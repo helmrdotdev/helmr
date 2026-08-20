@@ -90,7 +90,7 @@ func populateRuntimePrepareSource(
 	if row.WorkspaceArchitecture == "" {
 		return errors.New("runtime reservation has no workspace architecture")
 	}
-	source.WorkspaceTarget = workerapi.WorkspaceResetTarget{
+	source.WorkspaceTarget = &workerapi.WorkspaceResetTarget{
 		BaseWorkspaceVersionID: pgvalue.UUIDString(row.BaseWorkspaceVersionID),
 		Tree: workerapi.WorkspaceTreeIdentity{
 			Digest: row.WorkspaceContentDigest.String, SizeBytes: row.WorkspaceLogicalSizeBytes.Int64,

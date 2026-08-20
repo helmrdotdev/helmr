@@ -280,11 +280,30 @@ func TestReconcileDesiredRuntimesStopsCleanly(t *testing.T) {
 	}
 }
 
+func TestWarmRuntimeTargetRejectsMissingWorkspaceTargetBeforeAdmission(t *testing.T) {
+	pool := NewPreparedRuntimePool(nil, nil, 1, nil)
+	admissionCalls := 0
+	pool.AdmitRuntimeStart = func(context.Context) error {
+		admissionCalls++
+		return errors.New("disk_floor")
+	}
+	err := pool.WarmRuntimeTarget(context.Background(), &typedRuntimeClient{}, workerapi.RuntimeReconcileTarget{})
+	if err == nil || !strings.Contains(err.Error(), "workspace target is required") {
+		t.Fatalf("error = %v, want missing Workspace target", err)
+	}
+	if admissionCalls != 0 {
+		t.Fatalf("runtime admission calls = %d, want 0", admissionCalls)
+	}
+}
+
 func TestWarmRuntimeTargetHonorsHardAdmissionBeforeMaterialization(t *testing.T) {
 	pool := NewPreparedRuntimePool(nil, nil, 1, nil)
 	admissionErr := errors.New("disk_floor")
 	pool.AdmitRuntimeStart = func(context.Context) error { return admissionErr }
-	err := pool.WarmRuntimeTarget(context.Background(), &typedRuntimeClient{}, workerapi.RuntimeReconcileTarget{})
+	target := workerapi.RuntimeReconcileTarget{Source: workerapi.RuntimeSource{
+		WorkspaceTarget: &workerapi.WorkspaceResetTarget{},
+	}}
+	err := pool.WarmRuntimeTarget(context.Background(), &typedRuntimeClient{}, target)
 	if !errors.Is(err, admissionErr) {
 		t.Fatalf("error = %v, want hard admission error", err)
 	}
@@ -378,7 +397,7 @@ func TestPreparedRuntimeSourcePreservesWorkspaceReservationAuthority(t *testing.
 	source := workerapi.RuntimeSource{
 		WorkspaceID:            "019c10d5-a6f7-7af1-8f5f-000000000701",
 		DeploymentDefinitionID: "019c10d5-a6f7-7af1-8f5f-000000000702",
-		WorkspaceTarget: workerapi.WorkspaceResetTarget{
+		WorkspaceTarget: &workerapi.WorkspaceResetTarget{
 			BaseWorkspaceVersionID: "019c10d5-a6f7-7af1-8f5f-000000000703",
 			Tree:                   workerapi.WorkspaceTreeIdentity{Digest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", SizeBytes: 2048, EntryCount: 3},
 			Artifact: &workerapi.WorkspaceArtifact{
@@ -563,6 +582,7 @@ func runtimeCapacityTarget(id string, epoch int64) workerapi.RuntimeReconcileTar
 		ID: id, WorkerEpoch: epoch,
 		Source: workerapi.RuntimeSource{
 			DeploymentDefinitionID: "019c10d5-a6f7-7af1-8f5f-000000000703",
+			WorkspaceTarget:        &workerapi.WorkspaceResetTarget{},
 			ReservedCPUMillis:      1000, ReservedMemoryMiB: 512, ReservedDiskMiB: 1024,
 			ReservedExecutionSlots: 5,
 		},
@@ -572,7 +592,10 @@ func runtimeCapacityTarget(id string, epoch int64) workerapi.RuntimeReconcileTar
 func retryableWarmTarget() workerapi.RuntimeReconcileTarget {
 	return workerapi.RuntimeReconcileTarget{
 		ID: "019c10d5-a6f7-7af1-8f5f-000000000503", WorkerEpoch: 7,
-		Source: workerapi.RuntimeSource{DeploymentDefinitionID: "019c10d5-a6f7-7af1-8f5f-000000000703"},
+		Source: workerapi.RuntimeSource{
+			DeploymentDefinitionID: "019c10d5-a6f7-7af1-8f5f-000000000703",
+			WorkspaceTarget:        &workerapi.WorkspaceResetTarget{},
+		},
 	}
 }
 

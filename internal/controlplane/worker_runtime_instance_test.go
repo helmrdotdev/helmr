@@ -5,6 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -28,6 +31,70 @@ type runtimeRestoreProjectionStore struct {
 	artifacts  []db.ListRunCheckpointArtifactAuthorityRow
 	base       db.GetCheckpointWorkspaceBaseAuthorityRow
 	baseCalls  int
+}
+
+type runtimeReconcileTargetStore struct {
+	db.Querier
+	row db.GetNextRuntimeReconcileTargetRow
+}
+
+func (s runtimeReconcileTargetStore) GetNextRuntimeReconcileTarget(
+	context.Context,
+	db.GetNextRuntimeReconcileTargetParams,
+) (db.GetNextRuntimeReconcileTargetRow, error) {
+	return s.row, nil
+}
+
+func TestWorkerRuntimeReconcileTargetRoundTripsActionWorkspaceAuthority(t *testing.T) {
+	runtimeID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	workerID := uuid.Must(uuid.NewV7())
+	baseVersionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	tests := []struct {
+		name       string
+		desired    db.RuntimeDesiredState
+		observed   db.RuntimeObservedState
+		wantAction string
+		wantTarget bool
+	}{
+		{name: "prepare", desired: db.RuntimeDesiredStateReady, observed: db.RuntimeObservedStateAllocated, wantAction: workerapi.RuntimeReconcilePrepare, wantTarget: true},
+		{name: "close", desired: db.RuntimeDesiredStateClosed, observed: db.RuntimeObservedStateReady, wantAction: workerapi.RuntimeReconcileClose},
+		{name: "reclaim", desired: db.RuntimeDesiredStateReady, observed: db.RuntimeObservedStateFailed, wantAction: workerapi.RuntimeReconcileReclaim},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			row := db.GetNextRuntimeReconcileTargetRow{
+				ID: runtimeID, WorkerEpoch: 7,
+				DesiredState: test.desired, ObservedState: test.observed,
+				BaseWorkspaceVersionID:    baseVersionID,
+				WorkspaceContentDigest:    pgvalue.Text(workspace.CanonicalEmptyTreeDigest),
+				WorkspaceLogicalSizeBytes: pgtype.Int8{Int64: 0, Valid: true},
+				WorkspaceEntryCount:       pgtype.Int4{Int32: 0, Valid: true},
+				WorkspaceArchitecture:     "x86_64",
+			}
+			server := &Server{log: discardTestLogger(), db: runtimeReconcileTargetStore{row: row}}
+			request := httptest.NewRequest(http.MethodPost, "/api/worker/v0/run/runtime-instances/reconcile", strings.NewReader(`{}`))
+			request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
+				WorkerInstanceID: workerID,
+				WorkerGroupID:    "run-workers",
+				WorkerEpoch:      7,
+			}))
+			response := httptest.NewRecorder()
+
+			server.workerNextRuntimeReconcileTarget(response, request)
+
+			if response.Code != http.StatusOK {
+				t.Fatalf("status = %d body = %s", response.Code, response.Body)
+			}
+			var decoded workerapi.RuntimeReconcileResponse
+			if err := json.Unmarshal(response.Body.Bytes(), &decoded); err != nil {
+				t.Fatalf("decode response %s: %v", response.Body, err)
+			}
+			if decoded.Target == nil || decoded.Target.Action != test.wantAction ||
+				(decoded.Target.Source.WorkspaceTarget != nil) != test.wantTarget {
+				t.Fatalf("target = %#v", decoded.Target)
+			}
+		})
+	}
 }
 
 func (s *runtimeRestoreProjectionStore) GetReadyRunCheckpoint(
@@ -103,7 +170,7 @@ func TestPopulateRuntimeRestoreSourceKeepsCapturedAndSourceFrontiersDistinct(t *
 		Digest: validDigest('9'), SizeBytes: 1024,
 		MediaType: workspace.ArtifactMediaType, Encoding: workspace.ArtifactEncoding,
 	}
-	source := workerapi.RuntimeSource{WorkspaceTarget: workerapi.WorkspaceResetTarget{
+	source := workerapi.RuntimeSource{WorkspaceTarget: &workerapi.WorkspaceResetTarget{
 		BaseWorkspaceVersionID: pgvalue.UUIDString(capturedVersionID),
 		Tree:                   workerapi.WorkspaceTreeIdentity{Digest: validDigest('8'), SizeBytes: 2048, EntryCount: 2},
 		Artifact:               &targetArtifact,

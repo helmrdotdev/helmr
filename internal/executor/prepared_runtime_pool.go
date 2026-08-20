@@ -437,6 +437,9 @@ func (p *PreparedRuntimePool) WarmRuntimeTarget(ctx context.Context, client Prep
 	if client == nil {
 		return errors.New("prepared runtime instance client is required")
 	}
+	if target.Source.WorkspaceTarget == nil {
+		return errors.New("prepared runtime warm command workspace target is required")
+	}
 	if p.AdmitRuntimeStart != nil {
 		if err := p.AdmitRuntimeStart(ctx); err != nil {
 			return err
@@ -1207,7 +1210,7 @@ func preparedRuntimeWorkspaceMountFromSource(source workerapi.RuntimeSource) wor
 		ID:                      uuid.Must(uuid.NewV7()).String(),
 		WorkspaceID:             strings.TrimSpace(source.WorkspaceID),
 		DeploymentDefinitionID:  strings.TrimSpace(source.DeploymentDefinitionID),
-		Target:                  source.WorkspaceTarget,
+		Target:                  *source.WorkspaceTarget,
 		RuntimeIdentityID:       strings.TrimSpace(source.RuntimeIdentityID),
 		WorkspaceImage:          source.WorkspaceImage,
 		RootfsDigest:            strings.TrimSpace(source.RootfsDigest),

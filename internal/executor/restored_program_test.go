@@ -159,7 +159,7 @@ func TestValidatePreparedRuntimeRestoreExactTupleAndMembership(t *testing.T) {
 	}
 	target := workerapi.RuntimeReconcileTarget{Source: workerapi.RuntimeSource{
 		VMVCPUCount: 2, CPUConfigDigest: cpuConfigDigest,
-		WorkspaceTarget: workerapi.WorkspaceResetTarget{
+		WorkspaceTarget: &workerapi.WorkspaceResetTarget{
 			BaseWorkspaceVersionID: "target-version",
 			Tree:                   workerapi.WorkspaceTreeIdentity{Digest: "sha256:target", SizeBytes: 75, EntryCount: 1},
 			Artifact: &workerapi.WorkspaceArtifact{Digest: "captured-workspace-object", SizeBytes: 75,

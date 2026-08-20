@@ -161,22 +161,22 @@ type RuntimeInstance struct {
 }
 
 type RuntimeSource struct {
-	DeploymentDefinitionID string               `json:"deployment_definition_id"`
-	WorkspaceID            string               `json:"workspace_id"`
-	RuntimeIdentityID      string               `json:"runtime_identity_id"`
-	VMVCPUCount            int32                `json:"vm_vcpu_count"`
-	CPUConfigDigest        string               `json:"cpu_config_digest"`
-	WorkspaceImage         CASObject            `json:"workspace_image"`
-	WorkspaceArchitecture  string               `json:"workspace_architecture"`
-	WorkspaceTarget        WorkspaceResetTarget `json:"workspace_target"`
-	RootfsDigest           string               `json:"rootfs_digest"`
-	ReservedCPUMillis      int32                `json:"reserved_cpu_millis"`
-	ReservedMemoryMiB      int32                `json:"reserved_memory_mib"`
-	ReservedDiskMiB        int64                `json:"reserved_disk_mib"`
-	ReservedExecutionSlots int32                `json:"reserved_execution_slots"`
-	VMRuntimeContract      string               `json:"vm_runtime_contract"`
-	Program                *RuntimeProgram      `json:"program,omitempty"`
-	Restore                *RuntimeRestore      `json:"restore,omitempty"`
+	DeploymentDefinitionID string                `json:"deployment_definition_id"`
+	WorkspaceID            string                `json:"workspace_id"`
+	RuntimeIdentityID      string                `json:"runtime_identity_id"`
+	VMVCPUCount            int32                 `json:"vm_vcpu_count"`
+	CPUConfigDigest        string                `json:"cpu_config_digest"`
+	WorkspaceImage         CASObject             `json:"workspace_image"`
+	WorkspaceArchitecture  string                `json:"workspace_architecture"`
+	WorkspaceTarget        *WorkspaceResetTarget `json:"workspace_target,omitempty"`
+	RootfsDigest           string                `json:"rootfs_digest"`
+	ReservedCPUMillis      int32                 `json:"reserved_cpu_millis"`
+	ReservedMemoryMiB      int32                 `json:"reserved_memory_mib"`
+	ReservedDiskMiB        int64                 `json:"reserved_disk_mib"`
+	ReservedExecutionSlots int32                 `json:"reserved_execution_slots"`
+	VMRuntimeContract      string                `json:"vm_runtime_contract"`
+	Program                *RuntimeProgram       `json:"program,omitempty"`
+	Restore                *RuntimeRestore       `json:"restore,omitempty"`
 }
 
 type RuntimeRestore struct {

@@ -71,7 +71,7 @@ func TestPreparedRuntimeRestoreRebuildsAndRegistersSubstrateWithoutSubstrateCAS(
 		Source: workerapi.RuntimeSource{
 			WorkspaceID:            "019c10d5-a6f7-7af1-8f5f-000000000801",
 			DeploymentDefinitionID: "019c10d5-a6f7-7af1-8f5f-000000000802",
-			WorkspaceTarget: workerapi.WorkspaceResetTarget{
+			WorkspaceTarget: &workerapi.WorkspaceResetTarget{
 				BaseWorkspaceVersionID: "019c10d5-a6f7-7af1-8f5f-000000000803",
 			},
 			WorkspaceImage: fixture.WorkspaceImage,
