@@ -24,7 +24,6 @@ type resumedProgramAdmission struct {
 	entrypointDeclaredID string
 	decision             workerapi.RunLeaseDecision
 	start                workerapi.RunStartRequest
-	recreated            bool
 }
 
 func (r ProgramRunner) startResumedProgram(
@@ -171,8 +170,7 @@ func validateResumedProgramClaim(
 	execution := claim.Execution
 	switch {
 	case execution.Restore != nil &&
-		execution.Fresh == nil &&
-		execution.Attach == nil:
+		execution.Fresh == nil:
 		restore := execution.Restore
 		admission := resumedProgramAdmission{
 			runWaitID:            strings.TrimSpace(restore.RunWaitID),
@@ -189,7 +187,6 @@ func validateResumedProgramClaim(
 				ResumeAttachID:       restore.ResumeAttachID,
 				ResumeRequestVersion: restore.ResumeRequestVersion,
 			}},
-			recreated: restore.Recreated != nil,
 		}
 		if admission.runWaitID == "" ||
 			admission.checkpointID == "" ||
@@ -197,74 +194,31 @@ func validateResumedProgramClaim(
 			admission.resumeRequestVersion <= 0 ||
 			admission.correlationID == "" ||
 			admission.entrypointDeclaredID == "" ||
-			((restore.Recreated == nil) == (restore.Retained == nil)) {
+			len(restore.Manifest) == 0 {
 			return resumedProgramAdmission{}, errors.New(
 				"program restore authority is incomplete",
 			)
 		}
-		if restore.Retained != nil &&
-			strings.TrimSpace(restore.Retained.EnclosingRunWaitID) == "" {
-			return resumedProgramAdmission{}, errors.New(
-				"retained program restore authority is incomplete",
+		var checkpoint workerapi.CheckpointManifest
+		if err := json.Unmarshal(restore.Manifest, &checkpoint); err != nil {
+			return resumedProgramAdmission{}, fmt.Errorf(
+				"decode restored program checkpoint: %w",
+				err,
 			)
 		}
-		if restore.Recreated != nil {
-			var checkpoint workerapi.CheckpointManifest
-			if err := json.Unmarshal(restore.Recreated.Manifest, &checkpoint); err != nil {
-				return resumedProgramAdmission{}, fmt.Errorf(
-					"decode restored program checkpoint: %w",
-					err,
-				)
-			}
-			if checkpoint.RecoveryPoint.ID != admission.checkpointID ||
-				checkpoint.RecoveryPoint.RunID != lease.RunID ||
-				checkpoint.RecoveryPoint.AttemptNumber != lease.AttemptNumber ||
-				checkpoint.RecoveryPoint.RunWaitID != admission.runWaitID ||
-				checkpoint.RecoveryPoint.CorrelationID != admission.correlationID {
-				return resumedProgramAdmission{}, errors.New(
-					"restored program checkpoint identity is inconsistent",
-				)
-			}
-		}
-		return admission, nil
-	case execution.Restore == nil &&
-		execution.Fresh == nil &&
-		execution.Attach != nil &&
-		execution.Attach.Parent != nil &&
-		execution.Attach.Child == nil:
-		parent := execution.Attach.Parent
-		admission := resumedProgramAdmission{
-			runWaitID:            strings.TrimSpace(parent.RunWaitID),
-			checkpointID:         strings.TrimSpace(parent.CheckpointID),
-			resumeAttachID:       strings.TrimSpace(parent.ResumeAttachID),
-			resumeRequestVersion: parent.ResumeRequestVersion,
-			correlationID:        strings.TrimSpace(parent.CorrelationID),
-			entrypointKind:       strings.TrimSpace(parent.EntrypointKind),
-			entrypointDeclaredID: strings.TrimSpace(parent.EntrypointDeclaredID),
-			decision:             parent.Decision,
-			start: workerapi.RunStartRequest{Attach: &workerapi.RunStartAttach{
-				Parent: &workerapi.RunStartParentAttach{
-					RunWaitID:            parent.RunWaitID,
-					CheckpointID:         parent.CheckpointID,
-					ResumeAttachID:       parent.ResumeAttachID,
-					ResumeRequestVersion: parent.ResumeRequestVersion,
-				},
-			}},
-		}
-		if admission.runWaitID == "" ||
-			admission.checkpointID == "" ||
-			admission.resumeAttachID == "" ||
-			admission.resumeRequestVersion <= 0 ||
-			admission.correlationID == "" ||
-			admission.entrypointDeclaredID == "" {
+		if checkpoint.RecoveryPoint.ID != admission.checkpointID ||
+			checkpoint.RecoveryPoint.RunID != lease.RunID ||
+			checkpoint.RecoveryPoint.AttemptNumber != lease.AttemptNumber ||
+			checkpoint.RecoveryPoint.RunWaitID != admission.runWaitID ||
+			checkpoint.RecoveryPoint.CorrelationID != admission.correlationID {
 			return resumedProgramAdmission{}, errors.New(
-				"parent-attached program authority is incomplete",
+				"restored program checkpoint identity is inconsistent",
 			)
 		}
 		return admission, nil
 	default:
 		return resumedProgramAdmission{}, errors.New(
-			"run lease execution must contain exactly one restored or parent-attached program",
+			"run lease execution must contain exactly one restored program",
 		)
 	}
 }
@@ -283,10 +237,10 @@ func validateResumedProgramMount(
 	if mount.RuntimeInstanceID != lease.RuntimeInstanceID {
 		return errors.New("resumed Runtime Instance does not match the claimed physical authority")
 	}
-	if mount.BaseVersionID != lease.BaseWorkspaceVersionID {
+	if mount.Target.BaseWorkspaceVersionID != lease.BaseWorkspaceVersionID {
 		return errors.New("resumed base Workspace version does not match the claimed physical authority")
 	}
-	if resume.recreated && mount.RestoreCheckpointID != resume.checkpointID {
+	if mount.RestoreCheckpointID != resume.checkpointID {
 		return errors.New("resumed restore checkpoint does not match the claimed physical authority")
 	}
 	return nil

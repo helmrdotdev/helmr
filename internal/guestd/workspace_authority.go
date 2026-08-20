@@ -191,12 +191,8 @@ func handleProgramRestoreVerifyConnection(
 	if !waits.verifyFrozenProgram(&request) {
 		return errors.New("program restore verification did not match a frozen program")
 	}
-	entry := mounts.currentProgramEntry(request.GetRunId(), request.GetAttemptNumber())
-	if entry == nil {
+	if mounts.currentProgramEntry(request.GetRunId(), request.GetAttemptNumber()) == nil {
 		return errors.New("program restore verification did not match an active program claim")
-	}
-	if err := mounts.authorizeChildProgram(entry, request.GetRunId(), request.GetAttemptNumber()); err != nil {
-		return fmt.Errorf("authorize child program: %w", err)
 	}
 	if err := conn.SetWriteDeadline(time.Now().Add(resumeAttachTimeout)); err != nil {
 		return err
@@ -266,32 +262,6 @@ func (entry *workspaceMountEntry) installWorkspaceRunAuthorityLocked(authority *
 	}
 	entry.setFencingGeneration(mountGeneration)
 	entry.authority = proto.Clone(authority).(*workspacev0.WorkspaceRunAuthority)
-	entry.previousExpiry = 0
-	return nil
-}
-
-func (entry *workspaceMountEntry) installChildWorkspaceRunAuthorityLocked(
-	parent *workspacev0.WorkspaceRunAuthority,
-	child *workspacev0.WorkspaceRunAuthority,
-	now time.Time,
-) error {
-	if err := validateWorkspaceRunAuthority(entry, child, now); err != nil {
-		return err
-	}
-	if err := validateManagedProgramChildAuthority(parent, child); err != nil {
-		return err
-	}
-	entry.authorityMu.Lock()
-	defer entry.authorityMu.Unlock()
-	entry.processesMu.Lock()
-	live := entry.authorityState == workspaceAuthorityLive && !entry.recoveryRequired
-	entry.processesMu.Unlock()
-	if !live || !workspaceRunAuthoritiesEqual(entry.authority, parent) {
-		return errors.New("frozen parent program authority is no longer current")
-	}
-	entry.baseVersionID = child.GetFence().GetBaseWorkspaceVersionId()
-	entry.setFencingGeneration(uint64(child.GetFence().GetMountFencingGeneration()))
-	entry.authority = proto.Clone(child).(*workspacev0.WorkspaceRunAuthority)
 	entry.previousExpiry = 0
 	return nil
 }

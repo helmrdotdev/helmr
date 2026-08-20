@@ -126,41 +126,6 @@ func TestRunWorkerCapacityPressureCandidatesPreserveRestoreIdentity(t *testing.T
 	}
 }
 
-func TestPlanRetainedRuntimeStaysOnExactPoolAndBlocksScaleIn(t *testing.T) {
-	primaryID := plannerTestUUID(1)
-	retainedID := plannerTestUUID(2)
-	store := plannerStore{
-		group: plannerTestGroup(primaryID),
-		pools: []db.ListCapacityWorkerPoolsRow{
-			plannerTestPool(primaryID, "primary"),
-			plannerTestPool(retainedID, "retained"),
-		},
-		runs: []db.ListQueuedRunPlanningCandidatesForScopesRow{{
-			RunID: plannerTestUUID(12), RequiresRetainedRuntime: true, RetainedWorkerPoolID: retainedID,
-		}},
-	}
-
-	plan, err := Plan(context.Background(), store, plannerTestGroupID, capacityapi.CapacityPlanRequest{Pools: []capacityapi.CapacityPoolRequest{
-		plannerPoolRequest(primaryID, 1),
-		plannerPoolRequest(retainedID, 1),
-	}}, plannerTestNow)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	retainedPlan := requirePoolPlan(t, plan, retainedID)
-	primaryPlan := requirePoolPlan(t, plan, primaryID)
-	if retainedPlan.CompatibleQueuedItems != 1 || retainedPlan.RecommendedAdditionalWorkers != 0 || !retainedPlan.ScaleInBlocked {
-		t.Fatalf("retained pool plan = %+v", retainedPlan)
-	}
-	if primaryPlan.CompatibleQueuedItems != 0 || primaryPlan.ScaleInBlocked {
-		t.Fatalf("primary pool plan = %+v", primaryPlan)
-	}
-	if len(plan.UnmatchedDemand) != 0 {
-		t.Fatalf("unmatched demand = %+v", plan.UnmatchedDemand)
-	}
-}
-
 func TestPlanRestoreUsesCompatibleSecondaryPool(t *testing.T) {
 	primaryID := plannerTestUUID(1)
 	secondaryID := plannerTestUUID(2)

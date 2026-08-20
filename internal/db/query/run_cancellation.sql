@@ -164,14 +164,6 @@ WITH target_runtimes AS (
     SELECT runtime_instances.id
       FROM runtime_instances
      WHERE runtime_instances.reserved_run_id = ANY(sqlc.arg(cancel_ids)::uuid[])
-    UNION
-    SELECT run_waits.handoff_runtime_instance_id
-      FROM run_waits
-     WHERE run_waits.run_id = ANY(sqlc.arg(run_ids)::uuid[])
-       AND run_waits.handoff_runtime_instance_id IS NOT NULL
-       AND run_waits.suspension_state IN (
-           'hot', 'checkpointing', 'parked', 'resume_pending', 'resuming'
-       )
 )
 SELECT runtime_instances.id
   FROM runtime_instances
@@ -217,8 +209,6 @@ SELECT id,
        current_run_lease_id,
        prior_run_lease_id,
        suspend_checkpoint_id,
-       handoff_runtime_instance_id,
-       handoff_workspace_mount_id,
        base_workspace_version_id,
        child_writer_generation
   FROM run_waits
@@ -557,18 +547,10 @@ WITH candidate_runtimes AS (
       FROM run_leases
      WHERE run_leases.id = sqlc.narg(run_lease_id)
        AND run_leases.run_id = sqlc.arg(run_id)
-       AND run_leases.runtime_instance_id IS DISTINCT FROM sqlc.narg(retained_runtime_id)
     UNION
     SELECT runtime_instances.id AS runtime_instance_id
       FROM runtime_instances
      WHERE runtime_instances.reserved_run_id = sqlc.arg(run_id)
-       AND runtime_instances.id IS DISTINCT FROM sqlc.narg(retained_runtime_id)
-    UNION
-    SELECT run_waits.handoff_runtime_instance_id AS runtime_instance_id
-      FROM run_waits
-     WHERE run_waits.run_id = sqlc.arg(run_id)
-       AND run_waits.handoff_runtime_instance_id IS NOT NULL
-       AND run_waits.handoff_runtime_instance_id IS DISTINCT FROM sqlc.narg(retained_runtime_id)
 ), closing_runtimes AS (
     UPDATE runtime_instances
        SET desired_state = 'closed',
@@ -600,7 +582,6 @@ UPDATE workspace_mounts
        UNION
        SELECT id FROM closing_runtimes
    )
-   AND workspace_mounts.id IS DISTINCT FROM sqlc.narg(retained_mount_id)
    AND state IN ('mounting', 'mounted');
 
 -- name: TerminalizeRunAttempt :execrows

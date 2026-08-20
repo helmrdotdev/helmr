@@ -117,31 +117,6 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 	assertRemoved(t, artifact.Memory[0].Path)
 }
 
-func TestRuntimeCheckpointerRetainsAndResumesSameWorkspaceSource(t *testing.T) {
-	stream := newCheckpointStream(t, nil, &runv0.CheckpointPauseReady{
-		RunWaitId: "run-wait-id-1", CheckpointId: "checkpoint-1",
-	})
-	artifact := checkpointArtifact(t)
-	session := &checkpointSession{stream: stream, artifact: artifact}
-	result, err := runtimeCheckpointer{
-		session: session, cas: &checkpointCAS{}, encryptor: testCheckpointEncryptor(t),
-		tempDir: t.TempDir(), stream: stream, workspace: testCheckpointWorkspaceBase(),
-	}.CreateCheckpoint(context.Background(), CheckpointRequest{
-		RunWaitID: "run-wait-id-1", CheckpointID: "checkpoint-1", RetainSource: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if session.resumeCount != 1 || session.closeCount != 0 || result.SourceCleanup != nil {
-		t.Fatalf("retained checkpoint session = resume:%d close:%d cleanup:%+v",
-			session.resumeCount, session.closeCount, result.SourceCleanup)
-	}
-	if !checkpointPhaseNamed(result.Manifest.Phases, "resume_checkpoint_source") ||
-		checkpointPhaseNamed(result.Manifest.Phases, "release_checkpoint_source") {
-		t.Fatalf("retained checkpoint phases = %+v", result.Manifest.Phases)
-	}
-}
-
 func TestRuntimeCheckpointerPublishesFrozenAuthorityBeforeSnapshot(t *testing.T) {
 	stream := newCheckpointStream(t, nil, &runv0.CheckpointPauseReady{
 		RunWaitId: "run-wait-id-1", CheckpointId: "checkpoint-1",
@@ -839,15 +814,6 @@ func checkpointPhaseHasFilepackStats(phases []workerapi.CheckpointPhase, name st
 	for _, phase := range phases {
 		if phase.Name == name && phase.Filepack != nil && phase.Filepack.LogicalBytes > 0 &&
 			phase.Filepack.SparseSupported != nil && *phase.Filepack.SparseSupported {
-			return true
-		}
-	}
-	return false
-}
-
-func checkpointPhaseNamed(phases []workerapi.CheckpointPhase, name string) bool {
-	for _, phase := range phases {
-		if phase.Name == name {
 			return true
 		}
 	}

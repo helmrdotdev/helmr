@@ -131,7 +131,6 @@ func TestRunLeaseClaimProjectionLoadsOnlyLockedWorkspaceLeaseBase(t *testing.T) 
 func TestRestoreRunLeaseClaimDoesNotOpenSecrets(t *testing.T) {
 	authority, projection, keys := validRunLeaseClaimResponse(t)
 	authority.mode = runLeaseClaimRestore
-	authority.restoreSource = runLeaseRestoreRecreated
 	authority.attempt.EntrypointEnteredAt.Valid = true
 	authority.runWait = db.RunWait{
 		ID: pgvalue.UUID(uuid.New()), ConditionState: db.WaitStateCompleted,
@@ -141,7 +140,6 @@ func TestRestoreRunLeaseClaimDoesNotOpenSecrets(t *testing.T) {
 	authority.checkpoint = db.RunCheckpoint{
 		ID: pgvalue.UUID(uuid.New()), RunID: authority.run.ID,
 		AttemptNumber: authority.attempt.Number,
-		Kind:          db.RunCheckpointKindSuspend,
 		State:         db.RunCheckpointStateReady,
 	}
 	authority.checkpoint.RestoreManifest = testCheckpointManifest(
@@ -171,45 +169,6 @@ func TestRestoreRunLeaseClaimDoesNotOpenSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	if response.Secrets == nil || len(response.Secrets) != 0 || response.Execution.Restore == nil {
-		t.Fatalf("response = %#v", response)
-	}
-}
-
-func TestParentAttachRunLeaseClaimDoesNotOpenSecrets(t *testing.T) {
-	authority, projection, keys := validRunLeaseClaimResponse(t)
-	authority.mode = runLeaseClaimAttachParent
-	authority.attempt.EntrypointEnteredAt.Valid = true
-	authority.runWait = db.RunWait{
-		ID: pgvalue.UUID(uuid.New()), ConditionState: db.WaitStateCompleted,
-		ConditionTerminalAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
-		ResumeAttachID:      pgvalue.UUID(uuid.New()), ResumeRequestVersion: 2,
-	}
-	authority.checkpoint = db.RunCheckpoint{
-		ID: pgvalue.UUID(uuid.New()), RunID: authority.run.ID,
-		AttemptNumber: authority.attempt.Number,
-	}
-	authority.checkpoint.RestoreManifest = testCheckpointManifest(
-		t,
-		authority.checkpoint.ID,
-		authority.run.ID,
-		authority.attempt.Number,
-		authority.runWait.ID,
-	)
-	authority.childRun = db.Run{ID: pgvalue.UUID(uuid.New())}
-	response, err := projectRunLeaseClaimResponse(
-		context.Background(),
-		authority,
-		[]secret.DeliveryEnvelope{{PlacementKind: "env", PlacementTarget: "TOKEN"}},
-		projection,
-		claimResponsePlatformStore{},
-		nil,
-		keys,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if response.Secrets == nil || len(response.Secrets) != 0 ||
-		response.Execution.Attach == nil || response.Execution.Attach.Parent == nil {
 		t.Fatalf("response = %#v", response)
 	}
 }

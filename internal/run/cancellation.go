@@ -59,21 +59,19 @@ type cancellationRun struct {
 }
 
 type cancellationWait struct {
-	id                       uuid.UUID
-	runID                    uuid.UUID
-	workspaceID              uuid.UUID
-	childRunID               pgtype.UUID
-	conditionState           db.WaitState
-	suspensionState          db.RunWaitState
-	expectedRunStateVersion  int64
-	attemptNumber            int32
-	currentRunLeaseID        pgtype.UUID
-	priorRunLeaseID          pgtype.UUID
-	suspendCheckpointID      pgtype.UUID
-	handoffRuntimeInstanceID pgtype.UUID
-	handoffWorkspaceMountID  pgtype.UUID
-	baseWorkspaceVersionID   pgtype.UUID
-	childWriterGeneration    pgtype.Int8
+	id                      uuid.UUID
+	runID                   uuid.UUID
+	workspaceID             uuid.UUID
+	childRunID              pgtype.UUID
+	conditionState          db.WaitState
+	suspensionState         db.RunWaitState
+	expectedRunStateVersion int64
+	attemptNumber           int32
+	currentRunLeaseID       pgtype.UUID
+	priorRunLeaseID         pgtype.UUID
+	suspendCheckpointID     pgtype.UUID
+	baseWorkspaceVersionID  pgtype.UUID
+	childWriterGeneration   pgtype.Int8
 }
 
 type terminalChildWaitResolution struct {
@@ -295,9 +293,7 @@ func (g OwnedFinalization) CancelDescendants(ctx context.Context) (int, error) {
 		if runStatusTerminal(run.status) {
 			continue
 		}
-		if err := cancelLockedRun(
-			ctx, g.tx, run, pgtype.UUID{}, pgtype.UUID{},
-		); err != nil {
+		if err := cancelLockedRun(ctx, g.tx, run); err != nil {
 			return 0, err
 		}
 		cancelled++
@@ -324,8 +320,6 @@ func (g OwnedFinalization) FailCurrentForSecretRevocation(
 		ctx,
 		g.tx,
 		target,
-		pgtype.UUID{},
-		pgtype.UUID{},
 		secretRevokedTermination,
 	); err != nil {
 		return 0, err
@@ -342,8 +336,7 @@ func (g OwnedFinalization) FailCurrentForSecretRevocation(
 				)
 			}
 			wait, found := g.waitsByChild[target.id]
-			if !found || wait.handoffRuntimeInstanceID.Valid ||
-				wait.handoffWorkspaceMountID.Valid {
+			if !found {
 				return 0, cancellationAuthority(
 					"secret-revoked child wait boundary is inconsistent",
 					nil,
@@ -429,8 +422,6 @@ func (g OwnedFinalization) failCurrentForRuntimePreparation(ctx context.Context)
 		ctx,
 		g.tx,
 		target,
-		pgtype.UUID{},
-		pgtype.UUID{},
 		runtimePreparationTermination,
 	); err != nil {
 		return err
@@ -459,9 +450,8 @@ func (g OwnedFinalization) failCurrentForRuntimePreparation(ctx context.Context)
 	if parent.workspaceID != target.workspaceID {
 		return resolveDifferentWorkspaceChildWait(ctx, g.tx, parent, wait, result)
 	}
-	if !wait.baseWorkspaceVersionID.Valid || !wait.handoffRuntimeInstanceID.Valid ||
-		!wait.handoffWorkspaceMountID.Valid {
-		return cancellationAuthority("runtime preparation handoff wait is inconsistent", nil)
+	if !wait.baseWorkspaceVersionID.Valid {
+		return cancellationAuthority("runtime preparation same-workspace wait is inconsistent", nil)
 	}
 	reasonCode := "runtime_preparation_failed"
 	return resolveTerminalChildWait(
@@ -569,7 +559,6 @@ func (c *Canceler) Cancel(
 	if err != nil {
 		return CancellationResult{}, err
 	}
-	var preservedRuntimeID, preservedMountID pgtype.UUID
 	var boundaryParent cancellationRun
 	var boundaryWait cancellationWait
 	resolveBoundaryParent := false
@@ -592,12 +581,7 @@ func (c *Canceler) Cancel(
 					nil,
 				)
 			}
-			preservedRuntimeID, preservedMountID, err = retainedCancellationHandoff(
-				boundaryParent,
-				target,
-				boundaryWait,
-			)
-			if err != nil {
+			if err := validateCancellationBoundary(boundaryParent, target, boundaryWait); err != nil {
 				return CancellationResult{}, err
 			}
 			resolveBoundaryParent = true
@@ -610,13 +594,7 @@ func (c *Canceler) Cancel(
 		return slices.Compare(left.id[:], right.id[:])
 	})
 	for _, run := range runs {
-		if err := cancelLockedRun(
-			ctx,
-			tx,
-			run,
-			preservedRuntimeID,
-			preservedMountID,
-		); err != nil {
+		if err := cancelLockedRun(ctx, tx, run); err != nil {
 			return CancellationResult{}, err
 		}
 		if resolveBoundaryParent && run.id == target.id {
@@ -791,7 +769,7 @@ func lockCancellationResources(
 			return nil, err
 		}
 	}
-	runtimeIDs, err := lockCancellationRuntimes(ctx, tx, lockOrder, cancelIDs)
+	runtimeIDs, err := lockCancellationRuntimes(ctx, tx, cancelIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -835,13 +813,9 @@ func lockCancellationAttempts(
 func lockCancellationRuntimes(
 	ctx context.Context,
 	tx pgx.Tx,
-	runIDs []uuid.UUID,
 	cancelIDs []uuid.UUID,
 ) ([]uuid.UUID, error) {
-	rows, err := db.New(tx).LockCancellationRuntimes(ctx, db.LockCancellationRuntimesParams{
-		RunIDs:    pgUUIDs(runIDs),
-		CancelIDs: pgUUIDs(cancelIDs),
-	})
+	rows, err := db.New(tx).LockCancellationRuntimes(ctx, pgUUIDs(cancelIDs))
 	if err != nil {
 		return nil, cancellationAuthority("lock cancellation Runtimes", err)
 	}
@@ -906,21 +880,19 @@ func lockCancellationWaits(
 	waitsByChild := make(map[uuid.UUID]cancellationWait)
 	for _, row := range rows {
 		wait := cancellationWait{
-			id:                       uuid.UUID(row.ID.Bytes),
-			runID:                    uuid.UUID(row.RunID.Bytes),
-			workspaceID:              uuid.UUID(row.WorkspaceID.Bytes),
-			childRunID:               row.ChildRunID,
-			conditionState:           row.ConditionState,
-			suspensionState:          row.SuspensionState,
-			expectedRunStateVersion:  row.ExpectedRunStateVersion,
-			attemptNumber:            row.AttemptNumber,
-			currentRunLeaseID:        row.CurrentRunLeaseID,
-			priorRunLeaseID:          row.PriorRunLeaseID,
-			suspendCheckpointID:      row.SuspendCheckpointID,
-			handoffRuntimeInstanceID: row.HandoffRuntimeInstanceID,
-			handoffWorkspaceMountID:  row.HandoffWorkspaceMountID,
-			baseWorkspaceVersionID:   row.BaseWorkspaceVersionID,
-			childWriterGeneration:    row.ChildWriterGeneration,
+			id:                      uuid.UUID(row.ID.Bytes),
+			runID:                   uuid.UUID(row.RunID.Bytes),
+			workspaceID:             uuid.UUID(row.WorkspaceID.Bytes),
+			childRunID:              row.ChildRunID,
+			conditionState:          row.ConditionState,
+			suspensionState:         row.SuspensionState,
+			expectedRunStateVersion: row.ExpectedRunStateVersion,
+			attemptNumber:           row.AttemptNumber,
+			currentRunLeaseID:       row.CurrentRunLeaseID,
+			priorRunLeaseID:         row.PriorRunLeaseID,
+			suspendCheckpointID:     row.SuspendCheckpointID,
+			baseWorkspaceVersionID:  row.BaseWorkspaceVersionID,
+			childWriterGeneration:   row.ChildWriterGeneration,
 		}
 		if wait.childRunID.Valid {
 			childID := uuid.UUID(wait.childRunID.Bytes)
@@ -964,62 +936,40 @@ func cancellationIDs(values []pgtype.UUID) []uuid.UUID {
 	return ids
 }
 
-func retainedCancellationHandoff(
+func validateCancellationBoundary(
 	parent cancellationRun,
 	child cancellationRun,
 	wait cancellationWait,
-) (pgtype.UUID, pgtype.UUID, error) {
+) error {
 	if wait.runID != parent.id ||
 		!wait.childRunID.Valid ||
 		uuid.UUID(wait.childRunID.Bytes) != child.id {
-		return pgtype.UUID{}, pgtype.UUID{}, cancellationAuthority(
+		return cancellationAuthority(
 			"cancelled child wait relation does not match",
 			nil,
 		)
 	}
 	if wait.workspaceID != parent.workspaceID {
-		return pgtype.UUID{}, pgtype.UUID{}, cancellationAuthority(
+		return cancellationAuthority(
 			"cancelled child wait workspace does not match parent",
 			nil,
 		)
 	}
-	if !wait.handoffRuntimeInstanceID.Valid && !wait.handoffWorkspaceMountID.Valid {
-		return pgtype.UUID{}, pgtype.UUID{}, nil
-	}
-	if parent.workspaceID != child.workspaceID ||
-		!wait.handoffRuntimeInstanceID.Valid ||
-		!wait.handoffWorkspaceMountID.Valid {
-		return pgtype.UUID{}, pgtype.UUID{}, cancellationAuthority(
-			"cancelled child handoff reservation is inconsistent",
-			nil,
-		)
-	}
-	return wait.handoffRuntimeInstanceID, wait.handoffWorkspaceMountID, nil
+	return nil
 }
 
 func cancelLockedRun(
 	ctx context.Context,
 	tx pgx.Tx,
 	run cancellationRun,
-	preservedRuntimeID pgtype.UUID,
-	preservedMountID pgtype.UUID,
 ) error {
-	return terminateLockedRun(
-		ctx,
-		tx,
-		run,
-		preservedRuntimeID,
-		preservedMountID,
-		cancelledTermination,
-	)
+	return terminateLockedRun(ctx, tx, run, cancelledTermination)
 }
 
 func terminateLockedRun(
 	ctx context.Context,
 	tx pgx.Tx,
 	run cancellationRun,
-	preservedRuntimeID pgtype.UUID,
-	preservedMountID pgtype.UUID,
 	termination termination,
 ) error {
 	if runStatusTerminal(run.status) {
@@ -1127,10 +1077,8 @@ func terminateLockedRun(
 	if err := queries.CloseRunRuntimes(
 		ctx,
 		db.CloseRunRuntimesParams{
-			RetainedMountID:             preservedMountID,
 			RunLeaseID:                  run.currentRunLeaseID,
 			RunID:                       pgvalue.UUID(run.id),
-			RetainedRuntimeID:           preservedRuntimeID,
 			ReasonCode:                  termination.reasonCode,
 			MountFinalizationKind:       mountFinalizationKind,
 			MountFinalizationReasonCode: mountFinalizationReasonCode,
@@ -1219,11 +1167,11 @@ func resolveCancelledChildWait(
 		parent.stateVersion != wait.expectedRunStateVersion {
 		return cancellationAuthority("cancelled child wait fence does not match", nil)
 	}
-	if !wait.handoffRuntimeInstanceID.Valid {
+	if parent.workspaceID != child.workspaceID {
 		return resolveCancelledDifferentWorkspaceChildWait(ctx, tx, parent, child, wait)
 	}
 	if !wait.baseWorkspaceVersionID.Valid {
-		return cancellationAuthority("cancelled handoff child has no base workspace version", nil)
+		return cancellationAuthority("cancelled same-workspace child has no base workspace version", nil)
 	}
 	reasonCode := "child_run_cancelled"
 	return resolveTerminalChildWait(
@@ -1286,7 +1234,7 @@ func resolveTerminalChildWait(
 ) error {
 	if resolution.resumeWorkspaceVersionID.Valid &&
 		wait.suspensionState != db.RunWaitStateParked {
-		return cancellationAuthority("terminal child workspace handoff is not parked", nil)
+		return cancellationAuthority("terminal same-workspace child wait is not parked", nil)
 	}
 	queries := db.New(tx)
 	switch wait.suspensionState {

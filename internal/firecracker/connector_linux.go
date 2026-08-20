@@ -2610,7 +2610,7 @@ func validateRestoredNetworkConfig(expected snapshotNetworkManifest, actual snap
 		return fmt.Errorf("validate checkpoint network manifest: %w", err)
 	}
 	if err := validateSnapshotNetwork(actual); err != nil {
-		return fmt.Errorf("validate recreated checkpoint network: %w", err)
+		return fmt.Errorf("validate restored checkpoint network: %w", err)
 	}
 	if expected.GuestIPv4CIDR != actual.GuestIPv4CIDR ||
 		expected.GuestMAC != actual.GuestMAC ||
@@ -2619,7 +2619,7 @@ func validateRestoredNetworkConfig(expected snapshotNetworkManifest, actual snap
 		expected.GuestInterfaceName != actual.GuestInterfaceName ||
 		expected.MTU != actual.MTU ||
 		!slices.Equal(expected.ResolverAddresses, actual.ResolverAddresses) {
-		return errors.New("recreated checkpoint network does not exactly match manifest")
+		return errors.New("restored checkpoint network does not exactly match manifest")
 	}
 	return nil
 }

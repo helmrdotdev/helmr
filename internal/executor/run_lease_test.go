@@ -67,63 +67,6 @@ func TestExecutorCompletesSuccessfulRunLeaseTask(t *testing.T) {
 	}
 }
 
-func TestExecutorCompletesSuccessfulTaskHandoff(t *testing.T) {
-	trace := &runLeaseTrace{}
-	lease := testRunLeaseAssignment(time.Now().Add(time.Minute))
-	frozen := lease
-	frozen.ExpiresAt = lease.ExpiresAt.Add(20 * time.Minute)
-	task := &testRunLeaseTask{
-		trace:   trace,
-		renewed: lease,
-		result: RunLeaseTaskResult{
-			Outcome: workerapi.TaskOutcome{Succeeded: &workerapi.TaskSucceeded{
-				Output: json.RawMessage(`{"ok":true}`),
-			}},
-			ProgramQuiesced: workerapi.RunQuiescenceProof{
-				RunID: lease.RunID, AttemptNumber: lease.AttemptNumber,
-				RunLeaseID: lease.ID,
-			},
-		},
-	}
-	controlPlane := &testRunLeaseControlPlane{
-		trace:   trace,
-		claim:   workerapi.RunLeaseClaimResponse{Lease: lease},
-		renewed: testRunLeaseRenewResponse(lease),
-		begin: workerapi.BeginRunFinalizationResponse{
-			Lease: frozen.Fence(), ExpiresAt: frozen.ExpiresAt,
-			BaseWorkspaceVersionID: frozen.BaseWorkspaceVersionID,
-			Kind:                   workerapi.RunFinalizationCapture,
-			Handoff: &workerapi.RunFinalizationHandoff{
-				ParentRunID: "parent-run", ParentAttemptNumber: 1,
-				RunWaitID: "wait", SuspendCheckpointID: "suspend",
-				ResumeAttachID: "attach", CorrelationID: "correlation",
-			},
-		},
-	}
-	executor := Executor{
-		RunLeases:     controlPlane,
-		RunLeaseTasks: &testRunLeaseTaskRunner{trace: trace, task: task},
-	}
-
-	if err := executor.ExecuteRunLease(context.Background(), workerapi.RunLeaseWork{
-		LeaseID: lease.ID, LeaseSequence: lease.LeaseSequence,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(trace.calls, []string{
-		"claim", "start", "wait", "renew", "begin", "guest-begin", "capture",
-		"handoff-checkpoint", "complete",
-	}) {
-		t.Fatalf("calls = %v", trace.calls)
-	}
-	if controlPlane.completed.Handoff == nil ||
-		controlPlane.completed.Handoff.CheckpointID == "" ||
-		controlPlane.completed.Workspace.Captured == nil ||
-		controlPlane.completed.Outcome.Succeeded == nil {
-		t.Fatalf("completion = %+v", controlPlane.completed)
-	}
-}
-
 func TestExecutorRollsBackFailedRunLeaseTask(t *testing.T) {
 	trace := &runLeaseTrace{}
 	lease := testRunLeaseAssignment(time.Now().Add(time.Minute))
@@ -286,7 +229,7 @@ func TestRenewRunLeaseAuthorityInstallsCommittedRenewalAfterCallerCancellation(t
 	registry := NewWorkspaceMountSessions()
 	registry.RegisterWorkspaceMountSession(workerapi.WorkspaceMount{
 		ID: "mount-1", WorkspaceID: "workspace-1", RuntimeInstanceID: "runtime-1",
-		FencingGeneration: 4, BaseVersionID: "version-1",
+		FencingGeneration: 4, Target: workerapi.WorkspaceResetTarget{BaseWorkspaceVersionID: "version-1"},
 	}, &borrowedParentSession{stream: discardReadWriteCloser{}, openStream: host}, "channel-1")
 	authority := &workspacev0.WorkspaceRunAuthority{
 		Fence: &workspacev0.WorkspaceAuthorityFence{
@@ -657,16 +600,6 @@ func (task *testRunLeaseTask) CaptureWorkspace(context.Context) (workerapi.TaskW
 		return workerapi.TaskWorkspaceCapture{}, errors.New("transient capture failure")
 	}
 	return workerapi.TaskWorkspaceCapture{}, nil
-}
-
-func (task *testRunLeaseTask) CreateHandoffCheckpoint(
-	context.Context,
-	workerapi.RunFinalizationHandoff,
-	string,
-	workerapi.TaskWorkspaceCapture,
-) (workerapi.CheckpointManifest, error) {
-	task.trace.add("handoff-checkpoint")
-	return workerapi.CheckpointManifest{}, nil
 }
 
 func (task *testRunLeaseTask) ResetWorkspace(context.Context) (workerapi.TaskWorkspaceRollback, error) {

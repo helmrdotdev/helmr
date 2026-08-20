@@ -305,7 +305,7 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 	}
 	checkpointID := uuid.Must(uuid.NewV7())
 	if _, err := fixture.queries.CreateRunCheckpoint(ctx, db.CreateRunCheckpointParams{
-		ID: pgvalue.UUID(checkpointID), Kind: db.RunCheckpointKindSuspend,
+		ID:    pgvalue.UUID(checkpointID),
 		RunID: pgvalue.UUID(work.runID), AttemptNumber: int32(1),
 		RunWaitID: pgvalue.UUID(registered.WaitID), SourceRunLeaseID: pgvalue.UUID(work.leaseID),
 		SourceWorkspaceLeaseID: pgvalue.UUID(authority.workspaceLeaseID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
@@ -653,7 +653,7 @@ func testPendingRootTokenWaitCheckpointReadyCommitsAtomicParkingFacts(t *testing
 	defer tx.Rollback(context.Background())
 	queries := db.New(tx)
 	if _, err := queries.CreateRunCheckpoint(ctx, db.CreateRunCheckpointParams{
-		ID: pgvalue.UUID(checkpointID), Kind: db.RunCheckpointKindSuspend,
+		ID:    pgvalue.UUID(checkpointID),
 		RunID: pgvalue.UUID(work.runID), AttemptNumber: int32(1),
 		RunWaitID: pgvalue.UUID(registered.WaitID), SourceRunLeaseID: pgvalue.UUID(work.leaseID),
 		SourceWorkspaceLeaseID: pgvalue.UUID(authority.workspaceLeaseID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
@@ -937,12 +937,12 @@ func TestTokenWaitRegistrationReplaySurvivesParkedCompletion(t *testing.T) {
 	checkpointID := uuid.Must(uuid.NewV7())
 	dbtest.MustExec(t, ctx, fixture.pool, `
 		INSERT INTO run_checkpoints (
-		    id, kind, run_id, attempt_number, run_wait_id,
+		    id, run_id, attempt_number, run_wait_id,
 		    source_run_lease_id, source_workspace_lease_id, workspace_id,
 		    base_workspace_version_id, private_workspace_version_id,
 		    state, restore_manifest, ready_request_fingerprint, ready_at
 		) VALUES (
-		    $1, 'suspend', $2, 1, $3, $4, $5, $6, $7, $7,
+		    $1, $2, 1, $3, $4, $5, $6, $7, $7,
 		    'ready', '{"test":true}'::jsonb, 'sha256:test-ready', transaction_timestamp()
 		)
 	`, checkpointID, work.runID, request.WaitID, work.leaseID, workspaceLeaseID, workspaceID, baseVersionID)
@@ -1332,12 +1332,12 @@ func newTokenWaitReconcileSetup(
 		setup.checkpointID = pgvalue.UUID(checkpointID)
 		dbtest.MustExec(t, ctx, fixture.pool, `
 			INSERT INTO run_checkpoints (
-			    id, kind, run_id, attempt_number, run_wait_id,
+			    id, run_id, attempt_number, run_wait_id,
 			    source_run_lease_id, source_workspace_lease_id, workspace_id,
 			    base_workspace_version_id, private_workspace_version_id,
 			    state, restore_manifest, ready_request_fingerprint, ready_at
 			) VALUES (
-			    $1, 'suspend', $2, 1, $3, $4, $5, $6, $7, $7,
+			    $1, $2, 1, $3, $4, $5, $6, $7, $7,
 			    'ready', '{"test":true}'::jsonb, 'sha256:test-ready', transaction_timestamp()
 			)
 		`, checkpointID, setup.runID, setup.waitID, setup.leaseID, workspaceLeaseID, setup.workspaceID, baseVersionID)

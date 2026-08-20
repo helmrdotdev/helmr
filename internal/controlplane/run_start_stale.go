@@ -15,7 +15,7 @@ const (
 	runStartFailureRuntime              runStartFailurePoint = "runtime"
 	runStartFailureRunLease             runStartFailurePoint = "run_lease"
 	runStartFailurePhysicalAuthority    runStartFailurePoint = "physical_authority"
-	runStartFailureParentHandoff        runStartFailurePoint = "parent_handoff"
+	runStartFailureParentWait           runStartFailurePoint = "parent_wait"
 	runStartFailureWorkspaceMount       runStartFailurePoint = "workspace_mount"
 	runStartFailureWorkspaceLease       runStartFailurePoint = "workspace_lease"
 	runStartFailureWorkspaceAuthority   runStartFailurePoint = "workspace_authority"

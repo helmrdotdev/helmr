@@ -44,8 +44,8 @@ run_check network-deny-evidence-producer \
   dev/release-gate/run-go-tests.sh \
   '^(TestNetworkPolicyUsesSuppliedDenySetAndDNSException|TestRunNetworkCounterContractRejectsMissingAndDuplicate)$' ./internal/firecracker
 run_check same-workspace-call \
-  'same-Workspace controlplane, executor, dispatch, and guest Program handoff contracts plus release smoke selector' \
-  bash -c "nix develop -c dev/release-gate/run-go-tests.sh 'SameWorkspace|Same.Workspace' ./internal/controlplane ./internal/dispatch && dev/release-gate/run-go-tests.sh '^TestChildAttachStartsNewProgramOnRetainedMount$' ./internal/executor && dev/release-gate/run-go-tests.sh 'ManagedProgramChildAdmission|ProgramCgroupLeaf|WorkspaceProgramAdmission|RestoredWorkspaceRebind' ./internal/guestd && bash tests/release_smoke_selector_test.sh"
+  'same-Workspace controlplane, executor, dispatch, and guest Program restore contracts plus release smoke selector' \
+  bash -c "nix develop -c dev/release-gate/run-go-tests.sh 'SameWorkspace|Same.Workspace' ./internal/controlplane ./internal/dispatch && dev/release-gate/run-go-tests.sh '^TestStartRestoredProgramOrdersGrantStartProofAndRelease$' ./internal/executor && dev/release-gate/run-go-tests.sh '^TestRestoredProgramDecisionPreservesTerminalUnion$' ./internal/executor && dev/release-gate/run-go-tests.sh '^TestRestoredWorkspaceMaterializesExactTargetBeforeRebindingAuthority$' ./internal/guestd && dev/release-gate/run-go-tests.sh '^TestProgramCgroupLeaf(IsStableAndProgramSpecific|RejectsIncompleteOrUntrustedNames)$' ./internal/guestd && dev/release-gate/run-go-tests.sh '^TestWorkspaceProgramAdmission(RejectsRetiredMount|InstallsNewMountGeneration)$' ./internal/guestd && bash tests/release_smoke_selector_test.sh"
 run_check console-typecheck \
   'Console TypeScript typecheck' \
   bun run --cwd packages/console typecheck

@@ -40,6 +40,8 @@ WITH candidate AS (
     RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
 )
 SELECT claimed.id, claimed.org_id, claimed.worker_group_id, claimed.project_id, claimed.environment_id, claimed.region_id, claimed.worker_instance_id, claimed.worker_epoch, claimed.workspace_id, claimed.materialized_version_id, claimed.runtime_instance_id, claimed.claim_attempt, claimed.guest_channel_token_hash, claimed.guest_channel_token_expires_at, claimed.state, claimed.request, claimed.dirty_generation, claimed.fencing_generation, claimed.finalization_kind, claimed.finalization_reason_code, claimed.finalization_error, claimed.staged_version_id, claimed.requested_at, claimed.mounted_at, claimed.unmounted_at, claimed.stopped_at, claimed.lost_at, claimed.failed_at, claimed.terminal_at, claimed.terminal_reason_code, claimed.terminal_error, claimed.created_at, claimed.updated_at, runtime_instances.runtime_identity_id AS runtime_id,
+	   runtime_instances.restore_checkpoint_id,
+	   restore_checkpoint.base_workspace_version_id AS restore_source_version_id,
        runtime_instances.deployment_definition_id,
        runtime_identities.rootfs_digest,
        runtime_identities.vm_runtime_contract,
@@ -55,11 +57,17 @@ SELECT claimed.id, claimed.org_id, claimed.worker_group_id, claimed.project_id, 
        COALESCE(workspace_artifacts.digest, '') AS workspace_artifact_digest,
        COALESCE(workspace_artifacts.size_bytes, 0) AS workspace_artifact_size_bytes,
        COALESCE(workspace_artifacts.media_type, '') AS workspace_artifact_media_type,
+	   workspace_versions.content_digest AS workspace_content_digest,
+	   workspace_versions.size_bytes AS workspace_logical_size_bytes,
        workspace_versions.entry_count AS workspace_entry_count
   FROM claimed
   JOIN runtime_instances ON runtime_instances.org_id = claimed.org_id
                         AND runtime_instances.id = claimed.runtime_instance_id
   JOIN runtime_identities ON runtime_identities.id = runtime_instances.runtime_identity_id
+	LEFT JOIN run_checkpoints AS restore_checkpoint
+	  ON restore_checkpoint.id = runtime_instances.restore_checkpoint_id
+	 AND restore_checkpoint.workspace_id = claimed.workspace_id
+	 AND restore_checkpoint.state = 'ready'
   JOIN deployment_definitions
     ON deployment_definitions.environment_id = runtime_instances.environment_id
    AND deployment_definitions.id = runtime_instances.deployment_definition_id
@@ -117,6 +125,8 @@ type ClaimWorkspaceMountRow struct {
 	CreatedAt                       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                       pgtype.Timestamptz `json:"updated_at"`
 	RuntimeID                       string             `json:"runtime_id"`
+	RestoreCheckpointID             pgtype.UUID        `json:"restore_checkpoint_id"`
+	RestoreSourceVersionID          pgtype.UUID        `json:"restore_source_version_id"`
 	DeploymentDefinitionID          pgtype.UUID        `json:"deployment_definition_id"`
 	RootfsDigest                    string             `json:"rootfs_digest"`
 	VMRuntimeContract               string             `json:"vm_runtime_contract"`
@@ -132,6 +142,8 @@ type ClaimWorkspaceMountRow struct {
 	WorkspaceArtifactDigest         string             `json:"workspace_artifact_digest"`
 	WorkspaceArtifactSizeBytes      int64              `json:"workspace_artifact_size_bytes"`
 	WorkspaceArtifactMediaType      string             `json:"workspace_artifact_media_type"`
+	WorkspaceContentDigest          string             `json:"workspace_content_digest"`
+	WorkspaceLogicalSizeBytes       int64              `json:"workspace_logical_size_bytes"`
 	WorkspaceEntryCount             int32              `json:"workspace_entry_count"`
 }
 
@@ -178,6 +190,8 @@ func (q *Queries) ClaimWorkspaceMount(ctx context.Context, arg ClaimWorkspaceMou
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.RuntimeID,
+		&i.RestoreCheckpointID,
+		&i.RestoreSourceVersionID,
 		&i.DeploymentDefinitionID,
 		&i.RootfsDigest,
 		&i.VMRuntimeContract,
@@ -193,6 +207,8 @@ func (q *Queries) ClaimWorkspaceMount(ctx context.Context, arg ClaimWorkspaceMou
 		&i.WorkspaceArtifactDigest,
 		&i.WorkspaceArtifactSizeBytes,
 		&i.WorkspaceArtifactMediaType,
+		&i.WorkspaceContentDigest,
+		&i.WorkspaceLogicalSizeBytes,
 		&i.WorkspaceEntryCount,
 	)
 	return i, err
@@ -372,6 +388,120 @@ func (q *Queries) EnsureProcessWorkspaceMountRequested(ctx context.Context, arg 
 }
 
 const ensureRunWorkspaceMountRequested = `-- name: EnsureRunWorkspaceMountRequested :one
+WITH same_workspace_child_authority AS MATERIALIZED (
+    SELECT child.id AS run_id
+      FROM runs AS child
+      JOIN run_attempts AS child_attempt
+        ON child_attempt.run_id = child.id
+       AND child_attempt.number = child.current_attempt_number
+       AND child_attempt.workspace_id = child.workspace_id
+       AND child_attempt.base_workspace_version_id = child.base_workspace_version_id
+      JOIN run_waits AS edge
+        ON edge.child_run_id = child.id
+       AND edge.workspace_id = child.workspace_id
+       AND edge.child_parent_owned IS TRUE
+       AND edge.condition_state = 'pending'
+       AND edge.suspension_state = 'parked'
+       AND edge.base_workspace_version_id = child.base_workspace_version_id
+       AND edge.ownership_generation IS NOT NULL
+       AND edge.parent_writer_generation IS NOT NULL
+      JOIN runs AS parent
+        ON parent.id = edge.run_id
+       AND parent.environment_id = edge.environment_id
+       AND parent.workspace_id = edge.workspace_id
+       AND parent.id = child.parent_run_id
+       AND parent.status = 'waiting'
+       AND parent.current_run_lease_id IS NULL
+      JOIN run_checkpoints AS checkpoint
+        ON checkpoint.id = edge.suspend_checkpoint_id
+       AND checkpoint.run_id = edge.run_id
+       AND checkpoint.attempt_number = edge.attempt_number
+       AND checkpoint.run_wait_id = edge.id
+       AND checkpoint.workspace_id = edge.workspace_id
+       AND checkpoint.private_workspace_version_id = edge.base_workspace_version_id
+       AND checkpoint.state = 'ready'
+       AND (checkpoint.expires_at IS NULL
+            OR checkpoint.expires_at > transaction_timestamp())
+      JOIN workspaces
+        ON workspaces.id = edge.workspace_id
+       AND workspaces.environment_id = edge.environment_id
+       AND workspaces.ownership_generation = edge.ownership_generation
+       AND (
+           workspaces.writer_generation = coalesce(
+               edge.child_writer_generation,
+               edge.parent_writer_generation
+           )
+           OR EXISTS (
+               SELECT 1
+                 FROM run_waits AS resume_edge
+                WHERE resume_edge.run_id = child.id
+                  AND resume_edge.attempt_number = child.current_attempt_number
+                  AND resume_edge.workspace_id = child.workspace_id
+                  AND resume_edge.suspension_state = 'resume_pending'
+                  AND resume_edge.ownership_generation = edge.ownership_generation
+                  AND resume_edge.parent_writer_generation = edge.child_writer_generation
+                  AND resume_edge.child_writer_generation = workspaces.writer_generation
+                  AND resume_edge.resume_writer_generation IS NULL
+                  AND resume_edge.resume_workspace_version_id = $9
+           )
+       )
+      LEFT JOIN LATERAL (
+          SELECT child_workspace_lease.id
+            FROM run_leases AS child_lease
+            JOIN workspace_leases AS child_workspace_lease
+              ON child_workspace_lease.owner_run_lease_id = child_lease.id
+             AND child_workspace_lease.workspace_id = child_lease.workspace_id
+             AND (
+                 child_workspace_lease.base_version_id = edge.base_workspace_version_id
+                 OR EXISTS (
+                     SELECT 1
+                       FROM run_waits AS prior_resume_edge
+                      WHERE prior_resume_edge.run_id = child.id
+                        AND prior_resume_edge.workspace_id = child.workspace_id
+                        AND prior_resume_edge.suspension_state = 'resume_pending'
+                        AND prior_resume_edge.ownership_generation = edge.ownership_generation
+                        AND prior_resume_edge.resume_writer_generation IS NULL
+                        AND prior_resume_edge.resume_workspace_version_id =
+                            child_workspace_lease.base_version_id
+                 )
+             )
+             AND child_workspace_lease.ownership_generation = edge.ownership_generation
+             AND child_workspace_lease.writer_generation = edge.child_writer_generation
+             AND child_workspace_lease.state IN ('released', 'fenced', 'expired', 'lost')
+           WHERE child_lease.run_id = child.id
+             AND child_lease.workspace_id = child.workspace_id
+             AND (
+                 child_lease.state IN ('failed', 'expired', 'lost', 'rejected')
+                 OR (
+                     child_lease.state = 'checkpointed'
+                     AND EXISTS (
+                         SELECT 1
+                          FROM run_waits AS resume_edge
+                          WHERE resume_edge.run_id = child.id
+                            AND resume_edge.attempt_number = child_lease.attempt_number
+                            AND resume_edge.workspace_id = child.workspace_id
+                            AND resume_edge.suspension_state = 'resume_pending'
+                            AND resume_edge.prior_run_lease_id = child_lease.id
+                            AND resume_edge.ownership_generation = edge.ownership_generation
+                            AND resume_edge.parent_writer_generation =
+                                child_workspace_lease.writer_generation
+                            AND resume_edge.resume_writer_generation IS NULL
+                     )
+                 )
+             )
+           ORDER BY child_lease.lease_sequence DESC
+           LIMIT 1
+      ) AS prior_child ON edge.child_writer_generation IS NOT NULL
+     WHERE child.org_id = $4
+       AND child.id = $7
+       AND child.workspace_id = $5
+       AND child.base_workspace_version_id = $9
+       AND child.status = 'queued'
+       AND child.current_run_lease_id IS NULL
+       AND child.cause_kind = 'child'
+       AND child.parent_owns_lifecycle IS TRUE
+       AND (edge.child_writer_generation IS NULL OR prior_child.id IS NOT NULL)
+)
 INSERT INTO workspace_mounts (
     id, org_id, project_id, environment_id, region_id, worker_group_id,
     worker_instance_id, worker_epoch, workspace_id,
@@ -392,10 +522,21 @@ SELECT $1, runtime_instances.org_id, runtime_instances.project_id,
                    AND run_attempts.workspace_id = runtime_instances.workspace_id
   JOIN workspace_versions ON workspace_versions.workspace_id = runtime_instances.workspace_id
                          AND workspace_versions.id = runtime_instances.reserved_workspace_version_id
-                         AND workspace_versions.state = CASE
-                                 WHEN runtime_instances.restore_checkpoint_id IS NULL THEN 'committed'
-                                 ELSE 'private'
-                             END
+                         AND (
+                             (runtime_instances.restore_checkpoint_id IS NOT NULL
+                              AND workspace_versions.state = 'private')
+                             OR
+                             (runtime_instances.restore_checkpoint_id IS NULL
+                              AND workspace_versions.state = 'committed')
+                             OR
+                             (runtime_instances.restore_checkpoint_id IS NULL
+                              AND workspace_versions.state = 'private'
+                              AND EXISTS (
+                                  SELECT 1
+                                    FROM same_workspace_child_authority
+                                   WHERE same_workspace_child_authority.run_id = runs.id
+                              ))
+                         )
  WHERE runtime_instances.org_id = $4
    AND runtime_instances.workspace_id = $5
    AND runtime_instances.id = $6

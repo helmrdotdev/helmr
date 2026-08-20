@@ -39,20 +39,6 @@ type runLeaseWork struct {
 	runID   uuid.UUID
 }
 
-type nestedHandoffChain struct {
-	outerRunID          uuid.UUID
-	parentRunID         uuid.UUID
-	outerWaitID         uuid.UUID
-	outerCheckpoint     uuid.UUID
-	outerResumeID       uuid.UUID
-	enclosingWaitID     uuid.UUID
-	enclosingCheckpoint uuid.UUID
-	enclosingResumeID   uuid.UUID
-	runtimeID           uuid.UUID
-	mountID             uuid.UUID
-	versionID           uuid.UUID
-}
-
 func TestRunLeaseClaimReadinessFailsClosedWithoutObservation(t *testing.T) {
 	ctx := context.Background()
 	fixture := newRunLeaseClaimFixture(t, ctx)
@@ -192,16 +178,6 @@ UPDATE workspace_mounts
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("missing restore Wait error = %v, want no rows", err)
 	}
-	if _, err := fixture.queries.LockSameWorkspaceHandoffWait(ctx, LockSameWorkspaceHandoffWaitParams{
-		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		EnvironmentID:       locators.EnvironmentID,
-		ParentRunID:         pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		ParentAttemptNumber: 1,
-		WorkspaceID:         locators.WorkspaceID,
-		ChildRunID:          locators.RunID,
-	}); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("missing handoff Wait error = %v, want no rows", err)
-	}
 	if _, err := fixture.queries.LockRestorableRunCheckpoint(ctx, LockRestorableRunCheckpointParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		RunID:         locators.RunID,
@@ -213,13 +189,12 @@ UPDATE workspace_mounts
 	}
 	if _, err := fixture.queries.LockReadyRunCheckpoint(ctx, LockReadyRunCheckpointParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		Kind:          RunCheckpointKindHandoffResume,
 		RunID:         locators.RunID,
 		AttemptNumber: locators.AttemptNumber,
 		RunWaitID:     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		WorkspaceID:   locators.WorkspaceID,
 	}); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("missing handoff Checkpoint error = %v, want no rows", err)
+		t.Fatalf("missing restore Checkpoint error = %v, want no rows", err)
 	}
 	if _, err := fixture.queries.GetRunCheckpointSource(ctx, GetRunCheckpointSourceParams{
 		SourceWorkspaceLeaseID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
@@ -436,63 +411,6 @@ UPDATE runs
 	}
 }
 
-func TestRunLeaseClaimLocatesNestedHandoffAuthority(t *testing.T) {
-	ctx := context.Background()
-	fixture := newRunLeaseClaimFixture(t, ctx)
-	work := fixture.addWork(t, ctx, "assigned", time.Now().Add(-time.Minute))
-	chain := fixture.addNestedHandoffChain(t, ctx, work)
-	locatorArgs := []any{
-		pgvalue.UUID(work.leaseID),
-		int64(1),
-		runLeaseTestWorkerGroup,
-		pgvalue.UUID(fixture.workerID),
-		int64(1),
-	}
-	var locatorCount int
-	if err := fixture.pool.QueryRow(
-		ctx,
-		"SELECT count(*) FROM ("+getRunLeaseClaimLocators+") AS claim_locators",
-		locatorArgs...,
-	).Scan(&locatorCount); err != nil {
-		t.Fatal(err)
-	}
-	if locatorCount != 1 {
-		t.Fatalf("nested claim locator rows = %d, want exactly one", locatorCount)
-	}
-
-	locators, err := fixture.queries.GetRunLeaseClaimLocators(ctx, GetRunLeaseClaimLocatorsParams{
-		ID: pgvalue.UUID(work.leaseID), LeaseSequence: 1,
-		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
-		WorkerEpoch: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if pgvalue.MustUUIDValue(locators.ParentRunID) != chain.parentRunID ||
-		!locators.ParentOwnsLifecycle.Valid ||
-		!locators.ParentOwnsLifecycle.Bool ||
-		locators.ParentAttemptNumber != 1 {
-		t.Fatalf("parent locator = %+v, want parent %s attempt 1", locators, chain.parentRunID)
-	}
-	if pgvalue.MustUUIDValue(locators.EnclosingWaitID) != chain.enclosingWaitID ||
-		pgvalue.MustUUIDValue(locators.EnclosingSuspendCheckpointID) != chain.enclosingCheckpoint ||
-		pgvalue.MustUUIDValue(locators.EnclosingResumeAttachID) != chain.enclosingResumeID ||
-		pgvalue.MustUUIDValue(locators.EnclosingRuntimeInstanceID) != chain.runtimeID ||
-		pgvalue.MustUUIDValue(locators.EnclosingWorkspaceMountID) != chain.mountID ||
-		pgvalue.MustUUIDValue(locators.EnclosingBaseWorkspaceVersionID) != chain.versionID ||
-		locators.EnclosingMountGeneration.Int64 != 2 ||
-		locators.EnclosingOwnershipGeneration.Int64 != 1 ||
-		locators.EnclosingParentWriterGeneration.Int64 != 2 ||
-		locators.EnclosingChildWriterGeneration.Int64 != 3 ||
-		locators.EnclosingResumeWriterGeneration.Valid {
-		t.Fatalf("enclosing locator = %+v, want B→C writer receipt 2→3", locators)
-	}
-	if pgvalue.MustUUIDValue(locators.ParentEnclosingWaitID) != chain.outerWaitID ||
-		pgvalue.MustUUIDValue(locators.ParentEnclosingRunID) != chain.outerRunID ||
-		locators.ParentEnclosingAttemptNumber != 1 {
-		t.Fatalf("parent enclosing locator = %+v, want A→B Wait %s", locators, chain.outerWaitID)
-	}
-}
-
 func newRunLeaseClaimFixture(t *testing.T, _ context.Context) runLeaseClaimFixture {
 	t.Helper()
 	base := runtest.New(t)
@@ -508,32 +426,6 @@ func newRunLeaseClaimFixture(t *testing.T, _ context.Context) runLeaseClaimFixtu
 		workerID:              base.WorkerID,
 		runtimeIdentityID:     base.RuntimeIdentityID,
 		base:                  base,
-	}
-}
-
-func (fixture runLeaseClaimFixture) addNestedHandoffChain(
-	t *testing.T,
-	ctx context.Context,
-	work runLeaseWork,
-) nestedHandoffChain {
-	t.Helper()
-	chain := fixture.base.AddHandoffChain(
-		t,
-		ctx,
-		runtest.RunLease{LeaseID: work.leaseID, RunID: work.runID},
-	)
-	return nestedHandoffChain{
-		outerRunID:          chain.OuterRunID,
-		parentRunID:         chain.ParentRunID,
-		outerWaitID:         chain.OuterWaitID,
-		outerCheckpoint:     chain.OuterCheckpoint,
-		outerResumeID:       chain.OuterResumeID,
-		enclosingWaitID:     chain.EnclosingWaitID,
-		enclosingCheckpoint: chain.EnclosingCheckpoint,
-		enclosingResumeID:   chain.EnclosingResumeID,
-		runtimeID:           chain.RuntimeID,
-		mountID:             chain.MountID,
-		versionID:           chain.VersionID,
 	}
 }
 

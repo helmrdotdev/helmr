@@ -25,18 +25,12 @@ func TestParseRunStartArm(t *testing.T) {
 		{name: "restore", request: workerapi.RunStartRequest{Restore: &workerapi.RunStartRestore{
 			RunWaitID: startWaitID, CheckpointID: startCheckpointID, ResumeAttachID: startAttachID, ResumeRequestVersion: 1,
 		}}, mode: runLeaseClaimRestore, ok: true},
-		{name: "child", request: workerapi.RunStartRequest{Attach: &workerapi.RunStartAttach{Child: &workerapi.RunStartChildAttach{
-			RunWaitID: startWaitID, CheckpointID: startCheckpointID, ResumeAttachID: startAttachID,
-		}}}, mode: runLeaseClaimAttachChild, ok: true},
-		{name: "parent", request: workerapi.RunStartRequest{Attach: &workerapi.RunStartAttach{Parent: &workerapi.RunStartParentAttach{
-			RunWaitID: startWaitID, CheckpointID: startCheckpointID, ResumeAttachID: startAttachID, ResumeRequestVersion: 2,
-		}}}, mode: runLeaseClaimAttachParent, ok: true},
 		{name: "bad UUID", request: workerapi.RunStartRequest{Restore: &workerapi.RunStartRestore{
 			RunWaitID: "bad", CheckpointID: startCheckpointID, ResumeAttachID: startAttachID, ResumeRequestVersion: 1,
 		}}},
-		{name: "bad version", request: workerapi.RunStartRequest{Attach: &workerapi.RunStartAttach{Parent: &workerapi.RunStartParentAttach{
+		{name: "bad version", request: workerapi.RunStartRequest{Restore: &workerapi.RunStartRestore{
 			RunWaitID: startWaitID, CheckpointID: startCheckpointID, ResumeAttachID: startAttachID,
-		}}}},
+		}}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -60,13 +54,10 @@ func TestDeriveRunStartModeFromDurableLocators(t *testing.T) {
 	}{
 		{name: "fresh", mode: runLeaseClaimFresh},
 		{name: "restore", locators: db.GetRunLeaseStartLocatorsRow{RunWaitID: valid}, mode: runLeaseClaimRestore},
-		{name: "child", locators: db.GetRunLeaseStartLocatorsRow{ParentRunID: valid, EnclosingWaitID: valid}, mode: runLeaseClaimAttachChild},
-		{name: "parent", locators: db.GetRunLeaseStartLocatorsRow{
-			RunWaitID: valid, ResumeHandoffRuntimeInstanceID: valid,
-		}, mode: runLeaseClaimAttachParent},
-		{name: "recreated parent", locators: db.GetRunLeaseStartLocatorsRow{
+		{name: "same workspace child is fresh", locators: db.GetRunLeaseStartLocatorsRow{ParentRunID: valid, EnclosingWaitID: valid}, mode: runLeaseClaimFresh},
+		{name: "same workspace parent restores", locators: db.GetRunLeaseStartLocatorsRow{
 			RunWaitID: valid, RunWaitCheckpointID: valid,
-			RuntimeRestoreCheckpointID: valid, ResumeHandoffRuntimeInstanceID: valid,
+			RuntimeRestoreCheckpointID: valid,
 		}, mode: runLeaseClaimRestore},
 		{name: "nested restore", locators: db.GetRunLeaseStartLocatorsRow{
 			RunWaitID: valid, EnclosingWaitID: valid,

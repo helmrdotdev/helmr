@@ -109,11 +109,11 @@ func TestDecideExecutionLeaseLossStateDeadlines(t *testing.T) {
 
 func TestRuntimeCleanupMountFinalizationUsesTopologyNotReason(t *testing.T) {
 	kind, reason := runtimeCleanupMountFinalization(
-		"same_workspace_handoff_runtime_lost",
+		"obsolete_reason_must_not_drive_cleanup",
 		false,
 	)
 	if kind.Valid || reason.Valid {
-		t.Fatalf("non-handoff cleanup = %v/%v, want no finalization", kind, reason)
+		t.Fatalf("non-discard cleanup = %v/%v, want no finalization", kind, reason)
 	}
 
 	kind, reason = runtimeCleanupMountFinalization(
@@ -122,7 +122,7 @@ func TestRuntimeCleanupMountFinalizationUsesTopologyNotReason(t *testing.T) {
 	)
 	if !kind.Valid || kind.String != "discard" ||
 		!reason.Valid || reason.String != "max_active_duration_exceeded" {
-		t.Fatalf("handoff cleanup = %v/%v, want discard with exact reason", kind, reason)
+		t.Fatalf("discard cleanup = %v/%v, want discard with exact reason", kind, reason)
 	}
 }
 

@@ -118,7 +118,7 @@ func TestBeginRunFinalizationRejectsUnenteredAttempt(t *testing.T) {
 	}
 }
 
-func TestBeginRunFinalizationRejectsMissingSameWorkspaceHandoff(t *testing.T) {
+func TestBeginRunFinalizationRejectsMissingSameWorkspaceParentEdge(t *testing.T) {
 	server, store, worker, request, parsed := validRunFinalizationFixture(t)
 	parentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store.renewal.ParentRunID = parentID
@@ -267,7 +267,7 @@ func TestLockLiveRunFinalizationAuthorityLocksLineageBeforePhysicalAuthority(t *
 	store.authority.actor = db.Session{
 		ID: actorID, CurrentRunID: rootID, WorkspaceID: workspaceID, State: "open",
 	}
-	store.finalizationLineage = []db.ListSameWorkspaceHandoffAncestorRunsRow{
+	store.finalizationLineage = []db.ListSameWorkspaceAncestorRunsRow{
 		{Run: root, Depth: 2},
 		{Run: lineageRun(middleID, rootID), Depth: 1},
 		{Run: lineageRun(parentID, middleID), Depth: 0},
@@ -351,16 +351,24 @@ func validRunFinalizationFixture(
 }
 
 func (s *runLeaseClaimStore) LockParentOwnedChildWait(
-	context.Context,
-	db.LockParentOwnedChildWaitParams,
+	_ context.Context,
+	params db.LockParentOwnedChildWaitParams,
 ) (db.RunWait, error) {
+	if s.authority.enclosingWait.ID.Valid && params.ParentRunID == s.authority.enclosingWait.RunID {
+		s.calls = append(s.calls, "enclosing_wait")
+		return s.authority.enclosingWait, nil
+	}
+	if s.authority.runWait.ID.Valid {
+		s.calls = append(s.calls, "same_workspace_wait")
+		return s.authority.runWait, nil
+	}
 	return db.RunWait{}, pgx.ErrNoRows
 }
 
-func (s *runLeaseClaimStore) ListSameWorkspaceHandoffAncestorRuns(
+func (s *runLeaseClaimStore) ListSameWorkspaceAncestorRuns(
 	context.Context,
-	db.ListSameWorkspaceHandoffAncestorRunsParams,
-) ([]db.ListSameWorkspaceHandoffAncestorRunsRow, error) {
+	db.ListSameWorkspaceAncestorRunsParams,
+) ([]db.ListSameWorkspaceAncestorRunsRow, error) {
 	return s.finalizationLineage, nil
 }
 

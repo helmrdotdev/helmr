@@ -22,9 +22,8 @@ var (
 const runtimeArchitecture = "x86_64"
 
 type Authority struct {
-	pool          *pgxpool.Pool
-	fencingKey    workspace.FencingKey
-	nestedResumes nestedResumeCursor
+	pool       *pgxpool.Pool
+	fencingKey workspace.FencingKey
 }
 
 func NewRunAuthority(

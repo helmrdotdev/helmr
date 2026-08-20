@@ -136,29 +136,6 @@ func (e Executor) ExecuteRunLease(
 		}
 		completion.Workspace.Captured = &capture
 		actorCompletion.Workspace.Captured = &capture
-		if begun.Handoff != nil {
-			checkpointID, err := uuid.NewV7()
-			if err != nil {
-				return fmt.Errorf("create handoff checkpoint ID: %w", err)
-			}
-			var manifest workerapi.CheckpointManifest
-			if err := retryRunLeaseOperation(stageCtx, func(requestCtx context.Context) error {
-				var requestErr error
-				manifest, requestErr = task.CreateHandoffCheckpoint(
-					requestCtx,
-					*begun.Handoff,
-					checkpointID.String(),
-					capture,
-				)
-				return requestErr
-			}); err != nil {
-				return fmt.Errorf("create handoff checkpoint: %w", err)
-			}
-			completion.Handoff = &workerapi.TaskHandoffCheckpoint{
-				CheckpointID: checkpointID.String(),
-				Manifest:     manifest,
-			}
-		}
 	} else {
 		var rollback workerapi.TaskWorkspaceRollback
 		if err := retryRunLeaseOperation(stageCtx, func(requestCtx context.Context) error {

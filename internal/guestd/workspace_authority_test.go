@@ -187,9 +187,6 @@ func TestProgramRestoreVerificationRequiresExactFrozenRegistration(t *testing.T)
 	if response.GetCheckpointId() != request.GetCheckpointId() || response.GetCorrelationId() != request.GetCorrelationId() {
 		t.Fatalf("verification response = %+v", &response)
 	}
-	if mounts.childAdmission == nil || mounts.childAdmission.entry != entry {
-		t.Fatal("verified frozen Program did not authorize one child admission")
-	}
 	request.CorrelationId = "different"
 	body.Reset()
 	if err := frameio.WriteProtoFrame(&body, request); err != nil {

@@ -72,34 +72,8 @@ func (g OwnedFinalization) RecoverExecutionLeaseLoss(
 	if err != nil || !ok {
 		return false, err
 	}
-	_, sameWorkspaceChild, err := g.sameWorkspaceChildRecoveryBoundary(target)
-	if err != nil {
-		return false, err
-	}
-	if sameWorkspaceChild && authority.RunLeaseState == string(db.RunLeaseStateAssigned) &&
-		executionAssignedHandoffRetainable(authority) {
-		if err := recoverExecutionAssignedHandoff(ctx, q, authority, loss); err != nil {
-			return false, err
-		}
-		return true, nil
-	}
 	if authority.RunLeaseState == string(db.RunLeaseStateAssigned) ||
 		authority.RunLeaseState == string(db.RunLeaseStateStarting) {
-		if sameWorkspaceChild {
-			loss.reason = "same_workspace_handoff_runtime_lost"
-			loss.state = db.RunLeaseStateLost
-			if err := g.failCurrentForLeaseLoss(
-				ctx,
-				loss,
-				"Same-Workspace child handoff runtime was lost",
-				db.RunStatusSystemFailed,
-				"platform_failure",
-				true,
-			); err != nil {
-				return false, err
-			}
-			return true, nil
-		}
 		cleared, err := recoverExecutionPrestartLease(ctx, q, authority, loss)
 		if err != nil {
 			return false, err
@@ -137,22 +111,6 @@ func (g OwnedFinalization) RecoverExecutionLeaseLoss(
 			"Run maximum active duration was exceeded",
 			db.RunStatusExpired,
 			"run_expired",
-			sameWorkspaceChild,
-		); err != nil {
-			return false, err
-		}
-		return true, nil
-	}
-	if sameWorkspaceChild {
-		loss.reason = "same_workspace_handoff_runtime_lost"
-		loss.state = db.RunLeaseStateLost
-		if err := g.failCurrentForLeaseLoss(
-			ctx,
-			loss,
-			"Same-Workspace child handoff runtime was lost",
-			db.RunStatusSystemFailed,
-			"platform_failure",
-			true,
 		); err != nil {
 			return false, err
 		}
@@ -163,7 +121,7 @@ func (g OwnedFinalization) RecoverExecutionLeaseLoss(
 		loss.reason = "retry_policy_invalid"
 		loss.state = db.RunLeaseStateLost
 		if err := g.failCurrentForLeaseLoss(
-			ctx, loss, "Run retry policy was invalid", db.RunStatusSystemFailed, "platform_failure", false,
+			ctx, loss, "Run retry policy was invalid", db.RunStatusSystemFailed, "platform_failure",
 		); err != nil {
 			return false, err
 		}
@@ -177,7 +135,7 @@ func (g OwnedFinalization) RecoverExecutionLeaseLoss(
 		loss.reason = "secret_retry_unavailable"
 		loss.state = db.RunLeaseStateLost
 		if err := g.failCurrentForLeaseLoss(
-			ctx, loss, "Run retry Secret authority was unavailable", db.RunStatusSystemFailed, "platform_failure", false,
+			ctx, loss, "Run retry Secret authority was unavailable", db.RunStatusSystemFailed, "platform_failure",
 		); err != nil {
 			return false, err
 		}
@@ -185,7 +143,7 @@ func (g OwnedFinalization) RecoverExecutionLeaseLoss(
 	}
 	if !shouldRetry {
 		if err := g.failCurrentForLeaseLoss(
-			ctx, loss, executionLeaseLossMessage(loss.reason), db.RunStatusSystemFailed, "platform_failure", false,
+			ctx, loss, executionLeaseLossMessage(loss.reason), db.RunStatusSystemFailed, "platform_failure",
 		); err != nil {
 			return false, err
 		}
@@ -204,69 +162,6 @@ func (g OwnedFinalization) RecoverExecutionLeaseLoss(
 		return false, err
 	}
 	return true, nil
-}
-
-func (g OwnedFinalization) sameWorkspaceChildRecoveryBoundary(
-	target cancellationRun,
-) (cancellationWait, bool, error) {
-	if !target.parentRunID.Valid || !target.parentOwnsLifecycle.Valid ||
-		!target.parentOwnsLifecycle.Bool {
-		return cancellationWait{}, false, nil
-	}
-	parent, found := g.locked[uuid.UUID(target.parentRunID.Bytes)]
-	if !found {
-		return cancellationWait{}, false, cancellationAuthority(
-			"Run execution child recovery parent is unavailable", nil,
-		)
-	}
-	if parent.workspaceID != target.workspaceID {
-		return cancellationWait{}, false, nil
-	}
-	wait, found := g.waitsByChild[target.id]
-	if !found || !wait.childWriterGeneration.Valid ||
-		!wait.handoffRuntimeInstanceID.Valid || !wait.handoffWorkspaceMountID.Valid {
-		return cancellationWait{}, false, cancellationAuthority(
-			"Run execution same-Workspace child recovery boundary is unavailable", nil,
-		)
-	}
-	return wait, true, nil
-}
-
-func executionAssignedHandoffRetainable(authority db.GetRunExecutionLeaseLossAuthorityRow) bool {
-	return authority.RunLeaseState == string(db.RunLeaseStateAssigned) &&
-		authority.WorkerState == "active" &&
-		authority.WorkerCurrentEpoch.Valid &&
-		authority.WorkerCurrentEpoch.Int64 == authority.WorkerEpoch &&
-		!authority.WorkerLostAt.Valid && !authority.WorkerTerminationReadyAt.Valid &&
-		authority.RuntimeDesiredState == "ready" &&
-		authority.RuntimeObservedState == "ready" &&
-		!authority.RuntimeLostAt.Valid && !authority.RuntimeFailedAt.Valid &&
-		authority.WorkspaceLeaseState == "active" &&
-		authority.MountState == "mounted" &&
-		!authority.MountLostAt.Valid && !authority.MountFailedAt.Valid
-}
-
-func recoverExecutionAssignedHandoff(
-	ctx context.Context,
-	q *db.Queries,
-	authority db.GetRunExecutionLeaseLossAuthorityRow,
-	loss executionLeaseLoss,
-) error {
-	errorPayload, err := leaseLossError(loss.reason, executionLeaseLossMessage(loss.reason), true)
-	if err != nil {
-		return err
-	}
-	if err := terminalizeExecutionLeaseFences(ctx, q, authority, loss, errorPayload); err != nil {
-		return err
-	}
-	if _, err := q.ClearFreshPrestartRunLease(ctx, db.ClearFreshPrestartRunLeaseParams{
-		RunID: authority.RunID, WorkspaceID: authority.WorkspaceID,
-		ExpectedStateVersion: authority.StateVersion, AttemptNumber: authority.CurrentAttemptNumber,
-		RunLeaseID: authority.RunLeaseID,
-	}); err != nil {
-		return cancellationAuthority("clear retained handoff child Run lease", err)
-	}
-	return nil
 }
 
 func decideExecutionLeaseLoss(
@@ -574,7 +469,6 @@ func (g OwnedFinalization) failCurrentForLeaseLoss(
 	message string,
 	status db.RunStatus,
 	actorFailureCode string,
-	discardRuntime bool,
 ) error {
 	if _, err := g.CancelDescendants(ctx); err != nil {
 		return err
@@ -589,12 +483,11 @@ func (g OwnedFinalization) failCurrentForLeaseLoss(
 		waitCondition: db.WaitStateFailed, waitSuspension: db.RunWaitStateFailed,
 		eventKind: "run.system_failed", eventMessage: message,
 		actorFailureCode: actorFailureCode,
-		discardRuntime:   discardRuntime,
 	}
 	if status == db.RunStatusExpired {
 		term.eventKind = "run.expired"
 	}
-	if err := terminateLockedRun(ctx, g.tx, target, pgtype.UUID{}, pgtype.UUID{}, term); err != nil {
+	if err := terminateLockedRun(ctx, g.tx, target, term); err != nil {
 		return err
 	}
 	if !target.parentRunID.Valid || !target.parentOwnsLifecycle.Valid ||
@@ -617,8 +510,7 @@ func (g OwnedFinalization) failCurrentForLeaseLoss(
 		}
 		return resolveDifferentWorkspaceChildWait(ctx, g.tx, parent, wait, result)
 	}
-	if !wait.baseWorkspaceVersionID.Valid || !wait.handoffRuntimeInstanceID.Valid ||
-		!wait.handoffWorkspaceMountID.Valid {
+	if !wait.baseWorkspaceVersionID.Valid {
 		return cancellationAuthority("lost same-Workspace child wait is inconsistent", nil)
 	}
 	errorPayload, err := leaseLossError(loss.reason, message, false)

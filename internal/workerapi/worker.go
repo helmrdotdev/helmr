@@ -168,8 +168,7 @@ type RuntimeSource struct {
 	CPUConfigDigest        string            `json:"cpu_config_digest"`
 	WorkspaceImage         CASObject         `json:"workspace_image"`
 	WorkspaceArchitecture  string            `json:"workspace_architecture"`
-	BaseVersionID          string            `json:"base_version_id"`
-	WorkspaceArtifact      WorkspaceArtifact `json:"workspace_artifact"`
+	WorkspaceTarget        WorkspaceResetTarget `json:"workspace_target"`
 	RootfsDigest           string            `json:"rootfs_digest"`
 	ReservedCPUMillis      int32             `json:"reserved_cpu_millis"`
 	ReservedMemoryMiB      int32             `json:"reserved_memory_mib"`
@@ -185,7 +184,6 @@ type RuntimeRestore struct {
 	RunID               string                       `json:"run_id"`
 	AttemptNumber       int32                        `json:"attempt_number"`
 	RunWaitID           string                       `json:"run_wait_id"`
-	Kind                string                       `json:"kind"`
 	Manifest            json.RawMessage              `json:"manifest"`
 	Artifacts           []RunLeaseCheckpointArtifact `json:"artifacts"`
 	SourceWorkspaceBase *RuntimeRestoreWorkspaceBase `json:"source_workspace_base,omitempty"`
@@ -274,30 +272,11 @@ type RunStartRequest struct {
 	Lease   RunLeaseFence    `json:"lease"`
 	Fresh   *RunStartFresh   `json:"fresh,omitempty"`
 	Restore *RunStartRestore `json:"restore,omitempty"`
-	Attach  *RunStartAttach  `json:"attach,omitempty"`
 }
 
 type RunStartFresh struct{}
 
 type RunStartRestore struct {
-	RunWaitID            string `json:"run_wait_id"`
-	CheckpointID         string `json:"checkpoint_id"`
-	ResumeAttachID       string `json:"resume_attach_id"`
-	ResumeRequestVersion int64  `json:"resume_request_version"`
-}
-
-type RunStartAttach struct {
-	Child  *RunStartChildAttach  `json:"child,omitempty"`
-	Parent *RunStartParentAttach `json:"parent,omitempty"`
-}
-
-type RunStartChildAttach struct {
-	RunWaitID      string `json:"run_wait_id"`
-	CheckpointID   string `json:"checkpoint_id"`
-	ResumeAttachID string `json:"resume_attach_id"`
-}
-
-type RunStartParentAttach struct {
 	RunWaitID            string `json:"run_wait_id"`
 	CheckpointID         string `json:"checkpoint_id"`
 	ResumeAttachID       string `json:"resume_attach_id"`
@@ -362,16 +341,6 @@ type BeginRunFinalizationResponse struct {
 	OperationID            string                  `json:"operation_id"`
 	Kind                   RunFinalizationKind     `json:"kind"`
 	StartedAt              time.Time               `json:"started_at"`
-	Handoff                *RunFinalizationHandoff `json:"handoff,omitempty"`
-}
-
-type RunFinalizationHandoff struct {
-	ParentRunID         string `json:"parent_run_id"`
-	ParentAttemptNumber int32  `json:"parent_attempt_number"`
-	RunWaitID           string `json:"run_wait_id"`
-	SuspendCheckpointID string `json:"suspend_checkpoint_id"`
-	ResumeAttachID      string `json:"resume_attach_id"`
-	CorrelationID       string `json:"correlation_id"`
 }
 
 type RunEntrypointRequest struct {
@@ -384,12 +353,6 @@ type CompleteTaskRequest struct {
 	Lease     RunLeaseFence          `json:"lease"`
 	Outcome   TaskOutcome            `json:"outcome"`
 	Workspace TaskWorkspaceProof     `json:"workspace"`
-	Handoff   *TaskHandoffCheckpoint `json:"handoff,omitempty"`
-}
-
-type TaskHandoffCheckpoint struct {
-	CheckpointID string             `json:"checkpoint_id"`
-	Manifest     CheckpointManifest `json:"manifest"`
 }
 
 type CompleteActorRequest struct {
@@ -771,7 +734,6 @@ type SecretFile struct {
 type RunLeaseExecution struct {
 	Fresh   *RunLeaseFresh   `json:"fresh,omitempty"`
 	Restore *RunLeaseRestore `json:"restore,omitempty"`
-	Attach  *RunLeaseAttach  `json:"attach,omitempty"`
 }
 
 type RunLeaseFresh struct {
@@ -786,45 +748,9 @@ type RunLeaseRestore struct {
 	CorrelationID        string                    `json:"correlation_id"`
 	EntrypointKind       string                    `json:"entrypoint_kind"`
 	EntrypointDeclaredID string                    `json:"entrypoint_declared_id"`
-	Recreated            *RunLeaseRecreatedRestore `json:"recreated,omitempty"`
-	Retained             *RunLeaseRetainedRestore  `json:"retained,omitempty"`
+	Manifest             json.RawMessage             `json:"manifest"`
+	Artifacts            []RunLeaseCheckpointArtifact `json:"artifacts"`
 	Decision             RunLeaseDecision          `json:"decision"`
-}
-
-type RunLeaseRecreatedRestore struct {
-	Kind      string                       `json:"kind"`
-	Manifest  json.RawMessage              `json:"manifest"`
-	Artifacts []RunLeaseCheckpointArtifact `json:"artifacts"`
-}
-
-type RunLeaseRetainedRestore struct {
-	EnclosingRunWaitID string `json:"enclosing_run_wait_id"`
-}
-
-type RunLeaseAttach struct {
-	Child  *RunLeaseChildAttach  `json:"child,omitempty"`
-	Parent *RunLeaseParentAttach `json:"parent,omitempty"`
-}
-
-type RunLeaseChildAttach struct {
-	ParentRunID         string `json:"parent_run_id"`
-	ParentAttemptNumber int32  `json:"parent_attempt_number"`
-	RunWaitID           string `json:"run_wait_id"`
-	CheckpointID        string `json:"checkpoint_id"`
-	ResumeAttachID      string `json:"resume_attach_id"`
-	CorrelationID       string `json:"correlation_id"`
-	ProgramStart        []byte `json:"program_start"`
-}
-
-type RunLeaseParentAttach struct {
-	RunWaitID            string           `json:"run_wait_id"`
-	CheckpointID         string           `json:"checkpoint_id"`
-	ResumeAttachID       string           `json:"resume_attach_id"`
-	ResumeRequestVersion int64            `json:"resume_request_version"`
-	CorrelationID        string           `json:"correlation_id"`
-	EntrypointKind       string           `json:"entrypoint_kind"`
-	EntrypointDeclaredID string           `json:"entrypoint_declared_id"`
-	Decision             RunLeaseDecision `json:"decision"`
 }
 
 type RunLeaseCheckpointArtifact struct {
@@ -1040,7 +966,6 @@ type RunWaitPollResponse struct {
 	RequestVersion   int64             `json:"request_version,omitempty"`
 	CheckpointID     string            `json:"checkpoint_id,omitempty"`
 	CaptureWorkspace bool              `json:"capture_workspace,omitempty"`
-	RetainSource     bool              `json:"retain_source,omitempty"`
 	ResumeKind       string            `json:"resume_kind,omitempty"`
 	ResumePayload    json.RawMessage   `json:"resume_payload,omitempty"`
 	RequireAck       bool              `json:"require_ack,omitempty"`

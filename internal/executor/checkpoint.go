@@ -211,85 +211,18 @@ func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request Check
 	}
 	recordPhase("store_checkpoint_artifacts", started)
 	started = time.Now()
-	var sourceCleanup *workerapi.RuntimeCleanupProof
-	if request.RetainSource {
-		if err := c.session.Resume(ctx); err != nil {
-			return CheckpointResult{}, fmt.Errorf("resume retained checkpoint source: %w", err)
-		}
-		recordPhase("resume_checkpoint_source", started)
-	} else {
-		sourceReleaseAttempted = true
-		if err := c.releaseCheckpointSource(ctx); err != nil {
-			return CheckpointResult{}, fmt.Errorf("release checkpoint source: %w", err)
-		}
-		recordPhase("release_checkpoint_source", started)
-		sourceCleanup = &workerapi.RuntimeCleanupProof{
-			Method: workerapi.RuntimeCleanupSessionClosed, CompletedAt: time.Now().UTC(),
-		}
+	sourceReleaseAttempted = true
+	if err := c.releaseCheckpointSource(ctx); err != nil {
+		return CheckpointResult{}, fmt.Errorf("release checkpoint source: %w", err)
+	}
+	recordPhase("release_checkpoint_source", started)
+	sourceCleanup := &workerapi.RuntimeCleanupProof{
+		Method: workerapi.RuntimeCleanupSessionClosed, CompletedAt: time.Now().UTC(),
 	}
 	manifest.Phases = phases
 	return CheckpointResult{
 		Manifest: manifest, WorkspaceCapture: workspaceCapture, SourceCleanup: sourceCleanup,
 	}, nil
-}
-
-func (c runtimeCheckpointer) CreateHandoffCheckpoint(
-	ctx context.Context,
-	request CheckpointRequest,
-	workspaceBase workerapi.CheckpointWorkspaceBase,
-) (result workerapi.CheckpointManifest, err error) {
-	if c.session == nil {
-		return workerapi.CheckpointManifest{}, errors.New("handoff checkpoint source session is required")
-	}
-	if c.cas == nil {
-		return workerapi.CheckpointManifest{}, errors.New("handoff checkpoint CAS is required")
-	}
-	if c.encryptor == nil {
-		return workerapi.CheckpointManifest{}, errors.New("handoff checkpoint encryption is required")
-	}
-	if strings.TrimSpace(request.CheckpointID) == "" ||
-		strings.TrimSpace(request.RunID) == "" ||
-		request.AttemptNumber <= 0 ||
-		strings.TrimSpace(request.RunWaitID) == "" ||
-		strings.TrimSpace(request.CorrelationID) == "" ||
-		strings.TrimSpace(request.ResumeAttachID) == "" ||
-		strings.TrimSpace(workspaceBase.ArtifactDigest) == "" ||
-		strings.TrimSpace(workspaceBase.MountPath) == "" {
-		return workerapi.CheckpointManifest{}, errors.New("handoff checkpoint authority is incomplete")
-	}
-
-	phases := []workerapi.CheckpointPhase{}
-	recordPhase := func(name string, started time.Time) {
-		phases = append(phases, workerapi.CheckpointPhase{
-			Name: name, DurationMs: durationMilliseconds(time.Since(started)),
-		})
-	}
-	started := time.Now()
-	artifact, err := c.session.CreateSnapshot(ctx, vm.SnapshotRequest{ID: request.CheckpointID})
-	if err != nil {
-		return workerapi.CheckpointManifest{}, err
-	}
-	recordPhase("create_runtime_snapshot", started)
-	phases = append(phases, workerCheckpointPhases(artifact.Phases)...)
-	defer cleanupSnapshotArtifact(artifact)
-	defer func() {
-		resumeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		defer cancel()
-		resumeErr := c.session.Resume(resumeCtx)
-		if resumeErr != nil {
-			err = errors.Join(err, fmt.Errorf("resume handoff checkpoint source: %w", resumeErr))
-		}
-	}()
-
-	c.workspace = workspaceBase
-	started = time.Now()
-	result, err = c.storeSnapshotArtifact(ctx, request, artifact)
-	if err != nil {
-		return workerapi.CheckpointManifest{}, err
-	}
-	recordPhase("store_checkpoint_artifacts", started)
-	result.Phases = phases
-	return result, nil
 }
 
 func (c runtimeCheckpointer) releaseCheckpointSource(ctx context.Context) error {

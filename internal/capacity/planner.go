@@ -37,7 +37,6 @@ var ErrInvalidPlanRequest = errors.New("invalid capacity plan request")
 const (
 	reasonRunRole              = "worker_does_not_support_run"
 	reasonPerInstanceResources = "per_instance_resources"
-	reasonRetainedRuntime      = "retained_runtime"
 	reasonQueueConcurrency     = "queue_concurrency"
 	reasonRuntimeCompatibility = "runtime_compatibility"
 	reasonInvalidWorkload      = "invalid_workload_requirements"
@@ -58,7 +57,6 @@ type Store interface {
 type item struct {
 	role              string
 	resources         capacityapi.ResourceVector
-	retainedPoolID    pgtype.UUID
 	targetPoolID      pgtype.UUID
 	restore           *RestoreRequirements
 	runtimeIdentityID string
@@ -210,7 +208,7 @@ func Plan(ctx context.Context, store Store, workerGroupID string, request capaci
 		return response, nil
 	}
 	for index := range items {
-		if items[index].reason != "" || items[index].retainedPoolID.Valid || items[index].restore != nil {
+		if items[index].reason != "" || items[index].restore != nil {
 			continue
 		}
 		items[index].targetPoolID = group.PrimaryPoolID
@@ -239,16 +237,6 @@ func Plan(ctx context.Context, store Store, workerGroupID string, request capaci
 	for _, candidate := range items {
 		if candidate.reason != "" {
 			reasons[candidate.reason]++
-			continue
-		}
-		if candidate.retainedPoolID.Valid {
-			plan, ok := planByID[candidate.retainedPoolID.Bytes]
-			if !ok {
-				reasons[reasonProviderPool]++
-				continue
-			}
-			plan.result.CompatibleQueuedItems++
-			plan.result.ScaleInBlocked = true
 			continue
 		}
 		placed := false
@@ -533,14 +521,6 @@ func exceedsQueueLimit(used int64, candidateLimit pgtype.Int8, pinnedLimit int64
 
 func runItem(row db.ListQueuedRunPlanningCandidatesForScopesRow) item {
 	result := item{role: "run", key: fmt.Sprintf("%x", row.RunID.Bytes)}
-	if row.RequiresRetainedRuntime {
-		if !row.RetainedWorkerPoolID.Valid {
-			result.reason = reasonRetainedRuntime
-			return result
-		}
-		result.retainedPoolID = row.RetainedWorkerPoolID
-		return result
-	}
 	var manifest deployment.SandboxManifest
 	decoder := json.NewDecoder(bytes.NewReader(row.WorkspaceManifest))
 	decoder.DisallowUnknownFields()

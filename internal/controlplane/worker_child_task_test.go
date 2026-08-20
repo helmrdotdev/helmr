@@ -236,7 +236,7 @@ func TestReplayBoundSameWorkspaceChildCallRejectsDifferentFrontier(t *testing.T)
 			BaseWorkspaceDigest:    "sha256:" + strings.Repeat("0", 64),
 		},
 	)
-	if !errors.Is(err, errWorkspaceHandoffConflict) {
+	if !errors.Is(err, errWorkspaceFrontierConflict) {
 		t.Fatalf("different frontier error = %v", err)
 	}
 }

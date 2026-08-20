@@ -24,6 +24,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
+	"google.golang.org/protobuf/proto"
 )
 
 const workspaceStartupTimeout = 20 * time.Minute
@@ -618,17 +619,36 @@ func (m WorkspaceMaterializer) materializeSession(ctx context.Context, mount *wo
 	if mount.RuntimeEpoch <= 0 {
 		return nil, "", cleanup, "", workspaceMountFailure{code: "runtime_instance_fence_missing", err: errors.New("workspace mount claim must include the runtime epoch")}
 	}
-	if strings.TrimSpace(mount.BaseVersionID) == "" {
-		return nil, "", cleanup, "", workspaceMountFailure{code: "workspace_version_missing", err: errors.New("workspace mount base_version_id is required")}
+	target := mount.Target
+	if strings.TrimSpace(target.BaseWorkspaceVersionID) == "" {
+		return nil, "", cleanup, "", workspaceMountFailure{code: "workspace_version_missing", err: errors.New("workspace mount target version is required")}
+	}
+	targetTree := workspace.TreeIdentity{
+		Digest: strings.TrimSpace(target.Tree.Digest), SizeBytes: target.Tree.SizeBytes,
+		EntryCount: int(target.Tree.EntryCount),
+	}
+	if err := workspace.ValidateTreeIdentity(targetTree); err != nil {
+		return nil, "", cleanup, "", workspaceMountFailure{code: "workspace_version_tree_invalid", err: err}
 	}
 	if strings.TrimSpace(mount.WorkspaceMountPath) == "" {
 		return nil, "", cleanup, "", workspaceMountFailure{code: "workspace_mount_path_missing", err: errors.New("workspace mount mount path is required")}
 	}
-	if strings.TrimSpace(mount.WorkspaceArtifact.Encoding) != workspace.ArtifactEncoding {
-		return nil, "", cleanup, "", workspaceMountFailure{code: "workspace_version_artifact_incompatible", err: fmt.Errorf("workspace artifact encoding %q is not supported", mount.WorkspaceArtifact.Encoding)}
-	}
-	if err := validateWorkspaceArtifactShape(mount.WorkspaceArtifact); err != nil {
-		return nil, "", cleanup, "", workspaceMountFailure{code: "workspace_version_artifact_incompatible", err: err}
+	targetArtifact := workerapi.WorkspaceArtifact{}
+	switch {
+	case target.Empty != nil && target.Artifact == nil:
+		if targetTree.Digest != workspace.CanonicalEmptyTreeDigest || targetTree.SizeBytes != 0 || targetTree.EntryCount != 0 {
+			return nil, "", cleanup, "", workspaceMountFailure{code: "workspace_version_tree_invalid", err: errors.New("workspace mount without an artifact must target the canonical empty tree")}
+		}
+	case target.Empty == nil && target.Artifact != nil:
+		targetArtifact = *target.Artifact
+		if strings.TrimSpace(targetArtifact.Encoding) != workspace.ArtifactEncoding {
+			return nil, "", cleanup, "", workspaceMountFailure{code: "workspace_version_artifact_incompatible", err: fmt.Errorf("workspace artifact encoding %q is not supported", targetArtifact.Encoding)}
+		}
+		if err := validateWorkspaceArtifactShape(targetArtifact); err != nil {
+			return nil, "", cleanup, "", workspaceMountFailure{code: "workspace_version_artifact_incompatible", err: err}
+		}
+	default:
+		return nil, "", cleanup, "", workspaceMountFailure{code: "workspace_version_target_invalid", err: errors.New("workspace mount target must contain exactly one source")}
 	}
 	tempDir := strings.TrimSpace(m.TempDir)
 	if tempDir == "" {
@@ -654,30 +674,42 @@ func (m WorkspaceMaterializer) materializeSession(ctx context.Context, mount *wo
 		}
 		return nil, "", cleanup, key, workspaceMountFailure{code: "workspace_runtime_not_prepared", err: err}
 	}
-	mount.RestoreCheckpointID = m.RuntimePool.checkedOutRestoreCheckpoint(
+	releaseFailedCheckout := func(err error) error {
+		if closeErr := m.closeSession(session); closeErr != nil {
+			return errors.Join(err, workspaceMountFailure{
+				code: "workspace_mount_runtime_close_failed",
+				err:  fmt.Errorf("close prepared workspace runtime: %w", closeErr),
+			})
+		}
+		if releaseErr := m.RuntimePool.ReleaseCheckout(mount.RuntimeInstanceID, mount.RuntimeEpoch); releaseErr != nil {
+			return errors.Join(err, fmt.Errorf("release prepared workspace runtime checkout: %w", releaseErr))
+		}
+		return err
+	}
+	preparedCheckpointID := m.RuntimePool.checkedOutRestoreCheckpoint(
 		mount.RuntimeInstanceID, mount.RuntimeEpoch,
 	)
+	if strings.TrimSpace(mount.RestoreCheckpointID) != preparedCheckpointID {
+		err := workspaceMountFailure{code: "workspace_restore_checkpoint_mismatch", err: errors.New("workspace mount restore checkpoint does not match prepared runtime provenance")}
+		return nil, "", cleanup, key, releaseFailedCheckout(err)
+	}
+	if (preparedCheckpointID == "") != (strings.TrimSpace(mount.RestoreSourceVersionID) == "") {
+		err := workspaceMountFailure{code: "workspace_restore_source_invalid", err: errors.New("workspace mount restore source version must accompany its checkpoint")}
+		return nil, "", cleanup, key, releaseFailedCheckout(err)
+	}
 	workspaceArtifact := workerapi.CASObject{
-		Digest:    strings.TrimSpace(mount.WorkspaceArtifact.Digest),
-		SizeBytes: mount.WorkspaceArtifact.SizeBytes,
-		MediaType: strings.TrimSpace(mount.WorkspaceArtifact.MediaType),
+		Digest:    strings.TrimSpace(targetArtifact.Digest),
+		SizeBytes: targetArtifact.SizeBytes,
+		MediaType: strings.TrimSpace(targetArtifact.MediaType),
 	}
 	workspacePath := ""
-	if !workspaceArtifactIsEmpty(mount.WorkspaceArtifact) && mount.RestoreCheckpointID == "" {
+	if target.Artifact != nil {
 		phaseStarted := time.Now()
 		var err error
 		workspacePath, cleanup, err = m.restoreCASObject(ctx, tempDir, "workspace-version", workspaceArtifact)
 		m.logWorkspaceMountPhase(*mount, "workspace mount workspace artifact restored", "duration_ms", time.Since(phaseStarted).Milliseconds(), "size_bytes", workspaceArtifact.SizeBytes, "error", errorString(err), "prepared_runtime_hit", true)
 		if err != nil {
-			if closeErr := m.closeSession(session); closeErr != nil {
-				err = errors.Join(err, workspaceMountFailure{
-					code: "workspace_mount_runtime_close_failed",
-					err:  fmt.Errorf("close prepared workspace runtime: %w", closeErr),
-				})
-			} else if releaseErr := m.RuntimePool.ReleaseCheckout(mount.RuntimeInstanceID, mount.RuntimeEpoch); releaseErr != nil {
-				err = errors.Join(err, fmt.Errorf("release prepared workspace runtime checkout: %w", releaseErr))
-			}
-			return nil, "", cleanup, key, err
+			return nil, "", cleanup, key, releaseFailedCheckout(err)
 		}
 	}
 	m.logWorkspaceMountPhase(*mount, "workspace mount prepared runtime checked out", "runtime_instance_id", key)
@@ -981,26 +1013,18 @@ func (m WorkspaceMaterializer) registerWorkspaceMount(ctx context.Context, sessi
 			ChannelToken:      channelToken,
 			FencingGeneration: uint64(mount.FencingGeneration),
 		},
-		MountPath:     strings.TrimSpace(mount.WorkspaceMountPath),
-		BaseVersionId: strings.TrimSpace(mount.BaseVersionID),
+		MountPath: strings.TrimSpace(mount.WorkspaceMountPath),
+		Target:    workspaceResetTargetProto(mount.Target),
 		WorkspaceImage: &workspacev0.WorkspaceArtifact{
 			Digest:    strings.TrimSpace(mount.WorkspaceImage.Digest),
 			MediaType: strings.TrimSpace(mount.WorkspaceImage.MediaType),
 			Encoding:  "oci-tar",
 			SizeBytes: uint64(mount.WorkspaceImage.SizeBytes),
 		},
-		UsePreparedRuntime:   true,
-		RuntimeInstanceId:    strings.TrimSpace(runtimeInstanceID),
-		RestoredCheckpointId: strings.TrimSpace(mount.RestoreCheckpointID),
-	}
-	if !workspaceArtifactIsEmpty(mount.WorkspaceArtifact) && strings.TrimSpace(mount.RestoreCheckpointID) == "" {
-		request.BaseArtifact = &workspacev0.WorkspaceArtifact{
-			Digest:     strings.TrimSpace(mount.WorkspaceArtifact.Digest),
-			MediaType:  strings.TrimSpace(mount.WorkspaceArtifact.MediaType),
-			Encoding:   strings.TrimSpace(mount.WorkspaceArtifact.Encoding),
-			SizeBytes:  uint64(mount.WorkspaceArtifact.SizeBytes),
-			EntryCount: uint32(mount.WorkspaceArtifact.EntryCount),
-		}
+		UsePreparedRuntime:     true,
+		RuntimeInstanceId:      strings.TrimSpace(runtimeInstanceID),
+		RestoredCheckpointId:   strings.TrimSpace(mount.RestoreCheckpointID),
+		RestoreSourceVersionId: strings.TrimSpace(mount.RestoreSourceVersionID),
 	}
 	phaseStarted = time.Now()
 	if err := frameio.WriteProtoFrame(stream, request); err != nil {
@@ -1009,16 +1033,17 @@ func (m WorkspaceMaterializer) registerWorkspaceMount(ctx context.Context, sessi
 	}
 	m.logWorkspaceMountPhase(mount, "workspace mount request written", "duration_ms", time.Since(phaseStarted).Milliseconds())
 	m.logWorkspaceMountPhase(mount, "workspace image transfer skipped", "prepared_runtime_hit", true, "runtime_instance_id", runtimeInstanceID, "size_bytes", mount.WorkspaceImage.SizeBytes)
-	if !workspaceArtifactIsEmpty(mount.WorkspaceArtifact) && strings.TrimSpace(mount.RestoreCheckpointID) == "" {
+	if mount.Target.Artifact != nil {
+		artifact := mount.Target.Artifact
 		phaseStarted = time.Now()
 		if err := wire.WriteFileFrameWithMetadata(stream, wire.StreamHeader{
 			Type:        wire.StreamTypeWorkspaceArtifact,
 			WorkspaceID: mount.WorkspaceID,
-		}, workspaceArtifactPath, strings.TrimSpace(mount.WorkspaceArtifact.Digest), mount.WorkspaceArtifact.SizeBytes); err != nil {
-			m.logWorkspaceMountPhase(mount, "workspace mount workspace artifact sent", "duration_ms", time.Since(phaseStarted).Milliseconds(), "size_bytes", mount.WorkspaceArtifact.SizeBytes, "error", err.Error())
+		}, workspaceArtifactPath, strings.TrimSpace(artifact.Digest), artifact.SizeBytes); err != nil {
+			m.logWorkspaceMountPhase(mount, "workspace mount workspace artifact sent", "duration_ms", time.Since(phaseStarted).Milliseconds(), "size_bytes", artifact.SizeBytes, "error", err.Error())
 			return fmt.Errorf("write workspace artifact: %w", err)
 		}
-		m.logWorkspaceMountPhase(mount, "workspace mount workspace artifact sent", "duration_ms", time.Since(phaseStarted).Milliseconds(), "size_bytes", mount.WorkspaceArtifact.SizeBytes)
+		m.logWorkspaceMountPhase(mount, "workspace mount workspace artifact sent", "duration_ms", time.Since(phaseStarted).Milliseconds(), "size_bytes", artifact.SizeBytes)
 	}
 	var response workspacev0.MaterializeWorkspaceResponse
 	phaseStarted = time.Now()
@@ -1027,6 +1052,9 @@ func (m WorkspaceMaterializer) registerWorkspaceMount(ctx context.Context, sessi
 		return fmt.Errorf("read workspace materialize response: %w", err)
 	}
 	m.logWorkspaceMountPhase(mount, "workspace mount response read", "duration_ms", time.Since(phaseStarted).Milliseconds(), "state", strings.TrimSpace(response.State))
+	if !proto.Equal(response.GetTarget(), request.GetTarget()) {
+		return errors.New("workspace materialize response target does not match the requested exact target")
+	}
 	for _, guestPhase := range response.GetPhases() {
 		if guestPhase == nil {
 			continue

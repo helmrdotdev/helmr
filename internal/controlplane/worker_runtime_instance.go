@@ -83,32 +83,39 @@ func populateRuntimePrepareSource(
 	source *workerapi.RuntimeSource,
 	row db.GetNextRuntimeReconcileTargetRow,
 ) error {
-	if !row.BaseWorkspaceVersionID.Valid || !row.WorkspaceEntryCount.Valid {
+	if !row.BaseWorkspaceVersionID.Valid || !row.WorkspaceContentDigest.Valid ||
+		!row.WorkspaceLogicalSizeBytes.Valid || !row.WorkspaceEntryCount.Valid {
 		return errors.New("runtime reservation has no exact workspace version")
 	}
 	if row.WorkspaceArchitecture == "" {
 		return errors.New("runtime reservation has no workspace architecture")
 	}
-	source.BaseVersionID = pgvalue.UUIDString(row.BaseWorkspaceVersionID)
-	source.WorkspaceArtifact = workerapi.WorkspaceArtifact{
+	source.WorkspaceTarget = workerapi.WorkspaceResetTarget{
+		BaseWorkspaceVersionID: pgvalue.UUIDString(row.BaseWorkspaceVersionID),
+		Tree: workerapi.WorkspaceTreeIdentity{
+			Digest: row.WorkspaceContentDigest.String, SizeBytes: row.WorkspaceLogicalSizeBytes.Int64,
+			EntryCount: row.WorkspaceEntryCount.Int32,
+		},
+	}
+	artifact := workerapi.WorkspaceArtifact{
 		Digest:     row.WorkspaceArtifactDigest,
 		MediaType:  row.WorkspaceArtifactMediaType,
 		SizeBytes:  row.WorkspaceArtifactSizeBytes,
 		EntryCount: row.WorkspaceEntryCount.Int32,
 	}
-	if source.WorkspaceArtifact.Digest == "" {
-		if source.WorkspaceArtifact.SizeBytes != 0 ||
-			source.WorkspaceArtifact.MediaType != "" ||
-			source.WorkspaceArtifact.EntryCount != 0 {
+	if artifact.Digest == "" {
+		if artifact.SizeBytes != 0 || artifact.MediaType != "" || artifact.EntryCount != 0 ||
+			source.WorkspaceTarget.Tree.Digest != workspace.CanonicalEmptyTreeDigest ||
+			source.WorkspaceTarget.Tree.SizeBytes != 0 || source.WorkspaceTarget.Tree.EntryCount != 0 {
 			return errors.New("runtime reservation has an invalid empty workspace root")
 		}
+		source.WorkspaceTarget.Empty = &workerapi.EmptyWorkspace{}
 	} else {
-		if source.WorkspaceArtifact.SizeBytes <= 0 ||
-			source.WorkspaceArtifact.MediaType != workspace.ArtifactMediaType ||
-			source.WorkspaceArtifact.EntryCount < 0 {
+		if artifact.SizeBytes <= 0 || artifact.MediaType != workspace.ArtifactMediaType || artifact.EntryCount < 0 {
 			return errors.New("runtime reservation has an invalid workspace artifact")
 		}
-		source.WorkspaceArtifact.Encoding = workspace.ArtifactEncoding
+		artifact.Encoding = workspace.ArtifactEncoding
+		source.WorkspaceTarget.Artifact = &artifact
 	}
 	if !row.ProgramDeploymentID.Valid {
 		if row.ReservedRunID.Valid {
@@ -171,27 +178,23 @@ func populateRuntimeRestoreSource(
 	if err != nil {
 		return fmt.Errorf("project restored runtime checkpoint: %w", err)
 	}
-	var sourceBase *workerapi.RuntimeRestoreWorkspaceBase
-	if checkpoint.Kind == db.RunCheckpointKindSuspend {
-		baseAuthority, err := store.GetCheckpointWorkspaceBaseAuthority(ctx, db.GetCheckpointWorkspaceBaseAuthorityParams{
-			OrgID: row.OrgID, ProjectID: row.ProjectID, EnvironmentID: row.EnvironmentID,
-			WorkspaceID: row.WorkspaceID, VersionID: checkpoint.BaseWorkspaceVersionID,
-		})
-		if err != nil {
-			return fmt.Errorf("load restored runtime checkpoint source Workspace base: %w", err)
-		}
-		projectedBase, err := projectCheckpointWorkspaceBase(baseAuthority)
-		if err != nil {
-			return fmt.Errorf("project restored runtime checkpoint source Workspace base: %w", err)
-		}
-		sourceBase = &projectedBase
+	baseAuthority, err := store.GetCheckpointWorkspaceBaseAuthority(ctx, db.GetCheckpointWorkspaceBaseAuthorityParams{
+		OrgID: row.OrgID, ProjectID: row.ProjectID, EnvironmentID: row.EnvironmentID,
+		WorkspaceID: row.WorkspaceID, VersionID: checkpoint.BaseWorkspaceVersionID,
+	})
+	if err != nil {
+		return fmt.Errorf("load restored runtime checkpoint source Workspace base: %w", err)
+	}
+	sourceBase, err := projectCheckpointWorkspaceBase(baseAuthority)
+	if err != nil {
+		return fmt.Errorf("project restored runtime checkpoint source Workspace base: %w", err)
 	}
 	source.Restore = &workerapi.RuntimeRestore{
 		CheckpointID: pgvalue.UUIDString(row.RestoreCheckpointID),
 		RunID:        pgvalue.UUIDString(checkpoint.RunID), AttemptNumber: checkpoint.AttemptNumber,
 		RunWaitID: pgvalue.UUIDString(checkpoint.RunWaitID),
-		Kind:      projected.Kind, Manifest: projected.Manifest, Artifacts: projected.Artifacts,
-		SourceWorkspaceBase: sourceBase,
+		Manifest:  projected.Manifest, Artifacts: projected.Artifacts,
+		SourceWorkspaceBase: &sourceBase,
 	}
 	return nil
 }

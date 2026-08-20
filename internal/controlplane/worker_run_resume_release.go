@@ -104,7 +104,7 @@ func (s *Server) acknowledgeRunResumeRelease(
 			return staleRunLeaseClaim(err)
 		}
 		mode := deriveRunStartMode(locators)
-		if mode != runLeaseClaimRestore && mode != runLeaseClaimAttachParent {
+		if mode != runLeaseClaimRestore {
 			return errStaleRunLeaseClaim
 		}
 		authority, err := lockRunStartAuthority(
@@ -134,15 +134,8 @@ func (s *Server) acknowledgeRunResumeRelease(
 			wait.ResumeRequestVersion != proof.resumeRequestVersion {
 			return errStaleRunLeaseClaim
 		}
-		checkpointID := wait.SuspendCheckpointID
-		checkpointKind := db.RunCheckpointKindSuspend
-		if sameWorkspaceParentResumeWait(wait) &&
-			wait.ConditionState == db.WaitStateCompleted {
-			checkpointID = wait.HandoffResumeCheckpointID
-			checkpointKind = db.RunCheckpointKindHandoffResume
-		}
-		if checkpointID != proof.checkpointID ||
-			(mode == runLeaseClaimRestore && authority.runtime.RestoreCheckpointID != proof.checkpointID) {
+		if wait.SuspendCheckpointID != proof.checkpointID ||
+			authority.runtime.RestoreCheckpointID != proof.checkpointID {
 			return errStaleRunLeaseClaim
 		}
 		if wait.SuspensionState == db.RunWaitStateReleased &&
@@ -150,7 +143,7 @@ func (s *Server) acknowledgeRunResumeRelease(
 			return nil
 		}
 		if _, err := work.q.LockReadyRunCheckpoint(ctx, db.LockReadyRunCheckpointParams{
-			ID: proof.checkpointID, Kind: checkpointKind,
+			ID:    proof.checkpointID,
 			RunID: authority.run.ID, AttemptNumber: authority.attempt.Number,
 			RunWaitID: wait.ID, WorkspaceID: authority.workspace.ID,
 		}); err != nil {

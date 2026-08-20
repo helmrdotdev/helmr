@@ -51,7 +51,7 @@ func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDow
 	assertArtifactCreatorAuthority(t, dbctx, pool)
 	assertIdempotencyClaimCollectionIndexes(t, dbctx, pool)
 	assertExecutionAttachmentConstraints(t, dbctx, pool)
-	assertRunWaitHandoffAuthority(t, dbctx, pool)
+	assertRunWaitWorkspaceSuccession(t, dbctx, pool)
 	assertPrimitiveLifecycleSchema(t, dbctx, pool)
 	assertNoBusinessDatabaseLogic(t, dbctx, pool)
 	if !verifyDown {
@@ -80,7 +80,7 @@ func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDow
 	assertArtifactCreatorAuthority(t, dbctx, pool)
 	assertIdempotencyClaimCollectionIndexes(t, dbctx, pool)
 	assertExecutionAttachmentConstraints(t, dbctx, pool)
-	assertRunWaitHandoffAuthority(t, dbctx, pool)
+	assertRunWaitWorkspaceSuccession(t, dbctx, pool)
 	assertPrimitiveLifecycleSchema(t, dbctx, pool)
 	assertNoBusinessDatabaseLogic(t, dbctx, pool)
 }
@@ -242,15 +242,14 @@ func assertPrimitiveLifecycleSchema(
 		  FROM pg_type
 		 WHERE typname = ANY(ARRAY[
 		     'wait_kind',
-		     'run_checkpoint_kind',
 		     'artifact_kind',
 		     'workspace_version_kind'
 		 ])
 	`).Scan(&categoricalEnums); err != nil {
 		t.Fatal(err)
 	}
-	if categoricalEnums != 4 {
-		t.Fatalf("categorical enum sentinels = %d, want 4", categoricalEnums)
+	if categoricalEnums != 3 {
+		t.Fatalf("categorical enum sentinels = %d, want 3", categoricalEnums)
 	}
 
 	queryFiles, err := filepath.Glob("../query/*.sql")
@@ -525,230 +524,83 @@ SELECT EXISTS (
 	}
 }
 
-func assertRunWaitHandoffAuthority(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+func assertRunWaitWorkspaceSuccession(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
-	indexes := map[string]bool{
-		"run_waits_handoff_runtime_active_idx": false,
-		"run_waits_handoff_mount_active_idx":   false,
-		"run_waits_handoff_child_active_uidx":  true,
-	}
-	for name, unique := range indexes {
-		var definition string
-		if err := pool.QueryRow(ctx, `
+
+	var definition string
+	if err := pool.QueryRow(ctx, `
 SELECT indexdef
   FROM pg_indexes
  WHERE schemaname = 'public'
-   AND indexname = $1
-`, name).Scan(&definition); err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if got := strings.Contains(definition, "CREATE UNIQUE INDEX"); got != unique {
-			t.Fatalf("%s unique = %t, want %t", name, got, unique)
-		}
+   AND indexname = 'run_waits_same_workspace_child_active_uidx'
+`).Scan(&definition); err != nil {
+		t.Fatalf("read same-Workspace child index: %v", err)
+	}
+	if !strings.Contains(definition, "CREATE UNIQUE INDEX") {
+		t.Fatalf("same-Workspace child index is not unique: %q", definition)
 	}
 
-	if _, err := pool.Exec(ctx, `
-DROP TABLE IF EXISTS pg_temp.run_wait_handoff_shapes;
-CREATE TEMP TABLE run_wait_handoff_shapes
-    (LIKE run_waits INCLUDING DEFAULTS INCLUDING GENERATED INCLUDING CONSTRAINTS);
-
-INSERT INTO run_wait_handoff_shapes (
-    id, environment_id, run_id, workspace_id, kind, suspension_state,
-    expected_run_state_version, attempt_number, current_run_lease_id,
-    resume_attach_id, child_parent_owned, child_target_declared_id,
-    child_claim_id, child_request
-) VALUES (
-    '00000000-0000-0000-0000-000000000101',
-    '00000000-0000-0000-0000-000000000001',
-    '00000000-0000-0000-0000-000000000002',
-    '00000000-0000-0000-0000-000000000003',
-    'child', 'checkpointing', 1, 1,
-    '00000000-0000-0000-0000-000000000004',
-    '00000000-0000-0000-0000-000000000005',
-    true, 'child', '00000000-0000-0000-0000-000000000006', '{}'::jsonb
-);
-
-INSERT INTO run_wait_handoff_shapes (
-    id, environment_id, run_id, workspace_id, kind, suspension_state,
-    expected_run_state_version, attempt_number, prior_run_lease_id,
-    suspend_checkpoint_id, resume_attach_id, child_run_id, child_parent_owned,
-    child_target_declared_id, child_claim_id, child_request,
-    base_workspace_version_id, base_workspace_content_digest,
-    handoff_runtime_instance_id, handoff_workspace_mount_id,
-    handoff_mount_generation, ownership_generation,
-    parent_writer_generation
-) VALUES (
-    '00000000-0000-0000-0000-000000000102',
-    '00000000-0000-0000-0000-000000000001',
-    '00000000-0000-0000-0000-000000000002',
-    '00000000-0000-0000-0000-000000000003',
-    'child', 'parked', 1, 1,
-    '00000000-0000-0000-0000-000000000004',
-    '00000000-0000-0000-0000-00000000000e',
-    '00000000-0000-0000-0000-000000000005',
-    '00000000-0000-0000-0000-000000000007',
-    true, 'child', '00000000-0000-0000-0000-000000000006', '{}'::jsonb,
-    '00000000-0000-0000-0000-000000000008', 'sha256:base',
-    '00000000-0000-0000-0000-000000000009',
-    '00000000-0000-0000-0000-00000000000a',
-    1, 1, 1
-);
-
-INSERT INTO run_wait_handoff_shapes (
-    id, environment_id, run_id, workspace_id, kind, condition_state,
-    condition_terminal_at, suspension_state, expected_run_state_version,
-    attempt_number, prior_run_lease_id, suspend_checkpoint_id,
-    resume_attach_id, child_run_id,
-    child_parent_owned, child_target_declared_id, child_claim_id, child_request,
-    base_workspace_version_id, base_workspace_content_digest,
-    child_result_version_id, resume_workspace_version_id,
-    handoff_runtime_instance_id, handoff_workspace_mount_id,
-    handoff_mount_generation, ownership_generation, parent_writer_generation,
-    child_writer_generation, handoff_resume_checkpoint_id
-) VALUES (
-    '00000000-0000-0000-0000-000000000103',
-    '00000000-0000-0000-0000-000000000001',
-    '00000000-0000-0000-0000-000000000002',
-    '00000000-0000-0000-0000-000000000003',
-    'child', 'completed', now(), 'resume_pending', 1, 1,
-    '00000000-0000-0000-0000-000000000004',
-    '00000000-0000-0000-0000-00000000000e',
-    '00000000-0000-0000-0000-000000000005',
-    '00000000-0000-0000-0000-000000000007',
-    true, 'child', '00000000-0000-0000-0000-000000000006', '{}'::jsonb,
-    '00000000-0000-0000-0000-000000000008', 'sha256:base',
-    '00000000-0000-0000-0000-00000000000b',
-    '00000000-0000-0000-0000-00000000000b',
-    '00000000-0000-0000-0000-000000000009',
-    '00000000-0000-0000-0000-00000000000a',
-    1, 1, 1, 2,
-    '00000000-0000-0000-0000-00000000000c'
-);
-
-INSERT INTO run_wait_handoff_shapes (
-    id, environment_id, run_id, workspace_id, kind, condition_state,
-    condition_terminal_at, condition_reason_code, suspension_state,
-    expected_run_state_version, attempt_number, prior_run_lease_id,
-    suspend_checkpoint_id, resume_attach_id, child_run_id, child_parent_owned,
-    child_target_declared_id, child_claim_id, child_request,
-    base_workspace_version_id, base_workspace_content_digest,
-    resume_workspace_version_id, handoff_runtime_instance_id,
-    handoff_workspace_mount_id, handoff_mount_generation,
-    ownership_generation, parent_writer_generation
-) VALUES (
-    '00000000-0000-0000-0000-000000000104',
-    '00000000-0000-0000-0000-000000000001',
-    '00000000-0000-0000-0000-000000000002',
-    '00000000-0000-0000-0000-000000000003',
-    'child', 'failed', now(), 'child_failed', 'resume_pending', 1, 1,
-    '00000000-0000-0000-0000-000000000004',
-    '00000000-0000-0000-0000-00000000000e',
-    '00000000-0000-0000-0000-000000000005',
-    '00000000-0000-0000-0000-000000000007',
-    true, 'child', '00000000-0000-0000-0000-000000000006', '{}'::jsonb,
-    '00000000-0000-0000-0000-000000000008', 'sha256:base',
-    '00000000-0000-0000-0000-000000000008',
-    '00000000-0000-0000-0000-000000000009',
-    '00000000-0000-0000-0000-00000000000a',
-    1, 1, 1
-);
-
-INSERT INTO run_wait_handoff_shapes (
-    id, environment_id, run_id, workspace_id, kind, condition_state,
-    condition_terminal_at, suspension_state, expected_run_state_version,
-    attempt_number, current_run_lease_id, prior_run_lease_id,
-    suspend_checkpoint_id, resume_attach_id, child_run_id, child_parent_owned,
-    child_target_declared_id, child_claim_id,
-    child_request, base_workspace_version_id, base_workspace_content_digest,
-    child_result_version_id, resume_workspace_version_id,
-    handoff_runtime_instance_id, handoff_workspace_mount_id,
-    handoff_mount_generation, ownership_generation, parent_writer_generation,
-    child_writer_generation, resume_writer_generation,
-    handoff_resume_checkpoint_id
-) VALUES (
-    '00000000-0000-0000-0000-000000000105',
-    '00000000-0000-0000-0000-000000000001',
-    '00000000-0000-0000-0000-000000000002',
-    '00000000-0000-0000-0000-000000000003',
-    'child', 'completed', now(), 'resuming', 1, 1,
-    '00000000-0000-0000-0000-00000000000d',
-    '00000000-0000-0000-0000-000000000004',
-    '00000000-0000-0000-0000-00000000000e',
-    '00000000-0000-0000-0000-000000000005',
-    '00000000-0000-0000-0000-000000000007',
-    true, 'child', '00000000-0000-0000-0000-000000000006', '{}'::jsonb,
-    '00000000-0000-0000-0000-000000000008', 'sha256:base',
-    '00000000-0000-0000-0000-00000000000b',
-    '00000000-0000-0000-0000-00000000000b',
-    '00000000-0000-0000-0000-000000000009',
-    '00000000-0000-0000-0000-00000000000a',
-    1, 1, 1, 2, 3,
-    '00000000-0000-0000-0000-00000000000c'
-);
-`); err != nil {
-		t.Fatalf("insert valid Run Wait handoff stages: %v", err)
+	retiredRunWaitColumns := []string{
+		"handoff_resume_checkpoint_id",
+		"handoff_runtime_instance_id",
+		"handoff_workspace_mount_id",
+		"handoff_mount_generation",
 	}
-	tag, err := pool.Exec(ctx, `
-UPDATE run_wait_handoff_shapes
-   SET child_writer_generation = 2
- WHERE condition_state = 'pending'
-   AND child_run_id IS NOT NULL
-`)
-	if err != nil {
-		t.Fatalf("advance Run Wait to child-granted stage: %v", err)
+	var retiredColumnCount int
+	if err := pool.QueryRow(ctx, `
+SELECT count(*)
+  FROM information_schema.columns
+ WHERE table_schema = 'public'
+   AND table_name = 'run_waits'
+   AND column_name = ANY($1::text[])
+`, retiredRunWaitColumns).Scan(&retiredColumnCount); err != nil {
+		t.Fatal(err)
 	}
-	if tag.RowsAffected() != 1 {
-		t.Fatalf("child-granted Run Wait rows = %d, want 1", tag.RowsAffected())
+	if retiredColumnCount != 0 {
+		t.Fatalf("retained-runtime Run Wait columns = %d, want none", retiredColumnCount)
 	}
 
-	if _, err := pool.Exec(ctx, `
-UPDATE run_wait_handoff_shapes
-   SET resume_workspace_version_id = NULL
- WHERE condition_state = 'completed'
-   AND suspension_state = 'resume_pending'
-`); err == nil {
-		t.Fatal("successful handoff without a resume Workspace version was accepted")
+	var checkpointKindColumnCount int
+	if err := pool.QueryRow(ctx, `
+SELECT count(*)
+  FROM information_schema.columns
+ WHERE table_schema = 'public'
+   AND table_name = 'run_checkpoints'
+   AND column_name = 'kind'
+`).Scan(&checkpointKindColumnCount); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `
-UPDATE run_wait_handoff_shapes
-   SET resume_writer_generation = 4
- WHERE condition_state = 'completed'
-   AND suspension_state = 'resume_pending'
-`); err == nil {
-		t.Fatal("parent writer generation before regrant was accepted")
+	if checkpointKindColumnCount != 0 {
+		t.Fatal("run_checkpoints.kind survived the single-source greenfield schema")
 	}
 
-	if _, err := pool.Exec(ctx, `
-INSERT INTO run_wait_handoff_shapes (
-    id, environment_id, run_id, workspace_id, kind, suspension_state,
-    expected_run_state_version, attempt_number, prior_run_lease_id,
-    suspend_checkpoint_id, resume_attach_id, child_run_id, child_parent_owned,
-    child_target_declared_id, child_claim_id, child_request,
-    base_workspace_version_id, base_workspace_content_digest,
-    handoff_runtime_instance_id, handoff_workspace_mount_id,
-    handoff_mount_generation, ownership_generation,
-    parent_writer_generation, resume_writer_generation
-) VALUES (
-    '00000000-0000-0000-0000-000000000106',
-    '00000000-0000-0000-0000-000000000001',
-    '00000000-0000-0000-0000-000000000002',
-    '00000000-0000-0000-0000-000000000003',
-    'child', 'parked', 1, 1,
-    '00000000-0000-0000-0000-000000000004',
-    '00000000-0000-0000-0000-00000000000e',
-    '00000000-0000-0000-0000-000000000005',
-    '00000000-0000-0000-0000-000000000007',
-    true, 'child', '00000000-0000-0000-0000-000000000006', '{}'::jsonb,
-    '00000000-0000-0000-0000-000000000008', 'sha256:base',
-    '00000000-0000-0000-0000-000000000009',
-    '00000000-0000-0000-0000-00000000000a',
-    1, 1, 1, 2
-);
-`); err == nil {
-		t.Fatal("partial same-Workspace parent regrant shape was accepted")
+	var checkpointKindTypeCount int
+	if err := pool.QueryRow(ctx, `
+SELECT count(*)
+  FROM pg_type
+ WHERE typname = 'run_checkpoint_kind'
+`).Scan(&checkpointKindTypeCount); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `DROP TABLE run_wait_handoff_shapes`); err != nil {
-		t.Fatalf("drop Run Wait handoff shape table: %v", err)
+	if checkpointKindTypeCount != 0 {
+		t.Fatal("run_checkpoint_kind survived the single-source greenfield schema")
+	}
+
+	var successionConstraint bool
+	if err := pool.QueryRow(ctx, `
+SELECT EXISTS (
+    SELECT 1
+      FROM pg_constraint
+     WHERE conrelid = 'run_waits'::regclass
+       AND contype = 'c'
+	       AND pg_get_constraintdef(oid) LIKE '%resume_workspace_version_id IS NOT NULL%'
+       AND pg_get_constraintdef(oid) LIKE '%resume_writer_generation IS NOT NULL%'
+)
+`).Scan(&successionConstraint); err != nil {
+		t.Fatal(err)
+	}
+	if !successionConstraint {
+		t.Fatal("run_waits does not enforce exact Workspace version and writer succession")
 	}
 }
 

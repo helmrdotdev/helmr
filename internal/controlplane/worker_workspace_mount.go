@@ -717,6 +717,22 @@ func pgTime(value pgtype.Timestamptz) *time.Time {
 }
 
 func projectWorkerWorkspaceMount(row db.ClaimWorkspaceMountRow) *workerapi.WorkspaceMount {
+	target := workerapi.WorkspaceResetTarget{
+		BaseWorkspaceVersionID: pgvalue.MustUUIDValue(row.MaterializedVersionID).String(),
+		Tree: workerapi.WorkspaceTreeIdentity{
+			Digest: row.WorkspaceContentDigest, SizeBytes: row.WorkspaceLogicalSizeBytes,
+			EntryCount: row.WorkspaceEntryCount,
+		},
+	}
+	if row.WorkspaceArtifactDigest == "" {
+		target.Empty = &workerapi.EmptyWorkspace{}
+	} else {
+		target.Artifact = &workerapi.WorkspaceArtifact{
+			Digest: row.WorkspaceArtifactDigest, MediaType: row.WorkspaceArtifactMediaType,
+			Encoding: workspace.ArtifactEncoding, SizeBytes: row.WorkspaceArtifactSizeBytes,
+			EntryCount: row.WorkspaceEntryCount,
+		}
+	}
 	return &workerapi.WorkspaceMount{
 		ID:                     pgvalue.MustUUIDValue(row.ID).String(),
 		OrgID:                  pgvalue.MustUUIDValue(row.OrgID).String(),
@@ -724,8 +740,10 @@ func projectWorkerWorkspaceMount(row db.ClaimWorkspaceMountRow) *workerapi.Works
 		EnvironmentID:          pgvalue.MustUUIDValue(row.EnvironmentID).String(),
 		WorkspaceID:            pgvalue.MustUUIDValue(row.WorkspaceID).String(),
 		DeploymentDefinitionID: pgvalue.MustUUIDValue(row.DeploymentDefinitionID).String(),
-		BaseVersionID:          pgvalue.MustUUIDValue(row.MaterializedVersionID).String(),
+		Target:                 target,
 		RuntimeInstanceID:      pgvalue.MustUUIDValue(row.RuntimeInstanceID).String(),
+		RestoreCheckpointID:    pgvalue.UUIDString(row.RestoreCheckpointID),
+		RestoreSourceVersionID: pgvalue.UUIDString(row.RestoreSourceVersionID),
 		RuntimeEpoch:           row.WorkerEpoch,
 		GuestdChannelTokenHash: row.GuestChannelTokenHash,
 		State:                  string(row.State), RuntimeIdentityID: row.RuntimeID,
@@ -733,14 +751,7 @@ func projectWorkerWorkspaceMount(row db.ClaimWorkspaceMountRow) *workerapi.Works
 			Digest: row.ImageArtifactDigest, SizeBytes: row.ImageArtifactSizeBytes,
 			MediaType: row.ImageArtifactMediaType,
 		},
-		RootfsDigest: row.RootfsDigest,
-		WorkspaceArtifact: workerapi.WorkspaceArtifact{
-			Digest:     row.WorkspaceArtifactDigest,
-			MediaType:  row.WorkspaceArtifactMediaType,
-			Encoding:   workspace.ArtifactEncoding,
-			SizeBytes:  row.WorkspaceArtifactSizeBytes,
-			EntryCount: row.WorkspaceEntryCount,
-		},
+		RootfsDigest:            row.RootfsDigest,
 		WorkspaceMountPath:      "/workspace",
 		RequestedMilliCPU:       row.ReservedCPUMillis,
 		RequestedMemoryMiB:      row.ReservedMemoryBytes / (1024 * 1024),

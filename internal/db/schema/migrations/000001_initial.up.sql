@@ -571,11 +571,6 @@ CREATE TYPE wait_kind AS ENUM (
     'actor_input'
 );
 
-CREATE TYPE run_checkpoint_kind AS ENUM (
-    'suspend',
-    'handoff_resume'
-);
-
 CREATE TYPE workspace_version_kind AS ENUM (
     'user',
     'system'
@@ -2425,7 +2420,6 @@ ALTER TABLE runs
 
 CREATE TABLE run_checkpoints (
     id UUID PRIMARY KEY,
-    kind run_checkpoint_kind NOT NULL,
     run_id UUID NOT NULL,
     attempt_number INTEGER NOT NULL CHECK (attempt_number > 0),
     run_wait_id UUID NOT NULL,
@@ -2525,7 +2519,7 @@ CREATE INDEX run_checkpoints_wait_idx
     ON run_checkpoints (run_wait_id, state, id);
 
 CREATE UNIQUE INDEX run_checkpoints_creating_uidx
-    ON run_checkpoints (run_id, attempt_number, run_wait_id, kind)
+    ON run_checkpoints (run_id, attempt_number, run_wait_id)
     WHERE state = 'creating';
 
 CREATE TYPE run_checkpoint_artifact_role AS ENUM (
@@ -2668,17 +2662,12 @@ CREATE TABLE run_waits (
     checkpoint_ack_version BIGINT NOT NULL DEFAULT 0 CHECK (checkpoint_ack_version >= 0 AND checkpoint_ack_version <= checkpoint_request_version),
     checkpoint_due_at TIMESTAMPTZ,
     suspend_checkpoint_id UUID,
-    handoff_resume_checkpoint_id UUID,
     resume_attach_id UUID NOT NULL,
     resume_request_version BIGINT NOT NULL DEFAULT 0 CHECK (resume_request_version >= 0),
     resume_ack_version BIGINT NOT NULL DEFAULT 0 CHECK (resume_ack_version >= 0 AND resume_ack_version <= resume_request_version),
     base_workspace_version_id UUID,
     base_workspace_content_digest TEXT,
-    child_result_version_id UUID,
     resume_workspace_version_id UUID,
-    handoff_runtime_instance_id UUID,
-    handoff_workspace_mount_id UUID,
-    handoff_mount_generation BIGINT CHECK (handoff_mount_generation IS NULL OR handoff_mount_generation > 0),
     ownership_generation BIGINT CHECK (ownership_generation IS NULL OR ownership_generation > 0),
     parent_writer_generation BIGINT CHECK (parent_writer_generation IS NULL OR parent_writer_generation > 0),
     child_writer_generation BIGINT CHECK (child_writer_generation IS NULL OR child_writer_generation > 0),
@@ -2727,9 +2716,6 @@ CREATE TABLE run_waits (
         REFERENCES session_records(session_id, id, direction)
         ON DELETE RESTRICT,
     FOREIGN KEY (workspace_id, base_workspace_version_id)
-        REFERENCES workspace_versions(workspace_id, id)
-        ON DELETE RESTRICT,
-    FOREIGN KEY (workspace_id, child_result_version_id)
         REFERENCES workspace_versions(workspace_id, id)
         ON DELETE RESTRICT,
     FOREIGN KEY (workspace_id, resume_workspace_version_id)
@@ -2854,24 +2840,16 @@ CREATE TABLE run_waits (
     CHECK (
         (base_workspace_version_id IS NULL
          AND base_workspace_content_digest IS NULL
-         AND child_result_version_id IS NULL
          AND resume_workspace_version_id IS NULL
-         AND handoff_runtime_instance_id IS NULL
-         AND handoff_workspace_mount_id IS NULL
-         AND handoff_mount_generation IS NULL
          AND ownership_generation IS NULL
          AND parent_writer_generation IS NULL
          AND child_writer_generation IS NULL
-         AND resume_writer_generation IS NULL
-         AND handoff_resume_checkpoint_id IS NULL)
+         AND resume_writer_generation IS NULL)
         OR
         (kind = 'child'
          AND child_run_id IS NOT NULL
          AND base_workspace_version_id IS NOT NULL
          AND base_workspace_content_digest IS NOT NULL
-         AND handoff_runtime_instance_id IS NOT NULL
-         AND handoff_workspace_mount_id IS NOT NULL
-         AND handoff_mount_generation IS NOT NULL
          AND ownership_generation IS NOT NULL
          AND parent_writer_generation IS NOT NULL
          AND prior_run_lease_id IS NOT NULL
@@ -2880,17 +2858,12 @@ CREATE TABLE run_waits (
              ((condition_state = 'pending'
                OR (condition_state IN ('failed', 'cancelled')
                    AND suspension_state IN ('released', 'cancelled', 'failed')))
-              AND child_result_version_id IS NULL
               AND resume_workspace_version_id IS NULL
-              AND handoff_resume_checkpoint_id IS NULL
               AND resume_writer_generation IS NULL)
              OR
              (condition_state = 'completed'
               AND child_writer_generation IS NOT NULL
-              AND child_result_version_id IS NOT NULL
               AND resume_workspace_version_id IS NOT NULL
-              AND resume_workspace_version_id = child_result_version_id
-              AND handoff_resume_checkpoint_id IS NOT NULL
               AND (
                   (suspension_state = 'resume_pending'
                    AND resume_writer_generation IS NULL)
@@ -2902,10 +2875,8 @@ CREATE TABLE run_waits (
               ))
              OR
              (condition_state IN ('failed', 'cancelled')
-              AND child_result_version_id IS NULL
               AND resume_workspace_version_id IS NOT NULL
               AND resume_workspace_version_id = base_workspace_version_id
-              AND handoff_resume_checkpoint_id IS NULL
               AND (
                   (suspension_state = 'resume_pending'
                    AND resume_writer_generation IS NULL)
@@ -2959,19 +2930,9 @@ CREATE UNIQUE INDEX run_waits_completed_actor_record_active_uidx
     WHERE completed_actor_record_id IS NOT NULL
       AND suspension_state IN ('hot', 'checkpointing', 'parked', 'resume_pending', 'resuming');
 
-CREATE INDEX run_waits_handoff_runtime_active_idx
-    ON run_waits (handoff_runtime_instance_id)
-    WHERE handoff_runtime_instance_id IS NOT NULL
-      AND suspension_state IN ('hot', 'checkpointing', 'parked', 'resume_pending', 'resuming');
-
-CREATE INDEX run_waits_handoff_mount_active_idx
-    ON run_waits (handoff_workspace_mount_id)
-    WHERE handoff_workspace_mount_id IS NOT NULL
-      AND suspension_state IN ('hot', 'checkpointing', 'parked', 'resume_pending', 'resuming');
-
-CREATE UNIQUE INDEX run_waits_handoff_child_active_uidx
+CREATE UNIQUE INDEX run_waits_same_workspace_child_active_uidx
     ON run_waits (child_run_id)
-    WHERE handoff_runtime_instance_id IS NOT NULL
+    WHERE child_parent_owned IS TRUE
       AND suspension_state IN ('hot', 'checkpointing', 'parked', 'resume_pending', 'resuming');
 
 ALTER TABLE run_checkpoints
@@ -2983,10 +2944,6 @@ ALTER TABLE run_checkpoints
 ALTER TABLE run_waits
     ADD CONSTRAINT run_waits_suspend_checkpoint_fk
     FOREIGN KEY (run_id, attempt_number, workspace_id, suspend_checkpoint_id)
-    REFERENCES run_checkpoints(run_id, attempt_number, workspace_id, id)
-    ON DELETE RESTRICT,
-    ADD CONSTRAINT run_waits_handoff_resume_checkpoint_fk
-    FOREIGN KEY (run_id, attempt_number, workspace_id, handoff_resume_checkpoint_id)
     REFERENCES run_checkpoints(run_id, attempt_number, workspace_id, id)
     ON DELETE RESTRICT;
 

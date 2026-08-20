@@ -200,7 +200,7 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 					t.Fatal(err)
 				}
 				if request.Lease != receipt.Fence() || request.Fresh == nil ||
-					request.Restore != nil || request.Attach != nil {
+					request.Restore != nil {
 					t.Fatalf("start request = %+v", request)
 				}
 				_ = json.NewEncoder(w).Encode(

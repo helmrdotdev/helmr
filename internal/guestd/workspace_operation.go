@@ -12,7 +12,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -36,18 +35,12 @@ type workspaceOperationRegistry struct {
 	entries         map[string]*workspaceMountEntry
 	preparedRuntime *preparedWorkspaceRuntime
 	programClaims   []*managedProgramClaim
-	childAdmission  *managedProgramChildAdmission
 }
 
 type managedProgramClaim struct {
 	entry     *workspaceMountEntry
 	authority *workspacev0.WorkspaceRunAuthority
 	released  chan struct{}
-}
-
-type managedProgramChildAdmission struct {
-	entry  *workspaceMountEntry
-	parent *managedProgramClaim
 }
 
 type workspaceAuthorityState uint8
@@ -363,17 +356,11 @@ func (r *workspaceOperationRegistry) admitProgram(entry *workspaceMountEntry, au
 	) {
 		return func() {}, errors.New("program authority is not current for the workspace mount")
 	}
-	release, parent, err := r.claimProgramLocked(entry, authority)
+	release, err := r.claimProgramLocked(entry, authority)
 	if err != nil {
 		return func() {}, err
 	}
-	install := entry.installWorkspaceRunAuthorityLocked
-	if parent != nil {
-		install = func(candidate *workspacev0.WorkspaceRunAuthority, now time.Time) error {
-			return entry.installChildWorkspaceRunAuthorityLocked(parent.authority, candidate, now)
-		}
-	}
-	if err := install(authority, now); err != nil {
+	if err := entry.installWorkspaceRunAuthorityLocked(authority, now); err != nil {
 		release()
 		return func() {}, err
 	}
@@ -402,37 +389,26 @@ func (r *workspaceOperationRegistry) admitMountedProgram(entry *workspaceMountEn
 	}
 	authority := proto.Clone(entry.authority).(*workspacev0.WorkspaceRunAuthority)
 	entry.authorityMu.Unlock()
-	release, _, err := r.claimProgramLocked(entry, authority)
+	release, err := r.claimProgramLocked(entry, authority)
 	return release, err
 }
 
 func (r *workspaceOperationRegistry) claimProgramLocked(
 	entry *workspaceMountEntry,
 	authority *workspacev0.WorkspaceRunAuthority,
-) (func(), *managedProgramClaim, error) {
+) (func(), error) {
 	if authority == nil || authority.GetFence() == nil {
-		return func() {}, nil, errors.New("managed program authority is required")
+		return func() {}, errors.New("managed program authority is required")
 	}
 	r.mu.Lock()
-	var parent *managedProgramClaim
 	if len(r.programClaims) != 0 {
-		admission := r.childAdmission
-		if admission == nil || admission.entry != entry ||
-			!r.containsProgramClaimLocked(admission.parent) ||
-			validateManagedProgramChildAuthority(admission.parent.authority, authority) != nil {
-			r.mu.Unlock()
-			return func() {}, nil, errors.New("workspace already has an active managed program")
-		}
-		parent = admission.parent
-		r.childAdmission = nil
+		r.mu.Unlock()
+		return func() {}, errors.New("workspace already has an active managed program")
 	}
 	for _, existing := range r.programClaims {
 		if existing.authority.GetFence().GetRunLeaseId() == authority.GetFence().GetRunLeaseId() {
-			if parent != nil {
-				r.childAdmission = &managedProgramChildAdmission{entry: entry, parent: parent}
-			}
 			r.mu.Unlock()
-			return func() {}, nil, errors.New("managed program run lease is already active")
+			return func() {}, errors.New("managed program run lease is already active")
 		}
 	}
 	claim := &managedProgramClaim{
@@ -449,44 +425,11 @@ func (r *workspaceOperationRegistry) claimProgramLocked(
 				continue
 			}
 			r.programClaims = append(r.programClaims[:index], r.programClaims[index+1:]...)
-			if r.childAdmission != nil && r.childAdmission.parent == claim {
-				r.childAdmission = nil
-			}
 			close(claim.released)
 			break
 		}
 		r.mu.Unlock()
-	}, parent, nil
-}
-
-func (r *workspaceOperationRegistry) authorizeChildProgram(
-	entry *workspaceMountEntry,
-	parentRunID string,
-	parentAttemptNumber uint32,
-) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.childAdmission != nil {
-		if r.childAdmission.entry == entry {
-			fence := r.childAdmission.parent.authority.GetFence()
-			if fence.GetRunId() == parentRunID &&
-				fence.GetAttemptNumber() == parentAttemptNumber {
-				return nil
-			}
-		}
-		return errors.New("managed program child admission is already pending")
-	}
-	for index := len(r.programClaims) - 1; index >= 0; index-- {
-		claim := r.programClaims[index]
-		fence := claim.authority.GetFence()
-		if claim.entry == entry &&
-			fence.GetRunId() == parentRunID &&
-			fence.GetAttemptNumber() == parentAttemptNumber {
-			r.childAdmission = &managedProgramChildAdmission{entry: entry, parent: claim}
-			return nil
-		}
-	}
-	return errors.New("frozen parent program claim is not active")
+	}, nil
 }
 
 func (r *workspaceOperationRegistry) hasProgramClaimLocked(entry *workspaceMountEntry) bool {
@@ -496,36 +439,6 @@ func (r *workspaceOperationRegistry) hasProgramClaimLocked(entry *workspaceMount
 		}
 	}
 	return false
-}
-
-func (r *workspaceOperationRegistry) containsProgramClaimLocked(target *managedProgramClaim) bool {
-	return slices.Contains(r.programClaims, target)
-}
-
-func validateManagedProgramChildAuthority(
-	parent *workspacev0.WorkspaceRunAuthority,
-	child *workspacev0.WorkspaceRunAuthority,
-) error {
-	if parent == nil || parent.GetFence() == nil || child == nil || child.GetFence() == nil {
-		return errors.New("managed program parent and child authority are required")
-	}
-	parentFence := parent.GetFence()
-	childFence := child.GetFence()
-	if parentFence.GetWorkerInstanceId() != childFence.GetWorkerInstanceId() ||
-		parentFence.GetWorkerEpoch() != childFence.GetWorkerEpoch() ||
-		parentFence.GetRuntimeInstanceId() != childFence.GetRuntimeInstanceId() ||
-		parentFence.GetRuntimeIdentityId() != childFence.GetRuntimeIdentityId() ||
-		parentFence.GetWorkspaceId() != childFence.GetWorkspaceId() ||
-		parentFence.GetWorkspaceMountId() != childFence.GetWorkspaceMountId() ||
-		parentFence.GetOwnershipGeneration() != childFence.GetOwnershipGeneration() ||
-		parentFence.GetBaseWorkspaceVersionId() == childFence.GetBaseWorkspaceVersionId() ||
-		parentFence.GetRunLeaseId() == childFence.GetRunLeaseId() ||
-		childFence.GetWriterGeneration() <= parentFence.GetWriterGeneration() ||
-		childFence.GetMountFencingGeneration() <= parentFence.GetMountFencingGeneration() ||
-		subtle.ConstantTimeCompare([]byte(parent.GetChannelToken()), []byte(child.GetChannelToken())) != 1 {
-		return errors.New("managed program child authority does not advance the frozen parent authority")
-	}
-	return nil
 }
 
 func (r *workspaceOperationRegistry) waitForProgramRelease(
@@ -621,7 +534,7 @@ func handleWorkspaceMaterializeConnection(_ context.Context, conn io.ReadWriter,
 	workspaceMountID := strings.TrimSpace(envelope.WorkspaceMountId)
 	workspaceID := strings.TrimSpace(envelope.WorkspaceId)
 	if strings.TrimSpace(request.GetRestoredCheckpointId()) != "" {
-		phases, err := registry.rebindRestoredWorkspaceMount(&request, waits)
+		phases, err := registry.materializeRestoredWorkspaceMount(conn, &request, waits)
 		if err != nil {
 			phases = appendWorkspaceMountFailurePhase(phases, "guest_restore_rebind", totalStarted, err)
 			writeErr := frameio.WriteProtoFrame(conn, &workspacev0.MaterializeWorkspaceResponse{State: "failed", Phases: phases})
@@ -635,7 +548,7 @@ func handleWorkspaceMaterializeConnection(_ context.Context, conn io.ReadWriter,
 			"duration_ms", time.Since(totalStarted).Milliseconds())
 		return frameio.WriteProtoFrame(conn, &workspacev0.MaterializeWorkspaceResponse{
 			State: "running", GuestdChannelTokenHash: sha256sum.HexBytes([]byte(strings.TrimSpace(envelope.ChannelToken))),
-			Phases: phases,
+			Phases: phases, Target: proto.Clone(request.GetTarget()).(*workspacev0.WorkspaceResetTarget),
 		})
 	}
 	entry, phases, err := restoreWorkspaceMount(conn, &request, logger, registry)
@@ -661,32 +574,38 @@ func handleWorkspaceMaterializeConnection(_ context.Context, conn io.ReadWriter,
 		State:                  "running",
 		GuestdChannelTokenHash: sha256sum.HexBytes([]byte(strings.TrimSpace(envelope.ChannelToken))),
 		Phases:                 phases,
+		Target:                 proto.Clone(request.GetTarget()).(*workspacev0.WorkspaceResetTarget),
 	})
 }
 
-func (r *workspaceOperationRegistry) rebindRestoredWorkspaceMount(
+func (r *workspaceOperationRegistry) materializeRestoredWorkspaceMount(
+	reader io.Reader,
 	request *workspacev0.MaterializeWorkspaceRequest,
 	waits *waitingRunRegistry,
 ) ([]*workspacev0.WorkspaceMountPhase, error) {
 	started := time.Now()
 	if request == nil || request.GetEnvelope() == nil || !request.GetUsePreparedRuntime() {
-		return nil, errors.New("restored workspace rebind requires a prepared runtime")
+		return nil, errors.New("restored workspace materialization requires a prepared runtime")
 	}
 	checkpointID := strings.TrimSpace(request.GetRestoredCheckpointId())
+	sourceVersionID := strings.TrimSpace(request.GetRestoreSourceVersionId())
+	target, err := workspace.ResetTargetFromProto(request.GetTarget())
+	if err != nil {
+		return nil, fmt.Errorf("restored workspace target: %w", err)
+	}
 	if waits == nil || !waits.hasFrozenProgramCheckpoint(checkpointID) {
-		return nil, errors.New("restored workspace rebind did not match a frozen program checkpoint")
+		return nil, errors.New("restored workspace materialization did not match a frozen program checkpoint")
 	}
 	envelope := request.GetEnvelope()
 	newMountID := strings.TrimSpace(envelope.GetWorkspaceMountId())
 	workspaceID := strings.TrimSpace(envelope.GetWorkspaceId())
 	channelToken := strings.TrimSpace(envelope.GetChannelToken())
 	runtimeInstanceID := strings.TrimSpace(request.GetRuntimeInstanceId())
-	baseVersionID := strings.TrimSpace(request.GetBaseVersionId())
 	mountPath := filepath.Clean(strings.TrimSpace(request.GetMountPath()))
 	if newMountID == "" || workspaceID == "" || channelToken == "" || runtimeInstanceID == "" ||
-		baseVersionID == "" || envelope.GetFencingGeneration() == 0 || mountPath == "." ||
+		checkpointID == "" || sourceVersionID == "" || envelope.GetFencingGeneration() == 0 || mountPath == "." ||
 		mountPath == string(filepath.Separator) || !filepath.IsAbs(mountPath) {
-		return nil, errors.New("restored workspace rebind authority is incomplete")
+		return nil, errors.New("restored workspace materialization authority is incomplete")
 	}
 	parentRunID, parentAttemptNumber, ok := waits.frozenProgramForCheckpoint(checkpointID)
 	if !ok {
@@ -705,21 +624,30 @@ func (r *workspaceOperationRegistry) rebindRestoredWorkspaceMount(
 	entry.processesMu.Unlock()
 	if !r.hasProgramClaimLocked(entry) || unavailable || entry.workspaceID != workspaceID ||
 		filepath.Clean(entry.workspaceMount) != mountPath {
-		return nil, errors.New("restored workspace rebind did not match the frozen mounted runtime")
+		return nil, errors.New("restored workspace materialization did not match the frozen mounted runtime")
 	}
 	currentGeneration := entry.currentFencingGeneration()
 	if envelope.GetFencingGeneration() == currentGeneration && entry.workspaceMountID == newMountID &&
 		entry.channelToken == channelToken && entry.runtimeInstanceID == runtimeInstanceID &&
-		entry.baseVersionID == baseVersionID && r.entries[newMountID] == entry {
+		entry.baseVersionID == target.BaseVersionID && r.entries[newMountID] == entry {
+		if err := entry.materializeRestoredWorkspace(reader, workspaceID, checkpointID, sourceVersionID, target); err != nil {
+			return nil, err
+		}
 		return []*workspacev0.WorkspaceMountPhase{
-			workspaceMountPhase("guest_restore_rebind_replay", started, 0, 0, nil),
+			workspaceMountPhase("guest_restore_materialize_replay", started, uint64(workspaceRestoreArtifactSize(target)), uint32(target.Tree.EntryCount), nil),
 		}, nil
 	}
 	if envelope.GetFencingGeneration() <= currentGeneration {
-		return nil, errors.New("restored workspace rebind fencing generation did not advance")
+		return nil, errors.New("restored workspace materialization fencing generation did not advance")
 	}
 	if current := r.entries[newMountID]; current != nil && current != entry {
-		return nil, errors.New("restored workspace rebind target mount is already registered")
+		return nil, errors.New("restored workspace materialization target mount is already registered")
+	}
+	if entry.baseVersionID != sourceVersionID {
+		return nil, errors.New("restored workspace source version does not match the frozen mounted runtime")
+	}
+	if err := entry.materializeRestoredWorkspace(reader, workspaceID, checkpointID, sourceVersionID, target); err != nil {
+		return nil, err
 	}
 	for id, current := range r.entries {
 		if current == entry {
@@ -733,12 +661,19 @@ func (r *workspaceOperationRegistry) rebindRestoredWorkspaceMount(
 	entry.workspaceMountID = newMountID
 	entry.channelToken = channelToken
 	entry.runtimeInstanceID = runtimeInstanceID
-	entry.baseVersionID = baseVersionID
+	entry.baseVersionID = target.BaseVersionID
 	entry.setFencingGeneration(envelope.GetFencingGeneration())
 	r.entries[newMountID] = entry
 	return []*workspacev0.WorkspaceMountPhase{
-		workspaceMountPhase("guest_restore_rebind", started, 0, 0, nil),
+		workspaceMountPhase("guest_restore_materialize", started, uint64(workspaceRestoreArtifactSize(target)), uint32(target.Tree.EntryCount), nil),
 	}, nil
+}
+
+func workspaceRestoreArtifactSize(target workspace.ResetTarget) int64 {
+	if target.Artifact == nil {
+		return 0
+	}
+	return target.Artifact.SizeBytes
 }
 
 func handleWorkspaceRuntimePrepareConnection(_ context.Context, conn io.ReadWriter, logger *slog.Logger, registry *workspaceOperationRegistry) error {
@@ -856,11 +791,12 @@ func restoreWorkspaceMount(conn io.Reader, request *workspacev0.MaterializeWorks
 	if mountPath == "" || mountPath == "." || mountPath == string(filepath.Separator) || !filepath.IsAbs(mountPath) {
 		return nil, phases, fmt.Errorf("workspace materialize mount_path %q is invalid", request.GetMountPath())
 	}
-	if strings.TrimSpace(request.GetBaseVersionId()) == "" {
-		return nil, phases, errors.New("workspace materialize base_version_id is required")
+	target, err := workspace.ResetTargetFromProto(request.GetTarget())
+	if err != nil {
+		return nil, phases, fmt.Errorf("workspace materialize target: %w", err)
 	}
-	entry.baseVersionID = strings.TrimSpace(request.GetBaseVersionId())
-	artifact := request.GetBaseArtifact()
+	entry.baseVersionID = target.BaseVersionID
+	artifact := request.GetTarget().GetArtifact()
 	if artifact != nil {
 		if strings.TrimSpace(artifact.GetDigest()) == "" {
 			return nil, phases, errors.New("workspace materialize base_artifact digest is required")
@@ -964,6 +900,10 @@ func restoreWorkspaceMount(conn io.Reader, request *workspacev0.MaterializeWorks
 		if err != nil {
 			entry.cleanup()
 			return nil, phases, err
+		}
+		if err := verifyRestoredWorkspaceTree(entry.workspaceRoot, target.Tree); err != nil {
+			entry.cleanup()
+			return nil, phases, fmt.Errorf("verify empty workspace target: %w", err)
 		}
 		return entry, phases, nil
 	}
@@ -1072,6 +1012,11 @@ func restoreWorkspaceMount(conn io.Reader, request *workspacev0.MaterializeWorks
 		entry.cleanup()
 		phases = append(phases, workspaceMountPhase("guest_workspace_artifact_restore", phaseStarted, bodyLen, uint32(stats.EntryCount), err))
 		return nil, phases, fmt.Errorf("replace workspace mount: %w", err)
+	}
+	if err := verifyRestoredWorkspaceTree(entry.workspaceRoot, target.Tree); err != nil {
+		entry.cleanup()
+		phases = append(phases, workspaceMountPhase("guest_workspace_target_verify", phaseStarted, bodyLen, uint32(stats.EntryCount), err))
+		return nil, phases, fmt.Errorf("verify workspace materialize target: %w", err)
 	}
 	logger.Info("workspace materialize workspace artifact restored", "workspace_id", workspaceID, "workspace_mount_id", workspaceMountID, "duration_ms", time.Since(phaseStarted).Milliseconds(), "size_bytes", bodyLen, "entry_count", stats.EntryCount)
 	phases = append(phases, workspaceMountPhase("guest_workspace_artifact_restore", phaseStarted, bodyLen, uint32(stats.EntryCount), nil))

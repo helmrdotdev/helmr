@@ -279,7 +279,7 @@ func TestAdminWorkerPoolPostgresCheckpointReadySerializesWithPoolDrain(t *testin
 	product := newActorStartPostgresFixture(t, 1)
 	fixture := newAdminPoolPostgresFixture(t, product.pool, "us-east-1")
 	target := fixture.addActivePool(t, "checkpoint-source")
-	checkpoint := seedRetainedCheckpointForWorkerPool(t, product, fixture, target)
+	checkpoint := seedRestorableCheckpointForWorkerPool(t, product, fixture, target)
 	serviceID := uuid.Must(uuid.NewV7())
 	dbtest.MustExec(t, t.Context(), product.pool, `
 UPDATE worker_instances
@@ -463,11 +463,11 @@ SELECT cardinality(pg_blocking_pids($1)) > 0`, backendPID).Scan(&blocked); err !
 	t.Fatal("timed out waiting for concurrent pool drain to block on checkpoint lifecycle lock")
 }
 
-func TestAdminWorkerPoolPostgresRetainedCheckpointRequiresAnotherCompatibleSupplier(t *testing.T) {
+func TestAdminWorkerPoolPostgresRestorableCheckpointRequiresAnotherCompatibleSupplier(t *testing.T) {
 	product := newActorStartPostgresFixture(t, 1)
 	fixture := newAdminPoolPostgresFixture(t, product.pool, "us-east-1")
 	target := fixture.addActivePool(t, "current")
-	_ = seedRetainedCheckpointForWorkerPool(t, product, fixture, target)
+	_ = seedRestorableCheckpointForWorkerPool(t, product, fixture, target)
 
 	_, err := fixture.q.TransitionWorkerPoolLifecycle(t.Context(), db.TransitionWorkerPoolLifecycleParams{
 		TargetState:              "draining",
@@ -738,7 +738,7 @@ type adminPoolCheckpoint struct {
 	baseVersionID uuid.UUID
 }
 
-func seedRetainedCheckpointForWorkerPool(
+func seedRestorableCheckpointForWorkerPool(
 	t *testing.T,
 	product actorStartPostgresFixture,
 	fixture adminPoolPostgresFixture,
@@ -884,12 +884,12 @@ INSERT INTO run_waits (
 )`, waitID, product.environmentID, runID, product.workspaceIDs[0], uuid.Must(uuid.NewV7()))
 	dbtest.MustExec(t, t.Context(), product.pool, `
 INSERT INTO run_checkpoints (
-    id, kind, run_id, attempt_number, run_wait_id,
+    id, run_id, attempt_number, run_wait_id,
     source_run_lease_id, source_workspace_lease_id, workspace_id,
     base_workspace_version_id, private_workspace_version_id,
     state, restore_manifest, ready_request_fingerprint, ready_at
 ) VALUES (
-    $1, 'suspend', $2, 1, $3, $4, $5, $6, $7, $7,
+    $1, $2, 1, $3, $4, $5, $6, $7, $7,
     'ready', '{"kind":"suspend"}'::jsonb, 'checkpoint-ready', now()
 )`, checkpointID, runID, waitID, runLeaseID, workspaceLeaseID,
 		product.workspaceIDs[0], baseVersionID)

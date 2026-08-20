@@ -42,32 +42,7 @@ func (d *Authority) grantFreshRun(
 		authority.concurrencyKey != concurrencyKey {
 		return db.RunLease{}, ErrCandidateChanged
 	}
-	retainedRuntimeID, hasRetainedHandoff := authority.retainedHandoffRuntimeID()
-	retainedHandoff := hasRetainedHandoff &&
-		expectedMount.runtimeID == retainedRuntimeID
-	if retainedHandoff && authority.handoffChildWaitID.Valid &&
-		!authority.sameWorkspaceResume &&
-		(expectedMount.runtimeID != authority.handoffRuntimeID ||
-			expectedMount.id != authority.handoffWorkspaceMountID ||
-			expectedMount.fencingGeneration != authority.handoffAdmissionMountGen.Int64) {
-		return db.RunLease{}, ErrCapacityUnavailable
-	}
-	if retainedHandoff && authority.sameWorkspaceResume &&
-		(expectedMount.runtimeID != authority.resumeHandoffRuntimeID ||
-			expectedMount.id != authority.resumeHandoffMountID) {
-		return db.RunLease{}, ErrCapacityUnavailable
-	}
-	var runtime runRuntime
-	if retainedHandoff {
-		runtime, err = discoverHandoffRunRuntime(
-			ctx,
-			tx,
-			authority.workspaceID,
-			retainedRuntimeID,
-		)
-	} else {
-		runtime, err = discoverRunRuntime(ctx, tx, authority.workspaceID)
-	}
+	runtime, err := discoverRunRuntime(ctx, tx, authority.workspaceID)
 	if err != nil {
 		return db.RunLease{}, err
 	}
@@ -100,21 +75,8 @@ func (d *Authority) grantFreshRun(
 	if mount.id != expectedMount.id ||
 		mount.state != db.WorkspaceMountStateMounted ||
 		(authority.restoreMountGeneration.Valid &&
-			mount.fencingGeneration != authority.restoreMountGeneration.Int64) ||
-		(authority.handoffChildWaitID.Valid && !authority.sameWorkspaceResume &&
-			mount.fencingGeneration != authority.handoffAdmissionMountGen.Int64) {
+			mount.fencingGeneration != authority.restoreMountGeneration.Int64) {
 		return db.RunLease{}, ErrCapacityUnavailable
-	}
-	if authority.handoffChildWaitID.Valid && retainedHandoff {
-		if err := lockSameWorkspaceHandoffChain(
-			ctx,
-			tx,
-			authority,
-			runtime,
-			mount,
-		); err != nil {
-			return db.RunLease{}, err
-		}
 	}
 	if err := d.checkRunLeaseConcurrency(ctx, tx, authority); err != nil {
 		return db.RunLease{}, err
@@ -295,7 +257,7 @@ SELECT transaction_timestamp(),
 	if err != nil {
 		return db.RunLease{}, fmt.Errorf("set current run lease: %w", err)
 	}
-	if authority.handoffChildWaitID.Valid {
+	if authority.sameWorkspaceChildWaitID.Valid {
 		var boundWaitID pgtype.UUID
 		err = tx.QueryRow(ctx, `
 UPDATE run_waits
@@ -306,26 +268,20 @@ UPDATE run_waits
    AND workspace_id = $4
    AND child_parent_owned IS TRUE
    AND condition_state = 'pending'
-   AND suspension_state = 'parked'
-   AND current_run_lease_id IS NULL
-   AND prior_run_lease_id IS NOT NULL
-   AND handoff_runtime_instance_id = $5
-   AND handoff_workspace_mount_id = $6
-   AND handoff_mount_generation = $7
-   AND ownership_generation = $8
-   AND parent_writer_generation = $9
-   AND child_writer_generation IS NOT DISTINCT FROM $10
+	   AND suspension_state = 'parked'
+	   AND current_run_lease_id IS NULL
+	   AND prior_run_lease_id IS NOT NULL
+	   AND ownership_generation = $5
+	   AND parent_writer_generation = $6
+	   AND child_writer_generation IS NOT DISTINCT FROM $7
 RETURNING id`,
 			writerGeneration,
-			authority.handoffChildWaitID,
+			authority.sameWorkspaceChildWaitID,
 			authority.runID,
 			authority.workspaceID,
-			authority.handoffRuntimeID,
-			authority.handoffWorkspaceMountID,
-			authority.handoffMountGeneration.Int64,
-			authority.handoffOwnership.Int64,
-			authority.handoffParentWriter.Int64,
-			authority.handoffChildWriter,
+			authority.sameWorkspaceOwnership.Int64,
+			authority.sameWorkspaceParentWriter.Int64,
+			authority.sameWorkspaceChildWriter,
 		).Scan(&boundWaitID)
 		if err != nil {
 			return db.RunLease{}, fmt.Errorf(
@@ -336,84 +292,45 @@ RETURNING id`,
 	}
 	if authority.resumeRunWaitID.Valid {
 		var boundWaitID pgtype.UUID
+		var resumeWriterGeneration pgtype.Int8
 		if authority.sameWorkspaceResume {
-			err = tx.QueryRow(ctx, `
+			resumeWriterGeneration = pgtype.Int8{Int64: writerGeneration, Valid: true}
+		}
+		err = tx.QueryRow(ctx, `
 UPDATE run_waits
-   SET suspension_state = 'resuming',
-       current_run_lease_id = $1,
-       expected_run_state_version = $2,
-       resume_writer_generation = $3,
-       updated_at = transaction_timestamp()
- WHERE id = $4
+	   SET suspension_state = 'resuming',
+	       current_run_lease_id = $1,
+	       expected_run_state_version = $2,
+	       resume_writer_generation = $3,
+	       updated_at = transaction_timestamp()
+	 WHERE id = $4
    AND run_id = $5
    AND attempt_number = $6
    AND workspace_id = $7
    AND suspension_state = 'resume_pending'
-   AND current_run_lease_id IS NULL
-   AND resume_request_version = $8
-   AND resume_workspace_version_id = $9
-   AND handoff_runtime_instance_id = $10
-   AND handoff_workspace_mount_id = $11
-   AND handoff_mount_generation = $12
-   AND ownership_generation = $13
-   AND parent_writer_generation = $14
-   AND child_writer_generation = $15
-   AND resume_writer_generation IS NULL
-   AND (
-       (condition_state = 'completed'
-        AND handoff_resume_checkpoint_id = $16)
-       OR
-       (condition_state IN ('failed', 'cancelled')
-        AND handoff_resume_checkpoint_id IS NULL
-        AND suspend_checkpoint_id = $16)
-   )
+	   AND current_run_lease_id IS NULL
+	   AND resume_request_version = $8
+	   AND suspend_checkpoint_id = $9
+	   AND resume_workspace_version_id IS NOT DISTINCT FROM $10
+	   AND ownership_generation IS NOT DISTINCT FROM $11
+	   AND parent_writer_generation IS NOT DISTINCT FROM $12
+	   AND child_writer_generation IS NOT DISTINCT FROM $13
+	   AND resume_writer_generation IS NULL
 RETURNING id`,
-				runLeaseID,
-				grantedRun.StateVersion,
-				writerGeneration,
-				authority.resumeRunWaitID,
-				authority.runID,
-				authority.attemptNumber,
-				authority.workspaceID,
-				authority.resumeRequestVersion,
-				authority.baseVersionID,
-				authority.resumeHandoffRuntimeID,
-				authority.resumeHandoffMountID,
-				authority.resumeHandoffMountGen.Int64,
-				authority.resumeHandoffOwnership.Int64,
-				authority.resumeHandoffParentWriter.Int64,
-				authority.resumeHandoffChildWriter.Int64,
-				authority.restoreCheckpointID,
-			).Scan(&boundWaitID)
-		} else {
-			err = tx.QueryRow(ctx, `
-UPDATE run_waits
-   SET suspension_state = 'resuming',
-       current_run_lease_id = $1,
-       expected_run_state_version = $2,
-       updated_at = transaction_timestamp()
- WHERE id = $3
-   AND run_id = $4
-   AND attempt_number = $5
-   AND workspace_id = $6
-   AND suspension_state = 'resume_pending'
-   AND current_run_lease_id IS NULL
-   AND suspend_checkpoint_id = $7
-   AND resume_request_version = $8
-   AND handoff_runtime_instance_id IS NULL
-   AND handoff_workspace_mount_id IS NULL
-   AND handoff_resume_checkpoint_id IS NULL
-RETURNING id`,
-				runLeaseID,
-				grantedRun.StateVersion,
-				authority.resumeRunWaitID,
-				authority.runID,
-				authority.attemptNumber,
-				authority.workspaceID,
-				authority.restoreCheckpointID,
-				authority.resumeRequestVersion,
-			).Scan(&boundWaitID)
-		}
+			runLeaseID,
+			grantedRun.StateVersion,
+			resumeWriterGeneration,
+			authority.resumeRunWaitID,
+			authority.runID,
+			authority.attemptNumber,
+			authority.workspaceID,
+			authority.resumeRequestVersion,
+			authority.restoreCheckpointID,
+			pgtype.UUID{Bytes: authority.baseVersionID.Bytes, Valid: authority.sameWorkspaceResume},
+			authority.resumeOwnership,
+			authority.resumeParentWriter,
+			authority.resumeChildWriter,
+		).Scan(&boundWaitID)
 		if err != nil {
 			return db.RunLease{}, fmt.Errorf("bind resuming run wait: %w", err)
 		}

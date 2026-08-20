@@ -166,7 +166,7 @@ func workspaceCanAdmit(
 		workspace.HeadVersionID.Valid &&
 		!activity.HasActiveLease &&
 		!activity.HasActiveProcess &&
-		!activity.HasActiveHandoff
+		!activity.HasActiveChild
 }
 
 func bindingsCanAdmit(

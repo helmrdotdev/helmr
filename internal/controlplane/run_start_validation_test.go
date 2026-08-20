@@ -20,13 +20,9 @@ func TestValidateRunStartLifecycleSeparatesFirstStartFromResume(t *testing.T) {
 		ok      bool
 	}{
 		{name: "fresh first start", mode: runLeaseClaimFresh, ok: true},
-		{name: "child first start", mode: runLeaseClaimAttachChild, ok: true},
 		{name: "restore resume", mode: runLeaseClaimRestore, attempt: entered, ok: true},
-		{name: "parent resume", mode: runLeaseClaimAttachParent, attempt: entered, ok: true},
 		{name: "fresh cannot reenter", mode: runLeaseClaimFresh, attempt: entered},
-		{name: "child cannot reenter", mode: runLeaseClaimAttachChild, attempt: entered},
 		{name: "restore requires prior entry", mode: runLeaseClaimRestore},
-		{name: "parent requires prior entry", mode: runLeaseClaimAttachParent},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -116,16 +112,14 @@ func TestValidateRunStartArmModesAndReplay(t *testing.T) {
 	id := func(value byte) pgtype.UUID {
 		return pgtype.UUID{Bytes: [16]byte{value}, Valid: true}
 	}
-	leaseID, runID, parentRunID := id(1), id(2), id(3)
+	leaseID, runID := id(1), id(2)
 	waitID, checkpointID, attachID := id(4), id(5), id(6)
-	runtimeID, mountID := id(7), id(8)
+	runtimeID := id(7)
 	base := runStartValidationAuthority{
-		run:            db.Run{ID: runID, EntrypointKind: "task"},
-		parentRun:      db.Run{ID: parentRunID, Status: db.RunStatusWaiting},
-		runLease:       db.RunLease{ID: leaseID, State: db.RunLeaseStateStarting},
-		runtime:        db.RuntimeInstance{ID: runtimeID},
-		workspace:      db.Workspace{OwnershipGeneration: 11, WriterGeneration: 13},
-		workspaceMount: db.WorkspaceMount{ID: mountID, FencingGeneration: 17},
+		run:       db.Run{ID: runID, EntrypointKind: "task"},
+		runLease:  db.RunLease{ID: leaseID, State: db.RunLeaseStateStarting},
+		runtime:   db.RuntimeInstance{ID: runtimeID, RestoreCheckpointID: checkpointID},
+		workspace: db.Workspace{OwnershipGeneration: 11, WriterGeneration: 13},
 		runWait: db.RunWait{
 			ID: checkpointID, SuspendCheckpointID: checkpointID, ResumeAttachID: attachID,
 			CheckpointRequestVersion: 1, CheckpointAckVersion: 1,
@@ -156,7 +150,7 @@ func TestValidateRunStartArmModesAndReplay(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	t.Run("different Workspace child restores suspend checkpoint", func(t *testing.T) {
+	t.Run("same Workspace parent restores suspend checkpoint", func(t *testing.T) {
 		authority := base
 		authority.runWait.Kind = db.WaitKindChild
 		authority.runWait.ConditionState = db.WaitStateCompleted
@@ -164,22 +158,6 @@ func TestValidateRunStartArmModesAndReplay(t *testing.T) {
 		authority.runWait.ChildParentOwned = pgtype.Bool{Bool: true, Valid: true}
 		if err := validateRunStartArm(restore, authority); err != nil {
 			t.Fatal(err)
-		}
-
-		_, _, claimAuthority := validCheckpointRestoreRunLeaseClaimFixture(false)
-		claimAuthority.runWait.Kind = db.WaitKindChild
-		claimAuthority.runWait.ChildRunID = id(10)
-		claimAuthority.runWait.ChildParentOwned = pgtype.Bool{Bool: true, Valid: true}
-		store := &runLeaseClaimStore{authority: claimAuthority}
-		locked, err := lockRunStartCheckpointAuthority(
-			context.Background(), store, runLeaseClaimRestore, claimAuthority,
-		)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if locked.checkpoint.ID != claimAuthority.runWait.SuspendCheckpointID ||
-			locked.checkpoint.Kind != db.RunCheckpointKindSuspend {
-			t.Fatalf("checkpoint = %+v, want suspend %s", locked.checkpoint, claimAuthority.runWait.SuspendCheckpointID)
 		}
 	})
 	t.Run("restore released replay", func(t *testing.T) {
@@ -200,72 +178,4 @@ func TestValidateRunStartArmModesAndReplay(t *testing.T) {
 		}
 	})
 
-	parent := restore
-	parent.mode = runLeaseClaimAttachParent
-	parentAuthority := base
-	parentAuthority.runWait.Kind = db.WaitKindChild
-	parentAuthority.runWait.ConditionState = db.WaitStateCompleted
-	parentAuthority.runWait.ChildRunID = id(9)
-	parentAuthority.runWait.ChildParentOwned = pgtype.Bool{Bool: true, Valid: true}
-	parentAuthority.runWait.HandoffResumeCheckpointID = checkpointID
-	parentAuthority.runWait.HandoffRuntimeInstanceID = runtimeID
-	parentAuthority.runWait.HandoffWorkspaceMountID = mountID
-	parentAuthority.runWait.HandoffMountGeneration = pgtype.Int8{Int64: 17, Valid: true}
-	parentAuthority.runWait.OwnershipGeneration = pgtype.Int8{Int64: 11, Valid: true}
-	parentAuthority.runWait.ResumeWriterGeneration = pgtype.Int8{Int64: 13, Valid: true}
-	t.Run("parent first commit", func(t *testing.T) {
-		if err := validateRunStartArm(parent, parentAuthority); err != nil {
-			t.Fatal(err)
-		}
-	})
-	t.Run("parent released replay", func(t *testing.T) {
-		authority := parentAuthority
-		authority.runLease.State = db.RunLeaseStateRunning
-		authority.runWait.SuspensionState = db.RunWaitStateReleased
-		authority.runWait.ResumeAckVersion = authority.runWait.ResumeRequestVersion
-		if err := validateRunStartArm(parent, authority); err != nil {
-			t.Fatal(err)
-		}
-	})
-	t.Run("parent stale writer generation", func(t *testing.T) {
-		authority := parentAuthority
-		authority.runWait.ResumeWriterGeneration.Int64++
-		if err := validateRunStartArm(parent, authority); err == nil {
-			t.Fatal("stale resume writer generation accepted")
-		}
-	})
-
-	child := runStartArm{mode: runLeaseClaimAttachChild, runWaitID: waitID,
-		checkpointID: checkpointID, resumeAttachID: attachID}
-	childAuthority := parentAuthority
-	childAuthority.run.ParentRunID = parentRunID
-	childAuthority.runWait.ConditionState = db.WaitStatePending
-	childAuthority.runWait.SuspensionState = db.RunWaitStateParked
-	childAuthority.runWait.ChildRunID = runID
-	childAuthority.runWait.CurrentRunLeaseID = pgtype.UUID{}
-	childAuthority.runWait.HandoffResumeCheckpointID = pgtype.UUID{}
-	childAuthority.runWait.ChildWriterGeneration = pgtype.Int8{Int64: 13, Valid: true}
-	childAuthority.runWait.ResumeWriterGeneration = pgtype.Int8{}
-	childAuthority.runWait.ResumeAckVersion = childAuthority.runWait.ResumeRequestVersion
-	t.Run("child first commit", func(t *testing.T) {
-		if err := validateRunStartArm(child, childAuthority); err != nil {
-			t.Fatal(err)
-		}
-	})
-	t.Run("child exact replay authority", func(t *testing.T) {
-		authority := childAuthority
-		authority.runLease.State = db.RunLeaseStateRunning
-		authority.runWait.ConditionState = db.WaitStateCancelled
-		authority.runWait.SuspensionState = db.RunWaitStateReleased
-		if err := validateRunStartArm(child, authority); err != nil {
-			t.Fatal(err)
-		}
-	})
-	t.Run("child cross-run linkage", func(t *testing.T) {
-		authority := childAuthority
-		authority.run.ParentRunID = id(10)
-		if err := validateRunStartArm(child, authority); err == nil {
-			t.Fatal("cross-Run child linkage accepted")
-		}
-	})
 }

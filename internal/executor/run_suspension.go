@@ -199,7 +199,6 @@ func (w ControlPlaneRunWaits) handleCheckpointDecision(ctx context.Context, requ
 		CorrelationID:    request.CorrelationID,
 		CheckpointID:     intent.CheckpointID,
 		CaptureWorkspace: intent.CaptureWorkspace,
-		RetainSource:     intent.RetainSource,
 	}
 	if request.ResumeAttachID != "" {
 		checkpointRequest.AttemptNumber = lease.AttemptNumber

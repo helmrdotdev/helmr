@@ -103,9 +103,7 @@ func ExpireParentOwnedChild(
 		!wait.childRunID.Valid ||
 		uuid.UUID(wait.childRunID.Bytes) != child.id ||
 		wait.attemptNumber != parent.currentAttemptNumber ||
-		wait.expectedRunStateVersion != parent.stateVersion ||
-		wait.handoffRuntimeInstanceID.Valid ||
-		wait.handoffWorkspaceMountID.Valid) {
+		wait.expectedRunStateVersion != parent.stateVersion) {
 		return false, cancellationAuthority("queued child expiry wait does not match", nil)
 	}
 	if err := expireLockedParentOwnedChild(ctx, tx, child); err != nil {

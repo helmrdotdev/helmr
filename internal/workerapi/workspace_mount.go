@@ -57,9 +57,10 @@ type WorkspaceMount struct {
 	EnvironmentID           string            `json:"environment_id"`
 	WorkspaceID             string            `json:"workspace_id"`
 	DeploymentDefinitionID  string            `json:"deployment_definition_id"`
-	BaseVersionID           string            `json:"base_version_id,omitempty"`
+	Target                  WorkspaceResetTarget `json:"target"`
 	RuntimeInstanceID       string            `json:"runtime_instance_id,omitempty"`
 	RestoreCheckpointID     string            `json:"restore_checkpoint_id,omitempty"`
+	RestoreSourceVersionID  string            `json:"restore_source_version_id,omitempty"`
 	RuntimeEpoch            int64             `json:"runtime_epoch"`
 	GuestdChannelToken      string            `json:"guestd_channel_token"`
 	GuestdChannelTokenHash  string            `json:"guestd_channel_token_hash"`
@@ -67,7 +68,6 @@ type WorkspaceMount struct {
 	RuntimeIdentityID       string            `json:"runtime_identity_id"`
 	WorkspaceImage          CASObject         `json:"workspace_image"`
 	RootfsDigest            string            `json:"rootfs_digest"`
-	WorkspaceArtifact       WorkspaceArtifact `json:"workspace_artifact"`
 	WorkspaceMountPath      string            `json:"workspace_mount_path"`
 	RequestedMilliCPU       int64             `json:"requested_milli_cpu"`
 	RequestedMemoryMiB      int64             `json:"requested_memory_mib"`

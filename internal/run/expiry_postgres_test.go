@@ -238,12 +238,12 @@ func newQueuedChildParent(
 		parent.checkpointID = pgvalue.UUID(checkpointID)
 		dbtest.MustExec(t, ctx, fixture.pool, `
 			INSERT INTO run_checkpoints (
-			    id, kind, run_id, attempt_number, run_wait_id,
+			    id, run_id, attempt_number, run_wait_id,
 			    source_run_lease_id, source_workspace_lease_id, workspace_id,
 			    base_workspace_version_id, private_workspace_version_id,
 			    state, restore_manifest, ready_request_fingerprint, ready_at
 			) VALUES (
-			    $1, 'suspend', $2, 1, $3, $4, $5, $6, $7, $7,
+			    $1, $2, 1, $3, $4, $5, $6, $7, $7,
 			    'ready', '{"test":true}'::jsonb, 'sha256:test-ready', transaction_timestamp()
 			)
 		`, checkpointID, parent.runID, parent.waitID, parent.leaseID,

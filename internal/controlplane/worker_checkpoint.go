@@ -725,18 +725,18 @@ func parseCheckpointReadyRequest(request workerapi.CheckpointReadyRequest) (pars
 	if err != nil {
 		return parsedCheckpointReady{}, request, err
 	}
-	var cleanupProof []byte
-	if request.SourceCleanup != nil {
-		if request.SourceCleanup.Method != workerapi.RuntimeCleanupSessionClosed {
-			return parsedCheckpointReady{}, request, errors.New("source_cleanup.method must be session_closed")
-		}
-		if err := validateRuntimeCleanupProof(*request.SourceCleanup, time.Now()); err != nil {
-			return parsedCheckpointReady{}, request, fmt.Errorf("source_cleanup is invalid: %w", err)
-		}
-		cleanupProof, err = json.Marshal(request.SourceCleanup)
-		if err != nil {
-			return parsedCheckpointReady{}, request, fmt.Errorf("marshal source_cleanup: %w", err)
-		}
+	if request.SourceCleanup == nil {
+		return parsedCheckpointReady{}, request, errors.New("source_cleanup is required")
+	}
+	if request.SourceCleanup.Method != workerapi.RuntimeCleanupSessionClosed {
+		return parsedCheckpointReady{}, request, errors.New("source_cleanup.method must be session_closed")
+	}
+	if err := validateRuntimeCleanupProof(*request.SourceCleanup, time.Now()); err != nil {
+		return parsedCheckpointReady{}, request, fmt.Errorf("source_cleanup is invalid: %w", err)
+	}
+	cleanupProof, err := json.Marshal(request.SourceCleanup)
+	if err != nil {
+		return parsedCheckpointReady{}, request, fmt.Errorf("marshal source_cleanup: %w", err)
 	}
 	tree, err := parseTaskWorkspaceTree("workspace_capture.tree", request.WorkspaceCapture.Tree)
 	if err != nil {
@@ -924,7 +924,7 @@ func (s *Server) commitCheckpointReady(
 		if _, err := secret.LockAttemptDelivery(ctx, work.q, locators.RunID, locators.AttemptNumber, locators.WorkspaceID); err != nil {
 			return fmt.Errorf("lock checkpoint-ready secret authority: %w", err)
 		}
-		handoffBindings, err := work.q.LockWorkspaceSecretsForAdmission(ctx, locators.WorkspaceID)
+		workspaceBindings, err := work.q.LockWorkspaceSecretsForAdmission(ctx, locators.WorkspaceID)
 		if err != nil {
 			return fmt.Errorf("lock checkpoint-ready workspace secrets: %w", err)
 		}
@@ -970,10 +970,6 @@ func (s *Server) commitCheckpointReady(
 			return staleRunLeaseClaim(err)
 		}
 		if err := validateRunWaitActorCursor(authority, wait); err != nil {
-			return err
-		}
-		retainedSameWorkspaceChild, err := validateCheckpointSourceDisposition(wait, request.SourceCleanup)
-		if err != nil {
 			return err
 		}
 		checkpoint, err := work.q.LockCreatingRunCheckpoint(ctx, db.LockCreatingRunCheckpointParams{
@@ -1073,22 +1069,20 @@ func (s *Server) commitCheckpointReady(
 		}); err != nil {
 			return staleRunLeaseClaim(err)
 		}
-		if !retainedSameWorkspaceChild {
-			if _, err := work.q.CloseCheckpointSourceRuntime(ctx, db.CloseCheckpointSourceRuntimeParams{
-				CheckpointedAt:          checkpointedAt,
-				WorkspaceMountID:        authority.workspaceMount.ID,
-				RuntimeInstanceID:       authority.runtime.ID,
-				WorkerInstanceID:        authority.runtime.WorkerInstanceID,
-				WorkerEpoch:             authority.runtime.WorkerEpoch,
-				MountFencingGeneration:  authority.workspaceMount.FencingGeneration,
-				ExpectedDesiredVersion:  authority.runtime.DesiredVersion,
-				ExpectedObservedVersion: authority.runtime.ObservedVersion,
-				CleanupProof:            ready.cleanupProof,
-			}); err != nil {
-				return staleRunLeaseClaim(err)
-			}
+		if _, err := work.q.CloseCheckpointSourceRuntime(ctx, db.CloseCheckpointSourceRuntimeParams{
+			CheckpointedAt:          checkpointedAt,
+			WorkspaceMountID:        authority.workspaceMount.ID,
+			RuntimeInstanceID:       authority.runtime.ID,
+			WorkerInstanceID:        authority.runtime.WorkerInstanceID,
+			WorkerEpoch:             authority.runtime.WorkerEpoch,
+			MountFencingGeneration:  authority.workspaceMount.FencingGeneration,
+			ExpectedDesiredVersion:  authority.runtime.DesiredVersion,
+			ExpectedObservedVersion: authority.runtime.ObservedVersion,
+			CleanupProof:            ready.cleanupProof,
+		}); err != nil {
+			return staleRunLeaseClaim(err)
 		}
-		if retainedSameWorkspaceChild {
+		if wait.Kind == db.WaitKindChild && !wait.ChildRunID.Valid {
 			if wait.ConditionState != db.WaitStatePending {
 				return errStaleRunLeaseClaim
 			}
@@ -1101,7 +1095,7 @@ func (s *Server) commitCheckpointReady(
 				ready.capture.tree.Digest,
 				checkpointedAt,
 				request.RequestVersion,
-				handoffBindings,
+				workspaceBindings,
 			); err != nil {
 				return err
 			}
@@ -1134,17 +1128,6 @@ func (s *Server) commitCheckpointReady(
 	return response, err
 }
 
-func validateCheckpointSourceDisposition(
-	wait db.RunWait,
-	cleanup *workerapi.RuntimeCleanupProof,
-) (bool, error) {
-	retained := wait.Kind == db.WaitKindChild && !wait.ChildRunID.Valid
-	if retained == (cleanup != nil) {
-		return false, errStaleRunLeaseClaim
-	}
-	return retained, nil
-}
-
 func (s *Server) commitSameWorkspaceChildCheckpointReady(
 	ctx context.Context,
 	store db.Querier,
@@ -1161,8 +1144,7 @@ func (s *Server) commitSameWorkspaceChildCheckpointReady(
 		wait.ChildTargetDeclaredID.String == "" ||
 		!wait.SuspendCheckpointID.Valid ||
 		wait.ChildRunID.Valid ||
-		wait.BaseWorkspaceVersionID.Valid ||
-		wait.HandoffRuntimeInstanceID.Valid {
+		wait.BaseWorkspaceVersionID.Valid {
 		return errStaleRunLeaseClaim
 	}
 	var request idempotency.TaskChildInvokeFingerprint
@@ -1284,12 +1266,6 @@ func (s *Server) commitSameWorkspaceChildCheckpointReady(
 			CheckpointRequestVersion:   checkpointRequestVersion,
 			BaseWorkspaceVersionID:     baseWorkspaceVersionID,
 			BaseWorkspaceContentDigest: pgvalue.Text(baseWorkspaceContentDigest),
-			RuntimeInstanceID:          authority.runtime.ID,
-			WorkspaceMountID:           authority.workspaceMount.ID,
-			MountGeneration: pgtype.Int8{
-				Int64: authority.workspaceLease.MountFencingGeneration,
-				Valid: true,
-			},
 			OwnershipGeneration: pgtype.Int8{
 				Int64: authority.workspaceLease.OwnershipGeneration,
 				Valid: true,

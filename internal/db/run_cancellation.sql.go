@@ -186,20 +186,12 @@ const closeRunRuntimes = `-- name: CloseRunRuntimes :exec
 WITH candidate_runtimes AS (
     SELECT run_leases.runtime_instance_id
       FROM run_leases
-     WHERE run_leases.id = $4
-       AND run_leases.run_id = $5
-       AND run_leases.runtime_instance_id IS DISTINCT FROM $6
+     WHERE run_leases.id = $3
+       AND run_leases.run_id = $4
     UNION
     SELECT runtime_instances.id AS runtime_instance_id
       FROM runtime_instances
-     WHERE runtime_instances.reserved_run_id = $5
-       AND runtime_instances.id IS DISTINCT FROM $6
-    UNION
-    SELECT run_waits.handoff_runtime_instance_id AS runtime_instance_id
-      FROM run_waits
-     WHERE run_waits.run_id = $5
-       AND run_waits.handoff_runtime_instance_id IS NOT NULL
-       AND run_waits.handoff_runtime_instance_id IS DISTINCT FROM $6
+     WHERE runtime_instances.reserved_run_id = $4
 ), closing_runtimes AS (
     UPDATE runtime_instances
        SET desired_state = 'closed',
@@ -208,7 +200,7 @@ WITH candidate_runtimes AS (
                ELSE desired_version + 1
            END,
            desired_at = transaction_timestamp(),
-           desired_reason = $7,
+           desired_reason = $5,
            updated_at = transaction_timestamp()
      WHERE runtime_instances.id IN (
            SELECT runtime_instance_id FROM candidate_runtimes
@@ -231,17 +223,14 @@ UPDATE workspace_mounts
        UNION
        SELECT id FROM closing_runtimes
    )
-   AND workspace_mounts.id IS DISTINCT FROM $3
    AND state IN ('mounting', 'mounted')
 `
 
 type CloseRunRuntimesParams struct {
 	MountFinalizationKind       pgtype.Text `json:"mount_finalization_kind"`
 	MountFinalizationReasonCode pgtype.Text `json:"mount_finalization_reason_code"`
-	RetainedMountID             pgtype.UUID `json:"retained_mount_id"`
 	RunLeaseID                  pgtype.UUID `json:"run_lease_id"`
 	RunID                       pgtype.UUID `json:"run_id"`
-	RetainedRuntimeID           pgtype.UUID `json:"retained_runtime_id"`
 	ReasonCode                  string      `json:"reason_code"`
 }
 
@@ -249,10 +238,8 @@ func (q *Queries) CloseRunRuntimes(ctx context.Context, arg CloseRunRuntimesPara
 	_, err := q.db.Exec(ctx, closeRunRuntimes,
 		arg.MountFinalizationKind,
 		arg.MountFinalizationReasonCode,
-		arg.RetainedMountID,
 		arg.RunLeaseID,
 		arg.RunID,
-		arg.RetainedRuntimeID,
 		arg.ReasonCode,
 	)
 	return err
@@ -1048,14 +1035,6 @@ WITH target_runtimes AS (
     SELECT runtime_instances.id
       FROM runtime_instances
      WHERE runtime_instances.reserved_run_id = ANY($1::uuid[])
-    UNION
-    SELECT run_waits.handoff_runtime_instance_id
-      FROM run_waits
-     WHERE run_waits.run_id = ANY($2::uuid[])
-       AND run_waits.handoff_runtime_instance_id IS NOT NULL
-       AND run_waits.suspension_state IN (
-           'hot', 'checkpointing', 'parked', 'resume_pending', 'resuming'
-       )
 )
 SELECT runtime_instances.id
   FROM runtime_instances
@@ -1064,13 +1043,8 @@ SELECT runtime_instances.id
  FOR UPDATE OF runtime_instances
 `
 
-type LockCancellationRuntimesParams struct {
-	CancelIDs []pgtype.UUID `json:"cancel_ids"`
-	RunIDs    []pgtype.UUID `json:"run_ids"`
-}
-
-func (q *Queries) LockCancellationRuntimes(ctx context.Context, arg LockCancellationRuntimesParams) ([]pgtype.UUID, error) {
-	rows, err := q.db.Query(ctx, lockCancellationRuntimes, arg.CancelIDs, arg.RunIDs)
+func (q *Queries) LockCancellationRuntimes(ctx context.Context, cancelIds []pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, lockCancellationRuntimes, cancelIds)
 	if err != nil {
 		return nil, err
 	}
@@ -1101,8 +1075,6 @@ SELECT id,
        current_run_lease_id,
        prior_run_lease_id,
        suspend_checkpoint_id,
-       handoff_runtime_instance_id,
-       handoff_workspace_mount_id,
        base_workspace_version_id,
        child_writer_generation
   FROM run_waits
@@ -1123,21 +1095,19 @@ type LockCancellationWaitsParams struct {
 }
 
 type LockCancellationWaitsRow struct {
-	ID                       pgtype.UUID `json:"id"`
-	RunID                    pgtype.UUID `json:"run_id"`
-	WorkspaceID              pgtype.UUID `json:"workspace_id"`
-	ChildRunID               pgtype.UUID `json:"child_run_id"`
-	ConditionState           string      `json:"condition_state"`
-	SuspensionState          string      `json:"suspension_state"`
-	ExpectedRunStateVersion  int64       `json:"expected_run_state_version"`
-	AttemptNumber            int32       `json:"attempt_number"`
-	CurrentRunLeaseID        pgtype.UUID `json:"current_run_lease_id"`
-	PriorRunLeaseID          pgtype.UUID `json:"prior_run_lease_id"`
-	SuspendCheckpointID      pgtype.UUID `json:"suspend_checkpoint_id"`
-	HandoffRuntimeInstanceID pgtype.UUID `json:"handoff_runtime_instance_id"`
-	HandoffWorkspaceMountID  pgtype.UUID `json:"handoff_workspace_mount_id"`
-	BaseWorkspaceVersionID   pgtype.UUID `json:"base_workspace_version_id"`
-	ChildWriterGeneration    pgtype.Int8 `json:"child_writer_generation"`
+	ID                      pgtype.UUID `json:"id"`
+	RunID                   pgtype.UUID `json:"run_id"`
+	WorkspaceID             pgtype.UUID `json:"workspace_id"`
+	ChildRunID              pgtype.UUID `json:"child_run_id"`
+	ConditionState          string      `json:"condition_state"`
+	SuspensionState         string      `json:"suspension_state"`
+	ExpectedRunStateVersion int64       `json:"expected_run_state_version"`
+	AttemptNumber           int32       `json:"attempt_number"`
+	CurrentRunLeaseID       pgtype.UUID `json:"current_run_lease_id"`
+	PriorRunLeaseID         pgtype.UUID `json:"prior_run_lease_id"`
+	SuspendCheckpointID     pgtype.UUID `json:"suspend_checkpoint_id"`
+	BaseWorkspaceVersionID  pgtype.UUID `json:"base_workspace_version_id"`
+	ChildWriterGeneration   pgtype.Int8 `json:"child_writer_generation"`
 }
 
 func (q *Queries) LockCancellationWaits(ctx context.Context, arg LockCancellationWaitsParams) ([]LockCancellationWaitsRow, error) {
@@ -1161,8 +1131,6 @@ func (q *Queries) LockCancellationWaits(ctx context.Context, arg LockCancellatio
 			&i.CurrentRunLeaseID,
 			&i.PriorRunLeaseID,
 			&i.SuspendCheckpointID,
-			&i.HandoffRuntimeInstanceID,
-			&i.HandoffWorkspaceMountID,
 			&i.BaseWorkspaceVersionID,
 			&i.ChildWriterGeneration,
 		); err != nil {

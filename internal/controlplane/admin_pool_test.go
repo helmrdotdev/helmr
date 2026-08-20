@@ -247,7 +247,7 @@ func TestAdminWorkerPoolLifecycleLocksGroupBeforePool(t *testing.T) {
 	}
 }
 
-func TestAdminWorkerPoolLifecyclePreservesRetainedSupplySafetyFence(t *testing.T) {
+func TestAdminWorkerPoolLifecyclePreservesRestorableSupplySafetyFence(t *testing.T) {
 	group, pool := adminPoolFixture()
 	store := newAdminPoolStore(group, pool)
 	store.transitionErr = pgx.ErrNoRows

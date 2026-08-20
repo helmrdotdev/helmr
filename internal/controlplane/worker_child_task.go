@@ -26,7 +26,7 @@ var (
 	errChildTaskInvokeStale       = errors.New("child task invocation authority is stale")
 	errChildTaskInvokeUnsupported = errors.New("child task invocation method is unsupported")
 	errChildTaskSameWorkspace     = errors.New("same-workspace child task start is unsupported")
-	errWorkspaceHandoffConflict   = errors.New("same-workspace call reached a different workspace frontier")
+	errWorkspaceFrontierConflict  = errors.New("same-workspace call reached a different workspace frontier")
 )
 
 type childTaskInvokeStaleStageError struct{ stage string }
@@ -724,12 +724,12 @@ func replayBoundSameWorkspaceChildCall(
 		receipt.ResumeAttachID == "" ||
 		receipt.BaseWorkspaceVersionID == "" ||
 		receipt.BaseWorkspaceDigest == "" {
-		return workerapi.CreateRunWaitResponse{}, errWorkspaceHandoffConflict
+		return workerapi.CreateRunWaitResponse{}, errWorkspaceFrontierConflict
 	}
 	waitID := uuid.MustParse(receipt.RunWaitID)
 	resumeAttachID := uuid.MustParse(receipt.ResumeAttachID)
 	if waitID != input.RunWaitID || resumeAttachID != input.ResumeAttachID {
-		return workerapi.CreateRunWaitResponse{}, errWorkspaceHandoffConflict
+		return workerapi.CreateRunWaitResponse{}, errWorkspaceFrontierConflict
 	}
 	childRunID := uuid.MustParse(receipt.RunID)
 	baseID := uuid.MustParse(receipt.BaseWorkspaceVersionID)
@@ -749,7 +749,7 @@ func replayBoundSameWorkspaceChildCall(
 		},
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return workerapi.CreateRunWaitResponse{}, errWorkspaceHandoffConflict
+		return workerapi.CreateRunWaitResponse{}, errWorkspaceFrontierConflict
 	}
 	if err != nil {
 		return workerapi.CreateRunWaitResponse{}, fmt.Errorf(
@@ -761,7 +761,7 @@ func replayBoundSameWorkspaceChildCall(
 		replayed.ConditionState != db.WaitStateCompleted ||
 		replayed.ConditionResult == nil ||
 		!replayed.ResumeWorkspaceVersionID.Valid {
-		return workerapi.CreateRunWaitResponse{}, errWorkspaceHandoffConflict
+		return workerapi.CreateRunWaitResponse{}, errWorkspaceFrontierConflict
 	}
 	return workerapi.CreateRunWaitResponse{
 		RunID:             pgvalue.UUIDString(authority.run.ID),
@@ -1095,8 +1095,8 @@ func decodeChildTaskReceipt(raw []byte) (childTaskReceipt, error) {
 			return childTaskReceipt{}, errTaskStartReceiptInvalid
 		}
 	}
-	hasHandoff := receipt.BaseWorkspaceVersionID != "" || receipt.BaseWorkspaceDigest != ""
-	if hasHandoff {
+	hasWorkspaceFrontier := receipt.BaseWorkspaceVersionID != "" || receipt.BaseWorkspaceDigest != ""
+	if hasWorkspaceFrontier {
 		_, baseErr := ids.Parse(receipt.BaseWorkspaceVersionID)
 		if !hasWait || baseErr != nil ||
 			!taskWorkspaceDigestPattern.MatchString(receipt.BaseWorkspaceDigest) {
@@ -1123,9 +1123,9 @@ func (s *Server) writeChildTaskInvokeError(
 		failure = workerapi.RuntimeOperationFailure{
 			Code: "same_workspace_" + method + "_unsupported", Message: err.Error(),
 		}
-	case errors.Is(err, errWorkspaceHandoffConflict):
+	case errors.Is(err, errWorkspaceFrontierConflict):
 		failure = workerapi.RuntimeOperationFailure{
-			Code: "workspace_handoff_conflict", Message: err.Error(),
+			Code: "workspace_frontier_conflict", Message: err.Error(),
 		}
 	case errors.Is(err, errTaskNotDeployed):
 		failure = workerapi.RuntimeOperationFailure{Code: "task_not_deployed", Message: err.Error()}

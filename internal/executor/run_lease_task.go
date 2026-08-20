@@ -77,7 +77,6 @@ type RunLeaseTask interface {
 	RenewRunLease(context.Context) (RunLeaseTaskRenewal, error)
 	BeginWorkspaceFinalization(context.Context, workerapi.RunLeaseAssignment, workerapi.RunLeaseAssignment, string, workerapi.RunFinalizationKind) error
 	CaptureWorkspace(context.Context) (workerapi.TaskWorkspaceCapture, error)
-	CreateHandoffCheckpoint(context.Context, workerapi.RunFinalizationHandoff, string, workerapi.TaskWorkspaceCapture) (workerapi.CheckpointManifest, error)
 	ResetWorkspace(context.Context) (workerapi.TaskWorkspaceRollback, error)
 }
 
@@ -157,9 +156,7 @@ func (r ProgramRunner) StartRunLeaseTask(
 		return nil, err
 	}
 	var program freshProgram
-	if claim != nil &&
-		(claim.Execution.Restore != nil ||
-			(claim.Execution.Attach != nil && claim.Execution.Attach.Parent != nil)) {
+	if claim != nil && claim.Execution.Restore != nil {
 		program, err = r.startResumedProgram(ctx, claim, controlPlane)
 	} else {
 		program, err = r.startNewProgram(
@@ -187,9 +184,9 @@ func (r ProgramRunner) StartRunLeaseTask(
 			ID:                program.mount.WorkspaceID,
 			WorkspaceMountID:  program.mount.ID,
 			FencingGeneration: program.mount.FencingGeneration,
-			BaseVersionID:     program.mount.BaseVersionID,
+			BaseVersionID:     program.mount.Target.BaseWorkspaceVersionID,
 			MountPath:         program.mount.WorkspaceMountPath,
-			Artifact:          &program.mount.WorkspaceArtifact,
+			Artifact:          program.mount.Target.Artifact,
 		},
 	}
 	if waitClient, ok := controlPlane.(RunWaitClient); ok {
@@ -719,42 +716,6 @@ func (task *guestRunLeaseTask) CaptureWorkspace(
 			EntryCount: int32(result.Artifact.EntryCount),
 		},
 	}, nil
-}
-
-func (task *guestRunLeaseTask) CreateHandoffCheckpoint(
-	ctx context.Context,
-	handoff workerapi.RunFinalizationHandoff,
-	checkpointID string,
-	capture workerapi.TaskWorkspaceCapture,
-) (workerapi.CheckpointManifest, error) {
-	task.mu.Lock()
-	defer task.mu.Unlock()
-	if !task.finished || task.finalizingKind != workerapi.RunFinalizationCapture {
-		return workerapi.CheckpointManifest{}, errors.New("run lease task has not captured its workspace")
-	}
-	checkpointer, ok := task.checkpointer.(HandoffCheckpointer)
-	if !ok {
-		return workerapi.CheckpointManifest{}, errors.New("run lease task does not support handoff checkpoints")
-	}
-	return checkpointer.CreateHandoffCheckpoint(
-		ctx,
-		CheckpointRequest{
-			RunID:          handoff.ParentRunID,
-			AttemptNumber:  handoff.ParentAttemptNumber,
-			RunLeaseID:     task.lease.ID,
-			RunWaitID:      handoff.RunWaitID,
-			CorrelationID:  handoff.CorrelationID,
-			CheckpointID:   checkpointID,
-			ResumeAttachID: handoff.ResumeAttachID,
-		},
-		workerapi.CheckpointWorkspaceBase{
-			ArtifactDigest:    capture.Artifact.Digest,
-			ArtifactSizeBytes: capture.Artifact.SizeBytes,
-			ArtifactMediaType: capture.Artifact.MediaType,
-			ArtifactEncoding:  capture.Artifact.Encoding,
-			MountPath:         task.waitWorkspace.MountPath,
-		},
-	)
 }
 
 func (task *guestRunLeaseTask) ResetWorkspace(

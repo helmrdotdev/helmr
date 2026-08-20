@@ -230,48 +230,6 @@ func (ns NullRunCheckpointArtifactRole) Value() (driver.Value, error) {
 	return string(ns.RunCheckpointArtifactRole), nil
 }
 
-type RunCheckpointKind string
-
-const (
-	RunCheckpointKindSuspend       RunCheckpointKind = "suspend"
-	RunCheckpointKindHandoffResume RunCheckpointKind = "handoff_resume"
-)
-
-func (e *RunCheckpointKind) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = RunCheckpointKind(s)
-	case string:
-		*e = RunCheckpointKind(s)
-	default:
-		return fmt.Errorf("unsupported scan type for RunCheckpointKind: %T", src)
-	}
-	return nil
-}
-
-type NullRunCheckpointKind struct {
-	RunCheckpointKind RunCheckpointKind `json:"run_checkpoint_kind"`
-	Valid             bool              `json:"valid"` // Valid is true if RunCheckpointKind is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullRunCheckpointKind) Scan(value interface{}) error {
-	if value == nil {
-		ns.RunCheckpointKind, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.RunCheckpointKind.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullRunCheckpointKind) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.RunCheckpointKind), nil
-}
-
 type TelemetryStreamKind string
 
 const (
@@ -765,7 +723,6 @@ type RunAttempt struct {
 
 type RunCheckpoint struct {
 	ID                            pgtype.UUID        `json:"id"`
-	Kind                          RunCheckpointKind  `json:"kind"`
 	RunID                         pgtype.UUID        `json:"run_id"`
 	AttemptNumber                 int32              `json:"attempt_number"`
 	RunWaitID                     pgtype.UUID        `json:"run_wait_id"`
@@ -874,17 +831,12 @@ type RunWait struct {
 	CheckpointAckVersion             int64              `json:"checkpoint_ack_version"`
 	CheckpointDueAt                  pgtype.Timestamptz `json:"checkpoint_due_at"`
 	SuspendCheckpointID              pgtype.UUID        `json:"suspend_checkpoint_id"`
-	HandoffResumeCheckpointID        pgtype.UUID        `json:"handoff_resume_checkpoint_id"`
 	ResumeAttachID                   pgtype.UUID        `json:"resume_attach_id"`
 	ResumeRequestVersion             int64              `json:"resume_request_version"`
 	ResumeAckVersion                 int64              `json:"resume_ack_version"`
 	BaseWorkspaceVersionID           pgtype.UUID        `json:"base_workspace_version_id"`
 	BaseWorkspaceContentDigest       pgtype.Text        `json:"base_workspace_content_digest"`
-	ChildResultVersionID             pgtype.UUID        `json:"child_result_version_id"`
 	ResumeWorkspaceVersionID         pgtype.UUID        `json:"resume_workspace_version_id"`
-	HandoffRuntimeInstanceID         pgtype.UUID        `json:"handoff_runtime_instance_id"`
-	HandoffWorkspaceMountID          pgtype.UUID        `json:"handoff_workspace_mount_id"`
-	HandoffMountGeneration           pgtype.Int8        `json:"handoff_mount_generation"`
 	OwnershipGeneration              pgtype.Int8        `json:"ownership_generation"`
 	ParentWriterGeneration           pgtype.Int8        `json:"parent_writer_generation"`
 	ChildWriterGeneration            pgtype.Int8        `json:"child_writer_generation"`

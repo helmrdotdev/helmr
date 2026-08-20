@@ -30,7 +30,8 @@ func TestStartRestoredProgramOrdersGrantStartProofAndRelease(t *testing.T) {
 	unregister := mounts.RegisterWorkspaceMountSession(
 		workerapi.WorkspaceMount{
 			ID: claim.Lease.WorkspaceMountID, WorkspaceID: claim.Lease.WorkspaceID,
-			RuntimeInstanceID: claim.Lease.RuntimeInstanceID, BaseVersionID: claim.Lease.BaseWorkspaceVersionID,
+			RuntimeInstanceID: claim.Lease.RuntimeInstanceID,
+			Target:            workerapi.WorkspaceResetTarget{BaseWorkspaceVersionID: claim.Lease.BaseWorkspaceVersionID},
 			FencingGeneration: claim.Lease.MountFencingGeneration, RestoreCheckpointID: "checkpoint-1",
 		}, parent, "restored-channel",
 	)
@@ -66,7 +67,7 @@ func TestValidateResumedProgramMountSeparatesPhysicalIdentityFromLogicalFence(t 
 	mount := testWorkspaceMount(claim.Lease)
 	mount.FencingGeneration = claim.Lease.MountFencingGeneration - 1
 	mount.RestoreCheckpointID = "checkpoint-1"
-	resume := resumedProgramAdmission{recreated: true, checkpointID: "checkpoint-1"}
+	resume := resumedProgramAdmission{checkpointID: "checkpoint-1"}
 	if err := validateResumedProgramMount(claim.Lease, mount, resume); err != nil {
 		t.Fatalf("advanced logical fence rejected exact physical mount: %v", err)
 	}
@@ -78,7 +79,7 @@ func TestValidateResumedProgramMountSeparatesPhysicalIdentityFromLogicalFence(t 
 		{name: "mount ID", mutate: func(mount *workerapi.WorkspaceMount) { mount.ID = "other-mount" }},
 		{name: "Workspace ID", mutate: func(mount *workerapi.WorkspaceMount) { mount.WorkspaceID = "other-workspace" }},
 		{name: "Runtime Instance", mutate: func(mount *workerapi.WorkspaceMount) { mount.RuntimeInstanceID = "other-runtime" }},
-		{name: "base Workspace version", mutate: func(mount *workerapi.WorkspaceMount) { mount.BaseVersionID = "other-version" }},
+		{name: "base Workspace version", mutate: func(mount *workerapi.WorkspaceMount) { mount.Target.BaseWorkspaceVersionID = "other-version" }},
 		{name: "restore checkpoint", mutate: func(mount *workerapi.WorkspaceMount) { mount.RestoreCheckpointID = "other-checkpoint" }},
 	}
 	for _, test := range tests {
@@ -87,98 +88,6 @@ func TestValidateResumedProgramMountSeparatesPhysicalIdentityFromLogicalFence(t 
 			test.mutate(&mismatched)
 			if err := validateResumedProgramMount(claim.Lease, mismatched, resume); err == nil {
 				t.Fatal("physical identity mismatch was accepted")
-			}
-		})
-	}
-}
-
-func TestRetainedRestoreAndParentAttachResumeOnExistingMount(t *testing.T) {
-	tests := []struct {
-		name      string
-		wantStart string
-		wantActor bool
-		prepare   func(workerapi.RunLeaseClaimResponse) workerapi.RunLeaseClaimResponse
-	}{
-		{
-			name:      "retained restore",
-			wantStart: "restore",
-			prepare: func(claim workerapi.RunLeaseClaimResponse) workerapi.RunLeaseClaimResponse {
-				restore := claim.Execution.Restore
-				restore.Recreated = nil
-				restore.Retained = &workerapi.RunLeaseRetainedRestore{
-					EnclosingRunWaitID: "outer-wait-1",
-				}
-				return claim
-			},
-		},
-		{
-			name:      "parent attach",
-			wantStart: "parent",
-			wantActor: true,
-			prepare: func(claim workerapi.RunLeaseClaimResponse) workerapi.RunLeaseClaimResponse {
-				restore := claim.Execution.Restore
-				claim.Execution = workerapi.RunLeaseExecution{
-					Attach: &workerapi.RunLeaseAttach{
-						Parent: &workerapi.RunLeaseParentAttach{
-							RunWaitID:            restore.RunWaitID,
-							CheckpointID:         restore.CheckpointID,
-							ResumeAttachID:       restore.ResumeAttachID,
-							ResumeRequestVersion: restore.ResumeRequestVersion,
-							CorrelationID:        restore.CorrelationID,
-							EntrypointKind:       "actor",
-							EntrypointDeclaredID: "operator",
-							Decision:             restore.Decision,
-						},
-					},
-				}
-				return claim
-			},
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			claim := test.prepare(testRestoredProgramClaim(t))
-			resumeGuest, resumeHost := net.Pipe()
-			grantGuest, grantHost := net.Pipe()
-			parent := &queuedStreamSession{
-				streams: []vm.Stream{
-					testVMStream(resumeHost),
-					testVMStream(grantHost),
-				},
-			}
-			mount := testWorkspaceMount(claim.Lease)
-			mounts := NewWorkspaceMountSessions()
-			unregister := mounts.RegisterWorkspaceMountSession(
-				mount,
-				parent,
-				"restored-channel",
-			)
-			defer unregister()
-			controlPlane := &restoredProgramControlPlane{
-				lease:     claim.Lease,
-				wantStart: test.wantStart,
-			}
-			guestErr := make(chan error, 2)
-			go func() { guestErr <- serveRestoredGrant(grantGuest) }()
-			go func() { guestErr <- serveRestoredResume(resumeGuest) }()
-			program, err := (ProgramRunner{
-				WorkspaceMounts: mounts,
-			}).startResumedProgram(
-				context.Background(),
-				&claim,
-				controlPlane,
-			)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer program.session.Close(context.Background())
-			if (program.entrypoint.GetActor() != nil) != test.wantActor {
-				t.Fatalf("resumed entrypoint = %+v", program.entrypoint)
-			}
-			for range 2 {
-				if err := <-guestErr; err != nil {
-					t.Fatal(err)
-				}
 			}
 		})
 	}
@@ -250,11 +159,15 @@ func TestValidatePreparedRuntimeRestoreExactTupleAndMembership(t *testing.T) {
 	}
 	target := workerapi.RuntimeReconcileTarget{Source: workerapi.RuntimeSource{
 		VMVCPUCount: 2, CPUConfigDigest: cpuConfigDigest,
-		WorkspaceArtifact: workerapi.WorkspaceArtifact{Digest: "captured-workspace-object", SizeBytes: 75,
-			MediaType: "workspace-media", Encoding: "workspace-encoding"},
+		WorkspaceTarget: workerapi.WorkspaceResetTarget{
+			BaseWorkspaceVersionID: "target-version",
+			Tree:                   workerapi.WorkspaceTreeIdentity{Digest: "sha256:target", SizeBytes: 75, EntryCount: 1},
+			Artifact: &workerapi.WorkspaceArtifact{Digest: "captured-workspace-object", SizeBytes: 75,
+				MediaType: "workspace-media", Encoding: "workspace-encoding"},
+		},
 		Restore: &workerapi.RuntimeRestore{
 			CheckpointID: "checkpoint-1", RunID: "run-1", AttemptNumber: 2, RunWaitID: "wait-1",
-			Kind: "suspend", Manifest: manifest,
+			Manifest: manifest,
 			SourceWorkspaceBase: &workerapi.RuntimeRestoreWorkspaceBase{
 				VersionID: "source-base-version",
 				Base:      checkpoint.WorkspaceState.Base,
@@ -352,8 +265,8 @@ func testRestoredProgramClaim(t *testing.T) workerapi.RunLeaseClaimResponse {
 		RunWaitID: "wait-1", CheckpointID: "checkpoint-1", ResumeAttachID: "attach-1",
 		ResumeRequestVersion: 4, CorrelationID: "correlation-1",
 		EntrypointKind: "task", EntrypointDeclaredID: "deploy",
-		Recreated: &workerapi.RunLeaseRecreatedRestore{Kind: "suspend", Manifest: manifest},
-		Decision:  workerapi.RunLeaseDecision{Completed: &workerapi.RunLeaseCompleted{NoResult: &struct{}{}}},
+		Manifest: manifest,
+		Decision: workerapi.RunLeaseDecision{Completed: &workerapi.RunLeaseCompleted{NoResult: &struct{}{}}},
 	}}
 	return claim
 }
@@ -392,16 +305,7 @@ func (c *restoredProgramControlPlane) ClaimRunLease(context.Context, workerapi.R
 func (c *restoredProgramControlPlane) AcknowledgeRunStart(_ context.Context, request workerapi.RunStartRequest) (workerapi.RunStartResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	validArm := request.Restore != nil &&
-		request.Fresh == nil &&
-		request.Attach == nil
-	if c.wantStart == "parent" {
-		validArm = request.Restore == nil &&
-			request.Fresh == nil &&
-			request.Attach != nil &&
-			request.Attach.Parent != nil &&
-			request.Attach.Child == nil
-	}
+	validArm := request.Restore != nil && request.Fresh == nil
 	if !validArm || request.Lease != c.lease.Fence() {
 		return workerapi.RunStartResponse{}, errors.New("unexpected restore start")
 	}

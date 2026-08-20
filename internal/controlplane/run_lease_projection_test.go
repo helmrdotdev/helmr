@@ -32,65 +32,26 @@ func TestProjectSecretDeliveriesUsesCanonicalPlacementOrder(t *testing.T) {
 	}
 }
 
-func TestProjectRunLeaseExecutionKeepsFreshAndParentAttachClosed(t *testing.T) {
+func TestProjectRunLeaseExecutionProjectsFreshOnly(t *testing.T) {
 	run, attempt, definition := validTaskProgramStart(t, "none")
-	fresh, err := projectRunLeaseExecution(runLeaseExecutionProjection{
+	execution, err := projectRunLeaseExecution(runLeaseExecutionProjection{
 		mode: runLeaseClaimFresh, run: run, attempt: attempt,
 		definition: definition, deploymentVersion: "v42",
 	})
 	if err != nil {
 		t.Fatalf("project fresh execution: %v", err)
 	}
-	if fresh.Fresh == nil || fresh.Restore != nil || fresh.Attach != nil {
-		t.Fatalf("unexpected fresh execution union: %#v", fresh)
-	}
-
-	waitID := pgvalue.UUID(uuid.New())
-	checkpointID := pgvalue.UUID(uuid.New())
-	attachID := pgvalue.UUID(uuid.New())
-	attempt.EntrypointEnteredAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
-	parent, err := projectRunLeaseExecution(runLeaseExecutionProjection{
-		mode:    runLeaseClaimAttachParent,
-		run:     run,
-		attempt: attempt,
-		runWait: db.RunWait{
-			ID: waitID, ConditionState: db.WaitStateCompleted,
-			ConditionTerminalAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
-			ResumeAttachID:      attachID, ResumeRequestVersion: 2,
-		},
-		checkpoint: db.RunCheckpoint{
-			ID: checkpointID, RunID: run.ID, AttemptNumber: attempt.Number,
-			RestoreManifest: testCheckpointManifest(
-				t,
-				checkpointID,
-				run.ID,
-				attempt.Number,
-				waitID,
-			),
-		},
-		childRun: db.Run{ID: pgvalue.UUID(uuid.New())},
-	})
-	if err != nil {
-		t.Fatalf("project parent attach execution: %v", err)
-	}
-	if parent.Fresh != nil ||
-		parent.Restore != nil ||
-		parent.Attach == nil ||
-		parent.Attach.Child != nil ||
-		parent.Attach.Parent == nil ||
-		parent.Attach.Parent.ResumeAttachID != pgvalue.UUIDString(attachID) {
-		t.Fatalf("unexpected parent attach execution union: %#v", parent)
+	if execution.Fresh == nil || execution.Restore != nil {
+		t.Fatalf("unexpected fresh execution union: %#v", execution)
 	}
 }
 
-func TestProjectRunLeaseExecutionSeparatesRecreatedAndRetainedRestore(t *testing.T) {
+func TestProjectRunLeaseExecutionProjectsCheckpointRestoreOnly(t *testing.T) {
 	run, attempt, definition := validTaskProgramStart(t, "none")
 	attempt.EntrypointEnteredAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
 	waitID := pgvalue.UUID(uuid.New())
 	checkpointID := pgvalue.UUID(uuid.New())
 	attachID := pgvalue.UUID(uuid.New())
-	runtimeID := pgvalue.UUID(uuid.New())
-	mountID := pgvalue.UUID(uuid.New())
 	wait := db.RunWait{
 		ID: waitID, ConditionState: db.WaitStateCompleted,
 		ConditionTerminalAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
@@ -98,14 +59,8 @@ func TestProjectRunLeaseExecutionSeparatesRecreatedAndRetainedRestore(t *testing
 	}
 	checkpoint := db.RunCheckpoint{
 		ID: checkpointID, RunID: run.ID, AttemptNumber: attempt.Number,
-		Kind: db.RunCheckpointKindSuspend, State: db.RunCheckpointStateReady,
-		RestoreManifest: testCheckpointManifest(
-			t,
-			checkpointID,
-			run.ID,
-			attempt.Number,
-			waitID,
-		),
+		State:           db.RunCheckpointStateReady,
+		RestoreManifest: testCheckpointManifest(t, checkpointID, run.ID, attempt.Number, waitID),
 	}
 	artifacts := []db.ListRunCheckpointArtifactAuthorityRow{
 		{Role: db.RunCheckpointArtifactRoleRuntimeConfig, Ordinal: 0, Digest: validDigest('a'), SizeBytes: 8, MediaType: "application/example"},
@@ -113,61 +68,19 @@ func TestProjectRunLeaseExecutionSeparatesRecreatedAndRetainedRestore(t *testing
 		{Role: db.RunCheckpointArtifactRoleMemory, Ordinal: 0, Digest: validDigest('c'), SizeBytes: 16, MediaType: "application/example"},
 		{Role: db.RunCheckpointArtifactRoleScratchDisk, Ordinal: 0, Digest: validDigest('d'), SizeBytes: 12, MediaType: "application/example"},
 	}
-	recreated, err := projectRunLeaseExecution(runLeaseExecutionProjection{
-		mode: runLeaseClaimRestore, restoreSource: runLeaseRestoreRecreated,
-		run: run, attempt: attempt, definition: definition,
-		runtime: db.RuntimeInstance{ID: runtimeID, RestoreCheckpointID: checkpointID},
+	execution, err := projectRunLeaseExecution(runLeaseExecutionProjection{
+		mode: runLeaseClaimRestore, run: run, attempt: attempt, definition: definition,
+		runtime: db.RuntimeInstance{RestoreCheckpointID: checkpointID},
 		runWait: wait, checkpoint: checkpoint, checkpointArtifacts: artifacts,
 	})
 	if err != nil {
-		t.Fatalf("project recreated restore: %v", err)
+		t.Fatalf("project restore: %v", err)
 	}
-	if recreated.Restore == nil || recreated.Restore.Recreated == nil ||
-		recreated.Restore.Retained != nil || recreated.Restore.ResumeAttachID != pgvalue.UUIDString(attachID) {
-		t.Fatalf("unexpected recreated restore: %#v", recreated)
-	}
-
-	enclosingWaitID := pgvalue.UUID(uuid.New())
-	retained, err := projectRunLeaseExecution(runLeaseExecutionProjection{
-		mode: runLeaseClaimRestore, restoreSource: runLeaseRestoreRetained,
-		run: run, attempt: attempt, definition: definition,
-		runtime:        db.RuntimeInstance{ID: runtimeID, RestoreCheckpointID: pgvalue.UUID(uuid.New())},
-		workspaceMount: db.WorkspaceMount{ID: mountID, FencingGeneration: 7},
-		enclosingWait: db.RunWait{
-			ID: enclosingWaitID, HandoffRuntimeInstanceID: runtimeID,
-			HandoffWorkspaceMountID: mountID,
-			HandoffMountGeneration:  pgtype.Int8{Int64: 7, Valid: true},
-		},
-		runWait: wait, checkpoint: checkpoint,
-	})
-	if err != nil {
-		t.Fatalf("project retained restore: %v", err)
-	}
-	if retained.Restore == nil || retained.Restore.Retained == nil ||
-		retained.Restore.Recreated != nil ||
-		retained.Restore.Retained.EnclosingRunWaitID != pgvalue.UUIDString(enclosingWaitID) ||
-		retained.Restore.CheckpointID != pgvalue.UUIDString(checkpointID) {
-		t.Fatalf("unexpected retained restore: %#v", retained)
-	}
-	if _, err := projectRunLeaseExecution(runLeaseExecutionProjection{
-		mode: runLeaseClaimRestore, restoreSource: runLeaseRestoreRetained,
-		run: run, attempt: attempt, runtime: db.RuntimeInstance{ID: runtimeID},
-		workspaceMount: db.WorkspaceMount{ID: mountID, FencingGeneration: 7},
-		enclosingWait: db.RunWait{
-			ID: enclosingWaitID, HandoffRuntimeInstanceID: runtimeID,
-			HandoffWorkspaceMountID: mountID,
-			HandoffMountGeneration:  pgtype.Int8{Int64: 7, Valid: true},
-		},
-		runWait: wait, checkpoint: checkpoint, checkpointArtifacts: artifacts,
-	}); err == nil {
-		t.Fatal("retained restore accepted Checkpoint members")
-	}
-	if _, err := projectRunLeaseExecution(runLeaseExecutionProjection{
-		mode: runLeaseClaimRestore, run: run, attempt: attempt,
-		runtime: db.RuntimeInstance{ID: runtimeID, RestoreCheckpointID: checkpointID},
-		runWait: wait, checkpoint: checkpoint,
-	}); err == nil {
-		t.Fatal("restore without a source was accepted")
+	if execution.Restore == nil || execution.Fresh != nil ||
+		execution.Restore.ResumeAttachID != pgvalue.UUIDString(attachID) ||
+		execution.Restore.CheckpointID != pgvalue.UUIDString(checkpointID) ||
+		len(execution.Restore.Artifacts) != 4 {
+		t.Fatalf("unexpected restore execution: %#v", execution)
 	}
 }
 
@@ -255,7 +168,6 @@ func TestProjectRunWaitDecisionDistinguishesAbsentAndJSONNull(t *testing.T) {
 func TestProjectRunLeaseCheckpointRequiresCanonicalArtifactAuthority(t *testing.T) {
 	checkpoint := db.RunCheckpoint{
 		ID:              pgvalue.UUID(uuid.New()),
-		Kind:            db.RunCheckpointKindSuspend,
 		State:           db.RunCheckpointStateReady,
 		RestoreManifest: []byte(`{"version":0}`),
 	}

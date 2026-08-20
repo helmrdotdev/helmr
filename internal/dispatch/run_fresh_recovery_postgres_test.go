@@ -273,9 +273,9 @@ INSERT INTO run_waits (
 		waitID, fixture.environmentID, fixture.runID, fixture.workspaceID, leaseID, resumeAttachID)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 INSERT INTO run_checkpoints (
-    id, kind, run_id, attempt_number, run_wait_id, source_run_lease_id,
+    id, run_id, attempt_number, run_wait_id, source_run_lease_id,
     source_workspace_lease_id, workspace_id, base_workspace_version_id, state
-) VALUES ($1, 'suspend', $2, 1, $3, $4, $5, $6, $7, 'creating')`,
+) VALUES ($1, $2, 1, $3, $4, $5, $6, $7, 'creating')`,
 		checkpointID, fixture.runID, waitID, leaseID, workspaceLeaseID,
 		fixture.workspaceID, baseVersionID)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `

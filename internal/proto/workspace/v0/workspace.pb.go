@@ -1178,17 +1178,17 @@ func (x *WorkspaceFinalizationReceipt) GetFence() *WorkspaceAuthorityFence {
 }
 
 type MaterializeWorkspaceRequest struct {
-	state                protoimpl.MessageState      `protogen:"open.v1"`
-	Envelope             *WorkspaceOperationEnvelope `protobuf:"bytes,1,opt,name=envelope,proto3" json:"envelope,omitempty"`
-	MountPath            string                      `protobuf:"bytes,2,opt,name=mount_path,json=mountPath,proto3" json:"mount_path,omitempty"`
-	BaseVersionId        string                      `protobuf:"bytes,3,opt,name=base_version_id,json=baseVersionId,proto3" json:"base_version_id,omitempty"`
-	BaseArtifact         *WorkspaceArtifact          `protobuf:"bytes,4,opt,name=base_artifact,json=baseArtifact,proto3" json:"base_artifact,omitempty"`
-	WorkspaceImage       *WorkspaceArtifact          `protobuf:"bytes,5,opt,name=workspace_image,json=workspaceImage,proto3" json:"workspace_image,omitempty"`
-	UsePreparedRuntime   bool                        `protobuf:"varint,6,opt,name=use_prepared_runtime,json=usePreparedRuntime,proto3" json:"use_prepared_runtime,omitempty"`
-	RuntimeInstanceId    string                      `protobuf:"bytes,7,opt,name=runtime_instance_id,json=runtimeInstanceId,proto3" json:"runtime_instance_id,omitempty"`
-	RestoredCheckpointId string                      `protobuf:"bytes,8,opt,name=restored_checkpoint_id,json=restoredCheckpointId,proto3" json:"restored_checkpoint_id,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	state                  protoimpl.MessageState      `protogen:"open.v1"`
+	Envelope               *WorkspaceOperationEnvelope `protobuf:"bytes,1,opt,name=envelope,proto3" json:"envelope,omitempty"`
+	MountPath              string                      `protobuf:"bytes,2,opt,name=mount_path,json=mountPath,proto3" json:"mount_path,omitempty"`
+	Target                 *WorkspaceResetTarget       `protobuf:"bytes,3,opt,name=target,proto3" json:"target,omitempty"`
+	WorkspaceImage         *WorkspaceArtifact          `protobuf:"bytes,4,opt,name=workspace_image,json=workspaceImage,proto3" json:"workspace_image,omitempty"`
+	UsePreparedRuntime     bool                        `protobuf:"varint,5,opt,name=use_prepared_runtime,json=usePreparedRuntime,proto3" json:"use_prepared_runtime,omitempty"`
+	RuntimeInstanceId      string                      `protobuf:"bytes,6,opt,name=runtime_instance_id,json=runtimeInstanceId,proto3" json:"runtime_instance_id,omitempty"`
+	RestoredCheckpointId   string                      `protobuf:"bytes,7,opt,name=restored_checkpoint_id,json=restoredCheckpointId,proto3" json:"restored_checkpoint_id,omitempty"`
+	RestoreSourceVersionId string                      `protobuf:"bytes,8,opt,name=restore_source_version_id,json=restoreSourceVersionId,proto3" json:"restore_source_version_id,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *MaterializeWorkspaceRequest) Reset() {
@@ -1235,16 +1235,9 @@ func (x *MaterializeWorkspaceRequest) GetMountPath() string {
 	return ""
 }
 
-func (x *MaterializeWorkspaceRequest) GetBaseVersionId() string {
+func (x *MaterializeWorkspaceRequest) GetTarget() *WorkspaceResetTarget {
 	if x != nil {
-		return x.BaseVersionId
-	}
-	return ""
-}
-
-func (x *MaterializeWorkspaceRequest) GetBaseArtifact() *WorkspaceArtifact {
-	if x != nil {
-		return x.BaseArtifact
+		return x.Target
 	}
 	return nil
 }
@@ -1273,6 +1266,13 @@ func (x *MaterializeWorkspaceRequest) GetRuntimeInstanceId() string {
 func (x *MaterializeWorkspaceRequest) GetRestoredCheckpointId() string {
 	if x != nil {
 		return x.RestoredCheckpointId
+	}
+	return ""
+}
+
+func (x *MaterializeWorkspaceRequest) GetRestoreSourceVersionId() string {
+	if x != nil {
+		return x.RestoreSourceVersionId
 	}
 	return ""
 }
@@ -1358,6 +1358,7 @@ type MaterializeWorkspaceResponse struct {
 	State                  string                 `protobuf:"bytes,1,opt,name=state,proto3" json:"state,omitempty"`
 	GuestdChannelTokenHash string                 `protobuf:"bytes,2,opt,name=guestd_channel_token_hash,json=guestdChannelTokenHash,proto3" json:"guestd_channel_token_hash,omitempty"`
 	Phases                 []*WorkspaceMountPhase `protobuf:"bytes,3,rep,name=phases,proto3" json:"phases,omitempty"`
+	Target                 *WorkspaceResetTarget  `protobuf:"bytes,4,opt,name=target,proto3" json:"target,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
 }
@@ -1409,6 +1410,13 @@ func (x *MaterializeWorkspaceResponse) GetGuestdChannelTokenHash() string {
 func (x *MaterializeWorkspaceResponse) GetPhases() []*WorkspaceMountPhase {
 	if x != nil {
 		return x.Phases
+	}
+	return nil
+}
+
+func (x *MaterializeWorkspaceResponse) GetTarget() *WorkspaceResetTarget {
+	if x != nil {
+		return x.Target
 	}
 	return nil
 }
@@ -2439,17 +2447,17 @@ const file_workspace_proto_rawDesc = "" +
 	"\x1cWorkspaceFinalizationReceipt\x12!\n" +
 	"\foperation_id\x18\x01 \x01(\tR\voperationId\x12/\n" +
 	"\x13request_fingerprint\x18\x02 \x01(\tR\x12requestFingerprint\x12A\n" +
-	"\x05fence\x18\x03 \x01(\v2+.helmr.workspace.v0.WorkspaceAuthorityFenceR\x05fence\"\xe4\x03\n" +
+	"\x05fence\x18\x03 \x01(\v2+.helmr.workspace.v0.WorkspaceAuthorityFenceR\x05fence\"\xed\x03\n" +
 	"\x1bMaterializeWorkspaceRequest\x12J\n" +
 	"\benvelope\x18\x01 \x01(\v2..helmr.workspace.v0.WorkspaceOperationEnvelopeR\benvelope\x12\x1d\n" +
 	"\n" +
-	"mount_path\x18\x02 \x01(\tR\tmountPath\x12&\n" +
-	"\x0fbase_version_id\x18\x03 \x01(\tR\rbaseVersionId\x12J\n" +
-	"\rbase_artifact\x18\x04 \x01(\v2%.helmr.workspace.v0.WorkspaceArtifactR\fbaseArtifact\x12N\n" +
-	"\x0fworkspace_image\x18\x05 \x01(\v2%.helmr.workspace.v0.WorkspaceArtifactR\x0eworkspaceImage\x120\n" +
-	"\x14use_prepared_runtime\x18\x06 \x01(\bR\x12usePreparedRuntime\x12.\n" +
-	"\x13runtime_instance_id\x18\a \x01(\tR\x11runtimeInstanceId\x124\n" +
-	"\x16restored_checkpoint_id\x18\b \x01(\tR\x14restoredCheckpointId\"\xa0\x01\n" +
+	"mount_path\x18\x02 \x01(\tR\tmountPath\x12@\n" +
+	"\x06target\x18\x03 \x01(\v2(.helmr.workspace.v0.WorkspaceResetTargetR\x06target\x12N\n" +
+	"\x0fworkspace_image\x18\x04 \x01(\v2%.helmr.workspace.v0.WorkspaceArtifactR\x0eworkspaceImage\x120\n" +
+	"\x14use_prepared_runtime\x18\x05 \x01(\bR\x12usePreparedRuntime\x12.\n" +
+	"\x13runtime_instance_id\x18\x06 \x01(\tR\x11runtimeInstanceId\x124\n" +
+	"\x16restored_checkpoint_id\x18\a \x01(\tR\x14restoredCheckpointId\x129\n" +
+	"\x19restore_source_version_id\x18\b \x01(\tR\x16restoreSourceVersionId\"\xa0\x01\n" +
 	"\x13WorkspaceMountPhase\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1f\n" +
 	"\vduration_ms\x18\x02 \x01(\x04R\n" +
@@ -2458,11 +2466,12 @@ const file_workspace_proto_rawDesc = "" +
 	"size_bytes\x18\x03 \x01(\x04R\tsizeBytes\x12\x1f\n" +
 	"\ventry_count\x18\x04 \x01(\rR\n" +
 	"entryCount\x12\x14\n" +
-	"\x05error\x18\x05 \x01(\tR\x05error\"\xb0\x01\n" +
+	"\x05error\x18\x05 \x01(\tR\x05error\"\xf2\x01\n" +
 	"\x1cMaterializeWorkspaceResponse\x12\x14\n" +
 	"\x05state\x18\x01 \x01(\tR\x05state\x129\n" +
 	"\x19guestd_channel_token_hash\x18\x02 \x01(\tR\x16guestdChannelTokenHash\x12?\n" +
-	"\x06phases\x18\x03 \x03(\v2'.helmr.workspace.v0.WorkspaceMountPhaseR\x06phases\"\xbf\x01\n" +
+	"\x06phases\x18\x03 \x03(\v2'.helmr.workspace.v0.WorkspaceMountPhaseR\x06phases\x12@\n" +
+	"\x06target\x18\x04 \x01(\v2(.helmr.workspace.v0.WorkspaceResetTargetR\x06target\"\xbf\x01\n" +
 	"\x1ePrepareWorkspaceRuntimeRequest\x12.\n" +
 	"\x13runtime_instance_id\x18\x01 \x01(\tR\x11runtimeInstanceId\x12\x1d\n" +
 	"\n" +
@@ -2586,32 +2595,33 @@ var file_workspace_proto_depIdxs = []int32{
 	3,  // 7: helmr.workspace.v0.WorkspaceFinalizationEnvelope.authority:type_name -> helmr.workspace.v0.WorkspaceRunAuthority
 	2,  // 8: helmr.workspace.v0.WorkspaceFinalizationReceipt.fence:type_name -> helmr.workspace.v0.WorkspaceAuthorityFence
 	0,  // 9: helmr.workspace.v0.MaterializeWorkspaceRequest.envelope:type_name -> helmr.workspace.v0.WorkspaceOperationEnvelope
-	1,  // 10: helmr.workspace.v0.MaterializeWorkspaceRequest.base_artifact:type_name -> helmr.workspace.v0.WorkspaceArtifact
+	25, // 10: helmr.workspace.v0.MaterializeWorkspaceRequest.target:type_name -> helmr.workspace.v0.WorkspaceResetTarget
 	1,  // 11: helmr.workspace.v0.MaterializeWorkspaceRequest.workspace_image:type_name -> helmr.workspace.v0.WorkspaceArtifact
 	16, // 12: helmr.workspace.v0.MaterializeWorkspaceResponse.phases:type_name -> helmr.workspace.v0.WorkspaceMountPhase
-	1,  // 13: helmr.workspace.v0.PrepareWorkspaceRuntimeRequest.workspace_image:type_name -> helmr.workspace.v0.WorkspaceArtifact
-	16, // 14: helmr.workspace.v0.PrepareWorkspaceRuntimeResponse.phases:type_name -> helmr.workspace.v0.WorkspaceMountPhase
-	0,  // 15: helmr.workspace.v0.HeartbeatWorkspaceRequest.envelope:type_name -> helmr.workspace.v0.WorkspaceOperationEnvelope
-	13, // 16: helmr.workspace.v0.CaptureWorkspaceRequest.envelope:type_name -> helmr.workspace.v0.WorkspaceFinalizationEnvelope
-	14, // 17: helmr.workspace.v0.CaptureWorkspaceResponse.receipt:type_name -> helmr.workspace.v0.WorkspaceFinalizationReceipt
-	12, // 18: helmr.workspace.v0.CaptureWorkspaceResponse.tree:type_name -> helmr.workspace.v0.WorkspaceTreeIdentity
-	1,  // 19: helmr.workspace.v0.CaptureWorkspaceResponse.artifact:type_name -> helmr.workspace.v0.WorkspaceArtifact
-	12, // 20: helmr.workspace.v0.WorkspaceResetTarget.tree:type_name -> helmr.workspace.v0.WorkspaceTreeIdentity
-	24, // 21: helmr.workspace.v0.WorkspaceResetTarget.empty:type_name -> helmr.workspace.v0.EmptyWorkspaceResetTarget
-	1,  // 22: helmr.workspace.v0.WorkspaceResetTarget.artifact:type_name -> helmr.workspace.v0.WorkspaceArtifact
-	13, // 23: helmr.workspace.v0.ResetWorkspaceRequest.envelope:type_name -> helmr.workspace.v0.WorkspaceFinalizationEnvelope
-	25, // 24: helmr.workspace.v0.ResetWorkspaceRequest.target:type_name -> helmr.workspace.v0.WorkspaceResetTarget
-	14, // 25: helmr.workspace.v0.ResetWorkspaceResponse.receipt:type_name -> helmr.workspace.v0.WorkspaceFinalizationReceipt
-	25, // 26: helmr.workspace.v0.ResetWorkspaceResponse.target:type_name -> helmr.workspace.v0.WorkspaceResetTarget
-	0,  // 27: helmr.workspace.v0.StopWorkspaceRequest.envelope:type_name -> helmr.workspace.v0.WorkspaceOperationEnvelope
-	1,  // 28: helmr.workspace.v0.StopWorkspaceResponse.captured_artifact:type_name -> helmr.workspace.v0.WorkspaceArtifact
-	0,  // 29: helmr.workspace.v0.WorkspaceBasicExecRequest.envelope:type_name -> helmr.workspace.v0.WorkspaceOperationEnvelope
-	32, // 30: helmr.workspace.v0.WorkspaceBasicExecRequest.secrets:type_name -> helmr.workspace.v0.WorkspaceSecretDelivery
-	31, // [31:31] is the sub-list for method output_type
-	31, // [31:31] is the sub-list for method input_type
-	31, // [31:31] is the sub-list for extension type_name
-	31, // [31:31] is the sub-list for extension extendee
-	0,  // [0:31] is the sub-list for field type_name
+	25, // 13: helmr.workspace.v0.MaterializeWorkspaceResponse.target:type_name -> helmr.workspace.v0.WorkspaceResetTarget
+	1,  // 14: helmr.workspace.v0.PrepareWorkspaceRuntimeRequest.workspace_image:type_name -> helmr.workspace.v0.WorkspaceArtifact
+	16, // 15: helmr.workspace.v0.PrepareWorkspaceRuntimeResponse.phases:type_name -> helmr.workspace.v0.WorkspaceMountPhase
+	0,  // 16: helmr.workspace.v0.HeartbeatWorkspaceRequest.envelope:type_name -> helmr.workspace.v0.WorkspaceOperationEnvelope
+	13, // 17: helmr.workspace.v0.CaptureWorkspaceRequest.envelope:type_name -> helmr.workspace.v0.WorkspaceFinalizationEnvelope
+	14, // 18: helmr.workspace.v0.CaptureWorkspaceResponse.receipt:type_name -> helmr.workspace.v0.WorkspaceFinalizationReceipt
+	12, // 19: helmr.workspace.v0.CaptureWorkspaceResponse.tree:type_name -> helmr.workspace.v0.WorkspaceTreeIdentity
+	1,  // 20: helmr.workspace.v0.CaptureWorkspaceResponse.artifact:type_name -> helmr.workspace.v0.WorkspaceArtifact
+	12, // 21: helmr.workspace.v0.WorkspaceResetTarget.tree:type_name -> helmr.workspace.v0.WorkspaceTreeIdentity
+	24, // 22: helmr.workspace.v0.WorkspaceResetTarget.empty:type_name -> helmr.workspace.v0.EmptyWorkspaceResetTarget
+	1,  // 23: helmr.workspace.v0.WorkspaceResetTarget.artifact:type_name -> helmr.workspace.v0.WorkspaceArtifact
+	13, // 24: helmr.workspace.v0.ResetWorkspaceRequest.envelope:type_name -> helmr.workspace.v0.WorkspaceFinalizationEnvelope
+	25, // 25: helmr.workspace.v0.ResetWorkspaceRequest.target:type_name -> helmr.workspace.v0.WorkspaceResetTarget
+	14, // 26: helmr.workspace.v0.ResetWorkspaceResponse.receipt:type_name -> helmr.workspace.v0.WorkspaceFinalizationReceipt
+	25, // 27: helmr.workspace.v0.ResetWorkspaceResponse.target:type_name -> helmr.workspace.v0.WorkspaceResetTarget
+	0,  // 28: helmr.workspace.v0.StopWorkspaceRequest.envelope:type_name -> helmr.workspace.v0.WorkspaceOperationEnvelope
+	1,  // 29: helmr.workspace.v0.StopWorkspaceResponse.captured_artifact:type_name -> helmr.workspace.v0.WorkspaceArtifact
+	0,  // 30: helmr.workspace.v0.WorkspaceBasicExecRequest.envelope:type_name -> helmr.workspace.v0.WorkspaceOperationEnvelope
+	32, // 31: helmr.workspace.v0.WorkspaceBasicExecRequest.secrets:type_name -> helmr.workspace.v0.WorkspaceSecretDelivery
+	32, // [32:32] is the sub-list for method output_type
+	32, // [32:32] is the sub-list for method input_type
+	32, // [32:32] is the sub-list for extension type_name
+	32, // [32:32] is the sub-list for extension extendee
+	0,  // [0:32] is the sub-list for field type_name
 }
 
 func init() { file_workspace_proto_init() }

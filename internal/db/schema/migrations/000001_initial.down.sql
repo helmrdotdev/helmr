@@ -62,7 +62,6 @@ ALTER TABLE secrets DROP CONSTRAINT IF EXISTS secrets_current_version_fk;
 DROP TABLE IF EXISTS secret_versions;
 DROP TABLE IF EXISTS secrets;
 DROP TYPE IF EXISTS telemetry_stream_kind;
-DROP TYPE IF EXISTS run_checkpoint_kind;
 DROP TYPE IF EXISTS wait_kind;
 DROP TYPE IF EXISTS workspace_version_kind;
 DROP TYPE IF EXISTS artifact_kind;

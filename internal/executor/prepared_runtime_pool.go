@@ -694,7 +694,7 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 		session, materializeErr = connector.Materialize(ctx, vm.MaterializeRequest{
 			ID: runtimeInstanceID, OwnerKind: vm.OwnerRuntime, RootfsDigest: mount.RootfsDigest,
 			Binding:            runtimeTargetWorkloadBinding(target),
-			WorkspaceMountPath: mount.WorkspaceMountPath, BaseVersionID: mount.BaseVersionID,
+			WorkspaceMountPath: mount.WorkspaceMountPath, BaseVersionID: mount.Target.BaseWorkspaceVersionID,
 			Resources: compute.ResourceVector{MilliCPU: mount.RequestedMilliCPU, MemoryMiB: mount.RequestedMemoryMiB,
 				DiskMiB: mount.RequestedDiskMiB, Slots: mount.RequestedExecutionSlots},
 			VMVCPUCount: target.Source.VMVCPUCount, CPUConfigDigest: target.Source.CPUConfigDigest,
@@ -816,23 +816,24 @@ func (p *PreparedRuntimePool) verifyReservedWorkspaceVersion(
 	tempDir string,
 	mount workerapi.WorkspaceMount,
 ) error {
-	if strings.TrimSpace(mount.BaseVersionID) == "" {
+	if strings.TrimSpace(mount.Target.BaseWorkspaceVersionID) == "" {
 		return errors.New("runtime reservation base workspace version is required")
 	}
-	if err := validateWorkspaceArtifactShape(mount.WorkspaceArtifact); err != nil {
-		return fmt.Errorf("runtime reservation workspace artifact: %w", err)
+	if _, err := workspaceTargetFromWorker(mount.Target); err != nil {
+		return fmt.Errorf("runtime reservation workspace target: %w", err)
 	}
-	if workspaceArtifactIsEmpty(mount.WorkspaceArtifact) {
+	if mount.Target.Empty != nil {
 		return nil
 	}
+	artifact := mount.Target.Artifact
 	_, cleanup, err := materializer.restoreCASObject(
 		ctx,
 		tempDir,
 		"workspace-version",
 		workerapi.CASObject{
-			Digest:    mount.WorkspaceArtifact.Digest,
-			SizeBytes: mount.WorkspaceArtifact.SizeBytes,
-			MediaType: mount.WorkspaceArtifact.MediaType,
+			Digest: artifact.Digest,
+			SizeBytes: artifact.SizeBytes,
+			MediaType: artifact.MediaType,
 		},
 	)
 	cleanup()
@@ -1206,10 +1207,9 @@ func preparedRuntimeWorkspaceMountFromSource(source workerapi.RuntimeSource) wor
 		ID:                      uuid.Must(uuid.NewV7()).String(),
 		WorkspaceID:             strings.TrimSpace(source.WorkspaceID),
 		DeploymentDefinitionID:  strings.TrimSpace(source.DeploymentDefinitionID),
-		BaseVersionID:           strings.TrimSpace(source.BaseVersionID),
+		Target:                  source.WorkspaceTarget,
 		RuntimeIdentityID:       strings.TrimSpace(source.RuntimeIdentityID),
 		WorkspaceImage:          source.WorkspaceImage,
-		WorkspaceArtifact:       source.WorkspaceArtifact,
 		RootfsDigest:            strings.TrimSpace(source.RootfsDigest),
 		WorkspaceMountPath:      "/workspace",
 		RequestedMilliCPU:       int64(source.ReservedCPUMillis),

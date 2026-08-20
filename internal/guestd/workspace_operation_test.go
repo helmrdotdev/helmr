@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
@@ -17,189 +16,128 @@ import (
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workspace"
-	"google.golang.org/protobuf/proto"
 )
 
-func TestManagedProgramChildAdmissionPreservesParentClaim(t *testing.T) {
-	entry, registry, parent := testWorkspaceFinalizationMountUnadmitted(t)
-	releaseParent, err := registry.admitProgram(entry, parent, time.Now())
+func testWorkspaceArtifactTarget(
+	t *testing.T,
+	versionID string,
+	artifact workspace.WorkspaceArtifact,
+) *workspacev0.WorkspaceResetTarget {
+	t.Helper()
+	file, err := os.Open(artifact.Path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer releaseParent()
-	if err := registry.authorizeChildProgram(
-		entry,
-		parent.GetFence().GetRunId(),
-		parent.GetFence().GetAttemptNumber(),
-	); err != nil {
-		t.Fatal(err)
+	tree, inspectErr := workspace.InspectArtifact(file, artifact)
+	closeErr := file.Close()
+	if inspectErr != nil {
+		t.Fatal(inspectErr)
 	}
-	child := proto.Clone(parent).(*workspacev0.WorkspaceRunAuthority)
-	child.GetFence().RunId = "run-child"
-	child.GetFence().RunLeaseId = "run-lease-child"
-	child.GetFence().WorkspaceLeaseId = "workspace-lease-child"
-	child.GetFence().WriterGeneration++
-	child.GetFence().MountFencingGeneration++
-	child.GetFence().BaseWorkspaceVersionId = "captured-private-version"
-	child.WriteCapability = "child-write-capability"
-	releaseChild, err := registry.admitProgram(entry, child, time.Now())
-	if err != nil {
-		t.Fatal(err)
+	if closeErr != nil {
+		t.Fatal(closeErr)
 	}
-	registry.mu.Lock()
-	if len(registry.programClaims) != 2 ||
-		!workspaceRunAuthoritiesEqual(registry.programClaims[0].authority, parent) ||
-		!workspaceRunAuthoritiesEqual(registry.programClaims[1].authority, child) {
-		t.Fatalf("Program claims = %+v", registry.programClaims)
-	}
-	registry.mu.Unlock()
-	entry.authorityMu.Lock()
-	current := proto.Clone(entry.authority).(*workspacev0.WorkspaceRunAuthority)
-	entry.authorityMu.Unlock()
-	if !workspaceRunAuthoritiesEqual(current, child) ||
-		entry.baseVersionID != "captured-private-version" {
-		t.Fatal("child admission did not advance current Workspace authority")
-	}
-	waited := make(chan error, 1)
-	go func() {
-		waited <- registry.waitForProgramRelease(context.Background(), entry, child)
-	}()
-	select {
-	case err := <-waited:
-		t.Fatalf("child finalization did not wait for child release: %v", err)
-	case <-time.After(20 * time.Millisecond):
-	}
-	releaseChild()
-	select {
-	case err := <-waited:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("child finalization remained blocked by frozen parent")
-	}
-	registry.mu.Lock()
-	defer registry.mu.Unlock()
-	if len(registry.programClaims) != 1 ||
-		!workspaceRunAuthoritiesEqual(registry.programClaims[0].authority, parent) {
-		t.Fatal("child release discarded the frozen parent claim")
+	return &workspacev0.WorkspaceResetTarget{
+		BaseVersionId: versionID,
+		Tree: &workspacev0.WorkspaceTreeIdentity{
+			Digest: tree.Digest, SizeBytes: tree.SizeBytes, EntryCount: uint32(tree.EntryCount),
+		},
+		Source: &workspacev0.WorkspaceResetTarget_Artifact{Artifact: &workspacev0.WorkspaceArtifact{
+			Digest: artifact.Digest, MediaType: artifact.MediaType, Encoding: artifact.Encoding,
+			SizeBytes: uint64(artifact.SizeBytes), EntryCount: uint32(artifact.EntryCount),
+		}},
 	}
 }
 
-func TestManagedProgramChildAdmissionRejectsUnverifiedOrDifferentRuntime(t *testing.T) {
-	entry, registry, parent := testWorkspaceFinalizationMountUnadmitted(t)
-	releaseParent, err := registry.admitProgram(entry, parent, time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer releaseParent()
-	child := proto.Clone(parent).(*workspacev0.WorkspaceRunAuthority)
-	child.GetFence().RunId = "run-child"
-	child.GetFence().RunLeaseId = "run-lease-child"
-	child.GetFence().WorkspaceLeaseId = "workspace-lease-child"
-	child.GetFence().WriterGeneration++
-	child.GetFence().MountFencingGeneration++
-	child.GetFence().BaseWorkspaceVersionId = "captured-private-version"
-	if _, err := registry.admitProgram(entry, child, time.Now()); err == nil {
-		t.Fatal("unverified child Program was admitted")
-	}
-	if err := registry.authorizeChildProgram(
-		entry,
-		parent.GetFence().GetRunId(),
-		parent.GetFence().GetAttemptNumber(),
-	); err != nil {
-		t.Fatal(err)
-	}
-	child.GetFence().RuntimeInstanceId = "different-runtime"
-	if _, err := registry.admitProgram(entry, child, time.Now()); err == nil {
-		t.Fatal("child Program on a different runtime was admitted")
-	}
-	if entry.baseVersionID != parent.GetFence().GetBaseWorkspaceVersionId() ||
-		entry.currentFencingGeneration() != uint64(parent.GetFence().GetMountFencingGeneration()) {
-		t.Fatal("failed child admission mutated mounted Workspace authority")
+func testEmptyWorkspaceTarget(versionID string) *workspacev0.WorkspaceResetTarget {
+	return &workspacev0.WorkspaceResetTarget{
+		BaseVersionId: versionID,
+		Tree:          &workspacev0.WorkspaceTreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest},
+		Source:        &workspacev0.WorkspaceResetTarget_Empty{Empty: &workspacev0.EmptyWorkspaceResetTarget{}},
 	}
 }
 
-func TestManagedProgramChildAdmissionRequiresCapturedBaseAdvance(t *testing.T) {
-	entry, registry, parent := testWorkspaceFinalizationMountUnadmitted(t)
-	releaseParent, err := registry.admitProgram(entry, parent, time.Now())
+func TestRestoredWorkspaceMaterializesExactTargetBeforeRebindingAuthority(t *testing.T) {
+	tempRoot := t.TempDir()
+	liveRoot := filepath.Join(tempRoot, "live")
+	targetRoot := filepath.Join(tempRoot, "target")
+	if err := os.MkdirAll(liveRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(liveRoot, "from-b.txt"), []byte("B"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(targetRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(targetRoot, "from-c.txt"), []byte("C"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	artifact, cleanup, err := workspace.CreateWorkspaceArtifactFromRoot(targetRoot, tempRoot, tempRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer releaseParent()
-	if err := registry.authorizeChildProgram(
-		entry,
-		parent.GetFence().GetRunId(),
-		parent.GetFence().GetAttemptNumber(),
-	); err != nil {
-		t.Fatal(err)
+	defer cleanup()
+	request := &workspacev0.MaterializeWorkspaceRequest{
+		Envelope: &workspacev0.WorkspaceOperationEnvelope{
+			WorkspaceMountId: "mount-c", WorkspaceId: "workspace-1",
+			ChannelToken: "channel-c", FencingGeneration: 2,
+		},
+		MountPath: "/workspace", Target: testWorkspaceArtifactTarget(t, "version-c", artifact),
+		UsePreparedRuntime: true, RuntimeInstanceId: "runtime-c",
+		RestoredCheckpointId: "checkpoint-b", RestoreSourceVersionId: "version-a",
 	}
-	child := proto.Clone(parent).(*workspacev0.WorkspaceRunAuthority)
-	child.GetFence().RunId = "run-child"
-	child.GetFence().RunLeaseId = "run-lease-child"
-	child.GetFence().WorkspaceLeaseId = "workspace-lease-child"
-	child.GetFence().WriterGeneration++
-	child.GetFence().MountFencingGeneration++
-	child.WriteCapability = "child-write-capability"
-	if _, err := registry.admitProgram(entry, child, time.Now()); err == nil {
-		t.Fatal("child Program without a captured base advance was admitted")
-	}
-	if entry.baseVersionID != parent.GetFence().GetBaseWorkspaceVersionId() ||
-		entry.currentFencingGeneration() != uint64(parent.GetFence().GetMountFencingGeneration()) {
-		t.Fatal("rejected child mutated mounted Workspace authority")
-	}
-}
-
-func TestRestoredWorkspaceRebindPreservesFrozenProgramAndReplacesMountAuthority(t *testing.T) {
-	registry := newWorkspaceOperationRegistry()
 	entry := &workspaceMountEntry{
-		workspaceID: "workspace-1", workspaceMountID: "old-mount", channelToken: "old-channel",
-		runtimeInstanceID: "old-runtime", workspaceMount: "/workspace", baseVersionID: "old-version",
-		authority:      &workspacev0.WorkspaceRunAuthority{Fence: &workspacev0.WorkspaceAuthorityFence{RunLeaseId: "old-lease"}},
+		workspaceID: "workspace-1", workspaceMountID: "mount-b", channelToken: "channel-b",
+		runtimeInstanceID: "runtime-b", workspaceMount: "/workspace", workspaceRoot: liveRoot,
+		baseVersionID: "version-a", finalizationRoot: filepath.Join(tempRoot, "state"),
 		authorityState: workspaceAuthorityLive,
 	}
-	entry.setFencingGeneration(3)
-	registry.entries["old-mount"] = entry
+	entry.setFencingGeneration(1)
+	registry := newWorkspaceOperationRegistry()
+	registry.entries["mount-b"] = entry
 	registry.programClaims = []*managedProgramClaim{{
 		entry: entry,
 		authority: &workspacev0.WorkspaceRunAuthority{Fence: &workspacev0.WorkspaceAuthorityFence{
-			RunId: "run-1", AttemptNumber: 1, RunLeaseId: "old-lease",
+			RunId: "run-1", AttemptNumber: 1, RunLeaseId: "lease-b",
 		}},
 		released: make(chan struct{}),
 	}}
 	waits := newWaitingRunRegistry()
 	if _, err := waits.registerProgram(&runv0.CheckpointPauseRequest{
 		RunId: "run-1", AttemptNumber: 1, RunWaitId: "wait-1", CorrelationId: "correlation-1",
-		CheckpointId: "checkpoint-1", ResumeAttachId: "attach-1", CheckpointRequestVersion: 2,
+		CheckpointId: "checkpoint-b", ResumeAttachId: "resume-b", CheckpointRequestVersion: 1,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	request := &workspacev0.MaterializeWorkspaceRequest{
-		Envelope: &workspacev0.WorkspaceOperationEnvelope{
-			WorkspaceMountId: "new-mount", WorkspaceId: "workspace-1",
-			ChannelToken: "new-channel", FencingGeneration: 4,
-		},
-		MountPath: "/workspace", BaseVersionId: "private-version", UsePreparedRuntime: true,
-		RuntimeInstanceId: "new-runtime", RestoredCheckpointId: "checkpoint-1",
+	artifactFrame := func() *bytes.Buffer {
+		var stream bytes.Buffer
+		if err := wire.WriteFileFrame(&stream, wire.StreamHeader{
+			Type: wire.StreamTypeWorkspaceArtifact, WorkspaceID: "workspace-1",
+		}, artifact.Path); err != nil {
+			t.Fatal(err)
+		}
+		return &stream
 	}
-	phases, err := registry.rebindRestoredWorkspaceMount(request, waits)
+	phases, err := registry.materializeRestoredWorkspaceMount(artifactFrame(), request, waits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(phases) != 1 || registry.entries["old-mount"] != nil || registry.entries["new-mount"] != entry ||
-		len(registry.programClaims) != 1 || registry.programClaims[0].entry != entry || entry.authority != nil ||
-		entry.workspaceMountID != "new-mount" || entry.channelToken != "new-channel" ||
-		entry.runtimeInstanceID != "new-runtime" || entry.baseVersionID != "private-version" ||
-		entry.currentFencingGeneration() != 4 {
-		t.Fatalf("restored rebind state = entry=%+v phases=%+v", entry, phases)
+	if len(phases) != 1 || phases[0].GetName() != "guest_restore_materialize" {
+		t.Fatalf("phases = %+v", phases)
 	}
-	if replay, err := registry.rebindRestoredWorkspaceMount(request, waits); err != nil ||
-		len(replay) != 1 || replay[0].GetName() != "guest_restore_rebind_replay" {
-		t.Fatalf("restored rebind replay = %+v, %v", replay, err)
+	if _, err := os.Stat(filepath.Join(liveRoot, "from-b.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("B-only path remains: %v", err)
 	}
-	request.RestoredCheckpointId = "different-checkpoint"
-	if _, err := registry.rebindRestoredWorkspaceMount(request, waits); err == nil {
-		t.Fatal("mismatched restored Checkpoint was accepted")
+	if content, err := os.ReadFile(filepath.Join(liveRoot, "from-c.txt")); err != nil || string(content) != "C" {
+		t.Fatalf("C path = %q, %v", content, err)
+	}
+	if registry.entries["mount-b"] != nil || registry.entries["mount-c"] != entry ||
+		entry.baseVersionID != "version-c" || entry.currentFencingGeneration() != 2 {
+		t.Fatalf("rebinding state = %+v", entry)
+	}
+	if replay, err := registry.materializeRestoredWorkspaceMount(artifactFrame(), request, waits); err != nil ||
+		len(replay) != 1 || replay[0].GetName() != "guest_restore_materialize_replay" {
+		t.Fatalf("replay = %+v, %v", replay, err)
 	}
 }
 
@@ -239,15 +177,8 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesPrimitiveOperation(t *
 			ChannelToken:      "channel-token",
 			FencingGeneration: 1,
 		},
-		MountPath:     mountPath,
-		BaseVersionId: "version-1",
-		BaseArtifact: &workspacev0.WorkspaceArtifact{
-			Digest:     artifact.Digest,
-			MediaType:  artifact.MediaType,
-			Encoding:   artifact.Encoding,
-			SizeBytes:  uint64(artifact.SizeBytes),
-			EntryCount: uint32(artifact.EntryCount),
-		},
+		MountPath: mountPath,
+		Target:    testWorkspaceArtifactTarget(t, "version-1", artifact),
 		WorkspaceImage: &workspacev0.WorkspaceArtifact{
 			Digest:    imageDigest,
 			MediaType: workspaceImageMediaType,
@@ -394,16 +325,9 @@ func TestWorkspaceImageContractIsExact(t *testing.T) {
 			_, _, err = restoreWorkspaceMount(bytes.NewReader(nil), &workspacev0.MaterializeWorkspaceRequest{
 				Envelope:          &workspacev0.WorkspaceOperationEnvelope{},
 				MountPath:         "/workspace",
-				BaseVersionId:     "version-1",
+				Target:            testEmptyWorkspaceTarget("version-1"),
 				RuntimeInstanceId: "runtime-instance-1",
-				BaseArtifact: &workspacev0.WorkspaceArtifact{
-					Digest:     "sha256:base",
-					MediaType:  workspace.ArtifactMediaType,
-					Encoding:   workspace.ArtifactEncoding,
-					SizeBytes:  1,
-					EntryCount: 0,
-				},
-				WorkspaceImage: workspaceImage,
+				WorkspaceImage:    workspaceImage,
 			}, slogDiscard(), newWorkspaceOperationRegistry())
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("materialize error = %v, want %s rejection", err, tt.want)
@@ -444,8 +368,8 @@ func TestWorkspaceMaterializeWithoutBaseArtifactInitializesEmptyRoot(t *testing.
 			ChannelToken:      "channel-token",
 			FencingGeneration: 1,
 		},
-		MountPath:     "/workspace",
-		BaseVersionId: "version-zero",
+		MountPath: "/workspace",
+		Target:    testEmptyWorkspaceTarget("version-zero"),
 		WorkspaceImage: &workspacev0.WorkspaceArtifact{
 			Digest:    sha256sum.DigestBytes(image),
 			MediaType: workspaceImageMediaType,
@@ -507,7 +431,7 @@ func TestWorkspaceMaterializeReturnsFailureResponse(t *testing.T) {
 			FencingGeneration: 1,
 		},
 		MountPath:         "relative",
-		BaseVersionId:     "version-1",
+		Target:            testEmptyWorkspaceTarget("version-1"),
 		RuntimeInstanceId: "runtime-instance-1",
 	}); err != nil {
 		t.Fatal(err)

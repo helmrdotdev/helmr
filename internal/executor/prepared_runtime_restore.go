@@ -106,9 +106,9 @@ func validatePreparedRuntimeRestore(
 	workerArchitecture deployment.RuntimeArchitecture,
 ) (workerapi.CheckpointManifest, error) {
 	restore := target.Source.Restore
-	if restore == nil || restore.Kind != "suspend" || strings.TrimSpace(restore.CheckpointID) == "" ||
+	if restore == nil || strings.TrimSpace(restore.CheckpointID) == "" ||
 		strings.TrimSpace(restore.RunID) == "" || restore.AttemptNumber <= 0 ||
-		strings.TrimSpace(restore.RunWaitID) == "" || strings.TrimSpace(restore.Kind) == "" || len(restore.Manifest) == 0 {
+		strings.TrimSpace(restore.RunWaitID) == "" || len(restore.Manifest) == 0 {
 		return workerapi.CheckpointManifest{}, errors.New("prepared runtime restore authority is incomplete")
 	}
 	var checkpoint workerapi.CheckpointManifest

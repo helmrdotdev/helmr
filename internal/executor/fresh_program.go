@@ -77,7 +77,6 @@ type freshProgram struct {
 type newProgramAdmission struct {
 	programStart []byte
 	start        workerapi.RunStartRequest
-	parent       *workspacev0.VerifyProgramRestoreRequest
 }
 
 type freshAdmissionState struct {
@@ -651,26 +650,8 @@ func (r ProgramRunner) startNewProgram(
 	if err := validateNewProgramMount(
 		claim.Lease,
 		opened.Mount,
-		admission.parent != nil,
 	); err != nil {
 		return freshProgram{}, err
-	}
-	if admission.parent != nil {
-		if opened.ControlSession == nil {
-			return freshProgram{}, errors.New(
-				"child-attached program mount control session is required",
-			)
-		}
-		if err := verifyRestoredProgramOnSession(
-			admissionCtx,
-			opened.ControlSession,
-			admission.parent,
-		); err != nil {
-			return freshProgram{}, fmt.Errorf(
-				"verify frozen parent program: %w",
-				err,
-			)
-		}
 	}
 	if err := writeFreshProgramContext(
 		admissionCtx,
@@ -1020,7 +1001,6 @@ func validateNewProgramClaim(
 	switch {
 	case execution.Fresh != nil &&
 		execution.Restore == nil &&
-		execution.Attach == nil &&
 		len(execution.Fresh.ProgramStart) > 0:
 		admission = newProgramAdmission{
 			programStart: execution.Fresh.ProgramStart,
@@ -1028,45 +1008,9 @@ func validateNewProgramClaim(
 				Fresh: &workerapi.RunStartFresh{},
 			},
 		}
-	case execution.Fresh == nil &&
-		execution.Restore == nil &&
-		execution.Attach != nil &&
-		execution.Attach.Child != nil &&
-		execution.Attach.Parent == nil:
-		child := execution.Attach.Child
-		if strings.TrimSpace(child.RunWaitID) == "" ||
-			strings.TrimSpace(child.ParentRunID) == "" ||
-			child.ParentAttemptNumber <= 0 ||
-			strings.TrimSpace(child.CheckpointID) == "" ||
-			strings.TrimSpace(child.ResumeAttachID) == "" ||
-			strings.TrimSpace(child.CorrelationID) == "" ||
-			len(child.ProgramStart) == 0 {
-			return newProgramAdmission{}, errors.New(
-				"child-attached program authority is incomplete",
-			)
-		}
-		admission = newProgramAdmission{
-			programStart: child.ProgramStart,
-			parent: &workspacev0.VerifyProgramRestoreRequest{
-				RunId:         child.ParentRunID,
-				AttemptNumber: uint32(child.ParentAttemptNumber),
-				RunWaitId:     child.RunWaitID,
-				CheckpointId:  child.CheckpointID,
-				CorrelationId: child.CorrelationID,
-			},
-			start: workerapi.RunStartRequest{
-				Attach: &workerapi.RunStartAttach{
-					Child: &workerapi.RunStartChildAttach{
-						RunWaitID:      child.RunWaitID,
-						CheckpointID:   child.CheckpointID,
-						ResumeAttachID: child.ResumeAttachID,
-					},
-				},
-			},
-		}
 	default:
 		return newProgramAdmission{}, errors.New(
-			"run lease execution must contain exactly one fresh or child-attached program",
+			"run lease execution must contain exactly one fresh program",
 		)
 	}
 	if len(claim.Secrets) > maxFreshProgramSecrets {
@@ -1092,7 +1036,6 @@ func validateNewProgramClaim(
 func validateNewProgramMount(
 	lease workerapi.RunLeaseAssignment,
 	mount workerapi.WorkspaceMount,
-	childAttach bool,
 ) error {
 	if mount.ID != lease.WorkspaceMountID {
 		return errors.New("new program workspace mount ID does not match the claimed physical authority")
@@ -1103,7 +1046,7 @@ func validateNewProgramMount(
 	if mount.RuntimeInstanceID != lease.RuntimeInstanceID {
 		return errors.New("new program Runtime Instance does not match the claimed physical authority")
 	}
-	if !childAttach && mount.BaseVersionID != lease.BaseWorkspaceVersionID {
+	if mount.Target.BaseWorkspaceVersionID != lease.BaseWorkspaceVersionID {
 		return errors.New("new program base Workspace version does not match the claimed physical authority")
 	}
 	return nil
@@ -1302,10 +1245,6 @@ func clearFreshProgramDelivery(claim *workerapi.RunLeaseClaimResponse) {
 	if claim.Execution.Fresh != nil {
 		clearBytes(claim.Execution.Fresh.ProgramStart)
 		claim.Execution.Fresh.ProgramStart = nil
-	}
-	if claim.Execution.Attach != nil && claim.Execution.Attach.Child != nil {
-		clearBytes(claim.Execution.Attach.Child.ProgramStart)
-		claim.Execution.Attach.Child.ProgramStart = nil
 	}
 	for index := range claim.Secrets {
 		clearBytes(claim.Secrets[index].Value)

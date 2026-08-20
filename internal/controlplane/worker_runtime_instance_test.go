@@ -75,7 +75,7 @@ func TestPopulateRuntimeRestoreSourceKeepsCapturedAndSourceFrontiersDistinct(t *
 	store := &runtimeRestoreProjectionStore{
 		checkpoint: db.RunCheckpoint{
 			ID: checkpointID, RunID: runID, RunWaitID: waitID, AttemptNumber: 2,
-			Kind: db.RunCheckpointKindSuspend, State: db.RunCheckpointStateReady,
+			State:                  db.RunCheckpointStateReady,
 			BaseWorkspaceVersionID: sourceVersionID, RestoreManifest: manifest,
 		},
 		artifacts: []db.ListRunCheckpointArtifactAuthorityRow{
@@ -99,13 +99,15 @@ func TestPopulateRuntimeRestoreSourceKeepsCapturedAndSourceFrontiersDistinct(t *
 			ArtifactMediaType: pgvalue.Text(workspace.ArtifactMediaType),
 		},
 	}
-	source := workerapi.RuntimeSource{
-		BaseVersionID: pgvalue.UUIDString(capturedVersionID),
-		WorkspaceArtifact: workerapi.WorkspaceArtifact{
-			Digest: validDigest('9'), SizeBytes: 1024,
-			MediaType: workspace.ArtifactMediaType, Encoding: workspace.ArtifactEncoding,
-		},
+	targetArtifact := workerapi.WorkspaceArtifact{
+		Digest: validDigest('9'), SizeBytes: 1024,
+		MediaType: workspace.ArtifactMediaType, Encoding: workspace.ArtifactEncoding,
 	}
+	source := workerapi.RuntimeSource{WorkspaceTarget: workerapi.WorkspaceResetTarget{
+		BaseWorkspaceVersionID: pgvalue.UUIDString(capturedVersionID),
+		Tree:                   workerapi.WorkspaceTreeIdentity{Digest: validDigest('8'), SizeBytes: 2048, EntryCount: 2},
+		Artifact:               &targetArtifact,
+	}}
 	row := db.GetNextRuntimeReconcileTargetRow{
 		RestoreCheckpointID:   checkpointID,
 		ReservedRunID:         runID,
@@ -114,45 +116,15 @@ func TestPopulateRuntimeRestoreSourceKeepsCapturedAndSourceFrontiersDistinct(t *
 	if err := populateRuntimeRestoreSource(context.Background(), store, &source, row); err != nil {
 		t.Fatal(err)
 	}
-	if source.BaseVersionID != pgvalue.UUIDString(capturedVersionID) ||
-		source.WorkspaceArtifact.Digest != validDigest('9') {
+	if source.WorkspaceTarget.BaseWorkspaceVersionID != pgvalue.UUIDString(capturedVersionID) ||
+		source.WorkspaceTarget.Artifact == nil ||
+		source.WorkspaceTarget.Artifact.Digest != validDigest('9') {
 		t.Fatalf("captured frontier was rewritten: %+v", source)
 	}
 	if source.Restore == nil || source.Restore.SourceWorkspaceBase == nil ||
 		source.Restore.SourceWorkspaceBase.VersionID != pgvalue.UUIDString(sourceVersionID) ||
 		source.Restore.SourceWorkspaceBase.Base.ArtifactDigest != validDigest('e') || store.baseCalls != 1 {
 		t.Fatalf("source frontier was not projected independently: %+v", source.Restore)
-	}
-}
-
-func TestPopulateRuntimeRestoreSourceLeavesUnsupportedKindForWorkerFailure(t *testing.T) {
-	checkpointID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	store := &runtimeRestoreProjectionStore{
-		checkpoint: db.RunCheckpoint{
-			ID: checkpointID, RunID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			RunWaitID: pgvalue.UUID(uuid.Must(uuid.NewV7())), AttemptNumber: 1,
-			Kind: db.RunCheckpointKindHandoffResume, State: db.RunCheckpointStateReady,
-			RestoreManifest: []byte(`{"version":0}`),
-		},
-		artifacts: []db.ListRunCheckpointArtifactAuthorityRow{
-			{Role: db.RunCheckpointArtifactRoleRuntimeConfig, Digest: validDigest('a'), SizeBytes: 1, MediaType: "application/example"},
-			{Role: db.RunCheckpointArtifactRoleVMState, Digest: validDigest('b'), SizeBytes: 2, MediaType: "application/example"},
-			{Role: db.RunCheckpointArtifactRoleMemory, Digest: validDigest('c'), SizeBytes: 3, MediaType: "application/example"},
-			{Role: db.RunCheckpointArtifactRoleScratchDisk, Digest: validDigest('d'), SizeBytes: 4, MediaType: "application/example"},
-		},
-	}
-	source := workerapi.RuntimeSource{}
-	row := db.GetNextRuntimeReconcileTargetRow{
-		RestoreCheckpointID:   checkpointID,
-		ReservedRunID:         store.checkpoint.RunID,
-		ReservedAttemptNumber: pgtype.Int4{Int32: 1, Valid: true},
-	}
-	if err := populateRuntimeRestoreSource(context.Background(), store, &source, row); err != nil {
-		t.Fatal(err)
-	}
-	if source.Restore == nil || source.Restore.Kind != string(db.RunCheckpointKindHandoffResume) ||
-		source.Restore.SourceWorkspaceBase != nil || store.baseCalls != 0 {
-		t.Fatalf("unsupported restore was not delegated to Worker failure: %+v", source.Restore)
 	}
 }
 

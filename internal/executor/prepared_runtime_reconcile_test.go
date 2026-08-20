@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
 type typedRuntimeClient struct {
@@ -377,17 +378,20 @@ func TestPreparedRuntimeSourcePreservesWorkspaceReservationAuthority(t *testing.
 	source := workerapi.RuntimeSource{
 		WorkspaceID:            "019c10d5-a6f7-7af1-8f5f-000000000701",
 		DeploymentDefinitionID: "019c10d5-a6f7-7af1-8f5f-000000000702",
-		BaseVersionID:          "019c10d5-a6f7-7af1-8f5f-000000000703",
-		WorkspaceArtifact: workerapi.WorkspaceArtifact{
-			Digest:    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			SizeBytes: 512, MediaType: "application/vnd.helmr.workspace.v0+tar",
-			Encoding: "tar", EntryCount: 3,
+		WorkspaceTarget: workerapi.WorkspaceResetTarget{
+			BaseWorkspaceVersionID: "019c10d5-a6f7-7af1-8f5f-000000000703",
+			Tree:                   workerapi.WorkspaceTreeIdentity{Digest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", SizeBytes: 2048, EntryCount: 3},
+			Artifact: &workerapi.WorkspaceArtifact{
+				Digest:    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				SizeBytes: 512, MediaType: "application/vnd.helmr.workspace.v0+tar",
+				Encoding: "tar", EntryCount: 3,
+			},
 		},
 	}
 	mount := preparedRuntimeWorkspaceMountFromSource(source)
 	if mount.WorkspaceID != source.WorkspaceID ||
-		mount.BaseVersionID != source.BaseVersionID ||
-		mount.WorkspaceArtifact != source.WorkspaceArtifact {
+		mount.Target.BaseWorkspaceVersionID != source.WorkspaceTarget.BaseWorkspaceVersionID ||
+		mount.Target.Artifact.Digest != source.WorkspaceTarget.Artifact.Digest {
 		t.Fatalf("mount = %#v, want exact Workspace reservation source", mount)
 	}
 }
@@ -465,11 +469,15 @@ func TestPreparedRuntimeVerifiesReservedWorkspaceArtifactBeforeReady(t *testing.
 	); err != nil {
 		t.Fatal(err)
 	}
-	if got := store.getCalls[mount.WorkspaceArtifact.Digest]; got != 1 {
+	if got := store.getCalls[mount.Target.Artifact.Digest]; got != 1 {
 		t.Fatalf("Workspace Artifact reads = %d, want 1", got)
 	}
 
-	mount.WorkspaceArtifact = workerapi.WorkspaceArtifact{}
+	mount.Target = workerapi.WorkspaceResetTarget{
+		BaseWorkspaceVersionID: mount.Target.BaseWorkspaceVersionID,
+		Tree:                   workerapi.WorkspaceTreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest},
+		Empty:                  &workerapi.EmptyWorkspace{},
+	}
 	if err := pool.verifyReservedWorkspaceVersion(
 		context.Background(),
 		materializer,

@@ -50,28 +50,6 @@ func TestControlPlaneRunWaitsDetachesAfterTypedCheckpointIntent(t *testing.T) {
 	}
 }
 
-func TestControlPlaneRunWaitsRetainsSameWorkspaceCheckpointSource(t *testing.T) {
-	client := &fakeRunWaitClient{
-		created: liveRunWaitResponse(),
-		polls: []workerapi.RunWaitPollResponse{{
-			RunID: "run-1", RunWaitID: "run-wait-id-1", Status: "checkpoint_requested",
-			RequestVersion: 3, CheckpointID: "checkpoint-1", RetainSource: true,
-		}},
-	}
-	checkpointer := &fakeCheckpointer{
-		manifest: testRunCheckpointWaitManifest(), workspaceCapture: testCheckpointWorkspaceCapture(),
-	}
-	request := testWaitRequest(workerapi.RunWaitKindChild)
-	request.Checkpointer = checkpointer
-	err := ControlPlaneRunWaits{Client: client}.Wait(context.Background(), request)
-	if !errors.Is(err, ErrDetached) {
-		t.Fatalf("err = %v, want ErrDetached", err)
-	}
-	if !checkpointer.request.RetainSource || client.ready == nil || client.ready.SourceCleanup != nil {
-		t.Fatalf("retained checkpoint = request:%+v ready:%+v", checkpointer.request, client.ready)
-	}
-}
-
 func TestControlPlaneRunWaitsContinuesAlreadyOpenedWaitWithoutCreatingAnother(t *testing.T) {
 	client := &fakeRunWaitClient{
 		polls: []workerapi.RunWaitPollResponse{{
@@ -384,10 +362,8 @@ func (c *fakeCheckpointer) CreateCheckpoint(_ context.Context, request Checkpoin
 		return CheckpointResult{}, c.err
 	}
 	result := CheckpointResult{Manifest: c.manifest, WorkspaceCapture: c.workspaceCapture}
-	if !request.RetainSource {
-		result.SourceCleanup = &workerapi.RuntimeCleanupProof{
-			Method: workerapi.RuntimeCleanupSessionClosed, CompletedAt: time.Now().UTC(),
-		}
+	result.SourceCleanup = &workerapi.RuntimeCleanupProof{
+		Method: workerapi.RuntimeCleanupSessionClosed, CompletedAt: time.Now().UTC(),
 	}
 	return result, nil
 }

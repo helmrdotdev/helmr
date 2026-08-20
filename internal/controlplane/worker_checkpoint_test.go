@@ -13,7 +13,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestParseCheckpointReadyRequestBindsFullAtomicProof(t *testing.T) {
@@ -49,15 +48,6 @@ func TestParseCheckpointReadyRequestBindsFullAtomicProof(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	retained := request
-	retained.SourceCleanup = nil
-	retainedParsed, _, err := parseCheckpointReadyRequest(retained)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if retainedParsed.cleanupProof != nil || retainedParsed.fingerprint == parsed.fingerprint {
-		t.Fatalf("retained checkpoint-ready = %+v", retainedParsed)
-	}
 	if changedParsed.fingerprint == parsed.fingerprint {
 		t.Fatal("changed source cleanup proof retained checkpoint-ready fingerprint")
 	}
@@ -65,6 +55,7 @@ func TestParseCheckpointReadyRequestBindsFullAtomicProof(t *testing.T) {
 
 func TestParseCheckpointReadyRequestRejectsInvalidSourceCleanup(t *testing.T) {
 	for _, mutate := range []func(*workerapi.CheckpointReadyRequest){
+		func(request *workerapi.CheckpointReadyRequest) { request.SourceCleanup = nil },
 		func(request *workerapi.CheckpointReadyRequest) {
 			request.SourceCleanup.Method = workerapi.RuntimeCleanupHostReconciled
 		},
@@ -75,32 +66,6 @@ func TestParseCheckpointReadyRequestRejectsInvalidSourceCleanup(t *testing.T) {
 		if _, _, err := parseCheckpointReadyRequest(request); err == nil || !strings.Contains(err.Error(), "source_cleanup") {
 			t.Fatalf("err = %v, want source_cleanup rejection", err)
 		}
-	}
-}
-
-func TestValidateCheckpointSourceDisposition(t *testing.T) {
-	cleanup := &workerapi.RuntimeCleanupProof{Method: workerapi.RuntimeCleanupSessionClosed}
-	tests := []struct {
-		name       string
-		wait       db.RunWait
-		cleanup    *workerapi.RuntimeCleanupProof
-		wantRetain bool
-		wantErr    bool
-	}{
-		{name: "ordinary closed", wait: db.RunWait{Kind: db.WaitKindToken}, cleanup: cleanup},
-		{name: "ordinary missing proof", wait: db.RunWait{Kind: db.WaitKindToken}, wantErr: true},
-		{name: "same workspace retained", wait: db.RunWait{Kind: db.WaitKindChild}, wantRetain: true},
-		{name: "same workspace rejects proof", wait: db.RunWait{Kind: db.WaitKindChild}, cleanup: cleanup, wantErr: true},
-		{name: "different workspace closed", wait: db.RunWait{Kind: db.WaitKindChild, ChildRunID: pgtype.UUID{Valid: true}}, cleanup: cleanup},
-		{name: "different workspace missing proof", wait: db.RunWait{Kind: db.WaitKindChild, ChildRunID: pgtype.UUID{Valid: true}}, wantErr: true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			retained, err := validateCheckpointSourceDisposition(tt.wait, tt.cleanup)
-			if retained != tt.wantRetain || (err != nil) != tt.wantErr {
-				t.Fatalf("disposition = retained:%v err:%v", retained, err)
-			}
-		})
 	}
 }
 

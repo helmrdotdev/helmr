@@ -7,8 +7,6 @@ var errStaleRunLeaseClaim = errors.New("run lease claim is stale")
 type runLeaseClaimMode string
 
 const (
-	runLeaseClaimFresh        runLeaseClaimMode = "fresh"
-	runLeaseClaimRestore      runLeaseClaimMode = "restore"
-	runLeaseClaimAttachChild  runLeaseClaimMode = "attach_child"
-	runLeaseClaimAttachParent runLeaseClaimMode = "attach_parent"
+	runLeaseClaimFresh   runLeaseClaimMode = "fresh"
+	runLeaseClaimRestore runLeaseClaimMode = "restore"
 )

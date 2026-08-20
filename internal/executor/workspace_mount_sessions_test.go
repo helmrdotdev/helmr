@@ -173,7 +173,7 @@ func TestRenewWorkspaceAuthorityUsesMountedSession(t *testing.T) {
 		WorkspaceID:       "workspace-1",
 		RuntimeInstanceID: "runtime-1",
 		FencingGeneration: 3,
-		BaseVersionID:     "version-1",
+		Target:            workerapi.WorkspaceResetTarget{BaseWorkspaceVersionID: "version-1"},
 	}, parent, "channel-1")
 	request := &workspacev0.RenewWorkspaceAuthorityRequest{
 		Previous: &workspacev0.WorkspaceRunAuthority{
@@ -240,7 +240,7 @@ func TestBeginWorkspaceFinalizationUsesMountedSession(t *testing.T) {
 	registry := NewWorkspaceMountSessions()
 	registry.RegisterWorkspaceMountSession(workerapi.WorkspaceMount{
 		ID: "mount-1", WorkspaceID: "workspace-1", RuntimeInstanceID: "runtime-1",
-		FencingGeneration: 3, BaseVersionID: "version-1",
+		FencingGeneration: 3, Target: workerapi.WorkspaceResetTarget{BaseWorkspaceVersionID: "version-1"},
 	}, parent, "channel-1")
 	request := &workspacev0.BeginWorkspaceFinalizationRequest{
 		Previous: &workspacev0.WorkspaceRunAuthority{
@@ -296,7 +296,7 @@ func TestFinalizationSessionSeparatesPhysicalIdentityFromLogicalFence(t *testing
 	registry := NewWorkspaceMountSessions()
 	registry.RegisterWorkspaceMountSession(workerapi.WorkspaceMount{
 		ID: "mount-1", WorkspaceID: "workspace-1", RuntimeInstanceID: "runtime-1",
-		FencingGeneration: 3, BaseVersionID: "version-1",
+		FencingGeneration: 3, Target: workerapi.WorkspaceResetTarget{BaseWorkspaceVersionID: "version-1"},
 	}, &borrowedParentSession{stream: discardReadWriteCloser{}}, "channel-1")
 	envelope := &workspacev0.WorkspaceFinalizationEnvelope{
 		Authority: &workspacev0.WorkspaceRunAuthority{
@@ -328,7 +328,7 @@ func TestRenewWorkspaceAuthorityCancellationPreservesMountedSession(t *testing.T
 		WorkspaceID:       "workspace-1",
 		RuntimeInstanceID: "runtime-1",
 		FencingGeneration: 4,
-		BaseVersionID:     "version-1",
+		Target:            workerapi.WorkspaceResetTarget{BaseWorkspaceVersionID: "version-1"},
 	}, parent, "channel-1")
 	request := &workspacev0.RenewWorkspaceAuthorityRequest{
 		Previous: &workspacev0.WorkspaceRunAuthority{

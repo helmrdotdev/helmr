@@ -60,14 +60,6 @@ type Checkpointer interface {
 	CreateCheckpoint(context.Context, CheckpointRequest) (CheckpointResult, error)
 }
 
-type HandoffCheckpointer interface {
-	CreateHandoffCheckpoint(
-		context.Context,
-		CheckpointRequest,
-		workerapi.CheckpointWorkspaceBase,
-	) (workerapi.CheckpointManifest, error)
-}
-
 type CheckpointRequest struct {
 	RunID                    string
 	AttemptNumber            int32
@@ -78,7 +70,6 @@ type CheckpointRequest struct {
 	ResumeAttachID           string
 	CheckpointRequestVersion int64
 	CaptureWorkspace         bool
-	RetainSource             bool
 }
 
 type CheckpointResult struct {
