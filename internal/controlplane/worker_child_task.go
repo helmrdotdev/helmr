@@ -29,22 +29,22 @@ var (
 	errWorkspaceFrontierConflict  = errors.New("same-workspace call reached a different workspace frontier")
 )
 
-type childTaskInvokeStaleStageError struct{ stage string }
+type childTaskInvokeFailurePoint string
 
-func (err childTaskInvokeStaleStageError) Error() string { return errChildTaskInvokeStale.Error() }
-func (err childTaskInvokeStaleStageError) Unwrap() error { return errChildTaskInvokeStale }
-
-func staleChildTaskInvokeStage(stage string) error {
-	return childTaskInvokeStaleStageError{stage: stage}
-}
-
-func childTaskInvokeStaleStage(err error) string {
-	var staged childTaskInvokeStaleStageError
-	if errors.As(err, &staged) && staged.stage != "" {
-		return staged.stage
-	}
-	return "transaction_authority"
-}
+const (
+	childTaskInvokePointLoadLease         childTaskInvokeFailurePoint = "load_live_run_lease"
+	childTaskInvokePointSourceScope       childTaskInvokeFailurePoint = "source_scope"
+	childTaskInvokePointSourceOwner       childTaskInvokeFailurePoint = "source_owner"
+	childTaskInvokePointSourceRun         childTaskInvokeFailurePoint = "source_run"
+	childTaskInvokePointSourceRunState    childTaskInvokeFailurePoint = "source_run_state"
+	childTaskInvokePointSourceWorkspace   childTaskInvokeFailurePoint = "source_workspace"
+	childTaskInvokePointWorkspaceState    childTaskInvokeFailurePoint = "source_workspace_state"
+	childTaskInvokePointSourceAttempt     childTaskInvokeFailurePoint = "source_attempt"
+	childTaskInvokePointPhysicalAuthority childTaskInvokeFailurePoint = "source_physical_authority"
+	childTaskInvokePointExecutionState    childTaskInvokeFailurePoint = "source_execution_state"
+	childTaskInvokePointWorkspacePair     childTaskInvokeFailurePoint = "source_workspace_pair"
+	childTaskInvokePointTransaction       childTaskInvokeFailurePoint = "transaction_authority"
+)
 
 type childTaskOptions struct {
 	Queue          string                     `json:"queue,omitempty"`
@@ -142,14 +142,15 @@ func (s *Server) workerInvokeChildTask(w http.ResponseWriter, r *http.Request) {
 	worker := workerFromContext(r.Context())
 	locators, err := loadChildTaskInvokeLocators(r.Context(), s.db, worker, request.Lease, parsed)
 	if err != nil {
+		stale := staleAuthority(staleAuthorityChildTask, childTaskInvokePointLoadLease, errChildTaskInvokeStale)
 		s.log.Warn(
 			"reject stale child Task invocation",
-			"stage", "load_live_run_lease",
+			"failure_point", childTaskInvokePointLoadLease,
 			"run_lease_id", request.Lease.ID,
 			"lease_sequence", request.Lease.LeaseSequence,
 			"worker_instance_id", worker.WorkerInstanceID,
 		)
-		writeError(w, conflict(errChildTaskInvokeStale))
+		writeError(w, conflict(stale))
 		return
 	}
 	normalized, err := normalizeWorkerChildTaskRequest(request, locators)
@@ -293,7 +294,7 @@ func (s *Server) invokeChildTask(
 				return err
 			}
 			if !childTaskInvokeScopeMatches(authority, input) {
-				return staleChildTaskInvokeStage("source_scope")
+				return staleAuthority(staleAuthorityChildTask, childTaskInvokePointSourceScope, errChildTaskInvokeStale)
 			}
 			if edgeClaim == nil {
 				return errors.New("same-workspace child task call claim is unavailable")
@@ -332,7 +333,7 @@ func (s *Server) invokeChildTask(
 			return err
 		}
 		if !childTaskInvokeScopeMatches(authority, input) {
-			return staleChildTaskInvokeStage("source_scope")
+			return staleAuthority(staleAuthorityChildTask, childTaskInvokePointSourceScope, errChildTaskInvokeStale)
 		}
 		if replay != nil {
 			if err := completeChildTaskInvokeAuthority(
@@ -966,7 +967,7 @@ func lockChildTaskInvokeRunAuthority(
 ) (runLeaseClaimAuthority, error) {
 	owner, err := lockRunFinalizationOwner(ctx, q, locators)
 	if err != nil {
-		return runLeaseClaimAuthority{}, staleChildTaskInvokeStage("source_owner")
+		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityChildTask, childTaskInvokePointSourceOwner, errChildTaskInvokeStale)
 	}
 	authority := runLeaseClaimAuthority{actor: owner.actor, parentRun: owner.parent}
 	authority.run, err = q.LockRunLeaseClaimRun(ctx, db.LockRunLeaseClaimRunParams{
@@ -974,7 +975,7 @@ func lockChildTaskInvokeRunAuthority(
 		EnvironmentID: locators.EnvironmentID, WorkspaceID: locators.WorkspaceID,
 	})
 	if err != nil {
-		return runLeaseClaimAuthority{}, staleChildTaskInvokeStage("source_run")
+		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityChildTask, childTaskInvokePointSourceRun, errChildTaskInvokeStale)
 	}
 	allowedStatuses := []db.RunStatus{db.RunStatusRunning}
 	if input.Request.Method == "call" {
@@ -987,7 +988,7 @@ func lockChildTaskInvokeRunAuthority(
 		allowedStatuses...,
 	) != nil ||
 		validateRunFinalizationOwner(authority, locators) != nil {
-		return runLeaseClaimAuthority{}, staleChildTaskInvokeStage("source_run_state")
+		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityChildTask, childTaskInvokePointSourceRunState, errChildTaskInvokeStale)
 	}
 	return authority, nil
 }
@@ -1002,17 +1003,17 @@ func completeChildTaskInvokeAuthority(
 ) error {
 	if !workspaceLocked {
 		if err := lockRunLeaseWorkspace(ctx, q, authority, locators); err != nil {
-			return staleChildTaskInvokeStage("source_workspace")
+			return staleAuthority(staleAuthorityChildTask, childTaskInvokePointSourceWorkspace, errChildTaskInvokeStale)
 		}
 	} else if authority.workspace.ID != locators.WorkspaceID ||
 		authority.workspace.EnvironmentID != locators.EnvironmentID ||
 		authority.workspace.RegionID != locators.RegionID ||
 		authority.workspace.State != db.WorkspaceStateActive ||
 		authority.workspace.DesiredState != db.WorkspaceDesiredStateActive {
-		return staleChildTaskInvokeStage("source_workspace_state")
+		return staleAuthority(staleAuthorityChildTask, childTaskInvokePointWorkspaceState, errChildTaskInvokeStale)
 	}
 	if err := lockRunLeaseAttempt(ctx, q, authority, locators); err != nil {
-		return staleChildTaskInvokeStage("source_attempt")
+		return staleAuthority(staleAuthorityChildTask, childTaskInvokePointSourceAttempt, errChildTaskInvokeStale)
 	}
 	if err := lockRunLeasePhysicalAuthority(
 		ctx,
@@ -1023,14 +1024,14 @@ func completeChildTaskInvokeAuthority(
 		locators,
 		authority,
 	); err != nil {
-		return staleChildTaskInvokeStage("source_physical_authority")
+		return staleAuthority(staleAuthorityChildTask, childTaskInvokePointPhysicalAuthority, errChildTaskInvokeStale)
 	}
 	if (authority.run.Status != db.RunStatusRunning &&
 		(input.Request.Method != "call" || authority.run.Status != db.RunStatusWaiting)) ||
 		authority.runLease.State != db.RunLeaseStateRunning ||
 		!authority.run.ActiveStartedAt.Valid || !authority.attempt.EntrypointEnteredAt.Valid ||
 		authority.attempt.TerminalAt.Valid || authority.runLease.FinalizationOperationID.Valid {
-		return staleChildTaskInvokeStage("source_execution_state")
+		return staleAuthority(staleAuthorityChildTask, childTaskInvokePointExecutionState, errChildTaskInvokeStale)
 	}
 	return nil
 }
@@ -1068,7 +1069,7 @@ func sourceChildWorkspace(
 		}
 	}
 	if !sourceFound {
-		return db.Workspace{}, staleChildTaskInvokeStage("source_workspace_pair")
+		return db.Workspace{}, staleAuthority(staleAuthorityChildTask, childTaskInvokePointWorkspacePair, errChildTaskInvokeStale)
 	}
 	if !targetFound || len(workspaces) != 2 {
 		return db.Workspace{}, errTaskWorkspaceUnavailable
@@ -1138,12 +1139,14 @@ func (s *Server) writeChildTaskInvokeError(
 	case errors.Is(err, errTaskPayloadPresenceInvalid), errors.Is(err, errTaskStartInvalid):
 		failure = workerapi.RuntimeOperationFailure{Code: "invalid_child_task_invoke", Message: err.Error()}
 	case errors.Is(err, errChildTaskInvokeStale):
+		err = staleAuthority(staleAuthorityChildTask, childTaskInvokePointTransaction, err)
+		point, _ := staleAuthorityPointOf(err)
 		s.log.Warn(
 			"reject stale child Task invocation",
-			"stage", childTaskInvokeStaleStage(err),
+			"failure_point", point,
 			"correlation_id", correlationID,
 		)
-		writeError(w, conflict(errChildTaskInvokeStale))
+		writeError(w, conflict(err))
 		return
 	default:
 		s.log.Error("invoke child Task", "error", err)

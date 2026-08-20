@@ -19,35 +19,35 @@ import (
 )
 
 func TestStaleRunStartPreservesPublicSentinelAndFailurePoint(t *testing.T) {
-	err := staleRunStart(runStartFailureCheckpointValidation, errStaleRunLeaseClaim)
+	err := staleAuthority(staleAuthorityRunStart, runStartFailureCheckpointValidation, errStaleRunLeaseClaim)
 	if !errors.Is(err, errStaleRunLeaseClaim) {
 		t.Fatal("typed start failure did not preserve stale Run Lease sentinel")
 	}
-	point, ok := runStartFailurePointOf(err)
-	if !ok || point != runStartFailureCheckpointValidation {
+	point, ok := staleAuthorityPointOf(err)
+	if !ok || point != string(runStartFailureCheckpointValidation) {
 		t.Fatalf("failure point = %q, %v; want %q, true", point, ok, runStartFailureCheckpointValidation)
 	}
-	if err.Error() != errStaleRunLeaseClaim.Error() {
-		t.Fatalf("error = %q; want unchanged stale diagnostic", err)
+	if err.Error() != "run start authority is stale" {
+		t.Fatalf("error = %q; want operation-owned stale diagnostic", err)
 	}
 }
 
 func TestStaleRunStartDoesNotClassifyUnrelatedErrors(t *testing.T) {
 	original := errors.New("storage unavailable")
-	err := staleRunStart(runStartFailureRuntime, original)
+	err := staleAuthority(staleAuthorityRunStart, runStartFailureRuntime, original)
 	if !errors.Is(err, original) {
 		t.Fatal("unrelated error was replaced")
 	}
-	if _, ok := runStartFailurePointOf(err); ok {
+	if _, ok := staleAuthorityPointOf(err); ok {
 		t.Fatal("unrelated error received a start failure point")
 	}
 }
 
 func TestStaleRunStartKeepsInnermostFailurePoint(t *testing.T) {
-	err := staleRunStart(runStartFailureCheckpoint, errStaleRunLeaseClaim)
-	err = staleRunStart(runStartFailureRuntime, err)
-	point, ok := runStartFailurePointOf(err)
-	if !ok || point != runStartFailureCheckpoint {
+	err := staleAuthority(staleAuthorityRunStart, runStartFailureCheckpoint, errStaleRunLeaseClaim)
+	err = staleAuthority(staleAuthorityRunStart, runStartFailureRuntime, err)
+	point, ok := staleAuthorityPointOf(err)
+	if !ok || point != string(runStartFailureCheckpoint) {
 		t.Fatalf("failure point = %q, %v; want %q, true", point, ok, runStartFailureCheckpoint)
 	}
 }
@@ -90,9 +90,14 @@ func TestWorkerStartLogsOnlyTypedFailurePointAndKeepsPublicConflict(t *testing.T
 			t.Fatalf("%s leaked underlying error sentinel", name)
 		}
 	}
-	if strings.Contains(response.Body.String(), "failure_point") ||
-		!strings.Contains(response.Body.String(), "run start acknowledgement is stale") {
-		t.Fatalf("public conflict body changed: %s", response.Body)
+	for _, want := range []string{
+		`"code":"run_start_stale"`,
+		`"message":"run start authority is stale"`,
+		`"details":{"point":"locators"}`,
+	} {
+		if !strings.Contains(response.Body.String(), want) {
+			t.Fatalf("public conflict body missing %s: %s", want, response.Body)
+		}
 	}
 	for _, want := range []string{
 		`"failure_point":"locators"`,

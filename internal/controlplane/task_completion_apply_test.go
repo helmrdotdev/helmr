@@ -58,19 +58,19 @@ func TestTaskCompletionReplayRejectsChangedFingerprint(t *testing.T) {
 }
 
 func TestTaskCompletionFailurePointPreservesStaleIdentity(t *testing.T) {
-	err := staleTaskCompletionAt(taskCompletionPointFence, errStaleTaskCompletion)
+	err := staleAuthority(staleAuthorityTaskCompletion, taskCompletionPointFence, errStaleTaskCompletion)
 	if !errors.Is(err, errStaleTaskCompletion) {
 		t.Fatalf("error = %v, want stale completion identity", err)
 	}
-	point, ok := taskCompletionFailurePointOf(fmt.Errorf("outer: %w", err))
-	if !ok || point != taskCompletionPointFence {
+	point, ok := staleAuthorityPointOf(fmt.Errorf("outer: %w", err))
+	if !ok || point != string(taskCompletionPointFence) {
 		t.Fatalf("failure point = %q, %t", point, ok)
 	}
-	if got := staleTaskCompletionAt(taskCompletionPointFinish, err); got != err {
+	if got := staleAuthority(staleAuthorityTaskCompletion, taskCompletionPointFinish, err); got != err {
 		t.Fatal("outer failure point replaced the owning point")
 	}
 	plain := errors.New("storage unavailable")
-	if got := staleTaskCompletionAt(taskCompletionPointFence, plain); got != plain {
+	if got := staleAuthority(staleAuthorityTaskCompletion, taskCompletionPointFence, plain); got != plain {
 		t.Fatal("non-stale error was wrapped")
 	}
 }

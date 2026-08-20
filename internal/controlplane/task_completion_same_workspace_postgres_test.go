@@ -37,7 +37,7 @@ func TestSameWorkspaceTaskCompletionRequestsDiscardBeforeSuccessOrRetry(t *testi
 			if err := fixture.server.completeTask(
 				t.Context(), fixture.worker, fixture.request, completion,
 			); err != nil {
-				if point, ok := taskCompletionFailurePointOf(err); ok {
+				if point, ok := staleAuthorityPointOf(err); ok {
 					t.Fatalf("completion failed at %s: %v", point, err)
 				}
 				t.Fatal(err)

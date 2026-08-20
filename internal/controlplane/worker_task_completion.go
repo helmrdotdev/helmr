@@ -38,7 +38,7 @@ func (s *Server) workerCompleteTask(w http.ResponseWriter, r *http.Request) {
 	worker := workerFromContext(r.Context())
 	if err := s.completeTask(r.Context(), worker, request, completion); err != nil {
 		if errors.Is(err, errStaleTaskCompletion) {
-			if point, ok := taskCompletionFailurePointOf(err); ok {
+			if point, ok := staleAuthorityPointOf(err); ok {
 				s.log.Warn(
 					"task completion receipt rejected",
 					"failure_point", point,
@@ -49,7 +49,7 @@ func (s *Server) workerCompleteTask(w http.ResponseWriter, r *http.Request) {
 					"worker_epoch", worker.WorkerEpoch,
 				)
 			}
-			writeError(w, conflict(errStaleTaskCompletion))
+			writeError(w, conflict(err))
 			return
 		}
 		if isDeterministicWorkerAdmission(err) {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -81,11 +82,18 @@ func (c *runConsumer) Claim(ctx context.Context) (Work, bool, error) {
 		if err := c.runner.runLeaseExecutor.ExecuteRunLease(workCtx, selected); err != nil {
 			if isStaleLease(err) {
 				if c.runner.log != nil {
-					c.runner.log.Warn(
-						"run lease execution lost its authority",
+					attributes := []any{
 						"run_lease_id", selected.LeaseID,
 						"lease_sequence", selected.LeaseSequence,
-					)
+					}
+					var responseError *httpclient.Error
+					if errors.As(err, &responseError) {
+						attributes = append(attributes, "code", responseError.Code)
+						if len(responseError.Details) > 0 {
+							attributes = append(attributes, "details", string(responseError.Details))
+						}
+					}
+					c.runner.log.Warn("run lease execution lost its authority", attributes...)
 				}
 				stale = true
 				return nil

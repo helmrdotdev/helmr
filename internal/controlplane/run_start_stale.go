@@ -1,7 +1,5 @@
 package controlplane
 
-import "errors"
-
 type runStartFailurePoint string
 
 const (
@@ -32,34 +30,3 @@ const (
 	runStartFailureMarkRunRunning       runStartFailurePoint = "mark_run_running"
 	runStartFailureTouchWorkspace       runStartFailurePoint = "touch_workspace"
 )
-
-type staleRunStartError struct {
-	point runStartFailurePoint
-}
-
-func (e *staleRunStartError) Error() string {
-	return errStaleRunLeaseClaim.Error()
-}
-
-func (e *staleRunStartError) Unwrap() error {
-	return errStaleRunLeaseClaim
-}
-
-func staleRunStart(point runStartFailurePoint, err error) error {
-	if err == nil || !errors.Is(err, errStaleRunLeaseClaim) {
-		return err
-	}
-	var existing *staleRunStartError
-	if errors.As(err, &existing) {
-		return err
-	}
-	return &staleRunStartError{point: point}
-}
-
-func runStartFailurePointOf(err error) (runStartFailurePoint, bool) {
-	var stale *staleRunStartError
-	if !errors.As(err, &stale) {
-		return "", false
-	}
-	return stale.point, true
-}

@@ -1,10 +1,13 @@
 package worker
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -16,10 +19,14 @@ import (
 func TestRunConsumerSuppressesStaleTupleUntilDiscoveryNoLongerReturnsIt(t *testing.T) {
 	work := workerapi.RunLeaseWork{LeaseID: "0198b960-7818-7a77-9d7d-4ebf163e15b1", LeaseSequence: 7}
 	client := &runConsumerTestClient{response: workerapi.RunLeaseDiscoveryResponse{Items: []workerapi.RunLeaseWork{work}}}
-	executor := &runConsumerTestExecutor{err: &httpclient.Error{StatusCode: http.StatusConflict, Status: "Conflict"}}
+	executor := &runConsumerTestExecutor{err: &httpclient.Error{
+		StatusCode: http.StatusConflict, Status: "Conflict", Code: "run_start_stale",
+		Details: json.RawMessage(`{"point":"runtime"}`),
+	}}
+	var logs bytes.Buffer
 	consumer := NewRunConsumer(&Runner{
 		client: client, runLeaseExecutor: executor,
-		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		log: slog.New(slog.NewTextHandler(&logs, nil)),
 	})
 
 	claimed, ok, err := consumer.Claim(context.Background())
@@ -31,6 +38,10 @@ func TestRunConsumerSuppressesStaleTupleUntilDiscoveryNoLongerReturnsIt(t *testi
 	}
 	if executor.calls != 1 {
 		t.Fatalf("execute calls = %d, want 1", executor.calls)
+	}
+	if !strings.Contains(logs.String(), "code=run_start_stale") ||
+		!strings.Contains(logs.String(), `details="{\"point\":\"runtime\"}"`) {
+		t.Fatalf("stale authority log omitted Control diagnostics: %s", logs.String())
 	}
 
 	if claimed, ok, err := consumer.Claim(context.Background()); err != nil || ok || claimed != nil {

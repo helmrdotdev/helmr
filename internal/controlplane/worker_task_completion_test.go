@@ -78,8 +78,13 @@ func TestWorkerCompleteTaskRejectsChangedTerminalRequest(t *testing.T) {
 	if response.Code != http.StatusConflict {
 		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
 	}
-	if strings.Contains(response.Body.String(), string(taskCompletionPointReplay)) {
-		t.Fatalf("public response exposed internal failure point: %s", response.Body.String())
+	for _, want := range []string{
+		`"code":"task_completion_stale"`,
+		`"details":{"point":"replay"}`,
+	} {
+		if !strings.Contains(response.Body.String(), want) {
+			t.Fatalf("public response omitted %s: %s", want, response.Body.String())
+		}
 	}
 	if !strings.Contains(logs.String(), "failure_point=replay") {
 		t.Fatalf("internal log did not contain the closed failure point: %s", logs.String())
