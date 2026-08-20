@@ -872,15 +872,29 @@ func TestClaimSameWorkspaceChildRunLeaseInTxLocksParentBeforeChild(t *testing.T)
 		worker, locators, authority := validSameWorkspaceChildRunLeaseClaimFixture(actorParent)
 		store := &runLeaseClaimStore{authority: authority}
 
-		if _, err := claimSameWorkspaceChildRunLeaseInTx(
+		claimed, err := claimSameWorkspaceChildRunLeaseInTx(
 			context.Background(),
 			store,
 			worker,
 			authority.runLease.ID,
 			authority.runLease.LeaseSequence,
 			locators,
-		); err != nil {
+		)
+		if err != nil {
 			t.Fatalf("actorParent=%t: %v", actorParent, err)
+		}
+		if claimed.mode != runLeaseClaimFresh ||
+			claimed.runWait.ID.Valid ||
+			claimed.checkpoint.ID.Valid ||
+			claimed.enclosingWait.ID.Valid {
+			t.Fatalf(
+				"actorParent=%t fresh claim leaked resume authority: mode=%s wait=%v checkpoint=%v enclosing_wait=%v",
+				actorParent,
+				claimed.mode,
+				claimed.runWait.ID,
+				claimed.checkpoint.ID,
+				claimed.enclosingWait.ID,
+			)
 		}
 		wantOrder := []string{
 			"parent_run",
@@ -1002,15 +1016,28 @@ func TestClaimSameWorkspaceChildRunLeaseInTxExtendsEnclosingWait(t *testing.T) {
 	)
 	store := &runLeaseClaimStore{authority: authority}
 
-	if _, err := claimSameWorkspaceChildRunLeaseInTx(
+	claimed, err := claimSameWorkspaceChildRunLeaseInTx(
 		context.Background(),
 		store,
 		worker,
 		authority.runLease.ID,
 		authority.runLease.LeaseSequence,
 		locators,
-	); err != nil {
+	)
+	if err != nil {
 		t.Fatalf("%v after %v", err, store.calls)
+	}
+	if claimed.mode != runLeaseClaimFresh ||
+		claimed.runWait.ID.Valid ||
+		claimed.checkpoint.ID.Valid ||
+		claimed.enclosingWait.ID.Valid {
+		t.Fatalf(
+			"fresh nested claim leaked resume authority: mode=%s wait=%v checkpoint=%v enclosing_wait=%v",
+			claimed.mode,
+			claimed.runWait.ID,
+			claimed.checkpoint.ID,
+			claimed.enclosingWait.ID,
+		)
 	}
 	if !slices.Equal(store.calls, []string{
 		"parent_run", "run", "workspace", "parent_attempt", "attempt",

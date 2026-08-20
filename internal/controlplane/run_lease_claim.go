@@ -493,7 +493,7 @@ func claimSameWorkspaceChildRunLeaseInTx(
 	}
 
 	if hasParentEnclosingWait {
-		authority.enclosingWait, err = q.LockParentOwnedChildWait(ctx, db.LockParentOwnedChildWaitParams{
+		enclosingWait, err := q.LockParentOwnedChildWait(ctx, db.LockParentOwnedChildWaitParams{
 			EnvironmentID: locators.EnvironmentID,
 			ParentRunID:   locators.ParentEnclosingRunID,
 			ChildRunID:    authority.parentRun.ID,
@@ -502,7 +502,7 @@ func claimSameWorkspaceChildRunLeaseInTx(
 			return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
 		}
 		if err := validateActiveEnclosingWait(
-			authority.enclosingWait,
+			enclosingWait,
 			authority.parentRun,
 			locators.EnclosingParentWriterGeneration.Int64,
 			authority,
@@ -511,7 +511,7 @@ func claimSameWorkspaceChildRunLeaseInTx(
 		}
 	}
 
-	authority.runWait, err = q.LockParentOwnedChildWait(ctx, db.LockParentOwnedChildWaitParams{
+	childWait, err := q.LockParentOwnedChildWait(ctx, db.LockParentOwnedChildWaitParams{
 		EnvironmentID: locators.EnvironmentID,
 		ParentRunID:   authority.parentRun.ID,
 		ChildRunID:    authority.run.ID,
@@ -519,21 +519,21 @@ func claimSameWorkspaceChildRunLeaseInTx(
 	if err != nil {
 		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
 	}
-	if err := validateSameWorkspaceChildWait(locators, authority); err != nil {
+	if err := validateSameWorkspaceChildWait(locators, childWait, authority); err != nil {
 		return runLeaseClaimAuthority{}, err
 	}
 
-	authority.checkpoint, err = q.LockRestorableRunCheckpoint(ctx, db.LockRestorableRunCheckpointParams{
-		ID:            authority.runWait.SuspendCheckpointID,
+	checkpoint, err := q.LockRestorableRunCheckpoint(ctx, db.LockRestorableRunCheckpointParams{
+		ID:            childWait.SuspendCheckpointID,
 		RunID:         authority.parentRun.ID,
 		AttemptNumber: authority.parentAttempt.Number,
-		RunWaitID:     authority.runWait.ID,
+		RunWaitID:     childWait.ID,
 		WorkspaceID:   locators.WorkspaceID,
 	})
 	if err != nil {
 		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
 	}
-	if err := validateSameWorkspaceChildCheckpoint(authority); err != nil {
+	if err := validateSameWorkspaceChildCheckpoint(childWait, checkpoint, authority); err != nil {
 		return runLeaseClaimAuthority{}, err
 	}
 
@@ -1196,9 +1196,9 @@ func validateActiveEnclosingWait(
 
 func validateSameWorkspaceChildWait(
 	locators db.GetRunLeaseClaimLocatorsRow,
+	wait db.RunWait,
 	authority runLeaseClaimAuthority,
 ) error {
-	wait := authority.runWait
 	if wait.Kind != db.WaitKindChild ||
 		wait.ConditionState != db.WaitStatePending ||
 		wait.SuspensionState != db.RunWaitStateParked ||
@@ -1230,12 +1230,15 @@ func validateSameWorkspaceChildWait(
 	return nil
 }
 
-func validateSameWorkspaceChildCheckpoint(authority runLeaseClaimAuthority) error {
-	checkpoint := authority.checkpoint
+func validateSameWorkspaceChildCheckpoint(
+	wait db.RunWait,
+	checkpoint db.RunCheckpoint,
+	authority runLeaseClaimAuthority,
+) error {
 	if checkpoint.State != db.RunCheckpointStateReady ||
-		checkpoint.SourceRunLeaseID != authority.runWait.PriorRunLeaseID ||
+		checkpoint.SourceRunLeaseID != wait.PriorRunLeaseID ||
 		checkpoint.BaseWorkspaceVersionID != authority.parentAttempt.BaseWorkspaceVersionID ||
-		checkpoint.PrivateWorkspaceVersionID != authority.runWait.BaseWorkspaceVersionID {
+		checkpoint.PrivateWorkspaceVersionID != wait.BaseWorkspaceVersionID {
 		return errStaleRunLeaseClaim
 	}
 	if authority.parentRun.EntrypointKind == "task" {
