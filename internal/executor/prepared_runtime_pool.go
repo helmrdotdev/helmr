@@ -831,7 +831,7 @@ func (p *PreparedRuntimePool) verifyReservedWorkspaceVersion(
 		tempDir,
 		"workspace-version",
 		workerapi.CASObject{
-			Digest: artifact.Digest,
+			Digest:    artifact.Digest,
 			SizeBytes: artifact.SizeBytes,
 			MediaType: artifact.MediaType,
 		},

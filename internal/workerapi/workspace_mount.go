@@ -51,31 +51,31 @@ type WorkspaceMountClaimResponse struct {
 }
 
 type WorkspaceMount struct {
-	ID                      string            `json:"id"`
-	OrgID                   string            `json:"org_id"`
-	ProjectID               string            `json:"project_id"`
-	EnvironmentID           string            `json:"environment_id"`
-	WorkspaceID             string            `json:"workspace_id"`
-	DeploymentDefinitionID  string            `json:"deployment_definition_id"`
+	ID                      string               `json:"id"`
+	OrgID                   string               `json:"org_id"`
+	ProjectID               string               `json:"project_id"`
+	EnvironmentID           string               `json:"environment_id"`
+	WorkspaceID             string               `json:"workspace_id"`
+	DeploymentDefinitionID  string               `json:"deployment_definition_id"`
 	Target                  WorkspaceResetTarget `json:"target"`
-	RuntimeInstanceID       string            `json:"runtime_instance_id,omitempty"`
-	RestoreCheckpointID     string            `json:"restore_checkpoint_id,omitempty"`
-	RestoreSourceVersionID  string            `json:"restore_source_version_id,omitempty"`
-	RuntimeEpoch            int64             `json:"runtime_epoch"`
-	GuestdChannelToken      string            `json:"guestd_channel_token"`
-	GuestdChannelTokenHash  string            `json:"guestd_channel_token_hash"`
-	State                   string            `json:"state"`
-	RuntimeIdentityID       string            `json:"runtime_identity_id"`
-	WorkspaceImage          CASObject         `json:"workspace_image"`
-	RootfsDigest            string            `json:"rootfs_digest"`
-	WorkspaceMountPath      string            `json:"workspace_mount_path"`
-	RequestedMilliCPU       int64             `json:"requested_milli_cpu"`
-	RequestedMemoryMiB      int64             `json:"requested_memory_mib"`
-	RequestedDiskMiB        int64             `json:"requested_disk_mib"`
-	RequestedExecutionSlots int32             `json:"requested_execution_slots"`
-	VMRuntimeContract       string            `json:"vm_runtime_contract"`
-	FencingGeneration       int64             `json:"fencing_generation"`
-	ExpiresAt               time.Time         `json:"expires_at"`
+	RuntimeInstanceID       string               `json:"runtime_instance_id,omitempty"`
+	RestoreCheckpointID     string               `json:"restore_checkpoint_id,omitempty"`
+	RestoreSourceVersionID  string               `json:"restore_source_version_id,omitempty"`
+	RuntimeEpoch            int64                `json:"runtime_epoch"`
+	GuestdChannelToken      string               `json:"guestd_channel_token"`
+	GuestdChannelTokenHash  string               `json:"guestd_channel_token_hash"`
+	State                   string               `json:"state"`
+	RuntimeIdentityID       string               `json:"runtime_identity_id"`
+	WorkspaceImage          CASObject            `json:"workspace_image"`
+	RootfsDigest            string               `json:"rootfs_digest"`
+	WorkspaceMountPath      string               `json:"workspace_mount_path"`
+	RequestedMilliCPU       int64                `json:"requested_milli_cpu"`
+	RequestedMemoryMiB      int64                `json:"requested_memory_mib"`
+	RequestedDiskMiB        int64                `json:"requested_disk_mib"`
+	RequestedExecutionSlots int32                `json:"requested_execution_slots"`
+	VMRuntimeContract       string               `json:"vm_runtime_contract"`
+	FencingGeneration       int64                `json:"fencing_generation"`
+	ExpiresAt               time.Time            `json:"expires_at"`
 }
 
 type WorkspaceMountRenewRequest struct {

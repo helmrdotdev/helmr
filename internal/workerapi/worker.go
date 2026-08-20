@@ -161,22 +161,22 @@ type RuntimeInstance struct {
 }
 
 type RuntimeSource struct {
-	DeploymentDefinitionID string            `json:"deployment_definition_id"`
-	WorkspaceID            string            `json:"workspace_id"`
-	RuntimeIdentityID      string            `json:"runtime_identity_id"`
-	VMVCPUCount            int32             `json:"vm_vcpu_count"`
-	CPUConfigDigest        string            `json:"cpu_config_digest"`
-	WorkspaceImage         CASObject         `json:"workspace_image"`
-	WorkspaceArchitecture  string            `json:"workspace_architecture"`
+	DeploymentDefinitionID string               `json:"deployment_definition_id"`
+	WorkspaceID            string               `json:"workspace_id"`
+	RuntimeIdentityID      string               `json:"runtime_identity_id"`
+	VMVCPUCount            int32                `json:"vm_vcpu_count"`
+	CPUConfigDigest        string               `json:"cpu_config_digest"`
+	WorkspaceImage         CASObject            `json:"workspace_image"`
+	WorkspaceArchitecture  string               `json:"workspace_architecture"`
 	WorkspaceTarget        WorkspaceResetTarget `json:"workspace_target"`
-	RootfsDigest           string            `json:"rootfs_digest"`
-	ReservedCPUMillis      int32             `json:"reserved_cpu_millis"`
-	ReservedMemoryMiB      int32             `json:"reserved_memory_mib"`
-	ReservedDiskMiB        int64             `json:"reserved_disk_mib"`
-	ReservedExecutionSlots int32             `json:"reserved_execution_slots"`
-	VMRuntimeContract      string            `json:"vm_runtime_contract"`
-	Program                *RuntimeProgram   `json:"program,omitempty"`
-	Restore                *RuntimeRestore   `json:"restore,omitempty"`
+	RootfsDigest           string               `json:"rootfs_digest"`
+	ReservedCPUMillis      int32                `json:"reserved_cpu_millis"`
+	ReservedMemoryMiB      int32                `json:"reserved_memory_mib"`
+	ReservedDiskMiB        int64                `json:"reserved_disk_mib"`
+	ReservedExecutionSlots int32                `json:"reserved_execution_slots"`
+	VMRuntimeContract      string               `json:"vm_runtime_contract"`
+	Program                *RuntimeProgram      `json:"program,omitempty"`
+	Restore                *RuntimeRestore      `json:"restore,omitempty"`
 }
 
 type RuntimeRestore struct {
@@ -335,12 +335,12 @@ type BeginRunFinalizationRequest struct {
 }
 
 type BeginRunFinalizationResponse struct {
-	Lease                  RunLeaseFence           `json:"lease"`
-	BaseWorkspaceVersionID string                  `json:"base_workspace_version_id"`
-	ExpiresAt              time.Time               `json:"expires_at"`
-	OperationID            string                  `json:"operation_id"`
-	Kind                   RunFinalizationKind     `json:"kind"`
-	StartedAt              time.Time               `json:"started_at"`
+	Lease                  RunLeaseFence       `json:"lease"`
+	BaseWorkspaceVersionID string              `json:"base_workspace_version_id"`
+	ExpiresAt              time.Time           `json:"expires_at"`
+	OperationID            string              `json:"operation_id"`
+	Kind                   RunFinalizationKind `json:"kind"`
+	StartedAt              time.Time           `json:"started_at"`
 }
 
 type RunEntrypointRequest struct {
@@ -350,9 +350,9 @@ type RunEntrypointRequest struct {
 }
 
 type CompleteTaskRequest struct {
-	Lease     RunLeaseFence          `json:"lease"`
-	Outcome   TaskOutcome            `json:"outcome"`
-	Workspace TaskWorkspaceProof     `json:"workspace"`
+	Lease     RunLeaseFence      `json:"lease"`
+	Outcome   TaskOutcome        `json:"outcome"`
+	Workspace TaskWorkspaceProof `json:"workspace"`
 }
 
 type CompleteActorRequest struct {
@@ -741,16 +741,16 @@ type RunLeaseFresh struct {
 }
 
 type RunLeaseRestore struct {
-	RunWaitID            string                    `json:"run_wait_id"`
-	CheckpointID         string                    `json:"checkpoint_id"`
-	ResumeAttachID       string                    `json:"resume_attach_id"`
-	ResumeRequestVersion int64                     `json:"resume_request_version"`
-	CorrelationID        string                    `json:"correlation_id"`
-	EntrypointKind       string                    `json:"entrypoint_kind"`
-	EntrypointDeclaredID string                    `json:"entrypoint_declared_id"`
-	Manifest             json.RawMessage             `json:"manifest"`
+	RunWaitID            string                       `json:"run_wait_id"`
+	CheckpointID         string                       `json:"checkpoint_id"`
+	ResumeAttachID       string                       `json:"resume_attach_id"`
+	ResumeRequestVersion int64                        `json:"resume_request_version"`
+	CorrelationID        string                       `json:"correlation_id"`
+	EntrypointKind       string                       `json:"entrypoint_kind"`
+	EntrypointDeclaredID string                       `json:"entrypoint_declared_id"`
+	Manifest             json.RawMessage              `json:"manifest"`
 	Artifacts            []RunLeaseCheckpointArtifact `json:"artifacts"`
-	Decision             RunLeaseDecision          `json:"decision"`
+	Decision             RunLeaseDecision             `json:"decision"`
 }
 
 type RunLeaseCheckpointArtifact struct {
