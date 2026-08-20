@@ -187,9 +187,6 @@ func (c *Client) uploadDeploymentBundleObject(
 	if upload.Method != http.MethodPut || strings.TrimSpace(upload.URL) == "" {
 		return fmt.Errorf("%w: deployment object upload plan is invalid", ErrDeploymentObjectUploadNotAttempted)
 	}
-	if progressInterval <= 0 || noProgressTimeout <= 0 || progressInterval > noProgressTimeout {
-		return fmt.Errorf("%w: deployment object upload progress bounds are invalid", ErrDeploymentObjectUploadNotAttempted)
-	}
 	file, err := os.Open(objectPath)
 	if err != nil {
 		return fmt.Errorf("%w: open deployment object: %w", ErrDeploymentObjectUploadNotAttempted, err)
