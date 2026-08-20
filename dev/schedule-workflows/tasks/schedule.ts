@@ -16,16 +16,15 @@ export const scheduleSmoke = schedules.task({
   },
   workspace: { sandbox: scheduleSmokeWorkspace },
   maxDuration: "5m",
+  ttl: "5m",
   retry: { enabled: false },
-  run: async (input, ctx) => {
-    return {
-      scheduleId: input.scheduleId,
-      scheduledAt: input.scheduledAt.toISOString(),
-      lastScheduledAt: input.lastScheduledAt?.toISOString() ?? null,
-      timezone: input.timezone,
-      upcoming: input.upcoming.map((value) => value.toISOString()),
-      runId: ctx.run.id,
-      causeType: ctx.run.cause.type,
-    }
-  },
+  run: async (input, ctx) => ({
+    scheduleId: input.scheduleId,
+    scheduledAt: input.scheduledAt.toISOString(),
+    lastScheduledAt: input.lastScheduledAt?.toISOString() ?? null,
+    timezone: input.timezone,
+    upcoming: input.upcoming.map((value) => value.toISOString()),
+    runId: ctx.run.id,
+    causeType: ctx.run.cause.type,
+  }),
 })

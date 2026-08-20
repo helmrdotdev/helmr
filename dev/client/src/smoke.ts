@@ -622,8 +622,6 @@ async function writeClientSmokeResult(
     "actor-continuation",
     "actor-output-pagination",
     "deployment-read",
-    "schedule-read",
-    "schedule-fire",
     "secret-lifecycle",
     "token-management",
     "external-token-fanout",
@@ -644,7 +642,6 @@ async function writeClientSmokeResult(
             evidence.childTasks.actorRunId,
             evidence.childTasks.actorContinuationRunId,
             evidence.childTasks.actorChildRunId,
-            evidence.management.scheduledRunId,
             evidence.management.cancelledRunId,
             ...evidence.management.externalTokenRunIds,
           ],
@@ -660,9 +657,7 @@ async function writeClientSmokeResult(
       deployment_ids: evidence === undefined
         ? []
         : [evidence.management.deploymentId],
-      schedule_ids: evidence === undefined
-        ? []
-        : [evidence.management.scheduleId],
+      schedule_ids: [],
       token_ids: evidence === undefined
         ? []
         : [evidence.tokenId, evidence.management.completedTokenId],

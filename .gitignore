@@ -15,6 +15,7 @@ images/*/out/
 **/.terraform/
 **/.terraform.lock.hcl
 dev/workflows/vendor/
+dev/schedule-workflows/vendor/
 *.tfstate
 *.tfstate.*
 *.tfvars

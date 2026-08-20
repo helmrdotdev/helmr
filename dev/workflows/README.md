@@ -21,7 +21,6 @@ product repo.
 | `timer-smoke` | Parks on a wall-clock timer and verifies workspace state survives resume without active sleep. |
 | `child-task-smoke` | Exercises detached `task.start()`, durable `task.call()` success, and a child failure returned as `TaskResult`. |
 | `child-task-smoke-actor` | Exercises `task.call()` from successive Actor turns, durable input continuation, and ordered durable Actor output. |
-| `schedule-smoke` | Declares a one-minute scheduled Task and records the schedule cause and timestamps from the runtime context. |
 | `network-smoke` | Proves public IPv4 egress while metadata, private IPv4, IPv6 default routing, and public IPv6 are unavailable. |
 
 ## Environment Strategy
@@ -40,10 +39,10 @@ Expected release-smoke coverage:
 | Timer parked wait resume | `staging` | `timer-smoke` |
 | Child Task lifecycle | `staging` | `child-task-smoke` through the `child-tasks` release-smoke case; `child-task-smoke-actor` through the authenticated client smoke. |
 | Actor continuation and durable output | `staging` | The authenticated client smoke sends two inputs to one Actor, observes a new continuation Run, reads output with pagination, and verifies output remains after close. |
-| Declarative Schedule admission and fire | `staging` | `schedule-smoke` through the authenticated client smoke, including list/retrieve, cursor advance, scheduled Run receipt, terminal result, and Schedule cause. |
+| Declarative Schedule admission and fire | `staging` | The case-owned `dev/schedule-workflows` bundle is promoted only by the dedicated AWS Schedule lifecycle case, then the ordinary execution-only bundle is restored. |
 | IPv4-only network boundary | `staging` | `network-smoke` plus the deterministic host-policy test. The guest probe alone is not sufficient evidence. |
 | Missing-secret, invalid-payload, and failed-run observability | `staging` | `missing-secret-smoke` request expected to be rejected; malformed payload to `runtime-smoke`; `edge-smoke` expected-error |
-| Management resources | `staging` | The authenticated client smoke covers Deployment, Schedule, Secret, Token, Run list/cancel, and Workspace cleanup through the public SDK. |
+| Management resources | `staging` | The authenticated client smoke covers Deployment, Secret, Token, Run list/cancel, and Workspace cleanup through the public SDK. Schedule lifecycle is isolated because it temporarily changes the environment's current deployment. |
 | CLI, API, and console inspection | both | `helmr run get`, `helmr run events`, `helmr run logs`, and the console Run/Task views. Missing v0 surfaces are reported by the pre-AWS gate. |
 
 ## Deploy & Run

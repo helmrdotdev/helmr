@@ -3,9 +3,12 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 WORKFLOWS_DIR="${ROOT}/dev/workflows"
+SCHEDULE_WORKFLOWS_DIR="${ROOT}/dev/schedule-workflows"
 
 rm -rf "${WORKFLOWS_DIR}/vendor"
+rm -rf "${SCHEDULE_WORKFLOWS_DIR}/vendor"
 mkdir -p "${WORKFLOWS_DIR}/vendor"
+mkdir -p "${SCHEDULE_WORKFLOWS_DIR}/vendor"
 
 "${ROOT}/scripts/build-npm-packages.sh"
 
@@ -27,8 +30,14 @@ NODE
 }
 
 vendor_sdk "${WORKFLOWS_DIR}/vendor"
+vendor_sdk "${SCHEDULE_WORKFLOWS_DIR}/vendor"
 
 (
   cd "${WORKFLOWS_DIR}"
+  bun install --frozen-lockfile
+)
+
+(
+  cd "${SCHEDULE_WORKFLOWS_DIR}"
   bun install --frozen-lockfile
 )

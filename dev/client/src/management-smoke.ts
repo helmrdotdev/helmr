@@ -6,10 +6,6 @@ import {
   type Run,
 } from "@helmr/sdk"
 import type {
-  scheduleSmoke,
-  scheduleSmokeWorkspace,
-} from "../../workflows/tasks/smoke/schedule"
-import type {
   timerSmoke,
   timerSmokeWorkspace,
 } from "../../workflows/tasks/smoke/timer"
@@ -21,8 +17,6 @@ import { assert, assertEqual } from "./assert"
 
 export type ManagementEvidence = Readonly<{
   deploymentId: string
-  scheduleId: string
-  scheduledRunId: string
   secretId: string
   completedTokenId: string
   externalTokenRunIds: readonly string[]
@@ -49,60 +43,6 @@ export async function runManagementSmoke(
       deployment.id,
       "Deployment retrieve changed the current Deployment ID",
     )
-    const deploymentTasks = await client.tasks.list(
-      { deploymentId: deployment.id, limit: 100 },
-      { signal: AbortSignal.timeout(30_000) },
-    )
-    assert(
-      deploymentTasks.items.some((task) => task.id === "schedule-smoke"),
-      "current Deployment omitted the scheduled Task definition",
-    )
-
-    const scheduleWorkspace = await client.sandboxes.createWorkspace(
-      "helmr-schedule-smoke",
-      {
-        key: "release-gate",
-        idempotencyKey: "schedule-workspace:create:release-gate:v1",
-      },
-      { signal: AbortSignal.timeout(10 * 60_000) },
-    )
-    const schedule = await waitForActiveSchedule(client)
-    const baselineLastFireAt = schedule.lastFireAt
-    const retrievedSchedule = await client.schedules.retrieve(schedule.id, {
-      signal: AbortSignal.timeout(30_000),
-    })
-    assertEqual(retrievedSchedule.id, schedule.id, "Schedule retrieve changed the ID")
-    assertEqual(retrievedSchedule.taskId, "schedule-smoke", "Schedule task ID mismatch")
-    assertEqual(retrievedSchedule.status, "active", "Schedule was not active")
-    const firedSchedule = await waitForScheduleFire(
-      client,
-      schedule.id,
-      baselineLastFireAt,
-    )
-    const scheduledRun = await waitForScheduledRun(
-      client,
-      schedule.id,
-      firedSchedule.lastFireAt!,
-    )
-    const scheduledOutput = scheduledTaskOutput(
-      await client.runs.wait(
-        scheduledRun.id,
-        { signal: AbortSignal.timeout(10 * 60_000) },
-      ).unwrap(),
-    )
-    assertEqual(
-      scheduledOutput.scheduleId,
-      schedule.id,
-      "scheduled Task output changed the Schedule ID",
-    )
-    assertEqual(
-      scheduledOutput.scheduledAt,
-      firedSchedule.lastFireAt,
-      "scheduled Task output changed the fire instant",
-    )
-    assertEqual(scheduledOutput.timezone, "UTC", "scheduled Task timezone mismatch")
-    assertEqual(scheduledOutput.causeType, "schedule", "scheduled Task cause mismatch")
-
     const secretName = `release-gate-${marker}`.replace(/[^A-Za-z0-9_.-]/g, "-")
     const secret = await client.secrets.create(
       {
@@ -303,8 +243,6 @@ export async function runManagementSmoke(
     succeeded = true
     return {
       deploymentId: deployment.id,
-      scheduleId: schedule.id,
-      scheduledRunId: scheduledRun.id,
       secretId: secret.id,
       completedTokenId: completedToken.id,
       externalTokenRunIds: externalTokenRuns.map((run) => run.id),
@@ -324,29 +262,6 @@ export async function runManagementSmoke(
   }
 }
 
-function scheduledTaskOutput(value: JsonValue): Readonly<{
-  scheduleId: string
-  scheduledAt: string
-  timezone: string
-  causeType: string
-}> {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("scheduled Task output must be an object")
-  }
-  const output = value as Readonly<Record<string, JsonValue>>
-  for (const field of ["scheduleId", "scheduledAt", "timezone", "causeType"] as const) {
-    if (typeof output[field] !== "string") {
-      throw new Error(`scheduled Task output.${field} must be a string`)
-    }
-  }
-  return output as Readonly<{
-    scheduleId: string
-    scheduledAt: string
-    timezone: string
-    causeType: string
-  }>
-}
-
 function approvedTokenOutput(value: import("@helmr/sdk").JsonValue): boolean {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return false
@@ -356,104 +271,6 @@ function approvedTokenOutput(value: import("@helmr/sdk").JsonValue): boolean {
     return false
   }
   return (token as Readonly<Record<string, import("@helmr/sdk").JsonValue>>)["approved"] === true
-}
-
-async function waitForActiveSchedule(client: HelmrClient) {
-  const deadline = Date.now() + 5 * 60_000
-  for (;;) {
-    const schedules = await client.schedules.list(
-      { limit: 100 },
-      { signal: AbortSignal.timeout(30_000) },
-    )
-    const schedule = schedules.items.find((item) => item.taskId === "schedule-smoke")
-    if (schedule?.status === "active") return schedule
-    if (schedule?.status === "errored") {
-      throw new Error(`schedule-smoke admission failed: ${schedule.lastFailure?.code}`)
-    }
-    if (Date.now() >= deadline) {
-      throw new Error("timed out waiting for schedule-smoke to become active")
-    }
-    await new Promise((resolve) => setTimeout(resolve, 500))
-  }
-}
-
-async function waitForScheduleFire(
-  client: HelmrClient,
-  scheduleId: string,
-  baselineLastFireAt: string | undefined,
-) {
-  const deadline = Date.now() + 3 * 60_000
-  for (;;) {
-    const schedule = await client.schedules.retrieve(scheduleId, {
-      signal: AbortSignal.timeout(30_000),
-    })
-    if (
-      schedule.status === "active" &&
-      schedule.lastFireAt !== undefined &&
-      schedule.lastFireAt !== baselineLastFireAt
-    ) {
-      return schedule
-    }
-    if (schedule.status === "errored" || schedule.status === "archived") {
-      throw new Error(
-        `schedule-smoke stopped before firing: ${schedule.status} ${schedule.lastFailure?.code ?? ""}`,
-      )
-    }
-    if (Date.now() >= deadline) {
-      throw new Error(`timed out waiting for Schedule ${scheduleId} to fire`)
-    }
-    await new Promise((resolve) => setTimeout(resolve, 500))
-  }
-}
-
-async function waitForScheduledRun(
-  client: HelmrClient,
-  scheduleId: string,
-  scheduledAt: string,
-): Promise<Run> {
-  const deadline = Date.now() + 60_000
-  for (;;) {
-    let cursor: string | undefined
-    const matches: Run[] = []
-    for (let pageNumber = 0; pageNumber < 10; pageNumber++) {
-      const page = await client.runs.list(
-        {
-          limit: 100,
-          ...(cursor === undefined ? {} : { cursor }),
-        },
-        { signal: AbortSignal.timeout(30_000) },
-      )
-      const runs = await Promise.all(
-        page.items.map((item) =>
-          client.runs.retrieve(item.id, {
-            signal: AbortSignal.timeout(30_000),
-          })
-        ),
-      )
-      matches.push(...runs.filter((run) =>
-        run.cause.type === "schedule" &&
-        run.cause.scheduleId === scheduleId &&
-        run.cause.scheduledAt === scheduledAt
-      ))
-      if (page.nextCursor === undefined) break
-      if (pageNumber === 9) {
-        throw new Error("Run list exceeded the bounded Schedule receipt scan")
-      }
-      cursor = page.nextCursor
-    }
-    if (matches.length > 1) {
-      throw new Error(
-        `Schedule ${scheduleId} created duplicate Runs for ${scheduledAt}`,
-      )
-    }
-    if (matches[0] !== undefined) return matches[0]
-    if (Date.now() >= deadline) {
-      throw new Error(
-        `timed out finding Run for Schedule ${scheduleId} at ${scheduledAt}`,
-      )
-    }
-    await new Promise((resolve) => setTimeout(resolve, 500))
-  }
 }
 
 async function waitForRunStatus(

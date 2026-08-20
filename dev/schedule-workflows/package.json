@@ -1,0 +1,17 @@
+{
+  "name": "helmr-dev-schedule-workflows",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.3.10",
+  "version": "0.1.0",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@helmr/sdk": "file:vendor/helmr-sdk"
+  },
+  "devDependencies": {
+    "@types/node": "^24.7.2",
+    "typescript": "^5.9.3"
+  }
+}
