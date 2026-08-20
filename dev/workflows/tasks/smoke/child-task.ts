@@ -6,6 +6,7 @@ import {
   workspaces,
 } from "@helmr/sdk"
 import { readFile, writeFile } from "node:fs/promises"
+import { setTimeout as sleep } from "node:timers/promises"
 import { z } from "zod"
 
 const base = image("helmr-child-task-smoke")
@@ -29,6 +30,7 @@ export const childTaskSmokeTargetWorkspace = sandbox(
 const childPayload = z.object({
   marker: z.string().min(1),
   fail: z.boolean().default(false),
+  holdSeconds: z.number().int().min(0).max(240).default(0),
 }).strict()
 
 type ChildPayload = z.infer<typeof childPayload>
@@ -46,6 +48,9 @@ export const childTaskSmokeChild = task({
         attemptNumber: ctx.run.attemptNumber,
       }, null, 2)}\n`,
     )
+    if (input.holdSeconds > 0) {
+      await sleep(input.holdSeconds * 1000)
+    }
     if (input.fail) {
       throw new Error(`intentional child Task failure for ${input.marker}`)
     }
@@ -66,6 +71,7 @@ const callerPayload = z.object({
   ]),
   marker: z.string().min(1),
   childWorkspaceId: z.string().min(1).optional(),
+  holdSeconds: z.number().int().min(0).max(240).default(0),
 }).strict()
 
 type CallerPayload = z.infer<typeof callerPayload>
@@ -87,6 +93,7 @@ export const childTaskSmoke = task({
     const childInput = {
       marker: input.marker,
       fail: input.mode === "call-failure",
+      holdSeconds: input.holdSeconds,
     }
     const options = {
       workspace: childWorkspace,
@@ -169,7 +176,7 @@ export const childTaskSmokeActor = actor({
     }
     const input = actorInput.parse(received.value)
     const output = await childTaskSmokeChild.call(
-      { marker: input.marker, fail: false },
+      { marker: input.marker, fail: false, holdSeconds: 0 },
       {
         workspace: workspaces.ref(input.childWorkspaceId),
         idempotencyKey: `${ctx.run.id}:actor-call`,
