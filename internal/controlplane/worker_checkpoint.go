@@ -1192,7 +1192,7 @@ func (s *Server) commitSameWorkspaceChildCheckpointReady(
 	for _, binding := range bindings {
 		if binding.SecretState != "active" ||
 			!binding.CurrentVersionID.Valid {
-			return deterministicWorkerAdmission(errTaskSecretUnavailable)
+			return errTaskSecretUnavailable
 		}
 	}
 	claim, err := store.GetIdempotencyClaim(
