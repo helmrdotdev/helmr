@@ -4,14 +4,25 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )
+
+func TestCheckpointReadyRetryableStopsOnPermanentAdmissionFailure(t *testing.T) {
+	if checkpointReadyRetryable(&httpclient.Error{StatusCode: http.StatusUnprocessableEntity}) {
+		t.Fatal("unprocessable checkpoint admission remained retryable")
+	}
+	if !checkpointReadyRetryable(&httpclient.Error{StatusCode: http.StatusInternalServerError}) {
+		t.Fatal("transient checkpoint failure stopped retrying")
+	}
+}
 
 func TestControlPlaneRunWaitsDetachesAfterTypedCheckpointIntent(t *testing.T) {
 	client := &fakeRunWaitClient{

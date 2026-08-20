@@ -233,7 +233,13 @@ func (s *Server) workerMarkCheckpointFailed(w http.ResponseWriter, r *http.Reque
 		writeError(w, conflict(errors.New("worker checkpoint-failed receipt is stale")))
 		return
 	}
+	if isDeterministicWorkerAdmission(err) {
+		s.log.Warn("worker checkpoint-failed admission rejected", "run_lease_id", request.Lease.ID, "error", err)
+		writeError(w, apiError{kind: errUnprocessable, err: errors.New("worker checkpoint-failed admission is invalid")})
+		return
+	}
 	if err != nil {
+		s.log.Error("commit worker checkpoint-failed failed", "run_lease_id", request.Lease.ID, "error", err)
 		writeError(w, errors.New("commit worker checkpoint-failed"))
 		return
 	}
@@ -282,7 +288,7 @@ func failCheckpointTaskAttempt(
 			failedAt.Time,
 		)
 		if err != nil {
-			return err
+			return deterministicWorkerAdmission(err)
 		}
 	}
 	if !retry {
