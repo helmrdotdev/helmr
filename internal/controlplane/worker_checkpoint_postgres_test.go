@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -14,9 +15,39 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/jackc/pgx/v5"
 )
+
+func TestCreateSameWorkspaceChildRunQueryMatchesGreenfieldSchema(t *testing.T) {
+	fixture := runtest.New(t)
+	_, err := db.New(fixture.Pool).CreateSameWorkspaceChildRunFromParentDeployment(
+		t.Context(),
+		db.CreateSameWorkspaceChildRunFromParentDeploymentParams{
+			RunWaitID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			EntrypointDeclaredID:   pgvalue.Text("test-task"),
+			ClaimID:                pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			ParentRunLeaseID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			SuspendCheckpointID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			BaseWorkspaceVersionID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			EnvironmentID:          pgvalue.UUID(fixture.EnvironmentID),
+			ParentRunID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			ParentAttemptNumber:    1,
+			ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			QueueName:              "default",
+			QueueOriginAt:          pgvalue.Timestamptz(time.Now()),
+			QueueScoreAt:           pgvalue.Timestamptz(time.Now()),
+			MaxActiveDurationMs:    60_000,
+			RetryPolicy:            []byte(`{"enabled":false}`),
+			RootSpanID:             "1111111111111111",
+		},
+	)
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("empty-authority query error = %v, want no rows", err)
+	}
+}
 
 func TestWorkerCheckpointFailedRejectsInvalidPinnedRetryPolicyPermanently(t *testing.T) {
 	fixture := runtest.New(t)

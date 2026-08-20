@@ -1249,7 +1249,6 @@ WITH selected_target AS MATERIALIZED (
        AND checkpoint.workspace_id = parent.workspace_id
        AND checkpoint.run_wait_id = wait.id
        AND checkpoint.id = wait.suspend_checkpoint_id
-       AND checkpoint.kind = 'suspend'
        AND checkpoint.state = 'ready'
        AND checkpoint.private_workspace_version_id =
            $6
