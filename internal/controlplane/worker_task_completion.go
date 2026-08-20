@@ -52,6 +52,11 @@ func (s *Server) workerCompleteTask(w http.ResponseWriter, r *http.Request) {
 			writeError(w, conflict(errStaleTaskCompletion))
 			return
 		}
+		if isDeterministicWorkerAdmission(err) {
+			s.log.Warn("task completion admission rejected", "run_lease_id", request.Lease.ID, "error", err)
+			writeError(w, apiError{kind: errUnprocessable, err: errors.New("task completion admission is invalid")})
+			return
+		}
 		s.log.Error("complete Task failed", "run_lease_id", request.Lease.ID, "error", err)
 		writeError(w, errors.New("complete task"))
 		return

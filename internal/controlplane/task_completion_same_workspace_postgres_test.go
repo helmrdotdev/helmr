@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
@@ -90,6 +92,43 @@ SELECT parent.status, edge.condition_state, edge.suspension_state
 				t.Fatalf("success state = %s attempt %d", runStatus, currentAttempt)
 			}
 		})
+	}
+}
+
+func TestWorkerCompleteTaskRejectsInvalidPinnedRetryPolicyPermanently(t *testing.T) {
+	fixture := newSameWorkspaceCompletionPostgresFixture(t, true)
+	dbtest.MustExec(t, t.Context(), fixture.pool, `
+UPDATE runs SET retry_policy = '{"enabled":true}'::jsonb WHERE id = $1`, fixture.childRunID)
+	body, err := json.Marshal(fixture.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/worker/v0/run/tasks/complete",
+		bytes.NewReader(body),
+	)
+	request = request.WithContext(context.WithValue(
+		request.Context(), workerContextKey{}, fixture.worker,
+	))
+	response := httptest.NewRecorder()
+	fixture.server.log = taskCompletionTestLogger()
+
+	fixture.server.workerCompleteTask(response, request)
+
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+	var envelope struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Error.Code != "unprocessable_entity" {
+		t.Fatalf("error code = %q", envelope.Error.Code)
 	}
 }
 

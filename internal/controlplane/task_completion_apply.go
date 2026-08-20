@@ -183,7 +183,7 @@ func (s *Server) completeTask(
 
 		retryAt, retry, err := taskCompletionRetryAt(authority.run, authority.attempt, completion, completedAt.Time)
 		if err != nil {
-			return err
+			return deterministicWorkerAdmission(err)
 		}
 		var versionID pgtype.UUID
 		if completion.capture != nil {

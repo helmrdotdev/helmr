@@ -99,6 +99,11 @@ func (s *Server) workerMarkCheckpointReady(w http.ResponseWriter, r *http.Reques
 			writeError(w, conflict(errors.New("worker checkpoint-ready receipt is stale")))
 			return
 		}
+		if isDeterministicWorkerAdmission(err) {
+			s.log.Warn("worker checkpoint-ready admission rejected", "run_lease_id", request.Lease.ID, "error", err)
+			writeError(w, apiError{kind: errUnprocessable, err: errors.New("worker checkpoint-ready admission is invalid")})
+			return
+		}
 		s.log.Error("commit worker checkpoint-ready failed", "run_lease_id", request.Lease.ID, "error", err)
 		writeError(w, errors.New("commit worker checkpoint-ready"))
 		return
@@ -1149,7 +1154,7 @@ func (s *Server) commitSameWorkspaceChildCheckpointReady(
 	}
 	var request idempotency.TaskChildInvokeFingerprint
 	if err := decodeClosedJSON(wait.ChildRequest, &request); err != nil {
-		return staleRunLeaseClaim(err)
+		return deterministicWorkerAdmission(fmt.Errorf("decode pinned child task request: %w", err))
 	}
 	if request.Method != "call" {
 		return errStaleRunLeaseClaim
@@ -1178,12 +1183,16 @@ func (s *Server) commitSameWorkspaceChildCheckpointReady(
 		normalized,
 	)
 	if err != nil {
+		if errors.Is(err, errTaskNotDeployed) || errors.Is(err, errTaskStartAuthority) ||
+			errors.Is(err, errTaskPayloadPresenceInvalid) {
+			return deterministicWorkerAdmission(err)
+		}
 		return err
 	}
 	for _, binding := range bindings {
 		if binding.SecretState != "active" ||
 			!binding.CurrentVersionID.Valid {
-			return errTaskSecretUnavailable
+			return deterministicWorkerAdmission(errTaskSecretUnavailable)
 		}
 	}
 	claim, err := store.GetIdempotencyClaim(
