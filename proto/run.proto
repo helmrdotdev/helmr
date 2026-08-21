@@ -244,6 +244,16 @@ message ActorTurnCommitPauseReady {
   bool workspace_changed = 9;
 }
 
+message ActorTurnCommitApplied {
+  string correlation_id = 1;
+  int64 target_input_sequence = 2;
+  string run_id = 3;
+  uint32 attempt_number = 4;
+  string run_lease_id = 5;
+  string previous_base_workspace_version_id = 6;
+  string applied_base_workspace_version_id = 7;
+}
+
 message ActorOutputAppendRequested {
   string correlation_id = 1;
   string data_json = 2;

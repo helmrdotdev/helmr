@@ -223,7 +223,7 @@ func handleProgramRunConnection(
 			"workspace_id", workspaceID,
 		)
 	}
-	return superviseProgram(ctx, programConn, &request, process, waitingRegistry, entry)
+	return superviseProgram(ctx, programConn, &request, process, waitingRegistry, registry, entry)
 }
 
 func readProgramSecrets(
@@ -814,7 +814,8 @@ func superviseProgram(
 	conn programConnection,
 	request *runv0.ProgramRunRequest,
 	process *programProcess,
-	registry *waitingRunRegistry,
+	waits *waitingRunRegistry,
+	mounts *workspaceOperationRegistry,
 	workspaceEntry *workspaceMountEntry,
 ) error {
 	deadline := time.UnixMilli(request.GetStartDeadlineUnixMs())
@@ -944,7 +945,7 @@ func superviseProgram(
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {
 		return err
 	}
-	err = relayProgram(ctx, conn, request, ready.GetEntrypoint(), process, stream, outputErrors, &outputDone, registry, outputs, workspaceEntry)
+	err = relayProgram(ctx, conn, request, ready.GetEntrypoint(), process, stream, outputErrors, &outputDone, waits, mounts, outputs, workspaceEntry)
 	completed = err == nil
 	return err
 }
@@ -958,7 +959,8 @@ func relayProgram(
 	stream *programEventStream,
 	outputErrors <-chan error,
 	outputDone *sync.WaitGroup,
-	registry *waitingRunRegistry,
+	waits *waitingRunRegistry,
+	mounts *workspaceOperationRegistry,
 	outputs *programOutputCoordinator,
 	workspaceEntry *workspaceMountEntry,
 ) error {
@@ -1258,7 +1260,7 @@ func relayProgram(
 					if pendingPause != nil && len(pendingRuntimeOperations) == 0 {
 						resumed, err := pauseAndResumeProgram(
 							ctx, request, pendingWait, pendingPause, process, stream,
-							registry, outputs, events, controlErrors,
+							waits, outputs, events, controlErrors,
 						)
 						if err != nil {
 							return err
@@ -1280,7 +1282,7 @@ func relayProgram(
 				if control.turnCommit == nil {
 					return errors.New("program host sent non-commit control during actor turn commit")
 				}
-				if err := pauseActorTurnCommit(ctx, conn, request, pendingTurnCommit, control.turnCommit, process, stream, outputs, workspaceEntry); err != nil {
+				if err := pauseActorTurnCommit(ctx, conn, request, pendingTurnCommit, control.turnCommit, process, stream, outputs, mounts, workspaceEntry); err != nil {
 					return err
 				}
 				pendingTurnCommit = nil
@@ -1312,7 +1314,7 @@ func relayProgram(
 					hostControls = readProgramHostControl(conn)
 					continue
 				}
-				resumed, err := pauseAndResumeProgram(ctx, request, pendingWait, control.pause, process, stream, registry, outputs, events, controlErrors)
+				resumed, err := pauseAndResumeProgram(ctx, request, pendingWait, control.pause, process, stream, waits, outputs, events, controlErrors)
 				if err != nil {
 					return err
 				}
@@ -1756,6 +1758,7 @@ func pauseActorTurnCommit(
 	process *programProcess,
 	stream *programEventStream,
 	outputs *programOutputCoordinator,
+	mounts *workspaceOperationRegistry,
 	entry *workspaceMountEntry,
 ) error {
 	if requested == nil || pause == nil ||
@@ -1773,12 +1776,12 @@ func pauseActorTurnCommit(
 	if strings.TrimSpace(pause.GetExpectedBaseWorkspaceVersionId()) == "" {
 		return errors.New("actor turn commit expected workspace version is required")
 	}
-	releaseBarrier, authorityExpiresAt, err := entry.acquireActorTurnCommit(run, pause)
+	releaseBarrier, _, err := entry.acquireActorTurnCommit(run, pause)
 	if err != nil {
 		return err
 	}
 	defer releaseBarrier()
-	turnCtx, cancelTurn := context.WithDeadline(ctx, authorityExpiresAt)
+	turnCtx, cancelTurn := actorTurnAuthorityContext(ctx, entry)
 	defer cancelTurn()
 	if err := process.cgroup.freeze(turnCtx); err != nil {
 		return fmt.Errorf("freeze actor program cgroup: %w", err)
@@ -1851,10 +1854,21 @@ func pauseActorTurnCommit(
 	if strings.TrimSpace(committed.WorkspaceVersionID) == "" {
 		return errors.New("actor turn commit decision workspace version is required")
 	}
-	if err := entry.advanceActorTurnWorkspaceFrontierLocked(
+	if err := mounts.advanceActorTurnWorkspaceFrontier(
+		entry,
+		pause,
 		pause.GetExpectedBaseWorkspaceVersionId(), committed.WorkspaceVersionID,
 	); err != nil {
 		return err
+	}
+	applied := &runv0.ActorTurnCommitApplied{
+		CorrelationId: pause.GetCorrelationId(), TargetInputSequence: pause.GetTargetInputSequence(),
+		RunId: pause.GetRunId(), AttemptNumber: pause.GetAttemptNumber(), RunLeaseId: pause.GetRunLeaseId(),
+		PreviousBaseWorkspaceVersionId: pause.GetExpectedBaseWorkspaceVersionId(),
+		AppliedBaseWorkspaceVersionId:  committed.WorkspaceVersionID,
+	}
+	if err := stream.writeActorTurnCommitApplied(applied); err != nil {
+		return fmt.Errorf("write actor turn commit applied proof: %w", err)
 	}
 	if err := process.cgroup.thaw(turnCtx); err != nil {
 		return fmt.Errorf("thaw actor program cgroup: %w", err)
@@ -2482,6 +2496,14 @@ func (stream *programEventStream) writeActorTurnCommitPauseReady(ready *runv0.Ac
 	defer stream.mu.Unlock()
 	return stream.writeLocked(func(conn programConnection) error {
 		return wire.WriteActorTurnCommitPauseReady(conn, ready)
+	})
+}
+
+func (stream *programEventStream) writeActorTurnCommitApplied(applied *runv0.ActorTurnCommitApplied) error {
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	return stream.writeLocked(func(conn programConnection) error {
+		return wire.WriteActorTurnCommitApplied(conn, applied)
 	})
 }
 

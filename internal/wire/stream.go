@@ -17,6 +17,7 @@ const (
 	StreamTypeCheckpointPauseReady       StreamType = "checkpoint-pause-ready"
 	StreamTypeActorTurnCommitPause       StreamType = "actor-turn-commit-pause"
 	StreamTypeActorTurnCommitReady       StreamType = "actor-turn-commit-ready"
+	StreamTypeActorTurnCommitApplied     StreamType = "actor-turn-commit-applied"
 	StreamTypeResumeDecision             StreamType = "resume-decision"
 	StreamTypeWorkspaceMaterialize       StreamType = "workspace-materialize"
 	StreamTypeWorkspaceRuntimePrepare    StreamType = "workspace-runtime-prepare"
