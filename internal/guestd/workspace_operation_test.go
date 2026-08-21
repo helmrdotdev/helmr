@@ -443,6 +443,12 @@ func TestWorkspaceMaterializeReturnsFailureResponse(t *testing.T) {
 	if response.State != "failed" {
 		t.Fatalf("response state = %q, want failed", response.State)
 	}
+	if response.Target != nil {
+		t.Fatalf("failed response target = %+v, want nil", response.Target)
+	}
+	if response.GuestdChannelTokenHash != "" {
+		t.Fatalf("failed response channel token hash = %q, want empty", response.GuestdChannelTokenHash)
+	}
 	if got := testWorkspaceMountPhaseError(response.Phases); !strings.Contains(got, "mount_path") {
 		t.Fatalf("phase error = %q, want mount_path", got)
 	}

@@ -1299,7 +1299,79 @@ func TestWorkspaceMaterializerRegistersPreparedRuntimeOverOpenedStream(t *testin
 	}
 }
 
-func acknowledgePreparedWorkspaceMount(t *testing.T, stream io.ReadWriteCloser, workspaceMount workerapi.WorkspaceMount, runtimeKey string) {
+func TestWorkspaceMaterializerValidatesSuccessReceiptsOnlyAfterRunningState(t *testing.T) {
+	store, workspaceMount := testWorkspaceMountArtifacts(t)
+	workspaceMount.ID = "mat-receipt"
+	workspaceMount.OrgID = "org-1"
+	workspaceMount.WorkspaceID = "workspace-1"
+	workspaceMount.GuestdChannelToken = "channel-token"
+	workspaceMount.GuestdChannelTokenHash = sha256sum.HexBytes([]byte("channel-token"))
+	workspacePath := filepath.Join(t.TempDir(), "workspace.tar")
+	if err := os.WriteFile(workspacePath, store.objects[workspaceMount.Target.Artifact.Digest], 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name     string
+		response func(*workspacev0.MaterializeWorkspaceRequest) *workspacev0.MaterializeWorkspaceResponse
+		want     string
+		notWant  string
+	}{
+		{
+			name: "failed with phase error",
+			response: func(*workspacev0.MaterializeWorkspaceRequest) *workspacev0.MaterializeWorkspaceResponse {
+				return &workspacev0.MaterializeWorkspaceResponse{
+					State: "failed",
+					Phases: []*workspacev0.WorkspaceMountPhase{{
+						Name:  "guest_workspace_target_verify",
+						Error: "workspace tree digest mismatch",
+					}},
+				}
+			},
+			want:    "guest_workspace_target_verify: workspace tree digest mismatch",
+			notWant: "target does not match",
+		},
+		{
+			name: "failed without phase error",
+			response: func(*workspacev0.MaterializeWorkspaceRequest) *workspacev0.MaterializeWorkspaceResponse {
+				return &workspacev0.MaterializeWorkspaceResponse{State: "failed"}
+			},
+			want: `workspace materialize returned state "failed"`,
+		},
+		{
+			name: "running without target",
+			response: func(*workspacev0.MaterializeWorkspaceRequest) *workspacev0.MaterializeWorkspaceResponse {
+				return &workspacev0.MaterializeWorkspaceResponse{State: "running", GuestdChannelTokenHash: workspaceMount.GuestdChannelTokenHash}
+			},
+			want: "target does not match",
+		},
+		{
+			name: "running without channel receipt",
+			response: func(request *workspacev0.MaterializeWorkspaceRequest) *workspacev0.MaterializeWorkspaceResponse {
+				return &workspacev0.MaterializeWorkspaceResponse{State: "running", Target: request.Target}
+			},
+			want: "guest channel token hash mismatch",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			preparedClient, preparedServer := net.Pipe()
+			defer preparedServer.Close()
+			go respondToPreparedWorkspaceMountWithRequest(t, preparedServer, test.response)
+			err := (WorkspaceMaterializer{}).registerWorkspaceMount(context.Background(), &workspaceMaterializerTestSession{
+				streams: []io.ReadWriteCloser{preparedClient},
+			}, workspaceMount, workspacePath, "runtime-key")
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("register error = %v, want %q", err, test.want)
+			}
+			if test.notWant != "" && strings.Contains(err.Error(), test.notWant) {
+				t.Fatalf("register error = %v, do not want %q", err, test.notWant)
+			}
+		})
+	}
+}
+
+func respondToPreparedWorkspaceMountWithRequest(t *testing.T, stream io.ReadWriteCloser, response func(*workspacev0.MaterializeWorkspaceRequest) *workspacev0.MaterializeWorkspaceResponse) {
 	t.Helper()
 	header, _, err := wire.ReadStreamFrameHeader(stream)
 	if err != nil {
@@ -1315,27 +1387,31 @@ func acknowledgePreparedWorkspaceMount(t *testing.T, stream io.ReadWriteCloser, 
 		t.Errorf("read materialize request: %v", err)
 		return
 	}
-	if !request.UsePreparedRuntime || request.RuntimeInstanceId != runtimeKey {
-		t.Errorf("prepared runtime request use=%v runtime_instance_id=%q", request.UsePreparedRuntime, request.RuntimeInstanceId)
-		return
-	}
 	artifactHeader, artifactSize, err := wire.ReadStreamFrameHeader(stream)
-	if err != nil {
-		t.Errorf("read workspace artifact header: %v", err)
-		return
-	}
-	if artifactHeader.Type != wire.StreamTypeWorkspaceArtifact {
-		t.Errorf("workspace artifact header = %+v", artifactHeader)
+	if err != nil || artifactHeader.Type != wire.StreamTypeWorkspaceArtifact {
+		t.Errorf("read workspace artifact header: header=%+v err=%v", artifactHeader, err)
 		return
 	}
 	if _, err := io.Copy(io.Discard, &io.LimitedReader{R: stream, N: int64(artifactSize)}); err != nil {
 		t.Errorf("drain workspace artifact: %v", err)
 		return
 	}
-	_ = frameio.WriteProtoFrame(stream, &workspacev0.MaterializeWorkspaceResponse{
-		State:                  "running",
-		GuestdChannelTokenHash: workspaceMount.GuestdChannelTokenHash,
-		Target:                 request.Target,
+	if err := frameio.WriteProtoFrame(stream, response(&request)); err != nil {
+		t.Errorf("write materialize response: %v", err)
+	}
+}
+
+func acknowledgePreparedWorkspaceMount(t *testing.T, stream io.ReadWriteCloser, workspaceMount workerapi.WorkspaceMount, runtimeKey string) {
+	t.Helper()
+	respondToPreparedWorkspaceMountWithRequest(t, stream, func(request *workspacev0.MaterializeWorkspaceRequest) *workspacev0.MaterializeWorkspaceResponse {
+		if !request.UsePreparedRuntime || request.RuntimeInstanceId != runtimeKey {
+			t.Errorf("prepared runtime request use=%v runtime_instance_id=%q", request.UsePreparedRuntime, request.RuntimeInstanceId)
+		}
+		return &workspacev0.MaterializeWorkspaceResponse{
+			State:                  "running",
+			GuestdChannelTokenHash: workspaceMount.GuestdChannelTokenHash,
+			Target:                 request.Target,
+		}
 	})
 }
 

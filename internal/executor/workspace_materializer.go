@@ -1052,9 +1052,6 @@ func (m WorkspaceMaterializer) registerWorkspaceMount(ctx context.Context, sessi
 		return fmt.Errorf("read workspace materialize response: %w", err)
 	}
 	m.logWorkspaceMountPhase(mount, "workspace mount response read", "duration_ms", time.Since(phaseStarted).Milliseconds(), "state", strings.TrimSpace(response.State))
-	if !proto.Equal(response.GetTarget(), request.GetTarget()) {
-		return errors.New("workspace materialize response target does not match the requested exact target")
-	}
 	for _, guestPhase := range response.GetPhases() {
 		if guestPhase == nil {
 			continue
@@ -1072,6 +1069,9 @@ func (m WorkspaceMaterializer) registerWorkspaceMount(ctx context.Context, sessi
 			return fmt.Errorf("workspace materialize returned state %q: %s", response.State, phaseError)
 		}
 		return fmt.Errorf("workspace materialize returned state %q", response.State)
+	}
+	if !proto.Equal(response.GetTarget(), request.GetTarget()) {
+		return errors.New("workspace materialize response target does not match the requested exact target")
 	}
 	expectedHash := strings.TrimSpace(mount.GuestdChannelTokenHash)
 	if strings.TrimSpace(response.GuestdChannelTokenHash) != expectedHash {
