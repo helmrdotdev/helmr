@@ -4,12 +4,31 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/capacityapi"
+	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 )
+
+type workspaceExecInterleavedPlanStore struct {
+	*db.Queries
+	afterExec func()
+}
+
+func (s workspaceExecInterleavedPlanStore) ListPendingWorkspaceExecCapacityCandidates(
+	ctx context.Context,
+	params db.ListPendingWorkspaceExecCapacityCandidatesParams,
+) ([]db.ListPendingWorkspaceExecCapacityCandidatesRow, error) {
+	rows, err := s.Queries.ListPendingWorkspaceExecCapacityCandidates(ctx, params)
+	if err == nil && s.afterExec != nil {
+		s.afterExec()
+	}
+	return rows, err
+}
 
 func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *testing.T) {
 	ctx := context.Background()
@@ -103,6 +122,24 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 		}
 		if !visible && len(rows) != 0 {
 			t.Fatalf("%s rows = %+v, want none", label, rows)
+		}
+		if visible && len(rows[0].AccountedPoolIds) != 0 {
+			t.Fatalf("%s accounted pools = %+v, want none", label, rows[0].AccountedPoolIds)
+		}
+	}
+	requireAccounted := func(q *db.Queries, label string, poolIDs ...uuid.UUID) {
+		t.Helper()
+		rows := list(q, dbtest.DefaultRegionID)
+		if len(rows) != 1 || rows[0].ProcessID.Bytes != processID {
+			t.Fatalf("%s rows = %+v, want process %s", label, rows, processID)
+		}
+		if len(rows[0].AccountedPoolIds) != len(poolIDs) {
+			t.Fatalf("%s accounted pools = %+v, want %v", label, rows[0].AccountedPoolIds, poolIDs)
+		}
+		for index, poolID := range poolIDs {
+			if !rows[0].AccountedPoolIds[index].Valid || rows[0].AccountedPoolIds[index].Bytes != poolID {
+				t.Fatalf("%s accounted pools = %+v, want %v", label, rows[0].AccountedPoolIds, poolIDs)
+			}
 		}
 	}
 	requireVisible(queries, true, "eligible")
@@ -216,9 +253,7 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 		       reservation_expires_at = now() + interval '5 minutes'
 		 WHERE id = $1
 	`, runtimeID, processID, versionID)
-	if rows := list(queries, dbtest.DefaultRegionID); len(rows) != 0 {
-		t.Fatalf("rows with same-process live Runtime = %+v, want none", rows)
-	}
+	requireAccounted(queries, "same-process live Runtime", uuid.MustParse(dbtest.DefaultWorkerPoolID))
 
 	leaseProcessClaimID := uuid.Must(uuid.NewV7())
 	leaseProcessID := uuid.Must(uuid.NewV7())
@@ -284,9 +319,9 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 		       terminal_at = now(), terminal_reason_code = 'closed'
 		 WHERE id = $1
 	`, runtimeID)
-	requireVisible(queries, false, "releasing lease after Runtime reclamation")
+	requireAccounted(queries, "releasing lease after Runtime reclamation", uuid.MustParse(dbtest.DefaultWorkerPoolID))
 	dbtest.MustExec(t, ctx, pool, `UPDATE workspace_leases SET state = 'active' WHERE id = $1`, leaseID)
-	requireVisible(queries, false, "active lease after Runtime reclamation")
+	requireAccounted(queries, "active lease after Runtime reclamation", uuid.MustParse(dbtest.DefaultWorkerPoolID))
 	dbtest.MustExec(t, ctx, pool, `
 		UPDATE workspace_leases
 		   SET state = 'released', released_at = now(), terminal_at = now()
@@ -295,4 +330,105 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 	if rows := list(queries, dbtest.DefaultRegionID); len(rows) != 1 || rows[0].ProcessID.Bytes != processID {
 		t.Fatalf("rows after Runtime reclamation = %+v, want process %s", rows, processID)
 	}
+
+	t.Run("full Plan remains blocked when Runtime is reclaimed after Exec discovery", func(t *testing.T) {
+		interleavedRuntimeID := uuid.Must(uuid.NewV7())
+		dbtest.MustExec(t, ctx, pool, `
+			INSERT INTO runtime_instances (
+				id, org_id, worker_group_id, project_id, environment_id, region_id,
+				worker_instance_id, runtime_identity_id, deployment_definition_id,
+				worker_epoch, vm_vcpu_count, cpu_config_digest,
+				reserved_cpu_millis, reserved_memory_bytes,
+				reserved_guest_ephemeral_disk_bytes, reserved_execution_slots,
+				workspace_id, reserved_process_id, reserved_workspace_version_id,
+				reservation_expires_at, desired_reason
+			) VALUES (
+				$1, $2, $3, $4, $5, $6, $7, $8, $9,
+				1, 1, $10, 1000, 1073741824, 34359738368, 1,
+				$11, $12, $13, now() + interval '5 minutes',
+				'workspace-exec-capacity-interleaving-test'
+			)
+		`, interleavedRuntimeID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID,
+			ids.environmentID, dbtest.DefaultRegionID, workerID, dbtest.DefaultRuntimeID,
+			definitionID, dbtest.DefaultCPUConfigID, workspaceID, processID, versionID)
+
+		store := workspaceExecInterleavedPlanStore{
+			Queries: queries,
+			afterExec: func() {
+				dbtest.MustExec(t, ctx, pool, `
+					UPDATE runtime_instances
+					   SET desired_state = 'closed', desired_version = 2,
+					       observed_state = 'closed', observed_version = 1,
+					       observed_desired_version = 2, closing_at = now(), closed_at = now(),
+					       reserved_process_id = NULL, reserved_workspace_version_id = NULL,
+					       reservation_expires_at = NULL,
+					       reclaimed_at = now(), reclaim_evidence = '{}'::jsonb,
+					       terminal_at = now(), terminal_reason_code = 'closed'
+					 WHERE id = $1
+				`, interleavedRuntimeID)
+			},
+		}
+		plan, err := capacity.Plan(ctx, store, dbtest.DefaultWorkerGroupID, capacityapi.CapacityPlanRequest{
+			Pools: []capacityapi.CapacityPoolRequest{{
+				PoolID:               dbtest.DefaultWorkerPoolID,
+				MaxAdditionalWorkers: 1,
+			}},
+		}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(plan.Pools) != 1 {
+			t.Fatalf("pools = %+v, want one", plan.Pools)
+		}
+		poolPlan := plan.Pools[0]
+		if !poolPlan.ScaleInBlocked || poolPlan.CompatibleQueuedItems != 0 || poolPlan.RecommendedAdditionalWorkers != 0 {
+			t.Fatalf("pool plan after interleaved reclaim = %+v", poolPlan)
+		}
+		if !plan.Complete || poolPlan.Saturated {
+			t.Fatalf("plan after interleaved reclaim = %+v", plan)
+		}
+	})
+
+	t.Run("full Plan keeps candidate demand when Runtime is reserved after Exec discovery", func(t *testing.T) {
+		interleavedRuntimeID := uuid.Must(uuid.NewV7())
+		store := workspaceExecInterleavedPlanStore{
+			Queries: queries,
+			afterExec: func() {
+				dbtest.MustExec(t, ctx, pool, `
+					INSERT INTO runtime_instances (
+						id, org_id, worker_group_id, project_id, environment_id, region_id,
+						worker_instance_id, runtime_identity_id, deployment_definition_id,
+						worker_epoch, vm_vcpu_count, cpu_config_digest,
+						reserved_cpu_millis, reserved_memory_bytes,
+						reserved_guest_ephemeral_disk_bytes, reserved_execution_slots,
+						workspace_id, reserved_process_id, reserved_workspace_version_id,
+						reservation_expires_at, desired_reason
+					) VALUES (
+						$1, $2, $3, $4, $5, $6, $7, $8, $9,
+						1, 1, $10, 1000, 1073741824, 34359738368, 1,
+						$11, $12, $13, now() + interval '5 minutes',
+						'workspace-exec-capacity-reverse-interleaving-test'
+					)
+				`, interleavedRuntimeID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID,
+					ids.environmentID, dbtest.DefaultRegionID, workerID, dbtest.DefaultRuntimeID,
+					definitionID, dbtest.DefaultCPUConfigID, workspaceID, processID, versionID)
+			},
+		}
+		plan, err := capacity.Plan(ctx, store, dbtest.DefaultWorkerGroupID, capacityapi.CapacityPlanRequest{
+			Pools: []capacityapi.CapacityPoolRequest{{
+				PoolID:               dbtest.DefaultWorkerPoolID,
+				MaxAdditionalWorkers: 1,
+			}},
+		}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(plan.Pools) != 1 {
+			t.Fatalf("pools = %+v, want one", plan.Pools)
+		}
+		poolPlan := plan.Pools[0]
+		if poolPlan.CompatibleQueuedItems != 1 || poolPlan.ScaleInBlocked {
+			t.Fatalf("pool plan after interleaved reservation = %+v", poolPlan)
+		}
+	})
 }

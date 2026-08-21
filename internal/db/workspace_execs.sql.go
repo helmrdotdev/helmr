@@ -1545,7 +1545,26 @@ func (q *Queries) ListPendingWorkspaceExecCandidates(ctx context.Context, rowLim
 
 const listPendingWorkspaceExecCapacityCandidates = `-- name: ListPendingWorkspaceExecCapacityCandidates :many
 SELECT workspace_processes.id AS process_id,
-       definitions.manifest AS workspace_manifest
+       definitions.manifest AS workspace_manifest,
+       ARRAY(
+           SELECT accounting.worker_pool_id
+             FROM (
+                 SELECT worker_instances.worker_pool_id
+                   FROM runtime_instances
+                   JOIN worker_instances
+                     ON worker_instances.id = runtime_instances.worker_instance_id
+                  WHERE runtime_instances.workspace_id = workspaces.id
+                    AND runtime_instances.reclaimed_at IS NULL
+                 UNION
+                 SELECT worker_instances.worker_pool_id
+                   FROM workspace_leases
+                   JOIN worker_instances
+                     ON worker_instances.id = workspace_leases.worker_instance_id
+                  WHERE workspace_leases.workspace_id = workspaces.id
+                    AND workspace_leases.state IN ('active', 'releasing')
+             ) AS accounting
+            ORDER BY accounting.worker_pool_id
+       )::uuid[] AS accounted_pool_ids
   FROM workspace_processes
   JOIN workspaces
     ON workspaces.environment_id = workspace_processes.environment_id
@@ -1571,18 +1590,6 @@ SELECT workspace_processes.id AS process_id,
    AND workspaces.head_version_id = workspace_processes.base_version_id
    AND workspaces.owner_session_id IS NULL
    AND workspaces.owner_run_id IS NULL
-   AND NOT EXISTS (
-       SELECT 1
-         FROM workspace_leases
-        WHERE workspace_leases.workspace_id = workspaces.id
-          AND workspace_leases.state IN ('active', 'releasing')
-   )
-   AND NOT EXISTS (
-       SELECT 1
-         FROM runtime_instances
-        WHERE runtime_instances.workspace_id = workspaces.id
-          AND runtime_instances.reclaimed_at IS NULL
-   )
  ORDER BY workspace_processes.created_at, workspace_processes.id
  LIMIT $2
 `
@@ -1593,8 +1600,9 @@ type ListPendingWorkspaceExecCapacityCandidatesParams struct {
 }
 
 type ListPendingWorkspaceExecCapacityCandidatesRow struct {
-	ProcessID         pgtype.UUID `json:"process_id"`
-	WorkspaceManifest []byte      `json:"workspace_manifest"`
+	ProcessID         pgtype.UUID   `json:"process_id"`
+	WorkspaceManifest []byte        `json:"workspace_manifest"`
+	AccountedPoolIds  []pgtype.UUID `json:"accounted_pool_ids"`
 }
 
 func (q *Queries) ListPendingWorkspaceExecCapacityCandidates(ctx context.Context, arg ListPendingWorkspaceExecCapacityCandidatesParams) ([]ListPendingWorkspaceExecCapacityCandidatesRow, error) {
@@ -1606,7 +1614,7 @@ func (q *Queries) ListPendingWorkspaceExecCapacityCandidates(ctx context.Context
 	var items []ListPendingWorkspaceExecCapacityCandidatesRow
 	for rows.Next() {
 		var i ListPendingWorkspaceExecCapacityCandidatesRow
-		if err := rows.Scan(&i.ProcessID, &i.WorkspaceManifest); err != nil {
+		if err := rows.Scan(&i.ProcessID, &i.WorkspaceManifest, &i.AccountedPoolIds); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

@@ -190,11 +190,16 @@ func Plan(ctx context.Context, store Store, workerGroupID string, request capaci
 		return response, nil
 	}
 
-	items, complete, err := discoverItems(ctx, store, group, now.UTC().Format(time.RFC3339Nano))
+	items, accountedPoolIDs, complete, err := discoverItems(ctx, store, group, now.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return capacityapi.CapacityPlanResponse{}, err
 	}
 	response.Complete = complete
+	for poolID := range accountedPoolIDs {
+		if plan := planByID[poolID]; plan != nil {
+			plan.result.ScaleInBlocked = true
+		}
+	}
 	bins, binsComplete, err := currentBins(ctx, store, group.ID)
 	if err != nil {
 		return capacityapi.CapacityPlanResponse{}, err
@@ -399,8 +404,9 @@ func requestedPoolsForCandidate(plans []poolPlan, candidate item) []*poolPlan {
 	return result
 }
 
-func discoverItems(ctx context.Context, store Store, group db.WorkerGroup, scanSeed string) ([]item, bool, error) {
+func discoverItems(ctx context.Context, store Store, group db.WorkerGroup, scanSeed string) ([]item, map[[16]byte]struct{}, bool, error) {
 	result := make([]item, 0)
+	accountedPoolIDs := make(map[[16]byte]struct{})
 	complete := true
 	{
 		remaining := maximumPlanningCandidates
@@ -415,22 +421,22 @@ func discoverItems(ctx context.Context, store Store, group db.WorkerGroup, scanS
 				RowLimit: pageLimit, ScanSeed: scanSeed, RegionFilter: group.RegionID,
 			})
 			if err != nil {
-				return nil, false, fmt.Errorf("list capacity planning run scopes: %w", err)
+				return nil, nil, false, fmt.Errorf("list capacity planning run scopes: %w", err)
 			}
 			if len(scopes) == 0 {
 				break
 			}
 			usage, err := store.ListQueuedRunPlanningUsage(ctx, planningUsageParams(scopes))
 			if err != nil {
-				return nil, false, fmt.Errorf("list capacity planning run usage: %w", err)
+				return nil, nil, false, fmt.Errorf("list capacity planning run usage: %w", err)
 			}
 			if len(usage) != len(scopes) {
-				return nil, false, fmt.Errorf("list capacity planning run usage: got %d rows for %d scopes", len(usage), len(scopes))
+				return nil, nil, false, fmt.Errorf("list capacity planning run usage: got %d rows for %d scopes", len(usage), len(scopes))
 			}
 			visited += int32(len(scopes))
 			for index, scope := range scopes {
 				if usage[index].ScopeOrdinal != int64(index+1) {
-					return nil, false, fmt.Errorf("list capacity planning run usage: ordinal %d at index %d", usage[index].ScopeOrdinal, index)
+					return nil, nil, false, fmt.Errorf("list capacity planning run usage: ordinal %d at index %d", usage[index].ScopeOrdinal, index)
 				}
 				if remaining <= 0 {
 					complete = false
@@ -438,7 +444,7 @@ func discoverItems(ctx context.Context, store Store, group db.WorkerGroup, scanS
 				}
 				rows, err := store.ListQueuedRunPlanningCandidatesForScopes(ctx, planningCandidateParams(scope, remaining+1))
 				if err != nil {
-					return nil, false, fmt.Errorf("list capacity planning run candidates: %w", err)
+					return nil, nil, false, fmt.Errorf("list capacity planning run candidates: %w", err)
 				}
 				if len(rows) > int(remaining) {
 					complete = false
@@ -469,16 +475,22 @@ func discoverItems(ctx context.Context, store Store, group db.WorkerGroup, scanS
 		RowLimit: maximumPlanningCandidates + 1,
 	})
 	if err != nil {
-		return nil, false, fmt.Errorf("list capacity planning Workspace Exec candidates: %w", err)
+		return nil, nil, false, fmt.Errorf("list capacity planning Workspace Exec candidates: %w", err)
 	}
 	if len(execs) > int(maximumPlanningCandidates) {
 		complete = false
 		execs = execs[:maximumPlanningCandidates]
 	}
 	for _, row := range execs {
+		if len(row.AccountedPoolIds) > 0 {
+			for _, poolID := range row.AccountedPoolIds {
+				accountedPoolIDs[poolID.Bytes] = struct{}{}
+			}
+			continue
+		}
 		result = append(result, workspaceExecItem(row))
 	}
-	return result, complete, nil
+	return result, accountedPoolIDs, complete, nil
 }
 
 type queueAdmissionState struct {

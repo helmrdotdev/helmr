@@ -100,6 +100,60 @@ func TestPlanWorkspaceExecScalesExactPrimaryPoolFromZero(t *testing.T) {
 	}
 }
 
+func TestPlanWorkspaceExecAccountedSupplyBlocksExactRequestedPools(t *testing.T) {
+	primaryID := plannerTestUUID(58)
+	secondaryID := plannerTestUUID(59)
+	outsideID := plannerTestUUID(60)
+	primary := plannerTestPool(primaryID, "primary")
+	secondary := plannerTestPool(secondaryID, "secondary")
+	accounted := plannerWorkspaceExec(61)
+	accounted.AccountedPoolIds = []pgtype.UUID{secondaryID, primaryID, outsideID, primaryID}
+	store := plannerStore{
+		group: plannerTestGroup(primaryID),
+		pools: []db.ListCapacityWorkerPoolsRow{primary, secondary},
+		execs: []db.ListPendingWorkspaceExecCapacityCandidatesRow{accounted},
+	}
+
+	plan, err := Plan(context.Background(), store, plannerTestGroupID, capacityapi.CapacityPlanRequest{Pools: []capacityapi.CapacityPoolRequest{
+		plannerPoolRequest(primaryID, 1), plannerPoolRequest(secondaryID, 1),
+	}}, plannerTestNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []pgtype.UUID{primaryID, secondaryID} {
+		poolPlan := requirePoolPlan(t, plan, id)
+		if !poolPlan.ScaleInBlocked || poolPlan.CompatibleQueuedItems != 0 || poolPlan.RecommendedAdditionalWorkers != 0 {
+			t.Fatalf("accounted pool %s plan = %+v", plannerUUIDString(id), poolPlan)
+		}
+	}
+	if !plan.Complete || len(plan.UnmatchedDemand) != 0 {
+		t.Fatalf("plan = %+v", plan)
+	}
+}
+
+func TestPlanWorkspaceExecAccountedSupplyDoesNotHideOrdinaryCandidate(t *testing.T) {
+	primaryID := plannerTestUUID(62)
+	primary := plannerTestPool(primaryID, "primary")
+	accounted := plannerWorkspaceExec(63)
+	accounted.AccountedPoolIds = []pgtype.UUID{primaryID}
+	store := plannerStore{
+		group: plannerTestGroup(primaryID),
+		pools: []db.ListCapacityWorkerPoolsRow{primary},
+		execs: []db.ListPendingWorkspaceExecCapacityCandidatesRow{accounted, plannerWorkspaceExec(64)},
+	}
+
+	plan, err := Plan(context.Background(), store, plannerTestGroupID, capacityapi.CapacityPlanRequest{Pools: []capacityapi.CapacityPoolRequest{
+		plannerPoolRequest(primaryID, 1),
+	}}, plannerTestNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	poolPlan := requirePoolPlan(t, plan, primaryID)
+	if !poolPlan.ScaleInBlocked || poolPlan.CompatibleQueuedItems != 1 || poolPlan.RecommendedAdditionalWorkers != 1 {
+		t.Fatalf("pool plan = %+v", poolPlan)
+	}
+}
+
 func TestPlanWorkspaceExecUsesExistingCompatibleBin(t *testing.T) {
 	primaryID := plannerTestUUID(44)
 	primary := plannerTestPool(primaryID, "primary")
@@ -244,12 +298,15 @@ func TestDiscoverItemsScansWorkspaceExecIndependentlyFromRuns(t *testing.T) {
 		execs: []db.ListPendingWorkspaceExecCapacityCandidatesRow{plannerWorkspaceExec(47)},
 	}
 
-	items, complete, err := discoverItems(context.Background(), store, store.group, plannerTestNow.Format(time.RFC3339Nano))
+	items, accounted, complete, err := discoverItems(context.Background(), store, store.group, plannerTestNow.Format(time.RFC3339Nano))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if complete {
 		t.Fatal("discoverItems complete = true, want false for truncated Run scan")
+	}
+	if len(accounted) != 0 {
+		t.Fatalf("accounted pools = %+v, want none", accounted)
 	}
 	if len(items) != int(maximumPlanningCandidates)+1 {
 		t.Fatalf("items = %d, want %d Runs plus independent Workspace Exec", len(items), maximumPlanningCandidates+1)
@@ -267,12 +324,15 @@ func TestDiscoverItemsMarksTruncatedWorkspaceExecScanIncomplete(t *testing.T) {
 	}
 	store := plannerStore{group: plannerTestGroup(primaryID), execs: execs}
 
-	items, complete, err := discoverItems(context.Background(), store, store.group, plannerTestNow.Format(time.RFC3339Nano))
+	items, accounted, complete, err := discoverItems(context.Background(), store, store.group, plannerTestNow.Format(time.RFC3339Nano))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if complete || len(items) != int(maximumPlanningCandidates) {
 		t.Fatalf("complete = %v, items = %d", complete, len(items))
+	}
+	if len(accounted) != 0 {
+		t.Fatalf("accounted pools = %+v, want none", accounted)
 	}
 }
 
