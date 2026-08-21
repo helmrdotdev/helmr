@@ -132,16 +132,17 @@ async function runSmoke(): Promise<Evidence> {
   assertEqual(workspace.id, created.id, "workspace key resolved to a different Workspace")
   assertEqual(workspace.sandboxId, "helmr-runtime-smoke", "workspace Sandbox ID mismatch")
 
-  const markerPath = "workspace-smoke/nested/marker.txt"
+  const markerDirectory = "sandbox-smoke/nested"
+  const markerPath = `${markerDirectory}/marker.txt`
   const stdin = `stdin:${config.marker}\n`
   const execOptions = {
     command: [
       "sh",
       "-ceu",
       [
-        "mkdir -p workspace-smoke/nested",
+        `mkdir -p ${markerDirectory}`,
         "IFS= read -r line",
-        "printf 'marker=%s\\nstdin=%s\\n' \"$SMOKE_MARKER\" \"$line\" > workspace-smoke/nested/marker.txt",
+        `printf 'marker=%s\\nstdin=%s\\n' "$SMOKE_MARKER" "$line" > ${markerPath}`,
         "printf 'stdout:%s:%s\\n' \"$SMOKE_MARKER\" \"$line\"",
         "printf 'stderr:%s\\n' \"$SMOKE_MARKER\" >&2",
         "exit 7",
@@ -170,7 +171,7 @@ async function runSmoke(): Promise<Evidence> {
   assert(fileText.includes(`stdin=stdin:${config.marker}`), "committed file missed stdin")
   const fileStat = await byKey.files.stat(markerPath)
   assertFile(fileStat, markerPath, fileBytes.byteLength)
-  const listing = await byKey.files.list("workspace-smoke/nested", { limit: 100 })
+  const listing = await byKey.files.list(markerDirectory, { limit: 100 })
   assert(
     listing.items.some((entry) => entry.path === markerPath),
     "committed file was absent from the directory listing",
