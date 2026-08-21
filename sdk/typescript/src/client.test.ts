@@ -138,6 +138,8 @@ describe("HelmrClient Workspaces", () => {
 			}],
 		},
       {
+        process_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
+        status: "exited",
         exit_code: 0,
         stdout_base64: "b2sK",
         stderr_base64: "",
@@ -228,6 +230,67 @@ describe("HelmrClient Workspaces", () => {
     expect(JSON.parse(String(requests[4]!.init?.body))).toEqual({
       idempotency_key: "delete-1",
     })
+  })
+
+  test("polls an admitted Workspace Exec and preserves abort and failure semantics", async () => {
+    const workspaceId = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"
+    const processId = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36"
+    const requests: string[] = []
+    const responses: unknown[] = [
+      { process_id: processId, status: "pending" },
+      {
+        process_id: processId,
+        status: "exited",
+        exit_code: 0,
+        stdout_base64: "b2s=",
+        stderr_base64: "",
+      },
+      {
+        process_id: processId,
+        status: "failed",
+        error: { terminal_reason_code: "workspace_exec_placement_timed_out" },
+      },
+      { process_id: processId, status: "pending" },
+      { process_id: processId, status: "pending" },
+      { process_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37", status: "pending" },
+    ]
+    const client = new HelmrClient({
+      url: "https://api.example.test",
+      apiKey: "api-key",
+      fetch: (async (input: URL | RequestInfo) => {
+        requests.push(String(input))
+        return Response.json(responses.shift(), { status: 200 })
+      }) as typeof fetch,
+    })
+    const workspace = client.workspaces.ref(workspaceId)
+
+    const result = await workspace.exec({ command: ["true"], idempotencyKey: "exec-poll" })
+    expect(new TextDecoder().decode(result.stdout)).toBe("ok")
+    expect(requests[1]).toBe(
+      `https://api.example.test/v1/workspaces/${workspaceId}/exec/${processId}`,
+    )
+
+    await expect(workspace.exec({
+      command: ["true"],
+      idempotencyKey: "exec-failed",
+    })).rejects.toMatchObject({
+      name: "HelmrError",
+      code: "workspace_exec_placement_timed_out",
+    })
+
+    const controller = new AbortController()
+    const cancelled = workspace.exec(
+      { command: ["true"], idempotencyKey: "exec-abort" },
+      { signal: controller.signal },
+    )
+    controller.abort(new Error("cancelled"))
+    await expect(cancelled).rejects.toThrow("cancelled")
+
+    await expect(workspace.exec({
+      command: ["true"],
+      idempotencyKey: "exec-drift",
+    })).rejects.toThrow("changed process ID")
+    expect(requests).toHaveLength(6)
   })
 })
 

@@ -8,11 +8,72 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+func TestPublicWorkspaceExecProcessProjectsOnlySafeStatesAndTerminalData(t *testing.T) {
+	processID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	exitCode := int32(0)
+	resource, err := publicWorkspaceExecProcess(db.WorkspaceProcess{
+		ID:       processID,
+		State:    db.WorkspaceProcessStateExited,
+		ExitCode: pgtype.Int4{Int32: exitCode, Valid: true},
+		Stdout:   []byte("ok\n"),
+		Stderr:   []byte{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resource.Status != api.WorkspaceExecProcessStatusExited ||
+		resource.ExitCode == nil || *resource.ExitCode != exitCode ||
+		resource.StdoutBase64 == nil || *resource.StdoutBase64 != "b2sK" ||
+		resource.StderrBase64 == nil || *resource.StderrBase64 != "" ||
+		publicWorkspaceExecHTTPStatus(resource) != 200 {
+		t.Fatalf("terminal resource = %+v", resource)
+	}
+
+	failed, err := publicWorkspaceExecProcess(db.WorkspaceProcess{
+		ID:                 processID,
+		State:              db.WorkspaceProcessStateFailed,
+		TerminalReasonCode: pgvalue.Text("database_password=secret"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failed.Error == nil || failed.Error.TerminalReasonCode != "workspace_exec_failed" {
+		t.Fatalf("failed resource = %+v", failed)
+	}
+
+	pending, err := publicWorkspaceExecProcess(db.WorkspaceProcess{
+		ID: processID, State: db.WorkspaceProcessStateStarting,
+	})
+	if err != nil || pending.Status != api.WorkspaceExecProcessStatusPending ||
+		publicWorkspaceExecHTTPStatus(pending) != 202 {
+		t.Fatalf("pending resource = %+v, error = %v", pending, err)
+	}
+}
+
+func TestWorkspaceExecGETRequiresExecPermissionNotWorkspaceRead(t *testing.T) {
+	orgID := uuid.New()
+	scope := auth.Scope{OrgID: orgID, ProjectID: "project", EnvironmentID: "environment"}
+	viewer := auth.Actor{Kind: auth.ActorKindSession, OrgID: orgID, Role: auth.RoleViewer}
+	if canAccessWorkspaceExecOutput(viewer, scope) {
+		t.Fatal("Workspace reader was allowed to read Workspace Exec output")
+	}
+	createOnly := auth.Actor{
+		Kind: auth.ActorKindAPIKey, OrgID: orgID, Role: auth.RoleDeveloper,
+		ProjectID: "project", EnvironmentID: "environment",
+		Permissions: []auth.Permission{auth.PermissionWorkspaceExecCreate},
+	}
+	if !canAccessWorkspaceExecOutput(createOnly, scope) {
+		t.Fatal("create-only API key was unable to poll its Workspace Exec")
+	}
+}
 
 func TestNormalizeWorkspaceExecAppliesClosedDefaults(t *testing.T) {
 	normalized, err := normalizeWorkspaceExec(workspaceExecRequest{

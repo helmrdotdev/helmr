@@ -52,6 +52,7 @@ type Store interface {
 	ListQueuedRunEligibleScopes(context.Context, db.ListQueuedRunEligibleScopesParams) ([]db.ListQueuedRunEligibleScopesRow, error)
 	ListQueuedRunPlanningUsage(context.Context, db.ListQueuedRunPlanningUsageParams) ([]db.ListQueuedRunPlanningUsageRow, error)
 	ListQueuedRunPlanningCandidatesForScopes(context.Context, db.ListQueuedRunPlanningCandidatesForScopesParams) ([]db.ListQueuedRunPlanningCandidatesForScopesRow, error)
+	ListPendingWorkspaceExecCapacityCandidates(context.Context, db.ListPendingWorkspaceExecCapacityCandidatesParams) ([]db.ListPendingWorkspaceExecCapacityCandidatesRow, error)
 }
 
 type item struct {
@@ -463,6 +464,20 @@ func discoverItems(ctx context.Context, store Store, group db.WorkerGroup, scanS
 			complete = false
 		}
 	}
+	execs, err := store.ListPendingWorkspaceExecCapacityCandidates(ctx, db.ListPendingWorkspaceExecCapacityCandidatesParams{
+		RegionID: group.RegionID,
+		RowLimit: maximumPlanningCandidates + 1,
+	})
+	if err != nil {
+		return nil, false, fmt.Errorf("list capacity planning Workspace Exec candidates: %w", err)
+	}
+	if len(execs) > int(maximumPlanningCandidates) {
+		complete = false
+		execs = execs[:maximumPlanningCandidates]
+	}
+	for _, row := range execs {
+		result = append(result, workspaceExecItem(row))
+	}
 	return result, complete, nil
 }
 
@@ -520,28 +535,11 @@ func exceedsQueueLimit(used int64, candidateLimit pgtype.Int8, pinnedLimit int64
 }
 
 func runItem(row db.ListQueuedRunPlanningCandidatesForScopesRow) item {
-	result := item{role: "run", key: fmt.Sprintf("%x", row.RunID.Bytes)}
-	var manifest deployment.SandboxManifest
-	decoder := json.NewDecoder(bytes.NewReader(row.WorkspaceManifest))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&manifest); err != nil {
-		result.reason = reasonInvalidWorkload
+	result := freshExecutionItem(fmt.Sprintf("%x", row.RunID.Bytes), row.WorkspaceManifest)
+	if result.reason != "" {
 		return result
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		result.reason = reasonInvalidWorkload
-		return result
-	}
-	if manifest.Resources.MilliCPU <= 0 || manifest.Resources.MemoryMiB <= 0 ||
-		manifest.Resources.MemoryMiB > math.MaxInt64/mebibyte {
-		result.reason = reasonInvalidWorkload
-		return result
-	}
-	resources := capacityapi.ResourceVector{
-		CPUMillis: manifest.Resources.MilliCPU, MemoryBytes: manifest.Resources.MemoryMiB * mebibyte,
-		GuestEphemeralDiskBytes: compute.WorkspaceGuestEphemeralDiskMiB * mebibyte,
-		VMSlots:                 1,
-	}
+	resources := result.resources
 	if row.RequiredRuntimeIdentityID != "" {
 		if row.RequiredWorkerGroupID == "" || row.RequiredVMVCPUCount <= 0 ||
 			row.RequiredCPUConfigDigest == "" || row.RequiredCPUMillis <= 0 ||
@@ -565,6 +563,37 @@ func runItem(row db.ListQueuedRunPlanningCandidatesForScopesRow) item {
 	result.runtimeIdentityID = row.RequiredRuntimeIdentityID
 	result.substrateFormat = row.RequiredSubstrateFormat
 	result.substrateContract = row.RequiredSubstrateContract
+	return result
+}
+
+func workspaceExecItem(row db.ListPendingWorkspaceExecCapacityCandidatesRow) item {
+	return freshExecutionItem(fmt.Sprintf("workspace-exec:%x", row.ProcessID.Bytes), row.WorkspaceManifest)
+}
+
+func freshExecutionItem(key string, manifestJSON []byte) item {
+	result := item{role: "run", key: key}
+	var manifest deployment.SandboxManifest
+	decoder := json.NewDecoder(bytes.NewReader(manifestJSON))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&manifest); err != nil {
+		result.reason = reasonInvalidWorkload
+		return result
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		result.reason = reasonInvalidWorkload
+		return result
+	}
+	if manifest.Resources.MilliCPU <= 0 || manifest.Resources.MemoryMiB <= 0 ||
+		manifest.Resources.MemoryMiB > math.MaxInt64/mebibyte {
+		result.reason = reasonInvalidWorkload
+		return result
+	}
+	resources := capacityapi.ResourceVector{
+		CPUMillis: manifest.Resources.MilliCPU, MemoryBytes: manifest.Resources.MemoryMiB * mebibyte,
+		GuestEphemeralDiskBytes: compute.WorkspaceGuestEphemeralDiskMiB * mebibyte,
+		VMSlots:                 1,
+	}
+	result.resources = resources
 	return result
 }
 

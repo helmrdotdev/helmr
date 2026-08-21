@@ -345,6 +345,10 @@ func (s *capacityPlanStore) ListQueuedRunPlanningCandidatesForScopes(context.Con
 	return nil, nil
 }
 
+func (s *capacityPlanStore) ListPendingWorkspaceExecCapacityCandidates(context.Context, db.ListPendingWorkspaceExecCapacityCandidatesParams) ([]db.ListPendingWorkspaceExecCapacityCandidatesRow, error) {
+	return nil, nil
+}
+
 func capacityHTTPTemplate(t *testing.T) capacityapi.WorkerTemplate {
 	t.Helper()
 	runtime := capacityapi.RuntimeProfile{

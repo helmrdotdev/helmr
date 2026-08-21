@@ -79,6 +79,7 @@ GET /api/projects/{projectID}/environments/{environmentID}/tokens
 GET /api/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}
 GET /api/projects/{projectID}/environments/{environmentID}/workspaces
 GET /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}
+GET /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/exec/{processID}
 GET /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/files
 GET /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/files/content
 GET /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/files/stat
@@ -111,6 +112,7 @@ GET /v1/tokens
 GET /v1/tokens/{tokenID}
 GET /v1/workspaces
 GET /v1/workspaces/{workspaceID}
+GET /v1/workspaces/{workspaceID}/exec/{processID}
 GET /v1/workspaces/{workspaceID}/files
 GET /v1/workspaces/{workspaceID}/files/content
 GET /v1/workspaces/{workspaceID}/files/stat

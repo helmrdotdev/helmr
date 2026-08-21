@@ -352,6 +352,7 @@ type Querier interface {
 	ListOwnedCancellationRuns(ctx context.Context, arg ListOwnedCancellationRunsParams) ([]ListOwnedCancellationRunsRow, error)
 	ListPendingActorInputWaitTimeouts(ctx context.Context, limitCount int32) ([]RunWait, error)
 	ListPendingWorkspaceExecCandidates(ctx context.Context, rowLimit int32) ([]ListPendingWorkspaceExecCandidatesRow, error)
+	ListPendingWorkspaceExecCapacityCandidates(ctx context.Context, arg ListPendingWorkspaceExecCapacityCandidatesParams) ([]ListPendingWorkspaceExecCapacityCandidatesRow, error)
 	ListProjects(ctx context.Context, orgID pgtype.UUID) ([]Project, error)
 	ListProjectsForUpdate(ctx context.Context, orgID pgtype.UUID) ([]Project, error)
 	ListQueuedRunEligibleScopes(ctx context.Context, arg ListQueuedRunEligibleScopesParams) ([]ListQueuedRunEligibleScopesRow, error)

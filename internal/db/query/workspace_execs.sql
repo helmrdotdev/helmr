@@ -53,6 +53,49 @@ SELECT org_id, id, state_version, created_at
  ORDER BY created_at, id
  LIMIT sqlc.arg(row_limit);
 
+-- name: ListPendingWorkspaceExecCapacityCandidates :many
+SELECT workspace_processes.id AS process_id,
+       definitions.manifest AS workspace_manifest
+  FROM workspace_processes
+  JOIN workspaces
+    ON workspaces.environment_id = workspace_processes.environment_id
+   AND workspaces.id = workspace_processes.workspace_id
+  JOIN environments
+    ON environments.id = workspaces.environment_id
+   AND environments.org_id = workspace_processes.org_id
+   AND environments.project_id = workspace_processes.project_id
+  JOIN deployment_definitions AS definitions
+    ON definitions.environment_id = workspaces.environment_id
+   AND definitions.id = workspaces.deployment_definition_id
+   AND definitions.kind = 'sandbox'
+   AND definitions.declared_id = workspaces.sandbox_declared_id
+  JOIN workspace_versions
+    ON workspace_versions.workspace_id = workspaces.id
+   AND workspace_versions.id = workspace_processes.base_version_id
+   AND workspace_versions.state = 'committed'
+ WHERE workspace_processes.state = 'pending'
+   AND workspaces.region_id = sqlc.arg(region_id)
+   AND workspaces.state = 'active'
+   AND workspaces.desired_state IN ('active', 'stopped')
+   AND workspaces.dirty_state = 'clean'
+   AND workspaces.head_version_id = workspace_processes.base_version_id
+   AND workspaces.owner_session_id IS NULL
+   AND workspaces.owner_run_id IS NULL
+   AND NOT EXISTS (
+       SELECT 1
+         FROM workspace_leases
+        WHERE workspace_leases.workspace_id = workspaces.id
+          AND workspace_leases.state IN ('active', 'releasing')
+   )
+   AND NOT EXISTS (
+       SELECT 1
+         FROM runtime_instances
+        WHERE runtime_instances.workspace_id = workspaces.id
+          AND runtime_instances.reclaimed_at IS NULL
+   )
+ ORDER BY workspace_processes.created_at, workspace_processes.id
+ LIMIT sqlc.arg(row_limit);
+
 -- name: ListRecoverableWorkspaceExecCandidates :many
 SELECT workspace_processes.org_id,
        workspace_processes.id,

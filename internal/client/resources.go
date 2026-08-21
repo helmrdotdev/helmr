@@ -8,8 +8,10 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/ids"
 )
 
@@ -527,11 +529,78 @@ func (c *Client) ExecuteWorkspace(
 	if err != nil {
 		return api.ExecuteWorkspaceResult{}, err
 	}
-	var response api.ExecuteWorkspaceResult
-	if err := c.postJSON(ctx, path, input, &response); err != nil {
+	var process api.WorkspaceExecProcess
+	if err := c.postJSON(ctx, path, input, &process); err != nil {
 		return api.ExecuteWorkspaceResult{}, err
 	}
-	return response, nil
+	admittedProcessID := process.ProcessID
+	if err := ids.Validate(admittedProcessID); err != nil {
+		return api.ExecuteWorkspaceResult{}, fmt.Errorf("invalid workspace exec process ID: %w", err)
+	}
+	for {
+		if process.ProcessID != admittedProcessID {
+			return api.ExecuteWorkspaceResult{}, errors.New("workspace exec poll response changed process ID")
+		}
+		result, terminal, err := workspaceExecProcessResult(process)
+		if terminal || err != nil {
+			return result, err
+		}
+		timer := time.NewTimer(time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return api.ExecuteWorkspaceResult{}, ctx.Err()
+		case <-timer.C:
+		}
+		req, err := c.newRequest(ctx, http.MethodGet, path+"/"+url.PathEscape(admittedProcessID), nil)
+		if err != nil {
+			return api.ExecuteWorkspaceResult{}, err
+		}
+		if err := c.doJSON(req, &process); err != nil {
+			return api.ExecuteWorkspaceResult{}, err
+		}
+	}
+}
+
+func workspaceExecProcessResult(process api.WorkspaceExecProcess) (api.ExecuteWorkspaceResult, bool, error) {
+	switch process.Status {
+	case api.WorkspaceExecProcessStatusPending, api.WorkspaceExecProcessStatusRunning:
+		return api.ExecuteWorkspaceResult{}, false, nil
+	case api.WorkspaceExecProcessStatusExited:
+		if process.ExitCode == nil || process.StdoutBase64 == nil || process.StderrBase64 == nil {
+			return api.ExecuteWorkspaceResult{}, true, errors.New("workspace exec terminal response is incomplete")
+		}
+		return api.ExecuteWorkspaceResult{
+			ExitCode:     *process.ExitCode,
+			StdoutBase64: *process.StdoutBase64,
+			StderrBase64: *process.StderrBase64,
+		}, true, nil
+	case api.WorkspaceExecProcessStatusFailed:
+		if process.Error == nil {
+			return api.ExecuteWorkspaceResult{}, true, errors.New("workspace exec failure response is incomplete")
+		}
+		code := process.Error.TerminalReasonCode
+		message := "workspace exec failed"
+		switch code {
+		case "workspace_exec_timed_out":
+			message = "workspace exec timed out"
+		case "workspace_exec_output_limit_exceeded":
+			message = "workspace exec output limit was exceeded"
+		case "workspace_exec_placement_timed_out":
+			message = "workspace exec placement timed out"
+		case "workspace_exec_failed":
+		default:
+			return api.ExecuteWorkspaceResult{}, true, errors.New("workspace exec failure response has an invalid terminal reason")
+		}
+		return api.ExecuteWorkspaceResult{}, true, &httpclient.Error{
+			StatusCode: http.StatusUnprocessableEntity,
+			Status:     "422 Unprocessable Entity",
+			Code:       code,
+			Message:    message,
+		}
+	default:
+		return api.ExecuteWorkspaceResult{}, true, errors.New("workspace exec response has an invalid status")
+	}
 }
 
 type TokenScopeOptions struct {
