@@ -313,6 +313,32 @@ inspect_run() {
   fi
 }
 
+inspect_ready_run() {
+  local run_id=$1
+  shift
+  local scope_args=()
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --project|-p|--env|-e)
+        scope_args+=("$1" "$2")
+        shift 2
+        ;;
+      *)
+        shift
+        ;;
+    esac
+  done
+  if ! run_helmr run get "${run_id}" ${scope_args[@]+"${scope_args[@]}"}; then
+    return 1
+  fi
+  if ! run_helmr run events "${run_id}" ${scope_args[@]+"${scope_args[@]}"} --wait-ready 60s; then
+    return 1
+  fi
+  if ! run_helmr run logs "${run_id}" ${scope_args[@]+"${scope_args[@]}"} --wait-ready 60s; then
+    return 1
+  fi
+}
+
 run_snapshot_json() {
   local run_id=$1
   shift
@@ -418,7 +444,7 @@ expect_run_success() {
     inspect_run "${run_id}" "$@" >&2 || true
     printf 'FAIL %s: expected succeeded, got %s: %s\n' "${name}" "${status}" "${run_id}" >&2
     result=1
-  elif ! inspect_run "${run_id}" "$@"; then
+  elif ! inspect_ready_run "${run_id}" "$@"; then
     result=1
   fi
   if ! delete_smoke_workspace "${workspace_id}" "$@"; then
@@ -514,9 +540,9 @@ expect_child_task_lifecycle() {
         inspect_run "${child_run_id}" ${scope_args[@]+"${scope_args[@]}"} >&2 || true
         printf 'FAIL %s: detached child expected succeeded, got %s\n' "${name}" "${status}" >&2
         result=1
-      elif ! inspect_run "${parent_run_id}" ${scope_args[@]+"${scope_args[@]}"}; then
+      elif ! inspect_ready_run "${parent_run_id}" ${scope_args[@]+"${scope_args[@]}"}; then
         result=1
-      elif ! inspect_run "${child_run_id}" ${scope_args[@]+"${scope_args[@]}"}; then
+      elif ! inspect_ready_run "${child_run_id}" ${scope_args[@]+"${scope_args[@]}"}; then
         result=1
       fi
     fi
@@ -583,6 +609,7 @@ expect_token_success() {
   local run_id
   local token_id
   local status
+  local result=0
   marker="release-smoke-${name}-$(date -u +%Y%m%d%H%M%S)"
   ids="$(start_capture_ids runtime-smoke "$@" --payload-json "$(jq -nc --arg marker "${marker}" '{
     scenario: "token",
@@ -608,8 +635,13 @@ expect_token_success() {
     printf 'FAIL %s: expected succeeded, got %s: %s\n' "${name}" "${status}" "${run_id}" >&2
     return 1
   fi
-  inspect_run "${run_id}" "$@"
-  delete_smoke_workspace "${workspace_id}" "$@"
+  if ! inspect_ready_run "${run_id}" "$@"; then
+    result=1
+  fi
+  if ! delete_smoke_workspace "${workspace_id}" "$@"; then
+    result=1
+  fi
+  [ "${result}" = "0" ] || return "${result}"
   printf 'PASS %s workspace_id=%s run_id=%s token_id=%s\n' "${name}" "${workspace_id}" "${run_id}" "${token_id}"
 }
 

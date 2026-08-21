@@ -16,6 +16,15 @@ assert_contains() {
 	grep -Fq -- "$needle" "$file" || fail "$label: expected '$needle' in $file"
 }
 
+assert_not_contains() {
+	local file="$1"
+	local needle="$2"
+	local label="$3"
+	if grep -Fq -- "$needle" "$file"; then
+		fail "$label: did not expect '$needle' in $file"
+	fi
+}
+
 assert_equal() {
 	local expected="$1"
 	local actual="$2"
@@ -104,6 +113,7 @@ run_expect_status 1 env \
 	SKIP_DEPLOY=1 \
 	bash "$script"
 assert_contains "$fake_log" "run events run-call-success" "Run events failure attempt"
+assert_contains "$fake_log" "--wait-ready 60s" "successful Run telemetry readiness wait"
 assert_contains "$fake_log" "workspace delete --id workspace-caller" "inspection failure caller cleanup"
 assert_contains "$fake_log" "workspace delete --id workspace-target" "inspection failure target cleanup"
 assert_equal "failed" "$(jq -r '.status' "$result_json")" "inspection failure structured terminal status"
@@ -121,6 +131,8 @@ run_expect_status 0 env \
 	/bin/bash "$script"
 assert_contains "$stdout" "PASS staging-runtime" "API-key runtime contract pass"
 assert_equal '["019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30"]' "$(jq -c '.run_ids' "$result_json")" "API-key runtime Run result"
+assert_contains "$fake_log" "run events 019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30 --wait-ready 60s" "runtime event readiness"
+assert_contains "$fake_log" "run logs 019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30 --wait-ready 60s" "runtime log readiness"
 if grep -Eq -- '(^| )--(project|env)( |$)' "$fake_log"; then
 	fail "API-key runtime must not send session scope flags"
 fi
@@ -203,6 +215,19 @@ run_expect_status 0 env \
 	SKIP_DEPLOY=1 \
 	bash "$script"
 assert_contains "$stdout" "PASS staging-expected-error failed as expected" "Task failure contract pass"
+assert_not_contains "$fake_log" "run events 019c10d5-a6f7-7af1-8f5f-bb97bcc0dc3c --wait-ready" "failed Run diagnostics stay one-shot"
+
+: >"$fake_log"
+run_expect_status 1 env \
+	FAKE_HELMR_FAIL_MODE=token-readiness \
+	FAKE_HELMR_LOG="$fake_log" \
+	HELMR_BIN="$contract_fake" \
+	HELMR_SMOKE_RESULT_FILE="$result_json" \
+	SMOKE_CASES=token \
+	SKIP_DEPLOY=1 \
+	bash "$script"
+assert_contains "$fake_log" "run events 019c10d5-a6f7-7af1-8f5f-bb97bcc0dc3e" "token readiness failure attempt"
+assert_contains "$fake_log" "workspace delete --id 019c10d5-a6f7-7af1-8f5f-bb97bcc0dc3f" "token readiness failure cleanup"
 
 : >"$fake_log"
 run_expect_status 0 env \

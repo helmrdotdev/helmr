@@ -9,6 +9,7 @@ runtime_run=019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30
 invalid_run=019c10d5-a6f7-7af1-8f5f-bb97bcc0dc38
 error_run=019c10d5-a6f7-7af1-8f5f-bb97bcc0dc3c
 concurrent_run=019c10d5-a6f7-7af1-8f5f-bb97bcc0dc3d
+token_run=019c10d5-a6f7-7af1-8f5f-bb97bcc0dc3e
 
 case "${1:-} ${2:-}" in
   "workspace create")
@@ -41,6 +42,9 @@ case "${1:-} ${2:-}" in
         ;;
       "runtime-smoke "*'"scenario":"staging-runtime"'*)
         printf '{"run_id":"%s"}\n' "${runtime_run}"
+        ;;
+      "runtime-smoke "*'"scenario":"token"'*)
+        printf '{"run_id":"%s"}\n' "${token_run}"
         ;;
       "runtime-smoke "*'"unknown":true'*)
         printf '{"run_id":"%s"}\n' "${invalid_run}"
@@ -75,6 +79,9 @@ case "${1:-} ${2:-}" in
       "${network_run}"|"${concurrent_run}")
         printf '{"status":"succeeded"}\n'
         ;;
+      "${token_run}")
+        printf '{"status":"succeeded"}\n'
+        ;;
       *)
         printf 'unexpected Run wait: %s\n' "${3:-}" >&2
         exit 2
@@ -102,6 +109,13 @@ case "${1:-} ${2:-}" in
       "${concurrent_run}")
         printf '{"status":"succeeded","output":{"mode":"concurrent-wait"}}\n'
         ;;
+      "${token_run}")
+        if [[ "$*" == *" --json"* ]]; then
+          printf '{"status":"waiting","pending_wait":{"kind":"token","status":"pending","params":{"token_id":"token-ready"}}}\n'
+        else
+          printf '{"status":"succeeded"}\n'
+        fi
+        ;;
       *)
         printf 'unexpected Run get: %s\n' "${3:-}" >&2
         exit 2
@@ -109,7 +123,15 @@ case "${1:-} ${2:-}" in
     esac
     ;;
   "run events"|"run logs")
+    if [ "${FAKE_HELMR_FAIL_MODE:-}" = "token-readiness" ] &&
+      [ "${3:-}" = "${token_run}" ] && [[ "$*" == *"--wait-ready"* ]]; then
+      printf 'intentional token telemetry readiness failure\n' >&2
+      exit 1
+    fi
     printf '{"items":[]}\n'
+    ;;
+  "token complete")
+    printf '{"id":"%s","status":"completed"}\n' "${3:-unknown}"
     ;;
   *)
     printf 'unexpected fake Helmr command: %s\n' "$*" >&2
