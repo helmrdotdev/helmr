@@ -43,7 +43,7 @@ func (r ProgramRunner) startResumedProgram(
 	if !ok {
 		return freshProgram{}, errors.New("restored program wait control plane is required")
 	}
-	admissionCtx, cancelAdmission := context.WithCancel(ctx)
+	admissionCtx, cancelAdmission := context.WithDeadline(ctx, claim.Lease.StartDeadlineAt)
 	defer cancelAdmission()
 	opened, err := r.WorkspaceMounts.OpenWorkspaceMountSession(admissionCtx, claim.Lease.WorkspaceMountID)
 	if err != nil {
@@ -65,11 +65,6 @@ func (r ProgramRunner) startResumedProgram(
 	); err != nil {
 		return freshProgram{}, err
 	}
-	renewedLease, err := renewControlPlaneRunLeaseAuthority(admissionCtx, controlPlane, claim.Lease)
-	if err != nil {
-		return freshProgram{}, fmt.Errorf("renew resumed program authority before install: %w", err)
-	}
-	claim.Lease = renewedLease
 	authority := freshWorkspaceAuthority(claim, opened.ChannelToken)
 	grant := &workspacev0.GrantProgramResumeRequest{
 		Authority: authority, RunWaitId: resume.runWaitID, CheckpointId: resume.checkpointID,
@@ -79,25 +74,24 @@ func (r ProgramRunner) startResumedProgram(
 	if err := grantProgramResumeOnSession(admissionCtx, opened.ControlSession, grant); err != nil {
 		return freshProgram{}, fmt.Errorf("install resumed program authority: %w", err)
 	}
+	resume.start.Lease = claim.Lease.Fence()
+	var startResponse workerapi.RunStartResponse
+	if err := retryRunLeaseRequest(admissionCtx, func(requestCtx context.Context) error {
+		var requestErr error
+		startResponse, requestErr = controlPlane.AcknowledgeRunStart(requestCtx, resume.start)
+		if requestErr == nil && startResponse.Lease != resume.start.Lease {
+			return errors.New("resumed run start acknowledgement changed the run lease fence")
+		}
+		return requestErr
+	}); err != nil {
+		return freshProgram{}, fmt.Errorf("acknowledge resumed run start: %w", err)
+	}
 	state := &freshAdmissionState{
 		lease: claim.Lease, authority: authority, mounts: r.WorkspaceMounts,
 		controlPlane: controlPlane,
 	}
 	var entrypoint *runv0.EntrypointIdentity
-	if err := runWithFreshAdmissionRenewal(admissionCtx, state, func(operationCtx context.Context) error {
-		var startResponse workerapi.RunStartResponse
-		if err := retryRunLeaseRequest(operationCtx, func(requestCtx context.Context) error {
-			lease, _ := state.snapshot()
-			resume.start.Lease = lease.Fence()
-			var requestErr error
-			startResponse, requestErr = controlPlane.AcknowledgeRunStart(requestCtx, resume.start)
-			if requestErr == nil && startResponse.Lease != resume.start.Lease {
-				return errors.New("resumed run start acknowledgement changed the run lease fence")
-			}
-			return requestErr
-		}); err != nil {
-			return fmt.Errorf("acknowledge resumed run start: %w", err)
-		}
+	if err := runWithFreshAdmissionRenewal(ctx, state, func(operationCtx context.Context) error {
 		attach := &runv0.ResumeAttach{
 			RunId: claim.Lease.RunID, AttemptNumber: uint32(claim.Lease.AttemptNumber),
 			RunLeaseId: claim.Lease.ID, RunWaitId: resume.runWaitID, CheckpointId: resume.checkpointID,

@@ -84,11 +84,9 @@ func TestStartRestoredProgramRenewsAuthorityUntilRelease(t *testing.T) {
 	)
 	defer unregister()
 	releaseGate := make(chan struct{})
-	preRenewExpiresAt := time.Now().Add(600 * time.Millisecond)
 	controlPlane := &restoredProgramControlPlane{
 		lease: claim.Lease, wantStart: "restore", releaseGate: releaseGate,
-		preRenewExpiresAt: preRenewExpiresAt,
-		renewExpiresAt:    time.Now().Add(time.Minute), renewed: make(chan struct{}),
+		renewExpiresAt: time.Now().Add(time.Minute), renewed: make(chan struct{}),
 	}
 	guestErr := make(chan error, 3)
 	go func() { guestErr <- serveRestoredGrant(grantGuest) }()
@@ -130,11 +128,11 @@ func TestStartRestoredProgramRenewsAuthorityUntilRelease(t *testing.T) {
 	}
 }
 
-func TestStartRestoredProgramPreRenewsAuthorityBeforeGrantInstallation(t *testing.T) {
+func TestStartRestoredProgramStopsBlockedStartAtStartDeadline(t *testing.T) {
 	claim := testRestoredProgramClaim(t)
-	claim.Lease.ExpiresAt = time.Now().Add(120 * time.Millisecond)
-	preRenewExpiresAt := time.Now().Add(time.Minute)
+	claim.Lease.StartDeadlineAt = time.Now().Add(50 * time.Millisecond).UTC()
 	resumeGuest, resumeHost := net.Pipe()
+	defer resumeGuest.Close()
 	grantGuest, grantHost := net.Pipe()
 	parent := &queuedStreamSession{streams: []vm.Stream{testVMStream(resumeHost), testVMStream(grantHost)}}
 	mounts := NewWorkspaceMountSessions()
@@ -147,41 +145,32 @@ func TestStartRestoredProgramPreRenewsAuthorityBeforeGrantInstallation(t *testin
 		}, parent, "restored-channel",
 	)
 	defer unregister()
+	startGate := make(chan struct{})
 	controlPlane := &restoredProgramControlPlane{
-		lease: claim.Lease, wantStart: "restore", preRenewExpiresAt: preRenewExpiresAt,
+		lease: claim.Lease, wantStart: "restore", startGate: startGate,
 	}
-	grantInstalled := make(chan struct{})
-	grantResponse := make(chan struct{})
-	guestErr := make(chan error, 2)
-	go func() {
-		guestErr <- serveRestoredGrantBlocked(grantGuest, preRenewExpiresAt, grantInstalled, grantResponse)
-	}()
-	go func() { guestErr <- serveRestoredResume(resumeGuest) }()
-	programResult := make(chan error, 1)
-	go func() {
-		program, err := (ProgramRunner{WorkspaceMounts: mounts}).startResumedProgram(
-			context.Background(), &claim, controlPlane,
-		)
-		if err == nil {
-			err = program.session.Close(context.Background())
-		}
-		programResult <- err
-	}()
-	<-grantInstalled
-	time.Sleep(150 * time.Millisecond)
-	select {
-	case err := <-programResult:
-		t.Fatalf("restored admission completed before delayed grant response: %v", err)
-	default:
+	grantDone := make(chan error, 1)
+	go func() { grantDone <- serveRestoredGrant(grantGuest) }()
+	started := time.Now()
+	_, err := (ProgramRunner{WorkspaceMounts: mounts}).startResumedProgram(
+		context.Background(), &claim, controlPlane,
+	)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("startResumedProgram() error = %v", err)
 	}
-	close(grantResponse)
-	if err := <-programResult; err != nil {
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("blocked restored start stopped after %s", elapsed)
+	}
+	if err := <-grantDone; err != nil {
 		t.Fatal(err)
 	}
-	for range 2 {
-		if err := <-guestErr; err != nil {
-			t.Fatal(err)
-		}
+	controlPlane.mu.Lock()
+	defer controlPlane.mu.Unlock()
+	if controlPlane.started || controlPlane.renewCalls != 0 {
+		t.Fatalf("started=%v renew calls=%d", controlPlane.started, controlPlane.renewCalls)
+	}
+	if claim.Workspace.WriteCapability != "" {
+		t.Fatal("timed-out restored claim retained its write capability")
 	}
 }
 
@@ -421,36 +410,6 @@ func serveRestoredGrant(conn net.Conn) error {
 	})
 }
 
-func serveRestoredGrantBlocked(
-	conn net.Conn,
-	wantExpiry time.Time,
-	installed chan<- struct{},
-	release <-chan struct{},
-) error {
-	defer conn.Close()
-	header, bodyLen, err := wire.ReadStreamFrameHeader(conn)
-	if err != nil {
-		return err
-	}
-	if header.Type != wire.StreamTypeProgramResumeGrant || bodyLen != 0 {
-		return errors.New("unexpected restored grant header")
-	}
-	var request workspacev0.GrantProgramResumeRequest
-	if err := frameio.ReadProtoFrame(conn, &request); err != nil {
-		return err
-	}
-	if request.GetAuthority().GetFence().GetExpiresAtUnixNano() != wantExpiry.UnixNano() {
-		return errors.New("restored grant did not install the pre-renewed authority")
-	}
-	close(installed)
-	<-release
-	return frameio.WriteProtoFrame(conn, &workspacev0.GrantProgramResumeResponse{
-		Fence: request.GetAuthority().GetFence(), RunWaitId: request.GetRunWaitId(),
-		CheckpointId: request.GetCheckpointId(), ResumeAttachId: request.GetResumeAttachId(),
-		ResumeRequestVersion: request.GetResumeRequestVersion(), CorrelationId: request.GetCorrelationId(),
-	})
-}
-
 func serveRestoredResume(conn net.Conn) error {
 	defer conn.Close()
 	var attach runv0.ResumeAttach
@@ -543,24 +502,31 @@ func (s *queuedStreamSession) Close(context.Context) error {
 func (*queuedStreamSession) Wait(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
 
 type restoredProgramControlPlane struct {
-	mu                sync.Mutex
-	lease             workerapi.RunLeaseAssignment
-	started           bool
-	released          bool
-	releaseCalls      int
-	wantStart         string
-	releaseGate       <-chan struct{}
-	preRenewExpiresAt time.Time
-	renewExpiresAt    time.Time
-	renewCalls        int
-	renewed           chan struct{}
-	renewOnce         sync.Once
+	mu             sync.Mutex
+	lease          workerapi.RunLeaseAssignment
+	started        bool
+	released       bool
+	releaseCalls   int
+	wantStart      string
+	startGate      <-chan struct{}
+	releaseGate    <-chan struct{}
+	renewExpiresAt time.Time
+	renewCalls     int
+	renewed        chan struct{}
+	renewOnce      sync.Once
 }
 
 func (c *restoredProgramControlPlane) ClaimRunLease(context.Context, workerapi.RunLeaseWork) (workerapi.RunLeaseClaimResponse, error) {
 	return workerapi.RunLeaseClaimResponse{}, errors.New("unexpected claim")
 }
-func (c *restoredProgramControlPlane) AcknowledgeRunStart(_ context.Context, request workerapi.RunStartRequest) (workerapi.RunStartResponse, error) {
+func (c *restoredProgramControlPlane) AcknowledgeRunStart(ctx context.Context, request workerapi.RunStartRequest) (workerapi.RunStartResponse, error) {
+	if c.startGate != nil {
+		select {
+		case <-c.startGate:
+		case <-ctx.Done():
+			return workerapi.RunStartResponse{}, ctx.Err()
+		}
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	validArm := request.Restore != nil && request.Fresh == nil
@@ -577,12 +543,12 @@ func (*restoredProgramControlPlane) AcknowledgeRunEntrypoint(context.Context, wo
 func (c *restoredProgramControlPlane) RenewRunLease(_ context.Context, previous workerapi.RunLeaseAssignment) (workerapi.RunLeaseRenewResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if !c.started {
+		return workerapi.RunLeaseRenewResponse{}, errors.New("renew before start")
+	}
 	expiresAt := c.lease.ExpiresAt
 	c.renewCalls++
-	if c.renewCalls == 1 && !c.preRenewExpiresAt.IsZero() {
-		expiresAt = c.preRenewExpiresAt
-		c.lease.ExpiresAt = expiresAt
-	} else if !c.renewExpiresAt.IsZero() {
+	if !c.renewExpiresAt.IsZero() {
 		expiresAt = c.renewExpiresAt
 		c.lease.ExpiresAt = expiresAt
 		c.renewOnce.Do(func() { close(c.renewed) })
