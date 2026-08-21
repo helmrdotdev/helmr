@@ -2886,7 +2886,7 @@ WITH authority AS (
     )
     SELECT $4,
            authority.environment_id, authority.workspace_id, authority.base_version_id,
-           $5, 'workspace_version', 'system',
+           $5, 'workspace_version', 'user',
            $6, $7, $8,
            'private', authority.source_workspace_lease_id,
            authority.ownership_generation, authority.writer_generation

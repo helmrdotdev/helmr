@@ -17,6 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -185,22 +186,40 @@ UPDATE workspace_mounts
 		t.Fatal(err)
 	}
 	versionID := uuid.MustParse(receipt.VersionID)
+	var versionKind db.WorkspaceVersionKind
 	var versionDigest, artifactDigest string
 	var versionSize, artifactSize int64
 	var versionEntries int32
 	if err := fixture.Pool.QueryRow(t.Context(), `
-SELECT workspace_versions.content_digest, workspace_versions.size_bytes,
+SELECT workspace_versions.kind, workspace_versions.content_digest, workspace_versions.size_bytes,
        workspace_versions.entry_count, artifacts.digest, artifacts.size_bytes
   FROM workspace_versions
   JOIN artifacts ON artifacts.id = workspace_versions.artifact_id
  WHERE workspace_versions.id = $1`, versionID).Scan(
-		&versionDigest, &versionSize, &versionEntries, &artifactDigest, &artifactSize,
+		&versionKind, &versionDigest, &versionSize, &versionEntries, &artifactDigest, &artifactSize,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if versionDigest != first.Tree.Digest || versionSize != first.Tree.SizeBytes || versionEntries != first.Tree.EntryCount ||
+	if versionKind != db.WorkspaceVersionKindUser ||
+		versionDigest != first.Tree.Digest || versionSize != first.Tree.SizeBytes || versionEntries != first.Tree.EntryCount ||
 		artifactDigest != first.Artifact.Digest || artifactSize != first.Artifact.SizeBytes {
-		t.Fatalf("version=%s/%d/%d artifact=%s/%d", versionDigest, versionSize, versionEntries, artifactDigest, artifactSize)
+		t.Fatalf("version=%s/%s/%d/%d artifact=%s/%d", versionKind, versionDigest, versionSize, versionEntries, artifactDigest, artifactSize)
+	}
+	authority, err := server.db.GetWorkspaceResetTargetAuthority(t.Context(), db.GetWorkspaceResetTargetAuthorityParams{
+		OrgID: pgvalue.UUID(fixture.OrgID), ProjectID: pgvalue.UUID(fixture.ProjectID),
+		EnvironmentID: pgvalue.UUID(fixture.EnvironmentID), WorkspaceID: pgvalue.UUID(workspaceID),
+		VersionID: pgvalue.UUID(versionID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resetTarget, err := projectWorkspaceResetTarget(db.WorkspaceLease{BaseVersionID: pgvalue.UUID(versionID)}, authority)
+	if err != nil {
+		t.Fatalf("captured version is not a valid reset target: %v", err)
+	}
+	if resetTarget.BaseWorkspaceVersionID != versionID.String() || resetTarget.Artifact == nil ||
+		resetTarget.Artifact.Digest != first.Artifact.Digest || resetTarget.Tree.Digest != first.Tree.Digest {
+		t.Fatalf("captured reset target = %+v", resetTarget)
 	}
 
 	replayed := capture(first)

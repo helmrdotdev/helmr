@@ -729,7 +729,7 @@ WITH authority AS (
     )
     SELECT sqlc.arg(workspace_version_id),
            authority.environment_id, authority.workspace_id, authority.base_version_id,
-           sqlc.arg(artifact_id), 'workspace_version', 'system',
+           sqlc.arg(artifact_id), 'workspace_version', 'user',
            sqlc.arg(content_digest), sqlc.arg(size_bytes), sqlc.arg(entry_count),
            'private', authority.source_workspace_lease_id,
            authority.ownership_generation, authority.writer_generation
