@@ -135,16 +135,29 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 		writeError(w, badRequest(fmt.Errorf("invalid workspace capture JSON: %w", err)))
 		return
 	}
+	tree, err := parseTaskWorkspaceTree("tree", request.Tree)
+	if err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
+	if err := validateTaskWorkspaceArtifact("artifact", request.Artifact); err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
+	if tree.EntryCount != int(request.Artifact.EntryCount) {
+		writeError(w, badRequest(errors.New("workspace capture tree and artifact entry counts differ")))
+		return
+	}
 	params, err := s.workspaceMountTransition(r.Context(), request.OrgID, request.WorkspaceMountID)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	if strings.TrimSpace(request.ArtifactMediaType) != workspace.ArtifactMediaType ||
-		strings.TrimSpace(request.ArtifactEncoding) != workspace.ArtifactEncoding ||
-		request.ArtifactSizeBytes <= 0 || request.ArtifactEntryCount < 0 ||
-		strings.TrimSpace(request.ArtifactDigest) == "" {
-		writeError(w, badRequest(errors.New("workspace capture artifact is invalid")))
+	verified, err := s.verifyTaskWorkspaceCapture(r.Context(), parsedTaskWorkspaceCapture{
+		tree: tree, artifact: request.Artifact,
+	})
+	if err != nil {
+		writeError(w, badRequest(err))
 		return
 	}
 	var versionID pgtype.UUID
@@ -158,9 +171,9 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 			},
 		)
 		if err == nil {
-			if existing.ContentDigest != strings.TrimSpace(request.ArtifactDigest) ||
-				existing.SizeBytes != request.ArtifactSizeBytes ||
-				existing.EntryCount != request.ArtifactEntryCount {
+			if existing.ContentDigest != verified.tree.Digest ||
+				existing.SizeBytes != verified.tree.SizeBytes ||
+				existing.EntryCount != int32(verified.tree.EntryCount) {
 				return conflict(errors.New("workspace capture replay differs"))
 			}
 			versionID = existing.ID
@@ -170,18 +183,18 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 			return err
 		}
 		if _, err := work.q.UpsertCasObject(r.Context(), db.UpsertCasObjectParams{
-			OrgID: params.orgID, Digest: strings.TrimSpace(request.ArtifactDigest),
-			SizeBytes: request.ArtifactSizeBytes,
-			MediaType: strings.TrimSpace(request.ArtifactMediaType),
+			OrgID: params.orgID, Digest: verified.artifact.Digest,
+			SizeBytes: verified.artifact.SizeBytes,
+			MediaType: verified.artifact.MediaType,
 		}); err != nil {
 			return err
 		}
 		artifact, err := work.q.CreateArtifact(r.Context(), db.CreateArtifactParams{
 			ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), OrgID: params.orgID,
 			ProjectID: params.mount.ProjectID, EnvironmentID: params.mount.EnvironmentID,
-			Digest: strings.TrimSpace(request.ArtifactDigest),
-			Kind:   db.ArtifactKindWorkspaceVersion, SizeBytes: request.ArtifactSizeBytes,
-			MediaType:                 strings.TrimSpace(request.ArtifactMediaType),
+			Digest: verified.artifact.Digest,
+			Kind:   db.ArtifactKindWorkspaceVersion, SizeBytes: verified.artifact.SizeBytes,
+			MediaType:                 verified.artifact.MediaType,
 			CreatedByWorkerInstanceID: params.workerID,
 		})
 		if err != nil {
@@ -195,9 +208,9 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 				WorkerEpoch:        params.epoch,
 				WorkspaceVersionID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
 				ArtifactID:         artifact.ID,
-				ContentDigest:      strings.TrimSpace(request.ArtifactDigest),
-				SizeBytes:          request.ArtifactSizeBytes,
-				EntryCount:         request.ArtifactEntryCount,
+				ContentDigest:      verified.tree.Digest,
+				SizeBytes:          verified.tree.SizeBytes,
+				EntryCount:         int32(verified.tree.EntryCount),
 			},
 		)
 		if err != nil {
@@ -211,7 +224,7 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err != nil {
-		writeError(w, errors.New("stage workspace capture"))
+		writeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.WorkspaceMountCaptureResponse{

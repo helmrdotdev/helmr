@@ -1132,7 +1132,7 @@ func (m WorkspaceMaterializer) stopControlledWorkspaceMount(ctx context.Context,
 		return fmt.Errorf("workspace mount finalization kind %q is unsupported", update.FinalizationKind)
 	}
 	fencingGeneration := max(update.FencingGeneration, mount.FencingGeneration)
-	artifact, err := m.stopWorkspaceGuest(ctx, session, mount, fencingGeneration, capture, !capture)
+	result, err := m.stopWorkspaceGuest(ctx, session, mount, fencingGeneration, capture, !capture)
 	if err != nil {
 		if capture {
 			_ = m.failWorkspaceMount(client, mount, workspaceMountFailure{
@@ -1149,16 +1149,16 @@ func (m WorkspaceMaterializer) stopControlledWorkspaceMount(ctx context.Context,
 	}
 	if capture {
 		if _, err := client.CaptureWorkspaceMount(ctx, workerapi.WorkspaceMountCaptureRequest{
-			OrgID:              mount.OrgID,
-			ProjectID:          mount.ProjectID,
-			EnvironmentID:      mount.EnvironmentID,
-			WorkspaceID:        mount.WorkspaceID,
-			WorkspaceMountID:   mount.ID,
-			ArtifactDigest:     artifact.Digest,
-			ArtifactSizeBytes:  artifact.SizeBytes,
-			ArtifactMediaType:  artifact.MediaType,
-			ArtifactEncoding:   artifact.Encoding,
-			ArtifactEntryCount: int32(artifact.EntryCount),
+			OrgID:            mount.OrgID,
+			WorkspaceMountID: mount.ID,
+			Tree: workerapi.WorkspaceTreeIdentity{
+				Digest: result.Tree.Digest, SizeBytes: result.Tree.SizeBytes, EntryCount: int32(result.Tree.EntryCount),
+			},
+			Artifact: workerapi.WorkspaceArtifact{
+				Digest: result.Artifact.Digest, MediaType: result.Artifact.MediaType,
+				Encoding: result.Artifact.Encoding, SizeBytes: result.Artifact.SizeBytes,
+				EntryCount: int32(result.Artifact.EntryCount),
+			},
 		}); err != nil {
 			_ = m.failWorkspaceMount(client, mount, workspaceMountFailure{
 				code: "workspace_mount_recovery_required",
@@ -1194,24 +1194,42 @@ func (m WorkspaceMaterializer) stopControlledWorkspaceMount(ctx context.Context,
 	return nil
 }
 
-func (m WorkspaceMaterializer) stopWorkspaceGuest(ctx context.Context, session vm.Session, mount workerapi.WorkspaceMount, fencingGeneration int64, capture bool, finalize bool) (workspace.WorkspaceArtifact, error) {
+type workspaceMountCapture struct {
+	Tree     workspace.TreeIdentity
+	Artifact workspace.WorkspaceArtifact
+}
+
+func workspaceTreeIdentityFromProto(value *workspacev0.WorkspaceTreeIdentity) (workspace.TreeIdentity, error) {
+	if value == nil {
+		return workspace.TreeIdentity{}, errors.New("workspace tree identity is required")
+	}
+	tree := workspace.TreeIdentity{
+		Digest: strings.TrimSpace(value.GetDigest()), SizeBytes: value.GetSizeBytes(), EntryCount: int(value.GetEntryCount()),
+	}
+	if err := workspace.ValidateTreeIdentity(tree); err != nil {
+		return workspace.TreeIdentity{}, err
+	}
+	return tree, nil
+}
+
+func (m WorkspaceMaterializer) stopWorkspaceGuest(ctx context.Context, session vm.Session, mount workerapi.WorkspaceMount, fencingGeneration int64, capture bool, finalize bool) (workspaceMountCapture, error) {
 	channelToken := m.channelToken(mount)
 	if channelToken == "" {
-		return workspace.WorkspaceArtifact{}, errors.New("workspace mount guest channel token is required")
+		return workspaceMountCapture{}, errors.New("workspace mount guest channel token is required")
 	}
 	if m.CAS == nil {
-		return workspace.WorkspaceArtifact{}, errors.New("workspace materializer CAS is required")
+		return workspaceMountCapture{}, errors.New("workspace materializer CAS is required")
 	}
 	stream, err := session.OpenStream(ctx)
 	if err != nil {
-		return workspace.WorkspaceArtifact{}, fmt.Errorf("open workspace stop stream: %w", err)
+		return workspaceMountCapture{}, fmt.Errorf("open workspace stop stream: %w", err)
 	}
 	defer stream.Close()
 	if err := wire.WriteStreamFrameHeader(stream, wire.StreamHeader{
 		Type:        wire.StreamTypeWorkspaceStop,
 		WorkspaceID: mount.WorkspaceID,
 	}, 0); err != nil {
-		return workspace.WorkspaceArtifact{}, fmt.Errorf("write workspace stop header: %w", err)
+		return workspaceMountCapture{}, fmt.Errorf("write workspace stop header: %w", err)
 	}
 	if err := frameio.WriteProtoFrame(stream, &workspacev0.StopWorkspaceRequest{
 		Envelope: &workspacev0.WorkspaceOperationEnvelope{
@@ -1223,71 +1241,78 @@ func (m WorkspaceMaterializer) stopWorkspaceGuest(ctx context.Context, session v
 		CaptureBeforeStop: capture,
 		FinalizeStop:      finalize,
 	}); err != nil {
-		return workspace.WorkspaceArtifact{}, fmt.Errorf("write workspace stop request: %w", err)
+		return workspaceMountCapture{}, fmt.Errorf("write workspace stop request: %w", err)
 	}
 	var response workspacev0.StopWorkspaceResponse
 	if err := readProtoFrameFromReaderContext(ctx, session, stream, &response); err != nil {
-		return workspace.WorkspaceArtifact{}, fmt.Errorf("read workspace stop response: %w", err)
+		return workspaceMountCapture{}, fmt.Errorf("read workspace stop response: %w", err)
 	}
 	if strings.TrimSpace(response.GetErrorJson()) != "" {
-		return workspace.WorkspaceArtifact{}, fmt.Errorf("workspace stop failed: %s", strings.TrimSpace(response.GetErrorJson()))
+		return workspaceMountCapture{}, fmt.Errorf("workspace stop failed: %s", strings.TrimSpace(response.GetErrorJson()))
 	}
 	expectedState := "stopped"
 	if capture && !finalize {
 		expectedState = "captured"
 	}
 	if strings.TrimSpace(response.State) != expectedState {
-		return workspace.WorkspaceArtifact{}, fmt.Errorf("workspace stop returned state %q", response.State)
+		return workspaceMountCapture{}, fmt.Errorf("workspace stop returned state %q", response.State)
 	}
 	if !capture {
-		return workspace.WorkspaceArtifact{}, nil
+		return workspaceMountCapture{}, nil
+	}
+	reportedTree, err := workspaceTreeIdentityFromProto(response.GetCapturedTree())
+	if err != nil {
+		return workspaceMountCapture{}, fmt.Errorf("workspace stop captured tree: %w", err)
 	}
 	captured := response.GetCapturedArtifact()
 	if captured == nil {
-		return workspace.WorkspaceArtifact{}, errors.New("workspace stop response missing captured artifact")
+		return workspaceMountCapture{}, errors.New("workspace stop response missing captured artifact")
 	}
 	if strings.TrimSpace(captured.GetDigest()) == "" {
-		return workspace.WorkspaceArtifact{}, errors.New("workspace stop captured artifact digest is required")
+		return workspaceMountCapture{}, errors.New("workspace stop captured artifact digest is required")
 	}
 	if strings.TrimSpace(captured.GetMediaType()) != workspace.ArtifactMediaType {
-		return workspace.WorkspaceArtifact{}, fmt.Errorf("workspace stop captured artifact media_type %q is unsupported", captured.GetMediaType())
+		return workspaceMountCapture{}, fmt.Errorf("workspace stop captured artifact media_type %q is unsupported", captured.GetMediaType())
 	}
 	if strings.TrimSpace(captured.GetEncoding()) != workspace.ArtifactEncoding {
-		return workspace.WorkspaceArtifact{}, fmt.Errorf("workspace stop captured artifact encoding %q is unsupported", captured.GetEncoding())
+		return workspaceMountCapture{}, fmt.Errorf("workspace stop captured artifact encoding %q is unsupported", captured.GetEncoding())
+	}
+	if int(captured.GetEntryCount()) != reportedTree.EntryCount {
+		return workspaceMountCapture{}, errors.New("workspace stop captured tree and artifact entry counts differ")
 	}
 	header, bodyLen, err := wire.ReadStreamFrameHeader(stream)
 	if err != nil {
-		return workspace.WorkspaceArtifact{}, fmt.Errorf("read workspace stop artifact header: %w", err)
+		return workspaceMountCapture{}, fmt.Errorf("read workspace stop artifact header: %w", err)
 	}
 	if header.Type != wire.StreamTypeWorkspaceArtifact {
-		return workspace.WorkspaceArtifact{}, fmt.Errorf("workspace stop returned artifact stream type %q", header.Type)
+		return workspaceMountCapture{}, fmt.Errorf("workspace stop returned artifact stream type %q", header.Type)
 	}
 	if strings.TrimSpace(header.WorkspaceID) != strings.TrimSpace(mount.WorkspaceID) {
-		return workspace.WorkspaceArtifact{}, fmt.Errorf("workspace stop artifact workspace_id %q does not match %q", header.WorkspaceID, mount.WorkspaceID)
+		return workspaceMountCapture{}, fmt.Errorf("workspace stop artifact workspace_id %q does not match %q", header.WorkspaceID, mount.WorkspaceID)
 	}
 	if uint64(captured.GetSizeBytes()) != bodyLen {
-		return workspace.WorkspaceArtifact{}, fmt.Errorf("workspace stop artifact size %d does not match frame size %d", captured.GetSizeBytes(), bodyLen)
+		return workspaceMountCapture{}, fmt.Errorf("workspace stop artifact size %d does not match frame size %d", captured.GetSizeBytes(), bodyLen)
 	}
 	if header.BodyDigest != nil && strings.TrimSpace(*header.BodyDigest) != strings.TrimSpace(captured.GetDigest()) {
-		return workspace.WorkspaceArtifact{}, fmt.Errorf("workspace stop artifact digest %q does not match frame digest %q", captured.GetDigest(), *header.BodyDigest)
+		return workspaceMountCapture{}, fmt.Errorf("workspace stop artifact digest %q does not match frame digest %q", captured.GetDigest(), *header.BodyDigest)
 	}
 	body := &io.LimitedReader{R: stream, N: int64(bodyLen)}
 	object, err := m.CAS.Put(ctx, workspace.ArtifactMediaType, body)
 	if err != nil {
-		return workspace.WorkspaceArtifact{}, fmt.Errorf("store workspace stop artifact: %w", err)
+		return workspaceMountCapture{}, fmt.Errorf("store workspace stop artifact: %w", err)
 	}
 	if body.N != 0 {
-		return workspace.WorkspaceArtifact{}, errors.New("workspace stop artifact stream ended early")
+		return workspaceMountCapture{}, errors.New("workspace stop artifact stream ended early")
 	}
 	if object.Digest != strings.TrimSpace(captured.GetDigest()) || object.SizeBytes != int64(captured.GetSizeBytes()) || object.MediaType != workspace.ArtifactMediaType {
-		return workspace.WorkspaceArtifact{}, errors.New("workspace stop artifact CAS metadata mismatch")
+		return workspaceMountCapture{}, errors.New("workspace stop artifact CAS metadata mismatch")
 	}
-	return workspace.WorkspaceArtifact{
-		Digest:     object.Digest,
-		MediaType:  object.MediaType,
-		Encoding:   workspace.ArtifactEncoding,
-		SizeBytes:  object.SizeBytes,
-		EntryCount: int(captured.GetEntryCount()),
+	return workspaceMountCapture{
+		Tree: reportedTree,
+		Artifact: workspace.WorkspaceArtifact{
+			Digest: object.Digest, MediaType: object.MediaType, Encoding: workspace.ArtifactEncoding,
+			SizeBytes: object.SizeBytes, EntryCount: int(captured.GetEntryCount()),
+		},
 	}, nil
 }
 

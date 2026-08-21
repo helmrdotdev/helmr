@@ -1178,8 +1178,8 @@ func restorePreparedWorkspaceImage(conn io.Reader, request *workspacev0.PrepareW
 	return image, cleanup, nil
 }
 
-func handleWorkspaceStopConnection(_ context.Context, conn io.ReadWriter, registry *workspaceOperationRegistry) error {
-	if err := handleWorkspaceStop(conn, registry); err != nil {
+func handleWorkspaceStopConnection(ctx context.Context, conn io.ReadWriter, registry *workspaceOperationRegistry) error {
+	if err := handleWorkspaceStop(ctx, conn, registry); err != nil {
 		response := &workspacev0.StopWorkspaceResponse{
 			State:     "failed",
 			ErrorJson: workspaceStopErrorJSON(err),
@@ -1192,7 +1192,7 @@ func handleWorkspaceStopConnection(_ context.Context, conn io.ReadWriter, regist
 	return nil
 }
 
-func handleWorkspaceStop(conn io.ReadWriter, registry *workspaceOperationRegistry) error {
+func handleWorkspaceStop(ctx context.Context, conn io.ReadWriter, registry *workspaceOperationRegistry) error {
 	var request workspacev0.StopWorkspaceRequest
 	if err := frameio.ReadProtoFrame(conn, &request); err != nil {
 		return fmt.Errorf("read workspace stop request: %w", err)
@@ -1236,6 +1236,13 @@ func handleWorkspaceStop(conn io.ReadWriter, registry *workspaceOperationRegistr
 			return fmt.Errorf("capture workspace stop artifact: %w", err)
 		}
 		defer cleanupArtifact()
+		tree, err := workspace.InspectArtifactTreeContext(ctx, artifact.Path, artifact.SizeBytes)
+		if err != nil {
+			return fmt.Errorf("inspect workspace stop artifact tree: %w", err)
+		}
+		response.CapturedTree = &workspacev0.WorkspaceTreeIdentity{
+			Digest: tree.Digest, SizeBytes: tree.SizeBytes, EntryCount: uint32(tree.EntryCount),
+		}
 		response.CapturedArtifact = &workspacev0.WorkspaceArtifact{
 			Digest:     artifact.Digest,
 			MediaType:  artifact.MediaType,

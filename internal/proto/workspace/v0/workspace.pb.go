@@ -2076,6 +2076,7 @@ type StopWorkspaceResponse struct {
 	State            string                 `protobuf:"bytes,1,opt,name=state,proto3" json:"state,omitempty"`
 	CapturedArtifact *WorkspaceArtifact     `protobuf:"bytes,2,opt,name=captured_artifact,json=capturedArtifact,proto3" json:"captured_artifact,omitempty"`
 	ErrorJson        string                 `protobuf:"bytes,3,opt,name=error_json,json=errorJson,proto3" json:"error_json,omitempty"`
+	CapturedTree     *WorkspaceTreeIdentity `protobuf:"bytes,4,opt,name=captured_tree,json=capturedTree,proto3" json:"captured_tree,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -2129,6 +2130,13 @@ func (x *StopWorkspaceResponse) GetErrorJson() string {
 		return x.ErrorJson
 	}
 	return ""
+}
+
+func (x *StopWorkspaceResponse) GetCapturedTree() *WorkspaceTreeIdentity {
+	if x != nil {
+		return x.CapturedTree
+	}
+	return nil
 }
 
 type WorkspaceBasicExecRequest struct {
@@ -2512,12 +2520,13 @@ const file_workspace_proto_rawDesc = "" +
 	"\x14StopWorkspaceRequest\x12J\n" +
 	"\benvelope\x18\x01 \x01(\v2..helmr.workspace.v0.WorkspaceOperationEnvelopeR\benvelope\x12.\n" +
 	"\x13capture_before_stop\x18\x02 \x01(\bR\x11captureBeforeStop\x12#\n" +
-	"\rfinalize_stop\x18\x03 \x01(\bR\ffinalizeStop\"\xa0\x01\n" +
+	"\rfinalize_stop\x18\x03 \x01(\bR\ffinalizeStop\"\xf0\x01\n" +
 	"\x15StopWorkspaceResponse\x12\x14\n" +
 	"\x05state\x18\x01 \x01(\tR\x05state\x12R\n" +
 	"\x11captured_artifact\x18\x02 \x01(\v2%.helmr.workspace.v0.WorkspaceArtifactR\x10capturedArtifact\x12\x1d\n" +
 	"\n" +
-	"error_json\x18\x03 \x01(\tR\terrorJson\"\xe7\x01\n" +
+	"error_json\x18\x03 \x01(\tR\terrorJson\x12N\n" +
+	"\rcaptured_tree\x18\x04 \x01(\v2).helmr.workspace.v0.WorkspaceTreeIdentityR\fcapturedTree\"\xe7\x01\n" +
 	"\x19WorkspaceBasicExecRequest\x12J\n" +
 	"\benvelope\x18\x01 \x01(\v2..helmr.workspace.v0.WorkspaceOperationEnvelopeR\benvelope\x12!\n" +
 	"\frequest_json\x18\x02 \x01(\tR\vrequestJson\x12E\n" +
@@ -2615,13 +2624,14 @@ var file_workspace_proto_depIdxs = []int32{
 	25, // 27: helmr.workspace.v0.ResetWorkspaceResponse.target:type_name -> helmr.workspace.v0.WorkspaceResetTarget
 	0,  // 28: helmr.workspace.v0.StopWorkspaceRequest.envelope:type_name -> helmr.workspace.v0.WorkspaceOperationEnvelope
 	1,  // 29: helmr.workspace.v0.StopWorkspaceResponse.captured_artifact:type_name -> helmr.workspace.v0.WorkspaceArtifact
-	0,  // 30: helmr.workspace.v0.WorkspaceBasicExecRequest.envelope:type_name -> helmr.workspace.v0.WorkspaceOperationEnvelope
-	32, // 31: helmr.workspace.v0.WorkspaceBasicExecRequest.secrets:type_name -> helmr.workspace.v0.WorkspaceSecretDelivery
-	32, // [32:32] is the sub-list for method output_type
-	32, // [32:32] is the sub-list for method input_type
-	32, // [32:32] is the sub-list for extension type_name
-	32, // [32:32] is the sub-list for extension extendee
-	0,  // [0:32] is the sub-list for field type_name
+	12, // 30: helmr.workspace.v0.StopWorkspaceResponse.captured_tree:type_name -> helmr.workspace.v0.WorkspaceTreeIdentity
+	0,  // 31: helmr.workspace.v0.WorkspaceBasicExecRequest.envelope:type_name -> helmr.workspace.v0.WorkspaceOperationEnvelope
+	32, // 32: helmr.workspace.v0.WorkspaceBasicExecRequest.secrets:type_name -> helmr.workspace.v0.WorkspaceSecretDelivery
+	33, // [33:33] is the sub-list for method output_type
+	33, // [33:33] is the sub-list for method input_type
+	33, // [33:33] is the sub-list for extension type_name
+	33, // [33:33] is the sub-list for extension extendee
+	0,  // [0:33] is the sub-list for field type_name
 }
 
 func init() { file_workspace_proto_init() }

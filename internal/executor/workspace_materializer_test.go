@@ -573,6 +573,9 @@ func TestWorkspaceMaterializerStopWorkspaceGuestStoresCapturedArtifact(t *testin
 		}
 		if err := frameio.WriteProtoFrame(server, &workspacev0.StopWorkspaceResponse{
 			State: "captured",
+			CapturedTree: &workspacev0.WorkspaceTreeIdentity{
+				Digest: sha256sum.DigestBytes([]byte("captured tree")), SizeBytes: 18, EntryCount: 3,
+			},
 			CapturedArtifact: &workspacev0.WorkspaceArtifact{
 				Digest:     object.Digest,
 				MediaType:  object.MediaType,
@@ -597,15 +600,57 @@ func TestWorkspaceMaterializerStopWorkspaceGuestStoresCapturedArtifact(t *testin
 		_, err = server.Write(body)
 		done <- err
 	}()
-	artifact, err := (WorkspaceMaterializer{CAS: store}).stopWorkspaceGuest(context.Background(), session, workspaceMount, workspaceMount.FencingGeneration, true, false)
+	capture, err := (WorkspaceMaterializer{CAS: store}).stopWorkspaceGuest(context.Background(), session, workspaceMount, workspaceMount.FencingGeneration, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	if artifact.Digest != object.Digest || artifact.SizeBytes != object.SizeBytes || artifact.EntryCount != 3 {
-		t.Fatalf("captured artifact = %+v, want digest=%s size=%d entries=3", artifact, object.Digest, object.SizeBytes)
+	if capture.Artifact.Digest != object.Digest || capture.Artifact.SizeBytes != object.SizeBytes || capture.Artifact.EntryCount != 3 {
+		t.Fatalf("captured artifact = %+v, want digest=%s size=%d entries=3", capture.Artifact, object.Digest, object.SizeBytes)
+	}
+	if capture.Tree.Digest != sha256sum.DigestBytes([]byte("captured tree")) || capture.Tree.SizeBytes != 18 || capture.Tree.EntryCount != 3 {
+		t.Fatalf("captured tree = %+v", capture.Tree)
+	}
+}
+
+func TestWorkspaceMaterializerStopWorkspaceGuestRejectsInvalidTreeReceipts(t *testing.T) {
+	digest := sha256sum.DigestBytes([]byte("workspace artifact"))
+	tests := []struct {
+		name string
+		tree *workspacev0.WorkspaceTreeIdentity
+		want string
+	}{
+		{name: "missing", want: "workspace tree identity is required"},
+		{name: "invalid", tree: &workspacev0.WorkspaceTreeIdentity{Digest: "invalid", EntryCount: 1}, want: "workspace tree identity is invalid"},
+		{name: "entry count mismatch", tree: &workspacev0.WorkspaceTreeIdentity{Digest: digest, EntryCount: 2}, want: "tree and artifact entry counts differ"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client, server := net.Pipe()
+			defer server.Close()
+			go func() {
+				_, _, _ = wire.ReadStreamFrameHeader(server)
+				var request workspacev0.StopWorkspaceRequest
+				_ = frameio.ReadProtoFrame(server, &request)
+				_ = frameio.WriteProtoFrame(server, &workspacev0.StopWorkspaceResponse{
+					State: "captured", CapturedTree: test.tree,
+					CapturedArtifact: &workspacev0.WorkspaceArtifact{
+						Digest: digest, MediaType: workspace.ArtifactMediaType, Encoding: workspace.ArtifactEncoding,
+						SizeBytes: 1, EntryCount: 1,
+					},
+				})
+			}()
+			_, err := (WorkspaceMaterializer{CAS: &fakeCAS{objects: map[string][]byte{}}}).stopWorkspaceGuest(
+				context.Background(), &workspaceMaterializerTestSession{streams: []io.ReadWriteCloser{client}},
+				workerapi.WorkspaceMount{WorkspaceID: "workspace-1", GuestdChannelToken: "token", FencingGeneration: 1},
+				1, true, false,
+			)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("stop error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
 
@@ -770,6 +815,9 @@ func TestWorkspaceMaterializerControlledDirtyStopPromotesBeforeFinalize(t *testi
 		}
 		if err := frameio.WriteProtoFrame(captureServer, &workspacev0.StopWorkspaceResponse{
 			State: "captured",
+			CapturedTree: &workspacev0.WorkspaceTreeIdentity{
+				Digest: sha256sum.DigestBytes([]byte("dirty tree")), SizeBytes: 15, EntryCount: 2,
+			},
 			CapturedArtifact: &workspacev0.WorkspaceArtifact{
 				Digest:     object.Digest,
 				MediaType:  object.MediaType,
@@ -825,6 +873,16 @@ func TestWorkspaceMaterializerControlledDirtyStopPromotesBeforeFinalize(t *testi
 	if len(client.captures) != 1 {
 		t.Fatalf("captures = %d, want 1", len(client.captures))
 	}
+	capture := client.captures[0]
+	if capture.OrgID != workspaceMount.OrgID || capture.WorkspaceMountID != workspaceMount.ID {
+		t.Fatalf("capture authority = %+v", capture)
+	}
+	if capture.Tree.Digest != sha256sum.DigestBytes([]byte("dirty tree")) || capture.Tree.SizeBytes != 15 || capture.Tree.EntryCount != 2 {
+		t.Fatalf("capture tree = %+v", capture.Tree)
+	}
+	if capture.Artifact.Digest != object.Digest || capture.Artifact.SizeBytes != object.SizeBytes || capture.Artifact.EntryCount != 2 {
+		t.Fatalf("capture artifact = %+v", capture.Artifact)
+	}
 	if client.stops != 1 {
 		t.Fatalf("stops = %d, want 1", client.stops)
 	}
@@ -868,6 +926,9 @@ func TestWorkspaceMaterializerControlledDirtyStopFinalizeFailureFailsWorkspaceMo
 		}
 		if err := frameio.WriteProtoFrame(captureServer, &workspacev0.StopWorkspaceResponse{
 			State: "captured",
+			CapturedTree: &workspacev0.WorkspaceTreeIdentity{
+				Digest: sha256sum.DigestBytes([]byte("dirty tree")), SizeBytes: 15, EntryCount: 2,
+			},
 			CapturedArtifact: &workspacev0.WorkspaceArtifact{
 				Digest:     object.Digest,
 				MediaType:  object.MediaType,

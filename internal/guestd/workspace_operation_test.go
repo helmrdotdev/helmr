@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -454,6 +455,72 @@ func TestWorkspaceMaterializeReturnsFailureResponse(t *testing.T) {
 	}
 	if err := <-errCh; err == nil || !strings.Contains(err.Error(), "mount_path") {
 		t.Fatalf("handler error = %v, want mount_path", err)
+	}
+}
+
+func TestWorkspaceStopCaptureReportsTreeDerivedFromArtifact(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "nested"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "nested", "marker.txt"), []byte("captured marker"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	registry := newWorkspaceOperationRegistry()
+	registry.register("mat-1", &workspaceMountEntry{
+		workspaceID: "workspace-1", workspaceMountID: "mat-1", channelToken: "token-1",
+		fencingGeneration: 1, workspaceRoot: root, cleanup: func() {},
+	})
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+	done := make(chan error, 1)
+	go func() {
+		done <- handleWorkspaceStopConnection(context.Background(), server, registry)
+	}()
+	if err := frameio.WriteProtoFrame(client, &workspacev0.StopWorkspaceRequest{
+		Envelope: &workspacev0.WorkspaceOperationEnvelope{
+			WorkspaceMountId: "mat-1", WorkspaceId: "workspace-1", ChannelToken: "token-1", FencingGeneration: 1,
+		},
+		CaptureBeforeStop: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var response workspacev0.StopWorkspaceResponse
+	if err := frameio.ReadProtoFrame(client, &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.GetState() != "captured" || response.GetCapturedTree() == nil || response.GetCapturedArtifact() == nil {
+		t.Fatalf("capture response = %+v", &response)
+	}
+	header, bodyLen, err := wire.ReadStreamFrameHeader(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if header.Type != wire.StreamTypeWorkspaceArtifact || header.WorkspaceID != "workspace-1" {
+		t.Fatalf("artifact header = %+v", header)
+	}
+	body, err := io.ReadAll(&io.LimitedReader{R: client, N: int64(bodyLen)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree := workspace.TreeIdentity{
+		Digest: response.GetCapturedTree().GetDigest(), SizeBytes: response.GetCapturedTree().GetSizeBytes(),
+		EntryCount: int(response.GetCapturedTree().GetEntryCount()),
+	}
+	artifact := workspace.WorkspaceArtifact{
+		Digest: response.GetCapturedArtifact().GetDigest(), MediaType: response.GetCapturedArtifact().GetMediaType(),
+		Encoding: response.GetCapturedArtifact().GetEncoding(), SizeBytes: int64(response.GetCapturedArtifact().GetSizeBytes()),
+		EntryCount: int(response.GetCapturedArtifact().GetEntryCount()),
+	}
+	if tree.Digest == artifact.Digest || tree.SizeBytes == artifact.SizeBytes {
+		t.Fatalf("tree and artifact identities were conflated: tree=%+v artifact=%+v", tree, artifact)
+	}
+	if err := workspace.VerifyArtifact(bytes.NewReader(body), artifact, tree); err != nil {
+		t.Fatalf("captured tree is not derived from exact artifact: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }
 

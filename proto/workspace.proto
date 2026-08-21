@@ -218,6 +218,7 @@ message StopWorkspaceResponse {
   string state = 1;
   WorkspaceArtifact captured_artifact = 2;
   string error_json = 3;
+  WorkspaceTreeIdentity captured_tree = 4;
 }
 
 message WorkspaceBasicExecRequest {

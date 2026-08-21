@@ -95,16 +95,10 @@ type WorkspaceMountStopRequest struct {
 }
 
 type WorkspaceMountCaptureRequest struct {
-	OrgID              string `json:"org_id"`
-	ProjectID          string `json:"project_id"`
-	EnvironmentID      string `json:"environment_id"`
-	WorkspaceID        string `json:"workspace_id"`
-	WorkspaceMountID   string `json:"workspace_mount_id"`
-	ArtifactDigest     string `json:"artifact_digest"`
-	ArtifactSizeBytes  int64  `json:"artifact_size_bytes"`
-	ArtifactMediaType  string `json:"artifact_media_type"`
-	ArtifactEncoding   string `json:"artifact_encoding"`
-	ArtifactEntryCount int32  `json:"artifact_entry_count"`
+	OrgID            string                `json:"org_id"`
+	WorkspaceMountID string                `json:"workspace_mount_id"`
+	Tree             WorkspaceTreeIdentity `json:"tree"`
+	Artifact         WorkspaceArtifact     `json:"artifact"`
 }
 
 type WorkspaceMountCaptureResponse struct {
