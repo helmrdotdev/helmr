@@ -52,8 +52,7 @@ func (entry *workspaceMountEntry) materializeRestoredWorkspace(
 		CheckpointID: checkpointID, SourceWorkspaceID: sourceVersionID, Target: target,
 	}
 	if found && !sameWorkspaceRestoreOperation(journal, want) {
-		if journal.Phase != "applied" || journal.Target.BaseVersionID != sourceVersionID ||
-			entry.baseVersionID != sourceVersionID {
+		if entry.baseVersionID != sourceVersionID {
 			return errors.New("restored workspace materialization journal conflicts with its exact authority")
 		}
 		if err := os.RemoveAll(stateRoot); err != nil {
