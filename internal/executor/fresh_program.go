@@ -1083,9 +1083,6 @@ func validateNewProgramMount(
 	if mount.RuntimeInstanceID != lease.RuntimeInstanceID {
 		return errors.New("new program Runtime Instance does not match the claimed physical authority")
 	}
-	if mount.Target.BaseWorkspaceVersionID != lease.BaseWorkspaceVersionID {
-		return errors.New("new program base Workspace version does not match the claimed physical authority")
-	}
 	return nil
 }
 

@@ -180,14 +180,11 @@ func (r ProgramRunner) StartRunLeaseTask(
 		lease:        program.lease,
 		authority:    authority,
 		orgID:        program.mount.OrgID,
-		waitWorkspace: workerapi.Workspace{
-			ID:                program.mount.WorkspaceID,
-			WorkspaceMountID:  program.mount.ID,
-			FencingGeneration: program.mount.FencingGeneration,
-			BaseVersionID:     program.mount.Target.BaseWorkspaceVersionID,
-			MountPath:         program.mount.WorkspaceMountPath,
-			Artifact:          program.mount.Target.Artifact,
-		},
+		waitWorkspace: waitWorkspaceForRun(
+			program.mount,
+			claim.Lease,
+			claim.Workspace.ResetTarget,
+		),
 	}
 	if waitClient, ok := controlPlane.(RunWaitClient); ok {
 		task.waits = &ControlPlaneRunWaits{Client: waitClient}
@@ -206,6 +203,21 @@ func (r ProgramRunner) StartRunLeaseTask(
 		}
 	}
 	return task, nil
+}
+
+func waitWorkspaceForRun(
+	mount workerapi.WorkspaceMount,
+	lease workerapi.RunLeaseAssignment,
+	target workerapi.WorkspaceResetTarget,
+) workerapi.Workspace {
+	return workerapi.Workspace{
+		ID:                mount.WorkspaceID,
+		WorkspaceMountID:  mount.ID,
+		FencingGeneration: lease.MountFencingGeneration,
+		BaseVersionID:     target.BaseWorkspaceVersionID,
+		MountPath:         mount.WorkspaceMountPath,
+		Artifact:          target.Artifact,
+	}
 }
 
 type runLeaseProgramEventSink struct {

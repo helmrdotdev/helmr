@@ -35,6 +35,7 @@ func TestFreshProgramOrdersAdmissionEntrypointAndTaskCompletion(t *testing.T) {
 	sessions := NewWorkspaceMountSessions()
 	mount := testWorkspaceMount(claim.Lease)
 	mount.FencingGeneration = claim.Lease.MountFencingGeneration - 1
+	mount.Target.BaseWorkspaceVersionID = "version-before-capture"
 	unregister := sessions.RegisterWorkspaceMountSession(
 		mount,
 		fakeGuestSession{stream: host},
@@ -112,6 +113,7 @@ func TestValidateNewProgramMountSeparatesPhysicalIdentityFromLogicalFence(t *tes
 	claim := testFreshProgramClaim(t)
 	mount := testWorkspaceMount(claim.Lease)
 	mount.FencingGeneration = claim.Lease.MountFencingGeneration - 1
+	mount.Target.BaseWorkspaceVersionID = "version-before-capture"
 	if err := validateNewProgramMount(claim.Lease, mount); err != nil {
 		t.Fatalf("advanced logical fence rejected exact physical mount: %v", err)
 	}
@@ -123,7 +125,6 @@ func TestValidateNewProgramMountSeparatesPhysicalIdentityFromLogicalFence(t *tes
 		{name: "mount ID", mutate: func(mount *workerapi.WorkspaceMount) { mount.ID = "other-mount" }},
 		{name: "Workspace ID", mutate: func(mount *workerapi.WorkspaceMount) { mount.WorkspaceID = "other-workspace" }},
 		{name: "Runtime Instance", mutate: func(mount *workerapi.WorkspaceMount) { mount.RuntimeInstanceID = "other-runtime" }},
-		{name: "base Workspace version", mutate: func(mount *workerapi.WorkspaceMount) { mount.Target.BaseWorkspaceVersionID = "other-version" }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
