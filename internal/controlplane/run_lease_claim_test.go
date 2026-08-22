@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -1110,7 +1111,11 @@ type runLeaseClaimStore struct {
 	program              db.GetDeploymentProgramAuthorityRow
 	definition           db.DeploymentDefinition
 	resetTarget          db.GetWorkspaceResetTargetAuthorityRow
+	resetTargets         map[pgtype.UUID]db.GetWorkspaceResetTargetAuthorityRow
 	resetTargetParams    db.GetWorkspaceResetTargetAuthorityParams
+	readyCheckpoint      db.RunCheckpoint
+	runWait              db.RunWait
+	workspaceLeases      map[pgtype.UUID]db.WorkspaceLease
 	projectionErr        error
 	entrypoint           db.GetRunEntrypointLocatorsRow
 	enteredAt            pgtype.Timestamptz
@@ -1212,7 +1217,34 @@ func (s *runLeaseClaimStore) GetWorkspaceResetTargetAuthority(
 	if s.projectionErr != nil {
 		return db.GetWorkspaceResetTargetAuthorityRow{}, s.projectionErr
 	}
+	if target, ok := s.resetTargets[params.VersionID]; ok {
+		return target, nil
+	}
 	return s.resetTarget, nil
+}
+
+func (s *runLeaseClaimStore) GetReadyRunCheckpoint(
+	context.Context,
+	db.GetReadyRunCheckpointParams,
+) (db.RunCheckpoint, error) {
+	return s.readyCheckpoint, nil
+}
+
+func (s *runLeaseClaimStore) GetRunWait(
+	context.Context,
+	db.GetRunWaitParams,
+) (db.RunWait, error) {
+	return s.runWait, nil
+}
+
+func (s *runLeaseClaimStore) GetWorkspaceLease(
+	_ context.Context,
+	params db.GetWorkspaceLeaseParams,
+) (db.WorkspaceLease, error) {
+	if lease, ok := s.workspaceLeases[params.ID]; ok {
+		return lease, nil
+	}
+	return db.WorkspaceLease{}, pgx.ErrNoRows
 }
 
 func (s *runLeaseClaimStore) LockRunLeaseClaimActor(context.Context, db.LockRunLeaseClaimActorParams) (db.Session, error) {

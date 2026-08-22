@@ -175,9 +175,18 @@ func validateActorCompletionAuthority(
 		!authority.runLease.FinalizationKind.Valid || !authority.runLease.FinalizationStartedAt.Valid ||
 		!authority.runLease.FinalizationRequestFingerprint.Valid || !actor.CurrentRunID.Valid || actor.CurrentRunID != authority.run.ID ||
 		(actor.State != "open" && actor.State != "closing") || authority.workspace.OwnerSessionID != actor.ID || authority.workspace.OwnerRunID.Valid ||
-		!authority.workspace.HeadVersionID.Valid || authority.workspace.HeadVersionID != authority.workspaceLease.BaseVersionID ||
+		!authority.workspace.HeadVersionID.Valid ||
 		!authority.attempt.SessionInputStartSequence.Valid || !authority.run.SessionInputStartSequence.Valid || !authority.run.SessionInputHighWatermark.Valid {
 		return errStaleActorCompletion
+	}
+	if authority.workspaceLease.BaseVersionID != authority.workspace.HeadVersionID {
+		base, err := getActorTurnVersion(ctx, store, authority, authority.workspaceLease.BaseVersionID)
+		if err != nil {
+			return staleActorCompletion(err)
+		}
+		if err := validateRestoredActorCompletionBase(ctx, store, authority, base); err != nil {
+			return err
+		}
 	}
 	cursor := completion.terminalInputSequence
 	if cursor < authority.attempt.SessionInputStartSequence.Int64 || cursor < actor.CommittedInputSequence || cursor >= actor.NextInputSequence {
@@ -213,6 +222,117 @@ func validateActorCompletionAuthority(
 		return errStaleActorCompletion
 	}
 	return nil
+}
+
+func validateRestoredActorCompletionBase(
+	ctx context.Context,
+	store db.Querier,
+	authority runLeaseClaimAuthority,
+	base db.GetWorkspaceResetTargetAuthorityRow,
+) error {
+	if !authority.runtime.RestoreCheckpointID.Valid ||
+		!base.SourceWorkspaceLeaseID.Valid ||
+		base.OwnershipGeneration != authority.workspace.OwnershipGeneration {
+		return errStaleActorCompletion
+	}
+	checkpoint, err := store.GetReadyRunCheckpoint(ctx, db.GetReadyRunCheckpointParams{
+		RunID: authority.run.ID, AttemptNumber: authority.attempt.Number,
+		ID: authority.runtime.RestoreCheckpointID,
+	})
+	if err != nil {
+		return staleActorCompletion(err)
+	}
+	wait, err := store.GetRunWait(ctx, db.GetRunWaitParams{
+		RunID: authority.run.ID, AttemptNumber: authority.attempt.Number, ID: checkpoint.RunWaitID,
+	})
+	if err != nil {
+		return staleActorCompletion(err)
+	}
+	if checkpoint.ID != authority.runtime.RestoreCheckpointID ||
+		checkpoint.WorkspaceID != authority.workspace.ID ||
+		checkpoint.BaseWorkspaceVersionID != authority.workspace.HeadVersionID ||
+		checkpoint.BaseWorkspaceVersionID != authority.attempt.BaseWorkspaceVersionID ||
+		checkpoint.SourceRunLeaseID != wait.PriorRunLeaseID ||
+		wait.SuspendCheckpointID != checkpoint.ID ||
+		wait.SuspensionState != db.RunWaitStateReleased ||
+		wait.CheckpointRequestVersion <= 0 || wait.CheckpointRequestVersion != wait.CheckpointAckVersion ||
+		wait.ResumeRequestVersion <= 0 || wait.ResumeRequestVersion != wait.ResumeAckVersion {
+		return errStaleActorCompletion
+	}
+
+	checkpointBase, err := getActorTurnVersion(ctx, store, authority, checkpoint.PrivateWorkspaceVersionID)
+	if err != nil {
+		return staleActorCompletion(err)
+	}
+	checkpointSource, err := store.GetWorkspaceLease(ctx, db.GetWorkspaceLeaseParams{
+		EnvironmentID: authority.run.EnvironmentID, WorkspaceID: authority.workspace.ID,
+		ID: checkpoint.SourceWorkspaceLeaseID,
+	})
+	if err != nil {
+		return staleActorCompletion(err)
+	}
+	if !validActorCompletionVersionSource(
+		checkpointBase, checkpointSource, authority.workspace.HeadVersionID,
+		authority.workspace.OwnershipGeneration,
+	) {
+		return errStaleActorCompletion
+	}
+
+	if sameWorkspaceParentResumeWait(wait) {
+		if wait.ConditionState != db.WaitStateCompleted ||
+			!wait.BaseWorkspaceVersionID.Valid || wait.BaseWorkspaceVersionID != checkpoint.PrivateWorkspaceVersionID ||
+			!wait.ResumeWorkspaceVersionID.Valid || wait.ResumeWorkspaceVersionID != authority.workspaceLease.BaseVersionID ||
+			!wait.OwnershipGeneration.Valid || wait.OwnershipGeneration.Int64 != authority.workspace.OwnershipGeneration ||
+			!wait.ParentWriterGeneration.Valid || wait.ParentWriterGeneration.Int64 != checkpointBase.WriterGeneration ||
+			!wait.ChildWriterGeneration.Valid || wait.ChildWriterGeneration.Int64 != base.WriterGeneration ||
+			!wait.ResumeWriterGeneration.Valid || wait.ResumeWriterGeneration.Int64 != authority.workspace.WriterGeneration ||
+			wait.ParentWriterGeneration.Int64 >= wait.ChildWriterGeneration.Int64 ||
+			wait.ChildWriterGeneration.Int64 >= wait.ResumeWriterGeneration.Int64 ||
+			authority.workspaceLease.WriterGeneration != wait.ResumeWriterGeneration.Int64 {
+			return errStaleActorCompletion
+		}
+		childSource, err := store.GetWorkspaceLease(ctx, db.GetWorkspaceLeaseParams{
+			EnvironmentID: authority.run.EnvironmentID, WorkspaceID: authority.workspace.ID,
+			ID: base.SourceWorkspaceLeaseID,
+		})
+		if err != nil {
+			return staleActorCompletion(err)
+		}
+		if !validActorCompletionVersionSource(
+			base, childSource, checkpoint.PrivateWorkspaceVersionID,
+			authority.workspace.OwnershipGeneration,
+		) {
+			return errStaleActorCompletion
+		}
+		return nil
+	}
+
+	if wait.BaseWorkspaceVersionID.Valid || wait.ResumeWorkspaceVersionID.Valid ||
+		wait.OwnershipGeneration.Valid || wait.ParentWriterGeneration.Valid ||
+		wait.ChildWriterGeneration.Valid || wait.ResumeWriterGeneration.Valid ||
+		checkpoint.PrivateWorkspaceVersionID != authority.workspaceLease.BaseVersionID ||
+		base.VersionID != checkpointBase.VersionID ||
+		base.WriterGeneration >= authority.workspace.WriterGeneration ||
+		authority.workspaceLease.WriterGeneration != authority.workspace.WriterGeneration {
+		return errStaleActorCompletion
+	}
+	return nil
+}
+
+func validActorCompletionVersionSource(
+	version db.GetWorkspaceResetTargetAuthorityRow,
+	source db.WorkspaceLease,
+	expectedParent pgtype.UUID,
+	expectedOwnership int64,
+) bool {
+	return version.ParentVersionID == expectedParent &&
+		version.SourceWorkspaceLeaseID == source.ID &&
+		version.OwnershipGeneration == expectedOwnership &&
+		version.WriterGeneration == source.WriterGeneration &&
+		source.WorkspaceID.Valid &&
+		source.OwnershipGeneration == expectedOwnership &&
+		source.BaseVersionID == expectedParent &&
+		(source.State == db.WorkspaceLeaseStateReleased || source.State == db.WorkspaceLeaseStateFenced)
 }
 
 func actorCompletionRetryAt(run db.Run, attempt db.RunAttempt, completion parsedActorCompletion, completedAt time.Time) (time.Time, bool, error) {
