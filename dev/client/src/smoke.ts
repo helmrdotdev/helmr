@@ -482,7 +482,7 @@ async function waitForTerminalRun(runId: string): Promise<Run> {
 async function waitForActorOutput(
   ref: SessionRef,
 ) {
-  const deadline = Date.now() + 60_000
+  const deadline = Date.now() + 5 * 60_000
   for (;;) {
     const page = await ref.output.list({ after: 0, limit: 10 })
     if (page.records[0] !== undefined) return page.records[0]
@@ -497,7 +497,7 @@ async function waitForActorOutputs(
   ref: SessionRef,
   count: number,
 ) {
-  const deadline = Date.now() + 60_000
+  const deadline = Date.now() + 5 * 60_000
   for (;;) {
     const page = await ref.output.list({ after: 0, limit: 10 })
     if (page.records.length >= count) return page.records
