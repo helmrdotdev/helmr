@@ -404,7 +404,6 @@ func validateRunRuntime(
 	if runtime.deploymentDefinition != authority.workspaceDefinitionID ||
 		!runtime.programDeployment.Valid ||
 		runtime.programDeployment != authority.deploymentID ||
-		runtime.restoreCheckpoint != authority.restoreCheckpointID ||
 		runtime.cpuMillis != authority.resources.cpuMillis ||
 		runtime.memoryBytes != authority.resources.memoryBytes ||
 		runtime.guestEphemeralDiskBytes != authority.resources.guestEphemeralDiskBytes ||
@@ -412,7 +411,8 @@ func validateRunRuntime(
 		return errors.New("workspace runtime does not match run authority")
 	}
 	if authority.restoreCheckpointID.Valid &&
-		(runtime.runtimeIdentityID != authority.restoreRuntimeIdentityID ||
+		(runtime.restoreCheckpoint != authority.restoreCheckpointID ||
+			runtime.runtimeIdentityID != authority.restoreRuntimeIdentityID ||
 			runtime.runtimeSubstrateID != authority.restoreSubstrateID) {
 		return errors.New("workspace runtime does not match checkpoint source")
 	}

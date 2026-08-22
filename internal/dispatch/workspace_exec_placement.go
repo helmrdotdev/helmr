@@ -459,7 +459,6 @@ func (d *Authority) createWorkspaceExecRuntime(
 
 func validateWorkspaceExecRuntime(authority workspaceExecAuthority, runtime runRuntime) error {
 	if runtime.deploymentDefinition != authority.workspaceDefinitionID ||
-		runtime.restoreCheckpoint.Valid ||
 		runtime.cpuMillis != authority.resources.cpuMillis ||
 		runtime.memoryBytes != authority.resources.memoryBytes ||
 		runtime.guestEphemeralDiskBytes != authority.resources.guestEphemeralDiskBytes ||

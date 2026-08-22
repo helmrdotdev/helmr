@@ -506,22 +506,6 @@ SELECT pg_get_constraintdef(oid)
 			t.Fatalf("%s = %q, want to contain %q", name, got, want)
 		}
 	}
-	var processFence bool
-	if err := pool.QueryRow(ctx, `
-SELECT EXISTS (
-    SELECT 1
-     FROM pg_constraint
-     WHERE conrelid = 'runtime_instances'::regclass
-       AND contype = 'c'
-       AND pg_get_constraintdef(oid) LIKE '%restore_checkpoint_id IS NULL%'
-       AND pg_get_constraintdef(oid) LIKE '%reserved_process_id IS NULL%'
-)
-`).Scan(&processFence); err != nil {
-		t.Fatal(err)
-	}
-	if !processFence {
-		t.Fatal("runtime restore provenance does not fence direct Process reservation")
-	}
 }
 
 func assertRunWaitWorkspaceSuccession(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {

@@ -179,9 +179,6 @@ func claimFreshTaskRunLeaseInTx(
 	if err != nil {
 		return runLeaseClaimAuthority{}, err
 	}
-	if authority.runtime.RestoreCheckpointID.Valid {
-		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
-	}
 	return markRunLeaseStartingInTx(ctx, q, worker, leaseID, leaseSequence, authority)
 }
 
@@ -290,9 +287,6 @@ func claimActorRunLeaseInTx(
 	)
 	if err != nil {
 		return runLeaseClaimAuthority{}, err
-	}
-	if authority.runtime.RestoreCheckpointID.Valid {
-		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 	return markRunLeaseStartingInTx(ctx, q, worker, leaseID, leaseSequence, authority)
 }
@@ -537,9 +531,6 @@ func claimSameWorkspaceChildRunLeaseInTx(
 		return runLeaseClaimAuthority{}, err
 	}
 
-	if authority.runtime.RestoreCheckpointID.Valid {
-		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
-	}
 	return markRunLeaseStartingInTx(ctx, q, worker, leaseID, leaseSequence, authority)
 }
 

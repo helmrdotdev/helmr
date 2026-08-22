@@ -30,6 +30,10 @@ func TestValidateRunRuntimeUsesCheckpointContractOnlyForRestore(t *testing.T) {
 	if err := validateRunRuntime(authority, runtime); err != nil {
 		t.Fatalf("fresh runtime validation failed: %v", err)
 	}
+	runtime.restoreCheckpoint = pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	if err := validateRunRuntime(authority, runtime); err != nil {
+		t.Fatalf("fresh runtime rejected historical restore provenance: %v", err)
+	}
 
 	authority.restoreCheckpointID = pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	authority.restoreRuntimeIdentityID = "sha256:source"

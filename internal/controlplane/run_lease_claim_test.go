@@ -710,16 +710,16 @@ func TestValidateSameWorkspaceParentRestoreFailureTargetsSuspendWorkspaceB(t *te
 	}
 }
 
-func TestClaimFreshRunLeasesRejectRestoreProvenance(t *testing.T) {
+func TestClaimFreshRunLeasesIgnoreHistoricalRestoreProvenance(t *testing.T) {
 	t.Run("task", func(t *testing.T) {
 		worker, locators, authority := validRunLeaseClaimFixture()
 		authority.runtime.RestoreCheckpointID = pgvalue.UUID(uuid.New())
 		store := &runLeaseClaimStore{authority: authority}
-		_, err := claimFreshTaskRunLeaseInTx(
+		claimed, err := claimFreshTaskRunLeaseInTx(
 			context.Background(), store, worker, authority.runLease.ID,
 			authority.runLease.LeaseSequence, locators,
 		)
-		if !errors.Is(err, errStaleRunLeaseClaim) || slices.Contains(store.calls, "mark_starting") {
+		if err != nil || !slices.Contains(store.calls, "mark_starting") || claimed.mode != runLeaseClaimFresh {
 			t.Fatalf("error = %v, calls = %v", err, store.calls)
 		}
 	})
@@ -727,11 +727,23 @@ func TestClaimFreshRunLeasesRejectRestoreProvenance(t *testing.T) {
 		worker, locators, authority := validActorRunLeaseClaimFixture()
 		authority.runtime.RestoreCheckpointID = pgvalue.UUID(uuid.New())
 		store := &runLeaseClaimStore{authority: authority}
-		_, err := claimActorRunLeaseInTx(
+		claimed, err := claimActorRunLeaseInTx(
 			context.Background(), store, worker, authority.runLease.ID,
 			authority.runLease.LeaseSequence, locators,
 		)
-		if !errors.Is(err, errStaleRunLeaseClaim) || slices.Contains(store.calls, "mark_starting") {
+		if err != nil || !slices.Contains(store.calls, "mark_starting") || claimed.mode != runLeaseClaimFresh {
+			t.Fatalf("error = %v, calls = %v", err, store.calls)
+		}
+	})
+	t.Run("same workspace child", func(t *testing.T) {
+		worker, locators, authority := validSameWorkspaceChildRunLeaseClaimFixture(false)
+		authority.runtime.RestoreCheckpointID = pgvalue.UUID(uuid.New())
+		store := &runLeaseClaimStore{authority: authority}
+		claimed, err := claimSameWorkspaceChildRunLeaseInTx(
+			context.Background(), store, worker, authority.runLease.ID,
+			authority.runLease.LeaseSequence, locators,
+		)
+		if err != nil || !slices.Contains(store.calls, "mark_starting") || claimed.mode != runLeaseClaimFresh {
 			t.Fatalf("error = %v, calls = %v", err, store.calls)
 		}
 	})

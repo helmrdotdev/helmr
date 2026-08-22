@@ -36,7 +36,6 @@ func projectRunLeaseExecution(
 	case runLeaseClaimFresh:
 		if authority.runWait.ID.Valid ||
 			authority.checkpoint.ID.Valid ||
-			authority.runtime.RestoreCheckpointID.Valid ||
 			len(authority.checkpointArtifacts) != 0 {
 			return workerapi.RunLeaseExecution{}, errors.New("fresh run lease contains resume authority")
 		}

@@ -3062,7 +3062,6 @@ CREATE TABLE runtime_instances (
          AND reservation_expires_at IS NOT NULL)
     ),
     CHECK (reserved_workspace_version_id IS NULL OR observed_state IN ('allocated', 'preparing', 'ready')),
-    CHECK (restore_checkpoint_id IS NULL OR reserved_process_id IS NULL),
     CHECK (desired_state <> 'closed' OR desired_version > 1),
     CHECK (observed_desired_version < desired_version OR desired_state <> 'closed' OR observed_state IN ('closing', 'closed', 'failed', 'lost')),
     CHECK (preparing_at IS NULL OR preparing_at >= allocated_at),

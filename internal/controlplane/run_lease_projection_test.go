@@ -107,14 +107,18 @@ func testCheckpointManifest(
 	return manifest
 }
 
-func TestProjectFreshRunLeaseRejectsRestoreProvenance(t *testing.T) {
+func TestProjectFreshRunLeaseIgnoresHistoricalRestoreProvenance(t *testing.T) {
 	run, attempt, definition := validTaskProgramStart(t, "none")
-	_, err := projectRunLeaseExecution(runLeaseExecutionProjection{
+	execution, err := projectRunLeaseExecution(runLeaseExecutionProjection{
 		mode: runLeaseClaimFresh, run: run, attempt: attempt, definition: definition,
-		runtime: db.RuntimeInstance{RestoreCheckpointID: pgvalue.UUID(uuid.New())},
+		deploymentVersion: "v42",
+		runtime:           db.RuntimeInstance{RestoreCheckpointID: pgvalue.UUID(uuid.New())},
 	})
-	if err == nil {
-		t.Fatal("fresh execution accepted restore provenance")
+	if err != nil {
+		t.Fatalf("project fresh execution: %v", err)
+	}
+	if execution.Fresh == nil || execution.Restore != nil {
+		t.Fatalf("unexpected fresh execution union: %#v", execution)
 	}
 }
 
