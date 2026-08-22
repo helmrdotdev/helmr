@@ -35,18 +35,18 @@ export const runtimeSmokeWorkspace = sandbox({ id: "helmr-runtime-smoke" })
   .image(base)
   .resources({ cpu: 2, memory: "2GiB" })
 
-const payload = z.object({
+export const runtimeSmokePayload = z.object({
   scenario: z.string().default("release-smoke"),
   marker: z.string().optional(),
   expectedWorkspaceMarker: z.string().optional(),
   expectedEnvironment: z.enum(["production", "staging", "unknown"]).default("unknown"),
   exerciseToken: z.boolean().default(false),
-  externalTokenId: z.string().regex(/^tok_[a-z2-7]{26}$/).optional(),
+  externalTokenId: z.uuidv7().optional(),
   tokenTimeout: z.number().int().positive().max(900).default(120),
   largeFileKiB: z.number().int().min(1).max(4096).default(256),
 }).strict()
 
-type Payload = z.infer<typeof payload>
+type Payload = z.infer<typeof runtimeSmokePayload>
 
 const approvalDecision = z.object({
   approved: z.boolean(),
@@ -62,7 +62,7 @@ type Check = {
 export const runtimeSmoke = task({
   id: "runtime-smoke",
   maxDuration: "20m",
-  payload,
+  payload: runtimeSmokePayload,
   run: async (input: Payload, ctx): Promise<JsonValue> => {
     const marker = input.marker?.trim() || `runtime-smoke-${ctx.run.id}`
     const checks: Check[] = []
