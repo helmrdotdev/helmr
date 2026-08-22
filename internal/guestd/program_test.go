@@ -603,6 +603,135 @@ func TestRelayProgramRoutesActorInputSendDecisionWithoutConsumingWaitAuthority(t
 	}
 }
 
+func TestRelayProgramRoutesActorOutputAppendDecision(t *testing.T) {
+	blockedProcessInput, releaseProcess, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blockedProcessInput.Close()
+	defer releaseProcess.Close()
+	cmd := exec.Command("cat")
+	cmd.Stdin = blockedProcessInput
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	controlReader, controlWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	programDecisionReader, programDecisionWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer programDecisionReader.Close()
+	defer programDecisionWriter.Close()
+	process := &programProcess{
+		cmd:      cmd,
+		stdin:    programDecisionWriter,
+		control:  controlReader,
+		cgroup:   &testProgramCgroup{},
+		waitDone: make(chan struct{}),
+	}
+	defer process.close()
+	guest, host := net.Pipe()
+	defer guest.Close()
+	defer host.Close()
+	request := testProgramRunRequest(testProgramStartFrame(t))
+	result := make(chan error, 1)
+	go func() {
+		var outputDone sync.WaitGroup
+		result <- relayProgram(
+			t.Context(),
+			guest,
+			request,
+			&runv0.EntrypointIdentity{
+				Kind: &runv0.EntrypointIdentity_Actor{Actor: &runv0.ActorEntrypoint{}},
+			},
+			process,
+			&programEventStream{conn: guest},
+			make(chan error, 2),
+			&outputDone,
+			newWaitingRunRegistry(),
+			nil,
+			&programOutputCoordinator{},
+			nil,
+		)
+	}()
+	correlationID := "00000000-0000-0000-0000-000000000112"
+	if err := frameio.WriteProtoFrame(controlWriter, &runv0.RunEvent{
+		Event: &runv0.RunEvent_ActorOutputAppendRequested{
+			ActorOutputAppendRequested: &runv0.ActorOutputAppendRequested{
+				CorrelationId: correlationID,
+				DataJson:      `{"message":"hello"}`,
+				ContentType:   "application/json",
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var event runv0.RunEvent
+	if err := frameio.ReadProtoFrame(host, &event); err != nil {
+		t.Fatal(err)
+	}
+	if event.GetActorOutputAppendRequested().GetCorrelationId() != correlationID {
+		t.Fatalf("Actor output append event = %#v", event.GetEvent())
+	}
+	decision := &runv0.ResumeDecision{
+		CorrelationId: correlationID,
+		Kind:          "completed",
+		DataJson:      `{"id":"output-1","sequence":1}`,
+	}
+	if err := wire.WriteResumeDecision(host, decision); err != nil {
+		t.Fatal(err)
+	}
+	var staged runv0.ResumeDecision
+	if err := frameio.ReadProtoFrame(programDecisionReader, &staged); err != nil {
+		t.Fatal(err)
+	}
+	zero := int64(0)
+	if err := frameio.WriteProtoFrame(controlWriter, &runv0.RunEvent{
+		Event: &runv0.RunEvent_ActorOutcome{
+			ActorOutcome: &runv0.ActorOutcome{
+				TerminalInputSequence: &zero,
+				Outcome: &runv0.ActorOutcome_Succeeded{
+					Succeeded: &runv0.ActorSucceeded{},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := controlWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := releaseProcess.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := frameio.ReadProtoFrame(host, &event); err != nil {
+		t.Fatal(err)
+	}
+	if event.GetActorOutcome() == nil {
+		t.Fatalf("Actor outcome = %#v", event.GetEvent())
+	}
+	if err := frameio.ReadProtoFrame(host, &event); err != nil {
+		t.Fatal(err)
+	}
+	if event.GetProgramQuiesced() == nil {
+		t.Fatalf("Program quiescence = %#v", event.GetEvent())
+	}
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+	if !proto.Equal(&staged, decision) {
+		t.Fatalf("staged decision = %+v", &staged)
+	}
+	if staged.GetRequireConsumedAck() ||
+		staged.GetRunWaitId() != "" ||
+		staged.GetCheckpointId() != "" {
+		t.Fatalf("append decision carried consuming Wait authority: %+v", &staged)
+	}
+}
+
 func TestRelayProgramRoutesChildTaskRequests(t *testing.T) {
 	tests := []struct {
 		name           string

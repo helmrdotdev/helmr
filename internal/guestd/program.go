@@ -1519,6 +1519,8 @@ func runtimeResourceOperationIdentity(event *runv0.RunEvent) (string, string, bo
 		return strings.TrimSpace(value.SessionCloseRequested.GetCorrelationId()), "session close", true
 	case *runv0.RunEvent_SessionOutputPageRequested:
 		return strings.TrimSpace(value.SessionOutputPageRequested.GetCorrelationId()), "session output page read", true
+	case *runv0.RunEvent_ActorOutputAppendRequested:
+		return strings.TrimSpace(value.ActorOutputAppendRequested.GetCorrelationId()), "actor output append", true
 	case *runv0.RunEvent_WorkspaceCreateRequested:
 		return strings.TrimSpace(value.WorkspaceCreateRequested.GetCorrelationId()), "workspace create", true
 	case *runv0.RunEvent_WorkspaceRetrieveRequested:
