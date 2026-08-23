@@ -113,7 +113,7 @@ run_expect_status 1 env \
 	SKIP_DEPLOY=1 \
 	bash "$script"
 assert_contains "$fake_log" "run events run-call-success" "Run events failure attempt"
-assert_contains "$fake_log" "--wait-ready 60s" "successful Run telemetry readiness wait"
+assert_contains "$fake_log" "--wait-ready 5m" "successful Run telemetry readiness wait"
 assert_contains "$fake_log" "workspace delete --id workspace-caller" "inspection failure caller cleanup"
 assert_contains "$fake_log" "workspace delete --id workspace-target" "inspection failure target cleanup"
 assert_equal "failed" "$(jq -r '.status' "$result_json")" "inspection failure structured terminal status"
@@ -131,8 +131,8 @@ run_expect_status 0 env \
 	/bin/bash "$script"
 assert_contains "$stdout" "PASS staging-runtime" "API-key runtime contract pass"
 assert_equal '["019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30"]' "$(jq -c '.run_ids' "$result_json")" "API-key runtime Run result"
-assert_contains "$fake_log" "run events 019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30 --wait-ready 60s" "runtime event readiness"
-assert_contains "$fake_log" "run logs 019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30 --wait-ready 60s" "runtime log readiness"
+assert_contains "$fake_log" "run events 019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30 --wait-ready 5m" "runtime event readiness"
+assert_contains "$fake_log" "run logs 019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30 --wait-ready 5m" "runtime log readiness"
 if grep -Eq -- '(^| )--(project|env)( |$)' "$fake_log"; then
 	fail "API-key runtime must not send session scope flags"
 fi

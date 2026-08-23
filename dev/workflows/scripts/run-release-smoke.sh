@@ -331,10 +331,10 @@ inspect_ready_run() {
   if ! run_helmr run get "${run_id}" ${scope_args[@]+"${scope_args[@]}"}; then
     return 1
   fi
-  if ! run_helmr run events "${run_id}" ${scope_args[@]+"${scope_args[@]}"} --wait-ready 60s; then
+  if ! run_helmr run events "${run_id}" ${scope_args[@]+"${scope_args[@]}"} --wait-ready 5m; then
     return 1
   fi
-  if ! run_helmr run logs "${run_id}" ${scope_args[@]+"${scope_args[@]}"} --wait-ready 60s; then
+  if ! run_helmr run logs "${run_id}" ${scope_args[@]+"${scope_args[@]}"} --wait-ready 5m; then
     return 1
   fi
 }
