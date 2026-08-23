@@ -438,7 +438,7 @@ async function runChildTaskSmoke(): Promise<ChildTaskEvidence> {
       "Actor close discarded durable output",
     )
     for (const workspace of workspaces.toReversed()) {
-      await workspace.ref.delete({ idempotencyKey: workspace.deleteKey })
+      await deleteChildSmokeWorkspace(workspace.ref, workspace.deleteKey)
     }
 
     return {
@@ -456,6 +456,17 @@ async function runChildTaskSmoke(): Promise<ChildTaskEvidence> {
   } catch (error) {
     await cleanupChildTaskSmoke(actorRef, workspaces)
     throw error
+  }
+}
+
+async function deleteChildSmokeWorkspace(
+  ref: WorkspaceRef,
+  idempotencyKey: string,
+): Promise<void> {
+  try {
+    await ref.delete({ idempotencyKey })
+  } catch (error) {
+    if (errorCode(error) !== "workspace_not_found") throw error
   }
 }
 
