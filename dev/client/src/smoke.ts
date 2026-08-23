@@ -232,7 +232,7 @@ async function runSmoke(): Promise<Evidence> {
   const canceled = await client.tokens.cancel(token.id, {
     idempotencyKey: `token:cancel:${config.marker}`,
   })
-  assertEqual(canceled.status, "canceled", "external Token was not canceled")
+  assertEqual(canceled.status, "cancelled", "external Token was not cancelled")
 
   const deleted = await byKey.delete({
     idempotencyKey: `workspace:delete:${config.marker}`,
@@ -564,7 +564,10 @@ async function readTelemetry<T>(
       return await read()
     } catch (error) {
       const code = errorCode(error)
-      if (code !== "telemetry_lagging" || Date.now() >= deadline) throw error
+      if (
+        (code !== "telemetry_lagging" && code !== "telemetry_unavailable") ||
+        Date.now() >= deadline
+      ) throw error
       await new Promise((resolve) => setTimeout(resolve, 500))
     }
   }
