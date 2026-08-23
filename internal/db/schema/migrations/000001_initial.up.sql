@@ -953,7 +953,7 @@ CREATE TABLE workspaces (
         OR
         (state = 'deleted'
          AND sandbox_declared_id IS NULL
-         AND deployment_definition_id IS NULL
+         AND deployment_definition_id IS NOT NULL
          AND head_version_id IS NULL
          AND owner_session_id IS NULL
          AND owner_run_id IS NULL

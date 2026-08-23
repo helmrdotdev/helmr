@@ -46,30 +46,11 @@ func (s *Server) deleteWorkspace(ctx context.Context, request workspaceDeleteReq
 				return err
 			}
 		}
-		authority, err := work.q.LockWorkspaceForDelete(ctx, db.LockWorkspaceForDeleteParams{
-			OrgID:         pgvalue.UUID(request.OrgID),
-			ProjectID:     pgvalue.UUID(request.ProjectID),
-			EnvironmentID: pgvalue.UUID(request.EnvironmentID),
-			ID:            pgvalue.UUID(request.WorkspaceID),
-		})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return errWorkspaceNotFound
-		}
-		if err != nil {
-			return fmt.Errorf("lock workspace for delete: %w", err)
-		}
-		workspaceID := pgvalue.MustUUIDValue(authority.ID)
-		if authority.State != db.WorkspaceStateDeleting &&
-			(authority.OwnerSessionID.Valid || authority.OwnerRunID.Valid ||
-				authority.HasActiveLease || authority.HasActiveProcess) {
-			return errWorkspaceBusy
-		}
-
 		var claim *db.IdempotencyClaim
 		if request.IdempotencyKey != "" {
 			claimRequest, err := idempotency.NewWorkspaceDeleteRequest(
 				request.EnvironmentID,
-				workspaceID,
+				request.WorkspaceID,
 				request.IdempotencyKey,
 			)
 			if err != nil {
@@ -96,6 +77,24 @@ func (s *Server) deleteWorkspace(ctx context.Context, request workspaceDeleteReq
 				return errWorkspaceDeleteReceipt
 			}
 			claim = &acquired.Claim
+		}
+		authority, err := work.q.LockWorkspaceForDelete(ctx, db.LockWorkspaceForDeleteParams{
+			OrgID:         pgvalue.UUID(request.OrgID),
+			ProjectID:     pgvalue.UUID(request.ProjectID),
+			EnvironmentID: pgvalue.UUID(request.EnvironmentID),
+			ID:            pgvalue.UUID(request.WorkspaceID),
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errWorkspaceNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("lock workspace for delete: %w", err)
+		}
+		workspaceID := pgvalue.MustUUIDValue(authority.ID)
+		if authority.State != db.WorkspaceStateDeleting &&
+			(authority.OwnerSessionID.Valid || authority.OwnerRunID.Valid ||
+				authority.HasActiveLease || authority.HasActiveProcess) {
+			return errWorkspaceBusy
 		}
 
 		if authority.State != db.WorkspaceStateDeleting {

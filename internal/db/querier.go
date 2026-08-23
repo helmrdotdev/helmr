@@ -185,6 +185,7 @@ type Querier interface {
 	FenceRunWorkspaceLease(ctx context.Context, arg FenceRunWorkspaceLeaseParams) (int64, error)
 	FenceWorkerInstance(ctx context.Context, arg FenceWorkerInstanceParams) (FenceWorkerInstanceRow, error)
 	FenceWorkspaceExecLeaseForSecretRevocation(ctx context.Context, arg FenceWorkspaceExecLeaseForSecretRevocationParams) (WorkspaceLease, error)
+	FinalizeDeletingWorkspaces(ctx context.Context, rowLimit int32) ([]pgtype.UUID, error)
 	FinalizeWorkspaceExecProcess(ctx context.Context, arg FinalizeWorkspaceExecProcessParams) (WorkspaceProcess, error)
 	FinalizeWorkspaceExecWorkspace(ctx context.Context, arg FinalizeWorkspaceExecWorkspaceParams) (Workspace, error)
 	FindCancellationTarget(ctx context.Context, arg FindCancellationTargetParams) (pgtype.UUID, error)

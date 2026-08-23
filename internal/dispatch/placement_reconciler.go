@@ -25,6 +25,7 @@ const (
 	defaultRunPlacementParallelism       = 16
 	defaultRunPlacementPendingInterval   = time.Second
 	defaultWorkspaceExecPlacementLimit   = int32(32)
+	defaultWorkspaceDeleteFinalizeLimit  = int32(32)
 	defaultWorkspaceExecPendingTimeout   = 10 * time.Minute
 )
 
@@ -65,14 +66,20 @@ type WorkspaceExecPlacementAuthority interface {
 	) error
 }
 
+type WorkspaceDeletionFinalizer interface {
+	FinalizeDeletingWorkspaces(context.Context, int32) ([]pgtype.UUID, error)
+}
+
 type PlacementReconciler struct {
 	runDiscovery           RunPlacementDiscovery
 	runLaneLocker          RunPlacementLaneLocker
 	runAuthority           RunPlacementAuthority
 	workspaceExecDiscovery WorkspaceExecPlacementDiscovery
 	workspaceExecAuthority WorkspaceExecPlacementAuthority
+	workspaceFinalizer     WorkspaceDeletionFinalizer
 	runPolicy              runPlacementPolicy
 	workspaceExecPolicy    placementLoopPolicy
+	workspaceDeletePolicy  placementLoopPolicy
 	runCursors             [runPlacementLaneCount]runPlacementCursor
 	runLaneMutexes         [runPlacementLaneCount]sync.Mutex
 	runNextLane            atomic.Uint32
@@ -186,11 +193,12 @@ func NewPlacementReconciler(runDiscovery RunPlacementDiscovery, runLaneLocker Ru
 	runAuthority RunPlacementAuthority,
 	workspaceExecDiscovery WorkspaceExecPlacementDiscovery,
 	workspaceExecAuthority WorkspaceExecPlacementAuthority,
+	workspaceFinalizer WorkspaceDeletionFinalizer,
 	log *slog.Logger,
 ) (*PlacementReconciler, error) {
 	if runDiscovery == nil || runLaneLocker == nil || runAuthority == nil ||
-		workspaceExecDiscovery == nil || workspaceExecAuthority == nil {
-		return nil, errors.New("run and workspace exec placement dependencies are required")
+		workspaceExecDiscovery == nil || workspaceExecAuthority == nil || workspaceFinalizer == nil {
+		return nil, errors.New("run placement, workspace exec placement, and workspace deletion dependencies are required")
 	}
 	if log == nil {
 		log = slog.Default()
@@ -199,6 +207,7 @@ func NewPlacementReconciler(runDiscovery RunPlacementDiscovery, runLaneLocker Ru
 		runDiscovery: runDiscovery, runLaneLocker: runLaneLocker, runAuthority: runAuthority,
 		workspaceExecDiscovery: workspaceExecDiscovery,
 		workspaceExecAuthority: workspaceExecAuthority,
+		workspaceFinalizer:     workspaceFinalizer,
 		log:                    log, metrics: newReconcileMetrics(),
 		runPolicy: runPlacementPolicy{
 			idleInterval:      defaultRunPlacementIdleInterval,
@@ -214,6 +223,10 @@ func NewPlacementReconciler(runDiscovery RunPlacementDiscovery, runLaneLocker Ru
 			interval: defaultRunPlacementIdleInterval, failureBackoff: defaultRunPlacementFailureBackoff,
 			timeout: defaultRunPlacementTimeout, limit: defaultWorkspaceExecPlacementLimit,
 		},
+		workspaceDeletePolicy: placementLoopPolicy{
+			interval: defaultRunPlacementIdleInterval, failureBackoff: defaultRunPlacementFailureBackoff,
+			timeout: defaultRunPlacementTimeout, limit: defaultWorkspaceDeleteFinalizeLimit,
+		},
 	}
 	reconciler.runParallel = make(chan struct{}, reconciler.runPolicy.parallelism)
 	return reconciler, nil
@@ -222,7 +235,7 @@ func NewPlacementReconciler(runDiscovery RunPlacementDiscovery, runLaneLocker Ru
 func (r *PlacementReconciler) Run(ctx context.Context) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	loops := r.runPolicy.workers + 1
+	loops := r.runPolicy.workers + 2
 	errC := make(chan error, loops)
 	for range r.runPolicy.workers {
 		go func() { errC <- r.runPlacementLoop(runCtx) }()
@@ -233,6 +246,14 @@ func (r *PlacementReconciler) Run(ctx context.Context) error {
 			"workspace_exec",
 			r.workspaceExecPolicy,
 			r.ReconcileWorkspaceExecs,
+		)
+	}()
+	go func() {
+		errC <- r.runLoop(
+			runCtx,
+			"workspace_delete",
+			r.workspaceDeletePolicy,
+			r.ReconcileWorkspaceDeletes,
 		)
 	}()
 	var firstErr error
@@ -403,6 +424,14 @@ func (r *PlacementReconciler) ReconcileWorkspaceExecs(ctx context.Context) error
 	return errors.Join(problems...)
 }
 
+func (r *PlacementReconciler) ReconcileWorkspaceDeletes(ctx context.Context) error {
+	_, err := r.workspaceFinalizer.FinalizeDeletingWorkspaces(ctx, r.workspaceDeletePolicy.limit)
+	if err != nil {
+		return fmt.Errorf("finalize deleting workspaces: %w", err)
+	}
+	return nil
+}
+
 func (r *PlacementReconciler) runLoop(ctx context.Context, domain string, policy placementLoopPolicy, reconcile func(context.Context) error) error {
 	for {
 		started := time.Now()
@@ -417,7 +446,7 @@ func (r *PlacementReconciler) runLoop(ctx context.Context, domain string, policy
 		if err != nil && !errors.Is(err, context.Canceled) {
 			outcome = "failure"
 			delay = policy.failureBackoff
-			r.log.Warn("placement reconciliation failed", "domain", domain, "duration_ms", time.Since(started).Milliseconds(), "error", err)
+			r.log.Warn("reconciliation failed", "domain", domain, "duration_ms", time.Since(started).Milliseconds(), "error", err)
 		}
 		r.metrics.observe(ctx, "placement", domain, outcome, time.Since(started))
 		timer := time.NewTimer(delay)

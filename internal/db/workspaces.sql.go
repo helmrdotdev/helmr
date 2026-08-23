@@ -198,6 +198,79 @@ func (q *Queries) CreateWorkspaceSecret(ctx context.Context, arg CreateWorkspace
 	return i, err
 }
 
+const finalizeDeletingWorkspaces = `-- name: FinalizeDeletingWorkspaces :many
+WITH eligible AS (
+    SELECT workspaces.id
+      FROM workspaces
+     WHERE workspaces.state = 'deleting'
+       AND workspaces.desired_state = 'deleted'
+       AND workspaces.owner_session_id IS NULL
+       AND workspaces.owner_run_id IS NULL
+       AND NOT EXISTS (
+           SELECT 1
+             FROM workspace_processes
+            WHERE workspace_processes.workspace_id = workspaces.id
+              AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
+       )
+       AND NOT EXISTS (
+           SELECT 1
+             FROM workspace_leases
+            WHERE workspace_leases.workspace_id = workspaces.id
+              AND workspace_leases.state IN ('active', 'releasing')
+       )
+       AND NOT EXISTS (
+           SELECT 1
+             FROM workspace_mounts
+            WHERE workspace_mounts.workspace_id = workspaces.id
+              AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
+       )
+       AND NOT EXISTS (
+           SELECT 1
+             FROM runtime_instances
+            WHERE runtime_instances.workspace_id = workspaces.id
+              AND runtime_instances.reclaimed_at IS NULL
+              AND runtime_instances.observed_state <> 'lost'
+       )
+     ORDER BY workspaces.updated_at, workspaces.id
+     LIMIT $1
+     FOR UPDATE OF workspaces SKIP LOCKED
+), finalized AS (
+    UPDATE workspaces
+       SET key = NULL,
+           sandbox_declared_id = NULL,
+           head_version_id = NULL,
+           dirty_state = 'clean',
+           state = 'deleted',
+           state_version = state_version + 1,
+           deleted_at = now(),
+           updated_at = now()
+      FROM eligible
+     WHERE workspaces.id = eligible.id
+    RETURNING workspaces.id
+)
+SELECT id FROM finalized
+`
+
+func (q *Queries) FinalizeDeletingWorkspaces(ctx context.Context, rowLimit int32) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, finalizeDeletingWorkspaces, rowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getWorkspace = `-- name: GetWorkspace :one
 SELECT workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at
   FROM workspaces

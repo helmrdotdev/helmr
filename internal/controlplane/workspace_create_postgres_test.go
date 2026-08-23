@@ -5,13 +5,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestRunPinnedWorkspaceCreateUsesSourceDeploymentAndFencesBeforeClaim(t *testing.T) {
@@ -255,6 +258,13 @@ func TestWorkspaceDeletePublishesOwnerlessMountCleanupOnce(t *testing.T) {
 func TestWorkspaceDeleteWithoutActiveMountSucceeds(t *testing.T) {
 	product := newActorStartPostgresFixture(t, 1)
 	workspaceID := product.workspaceIDs[0]
+	var originalKey, originalDeclaredID string
+	if err := product.pool.QueryRow(t.Context(), `
+SELECT key, sandbox_declared_id FROM workspaces WHERE id = $1`, workspaceID).Scan(
+		&originalKey, &originalDeclaredID,
+	); err != nil {
+		t.Fatal(err)
+	}
 
 	deleted, err := product.server.deleteWorkspace(t.Context(), workspaceDeleteRequest{
 		OrgID: product.orgID, ProjectID: product.projectID,
@@ -274,6 +284,154 @@ SELECT state FROM workspaces WHERE id = $1`, workspaceID).Scan(&state); err != n
 	}
 	if state != db.WorkspaceStateDeleting {
 		t.Fatalf("workspace state = %s, want deleting", state)
+	}
+	finalized, err := product.server.db.FinalizeDeletingWorkspaces(t.Context(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(finalized) != 1 || pgvalue.MustUUIDValue(finalized[0]) != workspaceID {
+		t.Fatalf("finalized workspaces = %+v, want %s", finalized, workspaceID)
+	}
+	var tombstone struct {
+		state                  db.WorkspaceState
+		stateVersion           int64
+		deploymentDefinitionID uuid.UUID
+		key                    *string
+		sandboxDeclaredID      *string
+		headVersionID          *uuid.UUID
+		deletedAt              time.Time
+	}
+	if err := product.pool.QueryRow(t.Context(), `
+SELECT state, state_version, deployment_definition_id, key,
+       sandbox_declared_id, head_version_id, deleted_at
+  FROM workspaces WHERE id = $1`, workspaceID).Scan(
+		&tombstone.state, &tombstone.stateVersion, &tombstone.deploymentDefinitionID,
+		&tombstone.key, &tombstone.sandboxDeclaredID, &tombstone.headVersionID,
+		&tombstone.deletedAt,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if tombstone.state != db.WorkspaceStateDeleted || tombstone.stateVersion != 3 ||
+		tombstone.deploymentDefinitionID == uuid.Nil || tombstone.key != nil ||
+		tombstone.sandboxDeclaredID != nil || tombstone.headVersionID != nil ||
+		tombstone.deletedAt.IsZero() {
+		t.Fatalf("workspace tombstone = %+v", tombstone)
+	}
+	if originalKey == "" {
+		t.Fatal("workspace key was empty before deletion")
+	}
+	replayed, err := product.server.deleteWorkspace(t.Context(), workspaceDeleteRequest{
+		OrgID: product.orgID, ProjectID: product.projectID,
+		EnvironmentID: product.environmentID, WorkspaceID: workspaceID,
+		IdempotencyKey: "workspace-delete-without-active-mount",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !replayed.Replayed || replayed.WorkspaceID != workspaceID {
+		t.Fatalf("delete replay = %+v", replayed)
+	}
+	_, err = product.server.deleteWorkspace(t.Context(), workspaceDeleteRequest{
+		OrgID: product.orgID, ProjectID: product.projectID,
+		EnvironmentID: product.environmentID, WorkspaceID: workspaceID,
+		IdempotencyKey: "workspace-delete-after-tombstone",
+	})
+	if !errors.Is(err, errWorkspaceNotFound) {
+		t.Fatalf("fresh delete after tombstone error = %v", err)
+	}
+	replacementKey := originalKey
+	replacement, err := product.server.createWorkspace(t.Context(), workspaceCreateRequest{
+		OrgID: product.orgID, ProjectID: product.projectID, EnvironmentID: product.environmentID,
+		Declaration: workspaceDeclarationSelector{Kind: workspaceDeclarationPromoted},
+		DeclaredID:  originalDeclaredID, Key: &replacementKey,
+		IdempotencyKey: "workspace-recreate-after-delete",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replacement.WorkspaceID == workspaceID || replacement.Snapshot.Key == nil ||
+		*replacement.Snapshot.Key != originalKey {
+		t.Fatalf("replacement workspace = %+v", replacement)
+	}
+}
+
+func TestWorkspaceDeleteFinalizationSkipsBlockedRowsAndIsConcurrent(t *testing.T) {
+	product := newActorStartPostgresFixture(t, 4)
+	blockedWorkspaceID := product.workspaceIDs[0]
+	if _, err := product.server.startTask(t.Context(), taskStartRequest{
+		OrgID: product.orgID, ProjectID: product.projectID, EnvironmentID: product.environmentID,
+		TaskDeclaredID: "resize-image", PayloadPresent: true,
+		Payload: []byte(`{"source":"delete-finalizer-blocker"}`), WorkspaceID: blockedWorkspaceID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := product.pool.Exec(t.Context(), `
+UPDATE workspaces
+   SET state = 'deleting', desired_state = 'deleted', updated_at = now() - interval '1 hour'
+ WHERE id = $1`, blockedWorkspaceID); err != nil {
+		t.Fatal(err)
+	}
+	for index, workspaceID := range product.workspaceIDs[1:] {
+		if _, err := product.server.deleteWorkspace(t.Context(), workspaceDeleteRequest{
+			OrgID: product.orgID, ProjectID: product.projectID,
+			EnvironmentID: product.environmentID, WorkspaceID: workspaceID,
+			IdempotencyKey: fmt.Sprintf("workspace-delete-concurrent-%d", index),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := product.pool.Exec(t.Context(), `
+UPDATE workspaces SET updated_at = now() - ($2::int * interval '10 minutes')
+ WHERE id = $1`, workspaceID, 3-index); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	type result struct {
+		ids []pgtype.UUID
+		err error
+	}
+	first, err := product.server.db.FinalizeDeletingWorkspaces(t.Context(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 1 || pgvalue.MustUUIDValue(first[0]) != product.workspaceIDs[1] {
+		t.Fatalf("oldest eligible finalization = %+v, want %s", first, product.workspaceIDs[1])
+	}
+
+	start := make(chan struct{})
+	results := make(chan result, 2)
+	for range 2 {
+		go func() {
+			<-start
+			ids, err := product.server.db.FinalizeDeletingWorkspaces(t.Context(), 1)
+			results <- result{ids: ids, err: err}
+		}()
+	}
+	close(start)
+	seen := map[uuid.UUID]struct{}{product.workspaceIDs[1]: {}}
+	for range 2 {
+		result := <-results
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+		for _, rawID := range result.ids {
+			id := pgvalue.MustUUIDValue(rawID)
+			if _, duplicate := seen[id]; duplicate {
+				t.Fatalf("workspace %s finalized twice", id)
+			}
+			seen[id] = struct{}{}
+		}
+	}
+	if len(seen) != 3 {
+		t.Fatalf("finalized workspaces = %v, want three eligible rows", seen)
+	}
+	var blockedState db.WorkspaceState
+	if err := product.pool.QueryRow(t.Context(), `
+SELECT state FROM workspaces WHERE id = $1`, blockedWorkspaceID).Scan(&blockedState); err != nil {
+		t.Fatal(err)
+	}
+	if blockedState != db.WorkspaceStateDeleting {
+		t.Fatalf("blocked workspace state = %s, want deleting", blockedState)
 	}
 }
 
@@ -466,6 +624,61 @@ SELECT workspace_mounts.finalization_kind,
 		t.Fatalf(
 			"existing finalization=%s/%s runtime=%s version=%d reason=%s",
 			finalizationKind, finalizationReason, desiredState, desiredVersion, desiredReason,
+		)
+	}
+	assertFinalizedCount := func(want int, label string) {
+		t.Helper()
+		rows, err := product.server.db.FinalizeDeletingWorkspaces(t.Context(), 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != want {
+			t.Fatalf("%s finalized = %+v, want %d", label, rows, want)
+		}
+	}
+	assertFinalizedCount(0, "active mount")
+	if _, err := product.pool.Exec(t.Context(), `
+UPDATE workspace_mounts
+   SET state = 'unmounted', unmounted_at = now(), terminal_at = now(),
+       terminal_reason_code = 'test_unmounted'
+ WHERE id = $1`, mountID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := product.pool.Exec(t.Context(), `
+UPDATE runtime_instances
+   SET observed_state = 'failed', failed_at = now(), terminal_at = now(),
+       terminal_reason_code = 'test_failed'
+ WHERE id = $1`, runtimeID); err != nil {
+		t.Fatal(err)
+	}
+	assertFinalizedCount(0, "unreclaimed failed runtime")
+	if _, err := product.pool.Exec(t.Context(), `
+UPDATE runtime_instances
+   SET observed_state = 'lost', failed_at = NULL, lost_at = now(),
+       terminal_at = now(), terminal_reason_code = 'test_lost'
+ WHERE id = $1`, runtimeID); err != nil {
+		t.Fatal(err)
+	}
+	assertFinalizedCount(1, "lost runtime")
+	var workspaceState db.WorkspaceState
+	var retainedDefinitionID uuid.UUID
+	var retainedRuntimeCount int
+	if err := product.pool.QueryRow(t.Context(), `
+SELECT workspaces.state, workspaces.deployment_definition_id,
+       count(runtime_instances.id)
+  FROM workspaces
+  LEFT JOIN runtime_instances ON runtime_instances.workspace_id = workspaces.id
+ WHERE workspaces.id = $1
+ GROUP BY workspaces.id`, workspaceID).Scan(
+		&workspaceState, &retainedDefinitionID, &retainedRuntimeCount,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if workspaceState != db.WorkspaceStateDeleted ||
+		retainedDefinitionID != sandboxDefinitionID || retainedRuntimeCount != 1 {
+		t.Fatalf(
+			"workspace=%s definition=%s runtimes=%d",
+			workspaceState, retainedDefinitionID, retainedRuntimeCount,
 		)
 	}
 }

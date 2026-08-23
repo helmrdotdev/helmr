@@ -284,6 +284,58 @@ UPDATE workspaces
    AND owner_run_id IS NULL
 RETURNING *;
 
+-- name: FinalizeDeletingWorkspaces :many
+WITH eligible AS (
+    SELECT workspaces.id
+      FROM workspaces
+     WHERE workspaces.state = 'deleting'
+       AND workspaces.desired_state = 'deleted'
+       AND workspaces.owner_session_id IS NULL
+       AND workspaces.owner_run_id IS NULL
+       AND NOT EXISTS (
+           SELECT 1
+             FROM workspace_processes
+            WHERE workspace_processes.workspace_id = workspaces.id
+              AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
+       )
+       AND NOT EXISTS (
+           SELECT 1
+             FROM workspace_leases
+            WHERE workspace_leases.workspace_id = workspaces.id
+              AND workspace_leases.state IN ('active', 'releasing')
+       )
+       AND NOT EXISTS (
+           SELECT 1
+             FROM workspace_mounts
+            WHERE workspace_mounts.workspace_id = workspaces.id
+              AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
+       )
+       AND NOT EXISTS (
+           SELECT 1
+             FROM runtime_instances
+            WHERE runtime_instances.workspace_id = workspaces.id
+              AND runtime_instances.reclaimed_at IS NULL
+              AND runtime_instances.observed_state <> 'lost'
+       )
+     ORDER BY workspaces.updated_at, workspaces.id
+     LIMIT sqlc.arg(row_limit)
+     FOR UPDATE OF workspaces SKIP LOCKED
+), finalized AS (
+    UPDATE workspaces
+       SET key = NULL,
+           sandbox_declared_id = NULL,
+           head_version_id = NULL,
+           dirty_state = 'clean',
+           state = 'deleted',
+           state_version = state_version + 1,
+           deleted_at = now(),
+           updated_at = now()
+      FROM eligible
+     WHERE workspaces.id = eligible.id
+    RETURNING workspaces.id
+)
+SELECT id FROM finalized;
+
 -- name: LockActorInputWorkspace :one
 SELECT *
   FROM workspaces
