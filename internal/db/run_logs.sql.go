@@ -40,8 +40,10 @@ current_run_lease AS (
        AND run_leases.worker_epoch = $9
        AND runs.current_run_lease_id = run_leases.id
        AND runs.current_attempt_number = run_leases.attempt_number
-       AND runs.status = 'running'
-       AND run_leases.state = 'running'
+       AND (
+            (runs.status = 'running' AND run_leases.state = 'running')
+         OR (runs.status = 'waiting' AND run_leases.state = 'checkpointing')
+       )
        AND run_leases.expires_at > now()
 ),
 candidate AS (
