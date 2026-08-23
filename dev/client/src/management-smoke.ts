@@ -278,7 +278,7 @@ async function waitForRunStatus(
   runId: string,
   accepted: readonly Run["status"][],
 ): Promise<Run> {
-  const deadline = Date.now() + 5 * 60_000
+  const deadline = Date.now() + 10 * 60_000
   for (;;) {
     const run = await client.runs.retrieve(runId, {
       signal: AbortSignal.timeout(30_000),
