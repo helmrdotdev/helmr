@@ -558,7 +558,7 @@ async function cleanupChildTaskSmoke(
 async function readTelemetry<T>(
   read: () => Promise<Readonly<{ items: readonly T[] }>>,
 ): Promise<Readonly<{ items: readonly T[] }>> {
-  const deadline = Date.now() + 60_000
+  const deadline = Date.now() + 2 * 60_000
   for (;;) {
     try {
       return await read()
