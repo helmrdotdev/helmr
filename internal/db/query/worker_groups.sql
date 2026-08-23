@@ -665,8 +665,17 @@ WITH current_instances AS (
            id, resource_id, worker_group_id, worker_pool_id, state, claim_version, current_epoch,
            draining_at, termination_ready_at, lost_at,
            created_at, updated_at
-      FROM worker_instances
+     FROM worker_instances
      WHERE (sqlc.narg(worker_group_id)::text IS NULL OR worker_group_id = sqlc.narg(worker_group_id))
+       AND (
+           NOT sqlc.arg(has_unreclaimed_runtime)::boolean
+           OR EXISTS (
+               SELECT 1
+                 FROM runtime_instances
+                WHERE runtime_instances.worker_instance_id = worker_instances.id
+                  AND runtime_instances.reclaimed_at IS NULL
+           )
+       )
        AND (
            cardinality(sqlc.arg(resource_ids)::text[]) = 0
            OR resource_id = ANY(sqlc.arg(resource_ids)::text[])
@@ -859,6 +868,132 @@ SELECT worker_instances.id, worker_instances.resource_id,
    )
    AND NOT EXISTS (SELECT 1 FROM completed)
 LIMIT 1;
+
+-- name: ConfirmWorkerInstanceProviderAbsent :one
+WITH target AS MATERIALIZED (
+    SELECT worker_instances.id
+      FROM worker_instances
+     WHERE worker_instances.id = sqlc.arg(worker_instance_id)
+       AND worker_instances.state IN ('registering', 'active', 'draining', 'lost')
+     FOR UPDATE
+), transitioned AS (
+    UPDATE worker_instances
+       SET state = 'lost',
+           claim_version = worker_instances.claim_version
+               + CASE WHEN worker_instances.state = 'lost' THEN 0 ELSE 1 END,
+           lost_at = COALESCE(worker_instances.lost_at, now()),
+           updated_at = CASE
+               WHEN worker_instances.state = 'lost' THEN worker_instances.updated_at
+               ELSE now()
+           END
+      FROM target
+     WHERE worker_instances.id = target.id
+    RETURNING worker_instances.id, worker_instances.resource_id,
+              worker_instances.worker_group_id, worker_instances.worker_pool_id,
+              worker_instances.state, worker_instances.claim_version,
+              worker_instances.current_epoch, worker_instances.draining_at,
+              worker_instances.termination_ready_at, worker_instances.lost_at,
+              worker_instances.created_at, worker_instances.updated_at
+), revoked_credentials AS (
+    UPDATE worker_instance_credentials
+       SET revoked_at = COALESCE(worker_instance_credentials.revoked_at, now())
+      FROM transitioned
+     WHERE worker_instance_credentials.worker_instance_id = transitioned.id
+       AND worker_instance_credentials.revoked_at IS NULL
+    RETURNING worker_instance_credentials.id
+), lost_mounts AS (
+    UPDATE workspace_mounts
+       SET state = 'lost',
+           lost_at = COALESCE(workspace_mounts.lost_at, now()),
+           terminal_at = COALESCE(workspace_mounts.terminal_at, now()),
+           terminal_reason_code = COALESCE(
+               workspace_mounts.terminal_reason_code,
+               'external_instance_drift'
+           ),
+           updated_at = now()
+      FROM transitioned
+     WHERE workspace_mounts.worker_instance_id = transitioned.id
+       AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
+    RETURNING workspace_mounts.id
+)
+SELECT transitioned.id, transitioned.resource_id,
+       transitioned.worker_group_id, transitioned.worker_pool_id,
+       transitioned.state, transitioned.claim_version,
+       transitioned.current_epoch, transitioned.draining_at,
+       transitioned.termination_ready_at, transitioned.lost_at,
+       transitioned.created_at, transitioned.updated_at
+  FROM transitioned
+ WHERE (SELECT count(*) FROM revoked_credentials) >= 0
+   AND (SELECT count(*) FROM lost_mounts) >= 0;
+
+-- name: ReconcileProviderAbsentWorkerRuntimes :one
+WITH runtime_candidates AS MATERIALIZED (
+    SELECT runtime_instances.id,
+           NOT EXISTS (
+               SELECT 1
+                 FROM run_leases
+                WHERE run_leases.runtime_instance_id = runtime_instances.id
+                  AND run_leases.state IN (
+                      'assigned', 'starting', 'running', 'checkpointing', 'finalizing'
+                  )
+           ) AS reclaimable
+      FROM runtime_instances
+      JOIN worker_instances
+        ON worker_instances.id = runtime_instances.worker_instance_id
+       AND worker_instances.id = sqlc.arg(worker_instance_id)
+       AND worker_instances.state = 'lost'
+     WHERE runtime_instances.reclaimed_at IS NULL
+     ORDER BY runtime_instances.id
+     FOR UPDATE OF runtime_instances
+), reconciled_runtimes AS (
+    UPDATE runtime_instances
+       SET observed_state = CASE
+               WHEN runtime_instances.observed_state IN ('failed', 'lost')
+               THEN runtime_instances.observed_state
+               ELSE 'lost'
+           END,
+           observed_version = runtime_instances.observed_version + 1,
+           observed_at = now(),
+           lost_at = CASE
+               WHEN runtime_instances.observed_state = 'failed'
+               THEN runtime_instances.lost_at
+               ELSE COALESCE(runtime_instances.lost_at, now())
+           END,
+           terminal_at = COALESCE(runtime_instances.terminal_at, now()),
+           terminal_reason_code = COALESCE(
+               runtime_instances.terminal_reason_code,
+               'external_instance_drift'
+           ),
+           reclaimed_at = CASE
+               WHEN runtime_candidates.reclaimable THEN now()
+               ELSE runtime_instances.reclaimed_at
+           END,
+           reclaim_evidence = CASE
+               WHEN runtime_candidates.reclaimable THEN jsonb_build_object(
+                   'method', 'provider_absent',
+                   'completed_at', now()
+               )
+               ELSE runtime_instances.reclaim_evidence
+           END,
+           reserved_run_id = NULL,
+           reserved_attempt_number = NULL,
+           reserved_process_id = NULL,
+           reserved_workspace_version_id = NULL,
+           reservation_expires_at = NULL,
+           updated_at = now()
+      FROM runtime_candidates
+     WHERE runtime_instances.id = runtime_candidates.id
+       AND (
+           runtime_candidates.reclaimable
+           OR runtime_instances.observed_state NOT IN ('failed', 'lost')
+           OR runtime_instances.reserved_run_id IS NOT NULL
+           OR runtime_instances.reserved_process_id IS NOT NULL
+           OR runtime_instances.reserved_workspace_version_id IS NOT NULL
+           OR runtime_instances.reservation_expires_at IS NOT NULL
+       )
+    RETURNING runtime_instances.id
+)
+SELECT count(*) FROM reconciled_runtimes;
 
 -- name: ActivateWorkerInstance :one
 UPDATE worker_instances

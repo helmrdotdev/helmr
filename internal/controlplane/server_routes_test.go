@@ -146,6 +146,7 @@ POST /api/auth/magic-link/invite/start
 POST /api/auth/magic-link/start
 POST /api/capacity/v0/worker-groups/{workerGroupID}/plan
 POST /api/capacity/v0/worker-instances/{workerInstanceID}/drain
+POST /api/capacity/v0/worker-instances/{workerInstanceID}/lost
 POST /api/invitations
 POST /api/organizations
 POST /api/projects

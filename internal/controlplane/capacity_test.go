@@ -207,6 +207,46 @@ func TestCapacityClientDecodesStaleDrainConflict(t *testing.T) {
 	}
 }
 
+func TestCapacityProviderAbsenceUsesExactWorkerIdentity(t *testing.T) {
+	workerID := pgvalue.NewUUIDv7()
+	now := time.Now().UTC()
+	poolID := pgvalue.NewUUIDv7()
+	store := &capacityDrainStore{
+		instance: db.GetCapacityWorkerInstanceRow{
+			ID: workerID, ResourceID: "i-provider-absent", WorkerGroupID: "run-workers",
+			WorkerPoolID: poolID, State: string(db.WorkerInstanceStateActive), ClaimVersion: 7,
+			CurrentEpoch: pgtype.Int8{Int64: 4, Valid: true},
+			CreatedAt:    pgtype.Timestamptz{Time: now, Valid: true}, UpdatedAt: pgtype.Timestamptz{Time: now, Valid: true},
+		},
+		providerAbsent: db.ConfirmWorkerInstanceProviderAbsentRow{
+			ID: workerID, ResourceID: "i-provider-absent", WorkerGroupID: "run-workers",
+			WorkerPoolID: poolID, State: string(db.WorkerInstanceStateLost), ClaimVersion: 8,
+			CurrentEpoch: pgtype.Int8{Int64: 4, Valid: true}, LostAt: pgtype.Timestamptz{Time: now, Valid: true},
+			CreatedAt: pgtype.Timestamptz{Time: now, Valid: true}, UpdatedAt: pgtype.Timestamptz{Time: now, Valid: true},
+		},
+	}
+	hash, err := hashCapacityToken(capacityTestToken())
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{db: store, capacityTokenHash: hash}
+	router := chi.NewRouter()
+	router.Route("/api", server.mountCapacityRoutes)
+	httpServer := httptest.NewServer(router)
+	defer httpServer.Close()
+	client, err := capacityapi.NewClient(httpServer.URL, capacityTestToken())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := client.ConfirmWorkerInstanceProviderAbsent(t.Context(), uuid.UUID(workerID.Bytes).String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.providerAbsentID != workerID || result.Status != capacityapi.WorkerInstanceStatusLost || result.ClaimVersion != 8 || result.ResourceID != "i-provider-absent" {
+		t.Fatalf("provider absence = id:%v result:%+v", store.providerAbsentID, result)
+	}
+}
+
 func TestCapacityResolveAndPlanHandlers(t *testing.T) {
 	groupID := uuid.Must(uuid.NewV7()).String()
 	poolID := pgvalue.NewUUIDv7()
@@ -283,15 +323,15 @@ func TestCapacityResolveAndPlanHandlers(t *testing.T) {
 }
 
 func TestCapacityWorkerInstanceListParamsAreBounded(t *testing.T) {
-	request := httptest.NewRequest(http.MethodGet, "/?worker_group_id=run-workers&resource_id=host-1&resource_id=host-2&status=active&status=draining&limit=50", nil)
+	request := httptest.NewRequest(http.MethodGet, "/?worker_group_id=run-workers&resource_id=host-1&resource_id=host-2&status=active&status=draining&has_unreclaimed_runtime=true&limit=50", nil)
 	params, err := capacityWorkerInstanceListParams(request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !params.WorkerGroupID.Valid || params.WorkerGroupID.String != "run-workers" || params.RowLimit != 50 || strings.Join(params.ResourceIds, ",") != "host-1,host-2" || strings.Join(params.States, ",") != "active,draining" {
+	if !params.WorkerGroupID.Valid || params.WorkerGroupID.String != "run-workers" || !params.HasUnreclaimedRuntime || params.RowLimit != 50 || strings.Join(params.ResourceIds, ",") != "host-1,host-2" || strings.Join(params.States, ",") != "active,draining" {
 		t.Fatalf("params = %+v", params)
 	}
-	for _, raw := range []string{"/?unsupported=active", "/?status=unknown", "/?resource_id=", "/?resource_id=host-1&resource_id=host-1", "/?limit=0", "/?limit=501"} {
+	for _, raw := range []string{"/?unsupported=active", "/?status=unknown", "/?resource_id=", "/?resource_id=host-1&resource_id=host-1", "/?has_unreclaimed_runtime=false", "/?has_unreclaimed_runtime=true&has_unreclaimed_runtime=true", "/?limit=0", "/?limit=501"} {
 		if _, err := capacityWorkerInstanceListParams(httptest.NewRequest(http.MethodGet, raw, nil)); err == nil {
 			t.Fatalf("params for %q succeeded", raw)
 		}
@@ -300,10 +340,13 @@ func TestCapacityWorkerInstanceListParamsAreBounded(t *testing.T) {
 
 type capacityDrainStore struct {
 	db.Querier
-	instance db.GetCapacityWorkerInstanceRow
-	draining db.DrainWorkerInstanceRow
-	params   db.DrainWorkerInstanceParams
-	drainErr error
+	instance          db.GetCapacityWorkerInstanceRow
+	draining          db.DrainWorkerInstanceRow
+	providerAbsent    db.ConfirmWorkerInstanceProviderAbsentRow
+	providerAbsentID  pgtype.UUID
+	params            db.DrainWorkerInstanceParams
+	drainErr          error
+	providerAbsentErr error
 }
 
 type capacityPlanStore struct {
@@ -382,9 +425,22 @@ func (s *capacityDrainStore) GetCapacityWorkerInstance(context.Context, pgtype.U
 	return s.instance, nil
 }
 
+func (s *capacityDrainStore) BeginQuerier(context.Context) (db.Querier, transaction, error) {
+	return s, &adminHTTPTransaction{}, nil
+}
+
 func (s *capacityDrainStore) DrainWorkerInstance(_ context.Context, params db.DrainWorkerInstanceParams) (db.DrainWorkerInstanceRow, error) {
 	s.params = params
 	return s.draining, s.drainErr
+}
+
+func (s *capacityDrainStore) ConfirmWorkerInstanceProviderAbsent(_ context.Context, id pgtype.UUID) (db.ConfirmWorkerInstanceProviderAbsentRow, error) {
+	s.providerAbsentID = id
+	return s.providerAbsent, s.providerAbsentErr
+}
+
+func (s *capacityDrainStore) ReconcileProviderAbsentWorkerRuntimes(context.Context, pgtype.UUID) (int64, error) {
+	return 0, nil
 }
 
 func capacityTestToken() string {

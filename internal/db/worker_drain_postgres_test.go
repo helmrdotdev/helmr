@@ -233,6 +233,40 @@ SELECT workspace_mounts.lost_at, runtime_instances.reclaimed_at,
 	}
 }
 
+func TestProviderAbsenceReclaimsRuntimeFromPriorWorkerEpoch(t *testing.T) {
+	ctx := context.Background()
+	pool := newPostgresDB(t, ctx)
+	prepared := prepareOldEpochStartupRecovery(t, ctx, pool)
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	queries := db.New(tx)
+	if _, err := queries.ConfirmWorkerInstanceProviderAbsent(ctx, prepared.params.WorkerInstanceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.ReconcileProviderAbsentWorkerRuntimes(ctx, prepared.params.WorkerInstanceID); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var runtimeReclaimed pgtype.Timestamptz
+	var mountState string
+	if err := pool.QueryRow(ctx, `
+		SELECT runtime_instances.reclaimed_at, workspace_mounts.state
+		  FROM runtime_instances
+		  JOIN workspace_mounts ON workspace_mounts.id = $2
+		 WHERE runtime_instances.id = $1
+	`, prepared.runtimeID, prepared.mountID).Scan(&runtimeReclaimed, &mountState); err != nil {
+		t.Fatal(err)
+	}
+	if !runtimeReclaimed.Valid || mountState != "lost" {
+		t.Fatalf("prior-epoch provider cleanup = reclaimed:%v mount:%q", runtimeReclaimed.Valid, mountState)
+	}
+}
+
 func TestWorkerStartupRecoveryLocksRuntimeBeforeMount(t *testing.T) {
 	ctx := context.Background()
 	pool := newPostgresDB(t, ctx)

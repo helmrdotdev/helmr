@@ -100,7 +100,7 @@ func TestClientPlansCapacityAndReadsFilteredWorkerInstances(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(CapacityPlanResponse{WorkerGroupID: "group-1", Pools: []CapacityPoolPlan{{PoolID: "pool-1", RecommendedAdditionalWorkers: 2}}})
 		case 2:
-			want := "/api/capacity/v0/worker-instances?limit=25&resource_id=host-a&resource_id=host-b&status=active&status=draining&worker_group_id=run-us-east-1"
+			want := "/api/capacity/v0/worker-instances?has_unreclaimed_runtime=true&limit=25&resource_id=host-a&resource_id=host-b&status=active&status=draining&worker_group_id=run-us-east-1"
 			if r.Method != http.MethodGet || r.URL.RequestURI() != want {
 				t.Fatalf("request = %s %s, want GET %s", r.Method, r.URL.RequestURI(), want)
 			}
@@ -128,6 +128,7 @@ func TestClientPlansCapacityAndReadsFilteredWorkerInstances(t *testing.T) {
 		"run-us-east-1",
 		[]string{"host-a", "host-b"},
 		[]WorkerInstanceStatus{WorkerInstanceStatusActive, WorkerInstanceStatusDraining},
+		true,
 		25,
 	)
 	if err != nil {
@@ -135,6 +136,33 @@ func TestClientPlansCapacityAndReadsFilteredWorkerInstances(t *testing.T) {
 	}
 	if len(workers.WorkerInstances) != 1 || workers.WorkerInstances[0].ID != "worker-1" {
 		t.Fatalf("workers = %+v", workers)
+	}
+}
+
+func TestClientConfirmsProviderAbsenceWithoutCallerEvidence(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+testCapacityToken {
+			t.Fatalf("authorization = %q", r.Header.Get("Authorization"))
+		}
+		if r.Method != http.MethodPost || r.URL.Path != "/api/capacity/v0/worker-instances/worker-1/lost" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if r.ContentLength != 0 {
+			t.Fatalf("provider absence content length = %d", r.ContentLength)
+		}
+		_ = json.NewEncoder(w).Encode(WorkerInstance{ID: "worker-1", ResourceID: "i-123", Status: WorkerInstanceStatusLost})
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL, testCapacityToken, WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := client.ConfirmWorkerInstanceProviderAbsent(context.Background(), "worker-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ID != "worker-1" || result.ResourceID != "i-123" || result.Status != WorkerInstanceStatusLost {
+		t.Fatalf("provider absence result = %+v", result)
 	}
 }
 

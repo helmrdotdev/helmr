@@ -60,6 +60,7 @@ func (s *Server) mountCapacityRoutes(r chi.Router) {
 			Post(capacityapi.WorkerGroupsPath+"/{workerGroupID}/plan", s.capacityPlan)
 		r.Get(capacityapi.WorkerInstancesPath, s.capacityListWorkerInstances)
 		r.Get(capacityapi.WorkerInstancesPath+"/{workerInstanceID}", s.capacityGetWorkerInstance)
+		r.Post(capacityapi.WorkerInstancesPath+"/{workerInstanceID}/lost", s.capacityConfirmWorkerInstanceProviderAbsent)
 		r.With(limitRequestBody(capacityRequestBodyLimit)).
 			Post(capacityapi.WorkerInstancesPath+"/{workerInstanceID}/drain", s.capacityDrainWorkerInstance)
 	})
@@ -349,6 +350,63 @@ func (s *Server) capacityDrainWorkerInstance(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, response)
 }
 
+func (s *Server) capacityConfirmWorkerInstanceProviderAbsent(w http.ResponseWriter, r *http.Request) {
+	id, err := capacityWorkerInstanceID(r)
+	if err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
+	if r.ContentLength != 0 {
+		writeError(w, badRequest(errors.New("provider absence request must not contain a body")))
+		return
+	}
+	instance, err := s.db.GetCapacityWorkerInstance(r.Context(), pgvalue.UUID(id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, notFound(errors.New("worker instance was not found")))
+		return
+	}
+	if err != nil {
+		s.log.Error("get Worker instance for provider absence", "worker_instance_id", id.String(), "error", err)
+		writeError(w, errors.New("get worker instance for provider absence"))
+		return
+	}
+	var confirmed db.ConfirmWorkerInstanceProviderAbsentRow
+	err = s.inTx(r.Context(), func(work *txWork) error {
+		var txErr error
+		confirmed, txErr = work.q.ConfirmWorkerInstanceProviderAbsent(r.Context(), pgvalue.UUID(id))
+		if txErr != nil {
+			return txErr
+		}
+		_, txErr = work.q.ReconcileProviderAbsentWorkerRuntimes(r.Context(), pgvalue.UUID(id))
+		return txErr
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, conflict(errors.New("worker instance cannot be marked lost from its current state")))
+		return
+	}
+	if err != nil {
+		s.log.Error("confirm Worker provider absence", "worker_instance_id", id.String(), "error", err)
+		writeError(w, errors.New("confirm worker provider absence"))
+		return
+	}
+	if confirmed.WorkerGroupID != instance.WorkerGroupID || confirmed.WorkerPoolID != instance.WorkerPoolID || confirmed.ResourceID != instance.ResourceID {
+		s.log.Error("provider absence changed Worker identity", "worker_instance_id", id.String())
+		writeError(w, errors.New("confirm worker provider absence"))
+		return
+	}
+	response, err := capacityWorkerInstance(
+		confirmed.ID, confirmed.ResourceID, confirmed.WorkerGroupID, confirmed.WorkerPoolID,
+		confirmed.State, confirmed.ClaimVersion, confirmed.CurrentEpoch, confirmed.DrainingAt,
+		confirmed.TerminationReadyAt, confirmed.LostAt, confirmed.CreatedAt, confirmed.UpdatedAt,
+	)
+	if err != nil {
+		s.log.Error("project provider-absent Worker instance", "worker_instance_id", id.String(), "error", err)
+		writeError(w, errors.New("project provider-absent worker instance"))
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
 func capacityWorkerInstanceID(r *http.Request) (uuid.UUID, error) {
 	id, err := ids.Parse(chi.URLParam(r, "workerInstanceID"))
 	if err != nil {
@@ -359,23 +417,30 @@ func capacityWorkerInstanceID(r *http.Request) (uuid.UUID, error) {
 
 func capacityWorkerInstanceListParams(r *http.Request) (db.ListCapacityWorkerInstancesParams, error) {
 	params := db.ListCapacityWorkerInstancesParams{
-		ResourceIds: []string{},
-		States:      []string{},
-		RowLimit:    defaultCapacityInstanceLimit,
+		ResourceIds:           []string{},
+		States:                []string{},
+		HasUnreclaimedRuntime: false,
+		RowLimit:              defaultCapacityInstanceLimit,
 	}
 	query := r.URL.Query()
 	for name := range query {
 		switch name {
-		case "worker_group_id", "resource_id", "status", "limit":
+		case "worker_group_id", "resource_id", "status", "has_unreclaimed_runtime", "limit":
 		default:
 			return params, fmt.Errorf("query parameter %q is not supported", name)
 		}
 	}
-	if len(query["worker_group_id"]) > 1 || len(query["limit"]) > 1 {
-		return params, errors.New("worker_group_id and limit must not be repeated")
+	if len(query["worker_group_id"]) > 1 || len(query["has_unreclaimed_runtime"]) > 1 || len(query["limit"]) > 1 {
+		return params, errors.New("worker_group_id, has_unreclaimed_runtime, and limit must not be repeated")
 	}
 	if groupID := strings.TrimSpace(query.Get("worker_group_id")); groupID != "" {
 		params.WorkerGroupID = pgtype.Text{String: groupID, Valid: true}
+	}
+	if raw := strings.TrimSpace(query.Get("has_unreclaimed_runtime")); raw != "" {
+		if raw != "true" {
+			return params, errors.New("has_unreclaimed_runtime must be true when present")
+		}
+		params.HasUnreclaimedRuntime = true
 	}
 	for _, status := range query["status"] {
 		status = strings.TrimSpace(status)

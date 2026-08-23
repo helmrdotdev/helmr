@@ -88,6 +88,7 @@ type Querier interface {
 	CompleteToken(ctx context.Context, arg CompleteTokenParams) (CompleteTokenRow, error)
 	CompleteWorkerDrain(ctx context.Context, arg CompleteWorkerDrainParams) (CompleteWorkerDrainRow, error)
 	CompleteWorkerStartupRecovery(ctx context.Context, arg CompleteWorkerStartupRecoveryParams) (WorkerInstance, error)
+	ConfirmWorkerInstanceProviderAbsent(ctx context.Context, workerInstanceID pgtype.UUID) (ConfirmWorkerInstanceProviderAbsentRow, error)
 	ConsumeDeviceCode(ctx context.Context, deviceCodeHash []byte) (DeviceCode, error)
 	ConsumeMagicLink(ctx context.Context, arg ConsumeMagicLinkParams) (int64, error)
 	ConsumeRunRuntimeReservation(ctx context.Context, arg ConsumeRunRuntimeReservationParams) (int64, error)
@@ -503,6 +504,7 @@ type Querier interface {
 	RecheckAndFenceStaleWorkerInstance(ctx context.Context, arg RecheckAndFenceStaleWorkerInstanceParams) (RecheckAndFenceStaleWorkerInstanceRow, error)
 	ReclaimFailedRuntimeInstance(ctx context.Context, arg ReclaimFailedRuntimeInstanceParams) (RuntimeInstance, error)
 	ReconcileActorTerminalRun(ctx context.Context, arg ReconcileActorTerminalRunParams) (Session, error)
+	ReconcileProviderAbsentWorkerRuntimes(ctx context.Context, workerInstanceID pgtype.UUID) (int64, error)
 	ReconcileSchedule(ctx context.Context, arg ReconcileScheduleParams) (ReconcileScheduleRow, error)
 	RecordRunTerminalEvent(ctx context.Context, arg RecordRunTerminalEventParams) error
 	RecordWorkerObservation(ctx context.Context, arg RecordWorkerObservationParams) (WorkerInstance, error)

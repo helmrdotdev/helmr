@@ -304,6 +304,99 @@ func (q *Queries) CompleteWorkerStartupRecovery(ctx context.Context, arg Complet
 	return i, err
 }
 
+const confirmWorkerInstanceProviderAbsent = `-- name: ConfirmWorkerInstanceProviderAbsent :one
+WITH target AS MATERIALIZED (
+    SELECT worker_instances.id
+      FROM worker_instances
+     WHERE worker_instances.id = $1
+       AND worker_instances.state IN ('registering', 'active', 'draining', 'lost')
+     FOR UPDATE
+), transitioned AS (
+    UPDATE worker_instances
+       SET state = 'lost',
+           claim_version = worker_instances.claim_version
+               + CASE WHEN worker_instances.state = 'lost' THEN 0 ELSE 1 END,
+           lost_at = COALESCE(worker_instances.lost_at, now()),
+           updated_at = CASE
+               WHEN worker_instances.state = 'lost' THEN worker_instances.updated_at
+               ELSE now()
+           END
+      FROM target
+     WHERE worker_instances.id = target.id
+    RETURNING worker_instances.id, worker_instances.resource_id,
+              worker_instances.worker_group_id, worker_instances.worker_pool_id,
+              worker_instances.state, worker_instances.claim_version,
+              worker_instances.current_epoch, worker_instances.draining_at,
+              worker_instances.termination_ready_at, worker_instances.lost_at,
+              worker_instances.created_at, worker_instances.updated_at
+), revoked_credentials AS (
+    UPDATE worker_instance_credentials
+       SET revoked_at = COALESCE(worker_instance_credentials.revoked_at, now())
+      FROM transitioned
+     WHERE worker_instance_credentials.worker_instance_id = transitioned.id
+       AND worker_instance_credentials.revoked_at IS NULL
+    RETURNING worker_instance_credentials.id
+), lost_mounts AS (
+    UPDATE workspace_mounts
+       SET state = 'lost',
+           lost_at = COALESCE(workspace_mounts.lost_at, now()),
+           terminal_at = COALESCE(workspace_mounts.terminal_at, now()),
+           terminal_reason_code = COALESCE(
+               workspace_mounts.terminal_reason_code,
+               'external_instance_drift'
+           ),
+           updated_at = now()
+      FROM transitioned
+     WHERE workspace_mounts.worker_instance_id = transitioned.id
+       AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
+    RETURNING workspace_mounts.id
+)
+SELECT transitioned.id, transitioned.resource_id,
+       transitioned.worker_group_id, transitioned.worker_pool_id,
+       transitioned.state, transitioned.claim_version,
+       transitioned.current_epoch, transitioned.draining_at,
+       transitioned.termination_ready_at, transitioned.lost_at,
+       transitioned.created_at, transitioned.updated_at
+  FROM transitioned
+ WHERE (SELECT count(*) FROM revoked_credentials) >= 0
+   AND (SELECT count(*) FROM lost_mounts) >= 0
+`
+
+type ConfirmWorkerInstanceProviderAbsentRow struct {
+	ID                 pgtype.UUID        `json:"id"`
+	ResourceID         string             `json:"resource_id"`
+	WorkerGroupID      string             `json:"worker_group_id"`
+	WorkerPoolID       pgtype.UUID        `json:"worker_pool_id"`
+	State              string             `json:"state"`
+	ClaimVersion       int64              `json:"claim_version"`
+	CurrentEpoch       pgtype.Int8        `json:"current_epoch"`
+	DrainingAt         pgtype.Timestamptz `json:"draining_at"`
+	TerminationReadyAt pgtype.Timestamptz `json:"termination_ready_at"`
+	LostAt             pgtype.Timestamptz `json:"lost_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) ConfirmWorkerInstanceProviderAbsent(ctx context.Context, workerInstanceID pgtype.UUID) (ConfirmWorkerInstanceProviderAbsentRow, error) {
+	row := q.db.QueryRow(ctx, confirmWorkerInstanceProviderAbsent, workerInstanceID)
+	var i ConfirmWorkerInstanceProviderAbsentRow
+	err := row.Scan(
+		&i.ID,
+		&i.ResourceID,
+		&i.WorkerGroupID,
+		&i.WorkerPoolID,
+		&i.State,
+		&i.ClaimVersion,
+		&i.CurrentEpoch,
+		&i.DrainingAt,
+		&i.TerminationReadyAt,
+		&i.LostAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const createPendingWorkerPool = `-- name: CreatePendingWorkerPool :one
 INSERT INTO worker_pools (id, worker_group_id, name, state, claim_version)
 SELECT $1, worker_groups.id, $2,
@@ -640,11 +733,20 @@ WITH current_instances AS (
            id, resource_id, worker_group_id, worker_pool_id, state, claim_version, current_epoch,
            draining_at, termination_ready_at, lost_at,
            created_at, updated_at
-      FROM worker_instances
+     FROM worker_instances
      WHERE ($3::text IS NULL OR worker_group_id = $3)
        AND (
-           cardinality($4::text[]) = 0
-           OR resource_id = ANY($4::text[])
+           NOT $4::boolean
+           OR EXISTS (
+               SELECT 1
+                 FROM runtime_instances
+                WHERE runtime_instances.worker_instance_id = worker_instances.id
+                  AND runtime_instances.reclaimed_at IS NULL
+           )
+       )
+       AND (
+           cardinality($5::text[]) = 0
+           OR resource_id = ANY($5::text[])
        )
      ORDER BY worker_group_id, resource_id,
               (state IN ('registering', 'active', 'draining')) DESC,
@@ -661,10 +763,11 @@ SELECT id, resource_id, worker_group_id, worker_pool_id, state, claim_version, c
 `
 
 type ListCapacityWorkerInstancesParams struct {
-	States        []string    `json:"states"`
-	RowLimit      int32       `json:"row_limit"`
-	WorkerGroupID pgtype.Text `json:"worker_group_id"`
-	ResourceIds   []string    `json:"resource_ids"`
+	States                []string    `json:"states"`
+	RowLimit              int32       `json:"row_limit"`
+	WorkerGroupID         pgtype.Text `json:"worker_group_id"`
+	HasUnreclaimedRuntime bool        `json:"has_unreclaimed_runtime"`
+	ResourceIds           []string    `json:"resource_ids"`
 }
 
 type ListCapacityWorkerInstancesRow struct {
@@ -687,6 +790,7 @@ func (q *Queries) ListCapacityWorkerInstances(ctx context.Context, arg ListCapac
 		arg.States,
 		arg.RowLimit,
 		arg.WorkerGroupID,
+		arg.HasUnreclaimedRuntime,
 		arg.ResourceIds,
 	)
 	if err != nil {
@@ -1371,6 +1475,83 @@ func (q *Queries) MarkWorkerInstanceLost(ctx context.Context, arg MarkWorkerInst
 		&i.TransitionApplied,
 	)
 	return i, err
+}
+
+const reconcileProviderAbsentWorkerRuntimes = `-- name: ReconcileProviderAbsentWorkerRuntimes :one
+WITH runtime_candidates AS MATERIALIZED (
+    SELECT runtime_instances.id,
+           NOT EXISTS (
+               SELECT 1
+                 FROM run_leases
+                WHERE run_leases.runtime_instance_id = runtime_instances.id
+                  AND run_leases.state IN (
+                      'assigned', 'starting', 'running', 'checkpointing', 'finalizing'
+                  )
+           ) AS reclaimable
+      FROM runtime_instances
+      JOIN worker_instances
+        ON worker_instances.id = runtime_instances.worker_instance_id
+       AND worker_instances.id = $1
+       AND worker_instances.state = 'lost'
+     WHERE runtime_instances.reclaimed_at IS NULL
+     ORDER BY runtime_instances.id
+     FOR UPDATE OF runtime_instances
+), reconciled_runtimes AS (
+    UPDATE runtime_instances
+       SET observed_state = CASE
+               WHEN runtime_instances.observed_state IN ('failed', 'lost')
+               THEN runtime_instances.observed_state
+               ELSE 'lost'
+           END,
+           observed_version = runtime_instances.observed_version + 1,
+           observed_at = now(),
+           lost_at = CASE
+               WHEN runtime_instances.observed_state = 'failed'
+               THEN runtime_instances.lost_at
+               ELSE COALESCE(runtime_instances.lost_at, now())
+           END,
+           terminal_at = COALESCE(runtime_instances.terminal_at, now()),
+           terminal_reason_code = COALESCE(
+               runtime_instances.terminal_reason_code,
+               'external_instance_drift'
+           ),
+           reclaimed_at = CASE
+               WHEN runtime_candidates.reclaimable THEN now()
+               ELSE runtime_instances.reclaimed_at
+           END,
+           reclaim_evidence = CASE
+               WHEN runtime_candidates.reclaimable THEN jsonb_build_object(
+                   'method', 'provider_absent',
+                   'completed_at', now()
+               )
+               ELSE runtime_instances.reclaim_evidence
+           END,
+           reserved_run_id = NULL,
+           reserved_attempt_number = NULL,
+           reserved_process_id = NULL,
+           reserved_workspace_version_id = NULL,
+           reservation_expires_at = NULL,
+           updated_at = now()
+      FROM runtime_candidates
+     WHERE runtime_instances.id = runtime_candidates.id
+       AND (
+           runtime_candidates.reclaimable
+           OR runtime_instances.observed_state NOT IN ('failed', 'lost')
+           OR runtime_instances.reserved_run_id IS NOT NULL
+           OR runtime_instances.reserved_process_id IS NOT NULL
+           OR runtime_instances.reserved_workspace_version_id IS NOT NULL
+           OR runtime_instances.reservation_expires_at IS NOT NULL
+       )
+    RETURNING runtime_instances.id
+)
+SELECT count(*) FROM reconciled_runtimes
+`
+
+func (q *Queries) ReconcileProviderAbsentWorkerRuntimes(ctx context.Context, workerInstanceID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, reconcileProviderAbsentWorkerRuntimes, workerInstanceID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const recordWorkerObservation = `-- name: RecordWorkerObservation :one

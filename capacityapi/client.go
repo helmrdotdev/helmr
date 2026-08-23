@@ -113,7 +113,7 @@ func (c *Client) ResolveWorkerPool(ctx context.Context, workerGroupID, name stri
 	return response, err
 }
 
-func (c *Client) WorkerInstances(ctx context.Context, workerGroupID string, resourceIDs []string, statuses []WorkerInstanceStatus, limit int32) (WorkerInstancesResponse, error) {
+func (c *Client) WorkerInstances(ctx context.Context, workerGroupID string, resourceIDs []string, statuses []WorkerInstanceStatus, hasUnreclaimedRuntime bool, limit int32) (WorkerInstancesResponse, error) {
 	query := url.Values{}
 	if workerGroupID = strings.TrimSpace(workerGroupID); workerGroupID != "" {
 		query.Set("worker_group_id", workerGroupID)
@@ -124,6 +124,9 @@ func (c *Client) WorkerInstances(ctx context.Context, workerGroupID string, reso
 	for _, resourceID := range resourceIDs {
 		query.Add("resource_id", resourceID)
 	}
+	if hasUnreclaimedRuntime {
+		query.Set("has_unreclaimed_runtime", "true")
+	}
 	if limit > 0 {
 		query.Set("limit", strconv.FormatInt(int64(limit), 10))
 	}
@@ -133,6 +136,13 @@ func (c *Client) WorkerInstances(ctx context.Context, workerGroupID string, reso
 	}
 	var response WorkerInstancesResponse
 	err := c.do(ctx, http.MethodGet, path, nil, &response)
+	return response, err
+}
+
+func (c *Client) ConfirmWorkerInstanceProviderAbsent(ctx context.Context, workerInstanceID string) (WorkerInstance, error) {
+	var response WorkerInstance
+	path := "/api" + RoutePrefix + WorkerInstancesPath + "/" + url.PathEscape(workerInstanceID) + "/lost"
+	err := c.do(ctx, http.MethodPost, path, nil, &response)
 	return response, err
 }
 
