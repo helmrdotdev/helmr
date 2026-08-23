@@ -20,6 +20,11 @@ case "${1:-} ${2:-}" in
     esac
     ;;
   "workspace delete")
+    if [ "${FAKE_HELMR_FAIL_MODE:-}" = "delete-already-gone" ] &&
+      [ "${4:-}" = "workspace-caller" ]; then
+      printf '404 Not Found: workspace was not found\n' >&2
+      exit 1
+    fi
     if [ "${FAKE_HELMR_FAIL_MODE:-}" = "delete-target" ] &&
       [ "${4:-}" = "workspace-target" ]; then
       printf 'intentional target Workspace delete failure\n' >&2

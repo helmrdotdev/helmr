@@ -380,6 +380,7 @@ assert_run_output() {
 
 delete_smoke_workspace() {
   local workspace_id=$1
+  local delete_output
   shift
   local scope_args=()
   while [ "$#" -gt 0 ]; do
@@ -393,11 +394,15 @@ delete_smoke_workspace() {
         ;;
     esac
   done
-  if ! run_helmr workspace delete --id "${workspace_id}" ${scope_args[@]+"${scope_args[@]}"} \
+  if ! delete_output="$(run_helmr workspace delete --id "${workspace_id}" ${scope_args[@]+"${scope_args[@]}"} \
       --idempotency-key "release-smoke:${workspace_id}:delete" \
-      --json; then
-    return 1
+      --json 2>&1)"; then
+    if [[ "${delete_output}" != *"404 Not Found: workspace was not found"* ]]; then
+      printf '%s\n' "${delete_output}" >&2
+      return 1
+    fi
   fi
+  printf '%s\n' "${delete_output}" >&2
   deleted_workspace_ids+=("${workspace_id}")
 }
 

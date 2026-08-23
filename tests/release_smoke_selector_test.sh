@@ -79,6 +79,18 @@ assert_equal '["child-tasks"]' "$(jq -c '.executed_cases' "$result_json")" "chil
 assert_equal "passed" "$(jq -r '.status' "$result_json")" "child Task structured terminal status"
 
 : >"$fake_log"
+run_expect_status 0 env \
+	FAKE_HELMR_FAIL_MODE=delete-already-gone \
+	FAKE_HELMR_LOG="$fake_log" \
+	HELMR_BIN="$fake_helmr" \
+	HELMR_SMOKE_RESULT_FILE="$result_json" \
+	SMOKE_CASES=child-tasks \
+	SKIP_DEPLOY=1 \
+	bash "$script"
+assert_contains "$fake_log" "workspace delete --id workspace-caller" "already deleted caller cleanup"
+assert_equal "passed" "$(jq -r '.status' "$result_json")" "already deleted caller terminal status"
+
+: >"$fake_log"
 run_expect_status 1 env \
 	FAKE_HELMR_FAIL_MODE=call-failure \
 	FAKE_HELMR_LOG="$fake_log" \
