@@ -172,7 +172,7 @@ SELECT runs.workspace_id,
 	waitID := uuid.Must(uuid.NewV7())
 	checkpointID := uuid.Must(uuid.NewV7())
 	operationID := uuid.Must(uuid.NewV7())
-	expiresAt := time.Now().Add(10 * time.Minute).UTC()
+	expiresAt := time.Now().Add(10 * time.Minute).UTC().Truncate(time.Microsecond)
 	privateDigest := dbtest.Digest("restored-actor-private-base")
 	checkpointDigest := dbtest.Digest("restored-actor-checkpoint-base")
 

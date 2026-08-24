@@ -175,7 +175,7 @@ SELECT runs.workspace_id,
 	checkpointID := uuid.Must(uuid.NewV7())
 	claimID := uuid.Must(uuid.NewV7())
 	operationID := uuid.Must(uuid.NewV7())
-	expiresAt := time.Now().Add(10 * time.Minute).UTC()
+	expiresAt := time.Now().Add(10 * time.Minute).UTC().Truncate(time.Microsecond)
 	retryPolicy := `{"enabled":false}`
 	if retry {
 		retryPolicy = `{"enabled":true,"maxAttempts":3,"backoff":{"minMs":1,"maxMs":1,"factor":1,"jitter":"none"}}`
