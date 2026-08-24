@@ -109,10 +109,28 @@ func TestRunLeaseClaimResponseKeepsWorkspaceAuthorityInAssignment(t *testing.T) 
 	}
 }
 
+func TestRunLeaseClaimProjectionLoadsOnlyLockedWorkspaceLeaseBase(t *testing.T) {
+	authority, projection, _ := validRunLeaseClaimResponse(t)
+	store := &runLeaseClaimStore{
+		program: projection.program, definition: projection.definition,
+		resetTarget: projection.resetTarget,
+	}
+
+	if _, err := loadRunLeaseClaimProjection(context.Background(), store, authority); err != nil {
+		t.Fatal(err)
+	}
+	if store.resetTargetParams.OrgID != authority.run.OrgID ||
+		store.resetTargetParams.ProjectID != authority.run.ProjectID ||
+		store.resetTargetParams.EnvironmentID != authority.run.EnvironmentID ||
+		store.resetTargetParams.WorkspaceID != authority.workspace.ID ||
+		store.resetTargetParams.VersionID != authority.workspaceLease.BaseVersionID {
+		t.Fatalf("reset target lookup = %+v", store.resetTargetParams)
+	}
+}
+
 func TestRestoreRunLeaseClaimDoesNotOpenSecrets(t *testing.T) {
 	authority, projection, keys := validRunLeaseClaimResponse(t)
 	authority.mode = runLeaseClaimRestore
-	authority.restoreSource = runLeaseRestoreRecreated
 	authority.attempt.EntrypointEnteredAt.Valid = true
 	authority.runWait = db.RunWait{
 		ID: pgvalue.UUID(uuid.New()), ConditionState: db.WaitStateCompleted,
@@ -122,7 +140,6 @@ func TestRestoreRunLeaseClaimDoesNotOpenSecrets(t *testing.T) {
 	authority.checkpoint = db.RunCheckpoint{
 		ID: pgvalue.UUID(uuid.New()), RunID: authority.run.ID,
 		AttemptNumber: authority.attempt.Number,
-		Kind:          db.RunCheckpointKindSuspend,
 		State:         db.RunCheckpointStateReady,
 	}
 	authority.checkpoint.RestoreManifest = testCheckpointManifest(
@@ -152,45 +169,6 @@ func TestRestoreRunLeaseClaimDoesNotOpenSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	if response.Secrets == nil || len(response.Secrets) != 0 || response.Execution.Restore == nil {
-		t.Fatalf("response = %#v", response)
-	}
-}
-
-func TestParentAttachRunLeaseClaimDoesNotOpenSecrets(t *testing.T) {
-	authority, projection, keys := validRunLeaseClaimResponse(t)
-	authority.mode = runLeaseClaimAttachParent
-	authority.attempt.EntrypointEnteredAt.Valid = true
-	authority.runWait = db.RunWait{
-		ID: pgvalue.UUID(uuid.New()), ConditionState: db.WaitStateCompleted,
-		ConditionTerminalAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
-		ResumeAttachID:      pgvalue.UUID(uuid.New()), ResumeRequestVersion: 2,
-	}
-	authority.checkpoint = db.RunCheckpoint{
-		ID: pgvalue.UUID(uuid.New()), RunID: authority.run.ID,
-		AttemptNumber: authority.attempt.Number,
-	}
-	authority.checkpoint.RestoreManifest = testCheckpointManifest(
-		t,
-		authority.checkpoint.ID,
-		authority.run.ID,
-		authority.attempt.Number,
-		authority.runWait.ID,
-	)
-	authority.childRun = db.Run{ID: pgvalue.UUID(uuid.New())}
-	response, err := projectRunLeaseClaimResponse(
-		context.Background(),
-		authority,
-		[]secret.DeliveryEnvelope{{PlacementKind: "env", PlacementTarget: "TOKEN"}},
-		projection,
-		claimResponsePlatformStore{},
-		nil,
-		keys,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if response.Secrets == nil || len(response.Secrets) != 0 ||
-		response.Execution.Attach == nil || response.Execution.Attach.Parent == nil {
 		t.Fatalf("response = %#v", response)
 	}
 }
@@ -225,20 +203,15 @@ func validRunLeaseClaimResponse(
 	physical.workspaceLease.FencingTokenHash = capability.Hash
 
 	runtime := claimResponseRuntimeDescriptor()
-	runtimeDigest, err := deployment.RuntimeDigestBytes(runtime.Digest)
-	if err != nil {
-		t.Fatal(err)
-	}
 	projection := runLeaseClaimProjection{
 		program: db.GetDeploymentProgramAuthorityRow{
 			DeploymentID:             run.DeploymentID,
 			EnvironmentID:            run.EnvironmentID,
 			DeploymentVersion:        "v42",
-			BuildRuntimeDigest:       runtimeDigest,
+			RuntimeArtifactDigest:    runtime.Digest,
 			ProgramArtifactDigest:    validDigest('a'),
 			ProgramArtifactSizeBytes: 100,
 			ProgramArtifactMediaType: deployment.ProgramArtifactMediaType,
-			BuildContract:            deployment.ProgramBuildContract,
 			ProgramIndexDigest:       validDigestBytes(t, 'b'),
 		},
 		definition:  definition,

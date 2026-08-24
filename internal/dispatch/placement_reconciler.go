@@ -24,11 +24,8 @@ const (
 	defaultRunPlacementAttemptLimit      = int32(32)
 	defaultRunPlacementParallelism       = 16
 	defaultRunPlacementPendingInterval   = time.Second
-	defaultBuildPlacementInterval        = 2 * time.Second
-	defaultBuildPlacementFailureBackoff  = 5 * time.Second
-	defaultBuildPlacementTimeout         = 30 * time.Second
-	defaultBuildPlacementLimit           = int32(8)
 	defaultWorkspaceExecPlacementLimit   = int32(32)
+	defaultWorkspaceDeleteFinalizeLimit  = int32(32)
 	defaultWorkspaceExecPendingTimeout   = 10 * time.Minute
 )
 
@@ -38,17 +35,8 @@ type RunPlacementDiscovery interface {
 	ListCandidates(context.Context, db.ListQueuedRunPlacementCandidatesParams) ([]db.ListQueuedRunPlacementCandidatesRow, error)
 }
 
-type BuildPlacementDiscovery interface {
-	ListQueuedDeploymentBuildCandidates(context.Context, db.ListQueuedDeploymentBuildCandidatesParams) ([]db.ListQueuedDeploymentBuildCandidatesRow, error)
-	ListQueuedDeploymentBuildRegions(context.Context, int32) ([]string, error)
-}
-
 type RunPlacementAuthority interface {
 	PlaceReadyRun(context.Context, ReadyRunCandidate) (ReadyRunPlacement, error)
-}
-
-type BuildPlacementAuthority interface {
-	PlaceReadyBuild(context.Context, ReadyBuildCandidate) (db.LeaseQueuedDeploymentBuildRow, error)
 }
 
 type WorkspaceExecPlacementDiscovery interface {
@@ -78,17 +66,20 @@ type WorkspaceExecPlacementAuthority interface {
 	) error
 }
 
+type WorkspaceDeletionFinalizer interface {
+	FinalizeDeletingWorkspaces(context.Context, int32) ([]pgtype.UUID, error)
+}
+
 type PlacementReconciler struct {
 	runDiscovery           RunPlacementDiscovery
 	runLaneLocker          RunPlacementLaneLocker
 	runAuthority           RunPlacementAuthority
-	buildDiscovery         BuildPlacementDiscovery
-	buildAuthority         BuildPlacementAuthority
 	workspaceExecDiscovery WorkspaceExecPlacementDiscovery
 	workspaceExecAuthority WorkspaceExecPlacementAuthority
+	workspaceFinalizer     WorkspaceDeletionFinalizer
 	runPolicy              runPlacementPolicy
-	buildPolicy            placementLoopPolicy
 	workspaceExecPolicy    placementLoopPolicy
+	workspaceDeletePolicy  placementLoopPolicy
 	runCursors             [runPlacementLaneCount]runPlacementCursor
 	runLaneMutexes         [runPlacementLaneCount]sync.Mutex
 	runNextLane            atomic.Uint32
@@ -200,23 +191,23 @@ func (c *runPlacementOrganizationCandidates) take(
 
 func NewPlacementReconciler(runDiscovery RunPlacementDiscovery, runLaneLocker RunPlacementLaneLocker,
 	runAuthority RunPlacementAuthority,
-	buildDiscovery BuildPlacementDiscovery, buildAuthority BuildPlacementAuthority,
 	workspaceExecDiscovery WorkspaceExecPlacementDiscovery,
 	workspaceExecAuthority WorkspaceExecPlacementAuthority,
+	workspaceFinalizer WorkspaceDeletionFinalizer,
 	log *slog.Logger,
 ) (*PlacementReconciler, error) {
-	if runDiscovery == nil || runLaneLocker == nil || runAuthority == nil || buildDiscovery == nil || buildAuthority == nil ||
-		workspaceExecDiscovery == nil || workspaceExecAuthority == nil {
-		return nil, errors.New("run, build, and workspace exec placement dependencies are required")
+	if runDiscovery == nil || runLaneLocker == nil || runAuthority == nil ||
+		workspaceExecDiscovery == nil || workspaceExecAuthority == nil || workspaceFinalizer == nil {
+		return nil, errors.New("run placement, workspace exec placement, and workspace deletion dependencies are required")
 	}
 	if log == nil {
 		log = slog.Default()
 	}
 	reconciler := &PlacementReconciler{
 		runDiscovery: runDiscovery, runLaneLocker: runLaneLocker, runAuthority: runAuthority,
-		buildDiscovery: buildDiscovery, buildAuthority: buildAuthority,
 		workspaceExecDiscovery: workspaceExecDiscovery,
 		workspaceExecAuthority: workspaceExecAuthority,
+		workspaceFinalizer:     workspaceFinalizer,
 		log:                    log, metrics: newReconcileMetrics(),
 		runPolicy: runPlacementPolicy{
 			idleInterval:      defaultRunPlacementIdleInterval,
@@ -228,13 +219,13 @@ func NewPlacementReconciler(runDiscovery RunPlacementDiscovery, runLaneLocker Ru
 			parallelism:       defaultRunPlacementParallelism,
 			pendingInterval:   defaultRunPlacementPendingInterval,
 		},
-		buildPolicy: placementLoopPolicy{
-			interval: defaultBuildPlacementInterval, failureBackoff: defaultBuildPlacementFailureBackoff,
-			timeout: defaultBuildPlacementTimeout, limit: defaultBuildPlacementLimit,
-		},
 		workspaceExecPolicy: placementLoopPolicy{
 			interval: defaultRunPlacementIdleInterval, failureBackoff: defaultRunPlacementFailureBackoff,
 			timeout: defaultRunPlacementTimeout, limit: defaultWorkspaceExecPlacementLimit,
+		},
+		workspaceDeletePolicy: placementLoopPolicy{
+			interval: defaultRunPlacementIdleInterval, failureBackoff: defaultRunPlacementFailureBackoff,
+			timeout: defaultRunPlacementTimeout, limit: defaultWorkspaceDeleteFinalizeLimit,
 		},
 	}
 	reconciler.runParallel = make(chan struct{}, reconciler.runPolicy.parallelism)
@@ -249,13 +240,20 @@ func (r *PlacementReconciler) Run(ctx context.Context) error {
 	for range r.runPolicy.workers {
 		go func() { errC <- r.runPlacementLoop(runCtx) }()
 	}
-	go func() { errC <- r.runLoop(runCtx, "build", r.buildPolicy, r.ReconcileBuilds) }()
 	go func() {
 		errC <- r.runLoop(
 			runCtx,
 			"workspace_exec",
 			r.workspaceExecPolicy,
 			r.ReconcileWorkspaceExecs,
+		)
+	}()
+	go func() {
+		errC <- r.runLoop(
+			runCtx,
+			"workspace_delete",
+			r.workspaceDeletePolicy,
+			r.ReconcileWorkspaceDeletes,
 		)
 	}()
 	var firstErr error
@@ -426,6 +424,14 @@ func (r *PlacementReconciler) ReconcileWorkspaceExecs(ctx context.Context) error
 	return errors.Join(problems...)
 }
 
+func (r *PlacementReconciler) ReconcileWorkspaceDeletes(ctx context.Context) error {
+	_, err := r.workspaceFinalizer.FinalizeDeletingWorkspaces(ctx, r.workspaceDeletePolicy.limit)
+	if err != nil {
+		return fmt.Errorf("finalize deleting workspaces: %w", err)
+	}
+	return nil
+}
+
 func (r *PlacementReconciler) runLoop(ctx context.Context, domain string, policy placementLoopPolicy, reconcile func(context.Context) error) error {
 	for {
 		started := time.Now()
@@ -440,7 +446,7 @@ func (r *PlacementReconciler) runLoop(ctx context.Context, domain string, policy
 		if err != nil && !errors.Is(err, context.Canceled) {
 			outcome = "failure"
 			delay = policy.failureBackoff
-			r.log.Warn("placement reconciliation failed", "domain", domain, "duration_ms", time.Since(started).Milliseconds(), "error", err)
+			r.log.Warn("reconciliation failed", "domain", domain, "duration_ms", time.Since(started).Milliseconds(), "error", err)
 		}
 		r.metrics.observe(ctx, "placement", domain, outcome, time.Since(started))
 		timer := time.NewTimer(delay)
@@ -818,45 +824,4 @@ func (r *PlacementReconciler) placeRunCandidate(
 		return runPlacementResult{work: work, outcome: runPlacementPending}
 	}
 	return runPlacementResult{work: work, outcome: runPlacementPlaced}
-}
-
-func (r *PlacementReconciler) ReconcileBuilds(ctx context.Context) error {
-	var problems []error
-	remaining := r.buildPolicy.limit
-	regions, err := r.buildDiscovery.ListQueuedDeploymentBuildRegions(ctx, remaining)
-	if err != nil {
-		return fmt.Errorf("discover build regions: %w", err)
-	}
-	for _, region := range regions {
-		if remaining <= 0 {
-			break
-		}
-		rows, err := r.buildDiscovery.ListQueuedDeploymentBuildCandidates(ctx, db.ListQueuedDeploymentBuildCandidatesParams{BuildRegionID: region, LimitCount: remaining})
-		if err != nil {
-			problems = append(problems, err)
-			continue
-		}
-		for _, candidate := range rows {
-			remaining--
-			if err := r.placeBuildCandidate(ctx, ReadyBuildCandidate{
-				OrgID: candidate.OrgID, DeploymentID: candidate.DeploymentID,
-				BuildRegionID: candidate.BuildRegionID,
-				LeaseSequence: candidate.LeaseSequence,
-			}); err != nil {
-				problems = append(problems, err)
-			}
-		}
-	}
-	return errors.Join(problems...)
-}
-
-func (r *PlacementReconciler) placeBuildCandidate(ctx context.Context, candidate ReadyBuildCandidate) error {
-	_, err := r.buildAuthority.PlaceReadyBuild(ctx, candidate)
-	if err != nil {
-		if errors.Is(err, ErrCandidateChanged) || errors.Is(err, pgx.ErrNoRows) || errors.Is(err, ErrCapacityUnavailable) {
-			return nil
-		}
-		return err
-	}
-	return nil
 }

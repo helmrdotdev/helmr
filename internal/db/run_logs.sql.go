@@ -40,8 +40,10 @@ current_run_lease AS (
        AND run_leases.worker_epoch = $9
        AND runs.current_run_lease_id = run_leases.id
        AND runs.current_attempt_number = run_leases.attempt_number
-       AND runs.status = 'running'
-       AND run_leases.state = 'running'
+       AND (
+            (runs.status = 'running' AND run_leases.state = 'running')
+         OR (runs.status = 'waiting' AND run_leases.state = 'checkpointing')
+       )
        AND run_leases.expires_at > now()
 ),
 candidate AS (
@@ -209,7 +211,7 @@ meter_event AS (
         WHERE run_lease_id IS NOT NULL
     DO UPDATE SET idempotency_fingerprint = meter_events.idempotency_fingerprint
      WHERE meter_events.idempotency_fingerprint = excluded.idempotency_fingerprint
-    RETURNING id, org_id, project_id, environment_id, run_id, run_lease_id, deployment_id, deployment_build_lease_id, attempt_number, trace_id, span_id, meter, quantity, unit, measured_from, measured_to, occurred_at, details, idempotency_key, idempotency_fingerprint, created_at
+    RETURNING id, org_id, project_id, environment_id, run_id, run_lease_id, attempt_number, trace_id, span_id, meter, quantity, unit, measured_from, measured_to, occurred_at, details, idempotency_key, idempotency_fingerprint, created_at
 ),
 meter_event_outbox AS (
     INSERT INTO telemetry_outbox (

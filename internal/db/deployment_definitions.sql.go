@@ -82,7 +82,6 @@ SELECT deployment_definitions.id, deployment_definitions.environment_id, deploym
   JOIN deployments
     ON deployments.environment_id = deployment_definitions.environment_id
    AND deployments.id = deployment_definitions.deployment_id
-   AND deployments.status = 'deployed'
   JOIN environments
     ON environments.id = deployment_definitions.environment_id
    AND environments.current_deployment_id = deployment_definitions.deployment_id
@@ -155,7 +154,6 @@ SELECT deployment_definitions.id, deployment_definitions.environment_id, deploym
    AND deployment_definitions.deployment_id = $2
    AND deployment_definitions.kind = $3
    AND deployment_definitions.declared_id = $4
-   AND deployments.status = 'deployed'
  LIMIT 1
 `
 
@@ -197,8 +195,7 @@ SELECT deployments.id AS deployment_id,
        program_artifact.digest AS program_artifact_digest,
        program_artifact.size_bytes AS program_artifact_size_bytes,
        program_artifact.media_type AS program_artifact_media_type,
-       deployments.build_runtime_digest,
-       deployments.build_contract,
+       deployments.runtime_artifact_digest,
        deployments.program_index_digest,
        deployments.queue_config
   FROM deployments
@@ -208,7 +205,6 @@ SELECT deployments.id AS deployment_id,
    AND program_artifact.kind = 'deployment_program'
  WHERE deployments.environment_id = $1
    AND deployments.id = $2
-   AND deployments.status = 'deployed'
  LIMIT 1
 `
 
@@ -225,8 +221,7 @@ type GetDeploymentProgramAuthorityRow struct {
 	ProgramArtifactDigest    string      `json:"program_artifact_digest"`
 	ProgramArtifactSizeBytes int64       `json:"program_artifact_size_bytes"`
 	ProgramArtifactMediaType string      `json:"program_artifact_media_type"`
-	BuildRuntimeDigest       []byte      `json:"build_runtime_digest"`
-	BuildContract            string      `json:"build_contract"`
+	RuntimeArtifactDigest    string      `json:"runtime_artifact_digest"`
 	ProgramIndexDigest       []byte      `json:"program_index_digest"`
 	QueueConfig              []byte      `json:"queue_config"`
 }
@@ -242,8 +237,7 @@ func (q *Queries) GetDeploymentProgramAuthority(ctx context.Context, arg GetDepl
 		&i.ProgramArtifactDigest,
 		&i.ProgramArtifactSizeBytes,
 		&i.ProgramArtifactMediaType,
-		&i.BuildRuntimeDigest,
-		&i.BuildContract,
+		&i.RuntimeArtifactDigest,
 		&i.ProgramIndexDigest,
 		&i.QueueConfig,
 	)
@@ -306,7 +300,6 @@ SELECT deployment_definitions.id, deployment_definitions.environment_id, deploym
  WHERE deployment_definitions.environment_id = $1
    AND deployment_definitions.deployment_id = $2
    AND ($3::text IS NULL OR deployment_definitions.kind = $3::text)
-   AND deployments.status = 'deployed'
  ORDER BY deployment_definitions.kind, deployment_definitions.declared_id
 `
 

@@ -8,6 +8,7 @@ import (
 	"net"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
@@ -15,9 +16,11 @@ import (
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestStartRestoredProgramOrdersGrantStartProofAndRelease(t *testing.T) {
@@ -29,7 +32,8 @@ func TestStartRestoredProgramOrdersGrantStartProofAndRelease(t *testing.T) {
 	unregister := mounts.RegisterWorkspaceMountSession(
 		workerapi.WorkspaceMount{
 			ID: claim.Lease.WorkspaceMountID, WorkspaceID: claim.Lease.WorkspaceID,
-			RuntimeInstanceID: claim.Lease.RuntimeInstanceID, BaseVersionID: claim.Lease.BaseWorkspaceVersionID,
+			RuntimeInstanceID: claim.Lease.RuntimeInstanceID,
+			Target:            workerapi.WorkspaceResetTarget{BaseWorkspaceVersionID: claim.Lease.BaseWorkspaceVersionID},
 			FencingGeneration: claim.Lease.MountFencingGeneration, RestoreCheckpointID: "checkpoint-1",
 		}, parent, "restored-channel",
 	)
@@ -60,93 +64,212 @@ func TestStartRestoredProgramOrdersGrantStartProofAndRelease(t *testing.T) {
 	}
 }
 
-func TestRetainedRestoreAndParentAttachResumeOnExistingMount(t *testing.T) {
+func TestStartRestoredProgramRenewsAuthorityUntilRelease(t *testing.T) {
+	claim := testRestoredProgramClaim(t)
+	claim.Lease.ExpiresAt = time.Now().Add(300 * time.Millisecond)
+	resumeGuest, resumeHost := net.Pipe()
+	grantGuest, grantHost := net.Pipe()
+	renewGuest, renewHost := net.Pipe()
+	parent := &queuedStreamSession{streams: []vm.Stream{
+		testVMStream(resumeHost), testVMStream(grantHost), testVMStream(renewHost),
+	}}
+	mounts := NewWorkspaceMountSessions()
+	unregister := mounts.RegisterWorkspaceMountSession(
+		workerapi.WorkspaceMount{
+			ID: claim.Lease.WorkspaceMountID, WorkspaceID: claim.Lease.WorkspaceID,
+			RuntimeInstanceID: claim.Lease.RuntimeInstanceID,
+			Target:            workerapi.WorkspaceResetTarget{BaseWorkspaceVersionID: claim.Lease.BaseWorkspaceVersionID},
+			FencingGeneration: claim.Lease.MountFencingGeneration, RestoreCheckpointID: "checkpoint-1",
+		}, parent, "restored-channel",
+	)
+	defer unregister()
+	releaseGate := make(chan struct{})
+	controlPlane := &restoredProgramControlPlane{
+		lease: claim.Lease, wantStart: "restore", releaseGate: releaseGate,
+		renewExpiresAt: time.Now().Add(time.Minute), renewed: make(chan struct{}),
+	}
+	guestErr := make(chan error, 3)
+	go func() { guestErr <- serveRestoredGrant(grantGuest) }()
+	go func() { guestErr <- serveRestoredResume(resumeGuest) }()
+	go func() { guestErr <- serveRestoredAuthorityRenewal(renewGuest) }()
+	programResult := make(chan struct {
+		program freshProgram
+		err     error
+	}, 1)
+	go func() {
+		program, err := (ProgramRunner{WorkspaceMounts: mounts}).startResumedProgram(
+			context.Background(), &claim, controlPlane,
+		)
+		programResult <- struct {
+			program freshProgram
+			err     error
+		}{program: program, err: err}
+	}()
+	select {
+	case <-controlPlane.renewed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("restored admission did not renew while release was blocked")
+	}
+	close(releaseGate)
+	result := <-programResult
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	defer result.program.session.Close(context.Background())
+	if !result.program.lease.ExpiresAt.Equal(controlPlane.renewExpiresAt) ||
+		result.program.authority.GetFence().GetExpiresAtUnixNano() != controlPlane.renewExpiresAt.UnixNano() {
+		t.Fatalf("restored Program did not return latest authority: lease=%v fence=%d",
+			result.program.lease.ExpiresAt, result.program.authority.GetFence().GetExpiresAtUnixNano())
+	}
+	for range 3 {
+		if err := <-guestErr; err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestStartRestoredProgramStopsBlockedStartAtStartDeadline(t *testing.T) {
+	claim := testRestoredProgramClaim(t)
+	claim.Lease.StartDeadlineAt = time.Now().Add(50 * time.Millisecond).UTC()
+	resumeGuest, resumeHost := net.Pipe()
+	defer resumeGuest.Close()
+	grantGuest, grantHost := net.Pipe()
+	parent := &queuedStreamSession{streams: []vm.Stream{testVMStream(resumeHost), testVMStream(grantHost)}}
+	mounts := NewWorkspaceMountSessions()
+	unregister := mounts.RegisterWorkspaceMountSession(
+		workerapi.WorkspaceMount{
+			ID: claim.Lease.WorkspaceMountID, WorkspaceID: claim.Lease.WorkspaceID,
+			RuntimeInstanceID: claim.Lease.RuntimeInstanceID,
+			Target:            workerapi.WorkspaceResetTarget{BaseWorkspaceVersionID: claim.Lease.BaseWorkspaceVersionID},
+			FencingGeneration: claim.Lease.MountFencingGeneration, RestoreCheckpointID: "checkpoint-1",
+		}, parent, "restored-channel",
+	)
+	defer unregister()
+	startGate := make(chan struct{})
+	controlPlane := &restoredProgramControlPlane{
+		lease: claim.Lease, wantStart: "restore", startGate: startGate,
+	}
+	grantDone := make(chan error, 1)
+	go func() { grantDone <- serveRestoredGrant(grantGuest) }()
+	started := time.Now()
+	_, err := (ProgramRunner{WorkspaceMounts: mounts}).startResumedProgram(
+		context.Background(), &claim, controlPlane,
+	)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("startResumedProgram() error = %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("blocked restored start stopped after %s", elapsed)
+	}
+	if err := <-grantDone; err != nil {
+		t.Fatal(err)
+	}
+	controlPlane.mu.Lock()
+	defer controlPlane.mu.Unlock()
+	if controlPlane.started || controlPlane.renewCalls != 0 {
+		t.Fatalf("started=%v renew calls=%d", controlPlane.started, controlPlane.renewCalls)
+	}
+	if claim.Workspace.WriteCapability != "" {
+		t.Fatal("timed-out restored claim retained its write capability")
+	}
+}
+
+func TestStartRestoredProgramCancellationClosesBlockedAttach(t *testing.T) {
+	claim := testRestoredProgramClaim(t)
+	resume := newBlockingWriteStream()
+	grantGuest, grantHost := net.Pipe()
+	parent := &queuedStreamSession{streams: []vm.Stream{resume, testVMStream(grantHost)}}
+	mounts := NewWorkspaceMountSessions()
+	unregister := mounts.RegisterWorkspaceMountSession(
+		workerapi.WorkspaceMount{
+			ID: claim.Lease.WorkspaceMountID, WorkspaceID: claim.Lease.WorkspaceID,
+			RuntimeInstanceID: claim.Lease.RuntimeInstanceID,
+			Target:            workerapi.WorkspaceResetTarget{BaseWorkspaceVersionID: claim.Lease.BaseWorkspaceVersionID},
+			FencingGeneration: claim.Lease.MountFencingGeneration, RestoreCheckpointID: "checkpoint-1",
+		}, parent, "restored-channel",
+	)
+	defer unregister()
+	controlPlane := &restoredProgramControlPlane{lease: claim.Lease, wantStart: "restore"}
+	grantDone := make(chan error, 1)
+	go func() { grantDone <- serveRestoredGrant(grantGuest) }()
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		_, err := (ProgramRunner{WorkspaceMounts: mounts}).startResumedProgram(ctx, &claim, controlPlane)
+		result <- err
+	}()
+	if err := <-grantDone; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-resume.entered:
+	case <-time.After(time.Second):
+		t.Fatal("restored attach write did not start")
+	}
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("blocked restored attach cancellation = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("blocked restored attach ignored cancellation")
+	}
+}
+
+type blockingWriteStream struct {
+	entered   chan struct{}
+	closed    chan struct{}
+	enterOnce sync.Once
+	closeOnce sync.Once
+}
+
+func newBlockingWriteStream() *blockingWriteStream {
+	return &blockingWriteStream{entered: make(chan struct{}), closed: make(chan struct{})}
+}
+
+func (stream *blockingWriteStream) Read([]byte) (int, error) {
+	<-stream.closed
+	return 0, io.ErrClosedPipe
+}
+
+func (stream *blockingWriteStream) Write([]byte) (int, error) {
+	stream.enterOnce.Do(func() { close(stream.entered) })
+	<-stream.closed
+	return 0, io.ErrClosedPipe
+}
+
+func (stream *blockingWriteStream) Close() error {
+	stream.closeOnce.Do(func() { close(stream.closed) })
+	return nil
+}
+
+func TestValidateResumedProgramMountSeparatesPhysicalIdentityFromLogicalFence(t *testing.T) {
+	claim := testRestoredProgramClaim(t)
+	mount := testWorkspaceMount(claim.Lease)
+	mount.FencingGeneration = claim.Lease.MountFencingGeneration - 1
+	mount.RestoreCheckpointID = "checkpoint-1"
+	resume := resumedProgramAdmission{checkpointID: "checkpoint-1"}
+	if err := validateResumedProgramMount(claim.Lease, mount, resume); err != nil {
+		t.Fatalf("advanced logical fence rejected exact physical mount: %v", err)
+	}
+
 	tests := []struct {
-		name      string
-		wantStart string
-		wantActor bool
-		prepare   func(workerapi.RunLeaseClaimResponse) workerapi.RunLeaseClaimResponse
+		name   string
+		mutate func(*workerapi.WorkspaceMount)
 	}{
-		{
-			name:      "retained restore",
-			wantStart: "restore",
-			prepare: func(claim workerapi.RunLeaseClaimResponse) workerapi.RunLeaseClaimResponse {
-				restore := claim.Execution.Restore
-				restore.Recreated = nil
-				restore.Retained = &workerapi.RunLeaseRetainedRestore{
-					EnclosingRunWaitID: "outer-wait-1",
-				}
-				return claim
-			},
-		},
-		{
-			name:      "parent attach",
-			wantStart: "parent",
-			wantActor: true,
-			prepare: func(claim workerapi.RunLeaseClaimResponse) workerapi.RunLeaseClaimResponse {
-				restore := claim.Execution.Restore
-				claim.Execution = workerapi.RunLeaseExecution{
-					Attach: &workerapi.RunLeaseAttach{
-						Parent: &workerapi.RunLeaseParentAttach{
-							RunWaitID:            restore.RunWaitID,
-							CheckpointID:         restore.CheckpointID,
-							ResumeAttachID:       restore.ResumeAttachID,
-							ResumeRequestVersion: restore.ResumeRequestVersion,
-							CorrelationID:        restore.CorrelationID,
-							EntrypointKind:       "actor",
-							EntrypointDeclaredID: "operator",
-							Decision:             restore.Decision,
-						},
-					},
-				}
-				return claim
-			},
-		},
+		{name: "mount ID", mutate: func(mount *workerapi.WorkspaceMount) { mount.ID = "other-mount" }},
+		{name: "Workspace ID", mutate: func(mount *workerapi.WorkspaceMount) { mount.WorkspaceID = "other-workspace" }},
+		{name: "Runtime Instance", mutate: func(mount *workerapi.WorkspaceMount) { mount.RuntimeInstanceID = "other-runtime" }},
+		{name: "base Workspace version", mutate: func(mount *workerapi.WorkspaceMount) { mount.Target.BaseWorkspaceVersionID = "other-version" }},
+		{name: "restore checkpoint", mutate: func(mount *workerapi.WorkspaceMount) { mount.RestoreCheckpointID = "other-checkpoint" }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			claim := test.prepare(testRestoredProgramClaim(t))
-			resumeGuest, resumeHost := net.Pipe()
-			grantGuest, grantHost := net.Pipe()
-			parent := &queuedStreamSession{
-				streams: []vm.Stream{
-					testVMStream(resumeHost),
-					testVMStream(grantHost),
-				},
-			}
-			mount := testWorkspaceMount(claim.Lease)
-			mounts := NewWorkspaceMountSessions()
-			unregister := mounts.RegisterWorkspaceMountSession(
-				mount,
-				parent,
-				"restored-channel",
-			)
-			defer unregister()
-			controlPlane := &restoredProgramControlPlane{
-				lease:     claim.Lease,
-				wantStart: test.wantStart,
-			}
-			guestErr := make(chan error, 2)
-			go func() { guestErr <- serveRestoredGrant(grantGuest) }()
-			go func() { guestErr <- serveRestoredResume(resumeGuest) }()
-			program, err := (ProgramRunner{
-				WorkspaceMounts: mounts,
-			}).startResumedProgram(
-				context.Background(),
-				&claim,
-				controlPlane,
-			)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer program.session.Close(context.Background())
-			if (program.entrypoint.GetActor() != nil) != test.wantActor {
-				t.Fatalf("resumed entrypoint = %+v", program.entrypoint)
-			}
-			for range 2 {
-				if err := <-guestErr; err != nil {
-					t.Fatal(err)
-				}
+			mismatched := mount
+			test.mutate(&mismatched)
+			if err := validateResumedProgramMount(claim.Lease, mismatched, resume); err == nil {
+				t.Fatal("physical identity mismatch was accepted")
 			}
 		})
 	}
@@ -187,6 +310,7 @@ func TestRestoredProgramDecisionPreservesTerminalUnion(t *testing.T) {
 }
 
 func TestValidatePreparedRuntimeRestoreExactTupleAndMembership(t *testing.T) {
+	cpuConfigDigest := sha256sum.DigestBytes([]byte("cpu-config"))
 	artifact := func(digest, mediaType string, size int64) workerapi.CheckpointArtifact {
 		return workerapi.CheckpointArtifact{Digest: digest, MediaType: mediaType, SizeBytes: size}
 	}
@@ -194,7 +318,8 @@ func TestValidatePreparedRuntimeRestoreExactTupleAndMembership(t *testing.T) {
 		RecoveryPoint: workerapi.CheckpointRecoveryPoint{
 			ID: "checkpoint-1", RunID: "run-1", AttemptNumber: 2, RunWaitID: "wait-1", CorrelationID: "correlation-1",
 			Runtime: workerapi.CheckpointRuntime{Backend: "firecracker", ID: "runtime-shape", Arch: testCheckpointRuntimeArchitecture(),
-				Contract: "abi-1", KernelDigest: "kernel", InitramfsDigest: "initramfs", RootfsDigest: "rootfs", ConfigDigest: "config"},
+				Contract: "abi-1", KernelDigest: "kernel", InitramfsDigest: "initramfs", RootfsDigest: "rootfs", ConfigDigest: "config",
+				VMVCPUCount: 2, CPUConfigDigest: cpuConfigDigest},
 		},
 		RuntimeState: workerapi.CheckpointRuntimeState{
 			ConfigArtifact:      artifact("config-object", cas.CheckpointRuntimeConfigMediaType, 10),
@@ -215,11 +340,20 @@ func TestValidatePreparedRuntimeRestoreExactTupleAndMembership(t *testing.T) {
 		return workerapi.CASObject{Digest: value.Digest, SizeBytes: value.SizeBytes, MediaType: value.MediaType}
 	}
 	target := workerapi.RuntimeReconcileTarget{Source: workerapi.RuntimeSource{
-		WorkspaceArtifact: workerapi.WorkspaceArtifact{Digest: "workspace-object", SizeBytes: 50,
-			MediaType: "workspace-media", Encoding: "workspace-encoding"},
+		VMVCPUCount: 2, CPUConfigDigest: cpuConfigDigest,
+		WorkspaceTarget: &workerapi.WorkspaceResetTarget{
+			BaseWorkspaceVersionID: "target-version",
+			Tree:                   workerapi.WorkspaceTreeIdentity{Digest: "sha256:target", SizeBytes: 75, EntryCount: 1},
+			Artifact: &workerapi.WorkspaceArtifact{Digest: "captured-workspace-object", SizeBytes: 75,
+				MediaType: "workspace-media", Encoding: "workspace-encoding"},
+		},
 		Restore: &workerapi.RuntimeRestore{
 			CheckpointID: "checkpoint-1", RunID: "run-1", AttemptNumber: 2, RunWaitID: "wait-1",
-			Kind: "suspend", Manifest: manifest,
+			Manifest: manifest,
+			SourceWorkspaceBase: &workerapi.RuntimeRestoreWorkspaceBase{
+				VersionID: "source-base-version",
+				Base:      checkpoint.WorkspaceState.Base,
+			},
 			Artifacts: []workerapi.RunLeaseCheckpointArtifact{
 				{Role: "runtime_config", Object: object(checkpoint.RuntimeState.ConfigArtifact)},
 				{Role: "vm_state", Object: object(checkpoint.RuntimeState.VMStateArtifact)},
@@ -231,9 +365,28 @@ func TestValidatePreparedRuntimeRestoreExactTupleAndMembership(t *testing.T) {
 	if _, err := validatePreparedRuntimeRestore(target, deployment.ArchitectureX8664); err != nil {
 		t.Fatal(err)
 	}
+	target.Source.CPUConfigDigest = sha256sum.DigestBytes([]byte("other-cpu-config"))
+	if _, err := validatePreparedRuntimeRestore(target, deployment.ArchitectureX8664); err == nil {
+		t.Fatal("mismatched runtime reservation CPU shape was accepted")
+	}
+	target.Source.CPUConfigDigest = cpuConfigDigest
 	target.Source.Restore.Artifacts[2].Role = "vm_state"
 	if _, err := validatePreparedRuntimeRestore(target, deployment.ArchitectureX8664); err == nil {
 		t.Fatal("mismatched Checkpoint Artifact membership was accepted")
+	}
+	target.Source.Restore.Artifacts[2].Role = "memory"
+	target.Source.Restore.SourceWorkspaceBase.Base.ArtifactDigest = "different-source-base"
+	if _, err := validatePreparedRuntimeRestore(target, deployment.ArchitectureX8664); err == nil {
+		t.Fatal("mismatched Checkpoint source Workspace base was accepted")
+	}
+	target.Source.Restore.SourceWorkspaceBase.Base = checkpoint.WorkspaceState.Base
+	target.Source.Restore.SourceWorkspaceBase.Base.MountPath = "/other"
+	if _, err := validatePreparedRuntimeRestore(target, deployment.ArchitectureX8664); err == nil {
+		t.Fatal("noncanonical Checkpoint source Workspace mount was accepted")
+	}
+	target.Source.Restore.SourceWorkspaceBase = nil
+	if _, err := validatePreparedRuntimeRestore(target, deployment.ArchitectureX8664); err == nil {
+		t.Fatal("missing Checkpoint source Workspace authority was accepted")
 	}
 }
 
@@ -278,6 +431,24 @@ func serveRestoredResume(conn net.Conn) error {
 	})
 }
 
+func serveRestoredAuthorityRenewal(conn net.Conn) error {
+	defer conn.Close()
+	header, _, err := wire.ReadStreamFrameHeader(conn)
+	if err != nil {
+		return err
+	}
+	if header.Type != wire.StreamTypeWorkspaceAuthorityRenew {
+		return errors.New("unexpected restored authority renewal stream")
+	}
+	var request workspacev0.RenewWorkspaceAuthorityRequest
+	if err := frameio.ReadProtoFrame(conn, &request); err != nil {
+		return err
+	}
+	fence := proto.Clone(request.GetPrevious().GetFence()).(*workspacev0.WorkspaceAuthorityFence)
+	fence.ExpiresAtUnixNano = request.GetNewExpiresAtUnixNano()
+	return frameio.WriteProtoFrame(conn, &workspacev0.RenewWorkspaceAuthorityResponse{Fence: fence})
+}
+
 func testRestoredProgramClaim(t *testing.T) workerapi.RunLeaseClaimResponse {
 	t.Helper()
 	claim := testFreshProgramClaim(t)
@@ -294,8 +465,8 @@ func testRestoredProgramClaim(t *testing.T) workerapi.RunLeaseClaimResponse {
 		RunWaitID: "wait-1", CheckpointID: "checkpoint-1", ResumeAttachID: "attach-1",
 		ResumeRequestVersion: 4, CorrelationID: "correlation-1",
 		EntrypointKind: "task", EntrypointDeclaredID: "deploy",
-		Recreated: &workerapi.RunLeaseRecreatedRestore{Kind: "suspend", Manifest: manifest},
-		Decision:  workerapi.RunLeaseDecision{Completed: &workerapi.RunLeaseCompleted{NoResult: &struct{}{}}},
+		Manifest: manifest,
+		Decision: workerapi.RunLeaseDecision{Completed: &workerapi.RunLeaseCompleted{NoResult: &struct{}{}}},
 	}}
 	return claim
 }
@@ -303,6 +474,7 @@ func testRestoredProgramClaim(t *testing.T) workerapi.RunLeaseClaimResponse {
 type queuedStreamSession struct {
 	mu      sync.Mutex
 	streams []vm.Stream
+	opened  []vm.Stream
 }
 
 func (s *queuedStreamSession) Stream() vm.Stream { return nil }
@@ -314,36 +486,50 @@ func (s *queuedStreamSession) OpenStream(context.Context) (vm.Stream, error) {
 	}
 	stream := s.streams[0]
 	s.streams = s.streams[1:]
+	s.opened = append(s.opened, stream)
 	return stream, nil
 }
-func (*queuedStreamSession) Close(context.Context) error    { return nil }
+func (s *queuedStreamSession) Close(context.Context) error {
+	s.mu.Lock()
+	streams := append(append([]vm.Stream(nil), s.opened...), s.streams...)
+	s.mu.Unlock()
+	var err error
+	for _, stream := range streams {
+		err = errors.Join(err, stream.Close())
+	}
+	return err
+}
 func (*queuedStreamSession) Wait(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
 
 type restoredProgramControlPlane struct {
-	mu           sync.Mutex
-	lease        workerapi.RunLeaseAssignment
-	started      bool
-	released     bool
-	releaseCalls int
-	wantStart    string
+	mu             sync.Mutex
+	lease          workerapi.RunLeaseAssignment
+	started        bool
+	released       bool
+	releaseCalls   int
+	wantStart      string
+	startGate      <-chan struct{}
+	releaseGate    <-chan struct{}
+	renewExpiresAt time.Time
+	renewCalls     int
+	renewed        chan struct{}
+	renewOnce      sync.Once
 }
 
 func (c *restoredProgramControlPlane) ClaimRunLease(context.Context, workerapi.RunLeaseWork) (workerapi.RunLeaseClaimResponse, error) {
 	return workerapi.RunLeaseClaimResponse{}, errors.New("unexpected claim")
 }
-func (c *restoredProgramControlPlane) AcknowledgeRunStart(_ context.Context, request workerapi.RunStartRequest) (workerapi.RunStartResponse, error) {
+func (c *restoredProgramControlPlane) AcknowledgeRunStart(ctx context.Context, request workerapi.RunStartRequest) (workerapi.RunStartResponse, error) {
+	if c.startGate != nil {
+		select {
+		case <-c.startGate:
+		case <-ctx.Done():
+			return workerapi.RunStartResponse{}, ctx.Err()
+		}
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	validArm := request.Restore != nil &&
-		request.Fresh == nil &&
-		request.Attach == nil
-	if c.wantStart == "parent" {
-		validArm = request.Restore == nil &&
-			request.Fresh == nil &&
-			request.Attach != nil &&
-			request.Attach.Parent != nil &&
-			request.Attach.Child == nil
-	}
+	validArm := request.Restore != nil && request.Fresh == nil
 	if !validArm || request.Lease != c.lease.Fence() {
 		return workerapi.RunStartResponse{}, errors.New("unexpected restore start")
 	}
@@ -353,10 +539,23 @@ func (c *restoredProgramControlPlane) AcknowledgeRunStart(_ context.Context, req
 func (*restoredProgramControlPlane) AcknowledgeRunEntrypoint(context.Context, workerapi.RunEntrypointRequest) error {
 	return errors.New("unexpected entrypoint")
 }
-func (c *restoredProgramControlPlane) RenewRunLease(context.Context, workerapi.RunLeaseAssignment) (workerapi.RunLeaseRenewResponse, error) {
+
+func (c *restoredProgramControlPlane) RenewRunLease(_ context.Context, previous workerapi.RunLeaseAssignment) (workerapi.RunLeaseRenewResponse, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.started {
+		return workerapi.RunLeaseRenewResponse{}, errors.New("renew before start")
+	}
+	expiresAt := c.lease.ExpiresAt
+	c.renewCalls++
+	if !c.renewExpiresAt.IsZero() {
+		expiresAt = c.renewExpiresAt
+		c.lease.ExpiresAt = expiresAt
+		c.renewOnce.Do(func() { close(c.renewed) })
+	}
 	return workerapi.RunLeaseRenewResponse{
-		Lease: c.lease.Fence(), ExpiresAt: c.lease.ExpiresAt,
-		BaseWorkspaceVersionID: c.lease.BaseWorkspaceVersionID,
+		Lease: previous.Fence(), ExpiresAt: expiresAt,
+		BaseWorkspaceVersionID: previous.BaseWorkspaceVersionID,
 	}, nil
 }
 func (*restoredProgramControlPlane) BeginRunFinalization(context.Context, workerapi.BeginRunFinalizationRequest) (workerapi.BeginRunFinalizationResponse, error) {
@@ -399,7 +598,14 @@ func (*restoredProgramControlPlane) MarkCheckpointReady(context.Context, workera
 func (*restoredProgramControlPlane) MarkCheckpointFailed(context.Context, workerapi.CheckpointFailedRequest) (workerapi.CheckpointResponse, error) {
 	return workerapi.CheckpointResponse{}, errors.New("unexpected checkpoint failure")
 }
-func (c *restoredProgramControlPlane) AcknowledgeRunResumeRelease(_ context.Context, request workerapi.RunResumeReleaseRequest) (workerapi.RunResumeReleaseResponse, error) {
+func (c *restoredProgramControlPlane) AcknowledgeRunResumeRelease(ctx context.Context, request workerapi.RunResumeReleaseRequest) (workerapi.RunResumeReleaseResponse, error) {
+	if c.releaseGate != nil {
+		select {
+		case <-c.releaseGate:
+		case <-ctx.Done():
+			return workerapi.RunResumeReleaseResponse{}, ctx.Err()
+		}
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.releaseCalls++

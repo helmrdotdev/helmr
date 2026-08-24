@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestReleaseRecreatedRunResumeWaitIsWaitOnlyAndFullyGuarded(t *testing.T) {
+func TestReleaseRestoredRunResumeWaitIsWaitOnlyAndFullyGuarded(t *testing.T) {
 	body, err := os.ReadFile("query/run_waits.sql")
 	if err != nil {
 		t.Fatal(err)
@@ -26,7 +26,7 @@ func TestReleaseRecreatedRunResumeWaitIsWaitOnlyAndFullyGuarded(t *testing.T) {
 	}
 	for _, guard := range []string{
 		"suspension_state = 'resuming'",
-		"END = sqlc.arg(checkpoint_id)::uuid",
+		"suspend_checkpoint_id = sqlc.arg(checkpoint_id)::uuid",
 		"resume_attach_id = sqlc.arg(resume_attach_id)",
 		"resume_request_version = sqlc.arg(resume_request_version)",
 		"resume_ack_version < resume_request_version",

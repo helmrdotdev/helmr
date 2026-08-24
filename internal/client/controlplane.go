@@ -2,23 +2,33 @@ package client
 
 import (
 	"bufio"
+	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"mime/multipart"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/helmrdotdev/helmr/internal/sha256sum"
+)
+
+var (
+	ErrDeploymentObjectUploadNotAttempted = errors.New("deployment object upload was not attempted")
+	ErrDeploymentObjectUploadNoProgress   = errors.New("deployment object upload made no progress")
+)
+
+const (
+	deploymentObjectUploadProgressInterval  = 10 * time.Second
+	deploymentObjectUploadNoProgressTimeout = 2 * time.Minute
 )
 
 func (c *Client) ListProjects(ctx context.Context) (api.ListProjectsResponse, error) {
@@ -129,84 +139,378 @@ func environmentScopedResourcePath(base string, id string, suffix string) string
 	return base + "/" + url.PathEscape(id) + suffix
 }
 
-func (c *Client) CreateDeployment(
+func (c *Client) PlanDeploymentBundleUploads(
 	ctx context.Context,
-	input api.CreateDeploymentRequest,
-	sourceTarPath string,
+	bundleJSON []byte,
 	scope EnvironmentScopeOptions,
-) (api.DeploymentResponse, error) {
-	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
-	if input.IdempotencyKey == "" {
-		return api.DeploymentResponse{}, errors.New("deployment idempotency key is required")
-	}
-	file, err := os.Open(sourceTarPath)
+) (api.DeploymentBundleUploadPlanResponse, error) {
+	path, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/deployment-bundles/upload-plan")
 	if err != nil {
-		return api.DeploymentResponse{}, fmt.Errorf("open deployment source archive: %w", err)
+		return api.DeploymentBundleUploadPlanResponse{}, err
 	}
-	defer file.Close()
-	digest, err := deploymentSourceDigest(file)
+	req, err := c.newRequest(ctx, http.MethodPost, path, bytes.NewReader(bundleJSON))
 	if err != nil {
-		return api.DeploymentResponse{}, fmt.Errorf("hash deployment source archive: %w", err)
+		return api.DeploymentBundleUploadPlanResponse{}, err
 	}
-	if input.ContentHash = strings.TrimSpace(input.ContentHash); input.ContentHash == "" {
-		input.ContentHash = digest
-	} else if input.ContentHash != digest {
-		return api.DeploymentResponse{}, fmt.Errorf("deployment source archive digest %s does not match metadata content_hash %s", digest, input.ContentHash)
-	}
-	path, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/deployments")
-	if err != nil {
-		return api.DeploymentResponse{}, err
-	}
-	var lastErr error
-	for range 2 {
-		if _, err := file.Seek(0, io.SeekStart); err != nil {
-			return api.DeploymentResponse{}, fmt.Errorf("rewind deployment source archive: %w", err)
-		}
-		response, err := c.createDeploymentAttempt(ctx, path, input, file)
-		if err == nil {
-			return response, nil
-		}
-		lastErr = err
-		var httpErr *httpclient.Error
-		if errors.As(err, &httpErr) || ctx.Err() != nil {
-			return api.DeploymentResponse{}, err
-		}
-	}
-	return api.DeploymentResponse{}, lastErr
-}
-
-func (c *Client) createDeploymentAttempt(
-	ctx context.Context,
-	path string,
-	input api.CreateDeploymentRequest,
-	source io.Reader,
-) (api.DeploymentResponse, error) {
-	reader, pipeWriter := io.Pipe()
-	multipartWriter := multipart.NewWriter(pipeWriter)
-	writeDone := make(chan error, 1)
-	go func() {
-		writeErr := writeDeploymentMultipart(multipartWriter, input, source)
-		_ = pipeWriter.CloseWithError(writeErr)
-		writeDone <- writeErr
-	}()
-	req, err := c.newRequest(ctx, http.MethodPost, path, reader)
-	if err != nil {
-		_ = reader.Close()
-		<-writeDone
-		return api.DeploymentResponse{}, err
-	}
-	req.Header.Set("content-type", multipartWriter.FormDataContentType())
-	var response api.DeploymentResponse
+	req.Header.Set("content-type", "application/vnd.helmr.deployment-bundle.v0+json")
+	var response api.DeploymentBundleUploadPlanResponse
 	if err := c.doJSON(req, &response); err != nil {
-		_ = reader.Close()
-		<-writeDone
-		return api.DeploymentResponse{}, err
-	}
-	_ = reader.Close()
-	if err := <-writeDone; err != nil {
-		return api.DeploymentResponse{}, err
+		return api.DeploymentBundleUploadPlanResponse{}, err
 	}
 	return response, nil
+}
+
+func (c *Client) UploadDeploymentBundleObject(
+	ctx context.Context,
+	upload api.DeploymentBundleUpload,
+	objectPath string,
+	progress func(bytesRead int64, totalBytes int64) error,
+) error {
+	return c.uploadDeploymentBundleObject(
+		ctx,
+		upload,
+		objectPath,
+		progress,
+		deploymentObjectUploadProgressInterval,
+		deploymentObjectUploadNoProgressTimeout,
+	)
+}
+
+func (c *Client) uploadDeploymentBundleObject(
+	ctx context.Context,
+	upload api.DeploymentBundleUpload,
+	objectPath string,
+	progress func(bytesRead int64, totalBytes int64) error,
+	progressInterval time.Duration,
+	noProgressTimeout time.Duration,
+) error {
+	if upload.Method != http.MethodPut || strings.TrimSpace(upload.URL) == "" {
+		return fmt.Errorf("%w: deployment object upload plan is invalid", ErrDeploymentObjectUploadNotAttempted)
+	}
+	file, err := os.Open(objectPath)
+	if err != nil {
+		return fmt.Errorf("%w: open deployment object: %w", ErrDeploymentObjectUploadNotAttempted, err)
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("%w: stat deployment object: %w", ErrDeploymentObjectUploadNotAttempted, err)
+	}
+	uploadCtx, cancelUpload := context.WithCancel(ctx)
+	defer cancelUpload()
+	trackedBody := &deploymentObjectUploadReader{reader: file}
+	req, err := http.NewRequestWithContext(uploadCtx, upload.Method, upload.URL, trackedBody)
+	if err != nil {
+		return fmt.Errorf("%w: construct deployment object upload", ErrDeploymentObjectUploadNotAttempted)
+	}
+	contentLengthSet := false
+	for name, value := range upload.Headers {
+		if strings.EqualFold(name, "authorization") {
+			return fmt.Errorf("%w: deployment object upload plan contains a credential header", ErrDeploymentObjectUploadNotAttempted)
+		}
+		if strings.EqualFold(name, "content-length") {
+			if contentLengthSet {
+				return fmt.Errorf("%w: deployment object upload plan contains duplicate content length headers", ErrDeploymentObjectUploadNotAttempted)
+			}
+			contentLength, parseErr := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+			if parseErr != nil || contentLength < 0 {
+				return fmt.Errorf("%w: deployment object upload plan contains an invalid content length", ErrDeploymentObjectUploadNotAttempted)
+			}
+			if contentLength != info.Size() {
+				return fmt.Errorf("%w: deployment object size differs from the upload plan", ErrDeploymentObjectUploadNotAttempted)
+			}
+			req.ContentLength = contentLength
+			contentLengthSet = true
+			continue
+		}
+		req.Header.Set(name, value)
+	}
+	if !contentLengthSet {
+		return fmt.Errorf("%w: deployment object upload plan is missing content length", ErrDeploymentObjectUploadNotAttempted)
+	}
+	monitorDone := make(chan struct{})
+	monitorResult := make(chan error, 1)
+	go monitorDeploymentObjectUpload(
+		uploadCtx,
+		cancelUpload,
+		monitorDone,
+		monitorResult,
+		&trackedBody.bytesRead,
+		info.Size(),
+		progress,
+		progressInterval,
+		noProgressTimeout,
+	)
+	response, err := c.transport.Do(req)
+	var responseErr error
+	if err == nil {
+		defer response.Body.Close()
+		if _, copyErr := io.Copy(io.Discard, response.Body); copyErr != nil {
+			responseErr = errors.New("read deployment object upload response")
+		}
+	}
+	close(monitorDone)
+	monitorErr := <-monitorResult
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	if monitorErr != nil {
+		if errors.Is(monitorErr, ErrDeploymentObjectUploadNoProgress) {
+			return fmt.Errorf(
+				"%w for %s; rerun the same bundle to reuse completed objects",
+				ErrDeploymentObjectUploadNoProgress,
+				noProgressTimeout,
+			)
+		}
+		return monitorErr
+	}
+	if err != nil {
+		var statusError interface{ HTTPStatusCode() int }
+		if errors.As(err, &statusError) && statusError.HTTPStatusCode() != 0 {
+			return err
+		}
+		return errors.New("deployment object upload transport failed")
+	}
+	if responseErr != nil {
+		return responseErr
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("deployment object upload returned %s", response.Status)
+	}
+	return nil
+}
+
+type deploymentObjectUploadReader struct {
+	reader    io.Reader
+	bytesRead atomic.Int64
+}
+
+func (r *deploymentObjectUploadReader) Read(buffer []byte) (int, error) {
+	n, err := r.reader.Read(buffer)
+	r.bytesRead.Add(int64(n))
+	return n, err
+}
+
+func monitorDeploymentObjectUpload(
+	ctx context.Context,
+	cancel context.CancelFunc,
+	done <-chan struct{},
+	result chan<- error,
+	bytesRead *atomic.Int64,
+	totalBytes int64,
+	progress func(bytesRead int64, totalBytes int64) error,
+	progressInterval time.Duration,
+	noProgressTimeout time.Duration,
+) {
+	ticker := time.NewTicker(progressInterval)
+	defer ticker.Stop()
+	lastBytesRead := bytesRead.Load()
+	lastProgressAt := time.Now()
+	for {
+		select {
+		case <-done:
+			result <- nil
+			return
+		case <-ctx.Done():
+			result <- nil
+			return
+		case now := <-ticker.C:
+			currentBytesRead := bytesRead.Load()
+			if currentBytesRead > lastBytesRead {
+				lastBytesRead = currentBytesRead
+				lastProgressAt = now
+			}
+			if progress != nil {
+				if err := progress(currentBytesRead, totalBytes); err != nil {
+					result <- fmt.Errorf("report deployment object upload progress: %w", err)
+					cancel()
+					return
+				}
+			}
+			if now.Sub(lastProgressAt) >= noProgressTimeout {
+				result <- ErrDeploymentObjectUploadNoProgress
+				cancel()
+				return
+			}
+		}
+	}
+}
+
+func (c *Client) FinalizeDeploymentBundle(
+	ctx context.Context,
+	input api.FinalizeDeploymentBundleRequest,
+	scope EnvironmentScopeOptions,
+	progress func(api.DeploymentBundleFinalizeObject) error,
+) (api.DeploymentResponse, error) {
+	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
+	input.BundleDigest = strings.TrimSpace(input.BundleDigest)
+	if input.IdempotencyKey == "" || input.BundleDigest == "" {
+		return api.DeploymentResponse{}, errors.New("deployment idempotency key and bundle digest are required")
+	}
+	path, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/deployment-bundles/finalize")
+	if err != nil {
+		return api.DeploymentResponse{}, err
+	}
+	var body bytes.Buffer
+	if err := json.NewEncoder(&body).Encode(input); err != nil {
+		return api.DeploymentResponse{}, fmt.Errorf("encode deployment finalization request: %w", err)
+	}
+	req, err := c.newRequest(ctx, http.MethodPost, path, bytes.NewReader(body.Bytes()))
+	if err != nil {
+		return api.DeploymentResponse{}, err
+	}
+	req.Header.Set("content-type", "application/json")
+	req.Header.Set("accept", "text/event-stream")
+	response, err := c.transport.Do(req)
+	if err != nil {
+		return api.DeploymentResponse{}, err
+	}
+	defer response.Body.Close()
+	mediaType, _, parseErr := mime.ParseMediaType(response.Header.Get("content-type"))
+	if parseErr != nil || !strings.EqualFold(mediaType, "text/event-stream") {
+		return api.DeploymentResponse{}, errors.New("deployment finalization response is not an event stream")
+	}
+	created, err := consumeDeploymentFinalizeStream(response.Body, input.BundleDigest, progress)
+	if err != nil {
+		return api.DeploymentResponse{}, err
+	}
+	if created.BundleDigest != input.BundleDigest {
+		return api.DeploymentResponse{}, errors.New("deployment finalization completed with another bundle digest")
+	}
+	return created, nil
+}
+
+type DeploymentFinalizeError struct {
+	Code    string
+	Message string
+}
+
+func (e *DeploymentFinalizeError) Error() string {
+	if e.Message == "" {
+		return e.Code
+	}
+	return e.Message
+}
+
+type deploymentFinalizeObserverError struct{ err error }
+
+func (e deploymentFinalizeObserverError) Error() string { return e.err.Error() }
+func (e deploymentFinalizeObserverError) Unwrap() error { return e.err }
+
+func consumeDeploymentFinalizeStream(
+	reader io.Reader,
+	expectedBundleDigest string,
+	progress func(api.DeploymentBundleFinalizeObject) error,
+) (api.DeploymentResponse, error) {
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 4096), 64<<10)
+	var event string
+	var data []byte
+	started := false
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			if event == "" && len(data) == 0 {
+				continue
+			}
+			if event == "" || len(data) == 0 {
+				return api.DeploymentResponse{}, errors.New("deployment finalization event is incomplete")
+			}
+			switch event {
+			case api.DeploymentBundleFinalizeEventStarted:
+				if started {
+					return api.DeploymentResponse{}, errors.New("deployment finalization stream started more than once")
+				}
+				var value api.DeploymentBundleFinalizeStarted
+				if err := decodeDeploymentFinalizeEvent(data, &value); err != nil || value.BundleDigest != expectedBundleDigest {
+					return api.DeploymentResponse{}, errors.New("deployment finalization started event is invalid")
+				}
+				started = true
+			case api.DeploymentBundleFinalizeEventPing:
+				if !started || string(data) != "{}" {
+					return api.DeploymentResponse{}, errors.New("deployment finalization ping event is invalid")
+				}
+			case api.DeploymentBundleFinalizeEventObjectVerified:
+				if !started {
+					return api.DeploymentResponse{}, errors.New("deployment finalization progress preceded the started event")
+				}
+				var value api.DeploymentBundleFinalizeObject
+				if err := decodeDeploymentFinalizeEvent(data, &value); err != nil || strings.TrimSpace(value.Digest) == "" {
+					return api.DeploymentResponse{}, errors.New("deployment finalization object event is invalid")
+				}
+				if progress != nil {
+					if err := progress(value); err != nil {
+						return api.DeploymentResponse{}, deploymentFinalizeObserverError{err: err}
+					}
+				}
+			case api.DeploymentBundleFinalizeEventComplete:
+				if !started {
+					return api.DeploymentResponse{}, errors.New("deployment finalization completed before it started")
+				}
+				var value api.DeploymentResponse
+				if err := decodeDeploymentFinalizeEvent(data, &value); err != nil || value.ID == "" || value.BundleDigest == "" {
+					return api.DeploymentResponse{}, errors.New("deployment finalization completion event is invalid")
+				}
+				return value, nil
+			case api.DeploymentBundleFinalizeEventError:
+				if !started {
+					return api.DeploymentResponse{}, errors.New("deployment finalization failed before it started")
+				}
+				var value api.DeploymentBundleFinalizeError
+				if err := decodeDeploymentFinalizeEvent(data, &value); err != nil || value.Code == "" || value.Message == "" {
+					return api.DeploymentResponse{}, errors.New("deployment finalization error event is invalid")
+				}
+				return api.DeploymentResponse{}, &DeploymentFinalizeError{Code: value.Code, Message: value.Message}
+			default:
+				return api.DeploymentResponse{}, errors.New("deployment finalization stream contains an unknown event")
+			}
+			event = ""
+			data = nil
+			continue
+		}
+		if strings.HasPrefix(line, ":") {
+			continue
+		}
+		field, value, ok := strings.Cut(line, ":")
+		if !ok {
+			return api.DeploymentResponse{}, errors.New("deployment finalization stream field is invalid")
+		}
+		value = strings.TrimPrefix(value, " ")
+		switch field {
+		case "event":
+			if event != "" {
+				return api.DeploymentResponse{}, errors.New("deployment finalization event name is duplicated")
+			}
+			event = value
+		case "data":
+			if data != nil {
+				return api.DeploymentResponse{}, errors.New("deployment finalization event data is duplicated")
+			}
+			data = []byte(value)
+		default:
+			return api.DeploymentResponse{}, errors.New("deployment finalization stream field is unsupported")
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return api.DeploymentResponse{}, fmt.Errorf("read deployment finalization stream: %w", err)
+	}
+	return api.DeploymentResponse{}, errors.New("deployment finalization stream ended without a terminal event")
+}
+
+func decodeDeploymentFinalizeEvent(raw []byte, value any) error {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(value); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("deployment finalization event contains trailing data")
+		}
+		return err
+	}
+	return nil
 }
 
 func (c *Client) GetDeployment(ctx context.Context, deploymentID string, scope EnvironmentScopeOptions) (api.DeploymentResponse, error) {
@@ -229,49 +533,6 @@ func (c *Client) GetDeployment(ctx context.Context, deploymentID string, scope E
 	return response, nil
 }
 
-func (c *Client) FollowDeploymentEvents(ctx context.Context, deploymentID string, scope EnvironmentScopeOptions, cursor string, handle func(api.RunEvent) error) error {
-	if err := ids.Validate(deploymentID); err != nil {
-		return err
-	}
-	basePath, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/deployments")
-	if err != nil {
-		return err
-	}
-	values := url.Values{}
-	values.Set("follow", "1")
-	path := environmentScopedResourcePath(basePath, deploymentID, "/events") + "?" + values.Encode()
-	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("accept", "text/event-stream")
-	if cursor != "" {
-		req.Header.Set("Last-Event-ID", cursor)
-	}
-	res, err := c.transport.Do(req)
-	if err != nil {
-		return err
-	}
-	defer res.Body.Close()
-	scanner := bufio.NewScanner(res.Body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		line := scanner.Text()
-		data, ok := strings.CutPrefix(line, "data: ")
-		if !ok {
-			continue
-		}
-		var event api.RunEvent
-		if err := json.Unmarshal([]byte(data), &event); err != nil {
-			return err
-		}
-		if err := handle(event); err != nil {
-			return err
-		}
-	}
-	return scanner.Err()
-}
-
 func (c *Client) PromoteDeployment(ctx context.Context, deployment string, input api.PromoteDeploymentRequest, scope EnvironmentScopeOptions) (api.DeploymentResponse, error) {
 	if err := ids.Validate(deployment); err != nil {
 		return api.DeploymentResponse{}, err
@@ -286,36 +547,6 @@ func (c *Client) PromoteDeployment(ctx context.Context, deployment string, input
 		return api.DeploymentResponse{}, err
 	}
 	return response, nil
-}
-
-func deploymentSourceDigest(source io.Reader) (string, error) {
-	hash := sha256.New()
-	if _, err := io.Copy(hash, source); err != nil {
-		return "", err
-	}
-	return sha256sum.DigestHash(hash), nil
-}
-
-func writeDeploymentMultipart(writer *multipart.Writer, input api.CreateDeploymentRequest, source io.Reader) error {
-	metadata, err := json.Marshal(input)
-	if err != nil {
-		_ = writer.Close()
-		return fmt.Errorf("encode deployment metadata: %w", err)
-	}
-	if err := writer.WriteField("metadata", string(metadata)); err != nil {
-		_ = writer.Close()
-		return err
-	}
-	part, err := writer.CreateFormFile("deployment_source", "deployment-source.tar")
-	if err != nil {
-		_ = writer.Close()
-		return err
-	}
-	if _, err := io.Copy(part, source); err != nil {
-		_ = writer.Close()
-		return err
-	}
-	return writer.Close()
 }
 
 type SecretOptions struct {

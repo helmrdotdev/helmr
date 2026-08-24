@@ -191,8 +191,8 @@ func (s *Server) resolveDefinitionDeployment(
 	if err != nil {
 		return pgtype.UUID{}, errors.New("resolve definition deployment")
 	}
-	if deployment.Status != "deployed" || !deployment.ProgramArtifactID.Valid ||
-		len(deployment.ProgramIndexDigest) == 0 || len(deployment.BuildRuntimeDigest) == 0 {
+	if !deployment.ProgramArtifactID.Valid || len(deployment.ProgramIndexDigest) == 0 ||
+		deployment.RuntimeArtifactDigest == "" {
 		return pgtype.UUID{}, conflict(codedError{
 			code: "deployment_not_materialized", message: "Deployment definitions are not materialized",
 		})

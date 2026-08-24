@@ -5,13 +5,16 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"google.golang.org/protobuf/proto"
 )
 
 type childTaskControlPlane struct {
@@ -22,6 +25,7 @@ type childTaskControlPlane struct {
 	err          error
 	errors       []error
 	firstAttempt chan struct{}
+	blockAttempt <-chan struct{}
 }
 
 func (controlPlane *childTaskControlPlane) InvokeChildTask(
@@ -30,16 +34,104 @@ func (controlPlane *childTaskControlPlane) InvokeChildTask(
 ) (workerapi.InvokeChildTaskResponse, error) {
 	controlPlane.request = request
 	controlPlane.requests = append(controlPlane.requests, request)
+	if controlPlane.firstAttempt != nil {
+		close(controlPlane.firstAttempt)
+		controlPlane.firstAttempt = nil
+	}
+	if controlPlane.blockAttempt != nil {
+		<-controlPlane.blockAttempt
+	}
 	if len(controlPlane.errors) != 0 {
 		err := controlPlane.errors[0]
 		controlPlane.errors = controlPlane.errors[1:]
-		if controlPlane.firstAttempt != nil {
-			close(controlPlane.firstAttempt)
-			controlPlane.firstAttempt = nil
-		}
 		return workerapi.InvokeChildTaskResponse{}, err
 	}
 	return controlPlane.response, controlPlane.err
+}
+
+type acceptingChildTaskRenewalMounts struct {
+	WorkspaceMountSessionRegistry
+	calls int
+}
+
+func (mounts *acceptingChildTaskRenewalMounts) RenewWorkspaceAuthority(
+	_ context.Context,
+	request *workspacev0.RenewWorkspaceAuthorityRequest,
+) (*workspacev0.WorkspaceAuthorityFence, error) {
+	mounts.calls++
+	fence := proto.Clone(request.GetPrevious().GetFence()).(*workspacev0.WorkspaceAuthorityFence)
+	fence.ExpiresAtUnixNano = request.GetNewExpiresAtUnixNano()
+	return fence, nil
+}
+
+func TestHandleChildTaskInvokeDoesNotBlockRunLeaseRenewal(t *testing.T) {
+	previous := testFreshProgramClaim(t).Lease
+	previous.ExpiresAt = time.Now().Add(time.Minute).UTC()
+	renewed := previous
+	renewed.ExpiresAt = previous.ExpiresAt.Add(time.Minute)
+	correlationID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc27"
+	attempted := make(chan struct{})
+	releaseAttempt := make(chan struct{})
+	trace := &runLeaseTrace{}
+	controlPlane := &childTaskControlPlane{
+		testRunLeaseControlPlane: &testRunLeaseControlPlane{
+			trace: trace, renewed: testRunLeaseRenewResponse(renewed),
+		},
+		response: workerapi.InvokeChildTaskResponse{
+			CorrelationID: correlationID,
+			Completed: &workerapi.ChildTaskStartResult{
+				RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc3b",
+			},
+		},
+		firstAttempt: attempted,
+		blockAttempt: releaseAttempt,
+	}
+	mounts := &acceptingChildTaskRenewalMounts{}
+	guest, host := net.Pipe()
+	defer guest.Close()
+	defer host.Close()
+	task := &guestRunLeaseTask{
+		program:      freshProgram{session: fakeGuestSession{stream: guest}},
+		controlPlane: controlPlane,
+		mounts:       mounts,
+		lease:        previous,
+		authority: &workspacev0.WorkspaceRunAuthority{Fence: &workspacev0.WorkspaceAuthorityFence{
+			ExpiresAtUnixNano: previous.ExpiresAt.UnixNano(),
+		}},
+	}
+	invokeResult := make(chan error, 1)
+	go func() {
+		invokeResult <- task.handleChildTaskInvoke(t.Context(), &runv0.TaskChildInvokeRequested{
+			CorrelationId: correlationID,
+			DeclaredId:    "resize-image",
+			Method:        "start",
+			WorkspaceJson: `{}`,
+			OptionsJson:   `{}`,
+		})
+	}()
+	<-attempted
+	renewResult := make(chan error, 1)
+	go func() {
+		_, err := task.RenewRunLease(t.Context())
+		renewResult <- err
+	}()
+	requirePromptResult(t, renewResult, "renew while child Task invocation is blocked")
+	if mounts.calls != 1 || !equalRunLeaseAssignment(task.lease, renewed) {
+		t.Fatalf("guest renewal calls = %d task Lease = %+v", mounts.calls, task.lease)
+	}
+	close(releaseAttempt)
+	reader := bufio.NewReader(host)
+	header, bodyLen, err := wire.ReadStreamFrameHeader(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wire.ReadResumeDecision(header, reader, bodyLen); err != nil {
+		t.Fatal(err)
+	}
+	requirePromptResult(t, invokeResult, "complete child Task invocation")
+	if controlPlane.request.Lease != previous.Fence() {
+		t.Fatalf("child Task invocation fence = %+v, want %+v", controlPlane.request.Lease, previous.Fence())
+	}
 }
 
 func TestHandleChildTaskInvokeWritesCorrelatedDecision(t *testing.T) {
@@ -104,6 +196,50 @@ func TestHandleChildTaskInvokeWritesCorrelatedDecision(t *testing.T) {
 		string(controlPlane.request.Options) != `{"queue":"priority"}` ||
 		controlPlane.request.IdempotencyKey != idempotencyKey {
 		t.Fatalf("request = %+v", controlPlane.request)
+	}
+}
+
+func TestHandleChildTaskCallRejectsCompletedResponseWithoutOpenedWait(t *testing.T) {
+	lease := testFreshProgramClaim(t).Lease
+	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
+	correlationID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc25"
+	runWaitID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc26"
+	resumeAttachID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc27"
+	controlPlane := &childTaskControlPlane{
+		testRunLeaseControlPlane: &testRunLeaseControlPlane{},
+		response: workerapi.InvokeChildTaskResponse{
+			CorrelationID: correlationID,
+			Completed: &workerapi.ChildTaskStartResult{
+				RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
+			},
+		},
+	}
+	guest, host := net.Pipe()
+	defer guest.Close()
+	defer host.Close()
+	task := &guestRunLeaseTask{
+		program:      freshProgram{session: fakeGuestSession{stream: guest}},
+		controlPlane: controlPlane,
+		lease:        lease,
+	}
+	err := task.handleChildTaskInvoke(t.Context(), &runv0.TaskChildInvokeRequested{
+		CorrelationId: correlationID, DeclaredId: "resize-image", Method: "call",
+		RunWaitId: runWaitID, ResumeAttachId: resumeAttachID,
+		WorkspaceJson: `{}`, OptionsJson: `{}`,
+	})
+	if err == nil || !strings.Contains(err.Error(), "requires an opened Wait") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestWorkerChildTaskInvokeRequestRejectsUnknownMethod(t *testing.T) {
+	_, err := workerChildTaskInvokeRequest(&runv0.TaskChildInvokeRequested{
+		CorrelationId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc28",
+		DeclaredId:    "resize-image", Method: "enqueue",
+		WorkspaceJson: `{}`, OptionsJson: `{}`,
+	})
+	if err == nil {
+		t.Fatal("unknown child task invocation method was accepted")
 	}
 }
 
@@ -250,6 +386,8 @@ func TestHandleChildTaskInvokeReturnsSemanticFailureToRuntime(t *testing.T) {
 	lease := testFreshProgramClaim(t).Lease
 	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
 	correlationID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc22"
+	runWaitID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc23"
+	resumeAttachID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc24"
 	controlPlane := &childTaskControlPlane{
 		testRunLeaseControlPlane: &testRunLeaseControlPlane{},
 		err: &httpclient.Error{
@@ -270,11 +408,13 @@ func TestHandleChildTaskInvokeReturnsSemanticFailureToRuntime(t *testing.T) {
 	result := make(chan error, 1)
 	go func() {
 		result <- task.handleChildTaskInvoke(t.Context(), &runv0.TaskChildInvokeRequested{
-			CorrelationId: correlationID,
-			DeclaredId:    "resize-image",
-			Method:        "start",
-			WorkspaceJson: `{"key":"image-workspace"}`,
-			OptionsJson:   `{}`,
+			CorrelationId:  correlationID,
+			RunWaitId:      runWaitID,
+			ResumeAttachId: resumeAttachID,
+			DeclaredId:     "resize-image",
+			Method:         "call",
+			WorkspaceJson:  `{"key":"image-workspace"}`,
+			OptionsJson:    `{}`,
 		})
 	}()
 	reader := bufio.NewReader(host)
@@ -294,6 +434,8 @@ func TestHandleChildTaskInvokeReturnsSemanticFailureToRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	if decision.GetCorrelationId() != correlationID ||
+		decision.GetRunWaitId() != runWaitID ||
+		decision.GetResumeAttachId() != resumeAttachID ||
 		decision.GetKind() != "failed" ||
 		failure.Code != "idempotency_conflict" ||
 		failure.Retryable {

@@ -7,18 +7,16 @@ const maxConfigBytes = 1 << 20
 
 async function main(): Promise<void> {
   if (
-    process.argv.length !== 6 ||
+    process.argv.length !== 5 ||
     process.argv[2] === undefined ||
     process.argv[3] === undefined ||
-    process.argv[4] === undefined ||
-    !isManager(process.argv[5])
+    process.argv[4] === undefined
   ) {
     throw new Error(
-      "Config Evaluator requires a Program root, exact Node version, output root, and Manager family",
+      "Config Evaluator requires a Program root, exact Node version, and output root",
     )
   }
   const compiled = await compileConfig({
-    manager: process.argv[5],
     nodeVersion: process.argv[3],
     outputRoot: process.argv[4],
     root: process.argv[2],
@@ -46,10 +44,6 @@ async function main(): Promise<void> {
     output.once("error", reject)
     output.end(frame, resolve)
   })
-}
-
-function isManager(value: unknown): value is "bun" | "npm" | "pnpm" {
-  return value === "bun" || value === "npm" || value === "pnpm"
 }
 
 await main()

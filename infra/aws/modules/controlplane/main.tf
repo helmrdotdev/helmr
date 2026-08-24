@@ -1,20 +1,16 @@
 locals {
-  name                              = lower(var.name)
-  controlplane_port                 = 8080
-  bucket_prefix                     = lower(coalesce(var.bucket_name_prefix, "${local.name}-${data.aws_caller_identity.current.account_id}-${data.aws_region.current.region}"))
-  controlplane_url                  = var.enable_cloudfront ? "https://${aws_cloudfront_distribution.controlplane[0].domain_name}" : var.public_url
-  controlplane_subnet_ids           = var.controlplane_assign_public_ip ? var.public_subnet_ids : var.private_subnet_ids
-  email_from                        = var.email_from == null ? "" : var.email_from
-  smtp_addr                         = var.smtp_addr == null ? "" : var.smtp_addr
-  smtp_username                     = var.smtp_username == null ? "" : var.smtp_username
-  clickhouse_url                    = trimspace(var.clickhouse_url)
-  clickhouse_user                   = var.clickhouse_user == null ? "" : var.clickhouse_user
-  bootstrap_region_id               = trimspace(coalesce(var.bootstrap_region_id, data.aws_region.current.region))
-  bootstrap_region_display_name     = trimspace(coalesce(var.bootstrap_region_display_name, local.bootstrap_region_id))
-  image_cache_repository_prefix     = "${local.name}/image-cache"
-  image_cache_repository_arn_prefix = "arn:${data.aws_partition.current.partition}:ecr:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:repository/${local.image_cache_repository_prefix}/"
-  image_cache_registry_authority    = "${data.aws_caller_identity.current.account_id}.dkr.ecr.${data.aws_region.current.region}.${data.aws_partition.current.dns_suffix}"
-  image_cache_worker_role_arns      = sort(distinct(var.image_cache_worker_role_arns))
+  name                          = lower(var.name)
+  controlplane_port             = 8080
+  bucket_prefix                 = lower(coalesce(var.bucket_name_prefix, "${local.name}-${data.aws_caller_identity.current.account_id}-${data.aws_region.current.region}"))
+  controlplane_url              = var.enable_cloudfront ? "https://${aws_cloudfront_distribution.controlplane[0].domain_name}" : var.public_url
+  controlplane_subnet_ids       = var.controlplane_assign_public_ip ? var.public_subnet_ids : var.private_subnet_ids
+  email_from                    = var.email_from == null ? "" : var.email_from
+  smtp_addr                     = var.smtp_addr == null ? "" : var.smtp_addr
+  smtp_username                 = var.smtp_username == null ? "" : var.smtp_username
+  clickhouse_url                = trimspace(var.clickhouse_url)
+  clickhouse_user               = var.clickhouse_user == null ? "" : var.clickhouse_user
+  bootstrap_region_id           = trimspace(coalesce(var.bootstrap_region_id, data.aws_region.current.region))
+  bootstrap_region_display_name = trimspace(coalesce(var.bootstrap_region_display_name, local.bootstrap_region_id))
   secret_kms_key_arns = distinct(concat(
     [aws_kms_key.helmr.arn],
     var.clickhouse_password_kms_key_arns,
@@ -88,19 +84,15 @@ locals {
   )
 
   controlplane_environment_defaults = merge({
-    CONTROL_PLANE_ADDR                = ":${local.controlplane_port}"
-    DEPLOYMENT_MODE                   = var.deployment_mode
-    CAS_URI                           = "s3://${aws_s3_bucket.cas.bucket}"
-    BUILD_POLICY_PATH                 = "/release/build-policy.json"
-    PLATFORM_STORE_URI                = var.platform_store_uri
-    PUBLIC_URL                        = local.controlplane_url
-    API_ORIGIN                        = coalesce(var.api_origin, local.controlplane_url)
-    REDIS_URL                         = local.redis_url
-    GITHUB_OAUTH_CLIENT_ID            = var.github_oauth_client_id
-    IMAGE_CACHE_REGISTRY_AUTHORITY    = local.image_cache_registry_authority
-    IMAGE_CACHE_REPOSITORY_PREFIX     = local.image_cache_repository_prefix
-    IMAGE_CACHE_ROLE_ARN              = aws_iam_role.image_cache.arn
-    IMAGE_CACHE_REPOSITORY_ARN_PREFIX = local.image_cache_repository_arn_prefix
+    CONTROL_PLANE_ADDR                 = ":${local.controlplane_port}"
+    DEPLOYMENT_MODE                    = var.deployment_mode
+    CAS_URI                            = "s3://${aws_s3_bucket.cas.bucket}"
+    DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH = "/usr/local/share/helmr/runtime.descriptor.json"
+    PLATFORM_STORE_URI                 = var.platform_store_uri
+    PUBLIC_URL                         = local.controlplane_url
+    API_ORIGIN                         = coalesce(var.api_origin, local.controlplane_url)
+    REDIS_URL                          = local.redis_url
+    GITHUB_OAUTH_CLIENT_ID             = var.github_oauth_client_id
   }, local.bootstrap_environment, local.clickhouse_environment, local.email_environment)
 
   controlplane_secret_defaults = merge({
@@ -185,11 +177,6 @@ resource "terraform_data" "bootstrap_preconditions" {
     }
 
     precondition {
-      condition     = length(local.image_cache_worker_role_arns) > 0
-      error_message = "image_cache_worker_role_arns must contain at least one deployment-owned build Worker role."
-    }
-
-    precondition {
       condition     = length(local.dispatcher_environment_conflicts) == 0
       error_message = "dispatcher_environment must not set managed Helmr variables. Use explicit module inputs and secret containers for managed settings."
     }
@@ -202,14 +189,6 @@ resource "terraform_data" "bootstrap_preconditions" {
     precondition {
       condition     = var.platform_store_bucket_arn != aws_s3_bucket.cas.arn
       error_message = "platform_store_bucket_arn must identify the dedicated bootstrap store, not the mutable Control Plane CAS bucket."
-    }
-
-    precondition {
-      condition = alltrue([
-        for role_arn in var.image_cache_worker_role_arns :
-        startswith(role_arn, "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/")
-      ])
-      error_message = "image_cache_worker_role_arns must identify roles in the Control Plane AWS account."
     }
 
     precondition {
@@ -414,7 +393,8 @@ resource "random_id" "postgres_final_snapshot" {
 resource "aws_db_instance" "postgres" {
   identifier                   = "${local.name}-postgres"
   engine                       = "postgres"
-  engine_version               = var.database_engine_version
+  engine_version               = "18"
+  auto_minor_version_upgrade   = true
   instance_class               = var.database_instance_class
   allocated_storage            = var.database_allocated_storage_gb
   db_name                      = "helmr"
@@ -870,66 +850,6 @@ resource "aws_iam_role_policy" "database_bootstrap_execution" {
   })
 }
 
-resource "aws_iam_policy" "image_cache_boundary" {
-  name = "${local.name}-image-cache-boundary"
-  tags = var.tags
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid      = "AuthenticateExecutionCacheRegistry"
-        Effect   = "Allow"
-        Action   = ["ecr:GetAuthorizationToken"]
-        Resource = "*"
-      },
-      {
-        Sid    = "UseExecutionCacheRepositories"
-        Effect = "Allow"
-        Action = [
-          "ecr:BatchCheckLayerAvailability",
-          "ecr:BatchGetImage",
-          "ecr:CompleteLayerUpload",
-          "ecr:GetDownloadUrlForLayer",
-          "ecr:InitiateLayerUpload",
-          "ecr:PutImage",
-          "ecr:UploadLayerPart"
-        ]
-        Resource = "${local.image_cache_repository_arn_prefix}environments/*"
-      }
-    ]
-  })
-}
-
-resource "aws_iam_role" "image_cache" {
-  name                 = "${local.name}-image-cache"
-  permissions_boundary = aws_iam_policy.image_cache_boundary.arn
-  tags                 = var.tags
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Principal = {
-        AWS = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"
-      }
-      Action = "sts:AssumeRole"
-      Condition = {
-        ArnEquals = {
-          "aws:PrincipalArn" = local.image_cache_worker_role_arns
-        }
-      }
-    }]
-  })
-}
-
-resource "aws_iam_role_policy" "image_cache" {
-  name = "${local.name}-image-cache"
-  role = aws_iam_role.image_cache.id
-
-  policy = aws_iam_policy.image_cache_boundary.policy
-}
-
 resource "aws_iam_role" "controlplane_task" {
   name = "${local.name}-controlplane-task"
   tags = var.tags
@@ -999,24 +919,7 @@ resource "aws_iam_role_policy" "controlplane_task" {
           }
         }
       },
-      ], [for statement in [
-        {
-          Sid    = "ProvisionExecutionImageCache"
-          Effect = "Allow"
-          Action = [
-            "ecr:CreateRepository",
-            "ecr:DeleteRepository",
-            "ecr:DescribeRepositories",
-            "ecr:ListTagsForResource",
-            "ecr:PutImageTagMutability",
-            "ecr:PutLifecyclePolicy",
-            "ecr:SetRepositoryPolicy",
-            "ecr:TagResource",
-            "ecr:UntagResource"
-          ]
-          Resource = "${local.image_cache_repository_arn_prefix}environments/*"
-        }
-    ] : statement])
+    ])
   })
 }
 
@@ -1067,55 +970,12 @@ resource "aws_ecs_task_definition" "controlplane" {
     cpu_architecture        = var.controlplane_architecture
   }
 
-  volume {
-    name = "release-policy"
-  }
-
   container_definitions = jsonencode([
-    {
-      name       = "release-install"
-      image      = var.controlplane_image
-      essential  = false
-      user       = "0"
-      entryPoint = ["helmr-controlplane"]
-      command = [
-        "release",
-        "install",
-        "--store",
-        var.platform_store_uri,
-        "--digest",
-        var.build_policy_digest,
-        "--output",
-        "/release/build-policy.json"
-      ]
-      mountPoints = [{
-        sourceVolume  = "release-policy"
-        containerPath = "/release"
-        readOnly      = false
-      }]
-      logConfiguration = {
-        logDriver = "awslogs"
-        options = {
-          awslogs-group         = aws_cloudwatch_log_group.controlplane.name
-          awslogs-region        = data.aws_region.current.region
-          awslogs-stream-prefix = "release-install"
-        }
-      }
-    },
     {
       name       = "controlplane"
       image      = var.controlplane_image
       essential  = true
       entryPoint = var.controlplane_entrypoint
-      dependsOn = [{
-        containerName = "release-install"
-        condition     = "SUCCESS"
-      }]
-      mountPoints = [{
-        sourceVolume  = "release-policy"
-        containerPath = "/release"
-        readOnly      = true
-      }]
       portMappings = [{
         containerPort = local.controlplane_port
         hostPort      = local.controlplane_port

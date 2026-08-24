@@ -3,7 +3,6 @@ package dispatch
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -18,21 +17,23 @@ func TestWorkerFenceCoordinatesAtWorkerGranularity(t *testing.T) {
 	serviceID := uuid.New()
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 INSERT INTO worker_instances (
-    id, resource_id, worker_group_id, state,
-    current_epoch, current_service_id, supervisor_version,
-    supports_run, runtime_identity_id, substrate_format, substrate_contract,
+    id, resource_id, worker_group_id, worker_pool_id, state,
+    current_epoch, current_service_id,
+    runtime_identity_id, substrate_format, substrate_contract,
     epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
     per_vm_cpu_millis, per_vm_memory_bytes,
     per_vm_guest_ephemeral_disk_bytes, max_vm_slots,
-    max_runtime_starts, observed_at, epoch_started_at, activated_at
+    max_runtime_starts, cpu_environment, cpu_environment_digest,
+    observed_at, epoch_started_at, activated_at
 )
-SELECT $2, $3, worker_group_id, state,
-       current_epoch, $4, supervisor_version,
-       supports_run, runtime_identity_id, substrate_format, substrate_contract,
+SELECT $2, $3, worker_group_id, worker_pool_id, state,
+       current_epoch, $4,
+       runtime_identity_id, substrate_format, substrate_contract,
        epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
        per_vm_cpu_millis, per_vm_memory_bytes,
        per_vm_guest_ephemeral_disk_bytes, max_vm_slots,
-       max_runtime_starts, observed_at, epoch_started_at, activated_at
+       max_runtime_starts, cpu_environment, cpu_environment_digest,
+       observed_at, epoch_started_at, activated_at
   FROM worker_instances
  WHERE id = $1`, fixture.workerID, workerID, workerID.String(), serviceID)
 
@@ -51,7 +52,7 @@ SELECT $2, $3, worker_group_id, state,
 	if err := lockWorkerFence(fixture.ctx, first, workerFence{
 		GroupID: fixture.groupID, RegionID: "us-east-1",
 		WorkerInstanceID: pgvalue.UUID(fixture.workerID), WorkerEpoch: 1,
-		Role: "run", RunArchitecture: platformArchitecture,
+		RunArchitecture: runtimeArchitecture,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +67,7 @@ SELECT $2, $3, worker_group_id, state,
 	if err := lockWorkerFence(secondCtx, second, workerFence{
 		GroupID: fixture.groupID, RegionID: "us-east-1",
 		WorkerInstanceID: pgvalue.UUID(workerID), WorkerEpoch: 1,
-		Role: "run", RunArchitecture: platformArchitecture,
+		RunArchitecture: runtimeArchitecture,
 	}); err != nil {
 		t.Fatalf("independent Worker fence blocked: %v", err)
 	}
@@ -100,10 +101,37 @@ UPDATE worker_groups SET state = 'paused' WHERE id = $1`, fixture.groupID)
 	err = lockWorkerFence(fixture.ctx, recheck, workerFence{
 		GroupID: fixture.groupID, RegionID: "us-east-1",
 		WorkerInstanceID: pgvalue.UUID(fixture.workerID), WorkerEpoch: 1,
-		Role: "run", RunArchitecture: platformArchitecture,
+		RunArchitecture: runtimeArchitecture,
 	})
 	if err == nil {
 		t.Fatal("paused Worker Group remained eligible for placement")
+	}
+}
+
+func TestRuntimeAdmissionFenceRejectsRuntimePausedWorker(t *testing.T) {
+	fixture := newRunPlacementFixture(t)
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE worker_instances
+   SET runtime_paused_reason = 'runtime_health'
+ WHERE id = $1`, fixture.workerID)
+
+	tx, err := fixture.authority.begin(fixture.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rollback(context.Background(), tx)
+	if err := lockWorkerFence(fixture.ctx, tx, workerFence{
+		GroupID: fixture.groupID, RegionID: "us-east-1",
+		WorkerInstanceID: pgvalue.UUID(fixture.workerID), WorkerEpoch: 1,
+		RunArchitecture: runtimeArchitecture,
+	}); err != nil {
+		t.Fatalf("Run-domain fence rejected Runtime-only pause: %v", err)
+	}
+	err = checkLockedWorkerRuntimeAdmission(
+		fixture.ctx, tx, pgvalue.UUID(fixture.workerID), 1,
+	)
+	if err == nil {
+		t.Fatal("runtime-paused Worker remained eligible for Runtime admission")
 	}
 }
 
@@ -175,95 +203,6 @@ SELECT count(*)
 	}
 	if reservations != 1 {
 		t.Fatalf("live runtime reservations = %d, want 1", reservations)
-	}
-}
-
-func TestConcurrentRunAndBuildPlacementShareWorkerCapacity(t *testing.T) {
-	fixture := newRunPlacementFixture(t)
-	buildID := uuid.New()
-	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-INSERT INTO deployments (
-    id, org_id, project_id, environment_id, build_region_id,
-    build_node_version, build_runtime_digest, build_toolchain_digest,
-    build_manager_name, build_manager_version, build_manager_digest,
-    build_contract, image_cache_mode, version, content_hash,
-    deployment_source_artifact_id, status
-)
-SELECT $2, org_id, project_id, environment_id, build_region_id,
-       build_node_version, build_runtime_digest, build_toolchain_digest,
-       build_manager_name, build_manager_version, build_manager_digest,
-       build_contract, image_cache_mode, 'v2', $3,
-       deployment_source_artifact_id, 'queued'
-  FROM deployments
- WHERE id = $1`, fixture.deploymentID, buildID, "sha256:"+strings.Repeat("9", 64))
-	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-UPDATE worker_groups
-   SET allows_build = true
- WHERE id = $1`, fixture.groupID)
-	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-UPDATE worker_instances
-   SET supports_build = true,
-       epoch_cpu_millis = 3000,
-       epoch_memory_bytes = 4294967296,
-       epoch_guest_ephemeral_disk_bytes = 34359738368,
-       per_vm_cpu_millis = 2000,
-       per_vm_memory_bytes = 2147483648,
-       max_vm_slots = 1,
-       max_runtime_starts = 1,
-       max_build_executors = 1
- WHERE id = $1`, fixture.workerID)
-
-	buildAuthority, err := NewBuildAuthority(fixture.pool)
-	if err != nil {
-		t.Fatal(err)
-	}
-	blocker, err := fixture.pool.Begin(fixture.ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rollback(context.Background(), blocker)
-	if _, err := blocker.Exec(fixture.ctx, `
-SELECT id FROM worker_instances WHERE id = $1 FOR UPDATE`, fixture.workerID); err != nil {
-		t.Fatal(err)
-	}
-
-	runResult := make(chan error, 1)
-	go func() {
-		_, err := fixture.authority.PlaceReadyRun(fixture.ctx, fixture.candidate())
-		runResult <- err
-	}()
-	waitForBlockedQuery(t, fixture, "FOR UPDATE OF worker_instances", 1)
-	buildResult := make(chan error, 1)
-	go func() {
-		_, err := buildAuthority.PlaceReadyBuild(fixture.ctx, ReadyBuildCandidate{
-			OrgID: pgvalue.UUID(fixture.orgID), DeploymentID: pgvalue.UUID(buildID),
-			BuildRegionID: "us-east-1", LeaseSequence: 1,
-		})
-		buildResult <- err
-	}()
-	waitForBlockedQuery(t, fixture, "FOR UPDATE OF worker_instances", 2)
-	if err := blocker.Commit(fixture.ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := <-runResult; err != nil {
-		t.Fatalf("Run placement failed: %v", err)
-	}
-	if err := <-buildResult; !errors.Is(err, ErrCapacityUnavailable) {
-		t.Fatalf("Build placement error = %v, want ErrCapacityUnavailable", err)
-	}
-
-	var runtimes, builds int
-	if err := fixture.pool.QueryRow(fixture.ctx, `
-SELECT (SELECT count(*) FROM runtime_instances
-         WHERE worker_instance_id = $1 AND worker_epoch = 1 AND reclaimed_at IS NULL),
-       (SELECT count(*) FROM deployment_build_leases
-         WHERE worker_instance_id = $1 AND worker_epoch = 1
-           AND state IN ('assigned', 'starting', 'running'))`, fixture.workerID).Scan(&runtimes, &builds); err != nil {
-		t.Fatal(err)
-	}
-	if runtimes+builds != 1 {
-		t.Fatalf("shared Worker allocations runtimes=%d builds=%d, want one total", runtimes, builds)
 	}
 }
 

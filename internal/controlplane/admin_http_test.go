@@ -72,7 +72,6 @@ func (q *adminHTTPQuerier) CreateWorkerGroup(_ context.Context, params db.Create
 	return db.WorkerGroup{
 		ID: params.ID, RegionID: params.RegionID, Name: params.Name, Description: params.Description,
 		State: db.WorkerGroupStateActive, ClaimVersion: 1,
-		AllowsRun: params.AllowsRun, AllowsBuild: params.AllowsBuild,
 	}, nil
 }
 
@@ -213,14 +212,13 @@ func TestAdminHTTPCreatesLogicalWorkerGroup(t *testing.T) {
 	adminHTTPRouter(t, queries).ServeHTTP(response, adminHTTPRequest(
 		http.MethodPost,
 		"/admin/api/v1/worker-groups",
-		`{"region_id":"default","name":"default","description":"Primary fleet","allows_run":true,"allows_build":true}`,
+		`{"region_id":"default","name":"default","description":"Primary fleet"}`,
 	))
 	if response.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201: %s", response.Code, response.Body.String())
 	}
 	if queries.createGroupCalls != 1 || queries.createGroupParams.RegionID != "default" ||
-		queries.createGroupParams.Name != "default" || queries.createGroupParams.Description != "Primary fleet" ||
-		!queries.createGroupParams.AllowsRun || !queries.createGroupParams.AllowsBuild {
+		queries.createGroupParams.Name != "default" || queries.createGroupParams.Description != "Primary fleet" {
 		t.Fatalf("create worker group params = %+v, calls = %d", queries.createGroupParams, queries.createGroupCalls)
 	}
 	if response.Header().Get("Cache-Control") != "no-store" {

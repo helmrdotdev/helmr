@@ -165,10 +165,6 @@ func (s *Server) adminCreateWorkerGroup(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	description := strings.TrimSpace(request.Description)
-	if err := workergroup.ValidateRoles(request.AllowsRun, request.AllowsBuild); err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
 	token, err := workergroup.GenerateEnrollmentToken()
 	if err != nil {
 		writeError(w, errors.New("generate worker group token"))
@@ -189,7 +185,6 @@ func (s *Server) adminCreateWorkerGroup(w http.ResponseWriter, r *http.Request) 
 		created, err = work.q.CreateWorkerGroup(r.Context(), db.CreateWorkerGroupParams{
 			ID: uuid.Must(uuid.NewV7()).String(), TokenID: pgvalue.UUID(uuid.Must(uuid.NewV7())), TokenHash: token.Hash,
 			RegionID: request.RegionID, Name: request.Name, Description: description,
-			AllowsRun: request.AllowsRun, AllowsBuild: request.AllowsBuild,
 		})
 		if isUniqueViolation(err) {
 			return conflict(errors.New("worker group conflicts with an existing active role or name"))
@@ -312,6 +307,199 @@ func (s *Server) adminRotateWorkerGroupToken(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, api.RotateWorkerGroupTokenResponse{EnrollmentToken: token.Raw})
 }
 
+func (s *Server) adminListWorkerPools(w http.ResponseWriter, r *http.Request) {
+	groupID, ok := adminGroupID(w, r)
+	if !ok {
+		return
+	}
+	group, err := s.db.GetWorkerGroup(r.Context(), groupID)
+	if isNoRows(err) {
+		writeError(w, notFound(errors.New("worker group not found")))
+		return
+	}
+	if err != nil {
+		writeError(w, errors.New("get worker group"))
+		return
+	}
+	pools, err := s.db.ListWorkerPools(r.Context(), groupID)
+	if err != nil {
+		writeError(w, errors.New("list worker pools"))
+		return
+	}
+	response := api.AdminWorkerPoolsResponse{WorkerPools: make([]api.AdminWorkerPool, 0, len(pools))}
+	for _, pool := range pools {
+		response.WorkerPools = append(response.WorkerPools, adminWorkerPool(pool, group))
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) adminCreateWorkerPool(w http.ResponseWriter, r *http.Request) {
+	groupID, ok := adminGroupID(w, r)
+	if !ok {
+		return
+	}
+	var request api.CreateAdminWorkerPoolRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, badRequest(fmt.Errorf("invalid worker pool request JSON: %w", err)))
+		return
+	}
+	if err := workergroup.ValidatePoolName(request.Name); err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
+	if request.ExpectedGroupClaimVersion <= 0 {
+		writeError(w, badRequest(errors.New("expected_group_claim_version must be positive")))
+		return
+	}
+
+	var group db.WorkerGroup
+	var created db.WorkerPool
+	err := s.inTx(r.Context(), func(work *txWork) error {
+		var err error
+		group, err = work.q.LockWorkerGroupForPoolMutation(r.Context(), groupID)
+		if isNoRows(err) {
+			return notFound(errors.New("worker group not found"))
+		}
+		if err != nil {
+			return errors.New("lock worker group for pool creation")
+		}
+		if group.ClaimVersion != request.ExpectedGroupClaimVersion ||
+			(group.State != db.WorkerGroupStateActive && group.State != db.WorkerGroupStatePaused) {
+			return conflict(errors.New("worker group state or claim version changed"))
+		}
+		created, err = work.q.CreatePendingWorkerPool(r.Context(), db.CreatePendingWorkerPoolParams{
+			WorkerPoolID: pgvalue.UUID(uuid.Must(uuid.NewV7())), Name: request.Name,
+			WorkerGroupID: groupID, ExpectedGroupClaimVersion: request.ExpectedGroupClaimVersion,
+		})
+		if isUniqueViolation(err) {
+			return conflict(errors.New("worker pool name is already in use"))
+		}
+		if isNoRows(err) {
+			return conflict(errors.New("worker group state or claim version changed"))
+		}
+		if err != nil {
+			return errors.New("create worker pool")
+		}
+		return nil
+	})
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, adminWorkerPool(created, group))
+}
+
+func (s *Server) adminSwitchWorkerPoolPrimary(w http.ResponseWriter, r *http.Request) {
+	groupID, poolID, ok := adminWorkerPoolIDs(w, r)
+	if !ok {
+		return
+	}
+	var request api.SwitchAdminWorkerPoolPrimaryRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, badRequest(fmt.Errorf("invalid worker pool primary request JSON: %w", err)))
+		return
+	}
+	if request.ExpectedGroupClaimVersion <= 0 {
+		writeError(w, badRequest(errors.New("expected_group_claim_version must be positive")))
+		return
+	}
+	targetPoolID := pgvalue.UUID(poolID)
+	result, err := s.reconcileWorkerGroupPrimarySelection(r.Context(), workerGroupPrimarySelectionCommand{
+		workerGroupID:             groupID,
+		expectedGroupClaimVersion: request.ExpectedGroupClaimVersion,
+		desired: func(db.WorkerGroup) (pgtype.UUID, error) {
+			return targetPoolID, nil
+		},
+	})
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	pool, ok := result.pools[poolID.String()]
+	if !ok {
+		writeError(w, errors.New("project selected worker pool"))
+		return
+	}
+	writeJSON(w, http.StatusOK, api.SwitchAdminWorkerPoolPrimaryResponse{
+		WorkerGroup: adminWorkerGroup(result.group), WorkerPool: adminWorkerPool(pool, result.group),
+	})
+}
+
+func (s *Server) adminDrainWorkerPool(w http.ResponseWriter, r *http.Request) {
+	s.adminTransitionWorkerPool(w, r, "draining")
+}
+
+func (s *Server) adminDisableWorkerPool(w http.ResponseWriter, r *http.Request) {
+	s.adminTransitionWorkerPool(w, r, "disabled")
+}
+
+func (s *Server) adminTransitionWorkerPool(w http.ResponseWriter, r *http.Request, target string) {
+	groupID, poolID, ok := adminWorkerPoolIDs(w, r)
+	if !ok {
+		return
+	}
+	var request api.WorkerPoolLifecycleRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, badRequest(fmt.Errorf("invalid worker pool lifecycle request JSON: %w", err)))
+		return
+	}
+	if request.ExpectedPoolClaimVersion <= 0 {
+		writeError(w, badRequest(errors.New("expected_pool_claim_version must be positive")))
+		return
+	}
+
+	var group db.WorkerGroup
+	var pool db.WorkerPool
+	err := s.inTx(r.Context(), func(work *txWork) error {
+		var err error
+		group, err = work.q.LockWorkerGroupForPoolMutation(r.Context(), groupID)
+		if isNoRows(err) {
+			return notFound(errors.New("worker group not found"))
+		}
+		if err != nil {
+			return errors.New("lock worker group for pool lifecycle")
+		}
+		pool, err = work.q.LockWorkerPool(r.Context(), db.LockWorkerPoolParams{
+			WorkerGroupID: groupID, WorkerPoolID: pgvalue.UUID(poolID),
+		})
+		if isNoRows(err) {
+			return notFound(errors.New("worker pool not found"))
+		}
+		if err != nil {
+			return errors.New("lock worker pool for lifecycle")
+		}
+		if pool.State == target && pool.ClaimVersion == request.ExpectedPoolClaimVersion+1 {
+			return nil
+		}
+		if pool.ClaimVersion != request.ExpectedPoolClaimVersion {
+			return conflict(errors.New("worker pool state or claim version changed"))
+		}
+		if target == "draining" && pool.State != "active" {
+			return conflict(errors.New("only an active worker pool can begin draining"))
+		}
+		if target == "disabled" && pool.State != "pending" && pool.State != "draining" {
+			return conflict(errors.New("only an unreferenced pending or drained worker pool can be disabled"))
+		}
+		transitioned, err := work.q.TransitionWorkerPoolLifecycle(r.Context(), db.TransitionWorkerPoolLifecycleParams{
+			TargetState: target, WorkerPoolID: pgvalue.UUID(poolID), WorkerGroupID: groupID,
+			ExpectedPoolClaimVersion: request.ExpectedPoolClaimVersion,
+		})
+		if isNoRows(err) {
+			return conflict(errors.New("worker pool is primary, referenced, or required for retained execution"))
+		}
+		if err != nil {
+			return errors.New("transition worker pool lifecycle")
+		}
+		pool = transitioned
+		return nil
+	})
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, adminWorkerPool(pool, group))
+}
+
 func adminRegion(row db.Region) api.AdminRegion {
 	return api.AdminRegion{
 		ID: row.ID, DisplayName: row.DisplayName, Location: row.Location,
@@ -321,8 +509,24 @@ func adminRegion(row db.Region) api.AdminRegion {
 func adminWorkerGroup(row db.WorkerGroup) api.AdminWorkerGroup {
 	return api.AdminWorkerGroup{
 		ID: row.ID, RegionID: row.RegionID, Name: row.Name, Description: row.Description,
-		State: row.State, ClaimVersion: row.ClaimVersion, AllowsRun: row.AllowsRun, AllowsBuild: row.AllowsBuild,
+		State: row.State, ClaimVersion: row.ClaimVersion,
+		PrimaryPoolID: adminOptionalUUID(row.PrimaryPoolID),
 	}
+}
+
+func adminWorkerPool(pool db.WorkerPool, group db.WorkerGroup) api.AdminWorkerPool {
+	return api.AdminWorkerPool{
+		ID: uuid.UUID(pool.ID.Bytes).String(), WorkerGroupID: pool.WorkerGroupID,
+		Name: pool.Name, State: pool.State, ClaimVersion: pool.ClaimVersion,
+		Primary: group.PrimaryPoolID.Valid && group.PrimaryPoolID.Bytes == pool.ID.Bytes,
+	}
+}
+
+func adminOptionalUUID(value pgtype.UUID) string {
+	if !value.Valid {
+		return ""
+	}
+	return uuid.UUID(value.Bytes).String()
 }
 
 func adminGroupID(w http.ResponseWriter, r *http.Request) (string, bool) {
@@ -333,4 +537,17 @@ func adminGroupID(w http.ResponseWriter, r *http.Request) (string, bool) {
 		return "", false
 	}
 	return parsed.String(), true
+}
+
+func adminWorkerPoolIDs(w http.ResponseWriter, r *http.Request) (string, uuid.UUID, bool) {
+	groupID, ok := adminGroupID(w, r)
+	if !ok {
+		return "", uuid.Nil, false
+	}
+	poolID, err := ids.Parse(chi.URLParam(r, "poolID"))
+	if err != nil {
+		writeError(w, badRequest(errors.New("worker pool ID must be a canonical UUIDv7")))
+		return "", uuid.Nil, false
+	}
+	return groupID, poolID, true
 }

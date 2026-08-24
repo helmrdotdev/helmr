@@ -45,6 +45,77 @@ type errorDetailer interface {
 	ErrorDetails() map[string]json.RawMessage
 }
 
+type staleAuthorityOperation string
+
+const (
+	staleAuthorityRunStart       staleAuthorityOperation = "run_start"
+	staleAuthorityTaskCompletion staleAuthorityOperation = "task_completion"
+	staleAuthorityChildTask      staleAuthorityOperation = "child_task_invoke"
+)
+
+type staleAuthorityError struct {
+	operation staleAuthorityOperation
+	point     string
+	cause     error
+}
+
+func (e *staleAuthorityError) Error() string {
+	switch e.operation {
+	case staleAuthorityRunStart:
+		return "run start authority is stale"
+	case staleAuthorityTaskCompletion:
+		return "task completion authority is stale"
+	case staleAuthorityChildTask:
+		return "child task invocation authority is stale"
+	default:
+		return "worker authority is stale"
+	}
+}
+
+func (e *staleAuthorityError) Unwrap() error { return e.cause }
+
+func (e *staleAuthorityError) ErrorCode() string {
+	return string(e.operation) + "_stale"
+}
+
+func (e *staleAuthorityError) ErrorDetails() map[string]json.RawMessage {
+	point, _ := json.Marshal(e.point)
+	return map[string]json.RawMessage{"point": point}
+}
+
+func staleAuthority[P ~string](operation staleAuthorityOperation, point P, err error) error {
+	if err == nil || point == "" {
+		return err
+	}
+	var sentinel error
+	switch operation {
+	case staleAuthorityRunStart:
+		sentinel = errStaleRunLeaseClaim
+	case staleAuthorityTaskCompletion:
+		sentinel = errStaleTaskCompletion
+	case staleAuthorityChildTask:
+		sentinel = errChildTaskInvokeStale
+	default:
+		return err
+	}
+	if !errors.Is(err, sentinel) {
+		return err
+	}
+	var existing *staleAuthorityError
+	if errors.As(err, &existing) {
+		return err
+	}
+	return &staleAuthorityError{operation: operation, point: string(point), cause: err}
+}
+
+func staleAuthorityPointOf(err error) (string, bool) {
+	var stale *staleAuthorityError
+	if !errors.As(err, &stale) || stale.point == "" {
+		return "", false
+	}
+	return stale.point, true
+}
+
 type codedError struct {
 	code      string
 	message   string

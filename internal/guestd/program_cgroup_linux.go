@@ -33,7 +33,7 @@ func enterProgramCgroupNamespace(leaf string) error {
 		return fmt.Errorf("read program cgroup identity: %w", err)
 	}
 	expected := "0::" + strings.TrimPrefix(
-		filepath.Join(buildCgroupRoot, leaf),
+		filepath.Join(programCgroupRoot, leaf),
 		"/sys/fs/cgroup",
 	)
 	if strings.TrimSpace(string(raw)) != expected {
@@ -53,7 +53,7 @@ func createProgramCgroup(leaf string) (programCgroup, error) {
 		return nil, err
 	}
 	rootFD, err := unix.Open(
-		buildCgroupRoot,
+		programCgroupRoot,
 		unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW,
 		0,
 	)
@@ -61,14 +61,14 @@ func createProgramCgroup(leaf string) (programCgroup, error) {
 		return nil, fmt.Errorf("open program cgroup root: %w", err)
 	}
 	defer unix.Close(rootFD)
-	processes, err := os.ReadFile(filepath.Join(buildCgroupRoot, "cgroup.procs"))
+	processes, err := os.ReadFile(filepath.Join(programCgroupRoot, "cgroup.procs"))
 	if err != nil {
 		return nil, fmt.Errorf("read program cgroup root processes: %w", err)
 	}
 	if len(bytes.TrimSpace(processes)) != 0 {
 		return nil, errors.New("program cgroup root is not process-free")
 	}
-	path := filepath.Join(buildCgroupRoot, leaf)
+	path := filepath.Join(programCgroupRoot, leaf)
 	if err := unix.Mkdirat(rootFD, leaf, 0o755); err != nil {
 		if !errors.Is(err, unix.EEXIST) {
 			return nil, fmt.Errorf("create program cgroup: %w", err)

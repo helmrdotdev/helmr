@@ -10,8 +10,7 @@ import (
 )
 
 type ProcessIdentity struct {
-	ServiceID string   `json:"service_id"`
-	Roles     []string `json:"roles"`
+	ServiceID string `json:"service_id"`
 }
 
 type Singleton struct {
@@ -20,8 +19,8 @@ type Singleton struct {
 }
 
 func Acquire(workDir string, identity ProcessIdentity) (*Singleton, error) {
-	if workDir == "" || identity.ServiceID == "" || len(identity.Roles) == 0 {
-		return nil, errors.New("supervisor work directory, service id, and roles are required")
+	if workDir == "" || identity.ServiceID == "" {
+		return nil, errors.New("supervisor work directory and service id are required")
 	}
 	stateDir := filepath.Join(workDir, "supervisor")
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
@@ -57,7 +56,7 @@ func ReadProcessIdentity(workDir string) (ProcessIdentity, error) {
 	if err := json.Unmarshal(payload, &identity); err != nil {
 		return ProcessIdentity{}, fmt.Errorf("decode running supervisor identity: %w", err)
 	}
-	if identity.ServiceID == "" || len(identity.Roles) == 0 {
+	if identity.ServiceID == "" {
 		return ProcessIdentity{}, errors.New("running supervisor identity is incomplete")
 	}
 	return identity, nil

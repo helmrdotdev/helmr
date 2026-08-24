@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -27,6 +28,7 @@ import (
 
 	"github.com/firecracker-microvm/firecracker-go-sdk"
 	"github.com/firecracker-microvm/firecracker-go-sdk/client/models"
+	"github.com/firecracker-microvm/firecracker-go-sdk/client/operations"
 	"github.com/firecracker-microvm/firecracker-go-sdk/vsock"
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/cas"
@@ -38,13 +40,48 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func TestSnapshotRuntimeConfigIncludesNetworkTopology(t *testing.T) {
-	cfg := (Config{NetworkResolverIPv4: "10.0.0.2"}).WithDefaults()
-	runtimeID, err := runtimeid.Digest(runtimeid.Selector{Arch: testCheckpointArchitecture(t), Contract: runtimeid.Contract, KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs"})
+var (
+	_ vm.Connector              = (*QualifiedRuntime)(nil)
+	_ vm.RestoringConnector     = (*QualifiedRuntime)(nil)
+	_ vm.MaterializingConnector = (*QualifiedRuntime)(nil)
+	_ vm.Cleaner                = (*QualifiedRuntime)(nil)
+)
+
+func TestRuntimeCandidateDoesNotExposeWorkloadInterfaces(t *testing.T) {
+	typeOfCandidate := reflect.TypeOf((*Connector)(nil))
+	for _, method := range []string{"Connect", "Restore", "Materialize", "Cleanup"} {
+		if _, ok := typeOfCandidate.MethodByName(method); ok {
+			t.Fatalf("unqualified runtime candidate exposes %s", method)
+		}
+	}
+}
+
+func TestRuntimeCapabilitiesRemainArtifactContentOnly(t *testing.T) {
+	connector := testConnector(t, testRestoreConfig(t))
+	capabilities, err := connector.runtimeCapabilities()
 	if err != nil {
 		t.Fatal(err)
 	}
-	digest, manifestBytes, err := snapshotRuntimeConfig(cfg, "checkpoint-1", runtimeID, "sha256:kernel", "sha256:initramfs", "sha256:rootfs", defaultKernelArgs, vm.RuntimeTopology{})
+	if capabilities.Arch != "x86_64" {
+		t.Fatalf("runtime capabilities arch = %q, want x86_64", capabilities.Arch)
+	}
+	if capabilities.Contract != runtimeid.Contract || !sha256sum.ValidDigest(capabilities.KernelDigest) || !sha256sum.ValidDigest(capabilities.InitramfsDigest) || !sha256sum.ValidDigest(capabilities.RootfsDigest) {
+		t.Fatalf("runtime artifact capabilities = %+v", capabilities)
+	}
+}
+
+func TestProbeGuestRequiresBoundRuntimeEvidence(t *testing.T) {
+	connector := &Connector{hostRuntime: newHostRuntimeEvidenceStore()}
+	err := connector.probeGuest(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "runtime evidence is not bound") {
+		t.Fatalf("ProbeGuest() error = %v", err)
+	}
+}
+
+func TestSnapshotRuntimeConfigIncludesNetworkTopology(t *testing.T) {
+	cfg := (Config{NetworkResolverIPv4: "10.0.0.2"}).WithDefaults()
+	runtimeID := testRuntimeIdentity(t, "sha256:1111111111111111111111111111111111111111111111111111111111111111", "sha256:2222222222222222222222222222222222222222222222222222222222222222", "sha256:3333333333333333333333333333333333333333333333333333333333333333").ID
+	digest, manifestBytes, err := snapshotRuntimeConfig(cfg, "checkpoint-1", runtimeID, testCPUConfigDigest(cfg.VCPUCount), "sha256:1111111111111111111111111111111111111111111111111111111111111111", "sha256:2222222222222222222222222222222222222222222222222222222222222222", "sha256:3333333333333333333333333333333333333333333333333333333333333333", defaultKernelArgs, vm.RuntimeTopology{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,8 +96,18 @@ func TestSnapshotRuntimeConfigIncludesNetworkTopology(t *testing.T) {
 	if network.GuestIPv4CIDR != GuestNetworkCIDRV0 || network.GuestMAC != GuestMACV0 || network.GatewayIPv4 != GuestGatewayIPv4V0 || network.GatewayMAC != GuestGatewayMACV0 || network.GuestInterfaceName != GuestInterfaceNameV0 || network.MTU != GuestMTUV0 || len(network.ResolverAddresses) != 1 || network.ResolverAddresses[0] != "10.0.0.2" {
 		t.Fatalf("network = %+v", network)
 	}
-	if manifest.RecoveryPoint.Runtime.ID != runtimeID || manifest.RecoveryPoint.Runtime.InitramfsDigest != "sha256:initramfs" {
+	if manifest.RecoveryPoint.Runtime.ID != runtimeID || manifest.RecoveryPoint.Runtime.InitramfsDigest != "sha256:2222222222222222222222222222222222222222222222222222222222222222" {
 		t.Fatalf("runtime = %+v", manifest.RecoveryPoint.Runtime)
+	}
+	descriptorDigest, err := CanonicalVMRuntimeDescriptor().Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.RecoveryPoint.Runtime.DescriptorDigest != descriptorDigest {
+		t.Fatalf("runtime descriptor digest = %q, want %q", manifest.RecoveryPoint.Runtime.DescriptorDigest, descriptorDigest)
+	}
+	if manifest.RecoveryPoint.Runtime.CPUConfigDigest != testCPUConfigDigest(cfg.VCPUCount) {
+		t.Fatalf("runtime CPU config digest = %q", manifest.RecoveryPoint.Runtime.CPUConfigDigest)
 	}
 }
 
@@ -85,39 +132,13 @@ func TestExt4FreeBytesReadsFreshFilesystemCapacity(t *testing.T) {
 	}
 }
 
-func TestScratchUsableFloorMatchesBuildProfiles(t *testing.T) {
-	tests := []struct {
-		name       string
-		kernelArgs string
-		want       uint64
-	}{
-		{name: "staged build", kernelArgs: buildKernelArgs, want: 19 * 1024 * 1024 * 1024},
-		{name: "image build", kernelArgs: imageBuildKernelArgs, want: 19 * 1024 * 1024 * 1024},
-		{name: "runtime", kernelArgs: defaultKernelArgs},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			connector := &Connector{kernelArgs: test.kernelArgs}
-			if got := connector.scratchUsableFloor(); got != test.want {
-				t.Fatalf("usable floor = %d, want %d", got, test.want)
-			}
-		})
-	}
-}
-
 func TestSnapshotRuntimeConfigBindsManagedProgramTopology(t *testing.T) {
 	cfg := (Config{NetworkResolverIPv4: "10.0.0.2"}).WithDefaults()
-	runtimeID, err := runtimeid.Digest(runtimeid.Selector{
-		Arch: testCheckpointArchitecture(t), Contract: runtimeid.Contract, KernelDigest: "sha256:kernel",
-		InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	runtimeID := testRuntimeIdentity(t, "sha256:1111111111111111111111111111111111111111111111111111111111111111", "sha256:2222222222222222222222222222222222222222222222222222222222222222", "sha256:3333333333333333333333333333333333333333333333333333333333333333").ID
 	drives := testProgramDrives(&recordingReadOnlyDriveSource{})
 	_, manifestBytes, err := snapshotRuntimeConfig(
-		cfg, "checkpoint-1", runtimeID, "sha256:kernel",
-		"sha256:initramfs", "sha256:rootfs", defaultKernelArgs+" helmr.program=1", vm.RuntimeTopology{}, drives,
+		cfg, "checkpoint-1", runtimeID, testCPUConfigDigest(cfg.VCPUCount), "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+		"sha256:2222222222222222222222222222222222222222222222222222222222222222", "sha256:3333333333333333333333333333333333333333333333333333333333333333", defaultKernelArgs+" helmr.program=1", vm.RuntimeTopology{}, drives,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -153,11 +174,11 @@ func TestCleanupRequiresCanonicalExactOwnership(t *testing.T) {
 	if err := os.MkdirAll(statePath, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(statePath, "owner"), []byte(string(vm.OwnerBuild)+"\n"+id+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(statePath, "owner"), []byte(string(vm.OwnerRuntime)+"\n"+strings.ToUpper(id)+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	connector := &Connector{cfg: Config{StateDir: stateDir, JailerChrootBaseDir: jailerDir, IPPath: "/bin/true"}}
-	err := connector.Cleanup(context.Background(), vm.Owner{Kind: vm.OwnerRuntime, ID: id})
+	err := connector.cleanup(context.Background(), vm.Owner{Kind: vm.OwnerRuntime, ID: id})
 	var unproven *vm.CleanupUnprovenError
 	if !errors.As(err, &unproven) || unproven.Owner != (vm.Owner{Kind: vm.OwnerRuntime, ID: id}) || !strings.Contains(err.Error(), "ownership marker") {
 		t.Fatalf("Cleanup() error = %v, want typed exact ownership rejection", err)
@@ -165,12 +186,12 @@ func TestCleanupRequiresCanonicalExactOwnership(t *testing.T) {
 	if _, err := os.Stat(statePath); err != nil {
 		t.Fatalf("mismatched owner state was removed: %v", err)
 	}
-	if err := connector.Cleanup(context.Background(), vm.Owner{Kind: vm.OwnerRuntime, ID: strings.ToUpper(id)}); !errors.As(err, &unproven) {
+	if err := connector.cleanup(context.Background(), vm.Owner{Kind: vm.OwnerRuntime, ID: strings.ToUpper(id)}); !errors.As(err, &unproven) {
 		t.Fatal("non-canonical owner id was accepted")
 	}
 }
 
-func TestCleanupRemovesExactBuildOwnerAndMarkerLast(t *testing.T) {
+func TestCleanupRemovesExactRuntimeOwnerAndMarkerLast(t *testing.T) {
 	stateDir := t.TempDir()
 	jailerDir := t.TempDir()
 	id := "019fc619-8443-77f6-9498-8c348c25f702"
@@ -182,14 +203,14 @@ func TestCleanupRemovesExactBuildOwnerAndMarkerLast(t *testing.T) {
 	if err := os.MkdirAll(jailerPath, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(statePath, "owner"), []byte("build\n"+id+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(statePath, "owner"), []byte(string(vm.OwnerRuntime)+"\n"+id+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(statePath, "scratch"), []byte("state"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	connector := &Connector{cfg: Config{StateDir: stateDir, JailerChrootBaseDir: jailerDir, IPPath: "/bin/true"}}
-	if err := connector.Cleanup(context.Background(), vm.Owner{Kind: vm.OwnerBuild, ID: id}); err != nil {
+	if err := connector.cleanup(context.Background(), vm.Owner{Kind: vm.OwnerRuntime, ID: id}); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{statePath, jailerPath} {
@@ -202,16 +223,14 @@ func TestCleanupRemovesExactBuildOwnerAndMarkerLast(t *testing.T) {
 func TestSnapshotRuntimeConfigIncludesSubstrateIdentity(t *testing.T) {
 	cfg := (Config{NetworkResolverIPv4: "10.0.0.2"}).WithDefaults()
 	topology := vm.RuntimeTopology{Substrate: &vm.RuntimeSubstrate{
-		Path:     filepath.Join(t.TempDir(), "substrate.ext4"),
-		Digest:   "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		Format:   "ext4",
-		Contract: "builder-v1",
+		Path:      filepath.Join(t.TempDir(), "substrate.ext4"),
+		Digest:    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Format:    "ext4",
+		Contract:  "builder-v1",
+		SizeBytes: 4096,
 	}}
-	runtimeID, err := runtimeid.Digest(runtimeid.Selector{Arch: testCheckpointArchitecture(t), Contract: runtimeid.Contract, KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, manifestBytes, err := snapshotRuntimeConfig(cfg, "checkpoint-1", runtimeID, "sha256:kernel", "sha256:initramfs", "sha256:rootfs", defaultKernelArgs+" helmr.substrate=1", topology)
+	runtimeID := testRuntimeIdentity(t, "sha256:1111111111111111111111111111111111111111111111111111111111111111", "sha256:2222222222222222222222222222222222222222222222222222222222222222", "sha256:3333333333333333333333333333333333333333333333333333333333333333").ID
+	_, manifestBytes, err := snapshotRuntimeConfig(cfg, "checkpoint-1", runtimeID, testCPUConfigDigest(cfg.VCPUCount), "sha256:1111111111111111111111111111111111111111111111111111111111111111", "sha256:2222222222222222222222222222222222222222222222222222222222222222", "sha256:3333333333333333333333333333333333333333333333333333333333333333", defaultKernelArgs+" helmr.substrate=1", topology)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,22 +242,24 @@ func TestSnapshotRuntimeConfigIncludesSubstrateIdentity(t *testing.T) {
 	if substrate == nil {
 		t.Fatal("substrate manifest is nil")
 	}
-	if substrate.Digest != topology.Substrate.Digest || substrate.Format != "ext4" || substrate.Contract != "builder-v1" {
+	if substrate.Digest != topology.Substrate.Digest || substrate.Format != "ext4" || substrate.Contract != "builder-v1" || substrate.SizeBytes != 4096 {
 		t.Fatalf("substrate = %+v", substrate)
 	}
 }
 
 func TestValidateRuntimeSubstrateManifestRequiresExactTopologyMatch(t *testing.T) {
 	manifest := &snapshotRuntimeSubstrate{
-		Digest:   "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		Format:   "ext4",
-		Contract: "builder-v1",
+		Digest:    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Format:    "ext4",
+		Contract:  "builder-v1",
+		SizeBytes: 4096,
 	}
 	expected := &vm.RuntimeSubstrate{
-		Path:     filepath.Join(t.TempDir(), "substrate.ext4"),
-		Digest:   manifest.Digest,
-		Format:   manifest.Format,
-		Contract: manifest.Contract,
+		Path:      filepath.Join(t.TempDir(), "substrate.ext4"),
+		Digest:    manifest.Digest,
+		Format:    manifest.Format,
+		Contract:  manifest.Contract,
+		SizeBytes: manifest.SizeBytes,
 	}
 	if err := validateRuntimeSubstrateManifest(manifest, expected); err != nil {
 		t.Fatal(err)
@@ -318,11 +339,8 @@ func (e testWrappedErrors) WrappedErrors() []error {
 
 func TestSnapshotRuntimeConfigRequiresResolver(t *testing.T) {
 	cfg := (Config{}).WithDefaults()
-	runtimeID, err := runtimeid.Digest(runtimeid.Selector{Arch: testCheckpointArchitecture(t), Contract: runtimeid.Contract, KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _, err = snapshotRuntimeConfig(cfg, "checkpoint-1", runtimeID, "sha256:kernel", "sha256:initramfs", "sha256:rootfs", defaultKernelArgs, vm.RuntimeTopology{})
+	runtimeID := testRuntimeIdentity(t, "sha256:1111111111111111111111111111111111111111111111111111111111111111", "sha256:2222222222222222222222222222222222222222222222222222222222222222", "sha256:3333333333333333333333333333333333333333333333333333333333333333").ID
+	_, _, err := snapshotRuntimeConfig(cfg, "checkpoint-1", runtimeID, testCPUConfigDigest(cfg.VCPUCount), "sha256:1111111111111111111111111111111111111111111111111111111111111111", "sha256:2222222222222222222222222222222222222222222222222222222222222222", "sha256:3333333333333333333333333333333333333333333333333333333333333333", defaultKernelArgs, vm.RuntimeTopology{})
 	if err == nil {
 		t.Fatal("expected missing resolver error")
 	}
@@ -382,8 +400,8 @@ func TestValidateRestoredNetworkConfigRequiresExactGuestVisibleIdentity(t *testi
 	}
 }
 
-func TestDefaultKernelArgsDeclareExt4Root(t *testing.T) {
-	if !strings.Contains(defaultKernelArgs, "rootfstype=ext4") {
+func TestDefaultKernelArgsDeclareSquashFSRoot(t *testing.T) {
+	if !strings.Contains(defaultKernelArgs, "rootfstype=squashfs") {
 		t.Fatalf("defaultKernelArgs = %q", defaultKernelArgs)
 	}
 }
@@ -453,7 +471,8 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 	kernelDigest := testDigest([]byte("kernel"))
 	initramfsDigest := testDigest([]byte("initramfs"))
 	rootfsDigest := testDigest([]byte("rootfs"))
-	runtimeID, err := runtimeid.Digest(runtimeid.Selector{Arch: testCheckpointArchitecture(t), Contract: runtimeid.Contract, KernelDigest: kernelDigest, InitramfsDigest: initramfsDigest, RootfsDigest: rootfsDigest})
+	runtimeID := testRuntimeIdentity(t, kernelDigest, initramfsDigest, rootfsDigest).ID
+	descriptorDigest, err := CanonicalVMRuntimeDescriptor().Digest()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -463,19 +482,21 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 		RecoveryPoint: snapshotRecoveryPointManifest{
 			ID: "checkpoint-1",
 			Runtime: snapshotRuntimeManifest{
-				Backend:         "firecracker",
-				ID:              runtimeID,
-				Arch:            testCheckpointArchitecture(t),
-				Contract:        runtimeid.Contract,
-				VCPUCount:       cfg.VCPUCount,
-				MemoryMiB:       cfg.MemoryMiB,
-				ScratchDiskMiB:  cfg.ScratchDiskMiB,
-				KernelArgs:      defaultKernelArgs,
-				KernelDigest:    kernelDigest,
-				InitramfsDigest: initramfsDigest,
-				RootfsDigest:    rootfsDigest,
-				GuestPort:       cfg.GuestPort,
-				HealthPort:      cfg.HealthPort,
+				Backend:          "firecracker",
+				DescriptorDigest: descriptorDigest,
+				ID:               runtimeID,
+				Arch:             testCheckpointArchitecture(t),
+				Contract:         runtimeid.Contract,
+				VCPUCount:        cfg.VCPUCount,
+				CPUConfigDigest:  testCPUConfigDigest(cfg.VCPUCount),
+				MemoryMiB:        cfg.MemoryMiB,
+				ScratchDiskMiB:   cfg.ScratchDiskMiB,
+				KernelArgs:       defaultKernelArgs,
+				KernelDigest:     kernelDigest,
+				InitramfsDigest:  initramfsDigest,
+				RootfsDigest:     rootfsDigest,
+				GuestPort:        cfg.GuestPort,
+				HealthPort:       cfg.HealthPort,
 			},
 		},
 		RuntimeState: snapshotRuntimeStateManifest{
@@ -503,14 +524,31 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 		{name: "identity initramfs digest", editIdentity: func(i *vm.CheckpointIdentity) { i.InitramfsDigest = "sha256:other" }, want: "checkpoint initramfs digest sha256:other does not match"},
 		{name: "identity rootfs digest", editIdentity: func(i *vm.CheckpointIdentity) { i.RootfsDigest = "sha256:other" }, want: "checkpoint rootfs digest sha256:other does not match"},
 		{name: "identity runtime config digest", editIdentity: func(i *vm.CheckpointIdentity) { i.RuntimeConfigDigest = "sha256:other" }, want: "checkpoint runtime config digest sha256:other does not match"},
+		{name: "identity vcpu count", editIdentity: func(i *vm.CheckpointIdentity) { i.VMVCPUCount = 0 }, want: "checkpoint VM vCPU count 0 is invalid"},
+		{name: "identity vcpu count does not match manifest", editIdentity: func(i *vm.CheckpointIdentity) { i.VMVCPUCount-- }, want: "does not match checkpoint manifest vCPU count"},
+		{name: "identity cpu config digest", editIdentity: func(i *vm.CheckpointIdentity) { i.CPUConfigDigest = "sha256:other" }, want: "checkpoint guest CPU configuration digest is not canonical"},
 		{name: "manifest backend", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.Backend = "test" }, want: `checkpoint manifest runtime backend "test" is not supported`},
+		{name: "manifest descriptor", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.DescriptorDigest = "sha256:other" }, want: "checkpoint manifest VM runtime descriptor digest sha256:other does not match"},
 		{name: "manifest arch", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.Arch = "other" }, want: `checkpoint manifest runtime arch "other" does not match`},
 		{name: "manifest contract", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.Contract = "other" }, want: `checkpoint manifest runtime contract "other" does not match`},
 		{name: "manifest runtime id", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.ID = "sha256:other" }, want: "checkpoint manifest runtime id sha256:other does not match"},
 		{name: "manifest kernel digest", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.KernelDigest = "sha256:other" }, want: "checkpoint manifest kernel digest sha256:other does not match"},
 		{name: "manifest initramfs digest", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.InitramfsDigest = "sha256:other" }, want: "checkpoint manifest initramfs digest sha256:other does not match"},
 		{name: "manifest rootfs digest", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.RootfsDigest = "sha256:other" }, want: "checkpoint manifest rootfs digest sha256:other does not match"},
-		{name: "manifest vcpu exceeds worker capacity", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.VCPUCount = cfg.VCPUCount + 1 }, want: "checkpoint manifest vcpu count"},
+		{name: "manifest vcpu exceeds worker capacity", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.VCPUCount = cfg.VCPUCount + 1 }, editIdentity: func(i *vm.CheckpointIdentity) { i.VMVCPUCount = int32(cfg.VCPUCount + 1) }, want: "checkpoint manifest vcpu count"},
+		{name: "manifest cpu config digest", editManifest: func(m *snapshotManifest) {
+			m.RecoveryPoint.Runtime.CPUConfigDigest = testCPUConfigDigest(cfg.VCPUCount + 1)
+		}, want: "does not match checkpoint manifest digest"},
+		{
+			name: "target cpu config digest",
+			editManifest: func(m *snapshotManifest) {
+				m.RecoveryPoint.Runtime.CPUConfigDigest = testCPUConfigDigest(cfg.VCPUCount + 1)
+			},
+			editIdentity: func(i *vm.CheckpointIdentity) {
+				i.CPUConfigDigest = testCPUConfigDigest(cfg.VCPUCount + 1)
+			},
+			want: "does not match target digest",
+		},
 		{name: "manifest memory exceeds worker capacity", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.MemoryMiB = cfg.MemoryMiB + 1 }, want: "checkpoint manifest memory"},
 		{name: "manifest scratch disk exceeds worker capacity", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.ScratchDiskMiB = cfg.ScratchDiskMiB + 1 }, want: "checkpoint manifest scratch disk size"},
 		{name: "manifest kernel args", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.KernelArgs = "other" }, want: "checkpoint manifest runtime ports or kernel args do not match"},
@@ -546,6 +584,8 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 				InitramfsDigest:     initramfsDigest,
 				RootfsDigest:        rootfsDigest,
 				RuntimeConfigDigest: sha256sum.DigestBytes(manifestBytes),
+				VMVCPUCount:         int32(cfg.VCPUCount),
+				CPUConfigDigest:     testCPUConfigDigest(cfg.VCPUCount),
 			}
 			if tt.editIdentity != nil {
 				tt.editIdentity(&identity)
@@ -581,6 +621,7 @@ func TestValidateRestoreIdentityUsesManifestRuntimeShape(t *testing.T) {
 		t.Fatal(err)
 	}
 	manifest.RecoveryPoint.Runtime.VCPUCount = 1
+	manifest.RecoveryPoint.Runtime.CPUConfigDigest = testCPUConfigDigest(1)
 	manifest.RecoveryPoint.Runtime.MemoryMiB = cfg.MemoryMiB / 2
 	manifest.RecoveryPoint.Runtime.ScratchDiskMiB = cfg.ScratchDiskMiB / 2
 	manifestBytes, err := json.Marshal(manifest)
@@ -588,6 +629,8 @@ func TestValidateRestoreIdentityUsesManifestRuntimeShape(t *testing.T) {
 		t.Fatal(err)
 	}
 	identity.RuntimeConfigDigest = sha256sum.DigestBytes(manifestBytes)
+	identity.VMVCPUCount = 1
+	identity.CPUConfigDigest = testCPUConfigDigest(1)
 
 	_, restoreCfg, err := connector.validateRestoreIdentity(
 		"checkpoint-1",
@@ -637,13 +680,13 @@ func TestRestoreRecordsUnpackPhasesOnFilepackFailure(t *testing.T) {
 	var mu sync.Mutex
 	var phases []vm.RuntimePhase
 
-	_, err := connector.Restore(context.Background(), vm.RestoreRequest{
+	_, err := connector.restore(context.Background(), vm.RestoreRequest{
 		ID:                "checkpoint-1",
 		RuntimeInstanceID: runtimeInstanceID,
 		OwnerKind:         vm.OwnerRuntime,
 		Binding: vm.WorkloadBinding{
 			WorkerEpoch: 1, OwnerID: runtimeInstanceID, Generation: 1,
-			RuntimeInstanceID: runtimeInstanceID, RuntimeIdentityID: runtimeid.Contract,
+			RuntimeInstanceID: runtimeInstanceID, RuntimeIdentityID: identity.RuntimeID,
 		},
 		VMState:              statePath,
 		VMStateMediaType:     cas.CheckpointVMStateMediaType,
@@ -1184,7 +1227,7 @@ func TestWithJailedRestoreFilesLinksScratchDiskAndRewritesDrivePaths(t *testing.
 		t.Fatal(err)
 	}
 	sourceDir := t.TempDir()
-	rootfsPath := filepath.Join(sourceDir, "rootfs.ext4")
+	rootfsPath := filepath.Join(sourceDir, "rootfs.squashfs")
 	scratchDiskPath := filepath.Join(sourceDir, "restored-scratch.ext4")
 	substrateDiskPath := filepath.Join(sourceDir, "9270959e49b0181ace5338d3acce327260b9e46d6f3827402dfca962a5189126.ext4")
 	memoryPath := filepath.Join(sourceDir, "checkpoint.mem")
@@ -1250,7 +1293,7 @@ func TestWithJailedRestoreFilesLinksScratchDiskAndRewritesDrivePaths(t *testing.
 }
 
 func TestRuntimeDrivesIncludeOptionalReadonlySubstrate(t *testing.T) {
-	drives := runtimeDrives("/rootfs.ext4", "/scratch.ext4", "/substrate.ext4", nil)
+	drives := runtimeDrives("/rootfs.squashfs", "/scratch.ext4", "/substrate.ext4", nil)
 	if len(drives) != 3 {
 		t.Fatalf("drive count = %d, want 3", len(drives))
 	}
@@ -1265,10 +1308,174 @@ func TestRuntimeDrivesIncludeOptionalReadonlySubstrate(t *testing.T) {
 	}
 }
 
+func TestRestoreReadOnlyDrivePathsSatisfySDKValidationAndBecomeJailedNames(t *testing.T) {
+	ownerDir := t.TempDir()
+	sourceDir := t.TempDir()
+	programRuntimeSource := filepath.Join(sourceDir, "runtime-source")
+	programSource := filepath.Join(sourceDir, "program-source")
+	for path, contents := range map[string]string{
+		programRuntimeSource: "runtime",
+		programSource:        "program",
+	} {
+		if err := os.WriteFile(path, []byte(contents), 0o400); err != nil {
+			t.Fatal(err)
+		}
+	}
+	drives := []vm.ReadOnlyDrive{
+		{ID: vm.ProgramRuntimeDrive, Source: fileLinkReadOnlyDriveSource{path: programRuntimeSource}},
+		{ID: vm.ProgramDrive, Source: fileLinkReadOnlyDriveSource{path: programSource}},
+	}
+	paths, err := prepareRestoreReadOnlyDrivePaths(
+		ownerDir,
+		drives,
+		os.Getuid(),
+		os.Getgid(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range readOnlyDriveOrder {
+		want := filepath.Join(ownerDir, readOnlyDriveName(id))
+		if paths[id] != want || !filepath.IsAbs(paths[id]) {
+			t.Fatalf("restore path for %q = %q, want absolute %q", id, paths[id], want)
+		}
+		info, err := os.Lstat(paths[id])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !info.Mode().IsRegular() {
+			t.Fatalf("restore path for %q is not regular", id)
+		}
+	}
+
+	machineFiles := t.TempDir()
+	rootfsPath := filepath.Join(machineFiles, "rootfs.squashfs")
+	scratchPath := filepath.Join(machineFiles, "scratch.ext4")
+	memoryPath := filepath.Join(machineFiles, "memory.mem")
+	statePath := filepath.Join(machineFiles, "state.vmstate")
+	kernelPath := filepath.Join(machineFiles, "vmlinux")
+	for _, path := range []string{rootfsPath, scratchPath, memoryPath, statePath, kernelPath} {
+		if err := os.WriteFile(path, []byte(filepath.Base(path)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := firecracker.Config{
+		SocketPath: filepath.Join(machineFiles, "api.sock"),
+		Drives: runtimeDrivesWithReadOnlyPaths(
+			rootfsPath,
+			scratchPath,
+			"",
+			drives,
+			paths,
+		),
+		Snapshot: firecracker.SnapshotConfig{
+			MemFilePath:  memoryPath,
+			SnapshotPath: statePath,
+		},
+	}
+	if err := cfg.ValidateLoadSnapshot(); err != nil {
+		t.Fatalf("SDK snapshot validation rejected owner-scoped drive paths: %v", err)
+	}
+
+	chrootBase := t.TempDir()
+	vmID := "restore-vm"
+	root := filepath.Join(chrootBase, "firecracker", vmID, "root")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	strategy := sealedDriveChrootStrategy{kernelImagePath: kernelPath, drives: drives}
+	machine, err := firecracker.NewMachine(
+		context.Background(),
+		firecracker.Config{
+			VMID:            vmID,
+			SocketPath:      filepath.Join(machineFiles, "api.sock"),
+			KernelImagePath: kernelPath,
+			JailerCfg: &firecracker.JailerConfig{
+				ExecFile:       "/usr/bin/firecracker",
+				ChrootBaseDir:  chrootBase,
+				ID:             vmID,
+				UID:            firecracker.Int(os.Getuid()),
+				GID:            firecracker.Int(os.Getgid()),
+				NumaNode:       firecracker.Int(0),
+				ChrootStrategy: strategy,
+			},
+			Drives: cfg.Drives,
+		},
+		withSnapshotRestore(memoryPath, statePath),
+		withJailedRestoreFiles(rootfsPath, scratchPath, "", memoryPath, statePath),
+		withRestoreSealedDrives(strategy),
+		func(machine *firecracker.Machine) {
+			for _, name := range []string{
+				firecracker.SetupNetworkHandlerName,
+				firecracker.StartVMMHandlerName,
+				firecracker.CreateLogFilesHandlerName,
+				firecracker.BootstrapLoggingHandlerName,
+				firecracker.LoadSnapshotHandlerName,
+			} {
+				machine.Handlers.FcInit = machine.Handlers.FcInit.Swap(firecracker.Handler{
+					Name: name,
+					Fn:   func(context.Context, *firecracker.Machine) error { return nil },
+				})
+			}
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := machine.Handlers.FcInit.Run(context.Background(), machine); err != nil {
+		t.Fatal(err)
+	}
+	for _, drive := range machine.Cfg.Drives {
+		id := firecracker.StringValue(drive.DriveID)
+		if id != vm.ProgramRuntimeDrive && id != vm.ProgramDrive {
+			continue
+		}
+		want := readOnlyDriveName(id)
+		if got := firecracker.StringValue(drive.PathOnHost); got != want {
+			t.Fatalf("jailed path for %q = %q, want %q", id, got, want)
+		}
+		if _, err := os.Stat(filepath.Join(root, want)); err != nil {
+			t.Fatalf("jailed drive %q is absent: %v", id, err)
+		}
+	}
+
+	if err := os.RemoveAll(ownerDir); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range paths {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatalf("owner projection %q survived cleanup: %v", path, err)
+		}
+	}
+}
+
+func TestPrepareRestoreReadOnlyDrivePathsFailsClosed(t *testing.T) {
+	drives := []vm.ReadOnlyDrive{{
+		ID:     vm.ProgramRuntimeDrive,
+		Source: failingReadOnlyDriveSource{err: errors.New("source changed")},
+	}}
+	if _, err := prepareRestoreReadOnlyDrivePaths(
+		t.TempDir(),
+		drives,
+		os.Getuid(),
+		os.Getgid(),
+	); err == nil || !strings.Contains(err.Error(), "source changed") {
+		t.Fatalf("error = %v, want sealed source failure", err)
+	}
+	if _, err := prepareRestoreReadOnlyDrivePaths(
+		"relative-owner",
+		drives,
+		os.Getuid(),
+		os.Getgid(),
+	); err == nil {
+		t.Fatal("relative owner directory should fail")
+	}
+}
+
 func TestRuntimeDrivesIncludeSealedReadOnlyDrives(t *testing.T) {
 	source := &recordingReadOnlyDriveSource{}
 	drives := runtimeDrives(
-		"/rootfs.ext4",
+		"/rootfs.squashfs",
 		"/scratch.ext4",
 		"",
 		[]vm.ReadOnlyDrive{{ID: vm.ProgramDrive, Source: source}},
@@ -1290,7 +1497,7 @@ func TestRuntimeDrivesIncludeSealedReadOnlyDrives(t *testing.T) {
 func TestRuntimeDrivesUseFixedProgramOrder(t *testing.T) {
 	source := &recordingReadOnlyDriveSource{}
 	drives := runtimeDrives(
-		"/rootfs.ext4",
+		"/rootfs.squashfs",
 		"/scratch.ext4",
 		"/workspace.ext4",
 		[]vm.ReadOnlyDrive{
@@ -1342,16 +1549,28 @@ func TestMaterializeAcceptsOnlyCompleteProgramDriveSet(t *testing.T) {
 	source := &recordingReadOnlyDriveSource{}
 	runtimeInstanceID := uuid.Must(uuid.NewV7()).String()
 	rootfsDigest := "sha256:" + strings.Repeat("0", 64)
-	connector := &Connector{artifacts: runtimeArtifacts{Rootfs: runtimeArtifact{Digest: rootfsDigest}}}
+	artifacts := testProbeRuntimeArtifacts()
+	artifacts.Rootfs.Digest = rootfsDigest
+	connector := &Connector{
+		artifacts:   artifacts,
+		hostRuntime: newHostRuntimeEvidenceStore(),
+	}
+	evidence := testHostRuntimeEvidence(t, 1, artifacts)
+	if err := connector.hostRuntime.bind(evidence, 1); err != nil {
+		t.Fatal(err)
+	}
 	request := vm.MaterializeRequest{
 		ID:        runtimeInstanceID,
 		OwnerKind: vm.OwnerRuntime,
 		Binding: vm.WorkloadBinding{
 			WorkerEpoch: 1, OwnerID: runtimeInstanceID, Generation: 1,
-			RuntimeInstanceID: runtimeInstanceID, RuntimeIdentityID: runtimeid.Contract,
+			RuntimeInstanceID: runtimeInstanceID, RuntimeIdentityID: evidence.RuntimeID,
 		},
 		RootfsDigest:       rootfsDigest,
 		WorkspaceMountPath: "/workspace",
+		Resources:          compute.ResourceVector{MilliCPU: 1000},
+		VMVCPUCount:        1,
+		CPUConfigDigest:    testCPUConfigDigest(1),
 		ReadOnlyDrives:     testProgramDrives(source),
 	}
 	if err := connector.validateMaterializeRequest(request); err != nil {
@@ -1363,125 +1582,121 @@ func TestMaterializeAcceptsOnlyCompleteProgramDriveSet(t *testing.T) {
 	}
 }
 
-func TestBuildGuestProfilesUseExactDriveSets(t *testing.T) {
-	source := &recordingReadOnlyDriveSource{}
-	tests := map[string]struct {
-		request    vm.ConnectRequest
-		kernelArgs string
+func TestMaterializeRequiresActivationProbedCPUShape(t *testing.T) {
+	runtimeInstanceID := uuid.Must(uuid.NewV7()).String()
+	rootfsDigest := testCanonicalDigest("0")
+	artifacts := testProbeRuntimeArtifacts()
+	artifacts.Rootfs.Digest = rootfsDigest
+	validRequest := vm.MaterializeRequest{
+		ID:        runtimeInstanceID,
+		OwnerKind: vm.OwnerRuntime,
+		Binding: vm.WorkloadBinding{
+			WorkerEpoch: 1, OwnerID: runtimeInstanceID, Generation: 1,
+			RuntimeInstanceID: runtimeInstanceID,
+		},
+		RootfsDigest:       rootfsDigest,
+		WorkspaceMountPath: "/workspace",
+		Resources:          compute.ResourceVector{MilliCPU: 1500},
+		VMVCPUCount:        2,
+		CPUConfigDigest:    testCPUConfigDigest(2),
+	}
+	connector := &Connector{
+		cfg:         Config{VCPUCount: 2},
+		artifacts:   artifacts,
+		hostRuntime: newHostRuntimeEvidenceStore(),
+	}
+	evidence := testHostRuntimeEvidence(t, 2, artifacts)
+	validRequest.Binding.RuntimeIdentityID = evidence.RuntimeID
+	if err := connector.hostRuntime.bind(evidence, 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := connector.validateMaterializeRequest(validRequest); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name string
+		edit func(*vm.MaterializeRequest)
+		want string
 	}{
-		"build": {
-			request: vm.ConnectRequest{
-				OwnerKind: vm.OwnerBuild,
-				Resources: compute.BuildGuestResources(),
-				PIDsMax:   compute.BuildGuestPIDsMax,
-				ReadOnlyDrives: []vm.ReadOnlyDrive{
-					{ID: vm.ToolchainDrive, Source: source},
-					{ID: vm.ManagerDrive, Source: source},
-					{ID: vm.ManagedRuntimeDrive, Source: source},
-				},
-			},
-			kernelArgs: buildKernelArgs,
-		},
-		"image build": {
-			request: vm.ConnectRequest{
-				OwnerKind: vm.OwnerImageBuild,
-				Resources: compute.ImageBuildGuestResources(),
-				PIDsMax:   compute.ImageBuildGuestPIDsMax,
-			},
-			kernelArgs: imageBuildKernelArgs,
-		},
+		{name: "missing vcpu", edit: func(request *vm.MaterializeRequest) { request.VMVCPUCount = 0 }, want: "does not match"},
+		{name: "wrong vcpu", edit: func(request *vm.MaterializeRequest) { request.VMVCPUCount = 1 }, want: "does not match"},
+		{name: "invalid digest", edit: func(request *vm.MaterializeRequest) { request.CPUConfigDigest = "sha256:other" }, want: "not canonical"},
+		{name: "wrong local digest", edit: func(request *vm.MaterializeRequest) { request.CPUConfigDigest = testCPUConfigDigest(1) }, want: "does not match target digest"},
+		{name: "wrong runtime identity", edit: func(request *vm.MaterializeRequest) { request.Binding.RuntimeIdentityID = testCanonicalDigest("f") }, want: "does not match target host runtime"},
 	}
-	for name, test := range tests {
-		t.Run(name, func(t *testing.T) {
-			kernelArgs, err := buildGuestProfile(test.request)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if kernelArgs != test.kernelArgs {
-				t.Fatalf("profile = %q, want %q", kernelArgs, test.kernelArgs)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := validRequest
+			test.edit(&request)
+			if err := connector.validateMaterializeRequest(request); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
 			}
 		})
 	}
-}
 
-func TestBuildGuestProfileRejectsOpenProfiles(t *testing.T) {
-	source := &recordingReadOnlyDriveSource{}
-	required := []vm.ReadOnlyDrive{
-		{ID: vm.ManagerDrive, Source: source},
-		{ID: vm.ManagedRuntimeDrive, Source: source},
-		{ID: vm.ToolchainDrive, Source: source},
-	}
-	tests := map[string]vm.ConnectRequest{
-		"missing component": {
-			OwnerKind:      vm.OwnerBuild,
-			Resources:      compute.BuildGuestResources(),
-			PIDsMax:        compute.BuildGuestPIDsMax,
-			ReadOnlyDrives: required[:2],
-		},
-		"wrong process limit": {
-			OwnerKind:      vm.OwnerBuild,
-			Resources:      compute.BuildGuestResources(),
-			PIDsMax:        compute.BuildGuestPIDsMax - 1,
-			ReadOnlyDrives: required,
-		},
-		"workspace substrate": {
-			OwnerKind: vm.OwnerBuild,
-			Resources: compute.BuildGuestResources(),
-			PIDsMax:   compute.BuildGuestPIDsMax,
-			Topology: vm.RuntimeTopology{Substrate: &vm.RuntimeSubstrate{
-				Path: "workspace.ext4",
-			}},
-			ReadOnlyDrives: required,
-		},
-		"build drives on standard build": {
-			OwnerKind:      vm.OwnerBuild,
-			Resources:      compute.BuildGuestResources(),
-			ReadOnlyDrives: required,
-		},
-		"image build with drive": {
-			OwnerKind:      vm.OwnerImageBuild,
-			Resources:      compute.ImageBuildGuestResources(),
-			PIDsMax:        compute.ImageBuildGuestPIDsMax,
-			ReadOnlyDrives: required[:1],
-		},
-	}
-	for name, request := range tests {
-		t.Run(name, func(t *testing.T) {
-			if _, err := buildGuestProfile(request); err == nil {
-				t.Fatal("buildGuestProfile error = nil")
-			}
-		})
+	unbound := *connector
+	unbound.hostRuntime = newHostRuntimeEvidenceStore()
+	if err := unbound.validateMaterializeRequest(validRequest); err == nil || !strings.Contains(err.Error(), "not bound") {
+		t.Fatalf("unbound error = %v", err)
 	}
 }
 
-func TestRuntimeDrivesUseFixedBuildOrder(t *testing.T) {
-	source := &recordingReadOnlyDriveSource{}
-	drives := runtimeDrives(
-		"/rootfs.ext4",
-		"/scratch.ext4",
+func TestSessionRuntimeFailsClosedUntilHostEvidenceIsBound(t *testing.T) {
+	artifacts := testProbeRuntimeArtifacts()
+	connector := &Connector{
+		cfg:         Config{VCPUCount: 2},
+		artifacts:   artifacts,
+		hostRuntime: newHostRuntimeEvidenceStore(),
+	}
+	if _, _, _, err := connector.boundSessionRuntime(2); err == nil || !strings.Contains(err.Error(), "not bound") {
+		t.Fatalf("unbound session runtime error = %v", err)
+	}
+	evidence := testHostRuntimeEvidence(t, 2, artifacts)
+	if err := connector.hostRuntime.bind(evidence, 2); err != nil {
+		t.Fatal(err)
+	}
+	identity, digest, firecrackerPath, err := connector.boundSessionRuntime(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.ID != evidence.RuntimeID || digest != evidence.CPUShapes[1].CPUConfigDigest || firecrackerPath != evidence.firecrackerPath {
+		t.Fatalf("bound session identity = %+v digest=%q executable=%q evidence=%+v", identity, digest, firecrackerPath, evidence)
+	}
+}
+
+func TestSessionEntryPointsRejectWorkloadRuntimeIdentityMismatch(t *testing.T) {
+	connector := testConnector(t, testRestoreConfig(t))
+	runtimeInstanceID := uuid.Must(uuid.NewV7()).String()
+	binding := vm.WorkloadBinding{
+		WorkerEpoch:       1,
+		OwnerID:           runtimeInstanceID,
+		Generation:        1,
+		RuntimeInstanceID: runtimeInstanceID,
+		RuntimeIdentityID: testCanonicalDigest("f"),
+	}
+	if _, err := connector.prepareSession(
+		context.Background(),
+		runtimeInstanceID,
+		vm.OwnerRuntime,
+		binding,
 		"",
-		[]vm.ReadOnlyDrive{
-			{ID: vm.BuildTreeDrive, Source: source},
-			{ID: vm.ToolchainDrive, Source: source},
-			{ID: vm.ManagedRuntimeDrive, Source: source},
-			{ID: vm.ManagerDrive, Source: source},
-		},
-	)
-	want := []string{
-		"rootfs",
-		"scratch",
-		vm.ManagerDrive,
-		vm.ManagedRuntimeDrive,
-		vm.ToolchainDrive,
-		vm.BuildTreeDrive,
+		"",
+		"",
+		nil,
+		vm.RuntimeTopology{},
+		nil,
+		nil,
+		false,
+	); err == nil || !strings.Contains(err.Error(), "does not match bound host runtime") {
+		t.Fatalf("prepare session runtime identity error = %v", err)
 	}
-	if len(drives) != len(want) {
-		t.Fatalf("drive count = %d, want %d", len(drives), len(want))
-	}
-	for index, drive := range drives {
-		if got := firecracker.StringValue(drive.DriveID); got != want[index] {
-			t.Fatalf("drive %d ID = %q, want %q", index, got, want[index])
-		}
+	if _, err := connector.restore(context.Background(), vm.RestoreRequest{
+		RuntimeInstanceID: runtimeInstanceID,
+		OwnerKind:         vm.OwnerRuntime,
+		Binding:           binding,
+	}); err == nil || !strings.Contains(err.Error(), "does not match target host runtime") {
+		t.Fatalf("restore runtime identity error = %v", err)
 	}
 }
 
@@ -1494,7 +1709,7 @@ func TestSealedDriveChrootStrategySeparatesSourceCapabilities(t *testing.T) {
 	}
 	sourceDirectory := t.TempDir()
 	kernelPath := filepath.Join(sourceDirectory, "vmlinux")
-	rootfsPath := filepath.Join(sourceDirectory, "rootfs.ext4")
+	rootfsPath := filepath.Join(sourceDirectory, "rootfs.squashfs")
 	scratchPath := filepath.Join(sourceDirectory, "scratch.ext4")
 	for _, path := range []string{kernelPath, rootfsPath, scratchPath} {
 		if err := os.WriteFile(path, []byte(filepath.Base(path)), 0o600); err != nil {
@@ -1568,91 +1783,6 @@ func TestSealedDriveChrootStrategySeparatesSourceCapabilities(t *testing.T) {
 	}
 }
 
-func TestSealedDriveChrootStrategyPreservesBuildDriveOrder(t *testing.T) {
-	chrootBase := t.TempDir()
-	vmID := "vm-build"
-	root := filepath.Join(chrootBase, "firecracker", vmID, "root")
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	sourceDirectory := t.TempDir()
-	kernelPath := filepath.Join(sourceDirectory, "vmlinux")
-	rootfsPath := filepath.Join(sourceDirectory, "rootfs.ext4")
-	scratchPath := filepath.Join(sourceDirectory, "scratch.ext4")
-	for _, path := range []string{kernelPath, rootfsPath, scratchPath} {
-		if err := os.WriteFile(path, []byte(filepath.Base(path)), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	sources := map[string]*recordingReadOnlyDriveSource{
-		vm.ManagerDrive:        {},
-		vm.ManagedRuntimeDrive: {},
-		vm.ToolchainDrive:      {},
-		vm.BuildTreeDrive:      {},
-	}
-	declared := []vm.ReadOnlyDrive{
-		{ID: vm.BuildTreeDrive, Source: sources[vm.BuildTreeDrive]},
-		{ID: vm.ToolchainDrive, Source: sources[vm.ToolchainDrive]},
-		{ID: vm.ManagedRuntimeDrive, Source: sources[vm.ManagedRuntimeDrive]},
-		{ID: vm.ManagerDrive, Source: sources[vm.ManagerDrive]},
-	}
-	machine := &firecracker.Machine{
-		Cfg: firecracker.Config{
-			KernelImagePath: kernelPath,
-			JailerCfg: &firecracker.JailerConfig{
-				ExecFile:      "/usr/bin/firecracker",
-				ChrootBaseDir: chrootBase,
-				ID:            vmID,
-				UID:           firecracker.Int(os.Getuid()),
-				GID:           firecracker.Int(os.Getgid()),
-			},
-			Drives: runtimeDrives(rootfsPath, scratchPath, "", declared),
-		},
-		Handlers: firecracker.Handlers{
-			FcInit: firecracker.HandlerList{}.Append(firecracker.Handler{
-				Name: firecracker.CreateLogFilesHandlerName,
-				Fn: func(context.Context, *firecracker.Machine) error {
-					return nil
-				},
-			}),
-		},
-	}
-	firecracker.WithLogger(logrus.NewEntry(logrus.New()))(machine)
-	strategy := sealedDriveChrootStrategy{kernelImagePath: kernelPath, drives: declared}
-	if err := strategy.AdaptHandlers(&machine.Handlers); err != nil {
-		t.Fatal(err)
-	}
-	if err := machine.Handlers.FcInit.Run(context.Background(), machine); err != nil {
-		t.Fatal(err)
-	}
-
-	want := []string{
-		"rootfs",
-		"scratch",
-		vm.ManagerDrive,
-		vm.ManagedRuntimeDrive,
-		vm.ToolchainDrive,
-		vm.BuildTreeDrive,
-	}
-	if len(machine.Cfg.Drives) != len(want) {
-		t.Fatalf("drive count = %d, want %d", len(machine.Cfg.Drives), len(want))
-	}
-	for index, drive := range machine.Cfg.Drives {
-		id := firecracker.StringValue(drive.DriveID)
-		if id != want[index] {
-			t.Fatalf("drive %d ID = %q, want %q", index, id, want[index])
-		}
-		if source := sources[id]; source != nil {
-			if source.directory != root ||
-				source.name != readOnlyDriveName(id) ||
-				source.uid != os.Getuid() ||
-				source.gid != os.Getgid() {
-				t.Fatalf("drive %q link request = %+v", id, source)
-			}
-		}
-	}
-}
-
 func TestValidateReadOnlyDrivesRejectsInvalidDeclarations(t *testing.T) {
 	source := &recordingReadOnlyDriveSource{}
 	for _, test := range []struct {
@@ -1688,6 +1818,23 @@ type recordingReadOnlyDriveSource struct {
 	name      string
 	uid       int
 	gid       int
+}
+
+type fileLinkReadOnlyDriveSource struct{ path string }
+
+func (source fileLinkReadOnlyDriveSource) LinkInto(
+	directory string,
+	name string,
+	_ int,
+	_ int,
+) error {
+	return os.Link(source.path, filepath.Join(directory, name))
+}
+
+type failingReadOnlyDriveSource struct{ err error }
+
+func (source failingReadOnlyDriveSource) LinkInto(string, string, int, int) error {
+	return source.err
 }
 
 func testProgramDrives(source vm.ReadOnlyDriveSource) []vm.ReadOnlyDrive {
@@ -1730,11 +1877,43 @@ func TestWithSnapshotRestoreSkipsVsockReconfiguration(t *testing.T) {
 	if machine.Cfg.Snapshot.SnapshotPath != "/checkpoint.vmstate" {
 		t.Fatalf("state path = %q", machine.Cfg.Snapshot.SnapshotPath)
 	}
+	if machine.Cfg.Snapshot.EnableDiffSnapshots {
+		t.Fatal("restore enabled differential snapshots")
+	}
+	if machine.Cfg.Snapshot.ResumeVM {
+		t.Fatal("restore must load paused so network identity can be validated before resume")
+	}
 	if !machine.Handlers.FcInit.Has(firecracker.LoadSnapshotHandlerName) {
 		t.Fatal("expected snapshot load handler")
 	}
 	if machine.Handlers.FcInit.Has(firecracker.AddVsocksHandlerName) {
 		t.Fatal("restore must not re-add vsock devices after loading a snapshot")
+	}
+}
+
+func TestExplicitFullSnapshotSetsSnapshotType(t *testing.T) {
+	parameters := &operations.CreateSnapshotParams{Body: &models.SnapshotCreateParams{}}
+	explicitFullSnapshot(parameters)
+	if parameters.Body.SnapshotType != models.SnapshotCreateParamsSnapshotTypeFull {
+		t.Fatalf("snapshot type = %q", parameters.Body.SnapshotType)
+	}
+}
+
+func TestRuntimeSDKConfigurationUsesDescriptor(t *testing.T) {
+	descriptor := CanonicalVMRuntimeDescriptor()
+	machine := runtimeMachineConfiguration(descriptor, Config{VCPUCount: 4, MemoryMiB: 4096})
+	if machine.VcpuCount == nil || *machine.VcpuCount != 4 || machine.MemSizeMib == nil || *machine.MemSizeMib != 4096 {
+		t.Fatalf("machine configuration = %+v", machine)
+	}
+	if machine.Smt == nil || *machine.Smt != descriptor.Machine.SMT || machine.TrackDirtyPages != descriptor.Machine.TrackDirtyPages {
+		t.Fatalf("machine configuration = %+v descriptor = %+v", machine, descriptor.Machine)
+	}
+	if machine.CPUTemplate != "" {
+		t.Fatalf("static CPU template = %q", machine.CPUTemplate)
+	}
+	device := runtimeVsockDevice(descriptor, descriptor.Devices.Vsock.GuestCIDStart)
+	if device.ID != descriptor.Devices.Vsock.ID || device.Path != descriptor.Paths.VsockSocket || device.CID != descriptor.Devices.Vsock.GuestCIDStart {
+		t.Fatalf("vsock device = %+v descriptor = %+v", device, descriptor.Devices.Vsock)
 	}
 }
 
@@ -1871,7 +2050,11 @@ func testConnector(t *testing.T, cfg Config) *Connector {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &Connector{cfg: cfg, artifacts: artifacts}
+	connector := &Connector{cfg: cfg, artifacts: artifacts, hostRuntime: newHostRuntimeEvidenceStore()}
+	if err := connector.hostRuntime.bind(testHostRuntimeEvidence(t, cfg.VCPUCount, artifacts), cfg.VCPUCount); err != nil {
+		t.Fatal(err)
+	}
+	return connector
 }
 
 func testCheckpointArchitecture(t *testing.T) string {
@@ -1888,7 +2071,9 @@ func testRestoreManifestAndIdentity(t *testing.T, cfg Config, checkpointID strin
 	kernelDigest := testDigest([]byte("kernel"))
 	initramfsDigest := testDigest([]byte("initramfs"))
 	rootfsDigest := testDigest([]byte("rootfs"))
-	runtimeID, err := runtimeid.Digest(runtimeid.Selector{Arch: testCheckpointArchitecture(t), Contract: runtimeid.Contract, KernelDigest: kernelDigest, InitramfsDigest: initramfsDigest, RootfsDigest: rootfsDigest})
+	runtimeIdentity := testRuntimeIdentity(t, kernelDigest, initramfsDigest, rootfsDigest)
+	runtimeID := runtimeIdentity.ID
+	descriptorDigest, err := CanonicalVMRuntimeDescriptor().Digest()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1896,19 +2081,21 @@ func testRestoreManifestAndIdentity(t *testing.T, cfg Config, checkpointID strin
 		RecoveryPoint: snapshotRecoveryPointManifest{
 			ID: checkpointID,
 			Runtime: snapshotRuntimeManifest{
-				Backend:         "firecracker",
-				ID:              runtimeID,
-				Arch:            testCheckpointArchitecture(t),
-				Contract:        runtimeid.Contract,
-				VCPUCount:       cfg.VCPUCount,
-				MemoryMiB:       cfg.MemoryMiB,
-				ScratchDiskMiB:  cfg.ScratchDiskMiB,
-				KernelArgs:      defaultKernelArgs,
-				KernelDigest:    kernelDigest,
-				InitramfsDigest: initramfsDigest,
-				RootfsDigest:    rootfsDigest,
-				GuestPort:       cfg.GuestPort,
-				HealthPort:      cfg.HealthPort,
+				Backend:          "firecracker",
+				DescriptorDigest: descriptorDigest,
+				ID:               runtimeID,
+				Arch:             runtimeIdentity.Arch,
+				Contract:         runtimeIdentity.Contract,
+				VCPUCount:        cfg.VCPUCount,
+				CPUConfigDigest:  testCPUConfigDigest(cfg.VCPUCount),
+				MemoryMiB:        cfg.MemoryMiB,
+				ScratchDiskMiB:   cfg.ScratchDiskMiB,
+				KernelArgs:       defaultKernelArgs,
+				KernelDigest:     kernelDigest,
+				InitramfsDigest:  initramfsDigest,
+				RootfsDigest:     rootfsDigest,
+				GuestPort:        cfg.GuestPort,
+				HealthPort:       cfg.HealthPort,
 			},
 		},
 		RuntimeState: snapshotRuntimeStateManifest{
@@ -1922,12 +2109,14 @@ func testRestoreManifestAndIdentity(t *testing.T, cfg Config, checkpointID strin
 	return manifestBytes, vm.CheckpointIdentity{
 		RuntimeBackend:      "firecracker",
 		RuntimeID:           runtimeID,
-		RuntimeArch:         testCheckpointArchitecture(t),
-		VMRuntimeContract:   runtimeid.Contract,
+		RuntimeArch:         runtimeIdentity.Arch,
+		VMRuntimeContract:   runtimeIdentity.Contract,
 		KernelDigest:        kernelDigest,
 		InitramfsDigest:     initramfsDigest,
 		RootfsDigest:        rootfsDigest,
 		RuntimeConfigDigest: sha256sum.DigestBytes(manifestBytes),
+		VMVCPUCount:         int32(cfg.VCPUCount),
+		CPUConfigDigest:     testCPUConfigDigest(cfg.VCPUCount),
 	}
 }
 

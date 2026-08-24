@@ -912,6 +912,88 @@ func (q *Queries) LockAttemptSecretDelivery(ctx context.Context, arg LockAttempt
 	return items, nil
 }
 
+const lockAttemptSecretResolutionMetadata = `-- name: LockAttemptSecretResolutionMetadata :many
+SELECT
+    workspace_secrets.placement_kind,
+    workspace_secrets.placement_target,
+    workspace_secrets.secret_id,
+    secrets.state AS secret_state,
+    secrets.current_version_id,
+    secrets.revocation_generation,
+    secret_resolutions.id AS resolution_id,
+    secret_resolutions.run_id AS resolution_run_id,
+    secret_resolutions.attempt_number AS resolution_attempt_number,
+    secret_resolutions.secret_version_id AS resolution_secret_version_id,
+    secret_resolutions.revocation_generation AS resolution_revocation_generation
+FROM workspace_secrets
+JOIN secrets
+  ON secrets.environment_id = workspace_secrets.environment_id
+ AND secrets.id = workspace_secrets.secret_id
+LEFT JOIN secret_resolutions
+  ON secret_resolutions.workspace_id = workspace_secrets.workspace_id
+ AND secret_resolutions.run_id = $1
+ AND secret_resolutions.attempt_number = $2
+ AND secret_resolutions.placement_kind = workspace_secrets.placement_kind
+ AND secret_resolutions.placement_target = workspace_secrets.placement_target
+ AND secret_resolutions.secret_id = workspace_secrets.secret_id
+WHERE workspace_secrets.workspace_id = $3
+ORDER BY secrets.id, workspace_secrets.placement_kind, workspace_secrets.placement_target
+LIMIT 65
+FOR UPDATE OF secrets
+`
+
+type LockAttemptSecretResolutionMetadataParams struct {
+	RunID         pgtype.UUID `json:"run_id"`
+	AttemptNumber pgtype.Int4 `json:"attempt_number"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+}
+
+type LockAttemptSecretResolutionMetadataRow struct {
+	PlacementKind                  string      `json:"placement_kind"`
+	PlacementTarget                string      `json:"placement_target"`
+	SecretID                       pgtype.UUID `json:"secret_id"`
+	SecretState                    string      `json:"secret_state"`
+	CurrentVersionID               pgtype.UUID `json:"current_version_id"`
+	RevocationGeneration           int64       `json:"revocation_generation"`
+	ResolutionID                   pgtype.UUID `json:"resolution_id"`
+	ResolutionRunID                pgtype.UUID `json:"resolution_run_id"`
+	ResolutionAttemptNumber        pgtype.Int4 `json:"resolution_attempt_number"`
+	ResolutionSecretVersionID      pgtype.UUID `json:"resolution_secret_version_id"`
+	ResolutionRevocationGeneration pgtype.Int8 `json:"resolution_revocation_generation"`
+}
+
+func (q *Queries) LockAttemptSecretResolutionMetadata(ctx context.Context, arg LockAttemptSecretResolutionMetadataParams) ([]LockAttemptSecretResolutionMetadataRow, error) {
+	rows, err := q.db.Query(ctx, lockAttemptSecretResolutionMetadata, arg.RunID, arg.AttemptNumber, arg.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LockAttemptSecretResolutionMetadataRow
+	for rows.Next() {
+		var i LockAttemptSecretResolutionMetadataRow
+		if err := rows.Scan(
+			&i.PlacementKind,
+			&i.PlacementTarget,
+			&i.SecretID,
+			&i.SecretState,
+			&i.CurrentVersionID,
+			&i.RevocationGeneration,
+			&i.ResolutionID,
+			&i.ResolutionRunID,
+			&i.ResolutionAttemptNumber,
+			&i.ResolutionSecretVersionID,
+			&i.ResolutionRevocationGeneration,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockProcessSecretDelivery = `-- name: LockProcessSecretDelivery :many
 SELECT
     workspace_secrets.workspace_id, workspace_secrets.environment_id, workspace_secrets.placement_kind, workspace_secrets.placement_target, workspace_secrets.secret_id, workspace_secrets.created_at,

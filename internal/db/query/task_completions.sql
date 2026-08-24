@@ -108,6 +108,95 @@ UPDATE workspace_leases
    AND expires_at > sqlc.arg(completed_at)
 RETURNING *;
 
+-- name: RequestSameWorkspaceChildAttemptRuntimeDiscard :one
+WITH authority AS MATERIALIZED (
+    SELECT runtime_instances.id AS runtime_instance_id,
+           workspace_mounts.id AS workspace_mount_id
+      FROM run_leases
+      JOIN workspace_leases
+        ON workspace_leases.id = sqlc.arg(workspace_lease_id)
+       AND workspace_leases.workspace_id = run_leases.workspace_id
+       AND workspace_leases.workspace_mount_id = sqlc.arg(workspace_mount_id)
+       AND workspace_leases.runtime_instance_id = sqlc.arg(runtime_instance_id)
+       AND workspace_leases.owner_run_lease_id = run_leases.id
+       AND workspace_leases.owner_process_id IS NULL
+       AND workspace_leases.ownership_generation = sqlc.arg(ownership_generation)
+       AND workspace_leases.writer_generation = sqlc.arg(writer_generation)
+       AND workspace_leases.mount_fencing_generation = sqlc.arg(mount_fencing_generation)
+       AND workspace_leases.state = 'released'
+      JOIN runtime_instances
+        ON runtime_instances.id = workspace_leases.runtime_instance_id
+       AND runtime_instances.org_id = sqlc.arg(org_id)
+       AND runtime_instances.project_id = sqlc.arg(project_id)
+       AND runtime_instances.environment_id = sqlc.arg(environment_id)
+       AND runtime_instances.workspace_id = sqlc.arg(workspace_id)
+       AND runtime_instances.worker_group_id = sqlc.arg(worker_group_id)
+       AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
+       AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
+       AND runtime_instances.reclaimed_at IS NULL
+       AND (runtime_instances.desired_state = 'ready'
+            OR (runtime_instances.desired_state = 'closed'
+                AND runtime_instances.desired_reason = 'same_workspace_child_attempt_finished'))
+       AND runtime_instances.observed_state IN ('ready', 'closing')
+      JOIN workspace_mounts
+        ON workspace_mounts.id = workspace_leases.workspace_mount_id
+       AND workspace_mounts.org_id = runtime_instances.org_id
+       AND workspace_mounts.project_id = runtime_instances.project_id
+       AND workspace_mounts.environment_id = runtime_instances.environment_id
+       AND workspace_mounts.workspace_id = runtime_instances.workspace_id
+       AND workspace_mounts.runtime_instance_id = runtime_instances.id
+       AND workspace_mounts.worker_group_id = runtime_instances.worker_group_id
+       AND workspace_mounts.worker_instance_id = runtime_instances.worker_instance_id
+       AND workspace_mounts.worker_epoch = runtime_instances.worker_epoch
+       AND workspace_mounts.fencing_generation = sqlc.arg(mount_fencing_generation)
+       AND (workspace_mounts.state = 'mounted'
+            OR (workspace_mounts.state = 'unmounting'
+                AND workspace_mounts.finalization_kind = 'discard'
+                AND workspace_mounts.finalization_reason_code = 'same_workspace_child_attempt_finished'
+                AND workspace_mounts.finalization_error IS NULL))
+     WHERE run_leases.id = sqlc.arg(run_lease_id)
+       AND run_leases.run_id = sqlc.arg(run_id)
+       AND run_leases.workspace_id = sqlc.arg(workspace_id)
+       AND run_leases.attempt_number = sqlc.arg(attempt_number)
+       AND run_leases.worker_group_id = sqlc.arg(worker_group_id)
+       AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)
+       AND run_leases.worker_epoch = sqlc.arg(worker_epoch)
+       AND run_leases.runtime_instance_id = runtime_instances.id
+       AND run_leases.state IN ('completed', 'failed')
+     FOR UPDATE OF runtime_instances, workspace_mounts
+), closing_runtime AS (
+    UPDATE runtime_instances
+       SET desired_state = 'closed',
+           desired_version = CASE
+               WHEN runtime_instances.desired_state = 'closed'
+               THEN runtime_instances.desired_version
+               ELSE runtime_instances.desired_version + 1
+           END,
+           desired_at = sqlc.arg(completed_at),
+           desired_reason = 'same_workspace_child_attempt_finished',
+           updated_at = sqlc.arg(completed_at)
+      FROM authority
+     WHERE runtime_instances.id = authority.runtime_instance_id
+       AND runtime_instances.reclaimed_at IS NULL
+    RETURNING runtime_instances.id
+)
+UPDATE workspace_mounts
+   SET state = 'unmounting',
+       finalization_kind = 'discard',
+       finalization_reason_code = 'same_workspace_child_attempt_finished',
+       finalization_error = NULL,
+       stopped_at = COALESCE(workspace_mounts.stopped_at, sqlc.arg(completed_at)),
+       updated_at = sqlc.arg(completed_at)
+  FROM authority, closing_runtime
+ WHERE workspace_mounts.id = authority.workspace_mount_id
+   AND workspace_mounts.runtime_instance_id = closing_runtime.id
+   AND (workspace_mounts.state = 'mounted'
+        OR (workspace_mounts.state = 'unmounting'
+            AND workspace_mounts.finalization_kind = 'discard'
+            AND workspace_mounts.finalization_reason_code = 'same_workspace_child_attempt_finished'
+            AND workspace_mounts.finalization_error IS NULL))
+RETURNING workspace_mounts.*;
+
 -- name: CompleteTaskRunLease :one
 UPDATE run_leases
    SET state = sqlc.arg(state),
@@ -205,22 +294,6 @@ UPDATE runs
    AND active_started_at IS NULL
 RETURNING *;
 
--- name: ClearSameWorkspaceChildWriter :one
-UPDATE run_waits
-   SET child_writer_generation = NULL,
-       updated_at = sqlc.arg(completed_at)
- WHERE id = sqlc.arg(run_wait_id)
-   AND environment_id = sqlc.arg(environment_id)
-   AND run_id = sqlc.arg(parent_run_id)
-   AND workspace_id = sqlc.arg(workspace_id)
-   AND child_run_id = sqlc.arg(child_run_id)
-   AND child_parent_owned IS TRUE
-   AND condition_state = 'pending'
-   AND suspension_state = 'parked'
-   AND child_writer_generation = sqlc.arg(child_writer_generation)
-   AND resume_writer_generation IS NULL
-RETURNING *;
-
 -- name: CompleteSameWorkspaceChildSuccess :one
 WITH queued_parent AS (
     UPDATE runs
@@ -243,9 +316,7 @@ UPDATE run_waits
        suspension_state = 'resume_pending',
        resume_request_version = resume_request_version + 1,
        expected_run_state_version = queued_parent.state_version,
-       child_result_version_id = sqlc.arg(child_result_version_id),
-       resume_workspace_version_id = sqlc.arg(child_result_version_id),
-       handoff_resume_checkpoint_id = sqlc.arg(handoff_resume_checkpoint_id),
+       resume_workspace_version_id = sqlc.arg(resume_workspace_version_id),
        updated_at = sqlc.arg(completed_at)
   FROM queued_parent
  WHERE run_waits.id = sqlc.arg(run_wait_id)
@@ -262,7 +333,6 @@ UPDATE run_waits
    AND run_waits.prior_run_lease_id = sqlc.arg(parent_run_lease_id)
    AND run_waits.suspend_checkpoint_id = sqlc.arg(suspend_checkpoint_id)
    AND run_waits.child_writer_generation = sqlc.arg(child_writer_generation)
-   AND run_waits.handoff_resume_checkpoint_id IS NULL
 RETURNING run_waits.*;
 
 -- name: CompleteSameWorkspaceChildFailure :one
@@ -305,71 +375,7 @@ UPDATE run_waits
    AND run_waits.prior_run_lease_id = sqlc.arg(parent_run_lease_id)
    AND run_waits.suspend_checkpoint_id = sqlc.arg(suspend_checkpoint_id)
    AND run_waits.child_writer_generation = sqlc.arg(child_writer_generation)
-   AND run_waits.handoff_resume_checkpoint_id IS NULL
 RETURNING run_waits.*;
-
--- name: FailNestedSameWorkspaceWait :one
-UPDATE run_waits
-   SET condition_state = 'failed',
-       condition_error = sqlc.arg(error)::jsonb,
-       condition_terminal_at = sqlc.arg(failed_at),
-       condition_reason_code = sqlc.arg(reason_code),
-       suspension_state = 'failed',
-       suspension_terminal_at = sqlc.arg(failed_at),
-       suspension_reason_code = 'same_workspace_handoff_runtime_lost',
-       suspension_error = sqlc.arg(error)::jsonb,
-       updated_at = sqlc.arg(failed_at)
- WHERE id = sqlc.arg(run_wait_id)
-   AND environment_id = sqlc.arg(environment_id)
-   AND run_id = sqlc.arg(run_id)
-   AND attempt_number = sqlc.arg(attempt_number)
-   AND workspace_id = sqlc.arg(workspace_id)
-   AND child_run_id = sqlc.arg(child_run_id)
-   AND child_parent_owned IS TRUE
-   AND condition_state = 'pending'
-   AND suspension_state = 'parked'
-   AND current_run_lease_id IS NULL
-   AND prior_run_lease_id IS NOT NULL
-   AND suspend_checkpoint_id IS NOT NULL
-   AND handoff_runtime_instance_id = sqlc.arg(handoff_runtime_instance_id)
-   AND handoff_workspace_mount_id = sqlc.arg(handoff_workspace_mount_id)
-   AND handoff_mount_generation = sqlc.arg(handoff_mount_generation)
-   AND ownership_generation = sqlc.arg(ownership_generation)
-   AND child_writer_generation IS NOT NULL
-   AND resume_writer_generation IS NULL
-RETURNING *;
-
--- name: FailNestedSameWorkspaceAttempt :one
-UPDATE run_attempts
-   SET terminal_outcome = 'failed',
-       terminal_reason_code = 'same_workspace_handoff_runtime_lost',
-       terminal_error = sqlc.arg(error)::jsonb,
-       terminal_at = sqlc.arg(failed_at)
- WHERE run_id = sqlc.arg(run_id)
-   AND number = sqlc.arg(attempt_number)
-   AND workspace_id = sqlc.arg(workspace_id)
-   AND entrypoint_kind = 'task'
-   AND terminal_at IS NULL
-RETURNING *;
-
--- name: FailNestedSameWorkspaceRun :one
-UPDATE runs
-   SET status = 'system_failed',
-       failure = sqlc.arg(failure)::jsonb,
-       state_version = state_version + 1,
-       current_run_lease_id = NULL,
-       retry_at = NULL,
-       terminal_at = sqlc.arg(failed_at),
-       updated_at = sqlc.arg(failed_at)
- WHERE id = sqlc.arg(run_id)
-   AND environment_id = sqlc.arg(environment_id)
-   AND workspace_id = sqlc.arg(workspace_id)
-   AND entrypoint_kind = 'task'
-   AND session_id IS NULL
-   AND status = 'waiting'
-   AND current_attempt_number = sqlc.arg(attempt_number)
-   AND current_run_lease_id IS NULL
-RETURNING *;
 
 -- name: CreateCheckpointFailureRetryAttempt :one
 INSERT INTO run_attempts (

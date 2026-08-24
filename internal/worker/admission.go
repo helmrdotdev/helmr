@@ -18,28 +18,26 @@ import (
 type AdmissionReason string
 
 const (
-	AdmissionAllowed                    AdmissionReason = ""
-	AdmissionDiskFloor                  AdmissionReason = "disk_floor"
-	AdmissionFileDescriptorPressure     AdmissionReason = "file_descriptor_pressure"
-	AdmissionCgroupUnavailable          AdmissionReason = "cgroup_unavailable"
-	AdmissionProgramVerifierUnavailable AdmissionReason = "program_verifier_unavailable"
-	AdmissionKVMUnavailable             AdmissionReason = "kvm_unavailable"
-	AdmissionFirecrackerUnavailable     AdmissionReason = "firecracker_unavailable"
-	AdmissionRuntimeSlotsQuarantined    AdmissionReason = "runtime_slots_quarantined"
-	AdmissionProbeFailed                AdmissionReason = "host_probe_failed"
-	AdmissionDatapathUnverified         AdmissionReason = "datapath_unverified"
+	AdmissionAllowed                 AdmissionReason = ""
+	AdmissionDiskFloor               AdmissionReason = "disk_floor"
+	AdmissionFileDescriptorPressure  AdmissionReason = "file_descriptor_pressure"
+	AdmissionCgroupUnavailable       AdmissionReason = "cgroup_unavailable"
+	AdmissionKVMUnavailable          AdmissionReason = "kvm_unavailable"
+	AdmissionFirecrackerUnavailable  AdmissionReason = "firecracker_unavailable"
+	AdmissionRuntimeSlotsQuarantined AdmissionReason = "runtime_slots_quarantined"
+	AdmissionProbeFailed             AdmissionReason = "host_probe_failed"
+	AdmissionDatapathUnverified      AdmissionReason = "datapath_unverified"
 )
 
 type HostHealth struct {
-	ObservedAt             time.Time `json:"observed_at"`
-	AvailableDiskBytes     int64     `json:"available_disk_bytes"`
-	DiskCapacityBytes      int64     `json:"disk_capacity_bytes"`
-	OpenFileDescriptors    uint64    `json:"open_file_descriptors"`
-	FileDescriptorLimit    uint64    `json:"file_descriptor_limit"`
-	CgroupHealthy          bool      `json:"cgroup_healthy"`
-	ProgramVerifierHealthy bool      `json:"program_verifier_healthy"`
-	KVMHealthy             bool      `json:"kvm_healthy"`
-	FirecrackerHealthy     bool      `json:"firecracker_healthy"`
+	ObservedAt          time.Time `json:"observed_at"`
+	AvailableDiskBytes  int64     `json:"available_disk_bytes"`
+	DiskCapacityBytes   int64     `json:"disk_capacity_bytes"`
+	OpenFileDescriptors uint64    `json:"open_file_descriptors"`
+	FileDescriptorLimit uint64    `json:"file_descriptor_limit"`
+	CgroupHealthy       bool      `json:"cgroup_healthy"`
+	KVMHealthy          bool      `json:"kvm_healthy"`
+	FirecrackerHealthy  bool      `json:"firecracker_healthy"`
 }
 
 type HostHealthProbe interface {
@@ -47,10 +45,11 @@ type HostHealthProbe interface {
 }
 
 type AdmissionCheck struct {
-	Consumer string
-	State    State
-	Snapshot Snapshot
-	Recovery RecoveryEvidence
+	Consumer          string
+	State             State
+	Snapshot          Snapshot
+	Recovery          RecoveryEvidence
+	DrainContinuation bool
 }
 
 type AdmissionDecision struct {
@@ -110,7 +109,7 @@ func (a *HardAdmission) Evaluate(ctx context.Context, check AdmissionCheck) Admi
 		decision.Reason = AdmissionProbeFailed
 	case datapathErr != nil:
 		decision.Reason = AdmissionDatapathUnverified
-	case check.State != StateActive:
+	case check.State != StateActive && !(check.State == StateDraining && check.DrainContinuation):
 		decision.Reason = AdmissionReason(check.State)
 	case health.AvailableDiskBytes < a.cfg.DiskFloorBytes:
 		decision.Reason = AdmissionDiskFloor
@@ -119,8 +118,6 @@ func (a *HardAdmission) Evaluate(ctx context.Context, check AdmissionCheck) Admi
 		decision.Reason = AdmissionFileDescriptorPressure
 	case !health.CgroupHealthy:
 		decision.Reason = AdmissionCgroupUnavailable
-	case check.Consumer == "build" && !health.ProgramVerifierHealthy:
-		decision.Reason = AdmissionProgramVerifierUnavailable
 	case !health.KVMHealthy:
 		decision.Reason = AdmissionKVMUnavailable
 	case !health.FirecrackerHealthy:
@@ -154,7 +151,6 @@ func (a *HardAdmission) Observation() workerapi.Observation {
 	if datapathErr != nil {
 		reason := string(AdmissionDatapathUnverified)
 		observation.RunPausedReason = reason
-		observation.BuildPausedReason = reason
 		observation.RuntimePausedReason = reason
 		return observation
 	}
@@ -163,14 +159,8 @@ func (a *HardAdmission) Observation() workerapi.Observation {
 			continue
 		}
 		reason := string(current.Reason)
-		if current.Reason == AdmissionProgramVerifierUnavailable {
-			if domain == "build" {
-				observation.BuildPausedReason = reason
-			}
-			continue
-		}
 		if current.Reason != AdmissionRuntimeSlotsQuarantined {
-			observation.RunPausedReason, observation.BuildPausedReason, observation.RuntimePausedReason = reason, reason, reason
+			observation.RunPausedReason, observation.RuntimePausedReason = reason, reason
 			break
 		}
 		if domain == "run" {
@@ -218,7 +208,6 @@ func (p SystemHostHealthProbe) Probe(context.Context) (HostHealth, error) {
 		if _, err := os.Stat("/sys/fs/cgroup/cgroup.controllers"); err == nil {
 			health.CgroupHealthy = true
 		}
-		health.ProgramVerifierHealthy = programVerifierHostHealthy()
 	}
 	if file, openErr := os.OpenFile("/dev/kvm", os.O_RDWR, 0); openErr == nil {
 		health.KVMHealthy = true

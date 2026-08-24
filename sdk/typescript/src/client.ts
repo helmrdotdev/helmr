@@ -14,6 +14,7 @@ import type {
   TaskWait,
 } from "./contract"
 import { runtimeOperationsInstalled } from "./internal/runtime"
+import { abortableDelay } from "./internal/abort"
 import { resourceID } from "./internal/id"
 import { createRunHandle, runHandleID } from "./internal/run-handle"
 import { timestampString } from "./internal/timestamp"
@@ -1200,29 +1201,6 @@ function validBase64(value: string): boolean {
   return /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
     value,
   )
-}
-
-function abortableDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
-  signal?.throwIfAborted()
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(done, milliseconds)
-    function done(): void {
-      signal?.removeEventListener("abort", aborted)
-      resolve()
-    }
-    function aborted(): void {
-      clearTimeout(timer)
-      signal?.removeEventListener("abort", aborted)
-      try {
-        signal?.throwIfAborted()
-      } catch (error) {
-        reject(error)
-        return
-      }
-      reject(new Error("Run wait was aborted"))
-    }
-    signal?.addEventListener("abort", aborted, { once: true })
-  })
 }
 
 function parseToken(value: unknown, credentials: boolean): Token | TokenCreateResult {

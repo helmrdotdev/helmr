@@ -15,7 +15,6 @@ func TestNewValidatesCapacity(t *testing.T) {
 		MemoryBytes:             1,
 		GuestEphemeralDiskBytes: 1,
 		VMSlots:                 1,
-		BuildSlots:              1,
 	}
 	tests := []struct {
 		name   string
@@ -27,7 +26,6 @@ func TestNewValidatesCapacity(t *testing.T) {
 		{name: "negative memory", mutate: func(vector *Vector) { vector.MemoryBytes = -1 }},
 		{name: "negative guest ephemeral disk", mutate: func(vector *Vector) { vector.GuestEphemeralDiskBytes = -1 }},
 		{name: "negative VM slots", mutate: func(vector *Vector) { vector.VMSlots = -1 }},
-		{name: "negative build slots", mutate: func(vector *Vector) { vector.BuildSlots = -1 }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -41,7 +39,6 @@ func TestNewValidatesCapacity(t *testing.T) {
 
 	valid.GuestEphemeralDiskBytes = 0
 	valid.VMSlots = 0
-	valid.BuildSlots = 0
 	if _, err := New(valid); err != nil {
 		t.Fatalf("New() with optional zero dimensions: %v", err)
 	}
@@ -50,7 +47,7 @@ func TestNewValidatesCapacity(t *testing.T) {
 func TestReserveValidatesKeyAndRequest(t *testing.T) {
 	ledger := newTestLedger(t, Vector{
 		CPUMillis: 10, MemoryBytes: 10, GuestEphemeralDiskBytes: 10,
-		VMSlots: 10, BuildSlots: 10,
+		VMSlots: 10,
 	})
 	validKey := Key{Kind: "run", Epoch: 1, ID: "run-1"}
 	keyTests := []Key{
@@ -78,7 +75,6 @@ func TestReserveValidatesKeyAndRequest(t *testing.T) {
 		{MemoryBytes: -1},
 		{GuestEphemeralDiskBytes: -1},
 		{VMSlots: -1},
-		{BuildSlots: -1},
 	}
 	for _, request := range requestTests {
 		if created, err := ledger.Reserve(validKey, request); created || !errors.Is(err, ErrInvalidRequest) {
@@ -96,13 +92,12 @@ func TestReserveAccountsForEveryDimension(t *testing.T) {
 		{name: "memory", vector: Vector{MemoryBytes: 1}},
 		{name: "guest ephemeral disk", vector: Vector{GuestEphemeralDiskBytes: 1}},
 		{name: "VM slots", vector: Vector{VMSlots: 1}},
-		{name: "build slots", vector: Vector{BuildSlots: 1}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			capacity := Vector{
 				CPUMillis: 1, MemoryBytes: 1, GuestEphemeralDiskBytes: 1,
-				VMSlots: 1, BuildSlots: 1,
+				VMSlots: 1,
 			}
 			ledger := newTestLedger(t, capacity)
 			if created, err := ledger.Reserve(Key{Kind: "test", Epoch: 1, ID: "first"}, test.vector); err != nil || !created {
@@ -145,7 +140,7 @@ func TestReserveDuplicateSemantics(t *testing.T) {
 
 func TestReleaseIsIdempotent(t *testing.T) {
 	ledger := newTestLedger(t, Vector{CPUMillis: 10, MemoryBytes: 10})
-	key := Key{Kind: "build", Epoch: 2, ID: "build-1"}
+	key := Key{Kind: "run", Epoch: 2, ID: "run-2"}
 	request := Vector{CPUMillis: 3, MemoryBytes: 4}
 	if _, err := ledger.Reserve(key, request); err != nil {
 		t.Fatalf("Reserve(): %v", err)
@@ -214,11 +209,11 @@ func TestLedgerConcurrentReserveAndRelease(t *testing.T) {
 	ledger := newTestLedger(t, Vector{
 		CPUMillis: reservations, MemoryBytes: reservations,
 		GuestEphemeralDiskBytes: reservations,
-		VMSlots:                 reservations, BuildSlots: reservations,
+		VMSlots:                 reservations,
 	})
 	request := Vector{
 		CPUMillis: 1, MemoryBytes: 1, GuestEphemeralDiskBytes: 1,
-		VMSlots: 1, BuildSlots: 1,
+		VMSlots: 1,
 	}
 
 	runConcurrently(t, reservations, func(index int) error {
@@ -235,7 +230,7 @@ func TestLedgerConcurrentReserveAndRelease(t *testing.T) {
 	want := Vector{
 		CPUMillis: reservations, MemoryBytes: reservations,
 		GuestEphemeralDiskBytes: reservations,
-		VMSlots:                 reservations, BuildSlots: reservations,
+		VMSlots:                 reservations,
 	}
 	if snapshot.Used != want || len(snapshot.Reservations) != reservations {
 		t.Fatalf("snapshot after reserve = %+v, reservations = %d", snapshot.Used, len(snapshot.Reservations))

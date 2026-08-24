@@ -137,6 +137,12 @@ INSERT INTO idempotency_claims (
 	if !reserved.RuntimeInstanceID.Valid {
 		t.Fatalf("runtime reservation = %+v", reserved)
 	}
+	if reserved.ProcessBound {
+		if !reserved.WorkspaceMountID.Valid {
+			t.Fatalf("warm placement = %+v", reserved)
+		}
+		return processID, pgvalue.MustUUIDValue(reserved.WorkspaceMountID)
+	}
 	markRunPlacementRuntimeReady(t, fixture, reserved.RuntimeInstanceID)
 	mounting, err := fixture.authority.PlaceWorkspaceExec(fixture.ctx, candidate)
 	if err != nil {

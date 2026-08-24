@@ -32,7 +32,6 @@ SELECT deployment_definitions.*
    AND deployment_definitions.deployment_id = sqlc.arg(deployment_id)
    AND deployment_definitions.kind = sqlc.arg(kind)
    AND deployment_definitions.declared_id = sqlc.arg(declared_id)
-   AND deployments.status = 'deployed'
  LIMIT 1;
 
 -- name: GetCurrentDeploymentDefinition :one
@@ -41,7 +40,6 @@ SELECT deployment_definitions.*
   JOIN deployments
     ON deployments.environment_id = deployment_definitions.environment_id
    AND deployments.id = deployment_definitions.deployment_id
-   AND deployments.status = 'deployed'
   JOIN environments
     ON environments.id = deployment_definitions.environment_id
    AND environments.current_deployment_id = deployment_definitions.deployment_id
@@ -59,7 +57,6 @@ SELECT deployment_definitions.*
  WHERE deployment_definitions.environment_id = sqlc.arg(environment_id)
    AND deployment_definitions.deployment_id = sqlc.arg(deployment_id)
    AND (sqlc.narg(kind)::text IS NULL OR deployment_definitions.kind = sqlc.narg(kind)::text)
-   AND deployments.status = 'deployed'
  ORDER BY deployment_definitions.kind, deployment_definitions.declared_id;
 
 -- name: GetDeploymentProgramAuthority :one
@@ -70,8 +67,7 @@ SELECT deployments.id AS deployment_id,
        program_artifact.digest AS program_artifact_digest,
        program_artifact.size_bytes AS program_artifact_size_bytes,
        program_artifact.media_type AS program_artifact_media_type,
-       deployments.build_runtime_digest,
-       deployments.build_contract,
+       deployments.runtime_artifact_digest,
        deployments.program_index_digest,
        deployments.queue_config
   FROM deployments
@@ -81,7 +77,6 @@ SELECT deployments.id AS deployment_id,
    AND program_artifact.kind = 'deployment_program'
  WHERE deployments.environment_id = sqlc.arg(environment_id)
    AND deployments.id = sqlc.arg(deployment_id)
-   AND deployments.status = 'deployed'
  LIMIT 1;
 
 -- name: ListDefinitionSnapshots :many

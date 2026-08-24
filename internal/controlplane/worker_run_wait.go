@@ -348,7 +348,7 @@ func (s *Server) requestWorkerRunWaitCheckpoint(
 		}
 		checkpointID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 		if _, err := work.q.CreateRunCheckpoint(ctx, db.CreateRunCheckpointParams{
-			ID: checkpointID, Kind: db.RunCheckpointKindSuspend, RunID: authority.run.ID,
+			ID: checkpointID, RunID: authority.run.ID,
 			AttemptNumber: authority.attempt.Number, RunWaitID: wait.ID,
 			SourceRunLeaseID: authority.runLease.ID, SourceWorkspaceLeaseID: authority.workspaceLease.ID,
 			WorkspaceID: authority.workspace.ID, BaseWorkspaceVersionID: authority.workspaceLease.BaseVersionID,

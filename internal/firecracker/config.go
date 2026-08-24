@@ -14,29 +14,26 @@ const (
 	DefaultGuestPort = uint32(5000)
 	HealthPort       = uint32(5001)
 
-	DefaultFirecrackerPath      = "firecracker"
-	DefaultJailerPath           = "jailer"
-	DefaultIPPath               = "ip"
-	DefaultNFTPath              = "nft"
-	DefaultKVMPath              = "/dev/kvm"
-	DefaultVCPUs                = int64(2)
-	DefaultMemoryMiB            = int64(2048)
-	DefaultScratchDiskMiB       = int64(8192)
-	DefaultCgroupVersion        = "2"
-	DefaultInitTimeout          = 30 * time.Second
-	DefaultHealthTimeout        = 30 * time.Second
-	DefaultHealthAttemptTimeout = 5 * time.Second
-	GuestNetworkCIDRV0          = "192.168.127.2/30"
-	GuestGatewayIPv4V0          = "192.168.127.1"
-	GuestGatewayMACV0           = "02:fc:00:00:00:01"
-	GuestMACV0                  = "02:fc:00:00:00:02"
-	GuestTapNameV0              = "tap0"
-	GuestInterfaceNameV0        = "eth0"
-	GuestMTUV0                  = 1500
+	DefaultFirecrackerPath       = "firecracker"
+	DefaultCPUTemplateHelperPath = "cpu-template-helper"
+	DefaultJailerPath            = "jailer"
+	DefaultIPPath                = "ip"
+	DefaultNFTPath               = "nft"
+	DefaultKVMPath               = "/dev/kvm"
+	DefaultVCPUs                 = int64(2)
+	DefaultMemoryMiB             = int64(2048)
+	DefaultScratchDiskMiB        = int64(8192)
+	DefaultCgroupVersion         = "2"
+	DefaultInitTimeout           = 30 * time.Second
+	DefaultHealthTimeout         = 30 * time.Second
+	DefaultHealthAttemptTimeout  = 5 * time.Second
 )
 
 type Config struct {
 	FirecrackerPath         string
+	CPUTemplateHelperPath   string
+	CPUTemplateSelector     CPUTemplateSelector
+	CustomCPUTemplatePath   string
 	JailerPath              string
 	JailerUID               int
 	JailerGID               int
@@ -56,6 +53,7 @@ type Config struct {
 	IPPath                  string
 	NFTPath                 string
 	MkfsExt4Path            string
+	Mke2fsConfigPath        string
 	KVMPath                 string
 	VCPUCount               int64
 	MemoryMiB               int64
@@ -67,8 +65,9 @@ type Config struct {
 	HealthAttemptTimeout    time.Duration
 }
 
+// RuntimeCapabilities is content-only boot artifact metadata. A complete v1
+// runtime identity exists only after a Connector candidate qualifies.
 type RuntimeCapabilities struct {
-	ID              string
 	Arch            string
 	Contract        string
 	KernelDigest    string
@@ -79,9 +78,13 @@ type RuntimeCapabilities struct {
 }
 
 func (cfg Config) WithDefaults() Config {
-	if strings.TrimSpace(cfg.FirecrackerPath) == "" {
+	if cfg.FirecrackerPath == "" {
 		cfg.FirecrackerPath = DefaultFirecrackerPath
 	}
+	if cfg.CPUTemplateHelperPath == "" {
+		cfg.CPUTemplateHelperPath = DefaultCPUTemplateHelperPath
+	}
+	cfg.CPUTemplateSelector = cfg.CPUTemplateSelector.withDefaults()
 	if strings.TrimSpace(cfg.JailerPath) == "" {
 		cfg.JailerPath = DefaultJailerPath
 	}
@@ -105,6 +108,9 @@ func (cfg Config) WithDefaults() Config {
 	}
 	if strings.TrimSpace(cfg.MkfsExt4Path) == "" {
 		cfg.MkfsExt4Path = "mkfs.ext4"
+	}
+	if strings.TrimSpace(cfg.Mke2fsConfigPath) == "" {
+		cfg.Mke2fsConfigPath = "/etc/mke2fs.conf"
 	}
 	if strings.TrimSpace(cfg.KVMPath) == "" {
 		cfg.KVMPath = DefaultKVMPath
@@ -143,6 +149,28 @@ func (cfg Config) Validate() error {
 	var problems []error
 	if strings.TrimSpace(cfg.FirecrackerPath) == "" {
 		problems = append(problems, errors.New("the Firecracker path is required"))
+	} else if cfg.FirecrackerPath != strings.TrimSpace(cfg.FirecrackerPath) {
+		problems = append(problems, errors.New("the Firecracker path must not contain surrounding whitespace"))
+	}
+	if strings.TrimSpace(cfg.CPUTemplateHelperPath) == "" {
+		problems = append(problems, errors.New("the Firecracker CPU template helper path is required"))
+	} else if cfg.CPUTemplateHelperPath != strings.TrimSpace(cfg.CPUTemplateHelperPath) {
+		problems = append(problems, errors.New("the Firecracker CPU template helper path must not contain surrounding whitespace"))
+	}
+	if err := cfg.CPUTemplateSelector.Validate(); err != nil {
+		problems = append(problems, err)
+	}
+	switch cfg.CPUTemplateSelector.Kind {
+	case CPUTemplateNone:
+		if cfg.CustomCPUTemplatePath != "" {
+			problems = append(problems, errors.New("a custom CPU template path requires the custom CPU template selector"))
+		}
+	case CPUTemplateCustom:
+		if strings.TrimSpace(cfg.CustomCPUTemplatePath) == "" {
+			problems = append(problems, errors.New("the custom CPU template path is required for the custom CPU template selector"))
+		} else if cfg.CustomCPUTemplatePath != strings.TrimSpace(cfg.CustomCPUTemplatePath) {
+			problems = append(problems, errors.New("the custom CPU template path must not contain surrounding whitespace"))
+		}
 	}
 	if strings.TrimSpace(cfg.JailerPath) == "" {
 		problems = append(problems, errors.New("the Firecracker jailer path is required"))
@@ -194,6 +222,8 @@ func (cfg Config) Validate() error {
 	}
 	if cfg.VCPUCount <= 0 {
 		problems = append(problems, fmt.Errorf("guest vcpu count must be positive, got %d", cfg.VCPUCount))
+	} else if cfg.VCPUCount > MaxVMVCPUCount {
+		problems = append(problems, fmt.Errorf("guest vcpu count must not exceed %d, got %d", MaxVMVCPUCount, cfg.VCPUCount))
 	}
 	if cfg.MemoryMiB <= 0 {
 		problems = append(problems, fmt.Errorf("guest memory must be positive, got %d MiB", cfg.MemoryMiB))
@@ -203,6 +233,9 @@ func (cfg Config) Validate() error {
 	}
 	if strings.TrimSpace(cfg.MkfsExt4Path) == "" {
 		problems = append(problems, errors.New("mkfs.ext4 path is required"))
+	}
+	if strings.TrimSpace(cfg.Mke2fsConfigPath) == "" {
+		problems = append(problems, errors.New("mke2fs config path is required"))
 	}
 	if strings.TrimSpace(cfg.KVMPath) == "" {
 		problems = append(problems, errors.New("the Firecracker KVM path is required"))

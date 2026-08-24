@@ -1,11 +1,13 @@
 package deployment
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -16,9 +18,88 @@ const (
 	verifierArtifactBaseFD     = 4
 	verifierHeaderBytes        = 5
 	verifierDiagnosticMaxBytes = 65536
+	verifierStderrMaxBytes     = 4096
 	verifierBootstrapDeadline  = 10 * time.Second
 	verifierDeadline           = 5 * time.Minute
 )
+
+type verifierBootstrapError struct {
+	diagnostic string
+}
+
+func (err *verifierBootstrapError) Error() string {
+	return "artifact verifier bootstrap failed"
+}
+
+func (err *verifierBootstrapError) FatalWorker() bool { return true }
+
+func (err *verifierBootstrapError) LocalDiagnostic() string {
+	return err.diagnostic
+}
+
+type boundedVerifierStderr struct {
+	buffer    bytes.Buffer
+	truncated bool
+}
+
+func (writer *boundedVerifierStderr) Write(value []byte) (int, error) {
+	remaining := verifierStderrMaxBytes - writer.buffer.Len()
+	if remaining > 0 {
+		copied := len(value)
+		if copied > remaining {
+			copied = remaining
+		}
+		_, _ = writer.buffer.Write(value[:copied])
+	}
+	if len(value) > remaining {
+		writer.truncated = true
+	}
+	return len(value), nil
+}
+
+func (writer *boundedVerifierStderr) Diagnostic() string {
+	diagnostic := string(bytes.ToValidUTF8(writer.buffer.Bytes(), []byte("?")))
+	diagnostic = strings.Map(func(value rune) rune {
+		if unicode.IsControl(value) {
+			return '?'
+		}
+		return value
+	}, diagnostic)
+	if writer.truncated {
+		diagnostic += " [truncated]"
+	}
+	return diagnostic
+}
+
+func newVerifierBootstrapError(diagnostic string) error {
+	return &verifierBootstrapError{diagnostic: sanitizeVerifierLocalDiagnostic(diagnostic)}
+}
+
+func sanitizeVerifierLocalDiagnostic(diagnostic string) string {
+	writer := &boundedVerifierStderr{}
+	_, _ = writer.Write([]byte(diagnostic))
+	return writer.Diagnostic()
+}
+
+// VerifierChildLocalDiagnostic bounds and sanitizes a verifier child bootstrap
+// cause for the host-local stderr channel. It must not be sent through the
+// Worker API.
+func VerifierChildLocalDiagnostic(err error) string {
+	if err == nil {
+		return ""
+	}
+	return sanitizeVerifierLocalDiagnostic(err.Error())
+}
+
+// VerifierLocalDiagnostic returns bounded host-only bootstrap diagnostics.
+// Callers must log it locally and must not include it in Worker API payloads.
+func VerifierLocalDiagnostic(err error) (string, bool) {
+	var diagnostic interface{ LocalDiagnostic() string }
+	if !errors.As(err, &diagnostic) {
+		return "", false
+	}
+	return diagnostic.LocalDiagnostic(), true
+}
 
 type verifierRecordKind uint8
 

@@ -13,10 +13,6 @@ import (
 )
 
 func (s *Server) workerClaimRunLease(w http.ResponseWriter, r *http.Request) {
-	if s.buildPolicy == nil {
-		writeError(w, unavailable(errors.New("build policy is not configured")))
-		return
-	}
 	var request workerapi.RunLeaseClaimRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
@@ -55,9 +51,7 @@ func (s *Server) workerClaimRunLease(w http.ResponseWriter, r *http.Request) {
 	}
 	responseAuthority := runLeaseClaimResponseAuthority{
 		mode:           authority.mode,
-		restoreSource:  authority.restoreSource,
 		actor:          authority.actor,
-		childRun:       authority.childRun,
 		run:            authority.run,
 		attempt:        authority.attempt,
 		runtime:        authority.runtime,
@@ -65,7 +59,6 @@ func (s *Server) workerClaimRunLease(w http.ResponseWriter, r *http.Request) {
 		workspace:      authority.workspace,
 		workspaceMount: authority.workspaceMount,
 		workspaceLease: authority.workspaceLease,
-		enclosingWait:  authority.enclosingWait,
 		runWait:        authority.runWait,
 		checkpoint:     authority.checkpoint,
 	}

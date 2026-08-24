@@ -15,16 +15,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
-type runLeaseRestoreSource string
-
-const (
-	runLeaseRestoreRecreated runLeaseRestoreSource = "recreated"
-	runLeaseRestoreRetained  runLeaseRestoreSource = "retained"
-)
-
 type runLeaseExecutionProjection struct {
 	mode                runLeaseClaimMode
-	restoreSource       runLeaseRestoreSource
 	run                 db.Run
 	attempt             db.RunAttempt
 	actor               *db.Session
@@ -32,10 +24,8 @@ type runLeaseExecutionProjection struct {
 	deploymentVersion   string
 	runtime             db.RuntimeInstance
 	workspaceMount      db.WorkspaceMount
-	enclosingWait       db.RunWait
 	runWait             db.RunWait
 	checkpoint          db.RunCheckpoint
-	childRun            db.Run
 	checkpointArtifacts []db.ListRunCheckpointArtifactAuthorityRow
 }
 
@@ -46,8 +36,6 @@ func projectRunLeaseExecution(
 	case runLeaseClaimFresh:
 		if authority.runWait.ID.Valid ||
 			authority.checkpoint.ID.Valid ||
-			authority.childRun.ID.Valid ||
-			authority.runtime.RestoreCheckpointID.Valid ||
 			len(authority.checkpointArtifacts) != 0 {
 			return workerapi.RunLeaseExecution{}, errors.New("fresh run lease contains resume authority")
 		}
@@ -94,6 +82,10 @@ func projectRunLeaseExecution(
 		if err != nil {
 			return workerapi.RunLeaseExecution{}, err
 		}
+		checkpoint, err := projectRunLeaseCheckpoint(authority.checkpoint, authority.checkpointArtifacts)
+		if err != nil {
+			return workerapi.RunLeaseExecution{}, err
+		}
 		restore := workerapi.RunLeaseRestore{
 			RunWaitID:            waitID,
 			CheckpointID:         checkpointID,
@@ -102,136 +94,12 @@ func projectRunLeaseExecution(
 			CorrelationID:        correlationID,
 			EntrypointKind:       authority.run.EntrypointKind,
 			EntrypointDeclaredID: authority.run.EntrypointDeclaredID,
+			Manifest:             checkpoint.Manifest,
+			Artifacts:            checkpoint.Artifacts,
 			Decision:             decision,
-		}
-		switch authority.restoreSource {
-		case runLeaseRestoreRetained:
-			if len(authority.checkpointArtifacts) != 0 ||
-				authority.enclosingWait.HandoffRuntimeInstanceID != authority.runtime.ID ||
-				authority.enclosingWait.HandoffWorkspaceMountID != authority.workspaceMount.ID ||
-				!authority.enclosingWait.HandoffMountGeneration.Valid {
-				return workerapi.RunLeaseExecution{}, errors.New("retained restore authority is incomplete")
-			}
-			enclosingWaitID, err := requiredClaimUUIDString("enclosing run wait ID", authority.enclosingWait.ID)
-			if err != nil {
-				return workerapi.RunLeaseExecution{}, err
-			}
-			restore.Retained = &workerapi.RunLeaseRetainedRestore{
-				EnclosingRunWaitID: enclosingWaitID,
-			}
-		case runLeaseRestoreRecreated:
-			if authority.runtime.RestoreCheckpointID != authority.checkpoint.ID {
-				return workerapi.RunLeaseExecution{}, errors.New("recreated restore runtime provenance is incomplete")
-			}
-			checkpoint, err := projectRunLeaseCheckpoint(
-				authority.checkpoint,
-				authority.checkpointArtifacts,
-			)
-			if err != nil {
-				return workerapi.RunLeaseExecution{}, err
-			}
-			restore.Recreated = &checkpoint
-		default:
-			return workerapi.RunLeaseExecution{}, errors.New("restore source is required")
 		}
 		return workerapi.RunLeaseExecution{
 			Restore: &restore,
-		}, nil
-	case runLeaseClaimAttachChild:
-		if !authority.runWait.ID.Valid ||
-			!authority.checkpoint.ID.Valid ||
-			authority.childRun.ID.Valid ||
-			authority.attempt.EntrypointEnteredAt.Valid ||
-			len(authority.checkpointArtifacts) != 0 {
-			return workerapi.RunLeaseExecution{}, errors.New("child attach authority is incomplete")
-		}
-		waitID, err := requiredClaimUUIDString("run wait ID", authority.runWait.ID)
-		if err != nil {
-			return workerapi.RunLeaseExecution{}, err
-		}
-		checkpointID, err := requiredClaimUUIDString("run checkpoint ID", authority.checkpoint.ID)
-		if err != nil {
-			return workerapi.RunLeaseExecution{}, err
-		}
-		attachID, err := requiredClaimUUIDString("resume attach ID", authority.runWait.ResumeAttachID)
-		if err != nil {
-			return workerapi.RunLeaseExecution{}, err
-		}
-		correlationID, err := checkpointCorrelationID(
-			authority.checkpoint,
-			authority.runWait,
-		)
-		if err != nil {
-			return workerapi.RunLeaseExecution{}, err
-		}
-		start, err := encodeProgramStart(
-			authority.run,
-			authority.attempt,
-			authority.actor,
-			authority.definition,
-			authority.deploymentVersion,
-		)
-		if err != nil {
-			return workerapi.RunLeaseExecution{}, err
-		}
-		return workerapi.RunLeaseExecution{
-			Attach: &workerapi.RunLeaseAttach{
-				Child: &workerapi.RunLeaseChildAttach{
-					ParentRunID:         pgvalue.UUIDString(authority.checkpoint.RunID),
-					ParentAttemptNumber: authority.checkpoint.AttemptNumber,
-					RunWaitID:           waitID,
-					CheckpointID:        checkpointID,
-					ResumeAttachID:      attachID,
-					CorrelationID:       correlationID,
-					ProgramStart:        start,
-				},
-			},
-		}, nil
-	case runLeaseClaimAttachParent:
-		if !authority.runWait.ID.Valid ||
-			!authority.checkpoint.ID.Valid ||
-			!authority.childRun.ID.Valid ||
-			!authority.attempt.EntrypointEnteredAt.Valid ||
-			authority.runWait.ResumeRequestVersion <= 0 ||
-			len(authority.checkpointArtifacts) != 0 {
-			return workerapi.RunLeaseExecution{}, errors.New("parent attach authority is incomplete")
-		}
-		waitID, err := requiredClaimUUIDString("run wait ID", authority.runWait.ID)
-		if err != nil {
-			return workerapi.RunLeaseExecution{}, err
-		}
-		checkpointID, err := requiredClaimUUIDString("run checkpoint ID", authority.checkpoint.ID)
-		if err != nil {
-			return workerapi.RunLeaseExecution{}, err
-		}
-		attachID, err := requiredClaimUUIDString("resume attach ID", authority.runWait.ResumeAttachID)
-		if err != nil {
-			return workerapi.RunLeaseExecution{}, err
-		}
-		correlationID, err := checkpointCorrelationID(
-			authority.checkpoint,
-			authority.runWait,
-		)
-		if err != nil {
-			return workerapi.RunLeaseExecution{}, err
-		}
-		decision, err := projectRunWaitDecision(authority.runWait)
-		if err != nil {
-			return workerapi.RunLeaseExecution{}, err
-		}
-		return workerapi.RunLeaseExecution{
-			Attach: &workerapi.RunLeaseAttach{
-				Parent: &workerapi.RunLeaseParentAttach{
-					RunWaitID:            waitID,
-					CheckpointID:         checkpointID,
-					ResumeAttachID:       attachID,
-					ResumeRequestVersion: authority.runWait.ResumeRequestVersion,
-					CorrelationID:        correlationID,
-					EntrypointKind:       authority.run.EntrypointKind,
-					EntrypointDeclaredID: authority.run.EntrypointDeclaredID,
-					Decision:             decision,
-				},
-			},
 		}, nil
 	default:
 		return workerapi.RunLeaseExecution{}, fmt.Errorf(
@@ -563,15 +431,17 @@ func projectRunLeaseFailure(wait db.RunWait) (runLeaseFailure, error) {
 	return runLeaseFailure{reason: wait.ConditionReasonCode.String, detail: detail}, nil
 }
 
+type runLeaseCheckpointProjection struct {
+	Manifest  json.RawMessage
+	Artifacts []workerapi.RunLeaseCheckpointArtifact
+}
+
 func projectRunLeaseCheckpoint(
 	checkpoint db.RunCheckpoint,
 	rows []db.ListRunCheckpointArtifactAuthorityRow,
-) (workerapi.RunLeaseRecreatedRestore, error) {
-	if checkpoint.State != db.RunCheckpointStateReady ||
-		(checkpoint.Kind != db.RunCheckpointKindSuspend &&
-			checkpoint.Kind != db.RunCheckpointKindHandoffResume) ||
-		!json.Valid(checkpoint.RestoreManifest) {
-		return workerapi.RunLeaseRecreatedRestore{}, errors.New("run checkpoint authority is invalid")
+) (runLeaseCheckpointProjection, error) {
+	if checkpoint.State != db.RunCheckpointStateReady || !json.Valid(checkpoint.RestoreManifest) {
+		return runLeaseCheckpointProjection{}, errors.New("run checkpoint authority is invalid")
 	}
 	artifacts := make([]workerapi.RunLeaseCheckpointArtifact, 0, len(rows))
 	priorRank := -1
@@ -581,11 +451,11 @@ func projectRunLeaseCheckpoint(
 		role := string(row.Role)
 		rank, ok := checkpointArtifactRoleRank(row.Role)
 		if !ok || row.Ordinal < 0 {
-			return workerapi.RunLeaseRecreatedRestore{}, errors.New("run checkpoint artifact membership is invalid")
+			return runLeaseCheckpointProjection{}, errors.New("run checkpoint artifact membership is invalid")
 		}
 		if index > 0 &&
 			(rank < priorRank || (rank == priorRank && row.Ordinal <= priorOrdinal)) {
-			return workerapi.RunLeaseRecreatedRestore{}, errors.New("run checkpoint artifact membership is not canonically ordered")
+			return runLeaseCheckpointProjection{}, errors.New("run checkpoint artifact membership is not canonically ordered")
 		}
 		object, err := projectCASObject(
 			row.Digest,
@@ -594,7 +464,7 @@ func projectRunLeaseCheckpoint(
 			"run checkpoint artifact",
 		)
 		if err != nil {
-			return workerapi.RunLeaseRecreatedRestore{}, err
+			return runLeaseCheckpointProjection{}, err
 		}
 		artifacts = append(artifacts, workerapi.RunLeaseCheckpointArtifact{
 			Role: role, Ordinal: row.Ordinal, Object: object,
@@ -602,7 +472,7 @@ func projectRunLeaseCheckpoint(
 		priorRank = rank
 		priorOrdinal = row.Ordinal
 		if row.Ordinal != int32(counts[row.Role]) {
-			return workerapi.RunLeaseRecreatedRestore{}, errors.New("run checkpoint artifact ordinals are not contiguous")
+			return runLeaseCheckpointProjection{}, errors.New("run checkpoint artifact ordinals are not contiguous")
 		}
 		counts[row.Role]++
 	}
@@ -610,10 +480,9 @@ func projectRunLeaseCheckpoint(
 		counts[db.RunCheckpointArtifactRoleVMState] != 1 ||
 		counts[db.RunCheckpointArtifactRoleMemory] != 1 ||
 		counts[db.RunCheckpointArtifactRoleScratchDisk] != 1 {
-		return workerapi.RunLeaseRecreatedRestore{}, errors.New("run checkpoint artifact membership is incomplete")
+		return runLeaseCheckpointProjection{}, errors.New("run checkpoint artifact membership is incomplete")
 	}
-	return workerapi.RunLeaseRecreatedRestore{
-		Kind:      string(checkpoint.Kind),
+	return runLeaseCheckpointProjection{
 		Manifest:  append(json.RawMessage(nil), checkpoint.RestoreManifest...),
 		Artifacts: artifacts,
 	}, nil

@@ -110,10 +110,6 @@ export type ImageStep =
   | Readonly<{
       from: Readonly<{
         ref: string
-        auth?: Readonly<{
-          username: string
-          passwordSecret: string
-        }>
       }>
     }>
   | Readonly<{
@@ -615,26 +611,8 @@ function compileImageStep(
 ): ImageStep {
   switch (step.kind) {
     case "from":
-      assertExactKeys(
-        step,
-        step.auth === undefined ? ["kind", "ref"] : ["auth", "kind", "ref"],
-        "image from step",
-      )
-      if (step.auth === undefined) return { from: { ref: step.ref } }
-      assertExactKeys(
-        step.auth,
-        ["passwordSecret", "username"],
-        "image from auth",
-      )
-      return {
-        from: {
-          ref: step.ref,
-          auth: {
-            username: step.auth.username,
-            passwordSecret: step.auth.passwordSecret,
-          },
-        },
-      }
+      assertExactKeys(step, ["kind", "ref"], "image from step")
+      return { from: { ref: step.ref } }
     case "run":
       assertExactKeys(step, ["argv", "kind"], "image run step")
       return {

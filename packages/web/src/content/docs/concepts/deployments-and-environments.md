@@ -15,11 +15,11 @@ versions, credentials, execution history, or access boundaries. Environment
 API keys are issued into one such scope. Saved user sessions instead select a
 Project and Environment on each CLI operation.
 
-A Deployment is an immutable remote build of a submitted task project. The
-source archive contains `package.json`, one supported lockfile,
-`helmr.config.ts`, and retained declaration source. The remote build installs
-the exact selected dependencies, evaluates config, compiles local declarations,
-builds Sandbox images, and indexes Tasks, Actors, Sandboxes, and Schedules.
+A Deployment is one immutable, content-addressed bundle produced by the Helmr
+CLI on a developer or CI machine. The official builder installs the project's
+dependencies, evaluates config, compiles declarations, builds Sandbox images,
+and indexes Tasks, Actors, Sandboxes, and Schedules. The Control Plane verifies
+and registers the completed closure without rebuilding it.
 
 Promotion makes one completed Deployment current in an Environment. New
 definition lookups and starts use that current Deployment unless the read API
@@ -28,7 +28,7 @@ Deployment recorded when they were created.
 
 Promotion also reconciles source-declared Schedules. It does not mutate the
 immutable Deployment or rewrite existing Workspaces. Deploying with
-`--skip-promotion` is useful for building and inspecting a candidate before it
+`--skip-promotion` is useful for finalizing and inspecting a candidate before it
 becomes current.
 
 The TypeScript SDK's developer routes use `/v1` with an environment API key.

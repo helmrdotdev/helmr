@@ -53,44 +53,20 @@ func parseRunStartArm(request workerapi.RunStartRequest) (runStartArm, error) {
 		}
 		return runStartArm{mode: runLeaseClaimRestore, runWaitID: waitID, checkpointID: checkpointID,
 			resumeAttachID: attachID, resumeRequestVersion: request.Restore.ResumeRequestVersion}, nil
-	case request.Attach != nil && request.Attach.Child != nil:
-		waitID, checkpointID, attachID, err := parseIDs(
-			request.Attach.Child.RunWaitID, request.Attach.Child.CheckpointID, request.Attach.Child.ResumeAttachID,
-		)
-		if err != nil {
-			return runStartArm{}, errors.New("attach.child IDs must be UUIDs")
-		}
-		return runStartArm{mode: runLeaseClaimAttachChild, runWaitID: waitID,
-			checkpointID: checkpointID, resumeAttachID: attachID}, nil
-	case request.Attach != nil && request.Attach.Parent != nil:
-		waitID, checkpointID, attachID, err := parseIDs(
-			request.Attach.Parent.RunWaitID, request.Attach.Parent.CheckpointID, request.Attach.Parent.ResumeAttachID,
-		)
-		if err != nil || request.Attach.Parent.ResumeRequestVersion <= 0 {
-			return runStartArm{}, errors.New("attach.parent IDs must be UUIDs and resume_request_version must be positive")
-		}
-		return runStartArm{mode: runLeaseClaimAttachParent, runWaitID: waitID, checkpointID: checkpointID,
-			resumeAttachID: attachID, resumeRequestVersion: request.Attach.Parent.ResumeRequestVersion}, nil
 	default:
-		return runStartArm{}, errors.New("run start arm is required")
+		return runStartArm{}, errors.New("exactly one fresh or restore run start arm is required")
 	}
 }
 
 func deriveRunStartMode(locators db.GetRunLeaseStartLocatorsRow) runLeaseClaimMode {
 	if locators.RunWaitID.Valid {
-		if locators.ResumeChildRunID.Valid &&
-			locators.ResumeChildParentOwned.Valid &&
-			locators.ResumeChildParentOwned.Bool {
-			if locators.RuntimeRestoreCheckpointID.Valid &&
-				locators.RuntimeRestoreCheckpointID == locators.RunWaitCheckpointID {
-				return runLeaseClaimRestore
-			}
-			return runLeaseClaimAttachParent
-		}
 		return runLeaseClaimRestore
 	}
-	if locators.EnclosingWaitID.Valid {
-		return runLeaseClaimAttachChild
-	}
 	return runLeaseClaimFresh
+}
+
+func sameWorkspaceParentResumeWait(wait db.RunWait) bool {
+	return wait.Kind == db.WaitKindChild &&
+		wait.ChildParentOwned.Valid && wait.ChildParentOwned.Bool &&
+		wait.OwnershipGeneration.Valid
 }

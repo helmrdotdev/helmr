@@ -19,7 +19,6 @@ async function analyzeProject(options: {
 }) {
   const compiled = await compileProgram({
     ...options,
-    manager: "npm",
     nodeVersion: "24.16.0",
     outputRoot: await outputRoot(),
     runtimeRoot: options.root,

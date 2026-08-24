@@ -42,7 +42,7 @@ stdenv.mkDerivation (finalAttrs: {
   ];
 
   postInstall = ''
-    "$out/bin/mksquashfs" -version 2>&1 | grep -F "version 4.6.1"
+    "$out/bin/mksquashfs" -version 2>&1 | grep -E '^mksquashfs version 4[.]6[.]1([[:space:]]|$)'
   '';
 
   meta = {

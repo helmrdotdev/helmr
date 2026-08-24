@@ -38,17 +38,7 @@ type parsedTaskCompletion struct {
 	errorObject json.RawMessage
 	capture     *parsedTaskWorkspaceCapture
 	rollback    *parsedTaskWorkspaceRollback
-	handoff     *parsedTaskHandoffCheckpoint
 	fingerprint string
-}
-
-type parsedTaskHandoffCheckpoint struct {
-	checkpointID  uuid.UUID
-	parentRunID   uuid.UUID
-	waitID        uuid.UUID
-	attemptNumber int32
-	manifest      []byte
-	artifacts     []checkpointArtifactProof
 }
 
 type parsedTaskWorkspaceCapture struct {
@@ -138,54 +128,6 @@ func parseTaskCompletionRequest(request workerapi.CompleteTaskRequest) (parsedTa
 	if parsed.kind != taskCompletionSucceeded && parsed.rollback == nil {
 		return parsedTaskCompletion{}, errors.New("a failed task requires a workspace rollback")
 	}
-	if request.Handoff != nil {
-		if parsed.kind != taskCompletionSucceeded || parsed.capture == nil {
-			return parsedTaskCompletion{}, errors.New("a handoff checkpoint requires successful workspace capture")
-		}
-		checkpointID, err := parseCanonicalUUID("handoff.checkpoint_id", request.Handoff.CheckpointID)
-		if err != nil {
-			return parsedTaskCompletion{}, err
-		}
-		parentRunID, err := parseCanonicalUUID("handoff.manifest.recovery_point.run_id", request.Handoff.Manifest.RecoveryPoint.RunID)
-		if err != nil {
-			return parsedTaskCompletion{}, err
-		}
-		waitID, err := parseCanonicalUUID("handoff.manifest.recovery_point.run_wait_id", request.Handoff.Manifest.RecoveryPoint.RunWaitID)
-		if err != nil {
-			return parsedTaskCompletion{}, err
-		}
-		if request.Handoff.Manifest.RecoveryPoint.AttemptNumber <= 0 {
-			return parsedTaskCompletion{}, errors.New("handoff manifest parent attempt_number must be positive")
-		}
-		manifest, artifacts, err := validateCheckpointManifest(
-			request.Handoff.Manifest,
-			checkpointID.String(),
-			parentRunID.String(),
-			request.Handoff.Manifest.RecoveryPoint.AttemptNumber,
-			waitID.String(),
-			request.Handoff.Manifest.RecoveryPoint.Runtime.ID,
-		)
-		if err != nil {
-			return parsedTaskCompletion{}, fmt.Errorf("validate handoff checkpoint: %w", err)
-		}
-		base := request.Handoff.Manifest.WorkspaceState.Base
-		if base.ArtifactDigest != parsed.capture.artifact.Digest ||
-			base.ArtifactSizeBytes != parsed.capture.artifact.SizeBytes ||
-			base.ArtifactMediaType != parsed.capture.artifact.MediaType ||
-			base.ArtifactEncoding != parsed.capture.artifact.Encoding ||
-			strings.TrimSpace(base.MountPath) == "" {
-			return parsedTaskCompletion{}, errors.New("handoff checkpoint workspace base does not match captured workspace")
-		}
-		parsed.handoff = &parsedTaskHandoffCheckpoint{
-			checkpointID:  checkpointID,
-			parentRunID:   parentRunID,
-			waitID:        waitID,
-			attemptNumber: request.Handoff.Manifest.RecoveryPoint.AttemptNumber,
-			manifest:      manifest,
-			artifacts:     artifacts,
-		}
-	}
-
 	parsed.fingerprint, err = terminalRequestFingerprint("task.complete.v0", normalized)
 	if err != nil {
 		return parsedTaskCompletion{}, fmt.Errorf("fingerprint task completion: %w", err)

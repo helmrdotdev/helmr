@@ -131,17 +131,27 @@ from `helmr_version` and `aws_region`; set `worker_ami_id` only for custom build
 Workers launch in private subnets, use SSM Session Manager by default, and do not require inbound
 SSH rules. The default worker instance type is a metal host for production isolation; nested
 virtualization remains available for supported instance families when explicitly enabled. Workers
-are filesystem-first: size the root EBS volume for build/cache/runtime data, and set
+are filesystem-first: size the root EBS volume for runtime/cache data, and set
 `worker_disk_mib` only when the advertised filesystem capacity should differ from auto-detection.
 
-For an AMI rollout, change `worker_ami_id`, apply the launch template, and
-coordinate the Auto Scaling instance refresh through the deployment's exact
-drain-to-`termination_ready` path. Control Plane does not authenticate or allowlist
-the AMI.
+The stack derives each Worker Pool generation name from the complete immutable
+supply definition: Worker module/user-data contract,
+resolved AMI, instance/runtime class, network/store/cache policy,
+root-volume shape, roles, and advertised capacity shape. Changing one of those
+sealed inputs creates a new Pool name; changing only ASG minimum or maximum
+size does not. Each Pool name keys a distinct Auto Scaling Group and launch
+template. Before changing an immutable input, copy the old entry from
+`worker_generation_definitions` into `retained_worker_generations` with
+`min_size = 0`. The exported entry includes the realized user data, IAM
+documents, SSM choice, and exact launch-template version, so the retained ASG
+does not follow a newer template. Remove a retained entry only after Product
+restore authority no longer references that Pool and its exact drain-to-
+`termination_ready` retirement has completed. Control Plane does not
+authenticate or allowlist the AMI; `worker_generation_bindings` records the
+exact Product Pool to provider binding.
 
-Deployment infrastructure owns desired capacity independently for run and
-build groups. Terraform continues enforcing ASG min/max; `max_size` is the hard
-spend guardrail and equal min/max values provide fixed capacity. Explicit CPU,
-memory, disk, cache, VM-slot, and build-executor capacities are required when
-workers are created. Demand observations may guide scale-out, but scale-in must
-use the exact claim-fenced drain contract.
+Deployment infrastructure owns desired execution capacity. Terraform continues
+enforcing ASG min/max; `max_size` is the hard spend guardrail and equal min/max
+values provide fixed capacity. Explicit CPU, memory, disk, cache, and VM-slot
+capacities are required when workers are created. Demand observations may guide
+scale-out, but scale-in must use the exact claim-fenced drain contract.

@@ -7,7 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -75,9 +77,6 @@ func (s *runResumeReleaseStore) ReleaseRunResumeWait(
 }
 
 func resumeReleaseCheckpointID(wait db.RunWait) pgtype.UUID {
-	if wait.ConditionState == db.WaitStateCompleted && wait.HandoffResumeCheckpointID.Valid {
-		return wait.HandoffResumeCheckpointID
-	}
 	return wait.SuspendCheckpointID
 }
 
@@ -131,17 +130,20 @@ func TestAcknowledgeRunResumeReleaseCommitsOnceAndReplaysWithoutWrite(t *testing
 	}
 }
 
-func TestAcknowledgeRunResumeReleaseAcceptsParentAttachHandoffCheckpoint(t *testing.T) {
-	server, store, worker, expected, proof := validParentAttachRunResumeReleaseFixture(t)
+func TestAcknowledgeRunResumeReleaseUsesSuspendCheckpointForDifferentWorkspaceChild(t *testing.T) {
+	server, store, worker, expected, proof := validRunResumeReleaseFixture(t)
+	store.authority.runWait.Kind = db.WaitKindChild
+	store.authority.runWait.ChildRunID = pgvalue.UUID(uuid.New())
+	store.authority.runWait.ChildParentOwned = pgtype.Bool{Bool: true, Valid: true}
+
 	if _, err := server.acknowledgeRunResumeRelease(
 		context.Background(), worker, store.authority.runLease.ID, expected.Fence(), proof,
 	); err != nil {
 		t.Fatal(err)
 	}
 	if store.releaseWrites != 1 || store.checkpointLock == nil ||
-		store.checkpointLock.ID != proof.checkpointID ||
-		store.checkpointLock.Kind != db.RunCheckpointKindHandoffResume {
-		t.Fatalf("parent release writes=%d checkpoint=%+v", store.releaseWrites, store.checkpointLock)
+		store.checkpointLock.ID != proof.checkpointID {
+		t.Fatalf("different Workspace release writes=%d checkpoint=%+v", store.releaseWrites, store.checkpointLock)
 	}
 }
 
@@ -235,55 +237,6 @@ func validRunResumeReleaseFixture(
 	}
 	proof := runResumeReleaseProof{
 		runWaitID: authority.runWait.ID, checkpointID: authority.runWait.SuspendCheckpointID,
-		resumeAttachID:       authority.runWait.ResumeAttachID,
-		resumeRequestVersion: authority.runWait.ResumeRequestVersion,
-	}
-	return &Server{db: store}, store, worker, expected, proof
-}
-
-func validParentAttachRunResumeReleaseFixture(
-	t *testing.T,
-) (*Server, *runResumeReleaseStore, workerActor, workerapi.RunLeaseAssignment, runResumeReleaseProof) {
-	t.Helper()
-	worker, claimLocators, authority := validSameWorkspaceParentResumeRunLeaseClaimFixture(false, true)
-	authority.run.Status = db.RunStatusRunning
-	authority.run.MaxActiveDurationMs = 60_000
-	authority.runLease.State = db.RunLeaseStateRunning
-	authority.runLease.StartDeadlineAt = pgtype.Timestamptz{Time: time.Now().Add(-time.Minute), Valid: true}
-	authority.runLease.ExpiresAt = pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true}
-	authority.runtime.RestoreCheckpointID = pgtype.UUID{}
-	authority.workspaceMount.RuntimeInstanceID = authority.runtime.ID
-	authority.workspaceLease.RuntimeInstanceID = authority.runtime.ID
-	authority.workspaceLease.WorkspaceMountID = authority.workspaceMount.ID
-	authority.workspaceLease.WorkspaceID = authority.workspace.ID
-
-	locators := db.GetRunLeaseStartLocatorsRow{
-		OrgID: claimLocators.OrgID, ProjectID: claimLocators.ProjectID,
-		EnvironmentID: claimLocators.EnvironmentID, RunID: claimLocators.RunID,
-		WorkspaceID: claimLocators.WorkspaceID, AttemptNumber: claimLocators.AttemptNumber,
-		RegionID: claimLocators.RegionID, RuntimeInstanceID: claimLocators.RuntimeInstanceID,
-		WorkspaceLeaseID: claimLocators.WorkspaceLeaseID, WorkspaceMountID: claimLocators.WorkspaceMountID,
-		RunWaitID: authority.runWait.ID, RunWaitCheckpointID: authority.runWait.HandoffResumeCheckpointID,
-		ResumeAttachID:         authority.runWait.ResumeAttachID,
-		ResumeRequestVersion:   pgtype.Int8{Int64: authority.runWait.ResumeRequestVersion, Valid: true},
-		ResumeChildRunID:       authority.runWait.ChildRunID,
-		ResumeChildParentOwned: authority.runWait.ChildParentOwned,
-	}
-	store := &runResumeReleaseStore{
-		runLeaseClaimStore: &runLeaseClaimStore{authority: authority},
-		locators:           locators,
-	}
-	expected, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{
-		run: authority.run, attempt: authority.attempt, runtime: authority.runtime,
-		runLease:  authority.runLease,
-		workspace: authority.workspace, workspaceMount: authority.workspaceMount,
-		workspaceLease: authority.workspaceLease,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	proof := runResumeReleaseProof{
-		runWaitID: authority.runWait.ID, checkpointID: authority.runWait.HandoffResumeCheckpointID,
 		resumeAttachID:       authority.runWait.ResumeAttachID,
 		resumeRequestVersion: authority.runWait.ResumeRequestVersion,
 	}

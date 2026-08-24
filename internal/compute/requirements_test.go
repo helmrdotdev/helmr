@@ -3,6 +3,8 @@ package compute
 import (
 	"strings"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/runtimeid"
 )
 
 func TestRunRuntimeRequirementsFromFields(t *testing.T) {
@@ -13,7 +15,7 @@ func TestRunRuntimeRequirementsFromFields(t *testing.T) {
 		RequestedExecutionSlots: 1,
 		RuntimeID:               "sha256:runtime",
 		RuntimeArch:             "amd64",
-		VMRuntimeContract:       "helmr.vm-runtime.v0",
+		VMRuntimeContract:       runtimeid.Contract,
 		KernelDigest:            "sha256:kernel",
 		InitramfsDigest:         "sha256:initramfs",
 		RootfsDigest:            "sha256:rootfs",
@@ -35,7 +37,7 @@ func TestRunRuntimeRequirementsRejectsPlacementRegion(t *testing.T) {
 		RequestedExecutionSlots: 1,
 		RuntimeID:               "sha256:runtime",
 		RuntimeArch:             "amd64",
-		VMRuntimeContract:       "helmr.vm-runtime.v0",
+		VMRuntimeContract:       runtimeid.Contract,
 		KernelDigest:            "sha256:kernel",
 		InitramfsDigest:         "sha256:initramfs",
 		RootfsDigest:            "sha256:rootfs",

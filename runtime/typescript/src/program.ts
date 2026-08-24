@@ -116,6 +116,7 @@ interface ProgramIndex {
 
 class FrameReader {
   readonly #iterator: AsyncIterator<InputChunk>
+  #closePromise: Promise<void> | undefined
   #chunk: Uint8Array<ArrayBufferLike> = new Uint8Array()
   #offset = 0
 
@@ -134,6 +135,17 @@ class FrameReader {
       throw new Error(`runtime frame length ${size} exceeds max ${maxBytes}`)
     }
     return this.#readExact(size)
+  }
+
+  close(): Promise<void> {
+    if (this.#closePromise !== undefined) return this.#closePromise
+    this.#closePromise = this.#closeIterator()
+    return this.#closePromise
+  }
+
+  async #closeIterator(): Promise<void> {
+    const close = this.#iterator.return
+    if (close !== undefined) await close.call(this.#iterator)
   }
 
   async #readExact(size: number): Promise<Uint8Array> {
@@ -446,9 +458,10 @@ export async function runProgram(
 
   if (definition.kind === "task") {
     await runTask(start, definition, io, decisions)
-    return
+  } else {
+    await runActor(start, definition, io, decisions)
   }
-  await runActor(start, definition, io, decisions)
+  await reader.close()
 }
 
 

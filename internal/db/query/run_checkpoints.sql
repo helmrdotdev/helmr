@@ -1,7 +1,6 @@
 -- name: CreateRunCheckpoint :one
 INSERT INTO run_checkpoints (
     id,
-    kind,
     run_id,
     attempt_number,
     run_wait_id,
@@ -17,7 +16,6 @@ INSERT INTO run_checkpoints (
 )
 VALUES (
     sqlc.arg(id),
-    sqlc.arg(kind),
     sqlc.arg(run_id),
     sqlc.arg(attempt_number),
     sqlc.arg(run_wait_id),
@@ -65,7 +63,6 @@ RETURNING *;
 SELECT *
   FROM run_checkpoints
  WHERE id = sqlc.arg(id)
-   AND kind = 'suspend'
    AND run_id = sqlc.arg(run_id)
    AND attempt_number = sqlc.arg(attempt_number)
    AND run_wait_id = sqlc.arg(run_wait_id)
@@ -80,7 +77,6 @@ SELECT run_id, attempt_number, run_wait_id, source_run_lease_id,
        workspace_id, private_workspace_version_id, ready_request_fingerprint
   FROM run_checkpoints
  WHERE id = sqlc.arg(id)
-   AND kind = 'suspend'
    AND state = 'ready'
    AND ready_request_fingerprint IS NOT NULL;
 
@@ -89,7 +85,6 @@ SELECT run_id, attempt_number, run_wait_id, source_run_lease_id,
        workspace_id, failed_request_fingerprint
   FROM run_checkpoints
  WHERE id = sqlc.arg(id)
-   AND kind = 'suspend'
    AND state = 'invalid'
    AND invalidation_reason_code = 'checkpoint_failed'
    AND failed_request_fingerprint IS NOT NULL;
@@ -155,6 +150,61 @@ UPDATE workspace_leases
    AND state = 'active'
    AND expires_at > sqlc.arg(checkpointed_at)
 RETURNING *;
+
+-- name: CloseCheckpointSourceRuntime :one
+WITH closed_mount AS (
+    UPDATE workspace_mounts
+       SET state = 'unmounted',
+           stopped_at = COALESCE(stopped_at, sqlc.arg(checkpointed_at)),
+           unmounted_at = sqlc.arg(checkpointed_at),
+           terminal_at = sqlc.arg(checkpointed_at),
+           terminal_reason_code = 'checkpointed',
+           terminal_error = NULL,
+           updated_at = sqlc.arg(checkpointed_at)
+     WHERE workspace_mounts.id = sqlc.arg(workspace_mount_id)
+       AND workspace_mounts.runtime_instance_id = sqlc.arg(runtime_instance_id)
+       AND workspace_mounts.worker_instance_id = sqlc.arg(worker_instance_id)
+       AND workspace_mounts.worker_epoch = sqlc.arg(worker_epoch)
+       AND workspace_mounts.fencing_generation = sqlc.arg(mount_fencing_generation)
+       AND workspace_mounts.state = 'mounted'
+    RETURNING workspace_mounts.*
+), closed_runtime AS (
+    UPDATE runtime_instances
+       SET desired_state = 'closed',
+           desired_version = runtime_instances.desired_version + 1,
+           desired_at = sqlc.arg(checkpointed_at),
+           desired_reason = 'checkpointed',
+           observed_state = 'closed',
+           observed_version = runtime_instances.observed_version + 1,
+           observed_desired_version = runtime_instances.desired_version + 1,
+           observed_at = sqlc.arg(checkpointed_at),
+           closing_at = COALESCE(runtime_instances.closing_at, sqlc.arg(checkpointed_at)),
+           closed_at = sqlc.arg(checkpointed_at),
+           terminal_at = sqlc.arg(checkpointed_at),
+           terminal_reason_code = 'checkpointed',
+           terminal_error = NULL,
+           reclaimed_at = sqlc.arg(checkpointed_at),
+           reclaim_evidence = sqlc.arg(cleanup_proof)::jsonb,
+           reserved_run_id = NULL,
+           reserved_attempt_number = NULL,
+           reserved_process_id = NULL,
+           reserved_workspace_version_id = NULL,
+           reservation_expires_at = NULL,
+           updated_at = sqlc.arg(checkpointed_at)
+      FROM closed_mount
+     WHERE runtime_instances.id = sqlc.arg(runtime_instance_id)
+       AND runtime_instances.id = closed_mount.runtime_instance_id
+       AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
+       AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
+       AND runtime_instances.desired_state = 'ready'
+       AND runtime_instances.desired_version = sqlc.arg(expected_desired_version)
+       AND runtime_instances.observed_state = 'ready'
+       AND runtime_instances.observed_version = sqlc.arg(expected_observed_version)
+    RETURNING runtime_instances.id
+)
+SELECT closed_mount.*
+  FROM closed_mount
+  JOIN closed_runtime ON closed_runtime.id = closed_mount.runtime_instance_id;
 
 -- name: CommitPendingCheckpointReady :one
 WITH updated_run AS (
@@ -229,9 +279,6 @@ UPDATE run_waits
        base_workspace_version_id = sqlc.arg(base_workspace_version_id),
        base_workspace_content_digest =
            sqlc.arg(base_workspace_content_digest),
-       handoff_runtime_instance_id = sqlc.arg(runtime_instance_id),
-       handoff_workspace_mount_id = sqlc.arg(workspace_mount_id),
-       handoff_mount_generation = sqlc.arg(mount_generation),
        ownership_generation = sqlc.arg(ownership_generation),
        parent_writer_generation = sqlc.arg(parent_writer_generation),
        updated_at = sqlc.arg(checkpointed_at)
@@ -394,43 +441,6 @@ UPDATE workspace_mounts
    AND workspace_mounts.state = 'mounted'
 RETURNING workspace_mounts.*;
 
--- name: RequestHandoffFailureRuntimeClose :one
-WITH closing_runtime AS (
-    UPDATE runtime_instances
-       SET desired_state = 'closed',
-           desired_version = desired_version + 1,
-           desired_at = sqlc.arg(failed_at),
-           desired_reason = 'child_handoff_failed',
-           updated_at = sqlc.arg(failed_at)
-     WHERE runtime_instances.id = sqlc.arg(runtime_instance_id)
-       AND runtime_instances.org_id = sqlc.arg(org_id)
-       AND runtime_instances.project_id = sqlc.arg(project_id)
-       AND runtime_instances.environment_id = sqlc.arg(environment_id)
-       AND runtime_instances.workspace_id = sqlc.arg(workspace_id)
-       AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
-       AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
-       AND runtime_instances.desired_state = 'ready'
-       AND runtime_instances.observed_state = 'ready'
-       AND runtime_instances.reclaimed_at IS NULL
-    RETURNING id
-)
-UPDATE workspace_mounts
-   SET state = 'unmounting',
-       stopped_at = COALESCE(stopped_at, sqlc.arg(failed_at)),
-       updated_at = sqlc.arg(failed_at)
-  FROM closing_runtime
- WHERE workspace_mounts.id = sqlc.arg(workspace_mount_id)
-   AND workspace_mounts.org_id = sqlc.arg(org_id)
-   AND workspace_mounts.project_id = sqlc.arg(project_id)
-   AND workspace_mounts.environment_id = sqlc.arg(environment_id)
-   AND workspace_mounts.workspace_id = sqlc.arg(workspace_id)
-   AND workspace_mounts.runtime_instance_id = closing_runtime.id
-   AND workspace_mounts.worker_instance_id = sqlc.arg(worker_instance_id)
-   AND workspace_mounts.worker_epoch = sqlc.arg(worker_epoch)
-   AND workspace_mounts.fencing_generation = sqlc.arg(mount_fencing_generation)
-   AND workspace_mounts.state = 'mounted'
-RETURNING workspace_mounts.*;
-
 -- name: InvalidateRunCheckpoint :one
 UPDATE run_checkpoints
    SET state = 'invalid',
@@ -459,7 +469,6 @@ SELECT run_checkpoints.*
 SELECT *
   FROM run_checkpoints
  WHERE id = sqlc.arg(id)
-   AND kind = 'suspend'
    AND run_id = sqlc.arg(run_id)
    AND attempt_number = sqlc.arg(attempt_number)
    AND run_wait_id = sqlc.arg(run_wait_id)

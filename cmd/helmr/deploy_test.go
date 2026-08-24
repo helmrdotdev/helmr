@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,283 +14,82 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
-func TestDeployCommandUploadsCurrentDirectoryTaskArtifact(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "helmr.config.ts"), []byte(`export default { dirs: ["tasks"] }`), 0o644); err != nil {
+func writeSessionScopeProjects(t *testing.T, w http.ResponseWriter, projectSlug, environmentSlug string) {
+	t.Helper()
+	if err := json.NewEncoder(w).Encode(api.ListProjectsResponse{Projects: []api.ProjectSummary{{
+		ID:   "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30",
+		Slug: projectSlug,
+		Environments: []api.EnvironmentSummary{{
+			ID:   "019c10d5-a6f7-7af2-8f5f-bb97bcc0dc32",
+			Slug: environmentSlug,
+		}},
+	}}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"private":true,"type":"module","packageManager":"bun@1.3.10","devEngines":{"runtime":{"name":"node","version":"24.16.0","onFail":"error"}},"dependencies":{"@helmr/sdk":"latest"}}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "bun.lock"), []byte("{}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(root, "node_modules", "@helmr", "sdk"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "node_modules", "@helmr", "sdk", "package.json"), []byte(`{"name":"@helmr/sdk"}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(root, "tasks"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "tasks", "deploy.ts"), []byte(`export const deploy = task("deploy", async () => {})`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(root, "secrets"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "secrets", "token.txt"), []byte("secret"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "tasks", ".env.local"), []byte("TOKEN=secret"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(root, ".helmrignore"),
-		[]byte("node_modules/\nsecrets/\ntasks/.env.local\n"),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "tasks", "generated.ts"), []byte("generated"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	oldTemp := deployArchiveTempDir
-	deployArchiveTempDir = t.TempDir()
-	t.Cleanup(func() {
-		deployArchiveTempDir = oldTemp
-	})
+}
 
-	var metadata api.CreateDeploymentRequest
-	var metadataFields map[string]json.RawMessage
-	var uploaded []byte
-	requests := []string{}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func TestDeployBundleUsesUploadFinalizePromoteFlow(t *testing.T) {
+	directory, raw, digest, objectDigest := writeDeployTestBundle(t)
+	const deploymentID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"
+	requests := make([]string, 0, 4)
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.Path)
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/deployments":
-			if got := r.Header.Get("authorization"); got != "Bearer test-key" {
-				t.Fatalf("auth = %s", got)
+		switch r.URL.Path {
+		case "/v1/deployment-bundles/upload-plan":
+			if r.Header.Get("Content-Type") != deployment.DeploymentBundleMediaType {
+				t.Fatalf("content type = %q", r.Header.Get("Content-Type"))
 			}
-			if err := r.ParseMultipartForm(32 << 20); err != nil {
-				t.Fatal(err)
-			}
-			encodedMetadata := []byte(r.FormValue("metadata"))
-			if err := json.Unmarshal(encodedMetadata, &metadata); err != nil {
-				t.Fatal(err)
-			}
-			if err := json.Unmarshal(encodedMetadata, &metadataFields); err != nil {
-				t.Fatal(err)
-			}
-			file, _, err := r.FormFile("deployment_source")
+			body, err := io.ReadAll(r.Body)
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer file.Close()
-			uploaded, err = io.ReadAll(file)
-			if err != nil {
-				t.Fatal(err)
+			if !bytes.Equal(body, raw) {
+				t.Fatal("upload plan body differs from bundle.json")
 			}
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Status: "queued"})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/events":
-			writeDeploymentEventSSE(t, w, r, "deployment.deployed")
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35":
-			if r.URL.RawQuery != "" {
-				t.Fatalf("deployment query = %s", r.URL.RawQuery)
+			_ = json.NewEncoder(w).Encode(api.DeploymentBundleUploadPlanResponse{
+				BundleDigest: digest,
+				Uploads: []api.DeploymentBundleUpload{{
+					Digest: objectDigest, Method: http.MethodPut, URL: server.URL + "/upload",
+					Headers: map[string]string{
+						"Content-Length": "7",
+						"Content-Type":   deployment.ProgramArtifactMediaType,
+					},
+				}},
+			})
+		case "/upload":
+			if r.Header.Get("Authorization") != "" {
+				t.Fatal("Control Plane credential leaked to object upload")
 			}
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Version: "20260101.1", Status: "deployed"})
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/promote":
-			var request api.PromoteDeploymentRequest
+			if r.ContentLength != 7 {
+				t.Fatalf("upload content length = %d", r.ContentLength)
+			}
+			body, err := io.ReadAll(r.Body)
+			if err != nil || string(body) != "program" {
+				t.Fatalf("upload body = %q, err = %v", body, err)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		case "/v1/deployment-bundles/finalize":
+			var request api.FinalizeDeploymentBundleRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.Reason != "deploy" {
-				t.Fatalf("promotion request = %+v", request)
+			if request.BundleDigest != digest || request.IdempotencyKey != "deploy-test" {
+				t.Fatalf("finalize request = %+v", request)
 			}
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Version: "20260101.1", Status: "deployed"})
-		default:
-			t.Fatalf("%s %s", r.Method, r.URL.Path)
-		}
-	}))
-	defer server.Close()
-	t.Setenv(helmrAPIURLEnv, server.URL)
-	t.Setenv(helmrAPIKeyEnv, "test-key")
-
-	var out bytes.Buffer
-	cmd := newRootCommand()
-	cmd.SetOut(&out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"deploy", root, "--idempotency-key", "deploy-1"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if metadata.IdempotencyKey != "deploy-1" {
-		t.Fatalf("deployment idempotency key = %q", metadata.IdempotencyKey)
-	}
-	if metadata.ImageCacheMode != "prefer" {
-		t.Fatalf("deployment image cache mode = %q", metadata.ImageCacheMode)
-	}
-	if strings.TrimSpace(out.String()) != "20260101.1" {
-		t.Fatalf("output = %q", out.String())
-	}
-	if got := strings.Join(requests, ","); got != "POST /v1/deployments,GET /v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/events,GET /v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35,POST /v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/promote" {
-		t.Fatalf("requests = %s", got)
-	}
-	if _, present := metadataFields["project_id"]; present {
-		t.Fatalf("metadata contains project_id: %s", metadataFields["project_id"])
-	}
-	if _, present := metadataFields["environment_id"]; present {
-		t.Fatalf("metadata contains environment_id: %s", metadataFields["environment_id"])
-	}
-	if metadata.ContentHash == "" || metadata.ContentHash != sha256sum.DigestBytes(uploaded) {
-		t.Fatalf("content hash = %q, uploaded digest = %q", metadata.ContentHash, sha256sum.DigestBytes(uploaded))
-	}
-	if !bytes.Contains(uploaded, []byte("helmr.config.ts")) || !bytes.Contains(uploaded, []byte("package.json")) || !bytes.Contains(uploaded, []byte("tasks/deploy.ts")) {
-		t.Fatalf("uploaded archive does not include expected files")
-	}
-	uploadedEntries := readTarEntries(t, uploaded)
-	if uploadedEntries["secrets/token.txt"] || uploadedEntries["tasks/.env.local"] {
-		t.Fatalf("uploaded archive includes ignored file: %+v", uploadedEntries)
-	}
-	if !uploadedEntries[".helmrignore"] || !uploadedEntries["tasks/generated.ts"] {
-		t.Fatalf("source selection reused declaration ignorePatterns: %+v", uploadedEntries)
-	}
-}
-
-func TestDeployCommandDoesNotExecuteOrMutateSource(t *testing.T) {
-	root, _ := deployCommandFixture(t)
-	if err := os.RemoveAll(filepath.Join(root, "node_modules")); err != nil {
-		t.Fatal(err)
-	}
-	configPath := filepath.Join(root, "helmr.config.ts")
-	config := []byte("throw new Error(\"must not execute locally\")\nexport default { dirs: [\"./tasks\"] }\n")
-	if err := os.WriteFile(configPath, config, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	lockPath := filepath.Join(root, "bun.lock")
-	lockBefore, err := os.ReadFile(lockPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/v1/deployments" {
-			t.Fatalf("%s %s", r.Method, r.URL.Path)
-		}
-		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Status: "queued"})
-	}))
-	defer server.Close()
-	t.Setenv(helmrAPIURLEnv, server.URL)
-	t.Setenv(helmrAPIKeyEnv, "test-key")
-
-	cmd := newRootCommand()
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"deploy", root, "--detach"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(root, "node_modules")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("node_modules was created: %v", err)
-	}
-	lockAfter, err := os.ReadFile(lockPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(lockAfter, lockBefore) {
-		t.Fatal("lockfile was mutated")
-	}
-	configAfter, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(configAfter, config) {
-		t.Fatal("config was mutated")
-	}
-}
-
-func TestDeployCommandWaitsWithResolvedConfiguredScope(t *testing.T) {
-	root, _ := deployCommandFixture(t)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/deployments":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
-				ID:     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
-				Status: "queued",
+			writeDeploymentFinalizeTestStream(t, w, objectDigest, api.DeploymentResponse{
+				ID: deploymentID, Version: "v-test", BundleDigest: digest, CreatedAt: time.Now(),
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/events":
-			writeDeploymentEventSSE(t, w, r, "deployment.deployed")
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35":
-			if r.URL.RawQuery != "" {
-				t.Fatalf("deployment query = %s", r.URL.RawQuery)
-			}
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Status: "deployed"})
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/promote":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Status: "deployed"})
-		default:
-			t.Fatalf("%s %s", r.Method, r.URL.Path)
-		}
-	}))
-	defer server.Close()
-	t.Setenv(helmrAPIURLEnv, server.URL)
-	t.Setenv(helmrAPIKeyEnv, "test-key")
-
-	var out bytes.Buffer
-	cmd := newRootCommand()
-	cmd.SetOut(&out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"deploy", root})
-	if err := cmd.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if strings.TrimSpace(out.String()) != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35" {
-		t.Fatalf("output = %q", out.String())
-	}
-}
-
-func TestDeployCommandReconnectsDeploymentEventsUntilTerminal(t *testing.T) {
-	root, _ := deployCommandFixture(t)
-	oldReconnectDelay := deployEventReconnectDelay
-	deployEventReconnectDelay = time.Millisecond
-	t.Cleanup(func() { deployEventReconnectDelay = oldReconnectDelay })
-	eventRequests := 0
-	deploymentRequests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/deployments":
+		case "/v1/deployments/" + deploymentID + "/promote":
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
-				ID:     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
-				Status: "queued",
+				ID: deploymentID, Version: "v-test", BundleDigest: digest, CreatedAt: time.Now(),
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/events":
-			eventRequests++
-			if r.URL.Query().Get("follow") != "1" {
-				t.Fatalf("events query = %s", r.URL.RawQuery)
-			}
-			w.Header().Set("Content-Type", "text/event-stream")
-			if eventRequests == 1 {
-				_, _ = fmt.Fprint(w, "id: event-cursor-1\nevent: deployment_event\ndata: {\"id\":\"event-cursor-1\",\"deployment_id\":\"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35\",\"kind\":\"deployment.building\",\"message\":\"Deployment build started\"}\n\n")
-				return
-			}
-			if got := r.Header.Get("Last-Event-ID"); got != "event-cursor-1" {
-				t.Fatalf("last event id = %q", got)
-			}
-			_, _ = fmt.Fprint(w, "id: event-cursor-2\nevent: deployment_event\ndata: {\"id\":\"event-cursor-2\",\"deployment_id\":\"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35\",\"kind\":\"deployment.deployed\",\"message\":\"Deployment build completed\"}\n\n")
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35":
-			deploymentRequests++
-			status := "queued"
-			if eventRequests >= 2 {
-				status = "deployed"
-			}
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Status: api.DeploymentStatus(status)})
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/promote":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Status: "deployed"})
 		default:
-			t.Fatalf("%s %s", r.Method, r.URL.Path)
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
 	}))
 	defer server.Close()
@@ -302,363 +100,377 @@ func TestDeployCommandReconnectsDeploymentEventsUntilTerminal(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"deploy", root})
+	cmd.SetArgs([]string{"deploy", "--bundle", directory, "--idempotency-key", "deploy-test"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if eventRequests != 2 {
-		t.Fatalf("event requests = %d", eventRequests)
-	}
-	if deploymentRequests < 2 {
-		t.Fatalf("deployment requests = %d", deploymentRequests)
-	}
-}
-
-func TestDeployCommandDetachReturnsQueuedDeploymentID(t *testing.T) {
-	root, _ := deployCommandFixture(t)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/v1/deployments" {
-			t.Fatalf("%s %s", r.Method, r.URL.Path)
-		}
-		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Status: "queued"})
-	}))
-	defer server.Close()
-	t.Setenv(helmrAPIURLEnv, server.URL)
-	t.Setenv(helmrAPIKeyEnv, "test-key")
-
-	var out bytes.Buffer
-	cmd := newRootCommand()
-	cmd.SetOut(&out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"deploy", root, "--detach"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if strings.TrimSpace(out.String()) != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35" {
+	if out.String() != "v-test\n" {
 		t.Fatalf("output = %q", out.String())
 	}
+	want := []string{
+		"POST /v1/deployment-bundles/upload-plan",
+		"PUT /upload",
+		"POST /v1/deployment-bundles/finalize",
+		"POST /v1/deployments/" + deploymentID + "/promote",
+	}
+	if strings.Join(requests, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("requests = %v", requests)
+	}
 }
 
-func TestFailingBuildFixtureReachesDeploymentCreation(t *testing.T) {
-	if os.Getenv("HELMR_TEST_PREPARED_FAILING_BUILD_FIXTURE") != "1" {
-		t.Skip("pre-AWS fixture contract is exercised by check-pre-aws.sh")
-	}
-	root, err := filepath.Abs("../../dev/workflows-failing-build")
-	if err != nil {
+func TestDeployReporterEmitsObjectTransferProgress(t *testing.T) {
+	const digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	command := newRootCommand()
+	var jsonOutput bytes.Buffer
+	command.SetOut(&jsonOutput)
+	reporter := newDeployReporter(command, true)
+	if err := reporter.DeploymentObjectUploadStarted(digest, 1, 2); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{
-		"bun.lock",
-		"vendor/helmr-sdk/package.json",
-		"vendor/helmr-proto/package.json",
-		"node_modules/@helmr/sdk/package.json",
-	} {
-		if info, err := os.Stat(filepath.Join(root, path)); err != nil || info.IsDir() {
-			t.Fatalf("failing-build fixture must be prepared by sync-local-sdk.sh: %s", path)
+	if err := reporter.DeploymentObjectUploadProgress(digest, 1, 2, 3, 7); err != nil {
+		t.Fatal(err)
+	}
+	if err := reporter.DeploymentObjectUploaded(digest, 1, 2); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(jsonOutput.String()), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("JSON lines = %q", jsonOutput.String())
+	}
+	wantTypes := []string{
+		"deployment_object_upload_started",
+		"deployment_object_upload_progress",
+		"deployment_object_uploaded",
+	}
+	for index, raw := range lines {
+		var line cliDeployLine
+		if err := json.Unmarshal([]byte(raw), &line); err != nil {
+			t.Fatal(err)
+		}
+		if line.Type != wantTypes[index] || line.Digest != digest || line.Index != 1 || line.Count != 2 {
+			t.Fatalf("line %d = %+v", index, line)
+		}
+		if index == 1 && (line.BytesRead != 3 || line.TotalBytes != 7) {
+			t.Fatalf("progress line = %+v", line)
 		}
 	}
 
-	oldTemp := deployArchiveTempDir
-	deployArchiveTempDir = t.TempDir()
-	t.Cleanup(func() {
-		deployArchiveTempDir = oldTemp
-	})
+	var textOutput bytes.Buffer
+	command.SetErr(&textOutput)
+	textReporter := newDeployReporter(command, false)
+	if err := textReporter.DeploymentObjectUploadStarted(digest, 1, 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := textReporter.DeploymentObjectUploadProgress(digest, 1, 2, 3, 7); err != nil {
+		t.Fatal(err)
+	}
+	if err := textReporter.DeploymentObjectUploaded(digest, 1, 2); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Uploading deployment object", "3/7 bytes", "uploaded (1/2)"} {
+		if !strings.Contains(textOutput.String(), want) {
+			t.Fatalf("text output = %q, want %q", textOutput.String(), want)
+		}
+	}
+}
 
-	var uploaded []byte
+func TestDeployBundleReconcilesAcceptedUploadWithLostResponse(t *testing.T) {
+	directory, _, digest, objectDigest := writeDeployTestBundle(t)
+	const deploymentID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"
+	planRequests := 0
+	uploadRequests := 0
+	finalizeRequests := 0
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/deployment-bundles/upload-plan":
+			planRequests++
+			response := api.DeploymentBundleUploadPlanResponse{BundleDigest: digest}
+			if planRequests == 1 {
+				response.Uploads = []api.DeploymentBundleUpload{deployTestUpload(server.URL, objectDigest)}
+			}
+			_ = json.NewEncoder(w).Encode(response)
+		case "/upload":
+			uploadRequests++
+			body, err := io.ReadAll(r.Body)
+			if err != nil || string(body) != "program" {
+				t.Fatalf("upload body = %q, err = %v", body, err)
+			}
+			connection, _, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = connection.Close()
+		case "/v1/deployment-bundles/finalize":
+			finalizeRequests++
+			writeDeploymentFinalizeTestStream(t, w, objectDigest, api.DeploymentResponse{
+				ID: deploymentID, Version: "v-test", BundleDigest: digest, CreatedAt: time.Now(),
+			})
+		case "/v1/deployments/" + deploymentID + "/promote":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
+				ID: deploymentID, Version: "v-test", BundleDigest: digest, CreatedAt: time.Now(),
+			})
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv(helmrAPIURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	cmd := newRootCommand()
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"deploy", "--bundle", directory, "--idempotency-key", "deploy-test"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if planRequests != 2 || uploadRequests != 1 || finalizeRequests != 1 {
+		t.Fatalf(
+			"requests = plans:%d uploads:%d finalize:%d",
+			planRequests, uploadRequests, finalizeRequests,
+		)
+	}
+}
+
+func TestDeployBundlePreservesUploadFailureWhenObjectRemainsMissing(t *testing.T) {
+	directory, _, digest, objectDigest := writeDeployTestBundle(t)
+	planRequests := 0
+	uploadRequests := 0
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/deployment-bundles/upload-plan":
+			planRequests++
+			_ = json.NewEncoder(w).Encode(api.DeploymentBundleUploadPlanResponse{
+				BundleDigest: digest,
+				Uploads:      []api.DeploymentBundleUpload{deployTestUpload(server.URL, objectDigest)},
+			})
+		case "/upload":
+			uploadRequests++
+			_, _ = io.Copy(io.Discard, r.Body)
+			connection, _, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = connection.Close()
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv(helmrAPIURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	cmd := newRootCommand()
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"deploy", "--bundle", directory})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "deployment object upload transport failed") {
+		t.Fatalf("error = %v", err)
+	}
+	if planRequests != 2 || uploadRequests != 1 {
+		t.Fatalf("requests = plans:%d uploads:%d", planRequests, uploadRequests)
+	}
+}
+
+func TestDeployBundleDoesNotReconcileUnattemptedUpload(t *testing.T) {
+	directory, _, digest, objectDigest := writeDeployTestBundle(t)
+	planRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/v1/deployments" {
-			t.Fatalf("%s %s", r.Method, r.URL.Path)
-		}
-		if err := r.ParseMultipartForm(32 << 20); err != nil {
-			t.Fatal(err)
-		}
-		file, _, err := r.FormFile("deployment_source")
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer file.Close()
-		uploaded, err = io.ReadAll(file)
-		if err != nil {
-			t.Fatal(err)
-		}
-		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
-			ID:     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
-			Status: "queued",
+		planRequests++
+		_ = json.NewEncoder(w).Encode(api.DeploymentBundleUploadPlanResponse{
+			BundleDigest: digest,
+			Uploads: []api.DeploymentBundleUpload{{
+				Digest: objectDigest, Method: http.MethodGet, URL: "https://upload.invalid/object",
+			}},
 		})
 	}))
 	defer server.Close()
 	t.Setenv(helmrAPIURLEnv, server.URL)
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 
-	var out bytes.Buffer
 	cmd := newRootCommand()
-	cmd.SetOut(&out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"deploy", root, "--detach", "--json"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out.String(), `"type":"deployment_created"`) {
-		t.Fatalf("deployment creation evidence missing: %s", out.String())
-	}
-	entries := readTarEntries(t, uploaded)
-	for _, path := range []string{
-		".helmrignore",
-		"bun.lock",
-		"package.json",
-		"tasks/failing-build.ts",
-		"vendor/helmr-sdk/package.json",
-		"vendor/helmr-proto/package.json",
-	} {
-		if !entries[path] {
-			t.Fatalf("uploaded failing-build source is not self-contained: %s", path)
-		}
-	}
-}
-
-func TestDeployCommandJSONUsesProjectAndEnv(t *testing.T) {
-	state := installTestCLIConfig(t)
-	root, _ := deployCommandFixture(t)
-	var metadata api.CreateDeploymentRequest
-	var metadataFields map[string]json.RawMessage
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/projects/project-override/environments/prod/deployments" {
-			t.Fatalf("%s %s", r.Method, r.URL.Path)
-		}
-		if got := r.Header.Get("authorization"); got != "Bearer session-test" {
-			t.Fatalf("auth = %s", got)
-		}
-		if err := r.ParseMultipartForm(32 << 20); err != nil {
-			t.Fatal(err)
-		}
-		encodedMetadata := []byte(r.FormValue("metadata"))
-		if err := json.Unmarshal(encodedMetadata, &metadata); err != nil {
-			t.Fatal(err)
-		}
-		if err := json.Unmarshal(encodedMetadata, &metadataFields); err != nil {
-			t.Fatal(err)
-		}
-		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Status: "queued"})
-	}))
-	defer server.Close()
-	t.Setenv(helmrAPIURLEnv, server.URL)
-	if err := state.SaveLogin(server.URL, "session-test"); err != nil {
-		t.Fatal(err)
-	}
-
-	var out bytes.Buffer
-	cmd := newRootCommand()
-	cmd.SetOut(&out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"deploy", root, "--project", "project-override", "--env", "prod", "--detach", "--json", "--no-image-cache"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if _, present := metadataFields["project_id"]; present {
-		t.Fatalf("metadata contains project_id: %s", metadataFields["project_id"])
-	}
-	if _, present := metadataFields["environment_id"]; present {
-		t.Fatalf("metadata contains environment_id: %s", metadataFields["environment_id"])
-	}
-	if metadata.ImageCacheMode != "bypass" {
-		t.Fatalf("deployment image cache mode = %q", metadata.ImageCacheMode)
-	}
-	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	if len(lines) == 0 {
-		t.Fatal("expected JSON output")
-	}
-	for _, line := range lines {
-		var decoded struct {
-			Type string `json:"type"`
-		}
-		if err := json.Unmarshal([]byte(line), &decoded); err != nil {
-			t.Fatalf("decode JSON line %q: %v\n%s", line, err, out.String())
-		}
-		if decoded.Type == "" {
-			t.Fatalf("JSON line missing type: %q", line)
-		}
-	}
-	var result struct {
-		Type       string                 `json:"type"`
-		Phase      string                 `json:"phase"`
-		Deployment api.DeploymentResponse `json:"deployment"`
-	}
-	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &result); err != nil {
-		t.Fatalf("decode result line: %v\n%s", err, out.String())
-	}
-	if result.Type != "deployment_result" || result.Phase != "queued" || result.Deployment.ID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35" {
-		t.Fatalf("result = %+v", result)
-	}
-}
-
-func TestDeployCommandSkipPromotionDoesNotPromote(t *testing.T) {
-	root, _ := deployCommandFixture(t)
-	requests := []string{}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests = append(requests, r.Method+" "+r.URL.Path)
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/deployments":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
-				ID:     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
-				Status: "queued",
-			})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/events":
-			writeDeploymentEventSSE(t, w, r, "deployment.deployed")
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Version: "20260101.1", Status: "deployed"})
-		default:
-			t.Fatalf("%s %s", r.Method, r.URL.Path)
-		}
-	}))
-	defer server.Close()
-	t.Setenv(helmrAPIURLEnv, server.URL)
-	t.Setenv(helmrAPIKeyEnv, "test-key")
-
-	var out bytes.Buffer
-	cmd := newRootCommand()
-	cmd.SetOut(&out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"deploy", root, "--skip-promotion"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if strings.TrimSpace(out.String()) != "20260101.1" {
-		t.Fatalf("output = %q", out.String())
-	}
-	if got := strings.Join(requests, ","); got != "POST /v1/deployments,GET /v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/events,GET /v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35" {
-		t.Fatalf("requests = %s", got)
-	}
-}
-
-func TestDeployCommandReturnsFailedDeploymentError(t *testing.T) {
-	root, _ := deployCommandFixture(t)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/deployments":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
-				ID:     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
-				Status: "queued",
-			})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/events":
-			writeDeploymentEventSSE(t, w, r, "deployment.failed")
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
-				ID:      "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
-				Status:  "failed",
-				Failure: &api.DeploymentFailure{Code: "build_failed", Message: "build failed", Details: json.RawMessage(`{}`)},
-			})
-		default:
-			t.Fatalf("%s %s", r.Method, r.URL.Path)
-		}
-	}))
-	defer server.Close()
-	t.Setenv(helmrAPIURLEnv, server.URL)
-	t.Setenv(helmrAPIKeyEnv, "test-key")
-
-	var out bytes.Buffer
-	cmd := newRootCommand()
-	cmd.SetOut(&out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"deploy", root})
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"deploy", "--bundle", directory})
 	err := cmd.Execute()
-	if err == nil || !strings.Contains(err.Error(), "deployment 019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35 failed: build failed") {
-		t.Fatalf("err = %v", err)
+	if err == nil || !strings.Contains(err.Error(), "upload was not attempted") {
+		t.Fatalf("error = %v", err)
 	}
-	if strings.TrimSpace(out.String()) != "" {
-		t.Fatalf("output = %q", out.String())
-	}
-}
-
-func TestDeployCommandReusesExplicitSessionScope(t *testing.T) {
-	state := installTestCLIConfig(t)
-	root, _ := deployCommandFixture(t)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/api/projects/agents/environments/prod/deployments":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Status: "queued"})
-		case r.Method == http.MethodGet && r.URL.Path == "/api/projects/agents/environments/prod/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/events":
-			writeDeploymentEventSSE(t, w, r, "deployment.deployed")
-		case r.Method == http.MethodGet && r.URL.Path == "/api/projects/agents/environments/prod/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Status: "deployed"})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/projects/agents/environments/prod/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/promote":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Status: "deployed"})
-		default:
-			t.Fatalf("%s %s", r.Method, r.URL.Path)
-		}
-	}))
-	defer server.Close()
-	t.Setenv(helmrAPIURLEnv, server.URL)
-	if err := state.SaveLogin(server.URL, "session-test"); err != nil {
-		t.Fatal(err)
-	}
-
-	cmd := newRootCommand()
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"deploy", root, "--project", "agents", "--env", "prod"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatal(err)
+	if planRequests != 1 {
+		t.Fatalf("plan requests = %d", planRequests)
 	}
 }
 
-func TestDeployCommandRequiresExplicitSessionScope(t *testing.T) {
-	state := installTestCLIConfig(t)
-	root, _ := deployCommandFixture(t)
-	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		t.Fatal("deployment request must not be sent without explicit scope")
-	}))
-	defer server.Close()
-	t.Setenv(helmrAPIURLEnv, server.URL)
-	if err := state.SaveLogin(server.URL, "session-test"); err != nil {
-		t.Fatal(err)
-	}
-
-	tests := []struct {
-		name string
-		args []string
-		want string
-	}{
-		{name: "project", args: []string{"deploy", root, "--env", "prod"}, want: "--project is required with helmr login"},
-		{name: "environment", args: []string{"deploy", root, "--project", "agents"}, want: "--env is required with helmr login"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			cmd := newRootCommand()
-			cmd.SetOut(&bytes.Buffer{})
-			cmd.SetErr(&bytes.Buffer{})
-			cmd.SetArgs(test.args)
-			err := cmd.Execute()
-			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("err = %v", err)
+func TestDeployBundleRejectsInvalidReconciliationPlan(t *testing.T) {
+	directory, _, digest, objectDigest := writeDeployTestBundle(t)
+	planRequests := 0
+	uploadRequests := 0
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/deployment-bundles/upload-plan":
+			planRequests++
+			response := api.DeploymentBundleUploadPlanResponse{BundleDigest: digest}
+			if planRequests == 1 {
+				response.Uploads = []api.DeploymentBundleUpload{deployTestUpload(server.URL, objectDigest)}
+			} else {
+				response.BundleDigest = "sha256:" + strings.Repeat("a", 64)
 			}
-		})
-	}
-}
-
-func TestDeployCommandRejectsScopeFlagsWithEnvironmentKey(t *testing.T) {
-	root, _ := deployCommandFixture(t)
+			_ = json.NewEncoder(w).Encode(response)
+		case "/upload":
+			uploadRequests++
+			_, _ = io.Copy(io.Discard, r.Body)
+			connection, _, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = connection.Close()
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv(helmrAPIURLEnv, server.URL)
 	t.Setenv(helmrAPIKeyEnv, "test-key")
-	t.Setenv(helmrAPIURLEnv, "http://localhost:8080")
 
 	cmd := newRootCommand()
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"deploy", root, "--project", "agents", "--env", "prod"})
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"deploy", "--bundle", directory})
 	err := cmd.Execute()
-	if err == nil || !strings.Contains(err.Error(), "--project and --env require helmr login") {
-		t.Fatalf("err = %v", err)
+	if err == nil ||
+		!strings.Contains(err.Error(), "deployment object upload transport failed") ||
+		!strings.Contains(err.Error(), "different bundle digest") {
+		t.Fatalf("error = %v", err)
+	}
+	if planRequests != 2 || uploadRequests != 1 {
+		t.Fatalf("requests = plans:%d uploads:%d", planRequests, uploadRequests)
 	}
 }
 
-func TestDeployCommandRequiresPackageJSON(t *testing.T) {
+func deployTestUpload(serverURL string, objectDigest string) api.DeploymentBundleUpload {
+	return api.DeploymentBundleUpload{
+		Digest: objectDigest, Method: http.MethodPut, URL: serverURL + "/upload",
+		Headers: map[string]string{
+			"Content-Length": "7",
+			"Content-Type":   deployment.ProgramArtifactMediaType,
+		},
+	}
+}
+
+func writeDeploymentFinalizeTestStream(
+	t *testing.T,
+	w http.ResponseWriter,
+	objectDigest string,
+	response api.DeploymentResponse,
+) {
+	t.Helper()
+	w.Header().Set("Content-Type", "text/event-stream")
+	started, err := json.Marshal(api.DeploymentBundleFinalizeStarted{BundleDigest: response.BundleDigest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	object, err := json.Marshal(api.DeploymentBundleFinalizeObject{Digest: objectDigest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	complete, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = fmt.Fprintf(w, "event: started\ndata: %s\n\nevent: object_verified\ndata: %s\n\nevent: complete\ndata: %s\n\n", started, object, complete)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDeployBundleRejectsUploadOutsideClosure(t *testing.T) {
+	directory, _, digest, _ := writeDeployTestBundle(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/deployment-bundles/upload-plan" {
+			t.Fatalf("unexpected request %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(api.DeploymentBundleUploadPlanResponse{
+			BundleDigest: digest,
+			Uploads: []api.DeploymentBundleUpload{{
+				Digest: "sha256:" + strings.Repeat("e", 64), Method: http.MethodPut,
+				URL: "https://upload.invalid/object",
+			}},
+		})
+	}))
+	defer server.Close()
+	t.Setenv(helmrAPIURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+	cmd := newRootCommand()
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"deploy", "--bundle", directory})
+	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "outside the bundle") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func writeDeployTestBundle(t *testing.T) (string, []byte, string, string) {
+	t.Helper()
+	program := []byte("program")
+	programDigest := sha256sum.DigestBytes(program)
+	runtimeDigest := "sha256:" + strings.Repeat("f", 64)
+	declaration := deployment.ProgramIndexDeclaration{
+		Kind: deployment.DefinitionKindTask, DeclaredID: "hello",
+		Task: &deployment.TaskManifest{
+			Payload: deployment.SchemaManifest{Kind: deployment.SchemaKindNone},
+			Run: deployment.RunManifest{Queue: "default", MaxDurationMs: 5000,
+				Retry: deployment.RetryManifest{Enabled: false}},
+		},
+		Locator: &deployment.ProgramLocator{
+			ExportName: "hello", ModulePath: ".helmr/modules/" + strings.Repeat("d", 64) + ".mjs",
+			Slot: deployment.DeclarationSlotHandler,
+		},
+	}
+	queues := []deployment.QueueInput{{Name: "default"}}
+	plan := deployment.DeploymentPlan{FormatVersion: deployment.DeploymentPlanFormatVersion,
+		Definitions: []deployment.ProgramIndexDeclaration{declaration}, Queues: queues}
+	bundle := deployment.DeploymentBundle{
+		Contract: deployment.DeploymentBundleContract,
+		Platform: deployment.DeploymentBundlePlatform{Architecture: deployment.ArchitectureX8664,
+			OS: deployment.DeploymentBundleTargetOS},
+		Plan: plan,
+		Runtime: deployment.DeploymentBundleRuntime{Contract: deployment.RuntimeContract,
+			Artifact: deployment.BundleObject{Digest: runtimeDigest, SizeBytes: 4096,
+				MediaType: deployment.RuntimeArtifactMediaType}},
+		Program: deployment.ProgramOutput{
+			Artifact: deployment.ProgramDescriptor{Digest: programDigest, SizeBytes: int64(len(program)),
+				MediaType: deployment.ProgramArtifactMediaType},
+			Index: deployment.ProgramIndex{Architecture: deployment.ArchitectureX8664,
+				ConfigResultDigest: "sha256:" + strings.Repeat("c", 64),
+				Declarations:       []deployment.ProgramIndexDeclaration{declaration}, Queues: queues,
+				RuntimeContract: deployment.RuntimeContract, RuntimeDigest: runtimeDigest},
+		},
+		WorkspaceImages: []deployment.BundleWorkspaceImage{},
+		Objects: []deployment.BundleObject{{Digest: programDigest, SizeBytes: int64(len(program)),
+			MediaType: deployment.ProgramArtifactMediaType}},
+	}
+	raw, err := deployment.CanonicalDeploymentBundle(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, err := deployment.DeploymentBundleDigest(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
 	root := t.TempDir()
-	cmd := newRootCommand()
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"deploy", root})
-
-	err := cmd.Execute()
-	if err == nil || !strings.Contains(err.Error(), "submitted source package.json must be a regular file") {
-		t.Fatalf("err = %v", err)
+	objects := filepath.Join(root, "objects", "sha256")
+	if err := os.MkdirAll(objects, 0o700); err != nil {
+		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(root, "bundle.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(objects, strings.TrimPrefix(programDigest, "sha256:")), program, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return root, raw, digest, programDigest
 }

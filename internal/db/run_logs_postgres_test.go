@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -135,6 +136,137 @@ func TestAppendRunLogChunkRejectsSupersededAuthority(t *testing.T) {
 	params.ObservedSeq++
 	if _, err := fixture.queries.AppendRunLogChunk(ctx, params); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("terminal lease error = %v, want no rows", err)
+	}
+}
+
+func TestAppendRunLogChunkRequiresCoherentRunAndLeaseState(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("checkpoint pause", func(t *testing.T) {
+		fixture := newRunLeaseClaimFixture(t, ctx)
+		params := fixture.runningRunLogParams(t, ctx)
+		var runID, workspaceID pgtype.UUID
+		var attemptNumber int32
+		var leaseSequence, runStateVersion int64
+		if err := fixture.pool.QueryRow(ctx, `
+			SELECT rl.run_id, rl.workspace_id, rl.attempt_number, rl.lease_sequence, r.state_version
+			  FROM run_leases rl
+			  JOIN runs r ON r.id = rl.run_id
+			 WHERE rl.id = $1
+		`, params.RunLeaseID).Scan(
+			&runID,
+			&workspaceID,
+			&attemptNumber,
+			&leaseSequence,
+			&runStateVersion,
+		); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fixture.queries.RegisterTimerRunWait(ctx, RegisterTimerRunWaitParams{
+			ID:                             randomPGUUID(),
+			EnvironmentID:                  pgvalue.UUID(fixture.environmentID),
+			DueAt:                          pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+			IdleTimeoutMs:                  pgtype.Int8{Int64: 30_000, Valid: true},
+			RegistrationRequestFingerprint: pgvalue.Text(dbtest.Digest("checkpoint-log-wait")),
+			AttemptNumber:                  attemptNumber,
+			CurrentRunLeaseID:              params.RunLeaseID,
+			CheckpointDueAt:                pgvalue.Timestamptz(time.Now().Add(-time.Millisecond)),
+			ResumeAttachID:                 randomPGUUID(),
+			Metadata:                       []byte(`{}`),
+			Tags:                           []string{},
+			RunID:                          runID,
+			ExpectedRunningStateVersion:    runStateVersion,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fixture.queries.BeginRunLeaseCheckpoint(
+			ctx,
+			BeginRunLeaseCheckpointParams{
+				ID:            params.RunLeaseID,
+				RunID:         runID,
+				WorkspaceID:   workspaceID,
+				AttemptNumber: attemptNumber,
+				LeaseSequence: leaseSequence,
+			},
+		); err != nil {
+			t.Fatal(err)
+		}
+
+		first, err := fixture.queries.AppendRunLogChunk(ctx, params)
+		if err != nil {
+			t.Fatal(err)
+		}
+		replay, err := fixture.queries.AppendRunLogChunk(ctx, params)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !first.ReplayMatches || !replay.ReplayMatches || replay.Seq != first.Seq {
+			t.Fatalf("checkpoint replay first=%+v replay=%+v", first, replay)
+		}
+
+		var chunks, events, meterOutbox, meters int
+		if err := fixture.pool.QueryRow(ctx, `
+			SELECT count(*) FILTER (WHERE stream_kind = 'run_log'),
+			       count(*) FILTER (WHERE stream_kind = 'event'),
+			       count(*) FILTER (WHERE stream_kind = 'meter_event')
+			  FROM telemetry_outbox
+			 WHERE run_lease_id = $1
+		`, params.RunLeaseID).Scan(&chunks, &events, &meterOutbox); err != nil {
+			t.Fatal(err)
+		}
+		if err := fixture.pool.QueryRow(ctx, `
+			SELECT count(*) FROM meter_events WHERE run_lease_id = $1 AND meter = 'log_bytes'
+		`, params.RunLeaseID).Scan(&meters); err != nil {
+			t.Fatal(err)
+		}
+		if chunks != 1 || events != 1 || meterOutbox != 1 || meters != 1 {
+			t.Fatalf(
+				"checkpoint replay side effects = chunks %d events %d meter outbox %d meters %d",
+				chunks,
+				events,
+				meterOutbox,
+				meters,
+			)
+		}
+	})
+
+	tests := []struct {
+		name       string
+		runStatus  string
+		leaseState string
+	}{
+		{name: "waiting Run with running lease", runStatus: "waiting", leaseState: "running"},
+		{name: "running Run with checkpointing lease", runStatus: "running", leaseState: "checkpointing"},
+		{name: "waiting Run with finalizing lease", runStatus: "waiting", leaseState: "finalizing"},
+		{name: "running Run with finalizing lease", runStatus: "running", leaseState: "finalizing"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newRunLeaseClaimFixture(t, ctx)
+			params := fixture.runningRunLogParams(t, ctx)
+			if _, err := fixture.pool.Exec(
+				ctx,
+				`UPDATE runs SET status = $2 WHERE current_run_lease_id = $1`,
+				params.RunLeaseID,
+				test.runStatus,
+			); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := fixture.pool.Exec(ctx, `
+				UPDATE run_leases
+				   SET state = $2,
+				       finalization_operation_id = CASE WHEN $2 = 'finalizing' THEN $3::uuid ELSE NULL END,
+				       finalization_kind = CASE WHEN $2 = 'finalizing' THEN 'capture' ELSE NULL END,
+				       finalization_started_at = CASE WHEN $2 = 'finalizing' THEN now() ELSE NULL END,
+				       finalization_request_fingerprint = CASE WHEN $2 = 'finalizing' THEN 'fixture-finalization' ELSE NULL END
+				 WHERE id = $1
+			`, params.RunLeaseID, test.leaseState, randomPGUUID()); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := fixture.queries.AppendRunLogChunk(ctx, params); !errors.Is(err, pgx.ErrNoRows) {
+				t.Fatalf("AppendRunLogChunk() error = %v, want no rows", err)
+			}
+		})
 	}
 }
 

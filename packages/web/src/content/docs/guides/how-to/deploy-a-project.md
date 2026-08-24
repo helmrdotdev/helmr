@@ -1,45 +1,43 @@
 ---
 title: Deploy a project
-description: Validate, upload, build, and promote a Helmr project with the CLI.
+description: Build, upload, verify, and promote a Helmr project with the CLI.
 ---
 
 # Deploy a project
 
-From a directory containing `helmr.config.ts`, `package.json`, exactly one
-supported lockfile, and declaration source, run:
+From a directory containing `helmr.config.ts`, `package.json`, and declaration
+source, run:
 
 ```sh
 helmr deploy . --project agents --env production
 ```
 
 Saved-login commands require `--project` and `--env`. An environment API key is
-already scoped and rejects those flags. By default the CLI waits for the remote
-build and promotes the completed Deployment.
+already scoped and rejects those flags.
 
-`helmr.config.ts` selects declaration directories:
+The CLI packages the selected source, invokes the official digest-pinned Linux
+builder, uploads the resulting content-addressed bundle, asks the Control Plane
+to verify it, and promotes the finalized Deployment. Build dependencies and
+lifecycle scripts run only inside the isolated builder, never in the Control
+Plane or execution Worker.
 
-```ts
-import { defineConfig } from "@helmr/sdk"
-export default defineConfig({ dirs: ["tasks", "actors"] })
-```
+Helmr respects the project's `packageManager` and lockfile when present. npm,
+pnpm, Bun, Yarn, and a custom `--install-command` are producer choices rather
+than server acceptance criteria. A frozen lockfile is the recommended
+reproducible path, but the durable Deployment identity is the completed bundle
+and its artifact digests—not the package-manager name or version.
 
-The CLI applies `.helmrignore`, archives the retained source, uploads its
-content hash, creates a Deployment, and follows build events. It does not run a
-local dependency install or execute the config. Keep the selected package
-manager version and root lockfile exact and consistent before deploying.
-
-Useful modes:
+To separate build and deploy:
 
 ```sh
-helmr deploy . --project agents --env staging --json
-helmr deploy . --project agents --env staging --skip-promotion
-helmr deploy . --project agents --env staging --detach
+helmr build . --output .helmr/deployment-bundle
+helmr deploy --bundle .helmr/deployment-bundle --project agents --env staging
 ```
 
-`--json` emits JSON lines for automation. `--skip-promotion` retains a built
-Deployment without making it current. `--detach` returns after queuing and does
-not promote. Use `--no-image-cache` when diagnosing a Workspace image build.
+Use `--skip-promotion` to finalize without making the Deployment current. The
+Control Plane validates the bundle closure, sizes, formats, architecture, and
+runtime contract; it does not rebuild the project.
 
-`.helmrignore` is the submitted-source boundary; `.gitignore` is not merged.
-Do not retain secrets or `.env` files in the archive. Put runtime credentials
-in Helmr Secrets instead.
+Do not copy secrets into source or build outputs. Pass private dependency
+credentials through the local or CI build environment, and put runtime
+credentials in Helmr Secrets.

@@ -17,7 +17,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
-	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -34,8 +33,11 @@ func TestFreshProgramOrdersAdmissionEntrypointAndTaskCompletion(t *testing.T) {
 	guest, host := net.Pipe()
 	defer guest.Close()
 	sessions := NewWorkspaceMountSessions()
+	mount := testWorkspaceMount(claim.Lease)
+	mount.FencingGeneration = claim.Lease.MountFencingGeneration - 1
+	mount.Target.BaseWorkspaceVersionID = "version-before-capture"
 	unregister := sessions.RegisterWorkspaceMountSession(
-		testWorkspaceMount(claim.Lease),
+		mount,
 		fakeGuestSession{stream: host},
 		"channel-1",
 	)
@@ -107,174 +109,32 @@ func TestFreshProgramOrdersAdmissionEntrypointAndTaskCompletion(t *testing.T) {
 	}
 }
 
-func TestChildAttachStartsNewProgramOnRetainedMount(t *testing.T) {
-	claim := testChildAttachProgramClaim(t)
-	controlPlane := &testFreshProgramControlPlane{
-		lease:     claim.Lease,
-		wantChild: true,
+func TestValidateNewProgramMountSeparatesPhysicalIdentityFromLogicalFence(t *testing.T) {
+	claim := testFreshProgramClaim(t)
+	mount := testWorkspaceMount(claim.Lease)
+	mount.FencingGeneration = claim.Lease.MountFencingGeneration - 1
+	mount.Target.BaseWorkspaceVersionID = "version-before-capture"
+	if err := validateNewProgramMount(claim.Lease, mount); err != nil {
+		t.Fatalf("advanced logical fence rejected exact physical mount: %v", err)
 	}
-	guest, host := net.Pipe()
-	defer guest.Close()
-	verifyGuest, verifyHost := net.Pipe()
-	defer verifyGuest.Close()
-	parent := &queuedStreamSession{
-		streams: []vm.Stream{
-			testVMStream(host),
-			testVMStream(verifyHost),
-		},
-	}
-	sessions := NewWorkspaceMountSessions()
-	unregister := sessions.RegisterWorkspaceMountSession(
-		testWorkspaceMount(claim.Lease),
-		parent,
-		"channel-1",
-	)
-	defer unregister()
-	guestResult := make(chan error, 1)
-	go func() {
-		guestResult <- serveFreshProgramProtocol(
-			guest,
-			claim.Lease,
-			controlPlane,
-		)
-	}()
-	verifyResult := make(chan error, 1)
-	go func() {
-		verifyResult <- serveFrozenParentVerification(verifyGuest)
-	}()
-	program, err := (ProgramRunner{
-		WorkspaceMounts: sessions,
-	}).startNewProgram(
-		context.Background(),
-		&claim,
-		controlPlane,
-		&testFreshProgramEventSink{},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer program.session.Close(context.Background())
-	if _, _, err := program.awaitTaskCompletion(
-		context.Background(),
-		&testFreshProgramEventSink{},
-		nil,
-		nil,
-		nil,
-		nil,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if err := <-guestResult; err != nil {
-		t.Fatal(err)
-	}
-	if err := <-verifyResult; err != nil {
-		t.Fatal(err)
-	}
-	if claim.Execution.Attach.Child.ProgramStart != nil {
-		t.Fatal("child Program start authority was retained")
-	}
-}
 
-func TestChildAttachRejectsMismatchedFrozenParentProof(t *testing.T) {
-	claim := testChildAttachProgramClaim(t)
-	programGuest, programHost := net.Pipe()
-	defer programGuest.Close()
-	verifyGuest, verifyHost := net.Pipe()
-	defer verifyGuest.Close()
-	parent := &queuedStreamSession{
-		streams: []vm.Stream{
-			testVMStream(programHost),
-			testVMStream(verifyHost),
-		},
+	tests := []struct {
+		name   string
+		mutate func(*workerapi.WorkspaceMount)
+	}{
+		{name: "mount ID", mutate: func(mount *workerapi.WorkspaceMount) { mount.ID = "other-mount" }},
+		{name: "Workspace ID", mutate: func(mount *workerapi.WorkspaceMount) { mount.WorkspaceID = "other-workspace" }},
+		{name: "Runtime Instance", mutate: func(mount *workerapi.WorkspaceMount) { mount.RuntimeInstanceID = "other-runtime" }},
 	}
-	sessions := NewWorkspaceMountSessions()
-	unregister := sessions.RegisterWorkspaceMountSession(
-		testWorkspaceMount(claim.Lease),
-		parent,
-		"channel-1",
-	)
-	defer unregister()
-	verifyResult := make(chan error, 1)
-	go func() {
-		defer verifyGuest.Close()
-		if _, _, err := wire.ReadStreamFrameHeader(verifyGuest); err != nil {
-			verifyResult <- err
-			return
-		}
-		var request workspacev0.VerifyProgramRestoreRequest
-		if err := frameio.ReadProtoFrame(verifyGuest, &request); err != nil {
-			verifyResult <- err
-			return
-		}
-		request.CorrelationId = "wrong-correlation"
-		verifyResult <- frameio.WriteProtoFrame(
-			verifyGuest,
-			&workspacev0.VerifyProgramRestoreResponse{
-				RunId:         request.GetRunId(),
-				AttemptNumber: request.GetAttemptNumber(),
-				RunWaitId:     request.GetRunWaitId(),
-				CheckpointId:  request.GetCheckpointId(),
-				CorrelationId: request.GetCorrelationId(),
-			},
-		)
-	}()
-	controlPlane := &testFreshProgramControlPlane{
-		lease:     claim.Lease,
-		wantChild: true,
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mismatched := mount
+			test.mutate(&mismatched)
+			if err := validateNewProgramMount(claim.Lease, mismatched); err == nil {
+				t.Fatal("physical identity mismatch was accepted")
+			}
+		})
 	}
-	_, err := (ProgramRunner{
-		WorkspaceMounts: sessions,
-	}).startNewProgram(
-		context.Background(),
-		&claim,
-		controlPlane,
-		&testFreshProgramEventSink{},
-	)
-	if err == nil || !strings.Contains(err.Error(), "verification response changed") {
-		t.Fatalf("startNewProgram() error = %v", err)
-	}
-	if err := <-verifyResult; err != nil {
-		t.Fatal(err)
-	}
-	if len(controlPlane.snapshot()) != 0 {
-		t.Fatalf("Control Plane calls = %v", controlPlane.snapshot())
-	}
-}
-
-func serveFrozenParentVerification(conn net.Conn) error {
-	defer conn.Close()
-	header, bodyLen, err := wire.ReadStreamFrameHeader(conn)
-	if err != nil {
-		return err
-	}
-	if header.Type != wire.StreamTypeProgramRestoreVerify ||
-		header.RunID != "parent-run-1" ||
-		header.RunWaitID != "wait-1" ||
-		header.CheckpointID != "checkpoint-1" ||
-		bodyLen != 0 {
-		return fmt.Errorf("parent verification header = %+v body=%d", header, bodyLen)
-	}
-	var request workspacev0.VerifyProgramRestoreRequest
-	if err := frameio.ReadProtoFrame(conn, &request); err != nil {
-		return err
-	}
-	if request.GetRunId() != "parent-run-1" ||
-		request.GetAttemptNumber() != 3 ||
-		request.GetRunWaitId() != "wait-1" ||
-		request.GetCheckpointId() != "checkpoint-1" ||
-		request.GetCorrelationId() != "correlation-1" {
-		return fmt.Errorf("parent verification request = %+v", &request)
-	}
-	return frameio.WriteProtoFrame(
-		conn,
-		&workspacev0.VerifyProgramRestoreResponse{
-			RunId:         request.GetRunId(),
-			AttemptNumber: request.GetAttemptNumber(),
-			RunWaitId:     request.GetRunWaitId(),
-			CheckpointId:  request.GetCheckpointId(),
-			CorrelationId: request.GetCorrelationId(),
-		},
-	)
 }
 
 func TestStartFreshProgramDoesNotReleaseAfterStartRejection(t *testing.T) {
@@ -332,6 +192,149 @@ func TestStartFreshProgramDoesNotReleaseAfterStartRejection(t *testing.T) {
 	if claim.Execution.Fresh.ProgramStart != nil ||
 		claim.Workspace.WriteCapability != "" {
 		t.Fatal("rejected claim delivery authority was retained")
+	}
+}
+
+func TestStartFreshProgramFailsExactMountOnTypedStartFailure(t *testing.T) {
+	claim := testFreshProgramClaim(t)
+	controlPlane := &testFreshProgramControlPlane{lease: claim.Lease}
+	guest, host := net.Pipe()
+	defer guest.Close()
+	session := newManagedWorkspaceMountSession(fakeGuestSession{stream: host})
+	sessions := NewWorkspaceMountSessions()
+	unregister := sessions.RegisterWorkspaceMountSession(
+		testWorkspaceMount(claim.Lease),
+		session,
+		"channel-1",
+	)
+	defer unregister()
+	guestResult := make(chan error, 1)
+	go func() {
+		if err := readFreshProgramAdmission(guest, claim.Lease); err != nil {
+			guestResult <- err
+			return
+		}
+		guestResult <- frameio.WriteProtoFrame(guest, &runv0.RunEvent{
+			Event: &runv0.RunEvent_ProgramProcessStartFailed{
+				ProgramProcessStartFailed: &runv0.ProgramProcessStartFailed{
+					RunId:         claim.Lease.RunID,
+					AttemptNumber: uint32(claim.Lease.AttemptNumber),
+					RunLeaseId:    claim.Lease.ID,
+					Phase:         "start",
+					Diagnostic:    "Program process start failed",
+				},
+			},
+		})
+	}()
+	failureRequested := make(chan struct{}, 1)
+	go func() {
+		request := <-session.failureRequests
+		failureRequested <- struct{}{}
+		request.result <- nil
+	}()
+
+	_, err := (ProgramRunner{WorkspaceMounts: sessions}).startNewProgram(
+		context.Background(),
+		&claim,
+		controlPlane,
+		&testFreshProgramEventSink{},
+	)
+	if err == nil || !strings.Contains(err.Error(), "failed before start proof") {
+		t.Fatalf("startNewProgram() error = %v", err)
+	}
+	if err := <-guestResult; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-failureRequested:
+	case <-time.After(time.Second):
+		t.Fatal("typed start failure did not fail the exact Workspace Mount")
+	}
+	if len(controlPlane.snapshot()) != 0 {
+		t.Fatalf("Control Plane calls = %v", controlPlane.snapshot())
+	}
+}
+
+func TestStartFreshProgramRejectsNoncanonicalStartFailureDiagnosticWithoutFailingMount(t *testing.T) {
+	claim := testFreshProgramClaim(t)
+	guest, host := net.Pipe()
+	defer guest.Close()
+	session := newManagedWorkspaceMountSession(fakeGuestSession{stream: host})
+	sessions := NewWorkspaceMountSessions()
+	unregister := sessions.RegisterWorkspaceMountSession(
+		testWorkspaceMount(claim.Lease),
+		session,
+		"channel-1",
+	)
+	defer unregister()
+	go func() {
+		_ = readFreshProgramAdmission(guest, claim.Lease)
+		_ = frameio.WriteProtoFrame(guest, &runv0.RunEvent{
+			Event: &runv0.RunEvent_ProgramProcessStartFailed{
+				ProgramProcessStartFailed: &runv0.ProgramProcessStartFailed{
+					RunId:         claim.Lease.RunID,
+					AttemptNumber: uint32(claim.Lease.AttemptNumber),
+					RunLeaseId:    claim.Lease.ID,
+					Phase:         "start",
+					Diagnostic:    "guest-controlled diagnostic",
+				},
+			},
+		})
+	}()
+
+	_, err := (ProgramRunner{WorkspaceMounts: sessions}).startNewProgram(
+		context.Background(),
+		&claim,
+		&testFreshProgramControlPlane{lease: claim.Lease},
+		&testFreshProgramEventSink{},
+	)
+	if err == nil || !strings.Contains(err.Error(), "diagnostic is invalid") {
+		t.Fatalf("startNewProgram() error = %v", err)
+	}
+	select {
+	case <-session.failureRequests:
+		t.Fatal("noncanonical guest diagnostic redirected Workspace Mount cleanup")
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestStartFreshProgramRejectsMismatchedStartFailureProofWithoutFailingMount(t *testing.T) {
+	claim := testFreshProgramClaim(t)
+	guest, host := net.Pipe()
+	defer guest.Close()
+	session := newManagedWorkspaceMountSession(fakeGuestSession{stream: host})
+	sessions := NewWorkspaceMountSessions()
+	unregister := sessions.RegisterWorkspaceMountSession(
+		testWorkspaceMount(claim.Lease),
+		session,
+		"channel-1",
+	)
+	defer unregister()
+	go func() {
+		_ = readFreshProgramAdmission(guest, claim.Lease)
+		_ = frameio.WriteProtoFrame(guest, &runv0.RunEvent{
+			Event: &runv0.RunEvent_ProgramProcessStartFailed{
+				ProgramProcessStartFailed: &runv0.ProgramProcessStartFailed{
+					RunId: "other-run", AttemptNumber: uint32(claim.Lease.AttemptNumber),
+					RunLeaseId: claim.Lease.ID, Phase: "start", Diagnostic: "safe",
+				},
+			},
+		})
+	}()
+
+	_, err := (ProgramRunner{WorkspaceMounts: sessions}).startNewProgram(
+		context.Background(),
+		&claim,
+		&testFreshProgramControlPlane{lease: claim.Lease},
+		&testFreshProgramEventSink{},
+	)
+	if err == nil || !strings.Contains(err.Error(), "does not match run lease") {
+		t.Fatalf("startNewProgram() error = %v", err)
+	}
+	select {
+	case <-session.failureRequests:
+		t.Fatal("mismatched guest proof redirected Workspace Mount cleanup")
+	case <-time.After(50 * time.Millisecond):
 	}
 }
 
@@ -887,28 +890,6 @@ func testFreshProgramClaim(
 	}
 }
 
-func testChildAttachProgramClaim(
-	t *testing.T,
-) workerapi.RunLeaseClaimResponse {
-	t.Helper()
-	claim := testFreshProgramClaim(t)
-	start := claim.Execution.Fresh.ProgramStart
-	claim.Execution = workerapi.RunLeaseExecution{
-		Attach: &workerapi.RunLeaseAttach{
-			Child: &workerapi.RunLeaseChildAttach{
-				ParentRunID:         "parent-run-1",
-				ParentAttemptNumber: 3,
-				RunWaitID:           "wait-1",
-				CheckpointID:        "checkpoint-1",
-				ResumeAttachID:      "attach-1",
-				CorrelationID:       "correlation-1",
-				ProgramStart:        start,
-			},
-		},
-	}
-	return claim
-}
-
 func testWorkspaceMount(
 	lease workerapi.RunLeaseAssignment,
 ) workerapi.WorkspaceMount {
@@ -916,7 +897,9 @@ func testWorkspaceMount(
 		ID:                lease.WorkspaceMountID,
 		WorkspaceID:       lease.WorkspaceID,
 		RuntimeInstanceID: lease.RuntimeInstanceID,
-		BaseVersionID:     lease.BaseWorkspaceVersionID,
+		Target: workerapi.WorkspaceResetTarget{
+			BaseWorkspaceVersionID: lease.BaseWorkspaceVersionID,
+		},
 		FencingGeneration: lease.MountFencingGeneration,
 	}
 }
@@ -924,13 +907,13 @@ func testWorkspaceMount(
 type testFreshProgramControlPlane struct {
 	mu                 sync.Mutex
 	lease              workerapi.RunLeaseAssignment
+	renewExpiresAt     time.Time
 	calls              []string
 	startErr           error
 	entrypointErr      error
 	startFailures      int
 	entrypointFailures int
 	renewals           int
-	wantChild          bool
 }
 
 type testFreshProgramLog struct {
@@ -992,18 +975,7 @@ func (c *testFreshProgramControlPlane) AcknowledgeRunStart(
 	defer c.mu.Unlock()
 	c.calls = append(c.calls, "start")
 	validArm := request.Fresh != nil &&
-		request.Restore == nil &&
-		request.Attach == nil
-	if c.wantChild {
-		validArm = request.Fresh == nil &&
-			request.Restore == nil &&
-			request.Attach != nil &&
-			request.Attach.Child != nil &&
-			request.Attach.Parent == nil &&
-			request.Attach.Child.RunWaitID == "wait-1" &&
-			request.Attach.Child.CheckpointID == "checkpoint-1" &&
-			request.Attach.Child.ResumeAttachID == "attach-1"
-	}
+		request.Restore == nil
 	if !validArm || request.Lease != c.lease.Fence() {
 		return workerapi.RunStartResponse{}, errors.New(
 			"unexpected start receipt",
@@ -1051,8 +1023,12 @@ func (c *testFreshProgramControlPlane) RenewRunLease(
 	if !equalRunLeaseAssignment(lease, c.lease) {
 		return workerapi.RunLeaseRenewResponse{}, errors.New("unexpected renewal receipt")
 	}
+	expiresAt := c.lease.ExpiresAt
+	if !c.renewExpiresAt.IsZero() {
+		expiresAt = c.renewExpiresAt
+	}
 	return workerapi.RunLeaseRenewResponse{
-		Lease: c.lease.Fence(), ExpiresAt: c.lease.ExpiresAt,
+		Lease: c.lease.Fence(), ExpiresAt: expiresAt,
 		BaseWorkspaceVersionID: c.lease.BaseWorkspaceVersionID,
 	}, nil
 }

@@ -2,7 +2,6 @@ package guestd
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,16 +14,11 @@ import (
 )
 
 type Config struct {
-	Profile    string
 	VsockPort  uint
 	HealthPort uint
 }
 
 func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
-	profile, err := parseGuestProfile(cfg.Profile)
-	if err != nil {
-		return err
-	}
 	healthListener, err := vsock.Listen(uint32(cfg.HealthPort), nil)
 	if err != nil {
 		return fmt.Errorf("listen health vsock: %w", err)
@@ -43,16 +37,6 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 
 	registry := newWaitingRunRegistry()
 	workspaceRegistry := newWorkspaceOperationRegistry()
-	if profile != ordinaryGuestProfile {
-		return serveOneShotGuest(
-			ctx,
-			runListener,
-			cfg,
-			logger,
-			registry,
-			workspaceRegistry,
-		)
-	}
 	for {
 		conn, err := runListener.Accept()
 		if err != nil {
@@ -68,7 +52,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 					_ = conn.Close()
 				}
 			}()
-			keepOpen, err := handleConnection(ctx, conn, cfg, logger, registry, workspaceRegistry)
+			keepOpen, err := handleConnection(ctx, conn, logger, registry, workspaceRegistry)
 			if keepOpen {
 				closeConn = false
 			}
@@ -77,38 +61,6 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			}
 		}()
 	}
-}
-
-func serveOneShotGuest(
-	ctx context.Context,
-	listener net.Listener,
-	cfg Config,
-	logger *slog.Logger,
-	registry *waitingRunRegistry,
-	workspaceRegistry *workspaceOperationRegistry,
-) (retErr error) {
-	conn, err := listener.Accept()
-	if err != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		return fmt.Errorf("accept build guest connection: %w", err)
-	}
-	defer func() {
-		retErr = errors.Join(retErr, conn.Close())
-	}()
-	keepOpen, err := handleConnection(
-		ctx,
-		conn,
-		cfg,
-		logger,
-		registry,
-		workspaceRegistry,
-	)
-	if keepOpen {
-		return errors.New("build guest attempted to retain its one-shot connection")
-	}
-	return err
 }
 
 func serveHealth(listener net.Listener, ready func() bool, logger *slog.Logger) {

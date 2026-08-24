@@ -20,7 +20,6 @@ const (
 
 	RuntimeContract                       = "helmr.runtime.v0"
 	ConfigEvaluatorContract               = "helmr.config-evaluator.v0"
-	ProgramBuildContract                  = "helmr.program-build.v0"
 	ProgramArtifactMediaType              = "application/vnd.helmr.deployment-program.v0+squashfs"
 	manifestDigestDomain                  = "helmr.deployment-definition-manifest.v0\x00"
 	maxJSONSafeInteger              int64 = 9007199254740991
@@ -71,28 +70,6 @@ type ProgramFile struct {
 	SizeBytes int64  `json:"sizeBytes"`
 }
 
-type ProgramManager struct {
-	Digest  string             `json:"digest"`
-	Name    PackageManagerName `json:"name"`
-	Version string             `json:"version"`
-}
-
-type ProgramSubmittedSource struct {
-	LockfileDigest string `json:"lockfileDigest"`
-	LockfileName   string `json:"lockfileName"`
-	SourceDigest   string `json:"sourceDigest"`
-}
-
-type BuildProvenance struct {
-	Architecture    RuntimeArchitecture    `json:"architecture"`
-	BuildContract   string                 `json:"buildContract"`
-	Config          ProgramConfig          `json:"config"`
-	Manager         ProgramManager         `json:"manager"`
-	RuntimeDigest   string                 `json:"runtimeDigest"`
-	ToolchainDigest string                 `json:"toolchainDigest"`
-	Submitted       ProgramSubmittedSource `json:"submitted"`
-}
-
 type ProgramConfig struct {
 	EvaluatorContract string `json:"evaluatorContract"`
 	SourceDigest      string `json:"sourceDigest"`
@@ -105,13 +82,71 @@ type ProgramIndex struct {
 	Declarations       []ProgramIndexDeclaration `json:"declarations"`
 	Queues             []QueueInput              `json:"queues"`
 	RuntimeContract    string                    `json:"runtimeContract"`
+	RuntimeDigest      string                    `json:"runtimeDigest"`
 }
 
-// ProgramOutput is the build worker's verified Program publication result.
-// Artifact IDs are assigned by Control.
+// ProgramOutput is the canonical Program artifact and its execution index.
 type ProgramOutput struct {
 	Artifact ProgramDescriptor `json:"artifact"`
 	Index    ProgramIndex      `json:"index"`
+}
+
+func ParseProgramOutput(raw []byte) (ProgramOutput, error) {
+	if len(raw) == 0 || len(raw) > maxProgramVerificationSizeBytes {
+		return ProgramOutput{}, fmt.Errorf(
+			"program output size is outside [1,%d]",
+			maxProgramVerificationSizeBytes,
+		)
+	}
+	canonical, err := jsoncanon.Transform(raw)
+	if err != nil {
+		return ProgramOutput{}, fmt.Errorf("canonicalize program output: %w", err)
+	}
+	if !bytes.Equal(raw, canonical) {
+		return ProgramOutput{}, errors.New("program output is not RFC 8785 canonical JSON")
+	}
+	var output ProgramOutput
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&output); err != nil {
+		return ProgramOutput{}, fmt.Errorf("decode program output: %w", err)
+	}
+	if err := ensureEOF(decoder, "program output"); err != nil {
+		return ProgramOutput{}, err
+	}
+	if err := ValidateProgramOutput(output); err != nil {
+		return ProgramOutput{}, err
+	}
+	complete, err := CanonicalProgramOutput(output)
+	if err != nil {
+		return ProgramOutput{}, err
+	}
+	if !bytes.Equal(raw, complete) {
+		return ProgramOutput{}, errors.New("program output does not match the complete canonical v0 shape")
+	}
+	output.Index = cloneProgramIndex(output.Index)
+	return output, nil
+}
+
+func CanonicalProgramOutput(output ProgramOutput) ([]byte, error) {
+	if err := ValidateProgramOutput(output); err != nil {
+		return nil, err
+	}
+	raw, err := json.Marshal(output)
+	if err != nil {
+		return nil, fmt.Errorf("encode program output: %w", err)
+	}
+	canonical, err := jsoncanon.Transform(raw)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize program output: %w", err)
+	}
+	if len(canonical) == 0 || len(canonical) > maxProgramVerificationSizeBytes {
+		return nil, fmt.Errorf(
+			"program output size is outside [1,%d]",
+			maxProgramVerificationSizeBytes,
+		)
+	}
+	return canonical, nil
 }
 
 type programVerification struct {
@@ -239,13 +274,17 @@ func validateProgramVerification(verified programVerification) error {
 }
 
 func cloneProgramIndex(index ProgramIndex) ProgramIndex {
-	index.Declarations = append([]ProgramIndexDeclaration(nil), index.Declarations...)
+	declarations := make([]ProgramIndexDeclaration, len(index.Declarations))
+	copy(declarations, index.Declarations)
+	index.Declarations = declarations
 	for position := range index.Declarations {
 		index.Declarations[position] = cloneProgramIndexDeclaration(
 			index.Declarations[position],
 		)
 	}
-	index.Queues = append([]QueueInput(nil), index.Queues...)
+	queues := make([]QueueInput, len(index.Queues))
+	copy(queues, index.Queues)
+	index.Queues = queues
 	for position := range index.Queues {
 		if index.Queues[position].ConcurrencyLimit != nil {
 			value := *index.Queues[position].ConcurrencyLimit
@@ -311,6 +350,9 @@ func ValidateProgramIndex(index ProgramIndex) error {
 	if index.RuntimeContract != RuntimeContract {
 		return fmt.Errorf("program index runtimeContract = %q, want %q", index.RuntimeContract, RuntimeContract)
 	}
+	if !sha256DigestPattern.MatchString(index.RuntimeDigest) {
+		return errors.New("program index runtimeDigest is not a lowercase SHA-256 digest")
+	}
 	if !validArchitecture(index.Architecture) {
 		return fmt.Errorf("program index architecture %q is unsupported", index.Architecture)
 	}
@@ -351,78 +393,26 @@ func ValidateProgramIndex(index ProgramIndex) error {
 	return nil
 }
 
-func validateBuildProvenance(prefix string, provenance BuildProvenance) error {
-	if provenance.BuildContract != ProgramBuildContract {
-		return fmt.Errorf(
-			"%s buildContract = %q, want %q",
-			prefix,
-			provenance.BuildContract,
-			ProgramBuildContract,
-		)
+func buildPlanProgramDeclarations(plan BuildPlan) []ProgramDeclaration {
+	declarations := make([]ProgramDeclaration, 0)
+	for _, definition := range plan.Definitions {
+		switch definition.Kind {
+		case DefinitionKindTask:
+			slots := []DeclarationSlot{DeclarationSlotHandler}
+			if definition.Task.Payload.Kind == SchemaKindStandard {
+				slots = append(slots, DeclarationSlotPayloadSchema)
+			}
+			declarations = append(declarations, ProgramDeclaration{
+				Kind: DeclarationKindTask, DeclaredID: definition.DeclaredID, Slots: slots,
+			})
+		case DefinitionKindActor:
+			declarations = append(declarations, ProgramDeclaration{
+				Kind: DeclarationKindActor, DeclaredID: definition.DeclaredID,
+				Slots: []DeclarationSlot{DeclarationSlotHandler},
+			})
+		}
 	}
-	if !sha256DigestPattern.MatchString(provenance.RuntimeDigest) {
-		return fmt.Errorf("%s runtimeDigest is not a lowercase SHA-256 digest", prefix)
-	}
-	if err := validateProgramConfig(provenance.Config); err != nil {
-		return fmt.Errorf("%s config: %w", prefix, err)
-	}
-	if !validArchitecture(provenance.Architecture) {
-		return fmt.Errorf("%s architecture %q is unsupported", prefix, provenance.Architecture)
-	}
-	if !sha256DigestPattern.MatchString(provenance.ToolchainDigest) {
-		return fmt.Errorf("%s toolchainDigest is not a lowercase SHA-256 digest", prefix)
-	}
-	if !sha256DigestPattern.MatchString(provenance.Manager.Digest) {
-		return fmt.Errorf("%s manager.digest is not a lowercase SHA-256 digest", prefix)
-	}
-	if err := ValidatePackageManager(PackageManager{
-		Name: provenance.Manager.Name, Version: provenance.Manager.Version,
-	}); err != nil {
-		return fmt.Errorf("%s manager: %w", prefix, err)
-	}
-	if !validProgramLockfile(provenance.Manager.Name, provenance.Submitted.LockfileName) {
-		return fmt.Errorf(
-			"%s submitted.lockfileName = %q is unsupported for %s",
-			prefix,
-			provenance.Submitted.LockfileName,
-			provenance.Manager.Name,
-		)
-	}
-	if !sha256DigestPattern.MatchString(provenance.Submitted.LockfileDigest) {
-		return fmt.Errorf("%s submitted.lockfileDigest is not a lowercase SHA-256 digest", prefix)
-	}
-	if !sha256DigestPattern.MatchString(provenance.Submitted.SourceDigest) {
-		return fmt.Errorf("%s submitted.sourceDigest is not a lowercase SHA-256 digest", prefix)
-	}
-	return nil
-}
-
-func validateProgramConfig(config ProgramConfig) error {
-	if config.EvaluatorContract != ConfigEvaluatorContract ||
-		!sha256DigestPattern.MatchString(config.SourceDigest) ||
-		!sha256DigestPattern.MatchString(config.ResultDigest) {
-		return errors.New("config provenance is invalid")
-	}
-	return nil
-}
-
-func validProgramLockfile(manager PackageManagerName, lockfile string) bool {
-	switch manager {
-	case PackageManagerNPM:
-		return lockfile == "package-lock.json" || lockfile == "npm-shrinkwrap.json"
-	case PackageManagerPNPM:
-		return lockfile == "pnpm-lock.yaml"
-	case PackageManagerBun:
-		return lockfile == "bun.lock"
-	default:
-		return false
-	}
-}
-
-func validProgramLockfileName(lockfile string) bool {
-	return validProgramLockfile(PackageManagerNPM, lockfile) ||
-		validProgramLockfile(PackageManagerPNPM, lockfile) ||
-		validProgramLockfile(PackageManagerBun, lockfile)
+	return declarations
 }
 
 func CanonicalManifestAndDigest(raw []byte) ([]byte, [sha256.Size]byte, error) {

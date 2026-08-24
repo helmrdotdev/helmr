@@ -1,7 +1,7 @@
 package schedule
 
 import (
-	"bufio"
+	_ "embed"
 	"errors"
 	"fmt"
 	"os"
@@ -18,13 +18,15 @@ const CronSemanticsVersion = "robfig-cron-v3.0.1/standard-5-field"
 var cronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 
 var (
-	locationCache   sync.Map
-	zoneNamesOnce   sync.Once
-	zoneNames       map[string]struct{}
-	zoneManifestErr error
+	locationCache sync.Map
+	zoneNamesOnce sync.Once
+	zoneNames     map[string]struct{}
 )
 
 const tzdbRoot = "/usr/share/zoneinfo"
+
+//go:embed tzdb_names.txt
+var zoneNamesManifest string
 
 func ValidateCron(expression string) error {
 	if _, err := cronParser.Parse(expression); err != nil {
@@ -37,7 +39,7 @@ func ValidateTimezone(name string) error {
 	if name == "" || name != strings.TrimSpace(name) || name == "Local" {
 		return errors.New("timezone must be an exact IANA timezone identifier")
 	}
-	if _, err := loadLocation(name); err != nil {
+	if err := validateZoneName(name); err != nil {
 		return errors.New("timezone must be an exact IANA timezone identifier")
 	}
 	return nil
@@ -50,7 +52,10 @@ func NextCronTime(expression string, timezone string, anchor time.Time) (time.Ti
 	if err := ValidateTimezone(timezone); err != nil {
 		return time.Time{}, err
 	}
-	loc, _ := loadLocation(timezone)
+	loc, err := loadLocation(timezone)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("load timezone rules: %w", err)
+	}
 	spec, _ := cronParser.Parse(expression)
 	next := spec.Next(anchor.In(loc)).UTC()
 	if next.IsZero() {
@@ -69,7 +74,10 @@ func NextCronTimes(expression string, timezone string, anchor time.Time, count i
 	if err := ValidateTimezone(timezone); err != nil {
 		return nil, err
 	}
-	loc, _ := loadLocation(timezone)
+	loc, err := loadLocation(timezone)
+	if err != nil {
+		return nil, fmt.Errorf("load timezone rules: %w", err)
+	}
 	spec, _ := cronParser.Parse(expression)
 	result := make([]time.Time, 0, count)
 	cursor := anchor.In(loc)
@@ -91,11 +99,20 @@ func loadLocation(name string) (*time.Location, error) {
 	if err := validateZoneName(name); err != nil {
 		return nil, err
 	}
+	location, err := loadLocationFromRoot(name, tzdbRoot)
+	if err != nil {
+		return nil, err
+	}
+	actual, _ := locationCache.LoadOrStore(name, location)
+	return actual.(*time.Location), nil
+}
+
+func loadLocationFromRoot(name string, root string) (*time.Location, error) {
 	if filepath.IsAbs(name) || strings.Contains(name, `\`) {
 		return nil, errors.New("timezone path must be relative")
 	}
 	parts := strings.Split(name, "/")
-	current := tzdbRoot
+	current := root
 	for _, part := range parts {
 		if part == "" || part == "." || part == ".." {
 			return nil, errors.New("timezone path is invalid")
@@ -124,34 +141,16 @@ func loadLocation(name string) (*time.Location, error) {
 	if err != nil {
 		return nil, err
 	}
-	actual, _ := locationCache.LoadOrStore(name, location)
-	return actual.(*time.Location), nil
+	return location, nil
 }
 
 func validateZoneName(name string) error {
 	zoneNamesOnce.Do(func() {
 		zoneNames = make(map[string]struct{})
-		file, err := os.Open(filepath.Join(tzdbRoot, "tzdata.zi"))
-		if err != nil {
-			zoneManifestErr = err
-			return
+		for _, zoneName := range strings.Fields(zoneNamesManifest) {
+			zoneNames[zoneName] = struct{}{}
 		}
-		defer file.Close()
-		scanner := bufio.NewScanner(file)
-		for scanner.Scan() {
-			fields := strings.Fields(scanner.Text())
-			if len(fields) >= 2 && (fields[0] == "Z" || fields[0] == "Zone") {
-				zoneNames[fields[1]] = struct{}{}
-			}
-			if len(fields) >= 3 && (fields[0] == "L" || fields[0] == "Link") {
-				zoneNames[fields[2]] = struct{}{}
-			}
-		}
-		zoneManifestErr = scanner.Err()
 	})
-	if zoneManifestErr != nil {
-		return zoneManifestErr
-	}
 	if _, ok := zoneNames[name]; !ok {
 		return errors.New("timezone identifier is absent from the pinned tzdb manifest")
 	}

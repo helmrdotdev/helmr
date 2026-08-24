@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
@@ -40,6 +41,20 @@ func TestProgramArtifactRejectsContractDivergence(t *testing.T) {
 		"unknown Platform-owned path": func(program *testProgram) {
 			program.artifact.addFile("helmr/modules.json", []byte("{}"), 0o644)
 		},
+		"evaluated config": func(program *testProgram) {
+			program.artifact.files["helmr/config.json"] = []byte("{}")
+		},
+		"compiled module": func(program *testProgram) {
+			for name := range program.artifact.files {
+				if !strings.Contains(name, "/.helmr/modules/") ||
+					!strings.HasSuffix(name, ".mjs") {
+					continue
+				}
+				program.artifact.files[name] = []byte("export default null\n")
+				return
+			}
+			t.Fatal("compiled module fixture is absent")
+		},
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -52,11 +67,14 @@ func TestProgramArtifactRejectsContractDivergence(t *testing.T) {
 	}
 }
 
-func TestProgramArtifactRejectsLifecycleModifiedLockfile(t *testing.T) {
+func TestProgramArtifactDoesNotInterpretProducerMetadata(t *testing.T) {
 	program := newTestProgram(t)
 	program.artifact.files["bun.lock"] = []byte("changed by lifecycle")
-	if _, err := verifyProgramArtifact(context.Background(), program.descriptor); err == nil {
-		t.Fatal("verifyProgramArtifact accepted a changed protected lockfile")
+	program.artifact.files["package.json"] = []byte(
+		`{"packageManager":"yarn@4.9.2"}`,
+	)
+	if _, err := verifyProgramArtifact(context.Background(), program.descriptor); err != nil {
+		t.Fatalf("verifyProgramArtifact rejected producer metadata: %v", err)
 	}
 }
 
@@ -69,6 +87,127 @@ func TestProgramArtifactAcceptsManagerNativeDependencyTree(t *testing.T) {
 	program.artifact.addDirectory("packages/local/node_modules")
 	if _, err := verifyProgramArtifact(context.Background(), program.descriptor); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestProgramArtifactAcceptsLocalPackageInstallLayouts(t *testing.T) {
+	for _, copied := range []bool{false, true} {
+		name := "symlinked"
+		if copied {
+			name = "copied"
+		}
+		t.Run(name, func(t *testing.T) {
+			program := newTestProgram(t)
+			program.artifact.addDirectory("packages")
+			program.artifact.addDirectory("packages/local")
+			program.artifact.addFile(
+				"packages/local/package.json",
+				[]byte(`{"name":"@example/local"}`),
+				0644,
+			)
+			program.artifact.addDirectory("node_modules/@example")
+			if copied {
+				program.artifact.addDirectory("node_modules/@example/local")
+				program.artifact.addFile(
+					"node_modules/@example/local/package.json",
+					[]byte(`{"name":"@example/local"}`),
+					0644,
+				)
+			} else {
+				program.artifact.addLink(
+					"node_modules/@example/local",
+					"../../packages/local",
+				)
+			}
+			program.manifest.LocalPackages = []ProgramLocalPackage{{
+				InstalledRoot: "node_modules/@example/local",
+				Name:          "@example/local",
+				SourceRoot:    "packages/local",
+			}}
+			program.refreshManifest(t)
+			if _, err := verifyProgramArtifact(
+				context.Background(),
+				program.descriptor,
+			); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestProgramArtifactBindsExternalDependencyResolution(t *testing.T) {
+	newExternalProgram := func(t *testing.T, target string) *testProgram {
+		t.Helper()
+		program := newTestProgram(t)
+		program.artifact.addDirectory("node_modules/.pnpm")
+		program.artifact.addDirectory("node_modules/.pnpm/registry-package")
+		program.artifact.addFile(
+			"node_modules/.pnpm/registry-package/index.mjs",
+			[]byte("export const value = true\n"),
+			0644,
+		)
+		program.artifact.addLink("node_modules/registry-package", target)
+		program.manifest.ExternalEdges = []ProgramExternalEdge{{
+			Importer:     "tasks/build.ts",
+			Kind:         "import-statement",
+			LogicalPath:  "node_modules/registry-package/index.mjs",
+			ResolvedPath: "node_modules/.pnpm/registry-package/index.mjs",
+			RuntimePath:  "/opt/helmr/program/node_modules/registry-package/index.mjs",
+			Specifier:    "registry-package",
+		}}
+		program.refreshManifest(t)
+		return program
+	}
+
+	valid := newExternalProgram(t, ".pnpm/registry-package")
+	if _, err := verifyProgramArtifact(context.Background(), valid.descriptor); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := map[string]func(*testProgram){
+		"missing": func(program *testProgram) {
+			program.manifest.ExternalEdges[0].LogicalPath =
+				"node_modules/missing/index.mjs"
+			program.manifest.ExternalEdges[0].RuntimePath =
+				"/opt/helmr/program/node_modules/missing/index.mjs"
+		},
+		"broken": func(program *testProgram) {
+			program.artifact.mutate("node_modules/registry-package", func(entry *artifactEntry) {
+				entry.LinkTarget = ".pnpm/missing"
+				entry.SizeBytes = int64(len(entry.LinkTarget))
+			})
+		},
+		"misdirected": func(program *testProgram) {
+			program.artifact.addDirectory("node_modules/.pnpm/other")
+			program.artifact.addFile(
+				"node_modules/.pnpm/other/index.mjs",
+				[]byte("export const value = false\n"),
+				0644,
+			)
+			program.artifact.mutate("node_modules/registry-package", func(entry *artifactEntry) {
+				entry.LinkTarget = ".pnpm/other"
+				entry.SizeBytes = int64(len(entry.LinkTarget))
+			})
+		},
+		"escaping": func(program *testProgram) {
+			program.artifact.mutate("node_modules/registry-package", func(entry *artifactEntry) {
+				entry.LinkTarget = "../../outside"
+				entry.SizeBytes = int64(len(entry.LinkTarget))
+			})
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			program := newExternalProgram(t, ".pnpm/registry-package")
+			mutate(program)
+			program.refreshManifest(t)
+			if _, err := verifyProgramArtifact(
+				context.Background(),
+				program.descriptor,
+			); err == nil {
+				t.Fatal("verifyProgramArtifact returned nil error")
+			}
+		})
 	}
 }
 
@@ -107,6 +246,7 @@ func TestProgramArtifactAcceptsUnrelatedTypeScriptWithoutSidecars(t *testing.T) 
 type testProgram struct {
 	descriptor artifactInput
 	artifact   *memoryArtifact
+	manifest   ProgramManifest
 }
 
 func newTestProgram(t *testing.T) *testProgram {
@@ -152,48 +292,20 @@ func newTestProgram(t *testing.T) *testProgram {
 			Name: "task/build",
 		}},
 		RuntimeContract: RuntimeContract,
+		RuntimeDigest:   "sha256:" + strings.Repeat("f", 64),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	compiler := testCompilerInputs()
-	optionsDigest, err := compilerOptionsDigest(compiler, "24.16.0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	manifestRaw, err := canonicalProgramBuildManifest(ProgramBuildManifest{
-		AggregateResultDigest: testDigest("aggregate"),
-		Compiler: ProgramCompilerContract{
-			APIVersion:            compiler.APIVersion,
-			EsbuildVersion:        compiler.Esbuild.Version,
-			OptionsContractDigest: compiler.OptionsContractDigest,
-			Output:                compiler.Output,
-			Source:                compiler.Source,
-		},
-		Config: ProgramBuildFile{
+	manifest := ProgramManifest{
+		FormatVersion: ProgramManifestFormatVersion,
+		Config: ProgramPathDigest{
 			Digest: testDigest(string(configRaw)),
 			Path:   "helmr/config.json",
 		},
-		ConfigSource: ProgramBuildFile{
-			Digest: testDigest(string(configSourceRaw)),
-			Path:   "helmr.config.ts",
-		},
-		DiscoveryCandidates: []string{sourcePath},
-		Execution: ProgramBuildExecution{
-			NodeVersion:   "24.16.0",
-			OptionsDigest: optionsDigest,
-		},
-		ExternalEdges: []ProgramBuildExternalEdge{},
-		Inputs: []ProgramBuildFile{{
-			Digest: testDigest(string(sourceRaw)),
-			Path:   sourcePath,
-		}},
-		LocalPackages: []ProgramBuildLocalPackage{},
-		Lockfile: ProgramBuildFile{
-			Digest: testDigest(string(lockfile)),
-			Path:   "bun.lock",
-		},
-		Outputs: []ProgramBuildOutput{{
+		ExternalEdges: []ProgramExternalEdge{},
+		LocalPackages: []ProgramLocalPackage{},
+		Modules: []ProgramModule{{
 			ModuleDigest:    testDigest(string(moduleRaw)),
 			ModulePath:      modulePath,
 			SourceMapDigest: testDigest(string(sourceMapRaw)),
@@ -201,15 +313,8 @@ func newTestProgram(t *testing.T) *testProgram {
 			SourcePath:      sourcePath,
 		}},
 		ProgramIndexDigest: testDigest(string(programRaw)),
-		Selections: []ProgramBuildSelection{{
-			DeclaredID: "build",
-			ExportName: "build",
-			Kind:       DeclarationKindTask,
-			SourcePath: sourcePath,
-			Slot:       DeclarationSlotHandler,
-		}},
-		TSConfigs: []ProgramBuildFile{},
-	})
+	}
+	manifestRaw, err := canonicalProgramManifest(manifest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +324,7 @@ func newTestProgram(t *testing.T) *testProgram {
 	artifact.addDirectory("tasks")
 	artifact.addDirectory("tasks/.helmr")
 	artifact.addDirectory("tasks/.helmr/modules")
-	artifact.addFile("helmr/build-manifest.json", manifestRaw, 0644)
+	artifact.addFile("helmr/program-manifest.json", manifestRaw, 0644)
 	artifact.addFile("helmr/config.json", configRaw, 0644)
 	artifact.addFile("helmr/declarations.json", programRaw, 0644)
 	artifact.addFile("helmr/entry.mjs", []byte(ProgramEntry), 0644)
@@ -238,7 +343,20 @@ func newTestProgram(t *testing.T) *testProgram {
 			Reader:    artifact,
 		},
 		artifact: artifact,
+		manifest: manifest,
 	}
+}
+
+func (program *testProgram) refreshManifest(t *testing.T) {
+	t.Helper()
+	raw, err := canonicalProgramManifest(program.manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	program.artifact.files["helmr/program-manifest.json"] = raw
+	program.artifact.mutate("helmr/program-manifest.json", func(entry *artifactEntry) {
+		entry.SizeBytes = int64(len(raw))
+	})
 }
 
 func exactTestFilesystem() artifactFilesystem {

@@ -90,6 +90,9 @@ func (task *guestRunLeaseTask) handleChildTaskInvoke(
 		}
 		return task.waits.ContinueRunWait(ctx, runtimeWait, *response.OpenedWait)
 	}
+	if request.Method == "call" && response.Completed != nil {
+		return errors.New("completed child task call response requires an opened Wait")
+	}
 	if (response.Completed == nil) == (response.Failed == nil) {
 		return errors.New("child task invocation response must contain exactly one outcome")
 	}
@@ -104,9 +107,11 @@ func (task *guestRunLeaseTask) handleChildTaskInvoke(
 		return fmt.Errorf("encode child task invocation decision: %w", err)
 	}
 	if err := wire.WriteResumeDecision(task.program.session.Stream(), &runv0.ResumeDecision{
-		CorrelationId: request.CorrelationID,
-		Kind:          kind,
-		DataJson:      string(encoded),
+		CorrelationId:  request.CorrelationID,
+		RunWaitId:      request.RunWaitID,
+		ResumeAttachId: request.ResumeAttachID,
+		Kind:           kind,
+		DataJson:       string(encoded),
 	}); err != nil {
 		return fmt.Errorf("write child task invocation decision: %w", err)
 	}
@@ -132,6 +137,8 @@ func workerChildTaskInvokeRequest(
 		if requested.GetRunWaitId() != "" || requested.GetResumeAttachId() != "" {
 			return workerapi.InvokeChildTaskRequest{}, errors.New("child task start must not contain wait IDs")
 		}
+	default:
+		return workerapi.InvokeChildTaskRequest{}, errors.New("child task invocation method is invalid")
 	}
 	request := workerapi.InvokeChildTaskRequest{
 		CorrelationID:  requested.GetCorrelationId(),

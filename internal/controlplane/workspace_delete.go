@@ -46,30 +46,11 @@ func (s *Server) deleteWorkspace(ctx context.Context, request workspaceDeleteReq
 				return err
 			}
 		}
-		authority, err := work.q.LockWorkspaceForDelete(ctx, db.LockWorkspaceForDeleteParams{
-			OrgID:         pgvalue.UUID(request.OrgID),
-			ProjectID:     pgvalue.UUID(request.ProjectID),
-			EnvironmentID: pgvalue.UUID(request.EnvironmentID),
-			ID:            pgvalue.UUID(request.WorkspaceID),
-		})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return errWorkspaceNotFound
-		}
-		if err != nil {
-			return fmt.Errorf("lock workspace for delete: %w", err)
-		}
-		workspaceID := pgvalue.MustUUIDValue(authority.ID)
-		if authority.State != db.WorkspaceStateDeleting &&
-			(authority.OwnerSessionID.Valid || authority.OwnerRunID.Valid ||
-				authority.HasActiveLease || authority.HasActiveProcess) {
-			return errWorkspaceBusy
-		}
-
 		var claim *db.IdempotencyClaim
 		if request.IdempotencyKey != "" {
 			claimRequest, err := idempotency.NewWorkspaceDeleteRequest(
 				request.EnvironmentID,
-				workspaceID,
+				request.WorkspaceID,
 				request.IdempotencyKey,
 			)
 			if err != nil {
@@ -97,6 +78,24 @@ func (s *Server) deleteWorkspace(ctx context.Context, request workspaceDeleteReq
 			}
 			claim = &acquired.Claim
 		}
+		authority, err := work.q.LockWorkspaceForDelete(ctx, db.LockWorkspaceForDeleteParams{
+			OrgID:         pgvalue.UUID(request.OrgID),
+			ProjectID:     pgvalue.UUID(request.ProjectID),
+			EnvironmentID: pgvalue.UUID(request.EnvironmentID),
+			ID:            pgvalue.UUID(request.WorkspaceID),
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errWorkspaceNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("lock workspace for delete: %w", err)
+		}
+		workspaceID := pgvalue.MustUUIDValue(authority.ID)
+		if authority.State != db.WorkspaceStateDeleting &&
+			(authority.OwnerSessionID.Valid || authority.OwnerRunID.Valid ||
+				authority.HasActiveLease || authority.HasActiveProcess) {
+			return errWorkspaceBusy
+		}
 
 		if authority.State != db.WorkspaceStateDeleting {
 			if _, err := work.q.MarkWorkspaceDeleting(ctx, db.MarkWorkspaceDeletingParams{
@@ -108,6 +107,14 @@ func (s *Server) deleteWorkspace(ctx context.Context, request workspaceDeleteReq
 			} else if err != nil {
 				return fmt.Errorf("mark workspace deleting: %w", err)
 			}
+		}
+		if _, err := work.q.RequestWorkspaceDeleteMountStop(ctx, db.RequestWorkspaceDeleteMountStopParams{
+			OrgID:         pgvalue.UUID(request.OrgID),
+			ProjectID:     pgvalue.UUID(request.ProjectID),
+			EnvironmentID: pgvalue.UUID(request.EnvironmentID),
+			WorkspaceID:   authority.ID,
+		}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("request workspace delete cleanup: %w", err)
 		}
 		result = workspaceDeleteResult{WorkspaceID: workspaceID}
 		if claim != nil {

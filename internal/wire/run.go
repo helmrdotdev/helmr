@@ -84,6 +84,23 @@ func WriteActorTurnCommitPauseReady(w io.Writer, ready *runv0.ActorTurnCommitPau
 	return err
 }
 
+func WriteActorTurnCommitApplied(w io.Writer, applied *runv0.ActorTurnCommitApplied) error {
+	if applied == nil {
+		return fmt.Errorf("actor turn commit applied proof is required")
+	}
+	body, err := proto.Marshal(applied)
+	if err != nil {
+		return fmt.Errorf("marshal actor turn commit applied proof: %w", err)
+	}
+	if err := WriteStreamFrameHeader(w, StreamHeader{
+		Type: StreamTypeActorTurnCommitApplied, RunID: applied.RunId,
+	}, uint64(len(body))); err != nil {
+		return err
+	}
+	_, err = w.Write(body)
+	return err
+}
+
 func WriteResumeDecision(w io.Writer, decision *runv0.ResumeDecision) error {
 	if decision == nil {
 		return fmt.Errorf("resume decision is required")
@@ -143,6 +160,20 @@ func ReadActorTurnCommitPauseReady(header StreamHeader, reader io.Reader, bodyLe
 		return nil, fmt.Errorf("actor turn commit pause ready header mismatch: run_id=%q/%q", header.RunID, ready.RunId)
 	}
 	return &ready, nil
+}
+
+func ReadActorTurnCommitApplied(header StreamHeader, reader io.Reader, bodyLen uint64) (*runv0.ActorTurnCommitApplied, error) {
+	if header.Type != StreamTypeActorTurnCommitApplied {
+		return nil, fmt.Errorf("expected actor turn commit applied frame, got %q", header.Type)
+	}
+	var applied runv0.ActorTurnCommitApplied
+	if err := readProtoStreamBody(reader, bodyLen, &applied); err != nil {
+		return nil, fmt.Errorf("read actor turn commit applied proof: %w", err)
+	}
+	if strings.TrimSpace(header.RunID) != strings.TrimSpace(applied.RunId) {
+		return nil, fmt.Errorf("actor turn commit applied header mismatch: run_id=%q/%q", header.RunID, applied.RunId)
+	}
+	return &applied, nil
 }
 
 func ReadResumeDecision(header StreamHeader, reader io.Reader, bodyLen uint64) (*runv0.ResumeDecision, error) {

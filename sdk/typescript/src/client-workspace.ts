@@ -1,4 +1,5 @@
 import type { CursorPage } from "./contract"
+import { abortableDelay } from "./internal/abort"
 import { resourceID } from "./internal/id"
 import { timestampString } from "./internal/timestamp"
 import { validateTaskId } from "./schema/task"
@@ -183,7 +184,7 @@ export function createClientWorkspaceRef(
       request: WorkspaceExecRequest,
       options: RequestOptions = {},
     ): Promise<WorkspaceExecResult> {
-      return parseWorkspaceExecResult(await transport.request("POST", `${path}/exec`, {
+      let process = parseWorkspaceExecProcess(await transport.request("POST", `${path}/exec`, {
         body: {
           command: [...request.command],
           ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
@@ -194,6 +195,23 @@ export function createClientWorkspaceRef(
         },
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       }))
+      const admittedProcessId = process.processId
+      while (process.status === "pending" || process.status === "running") {
+        await abortableDelay(1_000, options.signal)
+        process = parseWorkspaceExecProcess(await transport.request(
+          "GET",
+          `${path}/exec/${encodeURIComponent(admittedProcessId)}`,
+          options.signal === undefined ? {} : { signal: options.signal },
+        ))
+        if (process.processId !== admittedProcessId) {
+          throw new Error("Workspace exec poll response changed process ID")
+        }
+      }
+      if (process.status === "failed") throw workspaceExecFailure(process.terminalReasonCode)
+      if (process.status !== "exited") {
+        throw new Error("Workspace exec process response did not reach a terminal status")
+      }
+      return process.result
     },
     async delete(
       request: WorkspaceDeleteRequest = {},
@@ -206,6 +224,59 @@ export function createClientWorkspaceRef(
     },
   }
   return brandWorkspaceAddress(ref)
+}
+
+type WorkspaceExecProcess =
+  | Readonly<{ processId: string; status: "pending" | "running" }>
+  | Readonly<{ processId: string; status: "exited"; result: WorkspaceExecResult }>
+  | Readonly<{ processId: string; status: "failed"; terminalReasonCode: string }>
+
+function parseWorkspaceExecProcess(value: unknown): WorkspaceExecProcess {
+  const response = objectValue(value, "Workspace exec process response")
+  const processId = resourceID(
+    response["process_id"],
+    "Workspace exec process response.process_id",
+  )
+  switch (response["status"]) {
+    case "pending":
+    case "running":
+      return Object.freeze({ processId, status: response["status"] })
+    case "exited":
+      return Object.freeze({
+        processId,
+        status: "exited",
+        result: parseWorkspaceExecResult(response),
+      })
+    case "failed": {
+      const error = objectValue(response["error"], "Workspace exec process response.error")
+      const terminalReasonCode = error["terminal_reason_code"]
+      if (typeof terminalReasonCode !== "string" || ![
+        "workspace_exec_timed_out",
+        "workspace_exec_output_limit_exceeded",
+        "workspace_exec_placement_timed_out",
+        "workspace_exec_failed",
+      ].includes(terminalReasonCode)) {
+        throw new Error("Workspace exec process response.error.terminal_reason_code is invalid")
+      }
+      return Object.freeze({ processId, status: "failed", terminalReasonCode })
+    }
+    default:
+      throw new Error("Workspace exec process response.status is invalid")
+  }
+}
+
+function workspaceExecFailure(code: string): Error {
+  const message = code === "workspace_exec_timed_out"
+    ? "workspace exec timed out"
+    : code === "workspace_exec_output_limit_exceeded"
+      ? "workspace exec output limit was exceeded"
+      : code === "workspace_exec_placement_timed_out"
+        ? "workspace exec placement timed out"
+        : "workspace exec failed"
+  const error = new Error(message) as Error & { code: string }
+  error.name = "HelmrError"
+  error.code = code
+  return error
 }
 
 function workspaceListQuery(queryInput: WorkspaceListQuery): string {

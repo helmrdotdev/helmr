@@ -53,6 +53,56 @@ SELECT org_id, id, state_version, created_at
  ORDER BY created_at, id
  LIMIT sqlc.arg(row_limit);
 
+-- name: ListPendingWorkspaceExecCapacityCandidates :many
+SELECT workspace_processes.id AS process_id,
+       definitions.manifest AS workspace_manifest,
+       ARRAY(
+           SELECT accounting.worker_pool_id
+             FROM (
+                 SELECT worker_instances.worker_pool_id
+                   FROM runtime_instances
+                   JOIN worker_instances
+                     ON worker_instances.id = runtime_instances.worker_instance_id
+                  WHERE runtime_instances.workspace_id = workspaces.id
+                    AND runtime_instances.reclaimed_at IS NULL
+                 UNION
+                 SELECT worker_instances.worker_pool_id
+                   FROM workspace_leases
+                   JOIN worker_instances
+                     ON worker_instances.id = workspace_leases.worker_instance_id
+                  WHERE workspace_leases.workspace_id = workspaces.id
+                    AND workspace_leases.state IN ('active', 'releasing')
+             ) AS accounting
+            ORDER BY accounting.worker_pool_id
+       )::uuid[] AS accounted_pool_ids
+  FROM workspace_processes
+  JOIN workspaces
+    ON workspaces.environment_id = workspace_processes.environment_id
+   AND workspaces.id = workspace_processes.workspace_id
+  JOIN environments
+    ON environments.id = workspaces.environment_id
+   AND environments.org_id = workspace_processes.org_id
+   AND environments.project_id = workspace_processes.project_id
+  JOIN deployment_definitions AS definitions
+    ON definitions.environment_id = workspaces.environment_id
+   AND definitions.id = workspaces.deployment_definition_id
+   AND definitions.kind = 'sandbox'
+   AND definitions.declared_id = workspaces.sandbox_declared_id
+  JOIN workspace_versions
+    ON workspace_versions.workspace_id = workspaces.id
+   AND workspace_versions.id = workspace_processes.base_version_id
+   AND workspace_versions.state = 'committed'
+ WHERE workspace_processes.state = 'pending'
+   AND workspaces.region_id = sqlc.arg(region_id)
+   AND workspaces.state = 'active'
+   AND workspaces.desired_state IN ('active', 'stopped')
+   AND workspaces.dirty_state = 'clean'
+   AND workspaces.head_version_id = workspace_processes.base_version_id
+   AND workspaces.owner_session_id IS NULL
+   AND workspaces.owner_run_id IS NULL
+ ORDER BY workspace_processes.created_at, workspace_processes.id
+ LIMIT sqlc.arg(row_limit);
+
 -- name: ListRecoverableWorkspaceExecCandidates :many
 SELECT workspace_processes.org_id,
        workspace_processes.id,
@@ -126,7 +176,26 @@ UPDATE runtime_instances
  WHERE runtime_instances.id = target.id;
 
 -- name: CreateWorkspaceExecRuntimeReservation :one
-WITH created_runtime AS (
+WITH selected_shape AS MATERIALIZED (
+    SELECT worker_pool_cpu_shapes.vcpu_count,
+           worker_pool_cpu_shapes.cpu_config_digest
+      FROM worker_instances
+      JOIN worker_groups
+        ON worker_groups.id = worker_instances.worker_group_id
+       AND worker_groups.state = 'active'
+      JOIN worker_pools
+	    ON worker_pools.id = worker_instances.worker_pool_id
+	   AND worker_pools.worker_group_id = worker_instances.worker_group_id
+	   AND worker_pools.state = 'active'
+      JOIN worker_pool_cpu_shapes
+        ON worker_pool_cpu_shapes.worker_pool_id = worker_pools.id
+       AND worker_pool_cpu_shapes.vcpu_count = ((sqlc.arg(reserved_cpu_millis)::bigint - 1) / 1000 + 1)::integer
+     WHERE worker_instances.id = sqlc.arg(worker_instance_id)
+       AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
+	   AND worker_instances.current_epoch = sqlc.arg(worker_epoch)
+	   AND worker_instances.state = 'active'
+       AND worker_groups.primary_pool_id = worker_pools.id
+), created_runtime AS (
     INSERT INTO runtime_instances (
         id,
         org_id,
@@ -138,6 +207,8 @@ WITH created_runtime AS (
         runtime_identity_id,
         deployment_definition_id,
         worker_epoch,
+        vm_vcpu_count,
+        cpu_config_digest,
         reserved_cpu_millis,
         reserved_memory_bytes,
         reserved_guest_ephemeral_disk_bytes,
@@ -147,7 +218,7 @@ WITH created_runtime AS (
         reserved_workspace_version_id,
         reservation_expires_at,
         desired_reason
-    ) VALUES (
+    ) SELECT
         sqlc.arg(id),
         sqlc.arg(org_id),
         sqlc.arg(worker_group_id),
@@ -158,6 +229,8 @@ WITH created_runtime AS (
         sqlc.arg(runtime_identity_id),
         sqlc.arg(deployment_definition_id),
         sqlc.arg(worker_epoch),
+        selected_shape.vcpu_count,
+        selected_shape.cpu_config_digest,
         sqlc.arg(reserved_cpu_millis),
         sqlc.arg(reserved_memory_bytes),
         sqlc.arg(reserved_guest_ephemeral_disk_bytes),
@@ -167,7 +240,7 @@ WITH created_runtime AS (
         sqlc.arg(base_workspace_version_id),
         sqlc.arg(reservation_expires_at),
         'workspace_exec_reservation'
-    )
+      FROM selected_shape
     RETURNING *
 )
 SELECT created_runtime.*
@@ -381,11 +454,9 @@ SELECT sqlc.embed(workspace_processes),
    AND workspace_leases.mount_fencing_generation = workspace_mounts.fencing_generation
    AND (
        workspace_processes.state <> 'starting'
-       OR (
-           worker_groups.state = 'active'
-           AND worker_groups.allows_run
-           AND worker_instances.state = 'active'
-           AND worker_instances.supports_run
+	       OR (
+	           worker_groups.state = 'active'
+	           AND worker_instances.state = 'active'
            AND worker_instances.runtime_identity_id = runtime_instances.runtime_identity_id
 		   AND runtime_identities.vm_runtime_contract = 'helmr.vm-runtime.v0'
            AND worker_instances.observed_at >= transaction_timestamp()
@@ -658,7 +729,7 @@ WITH authority AS (
     )
     SELECT sqlc.arg(workspace_version_id),
            authority.environment_id, authority.workspace_id, authority.base_version_id,
-           sqlc.arg(artifact_id), 'workspace_version', 'system',
+           sqlc.arg(artifact_id), 'workspace_version', 'user',
            sqlc.arg(content_digest), sqlc.arg(size_bytes), sqlc.arg(entry_count),
            'private', authority.source_workspace_lease_id,
            authority.ownership_generation, authority.writer_generation

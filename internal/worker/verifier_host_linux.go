@@ -22,11 +22,6 @@ func prepareVerifierHost(procCgroup, cgroupRoot string, pid int) (string, error)
 	return checkVerifierHost(procCgroup, cgroupRoot, pid, true)
 }
 
-func programVerifierHostHealthy() bool {
-	_, err := checkVerifierHost("/proc/self/cgroup", "/sys/fs/cgroup", os.Getpid(), false)
-	return err == nil
-}
-
 func checkVerifierHost(procCgroup, cgroupRoot string, pid int, enable bool) (string, error) {
 	raw, err := os.ReadFile(procCgroup)
 	if err != nil {

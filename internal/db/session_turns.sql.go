@@ -192,7 +192,7 @@ UPDATE run_checkpoints
    AND actor_speculative_input_sequence BETWEEN $7::bigint - 1
                                             AND $7::bigint
    AND state = 'ready'
-RETURNING run_checkpoints.id, run_checkpoints.kind, run_checkpoints.run_id, run_checkpoints.attempt_number, run_checkpoints.run_wait_id, run_checkpoints.source_run_lease_id, run_checkpoints.source_workspace_lease_id, run_checkpoints.workspace_id, run_checkpoints.base_workspace_version_id, run_checkpoints.private_workspace_version_id, run_checkpoints.actor_speculative_input_sequence, run_checkpoints.state, run_checkpoints.restore_manifest, run_checkpoints.ready_request_fingerprint, run_checkpoints.failed_request_fingerprint, run_checkpoints.expires_at, run_checkpoints.created_at, run_checkpoints.ready_at, run_checkpoints.invalidated_at, run_checkpoints.invalidation_reason_code
+RETURNING run_checkpoints.id, run_checkpoints.run_id, run_checkpoints.attempt_number, run_checkpoints.run_wait_id, run_checkpoints.source_run_lease_id, run_checkpoints.source_workspace_lease_id, run_checkpoints.workspace_id, run_checkpoints.base_workspace_version_id, run_checkpoints.private_workspace_version_id, run_checkpoints.actor_speculative_input_sequence, run_checkpoints.state, run_checkpoints.restore_manifest, run_checkpoints.ready_request_fingerprint, run_checkpoints.failed_request_fingerprint, run_checkpoints.expires_at, run_checkpoints.created_at, run_checkpoints.ready_at, run_checkpoints.invalidated_at, run_checkpoints.invalidation_reason_code
 `
 
 type InvalidateRestoredActorCheckpointParams struct {
@@ -218,7 +218,6 @@ func (q *Queries) InvalidateRestoredActorCheckpoint(ctx context.Context, arg Inv
 	var i RunCheckpoint
 	err := row.Scan(
 		&i.ID,
-		&i.Kind,
 		&i.RunID,
 		&i.AttemptNumber,
 		&i.RunWaitID,

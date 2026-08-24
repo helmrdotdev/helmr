@@ -129,12 +129,12 @@ message WorkspaceFinalizationReceipt {
 message MaterializeWorkspaceRequest {
   WorkspaceOperationEnvelope envelope = 1;
   string mount_path = 2;
-  string base_version_id = 3;
-  WorkspaceArtifact base_artifact = 4;
-  WorkspaceArtifact workspace_image = 5;
-  bool use_prepared_runtime = 6;
-  string runtime_instance_id = 7;
-  string restored_checkpoint_id = 8;
+  WorkspaceResetTarget target = 3;
+  WorkspaceArtifact workspace_image = 4;
+  bool use_prepared_runtime = 5;
+  string runtime_instance_id = 6;
+  string restored_checkpoint_id = 7;
+  string restore_source_version_id = 8;
 }
 
 message WorkspaceMountPhase {
@@ -149,6 +149,7 @@ message MaterializeWorkspaceResponse {
   string state = 1;
   string guestd_channel_token_hash = 2;
   repeated WorkspaceMountPhase phases = 3;
+  WorkspaceResetTarget target = 4;
 }
 
 message PrepareWorkspaceRuntimeRequest {
@@ -217,6 +218,7 @@ message StopWorkspaceResponse {
   string state = 1;
   WorkspaceArtifact captured_artifact = 2;
   string error_json = 3;
+  WorkspaceTreeIdentity captured_tree = 4;
 }
 
 message WorkspaceBasicExecRequest {

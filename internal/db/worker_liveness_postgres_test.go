@@ -354,10 +354,11 @@ func insertRegisteringWorker(t *testing.T, ctx context.Context, pool *pgxpool.Po
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO worker_instances (
-			id, resource_id, worker_group_id, state, updated_at,
+			id, resource_id, worker_group_id, worker_pool_id, state, updated_at,
 			current_epoch, current_service_id, epoch_started_at
-		) VALUES ($1, $2, $3, 'registering', $4, $5, $6, $7)
-	`, id, "registering-"+id.String(), dbtest.DefaultWorkerGroupID, updatedAt, epoch, serviceID, epochStartedAt); err != nil {
+		) VALUES ($1, $2, $3, $8, 'registering', $4, $5, $6, $7)
+	`, id, "registering-"+id.String(), dbtest.DefaultWorkerGroupID, updatedAt, epoch, serviceID, epochStartedAt,
+		dbtest.DefaultWorkerPoolID); err != nil {
 		t.Fatal(err)
 	}
 	return id
@@ -367,31 +368,27 @@ func insertActiveWorkerWithObservation(t *testing.T, ctx context.Context, pool *
 	t.Helper()
 	id := uuid.Must(uuid.NewV7())
 	serviceID := uuid.Must(uuid.NewV7())
-	runtimeIdentityID := "active-runtime-" + id.String()
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO runtime_identities (
-			id, runtime_arch, vm_runtime_contract, kernel_digest, initramfs_digest, rootfs_digest
-		) VALUES ($1, 'x86_64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs')
-	`, runtimeIdentityID); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO worker_instances (
-			id, resource_id, worker_group_id, state,
-			current_epoch, current_service_id, supervisor_version, supports_build, runtime_identity_id,
+			id, resource_id, worker_group_id, worker_pool_id, state,
+			current_epoch, current_service_id, runtime_identity_id,
+			substrate_format, substrate_contract,
 			epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
 			per_vm_cpu_millis, per_vm_memory_bytes,
-			per_vm_guest_ephemeral_disk_bytes, max_build_executors,
+			per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_runtime_starts,
+			cpu_environment, cpu_environment_digest,
 			observed_at, epoch_started_at, activated_at
 		) VALUES (
-			$1, $2, $3, 'active',
-			1, $4, 'test-worker', true, $6,
-			1000, 1073741824, 1073741824,
-			1000, 1073741824,
-			1073741824, 1,
-			$5, $5, $5
+			$1, $2, $3, $4, 'active',
+			1, $5, $6, 'ext4', 'helmr.substrate.ext4.v0',
+			8000, 17179869184, 274877906944,
+			4000, 8589934592,
+			34359738368, 8, 1,
+			'{}'::jsonb, $7,
+			$8, $8, $8
 		)
-	`, id, "active-"+id.String(), dbtest.DefaultWorkerGroupID, serviceID, observedAt, runtimeIdentityID); err != nil {
+	`, id, "active-"+id.String(), dbtest.DefaultWorkerGroupID, dbtest.DefaultWorkerPoolID,
+		serviceID, dbtest.DefaultRuntimeID, dbtest.DefaultCPUConfigID, observedAt); err != nil {
 		t.Fatal(err)
 	}
 	return id

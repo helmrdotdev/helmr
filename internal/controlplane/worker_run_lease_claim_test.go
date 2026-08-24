@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -26,24 +25,8 @@ func discardTestLogger() *slog.Logger {
 
 func TestWorkerRunLeaseClaimAuthorizesTransitionsAndReplays(t *testing.T) {
 	server, store, worker, requestBody := newWorkerRunLeaseClaimHTTPFixture(t)
-	handler := requireWorkerRole(
-		auth.WorkerRoleRun,
-		http.HandlerFunc(server.workerClaimRunLease),
-	)
+	handler := http.HandlerFunc(server.workerClaimRunLease)
 
-	unauthorized := runWorkerLeaseClaimRequest(
-		handler,
-		workerActor{Roles: []string{auth.WorkerRoleBuild}},
-		requestBody,
-	)
-	if unauthorized.Code != http.StatusForbidden {
-		t.Fatalf("unauthorized status = %d body=%s", unauthorized.Code, unauthorized.Body)
-	}
-	if len(store.calls) != 0 {
-		t.Fatalf("unauthorized request reached claim store: %v", store.calls)
-	}
-
-	worker.Roles = []string{auth.WorkerRoleRun}
 	first := runWorkerLeaseClaimRequest(handler, worker, requestBody)
 	if first.Code != http.StatusOK {
 		t.Fatalf("first claim status = %d body=%s", first.Code, first.Body)
@@ -74,11 +57,7 @@ func TestWorkerRunLeaseClaimAuthorizesTransitionsAndReplays(t *testing.T) {
 
 func TestWorkerRunLeaseClaimRemainsReplayableAfterProjectionFailure(t *testing.T) {
 	server, store, worker, requestBody := newWorkerRunLeaseClaimHTTPFixture(t)
-	handler := requireWorkerRole(
-		auth.WorkerRoleRun,
-		http.HandlerFunc(server.workerClaimRunLease),
-	)
-	worker.Roles = []string{auth.WorkerRoleRun}
+	handler := http.HandlerFunc(server.workerClaimRunLease)
 	store.projectionErr = errors.New("projection unavailable")
 
 	failed := runWorkerLeaseClaimRequest(handler, worker, requestBody)
@@ -145,10 +124,6 @@ func newWorkerRunLeaseClaimHTTPFixture(
 	authority.workspaceLease.FencingTokenHash = capability.Hash
 
 	runtime := claimResponseRuntimeDescriptor()
-	runtimeDigest, err := deployment.RuntimeDigestBytes(runtime.Digest)
-	if err != nil {
-		t.Fatal(err)
-	}
 	store := &runLeaseClaimStore{
 		authority: authority,
 		locators:  locators,
@@ -156,11 +131,10 @@ func newWorkerRunLeaseClaimHTTPFixture(
 			DeploymentID:             authority.run.DeploymentID,
 			EnvironmentID:            authority.run.EnvironmentID,
 			DeploymentVersion:        "v42",
-			BuildRuntimeDigest:       runtimeDigest,
+			RuntimeArtifactDigest:    runtime.Digest,
 			ProgramArtifactDigest:    validDigest('a'),
 			ProgramArtifactSizeBytes: 100,
 			ProgramArtifactMediaType: deployment.ProgramArtifactMediaType,
-			BuildContract:            deployment.ProgramBuildContract,
 			ProgramIndexDigest:       validDigestBytes(t, 'b'),
 		},
 		definition: definition,
@@ -171,7 +145,6 @@ func newWorkerRunLeaseClaimHTTPFixture(
 	server := &Server{
 		log:                 discardTestLogger(),
 		db:                  store,
-		buildPolicy:         controlPlaneBuildPolicy(t),
 		platformStore:       claimResponsePlatformStore{},
 		secretDelivery:      &recordingSecretDeliveryOpener{},
 		workspaceFencingKey: key,

@@ -17,6 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -77,7 +78,6 @@ type freshProgram struct {
 type newProgramAdmission struct {
 	programStart []byte
 	start        workerapi.RunStartRequest
-	parent       *workspacev0.VerifyProgramRestoreRequest
 }
 
 type freshAdmissionState struct {
@@ -145,6 +145,42 @@ func (state *freshAdmissionState) expiresAt() time.Time {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	return state.lease.ExpiresAt
+}
+
+func (state *freshAdmissionState) snapshot() (workerapi.RunLeaseAssignment, *workspacev0.WorkspaceRunAuthority) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	return state.lease, proto.Clone(state.authority).(*workspacev0.WorkspaceRunAuthority)
+}
+
+func runWithFreshAdmissionRenewal(
+	ctx context.Context,
+	state *freshAdmissionState,
+	operation func(context.Context) error,
+) error {
+	operationCtx, cancelOperation := context.WithCancel(ctx)
+	defer cancelOperation()
+	done := make(chan error, 1)
+	go func() { done <- operation(operationCtx) }()
+	renewTimer := time.NewTimer(runLeaseRenewDelay(state.expiresAt()))
+	defer renewTimer.Stop()
+	for {
+		select {
+		case err := <-done:
+			return err
+		case <-renewTimer.C:
+			if err := state.renew(ctx); err != nil {
+				cancelOperation()
+				<-done
+				return fmt.Errorf("renew admission run lease: %w", err)
+			}
+			renewTimer.Reset(runLeaseRenewDelay(state.expiresAt()))
+		case <-ctx.Done():
+			cancelOperation()
+			<-done
+			return ctx.Err()
+		}
+	}
 }
 
 func (state *freshAdmissionState) renew(ctx context.Context) error {
@@ -648,25 +684,11 @@ func (r ProgramRunner) startNewProgram(
 	if opened.Session.Stream() == nil {
 		return freshProgram{}, errors.New("workspace mount stream is required")
 	}
-	if err := validateNewProgramMount(claim.Lease, opened.Mount); err != nil {
+	if err := validateNewProgramMount(
+		claim.Lease,
+		opened.Mount,
+	); err != nil {
 		return freshProgram{}, err
-	}
-	if admission.parent != nil {
-		if opened.ControlSession == nil {
-			return freshProgram{}, errors.New(
-				"child-attached program mount control session is required",
-			)
-		}
-		if err := verifyRestoredProgramOnSession(
-			admissionCtx,
-			opened.ControlSession,
-			admission.parent,
-		); err != nil {
-			return freshProgram{}, fmt.Errorf(
-				"verify frozen parent program: %w",
-				err,
-			)
-		}
 	}
 	if err := writeFreshProgramContext(
 		admissionCtx,
@@ -693,6 +715,55 @@ func (r ProgramRunner) startNewProgram(
 			"read program process-started proof: %w",
 			err,
 		)
+	}
+	if failed := event.GetProgramProcessStartFailed(); failed != nil {
+		if failed.GetRunId() != claim.Lease.RunID ||
+			failed.GetAttemptNumber() != uint32(claim.Lease.AttemptNumber) ||
+			failed.GetRunLeaseId() != claim.Lease.ID {
+			return freshProgram{}, errors.New(
+				"program process-start failure proof does not match run lease",
+			)
+		}
+		var diagnostic string
+		switch failed.GetPhase() {
+		case "prepare":
+			diagnostic = "Program process preparation failed"
+		case "start":
+			diagnostic = "Program process start failed"
+		default:
+			return freshProgram{}, errors.New(
+				"program process-start failure proof phase is invalid",
+			)
+		}
+		if failed.GetDiagnostic() != diagnostic {
+			return freshProgram{}, errors.New(
+				"program process-start failure proof diagnostic is invalid",
+			)
+		}
+		if r.Log != nil {
+			r.Log.Error(
+				"Program process start failed",
+				"run_id", claim.Lease.RunID,
+				"run_lease_id", claim.Lease.ID,
+				"runtime_instance_id", claim.Lease.RuntimeInstanceID,
+				"workspace_mount_id", claim.Lease.WorkspaceMountID,
+				"phase", failed.GetPhase(),
+				"diagnostic", diagnostic,
+			)
+		}
+		failureCtx, cancelFailure := context.WithTimeout(
+			context.Background(),
+			30*time.Second,
+		)
+		defer cancelFailure()
+		failure := errors.New("program process failed before start proof")
+		if err := r.WorkspaceMounts.FailWorkspaceMountSession(
+			failureCtx,
+			claim.Lease.WorkspaceMountID,
+		); err != nil {
+			return freshProgram{}, errors.Join(failure, err)
+		}
+		return freshProgram{}, failure
 	}
 	started := event.GetProgramProcessStarted()
 	if started == nil ||
@@ -967,7 +1038,6 @@ func validateNewProgramClaim(
 	switch {
 	case execution.Fresh != nil &&
 		execution.Restore == nil &&
-		execution.Attach == nil &&
 		len(execution.Fresh.ProgramStart) > 0:
 		admission = newProgramAdmission{
 			programStart: execution.Fresh.ProgramStart,
@@ -975,45 +1045,9 @@ func validateNewProgramClaim(
 				Fresh: &workerapi.RunStartFresh{},
 			},
 		}
-	case execution.Fresh == nil &&
-		execution.Restore == nil &&
-		execution.Attach != nil &&
-		execution.Attach.Child != nil &&
-		execution.Attach.Parent == nil:
-		child := execution.Attach.Child
-		if strings.TrimSpace(child.RunWaitID) == "" ||
-			strings.TrimSpace(child.ParentRunID) == "" ||
-			child.ParentAttemptNumber <= 0 ||
-			strings.TrimSpace(child.CheckpointID) == "" ||
-			strings.TrimSpace(child.ResumeAttachID) == "" ||
-			strings.TrimSpace(child.CorrelationID) == "" ||
-			len(child.ProgramStart) == 0 {
-			return newProgramAdmission{}, errors.New(
-				"child-attached program authority is incomplete",
-			)
-		}
-		admission = newProgramAdmission{
-			programStart: child.ProgramStart,
-			parent: &workspacev0.VerifyProgramRestoreRequest{
-				RunId:         child.ParentRunID,
-				AttemptNumber: uint32(child.ParentAttemptNumber),
-				RunWaitId:     child.RunWaitID,
-				CheckpointId:  child.CheckpointID,
-				CorrelationId: child.CorrelationID,
-			},
-			start: workerapi.RunStartRequest{
-				Attach: &workerapi.RunStartAttach{
-					Child: &workerapi.RunStartChildAttach{
-						RunWaitID:      child.RunWaitID,
-						CheckpointID:   child.CheckpointID,
-						ResumeAttachID: child.ResumeAttachID,
-					},
-				},
-			},
-		}
 	default:
 		return newProgramAdmission{}, errors.New(
-			"run lease execution must contain exactly one fresh or child-attached program",
+			"run lease execution must contain exactly one fresh program",
 		)
 	}
 	if len(claim.Secrets) > maxFreshProgramSecrets {
@@ -1040,14 +1074,14 @@ func validateNewProgramMount(
 	lease workerapi.RunLeaseAssignment,
 	mount workerapi.WorkspaceMount,
 ) error {
-	if mount.ID != lease.WorkspaceMountID ||
-		mount.WorkspaceID != lease.WorkspaceID ||
-		mount.RuntimeInstanceID != lease.RuntimeInstanceID ||
-		mount.BaseVersionID != lease.BaseWorkspaceVersionID ||
-		mount.FencingGeneration != lease.MountFencingGeneration {
-		return errors.New(
-			"new program workspace mount does not match the claimed physical authority",
-		)
+	if mount.ID != lease.WorkspaceMountID {
+		return errors.New("new program workspace mount ID does not match the claimed physical authority")
+	}
+	if mount.WorkspaceID != lease.WorkspaceID {
+		return errors.New("new program workspace ID does not match the claimed physical authority")
+	}
+	if mount.RuntimeInstanceID != lease.RuntimeInstanceID {
+		return errors.New("new program Runtime Instance does not match the claimed physical authority")
 	}
 	return nil
 }
@@ -1245,10 +1279,6 @@ func clearFreshProgramDelivery(claim *workerapi.RunLeaseClaimResponse) {
 	if claim.Execution.Fresh != nil {
 		clearBytes(claim.Execution.Fresh.ProgramStart)
 		claim.Execution.Fresh.ProgramStart = nil
-	}
-	if claim.Execution.Attach != nil && claim.Execution.Attach.Child != nil {
-		clearBytes(claim.Execution.Attach.Child.ProgramStart)
-		claim.Execution.Attach.Child.ProgramStart = nil
 	}
 	for index := range claim.Secrets {
 		clearBytes(claim.Secrets[index].Value)

@@ -347,29 +347,47 @@ func workspaceExecTerminal(state db.WorkspaceProcessState) bool {
 	}
 }
 
-func (s *Server) waitWorkspaceExec(ctx context.Context, admitted workspaceExecAdmission) (api.ExecuteWorkspaceResult, error) {
-	process := admitted.Process
-	ticker := time.NewTicker(250 * time.Millisecond)
-	defer ticker.Stop()
-	for !workspaceExecTerminal(process.State) {
-		select {
-		case <-ctx.Done():
-			return api.ExecuteWorkspaceResult{}, ctx.Err()
-		case <-ticker.C:
+func publicWorkspaceExecProcess(process db.WorkspaceProcess) (api.WorkspaceExecProcess, error) {
+	resource := api.WorkspaceExecProcess{ProcessID: pgvalue.MustUUIDValue(process.ID).String()}
+	switch process.State {
+	case db.WorkspaceProcessStatePending, db.WorkspaceProcessStateStarting:
+		resource.Status = api.WorkspaceExecProcessStatusPending
+	case db.WorkspaceProcessStateRunning, db.WorkspaceProcessStateExitRequested:
+		resource.Status = api.WorkspaceExecProcessStatusRunning
+	case db.WorkspaceProcessStateExited:
+		if !process.ExitCode.Valid || process.Stdout == nil || process.Stderr == nil {
+			return api.WorkspaceExecProcess{}, errors.New("workspace exec terminal output is unavailable")
 		}
-		var err error
-		process, err = s.db.GetWorkspaceExec(ctx, db.GetWorkspaceExecParams{
-			OrgID:         process.OrgID,
-			ProjectID:     process.ProjectID,
-			EnvironmentID: process.EnvironmentID,
-			WorkspaceID:   process.WorkspaceID,
-			ID:            process.ID,
-		})
-		if err != nil {
-			return api.ExecuteWorkspaceResult{}, err
+		if len(process.Stdout) > workspaceExecOutputMaxBytes || len(process.Stderr) > workspaceExecOutputMaxBytes {
+			return api.WorkspaceExecProcess{}, errors.New("workspace exec terminal output exceeds its persisted limit")
 		}
+		stdout := base64.StdEncoding.EncodeToString(process.Stdout)
+		stderr := base64.StdEncoding.EncodeToString(process.Stderr)
+		exitCode := process.ExitCode.Int32
+		resource.Status = api.WorkspaceExecProcessStatusExited
+		resource.ExitCode = &exitCode
+		resource.StdoutBase64 = &stdout
+		resource.StderrBase64 = &stderr
+	case db.WorkspaceProcessStateFailed:
+		resource.Status = api.WorkspaceExecProcessStatusFailed
+		resource.Error = &api.WorkspaceExecProcessError{
+			TerminalReasonCode: publicWorkspaceExecTerminalReason(process.TerminalReasonCode.String),
+		}
+	default:
+		return api.WorkspaceExecProcess{}, errors.New("workspace exec state is invalid")
 	}
-	return workspaceExecResult(process)
+	return resource, nil
+}
+
+func publicWorkspaceExecTerminalReason(code string) string {
+	switch code {
+	case "workspace_exec_timed_out",
+		"workspace_exec_output_limit_exceeded",
+		"workspace_exec_placement_timed_out":
+		return code
+	default:
+		return "workspace_exec_failed"
+	}
 }
 
 func workspaceExecResult(process db.WorkspaceProcess) (api.ExecuteWorkspaceResult, error) {

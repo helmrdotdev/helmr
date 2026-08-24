@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -33,7 +34,7 @@ func runCancelCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			scope, err := runScopeForClient(controlPlane, projectID, environmentID)
+			scope, err := runScopeForClient(cmd.Context(), controlPlane, projectID, environmentID)
 			if err != nil {
 				return err
 			}
@@ -70,12 +71,16 @@ func runListCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			scope, err := runScopeForClient(cmd.Context(), controlPlane, projectID, environmentID)
+			if err != nil {
+				return err
+			}
 			response, err := controlPlane.ListRuns(cmd.Context(), client.ListRunsOptions{
 				Statuses:      statuses,
 				Cursor:        cursor,
 				Limit:         limit,
-				ProjectID:     strings.TrimSpace(projectID),
-				EnvironmentID: strings.TrimSpace(environmentID),
+				ProjectID:     scope.ProjectID,
+				EnvironmentID: scope.EnvironmentID,
 			})
 			if err != nil {
 				return err
@@ -115,7 +120,7 @@ func runGetCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			scope, err := runScopeForClient(controlPlane, projectID, environmentID)
+			scope, err := runScopeForClient(cmd.Context(), controlPlane, projectID, environmentID)
 			if err != nil {
 				return err
 			}
@@ -148,24 +153,37 @@ func runLogsCommand() *cobra.Command {
 	var projectID string
 	var environmentID string
 	var follow bool
+	var waitReady string
 	cmd := &cobra.Command{
 		Use:   "logs RUN",
 		Short: "Print the latest run logs.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			waitReadyDuration, err := parseRunTelemetryReadyDuration(waitReady, cmd.Flags().Changed("wait-ready"), follow)
+			if err != nil {
+				return err
+			}
 			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			scope, err := runScopeForClient(controlPlane, projectID, environmentID)
+			scope, err := runScopeForClient(cmd.Context(), controlPlane, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			logs, err := controlPlane.ListRunLogs(
-				cmd.Context(),
-				args[0],
-				client.ListRunLogsOptions{RunScopeOptions: scope},
-			)
+			readLogs := func(ctx context.Context) (api.RunLogPage, error) {
+				return controlPlane.ListRunLogs(
+					ctx,
+					args[0],
+					client.ListRunLogsOptions{RunScopeOptions: scope},
+				)
+			}
+			var logs api.RunLogPage
+			if waitReadyDuration > 0 {
+				logs, err = waitForRunTelemetryReady(cmd.Context(), waitReadyDuration, readLogs)
+			} else {
+				logs, err = readLogs(cmd.Context())
+			}
 			if err != nil {
 				return err
 			}
@@ -187,6 +205,7 @@ func runLogsCommand() *cobra.Command {
 	}
 	addScopeFlags(cmd, &projectID, &environmentID)
 	cmd.Flags().BoolVar(&follow, "follow", false, "Continue streaming new logs.")
+	cmd.Flags().StringVar(&waitReady, "wait-ready", "", "Wait up to this duration for terminal telemetry to become readable.")
 	return cmd
 }
 
@@ -223,21 +242,34 @@ func runEventsCommand() *cobra.Command {
 	var cursor string
 	var limit int32
 	var follow bool
+	var waitReady string
 	cmd := &cobra.Command{
 		Use:   "events RUN",
 		Short: "List run events.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			waitReadyDuration, err := parseRunTelemetryReadyDuration(waitReady, cmd.Flags().Changed("wait-ready"), follow)
+			if err != nil {
+				return err
+			}
 			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			scope, err := runScopeForClient(controlPlane, projectID, environmentID)
+			scope, err := runScopeForClient(cmd.Context(), controlPlane, projectID, environmentID)
 			if err != nil {
 				return err
 			}
 			if !follow {
-				page, err := controlPlane.ListRunEvents(cmd.Context(), args[0], client.ListRunEventsOptions{Cursor: cursor, Limit: limit, RunScopeOptions: scope})
+				readEvents := func(ctx context.Context) (api.RunEventRecordPage, error) {
+					return controlPlane.ListRunEvents(ctx, args[0], client.ListRunEventsOptions{Cursor: cursor, Limit: limit, RunScopeOptions: scope})
+				}
+				var page api.RunEventRecordPage
+				if waitReadyDuration > 0 {
+					page, err = waitForRunTelemetryReady(cmd.Context(), waitReadyDuration, readEvents)
+				} else {
+					page, err = readEvents(cmd.Context())
+				}
 				if err != nil {
 					return err
 				}
@@ -250,7 +282,52 @@ func runEventsCommand() *cobra.Command {
 	cmd.Flags().StringVar(&cursor, "cursor", "", "Return events after this cursor.")
 	cmd.Flags().Int32Var(&limit, "limit", 0, "Maximum events to return.")
 	cmd.Flags().BoolVar(&follow, "follow", false, "Continue streaming new events.")
+	cmd.Flags().StringVar(&waitReady, "wait-ready", "", "Wait up to this duration for terminal telemetry to become readable.")
 	return cmd
+}
+
+func parseRunTelemetryReadyDuration(raw string, supplied bool, follow bool) (time.Duration, error) {
+	if !supplied {
+		return 0, nil
+	}
+	if follow {
+		return 0, errors.New("--wait-ready cannot be combined with --follow")
+	}
+	return api.ParsePositiveDuration(raw, "--wait-ready")
+}
+
+func waitForRunTelemetryReady[T any](ctx context.Context, timeout time.Duration, read func(context.Context) (T, error)) (T, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	for {
+		value, err := read(ctx)
+		if err == nil {
+			return value, nil
+		}
+		if ctx.Err() != nil {
+			var zero T
+			return zero, fmt.Errorf("wait for run telemetry readiness: %w", ctx.Err())
+		}
+		if !runTelemetryIsLagging(err) {
+			var zero T
+			return zero, err
+		}
+		timer := time.NewTimer(runFollowPollInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			var zero T
+			return zero, fmt.Errorf("wait for run telemetry readiness: %w", ctx.Err())
+		case <-timer.C:
+		}
+	}
+}
+
+func runTelemetryIsLagging(err error) bool {
+	var httpErr *httpclient.Error
+	return errors.As(err, &httpErr) &&
+		httpErr.StatusCode == http.StatusServiceUnavailable &&
+		httpErr.Code == "telemetry_lagging"
 }
 
 func runWaitCommand() *cobra.Command {
@@ -277,7 +354,7 @@ func runWaitCommand() *cobra.Command {
 				ctx, cancel = context.WithTimeout(ctx, waitTimeout)
 				defer cancel()
 			}
-			scope, err := runScopeForClient(controlPlane, projectID, environmentID)
+			scope, err := runScopeForClient(cmd.Context(), controlPlane, projectID, environmentID)
 			if err != nil {
 				return err
 			}
@@ -298,24 +375,15 @@ func runWaitCommand() *cobra.Command {
 	return cmd
 }
 
-func runScopeForClient(controlPlane *client.Client, projectID string, environmentID string) (client.RunScopeOptions, error) {
-	scope := client.RunScopeOptions{
-		ProjectID:     strings.TrimSpace(projectID),
-		EnvironmentID: strings.TrimSpace(environmentID),
+func runScopeForClient(ctx context.Context, controlPlane *client.Client, projectID string, environmentID string) (client.RunScopeOptions, error) {
+	scope, err := environmentScopeForClient(ctx, controlPlane, projectID, environmentID)
+	if err != nil {
+		return client.RunScopeOptions{}, err
 	}
-	if !controlPlane.UsesSessionScopedRoutes() {
-		if scope.ProjectID != "" || scope.EnvironmentID != "" {
-			return client.RunScopeOptions{}, errors.New("--project and --env require helmr login; API keys are already environment scoped")
-		}
-		return client.RunScopeOptions{}, nil
-	}
-	if scope.ProjectID == "" || scope.EnvironmentID == "" {
-		return client.RunScopeOptions{}, errors.New("--project and --env are required with helmr login")
-	}
-	return scope, nil
+	return client.RunScopeOptions(scope), nil
 }
 
-func environmentScopeForClient(controlPlane *client.Client, projectID string, environmentID string) (client.EnvironmentScopeOptions, error) {
+func environmentScopeForClient(ctx context.Context, controlPlane *client.Client, projectID string, environmentID string) (client.EnvironmentScopeOptions, error) {
 	scope := client.EnvironmentScopeOptions{
 		ProjectID:     strings.TrimSpace(projectID),
 		EnvironmentID: strings.TrimSpace(environmentID),
@@ -329,11 +397,15 @@ func environmentScopeForClient(controlPlane *client.Client, projectID string, en
 	if scope.ProjectID == "" || scope.EnvironmentID == "" {
 		return client.EnvironmentScopeOptions{}, errors.New("--project and --env are required with helmr login")
 	}
-	return scope, nil
+	project, environment, err := resolveProjectEnvironment(ctx, controlPlane, scope.ProjectID, scope.EnvironmentID)
+	if err != nil {
+		return client.EnvironmentScopeOptions{}, err
+	}
+	return client.EnvironmentScopeOptions{ProjectID: project.ID, EnvironmentID: environment.ID}, nil
 }
 
-func workspaceScopeForClient(controlPlane *client.Client, projectID string, environmentID string) (client.WorkspaceScopeOptions, error) {
-	environmentScope, err := environmentScopeForClient(controlPlane, projectID, environmentID)
+func workspaceScopeForClient(ctx context.Context, controlPlane *client.Client, projectID string, environmentID string) (client.WorkspaceScopeOptions, error) {
+	environmentScope, err := environmentScopeForClient(ctx, controlPlane, projectID, environmentID)
 	return client.WorkspaceScopeOptions(environmentScope), err
 }
 

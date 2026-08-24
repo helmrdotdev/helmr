@@ -86,6 +86,17 @@ func (c *Client) Plan(ctx context.Context, workerGroupID string, request Capacit
 	return response, err
 }
 
+func (c *Client) ReconcileWorkerGroupPrimaryPools(
+	ctx context.Context,
+	workerGroupID string,
+	request ReconcileWorkerGroupPrimaryPoolsRequest,
+) (ReconcileWorkerGroupPrimaryPoolsResponse, error) {
+	var response ReconcileWorkerGroupPrimaryPoolsResponse
+	path := "/api" + RoutePrefix + WorkerGroupsPath + "/" + url.PathEscape(workerGroupID) + "/primary-pools"
+	err := c.do(ctx, http.MethodPut, path, request, &response)
+	return response, err
+}
+
 func (c *Client) ResolveWorkerGroup(ctx context.Context, regionID, name string) (CapacityWorkerGroup, error) {
 	query := url.Values{"region_id": []string{regionID}, "name": []string{name}}
 	path := "/api" + RoutePrefix + WorkerGroupsPath + "/resolve?" + query.Encode()
@@ -94,7 +105,15 @@ func (c *Client) ResolveWorkerGroup(ctx context.Context, regionID, name string) 
 	return response, err
 }
 
-func (c *Client) WorkerInstances(ctx context.Context, workerGroupID string, resourceIDs []string, statuses []WorkerInstanceStatus, limit int32) (WorkerInstancesResponse, error) {
+func (c *Client) ResolveWorkerPool(ctx context.Context, workerGroupID, name string) (CapacityWorkerPool, error) {
+	query := url.Values{"name": []string{name}}
+	path := "/api" + RoutePrefix + WorkerGroupsPath + "/" + url.PathEscape(workerGroupID) + "/pools/resolve?" + query.Encode()
+	var response CapacityWorkerPool
+	err := c.do(ctx, http.MethodGet, path, nil, &response)
+	return response, err
+}
+
+func (c *Client) WorkerInstances(ctx context.Context, workerGroupID string, resourceIDs []string, statuses []WorkerInstanceStatus, hasUnreclaimedRuntime bool, limit int32) (WorkerInstancesResponse, error) {
 	query := url.Values{}
 	if workerGroupID = strings.TrimSpace(workerGroupID); workerGroupID != "" {
 		query.Set("worker_group_id", workerGroupID)
@@ -105,6 +124,9 @@ func (c *Client) WorkerInstances(ctx context.Context, workerGroupID string, reso
 	for _, resourceID := range resourceIDs {
 		query.Add("resource_id", resourceID)
 	}
+	if hasUnreclaimedRuntime {
+		query.Set("has_unreclaimed_runtime", "true")
+	}
 	if limit > 0 {
 		query.Set("limit", strconv.FormatInt(int64(limit), 10))
 	}
@@ -114,6 +136,13 @@ func (c *Client) WorkerInstances(ctx context.Context, workerGroupID string, reso
 	}
 	var response WorkerInstancesResponse
 	err := c.do(ctx, http.MethodGet, path, nil, &response)
+	return response, err
+}
+
+func (c *Client) ConfirmWorkerInstanceProviderAbsent(ctx context.Context, workerInstanceID string) (WorkerInstance, error) {
+	var response WorkerInstance
+	path := "/api" + RoutePrefix + WorkerInstancesPath + "/" + url.PathEscape(workerInstanceID) + "/lost"
+	err := c.do(ctx, http.MethodPost, path, nil, &response)
 	return response, err
 }
 

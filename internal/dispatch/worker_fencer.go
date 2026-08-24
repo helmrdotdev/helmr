@@ -16,6 +16,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+const staleWorkerFenceUnlockTimeout = 5 * time.Second
+
 const (
 	DefaultWorkerRegistrationReadinessGrace = 15 * time.Minute
 	DefaultStaleWorkerFenceBatch            = int32(100)
@@ -228,7 +230,7 @@ func (f *StaleWorkerFencer) ReconcileOnce(ctx context.Context) (StaleWorkerFence
 		cycle.LockAcquired = true
 		transactions = guard.Transactions(f.transactions)
 		defer func() {
-			unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), expirySweepUnlockTimeout)
+			unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), staleWorkerFenceUnlockTimeout)
 			defer cancel()
 			if err := guard.Unlock(unlockCtx); err != nil {
 				f.log.Warn("release stale worker fence lock failed", "error", err)

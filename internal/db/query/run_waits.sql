@@ -422,9 +422,6 @@ SELECT *
    AND child_run_id = sqlc.arg(child_run_id)
    AND base_workspace_version_id = sqlc.arg(base_workspace_version_id)
    AND base_workspace_content_digest = sqlc.arg(base_workspace_content_digest)
-   AND handoff_runtime_instance_id IS NOT NULL
-   AND handoff_workspace_mount_id IS NOT NULL
-   AND handoff_mount_generation IS NOT NULL
    AND ownership_generation IS NOT NULL
    AND parent_writer_generation IS NOT NULL;
 
@@ -548,18 +545,18 @@ SELECT run_waits.*
  LIMIT 1
  FOR UPDATE OF parent, run_waits;
 
--- name: ListSameWorkspaceHandoffAncestorRuns :many
+-- name: ListSameWorkspaceAncestorRuns :many
 WITH RECURSIVE ancestors AS (
-    SELECT handoff.run_id AS parent_run_id,
-           handoff.child_run_id,
+    SELECT edge.run_id AS parent_run_id,
+           edge.child_run_id,
            0 AS depth
-      FROM run_waits AS handoff
-     WHERE handoff.environment_id = sqlc.arg(environment_id)
-       AND handoff.child_run_id = sqlc.arg(child_run_id)
-       AND handoff.workspace_id = sqlc.arg(workspace_id)
-       AND handoff.child_parent_owned IS TRUE
-       AND handoff.condition_state = 'pending'
-       AND handoff.suspension_state = 'parked'
+      FROM run_waits AS edge
+     WHERE edge.environment_id = sqlc.arg(environment_id)
+       AND edge.child_run_id = sqlc.arg(child_run_id)
+       AND edge.workspace_id = sqlc.arg(workspace_id)
+       AND edge.child_parent_owned IS TRUE
+       AND edge.condition_state = 'pending'
+       AND edge.suspension_state = 'parked'
     UNION ALL
     SELECT outer_wait.run_id,
            outer_wait.child_run_id,
@@ -589,19 +586,19 @@ SELECT sqlc.embed(parent),
    AND parent.current_run_lease_id IS NULL
  ORDER BY ancestors.depth DESC;
 
--- name: LockSameWorkspaceHandoffAncestors :many
+-- name: LockSameWorkspaceAncestors :many
 WITH RECURSIVE ancestors AS (
-    SELECT handoff.id,
-           handoff.run_id AS parent_run_id,
-           handoff.child_run_id,
+    SELECT edge.id,
+           edge.run_id AS parent_run_id,
+           edge.child_run_id,
            0 AS depth
-      FROM run_waits AS handoff
-     WHERE handoff.environment_id = sqlc.arg(environment_id)
-       AND handoff.child_run_id = sqlc.arg(child_run_id)
-       AND handoff.workspace_id = sqlc.arg(workspace_id)
-       AND handoff.child_parent_owned IS TRUE
-       AND handoff.condition_state = 'pending'
-       AND handoff.suspension_state = 'parked'
+      FROM run_waits AS edge
+     WHERE edge.environment_id = sqlc.arg(environment_id)
+       AND edge.child_run_id = sqlc.arg(child_run_id)
+       AND edge.workspace_id = sqlc.arg(workspace_id)
+       AND edge.child_parent_owned IS TRUE
+       AND edge.condition_state = 'pending'
+       AND edge.suspension_state = 'parked'
     UNION ALL
     SELECT outer_wait.id,
            outer_wait.run_id,
@@ -621,17 +618,17 @@ WITH RECURSIVE ancestors AS (
        AND outer_wait.condition_state = 'pending'
        AND outer_wait.suspension_state = 'parked'
 )
-SELECT sqlc.embed(handoff),
+SELECT sqlc.embed(edge),
        sqlc.embed(parent),
        sqlc.embed(attempt),
        ancestors.depth
   FROM ancestors
-  JOIN run_waits AS handoff
-    ON handoff.id = ancestors.id
+  JOIN run_waits AS edge
+    ON edge.id = ancestors.id
   JOIN runs AS parent
-    ON parent.id = handoff.run_id
-   AND parent.environment_id = handoff.environment_id
-   AND parent.workspace_id = handoff.workspace_id
+    ON parent.id = edge.run_id
+   AND parent.environment_id = edge.environment_id
+   AND parent.workspace_id = edge.workspace_id
    AND parent.status = 'waiting'
    AND parent.current_run_lease_id IS NULL
   JOIN run_attempts AS attempt
@@ -640,7 +637,7 @@ SELECT sqlc.embed(handoff),
    AND attempt.workspace_id = parent.workspace_id
    AND attempt.terminal_at IS NULL
  ORDER BY ancestors.depth DESC
- FOR UPDATE OF parent, attempt, handoff;
+ FOR UPDATE OF parent, attempt, edge;
 
 -- name: CompleteHotChildRunWait :one
 WITH moved_run AS (
@@ -782,12 +779,7 @@ UPDATE run_waits
    AND workspace_id = sqlc.arg(workspace_id)
    AND current_run_lease_id = sqlc.arg(current_run_lease_id)
    AND suspension_state = 'resuming'
-   AND CASE
-           WHEN condition_state = 'completed'
-                AND handoff_resume_checkpoint_id IS NOT NULL
-               THEN handoff_resume_checkpoint_id
-           ELSE suspend_checkpoint_id
-       END = sqlc.arg(checkpoint_id)::uuid
+   AND suspend_checkpoint_id = sqlc.arg(checkpoint_id)::uuid
    AND resume_attach_id = sqlc.arg(resume_attach_id)
    AND resume_request_version = sqlc.arg(resume_request_version)
    AND resume_ack_version < resume_request_version

@@ -3,6 +3,7 @@ package idempotency
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -12,6 +13,59 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+func TestEncodeTaskChildInvokeFingerprintPreservesAbsentRetryPolicy(t *testing.T) {
+	encoded, err := EncodeTaskChildInvokeFingerprint(TaskChildInvokeFingerprint{
+		Method:         "call",
+		PayloadPresent: true,
+		Payload:        json.RawMessage(`{"value":1}`),
+		Workspace:      json.RawMessage(`{"id":"workspace"}`),
+		QueueName:      "default",
+		Metadata:       json.RawMessage(`{}`),
+		Tags:           []string{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(encoded, []byte(`"retryPolicy"`)) {
+		t.Fatalf("absent retry policy was serialized: %s", encoded)
+	}
+
+	var decoded TaskChildInvokeFingerprint
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.RetryPolicy) != 0 {
+		t.Fatalf("decoded retry policy = %s", decoded.RetryPolicy)
+	}
+}
+
+func TestEncodeTaskChildInvokeFingerprintPreservesCanonicalRetryPolicy(t *testing.T) {
+	for _, retryPolicy := range []string{
+		`{"enabled":false}`,
+		`{"backoff":{"factor":2,"jitter":"full","maxMs":30000,"minMs":1000},"enabled":true,"maxAttempts":3}`,
+	} {
+		t.Run(retryPolicy, func(t *testing.T) {
+			encoded, err := EncodeTaskChildInvokeFingerprint(TaskChildInvokeFingerprint{
+				Method:      "call",
+				Workspace:   json.RawMessage(`{}`),
+				RetryPolicy: json.RawMessage(retryPolicy),
+				Metadata:    json.RawMessage(`{}`),
+				Tags:        []string{},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var decoded TaskChildInvokeFingerprint
+			if err := json.Unmarshal(encoded, &decoded); err != nil {
+				t.Fatal(err)
+			}
+			if string(decoded.RetryPolicy) != retryPolicy {
+				t.Fatalf("decoded retry policy = %s", decoded.RetryPolicy)
+			}
+		})
+	}
+}
 
 func TestTransactionCreateReplayAndConflict(t *testing.T) {
 	store := &claimMemory{}
@@ -78,23 +132,13 @@ func TestTransactionCreateReplayAndConflict(t *testing.T) {
 	}
 }
 
-func TestDeploymentCreateFingerprintBindsBuildAuthority(t *testing.T) {
+func TestDeploymentFinalizeFingerprintBindsBundleDigest(t *testing.T) {
 	store := &claimMemory{}
 	transaction := &Transaction{store: store}
 	environmentID := uuid.New()
 	projectID := uuid.New()
-	fingerprint := DeploymentCreateFingerprint{
-		SourceDigest:     "sha256:source",
-		LockfileDigest:   "sha256:lockfile",
-		LockfileName:     "pnpm-lock.yaml",
-		NodeVersion:      "24.16.0",
-		ManagerName:      "pnpm",
-		ManagerVersion:   "11.1.0",
-		ManagerIntegrity: "sha256.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		BuildContract:    "helmr.program-build.v0",
-		ImageCacheMode:   "prefer",
-	}
-	first, err := NewDeploymentCreateRequest(environmentID, projectID, "deploy-1", fingerprint)
+	fingerprint := DeploymentFinalizeFingerprint{BundleDigest: "sha256:" + string(bytes.Repeat([]byte{'a'}, 64))}
+	first, err := NewDeploymentFinalizeRequest(environmentID, projectID, "deploy-1", fingerprint)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +153,7 @@ func TestDeploymentCreateFingerprintBindsBuildAuthority(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	replay, err := NewDeploymentCreateRequest(environmentID, projectID, "deploy-1", fingerprint)
+	replay, err := NewDeploymentFinalizeRequest(environmentID, projectID, "deploy-1", fingerprint)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,8 +164,8 @@ func TestDeploymentCreateFingerprintBindsBuildAuthority(t *testing.T) {
 	if replayed.New || replayed.Claim.ID != created.Claim.ID {
 		t.Fatalf("replayed claim = %+v", replayed)
 	}
-	fingerprint.ManagerIntegrity = "sha256.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	conflicting, err := NewDeploymentCreateRequest(environmentID, projectID, "deploy-1", fingerprint)
+	fingerprint.BundleDigest = "sha256:" + string(bytes.Repeat([]byte{'b'}, 64))
+	conflicting, err := NewDeploymentFinalizeRequest(environmentID, projectID, "deploy-1", fingerprint)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,94 +173,6 @@ func TestDeploymentCreateFingerprintBindsBuildAuthority(t *testing.T) {
 	var conflict ConflictError
 	if !errors.As(err, &conflict) {
 		t.Fatalf("conflict = %v", err)
-	}
-}
-
-func TestDeploymentCreateFingerprintBindsImageCacheMode(t *testing.T) {
-	store := &claimMemory{}
-	transaction := &Transaction{store: store}
-	environmentID := uuid.New()
-	projectID := uuid.New()
-	fingerprint := DeploymentCreateFingerprint{
-		SourceDigest: "sha256:source", LockfileDigest: "sha256:lockfile",
-		LockfileName: "pnpm-lock.yaml", NodeVersion: "24.16.0",
-		ManagerName: "pnpm", ManagerVersion: "11.1.0",
-		BuildContract: "helmr.program-build.v0", ImageCacheMode: "prefer",
-	}
-	request, err := NewDeploymentCreateRequest(environmentID, projectID, "deploy-1", fingerprint)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := transaction.Acquire(t.Context(), request); err != nil {
-		t.Fatal(err)
-	}
-	fingerprint.ImageCacheMode = "bypass"
-	conflicting, err := NewDeploymentCreateRequest(environmentID, projectID, "deploy-1", fingerprint)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := transaction.Acquire(t.Context(), conflicting); err == nil {
-		t.Fatal("cache mode change did not conflict")
-	}
-}
-
-func TestWorkspaceImageBuildRequestBindsLeaseGenerationSlotAndFingerprint(t *testing.T) {
-	store := &claimMemory{}
-	transaction := &Transaction{store: store}
-	environmentID := uuid.New()
-	buildLeaseID := uuid.New()
-	fingerprint := testWorkspaceImageBuildFingerprint()
-	request, err := NewWorkspaceImageBuildRequest(
-		environmentID, buildLeaseID, 1, "workspace/base", fingerprint,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	created, err := transaction.Acquire(t.Context(), request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	replay, err := NewWorkspaceImageBuildRequest(
-		environmentID, buildLeaseID, 1, "workspace/base", fingerprint,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	replayed, err := transaction.Acquire(t.Context(), replay)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if replayed.New || replayed.Claim.ID != created.Claim.ID {
-		t.Fatalf("replayed claim = %+v", replayed)
-	}
-	fingerprint.PlanDigest = "sha256:changed"
-	changed, err := NewWorkspaceImageBuildRequest(
-		environmentID, buildLeaseID, 1, "workspace/base", fingerprint,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := transaction.Acquire(t.Context(), changed); err == nil {
-		t.Fatal("changed image operation fingerprint did not conflict")
-	}
-	nextGeneration, err := NewWorkspaceImageBuildRequest(
-		environmentID, buildLeaseID, 2, "workspace/base", fingerprint,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if idempotencySlotHash(nextGeneration.idempotencyRequest()) ==
-		idempotencySlotHash(request.idempotencyRequest()) {
-		t.Fatal("Build Lease generation did not change the image operation slot")
-	}
-	publicSlot, err := WorkspaceImageBuildSlotHash(
-		environmentID, buildLeaseID, 1, "workspace/base",
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if publicSlot != idempotencySlotHash(request.idempotencyRequest()) {
-		t.Fatal("public Workspace image slot authority diverged from claim framing")
 	}
 }
 
@@ -260,33 +216,6 @@ func TestWorkspaceCreateSlotsBindSourceAuthority(t *testing.T) {
 	}
 	if firstRunSlot == idempotencySlotHash(secondRun.idempotencyRequest()) {
 		t.Fatal("different source Runs shared a Workspace creation slot")
-	}
-}
-
-func testWorkspaceImageBuildFingerprint() WorkspaceImageBuildFingerprint {
-	return WorkspaceImageBuildFingerprint{
-		Architecture:           "x86_64",
-		PlanDigest:             "sha256:plan",
-		SubmittedSourceDigest:  "sha256:source",
-		BuildTreeDigest:        "sha256:tree",
-		BuildTreeSizeBytes:     4096,
-		AdmittedPathSetDigest:  "sha256:paths",
-		SourceArchiveDigest:    "sha256:archive",
-		SourceArchiveSizeBytes: 1024,
-		SourceArchiveEntries:   1,
-		ImageCacheMode:         "prefer",
-		CacheScope:             "environment/workspace/base",
-		ImageBuildContract:     "helmr.image-build.v0",
-		Quotas: WorkspaceImageBuildQuotas{
-			CPUMillis: 3000, MemoryBytes: 4 << 30, ScratchBytes: 32 << 30,
-			PIDs: 1024, MaxSourceArchiveBytes: 11 << 30,
-			MaxSourceArchiveEntries: 100000, MaxOCIArchiveBytes: 16 << 30,
-		},
-		Output: WorkspaceImageBuildOutputContract{
-			Architecture: "x86_64",
-			MediaType:    "application/vnd.helmr.workspace-image.v0.oci-tar",
-			MaxSizeBytes: 16 << 30,
-		},
 	}
 }
 

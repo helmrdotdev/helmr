@@ -3,9 +3,14 @@ package clickhouse
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
+	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/url"
 	"strings"
+	"syscall"
 	"time"
 
 	ch "github.com/ClickHouse/clickhouse-go/v2"
@@ -50,6 +55,15 @@ func (c *Client) Exec(ctx context.Context, query string, args ...any) error {
 	return c.conn.Exec(ctx, query, args...)
 }
 
+func (c *Client) Ping(ctx context.Context) error {
+	if c.requestTimeout <= 0 {
+		return c.conn.Ping(ctx)
+	}
+	ctx, cancel := context.WithTimeout(ctx, c.requestTimeout)
+	defer cancel()
+	return c.conn.Ping(ctx)
+}
+
 func (c *Client) Select(ctx context.Context, dest any, query string, args ...any) error {
 	ctx, cancel := c.contextWithTimeout(ctx)
 	defer cancel()
@@ -68,6 +82,54 @@ func (c *Client) PrepareBatch(ctx context.Context, query string) (driver.Batch, 
 
 func (c *Client) Close() error {
 	return c.conn.Close()
+}
+
+func IsReadinessErrorRetryable(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var exception *ch.Exception
+	if errors.As(err, &exception) {
+		return false
+	}
+	var unknownAuthority x509.UnknownAuthorityError
+	if errors.As(err, &unknownAuthority) {
+		return false
+	}
+	var hostname x509.HostnameError
+	if errors.As(err, &hostname) {
+		return false
+	}
+	var invalidCertificate x509.CertificateInvalidError
+	if errors.As(err, &invalidCertificate) {
+		return false
+	}
+
+	if errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, ch.ErrAcquireConnTimeout) ||
+		errors.Is(err, ch.ErrConnectionClosed) ||
+		errors.Is(err, syscall.ECONNABORTED) ||
+		errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.EHOSTUNREACH) ||
+		errors.Is(err, syscall.ENETUNREACH) ||
+		errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, syscall.ETIMEDOUT) {
+		return true
+	}
+
+	var networkError net.Error
+	if !errors.As(err, &networkError) {
+		return false
+	}
+	if networkError.Timeout() {
+		return true
+	}
+	temporaryError, ok := any(networkError).(interface{ Temporary() bool })
+	return ok && temporaryError.Temporary()
 }
 
 func (c *Client) contextWithTimeout(ctx context.Context) (context.Context, context.CancelFunc) {

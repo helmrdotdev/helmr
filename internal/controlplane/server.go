@@ -26,7 +26,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/helmrdotdev/helmr/internal/imagecache"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -55,14 +54,6 @@ type SecretManager interface {
 	ResolveScopedNames(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, names []string) (secret.Resolved, error)
 }
 
-type PlatformArtifactLocker interface {
-	With(context.Context, []string, func() error) error
-}
-
-type RegistryCredentialOpener interface {
-	OpenRegistryCredential(uuid.UUID, db.Secret, db.SecretVersion) ([]byte, error)
-}
-
 type SubjectEventReader interface {
 	ReadSubject(context.Context, uuid.UUID, string, uuid.UUID, int64, func(api.RunEvent) error, func() error) error
 }
@@ -75,13 +66,10 @@ type Server struct {
 	readinessDB           db.DBTX
 	auth                  auth.Authenticator
 	cas                   cas.Store
-	buildPolicy           *deployment.BuildPolicy
+	bundleAdmission       *deployment.DeploymentBundleAdmission
 	platformStore         cas.Reader
-	platformArtifactLocks PlatformArtifactLocker
 	secrets               SecretManager
 	secretDelivery        SecretDeliveryOpener
-	registryCredentials   RegistryCredentialOpener
-	cacheRepositories     imagecache.RepositoryProvisioner
 	workspaceFencingKey   workspace.FencingKey
 	tokenCredentialKey    auth.CredentialKey
 	eventStream           SubjectEventReader
@@ -102,6 +90,9 @@ type Server struct {
 	magicLinkTTL          time.Duration
 	deviceCodeTTL         time.Duration
 	devicePollEvery       time.Duration
+
+	deploymentFinalizePingEvery time.Duration
+	deploymentVerifierSlots     chan struct{}
 }
 
 const (
@@ -121,21 +112,18 @@ type ServerConfig struct {
 	TX          TxBeginner
 	ReadinessDB db.DBTX
 
-	Auth                  auth.Authenticator
-	CAS                   cas.Store
-	BuildPolicy           *deployment.BuildPolicy
-	PlatformStore         cas.Reader
-	PlatformArtifactLocks PlatformArtifactLocker
-	Secrets               SecretManager
-	SecretDelivery        SecretDeliveryOpener
-	RegistryCredentials   RegistryCredentialOpener
-	CacheRepositories     imagecache.RepositoryProvisioner
-	WorkspaceFencingKey   workspace.FencingKey
-	TokenCredentialKey    auth.CredentialKey
-	EventStream           SubjectEventReader
-	TelemetryReader       telemetry.Reader
-	Mailer                email.Sender
-	AuthProvider          AuthProvider
+	Auth                auth.Authenticator
+	CAS                 cas.Store
+	BundleAdmission     *deployment.DeploymentBundleAdmission
+	PlatformStore       cas.Reader
+	Secrets             SecretManager
+	SecretDelivery      SecretDeliveryOpener
+	WorkspaceFencingKey workspace.FencingKey
+	TokenCredentialKey  auth.CredentialKey
+	EventStream         SubjectEventReader
+	TelemetryReader     telemetry.Reader
+	Mailer              email.Sender
+	AuthProvider        AuthProvider
 
 	WorkerTokenSigningKey []byte
 	WorkerTokenTTL        time.Duration
@@ -167,8 +155,13 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if cfg.Auth == nil {
 		return nil, errors.New("control plane authenticator is required")
 	}
-	if cfg.PlatformArtifactLocks == nil {
-		return nil, errors.New("platform artifact locks are required")
+	var bundleAdmission *deployment.DeploymentBundleAdmission
+	if cfg.BundleAdmission != nil {
+		admission := *cfg.BundleAdmission
+		if err := admission.Validate(); err != nil {
+			return nil, err
+		}
+		bundleAdmission = &admission
 	}
 	deploymentMode := strings.TrimSpace(cfg.DeploymentMode)
 	if deploymentMode == "" {
@@ -183,9 +176,6 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	}
 	if cfg.SecretDelivery == nil {
 		return nil, errors.New("secret delivery opener is required")
-	}
-	if cfg.RegistryCredentials == nil {
-		return nil, errors.New("registry credential opener is required")
 	}
 	if !cfg.WorkspaceFencingKey.Valid() {
 		return nil, errors.New("workspace fencing key is required")
@@ -235,13 +225,10 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		readinessDB:           cfg.ReadinessDB,
 		auth:                  cfg.Auth,
 		cas:                   cfg.CAS,
-		buildPolicy:           cfg.BuildPolicy,
+		bundleAdmission:       bundleAdmission,
 		platformStore:         cfg.PlatformStore,
-		platformArtifactLocks: cfg.PlatformArtifactLocks,
 		secrets:               cfg.Secrets,
 		secretDelivery:        cfg.SecretDelivery,
-		registryCredentials:   cfg.RegistryCredentials,
-		cacheRepositories:     cfg.CacheRepositories,
 		workspaceFencingKey:   cfg.WorkspaceFencingKey,
 		tokenCredentialKey:    cfg.TokenCredentialKey,
 		eventStream:           cfg.EventStream,
@@ -262,6 +249,9 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		magicLinkTTL:          cfg.MagicLinkTTL,
 		deviceCodeTTL:         cfg.DeviceCodeTTL,
 		devicePollEvery:       cfg.DevicePollEvery,
+
+		deploymentFinalizePingEvery: 10 * time.Second,
+		deploymentVerifierSlots:     make(chan struct{}, 1),
 	}
 	router := chi.NewRouter()
 	router.Use(server.recoverPanics)
@@ -320,6 +310,11 @@ func (s *Server) mountAdminRoutes(r chi.Router) {
 	r.Post("/worker-groups/{groupID}/drain", s.adminDrainWorkerGroup)
 	r.Post("/worker-groups/{groupID}/disable", s.adminDisableWorkerGroup)
 	r.Post("/worker-groups/{groupID}/token/rotate", s.adminRotateWorkerGroupToken)
+	r.Get("/worker-groups/{groupID}/pools", s.adminListWorkerPools)
+	r.Post("/worker-groups/{groupID}/pools", s.adminCreateWorkerPool)
+	r.Post("/worker-groups/{groupID}/pools/{poolID}/primary", s.adminSwitchWorkerPoolPrimary)
+	r.Post("/worker-groups/{groupID}/pools/{poolID}/drain", s.adminDrainWorkerPool)
+	r.Post("/worker-groups/{groupID}/pools/{poolID}/disable", s.adminDisableWorkerPool)
 }
 
 func (s *Server) recoverPanics(next http.Handler) http.Handler {
@@ -439,7 +434,8 @@ func (s *Server) mountSessionRoutes(r chi.Router) {
 		r.Get("/projects", s.listProjects)
 		r.Get("/projects/{projectID}", s.getProject)
 		r.Get("/projects/{projectID}/environments/{environmentID}", s.getEnvironment)
-		r.Post("/projects/{projectID}/environments/{environmentID}/deployments", s.createDeployment)
+		r.Post("/projects/{projectID}/environments/{environmentID}/deployment-bundles/upload-plan", s.planDeploymentBundleUpload)
+		r.Post("/projects/{projectID}/environments/{environmentID}/deployment-bundles/finalize", s.finalizeDeploymentBundle)
 		r.Get("/projects/{projectID}/environments/{environmentID}/deployments", s.listDeployments)
 		r.Get("/projects/{projectID}/environments/{environmentID}/deployments/current", s.getCurrentDeployment)
 		r.Get("/projects/{projectID}/environments/{environmentID}/deployments/{deploymentID}", s.getDeployment)
@@ -471,6 +467,7 @@ func (s *Server) mountSessionRoutes(r chi.Router) {
 		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/files/stat", s.statWorkspaceFileHTTP)
 		r.With(limitRequestBody(workspaceExecBodyMaxBytes)).
 			Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/exec", s.executeWorkspaceHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/exec/{processID}", s.getWorkspaceExecHTTP)
 		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}", s.getWorkspaceHTTP)
 		r.Delete("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}", s.deleteWorkspaceHTTP)
 		r.With(limitRequestBody(taskStartBodyLimit)).
@@ -537,7 +534,8 @@ func (s *Server) mountDeveloperRoutes(r chi.Router) {
 		r.Get("/deployments/current", s.getCurrentDeployment)
 		r.Get("/deployments/{deploymentID}", s.getDeployment)
 		r.Get("/deployments/{deploymentID}/events", s.getDeploymentEvents)
-		r.Post("/deployments", s.createDeployment)
+		r.Post("/deployment-bundles/upload-plan", s.planDeploymentBundleUpload)
+		r.Post("/deployment-bundles/finalize", s.finalizeDeploymentBundle)
 		r.Post("/deployments/{deploymentID}/promote", s.promoteDeployment)
 		r.Get("/schedules", s.listSchedules)
 		r.Get("/schedules/{scheduleID}", s.getSchedule)
@@ -570,6 +568,7 @@ func (s *Server) mountDeveloperRoutes(r chi.Router) {
 		r.Get("/workspaces/{workspaceID}/files/content", s.readWorkspaceFileHTTP)
 		r.Get("/workspaces/{workspaceID}/files/stat", s.statWorkspaceFileHTTP)
 		r.With(limitRequestBody(workspaceExecBodyMaxBytes)).Post("/workspaces/{workspaceID}/exec", s.executeWorkspaceHTTP)
+		r.Get("/workspaces/{workspaceID}/exec/{processID}", s.getWorkspaceExecHTTP)
 		r.Get("/workspaces/{workspaceID}", s.getWorkspaceHTTP)
 		r.Delete("/workspaces/{workspaceID}", s.deleteWorkspaceHTTP)
 		r.With(limitSessionInputBody).Post("/sessions/{sessionID}/inputs", s.sendSessionInput)
@@ -615,22 +614,6 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 			r.Post("/instance/observations", s.workerObserve)
 			r.Post("/instance/drain", s.workerDrain)
 			r.Group(func(r chi.Router) {
-				r.Use(func(next http.Handler) http.Handler { return requireWorkerRole(auth.WorkerRoleBuild, next) })
-				r.With(func(next http.Handler) http.Handler { return requireActiveWorkerRole(auth.WorkerRoleBuild, next) }).Post("/build/platform-acquisitions/next", s.workerNextPlatformAcquisition)
-				r.Post("/build/platform-acquisitions/complete", s.workerCompletePlatformAcquisition)
-				r.Post("/build/platform-acquisitions/fail", s.workerFailPlatformAcquisition)
-				r.With(func(next http.Handler) http.Handler { return requireActiveWorkerRole(auth.WorkerRoleBuild, next) }).Post("/build/deployments/lease", s.workerLeaseDeploymentBuild)
-				r.Post("/build/deployments/start", s.workerStartDeploymentBuild)
-				r.Post("/build/deployments/renew", s.workerRenewDeploymentBuild)
-				r.Post("/build/deployments/reject", s.workerRejectDeploymentBuild)
-				r.Post("/build/deployments/delivery-failed", s.workerDeploymentBuildDeliveryFailed)
-				r.Post("/build/deployments/workspace-images/admit", s.workerAdmitWorkspaceImage)
-				r.Post("/build/deployments/workspace-images/credentials", s.workerFetchWorkspaceImageCredentials)
-				r.Post("/build/deployments/workspace-images/complete", s.workerCompleteWorkspaceImage)
-				r.Post("/build/deployments/complete", s.workerCompleteDeploymentBuild)
-			})
-			r.Group(func(r chi.Router) {
-				r.Use(func(next http.Handler) http.Handler { return requireWorkerRole(auth.WorkerRoleRun, next) })
 				r.Post("/run/runtime-instances/reconcile", s.workerNextRuntimeReconcileTarget)
 				r.Post("/run/runtime-instances/ready", s.workerMarkRuntimeInstanceReady)
 				r.Post("/run/runtime-instances/closed", s.workerMarkRuntimeInstanceClosed)

@@ -8,10 +8,10 @@ case "${1:-} ${2:-}" in
   "workspace create")
     case "${3:-}" in
       helmr-child-task-target-smoke)
-        printf '{"workspace_id":"workspace-target"}\n'
+        printf '{"id":"workspace-target"}\n'
         ;;
       helmr-child-task-caller-smoke)
-        printf '{"workspace_id":"workspace-caller"}\n'
+        printf '{"id":"workspace-caller"}\n'
         ;;
       *)
         printf 'unexpected Workspace declaration: %s\n' "${3:-}" >&2
@@ -20,20 +20,25 @@ case "${1:-} ${2:-}" in
     esac
     ;;
   "workspace delete")
+    if [ "${FAKE_HELMR_FAIL_MODE:-}" = "delete-already-gone" ] &&
+      [ "${4:-}" = "workspace-caller" ]; then
+      printf '404 Not Found: workspace was not found\n' >&2
+      exit 1
+    fi
     if [ "${FAKE_HELMR_FAIL_MODE:-}" = "delete-target" ] &&
       [ "${4:-}" = "workspace-target" ]; then
       printf 'intentional target Workspace delete failure\n' >&2
       exit 1
     fi
-    printf '{"workspace_id":"%s"}\n' "${4:-unknown}"
+    printf '{"id":"%s"}\n' "${4:-unknown}"
     ;;
   "task start")
     case "$*" in
       *'"mode":"call-success"'*)
         printf '{"run_id":"run-call-success"}\n'
         ;;
-      *'"mode":"same-workspace-call"'*)
-        printf '{"run_id":"run-same-workspace-call"}\n'
+      *'"mode":"same-sandbox-call"'*)
+        printf '{"run_id":"run-same-sandbox-call"}\n'
         ;;
       *'"mode":"call-failure"'*)
         printf '{"run_id":"run-call-failure"}\n'

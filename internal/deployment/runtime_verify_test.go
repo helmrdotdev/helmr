@@ -2,6 +2,7 @@ package deployment
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 )
 
@@ -20,7 +21,6 @@ func TestRuntimeTopologyAcceptsClosedLayout(t *testing.T) {
 	index, err := verifyRuntimeTopology(
 		context.Background(),
 		inspected,
-		runtimeArtifactObject(descriptor),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -74,8 +74,9 @@ func TestRuntimeTopologyRejectsOpenOrDivergentLayout(t *testing.T) {
 		"extra share": func(artifact *memoryArtifact) {
 			artifact.addFile("share/other", []byte("other"), 0644)
 		},
-		"missing entry":   removePath(runtimeEntryPath),
-		"missing license": removePath(runtimeLicensePath),
+		"missing entry":    removePath(runtimeEntryPath),
+		"missing metadata": removePath(runtimeMetadataPath),
+		"missing license":  removePath(runtimeLicensePath),
 		"node mode": func(artifact *memoryArtifact) {
 			artifact.mutate(runtimeNodePath, func(entry *artifactEntry) {
 				entry.Mode = 0644
@@ -84,6 +85,27 @@ func TestRuntimeTopologyRejectsOpenOrDivergentLayout(t *testing.T) {
 		"entry mode": func(artifact *memoryArtifact) {
 			artifact.mutate(runtimeEntryPath, func(entry *artifactEntry) {
 				entry.Mode = 0755
+			})
+		},
+		"metadata mode": func(artifact *memoryArtifact) {
+			artifact.mutate(runtimeMetadataPath, func(entry *artifactEntry) {
+				entry.Mode = 0755
+			})
+		},
+		"metadata Node flags": func(artifact *memoryArtifact) {
+			invalid := RuntimeMetadata{
+				Architecture: ArchitectureX8664, FormatVersion: RuntimeMetadataFormatVersion,
+				NodeVersion:      "24.16.0",
+				ProgramNodeFlags: []string{NodeNoExperimentalStripTypes, "--enable-source-maps"},
+				RuntimeContract:  RuntimeContract,
+			}
+			raw, err := json.Marshal(invalid)
+			if err != nil {
+				t.Fatal(err)
+			}
+			artifact.files[runtimeMetadataPath] = raw
+			artifact.mutate(runtimeMetadataPath, func(entry *artifactEntry) {
+				entry.SizeBytes = int64(len(raw))
 			})
 		},
 		"libc mode": func(artifact *memoryArtifact) {
@@ -112,7 +134,6 @@ func TestRuntimeTopologyRejectsOpenOrDivergentLayout(t *testing.T) {
 				_, err = verifyRuntimeTopology(
 					context.Background(),
 					inspected,
-					runtimeArtifactObject(descriptor),
 				)
 			}
 			if err == nil {
@@ -178,87 +199,29 @@ func TestVerifiedRuntimeResultMatchesDescriptor(t *testing.T) {
 
 func newRuntimeTopology(t *testing.T) (RuntimeDescriptor, *memoryArtifact) {
 	t.Helper()
-	sourceRaw := []byte("upstream")
-	source := PlatformSource{
-		Digest:    digestDocument(sourceRaw),
-		Origin:    "https://nodejs.org/dist/v24.16.0/node-v24.16.0-linux-x64.tar.xz",
-		SizeBytes: int64(len(sourceRaw)),
+	metadata := RuntimeMetadata{
+		Architecture:     ArchitectureX8664,
+		FormatVersion:    RuntimeMetadataFormatVersion,
+		NodeVersion:      "24.16.0",
+		ProgramNodeFlags: []string{NodeNoStripTypes, "--enable-source-maps"},
+		RuntimeContract:  RuntimeContract,
 	}
-	evidence := []PlatformEvidenceFile{{
-		Digest:    digestDocument(sourceRaw),
-		Path:      "helmr/upstream/source",
-		SizeBytes: int64(len(sourceRaw)),
-	}}
-	integrity := PlatformIntegrity{
-		Evidence:      evidence,
-		FormatVersion: PlatformArtifactDocumentFormatVersion,
-		Identity:      "00112233445566778899AABBCCDDEEFF00112233",
-		IntegrityKind: "openpgp-sha256",
-		Redirects:     []string{},
-		Source:        source,
-	}
-	integrityRaw, err := CanonicalPlatformDocument(integrity)
-	if err != nil {
-		t.Fatal(err)
-	}
-	results := make([]PlatformConformanceResult, len(runtimeConformanceNames()))
-	for index, name := range runtimeConformanceNames() {
-		results[index] = PlatformConformanceResult{Name: name, Outcome: "passed"}
-	}
-	conformance := PlatformConformance{
-		ConformanceSet: PlatformConformanceSet,
-		FormatVersion:  PlatformArtifactDocumentFormatVersion,
-		Inputs:         evidence,
-		Results:        results,
-	}
-	conformanceRaw, err := CanonicalPlatformDocument(conformance)
-	if err != nil {
-		t.Fatal(err)
-	}
-	runtimeDescriptor := RuntimeArtifactDescriptor{
-		AdapterVersion:          NodeRuntimeAdapterVersion,
-		Architecture:            ArchitectureX8664,
-		ConformanceDigest:       digestDocument(conformanceRaw),
-		DescriptorSchemaVersion: PlatformDescriptorSchemaV0,
-		Entrypoint:              "/opt/helmr/runtime/helmr/entry.mjs",
-		IntegrityDigest:         digestDocument(integrityRaw),
-		Kind:                    "runtime",
-		MediaType:               RuntimeArtifactMediaType,
-		NodeModuleABI:           "137",
-		NodeVersion:             "24.16.0",
-		ProgramNodeFlags:        []string{NodeNoStripTypes, "--enable-source-maps"},
-		RuntimeContract:         RuntimeContract,
-		RuntimeHarnessDigest:    testDigest("harness"),
-		Source:                  source,
-	}
-	runtimeDescriptorRaw, err := CanonicalPlatformDocument(runtimeDescriptor)
+	metadataRaw, err := CanonicalRuntimeMetadata(metadata)
 	if err != nil {
 		t.Fatal(err)
 	}
 	artifact := newMemoryArtifact()
 	artifact.addDirectory("bin")
 	artifact.addDirectory("helmr")
-	artifact.addDirectory("helmr/upstream")
 	artifact.addDirectory("lib")
 	artifact.addDirectory("share")
 	artifact.addDirectory("share/licenses")
 	artifact.addDirectory("share/licenses/node")
 	artifact.addFile(runtimeNodePath, []byte("node"), 0755)
 	artifact.addFile(runtimeEntryPath, []byte("entry"), 0644)
-	artifact.addFile(PlatformDescriptorPath, runtimeDescriptorRaw, 0644)
-	artifact.addFile(PlatformIntegrityPath, integrityRaw, 0644)
-	artifact.addFile(PlatformConformancePath, conformanceRaw, 0644)
-	artifact.addFile("helmr/upstream/source", sourceRaw, 0644)
+	artifact.addFile(runtimeMetadataPath, metadataRaw, 0644)
 	artifact.addFile(runtimeLibcPath, []byte("libc"), 0644)
 	artifact.addFile(runtimeLicensePath, []byte("license"), 0644)
 	artifact.addFile("lib/locale-archive", []byte("locale"), 0644)
 	return testRuntimeDescriptor(), artifact
-}
-
-func runtimeArtifactObject(descriptor RuntimeDescriptor) ArtifactDescriptor {
-	return ArtifactDescriptor{
-		Digest:    descriptor.Digest,
-		MediaType: descriptor.MediaType,
-		SizeBytes: descriptor.SizeBytes,
-	}
 }

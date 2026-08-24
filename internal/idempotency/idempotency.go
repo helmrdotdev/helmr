@@ -5,9 +5,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -24,24 +26,23 @@ const (
 type operation string
 
 const (
-	operationDeploymentCreate    operation = "deployment.create"
-	operationSecretCreate        operation = "secret.create"
-	operationSecretRotate        operation = "secret.rotate"
-	operationSecretRevoke        operation = "secret.revoke"
-	operationRunMetadata         operation = "run.metadata"
-	operationActorStart          operation = "actor.start"
-	operationActorInputSend      operation = "session.input.send"
-	operationActorOutputAppend   operation = "session.output.append"
-	operationActorClose          operation = "session.close"
-	operationTaskStart           operation = "task.start"
-	operationTaskChildInvoke     operation = "task.child.invoke"
-	operationTokenCreate         operation = "token.create"
-	operationTokenComplete       operation = "token.complete"
-	operationTokenCancel         operation = "token.cancel"
-	operationWorkspaceCreate     operation = "workspace.create"
-	operationWorkspaceExec       operation = "workspace.exec"
-	operationWorkspaceDelete     operation = "workspace.delete"
-	operationWorkspaceImageBuild operation = "workspace.image.build"
+	operationDeploymentFinalize operation = "deployment.finalize"
+	operationSecretCreate       operation = "secret.create"
+	operationSecretRotate       operation = "secret.rotate"
+	operationSecretRevoke       operation = "secret.revoke"
+	operationRunMetadata        operation = "run.metadata"
+	operationActorStart         operation = "actor.start"
+	operationActorInputSend     operation = "session.input.send"
+	operationActorOutputAppend  operation = "session.output.append"
+	operationActorClose         operation = "session.close"
+	operationTaskStart          operation = "task.start"
+	operationTaskChildInvoke    operation = "task.child.invoke"
+	operationTokenCreate        operation = "token.create"
+	operationTokenComplete      operation = "token.complete"
+	operationTokenCancel        operation = "token.cancel"
+	operationWorkspaceCreate    operation = "workspace.create"
+	operationWorkspaceExec      operation = "workspace.exec"
+	operationWorkspaceDelete    operation = "workspace.delete"
 )
 
 type Transaction struct {
@@ -88,16 +89,8 @@ type ActorStartFingerprint struct {
 	ManagedRunTags        []string
 }
 
-type DeploymentCreateFingerprint struct {
-	SourceDigest     string `json:"sourceDigest"`
-	LockfileDigest   string `json:"lockfileDigest"`
-	LockfileName     string `json:"lockfileName"`
-	NodeVersion      string `json:"nodeVersion"`
-	ManagerName      string `json:"managerName"`
-	ManagerVersion   string `json:"managerVersion"`
-	ManagerIntegrity string `json:"managerIntegrity,omitempty"`
-	BuildContract    string `json:"buildContract"`
-	ImageCacheMode   string `json:"imageCacheMode"`
+type DeploymentFinalizeFingerprint struct {
+	BundleDigest string `json:"bundleDigest"`
 }
 
 type TokenCreateFingerprint struct {
@@ -120,17 +113,32 @@ type TaskStartFingerprint struct {
 }
 
 type TaskChildInvokeFingerprint struct {
-	Method         string
-	PayloadPresent bool
-	Payload        json.RawMessage
-	Workspace      json.RawMessage
-	QueueName      string
-	ConcurrencyKey *string
-	Priority       int32
-	QueuedTTLMS    *int64
-	RetryPolicy    json.RawMessage
-	Metadata       json.RawMessage
-	Tags           []string
+	Method         string          `json:"method"`
+	PayloadPresent bool            `json:"payloadPresent"`
+	Payload        json.RawMessage `json:"payload,omitempty"`
+	Workspace      json.RawMessage `json:"workspace"`
+	QueueName      string          `json:"queueName"`
+	ConcurrencyKey *string         `json:"concurrencyKey,omitempty"`
+	Priority       int32           `json:"priority"`
+	QueuedTTLMS    *int64          `json:"queuedTtlMs,omitempty"`
+	RetryPolicy    json.RawMessage `json:"retryPolicy,omitempty"`
+	Metadata       json.RawMessage `json:"metadata"`
+	Tags           []string        `json:"tags"`
+}
+
+// EncodeTaskChildInvokeFingerprint encodes normalized child invocation
+// authority for durable replay. Optional fields remain absent rather than
+// being widened to JSON null.
+func EncodeTaskChildInvokeFingerprint(input TaskChildInvokeFingerprint) (json.RawMessage, error) {
+	encoded, err := json.Marshal(input)
+	if err != nil {
+		return nil, fmt.Errorf("encode child task invocation fingerprint: %w", err)
+	}
+	canonical, err := jsoncanon.Transform(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize child task invocation fingerprint: %w", err)
+	}
+	return canonical, nil
 }
 
 type WorkspaceCreateFingerprint struct {
@@ -146,52 +154,31 @@ type WorkspaceExecFingerprint struct {
 	TimeoutMS int64
 }
 
-type WorkspaceImageBuildFingerprint struct {
-	Architecture           string                            `json:"architecture"`
-	PlanDigest             string                            `json:"planDigest"`
-	SubmittedSourceDigest  string                            `json:"submittedSourceDigest"`
-	BuildTreeDigest        string                            `json:"buildTreeDigest"`
-	BuildTreeSizeBytes     int64                             `json:"buildTreeSizeBytes"`
-	AdmittedPathSetDigest  string                            `json:"admittedPathSetDigest"`
-	SourceArchiveDigest    string                            `json:"sourceArchiveDigest"`
-	SourceArchiveSizeBytes int64                             `json:"sourceArchiveSizeBytes"`
-	SourceArchiveEntries   int                               `json:"sourceArchiveEntries"`
-	ImageCacheMode         string                            `json:"imageCacheMode"`
-	CacheScope             string                            `json:"cacheScope"`
-	ImageBuildContract     string                            `json:"imageBuildContract"`
-	Quotas                 WorkspaceImageBuildQuotas         `json:"quotas"`
-	Output                 WorkspaceImageBuildOutputContract `json:"output"`
-}
-
-type WorkspaceImageBuildQuotas struct {
-	CPUMillis               int64 `json:"cpuMillis"`
-	MemoryBytes             int64 `json:"memoryBytes"`
-	ScratchBytes            int64 `json:"scratchBytes"`
-	PIDs                    int64 `json:"pids"`
-	MaxSourceArchiveBytes   int64 `json:"maxSourceArchiveBytes"`
-	MaxSourceArchiveEntries int   `json:"maxSourceArchiveEntries"`
-	MaxOCIArchiveBytes      int64 `json:"maxOciArchiveBytes"`
-}
-
-type WorkspaceImageBuildOutputContract struct {
-	Architecture string `json:"architecture"`
-	MediaType    string `json:"mediaType"`
-	MaxSizeBytes int64  `json:"maxSizeBytes"`
-}
-
 type ConflictError struct {
 	ClaimID uuid.UUID
+}
+
+func deploymentDigestBytes(value string) ([]byte, error) {
+	hexValue, ok := strings.CutPrefix(value, "sha256:")
+	if !ok || len(hexValue) != sha256.Size*2 || strings.ToLower(hexValue) != hexValue {
+		return nil, errors.New("deployment bundle digest must be a lowercase SHA-256 digest")
+	}
+	decoded, err := hex.DecodeString(hexValue)
+	if err != nil {
+		return nil, errors.New("deployment bundle digest must be a lowercase SHA-256 digest")
+	}
+	return decoded, nil
 }
 
 func (e ConflictError) Error() string {
 	return fmt.Sprintf("idempotency key conflicts with claim %s", e.ClaimID)
 }
 
-func NewDeploymentCreateRequest(
+func NewDeploymentFinalizeRequest(
 	environmentID uuid.UUID,
 	projectID uuid.UUID,
 	key string,
-	fingerprint DeploymentCreateFingerprint,
+	fingerprint DeploymentFinalizeFingerprint,
 ) (Request, error) {
 	if environmentID == uuid.Nil {
 		return nil, errors.New("idempotency environment is required")
@@ -199,151 +186,26 @@ func NewDeploymentCreateRequest(
 	if projectID == uuid.Nil {
 		return nil, errors.New("project ID is required")
 	}
-	if fingerprint.ImageCacheMode != "prefer" && fingerprint.ImageCacheMode != "bypass" {
-		return nil, errors.New("deployment image cache mode is invalid")
+	if _, err := deploymentDigestBytes(fingerprint.BundleDigest); err != nil {
+		return nil, err
 	}
 	encoded, err := json.Marshal(fingerprint)
 	if err != nil {
-		return nil, fmt.Errorf("encode deployment creation fingerprint: %w", err)
+		return nil, fmt.Errorf("encode deployment finalization fingerprint: %w", err)
 	}
 	canonical, err := jsoncanon.Transform(encoded)
 	if err != nil {
-		return nil, fmt.Errorf("canonicalize deployment creation fingerprint: %w", err)
+		return nil, fmt.Errorf("canonicalize deployment finalization fingerprint: %w", err)
 	}
 	return sealedRequest{value: request{
 		environmentID: environmentID,
-		operation:     operationDeploymentCreate,
+		operation:     operationDeploymentFinalize,
 		scope:         bytes.Clone(projectID[:]),
 		key:           key,
 		fingerprint: func() ([sha256.Size]byte, error) {
-			return operationFingerprint(operationDeploymentCreate, canonical), nil
+			return operationFingerprint(operationDeploymentFinalize, canonical), nil
 		},
 	}}, nil
-}
-
-func NewWorkspaceImageBuildRequest(
-	environmentID uuid.UUID,
-	buildLeaseID uuid.UUID,
-	buildLeaseGeneration int64,
-	declarationSlot string,
-	fingerprint WorkspaceImageBuildFingerprint,
-) (Request, error) {
-	authority, err := workspaceImageBuildAuthority(
-		environmentID,
-		buildLeaseID,
-		buildLeaseGeneration,
-		declarationSlot,
-	)
-	if err != nil {
-		return nil, err
-	}
-	if err := validateWorkspaceImageBuildFingerprint(fingerprint); err != nil {
-		return nil, err
-	}
-	encoded, err := json.Marshal(fingerprint)
-	if err != nil {
-		return nil, fmt.Errorf("encode workspace image build fingerprint: %w", err)
-	}
-	canonical, err := jsoncanon.Transform(encoded)
-	if err != nil {
-		return nil, fmt.Errorf("canonicalize workspace image build fingerprint: %w", err)
-	}
-	authority.fingerprint = func() ([sha256.Size]byte, error) {
-		return operationFingerprint(operationWorkspaceImageBuild, canonical), nil
-	}
-	return sealedRequest{value: authority}, nil
-}
-
-// WorkspaceImageBuildSlotHash returns the exact authority hash used by the
-// generic claim. Completion paths use it to prove that a terminal receipt
-// belongs to the current Build Lease generation and declaration slot without
-// decoding or duplicating the claim's opaque framing.
-func WorkspaceImageBuildSlotHash(
-	environmentID uuid.UUID,
-	buildLeaseID uuid.UUID,
-	buildLeaseGeneration int64,
-	declarationSlot string,
-) ([sha256.Size]byte, error) {
-	authority, err := workspaceImageBuildAuthority(
-		environmentID,
-		buildLeaseID,
-		buildLeaseGeneration,
-		declarationSlot,
-	)
-	if err != nil {
-		return [sha256.Size]byte{}, err
-	}
-	return idempotencySlotHash(authority), nil
-}
-
-func workspaceImageBuildAuthority(
-	environmentID uuid.UUID,
-	buildLeaseID uuid.UUID,
-	buildLeaseGeneration int64,
-	declarationSlot string,
-) (request, error) {
-	if environmentID == uuid.Nil {
-		return request{}, errors.New("idempotency environment is required")
-	}
-	if buildLeaseID == uuid.Nil {
-		return request{}, errors.New("build lease ID is required")
-	}
-	if buildLeaseGeneration <= 0 {
-		return request{}, errors.New("build lease generation must be positive")
-	}
-	if declarationSlot == "" {
-		return request{}, errors.New("workspace declaration slot is required")
-	}
-	scope := make([]byte, 0, len(buildLeaseID)+8)
-	scope = append(scope, buildLeaseID[:]...)
-	scope = binary.BigEndian.AppendUint64(scope, uint64(buildLeaseGeneration))
-	return request{
-		environmentID: environmentID,
-		operation:     operationWorkspaceImageBuild,
-		scope:         scope,
-		key:           declarationSlot,
-	}, nil
-}
-
-func validateWorkspaceImageBuildFingerprint(
-	fingerprint WorkspaceImageBuildFingerprint,
-) error {
-	for label, value := range map[string]string{
-		"architecture":             fingerprint.Architecture,
-		"plan digest":              fingerprint.PlanDigest,
-		"submitted source digest":  fingerprint.SubmittedSourceDigest,
-		"build tree digest":        fingerprint.BuildTreeDigest,
-		"admitted path-set digest": fingerprint.AdmittedPathSetDigest,
-		"source archive digest":    fingerprint.SourceArchiveDigest,
-		"cache scope":              fingerprint.CacheScope,
-		"image build contract":     fingerprint.ImageBuildContract,
-		"output architecture":      fingerprint.Output.Architecture,
-		"output media type":        fingerprint.Output.MediaType,
-	} {
-		if value == "" {
-			return fmt.Errorf("workspace image build %s is required", label)
-		}
-	}
-	if fingerprint.Architecture != fingerprint.Output.Architecture {
-		return errors.New("workspace image build output architecture does not match the request")
-	}
-	if fingerprint.ImageCacheMode != "prefer" && fingerprint.ImageCacheMode != "bypass" {
-		return errors.New("workspace image build cache mode is invalid")
-	}
-	if fingerprint.BuildTreeSizeBytes < 1 ||
-		fingerprint.SourceArchiveSizeBytes < 1 ||
-		fingerprint.SourceArchiveEntries < 0 ||
-		fingerprint.Quotas.CPUMillis < 1 ||
-		fingerprint.Quotas.MemoryBytes < 1 ||
-		fingerprint.Quotas.ScratchBytes < 1 ||
-		fingerprint.Quotas.PIDs < 1 ||
-		fingerprint.Quotas.MaxSourceArchiveBytes < 1 ||
-		fingerprint.Quotas.MaxSourceArchiveEntries < 1 ||
-		fingerprint.Quotas.MaxOCIArchiveBytes < 1 ||
-		fingerprint.Output.MaxSizeBytes < 1 {
-		return errors.New("workspace image build fingerprint contains an invalid bound")
-	}
-	return nil
 }
 
 func NewSecretCreateRequest(environmentID uuid.UUID, name string, key string) (Request, error) {
@@ -1093,10 +955,10 @@ func (t *Transaction) Acquire(ctx context.Context, input Request) (Result, error
 
 func supportedOperation(value operation) bool {
 	switch value {
-	case operationDeploymentCreate, operationSecretCreate, operationSecretRotate, operationSecretRevoke, operationRunMetadata,
+	case operationDeploymentFinalize, operationSecretCreate, operationSecretRotate, operationSecretRevoke, operationRunMetadata,
 		operationActorStart, operationActorInputSend, operationActorOutputAppend, operationActorClose,
 		operationTaskStart, operationTaskChildInvoke, operationTokenCreate, operationTokenComplete, operationTokenCancel,
-		operationWorkspaceCreate, operationWorkspaceExec, operationWorkspaceDelete, operationWorkspaceImageBuild:
+		operationWorkspaceCreate, operationWorkspaceExec, operationWorkspaceDelete:
 		return true
 	default:
 		return false

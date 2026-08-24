@@ -40,7 +40,6 @@ describe("v0 compiler contract", () => {
       ].join("\n"),
     )
     const compiled = await compileConfig({
-      manager: "npm",
       nodeVersion: "24.16.0",
       outputRoot: await output(),
       root,
@@ -92,6 +91,29 @@ describe("v0 compiler contract", () => {
       ).toBe(true)
       expect(sourceMap.sourcesContent).toBeUndefined()
     }
+  })
+
+  test("preserves canonical declaration order in compiler selections", async () => {
+    const root = await project()
+    await source(
+      root,
+      "tasks/mixed.ts",
+      [
+        'import { actor, task } from "@helmr/sdk"',
+        'export const zTask = task({ id: "z-task", run: () => null })',
+        'export const aActor = actor({ id: "a-actor", run: () => null })',
+      ].join("\n"),
+    )
+
+    const compiled = await compile(root)
+    const result = JSON.parse(
+      new TextDecoder().decode(compiled.files.get("helmr/compiler-result.json")),
+    )
+    expect(result).not.toHaveProperty("aggregateResultDigest")
+    expect(result.selections.map(
+      (selection: { declaredId: string; kind: string }) =>
+        `${selection.kind}:${selection.declaredId}`,
+    )).toEqual(["task:z-task", "actor:a-actor"])
   })
 
   test("compiles a Schedule that references the exact exported Sandbox", async () => {
@@ -238,6 +260,11 @@ describe("v0 compiler contract", () => {
     const required = new TextDecoder().decode(
       compiled.files.get(bySource.get("tasks/require.cjs")),
     )
+    expect(
+      manifest.externalEdges.every(
+        (edge: { runtimePath: string }) => edge.runtimePath.startsWith(`${root}/`),
+      ),
+    ).toBe(true)
     expect(imported).toContain(
       resolve(root, "node_modules/conditional-package/import.mjs"),
     )
@@ -306,7 +333,7 @@ describe("v0 compiler contract", () => {
     )
   })
 
-  test("bundles copied file dependencies from the Manager-resolved local map", async () => {
+  test("bundles copied file dependencies from the installed-tree local map", async () => {
     const root = await project()
     await source(
       root,
@@ -556,7 +583,6 @@ describe("v0 compiler contract", () => {
     const first = await compileProgram({
       architecture: "x86_64",
       config: { dirs: ["tasks"], ignorePatterns: [] },
-      manager: "npm",
       nodeVersion: "22.22.0",
       outputRoot: await output(),
       root: firstRoot,
@@ -568,7 +594,6 @@ describe("v0 compiler contract", () => {
     const second = await compileProgram({
       architecture: "x86_64",
       config: { dirs: ["tasks"], ignorePatterns: [] },
-      manager: "npm",
       nodeVersion: "24.16.0",
       outputRoot: await output(),
       root: secondRoot,
@@ -581,7 +606,6 @@ describe("v0 compiler contract", () => {
     await expect(compileProgram({
       architecture: "x86_64",
       config: { dirs: ["tasks"], ignorePatterns: [] },
-      manager: "npm",
       nodeVersion: "24",
       outputRoot: await output(),
       root: invalidRoot,
@@ -593,7 +617,6 @@ async function compile(root: string) {
   return compileProgram({
     architecture: "x86_64",
     config: { dirs: ["tasks"], ignorePatterns: [] },
-    manager: "npm",
     nodeVersion: "24.16.0",
     outputRoot: await output(),
     root,
@@ -644,6 +667,15 @@ async function project(): Promise<string> {
       '      kind: "task",',
       "      id: config.id,",
       "      hasPayload: false,",
+      "      handler: config.run,",
+      "    }),",
+      "  })",
+      "}",
+      "export function actor(config) {",
+      "  return Object.freeze({",
+      "    [brand]: Object.freeze({",
+      '      kind: "actor",',
+      "      id: config.id,",
       "      handler: config.run,",
       "    }),",
       "  })",

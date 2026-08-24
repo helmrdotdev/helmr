@@ -65,6 +65,23 @@ func TestEnterRunEntrypointCommitsOnceAndReplaysTheSameFence(t *testing.T) {
 	}
 }
 
+func TestEnterRunEntrypointContinuesRunningLeaseWhileDraining(t *testing.T) {
+	worker, locators, authority, assignment := validRunEntrypointFixture(t)
+	authority.workerGroup.State = db.WorkerGroupStateDraining
+	authority.worker.State = db.WorkerInstanceStateDraining
+	store := &runLeaseClaimStore{authority: authority, entrypoint: locators}
+	request := workerapi.RunEntrypointRequest{
+		Lease: assignment.Fence(), EntrypointKind: authority.run.EntrypointKind,
+		EntrypointDeclaredID: authority.run.EntrypointDeclaredID,
+	}
+	if err := enterRunEntrypoint(context.Background(), store, nil, worker, authority.runLease.ID, request); err != nil {
+		t.Fatal(err)
+	}
+	if store.entrypointMarks != 1 {
+		t.Fatalf("entrypoint marks = %d, want 1", store.entrypointMarks)
+	}
+}
+
 func TestEnterRunEntrypointRollsBackMismatchedFenceAndIdentity(t *testing.T) {
 	for name, change := range map[string]func(*workerapi.RunEntrypointRequest){
 		"fence": func(request *workerapi.RunEntrypointRequest) {

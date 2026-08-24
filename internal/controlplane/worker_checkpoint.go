@@ -32,6 +32,7 @@ type parsedCheckpointReady struct {
 	manifest       []byte
 	fingerprint    string
 	artifacts      []checkpointArtifactProof
+	cleanupProof   []byte
 	requestVersion int64
 }
 
@@ -96,6 +97,11 @@ func (s *Server) workerMarkCheckpointReady(w http.ResponseWriter, r *http.Reques
 		}
 		if errors.Is(err, errStaleRunLeaseClaim) || errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, conflict(errors.New("worker checkpoint-ready receipt is stale")))
+			return
+		}
+		if isDeterministicWorkerAdmission(err) {
+			s.log.Warn("worker checkpoint-ready admission rejected", "run_lease_id", request.Lease.ID, "error", err)
+			writeError(w, apiError{kind: errUnprocessable, err: errors.New("worker checkpoint-ready admission is invalid")})
 			return
 		}
 		s.log.Error("commit worker checkpoint-ready failed", "run_lease_id", request.Lease.ID, "error", err)
@@ -227,7 +233,13 @@ func (s *Server) workerMarkCheckpointFailed(w http.ResponseWriter, r *http.Reque
 		writeError(w, conflict(errors.New("worker checkpoint-failed receipt is stale")))
 		return
 	}
+	if isDeterministicWorkerAdmission(err) {
+		s.log.Warn("worker checkpoint-failed admission rejected", "run_lease_id", request.Lease.ID, "error", err)
+		writeError(w, apiError{kind: errUnprocessable, err: errors.New("worker checkpoint-failed admission is invalid")})
+		return
+	}
 	if err != nil {
+		s.log.Error("commit worker checkpoint-failed failed", "run_lease_id", request.Lease.ID, "error", err)
 		writeError(w, errors.New("commit worker checkpoint-failed"))
 		return
 	}
@@ -276,7 +288,7 @@ func failCheckpointTaskAttempt(
 			failedAt.Time,
 		)
 		if err != nil {
-			return err
+			return deterministicWorkerAdmission(err)
 		}
 	}
 	if !retry {
@@ -724,6 +736,19 @@ func parseCheckpointReadyRequest(request workerapi.CheckpointReadyRequest) (pars
 	if err != nil {
 		return parsedCheckpointReady{}, request, err
 	}
+	if request.SourceCleanup == nil {
+		return parsedCheckpointReady{}, request, errors.New("source_cleanup is required")
+	}
+	if request.SourceCleanup.Method != workerapi.RuntimeCleanupSessionClosed {
+		return parsedCheckpointReady{}, request, errors.New("source_cleanup.method must be session_closed")
+	}
+	if err := validateRuntimeCleanupProof(*request.SourceCleanup, time.Now()); err != nil {
+		return parsedCheckpointReady{}, request, fmt.Errorf("source_cleanup is invalid: %w", err)
+	}
+	cleanupProof, err := json.Marshal(request.SourceCleanup)
+	if err != nil {
+		return parsedCheckpointReady{}, request, fmt.Errorf("marshal source_cleanup: %w", err)
+	}
 	tree, err := parseTaskWorkspaceTree("workspace_capture.tree", request.WorkspaceCapture.Tree)
 	if err != nil {
 		return parsedCheckpointReady{}, request, err
@@ -745,6 +770,7 @@ func parseCheckpointReadyRequest(request workerapi.CheckpointReadyRequest) (pars
 		lease: lease, waitID: waitID, checkpointID: checkpointID,
 		capture:  parsedTaskWorkspaceCapture{tree: tree, artifact: request.WorkspaceCapture.Artifact},
 		manifest: manifest, fingerprint: fingerprint, artifacts: artifacts,
+		cleanupProof:   cleanupProof,
 		requestVersion: request.RequestVersion,
 	}, normalized, nil
 }
@@ -781,7 +807,9 @@ func validateCheckpointManifest(
 		!taskWorkspaceDigestPattern.MatchString(identity.KernelDigest) ||
 		!taskWorkspaceDigestPattern.MatchString(identity.InitramfsDigest) ||
 		!taskWorkspaceDigestPattern.MatchString(identity.RootfsDigest) ||
-		!taskWorkspaceDigestPattern.MatchString(identity.ConfigDigest) {
+		!taskWorkspaceDigestPattern.MatchString(identity.ConfigDigest) ||
+		identity.VMVCPUCount <= 0 ||
+		!taskWorkspaceDigestPattern.MatchString(identity.CPUConfigDigest) {
 		return nil, nil, errors.New("manifest runtime identity is invalid")
 	}
 	proofs := []checkpointArtifactProof{
@@ -907,7 +935,7 @@ func (s *Server) commitCheckpointReady(
 		if _, err := secret.LockAttemptDelivery(ctx, work.q, locators.RunID, locators.AttemptNumber, locators.WorkspaceID); err != nil {
 			return fmt.Errorf("lock checkpoint-ready secret authority: %w", err)
 		}
-		handoffBindings, err := work.q.LockWorkspaceSecretsForAdmission(ctx, locators.WorkspaceID)
+		workspaceBindings, err := work.q.LockWorkspaceSecretsForAdmission(ctx, locators.WorkspaceID)
 		if err != nil {
 			return fmt.Errorf("lock checkpoint-ready workspace secrets: %w", err)
 		}
@@ -920,6 +948,17 @@ func (s *Server) commitCheckpointReady(
 		)
 		if err != nil {
 			return err
+		}
+		sourcePoolID := authority.worker.WorkerPoolID
+		sourcePool, err := work.q.LockWorkerPool(ctx, db.LockWorkerPoolParams{
+			WorkerGroupID: worker.WorkerGroupID,
+			WorkerPoolID:  sourcePoolID,
+		})
+		if err != nil {
+			return staleRunLeaseClaim(err)
+		}
+		if sourcePool.State != "active" && sourcePool.State != "draining" {
+			return errStaleRunLeaseClaim
 		}
 		authority.actor = owner.actor
 		authority.parentRun = owner.parent
@@ -961,6 +1000,24 @@ func (s *Server) commitCheckpointReady(
 			identity.RootfsDigest != request.Manifest.RecoveryPoint.Runtime.RootfsDigest {
 			return staleRunLeaseClaim(err)
 		}
+		if err := validateCheckpointRuntimeShapeAuthority(authority.runtime, request.Manifest); err != nil {
+			return err
+		}
+		baseAuthority, err := work.q.GetCheckpointWorkspaceBaseAuthority(ctx, db.GetCheckpointWorkspaceBaseAuthorityParams{
+			OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID,
+			EnvironmentID: authority.run.EnvironmentID, WorkspaceID: authority.workspace.ID,
+			VersionID: authority.workspaceLease.BaseVersionID,
+		})
+		if err != nil {
+			return staleRunLeaseClaim(err)
+		}
+		sourceBase, err := projectCheckpointWorkspaceBase(baseAuthority)
+		if err != nil {
+			return err
+		}
+		if err := validateCheckpointWorkspaceBaseAuthority(request.Manifest, sourceBase); err != nil {
+			return err
+		}
 		if err := validateCheckpointSubstrateAuthority(
 			ctx,
 			work.q,
@@ -968,6 +1025,15 @@ func (s *Server) commitCheckpointReady(
 			request.Manifest,
 		); err != nil {
 			return err
+		}
+		if _, err := work.q.RequireCheckpointRestoreSupplier(ctx, db.RequireCheckpointRestoreSupplierParams{
+			SourceRunLeaseID:   authority.runLease.ID,
+			WorkerGroupID:      worker.WorkerGroupID,
+			WorkerInstanceID:   pgvalue.UUID(worker.WorkerInstanceID),
+			WorkerEpoch:        worker.WorkerEpoch,
+			SourceWorkerPoolID: sourcePoolID,
+		}); err != nil {
+			return staleRunLeaseClaim(err)
 		}
 		checkpointedAt, err := work.q.GetRunLeaseRenewalTime(ctx)
 		if err != nil || !checkpointedAt.Valid || !checkpointedAt.Time.Before(authority.runLease.ExpiresAt.Time) {
@@ -1014,6 +1080,19 @@ func (s *Server) commitCheckpointReady(
 		}); err != nil {
 			return staleRunLeaseClaim(err)
 		}
+		if _, err := work.q.CloseCheckpointSourceRuntime(ctx, db.CloseCheckpointSourceRuntimeParams{
+			CheckpointedAt:          checkpointedAt,
+			WorkspaceMountID:        authority.workspaceMount.ID,
+			RuntimeInstanceID:       authority.runtime.ID,
+			WorkerInstanceID:        authority.runtime.WorkerInstanceID,
+			WorkerEpoch:             authority.runtime.WorkerEpoch,
+			MountFencingGeneration:  authority.workspaceMount.FencingGeneration,
+			ExpectedDesiredVersion:  authority.runtime.DesiredVersion,
+			ExpectedObservedVersion: authority.runtime.ObservedVersion,
+			CleanupProof:            ready.cleanupProof,
+		}); err != nil {
+			return staleRunLeaseClaim(err)
+		}
 		if wait.Kind == db.WaitKindChild && !wait.ChildRunID.Valid {
 			if wait.ConditionState != db.WaitStatePending {
 				return errStaleRunLeaseClaim
@@ -1027,7 +1106,7 @@ func (s *Server) commitCheckpointReady(
 				ready.capture.tree.Digest,
 				checkpointedAt,
 				request.RequestVersion,
-				handoffBindings,
+				workspaceBindings,
 			); err != nil {
 				return err
 			}
@@ -1076,13 +1155,12 @@ func (s *Server) commitSameWorkspaceChildCheckpointReady(
 		wait.ChildTargetDeclaredID.String == "" ||
 		!wait.SuspendCheckpointID.Valid ||
 		wait.ChildRunID.Valid ||
-		wait.BaseWorkspaceVersionID.Valid ||
-		wait.HandoffRuntimeInstanceID.Valid {
+		wait.BaseWorkspaceVersionID.Valid {
 		return errStaleRunLeaseClaim
 	}
 	var request idempotency.TaskChildInvokeFingerprint
 	if err := decodeClosedJSON(wait.ChildRequest, &request); err != nil {
-		return staleRunLeaseClaim(err)
+		return deterministicWorkerAdmission(fmt.Errorf("decode pinned child task request: %w", err))
 	}
 	if request.Method != "call" {
 		return errStaleRunLeaseClaim
@@ -1111,6 +1189,10 @@ func (s *Server) commitSameWorkspaceChildCheckpointReady(
 		normalized,
 	)
 	if err != nil {
+		if errors.Is(err, errTaskNotDeployed) || errors.Is(err, errTaskStartAuthority) ||
+			errors.Is(err, errTaskPayloadPresenceInvalid) {
+			return deterministicWorkerAdmission(err)
+		}
 		return err
 	}
 	for _, binding := range bindings {
@@ -1199,12 +1281,6 @@ func (s *Server) commitSameWorkspaceChildCheckpointReady(
 			CheckpointRequestVersion:   checkpointRequestVersion,
 			BaseWorkspaceVersionID:     baseWorkspaceVersionID,
 			BaseWorkspaceContentDigest: pgvalue.Text(baseWorkspaceContentDigest),
-			RuntimeInstanceID:          authority.runtime.ID,
-			WorkspaceMountID:           authority.workspaceMount.ID,
-			MountGeneration: pgtype.Int8{
-				Int64: authority.workspaceLease.MountFencingGeneration,
-				Valid: true,
-			},
 			OwnershipGeneration: pgtype.Int8{
 				Int64: authority.workspaceLease.OwnershipGeneration,
 				Valid: true,
@@ -1281,7 +1357,21 @@ func validateCheckpointSubstrateAuthority(
 		substrate.DeploymentDefinitionID != authority.runtime.DeploymentDefinitionID ||
 		substrate.SubstrateDigest != identity.Digest ||
 		substrate.SubstrateFormat != identity.Format ||
-		substrate.SubstrateContract != identity.Contract {
+		substrate.SubstrateContract != identity.Contract ||
+		substrate.SubstrateSizeBytes != identity.SizeBytes ||
+		identity.SizeBytes <= 0 {
+		return errStaleRunLeaseClaim
+	}
+	return nil
+}
+
+func validateCheckpointRuntimeShapeAuthority(
+	runtime db.RuntimeInstance,
+	manifest workerapi.CheckpointManifest,
+) error {
+	shape := manifest.RecoveryPoint.Runtime
+	if shape.VMVCPUCount != runtime.VMVCPUCount ||
+		shape.CPUConfigDigest != runtime.CPUConfigDigest {
 		return errStaleRunLeaseClaim
 	}
 	return nil

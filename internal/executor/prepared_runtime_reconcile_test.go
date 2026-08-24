@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
 type typedRuntimeClient struct {
@@ -40,6 +41,11 @@ type stuckPreparedRuntimeSession struct {
 
 type unavailableRuntimeCAS struct{}
 
+type fatalRuntimeInfrastructureError struct{ secret string }
+
+func (err fatalRuntimeInfrastructureError) Error() string { return err.secret }
+func (fatalRuntimeInfrastructureError) FatalWorker() bool { return true }
+
 func (unavailableRuntimeCAS) Put(context.Context, string, io.Reader) (cas.Object, error) {
 	return cas.Object{}, errors.New("not used")
 }
@@ -53,6 +59,45 @@ func (unavailableRuntimeCAS) Get(context.Context, string) (io.ReadCloser, error)
 	return nil, errors.New("not used")
 }
 func (unavailableRuntimeCAS) Delete(context.Context, string) error { return errors.New("not used") }
+
+func TestRuntimeTargetFailureScrubsFatalWorkerDiagnostic(t *testing.T) {
+	const sentinel = "signed-url-secret-sentinel"
+	request := runtimeTargetStateRequest(
+		workerapi.RuntimeReconcileTarget{ID: "runtime", WorkerEpoch: 1, DesiredVersion: 2},
+		fatalRuntimeInfrastructureError{secret: sentinel},
+	)
+	if request.ReasonCode != workerapi.RuntimeFailureWorkerInvalid ||
+		strings.Contains(string(request.Error), sentinel) ||
+		!strings.Contains(string(request.Error), "worker runtime infrastructure failed") {
+		t.Fatalf("fatal runtime request = reason:%q error:%s", request.ReasonCode, request.Error)
+	}
+}
+
+func TestFatalRuntimeFailureWaitsForControlAcknowledgement(t *testing.T) {
+	client := &typedRuntimeClient{failedErrors: []error{errors.New("control unavailable")}}
+	pool := &PreparedRuntimePool{}
+	target := workerapi.RuntimeReconcileTarget{ID: "runtime", WorkerEpoch: 1, DesiredVersion: 2}
+	err := pool.reportRuntimeTargetFailedWithProof(
+		t.Context(), client, target,
+		fatalRuntimeInfrastructureError{secret: "local-secret-sentinel"},
+		workerapi.RuntimeCleanupNotMaterialized,
+	)
+	if err == nil || !strings.Contains(err.Error(), "control unavailable") ||
+		strings.Contains(err.Error(), "local-secret-sentinel") {
+		t.Fatalf("failure-report error = %v", err)
+	}
+	var fatal interface{ FatalWorker() bool }
+	if errors.As(err, &fatal) && fatal.FatalWorker() {
+		t.Fatal("unacknowledged failure report terminated the Worker epoch")
+	}
+	if err := pool.reportRuntimeTargetFailedWithProof(
+		t.Context(), client, target,
+		fatalRuntimeInfrastructureError{secret: "local-secret-sentinel"},
+		workerapi.RuntimeCleanupNotMaterialized,
+	); err != nil {
+		t.Fatalf("acknowledged failure report = %v", err)
+	}
+}
 
 func (c *cleanupRuntimeConnector) Connect(context.Context, vm.ConnectRequest) (vm.Session, error) {
 	return nil, errors.New("not used")
@@ -235,11 +280,30 @@ func TestReconcileDesiredRuntimesStopsCleanly(t *testing.T) {
 	}
 }
 
+func TestWarmRuntimeTargetRejectsMissingWorkspaceTargetBeforeAdmission(t *testing.T) {
+	pool := NewPreparedRuntimePool(nil, nil, 1, nil)
+	admissionCalls := 0
+	pool.AdmitRuntimeStart = func(context.Context) error {
+		admissionCalls++
+		return errors.New("disk_floor")
+	}
+	err := pool.WarmRuntimeTarget(context.Background(), &typedRuntimeClient{}, workerapi.RuntimeReconcileTarget{})
+	if err == nil || !strings.Contains(err.Error(), "workspace target is required") {
+		t.Fatalf("error = %v, want missing Workspace target", err)
+	}
+	if admissionCalls != 0 {
+		t.Fatalf("runtime admission calls = %d, want 0", admissionCalls)
+	}
+}
+
 func TestWarmRuntimeTargetHonorsHardAdmissionBeforeMaterialization(t *testing.T) {
 	pool := NewPreparedRuntimePool(nil, nil, 1, nil)
 	admissionErr := errors.New("disk_floor")
 	pool.AdmitRuntimeStart = func(context.Context) error { return admissionErr }
-	err := pool.WarmRuntimeTarget(context.Background(), &typedRuntimeClient{}, workerapi.RuntimeReconcileTarget{})
+	target := workerapi.RuntimeReconcileTarget{Source: workerapi.RuntimeSource{
+		WorkspaceTarget: &workerapi.WorkspaceResetTarget{},
+	}}
+	err := pool.WarmRuntimeTarget(context.Background(), &typedRuntimeClient{}, target)
 	if !errors.Is(err, admissionErr) {
 		t.Fatalf("error = %v, want hard admission error", err)
 	}
@@ -333,17 +397,20 @@ func TestPreparedRuntimeSourcePreservesWorkspaceReservationAuthority(t *testing.
 	source := workerapi.RuntimeSource{
 		WorkspaceID:            "019c10d5-a6f7-7af1-8f5f-000000000701",
 		DeploymentDefinitionID: "019c10d5-a6f7-7af1-8f5f-000000000702",
-		BaseVersionID:          "019c10d5-a6f7-7af1-8f5f-000000000703",
-		WorkspaceArtifact: workerapi.WorkspaceArtifact{
-			Digest:    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			SizeBytes: 512, MediaType: "application/vnd.helmr.workspace.v0+tar",
-			Encoding: "tar", EntryCount: 3,
+		WorkspaceTarget: &workerapi.WorkspaceResetTarget{
+			BaseWorkspaceVersionID: "019c10d5-a6f7-7af1-8f5f-000000000703",
+			Tree:                   workerapi.WorkspaceTreeIdentity{Digest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", SizeBytes: 2048, EntryCount: 3},
+			Artifact: &workerapi.WorkspaceArtifact{
+				Digest:    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				SizeBytes: 512, MediaType: "application/vnd.helmr.workspace.v0+tar",
+				Encoding: "tar", EntryCount: 3,
+			},
 		},
 	}
 	mount := preparedRuntimeWorkspaceMountFromSource(source)
 	if mount.WorkspaceID != source.WorkspaceID ||
-		mount.BaseVersionID != source.BaseVersionID ||
-		mount.WorkspaceArtifact != source.WorkspaceArtifact {
+		mount.Target.BaseWorkspaceVersionID != source.WorkspaceTarget.BaseWorkspaceVersionID ||
+		mount.Target.Artifact.Digest != source.WorkspaceTarget.Artifact.Digest {
 		t.Fatalf("mount = %#v, want exact Workspace reservation source", mount)
 	}
 }
@@ -392,6 +459,7 @@ func TestPreparedRuntimeBindsProgramIndexToDeploymentReceipt(t *testing.T) {
 			Name: "task/task",
 		}},
 		RuntimeContract: deployment.RuntimeContract,
+		RuntimeDigest:   "sha256:" + strings.Repeat("f", 64),
 	}
 	canonical, err := deployment.CanonicalProgramIndex(index)
 	if err != nil {
@@ -420,11 +488,15 @@ func TestPreparedRuntimeVerifiesReservedWorkspaceArtifactBeforeReady(t *testing.
 	); err != nil {
 		t.Fatal(err)
 	}
-	if got := store.getCalls[mount.WorkspaceArtifact.Digest]; got != 1 {
+	if got := store.getCalls[mount.Target.Artifact.Digest]; got != 1 {
 		t.Fatalf("Workspace Artifact reads = %d, want 1", got)
 	}
 
-	mount.WorkspaceArtifact = workerapi.WorkspaceArtifact{}
+	mount.Target = workerapi.WorkspaceResetTarget{
+		BaseWorkspaceVersionID: mount.Target.BaseWorkspaceVersionID,
+		Tree:                   workerapi.WorkspaceTreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest},
+		Empty:                  &workerapi.EmptyWorkspace{},
+	}
 	if err := pool.verifyReservedWorkspaceVersion(
 		context.Background(),
 		materializer,
@@ -510,6 +582,7 @@ func runtimeCapacityTarget(id string, epoch int64) workerapi.RuntimeReconcileTar
 		ID: id, WorkerEpoch: epoch,
 		Source: workerapi.RuntimeSource{
 			DeploymentDefinitionID: "019c10d5-a6f7-7af1-8f5f-000000000703",
+			WorkspaceTarget:        &workerapi.WorkspaceResetTarget{},
 			ReservedCPUMillis:      1000, ReservedMemoryMiB: 512, ReservedDiskMiB: 1024,
 			ReservedExecutionSlots: 5,
 		},
@@ -519,7 +592,10 @@ func runtimeCapacityTarget(id string, epoch int64) workerapi.RuntimeReconcileTar
 func retryableWarmTarget() workerapi.RuntimeReconcileTarget {
 	return workerapi.RuntimeReconcileTarget{
 		ID: "019c10d5-a6f7-7af1-8f5f-000000000503", WorkerEpoch: 7,
-		Source: workerapi.RuntimeSource{DeploymentDefinitionID: "019c10d5-a6f7-7af1-8f5f-000000000703"},
+		Source: workerapi.RuntimeSource{
+			DeploymentDefinitionID: "019c10d5-a6f7-7af1-8f5f-000000000703",
+			WorkspaceTarget:        &workerapi.WorkspaceResetTarget{},
+		},
 	}
 }
 

@@ -1,18 +1,70 @@
 package controlplane
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 )
+
+func TestChildTaskInvokeStaleResponseIncludesClosedFailurePoint(t *testing.T) {
+	var logs bytes.Buffer
+	server := &Server{log: slog.New(slog.NewTextHandler(&logs, nil))}
+	response := httptest.NewRecorder()
+	server.writeChildTaskInvokeError(
+		response,
+		"0198b960-7818-7a77-9d7d-4ebf163e15b1",
+		"call",
+		staleAuthority(staleAuthorityChildTask, childTaskInvokePointSourceScope, errChildTaskInvokeStale),
+	)
+
+	if response.Code != http.StatusConflict {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+	for _, want := range []string{
+		`"code":"child_task_invoke_stale"`,
+		`"details":{"point":"source_scope"}`,
+	} {
+		if !strings.Contains(response.Body.String(), want) {
+			t.Fatalf("response omitted %s: %s", want, response.Body.String())
+		}
+	}
+	if !strings.Contains(logs.String(), "failure_point=source_scope") {
+		t.Fatalf("log omitted failure point: %s", logs.String())
+	}
+}
+
+func TestSameWorkspaceChildRequestRejectsExplicitNullRetryPolicy(t *testing.T) {
+	var request idempotency.TaskChildInvokeFingerprint
+	if err := decodeClosedJSON(json.RawMessage(`{
+		"method":"call",
+		"payloadPresent":false,
+		"workspace":{},
+		"queueName":"default",
+		"priority":0,
+		"retryPolicy":null,
+		"metadata":{},
+		"tags":[]
+	}`), &request); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := deployment.ParseRetryManifest(request.RetryPolicy); err == nil {
+		t.Fatal("explicit null retry policy was accepted")
+	}
+}
 
 func TestNormalizeWorkerChildTaskRequestUsesParentScopeAndCallerOptions(t *testing.T) {
 	workspaceID := uuid.Must(uuid.NewV7()).String()
@@ -215,7 +267,7 @@ func TestReplayBoundSameWorkspaceChildCallRejectsDifferentFrontier(t *testing.T)
 			BaseWorkspaceDigest:    "sha256:" + strings.Repeat("0", 64),
 		},
 	)
-	if !errors.Is(err, errWorkspaceHandoffConflict) {
+	if !errors.Is(err, errWorkspaceFrontierConflict) {
 		t.Fatalf("different frontier error = %v", err)
 	}
 }

@@ -2,8 +2,6 @@ package deployment
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"path"
 	"strings"
@@ -13,7 +11,7 @@ type programVerifier struct {
 	ctx      context.Context
 	artifact *inspectedArtifact
 	index    ProgramIndex
-	manifest ProgramBuildManifest
+	manifest ProgramManifest
 }
 
 func (verifier *programVerifier) verify() error {
@@ -26,24 +24,10 @@ func (verifier *programVerifier) verify() error {
 	if err := verifier.verifyDeclarations(); err != nil {
 		return err
 	}
-	if err := verifyProgramBuildFiles(
+	if err := verifyProgramManifestFiles(
 		verifier.ctx,
 		verifier.artifact,
-		compilerResultFromManifest(verifier.manifest),
-	); err != nil {
-		return err
-	}
-	if err := verifyProgramBuildFile(
-		verifier.ctx,
-		verifier.artifact,
-		verifier.manifest.ConfigSource,
-	); err != nil {
-		return err
-	}
-	if err := verifyProgramBuildFile(
-		verifier.ctx,
-		verifier.artifact,
-		verifier.manifest.Lockfile,
+		verifier.manifest,
 	); err != nil {
 		return err
 	}
@@ -61,15 +45,15 @@ func (verifier *programVerifier) readDocuments() error {
 	}
 	manifestRaw, err := verifier.artifact.read(
 		verifier.ctx,
-		"helmr/build-manifest.json",
+		"helmr/program-manifest.json",
 		maxProgramFileSizeBytes,
 	)
 	if err != nil {
-		return fmt.Errorf("program build manifest: %w", err)
+		return fmt.Errorf("program manifest: %w", err)
 	}
-	verifier.manifest, err = ParseProgramBuildManifest(manifestRaw)
+	verifier.manifest, err = ParseProgramManifest(manifestRaw)
 	if err != nil {
-		return fmt.Errorf("program build manifest: %w", err)
+		return fmt.Errorf("program manifest: %w", err)
 	}
 	verifier.index, err = ParseProgramIndex(indexRaw)
 	if err != nil {
@@ -77,14 +61,12 @@ func (verifier *programVerifier) readDocuments() error {
 	}
 	if verifier.manifest.Config.Digest != verifier.index.ConfigResultDigest {
 		return fmt.Errorf(
-			"program build manifest config digest does not match program index",
+			"program manifest config digest does not match program index",
 		)
 	}
-	indexHash := sha256.Sum256(indexRaw)
-	if verifier.manifest.ProgramIndexDigest !=
-		"sha256:"+hex.EncodeToString(indexHash[:]) {
+	if verifier.manifest.ProgramIndexDigest != programIndexDigest(indexRaw) {
 		return fmt.Errorf(
-			"program build manifest index digest does not match program index",
+			"program manifest index digest does not match program index",
 		)
 	}
 	entryRaw, err := verifier.artifact.read(
@@ -102,9 +84,9 @@ func (verifier *programVerifier) readDocuments() error {
 }
 
 func (verifier *programVerifier) verifyLayout() error {
-	generated := make(map[string]struct{}, len(verifier.manifest.Outputs)*2)
-	generatedDirectories := make(map[string]struct{}, len(verifier.manifest.Outputs)*2)
-	for _, output := range verifier.manifest.Outputs {
+	generated := make(map[string]struct{}, len(verifier.manifest.Modules)*2)
+	generatedDirectories := make(map[string]struct{}, len(verifier.manifest.Modules)*2)
+	for _, output := range verifier.manifest.Modules {
 		generated[output.ModulePath] = struct{}{}
 		generated[output.SourceMapPath] = struct{}{}
 		moduleDirectory := path.Dir(output.ModulePath)
@@ -117,7 +99,7 @@ func (verifier *programVerifier) verifyLayout() error {
 		}
 	}
 	for _, required := range []string{
-		"helmr/build-manifest.json",
+		"helmr/program-manifest.json",
 		"helmr/config.json",
 		"helmr/declarations.json",
 		"helmr/entry.mjs",
@@ -129,7 +111,7 @@ func (verifier *programVerifier) verifyLayout() error {
 	for _, entry := range verifier.artifact.ordered {
 		if strings.HasPrefix(entry.Path, "helmr/") {
 			switch entry.Path {
-			case "helmr/build-manifest.json", "helmr/config.json",
+			case "helmr/program-manifest.json", "helmr/config.json",
 				"helmr/declarations.json", "helmr/entry.mjs":
 			default:
 				return fmt.Errorf(
@@ -185,10 +167,7 @@ func (verifier *programVerifier) verifyDeclarations() error {
 			Slot:       declaration.Locator.Slot,
 		})
 	}
-	return validateProgramBuildLocators(
-		compilerResultFromManifest(verifier.manifest),
-		locator,
-	)
+	return validateProgramManifestLocators(verifier.manifest.Modules, locator)
 }
 
 func (verifier *programVerifier) verifyLinks() error {

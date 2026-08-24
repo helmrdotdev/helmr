@@ -26,8 +26,6 @@ type authentication struct {
 	workerInstanceID string
 	secret           string
 	serviceID        string
-	supportsRun      bool
-	supportsBuild    bool
 	token            string
 	expiresAt        time.Time
 	refreshDone      chan struct{}
@@ -39,8 +37,6 @@ type options struct {
 	workerInstanceID string
 	secret           string
 	serviceID        string
-	supportsRun      bool
-	supportsBuild    bool
 }
 
 type Option func(*options)
@@ -56,11 +52,9 @@ func WithAuth(workerInstanceID string, secret string) Option {
 	}
 }
 
-func WithService(serviceID string, supportsRun bool, supportsBuild bool) Option {
+func WithService(serviceID string) Option {
 	return func(options *options) {
 		options.serviceID = strings.TrimSpace(serviceID)
-		options.supportsRun = supportsRun
-		options.supportsBuild = supportsBuild
 	}
 }
 
@@ -77,8 +71,6 @@ func New(baseURL string, opts ...Option) (*Client, error) {
 		workerInstanceID: config.workerInstanceID,
 		secret:           config.secret,
 		serviceID:        config.serviceID,
-		supportsRun:      config.supportsRun,
-		supportsBuild:    config.supportsBuild,
 	}}, nil
 }
 
@@ -197,14 +189,13 @@ func (c *Client) token(ctx context.Context) (string, error) {
 }
 
 func (c *Client) requestToken(ctx context.Context) (string, time.Time, error) {
-	if c.auth.serviceID == "" || !c.auth.supportsRun && !c.auth.supportsBuild {
-		return "", time.Time{}, errors.New("worker service id and at least one role are required")
+	if c.auth.serviceID == "" {
+		return "", time.Time{}, errors.New("worker service id is required")
 	}
 	var body bytes.Buffer
 	if err := json.NewEncoder(&body).Encode(workerapi.TokenRequest{
 		WorkerInstanceID: c.auth.workerInstanceID, WorkerInstanceSecret: c.auth.secret,
-		ServiceID:   c.auth.serviceID,
-		SupportsRun: c.auth.supportsRun, SupportsBuild: c.auth.supportsBuild,
+		ServiceID: c.auth.serviceID,
 	}); err != nil {
 		return "", time.Time{}, fmt.Errorf("encode worker token request: %w", err)
 	}

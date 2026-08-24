@@ -34,6 +34,7 @@ func newRootCommand() *cobra.Command {
 		loginCommand(),
 		logoutCommand(),
 		whoamiCommand(),
+		bundleBuildCommand(),
 		deployCommand(),
 		deploymentCommand(),
 		taskCommand(),

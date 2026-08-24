@@ -18,6 +18,11 @@ import (
 
 const runtimeArtifactsSchema = "helmr.runtime-artifacts.v0"
 
+const BootCorpusMaxMiB = int64(2048)
+
+const runtimeManifestMaxBytes = int64(64 * 1024)
+const runtimeAllocationUnit = int64(4096)
+
 type runtimeArtifact struct {
 	Path      string `json:"path"`
 	Digest    string `json:"digest"`
@@ -33,87 +38,30 @@ type runtimeArtifacts struct {
 	Rootfs            runtimeArtifact `json:"rootfs"`
 }
 
-// InspectRuntimeArtifacts validates the exact boot artifacts used by Worker
-// startup and returns their runtime identity inputs without starting Firecracker.
-func InspectRuntimeArtifacts(directory string) (RuntimeCapabilities, error) {
-	cfg := Config{
-		KernelPath: filepath.Join(directory, "vmlinuz"), InitramfsPath: filepath.Join(directory, "initramfs"),
-		RootfsPath: filepath.Join(directory, "rootfs.ext4"), RuntimeArtifactsPath: filepath.Join(directory, "runtime-artifacts.json"),
-	}
-	file, err := os.Open(cfg.RuntimeArtifactsPath)
-	if err != nil {
-		return RuntimeCapabilities{}, fmt.Errorf("open runtime artifacts manifest: %w", err)
-	}
-	artifacts, decodeErr := decodeRuntimeArtifacts(file)
-	closeErr := file.Close()
-	if decodeErr != nil {
-		return RuntimeCapabilities{}, decodeErr
-	}
-	if closeErr != nil {
-		return RuntimeCapabilities{}, closeErr
-	}
-	if err := validateRuntimeArtifactsDeclaration(cfg, artifacts); err != nil {
-		return RuntimeCapabilities{}, err
-	}
-	for _, artifact := range []struct {
-		name string
-		path string
-		item runtimeArtifact
-	}{
-		{name: "kernel", path: cfg.KernelPath, item: artifacts.Kernel},
-		{name: "initramfs", path: cfg.InitramfsPath, item: artifacts.Initramfs},
-		{name: "rootfs", path: cfg.RootfsPath, item: artifacts.Rootfs},
-	} {
-		if err := validateRuntimeArtifact(artifact.name, artifact.path, artifact.item); err != nil {
-			return RuntimeCapabilities{}, err
-		}
-	}
-	return RuntimeCapabilities{
-		Arch: artifacts.Arch, Contract: artifacts.VMRuntimeContract,
-		KernelDigest: artifacts.Kernel.Digest, InitramfsDigest: artifacts.Initramfs.Digest,
-		RootfsDigest: artifacts.Rootfs.Digest,
-	}, nil
-}
-
-// InspectRuntimeArtifactsManifest derives runtime identity from a canonical
-// manifest. Callers must separately bind the manifest digest to validated bytes.
-func InspectRuntimeArtifactsManifest(path string) (RuntimeCapabilities, error) {
-	cfg := Config{
-		KernelPath: "vmlinuz", InitramfsPath: "initramfs", RootfsPath: "rootfs.ext4", RuntimeArtifactsPath: path,
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return RuntimeCapabilities{}, fmt.Errorf("open runtime artifacts manifest: %w", err)
-	}
-	artifacts, decodeErr := decodeRuntimeArtifacts(file)
-	closeErr := file.Close()
-	if decodeErr != nil {
-		return RuntimeCapabilities{}, decodeErr
-	}
-	if closeErr != nil {
-		return RuntimeCapabilities{}, closeErr
-	}
-	if err := validateRuntimeArtifactsDeclaration(cfg, artifacts); err != nil {
-		return RuntimeCapabilities{}, err
-	}
-	return RuntimeCapabilities{
-		Arch: artifacts.Arch, Contract: artifacts.VMRuntimeContract,
-		KernelDigest: artifacts.Kernel.Digest, InitramfsDigest: artifacts.Initramfs.Digest,
-		RootfsDigest: artifacts.Rootfs.Digest,
-	}, nil
-}
-
 func loadRuntimeArtifacts(cfg Config) (runtimeArtifacts, error) {
 	file, err := os.Open(cfg.RuntimeArtifactsPath)
 	if err != nil {
 		return runtimeArtifacts{}, fmt.Errorf("open runtime artifacts manifest: %w", err)
 	}
 	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return runtimeArtifacts{}, fmt.Errorf("stat runtime artifacts manifest: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return runtimeArtifacts{}, errors.New("runtime artifacts manifest is not a regular file")
+	}
+	if info.Size() <= 0 || info.Size() > runtimeManifestMaxBytes {
+		return runtimeArtifacts{}, fmt.Errorf("runtime artifacts manifest size %d is invalid", info.Size())
+	}
 	artifacts, err := decodeRuntimeArtifacts(file)
 	if err != nil {
 		return runtimeArtifacts{}, err
 	}
 	if err := validateRuntimeArtifactsManifest(cfg, artifacts); err != nil {
+		return runtimeArtifacts{}, err
+	}
+	if _, err := runtimeCorpusBytes(artifacts, info.Size()); err != nil {
 		return runtimeArtifacts{}, err
 	}
 	for _, artifact := range []struct {
@@ -130,6 +78,30 @@ func loadRuntimeArtifacts(cfg Config) (runtimeArtifacts, error) {
 		}
 	}
 	return artifacts, nil
+}
+
+func roundedRuntimeBytes(size int64) int64 {
+	return (size + runtimeAllocationUnit - 1) / runtimeAllocationUnit * runtimeAllocationUnit
+}
+
+func runtimeCorpusBytes(manifest runtimeArtifacts, manifestBytes int64) (int64, error) {
+	limit := BootCorpusMaxMiB * 1024 * 1024
+	if manifestBytes <= 0 || manifestBytes > runtimeManifestMaxBytes {
+		return 0, fmt.Errorf("runtime artifacts manifest size %d is invalid", manifestBytes)
+	}
+	allocated := runtimeAllocationUnit + roundedRuntimeBytes(manifestBytes)
+	for _, size := range []int64{manifest.Kernel.SizeBytes, manifest.Initramfs.SizeBytes, manifest.Rootfs.SizeBytes} {
+		remaining := limit - allocated
+		if size <= 0 || size > remaining {
+			return 0, fmt.Errorf("runtime boot corpus exceeds %d bytes", limit)
+		}
+		rounded := roundedRuntimeBytes(size)
+		if rounded > remaining {
+			return 0, fmt.Errorf("runtime boot corpus exceeds %d bytes", limit)
+		}
+		allocated += rounded
+	}
+	return allocated, nil
 }
 
 func decodeRuntimeArtifacts(source io.Reader) (runtimeArtifacts, error) {

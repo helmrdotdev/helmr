@@ -24,7 +24,7 @@ artifacts_dir=$2
 [ ! -e "${output}" ] || die "output already exists: ${output}"
 [ -d "${artifacts_dir}" ] || die "runtime artifacts directory does not exist: ${artifacts_dir}"
 
-files=(initramfs rootfs.ext4 runtime-artifacts.json vmlinuz)
+files=(initramfs rootfs.squashfs runtime-artifacts.json vmlinuz)
 for name in "${files[@]}"; do
   path="${artifacts_dir}/${name}"
   [ ! -L "${path}" ] && [ -f "${path}" ] || die "runtime artifact must be a regular non-symlink file: ${path}"
@@ -37,8 +37,6 @@ trap 'rm -rf "${work}"' EXIT
 result="${work}/result"
 mkdir "${result}"
 
-go -C "${root}" run ./cmd/helmr-worker runtime-profile \
-  --runtime-artifacts-dir "${artifacts_dir}" >"${result}/runtime-profile.json"
 install -m 0600 "${artifacts_dir}/runtime-artifacts.json" "${result}/runtime-artifacts.json"
 tar \
   --sort=name \
@@ -57,14 +55,12 @@ source_commit="$(git -C "${root}" rev-parse HEAD)"
 jq -cn \
   --arg bundle_digest "${bundle_digest}" \
   --arg manifest_digest "${manifest_digest}" \
-  --arg source_commit "${source_commit}" \
-  --slurpfile runtime_profile "${result}/runtime-profile.json" '
+  --arg source_commit "${source_commit}" '
   {
     schema: "helmr.worker-runtime-bundle.v0",
     sourceCommit: $source_commit,
     bundle: {path: "runtime-artifacts.tar", digest: $bundle_digest},
-    runtimeArtifactsManifest: {path: "runtime-artifacts.json", digest: $manifest_digest},
-    runtimeProfile: $runtime_profile[0]
+    runtimeArtifactsManifest: {path: "runtime-artifacts.json", digest: $manifest_digest}
   }
 ' >"${result}/worker-runtime-bundle.json"
 chmod 0600 "${result}/"*

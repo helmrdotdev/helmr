@@ -495,8 +495,7 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 	actorDefinitionID := uuid.Must(uuid.NewV7())
 	taskDefinitionID := uuid.Must(uuid.NewV7())
 	workspaceDefinitionID := uuid.Must(uuid.NewV7())
-	sourceID, programID, imageID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()),
-		uuid.Must(uuid.NewV7())
+	programID, imageID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO regions (id, display_name)
 		VALUES ('us-east-1', 'Actor Start Test')
@@ -519,6 +518,7 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 		"sha256:" + fmt.Sprintf("%064x", 1),
 		"sha256:" + fmt.Sprintf("%064x", 2),
 		"sha256:" + fmt.Sprintf("%064x", 3),
+		"sha256:" + fmt.Sprintf("%064x", 4),
 	}
 	actorManifest := []byte(
 		`{"idleTimeoutMs":30000,"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}`,
@@ -539,33 +539,27 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 	)
 	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
-		VALUES ($1, $2, 1, 'application/vnd.helmr.deployment-source.v0+tar'),
+		VALUES ($1, $2, 1, 'application/vnd.helmr.deployment-bundle.v0+json'),
 		       ($1, $3, 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
-		       ($1, $4, 1, 'application/octet-stream')
-	`, fixture.orgID, digests[0], digests[1], digests[2])
+		       ($1, $4, 1, 'application/octet-stream'),
+		       ($1, $5, 1, 'application/vnd.helmr.runtime.v0+squashfs')
+	`, fixture.orgID, digests[0], digests[1], digests[2], digests[3])
 	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
-		VALUES ($1, $4, $5, $6, $7, 'deployment_source', 1, 'application/vnd.helmr.deployment-source.v0+tar'),
-		       ($2, $4, $5, $6, $8, 'deployment_program', 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
-		       ($3, $4, $5, $6, $9, 'workspace_image', 1, 'application/octet-stream')
-	`, sourceID, programID, imageID, fixture.orgID, fixture.projectID,
-		fixture.environmentID, digests[0], digests[1], digests[2])
+		VALUES ($1, $3, $4, $5, $6, 'deployment_program', 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
+		       ($2, $3, $4, $5, $7, 'workspace_image', 1, 'application/octet-stream')
+	`, programID, imageID, fixture.orgID, fixture.projectID,
+		fixture.environmentID, digests[1], digests[2])
 	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO deployments (
-		    id, org_id, project_id, environment_id, build_region_id,
-		    build_node_version, build_runtime_digest, build_toolchain_digest,
-		    build_manager_name, build_manager_version, build_manager_digest,
-		    build_contract, image_cache_mode, version, content_hash, deployment_source_artifact_id,
-		    program_artifact_id, program_index_digest, queue_config, status
+		    id, org_id, project_id, environment_id, version, bundle_digest,
+		    runtime_artifact_digest, program_artifact_id, program_index_digest, queue_config
 		) VALUES (
-		    $1, $2, $3, $4, 'us-east-1', '24.16.0',
-		    decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'),
-		    'npm', '11.5.0', decode(repeat('22', 32), 'hex'),
-		    'helmr.program-build.v0', 'prefer', 'actor-start-test', $5, $6, $7,
-		    decode(repeat('03', 32), 'hex'), $8::jsonb, 'deployed'
+		    $1, $2, $3, $4, 'actor-start-test', $5, $6, $7,
+		    decode(repeat('03', 32), 'hex'), $8::jsonb
 		)
 	`, deploymentID, fixture.orgID, fixture.projectID,
-		fixture.environmentID, digests[0], sourceID, programID, queueConfig)
+		fixture.environmentID, digests[0], digests[3], programID, queueConfig)
 	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO deployment_definitions (
 		    id, environment_id, deployment_id, kind, declared_id,

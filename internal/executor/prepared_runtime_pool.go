@@ -311,6 +311,13 @@ func (p *PreparedRuntimePool) ReconcileDesiredRuntimes(ctx context.Context, clie
 			err = fmt.Errorf("unsupported runtime desired state %q", response.Target.DesiredState)
 		}
 		if err != nil {
+			if diagnostic, ok := deployment.VerifierLocalDiagnostic(err); ok {
+				p.logInfo("artifact verifier bootstrap failed", "diagnostic", diagnostic)
+			}
+			var fatal interface{ FatalWorker() bool }
+			if errors.As(err, &fatal) && fatal.FatalWorker() {
+				return err
+			}
 			p.logInfo("runtime reconciliation failed", "error", err.Error())
 		}
 		if err := sleepWithContext(ctx, reconnectDelay); err != nil {
@@ -429,6 +436,9 @@ func (p *PreparedRuntimePool) WarmRuntimeTarget(ctx context.Context, client Prep
 	}
 	if client == nil {
 		return errors.New("prepared runtime instance client is required")
+	}
+	if target.Source.WorkspaceTarget == nil {
+		return errors.New("prepared runtime warm command workspace target is required")
 	}
 	if p.AdmitRuntimeStart != nil {
 		if err := p.AdmitRuntimeStart(ctx); err != nil {
@@ -596,19 +606,21 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 		if !materializeAttempted {
 			proofMethod = workerapi.RuntimeCleanupNotMaterialized
 		}
-		if markErr := p.markRuntimeTargetFailedWithProof(stateCtx, p.RuntimeInstances, target, err, proofMethod); markErr != nil {
+		if markErr := p.reportRuntimeTargetFailedWithProof(stateCtx, p.RuntimeInstances, target, err, proofMethod); markErr != nil {
 			p.logInfo("prepared runtime pool instance fail transition failed", "runtime_instance_id", runtimeInstanceID, "error", markErr.Error())
-			return errors.Join(err, markErr)
+			return markErr
+		}
+		var fatal interface{ FatalWorker() bool }
+		if errors.As(err, &fatal) && fatal.FatalWorker() {
+			return err
 		}
 		return nil
 	}
 	materializer := WorkspaceMaterializer{
-		Connector:             p.Connector,
 		CAS:                   p.CAS,
 		TempDir:               p.TempDir,
 		ArtifactCacheDir:      p.ArtifactCacheDir,
 		ArtifactCacheMaxBytes: p.ArtifactCacheMaxBytes,
-		Substrates:            p.Substrates,
 		Log:                   p.Log,
 	}
 	tempDir := strings.TrimSpace(p.TempDir)
@@ -660,7 +672,7 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 		runtimeSubstrateIDValue = runtimeSubstrateID(registered)
 	}
 	started := time.Now()
-	if err := p.reserveRuntimeCapacity(target); err != nil {
+	if err := p.reserveRuntimeCapacity(target, topology); err != nil {
 		if errors.Is(err, errPreparedRuntimeCapacityBusy) {
 			p.logInfo("prepared runtime warm deferred", "runtime_instance_id", runtimeInstanceID, "reason", err.Error())
 			return err
@@ -685,9 +697,10 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 		session, materializeErr = connector.Materialize(ctx, vm.MaterializeRequest{
 			ID: runtimeInstanceID, OwnerKind: vm.OwnerRuntime, RootfsDigest: mount.RootfsDigest,
 			Binding:            runtimeTargetWorkloadBinding(target),
-			WorkspaceMountPath: mount.WorkspaceMountPath, BaseVersionID: mount.BaseVersionID,
+			WorkspaceMountPath: mount.WorkspaceMountPath, BaseVersionID: mount.Target.BaseWorkspaceVersionID,
 			Resources: compute.ResourceVector{MilliCPU: mount.RequestedMilliCPU, MemoryMiB: mount.RequestedMemoryMiB,
 				DiskMiB: mount.RequestedDiskMiB, Slots: mount.RequestedExecutionSlots},
+			VMVCPUCount: target.Source.VMVCPUCount, CPUConfigDigest: target.Source.CPUConfigDigest,
 			Topology: topology, ReadOnlyDrives: readOnlyDrives,
 		})
 	}
@@ -761,6 +774,8 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 	}
 	readyRequest := runtimeTargetStateRequest(target, nil)
 	readyRequest.RuntimeSubstrateID = runtimeSubstrateIDValue
+	readyRequest.VMVCPUCount = target.Source.VMVCPUCount
+	readyRequest.CPUConfigDigest = target.Source.CPUConfigDigest
 	if _, err := p.RuntimeInstances.MarkRuntimeInstanceReady(ctx, readyRequest); err != nil {
 		entry.ready.finish(err)
 		p.logInfo("prepared runtime pool instance ready transition failed", "runtime_instance_id", runtimeInstanceID, "error", err.Error())
@@ -804,23 +819,24 @@ func (p *PreparedRuntimePool) verifyReservedWorkspaceVersion(
 	tempDir string,
 	mount workerapi.WorkspaceMount,
 ) error {
-	if strings.TrimSpace(mount.BaseVersionID) == "" {
+	if strings.TrimSpace(mount.Target.BaseWorkspaceVersionID) == "" {
 		return errors.New("runtime reservation base workspace version is required")
 	}
-	if err := validateWorkspaceArtifactShape(mount.WorkspaceArtifact); err != nil {
-		return fmt.Errorf("runtime reservation workspace artifact: %w", err)
+	if _, err := workspaceTargetFromWorker(mount.Target); err != nil {
+		return fmt.Errorf("runtime reservation workspace target: %w", err)
 	}
-	if workspaceArtifactIsEmpty(mount.WorkspaceArtifact) {
+	if mount.Target.Empty != nil {
 		return nil
 	}
+	artifact := mount.Target.Artifact
 	_, cleanup, err := materializer.restoreCASObject(
 		ctx,
 		tempDir,
 		"workspace-version",
 		workerapi.CASObject{
-			Digest:    mount.WorkspaceArtifact.Digest,
-			SizeBytes: mount.WorkspaceArtifact.SizeBytes,
-			MediaType: mount.WorkspaceArtifact.MediaType,
+			Digest:    artifact.Digest,
+			SizeBytes: artifact.SizeBytes,
+			MediaType: artifact.MediaType,
 		},
 	)
 	cleanup()
@@ -923,8 +939,7 @@ func (p *PreparedRuntimePool) prepareProgram(
 		)
 	}
 	if programIndex.RuntimeContract != runtimeDescriptor.RuntimeContract ||
-		programIndex.Architecture != runtimeDescriptor.Architecture ||
-		program.BuildContract != deployment.ProgramBuildContract {
+		programIndex.Architecture != runtimeDescriptor.Architecture {
 		return nil, func() error { return nil }, errors.Join(
 			errors.New("program index does not match runtime reservation authority"),
 			closeSnapshots(),
@@ -1195,10 +1210,9 @@ func preparedRuntimeWorkspaceMountFromSource(source workerapi.RuntimeSource) wor
 		ID:                      uuid.Must(uuid.NewV7()).String(),
 		WorkspaceID:             strings.TrimSpace(source.WorkspaceID),
 		DeploymentDefinitionID:  strings.TrimSpace(source.DeploymentDefinitionID),
-		BaseVersionID:           strings.TrimSpace(source.BaseVersionID),
+		Target:                  *source.WorkspaceTarget,
 		RuntimeIdentityID:       strings.TrimSpace(source.RuntimeIdentityID),
 		WorkspaceImage:          source.WorkspaceImage,
-		WorkspaceArtifact:       source.WorkspaceArtifact,
 		RootfsDigest:            strings.TrimSpace(source.RootfsDigest),
 		WorkspaceMountPath:      "/workspace",
 		RequestedMilliCPU:       int64(source.ReservedCPUMillis),
@@ -1316,14 +1330,25 @@ func preparedRuntimeControlContext(parent context.Context) (context.Context, con
 	return context.WithTimeout(parent, defaultPreparedRuntimeControlTimeout)
 }
 
-func (p *PreparedRuntimePool) reserveRuntimeCapacity(target workerapi.RuntimeReconcileTarget) error {
+func (p *PreparedRuntimePool) reserveRuntimeCapacity(
+	target workerapi.RuntimeReconcileTarget,
+	topologies ...vm.RuntimeTopology,
+) error {
 	if p == nil || p.Capacity == nil {
 		return errors.New("prepared runtime capacity ledger is required")
 	}
-	request, err := runtimeCapacityVector(
+	projectionBytes := int64(0)
+	if len(topologies) > 1 {
+		return errors.New("runtime capacity accepts at most one topology")
+	}
+	if len(topologies) == 1 && topologies[0].Substrate != nil {
+		projectionBytes = topologies[0].Substrate.SizeBytes
+	}
+	request, err := runtimeCapacityVectorWithProjection(
 		int64(target.Source.ReservedCPUMillis),
 		int64(target.Source.ReservedMemoryMiB),
 		target.Source.ReservedDiskMiB,
+		projectionBytes,
 	)
 	if err != nil {
 		return err
@@ -1368,8 +1393,14 @@ func runtimeTargetStateRequest(target workerapi.RuntimeReconcileTarget, failure 
 		ExpectedObservedVersion: target.ObservedVersion, ReasonCode: "desired_state_reconciled",
 	}
 	if failure != nil {
-		request.ReasonCode = "runtime_reconcile_failed"
-		request.Error, _ = json.Marshal(map[string]string{"message": failure.Error()})
+		request.ReasonCode = workerapi.RuntimeFailureReconcile
+		message := failure.Error()
+		var fatal interface{ FatalWorker() bool }
+		if errors.As(failure, &fatal) && fatal.FatalWorker() {
+			request.ReasonCode = workerapi.RuntimeFailureWorkerInvalid
+			message = "worker runtime infrastructure failed"
+		}
+		request.Error, _ = json.Marshal(map[string]string{"message": message})
 	}
 	return request
 }
@@ -1379,15 +1410,22 @@ func (p *PreparedRuntimePool) markRuntimeTargetFailed(ctx context.Context, clien
 }
 
 func (p *PreparedRuntimePool) markRuntimeTargetFailedWithProof(ctx context.Context, client PreparedRuntimeInstanceClient, target workerapi.RuntimeReconcileTarget, failure error, proofMethod string) error {
+	if err := p.reportRuntimeTargetFailedWithProof(ctx, client, target, failure, proofMethod); err != nil {
+		return errors.Join(failure, err)
+	}
+	return failure
+}
+
+func (p *PreparedRuntimePool) reportRuntimeTargetFailedWithProof(ctx context.Context, client PreparedRuntimeInstanceClient, target workerapi.RuntimeReconcileTarget, failure error, proofMethod string) error {
 	request := runtimeTargetStateRequest(target, failure)
 	if proofMethod != "" {
 		request.CleanupProof = &workerapi.RuntimeCleanupProof{Method: proofMethod, CompletedAt: time.Now().UTC()}
 	}
 	_, err := client.MarkRuntimeInstanceFailed(ctx, request)
 	if err != nil {
-		return errors.Join(failure, err)
+		return fmt.Errorf("report runtime preparation failure: %w", err)
 	}
-	return failure
+	return nil
 }
 
 func writeFileFrameWithMetadataContext(ctx context.Context, session vm.Session, w io.Writer, header wire.StreamHeader, path string, digest string, size int64) error {

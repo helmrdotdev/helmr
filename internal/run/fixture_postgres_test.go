@@ -11,8 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const testWorkerGroup = runtest.WorkerGroup
-
 type postgresFixture struct {
 	base          runtest.Fixture
 	pool          *pgxpool.Pool
@@ -26,20 +24,6 @@ type postgresFixture struct {
 type leasedRun struct {
 	leaseID uuid.UUID
 	runID   uuid.UUID
-}
-
-type handoffChain struct {
-	outerRunID          uuid.UUID
-	parentRunID         uuid.UUID
-	outerWaitID         uuid.UUID
-	outerCheckpoint     uuid.UUID
-	outerResumeID       uuid.UUID
-	enclosingWaitID     uuid.UUID
-	enclosingCheckpoint uuid.UUID
-	enclosingResumeID   uuid.UUID
-	runtimeID           uuid.UUID
-	mountID             uuid.UUID
-	versionID           uuid.UUID
 }
 
 func newPostgresFixture(t *testing.T) postgresFixture {
@@ -79,30 +63,4 @@ func (fixture postgresFixture) convertToActor(
 		runtest.RunLease{LeaseID: work.leaseID, RunID: work.runID},
 		retryPolicy,
 	)
-}
-
-func (fixture postgresFixture) addHandoffChain(
-	t *testing.T,
-	ctx context.Context,
-	work leasedRun,
-) handoffChain {
-	t.Helper()
-	chain := fixture.base.AddHandoffChain(
-		t,
-		ctx,
-		runtest.RunLease{LeaseID: work.leaseID, RunID: work.runID},
-	)
-	return handoffChain{
-		outerRunID:          chain.OuterRunID,
-		parentRunID:         chain.ParentRunID,
-		outerWaitID:         chain.OuterWaitID,
-		outerCheckpoint:     chain.OuterCheckpoint,
-		outerResumeID:       chain.OuterResumeID,
-		enclosingWaitID:     chain.EnclosingWaitID,
-		enclosingCheckpoint: chain.EnclosingCheckpoint,
-		enclosingResumeID:   chain.EnclosingResumeID,
-		runtimeID:           chain.RuntimeID,
-		mountID:             chain.MountID,
-		versionID:           chain.VersionID,
-	}
 }

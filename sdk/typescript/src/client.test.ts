@@ -138,6 +138,8 @@ describe("HelmrClient Workspaces", () => {
 			}],
 		},
       {
+        process_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
+        status: "exited",
         exit_code: 0,
         stdout_base64: "b2sK",
         stderr_base64: "",
@@ -228,6 +230,67 @@ describe("HelmrClient Workspaces", () => {
     expect(JSON.parse(String(requests[4]!.init?.body))).toEqual({
       idempotency_key: "delete-1",
     })
+  })
+
+  test("polls an admitted Workspace Exec and preserves abort and failure semantics", async () => {
+    const workspaceId = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"
+    const processId = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36"
+    const requests: string[] = []
+    const responses: unknown[] = [
+      { process_id: processId, status: "pending" },
+      {
+        process_id: processId,
+        status: "exited",
+        exit_code: 0,
+        stdout_base64: "b2s=",
+        stderr_base64: "",
+      },
+      {
+        process_id: processId,
+        status: "failed",
+        error: { terminal_reason_code: "workspace_exec_placement_timed_out" },
+      },
+      { process_id: processId, status: "pending" },
+      { process_id: processId, status: "pending" },
+      { process_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37", status: "pending" },
+    ]
+    const client = new HelmrClient({
+      url: "https://api.example.test",
+      apiKey: "api-key",
+      fetch: (async (input: URL | RequestInfo) => {
+        requests.push(String(input))
+        return Response.json(responses.shift(), { status: 200 })
+      }) as typeof fetch,
+    })
+    const workspace = client.workspaces.ref(workspaceId)
+
+    const result = await workspace.exec({ command: ["true"], idempotencyKey: "exec-poll" })
+    expect(new TextDecoder().decode(result.stdout)).toBe("ok")
+    expect(requests[1]).toBe(
+      `https://api.example.test/v1/workspaces/${workspaceId}/exec/${processId}`,
+    )
+
+    await expect(workspace.exec({
+      command: ["true"],
+      idempotencyKey: "exec-failed",
+    })).rejects.toMatchObject({
+      name: "HelmrError",
+      code: "workspace_exec_placement_timed_out",
+    })
+
+    const controller = new AbortController()
+    const cancelled = workspace.exec(
+      { command: ["true"], idempotencyKey: "exec-abort" },
+      { signal: controller.signal },
+    )
+    controller.abort(new Error("cancelled"))
+    await expect(cancelled).rejects.toThrow("cancelled")
+
+    await expect(workspace.exec({
+      command: ["true"],
+      idempotencyKey: "exec-drift",
+    })).rejects.toThrow("changed process ID")
+    expect(requests).toHaveLength(6)
   })
 })
 
@@ -717,11 +780,8 @@ describe("HelmrClient Deployments", () => {
       Response.json({
         id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
         version: "2026.07.25.1",
-        content_hash: "sha256:source",
-        deployment_source: { digest: "sha256:artifact", size_bytes: 4096 },
-        status: "deployed",
+        bundle_digest: "sha256:bundle",
         created_at: "2026-07-25T10:00:00Z",
-        deployed_at: "2026-07-25T10:01:00Z",
       }),
     ]
     const client = new HelmrClient({
@@ -736,47 +796,42 @@ describe("HelmrClient Deployments", () => {
     ).resolves.toEqual({
       id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
       version: "2026.07.25.1",
-      contentHash: "sha256:source",
-      deploymentSource: { digest: "sha256:artifact", sizeBytes: 4096 },
-      status: "deployed",
+      bundleDigest: "sha256:bundle",
       createdAt: "2026-07-25T10:00:00Z",
-      deployedAt: "2026-07-25T10:01:00Z",
     })
   })
 
-	test("lists bounded Deployment projections", async () => {
-		const requests: string[] = []
-		const client = new HelmrClient({
-			url: "https://api.example.test",
-			apiKey: "api-key",
-			fetch: (async (input: URL | RequestInfo) => {
-				requests.push(String(input))
-				return Response.json({
-					deployments: [{
-						id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
-						version: "2026.07.25.1",
-						status: "deployed",
-						created_at: "2026-07-25T10:00:00Z",
-						deployed_at: "2026-07-25T10:01:00Z",
-					}],
-					next_cursor: "cursor-next",
-				})
-			}) as typeof fetch,
-		})
+  test("lists bounded Deployment projections", async () => {
+    const requests: string[] = []
+    const client = new HelmrClient({
+      url: "https://api.example.test",
+      apiKey: "api-key",
+      fetch: (async (input: URL | RequestInfo) => {
+        requests.push(String(input))
+        return Response.json({
+          deployments: [{
+            id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
+            version: "2026.07.25.1",
+            bundle_digest: "sha256:bundle",
+            created_at: "2026-07-25T10:00:00Z",
+          }],
+          next_cursor: "cursor-next",
+        })
+      }) as typeof fetch,
+    })
 
-		const page = await client.deployments.list({ cursor: "cursor-current", limit: 10 })
-		expect(page.items[0]).toEqual({
-			id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
-			version: "2026.07.25.1",
-			status: "deployed",
-			createdAt: "2026-07-25T10:00:00Z",
-			deployedAt: "2026-07-25T10:01:00Z",
-		})
-		expect(page.nextCursor).toBe("cursor-next")
-		expect(requests[0]).toBe(
-			"https://api.example.test/v1/deployments?cursor=cursor-current&limit=10",
-		)
-	})
+    const page = await client.deployments.list({ cursor: "cursor-current", limit: 10 })
+    expect(page.items[0]).toEqual({
+      id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
+      version: "2026.07.25.1",
+      bundleDigest: "sha256:bundle",
+      createdAt: "2026-07-25T10:00:00Z",
+    })
+    expect(page.nextCursor).toBe("cursor-next")
+    expect(requests[0]).toBe(
+      "https://api.example.test/v1/deployments?cursor=cursor-current&limit=10",
+    )
+  })
 })
 
 describe("HelmrClient Schedules", () => {

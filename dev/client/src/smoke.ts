@@ -96,7 +96,10 @@ async function runSmoke(): Promise<Evidence> {
     workspaceCreateOptions,
   )
   cleanupPrimaryWorkspace = () =>
-    created.delete({ idempotencyKey: `workspace:delete:${config.marker}` })
+    created.delete(
+      { idempotencyKey: `workspace:delete:${config.marker}` },
+      { signal: AbortSignal.timeout(30_000) },
+    )
   const replayedCreate = await client.sandboxes.createWorkspace(
     "helmr-runtime-smoke",
     workspaceCreateOptions,
@@ -132,16 +135,17 @@ async function runSmoke(): Promise<Evidence> {
   assertEqual(workspace.id, created.id, "workspace key resolved to a different Workspace")
   assertEqual(workspace.sandboxId, "helmr-runtime-smoke", "workspace Sandbox ID mismatch")
 
-  const markerPath = "workspace-smoke/nested/marker.txt"
+  const markerDirectory = "sandbox-smoke/nested"
+  const markerPath = `${markerDirectory}/marker.txt`
   const stdin = `stdin:${config.marker}\n`
   const execOptions = {
     command: [
       "sh",
       "-ceu",
       [
-        "mkdir -p workspace-smoke/nested",
+        `mkdir -p ${markerDirectory}`,
         "IFS= read -r line",
-        "printf 'marker=%s\\nstdin=%s\\n' \"$SMOKE_MARKER\" \"$line\" > workspace-smoke/nested/marker.txt",
+        `printf 'marker=%s\\nstdin=%s\\n' "$SMOKE_MARKER" "$line" > ${markerPath}`,
         "printf 'stdout:%s:%s\\n' \"$SMOKE_MARKER\" \"$line\"",
         "printf 'stderr:%s\\n' \"$SMOKE_MARKER\" >&2",
         "exit 7",
@@ -153,10 +157,14 @@ async function runSmoke(): Promise<Evidence> {
     timeout: "2m",
     idempotencyKey: `workspace:exec:${config.marker}`,
   } as const
-  const initialExec = await byKey.exec(execOptions)
+  const initialExec = await byKey.exec(execOptions, {
+    signal: AbortSignal.timeout(15 * 60_000),
+  })
   assertExec(initialExec, config.marker)
 
-  const replayExec = await byKey.exec(execOptions)
+  const replayExec = await byKey.exec(execOptions, {
+    signal: AbortSignal.timeout(15 * 60_000),
+  })
   assertExec(replayExec, config.marker)
   assertEqual(
     encodeExec(replayExec),
@@ -164,13 +172,21 @@ async function runSmoke(): Promise<Evidence> {
     "BasicExec idempotency replay changed the result",
   )
 
-  const fileBytes = await byKey.files.read(markerPath)
+  const fileBytes = await byKey.files.read(markerPath, {
+    signal: AbortSignal.timeout(30_000),
+  })
   const fileText = new TextDecoder().decode(fileBytes)
   assert(fileText.includes(`marker=${config.marker}`), "committed file missed the exec marker")
   assert(fileText.includes(`stdin=stdin:${config.marker}`), "committed file missed stdin")
-  const fileStat = await byKey.files.stat(markerPath)
+  const fileStat = await byKey.files.stat(markerPath, {
+    signal: AbortSignal.timeout(30_000),
+  })
   assertFile(fileStat, markerPath, fileBytes.byteLength)
-  const listing = await byKey.files.list("workspace-smoke/nested", { limit: 100 })
+  const listing = await byKey.files.list(
+    markerDirectory,
+    { limit: 100 },
+    { signal: AbortSignal.timeout(30_000) },
+  )
   assert(
     listing.items.some((entry) => entry.path === markerPath),
     "committed file was absent from the directory listing",
@@ -194,6 +210,7 @@ async function runSmoke(): Promise<Evidence> {
       tags: ["smoke", "workspace-basic-exec"],
       metadata: { marker: config.marker },
     },
+    { signal: AbortSignal.timeout(30_000) },
   )
   const taskOutput = await client.runs.wait(started, {
     signal: AbortSignal.timeout(20 * 60 * 1_000),
@@ -214,7 +231,9 @@ async function runSmoke(): Promise<Evidence> {
     taskEvents.items.some((event) => event.runId === started.id),
     "Task events did not include the completed Run",
   )
-  const taskFile = new TextDecoder().decode(await byKey.files.read(markerPath))
+  const taskFile = new TextDecoder().decode(await byKey.files.read(markerPath, {
+    signal: AbortSignal.timeout(30_000),
+  }))
   assert(taskFile.includes(`marker=${taskMarker}`), "Task did not advance the Workspace head")
 
   const childTasks = await runChildTaskSmoke()
@@ -231,7 +250,7 @@ async function runSmoke(): Promise<Evidence> {
   const canceled = await client.tokens.cancel(token.id, {
     idempotencyKey: `token:cancel:${config.marker}`,
   })
-  assertEqual(canceled.status, "canceled", "external Token was not canceled")
+  assertEqual(canceled.status, "cancelled", "external Token was not cancelled")
 
   const deleted = await byKey.delete({
     idempotencyKey: `workspace:delete:${config.marker}`,
@@ -437,7 +456,7 @@ async function runChildTaskSmoke(): Promise<ChildTaskEvidence> {
       "Actor close discarded durable output",
     )
     for (const workspace of workspaces.toReversed()) {
-      await workspace.ref.delete({ idempotencyKey: workspace.deleteKey })
+      await deleteChildSmokeWorkspace(workspace.ref, workspace.deleteKey)
     }
 
     return {
@@ -455,6 +474,17 @@ async function runChildTaskSmoke(): Promise<ChildTaskEvidence> {
   } catch (error) {
     await cleanupChildTaskSmoke(actorRef, workspaces)
     throw error
+  }
+}
+
+async function deleteChildSmokeWorkspace(
+  ref: WorkspaceRef,
+  idempotencyKey: string,
+): Promise<void> {
+  try {
+    await ref.delete({ idempotencyKey })
+  } catch (error) {
+    if (errorCode(error) !== "workspace_not_found") throw error
   }
 }
 
@@ -481,7 +511,7 @@ async function waitForTerminalRun(runId: string): Promise<Run> {
 async function waitForActorOutput(
   ref: SessionRef,
 ) {
-  const deadline = Date.now() + 60_000
+  const deadline = Date.now() + 5 * 60_000
   for (;;) {
     const page = await ref.output.list({ after: 0, limit: 10 })
     if (page.records[0] !== undefined) return page.records[0]
@@ -496,7 +526,7 @@ async function waitForActorOutputs(
   ref: SessionRef,
   count: number,
 ) {
-  const deadline = Date.now() + 60_000
+  const deadline = Date.now() + 5 * 60_000
   for (;;) {
     const page = await ref.output.list({ after: 0, limit: 10 })
     if (page.records.length >= count) return page.records
@@ -557,13 +587,16 @@ async function cleanupChildTaskSmoke(
 async function readTelemetry<T>(
   read: () => Promise<Readonly<{ items: readonly T[] }>>,
 ): Promise<Readonly<{ items: readonly T[] }>> {
-  const deadline = Date.now() + 60_000
+  const deadline = Date.now() + 5 * 60_000
   for (;;) {
     try {
       return await read()
     } catch (error) {
       const code = errorCode(error)
-      if (code !== "telemetry_lagging" || Date.now() >= deadline) throw error
+      if (
+        (code !== "telemetry_lagging" && code !== "telemetry_unavailable") ||
+        Date.now() >= deadline
+      ) throw error
       await new Promise((resolve) => setTimeout(resolve, 500))
     }
   }
@@ -622,8 +655,6 @@ async function writeClientSmokeResult(
     "actor-continuation",
     "actor-output-pagination",
     "deployment-read",
-    "schedule-read",
-    "schedule-fire",
     "secret-lifecycle",
     "token-management",
     "external-token-fanout",
@@ -644,7 +675,6 @@ async function writeClientSmokeResult(
             evidence.childTasks.actorRunId,
             evidence.childTasks.actorContinuationRunId,
             evidence.childTasks.actorChildRunId,
-            evidence.management.scheduledRunId,
             evidence.management.cancelledRunId,
             ...evidence.management.externalTokenRunIds,
           ],
@@ -660,9 +690,7 @@ async function writeClientSmokeResult(
       deployment_ids: evidence === undefined
         ? []
         : [evidence.management.deploymentId],
-      schedule_ids: evidence === undefined
-        ? []
-        : [evidence.management.scheduleId],
+      schedule_ids: [],
       token_ids: evidence === undefined
         ? []
         : [evidence.tokenId, evidence.management.completedTokenId],

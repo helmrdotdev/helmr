@@ -9,8 +9,11 @@ import (
 
 func TestConfigDefaults(t *testing.T) {
 	cfg := (Config{}).WithDefaults()
-	if cfg.FirecrackerPath != DefaultFirecrackerPath || cfg.VCPUCount != DefaultVCPUs || cfg.MemoryMiB != DefaultMemoryMiB {
+	if cfg.FirecrackerPath != DefaultFirecrackerPath || cfg.CPUTemplateHelperPath != DefaultCPUTemplateHelperPath || cfg.VCPUCount != DefaultVCPUs || cfg.MemoryMiB != DefaultMemoryMiB {
 		t.Fatalf("config = %+v", cfg)
+	}
+	if cfg.CPUTemplateSelector != NoCPUTemplateSelector() {
+		t.Fatalf("CPU template selector = %+v", cfg.CPUTemplateSelector)
 	}
 	if cfg.JailerPath != DefaultJailerPath || cfg.JailerChrootBaseDir == "" || cfg.CgroupVersion != DefaultCgroupVersion {
 		t.Fatalf("config = %+v", cfg)
@@ -20,6 +23,42 @@ func TestConfigDefaults(t *testing.T) {
 	}
 	if cfg.GuestPort != DefaultGuestPort || cfg.HealthPort != HealthPort || cfg.StateDir == "" || cfg.InitTimeout != DefaultInitTimeout || cfg.HealthTimeout != DefaultHealthTimeout || cfg.HealthAttemptTimeout != DefaultHealthAttemptTimeout {
 		t.Fatalf("config = %+v", cfg)
+	}
+}
+
+func TestConfigValidateRejectsInvalidCPUTemplateConfiguration(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  Config
+		want string
+	}{
+		{name: "unknown selector", cfg: Config{CPUTemplateSelector: CPUTemplateSelector{Kind: "static"}}, want: "selector kind"},
+		{name: "none with digest", cfg: Config{CPUTemplateSelector: CPUTemplateSelector{Kind: CPUTemplateNone, Digest: "sha256:" + strings.Repeat("a", 64)}}, want: "must not include a digest"},
+		{name: "custom digest", cfg: Config{CPUTemplateSelector: CPUTemplateSelector{Kind: CPUTemplateCustom, Digest: "sha256:invalid"}, CustomCPUTemplatePath: "/template.json"}, want: "canonical SHA-256"},
+		{name: "custom path missing", cfg: Config{CPUTemplateSelector: CPUTemplateSelector{Kind: CPUTemplateCustom, Digest: "sha256:" + strings.Repeat("a", 64)}}, want: "custom CPU template path is required"},
+		{name: "none with path", cfg: Config{CustomCPUTemplatePath: "/template.json"}, want: "path requires the custom"},
+		{name: "none with whitespace path", cfg: Config{CustomCPUTemplatePath: " "}, want: "path requires the custom"},
+		{name: "custom path whitespace", cfg: Config{CPUTemplateSelector: CPUTemplateSelector{Kind: CPUTemplateCustom, Digest: "sha256:" + strings.Repeat("a", 64)}, CustomCPUTemplatePath: " /template.json"}, want: "surrounding whitespace"},
+		{name: "Firecracker path whitespace", cfg: Config{FirecrackerPath: " firecracker"}, want: "Firecracker path must not contain surrounding whitespace"},
+		{name: "Firecracker path only whitespace", cfg: Config{FirecrackerPath: " "}, want: "Firecracker path is required"},
+		{name: "helper path whitespace", cfg: Config{CPUTemplateHelperPath: "cpu-template-helper "}, want: "helper path must not contain surrounding whitespace"},
+		{name: "helper path only whitespace", cfg: Config{CPUTemplateHelperPath: " "}, want: "helper path is required"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.cfg.WithDefaults().Validate()
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestConfigValidateRejectsVCPUCountAboveFirecrackerLimit(t *testing.T) {
+	cfg := (Config{VCPUCount: MaxVMVCPUCount + 1}).WithDefaults()
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "must not exceed") {
+		t.Fatalf("error = %v", err)
 	}
 }
 

@@ -53,12 +53,8 @@ SELECT EXISTS (
              FROM run_waits
             WHERE run_waits.workspace_id = sqlc.arg(workspace_id)
               AND run_waits.condition_state = 'pending'
-              AND (
-                  run_waits.child_run_id IS NOT NULL
-                  OR run_waits.handoff_runtime_instance_id IS NOT NULL
-                  OR run_waits.handoff_workspace_mount_id IS NOT NULL
-              )
-       ) AS has_active_handoff;
+              AND run_waits.child_run_id IS NOT NULL
+       ) AS has_active_child;
 
 -- name: CompleteIdleActorClose :one
 UPDATE sessions

@@ -236,3 +236,179 @@ func TestEventsCommandPrintsJSONLines(t *testing.T) {
 		t.Fatalf("output = %q", out.String())
 	}
 }
+
+func TestRunEventsWaitReadyRetriesTelemetryLag(t *testing.T) {
+	withFastRunTelemetryPoll(t)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests == 1 {
+			writeRunTelemetryTestError(w, http.StatusServiceUnavailable, "telemetry_lagging")
+			return
+		}
+		_ = json.NewEncoder(w).Encode(api.RunEventPage{Events: []api.RunEvent{{ID: "ready", Kind: "run.completed"}}})
+	}))
+	defer server.Close()
+	setRunTelemetryTestEnvironment(t, server.URL)
+
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"run", "events", "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", "--wait-ready", "1s"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 2 || !strings.Contains(out.String(), `"id":"ready"`) {
+		t.Fatalf("requests=%d output=%q", requests, out.String())
+	}
+}
+
+func TestRunLogsWaitReadyRetriesTelemetryLag(t *testing.T) {
+	withFastRunTelemetryPoll(t)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests == 1 {
+			writeRunTelemetryTestError(w, http.StatusServiceUnavailable, "telemetry_lagging")
+			return
+		}
+		_ = json.NewEncoder(w).Encode(api.RunLogPage{Logs: []api.RunLogRecord{{
+			Kind: "stdout", ContentBase64: base64.StdEncoding.EncodeToString([]byte("ready\n")),
+		}}})
+	}))
+	defer server.Close()
+	setRunTelemetryTestEnvironment(t, server.URL)
+
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"run", "logs", "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", "--wait-ready", "1s"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 2 || out.String() != "ready\n" {
+		t.Fatalf("requests=%d output=%q", requests, out.String())
+	}
+}
+
+func TestRunEventsWaitReadyStopsAtBound(t *testing.T) {
+	withFastRunTelemetryPoll(t)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		writeRunTelemetryTestError(w, http.StatusServiceUnavailable, "telemetry_lagging")
+	}))
+	defer server.Close()
+	setRunTelemetryTestEnvironment(t, server.URL)
+
+	cmd := newRootCommand()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"run", "events", "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", "--wait-ready", "5ms"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "wait for run telemetry readiness: context deadline exceeded") {
+		t.Fatalf("err=%v", err)
+	}
+	if requests < 2 {
+		t.Fatalf("requests=%d, want retries", requests)
+	}
+}
+
+func TestRunEventsWaitReadyRejectsNonLaggingErrorsImmediately(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+		code   string
+	}{
+		{name: "telemetry unavailable", status: http.StatusServiceUnavailable, code: "telemetry_unavailable"},
+		{name: "generic service unavailable", status: http.StatusServiceUnavailable, code: "service_unavailable"},
+		{name: "unauthorized", status: http.StatusUnauthorized, code: "unauthorized"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			requests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				writeRunTelemetryTestError(w, test.status, test.code)
+			}))
+			defer server.Close()
+			setRunTelemetryTestEnvironment(t, server.URL)
+
+			cmd := newRootCommand()
+			cmd.SetOut(&bytes.Buffer{})
+			cmd.SetErr(&bytes.Buffer{})
+			cmd.SetArgs([]string{"run", "events", "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", "--wait-ready", "1s"})
+			if err := cmd.Execute(); err == nil {
+				t.Fatal("expected command failure")
+			}
+			if requests != 1 {
+				t.Fatalf("requests=%d, want one", requests)
+			}
+		})
+	}
+}
+
+func TestRunEventsWithoutWaitReadyReadsOnce(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		writeRunTelemetryTestError(w, http.StatusServiceUnavailable, "telemetry_lagging")
+	}))
+	defer server.Close()
+	setRunTelemetryTestEnvironment(t, server.URL)
+
+	cmd := newRootCommand()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"run", "events", "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"})
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("expected command failure")
+	}
+	if requests != 1 {
+		t.Fatalf("requests=%d, want one", requests)
+	}
+}
+
+func TestRunTelemetryWaitReadyFlagValidation(t *testing.T) {
+	tests := [][]string{
+		{"run", "events", "run-id", "--wait-ready", "0s"},
+		{"run", "logs", "run-id", "--wait-ready", "invalid"},
+		{"run", "events", "run-id", "--wait-ready="},
+		{"run", "logs", "run-id", "--wait-ready=   "},
+		{"run", "events", "run-id", "--wait-ready", "1s", "--follow"},
+		{"run", "logs", "run-id", "--wait-ready", "1s", "--follow"},
+		{"run", "events", "run-id", "--wait-ready=", "--follow"},
+		{"run", "logs", "run-id", "--wait-ready=", "--follow"},
+	}
+	for _, args := range tests {
+		cmd := newRootCommand()
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetErr(&bytes.Buffer{})
+		cmd.SetArgs(args)
+		if err := cmd.Execute(); err == nil {
+			t.Fatalf("args=%v unexpectedly succeeded", args)
+		}
+	}
+}
+
+func withFastRunTelemetryPoll(t *testing.T) {
+	t.Helper()
+	oldPollInterval := runFollowPollInterval
+	runFollowPollInterval = time.Millisecond
+	t.Cleanup(func() { runFollowPollInterval = oldPollInterval })
+}
+
+func setRunTelemetryTestEnvironment(t *testing.T, serverURL string) {
+	t.Helper()
+	t.Setenv(helmrAPIURLEnv, serverURL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+}
+
+func writeRunTelemetryTestError(w http.ResponseWriter, status int, code string) {
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"error": map[string]any{"code": code, "message": code},
+	})
+}

@@ -5,14 +5,15 @@ SELECT runtime_instances.*,
        artifacts.media_type AS workspace_image_media_type,
        '/workspace'::text AS workspace_mount_path,
        reserved_workspace_versions.id AS base_workspace_version_id,
+	   reserved_workspace_versions.content_digest AS workspace_content_digest,
+	   reserved_workspace_versions.size_bytes AS workspace_logical_size_bytes,
        reserved_workspace_versions.entry_count AS workspace_entry_count,
        COALESCE(reserved_workspace_artifacts.digest, '') AS workspace_artifact_digest,
        COALESCE(reserved_workspace_artifacts.size_bytes, 0) AS workspace_artifact_size_bytes,
        COALESCE(reserved_workspace_artifacts.media_type, '') AS workspace_artifact_media_type,
        runtime_identities.runtime_arch AS workspace_architecture,
        program_deployments.id AS program_deployment_authority_id,
-       program_deployments.build_runtime_digest AS program_runtime_digest,
-       program_deployments.build_contract AS program_build_contract,
+       program_deployments.runtime_artifact_digest AS program_runtime_digest,
        program_deployments.program_index_digest,
        COALESCE(program_artifact.digest, '') AS program_artifact_digest,
        COALESCE(program_artifact.size_bytes, 0) AS program_artifact_size_bytes,
@@ -35,17 +36,13 @@ SELECT runtime_instances.*,
     ON reserved_workspace_versions.environment_id = runtime_instances.environment_id
    AND reserved_workspace_versions.workspace_id = runtime_instances.workspace_id
    AND reserved_workspace_versions.id = runtime_instances.reserved_workspace_version_id
-   AND reserved_workspace_versions.state = CASE
-           WHEN runtime_instances.restore_checkpoint_id IS NULL THEN 'committed'
-           ELSE 'private'
-       END
+   AND reserved_workspace_versions.state IN ('committed', 'private')
   LEFT JOIN artifacts AS reserved_workspace_artifacts
     ON reserved_workspace_artifacts.environment_id = reserved_workspace_versions.environment_id
    AND reserved_workspace_artifacts.id = reserved_workspace_versions.artifact_id
   LEFT JOIN deployments AS program_deployments
     ON program_deployments.environment_id = runtime_instances.environment_id
    AND program_deployments.id = runtime_instances.program_deployment_id
-   AND program_deployments.status = 'deployed'
   LEFT JOIN artifacts AS program_artifact
     ON program_artifact.environment_id = program_deployments.environment_id
    AND program_artifact.id = program_deployments.program_artifact_id
@@ -91,7 +88,7 @@ UPDATE runtime_instances
 RETURNING runtime_instances.*;
 
 -- name: MarkRuntimeInstanceReady :one
-WITH restore_secret_authority AS MATERIALIZED (
+WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
     SELECT runtime_instances.id AS runtime_instance_id,
            workspace_secrets.placement_kind,
            workspace_secrets.placement_target
@@ -180,6 +177,65 @@ WITH restore_secret_authority AS MATERIALIZED (
                 AND runs.cause_kind IN ('actor_start', 'continuation')
                 AND runs.parent_run_id IS NULL))
      FOR UPDATE OF runs
+), restore_same_workspace_ancestors AS (
+    SELECT runtime_instances.id AS runtime_instance_id,
+           parent.id AS parent_run_id,
+           parent.parent_run_id AS next_parent_run_id,
+           parent.parent_owns_lifecycle,
+           parent.session_id AS parent_session_id,
+           edge.ownership_generation,
+           edge.parent_writer_generation
+      FROM restore_run_authority
+      JOIN runtime_instances
+        ON runtime_instances.id = restore_run_authority.runtime_instance_id
+      JOIN run_waits AS edge
+        ON edge.child_run_id = runtime_instances.reserved_run_id
+       AND edge.workspace_id = runtime_instances.workspace_id
+       AND edge.child_parent_owned IS TRUE
+       AND edge.condition_state = 'pending'
+       AND edge.suspension_state = 'parked'
+       AND edge.ownership_generation IS NOT NULL
+       AND edge.parent_writer_generation IS NOT NULL
+       AND edge.child_writer_generation IS NOT NULL
+       AND edge.resume_writer_generation IS NULL
+      JOIN runs AS parent
+        ON parent.environment_id = edge.environment_id
+       AND parent.id = edge.run_id
+       AND parent.workspace_id = edge.workspace_id
+       AND parent.status = 'waiting'
+       AND parent.current_run_lease_id IS NULL
+    UNION ALL
+    SELECT child.runtime_instance_id,
+           parent.id,
+           parent.parent_run_id,
+           parent.parent_owns_lifecycle,
+           parent.session_id,
+           edge.ownership_generation,
+           edge.parent_writer_generation
+      FROM restore_same_workspace_ancestors AS child
+      JOIN run_waits AS edge
+        ON edge.child_run_id = child.parent_run_id
+       AND edge.child_parent_owned IS TRUE
+       AND edge.condition_state = 'pending'
+       AND edge.suspension_state = 'parked'
+       AND edge.ownership_generation = child.ownership_generation
+       AND edge.child_writer_generation = child.parent_writer_generation
+       AND edge.resume_writer_generation IS NULL
+      JOIN runs AS parent
+        ON parent.environment_id = edge.environment_id
+       AND parent.id = edge.run_id
+       AND parent.workspace_id = edge.workspace_id
+       AND parent.status = 'waiting'
+       AND parent.current_run_lease_id IS NULL
+     WHERE child.parent_owns_lifecycle IS TRUE
+), restore_same_workspace_root_authority AS MATERIALIZED (
+    SELECT ancestors.runtime_instance_id,
+           ancestors.parent_run_id,
+           ancestors.parent_session_id,
+           ancestors.ownership_generation
+      FROM restore_same_workspace_ancestors AS ancestors
+     WHERE (ancestors.next_parent_run_id IS NULL
+            OR ancestors.parent_owns_lifecycle IS NOT TRUE)
 ), restore_workspace_authority AS MATERIALIZED (
     SELECT restore_run_authority.*
       FROM restore_run_authority
@@ -189,8 +245,22 @@ WITH restore_secret_authority AS MATERIALIZED (
         ON workspaces.id = runtime_instances.workspace_id
        AND workspaces.environment_id = runtime_instances.environment_id
        AND ((restore_run_authority.entrypoint_kind = 'task'
-             AND workspaces.owner_run_id = runtime_instances.reserved_run_id
-             AND workspaces.owner_session_id IS NULL)
+             AND (
+                 (workspaces.owner_run_id = runtime_instances.reserved_run_id
+                  AND workspaces.owner_session_id IS NULL)
+                 OR EXISTS (
+                     SELECT 1
+                       FROM restore_same_workspace_root_authority AS root
+                      WHERE root.runtime_instance_id = runtime_instances.id
+                        AND root.ownership_generation = workspaces.ownership_generation
+                        AND ((root.parent_session_id IS NULL
+                              AND workspaces.owner_run_id = root.parent_run_id
+                              AND workspaces.owner_session_id IS NULL)
+                             OR (root.parent_session_id IS NOT NULL
+                                 AND workspaces.owner_session_id = root.parent_session_id
+                                 AND workspaces.owner_run_id IS NULL))
+                 )
+             ))
             OR (restore_run_authority.entrypoint_kind = 'actor'
                 AND workspaces.owner_session_id = restore_run_authority.session_id
                 AND workspaces.owner_run_id IS NULL))
@@ -224,10 +294,9 @@ WITH restore_secret_authority AS MATERIALIZED (
       FROM runtime_instances
       JOIN worker_instances
         ON worker_instances.id = runtime_instances.worker_instance_id
-       AND worker_instances.worker_group_id = runtime_instances.worker_group_id
-       AND worker_instances.current_epoch = runtime_instances.worker_epoch
-       AND worker_instances.state IN ('active', 'draining')
-       AND worker_instances.supports_run
+	   AND worker_instances.worker_group_id = runtime_instances.worker_group_id
+	   AND worker_instances.current_epoch = runtime_instances.worker_epoch
+	   AND worker_instances.state IN ('active', 'draining')
       JOIN runtime_substrates
         ON runtime_substrates.id = sqlc.arg(runtime_substrate_id)
        AND runtime_substrates.org_id = runtime_instances.org_id
@@ -274,49 +343,17 @@ WITH restore_secret_authority AS MATERIALIZED (
        AND run_waits.workspace_id = runtime_instances.workspace_id
        AND run_waits.suspension_state = 'resume_pending'
        AND run_waits.resume_writer_generation IS NULL
-       AND (
-           (run_waits.handoff_runtime_instance_id IS NULL
-            AND run_waits.handoff_workspace_mount_id IS NULL
-            AND run_waits.handoff_resume_checkpoint_id IS NULL)
-           OR
-           (run_waits.handoff_runtime_instance_id IS NOT NULL
-            AND run_waits.handoff_workspace_mount_id IS NOT NULL
-            AND run_waits.handoff_mount_generation IS NOT NULL
-            AND run_waits.ownership_generation IS NOT NULL
-            AND run_waits.parent_writer_generation IS NOT NULL
-            AND run_waits.child_writer_generation IS NOT NULL
-            AND run_waits.resume_workspace_version_id
-                = runtime_instances.reserved_workspace_version_id
-            AND (
-                (run_waits.condition_state = 'completed'
-                 AND run_waits.handoff_resume_checkpoint_id
-                     = runtime_instances.restore_checkpoint_id)
-                OR
-                (run_waits.condition_state IN ('failed', 'cancelled')
-                 AND run_waits.handoff_resume_checkpoint_id IS NULL
-                 AND run_waits.suspend_checkpoint_id
-                     = runtime_instances.restore_checkpoint_id)
-            ))
-       )
+       AND (run_waits.resume_workspace_version_id IS NULL
+            OR run_waits.resume_workspace_version_id = runtime_instances.reserved_workspace_version_id)
+       AND run_waits.suspend_checkpoint_id = runtime_instances.restore_checkpoint_id
       JOIN run_checkpoints
         ON run_checkpoints.id = runtime_instances.restore_checkpoint_id
-       AND run_checkpoints.id = CASE
-               WHEN run_waits.handoff_runtime_instance_id IS NOT NULL
-                AND run_waits.condition_state = 'completed'
-               THEN run_waits.handoff_resume_checkpoint_id
-               ELSE run_waits.suspend_checkpoint_id
-           END
-       AND run_checkpoints.kind = CASE
-               WHEN run_waits.handoff_runtime_instance_id IS NOT NULL
-                AND run_waits.condition_state = 'completed'
-               THEN 'handoff_resume'::run_checkpoint_kind
-               ELSE 'suspend'::run_checkpoint_kind
-           END
+       AND run_checkpoints.id = run_waits.suspend_checkpoint_id
        AND run_checkpoints.run_id = runtime_instances.reserved_run_id
        AND run_checkpoints.attempt_number = runtime_instances.reserved_attempt_number
        AND run_checkpoints.run_wait_id = run_waits.id
        AND run_checkpoints.workspace_id = runtime_instances.workspace_id
-       AND run_checkpoints.private_workspace_version_id = runtime_instances.reserved_workspace_version_id
+       AND run_checkpoints.private_workspace_version_id IS NOT NULL
        AND run_checkpoints.state = 'ready'
        AND ((restore_attempt_authority.entrypoint_kind = 'task'
              AND run_checkpoints.actor_speculative_input_sequence IS NULL)
@@ -334,6 +371,8 @@ WITH restore_secret_authority AS MATERIALIZED (
       JOIN runtime_instances AS source_runtime
         ON source_runtime.id = source_lease.runtime_instance_id
        AND source_runtime.runtime_identity_id = runtime_instances.runtime_identity_id
+       AND source_runtime.vm_vcpu_count = runtime_instances.vm_vcpu_count
+       AND source_runtime.cpu_config_digest = runtime_instances.cpu_config_digest
        AND source_runtime.runtime_substrate_id = sqlc.arg(runtime_substrate_id)
       JOIN workspace_versions
         ON workspace_versions.workspace_id = runtime_instances.workspace_id
@@ -360,6 +399,8 @@ UPDATE runtime_instances
    AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch) AND runtime_instances.desired_version = sqlc.arg(desired_version)
    AND runtime_instances.observed_version = sqlc.arg(expected_observed_version)
    AND runtime_instances.observed_state IN ('allocated', 'preparing')
+   AND runtime_instances.vm_vcpu_count = sqlc.arg(vm_vcpu_count)
+   AND runtime_instances.cpu_config_digest = sqlc.arg(cpu_config_digest)
    AND (runtime_instances.runtime_substrate_id IS NULL
         OR runtime_instances.runtime_substrate_id = sqlc.arg(runtime_substrate_id))
    AND (runtime_instances.restore_checkpoint_id IS NULL
@@ -403,6 +444,67 @@ UPDATE runtime_instances
    AND observed_state IN ('allocated','preparing','ready','closing')
 RETURNING runtime_instances.*;
 
+-- name: GetRuntimePreparationFailureAuthority :one
+SELECT runtime_instances.reserved_run_id,
+       runtime_instances.reserved_attempt_number,
+       runtime_instances.worker_group_id,
+       worker_instances.worker_pool_id,
+       runtime_instances.org_id,
+       runtime_instances.project_id,
+       runtime_instances.environment_id,
+       (runs.id IS NOT NULL)::boolean AS run_authority_valid
+  FROM runtime_instances
+  JOIN worker_instances
+    ON worker_instances.id = runtime_instances.worker_instance_id
+   AND worker_instances.worker_group_id = runtime_instances.worker_group_id
+   AND worker_instances.current_epoch = runtime_instances.worker_epoch
+  LEFT JOIN runs
+    ON runs.id = runtime_instances.reserved_run_id
+   AND runs.org_id = runtime_instances.org_id
+   AND runs.project_id = runtime_instances.project_id
+   AND runs.environment_id = runtime_instances.environment_id
+   AND runs.workspace_id = runtime_instances.workspace_id
+   AND runs.current_attempt_number = runtime_instances.reserved_attempt_number
+   AND runs.status = 'queued'
+   AND runs.current_run_lease_id IS NULL
+ WHERE runtime_instances.id = sqlc.arg(id)
+   AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
+   AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
+   AND runtime_instances.desired_version = sqlc.arg(desired_version)
+   AND runtime_instances.observed_version = sqlc.arg(expected_observed_version)
+   AND runtime_instances.observed_state IN ('allocated','preparing','ready','closing');
+
+-- name: LockRuntimePreparationFailureAuthority :one
+SELECT runtime_instances.reserved_run_id,
+       runtime_instances.reserved_attempt_number,
+       runtime_instances.worker_group_id,
+       worker_instances.worker_pool_id,
+       runtime_instances.org_id,
+       runtime_instances.project_id,
+       runtime_instances.environment_id,
+       (runs.id IS NOT NULL)::boolean AS run_authority_valid
+  FROM runtime_instances
+  JOIN worker_instances
+    ON worker_instances.id = runtime_instances.worker_instance_id
+   AND worker_instances.worker_group_id = runtime_instances.worker_group_id
+   AND worker_instances.current_epoch = runtime_instances.worker_epoch
+  LEFT JOIN runs
+    ON runs.id = runtime_instances.reserved_run_id
+   AND runs.org_id = runtime_instances.org_id
+   AND runs.project_id = runtime_instances.project_id
+   AND runs.environment_id = runtime_instances.environment_id
+   AND runs.workspace_id = runtime_instances.workspace_id
+   AND runs.current_attempt_number = runtime_instances.reserved_attempt_number
+   AND runs.status = 'queued'
+   AND runs.current_run_lease_id IS NULL
+ WHERE runtime_instances.id = sqlc.arg(id)
+   AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
+   AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
+   AND runtime_instances.desired_version = sqlc.arg(desired_version)
+   AND runtime_instances.observed_version = sqlc.arg(expected_observed_version)
+   AND runtime_instances.observed_state IN ('allocated','preparing','ready','closing')
+ FOR UPDATE OF runtime_instances;
+
 -- name: ReclaimFailedRuntimeInstance :one
 UPDATE runtime_instances
    SET reclaimed_at = now(),
@@ -421,6 +523,6 @@ UPDATE runtime_instances
        SELECT 1
          FROM run_leases
         WHERE run_leases.runtime_instance_id = runtime_instances.id
-          AND run_leases.state IN ('assigned', 'starting', 'running')
+          AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
    )
 RETURNING runtime_instances.*;

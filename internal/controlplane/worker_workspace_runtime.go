@@ -432,7 +432,7 @@ func (s *Server) workerDeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	worker := workerFromContext(r.Context())
-	source, record, err := s.workerWorkspaceSourceAndRecord(r.Context(), worker, request.RetrieveWorkspaceRequest)
+	source, err := s.workerRunSource(r.Context(), worker, request.Lease)
 	if err != nil {
 		if failure, ok := workerWorkspaceReferenceFailure(err); ok {
 			writeJSON(w, http.StatusOK, workerapi.DeleteWorkspaceResponse{
@@ -443,9 +443,14 @@ func (s *Server) workerDeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		s.writeWorkerWorkspaceSourceError(w, "delete", request.Lease.ID, err)
 		return
 	}
+	workspaceID, err := ids.Parse(request.Workspace.WorkspaceID)
+	if err != nil {
+		writeError(w, badRequest(errors.New("workspace ID is invalid")))
+		return
+	}
 	result, err := s.deleteWorkspace(r.Context(), workspaceDeleteRequest{
 		OrgID: pgvalue.MustUUIDValue(source.OrgID), ProjectID: pgvalue.MustUUIDValue(source.ProjectID),
-		EnvironmentID: pgvalue.MustUUIDValue(source.EnvironmentID), WorkspaceID: pgvalue.MustUUIDValue(record.ID),
+		EnvironmentID: pgvalue.MustUUIDValue(source.EnvironmentID), WorkspaceID: workspaceID,
 		IdempotencyKey: idempotencyKey,
 		Authorize: func(ctx context.Context, q db.Querier) error {
 			_, err := authorizeWorkerRunSource(ctx, q, worker, request.Lease)

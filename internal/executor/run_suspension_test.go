@@ -4,14 +4,25 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )
+
+func TestCheckpointReadyRetryableStopsOnPermanentAdmissionFailure(t *testing.T) {
+	if checkpointReadyRetryable(&httpclient.Error{StatusCode: http.StatusUnprocessableEntity}) {
+		t.Fatal("unprocessable checkpoint admission remained retryable")
+	}
+	if !checkpointReadyRetryable(&httpclient.Error{StatusCode: http.StatusInternalServerError}) {
+		t.Fatal("transient checkpoint failure stopped retrying")
+	}
+}
 
 func TestControlPlaneRunWaitsDetachesAfterTypedCheckpointIntent(t *testing.T) {
 	client := &fakeRunWaitClient{
@@ -33,6 +44,9 @@ func TestControlPlaneRunWaitsDetachesAfterTypedCheckpointIntent(t *testing.T) {
 	}
 	if client.ready == nil || client.ready.RequestVersion != 3 || client.ready.CheckpointID != "checkpoint-1" {
 		t.Fatalf("ready request = %+v", client.ready)
+	}
+	if client.ready.SourceCleanup == nil || client.ready.SourceCleanup.Method != workerapi.RuntimeCleanupSessionClosed {
+		t.Fatalf("ready source cleanup = %+v", client.ready.SourceCleanup)
 	}
 	if checkpointer.request.CheckpointID != "checkpoint-1" ||
 		checkpointer.request.RunID != "run-1" ||
@@ -358,7 +372,11 @@ func (c *fakeCheckpointer) CreateCheckpoint(_ context.Context, request Checkpoin
 	if c.err != nil {
 		return CheckpointResult{}, c.err
 	}
-	return CheckpointResult{Manifest: c.manifest, WorkspaceCapture: c.workspaceCapture}, nil
+	result := CheckpointResult{Manifest: c.manifest, WorkspaceCapture: c.workspaceCapture}
+	result.SourceCleanup = &workerapi.RuntimeCleanupProof{
+		Method: workerapi.RuntimeCleanupSessionClosed, CompletedAt: time.Now().UTC(),
+	}
+	return result, nil
 }
 
 type mutableRunLeaseProvider struct {
@@ -412,6 +430,7 @@ func testRunCheckpointWaitManifest() workerapi.CheckpointManifest {
 		RecoveryPoint: workerapi.CheckpointRecoveryPoint{Runtime: workerapi.CheckpointRuntime{
 			Backend: "firecracker", ID: "sha256:runtime", Arch: "x86_64", Contract: "helmr.vm-runtime.v0",
 			KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", ConfigDigest: "sha256:runtime-config",
+			VMVCPUCount: 2, CPUConfigDigest: "sha256:" + strings.Repeat("8", 64),
 		}},
 		RuntimeState: workerapi.CheckpointRuntimeState{
 			ConfigArtifact:      workerapi.CheckpointArtifact{Digest: "sha256:" + strings.Repeat("4", 64), MediaType: cas.CheckpointRuntimeConfigMediaType},

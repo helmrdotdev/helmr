@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -276,7 +275,7 @@ func TestSupervisorDelaysRetryAfterNonfatalWorkFailure(t *testing.T) {
 	consumer := &queuedConsumer{work: []Work{
 		func(context.Context) error {
 			started <- time.Now()
-			return errors.New("temporary acquisition failure")
+			return errors.New("temporary execution failure")
 		},
 		func(context.Context) error {
 			started <- time.Now()
@@ -286,7 +285,7 @@ func TestSupervisorDelaysRetryAfterNonfatalWorkFailure(t *testing.T) {
 	pollEvery := 50 * time.Millisecond
 	s, err := New(Config{
 		ControlPlane: controlPlane, PollEvery: pollEvery,
-		Consumers: []ConsumerSpec{{Name: "platform-acquisition", Concurrency: 1, Consumer: consumer}},
+		Consumers: []ConsumerSpec{{Name: "run", Concurrency: 1, Consumer: consumer}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -406,32 +405,23 @@ func TestSupervisorTerminatesEpochOnFatalWorkError(t *testing.T) {
 	}
 }
 
-func TestSupervisorRefusesActivationWithBuildResidue(t *testing.T) {
+func TestSupervisorTerminatesEpochOnFatalBackgroundError(t *testing.T) {
 	controlPlane := &testControlPlane{}
-	owner := vm.Owner{Kind: vm.OwnerBuild, ID: "019c10d5-a6f7-7af1-8f5f-000000000701"}
 	s, err := New(Config{
 		ControlPlane: controlPlane,
-		Capabilities: workerapi.Capabilities{
-			SupportsBuild:     true,
-			MaxBuildExecutors: 1,
-		},
-		Recover: func(context.Context) (RecoveryEvidence, error) {
-			return RecoveryEvidence{
-				ObservedAt:        time.Now().UTC(),
-				Quarantined:       []string{owner.String()},
-				QuarantinedOwners: []vm.Owner{owner},
-			}, nil
-		},
+		PollEvery:    time.Millisecond,
+		Background: []BackgroundSpec{{Name: "runtime-controller", Run: func(context.Context) error {
+			return &fatalWorkerError{err: errors.New("runtime verifier bootstrap failed")}
+		}}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = s.Run(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "quarantined build residue") {
-		t.Fatalf("error = %v, want build residue rejection", err)
-	}
-	if controlPlane.activated.Load() {
-		t.Fatal("worker activated with build residue")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	err = s.Run(ctx)
+	if err == nil || !strings.Contains(err.Error(), "worker fatal execution") {
+		t.Fatalf("run error = %v, want fatal execution", err)
 	}
 }
 
@@ -440,7 +430,6 @@ func TestSupervisorRefusesActivationWithUnownedResidue(t *testing.T) {
 	s, err := New(Config{
 		ControlPlane: controlPlane,
 		Capabilities: workerapi.Capabilities{
-			SupportsRun:             true,
 			ExecutionSlotsAvailable: 1,
 		},
 		Recover: func(context.Context) (RecoveryEvidence, error) {
@@ -559,40 +548,6 @@ func TestSupervisorHardAdmissionPausesClaimsButNotShutdown(t *testing.T) {
 	}
 }
 
-func TestSupervisorObservationKeepsBuildOnlyAdmissionPause(t *testing.T) {
-	now := time.Now()
-	health := healthyHost(now)
-	health.ProgramVerifierHealthy = false
-	evaluator, err := NewHardAdmission(HardAdmissionConfig{
-		Probe:          &staticHealthProbe{health: health},
-		DiskFloorBytes: 1, FDHeadroom: 1, RuntimeSlotCount: 1,
-		Now: func() time.Time { return now },
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	evaluator.Evaluate(context.Background(), AdmissionCheck{
-		Consumer: "build", State: StateActive,
-	})
-	supervisor, err := New(Config{
-		ControlPlane: &testControlPlane{}, AdmissionEvaluator: evaluator,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	observation := supervisor.observation(StateActive, RecoveryEvidence{})
-	if observation.RunPausedReason != "" ||
-		observation.RuntimePausedReason != "" ||
-		observation.BuildPausedReason != string(AdmissionProgramVerifierUnavailable) {
-		t.Fatalf(
-			"domain pauses = run:%q runtime:%q build:%q",
-			observation.RunPausedReason,
-			observation.RuntimePausedReason,
-			observation.BuildPausedReason,
-		)
-	}
-}
-
 func TestServerDirectedDrainStopsExecutionAndCompletesAfterCleanup(t *testing.T) {
 	controlPlane := &testControlPlane{}
 	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusActive})
@@ -615,7 +570,7 @@ func TestServerDirectedDrainStopsExecutionAndCompletesAfterCleanup(t *testing.T)
 		ControlPlane: controlPlane, PollEvery: time.Millisecond, ObservationEvery: time.Millisecond, DrainTimeout: time.Second,
 		Consumers: []ConsumerSpec{
 			{Name: "run", Concurrency: 1, Consumer: runs},
-			{Name: "workspace-cleanup", Concurrency: 1, DrainEligible: true, Consumer: cleanup},
+			{Name: "workspace-cleanup", Concurrency: 1, ContinueDuringDrain: true, BypassAdmissionDuringDrain: true, Consumer: cleanup},
 		},
 		FinalizeDrain: func(context.Context) (RecoveryEvidence, error) {
 			close(finalized)
@@ -670,6 +625,139 @@ func TestServerDirectedDrainStopsExecutionAndCompletesAfterCleanup(t *testing.T)
 	}
 	if got := controlPlane.completed.Load(); got != 1 {
 		t.Fatalf("drain completion calls = %d, want 1", got)
+	}
+}
+
+func TestServerDirectedDrainContinuesBoundRunWithHardAdmission(t *testing.T) {
+	controlPlane := &testControlPlane{}
+	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusActive})
+	now := time.Now()
+	evaluator, err := NewHardAdmission(HardAdmissionConfig{
+		Probe: &staticHealthProbe{health: healthyHost(now)}, DiskFloorBytes: 1,
+		FDHeadroom: 1, RuntimeSlotCount: 1, Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workStarted := make(chan struct{})
+	releaseWork := make(chan struct{})
+	consumer := &enabledConsumer{inner: &queuedConsumer{work: []Work{func(context.Context) error {
+		close(workStarted)
+		<-releaseWork
+		return nil
+	}}}}
+	s, err := New(Config{
+		ControlPlane: controlPlane, PollEvery: time.Millisecond, ObservationEvery: time.Millisecond,
+		DrainTimeout: time.Second, AdmissionEvaluator: evaluator,
+		Consumers: []ConsumerSpec{{
+			Name: "run", Concurrency: 1, ContinueDuringDrain: true, Consumer: consumer,
+		}},
+		FinalizeDrain: func(context.Context) (RecoveryEvidence, error) {
+			return RecoveryEvidence{ObservedAt: time.Now().UTC()}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- s.Run(t.Context()) }()
+	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveExecutions: 1})
+	deadline := time.Now().Add(time.Second)
+	for s.state.Load().(State) != StateDraining {
+		if time.Now().After(deadline) {
+			t.Fatal("supervisor did not enter draining state")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	consumer.enabled.Store(true)
+	select {
+	case <-workStarted:
+	case <-time.After(time.Second):
+		t.Fatal("bound Run was not claimed during drain")
+	}
+	close(releaseWork)
+	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveExecutions: 0})
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("supervisor did not complete drain after bound Run finished")
+	}
+}
+
+func TestServerDirectedDrainDoesNotBypassBoundRunAdmission(t *testing.T) {
+	controlPlane := &testControlPlane{}
+	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusActive})
+	now := time.Now()
+	probe := &staticHealthProbe{health: healthyHost(now)}
+	probe.health.KVMHealthy = false
+	evaluator, err := NewHardAdmission(HardAdmissionConfig{
+		Probe: probe, DiskFloorBytes: 1, FDHeadroom: 1, RuntimeSlotCount: 1, Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumer := &enabledConsumer{inner: &queuedConsumer{work: []Work{func(context.Context) error { return nil }}}}
+	s, err := New(Config{
+		ControlPlane: controlPlane, PollEvery: time.Millisecond, ObservationEvery: time.Millisecond,
+		DrainTimeout: time.Second, AdmissionEvaluator: evaluator,
+		Consumers: []ConsumerSpec{{
+			Name: "run", Concurrency: 1, ContinueDuringDrain: true, Consumer: consumer,
+		}},
+		FinalizeDrain: func(context.Context) (RecoveryEvidence, error) {
+			return RecoveryEvidence{ObservedAt: time.Now().UTC()}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- s.Run(t.Context()) }()
+	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveExecutions: 1})
+	deadline := time.Now().Add(time.Second)
+	for s.state.Load().(State) != StateDraining {
+		if time.Now().After(deadline) {
+			t.Fatal("supervisor did not enter draining state")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	consumer.enabled.Store(true)
+	time.Sleep(20 * time.Millisecond)
+	consumer.inner.mu.Lock()
+	claimed := consumer.inner.claimed
+	consumer.inner.mu.Unlock()
+	if claimed != 0 {
+		t.Fatalf("claimed %d bound Runs with unavailable KVM", claimed)
+	}
+	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveExecutions: 0})
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("supervisor did not complete rejected drain")
+	}
+}
+
+func TestDrainingObservationPreservesHardHealthInsteadOfLifecyclePause(t *testing.T) {
+	now := time.Now()
+	evaluator, err := NewHardAdmission(HardAdmissionConfig{
+		Probe: &staticHealthProbe{health: healthyHost(now)}, DiskFloorBytes: 1,
+		FDHeadroom: 1, RuntimeSlotCount: 1, Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	evaluator.Evaluate(context.Background(), AdmissionCheck{
+		Consumer: "run", State: StateDraining, DrainContinuation: true,
+	})
+	s := &Supervisor{cfg: Config{AdmissionEvaluator: evaluator}}
+	observation := s.observation(StateDraining, RecoveryEvidence{})
+	if observation.RunPausedReason != "" || observation.RuntimePausedReason != "" {
+		t.Fatalf("draining observation reported lifecycle pause: %+v", observation)
 	}
 }
 
@@ -876,12 +964,12 @@ func TestServerDirectedDrainDoesNotCompleteOnTimeoutOrDirtyInventory(t *testing.
 
 func TestSingletonRejectsSecondOwner(t *testing.T) {
 	dir := t.TempDir()
-	first, err := Acquire(dir, ProcessIdentity{ServiceID: "one", Roles: []string{"run"}})
+	first, err := Acquire(dir, ProcessIdentity{ServiceID: "one"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer first.Close()
-	if _, err := Acquire(dir, ProcessIdentity{ServiceID: "two", Roles: []string{"run"}}); err == nil {
+	if _, err := Acquire(dir, ProcessIdentity{ServiceID: "two"}); err == nil {
 		t.Fatal("second singleton acquisition succeeded")
 	}
 	identity, err := ReadProcessIdentity(dir)

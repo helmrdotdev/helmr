@@ -35,8 +35,9 @@ key from your application's configuration to its constructor.
 
 ## Control Plane
 
-Required: `DATABASE_URL`, `CAS_URI`, `CLICKHOUSE_URL`, `BUILD_POLICY_PATH`,
-`PLATFORM_STORE_URI`, `WORKER_TOKEN_SIGNING_KEY`, `AUTH_KEY`, `ENCRYPTION_KEY`,
+Required: `DATABASE_URL`, `CAS_URI`, `CLICKHOUSE_URL`,
+`DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH`, `PLATFORM_STORE_URI`,
+`WORKER_TOKEN_SIGNING_KEY`, `AUTH_KEY`, `ENCRYPTION_KEY`,
 `WORKSPACE_FENCING_KEY`, `TOKEN_CREDENTIAL_KEY`,
 `GITHUB_OAUTH_CLIENT_ID`, and `GITHUB_OAUTH_CLIENT_SECRET`.
 
@@ -46,8 +47,8 @@ Regions and Worker Groups are PostgreSQL resources managed through the Admin
 API and Console. Control Plane startup does not reconcile them from process
 configuration, and a deployment may start with neither resource.
 
-An optional startup bootstrap seeds one Region and one combined run/build
-Worker Group. Set `BOOTSTRAP_ENABLED=true`. When the named Worker
+An optional startup bootstrap seeds one Region and one execution Worker Group.
+Set `BOOTSTRAP_ENABLED=true`. When the named Worker
 Group does not exist, `BOOTSTRAP_WORKER_TOKEN` is also required.
 `BOOTSTRAP_REGION_ID` and
 `BOOTSTRAP_WORKER_GROUP_NAME` default to `default`.
@@ -107,7 +108,7 @@ Control Plane event stream and injects `REDIS_URL` into `helmr-controlplane`.
 
 Required for every Worker: `CONTROL_PLANE_URL`, `CAS_URI`,
 `PLATFORM_STORE_URI`, `WORKER_RESOURCE_ID`,
-`WORKER_ENROLLMENT_TOKEN_FILE`, `WORKER_ROLES`,
+`WORKER_POOL_NAME`, `WORKER_ENROLLMENT_TOKEN_FILE`,
 `CHECKPOINT_ENCRYPTION_KEY`, `JAILER_UID`, `JAILER_GID`,
 `WORKER_NETWORK_LINK_POOL`, `WORKER_NETWORK_TRANSLATION_POOL`,
 `WORKER_NETWORK_RESOLVER_IPV4`, and
@@ -115,19 +116,14 @@ Required for every Worker: `CONTROL_PLANE_URL`, `CAS_URI`,
 ordered JSON array; use `[]` only when the deployment intentionally supplies no
 blocked destinations.
 
-A Worker with the `build` role also requires `BUILD_POLICY_PATH`,
-`WORKER_BUILD_CACHE_DIR`, `WORKER_BUILD_SCRATCH_DIR`, positive
-`WORKER_SUBSTRATE_CACHE_MAX_MIB`, and positive
-`WORKER_ARTIFACT_CACHE_MAX_MIB`.
-
 The Worker reads its Worker Group enrollment token from the strict-permission
 token file and presents it as a Bearer credential over TLS. The token selects
 the Worker Group; the Worker does not configure a group ID. Control Plane
-validates the requested roles against that group, records token use, creates
+validates the Pool enrollment against that group, records token use, creates
 the authoritative Worker-instance identity, and issues a renewable
 per-instance credential stored at `WORKER_INSTANCE_CREDENTIAL_PATH`.
 `WORKER_RESOURCE_ID` remains an opaque deployment-owned locator for the
 physical Worker. Provider identity and infrastructure inventory are deployment
 responsibilities rather than Control Plane authentication inputs.
 
-Runtime inputs include `WORKER_WORK_DIR`, `WORKER_IMAGES_DIR`, Firecracker paths and jailer settings, routed-network link and translation pools, resolver and blocked CIDRs, `VM_VCPUS`, `VM_MEMORY_MIB`, `WORKER_DISK_MIB`, and `VM_HEALTH_TIMEOUT`. `WORKER_DISK_MIB` overrides the filesystem capacity advertised by filesystem-first worker instances. The AWS Worker profile sets `VM_HEALTH_TIMEOUT=300s` to allow extra time for first-boot guest health convergence on EC2; other deployments use the Worker default unless they have the same provider-level requirement. Workspace-image builds start the pinned BuildKit daemon inside a fresh image-build guest; there is no host BuildKit address or service setting.
+Runtime inputs include `WORKER_WORK_DIR`, `WORKER_IMAGES_DIR`, Firecracker paths and jailer settings, routed-network link and translation pools, resolver and blocked CIDRs, `VM_VCPUS`, `VM_MEMORY_MIB`, `WORKER_DISK_MIB`, and `VM_HEALTH_TIMEOUT`. `WORKER_DISK_MIB` overrides the filesystem capacity advertised by filesystem-first worker instances. The AWS Worker profile sets `VM_HEALTH_TIMEOUT=300s` to allow extra time for first-boot guest health convergence on EC2; other deployments use the Worker default unless they have the same provider-level requirement.

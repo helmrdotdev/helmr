@@ -24,9 +24,7 @@ type runLeaseClaimProjection struct {
 
 type runLeaseClaimResponseAuthority struct {
 	mode           runLeaseClaimMode
-	restoreSource  runLeaseRestoreSource
 	actor          db.Session
-	childRun       db.Run
 	run            db.Run
 	attempt        db.RunAttempt
 	runtime        db.RuntimeInstance
@@ -34,7 +32,6 @@ type runLeaseClaimResponseAuthority struct {
 	workspace      db.Workspace
 	workspaceMount db.WorkspaceMount
 	workspaceLease db.WorkspaceLease
-	enclosingWait  db.RunWait
 	runWait        db.RunWait
 	checkpoint     db.RunCheckpoint
 }
@@ -79,7 +76,7 @@ func loadRunLeaseClaimProjection(
 	if err != nil {
 		return runLeaseClaimProjection{}, fmt.Errorf("load run lease workspace reset target authority: %w", err)
 	}
-	if authority.restoreSource == runLeaseRestoreRecreated {
+	if authority.mode == runLeaseClaimRestore {
 		projection.checkpointArtifacts, err = store.ListRunCheckpointArtifactAuthority(
 			ctx,
 			authority.checkpoint.ID,
@@ -127,7 +124,6 @@ func projectRunLeaseClaimResponse(
 	}
 	execution, err := projectRunLeaseExecution(runLeaseExecutionProjection{
 		mode:                authority.mode,
-		restoreSource:       authority.restoreSource,
 		run:                 authority.run,
 		attempt:             authority.attempt,
 		actor:               actor,
@@ -135,10 +131,8 @@ func projectRunLeaseClaimResponse(
 		deploymentVersion:   projection.program.DeploymentVersion,
 		runtime:             authority.runtime,
 		workspaceMount:      authority.workspaceMount,
-		enclosingWait:       authority.enclosingWait,
 		runWait:             authority.runWait,
 		checkpoint:          authority.checkpoint,
-		childRun:            authority.childRun,
 		checkpointArtifacts: projection.checkpointArtifacts,
 	})
 	if err != nil {
@@ -153,7 +147,7 @@ func projectRunLeaseClaimResponse(
 		return workerapi.RunLeaseClaimResponse{}, err
 	}
 	secrets := make([]workerapi.SecretDelivery, 0)
-	if authority.mode == runLeaseClaimFresh || authority.mode == runLeaseClaimAttachChild {
+	if authority.mode == runLeaseClaimFresh {
 		if secretDelivery == nil {
 			return workerapi.RunLeaseClaimResponse{}, errors.New("secret delivery opener is not configured")
 		}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -82,6 +83,34 @@ func TestVerifierResultRoundTrip(t *testing.T) {
 				t.Fatalf("result = %#v", result)
 			}
 		})
+	}
+}
+
+func TestVerifierBootstrapDiagnosticIsBoundedAndFatal(t *testing.T) {
+	writer := &boundedVerifierStderr{}
+	input := strings.Repeat("x", verifierStderrMaxBytes+128)
+	if written, err := writer.Write([]byte(input)); err != nil || written != len(input) {
+		t.Fatalf("write = %d, %v", written, err)
+	}
+	diagnostic := writer.Diagnostic()
+	if len(diagnostic) > verifierStderrMaxBytes+len(" [truncated]") ||
+		!strings.HasSuffix(diagnostic, " [truncated]") {
+		t.Fatalf("bounded diagnostic length/suffix = %d/%q", len(diagnostic), diagnostic[len(diagnostic)-16:])
+	}
+	err := newVerifierBootstrapError(diagnostic)
+	var fatal interface{ FatalWorker() bool }
+	if !errors.As(err, &fatal) || !fatal.FatalWorker() {
+		t.Fatal("bootstrap error is not Worker-fatal")
+	}
+	returned, ok := VerifierLocalDiagnostic(err)
+	if !ok || len(returned) > verifierStderrMaxBytes+len(" [truncated]") ||
+		!strings.HasSuffix(returned, " [truncated]") ||
+		err.Error() != "artifact verifier bootstrap failed" {
+		t.Fatalf("bootstrap diagnostic = %q/%t error=%q", returned, ok, err)
+	}
+	child := VerifierChildLocalDiagnostic(errors.New("unsafe\n\x00cause"))
+	if strings.ContainsAny(child, "\n\x00") || child != "unsafe??cause" {
+		t.Fatalf("child diagnostic = %q", child)
 	}
 }
 
@@ -240,6 +269,7 @@ func canonicalVerifierProgramIndex(t *testing.T) []byte {
 			Name: "task/verify",
 		}},
 		RuntimeContract: RuntimeContract,
+		RuntimeDigest:   "sha256:" + strings.Repeat("f", 64),
 	})
 	if err != nil {
 		t.Fatal(err)

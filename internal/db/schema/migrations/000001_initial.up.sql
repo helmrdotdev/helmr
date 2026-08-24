@@ -296,7 +296,6 @@ CREATE TABLE cas_objects (
 );
 
 CREATE TYPE artifact_kind AS ENUM (
-    'deployment_source',
     'deployment_program',
     'workspace_image',
     'run_checkpoint_config',
@@ -323,67 +322,139 @@ CREATE TABLE worker_groups (
     state TEXT NOT NULL DEFAULT 'active'
         CHECK (state IN ('active', 'paused', 'draining', 'disabled')),
     claim_version BIGINT NOT NULL DEFAULT 1 CHECK (claim_version > 0),
-    allows_run BOOLEAN NOT NULL DEFAULT true,
-    allows_build BOOLEAN NOT NULL DEFAULT true,
+	primary_pool_id UUID,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (id, region_id),
-    UNIQUE (region_id, name),
-    CHECK (allows_run OR allows_build)
+	UNIQUE (region_id, name)
 );
 
 CREATE INDEX worker_groups_active_placement_idx
     ON worker_groups (region_id, id)
     WHERE state = 'active';
 
-CREATE UNIQUE INDEX worker_groups_one_active_run_per_region_idx
-    ON worker_groups (region_id)
-    WHERE state IN ('active', 'paused') AND allows_run;
-
-CREATE UNIQUE INDEX worker_groups_one_active_build_per_region_idx
-    ON worker_groups (region_id)
-    WHERE state IN ('active', 'paused') AND allows_build;
+CREATE UNIQUE INDEX worker_groups_one_active_per_region_idx
+	ON worker_groups (region_id)
+	WHERE state IN ('active', 'paused');
 
 CREATE TABLE runtime_identities (
-    id TEXT PRIMARY KEY CHECK (btrim(id) <> ''),
+    id TEXT PRIMARY KEY CHECK (id ~ '^sha256:[0-9a-f]{64}$'),
     runtime_arch TEXT NOT NULL CHECK (runtime_arch = 'x86_64'),
-    vm_runtime_contract TEXT NOT NULL CHECK (btrim(vm_runtime_contract) <> ''),
-    kernel_digest TEXT NOT NULL CHECK (btrim(kernel_digest) <> ''),
-    initramfs_digest TEXT NOT NULL CHECK (btrim(initramfs_digest) <> ''),
-    rootfs_digest TEXT NOT NULL CHECK (btrim(rootfs_digest) <> ''),
+    vm_runtime_contract TEXT NOT NULL CHECK (vm_runtime_contract = 'helmr.vm-runtime.v0'),
+    vm_runtime_descriptor_digest TEXT NOT NULL CHECK (vm_runtime_descriptor_digest ~ '^sha256:[0-9a-f]{64}$'),
+    firecracker_digest TEXT NOT NULL CHECK (firecracker_digest ~ '^sha256:[0-9a-f]{64}$'),
+    firecracker_version TEXT NOT NULL CHECK (firecracker_version ~ '^[0-9]+\.[0-9]+\.[0-9]+$'),
+    snapshot_format_version TEXT NOT NULL CHECK (snapshot_format_version ~ '^[0-9]+\.[0-9]+\.[0-9]+$'),
+    host_kernel_release TEXT NOT NULL CHECK (btrim(host_kernel_release) <> '' AND octet_length(host_kernel_release) <= 255),
+    cpu_template_kind TEXT NOT NULL CHECK (cpu_template_kind IN ('none', 'custom')),
+    cpu_template_digest TEXT CHECK (cpu_template_digest IS NULL OR cpu_template_digest ~ '^sha256:[0-9a-f]{64}$'),
+    kernel_digest TEXT NOT NULL CHECK (kernel_digest ~ '^sha256:[0-9a-f]{64}$'),
+    initramfs_digest TEXT NOT NULL CHECK (initramfs_digest ~ '^sha256:[0-9a-f]{64}$'),
+    rootfs_digest TEXT NOT NULL CHECK (rootfs_digest ~ '^sha256:[0-9a-f]{64}$'),
     first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK ((cpu_template_kind = 'none' AND cpu_template_digest IS NULL)
+        OR (cpu_template_kind = 'custom' AND cpu_template_digest IS NOT NULL))
 );
+
+CREATE TABLE worker_pools (
+    id UUID PRIMARY KEY,
+    worker_group_id TEXT NOT NULL REFERENCES worker_groups(id) ON DELETE RESTRICT,
+    name TEXT NOT NULL CHECK (btrim(name) <> '' AND octet_length(name) <= 128),
+    state TEXT NOT NULL DEFAULT 'pending'
+        CHECK (state IN ('pending', 'active', 'draining', 'disabled')),
+    claim_version BIGINT NOT NULL DEFAULT 1 CHECK (claim_version > 0),
+	runtime_identity_id TEXT REFERENCES runtime_identities(id) ON DELETE RESTRICT,
+    substrate_format TEXT,
+    substrate_contract TEXT,
+    capacity_cpu_millis BIGINT CHECK (capacity_cpu_millis IS NULL OR capacity_cpu_millis > 0),
+    capacity_memory_bytes BIGINT CHECK (capacity_memory_bytes IS NULL OR capacity_memory_bytes > 0),
+    capacity_guest_ephemeral_disk_bytes BIGINT CHECK (capacity_guest_ephemeral_disk_bytes IS NULL OR capacity_guest_ephemeral_disk_bytes > 0),
+    per_vm_cpu_millis BIGINT CHECK (per_vm_cpu_millis IS NULL OR per_vm_cpu_millis > 0),
+    per_vm_memory_bytes BIGINT CHECK (per_vm_memory_bytes IS NULL OR per_vm_memory_bytes > 0),
+    per_vm_guest_ephemeral_disk_bytes BIGINT CHECK (per_vm_guest_ephemeral_disk_bytes IS NULL OR per_vm_guest_ephemeral_disk_bytes > 0),
+	max_vm_slots INTEGER CHECK (max_vm_slots IS NULL OR max_vm_slots >= 0),
+    sealed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (worker_group_id, id),
+	UNIQUE (worker_group_id, name),
+    CHECK (
+        (state IN ('pending', 'disabled')
+         AND sealed_at IS NULL
+         AND runtime_identity_id IS NULL
+         AND substrate_format IS NULL
+         AND substrate_contract IS NULL
+         AND capacity_cpu_millis IS NULL
+         AND capacity_memory_bytes IS NULL
+         AND capacity_guest_ephemeral_disk_bytes IS NULL
+         AND per_vm_cpu_millis IS NULL
+         AND per_vm_memory_bytes IS NULL
+         AND per_vm_guest_ephemeral_disk_bytes IS NULL
+		 AND max_vm_slots IS NULL)
+        OR
+        (state IN ('active', 'draining', 'disabled')
+         AND sealed_at IS NOT NULL
+         AND runtime_identity_id IS NOT NULL
+         AND substrate_format IS NOT NULL
+         AND substrate_contract IS NOT NULL
+         AND capacity_cpu_millis IS NOT NULL
+         AND capacity_memory_bytes IS NOT NULL
+         AND capacity_guest_ephemeral_disk_bytes IS NOT NULL
+         AND per_vm_cpu_millis IS NOT NULL
+         AND per_vm_memory_bytes IS NOT NULL
+		 AND per_vm_guest_ephemeral_disk_bytes IS NOT NULL
+		 AND max_vm_slots IS NOT NULL)
+    ),
+    CHECK (sealed_at IS NULL OR per_vm_cpu_millis <= capacity_cpu_millis),
+    CHECK (sealed_at IS NULL OR per_vm_memory_bytes <= capacity_memory_bytes),
+    CHECK (sealed_at IS NULL OR per_vm_guest_ephemeral_disk_bytes <= capacity_guest_ephemeral_disk_bytes),
+	CHECK (sealed_at IS NULL OR max_vm_slots > 0),
+	CHECK (sealed_at IS NULL OR (btrim(substrate_format) <> '' AND btrim(substrate_contract) <> ''))
+);
+
+CREATE INDEX worker_pools_active_placement_idx
+    ON worker_pools (worker_group_id, id)
+    WHERE state = 'active';
+
+CREATE TABLE worker_pool_cpu_shapes (
+    worker_pool_id UUID NOT NULL REFERENCES worker_pools(id) ON DELETE RESTRICT,
+    vcpu_count INTEGER NOT NULL CHECK (vcpu_count > 0),
+    cpu_config_digest TEXT NOT NULL CHECK (cpu_config_digest ~ '^sha256:[0-9a-f]{64}$'),
+    PRIMARY KEY (worker_pool_id, vcpu_count)
+);
+
+ALTER TABLE worker_groups
+	ADD CONSTRAINT worker_groups_primary_pool_fkey
+	FOREIGN KEY (id, primary_pool_id)
+	REFERENCES worker_pools(worker_group_id, id)
+	ON DELETE RESTRICT;
 
 CREATE TABLE worker_instances (
     id UUID PRIMARY KEY,
     resource_id TEXT NOT NULL CHECK (btrim(resource_id) <> ''),
     worker_group_id TEXT NOT NULL REFERENCES worker_groups(id) ON DELETE RESTRICT,
+    worker_pool_id UUID NOT NULL,
     state TEXT NOT NULL DEFAULT 'registering'
         CHECK (state IN ('registering', 'active', 'draining', 'termination_ready', 'lost')),
     claim_version BIGINT NOT NULL DEFAULT 1 CHECK (claim_version > 0),
     current_epoch BIGINT CHECK (current_epoch IS NULL OR current_epoch > 0),
     current_service_id UUID,
-    supervisor_version TEXT NOT NULL DEFAULT '',
-    supports_run BOOLEAN NOT NULL DEFAULT false,
-    supports_build BOOLEAN NOT NULL DEFAULT false,
-    runtime_identity_id TEXT REFERENCES runtime_identities(id) ON DELETE RESTRICT,
+	runtime_identity_id TEXT REFERENCES runtime_identities(id) ON DELETE RESTRICT,
     substrate_format TEXT NOT NULL DEFAULT '',
     substrate_contract TEXT NOT NULL DEFAULT '',
     epoch_cpu_millis BIGINT NOT NULL DEFAULT 0 CHECK (epoch_cpu_millis >= 0),
     epoch_memory_bytes BIGINT NOT NULL DEFAULT 0 CHECK (epoch_memory_bytes >= 0),
     epoch_guest_ephemeral_disk_bytes BIGINT NOT NULL DEFAULT 0 CHECK (epoch_guest_ephemeral_disk_bytes >= 0),
-    epoch_build_cache_bytes BIGINT NOT NULL DEFAULT 0 CHECK (epoch_build_cache_bytes >= 0),
-    epoch_artifact_cache_bytes BIGINT NOT NULL DEFAULT 0 CHECK (epoch_artifact_cache_bytes >= 0),
     per_vm_cpu_millis BIGINT NOT NULL DEFAULT 0 CHECK (per_vm_cpu_millis >= 0),
     per_vm_memory_bytes BIGINT NOT NULL DEFAULT 0 CHECK (per_vm_memory_bytes >= 0),
     per_vm_guest_ephemeral_disk_bytes BIGINT NOT NULL DEFAULT 0 CHECK (per_vm_guest_ephemeral_disk_bytes >= 0),
-    max_vm_slots INTEGER NOT NULL DEFAULT 0 CHECK (max_vm_slots >= 0),
-    max_build_executors INTEGER NOT NULL DEFAULT 0 CHECK (max_build_executors >= 0),
+	max_vm_slots INTEGER NOT NULL DEFAULT 0 CHECK (max_vm_slots >= 0),
     max_runtime_starts INTEGER NOT NULL DEFAULT 0 CHECK (max_runtime_starts >= 0),
+    cpu_environment JSONB,
+    cpu_environment_digest TEXT CHECK (cpu_environment_digest IS NULL OR cpu_environment_digest ~ '^sha256:[0-9a-f]{64}$'),
     observed_at TIMESTAMPTZ,
-    run_paused_reason TEXT,
-    build_paused_reason TEXT,
+	run_paused_reason TEXT,
     runtime_paused_reason TEXT,
     epoch_started_at TIMESTAMPTZ,
     activated_at TIMESTAMPTZ,
@@ -393,6 +464,7 @@ CREATE TABLE worker_instances (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (id, worker_group_id),
+    UNIQUE (id, worker_group_id, worker_pool_id),
     CHECK (octet_length(resource_id) <= 512),
     CHECK (
         (current_epoch IS NULL AND current_service_id IS NULL AND epoch_started_at IS NULL)
@@ -402,40 +474,33 @@ CREATE TABLE worker_instances (
     CONSTRAINT worker_instances_epoch_shape_check CHECK (
         state <> 'active'
         OR (
-            btrim(supervisor_version) <> ''
-            AND activated_at IS NOT NULL
+            activated_at IS NOT NULL
             AND epoch_cpu_millis > 0
             AND epoch_memory_bytes > 0
             AND per_vm_cpu_millis > 0
             AND per_vm_memory_bytes > 0
-            AND per_vm_guest_ephemeral_disk_bytes > 0
-            AND (supports_run OR supports_build)
+			AND per_vm_guest_ephemeral_disk_bytes > 0
         )
     ),
+	CHECK (state <> 'active' OR (runtime_identity_id IS NOT NULL AND max_vm_slots > 0 AND max_runtime_starts > 0)),
+	CHECK (state <> 'active' OR (btrim(substrate_format) <> '' AND btrim(substrate_contract) <> '')),
+    CHECK (state <> 'active' OR activated_at IS NOT NULL),
     CHECK (
         state <> 'active'
-        OR NOT supports_run
         OR (
-            runtime_identity_id IS NOT NULL
-            AND max_vm_slots > 0
-            AND max_runtime_starts > 0
+            cpu_environment IS NOT NULL
+            AND jsonb_typeof(cpu_environment) = 'object'
+            AND pg_column_size(cpu_environment) <= 4096
+            AND cpu_environment_digest IS NOT NULL
         )
     ),
-    CHECK (state <> 'active' OR NOT supports_build OR max_build_executors > 0),
-    CHECK (state <> 'active' OR runtime_identity_id IS NOT NULL),
-    CHECK (
-        (supports_run
-         AND btrim(substrate_format) <> ''
-         AND btrim(substrate_contract) <> '')
-        OR
-        (NOT supports_run
-         AND substrate_format = ''
-         AND substrate_contract = '')
-    ),
-    CHECK (state <> 'active' OR activated_at IS NOT NULL),
+    CHECK ((cpu_environment IS NULL) = (cpu_environment_digest IS NULL)),
     CHECK (state NOT IN ('draining', 'termination_ready') OR draining_at IS NOT NULL),
     CHECK ((state = 'termination_ready') = (termination_ready_at IS NOT NULL)),
-    CHECK ((state = 'lost') = (lost_at IS NOT NULL))
+    CHECK ((state = 'lost') = (lost_at IS NOT NULL)),
+    FOREIGN KEY (worker_group_id, worker_pool_id)
+        REFERENCES worker_pools(worker_group_id, id)
+        ON DELETE RESTRICT
 );
 
 CREATE UNIQUE INDEX worker_instances_one_live_locator_idx
@@ -456,15 +521,12 @@ CREATE TABLE worker_instance_credentials (
     worker_instance_id UUID NOT NULL,
     key_prefix TEXT NOT NULL UNIQUE CHECK (btrim(key_prefix) <> ''),
     claim_version BIGINT NOT NULL DEFAULT 1 CHECK (claim_version > 0),
-    allows_run BOOLEAN NOT NULL,
-    allows_build BOOLEAN NOT NULL,
-    expires_at TIMESTAMPTZ,
+	expires_at TIMESTAMPTZ,
     secret_hash BYTEA NOT NULL UNIQUE CHECK (octet_length(secret_hash) > 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_used_at TIMESTAMPTZ,
     revoked_at TIMESTAMPTZ,
-    UNIQUE (worker_instance_id, id),
-    CHECK (allows_run OR allows_build),
+	UNIQUE (worker_instance_id, id),
     FOREIGN KEY (worker_instance_id, worker_group_id)
         REFERENCES worker_instances(id, worker_group_id)
         ON DELETE RESTRICT
@@ -509,11 +571,6 @@ CREATE TYPE wait_kind AS ENUM (
     'actor_input'
 );
 
-CREATE TYPE run_checkpoint_kind AS ENUM (
-    'suspend',
-    'handoff_resume'
-);
-
 CREATE TYPE workspace_version_kind AS ENUM (
     'user',
     'system'
@@ -524,129 +581,32 @@ CREATE TABLE deployments (
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
-    build_region_id TEXT NOT NULL REFERENCES regions(id) ON DELETE RESTRICT,
-    build_node_version TEXT NOT NULL CHECK (
-        build_node_version = btrim(build_node_version)
-        AND octet_length(build_node_version) BETWEEN 1 AND 64
-    ),
-    build_runtime_digest BYTEA CHECK (
-        build_runtime_digest IS NULL OR octet_length(build_runtime_digest) = 32
-    ),
-    build_toolchain_digest BYTEA CHECK (
-        build_toolchain_digest IS NULL
-        OR octet_length(build_toolchain_digest) = 32
-    ),
-    build_manager_name TEXT NOT NULL CHECK (build_manager_name IN ('npm', 'pnpm', 'bun')),
-    build_manager_version TEXT NOT NULL CHECK (
-        build_manager_version = btrim(build_manager_version)
-        AND octet_length(build_manager_version) BETWEEN 1 AND 64
-    ),
-    build_manager_integrity TEXT,
-    build_manager_digest BYTEA CHECK (
-        build_manager_digest IS NULL OR octet_length(build_manager_digest) = 32
-    ),
-    build_contract TEXT NOT NULL CHECK (build_contract = 'helmr.program-build.v0'),
-    image_cache_mode TEXT NOT NULL CHECK (image_cache_mode IN ('prefer', 'bypass')),
     version TEXT NOT NULL CHECK (btrim(version) <> ''),
-    content_hash TEXT NOT NULL CHECK (content_hash ~ '^sha256:[0-9a-f]{64}$'),
-    deployment_source_artifact_id UUID NOT NULL,
-    program_artifact_id UUID,
+    bundle_digest TEXT NOT NULL CHECK (bundle_digest ~ '^sha256:[0-9a-f]{64}$'),
+    runtime_artifact_digest TEXT NOT NULL CHECK (
+        runtime_artifact_digest ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    program_artifact_id UUID NOT NULL,
     program_artifact_kind artifact_kind NOT NULL DEFAULT 'deployment_program'
         CHECK (program_artifact_kind = 'deployment_program'),
-    program_index_digest BYTEA CHECK (
-        program_index_digest IS NULL OR octet_length(program_index_digest) = 32
-    ),
-    queue_config JSONB,
-    status TEXT NOT NULL DEFAULT 'queued'
-        CHECK (status IN ('queued', 'building', 'deployed', 'failed')),
-    failure JSONB,
-    current_build_lease_id UUID,
+    program_index_digest BYTEA NOT NULL CHECK (octet_length(program_index_digest) = 32),
+    queue_config JSONB NOT NULL CHECK (jsonb_typeof(queue_config) = 'object'),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    building_at TIMESTAMPTZ,
-    built_at TIMESTAMPTZ,
-    deployed_at TIMESTAMPTZ,
-    failed_at TIMESTAMPTZ,
     UNIQUE (org_id, id),
     CONSTRAINT deployments_environment_id_id_key UNIQUE (environment_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
-    UNIQUE (org_id, project_id, environment_id, id, build_region_id),
     UNIQUE (org_id, project_id, environment_id, version),
+    UNIQUE (environment_id, bundle_digest),
     FOREIGN KEY (org_id, project_id)
         REFERENCES projects(org_id, id)
         ON DELETE CASCADE,
     FOREIGN KEY (org_id, project_id, environment_id)
         REFERENCES environments(org_id, project_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, deployment_source_artifact_id)
-        REFERENCES artifacts(org_id, project_id, environment_id, id)
-        DEFERRABLE INITIALLY DEFERRED,
     CONSTRAINT deployments_program_artifact_fk
         FOREIGN KEY (environment_id, program_artifact_id, program_artifact_kind)
         REFERENCES artifacts(environment_id, id, kind)
-        ON DELETE RESTRICT,
-    CONSTRAINT deployments_program_tuple_check CHECK (
-        (program_artifact_id IS NULL
-         AND program_index_digest IS NULL)
-        OR
-        (program_artifact_id IS NOT NULL
-         AND program_index_digest IS NOT NULL)
-    ),
-    CONSTRAINT deployments_platform_pins_check CHECK (
-        (
-            build_runtime_digest IS NULL
-            AND build_toolchain_digest IS NULL
-            AND build_manager_digest IS NULL
-        )
-        OR
-        (
-            build_runtime_digest IS NOT NULL
-            AND build_toolchain_digest IS NOT NULL
-            AND build_manager_digest IS NOT NULL
-        )
-    ),
-    CONSTRAINT deployments_platform_pin_state_check CHECK (
-        (
-            status = 'queued'
-            AND current_build_lease_id IS NULL
-        )
-        OR
-        (
-            status IN ('building', 'deployed')
-            AND build_runtime_digest IS NOT NULL
-            AND build_toolchain_digest IS NOT NULL
-            AND build_manager_digest IS NOT NULL
-        )
-        OR
-        status = 'failed'
-    ),
-    CONSTRAINT deployments_build_lease_pin_check CHECK (
-        current_build_lease_id IS NULL
-        OR (
-            build_runtime_digest IS NOT NULL
-            AND build_toolchain_digest IS NOT NULL
-            AND build_manager_digest IS NOT NULL
-        )
-    ),
-    CONSTRAINT deployments_queue_config_check CHECK (
-        (status = 'deployed' AND jsonb_typeof(queue_config) = 'object')
-        OR
-        (status <> 'deployed' AND queue_config IS NULL)
-    ),
-    CONSTRAINT deployments_failure_check CHECK (
-        (status = 'failed'
-         AND jsonb_typeof(failure) = 'object'
-         AND failure ?& ARRAY['code', 'message', 'details']
-         AND failure - ARRAY['code', 'message', 'details'] = '{}'::jsonb
-         AND failure->>'code' ~ '^[a-z][a-z0-9_]{0,127}$'
-         AND failure->>'code' = btrim(failure->>'code')
-         AND failure->>'message' = btrim(failure->>'message')
-         AND octet_length(failure->>'message') BETWEEN 1 AND 1024
-         AND jsonb_typeof(failure->'details') = 'object')
-        OR
-        (status <> 'failed'
-         AND failure IS NULL)
-    )
+        ON DELETE RESTRICT
 );
 
 CREATE INDEX deployments_program_artifact_idx
@@ -700,130 +660,6 @@ CREATE TABLE deployment_definitions (
 
 CREATE INDEX deployment_definitions_artifact_idx
     ON deployment_definitions (environment_id, artifact_id);
-
-CREATE TABLE deployment_build_leases (
-    id UUID PRIMARY KEY,
-    org_id UUID NOT NULL,
-    project_id UUID NOT NULL,
-    environment_id UUID NOT NULL,
-    deployment_id UUID NOT NULL,
-    build_region_id TEXT NOT NULL,
-    lease_sequence BIGINT NOT NULL CHECK (lease_sequence BETWEEN 1 AND 3),
-    worker_group_id TEXT NOT NULL,
-    worker_instance_id UUID NOT NULL,
-    worker_epoch BIGINT NOT NULL CHECK (worker_epoch > 0),
-    requested_cpu_millis BIGINT NOT NULL CHECK (requested_cpu_millis = 3000),
-    requested_memory_bytes BIGINT NOT NULL CHECK (requested_memory_bytes = 4294967296),
-    requested_guest_ephemeral_disk_bytes BIGINT NOT NULL CHECK (requested_guest_ephemeral_disk_bytes = 34359738368),
-    requested_build_executors INTEGER NOT NULL DEFAULT 1 CHECK (requested_build_executors = 1),
-    build_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
-    trace_id TEXT,
-    span_id TEXT,
-    parent_span_id TEXT,
-    traceparent TEXT,
-    state TEXT NOT NULL DEFAULT 'assigned'
-        CHECK (state IN (
-            'assigned',
-            'starting',
-            'running',
-            'succeeded',
-            'failed',
-            'cancelled',
-            'lost',
-            'rejected',
-            'expired'
-        )),
-    assigned_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    start_deadline_at TIMESTAMPTZ NOT NULL,
-    claimed_at TIMESTAMPTZ,
-    started_at TIMESTAMPTZ,
-    renewed_at TIMESTAMPTZ,
-    expires_at TIMESTAMPTZ NOT NULL,
-    terminal_at TIMESTAMPTZ,
-    terminal_reason_code TEXT,
-    terminal_error JSONB,
-    terminal_request_fingerprint TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT deployment_build_leases_deployment_id_id_key
-        UNIQUE (deployment_id, id),
-    UNIQUE (org_id, deployment_id, id),
-    UNIQUE (deployment_id, lease_sequence),
-    UNIQUE (org_id, project_id, environment_id, deployment_id, id),
-    FOREIGN KEY (org_id, project_id, environment_id, deployment_id, build_region_id)
-        REFERENCES deployments(org_id, project_id, environment_id, id, build_region_id)
-        ON DELETE RESTRICT,
-    FOREIGN KEY (worker_group_id, build_region_id)
-        REFERENCES worker_groups(id, region_id)
-        ON DELETE RESTRICT,
-    FOREIGN KEY (worker_instance_id, worker_group_id)
-        REFERENCES worker_instances(id, worker_group_id)
-        ON DELETE RESTRICT,
-    CHECK (jsonb_typeof(build_snapshot) = 'object'),
-    CHECK (expires_at > assigned_at),
-    CHECK (start_deadline_at <= expires_at),
-    CHECK (claimed_at IS NULL OR claimed_at >= assigned_at),
-    CHECK (started_at IS NULL OR (claimed_at IS NOT NULL AND started_at >= claimed_at)),
-    CHECK (renewed_at IS NULL OR (
-        renewed_at >= COALESCE(started_at, claimed_at, assigned_at)
-        AND (terminal_at IS NULL OR renewed_at <= terminal_at)
-    )),
-    CHECK (
-        (state = 'assigned' AND claimed_at IS NULL AND started_at IS NULL)
-        OR (state = 'starting' AND claimed_at IS NOT NULL AND started_at IS NULL)
-        OR (state IN ('running', 'succeeded', 'failed') AND claimed_at IS NOT NULL AND started_at IS NOT NULL)
-        OR (state IN ('cancelled', 'lost', 'expired'))
-        OR (state = 'rejected' AND started_at IS NULL)
-    ),
-    CHECK (
-        (state IN ('assigned', 'starting', 'running') AND terminal_at IS NULL AND terminal_reason_code IS NULL AND terminal_error IS NULL)
-        OR (
-            state IN ('succeeded', 'failed', 'cancelled', 'lost', 'rejected', 'expired')
-            AND terminal_at IS NOT NULL
-            AND terminal_reason_code IS NOT NULL
-            AND btrim(terminal_reason_code) <> ''
-            AND octet_length(terminal_reason_code) <= 128
-        )
-    ),
-    CHECK (terminal_error IS NULL OR jsonb_typeof(terminal_error) = 'object'),
-    CHECK (terminal_request_fingerprint IS NULL OR (
-        btrim(terminal_request_fingerprint) <> '' AND octet_length(terminal_request_fingerprint) <= 128
-    )),
-    CHECK (
-        (state IN ('succeeded', 'failed', 'rejected') AND terminal_request_fingerprint IS NOT NULL)
-        OR
-        (state IN ('assigned', 'starting', 'running', 'cancelled', 'lost', 'expired')
-         AND terminal_request_fingerprint IS NULL)
-    ),
-    CHECK (
-        state <> 'succeeded' OR terminal_error IS NULL
-    )
-);
-
-CREATE UNIQUE INDEX deployment_build_leases_deployment_active_uidx
-    ON deployment_build_leases (deployment_id)
-    WHERE state IN ('assigned', 'starting', 'running');
-
-CREATE INDEX deployment_build_leases_worker_replay_idx
-    ON deployment_build_leases (worker_instance_id, worker_epoch, state, assigned_at, id)
-    WHERE state IN ('assigned', 'starting', 'running');
-
-CREATE INDEX deployment_build_leases_expiry_idx
-    ON deployment_build_leases (expires_at, id)
-    WHERE state IN ('assigned', 'starting', 'running');
-
-CREATE INDEX deployment_build_leases_capacity_idx
-    ON deployment_build_leases (worker_instance_id, worker_epoch, state, requested_build_executors)
-    WHERE state IN ('assigned', 'starting', 'running');
-
-CREATE INDEX deployment_build_leases_history_idx
-    ON deployment_build_leases (deployment_id, lease_sequence DESC);
-
-ALTER TABLE deployments
-    ADD CONSTRAINT deployments_current_build_lease_id_fkey
-    FOREIGN KEY (org_id, id, current_build_lease_id)
-    REFERENCES deployment_build_leases(org_id, deployment_id, id)
-    ON DELETE RESTRICT;
 
 ALTER TABLE environments
     ADD COLUMN current_deployment_id UUID;
@@ -917,54 +753,6 @@ CREATE INDEX idempotency_claims_live_expiry_idx
 CREATE INDEX idempotency_claims_retired_idx
     ON idempotency_claims (retired_at, id)
     WHERE retired_at IS NOT NULL;
-
-CREATE TABLE registry_credential_resolutions (
-    id UUID PRIMARY KEY,
-    environment_id UUID NOT NULL,
-    deployment_id UUID NOT NULL,
-    build_lease_id UUID NOT NULL,
-    image_operation_id UUID NOT NULL,
-    plan_digest BYTEA NOT NULL CHECK (octet_length(plan_digest) = 32),
-    registry_authority TEXT NOT NULL CHECK (
-        registry_authority = btrim(registry_authority)
-        AND octet_length(registry_authority) BETWEEN 1 AND 512
-    ),
-    username TEXT NOT NULL CHECK (
-        username = btrim(username)
-        AND octet_length(username) BETWEEN 1 AND 256
-    ),
-    secret_id UUID NOT NULL,
-    secret_version_id UUID NOT NULL,
-    revocation_generation BIGINT NOT NULL CHECK (revocation_generation >= 0),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT registry_credential_resolutions_binding_key
-        UNIQUE (build_lease_id, image_operation_id, registry_authority),
-    CONSTRAINT registry_credential_resolutions_build_lease_fk
-        FOREIGN KEY (deployment_id, build_lease_id)
-        REFERENCES deployment_build_leases(deployment_id, id)
-        ON DELETE RESTRICT,
-    CONSTRAINT registry_credential_resolutions_image_operation_fk
-        FOREIGN KEY (environment_id, image_operation_id)
-        REFERENCES idempotency_claims(environment_id, id)
-        ON DELETE RESTRICT,
-    CONSTRAINT registry_credential_resolutions_secret_fk
-        FOREIGN KEY (environment_id, secret_id)
-        REFERENCES secrets(environment_id, id)
-        ON DELETE RESTRICT,
-    CONSTRAINT registry_credential_resolutions_secret_version_fk
-        FOREIGN KEY (secret_id, secret_version_id)
-        REFERENCES secret_versions(secret_id, id)
-        ON DELETE RESTRICT
-);
-
-CREATE INDEX registry_credential_resolutions_image_operation_idx
-    ON registry_credential_resolutions (environment_id, image_operation_id);
-
-CREATE INDEX registry_credential_resolutions_secret_idx
-    ON registry_credential_resolutions (environment_id, secret_id);
-
-CREATE INDEX registry_credential_resolutions_secret_version_idx
-    ON registry_credential_resolutions (secret_id, secret_version_id);
 
 CREATE TABLE schedules (
     id UUID PRIMARY KEY,
@@ -1165,7 +953,7 @@ CREATE TABLE workspaces (
         OR
         (state = 'deleted'
          AND sandbox_declared_id IS NULL
-         AND deployment_definition_id IS NULL
+         AND deployment_definition_id IS NOT NULL
          AND head_version_id IS NULL
          AND owner_session_id IS NULL
          AND owner_run_id IS NULL
@@ -1406,6 +1194,9 @@ CREATE TABLE runs (
     first_lease_at TIMESTAMPTZ,
     started_at TIMESTAMPTZ,
     retry_at TIMESTAMPTZ,
+    runtime_preparation_count INTEGER NOT NULL DEFAULT 0
+        CHECK (runtime_preparation_count BETWEEN 0 AND 8),
+    next_runtime_preparation_at TIMESTAMPTZ,
     terminal_at TIMESTAMPTZ,
     UNIQUE (org_id, id),
     UNIQUE (environment_id, id),
@@ -1728,7 +1519,8 @@ CREATE INDEX runs_dispatch_fair_idx
     INCLUDE (
         state_version,
         first_lease_at,
-        queued_expires_at
+        queued_expires_at,
+        next_runtime_preparation_at
     )
     WHERE status = 'queued' AND current_run_lease_id IS NULL;
 
@@ -2404,13 +2196,10 @@ CREATE TABLE telemetry_outbox (
         stream_kind <> 'meter_event'
         OR (
             meter_event_id IS NOT NULL
-            AND (
-                (run_id IS NOT NULL AND deployment_id IS NULL
-                 AND source_kind = 'run_lease' AND attempt_number IS NOT NULL)
-                OR
-                (deployment_id IS NOT NULL AND run_id IS NULL
-                 AND source_kind = 'deployment_build_lease' AND attempt_number IS NULL)
-            )
+            AND run_id IS NOT NULL
+            AND deployment_id IS NULL
+            AND source_kind = 'run_lease'
+            AND attempt_number IS NOT NULL
             AND idempotency_key IS NOT NULL
             AND btrim(kind) <> ''
             AND payload IS NOT NULL
@@ -2631,7 +2420,6 @@ ALTER TABLE runs
 
 CREATE TABLE run_checkpoints (
     id UUID PRIMARY KEY,
-    kind run_checkpoint_kind NOT NULL,
     run_id UUID NOT NULL,
     attempt_number INTEGER NOT NULL CHECK (attempt_number > 0),
     run_wait_id UUID NOT NULL,
@@ -2731,7 +2519,7 @@ CREATE INDEX run_checkpoints_wait_idx
     ON run_checkpoints (run_wait_id, state, id);
 
 CREATE UNIQUE INDEX run_checkpoints_creating_uidx
-    ON run_checkpoints (run_id, attempt_number, run_wait_id, kind)
+    ON run_checkpoints (run_id, attempt_number, run_wait_id)
     WHERE state = 'creating';
 
 CREATE TYPE run_checkpoint_artifact_role AS ENUM (
@@ -2763,8 +2551,6 @@ CREATE TABLE meter_events (
     environment_id UUID NOT NULL,
     run_id UUID,
     run_lease_id UUID,
-    deployment_id UUID,
-    deployment_build_lease_id UUID,
     attempt_number INTEGER CHECK (attempt_number IS NULL OR attempt_number > 0),
     trace_id TEXT CHECK (trace_id IS NULL OR (trace_id ~ '^[0-9a-f]{32}$' AND trace_id <> '00000000000000000000000000000000')),
     span_id TEXT CHECK (span_id IS NULL OR (span_id ~ '^[0-9a-f]{16}$' AND span_id <> '0000000000000000')),
@@ -2782,17 +2568,9 @@ CREATE TABLE meter_events (
     FOREIGN KEY (org_id, project_id, environment_id, run_id, run_lease_id, attempt_number)
         REFERENCES run_leases(org_id, project_id, environment_id, run_id, id, attempt_number)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, deployment_id, deployment_build_lease_id)
-        REFERENCES deployment_build_leases(org_id, project_id, environment_id, deployment_id, id)
-        ON DELETE RESTRICT,
     CHECK (
         (run_id IS NOT NULL AND run_lease_id IS NOT NULL
-         AND deployment_id IS NULL AND deployment_build_lease_id IS NULL
          AND attempt_number IS NOT NULL)
-        OR
-        (run_id IS NULL AND run_lease_id IS NULL
-         AND deployment_id IS NOT NULL AND deployment_build_lease_id IS NOT NULL
-         AND attempt_number IS NULL)
     ),
     CHECK (
         (measured_from IS NULL AND measured_to IS NULL)
@@ -2812,10 +2590,6 @@ CREATE UNIQUE INDEX meter_events_run_lease_idempotency_uidx
     ON meter_events (org_id, run_lease_id, meter, idempotency_key)
     WHERE run_lease_id IS NOT NULL;
 
-CREATE UNIQUE INDEX meter_events_deployment_build_lease_idempotency_uidx
-    ON meter_events (org_id, deployment_build_lease_id, meter, idempotency_key)
-    WHERE deployment_build_lease_id IS NOT NULL;
-
 CREATE INDEX meter_events_scope_meter_time_idx
     ON meter_events (org_id, project_id, environment_id, meter, occurred_at DESC, id DESC);
 
@@ -2827,11 +2601,6 @@ CREATE INDEX meter_events_run_meter_idx
     ON meter_events (org_id, run_id, meter)
     INCLUDE (quantity)
     WHERE run_id IS NOT NULL;
-
-CREATE INDEX meter_events_deployment_meter_idx
-    ON meter_events (org_id, deployment_id, meter)
-    INCLUDE (quantity)
-    WHERE deployment_id IS NOT NULL;
 
 CREATE UNIQUE INDEX telemetry_outbox_meter_event_uidx
     ON telemetry_outbox (meter_event_id)
@@ -2893,17 +2662,12 @@ CREATE TABLE run_waits (
     checkpoint_ack_version BIGINT NOT NULL DEFAULT 0 CHECK (checkpoint_ack_version >= 0 AND checkpoint_ack_version <= checkpoint_request_version),
     checkpoint_due_at TIMESTAMPTZ,
     suspend_checkpoint_id UUID,
-    handoff_resume_checkpoint_id UUID,
     resume_attach_id UUID NOT NULL,
     resume_request_version BIGINT NOT NULL DEFAULT 0 CHECK (resume_request_version >= 0),
     resume_ack_version BIGINT NOT NULL DEFAULT 0 CHECK (resume_ack_version >= 0 AND resume_ack_version <= resume_request_version),
     base_workspace_version_id UUID,
     base_workspace_content_digest TEXT,
-    child_result_version_id UUID,
     resume_workspace_version_id UUID,
-    handoff_runtime_instance_id UUID,
-    handoff_workspace_mount_id UUID,
-    handoff_mount_generation BIGINT CHECK (handoff_mount_generation IS NULL OR handoff_mount_generation > 0),
     ownership_generation BIGINT CHECK (ownership_generation IS NULL OR ownership_generation > 0),
     parent_writer_generation BIGINT CHECK (parent_writer_generation IS NULL OR parent_writer_generation > 0),
     child_writer_generation BIGINT CHECK (child_writer_generation IS NULL OR child_writer_generation > 0),
@@ -2952,9 +2716,6 @@ CREATE TABLE run_waits (
         REFERENCES session_records(session_id, id, direction)
         ON DELETE RESTRICT,
     FOREIGN KEY (workspace_id, base_workspace_version_id)
-        REFERENCES workspace_versions(workspace_id, id)
-        ON DELETE RESTRICT,
-    FOREIGN KEY (workspace_id, child_result_version_id)
         REFERENCES workspace_versions(workspace_id, id)
         ON DELETE RESTRICT,
     FOREIGN KEY (workspace_id, resume_workspace_version_id)
@@ -3079,24 +2840,16 @@ CREATE TABLE run_waits (
     CHECK (
         (base_workspace_version_id IS NULL
          AND base_workspace_content_digest IS NULL
-         AND child_result_version_id IS NULL
          AND resume_workspace_version_id IS NULL
-         AND handoff_runtime_instance_id IS NULL
-         AND handoff_workspace_mount_id IS NULL
-         AND handoff_mount_generation IS NULL
          AND ownership_generation IS NULL
          AND parent_writer_generation IS NULL
          AND child_writer_generation IS NULL
-         AND resume_writer_generation IS NULL
-         AND handoff_resume_checkpoint_id IS NULL)
+         AND resume_writer_generation IS NULL)
         OR
         (kind = 'child'
          AND child_run_id IS NOT NULL
          AND base_workspace_version_id IS NOT NULL
          AND base_workspace_content_digest IS NOT NULL
-         AND handoff_runtime_instance_id IS NOT NULL
-         AND handoff_workspace_mount_id IS NOT NULL
-         AND handoff_mount_generation IS NOT NULL
          AND ownership_generation IS NOT NULL
          AND parent_writer_generation IS NOT NULL
          AND prior_run_lease_id IS NOT NULL
@@ -3105,17 +2858,12 @@ CREATE TABLE run_waits (
              ((condition_state = 'pending'
                OR (condition_state IN ('failed', 'cancelled')
                    AND suspension_state IN ('released', 'cancelled', 'failed')))
-              AND child_result_version_id IS NULL
               AND resume_workspace_version_id IS NULL
-              AND handoff_resume_checkpoint_id IS NULL
               AND resume_writer_generation IS NULL)
              OR
              (condition_state = 'completed'
               AND child_writer_generation IS NOT NULL
-              AND child_result_version_id IS NOT NULL
               AND resume_workspace_version_id IS NOT NULL
-              AND resume_workspace_version_id = child_result_version_id
-              AND handoff_resume_checkpoint_id IS NOT NULL
               AND (
                   (suspension_state = 'resume_pending'
                    AND resume_writer_generation IS NULL)
@@ -3127,10 +2875,8 @@ CREATE TABLE run_waits (
               ))
              OR
              (condition_state IN ('failed', 'cancelled')
-              AND child_result_version_id IS NULL
               AND resume_workspace_version_id IS NOT NULL
               AND resume_workspace_version_id = base_workspace_version_id
-              AND handoff_resume_checkpoint_id IS NULL
               AND (
                   (suspension_state = 'resume_pending'
                    AND resume_writer_generation IS NULL)
@@ -3184,19 +2930,9 @@ CREATE UNIQUE INDEX run_waits_completed_actor_record_active_uidx
     WHERE completed_actor_record_id IS NOT NULL
       AND suspension_state IN ('hot', 'checkpointing', 'parked', 'resume_pending', 'resuming');
 
-CREATE INDEX run_waits_handoff_runtime_active_idx
-    ON run_waits (handoff_runtime_instance_id)
-    WHERE handoff_runtime_instance_id IS NOT NULL
-      AND suspension_state IN ('hot', 'checkpointing', 'parked', 'resume_pending', 'resuming');
-
-CREATE INDEX run_waits_handoff_mount_active_idx
-    ON run_waits (handoff_workspace_mount_id)
-    WHERE handoff_workspace_mount_id IS NOT NULL
-      AND suspension_state IN ('hot', 'checkpointing', 'parked', 'resume_pending', 'resuming');
-
-CREATE UNIQUE INDEX run_waits_handoff_child_active_uidx
+CREATE UNIQUE INDEX run_waits_same_workspace_child_active_uidx
     ON run_waits (child_run_id)
-    WHERE handoff_runtime_instance_id IS NOT NULL
+    WHERE child_parent_owned IS TRUE
       AND suspension_state IN ('hot', 'checkpointing', 'parked', 'resume_pending', 'resuming');
 
 ALTER TABLE run_checkpoints
@@ -3208,10 +2944,6 @@ ALTER TABLE run_checkpoints
 ALTER TABLE run_waits
     ADD CONSTRAINT run_waits_suspend_checkpoint_fk
     FOREIGN KEY (run_id, attempt_number, workspace_id, suspend_checkpoint_id)
-    REFERENCES run_checkpoints(run_id, attempt_number, workspace_id, id)
-    ON DELETE RESTRICT,
-    ADD CONSTRAINT run_waits_handoff_resume_checkpoint_fk
-    FOREIGN KEY (run_id, attempt_number, workspace_id, handoff_resume_checkpoint_id)
     REFERENCES run_checkpoints(run_id, attempt_number, workspace_id, id)
     ON DELETE RESTRICT;
 
@@ -3227,6 +2959,8 @@ CREATE TABLE runtime_instances (
     deployment_definition_id UUID NOT NULL,
     runtime_substrate_id UUID,
     worker_epoch BIGINT NOT NULL CHECK (worker_epoch > 0),
+    vm_vcpu_count INTEGER NOT NULL CHECK (vm_vcpu_count > 0),
+    cpu_config_digest TEXT NOT NULL CHECK (cpu_config_digest ~ '^sha256:[0-9a-f]{64}$'),
     reserved_cpu_millis BIGINT NOT NULL CHECK (reserved_cpu_millis > 0),
     reserved_memory_bytes BIGINT NOT NULL CHECK (reserved_memory_bytes > 0),
     reserved_guest_ephemeral_disk_bytes BIGINT NOT NULL CHECK (reserved_guest_ephemeral_disk_bytes >= 0),
@@ -3328,7 +3062,6 @@ CREATE TABLE runtime_instances (
          AND reservation_expires_at IS NOT NULL)
     ),
     CHECK (reserved_workspace_version_id IS NULL OR observed_state IN ('allocated', 'preparing', 'ready')),
-    CHECK (restore_checkpoint_id IS NULL OR reserved_process_id IS NULL),
     CHECK (desired_state <> 'closed' OR desired_version > 1),
     CHECK (observed_desired_version < desired_version OR desired_state <> 'closed' OR observed_state IN ('closing', 'closed', 'failed', 'lost')),
     CHECK (preparing_at IS NULL OR preparing_at >= allocated_at),
@@ -3452,9 +3185,6 @@ CREATE INDEX deployment_promotions_deployment_idx
     ON deployment_promotions(environment_id, deployment_id);
 CREATE INDEX deployment_promotions_environment_created_idx
     ON deployment_promotions(environment_id, created_at DESC);
-CREATE INDEX deployments_build_region_status_idx
-    ON deployments(build_region_id, status, created_at)
-    WHERE status IN ('queued', 'building');
 CREATE INDEX artifacts_scope_kind_created_idx
     ON artifacts(org_id, project_id, environment_id, kind, created_at DESC);
 CREATE INDEX artifacts_digest_idx

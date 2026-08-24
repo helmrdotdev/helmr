@@ -16,7 +16,7 @@ func (request *RunStartRequest) UnmarshalJSON(data []byte) error {
 	*request = RunStartRequest{}
 	for name := range fields {
 		switch name {
-		case "lease", "fresh", "restore", "attach":
+		case "lease", "fresh", "restore":
 		default:
 			return fmt.Errorf("unknown field %q", name)
 		}
@@ -50,59 +50,10 @@ func (request *RunStartRequest) UnmarshalJSON(data []byte) error {
 			return fmt.Errorf("restore: %w", err)
 		}
 	}
-	if raw, present := fields["attach"]; present {
-		arms++
-		if isStartJSONNull(raw) {
-			return errors.New("attach must not be null")
-		}
-		attach, err := decodeWorkerRunStartAttach(raw)
-		if err != nil {
-			return err
-		}
-		request.Attach = attach
-	}
 	if arms != 1 {
-		return errors.New("exactly one of fresh, restore, or attach is required")
+		return errors.New("exactly one of fresh or restore is required")
 	}
 	return nil
-}
-
-func decodeWorkerRunStartAttach(data []byte) (*RunStartAttach, error) {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(data, &fields); err != nil {
-		return nil, fmt.Errorf("attach: %w", err)
-	}
-	for name := range fields {
-		if name != "child" && name != "parent" {
-			return nil, fmt.Errorf("attach: unknown field %q", name)
-		}
-	}
-	attach := &RunStartAttach{}
-	arms := 0
-	if raw, present := fields["child"]; present {
-		arms++
-		if isStartJSONNull(raw) {
-			return nil, errors.New("attach.child must not be null")
-		}
-		attach.Child = &RunStartChildAttach{}
-		if err := decodeStrictJSON(raw, attach.Child); err != nil {
-			return nil, fmt.Errorf("attach.child: %w", err)
-		}
-	}
-	if raw, present := fields["parent"]; present {
-		arms++
-		if isStartJSONNull(raw) {
-			return nil, errors.New("attach.parent must not be null")
-		}
-		attach.Parent = &RunStartParentAttach{}
-		if err := decodeStrictJSON(raw, attach.Parent); err != nil {
-			return nil, fmt.Errorf("attach.parent: %w", err)
-		}
-	}
-	if arms != 1 {
-		return nil, errors.New("attach must contain exactly one of child or parent")
-	}
-	return attach, nil
 }
 
 func decodeStrictJSON(data []byte, target any) error {

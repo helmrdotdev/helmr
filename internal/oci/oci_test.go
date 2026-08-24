@@ -7,10 +7,47 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
+
+func TestApplyLayerTarAppliesExactModesIndependentOfUmask(t *testing.T) {
+	previous := syscall.Umask(0o077)
+	t.Cleanup(func() { syscall.Umask(previous) })
+	var layer bytes.Buffer
+	writer := tar.NewWriter(&layer)
+	if err := writer.WriteHeader(&tar.Header{Name: "app", Typeflag: tar.TypeDir, Mode: 0o751}); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte("hello")
+	if err := writer.WriteHeader(&tar.Header{Name: "app/hello", Typeflag: tar.TypeReg, Mode: 0o640, Size: int64(len(body))}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Write(body); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if err := ApplyLayerTar(bytes.NewReader(layer.Bytes()), root); err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]os.FileMode{
+		filepath.Join(root, "app"):          0o751,
+		filepath.Join(root, "app", "hello"): 0o640,
+	} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != want {
+			t.Fatalf("%s mode = %04o, want %04o", path, got, want)
+		}
+	}
+}
 
 func TestUnpackAppliesLayersAndConfig(t *testing.T) {
 	first := tarBytes(t, map[string]string{

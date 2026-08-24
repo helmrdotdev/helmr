@@ -25,7 +25,8 @@ const (
 	VerificationDeclarationsPath = "helmr/analysis-locators.json"
 	VerificationProgramEntryPath = "helmr/entry.mjs"
 
-	maxVerificationResultBytes = 70 << 20
+	maxVerificationResultBytes         = 70 << 20
+	maxVerificationFailureMessageBytes = 16 << 10
 )
 
 type VerificationOutcome string
@@ -337,11 +338,11 @@ func validateVerificationFailed(failed VerificationFailed) error {
 		)
 	}
 	if !utf8.ValidString(failed.Error.Message) ||
-		len(failed.Error.Message) > maxBuildFailureMessageBytes ||
+		len(failed.Error.Message) > maxVerificationFailureMessageBytes ||
 		strings.TrimSpace(failed.Error.Message) == "" {
 		return fmt.Errorf(
 			"verification failure message must be nonblank UTF-8 of at most %d bytes",
-			maxBuildFailureMessageBytes,
+			maxVerificationFailureMessageBytes,
 		)
 	}
 	return nil

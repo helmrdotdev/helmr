@@ -83,6 +83,7 @@ func (p *PreparedRuntimePool) restorePreparedRuntime(
 			RuntimeArch: runtimeInfo.Arch, VMRuntimeContract: runtimeInfo.Contract,
 			KernelDigest: runtimeInfo.KernelDigest, InitramfsDigest: runtimeInfo.InitramfsDigest,
 			RootfsDigest: runtimeInfo.RootfsDigest, RuntimeConfigDigest: runtimeInfo.ConfigDigest,
+			VMVCPUCount: runtimeInfo.VMVCPUCount, CPUConfigDigest: runtimeInfo.CPUConfigDigest,
 		},
 		Topology: topology, ReadOnlyDrives: readOnlyDrives,
 		RecordPhase: record,
@@ -105,9 +106,9 @@ func validatePreparedRuntimeRestore(
 	workerArchitecture deployment.RuntimeArchitecture,
 ) (workerapi.CheckpointManifest, error) {
 	restore := target.Source.Restore
-	if restore == nil || restore.Kind != "suspend" || strings.TrimSpace(restore.CheckpointID) == "" ||
+	if restore == nil || strings.TrimSpace(restore.CheckpointID) == "" ||
 		strings.TrimSpace(restore.RunID) == "" || restore.AttemptNumber <= 0 ||
-		strings.TrimSpace(restore.RunWaitID) == "" || strings.TrimSpace(restore.Kind) == "" || len(restore.Manifest) == 0 {
+		strings.TrimSpace(restore.RunWaitID) == "" || len(restore.Manifest) == 0 {
 		return workerapi.CheckpointManifest{}, errors.New("prepared runtime restore authority is incomplete")
 	}
 	var checkpoint workerapi.CheckpointManifest
@@ -116,6 +117,10 @@ func validatePreparedRuntimeRestore(
 	}
 	if err := validateRestoreIdentity(checkpoint, workerArchitecture); err != nil {
 		return workerapi.CheckpointManifest{}, err
+	}
+	if checkpoint.RecoveryPoint.Runtime.VMVCPUCount != target.Source.VMVCPUCount ||
+		checkpoint.RecoveryPoint.Runtime.CPUConfigDigest != target.Source.CPUConfigDigest {
+		return workerapi.CheckpointManifest{}, errors.New("prepared runtime restore manifest CPU shape does not match its reservation")
 	}
 	if checkpoint.RecoveryPoint.ID != restore.CheckpointID || checkpoint.RecoveryPoint.RunID != restore.RunID ||
 		checkpoint.RecoveryPoint.AttemptNumber != restore.AttemptNumber ||
@@ -147,12 +152,10 @@ func validatePreparedRuntimeRestore(
 			return workerapi.CheckpointManifest{}, errors.New("prepared runtime restore artifact membership does not match its manifest")
 		}
 	}
-	base := checkpoint.WorkspaceState.Base
-	workspace := target.Source.WorkspaceArtifact
-	if base.ArtifactDigest != workspace.Digest || base.ArtifactSizeBytes != workspace.SizeBytes ||
-		base.ArtifactMediaType != workspace.MediaType || base.ArtifactEncoding != workspace.Encoding ||
-		strings.TrimSpace(base.MountPath) != "/workspace" {
-		return workerapi.CheckpointManifest{}, errors.New("prepared runtime restore workspace frontier does not match its reservation")
+	if restore.SourceWorkspaceBase == nil || strings.TrimSpace(restore.SourceWorkspaceBase.VersionID) == "" ||
+		!workerapi.CheckpointWorkspaceBaseEqual(checkpoint.WorkspaceState.Base, restore.SourceWorkspaceBase.Base) ||
+		strings.TrimSpace(restore.SourceWorkspaceBase.Base.MountPath) != "/workspace" {
+		return workerapi.CheckpointManifest{}, errors.New("prepared runtime restore manifest Workspace base does not match its source authority")
 	}
 	return checkpoint, nil
 }

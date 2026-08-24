@@ -59,10 +59,6 @@ func writeTreeArchive(
 		state.logicalLimit = maxBuildTreeLogicalBytes
 	case runtimeArtifact:
 		state.logicalLimit = maxRuntimeLogicalBytes
-	case managerArtifact:
-		state.logicalLimit = maxManagerTreeBytes
-	case toolchainArtifact:
-		state.logicalLimit = maxToolArtifactBytes
 	default:
 		return fmt.Errorf("program archive artifact role = %d", role)
 	}
@@ -253,7 +249,7 @@ func validateTreeEntry(entry treeEntry, role artifactRole) error {
 
 func programArchiveLimit(role artifactRole) (int64, error) {
 	switch role {
-	case programArtifact, buildTreeArtifact, runtimeArtifact, managerArtifact, toolchainArtifact:
+	case programArtifact, buildTreeArtifact, runtimeArtifact:
 		return maxProgramArchiveBytes, nil
 	default:
 		return 0, fmt.Errorf("program archive artifact role = %d", role)

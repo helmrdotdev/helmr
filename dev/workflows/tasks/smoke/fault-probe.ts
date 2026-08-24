@@ -13,7 +13,7 @@ export const faultProbeWorkspace = sandbox({ id: "helmr-fault-probe" })
 const payload = z.object({
   marker: z.string().min(1),
   mode: z.enum(["hold", "network-deny"]),
-  delaySeconds: z.number().int().min(0).max(120).default(0),
+  delaySeconds: z.number().int().min(0).max(900).default(0),
   holdSeconds: z.number().int().min(1).max(900).default(30),
   retryHoldSeconds: z.number().int().min(1).max(900).optional(),
   denyAttempts: z.number().int().min(1).max(20).default(3),

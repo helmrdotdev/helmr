@@ -32,12 +32,6 @@ if ! printf '%s' "$release_tag" | grep -Eq '^v[0-9]+[.][0-9]+[.][0-9]+(-[0-9A-Za
   die "release tag must match vX.Y.Z or vX.Y.Z-prerelease"
 fi
 
-release_version="${release_tag#v}"
-image_builder_version="${release_version%%-*}"
-if ! printf '%s' "$image_builder_version" | grep -Eq '^[0-9]+[.][0-9]+[.][0-9]+$'; then
-  die "failed to derive EC2 Image Builder version from ${release_tag}"
-fi
-
 release_slug_base="$(slugify "$release_tag")"
 [ -n "$release_slug_base" ] || die "failed to derive release slug from ${release_tag}"
 release_tag_hash="$(printf '%s' "$release_tag" | sha256_hex | cut -c 1-10)"
@@ -68,5 +62,4 @@ state_key="${state_namespace}/releases/${release_slug}.tfstate"
 
 printf 'release_slug=%s\n' "$release_slug"
 printf 'worker_image_name=%s\n' "$worker_image_name"
-printf 'worker_image_version=%s\n' "$image_builder_version"
 printf 'state_key=%s\n' "$state_key"

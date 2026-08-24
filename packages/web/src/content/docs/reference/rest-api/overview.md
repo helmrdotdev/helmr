@@ -17,7 +17,7 @@ is public.
 | Actors | `GET /v1/actors`, `GET /v1/actors/{id}`, `POST /v1/actors/{declaredID}/start` |
 | Sessions | `GET /v1/sessions`, `GET /v1/sessions/{id}`, `POST .../inputs`, `GET .../outputs`, `POST .../close` |
 | Sandboxes | `GET /v1/sandboxes`, `GET /v1/sandboxes/{id}`, `POST .../{id}/workspaces` |
-| Workspaces | `GET /v1/workspaces`, `GET`/`DELETE /v1/workspaces/{id}`, `GET .../files`, `GET .../files/content`, `GET .../files/stat`, `POST .../exec` |
+| Workspaces | `GET /v1/workspaces`, `GET`/`DELETE /v1/workspaces/{id}`, `GET .../files`, `GET .../files/content`, `GET .../files/stat`, `POST .../exec`, `GET .../exec/{process_id}` |
 | Runs | `GET /v1/runs`, `GET /v1/runs/{id}`, `GET .../events`, `GET .../logs`, `POST .../cancel` |
 | Deployments | `GET`/`POST /v1/deployments`, `GET /v1/deployments/current`, `GET /v1/deployments/{id}`, `GET .../events`, `POST .../promote` |
 | Schedules | `GET /v1/schedules`, `GET /v1/schedules/{id}` |

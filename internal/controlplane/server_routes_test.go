@@ -41,8 +41,10 @@ GET /admin/api/v1/regions
 GET /admin/api/v1/regions/{regionID}
 GET /admin/api/v1/worker-groups
 GET /admin/api/v1/worker-groups/{groupID}
+GET /admin/api/v1/worker-groups/{groupID}/pools
 GET /api/auth/device/status
 GET /api/capacity/v0/worker-groups/resolve
+GET /api/capacity/v0/worker-groups/{workerGroupID}/pools/resolve
 GET /api/capacity/v0/worker-instances
 GET /api/capacity/v0/worker-instances/{workerInstanceID}
 GET /api/invitations
@@ -77,6 +79,7 @@ GET /api/projects/{projectID}/environments/{environmentID}/tokens
 GET /api/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}
 GET /api/projects/{projectID}/environments/{environmentID}/workspaces
 GET /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}
+GET /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/exec/{processID}
 GET /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/files
 GET /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/files/content
 GET /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/files/stat
@@ -109,6 +112,7 @@ GET /v1/tokens
 GET /v1/tokens/{tokenID}
 GET /v1/workspaces
 GET /v1/workspaces/{workspaceID}
+GET /v1/workspaces/{workspaceID}/exec/{processID}
 GET /v1/workspaces/{workspaceID}/files
 GET /v1/workspaces/{workspaceID}/files/content
 GET /v1/workspaces/{workspaceID}/files/stat
@@ -124,6 +128,10 @@ POST /admin/api/v1/worker-groups/{groupID}/activate
 POST /admin/api/v1/worker-groups/{groupID}/disable
 POST /admin/api/v1/worker-groups/{groupID}/drain
 POST /admin/api/v1/worker-groups/{groupID}/pause
+POST /admin/api/v1/worker-groups/{groupID}/pools
+POST /admin/api/v1/worker-groups/{groupID}/pools/{poolID}/disable
+POST /admin/api/v1/worker-groups/{groupID}/pools/{poolID}/drain
+POST /admin/api/v1/worker-groups/{groupID}/pools/{poolID}/primary
 POST /admin/api/v1/worker-groups/{groupID}/token/rotate
 POST /api/auth/device/approve
 POST /api/auth/device/deny
@@ -138,13 +146,15 @@ POST /api/auth/magic-link/invite/start
 POST /api/auth/magic-link/start
 POST /api/capacity/v0/worker-groups/{workerGroupID}/plan
 POST /api/capacity/v0/worker-instances/{workerInstanceID}/drain
+POST /api/capacity/v0/worker-instances/{workerInstanceID}/lost
 POST /api/invitations
 POST /api/organizations
 POST /api/projects
 POST /api/projects/{projectID}/environments
 POST /api/projects/{projectID}/environments/{environmentID}/actors/{actorDeclaredID}/start
 POST /api/projects/{projectID}/environments/{environmentID}/api-keys
-POST /api/projects/{projectID}/environments/{environmentID}/deployments
+POST /api/projects/{projectID}/environments/{environmentID}/deployment-bundles/finalize
+POST /api/projects/{projectID}/environments/{environmentID}/deployment-bundles/upload-plan
 POST /api/projects/{projectID}/environments/{environmentID}/deployments/{deploymentID}/promote
 POST /api/projects/{projectID}/environments/{environmentID}/runs/{runID}/cancel
 POST /api/projects/{projectID}/environments/{environmentID}/sandboxes/{sandboxID}/workspaces
@@ -160,18 +170,6 @@ POST /api/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}/com
 POST /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/exec
 POST /api/public/tokens/{tokenID}/complete
 POST /api/token-callbacks/{tokenID}/{callbackSecret}
-POST /api/worker/v0/build/deployments/complete
-POST /api/worker/v0/build/deployments/delivery-failed
-POST /api/worker/v0/build/deployments/lease
-POST /api/worker/v0/build/deployments/reject
-POST /api/worker/v0/build/deployments/renew
-POST /api/worker/v0/build/deployments/start
-POST /api/worker/v0/build/deployments/workspace-images/admit
-POST /api/worker/v0/build/deployments/workspace-images/complete
-POST /api/worker/v0/build/deployments/workspace-images/credentials
-POST /api/worker/v0/build/platform-acquisitions/complete
-POST /api/worker/v0/build/platform-acquisitions/fail
-POST /api/worker/v0/build/platform-acquisitions/next
 POST /api/worker/v0/enrollment
 POST /api/worker/v0/instance/activate
 POST /api/worker/v0/instance/drain
@@ -228,7 +226,8 @@ POST /api/worker/v0/run/workspaces/files/read
 POST /api/worker/v0/run/workspaces/files/stat
 POST /api/worker/v0/run/workspaces/retrieve
 POST /v1/actors/{actorDeclaredID}/start
-POST /v1/deployments
+POST /v1/deployment-bundles/finalize
+POST /v1/deployment-bundles/upload-plan
 POST /v1/deployments/{deploymentID}/promote
 POST /v1/runs/{runID}/cancel
 POST /v1/sandboxes/{sandboxID}/workspaces
@@ -242,6 +241,7 @@ POST /v1/tokens
 POST /v1/tokens/{tokenID}/cancel
 POST /v1/tokens/{tokenID}/complete
 POST /v1/workspaces/{workspaceID}/exec
+PUT /api/capacity/v0/worker-groups/{workerGroupID}/primary-pools
 `), "\n")
 	if !slices.IsSorted(want) {
 		t.Fatal("Control Plane route snapshot must stay sorted")

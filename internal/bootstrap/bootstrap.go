@@ -78,7 +78,6 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, cfg Config) error {
 	if _, err := q.CreateWorkerGroup(ctx, db.CreateWorkerGroupParams{
 		ID: uuid.Must(uuid.NewV7()).String(), TokenID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		TokenHash: tokenHash, RegionID: cfg.RegionID, Name: cfg.WorkerGroupName, Description: "",
-		AllowsRun: true, AllowsBuild: true,
 	}); err != nil {
 		return fmt.Errorf("create bootstrap worker group: %w", err)
 	}

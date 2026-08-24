@@ -23,58 +23,10 @@ type connectionStart struct {
 	attach       *runv0.ResumeAttach
 }
 
-type guestProfile uint8
-
-const (
-	ordinaryGuestProfile guestProfile = iota
-	buildGuestProfile
-	imageBuildGuestProfile
-)
-
-func parseGuestProfile(value string) (guestProfile, error) {
-	switch value {
-	case "":
-		return ordinaryGuestProfile, nil
-	case "build":
-		return buildGuestProfile, nil
-	case "image-build":
-		return imageBuildGuestProfile, nil
-	default:
-		return 0, fmt.Errorf("unsupported guest profile %q", value)
-	}
-}
-
-func handleConnection(ctx context.Context, conn io.ReadWriteCloser, cfg Config, logger *slog.Logger, registry *waitingRunRegistry, workspaceRegistry *workspaceOperationRegistry) (bool, error) {
-	profile, err := parseGuestProfile(cfg.Profile)
-	if err != nil {
-		return false, err
-	}
+func handleConnection(ctx context.Context, conn io.ReadWriteCloser, logger *slog.Logger, registry *waitingRunRegistry, workspaceRegistry *workspaceOperationRegistry) (bool, error) {
 	start, err := readConnectionStart(conn)
 	if err != nil {
 		return false, err
-	}
-	if profile != ordinaryGuestProfile {
-		if start.attach != nil {
-			return false, errors.New("one-shot guest rejects resume attach")
-		}
-		switch profile {
-		case buildGuestProfile:
-			if start.streamHeader.Type != wire.StreamTypeBuild {
-				return false, fmt.Errorf(
-					"build guest rejects input type %q",
-					start.streamHeader.Type,
-				)
-			}
-			return false, handleBuild(ctx, conn, start.bodyLen)
-		case imageBuildGuestProfile:
-			if start.streamHeader.Type != wire.StreamTypeImageBuild {
-				return false, fmt.Errorf(
-					"image-build guest rejects input type %q",
-					start.streamHeader.Type,
-				)
-			}
-			return false, handleImageBuild(ctx, conn, start.bodyLen)
-		}
 	}
 	if start.attach != nil {
 		if err := registry.attachResume(start.attach, conn); err != nil {

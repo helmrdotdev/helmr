@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -23,7 +24,7 @@ func TestParseCheckpointReadyRequestBindsFullAtomicProof(t *testing.T) {
 	if parsed.waitID.String() != request.RunWaitID || parsed.checkpointID.String() != request.CheckpointID ||
 		parsed.requestVersion != request.RequestVersion ||
 		parsed.capture.tree.Digest != request.WorkspaceCapture.Tree.Digest || len(parsed.artifacts) != 4 ||
-		parsed.fingerprint == "" || len(parsed.manifest) == 0 {
+		parsed.fingerprint == "" || len(parsed.manifest) == 0 || len(parsed.cleanupProof) == 0 {
 		t.Fatalf("parsed checkpoint-ready = %+v", parsed)
 	}
 	if normalized.Lease != request.Lease {
@@ -38,6 +39,33 @@ func TestParseCheckpointReadyRequestBindsFullAtomicProof(t *testing.T) {
 	}
 	if changedParsed.fingerprint == parsed.fingerprint {
 		t.Fatal("changed Workspace proof retained checkpoint-ready fingerprint")
+	}
+	changed = request
+	cleanup := *request.SourceCleanup
+	changed.SourceCleanup = &cleanup
+	changed.SourceCleanup.CompletedAt = changed.SourceCleanup.CompletedAt.Add(-time.Second)
+	changedParsed, _, err = parseCheckpointReadyRequest(changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changedParsed.fingerprint == parsed.fingerprint {
+		t.Fatal("changed source cleanup proof retained checkpoint-ready fingerprint")
+	}
+}
+
+func TestParseCheckpointReadyRequestRejectsInvalidSourceCleanup(t *testing.T) {
+	for _, mutate := range []func(*workerapi.CheckpointReadyRequest){
+		func(request *workerapi.CheckpointReadyRequest) { request.SourceCleanup = nil },
+		func(request *workerapi.CheckpointReadyRequest) {
+			request.SourceCleanup.Method = workerapi.RuntimeCleanupHostReconciled
+		},
+		func(request *workerapi.CheckpointReadyRequest) { request.SourceCleanup.CompletedAt = time.Time{} },
+	} {
+		request := validCheckpointReadyRequest()
+		mutate(&request)
+		if _, _, err := parseCheckpointReadyRequest(request); err == nil || !strings.Contains(err.Error(), "source_cleanup") {
+			t.Fatalf("err = %v, want source_cleanup rejection", err)
+		}
 	}
 }
 
@@ -135,6 +163,9 @@ func validCheckpointReadyRequest() workerapi.CheckpointReadyRequest {
 	}
 	return workerapi.CheckpointReadyRequest{
 		Lease: lease.Fence(), RequestVersion: 1, RunWaitID: waitID, CheckpointID: checkpointID,
+		SourceCleanup: &workerapi.RuntimeCleanupProof{
+			Method: workerapi.RuntimeCleanupSessionClosed, CompletedAt: time.Now().UTC(),
+		},
 		WorkspaceCapture: workerapi.CheckpointWorkspaceCapture{
 			Tree: workerapi.WorkspaceTreeIdentity{Digest: digestWith("2"), SizeBytes: 10, EntryCount: 1},
 			Artifact: workerapi.WorkspaceArtifact{
@@ -150,6 +181,7 @@ func validCheckpointReadyRequest() workerapi.CheckpointReadyRequest {
 					Backend: "firecracker", ID: runtimeIdentity, Arch: string(deployment.ArchitectureX8664),
 					Contract: "helmr.vm-runtime.v0", KernelDigest: digestWith("4"),
 					InitramfsDigest: digestWith("5"), RootfsDigest: digestWith("6"), ConfigDigest: digestWith("7"),
+					VMVCPUCount: 2, CPUConfigDigest: digestWith("8"),
 				},
 			},
 			RuntimeState: workerapi.CheckpointRuntimeState{
@@ -160,6 +192,21 @@ func validCheckpointReadyRequest() workerapi.CheckpointReadyRequest {
 				Config:              json.RawMessage(`{"machine-config":{"vcpu_count":1}}`),
 			},
 		},
+	}
+}
+
+func TestCheckpointRuntimeShapeAuthorityMatchesLockedRuntime(t *testing.T) {
+	manifest := validCheckpointReadyRequest().Manifest
+	runtime := db.RuntimeInstance{
+		VMVCPUCount:     manifest.RecoveryPoint.Runtime.VMVCPUCount,
+		CPUConfigDigest: manifest.RecoveryPoint.Runtime.CPUConfigDigest,
+	}
+	if err := validateCheckpointRuntimeShapeAuthority(runtime, manifest); err != nil {
+		t.Fatal(err)
+	}
+	manifest.RecoveryPoint.Runtime.CPUConfigDigest = digestWith("9")
+	if err := validateCheckpointRuntimeShapeAuthority(runtime, manifest); !errors.Is(err, errStaleRunLeaseClaim) {
+		t.Fatalf("error = %v, want stale runtime shape", err)
 	}
 }
 

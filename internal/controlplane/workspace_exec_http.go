@@ -69,7 +69,7 @@ func (s *Server) executeWorkspaceHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(codedError{code: "invalid_workspace_reference", message: err.Error()}))
 		return
 	}
-	if !principal.HasPermission(auth.PermissionWorkspaceExecCreate, scope) {
+	if !canAccessWorkspaceExecOutput(principal, scope) {
 		writeError(w, forbidden(codedError{code: "permission_required", message: errPermissionRequired.Error()}))
 		return
 	}
@@ -108,15 +108,72 @@ func (s *Server) executeWorkspaceHTTP(w http.ResponseWriter, r *http.Request) {
 		s.writeWorkspaceExecError(w, err)
 		return
 	}
-	result, err := s.waitWorkspaceExec(r.Context(), admission)
+	resource, err := publicWorkspaceExecProcess(admission.Process)
 	if err != nil {
-		if errors.Is(err, r.Context().Err()) {
-			return
-		}
 		s.writeWorkspaceExecError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, result)
+	writeJSON(w, publicWorkspaceExecHTTPStatus(resource), resource)
+}
+
+func canAccessWorkspaceExecOutput(principal auth.Actor, scope auth.Scope) bool {
+	return principal.HasPermission(auth.PermissionWorkspaceExecCreate, scope)
+}
+
+func (s *Server) getWorkspaceExecHTTP(w http.ResponseWriter, r *http.Request) {
+	workspaceID, err := ids.Parse(chi.URLParam(r, "workspaceID"))
+	if err != nil {
+		writeError(w, badRequest(codedError{code: "invalid_workspace_reference", message: "workspace ID is invalid"}))
+		return
+	}
+	processID, err := ids.Parse(chi.URLParam(r, "processID"))
+	if err != nil {
+		writeError(w, badRequest(codedError{code: "invalid_workspace_exec_reference", message: "workspace exec process ID is invalid"}))
+		return
+	}
+	principal := actorFromContext(r.Context())
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
+	if err != nil {
+		writeError(w, badRequest(codedError{code: "invalid_workspace_reference", message: err.Error()}))
+		return
+	}
+	if !canAccessWorkspaceExecOutput(principal, scope) {
+		writeError(w, forbidden(codedError{code: "permission_required", message: errPermissionRequired.Error()}))
+		return
+	}
+	process, err := s.db.GetWorkspaceExec(r.Context(), db.GetWorkspaceExecParams{
+		OrgID:         pgvalue.UUID(principal.OrgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		WorkspaceID:   pgvalue.UUID(workspaceID),
+		ID:            pgvalue.UUID(processID),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, notFound(codedError{code: "workspace_exec_not_found", message: "workspace exec process was not found"}))
+		return
+	}
+	if err != nil {
+		writeError(w, unavailable(codedError{
+			code:      "workspace_authority_unavailable",
+			message:   errWorkspaceAuthorityUnavailable.Error(),
+			retryable: true,
+		}))
+		return
+	}
+	resource, err := publicWorkspaceExecProcess(process)
+	if err != nil {
+		s.writeWorkspaceExecError(w, err)
+		return
+	}
+	writeJSON(w, publicWorkspaceExecHTTPStatus(resource), resource)
+}
+
+func publicWorkspaceExecHTTPStatus(process api.WorkspaceExecProcess) int {
+	if process.Status == api.WorkspaceExecProcessStatusPending ||
+		process.Status == api.WorkspaceExecProcessStatusRunning {
+		return http.StatusAccepted
+	}
+	return http.StatusOK
 }
 
 func (s *Server) writeWorkspaceExecError(w http.ResponseWriter, err error) {

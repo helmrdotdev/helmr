@@ -105,6 +105,7 @@ func TestSuperviseProgramOrdersFreshEntrypointGates(t *testing.T) {
 			process,
 			newWaitingRunRegistry(),
 			nil,
+			nil,
 		)
 	}()
 
@@ -186,6 +187,7 @@ func TestSuperviseProgramRejectsMismatchedStartRelease(t *testing.T) {
 			process,
 			newWaitingRunRegistry(),
 			nil,
+			nil,
 		)
 	}()
 	var event runv0.RunEvent
@@ -208,6 +210,102 @@ func TestSuperviseProgramRejectsMismatchedStartRelease(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Program supervisor did not reject release")
+	}
+}
+
+func TestSuperviseProgramReportsProcessStartFailure(t *testing.T) {
+	request := testProgramRunRequest(testProgramStartFrame(t))
+	process := &programProcess{cmd: exec.Command("/helmr-test-missing-program")}
+	guest, host := net.Pipe()
+	defer guest.Close()
+	defer host.Close()
+	result := make(chan error, 1)
+	go func() {
+		result <- superviseProgram(
+			context.Background(),
+			guest,
+			request,
+			process,
+			newWaitingRunRegistry(),
+			nil,
+			nil,
+		)
+	}()
+
+	var event runv0.RunEvent
+	if err := frameio.ReadProtoFrame(host, &event); err != nil {
+		t.Fatal(err)
+	}
+	failed := event.GetProgramProcessStartFailed()
+	if failed == nil || failed.GetRunId() != request.GetRunId() ||
+		failed.GetAttemptNumber() != request.GetAttemptNumber() ||
+		failed.GetRunLeaseId() != request.GetRunLeaseId() ||
+		failed.GetPhase() != "start" ||
+		failed.GetDiagnostic() != "Program process start failed" {
+		t.Fatalf("process-start failure event = %#v", event.GetEvent())
+	}
+	select {
+	case err := <-result:
+		if err == nil || !strings.Contains(err.Error(), "start program process") {
+			t.Fatalf("superviseProgram() error = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Program supervisor did not report start failure")
+	}
+}
+
+func TestProgramProcessStartFailureDiagnosticIsStatic(t *testing.T) {
+	guest, host := net.Pipe()
+	defer guest.Close()
+	defer host.Close()
+	request := testProgramRunRequest(testProgramStartFrame(t))
+	result := make(chan error, 1)
+	go func() {
+		result <- writeProgramProcessStartFailed(
+			guest,
+			request,
+			"prepare",
+		)
+	}()
+	var event runv0.RunEvent
+	if err := frameio.ReadProtoFrame(host, &event); err != nil {
+		t.Fatal(err)
+	}
+	if failed := event.GetProgramProcessStartFailed(); failed == nil ||
+		failed.GetPhase() != "prepare" ||
+		failed.GetDiagnostic() != "Program process preparation failed" {
+		t.Fatalf("prepare failure event = %#v", event.GetEvent())
+	}
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPromoteProgramResumeLeaseRejectsMismatchedConsumedWithoutMutation(t *testing.T) {
+	run := &runv0.ProgramRunRequest{
+		RunId: "run-1", AttemptNumber: 2, RunLeaseId: "lease-1",
+	}
+	pause := &runv0.CheckpointPauseRequest{
+		RunId: "run-1", AttemptNumber: 2, RunLeaseId: "lease-1",
+		RunWaitId: "wait-1", CheckpointId: "checkpoint-1",
+		ResumeAttachId: "attach-1", CorrelationId: "correlation-1",
+	}
+	attach := &runv0.ResumeAttach{
+		RunId: "run-1", AttemptNumber: 2, RunLeaseId: "lease-2",
+		RunWaitId: "wait-1", CheckpointId: "checkpoint-1",
+		ResumeAttachId: "attach-1", ResumeRequestVersion: 4,
+		CorrelationId: "correlation-1",
+	}
+	consumed := &runv0.ResumeConsumed{
+		RunLeaseId: "wrong-lease", RunWaitId: "wait-1",
+		CheckpointId: "checkpoint-1", ResumeAttachId: "attach-1",
+		ResumeRequestVersion: 4, CorrelationId: "correlation-1",
+	}
+	if err := promoteProgramResumeLease(run, pause, attach, consumed); err == nil {
+		t.Fatal("mismatched consumed proof was accepted")
+	}
+	if run.GetRunLeaseId() != "lease-1" {
+		t.Fatalf("rejected proof changed Program lease to %q", run.GetRunLeaseId())
 	}
 }
 
@@ -240,6 +338,7 @@ func TestSuperviseProgramRejectsWrongCommandArmBeforeStart(t *testing.T) {
 					request,
 					process,
 					newWaitingRunRegistry(),
+					nil,
 					nil,
 				)
 			}()
@@ -296,6 +395,7 @@ func TestRelayProgramPropagatesControlDecodeFailure(t *testing.T) {
 		make(chan error, 2),
 		&outputDone,
 		newWaitingRunRegistry(),
+		nil,
 		&programOutputCoordinator{},
 		nil,
 	)
@@ -350,6 +450,7 @@ func TestRelayProgramQuiescesDescendantHeldControlBeforeEOF(t *testing.T) {
 			make(chan error, 2),
 			&outputDone,
 			newWaitingRunRegistry(),
+			nil,
 			&programOutputCoordinator{},
 			nil,
 		)
@@ -424,6 +525,7 @@ func TestRelayProgramRoutesActorInputSendDecisionWithoutConsumingWaitAuthority(t
 			make(chan error, 2),
 			&outputDone,
 			newWaitingRunRegistry(),
+			nil,
 			&programOutputCoordinator{},
 			nil,
 		)
@@ -501,6 +603,651 @@ func TestRelayProgramRoutesActorInputSendDecisionWithoutConsumingWaitAuthority(t
 	}
 }
 
+func TestRelayProgramRoutesActorOutputAppendDecision(t *testing.T) {
+	blockedProcessInput, releaseProcess, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blockedProcessInput.Close()
+	defer releaseProcess.Close()
+	cmd := exec.Command("cat")
+	cmd.Stdin = blockedProcessInput
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	controlReader, controlWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	programDecisionReader, programDecisionWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer programDecisionReader.Close()
+	defer programDecisionWriter.Close()
+	process := &programProcess{
+		cmd:      cmd,
+		stdin:    programDecisionWriter,
+		control:  controlReader,
+		cgroup:   &testProgramCgroup{},
+		waitDone: make(chan struct{}),
+	}
+	defer process.close()
+	guest, host := net.Pipe()
+	defer guest.Close()
+	defer host.Close()
+	request := testProgramRunRequest(testProgramStartFrame(t))
+	result := make(chan error, 1)
+	go func() {
+		var outputDone sync.WaitGroup
+		result <- relayProgram(
+			t.Context(),
+			guest,
+			request,
+			&runv0.EntrypointIdentity{
+				Kind: &runv0.EntrypointIdentity_Actor{Actor: &runv0.ActorEntrypoint{}},
+			},
+			process,
+			&programEventStream{conn: guest},
+			make(chan error, 2),
+			&outputDone,
+			newWaitingRunRegistry(),
+			nil,
+			&programOutputCoordinator{},
+			nil,
+		)
+	}()
+	correlationID := "00000000-0000-0000-0000-000000000112"
+	if err := frameio.WriteProtoFrame(controlWriter, &runv0.RunEvent{
+		Event: &runv0.RunEvent_ActorOutputAppendRequested{
+			ActorOutputAppendRequested: &runv0.ActorOutputAppendRequested{
+				CorrelationId: correlationID,
+				DataJson:      `{"message":"hello"}`,
+				ContentType:   "application/json",
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var event runv0.RunEvent
+	if err := frameio.ReadProtoFrame(host, &event); err != nil {
+		t.Fatal(err)
+	}
+	if event.GetActorOutputAppendRequested().GetCorrelationId() != correlationID {
+		t.Fatalf("Actor output append event = %#v", event.GetEvent())
+	}
+	decision := &runv0.ResumeDecision{
+		CorrelationId: correlationID,
+		Kind:          "completed",
+		DataJson:      `{"id":"output-1","sequence":1}`,
+	}
+	if err := wire.WriteResumeDecision(host, decision); err != nil {
+		t.Fatal(err)
+	}
+	var staged runv0.ResumeDecision
+	if err := frameio.ReadProtoFrame(programDecisionReader, &staged); err != nil {
+		t.Fatal(err)
+	}
+	zero := int64(0)
+	if err := frameio.WriteProtoFrame(controlWriter, &runv0.RunEvent{
+		Event: &runv0.RunEvent_ActorOutcome{
+			ActorOutcome: &runv0.ActorOutcome{
+				TerminalInputSequence: &zero,
+				Outcome: &runv0.ActorOutcome_Succeeded{
+					Succeeded: &runv0.ActorSucceeded{},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := controlWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := releaseProcess.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := frameio.ReadProtoFrame(host, &event); err != nil {
+		t.Fatal(err)
+	}
+	if event.GetActorOutcome() == nil {
+		t.Fatalf("Actor outcome = %#v", event.GetEvent())
+	}
+	if err := frameio.ReadProtoFrame(host, &event); err != nil {
+		t.Fatal(err)
+	}
+	if event.GetProgramQuiesced() == nil {
+		t.Fatalf("Program quiescence = %#v", event.GetEvent())
+	}
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+	if !proto.Equal(&staged, decision) {
+		t.Fatalf("staged decision = %+v", &staged)
+	}
+	if staged.GetRequireConsumedAck() ||
+		staged.GetRunWaitId() != "" ||
+		staged.GetCheckpointId() != "" {
+		t.Fatalf("append decision carried consuming Wait authority: %+v", &staged)
+	}
+}
+
+func TestRelayProgramRoutesChildTaskRequests(t *testing.T) {
+	tests := []struct {
+		name           string
+		method         string
+		runWaitID      string
+		resumeAttachID string
+	}{
+		{name: "start", method: "start"},
+		{
+			name: "call", method: "call",
+			runWaitID: "wait-1", resumeAttachID: "attach-1",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			blockedProcessInput, releaseProcess, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer blockedProcessInput.Close()
+			defer releaseProcess.Close()
+			cmd := exec.Command("cat")
+			cmd.Stdin = blockedProcessInput
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			controlReader, controlWriter, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			programDecisionReader, programDecisionWriter, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer programDecisionReader.Close()
+			defer programDecisionWriter.Close()
+			process := &programProcess{
+				cmd: cmd, stdin: programDecisionWriter, control: controlReader,
+				cgroup: &testProgramCgroup{}, waitDone: make(chan struct{}),
+			}
+			defer process.close()
+			guest, host := net.Pipe()
+			defer guest.Close()
+			defer host.Close()
+			request := testProgramRunRequest(testProgramStartFrame(t))
+			result := make(chan error, 1)
+			go func() {
+				var outputDone sync.WaitGroup
+				result <- relayProgram(
+					t.Context(), guest, request,
+					&runv0.EntrypointIdentity{
+						Kind: &runv0.EntrypointIdentity_Task{Task: &runv0.TaskEntrypoint{}},
+					},
+					process, &programEventStream{conn: guest}, make(chan error, 2),
+					&outputDone, newWaitingRunRegistry(), nil, &programOutputCoordinator{}, nil,
+				)
+			}()
+			correlationID := "00000000-0000-0000-0000-000000000311"
+			requested := &runv0.TaskChildInvokeRequested{
+				CorrelationId: correlationID, DeclaredId: "child-task",
+				Method: test.method, WorkspaceJson: `{}`, OptionsJson: `{}`,
+				RunWaitId: test.runWaitID, ResumeAttachId: test.resumeAttachID,
+			}
+			if err := frameio.WriteProtoFrame(controlWriter, &runv0.RunEvent{
+				Event: &runv0.RunEvent_TaskChildInvokeRequested{
+					TaskChildInvokeRequested: requested,
+				},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			var event runv0.RunEvent
+			if err := frameio.ReadProtoFrame(host, &event); err != nil {
+				t.Fatal(err)
+			}
+			if !proto.Equal(event.GetTaskChildInvokeRequested(), requested) {
+				t.Fatalf("child request = %+v", event.GetTaskChildInvokeRequested())
+			}
+			decision := &runv0.ResumeDecision{
+				CorrelationId: correlationID, RunWaitId: test.runWaitID,
+				ResumeAttachId: test.resumeAttachID,
+				Kind:           "completed", DataJson: `{"run_id":"child-run"}`,
+			}
+			if err := wire.WriteResumeDecision(host, decision); err != nil {
+				t.Fatal(err)
+			}
+			var staged runv0.ResumeDecision
+			if err := frameio.ReadProtoFrame(programDecisionReader, &staged); err != nil {
+				t.Fatal(err)
+			}
+			if !proto.Equal(&staged, decision) {
+				t.Fatalf("staged decision = %+v", &staged)
+			}
+			if err := frameio.WriteProtoFrame(controlWriter, &runv0.RunEvent{
+				Event: &runv0.RunEvent_TaskOutcome{TaskOutcome: &runv0.TaskOutcome{
+					Outcome: &runv0.TaskOutcome_Succeeded{
+						Succeeded: &runv0.TaskSucceeded{OutputJson: "null"},
+					},
+				}},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := controlWriter.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := releaseProcess.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := frameio.ReadProtoFrame(host, &event); err != nil {
+				t.Fatal(err)
+			}
+			if event.GetTaskOutcome() == nil {
+				t.Fatalf("Task outcome = %#v", event.GetEvent())
+			}
+			if err := frameio.ReadProtoFrame(host, &event); err != nil {
+				t.Fatal(err)
+			}
+			if event.GetProgramQuiesced() == nil {
+				t.Fatalf("Program quiescence = %#v", event.GetEvent())
+			}
+			if err := <-result; err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestRelayProgramQuiescenceUsesPromotedResumeLease(t *testing.T) {
+	blockedProcessInput, releaseProcess, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blockedProcessInput.Close()
+	defer releaseProcess.Close()
+	cmd := exec.Command("cat")
+	cmd.Stdin = blockedProcessInput
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	controlReader, controlWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	programDecisionReader, programDecisionWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer programDecisionReader.Close()
+	defer programDecisionWriter.Close()
+	process := &programProcess{
+		cmd: cmd, stdin: programDecisionWriter, control: controlReader,
+		cgroup: &testProgramCgroup{}, waitDone: make(chan struct{}),
+	}
+	defer process.close()
+	guest, host := net.Pipe()
+	defer guest.Close()
+	defer host.Close()
+	request := testProgramRunRequest(testProgramStartFrame(t))
+	request.RunLeaseId = "lease-1"
+	registry := newWaitingRunRegistry()
+	result := make(chan error, 1)
+	go func() {
+		var outputDone sync.WaitGroup
+		result <- relayProgram(
+			t.Context(), guest, request,
+			&runv0.EntrypointIdentity{
+				Kind: &runv0.EntrypointIdentity_Task{Task: &runv0.TaskEntrypoint{}},
+			},
+			process,
+			&programEventStream{
+				conn: guest, changed: make(chan struct{}), done: make(chan struct{}),
+				rebind: make(chan programConnection, 1),
+			},
+			make(chan error, 2), &outputDone, registry, nil,
+			&programOutputCoordinator{}, nil,
+		)
+	}()
+	child := &runv0.TaskChildInvokeRequested{
+		CorrelationId: "correlation-1", DeclaredId: "child-task", Method: "call",
+		WorkspaceJson: `{}`, OptionsJson: `{}`, RunWaitId: "wait-1",
+		ResumeAttachId: "attach-1",
+	}
+	if err := frameio.WriteProtoFrame(controlWriter, &runv0.RunEvent{
+		Event: &runv0.RunEvent_TaskChildInvokeRequested{TaskChildInvokeRequested: child},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var event runv0.RunEvent
+	if err := frameio.ReadProtoFrame(host, &event); err != nil {
+		t.Fatal(err)
+	}
+	if !proto.Equal(event.GetTaskChildInvokeRequested(), child) {
+		t.Fatalf("child request = %+v", event.GetTaskChildInvokeRequested())
+	}
+	pause := &runv0.CheckpointPauseRequest{
+		RunId: request.GetRunId(), AttemptNumber: request.GetAttemptNumber(),
+		RunLeaseId: "lease-1", RunWaitId: "wait-1", CorrelationId: "correlation-1",
+		CheckpointId: "checkpoint-1", ResumeAttachId: "attach-1",
+		CheckpointRequestVersion: 1,
+	}
+	if err := wire.WriteCheckpointPauseRequest(host, pause); err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(host)
+	header, bodyLen, err := wire.ReadStreamFrameHeader(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if header.Type != wire.StreamTypeCheckpointPauseReady || bodyLen == 0 {
+		t.Fatalf("pause proof frame = %+v body=%d", header, bodyLen)
+	}
+	body := make([]byte, bodyLen)
+	if _, err := io.ReadFull(reader, body); err != nil {
+		t.Fatal(err)
+	}
+	var ready runv0.CheckpointPauseReady
+	if err := proto.Unmarshal(body, &ready); err != nil {
+		t.Fatal(err)
+	}
+	resumeGuest, resumeHost := net.Pipe()
+	defer resumeGuest.Close()
+	defer resumeHost.Close()
+	attach := &runv0.ResumeAttach{
+		RunId: request.GetRunId(), AttemptNumber: request.GetAttemptNumber(),
+		RunLeaseId: "lease-2", RunWaitId: "wait-1", CorrelationId: "correlation-1",
+		CheckpointId: "checkpoint-1", ResumeAttachId: "attach-1",
+		ResumeRequestVersion: 2,
+	}
+	if err := registry.grantProgramResume(testProgramResumeGrant(attach)); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.attachResume(attach, resumeGuest); err != nil {
+		t.Fatal(err)
+	}
+	decision := &runv0.ResumeDecision{
+		RunWaitId: "wait-1", CorrelationId: "correlation-1", Kind: "completed",
+		DataJson: `{"child":"done"}`, RequireConsumedAck: true,
+		CheckpointId: "checkpoint-1", ResumeAttachId: "attach-1",
+		ResumeRequestVersion: 2, RunLeaseId: "lease-2",
+	}
+	if err := frameio.WriteProtoFrame(resumeHost, decision); err != nil {
+		t.Fatal(err)
+	}
+	var staged runv0.ResumeDecision
+	if err := frameio.ReadProtoFrame(programDecisionReader, &staged); err != nil {
+		t.Fatal(err)
+	}
+	if !proto.Equal(&staged, decision) {
+		t.Fatalf("staged decision = %+v", &staged)
+	}
+	if err := frameio.WriteProtoFrame(controlWriter, &runv0.RunEvent{
+		Event: &runv0.RunEvent_ResumeConsumed{ResumeConsumed: &runv0.ResumeConsumed{
+			RunLeaseId: "lease-2", RunWaitId: "wait-1", CorrelationId: "correlation-1",
+			CheckpointId: "checkpoint-1", ResumeAttachId: "attach-1",
+			ResumeRequestVersion: 2,
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var ack runv0.ResumeAck
+	if err := frameio.ReadProtoFrame(resumeHost, &ack); err != nil {
+		t.Fatal(err)
+	}
+	if ack.GetRunLeaseId() != "lease-2" {
+		t.Fatalf("resume ack = %+v", &ack)
+	}
+	if err := frameio.WriteProtoFrame(controlWriter, &runv0.RunEvent{
+		Event: &runv0.RunEvent_TaskOutcome{TaskOutcome: &runv0.TaskOutcome{
+			Outcome: &runv0.TaskOutcome_Succeeded{
+				Succeeded: &runv0.TaskSucceeded{OutputJson: `{"ok":true}`},
+			},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := controlWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := releaseProcess.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := frameio.ReadProtoFrame(resumeHost, &event); err != nil {
+		t.Fatal(err)
+	}
+	if event.GetTaskOutcome() == nil {
+		t.Fatalf("task outcome = %#v", event.GetEvent())
+	}
+	if err := frameio.ReadProtoFrame(resumeHost, &event); err != nil {
+		t.Fatal(err)
+	}
+	proof := event.GetProgramQuiesced()
+	if proof == nil || proof.GetRunLeaseId() != "lease-2" {
+		t.Fatalf("Program quiescence = %+v", proof)
+	}
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateImmediateProgramWaitDecisionRequiresExactIdentity(t *testing.T) {
+	wait, err := newProgramWaitIdentity(programWaitKindStandard, "correlation-1", "wait-1", "attach-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := &runv0.ResumeDecision{
+		CorrelationId: "correlation-1", RunWaitId: "wait-1",
+		ResumeAttachId: "attach-1", Kind: "completed", DataJson: `null`,
+	}
+	if err := validateImmediateProgramWaitDecision(wait, valid); err != nil {
+		t.Fatalf("valid immediate decision: %v", err)
+	}
+	for _, mutate := range []func(*runv0.ResumeDecision){
+		func(value *runv0.ResumeDecision) { value.CorrelationId = "other" },
+		func(value *runv0.ResumeDecision) { value.RunWaitId = "other" },
+		func(value *runv0.ResumeDecision) { value.ResumeAttachId = "other" },
+		func(value *runv0.ResumeDecision) { value.RequireConsumedAck = true },
+	} {
+		candidate := proto.Clone(valid).(*runv0.ResumeDecision)
+		mutate(candidate)
+		if err := validateImmediateProgramWaitDecision(wait, candidate); err == nil {
+			t.Fatalf("invalid immediate decision was accepted: %+v", candidate)
+		}
+	}
+}
+
+func TestValidateImmediateChildCallFailureUsesRuntimeOperationSchema(t *testing.T) {
+	childCall, err := newProgramWaitIdentity(
+		programWaitKindChildCall, "correlation-1", "wait-1", "attach-1",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failure := &runv0.ResumeDecision{
+		CorrelationId: "correlation-1", RunWaitId: "wait-1", ResumeAttachId: "attach-1",
+		Kind: "failed", DataJson: `{"code":"idempotency_conflict","message":"request was rejected","retryable":false}`,
+	}
+	if err := validateImmediateProgramWaitDecision(childCall, failure); err != nil {
+		t.Fatalf("valid child call failure: %v", err)
+	}
+	standard, err := newProgramWaitIdentity(
+		programWaitKindStandard, "correlation-1", "wait-1", "attach-1",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateImmediateProgramWaitDecision(standard, failure); err == nil {
+		t.Fatal("runtime operation failure was accepted for a standard Wait")
+	}
+	for _, dataJSON := range []string{
+		`{"code":"idempotency_conflict","message":"request was rejected"}`,
+		`{"code":"idempotency_conflict","message":"request was rejected","retryable":false,"secret":"sentinel"}`,
+		`{"code":"","message":"request was rejected","retryable":false}`,
+	} {
+		candidate := proto.Clone(failure).(*runv0.ResumeDecision)
+		candidate.DataJson = dataJSON
+		if err := validateImmediateProgramWaitDecision(childCall, candidate); err == nil {
+			t.Fatalf("invalid child call failure was accepted: %s", dataJSON)
+		}
+	}
+}
+
+func TestRelayProgramRejectsConflictingChildTaskState(t *testing.T) {
+	call := func(correlationID string) *runv0.RunEvent {
+		return &runv0.RunEvent{Event: &runv0.RunEvent_TaskChildInvokeRequested{
+			TaskChildInvokeRequested: &runv0.TaskChildInvokeRequested{
+				CorrelationId: correlationID, DeclaredId: "child-task", Method: "call",
+				RunWaitId: "wait-1", ResumeAttachId: "attach-1", WorkspaceJson: `{}`, OptionsJson: `{}`,
+			},
+		}}
+	}
+	start := func(correlationID string) *runv0.RunEvent {
+		return &runv0.RunEvent{Event: &runv0.RunEvent_TaskChildInvokeRequested{
+			TaskChildInvokeRequested: &runv0.TaskChildInvokeRequested{
+				CorrelationId: correlationID, DeclaredId: "child-task", Method: "start",
+				WorkspaceJson: `{}`, OptionsJson: `{}`,
+			},
+		}}
+	}
+	outcome := &runv0.RunEvent{Event: &runv0.RunEvent_TaskOutcome{TaskOutcome: &runv0.TaskOutcome{
+		Outcome: &runv0.TaskOutcome_Succeeded{Succeeded: &runv0.TaskSucceeded{OutputJson: "null"}},
+	}}}
+	for _, test := range []struct {
+		name   string
+		events []*runv0.RunEvent
+	}{
+		{name: "start then call correlation collision", events: []*runv0.RunEvent{start("correlation-1"), call("correlation-1")}},
+		{name: "call then start correlation collision", events: []*runv0.RunEvent{call("correlation-1"), start("correlation-1")}},
+		{name: "outcome while call pending", events: []*runv0.RunEvent{call("correlation-1"), outcome}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			blockedProcessInput, releaseProcess, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer blockedProcessInput.Close()
+			defer releaseProcess.Close()
+			cmd := exec.Command("cat")
+			cmd.Stdin = blockedProcessInput
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			var control bytes.Buffer
+			for _, event := range test.events {
+				if err := frameio.WriteProtoFrame(&control, event); err != nil {
+					t.Fatal(err)
+				}
+			}
+			process := &programProcess{
+				cmd: cmd, stdin: nopWriteCloser{Writer: io.Discard}, control: io.NopCloser(&control),
+				cgroup: &testProgramCgroup{}, waitDone: make(chan struct{}),
+			}
+			defer process.close()
+			guest, host := net.Pipe()
+			defer guest.Close()
+			defer host.Close()
+			drained := make(chan struct{})
+			go func() {
+				_, _ = io.Copy(io.Discard, host)
+				close(drained)
+			}()
+			var outputDone sync.WaitGroup
+			err = relayProgram(
+				t.Context(), guest, testProgramRunRequest(testProgramStartFrame(t)),
+				&runv0.EntrypointIdentity{Kind: &runv0.EntrypointIdentity_Task{Task: &runv0.TaskEntrypoint{}}},
+				process, &programEventStream{conn: guest}, make(chan error, 2), &outputDone,
+				newWaitingRunRegistry(), nil, &programOutputCoordinator{}, nil,
+			)
+			if closeErr := releaseProcess.Close(); closeErr != nil {
+				t.Fatal(closeErr)
+			}
+			if err == nil {
+				t.Fatal("conflicting child task state was accepted")
+			}
+			if closeErr := guest.Close(); closeErr != nil {
+				t.Fatal(closeErr)
+			}
+			<-drained
+		})
+	}
+}
+
+func TestRelayProgramRejectsMalformedChildTaskWaitIdentity(t *testing.T) {
+	tests := []struct {
+		name    string
+		request *runv0.TaskChildInvokeRequested
+	}{
+		{
+			name: "unknown method",
+			request: &runv0.TaskChildInvokeRequested{
+				CorrelationId: "correlation-1", DeclaredId: "child-task",
+				Method: "enqueue",
+			},
+		},
+		{
+			name: "call missing wait identity",
+			request: &runv0.TaskChildInvokeRequested{
+				CorrelationId: "correlation-1", DeclaredId: "child-task",
+				Method: "call", RunWaitId: "wait-1",
+			},
+		},
+		{
+			name: "start carrying wait identity",
+			request: &runv0.TaskChildInvokeRequested{
+				CorrelationId: "correlation-1", DeclaredId: "child-task",
+				Method: "start", RunWaitId: "wait-1", ResumeAttachId: "attach-1",
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			blockedProcessInput, releaseProcess, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer blockedProcessInput.Close()
+			defer releaseProcess.Close()
+			cmd := exec.Command("cat")
+			cmd.Stdin = blockedProcessInput
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			var control bytes.Buffer
+			if err := frameio.WriteProtoFrame(&control, &runv0.RunEvent{
+				Event: &runv0.RunEvent_TaskChildInvokeRequested{
+					TaskChildInvokeRequested: test.request,
+				},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			process := &programProcess{
+				cmd: cmd, stdin: nopWriteCloser{Writer: io.Discard},
+				control: io.NopCloser(&control), cgroup: &testProgramCgroup{},
+				waitDone: make(chan struct{}),
+			}
+			defer process.close()
+			guest, host := net.Pipe()
+			defer guest.Close()
+			defer host.Close()
+			var outputDone sync.WaitGroup
+			err = relayProgram(
+				t.Context(), guest, testProgramRunRequest(testProgramStartFrame(t)),
+				&runv0.EntrypointIdentity{
+					Kind: &runv0.EntrypointIdentity_Task{Task: &runv0.TaskEntrypoint{}},
+				},
+				process, &programEventStream{conn: guest}, make(chan error, 2),
+				&outputDone, newWaitingRunRegistry(), nil, &programOutputCoordinator{}, nil,
+			)
+			if closeErr := releaseProcess.Close(); closeErr != nil {
+				t.Fatal(closeErr)
+			}
+			if err == nil {
+				t.Fatal("malformed child task request was accepted")
+			}
+		})
+	}
+}
+
 func TestRelayProgramDefersCheckpointPauseUntilRuntimeOperationsDrain(t *testing.T) {
 	blockedProcessInput, releaseProcess, err := os.Pipe()
 	if err != nil {
@@ -544,7 +1291,7 @@ func TestRelayProgramDefersCheckpointPauseUntilRuntimeOperationsDrain(t *testing
 				Kind: &runv0.EntrypointIdentity_Task{Task: &runv0.TaskEntrypoint{}},
 			},
 			process, &programEventStream{conn: guest}, make(chan error, 2),
-			&outputDone, newWaitingRunRegistry(), &programOutputCoordinator{}, nil,
+			&outputDone, newWaitingRunRegistry(), nil, &programOutputCoordinator{}, nil,
 		)
 	}()
 	writeRetrieve := func(correlationID string) {
@@ -575,9 +1322,11 @@ func TestRelayProgramDefersCheckpointPauseUntilRuntimeOperationsDrain(t *testing
 	writeRetrieve("00000000-0000-0000-0000-000000000201")
 	readRetrieve("00000000-0000-0000-0000-000000000201")
 	if err := frameio.WriteProtoFrame(controlWriter, &runv0.RunEvent{
-		Event: &runv0.RunEvent_RunWaitRequested{
-			RunWaitRequested: &runv0.RunWaitRequested{
-				CorrelationId: "wait-correlation", Kind: "timer", ParamsJson: `{}`,
+		Event: &runv0.RunEvent_TaskChildInvokeRequested{
+			TaskChildInvokeRequested: &runv0.TaskChildInvokeRequested{
+				CorrelationId: "wait-correlation", DeclaredId: "child-task",
+				Method: "call", WorkspaceJson: `{}`, OptionsJson: `{}`,
+				RunWaitId: "durable-wait", ResumeAttachId: "attach-1",
 			},
 		},
 	}); err != nil {
@@ -587,7 +1336,7 @@ func TestRelayProgramDefersCheckpointPauseUntilRuntimeOperationsDrain(t *testing
 	if err := frameio.ReadProtoFrame(host, &waitEvent); err != nil {
 		t.Fatal(err)
 	}
-	if waitEvent.GetRunWaitRequested() == nil {
+	if waitEvent.GetTaskChildInvokeRequested() == nil {
 		t.Fatalf("Wait event = %#v", waitEvent.GetEvent())
 	}
 	pause := &runv0.CheckpointPauseRequest{
@@ -662,7 +1411,10 @@ func TestPauseAndResumeProgramUsesExactFrozenAuthority(t *testing.T) {
 		workspaceRoot: workspaceRoot,
 	}
 	run := &runv0.ProgramRunRequest{RunId: "run-1", AttemptNumber: 2, RunLeaseId: "lease-1"}
-	wait := &runv0.RunWaitRequested{CorrelationId: "wait-1", Kind: "timer"}
+	wait, err := newProgramWaitIdentity(programWaitKindStandard, "wait-1", "durable-wait-1", "attach-1")
+	if err != nil {
+		t.Fatal(err)
+	}
 	pause := &runv0.CheckpointPauseRequest{
 		RunId: "run-1", AttemptNumber: 2, RunLeaseId: "lease-1",
 		RunWaitId: "durable-wait-1", CorrelationId: "wait-1", CheckpointId: "checkpoint-1",
@@ -760,6 +1512,26 @@ func TestPauseAndResumeProgramUsesExactFrozenAuthority(t *testing.T) {
 	}
 	if err := <-result; err != nil {
 		t.Fatal(err)
+	}
+	if run.GetRunLeaseId() != "lease-2" {
+		t.Fatalf("current Program lease = %q", run.GetRunLeaseId())
+	}
+	nextWait, err := newProgramWaitIdentity(
+		programWaitKindStandard,
+		"wait-2",
+		"durable-wait-2",
+		"attach-2",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateProgramCheckpointPause(run, nextWait, &runv0.CheckpointPauseRequest{
+		RunId: run.GetRunId(), AttemptNumber: run.GetAttemptNumber(),
+		RunLeaseId: "lease-2", RunWaitId: "durable-wait-2",
+		CorrelationId: "wait-2", CheckpointId: "checkpoint-2",
+		ResumeAttachId: "attach-2", CheckpointRequestVersion: 5,
+	}); err != nil {
+		t.Fatalf("next checkpoint under promoted lease: %v", err)
 	}
 }
 
@@ -906,7 +1678,10 @@ func testProgramResumeGrant(attach *runv0.ResumeAttach) *programResumeGrant {
 
 func TestValidateProgramCheckpointPauseRejectsMismatchedFence(t *testing.T) {
 	run := &runv0.ProgramRunRequest{RunId: "run-1", AttemptNumber: 2, RunLeaseId: "lease-1"}
-	wait := &runv0.RunWaitRequested{CorrelationId: "wait-1", Kind: "timer"}
+	wait, err := newProgramWaitIdentity(programWaitKindStandard, "wait-1", "durable-wait-1", "attach-1")
+	if err != nil {
+		t.Fatal(err)
+	}
 	pause := &runv0.CheckpointPauseRequest{
 		RunId: "run-1", AttemptNumber: 2, RunLeaseId: "lease-2",
 		RunWaitId: "durable-wait-1", CorrelationId: "wait-1", CheckpointId: "checkpoint-1",
@@ -1111,6 +1886,93 @@ func TestProgramAdmissionDoesNotClaimBeforeSecretSequence(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("partial Secret sequence did not unblock on cancellation")
+	}
+}
+
+func TestProgramAdmissionReportsPrepareFailureWithExactFence(t *testing.T) {
+	registry := newWorkspaceOperationRegistry()
+	registry.register("mount-1", &workspaceMountEntry{
+		workspaceID:       "workspace-1",
+		baseVersionID:     "version-1",
+		channelToken:      "channel-1",
+		fencingGeneration: 1,
+		runtimeInstanceID: "runtime-1",
+		// A missing runtime user deterministically fails newProgramProcess after
+		// the exact authority and Secret sequence have been admitted.
+		runtimeUser: nil,
+	})
+	guest, host := net.Pipe()
+	defer guest.Close()
+	defer host.Close()
+	result := make(chan error, 1)
+	go func() {
+		result <- handleProgramRunConnection(
+			context.Background(),
+			guest,
+			nil,
+			newWaitingRunRegistry(),
+			registry,
+			wire.StreamHeader{
+				Type:             wire.StreamTypeProgramRun,
+				RunID:            "run-1",
+				WorkspaceID:      "workspace-1",
+				WorkspaceMountID: "mount-1",
+			},
+			0,
+		)
+	}()
+	authority := &workspacev0.WorkspaceRunAuthority{
+		Fence: &workspacev0.WorkspaceAuthorityFence{
+			WorkerInstanceId:       "worker-1",
+			WorkerEpoch:            1,
+			RuntimeInstanceId:      "runtime-1",
+			RuntimeIdentityId:      "runtime-identity-1",
+			WorkspaceId:            "workspace-1",
+			WorkspaceMountId:       "mount-1",
+			RunId:                  "run-1",
+			AttemptNumber:          2,
+			RunLeaseId:             "lease-1",
+			LeaseSequence:          1,
+			WorkspaceLeaseId:       "workspace-lease-1",
+			OwnershipGeneration:    1,
+			WriterGeneration:       1,
+			MountFencingGeneration: 1,
+			ExpiresAtUnixNano:      time.Now().Add(time.Minute).UnixNano(),
+			BaseWorkspaceVersionId: "version-1",
+		},
+		ChannelToken:    "channel-1",
+		WriteCapability: "write-capability",
+	}
+	if err := frameio.WriteProtoFrame(host, authority); err != nil {
+		t.Fatal(err)
+	}
+	request := testProgramRunRequest(testProgramStartFrame(t))
+	request.StartDeadlineUnixMs = time.Now().Add(time.Minute).UnixMilli()
+	if err := frameio.WriteProtoFrame(host, request); err != nil {
+		t.Fatal(err)
+	}
+	if err := frameio.WriteProtoFrame(host, programSecretsCompleteCommand(request)); err != nil {
+		t.Fatal(err)
+	}
+	var event runv0.RunEvent
+	if err := frameio.ReadProtoFrame(host, &event); err != nil {
+		t.Fatal(err)
+	}
+	failed := event.GetProgramProcessStartFailed()
+	if failed == nil || failed.GetRunId() != request.GetRunId() ||
+		failed.GetAttemptNumber() != request.GetAttemptNumber() ||
+		failed.GetRunLeaseId() != request.GetRunLeaseId() ||
+		failed.GetPhase() != "prepare" ||
+		failed.GetDiagnostic() != "Program process preparation failed" {
+		t.Fatalf("prepare failure event = %#v", event.GetEvent())
+	}
+	select {
+	case err := <-result:
+		if err == nil || !strings.Contains(err.Error(), "runtime user") {
+			t.Fatalf("handleProgramRunConnection() error = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Program admission did not report prepare failure")
 	}
 }
 

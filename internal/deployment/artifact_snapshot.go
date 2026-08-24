@@ -72,18 +72,6 @@ func artifactSnapshotSpecForRole(role artifactRole) (artifactSnapshotSpec, error
 			mediaType: RuntimeArtifactMediaType,
 			maxBytes:  maxRuntimePhysicalBytes,
 		}, nil
-	case toolchainArtifact:
-		return artifactSnapshotSpec{
-			label:     "toolchain",
-			mediaType: ToolchainMediaType,
-			maxBytes:  maxToolArtifactBytes,
-		}, nil
-	case managerArtifact:
-		return artifactSnapshotSpec{
-			label:     "manager",
-			mediaType: ManagerTreeMediaType,
-			maxBytes:  maxManagerTreeBytes,
-		}, nil
 	case buildTreeArtifact:
 		return artifactSnapshotSpec{
 			label:     "build tree",

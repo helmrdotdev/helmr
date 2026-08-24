@@ -55,6 +55,11 @@ in
         bash tests/release_worker_ami_cleanup_test.sh
         bash tests/release_worker_image_identity_test.sh
         bash tests/pre_aws_release_gate_test.sh
+        bash tests/worker_host_bundle_test.sh
+        bash tests/linux_worker_host_bundle_materialize_test.sh
+        bash tests/netboot_inputs_test.sh
+        bash tests/boot_artifacts_make_test.sh
+        bash tests/guest_init_cgroup_test.sh
       '';
   ci-generated =
     app "ci-generated" "check generated artifacts and formatting for CI" toolsets.ciChecks
@@ -109,6 +114,18 @@ in
       ''
         make test-linux-compile
       '';
+  ci-firecracker-probe =
+    app "ci-firecracker-probe" "validate the pinned Firecracker probe output on Linux"
+      toolsets.runtimeProbe
+      ''
+        if [ "$(uname -s)" != "Linux" ] || [ "$(uname -m)" != "x86_64" ]; then
+          echo "ci-firecracker-probe requires an x86_64 Linux host." >&2
+          exit 1
+        fi
+        FIRECRACKER_PATH="$(command -v firecracker)"
+        export FIRECRACKER_PATH
+        go test ./internal/firecracker -run '^TestPackagedFirecrackerProbeOutputIsAccepted$' -count=1
+      '';
   ci-linux-lint =
     app "ci-linux-lint" "run Linux-targeted Go static analysis for CI" toolsets.ciChecks
       ''
@@ -122,6 +139,17 @@ in
         for module in bootstrap controlplane network worker worker-image; do
           (
             cd "infra/aws/modules/$module"
+            if [ "$module" = worker-image ]; then
+              bash tests/prepare_root_test.sh
+            fi
+            tofu init -backend=false -input=false
+            tofu fmt -check -recursive
+            tofu test
+          )
+        done
+        for stack in quickstart standard; do
+          (
+            cd "infra/aws/$stack"
             tofu init -backend=false -input=false
             tofu fmt -check -recursive
             tofu test
@@ -148,6 +176,21 @@ in
       ''
         exec ./scripts/ci-boot-artifacts.sh "$@"
       '';
+  ci-boot-artifacts-repro =
+    app "ci-boot-artifacts-repro" "prove guest boot artifact reproducibility for CI"
+      (
+        toolsets.appRuntime
+        ++ [
+          pkgs.gnutar
+          pkgs.nix
+        ]
+      )
+      ''
+        bash ./tests/netboot_inputs_test.sh
+        bash ./tests/boot_artifacts_make_test.sh
+        bash ./tests/guest_init_cgroup_test.sh
+        exec ./tests/boot_artifacts_reproducibility_test.sh "$@"
+      '';
   fmt-check = app "fmt-check" "check Go formatting" toolsets.appRuntime ''
     unformatted="$(find . -name '*.go' -not -path './.git/*' -exec gofmt -l {} +)"
     if [ -n "$unformatted" ]; then
@@ -159,6 +202,8 @@ in
   doctor = app "doctor" "check Helmr host prerequisites" toolsets.appRuntime ''
     exec ./scripts/doctor.sh "$@"
   '';
+}
+// pkgs.lib.optionalAttrs (system == "x86_64-linux") {
   smoke-linux =
     app "smoke-linux" "build artifacts and check Linux Firecracker prerequisites" toolsets.appRuntime
       ''
@@ -176,6 +221,8 @@ in
         export WORKER_IMAGES_DIR=''${WORKER_IMAGES_DIR:-$PWD/images}
         export FIRECRACKER_PATH=''${FIRECRACKER_PATH:-$(command -v firecracker)}
         export JAILER_PATH=''${JAILER_PATH:-$(command -v jailer)}
+        export MKFS_EXT4_PATH=''${MKFS_EXT4_PATH:-${helmrPackages.workerHost}/bin/mkfs.ext4}
+        export MKE2FS_CONFIG_PATH=''${MKE2FS_CONFIG_PATH:-${helmrPackages.workerHost}/share/helmr/mke2fs.conf}
         export JAILER_UID=''${JAILER_UID:-$(id -u)}
         export JAILER_GID=''${JAILER_GID:-$(id -g)}
         export JAILER_CGROUP_VERSION=''${JAILER_CGROUP_VERSION:-2}

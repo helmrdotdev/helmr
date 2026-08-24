@@ -3,14 +3,17 @@ variable "name" {
   type        = string
 }
 
-variable "worker_roles" {
-  description = "Roles this worker group is permitted to advertise."
-  type        = set(string)
-  default     = ["run", "build"]
+variable "worker_pool_name" {
+  description = "Canonical logical Worker Pool generation name advertised during enrollment."
+  type        = string
 
   validation {
-    condition     = length(var.worker_roles) > 0 && length(setsubtract(var.worker_roles, ["run", "build"])) == 0
-    error_message = "worker_roles must contain run, build, or both."
+    condition = (
+      length(var.worker_pool_name) >= 1 &&
+      length(var.worker_pool_name) <= 128 &&
+      can(regex("^[a-z0-9]([a-z0-9-]{0,126}[a-z0-9])?$", var.worker_pool_name))
+    )
+    error_message = "worker_pool_name must be a lowercase identifier of 1 to 128 letters, digits, or internal hyphens."
   }
 }
 
@@ -45,6 +48,62 @@ variable "enable_ssm" {
   description = "Attach AmazonSSMManagedInstanceCore so workers can be reached through Session Manager without inbound SSH."
   type        = bool
   default     = true
+}
+
+variable "sealed_provider_definition" {
+  description = "Exact realized provider authority retained for an existing immutable Worker Pool. Null creates the current definition; a value preserves its user data, IAM policies, SSM contract, and launch-template version while the Pool remains restore-capable."
+  type = object({
+    user_data_base64                                = string
+    permission_policy_json                          = string
+    boundary_policy_json                            = string
+    enable_ssm                                      = bool
+    launch_template_version                         = string
+    health_check_grace_period_seconds               = number
+    launch_lifecycle_heartbeat_timeout_seconds      = number
+    termination_lifecycle_heartbeat_timeout_seconds = number
+    termination_drain_timeout_seconds               = number
+    lifecycle_heartbeat_interval_seconds            = number
+    termination_policies                            = list(string)
+    protect_from_scale_in                           = bool
+    health_check_type                               = string
+    instance_refresh_strategy                       = string
+    instance_refresh_min_healthy_percentage         = number
+    instance_refresh_max_healthy_percentage         = number
+    instance_refresh_scale_in_protected_instances   = string
+    instance_refresh_standby_instances              = string
+    instance_refresh_skip_matching                  = bool
+    launch_lifecycle_transition                     = string
+    launch_lifecycle_default_result                 = string
+    termination_lifecycle_transition                = string
+    termination_lifecycle_default_result            = string
+  })
+  default  = null
+  nullable = true
+
+  validation {
+    condition = var.sealed_provider_definition == null || (
+      can(base64decode(var.sealed_provider_definition.user_data_base64)) &&
+      can(jsondecode(var.sealed_provider_definition.permission_policy_json)) &&
+      can(jsondecode(var.sealed_provider_definition.boundary_policy_json)) &&
+      can(regex("^[1-9][0-9]*$", var.sealed_provider_definition.launch_template_version)) &&
+      var.sealed_provider_definition.health_check_grace_period_seconds > 0 &&
+      var.sealed_provider_definition.launch_lifecycle_heartbeat_timeout_seconds > var.sealed_provider_definition.lifecycle_heartbeat_interval_seconds &&
+      var.sealed_provider_definition.termination_lifecycle_heartbeat_timeout_seconds >= var.sealed_provider_definition.lifecycle_heartbeat_interval_seconds * 3 &&
+      var.sealed_provider_definition.termination_drain_timeout_seconds > 0 &&
+      length(var.sealed_provider_definition.termination_policies) > 0 &&
+      contains(["EC2", "ELB", "VPC_LATTICE"], var.sealed_provider_definition.health_check_type) &&
+      var.sealed_provider_definition.instance_refresh_strategy == "Rolling" &&
+      var.sealed_provider_definition.instance_refresh_min_healthy_percentage >= 0 &&
+      var.sealed_provider_definition.instance_refresh_max_healthy_percentage >= 100 &&
+      contains(["Refresh", "Ignore", "Wait"], var.sealed_provider_definition.instance_refresh_scale_in_protected_instances) &&
+      contains(["Terminate", "Ignore", "Wait"], var.sealed_provider_definition.instance_refresh_standby_instances) &&
+      var.sealed_provider_definition.launch_lifecycle_transition == "autoscaling:EC2_INSTANCE_LAUNCHING" &&
+      contains(["ABANDON", "CONTINUE"], var.sealed_provider_definition.launch_lifecycle_default_result) &&
+      var.sealed_provider_definition.termination_lifecycle_transition == "autoscaling:EC2_INSTANCE_TERMINATING" &&
+      contains(["ABANDON", "CONTINUE"], var.sealed_provider_definition.termination_lifecycle_default_result)
+    )
+    error_message = "sealed_provider_definition must contain valid immutable user data, IAM, launch-template, and ASG lifecycle authority."
+  }
 }
 
 variable "min_size" {
@@ -216,7 +275,7 @@ variable "worker_capacity_memory_mib" {
 }
 
 variable "worker_execution_slots" {
-  description = "Maximum concurrent Firecracker VM slots. Build execution has an independent fixed single-executor limit."
+  description = "Maximum concurrent Firecracker VM execution slots."
   type        = number
   default     = null
   nullable    = true
@@ -248,30 +307,6 @@ variable "artifact_cache_max_mib" {
   validation {
     condition     = var.artifact_cache_max_mib == null || var.artifact_cache_max_mib > 0
     error_message = "artifact_cache_max_mib must be null or positive."
-  }
-}
-
-variable "build_cache_mib" {
-  description = "Usable MiB allocated to the physically isolated build-cache filesystem."
-  type        = number
-  default     = null
-  nullable    = true
-
-  validation {
-    condition     = var.build_cache_mib == null || var.build_cache_mib > 0
-    error_message = "build_cache_mib must be null or positive."
-  }
-}
-
-variable "build_scratch_mib" {
-  description = "Usable MiB allocated to the physically isolated build-scratch filesystem."
-  type        = number
-  default     = null
-  nullable    = true
-
-  validation {
-    condition     = var.build_scratch_mib == null || var.build_scratch_mib > 0
-    error_message = "build_scratch_mib must be null or positive."
   }
 }
 
@@ -322,17 +357,6 @@ variable "platform_store_kms_key_arn" {
   validation {
     condition     = can(regex("^arn:[^:]+:kms:[^:]+:[0-9]{12}:key/[0-9a-fA-F-]+$", var.platform_store_kms_key_arn))
     error_message = "platform_store_kms_key_arn must be a KMS key ARN."
-  }
-}
-
-variable "build_policy_digest" {
-  description = "Exact build-policy digest installed by build-capable workers; must be null for run-only workers."
-  type        = string
-  nullable    = true
-
-  validation {
-    condition     = var.build_policy_digest == null || can(regex("^sha256:[0-9a-f]{64}$", var.build_policy_digest))
-    error_message = "build_policy_digest must be null or lowercase sha256:<64 hexadecimal digits>."
   }
 }
 
@@ -413,31 +437,6 @@ variable "network_resolver_ipv4" {
     )
     error_message = "network_resolver_ipv4 must be an IPv4 address when set."
   }
-}
-
-variable "image_cache_registry_authority" {
-  description = "Canonical regional ECR registry authority for the Platform image cache."
-  type        = string
-
-  validation {
-    condition     = can(regex("^[0-9]{12}\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com(\\.cn)?$", var.image_cache_registry_authority))
-    error_message = "image_cache_registry_authority must be a canonical private ECR registry authority."
-  }
-}
-
-variable "image_cache_repository_prefix" {
-  description = "Bounded ECR repository namespace for Environment image caches."
-  type        = string
-}
-
-variable "image_cache_role_arn" {
-  description = "Exact regional Execution image-cache role ARN."
-  type        = string
-}
-
-variable "image_cache_repository_arn_prefix" {
-  description = "Exact ECR repository ARN prefix matching image_cache_repository_prefix."
-  type        = string
 }
 
 variable "tags" {

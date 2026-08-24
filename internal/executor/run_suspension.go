@@ -221,6 +221,7 @@ func (w ControlPlaneRunWaits) handleCheckpointDecision(ctx context.Context, requ
 	readyRequest := workerapi.CheckpointReadyRequest{
 		Lease: lease.Fence(), RequestVersion: intent.RequestVersion,
 		RunWaitID: intent.RunWaitID, CheckpointID: intent.CheckpointID,
+		SourceCleanup:    checkpoint.SourceCleanup,
 		WorkspaceCapture: *workerCheckpointWorkspaceCapture(checkpoint.WorkspaceCapture),
 		Manifest:         checkpoint.Manifest,
 	}

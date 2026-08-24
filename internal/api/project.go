@@ -1,13 +1,10 @@
 package api
 
 import (
-	"encoding/json"
 	"errors"
 	"regexp"
 	"strings"
 	"time"
-
-	"github.com/helmrdotdev/helmr/internal/archive"
 )
 
 var environmentColorHexPattern = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
@@ -69,65 +66,63 @@ func NormalizeEnvironmentColorHex(colorHex string) (string, error) {
 	return strings.ToUpper(colorHex), nil
 }
 
-type CreateDeploymentRequest struct {
-	IdempotencyKey string `json:"idempotency_key"`
-	ContentHash    string `json:"content_hash"`
-	ImageCacheMode string `json:"image_cache_mode,omitempty"`
+type DeploymentBundleUpload struct {
+	Digest  string            `json:"digest"`
+	Method  string            `json:"method"`
+	URL     string            `json:"url"`
+	Headers map[string]string `json:"headers"`
 }
 
-type DeploymentStatus string
+type DeploymentBundleUploadPlanResponse struct {
+	BundleDigest string                   `json:"bundle_digest"`
+	Uploads      []DeploymentBundleUpload `json:"uploads"`
+}
+
+type FinalizeDeploymentBundleRequest struct {
+	IdempotencyKey string `json:"idempotency_key"`
+	BundleDigest   string `json:"bundle_digest"`
+}
 
 const (
-	DeploymentStatusQueued   DeploymentStatus = "queued"
-	DeploymentStatusBuilding DeploymentStatus = "building"
-	DeploymentStatusDeployed DeploymentStatus = "deployed"
-	DeploymentStatusFailed   DeploymentStatus = "failed"
+	DeploymentBundleFinalizeEventStarted        = "started"
+	DeploymentBundleFinalizeEventPing           = "ping"
+	DeploymentBundleFinalizeEventObjectVerified = "object_verified"
+	DeploymentBundleFinalizeEventComplete       = "complete"
+	DeploymentBundleFinalizeEventError          = "error"
 )
 
+type DeploymentBundleFinalizeStarted struct {
+	BundleDigest string `json:"bundle_digest"`
+}
+
+type DeploymentBundleFinalizeObject struct {
+	Digest string `json:"digest"`
+}
+
+type DeploymentBundleFinalizeError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
 type DeploymentResponse struct {
-	ID               string                   `json:"id"`
-	Version          string                   `json:"version"`
-	ContentHash      string                   `json:"content_hash"`
-	DeploymentSource DeploymentSourceArtifact `json:"deployment_source"`
-	Status           DeploymentStatus         `json:"status"`
-	Failure          *DeploymentFailure       `json:"failure,omitempty"`
-	CreatedAt        time.Time                `json:"created_at"`
-	BuildingAt       *time.Time               `json:"building_at,omitempty"`
-	BuiltAt          *time.Time               `json:"built_at,omitempty"`
-	DeployedAt       *time.Time               `json:"deployed_at,omitempty"`
-	FailedAt         *time.Time               `json:"failed_at,omitempty"`
+	ID           string    `json:"id"`
+	Version      string    `json:"version"`
+	BundleDigest string    `json:"bundle_digest"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 type DeploymentListItem struct {
-	ID         string           `json:"id"`
-	Version    string           `json:"version"`
-	Status     DeploymentStatus `json:"status"`
-	CreatedAt  time.Time        `json:"created_at"`
-	BuildingAt *time.Time       `json:"building_at,omitempty"`
-	BuiltAt    *time.Time       `json:"built_at,omitempty"`
-	DeployedAt *time.Time       `json:"deployed_at,omitempty"`
-	FailedAt   *time.Time       `json:"failed_at,omitempty"`
+	ID           string    `json:"id"`
+	Version      string    `json:"version"`
+	BundleDigest string    `json:"bundle_digest"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 type PromoteDeploymentRequest struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-type DeploymentFailure struct {
-	Code    string          `json:"code"`
-	Message string          `json:"message"`
-	Details json.RawMessage `json:"details"`
-}
-
 type ListDeploymentsResponse struct {
 	Deployments []DeploymentListItem `json:"deployments"`
 	NextCursor  string               `json:"next_cursor,omitempty"`
-}
-
-const DeploymentSourceArtifactMediaType = archive.SourceMediaType
-
-type DeploymentSourceArtifact struct {
-	Digest    string `json:"digest"`
-	SizeBytes int64  `json:"size_bytes,omitempty"`
-	MediaType string `json:"media_type,omitempty"`
 }

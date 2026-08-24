@@ -361,16 +361,9 @@ SELECT updated.id AS outbox_id,
        meter_events.org_id,
        meter_events.project_id,
        meter_events.environment_id,
-       CASE
-           WHEN meter_events.run_lease_id IS NOT NULL THEN 'run_lease'::text
-           ELSE 'deployment_build_lease'::text
-       END AS source_type,
-       COALESCE(
-           meter_events.run_lease_id,
-           meter_events.deployment_build_lease_id
-       ) AS source_id,
+       'run_lease'::text AS source_type,
+       meter_events.run_lease_id AS source_id,
        meter_events.run_id,
-       meter_events.deployment_id,
        meter_events.attempt_number,
        meter_events.trace_id,
        meter_events.span_id,
@@ -403,7 +396,6 @@ type ClaimMeterEventIngestBatchRow struct {
 	SourceType             string             `json:"source_type"`
 	SourceID               pgtype.UUID        `json:"source_id"`
 	RunID                  pgtype.UUID        `json:"run_id"`
-	DeploymentID           pgtype.UUID        `json:"deployment_id"`
 	AttemptNumber          pgtype.Int4        `json:"attempt_number"`
 	TraceID                pgtype.Text        `json:"trace_id"`
 	SpanID                 pgtype.Text        `json:"span_id"`
@@ -437,7 +429,6 @@ func (q *Queries) ClaimMeterEventIngestBatch(ctx context.Context, arg ClaimMeter
 			&i.SourceType,
 			&i.SourceID,
 			&i.RunID,
-			&i.DeploymentID,
 			&i.AttemptNumber,
 			&i.TraceID,
 			&i.SpanID,

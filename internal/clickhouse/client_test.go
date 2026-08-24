@@ -2,9 +2,99 @@ package clickhouse
 
 import (
 	"context"
+	"crypto/x509"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"syscall"
 	"testing"
 	"time"
+
+	ch "github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
+
+func TestIsReadinessErrorRetryable(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		err       error
+		retryable bool
+	}{
+		{name: "nil", err: nil},
+		{name: "deadline", err: context.DeadlineExceeded, retryable: true},
+		{name: "eof", err: io.EOF, retryable: true},
+		{name: "unexpected eof", err: io.ErrUnexpectedEOF, retryable: true},
+		{name: "connection refused", err: syscall.ECONNREFUSED, retryable: true},
+		{name: "wrapped connection reset", err: fmt.Errorf("dial clickhouse: %w", syscall.ECONNRESET), retryable: true},
+		{name: "driver acquire timeout", err: ch.ErrAcquireConnTimeout, retryable: true},
+		{name: "driver connection closed", err: ch.ErrConnectionClosed, retryable: true},
+		{name: "temporary network error", err: readinessNetError{temporary: true}, retryable: true},
+		{name: "timeout network error", err: readinessNetError{timeout: true}, retryable: true},
+		{name: "non-network temporary capability", err: readinessTemporaryError{}},
+		{name: "caller cancellation", err: context.Canceled},
+		{name: "server exception", err: &ch.Exception{Code: 516, Message: "authentication failed"}},
+		{name: "unknown certificate authority", err: x509.UnknownAuthorityError{}},
+		{name: "hostname mismatch", err: x509.HostnameError{}},
+		{name: "invalid certificate", err: x509.CertificateInvalidError{}},
+		{name: "generic error", err: errors.New("invalid clickhouse configuration")},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := IsReadinessErrorRetryable(test.err); got != test.retryable {
+				t.Fatalf("IsReadinessErrorRetryable(%v) = %t, want %t", test.err, got, test.retryable)
+			}
+		})
+	}
+}
+
+type readinessNetError struct {
+	temporary bool
+	timeout   bool
+}
+
+func (e readinessNetError) Error() string   { return "network error" }
+func (e readinessNetError) Temporary() bool { return e.temporary }
+func (e readinessNetError) Timeout() bool   { return e.timeout }
+
+var _ net.Error = readinessNetError{}
+
+type readinessTemporaryError struct{}
+
+func (readinessTemporaryError) Error() string   { return "generic temporary error" }
+func (readinessTemporaryError) Temporary() bool { return true }
+
+func TestClientPingAppliesRequestTimeout(t *testing.T) {
+	client := &Client{
+		conn: pingConn{ping: func(ctx context.Context) error {
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				t.Fatal("Ping context deadline missing")
+			}
+			if remaining := time.Until(deadline); remaining <= 0 || remaining > 20*time.Millisecond {
+				t.Fatalf("Ping deadline remaining = %s, want within request timeout", remaining)
+			}
+			<-ctx.Done()
+			return ctx.Err()
+		}},
+		requestTimeout: 10 * time.Millisecond,
+	}
+
+	if err := client.Ping(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Ping error = %v, want request deadline", err)
+	}
+}
+
+type pingConn struct {
+	driver.Conn
+	ping func(context.Context) error
+}
+
+func (c pingConn) Ping(ctx context.Context) error { return c.ping(ctx) }
 
 func TestOptionsFromConfigUsesHTTPTransportForCloudURL(t *testing.T) {
 	options, err := optionsFromConfig(Config{

@@ -195,24 +195,20 @@ SELECT EXISTS (
              FROM run_waits
             WHERE run_waits.workspace_id = $1
               AND run_waits.condition_state = 'pending'
-              AND (
-                  run_waits.child_run_id IS NOT NULL
-                  OR run_waits.handoff_runtime_instance_id IS NOT NULL
-                  OR run_waits.handoff_workspace_mount_id IS NOT NULL
-              )
-       ) AS has_active_handoff
+              AND run_waits.child_run_id IS NOT NULL
+       ) AS has_active_child
 `
 
 type GetActorCloseWorkspaceActivityRow struct {
 	HasActiveLease   bool `json:"has_active_lease"`
 	HasActiveProcess bool `json:"has_active_process"`
-	HasActiveHandoff bool `json:"has_active_handoff"`
+	HasActiveChild   bool `json:"has_active_child"`
 }
 
 func (q *Queries) GetActorCloseWorkspaceActivity(ctx context.Context, workspaceID pgtype.UUID) (GetActorCloseWorkspaceActivityRow, error) {
 	row := q.db.QueryRow(ctx, getActorCloseWorkspaceActivity, workspaceID)
 	var i GetActorCloseWorkspaceActivityRow
-	err := row.Scan(&i.HasActiveLease, &i.HasActiveProcess, &i.HasActiveHandoff)
+	err := row.Scan(&i.HasActiveLease, &i.HasActiveProcess, &i.HasActiveChild)
 	return i, err
 }
 

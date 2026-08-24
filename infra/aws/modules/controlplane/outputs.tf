@@ -151,23 +151,3 @@ output "worker_enrollment_secret_arn" {
   description = "Enrollment token secret shared by the initial Worker Group and its Workers."
   value       = var.bootstrap_enabled ? aws_secretsmanager_secret.worker_enrollment[0].arn : null
 }
-
-output "image_cache_registry_authority" {
-  description = "Canonical ECR registry authority injected into Control Plane and Workers."
-  value       = local.image_cache_registry_authority
-}
-
-output "image_cache_repository_prefix" {
-  description = "Execution image-cache repository namespace."
-  value       = local.image_cache_repository_prefix
-}
-
-output "image_cache_role_arn" {
-  description = "Regional Execution image-cache role assumed only by build-capable Workers."
-  value       = aws_iam_role.image_cache.arn
-}
-
-output "image_cache_repository_arn_prefix" {
-  description = "Exact Environment repository ARN prefix used to derive Worker session policy resources."
-  value       = local.image_cache_repository_arn_prefix
-}

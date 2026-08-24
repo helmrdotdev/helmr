@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
@@ -13,7 +15,13 @@ import (
 )
 
 const (
+	NodeNoStripTypes             = "--no-strip-types"
+	NodeNoExperimentalStripTypes = "--no-experimental-strip-types"
+)
+
+const (
 	RuntimeDescriptorFormatVersion = 0
+	RuntimeMetadataFormatVersion   = 0
 	RuntimeArtifactMediaType       = "application/vnd.helmr.runtime.v0+squashfs"
 	maxRuntimeDocumentBytes        = 4096
 	runtimeMountPath               = "/opt/helmr/runtime"
@@ -31,6 +39,82 @@ type RuntimeDescriptor struct {
 	MediaType       string              `json:"mediaType"`
 	RuntimeContract string              `json:"runtimeContract"`
 	SizeBytes       int64               `json:"sizeBytes"`
+}
+
+type RuntimeMetadata struct {
+	Architecture     RuntimeArchitecture `json:"architecture"`
+	FormatVersion    int                 `json:"formatVersion"`
+	NodeVersion      string              `json:"nodeVersion"`
+	ProgramNodeFlags []string            `json:"programNodeFlags"`
+	RuntimeContract  string              `json:"runtimeContract"`
+}
+
+func ParseRuntimeMetadata(raw []byte) (RuntimeMetadata, error) {
+	var metadata RuntimeMetadata
+	if err := parseRuntimeDocument(raw, "runtime metadata", &metadata); err != nil {
+		return RuntimeMetadata{}, err
+	}
+	if err := ValidateRuntimeMetadata(metadata); err != nil {
+		return RuntimeMetadata{}, err
+	}
+	canonical, err := CanonicalRuntimeMetadata(metadata)
+	if err != nil {
+		return RuntimeMetadata{}, err
+	}
+	if !bytes.Equal(raw, canonical) {
+		return RuntimeMetadata{}, errors.New("runtime metadata does not match the complete canonical v0 shape")
+	}
+	metadata.ProgramNodeFlags = append([]string(nil), metadata.ProgramNodeFlags...)
+	return metadata, nil
+}
+
+func CanonicalRuntimeMetadata(metadata RuntimeMetadata) ([]byte, error) {
+	if err := ValidateRuntimeMetadata(metadata); err != nil {
+		return nil, err
+	}
+	return canonicalRuntimeDocument(metadata, "runtime metadata")
+}
+
+func ValidateRuntimeMetadata(metadata RuntimeMetadata) error {
+	if metadata.FormatVersion != RuntimeMetadataFormatVersion {
+		return fmt.Errorf(
+			"runtime metadata formatVersion = %d, want %d",
+			metadata.FormatVersion,
+			RuntimeMetadataFormatVersion,
+		)
+	}
+	if !validArchitecture(metadata.Architecture) {
+		return fmt.Errorf("runtime metadata architecture %q is unsupported", metadata.Architecture)
+	}
+	if metadata.RuntimeContract != RuntimeContract {
+		return fmt.Errorf(
+			"runtime metadata runtimeContract = %q, want %q",
+			metadata.RuntimeContract,
+			RuntimeContract,
+		)
+	}
+	expectedFlags, err := NodeProgramFlags(metadata.NodeVersion)
+	if err != nil {
+		return fmt.Errorf("runtime metadata: %w", err)
+	}
+	if !slices.Equal(metadata.ProgramNodeFlags, expectedFlags) {
+		return errors.New("runtime metadata Program Node flags do not match the Node ABI contract")
+	}
+	return nil
+}
+
+func NodeProgramFlags(version string) ([]string, error) {
+	major, minor, patch, ok := parseReleaseVersion(version)
+	if !ok {
+		return nil, fmt.Errorf("the Node.js version %q is not an exact release", version)
+	}
+	if major == 24 && compareReleaseVersion(major, minor, patch, "24.12.0") >= 0 {
+		return []string{NodeNoStripTypes, "--enable-source-maps"}, nil
+	}
+	if major == 22 || major == 24 {
+		return []string{NodeNoExperimentalStripTypes, "--enable-source-maps"}, nil
+	}
+	return nil, fmt.Errorf("the Node.js version %q has no program launch contract", version)
 }
 
 func RuntimeArchitectureFromGo(value string) (RuntimeArchitecture, error) {

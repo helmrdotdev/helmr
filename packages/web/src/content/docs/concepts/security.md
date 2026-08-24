@@ -16,9 +16,11 @@ attaches the approved Workspace and materializes its fixed Secret placements.
 Application code should rely on normal guest behavior, not host paths, worker
 credentials, guest-control protocols, or networking implementation details.
 
-The remote Deployment build is also isolated from runtime Secrets. Submitted
-source and package lifecycle scripts are executable build input, so review
-dependencies and `.helmrignore` contents before deployment.
+Deployment bundles are produced in Helmr's digest-pinned Linux builder on the
+developer or CI machine. Package lifecycle scripts are untrusted build input,
+so the builder receives neither runtime Secrets nor host filesystem or Docker
+socket access. The Control Plane verifies the completed artifact closure and
+never runs package installation or project build commands.
 
 ## Credentials and capabilities
 

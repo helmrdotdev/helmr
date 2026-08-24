@@ -27,9 +27,8 @@ import (
 )
 
 const (
-	baseMaxConns          = int32(12)
-	runDispatchMaxConns   = int32(32)
-	buildDispatchMaxConns = int32(2)
+	baseMaxConns        = int32(12)
+	runDispatchMaxConns = int32(32)
 )
 
 func main() {
@@ -60,14 +59,9 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("configure run dispatch database pool: %w", err)
 	}
 	defer runDispatchPool.Close()
-	buildDispatchPool, err := newDispatchPool(ctx, cfg.DatabaseURL, buildDispatchMaxConns)
-	if err != nil {
-		return fmt.Errorf("configure build dispatch database pool: %w", err)
-	}
-	defer buildDispatchPool.Close()
-	connectionBudget := baseMaxConns + runDispatchMaxConns + buildDispatchMaxConns
+	connectionBudget := baseMaxConns + runDispatchMaxConns
 	log.Info("dispatcher database connection budget", "max_connections", connectionBudget,
-		"base", baseMaxConns, "run_dispatch", runDispatchMaxConns, "build_dispatch", buildDispatchMaxConns)
+		"base", baseMaxConns, "run_dispatch", runDispatchMaxConns)
 	queries := db.New(pool)
 	runDispatchQueries := db.New(runDispatchPool)
 	runPlacementStore, err := dispatch.NewRunPlacementStore(runDispatchPool)
@@ -78,7 +72,6 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure run placement lane lock: %w", err)
 	}
-	buildDispatchQueries := db.New(buildDispatchPool)
 	workspaceFencingKey, err := workspace.NewFencingKey(cfg.WorkspaceFencingKey)
 	if err != nil {
 		return fmt.Errorf("configure workspace fencing key: %w", err)
@@ -89,10 +82,6 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	)
 	if err != nil {
 		return fmt.Errorf("configure run dispatch authority: %w", err)
-	}
-	buildDispatchAuthority, err := dispatch.NewBuildAuthority(buildDispatchPool)
-	if err != nil {
-		return fmt.Errorf("configure build dispatch authority: %w", err)
 	}
 	clickHouseClient, err := clickhouse.New(clickhouse.Config{
 		URL:      cfg.ClickHouseURL,
@@ -105,8 +94,8 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	defer clickHouseClient.Close()
 	placementReconciler, err := dispatch.NewPlacementReconciler(
 		runPlacementStore, runPlacementLaneLock, runDispatchAuthority,
-		buildDispatchQueries, buildDispatchAuthority,
 		runDispatchQueries, runDispatchAuthority,
+		runDispatchQueries,
 		log,
 	)
 	if err != nil {
@@ -115,18 +104,6 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	telemetryIngestor, err := telemetry.NewIngestor(log, queries, clickhouse.NewWriter(clickHouseClient))
 	if err != nil {
 		return fmt.Errorf("configure telemetry ingester: %w", err)
-	}
-	buildSweeperLock, err := dispatch.NewBuildExpirySweepAdvisoryLock(buildDispatchPool)
-	if err != nil {
-		return fmt.Errorf("configure build sweeper lock: %w", err)
-	}
-	buildSweeper, err := dispatch.NewBuildExpirySweeper(
-		buildDispatchQueries,
-		dispatch.WithBuildExpirySweepLogger(log),
-		dispatch.WithBuildExpirySweepLock(buildSweeperLock),
-	)
-	if err != nil {
-		return fmt.Errorf("configure build sweeper: %w", err)
 	}
 	staleWorkerTransactions, err := dispatch.NewPGXStaleWorkerFenceTransactions(pool)
 	if err != nil {
@@ -143,13 +120,13 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure stale worker fencer: %w", err)
 	}
-	runResumeRecoveryLock, err := dispatch.NewRunResumeRecoveryAdvisoryLock(runDispatchPool)
+	runLeaseRecoveryLock, err := dispatch.NewRunLeaseRecoveryAdvisoryLock(runDispatchPool)
 	if err != nil {
-		return fmt.Errorf("configure run resume recovery lock: %w", err)
+		return fmt.Errorf("configure Run lease recovery lock: %w", err)
 	}
-	runResumeReconciler, err := dispatch.NewRunResumeReconciler(runDispatchAuthority, runResumeRecoveryLock, log)
+	runLeaseReconciler, err := dispatch.NewRunLeaseReconciler(runDispatchAuthority, runLeaseRecoveryLock, log)
 	if err != nil {
-		return fmt.Errorf("configure run resume reconciler: %w", err)
+		return fmt.Errorf("configure Run lease reconciler: %w", err)
 	}
 	scheduleAuthority := deployment.NewScheduleAuthority()
 	scheduleAdmitter, err := schedule.NewDBAdmitter(pool, scheduleAuthority)
@@ -256,9 +233,8 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	runners := []func() error{
-		func() error { return buildSweeper.Run(runCtx) },
 		func() error { return staleWorkerFencer.Run(runCtx) },
-		func() error { return runResumeReconciler.Run(runCtx) },
+		func() error { return runLeaseReconciler.Run(runCtx) },
 		func() error { return placementReconciler.Run(runCtx) },
 		func() error { return scheduleWorker.Run(runCtx) },
 		func() error { return tokenReconcileDelivery.Run(runCtx) },

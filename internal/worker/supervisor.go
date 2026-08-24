@@ -38,11 +38,14 @@ type ConsumerSpec struct {
 	Name        string
 	Concurrency int
 	Admission   string
-	// DrainEligible permits cleanup work to continue while a durable,
-	// server-directed drain is in progress. Execution and build consumers must
-	// leave this false.
-	DrainEligible bool
-	Consumer      Consumer
+	// ContinueDuringDrain keeps the claim loop open after placement has been
+	// durably closed. The consumer must only return work already bound to this
+	// Worker.
+	ContinueDuringDrain bool
+	// BypassAdmissionDuringDrain is reserved for cleanup that cannot create or
+	// start workload. Bound execution continuation must retain hard admission.
+	BypassAdmissionDuringDrain bool
+	Consumer                   Consumer
 }
 
 type BackgroundSpec struct {
@@ -152,6 +155,9 @@ func New(cfg Config) (*Supervisor, error) {
 		if spec.Name == "" || spec.Concurrency <= 0 || spec.Consumer == nil {
 			return nil, errors.New("consumer name, positive concurrency, and implementation are required")
 		}
+		if spec.BypassAdmissionDuringDrain && !spec.ContinueDuringDrain {
+			return nil, fmt.Errorf("consumer %s cannot bypass drain admission without continuing during drain", spec.Name)
+		}
 	}
 	admission := make(map[string]chan struct{}, len(cfg.Admission))
 	for name, capacity := range cfg.Admission {
@@ -199,10 +205,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if runtimeQuarantines != 0 && !capabilities.SupportsRun {
-		return errors.New("runtime residue cannot be quarantined on a worker without runtime capacity")
-	}
-	if capabilities.SupportsRun && runtimeQuarantines != 0 {
+	if runtimeQuarantines != 0 {
 		capabilities.ExecutionSlotsAvailable -= int32(runtimeQuarantines)
 		if capabilities.ExecutionSlotsAvailable <= 0 {
 			return errors.New("all runtime execution slots remain quarantined after startup recovery")
@@ -239,7 +242,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	fatalWork := make(chan error, 1)
 	for _, spec := range s.cfg.Consumers {
 		claimCtx := activeClaimCtx
-		if spec.DrainEligible {
+		if spec.ContinueDuringDrain {
 			claimCtx = drainClaimCtx
 		}
 		for range spec.Concurrency {
@@ -253,6 +256,14 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		}
 		backgroundWG.Go(func() {
 			if err := background.Run(backgroundCtx); err != nil && !errors.Is(err, context.Canceled) {
+				var fatal FatalWorkError
+				if errors.As(err, &fatal) && fatal.FatalWorker() {
+					select {
+					case fatalWork <- err:
+					default:
+					}
+					return
+				}
 				s.cfg.Log.Error("worker background consumer stopped", "consumer", background.Name, "error", err)
 			}
 		})
@@ -262,8 +273,8 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	signalDrain := func(returned workerapi.StatusResponse) {
 		if returned.Status == workerapi.StatusDraining {
 			drainOnce.Do(func() {
-				// Publish draining before waking a run so every claim loop closes
-				// admission at the same instant the server response is observed.
+				// Publish draining before waking Run so new-work claim loops close
+				// while bound-work continuation sees the durable lifecycle state.
 				s.state.Store(StateDraining)
 				drainRequested <- struct{}{}
 			})
@@ -470,14 +481,10 @@ func activationQuarantines(evidence RecoveryEvidence) (int, error) {
 	}
 	runtimeCount := 0
 	for _, owner := range evidence.QuarantinedOwners {
-		switch owner.Kind {
-		case vm.OwnerRuntime:
-			runtimeCount++
-		case vm.OwnerBuild, vm.OwnerImageBuild:
-			return 0, errors.New("worker activation is blocked by quarantined build residue")
-		default:
+		if owner.Kind != vm.OwnerRuntime {
 			return 0, errors.New("worker activation is blocked by unknown VM owner kind")
 		}
+		runtimeCount++
 	}
 	return runtimeCount, nil
 }
@@ -531,7 +538,7 @@ func (s *Supervisor) consume(
 		case <-timer.C:
 		}
 		state := s.state.Load().(State)
-		if state != StateActive && !(spec.DrainEligible && state == StateDraining) {
+		if state != StateActive && !(spec.ContinueDuringDrain && state == StateDraining) {
 			timer.Reset(s.cfg.PollEvery)
 			continue
 		}
@@ -540,18 +547,17 @@ func (s *Supervisor) consume(
 			return
 		}
 		state = s.state.Load().(State)
-		if state != StateActive && !(spec.DrainEligible && state == StateDraining) {
+		if state != StateActive && !(spec.ContinueDuringDrain && state == StateDraining) {
 			releaseAdmission()
 			timer.Reset(s.cfg.PollEvery)
 			continue
 		}
-		// Drain-eligible consumers perform cleanup rather than create workload.
-		// Host admission (for example, low disk or unavailable KVM) must not
-		// deadlock that cleanup once the server has durably closed placement.
-		if s.cfg.AdmissionEvaluator != nil && !(spec.DrainEligible && state == StateDraining) {
+		// Cleanup may bypass host admission after placement is durably closed.
+		// Bound execution continuation still evaluates every hard host fence.
+		if s.cfg.AdmissionEvaluator != nil && !(spec.BypassAdmissionDuringDrain && state == StateDraining) {
 			decision := s.cfg.AdmissionEvaluator.Evaluate(claimCtx, AdmissionCheck{
-				Consumer: spec.Name, State: s.state.Load().(State), Snapshot: s.registry.snapshot(),
-				Recovery: evidence,
+				Consumer: spec.Name, State: state, Snapshot: s.registry.snapshot(),
+				Recovery: evidence, DrainContinuation: spec.ContinueDuringDrain && state == StateDraining,
 			})
 			if !decision.Allowed {
 				releaseAdmission()
@@ -654,18 +660,15 @@ func (s *Supervisor) observation(state State, evidence RecoveryEvidence) workera
 	if s.cfg.AdmissionEvaluator != nil {
 		admissionObservation := s.cfg.AdmissionEvaluator.Observation()
 		observation.RunPausedReason = admissionObservation.RunPausedReason
-		observation.BuildPausedReason = admissionObservation.BuildPausedReason
 		observation.RuntimePausedReason = admissionObservation.RuntimePausedReason
 	}
 	if len(evidence.Quarantined) > 0 {
 		observation.RunPausedReason = "startup_recovery_leak"
-		observation.BuildPausedReason = "startup_recovery_leak"
 		observation.RuntimePausedReason = "startup_recovery_leak"
 		return observation
 	}
-	if state != StateActive {
+	if state != StateActive && state != StateDraining {
 		observation.RunPausedReason = string(state)
-		observation.BuildPausedReason = string(state)
 		observation.RuntimePausedReason = string(state)
 	}
 	return observation

@@ -3,10 +3,10 @@ import { createQuery } from "@tanstack/solid-query";
 import { createMemo, For, Show } from "solid-js";
 import { formatRelative } from "../features/runs/display";
 import { ApiError } from "../lib/api";
-import { getCurrentDeployment, type Deployment, type DeploymentStatus } from "../lib/deployments";
+import { getCurrentDeployment } from "../lib/deployments";
 import { useScope } from "../lib/scope";
 import { listTasks, type Task } from "../lib/tasks";
-import { statusBadgeClass, ui } from "../ui/styles";
+import { ui } from "../ui/styles";
 
 function tasksErrorMessage(error: unknown): string {
   if (error instanceof ApiError && error.code === "forbidden") {
@@ -24,33 +24,6 @@ function shortDigest(digest: string): string {
   const [algorithm, value] = digest.split(":", 2);
   if (!value) return digest.length > 18 ? `${digest.slice(0, 18)}...` : digest;
   return `${algorithm}:${value.slice(0, 12)}`;
-}
-
-function statusLabel(status: DeploymentStatus): string {
-  return status.charAt(0).toUpperCase() + status.slice(1);
-}
-
-function statusTone(status: DeploymentStatus): "active" | "waiting" | "succeeded" | "revoked" {
-  if (status === "queued") return "active";
-  if (status === "building") return "waiting";
-  if (status === "failed") return "revoked";
-  return "succeeded";
-}
-
-function DeploymentStatusBadge(props: { status: DeploymentStatus }) {
-  return (
-    <span class={statusBadgeClass(statusTone(props.status))}>
-      {statusLabel(props.status)}
-    </span>
-  );
-}
-
-function deploymentTime(deployment: Deployment): { label: string; value: string } {
-  if (deployment.deployed_at) return { label: "Deployed", value: deployment.deployed_at };
-  if (deployment.failed_at) return { label: "Failed", value: deployment.failed_at };
-  if (deployment.built_at) return { label: "Built", value: deployment.built_at };
-  if (deployment.building_at) return { label: "Building", value: deployment.building_at };
-  return { label: "Created", value: deployment.created_at };
 }
 
 function TaskRow(props: { task: Task }) {
@@ -159,13 +132,12 @@ export function Tasks() {
             {(currentDeployment) => (
               <>
                 <div class={"mb-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12.5px] text-console-muted"}>
-                  <span><DeploymentStatusBadge status={currentDeployment().status} /></span>
                   <span><strong class="font-medium text-console-text">{tasks().length}</strong> tasks</span>
                   <span>
-                    {deploymentTime(currentDeployment()).label}{" "}
-                    <strong class="font-medium text-console-text">{formatRelative(deploymentTime(currentDeployment()).value)}</strong>
+                    Created{" "}
+                    <strong class="font-medium text-console-text">{formatRelative(currentDeployment().created_at)}</strong>
                   </span>
-                  <span>Source <code>{shortDigest(currentDeployment().deployment_source.digest)}</code></span>
+                  <span>Bundle <code>{shortDigest(currentDeployment().bundle_digest)}</code></span>
                   <span>Deployment <code>{shortID(currentDeployment().id)}</code></span>
                 </div>
 
