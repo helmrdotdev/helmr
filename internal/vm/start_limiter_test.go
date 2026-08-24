@@ -31,9 +31,6 @@ func (c *limitedStartConnector) start(ctx context.Context, kind string) (Session
 	}
 }
 
-func (c *limitedStartConnector) Connect(ctx context.Context, _ ConnectRequest) (Session, error) {
-	return c.start(ctx, "connect")
-}
 func (c *limitedStartConnector) Restore(ctx context.Context, _ RestoreRequest) (Session, error) {
 	return c.start(ctx, "restore")
 }
@@ -43,23 +40,22 @@ func (c *limitedStartConnector) Materialize(ctx context.Context, _ MaterializeRe
 func (*limitedStartConnector) Cleanup(context.Context, Owner) error { return nil }
 
 func TestStartLimiterSharesOneHostWideBudgetAcrossStartKinds(t *testing.T) {
-	connector := &limitedStartConnector{started: make(chan string, 3), release: make(chan struct{}, 3)}
+	connector := &limitedStartConnector{started: make(chan string, 2), release: make(chan struct{}, 2)}
 	limiter, err := NewStartLimiter(connector, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	done := make(chan error, 3)
-	go func() { _, err := limiter.Connect(context.Background(), ConnectRequest{}); done <- err }()
+	done := make(chan error, 2)
 	go func() { _, err := limiter.Restore(context.Background(), RestoreRequest{}); done <- err }()
 	go func() { _, err := limiter.Materialize(context.Background(), MaterializeRequest{}); done <- err }()
-	for range 3 {
+	for range 2 {
 		<-connector.started
 		if got := connector.active.Load(); got != 1 {
 			t.Fatalf("active starts = %d, want 1", got)
 		}
 		connector.release <- struct{}{}
 	}
-	for range 3 {
+	for range 2 {
 		if err := <-done; err != nil {
 			t.Fatal(err)
 		}

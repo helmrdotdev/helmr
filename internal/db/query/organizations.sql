@@ -13,11 +13,6 @@ VALUES (
 )
 RETURNING *;
 
--- name: GetOrganization :one
-SELECT *
-  FROM organizations
- WHERE id = sqlc.arg(id);
-
 -- name: GetUserOnboardingState :one
 SELECT
     users.id AS user_id,
@@ -47,32 +42,11 @@ SELECT
  WHERE users.id = sqlc.arg(user_id)
    AND users.disabled_at IS NULL;
 
--- name: GetDefaultProjectEnvironment :one
-SELECT
-    projects.id AS project_id,
-    environments.id AS environment_id
-  FROM projects
-  JOIN environments
-    ON environments.org_id = projects.org_id
-   AND environments.project_id = projects.id
-   AND environments.is_default
- WHERE projects.org_id = sqlc.arg(org_id)
-   AND projects.is_default
- LIMIT 1;
-
 -- name: GrantUserAdmin :exec
 UPDATE users SET admin = true, updated_at = now() WHERE id = sqlc.arg(user_id);
 
 -- name: ListOrganizationIDs :many
 SELECT id
   FROM organizations
- ORDER BY id ASC
- LIMIT sqlc.arg(row_limit);
-
--- name: ListOrganizationIDsPage :many
-SELECT id
-  FROM organizations
- WHERE sqlc.narg(after_id)::uuid IS NULL
-    OR id > sqlc.narg(after_id)::uuid
  ORDER BY id ASC
  LIMIT sqlc.arg(row_limit);

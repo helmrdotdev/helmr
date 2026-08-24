@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 const ProgramManifestFormatVersion = 0
@@ -488,5 +488,5 @@ func validateProgramManifestLocators(
 
 func programIndexDigest(raw []byte) string {
 	digest := sha256.Sum256(raw)
-	return "sha256:" + hex.EncodeToString(digest[:])
+	return sha256sum.FormatDigest(digest[:])
 }

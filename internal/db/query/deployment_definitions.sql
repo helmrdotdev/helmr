@@ -34,20 +34,6 @@ SELECT deployment_definitions.*
    AND deployment_definitions.declared_id = sqlc.arg(declared_id)
  LIMIT 1;
 
--- name: GetCurrentDeploymentDefinition :one
-SELECT deployment_definitions.*
-  FROM deployment_definitions
-  JOIN deployments
-    ON deployments.environment_id = deployment_definitions.environment_id
-   AND deployments.id = deployment_definitions.deployment_id
-  JOIN environments
-    ON environments.id = deployment_definitions.environment_id
-   AND environments.current_deployment_id = deployment_definitions.deployment_id
- WHERE deployment_definitions.environment_id = sqlc.arg(environment_id)
-   AND deployment_definitions.kind = sqlc.arg(kind)
-   AND deployment_definitions.declared_id = sqlc.arg(declared_id)
- LIMIT 1;
-
 -- name: ListDeploymentDefinitionsForDeployment :many
 SELECT deployment_definitions.*
   FROM deployment_definitions

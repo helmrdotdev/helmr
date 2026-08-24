@@ -11,10 +11,9 @@ type WorkspaceMaterializeRequest struct {
 }
 
 type WorkspaceStopRequest struct {
-	ProjectID         string `json:"project_id,omitempty"`
-	EnvironmentID     string `json:"environment_id,omitempty"`
-	IdempotencyKey    string `json:"idempotency_key,omitempty"`
-	IdempotencyKeyTTL string `json:"idempotency_key_ttl,omitempty"`
+	ProjectID      string `json:"project_id,omitempty"`
+	EnvironmentID  string `json:"environment_id,omitempty"`
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
 }
 
 type WorkspaceStopResponse struct {
@@ -28,7 +27,6 @@ type WorkspaceMountResponse struct {
 	ProjectID            string     `json:"project_id"`
 	EnvironmentID        string     `json:"environment_id"`
 	WorkspaceID          string     `json:"workspace_id"`
-	DeploymentSandboxID  string     `json:"deployment_sandbox_id"`
 	BaseVersionID        string     `json:"base_version_id,omitempty"`
 	WorkerInstanceID     string     `json:"worker_instance_id,omitempty"`
 	State                string     `json:"state"`

@@ -3,7 +3,6 @@ package deployment
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"math"
@@ -11,6 +10,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 const (
@@ -504,5 +505,5 @@ func (artifact *inspectedArtifact) read(
 
 func digestBytes(raw []byte) string {
 	digest := sha256.Sum256(raw)
-	return "sha256:" + hex.EncodeToString(digest[:])
+	return sha256sum.FormatDigest(digest[:])
 }

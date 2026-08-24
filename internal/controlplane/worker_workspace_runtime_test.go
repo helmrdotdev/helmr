@@ -149,13 +149,6 @@ func (store *workerWorkspaceFileStore) BeginQuerier(context.Context) (db.Querier
 	return store, workerWorkspaceFileTransaction{store: store}, nil
 }
 
-func (store *workerWorkspaceFileStore) ResolveWorkspaceTarget(
-	context.Context,
-	db.ResolveWorkspaceTargetParams,
-) (pgtype.UUID, error) {
-	return store.workspace.ID, nil
-}
-
 func (store *workerWorkspaceFileStore) GetWorkspace(
 	context.Context,
 	db.GetWorkspaceParams,

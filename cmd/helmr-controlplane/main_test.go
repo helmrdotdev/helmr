@@ -352,10 +352,6 @@ func (r controlplanetestTelemetryReader) ListTerminalOutput(context.Context, tel
 	return telemetry.TerminalOutputPage{}, nil
 }
 
-func (r controlplanetestTelemetryReader) GetRunLogSnapshot(context.Context, telemetry.RunLogSnapshotQuery) (telemetry.RunLogSnapshot, error) {
-	return telemetry.RunLogSnapshot{}, nil
-}
-
 type panicTxBeginner struct{}
 
 func (panicTxBeginner) Begin(context.Context) (pgx.Tx, error) {

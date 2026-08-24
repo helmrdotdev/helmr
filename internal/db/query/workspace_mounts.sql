@@ -201,65 +201,12 @@ WHERE workspace_mounts.runtime_instance_id = excluded.runtime_instance_id
 RETURNING workspace_mounts.*, (xmax = 0) AS inserted,
           CASE WHEN xmax = 0 THEN 'created'::text ELSE 'replayed'::text END AS decision;
 
--- name: ClassifyRunWorkspaceReuse :one
-SELECT workspaces.id AS workspace_id, workspace_mounts.id AS workspace_mount_id,
-       workspace_mounts.runtime_instance_id, workspace_mounts.state,
-       workspace_mounts.fencing_generation
-  FROM workspaces
-  JOIN environments ON environments.id = workspaces.environment_id
-  LEFT JOIN workspace_mounts ON workspace_mounts.workspace_id = workspaces.id
-                            AND workspace_mounts.state IN ('mounting','mounted','unmounting')
- WHERE environments.org_id = sqlc.arg(org_id) AND workspaces.id = sqlc.arg(workspace_id);
-
--- name: GetWorkspaceMount :one
-SELECT * FROM workspace_mounts
- WHERE org_id = sqlc.arg(org_id) AND workspace_id = sqlc.arg(workspace_id)
-   AND id = sqlc.arg(id);
-
--- name: GetWorkspaceMountForWorkerPrimitiveScope :one
-SELECT * FROM workspace_mounts
- WHERE org_id = sqlc.arg(org_id) AND workspace_id = sqlc.arg(workspace_id)
-   AND id = sqlc.arg(id) AND worker_instance_id = sqlc.arg(worker_instance_id)
-   AND worker_epoch = sqlc.arg(worker_epoch) AND runtime_instance_id = sqlc.arg(runtime_instance_id);
-
 -- name: GetWorkspaceMountForWorkerTransition :one
 SELECT * FROM workspace_mounts
  WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id)
    AND worker_instance_id = sqlc.arg(worker_instance_id)
    AND worker_epoch = sqlc.arg(worker_epoch)
    AND state IN ('mounting','mounted','unmounting');
-
--- name: GetWorkspaceMountPrerequisites :one
-SELECT workspaces.id AS workspace_id, workspaces.head_version_id,
-       workspace_versions.id AS current_workspace_version_id,
-       workspace_versions.state AS current_workspace_version_state,
-       workspace_versions.artifact_id AS current_workspace_artifact_id,
-       workspace_artifacts.id AS workspace_artifact_id,
-       workspace_artifacts.media_type AS workspace_artifact_media_type,
-       deployment_definitions.artifact_id AS workspace_image_artifact_id,
-       image_artifacts.id AS image_artifact_id,
-       image_artifacts.media_type AS image_artifact_media_type,
-       active_mount.state AS active_mount_state
-  FROM workspaces
-  LEFT JOIN workspace_versions ON workspace_versions.environment_id = workspaces.environment_id
-                              AND workspace_versions.workspace_id = workspaces.id
-                              AND workspace_versions.id = workspaces.head_version_id
-  LEFT JOIN artifacts AS workspace_artifacts ON workspace_artifacts.environment_id = workspace_versions.environment_id
-                                             AND workspace_artifacts.id = workspace_versions.artifact_id
-  LEFT JOIN deployment_definitions
-    ON deployment_definitions.environment_id = workspaces.environment_id
-   AND deployment_definitions.id = workspaces.deployment_definition_id
-   AND deployment_definitions.kind = 'sandbox'
-  LEFT JOIN artifacts AS image_artifacts
-    ON image_artifacts.environment_id = deployment_definitions.environment_id
-   AND image_artifacts.id = deployment_definitions.artifact_id
-  JOIN environments ON environments.id = workspaces.environment_id
-  LEFT JOIN workspace_mounts AS active_mount ON active_mount.workspace_id = workspaces.id
-                                             AND active_mount.state IN ('mounting','mounted','unmounting')
- WHERE environments.org_id = sqlc.arg(org_id)
-   AND environments.project_id = sqlc.arg(project_id)
-   AND workspaces.environment_id = sqlc.arg(environment_id)
-   AND workspaces.id = sqlc.arg(workspace_id);
 
 -- name: ClaimWorkspaceMount :one
 WITH candidate AS (
@@ -393,68 +340,6 @@ UPDATE runtime_instances
   FROM mount
  WHERE runtime_instances.id = mount.runtime_instance_id
 RETURNING mount.*;
-
--- name: PromoteWorkspaceMountStopCapture :one
-WITH target AS (
-    SELECT workspace_mounts.*, workspaces.head_version_id,
-           workspaces.ownership_generation, workspaces.writer_generation,
-           workspace_leases.id AS source_workspace_lease_id
-      FROM workspace_mounts
-      JOIN workspaces ON workspaces.environment_id = workspace_mounts.environment_id
-                     AND workspaces.id = workspace_mounts.workspace_id
-      JOIN workspace_leases
-        ON workspace_leases.workspace_id = workspace_mounts.workspace_id
-       AND workspace_leases.workspace_mount_id = workspace_mounts.id
-       AND workspace_leases.state IN ('active', 'releasing')
-       AND workspace_leases.expires_at > now()
-       AND workspace_leases.ownership_generation = workspaces.ownership_generation
-       AND workspace_leases.writer_generation = workspaces.writer_generation
-       AND workspace_leases.mount_fencing_generation = workspace_mounts.fencing_generation
-     WHERE workspace_mounts.org_id = sqlc.arg(org_id)
-       AND workspace_mounts.project_id = sqlc.arg(project_id)
-       AND workspace_mounts.environment_id = sqlc.arg(environment_id)
-       AND workspace_mounts.workspace_id = sqlc.arg(workspace_id)
-       AND workspace_mounts.id = sqlc.arg(id)
-       AND workspace_mounts.state = 'unmounting'
-       AND workspace_mounts.worker_instance_id = sqlc.arg(worker_instance_id)
-       AND workspace_mounts.worker_epoch = sqlc.arg(worker_epoch)
-       AND workspace_mounts.runtime_instance_id = sqlc.arg(runtime_instance_id)
-       AND workspace_mounts.fencing_generation = sqlc.arg(fencing_generation)
-       AND workspaces.ownership_generation = sqlc.arg(ownership_generation)
-       AND workspaces.writer_generation = sqlc.arg(writer_generation)
-     FOR UPDATE OF workspace_mounts, workspaces
-), created AS (
-    INSERT INTO workspace_versions (
-        id, environment_id, workspace_id,
-        parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes,
-        entry_count, state, source_workspace_lease_id, ownership_generation,
-        writer_generation, published_at
-    )
-    SELECT sqlc.arg(workspace_version_id),
-           target.environment_id, target.workspace_id,
-           target.head_version_id, sqlc.arg(artifact_id), 'workspace_version', 'system',
-           sqlc.arg(content_digest), sqlc.arg(size_bytes),
-           sqlc.arg(entry_count), 'committed', target.source_workspace_lease_id,
-           target.ownership_generation, target.writer_generation, now()
-      FROM target
-    RETURNING *
-), updated_workspace AS (
-    UPDATE workspaces
-       SET head_version_id = created.id, dirty_state = 'clean', updated_at = now()
-      FROM created
-     WHERE workspaces.environment_id = created.environment_id
-       AND workspaces.id = created.workspace_id
-    RETURNING workspaces.id
-), updated_mount AS (
-    UPDATE workspace_mounts
-       SET materialized_version_id = created.id, dirty_generation = dirty_generation + 1,
-           updated_at = now()
-      FROM created, updated_workspace, target
-     WHERE workspace_mounts.environment_id = created.environment_id
-       AND workspace_mounts.id = target.id
-    RETURNING workspace_mounts.id
-)
-SELECT created.* FROM created JOIN updated_mount ON true;
 
 -- name: StopWorkspaceMount :one
 WITH stopped AS (

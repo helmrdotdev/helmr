@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +13,7 @@ import (
 	"sort"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 type EncodedProgram struct {
@@ -206,7 +206,7 @@ func VerifyProgramOutputFile(
 	); err != nil {
 		return fmt.Errorf("hash Program object: %w", err)
 	}
-	actualDigest := "sha256:" + hex.EncodeToString(hash.Sum(nil))
+	actualDigest := sha256sum.FormatDigest(hash.Sum(nil))
 	if actualDigest != output.Artifact.Digest {
 		return errors.New("program object digest does not match its descriptor")
 	}

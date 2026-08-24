@@ -30,7 +30,7 @@ func (s *Server) workerCreateTimerRunWait(
 	request workerapi.CreateRunWaitRequest,
 	identity requestedRunWaitIdentity,
 ) {
-	params, dueAt, idleTimeout, checkpointDueAt, checkpointDelay, err := timerWaitDeadlines(request)
+	params, dueAt, idleTimeout, checkpointDueAt, err := timerWaitDeadlines(request)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -161,7 +161,6 @@ func (s *Server) workerCreateTimerRunWait(
 		ResumeAttachID:    resumeAttachID.String(),
 		RuntimeInstanceID: pgvalue.UUIDString(registrationLocators.RuntimeInstanceID),
 		RuntimeEpoch:      worker.WorkerEpoch,
-		CheckpointDelayMs: checkpointDelay.Milliseconds(),
 	}
 	if registered.SuspensionState == db.RunWaitStateReleased {
 		response.ResolutionKind, response.Resolution, err = timerWaitDecision(registered)
@@ -175,19 +174,19 @@ func (s *Server) workerCreateTimerRunWait(
 
 func timerWaitDeadlines(
 	request workerapi.CreateRunWaitRequest,
-) (workerTimerWaitParams, time.Time, pgtype.Int8, pgtype.Timestamptz, time.Duration, error) {
+) (workerTimerWaitParams, time.Time, pgtype.Int8, pgtype.Timestamptz, error) {
 	var params workerTimerWaitParams
 	if err := decodeClosedJSON(request.Params, &params); err != nil {
-		return params, time.Time{}, pgtype.Int8{}, pgtype.Timestamptz{}, 0,
+		return params, time.Time{}, pgtype.Int8{}, pgtype.Timestamptz{},
 			fmt.Errorf("invalid timer wait params: %w", err)
 	}
 	if (params.Duration == nil) == (params.Date == nil) {
-		return params, time.Time{}, pgtype.Int8{}, pgtype.Timestamptz{}, 0,
+		return params, time.Time{}, pgtype.Int8{}, pgtype.Timestamptz{},
 			errors.New("timer wait params must contain exactly one of duration or date")
 	}
 	if request.TimeoutMS == nil || *request.TimeoutMS <= 0 ||
 		*request.TimeoutMS > maxRunWaitDuration.Milliseconds() {
-		return params, time.Time{}, pgtype.Int8{}, pgtype.Timestamptz{}, 0,
+		return params, time.Time{}, pgtype.Int8{}, pgtype.Timestamptz{},
 			fmt.Errorf("timeout_ms must be between 1 and %d", maxRunWaitDuration.Milliseconds())
 	}
 	now := time.Now().UTC()
@@ -195,31 +194,31 @@ func timerWaitDeadlines(
 	if params.Duration != nil {
 		duration, err := parseTimerDuration(*params.Duration)
 		if err != nil {
-			return params, time.Time{}, pgtype.Int8{}, pgtype.Timestamptz{}, 0, err
+			return params, time.Time{}, pgtype.Int8{}, pgtype.Timestamptz{}, err
 		}
 		if duration.Milliseconds() != *request.TimeoutMS {
-			return params, time.Time{}, pgtype.Int8{}, pgtype.Timestamptz{}, 0,
+			return params, time.Time{}, pgtype.Int8{}, pgtype.Timestamptz{},
 				errors.New("timer duration and timeout_ms must match")
 		}
 		dueAt = now.Add(duration)
 	} else {
 		parsed, err := time.Parse(time.RFC3339Nano, *params.Date)
 		if err != nil {
-			return params, time.Time{}, pgtype.Int8{}, pgtype.Timestamptz{}, 0,
+			return params, time.Time{}, pgtype.Int8{}, pgtype.Timestamptz{},
 				errors.New("timer date must be an RFC3339 timestamp")
 		}
 		dueAt = parsed.UTC()
 		normalized := dueAt.Format(time.RFC3339Nano)
 		params.Date = &normalized
 		if dueAt.After(now.Add(maxRunWaitDuration)) {
-			return params, time.Time{}, pgtype.Int8{}, pgtype.Timestamptz{}, 0,
+			return params, time.Time{}, pgtype.Int8{}, pgtype.Timestamptz{},
 				errors.New("timer date must not be more than 365d in the future")
 		}
 	}
 	idleDuration := defaultRunWaitIdleTimeout
 	if request.IdleTimeoutMS != nil {
 		if *request.IdleTimeoutMS <= 0 || *request.IdleTimeoutMS > maxRunWaitIdleTimeout.Milliseconds() {
-			return params, time.Time{}, pgtype.Int8{}, pgtype.Timestamptz{}, 0,
+			return params, time.Time{}, pgtype.Int8{}, pgtype.Timestamptz{},
 				fmt.Errorf("idle_timeout_ms must be between 1 and %d", maxRunWaitIdleTimeout.Milliseconds())
 		}
 		idleDuration = time.Duration(*request.IdleTimeoutMS) * time.Millisecond
@@ -234,7 +233,7 @@ func timerWaitDeadlines(
 	}
 	return params, dueAt,
 		pgtype.Int8{Int64: idleDuration.Milliseconds(), Valid: true},
-		pgvalue.Timestamptz(now.Add(checkpointDelay)), checkpointDelay, nil
+		pgvalue.Timestamptz(now.Add(checkpointDelay)), nil
 }
 
 func parseTimerDuration(value string) (time.Duration, error) {

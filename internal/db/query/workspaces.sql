@@ -107,16 +107,6 @@ SELECT workspaces.*
    AND workspaces.id = sqlc.arg(id)
    AND workspaces.deleted_at IS NULL;
 
--- name: GetWorkspaceByKey :one
-SELECT workspaces.*
-  FROM workspaces
-  JOIN environments ON environments.id = workspaces.environment_id
- WHERE environments.org_id = sqlc.arg(org_id)
-   AND environments.project_id = sqlc.arg(project_id)
-   AND workspaces.environment_id = sqlc.arg(environment_id)
-   AND workspaces.key = sqlc.arg(key)
-   AND workspaces.deleted_at IS NULL;
-
 -- name: GetWorkspaceListItemByKey :one
 SELECT workspaces.id,
        workspaces.key,
@@ -188,32 +178,6 @@ INSERT INTO workspace_secrets (
     sqlc.arg(secret_id)
 )
 RETURNING *;
-
--- name: ResolveWorkspaceTarget :one
-SELECT workspaces.id
-  FROM workspaces
-  JOIN environments ON environments.id = workspaces.environment_id
- WHERE environments.org_id = sqlc.arg(org_id)
-   AND environments.project_id = sqlc.arg(project_id)
-   AND workspaces.environment_id = sqlc.arg(environment_id)
-   AND workspaces.deleted_at IS NULL
-   AND (
-       (sqlc.narg(id)::uuid IS NOT NULL
-        AND sqlc.narg(key)::text IS NULL
-        AND workspaces.id = sqlc.narg(id)::uuid)
-       OR
-       (sqlc.narg(id)::uuid IS NULL
-        AND sqlc.narg(key)::text IS NOT NULL
-        AND workspaces.key = sqlc.narg(key)::text)
-   );
-
--- name: GetWorkspaceByOrgAndID :one
-SELECT workspaces.*
-  FROM workspaces
-  JOIN environments ON environments.id = workspaces.environment_id
- WHERE environments.org_id = sqlc.arg(org_id)
-   AND workspaces.id = sqlc.arg(id)
-   AND workspaces.deleted_at IS NULL;
 
 -- name: LockWorkspaceAdmissionAuthority :one
 SELECT workspaces.*,

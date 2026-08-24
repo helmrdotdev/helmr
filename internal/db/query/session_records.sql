@@ -1,12 +1,3 @@
--- name: LockActorInputClaim :one
-SELECT *
-  FROM idempotency_claims
- WHERE environment_id = sqlc.arg(environment_id)
-   AND id = sqlc.arg(id)
-   AND operation = 'session.input.send'
-   AND retired_at IS NULL
- FOR UPDATE;
-
 -- name: CreateActorStartInputRecord :one
 WITH locked_actor AS MATERIALIZED (
     SELECT sessions.*
@@ -281,24 +272,6 @@ SELECT *
    AND id = sqlc.arg(id)
    AND direction = 'output';
 
--- name: ListActorInputRecords :many
-SELECT *
-  FROM session_records
- WHERE session_id = sqlc.arg(session_id)
-   AND direction = 'input'
-   AND sequence > sqlc.arg(after_sequence)
- ORDER BY sequence, id
- LIMIT sqlc.arg(limit_count);
-
--- name: ListActorOutputRecords :many
-SELECT *
-  FROM session_records
- WHERE session_id = sqlc.arg(session_id)
-   AND direction = 'output'
-   AND sequence > sqlc.arg(after_sequence)
- ORDER BY sequence, id
- LIMIT sqlc.arg(limit_count);
-
 -- name: ReadPublicActorOutputPage :many
 WITH scoped_actor AS MATERIALIZED (
     SELECT sessions.id,
@@ -350,32 +323,6 @@ SELECT scoped_actor.id AS session_id,
        LIMIT sqlc.arg(limit_count)::integer
   ) AS page ON true
  ORDER BY page.sequence NULLS LAST, page.record_id NULLS LAST;
-
--- name: CommitActorInputCursor :one
-UPDATE sessions
-   SET committed_input_sequence = sqlc.arg(committed_input_sequence),
-       state_version = state_version + 1,
-       updated_at = now()
- WHERE environment_id = sqlc.arg(environment_id)
-   AND id = sqlc.arg(session_id)
-   AND current_run_id = sqlc.arg(run_id)
-   AND run_generation = sqlc.arg(expected_run_generation)
-   AND committed_input_sequence < sqlc.arg(committed_input_sequence)
-   AND sqlc.arg(committed_input_sequence) < next_input_sequence
-RETURNING *;
-
--- name: GetActorWakeupRecord :one
-SELECT session_records.*
-  FROM sessions
-  JOIN session_records
-    ON session_records.session_id = sessions.id
-   AND session_records.direction = 'input'
-   AND session_records.sequence > sessions.committed_input_sequence
- WHERE sessions.environment_id = sqlc.arg(environment_id)
-   AND sessions.id = sqlc.arg(session_id)
-   AND sessions.state = 'open'
- ORDER BY session_records.sequence, session_records.id
-LIMIT 1;
 
 -- name: GetActorInputRecordAtSequenceForUpdate :one
 SELECT *

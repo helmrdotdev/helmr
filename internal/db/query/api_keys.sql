@@ -156,14 +156,3 @@ SELECT *
  WHERE org_id = sqlc.arg(org_id)
    AND api_key_id = sqlc.arg(api_key_id)
  ORDER BY permission, created_at ASC;
-
--- name: DeleteAPIKeyGrant :execrows
-DELETE FROM api_key_grants
- WHERE org_id = sqlc.arg(org_id)
-   AND api_key_id = sqlc.arg(api_key_id)
-   AND id = sqlc.arg(id);
-
--- name: DeleteAPIKeyGrantsForKey :execrows
-DELETE FROM api_key_grants
- WHERE org_id = sqlc.arg(org_id)
-   AND api_key_id = sqlc.arg(api_key_id);

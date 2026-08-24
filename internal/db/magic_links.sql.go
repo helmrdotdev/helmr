@@ -165,30 +165,6 @@ func (q *Queries) GetActiveMagicLinkByTokenHash(ctx context.Context, tokenHash [
 	return i, err
 }
 
-const getMagicLinkLoginUser = `-- name: GetMagicLinkLoginUser :one
-SELECT users.id, users.display_name, users.profile_image_url, users.primary_email, users.admin, users.disabled_at, users.created_at, users.updated_at
-  FROM users
- WHERE lower(users.primary_email) = $1
-   AND users.disabled_at IS NULL
- LIMIT 1
-`
-
-func (q *Queries) GetMagicLinkLoginUser(ctx context.Context, email pgtype.Text) (User, error) {
-	row := q.db.QueryRow(ctx, getMagicLinkLoginUser, email)
-	var i User
-	err := row.Scan(
-		&i.ID,
-		&i.DisplayName,
-		&i.ProfileImageURL,
-		&i.PrimaryEmail,
-		&i.Admin,
-		&i.DisabledAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const lockMagicLinkRecipient = `-- name: LockMagicLinkRecipient :exec
 SELECT pg_advisory_xact_lock($1::bigint)
 `

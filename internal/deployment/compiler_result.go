@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 type ProgramCompilerResult struct {
@@ -362,7 +363,7 @@ func compilerOptionsDigest(
 		return "", err
 	}
 	digest := sha256.Sum256(raw)
-	return "sha256:" + hex.EncodeToString(digest[:]), nil
+	return sha256sum.FormatDigest(digest[:]), nil
 }
 
 func verifyProgramCompilerFiles(

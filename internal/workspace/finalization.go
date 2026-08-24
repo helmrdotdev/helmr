@@ -2,7 +2,6 @@ package workspace
 
 import (
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -135,5 +134,5 @@ func FinalizationFingerprint(kind string, request FinalizationRequest) (string, 
 	hash := sha256.New()
 	_, _ = hash.Write([]byte(FinalizationFingerprintDomain))
 	_, _ = hash.Write(canonical)
-	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
+	return sha256sum.FormatDigest(hash.Sum(nil)), nil
 }

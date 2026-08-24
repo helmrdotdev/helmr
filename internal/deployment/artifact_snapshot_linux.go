@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"golang.org/x/sys/unix"
 )
 
@@ -350,7 +351,7 @@ func copyArtifactSnapshot(
 			expected.SizeBytes,
 		)
 	}
-	actualDigest := "sha256:" + hex.EncodeToString(digest.Sum(nil))
+	actualDigest := sha256sum.FormatDigest(digest.Sum(nil))
 	if actualDigest != expected.Digest {
 		return fmt.Errorf(
 			"artifact snapshot digest = %s, want %s",
@@ -526,7 +527,7 @@ func hashArtifactSnapshot(
 			sizeBytes,
 		)
 	}
-	return "sha256:" + hex.EncodeToString(digest.Sum(nil)), nil
+	return sha256sum.FormatDigest(digest.Sum(nil)), nil
 }
 
 func newArtifactSnapshotName() (string, error) {

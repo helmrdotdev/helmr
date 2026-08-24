@@ -24,7 +24,6 @@ type Reader interface {
 	ListEvents(ctx context.Context, query EventQuery) (EventPage, error)
 	ListRunLogChunks(ctx context.Context, query RunLogChunkQuery) (RunLogChunkPage, error)
 	ListTerminalOutput(ctx context.Context, query TerminalOutputQuery) (TerminalOutputPage, error)
-	GetRunLogSnapshot(ctx context.Context, query RunLogSnapshotQuery) (RunLogSnapshot, error)
 }
 
 type EventQuery struct {
@@ -40,7 +39,6 @@ type EventPage struct {
 	Events     []api.RunEvent
 	LastSeq    int64
 	Watermark  int64
-	HotCount   int
 	Historical int
 }
 
@@ -56,34 +54,7 @@ type RunLogChunkPage struct {
 	Chunks     []api.RunLogChunk
 	LastSeq    int64
 	Watermark  int64
-	HotCount   int
 	Historical int
-}
-
-type RunLogSnapshotQuery struct {
-	OrgID       uuid.UUID
-	RunID       uuid.UUID
-	StdoutLimit int64
-	StderrLimit int64
-}
-
-type RunLogSnapshot struct {
-	Stdout      []byte
-	Stderr      []byte
-	Cursor      int64
-	StdoutBytes int64
-	StderrBytes int64
-	Truncated   bool
-	UpdatedAt   time.Time
-}
-
-type DeadLetteredTelemetryQuery struct {
-	OrgID      uuid.UUID
-	StreamKind string
-	SourceKind string
-	SourceID   uuid.UUID
-	AfterSeq   int64
-	Watermark  int64
 }
 
 type TerminalOutputQuery struct {
@@ -102,7 +73,6 @@ type TerminalOutputPage struct {
 	Chunks     []TerminalOutputChunk
 	LastOffset int64
 	Watermark  int64
-	HotCount   int
 	Historical int
 }
 

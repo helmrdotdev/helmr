@@ -5,12 +5,13 @@ package deployment
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 func inspectBuildTree(
@@ -95,7 +96,7 @@ func IngestBuildTreeArchive(
 	if limited.N != 0 {
 		return nil, errors.New("build tree stream is truncated")
 	}
-	actualDigest := "sha256:" + hex.EncodeToString(digest.Sum(nil))
+	actualDigest := sha256sum.FormatDigest(digest.Sum(nil))
 	if actualDigest != archiveDigest {
 		return nil, fmt.Errorf(
 			"build tree stream digest = %s, want %s",

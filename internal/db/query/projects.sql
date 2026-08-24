@@ -48,12 +48,6 @@ SELECT *
  WHERE org_id = sqlc.arg(org_id)
    AND id = sqlc.arg(id);
 
--- name: GetProjectBySlug :one
-SELECT *
-  FROM projects
- WHERE org_id = sqlc.arg(org_id)
-   AND slug = sqlc.arg(slug);
-
 -- name: UpdateProjectDetails :one
 UPDATE projects
    SET slug = sqlc.arg(slug),
@@ -68,13 +62,6 @@ DELETE FROM projects
  WHERE org_id = sqlc.arg(org_id)
    AND id = sqlc.arg(id)
 RETURNING *;
-
--- name: ClearDefaultProject :execrows
-UPDATE projects
-   SET is_default = false,
-       updated_at = now()
- WHERE org_id = sqlc.arg(org_id)
-   AND is_default;
 
 -- name: SetDefaultProject :execrows
 UPDATE projects
@@ -134,21 +121,6 @@ SELECT *
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND id = sqlc.arg(id);
-
--- name: GetEnvironmentBySlug :one
-SELECT *
-  FROM environments
- WHERE org_id = sqlc.arg(org_id)
-   AND project_id = sqlc.arg(project_id)
-   AND slug = sqlc.arg(slug);
-
--- name: GetDefaultEnvironment :one
-SELECT *
-  FROM environments
- WHERE org_id = sqlc.arg(org_id)
-   AND project_id = sqlc.arg(project_id)
-   AND is_default
- LIMIT 1;
 
 -- name: ListEnvironments :many
 SELECT *

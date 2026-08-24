@@ -68,19 +68,3 @@ SELECT workspace_versions.id AS version_id,
    AND workspace_versions.workspace_id = sqlc.arg(workspace_id)
    AND workspace_versions.id = sqlc.arg(version_id)
    AND workspace_versions.state IN ('committed', 'private');
-
--- name: ListWorkspaceVersions :many
-SELECT workspace_versions.*
-  FROM workspace_versions
-  JOIN workspaces
-    ON workspaces.environment_id = workspace_versions.environment_id
-   AND workspaces.id = workspace_versions.workspace_id
-  JOIN environments ON environments.id = workspaces.environment_id
- WHERE environments.org_id = sqlc.arg(org_id)
-   AND environments.project_id = sqlc.arg(project_id)
-   AND workspace_versions.environment_id = sqlc.arg(environment_id)
-   AND workspace_versions.workspace_id = sqlc.arg(workspace_id)
-   AND workspace_versions.state = 'committed'
-   AND (sqlc.narg(kind)::workspace_version_kind IS NULL OR workspace_versions.kind = sqlc.narg(kind)::workspace_version_kind)
- ORDER BY workspace_versions.created_at DESC, workspace_versions.id DESC
- LIMIT sqlc.arg(limit_count);

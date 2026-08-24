@@ -175,22 +175,9 @@ SELECT sessions.*,
  ORDER BY sessions.created_at DESC, sessions.id DESC
  LIMIT sqlc.arg(limit_count);
 
--- name: GetActorByAddressID :one
-SELECT *
-  FROM sessions
- WHERE environment_id = sqlc.arg(environment_id)
-   AND actor_declared_id = sqlc.arg(actor_declared_id)
-   AND id = sqlc.arg(id);
-
 -- name: GetActorByKey :one
 SELECT *
   FROM sessions
  WHERE environment_id = sqlc.arg(environment_id)
    AND actor_declared_id = sqlc.arg(actor_declared_id)
    AND key = sqlc.arg(key);
-
--- name: GetSessionRead :one
-SELECT sessions.*
-  FROM sessions
- WHERE sessions.environment_id = sqlc.arg(environment_id)
-   AND sessions.id = sqlc.arg(session_id);

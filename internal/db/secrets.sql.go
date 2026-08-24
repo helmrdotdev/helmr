@@ -310,38 +310,6 @@ func (q *Queries) GetSecret(ctx context.Context, arg GetSecretParams) (Secret, e
 	return i, err
 }
 
-const getSecretByName = `-- name: GetSecretByName :one
-SELECT secrets.id, secrets.environment_id, secrets.name, secrets.state, secrets.state_version, secrets.current_version_id, secrets.revocation_generation, secrets.created_at, secrets.updated_at, secrets.revoked_at, secrets.deleted_at
-FROM secrets
-WHERE environment_id = $1
-  AND name = $2
-  AND state <> 'deleted'
-`
-
-type GetSecretByNameParams struct {
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	Name          string      `json:"name"`
-}
-
-func (q *Queries) GetSecretByName(ctx context.Context, arg GetSecretByNameParams) (Secret, error) {
-	row := q.db.QueryRow(ctx, getSecretByName, arg.EnvironmentID, arg.Name)
-	var i Secret
-	err := row.Scan(
-		&i.ID,
-		&i.EnvironmentID,
-		&i.Name,
-		&i.State,
-		&i.StateVersion,
-		&i.CurrentVersionID,
-		&i.RevocationGeneration,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.RevokedAt,
-		&i.DeletedAt,
-	)
-	return i, err
-}
-
 const getSecretSnapshot = `-- name: GetSecretSnapshot :one
 SELECT
     secrets.id,

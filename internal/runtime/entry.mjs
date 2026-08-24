@@ -3387,6 +3387,32 @@ var ResumeAckSchema = /* @__PURE__ */ messageDesc(file_run, 58);
 var ResumeConsumedSchema = /* @__PURE__ */ messageDesc(file_run, 59);
 var MetadataUpdatedSchema = /* @__PURE__ */ messageDesc(file_run, 60);
 var StructuredLogRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 61);
+// sdk/typescript/src/internal/utf8.ts
+var encoder = new TextEncoder;
+var encode = TextEncoder.prototype.encode.call.bind(TextEncoder.prototype.encode);
+var charCodeAt = String.prototype.charCodeAt.call.bind(String.prototype.charCodeAt);
+function hasOnlyUnicodeScalarValues(value) {
+  for (let index = 0;index < value.length; index++) {
+    const unit = charCodeAt(value, index);
+    if (unit >= 55296 && unit <= 56319) {
+      if (index + 1 === value.length)
+        return false;
+      const next = charCodeAt(value, index + 1);
+      if (next < 56320 || next > 57343)
+        return false;
+      index++;
+    } else if (unit >= 56320 && unit <= 57343) {
+      return false;
+    }
+  }
+  return true;
+}
+function assertUnicodeString(value) {
+  if (!hasOnlyUnicodeScalarValues(value)) {
+    throw new Error("canonical JSON contains an unpaired surrogate");
+  }
+}
+
 // sdk/typescript/src/config.ts
 var arrayPrototype = Array.prototype;
 var objectPrototype = Object.prototype;
@@ -3395,10 +3421,8 @@ var endsWith = String.prototype.endsWith.call.bind(String.prototype.endsWith);
 var includes = String.prototype.includes.call.bind(String.prototype.includes);
 var split = String.prototype.split.call.bind(String.prototype.split);
 var slice = String.prototype.slice.call.bind(String.prototype.slice);
-var charCodeAt = String.prototype.charCodeAt.call.bind(String.prototype.charCodeAt);
+var charCodeAt2 = String.prototype.charCodeAt.call.bind(String.prototype.charCodeAt);
 var regexpTest = RegExp.prototype.test.call.bind(RegExp.prototype.test);
-var utf8Encoder = new TextEncoder;
-var encodeUTF8 = TextEncoder.prototype.encode.call.bind(TextEncoder.prototype.encode);
 // sdk/typescript/src/schema/payload.ts
 var payloadSchemaValidationErrorBrand = Symbol.for("helmr.sdk.PayloadSchemaValidationError");
 function assertPayloadSchema(value, label = "payload") {
@@ -3901,7 +3925,6 @@ function decodeWorkspaceBase64(value, label) {
   return output;
 }
 // sdk/typescript/src/internal/jsoncanon.ts
-var textDecoder = new TextDecoder("utf-8", { fatal: true });
 var textEncoder = new TextEncoder;
 function canonicalizeJsonValue(value) {
   return textEncoder.encode(serialize(value, new Set));
@@ -3964,20 +3987,6 @@ function assertPlainObject(value) {
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (!descriptor?.enumerable || !("value" in descriptor)) {
       throw new Error("canonical JSON object properties must be enumerable data properties");
-    }
-  }
-}
-function assertUnicodeString(value) {
-  for (let index = 0;index < value.length; index++) {
-    const unit = value.charCodeAt(index);
-    if (unit >= 55296 && unit <= 56319) {
-      const next = value.charCodeAt(index + 1);
-      if (next < 56320 || next > 57343) {
-        throw new Error("canonical JSON contains an unpaired high surrogate");
-      }
-      index++;
-    } else if (unit >= 56320 && unit <= 57343) {
-      throw new Error("canonical JSON contains an unpaired low surrogate");
     }
   }
 }
@@ -5919,15 +5928,15 @@ function validationDetails(issues) {
   };
 }
 function boundedUtf8(value, maxBytes) {
-  const encoder = new TextEncoder;
-  if (encoder.encode(value).byteLength <= maxBytes)
+  const encoder2 = new TextEncoder;
+  if (encoder2.encode(value).byteLength <= maxBytes)
     return value;
   const suffix = "…";
-  const suffixBytes = encoder.encode(suffix).byteLength;
+  const suffixBytes = encoder2.encode(suffix).byteLength;
   let result = "";
   let size = 0;
   for (const character of value) {
-    const characterBytes = encoder.encode(character).byteLength;
+    const characterBytes = encoder2.encode(character).byteLength;
     if (size + characterBytes + suffixBytes > maxBytes)
       break;
     result += character;

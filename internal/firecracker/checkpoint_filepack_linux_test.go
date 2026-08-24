@@ -40,7 +40,7 @@ func TestRuntimeFilepackRoundTripsSparseFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stats.LogicalBytes != 64<<20 || stats.EncodedChunks == 0 || stats.CompressedBytes == 0 {
+	if stats.LogicalBytes != 64<<20 || stats.EncodedChunks == 0 {
 		t.Fatalf("pack stats = %+v", stats)
 	}
 	sourceInfo, err := os.Stat(source)

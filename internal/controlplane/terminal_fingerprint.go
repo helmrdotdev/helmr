@@ -2,8 +2,9 @@ package controlplane
 
 import (
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
+
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 func terminalRequestFingerprint(scope string, payload any) (string, error) {
@@ -19,5 +20,5 @@ func terminalRequestFingerprint(scope string, payload any) (string, error) {
 		return "", err
 	}
 	sum := sha256.Sum256(canonical)
-	return "sha256:" + hex.EncodeToString(sum[:]), nil
+	return sha256sum.FormatDigest(sum[:]), nil
 }

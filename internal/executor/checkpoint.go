@@ -522,7 +522,6 @@ func (c runtimeCheckpointer) storeSnapshotFile(ctx context.Context, file vm.Snap
 }
 
 func (c runtimeCheckpointer) storeSnapshotReader(ctx context.Context, body io.Reader, mediaType string, suffix string) (storedCheckpointArtifact, error) {
-	encryptStarted := time.Now()
 	stage, err := c.cas.Stage(ctx, mediaType)
 	if err != nil {
 		return storedCheckpointArtifact{}, err
@@ -531,19 +530,15 @@ func (c runtimeCheckpointer) storeSnapshotReader(ctx context.Context, body io.Re
 		_ = stage.Abort(context.Background())
 		return storedCheckpointArtifact{}, err
 	}
-	encryptDuration := time.Since(encryptStarted)
-	storeStarted := time.Now()
 	object, err := stage.Commit(ctx)
 	if err != nil {
 		_ = stage.Abort(context.Background())
 		return storedCheckpointArtifact{}, err
 	}
 	return storedCheckpointArtifact{artifact: workerapi.CheckpointArtifact{
-		Digest:            object.Digest,
-		SizeBytes:         object.SizeBytes,
-		MediaType:         object.MediaType,
-		EncryptDurationMs: durationMilliseconds(encryptDuration),
-		StoreDurationMs:   durationMilliseconds(time.Since(storeStarted)),
+		Digest:    object.Digest,
+		SizeBytes: object.SizeBytes,
+		MediaType: object.MediaType,
 	}}, nil
 }
 
@@ -579,13 +574,7 @@ func workerCheckpointFilepackStats(stats *vm.FilepackStats) *workerapi.Checkpoin
 	}
 	return &workerapi.CheckpointFilepackStats{
 		LogicalBytes:       stats.LogicalBytes,
-		AllocatedBytes:     stats.AllocatedBytes,
-		SparseSupported:    stats.SparseSupported,
-		SparseDataRanges:   stats.SparseDataRanges,
-		SparseDataBytes:    stats.SparseDataBytes,
-		ZeroChunksSkipped:  stats.ZeroChunksSkipped,
 		EncodedChunks:      stats.EncodedChunks,
-		CompressedBytes:    stats.CompressedBytes,
 		UnpackWrittenBytes: stats.UnpackWrittenBytes,
 	}
 }

@@ -103,7 +103,7 @@ func (s *Server) workerCreateTokenRunWait(
 		writeError(w, badRequest(err))
 		return
 	}
-	timeoutAt, idleTimeout, checkpointDueAt, checkpointDelay, err := runWaitDeadlines(request, defaultRunWaitIdleTimeout)
+	timeoutAt, idleTimeout, checkpointDueAt, err := runWaitDeadlines(request, defaultRunWaitIdleTimeout)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -169,7 +169,7 @@ func (s *Server) workerCreateTokenRunWait(
 	response := workerapi.CreateRunWaitResponse{
 		RunID: pgvalue.UUIDString(locators.RunID), RunWaitID: registered.WaitID.String(),
 		ResumeAttachID: resumeAttachID.String(), RuntimeInstanceID: pgvalue.UUIDString(locators.RuntimeInstanceID),
-		RuntimeEpoch: worker.WorkerEpoch, CheckpointDelayMs: checkpointDelay.Milliseconds(),
+		RuntimeEpoch: worker.WorkerEpoch,
 	}
 	if registered.SuspensionState == db.RunWaitStateReleased {
 		response.ResolutionKind, response.Resolution, err = tokenWaitDecision(
@@ -447,13 +447,13 @@ func (s *Server) loadRunWaitLeaseAuthority(
 	return parsed, worker, locators, nil
 }
 
-func runWaitDeadlines(request workerapi.CreateRunWaitRequest, defaultIdleTimeout time.Duration) (pgtype.Timestamptz, pgtype.Int8, pgtype.Timestamptz, time.Duration, error) {
+func runWaitDeadlines(request workerapi.CreateRunWaitRequest, defaultIdleTimeout time.Duration) (pgtype.Timestamptz, pgtype.Int8, pgtype.Timestamptz, error) {
 	now := time.Now().UTC()
 	checkpointDelay := rootRunWaitHotWindow
 	var timeoutAt pgtype.Timestamptz
 	if request.TimeoutMS != nil {
 		if *request.TimeoutMS <= 0 || *request.TimeoutMS > maxRunWaitDuration.Milliseconds() {
-			return pgtype.Timestamptz{}, pgtype.Int8{}, pgtype.Timestamptz{}, 0,
+			return pgtype.Timestamptz{}, pgtype.Int8{}, pgtype.Timestamptz{},
 				fmt.Errorf("timeout_ms must be between 1 and %d", maxRunWaitDuration.Milliseconds())
 		}
 		duration := time.Duration(*request.TimeoutMS) * time.Millisecond
@@ -465,7 +465,7 @@ func runWaitDeadlines(request workerapi.CreateRunWaitRequest, defaultIdleTimeout
 	idleDuration := defaultIdleTimeout
 	if request.IdleTimeoutMS != nil {
 		if *request.IdleTimeoutMS <= 0 || *request.IdleTimeoutMS > maxRunWaitIdleTimeout.Milliseconds() {
-			return pgtype.Timestamptz{}, pgtype.Int8{}, pgtype.Timestamptz{}, 0,
+			return pgtype.Timestamptz{}, pgtype.Int8{}, pgtype.Timestamptz{},
 				fmt.Errorf("idle_timeout_ms must be between 1 and %d", maxRunWaitIdleTimeout.Milliseconds())
 		}
 		idleDuration = time.Duration(*request.IdleTimeoutMS) * time.Millisecond
@@ -474,7 +474,7 @@ func runWaitDeadlines(request workerapi.CreateRunWaitRequest, defaultIdleTimeout
 	if idleDuration < checkpointDelay {
 		checkpointDelay = idleDuration
 	}
-	return timeoutAt, idleTimeout, pgvalue.Timestamptz(now.Add(checkpointDelay)), checkpointDelay, nil
+	return timeoutAt, idleTimeout, pgvalue.Timestamptz(now.Add(checkpointDelay)), nil
 }
 
 func tokenWaitDecision(state db.WaitState, result json.RawMessage, reason string) (string, json.RawMessage, error) {

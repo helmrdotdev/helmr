@@ -56,46 +56,6 @@ func (q *Queries) CreateAPIKeyGrant(ctx context.Context, arg CreateAPIKeyGrantPa
 	return i, err
 }
 
-const deleteAPIKeyGrant = `-- name: DeleteAPIKeyGrant :execrows
-DELETE FROM api_key_grants
- WHERE org_id = $1
-   AND api_key_id = $2
-   AND id = $3
-`
-
-type DeleteAPIKeyGrantParams struct {
-	OrgID    pgtype.UUID `json:"org_id"`
-	APIKeyID pgtype.UUID `json:"api_key_id"`
-	ID       pgtype.UUID `json:"id"`
-}
-
-func (q *Queries) DeleteAPIKeyGrant(ctx context.Context, arg DeleteAPIKeyGrantParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteAPIKeyGrant, arg.OrgID, arg.APIKeyID, arg.ID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
-const deleteAPIKeyGrantsForKey = `-- name: DeleteAPIKeyGrantsForKey :execrows
-DELETE FROM api_key_grants
- WHERE org_id = $1
-   AND api_key_id = $2
-`
-
-type DeleteAPIKeyGrantsForKeyParams struct {
-	OrgID    pgtype.UUID `json:"org_id"`
-	APIKeyID pgtype.UUID `json:"api_key_id"`
-}
-
-func (q *Queries) DeleteAPIKeyGrantsForKey(ctx context.Context, arg DeleteAPIKeyGrantsForKeyParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteAPIKeyGrantsForKey, arg.OrgID, arg.APIKeyID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const issueAPIKey = `-- name: IssueAPIKey :one
 WITH revoked AS (
     UPDATE api_keys

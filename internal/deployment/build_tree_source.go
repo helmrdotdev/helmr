@@ -3,7 +3,6 @@ package deployment
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/imagebuild"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 // BuildTreeSource is a sealed selection over one verified BuildTree. Its
@@ -71,7 +71,7 @@ func (tree *BuildTree) SelectImageSource(
 		return nil, err
 	}
 	descriptor := imagebuild.SourceArchiveDescriptor{
-		ArchiveDigest:    "sha256:" + hex.EncodeToString(digest.Sum(nil)),
+		ArchiveDigest:    sha256sum.FormatDigest(digest.Sum(nil)),
 		ArchiveSizeBytes: counter.written,
 		ArchiveEntries:   len(selected),
 		PathSetDigest:    imagebuild.PathSetDigest(paths),
@@ -136,7 +136,7 @@ func (source *BuildTreeSource) WriteTo(
 	); err != nil {
 		return err
 	}
-	actualDigest := "sha256:" + hex.EncodeToString(digest.Sum(nil))
+	actualDigest := sha256sum.FormatDigest(digest.Sum(nil))
 	if actualDigest != source.descriptor.ArchiveDigest ||
 		counter.written != source.descriptor.ArchiveSizeBytes {
 		return errors.New("image source archive changed after admission")

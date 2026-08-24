@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/substrate"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -28,7 +28,7 @@ func TestRuntimeSubstrateCacheSourceProjectsWithoutMutatingCacheAuthority(t *tes
 	}
 	sum := sha256.Sum256(body)
 	source := &runtimeSubstrateCacheSource{
-		path: cachePath, digest: "sha256:" + hex.EncodeToString(sum[:]), sizeBytes: int64(len(body)),
+		path: cachePath, digest: sha256sum.FormatDigest(sum[:]), sizeBytes: int64(len(body)),
 	}
 	projected, err := source.MaterializeInto(
 		context.Background(), arenaDir, "substrate.ext4", os.Getuid(), os.Getgid(),

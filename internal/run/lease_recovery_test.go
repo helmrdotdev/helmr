@@ -107,25 +107,6 @@ func TestDecideExecutionLeaseLossStateDeadlines(t *testing.T) {
 	}
 }
 
-func TestRuntimeCleanupMountFinalizationUsesTopologyNotReason(t *testing.T) {
-	kind, reason := runtimeCleanupMountFinalization(
-		"obsolete_reason_must_not_drive_cleanup",
-		false,
-	)
-	if kind.Valid || reason.Valid {
-		t.Fatalf("non-discard cleanup = %v/%v, want no finalization", kind, reason)
-	}
-
-	kind, reason = runtimeCleanupMountFinalization(
-		"max_active_duration_exceeded",
-		true,
-	)
-	if !kind.Valid || kind.String != "discard" ||
-		!reason.Valid || reason.String != "max_active_duration_exceeded" {
-		t.Fatalf("discard cleanup = %v/%v, want discard with exact reason", kind, reason)
-	}
-}
-
 func timestamp(value time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: value, Valid: true}
 }

@@ -51,51 +51,6 @@ func (q *Queries) CreateOrganization(ctx context.Context, arg CreateOrganization
 	return i, err
 }
 
-const getDefaultProjectEnvironment = `-- name: GetDefaultProjectEnvironment :one
-SELECT
-    projects.id AS project_id,
-    environments.id AS environment_id
-  FROM projects
-  JOIN environments
-    ON environments.org_id = projects.org_id
-   AND environments.project_id = projects.id
-   AND environments.is_default
- WHERE projects.org_id = $1
-   AND projects.is_default
- LIMIT 1
-`
-
-type GetDefaultProjectEnvironmentRow struct {
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-}
-
-func (q *Queries) GetDefaultProjectEnvironment(ctx context.Context, orgID pgtype.UUID) (GetDefaultProjectEnvironmentRow, error) {
-	row := q.db.QueryRow(ctx, getDefaultProjectEnvironment, orgID)
-	var i GetDefaultProjectEnvironmentRow
-	err := row.Scan(&i.ProjectID, &i.EnvironmentID)
-	return i, err
-}
-
-const getOrganization = `-- name: GetOrganization :one
-SELECT id, name, slug, created_at, updated_at
-  FROM organizations
- WHERE id = $1
-`
-
-func (q *Queries) GetOrganization(ctx context.Context, id pgtype.UUID) (Organization, error) {
-	row := q.db.QueryRow(ctx, getOrganization, id)
-	var i Organization
-	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.Slug,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const getUserOnboardingState = `-- name: GetUserOnboardingState :one
 SELECT
     users.id AS user_id,
@@ -173,40 +128,6 @@ SELECT id
 
 func (q *Queries) ListOrganizationIDs(ctx context.Context, rowLimit int32) ([]pgtype.UUID, error) {
 	rows, err := q.db.Query(ctx, listOrganizationIDs, rowLimit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []pgtype.UUID
-	for rows.Next() {
-		var id pgtype.UUID
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		items = append(items, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listOrganizationIDsPage = `-- name: ListOrganizationIDsPage :many
-SELECT id
-  FROM organizations
- WHERE $1::uuid IS NULL
-    OR id > $1::uuid
- ORDER BY id ASC
- LIMIT $2
-`
-
-type ListOrganizationIDsPageParams struct {
-	AfterID  pgtype.UUID `json:"after_id"`
-	RowLimit int32       `json:"row_limit"`
-}
-
-func (q *Queries) ListOrganizationIDsPage(ctx context.Context, arg ListOrganizationIDsPageParams) ([]pgtype.UUID, error) {
-	rows, err := q.db.Query(ctx, listOrganizationIDsPage, arg.AfterID, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}

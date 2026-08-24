@@ -27,7 +27,8 @@ func HexBytes(bytes []byte) string {
 }
 
 func DigestBytes(bytes []byte) string {
-	return Prefix + HexBytes(bytes)
+	sum := sha256.Sum256(bytes)
+	return FormatDigest(sum[:])
 }
 
 func HexHash(hash hash.Hash) string {
@@ -35,5 +36,9 @@ func HexHash(hash hash.Hash) string {
 }
 
 func DigestHash(hash hash.Hash) string {
-	return Prefix + HexHash(hash)
+	return FormatDigest(hash.Sum(nil))
+}
+
+func FormatDigest(digest []byte) string {
+	return Prefix + hex.EncodeToString(digest)
 }

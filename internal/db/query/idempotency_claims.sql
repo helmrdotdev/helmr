@@ -8,56 +8,6 @@ SELECT idempotency_claims.*,
    AND idempotency_claims.retired_at IS NULL
  FOR UPDATE;
 
--- name: RetireExpiredIdempotencyClaims :many
-WITH candidates AS (
-    SELECT id
-      FROM idempotency_claims
-     WHERE retired_at IS NULL
-       AND expires_at <= transaction_timestamp()
-     ORDER BY expires_at, id
-     LIMIT sqlc.arg(row_limit)
-     FOR UPDATE SKIP LOCKED
-)
-UPDATE idempotency_claims
-   SET retired_at = statement_timestamp()
-  FROM candidates
- WHERE idempotency_claims.id = candidates.id
-RETURNING idempotency_claims.*;
-
--- name: CollectRetiredIdempotencyClaims :many
-WITH candidates AS (
-    SELECT id
-      FROM idempotency_claims
-     WHERE retired_at IS NOT NULL
-       AND NOT EXISTS (
-           SELECT 1
-             FROM runs
-            WHERE runs.claim_id = idempotency_claims.id
-       )
-       AND NOT EXISTS (
-           SELECT 1
-             FROM session_records
-            WHERE session_records.claim_id = idempotency_claims.id
-       )
-       AND NOT EXISTS (
-           SELECT 1
-             FROM run_waits
-            WHERE run_waits.child_claim_id = idempotency_claims.id
-       )
-       AND NOT EXISTS (
-           SELECT 1
-             FROM workspace_processes
-            WHERE workspace_processes.claim_id = idempotency_claims.id
-       )
-     ORDER BY retired_at, id
-     LIMIT sqlc.arg(row_limit)
-     FOR UPDATE SKIP LOCKED
-)
-DELETE FROM idempotency_claims
- USING candidates
- WHERE idempotency_claims.id = candidates.id
-RETURNING idempotency_claims.*;
-
 -- name: CreateIdempotencyClaim :one
 INSERT INTO idempotency_claims (
     id,

@@ -12,17 +12,11 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 )
 
-type Connector interface {
-	Connect(context.Context, ConnectRequest) (Session, error)
-}
-
 type RestoringConnector interface {
-	Connector
 	Restore(context.Context, RestoreRequest) (Session, error)
 }
 
 type MaterializingConnector interface {
-	Connector
 	Materialize(context.Context, MaterializeRequest) (Session, error)
 }
 
@@ -296,13 +290,7 @@ type RuntimePhase struct {
 
 type FilepackStats struct {
 	LogicalBytes       int64
-	AllocatedBytes     int64
-	SparseSupported    *bool
-	SparseDataRanges   int64
-	SparseDataBytes    int64
-	ZeroChunksSkipped  int64
 	EncodedChunks      int64
-	CompressedBytes    int64
 	UnpackWrittenBytes int64
 }
 

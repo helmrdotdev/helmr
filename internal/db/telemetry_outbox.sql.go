@@ -652,41 +652,6 @@ func (q *Queries) ClaimWorkspaceProcessTerminalOutputIngestBatch(ctx context.Con
 	return items, nil
 }
 
-const hasUnpublishedLiveTelemetryOutbox = `-- name: HasUnpublishedLiveTelemetryOutbox :one
-SELECT EXISTS (
-    SELECT 1
-      FROM telemetry_outbox
-     WHERE telemetry_outbox.org_id = $1
-       AND telemetry_outbox.stream_kind = $2
-       AND telemetry_outbox.source_kind = $3
-       AND telemetry_outbox.source_id = $4
-       AND telemetry_outbox.stream_name = $5
-       AND (telemetry_outbox.published_at IS NULL OR telemetry_outbox.written_at IS NULL)
-       AND telemetry_outbox.state <> 'dead_lettered'
-)
-`
-
-type HasUnpublishedLiveTelemetryOutboxParams struct {
-	OrgID      pgtype.UUID         `json:"org_id"`
-	StreamKind TelemetryStreamKind `json:"stream_kind"`
-	SourceKind string              `json:"source_kind"`
-	SourceID   pgtype.UUID         `json:"source_id"`
-	StreamName string              `json:"stream_name"`
-}
-
-func (q *Queries) HasUnpublishedLiveTelemetryOutbox(ctx context.Context, arg HasUnpublishedLiveTelemetryOutboxParams) (bool, error) {
-	row := q.db.QueryRow(ctx, hasUnpublishedLiveTelemetryOutbox,
-		arg.OrgID,
-		arg.StreamKind,
-		arg.SourceKind,
-		arg.SourceID,
-		arg.StreamName,
-	)
-	var exists bool
-	err := row.Scan(&exists)
-	return exists, err
-}
-
 const markLiveTelemetryOutboxFailed = `-- name: MarkLiveTelemetryOutboxFailed :exec
 UPDATE telemetry_outbox
    SET publish_locked_until = now() + $1::interval,
@@ -792,26 +757,4 @@ func (q *Queries) PruneTelemetryOutboxWritten(ctx context.Context, retainFor pgt
 		return nil, err
 	}
 	return items, nil
-}
-
-const requeueWrittenTelemetryOutbox = `-- name: RequeueWrittenTelemetryOutbox :exec
-UPDATE telemetry_outbox
-   SET state = 'failed',
-       written_at = NULL,
-       next_retry_at = now() + $1::interval,
-       updated_at = now(),
-       last_error = $2
- WHERE id = ANY($3::bigint[])
-   AND written_at IS NOT NULL
-`
-
-type RequeueWrittenTelemetryOutboxParams struct {
-	RetryAfter pgtype.Interval `json:"retry_after"`
-	LastError  string          `json:"last_error"`
-	Ids        []int64         `json:"ids"`
-}
-
-func (q *Queries) RequeueWrittenTelemetryOutbox(ctx context.Context, arg RequeueWrittenTelemetryOutboxParams) error {
-	_, err := q.db.Exec(ctx, requeueWrittenTelemetryOutbox, arg.RetryAfter, arg.LastError, arg.Ids)
-	return err
 }

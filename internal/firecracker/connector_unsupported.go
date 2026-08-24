@@ -28,10 +28,6 @@ func (*Connector) Qualify(context.Context) (*QualifiedRuntime, error) {
 	return nil, ErrUnsupported
 }
 
-func (*QualifiedRuntime) Connect(context.Context, vm.ConnectRequest) (vm.Session, error) {
-	return nil, ErrUnsupported
-}
-
 func (*QualifiedRuntime) Restore(context.Context, vm.RestoreRequest) (vm.Session, error) {
 	return nil, ErrUnsupported
 }

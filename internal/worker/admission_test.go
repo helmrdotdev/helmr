@@ -16,7 +16,7 @@ func (p *staticHealthProbe) Probe(context.Context) (HostHealth, error) { return 
 
 func healthyHost(now time.Time) HostHealth {
 	return HostHealth{
-		ObservedAt: now, AvailableDiskBytes: 20 << 30, DiskCapacityBytes: 40 << 30,
+		ObservedAt: now, AvailableDiskBytes: 20 << 30,
 		OpenFileDescriptors: 100, FileDescriptorLimit: 4096,
 		CgroupHealthy: true,
 		KVMHealthy:    true, FirecrackerHealthy: true,

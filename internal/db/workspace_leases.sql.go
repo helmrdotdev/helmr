@@ -11,66 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const getRunOwnedWorkspaceLease = `-- name: GetRunOwnedWorkspaceLease :one
-SELECT workspace_leases.id, workspace_leases.org_id, workspace_leases.worker_group_id, workspace_leases.project_id, workspace_leases.environment_id, workspace_leases.region_id, workspace_leases.worker_instance_id, workspace_leases.worker_epoch, workspace_leases.runtime_instance_id, workspace_leases.workspace_id, workspace_leases.workspace_mount_id, workspace_leases.state, workspace_leases.owner_run_lease_id, workspace_leases.owner_process_id, workspace_leases.base_version_id, workspace_leases.ownership_generation, workspace_leases.writer_generation, workspace_leases.mount_fencing_generation, workspace_leases.fencing_token_hash, workspace_leases.acquired_at, workspace_leases.renewed_at, workspace_leases.expires_at, workspace_leases.released_at, workspace_leases.lost_at, workspace_leases.updated_at, workspace_leases.terminal_at, workspace_leases.terminal_reason_code, workspace_leases.terminal_error
-  FROM workspace_leases
-  JOIN run_leases
-    ON run_leases.workspace_id = workspace_leases.workspace_id
-   AND run_leases.id = workspace_leases.owner_run_lease_id
- WHERE run_leases.run_id = $1
-   AND run_leases.attempt_number = $2
-   AND workspace_leases.workspace_id = $3
-   AND workspace_leases.id = $4
-`
-
-type GetRunOwnedWorkspaceLeaseParams struct {
-	RunID         pgtype.UUID `json:"run_id"`
-	AttemptNumber int32       `json:"attempt_number"`
-	WorkspaceID   pgtype.UUID `json:"workspace_id"`
-	ID            pgtype.UUID `json:"id"`
-}
-
-func (q *Queries) GetRunOwnedWorkspaceLease(ctx context.Context, arg GetRunOwnedWorkspaceLeaseParams) (WorkspaceLease, error) {
-	row := q.db.QueryRow(ctx, getRunOwnedWorkspaceLease,
-		arg.RunID,
-		arg.AttemptNumber,
-		arg.WorkspaceID,
-		arg.ID,
-	)
-	var i WorkspaceLease
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.WorkerGroupID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.RegionID,
-		&i.WorkerInstanceID,
-		&i.WorkerEpoch,
-		&i.RuntimeInstanceID,
-		&i.WorkspaceID,
-		&i.WorkspaceMountID,
-		&i.State,
-		&i.OwnerRunLeaseID,
-		&i.OwnerProcessID,
-		&i.BaseVersionID,
-		&i.OwnershipGeneration,
-		&i.WriterGeneration,
-		&i.MountFencingGeneration,
-		&i.FencingTokenHash,
-		&i.AcquiredAt,
-		&i.RenewedAt,
-		&i.ExpiresAt,
-		&i.ReleasedAt,
-		&i.LostAt,
-		&i.UpdatedAt,
-		&i.TerminalAt,
-		&i.TerminalReasonCode,
-		&i.TerminalError,
-	)
-	return i, err
-}
-
 const getWorkspaceLease = `-- name: GetWorkspaceLease :one
 SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, state, owner_run_lease_id, owner_process_id, base_version_id, ownership_generation, writer_generation, mount_fencing_generation, fencing_token_hash, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, terminal_at, terminal_reason_code, terminal_error
   FROM workspace_leases

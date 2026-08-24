@@ -32,7 +32,6 @@ const (
 type HostHealth struct {
 	ObservedAt          time.Time `json:"observed_at"`
 	AvailableDiskBytes  int64     `json:"available_disk_bytes"`
-	DiskCapacityBytes   int64     `json:"disk_capacity_bytes"`
 	OpenFileDescriptors uint64    `json:"open_file_descriptors"`
 	FileDescriptorLimit uint64    `json:"file_descriptor_limit"`
 	CgroupHealthy       bool      `json:"cgroup_healthy"`
@@ -193,7 +192,6 @@ func (p SystemHostHealthProbe) Probe(context.Context) (HostHealth, error) {
 		return health, fmt.Errorf("inspect worker filesystem: %w", err)
 	}
 	health.AvailableDiskBytes = int64(stat.Bavail) * int64(stat.Bsize)
-	health.DiskCapacityBytes = int64(stat.Blocks) * int64(stat.Bsize)
 	entries, err := os.ReadDir("/proc/self/fd")
 	if err != nil {
 		return health, fmt.Errorf("inspect open file descriptors: %w", err)

@@ -3,7 +3,6 @@ package executor
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/substrate"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -102,7 +102,7 @@ func (source *runtimeSubstrateCacheSource) MaterializeInto(
 	if err != nil {
 		return "", fmt.Errorf("copy runtime substrate into arena: %w", err)
 	}
-	actualDigest := "sha256:" + hex.EncodeToString(hash.Sum(nil))
+	actualDigest := sha256sum.FormatDigest(hash.Sum(nil))
 	if written != source.sizeBytes || actualDigest != source.digest {
 		return "", errors.New("runtime substrate arena projection does not match source identity")
 	}

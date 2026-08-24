@@ -3,13 +3,13 @@ package deployment
 import (
 	"bytes"
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 const (
@@ -158,7 +158,7 @@ func DeploymentBundleDigest(raw []byte) (string, error) {
 		return "", err
 	}
 	digest := sha256.Sum256(raw)
-	return "sha256:" + hex.EncodeToString(digest[:]), nil
+	return sha256sum.FormatDigest(digest[:]), nil
 }
 
 func ValidateDeploymentBundle(bundle DeploymentBundle) error {

@@ -3,12 +3,13 @@ package cas
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 func ValidateDescriptor(expected Descriptor) error {
@@ -63,7 +64,7 @@ func VerifyDescriptorFile(ctx context.Context, expected Descriptor, file *os.Fil
 	if sizeBytes != expected.SizeBytes {
 		return fmt.Errorf("immutable file size = %d, want %d", sizeBytes, expected.SizeBytes)
 	}
-	actual := "sha256:" + hex.EncodeToString(digest.Sum(nil))
+	actual := sha256sum.FormatDigest(digest.Sum(nil))
 	if actual != expected.Digest {
 		return fmt.Errorf("immutable file digest = %s, want %s", actual, expected.Digest)
 	}

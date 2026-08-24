@@ -1440,57 +1440,6 @@ func (q *Queries) InvalidateFailedRunCheckpoint(ctx context.Context, arg Invalid
 	return i, err
 }
 
-const invalidateRunCheckpoint = `-- name: InvalidateRunCheckpoint :one
-UPDATE run_checkpoints
-   SET state = 'invalid',
-       invalidated_at = now(),
-       invalidation_reason_code = $1
- WHERE run_id = $2
-   AND attempt_number = $3
-   AND id = $4
-   AND state IN ('creating', 'ready')
-RETURNING id, run_id, attempt_number, run_wait_id, source_run_lease_id, source_workspace_lease_id, workspace_id, base_workspace_version_id, private_workspace_version_id, actor_speculative_input_sequence, state, restore_manifest, ready_request_fingerprint, failed_request_fingerprint, expires_at, created_at, ready_at, invalidated_at, invalidation_reason_code
-`
-
-type InvalidateRunCheckpointParams struct {
-	InvalidationReasonCode pgtype.Text `json:"invalidation_reason_code"`
-	RunID                  pgtype.UUID `json:"run_id"`
-	AttemptNumber          int32       `json:"attempt_number"`
-	ID                     pgtype.UUID `json:"id"`
-}
-
-func (q *Queries) InvalidateRunCheckpoint(ctx context.Context, arg InvalidateRunCheckpointParams) (RunCheckpoint, error) {
-	row := q.db.QueryRow(ctx, invalidateRunCheckpoint,
-		arg.InvalidationReasonCode,
-		arg.RunID,
-		arg.AttemptNumber,
-		arg.ID,
-	)
-	var i RunCheckpoint
-	err := row.Scan(
-		&i.ID,
-		&i.RunID,
-		&i.AttemptNumber,
-		&i.RunWaitID,
-		&i.SourceRunLeaseID,
-		&i.SourceWorkspaceLeaseID,
-		&i.WorkspaceID,
-		&i.BaseWorkspaceVersionID,
-		&i.PrivateWorkspaceVersionID,
-		&i.ActorSpeculativeInputSequence,
-		&i.State,
-		&i.RestoreManifest,
-		&i.ReadyRequestFingerprint,
-		&i.FailedRequestFingerprint,
-		&i.ExpiresAt,
-		&i.CreatedAt,
-		&i.ReadyAt,
-		&i.InvalidatedAt,
-		&i.InvalidationReasonCode,
-	)
-	return i, err
-}
-
 const listRunCheckpointArtifactAuthority = `-- name: ListRunCheckpointArtifactAuthority :many
 SELECT members.role,
        members.ordinal,
@@ -1532,39 +1481,6 @@ func (q *Queries) ListRunCheckpointArtifactAuthority(ctx context.Context, runChe
 			&i.Digest,
 			&i.SizeBytes,
 			&i.MediaType,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listRunCheckpointArtifacts = `-- name: ListRunCheckpointArtifacts :many
-SELECT run_checkpoint_id, role, ordinal, artifact_id, created_at
-  FROM run_checkpoint_artifacts
- WHERE run_checkpoint_id = $1
- ORDER BY role, ordinal
-`
-
-func (q *Queries) ListRunCheckpointArtifacts(ctx context.Context, runCheckpointID pgtype.UUID) ([]RunCheckpointArtifact, error) {
-	rows, err := q.db.Query(ctx, listRunCheckpointArtifacts, runCheckpointID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []RunCheckpointArtifact
-	for rows.Next() {
-		var i RunCheckpointArtifact
-		if err := rows.Scan(
-			&i.RunCheckpointID,
-			&i.Role,
-			&i.Ordinal,
-			&i.ArtifactID,
-			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
