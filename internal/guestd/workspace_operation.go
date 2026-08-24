@@ -66,7 +66,7 @@ type workspaceMountEntry struct {
 	cleanup           func()
 	processesMu       sync.Mutex
 	basicExecMu       sync.Mutex
-	basicExecs        map[string]*workspaceBasicExec
+	basicExec         *workspaceBasicExec
 	basicExecRun      func(*workspacev0.WorkspaceBasicExecRequest) *workspacev0.WorkspaceBasicExecResult
 	active            int
 	retired           bool
