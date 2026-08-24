@@ -96,7 +96,10 @@ async function runSmoke(): Promise<Evidence> {
     workspaceCreateOptions,
   )
   cleanupPrimaryWorkspace = () =>
-    created.delete({ idempotencyKey: `workspace:delete:${config.marker}` })
+    created.delete(
+      { idempotencyKey: `workspace:delete:${config.marker}` },
+      { signal: AbortSignal.timeout(30_000) },
+    )
   const replayedCreate = await client.sandboxes.createWorkspace(
     "helmr-runtime-smoke",
     workspaceCreateOptions,
@@ -154,10 +157,14 @@ async function runSmoke(): Promise<Evidence> {
     timeout: "2m",
     idempotencyKey: `workspace:exec:${config.marker}`,
   } as const
-  const initialExec = await byKey.exec(execOptions)
+  const initialExec = await byKey.exec(execOptions, {
+    signal: AbortSignal.timeout(15 * 60_000),
+  })
   assertExec(initialExec, config.marker)
 
-  const replayExec = await byKey.exec(execOptions)
+  const replayExec = await byKey.exec(execOptions, {
+    signal: AbortSignal.timeout(15 * 60_000),
+  })
   assertExec(replayExec, config.marker)
   assertEqual(
     encodeExec(replayExec),
@@ -165,13 +172,21 @@ async function runSmoke(): Promise<Evidence> {
     "BasicExec idempotency replay changed the result",
   )
 
-  const fileBytes = await byKey.files.read(markerPath)
+  const fileBytes = await byKey.files.read(markerPath, {
+    signal: AbortSignal.timeout(30_000),
+  })
   const fileText = new TextDecoder().decode(fileBytes)
   assert(fileText.includes(`marker=${config.marker}`), "committed file missed the exec marker")
   assert(fileText.includes(`stdin=stdin:${config.marker}`), "committed file missed stdin")
-  const fileStat = await byKey.files.stat(markerPath)
+  const fileStat = await byKey.files.stat(markerPath, {
+    signal: AbortSignal.timeout(30_000),
+  })
   assertFile(fileStat, markerPath, fileBytes.byteLength)
-  const listing = await byKey.files.list(markerDirectory, { limit: 100 })
+  const listing = await byKey.files.list(
+    markerDirectory,
+    { limit: 100 },
+    { signal: AbortSignal.timeout(30_000) },
+  )
   assert(
     listing.items.some((entry) => entry.path === markerPath),
     "committed file was absent from the directory listing",
@@ -195,6 +210,7 @@ async function runSmoke(): Promise<Evidence> {
       tags: ["smoke", "workspace-basic-exec"],
       metadata: { marker: config.marker },
     },
+    { signal: AbortSignal.timeout(30_000) },
   )
   const taskOutput = await client.runs.wait(started, {
     signal: AbortSignal.timeout(20 * 60 * 1_000),
@@ -215,7 +231,9 @@ async function runSmoke(): Promise<Evidence> {
     taskEvents.items.some((event) => event.runId === started.id),
     "Task events did not include the completed Run",
   )
-  const taskFile = new TextDecoder().decode(await byKey.files.read(markerPath))
+  const taskFile = new TextDecoder().decode(await byKey.files.read(markerPath, {
+    signal: AbortSignal.timeout(30_000),
+  }))
   assert(taskFile.includes(`marker=${taskMarker}`), "Task did not advance the Workspace head")
 
   const childTasks = await runChildTaskSmoke()
