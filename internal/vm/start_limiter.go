@@ -9,7 +9,6 @@ import (
 // govern steady state.
 type StartLimiter struct {
 	connector interface {
-		Connector
 		RestoringConnector
 		MaterializingConnector
 		Cleaner
@@ -18,7 +17,6 @@ type StartLimiter struct {
 }
 
 func NewStartLimiter(connector interface {
-	Connector
 	RestoringConnector
 	MaterializingConnector
 	Cleaner
@@ -37,10 +35,6 @@ func (l *StartLimiter) withPermit(ctx context.Context, start func() (Session, er
 		return nil, ctx.Err()
 	}
 	return start()
-}
-
-func (l *StartLimiter) Connect(ctx context.Context, request ConnectRequest) (Session, error) {
-	return l.withPermit(ctx, func() (Session, error) { return l.connector.Connect(ctx, request) })
 }
 
 func (l *StartLimiter) Restore(ctx context.Context, request RestoreRequest) (Session, error) {

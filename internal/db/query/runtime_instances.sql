@@ -78,15 +78,6 @@ SELECT runtime_instances.*,
  ORDER BY runtime_instances.desired_at, runtime_instances.id
  LIMIT 1;
 
--- name: RenewRuntimeInstance :one
-UPDATE runtime_instances
-   SET observed_at = now(), observed_version = observed_version + 1, updated_at = now()
- WHERE runtime_instances.id = sqlc.arg(id) AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
-   AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
-   AND observed_version = sqlc.arg(expected_observed_version)
-   AND observed_state IN ('allocated', 'preparing', 'ready', 'closing')
-RETURNING runtime_instances.*;
-
 -- name: MarkRuntimeInstanceReady :one
 WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
     SELECT runtime_instances.id AS runtime_instance_id,

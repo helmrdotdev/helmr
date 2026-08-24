@@ -2,11 +2,12 @@ package cas
 
 import (
 	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"hash"
 	"io"
+
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 type verifyingReadCloser struct {
@@ -62,7 +63,7 @@ func (r *verifyingReadCloser) verify() error {
 	if r.err != nil {
 		return r.err
 	}
-	actual := "sha256:" + hex.EncodeToString(r.hash.Sum(nil))
+	actual := sha256sum.FormatDigest(r.hash.Sum(nil))
 	if actual != r.expected {
 		r.err = fmt.Errorf("%w: expected %s, got %s", ErrDigestMismatch, r.expected, actual)
 	}

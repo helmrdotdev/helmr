@@ -767,12 +767,8 @@ func checkpointArtifact(t *testing.T) vm.SnapshotArtifact {
 		CPUConfigDigest:     sha256sum.DigestBytes([]byte("cpu-config")),
 		VMState:             vm.SnapshotFile{Path: state, MediaType: cas.CheckpointVMStateMediaType},
 		ScratchDisk: vm.SnapshotFile{Path: scratch, MediaType: cas.CheckpointScratchDiskMediaType, Filepack: &vm.FilepackStats{
-			LogicalBytes:      1024,
-			SparseSupported:   new(true),
-			SparseDataRanges:  1,
-			ZeroChunksSkipped: 2,
-			EncodedChunks:     1,
-			CompressedBytes:   64,
+			LogicalBytes:  1024,
+			EncodedChunks: 1,
 		}},
 		Memory: []vm.SnapshotFile{{Path: memory, MediaType: cas.CheckpointMemoryMediaType}},
 		Phases: []vm.RuntimePhase{{
@@ -780,12 +776,8 @@ func checkpointArtifact(t *testing.T) vm.SnapshotArtifact {
 			Role:      "scratch-disk",
 			MediaType: cas.CheckpointScratchDiskMediaType,
 			Filepack: &vm.FilepackStats{
-				LogicalBytes:      1024,
-				SparseSupported:   new(true),
-				SparseDataRanges:  1,
-				ZeroChunksSkipped: 2,
-				EncodedChunks:     1,
-				CompressedBytes:   64,
+				LogicalBytes:  1024,
+				EncodedChunks: 1,
 			},
 		}},
 		Manifest: []byte(`{"runtime":{"backend":"firecracker"}}`),
@@ -812,8 +804,7 @@ func addCheckpointRuntimeSubstrate(t *testing.T, artifact *vm.SnapshotArtifact) 
 
 func checkpointPhaseHasFilepackStats(phases []workerapi.CheckpointPhase, name string) bool {
 	for _, phase := range phases {
-		if phase.Name == name && phase.Filepack != nil && phase.Filepack.LogicalBytes > 0 &&
-			phase.Filepack.SparseSupported != nil && *phase.Filepack.SparseSupported {
+		if phase.Name == name && phase.Filepack != nil && phase.Filepack.LogicalBytes > 0 {
 			return true
 		}
 	}

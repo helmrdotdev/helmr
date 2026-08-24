@@ -85,13 +85,6 @@ WHERE environment_id = sqlc.arg(environment_id)
   AND state_version = sqlc.arg(expected_state_version)
 RETURNING *;
 
--- name: GetSecretByName :one
-SELECT secrets.*
-FROM secrets
-WHERE environment_id = sqlc.arg(environment_id)
-  AND name = sqlc.arg(name)
-  AND state <> 'deleted';
-
 -- name: LockActiveSecretsByNameForWorkspaceCreate :many
 SELECT secrets.*
 FROM secrets

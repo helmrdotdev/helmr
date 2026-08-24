@@ -76,45 +76,6 @@ func (q *Queries) CreateDeploymentDefinition(ctx context.Context, arg CreateDepl
 	return i, err
 }
 
-const getCurrentDeploymentDefinition = `-- name: GetCurrentDeploymentDefinition :one
-SELECT deployment_definitions.id, deployment_definitions.environment_id, deployment_definitions.deployment_id, deployment_definitions.kind, deployment_definitions.declared_id, deployment_definitions.manifest_version, deployment_definitions.manifest, deployment_definitions.manifest_digest, deployment_definitions.artifact_id, deployment_definitions.created_at
-  FROM deployment_definitions
-  JOIN deployments
-    ON deployments.environment_id = deployment_definitions.environment_id
-   AND deployments.id = deployment_definitions.deployment_id
-  JOIN environments
-    ON environments.id = deployment_definitions.environment_id
-   AND environments.current_deployment_id = deployment_definitions.deployment_id
- WHERE deployment_definitions.environment_id = $1
-   AND deployment_definitions.kind = $2
-   AND deployment_definitions.declared_id = $3
- LIMIT 1
-`
-
-type GetCurrentDeploymentDefinitionParams struct {
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	Kind          string      `json:"kind"`
-	DeclaredID    string      `json:"declared_id"`
-}
-
-func (q *Queries) GetCurrentDeploymentDefinition(ctx context.Context, arg GetCurrentDeploymentDefinitionParams) (DeploymentDefinition, error) {
-	row := q.db.QueryRow(ctx, getCurrentDeploymentDefinition, arg.EnvironmentID, arg.Kind, arg.DeclaredID)
-	var i DeploymentDefinition
-	err := row.Scan(
-		&i.ID,
-		&i.EnvironmentID,
-		&i.DeploymentID,
-		&i.Kind,
-		&i.DeclaredID,
-		&i.ManifestVersion,
-		&i.Manifest,
-		&i.ManifestDigest,
-		&i.ArtifactID,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const getDefinitionSnapshot = `-- name: GetDefinitionSnapshot :one
 SELECT declared_id
   FROM deployment_definitions

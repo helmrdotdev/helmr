@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"syscall"
 
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/klauspost/compress/zstd"
@@ -49,10 +48,7 @@ func packRuntimeFile(ctx context.Context, sourcePath string, targetPath string, 
 	if err != nil {
 		return vm.FilepackStats{}, err
 	}
-	stats := vm.FilepackStats{
-		LogicalBytes:   info.Size(),
-		AllocatedBytes: fileInfoAllocatedBytes(info),
-	}
+	stats := vm.FilepackStats{LogicalBytes: info.Size()}
 	target, err := os.OpenFile(targetPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return vm.FilepackStats{}, err
@@ -242,23 +238,11 @@ func writeFilepackData(ctx context.Context, source *os.File, target io.Writer, e
 			return err
 		}
 		if !sparse {
-			if stats != nil {
-				stats.SparseSupported = boolPtr(false)
-				stats.SparseDataRanges = 1
-				stats.SparseDataBytes = logicalSize - offset
-			}
 			return scanAndWriteFilepackRange(ctx, source, target, encoder, stats, offset, logicalSize)
-		}
-		if stats != nil {
-			stats.SparseSupported = boolPtr(true)
 		}
 		if dataStart >= dataEnd {
 			offset = nextOffset
 			continue
-		}
-		if stats != nil {
-			stats.SparseDataRanges++
-			stats.SparseDataBytes += dataEnd - dataStart
 		}
 		if err := scanAndWriteFilepackRange(ctx, source, target, encoder, stats, dataStart, dataEnd); err != nil {
 			return err
@@ -314,14 +298,9 @@ func scanAndWriteFilepackRange(ctx context.Context, source *os.File, target io.W
 			compressed := encoder.EncodeAll(read, nil)
 			if stats != nil {
 				stats.EncodedChunks++
-				stats.CompressedBytes += int64(len(compressed))
 			}
 			if err := writeFilepackDataRecord(target, offset, int(n), compressed); err != nil {
 				return err
-			}
-		} else {
-			if stats != nil {
-				stats.ZeroChunksSkipped++
 			}
 		}
 		offset += n
@@ -388,17 +367,9 @@ func readFilepackDataRecord(r io.Reader, target *os.File, decoder *zstd.Decoder,
 	}
 	if stats != nil {
 		stats.EncodedChunks++
-		stats.CompressedBytes += compressedSize
 		stats.UnpackWrittenBytes += rawSize
 	}
 	return nil
-}
-
-func fileInfoAllocatedBytes(info os.FileInfo) int64 {
-	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
-		return stat.Blocks * 512
-	}
-	return 0
 }
 
 func readFullAt(file *os.File, data []byte, offset int64) error {
@@ -413,8 +384,4 @@ func readFullAt(file *os.File, data []byte, offset int64) error {
 		return io.ErrUnexpectedEOF
 	}
 	return err
-}
-
-func boolPtr(value bool) *bool {
-	return &value
 }

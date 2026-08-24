@@ -5,11 +5,11 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 const (
@@ -76,6 +76,6 @@ func (k FencingKey) Derive(input FenceInput) (FencingCapability, error) {
 	sum := sha256.Sum256(raw)
 	return FencingCapability{
 		Token: base64.RawURLEncoding.EncodeToString(raw),
-		Hash:  "sha256:" + hex.EncodeToString(sum[:]),
+		Hash:  sha256sum.FormatDigest(sum[:]),
 	}, nil
 }

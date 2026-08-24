@@ -441,17 +441,6 @@ UPDATE workspace_mounts
    AND workspace_mounts.state = 'mounted'
 RETURNING workspace_mounts.*;
 
--- name: InvalidateRunCheckpoint :one
-UPDATE run_checkpoints
-   SET state = 'invalid',
-       invalidated_at = now(),
-       invalidation_reason_code = sqlc.arg(invalidation_reason_code)
- WHERE run_id = sqlc.arg(run_id)
-   AND attempt_number = sqlc.arg(attempt_number)
-   AND id = sqlc.arg(id)
-   AND state IN ('creating', 'ready')
-RETURNING *;
-
 -- name: GetReadyRunCheckpoint :one
 SELECT run_checkpoints.*
   FROM run_checkpoints
@@ -496,12 +485,6 @@ SELECT sqlc.embed(run_leases),
    AND run_leases.run_id = sqlc.arg(run_id)
    AND run_leases.attempt_number = sqlc.arg(attempt_number)
    AND run_leases.workspace_id = sqlc.arg(workspace_id);
-
--- name: ListRunCheckpointArtifacts :many
-SELECT *
-  FROM run_checkpoint_artifacts
- WHERE run_checkpoint_id = sqlc.arg(run_checkpoint_id)
- ORDER BY role, ordinal;
 
 -- name: ListRunCheckpointArtifactAuthority :many
 SELECT members.role,

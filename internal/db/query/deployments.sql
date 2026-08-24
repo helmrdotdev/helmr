@@ -123,21 +123,6 @@ SELECT *
  WHERE org_id = sqlc.arg(org_id)
    AND id = sqlc.arg(id);
 
--- name: GetDeploymentByVersion :one
-SELECT *
-  FROM deployments
- WHERE org_id = sqlc.arg(org_id)
-   AND project_id = sqlc.arg(project_id)
-   AND environment_id = sqlc.arg(environment_id)
-   AND version = sqlc.arg(version);
-
--- name: ListDeploymentsByVersionForOrg :many
-SELECT *
-  FROM deployments
- WHERE org_id = sqlc.arg(org_id)
-   AND version = sqlc.arg(version)
- ORDER BY created_at ASC;
-
 -- name: ListScopedDeployments :many
 SELECT deployments.id,
        deployments.version,

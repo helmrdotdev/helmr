@@ -1,3 +1,5 @@
+import { compareUTF8, hasOnlyUnicodeScalarValues } from "./internal/utf8"
+
 const arrayIsArray = Array.isArray
 const arrayPrototype = Array.prototype
 const defineProperty = Object.defineProperty
@@ -29,10 +31,6 @@ const charCodeAt = String.prototype.charCodeAt.call.bind(
 const regexpTest = RegExp.prototype.test.call.bind(
   RegExp.prototype.test,
 ) as (regexp: RegExp, value: string) => boolean
-const utf8Encoder = new TextEncoder()
-const encodeUTF8 = TextEncoder.prototype.encode.call.bind(
-  TextEncoder.prototype.encode,
-) as (encoder: TextEncoder, value: string) => Uint8Array
 
 export interface HelmrConfigInput {
   readonly dirs: readonly string[]
@@ -92,7 +90,7 @@ function validateDirectory(value: unknown): string {
   if (
     typeof value !== "string" ||
     value === "" ||
-    hasUnpairedSurrogate(value) ||
+    !hasOnlyUnicodeScalarValues(value) ||
     startsWith(value, "/") ||
     includes(value, "\\") ||
     hasControl(value)
@@ -119,7 +117,7 @@ function validateIgnorePattern(value: unknown): string {
   if (
     typeof value !== "string" ||
     value === "" ||
-    hasUnpairedSurrogate(value) ||
+    !hasOnlyUnicodeScalarValues(value) ||
     startsWith(value, "./") ||
     startsWith(value, "/") ||
     endsWith(value, "/") ||
@@ -176,19 +174,6 @@ function hasControl(value: string): boolean {
   for (let index = 0; index < value.length; index++) {
     const code = charCodeAt(value, index)
     if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return true
-  }
-  return false
-}
-
-function hasUnpairedSurrogate(value: string): boolean {
-  for (let index = 0; index < value.length; index++) {
-    const code = charCodeAt(value, index)
-    if (code >= 0xdc00 && code <= 0xdfff) return true
-    if (code < 0xd800 || code > 0xdbff) continue
-    index++
-    if (index === value.length) return true
-    const low = charCodeAt(value, index)
-    if (low < 0xdc00 || low > 0xdfff) return true
   }
   return false
 }
@@ -324,17 +309,4 @@ function setArrayIndex<T>(array: T[], index: number, value: T): void {
     value,
     writable: true,
   })
-}
-
-function compareUTF8(left: string, right: string): number {
-  const leftBytes = encodeUTF8(utf8Encoder, left)
-  const rightBytes = encodeUTF8(utf8Encoder, right)
-  const length = leftBytes.length < rightBytes.length
-    ? leftBytes.length
-    : rightBytes.length
-  for (let index = 0; index < length; index++) {
-    const difference = (leftBytes[index] as number) - (rightBytes[index] as number)
-    if (difference !== 0) return difference
-  }
-  return leftBytes.length - rightBytes.length
 }

@@ -569,12 +569,6 @@ WITH candidate_runtimes AS (
 )
 UPDATE workspace_mounts
    SET state = 'unmounting',
-       finalization_kind = COALESCE(sqlc.narg(mount_finalization_kind), finalization_kind),
-       finalization_reason_code = COALESCE(sqlc.narg(mount_finalization_reason_code), finalization_reason_code),
-       finalization_error = CASE
-           WHEN sqlc.narg(mount_finalization_kind)::text IS NOT NULL THEN NULL
-           ELSE finalization_error
-       END,
        stopped_at = COALESCE(stopped_at, transaction_timestamp()),
        updated_at = transaction_timestamp()
  WHERE runtime_instance_id IN (

@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )
@@ -406,7 +407,7 @@ func recoverWorkspaceCaptureArtifact(path string, tree workspace.TreeIdentity) (
 	}
 	artifact := workspace.WorkspaceArtifact{
 		Path:       path,
-		Digest:     "sha256:" + hex.EncodeToString(hash.Sum(nil)),
+		Digest:     sha256sum.FormatDigest(hash.Sum(nil)),
 		MediaType:  workspace.ArtifactMediaType,
 		Encoding:   workspace.ArtifactEncoding,
 		SizeBytes:  info.Size(),

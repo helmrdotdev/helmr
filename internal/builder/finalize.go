@@ -3,7 +3,6 @@ package builder
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/oci"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 type ObjectSource struct {
@@ -351,7 +351,7 @@ func copyExactObject(
 	if written != expected.SizeBytes {
 		return fmt.Errorf("bundle object source %s size changed while reading", expected.Digest)
 	}
-	actual := "sha256:" + hex.EncodeToString(hash.Sum(nil))
+	actual := sha256sum.FormatDigest(hash.Sum(nil))
 	if actual != expected.Digest {
 		return fmt.Errorf("bundle object source %s digest does not match descriptor", expected.Digest)
 	}

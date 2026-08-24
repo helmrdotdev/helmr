@@ -205,61 +205,6 @@ func (q *Queries) GetActor(ctx context.Context, arg GetActorParams) (Session, er
 	return i, err
 }
 
-const getActorByAddressID = `-- name: GetActorByAddressID :one
-SELECT id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, state_version, manual_run_cancelled, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, input_retention_floor, output_retention_floor, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, state, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
-  FROM sessions
- WHERE environment_id = $1
-   AND actor_declared_id = $2
-   AND id = $3
-`
-
-type GetActorByAddressIDParams struct {
-	EnvironmentID   pgtype.UUID `json:"environment_id"`
-	ActorDeclaredID string      `json:"actor_declared_id"`
-	ID              pgtype.UUID `json:"id"`
-}
-
-func (q *Queries) GetActorByAddressID(ctx context.Context, arg GetActorByAddressIDParams) (Session, error) {
-	row := q.db.QueryRow(ctx, getActorByAddressID, arg.EnvironmentID, arg.ActorDeclaredID, arg.ID)
-	var i Session
-	err := row.Scan(
-		&i.ID,
-		&i.EnvironmentID,
-		&i.ActorDeclaredID,
-		&i.DeploymentDefinitionID,
-		&i.WorkspaceID,
-		&i.Key,
-		&i.CurrentRunID,
-		&i.RunGeneration,
-		&i.StateVersion,
-		&i.ManualRunCancelled,
-		&i.Failure,
-		&i.FailureRunID,
-		&i.NextInputSequence,
-		&i.CommittedInputSequence,
-		&i.NextOutputSequence,
-		&i.InputRetentionFloor,
-		&i.OutputRetentionFloor,
-		&i.RunQueueName,
-		&i.RunConcurrencyKey,
-		&i.RunQueueConcurrencyLimit,
-		&i.RunPriority,
-		&i.RunQueueTtlMs,
-		&i.RunMaxActiveDurationMs,
-		&i.RunRetryPolicy,
-		&i.RunMetadata,
-		&i.RunTags,
-		&i.State,
-		&i.CloseSequence,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.ClosedAt,
-		&i.CancelledAt,
-		&i.FailedAt,
-	)
-	return i, err
-}
-
 const getActorByKey = `-- name: GetActorByKey :one
 SELECT id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, state_version, manual_run_cancelled, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, input_retention_floor, output_retention_floor, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, state, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
   FROM sessions
@@ -276,59 +221,6 @@ type GetActorByKeyParams struct {
 
 func (q *Queries) GetActorByKey(ctx context.Context, arg GetActorByKeyParams) (Session, error) {
 	row := q.db.QueryRow(ctx, getActorByKey, arg.EnvironmentID, arg.ActorDeclaredID, arg.Key)
-	var i Session
-	err := row.Scan(
-		&i.ID,
-		&i.EnvironmentID,
-		&i.ActorDeclaredID,
-		&i.DeploymentDefinitionID,
-		&i.WorkspaceID,
-		&i.Key,
-		&i.CurrentRunID,
-		&i.RunGeneration,
-		&i.StateVersion,
-		&i.ManualRunCancelled,
-		&i.Failure,
-		&i.FailureRunID,
-		&i.NextInputSequence,
-		&i.CommittedInputSequence,
-		&i.NextOutputSequence,
-		&i.InputRetentionFloor,
-		&i.OutputRetentionFloor,
-		&i.RunQueueName,
-		&i.RunConcurrencyKey,
-		&i.RunQueueConcurrencyLimit,
-		&i.RunPriority,
-		&i.RunQueueTtlMs,
-		&i.RunMaxActiveDurationMs,
-		&i.RunRetryPolicy,
-		&i.RunMetadata,
-		&i.RunTags,
-		&i.State,
-		&i.CloseSequence,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.ClosedAt,
-		&i.CancelledAt,
-		&i.FailedAt,
-	)
-	return i, err
-}
-
-const getSessionRead = `-- name: GetSessionRead :one
-SELECT sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.state_version, sessions.manual_run_cancelled, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_output_sequence, sessions.input_retention_floor, sessions.output_retention_floor, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.state, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.cancelled_at, sessions.failed_at
-  FROM sessions
- WHERE sessions.environment_id = $1
-   AND sessions.id = $2
-`
-
-type GetSessionReadParams struct {
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	SessionID     pgtype.UUID `json:"session_id"`
-}
-
-func (q *Queries) GetSessionRead(ctx context.Context, arg GetSessionReadParams) (Session, error) {
-	row := q.db.QueryRow(ctx, getSessionRead, arg.EnvironmentID, arg.SessionID)
 	var i Session
 	err := row.Scan(
 		&i.ID,

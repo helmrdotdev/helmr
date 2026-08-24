@@ -3,12 +3,13 @@ package deployment
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"hash"
 	"io"
 	"os"
+
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 type artifactSnapshotDescriptor ProgramDescriptor
@@ -218,7 +219,7 @@ func (reader *artifactSnapshotReader) Read(buffer []byte) (int, error) {
 			)
 			return count, reader.terminalErr
 		}
-		digest := "sha256:" + hex.EncodeToString(reader.digest.Sum(nil))
+		digest := sha256sum.FormatDigest(reader.digest.Sum(nil))
 		if digest != reader.expected.Digest {
 			reader.terminalErr = fmt.Errorf(
 				"artifact snapshot upload digest = %s, want %s",

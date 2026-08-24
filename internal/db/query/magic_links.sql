@@ -104,13 +104,6 @@ SELECT count(*)
    AND delivery_failed_at IS NULL
    AND created_at >= sqlc.arg(since);
 
--- name: GetMagicLinkLoginUser :one
-SELECT users.*
-  FROM users
- WHERE lower(users.primary_email) = sqlc.arg(email)
-   AND users.disabled_at IS NULL
- LIMIT 1;
-
 -- name: UpsertMagicLinkAuthIdentity :one
 WITH upserted_user AS (
     INSERT INTO users (id, display_name, profile_image_url, primary_email, admin)

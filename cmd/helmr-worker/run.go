@@ -216,7 +216,6 @@ func run(log *slog.Logger) error {
 	workspaceMountSessions := executor.NewWorkspaceMountSessions()
 	backgroundGate := executor.NewBackgroundWorkGate()
 	workspaceMountSessions.BackgroundGate = backgroundGate
-	var workspaceMountConnector vm.MaterializingConnector = runtimeConnector
 	var preparedRuntimePool *executor.PreparedRuntimePool
 	closePreparedRuntime := retryableWorkerCloser{close: func(closeCtx context.Context) error {
 		if preparedRuntimePool != nil {
@@ -230,7 +229,7 @@ func run(log *slog.Logger) error {
 		}
 	}()
 	if runtimeCapacity.preparedPoolSize > 0 {
-		preparedRuntimePool = executor.NewPreparedRuntimePool(workspaceMountConnector, store, runtimeCapacity.preparedPoolSize, log)
+		preparedRuntimePool = executor.NewPreparedRuntimePool(runtimeConnector, store, runtimeCapacity.preparedPoolSize, log)
 		preparedRuntimePool.TempDir = filepath.Join(workDir, "tmp")
 		preparedRuntimePool.ArtifactCacheDir = artifactCacheDir
 		preparedRuntimePool.ArtifactCacheMaxBytes = artifactCacheMaxBytes

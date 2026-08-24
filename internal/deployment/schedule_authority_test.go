@@ -16,7 +16,7 @@ func TestScheduleAuthorityValidatesAcceptedScheduledTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := authority.ValidateScheduledTask(
+	if _, err := authority.ResolveScheduledTask(
 		BuildPlanFormatVersion,
 		"daily-report",
 		manifest,
@@ -41,7 +41,7 @@ func TestScheduleAuthorityRejectsPayloadlessTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := authority.ValidateScheduledTask(
+	if _, err := authority.ResolveScheduledTask(
 		BuildPlanFormatVersion,
 		"daily-report",
 		manifest,

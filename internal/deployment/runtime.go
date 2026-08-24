@@ -12,6 +12,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/runtimeid"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 const (
@@ -152,7 +153,7 @@ func RuntimeDigestString(value []byte) (string, error) {
 	if len(value) != sha256.Size {
 		return "", fmt.Errorf("runtime digest is not %d bytes", sha256.Size)
 	}
-	return "sha256:" + hex.EncodeToString(value), nil
+	return sha256sum.FormatDigest(value), nil
 }
 
 func ParseRuntimeIndex(raw []byte) (RuntimeIndex, error) {

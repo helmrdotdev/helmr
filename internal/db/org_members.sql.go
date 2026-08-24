@@ -11,65 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const disableOrgMember = `-- name: DisableOrgMember :one
-WITH locked_active_owners AS (
-    SELECT org_members.user_id
-      FROM org_members
-      JOIN users ON users.id = org_members.user_id
-     WHERE org_members.org_id = $1
-       AND org_members.role = 'owner'
-       AND org_members.disabled_at IS NULL
-       AND users.disabled_at IS NULL
-     FOR UPDATE OF org_members
-)
-UPDATE org_members
-   SET disabled_at = now(),
-       updated_at = now()
- WHERE org_members.org_id = $1
-   AND org_members.user_id = $2
-   AND org_members.role = $3::org_member_role
-   AND org_members.disabled_at IS NULL
-   AND (
-       $4::boolean
-       OR org_members.role <> 'owner'
-   )
-   AND (
-       org_members.role <> 'owner'
-       OR EXISTS (
-           SELECT 1 FROM locked_active_owners
-            WHERE locked_active_owners.user_id <> org_members.user_id
-       )
-   )
-RETURNING org_id, user_id, role, display_name, disabled_at, created_at, updated_at
-`
-
-type DisableOrgMemberParams struct {
-	OrgID        pgtype.UUID   `json:"org_id"`
-	UserID       pgtype.UUID   `json:"user_id"`
-	ExpectedRole OrgMemberRole `json:"expected_role"`
-	ActorIsOwner bool          `json:"actor_is_owner"`
-}
-
-func (q *Queries) DisableOrgMember(ctx context.Context, arg DisableOrgMemberParams) (OrgMember, error) {
-	row := q.db.QueryRow(ctx, disableOrgMember,
-		arg.OrgID,
-		arg.UserID,
-		arg.ExpectedRole,
-		arg.ActorIsOwner,
-	)
-	var i OrgMember
-	err := row.Scan(
-		&i.OrgID,
-		&i.UserID,
-		&i.Role,
-		&i.DisplayName,
-		&i.DisabledAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const disableOrgMemberAndRevokeOrgSessions = `-- name: DisableOrgMemberAndRevokeOrgSessions :one
 WITH locked_active_owners AS (
     SELECT org_members.user_id
@@ -198,50 +139,6 @@ func (q *Queries) EnsureOrgMember(ctx context.Context, arg EnsureOrgMemberParams
 	return i, err
 }
 
-const getOrgMember = `-- name: GetOrgMember :one
-SELECT org_members.org_id, org_members.user_id, org_members.role, org_members.display_name, org_members.disabled_at, org_members.created_at, org_members.updated_at, users.display_name AS user_display_name, users.profile_image_url
-  FROM org_members
-  JOIN users ON users.id = org_members.user_id
- WHERE org_members.org_id = $1
-   AND org_members.user_id = $2
-   AND org_members.disabled_at IS NULL
-   AND users.disabled_at IS NULL
-`
-
-type GetOrgMemberParams struct {
-	OrgID  pgtype.UUID `json:"org_id"`
-	UserID pgtype.UUID `json:"user_id"`
-}
-
-type GetOrgMemberRow struct {
-	OrgID           pgtype.UUID        `json:"org_id"`
-	UserID          pgtype.UUID        `json:"user_id"`
-	Role            OrgMemberRole      `json:"role"`
-	DisplayName     pgtype.Text        `json:"display_name"`
-	DisabledAt      pgtype.Timestamptz `json:"disabled_at"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
-	UserDisplayName string             `json:"user_display_name"`
-	ProfileImageURL pgtype.Text        `json:"profile_image_url"`
-}
-
-func (q *Queries) GetOrgMember(ctx context.Context, arg GetOrgMemberParams) (GetOrgMemberRow, error) {
-	row := q.db.QueryRow(ctx, getOrgMember, arg.OrgID, arg.UserID)
-	var i GetOrgMemberRow
-	err := row.Scan(
-		&i.OrgID,
-		&i.UserID,
-		&i.Role,
-		&i.DisplayName,
-		&i.DisabledAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.UserDisplayName,
-		&i.ProfileImageURL,
-	)
-	return i, err
-}
-
 const getOrgMemberForManagement = `-- name: GetOrgMemberForManagement :one
 SELECT org_members.org_id,
        org_members.user_id,
@@ -349,25 +246,6 @@ func (q *Queries) ListOrgMembers(ctx context.Context, orgID pgtype.UUID) ([]List
 		return nil, err
 	}
 	return items, nil
-}
-
-const ownerExists = `-- name: OwnerExists :one
-SELECT EXISTS (
-    SELECT 1
-      FROM org_members
-      JOIN users ON users.id = org_members.user_id
-     WHERE org_members.org_id = $1
-       AND org_members.role = 'owner'
-       AND org_members.disabled_at IS NULL
-       AND users.disabled_at IS NULL
-)
-`
-
-func (q *Queries) OwnerExists(ctx context.Context, orgID pgtype.UUID) (bool, error) {
-	row := q.db.QueryRow(ctx, ownerExists, orgID)
-	var exists bool
-	err := row.Scan(&exists)
-	return exists, err
 }
 
 const updateOrgMemberRole = `-- name: UpdateOrgMemberRole :one

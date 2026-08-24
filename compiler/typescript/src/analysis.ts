@@ -7,6 +7,7 @@ import {
 import type { AnalysisResult } from "./compile"
 import { lstat, readdir, realpath } from "node:fs/promises"
 import { relative, resolve, sep } from "node:path"
+import { compareUTF8 } from "./utf8"
 
 const executableExtension = /\.(?:cjs|cts|js|jsx|mjs|mts|ts|tsx)$/
 const textDecoder = new TextDecoder("utf-8", { fatal: true })
@@ -121,7 +122,7 @@ export async function discoverModules(
   const modules = [...candidates].filter((path) =>
     !config.ignorePatterns.some((pattern) => matchesIgnorePattern(pattern, path))
   )
-  modules.sort(compareUtf8)
+  modules.sort(compareUTF8)
   return modules
 }
 
@@ -131,7 +132,7 @@ async function appendCandidates(
   candidates: Set<string>,
 ): Promise<void> {
   const entries = await readdir(directory, { withFileTypes: true })
-  entries.sort((left, right) => compareUtf8(left.name, right.name))
+  entries.sort((left, right) => compareUTF8(left.name, right.name))
   for (const entry of entries) {
     const absolute = resolve(directory, entry.name)
     const path = projectPath(root, absolute)
@@ -212,9 +213,6 @@ function hasComponent(path: string, component: string): boolean {
   return path.split("/").includes(component)
 }
 
-function compareUtf8(left: string, right: string): number {
-  return Buffer.compare(Buffer.from(left), Buffer.from(right))
-}
 
 function decodeGeneratedFile(value: Uint8Array): string {
   try {

@@ -2,6 +2,7 @@ import { lstat, readFile, readdir, realpath, stat } from "node:fs/promises"
 import { dirname, relative, resolve, sep } from "node:path"
 
 import { glob } from "tinyglobby"
+import { compareUTF8 } from "./utf8"
 export interface LocalPackage {
   readonly installedRoot: string
   readonly name: string
@@ -235,8 +236,4 @@ function hasNodeModules(path: string): boolean {
 function inside(path: string): boolean {
   return path === "" ||
     (path !== ".." && !path.startsWith("../") && !path.startsWith("/"))
-}
-
-function compareUTF8(left: string, right: string): number {
-  return Buffer.compare(Buffer.from(left), Buffer.from(right))
 }

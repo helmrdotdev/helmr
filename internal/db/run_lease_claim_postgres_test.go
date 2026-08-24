@@ -314,15 +314,19 @@ UPDATE workspace_mounts
 		WorkerEpoch: 1}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("second claim update error = %v, want no rows", err)
 	}
-	replayed, err := fixture.queries.GetRunLease(ctx, GetRunLeaseParams{
-		RunID: pgvalue.UUID(assigned.runID), AttemptNumber: 1,
-		WorkspaceID: locators.WorkspaceID, ID: pgvalue.UUID(assigned.leaseID),
-	})
-	if err != nil {
+	var replayedClaimedAt pgtype.Timestamptz
+	if err := fixture.pool.QueryRow(ctx, `
+		SELECT claimed_at
+		  FROM run_leases
+		 WHERE run_id = $1
+		   AND attempt_number = 1
+		   AND workspace_id = $2
+		   AND id = $3
+	`, pgvalue.UUID(assigned.runID), locators.WorkspaceID, pgvalue.UUID(assigned.leaseID)).Scan(&replayedClaimedAt); err != nil {
 		t.Fatal(err)
 	}
-	if !replayed.ClaimedAt.Valid || !replayed.ClaimedAt.Time.Equal(firstClaimedAt) {
-		t.Fatalf("claim replay timestamp = %v, want %s", replayed.ClaimedAt, firstClaimedAt)
+	if !replayedClaimedAt.Valid || !replayedClaimedAt.Time.Equal(firstClaimedAt) {
+		t.Fatalf("claim replay timestamp = %v, want %s", replayedClaimedAt, firstClaimedAt)
 	}
 	unclaimed := fixture.addWork(t, ctx, "assigned", time.Now())
 

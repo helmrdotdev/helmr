@@ -337,7 +337,7 @@ func TestValidatePreparedRuntimeRestoreExactTupleAndMembership(t *testing.T) {
 		t.Fatal(err)
 	}
 	object := func(value workerapi.CheckpointArtifact) workerapi.CASObject {
-		return workerapi.CASObject{Digest: value.Digest, SizeBytes: value.SizeBytes, MediaType: value.MediaType}
+		return workerapi.CASObject(value)
 	}
 	target := workerapi.RuntimeReconcileTarget{Source: workerapi.RuntimeSource{
 		VMVCPUCount: 2, CPUConfigDigest: cpuConfigDigest,

@@ -2,10 +2,11 @@ package workerapi
 
 import (
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"strings"
+
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 const cpuEnvironmentDomain = "helmr.cpu-environment.v0"
@@ -30,7 +31,7 @@ func (e CPUEnvironment) ExpectedDigest() (string, error) {
 		return "", err
 	}
 	sum := sha256.Sum256(payload)
-	return "sha256:" + hex.EncodeToString(sum[:]), nil
+	return sha256sum.FormatDigest(sum[:]), nil
 }
 
 func (e CPUEnvironment) Validate() error {

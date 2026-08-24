@@ -36,11 +36,3 @@ SELECT *
  WHERE environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id)
    AND kind = 'workspace_version';
-
--- name: ListArtifactsByIDs :many
-SELECT *
-  FROM artifacts
- WHERE org_id = sqlc.arg(org_id)
-   AND project_id = sqlc.arg(project_id)
-   AND environment_id = sqlc.arg(environment_id)
-   AND id = ANY(sqlc.arg(ids)::uuid[]);

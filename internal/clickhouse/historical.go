@@ -126,46 +126,6 @@ LIMIT @row_limit`
 	return telemetry.TerminalOutputPage{Chunks: chunks, LastOffset: last, Historical: len(chunks)}, nil
 }
 
-func (r *Reader) GetRunLogSnapshot(ctx context.Context, q telemetry.RunLogSnapshotQuery) (telemetry.RunLogSnapshot, error) {
-	var snapshot telemetry.RunLogSnapshot
-	cursor := int64(0)
-	const pageLimit = int32(1000)
-	for {
-		page, err := r.ListRunLogChunks(ctx, telemetry.RunLogChunkQuery{
-			OrgID:    q.OrgID,
-			RunID:    q.RunID,
-			AfterSeq: cursor,
-			Limit:    pageLimit,
-		})
-		if err != nil {
-			return telemetry.RunLogSnapshot{}, err
-		}
-		for _, chunk := range page.Chunks {
-			data, _ := base64.StdEncoding.DecodeString(chunk.ContentBase64)
-			switch chunk.Stream {
-			case "stdout":
-				snapshot.StdoutBytes += int64(len(data))
-				snapshot.Stdout = appendTail(snapshot.Stdout, data, q.StdoutLimit)
-			case "stderr":
-				snapshot.StderrBytes += int64(len(data))
-				snapshot.Stderr = appendTail(snapshot.Stderr, data, q.StderrLimit)
-			}
-			if seq, err := telemetry.ParseCursor(chunk.ID); err == nil && seq > snapshot.Cursor {
-				snapshot.Cursor = seq
-			}
-			if chunk.At.After(snapshot.UpdatedAt) {
-				snapshot.UpdatedAt = chunk.At
-			}
-		}
-		if len(page.Chunks) < int(pageLimit) || page.LastSeq <= cursor {
-			break
-		}
-		cursor = page.LastSeq
-	}
-	snapshot.Truncated = isTailTruncated(snapshot.StdoutBytes, q.StdoutLimit) || isTailTruncated(snapshot.StderrBytes, q.StderrLimit)
-	return snapshot, nil
-}
-
 type eventRow struct {
 	Seq            uint64     `ch:"seq"`
 	RunID          *uuid.UUID `ch:"run_id"`
@@ -278,21 +238,6 @@ func (r runLogRow) chunk() api.RunLogChunk {
 		ObservedSeq:   int64(r.ObservedSeq),
 		At:            r.ObservedAt.UTC(),
 	}
-}
-
-func appendTail(existing []byte, next []byte, limit int64) []byte {
-	existing = append(existing, next...)
-	if limit <= 0 || int64(len(existing)) <= limit {
-		return existing
-	}
-	return existing[int64(len(existing))-limit:]
-}
-
-func isTailTruncated(total int64, limit int64) bool {
-	if limit <= 0 {
-		return false
-	}
-	return total > limit
 }
 
 func firstNonEmpty(values ...string) string {

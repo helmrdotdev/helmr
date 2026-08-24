@@ -40,6 +40,7 @@ import {
   deriveLocalPackages,
   type LocalPackage,
 } from "./local-packages"
+import { compareUTF8 } from "./utf8"
 
 export const COMPILER_API_VERSION = "helmr.compiler.v0" as const
 export const ESBUILD_VERSION = "0.28.1" as const
@@ -970,8 +971,4 @@ function hasNodeModules(path: string): boolean {
 function inside(path: string): boolean {
   return path === "" ||
     (path !== ".." && !path.startsWith(`..${sep}`) && !path.startsWith("/"))
-}
-
-function compareUTF8(left: string, right: string): number {
-  return Buffer.compare(Buffer.from(left), Buffer.from(right))
 }

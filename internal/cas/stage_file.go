@@ -3,10 +3,11 @@ package cas
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"hash"
 	"os"
+
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 type FileStage struct {
@@ -74,7 +75,7 @@ func (s *FileStage) BeginCommit(ctx context.Context, syncBeforeClose bool) (stri
 	if err := s.Close(); err != nil {
 		return "", err
 	}
-	return "sha256:" + hex.EncodeToString(s.hash.Sum(nil)), nil
+	return sha256sum.FormatDigest(s.hash.Sum(nil)), nil
 }
 
 func (s *FileStage) Abort(context.Context) error {

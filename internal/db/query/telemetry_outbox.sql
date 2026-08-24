@@ -277,19 +277,6 @@ UPDATE telemetry_outbox
  WHERE id = sqlc.arg(id)
    AND published_at IS NULL;
 
--- name: HasUnpublishedLiveTelemetryOutbox :one
-SELECT EXISTS (
-    SELECT 1
-      FROM telemetry_outbox
-     WHERE telemetry_outbox.org_id = sqlc.arg(org_id)
-       AND telemetry_outbox.stream_kind = sqlc.arg(stream_kind)
-       AND telemetry_outbox.source_kind = sqlc.arg(source_kind)
-       AND telemetry_outbox.source_id = sqlc.arg(source_id)
-       AND telemetry_outbox.stream_name = sqlc.arg(stream_name)
-       AND (telemetry_outbox.published_at IS NULL OR telemetry_outbox.written_at IS NULL)
-       AND telemetry_outbox.state <> 'dead_lettered'
-);
-
 -- name: MarkTelemetryOutboxWritten :exec
 UPDATE telemetry_outbox
    SET state = 'written',
@@ -308,16 +295,6 @@ UPDATE telemetry_outbox
        last_error = sqlc.arg(last_error)
  WHERE id = ANY(sqlc.arg(ids)::bigint[])
    AND written_at IS NULL;
-
--- name: RequeueWrittenTelemetryOutbox :exec
-UPDATE telemetry_outbox
-   SET state = 'failed',
-       written_at = NULL,
-       next_retry_at = now() + sqlc.arg(retry_after)::interval,
-       updated_at = now(),
-       last_error = sqlc.arg(last_error)
- WHERE id = ANY(sqlc.arg(ids)::bigint[])
-   AND written_at IS NOT NULL;
 
 -- name: PruneTelemetryOutboxWritten :many
 DELETE FROM telemetry_outbox

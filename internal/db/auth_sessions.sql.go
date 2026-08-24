@@ -153,24 +153,3 @@ func (q *Queries) RevokeAuthSessionsForUser(ctx context.Context, userID pgtype.U
 	}
 	return result.RowsAffected(), nil
 }
-
-const revokeOrgAuthSessionsForUser = `-- name: RevokeOrgAuthSessionsForUser :execrows
-UPDATE auth_sessions
-   SET revoked_at = now()
- WHERE user_id = $1
-   AND (org_id = $2 OR org_id IS NULL)
-   AND revoked_at IS NULL
-`
-
-type RevokeOrgAuthSessionsForUserParams struct {
-	UserID pgtype.UUID `json:"user_id"`
-	OrgID  pgtype.UUID `json:"org_id"`
-}
-
-func (q *Queries) RevokeOrgAuthSessionsForUser(ctx context.Context, arg RevokeOrgAuthSessionsForUserParams) (int64, error) {
-	result, err := q.db.Exec(ctx, revokeOrgAuthSessionsForUser, arg.UserID, arg.OrgID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}

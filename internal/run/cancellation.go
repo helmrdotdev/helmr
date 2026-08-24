@@ -95,7 +95,6 @@ type termination struct {
 	eventMessage      string
 	actorFailureCode  string
 	actorCancellation bool
-	discardRuntime    bool
 }
 
 var cancelledTermination = termination{
@@ -1072,16 +1071,12 @@ func terminateLockedRun(
 			return cancellationAuthority("terminalize current run lease", err)
 		}
 	}
-	mountFinalizationKind, mountFinalizationReasonCode :=
-		runtimeCleanupMountFinalization(termination.reasonCode, termination.discardRuntime)
 	if err := queries.CloseRunRuntimes(
 		ctx,
 		db.CloseRunRuntimesParams{
-			RunLeaseID:                  run.currentRunLeaseID,
-			RunID:                       pgvalue.UUID(run.id),
-			ReasonCode:                  termination.reasonCode,
-			MountFinalizationKind:       mountFinalizationKind,
-			MountFinalizationReasonCode: mountFinalizationReasonCode,
+			RunLeaseID: run.currentRunLeaseID,
+			RunID:      pgvalue.UUID(run.id),
+			ReasonCode: termination.reasonCode,
 		},
 	); err != nil {
 		return cancellationAuthority("request terminal run runtime cleanup", err)
@@ -1145,13 +1140,6 @@ func terminateLockedRun(
 		return cancellationAuthority("record run terminal event", err)
 	}
 	return nil
-}
-
-func runtimeCleanupMountFinalization(reasonCode string, discardRuntime bool) (pgtype.Text, pgtype.Text) {
-	if !discardRuntime {
-		return pgtype.Text{}, pgtype.Text{}
-	}
-	return pgvalue.Text("discard"), pgvalue.Text(reasonCode)
 }
 
 func resolveCancelledChildWait(

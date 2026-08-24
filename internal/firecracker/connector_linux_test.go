@@ -8,7 +8,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,7 +40,6 @@ import (
 )
 
 var (
-	_ vm.Connector              = (*QualifiedRuntime)(nil)
 	_ vm.RestoringConnector     = (*QualifiedRuntime)(nil)
 	_ vm.MaterializingConnector = (*QualifiedRuntime)(nil)
 	_ vm.Cleaner                = (*QualifiedRuntime)(nil)
@@ -2144,5 +2142,5 @@ func hasRuntimePhase(phases []vm.RuntimePhase, name string, errorClass string) b
 
 func testDigest(body []byte) string {
 	sum := sha256.Sum256(body)
-	return "sha256:" + hex.EncodeToString(sum[:])
+	return sha256sum.FormatDigest(sum[:])
 }

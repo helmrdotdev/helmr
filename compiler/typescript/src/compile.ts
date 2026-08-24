@@ -15,6 +15,7 @@ import {
   type RuntimeArchitecture,
 } from "@helmr/sdk/internal"
 import { canonicalizeJsonValue, type JsonValue } from "@helmr/sdk/internal"
+import { compareUTF8, hasOnlyUnicodeScalarValues } from "./utf8"
 
 export const BUILD_PLAN_FORMAT_VERSION = 0 as const
 export const DECLARATION_LOCATOR_FORMAT_VERSION = 0 as const
@@ -204,7 +205,7 @@ export function analyze(options: AnalyzeOptions): AnalysisResult {
     queues: Object.freeze(
       [...queues.values()]
         .map((entry) => Object.freeze({ ...entry }))
-        .sort((left, right) => compareUtf8(left.name, right.name)),
+        .sort((left, right) => compareUTF8(left.name, right.name)),
     ),
   })
   const declarationLocator: DeclarationLocator = Object.freeze({
@@ -587,7 +588,7 @@ function compileImageBuild(
   }
   visit(root)
   const specs = [...images.values()]
-    .sort((left, right) => compareUtf8(left.key, right.key))
+    .sort((left, right) => compareUTF8(left.key, right.key))
     .map((image) => ({
       key: image.key,
       platform: {
@@ -677,7 +678,7 @@ function assertExactKeys(
   expected: readonly string[],
   label: string,
 ): void {
-  const actual = Object.keys(value).sort(compareUtf8)
+  const actual = Object.keys(value).sort(compareUTF8)
   if (
     actual.length !== expected.length ||
     actual.some((key, index) => key !== expected[index])
@@ -841,20 +842,6 @@ function validateExportName(name: string): void {
   }
 }
 
-function hasOnlyUnicodeScalarValues(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index)
-    if (code >= 0xd800 && code <= 0xdbff) {
-      const next = value.charCodeAt(index + 1)
-      if (next < 0xdc00 || next > 0xdfff) return false
-      index += 1
-    } else if (code >= 0xdc00 && code <= 0xdfff) {
-      return false
-    }
-  }
-  return true
-}
-
 function compareLocatedDefinitions(
   left: LocatedDefinition,
   right: LocatedDefinition,
@@ -866,7 +853,7 @@ function compareLocatedDefinitions(
   }
   return (
     order[left.definition.kind] - order[right.definition.kind] ||
-    compareUtf8(left.definition.id, right.definition.id)
+    compareUTF8(left.definition.id, right.definition.id)
   )
 }
 
@@ -875,18 +862,7 @@ function compareLocatorOccurrence(
   right: LocatedDefinition,
 ): number {
   return (
-    compareUtf8(left.modulePath, right.modulePath) ||
-    compareUtf8(left.exportName, right.exportName)
+    compareUTF8(left.modulePath, right.modulePath) ||
+    compareUTF8(left.exportName, right.exportName)
   )
-}
-
-function compareUtf8(left: string, right: string): number {
-  const encoder = new TextEncoder()
-  const a = encoder.encode(left)
-  const b = encoder.encode(right)
-  for (let index = 0; index < Math.min(a.length, b.length); index += 1) {
-    const difference = (a[index] as number) - (b[index] as number)
-    if (difference !== 0) return difference
-  }
-  return a.length - b.length
 }

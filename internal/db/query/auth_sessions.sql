@@ -50,10 +50,3 @@ UPDATE auth_sessions
    SET revoked_at = now()
  WHERE user_id = sqlc.arg(user_id)
    AND revoked_at IS NULL;
-
--- name: RevokeOrgAuthSessionsForUser :execrows
-UPDATE auth_sessions
-   SET revoked_at = now()
- WHERE user_id = sqlc.arg(user_id)
-   AND (org_id = sqlc.arg(org_id) OR org_id IS NULL)
-   AND revoked_at IS NULL;

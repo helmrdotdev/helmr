@@ -179,10 +179,6 @@ func (c *Connector) probeGuest(ctx context.Context) error {
 	return nil
 }
 
-func (runtime *QualifiedRuntime) Connect(ctx context.Context, request vm.ConnectRequest) (vm.Session, error) {
-	return runtime.connector.connect(ctx, request)
-}
-
 func (c *Connector) connect(ctx context.Context, request vm.ConnectRequest) (vm.Session, error) {
 	owner := vm.Owner{Kind: request.OwnerKind, ID: request.ID}
 	if err := request.Binding.Validate(owner); err != nil {

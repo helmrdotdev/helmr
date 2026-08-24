@@ -13,26 +13,6 @@ ON CONFLICT (org_id, user_id) DO UPDATE
        updated_at = now()
 RETURNING *;
 
--- name: OwnerExists :one
-SELECT EXISTS (
-    SELECT 1
-      FROM org_members
-      JOIN users ON users.id = org_members.user_id
-     WHERE org_members.org_id = sqlc.arg(org_id)
-       AND org_members.role = 'owner'
-       AND org_members.disabled_at IS NULL
-       AND users.disabled_at IS NULL
-);
-
--- name: GetOrgMember :one
-SELECT org_members.*, users.display_name AS user_display_name, users.profile_image_url
-  FROM org_members
-  JOIN users ON users.id = org_members.user_id
- WHERE org_members.org_id = sqlc.arg(org_id)
-   AND org_members.user_id = sqlc.arg(user_id)
-   AND org_members.disabled_at IS NULL
-   AND users.disabled_at IS NULL;
-
 -- name: ListOrgMembers :many
 SELECT org_members.org_id,
        org_members.user_id,
@@ -92,37 +72,6 @@ UPDATE org_members
    AND (
        org_members.role <> 'owner'
        OR sqlc.arg(role)::org_member_role = 'owner'
-       OR EXISTS (
-           SELECT 1 FROM locked_active_owners
-            WHERE locked_active_owners.user_id <> org_members.user_id
-       )
-   )
-RETURNING *;
-
--- name: DisableOrgMember :one
-WITH locked_active_owners AS (
-    SELECT org_members.user_id
-      FROM org_members
-      JOIN users ON users.id = org_members.user_id
-     WHERE org_members.org_id = sqlc.arg(org_id)
-       AND org_members.role = 'owner'
-       AND org_members.disabled_at IS NULL
-       AND users.disabled_at IS NULL
-     FOR UPDATE OF org_members
-)
-UPDATE org_members
-   SET disabled_at = now(),
-       updated_at = now()
- WHERE org_members.org_id = sqlc.arg(org_id)
-   AND org_members.user_id = sqlc.arg(user_id)
-   AND org_members.role = sqlc.arg(expected_role)::org_member_role
-   AND org_members.disabled_at IS NULL
-   AND (
-       sqlc.arg(actor_is_owner)::boolean
-       OR org_members.role <> 'owner'
-   )
-   AND (
-       org_members.role <> 'owner'
        OR EXISTS (
            SELECT 1 FROM locked_active_owners
             WHERE locked_active_owners.user_id <> org_members.user_id

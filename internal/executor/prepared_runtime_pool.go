@@ -71,7 +71,7 @@ type RuntimeReconcileClient interface {
 }
 
 type PreparedRuntimePool struct {
-	Connector             vm.Connector
+	Connector             vm.Cleaner
 	CAS                   cas.Store
 	TempDir               string
 	ArtifactCacheDir      string
@@ -170,7 +170,7 @@ func (s *preparedRuntimeSignal) finished() (error, bool) {
 	}
 }
 
-func NewPreparedRuntimePool(connector vm.Connector, store cas.Store, size int, log *slog.Logger) *PreparedRuntimePool {
+func NewPreparedRuntimePool(connector vm.Cleaner, store cas.Store, size int, log *slog.Logger) *PreparedRuntimePool {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &PreparedRuntimePool{
 		Connector:         connector,
@@ -337,8 +337,7 @@ func (p *PreparedRuntimePool) ReclaimFailedRuntimeTarget(ctx context.Context, cl
 	if runtimeInstanceID == "" || target.WorkerEpoch <= 0 {
 		return errors.New("failed runtime reclaim target id and worker_epoch are required")
 	}
-	cleaner, ok := p.Connector.(vm.Cleaner)
-	if !ok {
+	if p.Connector == nil {
 		return errors.New("runtime connector does not support exact failed-runtime cleanup")
 	}
 	entry, ready := p.claimReadyEntry(runtimeInstanceID, target.WorkerEpoch)
@@ -349,7 +348,7 @@ func (p *PreparedRuntimePool) ReclaimFailedRuntimeTarget(ctx context.Context, cl
 		cancel()
 	}
 	cleanupCtx, cancel := preparedRuntimeControlContext(ctx)
-	err := cleaner.Cleanup(cleanupCtx, vm.Owner{Kind: vm.OwnerRuntime, ID: runtimeInstanceID})
+	err := p.Connector.Cleanup(cleanupCtx, vm.Owner{Kind: vm.OwnerRuntime, ID: runtimeInstanceID})
 	cancel()
 	if err != nil {
 		return fmt.Errorf("reconcile failed runtime physical cleanup: %w", errors.Join(closeErr, err))
@@ -382,12 +381,11 @@ func (p *PreparedRuntimePool) StopRuntimeTarget(ctx context.Context, client Prep
 		if p.runtimeCheckedOut(runtimeInstanceID, target.WorkerEpoch) {
 			return nil
 		}
-		cleaner, cleanupOK := p.Connector.(vm.Cleaner)
-		if !cleanupOK {
+		if p.Connector == nil {
 			return errors.New("runtime connector does not support exact runtime cleanup")
 		}
 		cleanupCtx, cancel := preparedRuntimeControlContext(ctx)
-		err := cleaner.Cleanup(cleanupCtx, vm.Owner{Kind: vm.OwnerRuntime, ID: runtimeInstanceID})
+		err := p.Connector.Cleanup(cleanupCtx, vm.Owner{Kind: vm.OwnerRuntime, ID: runtimeInstanceID})
 		cancel()
 		if err != nil {
 			return fmt.Errorf("reconcile runtime physical cleanup: %w", err)
@@ -405,12 +403,11 @@ func (p *PreparedRuntimePool) StopRuntimeTarget(ctx context.Context, client Prep
 		}
 		proofMethod = workerapi.RuntimeCleanupSessionClosed
 	} else {
-		cleaner, cleanupOK := p.Connector.(vm.Cleaner)
-		if !cleanupOK {
+		if p.Connector == nil {
 			return errors.New("runtime connector does not support exact runtime cleanup")
 		}
 		cleanupCtx, cancel := preparedRuntimeControlContext(ctx)
-		err := cleaner.Cleanup(cleanupCtx, vm.Owner{Kind: vm.OwnerRuntime, ID: runtimeInstanceID})
+		err := p.Connector.Cleanup(cleanupCtx, vm.Owner{Kind: vm.OwnerRuntime, ID: runtimeInstanceID})
 		cancel()
 		if err != nil {
 			return fmt.Errorf("reconcile runtime physical cleanup: %w", err)

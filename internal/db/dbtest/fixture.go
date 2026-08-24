@@ -3,11 +3,11 @@ package dbtest
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -22,7 +22,7 @@ func MustExec(t *testing.T, ctx context.Context, executor interface {
 
 func Digest(seed string) string {
 	sum := sha256.Sum256([]byte(seed))
-	return "sha256:" + hex.EncodeToString(sum[:])
+	return sha256sum.FormatDigest(sum[:])
 }
 
 func Hash(seed string) []byte {

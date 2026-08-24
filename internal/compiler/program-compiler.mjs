@@ -1709,6 +1709,43 @@ var require_picomatch2 = __commonJS((exports, module) => {
   module.exports = picomatch;
 });
 
+// sdk/typescript/src/internal/utf8.ts
+var encoder = new TextEncoder;
+var encode = TextEncoder.prototype.encode.call.bind(TextEncoder.prototype.encode);
+var charCodeAt = String.prototype.charCodeAt.call.bind(String.prototype.charCodeAt);
+function compareUTF8(left, right) {
+  const leftBytes = encode(encoder, left);
+  const rightBytes = encode(encoder, right);
+  const length = leftBytes.length < rightBytes.length ? leftBytes.length : rightBytes.length;
+  for (let index = 0;index < length; index++) {
+    const difference = leftBytes[index] - rightBytes[index];
+    if (difference !== 0)
+      return difference;
+  }
+  return leftBytes.length - rightBytes.length;
+}
+function hasOnlyUnicodeScalarValues(value) {
+  for (let index = 0;index < value.length; index++) {
+    const unit = charCodeAt(value, index);
+    if (unit >= 55296 && unit <= 56319) {
+      if (index + 1 === value.length)
+        return false;
+      const next = charCodeAt(value, index + 1);
+      if (next < 56320 || next > 57343)
+        return false;
+      index++;
+    } else if (unit >= 56320 && unit <= 57343) {
+      return false;
+    }
+  }
+  return true;
+}
+function assertUnicodeString(value) {
+  if (!hasOnlyUnicodeScalarValues(value)) {
+    throw new Error("canonical JSON contains an unpaired surrogate");
+  }
+}
+
 // sdk/typescript/src/config.ts
 var arrayIsArray = Array.isArray;
 var arrayPrototype = Array.prototype;
@@ -1725,10 +1762,8 @@ var endsWith = String.prototype.endsWith.call.bind(String.prototype.endsWith);
 var includes = String.prototype.includes.call.bind(String.prototype.includes);
 var split = String.prototype.split.call.bind(String.prototype.split);
 var slice = String.prototype.slice.call.bind(String.prototype.slice);
-var charCodeAt = String.prototype.charCodeAt.call.bind(String.prototype.charCodeAt);
+var charCodeAt2 = String.prototype.charCodeAt.call.bind(String.prototype.charCodeAt);
 var regexpTest = RegExp.prototype.test.call.bind(RegExp.prototype.test);
-var utf8Encoder = new TextEncoder;
-var encodeUTF8 = TextEncoder.prototype.encode.call.bind(TextEncoder.prototype.encode);
 function inspectConfig(value) {
   if (typeof value !== "object" || value === null) {
     throw new Error("config must be an ordinary object");
@@ -1758,7 +1793,7 @@ function matchesIgnorePattern(pattern, path) {
   return matches(0, 0);
 }
 function validateDirectory(value) {
-  if (typeof value !== "string" || value === "" || hasUnpairedSurrogate(value) || startsWith(value, "/") || includes(value, "\\") || hasControl(value)) {
+  if (typeof value !== "string" || value === "" || !hasOnlyUnicodeScalarValues(value) || startsWith(value, "/") || includes(value, "\\") || hasControl(value)) {
     throw new Error("config dirs entries must be non-empty root-relative POSIX paths");
   }
   const normalized = startsWith(value, "./") ? slice(value, 2) : value;
@@ -1777,7 +1812,7 @@ function validateDirectory(value) {
   return normalized;
 }
 function validateIgnorePattern(value) {
-  if (typeof value !== "string" || value === "" || hasUnpairedSurrogate(value) || startsWith(value, "./") || startsWith(value, "/") || endsWith(value, "/") || includes(value, "//") || includes(value, "\\") || hasControl(value) || startsWith(value, "!") || regexpTest(/[[\]{}]/, value) || regexpTest(/[?*+@!]\(/, value)) {
+  if (typeof value !== "string" || value === "" || !hasOnlyUnicodeScalarValues(value) || startsWith(value, "./") || startsWith(value, "/") || endsWith(value, "/") || includes(value, "//") || includes(value, "\\") || hasControl(value) || startsWith(value, "!") || regexpTest(/[[\]{}]/, value) || regexpTest(/[?*+@!]\(/, value)) {
     throw new Error(`unsupported ignorePattern ${JSON.stringify(value)}`);
   }
   const segments = split(value, "/");
@@ -1821,24 +1856,8 @@ function matchesSegment(pattern, value) {
 }
 function hasControl(value) {
   for (let index = 0;index < value.length; index++) {
-    const code = charCodeAt(value, index);
+    const code = charCodeAt2(value, index);
     if (code <= 31 || code >= 127 && code <= 159)
-      return true;
-  }
-  return false;
-}
-function hasUnpairedSurrogate(value) {
-  for (let index = 0;index < value.length; index++) {
-    const code = charCodeAt(value, index);
-    if (code >= 56320 && code <= 57343)
-      return true;
-    if (code < 55296 || code > 56319)
-      continue;
-    index++;
-    if (index === value.length)
-      return true;
-    const low = charCodeAt(value, index);
-    if (low < 56320 || low > 57343)
       return true;
   }
   return false;
@@ -1846,7 +1865,7 @@ function hasUnpairedSurrogate(value) {
 function codePoints(value) {
   const result = [];
   for (let index = 0;index < value.length; ) {
-    const first = charCodeAt(value, index);
+    const first = charCodeAt2(value, index);
     const width = first >= 55296 && first <= 56319 ? 2 : 1;
     setArrayIndex(result, result.length, slice(value, index, index + width));
     index += width;
@@ -1932,17 +1951,6 @@ function setArrayIndex(array, index, value) {
     value,
     writable: true
   });
-}
-function compareUTF8(left, right) {
-  const leftBytes = encodeUTF8(utf8Encoder, left);
-  const rightBytes = encodeUTF8(utf8Encoder, right);
-  const length = leftBytes.length < rightBytes.length ? leftBytes.length : rightBytes.length;
-  for (let index = 0;index < length; index++) {
-    const difference = leftBytes[index] - rightBytes[index];
-    if (difference !== 0)
-      return difference;
-  }
-  return leftBytes.length - rightBytes.length;
 }
 // sdk/typescript/src/schema/payload.ts
 var payloadSchemaValidationErrorBrand = Symbol.for("helmr.sdk.PayloadSchemaValidationError");
@@ -2273,7 +2281,6 @@ function freezeWorkspaceAddress(value) {
   return Object.freeze(value);
 }
 // sdk/typescript/src/internal/jsoncanon.ts
-var textDecoder = new TextDecoder("utf-8", { fatal: true });
 var textEncoder = new TextEncoder;
 function canonicalizeJsonValue(value) {
   return textEncoder.encode(serialize(value, new Set));
@@ -2339,20 +2346,6 @@ function assertPlainObject(value) {
     }
   }
 }
-function assertUnicodeString(value) {
-  for (let index = 0;index < value.length; index++) {
-    const unit = value.charCodeAt(index);
-    if (unit >= 55296 && unit <= 56319) {
-      const next = value.charCodeAt(index + 1);
-      if (next < 56320 || next > 57343) {
-        throw new Error("canonical JSON contains an unpaired high surrogate");
-      }
-      index++;
-    } else if (unit >= 56320 && unit <= 57343) {
-      throw new Error("canonical JSON contains an unpaired low surrogate");
-    }
-  }
-}
 // compiler/typescript/src/program-compiler.ts
 import { createWriteStream } from "node:fs";
 import { mkdir as mkdir2, readFile as readFile3, writeFile as writeFile2 } from "node:fs/promises";
@@ -2361,8 +2354,31 @@ import { dirname as dirname4, resolve as resolve6 } from "node:path";
 // compiler/typescript/src/analysis.ts
 import { lstat, readdir, realpath } from "node:fs/promises";
 import { relative, resolve, sep } from "node:path";
+
+// compiler/typescript/src/utf8.ts
+function compareUTF82(left, right) {
+  return Buffer.compare(Buffer.from(left), Buffer.from(right));
+}
+function hasOnlyUnicodeScalarValues2(value) {
+  for (let index = 0;index < value.length; index++) {
+    const unit = value.charCodeAt(index);
+    if (unit >= 55296 && unit <= 56319) {
+      if (index + 1 === value.length)
+        return false;
+      const next = value.charCodeAt(index + 1);
+      if (next < 56320 || next > 57343)
+        return false;
+      index++;
+    } else if (unit >= 56320 && unit <= 57343) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// compiler/typescript/src/analysis.ts
 var executableExtension = /\.(?:cjs|cts|js|jsx|mjs|mts|ts|tsx)$/;
-var textDecoder2 = new TextDecoder("utf-8", { fatal: true });
+var textDecoder = new TextDecoder("utf-8", { fatal: true });
 var maxVerificationFailureMessageBytes = 16 << 10;
 var VERIFICATION_RESULT_FORMAT_VERSION = 0;
 function successfulVerificationResult(analysis) {
@@ -2427,12 +2443,12 @@ async function discoverModules(root, config) {
     await appendCandidates(canonicalRoot, directory, candidates);
   }
   const modules = [...candidates].filter((path) => !config.ignorePatterns.some((pattern) => matchesIgnorePattern(pattern, path)));
-  modules.sort(compareUtf8);
+  modules.sort(compareUTF82);
   return modules;
 }
 async function appendCandidates(root, directory, candidates) {
   const entries = await readdir(directory, { withFileTypes: true });
-  entries.sort((left, right) => compareUtf8(left.name, right.name));
+  entries.sort((left, right) => compareUTF82(left.name, right.name));
   for (const entry of entries) {
     const absolute = resolve(directory, entry.name);
     const path = projectPath(root, absolute);
@@ -2497,12 +2513,9 @@ function inside(root, value) {
 function hasComponent(path, component) {
   return path.split("/").includes(component);
 }
-function compareUtf8(left, right) {
-  return Buffer.compare(Buffer.from(left), Buffer.from(right));
-}
 function decodeGeneratedFile(value) {
   try {
-    return textDecoder2.decode(value);
+    return textDecoder.decode(value);
   } catch {
     throw new Error("generated analysis file is not valid UTF-8");
   }
@@ -3350,7 +3363,7 @@ function analyze(options) {
   const buildPlan = Object.freeze({
     formatVersion: BUILD_PLAN_FORMAT_VERSION,
     definitions: Object.freeze(definitions),
-    queues: Object.freeze([...queues.values()].map((entry) => Object.freeze({ ...entry })).sort((left, right) => compareUtf82(left.name, right.name)))
+    queues: Object.freeze([...queues.values()].map((entry) => Object.freeze({ ...entry })).sort((left, right) => compareUTF82(left.name, right.name)))
   });
   const declarationLocator = Object.freeze({
     declarations: programExports.declarationLocator.declarations,
@@ -3606,7 +3619,7 @@ function compileImageBuild(root, options) {
     visiting.delete(image.key);
   };
   visit2(root);
-  const specs = [...images.values()].sort((left, right) => compareUtf82(left.key, right.key)).map((image) => ({
+  const specs = [...images.values()].sort((left, right) => compareUTF82(left.key, right.key)).map((image) => ({
     key: image.key,
     platform: {
       os: "linux",
@@ -3676,7 +3689,7 @@ function compileImageStep(step, options) {
   }
 }
 function assertExactKeys(value, expected, label) {
-  const actual = Object.keys(value).sort(compareUtf82);
+  const actual = Object.keys(value).sort(compareUTF82);
   if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
     throw new Error(`${label} has unknown members`);
   }
@@ -3778,29 +3791,15 @@ function validateModulePath(path) {
     ".tsx"
   ];
   const components = path.split("/");
-  if (path.length === 0 || !hasOnlyUnicodeScalarValues(path) || path.startsWith("/") || path.includes("\\") || /[\p{Cc}]/u.test(path) || components.some((component) => component === "" || component === "." || component === "..") || components.includes("node_modules") || components[0] === "helmr" || path.endsWith(".d.ts") || path.endsWith(".d.mts") || path.endsWith(".d.cts") || !suffixes.some((suffix) => path.endsWith(suffix))) {
+  if (path.length === 0 || !hasOnlyUnicodeScalarValues2(path) || path.startsWith("/") || path.includes("\\") || /[\p{Cc}]/u.test(path) || components.some((component) => component === "" || component === "." || component === "..") || components.includes("node_modules") || components[0] === "helmr" || path.endsWith(".d.ts") || path.endsWith(".d.mts") || path.endsWith(".d.cts") || !suffixes.some((suffix) => path.endsWith(suffix))) {
     throw new Error(`modulePath ${JSON.stringify(path)} is not an admitted first-party module path`);
   }
 }
 function validateExportName(name) {
   const length = new TextEncoder().encode(name).length;
-  if (length < 1 || length > 256 || !hasOnlyUnicodeScalarValues(name) || /[\p{Cc}]/u.test(name)) {
+  if (length < 1 || length > 256 || !hasOnlyUnicodeScalarValues2(name) || /[\p{Cc}]/u.test(name)) {
     throw new Error(`exportName ${JSON.stringify(name)} is invalid`);
   }
-}
-function hasOnlyUnicodeScalarValues(value) {
-  for (let index = 0;index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code >= 55296 && code <= 56319) {
-      const next = value.charCodeAt(index + 1);
-      if (next < 56320 || next > 57343)
-        return false;
-      index += 1;
-    } else if (code >= 56320 && code <= 57343) {
-      return false;
-    }
-  }
-  return true;
 }
 function compareLocatedDefinitions(left, right) {
   const order = {
@@ -3808,21 +3807,10 @@ function compareLocatedDefinitions(left, right) {
     actor: 1,
     sandbox: 2
   };
-  return order[left.definition.kind] - order[right.definition.kind] || compareUtf82(left.definition.id, right.definition.id);
+  return order[left.definition.kind] - order[right.definition.kind] || compareUTF82(left.definition.id, right.definition.id);
 }
 function compareLocatorOccurrence(left, right) {
-  return compareUtf82(left.modulePath, right.modulePath) || compareUtf82(left.exportName, right.exportName);
-}
-function compareUtf82(left, right) {
-  const encoder = new TextEncoder;
-  const a = encoder.encode(left);
-  const b = encoder.encode(right);
-  for (let index = 0;index < Math.min(a.length, b.length); index += 1) {
-    const difference = a[index] - b[index];
-    if (difference !== 0)
-      return difference;
-  }
-  return a.length - b.length;
+  return compareUTF82(left.modulePath, right.modulePath) || compareUTF82(left.exportName, right.exportName);
 }
 
 // compiler/typescript/src/local-packages.ts
@@ -4839,9 +4827,6 @@ function hasNodeModules(path) {
 function inside2(path) {
   return path === "" || path !== ".." && !path.startsWith("../") && !path.startsWith("/");
 }
-function compareUTF82(left, right) {
-  return Buffer.compare(Buffer.from(left), Buffer.from(right));
-}
 
 // compiler/typescript/src/bundle.ts
 var COMPILER_API_VERSION = "helmr.compiler.v0";
@@ -4908,7 +4893,7 @@ async function compileProgram(options) {
     });
     const canonicalSources = [
       ...new Set(analyzed.declarationLocator.declarations.map((item) => item.modulePath))
-    ].sort(compareUTF83);
+    ].sort(compareUTF82);
     const generated = new Map;
     const files = new Map;
     const finalOutputs = [];
@@ -4950,7 +4935,7 @@ async function compileProgram(options) {
         sourcePath: source2
       });
     }
-    finalOutputs.sort((left, right) => compareUTF83(left.modulePath, right.modulePath));
+    finalOutputs.sort((left, right) => compareUTF82(left.modulePath, right.modulePath));
     const locator = {
       declarations: analyzed.declarationLocator.declarations.map((item) => ({
         ...item,
@@ -5184,7 +5169,7 @@ function localPackageForPath(path, localPackages) {
   return;
 }
 function sortedLocalPackages(localPackages) {
-  return [...localPackages.values()].sort((left, right) => compareUTF83(left.installedRoot, right.installedRoot));
+  return [...localPackages.values()].sort((left, right) => compareUTF82(left.installedRoot, right.installedRoot));
 }
 function mergeLocalPackages(groups) {
   const merged = new Map;
@@ -5200,7 +5185,7 @@ function mergeLocalPackages(groups) {
   return sortedLocalPackages(merged);
 }
 function sortedExternalEdges(edges) {
-  return [...edges].sort((left, right) => compareUTF83(externalEdgeKey(left), externalEdgeKey(right)));
+  return [...edges].sort((left, right) => compareUTF82(externalEdgeKey(left), externalEdgeKey(right)));
 }
 function mergeExternalEdges(groups) {
   const merged = new Map;
@@ -5251,7 +5236,7 @@ async function importAggregate(path) {
   return value.default;
 }
 function analysisExports(modules) {
-  return modules.flatMap(({ modulePath, namespace }) => Object.getOwnPropertyNames(namespace).sort(compareUTF83).map((exportName) => ({
+  return modules.flatMap(({ modulePath, namespace }) => Object.getOwnPropertyNames(namespace).sort(compareUTF82).map((exportName) => ({
     exportName,
     modulePath,
     value: namespace[exportName]
@@ -5322,7 +5307,7 @@ async function compilerInputs(root, metafiles, localPackages) {
       paths.add(path);
     }
   }
-  const sorted = [...paths].sort(compareUTF83);
+  const sorted = [...paths].sort(compareUTF82);
   return Promise.all(sorted.map(async (path) => ({
     digest: `sha256:${sha256(await readFile2(resolve5(root, path)))}`,
     path
@@ -5378,7 +5363,7 @@ async function compilerTSConfigs(root, inputs) {
       pending.push(await resolveTSConfigExtends(candidate, specifier));
     }
   }
-  return [...configs].map(([path, digest]) => ({ digest, path })).sort((left, right) => compareUTF83(left.path, right.path));
+  return [...configs].map(([path, digest]) => ({ digest, path })).sort((left, right) => compareUTF82(left.path, right.path));
 }
 async function resolveTSConfigExtends(configPath, specifier) {
   const directory = dirname3(configPath);
@@ -5430,9 +5415,6 @@ function hasNodeModules2(path) {
 }
 function inside3(path) {
   return path === "" || path !== ".." && !path.startsWith(`..${sep4}`) && !path.startsWith("/");
-}
-function compareUTF83(left, right) {
-  return Buffer.compare(Buffer.from(left), Buffer.from(right));
 }
 
 // compiler/typescript/src/config.ts

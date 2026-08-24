@@ -2,7 +2,6 @@ package deployment
 
 import (
 	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +9,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 type DeploymentBundleDirectory struct {
@@ -135,7 +136,7 @@ func verifyDeploymentBundleObjectFile(path string, descriptor BundleObject) erro
 	if written != descriptor.SizeBytes {
 		return fmt.Errorf("deployment bundle object %s size changed while reading", descriptor.Digest)
 	}
-	actual := "sha256:" + hex.EncodeToString(hash.Sum(nil))
+	actual := sha256sum.FormatDigest(hash.Sum(nil))
 	if actual != descriptor.Digest {
 		return fmt.Errorf("deployment bundle object %s digest does not match bytes", descriptor.Digest)
 	}

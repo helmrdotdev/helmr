@@ -20,7 +20,6 @@ import (
 type RecoveryEvidence struct {
 	ObservedAt        time.Time  `json:"observed_at"`
 	Reclaimed         []string   `json:"reclaimed,omitempty"`
-	ReclaimedOwners   []vm.Owner `json:"reclaimed_owners,omitempty"`
 	Quarantined       []string   `json:"quarantined,omitempty"`
 	QuarantinedOwners []vm.Owner `json:"quarantined_owners,omitempty"`
 	QuarantineErrors  []string   `json:"quarantine_errors,omitempty"`
@@ -243,7 +242,6 @@ func recoverLocalVMState(ctx context.Context, workDir string, jailerDir string, 
 			label := id
 			if hasOwner {
 				label = owner.String()
-				evidence.ReclaimedOwners = append(evidence.ReclaimedOwners, owner)
 			}
 			evidence.Reclaimed = append(evidence.Reclaimed, label)
 			continue

@@ -235,47 +235,6 @@ func (q *Queries) GetDeploymentByBundleDigest(ctx context.Context, arg GetDeploy
 	return i, err
 }
 
-const getDeploymentByVersion = `-- name: GetDeploymentByVersion :one
-SELECT id, org_id, project_id, environment_id, version, bundle_digest, runtime_artifact_digest, program_artifact_id, program_artifact_kind, program_index_digest, queue_config, created_at
-  FROM deployments
- WHERE org_id = $1
-   AND project_id = $2
-   AND environment_id = $3
-   AND version = $4
-`
-
-type GetDeploymentByVersionParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	Version       string      `json:"version"`
-}
-
-func (q *Queries) GetDeploymentByVersion(ctx context.Context, arg GetDeploymentByVersionParams) (Deployment, error) {
-	row := q.db.QueryRow(ctx, getDeploymentByVersion,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.Version,
-	)
-	var i Deployment
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.Version,
-		&i.BundleDigest,
-		&i.RuntimeArtifactDigest,
-		&i.ProgramArtifactID,
-		&i.ProgramArtifactKind,
-		&i.ProgramIndexDigest,
-		&i.QueueConfig,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const getDeploymentForOrg = `-- name: GetDeploymentForOrg :one
 SELECT id, org_id, project_id, environment_id, version, bundle_digest, runtime_artifact_digest, program_artifact_id, program_artifact_kind, program_index_digest, queue_config, created_at
   FROM deployments
@@ -306,52 +265,6 @@ func (q *Queries) GetDeploymentForOrg(ctx context.Context, arg GetDeploymentForO
 		&i.CreatedAt,
 	)
 	return i, err
-}
-
-const listDeploymentsByVersionForOrg = `-- name: ListDeploymentsByVersionForOrg :many
-SELECT id, org_id, project_id, environment_id, version, bundle_digest, runtime_artifact_digest, program_artifact_id, program_artifact_kind, program_index_digest, queue_config, created_at
-  FROM deployments
- WHERE org_id = $1
-   AND version = $2
- ORDER BY created_at ASC
-`
-
-type ListDeploymentsByVersionForOrgParams struct {
-	OrgID   pgtype.UUID `json:"org_id"`
-	Version string      `json:"version"`
-}
-
-func (q *Queries) ListDeploymentsByVersionForOrg(ctx context.Context, arg ListDeploymentsByVersionForOrgParams) ([]Deployment, error) {
-	rows, err := q.db.Query(ctx, listDeploymentsByVersionForOrg, arg.OrgID, arg.Version)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Deployment
-	for rows.Next() {
-		var i Deployment
-		if err := rows.Scan(
-			&i.ID,
-			&i.OrgID,
-			&i.ProjectID,
-			&i.EnvironmentID,
-			&i.Version,
-			&i.BundleDigest,
-			&i.RuntimeArtifactDigest,
-			&i.ProgramArtifactID,
-			&i.ProgramArtifactKind,
-			&i.ProgramIndexDigest,
-			&i.QueueConfig,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const listScopedDeployments = `-- name: ListScopedDeployments :many

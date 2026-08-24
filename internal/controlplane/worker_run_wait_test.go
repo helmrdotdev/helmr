@@ -15,7 +15,7 @@ import (
 
 func TestRunWaitDeadlinesApplyTokenDefaults(t *testing.T) {
 	before := time.Now().UTC()
-	timeoutAt, idleTimeout, checkpointDueAt, delay, err := runWaitDeadlines(workerapi.CreateRunWaitRequest{}, defaultRunWaitIdleTimeout)
+	timeoutAt, idleTimeout, checkpointDueAt, err := runWaitDeadlines(workerapi.CreateRunWaitRequest{}, defaultRunWaitIdleTimeout)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,9 +26,9 @@ func TestRunWaitDeadlinesApplyTokenDefaults(t *testing.T) {
 	if !idleTimeout.Valid || idleTimeout.Int64 != defaultRunWaitIdleTimeout.Milliseconds() {
 		t.Fatalf("idle timeout = %+v, want %dms", idleTimeout, defaultRunWaitIdleTimeout.Milliseconds())
 	}
-	if delay != defaultRunWaitIdleTimeout || !checkpointDueAt.Valid ||
-		checkpointDueAt.Time.Before(before.Add(delay)) || checkpointDueAt.Time.After(after.Add(delay)) {
-		t.Fatalf("checkpoint deadline = %s delay=%s, want registration time + default idle", checkpointDueAt.Time, delay)
+	if !checkpointDueAt.Valid || checkpointDueAt.Time.Before(before.Add(defaultRunWaitIdleTimeout)) ||
+		checkpointDueAt.Time.After(after.Add(defaultRunWaitIdleTimeout)) {
+		t.Fatalf("checkpoint deadline = %s, want registration time + default idle", checkpointDueAt.Time)
 	}
 }
 
@@ -36,7 +36,7 @@ func TestRunWaitDeadlinesPreserveMillisecondPrecision(t *testing.T) {
 	timeoutMS := int64(1)
 	idleTimeoutMS := int64(1501)
 	before := time.Now().UTC()
-	timeoutAt, idleTimeout, checkpointDueAt, delay, err := runWaitDeadlines(workerapi.CreateRunWaitRequest{
+	timeoutAt, idleTimeout, checkpointDueAt, err := runWaitDeadlines(workerapi.CreateRunWaitRequest{
 		TimeoutMS: &timeoutMS, IdleTimeoutMS: &idleTimeoutMS,
 	}, 30*time.Second)
 	if err != nil {
@@ -47,9 +47,9 @@ func TestRunWaitDeadlinesPreserveMillisecondPrecision(t *testing.T) {
 		t.Fatalf("timeout_at = %s, want registration time + 1ms", timeoutAt.Time)
 	}
 	expectedDelay := time.Millisecond + shortWaitGrace
-	if !idleTimeout.Valid || idleTimeout.Int64 != idleTimeoutMS || delay != expectedDelay ||
-		!checkpointDueAt.Valid || checkpointDueAt.Time.Before(before.Add(delay)) || checkpointDueAt.Time.After(after.Add(delay)) {
-		t.Fatalf("idle/checkpoint = %+v/%s/%s", idleTimeout, delay, checkpointDueAt.Time)
+	if !idleTimeout.Valid || idleTimeout.Int64 != idleTimeoutMS || !checkpointDueAt.Valid ||
+		checkpointDueAt.Time.Before(before.Add(expectedDelay)) || checkpointDueAt.Time.After(after.Add(expectedDelay)) {
+		t.Fatalf("idle/checkpoint = %+v/%s", idleTimeout, checkpointDueAt.Time)
 	}
 }
 
@@ -57,7 +57,7 @@ func TestTimerWaitDeadlinesSeparateDueAtFromFailureTimeout(t *testing.T) {
 	timeoutMS := int64(1501)
 	duration := "1501ms"
 	before := time.Now().UTC()
-	params, dueAt, idleTimeout, checkpointDueAt, delay, err := timerWaitDeadlines(
+	params, dueAt, idleTimeout, checkpointDueAt, err := timerWaitDeadlines(
 		workerapi.CreateRunWaitRequest{
 			Params:    json.RawMessage(`{"duration":"1501ms"}`),
 			TimeoutMS: &timeoutMS,
@@ -77,11 +77,10 @@ func TestTimerWaitDeadlinesSeparateDueAtFromFailureTimeout(t *testing.T) {
 	if !idleTimeout.Valid || idleTimeout.Int64 != defaultRunWaitIdleTimeout.Milliseconds() {
 		t.Fatalf("idle timeout = %+v", idleTimeout)
 	}
-	if delay != 1501*time.Millisecond+shortWaitGrace ||
-		!checkpointDueAt.Valid ||
-		checkpointDueAt.Time.Before(before.Add(delay)) ||
-		checkpointDueAt.Time.After(after.Add(delay)) {
-		t.Fatalf("checkpoint deadline = %s delay=%s", checkpointDueAt.Time, delay)
+	expectedDelay := 1501*time.Millisecond + shortWaitGrace
+	if !checkpointDueAt.Valid || checkpointDueAt.Time.Before(before.Add(expectedDelay)) ||
+		checkpointDueAt.Time.After(after.Add(expectedDelay)) {
+		t.Fatalf("checkpoint deadline = %s", checkpointDueAt.Time)
 	}
 }
 
@@ -92,7 +91,7 @@ func TestTimerWaitUntilKeepsAbsoluteDueAt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	params, dueAt, _, _, _, err := timerWaitDeadlines(workerapi.CreateRunWaitRequest{
+	params, dueAt, _, _, err := timerWaitDeadlines(workerapi.CreateRunWaitRequest{
 		Params: paramsJSON, TimeoutMS: &timeoutMS,
 	})
 	if err != nil {
@@ -111,14 +110,14 @@ func TestTimerWaitDeadlinesRejectAmbiguousOrInconsistentInput(t *testing.T) {
 		[]byte(`{"duration":"1000"}`),
 		[]byte(`{"duration":"1s","unexpected":true}`),
 	} {
-		if _, _, _, _, _, err := timerWaitDeadlines(workerapi.CreateRunWaitRequest{
+		if _, _, _, _, err := timerWaitDeadlines(workerapi.CreateRunWaitRequest{
 			Params: raw, TimeoutMS: &oneSecond,
 		}); err == nil {
 			t.Fatalf("invalid timer params accepted: %s", raw)
 		}
 	}
 	mismatch := int64(999)
-	if _, _, _, _, _, err := timerWaitDeadlines(workerapi.CreateRunWaitRequest{
+	if _, _, _, _, err := timerWaitDeadlines(workerapi.CreateRunWaitRequest{
 		Params: json.RawMessage(`{"duration":"1s"}`), TimeoutMS: &mismatch,
 	}); err == nil {
 		t.Fatal("timer duration and timeout mismatch was accepted")
@@ -220,7 +219,7 @@ func TestRunWaitDeadlinesEnforceTokenBounds(t *testing.T) {
 		{name: "idle timeout overflow", request: workerapi.CreateRunWaitRequest{IdleTimeoutMS: new(int64(math.MaxInt64))}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if _, _, _, _, err := runWaitDeadlines(test.request, defaultRunWaitIdleTimeout); err == nil {
+			if _, _, _, err := runWaitDeadlines(test.request, defaultRunWaitIdleTimeout); err == nil {
 				t.Fatal("out-of-range Token Wait deadline was accepted")
 			}
 		})

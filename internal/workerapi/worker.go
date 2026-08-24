@@ -195,11 +195,10 @@ type RuntimeRestoreWorkspaceBase struct {
 }
 
 type RuntimeProgram struct {
-	DeploymentID  string    `json:"deployment_id"`
-	Runtime       CASObject `json:"runtime"`
-	Artifact      CASObject `json:"artifact"`
-	BuildContract string    `json:"build_contract"`
-	IndexDigest   string    `json:"index_digest"`
+	DeploymentID string    `json:"deployment_id"`
+	Runtime      CASObject `json:"runtime"`
+	Artifact     CASObject `json:"artifact"`
+	IndexDigest  string    `json:"index_digest"`
 }
 
 type RuntimeInstanceStateRequest struct {
@@ -807,8 +806,6 @@ type Workspace struct {
 	ID                string             `json:"id,omitempty"`
 	WorkspaceMountID  string             `json:"workspace_mount_id,omitempty"`
 	FencingGeneration int64              `json:"fencing_generation,omitempty"`
-	WriteLeaseID      string             `json:"write_lease_id,omitempty"`
-	WriteFencingToken string             `json:"write_fencing_token,omitempty"`
 	BaseVersionID     string             `json:"base_version_id,omitempty"`
 	MountPath         string             `json:"mount_path,omitempty"`
 	Artifact          *WorkspaceArtifact `json:"artifact,omitempty"`
@@ -850,13 +847,12 @@ type Restore struct {
 }
 
 type RestoreRunWait struct {
-	ID                   string          `json:"id"`
-	CorrelationID        string          `json:"correlation_id"`
-	ResumeAttachID       string          `json:"resume_attach_id"`
-	ResumeRequestVersion int64           `json:"resume_request_version"`
-	Kind                 string          `json:"kind"`
-	ResumeKind           string          `json:"resume_kind"`
-	ResumePayloadJSON    json.RawMessage `json:"resume_payload_json"`
+	ID                   string `json:"id"`
+	CorrelationID        string `json:"correlation_id"`
+	ResumeAttachID       string `json:"resume_attach_id"`
+	ResumeRequestVersion int64  `json:"resume_request_version"`
+	Kind                 string `json:"kind"`
+	ResumeKind           string `json:"resume_kind"`
 }
 
 type SecretDeclaration struct {
@@ -939,7 +935,6 @@ type CreateRunWaitResponse struct {
 	ResumeAttachID     string          `json:"resume_attach_id,omitempty"`
 	RuntimeInstanceID  string          `json:"runtime_instance_id,omitempty"`
 	RuntimeEpoch       int64           `json:"runtime_epoch,omitempty"`
-	CheckpointDelayMs  int64           `json:"checkpoint_delay_ms,omitempty"`
 	WorkspaceVersionID string          `json:"workspace_version_id,omitempty"`
 	ResolutionKind     string          `json:"resolution_kind,omitempty"`
 	Resolution         json.RawMessage `json:"resolution,omitempty"`
@@ -1056,11 +1051,9 @@ func CheckpointWorkspaceBaseEqual(left, right CheckpointWorkspaceBase) bool {
 }
 
 type CheckpointArtifact struct {
-	Digest            string `json:"digest"`
-	SizeBytes         int64  `json:"size_bytes"`
-	MediaType         string `json:"media_type"`
-	EncryptDurationMs int64  `json:"encrypt_duration_ms,omitempty"`
-	StoreDurationMs   int64  `json:"store_duration_ms,omitempty"`
+	Digest    string `json:"digest"`
+	SizeBytes int64  `json:"size_bytes"`
+	MediaType string `json:"media_type"`
 }
 
 type CheckpointPhase struct {
@@ -1074,13 +1067,7 @@ type CheckpointPhase struct {
 
 type CheckpointFilepackStats struct {
 	LogicalBytes       int64 `json:"logical_bytes,omitempty"`
-	AllocatedBytes     int64 `json:"allocated_bytes,omitempty"`
-	SparseSupported    *bool `json:"sparse_supported,omitempty"`
-	SparseDataRanges   int64 `json:"sparse_data_ranges,omitempty"`
-	SparseDataBytes    int64 `json:"sparse_data_bytes,omitempty"`
-	ZeroChunksSkipped  int64 `json:"zero_chunks_skipped,omitempty"`
 	EncodedChunks      int64 `json:"encoded_chunks,omitempty"`
-	CompressedBytes    int64 `json:"compressed_bytes,omitempty"`
 	UnpackWrittenBytes int64 `json:"unpack_written_bytes,omitempty"`
 }
 

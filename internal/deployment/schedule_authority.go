@@ -17,23 +17,6 @@ func NewScheduleAuthority() *ScheduleAuthority {
 	return &ScheduleAuthority{}
 }
 
-func (a *ScheduleAuthority) ValidateScheduledTask(
-	manifestVersion int32,
-	declaredID string,
-	raw []byte,
-	expectedDigest []byte,
-	queueConfigRaw []byte,
-) error {
-	_, err := a.ResolveScheduledTask(
-		manifestVersion,
-		declaredID,
-		raw,
-		expectedDigest,
-		queueConfigRaw,
-	)
-	return err
-}
-
 func (a *ScheduleAuthority) ResolveScheduledTask(
 	manifestVersion int32,
 	declaredID string,

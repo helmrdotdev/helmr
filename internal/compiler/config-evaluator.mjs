@@ -1709,6 +1709,43 @@ var require_picomatch2 = __commonJS((exports, module) => {
   module.exports = picomatch;
 });
 
+// sdk/typescript/src/internal/utf8.ts
+var encoder = new TextEncoder;
+var encode = TextEncoder.prototype.encode.call.bind(TextEncoder.prototype.encode);
+var charCodeAt = String.prototype.charCodeAt.call.bind(String.prototype.charCodeAt);
+function compareUTF8(left, right) {
+  const leftBytes = encode(encoder, left);
+  const rightBytes = encode(encoder, right);
+  const length = leftBytes.length < rightBytes.length ? leftBytes.length : rightBytes.length;
+  for (let index = 0;index < length; index++) {
+    const difference = leftBytes[index] - rightBytes[index];
+    if (difference !== 0)
+      return difference;
+  }
+  return leftBytes.length - rightBytes.length;
+}
+function hasOnlyUnicodeScalarValues(value) {
+  for (let index = 0;index < value.length; index++) {
+    const unit = charCodeAt(value, index);
+    if (unit >= 55296 && unit <= 56319) {
+      if (index + 1 === value.length)
+        return false;
+      const next = charCodeAt(value, index + 1);
+      if (next < 56320 || next > 57343)
+        return false;
+      index++;
+    } else if (unit >= 56320 && unit <= 57343) {
+      return false;
+    }
+  }
+  return true;
+}
+function assertUnicodeString(value) {
+  if (!hasOnlyUnicodeScalarValues(value)) {
+    throw new Error("canonical JSON contains an unpaired surrogate");
+  }
+}
+
 // sdk/typescript/src/config.ts
 var arrayIsArray = Array.isArray;
 var arrayPrototype = Array.prototype;
@@ -1725,10 +1762,8 @@ var endsWith = String.prototype.endsWith.call.bind(String.prototype.endsWith);
 var includes = String.prototype.includes.call.bind(String.prototype.includes);
 var split = String.prototype.split.call.bind(String.prototype.split);
 var slice = String.prototype.slice.call.bind(String.prototype.slice);
-var charCodeAt = String.prototype.charCodeAt.call.bind(String.prototype.charCodeAt);
+var charCodeAt2 = String.prototype.charCodeAt.call.bind(String.prototype.charCodeAt);
 var regexpTest = RegExp.prototype.test.call.bind(RegExp.prototype.test);
-var utf8Encoder = new TextEncoder;
-var encodeUTF8 = TextEncoder.prototype.encode.call.bind(TextEncoder.prototype.encode);
 function inspectConfig(value) {
   if (typeof value !== "object" || value === null) {
     throw new Error("config must be an ordinary object");
@@ -1736,7 +1771,7 @@ function inspectConfig(value) {
   return normalizeConfig(value);
 }
 function validateDirectory(value) {
-  if (typeof value !== "string" || value === "" || hasUnpairedSurrogate(value) || startsWith(value, "/") || includes(value, "\\") || hasControl(value)) {
+  if (typeof value !== "string" || value === "" || !hasOnlyUnicodeScalarValues(value) || startsWith(value, "/") || includes(value, "\\") || hasControl(value)) {
     throw new Error("config dirs entries must be non-empty root-relative POSIX paths");
   }
   const normalized = startsWith(value, "./") ? slice(value, 2) : value;
@@ -1755,7 +1790,7 @@ function validateDirectory(value) {
   return normalized;
 }
 function validateIgnorePattern(value) {
-  if (typeof value !== "string" || value === "" || hasUnpairedSurrogate(value) || startsWith(value, "./") || startsWith(value, "/") || endsWith(value, "/") || includes(value, "//") || includes(value, "\\") || hasControl(value) || startsWith(value, "!") || regexpTest(/[[\]{}]/, value) || regexpTest(/[?*+@!]\(/, value)) {
+  if (typeof value !== "string" || value === "" || !hasOnlyUnicodeScalarValues(value) || startsWith(value, "./") || startsWith(value, "/") || endsWith(value, "/") || includes(value, "//") || includes(value, "\\") || hasControl(value) || startsWith(value, "!") || regexpTest(/[[\]{}]/, value) || regexpTest(/[?*+@!]\(/, value)) {
     throw new Error(`unsupported ignorePattern ${JSON.stringify(value)}`);
   }
   const segments = split(value, "/");
@@ -1769,24 +1804,8 @@ function validateIgnorePattern(value) {
 }
 function hasControl(value) {
   for (let index = 0;index < value.length; index++) {
-    const code = charCodeAt(value, index);
+    const code = charCodeAt2(value, index);
     if (code <= 31 || code >= 127 && code <= 159)
-      return true;
-  }
-  return false;
-}
-function hasUnpairedSurrogate(value) {
-  for (let index = 0;index < value.length; index++) {
-    const code = charCodeAt(value, index);
-    if (code >= 56320 && code <= 57343)
-      return true;
-    if (code < 55296 || code > 56319)
-      continue;
-    index++;
-    if (index === value.length)
-      return true;
-    const low = charCodeAt(value, index);
-    if (low < 56320 || low > 57343)
       return true;
   }
   return false;
@@ -1870,17 +1889,6 @@ function setArrayIndex(array, index, value) {
     value,
     writable: true
   });
-}
-function compareUTF8(left, right) {
-  const leftBytes = encodeUTF8(utf8Encoder, left);
-  const rightBytes = encodeUTF8(utf8Encoder, right);
-  const length = leftBytes.length < rightBytes.length ? leftBytes.length : rightBytes.length;
-  for (let index = 0;index < length; index++) {
-    const difference = leftBytes[index] - rightBytes[index];
-    if (difference !== 0)
-      return difference;
-  }
-  return leftBytes.length - rightBytes.length;
 }
 // sdk/typescript/src/schema/payload.ts
 var payloadSchemaValidationErrorBrand = Symbol.for("helmr.sdk.PayloadSchemaValidationError");
@@ -2031,7 +2039,6 @@ function freezeWorkspaceAddress(value) {
   return Object.freeze(value);
 }
 // sdk/typescript/src/internal/jsoncanon.ts
-var textDecoder = new TextDecoder("utf-8", { fatal: true });
 var textEncoder = new TextEncoder;
 function canonicalizeJsonValue(value) {
   return textEncoder.encode(serialize(value, new Set));
@@ -2094,20 +2101,6 @@ function assertPlainObject(value) {
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (!descriptor?.enumerable || !("value" in descriptor)) {
       throw new Error("canonical JSON object properties must be enumerable data properties");
-    }
-  }
-}
-function assertUnicodeString(value) {
-  for (let index = 0;index < value.length; index++) {
-    const unit = value.charCodeAt(index);
-    if (unit >= 55296 && unit <= 56319) {
-      const next = value.charCodeAt(index + 1);
-      if (next < 56320 || next > 57343) {
-        throw new Error("canonical JSON contains an unpaired high surrogate");
-      }
-      index++;
-    } else if (unit >= 56320 && unit <= 57343) {
-      throw new Error("canonical JSON contains an unpaired low surrogate");
     }
   }
 }
@@ -2307,8 +2300,13 @@ var ParseErrorCode;
   ParseErrorCode2[ParseErrorCode2["InvalidCharacter"] = 16] = "InvalidCharacter";
 })(ParseErrorCode || (ParseErrorCode = {}));
 
+// compiler/typescript/src/utf8.ts
+function compareUTF82(left, right) {
+  return Buffer.compare(Buffer.from(left), Buffer.from(right));
+}
+
 // compiler/typescript/src/analysis.ts
-var textDecoder2 = new TextDecoder("utf-8", { fatal: true });
+var textDecoder = new TextDecoder("utf-8", { fatal: true });
 var maxVerificationFailureMessageBytes = 16 << 10;
 
 // compiler/typescript/src/local-packages.ts
@@ -3325,9 +3323,6 @@ function hasNodeModules(path) {
 function inside(path) {
   return path === "" || path !== ".." && !path.startsWith("../") && !path.startsWith("/");
 }
-function compareUTF82(left, right) {
-  return Buffer.compare(Buffer.from(left), Buffer.from(right));
-}
 
 // compiler/typescript/src/bundle.ts
 var ESBUILD_VERSION = "0.28.1";
@@ -3471,10 +3466,10 @@ function localPackageForPath(path, localPackages) {
   return;
 }
 function sortedLocalPackages(localPackages) {
-  return [...localPackages.values()].sort((left, right) => compareUTF83(left.installedRoot, right.installedRoot));
+  return [...localPackages.values()].sort((left, right) => compareUTF82(left.installedRoot, right.installedRoot));
 }
 function sortedExternalEdges(edges) {
-  return [...edges].sort((left, right) => compareUTF83(externalEdgeKey(left), externalEdgeKey(right)));
+  return [...edges].sort((left, right) => compareUTF82(externalEdgeKey(left), externalEdgeKey(right)));
 }
 function externalEdgeKey(edge) {
   return [
@@ -3512,9 +3507,6 @@ function hasNodeModules2(path) {
 }
 function inside2(path) {
   return path === "" || path !== ".." && !path.startsWith(`..${sep3}`) && !path.startsWith("/");
-}
-function compareUTF83(left, right) {
-  return Buffer.compare(Buffer.from(left), Buffer.from(right));
 }
 
 // compiler/typescript/src/config.ts

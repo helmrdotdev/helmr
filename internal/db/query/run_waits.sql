@@ -749,23 +749,6 @@ UPDATE run_leases
    AND expires_at > transaction_timestamp()
 RETURNING *;
 
--- name: MarkRunWaitParked :one
-UPDATE run_waits
-   SET suspension_state = 'parked',
-       checkpoint_ack_version = sqlc.arg(checkpoint_ack_version),
-       suspend_checkpoint_id = sqlc.arg(suspend_checkpoint_id),
-       prior_run_lease_id = current_run_lease_id,
-       current_run_lease_id = NULL,
-       updated_at = now()
- WHERE run_id = sqlc.arg(run_id)
-   AND attempt_number = sqlc.arg(attempt_number)
-   AND workspace_id = sqlc.arg(workspace_id)
-   AND id = sqlc.arg(id)
-   AND suspension_state = 'checkpointing'
-   AND condition_state = 'pending'
-   AND checkpoint_request_version = sqlc.arg(checkpoint_ack_version)
-RETURNING *;
-
 -- name: ReleaseRunResumeWait :one
 UPDATE run_waits
    SET suspension_state = 'released',

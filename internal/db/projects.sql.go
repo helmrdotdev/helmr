@@ -11,22 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const clearDefaultProject = `-- name: ClearDefaultProject :execrows
-UPDATE projects
-   SET is_default = false,
-       updated_at = now()
- WHERE org_id = $1
-   AND is_default
-`
-
-func (q *Queries) ClearDefaultProject(ctx context.Context, orgID pgtype.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, clearDefaultProject, orgID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const createEnvironment = `-- name: CreateEnvironment :one
 INSERT INTO environments (id, org_id, project_id, slug, name, color_hex, is_default)
 VALUES (
@@ -263,38 +247,6 @@ func (q *Queries) DeleteProject(ctx context.Context, arg DeleteProjectParams) (P
 	return i, err
 }
 
-const getDefaultEnvironment = `-- name: GetDefaultEnvironment :one
-SELECT id, org_id, project_id, slug, name, color_hex, is_default, created_at, updated_at, current_deployment_id
-  FROM environments
- WHERE org_id = $1
-   AND project_id = $2
-   AND is_default
- LIMIT 1
-`
-
-type GetDefaultEnvironmentParams struct {
-	OrgID     pgtype.UUID `json:"org_id"`
-	ProjectID pgtype.UUID `json:"project_id"`
-}
-
-func (q *Queries) GetDefaultEnvironment(ctx context.Context, arg GetDefaultEnvironmentParams) (Environment, error) {
-	row := q.db.QueryRow(ctx, getDefaultEnvironment, arg.OrgID, arg.ProjectID)
-	var i Environment
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.Slug,
-		&i.Name,
-		&i.ColorHex,
-		&i.IsDefault,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.CurrentDeploymentID,
-	)
-	return i, err
-}
-
 const getEnvironment = `-- name: GetEnvironment :one
 SELECT id, org_id, project_id, slug, name, color_hex, is_default, created_at, updated_at, current_deployment_id
   FROM environments
@@ -327,38 +279,6 @@ func (q *Queries) GetEnvironment(ctx context.Context, arg GetEnvironmentParams) 
 	return i, err
 }
 
-const getEnvironmentBySlug = `-- name: GetEnvironmentBySlug :one
-SELECT id, org_id, project_id, slug, name, color_hex, is_default, created_at, updated_at, current_deployment_id
-  FROM environments
- WHERE org_id = $1
-   AND project_id = $2
-   AND slug = $3
-`
-
-type GetEnvironmentBySlugParams struct {
-	OrgID     pgtype.UUID `json:"org_id"`
-	ProjectID pgtype.UUID `json:"project_id"`
-	Slug      string      `json:"slug"`
-}
-
-func (q *Queries) GetEnvironmentBySlug(ctx context.Context, arg GetEnvironmentBySlugParams) (Environment, error) {
-	row := q.db.QueryRow(ctx, getEnvironmentBySlug, arg.OrgID, arg.ProjectID, arg.Slug)
-	var i Environment
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.Slug,
-		&i.Name,
-		&i.ColorHex,
-		&i.IsDefault,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.CurrentDeploymentID,
-	)
-	return i, err
-}
-
 const getProject = `-- name: GetProject :one
 SELECT id, org_id, default_region_id, slug, name, is_default, created_at, updated_at
   FROM projects
@@ -373,34 +293,6 @@ type GetProjectParams struct {
 
 func (q *Queries) GetProject(ctx context.Context, arg GetProjectParams) (Project, error) {
 	row := q.db.QueryRow(ctx, getProject, arg.OrgID, arg.ID)
-	var i Project
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.DefaultRegionID,
-		&i.Slug,
-		&i.Name,
-		&i.IsDefault,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const getProjectBySlug = `-- name: GetProjectBySlug :one
-SELECT id, org_id, default_region_id, slug, name, is_default, created_at, updated_at
-  FROM projects
- WHERE org_id = $1
-   AND slug = $2
-`
-
-type GetProjectBySlugParams struct {
-	OrgID pgtype.UUID `json:"org_id"`
-	Slug  string      `json:"slug"`
-}
-
-func (q *Queries) GetProjectBySlug(ctx context.Context, arg GetProjectBySlugParams) (Project, error) {
-	row := q.db.QueryRow(ctx, getProjectBySlug, arg.OrgID, arg.Slug)
 	var i Project
 	err := row.Scan(
 		&i.ID,

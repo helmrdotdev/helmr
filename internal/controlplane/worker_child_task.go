@@ -638,7 +638,6 @@ func registerSameWorkspaceChildCall(
 		ResumeAttachID:    resumeAttachID.String(),
 		RuntimeInstanceID: pgvalue.UUIDString(authority.runtime.ID),
 		RuntimeEpoch:      input.Worker.WorkerEpoch,
-		CheckpointDelayMs: 0,
 	}
 	replayed, err := store.GetSameWorkspaceChildCallReplay(
 		ctx,
@@ -817,7 +816,6 @@ func registerDifferentWorkspaceChildCall(
 		ResumeAttachID:    resumeAttachID.String(),
 		RuntimeInstanceID: pgvalue.UUIDString(authority.runtime.ID),
 		RuntimeEpoch:      input.Worker.WorkerEpoch,
-		CheckpointDelayMs: 0,
 	}
 	replayed, err := store.GetChildCallRunWaitReplay(ctx, db.GetChildCallRunWaitReplayParams{
 		EnvironmentID: authority.run.EnvironmentID, RunID: authority.run.ID,

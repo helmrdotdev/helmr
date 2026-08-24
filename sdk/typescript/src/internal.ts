@@ -33,9 +33,7 @@ export {
   type InternalSandboxDefinition,
 } from "./workspace"
 export {
-  canonicalizeJson,
   canonicalizeJsonValue,
-  parseJson,
   type JsonObject,
   type JsonValue,
 } from "./internal/jsoncanon"

@@ -186,12 +186,12 @@ const closeRunRuntimes = `-- name: CloseRunRuntimes :exec
 WITH candidate_runtimes AS (
     SELECT run_leases.runtime_instance_id
       FROM run_leases
-     WHERE run_leases.id = $3
-       AND run_leases.run_id = $4
+     WHERE run_leases.id = $1
+       AND run_leases.run_id = $2
     UNION
     SELECT runtime_instances.id AS runtime_instance_id
       FROM runtime_instances
-     WHERE runtime_instances.reserved_run_id = $4
+     WHERE runtime_instances.reserved_run_id = $2
 ), closing_runtimes AS (
     UPDATE runtime_instances
        SET desired_state = 'closed',
@@ -200,7 +200,7 @@ WITH candidate_runtimes AS (
                ELSE desired_version + 1
            END,
            desired_at = transaction_timestamp(),
-           desired_reason = $5,
+           desired_reason = $3,
            updated_at = transaction_timestamp()
      WHERE runtime_instances.id IN (
            SELECT runtime_instance_id FROM candidate_runtimes
@@ -210,12 +210,6 @@ WITH candidate_runtimes AS (
 )
 UPDATE workspace_mounts
    SET state = 'unmounting',
-       finalization_kind = COALESCE($1, finalization_kind),
-       finalization_reason_code = COALESCE($2, finalization_reason_code),
-       finalization_error = CASE
-           WHEN $1::text IS NOT NULL THEN NULL
-           ELSE finalization_error
-       END,
        stopped_at = COALESCE(stopped_at, transaction_timestamp()),
        updated_at = transaction_timestamp()
  WHERE runtime_instance_id IN (
@@ -227,21 +221,13 @@ UPDATE workspace_mounts
 `
 
 type CloseRunRuntimesParams struct {
-	MountFinalizationKind       pgtype.Text `json:"mount_finalization_kind"`
-	MountFinalizationReasonCode pgtype.Text `json:"mount_finalization_reason_code"`
-	RunLeaseID                  pgtype.UUID `json:"run_lease_id"`
-	RunID                       pgtype.UUID `json:"run_id"`
-	ReasonCode                  string      `json:"reason_code"`
+	RunLeaseID pgtype.UUID `json:"run_lease_id"`
+	RunID      pgtype.UUID `json:"run_id"`
+	ReasonCode string      `json:"reason_code"`
 }
 
 func (q *Queries) CloseRunRuntimes(ctx context.Context, arg CloseRunRuntimesParams) error {
-	_, err := q.db.Exec(ctx, closeRunRuntimes,
-		arg.MountFinalizationKind,
-		arg.MountFinalizationReasonCode,
-		arg.RunLeaseID,
-		arg.RunID,
-		arg.ReasonCode,
-	)
+	_, err := q.db.Exec(ctx, closeRunRuntimes, arg.RunLeaseID, arg.RunID, arg.ReasonCode)
 	return err
 }
 

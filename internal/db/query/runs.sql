@@ -657,18 +657,6 @@ SELECT runs.id,
  ORDER BY runs.created_at DESC, runs.id DESC
  LIMIT sqlc.arg(limit_count);
 
--- name: ListQueuedRunsForQueue :many
-SELECT *
-  FROM runs
- WHERE environment_id = sqlc.arg(environment_id)
-   AND queue_name = sqlc.arg(queue_name)
-   AND concurrency_key IS NOT DISTINCT FROM sqlc.narg(concurrency_key)::text
-   AND status = 'queued'
-   AND current_run_lease_id IS NULL
-   AND (first_lease_at IS NOT NULL OR queued_expires_at IS NULL OR queued_expires_at > now())
- ORDER BY queue_score_at, id
- LIMIT sqlc.arg(limit_count);
-
 -- name: ListExpiredParentOwnedChildRuns :many
 SELECT child.id,
        child.parent_run_id,

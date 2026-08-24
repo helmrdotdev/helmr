@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"math"
@@ -12,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 func TestProgramArtifactAcceptsProgram(t *testing.T) {
@@ -485,5 +485,5 @@ func (artifact *memoryArtifact) takeInode() uint64 {
 
 func testDigest(value string) string {
 	digest := sha256.Sum256([]byte(value))
-	return "sha256:" + hex.EncodeToString(digest[:])
+	return sha256sum.FormatDigest(digest[:])
 }

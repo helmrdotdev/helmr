@@ -73,7 +73,7 @@ func (s *Server) workerCreateActorInputRunWait(
 		writeError(w, errors.New("actor input wait declaration is invalid"))
 		return
 	}
-	timeoutAt, idleTimeout, checkpointDueAt, checkpointDelay, err := runWaitDeadlines(
+	timeoutAt, idleTimeout, checkpointDueAt, err := runWaitDeadlines(
 		request, idleTimeoutDefault,
 	)
 	if err != nil {
@@ -196,7 +196,6 @@ func (s *Server) workerCreateActorInputRunWait(
 	response := workerapi.CreateRunWaitResponse{
 		RunID: pgvalue.UUIDString(registrationLocators.RunID), RunWaitID: waitID.String(), ResumeAttachID: resumeAttachID.String(),
 		RuntimeInstanceID: pgvalue.UUIDString(registrationLocators.RuntimeInstanceID), RuntimeEpoch: worker.WorkerEpoch,
-		CheckpointDelayMs: checkpointDelay.Milliseconds(),
 	}
 	if registered.SuspensionState == db.RunWaitStateReleased {
 		response.ResolutionKind, response.Resolution, err = actorInputWaitDecision(registered)

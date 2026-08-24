@@ -99,10 +99,6 @@ func TestFatalRuntimeFailureWaitsForControlAcknowledgement(t *testing.T) {
 	}
 }
 
-func (c *cleanupRuntimeConnector) Connect(context.Context, vm.ConnectRequest) (vm.Session, error) {
-	return nil, errors.New("not used")
-}
-
 func (c *cleanupRuntimeConnector) Cleanup(_ context.Context, owner vm.Owner) error {
 	c.cleaned = append(c.cleaned, owner.ID)
 	return c.err
