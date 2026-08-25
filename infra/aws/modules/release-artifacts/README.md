@@ -14,9 +14,13 @@ Expected manifest shape:
 
 ```json
 {
-  "controlplane_image": "ghcr.io/helmrdotdev/helmr-controlplane@sha256:...",
-  "worker_amis": {
-    "us-east-1": "ami-0123456789abcdef0"
+  "schema": "helmr.aws-release.v0",
+  "controlplaneImage": "ghcr.io/helmrdotdev/helmr-controlplane@sha256:...",
+  "platformRelease": {},
+  "workerImage": {
+    "amis": {
+      "us-east-1": "ami-0123456789abcdef0"
+    }
   }
 }
 ```
@@ -47,5 +51,5 @@ module "worker" {
 
 Use `controlplane_image_override` and `worker_ami_id_override` for custom builds or forks.
 `controlplane_image_override` must be digest-pinned with `@sha256:<digest>`, and release manifests are
-rejected unless `controlplane_image` is digest-pinned. Resolved worker AMIs from the manifest or override
+rejected unless `controlplaneImage` is digest-pinned. Resolved worker AMIs from the manifest or override
 must match `^ami-[0-9a-f]{8,}$`. When `resolve_worker_ami` is false, the worker AMI may be null.

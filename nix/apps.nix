@@ -136,7 +136,7 @@ in
   ci-infra-test =
     app "ci-infra-test" "run AWS module tests with pinned OpenTofu" toolsets.infraTest
       ''
-        for module in bootstrap controlplane network worker worker-image; do
+        for module in bootstrap controlplane network release-artifacts worker worker-image; do
           (
             cd "infra/aws/modules/$module"
             if [ "$module" = worker-image ]; then
