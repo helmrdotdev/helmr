@@ -15,7 +15,6 @@ let
       helmrPackages
       ;
   };
-  ciChecksPath = pkgs.lib.makeBinPath toolsets.ciChecks;
   helmrApp = {
     type = "app";
     program = "${helmrPackages.helmr}/bin/helmr";
@@ -34,128 +33,146 @@ let
       program = "${program}/bin/${name}";
       meta.description = description;
     };
+
+  ciApps = {
+    ci-policy =
+      app "ci-policy" "run repository policy and release script checks for CI" toolsets.ciChecks
+        ''
+          bun install --frozen-lockfile --ignore-scripts
+          bun audit
+          actionlint
+          scripts/security-checks.sh
+          bash -n scripts/dev-console-stack.sh
+          bash tests/install_test.sh
+          bash tests/release_manifest_test.sh
+          bash tests/release_workflow_test.sh
+          bash tests/release_worker_ami_cleanup_test.sh
+          bash tests/release_worker_image_identity_test.sh
+          bash tests/pre_aws_release_gate_test.sh
+          bash tests/aws_bootstrap_helmr_secrets_test.sh
+          bash tests/aws_release_artifacts_test.sh
+          bash tests/platform_release_materialize_test.sh
+          bash tests/platform_release_publish_test.sh
+          bash tests/publish_materialized_platform_release_test.sh
+          bash tests/release_smoke_selector_test.sh
+          bash tests/worker_host_bundle_test.sh
+          bash tests/worker_runtime_bundle_test.sh
+          bash tests/linux_worker_host_bundle_materialize_test.sh
+          bash tests/netboot_inputs_test.sh
+          bash tests/boot_artifacts_make_test.sh
+          bash tests/guest_init_cgroup_test.sh
+        '';
+    ci-generated =
+      app "ci-generated" "check generated artifacts and formatting for CI" toolsets.ciChecks
+        ''
+          bun install --frozen-lockfile --ignore-scripts
+          scripts/build-compiler-entry.sh --check
+          scripts/build-runtime-entry.sh --check
+          make generate
+          make fmt
+          make console-build
+          git diff --exit-code
+        '';
+    ci-typescript =
+      app "ci-typescript" "run TypeScript type checks and tests for CI" toolsets.ciChecks
+        ''
+          ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
+            export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib ]}
+          ''}
+          bun install --frozen-lockfile --ignore-scripts
+          scripts/check-dev-samples.sh
+          bun run typecheck
+          bun run test:ts
+          bun run build:web
+        '';
+    ci-go-lint =
+      app "ci-go-lint" "run Go lint checks with embedded console assets for CI" toolsets.ciChecks
+        ''
+          bun install --frozen-lockfile --ignore-scripts
+          make lint
+        '';
+    ci-go-build =
+      app "ci-go-build" "build Go commands with embedded console assets for CI" toolsets.ciChecks
+        ''
+          bun install --frozen-lockfile --ignore-scripts
+          make build
+        '';
+    ci-go-race =
+      app "ci-go-race" "run Go race tests with embedded console assets for CI" toolsets.ciChecks
+        ''
+          export HELMR_SKIP_POSTGRES_TESTS=1
+          bun install --frozen-lockfile --ignore-scripts
+          make test-race
+        '';
+    ci-linux-compile =
+      app "ci-linux-compile" "cross-compile Linux Go test binaries for CI" toolsets.ciChecks
+        ''
+          make test-linux-compile
+        '';
+    ci-firecracker-probe =
+      app "ci-firecracker-probe" "validate the pinned Firecracker probe output on Linux"
+        toolsets.runtimeProbe
+        ''
+          if [ "$(uname -s)" != "Linux" ] || [ "$(uname -m)" != "x86_64" ]; then
+            echo "ci-firecracker-probe requires an x86_64 Linux host." >&2
+            exit 1
+          fi
+          FIRECRACKER_PATH="$(command -v firecracker)"
+          export FIRECRACKER_PATH
+          go test ./internal/firecracker -run '^TestPackagedFirecrackerProbeOutputIsAccepted$' -count=1
+        '';
+    ci-linux-lint =
+      app "ci-linux-lint" "run Linux-targeted Go static analysis for CI" toolsets.ciChecks
+        ''
+          bun install --frozen-lockfile --ignore-scripts
+          make console-build
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 staticcheck -tags embed_console ./...
+        '';
+    ci-infra-test =
+      app "ci-infra-test" "run AWS module tests with pinned OpenTofu" toolsets.infraTest
+        ''
+          for module in bootstrap controlplane network release-artifacts worker worker-image; do
+            (
+              cd "infra/aws/modules/$module"
+              if [ "$module" = worker-image ]; then
+                bash tests/prepare_root_test.sh
+              fi
+              tofu init -backend=false -input=false
+              tofu fmt -check -recursive
+              tofu test
+            )
+          done
+          for stack in quickstart standard; do
+            (
+              cd "infra/aws/$stack"
+              tofu init -backend=false -input=false
+              tofu fmt -check -recursive
+              tofu test
+            )
+          done
+        '';
+    ci-postgres = app "ci-postgres" "run Postgres-backed CI tests" toolsets.appRuntime ''
+      exec ./scripts/ci-postgres.sh "$@"
+    '';
+  };
 in
-{
+ciApps
+// {
   default = helmrApp;
   helmr = helmrApp;
-  ci-checks = app "ci-checks" "run repository checks for CI" toolsets.ciChecks ''
-    export PATH=${ciChecksPath}
-    exec ${pkgs.bash}/bin/bash ./scripts/ci-checks.sh "$@"
+  ci-checks = app "ci-checks" "run repository checks for CI" [ ] ''
+    ${ciApps.ci-policy.program}
+    ${ciApps.ci-generated.program}
+    ${ciApps.ci-typescript.program}
+    ${ciApps.ci-go-lint.program}
+    ${ciApps.ci-go-build.program}
+    ${ciApps.ci-go-race.program}
+    ${ciApps.ci-linux-compile.program}
+    ${pkgs.lib.optionalString (system == "x86_64-linux") ciApps.ci-firecracker-probe.program}
+    ${ciApps.ci-linux-lint.program}
+    ${ciApps.ci-infra-test.program}
+    ${ciApps.ci-postgres.program}
   '';
-  ci-policy =
-    app "ci-policy" "run repository policy and release script checks for CI" toolsets.ciChecks
-      ''
-        bun install --frozen-lockfile --ignore-scripts
-        bun audit
-        actionlint
-        scripts/security-checks.sh
-        bash tests/install_test.sh
-        bash tests/release_manifest_test.sh
-        bash tests/release_workflow_test.sh
-        bash tests/release_worker_ami_cleanup_test.sh
-        bash tests/release_worker_image_identity_test.sh
-        bash tests/pre_aws_release_gate_test.sh
-        bash tests/worker_host_bundle_test.sh
-        bash tests/linux_worker_host_bundle_materialize_test.sh
-        bash tests/netboot_inputs_test.sh
-        bash tests/boot_artifacts_make_test.sh
-        bash tests/guest_init_cgroup_test.sh
-      '';
-  ci-generated =
-    app "ci-generated" "check generated artifacts and formatting for CI" toolsets.ciChecks
-      ''
-        bun install --frozen-lockfile --ignore-scripts
-        scripts/build-compiler-entry.sh --check
-        scripts/build-runtime-entry.sh --check
-        make generate
-        make fmt
-        make console-build
-        git diff --exit-code
-      '';
-  ci-typescript =
-    app "ci-typescript" "run TypeScript type checks and tests for CI" toolsets.ciChecks
-      ''
-        ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
-          export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib ]}
-        ''}
-        bun install --frozen-lockfile --ignore-scripts
-        scripts/check-dev-samples.sh
-        bun run typecheck
-        bun run test:ts
-      '';
-  ci-go-test =
-    app "ci-go-test" "run Go tests with embedded console assets for CI" toolsets.ciChecks
-      ''
-        export HELMR_SKIP_POSTGRES_TESTS=1
-        bun install --frozen-lockfile --ignore-scripts
-        make test
-      '';
-  ci-go-lint =
-    app "ci-go-lint" "run Go lint checks with embedded console assets for CI" toolsets.ciChecks
-      ''
-        bun install --frozen-lockfile --ignore-scripts
-        make lint
-      '';
-  ci-go-build =
-    app "ci-go-build" "build Go commands with embedded console assets for CI" toolsets.ciChecks
-      ''
-        bun install --frozen-lockfile --ignore-scripts
-        make build
-      '';
-  ci-go-race =
-    app "ci-go-race" "run Go race tests with embedded console assets for CI" toolsets.ciChecks
-      ''
-        export HELMR_SKIP_POSTGRES_TESTS=1
-        bun install --frozen-lockfile --ignore-scripts
-        make test-race
-      '';
-  ci-linux-compile =
-    app "ci-linux-compile" "cross-compile Linux Go test binaries for CI" toolsets.ciChecks
-      ''
-        make test-linux-compile
-      '';
-  ci-firecracker-probe =
-    app "ci-firecracker-probe" "validate the pinned Firecracker probe output on Linux"
-      toolsets.runtimeProbe
-      ''
-        if [ "$(uname -s)" != "Linux" ] || [ "$(uname -m)" != "x86_64" ]; then
-          echo "ci-firecracker-probe requires an x86_64 Linux host." >&2
-          exit 1
-        fi
-        FIRECRACKER_PATH="$(command -v firecracker)"
-        export FIRECRACKER_PATH
-        go test ./internal/firecracker -run '^TestPackagedFirecrackerProbeOutputIsAccepted$' -count=1
-      '';
-  ci-linux-lint =
-    app "ci-linux-lint" "run Linux-targeted Go static analysis for CI" toolsets.ciChecks
-      ''
-        bun install --frozen-lockfile --ignore-scripts
-        make console-build
-        CGO_ENABLED=0 GOOS=linux GOARCH=amd64 staticcheck -tags embed_console ./...
-      '';
-  ci-infra-test =
-    app "ci-infra-test" "run AWS module tests with pinned OpenTofu" toolsets.infraTest
-      ''
-        for module in bootstrap controlplane network release-artifacts worker worker-image; do
-          (
-            cd "infra/aws/modules/$module"
-            if [ "$module" = worker-image ]; then
-              bash tests/prepare_root_test.sh
-            fi
-            tofu init -backend=false -input=false
-            tofu fmt -check -recursive
-            tofu test
-          )
-        done
-        for stack in quickstart standard; do
-          (
-            cd "infra/aws/$stack"
-            tofu init -backend=false -input=false
-            tofu fmt -check -recursive
-            tofu test
-          )
-        done
-      '';
   test = app "test" "run the full Helmr test recipe" toolsets.appRuntime "make test";
   lint = app "lint" "run Go vet with repository lint settings" toolsets.appRuntime "make lint";
   modernize = app "modernize" "apply Go modernizer fixes" toolsets.appRuntime "make modernize";
@@ -164,9 +181,6 @@ in
       "make modernize-check";
   dev = app "dev" "run the local Helmr control plane and console dashboard" toolsets.appRuntime ''
     exec ./scripts/dev-console-stack.sh "$@"
-  '';
-  ci-postgres = app "ci-postgres" "run Postgres-backed CI tests" toolsets.appRuntime ''
-    exec ./scripts/ci-postgres.sh "$@"
   '';
   measure-dispatch = app "measure-dispatch" "measure PostgreSQL dispatch discovery" toolsets.base ''
     exec ./scripts/measure-dispatch.sh "$@"

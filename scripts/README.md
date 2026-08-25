@@ -6,14 +6,22 @@ scripts only orchestrate those sources.
 
 ## CI parity
 
-Run the full pinned local suite with:
+Run the repository lane aggregate for the current platform with:
 
 ```sh
 nix run .#ci-checks
 ```
 
-Use the narrower `ci-*` Nix apps while iterating. Linux Firecracker execution
-still requires a real KVM host and is not emulated in hosted CI.
+For full GitHub CI parity, also run the flake and bundle-builder checks:
+
+```sh
+nix flake check --show-trace
+nix develop .#images --command bash tests/bundle_builder_e2e.sh
+```
+
+Use the narrower `ci-*` Nix apps while iterating. The aggregate runs the
+Firecracker probe only on x86_64 Linux. Firecracker execution still requires a
+real KVM host and is not emulated in hosted CI.
 
 ## Product release artifacts
 

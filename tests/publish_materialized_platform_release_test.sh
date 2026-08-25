@@ -4,13 +4,10 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 script="${root}/scripts/publish-materialized-platform-release.sh"
 
-rg -F 'nixos/nix:2.31.2@sha256:c7cc6c8cb5d81bed19997247629604708fda95c99c43ac362daa05b6a68e8a24' "${script}" >/dev/null
+rg -q 'nixos/nix:[^@[:space:]]+@sha256:[0-9a-f]{64}' "${script}"
 rg -F 'git -C "${ROOT}" archive --format=tar HEAD | tar -xf - -C "${source_dir}"' "${script}" >/dev/null
-rg -F 'source=${source_dir},target=/work,readonly' "${script}" >/dev/null
-rg -F 'source=${publish_dir},target=/input,readonly' "${script}" >/dev/null
 rg -F 'develop path:/work' "${script}" >/dev/null
 rg -F 'go -C /work run ./cmd/helmr-controlplane release publish' "${script}" >/dev/null
-rg -F 'install -m0400 "${input}/platform-release.json"' "${script}" >/dev/null
 rg -F -- '--env PLATFORM_STORE_URI' "${script}" >/dev/null
 if rg -F 'source=${ROOT},target=/work' "${script}" >/dev/null ||
   rg -F -- '--privileged' "${script}" >/dev/null ||

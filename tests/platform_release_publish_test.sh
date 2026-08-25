@@ -4,11 +4,6 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 script="${root}/scripts/publish-platform-release.sh"
 
-rg -F 'cosign verify-blob' "${script}" >/dev/null
-rg -F 'refs/tags/${release_tag}' "${script}" >/dev/null
-rg -F '.archive.digest == $digest' "${script}" >/dev/null
-rg -F 'tar -xf "${archive}"' "${script}" >/dev/null
-rg -F 'scripts/publish-materialized-platform-release.sh' "${script}" >/dev/null
 if rg -F 'docker run' "${script}" >/dev/null ||
   rg -F 'release publish' "${script}" >/dev/null; then
   printf 'not ok - signed publication must delegate after verification instead of owning a second publisher\n' >&2

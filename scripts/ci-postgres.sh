@@ -39,6 +39,7 @@ cd "$repo_root"
 CGO_ENABLED=1 go test -race \
 	./cmd/internal/dev-controlplane \
 	./internal/controlplane \
+	./internal/bootstrap \
 	./internal/db \
 	./internal/db/schema \
 	./internal/dispatch \
