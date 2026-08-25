@@ -8,14 +8,11 @@ let
   pkgs = import nixpkgs { inherit system; };
   inherit (pkgs) lib;
 
-  commandCheck =
-    name: command:
+  vendoredGoCheck =
+    name: nativeBuildInputs: command:
     pkgs.runCommand name
       {
-        nativeBuildInputs = [
-          pkgs.go_1_26
-          pkgs.git
-        ];
+        nativeBuildInputs = [ pkgs.go_1_26 ] ++ nativeBuildInputs;
         src = ../.;
       }
       ''
@@ -24,6 +21,12 @@ let
         cd source
         export HOME="$TMPDIR/home"
         mkdir -p "$HOME"
+        cp -R ${helmrPackages.helmr.goModules} vendor
+        export GOFLAGS=-mod=vendor
+        export GOPROXY=off
+        export GOSUMDB=off
+        export GOTOOLCHAIN=local
+        export CGO_ENABLED=0
         ${command}
         touch "$out"
       '';
@@ -92,39 +95,27 @@ in
 
     touch "$out"
   '';
-  fmt = commandCheck "fmt-check" ''
-    unformatted="$(find . -name '*.go' -not -path './.git/*' -print | xargs gofmt -l)"
-    if [ -n "$unformatted" ]; then
-      printf '%s\n' "$unformatted" >&2
-      exit 1
-    fi
-  '';
-  squashfs-tools = helmrPackages.squashfsTools;
-  deployment-bundle-finalizer =
-    pkgs.runCommand "deployment-bundle-finalizer-check"
+  fmt =
+    pkgs.runCommand "fmt-check"
       {
-        nativeBuildInputs = [
-          pkgs.go_1_26
-          helmrPackages.squashfsTools
-        ];
+        nativeBuildInputs = [ pkgs.go_1_26 ];
         src = ../.;
       }
       ''
-        cp -R "$src" source
-        chmod -R u+w source
-        cd source
-        export HOME="$TMPDIR/home"
-        mkdir -p "$HOME"
-        cp -R ${helmrPackages.helmr.goModules} vendor
-        export GOFLAGS=-mod=vendor
-        export GOPROXY=off
-        export GOSUMDB=off
-        export GOTOOLCHAIN=local
-        export CGO_ENABLED=0
+        unformatted="$(find "$src" -name '*.go' -print | xargs gofmt -l)"
+        if [ -n "$unformatted" ]; then
+          printf '%s\n' "$unformatted" >&2
+          exit 1
+        fi
+        touch "$out"
+      '';
+  squashfs-tools = helmrPackages.squashfsTools;
+  deployment-bundle-finalizer =
+    vendoredGoCheck "deployment-bundle-finalizer-check" [ helmrPackages.squashfsTools ]
+      ''
         HELMR_SQUASHFS_ENCODER=${helmrPackages.squashfsTools}/bin/mksquashfs \
           go test ./internal/builder \
             -run '^(TestFinalizeBundleWritesExactAtomicDirectory|TestFinalizeBundlePublishesExactlyOneConcurrentWriter)$'
-        touch "$out"
       '';
   timezone-manifest =
     pkgs.runCommand "timezone-manifest-check" { src = ../internal/schedule/tzdb_names.txt; }
@@ -234,82 +225,24 @@ in
         touch "$out"
       '';
   worker-host = helmrPackages.workerHost;
-  substrate-projection =
-    pkgs.runCommand "substrate-projection-check"
-      {
-        nativeBuildInputs = [
-          pkgs.go_1_26
-          pkgs.e2fsprogs
-        ];
-        src = ../.;
-      }
-      ''
-        cp -R "$src" source
-        chmod -R u+w source
-        cd source
-        export HOME="$TMPDIR/home"
-        mkdir -p "$HOME"
-        cp -R ${helmrPackages.helmr.goModules} vendor
-        export GOFLAGS=-mod=vendor
-        export GOPROXY=off
-        export GOSUMDB=off
-        export GOTOOLCHAIN=local
-        export CGO_ENABLED=0
-        export HELMR_SUBSTRATE_MKFS_EXT4=${helmrPackages.workerHost}/bin/mkfs.ext4
-        export HELMR_SUBSTRATE_MKE2FS_CONFIG=${helmrPackages.workerHost}/share/helmr/mke2fs.conf
-        export HELMR_SUBSTRATE_E2FSCK=${lib.getBin pkgs.e2fsprogs}/bin/e2fsck
-        export HELMR_SUBSTRATE_DEBUGFS=${lib.getBin pkgs.e2fsprogs}/bin/debugfs
-        go test ./internal/substrate -run '^TestDeterministicExt4Projection$' -count=1 -v
-        touch "$out"
-      '';
+  substrate-projection = vendoredGoCheck "substrate-projection-check" [ pkgs.e2fsprogs ] ''
+    export HELMR_SUBSTRATE_MKFS_EXT4=${helmrPackages.workerHost}/bin/mkfs.ext4
+    export HELMR_SUBSTRATE_MKE2FS_CONFIG=${helmrPackages.workerHost}/share/helmr/mke2fs.conf
+    export HELMR_SUBSTRATE_E2FSCK=${lib.getBin pkgs.e2fsprogs}/bin/e2fsck
+    export HELMR_SUBSTRATE_DEBUGFS=${lib.getBin pkgs.e2fsprogs}/bin/debugfs
+    go test ./internal/substrate -run '^TestDeterministicExt4Projection$' -count=1 -v
+  '';
   platform-release = helmrPackages.platformRelease;
-  platform-release-publish-contract =
-    pkgs.runCommand "platform-release-publish-contract-check"
-      {
-        nativeBuildInputs = [ pkgs.go_1_26 ];
-        src = ../.;
-      }
-      ''
-        cp -R "$src" source
-        chmod -R u+w source
-        cd source
-        export HOME="$TMPDIR/home"
-        mkdir -p "$HOME"
-        cp -R ${helmrPackages.helmr.goModules} vendor
-        export GOFLAGS=-mod=vendor
-        export GOPROXY=off
-        export GOSUMDB=off
-        export GOTOOLCHAIN=local
-        export CGO_ENABLED=0
-        HELMR_PLATFORM_RELEASE_DIR=${helmrPackages.platformRelease} \
-        HELMR_RUNTIME_RELEASE_DIR=${helmrPackages.runtimeRelease} \
-          go test ./internal/deployment \
-            -run '^(TestPublishPinnedPlatformRelease|TestVerifyPinnedRuntimeRelease)$'
-        touch "$out"
-      '';
+  platform-release-publish-contract = vendoredGoCheck "platform-release-publish-contract-check" [ ] ''
+    HELMR_PLATFORM_RELEASE_DIR=${helmrPackages.platformRelease} \
+    HELMR_RUNTIME_RELEASE_DIR=${helmrPackages.runtimeRelease} \
+      go test ./internal/deployment \
+        -run '^(TestPublishPinnedPlatformRelease|TestVerifyPinnedRuntimeRelease)$'
+  '';
   program-archive-contract =
-    pkgs.runCommand "program-archive-contract-check"
-      {
-        nativeBuildInputs = [
-          pkgs.go_1_26
-          helmrPackages.squashfsTools
-        ];
-        src = ../.;
-      }
+    vendoredGoCheck "program-archive-contract-check" [ helmrPackages.squashfsTools ]
       ''
-        cp -R "$src" source
-        chmod -R u+w source
-        cd source
-        export HOME="$TMPDIR/home"
-        mkdir -p "$HOME"
-        cp -R ${helmrPackages.helmr.goModules} vendor
-        export GOFLAGS=-mod=vendor
-        export GOPROXY=off
-        export GOSUMDB=off
-        export GOTOOLCHAIN=local
-        export CGO_ENABLED=0
         HELMR_SQUASHFS_ENCODER=${helmrPackages.squashfsTools}/bin/mksquashfs \
           go test ./internal/deployment -run '^TestPinnedProgramEncoder$'
-        touch "$out"
       '';
 }
