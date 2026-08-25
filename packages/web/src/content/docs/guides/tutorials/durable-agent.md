@@ -18,7 +18,7 @@ import { actor } from "@helmr/sdk"
 
 export const assistant = actor({
   id: "assistant",
-  idleTimeout: "30m",
+  idleTimeout: "90s",
   async run(session, ctx) {
     await session.output.append({
       type: "ready",
@@ -27,9 +27,7 @@ export const assistant = actor({
     })
 
     while (!ctx.signal.aborted) {
-      const message = await session.input.receive({
-        idleTimeout: "30m",
-      })
+      const message = await session.input.receive()
       if (!message.ok) return
       await session.output.append({
         type: "reply",
@@ -41,7 +39,10 @@ export const assistant = actor({
 })
 ```
 
-`receive()` can durably park the managed Run. New input resumes work without
+The Actor-level `idleTimeout` is the default for Session input receives. It can
+shorten how long an idle Run stays warm before Helmr checkpoints and suspends
+it; Helmr may suspend earlier. `receive()` can therefore durably park the
+managed Run without closing the Session. New input resumes work without
 discarding the Session's identity or ordered history. A later continuation may
 use a different Run ID.
 

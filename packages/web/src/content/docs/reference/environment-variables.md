@@ -1,6 +1,6 @@
 ---
 title: Environment variables
-description: Environment variables read by Helmr services and the CLI.
+description: Supported environment configuration for Helmr services and the CLI.
 sidebarLabel: Environment variables
 ---
 
@@ -14,13 +14,15 @@ Helmr names environment variables according to the environment that owns them:
 - `HELMR_` is reserved for public client configuration and values that cross
   into an environment Helmr does not exclusively own, such as a user's shell
   or a task guest. The CLI variables below are examples.
-- Established ecosystem variables such as `AWS_*`, `OTEL_*`, `HTTP_PROXY`,
-  and `NO_PROXY` keep their standard names.
+- Established ecosystem variables such as `AWS_*`, `HTTP_PROXY`, and
+  `NO_PROXY` keep their standard names.
 
 Environment variable names are an exact, case-sensitive contract. Helmr does
 not read legacy aliases. Text, numeric, boolean, and duration settings ignore
 surrounding whitespace. Passwords and tokens are opaque and are read exactly as
 provided. Base64 root keys must be canonical without surrounding whitespace.
+This page covers supported operator and client configuration. Variables owned
+entirely by the guest image, tests, or development tooling remain internal.
 
 ## CLI
 
@@ -74,6 +76,10 @@ Optional: `CONTROL_PLANE_ADDR`, `PUBLIC_URL`, `API_ORIGIN`, `REDIS_URL`, and
 `PUBLIC_URL`. `REDIS_URL` defaults to
 `redis://127.0.0.1:6379/0`.
 
+`CAPACITY_TOKEN` enables and authenticates the capacity API used by managed
+deployment automation. It must be canonical unpadded base64url that decodes to
+exactly 32 bytes. When it is unset, capacity API requests are rejected.
+
 ClickHouse telemetry: `CLICKHOUSE_URL` is required. Set `CLICKHOUSE_USER` when the service user is not `default`, and set `CLICKHOUSE_PASSWORD` when the service requires a password.
 
 `AUTH_KEY`, `TOKEN_CREDENTIAL_KEY`, `WORKSPACE_FENCING_KEY`,
@@ -91,6 +97,22 @@ Email delivery is disabled by default. Set `EMAIL_PROVIDER` to choose a sender:
 | `resend` | `EMAIL_PROVIDER=resend`, `RESEND_API_KEY`, `EMAIL_FROM` | None |
 
 `EMAIL_FROM` must be an email address or display-name address accepted by the selected provider, such as `Helmr <noreply@example.com>`.
+
+### Database bootstrap command
+
+`helmr-controlplane database-bootstrap [reset]` uses a separate administrative
+connection to create or reset the application database role. These variables
+are command inputs; the long-running Control Plane does not read the
+administrative credentials.
+
+| Variable | Purpose |
+| --- | --- |
+| `DATABASE_ADMIN_HOST` | Required administrative PostgreSQL host. |
+| `DATABASE_ADMIN_PORT` | Administrative PostgreSQL port. Defaults to `5432`. |
+| `DATABASE_ADMIN_USERNAME` | Required administrative role. It must differ from the application role in `DATABASE_URL`. |
+| `DATABASE_ADMIN_PASSWORD` | Required administrative role password. |
+| `DATABASE_NAME` | Required database name. `DATABASE_URL` must target the same name. |
+| `DATABASE_URL` | Required application connection URL. It must target the administrative endpoint with TLS, and include the application role and password. |
 
 ## Dispatcher
 
@@ -126,4 +148,47 @@ per-instance credential stored at `WORKER_INSTANCE_CREDENTIAL_PATH`.
 physical Worker. Provider identity and infrastructure inventory are deployment
 responsibilities rather than Control Plane authentication inputs.
 
-Runtime inputs include `WORKER_WORK_DIR`, `WORKER_IMAGES_DIR`, Firecracker paths and jailer settings, routed-network link and translation pools, resolver and blocked CIDRs, `VM_VCPUS`, `VM_MEMORY_MIB`, `WORKER_DISK_MIB`, and `VM_HEALTH_TIMEOUT`. `WORKER_DISK_MIB` overrides the filesystem capacity advertised by filesystem-first worker instances. The AWS Worker profile sets `VM_HEALTH_TIMEOUT=300s` to allow extra time for first-boot guest health convergence on EC2; other deployments use the Worker default unless they have the same provider-level requirement.
+`WORKER_WORK_DIR` and `WORKER_IMAGES_DIR` select Worker state and image
+directories. The following advanced settings connect the Worker to binaries
+and host layout supplied by its deployment image:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `FIRECRACKER_PATH` | `firecracker` | Firecracker binary. |
+| `CPU_TEMPLATE_HELPER_PATH` | `cpu-template-helper` | Firecracker CPU-template helper binary. |
+| `JAILER_PATH` | `jailer` | Firecracker jailer binary. |
+| `MKFS_EXT4_PATH` | `/usr/local/libexec/helmr/mkfs.ext4` | ext4 formatter used for VM disks. |
+| `MKE2FS_CONFIG_PATH` | `/usr/share/helmr/mke2fs.conf` | Configuration passed to the ext4 formatter. |
+| `IP_PATH` | `ip` | `iproute2` binary used for VM networking. |
+| `NFT_PATH` | `nft` | nftables binary used for VM networking. |
+| `JAILER_CHROOT_DIR` | Derived from the Worker VM state directory. | Base directory for jailer chroots. |
+| `JAILER_CGROUP_VERSION` | `2` | Cgroup version passed to the jailer. |
+
+VM sizing, Worker capacity, disk budgeting, and concurrency use these settings:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `VM_VCPUS` | `2` | vCPUs assigned to each VM. |
+| `VM_MEMORY_MIB` | `2048` | Memory assigned to each VM. |
+| `VM_SCRATCH_DISK_MIB` | `8192` | Scratch disk assigned to each VM. |
+| `WORKER_CAPACITY_VCPUS` | `VM_VCPUS` | Total vCPU capacity advertised by the Worker. It cannot be smaller than `VM_VCPUS`. |
+| `WORKER_CAPACITY_MEMORY_MIB` | `VM_MEMORY_MIB` | Total memory capacity advertised by the Worker. It cannot be smaller than `VM_MEMORY_MIB`. |
+| `WORKER_DISK_MIB` | Total capacity of the Worker filesystem. | Overrides the physical capacity used for disk budgeting. |
+| `WORKER_DISK_RESERVE_MIB` | `1024` | Host disk space subtracted to form the physical disk budget. |
+| `WORKER_SUBSTRATE_CACHE_MAX_MIB` | Derived when `0`. | Maximum substrate-cache size. |
+| `WORKER_ARTIFACT_CACHE_MAX_MIB` | Derived when `0`. | Maximum artifact-cache size. |
+| `WORKER_EXECUTION_SLOTS` | `1` | Maximum concurrent executions admitted by the Worker. |
+| `VM_INIT_TIMEOUT` | `30s` | Timeout for Firecracker SDK initialization. |
+| `VM_HEALTH_TIMEOUT` | `30s` | Timeout for guest health convergence. |
+
+When both cache limits are `0`, the Worker derives one shared cache budget and
+splits it two-thirds to the substrate cache and one-third to the artifact
+cache. When only one limit is `0`, that cache receives its independently
+derived budget. The Worker advertises aggregate guest disk capacity after
+subtracting both the reserve and cache budgets from the configured or measured
+filesystem total.
+
+The routed-network link and translation pools, resolver, and blocked CIDRs are
+required inputs listed above. The AWS Worker profile sets
+`VM_HEALTH_TIMEOUT=300s` for first-boot convergence on EC2; that is a provider
+profile value, not the Worker process default.

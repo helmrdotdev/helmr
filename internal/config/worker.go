@@ -144,9 +144,6 @@ func LoadWorker() (Worker, error) {
 	if cfg.JailerGID, err = envInt("JAILER_GID", cfg.JailerGID); err != nil {
 		return cfg, err
 	}
-	if cfg.JailerNumaNode, err = envInt("JAILER_NUMA_NODE", cfg.JailerNumaNode); err != nil {
-		return cfg, err
-	}
 	if cfg.ControlPlaneURL == "" {
 		return cfg, errors.New("CONTROL_PLANE_URL is required")
 	}
