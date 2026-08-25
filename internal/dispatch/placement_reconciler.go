@@ -40,6 +40,7 @@ type RunPlacementAuthority interface {
 }
 
 type WorkspaceExecPlacementDiscovery interface {
+	LoseExpiredWorkspaceMountClaims(context.Context, int32) ([]db.LoseExpiredWorkspaceMountClaimsRow, error)
 	ListPendingWorkspaceExecCandidates(
 		context.Context,
 		int32,
@@ -354,6 +355,12 @@ func waitFor(ctx context.Context, delay time.Duration) error {
 }
 
 func (r *PlacementReconciler) ReconcileWorkspaceExecs(ctx context.Context) error {
+	if _, err := r.workspaceExecDiscovery.LoseExpiredWorkspaceMountClaims(
+		ctx,
+		r.workspaceExecPolicy.limit,
+	); err != nil {
+		return fmt.Errorf("lose expired workspace mount claims: %w", err)
+	}
 	recoverable, err := r.workspaceExecDiscovery.ListRecoverableWorkspaceExecCandidates(
 		ctx,
 		r.workspaceExecPolicy.limit,

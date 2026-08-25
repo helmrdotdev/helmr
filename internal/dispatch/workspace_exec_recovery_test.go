@@ -2,6 +2,7 @@ package dispatch
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -14,12 +15,27 @@ import (
 type workspaceExecRecoveryDiscovery struct {
 	recoverable []db.ListRecoverableWorkspaceExecCandidatesRow
 	pending     []db.ListPendingWorkspaceExecCandidatesRow
+	calls       *[]string
+	expireErr   error
+}
+
+func (d workspaceExecRecoveryDiscovery) LoseExpiredWorkspaceMountClaims(
+	context.Context,
+	int32,
+) ([]db.LoseExpiredWorkspaceMountClaimsRow, error) {
+	if d.calls != nil {
+		*d.calls = append(*d.calls, "expire")
+	}
+	return nil, d.expireErr
 }
 
 func (d workspaceExecRecoveryDiscovery) ListRecoverableWorkspaceExecCandidates(
 	context.Context,
 	int32,
 ) ([]db.ListRecoverableWorkspaceExecCandidatesRow, error) {
+	if d.calls != nil {
+		*d.calls = append(*d.calls, "list_recoverable")
+	}
 	return d.recoverable, nil
 }
 
@@ -27,6 +43,9 @@ func (d workspaceExecRecoveryDiscovery) ListPendingWorkspaceExecCandidates(
 	context.Context,
 	int32,
 ) ([]db.ListPendingWorkspaceExecCandidatesRow, error) {
+	if d.calls != nil {
+		*d.calls = append(*d.calls, "list_pending")
+	}
 	return d.pending, nil
 }
 
@@ -87,6 +106,46 @@ func TestReconcileWorkspaceExecsRecoversLostAuthorityBeforePlacement(t *testing.
 		authority.calls[0] != "recover" ||
 		authority.calls[1] != "place" {
 		t.Fatalf("calls = %v, want [recover place]", authority.calls)
+	}
+}
+
+func TestReconcileWorkspaceExecsExpiresMountClaimsBeforeCandidateDiscovery(t *testing.T) {
+	var calls []string
+	reconciler := PlacementReconciler{
+		workspaceExecDiscovery: workspaceExecRecoveryDiscovery{calls: &calls},
+		workspaceExecAuthority: &workspaceExecRecoveryAuthority{},
+		workspaceExecPolicy:    placementLoopPolicy{limit: 8},
+	}
+	if err := reconciler.ReconcileWorkspaceExecs(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"expire", "list_recoverable", "list_pending"}
+	if len(calls) != len(want) {
+		t.Fatalf("calls = %v, want %v", calls, want)
+	}
+	for index := range want {
+		if calls[index] != want[index] {
+			t.Fatalf("calls = %v, want %v", calls, want)
+		}
+	}
+}
+
+func TestReconcileWorkspaceExecsPropagatesMountClaimExpiryFailure(t *testing.T) {
+	var calls []string
+	wantErr := errors.New("expire mount claims")
+	reconciler := PlacementReconciler{
+		workspaceExecDiscovery: workspaceExecRecoveryDiscovery{
+			calls: &calls, expireErr: wantErr,
+		},
+		workspaceExecAuthority: &workspaceExecRecoveryAuthority{},
+		workspaceExecPolicy:    placementLoopPolicy{limit: 8},
+	}
+	err := reconciler.ReconcileWorkspaceExecs(context.Background())
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("reconcile error = %v, want %v", err, wantErr)
+	}
+	if len(calls) != 1 || calls[0] != "expire" {
+		t.Fatalf("calls = %v, want [expire]", calls)
 	}
 }
 

@@ -704,13 +704,13 @@ func guestChannelTokenHash(value string) string {
 
 func workspaceMountResponse(row db.WorkspaceMount) workerapi.WorkspaceMountResponse {
 	response := workerapi.WorkspaceMountResponse{
-		ID:               pgvalue.MustUUIDValue(row.ID).String(),
-		ProjectID:        pgvalue.MustUUIDValue(row.ProjectID).String(),
-		EnvironmentID:    pgvalue.MustUUIDValue(row.EnvironmentID).String(),
-		WorkspaceID:      pgvalue.MustUUIDValue(row.WorkspaceID).String(),
-		BaseVersionID:    pgvalue.MustUUIDValue(row.MaterializedVersionID).String(),
-		WorkerInstanceID: pgvalue.MustUUIDValue(row.WorkerInstanceID).String(),
-		State:            string(row.State), ClaimAttempt: row.ClaimAttempt,
+		ID:                   pgvalue.MustUUIDValue(row.ID).String(),
+		ProjectID:            pgvalue.MustUUIDValue(row.ProjectID).String(),
+		EnvironmentID:        pgvalue.MustUUIDValue(row.EnvironmentID).String(),
+		WorkspaceID:          pgvalue.MustUUIDValue(row.WorkspaceID).String(),
+		BaseVersionID:        pgvalue.MustUUIDValue(row.MaterializedVersionID).String(),
+		WorkerInstanceID:     pgvalue.MustUUIDValue(row.WorkerInstanceID).String(),
+		State:                string(row.State),
 		FencingGeneration:    row.FencingGeneration,
 		DirtyGeneration:      row.DirtyGeneration,
 		FinalizationKind:     row.FinalizationKind.String,

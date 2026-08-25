@@ -1294,7 +1294,6 @@ type WorkspaceMount struct {
 	WorkspaceID                pgtype.UUID        `json:"workspace_id"`
 	MaterializedVersionID      pgtype.UUID        `json:"materialized_version_id"`
 	RuntimeInstanceID          pgtype.UUID        `json:"runtime_instance_id"`
-	ClaimAttempt               int32              `json:"claim_attempt"`
 	GuestChannelTokenHash      string             `json:"guest_channel_token_hash"`
 	GuestChannelTokenExpiresAt pgtype.Timestamptz `json:"guest_channel_token_expires_at"`
 	State                      string             `json:"state"`
