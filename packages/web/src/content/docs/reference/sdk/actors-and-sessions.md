@@ -21,9 +21,13 @@ export const reviewer = actor({
 
 `actor.start({ workspace, key?, input?, idempotencyKey?, run?, signal? })`
 returns `{ session, run }`. The runtime Session has fixed `input` and `output`
-channels. `receive({ timeout?, idleTimeout?, metadata?, tags? })` produces a
-result or `wait_timeout`/`session_closed`. Output supports `append`, `pipe`, and
-`writer`; records have a durable integer sequence and Run provenance.
+channels. The Actor's `idleTimeout` is the default for Session input receives;
+it can shorten the warm wait before checkpoint and suspension, but does not
+close or fail the Session. `receive({ timeout?, idleTimeout?, metadata?, tags? })`
+can override that idle default. Its separate `timeout` is the application
+deadline that can produce `wait_timeout`; a closed Session produces
+`session_closed`. Output supports `append`, `pipe`, and `writer`; records have a
+durable integer sequence and Run provenance.
 
 Outside the guest, use `client.actors.start(declaredId, request)` and address
 the returned Session with `client.sessions.ref(id)`. A `SessionRef` provides

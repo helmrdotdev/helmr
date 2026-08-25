@@ -166,7 +166,7 @@ func validateControlPlaneEmailConfig(cfg *ControlPlane) error {
 	switch cfg.EmailProvider {
 	case EmailProviderNone:
 		if cfg.EmailFrom != "" {
-			return errors.New("EMAIL_PROVIDER is required when EMAIL_FROM is set")
+			return errors.New("EMAIL_FROM requires EMAIL_PROVIDER=log, smtp, or resend")
 		}
 		if cfg.ResendAPIKey != "" {
 			return errors.New("EMAIL_PROVIDER=resend is required when RESEND_API_KEY is set")

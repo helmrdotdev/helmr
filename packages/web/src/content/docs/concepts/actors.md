@@ -14,11 +14,9 @@ import { actor } from "@helmr/sdk"
 
 export const assistant = actor({
   id: "assistant",
-  idleTimeout: "30m",
+  idleTimeout: "90s",
   async run(session, ctx) {
-    const received = await session.input.receive({
-      idleTimeout: "30m",
-    })
+    const received = await session.input.receive()
     if (!received.ok) return
     await session.output.append({
       type: "acknowledged",
@@ -40,9 +38,13 @@ record has a sequence, source, and timestamp. Each output record also carries
 Run attempt and Deployment provenance.
 
 Sessions have `open`, `closed`, `cancelled`, and `failed` states. Closing a
-Session prevents further interaction. An idle timeout or managed Run failure
-can also end progress, so Actor protocols should handle receive errors and use
-stable idempotency keys for upstream messages and derived output.
+Session prevents further interaction. An Actor's `idleTimeout` is the default
+for Session input receives: it can shorten how long an idle Run stays warm
+before Helmr checkpoints and suspends it, and Helmr may suspend earlier. It does
+not close or fail the Session. A receive-level `idleTimeout` overrides the Actor
+default, while `timeout` is the separate application deadline that can produce
+`wait_timeout`. Actor protocols should handle receive errors and use stable
+idempotency keys for upstream messages and derived output.
 
 Use a Task for one terminal request and result. Use a Token for one externally
 completed value. Use an Actor when the outside system needs a continuing

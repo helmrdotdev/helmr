@@ -388,6 +388,29 @@ func TestLoadControlPlaneRequiresCompleteSMTPConfig(t *testing.T) {
 	}
 }
 
+func TestLoadControlPlaneRejectsEmailFromWithDisabledDelivery(t *testing.T) {
+	setControlPlaneRequiredEnv(t)
+	t.Setenv("DATABASE_URL", "postgres://example")
+	t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
+	t.Setenv("DEPLOYMENT_MODE", "managed-cloud")
+	t.Setenv("CAS_URI", "s3://helmr-cas")
+	t.Setenv("WORKER_TOKEN_SIGNING_KEY", "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=")
+	t.Setenv("AUTH_KEY", "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=")
+	t.Setenv("ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	t.Setenv("GITHUB_OAUTH_CLIENT_ID", "client-id")
+	t.Setenv("GITHUB_OAUTH_CLIENT_SECRET", "client-secret")
+	t.Setenv("EMAIL_PROVIDER", "none")
+	t.Setenv("EMAIL_FROM", "noreply@example.test")
+
+	_, err := LoadControlPlane()
+	if err == nil {
+		t.Fatal("expected email provider conflict")
+	}
+	if got, want := err.Error(), "EMAIL_FROM requires EMAIL_PROVIDER=log, smtp, or resend"; got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+}
+
 func TestLoadControlPlaneReadsResendConfig(t *testing.T) {
 	setControlPlaneRequiredEnv(t)
 	t.Setenv("DATABASE_URL", "postgres://example")
@@ -496,7 +519,6 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	t.Setenv("MKE2FS_CONFIG_PATH", " /opt/helmr/etc/mke2fs.conf ")
 	t.Setenv("JAILER_UID", " 1001 ")
 	t.Setenv("JAILER_GID", " 1002 ")
-	t.Setenv("JAILER_NUMA_NODE", " 1 ")
 	t.Setenv("JAILER_CHROOT_DIR", " /var/lib/helmr/scratch/jailer ")
 	t.Setenv("JAILER_CGROUP_VERSION", " 2 ")
 	t.Setenv("WORKER_NETWORK_LINK_POOL", " 169.254.128.0/18 ")
@@ -530,7 +552,7 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	if len(cfg.NetworkBlockedIPv4CIDRs) != 2 || cfg.NetworkBlockedIPv4CIDRs[1].String() != "169.254.0.0/16" {
 		t.Fatalf("blocked IPv4 CIDRs = %v", cfg.NetworkBlockedIPv4CIDRs)
 	}
-	if cfg.JailerPath != "/usr/bin/jailer" || cfg.MkfsExt4Path != "/opt/helmr/bin/mkfs.ext4" || cfg.Mke2fsConfigPath != "/opt/helmr/etc/mke2fs.conf" || cfg.JailerUID != 1001 || cfg.JailerGID != 1002 || cfg.JailerNumaNode != 1 || cfg.JailerChrootDir != "/var/lib/helmr/scratch/jailer" || cfg.CgroupVersion != "2" || cfg.IPPath != "/usr/sbin/ip" || cfg.NFTPath != "/usr/sbin/nft" {
+	if cfg.JailerPath != "/usr/bin/jailer" || cfg.MkfsExt4Path != "/opt/helmr/bin/mkfs.ext4" || cfg.Mke2fsConfigPath != "/opt/helmr/etc/mke2fs.conf" || cfg.JailerUID != 1001 || cfg.JailerGID != 1002 || cfg.JailerNumaNode != 0 || cfg.JailerChrootDir != "/var/lib/helmr/scratch/jailer" || cfg.CgroupVersion != "2" || cfg.IPPath != "/usr/sbin/ip" || cfg.NFTPath != "/usr/sbin/nft" {
 		t.Fatalf("config = %+v", cfg)
 	}
 	if cfg.PlatformStoreURI != "s3://helmr-runtime" {

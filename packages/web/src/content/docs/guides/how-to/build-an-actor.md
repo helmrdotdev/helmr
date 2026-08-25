@@ -13,11 +13,9 @@ import { actor } from "@helmr/sdk"
 
 export const reviewer = actor({
   id: "reviewer",
-  idleTimeout: "30m",
+  idleTimeout: "90s",
   async run(session, ctx) {
-    const message = await session.input.receive({
-      idleTimeout: "30m",
-    })
+    const message = await session.input.receive()
     if (!message.ok) return
     await session.output.append(
       {
@@ -32,9 +30,13 @@ export const reviewer = actor({
 ```
 
 The handler receives an `ActorSession` and `ActorContext`. Session input is an
-ordered JSON log; output is a separately ordered log. `idleTimeout` controls
-how long the Actor can remain without progress, while `maxDuration`, `ttl`,
-`retry`, and `queue` use the same Run-default contracts as Tasks.
+ordered JSON log; output is a separately ordered log. The Actor's
+`idleTimeout` is the default for Session input receives. It can shorten how
+long an idle Run stays warm before Helmr checkpoints and suspends it; Helmr may
+suspend earlier, and suspension does not close the Session. A receive-level
+`idleTimeout` overrides the Actor default. The separate receive `timeout` is an
+application deadline. `maxDuration`, `ttl`, `retry`, and `queue` use the same
+Run-default contracts as Tasks.
 
 Start the deployed Actor with a Workspace and optional stable key and initial
 input:
