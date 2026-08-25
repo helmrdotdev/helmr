@@ -221,12 +221,14 @@ func (w ControlPlaneRunWaits) handleCheckpointDecision(ctx context.Context, requ
 	readyRequest := workerapi.CheckpointReadyRequest{
 		Lease: lease.Fence(), RequestVersion: intent.RequestVersion,
 		RunWaitID: intent.RunWaitID, CheckpointID: intent.CheckpointID,
-		SourceCleanup:    checkpoint.SourceCleanup,
 		WorkspaceCapture: *workerCheckpointWorkspaceCapture(checkpoint.WorkspaceCapture),
 		Manifest:         checkpoint.Manifest,
 	}
 	for {
 		if _, err := w.Client.MarkCheckpointReady(ctx, readyRequest); err == nil {
+			if err := request.Checkpointer.ReleaseCheckpointSource(ctx); err != nil {
+				return errors.Join(ErrDetached, fmt.Errorf("release checkpoint source: %w", err))
+			}
 			return ErrDetached
 		} else if !checkpointReadyRetryable(err) {
 			return fmt.Errorf("mark checkpoint ready: %w", err)

@@ -2,7 +2,6 @@ package token
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -14,7 +13,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -748,12 +746,6 @@ SELECT desired_version, observed_version
  WHERE id = $1`, authority.runtimeID).Scan(&runtimeDesiredVersion, &runtimeObservedVersion); err != nil {
 		t.Fatal(err)
 	}
-	cleanupProof, err := json.Marshal(workerapi.RuntimeCleanupProof{
-		Method: workerapi.RuntimeCleanupSessionClosed, CompletedAt: checkpointedAt.Time,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	if _, err := queries.CloseCheckpointSourceRuntime(ctx, db.CloseCheckpointSourceRuntimeParams{
 		CheckpointedAt:          checkpointedAt,
 		WorkspaceMountID:        pgvalue.UUID(authority.mountID),
@@ -763,7 +755,6 @@ SELECT desired_version, observed_version
 		MountFencingGeneration:  2,
 		ExpectedDesiredVersion:  runtimeDesiredVersion,
 		ExpectedObservedVersion: runtimeObservedVersion,
-		CleanupProof:            cleanupProof,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -790,7 +781,8 @@ SELECT desired_version, observed_version
 	var mountState db.WorkspaceMountState
 	var runtimeDesiredState, runtimeObservedState string
 	var reservedRunID pgtype.UUID
-	var mountTerminalReason, runtimeTerminalReason string
+	var mountTerminalReason string
+	var runtimeTerminalReason pgtype.Text
 	var reclaimEvidence []byte
 	if err := fixture.pool.QueryRow(ctx, `
 SELECT runs.status, runs.current_run_lease_id, run_leases.state, workspace_leases.state,
@@ -813,23 +805,18 @@ SELECT runs.status, runs.current_run_lease_id, run_leases.state, workspace_lease
 		&reservedRunID, &mountTerminalReason, &runtimeTerminalReason, &reclaimEvidence); err != nil {
 		t.Fatal(err)
 	}
-	var storedCleanupProof workerapi.RuntimeCleanupProof
-	if err := json.Unmarshal(reclaimEvidence, &storedCleanupProof); err != nil {
-		t.Fatal(err)
-	}
 	if runStatus != db.RunStatusWaiting || currentLease.Valid || leaseState != db.RunLeaseStateCheckpointed ||
 		workspaceLeaseState != db.WorkspaceLeaseStateReleased || suspension != db.RunWaitStateParked ||
 		!priorLease.Valid || uuid.UUID(priorLease.Bytes) != work.leaseID ||
 		checkpointState != db.RunCheckpointStateReady || mountVersion != privateVersionID ||
 		mountState != db.WorkspaceMountStateUnmounted ||
-		runtimeDesiredState != "closed" || runtimeObservedState != "closed" ||
-		reservedRunID.Valid || mountTerminalReason != "checkpointed" || runtimeTerminalReason != "checkpointed" ||
-		storedCleanupProof.Method != workerapi.RuntimeCleanupSessionClosed ||
-		!storedCleanupProof.CompletedAt.Equal(checkpointedAt.Time) {
+		runtimeDesiredState != "closed" || runtimeObservedState != "ready" ||
+		reservedRunID.Valid || mountTerminalReason != "checkpointed" || runtimeTerminalReason.Valid ||
+		len(reclaimEvidence) != 0 {
 		t.Fatalf("ready checkpoint state = run=%s/%v lease=%s workspace_lease=%s wait=%s/%v checkpoint=%s mount=%s/%s/%s runtime=%s/%s/%s reserved=%v cleanup=%+v",
 			runStatus, currentLease, leaseState, workspaceLeaseState, suspension, priorLease, checkpointState,
 			mountVersion, mountState, mountTerminalReason, runtimeDesiredState, runtimeObservedState,
-			runtimeTerminalReason, reservedRunID, storedCleanupProof)
+			runtimeTerminalReason.String, reservedRunID, reclaimEvidence)
 	}
 	if actor {
 		committedAt := pgvalue.Timestamptz(time.Now().UTC())

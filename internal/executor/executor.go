@@ -58,6 +58,7 @@ type WaitResumeDecision struct {
 
 type Checkpointer interface {
 	CreateCheckpoint(context.Context, CheckpointRequest) (CheckpointResult, error)
+	ReleaseCheckpointSource(context.Context) error
 }
 
 type CheckpointRequest struct {
@@ -75,7 +76,6 @@ type CheckpointRequest struct {
 type CheckpointResult struct {
 	Manifest         workerapi.CheckpointManifest
 	WorkspaceCapture *CheckpointWorkspaceCapture
-	SourceCleanup    *workerapi.RuntimeCleanupProof
 }
 
 type CheckpointWorkspaceCapture struct {

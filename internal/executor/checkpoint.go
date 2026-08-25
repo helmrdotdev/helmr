@@ -161,14 +161,13 @@ func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request Check
 	if c.session == nil {
 		return CheckpointResult{}, errors.New("checkpoint source session is required")
 	}
-	sourceReleaseAttempted := false
 	defer func() {
-		if err == nil || sourceReleaseAttempted {
+		if err == nil {
 			return
 		}
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
-		_ = c.releaseCheckpointSource(cleanupCtx)
+		_ = c.ReleaseCheckpointSource(cleanupCtx)
 	}()
 	if c.cas == nil {
 		return CheckpointResult{}, errors.New("checkpoint CAS is required")
@@ -210,22 +209,11 @@ func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request Check
 		return CheckpointResult{}, err
 	}
 	recordPhase("store_checkpoint_artifacts", started)
-	started = time.Now()
-	sourceReleaseAttempted = true
-	if err := c.releaseCheckpointSource(ctx); err != nil {
-		return CheckpointResult{}, fmt.Errorf("release checkpoint source: %w", err)
-	}
-	recordPhase("release_checkpoint_source", started)
-	sourceCleanup := &workerapi.RuntimeCleanupProof{
-		Method: workerapi.RuntimeCleanupSessionClosed, CompletedAt: time.Now().UTC(),
-	}
 	manifest.Phases = phases
-	return CheckpointResult{
-		Manifest: manifest, WorkspaceCapture: workspaceCapture, SourceCleanup: sourceCleanup,
-	}, nil
+	return CheckpointResult{Manifest: manifest, WorkspaceCapture: workspaceCapture}, nil
 }
 
-func (c runtimeCheckpointer) releaseCheckpointSource(ctx context.Context) error {
+func (c runtimeCheckpointer) ReleaseCheckpointSource(ctx context.Context) error {
 	if releaser, ok := c.session.(CheckpointSourceReleaser); ok {
 		return releaser.ReleaseCheckpointSource(ctx)
 	}

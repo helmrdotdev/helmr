@@ -32,7 +32,6 @@ type parsedCheckpointReady struct {
 	manifest       []byte
 	fingerprint    string
 	artifacts      []checkpointArtifactProof
-	cleanupProof   []byte
 	requestVersion int64
 }
 
@@ -736,19 +735,6 @@ func parseCheckpointReadyRequest(request workerapi.CheckpointReadyRequest) (pars
 	if err != nil {
 		return parsedCheckpointReady{}, request, err
 	}
-	if request.SourceCleanup == nil {
-		return parsedCheckpointReady{}, request, errors.New("source_cleanup is required")
-	}
-	if request.SourceCleanup.Method != workerapi.RuntimeCleanupSessionClosed {
-		return parsedCheckpointReady{}, request, errors.New("source_cleanup.method must be session_closed")
-	}
-	if err := validateRuntimeCleanupProof(*request.SourceCleanup, time.Now()); err != nil {
-		return parsedCheckpointReady{}, request, fmt.Errorf("source_cleanup is invalid: %w", err)
-	}
-	cleanupProof, err := json.Marshal(request.SourceCleanup)
-	if err != nil {
-		return parsedCheckpointReady{}, request, fmt.Errorf("marshal source_cleanup: %w", err)
-	}
 	tree, err := parseTaskWorkspaceTree("workspace_capture.tree", request.WorkspaceCapture.Tree)
 	if err != nil {
 		return parsedCheckpointReady{}, request, err
@@ -770,7 +756,6 @@ func parseCheckpointReadyRequest(request workerapi.CheckpointReadyRequest) (pars
 		lease: lease, waitID: waitID, checkpointID: checkpointID,
 		capture:  parsedTaskWorkspaceCapture{tree: tree, artifact: request.WorkspaceCapture.Artifact},
 		manifest: manifest, fingerprint: fingerprint, artifacts: artifacts,
-		cleanupProof:   cleanupProof,
 		requestVersion: request.RequestVersion,
 	}, normalized, nil
 }
@@ -1089,7 +1074,6 @@ func (s *Server) commitCheckpointReady(
 			MountFencingGeneration:  authority.workspaceMount.FencingGeneration,
 			ExpectedDesiredVersion:  authority.runtime.DesiredVersion,
 			ExpectedObservedVersion: authority.runtime.ObservedVersion,
-			CleanupProof:            ready.cleanupProof,
 		}); err != nil {
 			return staleRunLeaseClaim(err)
 		}
