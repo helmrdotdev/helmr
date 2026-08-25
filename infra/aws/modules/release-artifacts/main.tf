@@ -20,8 +20,8 @@ locals {
   manifest_status_code = local.can_fetch_manifest ? data.http.manifest[0].status_code : null
   manifest_json        = local.can_fetch_manifest ? try(jsondecode(data.http.manifest[0].response_body), null) : null
 
-  manifest_controlplane_image = local.manifest_json != null ? try(tostring(local.manifest_json.controlplane_image), null) : null
-  manifest_worker_ami_id      = local.manifest_json != null ? try(tostring(local.manifest_json.worker_amis[var.aws_region]), null) : null
+  manifest_controlplane_image = local.manifest_json != null ? try(tostring(local.manifest_json.controlplaneImage), null) : null
+  manifest_worker_ami_id      = local.manifest_json != null ? try(tostring(local.manifest_json.workerImage.amis[var.aws_region]), null) : null
 
   controlplane_image = var.controlplane_image_override != null ? var.controlplane_image_override : local.manifest_controlplane_image
   worker_ami_id = var.worker_ami_id_override != null ? var.worker_ami_id_override : (
@@ -54,7 +54,7 @@ resource "terraform_data" "resolved" {
 
     precondition {
       condition     = try(trimspace(local.controlplane_image) != "", false)
-      error_message = "Unable to resolve controlplane_image. Provide a manifest with controlplane_image or set controlplane_image_override."
+      error_message = "Unable to resolve controlplane_image. Provide a manifest with controlplaneImage or set controlplane_image_override."
     }
 
     precondition {
@@ -64,7 +64,7 @@ resource "terraform_data" "resolved" {
 
     precondition {
       condition     = !var.resolve_worker_ami || try(trimspace(local.worker_ami_id) != "", false)
-      error_message = "Unable to resolve worker_ami_id for aws_region. Provide worker_amis[aws_region] in the manifest, set worker_ami_id_override, or set resolve_worker_ami to false."
+      error_message = "Unable to resolve worker_ami_id for aws_region. Provide workerImage.amis[aws_region] in the manifest, set worker_ami_id_override, or set resolve_worker_ami to false."
     }
 
     precondition {

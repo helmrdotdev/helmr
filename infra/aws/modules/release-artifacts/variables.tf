@@ -43,7 +43,7 @@ variable "manifest_url" {
 }
 
 variable "controlplane_image_override" {
-  description = "Explicit digest-pinned controlplane image URI for custom builds. When null, the release manifest controlplane_image is used."
+  description = "Explicit digest-pinned controlplane image URI for custom builds. When null, the release manifest controlplaneImage is used."
   type        = string
   default     = null
   nullable    = true
@@ -55,7 +55,7 @@ variable "controlplane_image_override" {
 }
 
 variable "worker_ami_id_override" {
-  description = "Explicit worker AMI ID for custom builds. When null and resolve_worker_ami is true, the release manifest worker_amis map is used."
+  description = "Explicit worker AMI ID for custom builds. When null and resolve_worker_ami is true, the release manifest workerImage.amis map is used."
   type        = string
   default     = null
   nullable    = true
