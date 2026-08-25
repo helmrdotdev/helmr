@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=release-artifact-contracts.sh
+source "${script_dir}/release-artifact-contracts.sh"
+
 controlplane_image="${1:-}"
 worker_image_json="${2:-}"
 platform_release_json="${3:-}"
@@ -33,40 +37,13 @@ is_truthy() {
 [[ "${controlplane_image}" =~ @sha256:[0-9a-f]{64}$ ]] ||
   die "controlplane image must be pinned by digest as @sha256:<64 lowercase hex characters>"
 
+validate_worker_image_receipt /dev/stdin <<<"${worker_image_json}" ||
+  die "Worker image receipt is invalid"
+
 jq -e --arg required_worker_ami_regions "${required_worker_ami_regions}" '
   . as $worker_image |
   ($required_worker_ami_regions | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | sort | unique) as $required_regions |
-  (keys | sort) == [
-    "amis",
-    "componentDefinitionDigest",
-    "hostArtifacts",
-    "imageBuildVersionARN",
-    "imageDefinitionDigest",
-    "imageRecipeARN",
-    "prepareRootDigest",
-    "resolvedParentImageID",
-    "runtimeArtifacts",
-    "schema",
-    "visibility"
-  ] and
-  .schema == "helmr.worker-image.v0" and
-  (.amis | type == "object" and length > 0) and
-  all($required_regions[]; . as $region | ($worker_image.amis | has($region))) and
-  all(.amis | keys[]; test("^[a-z]{2}-[a-z-]+-[0-9]+$")) and
-  all(.amis[]; test("^ami-([0-9a-f]{8}|[0-9a-f]{17})$")) and
-  (.visibility == "public" or .visibility == "private") and
-  (.imageBuildVersionARN | test("^arn:[^:]+:imagebuilder:[^:]+:[0-9]{12}:image/.+/1[.]0[.]0/[0-9]+$")) and
-  (.imageRecipeARN | test("^arn:[^:]+:imagebuilder:[^:]+:[0-9]{12}:image-recipe/.+/1[.]0[.]0$")) and
-  (.componentDefinitionDigest | test("^sha256:[0-9a-f]{64}$")) and
-  (.imageDefinitionDigest | test("^sha256:[0-9a-f]{64}$")) and
-  (.prepareRootDigest | test("^sha256:[0-9a-f]{64}$")) and
-  (.resolvedParentImageID | test("^ami-([0-9a-f]{8}|[0-9a-f]{17})$")) and
-  (.hostArtifacts | keys == ["bundleDigest", "manifestDigest", "sourceCommit"]) and
-  (.hostArtifacts.sourceCommit | test("^[0-9a-f]{40}$")) and
-  all(.hostArtifacts.bundleDigest, .hostArtifacts.manifestDigest; test("^sha256:[0-9a-f]{64}$")) and
-  (.runtimeArtifacts | keys == ["bundleDigest", "manifestDigest", "sourceCommit"]) and
-  (.runtimeArtifacts.sourceCommit | test("^[0-9a-f]{40}$")) and
-  all(.runtimeArtifacts.bundleDigest, .runtimeArtifacts.manifestDigest; test("^sha256:[0-9a-f]{64}$"))
+  all($required_regions[]; . as $region | ($worker_image.amis | has($region)))
 ' >/dev/null <<<"${worker_image_json}" || die "Worker image receipt is invalid"
 
 jq -e '

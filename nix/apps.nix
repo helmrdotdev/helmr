@@ -45,6 +45,7 @@ let
           bash -n scripts/dev-console-stack.sh
           bash tests/install_test.sh
           bash tests/release_manifest_test.sh
+          bash tests/release_artifact_contracts_test.sh
           bash tests/release_workflow_test.sh
           bash tests/release_worker_ami_cleanup_test.sh
           bash tests/release_worker_image_identity_test.sh
