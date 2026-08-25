@@ -76,13 +76,12 @@ func TestWorkspaceBasicExecSurvivesCallerDisconnect(t *testing.T) {
 
 func TestWorkspaceBasicExecRejectsFingerprintChange(t *testing.T) {
 	entry := &workspaceMountEntry{
-		basicExecs: map[string]*workspaceBasicExec{
-			"process-1": {
-				fingerprint: strings.Repeat("a", 64),
-				done:        closedWorkspaceBasicExecDone(),
-				result: &workspacev0.WorkspaceBasicExecResult{
-					Outcome: "exited", RequestFingerprint: strings.Repeat("a", 64),
-				},
+		basicExec: &workspaceBasicExec{
+			operationID: "process-1",
+			fingerprint: strings.Repeat("a", 64),
+			done:        closedWorkspaceBasicExecDone(),
+			result: &workspacev0.WorkspaceBasicExecResult{
+				Outcome: "exited", RequestFingerprint: strings.Repeat("a", 64),
 			},
 		},
 	}
@@ -92,6 +91,70 @@ func TestWorkspaceBasicExecRejectsFingerprintChange(t *testing.T) {
 	)
 	if result.GetOutcome() != "workspace_exec_fingerprint_conflict" {
 		t.Fatalf("outcome = %q", result.GetOutcome())
+	}
+}
+
+func TestWorkspaceBasicExecRejectsAnotherOperation(t *testing.T) {
+	var runs atomic.Int32
+	entry := &workspaceMountEntry{
+		basicExecRun: func(request *workspacev0.WorkspaceBasicExecRequest) *workspacev0.WorkspaceBasicExecResult {
+			runs.Add(1)
+			return &workspacev0.WorkspaceBasicExecResult{
+				Outcome: "exited", RequestFingerprint: request.GetEnvelope().GetRequestFingerprint(),
+			}
+		},
+	}
+	first := entry.runWorkspaceBasicExec(
+		context.Background(),
+		testWorkspaceBasicExecRequest("process-1", strings.Repeat("a", 64)),
+	)
+	second := entry.runWorkspaceBasicExec(
+		context.Background(),
+		testWorkspaceBasicExecRequest("process-2", strings.Repeat("b", 64)),
+	)
+	if first.GetOutcome() != "exited" || second.GetOutcome() != "workspace_exec_unavailable" {
+		t.Fatalf("outcomes = %q / %q", first.GetOutcome(), second.GetOutcome())
+	}
+	if runs.Load() != 1 {
+		t.Fatalf("executions = %d, want 1", runs.Load())
+	}
+}
+
+func TestWorkspaceBasicExecRejectsAnotherOperationWhileRunning(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var runs atomic.Int32
+	entry := &workspaceMountEntry{
+		basicExecRun: func(request *workspacev0.WorkspaceBasicExecRequest) *workspacev0.WorkspaceBasicExecResult {
+			runs.Add(1)
+			close(started)
+			<-release
+			return &workspacev0.WorkspaceBasicExecResult{
+				Outcome: "exited", RequestFingerprint: request.GetEnvelope().GetRequestFingerprint(),
+			}
+		},
+	}
+	first := make(chan *workspacev0.WorkspaceBasicExecResult, 1)
+	go func() {
+		first <- entry.runWorkspaceBasicExec(
+			context.Background(),
+			testWorkspaceBasicExecRequest("process-1", strings.Repeat("a", 64)),
+		)
+	}()
+	<-started
+	second := entry.runWorkspaceBasicExec(
+		context.Background(),
+		testWorkspaceBasicExecRequest("process-2", strings.Repeat("b", 64)),
+	)
+	close(release)
+	if result := <-first; result.GetOutcome() != "exited" {
+		t.Fatalf("first outcome = %q", result.GetOutcome())
+	}
+	if second.GetOutcome() != "workspace_exec_unavailable" {
+		t.Fatalf("second outcome = %q", second.GetOutcome())
+	}
+	if runs.Load() != 1 {
+		t.Fatalf("executions = %d, want 1", runs.Load())
 	}
 }
 

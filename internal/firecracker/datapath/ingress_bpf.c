@@ -124,25 +124,6 @@ static __inline int bytes_broadcast(const __u8 *value)
 	return 1;
 }
 
-static __inline int ipv4_checksum_valid(struct ipv4_header *ipv4, void *data_end, __u32 header_bytes)
-{
-	__u8 *cursor = (__u8 *)ipv4;
-	__u32 sum = 0;
-
-#pragma unroll
-	for (int index = 0; index < 30; index++) {
-		__u32 offset = (__u32)index * 2;
-		if (offset >= header_bytes)
-			break;
-		if (cursor + offset + 2 > (__u8 *)data_end)
-			return 0;
-		sum += ((__u32)cursor[offset] << 8) | cursor[offset + 1];
-	}
-	sum = (sum & 0xffff) + (sum >> 16);
-	sum = (sum & 0xffff) + (sum >> 16);
-	return sum == 0xffff;
-}
-
 static __inline struct ipv4_header *valid_ipv4(void *payload, void *data_end)
 {
 	struct ipv4_header *ipv4 = payload;
@@ -157,8 +138,6 @@ static __inline struct ipv4_header *valid_ipv4(void *payload, void *data_end)
 		return 0;
 	__u32 total_length = host_u16(ipv4->total_length);
 	if (total_length < header_bytes || total_length > available_bytes)
-		return 0;
-	if (!ipv4_checksum_valid(ipv4, data_end, header_bytes))
 		return 0;
 	return ipv4;
 }

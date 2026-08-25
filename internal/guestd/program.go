@@ -1804,10 +1804,14 @@ func pauseActorTurnCommit(
 			resumeOutputs()
 		}
 	}()
+	tempRoot, err := guestdTempRoot()
+	if err != nil {
+		return fmt.Errorf("prepare actor turn workspace capture staging: %w", err)
+	}
 	artifact, cleanup, err := workspace.CreateWorkspaceArtifactFromRootWithExcludesContext(
 		turnCtx,
 		process.workspaceRoot,
-		os.TempDir(),
+		tempRoot,
 		process.workspaceRoot,
 		workspaceSecretExcludes(process.workspaceRoot, process.secretPaths),
 	)
@@ -2513,9 +2517,13 @@ func (stream *programEventStream) writeWorkspaceArtifact(runID, workspaceRoot st
 	if strings.TrimSpace(workspaceRoot) == "" {
 		return errors.New("program workspace root is required")
 	}
+	tempRoot, err := guestdTempRoot()
+	if err != nil {
+		return fmt.Errorf("prepare workspace capture staging: %w", err)
+	}
 	artifact, cleanup, err := workspace.CreateWorkspaceArtifactFromRootWithExcludes(
 		workspaceRoot,
-		os.TempDir(),
+		tempRoot,
 		workspaceRoot,
 		workspaceSecretExcludes(workspaceRoot, secretPaths),
 	)

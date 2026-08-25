@@ -21,6 +21,7 @@ import (
 const workspaceBasicExecOutputLimit = 4 << 20
 
 type workspaceBasicExec struct {
+	operationID string
 	fingerprint string
 	done        chan struct{}
 	result      *workspacev0.WorkspaceBasicExecResult
@@ -63,18 +64,19 @@ func (entry *workspaceMountEntry) runWorkspaceBasicExec(
 	request *workspacev0.WorkspaceBasicExecRequest,
 ) *workspacev0.WorkspaceBasicExecResult {
 	envelope := request.GetEnvelope()
-	processID := strings.TrimSpace(envelope.GetOperationId())
+	operationID := strings.TrimSpace(envelope.GetOperationId())
 	fingerprint := strings.TrimSpace(envelope.GetRequestFingerprint())
-	if processID == "" || fingerprint == "" {
+	if operationID == "" || fingerprint == "" {
 		return workspaceBasicExecFailure(fingerprint, "workspace_exec_invalid", errors.New("workspace exec identity is required"))
 	}
 
 	entry.basicExecMu.Lock()
-	if entry.basicExecs == nil {
-		entry.basicExecs = make(map[string]*workspaceBasicExec)
-	}
-	execution := entry.basicExecs[processID]
+	execution := entry.basicExec
 	if execution != nil {
+		if execution.operationID != operationID {
+			entry.basicExecMu.Unlock()
+			return workspaceBasicExecFailure(fingerprint, "workspace_exec_unavailable", errors.New("workspace mount already served another exec operation"))
+		}
 		if execution.fingerprint != fingerprint {
 			entry.basicExecMu.Unlock()
 			return workspaceBasicExecFailure(fingerprint, "workspace_exec_fingerprint_conflict", errors.New("workspace exec fingerprint changed"))
@@ -92,13 +94,13 @@ func (entry *workspaceMountEntry) runWorkspaceBasicExec(
 		entry.basicExecMu.Unlock()
 		return workspaceBasicExecFailure(fingerprint, "workspace_exec_unavailable", err)
 	}
-	execution = &workspaceBasicExec{fingerprint: fingerprint, done: make(chan struct{})}
-	entry.basicExecs[processID] = execution
+	execution = &workspaceBasicExec{operationID: operationID, fingerprint: fingerprint, done: make(chan struct{})}
+	entry.basicExec = execution
 	entry.basicExecMu.Unlock()
 
 	requestCopy := &workspacev0.WorkspaceBasicExecRequest{
 		Envelope: &workspacev0.WorkspaceOperationEnvelope{
-			OperationId:        processID,
+			OperationId:        operationID,
 			RequestFingerprint: fingerprint,
 		},
 		RequestJson: request.GetRequestJson(),

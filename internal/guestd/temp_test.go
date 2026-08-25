@@ -24,3 +24,21 @@ func TestMkdirGuestdTempUsesConfiguredDiskBackedRoot(t *testing.T) {
 		t.Fatalf("temp path is not a directory: %s", dir)
 	}
 }
+
+func TestGuestdTempRootCreatesConfiguredDiskBackedRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "guestd")
+	t.Setenv("HELMR_GUESTD_TMPDIR", root)
+
+	got, err := guestdTempRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != root {
+		t.Fatalf("temp root = %q, want %q", got, root)
+	}
+	if info, err := os.Stat(root); err != nil {
+		t.Fatalf("stat temp root: %v", err)
+	} else if !info.IsDir() {
+		t.Fatalf("temp root is not a directory: %s", root)
+	}
+}
