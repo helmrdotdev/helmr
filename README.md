@@ -216,16 +216,19 @@ nix run .#ci-checks
 nix run .#ci-policy
 nix run .#ci-generated
 nix run .#ci-typescript
-nix run .#ci-go-test
 nix run .#ci-go-lint
 nix run .#ci-go-build
 nix run .#ci-go-race
 nix run .#ci-linux-compile
+nix run .#ci-firecracker-probe
 nix run .#ci-linux-lint
+nix run .#ci-infra-test
 nix run .#ci-postgres
+nix develop .#images --command bash tests/bundle_builder_e2e.sh
 ```
 
-On Linux, `nix flake check` also evaluates the Firecracker host NixOS module.
+The Firecracker probe requires x86_64 Linux. On Linux, `nix flake check` also
+evaluates the Firecracker host NixOS module.
 
 Linux Firecracker smoke tests need a Linux host with KVM:
 
