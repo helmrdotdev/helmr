@@ -100,6 +100,7 @@ type PreparedRuntimePool struct {
 	activity          int
 	activityWake      chan struct{}
 	closed            bool
+	verifiedRuntimes  map[deployment.RuntimeDescriptor]deployment.RuntimeIndex
 }
 
 type preparedRuntimeEntry struct {
@@ -887,11 +888,20 @@ func (p *PreparedRuntimePool) prepareProgram(
 		return nil, func() error { return nil }, err
 	}
 	closeSnapshots := func() error { return runtimeSnapshot.Close() }
-	runtimeIndex, err := deployment.VerifyRuntimeArtifact(
-		ctx,
-		p.VerifierCgroupRoot,
-		target.ID,
-		runtimeSnapshot,
+	started := time.Now()
+	runtimeIndex, memoHit, err := p.verifyRuntime(runtimeDescriptor, func() (deployment.RuntimeIndex, error) {
+		return deployment.VerifyRuntimeArtifact(
+			ctx,
+			p.VerifierCgroupRoot,
+			target.ID,
+			runtimeSnapshot,
+		)
+	})
+	p.logInfo("prepared runtime artifact verified",
+		"runtime_instance_id", target.ID,
+		"duration_ms", time.Since(started).Milliseconds(),
+		"memo_hit", memoHit,
+		"error", errorString(err),
 	)
 	if err != nil {
 		return nil, func() error { return nil }, errors.Join(
@@ -960,6 +970,30 @@ func (p *PreparedRuntimePool) prepareProgram(
 			Source: programSnapshot,
 		},
 	}, closeSnapshots, nil
+}
+
+func (p *PreparedRuntimePool) verifyRuntime(
+	descriptor deployment.RuntimeDescriptor,
+	verify func() (deployment.RuntimeIndex, error),
+) (deployment.RuntimeIndex, bool, error) {
+	p.mu.Lock()
+	index, ok := p.verifiedRuntimes[descriptor]
+	p.mu.Unlock()
+	if ok {
+		return index, true, nil
+	}
+	index, err := verify()
+	if err != nil {
+		return deployment.RuntimeIndex{}, false, err
+	}
+
+	p.mu.Lock()
+	if p.verifiedRuntimes == nil {
+		p.verifiedRuntimes = make(map[deployment.RuntimeDescriptor]deployment.RuntimeIndex)
+	}
+	p.verifiedRuntimes[descriptor] = index
+	p.mu.Unlock()
+	return index, false, nil
 }
 
 func verifyProgramIndexDigest(
