@@ -1516,7 +1516,7 @@ UPDATE workspace_mounts
             AND workspace_mounts.finalization_kind = 'discard'
             AND workspace_mounts.finalization_reason_code = 'same_workspace_child_attempt_finished'
             AND workspace_mounts.finalization_error IS NULL))
-RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
+RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
 `
 
 type RequestSameWorkspaceChildAttemptRuntimeDiscardParams struct {
@@ -1572,7 +1572,6 @@ func (q *Queries) RequestSameWorkspaceChildAttemptRuntimeDiscard(ctx context.Con
 		&i.WorkspaceID,
 		&i.MaterializedVersionID,
 		&i.RuntimeInstanceID,
-		&i.ClaimAttempt,
 		&i.GuestChannelTokenHash,
 		&i.GuestChannelTokenExpiresAt,
 		&i.State,
@@ -1612,7 +1611,7 @@ UPDATE workspace_mounts
    AND materialized_version_id = $9
    AND fencing_generation = $10
    AND state = 'mounted'
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, claim_attempt, guest_channel_token_hash, guest_channel_token_expires_at, state, request, dirty_generation, fencing_generation, finalization_kind, finalization_reason_code, finalization_error, staged_version_id, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
+RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, guest_channel_token_hash, guest_channel_token_expires_at, state, request, dirty_generation, fencing_generation, finalization_kind, finalization_reason_code, finalization_error, staged_version_id, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
 `
 
 type UpdateTaskWorkspaceMountFrontierParams struct {
@@ -1654,7 +1653,6 @@ func (q *Queries) UpdateTaskWorkspaceMountFrontier(ctx context.Context, arg Upda
 		&i.WorkspaceID,
 		&i.MaterializedVersionID,
 		&i.RuntimeInstanceID,
-		&i.ClaimAttempt,
 		&i.GuestChannelTokenHash,
 		&i.GuestChannelTokenExpiresAt,
 		&i.State,

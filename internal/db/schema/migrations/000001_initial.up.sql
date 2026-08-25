@@ -1546,7 +1546,6 @@ CREATE TABLE workspace_mounts (
     workspace_id UUID NOT NULL,
     materialized_version_id UUID NOT NULL,
     runtime_instance_id UUID NOT NULL,
-    claim_attempt INTEGER NOT NULL DEFAULT 0 CHECK (claim_attempt >= 0),
     guest_channel_token_hash TEXT NOT NULL DEFAULT '',
     guest_channel_token_expires_at TIMESTAMPTZ,
     state TEXT NOT NULL DEFAULT 'mounting'
@@ -1585,6 +1584,13 @@ CREATE TABLE workspace_mounts (
         REFERENCES workspaces(environment_id, id)
         ON DELETE RESTRICT,
     CHECK (jsonb_typeof(request) = 'object'),
+    CHECK (
+        (guest_channel_token_hash = '' AND guest_channel_token_expires_at IS NULL)
+        OR (
+            guest_channel_token_hash <> ''
+            AND guest_channel_token_expires_at IS NOT NULL
+        )
+    ),
     CHECK (
         (state IN ('mounting', 'mounted', 'unmounting') AND terminal_at IS NULL AND terminal_reason_code IS NULL AND terminal_error IS NULL)
         OR (
@@ -1633,9 +1639,9 @@ CREATE INDEX workspace_mounts_worker_replay_idx
     ON workspace_mounts (worker_instance_id, worker_epoch, state, requested_at, id)
     WHERE state IN ('mounting', 'mounted', 'unmounting');
 
-CREATE INDEX workspace_mounts_sweep_idx
-    ON workspace_mounts (state, updated_at, id)
-    WHERE state IN ('mounting', 'unmounting');
+CREATE INDEX workspace_mounts_claim_expiry_idx
+    ON workspace_mounts (guest_channel_token_expires_at, id)
+    WHERE state = 'mounting' AND guest_channel_token_hash <> '';
 
 CREATE TABLE workspace_leases (
     id UUID PRIMARY KEY,

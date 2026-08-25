@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/localcache"
@@ -34,6 +35,103 @@ func TestWorkspaceMaterializerUsesStartupTimeout(t *testing.T) {
 	custom := time.Second
 	if got := (WorkspaceMaterializer{StartupTimeout: custom}).startupTimeout(); got != custom {
 		t.Fatalf("custom startup timeout = %s, want %s", got, custom)
+	}
+}
+
+func TestWorkspaceMaterializerRenewsWhileMaterializing(t *testing.T) {
+	store, mount := testWorkspaceMountArtifacts(t)
+	mount.ID = "mount-renewing-during-materialization"
+	mount.OrgID = "org-1"
+	started := make(chan struct{})
+	release := make(chan struct{})
+	renewed := make(chan struct{})
+	blockingStore := &workspaceMaterializerBlockingCAS{
+		Store: store, started: started, release: release,
+	}
+	client := &workspaceMaterializerTestClient{renewed: renewed}
+	materializer := WorkspaceMaterializer{
+		CAS:         blockingStore,
+		TempDir:     t.TempDir(),
+		Heartbeat:   time.Millisecond,
+		RuntimePool: workspacePreparedRuntimePool(t, mount, &workspaceMaterializerTestSession{}),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- materializer.RunWorkspaceMount(ctx, mount, client) }()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("materialization did not reach CAS restore")
+	}
+	select {
+	case <-renewed:
+	case <-time.After(time.Second):
+		t.Fatal("mount was not renewed while materialization was blocked")
+	}
+	cancel()
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("materializer did not stop after cancellation")
+	}
+}
+
+func TestWorkspaceMaterializerRenewalFailureCancelsMaterialization(t *testing.T) {
+	store, mount := testWorkspaceMountArtifacts(t)
+	mount.ID = "mount-renewal-fails-during-materialization"
+	mount.OrgID = "org-1"
+	started := make(chan struct{})
+	blockingStore := &workspaceMaterializerBlockingCAS{
+		Store: store, started: started, release: make(chan struct{}),
+	}
+	client := &workspaceMaterializerTestClient{
+		renewErrors: []error{errors.New("renew failed")},
+	}
+	materializer := WorkspaceMaterializer{
+		CAS:         blockingStore,
+		TempDir:     t.TempDir(),
+		Heartbeat:   10 * time.Millisecond,
+		RuntimePool: workspacePreparedRuntimePool(t, mount, &workspaceMaterializerTestSession{}),
+	}
+	ctx := context.Background()
+	done := make(chan error, 1)
+	go func() { done <- materializer.RunWorkspaceMount(ctx, mount, client) }()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("materialization did not reach CAS restore")
+	}
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "renew workspace mount") {
+			t.Fatalf("materializer err = %v, want renewal failure", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("materializer did not stop after renewal failure")
+	}
+	if err := ctx.Err(); err != nil {
+		t.Fatalf("parent context = %v, want active", err)
+	}
+	if len(client.failures) != 1 {
+		t.Fatalf("failures = %+v, want one", client.failures)
+	}
+}
+
+type workspaceMaterializerBlockingCAS struct {
+	cas.Store
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (s *workspaceMaterializerBlockingCAS) Get(ctx context.Context, digest string) (io.ReadCloser, error) {
+	s.once.Do(func() { close(s.started) })
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-s.release:
+		return s.Store.Get(ctx, digest)
 	}
 }
 
@@ -1561,6 +1659,8 @@ type workspaceMaterializerTestClient struct {
 	completeErrors  []error
 	renewErrors     []error
 	renews          []workerapi.WorkspaceMountRenewRequest
+	renewed         chan struct{}
+	renewedOnce     sync.Once
 	mounted         []workerapi.WorkspaceMountMountedRequest
 	onMounted       func()
 	stops           int
@@ -1570,6 +1670,9 @@ type workspaceMaterializerTestClient struct {
 
 func (c *workspaceMaterializerTestClient) RenewWorkspaceMount(_ context.Context, request workerapi.WorkspaceMountRenewRequest) (workerapi.WorkspaceMountResponse, error) {
 	c.renews = append(c.renews, request)
+	if c.renewed != nil {
+		c.renewedOnce.Do(func() { close(c.renewed) })
+	}
 	if len(c.renewErrors) > 0 {
 		err := c.renewErrors[0]
 		c.renewErrors = c.renewErrors[1:]

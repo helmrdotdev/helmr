@@ -30,7 +30,6 @@ type WorkspaceMountResponse struct {
 	BaseVersionID        string     `json:"base_version_id,omitempty"`
 	WorkerInstanceID     string     `json:"worker_instance_id,omitempty"`
 	State                string     `json:"state"`
-	ClaimAttempt         int32      `json:"claim_attempt"`
 	FencingGeneration    int64      `json:"fencing_generation"`
 	DirtyGeneration      int64      `json:"dirty_generation"`
 	FinalizationKind     string     `json:"finalization_kind,omitempty"`

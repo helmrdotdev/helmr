@@ -425,6 +425,7 @@ type Querier interface {
 	LockWorkspaceExecWorkerAuthority(ctx context.Context, arg LockWorkspaceExecWorkerAuthorityParams) (LockWorkspaceExecWorkerAuthorityRow, error)
 	LockWorkspaceForDelete(ctx context.Context, arg LockWorkspaceForDeleteParams) (LockWorkspaceForDeleteRow, error)
 	LockWorkspaceSecretsForAdmission(ctx context.Context, workspaceID pgtype.UUID) ([]LockWorkspaceSecretsForAdmissionRow, error)
+	LoseExpiredWorkspaceMountClaims(ctx context.Context, limitCount int32) ([]LoseExpiredWorkspaceMountClaimsRow, error)
 	LoseWorkspaceExecMount(ctx context.Context, arg LoseWorkspaceExecMountParams) (WorkspaceMount, error)
 	MarkDeletionJobRunning(ctx context.Context, arg MarkDeletionJobRunningParams) (DeletionJob, error)
 	MarkLiveTelemetryOutboxFailed(ctx context.Context, arg MarkLiveTelemetryOutboxFailedParams) error

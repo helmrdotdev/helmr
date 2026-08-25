@@ -219,6 +219,8 @@ WITH candidate AS (
      WHERE workspace_mounts.worker_instance_id = sqlc.arg(worker_instance_id)
        AND workspace_mounts.worker_epoch = sqlc.arg(worker_epoch)
        AND workspace_mounts.state = 'mounting'
+       AND workspace_mounts.guest_channel_token_hash = ''
+       AND workspace_mounts.guest_channel_token_expires_at IS NULL
        AND runtime_instances.observed_state = 'ready'
        AND runtime_instances.reserved_workspace_version_id = workspace_mounts.materialized_version_id
        AND num_nonnulls(runtime_instances.reserved_run_id, runtime_instances.reserved_process_id) = 1
@@ -228,8 +230,7 @@ WITH candidate AS (
      FOR UPDATE OF workspace_mounts SKIP LOCKED
 ), claimed AS (
     UPDATE workspace_mounts
-       SET claim_attempt = claim_attempt + 1,
-           guest_channel_token_hash = sqlc.arg(guest_channel_token_hash),
+       SET guest_channel_token_hash = sqlc.arg(guest_channel_token_hash),
            guest_channel_token_expires_at = sqlc.arg(guest_channel_token_expires_at),
            updated_at = now()
       FROM candidate
@@ -288,6 +289,49 @@ UPDATE workspace_mounts
    AND worker_epoch = sqlc.arg(worker_epoch) AND runtime_instance_id = sqlc.arg(runtime_instance_id)
    AND state IN ('mounting','mounted','unmounting')
 RETURNING *;
+
+-- name: LoseExpiredWorkspaceMountClaims :many
+WITH candidates AS (
+    SELECT workspace_mounts.id
+      FROM workspace_mounts
+      JOIN runtime_instances
+        ON runtime_instances.org_id = workspace_mounts.org_id
+       AND runtime_instances.id = workspace_mounts.runtime_instance_id
+       AND runtime_instances.worker_instance_id = workspace_mounts.worker_instance_id
+       AND runtime_instances.worker_epoch = workspace_mounts.worker_epoch
+     WHERE workspace_mounts.state = 'mounting'
+       AND workspace_mounts.guest_channel_token_hash <> ''
+       AND workspace_mounts.guest_channel_token_expires_at <= transaction_timestamp()
+       AND runtime_instances.reclaimed_at IS NULL
+       AND runtime_instances.observed_state IN ('allocated','preparing','ready','closing')
+     ORDER BY workspace_mounts.guest_channel_token_expires_at, workspace_mounts.id
+     LIMIT sqlc.arg(limit_count)
+     FOR UPDATE OF workspace_mounts, runtime_instances SKIP LOCKED
+), lost_mounts AS (
+    UPDATE workspace_mounts
+       SET state = 'lost',
+           lost_at = transaction_timestamp(),
+           terminal_at = transaction_timestamp(),
+           terminal_reason_code = 'workspace_mount_claim_expired',
+           terminal_error = NULL,
+           updated_at = transaction_timestamp()
+      FROM candidates
+     WHERE workspace_mounts.id = candidates.id
+    RETURNING workspace_mounts.*
+)
+UPDATE runtime_instances
+   SET desired_state = 'closed',
+       desired_version = CASE
+           WHEN runtime_instances.desired_state = 'closed'
+               THEN runtime_instances.desired_version
+           ELSE runtime_instances.desired_version + 1
+       END,
+       desired_at = transaction_timestamp(),
+       desired_reason = 'workspace_mount_claim_expired',
+       updated_at = transaction_timestamp()
+  FROM lost_mounts
+ WHERE runtime_instances.id = lost_mounts.runtime_instance_id
+RETURNING lost_mounts.*;
 
 -- name: MarkWorkspaceMountMounted :one
 UPDATE workspace_mounts

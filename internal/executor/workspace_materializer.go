@@ -60,20 +60,23 @@ func (m WorkspaceMaterializer) RunWorkspaceMount(ctx context.Context, mount work
 	if renewEvery <= 0 {
 		renewEvery = 15 * time.Second
 	}
-	startupCtx, cancelStartup := context.WithTimeout(ctx, m.startupTimeout())
+	renewal := m.startRenewalLoop(ctx, workerapi.WorkspaceMountRenewRequest{
+		OrgID: mount.OrgID, WorkspaceMountID: mount.ID,
+	}, client, renewEvery)
+	defer renewal.stopAndWait()
+	startupCtx, cancelStartup := context.WithTimeout(renewal.ctx, m.startupTimeout())
 	defer cancelStartup()
 	phaseStarted := time.Now()
 	rawSession, workspaceArtifactPath, cleanup, runtimeInstanceID, err := m.materializeSession(startupCtx, &mount)
 	m.logWorkspaceMountPhase(mount, "workspace mount session materialized", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", errorString(err))
 	if err != nil {
+		if renewalErr := renewal.stopAndWait(); renewalErr != nil {
+			err = renewalErr
+		}
 		cleanup()
 		_ = m.failWorkspaceMount(client, mount, err)
 		return fmt.Errorf("checkout workspace mount runtime: %w", err)
 	}
-	renewal := m.startRenewalLoop(ctx, workerapi.WorkspaceMountRenewRequest{
-		OrgID: mount.OrgID, WorkspaceMountID: mount.ID,
-	}, client, renewEvery)
-	defer renewal.stopAndWait()
 	session := newManagedWorkspaceMountSession(rawSession)
 	defer cleanup()
 	defer func() {
