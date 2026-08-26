@@ -29,7 +29,6 @@ type runtimeRestoreProjectionStore struct {
 	db.Querier
 	checkpoint db.RunCheckpoint
 	artifacts  []db.ListRunCheckpointArtifactAuthorityRow
-	base       db.GetCheckpointWorkspaceBaseAuthorityRow
 	baseCalls  int
 }
 
@@ -113,16 +112,13 @@ func (s *runtimeRestoreProjectionStore) ListRunCheckpointArtifactAuthority(
 
 func (s *runtimeRestoreProjectionStore) GetCheckpointWorkspaceBaseAuthority(
 	_ context.Context,
-	params db.GetCheckpointWorkspaceBaseAuthorityParams,
+	_ db.GetCheckpointWorkspaceBaseAuthorityParams,
 ) (db.GetCheckpointWorkspaceBaseAuthorityRow, error) {
 	s.baseCalls++
-	if params.VersionID != s.checkpoint.BaseWorkspaceVersionID {
-		return db.GetCheckpointWorkspaceBaseAuthorityRow{}, errors.New("unexpected source base version")
-	}
-	return s.base, nil
+	return db.GetCheckpointWorkspaceBaseAuthorityRow{}, errors.New("restore projection queried Workspace base authority")
 }
 
-func TestPopulateRuntimeRestoreSourceKeepsCapturedAndSourceFrontiersDistinct(t *testing.T) {
+func TestPopulateRuntimeRestoreSourceKeepsCapturedFrontierWithoutRequeryingBase(t *testing.T) {
 	checkpointID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	waitID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
@@ -151,20 +147,6 @@ func TestPopulateRuntimeRestoreSourceKeepsCapturedAndSourceFrontiersDistinct(t *
 			{Role: db.RunCheckpointArtifactRoleMemory, Digest: validDigest('c'), SizeBytes: 3, MediaType: "application/example"},
 			{Role: db.RunCheckpointArtifactRoleScratchDisk, Digest: validDigest('d'), SizeBytes: 4, MediaType: "application/example"},
 		},
-		base: db.GetCheckpointWorkspaceBaseAuthorityRow{
-			VersionID:       sourceVersionID,
-			ParentVersionID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			ArtifactID:      pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			ArtifactKind:    db.NullArtifactKind{ArtifactKind: db.ArtifactKindWorkspaceVersion, Valid: true},
-			VersionKind:     db.WorkspaceVersionKindUser,
-			ContentDigest:   validDigest('f'), LogicalSizeBytes: 64, EntryCount: 1,
-			SourceWorkspaceLeaseID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			OwnershipGeneration:    2, WriterGeneration: 3,
-			ArtifactRowKind:   db.NullArtifactKind{ArtifactKind: db.ArtifactKindWorkspaceVersion, Valid: true},
-			ArtifactDigest:    pgvalue.Text(validDigest('e')),
-			ArtifactSizeBytes: pgtype.Int8{Int64: 512, Valid: true},
-			ArtifactMediaType: pgvalue.Text(workspace.ArtifactMediaType),
-		},
 	}
 	targetArtifact := workerapi.WorkspaceArtifact{
 		Digest: validDigest('9'), SizeBytes: 1024,
@@ -188,10 +170,8 @@ func TestPopulateRuntimeRestoreSourceKeepsCapturedAndSourceFrontiersDistinct(t *
 		source.WorkspaceTarget.Artifact.Digest != validDigest('9') {
 		t.Fatalf("captured frontier was rewritten: %+v", source)
 	}
-	if source.Restore == nil || source.Restore.SourceWorkspaceBase == nil ||
-		source.Restore.SourceWorkspaceBase.VersionID != pgvalue.UUIDString(sourceVersionID) ||
-		source.Restore.SourceWorkspaceBase.Base.ArtifactDigest != validDigest('e') || store.baseCalls != 1 {
-		t.Fatalf("source frontier was not projected independently: %+v", source.Restore)
+	if source.Restore == nil || store.baseCalls != 0 {
+		t.Fatalf("restore projection queried Workspace base authority: restore=%+v calls=%d", source.Restore, store.baseCalls)
 	}
 }
 
