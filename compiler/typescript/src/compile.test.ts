@@ -113,6 +113,9 @@ describe("declaration analysis", () => {
     const workspaceDefinition = result.buildPlan.definitions[3]
     expect(workspaceDefinition?.kind).toBe("sandbox")
     if (workspaceDefinition?.kind !== "sandbox") throw new Error("Sandbox missing")
+    expect(workspaceDefinition.manifest.imageBuild).not.toHaveProperty(
+      "formatVersion",
+    )
     expect(workspaceDefinition.manifest.resources).toEqual({
       milliCpu: 125,
       memoryMiB: 1024,

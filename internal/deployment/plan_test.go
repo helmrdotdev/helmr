@@ -113,6 +113,17 @@ func TestParseBuildPlanRequiresClosedCanonicalShape(t *testing.T) {
 			errMsg: "unknown field",
 		},
 		{
+			name: "nested image build format version",
+			raw: func() []byte {
+				return mutateBuildPlanJSON(t, raw, func(root map[string]any) {
+					definitions := root["definitions"].([]any)
+					manifest := definitions[2].(map[string]any)["manifest"].(map[string]any)
+					manifest["imageBuild"].(map[string]any)["formatVersion"] = 0
+				})
+			},
+			errMsg: "unknown field",
+		},
+		{
 			name: "null optional member",
 			raw: func() []byte {
 				return mutateBuildPlanJSON(t, raw, func(root map[string]any) {
@@ -513,8 +524,7 @@ func testBuildPlan() BuildPlan {
 				DeclaredID: "repo",
 				Sandbox: &SandboxInputManifest{
 					ImageBuild: imagebuild.Build{
-						FormatVersion: imagebuild.FormatVersion,
-						Root:          "repo",
+						Root: "repo",
 						Images: []imagebuild.Spec{{
 							Key: "repo",
 							Platform: imagebuild.Platform{

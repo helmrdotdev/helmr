@@ -10,8 +10,7 @@ import (
 func TestWorkspaceImageDockerfileUsesInstalledTreeAndDigestPinnedBase(t *testing.T) {
 	base := "docker.io/library/alpine@sha256:" + strings.Repeat("b", 64)
 	build := imagebuild.Build{
-		FormatVersion: imagebuild.FormatVersion,
-		Root:          "root",
+		Root: "root",
 		Images: []imagebuild.Spec{{
 			Key: "root", Platform: imagebuild.Platform{OS: "linux", Architecture: "x86_64"},
 			Steps: []imagebuild.Step{
@@ -48,7 +47,7 @@ func TestWorkspaceImageDockerfileUsesInstalledTreeAndDigestPinnedBase(t *testing
 
 func TestWorkspaceImageDockerfileAcceptsTaggedBase(t *testing.T) {
 	build := imagebuild.Build{
-		FormatVersion: imagebuild.FormatVersion, Root: "root",
+		Root: "root",
 		Images: []imagebuild.Spec{{
 			Key: "root", Platform: imagebuild.Platform{OS: "linux", Architecture: "x86_64"},
 			Steps: []imagebuild.Step{{From: &imagebuild.From{Ref: "node:24-bookworm-slim"}}},
@@ -67,7 +66,7 @@ func TestWorkspaceImageDockerfileDisambiguatesInternalNames(t *testing.T) {
 	for _, base := range []string{"helmr_installed", "installed-tree", "helmr_workspace_0"} {
 		t.Run(base, func(t *testing.T) {
 			build := imagebuild.Build{
-				FormatVersion: imagebuild.FormatVersion, Root: "root",
+				Root: "root",
 				Images: []imagebuild.Spec{{
 					Key: "root", Platform: imagebuild.Platform{OS: "linux", Architecture: "x86_64"},
 					Steps: []imagebuild.Step{{From: &imagebuild.From{Ref: base}}},
@@ -87,7 +86,7 @@ func TestWorkspaceImageDockerfileDisambiguatesInternalNames(t *testing.T) {
 
 func TestWorkspaceImageDockerfilePreservesScratchBase(t *testing.T) {
 	build := imagebuild.Build{
-		FormatVersion: imagebuild.FormatVersion, Root: "root",
+		Root: "root",
 		Images: []imagebuild.Spec{{
 			Key: "root", Platform: imagebuild.Platform{OS: "linux", Architecture: "x86_64"},
 			Steps: []imagebuild.Step{{From: &imagebuild.From{Ref: "scratch"}}},
@@ -104,7 +103,7 @@ func TestWorkspaceImageDockerfilePreservesScratchBase(t *testing.T) {
 
 func TestWorkspaceImageDockerfileRejectsInvalidBase(t *testing.T) {
 	build := imagebuild.Build{
-		FormatVersion: imagebuild.FormatVersion, Root: "root",
+		Root: "root",
 		Images: []imagebuild.Spec{{
 			Key: "root", Platform: imagebuild.Platform{OS: "linux", Architecture: "x86_64"},
 			Steps: []imagebuild.Step{{From: &imagebuild.From{Ref: "not a valid ref"}}},

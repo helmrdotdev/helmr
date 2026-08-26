@@ -1,8 +1,6 @@
 package imagebuild
 
 import (
-	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"path"
@@ -12,12 +10,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/distribution/reference"
-	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
 const (
-	FormatVersion = 0
-
 	maxImageIdentifierBytes = 512
 	maxImageReferenceBytes  = 4096
 	maxImagePathBytes       = 4096
@@ -28,7 +23,6 @@ const (
 	maxEnvValueBytes        = 1 << 20
 	maxEnvBytes             = 1 << 20
 	maxUserBytes            = 256
-	maxImageBuildBytes      = 16 << 20
 	maxBuildSteps           = 10000
 )
 
@@ -38,9 +32,8 @@ var (
 )
 
 type Build struct {
-	FormatVersion int    `json:"formatVersion"`
-	Root          string `json:"root"`
-	Images        []Spec `json:"images"`
+	Root   string `json:"root"`
+	Images []Spec `json:"images"`
 }
 
 type Spec struct {
@@ -103,13 +96,6 @@ type Env struct {
 }
 
 func Validate(build Build, architecture string) error {
-	if build.FormatVersion != FormatVersion {
-		return fmt.Errorf(
-			"image build formatVersion = %d, want %d",
-			build.FormatVersion,
-			FormatVersion,
-		)
-	}
 	if !validImageArchitecture(architecture) {
 		return fmt.Errorf("image build architecture %q is unsupported", architecture)
 	}
@@ -210,33 +196,6 @@ func Validate(build Build, architecture string) error {
 		}
 	}
 	return nil
-}
-
-func Canonical(build Build, architecture string) ([]byte, error) {
-	if err := Validate(build, architecture); err != nil {
-		return nil, err
-	}
-	raw, err := json.Marshal(build)
-	if err != nil {
-		return nil, fmt.Errorf("encode image build: %w", err)
-	}
-	canonical, err := jsoncanon.Transform(raw)
-	if err != nil {
-		return nil, fmt.Errorf("canonicalize image build: %w", err)
-	}
-	if len(canonical) > maxImageBuildBytes {
-		return nil, fmt.Errorf("image build exceeds %d bytes", maxImageBuildBytes)
-	}
-	return canonical, nil
-}
-
-func Digest(build Build, architecture string) (string, error) {
-	canonical, err := Canonical(build, architecture)
-	if err != nil {
-		return "", err
-	}
-	digest := sha256.Sum256(canonical)
-	return fmt.Sprintf("sha256:%x", digest), nil
 }
 
 func StepCount(build Build) int {
