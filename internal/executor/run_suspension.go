@@ -163,7 +163,7 @@ func (w ControlPlaneRunWaits) ContinueRunWait(
 	}
 }
 
-func (w ControlPlaneRunWaits) handleCheckpointDecision(ctx context.Context, request WaitRequest, intent workerapi.RunWaitPollResponse) error {
+func (w ControlPlaneRunWaits) handleCheckpointDecision(ctx context.Context, request WaitRequest, intent workerapi.RunWaitPollResponse) (resultErr error) {
 	if intent.CheckpointID == "" || intent.RequestVersion <= 0 {
 		return errors.New("checkpoint request id and version are required")
 	}
@@ -180,9 +180,9 @@ func (w ControlPlaneRunWaits) handleCheckpointDecision(ctx context.Context, requ
 			if _, failErr := w.Client.MarkCheckpointFailed(ctx, failedRequest); failErr == nil {
 				return ErrDetached
 			} else if !checkpointReadyRetryable(failErr) {
-				return failErr
+				return errors.Join(err, failErr)
 			} else if sleepErr := sleepWithContext(ctx, 250*time.Millisecond); sleepErr != nil {
-				return errors.Join(failErr, sleepErr)
+				return errors.Join(err, failErr, sleepErr)
 			}
 		}
 	}
@@ -210,6 +210,13 @@ func (w ControlPlaneRunWaits) handleCheckpointDecision(ctx context.Context, requ
 	if err != nil {
 		return failCheckpoint(err)
 	}
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		if err := request.Checkpointer.ReleaseCheckpointSource(cleanupCtx); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("release checkpoint source: %w", err))
+		}
+	}()
 	if checkpoint.WorkspaceCapture == nil {
 		err := errors.New("workspace capture is required before parking")
 		return failCheckpoint(err)
@@ -226,12 +233,9 @@ func (w ControlPlaneRunWaits) handleCheckpointDecision(ctx context.Context, requ
 	}
 	for {
 		if _, err := w.Client.MarkCheckpointReady(ctx, readyRequest); err == nil {
-			if err := request.Checkpointer.ReleaseCheckpointSource(ctx); err != nil {
-				return errors.Join(ErrDetached, fmt.Errorf("release checkpoint source: %w", err))
-			}
 			return ErrDetached
 		} else if !checkpointReadyRetryable(err) {
-			return fmt.Errorf("mark checkpoint ready: %w", err)
+			return failCheckpoint(fmt.Errorf("mark checkpoint ready: %w", err))
 		} else if err := sleepWithContext(ctx, 250*time.Millisecond); err != nil {
 			return err
 		}

@@ -25,10 +25,7 @@ import (
 )
 
 func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) {
-	stream := newCheckpointStream(t, nil, &runv0.CheckpointPauseReady{
-		RunWaitId:    "run-wait-id-1",
-		CheckpointId: "checkpoint-1",
-	})
+	stream := newCheckpointStream(t, nil, "run-wait-id-1", "checkpoint-1")
 	artifact := checkpointArtifact(t)
 	addCheckpointRuntimeSubstrate(t, &artifact)
 	session := &checkpointSession{stream: stream, artifact: artifact}
@@ -120,9 +117,7 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 }
 
 func TestRuntimeCheckpointerPublishesFrozenAuthorityBeforeSnapshot(t *testing.T) {
-	stream := newCheckpointStream(t, nil, &runv0.CheckpointPauseReady{
-		RunWaitId: "run-wait-id-1", CheckpointId: "checkpoint-1",
-	})
+	stream := newCheckpointStream(t, nil, "run-wait-id-1", "checkpoint-1")
 	artifact := checkpointArtifact(t)
 	addCheckpointRuntimeSubstrate(t, &artifact)
 	frozen := false
@@ -149,26 +144,6 @@ func TestRuntimeCheckpointerPublishesFrozenAuthorityBeforeSnapshot(t *testing.T)
 	}
 }
 
-func TestValidateCheckpointPauseReadyRequiresExactAuthority(t *testing.T) {
-	request := CheckpointRequest{
-		RunID: "run-1", AttemptNumber: 2, RunLeaseID: "lease-1",
-		RunWaitID: "wait-1", CheckpointID: "checkpoint-1",
-		ResumeAttachID: "attach-1", CheckpointRequestVersion: 3,
-	}
-	ready := &runv0.CheckpointPauseReady{
-		RunId: "run-1", AttemptNumber: 2, RunLeaseId: "lease-1",
-		RunWaitId: "wait-1", CheckpointId: "checkpoint-1",
-		ResumeAttachId: "attach-1", CheckpointRequestVersion: 3,
-	}
-	if err := validateCheckpointPauseReady(ready, request); err != nil {
-		t.Fatal(err)
-	}
-	ready.ResumeAttachId = "attach-2"
-	if err := validateCheckpointPauseReady(ready, request); err == nil {
-		t.Fatal("mismatched resume attach authority was accepted")
-	}
-}
-
 func TestValidateRestoreIdentityRejectsMissingSubstrateSize(t *testing.T) {
 	checkpoint := workerapi.CheckpointManifest{RecoveryPoint: workerapi.CheckpointRecoveryPoint{
 		Runtime: workerapi.CheckpointRuntime{
@@ -189,7 +164,7 @@ func TestValidateRestoreIdentityRejectsMissingSubstrateSize(t *testing.T) {
 }
 
 func TestRuntimeCheckpointerClosesSourceOnPrePauseConfigurationFailure(t *testing.T) {
-	stream := newCheckpointStream(t, nil)
+	stream := newCheckpointStream(t, nil, "", "")
 	session := &checkpointSession{stream: stream}
 	_, err := runtimeCheckpointer{session: session, stream: stream}.CreateCheckpoint(
 		context.Background(),
@@ -267,10 +242,7 @@ func TestRuntimeCheckpointerSeparatesWorkspaceCaptureFromRuntimeManifest(t *test
 func TestRuntimeCheckpointerProcessesRunEventsBeforePauseReady(t *testing.T) {
 	stream := newInterleavedCheckpointStream(t,
 		[]proto.Message{&runv0.RunEvent{Event: &runv0.RunEvent_StdoutChunk{StdoutChunk: []byte("flushed before checkpoint")}}},
-		&runv0.CheckpointPauseReady{
-			RunWaitId:    "run-wait-id-1",
-			CheckpointId: "checkpoint-1",
-		},
+		"run-wait-id-1", "checkpoint-1",
 	)
 	artifact := checkpointArtifact(t)
 	session := &checkpointSession{stream: stream, artifact: artifact}
@@ -305,10 +277,7 @@ func TestRuntimeCheckpointerProcessesRunEventsBeforePauseReady(t *testing.T) {
 }
 
 func TestRuntimeCheckpointerRejectsPauseReadyMismatch(t *testing.T) {
-	stream := newCheckpointStream(t, nil, &runv0.CheckpointPauseReady{
-		RunWaitId:    "other-run wait",
-		CheckpointId: "checkpoint-1",
-	})
+	stream := newCheckpointStream(t, nil, "other-run wait", "checkpoint-1")
 	session := &checkpointSession{stream: stream, artifact: checkpointArtifact(t)}
 
 	_, err := runtimeCheckpointer{
@@ -330,13 +299,32 @@ func TestRuntimeCheckpointerRejectsPauseReadyMismatch(t *testing.T) {
 	assertSuspendFrame(t, stream.written.Bytes(), "run-wait-id-1", "checkpoint-1")
 }
 
+func TestRuntimeCheckpointerRejectsPauseReadyBody(t *testing.T) {
+	var read bytes.Buffer
+	if err := wire.WriteStreamFrameHeader(&read, wire.StreamHeader{
+		Type:         wire.StreamTypeCheckpointPauseReady,
+		RunWaitID:    "run-wait-id-1",
+		CheckpointID: "checkpoint-1",
+	}, 1); err != nil {
+		t.Fatal(err)
+	}
+	read.WriteByte(0)
+
+	_, err := (runtimeCheckpointer{}).readPauseReady(context.Background(), bufio.NewReader(&read), CheckpointRequest{
+		RunWaitID: "run-wait-id-1", CheckpointID: "checkpoint-1",
+	})
+	if err == nil || !strings.Contains(err.Error(), "body length must be zero") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestRuntimeCheckpointerPauseReadyTimeoutDoesNotCloseSession(t *testing.T) {
 	stream := newBlockingGuestStream()
 	session := &checkpointSession{stream: stream}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, _, err := runtimeCheckpointer{
+	_, err := runtimeCheckpointer{
 		session: session,
 		stream:  stream,
 	}.readPauseReadyContext(ctx, bufio.NewReader(stream), CheckpointRequest{
@@ -410,10 +398,7 @@ func TestRuntimeCheckpointerClosesSourceOnFailureAfterPause(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			stream := newCheckpointStream(t, tt.closeErr, &runv0.CheckpointPauseReady{
-				RunWaitId:    "run-wait-id-1",
-				CheckpointId: "checkpoint-1",
-			})
+			stream := newCheckpointStream(t, tt.closeErr, "run-wait-id-1", "checkpoint-1")
 			artifact, snapshotErr := tt.snapshot(t)
 			session := &checkpointSession{stream: stream, artifact: artifact, snapshotErr: snapshotErr}
 			_, err := runtimeCheckpointer{
@@ -450,10 +435,7 @@ func TestRuntimeCheckpointerClosesSourceOnFailureAfterPause(t *testing.T) {
 
 func TestRuntimeCheckpointerReleaseBorrowedSourceDoesNotCloseControlStreamTwice(t *testing.T) {
 	stream := &nonIdempotentCheckpointStream{
-		checkpointStream: newCheckpointStream(t, nil, &runv0.CheckpointPauseReady{
-			RunWaitId:    "run-wait-id-1",
-			CheckpointId: "checkpoint-1",
-		}),
+		checkpointStream: newCheckpointStream(t, nil, "run-wait-id-1", "checkpoint-1"),
 	}
 	parent := &borrowedParentSession{stream: discardReadWriteCloser{}}
 	parent.artifact = checkpointArtifact(t)
@@ -493,14 +475,13 @@ type checkpointStream struct {
 	closed   int
 }
 
-func newCheckpointStream(t *testing.T, closeErr error, messages ...proto.Message) *checkpointStream {
+func newCheckpointStream(t *testing.T, closeErr error, runWaitID string, checkpointID string, messages ...proto.Message) *checkpointStream {
 	t.Helper()
 	var read bytes.Buffer
+	if runWaitID != "" || checkpointID != "" {
+		writeCheckpointPauseReadyFrame(t, &read, runWaitID, checkpointID)
+	}
 	for _, message := range messages {
-		if ready, ok := message.(*runv0.CheckpointPauseReady); ok {
-			writeCheckpointPauseReadyFrame(t, &read, ready.RunWaitId, ready.CheckpointId)
-			continue
-		}
 		body, err := proto.Marshal(message)
 		if err != nil {
 			t.Fatal(err)
@@ -512,7 +493,7 @@ func newCheckpointStream(t *testing.T, closeErr error, messages ...proto.Message
 	return &checkpointStream{scriptedGuestStream: &scriptedGuestStream{read: bytes.NewReader(read.Bytes())}, closeErr: closeErr}
 }
 
-func newInterleavedCheckpointStream(t *testing.T, beforeSnapshot []proto.Message, messages ...proto.Message) *checkpointStream {
+func newInterleavedCheckpointStream(t *testing.T, beforeSnapshot []proto.Message, runWaitID string, checkpointID string, messages ...proto.Message) *checkpointStream {
 	t.Helper()
 	var read bytes.Buffer
 	for _, message := range beforeSnapshot {
@@ -524,11 +505,8 @@ func newInterleavedCheckpointStream(t *testing.T, beforeSnapshot []proto.Message
 			t.Fatal(err)
 		}
 	}
+	writeCheckpointPauseReadyFrame(t, &read, runWaitID, checkpointID)
 	for _, message := range messages {
-		if ready, ok := message.(*runv0.CheckpointPauseReady); ok {
-			writeCheckpointPauseReadyFrame(t, &read, ready.RunWaitId, ready.CheckpointId)
-			continue
-		}
 		body, err := proto.Marshal(message)
 		if err != nil {
 			t.Fatal(err)

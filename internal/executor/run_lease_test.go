@@ -12,7 +12,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/frameio"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -376,10 +375,8 @@ func TestGuestRunLeaseTaskSerializesRenewalWithCheckpointFreeze(t *testing.T) {
 	<-mounts.started
 
 	stream := &signalingCheckpointStream{
-		checkpointStream: newCheckpointStream(t, nil, &runv0.CheckpointPauseReady{
-			RunWaitId: "run-wait-id-1", CheckpointId: "checkpoint-1",
-		}),
-		wrote: make(chan struct{}),
+		checkpointStream: newCheckpointStream(t, nil, "run-wait-id-1", "checkpoint-1"),
+		wrote:            make(chan struct{}),
 	}
 	frozen := make(chan struct{})
 	checkpointDone := make(chan error, 1)

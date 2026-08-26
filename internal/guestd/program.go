@@ -1629,17 +1629,7 @@ func pauseAndResumeProgram(
 			return nil, fmt.Errorf("capture checkpoint workspace: %w", err)
 		}
 	}
-	ready := &runv0.CheckpointPauseReady{
-		RunId:                    pause.GetRunId(),
-		AttemptNumber:            pause.GetAttemptNumber(),
-		RunLeaseId:               pause.GetRunLeaseId(),
-		RunWaitId:                pause.GetRunWaitId(),
-		CheckpointId:             pause.GetCheckpointId(),
-		ResumeAttachId:           pause.GetResumeAttachId(),
-		CheckpointRequestVersion: pause.GetCheckpointRequestVersion(),
-		CorrelationId:            pause.GetCorrelationId(),
-	}
-	if err := stream.writeCheckpointPauseReady(ready); err != nil {
+	if err := stream.writeCheckpointPauseReady(pause.GetRunWaitId(), pause.GetCheckpointId()); err != nil {
 		return nil, fmt.Errorf("write program checkpoint pause proof: %w", err)
 	}
 	var resumed programConnection
@@ -2489,11 +2479,11 @@ func workspaceSecretExcludes(
 	return patterns
 }
 
-func (stream *programEventStream) writeCheckpointPauseReady(ready *runv0.CheckpointPauseReady) error {
+func (stream *programEventStream) writeCheckpointPauseReady(runWaitID string, checkpointID string) error {
 	stream.mu.Lock()
 	defer stream.mu.Unlock()
 	return stream.writeLocked(func(conn programConnection) error {
-		return wire.WriteCheckpointPauseReady(conn, ready)
+		return wire.WriteCheckpointPauseReady(conn, runWaitID, checkpointID)
 	})
 }
 
