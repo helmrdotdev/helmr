@@ -51,12 +51,14 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 	}
 	manifest := result.Manifest
 
-	if session.resumeCount != 0 || session.closeCount != 1 || len(session.snapshotRequests) != 1 || session.snapshotRequests[0].ID != "checkpoint-1" {
+	if session.resumeCount != 0 || session.closeCount != 0 || len(session.snapshotRequests) != 1 || session.snapshotRequests[0].ID != "checkpoint-1" {
 		t.Fatalf("session = %+v", session)
 	}
-	if result.SourceCleanup == nil || result.SourceCleanup.Method != workerapi.RuntimeCleanupSessionClosed ||
-		result.SourceCleanup.CompletedAt.IsZero() {
-		t.Fatalf("source cleanup = %+v", result.SourceCleanup)
+	if err := (runtimeCheckpointer{session: session}).ReleaseCheckpointSource(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if session.closeCount != 1 {
+		t.Fatalf("session close count = %d, want 1", session.closeCount)
 	}
 	if stream.closed != 1 {
 		t.Fatalf("stream closed %d times", stream.closed)
@@ -404,14 +406,6 @@ func TestRuntimeCheckpointerClosesSourceOnFailureAfterPause(t *testing.T) {
 			putErrMediaType: cas.CheckpointMemoryMediaType,
 			want:            "store checkpoint memory: put failed",
 		},
-		{
-			name: "source release after durable store",
-			snapshot: func(t *testing.T) (vm.SnapshotArtifact, error) {
-				t.Helper()
-				return checkpointArtifact(t), nil
-			},
-			want: "release checkpoint source: close failed",
-		},
 	}
 
 	for _, tt := range tests {
@@ -422,10 +416,6 @@ func TestRuntimeCheckpointerClosesSourceOnFailureAfterPause(t *testing.T) {
 			})
 			artifact, snapshotErr := tt.snapshot(t)
 			session := &checkpointSession{stream: stream, artifact: artifact, snapshotErr: snapshotErr}
-			if tt.name == "source release after durable store" {
-				session.closeErr = errors.New("close failed")
-			}
-
 			_, err := runtimeCheckpointer{
 				session:   session,
 				cas:       &checkpointCAS{putErrMediaType: tt.putErrMediaType},
@@ -472,13 +462,14 @@ func TestRuntimeCheckpointerReleaseBorrowedSourceDoesNotCloseControlStreamTwice(
 		t.Fatal("borrowed session is not checkpointable")
 	}
 
-	_, err := runtimeCheckpointer{
+	checkpointer := runtimeCheckpointer{
 		session:   session,
 		cas:       &checkpointCAS{},
 		encryptor: testCheckpointEncryptor(t),
 		tempDir:   t.TempDir(),
 		stream:    stream,
-	}.CreateCheckpoint(context.Background(), CheckpointRequest{
+	}
+	_, err := checkpointer.CreateCheckpoint(context.Background(), CheckpointRequest{
 		RunWaitID:    "run-wait-id-1",
 		CheckpointID: "checkpoint-1",
 	})
@@ -487,6 +478,9 @@ func TestRuntimeCheckpointerReleaseBorrowedSourceDoesNotCloseControlStreamTwice(
 	}
 	if stream.closed != 1 {
 		t.Fatalf("stream closed %d times, want 1", stream.closed)
+	}
+	if err := checkpointer.ReleaseCheckpointSource(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 	if parent.closeCount != 1 {
 		t.Fatalf("parent close count = %d, want 1", parent.closeCount)

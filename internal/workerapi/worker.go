@@ -1082,7 +1082,6 @@ type CheckpointReadyRequest struct {
 	RequestVersion   int64                      `json:"request_version"`
 	RunWaitID        string                     `json:"run_wait_id"`
 	CheckpointID     string                     `json:"checkpoint_id"`
-	SourceCleanup    *RuntimeCleanupProof       `json:"source_cleanup,omitempty"`
 	WorkspaceCapture CheckpointWorkspaceCapture `json:"workspace_capture"`
 	Manifest         CheckpointManifest         `json:"manifest"`
 }

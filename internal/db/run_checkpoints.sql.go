@@ -157,17 +157,6 @@ WITH closed_mount AS (
            desired_version = runtime_instances.desired_version + 1,
            desired_at = $1,
            desired_reason = 'checkpointed',
-           observed_state = 'closed',
-           observed_version = runtime_instances.observed_version + 1,
-           observed_desired_version = runtime_instances.desired_version + 1,
-           observed_at = $1,
-           closing_at = COALESCE(runtime_instances.closing_at, $1),
-           closed_at = $1,
-           terminal_at = $1,
-           terminal_reason_code = 'checkpointed',
-           terminal_error = NULL,
-           reclaimed_at = $1,
-           reclaim_evidence = $7::jsonb,
            reserved_run_id = NULL,
            reserved_attempt_number = NULL,
            reserved_process_id = NULL,
@@ -180,9 +169,9 @@ WITH closed_mount AS (
        AND runtime_instances.worker_instance_id = $4
        AND runtime_instances.worker_epoch = $5
        AND runtime_instances.desired_state = 'ready'
-       AND runtime_instances.desired_version = $8
+       AND runtime_instances.desired_version = $7
        AND runtime_instances.observed_state = 'ready'
-       AND runtime_instances.observed_version = $9
+       AND runtime_instances.observed_version = $8
     RETURNING runtime_instances.id
 )
 SELECT closed_mount.id, closed_mount.org_id, closed_mount.worker_group_id, closed_mount.project_id, closed_mount.environment_id, closed_mount.region_id, closed_mount.worker_instance_id, closed_mount.worker_epoch, closed_mount.workspace_id, closed_mount.materialized_version_id, closed_mount.runtime_instance_id, closed_mount.guest_channel_token_hash, closed_mount.guest_channel_token_expires_at, closed_mount.state, closed_mount.request, closed_mount.dirty_generation, closed_mount.fencing_generation, closed_mount.finalization_kind, closed_mount.finalization_reason_code, closed_mount.finalization_error, closed_mount.staged_version_id, closed_mount.requested_at, closed_mount.mounted_at, closed_mount.unmounted_at, closed_mount.stopped_at, closed_mount.lost_at, closed_mount.failed_at, closed_mount.terminal_at, closed_mount.terminal_reason_code, closed_mount.terminal_error, closed_mount.created_at, closed_mount.updated_at
@@ -197,7 +186,6 @@ type CloseCheckpointSourceRuntimeParams struct {
 	WorkerInstanceID        pgtype.UUID        `json:"worker_instance_id"`
 	WorkerEpoch             int64              `json:"worker_epoch"`
 	MountFencingGeneration  int64              `json:"mount_fencing_generation"`
-	CleanupProof            []byte             `json:"cleanup_proof"`
 	ExpectedDesiredVersion  int64              `json:"expected_desired_version"`
 	ExpectedObservedVersion int64              `json:"expected_observed_version"`
 }
@@ -245,7 +233,6 @@ func (q *Queries) CloseCheckpointSourceRuntime(ctx context.Context, arg CloseChe
 		arg.WorkerInstanceID,
 		arg.WorkerEpoch,
 		arg.MountFencingGeneration,
-		arg.CleanupProof,
 		arg.ExpectedDesiredVersion,
 		arg.ExpectedObservedVersion,
 	)
