@@ -37,9 +37,8 @@ func TestProjectCheckpointWorkspaceBaseKeepsOriginalArtifactSeparate(t *testing.
 		ArtifactEncoding:  workspace.ArtifactEncoding,
 		MountPath:         "/workspace",
 	}
-	if projected.VersionID != pgvalue.UUIDString(versionID) ||
-		!workerapi.CheckpointWorkspaceBaseEqual(projected.Base, want) {
-		t.Fatalf("projected source base = %+v, want version %s base %+v", projected, pgvalue.UUIDString(versionID), want)
+	if !workerapi.CheckpointWorkspaceBaseEqual(projected, want) {
+		t.Fatalf("projected source base = %+v, want %+v", projected, want)
 	}
 
 	authority.ArtifactRowKind = db.NullArtifactKind{}
@@ -57,8 +56,7 @@ func TestProjectCheckpointWorkspaceBaseSupportsCanonicalEmptyBase(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if projected.VersionID != pgvalue.UUIDString(versionID) ||
-		projected.Base != (workerapi.CheckpointWorkspaceBase{MountPath: "/workspace"}) {
+	if projected != (workerapi.CheckpointWorkspaceBase{MountPath: "/workspace"}) {
 		t.Fatalf("empty source base = %+v", projected)
 	}
 }
@@ -75,7 +73,7 @@ func TestValidateCheckpointWorkspaceBaseAuthorityRejectsCrossedFrontier(t *testi
 	}
 	if err := validateCheckpointWorkspaceBaseAuthority(
 		manifest,
-		workerapi.RuntimeRestoreWorkspaceBase{VersionID: uuid.Must(uuid.NewV7()).String(), Base: base},
+		base,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +81,7 @@ func TestValidateCheckpointWorkspaceBaseAuthorityRejectsCrossedFrontier(t *testi
 	crossed.ArtifactDigest = digestWith("5")
 	if err := validateCheckpointWorkspaceBaseAuthority(
 		manifest,
-		workerapi.RuntimeRestoreWorkspaceBase{VersionID: uuid.Must(uuid.NewV7()).String(), Base: crossed},
+		crossed,
 	); err != errStaleRunLeaseClaim {
 		t.Fatalf("crossed source base error = %v, want stale authority", err)
 	}

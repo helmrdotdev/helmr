@@ -178,23 +178,11 @@ func populateRuntimeRestoreSource(
 	if err != nil {
 		return fmt.Errorf("project restored runtime checkpoint: %w", err)
 	}
-	baseAuthority, err := store.GetCheckpointWorkspaceBaseAuthority(ctx, db.GetCheckpointWorkspaceBaseAuthorityParams{
-		OrgID: row.OrgID, ProjectID: row.ProjectID, EnvironmentID: row.EnvironmentID,
-		WorkspaceID: row.WorkspaceID, VersionID: checkpoint.BaseWorkspaceVersionID,
-	})
-	if err != nil {
-		return fmt.Errorf("load restored runtime checkpoint source Workspace base: %w", err)
-	}
-	sourceBase, err := projectCheckpointWorkspaceBase(baseAuthority)
-	if err != nil {
-		return fmt.Errorf("project restored runtime checkpoint source Workspace base: %w", err)
-	}
 	source.Restore = &workerapi.RuntimeRestore{
 		CheckpointID: pgvalue.UUIDString(row.RestoreCheckpointID),
 		RunID:        pgvalue.UUIDString(checkpoint.RunID), AttemptNumber: checkpoint.AttemptNumber,
 		RunWaitID: pgvalue.UUIDString(checkpoint.RunWaitID),
 		Manifest:  projected.Manifest, Artifacts: projected.Artifacts,
-		SourceWorkspaceBase: &sourceBase,
 	}
 	return nil
 }

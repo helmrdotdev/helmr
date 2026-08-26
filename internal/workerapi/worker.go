@@ -180,18 +180,12 @@ type RuntimeSource struct {
 }
 
 type RuntimeRestore struct {
-	CheckpointID        string                       `json:"checkpoint_id"`
-	RunID               string                       `json:"run_id"`
-	AttemptNumber       int32                        `json:"attempt_number"`
-	RunWaitID           string                       `json:"run_wait_id"`
-	Manifest            json.RawMessage              `json:"manifest"`
-	Artifacts           []RunLeaseCheckpointArtifact `json:"artifacts"`
-	SourceWorkspaceBase *RuntimeRestoreWorkspaceBase `json:"source_workspace_base,omitempty"`
-}
-
-type RuntimeRestoreWorkspaceBase struct {
-	VersionID string                  `json:"version_id"`
-	Base      CheckpointWorkspaceBase `json:"base"`
+	CheckpointID  string                       `json:"checkpoint_id"`
+	RunID         string                       `json:"run_id"`
+	AttemptNumber int32                        `json:"attempt_number"`
+	RunWaitID     string                       `json:"run_wait_id"`
+	Manifest      json.RawMessage              `json:"manifest"`
+	Artifacts     []RunLeaseCheckpointArtifact `json:"artifacts"`
 }
 
 type RuntimeProgram struct {
