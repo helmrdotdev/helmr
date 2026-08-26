@@ -12,8 +12,6 @@ import (
 	"syscall"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/runtimeid"
-	"github.com/helmrdotdev/helmr/internal/vm"
 	"golang.org/x/sys/unix"
 )
 
@@ -45,10 +43,7 @@ func (c *Connector) preflight(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		problems = append(problems, err)
 	}
-	if err := errors.Join(problems...); err != nil {
-		return err
-	}
-	return c.proveRoutedNetworkLifecycle(ctx)
+	return errors.Join(problems...)
 }
 
 func checkJailerDeviceMount(path string) error {
@@ -64,42 +59,6 @@ func validateJailerDeviceMountFlags(flags int64) error {
 		return errors.New("the Firecracker jailer chroot filesystem forbids device nodes")
 	}
 	return nil
-}
-
-func (c *Connector) proveRoutedNetworkLifecycle(ctx context.Context) error {
-	owner := vm.Owner{Kind: vm.OwnerRuntime, ID: uuid.Must(uuid.NewV7()).String()}
-	statePath, err := createOwnerStateRoot(c.cfg.StateDir, owner)
-	if err != nil {
-		return fmt.Errorf("create routed network proof owner: %w", err)
-	}
-	binding, err := c.prepareNetworkBinding(ctx, owner, vm.WorkloadBinding{
-		WorkerEpoch: 1, OwnerID: owner.ID, Generation: 1,
-		RuntimeInstanceID: owner.ID, RuntimeIdentityID: runtimeid.Contract,
-	})
-	if err != nil {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), stopTimeout)
-		defer cancel()
-		cleanupErr := c.cleanup(cleanupCtx, owner)
-		return fmt.Errorf("exercise routed network lifecycle: %w", errors.Join(err, cleanupErr))
-	}
-	deactivateErr := binding.Deactivate()
-	closeErr := binding.Close()
-	if closeErr != nil {
-		return fmt.Errorf("close routed network proof: %w", errors.Join(deactivateErr, closeErr))
-	}
-	if err := c.cleanupNetworkAttachment(ctx, owner); err != nil {
-		return fmt.Errorf("reclaim routed network proof: %w", errors.Join(deactivateErr, err))
-	}
-	if err := removeStateRootLast(statePath, owner); err != nil {
-		return fmt.Errorf("remove routed network proof state: %w", err)
-	}
-	if err := syncDirectory(c.cfg.StateDir); err != nil {
-		return err
-	}
-	if exists, err := pathExists(statePath); err != nil || exists {
-		return fmt.Errorf("prove routed network proof state absence: exists=%t: %v", exists, err)
-	}
-	return deactivateErr
 }
 
 func checkHardLinkLayout(cfg Config) error {
