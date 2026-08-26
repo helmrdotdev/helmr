@@ -219,8 +219,7 @@ func imageSourcePlan(
 		steps = append(steps, imagebuild.Step{CopySourceDir: directory})
 	}
 	return imagebuild.Build{
-		FormatVersion: imagebuild.FormatVersion,
-		Root:          "base",
+		Root: "base",
 		Images: []imagebuild.Spec{{
 			Key:      "base",
 			Platform: imagebuild.Platform{OS: "linux", Architecture: "x86_64"},

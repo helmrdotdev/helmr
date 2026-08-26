@@ -3631,7 +3631,6 @@ function compileImageBuild(root, options) {
   if (stepCount > 1e4)
     throw new Error("image build exceeds 10000 steps");
   return {
-    formatVersion: 0,
     root: root.key,
     images: specs
   };

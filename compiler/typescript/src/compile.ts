@@ -93,7 +93,6 @@ export interface BuildPlan {
 }
 
 export interface ImageBuild {
-  readonly formatVersion: 0
   readonly root: string
   readonly images: readonly ImageSpec[]
 }
@@ -600,7 +599,6 @@ function compileImageBuild(
   const stepCount = specs.reduce((total, image) => total + image.steps.length, 0)
   if (stepCount > 10_000) throw new Error("image build exceeds 10000 steps")
   return {
-    formatVersion: 0,
     root: root.key,
     images: specs,
   }
