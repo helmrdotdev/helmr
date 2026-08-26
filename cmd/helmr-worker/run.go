@@ -47,6 +47,7 @@ func run(log *slog.Logger) error {
 		JailerUID:               cfg.JailerUID,
 		JailerGID:               cfg.JailerGID,
 		StateDir:                filepath.Join(workDir, "vms", "guest"),
+		TempDir:                 filepath.Join(workDir, "tmp"),
 		NetworkLinkPool:         cfg.NetworkLinkPool,
 		NetworkTranslationPool:  cfg.NetworkTranslationPool,
 		NetworkResolverIPv4:     cfg.NetworkResolverIPv4,

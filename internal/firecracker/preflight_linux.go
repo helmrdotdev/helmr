@@ -35,6 +35,7 @@ func (c *Connector) preflight(ctx context.Context) error {
 	problems = append(problems, poolErr)
 	problems = append(problems, ensureSecureDirectory("the Firecracker coordination directory", stateCoordinationDir(c.cfg.StateDir)))
 	problems = append(problems, ensureSecureDirectory("the Firecracker state directory", c.cfg.StateDir))
+	problems = append(problems, ensureSecureDirectory("the Firecracker temp directory", c.cfg.TempDir))
 	problems = append(problems, ensureSecureDirectory("the Firecracker jailer chroot directory", c.cfg.JailerChrootBaseDir))
 	problems = append(problems, checkJailerDeviceMount(c.cfg.JailerChrootBaseDir))
 	problems = append(problems, checkResolvedStateLayout(c.cfg))
@@ -91,12 +92,7 @@ func checkHardLinkLayout(cfg Config) error {
 		}
 	}
 
-	for _, item := range paths[:3] {
-		if err := proveHardLink(item.name, item.path, cfg.JailerChrootBaseDir); err != nil {
-			return err
-		}
-	}
-	probe, err := os.CreateTemp(stateCoordinationDir(cfg.StateDir), ".hardlink-")
+	probe, err := os.CreateTemp(cfg.TempDir, ".hardlink-")
 	if err != nil {
 		return fmt.Errorf("create Firecracker hard-link probe: %w", err)
 	}
@@ -106,7 +102,7 @@ func checkHardLinkLayout(cfg Config) error {
 		return fmt.Errorf("close Firecracker hard-link probe: %w", err)
 	}
 	defer os.Remove(source)
-	return proveHardLink("the Firecracker state", source, cfg.JailerChrootBaseDir)
+	return proveHardLink("the Firecracker session source", source, cfg.JailerChrootBaseDir)
 }
 
 func proveHardLink(label, source, directory string) error {

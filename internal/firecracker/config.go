@@ -45,6 +45,7 @@ type Config struct {
 	RootfsPath              string
 	RuntimeArtifactsPath    string
 	StateDir                string
+	TempDir                 string
 	NetworkLinkPool         string
 	NetworkTranslationPool  string
 	NetworkResolverIPv4     string
@@ -90,6 +91,9 @@ func (cfg Config) WithDefaults() Config {
 	}
 	if strings.TrimSpace(cfg.StateDir) == "" {
 		cfg.StateDir = filepath.Join(os.TempDir(), "helmr-worker", "vms", "guest")
+	}
+	if strings.TrimSpace(cfg.TempDir) == "" {
+		cfg.TempDir = filepath.Join(filepath.Dir(filepath.Dir(cfg.StateDir)), "tmp")
 	}
 	if strings.TrimSpace(cfg.JailerChrootBaseDir) == "" {
 		cfg.JailerChrootBaseDir = filepath.Join(filepath.Dir(filepath.Clean(cfg.StateDir)), "jailer")
@@ -204,6 +208,9 @@ func (cfg Config) Validate() error {
 	}
 	if strings.TrimSpace(cfg.StateDir) == "" {
 		problems = append(problems, errors.New("the Firecracker state dir is required"))
+	}
+	if strings.TrimSpace(cfg.TempDir) == "" {
+		problems = append(problems, errors.New("the Firecracker temp dir is required"))
 	}
 	if pathsOverlap(cfg.StateDir, cfg.JailerChrootBaseDir) {
 		problems = append(problems, errors.New("the Firecracker state dir and jailer chroot base directory must be disjoint"))

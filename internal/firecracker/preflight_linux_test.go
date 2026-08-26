@@ -112,10 +112,11 @@ func TestCheckHardLinkLayoutRejectsSeparateBindMount(t *testing.T) {
 		}
 	}
 	cfg := Config{
-		KernelPath:          filepath.Join(bind, "vmlinuz"),
-		InitramfsPath:       filepath.Join(bind, "initramfs"),
-		RootfsPath:          filepath.Join(bind, "rootfs.squashfs"),
+		KernelPath:          filepath.Join(source, "vmlinuz"),
+		InitramfsPath:       filepath.Join(source, "initramfs"),
+		RootfsPath:          filepath.Join(source, "rootfs.squashfs"),
 		StateDir:            state,
+		TempDir:             bind,
 		JailerChrootBaseDir: jailer,
 	}
 	for _, path := range []string{
