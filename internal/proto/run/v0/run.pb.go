@@ -4381,106 +4381,6 @@ func (x *CheckpointPauseRequest) GetCorrelationId() string {
 	return ""
 }
 
-type CheckpointPauseReady struct {
-	state                    protoimpl.MessageState `protogen:"open.v1"`
-	RunWaitId                string                 `protobuf:"bytes,1,opt,name=run_wait_id,json=runWaitId,proto3" json:"run_wait_id,omitempty"`
-	CheckpointId             string                 `protobuf:"bytes,2,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"`
-	RunId                    string                 `protobuf:"bytes,3,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
-	AttemptNumber            uint32                 `protobuf:"varint,4,opt,name=attempt_number,json=attemptNumber,proto3" json:"attempt_number,omitempty"`
-	RunLeaseId               string                 `protobuf:"bytes,5,opt,name=run_lease_id,json=runLeaseId,proto3" json:"run_lease_id,omitempty"`
-	ResumeAttachId           string                 `protobuf:"bytes,6,opt,name=resume_attach_id,json=resumeAttachId,proto3" json:"resume_attach_id,omitempty"`
-	CheckpointRequestVersion int64                  `protobuf:"varint,7,opt,name=checkpoint_request_version,json=checkpointRequestVersion,proto3" json:"checkpoint_request_version,omitempty"`
-	CorrelationId            string                 `protobuf:"bytes,8,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
-	unknownFields            protoimpl.UnknownFields
-	sizeCache                protoimpl.SizeCache
-}
-
-func (x *CheckpointPauseReady) Reset() {
-	*x = CheckpointPauseReady{}
-	mi := &file_run_proto_msgTypes[55]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *CheckpointPauseReady) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*CheckpointPauseReady) ProtoMessage() {}
-
-func (x *CheckpointPauseReady) ProtoReflect() protoreflect.Message {
-	mi := &file_run_proto_msgTypes[55]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use CheckpointPauseReady.ProtoReflect.Descriptor instead.
-func (*CheckpointPauseReady) Descriptor() ([]byte, []int) {
-	return file_run_proto_rawDescGZIP(), []int{55}
-}
-
-func (x *CheckpointPauseReady) GetRunWaitId() string {
-	if x != nil {
-		return x.RunWaitId
-	}
-	return ""
-}
-
-func (x *CheckpointPauseReady) GetCheckpointId() string {
-	if x != nil {
-		return x.CheckpointId
-	}
-	return ""
-}
-
-func (x *CheckpointPauseReady) GetRunId() string {
-	if x != nil {
-		return x.RunId
-	}
-	return ""
-}
-
-func (x *CheckpointPauseReady) GetAttemptNumber() uint32 {
-	if x != nil {
-		return x.AttemptNumber
-	}
-	return 0
-}
-
-func (x *CheckpointPauseReady) GetRunLeaseId() string {
-	if x != nil {
-		return x.RunLeaseId
-	}
-	return ""
-}
-
-func (x *CheckpointPauseReady) GetResumeAttachId() string {
-	if x != nil {
-		return x.ResumeAttachId
-	}
-	return ""
-}
-
-func (x *CheckpointPauseReady) GetCheckpointRequestVersion() int64 {
-	if x != nil {
-		return x.CheckpointRequestVersion
-	}
-	return 0
-}
-
-func (x *CheckpointPauseReady) GetCorrelationId() string {
-	if x != nil {
-		return x.CorrelationId
-	}
-	return ""
-}
-
 type ResumeAttach struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
 	CheckpointId         string                 `protobuf:"bytes,1,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"`
@@ -4497,7 +4397,7 @@ type ResumeAttach struct {
 
 func (x *ResumeAttach) Reset() {
 	*x = ResumeAttach{}
-	mi := &file_run_proto_msgTypes[56]
+	mi := &file_run_proto_msgTypes[55]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4509,7 +4409,7 @@ func (x *ResumeAttach) String() string {
 func (*ResumeAttach) ProtoMessage() {}
 
 func (x *ResumeAttach) ProtoReflect() protoreflect.Message {
-	mi := &file_run_proto_msgTypes[56]
+	mi := &file_run_proto_msgTypes[55]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4522,7 +4422,7 @@ func (x *ResumeAttach) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeAttach.ProtoReflect.Descriptor instead.
 func (*ResumeAttach) Descriptor() ([]byte, []int) {
-	return file_run_proto_rawDescGZIP(), []int{56}
+	return file_run_proto_rawDescGZIP(), []int{55}
 }
 
 func (x *ResumeAttach) GetCheckpointId() string {
@@ -4599,7 +4499,7 @@ type ResumeDecision struct {
 
 func (x *ResumeDecision) Reset() {
 	*x = ResumeDecision{}
-	mi := &file_run_proto_msgTypes[57]
+	mi := &file_run_proto_msgTypes[56]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4611,7 +4511,7 @@ func (x *ResumeDecision) String() string {
 func (*ResumeDecision) ProtoMessage() {}
 
 func (x *ResumeDecision) ProtoReflect() protoreflect.Message {
-	mi := &file_run_proto_msgTypes[57]
+	mi := &file_run_proto_msgTypes[56]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4624,7 +4524,7 @@ func (x *ResumeDecision) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeDecision.ProtoReflect.Descriptor instead.
 func (*ResumeDecision) Descriptor() ([]byte, []int) {
-	return file_run_proto_rawDescGZIP(), []int{57}
+	return file_run_proto_rawDescGZIP(), []int{56}
 }
 
 func (x *ResumeDecision) GetRunWaitId() string {
@@ -4711,7 +4611,7 @@ type ResumeAck struct {
 
 func (x *ResumeAck) Reset() {
 	*x = ResumeAck{}
-	mi := &file_run_proto_msgTypes[58]
+	mi := &file_run_proto_msgTypes[57]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4723,7 +4623,7 @@ func (x *ResumeAck) String() string {
 func (*ResumeAck) ProtoMessage() {}
 
 func (x *ResumeAck) ProtoReflect() protoreflect.Message {
-	mi := &file_run_proto_msgTypes[58]
+	mi := &file_run_proto_msgTypes[57]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4736,7 +4636,7 @@ func (x *ResumeAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeAck.ProtoReflect.Descriptor instead.
 func (*ResumeAck) Descriptor() ([]byte, []int) {
-	return file_run_proto_rawDescGZIP(), []int{58}
+	return file_run_proto_rawDescGZIP(), []int{57}
 }
 
 func (x *ResumeAck) GetRunWaitId() string {
@@ -4795,7 +4695,7 @@ type ResumeConsumed struct {
 
 func (x *ResumeConsumed) Reset() {
 	*x = ResumeConsumed{}
-	mi := &file_run_proto_msgTypes[59]
+	mi := &file_run_proto_msgTypes[58]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4807,7 +4707,7 @@ func (x *ResumeConsumed) String() string {
 func (*ResumeConsumed) ProtoMessage() {}
 
 func (x *ResumeConsumed) ProtoReflect() protoreflect.Message {
-	mi := &file_run_proto_msgTypes[59]
+	mi := &file_run_proto_msgTypes[58]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4820,7 +4720,7 @@ func (x *ResumeConsumed) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeConsumed.ProtoReflect.Descriptor instead.
 func (*ResumeConsumed) Descriptor() ([]byte, []int) {
-	return file_run_proto_rawDescGZIP(), []int{59}
+	return file_run_proto_rawDescGZIP(), []int{58}
 }
 
 func (x *ResumeConsumed) GetRunWaitId() string {
@@ -4879,7 +4779,7 @@ type MetadataUpdated struct {
 
 func (x *MetadataUpdated) Reset() {
 	*x = MetadataUpdated{}
-	mi := &file_run_proto_msgTypes[60]
+	mi := &file_run_proto_msgTypes[59]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4891,7 +4791,7 @@ func (x *MetadataUpdated) String() string {
 func (*MetadataUpdated) ProtoMessage() {}
 
 func (x *MetadataUpdated) ProtoReflect() protoreflect.Message {
-	mi := &file_run_proto_msgTypes[60]
+	mi := &file_run_proto_msgTypes[59]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4904,7 +4804,7 @@ func (x *MetadataUpdated) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MetadataUpdated.ProtoReflect.Descriptor instead.
 func (*MetadataUpdated) Descriptor() ([]byte, []int) {
-	return file_run_proto_rawDescGZIP(), []int{60}
+	return file_run_proto_rawDescGZIP(), []int{59}
 }
 
 func (x *MetadataUpdated) GetOperation() string {
@@ -4961,7 +4861,7 @@ type StructuredLogRequested struct {
 
 func (x *StructuredLogRequested) Reset() {
 	*x = StructuredLogRequested{}
-	mi := &file_run_proto_msgTypes[61]
+	mi := &file_run_proto_msgTypes[60]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4973,7 +4873,7 @@ func (x *StructuredLogRequested) String() string {
 func (*StructuredLogRequested) ProtoMessage() {}
 
 func (x *StructuredLogRequested) ProtoReflect() protoreflect.Message {
-	mi := &file_run_proto_msgTypes[61]
+	mi := &file_run_proto_msgTypes[60]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4986,7 +4886,7 @@ func (x *StructuredLogRequested) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StructuredLogRequested.ProtoReflect.Descriptor instead.
 func (*StructuredLogRequested) Descriptor() ([]byte, []int) {
-	return file_run_proto_rawDescGZIP(), []int{61}
+	return file_run_proto_rawDescGZIP(), []int{60}
 }
 
 func (x *StructuredLogRequested) GetCorrelationId() string {
@@ -5390,17 +5290,7 @@ const file_run_proto_rawDesc = "" +
 	"runLeaseId\x12(\n" +
 	"\x10resume_attach_id\x18\a \x01(\tR\x0eresumeAttachId\x12<\n" +
 	"\x1acheckpoint_request_version\x18\b \x01(\x03R\x18checkpointRequestVersion\x12%\n" +
-	"\x0ecorrelation_id\x18\t \x01(\tR\rcorrelationId\"\xca\x02\n" +
-	"\x14CheckpointPauseReady\x12\x1e\n" +
-	"\vrun_wait_id\x18\x01 \x01(\tR\trunWaitId\x12#\n" +
-	"\rcheckpoint_id\x18\x02 \x01(\tR\fcheckpointId\x12\x15\n" +
-	"\x06run_id\x18\x03 \x01(\tR\x05runId\x12%\n" +
-	"\x0eattempt_number\x18\x04 \x01(\rR\rattemptNumber\x12 \n" +
-	"\frun_lease_id\x18\x05 \x01(\tR\n" +
-	"runLeaseId\x12(\n" +
-	"\x10resume_attach_id\x18\x06 \x01(\tR\x0eresumeAttachId\x12<\n" +
-	"\x1acheckpoint_request_version\x18\a \x01(\x03R\x18checkpointRequestVersion\x12%\n" +
-	"\x0ecorrelation_id\x18\b \x01(\tR\rcorrelationId\"\xba\x02\n" +
+	"\x0ecorrelation_id\x18\t \x01(\tR\rcorrelationId\"\xba\x02\n" +
 	"\fResumeAttach\x12#\n" +
 	"\rcheckpoint_id\x18\x01 \x01(\tR\fcheckpointId\x12\x1e\n" +
 	"\vrun_wait_id\x18\x02 \x01(\tR\trunWaitId\x12 \n" +
@@ -5471,7 +5361,7 @@ func file_run_proto_rawDescGZIP() []byte {
 	return file_run_proto_rawDescData
 }
 
-var file_run_proto_msgTypes = make([]protoimpl.MessageInfo, 63)
+var file_run_proto_msgTypes = make([]protoimpl.MessageInfo, 62)
 var file_run_proto_goTypes = []any{
 	(*ProgramStart)(nil),                // 0: helmr.run.v0.ProgramStart
 	(*TaskStart)(nil),                   // 1: helmr.run.v0.TaskStart
@@ -5528,14 +5418,13 @@ var file_run_proto_goTypes = []any{
 	(*TokenCreateRequested)(nil),        // 52: helmr.run.v0.TokenCreateRequested
 	(*TaskChildInvokeRequested)(nil),    // 53: helmr.run.v0.TaskChildInvokeRequested
 	(*CheckpointPauseRequest)(nil),      // 54: helmr.run.v0.CheckpointPauseRequest
-	(*CheckpointPauseReady)(nil),        // 55: helmr.run.v0.CheckpointPauseReady
-	(*ResumeAttach)(nil),                // 56: helmr.run.v0.ResumeAttach
-	(*ResumeDecision)(nil),              // 57: helmr.run.v0.ResumeDecision
-	(*ResumeAck)(nil),                   // 58: helmr.run.v0.ResumeAck
-	(*ResumeConsumed)(nil),              // 59: helmr.run.v0.ResumeConsumed
-	(*MetadataUpdated)(nil),             // 60: helmr.run.v0.MetadataUpdated
-	(*StructuredLogRequested)(nil),      // 61: helmr.run.v0.StructuredLogRequested
-	nil,                                 // 62: helmr.run.v0.WorkspaceExecRequested.EnvEntry
+	(*ResumeAttach)(nil),                // 55: helmr.run.v0.ResumeAttach
+	(*ResumeDecision)(nil),              // 56: helmr.run.v0.ResumeDecision
+	(*ResumeAck)(nil),                   // 57: helmr.run.v0.ResumeAck
+	(*ResumeConsumed)(nil),              // 58: helmr.run.v0.ResumeConsumed
+	(*MetadataUpdated)(nil),             // 59: helmr.run.v0.MetadataUpdated
+	(*StructuredLogRequested)(nil),      // 60: helmr.run.v0.StructuredLogRequested
+	nil,                                 // 61: helmr.run.v0.WorkspaceExecRequested.EnvEntry
 }
 var file_run_proto_depIdxs = []int32{
 	4,  // 0: helmr.run.v0.ProgramStart.cause:type_name -> helmr.run.v0.RunCause
@@ -5557,9 +5446,9 @@ var file_run_proto_depIdxs = []int32{
 	18, // 16: helmr.run.v0.EntrypointReady.entrypoint:type_name -> helmr.run.v0.EntrypointIdentity
 	18, // 17: helmr.run.v0.EntrypointRelease.entrypoint:type_name -> helmr.run.v0.EntrypointIdentity
 	51, // 18: helmr.run.v0.RunEvent.run_wait_requested:type_name -> helmr.run.v0.RunWaitRequested
-	60, // 19: helmr.run.v0.RunEvent.metadata_updated:type_name -> helmr.run.v0.MetadataUpdated
+	59, // 19: helmr.run.v0.RunEvent.metadata_updated:type_name -> helmr.run.v0.MetadataUpdated
 	52, // 20: helmr.run.v0.RunEvent.token_create_requested:type_name -> helmr.run.v0.TokenCreateRequested
-	59, // 21: helmr.run.v0.RunEvent.resume_consumed:type_name -> helmr.run.v0.ResumeConsumed
+	58, // 21: helmr.run.v0.RunEvent.resume_consumed:type_name -> helmr.run.v0.ResumeConsumed
 	15, // 22: helmr.run.v0.RunEvent.program_process_started:type_name -> helmr.run.v0.ProgramProcessStarted
 	21, // 23: helmr.run.v0.RunEvent.entrypoint_ready:type_name -> helmr.run.v0.EntrypointReady
 	24, // 24: helmr.run.v0.RunEvent.task_outcome:type_name -> helmr.run.v0.TaskOutcome
@@ -5568,7 +5457,7 @@ var file_run_proto_depIdxs = []int32{
 	31, // 27: helmr.run.v0.RunEvent.actor_turn_commit_requested:type_name -> helmr.run.v0.ActorTurnCommitRequested
 	35, // 28: helmr.run.v0.RunEvent.actor_output_append_requested:type_name -> helmr.run.v0.ActorOutputAppendRequested
 	36, // 29: helmr.run.v0.RunEvent.session_input_send_requested:type_name -> helmr.run.v0.SessionInputSendRequested
-	61, // 30: helmr.run.v0.RunEvent.structured_log_requested:type_name -> helmr.run.v0.StructuredLogRequested
+	60, // 30: helmr.run.v0.RunEvent.structured_log_requested:type_name -> helmr.run.v0.StructuredLogRequested
 	53, // 31: helmr.run.v0.RunEvent.task_child_invoke_requested:type_name -> helmr.run.v0.TaskChildInvokeRequested
 	37, // 32: helmr.run.v0.RunEvent.actor_start_requested:type_name -> helmr.run.v0.ActorStartRequested
 	38, // 33: helmr.run.v0.RunEvent.session_status_requested:type_name -> helmr.run.v0.SessionStatusRequested
@@ -5593,7 +5482,7 @@ var file_run_proto_depIdxs = []int32{
 	41, // 52: helmr.run.v0.WorkspaceFileStatRequested.workspace:type_name -> helmr.run.v0.WorkspaceAddress
 	41, // 53: helmr.run.v0.WorkspaceFileListRequested.workspace:type_name -> helmr.run.v0.WorkspaceAddress
 	41, // 54: helmr.run.v0.WorkspaceExecRequested.workspace:type_name -> helmr.run.v0.WorkspaceAddress
-	62, // 55: helmr.run.v0.WorkspaceExecRequested.env:type_name -> helmr.run.v0.WorkspaceExecRequested.EnvEntry
+	61, // 55: helmr.run.v0.WorkspaceExecRequested.env:type_name -> helmr.run.v0.WorkspaceExecRequested.EnvEntry
 	41, // 56: helmr.run.v0.WorkspaceDeleteRequested.workspace:type_name -> helmr.run.v0.WorkspaceAddress
 	57, // [57:57] is the sub-list for method output_type
 	57, // [57:57] is the sub-list for method input_type
@@ -5697,14 +5586,14 @@ func file_run_proto_init() {
 	file_run_proto_msgTypes[51].OneofWrappers = []any{}
 	file_run_proto_msgTypes[52].OneofWrappers = []any{}
 	file_run_proto_msgTypes[53].OneofWrappers = []any{}
-	file_run_proto_msgTypes[60].OneofWrappers = []any{}
+	file_run_proto_msgTypes[59].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_run_proto_rawDesc), len(file_run_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   63,
+			NumMessages:   62,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

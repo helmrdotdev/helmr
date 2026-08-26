@@ -239,13 +239,10 @@ func (c runtimeCheckpointer) suspendGuestForCheckpoint(ctx context.Context, requ
 	}
 	reader := bufio.NewReader(c.stream)
 	pauseCtx, cancelPause := context.WithTimeout(ctx, checkpointSuspendTimeout)
-	ready, workspaceArtifact, err := c.readPauseReadyContext(pauseCtx, reader, request)
+	workspaceArtifact, err := c.readPauseReadyContext(pauseCtx, reader, request)
 	cancelPause()
 	if err != nil {
 		return nil, fmt.Errorf("read checkpoint pause ready: %w", err)
-	}
-	if err := validateCheckpointPauseReady(ready, request); err != nil {
-		return nil, err
 	}
 	if c.freezeGate != nil {
 		c.freezeGate.Lock()
@@ -277,39 +274,15 @@ func (c runtimeCheckpointer) suspendGuestForCheckpoint(ctx context.Context, requ
 	return &CheckpointWorkspaceCapture{Tree: tree, Artifact: *workspaceArtifact}, nil
 }
 
-func validateCheckpointPauseReady(ready *runv0.CheckpointPauseReady, request CheckpointRequest) error {
-	if request.ResumeAttachID == "" {
-		if ready == nil || ready.GetRunWaitId() != request.RunWaitID || ready.GetCheckpointId() != request.CheckpointID {
-			return errors.New("checkpoint pause ready did not match request")
-		}
-		return nil
-	}
-	if ready == nil ||
-		ready.GetRunId() != request.RunID ||
-		ready.GetAttemptNumber() != uint32(request.AttemptNumber) ||
-		ready.GetRunLeaseId() != request.RunLeaseID ||
-		ready.GetRunWaitId() != request.RunWaitID ||
-		ready.GetCorrelationId() != request.CorrelationID ||
-		ready.GetCheckpointId() != request.CheckpointID ||
-		ready.GetResumeAttachId() != request.ResumeAttachID ||
-		ready.GetCheckpointRequestVersion() != request.CheckpointRequestVersion {
-		return errors.New("checkpoint pause ready did not match exact request authority")
-	}
-	return nil
-}
-
-func (c runtimeCheckpointer) readPauseReadyContext(ctx context.Context, reader *bufio.Reader, request CheckpointRequest) (*runv0.CheckpointPauseReady, *workspace.WorkspaceArtifact, error) {
+func (c runtimeCheckpointer) readPauseReadyContext(ctx context.Context, reader *bufio.Reader, request CheckpointRequest) (*workspace.WorkspaceArtifact, error) {
 	type pauseReadyResult struct {
-		ready            *runv0.CheckpointPauseReady
 		workspaceCapture *workspace.WorkspaceArtifact
 		err              error
 	}
 	result := make(chan pauseReadyResult, 1)
 	go func() {
-		parsed := &runv0.CheckpointPauseReady{}
-		workspaceCapture, err := c.readPauseReady(ctx, reader, request, parsed)
+		workspaceCapture, err := c.readPauseReady(ctx, reader, request)
 		result <- pauseReadyResult{
-			ready:            parsed,
 			workspaceCapture: workspaceCapture,
 			err:              err,
 		}
@@ -317,16 +290,16 @@ func (c runtimeCheckpointer) readPauseReadyContext(ctx context.Context, reader *
 	select {
 	case result := <-result:
 		if result.err != nil {
-			return nil, nil, result.err
+			return nil, result.err
 		}
-		return result.ready, result.workspaceCapture, nil
+		return result.workspaceCapture, nil
 	case <-ctx.Done():
 		_ = c.stream.Close()
-		return nil, nil, ctx.Err()
+		return nil, ctx.Err()
 	}
 }
 
-func (c runtimeCheckpointer) readPauseReady(ctx context.Context, reader *bufio.Reader, request CheckpointRequest, ready *runv0.CheckpointPauseReady) (*workspace.WorkspaceArtifact, error) {
+func (c runtimeCheckpointer) readPauseReady(ctx context.Context, reader *bufio.Reader, request CheckpointRequest) (*workspace.WorkspaceArtifact, error) {
 	var workspaceCapture *workspace.WorkspaceArtifact
 	for {
 		prefix, err := reader.Peek(4)
@@ -343,19 +316,8 @@ func (c runtimeCheckpointer) readPauseReady(ctx context.Context, reader *bufio.R
 				if header.RunWaitID != request.RunWaitID || header.CheckpointID != request.CheckpointID {
 					return nil, fmt.Errorf("checkpoint pause ready mismatch: run_wait_id=%q checkpoint_id=%q", header.RunWaitID, header.CheckpointID)
 				}
-				if bodyLen == 0 {
-					ready.RunWaitId = header.RunWaitID
-					ready.CheckpointId = header.CheckpointID
-				} else if bodyLen > uint64(frameio.MaxFrameBytes) {
-					return nil, fmt.Errorf("checkpoint pause ready body length %d exceeds max %d", bodyLen, frameio.MaxFrameBytes)
-				} else if body, err := io.ReadAll(io.LimitReader(reader, int64(bodyLen))); err != nil {
-					return nil, fmt.Errorf("read checkpoint pause ready: %w", err)
-				} else if uint64(len(body)) != bodyLen {
-					return nil, io.ErrUnexpectedEOF
-				} else if err := proto.Unmarshal(body, ready); err != nil {
-					return nil, fmt.Errorf("unmarshal checkpoint pause ready: %w", err)
-				} else if ready.GetRunWaitId() != header.RunWaitID || ready.GetCheckpointId() != header.CheckpointID {
-					return nil, errors.New("checkpoint pause ready header did not match body")
+				if bodyLen != 0 {
+					return nil, fmt.Errorf("checkpoint pause ready body length must be zero, got %d", bodyLen)
 				}
 				return workspaceCapture, nil
 			case wire.StreamTypeWorkspaceArtifact:

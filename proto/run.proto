@@ -411,17 +411,6 @@ message CheckpointPauseRequest {
   string correlation_id = 9;
 }
 
-message CheckpointPauseReady {
-  string run_wait_id = 1;
-  string checkpoint_id = 2;
-  string run_id = 3;
-  uint32 attempt_number = 4;
-  string run_lease_id = 5;
-  string resume_attach_id = 6;
-  int64 checkpoint_request_version = 7;
-  string correlation_id = 8;
-}
-
 message ResumeAttach {
   string checkpoint_id = 1;
   string run_wait_id = 2;

@@ -939,16 +939,8 @@ func TestRelayProgramQuiescenceUsesPromotedResumeLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if header.Type != wire.StreamTypeCheckpointPauseReady || bodyLen == 0 {
+	if header.Type != wire.StreamTypeCheckpointPauseReady || header.RunWaitID != "wait-1" || header.CheckpointID != "checkpoint-1" || bodyLen != 0 {
 		t.Fatalf("pause proof frame = %+v body=%d", header, bodyLen)
-	}
-	body := make([]byte, bodyLen)
-	if _, err := io.ReadFull(reader, body); err != nil {
-		t.Fatal(err)
-	}
-	var ready runv0.CheckpointPauseReady
-	if err := proto.Unmarshal(body, &ready); err != nil {
-		t.Fatal(err)
 	}
 	resumeGuest, resumeHost := net.Pipe()
 	defer resumeGuest.Close()
@@ -1452,19 +1444,8 @@ func TestPauseAndResumeProgramUsesExactFrozenAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if header.Type != wire.StreamTypeCheckpointPauseReady || bodyLen == 0 {
+	if header.Type != wire.StreamTypeCheckpointPauseReady || header.RunWaitID != "durable-wait-1" || header.CheckpointID != "checkpoint-1" || bodyLen != 0 {
 		t.Fatalf("pause proof frame = %+v body=%d", header, bodyLen)
-	}
-	body := make([]byte, bodyLen)
-	if _, err := io.ReadFull(reader, body); err != nil {
-		t.Fatal(err)
-	}
-	var ready runv0.CheckpointPauseReady
-	if err := proto.Unmarshal(body, &ready); err != nil {
-		t.Fatal(err)
-	}
-	if ready.GetResumeAttachId() != "attach-1" || ready.GetCheckpointRequestVersion() != 3 {
-		t.Fatalf("pause proof = %+v", &ready)
 	}
 	if cgroup.freezeCount() != 1 || cgroup.thawCount() != 0 {
 		t.Fatalf("cgroup before resume freeze=%d thaw=%d", cgroup.freezeCount(), cgroup.thawCount())
