@@ -911,6 +911,7 @@ SELECT input_scopes.scope_ordinal,
        candidates.run_id,
        candidates.state_version,
        candidates.queue_concurrency_limit,
+       candidates.workspace_manifest_version,
        candidates.workspace_manifest,
        candidates.required_worker_group_id,
        candidates.required_runtime_identity_id,
@@ -927,6 +928,7 @@ SELECT runs.org_id,
        runs.id AS run_id,
        runs.state_version,
        runs.queue_concurrency_limit,
+       workspace_definitions.manifest_version AS workspace_manifest_version,
        workspace_definitions.manifest AS workspace_manifest,
        COALESCE(capacity_restore.worker_group_id, '') AS required_worker_group_id,
        COALESCE(capacity_restore.runtime_identity_id, '') AS required_runtime_identity_id,
@@ -1202,6 +1204,7 @@ type ListQueuedRunPlanningCandidatesForScopesRow struct {
 	RunID                           pgtype.UUID `json:"run_id"`
 	StateVersion                    int64       `json:"state_version"`
 	QueueConcurrencyLimit           pgtype.Int8 `json:"queue_concurrency_limit"`
+	WorkspaceManifestVersion        int32       `json:"workspace_manifest_version"`
 	WorkspaceManifest               []byte      `json:"workspace_manifest"`
 	RequiredWorkerGroupID           string      `json:"required_worker_group_id"`
 	RequiredRuntimeIdentityID       string      `json:"required_runtime_identity_id"`
@@ -1237,6 +1240,7 @@ func (q *Queries) ListQueuedRunPlanningCandidatesForScopes(ctx context.Context, 
 			&i.RunID,
 			&i.StateVersion,
 			&i.QueueConcurrencyLimit,
+			&i.WorkspaceManifestVersion,
 			&i.WorkspaceManifest,
 			&i.RequiredWorkerGroupID,
 			&i.RequiredRuntimeIdentityID,

@@ -78,6 +78,26 @@ type SandboxManifest struct {
 	Resources ResourcesManifest    `json:"resources"`
 }
 
+func ParseSandboxManifest(manifestVersion int32, raw []byte) (SandboxManifest, error) {
+	if manifestVersion != DeploymentPlanFormatVersion {
+		return SandboxManifest{}, fmt.Errorf(
+			"sandbox manifest version = %d, want %d",
+			manifestVersion,
+			DeploymentPlanFormatVersion,
+		)
+	}
+	var manifest SandboxManifest
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&manifest); err != nil {
+		return SandboxManifest{}, fmt.Errorf("decode sandbox manifest: %w", err)
+	}
+	if err := ensureEOF(decoder, "sandbox manifest"); err != nil {
+		return SandboxManifest{}, err
+	}
+	return manifest, nil
+}
+
 type SandboxImageManifest struct {
 	ArtifactDigest string `json:"artifactDigest"`
 	MediaType      string `json:"mediaType"`
@@ -123,29 +143,12 @@ type QueueConfig struct {
 	Queues        []QueueInput `json:"queues"`
 }
 
-func QueueConfigFromPlan(plan BuildPlan) (QueueConfig, error) {
-	if err := ValidateBuildPlan(plan); err != nil {
-		return QueueConfig{}, err
-	}
-	config := QueueConfig{
-		FormatVersion: BuildPlanFormatVersion,
-		Queues:        append([]QueueInput(nil), plan.Queues...),
-	}
-	for index := range config.Queues {
-		if plan.Queues[index].ConcurrencyLimit != nil {
-			limit := *plan.Queues[index].ConcurrencyLimit
-			config.Queues[index].ConcurrencyLimit = &limit
-		}
-	}
-	return config, nil
-}
-
 func CanonicalQueueConfig(config QueueConfig) ([]byte, error) {
-	if config.FormatVersion != BuildPlanFormatVersion {
+	if config.FormatVersion != DeploymentPlanFormatVersion {
 		return nil, fmt.Errorf(
 			"queue config formatVersion = %d, want %d",
 			config.FormatVersion,
-			BuildPlanFormatVersion,
+			DeploymentPlanFormatVersion,
 		)
 	}
 	for index, queue := range config.Queues {

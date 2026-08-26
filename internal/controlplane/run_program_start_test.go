@@ -156,7 +156,7 @@ func validTaskProgramStart(
 		DeploymentID:    deploymentID,
 		Kind:            "task",
 		DeclaredID:      "compile",
-		ManifestVersion: deployment.BuildPlanFormatVersion,
+		ManifestVersion: deployment.DeploymentPlanFormatVersion,
 		Manifest:        raw,
 		ManifestDigest:  digest[:],
 	}

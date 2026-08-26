@@ -3,10 +3,8 @@ package capacity
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"sort"
 	"time"
@@ -547,7 +545,7 @@ func exceedsQueueLimit(used int64, candidateLimit pgtype.Int8, pinnedLimit int64
 }
 
 func runItem(row db.ListQueuedRunPlanningCandidatesForScopesRow) item {
-	result := freshExecutionItem(fmt.Sprintf("%x", row.RunID.Bytes), row.WorkspaceManifest)
+	result := freshExecutionItem(fmt.Sprintf("%x", row.RunID.Bytes), row.WorkspaceManifestVersion, row.WorkspaceManifest)
 	if result.reason != "" {
 		return result
 	}
@@ -579,19 +577,13 @@ func runItem(row db.ListQueuedRunPlanningCandidatesForScopesRow) item {
 }
 
 func workspaceExecItem(row db.ListPendingWorkspaceExecCapacityCandidatesRow) item {
-	return freshExecutionItem(fmt.Sprintf("workspace-exec:%x", row.ProcessID.Bytes), row.WorkspaceManifest)
+	return freshExecutionItem(fmt.Sprintf("workspace-exec:%x", row.ProcessID.Bytes), row.WorkspaceManifestVersion, row.WorkspaceManifest)
 }
 
-func freshExecutionItem(key string, manifestJSON []byte) item {
+func freshExecutionItem(key string, manifestVersion int32, manifestJSON []byte) item {
 	result := item{role: "run", key: key}
-	var manifest deployment.SandboxManifest
-	decoder := json.NewDecoder(bytes.NewReader(manifestJSON))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&manifest); err != nil {
-		result.reason = reasonInvalidWorkload
-		return result
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	manifest, err := deployment.ParseSandboxManifest(manifestVersion, manifestJSON)
+	if err != nil {
 		result.reason = reasonInvalidWorkload
 		return result
 	}

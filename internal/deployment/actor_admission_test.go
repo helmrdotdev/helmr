@@ -10,7 +10,7 @@ func TestResolveActorRunAdmissionPinsDefinitionAndQueueAuthority(t *testing.T) {
 	}
 	queueConfig := []byte(`{"formatVersion":0,"queues":[{"concurrencyLimit":2,"name":"default"},{"name":"priority"}]}`)
 	admission, err := ResolveActorRunAdmission(
-		0, "operator.v1", manifest, digest[:], queueConfig, "priority",
+		DeploymentPlanFormatVersion, "operator.v1", manifest, digest[:], queueConfig, "priority",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -20,6 +20,11 @@ func TestResolveActorRunAdmissionPinsDefinitionAndQueueAuthority(t *testing.T) {
 		admission.QueuedTTLMS == nil || *admission.QueuedTTLMS != 60_000 ||
 		string(admission.RetryPolicy) != `{"enabled":false}` {
 		t.Fatalf("admission = %+v", admission)
+	}
+	if _, err := ResolveActorRunAdmission(
+		DeploymentPlanFormatVersion+1, "operator.v1", manifest, digest[:], queueConfig, "priority",
+	); err == nil {
+		t.Fatal("wrong actor manifest version was accepted")
 	}
 }
 
@@ -31,13 +36,13 @@ func TestResolveActorRunAdmissionRejectsUndefinedQueueAndDigestMismatch(t *testi
 	}
 	queueConfig := []byte(`{"formatVersion":0,"queues":[{"name":"default"}]}`)
 	if _, err := ResolveActorRunAdmission(
-		0, "operator.v1", manifest, digest[:], queueConfig, "missing",
+		DeploymentPlanFormatVersion, "operator.v1", manifest, digest[:], queueConfig, "missing",
 	); err == nil {
 		t.Fatal("undefined queue was accepted")
 	}
 	digest[0] ^= 0xff
 	if _, err := ResolveActorRunAdmission(
-		0, "operator.v1", manifest, digest[:], queueConfig, "",
+		DeploymentPlanFormatVersion, "operator.v1", manifest, digest[:], queueConfig, "",
 	); err == nil {
 		t.Fatal("manifest digest mismatch was accepted")
 	}
@@ -51,7 +56,7 @@ func TestResolveActorRunAdmissionOverrideDoesNotMaskInvalidStoredDefault(t *test
 	}
 	queueConfig := []byte(`{"formatVersion":0,"queues":[{"name":"priority"}]}`)
 	if _, err := ResolveActorRunAdmission(
-		0, "operator.v1", manifest, digest[:], queueConfig, "priority",
+		DeploymentPlanFormatVersion, "operator.v1", manifest, digest[:], queueConfig, "priority",
 	); err == nil {
 		t.Fatal("queue override masked an invalid stored default")
 	}

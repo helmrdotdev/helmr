@@ -1,12 +1,9 @@
 package dispatch
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 
 	"github.com/helmrdotdev/helmr/internal/compute"
@@ -399,6 +396,7 @@ SELECT runs.id,
 			!authority.baseVersionID.Valid) {
 		return runPlacementAuthority{}, fmt.Errorf("lock Run placement same-Workspace resume shape: %w", pgx.ErrNoRows)
 	}
+	var manifestVersion int32
 	var manifest []byte
 	workspaceOwnerPredicate := "workspaces.owner_run_id = $5 AND workspaces.owner_session_id IS NULL"
 	workspaceOwnerID := authority.runID
@@ -418,6 +416,7 @@ SELECT workspaces.deployment_definition_id,
        workspaces.region_id,
        workspaces.ownership_generation,
        workspaces.writer_generation,
+       workspace_definitions.manifest_version,
        workspace_definitions.manifest
   FROM workspaces
   JOIN environments AS workspace_environment
@@ -446,6 +445,7 @@ SELECT workspaces.deployment_definition_id,
 		&authority.regionID,
 		&authority.ownershipGeneration,
 		&authority.writerGeneration,
+		&manifestVersion,
 		&manifest,
 	)
 	if err != nil {
@@ -680,14 +680,9 @@ SELECT deployments.id
 	if err != nil {
 		return runPlacementAuthority{}, fmt.Errorf("lock Run placement Deployment authority: %w", err)
 	}
-	var workspaceManifest deployment.SandboxManifest
-	decoder := json.NewDecoder(bytes.NewReader(manifest))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&workspaceManifest); err != nil {
-		return runPlacementAuthority{}, fmt.Errorf("decode workspace manifest: %w", err)
-	}
-	if err := requireJSONEOF(decoder); err != nil {
-		return runPlacementAuthority{}, fmt.Errorf("decode workspace manifest: %w", err)
+	workspaceManifest, err := deployment.ParseSandboxManifest(manifestVersion, manifest)
+	if err != nil {
+		return runPlacementAuthority{}, fmt.Errorf("parse workspace manifest: %w", err)
 	}
 	resources, err := normalizeRunResources(workspaceManifest.Resources)
 	if err != nil {
@@ -967,14 +962,4 @@ func lockRunQueueScope(
 		return pgtype.UUID{}, "", pgtype.Text{}, fmt.Errorf("lock run queue scope: %w", err)
 	}
 	return environmentID, queueName, concurrencyKey, nil
-}
-
-func requireJSONEOF(decoder *json.Decoder) error {
-	var trailing any
-	if err := decoder.Decode(&trailing); errors.Is(err, io.EOF) {
-		return nil
-	} else if err != nil {
-		return err
-	}
-	return errors.New("contains trailing JSON value")
 }

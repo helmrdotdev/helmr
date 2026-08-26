@@ -25,11 +25,11 @@ func ResolveActorRunAdmission(
 	rawQueueConfig []byte,
 	queueOverride string,
 ) (ActorRunAdmission, error) {
-	if manifestVersion != BuildPlanFormatVersion {
+	if manifestVersion != DeploymentPlanFormatVersion {
 		return ActorRunAdmission{}, fmt.Errorf(
 			"actor manifest version = %d, want %d",
 			manifestVersion,
-			BuildPlanFormatVersion,
+			DeploymentPlanFormatVersion,
 		)
 	}
 	canonical, digest, err := CanonicalManifestAndDigest(rawManifest)

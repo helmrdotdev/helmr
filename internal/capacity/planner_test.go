@@ -338,10 +338,18 @@ func TestDiscoverItemsMarksTruncatedWorkspaceExecScanIncomplete(t *testing.T) {
 
 func TestWorkspaceExecItemRejectsMalformedSandboxDemand(t *testing.T) {
 	item := workspaceExecItem(db.ListPendingWorkspaceExecCapacityCandidatesRow{
-		ProcessID: plannerTestUUID(49), WorkspaceManifest: []byte(`{"resources":{"milliCpu":0,"memoryMiB":1024}}`),
+		ProcessID: plannerTestUUID(49), WorkspaceManifestVersion: deployment.DeploymentPlanFormatVersion,
+		WorkspaceManifest: []byte(`{"resources":{"milliCpu":0,"memoryMiB":1024}}`),
 	})
 	if item.reason != reasonInvalidWorkload {
 		t.Fatalf("reason = %q, want %q", item.reason, reasonInvalidWorkload)
+	}
+	item = workspaceExecItem(db.ListPendingWorkspaceExecCapacityCandidatesRow{
+		ProcessID: plannerTestUUID(49), WorkspaceManifestVersion: deployment.DeploymentPlanFormatVersion + 1,
+		WorkspaceManifest: plannerWorkspaceManifest(),
+	})
+	if item.reason != reasonInvalidWorkload {
+		t.Fatalf("wrong-version reason = %q, want %q", item.reason, reasonInvalidWorkload)
 	}
 }
 
@@ -700,19 +708,22 @@ func plannerBin(row db.ListCapacityWorkerPoolsRow, primaryRunPoolID pgtype.UUID)
 
 func plannerFreshRun(seed byte) db.ListQueuedRunPlanningCandidatesForScopesRow {
 	return db.ListQueuedRunPlanningCandidatesForScopesRow{
-		RunID: plannerTestUUID(seed), WorkspaceManifest: plannerWorkspaceManifest(),
+		RunID: plannerTestUUID(seed), WorkspaceManifestVersion: deployment.DeploymentPlanFormatVersion,
+		WorkspaceManifest: plannerWorkspaceManifest(),
 	}
 }
 
 func plannerWorkspaceExec(seed byte) db.ListPendingWorkspaceExecCapacityCandidatesRow {
 	return db.ListPendingWorkspaceExecCapacityCandidatesRow{
-		ProcessID: plannerTestUUID(seed), WorkspaceManifest: plannerWorkspaceManifest(),
+		ProcessID: plannerTestUUID(seed), WorkspaceManifestVersion: deployment.DeploymentPlanFormatVersion,
+		WorkspaceManifest: plannerWorkspaceManifest(),
 	}
 }
 
 func plannerRestoreRun(seed byte, requirements RestoreRequirements) db.ListQueuedRunPlanningCandidatesForScopesRow {
 	return db.ListQueuedRunPlanningCandidatesForScopesRow{
-		RunID: plannerTestUUID(seed), WorkspaceManifest: plannerWorkspaceManifest(),
+		RunID: plannerTestUUID(seed), WorkspaceManifestVersion: deployment.DeploymentPlanFormatVersion,
+		WorkspaceManifest:     plannerWorkspaceManifest(),
 		RequiredWorkerGroupID: requirements.WorkerGroupID, RequiredRuntimeIdentityID: requirements.RuntimeIdentityID,
 		RequiredVMVCPUCount: requirements.VCPUCount, RequiredCPUConfigDigest: requirements.CPUConfigDigest,
 		RequiredCPUMillis: requirements.Resources.CPUMillis, RequiredMemoryBytes: requirements.Resources.MemoryBytes,

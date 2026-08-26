@@ -10,20 +10,29 @@ func TestScheduleAuthorityValidatesAcceptedScheduledTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	queueConfig, err := CanonicalQueueConfig(QueueConfig{
-		FormatVersion: BuildPlanFormatVersion,
+		FormatVersion: DeploymentPlanFormatVersion,
 		Queues:        []QueueInput{{Name: "default"}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := authority.ResolveScheduledTask(
-		BuildPlanFormatVersion,
+		DeploymentPlanFormatVersion,
 		"daily-report",
 		manifest,
 		digest[:],
 		queueConfig,
 	); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := authority.ResolveScheduledTask(
+		DeploymentPlanFormatVersion+1,
+		"daily-report",
+		manifest,
+		digest[:],
+		queueConfig,
+	); err == nil {
+		t.Fatal("wrong task manifest version was accepted")
 	}
 }
 
@@ -35,14 +44,14 @@ func TestScheduleAuthorityRejectsPayloadlessTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	queueConfig, err := CanonicalQueueConfig(QueueConfig{
-		FormatVersion: BuildPlanFormatVersion,
+		FormatVersion: DeploymentPlanFormatVersion,
 		Queues:        []QueueInput{{Name: "default"}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := authority.ResolveScheduledTask(
-		BuildPlanFormatVersion,
+		DeploymentPlanFormatVersion,
 		"daily-report",
 		manifest,
 		digest[:],

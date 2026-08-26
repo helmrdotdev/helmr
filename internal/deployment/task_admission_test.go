@@ -11,7 +11,7 @@ func TestResolveTaskRunAdmissionAppliesValidatedOverrides(t *testing.T) {
 	queueConfig := []byte(`{"formatVersion":0,"queues":[{"concurrencyLimit":2,"name":"default"},{"name":"priority"}]}`)
 	ttl := int64(120_000)
 	admission, err := ResolveTaskRunAdmission(
-		0,
+		DeploymentPlanFormatVersion,
 		"resize-image",
 		manifest,
 		digest[:],
@@ -40,7 +40,7 @@ func TestResolveTaskRunAdmissionRejectsInvalidStoredAuthority(t *testing.T) {
 	}
 	queueConfig := []byte(`{"formatVersion":0,"queues":[{"name":"priority"}]}`)
 	if _, err := ResolveTaskRunAdmission(
-		0, "heartbeat", manifest, digest[:], queueConfig, "priority", nil, nil,
+		DeploymentPlanFormatVersion, "heartbeat", manifest, digest[:], queueConfig, "priority", nil, nil,
 	); err == nil {
 		t.Fatal("queue override masked an invalid stored default")
 	}

@@ -103,11 +103,11 @@ func ParseTaskManifest(
 	raw []byte,
 	expectedDigest []byte,
 ) (TaskManifest, error) {
-	if manifestVersion != BuildPlanFormatVersion {
+	if manifestVersion != DeploymentPlanFormatVersion {
 		return TaskManifest{}, fmt.Errorf(
 			"task manifest version = %d, want %d",
 			manifestVersion,
-			BuildPlanFormatVersion,
+			DeploymentPlanFormatVersion,
 		)
 	}
 	canonical, digest, err := CanonicalManifestAndDigest(raw)
