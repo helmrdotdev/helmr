@@ -21,7 +21,7 @@ func TestConfigDefaults(t *testing.T) {
 	if filepath.Dir(cfg.StateDir) != filepath.Dir(cfg.JailerChrootBaseDir) || pathsOverlap(cfg.StateDir, cfg.JailerChrootBaseDir) {
 		t.Fatalf("state and jailer directories are not disjoint siblings: state=%q jailer=%q", cfg.StateDir, cfg.JailerChrootBaseDir)
 	}
-	if cfg.GuestPort != DefaultGuestPort || cfg.HealthPort != HealthPort || cfg.StateDir == "" || cfg.InitTimeout != DefaultInitTimeout || cfg.HealthTimeout != DefaultHealthTimeout || cfg.HealthAttemptTimeout != DefaultHealthAttemptTimeout {
+	if cfg.GuestPort != DefaultGuestPort || cfg.HealthPort != HealthPort || cfg.StateDir == "" || cfg.TempDir == "" || cfg.InitTimeout != DefaultInitTimeout || cfg.HealthTimeout != DefaultHealthTimeout || cfg.HealthAttemptTimeout != DefaultHealthAttemptTimeout {
 		t.Fatalf("config = %+v", cfg)
 	}
 }
