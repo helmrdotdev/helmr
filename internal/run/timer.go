@@ -65,6 +65,8 @@ func (r *TimerWaitReconciler) reconcileOne(
 		return false, err
 	}
 	workspaceLocator, err := db.New(r.db).GetWorkspace(ctx, db.GetWorkspaceParams{
+		OrgID:         locator.OrgID,
+		ProjectID:     locator.ProjectID,
 		EnvironmentID: candidate.EnvironmentID,
 		ID:            candidate.WorkspaceID,
 	})
