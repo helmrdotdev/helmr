@@ -1,7 +1,6 @@
 package dispatch
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -302,6 +301,7 @@ func lockWorkspaceExecAuthority(
 	candidate ReadyWorkspaceExecCandidate,
 ) (workspaceExecAuthority, error) {
 	var authority workspaceExecAuthority
+	var manifestVersion int32
 	var manifest []byte
 	err := tx.QueryRow(ctx, `
 SELECT workspace_processes.id,
@@ -315,6 +315,7 @@ SELECT workspace_processes.id,
        workspaces.region_id,
        workspaces.ownership_generation,
        workspaces.writer_generation,
+       definitions.manifest_version,
        definitions.manifest
   FROM workspace_processes
   JOIN workspaces
@@ -365,24 +366,17 @@ SELECT workspace_processes.id,
 		&authority.regionID,
 		&authority.ownershipGeneration,
 		&authority.writerGeneration,
+		&manifestVersion,
 		&manifest,
 	)
 	if err != nil {
 		return workspaceExecAuthority{}, err
 	}
-	var workspaceManifest deployment.SandboxManifest
-	decoder := json.NewDecoder(bytes.NewReader(manifest))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&workspaceManifest); err != nil {
+	workspaceManifest, err := deployment.ParseSandboxManifest(manifestVersion, manifest)
+	if err != nil {
 		return workspaceExecAuthority{}, workspaceExecPermanentError{
 			code: "workspace_exec_manifest_invalid",
-			err:  fmt.Errorf("decode workspace exec manifest: %w", err),
-		}
-	}
-	if err := requireJSONEOF(decoder); err != nil {
-		return workspaceExecAuthority{}, workspaceExecPermanentError{
-			code: "workspace_exec_manifest_invalid",
-			err:  fmt.Errorf("decode workspace exec manifest: %w", err),
+			err:  fmt.Errorf("parse workspace exec manifest: %w", err),
 		}
 	}
 	resources, err := normalizeRunResources(workspaceManifest.Resources)

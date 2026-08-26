@@ -55,6 +55,7 @@ SELECT org_id, id, state_version, created_at
 
 -- name: ListPendingWorkspaceExecCapacityCandidates :many
 SELECT workspace_processes.id AS process_id,
+       definitions.manifest_version AS workspace_manifest_version,
        definitions.manifest AS workspace_manifest,
        ARRAY(
            SELECT accounting.worker_pool_id

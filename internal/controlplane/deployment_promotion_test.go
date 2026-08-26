@@ -179,7 +179,7 @@ func promotionTaskDefinition(
 		DeploymentID:    target.ID,
 		Kind:            "task",
 		DeclaredID:      declaredID,
-		ManifestVersion: deployment.BuildPlanFormatVersion,
+		ManifestVersion: deployment.DeploymentPlanFormatVersion,
 		Manifest:        canonical,
 		ManifestDigest:  digest[:],
 	}

@@ -120,6 +120,9 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 		if visible && (len(rows) != 1 || rows[0].ProcessID.Bytes != processID) {
 			t.Fatalf("%s rows = %+v, want process %s", label, rows, processID)
 		}
+		if visible && rows[0].WorkspaceManifestVersion != deployment.DeploymentPlanFormatVersion {
+			t.Fatalf("%s manifest version = %d, want %d", label, rows[0].WorkspaceManifestVersion, deployment.DeploymentPlanFormatVersion)
+		}
 		if !visible && len(rows) != 0 {
 			t.Fatalf("%s rows = %+v, want none", label, rows)
 		}

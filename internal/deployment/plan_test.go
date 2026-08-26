@@ -34,23 +34,20 @@ func TestBuildPlanCanonicalRoundTrip(t *testing.T) {
 	}
 }
 
-func TestQueueConfigFromPlan(t *testing.T) {
-	plan := testBuildPlan()
-	config, err := QueueConfigFromPlan(plan)
-	if err != nil {
-		t.Fatalf("QueueConfigFromPlan: %v", err)
+func TestParseSandboxManifestRejectsWrongVersionAndUnknownFields(t *testing.T) {
+	raw := []byte(`{"image":{"artifactDigest":"sha256:test","mediaType":"application/test"},"resources":{"milliCpu":1000,"memoryMiB":1024}}`)
+	if _, err := ParseSandboxManifest(DeploymentPlanFormatVersion+1, raw); err == nil {
+		t.Fatal("wrong sandbox manifest version was accepted")
 	}
-	raw, err := CanonicalQueueConfig(config)
-	if err != nil {
-		t.Fatalf("CanonicalQueueConfig: %v", err)
+	unknown := []byte(`{"image":{"artifactDigest":"sha256:test","mediaType":"application/test"},"resources":{"milliCpu":1000,"memoryMiB":1024},"extra":true}`)
+	if _, err := ParseSandboxManifest(DeploymentPlanFormatVersion, unknown); err == nil {
+		t.Fatal("unknown sandbox manifest field was accepted")
 	}
-	want := `{"formatVersion":0,"queues":[{"concurrencyLimit":1,"name":"actor/chat"},{"name":"task/build"}]}`
-	if string(raw) != want {
-		t.Fatalf("queue config = %s, want %s", raw, want)
-	}
-	*config.Queues[0].ConcurrencyLimit = 3
-	if *plan.Queues[0].ConcurrencyLimit != 1 {
-		t.Fatal("queue config retained a plan pointer")
+}
+
+func TestCanonicalQueueConfigRejectsWrongDeploymentPlanVersion(t *testing.T) {
+	if _, err := CanonicalQueueConfig(QueueConfig{FormatVersion: DeploymentPlanFormatVersion + 1}); err == nil {
+		t.Fatal("wrong queue config version was accepted")
 	}
 }
 

@@ -1544,6 +1544,7 @@ func (q *Queries) ListPendingWorkspaceExecCandidates(ctx context.Context, rowLim
 
 const listPendingWorkspaceExecCapacityCandidates = `-- name: ListPendingWorkspaceExecCapacityCandidates :many
 SELECT workspace_processes.id AS process_id,
+       definitions.manifest_version AS workspace_manifest_version,
        definitions.manifest AS workspace_manifest,
        ARRAY(
            SELECT accounting.worker_pool_id
@@ -1599,9 +1600,10 @@ type ListPendingWorkspaceExecCapacityCandidatesParams struct {
 }
 
 type ListPendingWorkspaceExecCapacityCandidatesRow struct {
-	ProcessID         pgtype.UUID   `json:"process_id"`
-	WorkspaceManifest []byte        `json:"workspace_manifest"`
-	AccountedPoolIds  []pgtype.UUID `json:"accounted_pool_ids"`
+	ProcessID                pgtype.UUID   `json:"process_id"`
+	WorkspaceManifestVersion int32         `json:"workspace_manifest_version"`
+	WorkspaceManifest        []byte        `json:"workspace_manifest"`
+	AccountedPoolIds         []pgtype.UUID `json:"accounted_pool_ids"`
 }
 
 func (q *Queries) ListPendingWorkspaceExecCapacityCandidates(ctx context.Context, arg ListPendingWorkspaceExecCapacityCandidatesParams) ([]ListPendingWorkspaceExecCapacityCandidatesRow, error) {
@@ -1613,7 +1615,12 @@ func (q *Queries) ListPendingWorkspaceExecCapacityCandidates(ctx context.Context
 	var items []ListPendingWorkspaceExecCapacityCandidatesRow
 	for rows.Next() {
 		var i ListPendingWorkspaceExecCapacityCandidatesRow
-		if err := rows.Scan(&i.ProcessID, &i.WorkspaceManifest, &i.AccountedPoolIds); err != nil {
+		if err := rows.Scan(
+			&i.ProcessID,
+			&i.WorkspaceManifestVersion,
+			&i.WorkspaceManifest,
+			&i.AccountedPoolIds,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
