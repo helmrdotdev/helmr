@@ -25,6 +25,7 @@ func TestCheckpointReadyRetryableStopsOnPermanentAdmissionFailure(t *testing.T) 
 }
 
 func TestControlPlaneRunWaitsDetachesAfterTypedCheckpointIntent(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
 	client := &fakeRunWaitClient{
 		created: liveRunWaitResponse(),
 		polls: []workerapi.RunWaitPollResponse{{
@@ -38,12 +39,13 @@ func TestControlPlaneRunWaitsDetachesAfterTypedCheckpointIntent(t *testing.T) {
 		if checkpointer.releaseCount != 0 {
 			t.Fatalf("checkpoint source released before ready")
 		}
+		cancel()
 	}
 
 	request := testWaitRequest(workerapi.RunWaitKindToken)
 	request.ActiveDuration = 1500 * time.Millisecond
 	request.Checkpointer = checkpointer
-	err := ControlPlaneRunWaits{Client: client}.Wait(context.Background(), request)
+	err := ControlPlaneRunWaits{Client: client}.Wait(ctx, request)
 	if !errors.Is(err, ErrDetached) {
 		t.Fatalf("err = %v, want ErrDetached", err)
 	}
@@ -52,6 +54,9 @@ func TestControlPlaneRunWaitsDetachesAfterTypedCheckpointIntent(t *testing.T) {
 	}
 	if checkpointer.releaseCount != 1 {
 		t.Fatalf("checkpoint source release count = %d, want 1", checkpointer.releaseCount)
+	}
+	if checkpointer.releaseContextErr != nil {
+		t.Fatalf("checkpoint source release context = %v, want live cleanup context", checkpointer.releaseContextErr)
 	}
 	if checkpointer.request.CheckpointID != "checkpoint-1" ||
 		checkpointer.request.RunID != "run-1" ||
@@ -66,7 +71,7 @@ func TestControlPlaneRunWaitsDetachesAfterTypedCheckpointIntent(t *testing.T) {
 	}
 }
 
-func TestControlPlaneRunWaitsKeepsCheckpointSourceOnPermanentReadyFailure(t *testing.T) {
+func TestControlPlaneRunWaitsReleasesCheckpointSourceOnPermanentReadyFailure(t *testing.T) {
 	client := &fakeRunWaitClient{
 		created: liveRunWaitResponse(),
 		polls: []workerapi.RunWaitPollResponse{{
@@ -82,11 +87,37 @@ func TestControlPlaneRunWaitsKeepsCheckpointSourceOnPermanentReadyFailure(t *tes
 	request.Checkpointer = checkpointer
 
 	err := ControlPlaneRunWaits{Client: client}.Wait(context.Background(), request)
-	if err == nil || !strings.Contains(err.Error(), "mark checkpoint ready") {
-		t.Fatalf("err = %v, want permanent ready failure", err)
+	if !errors.Is(err, ErrDetached) {
+		t.Fatalf("err = %v, want ErrDetached after permanent ready failure", err)
 	}
-	if checkpointer.releaseCount != 0 {
-		t.Fatalf("checkpoint source release count = %d, want 0", checkpointer.releaseCount)
+	if client.failed == nil || !strings.Contains(client.failed.Error, "mark checkpoint ready") {
+		t.Fatalf("failed request = %+v, want permanent ready failure", client.failed)
+	}
+	if checkpointer.releaseCount != 1 {
+		t.Fatalf("checkpoint source release count = %d, want 1", checkpointer.releaseCount)
+	}
+}
+
+func TestControlPlaneRunWaitsPreservesReadyAndFailureAdmissionErrors(t *testing.T) {
+	readyErr := &httpclient.Error{StatusCode: http.StatusUnprocessableEntity, Message: "ready rejected"}
+	failureErr := &httpclient.Error{StatusCode: http.StatusConflict, Message: "failure stale"}
+	client := &fakeRunWaitClient{
+		created: liveRunWaitResponse(),
+		polls: []workerapi.RunWaitPollResponse{{
+			RunID: "run-1", RunWaitID: "run-wait-id-1", Status: "checkpoint_requested",
+			RequestVersion: 3, CheckpointID: "checkpoint-1",
+		}},
+		readyErrors:             []error{readyErr},
+		checkpointFailureErrors: []error{failureErr},
+	}
+	request := testWaitRequest(workerapi.RunWaitKindToken)
+	request.Checkpointer = &fakeCheckpointer{
+		manifest: testRunCheckpointWaitManifest(), workspaceCapture: testCheckpointWorkspaceCapture(),
+	}
+
+	err := ControlPlaneRunWaits{Client: client}.Wait(context.Background(), request)
+	if !errors.Is(err, readyErr) || !errors.Is(err, failureErr) {
+		t.Fatalf("err = %v, want ready and failure admission errors", err)
 	}
 }
 
@@ -418,13 +449,14 @@ func (c *fakeRunWaitClient) MarkCheckpointFailed(_ context.Context, request work
 }
 
 type fakeCheckpointer struct {
-	manifest         workerapi.CheckpointManifest
-	workspaceCapture *CheckpointWorkspaceCapture
-	request          CheckpointRequest
-	err              error
-	onCreate         func()
-	releaseCount     int
-	releaseErr       error
+	manifest          workerapi.CheckpointManifest
+	workspaceCapture  *CheckpointWorkspaceCapture
+	request           CheckpointRequest
+	err               error
+	onCreate          func()
+	releaseCount      int
+	releaseErr        error
+	releaseContextErr error
 }
 
 func (c *fakeCheckpointer) CreateCheckpoint(_ context.Context, request CheckpointRequest) (CheckpointResult, error) {
@@ -438,8 +470,9 @@ func (c *fakeCheckpointer) CreateCheckpoint(_ context.Context, request Checkpoin
 	return CheckpointResult{Manifest: c.manifest, WorkspaceCapture: c.workspaceCapture}, nil
 }
 
-func (c *fakeCheckpointer) ReleaseCheckpointSource(context.Context) error {
+func (c *fakeCheckpointer) ReleaseCheckpointSource(ctx context.Context) error {
 	c.releaseCount++
+	c.releaseContextErr = ctx.Err()
 	return c.releaseErr
 }
 
