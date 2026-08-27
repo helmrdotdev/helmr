@@ -16,11 +16,12 @@ import (
 )
 
 const (
-	RoutePrefix               = "/capacity/v0"
-	WorkerGroupsPath          = "/worker-groups"
-	WorkerInstancesPath       = "/worker-instances"
-	maximumResponseBytes      = int64(4 << 20)
-	capacityTokenDecodedBytes = 32
+	RoutePrefix                  = "/capacity/v0"
+	WorkerGroupsPath             = "/worker-groups"
+	WorkerInstancesPath          = "/worker-instances"
+	ErrorCodeQueuedDemandPresent = "queued_demand_present"
+	maximumResponseBytes         = int64(4 << 20)
+	capacityTokenDecodedBytes    = 32
 )
 
 type HTTPError struct {

@@ -355,6 +355,7 @@ type WorkerInstancesResponse struct {
 }
 
 type DrainWorkerInstanceRequest struct {
-	ExpectedEpoch        int64 `json:"expected_epoch"`
-	ExpectedClaimVersion int64 `json:"expected_claim_version"`
+	ExpectedEpoch           int64 `json:"expected_epoch"`
+	ExpectedClaimVersion    int64 `json:"expected_claim_version"`
+	RequireZeroQueuedDemand bool  `json:"require_zero_queued_demand,omitempty"`
 }
