@@ -119,12 +119,45 @@ func (s *Server) finishFinalizedDeploymentBundle(
 	idempotencyRequest idempotency.Request,
 	progress func(deploymentFinalizeProgress) error,
 ) (api.DeploymentResponse, error) {
+	replay, err := s.finalizedDeploymentAvailable(ctx, uploads, environmentID, prepared)
+	if err != nil {
+		return api.DeploymentResponse{}, err
+	}
+	if replay {
+		return s.registerFinalizedDeploymentBundle(
+			ctx, orgID, projectID, environmentID, prepared, idempotencyRequest,
+		)
+	}
 	if err := s.verifyFinalizedDeploymentObjects(ctx, uploads, orgID, prepared, progress); err != nil {
 		return api.DeploymentResponse{}, err
 	}
 	return s.registerFinalizedDeploymentBundle(
 		ctx, orgID, projectID, environmentID, prepared, idempotencyRequest,
 	)
+}
+
+func (s *Server) finalizedDeploymentAvailable(
+	ctx context.Context,
+	store cas.Reader,
+	environmentID pgtype.UUID,
+	prepared finalizedDeploymentBundle,
+) (bool, error) {
+	_, err := s.db.GetDeploymentByBundleDigest(ctx, db.GetDeploymentByBundleDigestParams{
+		EnvironmentID: environmentID, BundleDigest: prepared.root.Digest,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("resolve deployment bundle replay: %w", err)
+	}
+	for _, descriptor := range prepared.objects {
+		object, err := store.Stat(ctx, descriptor.Digest)
+		if err != nil || requireExactCASObject(object, descriptor) != nil {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func (s *Server) registerFinalizedDeploymentBundle(
