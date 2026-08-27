@@ -244,6 +244,13 @@ func (deploymentFinalizePossessionStore) GetCasObject(context.Context, db.GetCas
 	return db.CasObject{}, pgx.ErrNoRows
 }
 
+func (deploymentFinalizePossessionStore) GetDeploymentByBundleDigest(
+	context.Context,
+	db.GetDeploymentByBundleDigestParams,
+) (db.Deployment, error) {
+	return db.Deployment{}, pgx.ErrNoRows
+}
+
 type deploymentFinalizeObjectStore struct {
 	cas.UploadStore
 	descriptor cas.Descriptor

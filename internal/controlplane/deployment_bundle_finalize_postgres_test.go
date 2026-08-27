@@ -2,6 +2,9 @@ package controlplane
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"io"
 	"sync"
 	"testing"
 
@@ -103,6 +106,133 @@ func TestRegisterFinalizedDeploymentBundlePostgresConvergesConcurrentExactReques
 	}
 }
 
+func TestRegisterFinalizedDeploymentBundlePostgresRejectsIdempotencyKeyForAnotherBundle(t *testing.T) {
+	fixture := newDeploymentFinalizePostgresFixture(t)
+	if _, err := fixture.server.registerFinalizedDeploymentBundle(
+		t.Context(), fixture.orgID, fixture.projectID, fixture.environmentID, fixture.prepared,
+		fixture.idempotencyRequest(t, "shared"),
+	); err != nil {
+		t.Fatal(err)
+	}
+	changed := fixture.prepared
+	changed.root.Digest = "sha256:" + string(bytes.Repeat([]byte{'d'}, 64))
+	_, err := fixture.server.registerFinalizedDeploymentBundle(
+		t.Context(), fixture.orgID, fixture.projectID, fixture.environmentID, changed,
+		fixture.idempotencyRequestFor(t, fixture.environmentID, "shared", changed.root.Digest),
+	)
+	var conflict idempotency.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("error = %v, want idempotency conflict", err)
+	}
+}
+
+func TestFinishFinalizedDeploymentBundlePostgresReplaysAvailableExactBundleWithoutReadingObjects(t *testing.T) {
+	fixture := newDeploymentFinalizePostgresFixture(t)
+	created, err := fixture.server.registerFinalizedDeploymentBundle(
+		t.Context(), fixture.orgID, fixture.projectID, fixture.environmentID, fixture.prepared,
+		fixture.idempotencyRequest(t, "first"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &deploymentFinalizeTrackingStore{
+		descriptor: fixture.prepared.objects[0],
+		body:       make([]byte, fixture.prepared.objects[0].SizeBytes),
+	}
+	replayed, err := fixture.server.finishFinalizedDeploymentBundle(
+		t.Context(), store, fixture.orgID, fixture.projectID, fixture.environmentID, fixture.prepared,
+		fixture.idempotencyRequest(t, "replay"),
+		func(deploymentFinalizeProgress) error {
+			t.Fatal("replay verified object bytes")
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.ID != created.ID || store.statCount != 1 || store.getCount != 0 {
+		t.Fatalf("replayed = %+v stats = %d gets = %d", replayed, store.statCount, store.getCount)
+	}
+}
+
+func TestFinishFinalizedDeploymentBundlePostgresFailsClosedWhenReplayObjectIsUnavailable(t *testing.T) {
+	fixture := newDeploymentFinalizePostgresFixture(t)
+	if _, err := fixture.server.registerFinalizedDeploymentBundle(
+		t.Context(), fixture.orgID, fixture.projectID, fixture.environmentID, fixture.prepared,
+		fixture.idempotencyRequest(t, "first"),
+	); err != nil {
+		t.Fatal(err)
+	}
+	store := &deploymentFinalizeTrackingStore{
+		descriptor: fixture.prepared.objects[0],
+		statErr:    errors.New("missing"),
+	}
+	if _, err := fixture.server.finishFinalizedDeploymentBundle(
+		t.Context(), store, fixture.orgID, fixture.projectID, fixture.environmentID, fixture.prepared,
+		fixture.idempotencyRequest(t, "replay"), func(deploymentFinalizeProgress) error { return nil },
+	); err == nil {
+		t.Fatal("replay with an unavailable object succeeded")
+	}
+	if store.getCount != 0 {
+		t.Fatalf("object reads = %d, want 0", store.getCount)
+	}
+}
+
+func TestFinishFinalizedDeploymentBundlePostgresVerifiesSameDigestInAnotherEnvironment(t *testing.T) {
+	fixture := newDeploymentFinalizePostgresFixture(t)
+	if _, err := fixture.server.registerFinalizedDeploymentBundle(
+		t.Context(), fixture.orgID, fixture.projectID, fixture.environmentID, fixture.prepared,
+		fixture.idempotencyRequest(t, "first"),
+	); err != nil {
+		t.Fatal(err)
+	}
+	otherEnvironment := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	if _, err := fixture.server.db.CreateEnvironment(t.Context(), db.CreateEnvironmentParams{
+		ID: otherEnvironment, OrgID: pgvalue.UUID(fixture.orgID), ProjectID: fixture.projectID,
+		Slug: "preview", Name: "Preview", ColorHex: "#315FCE",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	store := &deploymentFinalizeTrackingStore{
+		descriptor: fixture.prepared.objects[0],
+		body:       make([]byte, fixture.prepared.objects[0].SizeBytes),
+	}
+	if _, err := fixture.server.finishFinalizedDeploymentBundle(
+		t.Context(), store, fixture.orgID, fixture.projectID, otherEnvironment, fixture.prepared,
+		fixture.idempotencyRequestFor(t, otherEnvironment, "other", fixture.prepared.root.Digest),
+		func(deploymentFinalizeProgress) error { return nil },
+	); err == nil {
+		t.Fatal("unverified object created a deployment in another environment")
+	}
+	if store.getCount != 1 {
+		t.Fatalf("object reads = %d, want full verification", store.getCount)
+	}
+}
+
+type deploymentFinalizeTrackingStore struct {
+	cas.UploadStore
+	descriptor cas.Descriptor
+	body       []byte
+	statErr    error
+	statCount  int
+	getCount   int
+}
+
+func (s *deploymentFinalizeTrackingStore) Stat(context.Context, string) (cas.Object, error) {
+	s.statCount++
+	if s.statErr != nil {
+		return cas.Object{}, s.statErr
+	}
+	return cas.Object{
+		Digest: s.descriptor.Digest, SizeBytes: s.descriptor.SizeBytes, MediaType: s.descriptor.MediaType,
+	}, nil
+}
+
+func (s *deploymentFinalizeTrackingStore) Get(context.Context, string) (io.ReadCloser, error) {
+	s.getCount++
+	return io.NopCloser(bytes.NewReader(s.body)), nil
+}
+
 type deploymentFinalizePostgresFixture struct {
 	pool          *pgxpool.Pool
 	server        *Server
@@ -174,7 +304,17 @@ func newDeploymentFinalizePostgresFixture(t *testing.T) deploymentFinalizePostgr
 
 func (f deploymentFinalizePostgresFixture) idempotencyRequest(t *testing.T, key string) idempotency.Request {
 	t.Helper()
-	environmentID, err := pgvalue.UUIDValue(f.environmentID)
+	return f.idempotencyRequestFor(t, f.environmentID, key, f.prepared.root.Digest)
+}
+
+func (f deploymentFinalizePostgresFixture) idempotencyRequestFor(
+	t *testing.T,
+	environmentID pgtype.UUID,
+	key string,
+	bundleDigest string,
+) idempotency.Request {
+	t.Helper()
+	environmentUUID, err := pgvalue.UUIDValue(environmentID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,8 +323,8 @@ func (f deploymentFinalizePostgresFixture) idempotencyRequest(t *testing.T, key 
 		t.Fatal(err)
 	}
 	request, err := idempotency.NewDeploymentFinalizeRequest(
-		environmentID, projectID, key,
-		idempotency.DeploymentFinalizeFingerprint{BundleDigest: f.prepared.root.Digest},
+		environmentUUID, projectID, key,
+		idempotency.DeploymentFinalizeFingerprint{BundleDigest: bundleDigest},
 	)
 	if err != nil {
 		t.Fatal(err)
