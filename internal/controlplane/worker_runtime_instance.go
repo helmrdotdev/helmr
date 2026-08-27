@@ -22,6 +22,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const workerRuntimeReconcileLimit int32 = 64
+
 func (s *Server) workerNextRuntimeReconcileTarget(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.RuntimeReconcileRequest
 	if err := decodeJSON(r, &request); err != nil {
@@ -29,51 +31,50 @@ func (s *Server) workerNextRuntimeReconcileTarget(w http.ResponseWriter, r *http
 		return
 	}
 	worker := workerFromContext(r.Context())
-	row, err := s.db.GetNextRuntimeReconcileTarget(r.Context(), db.GetNextRuntimeReconcileTargetParams{
+	rows, err := s.db.ListRuntimeReconcileTargets(r.Context(), db.ListRuntimeReconcileTargetsParams{
 		WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
 		ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
+		RowLimit:                    workerRuntimeReconcileLimit,
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeJSON(w, http.StatusOK, workerapi.RuntimeReconcileResponse{})
-		return
-	}
 	if err != nil {
-		writeError(w, errors.New("get runtime reconcile target"))
+		writeError(w, errors.New("list runtime reconcile targets"))
 		return
 	}
-	action := workerapi.RuntimeReconcilePrepare
-	switch {
-	case row.ObservedState == db.RuntimeObservedStateFailed:
-		action = workerapi.RuntimeReconcileReclaim
-	case row.DesiredState == db.RuntimeDesiredStateClosed:
-		action = workerapi.RuntimeReconcileClose
-	}
-	source := workerapi.RuntimeSource{
-		DeploymentDefinitionID: pgvalue.UUIDString(row.DeploymentDefinitionID),
-		WorkspaceID:            pgvalue.UUIDString(row.WorkspaceID),
-		RuntimeIdentityID:      row.RuntimeIdentityID,
-		VMVCPUCount:            row.VMVCPUCount,
-		CPUConfigDigest:        row.CPUConfigDigest,
-		WorkspaceImage:         workerapi.CASObject{Digest: row.WorkspaceImageDigest, SizeBytes: row.WorkspaceImageSizeBytes, MediaType: row.WorkspaceImageMediaType},
-		WorkspaceArchitecture:  row.WorkspaceArchitecture,
-		RootfsDigest:           row.RootfsDigest,
-		ReservedCPUMillis:      int32(row.ReservedCPUMillis), ReservedMemoryMiB: int32(row.ReservedMemoryBytes / 1048576),
-		ReservedDiskMiB: row.ReservedGuestEphemeralDiskBytes / 1048576, ReservedExecutionSlots: row.ReservedExecutionSlots,
-		VMRuntimeContract: row.VMRuntimeContract,
-	}
-	if action == workerapi.RuntimeReconcilePrepare {
-		if err := populateRuntimePrepareSource(r.Context(), s.db, s.platformStore, &source, row); err != nil {
-			writeError(w, err)
-			return
+	items := make([]workerapi.RuntimeReconcileTarget, 0, len(rows))
+	for _, row := range rows {
+		action := workerapi.RuntimeReconcilePrepare
+		switch {
+		case row.ObservedState == db.RuntimeObservedStateFailed:
+			action = workerapi.RuntimeReconcileReclaim
+		case row.DesiredState == db.RuntimeDesiredStateClosed:
+			action = workerapi.RuntimeReconcileClose
 		}
+		source := workerapi.RuntimeSource{
+			DeploymentDefinitionID: pgvalue.UUIDString(row.DeploymentDefinitionID),
+			WorkspaceID:            pgvalue.UUIDString(row.WorkspaceID),
+			RuntimeIdentityID:      row.RuntimeIdentityID,
+			VMVCPUCount:            row.VMVCPUCount,
+			CPUConfigDigest:        row.CPUConfigDigest,
+			WorkspaceImage:         workerapi.CASObject{Digest: row.WorkspaceImageDigest, SizeBytes: row.WorkspaceImageSizeBytes, MediaType: row.WorkspaceImageMediaType},
+			WorkspaceArchitecture:  row.WorkspaceArchitecture,
+			RootfsDigest:           row.RootfsDigest,
+			ReservedCPUMillis:      int32(row.ReservedCPUMillis), ReservedMemoryMiB: int32(row.ReservedMemoryBytes / 1048576),
+			ReservedDiskMiB: row.ReservedGuestEphemeralDiskBytes / 1048576, ReservedExecutionSlots: row.ReservedExecutionSlots,
+			VMRuntimeContract: row.VMRuntimeContract,
+		}
+		if action == workerapi.RuntimeReconcilePrepare {
+			if err := populateRuntimePrepareSource(r.Context(), s.db, s.platformStore, &source, row); err != nil {
+				writeError(w, err)
+				return
+			}
+		}
+		items = append(items, workerapi.RuntimeReconcileTarget{
+			ID: pgvalue.UUIDString(row.ID), WorkerEpoch: row.WorkerEpoch,
+			DesiredVersion: row.DesiredVersion, ObservedVersion: row.ObservedVersion,
+			Action: action, Source: source,
+		})
 	}
-	target := workerapi.RuntimeReconcileTarget{
-		ID: pgvalue.UUIDString(row.ID), WorkerEpoch: row.WorkerEpoch,
-		DesiredState: string(row.DesiredState), DesiredVersion: row.DesiredVersion,
-		ObservedState: string(row.ObservedState), ObservedVersion: row.ObservedVersion, ObservedDesiredVersion: row.ObservedDesiredVersion,
-		Action: action, Source: source,
-	}
-	writeJSON(w, http.StatusOK, workerapi.RuntimeReconcileResponse{Target: &target})
+	writeJSON(w, http.StatusOK, workerapi.RuntimeReconcileResponse{Items: items})
 }
 
 func populateRuntimePrepareSource(
@@ -81,7 +82,7 @@ func populateRuntimePrepareSource(
 	store db.Querier,
 	platformStore cas.Reader,
 	source *workerapi.RuntimeSource,
-	row db.GetNextRuntimeReconcileTargetRow,
+	row db.ListRuntimeReconcileTargetsRow,
 ) error {
 	if !row.BaseWorkspaceVersionID.Valid || !row.WorkspaceContentDigest.Valid ||
 		!row.WorkspaceLogicalSizeBytes.Valid || !row.WorkspaceEntryCount.Valid {
@@ -157,7 +158,7 @@ func populateRuntimeRestoreSource(
 	ctx context.Context,
 	store db.Querier,
 	source *workerapi.RuntimeSource,
-	row db.GetNextRuntimeReconcileTargetRow,
+	row db.ListRuntimeReconcileTargetsRow,
 ) error {
 	if !row.RestoreCheckpointID.Valid || !row.ReservedRunID.Valid ||
 		!row.ReservedAttemptNumber.Valid || store == nil {

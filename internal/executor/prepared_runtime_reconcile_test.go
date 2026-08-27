@@ -3,8 +3,11 @@ package executor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,6 +26,27 @@ type typedRuntimeClient struct {
 	failed       []workerapi.RuntimeInstanceStateRequest
 	failedErrors []error
 }
+
+type batchRuntimeClient struct {
+	response workerapi.RuntimeReconcileResponse
+	polled   chan struct{}
+	calls    atomic.Int32
+	repeat   bool
+}
+
+type blockingMaterializingConnector struct {
+	started  chan string
+	canceled chan string
+	failID   string
+}
+
+type blockingCloseRuntimeSession struct {
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+type countingRuntimeConnector struct{ calls atomic.Int32 }
 
 type cleanupRuntimeConnector struct {
 	cleaned []string
@@ -114,6 +138,39 @@ func (s *closeTrackingRuntimeSession) Close(context.Context) error {
 	return s.err
 }
 
+func (*blockingCloseRuntimeSession) Stream() vm.Stream { return nil }
+func (*blockingCloseRuntimeSession) OpenStream(context.Context) (vm.Stream, error) {
+	return nil, nil
+}
+func (*blockingCloseRuntimeSession) Wait(context.Context) error { return nil }
+func (s *blockingCloseRuntimeSession) Close(ctx context.Context) error {
+	s.once.Do(func() { close(s.started) })
+	select {
+	case <-s.release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (c *countingRuntimeConnector) Cleanup(context.Context, vm.Owner) error {
+	c.calls.Add(1)
+	return nil
+}
+
+func (c *blockingMaterializingConnector) Cleanup(context.Context, vm.Owner) error { return nil }
+func (c *blockingMaterializingConnector) Materialize(ctx context.Context, request vm.MaterializeRequest) (vm.Session, error) {
+	c.started <- request.ID
+	if request.ID == c.failID {
+		return nil, errors.New("materialize failed")
+	}
+	<-ctx.Done()
+	if c.canceled != nil {
+		c.canceled <- request.ID
+	}
+	return nil, ctx.Err()
+}
+
 func (*stuckPreparedRuntimeSession) Stream() vm.Stream { return nil }
 func (*stuckPreparedRuntimeSession) OpenStream(context.Context) (vm.Stream, error) {
 	return nil, nil
@@ -154,7 +211,7 @@ func TestPreparedRuntimePoolCloseHonorsDeadlineWhileMonitorIsStuck(t *testing.T)
 	}
 }
 
-func (c *typedRuntimeClient) NextRuntimeReconcileTarget(ctx context.Context) (workerapi.RuntimeReconcileResponse, error) {
+func (c *typedRuntimeClient) ListRuntimeReconcileTargets(ctx context.Context) (workerapi.RuntimeReconcileResponse, error) {
 	if len(c.targets) == 0 {
 		<-ctx.Done()
 		return workerapi.RuntimeReconcileResponse{}, ctx.Err()
@@ -162,6 +219,32 @@ func (c *typedRuntimeClient) NextRuntimeReconcileTarget(ctx context.Context) (wo
 	target := c.targets[0]
 	c.targets = c.targets[1:]
 	return target, nil
+}
+
+func (c *batchRuntimeClient) ListRuntimeReconcileTargets(context.Context) (workerapi.RuntimeReconcileResponse, error) {
+	calls := c.calls.Add(1)
+	if c.polled != nil {
+		select {
+		case c.polled <- struct{}{}:
+		default:
+		}
+	}
+	if !c.repeat && calls > 1 {
+		return workerapi.RuntimeReconcileResponse{Items: []workerapi.RuntimeReconcileTarget{}}, nil
+	}
+	return c.response, nil
+}
+
+func (*batchRuntimeClient) MarkRuntimeInstanceReady(context.Context, workerapi.RuntimeInstanceStateRequest) (workerapi.RuntimeInstance, error) {
+	return workerapi.RuntimeInstance{}, nil
+}
+
+func (*batchRuntimeClient) MarkRuntimeInstanceClosed(_ context.Context, request workerapi.RuntimeInstanceStateRequest) (workerapi.RuntimeInstance, error) {
+	return workerapi.RuntimeInstance{ID: request.ID}, nil
+}
+
+func (*batchRuntimeClient) MarkRuntimeInstanceFailed(_ context.Context, request workerapi.RuntimeInstanceStateRequest) (workerapi.RuntimeInstance, error) {
+	return workerapi.RuntimeInstance{ID: request.ID}, nil
 }
 func (c *typedRuntimeClient) MarkRuntimeInstanceReady(context.Context, workerapi.RuntimeInstanceStateRequest) (workerapi.RuntimeInstance, error) {
 	return workerapi.RuntimeInstance{}, nil
@@ -276,6 +359,117 @@ func TestReconcileDesiredRuntimesStopsCleanly(t *testing.T) {
 	}
 }
 
+func TestReconcileDesiredRuntimesRunsBatchConcurrentlyAndWaitsForShutdown(t *testing.T) {
+	store, mount := testWorkspaceMountArtifacts(t)
+	connector := &blockingMaterializingConnector{
+		started: make(chan string, 2), canceled: make(chan string, 2), failID: "runtime-0",
+	}
+	pool := NewPreparedRuntimePool(connector, store, 2, nil)
+	pool.TempDir = t.TempDir()
+	pool.RuntimeArchitecture = deployment.RuntimeArchitecture("x86_64")
+	pool.Capacity = newPreparedRuntimeCapacity(t, 2)
+	items := make([]workerapi.RuntimeReconcileTarget, 2)
+	for i := range items {
+		items[i] = runtimePreparationTarget(mount, fmt.Sprintf("runtime-%d", i), 7)
+	}
+	client := &batchRuntimeClient{response: workerapi.RuntimeReconcileResponse{Items: items}}
+	pool.RuntimeInstances = client
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- pool.ReconcileDesiredRuntimes(ctx, client) }()
+	for range items {
+		select {
+		case <-connector.started:
+		case <-time.After(time.Second):
+			t.Fatal("batch target did not reach materialization")
+		}
+	}
+	select {
+	case id := <-connector.canceled:
+		t.Fatalf("sibling %q was canceled after an ordinary target failure", id)
+	case <-time.After(100 * time.Millisecond):
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != context.Canceled {
+			t.Fatalf("error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("reconciler returned before its attempts drained")
+	}
+}
+
+func TestReconcileDesiredRuntimesSkipsActiveRedelivery(t *testing.T) {
+	connector := &countingRuntimeConnector{}
+	pool := NewPreparedRuntimePool(connector, nil, 2, nil)
+	session := &blockingCloseRuntimeSession{started: make(chan struct{}), release: make(chan struct{})}
+	target := workerapi.RuntimeReconcileTarget{ID: "runtime-1", WorkerEpoch: 7, Action: workerapi.RuntimeReconcileClose}
+	pool.entries[target.ID] = []preparedRuntimeEntry{{session: session, runtimeInstanceID: target.ID, runtimeEpoch: 7}}
+	client := &batchRuntimeClient{
+		response: workerapi.RuntimeReconcileResponse{Items: []workerapi.RuntimeReconcileTarget{target}},
+		polled:   make(chan struct{}, 4),
+		repeat:   true,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- pool.ReconcileDesiredRuntimes(ctx, client) }()
+	for range 2 {
+		select {
+		case <-client.polled:
+		case <-time.After(time.Second):
+			t.Fatal("reconciler did not repoll")
+		}
+	}
+	if connector.calls.Load() != 0 {
+		t.Fatal("active runtime redelivery started duplicate cleanup")
+	}
+	cancel()
+	if err := <-done; err != context.Canceled {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestReconcileDesiredRuntimesBacksOffWhenCapacityIsFull(t *testing.T) {
+	store, mount := testWorkspaceMountArtifacts(t)
+	connector := &blockingMaterializingConnector{started: make(chan string, 1)}
+	pool := NewPreparedRuntimePool(connector, store, 2, nil)
+	pool.TempDir = t.TempDir()
+	pool.RuntimeArchitecture = deployment.RuntimeArchitecture("x86_64")
+	pool.Capacity = newPreparedRuntimeCapacity(t, 1)
+	pool.RuntimeInstances = &batchRuntimeClient{}
+	if err := pool.reserveRuntimeCapacity(runtimeCapacityTarget("occupied", 7)); err != nil {
+		t.Fatal(err)
+	}
+	target := runtimePreparationTarget(mount, "runtime-1", 7)
+	client := &batchRuntimeClient{
+		response: workerapi.RuntimeReconcileResponse{Items: []workerapi.RuntimeReconcileTarget{target}},
+		polled:   make(chan struct{}, 4),
+	}
+	pool.RuntimeInstances = client
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- pool.ReconcileDesiredRuntimes(ctx, client) }()
+	select {
+	case <-client.polled:
+	case <-time.After(time.Second):
+		t.Fatal("reconciler did not poll")
+	}
+	time.Sleep(250 * time.Millisecond)
+	if calls := client.calls.Load(); calls != 1 {
+		t.Fatalf("capacity-full poll calls = %d, want 1", calls)
+	}
+	select {
+	case id := <-connector.started:
+		t.Fatalf("capacity-rejected runtime %q reached materialization", id)
+	default:
+	}
+	cancel()
+	if err := <-done; err != context.Canceled {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestWarmRuntimeTargetRejectsMissingWorkspaceTargetBeforeAdmission(t *testing.T) {
 	pool := NewPreparedRuntimePool(nil, nil, 1, nil)
 	admissionCalls := 0
@@ -283,7 +477,7 @@ func TestWarmRuntimeTargetRejectsMissingWorkspaceTargetBeforeAdmission(t *testin
 		admissionCalls++
 		return errors.New("disk_floor")
 	}
-	err := pool.WarmRuntimeTarget(context.Background(), &typedRuntimeClient{}, workerapi.RuntimeReconcileTarget{})
+	err := pool.warmRuntimeTarget(context.Background(), &typedRuntimeClient{}, workerapi.RuntimeReconcileTarget{}, func() {})
 	if err == nil || !strings.Contains(err.Error(), "workspace target is required") {
 		t.Fatalf("error = %v, want missing Workspace target", err)
 	}
@@ -299,7 +493,7 @@ func TestWarmRuntimeTargetHonorsHardAdmissionBeforeMaterialization(t *testing.T)
 	target := workerapi.RuntimeReconcileTarget{Source: workerapi.RuntimeSource{
 		WorkspaceTarget: &workerapi.WorkspaceResetTarget{},
 	}}
-	err := pool.WarmRuntimeTarget(context.Background(), &typedRuntimeClient{}, target)
+	err := pool.warmRuntimeTarget(context.Background(), &typedRuntimeClient{}, target, func() {})
 	if !errors.Is(err, admissionErr) {
 		t.Fatalf("error = %v, want hard admission error", err)
 	}
@@ -322,7 +516,7 @@ func TestWarmRuntimeTargetStartsWhileUnrelatedRunIsBorrowed(t *testing.T) {
 	pool := NewPreparedRuntimePool(&cleanupRuntimeConnector{}, unavailableRuntimeCAS{}, 1, nil)
 	client := &typedRuntimeClient{}
 	pool.RuntimeInstances = client
-	if err := pool.WarmRuntimeTarget(context.Background(), client, retryableWarmTarget()); err != nil {
+	if err := pool.warmRuntimeTarget(context.Background(), client, retryableWarmTarget(), func() {}); err != nil {
 		t.Fatal(err)
 	}
 	if len(client.failed) != 1 {
@@ -335,7 +529,7 @@ func TestWarmRuntimeTargetRetriesCapacityBackpressureWithoutDurableFailure(t *te
 	pool.entries["occupied"] = []preparedRuntimeEntry{{runtimeInstanceID: "occupied", runtimeEpoch: 7}}
 	client := &typedRuntimeClient{}
 
-	err := pool.WarmRuntimeTarget(context.Background(), client, retryableWarmTarget())
+	err := pool.warmRuntimeTarget(context.Background(), client, retryableWarmTarget(), func() {})
 	assertRuntimeCapacityBackpressure(t, err)
 	if len(client.failed) != 0 {
 		t.Fatalf("capacity backpressure mutated durable runtime: %+v", client.failed)
@@ -567,13 +761,26 @@ func TestPreparedRuntimeCloseFailureRetainsCapacityUntilReclaim(t *testing.T) {
 func newPreparedRuntimeCapacity(t *testing.T, vmSlots int64) *capacity.Ledger {
 	t.Helper()
 	ledger, err := capacity.New(capacity.Vector{
-		CPUMillis: 1000, MemoryBytes: 512 << 20, GuestEphemeralDiskBytes: 1024 << 20,
+		CPUMillis: 1000 * vmSlots, MemoryBytes: vmSlots * 512 << 20, GuestEphemeralDiskBytes: vmSlots * 1024 << 20,
 		VMSlots: vmSlots,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return ledger
+}
+
+func runtimePreparationTarget(mount workerapi.WorkspaceMount, id string, epoch int64) workerapi.RuntimeReconcileTarget {
+	return workerapi.RuntimeReconcileTarget{
+		ID: id, WorkerEpoch: epoch, Action: workerapi.RuntimeReconcilePrepare,
+		Source: workerapi.RuntimeSource{
+			WorkspaceID: "workspace-" + id, DeploymentDefinitionID: "deployment-1",
+			RuntimeIdentityID: mount.RuntimeIdentityID, WorkspaceImage: mount.WorkspaceImage,
+			WorkspaceArchitecture: "x86_64", RootfsDigest: mount.RootfsDigest,
+			WorkspaceTarget: &mount.Target, ReservedCPUMillis: 1000, ReservedMemoryMiB: 512,
+			ReservedDiskMiB: 1024, ReservedExecutionSlots: 1,
+		},
+	}
 }
 
 func runtimeCapacityTarget(id string, epoch int64) workerapi.RuntimeReconcileTarget {

@@ -34,14 +34,16 @@ type runtimeRestoreProjectionStore struct {
 
 type runtimeReconcileTargetStore struct {
 	db.Querier
-	row db.GetNextRuntimeReconcileTargetRow
+	rows   []db.ListRuntimeReconcileTargetsRow
+	params db.ListRuntimeReconcileTargetsParams
 }
 
-func (s runtimeReconcileTargetStore) GetNextRuntimeReconcileTarget(
-	context.Context,
-	db.GetNextRuntimeReconcileTargetParams,
-) (db.GetNextRuntimeReconcileTargetRow, error) {
-	return s.row, nil
+func (s *runtimeReconcileTargetStore) ListRuntimeReconcileTargets(
+	_ context.Context,
+	params db.ListRuntimeReconcileTargetsParams,
+) ([]db.ListRuntimeReconcileTargetsRow, error) {
+	s.params = params
+	return s.rows, nil
 }
 
 func TestWorkerRuntimeReconcileTargetRoundTripsActionWorkspaceAuthority(t *testing.T) {
@@ -61,7 +63,7 @@ func TestWorkerRuntimeReconcileTargetRoundTripsActionWorkspaceAuthority(t *testi
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			row := db.GetNextRuntimeReconcileTargetRow{
+			row := db.ListRuntimeReconcileTargetsRow{
 				ID: runtimeID, WorkerEpoch: 7,
 				DesiredState: test.desired, ObservedState: test.observed,
 				BaseWorkspaceVersionID:    baseVersionID,
@@ -70,7 +72,7 @@ func TestWorkerRuntimeReconcileTargetRoundTripsActionWorkspaceAuthority(t *testi
 				WorkspaceEntryCount:       pgtype.Int4{Int32: 0, Valid: true},
 				WorkspaceArchitecture:     "x86_64",
 			}
-			server := &Server{log: discardTestLogger(), db: runtimeReconcileTargetStore{row: row}}
+			server := &Server{log: discardTestLogger(), db: &runtimeReconcileTargetStore{rows: []db.ListRuntimeReconcileTargetsRow{row}}}
 			request := httptest.NewRequest(http.MethodPost, "/api/worker/v0/run/runtime-instances/reconcile", strings.NewReader(`{}`))
 			request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
 				WorkerInstanceID: workerID,
@@ -88,11 +90,39 @@ func TestWorkerRuntimeReconcileTargetRoundTripsActionWorkspaceAuthority(t *testi
 			if err := json.Unmarshal(response.Body.Bytes(), &decoded); err != nil {
 				t.Fatalf("decode response %s: %v", response.Body, err)
 			}
-			if decoded.Target == nil || decoded.Target.Action != test.wantAction ||
-				(decoded.Target.Source.WorkspaceTarget != nil) != test.wantTarget {
-				t.Fatalf("target = %#v", decoded.Target)
+			if len(decoded.Items) != 1 || decoded.Items[0].Action != test.wantAction ||
+				(decoded.Items[0].Source.WorkspaceTarget != nil) != test.wantTarget {
+				t.Fatalf("items = %#v", decoded.Items)
 			}
 		})
+	}
+}
+
+func TestWorkerRuntimeReconcileReturnsBoundedBatch(t *testing.T) {
+	workerID := uuid.Must(uuid.NewV7())
+	store := &runtimeReconcileTargetStore{rows: []db.ListRuntimeReconcileTargetsRow{
+		{ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), WorkerEpoch: 7, DesiredState: db.RuntimeDesiredStateClosed, ObservedState: db.RuntimeObservedStateReady},
+		{ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), WorkerEpoch: 7, DesiredState: db.RuntimeDesiredStateClosed, ObservedState: db.RuntimeObservedStateClosing},
+	}}
+	server := &Server{log: discardTestLogger(), db: store}
+	request := httptest.NewRequest(http.MethodPost, "/api/worker/v0/run/runtime-instances/reconcile", strings.NewReader(`{}`))
+	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
+		WorkerInstanceID: workerID, WorkerGroupID: "run-workers", WorkerEpoch: 7,
+	}))
+	response := httptest.NewRecorder()
+
+	server.workerNextRuntimeReconcileTarget(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", response.Code, response.Body)
+	}
+	var decoded workerapi.RuntimeReconcileResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Items) != 2 || store.params.RowLimit != workerRuntimeReconcileLimit ||
+		store.params.WorkerEpoch != 7 || store.params.WorkerGroupID != "run-workers" {
+		t.Fatalf("items = %d params = %+v", len(decoded.Items), store.params)
 	}
 }
 
@@ -157,7 +187,7 @@ func TestPopulateRuntimeRestoreSourceKeepsCapturedFrontierWithoutRequeryingBase(
 		Tree:                   workerapi.WorkspaceTreeIdentity{Digest: validDigest('8'), SizeBytes: 2048, EntryCount: 2},
 		Artifact:               &targetArtifact,
 	}}
-	row := db.GetNextRuntimeReconcileTargetRow{
+	row := db.ListRuntimeReconcileTargetsRow{
 		RestoreCheckpointID:   checkpointID,
 		ReservedRunID:         runID,
 		ReservedAttemptNumber: pgtype.Int4{Int32: 2, Valid: true},

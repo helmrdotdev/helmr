@@ -40,7 +40,12 @@ type PreparedRuntimeInstanceClient interface {
 
 type RuntimeReconcileClient interface {
 	PreparedRuntimeInstanceClient
-	NextRuntimeReconcileTarget(context.Context) (workerapi.RuntimeReconcileResponse, error)
+	ListRuntimeReconcileTargets(context.Context) (workerapi.RuntimeReconcileResponse, error)
+}
+
+type runtimeReconcileResult struct {
+	ref preparedRuntimeRef
+	err error
 }
 
 type PreparedRuntimePool struct {
@@ -264,41 +269,130 @@ func (p *PreparedRuntimePool) ReconcileDesiredRuntimes(ctx context.Context, clie
 	if client == nil {
 		return errors.New("runtime reconcile client is required")
 	}
-	reconnectDelay := 100 * time.Millisecond
-	for {
-		response, err := client.NextRuntimeReconcileTarget(ctx)
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return ctxErr
+	workCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	active := make(map[preparedRuntimeRef]struct{}, p.Size)
+	decisions := make(chan bool, p.Size)
+	results := make(chan runtimeReconcileResult, p.Size)
+	var attempts sync.WaitGroup
+	stop := func(err error) error {
+		cancel()
+		attempts.Wait()
+		return err
+	}
+	handleResult := func(result runtimeReconcileResult) error {
+		delete(active, result.ref)
+		if result.err == nil {
+			return nil
 		}
+		if diagnostic, ok := deployment.VerifierLocalDiagnostic(result.err); ok {
+			p.logInfo("artifact verifier bootstrap failed", "diagnostic", diagnostic)
+		}
+		var fatal interface{ FatalWorker() bool }
+		if errors.As(result.err, &fatal) && fatal.FatalWorker() {
+			return result.err
+		}
+		p.logInfo("runtime reconciliation failed", "error", result.err.Error())
+		return nil
+	}
+	for {
+		for {
+			select {
+			case result := <-results:
+				if err := handleResult(result); err != nil {
+					return stop(err)
+				}
+			default:
+				goto drained
+			}
+		}
+	drained:
+		if len(active) >= p.Size {
+			select {
+			case result := <-results:
+				if err := handleResult(result); err != nil {
+					return stop(err)
+				}
+				continue
+			case <-ctx.Done():
+				return stop(ctx.Err())
+			}
+		}
+
+		response, err := client.ListRuntimeReconcileTargets(workCtx)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return stop(ctxErr)
+		}
+		delay := time.Second
 		if err != nil {
 			p.logInfo("runtime desired-state poll failed", "error", err.Error())
-		} else if response.Target == nil {
-			reconnectDelay = 100 * time.Millisecond
-		} else if response.Target.Action == workerapi.RuntimeReconcileReclaim {
-			err = p.ReclaimFailedRuntimeTarget(ctx, client, *response.Target)
-		} else if response.Target.Action == workerapi.RuntimeReconcileClose || response.Target.DesiredState == "closed" {
-			err = p.StopRuntimeTarget(ctx, client, *response.Target)
-		} else if response.Target.Action == workerapi.RuntimeReconcilePrepare || response.Target.DesiredState == "ready" {
-			err = p.WarmRuntimeTarget(ctx, client, *response.Target)
 		} else {
-			err = fmt.Errorf("unsupported runtime desired state %q", response.Target.DesiredState)
-		}
-		if err != nil {
-			if diagnostic, ok := deployment.VerifierLocalDiagnostic(err); ok {
-				p.logInfo("artifact verifier bootstrap failed", "diagnostic", diagnostic)
+			launched := 0
+			for _, target := range response.Items {
+				if len(active) >= p.Size {
+					break
+				}
+				ref := preparedRuntimeRef{id: strings.TrimSpace(target.ID), epoch: target.WorkerEpoch}
+				if _, ok := active[ref]; ok {
+					continue
+				}
+				active[ref] = struct{}{}
+				launched++
+				attempts.Add(1)
+				go func() {
+					defer attempts.Done()
+					admitted := false
+					err := p.reconcileRuntimeTarget(workCtx, client, target, func() {
+						admitted = true
+						decisions <- true
+					})
+					if !admitted {
+						decisions <- false
+					}
+					results <- runtimeReconcileResult{ref: ref, err: err}
+				}()
 			}
-			var fatal interface{ FatalWorker() bool }
-			if errors.As(err, &fatal) && fatal.FatalWorker() {
-				return err
+			productive := false
+			for decided := 0; decided < launched; {
+				select {
+				case admitted := <-decisions:
+					productive = productive || admitted
+					decided++
+				case result := <-results:
+					if err := handleResult(result); err != nil {
+						return stop(err)
+					}
+				case <-ctx.Done():
+					return stop(ctx.Err())
+				}
 			}
-			p.logInfo("runtime reconciliation failed", "error", err.Error())
+			if productive {
+				delay = 100 * time.Millisecond
+			}
 		}
-		if err := sleepWithContext(ctx, reconnectDelay); err != nil {
-			return err
+		if err := sleepWithContext(ctx, delay); err != nil {
+			return stop(err)
 		}
-		if reconnectDelay < time.Second {
-			reconnectDelay *= 2
-		}
+	}
+}
+
+func (p *PreparedRuntimePool) reconcileRuntimeTarget(
+	ctx context.Context,
+	client PreparedRuntimeInstanceClient,
+	target workerapi.RuntimeReconcileTarget,
+	admitted func(),
+) error {
+	switch {
+	case target.Action == workerapi.RuntimeReconcileReclaim:
+		admitted()
+		return p.ReclaimFailedRuntimeTarget(ctx, client, target)
+	case target.Action == workerapi.RuntimeReconcileClose:
+		admitted()
+		return p.StopRuntimeTarget(ctx, client, target)
+	case target.Action == workerapi.RuntimeReconcilePrepare:
+		return p.warmRuntimeTarget(ctx, client, target, admitted)
+	default:
+		return fmt.Errorf("unsupported runtime reconcile action %q", target.Action)
 	}
 }
 
@@ -400,7 +494,12 @@ func (p *PreparedRuntimePool) StopRuntimeTarget(ctx context.Context, client Prep
 	return nil
 }
 
-func (p *PreparedRuntimePool) WarmRuntimeTarget(ctx context.Context, client PreparedRuntimeInstanceClient, target workerapi.RuntimeReconcileTarget) error {
+func (p *PreparedRuntimePool) warmRuntimeTarget(
+	ctx context.Context,
+	client PreparedRuntimeInstanceClient,
+	target workerapi.RuntimeReconcileTarget,
+	admitted func(),
+) error {
 	if p == nil {
 		return nil
 	}
@@ -456,7 +555,7 @@ func (p *PreparedRuntimePool) WarmRuntimeTarget(ctx context.Context, client Prep
 		p.decrementFillingLocked(key)
 		p.mu.Unlock()
 	}()
-	return p.prepareAndStore(refillCtx, key, mount, target)
+	return p.prepareAndStore(refillCtx, key, mount, target, admitted)
 }
 
 func (p *PreparedRuntimePool) Close(ctx context.Context) error {
@@ -556,7 +655,13 @@ func (p *PreparedRuntimePool) waitForActivity(ctx context.Context) error {
 	}
 }
 
-func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, mount workerapi.WorkspaceMount, target workerapi.RuntimeReconcileTarget) (retErr error) {
+func (p *PreparedRuntimePool) prepareAndStore(
+	ctx context.Context,
+	key string,
+	mount workerapi.WorkspaceMount,
+	target workerapi.RuntimeReconcileTarget,
+	admitted func(),
+) (retErr error) {
 	runtimeInstanceID := strings.TrimSpace(target.ID)
 	runtimeEpoch := target.WorkerEpoch
 	materializeAttempted := false
@@ -643,6 +748,7 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 		}
 		return failInstance(err)
 	}
+	admitted()
 	materializeAttempted = true
 	var session vm.Session
 	var materializeErr error

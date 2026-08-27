@@ -275,7 +275,7 @@ func (c *Client) GetWorkerStatus(ctx context.Context) (workerapi.StatusResponse,
 	return response, nil
 }
 
-func (c *Client) NextRuntimeReconcileTarget(ctx context.Context) (workerapi.RuntimeReconcileResponse, error) {
+func (c *Client) ListRuntimeReconcileTargets(ctx context.Context) (workerapi.RuntimeReconcileResponse, error) {
 	var response workerapi.RuntimeReconcileResponse
 	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/runtime-instances/reconcile", workerapi.RuntimeReconcileRequest{}, &response); err != nil {
 		return workerapi.RuntimeReconcileResponse{}, err
