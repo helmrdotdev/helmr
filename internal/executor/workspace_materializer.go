@@ -43,17 +43,9 @@ type WorkspaceMaterializer struct {
 	ArtifactCacheDir      string
 	ArtifactCacheMaxBytes int64
 	RuntimePool           *PreparedRuntimePool
-	BackgroundGate        *BackgroundWorkGate
 }
 
 func (m WorkspaceMaterializer) RunWorkspaceMount(ctx context.Context, mount workerapi.WorkspaceMount, client workerapi.WorkspaceMaterializerControlPlaneClient) (runErr error) {
-	endForeground := m.beginForegroundWorkspaceMount()
-	foregroundActive := true
-	defer func() {
-		if foregroundActive {
-			endForeground()
-		}
-	}()
 	totalStarted := time.Now()
 	m.logWorkspaceMountPhase(mount, "workspace mount started", "state", "starting")
 	renewEvery := m.Heartbeat
@@ -134,8 +126,6 @@ func (m WorkspaceMaterializer) RunWorkspaceMount(ctx context.Context, mount work
 		_ = renewal.stopAndWait()
 		return nil
 	}
-	endForeground()
-	foregroundActive = false
 	m.logWorkspaceMountPhase(mount, "workspace mount ready", "duration_ms", time.Since(totalStarted).Milliseconds())
 	return m.serveWorkspaceMount(ctx, renewal, session, mount, client)
 }
@@ -524,13 +514,6 @@ func (m WorkspaceMaterializer) logWorkspaceMountPhase(mount workerapi.WorkspaceM
 	}
 	base = append(base, attrs...)
 	log.Info(message, base...)
-}
-
-func (m WorkspaceMaterializer) beginForegroundWorkspaceMount() func() {
-	if m.BackgroundGate == nil {
-		return func() {}
-	}
-	return m.BackgroundGate.BeginForeground()
 }
 
 func errorString(err error) string {

@@ -305,26 +305,29 @@ func TestWarmRuntimeTargetHonorsHardAdmissionBeforeMaterialization(t *testing.T)
 	}
 }
 
-func TestWarmRuntimeTargetRetriesForegroundBackpressureWithoutDurableFailure(t *testing.T) {
-	gate := NewBackgroundWorkGate()
-	endForeground := gate.BeginForeground()
+func TestWarmRuntimeTargetStartsWhileUnrelatedRunIsBorrowed(t *testing.T) {
+	registry := NewWorkspaceMountSessions()
+	unregister := registry.RegisterWorkspaceMountSession(
+		workerapi.WorkspaceMount{ID: "unrelated-mount"},
+		&closeTrackingRuntimeSession{},
+		"channel-token",
+	)
+	defer unregister()
+	borrowed, err := registry.OpenWorkspaceMountSession(context.Background(), "unrelated-mount")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer borrowed.Session.Close(context.Background())
+
 	pool := NewPreparedRuntimePool(&cleanupRuntimeConnector{}, unavailableRuntimeCAS{}, 1, nil)
-	pool.BackgroundGate = gate
 	client := &typedRuntimeClient{}
-	target := retryableWarmTarget()
-
-	err := pool.WarmRuntimeTarget(context.Background(), client, target)
-	assertRuntimeBackpressure(t, err, PreparedRuntimeBackpressureForeground)
-	if len(client.failed) != 0 {
-		t.Fatalf("foreground backpressure mutated durable runtime: %+v", client.failed)
+	pool.RuntimeInstances = client
+	if err := pool.WarmRuntimeTarget(context.Background(), client, retryableWarmTarget()); err != nil {
+		t.Fatal(err)
 	}
-
-	endForeground()
-	backgroundCtx, finish, ok := pool.beginBackground(context.Background())
-	if !ok || backgroundCtx == nil {
-		t.Fatal("foreground release did not make retry eligible")
+	if len(client.failed) != 1 {
+		t.Fatalf("runtime preparation attempts = %d, want 1", len(client.failed))
 	}
-	finish()
 }
 
 func TestWarmRuntimeTargetRetriesCapacityBackpressureWithoutDurableFailure(t *testing.T) {
@@ -333,7 +336,7 @@ func TestWarmRuntimeTargetRetriesCapacityBackpressureWithoutDurableFailure(t *te
 	client := &typedRuntimeClient{}
 
 	err := pool.WarmRuntimeTarget(context.Background(), client, retryableWarmTarget())
-	assertRuntimeBackpressure(t, err, PreparedRuntimeBackpressureCapacity)
+	assertRuntimeCapacityBackpressure(t, err)
 	if len(client.failed) != 0 {
 		t.Fatalf("capacity backpressure mutated durable runtime: %+v", client.failed)
 	}
@@ -510,10 +513,10 @@ func TestPreparedRuntimeCapacityExhaustionIsRetryableBackpressure(t *testing.T) 
 	if err := pool.reserveRuntimeCapacity(first); err != nil {
 		t.Fatal(err)
 	}
-	assertRuntimeBackpressure(t, pool.reserveRuntimeCapacity(first), PreparedRuntimeBackpressureCapacity)
+	assertRuntimeCapacityBackpressure(t, pool.reserveRuntimeCapacity(first))
 
 	err := pool.reserveRuntimeCapacity(runtimeCapacityTarget("019c10d5-a6f7-7af1-8f5f-000000000512", 7))
-	assertRuntimeBackpressure(t, err, PreparedRuntimeBackpressureCapacity)
+	assertRuntimeCapacityBackpressure(t, err)
 	if got := len(pool.Capacity.Snapshot().Reservations); got != 1 {
 		t.Fatalf("reservations = %d, want 1", got)
 	}
@@ -595,11 +598,10 @@ func retryableWarmTarget() workerapi.RuntimeReconcileTarget {
 	}
 }
 
-func assertRuntimeBackpressure(t *testing.T, err error, want PreparedRuntimeBackpressureKind) {
+func assertRuntimeCapacityBackpressure(t *testing.T, err error) {
 	t.Helper()
-	var backpressure *PreparedRuntimeBackpressureError
-	if !errors.As(err, &backpressure) || backpressure.Kind != want || !backpressure.Retryable() {
-		t.Fatalf("error = %v, want retryable %s backpressure", err, want)
+	if !errors.Is(err, errPreparedRuntimeCapacityBusy) {
+		t.Fatalf("error = %v, want capacity backpressure", err)
 	}
 }
 

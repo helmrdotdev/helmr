@@ -35,6 +35,13 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	physicalMemoryMiB, err := physicalWorkerMemoryMiB()
+	if err != nil {
+		return fmt.Errorf("inspect worker host memory: %w", err)
+	}
+	if err := validateWorkerMemoryMiB(cfg.WorkerCapacityMemoryMiB, physicalMemoryMiB); err != nil {
+		return err
+	}
 	checkpointEncryptor, err := checkpoint.New(cfg.CheckpointKey)
 	if err != nil {
 		return fmt.Errorf("configure checkpoint encryption: %w", err)
@@ -215,8 +222,6 @@ func run(log *slog.Logger) error {
 		MaxCacheBytes:    substrateCacheMaxBytes,
 	}
 	workspaceMountSessions := executor.NewWorkspaceMountSessions()
-	backgroundGate := executor.NewBackgroundWorkGate()
-	workspaceMountSessions.BackgroundGate = backgroundGate
 	var preparedRuntimePool *executor.PreparedRuntimePool
 	closePreparedRuntime := retryableWorkerCloser{close: func(closeCtx context.Context) error {
 		if preparedRuntimePool != nil {
@@ -238,7 +243,6 @@ func run(log *slog.Logger) error {
 		preparedRuntimePool.RuntimeSubstrates = controlPlaneClient
 		preparedRuntimePool.CheckpointEncryptor = checkpointEncryptor
 		preparedRuntimePool.RuntimeInstances = controlPlaneClient
-		preparedRuntimePool.BackgroundGate = backgroundGate
 		preparedRuntimePool.Capacity = hostCapacity
 		preparedRuntimePool.PlatformStore = platformStore
 		preparedRuntimePool.RuntimeArchitecture = runtimeArchitecture
@@ -270,7 +274,6 @@ func run(log *slog.Logger) error {
 			ArtifactCacheMaxBytes: artifactCacheMaxBytes,
 			Log:                   log,
 			RuntimePool:           preparedRuntimePool,
-			BackgroundGate:        backgroundGate,
 		}),
 	)
 	if err != nil {

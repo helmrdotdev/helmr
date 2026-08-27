@@ -30,34 +30,7 @@ const (
 	defaultPreparedRuntimeControlTimeout = 15 * time.Second
 )
 
-type PreparedRuntimeBackpressureKind string
-
-const (
-	PreparedRuntimeBackpressureForeground PreparedRuntimeBackpressureKind = "foreground_busy"
-	PreparedRuntimeBackpressureCapacity   PreparedRuntimeBackpressureKind = "capacity_busy"
-)
-
-type PreparedRuntimeBackpressureError struct {
-	Kind PreparedRuntimeBackpressureKind
-}
-
-func (e *PreparedRuntimeBackpressureError) Error() string {
-	switch e.Kind {
-	case PreparedRuntimeBackpressureForeground:
-		return "prepared runtime temporarily blocked by foreground work"
-	case PreparedRuntimeBackpressureCapacity:
-		return "prepared runtime local capacity is temporarily full"
-	default:
-		return "prepared runtime temporarily unavailable"
-	}
-}
-
-func (e *PreparedRuntimeBackpressureError) Retryable() bool { return true }
-
-var (
-	errPreparedRuntimeBackgroundBusy = &PreparedRuntimeBackpressureError{Kind: PreparedRuntimeBackpressureForeground}
-	errPreparedRuntimeCapacityBusy   = &PreparedRuntimeBackpressureError{Kind: PreparedRuntimeBackpressureCapacity}
-)
+var errPreparedRuntimeCapacityBusy = errors.New("prepared runtime local capacity is temporarily full")
 
 type PreparedRuntimeInstanceClient interface {
 	MarkRuntimeInstanceReady(context.Context, workerapi.RuntimeInstanceStateRequest) (workerapi.RuntimeInstance, error)
@@ -82,7 +55,6 @@ type PreparedRuntimePool struct {
 	Size                  int
 	RuntimeInstances      PreparedRuntimeInstanceClient
 	Log                   *slog.Logger
-	BackgroundGate        *BackgroundWorkGate
 	AdmitRuntimeStart     func(context.Context) error
 	Capacity              *capacity.Ledger
 	PlatformStore         cas.Reader
@@ -461,13 +433,7 @@ func (p *PreparedRuntimePool) WarmRuntimeTarget(ctx context.Context, client Prep
 		defer cancelState()
 		return p.markRuntimeTargetFailedWithProof(stateCtx, client, target, reason, workerapi.RuntimeCleanupNotMaterialized)
 	}
-	backgroundCtx, finish, ok := p.beginBackground(ctx)
-	if !ok {
-		p.logInfo("prepared runtime warm deferred", "runtime_instance_id", key, "reason", errPreparedRuntimeBackgroundBusy.Error())
-		return errPreparedRuntimeBackgroundBusy
-	}
-	defer finish()
-	refillCtx, cancelRefill := p.withPoolContext(backgroundCtx)
+	refillCtx, cancelRefill := p.withPoolContext(ctx)
 	defer cancelRefill()
 	p.mu.Lock()
 	if p.closed {
@@ -1328,13 +1294,6 @@ func (p *PreparedRuntimePool) prepareGuestRuntime(ctx context.Context, session v
 		return errors.New("prepared runtime instance id mismatch")
 	}
 	return nil
-}
-
-func (p *PreparedRuntimePool) beginBackground(ctx context.Context) (context.Context, func(), bool) {
-	if p == nil || p.BackgroundGate == nil {
-		return ctx, func() {}, true
-	}
-	return p.BackgroundGate.BeginBackground(ctx)
 }
 
 func (p *PreparedRuntimePool) withPoolContext(parent context.Context) (context.Context, context.CancelFunc) {
