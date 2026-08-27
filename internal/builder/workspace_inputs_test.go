@@ -78,6 +78,37 @@ func TestReadWorkspaceImageInputsDeduplicatesSharedObjectBytes(t *testing.T) {
 	}
 }
 
+func TestReadWorkspaceImageInputsAcceptsSharedPath(t *testing.T) {
+	root := t.TempDir()
+	imagePath := filepath.Join(root, "shared.oci.tar")
+	if err := os.WriteFile(imagePath, workspaceOCIFixture(t), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	document, err := json.Marshal([]workspaceImageInput{
+		{DeclaredID: "first", Path: imagePath},
+		{DeclaredID: "second", Path: imagePath},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	documentPath := filepath.Join(root, "images.json")
+	if err := os.WriteFile(documentPath, document, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	inspectCount := 0
+	images, objects, err := readWorkspaceImageInputs(context.Background(), documentPath, func(path string) (deployment.BundleWorkspaceImageArtifact, error) {
+		inspectCount++
+		return inspectWorkspaceImageInput(path)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspectCount != 1 || len(images) != 2 || len(objects) != 1 || images[0].Artifact != images[1].Artifact || objects[0].Path != imagePath {
+		t.Fatalf("inspect count = %d images = %+v objects = %+v", inspectCount, images, objects)
+	}
+}
+
 func workspaceOCIFixture(t *testing.T) []byte {
 	t.Helper()
 	layer := tarFixture(t, "hello.txt", []byte("hello"))

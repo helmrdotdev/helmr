@@ -29,6 +29,14 @@ func ReadWorkspaceImageInputs(
 	ctx context.Context,
 	path string,
 ) ([]deployment.BundleWorkspaceImage, []ObjectSource, error) {
+	return readWorkspaceImageInputs(ctx, path, inspectWorkspaceImageInput)
+}
+
+func readWorkspaceImageInputs(
+	ctx context.Context,
+	path string,
+	inspect func(string) (deployment.BundleWorkspaceImageArtifact, error),
+) ([]deployment.BundleWorkspaceImage, []ObjectSource, error) {
 	if path == "" {
 		return []deployment.BundleWorkspaceImage{}, []ObjectSource{}, nil
 	}
@@ -57,6 +65,7 @@ func ReadWorkspaceImageInputs(
 	images := make([]deployment.BundleWorkspaceImage, len(inputs))
 	objects := make([]ObjectSource, 0, len(inputs))
 	objectDigests := make(map[string]struct{}, len(inputs))
+	artifactsByPath := make(map[string]deployment.BundleWorkspaceImageArtifact, len(inputs))
 	for index, input := range inputs {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
@@ -67,9 +76,13 @@ func ReadWorkspaceImageInputs(
 		if index > 0 && inputs[index-1].DeclaredID >= input.DeclaredID {
 			return nil, nil, errors.New("workspace image inputs must be unique and sorted")
 		}
-		artifact, err := inspectWorkspaceImageInput(input.Path)
-		if err != nil {
-			return nil, nil, fmt.Errorf("workspace image %q: %w", input.DeclaredID, err)
+		artifact, inspected := artifactsByPath[input.Path]
+		if !inspected {
+			artifact, err = inspect(input.Path)
+			if err != nil {
+				return nil, nil, fmt.Errorf("workspace image %q: %w", input.DeclaredID, err)
+			}
+			artifactsByPath[input.Path] = artifact
 		}
 		images[index] = deployment.BundleWorkspaceImage{DeclaredID: input.DeclaredID, Artifact: artifact}
 		if _, exists := objectDigests[artifact.Digest]; !exists {
