@@ -43,9 +43,8 @@ type workspaceMountFailureRequest struct {
 }
 
 type WorkspaceMountSessions struct {
-	mu             sync.RWMutex
-	sessions       map[string]workspaceMountSessionEntry
-	BackgroundGate *BackgroundWorkGate
+	mu       sync.RWMutex
+	sessions map[string]workspaceMountSessionEntry
 }
 
 type workspaceMountSessionEntry struct {
@@ -96,9 +95,8 @@ func (s *WorkspaceMountSessions) OpenWorkspaceMountSession(ctx context.Context, 
 	if err != nil {
 		return WorkspaceMountSession{}, fmt.Errorf("open workspace mount stream %s: %w", id, err)
 	}
-	endForeground := s.beginForegroundRun()
 	return WorkspaceMountSession{
-		Session:        newBorrowedRunSession(entry.session, stream, endForeground),
+		Session:        newBorrowedRunSession(entry.session, stream),
 		ControlSession: entry.session,
 		ChannelToken:   entry.channelToken,
 		Mount:          entry.mount,
@@ -226,13 +224,6 @@ func validateWorkspaceMountPhysicalAuthority(
 		return errors.New("workspace authority fence does not match the mount session")
 	}
 	return nil
-}
-
-func (s *WorkspaceMountSessions) beginForegroundRun() func() {
-	if s == nil || s.BackgroundGate == nil {
-		return func() {}
-	}
-	return s.BackgroundGate.BeginForeground()
 }
 
 type managedWorkspaceMountSession struct {
@@ -381,18 +372,14 @@ func (s *managedWorkspaceMountSession) CheckpointReleaseResult(ctx context.Conte
 }
 
 type borrowedRunSession struct {
-	parent        vm.Session
-	stream        vm.Stream
-	endForeground func()
-	once          sync.Once
-	err           error
+	parent vm.Session
+	stream vm.Stream
+	once   sync.Once
+	err    error
 }
 
-func newBorrowedRunSession(parent vm.Session, stream vm.Stream, endForeground func()) vm.Session {
-	if endForeground == nil {
-		endForeground = func() {}
-	}
-	return &borrowedRunSession{parent: parent, stream: stream, endForeground: endForeground}
+func newBorrowedRunSession(parent vm.Session, stream vm.Stream) vm.Session {
+	return &borrowedRunSession{parent: parent, stream: stream}
 }
 
 func (s *borrowedRunSession) Stream() vm.Stream {
@@ -413,7 +400,6 @@ func (s *borrowedRunSession) Wait(ctx context.Context) error {
 
 func (s *borrowedRunSession) Close(context.Context) error {
 	s.once.Do(func() {
-		defer s.endForeground()
 		if s.stream != nil {
 			s.err = s.stream.Close()
 		}

@@ -439,7 +439,7 @@ func TestRuntimeCheckpointerReleaseBorrowedSourceDoesNotCloseControlStreamTwice(
 	}
 	parent := &borrowedParentSession{stream: discardReadWriteCloser{}}
 	parent.artifact = checkpointArtifact(t)
-	session, ok := newBorrowedRunSession(parent, testVMStream(stream), nil).(vm.CheckpointableSession)
+	session, ok := newBorrowedRunSession(parent, testVMStream(stream)).(vm.CheckpointableSession)
 	if !ok {
 		t.Fatal("borrowed session is not checkpointable")
 	}
