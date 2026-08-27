@@ -227,19 +227,16 @@ const (
 type RuntimeReconcileRequest struct{}
 
 type RuntimeReconcileResponse struct {
-	Target *RuntimeReconcileTarget `json:"target,omitempty"`
+	Items []RuntimeReconcileTarget `json:"items"`
 }
 
 type RuntimeReconcileTarget struct {
-	ID                     string        `json:"id"`
-	WorkerEpoch            int64         `json:"worker_epoch"`
-	DesiredState           string        `json:"desired_state"`
-	DesiredVersion         int64         `json:"desired_version"`
-	ObservedState          string        `json:"observed_state"`
-	ObservedVersion        int64         `json:"observed_version"`
-	ObservedDesiredVersion int64         `json:"observed_desired_version"`
-	Action                 string        `json:"action"`
-	Source                 RuntimeSource `json:"source"`
+	ID              string        `json:"id"`
+	WorkerEpoch     int64         `json:"worker_epoch"`
+	DesiredVersion  int64         `json:"desired_version"`
+	ObservedVersion int64         `json:"observed_version"`
+	Action          string        `json:"action"`
+	Source          RuntimeSource `json:"source"`
 }
 
 const (

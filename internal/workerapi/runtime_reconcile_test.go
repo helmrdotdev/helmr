@@ -30,11 +30,11 @@ func TestRuntimeReconcileWorkspaceTargetWireContract(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			response := RuntimeReconcileResponse{Target: &RuntimeReconcileTarget{
+			response := RuntimeReconcileResponse{Items: []RuntimeReconcileTarget{{
 				ID:     "019c10d5-a6f7-7af1-8f5f-000000000002",
 				Action: test.action,
 				Source: RuntimeSource{WorkspaceTarget: test.target},
-			}}
+			}}}
 			raw, err := json.Marshal(response)
 			if err != nil {
 				t.Fatal(err)
@@ -47,8 +47,8 @@ func TestRuntimeReconcileWorkspaceTargetWireContract(t *testing.T) {
 			if err := json.Unmarshal(raw, &decoded); err != nil {
 				t.Fatalf("decode produced %s: %v", raw, err)
 			}
-			if decoded.Target == nil || (decoded.Target.Source.WorkspaceTarget != nil) != test.wantTarget {
-				t.Fatalf("decoded target = %#v", decoded.Target)
+			if len(decoded.Items) != 1 || (decoded.Items[0].Source.WorkspaceTarget != nil) != test.wantTarget {
+				t.Fatalf("decoded items = %#v", decoded.Items)
 			}
 		})
 	}
@@ -57,11 +57,11 @@ func TestRuntimeReconcileWorkspaceTargetWireContract(t *testing.T) {
 func TestRuntimeReconcileRejectsPresentInvalidWorkspaceTarget(t *testing.T) {
 	var response RuntimeReconcileResponse
 	err := json.Unmarshal([]byte(`{
-		"target": {
+		"items": [{
 			"id": "019c10d5-a6f7-7af1-8f5f-000000000002",
 			"action": "prepare",
 			"source": {"workspace_target": {}}
-		}
+		}]
 	}`), &response)
 	if err == nil {
 		t.Fatal("present invalid workspace_target was accepted")

@@ -1,4 +1,18 @@
--- name: GetNextRuntimeReconcileTarget :one
+-- name: ListRuntimeReconcileTargets :many
+WITH worker AS (
+    SELECT worker_instances.id,
+           worker_instances.worker_group_id,
+           worker_instances.current_epoch,
+           worker_instances.state,
+           worker_instances.observed_at,
+           worker_instances.runtime_paused_reason,
+           worker_instances.max_runtime_starts
+      FROM worker_instances
+     WHERE worker_instances.id = sqlc.arg(worker_instance_id)
+       AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
+       AND worker_instances.current_epoch = sqlc.arg(worker_epoch)::bigint
+       AND worker_instances.state IN ('active', 'draining')
+)
 SELECT runtime_instances.*,
        artifacts.digest AS workspace_image_digest,
        artifacts.size_bytes AS workspace_image_size_bytes,
@@ -20,10 +34,11 @@ SELECT runtime_instances.*,
        COALESCE(program_artifact.media_type, '') AS program_artifact_media_type,
        runtime_identities.rootfs_digest,
        runtime_identities.vm_runtime_contract
-  FROM runtime_instances
-  JOIN worker_instances ON worker_instances.id = runtime_instances.worker_instance_id
-                       AND worker_instances.worker_group_id = runtime_instances.worker_group_id
-  JOIN worker_groups ON worker_groups.id = worker_instances.worker_group_id
+  FROM worker
+  JOIN runtime_instances ON runtime_instances.worker_instance_id = worker.id
+                        AND runtime_instances.worker_group_id = worker.worker_group_id
+                        AND runtime_instances.worker_epoch = worker.current_epoch
+  JOIN worker_groups ON worker_groups.id = worker.worker_group_id
 	JOIN runtime_identities ON runtime_identities.id = runtime_instances.runtime_identity_id
 	                       AND runtime_identities.vm_runtime_contract = 'helmr.vm-runtime.v0'
   JOIN deployment_definitions
@@ -47,20 +62,15 @@ SELECT runtime_instances.*,
     ON program_artifact.environment_id = program_deployments.environment_id
    AND program_artifact.id = program_deployments.program_artifact_id
    AND program_artifact.kind = 'deployment_program'
- WHERE runtime_instances.worker_group_id = sqlc.arg(worker_group_id)
-   AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
-   AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
-   AND runtime_instances.reclaimed_at IS NULL
-   AND worker_instances.current_epoch = runtime_instances.worker_epoch
-   AND worker_instances.state IN ('active', 'draining')
+ WHERE runtime_instances.reclaimed_at IS NULL
    AND (
        (runtime_instances.desired_state = 'ready'
        AND runtime_instances.observed_state IN ('allocated', 'preparing')
        AND runtime_instances.observed_desired_version < runtime_instances.desired_version
-        AND worker_instances.state = 'active'
-        AND worker_instances.observed_at >= transaction_timestamp()
+        AND worker.state = 'active'
+        AND worker.observed_at >= transaction_timestamp()
             - sqlc.arg(observation_freshness_seconds)::bigint * interval '1 second'
-        AND worker_instances.runtime_paused_reason IS NULL
+        AND worker.runtime_paused_reason IS NULL
        )
        OR
        (runtime_instances.desired_state = 'closed'
@@ -76,7 +86,7 @@ SELECT runtime_instances.*,
         ))
    )
  ORDER BY runtime_instances.desired_at, runtime_instances.id
- LIMIT 1;
+ LIMIT LEAST(sqlc.arg(row_limit)::int, (SELECT max_runtime_starts FROM worker));
 
 -- name: MarkRuntimeInstanceReady :one
 WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
