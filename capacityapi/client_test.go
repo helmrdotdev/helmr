@@ -22,7 +22,7 @@ func TestClientUsesDedicatedBearerAndExactDrainFence(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatal(err)
 		}
-		if request.ExpectedEpoch != 3 || request.ExpectedClaimVersion != 9 {
+		if request.ExpectedEpoch != 3 || request.ExpectedClaimVersion != 9 || !request.RequireZeroQueuedDemand {
 			t.Fatalf("request = %+v", request)
 		}
 		_ = json.NewEncoder(w).Encode(WorkerInstance{ID: "worker-1", Status: "draining", ClaimVersion: 10})
@@ -32,7 +32,9 @@ func TestClientUsesDedicatedBearerAndExactDrainFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := client.DrainWorkerInstance(context.Background(), "worker-1", DrainWorkerInstanceRequest{ExpectedEpoch: 3, ExpectedClaimVersion: 9})
+	result, err := client.DrainWorkerInstance(context.Background(), "worker-1", DrainWorkerInstanceRequest{
+		ExpectedEpoch: 3, ExpectedClaimVersion: 9, RequireZeroQueuedDemand: true,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

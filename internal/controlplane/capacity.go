@@ -321,6 +321,20 @@ func (s *Server) capacityDrainWorkerInstance(w http.ResponseWriter, r *http.Requ
 		writeError(w, errors.New("get worker instance for drain"))
 		return
 	}
+	if request.RequireZeroQueuedDemand && instance.State == string(db.WorkerInstanceStateActive) {
+		present, err := capacityplanner.HasQueuedDemand(r.Context(), s.db, instance.WorkerGroupID)
+		if err != nil {
+			s.log.Error("check queued demand for capacity drain", "worker_instance_id", id.String(), "error", err)
+			writeError(w, errors.New("check queued demand for worker drain"))
+			return
+		}
+		if present {
+			writeError(w, conflict(codedError{
+				code: capacityapi.ErrorCodeQueuedDemandPresent, message: "queued demand is present",
+			}))
+			return
+		}
+	}
 	draining, err := s.db.DrainWorkerInstance(r.Context(), db.DrainWorkerInstanceParams{
 		ID:                   pgvalue.UUID(id),
 		WorkerGroupID:        instance.WorkerGroupID,

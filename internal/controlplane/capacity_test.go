@@ -132,6 +132,7 @@ func TestCapacityDrainUsesExactEpochAndClaimFence(t *testing.T) {
 			CreatedAt:    pgtype.Timestamptz{Time: now, Valid: true},
 			UpdatedAt:    pgtype.Timestamptz{Time: now, Valid: true},
 		},
+		group: db.WorkerGroup{ID: "run-workers", RegionID: "us-east-1"},
 	}
 	store.draining = db.DrainWorkerInstanceRow{
 		ID: workerID, ResourceID: "host-opaque-1", WorkerGroupID: "run-workers",
@@ -155,7 +156,7 @@ func TestCapacityDrainUsesExactEpochAndClaimFence(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := client.DrainWorkerInstance(t.Context(), uuid.UUID(workerID.Bytes).String(), capacityapi.DrainWorkerInstanceRequest{
-		ExpectedEpoch: 4, ExpectedClaimVersion: 7,
+		ExpectedEpoch: 4, ExpectedClaimVersion: 7, RequireZeroQueuedDemand: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -167,12 +168,85 @@ func TestCapacityDrainUsesExactEpochAndClaimFence(t *testing.T) {
 		t.Fatalf("drain result = %+v", result)
 	}
 	replayed, err := client.DrainWorkerInstance(t.Context(), uuid.UUID(workerID.Bytes).String(), capacityapi.DrainWorkerInstanceRequest{
-		ExpectedEpoch: 4, ExpectedClaimVersion: 7,
+		ExpectedEpoch: 4, ExpectedClaimVersion: 7, RequireZeroQueuedDemand: true,
 	})
 	if err != nil || replayed.ID != result.ID || replayed.Status != result.Status ||
 		replayed.ClaimVersion != result.ClaimVersion || replayed.CurrentEpoch == nil ||
 		result.CurrentEpoch == nil || *replayed.CurrentEpoch != *result.CurrentEpoch {
 		t.Fatalf("exact replay = %+v, %v", replayed, err)
+	}
+	if store.groupCalls != 2 || store.queuedRunCalls != 2 || store.queuedExecCalls != 2 || store.drainCalls != 2 {
+		t.Fatalf("demand/drain calls = group:%d run:%d exec:%d drain:%d", store.groupCalls, store.queuedRunCalls, store.queuedExecCalls, store.drainCalls)
+	}
+}
+
+func TestCapacityDrainDefersForEligibleQueuedDemand(t *testing.T) {
+	workerID := pgvalue.NewUUIDv7()
+	store := &capacityDrainStore{
+		instance: db.GetCapacityWorkerInstanceRow{
+			ID: workerID, WorkerGroupID: "run-workers", State: string(db.WorkerInstanceStateActive),
+			ClaimVersion: 7, CurrentEpoch: pgtype.Int8{Int64: 4, Valid: true},
+		},
+		group:      db.WorkerGroup{ID: "run-workers", RegionID: "us-east-1"},
+		queuedRuns: []db.ListQueuedRunEligibleScopesRow{{RegionID: "us-east-1"}},
+	}
+	hash, err := hashCapacityToken(capacityTestToken())
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := chi.NewRouter()
+	router.Route("/api", (&Server{db: store, capacityTokenHash: hash}).mountCapacityRoutes)
+	httpServer := httptest.NewServer(router)
+	defer httpServer.Close()
+	client, err := capacityapi.NewClient(httpServer.URL, capacityTestToken())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.DrainWorkerInstance(t.Context(), uuid.UUID(workerID.Bytes).String(), capacityapi.DrainWorkerInstanceRequest{
+		ExpectedEpoch: 4, ExpectedClaimVersion: 7, RequireZeroQueuedDemand: true,
+	})
+	var httpErr *capacityapi.HTTPError
+	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusConflict ||
+		httpErr.Code != capacityapi.ErrorCodeQueuedDemandPresent {
+		t.Fatalf("queued demand error = %#v", err)
+	}
+	if store.drainCalls != 0 || store.queuedExecCalls != 0 {
+		t.Fatalf("drain calls = %d, Workspace Exec queries = %d", store.drainCalls, store.queuedExecCalls)
+	}
+}
+
+func TestCapacityDrainReplaySkipsQueuedDemandCheck(t *testing.T) {
+	workerID := pgvalue.NewUUIDv7()
+	store := &capacityDrainStore{
+		instance: db.GetCapacityWorkerInstanceRow{
+			ID: workerID, WorkerGroupID: "run-workers", State: string(db.WorkerInstanceStateDraining),
+			ClaimVersion: 8, CurrentEpoch: pgtype.Int8{Int64: 4, Valid: true},
+		},
+		draining: db.DrainWorkerInstanceRow{
+			ID: workerID, WorkerGroupID: "run-workers", State: string(db.WorkerInstanceStateDraining),
+			ClaimVersion: 8, CurrentEpoch: pgtype.Int8{Int64: 4, Valid: true},
+		},
+	}
+	hash, err := hashCapacityToken(capacityTestToken())
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := chi.NewRouter()
+	router.Route("/api", (&Server{db: store, capacityTokenHash: hash}).mountCapacityRoutes)
+	httpServer := httptest.NewServer(router)
+	defer httpServer.Close()
+	client, err := capacityapi.NewClient(httpServer.URL, capacityTestToken())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := client.DrainWorkerInstance(t.Context(), uuid.UUID(workerID.Bytes).String(), capacityapi.DrainWorkerInstanceRequest{
+		ExpectedEpoch: 4, ExpectedClaimVersion: 7, RequireZeroQueuedDemand: true,
+	})
+	if err != nil || result.Status != capacityapi.WorkerInstanceStatusDraining {
+		t.Fatalf("drain replay = %+v, %v", result, err)
+	}
+	if store.groupCalls != 0 || store.drainCalls != 1 {
+		t.Fatalf("group calls = %d, drain calls = %d", store.groupCalls, store.drainCalls)
 	}
 }
 
@@ -204,6 +278,9 @@ func TestCapacityClientDecodesStaleDrainConflict(t *testing.T) {
 	var httpErr *capacityapi.HTTPError
 	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusConflict {
 		t.Fatalf("stale drain error = %#v", err)
+	}
+	if store.groupCalls != 0 || store.drainCalls != 1 {
+		t.Fatalf("ungated drain calls = group:%d drain:%d", store.groupCalls, store.drainCalls)
 	}
 }
 
@@ -341,12 +418,19 @@ func TestCapacityWorkerInstanceListParamsAreBounded(t *testing.T) {
 type capacityDrainStore struct {
 	db.Querier
 	instance          db.GetCapacityWorkerInstanceRow
+	group             db.WorkerGroup
 	draining          db.DrainWorkerInstanceRow
+	queuedRuns        []db.ListQueuedRunEligibleScopesRow
+	queuedExecs       []db.ListPendingWorkspaceExecCapacityCandidatesRow
 	providerAbsent    db.ConfirmWorkerInstanceProviderAbsentRow
 	providerAbsentID  pgtype.UUID
 	params            db.DrainWorkerInstanceParams
 	drainErr          error
 	providerAbsentErr error
+	groupCalls        int
+	queuedRunCalls    int
+	queuedExecCalls   int
+	drainCalls        int
 }
 
 type capacityPlanStore struct {
@@ -425,11 +509,27 @@ func (s *capacityDrainStore) GetCapacityWorkerInstance(context.Context, pgtype.U
 	return s.instance, nil
 }
 
+func (s *capacityDrainStore) GetWorkerGroup(context.Context, string) (db.WorkerGroup, error) {
+	s.groupCalls++
+	return s.group, nil
+}
+
+func (s *capacityDrainStore) ListQueuedRunEligibleScopes(context.Context, db.ListQueuedRunEligibleScopesParams) ([]db.ListQueuedRunEligibleScopesRow, error) {
+	s.queuedRunCalls++
+	return s.queuedRuns, nil
+}
+
+func (s *capacityDrainStore) ListPendingWorkspaceExecCapacityCandidates(context.Context, db.ListPendingWorkspaceExecCapacityCandidatesParams) ([]db.ListPendingWorkspaceExecCapacityCandidatesRow, error) {
+	s.queuedExecCalls++
+	return s.queuedExecs, nil
+}
+
 func (s *capacityDrainStore) BeginQuerier(context.Context) (db.Querier, transaction, error) {
 	return s, &adminHTTPTransaction{}, nil
 }
 
 func (s *capacityDrainStore) DrainWorkerInstance(_ context.Context, params db.DrainWorkerInstanceParams) (db.DrainWorkerInstanceRow, error) {
+	s.drainCalls++
 	s.params = params
 	return s.draining, s.drainErr
 }

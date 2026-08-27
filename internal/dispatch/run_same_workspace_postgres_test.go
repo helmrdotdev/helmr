@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -140,6 +141,13 @@ UPDATE workspace_leases
 	reclaimRunRuntimeForTest(t, fixture, tx, parentRuntime, parentMount, pgvalue.UUID(bVersionID))
 	if err := tx.Commit(fixture.ctx); err != nil {
 		t.Fatal(err)
+	}
+	hasQueuedDemand, err := capacity.HasQueuedDemand(fixture.ctx, db.New(fixture.pool), fixture.groupID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasQueuedDemand {
+		t.Fatal("queued same-Workspace child was absent from the final drain demand check")
 	}
 
 	childCandidate := ReadyRunCandidate{
