@@ -214,30 +214,17 @@ func buildDeploymentBundleAt(
 	if err := os.WriteFile(filepath.Join(workspaceContext, "build-plan.json"), planRaw, 0o644); err != nil {
 		return err
 	}
-	workspaceInputs := make([]map[string]string, len(workspaceBuilds))
-	for index, workspace := range workspaceBuilds {
-		dockerfile, target, err := builder.WorkspaceImageDockerfile(workspace.Build)
-		if err != nil {
-			return fmt.Errorf("workspace image %q: %w", workspace.DeclaredID, err)
-		}
-		dockerfilePath := filepath.Join(stage, fmt.Sprintf("Dockerfile.workspace-%d", index))
-		if err := os.WriteFile(dockerfilePath, dockerfile, 0o600); err != nil {
-			return err
-		}
-		filename := fmt.Sprintf("workspace-%03d.oci.tar", index)
-		output := filepath.Join(workspaceContext, filename)
-		if err := runDockerBuildx(ctx, command, dockerBuildxRequest{
-			Dockerfile: dockerfilePath, ContextDirectory: emptyContext,
-			Target: target, Output: output, OutputType: "oci",
-			OutputAttributes: map[string]string{"rewrite-timestamp": "true"},
-			BuildContexts:    projectContexts,
-		}); err != nil {
-			return fmt.Errorf("build workspace image %q: %w", workspace.DeclaredID, err)
-		}
-		workspaceInputs[index] = map[string]string{
-			"declaredId": workspace.DeclaredID,
-			"path":       "/workspace/images/" + filename,
-		}
+	workspaceInputs, err := buildWorkspaceImages(
+		ctx,
+		command,
+		stage,
+		workspaceContext,
+		emptyContext,
+		projectContexts,
+		workspaceBuilds,
+	)
+	if err != nil {
+		return err
 	}
 	workspaceRaw, err := json.Marshal(workspaceInputs)
 	if err != nil {
@@ -273,6 +260,55 @@ func buildDeploymentBundleAt(
 		return err
 	}
 	return nil
+}
+
+func buildWorkspaceImages(
+	ctx context.Context,
+	command *cobra.Command,
+	stage string,
+	workspaceContext string,
+	emptyContext string,
+	projectContexts map[string]string,
+	workspaceBuilds []builder.WorkspaceBuild,
+) ([]map[string]string, error) {
+	workspaceInputs := make([]map[string]string, len(workspaceBuilds))
+	workspaceOutputs := make(map[struct {
+		dockerfile string
+		target     string
+	}]string, len(workspaceBuilds))
+	for index, workspace := range workspaceBuilds {
+		dockerfile, target, err := builder.WorkspaceImageDockerfile(workspace.Build)
+		if err != nil {
+			return nil, fmt.Errorf("workspace image %q: %w", workspace.DeclaredID, err)
+		}
+		key := struct {
+			dockerfile string
+			target     string
+		}{string(dockerfile), target}
+		filename, built := workspaceOutputs[key]
+		if !built {
+			dockerfilePath := filepath.Join(stage, fmt.Sprintf("Dockerfile.workspace-%d", index))
+			if err := os.WriteFile(dockerfilePath, dockerfile, 0o600); err != nil {
+				return nil, err
+			}
+			filename = fmt.Sprintf("workspace-%03d.oci.tar", index)
+			output := filepath.Join(workspaceContext, filename)
+			if err := runDockerBuildx(ctx, command, dockerBuildxRequest{
+				Dockerfile: dockerfilePath, ContextDirectory: emptyContext,
+				Target: target, Output: output, OutputType: "oci",
+				OutputAttributes: map[string]string{"rewrite-timestamp": "true"},
+				BuildContexts:    projectContexts,
+			}); err != nil {
+				return nil, fmt.Errorf("build workspace image %q: %w", workspace.DeclaredID, err)
+			}
+			workspaceOutputs[key] = filename
+		}
+		workspaceInputs[index] = map[string]string{
+			"declaredId": workspace.DeclaredID,
+			"path":       "/workspace/images/" + filename,
+		}
+	}
+	return workspaceInputs, nil
 }
 
 func executeDockerBuildx(
