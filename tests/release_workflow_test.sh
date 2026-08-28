@@ -23,20 +23,10 @@ require_text() {
 
 require_text "name: platform release" "$workflow" \
   "release workflow does not build the Platform release"
-require_text '"capacity/v*"' "$workflow" \
-  "release workflow does not accept capacity module tags"
-require_text "name: capacity module" "$workflow" \
-  "release workflow does not validate capacity module tags"
-require_text 'CAPACITY_RELEASE_TAG_PATTERN' "$workflow" \
-  "capacity release tags are not validated as semantic versions"
-require_text 'test "${GITHUB_REF_NAME#capacity/}" = "$(go list -m -f' "$workflow" \
-  "capacity release tag does not match the version required by the root module"
-require_text "go list -m all | wc -l" "$workflow" \
-  "capacity release does not enforce a standard-library-only module graph"
-require_text "go test ./internal/deppolicy" "$workflow" \
-  "capacity release does not run the dependency budget"
-require_text 'GOPROXY: direct' "$workflow" \
-  "capacity release does not validate a clean remote consumer"
+if rg -F -e '"capacity/v*"' -e "name: capacity module" "$workflow" >/dev/null; then
+  printf '%s\n' "release workflow still contains the retired capacity module lane" >&2
+  exit 1
+fi
 require_text "name: development platform release" "$workflow" \
   "release workflow has no branch-scoped development Platform release"
 require_text "environment: release-production" "$workflow" \

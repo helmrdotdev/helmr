@@ -11,14 +11,13 @@ buildGoModule {
     root = ../..;
     fileset = lib.fileset.unions [
       ../../cmd/internal/bundle-builder
-      ../../capacity
       ../../go.mod
       ../../go.sum
       ../../internal
     ];
   };
 
-  vendorHash = "sha256-ZSyB1cxcKqVPTf9t4eCvw6ZrmAA2yWwVmfpJNyHuavY=";
+  vendorHash = "sha256-jYDWiu8vwEqBTrcJx4Qm4RRexiE3eLreI/aA6xw4iT4=";
   subPackages = [ "cmd/internal/bundle-builder" ];
 
   ldflags = [

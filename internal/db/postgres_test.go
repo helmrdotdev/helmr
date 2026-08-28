@@ -5,12 +5,13 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/capacity"
+	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -136,7 +137,7 @@ func newPostgresDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 		)
 	`,
 		dbtest.DefaultRuntimeID,
-		capacity.RuntimeContract,
+		runtimeid.Contract,
 		dbtest.Digest("db-test-vm-runtime-descriptor"),
 		dbtest.Digest("db-test-firecracker"),
 		dbtest.Digest("db-test-kernel"),

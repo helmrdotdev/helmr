@@ -30,7 +30,7 @@ func TestPackagedFirecrackerProbeOutputIsAccepted(t *testing.T) {
 	}
 }
 
-func testRuntimeIdentity(t *testing.T, kernelDigest string, initramfsDigest string, rootfsDigest string) runtimeid.Selector {
+func testRuntimeIdentity(t *testing.T, kernelDigest string, initramfsDigest string, rootfsDigest string) runtimeid.Profile {
 	t.Helper()
 	artifacts := testProbeRuntimeArtifacts()
 	artifacts.Kernel.Digest = kernelDigest

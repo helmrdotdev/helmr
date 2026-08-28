@@ -16,9 +16,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/capacity"
+	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -502,14 +503,14 @@ func (s *capacityPlanStore) ListPendingWorkspaceExecCapacityCandidates(context.C
 
 func capacityHTTPTemplate(t *testing.T) capacity.WorkerTemplate {
 	t.Helper()
-	runtime := capacity.RuntimeProfile{
-		Arch: "x86_64", Contract: capacity.RuntimeContract,
+	runtime := runtimeid.Profile{
+		Arch: "x86_64", Contract: runtimeid.Contract,
 		VMRuntimeDescriptorDigest: "sha256:" + strings.Repeat("a", 64),
 		FirecrackerDigest:         "sha256:" + strings.Repeat("b", 64),
 		FirecrackerVersion:        "1.16.1",
 		SnapshotFormatVersion:     "6.0.0",
 		HostKernelRelease:         "6.8.0-1024-aws",
-		CPUTemplate:               capacity.CPUTemplateSelector{Kind: capacity.CPUTemplateNone},
+		CPUTemplate:               runtimeid.CPUTemplateSelector{Kind: runtimeid.CPUTemplateNone},
 		KernelDigest:              "sha256:" + strings.Repeat("1", 64),
 		InitramfsDigest:           "sha256:" + strings.Repeat("2", 64),
 		RootfsDigest:              "sha256:" + strings.Repeat("3", 64),
@@ -518,7 +519,7 @@ func capacityHTTPTemplate(t *testing.T) capacity.WorkerTemplate {
 	template := capacity.WorkerTemplate{
 		Schema:  capacity.WorkerTemplateSchema,
 		Runtime: runtime,
-		CPUShapes: []capacity.CPUShape{
+		CPUShapes: []runtimeid.CPUShape{
 			{VCPUCount: 1, CPUConfigDigest: "sha256:" + strings.Repeat("4", 64)},
 			{VCPUCount: 2, CPUConfigDigest: "sha256:" + strings.Repeat("5", 64)},
 		},

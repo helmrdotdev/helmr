@@ -11,11 +11,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/capacity"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
@@ -633,7 +634,7 @@ func (s *Server) activateWorker(ctx context.Context, worker workerActor, capabil
 	})
 }
 
-func runtimeIdentityParams(profile capacity.RuntimeProfile) db.UpsertRuntimeIdentityParams {
+func runtimeIdentityParams(profile runtimeid.Profile) db.UpsertRuntimeIdentityParams {
 	digest := pgtype.Text{String: profile.CPUTemplate.Digest, Valid: profile.CPUTemplate.Digest != ""}
 	return db.UpsertRuntimeIdentityParams{
 		ID: profile.ID, RuntimeArch: profile.Arch, VMRuntimeContract: profile.Contract,
@@ -688,7 +689,7 @@ func workerPoolMatches(pool db.WorkerPool, shapes []db.WorkerPoolCpuShape, templ
 func workerTemplate(capabilities workerapi.Capabilities) capacity.WorkerTemplate {
 	return capacity.WorkerTemplate{
 		Schema: capacity.WorkerTemplateSchema, Runtime: capabilities.Runtime,
-		CPUShapes: append([]capacity.CPUShape(nil), capabilities.CPUShapes...),
+		CPUShapes: append([]runtimeid.CPUShape(nil), capabilities.CPUShapes...),
 		Substrate: capacity.SubstrateProfile{
 			Format: capabilities.SubstrateFormat, Contract: capabilities.SubstrateContract,
 		},
@@ -718,7 +719,7 @@ func normalizeWorkerCapabilities(input workerapi.Capabilities) (workerapi.Capabi
 	runtimeProfile.KernelDigest = strings.TrimSpace(runtimeProfile.KernelDigest)
 	runtimeProfile.InitramfsDigest = strings.TrimSpace(runtimeProfile.InitramfsDigest)
 	runtimeProfile.RootfsDigest = strings.TrimSpace(runtimeProfile.RootfsDigest)
-	cpuShapes := append([]capacity.CPUShape(nil), input.CPUShapes...)
+	cpuShapes := append([]runtimeid.CPUShape(nil), input.CPUShapes...)
 	for index := range cpuShapes {
 		cpuShapes[index].CPUConfigDigest = strings.TrimSpace(cpuShapes[index].CPUConfigDigest)
 	}

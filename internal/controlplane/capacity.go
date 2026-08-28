@@ -12,9 +12,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/capacity"
 	"github.com/helmrdotdev/helmr/internal/auth"
-	capacityplanner "github.com/helmrdotdev/helmr/internal/capacity"
+	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -50,19 +49,19 @@ func hashCapacityToken(raw string) ([]byte, error) {
 }
 
 func (s *Server) mountCapacityRoutes(r chi.Router) {
-	r.Route(capacity.RoutePrefix, func(r chi.Router) {
+	r.Route("/capacity/v0", func(r chi.Router) {
 		r.Use(s.requireCapacity)
-		r.Get(capacity.WorkerGroupsPath+"/resolve", s.capacityResolveWorkerGroup)
-		r.Get(capacity.WorkerGroupsPath+"/{workerGroupID}/pools/resolve", s.capacityResolveWorkerPool)
+		r.Get("/worker-groups/resolve", s.capacityResolveWorkerGroup)
+		r.Get("/worker-groups/{workerGroupID}/pools/resolve", s.capacityResolveWorkerPool)
 		r.With(limitRequestBody(capacityRequestBodyLimit)).
-			Put(capacity.WorkerGroupsPath+"/{workerGroupID}/primary-pools", s.capacityReconcileWorkerGroupPrimaryPools)
+			Put("/worker-groups/{workerGroupID}/primary-pools", s.capacityReconcileWorkerGroupPrimaryPools)
 		r.With(limitRequestBody(capacityRequestBodyLimit)).
-			Post(capacity.WorkerGroupsPath+"/{workerGroupID}/plan", s.capacityPlan)
-		r.Get(capacity.WorkerInstancesPath, s.capacityListWorkerInstances)
-		r.Get(capacity.WorkerInstancesPath+"/{workerInstanceID}", s.capacityGetWorkerInstance)
-		r.Post(capacity.WorkerInstancesPath+"/{workerInstanceID}/lost", s.capacityConfirmWorkerInstanceProviderAbsent)
+			Post("/worker-groups/{workerGroupID}/plan", s.capacityPlan)
+		r.Get("/worker-instances", s.capacityListWorkerInstances)
+		r.Get("/worker-instances/{workerInstanceID}", s.capacityGetWorkerInstance)
+		r.Post("/worker-instances/{workerInstanceID}/lost", s.capacityConfirmWorkerInstanceProviderAbsent)
 		r.With(limitRequestBody(capacityRequestBodyLimit)).
-			Post(capacity.WorkerInstancesPath+"/{workerInstanceID}/drain", s.capacityDrainWorkerInstance)
+			Post("/worker-instances/{workerInstanceID}/drain", s.capacityDrainWorkerInstance)
 	})
 }
 
@@ -219,13 +218,13 @@ func (s *Server) capacityPlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(fmt.Errorf("invalid capacity plan JSON: %w", err)))
 		return
 	}
-	response, err := capacityplanner.Plan(r.Context(), s.db, workerGroupID.String(), request, time.Now())
+	response, err := capacity.Plan(r.Context(), s.db, workerGroupID.String(), request, time.Now())
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, notFound(errors.New("worker group was not found")))
 		return
 	}
 	if err != nil {
-		if errors.Is(err, capacityplanner.ErrInvalidPlanRequest) {
+		if errors.Is(err, capacity.ErrInvalidPlanRequest) {
 			writeError(w, badRequest(err))
 			return
 		}
@@ -322,7 +321,7 @@ func (s *Server) capacityDrainWorkerInstance(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if request.RequireZeroQueuedDemand && instance.State == string(db.WorkerInstanceStateActive) {
-		present, err := capacityplanner.HasQueuedDemand(r.Context(), s.db, instance.WorkerGroupID)
+		present, err := capacity.HasQueuedDemand(r.Context(), s.db, instance.WorkerGroupID)
 		if err != nil {
 			s.log.Error("check queued demand for capacity drain", "worker_instance_id", id.String(), "error", err)
 			writeError(w, errors.New("check queued demand for worker drain"))
@@ -330,7 +329,7 @@ func (s *Server) capacityDrainWorkerInstance(w http.ResponseWriter, r *http.Requ
 		}
 		if present {
 			writeError(w, conflict(codedError{
-				code: capacity.ErrorCodeQueuedDemandPresent, message: "queued demand is present",
+				code: "queued_demand_present", message: "queued demand is present",
 			}))
 			return
 		}

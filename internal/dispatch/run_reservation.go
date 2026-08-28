@@ -7,8 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/capacity"
-	capacityplanner "github.com/helmrdotdev/helmr/internal/capacity"
+	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
@@ -494,7 +493,7 @@ func selectRunWorker(
 	if err != nil {
 		return runWorker{}, err
 	}
-	selected, ok := capacityplanner.SelectRunWorker(rows, runCapacityRequirements(authority))
+	selected, ok := capacity.SelectRunWorker(rows, runCapacityRequirements(authority))
 	if !ok || !selected.WorkerEpoch.Valid || !selected.RuntimeIdentityID.Valid {
 		return runWorker{}, pgx.ErrNoRows
 	}
@@ -515,10 +514,10 @@ func requestRunCapacityPressure(
 	if err != nil {
 		return false, fmt.Errorf("list run capacity pressure candidates: %w", err)
 	}
-	if _, available := capacityplanner.SelectRunWorker(rows, runCapacityRequirements(authority)); available {
+	if _, available := capacity.SelectRunWorker(rows, runCapacityRequirements(authority)); available {
 		return false, nil
 	}
-	for _, selected := range capacityplanner.RunWorkerCapacityPressureCandidates(rows, runCapacityRequirements(authority)) {
+	for _, selected := range capacity.RunWorkerCapacityPressureCandidates(rows, runCapacityRequirements(authority)) {
 		if !selected.WorkerEpoch.Valid || !selected.RuntimeIdentityID.Valid {
 			continue
 		}
@@ -567,8 +566,8 @@ func requestRunCapacityPressure(
 	return false, nil
 }
 
-func runCapacityRequirements(authority runPlacementAuthority) capacityplanner.RunRequirements {
-	return capacityplanner.RunRequirements{
+func runCapacityRequirements(authority runPlacementAuthority) capacity.RunRequirements {
+	return capacity.RunRequirements{
 		Resources: capacity.ResourceVector{
 			CPUMillis: authority.resources.cpuMillis, MemoryBytes: authority.resources.memoryBytes,
 			GuestEphemeralDiskBytes: authority.resources.guestEphemeralDiskBytes, VMSlots: 1,

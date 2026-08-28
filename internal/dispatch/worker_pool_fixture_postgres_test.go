@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/capacity"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -49,7 +49,7 @@ INSERT INTO runtime_identities (
 		dbtest.Digest("dispatch-kernel"),
 		dbtest.Digest("dispatch-initramfs"),
 		dbtest.Digest("dispatch-rootfs"),
-		capacity.RuntimeContract,
+		runtimeid.Contract,
 	)
 	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO worker_pools (

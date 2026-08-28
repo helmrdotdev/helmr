@@ -7,11 +7,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/capacity"
+	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -578,7 +579,7 @@ ON CONFLICT (id) DO NOTHING`, regionID)
 	_, err = q.UpsertRuntimeIdentity(t.Context(), db.UpsertRuntimeIdentityParams{
 		ID:                        fixture.runtimeIdentityID,
 		RuntimeArch:               "x86_64",
-		VMRuntimeContract:         capacity.RuntimeContract,
+		VMRuntimeContract:         runtimeid.Contract,
 		VMRuntimeDescriptorDigest: dbtest.Digest("worker-pool-runtime-descriptor"),
 		FirecrackerDigest:         dbtest.Digest("worker-pool-firecracker"),
 		FirecrackerVersion:        "1.12.0",

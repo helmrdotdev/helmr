@@ -10,7 +10,6 @@
 let
   moduleFiles = lib.fileset.unions [
     ../../cmd/helmr
-    ../../capacity
     ../../go.mod
     ../../go.sum
     ../../internal
@@ -32,7 +31,7 @@ buildGoModule {
     fileset = runtimeFiles;
   };
 
-  vendorHash = "sha256-pSmxnNZM5u746zmtjOc+49e5pCmJYsXZuMbzWmtwPCE=";
+  vendorHash = "sha256-2EXUrW77rPhKn+GzhJ9xKkNHOfzIEI7uZgAAI2nDwZ8=";
   overrideModAttrs = _: {
     # Contract checks reuse goModules while compiling package tests. Resolve
     # dependencies from the complete module source even though the shipped CLI
