@@ -17,6 +17,7 @@ cd "$repo_root"
 ARCH="$arch" ./scripts/build-guestd-linux.sh
 
 ARCH="$arch" HELMR_GUESTD_BUILT=1 make -C "images/${role}" all
+bash tests/guest_initramfs_test.sh "images/${role}/out/initramfs"
 
 mkdir -p dist
 cp "images/${role}/out/vmlinuz" "dist/${prefix}-vmlinuz"
