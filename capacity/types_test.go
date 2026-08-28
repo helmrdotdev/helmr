@@ -1,4 +1,4 @@
-package capacityapi
+package capacity
 
 import (
 	"math"

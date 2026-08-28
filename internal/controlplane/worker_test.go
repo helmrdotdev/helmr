@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/capacityapi"
+	"github.com/helmrdotdev/helmr/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -24,19 +24,19 @@ func TestWorkerActivationDerivesRuntimeStartsFromRunSlots(t *testing.T) {
 func validWorkerCapabilities(t *testing.T) workerapi.Capabilities {
 	t.Helper()
 	c := workerapi.Capabilities{
-		Runtime: capacityapi.RuntimeProfile{
-			Arch: "x86_64", Contract: capacityapi.RuntimeContract,
+		Runtime: capacity.RuntimeProfile{
+			Arch: "x86_64", Contract: capacity.RuntimeContract,
 			VMRuntimeDescriptorDigest: "sha256:" + strings.Repeat("a", 64),
 			FirecrackerDigest:         "sha256:" + strings.Repeat("b", 64),
 			FirecrackerVersion:        "1.16.1",
 			SnapshotFormatVersion:     "6.0.0",
 			HostKernelRelease:         "6.8.0-1024-aws",
-			CPUTemplate:               capacityapi.CPUTemplateSelector{Kind: capacityapi.CPUTemplateNone},
+			CPUTemplate:               capacity.CPUTemplateSelector{Kind: capacity.CPUTemplateNone},
 			KernelDigest:              "sha256:" + strings.Repeat("1", 64),
 			InitramfsDigest:           "sha256:" + strings.Repeat("2", 64),
 			RootfsDigest:              "sha256:" + strings.Repeat("3", 64),
 		},
-		CPUShapes: []capacityapi.CPUShape{
+		CPUShapes: []capacity.CPUShape{
 			{VCPUCount: 1, CPUConfigDigest: "sha256:" + strings.Repeat("4", 64)},
 			{VCPUCount: 2, CPUConfigDigest: "sha256:" + strings.Repeat("5", 64)},
 		},
@@ -44,8 +44,8 @@ func validWorkerCapabilities(t *testing.T) workerapi.Capabilities {
 			FirecrackerVersion: "1.16.1", HostKernelRelease: "6.8.0-1024-aws",
 			MicrocodeVersion: "0x2b000643", BIOSVersion: "1.0", BIOSRevision: "1.0",
 		},
-		SubstrateFormat:           capacityapi.SubstrateFormatExt4,
-		SubstrateContract:         capacityapi.SubstrateContractExt4,
+		SubstrateFormat:           capacity.SubstrateFormatExt4,
+		SubstrateContract:         capacity.SubstrateContractExt4,
 		MaxVCPUs:                  8,
 		MaxMemoryMiB:              16 << 10,
 		VMMilliCPU:                2_000,
@@ -68,8 +68,8 @@ func validWorkerCapabilities(t *testing.T) workerapi.Capabilities {
 
 func TestNormalizeWorkerCapabilitiesReturnsCanonicalCompleteEvidence(t *testing.T) {
 	want := validWorkerCapabilities(t)
-	want.Runtime.CPUTemplate = capacityapi.CPUTemplateSelector{
-		Kind:   capacityapi.CPUTemplateCustom,
+	want.Runtime.CPUTemplate = capacity.CPUTemplateSelector{
+		Kind:   capacity.CPUTemplateCustom,
 		Digest: "sha256:" + strings.Repeat("6", 64),
 	}
 	var err error
@@ -79,7 +79,7 @@ func TestNormalizeWorkerCapabilitiesReturnsCanonicalCompleteEvidence(t *testing.
 	}
 
 	input := want
-	input.CPUShapes = append([]capacityapi.CPUShape(nil), want.CPUShapes...)
+	input.CPUShapes = append([]capacity.CPUShape(nil), want.CPUShapes...)
 	input.Runtime.ID = " \t" + input.Runtime.ID + "\n"
 	input.Runtime.Arch = " " + input.Runtime.Arch + " "
 	input.Runtime.Contract = "\t" + input.Runtime.Contract + "\n"
@@ -119,18 +119,18 @@ func TestNormalizeWorkerCapabilitiesReturnsCanonicalCompleteEvidence(t *testing.
 func TestWorkerTemplateDerivesImmutablePoolContract(t *testing.T) {
 	capabilities := validWorkerCapabilities(t)
 
-	want := capacityapi.WorkerTemplate{
-		Schema:    capacityapi.WorkerTemplateSchema,
+	want := capacity.WorkerTemplate{
+		Schema:    capacity.WorkerTemplateSchema,
 		Runtime:   capabilities.Runtime,
-		CPUShapes: append([]capacityapi.CPUShape(nil), capabilities.CPUShapes...),
-		Substrate: capacityapi.SubstrateProfile{
-			Format: capacityapi.SubstrateFormatExt4, Contract: capacityapi.SubstrateContractExt4,
+		CPUShapes: append([]capacity.CPUShape(nil), capabilities.CPUShapes...),
+		Substrate: capacity.SubstrateProfile{
+			Format: capacity.SubstrateFormatExt4, Contract: capacity.SubstrateContractExt4,
 		},
-		Capacity: capacityapi.ResourceVector{
+		Capacity: capacity.ResourceVector{
 			CPUMillis: 8_000, MemoryBytes: 16 << 30, GuestEphemeralDiskBytes: 64 << 30,
 			VMSlots: 4,
 		},
-		PerVM: capacityapi.ResourceVector{
+		PerVM: capacity.ResourceVector{
 			CPUMillis: 2_000, MemoryBytes: 2 << 30, GuestEphemeralDiskBytes: 8 << 30,
 		},
 	}
@@ -175,8 +175,8 @@ func TestSealWorkerPoolParamsDerivePendingPoolContract(t *testing.T) {
 
 func TestRuntimeIdentityParamsDeriveCompleteProfile(t *testing.T) {
 	profile := validWorkerCapabilities(t).Runtime
-	profile.CPUTemplate = capacityapi.CPUTemplateSelector{
-		Kind:   capacityapi.CPUTemplateCustom,
+	profile.CPUTemplate = capacity.CPUTemplateSelector{
+		Kind:   capacity.CPUTemplateCustom,
 		Digest: "sha256:" + strings.Repeat("6", 64),
 	}
 	var err error
@@ -231,8 +231,8 @@ func TestWorkerPoolMatchesRejectsCPUShapeOrTemplateMismatch(t *testing.T) {
 
 	t.Run("CPU template", func(t *testing.T) {
 		changed := template
-		changed.Runtime.CPUTemplate = capacityapi.CPUTemplateSelector{
-			Kind:   capacityapi.CPUTemplateCustom,
+		changed.Runtime.CPUTemplate = capacity.CPUTemplateSelector{
+			Kind:   capacity.CPUTemplateCustom,
 			Digest: "sha256:" + strings.Repeat("6", 64),
 		}
 		var err error
@@ -280,8 +280,8 @@ func TestNormalizeWorkerCapabilitiesRejectsCPUShapeOrTemplateMismatch(t *testing
 
 	t.Run("CPU template identity", func(t *testing.T) {
 		capabilities := validWorkerCapabilities(t)
-		capabilities.Runtime.CPUTemplate = capacityapi.CPUTemplateSelector{
-			Kind:   capacityapi.CPUTemplateCustom,
+		capabilities.Runtime.CPUTemplate = capacity.CPUTemplateSelector{
+			Kind:   capacity.CPUTemplateCustom,
 			Digest: "sha256:" + strings.Repeat("6", 64),
 		}
 		if _, err := normalizeWorkerCapabilities(capabilities); err == nil || !strings.Contains(err.Error(), "runtime.id") {
@@ -294,7 +294,7 @@ func sealedWorkerPool(
 	poolID pgtype.UUID,
 	groupID string,
 	name string,
-	template capacityapi.WorkerTemplate,
+	template capacity.WorkerTemplate,
 ) (db.WorkerPool, []db.WorkerPoolCpuShape) {
 	pool := db.WorkerPool{
 		ID:                              poolID,

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/capacityapi"
+	"github.com/helmrdotdev/helmr/capacity"
 )
 
 func TestRuntimeIdentityDigestIsStable(t *testing.T) {
@@ -16,7 +16,7 @@ func TestRuntimeIdentityDigestIsStable(t *testing.T) {
 		FirecrackerVersion:        "1.16.1",
 		SnapshotFormatVersion:     "6.0.0",
 		HostKernelRelease:         "6.8.0-1024-aws",
-		CPUTemplate:               capacityapi.CPUTemplateSelector{Kind: capacityapi.CPUTemplateNone},
+		CPUTemplate:               capacity.CPUTemplateSelector{Kind: capacity.CPUTemplateNone},
 		KernelDigest:              "sha256:" + strings.Repeat("1", 64),
 		InitramfsDigest:           "sha256:" + strings.Repeat("2", 64),
 		RootfsDigest:              "sha256:" + strings.Repeat("3", 64),

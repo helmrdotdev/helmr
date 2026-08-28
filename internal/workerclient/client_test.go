@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/capacityapi"
+	"github.com/helmrdotdev/helmr/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -740,7 +740,7 @@ func testClientCheckpointManifest(kernelDigest string, rootfsDigest string, conf
 			Backend:         "firecracker",
 			ID:              "sha256:runtime",
 			Arch:            "arm64",
-			Contract:        capacityapi.RuntimeContract,
+			Contract:        capacity.RuntimeContract,
 			KernelDigest:    kernelDigest,
 			InitramfsDigest: "sha256:initramfs",
 			RootfsDigest:    rootfsDigest,
@@ -761,8 +761,8 @@ func testClientCheckpointManifest(kernelDigest string, rootfsDigest string, conf
 
 func workerClientCapabilities() workerapi.Capabilities {
 	return workerapi.Capabilities{
-		Runtime: capacityapi.RuntimeProfile{
-			ID: "sha256:runtime", Arch: "arm64", Contract: capacityapi.RuntimeContract,
+		Runtime: capacity.RuntimeProfile{
+			ID: "sha256:runtime", Arch: "arm64", Contract: capacity.RuntimeContract,
 			KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs",
 		},
 		MaxVCPUs:                  2,

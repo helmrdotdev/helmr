@@ -13,7 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/capacityapi"
+	"github.com/helmrdotdev/helmr/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -77,12 +77,12 @@ func TestCapacityPrimarySelectionIsAtomicAndReplaySafe(t *testing.T) {
 	router.Route("/api", server.mountCapacityRoutes)
 	httpServer := httptest.NewServer(router)
 	defer httpServer.Close()
-	client, err := capacityapi.NewClient(httpServer.URL, capacityTestToken())
+	client, err := capacity.NewClient(httpServer.URL, capacityTestToken())
 	if err != nil {
 		t.Fatal(err)
 	}
 	poolID := pgvalue.UUIDString(pool.ID)
-	response, err := client.ReconcileWorkerGroupPrimaryPools(t.Context(), group.ID, capacityapi.ReconcileWorkerGroupPrimaryPoolsRequest{
+	response, err := client.ReconcileWorkerGroupPrimaryPools(t.Context(), group.ID, capacity.ReconcileWorkerGroupPrimaryPoolsRequest{
 		ExpectedGroupClaimVersion: group.ClaimVersion,
 		PoolID:                    poolID,
 	})
@@ -105,11 +105,11 @@ func TestCapacityPrimarySelectionIsAtomicAndReplaySafe(t *testing.T) {
 	replayRouter.Route("/api", replayServer.mountCapacityRoutes)
 	replayHTTPServer := httptest.NewServer(replayRouter)
 	defer replayHTTPServer.Close()
-	replayClient, err := capacityapi.NewClient(replayHTTPServer.URL, capacityTestToken())
+	replayClient, err := capacity.NewClient(replayHTTPServer.URL, capacityTestToken())
 	if err != nil {
 		t.Fatal(err)
 	}
-	replayed, err := replayClient.ReconcileWorkerGroupPrimaryPools(t.Context(), group.ID, capacityapi.ReconcileWorkerGroupPrimaryPoolsRequest{
+	replayed, err := replayClient.ReconcileWorkerGroupPrimaryPools(t.Context(), group.ID, capacity.ReconcileWorkerGroupPrimaryPoolsRequest{
 		ExpectedGroupClaimVersion: group.ClaimVersion,
 		PoolID:                    poolID,
 	})
@@ -151,11 +151,11 @@ func TestCapacityDrainUsesExactEpochAndClaimFence(t *testing.T) {
 	router.Route("/api", server.mountCapacityRoutes)
 	httpServer := httptest.NewServer(router)
 	defer httpServer.Close()
-	client, err := capacityapi.NewClient(httpServer.URL, capacityTestToken())
+	client, err := capacity.NewClient(httpServer.URL, capacityTestToken())
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := client.DrainWorkerInstance(t.Context(), uuid.UUID(workerID.Bytes).String(), capacityapi.DrainWorkerInstanceRequest{
+	result, err := client.DrainWorkerInstance(t.Context(), uuid.UUID(workerID.Bytes).String(), capacity.DrainWorkerInstanceRequest{
 		ExpectedEpoch: 4, ExpectedClaimVersion: 7, RequireZeroQueuedDemand: true,
 	})
 	if err != nil {
@@ -164,10 +164,10 @@ func TestCapacityDrainUsesExactEpochAndClaimFence(t *testing.T) {
 	if store.params.ExpectedEpoch.Int64 != 4 || store.params.ExpectedClaimVersion != 7 || store.params.WorkerGroupID != "run-workers" {
 		t.Fatalf("drain params = %+v", store.params)
 	}
-	if result.Status != capacityapi.WorkerInstanceStatusDraining || result.ClaimVersion != 8 {
+	if result.Status != capacity.WorkerInstanceStatusDraining || result.ClaimVersion != 8 {
 		t.Fatalf("drain result = %+v", result)
 	}
-	replayed, err := client.DrainWorkerInstance(t.Context(), uuid.UUID(workerID.Bytes).String(), capacityapi.DrainWorkerInstanceRequest{
+	replayed, err := client.DrainWorkerInstance(t.Context(), uuid.UUID(workerID.Bytes).String(), capacity.DrainWorkerInstanceRequest{
 		ExpectedEpoch: 4, ExpectedClaimVersion: 7, RequireZeroQueuedDemand: true,
 	})
 	if err != nil || replayed.ID != result.ID || replayed.Status != result.Status ||
@@ -198,16 +198,16 @@ func TestCapacityDrainDefersForEligibleQueuedDemand(t *testing.T) {
 	router.Route("/api", (&Server{db: store, capacityTokenHash: hash}).mountCapacityRoutes)
 	httpServer := httptest.NewServer(router)
 	defer httpServer.Close()
-	client, err := capacityapi.NewClient(httpServer.URL, capacityTestToken())
+	client, err := capacity.NewClient(httpServer.URL, capacityTestToken())
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.DrainWorkerInstance(t.Context(), uuid.UUID(workerID.Bytes).String(), capacityapi.DrainWorkerInstanceRequest{
+	_, err = client.DrainWorkerInstance(t.Context(), uuid.UUID(workerID.Bytes).String(), capacity.DrainWorkerInstanceRequest{
 		ExpectedEpoch: 4, ExpectedClaimVersion: 7, RequireZeroQueuedDemand: true,
 	})
-	var httpErr *capacityapi.HTTPError
+	var httpErr *capacity.HTTPError
 	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusConflict ||
-		httpErr.Code != capacityapi.ErrorCodeQueuedDemandPresent {
+		httpErr.Code != capacity.ErrorCodeQueuedDemandPresent {
 		t.Fatalf("queued demand error = %#v", err)
 	}
 	if store.drainCalls != 0 || store.queuedExecCalls != 0 {
@@ -235,14 +235,14 @@ func TestCapacityDrainReplaySkipsQueuedDemandCheck(t *testing.T) {
 	router.Route("/api", (&Server{db: store, capacityTokenHash: hash}).mountCapacityRoutes)
 	httpServer := httptest.NewServer(router)
 	defer httpServer.Close()
-	client, err := capacityapi.NewClient(httpServer.URL, capacityTestToken())
+	client, err := capacity.NewClient(httpServer.URL, capacityTestToken())
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := client.DrainWorkerInstance(t.Context(), uuid.UUID(workerID.Bytes).String(), capacityapi.DrainWorkerInstanceRequest{
+	result, err := client.DrainWorkerInstance(t.Context(), uuid.UUID(workerID.Bytes).String(), capacity.DrainWorkerInstanceRequest{
 		ExpectedEpoch: 4, ExpectedClaimVersion: 7, RequireZeroQueuedDemand: true,
 	})
-	if err != nil || result.Status != capacityapi.WorkerInstanceStatusDraining {
+	if err != nil || result.Status != capacity.WorkerInstanceStatusDraining {
 		t.Fatalf("drain replay = %+v, %v", result, err)
 	}
 	if store.groupCalls != 0 || store.drainCalls != 1 {
@@ -268,14 +268,14 @@ func TestCapacityClientDecodesStaleDrainConflict(t *testing.T) {
 	router.Route("/api", (&Server{db: store, capacityTokenHash: hash}).mountCapacityRoutes)
 	httpServer := httptest.NewServer(router)
 	defer httpServer.Close()
-	client, err := capacityapi.NewClient(httpServer.URL, capacityTestToken())
+	client, err := capacity.NewClient(httpServer.URL, capacityTestToken())
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.DrainWorkerInstance(t.Context(), uuid.UUID(workerID.Bytes).String(), capacityapi.DrainWorkerInstanceRequest{
+	_, err = client.DrainWorkerInstance(t.Context(), uuid.UUID(workerID.Bytes).String(), capacity.DrainWorkerInstanceRequest{
 		ExpectedEpoch: 4, ExpectedClaimVersion: 6,
 	})
-	var httpErr *capacityapi.HTTPError
+	var httpErr *capacity.HTTPError
 	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusConflict {
 		t.Fatalf("stale drain error = %#v", err)
 	}
@@ -311,7 +311,7 @@ func TestCapacityProviderAbsenceUsesExactWorkerIdentity(t *testing.T) {
 	router.Route("/api", server.mountCapacityRoutes)
 	httpServer := httptest.NewServer(router)
 	defer httpServer.Close()
-	client, err := capacityapi.NewClient(httpServer.URL, capacityTestToken())
+	client, err := capacity.NewClient(httpServer.URL, capacityTestToken())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,7 +319,7 @@ func TestCapacityProviderAbsenceUsesExactWorkerIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if store.providerAbsentID != workerID || result.Status != capacityapi.WorkerInstanceStatusLost || result.ClaimVersion != 8 || result.ResourceID != "i-provider-absent" {
+	if store.providerAbsentID != workerID || result.Status != capacity.WorkerInstanceStatusLost || result.ClaimVersion != 8 || result.ResourceID != "i-provider-absent" {
 		t.Fatalf("provider absence = id:%v result:%+v", store.providerAbsentID, result)
 	}
 }
@@ -356,20 +356,20 @@ func TestCapacityResolveAndPlanHandlers(t *testing.T) {
 	router.Route("/api", (&Server{db: store, capacityTokenHash: hash}).mountCapacityRoutes)
 	httpServer := httptest.NewServer(router)
 	defer httpServer.Close()
-	client, err := capacityapi.NewClient(httpServer.URL, capacityTestToken())
+	client, err := capacity.NewClient(httpServer.URL, capacityTestToken())
 	if err != nil {
 		t.Fatal(err)
 	}
 	resolved, err := client.ResolveWorkerGroup(t.Context(), store.group.RegionID, store.group.Name)
-	if err != nil || resolved.ID != groupID || resolved.Status != capacityapi.WorkerGroupStatusActive {
+	if err != nil || resolved.ID != groupID || resolved.Status != capacity.WorkerGroupStatusActive {
 		t.Fatalf("resolved group = %+v, %v", resolved, err)
 	}
 	resolvedPool, err := client.ResolveWorkerPool(t.Context(), groupID, store.pool.Name)
-	if err != nil || resolvedPool.ID != uuid.UUID(poolID.Bytes).String() || resolvedPool.Status != capacityapi.WorkerPoolStatusActive {
+	if err != nil || resolvedPool.ID != uuid.UUID(poolID.Bytes).String() || resolvedPool.Status != capacity.WorkerPoolStatusActive {
 		t.Fatalf("resolved pool = %+v, %v", resolvedPool, err)
 	}
-	plan, err := client.Plan(t.Context(), groupID, capacityapi.CapacityPlanRequest{
-		Pools: []capacityapi.CapacityPoolRequest{{
+	plan, err := client.Plan(t.Context(), groupID, capacity.PlanRequest{
+		Pools: []capacity.PoolRequest{{
 			PoolID: uuid.UUID(poolID.Bytes).String(), MaxAdditionalWorkers: 2,
 		}},
 	})
@@ -476,31 +476,31 @@ func (s *capacityPlanStore) ListPendingWorkspaceExecCapacityCandidates(context.C
 	return nil, nil
 }
 
-func capacityHTTPTemplate(t *testing.T) capacityapi.WorkerTemplate {
+func capacityHTTPTemplate(t *testing.T) capacity.WorkerTemplate {
 	t.Helper()
-	runtime := capacityapi.RuntimeProfile{
-		Arch: "x86_64", Contract: capacityapi.RuntimeContract,
+	runtime := capacity.RuntimeProfile{
+		Arch: "x86_64", Contract: capacity.RuntimeContract,
 		VMRuntimeDescriptorDigest: "sha256:" + strings.Repeat("a", 64),
 		FirecrackerDigest:         "sha256:" + strings.Repeat("b", 64),
 		FirecrackerVersion:        "1.16.1",
 		SnapshotFormatVersion:     "6.0.0",
 		HostKernelRelease:         "6.8.0-1024-aws",
-		CPUTemplate:               capacityapi.CPUTemplateSelector{Kind: capacityapi.CPUTemplateNone},
+		CPUTemplate:               capacity.CPUTemplateSelector{Kind: capacity.CPUTemplateNone},
 		KernelDigest:              "sha256:" + strings.Repeat("1", 64),
 		InitramfsDigest:           "sha256:" + strings.Repeat("2", 64),
 		RootfsDigest:              "sha256:" + strings.Repeat("3", 64),
 	}
 	runtime.ID, _ = runtime.ExpectedID()
-	template := capacityapi.WorkerTemplate{
-		Schema:  capacityapi.WorkerTemplateSchema,
+	template := capacity.WorkerTemplate{
+		Schema:  capacity.WorkerTemplateSchema,
 		Runtime: runtime,
-		CPUShapes: []capacityapi.CPUShape{
+		CPUShapes: []capacity.CPUShape{
 			{VCPUCount: 1, CPUConfigDigest: "sha256:" + strings.Repeat("4", 64)},
 			{VCPUCount: 2, CPUConfigDigest: "sha256:" + strings.Repeat("5", 64)},
 		},
-		Substrate: capacityapi.SubstrateProfile{Format: "ext4", Contract: "helmr.substrate.ext4.v0"},
-		Capacity:  capacityapi.ResourceVector{CPUMillis: 2000, MemoryBytes: 2 << 30, GuestEphemeralDiskBytes: 64 << 30, VMSlots: 1},
-		PerVM:     capacityapi.ResourceVector{CPUMillis: 2000, MemoryBytes: 2 << 30, GuestEphemeralDiskBytes: 32 << 30},
+		Substrate: capacity.SubstrateProfile{Format: "ext4", Contract: "helmr.substrate.ext4.v0"},
+		Capacity:  capacity.ResourceVector{CPUMillis: 2000, MemoryBytes: 2 << 30, GuestEphemeralDiskBytes: 64 << 30, VMSlots: 1},
+		PerVM:     capacity.ResourceVector{CPUMillis: 2000, MemoryBytes: 2 << 30, GuestEphemeralDiskBytes: 32 << 30},
 	}
 	return template
 }

@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/capacityapi"
+	"github.com/helmrdotdev/helmr/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -19,8 +19,8 @@ const (
 	plannerTestGroupID           = "group-1"
 	plannerTestRuntimeIdentityID = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	plannerTestCPUConfigDigest   = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	plannerTestSubstrateFormat   = capacityapi.SubstrateFormatExt4
-	plannerTestSubstrateContract = capacityapi.SubstrateContractExt4
+	plannerTestSubstrateFormat   = capacity.SubstrateFormatExt4
+	plannerTestSubstrateContract = capacity.SubstrateContractExt4
 )
 
 var plannerTestNow = time.Unix(100, 0).UTC()
@@ -36,7 +36,7 @@ func TestPlanFreshRunUsesExactPrimaryPool(t *testing.T) {
 		runs:  []db.ListQueuedRunPlanningCandidatesForScopesRow{plannerFreshRun(11)},
 	}
 
-	plan, err := Plan(context.Background(), store, plannerTestGroupID, capacityapi.CapacityPlanRequest{Pools: []capacityapi.CapacityPoolRequest{
+	plan, err := Plan(context.Background(), store, plannerTestGroupID, capacity.PlanRequest{Pools: []capacity.PoolRequest{
 		plannerPoolRequest(secondaryID, 1),
 		plannerPoolRequest(primaryID, 1),
 	}}, plannerTestNow)
@@ -80,7 +80,7 @@ func TestPlanWorkspaceExecScalesExactPrimaryPoolFromZero(t *testing.T) {
 		execs: []db.ListPendingWorkspaceExecCapacityCandidatesRow{plannerWorkspaceExec(43)},
 	}
 
-	plan, err := Plan(context.Background(), store, plannerTestGroupID, capacityapi.CapacityPlanRequest{Pools: []capacityapi.CapacityPoolRequest{
+	plan, err := Plan(context.Background(), store, plannerTestGroupID, capacity.PlanRequest{Pools: []capacity.PoolRequest{
 		plannerPoolRequest(secondaryID, 1), plannerPoolRequest(primaryID, 1),
 	}}, plannerTestNow)
 	if err != nil {
@@ -114,7 +114,7 @@ func TestPlanWorkspaceExecAccountedSupplyBlocksExactRequestedPools(t *testing.T)
 		execs: []db.ListPendingWorkspaceExecCapacityCandidatesRow{accounted},
 	}
 
-	plan, err := Plan(context.Background(), store, plannerTestGroupID, capacityapi.CapacityPlanRequest{Pools: []capacityapi.CapacityPoolRequest{
+	plan, err := Plan(context.Background(), store, plannerTestGroupID, capacity.PlanRequest{Pools: []capacity.PoolRequest{
 		plannerPoolRequest(primaryID, 1), plannerPoolRequest(secondaryID, 1),
 	}}, plannerTestNow)
 	if err != nil {
@@ -142,7 +142,7 @@ func TestPlanWorkspaceExecAccountedSupplyDoesNotHideOrdinaryCandidate(t *testing
 		execs: []db.ListPendingWorkspaceExecCapacityCandidatesRow{accounted, plannerWorkspaceExec(64)},
 	}
 
-	plan, err := Plan(context.Background(), store, plannerTestGroupID, capacityapi.CapacityPlanRequest{Pools: []capacityapi.CapacityPoolRequest{
+	plan, err := Plan(context.Background(), store, plannerTestGroupID, capacity.PlanRequest{Pools: []capacity.PoolRequest{
 		plannerPoolRequest(primaryID, 1),
 	}}, plannerTestNow)
 	if err != nil {
@@ -164,7 +164,7 @@ func TestPlanWorkspaceExecUsesExistingCompatibleBin(t *testing.T) {
 		execs: []db.ListPendingWorkspaceExecCapacityCandidatesRow{plannerWorkspaceExec(45)},
 	}
 
-	plan, err := Plan(context.Background(), store, plannerTestGroupID, capacityapi.CapacityPlanRequest{Pools: []capacityapi.CapacityPoolRequest{
+	plan, err := Plan(context.Background(), store, plannerTestGroupID, capacity.PlanRequest{Pools: []capacity.PoolRequest{
 		plannerPoolRequest(primaryID, 1),
 	}}, plannerTestNow)
 	if err != nil {
@@ -188,7 +188,7 @@ func TestPlanWorkspaceExecCannotUseSecondaryOnlyRequest(t *testing.T) {
 		execs: []db.ListPendingWorkspaceExecCapacityCandidatesRow{plannerWorkspaceExec(55)},
 	}
 
-	plan, err := Plan(context.Background(), store, plannerTestGroupID, capacityapi.CapacityPlanRequest{Pools: []capacityapi.CapacityPoolRequest{
+	plan, err := Plan(context.Background(), store, plannerTestGroupID, capacity.PlanRequest{Pools: []capacity.PoolRequest{
 		plannerPoolRequest(secondaryID, 1),
 	}}, plannerTestNow)
 	if err != nil {
@@ -198,7 +198,7 @@ func TestPlanWorkspaceExecCannotUseSecondaryOnlyRequest(t *testing.T) {
 	if secondaryPlan.RecommendedAdditionalWorkers != 0 || secondaryPlan.CompatibleQueuedItems != 0 {
 		t.Fatalf("secondary pool plan = %+v", secondaryPlan)
 	}
-	if len(plan.UnmatchedDemand) != 1 || plan.UnmatchedDemand[0] != (capacityapi.CapacityIncompatibility{
+	if len(plan.UnmatchedDemand) != 1 || plan.UnmatchedDemand[0] != (capacity.Incompatibility{
 		Reason: reasonProviderPool,
 		Count:  1,
 	}) {
@@ -250,7 +250,7 @@ func TestPlanWorkspaceExecSharesFreshRunBinConstraints(t *testing.T) {
 				execs: []db.ListPendingWorkspaceExecCapacityCandidatesRow{plannerWorkspaceExec(57)},
 			}
 
-			plan, err := Plan(context.Background(), store, plannerTestGroupID, capacityapi.CapacityPlanRequest{Pools: []capacityapi.CapacityPoolRequest{
+			plan, err := Plan(context.Background(), store, plannerTestGroupID, capacity.PlanRequest{Pools: []capacity.PoolRequest{
 				plannerPoolRequest(primaryID, 1),
 			}}, plannerTestNow)
 			if err != nil {
@@ -274,7 +274,7 @@ func TestPlanRunsAndWorkspaceExecsShareWorkerExecutionCounters(t *testing.T) {
 		execs: []db.ListPendingWorkspaceExecCapacityCandidatesRow{plannerWorkspaceExec(52)},
 	}
 
-	plan, err := Plan(context.Background(), store, plannerTestGroupID, capacityapi.CapacityPlanRequest{Pools: []capacityapi.CapacityPoolRequest{
+	plan, err := Plan(context.Background(), store, plannerTestGroupID, capacity.PlanRequest{Pools: []capacity.PoolRequest{
 		plannerPoolRequest(primaryID, 2),
 	}}, plannerTestNow)
 	if err != nil {
@@ -429,7 +429,7 @@ func TestPlanRestoreUsesCompatibleSecondaryPool(t *testing.T) {
 		runs:  []db.ListQueuedRunPlanningCandidatesForScopesRow{plannerRestoreRun(13, requirements)},
 	}
 
-	plan, err := Plan(context.Background(), store, plannerTestGroupID, capacityapi.CapacityPlanRequest{Pools: []capacityapi.CapacityPoolRequest{
+	plan, err := Plan(context.Background(), store, plannerTestGroupID, capacity.PlanRequest{Pools: []capacity.PoolRequest{
 		plannerPoolRequest(primaryID, 1),
 		plannerPoolRequest(secondaryID, 1),
 	}}, plannerTestNow)
@@ -470,7 +470,7 @@ func TestPlanRestoreScalesBoundSecondaryWhenCompatiblePrimaryIsUnboundAndFull(t 
 		runs:  []db.ListQueuedRunPlanningCandidatesForScopesRow{plannerRestoreRun(14, requirements)},
 	}
 
-	plan, err := Plan(context.Background(), store, plannerTestGroupID, capacityapi.CapacityPlanRequest{Pools: []capacityapi.CapacityPoolRequest{
+	plan, err := Plan(context.Background(), store, plannerTestGroupID, capacity.PlanRequest{Pools: []capacity.PoolRequest{
 		plannerPoolRequest(secondaryID, 1),
 	}}, plannerTestNow)
 	if err != nil {
@@ -502,7 +502,7 @@ func TestPlanAssignsRestoreOnceInDeterministicPoolOrder(t *testing.T) {
 
 	forward, err := Plan(context.Background(), plannerStore{
 		group: group, pools: []db.ListCapacityWorkerPoolsRow{first, second}, runs: []db.ListQueuedRunPlanningCandidatesForScopesRow{run},
-	}, plannerTestGroupID, capacityapi.CapacityPlanRequest{Pools: []capacityapi.CapacityPoolRequest{
+	}, plannerTestGroupID, capacity.PlanRequest{Pools: []capacity.PoolRequest{
 		plannerPoolRequest(firstID, 1), plannerPoolRequest(secondID, 1),
 	}}, plannerTestNow)
 	if err != nil {
@@ -510,7 +510,7 @@ func TestPlanAssignsRestoreOnceInDeterministicPoolOrder(t *testing.T) {
 	}
 	reverse, err := Plan(context.Background(), plannerStore{
 		group: group, pools: []db.ListCapacityWorkerPoolsRow{second, first}, runs: []db.ListQueuedRunPlanningCandidatesForScopesRow{run},
-	}, plannerTestGroupID, capacityapi.CapacityPlanRequest{Pools: []capacityapi.CapacityPoolRequest{
+	}, plannerTestGroupID, capacity.PlanRequest{Pools: []capacity.PoolRequest{
 		plannerPoolRequest(secondID, 1), plannerPoolRequest(firstID, 1),
 	}}, plannerTestNow)
 	if err != nil {
@@ -543,7 +543,7 @@ func TestPlanReportsPerPoolSaturationAndUnmatchedDemand(t *testing.T) {
 		},
 	}
 
-	plan, err := Plan(context.Background(), store, plannerTestGroupID, capacityapi.CapacityPlanRequest{Pools: []capacityapi.CapacityPoolRequest{
+	plan, err := Plan(context.Background(), store, plannerTestGroupID, capacity.PlanRequest{Pools: []capacity.PoolRequest{
 		plannerPoolRequest(primaryID, 1),
 	}}, plannerTestNow)
 	if err != nil {
@@ -554,7 +554,7 @@ func TestPlanReportsPerPoolSaturationAndUnmatchedDemand(t *testing.T) {
 	if poolPlan.RecommendedAdditionalWorkers != 1 || poolPlan.CompatibleQueuedItems != 1 || !poolPlan.Saturated {
 		t.Fatalf("pool plan = %+v", poolPlan)
 	}
-	if len(plan.UnmatchedDemand) != 1 || plan.UnmatchedDemand[0] != (capacityapi.CapacityIncompatibility{Reason: reasonProviderSaturated, Count: 2}) {
+	if len(plan.UnmatchedDemand) != 1 || plan.UnmatchedDemand[0] != (capacity.Incompatibility{Reason: reasonProviderSaturated, Count: 2}) {
 		t.Fatalf("unmatched demand = %+v", plan.UnmatchedDemand)
 	}
 }
@@ -567,7 +567,7 @@ func TestPlanAcceptsZeroAdditionalWorkerBudget(t *testing.T) {
 		runs:  []db.ListQueuedRunPlanningCandidatesForScopesRow{plannerFreshRun(24)},
 	}
 
-	plan, err := Plan(context.Background(), store, plannerTestGroupID, capacityapi.CapacityPlanRequest{Pools: []capacityapi.CapacityPoolRequest{
+	plan, err := Plan(context.Background(), store, plannerTestGroupID, capacity.PlanRequest{Pools: []capacity.PoolRequest{
 		plannerPoolRequest(primaryID, 0),
 	}}, plannerTestNow)
 	if err != nil {
@@ -578,7 +578,7 @@ func TestPlanAcceptsZeroAdditionalWorkerBudget(t *testing.T) {
 	if poolPlan.RecommendedAdditionalWorkers != 0 || poolPlan.CompatibleQueuedItems != 0 || !poolPlan.Saturated {
 		t.Fatalf("pool plan = %+v", poolPlan)
 	}
-	if len(plan.UnmatchedDemand) != 1 || plan.UnmatchedDemand[0] != (capacityapi.CapacityIncompatibility{Reason: reasonProviderSaturated, Count: 1}) {
+	if len(plan.UnmatchedDemand) != 1 || plan.UnmatchedDemand[0] != (capacity.Incompatibility{Reason: reasonProviderSaturated, Count: 1}) {
 		t.Fatalf("unmatched demand = %+v", plan.UnmatchedDemand)
 	}
 }
@@ -624,7 +624,7 @@ func TestRestoreCompatibilityParityBetweenPlannerAndImmediateSelection(t *testin
 				group: plannerTestGroup(compatible.ID),
 				pools: []db.ListCapacityWorkerPoolsRow{test.pool},
 				runs:  []db.ListQueuedRunPlanningCandidatesForScopesRow{plannerRestoreRun(31, requirements)},
-			}, plannerTestGroupID, capacityapi.CapacityPlanRequest{Pools: []capacityapi.CapacityPoolRequest{
+			}, plannerTestGroupID, capacity.PlanRequest{Pools: []capacity.PoolRequest{
 				plannerPoolRequest(test.pool.ID, 1),
 			}}, plannerTestNow)
 			if err != nil {
@@ -639,7 +639,7 @@ func TestRestoreCompatibilityParityBetweenPlannerAndImmediateSelection(t *testin
 				if len(plan.UnmatchedDemand) != 0 {
 					t.Fatalf("unmatched demand = %+v", plan.UnmatchedDemand)
 				}
-			} else if len(plan.UnmatchedDemand) != 1 || plan.UnmatchedDemand[0] != (capacityapi.CapacityIncompatibility{Reason: reasonRuntimeCompatibility, Count: 1}) {
+			} else if len(plan.UnmatchedDemand) != 1 || plan.UnmatchedDemand[0] != (capacity.Incompatibility{Reason: reasonRuntimeCompatibility, Count: 1}) {
 				t.Fatalf("unmatched demand = %+v", plan.UnmatchedDemand)
 			}
 		})
@@ -648,7 +648,7 @@ func TestRestoreCompatibilityParityBetweenPlannerAndImmediateSelection(t *testin
 
 func plannerTestGroup(primaryRunPoolID pgtype.UUID) db.WorkerGroup {
 	return db.WorkerGroup{
-		ID: plannerTestGroupID, Name: "default", RegionID: "us-east-1", State: string(capacityapi.WorkerGroupStatusActive),
+		ID: plannerTestGroupID, Name: "default", RegionID: "us-east-1", State: string(capacity.WorkerGroupStatusActive),
 		PrimaryPoolID: primaryRunPoolID,
 	}
 }
@@ -672,16 +672,16 @@ func plannerTestPool(id pgtype.UUID, name string) db.ListCapacityWorkerPoolsRow 
 }
 
 func plannerPool(row db.ListCapacityWorkerPoolsRow) Pool {
-	shapes := make([]capacityapi.CPUShape, len(row.CPUShapeVCPUCounts))
+	shapes := make([]capacity.CPUShape, len(row.CPUShapeVCPUCounts))
 	for index := range row.CPUShapeVCPUCounts {
-		shapes[index] = capacityapi.CPUShape{
+		shapes[index] = capacity.CPUShape{
 			VCPUCount: row.CPUShapeVCPUCounts[index], CPUConfigDigest: row.CPUShapeConfigDigests[index],
 		}
 	}
 	return Pool{
 		WorkerGroupID: row.WorkerGroupID, RuntimeIdentityID: row.RuntimeIdentityID.String,
 		SubstrateFormat: row.SubstrateFormat.String, SubstrateContract: row.SubstrateContract.String,
-		PerVM: capacityapi.ResourceVector{
+		PerVM: capacity.ResourceVector{
 			CPUMillis: row.PerVMCPUMillis.Int64, MemoryBytes: row.PerVMMemoryBytes.Int64,
 			GuestEphemeralDiskBytes: row.PerVMGuestEphemeralDiskBytes.Int64,
 		},
@@ -693,7 +693,7 @@ func plannerBin(row db.ListCapacityWorkerPoolsRow, primaryRunPoolID pgtype.UUID)
 	return db.ListWorkerCapacityBinsRow{
 		WorkerGroupID: plannerTestGroupID, PrimaryPoolID: primaryRunPoolID, WorkerPoolID: row.ID,
 		WorkerInstanceID:  plannerTestUUID(row.ID.Bytes[15] + 100),
-		RuntimeIdentityID: row.RuntimeIdentityID, RuntimeArch: "x86_64", VMRuntimeContract: capacityapi.RuntimeContract,
+		RuntimeIdentityID: row.RuntimeIdentityID, RuntimeArch: "x86_64", VMRuntimeContract: capacity.RuntimeContract,
 		SubstrateFormat: row.SubstrateFormat.String, SubstrateContract: row.SubstrateContract.String,
 		PerVMCPUMillis: row.PerVMCPUMillis.Int64, PerVMMemoryBytes: row.PerVMMemoryBytes.Int64,
 		PerVMGuestEphemeralDiskBytes: row.PerVMGuestEphemeralDiskBytes.Int64,
@@ -741,8 +741,8 @@ func plannerRestoreRequirements() RestoreRequirements {
 	}
 }
 
-func plannerRunResources() capacityapi.ResourceVector {
-	return capacityapi.ResourceVector{
+func plannerRunResources() capacity.ResourceVector {
+	return capacity.ResourceVector{
 		CPUMillis: 1000, MemoryBytes: 1 << 30, GuestEphemeralDiskBytes: 32 << 30, VMSlots: 1,
 	}
 }
@@ -757,11 +757,11 @@ func plannerWorkspaceManifest() []byte {
 	return result
 }
 
-func plannerPoolRequest(id pgtype.UUID, max int32) capacityapi.CapacityPoolRequest {
-	return capacityapi.CapacityPoolRequest{PoolID: plannerUUIDString(id), MaxAdditionalWorkers: max}
+func plannerPoolRequest(id pgtype.UUID, max int32) capacity.PoolRequest {
+	return capacity.PoolRequest{PoolID: plannerUUIDString(id), MaxAdditionalWorkers: max}
 }
 
-func requirePoolPlan(t *testing.T, plan capacityapi.CapacityPlanResponse, id pgtype.UUID) capacityapi.CapacityPoolPlan {
+func requirePoolPlan(t *testing.T, plan capacity.PlanResponse, id pgtype.UUID) capacity.PoolPlan {
 	t.Helper()
 	want := plannerUUIDString(id)
 	for _, pool := range plan.Pools {
@@ -770,7 +770,7 @@ func requirePoolPlan(t *testing.T, plan capacityapi.CapacityPlanResponse, id pgt
 		}
 	}
 	t.Fatalf("pool %s is missing from %+v", want, plan.Pools)
-	return capacityapi.CapacityPoolPlan{}
+	return capacity.PoolPlan{}
 }
 
 func plannerTestUUID(seed byte) pgtype.UUID {

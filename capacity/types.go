@@ -1,4 +1,4 @@
-package capacityapi
+package capacity
 
 import (
 	"crypto/sha256"
@@ -272,16 +272,16 @@ func sha256Digest(value []byte) string {
 	return "sha256:" + hex.EncodeToString(digest[:])
 }
 
-type CapacityPlanRequest struct {
-	Pools []CapacityPoolRequest `json:"pools"`
+type PlanRequest struct {
+	Pools []PoolRequest `json:"pools"`
 }
 
-type CapacityPoolRequest struct {
+type PoolRequest struct {
 	PoolID               string `json:"pool_id"`
 	MaxAdditionalWorkers int32  `json:"max_additional_workers"`
 }
 
-type CapacityWorkerGroup struct {
+type WorkerGroup struct {
 	ID            string            `json:"id"`
 	Name          string            `json:"name"`
 	RegionID      string            `json:"region_id"`
@@ -296,34 +296,34 @@ type ReconcileWorkerGroupPrimaryPoolsRequest struct {
 }
 
 type ReconcileWorkerGroupPrimaryPoolsResponse struct {
-	WorkerGroup CapacityWorkerGroup `json:"worker_group"`
-	Applied     bool                `json:"applied"`
+	WorkerGroup WorkerGroup `json:"worker_group"`
+	Applied     bool        `json:"applied"`
 }
 
-type CapacityWorkerPool struct {
+type WorkerPool struct {
 	ID            string           `json:"id"`
 	WorkerGroupID string           `json:"worker_group_id"`
 	Name          string           `json:"name"`
 	Status        WorkerPoolStatus `json:"status"`
 }
 
-type CapacityIncompatibility struct {
+type Incompatibility struct {
 	Reason string `json:"reason"`
 	Count  int64  `json:"count"`
 }
 
-type CapacityPlanResponse struct {
-	WorkerGroupID   string                    `json:"worker_group_id"`
-	WorkerGroupName string                    `json:"worker_group_name"`
-	RegionID        string                    `json:"region_id"`
-	GroupStatus     WorkerGroupStatus         `json:"group_status"`
-	Pools           []CapacityPoolPlan        `json:"pools"`
-	UnmatchedDemand []CapacityIncompatibility `json:"unmatched_demand"`
-	Complete        bool                      `json:"complete"`
-	ComputedAt      time.Time                 `json:"computed_at"`
+type PlanResponse struct {
+	WorkerGroupID   string            `json:"worker_group_id"`
+	WorkerGroupName string            `json:"worker_group_name"`
+	RegionID        string            `json:"region_id"`
+	GroupStatus     WorkerGroupStatus `json:"group_status"`
+	Pools           []PoolPlan        `json:"pools"`
+	UnmatchedDemand []Incompatibility `json:"unmatched_demand"`
+	Complete        bool              `json:"complete"`
+	ComputedAt      time.Time         `json:"computed_at"`
 }
 
-type CapacityPoolPlan struct {
+type PoolPlan struct {
 	PoolID                       string `json:"pool_id"`
 	PoolName                     string `json:"pool_name"`
 	RecommendedAdditionalWorkers int32  `json:"recommended_additional_workers"`
@@ -350,7 +350,7 @@ type WorkerInstance struct {
 	UpdatedAt          time.Time            `json:"updated_at"`
 }
 
-type WorkerInstancesResponse struct {
+type ListWorkerInstancesResponse struct {
 	WorkerInstances []WorkerInstance `json:"worker_instances"`
 }
 

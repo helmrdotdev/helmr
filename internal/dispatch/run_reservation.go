@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/capacityapi"
+	"github.com/helmrdotdev/helmr/capacity"
 	capacityplanner "github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -569,7 +569,7 @@ func requestRunCapacityPressure(
 
 func runCapacityRequirements(authority runPlacementAuthority) capacityplanner.RunRequirements {
 	return capacityplanner.RunRequirements{
-		Resources: capacityapi.ResourceVector{
+		Resources: capacity.ResourceVector{
 			CPUMillis: authority.resources.cpuMillis, MemoryBytes: authority.resources.memoryBytes,
 			GuestEphemeralDiskBytes: authority.resources.guestEphemeralDiskBytes, VMSlots: 1,
 		},

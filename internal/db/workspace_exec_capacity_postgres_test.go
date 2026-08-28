@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/capacityapi"
-	"github.com/helmrdotdev/helmr/internal/capacity"
+	capacitycontract "github.com/helmrdotdev/helmr/capacity"
+	capacityledger "github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/deployment"
@@ -371,8 +371,8 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 				`, interleavedRuntimeID)
 			},
 		}
-		plan, err := capacity.Plan(ctx, store, dbtest.DefaultWorkerGroupID, capacityapi.CapacityPlanRequest{
-			Pools: []capacityapi.CapacityPoolRequest{{
+		plan, err := capacityledger.Plan(ctx, store, dbtest.DefaultWorkerGroupID, capacitycontract.PlanRequest{
+			Pools: []capacitycontract.PoolRequest{{
 				PoolID:               dbtest.DefaultWorkerPoolID,
 				MaxAdditionalWorkers: 1,
 			}},
@@ -417,8 +417,8 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 					definitionID, dbtest.DefaultCPUConfigID, workspaceID, processID, versionID)
 			},
 		}
-		plan, err := capacity.Plan(ctx, store, dbtest.DefaultWorkerGroupID, capacityapi.CapacityPlanRequest{
-			Pools: []capacityapi.CapacityPoolRequest{{
+		plan, err := capacityledger.Plan(ctx, store, dbtest.DefaultWorkerGroupID, capacitycontract.PlanRequest{
+			Pools: []capacitycontract.PoolRequest{{
 				PoolID:               dbtest.DefaultWorkerPoolID,
 				MaxAdditionalWorkers: 1,
 			}},

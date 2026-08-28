@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/capacityapi"
+	"github.com/helmrdotdev/helmr/capacity"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -633,7 +633,7 @@ func (s *Server) activateWorker(ctx context.Context, worker workerActor, capabil
 	})
 }
 
-func runtimeIdentityParams(profile capacityapi.RuntimeProfile) db.UpsertRuntimeIdentityParams {
+func runtimeIdentityParams(profile capacity.RuntimeProfile) db.UpsertRuntimeIdentityParams {
 	digest := pgtype.Text{String: profile.CPUTemplate.Digest, Valid: profile.CPUTemplate.Digest != ""}
 	return db.UpsertRuntimeIdentityParams{
 		ID: profile.ID, RuntimeArch: profile.Arch, VMRuntimeContract: profile.Contract,
@@ -645,7 +645,7 @@ func runtimeIdentityParams(profile capacityapi.RuntimeProfile) db.UpsertRuntimeI
 	}
 }
 
-func sealWorkerPoolParams(groupID string, poolID pgtype.UUID, template capacityapi.WorkerTemplate) db.SealWorkerPoolParams {
+func sealWorkerPoolParams(groupID string, poolID pgtype.UUID, template capacity.WorkerTemplate) db.SealWorkerPoolParams {
 	return db.SealWorkerPoolParams{
 		RuntimeIdentityID:               pgtype.Text{String: template.Runtime.ID, Valid: true},
 		SubstrateFormat:                 pgtype.Text{String: template.Substrate.Format, Valid: true},
@@ -661,7 +661,7 @@ func sealWorkerPoolParams(groupID string, poolID pgtype.UUID, template capacitya
 	}
 }
 
-func workerPoolMatches(pool db.WorkerPool, shapes []db.WorkerPoolCpuShape, template capacityapi.WorkerTemplate) bool {
+func workerPoolMatches(pool db.WorkerPool, shapes []db.WorkerPoolCpuShape, template capacity.WorkerTemplate) bool {
 	if !pool.SealedAt.Valid ||
 		!pool.RuntimeIdentityID.Valid || pool.RuntimeIdentityID.String != template.Runtime.ID ||
 		!pool.SubstrateFormat.Valid || pool.SubstrateFormat.String != template.Substrate.Format ||
@@ -685,19 +685,19 @@ func workerPoolMatches(pool db.WorkerPool, shapes []db.WorkerPoolCpuShape, templ
 	return true
 }
 
-func workerTemplate(capabilities workerapi.Capabilities) capacityapi.WorkerTemplate {
-	return capacityapi.WorkerTemplate{
-		Schema: capacityapi.WorkerTemplateSchema, Runtime: capabilities.Runtime,
-		CPUShapes: append([]capacityapi.CPUShape(nil), capabilities.CPUShapes...),
-		Substrate: capacityapi.SubstrateProfile{
+func workerTemplate(capabilities workerapi.Capabilities) capacity.WorkerTemplate {
+	return capacity.WorkerTemplate{
+		Schema: capacity.WorkerTemplateSchema, Runtime: capabilities.Runtime,
+		CPUShapes: append([]capacity.CPUShape(nil), capabilities.CPUShapes...),
+		Substrate: capacity.SubstrateProfile{
 			Format: capabilities.SubstrateFormat, Contract: capabilities.SubstrateContract,
 		},
-		Capacity: capacityapi.ResourceVector{
+		Capacity: capacity.ResourceVector{
 			CPUMillis: capabilities.MaxVCPUs * 1000, MemoryBytes: capabilities.MaxMemoryMiB * 1024 * 1024,
 			GuestEphemeralDiskBytes: capabilities.GuestEphemeralDiskBytes,
 			VMSlots:                 int64(capabilities.ExecutionSlotsAvailable),
 		},
-		PerVM: capacityapi.ResourceVector{
+		PerVM: capacity.ResourceVector{
 			CPUMillis: capabilities.VMMilliCPU, MemoryBytes: capabilities.VMMemoryMiB * 1024 * 1024,
 			GuestEphemeralDiskBytes: capabilities.VMGuestEphemeralDiskBytes,
 		},
@@ -718,7 +718,7 @@ func normalizeWorkerCapabilities(input workerapi.Capabilities) (workerapi.Capabi
 	runtimeProfile.KernelDigest = strings.TrimSpace(runtimeProfile.KernelDigest)
 	runtimeProfile.InitramfsDigest = strings.TrimSpace(runtimeProfile.InitramfsDigest)
 	runtimeProfile.RootfsDigest = strings.TrimSpace(runtimeProfile.RootfsDigest)
-	cpuShapes := append([]capacityapi.CPUShape(nil), input.CPUShapes...)
+	cpuShapes := append([]capacity.CPUShape(nil), input.CPUShapes...)
 	for index := range cpuShapes {
 		cpuShapes[index].CPUConfigDigest = strings.TrimSpace(cpuShapes[index].CPUConfigDigest)
 	}

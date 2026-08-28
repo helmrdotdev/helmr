@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/capacityapi"
+	"github.com/helmrdotdev/helmr/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
@@ -572,13 +572,13 @@ ON CONFLICT (id) DO NOTHING`, regionID)
 		pool: pool, q: q, group: group,
 		runtimeIdentityID: dbtest.Digest("worker-pool-runtime"),
 		cpuConfigDigest:   dbtest.Digest("worker-pool-cpu"),
-		substrateFormat:   capacityapi.SubstrateFormatExt4,
-		substrateContract: capacityapi.SubstrateContractExt4,
+		substrateFormat:   capacity.SubstrateFormatExt4,
+		substrateContract: capacity.SubstrateContractExt4,
 	}
 	_, err = q.UpsertRuntimeIdentity(t.Context(), db.UpsertRuntimeIdentityParams{
 		ID:                        fixture.runtimeIdentityID,
 		RuntimeArch:               "x86_64",
-		VMRuntimeContract:         capacityapi.RuntimeContract,
+		VMRuntimeContract:         capacity.RuntimeContract,
 		VMRuntimeDescriptorDigest: dbtest.Digest("worker-pool-runtime-descriptor"),
 		FirecrackerDigest:         dbtest.Digest("worker-pool-firecracker"),
 		FirecrackerVersion:        "1.12.0",

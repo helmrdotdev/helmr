@@ -3,25 +3,25 @@ package runtimeid
 import (
 	"fmt"
 
-	"github.com/helmrdotdev/helmr/capacityapi"
+	"github.com/helmrdotdev/helmr/capacity"
 )
 
 type Selector struct {
-	ID                        string                          `json:"id"`
-	Arch                      string                          `json:"arch"`
-	Contract                  string                          `json:"contract"`
-	VMRuntimeDescriptorDigest string                          `json:"vm_runtime_descriptor_digest"`
-	FirecrackerDigest         string                          `json:"firecracker_digest"`
-	FirecrackerVersion        string                          `json:"firecracker_version"`
-	SnapshotFormatVersion     string                          `json:"snapshot_format_version"`
-	HostKernelRelease         string                          `json:"host_kernel_release"`
-	CPUTemplate               capacityapi.CPUTemplateSelector `json:"cpu_template"`
-	KernelDigest              string                          `json:"kernel_digest"`
-	InitramfsDigest           string                          `json:"initramfs_digest"`
-	RootfsDigest              string                          `json:"rootfs_digest"`
+	ID                        string                       `json:"id"`
+	Arch                      string                       `json:"arch"`
+	Contract                  string                       `json:"contract"`
+	VMRuntimeDescriptorDigest string                       `json:"vm_runtime_descriptor_digest"`
+	FirecrackerDigest         string                       `json:"firecracker_digest"`
+	FirecrackerVersion        string                       `json:"firecracker_version"`
+	SnapshotFormatVersion     string                       `json:"snapshot_format_version"`
+	HostKernelRelease         string                       `json:"host_kernel_release"`
+	CPUTemplate               capacity.CPUTemplateSelector `json:"cpu_template"`
+	KernelDigest              string                       `json:"kernel_digest"`
+	InitramfsDigest           string                       `json:"initramfs_digest"`
+	RootfsDigest              string                       `json:"rootfs_digest"`
 }
 
-const Contract = capacityapi.RuntimeContract
+const Contract = capacity.RuntimeContract
 
 func ArchitectureFromGo(value string) (string, error) {
 	if value == "amd64" {
@@ -31,7 +31,7 @@ func ArchitectureFromGo(value string) (string, error) {
 }
 
 func Digest(runtime Selector) (string, error) {
-	return (capacityapi.RuntimeProfile{
+	return (capacity.RuntimeProfile{
 		Arch:                      runtime.Arch,
 		Contract:                  runtime.Contract,
 		VMRuntimeDescriptorDigest: runtime.VMRuntimeDescriptorDigest,
