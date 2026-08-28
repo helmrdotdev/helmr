@@ -76,9 +76,14 @@ Optional: `CONTROL_PLANE_ADDR`, `PUBLIC_URL`, `API_ORIGIN`, `REDIS_URL`, and
 `PUBLIC_URL`. `REDIS_URL` defaults to
 `redis://127.0.0.1:6379/0`.
 
-`CAPACITY_TOKEN` enables and authenticates the capacity API used by managed
-deployment automation. It must be canonical unpadded base64url that decodes to
-exactly 32 bytes. When it is unset, capacity API requests are rejected.
+`CAPACITY_TOKEN` enables and authenticates the capacity API used by trusted
+deployment automation, including an operator-supplied scaler. It must be
+canonical unpadded base64url that decodes to exactly 32 bytes. The scaler sends
+the same value as a Bearer token over HTTPS outside localhost. Possession grants
+the complete capacity API for the deployment, so store it as a secret and
+provide it only to the Control Plane and trusted scaler. When it is unset,
+capacity API requests are rejected. See [custom capacity
+scaling](/docs/self-hosting/capacity-scaling/) for setup and rotation.
 
 ClickHouse telemetry: `CLICKHOUSE_URL` is required. Set `CLICKHOUSE_USER` when the service user is not `default`, and set `CLICKHOUSE_PASSWORD` when the service requires a password.
 

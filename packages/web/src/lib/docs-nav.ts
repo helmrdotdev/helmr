@@ -118,6 +118,7 @@ export const docsNav = [
           "self-hosting/aws-production",
           "self-hosting/control-plane",
           "self-hosting/workers",
+          "self-hosting/capacity-scaling",
           "self-hosting/authentication",
           "self-hosting/secrets-and-data",
           "self-hosting/upgrades",

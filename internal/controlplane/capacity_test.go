@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"errors"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -75,23 +78,17 @@ func TestCapacityPrimarySelectionIsAtomicAndReplaySafe(t *testing.T) {
 	server := &Server{db: store, capacityTokenHash: hash}
 	router := chi.NewRouter()
 	router.Route("/api", server.mountCapacityRoutes)
-	httpServer := httptest.NewServer(router)
-	defer httpServer.Close()
-	client, err := capacity.NewClient(httpServer.URL, capacityTestToken())
-	if err != nil {
-		t.Fatal(err)
-	}
 	poolID := pgvalue.UUIDString(pool.ID)
-	response, err := client.ReconcileWorkerGroupPrimaryPools(t.Context(), group.ID, capacity.ReconcileWorkerGroupPrimaryPoolsRequest{
-		ExpectedGroupClaimVersion: group.ClaimVersion,
-		PoolID:                    poolID,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !response.Applied || response.WorkerGroup.ClaimVersion != group.ClaimVersion+1 ||
-		response.WorkerGroup.PrimaryPoolID != poolID {
-		t.Fatalf("response = %+v", response)
+	response := capacityJSON(t, capacityRequest(t, router, http.MethodPut,
+		"/api/capacity/v0/worker-groups/"+group.ID+"/primary-pools",
+		fmt.Sprintf(`{"expected_group_claim_version":%d,"pool_id":%q}`, group.ClaimVersion, poolID),
+	), http.StatusOK)
+	assertCapacityJSONKeys(t, response, "applied", "worker_group")
+	responseGroup := capacityJSONObject(t, response["worker_group"])
+	assertCapacityJSONKeys(t, responseGroup, "claim_version", "id", "name", "primary_pool_id", "region_id", "status")
+	if response["applied"] != true || responseGroup["claim_version"] != float64(group.ClaimVersion+1) ||
+		responseGroup["primary_pool_id"] != poolID {
+		t.Fatalf("response = %#v", response)
 	}
 	if store.switchCalls != 1 || store.switchParams.PoolID != pool.ID {
 		t.Fatalf("set primary params = %+v, calls = %d", store.switchParams, store.switchCalls)
@@ -103,21 +100,13 @@ func TestCapacityPrimarySelectionIsAtomicAndReplaySafe(t *testing.T) {
 	replayServer := &Server{db: replayStore, capacityTokenHash: hash}
 	replayRouter := chi.NewRouter()
 	replayRouter.Route("/api", replayServer.mountCapacityRoutes)
-	replayHTTPServer := httptest.NewServer(replayRouter)
-	defer replayHTTPServer.Close()
-	replayClient, err := capacity.NewClient(replayHTTPServer.URL, capacityTestToken())
-	if err != nil {
-		t.Fatal(err)
-	}
-	replayed, err := replayClient.ReconcileWorkerGroupPrimaryPools(t.Context(), group.ID, capacity.ReconcileWorkerGroupPrimaryPoolsRequest{
-		ExpectedGroupClaimVersion: group.ClaimVersion,
-		PoolID:                    poolID,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if replayed.Applied || replayed.WorkerGroup.ClaimVersion != replayGroup.ClaimVersion || replayStore.switchCalls != 0 {
-		t.Fatalf("replay = %+v, set calls = %d", replayed, replayStore.switchCalls)
+	replayed := capacityJSON(t, capacityRequest(t, replayRouter, http.MethodPut,
+		"/api/capacity/v0/worker-groups/"+group.ID+"/primary-pools",
+		fmt.Sprintf(`{"expected_group_claim_version":%d,"pool_id":%q}`, group.ClaimVersion, poolID),
+	), http.StatusOK)
+	replayedGroup := capacityJSONObject(t, replayed["worker_group"])
+	if replayed["applied"] != false || replayedGroup["claim_version"] != float64(replayGroup.ClaimVersion) || replayStore.switchCalls != 0 {
+		t.Fatalf("replay = %#v, set calls = %d", replayed, replayStore.switchCalls)
 	}
 }
 
@@ -149,31 +138,22 @@ func TestCapacityDrainUsesExactEpochAndClaimFence(t *testing.T) {
 	server := &Server{db: store, capacityTokenHash: hash}
 	router := chi.NewRouter()
 	router.Route("/api", server.mountCapacityRoutes)
-	httpServer := httptest.NewServer(router)
-	defer httpServer.Close()
-	client, err := capacity.NewClient(httpServer.URL, capacityTestToken())
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, err := client.DrainWorkerInstance(t.Context(), uuid.UUID(workerID.Bytes).String(), capacity.DrainWorkerInstanceRequest{
-		ExpectedEpoch: 4, ExpectedClaimVersion: 7, RequireZeroQueuedDemand: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	path := "/api/capacity/v0/worker-instances/" + uuid.UUID(workerID.Bytes).String() + "/drain"
+	result := capacityJSON(t, capacityRequest(t, router, http.MethodPost, path,
+		`{"expected_epoch":4,"expected_claim_version":7,"require_zero_queued_demand":true}`,
+	), http.StatusOK)
+	assertCapacityJSONKeys(t, result, "claim_version", "created_at", "current_epoch", "draining_at", "id", "resource_id", "status", "updated_at", "worker_group_id", "worker_pool_id")
 	if store.params.ExpectedEpoch.Int64 != 4 || store.params.ExpectedClaimVersion != 7 || store.params.WorkerGroupID != "run-workers" {
 		t.Fatalf("drain params = %+v", store.params)
 	}
-	if result.Status != capacity.WorkerInstanceStatusDraining || result.ClaimVersion != 8 {
-		t.Fatalf("drain result = %+v", result)
+	if result["status"] != "draining" || result["claim_version"] != float64(8) || result["current_epoch"] != float64(4) {
+		t.Fatalf("drain result = %#v", result)
 	}
-	replayed, err := client.DrainWorkerInstance(t.Context(), uuid.UUID(workerID.Bytes).String(), capacity.DrainWorkerInstanceRequest{
-		ExpectedEpoch: 4, ExpectedClaimVersion: 7, RequireZeroQueuedDemand: true,
-	})
-	if err != nil || replayed.ID != result.ID || replayed.Status != result.Status ||
-		replayed.ClaimVersion != result.ClaimVersion || replayed.CurrentEpoch == nil ||
-		result.CurrentEpoch == nil || *replayed.CurrentEpoch != *result.CurrentEpoch {
-		t.Fatalf("exact replay = %+v, %v", replayed, err)
+	replayed := capacityJSON(t, capacityRequest(t, router, http.MethodPost, path,
+		`{"expected_epoch":4,"expected_claim_version":7,"require_zero_queued_demand":true}`,
+	), http.StatusOK)
+	if !reflect.DeepEqual(replayed, result) {
+		t.Fatalf("exact replay = %#v, want %#v", replayed, result)
 	}
 	if store.groupCalls != 2 || store.queuedRunCalls != 2 || store.queuedExecCalls != 2 || store.drainCalls != 2 {
 		t.Fatalf("demand/drain calls = group:%d run:%d exec:%d drain:%d", store.groupCalls, store.queuedRunCalls, store.queuedExecCalls, store.drainCalls)
@@ -196,19 +176,15 @@ func TestCapacityDrainDefersForEligibleQueuedDemand(t *testing.T) {
 	}
 	router := chi.NewRouter()
 	router.Route("/api", (&Server{db: store, capacityTokenHash: hash}).mountCapacityRoutes)
-	httpServer := httptest.NewServer(router)
-	defer httpServer.Close()
-	client, err := capacity.NewClient(httpServer.URL, capacityTestToken())
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = client.DrainWorkerInstance(t.Context(), uuid.UUID(workerID.Bytes).String(), capacity.DrainWorkerInstanceRequest{
-		ExpectedEpoch: 4, ExpectedClaimVersion: 7, RequireZeroQueuedDemand: true,
-	})
-	var httpErr *capacity.HTTPError
-	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusConflict ||
-		httpErr.Code != capacity.ErrorCodeQueuedDemandPresent {
-		t.Fatalf("queued demand error = %#v", err)
+	response := capacityJSON(t, capacityRequest(t, router, http.MethodPost,
+		"/api/capacity/v0/worker-instances/"+uuid.UUID(workerID.Bytes).String()+"/drain",
+		`{"expected_epoch":4,"expected_claim_version":7,"require_zero_queued_demand":true}`,
+	), http.StatusConflict)
+	assertCapacityJSONKeys(t, response, "error")
+	errorObject := capacityJSONObject(t, response["error"])
+	assertCapacityJSONKeys(t, errorObject, "code", "message")
+	if errorObject["code"] != "queued_demand_present" {
+		t.Fatalf("queued demand error = %#v", response)
 	}
 	if store.drainCalls != 0 || store.queuedExecCalls != 0 {
 		t.Fatalf("drain calls = %d, Workspace Exec queries = %d", store.drainCalls, store.queuedExecCalls)
@@ -233,24 +209,19 @@ func TestCapacityDrainReplaySkipsQueuedDemandCheck(t *testing.T) {
 	}
 	router := chi.NewRouter()
 	router.Route("/api", (&Server{db: store, capacityTokenHash: hash}).mountCapacityRoutes)
-	httpServer := httptest.NewServer(router)
-	defer httpServer.Close()
-	client, err := capacity.NewClient(httpServer.URL, capacityTestToken())
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, err := client.DrainWorkerInstance(t.Context(), uuid.UUID(workerID.Bytes).String(), capacity.DrainWorkerInstanceRequest{
-		ExpectedEpoch: 4, ExpectedClaimVersion: 7, RequireZeroQueuedDemand: true,
-	})
-	if err != nil || result.Status != capacity.WorkerInstanceStatusDraining {
-		t.Fatalf("drain replay = %+v, %v", result, err)
+	result := capacityJSON(t, capacityRequest(t, router, http.MethodPost,
+		"/api/capacity/v0/worker-instances/"+uuid.UUID(workerID.Bytes).String()+"/drain",
+		`{"expected_epoch":4,"expected_claim_version":7,"require_zero_queued_demand":true}`,
+	), http.StatusOK)
+	if result["status"] != "draining" {
+		t.Fatalf("drain replay = %#v", result)
 	}
 	if store.groupCalls != 0 || store.drainCalls != 1 {
 		t.Fatalf("group calls = %d, drain calls = %d", store.groupCalls, store.drainCalls)
 	}
 }
 
-func TestCapacityClientDecodesStaleDrainConflict(t *testing.T) {
+func TestCapacityStaleDrainReturnsConflict(t *testing.T) {
 	workerID := pgvalue.NewUUIDv7()
 	store := &capacityDrainStore{
 		instance: db.GetCapacityWorkerInstanceRow{
@@ -266,18 +237,14 @@ func TestCapacityClientDecodesStaleDrainConflict(t *testing.T) {
 	}
 	router := chi.NewRouter()
 	router.Route("/api", (&Server{db: store, capacityTokenHash: hash}).mountCapacityRoutes)
-	httpServer := httptest.NewServer(router)
-	defer httpServer.Close()
-	client, err := capacity.NewClient(httpServer.URL, capacityTestToken())
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = client.DrainWorkerInstance(t.Context(), uuid.UUID(workerID.Bytes).String(), capacity.DrainWorkerInstanceRequest{
-		ExpectedEpoch: 4, ExpectedClaimVersion: 6,
-	})
-	var httpErr *capacity.HTTPError
-	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusConflict {
-		t.Fatalf("stale drain error = %#v", err)
+	response := capacityJSON(t, capacityRequest(t, router, http.MethodPost,
+		"/api/capacity/v0/worker-instances/"+uuid.UUID(workerID.Bytes).String()+"/drain",
+		`{"expected_epoch":4,"expected_claim_version":6}`,
+	), http.StatusConflict)
+	errorObject := capacityJSONObject(t, response["error"])
+	assertCapacityJSONKeys(t, errorObject, "code", "message")
+	if errorObject["code"] != "conflict" {
+		t.Fatalf("stale drain error = %#v", response)
 	}
 	if store.groupCalls != 0 || store.drainCalls != 1 {
 		t.Fatalf("ungated drain calls = group:%d drain:%d", store.groupCalls, store.drainCalls)
@@ -309,18 +276,12 @@ func TestCapacityProviderAbsenceUsesExactWorkerIdentity(t *testing.T) {
 	server := &Server{db: store, capacityTokenHash: hash}
 	router := chi.NewRouter()
 	router.Route("/api", server.mountCapacityRoutes)
-	httpServer := httptest.NewServer(router)
-	defer httpServer.Close()
-	client, err := capacity.NewClient(httpServer.URL, capacityTestToken())
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, err := client.ConfirmWorkerInstanceProviderAbsent(t.Context(), uuid.UUID(workerID.Bytes).String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if store.providerAbsentID != workerID || result.Status != capacity.WorkerInstanceStatusLost || result.ClaimVersion != 8 || result.ResourceID != "i-provider-absent" {
-		t.Fatalf("provider absence = id:%v result:%+v", store.providerAbsentID, result)
+	result := capacityJSON(t, capacityRequest(t, router, http.MethodPost,
+		"/api/capacity/v0/worker-instances/"+uuid.UUID(workerID.Bytes).String()+"/lost", "",
+	), http.StatusOK)
+	assertCapacityJSONKeys(t, result, "claim_version", "created_at", "current_epoch", "id", "lost_at", "resource_id", "status", "updated_at", "worker_group_id", "worker_pool_id")
+	if store.providerAbsentID != workerID || result["status"] != "lost" || result["claim_version"] != float64(8) || result["resource_id"] != "i-provider-absent" {
+		t.Fatalf("provider absence = id:%v result:%#v", store.providerAbsentID, result)
 	}
 }
 
@@ -354,27 +315,33 @@ func TestCapacityResolveAndPlanHandlers(t *testing.T) {
 	}
 	router := chi.NewRouter()
 	router.Route("/api", (&Server{db: store, capacityTokenHash: hash}).mountCapacityRoutes)
-	httpServer := httptest.NewServer(router)
-	defer httpServer.Close()
-	client, err := capacity.NewClient(httpServer.URL, capacityTestToken())
-	if err != nil {
-		t.Fatal(err)
+	resolved := capacityJSON(t, capacityRequest(t, router, http.MethodGet,
+		"/api/capacity/v0/worker-groups/resolve?region_id=aws-us-east-1&name=default", "",
+	), http.StatusOK)
+	assertCapacityJSONKeys(t, resolved, "claim_version", "id", "name", "region_id", "status")
+	if resolved["id"] != groupID || resolved["status"] != "active" {
+		t.Fatalf("resolved group = %#v", resolved)
 	}
-	resolved, err := client.ResolveWorkerGroup(t.Context(), store.group.RegionID, store.group.Name)
-	if err != nil || resolved.ID != groupID || resolved.Status != capacity.WorkerGroupStatusActive {
-		t.Fatalf("resolved group = %+v, %v", resolved, err)
+	resolvedPool := capacityJSON(t, capacityRequest(t, router, http.MethodGet,
+		"/api/capacity/v0/worker-groups/"+groupID+"/pools/resolve?name=run-current", "",
+	), http.StatusOK)
+	assertCapacityJSONKeys(t, resolvedPool, "id", "name", "status", "worker_group_id")
+	if resolvedPool["id"] != uuid.UUID(poolID.Bytes).String() || resolvedPool["status"] != "active" {
+		t.Fatalf("resolved pool = %#v", resolvedPool)
 	}
-	resolvedPool, err := client.ResolveWorkerPool(t.Context(), groupID, store.pool.Name)
-	if err != nil || resolvedPool.ID != uuid.UUID(poolID.Bytes).String() || resolvedPool.Status != capacity.WorkerPoolStatusActive {
-		t.Fatalf("resolved pool = %+v, %v", resolvedPool, err)
+	plan := capacityJSON(t, capacityRequest(t, router, http.MethodPost,
+		"/api/capacity/v0/worker-groups/"+groupID+"/plan",
+		fmt.Sprintf(`{"pools":[{"pool_id":%q,"max_additional_workers":2}]}`, uuid.UUID(poolID.Bytes).String()),
+	), http.StatusOK)
+	assertCapacityJSONKeys(t, plan, "complete", "computed_at", "group_status", "pools", "region_id", "unmatched_demand", "worker_group_id", "worker_group_name")
+	pools, ok := plan["pools"].([]any)
+	if !ok || len(pools) != 1 {
+		t.Fatalf("plan pools = %#v", plan["pools"])
 	}
-	plan, err := client.Plan(t.Context(), groupID, capacity.PlanRequest{
-		Pools: []capacity.PoolRequest{{
-			PoolID: uuid.UUID(poolID.Bytes).String(), MaxAdditionalWorkers: 2,
-		}},
-	})
-	if err != nil || plan.WorkerGroupID != groupID || !plan.Complete || len(plan.Pools) != 1 || plan.Pools[0].RecommendedAdditionalWorkers != 0 {
-		t.Fatalf("plan = %+v, %v", plan, err)
+	poolPlan := capacityJSONObject(t, pools[0])
+	assertCapacityJSONKeys(t, poolPlan, "active_workers", "complete", "compatible_queued_items", "pool_id", "pool_name", "recommended_additional_workers", "registering_workers", "saturated", "scale_in_blocked")
+	if plan["worker_group_id"] != groupID || plan["complete"] != true || poolPlan["recommended_additional_workers"] != float64(0) {
+		t.Fatalf("plan = %#v", plan)
 	}
 
 	for _, test := range []struct {
@@ -415,9 +382,66 @@ func TestCapacityWorkerInstanceListParamsAreBounded(t *testing.T) {
 	}
 }
 
+func TestCapacityWorkerInstanceReadContract(t *testing.T) {
+	workerID := pgvalue.NewUUIDv7()
+	groupID := uuid.Must(uuid.NewV7()).String()
+	poolID := pgvalue.NewUUIDv7()
+	now := time.Now().UTC()
+	row := db.ListCapacityWorkerInstancesRow{
+		ID: workerID, ResourceID: "host-opaque-1", WorkerGroupID: groupID, WorkerPoolID: poolID,
+		State: string(db.WorkerInstanceStateActive), ClaimVersion: 7,
+		CurrentEpoch: pgtype.Int8{Int64: 4, Valid: true},
+		CreatedAt:    pgtype.Timestamptz{Time: now, Valid: true},
+		UpdatedAt:    pgtype.Timestamptz{Time: now, Valid: true},
+	}
+	store := &capacityDrainStore{
+		instance: db.GetCapacityWorkerInstanceRow{
+			ID: row.ID, ResourceID: row.ResourceID, WorkerGroupID: row.WorkerGroupID,
+			WorkerPoolID: row.WorkerPoolID, State: row.State, ClaimVersion: row.ClaimVersion, CurrentEpoch: row.CurrentEpoch,
+			CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		},
+		listed: []db.ListCapacityWorkerInstancesRow{row},
+	}
+	hash, err := hashCapacityToken(capacityTestToken())
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := chi.NewRouter()
+	router.Route("/api", (&Server{db: store, capacityTokenHash: hash}).mountCapacityRoutes)
+
+	list := capacityJSON(t, capacityRequest(t, router, http.MethodGet,
+		"/api/capacity/v0/worker-instances?worker_group_id="+groupID+"&status=active&limit=1", "",
+	), http.StatusOK)
+	assertCapacityJSONKeys(t, list, "worker_instances")
+	instances, ok := list["worker_instances"].([]any)
+	if !ok || len(instances) != 1 {
+		t.Fatalf("worker_instances = %#v", list["worker_instances"])
+	}
+	listed := capacityJSONObject(t, instances[0])
+	assertCapacityJSONKeys(t, listed, "claim_version", "created_at", "current_epoch", "id", "resource_id", "status", "updated_at", "worker_group_id", "worker_pool_id")
+	if store.listParams.WorkerGroupID.String != groupID || strings.Join(store.listParams.States, ",") != "active" || store.listParams.RowLimit != 1 {
+		t.Fatalf("list params = %+v", store.listParams)
+	}
+	if listed["id"] != uuid.UUID(workerID.Bytes).String() || listed["resource_id"] != row.ResourceID ||
+		listed["worker_group_id"] != groupID || listed["worker_pool_id"] != uuid.UUID(poolID.Bytes).String() ||
+		listed["status"] != "active" || listed["claim_version"] != float64(7) || listed["current_epoch"] != float64(4) {
+		t.Fatalf("listed instance = %#v", listed)
+	}
+
+	got := capacityJSON(t, capacityRequest(t, router, http.MethodGet,
+		"/api/capacity/v0/worker-instances/"+uuid.UUID(workerID.Bytes).String(), "",
+	), http.StatusOK)
+	assertCapacityJSONKeys(t, got, "claim_version", "created_at", "current_epoch", "id", "resource_id", "status", "updated_at", "worker_group_id", "worker_pool_id")
+	if !reflect.DeepEqual(got, listed) {
+		t.Fatalf("get = %#v, want listed instance %#v", got, listed)
+	}
+}
+
 type capacityDrainStore struct {
 	db.Querier
 	instance          db.GetCapacityWorkerInstanceRow
+	listed            []db.ListCapacityWorkerInstancesRow
+	listParams        db.ListCapacityWorkerInstancesParams
 	group             db.WorkerGroup
 	draining          db.DrainWorkerInstanceRow
 	queuedRuns        []db.ListQueuedRunEligibleScopesRow
@@ -509,6 +533,11 @@ func (s *capacityDrainStore) GetCapacityWorkerInstance(context.Context, pgtype.U
 	return s.instance, nil
 }
 
+func (s *capacityDrainStore) ListCapacityWorkerInstances(_ context.Context, params db.ListCapacityWorkerInstancesParams) ([]db.ListCapacityWorkerInstancesRow, error) {
+	s.listParams = params
+	return s.listed, nil
+}
+
 func (s *capacityDrainStore) GetWorkerGroup(context.Context, string) (db.WorkerGroup, error) {
 	s.groupCalls++
 	return s.group, nil
@@ -545,4 +574,51 @@ func (s *capacityDrainStore) ReconcileProviderAbsentWorkerRuntimes(context.Conte
 
 func capacityTestToken() string {
 	return base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, capacityTokenDecodedByteCount))
+}
+
+func capacityRequest(t *testing.T, handler http.Handler, method, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	request := httptest.NewRequest(method, path, strings.NewReader(body))
+	request.Header.Set("Authorization", "Bearer "+capacityTestToken())
+	request.Header.Set("Accept", "application/json")
+	if body != "" {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	return response
+}
+
+func capacityJSON(t *testing.T, response *httptest.ResponseRecorder, status int) map[string]any {
+	t.Helper()
+	if response.Code != status {
+		t.Fatalf("status = %d, want %d: %s", response.Code, status, response.Body.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode response JSON: %v: %s", err, response.Body.String())
+	}
+	return result
+}
+
+func capacityJSONObject(t *testing.T, value any) map[string]any {
+	t.Helper()
+	result, ok := value.(map[string]any)
+	if !ok {
+		t.Fatalf("JSON value = %#v, want object", value)
+	}
+	return result
+}
+
+func assertCapacityJSONKeys(t *testing.T, object map[string]any, want ...string) {
+	t.Helper()
+	got := make([]string, 0, len(object))
+	for key := range object {
+		got = append(got, key)
+	}
+	sort.Strings(got)
+	sort.Strings(want)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("JSON keys = %v, want %v", got, want)
+	}
 }
