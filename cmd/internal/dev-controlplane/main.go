@@ -79,7 +79,6 @@ func main() {
 		log.Error("bootstrap platform", "error", err)
 		os.Exit(1)
 	}
-	queries := db.New(pool)
 	if cfg.seedData {
 		if err := seedDevData(ctx, pool, cfg); err != nil {
 			log.Error("seed dev data", "error", err)
@@ -109,7 +108,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer pool.Close()
-	queries = db.New(pool)
+	queries := db.New(pool)
 	redisOptions, err := redis.ParseURL(cfg.redisURL)
 	if err != nil {
 		log.Error("parse redis URL", "error", err)
@@ -150,12 +149,12 @@ func main() {
 		os.Exit(1)
 	}
 	go func() {
-		if err := eventStream.RunPublisher(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		if err := eventStream.RunPublisher(ctx); !errors.Is(err, context.Canceled) {
 			log.Error("event stream publisher stopped", "error", err)
 		}
 	}()
 	go func() {
-		if err := telemetryIngestor.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		if err := telemetryIngestor.Run(ctx); !errors.Is(err, context.Canceled) {
 			log.Error("telemetry ingester stopped", "error", err)
 		}
 	}()

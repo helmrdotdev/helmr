@@ -12,7 +12,7 @@ let
     name: nativeBuildInputs: command:
     pkgs.runCommand name
       {
-        nativeBuildInputs = [ pkgs.go_1_26 ] ++ nativeBuildInputs;
+        nativeBuildInputs = [ helmrPackages.goPackage ] ++ nativeBuildInputs;
         src = ../.;
       }
       ''
@@ -98,7 +98,7 @@ in
   fmt =
     pkgs.runCommand "fmt-check"
       {
-        nativeBuildInputs = [ pkgs.go_1_26 ];
+        nativeBuildInputs = [ helmrPackages.goPackage ];
         src = ../.;
       }
       ''

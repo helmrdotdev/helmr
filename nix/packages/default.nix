@@ -4,6 +4,7 @@
   nixpkgs,
   nixpkgs-unstable,
   nixpkgs-bun,
+  nixpkgs-go,
 }:
 
 let
@@ -11,12 +12,15 @@ let
   inherit (pkgs) lib;
   pkgsUnstable = import nixpkgs-unstable { inherit system; };
   pkgsBun = import nixpkgs-bun { inherit system; };
+  goPackage = pkgs.callPackage "${nixpkgs-go}/pkgs/development/compilers/go/1.27.nix" {
+    inherit buildGo127Module;
+  };
   squashfsTools = pkgs.callPackage ./squashfs-tools.nix { };
   timezoneData = pkgs.callPackage ./timezone-data.nix { };
   runtimeReleaseUnchecked = pkgs.callPackage ./runtime-release.nix { inherit squashfsTools; };
   compiler = pkgs.callPackage ./compiler.nix { };
   bundleBuilder = pkgs.callPackage ./bundle-builder.nix {
-    buildGoModule = buildGo126Module;
+    buildGoModule = buildGo127Module;
   };
   bundleBuilderImage = pkgs.callPackage ./bundle-builder-image.nix {
     inherit
@@ -28,47 +32,47 @@ let
       ;
     bun = pkgsBun.bun;
   };
-  buildGo126Module = pkgs.callPackage "${nixpkgs}/pkgs/build-support/go/module.nix" {
-    go = pkgs.go_1_26;
+  buildGo127Module = pkgs.callPackage "${nixpkgs}/pkgs/build-support/go/module.nix" {
+    go = goPackage;
   };
-  staticcheck = buildGo126Module {
+  staticcheck = buildGo127Module {
     pname = "staticcheck";
-    version = "2026.1";
+    version = "2026.2.1";
 
     src = pkgs.fetchFromGitHub {
       owner = "dominikh";
       repo = "go-tools";
-      rev = "2026.1";
-      hash = "sha256-cj/pHKwp7eGuOO1zhv5bFmuPHgsFytktLQmihhdYkfY=";
+      rev = "2026.2.1";
+      hash = "sha256-wellofnfLW4lQy68UQyFJfvrKCfrZ/EllLODX1g9taY=";
     };
 
-    vendorHash = "sha256-Wu8+e0r0bkztLbxekbHktoKjg6c8q7ls5APSEdO8CKs=";
+    vendorHash = "sha256-3no4wPqFG0RfSsWB0z8EYxeoZ30t+Zf7ZayzFCLEm2A=";
     subPackages = [ "cmd/staticcheck" ];
   };
-  unparam = buildGo126Module {
+  unparam = buildGo127Module {
     pname = "unparam";
-    version = "2025-10-27";
+    version = "2026-08-23";
 
     src = pkgs.fetchFromGitHub {
       owner = "mvdan";
       repo = "unparam";
-      rev = "5beb8c8f8f15";
-      hash = "sha256-Xxl2ERHRqKbC0fqFSMqw5+yF/UiqEtz0xaFCBdYy85k=";
+      rev = "2fa3d841b0c8";
+      hash = "sha256-NXsiP+rjxGPrVDk9Xl62NRGQBVlD/4nSjznhAxrsrU4=";
     };
 
-    vendorHash = "sha256-TzyN1epeEmIuAorNO3X6xBQSANDnPeJ4mbWPNjB0mrk=";
+    vendorHash = "sha256-ClZv8xMyxFuGNnLy135R/MIgWp3MWpZU3bq4FJAfK8U=";
   };
   revision = self.shortRev or self.dirtyShortRev or "dirty";
   helmrVersion = "0.0.0-dev+${revision}";
   helmr = pkgs.callPackage ./helmr.nix {
-    buildGoModule = buildGo126Module;
+    buildGoModule = buildGo127Module;
     version = helmrVersion;
     bun = pkgsBun.bun;
   };
   runtimeRelease =
     pkgs.runCommand "helmr-runtime-release-verified"
       {
-        nativeBuildInputs = [ pkgs.go_1_26 ];
+        nativeBuildInputs = [ goPackage ];
         src = self;
       }
       ''
@@ -89,7 +93,7 @@ let
         cp -a ${runtimeReleaseUnchecked} "$out"
       '';
   firecrackerReleaseVersion = "1.16.1";
-  worker = pkgs.callPackage ./worker.nix { buildGoModule = buildGo126Module; };
+  worker = pkgs.callPackage ./worker.nix { buildGoModule = buildGo127Module; };
   firecrackerRuntime = pkgs.stdenvNoCC.mkDerivation {
     pname = "firecracker-runtime";
     version = firecrackerReleaseVersion;
@@ -117,6 +121,7 @@ in
 {
   inherit
     firecrackerRuntime
+    goPackage
     helmr
     worker
     ;

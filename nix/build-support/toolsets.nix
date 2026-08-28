@@ -6,7 +6,6 @@
 
 let
   inherit (pkgs) lib stdenv;
-  goPackage = if pkgs ? go_1_26 then pkgs.go_1_26 else pkgs.go;
 
   direnv = pkgs.direnv.overrideAttrs (_: {
     doCheck = false;
@@ -31,7 +30,7 @@ rec {
     pkgs.rsync
     pkgs.stdenv.cc
     bpfClang
-    goPackage
+    helmrPackages.goPackage
     pkgsUnstable.gopls
     pkgs.gotools
     helmrPackages.staticcheck

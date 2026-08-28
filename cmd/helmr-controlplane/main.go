@@ -56,7 +56,7 @@ func main() {
 			}
 			return
 		case "release":
-			if err := runReleaseCommand(context.Background(), os.Args[2:]); err != nil {
+			if err := runReleaseCommand(context.Background(), os.Args[2:]); !errors.Is(err, nil) {
 				log.Error("publish platform release", "error", err)
 				os.Exit(1)
 			}

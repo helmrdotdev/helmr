@@ -25,8 +25,8 @@ let
 
   shellHook = ''
     go_version="$(go version | awk '{print $3}' | sed 's/^go//')"
-    if [ "$go_version" != "1.26.3" ]; then
-      echo "warning: expected go 1.26.3 from go.mod, got $go_version" >&2
+    if [ "$go_version" != "1.27.0" ]; then
+      echo "warning: expected go 1.27.0 from go.mod, got $go_version" >&2
     fi
     bun_version="$(bun --version)"
     if [ "$bun_version" != "1.3.10" ]; then

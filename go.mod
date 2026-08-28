@@ -1,6 +1,6 @@
 module github.com/helmrdotdev/helmr
 
-go 1.26.3
+go 1.27.0
 
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.47.0
