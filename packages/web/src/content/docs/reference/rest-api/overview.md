@@ -31,4 +31,6 @@ file bytes. The SDK and the CLI's default output decode that value. Run logs
 and events are finite JSON pages.
 
 Console/session management, public callback, worker, capacity, and Admin APIs
-use other prefixes and are not aliases for the `/v1` Developer API.
+use other prefixes and are not aliases for the `/v1` Developer API. Self-hosted
+operators can integrate trusted scaling automation through the separate
+[Capacity deployment protocol](/docs/self-hosting/capacity-scaling/).
