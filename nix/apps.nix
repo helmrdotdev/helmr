@@ -174,12 +174,6 @@ ciApps
     ${ciApps.ci-infra-test.program}
     ${ciApps.ci-postgres.program}
   '';
-  test = app "test" "run the full Helmr test recipe" toolsets.appRuntime "make test";
-  lint = app "lint" "run Go vet with repository lint settings" toolsets.appRuntime "make lint";
-  modernize = app "modernize" "apply Go modernizer fixes" toolsets.appRuntime "make modernize";
-  modernize-check =
-    app "modernize-check" "check Go modernizer fixes" toolsets.appRuntime
-      "make modernize-check";
   dev = app "dev" "run the local Helmr control plane and console dashboard" toolsets.appRuntime ''
     exec ./scripts/dev-console-stack.sh "$@"
   '';
@@ -206,14 +200,6 @@ ciApps
         bash ./tests/guest_init_cgroup_test.sh
         exec ./tests/boot_artifacts_reproducibility_test.sh "$@"
       '';
-  fmt-check = app "fmt-check" "check Go formatting" toolsets.appRuntime ''
-    unformatted="$(find . -name '*.go' -not -path './.git/*' -exec gofmt -l {} +)"
-    if [ -n "$unformatted" ]; then
-      printf '%s\n' "$unformatted" >&2
-      exit 1
-    fi
-  '';
-  images = app "images" "build Helmr boot artifacts" toolsets.appRuntime "make images";
   doctor = app "doctor" "check Helmr host prerequisites" toolsets.appRuntime ''
     exec ./scripts/doctor.sh "$@"
   '';

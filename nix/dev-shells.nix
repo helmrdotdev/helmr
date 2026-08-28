@@ -54,18 +54,6 @@ in
     packages = toolsets.infra;
     inherit shellHook;
   };
-
-  dispatch-measure = pkgs.mkShell {
-    packages = toolsets.base;
-    inherit shellHook;
-  };
-
-  unstable-tools = pkgs.mkShell {
-    packages = toolsets.base ++ [
-      pkgsUnstable.nix
-    ];
-    inherit shellHook;
-  };
 }
 // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
   smoke-linux = pkgs.mkShell {
