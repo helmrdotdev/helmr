@@ -33,7 +33,6 @@ rec {
     bpfClang
     goPackage
     pkgsUnstable.gopls
-    helmrPackages.deadcode
     pkgs.gotools
     helmrPackages.staticcheck
     helmrPackages.unparam
@@ -94,7 +93,7 @@ rec {
       helmrPackages.firecrackerRuntime
     ];
 
-  appRuntime = base ++ image ++ smokeLinux ++ lib.optionals stdenv.isLinux [ pkgs.kmod ];
+  appRuntime = base ++ image ++ smokeLinux;
 
   infraTest = [
     pkgs.bash
