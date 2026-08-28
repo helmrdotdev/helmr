@@ -1580,6 +1580,71 @@ func TestMaterializeAcceptsOnlyCompleteProgramDriveSet(t *testing.T) {
 	}
 }
 
+func TestMaterializeRecordsScratchDiskPhase(t *testing.T) {
+	tests := []struct {
+		name        string
+		missingMkfs bool
+		errorClass  string
+	}{
+		{name: "success"},
+		{name: "failure", missingMkfs: true, errorClass: "unknown"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := testRestoreConfig(t)
+			cfg.StateDir = t.TempDir()
+			cfg.ScratchDiskMiB = 16
+			if test.missingMkfs {
+				cfg.MkfsExt4Path = filepath.Join(t.TempDir(), "missing-mkfs.ext4")
+			}
+			connector := testConnector(t, cfg)
+			runtimeIdentity, err := connector.hostRuntime.runtimeIdentity()
+			if err != nil {
+				t.Fatal(err)
+			}
+			cpuConfigDigest, err := connector.hostRuntime.cpuConfigDigest(1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			runtimeInstanceID := uuid.Must(uuid.NewV7()).String()
+			var phases []vm.RuntimePhase
+
+			_, err = connector.materialize(t.Context(), vm.MaterializeRequest{
+				ID:        runtimeInstanceID,
+				OwnerKind: vm.OwnerRuntime,
+				Binding: vm.WorkloadBinding{
+					WorkerEpoch: 1, OwnerID: runtimeInstanceID, Generation: 1,
+					RuntimeInstanceID: runtimeInstanceID, RuntimeIdentityID: runtimeIdentity.ID,
+				},
+				RootfsDigest:       connector.artifacts.Rootfs.Digest,
+				Resources:          compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 256, DiskMiB: 16, Slots: 1},
+				VMVCPUCount:        1,
+				CPUConfigDigest:    cpuConfigDigest,
+				WorkspaceMountPath: "/workspace",
+				RecordPhase: func(phase vm.RuntimePhase) {
+					phases = append(phases, phase)
+				},
+			})
+			if err == nil {
+				t.Fatal("materialize unexpectedly succeeded without a Firecracker runtime")
+			}
+			if test.missingMkfs && !strings.Contains(err.Error(), "format scratch disk") {
+				t.Fatalf("materialize error = %v, want scratch format failure", err)
+			}
+			var scratchPhase *vm.RuntimePhase
+			for i := range phases {
+				if phases[i].Name == "materialize_create_scratch_disk" {
+					scratchPhase = &phases[i]
+					break
+				}
+			}
+			if scratchPhase == nil || scratchPhase.ErrorClass != test.errorClass {
+				t.Fatalf("scratch phase = %+v, want error class %q; all phases: %+v", scratchPhase, test.errorClass, phases)
+			}
+		})
+	}
+}
+
 func TestMaterializeRequiresActivationProbedCPUShape(t *testing.T) {
 	runtimeInstanceID := uuid.Must(uuid.NewV7()).String()
 	rootfsDigest := testCanonicalDigest("0")

@@ -267,7 +267,7 @@ func (c *Connector) materialize(ctx context.Context, request vm.MaterializeReque
 		nil,
 		request.Topology,
 		request.ReadOnlyDrives,
-		nil,
+		request.RecordPhase,
 		false,
 	)
 }
@@ -944,8 +944,13 @@ func (c *Connector) prepareSession(ctx context.Context, instanceID string, owner
 	scratchDiskPath := filepath.Join(instanceDir, scratchDiskName)
 	if strings.TrimSpace(scratchDiskRestorePath) != "" {
 		scratchDiskPath = scratchDiskRestorePath
-	} else if err := c.createScratchDisk(ctx, scratchDiskPath); err != nil {
-		return nil, err
+	} else {
+		phaseStarted := time.Now()
+		err := c.createScratchDisk(ctx, scratchDiskPath)
+		recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "materialize_create_scratch_disk", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
+		if err != nil {
+			return nil, err
+		}
 	}
 	phaseStarted := time.Now()
 	if err := c.prepareScratchDiskForJailer(scratchDiskPath); err != nil {

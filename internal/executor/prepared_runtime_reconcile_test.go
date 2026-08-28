@@ -1,10 +1,12 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -160,6 +162,7 @@ func (c *countingRuntimeConnector) Cleanup(context.Context, vm.Owner) error {
 
 func (c *blockingMaterializingConnector) Cleanup(context.Context, vm.Owner) error { return nil }
 func (c *blockingMaterializingConnector) Materialize(ctx context.Context, request vm.MaterializeRequest) (vm.Session, error) {
+	request.RecordPhase(vm.RuntimePhase{Name: "test_materialize", DurationMs: 1})
 	c.started <- request.ID
 	if request.ID == c.failID {
 		return nil, errors.New("materialize failed")
@@ -364,7 +367,8 @@ func TestReconcileDesiredRuntimesRunsBatchConcurrentlyAndWaitsForShutdown(t *tes
 	connector := &blockingMaterializingConnector{
 		started: make(chan string, 2), canceled: make(chan string, 2), failID: "runtime-0",
 	}
-	pool := NewPreparedRuntimePool(connector, store, 2, nil)
+	var logs bytes.Buffer
+	pool := NewPreparedRuntimePool(connector, store, 2, slog.New(slog.NewTextHandler(&logs, nil)))
 	pool.TempDir = t.TempDir()
 	pool.RuntimeArchitecture = deployment.RuntimeArchitecture("x86_64")
 	pool.Capacity = newPreparedRuntimeCapacity(t, 2)
@@ -397,6 +401,10 @@ func TestReconcileDesiredRuntimesRunsBatchConcurrentlyAndWaitsForShutdown(t *tes
 		}
 	case <-time.After(time.Second):
 		t.Fatal("reconciler returned before its attempts drained")
+	}
+	if !strings.Contains(logs.String(), `msg="prepared runtime phase"`) ||
+		!strings.Contains(logs.String(), "phase=test_materialize") {
+		t.Fatalf("fresh materialize phase was not logged: %s", logs.String())
 	}
 }
 
