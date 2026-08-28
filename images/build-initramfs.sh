@@ -5,11 +5,10 @@ initramfs=$1
 base=$2
 modloop=$3
 kernel_modules=$4
-boot_init=$5
 tools_image=${BOOT_TOOLS_IMAGE:?BOOT_TOOLS_IMAGE is required}
 source_date_epoch=0
 
-for path in "$initramfs" "$base" "$modloop" "$kernel_modules" "$boot_init"; do
+for path in "$initramfs" "$base" "$modloop" "$kernel_modules"; do
 	case "$path" in
 	/*|../*|*/../*|*/..)
 		printf 'boot artifact path must stay within the role directory: %s\n' "$path" >&2
@@ -27,7 +26,6 @@ docker run --rm --platform linux/amd64 \
 	-e INITRAMFS="$initramfs" \
 	-e KERNEL_MODULES="$kernel_modules" \
 	-e MODLOOP="$modloop" \
-	-e BOOT_INIT="$boot_init" \
 	-e SOURCE_DATE_EPOCH="$source_date_epoch" \
 	--entrypoint /bin/sh \
 	"$tools_image" -ceu '
@@ -40,24 +38,24 @@ docker run --rm --platform linux/amd64 \
 	tmp_modules="/work/${KERNEL_MODULES}.tmp"
 	trap '\''rm -rf "$root" "$modroot" "$tmp_initramfs" "$tmp_modules"'\'' EXIT
 
-	mkdir -p "$root/source" "$root/initramfs" "$root/modules/lib/modules"
+	mkdir -p "$root/root"
 	gzip -dc "/work/$BASE" |
-		(cd "$root/source" && cpio --quiet --extract --make-directories --unconditional --no-absolute-filenames)
+		(cd "$root/root" && cpio --quiet --extract --make-directories --unconditional --no-absolute-filenames)
 	unsquashfs -f -q -d "$modroot" "/work/$MODLOOP"
 
 	kernel_version=
 	count=0
-	for candidate in "$modroot/modules"/*; do
-		[ -d "$candidate/kernel" ] || continue
+	for candidate in "$root/root/lib/modules"/*; do
+		[ -d "$candidate" ] || continue
 		kernel_version=$(basename "$candidate")
 		count=$((count + 1))
 	done
 	if [ "$count" -ne 1 ]; then
-		printf "modloop kernel module directory count = %s, want 1\n" "$count" >&2
+		printf "base initramfs kernel module directory count = %s, want 1\n" "$count" >&2
 		exit 1
 	fi
 	module_src="$modroot/modules/$kernel_version"
-	module_dst="$root/modules/lib/modules/$kernel_version"
+	module_dst="$root/root/lib/modules/$kernel_version"
 	if [ ! -d "$module_src/kernel" ]; then
 		printf "modloop has no modules for kernel %s\n" "$kernel_version" >&2
 		exit 1
@@ -74,12 +72,6 @@ docker run --rm --platform linux/amd64 \
 		install -D -m 0644 "$source" "$destination"
 	}
 
-	# Fixed Firecracker topology: root disk, network, squashfs, scratch,
-	# Program drives, packet sockets, and guestd vsock transport.
-	copy_module kernel/drivers/block/virtio_blk.ko
-	copy_module kernel/drivers/net/virtio_net.ko
-	copy_module kernel/drivers/net/net_failover.ko
-	copy_module kernel/net/core/failover.ko
 	copy_module kernel/fs/ext4/ext4.ko
 	copy_module kernel/fs/jbd2/jbd2.ko
 	copy_module kernel/fs/mbcache.ko
@@ -89,43 +81,13 @@ docker run --rm --platform linux/amd64 \
 	copy_module kernel/net/vmw_vsock/vsock.ko
 	copy_module kernel/net/vmw_vsock/vmw_vsock_virtio_transport_common.ko
 	copy_module kernel/net/vmw_vsock/vmw_vsock_virtio_transport.ko
-	for metadata in "$module_src"/modules.builtin* "$module_src"/modules.order; do
-		[ -f "$metadata" ] || continue
-		install -m 0644 "$metadata" "$module_dst/$(basename "$metadata")"
-	done
-	depmod -b "$root/modules" "$kernel_version"
+	depmod -b "$root/root" "$kernel_version"
 
-	initroot="$root/initramfs"
-	mkdir -p "$initroot/bin" "$initroot/sbin" "$initroot/lib" "$initroot/dev" "$initroot/proc" "$initroot/sys"
-	mknod -m 0600 "$initroot/dev/console" c 5 1
-	install -m 0755 "$root/source/bin/busybox" "$initroot/bin/busybox"
-	install -m 0755 "$root/source/lib/ld-musl-x86_64.so.1" "$initroot/lib/ld-musl-x86_64.so.1"
-	ln -s ld-musl-x86_64.so.1 "$initroot/lib/libc.musl-x86_64.so.1"
-	for applet in cut mkdir mount sh sleep switch_root; do
-		ln -s busybox "$initroot/bin/$applet"
-	done
-	ln -s ../bin/busybox "$initroot/sbin/modprobe"
-	install -m 0755 "/work/$BOOT_INIT" "$initroot/init"
-	chroot "$initroot" /sbin/modprobe --help >/dev/null 2>&1
-
-	for relative in \
-		kernel/drivers/block/virtio_blk.ko \
-		kernel/drivers/net/virtio_net.ko \
-		kernel/drivers/net/net_failover.ko \
-		kernel/net/core/failover.ko \
-		kernel/fs/squashfs/squashfs.ko; do
-		install -D -m 0644 "$module_dst/$relative" "$initroot/lib/modules/$kernel_version/$relative"
-	done
-	for metadata in "$module_dst"/modules.*; do
-		[ -f "$metadata" ] || continue
-		install -m 0644 "$metadata" "$initroot/lib/modules/$kernel_version/$(basename "$metadata")"
-	done
-
-	find "$initroot" "$root/modules" -xdev -exec chown -h 0:0 {} +
-	find "$initroot" "$root/modules" -xdev -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} +
+	find "$root/root" -xdev -exec chown -h 0:0 {} +
+	find "$root/root" -xdev -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} +
 
 	(
-		cd "$initroot"
+		cd "$root/root"
 		find . -xdev -print0 |
 			sort -z |
 			cpio --null --quiet --create --format=newc --reproducible --owner=0:0 |
@@ -143,7 +105,7 @@ docker run --rm --platform linux/amd64 \
 		--no-acls \
 		--no-xattrs \
 		-cf "$tmp_modules" \
-		-C "$root/modules" lib/modules
+		-C "$root/root" lib/modules
 
 	chown "$HOST_UID:$HOST_GID" "$tmp_initramfs" "$tmp_modules"
 	mv "$tmp_initramfs" "/work/$INITRAMFS"
