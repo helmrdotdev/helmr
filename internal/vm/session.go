@@ -158,6 +158,7 @@ type MaterializeRequest struct {
 	CPUConfigDigest    string
 	Topology           RuntimeTopology
 	ReadOnlyDrives     []ReadOnlyDrive
+	RecordPhase        func(RuntimePhase)
 }
 
 // WorkloadBinding is the closed logical authority that a connector binds to

@@ -752,13 +752,11 @@ func (p *PreparedRuntimePool) prepareAndStore(
 	materializeAttempted = true
 	var session vm.Session
 	var materializeErr error
+	phases := &runtimePhaseCollector{}
+	phaseLogMessage := "prepared runtime phase"
 	if target.Source.Restore != nil {
-		phases := &runtimePhaseCollector{}
+		phaseLogMessage = "prepared restored runtime phase"
 		session, materializeErr = p.restorePreparedRuntime(ctx, target, topology, readOnlyDrives, phases.Record)
-		for _, phase := range phases.Snapshot() {
-			p.logInfo("prepared restored runtime phase", "runtime_instance_id", runtimeInstanceID,
-				"phase", phase.Name, "duration_ms", phase.DurationMs, "error_class", phase.ErrorClass)
-		}
 	} else {
 		connector, ok := p.Connector.(vm.MaterializingConnector)
 		if !ok {
@@ -771,8 +769,12 @@ func (p *PreparedRuntimePool) prepareAndStore(
 			Resources: compute.ResourceVector{MilliCPU: mount.RequestedMilliCPU, MemoryMiB: mount.RequestedMemoryMiB,
 				DiskMiB: mount.RequestedDiskMiB, Slots: mount.RequestedExecutionSlots},
 			VMVCPUCount: target.Source.VMVCPUCount, CPUConfigDigest: target.Source.CPUConfigDigest,
-			Topology: topology, ReadOnlyDrives: readOnlyDrives,
+			Topology: topology, ReadOnlyDrives: readOnlyDrives, RecordPhase: phases.Record,
 		})
+	}
+	for _, phase := range phases.Snapshot() {
+		p.logInfo(phaseLogMessage, "runtime_instance_id", runtimeInstanceID,
+			"phase", phase.Name, "duration_ms", phase.DurationMs, "error_class", phase.ErrorClass)
 	}
 	closeProgramErr := closeProgram()
 	programArtifactsOpen = false
