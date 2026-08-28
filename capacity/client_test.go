@@ -1,4 +1,4 @@
-package capacityapi
+package capacity
 
 import (
 	"context"
@@ -60,7 +60,7 @@ func TestClientReconcilesCompleteWorkerGroupPrimarySelection(t *testing.T) {
 		}
 		_ = json.NewEncoder(w).Encode(ReconcileWorkerGroupPrimaryPoolsResponse{
 			Applied: true,
-			WorkerGroup: CapacityWorkerGroup{
+			WorkerGroup: WorkerGroup{
 				ID: "group-1", ClaimVersion: 8, PrimaryPoolID: "run-pool",
 			},
 		})
@@ -93,22 +93,27 @@ func TestClientPlansCapacityAndReadsFilteredWorkerInstances(t *testing.T) {
 			if r.Method != http.MethodPost || r.URL.RequestURI() != "/api/capacity/v0/worker-groups/group-1/plan" {
 				t.Fatalf("request = %s %s", r.Method, r.URL.RequestURI())
 			}
-			var request CapacityPlanRequest
+			var request PlanRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
 			if len(request.Pools) != 1 || request.Pools[0].PoolID != "pool-1" || request.Pools[0].MaxAdditionalWorkers != 4 {
 				t.Fatalf("request = %+v", request)
 			}
-			_ = json.NewEncoder(w).Encode(CapacityPlanResponse{WorkerGroupID: "group-1", Pools: []CapacityPoolPlan{{PoolID: "pool-1", RecommendedAdditionalWorkers: 2}}})
+			_ = json.NewEncoder(w).Encode(PlanResponse{WorkerGroupID: "group-1", Pools: []PoolPlan{{PoolID: "pool-1", RecommendedAdditionalWorkers: 2}}})
 		case 2:
 			want := "/api/capacity/v0/worker-instances?has_unreclaimed_runtime=true&limit=25&resource_id=host-a&resource_id=host-b&status=active&status=draining&worker_group_id=run-us-east-1"
 			if r.Method != http.MethodGet || r.URL.RequestURI() != want {
 				t.Fatalf("request = %s %s, want GET %s", r.Method, r.URL.RequestURI(), want)
 			}
-			_ = json.NewEncoder(w).Encode(WorkerInstancesResponse{
+			_ = json.NewEncoder(w).Encode(ListWorkerInstancesResponse{
 				WorkerInstances: []WorkerInstance{{ID: "worker-1", Status: "active"}},
 			})
+		case 3:
+			if r.Method != http.MethodGet || r.URL.RequestURI() != "/api/capacity/v0/worker-instances" {
+				t.Fatalf("request = %s %s", r.Method, r.URL.RequestURI())
+			}
+			_ = json.NewEncoder(w).Encode(ListWorkerInstancesResponse{WorkerInstances: []WorkerInstance{}})
 		default:
 			t.Fatalf("unexpected request %d", requests)
 		}
@@ -118,26 +123,31 @@ func TestClientPlansCapacityAndReadsFilteredWorkerInstances(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := client.Plan(context.Background(), "group-1", CapacityPlanRequest{Pools: []CapacityPoolRequest{{PoolID: "pool-1", MaxAdditionalWorkers: 4}}})
+	plan, err := client.Plan(context.Background(), "group-1", PlanRequest{Pools: []PoolRequest{{PoolID: "pool-1", MaxAdditionalWorkers: 4}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if plan.WorkerGroupID != "group-1" || len(plan.Pools) != 1 || plan.Pools[0].RecommendedAdditionalWorkers != 2 {
 		t.Fatalf("plan = %+v", plan)
 	}
-	workers, err := client.WorkerInstances(
+	workers, err := client.ListWorkerInstances(
 		context.Background(),
-		"run-us-east-1",
-		[]string{"host-a", "host-b"},
-		[]WorkerInstanceStatus{WorkerInstanceStatusActive, WorkerInstanceStatusDraining},
-		true,
-		25,
+		ListWorkerInstancesOptions{
+			WorkerGroupID:         "run-us-east-1",
+			ResourceIDs:           []string{"host-a", "host-b"},
+			Statuses:              []WorkerInstanceStatus{WorkerInstanceStatusActive, WorkerInstanceStatusDraining},
+			HasUnreclaimedRuntime: true,
+			Limit:                 25,
+		},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(workers.WorkerInstances) != 1 || workers.WorkerInstances[0].ID != "worker-1" {
 		t.Fatalf("workers = %+v", workers)
+	}
+	if _, err := client.ListWorkerInstances(context.Background(), ListWorkerInstancesOptions{}); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -193,7 +203,7 @@ func TestClientReturnsTypedHTTPError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.WorkerInstance(context.Background(), "worker-1")
+	_, err = client.GetWorkerInstance(context.Background(), "worker-1")
 	httpErr, ok := err.(*HTTPError)
 	if !ok || httpErr.StatusCode != http.StatusConflict || httpErr.Code != "stale_fence" ||
 		httpErr.Message != "stale fence" || string(httpErr.Details["claim_version"]) != "7" {

@@ -6,7 +6,7 @@
 let
   moduleFiles = lib.fileset.unions [
     ../../cmd/helmr-worker
-    ../../capacityapi
+    ../../capacity
     ../../go.mod
     ../../go.sum
     ../../internal
@@ -28,7 +28,7 @@ buildGoModule {
     fileset = runtimeFiles;
   };
 
-  vendorHash = "sha256-jYDWiu8vwEqBTrcJx4Qm4RRexiE3eLreI/aA6xw4iT4=";
+  vendorHash = "sha256-ZSyB1cxcKqVPTf9t4eCvw6ZrmAA2yWwVmfpJNyHuavY=";
   overrideModAttrs = _: {
     src = moduleSource;
   };

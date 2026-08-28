@@ -12,7 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/capacityapi"
+	"github.com/helmrdotdev/helmr/capacity"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	capacityplanner "github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -50,19 +50,19 @@ func hashCapacityToken(raw string) ([]byte, error) {
 }
 
 func (s *Server) mountCapacityRoutes(r chi.Router) {
-	r.Route(capacityapi.RoutePrefix, func(r chi.Router) {
+	r.Route(capacity.RoutePrefix, func(r chi.Router) {
 		r.Use(s.requireCapacity)
-		r.Get(capacityapi.WorkerGroupsPath+"/resolve", s.capacityResolveWorkerGroup)
-		r.Get(capacityapi.WorkerGroupsPath+"/{workerGroupID}/pools/resolve", s.capacityResolveWorkerPool)
+		r.Get(capacity.WorkerGroupsPath+"/resolve", s.capacityResolveWorkerGroup)
+		r.Get(capacity.WorkerGroupsPath+"/{workerGroupID}/pools/resolve", s.capacityResolveWorkerPool)
 		r.With(limitRequestBody(capacityRequestBodyLimit)).
-			Put(capacityapi.WorkerGroupsPath+"/{workerGroupID}/primary-pools", s.capacityReconcileWorkerGroupPrimaryPools)
+			Put(capacity.WorkerGroupsPath+"/{workerGroupID}/primary-pools", s.capacityReconcileWorkerGroupPrimaryPools)
 		r.With(limitRequestBody(capacityRequestBodyLimit)).
-			Post(capacityapi.WorkerGroupsPath+"/{workerGroupID}/plan", s.capacityPlan)
-		r.Get(capacityapi.WorkerInstancesPath, s.capacityListWorkerInstances)
-		r.Get(capacityapi.WorkerInstancesPath+"/{workerInstanceID}", s.capacityGetWorkerInstance)
-		r.Post(capacityapi.WorkerInstancesPath+"/{workerInstanceID}/lost", s.capacityConfirmWorkerInstanceProviderAbsent)
+			Post(capacity.WorkerGroupsPath+"/{workerGroupID}/plan", s.capacityPlan)
+		r.Get(capacity.WorkerInstancesPath, s.capacityListWorkerInstances)
+		r.Get(capacity.WorkerInstancesPath+"/{workerInstanceID}", s.capacityGetWorkerInstance)
+		r.Post(capacity.WorkerInstancesPath+"/{workerInstanceID}/lost", s.capacityConfirmWorkerInstanceProviderAbsent)
 		r.With(limitRequestBody(capacityRequestBodyLimit)).
-			Post(capacityapi.WorkerInstancesPath+"/{workerInstanceID}/drain", s.capacityDrainWorkerInstance)
+			Post(capacity.WorkerInstancesPath+"/{workerInstanceID}/drain", s.capacityDrainWorkerInstance)
 	})
 }
 
@@ -99,7 +99,7 @@ func (s *Server) capacityResolveWorkerPool(w http.ResponseWriter, r *http.Reques
 		writeError(w, errors.New("project capacity worker pool"))
 		return
 	}
-	writeJSON(w, http.StatusOK, capacityapi.CapacityWorkerPool{
+	writeJSON(w, http.StatusOK, capacity.WorkerPool{
 		ID: pgvalue.MustUUIDValue(pool.ID).String(), WorkerGroupID: pool.WorkerGroupID,
 		Name: pool.Name, Status: status,
 	})
@@ -141,7 +141,7 @@ func (s *Server) capacityReconcileWorkerGroupPrimaryPools(w http.ResponseWriter,
 		writeError(w, badRequest(errors.New("worker_group_id must be a canonical UUIDv7")))
 		return
 	}
-	var request capacityapi.ReconcileWorkerGroupPrimaryPoolsRequest
+	var request capacity.ReconcileWorkerGroupPrimaryPoolsRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid primary Pool selection JSON: %w", err)))
 		return
@@ -171,7 +171,7 @@ func (s *Server) capacityReconcileWorkerGroupPrimaryPools(w http.ResponseWriter,
 		writeError(w, errors.New("project capacity worker group"))
 		return
 	}
-	writeJSON(w, http.StatusOK, capacityapi.ReconcileWorkerGroupPrimaryPoolsResponse{
+	writeJSON(w, http.StatusOK, capacity.ReconcileWorkerGroupPrimaryPoolsResponse{
 		WorkerGroup: capacityWorkerGroup(result.group, status),
 		Applied:     result.applied,
 	})
@@ -188,8 +188,8 @@ func capacityOptionalPoolID(raw string) (pgtype.UUID, error) {
 	return pgvalue.UUID(id), nil
 }
 
-func capacityWorkerGroup(group db.WorkerGroup, status capacityapi.WorkerGroupStatus) capacityapi.CapacityWorkerGroup {
-	return capacityapi.CapacityWorkerGroup{
+func capacityWorkerGroup(group db.WorkerGroup, status capacity.WorkerGroupStatus) capacity.WorkerGroup {
+	return capacity.WorkerGroup{
 		ID: group.ID, Name: group.Name, RegionID: group.RegionID, Status: status,
 		ClaimVersion:  group.ClaimVersion,
 		PrimaryPoolID: pgvalue.UUIDString(group.PrimaryPoolID),
@@ -214,7 +214,7 @@ func (s *Server) capacityPlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("worker_group_id must be a canonical UUIDv7")))
 		return
 	}
-	var request capacityapi.CapacityPlanRequest
+	var request capacity.PlanRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid capacity plan JSON: %w", err)))
 		return
@@ -248,11 +248,11 @@ func (s *Server) capacityListWorkerInstances(w http.ResponseWriter, r *http.Requ
 		writeError(w, errors.New("list capacity worker instances"))
 		return
 	}
-	response := capacityapi.WorkerInstancesResponse{
-		WorkerInstances: make([]capacityapi.WorkerInstance, 0, len(rows)),
+	response := capacity.ListWorkerInstancesResponse{
+		WorkerInstances: make([]capacity.WorkerInstance, 0, len(rows)),
 	}
 	for _, row := range rows {
-		projected, err := capacityWorkerInstance(
+		projected, err := projectWorkerInstance(
 			row.ID, row.ResourceID, row.WorkerGroupID, row.WorkerPoolID, row.State, row.ClaimVersion,
 			row.CurrentEpoch, row.DrainingAt,
 			row.TerminationReadyAt, row.LostAt, row.CreatedAt, row.UpdatedAt,
@@ -283,7 +283,7 @@ func (s *Server) capacityGetWorkerInstance(w http.ResponseWriter, r *http.Reques
 		writeError(w, errors.New("get capacity worker instance"))
 		return
 	}
-	response, err := capacityWorkerInstance(
+	response, err := projectWorkerInstance(
 		row.ID, row.ResourceID, row.WorkerGroupID, row.WorkerPoolID, row.State, row.ClaimVersion,
 		row.CurrentEpoch, row.DrainingAt,
 		row.TerminationReadyAt, row.LostAt, row.CreatedAt, row.UpdatedAt,
@@ -302,7 +302,7 @@ func (s *Server) capacityDrainWorkerInstance(w http.ResponseWriter, r *http.Requ
 		writeError(w, badRequest(err))
 		return
 	}
-	var request capacityapi.DrainWorkerInstanceRequest
+	var request capacity.DrainWorkerInstanceRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker drain JSON: %w", err)))
 		return
@@ -330,7 +330,7 @@ func (s *Server) capacityDrainWorkerInstance(w http.ResponseWriter, r *http.Requ
 		}
 		if present {
 			writeError(w, conflict(codedError{
-				code: capacityapi.ErrorCodeQueuedDemandPresent, message: "queued demand is present",
+				code: capacity.ErrorCodeQueuedDemandPresent, message: "queued demand is present",
 			}))
 			return
 		}
@@ -350,7 +350,7 @@ func (s *Server) capacityDrainWorkerInstance(w http.ResponseWriter, r *http.Requ
 		writeError(w, errors.New("drain worker instance"))
 		return
 	}
-	response, err := capacityWorkerInstance(
+	response, err := projectWorkerInstance(
 		draining.ID, draining.ResourceID, draining.WorkerGroupID, draining.WorkerPoolID,
 		string(draining.State), draining.ClaimVersion,
 		draining.CurrentEpoch, draining.DrainingAt,
@@ -408,7 +408,7 @@ func (s *Server) capacityConfirmWorkerInstanceProviderAbsent(w http.ResponseWrit
 		writeError(w, errors.New("confirm worker provider absence"))
 		return
 	}
-	response, err := capacityWorkerInstance(
+	response, err := projectWorkerInstance(
 		confirmed.ID, confirmed.ResourceID, confirmed.WorkerGroupID, confirmed.WorkerPoolID,
 		confirmed.State, confirmed.ClaimVersion, confirmed.CurrentEpoch, confirmed.DrainingAt,
 		confirmed.TerminationReadyAt, confirmed.LostAt, confirmed.CreatedAt, confirmed.UpdatedAt,
@@ -488,37 +488,37 @@ func capacityWorkerInstanceListParams(r *http.Request) (db.ListCapacityWorkerIns
 	return params, nil
 }
 
-func workerGroupPublicStatus(state string) (capacityapi.WorkerGroupStatus, error) {
+func workerGroupPublicStatus(state string) (capacity.WorkerGroupStatus, error) {
 	switch state {
 	case db.WorkerGroupStateActive:
-		return capacityapi.WorkerGroupStatusActive, nil
+		return capacity.WorkerGroupStatusActive, nil
 	case db.WorkerGroupStatePaused:
-		return capacityapi.WorkerGroupStatusPaused, nil
+		return capacity.WorkerGroupStatusPaused, nil
 	case db.WorkerGroupStateDraining:
-		return capacityapi.WorkerGroupStatusDraining, nil
+		return capacity.WorkerGroupStatusDraining, nil
 	case db.WorkerGroupStateDisabled:
-		return capacityapi.WorkerGroupStatusDisabled, nil
+		return capacity.WorkerGroupStatusDisabled, nil
 	default:
 		return "", fmt.Errorf("worker group state %q has no public projection", state)
 	}
 }
 
-func workerPoolPublicStatus(state string) (capacityapi.WorkerPoolStatus, error) {
+func workerPoolPublicStatus(state string) (capacity.WorkerPoolStatus, error) {
 	switch state {
 	case "pending":
-		return capacityapi.WorkerPoolStatusPending, nil
+		return capacity.WorkerPoolStatusPending, nil
 	case "active":
-		return capacityapi.WorkerPoolStatusActive, nil
+		return capacity.WorkerPoolStatusActive, nil
 	case "draining":
-		return capacityapi.WorkerPoolStatusDraining, nil
+		return capacity.WorkerPoolStatusDraining, nil
 	case "disabled":
-		return capacityapi.WorkerPoolStatusDisabled, nil
+		return capacity.WorkerPoolStatusDisabled, nil
 	default:
 		return "", fmt.Errorf("worker pool state %q has no public projection", state)
 	}
 }
 
-func capacityWorkerInstance(
+func projectWorkerInstance(
 	id pgtype.UUID,
 	resourceID string,
 	workerGroupID string,
@@ -531,12 +531,12 @@ func capacityWorkerInstance(
 	lostAt pgtype.Timestamptz,
 	createdAt pgtype.Timestamptz,
 	updatedAt pgtype.Timestamptz,
-) (capacityapi.WorkerInstance, error) {
+) (capacity.WorkerInstance, error) {
 	publicStatus, err := workerInstancePublicStatus(status)
 	if err != nil {
-		return capacityapi.WorkerInstance{}, err
+		return capacity.WorkerInstance{}, err
 	}
-	result := capacityapi.WorkerInstance{
+	result := capacity.WorkerInstance{
 		ID: uuid.UUID(id.Bytes).String(), ResourceID: resourceID,
 		WorkerGroupID: workerGroupID, WorkerPoolID: uuid.UUID(workerPoolID.Bytes).String(),
 		Status: publicStatus, ClaimVersion: claimVersion,
@@ -557,18 +557,18 @@ func capacityWorkerInstance(
 	return result, nil
 }
 
-func workerInstancePublicStatus(state string) (capacityapi.WorkerInstanceStatus, error) {
+func workerInstancePublicStatus(state string) (capacity.WorkerInstanceStatus, error) {
 	switch state {
 	case db.WorkerInstanceStateRegistering:
-		return capacityapi.WorkerInstanceStatusRegistering, nil
+		return capacity.WorkerInstanceStatusRegistering, nil
 	case db.WorkerInstanceStateActive:
-		return capacityapi.WorkerInstanceStatusActive, nil
+		return capacity.WorkerInstanceStatusActive, nil
 	case db.WorkerInstanceStateDraining:
-		return capacityapi.WorkerInstanceStatusDraining, nil
+		return capacity.WorkerInstanceStatusDraining, nil
 	case db.WorkerInstanceStateTerminationReady:
-		return capacityapi.WorkerInstanceStatusTerminationReady, nil
+		return capacity.WorkerInstanceStatusTerminationReady, nil
 	case db.WorkerInstanceStateLost:
-		return capacityapi.WorkerInstanceStatusLost, nil
+		return capacity.WorkerInstanceStatusLost, nil
 	default:
 		return "", fmt.Errorf("worker instance state %q has no public projection", state)
 	}

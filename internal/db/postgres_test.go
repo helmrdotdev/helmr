@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/capacityapi"
+	"github.com/helmrdotdev/helmr/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
@@ -136,7 +136,7 @@ func newPostgresDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 		)
 	`,
 		dbtest.DefaultRuntimeID,
-		capacityapi.RuntimeContract,
+		capacity.RuntimeContract,
 		dbtest.Digest("db-test-vm-runtime-descriptor"),
 		dbtest.Digest("db-test-firecracker"),
 		dbtest.Digest("db-test-kernel"),
@@ -161,8 +161,8 @@ func newPostgresDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 		dbtest.DefaultWorkerPoolID,
 		dbtest.DefaultWorkerGroupID,
 		dbtest.DefaultRuntimeID,
-		capacityapi.SubstrateFormatExt4,
-		capacityapi.SubstrateContractExt4,
+		capacity.SubstrateFormatExt4,
+		capacity.SubstrateContractExt4,
 	)
 	for vcpuCount := int32(1); vcpuCount <= 4; vcpuCount++ {
 		dbtest.MustExec(t, ctx, pool, `

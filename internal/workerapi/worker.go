@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/helmrdotdev/helmr/capacityapi"
+	"github.com/helmrdotdev/helmr/capacity"
 	"github.com/helmrdotdev/helmr/internal/api"
 )
 
@@ -87,18 +87,18 @@ type Observation struct {
 }
 
 type Capabilities struct {
-	Runtime                   capacityapi.RuntimeProfile `json:"runtime"`
-	CPUShapes                 []capacityapi.CPUShape     `json:"cpu_shapes"`
-	CPUEnvironment            CPUEnvironment             `json:"cpu_environment"`
-	SubstrateFormat           string                     `json:"substrate_format,omitempty"`
-	SubstrateContract         string                     `json:"substrate_contract,omitempty"`
-	MaxVCPUs                  int64                      `json:"max_vcpus"`
-	MaxMemoryMiB              int64                      `json:"max_memory_mib"`
-	VMMilliCPU                int64                      `json:"vm_milli_cpu"`
-	VMMemoryMiB               int64                      `json:"vm_memory_mib"`
-	GuestEphemeralDiskBytes   int64                      `json:"guest_ephemeral_disk_bytes"`
-	VMGuestEphemeralDiskBytes int64                      `json:"vm_guest_ephemeral_disk_bytes"`
-	ExecutionSlotsAvailable   int32                      `json:"execution_slots_available"`
+	Runtime                   capacity.RuntimeProfile `json:"runtime"`
+	CPUShapes                 []capacity.CPUShape     `json:"cpu_shapes"`
+	CPUEnvironment            CPUEnvironment          `json:"cpu_environment"`
+	SubstrateFormat           string                  `json:"substrate_format,omitempty"`
+	SubstrateContract         string                  `json:"substrate_contract,omitempty"`
+	MaxVCPUs                  int64                   `json:"max_vcpus"`
+	MaxMemoryMiB              int64                   `json:"max_memory_mib"`
+	VMMilliCPU                int64                   `json:"vm_milli_cpu"`
+	VMMemoryMiB               int64                   `json:"vm_memory_mib"`
+	GuestEphemeralDiskBytes   int64                   `json:"guest_ephemeral_disk_bytes"`
+	VMGuestEphemeralDiskBytes int64                   `json:"vm_guest_ephemeral_disk_bytes"`
+	ExecutionSlotsAvailable   int32                   `json:"execution_slots_available"`
 }
 
 type CPUEnvironment struct {

@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/capacityapi"
+	"github.com/helmrdotdev/helmr/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -1321,7 +1321,7 @@ UPDATE worker_instances SET substrate_contract = 'incompatible-contract' WHERE i
 	}
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE worker_instances SET substrate_contract = $2 WHERE id = $1`,
-		fixture.workerID, capacityapi.SubstrateContractExt4)
+		fixture.workerID, capacity.SubstrateContractExt4)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE workspace_leases SET mount_fencing_generation = $2 WHERE id = $1`,
 		sourceWorkspaceLeaseID, int64(math.MaxInt64-1))
@@ -2275,7 +2275,7 @@ SELECT runtime_substrates.id
  WHERE substrate_format = $3
    AND substrate_contract = $4
 LIMIT 1`, runtimeID, pgvalue.NewUUIDv7(),
-		capacityapi.SubstrateFormatExt4, capacityapi.SubstrateContractExt4).Scan(&runtimeSubstrateID)
+		capacity.SubstrateFormatExt4, capacity.SubstrateContractExt4).Scan(&runtimeSubstrateID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2489,8 +2489,8 @@ SELECT $1, token.id, 'us-east-1', $1 FROM token`,
 		fixture.groupID, id("worker-group-token"), dbtest.Hash("run-placement-worker-group"),
 	)
 	poolSpec := dispatchWorkerPoolFixture{
-		substrateFormat:                 capacityapi.SubstrateFormatExt4,
-		substrateContract:               capacityapi.SubstrateContractExt4,
+		substrateFormat:                 capacity.SubstrateFormatExt4,
+		substrateContract:               capacity.SubstrateContractExt4,
 		capacityCPUMillis:               8000,
 		capacityMemoryBytes:             8589934592,
 		capacityGuestEphemeralDiskBytes: 274877906944,

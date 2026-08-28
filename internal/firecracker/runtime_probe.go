@@ -18,7 +18,7 @@ import (
 	"sync/atomic"
 	"unicode/utf8"
 
-	"github.com/helmrdotdev/helmr/capacityapi"
+	"github.com/helmrdotdev/helmr/capacity"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
@@ -179,12 +179,12 @@ func deriveHostRuntimeIdentity(evidence HostRuntimeEvidence) (runtimeid.Selector
 	if err := evidence.CPUTemplateSelector.Validate(); err != nil {
 		return runtimeid.Selector{}, err
 	}
-	var cpuTemplate capacityapi.CPUTemplateSelector
+	var cpuTemplate capacity.CPUTemplateSelector
 	switch evidence.CPUTemplateSelector.Kind {
 	case CPUTemplateNone:
-		cpuTemplate.Kind = capacityapi.CPUTemplateNone
+		cpuTemplate.Kind = capacity.CPUTemplateNone
 	case CPUTemplateCustom:
-		cpuTemplate.Kind = capacityapi.CPUTemplateCustom
+		cpuTemplate.Kind = capacity.CPUTemplateCustom
 		cpuTemplate.Digest = evidence.CPUTemplateSelector.Digest
 	default:
 		return runtimeid.Selector{}, fmt.Errorf("CPU template selector kind %q is not supported", evidence.CPUTemplateSelector.Kind)

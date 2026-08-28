@@ -19,6 +19,7 @@ require (
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/google/uuid v1.6.0
 	github.com/gowebpki/jcs v1.0.1
+	github.com/helmrdotdev/helmr/capacity v0.1.0
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/klauspost/compress v1.18.6
 	github.com/mdlayher/vsock v1.2.1
@@ -41,6 +42,8 @@ require (
 	golang.org/x/text v0.38.0
 	google.golang.org/protobuf v1.36.12-0.20260120151049-f2248ac996af
 )
+
+replace github.com/helmrdotdev/helmr/capacity => ./capacity
 
 require (
 	github.com/ClickHouse/ch-go v0.73.0 // indirect

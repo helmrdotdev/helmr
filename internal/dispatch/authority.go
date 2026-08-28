@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/helmrdotdev/helmr/capacityapi"
+	"github.com/helmrdotdev/helmr/capacity"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
@@ -124,7 +124,7 @@ SELECT worker_instances.id
 	   AND runtime_identities.vm_runtime_contract = $6
 	FOR UPDATE OF worker_instances`, fence.WorkerInstanceID, fence.GroupID,
 		fence.WorkerEpoch, fence.RunArchitecture,
-		workerapi.WorkerObservationFreshnessSeconds, capacityapi.RuntimeContract,
+		workerapi.WorkerObservationFreshnessSeconds, capacity.RuntimeContract,
 	).Scan(&workerID)
 	if err != nil {
 		return fmt.Errorf("lock eligible worker epoch: %w", err)
