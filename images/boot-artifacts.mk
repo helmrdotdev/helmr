@@ -94,8 +94,8 @@ boot-tools-image: $(BOOT_TOOLS_ARCHIVE)
 		../build-tools-image.sh $(BOOT_TOOLS_ARCHIVE) $(BOOT_TOOLS_IMAGE_ID_FILE); \
 	fi
 
-$(INITRAMFS) $(KERNEL_MODULES) &: $(INITRAMFS_BASE) $(MODLOOP) $(BOOT_TOOLS_ARCHIVE) ../build-initramfs.sh | $(OUT) boot-tools-image
-	BOOT_TOOLS_IMAGE=$$(cat $(BOOT_TOOLS_IMAGE_ID_FILE)) ../build-initramfs.sh $(INITRAMFS) $(INITRAMFS_BASE) $(MODLOOP) $(KERNEL_MODULES)
+$(INITRAMFS) $(KERNEL_MODULES) &: $(INITRAMFS_BASE) $(MODLOOP) $(BOOT_TOOLS_ARCHIVE) initramfs-init.sh ../build-initramfs.sh | $(OUT) boot-tools-image
+	BOOT_TOOLS_IMAGE=$$(cat $(BOOT_TOOLS_IMAGE_ID_FILE)) ../build-initramfs.sh $(INITRAMFS) $(INITRAMFS_BASE) $(MODLOOP) $(KERNEL_MODULES) initramfs-init.sh
 
 apko-lock:
 	apko lock $(APKO_CONFIG) --arch $(APKO_ARCH) --output $(APKO_LOCK)
