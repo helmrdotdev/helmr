@@ -6,9 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/capacity"
+	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -24,19 +25,19 @@ func TestWorkerActivationDerivesRuntimeStartsFromRunSlots(t *testing.T) {
 func validWorkerCapabilities(t *testing.T) workerapi.Capabilities {
 	t.Helper()
 	c := workerapi.Capabilities{
-		Runtime: capacity.RuntimeProfile{
-			Arch: "x86_64", Contract: capacity.RuntimeContract,
+		Runtime: runtimeid.Profile{
+			Arch: "x86_64", Contract: runtimeid.Contract,
 			VMRuntimeDescriptorDigest: "sha256:" + strings.Repeat("a", 64),
 			FirecrackerDigest:         "sha256:" + strings.Repeat("b", 64),
 			FirecrackerVersion:        "1.16.1",
 			SnapshotFormatVersion:     "6.0.0",
 			HostKernelRelease:         "6.8.0-1024-aws",
-			CPUTemplate:               capacity.CPUTemplateSelector{Kind: capacity.CPUTemplateNone},
+			CPUTemplate:               runtimeid.CPUTemplateSelector{Kind: runtimeid.CPUTemplateNone},
 			KernelDigest:              "sha256:" + strings.Repeat("1", 64),
 			InitramfsDigest:           "sha256:" + strings.Repeat("2", 64),
 			RootfsDigest:              "sha256:" + strings.Repeat("3", 64),
 		},
-		CPUShapes: []capacity.CPUShape{
+		CPUShapes: []runtimeid.CPUShape{
 			{VCPUCount: 1, CPUConfigDigest: "sha256:" + strings.Repeat("4", 64)},
 			{VCPUCount: 2, CPUConfigDigest: "sha256:" + strings.Repeat("5", 64)},
 		},
@@ -68,8 +69,8 @@ func validWorkerCapabilities(t *testing.T) workerapi.Capabilities {
 
 func TestNormalizeWorkerCapabilitiesReturnsCanonicalCompleteEvidence(t *testing.T) {
 	want := validWorkerCapabilities(t)
-	want.Runtime.CPUTemplate = capacity.CPUTemplateSelector{
-		Kind:   capacity.CPUTemplateCustom,
+	want.Runtime.CPUTemplate = runtimeid.CPUTemplateSelector{
+		Kind:   runtimeid.CPUTemplateCustom,
 		Digest: "sha256:" + strings.Repeat("6", 64),
 	}
 	var err error
@@ -79,7 +80,7 @@ func TestNormalizeWorkerCapabilitiesReturnsCanonicalCompleteEvidence(t *testing.
 	}
 
 	input := want
-	input.CPUShapes = append([]capacity.CPUShape(nil), want.CPUShapes...)
+	input.CPUShapes = append([]runtimeid.CPUShape(nil), want.CPUShapes...)
 	input.Runtime.ID = " \t" + input.Runtime.ID + "\n"
 	input.Runtime.Arch = " " + input.Runtime.Arch + " "
 	input.Runtime.Contract = "\t" + input.Runtime.Contract + "\n"
@@ -122,7 +123,7 @@ func TestWorkerTemplateDerivesImmutablePoolContract(t *testing.T) {
 	want := capacity.WorkerTemplate{
 		Schema:    capacity.WorkerTemplateSchema,
 		Runtime:   capabilities.Runtime,
-		CPUShapes: append([]capacity.CPUShape(nil), capabilities.CPUShapes...),
+		CPUShapes: append([]runtimeid.CPUShape(nil), capabilities.CPUShapes...),
 		Substrate: capacity.SubstrateProfile{
 			Format: capacity.SubstrateFormatExt4, Contract: capacity.SubstrateContractExt4,
 		},
@@ -175,8 +176,8 @@ func TestSealWorkerPoolParamsDerivePendingPoolContract(t *testing.T) {
 
 func TestRuntimeIdentityParamsDeriveCompleteProfile(t *testing.T) {
 	profile := validWorkerCapabilities(t).Runtime
-	profile.CPUTemplate = capacity.CPUTemplateSelector{
-		Kind:   capacity.CPUTemplateCustom,
+	profile.CPUTemplate = runtimeid.CPUTemplateSelector{
+		Kind:   runtimeid.CPUTemplateCustom,
 		Digest: "sha256:" + strings.Repeat("6", 64),
 	}
 	var err error
@@ -231,8 +232,8 @@ func TestWorkerPoolMatchesRejectsCPUShapeOrTemplateMismatch(t *testing.T) {
 
 	t.Run("CPU template", func(t *testing.T) {
 		changed := template
-		changed.Runtime.CPUTemplate = capacity.CPUTemplateSelector{
-			Kind:   capacity.CPUTemplateCustom,
+		changed.Runtime.CPUTemplate = runtimeid.CPUTemplateSelector{
+			Kind:   runtimeid.CPUTemplateCustom,
 			Digest: "sha256:" + strings.Repeat("6", 64),
 		}
 		var err error
@@ -280,8 +281,8 @@ func TestNormalizeWorkerCapabilitiesRejectsCPUShapeOrTemplateMismatch(t *testing
 
 	t.Run("CPU template identity", func(t *testing.T) {
 		capabilities := validWorkerCapabilities(t)
-		capabilities.Runtime.CPUTemplate = capacity.CPUTemplateSelector{
-			Kind:   capacity.CPUTemplateCustom,
+		capabilities.Runtime.CPUTemplate = runtimeid.CPUTemplateSelector{
+			Kind:   runtimeid.CPUTemplateCustom,
 			Digest: "sha256:" + strings.Repeat("6", 64),
 		}
 		if _, err := normalizeWorkerCapabilities(capabilities); err == nil || !strings.Contains(err.Error(), "runtime.id") {

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/helmrdotdev/helmr/capacity"
+	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/oci"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"golang.org/x/sync/singleflight"

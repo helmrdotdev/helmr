@@ -4,6 +4,8 @@ import (
 	"math"
 	"strings"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/runtimeid"
 )
 
 func TestWorkerTemplateValidation(t *testing.T) {
@@ -30,34 +32,6 @@ func TestWorkerTemplateValidation(t *testing.T) {
 	}
 }
 
-func TestRuntimeProfileRejectsInconsistentIdentity(t *testing.T) {
-	profile := testRuntimeProfile(t)
-	profile.ID = "sha256:" + strings.Repeat("f", 64)
-	if err := profile.Validate(); err == nil {
-		t.Fatal("profile with a forged runtime identity was accepted")
-	}
-}
-
-func TestRuntimeProfileExpectedIDRejectsNoncanonicalSelector(t *testing.T) {
-	profile := testRuntimeProfile(t)
-	profile.KernelDigest = strings.ToUpper(profile.KernelDigest)
-	if _, err := profile.ExpectedID(); err == nil {
-		t.Fatal("ExpectedID accepted a noncanonical selector")
-	}
-}
-
-func TestRuntimeProfileRejectsInvalidCPUTemplateSelector(t *testing.T) {
-	profile := testRuntimeProfile(t)
-	profile.CPUTemplate.Digest = "sha256:" + strings.Repeat("4", 64)
-	if _, err := profile.ExpectedID(); err == nil {
-		t.Fatal("no-template selector with a digest was accepted")
-	}
-	profile.CPUTemplate = CPUTemplateSelector{Kind: CPUTemplateCustom}
-	if _, err := profile.ExpectedID(); err == nil {
-		t.Fatal("custom-template selector without a digest was accepted")
-	}
-}
-
 func TestWorkerTemplateRejectsIncompleteCPUShapes(t *testing.T) {
 	template := validTestWorkerTemplate(t)
 	template.CPUShapes = template.CPUShapes[:len(template.CPUShapes)-1]
@@ -74,16 +48,28 @@ func TestWorkerTemplateRejectsCPUShapeOverflow(t *testing.T) {
 	}
 }
 
-func testRuntimeProfile(t *testing.T) RuntimeProfile {
+func validTestWorkerTemplate(t *testing.T) WorkerTemplate {
 	t.Helper()
-	profile := RuntimeProfile{
-		Arch: "x86_64", Contract: RuntimeContract,
+	return WorkerTemplate{
+		Schema:    WorkerTemplateSchema,
+		Runtime:   testRuntimeProfile(t),
+		CPUShapes: testCPUShapes(4),
+		Substrate: SubstrateProfile{Format: SubstrateFormatExt4, Contract: SubstrateContractExt4},
+		Capacity:  ResourceVector{CPUMillis: 4000, MemoryBytes: 8 << 30, GuestEphemeralDiskBytes: 64 << 30, VMSlots: 1},
+		PerVM:     ResourceVector{CPUMillis: 4000, MemoryBytes: 8 << 30, GuestEphemeralDiskBytes: 32 << 30},
+	}
+}
+
+func testRuntimeProfile(t *testing.T) runtimeid.Profile {
+	t.Helper()
+	profile := runtimeid.Profile{
+		Arch: "x86_64", Contract: runtimeid.Contract,
 		VMRuntimeDescriptorDigest: "sha256:" + strings.Repeat("a", 64),
 		FirecrackerDigest:         "sha256:" + strings.Repeat("b", 64),
 		FirecrackerVersion:        "1.16.1",
 		SnapshotFormatVersion:     "6.0.0",
 		HostKernelRelease:         "6.8.0-1024-aws",
-		CPUTemplate:               CPUTemplateSelector{Kind: CPUTemplateNone},
+		CPUTemplate:               runtimeid.CPUTemplateSelector{Kind: runtimeid.CPUTemplateNone},
 		KernelDigest:              "sha256:" + strings.Repeat("1", 64),
 		InitramfsDigest:           "sha256:" + strings.Repeat("2", 64),
 		RootfsDigest:              "sha256:" + strings.Repeat("3", 64),
@@ -96,10 +82,10 @@ func testRuntimeProfile(t *testing.T) RuntimeProfile {
 	return profile
 }
 
-func testCPUShapes(count int) []CPUShape {
-	shapes := make([]CPUShape, count)
+func testCPUShapes(count int) []runtimeid.CPUShape {
+	shapes := make([]runtimeid.CPUShape, count)
 	for index := range shapes {
-		shapes[index] = CPUShape{
+		shapes[index] = runtimeid.CPUShape{
 			VCPUCount:       int32(index + 1),
 			CPUConfigDigest: "sha256:" + strings.Repeat(string(rune('4'+index)), 64),
 		}

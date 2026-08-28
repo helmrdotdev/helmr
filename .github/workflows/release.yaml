@@ -4,7 +4,6 @@ on:
   push:
     tags:
       - "v*"
-      - "capacity/v*"
       - "sdk/typescript/v*"
   workflow_dispatch:
     inputs:
@@ -25,49 +24,12 @@ permissions:
 
 env:
   PLATFORM_RELEASE_TAG_PATTERN: '^v[0-9]+[.][0-9]+[.][0-9]+(-[0-9A-Za-z-]+([.][0-9A-Za-z-]+)*)?$'
-  CAPACITY_RELEASE_TAG_PATTERN: '^capacity/v[0-9]+[.][0-9]+[.][0-9]+(-[0-9A-Za-z-]+([.][0-9A-Za-z-]+)*)?$'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  capacity-module:
-    name: capacity module
-    if: startsWith(github.ref, 'refs/tags/capacity/v')
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-
-      - uses: ./.github/actions/setup-nix
-
-      - name: Validate capacity tag and module
-        run: |
-          if ! printf '%s' "$GITHUB_REF_NAME" | grep -Eq "$CAPACITY_RELEASE_TAG_PATTERN"; then
-            echo "capacity release tag must match capacity/vX.Y.Z or capacity/vX.Y.Z-prerelease" >&2
-            exit 1
-          fi
-          test "${GITHUB_REF_NAME#capacity/}" = "$(go list -m -f '{{.Version}}' github.com/helmrdotdev/helmr/capacity)"
-          test "$(cd capacity && go list -m -f '{{.Path}}')" = "github.com/helmrdotdev/helmr/capacity"
-          test "$(cd capacity && go list -m all | wc -l | tr -d '[:space:]')" = 1
-          go test ./internal/deppolicy -run '^TestCapacityModuleDependencyBudget$' -count=1
-
-      - name: Validate capacity module
-        run: nix develop --command bash -c 'cd capacity && go test ./... && go vet ./... && staticcheck ./...'
-
-      - name: Validate clean module consumer
-        env:
-          GOPROXY: direct
-        run: |
-          consumer_dir="$(mktemp -d)"
-          cd "$consumer_dir"
-          go mod init example.com/capacity-consumer
-          go get "github.com/helmrdotdev/helmr/capacity@${GITHUB_REF_NAME#capacity/}"
-          go list github.com/helmrdotdev/helmr/capacity
-
   platform-release:
     name: platform release
     if: startsWith(github.ref, 'refs/tags/v')

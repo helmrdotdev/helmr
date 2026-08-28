@@ -18,7 +18,6 @@ import (
 	"sync/atomic"
 	"unicode/utf8"
 
-	"github.com/helmrdotdev/helmr/capacity"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
@@ -67,7 +66,7 @@ type CPUShapeEvidence struct {
 }
 
 type boundHostRuntimeEvidence struct {
-	identity        runtimeid.Selector
+	identity        runtimeid.Profile
 	shapes          []CPUShapeEvidence
 	firecrackerPath string
 }
@@ -112,13 +111,13 @@ func (store *hostRuntimeEvidenceStore) bind(evidence HostRuntimeEvidence, maxVCP
 	return nil
 }
 
-func (store *hostRuntimeEvidenceStore) runtimeIdentity() (runtimeid.Selector, error) {
+func (store *hostRuntimeEvidenceStore) runtimeIdentity() (runtimeid.Profile, error) {
 	if store == nil {
-		return runtimeid.Selector{}, errors.New("host runtime evidence is not bound to the Firecracker connector")
+		return runtimeid.Profile{}, errors.New("host runtime evidence is not bound to the Firecracker connector")
 	}
 	evidence := store.value.Load()
 	if evidence == nil {
-		return runtimeid.Selector{}, errors.New("host runtime evidence is not bound to the Firecracker connector")
+		return runtimeid.Profile{}, errors.New("host runtime evidence is not bound to the Firecracker connector")
 	}
 	return evidence.identity, nil
 }
@@ -157,16 +156,16 @@ func (store *hostRuntimeEvidenceStore) firecrackerExecutable() (string, error) {
 
 // RuntimeIdentity returns the complete canonical runtime selector bound by
 // this evidence. The ID is recomputed and checked rather than trusted.
-func (evidence HostRuntimeEvidence) RuntimeIdentity() (runtimeid.Selector, error) {
+func (evidence HostRuntimeEvidence) RuntimeIdentity() (runtimeid.Profile, error) {
 	identity, err := deriveHostRuntimeIdentity(evidence)
 	if err != nil {
-		return runtimeid.Selector{}, err
+		return runtimeid.Profile{}, err
 	}
 	if evidence.RuntimeID == "" {
-		return runtimeid.Selector{}, errors.New("host runtime evidence runtime ID is required")
+		return runtimeid.Profile{}, errors.New("host runtime evidence runtime ID is required")
 	}
 	if evidence.RuntimeID != identity.ID {
-		return runtimeid.Selector{}, fmt.Errorf(
+		return runtimeid.Profile{}, fmt.Errorf(
 			"host runtime evidence runtime ID %s does not match canonical ID %s",
 			evidence.RuntimeID,
 			identity.ID,
@@ -175,21 +174,21 @@ func (evidence HostRuntimeEvidence) RuntimeIdentity() (runtimeid.Selector, error
 	return identity, nil
 }
 
-func deriveHostRuntimeIdentity(evidence HostRuntimeEvidence) (runtimeid.Selector, error) {
+func deriveHostRuntimeIdentity(evidence HostRuntimeEvidence) (runtimeid.Profile, error) {
 	if err := evidence.CPUTemplateSelector.Validate(); err != nil {
-		return runtimeid.Selector{}, err
+		return runtimeid.Profile{}, err
 	}
-	var cpuTemplate capacity.CPUTemplateSelector
+	var cpuTemplate runtimeid.CPUTemplateSelector
 	switch evidence.CPUTemplateSelector.Kind {
 	case CPUTemplateNone:
-		cpuTemplate.Kind = capacity.CPUTemplateNone
+		cpuTemplate.Kind = runtimeid.CPUTemplateNone
 	case CPUTemplateCustom:
-		cpuTemplate.Kind = capacity.CPUTemplateCustom
+		cpuTemplate.Kind = runtimeid.CPUTemplateCustom
 		cpuTemplate.Digest = evidence.CPUTemplateSelector.Digest
 	default:
-		return runtimeid.Selector{}, fmt.Errorf("CPU template selector kind %q is not supported", evidence.CPUTemplateSelector.Kind)
+		return runtimeid.Profile{}, fmt.Errorf("CPU template selector kind %q is not supported", evidence.CPUTemplateSelector.Kind)
 	}
-	identity := runtimeid.Selector{
+	identity := runtimeid.Profile{
 		Arch:                      evidence.RuntimeArch,
 		Contract:                  evidence.VMRuntimeContract,
 		VMRuntimeDescriptorDigest: evidence.VMRuntimeDescriptorDigest,
@@ -203,9 +202,9 @@ func deriveHostRuntimeIdentity(evidence HostRuntimeEvidence) (runtimeid.Selector
 		RootfsDigest:              evidence.RootfsDigest,
 	}
 	var err error
-	identity.ID, err = runtimeid.Digest(identity)
+	identity.ID, err = identity.ExpectedID()
 	if err != nil {
-		return runtimeid.Selector{}, fmt.Errorf("derive host runtime identity: %w", err)
+		return runtimeid.Profile{}, fmt.Errorf("derive host runtime identity: %w", err)
 	}
 	return identity, nil
 }

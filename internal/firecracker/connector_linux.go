@@ -1140,18 +1140,18 @@ func (c *Connector) prepareSession(ctx context.Context, instanceID string, owner
 	return session, nil
 }
 
-func (c *Connector) boundSessionRuntime(vcpuCount int64) (runtimeid.Selector, string, string, error) {
+func (c *Connector) boundSessionRuntime(vcpuCount int64) (runtimeid.Profile, string, string, error) {
 	runtimeIdentity, err := c.hostRuntime.runtimeIdentity()
 	if err != nil {
-		return runtimeid.Selector{}, "", "", fmt.Errorf("resolve host runtime identity: %w", err)
+		return runtimeid.Profile{}, "", "", fmt.Errorf("resolve host runtime identity: %w", err)
 	}
 	cpuConfigDigest, err := c.hostRuntime.cpuConfigDigest(vcpuCount)
 	if err != nil {
-		return runtimeid.Selector{}, "", "", fmt.Errorf("resolve guest CPU configuration for %d vCPUs: %w", vcpuCount, err)
+		return runtimeid.Profile{}, "", "", fmt.Errorf("resolve guest CPU configuration for %d vCPUs: %w", vcpuCount, err)
 	}
 	firecrackerPath, err := c.hostRuntime.firecrackerExecutable()
 	if err != nil {
-		return runtimeid.Selector{}, "", "", fmt.Errorf("resolve pinned Firecracker executable: %w", err)
+		return runtimeid.Profile{}, "", "", fmt.Errorf("resolve pinned Firecracker executable: %w", err)
 	}
 	return runtimeIdentity, cpuConfigDigest, firecrackerPath, nil
 }
@@ -1838,7 +1838,7 @@ type guestSession struct {
 	machineExit     *machineExit
 	cfg             Config
 	kernelArgs      string
-	runtimeIdentity runtimeid.Selector
+	runtimeIdentity runtimeid.Profile
 	cpuConfigDigest string
 	vsockHostPath   string
 	instanceDir     string
@@ -2053,7 +2053,7 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 		}
 	}()
 	runtimeIdentity := s.runtimeIdentity
-	expectedRuntimeID, err := runtimeid.Digest(runtimeIdentity)
+	expectedRuntimeID, err := runtimeIdentity.ExpectedID()
 	if err != nil {
 		_ = s.Resume(context.Background())
 		return vm.SnapshotArtifact{}, err

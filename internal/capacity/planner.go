@@ -10,12 +10,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/capacity"
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -55,7 +55,7 @@ type Store interface {
 
 type item struct {
 	role              string
-	resources         capacity.ResourceVector
+	resources         ResourceVector
 	targetPoolID      pgtype.UUID
 	restore           *RestoreRequirements
 	runtimeIdentityID string
@@ -68,7 +68,7 @@ type item struct {
 type bin struct {
 	workerGroupID     string
 	workerPoolID      pgtype.UUID
-	resources         capacity.ResourceVector
+	resources         ResourceVector
 	runConsumers      int64
 	runtimeStarts     int64
 	supportsRun       bool
@@ -79,8 +79,8 @@ type bin struct {
 	substrateContract string
 	runPaused         bool
 	runtimePaused     bool
-	perVM             capacity.ResourceVector
-	cpuShapes         []capacity.CPUShape
+	perVM             ResourceVector
+	cpuShapes         []runtimeid.CPUShape
 }
 
 type RestoreRequirements struct {
@@ -90,7 +90,7 @@ type RestoreRequirements struct {
 	CPUConfigDigest   string
 	SubstrateFormat   string
 	SubstrateContract string
-	Resources         capacity.ResourceVector
+	Resources         ResourceVector
 }
 
 type Pool struct {
@@ -98,8 +98,8 @@ type Pool struct {
 	RuntimeIdentityID string
 	SubstrateFormat   string
 	SubstrateContract string
-	PerVM             capacity.ResourceVector
-	CPUShapes         []capacity.CPUShape
+	PerVM             ResourceVector
+	CPUShapes         []runtimeid.CPUShape
 }
 
 func CanRestore(requirements RestoreRequirements, pool Pool) bool {
@@ -125,55 +125,55 @@ type poolPlan struct {
 	pool     Pool
 	template bin
 	bins     []bin
-	result   capacity.PoolPlan
+	result   PoolPlan
 }
 
-func Plan(ctx context.Context, store Store, workerGroupID string, request capacity.PlanRequest, now time.Time) (capacity.PlanResponse, error) {
+func Plan(ctx context.Context, store Store, workerGroupID string, request PlanRequest, now time.Time) (PlanResponse, error) {
 	if len(request.Pools) == 0 || len(request.Pools) > maximumPlanningPools {
-		return capacity.PlanResponse{}, fmt.Errorf("%w: pools must contain between 1 and %d entries", ErrInvalidPlanRequest, maximumPlanningPools)
+		return PlanResponse{}, fmt.Errorf("%w: pools must contain between 1 and %d entries", ErrInvalidPlanRequest, maximumPlanningPools)
 	}
 	limits := make(map[[16]byte]int32, len(request.Pools))
 	poolIDs := make([]pgtype.UUID, 0, len(request.Pools))
 	for index, requested := range request.Pools {
 		id, err := ids.Parse(requested.PoolID)
 		if err != nil {
-			return capacity.PlanResponse{}, fmt.Errorf("%w: pools[%d].pool_id must be a canonical UUIDv7", ErrInvalidPlanRequest, index)
+			return PlanResponse{}, fmt.Errorf("%w: pools[%d].pool_id must be a canonical UUIDv7", ErrInvalidPlanRequest, index)
 		}
 		if requested.MaxAdditionalWorkers < 0 || requested.MaxAdditionalWorkers > maximumAdditionalWorkers {
-			return capacity.PlanResponse{}, fmt.Errorf("%w: pools[%d].max_additional_workers must be between 0 and %d", ErrInvalidPlanRequest, index, maximumAdditionalWorkers)
+			return PlanResponse{}, fmt.Errorf("%w: pools[%d].max_additional_workers must be between 0 and %d", ErrInvalidPlanRequest, index, maximumAdditionalWorkers)
 		}
 		key := [16]byte(id)
 		if _, duplicate := limits[key]; duplicate {
-			return capacity.PlanResponse{}, fmt.Errorf("%w: pools[%d].pool_id is duplicated", ErrInvalidPlanRequest, index)
+			return PlanResponse{}, fmt.Errorf("%w: pools[%d].pool_id is duplicated", ErrInvalidPlanRequest, index)
 		}
 		limits[key] = requested.MaxAdditionalWorkers
 		poolIDs = append(poolIDs, pgvalue.UUID(id))
 	}
 	group, err := store.GetWorkerGroup(ctx, workerGroupID)
 	if err != nil {
-		return capacity.PlanResponse{}, err
+		return PlanResponse{}, err
 	}
 	rows, err := store.ListCapacityWorkerPools(ctx, db.ListCapacityWorkerPoolsParams{
 		WorkerGroupID: group.ID, WorkerPoolIDs: poolIDs,
 	})
 	if err != nil {
-		return capacity.PlanResponse{}, fmt.Errorf("list capacity Worker pools: %w", err)
+		return PlanResponse{}, fmt.Errorf("list capacity Worker pools: %w", err)
 	}
 	if len(rows) != len(poolIDs) {
-		return capacity.PlanResponse{}, fmt.Errorf("%w: every requested pool must be active in the Worker Group", ErrInvalidPlanRequest)
+		return PlanResponse{}, fmt.Errorf("%w: every requested pool must be active in the Worker Group", ErrInvalidPlanRequest)
 	}
-	response := capacity.PlanResponse{
+	response := PlanResponse{
 		WorkerGroupID: group.ID, WorkerGroupName: group.Name, RegionID: group.RegionID,
-		GroupStatus: capacity.WorkerGroupStatus(group.State),
-		Complete:    true, ComputedAt: now.UTC(), Pools: make([]capacity.PoolPlan, 0, len(rows)),
-		UnmatchedDemand: []capacity.Incompatibility{},
+		GroupStatus: WorkerGroupStatus(group.State),
+		Complete:    true, ComputedAt: now.UTC(), Pools: make([]PoolPlan, 0, len(rows)),
+		UnmatchedDemand: []Incompatibility{},
 	}
 	plans := make([]poolPlan, 0, len(rows))
 	planByID := make(map[[16]byte]*poolPlan, len(rows))
 	for _, row := range rows {
 		plan, err := capacityPoolPlan(row, limits[row.ID.Bytes])
 		if err != nil {
-			return capacity.PlanResponse{}, fmt.Errorf("load capacity Worker pool: %w", err)
+			return PlanResponse{}, fmt.Errorf("load capacity Worker pool: %w", err)
 		}
 		plans = append(plans, plan)
 	}
@@ -181,7 +181,7 @@ func Plan(ctx context.Context, store Store, workerGroupID string, request capaci
 	for index := range plans {
 		planByID[plans[index].id.Bytes] = &plans[index]
 	}
-	if group.State != string(capacity.WorkerGroupStatusActive) {
+	if group.State != string(WorkerGroupStatusActive) {
 		for index := range plans {
 			response.Pools = append(response.Pools, plans[index].result)
 		}
@@ -190,7 +190,7 @@ func Plan(ctx context.Context, store Store, workerGroupID string, request capaci
 
 	items, accountedPoolIDs, complete, err := discoverItems(ctx, store, group, now.UTC().Format(time.RFC3339Nano))
 	if err != nil {
-		return capacity.PlanResponse{}, err
+		return PlanResponse{}, err
 	}
 	response.Complete = complete
 	for poolID := range accountedPoolIDs {
@@ -200,7 +200,7 @@ func Plan(ctx context.Context, store Store, workerGroupID string, request capaci
 	}
 	bins, binsComplete, err := currentBins(ctx, store, group.ID)
 	if err != nil {
-		return capacity.PlanResponse{}, err
+		return PlanResponse{}, err
 	}
 	response.Complete = response.Complete && binsComplete
 	reasons := map[string]int64{}
@@ -314,7 +314,7 @@ func Plan(ctx context.Context, store Store, workerGroupID string, request capaci
 	}
 	sort.Strings(keys)
 	for _, reason := range keys {
-		response.UnmatchedDemand = append(response.UnmatchedDemand, capacity.Incompatibility{Reason: reason, Count: reasons[reason]})
+		response.UnmatchedDemand = append(response.UnmatchedDemand, Incompatibility{Reason: reason, Count: reasons[reason]})
 	}
 	for index := range plans {
 		plans[index].result.Complete = response.Complete
@@ -332,18 +332,18 @@ func capacityPoolPlan(row db.ListCapacityWorkerPoolsRow, max int32) (poolPlan, e
 		len(row.CPUShapeVCPUCounts) != len(row.CPUShapeConfigDigests) {
 		return poolPlan{}, errors.New("active Worker pool has an incomplete template")
 	}
-	shapes := make([]capacity.CPUShape, len(row.CPUShapeVCPUCounts))
+	shapes := make([]runtimeid.CPUShape, len(row.CPUShapeVCPUCounts))
 	for index := range row.CPUShapeVCPUCounts {
-		shapes[index] = capacity.CPUShape{
+		shapes[index] = runtimeid.CPUShape{
 			VCPUCount: row.CPUShapeVCPUCounts[index], CPUConfigDigest: row.CPUShapeConfigDigests[index],
 		}
 	}
-	resources := capacity.ResourceVector{
+	resources := ResourceVector{
 		CPUMillis: row.CapacityCPUMillis.Int64, MemoryBytes: row.CapacityMemoryBytes.Int64,
 		GuestEphemeralDiskBytes: row.CapacityGuestEphemeralDiskBytes.Int64,
 		VMSlots:                 int64(row.MaxVMSlots.Int32),
 	}
-	perVM := capacity.ResourceVector{
+	perVM := ResourceVector{
 		CPUMillis: row.PerVMCPUMillis.Int64, MemoryBytes: row.PerVMMemoryBytes.Int64,
 		GuestEphemeralDiskBytes: row.PerVMGuestEphemeralDiskBytes.Int64,
 	}
@@ -351,7 +351,7 @@ func capacityPoolPlan(row db.ListCapacityWorkerPoolsRow, max int32) (poolPlan, e
 		workerGroupID: row.WorkerGroupID, workerPoolID: row.ID,
 		resources: resources, runConsumers: resources.VMSlots, runtimeStarts: resources.VMSlots,
 		supportsRun: true,
-		runtimeArch: "x86_64", runtimeContract: capacity.RuntimeContract,
+		runtimeArch: "x86_64", runtimeContract: runtimeid.Contract,
 		runtimeIdentityID: row.RuntimeIdentityID.String,
 		substrateFormat:   row.SubstrateFormat.String, substrateContract: row.SubstrateContract.String,
 		perVM: perVM, cpuShapes: shapes,
@@ -364,7 +364,7 @@ func capacityPoolPlan(row db.ListCapacityWorkerPoolsRow, max int32) (poolPlan, e
 			PerVM: perVM, CPUShapes: shapes,
 		},
 		template: template,
-		result: capacity.PoolPlan{
+		result: PoolPlan{
 			PoolID: uuid.UUID(row.ID.Bytes).String(), PoolName: row.Name,
 			RegisteringWorkers: row.RegisteringWorkers, ActiveWorkers: row.ActiveWorkers,
 			Complete: true,
@@ -558,7 +558,7 @@ func runItem(row db.ListQueuedRunPlanningCandidatesForScopesRow) item {
 			result.reason = reasonInvalidWorkload
 			return result
 		}
-		resources = capacity.ResourceVector{
+		resources = ResourceVector{
 			CPUMillis: row.RequiredCPUMillis, MemoryBytes: row.RequiredMemoryBytes,
 			GuestEphemeralDiskBytes: row.RequiredGuestEphemeralDiskBytes, VMSlots: 1,
 		}
@@ -592,7 +592,7 @@ func freshExecutionItem(key string, manifestVersion int32, manifestJSON []byte) 
 		result.reason = reasonInvalidWorkload
 		return result
 	}
-	resources := capacity.ResourceVector{
+	resources := ResourceVector{
 		CPUMillis: manifest.Resources.MilliCPU, MemoryBytes: manifest.Resources.MemoryMiB * mebibyte,
 		GuestEphemeralDiskBytes: compute.WorkspaceGuestEphemeralDiskMiB * mebibyte,
 		VMSlots:                 1,
@@ -623,7 +623,7 @@ func binFromRow(row db.ListWorkerCapacityBinsRow) bin {
 	result := bin{
 		workerGroupID: row.WorkerGroupID,
 		workerPoolID:  row.WorkerPoolID,
-		resources: capacity.ResourceVector{
+		resources: ResourceVector{
 			CPUMillis: row.AvailableCPUMillis, MemoryBytes: row.AvailableMemoryBytes,
 			GuestEphemeralDiskBytes: row.AvailableGuestEphemeralDiskBytes,
 			VMSlots:                 row.AvailableVMSlots,
@@ -634,15 +634,15 @@ func binFromRow(row db.ListWorkerCapacityBinsRow) bin {
 		substrateFormat: row.SubstrateFormat, substrateContract: row.SubstrateContract,
 		runPaused:     row.RunPausedReason.Valid,
 		runtimePaused: row.RuntimePausedReason.Valid,
-		perVM: capacity.ResourceVector{
+		perVM: ResourceVector{
 			CPUMillis: row.PerVMCPUMillis, MemoryBytes: row.PerVMMemoryBytes,
 			GuestEphemeralDiskBytes: row.PerVMGuestEphemeralDiskBytes,
 		},
 	}
 	if len(row.CPUShapeVCPUCounts) == len(row.CPUShapeConfigDigests) {
-		result.cpuShapes = make([]capacity.CPUShape, len(row.CPUShapeVCPUCounts))
+		result.cpuShapes = make([]runtimeid.CPUShape, len(row.CPUShapeVCPUCounts))
 		for index := range row.CPUShapeVCPUCounts {
-			result.cpuShapes[index] = capacity.CPUShape{
+			result.cpuShapes[index] = runtimeid.CPUShape{
 				VCPUCount: row.CPUShapeVCPUCounts[index], CPUConfigDigest: row.CPUShapeConfigDigests[index],
 			}
 		}
@@ -651,7 +651,7 @@ func binFromRow(row db.ListWorkerCapacityBinsRow) bin {
 }
 
 type RunRequirements struct {
-	Resources         capacity.ResourceVector
+	Resources         ResourceVector
 	Architecture      string
 	WorkerGroupID     string
 	RuntimeIdentityID string
@@ -692,7 +692,7 @@ func RunWorkerCapacityPressureCandidates(rows []db.ListWorkerCapacityBinsRow, re
 func hardCompatibleRunWorker(row db.ListWorkerCapacityBinsRow, request RunRequirements) (bin, bool) {
 	target := binFromRow(row)
 	if target.runPaused || target.runtimePaused || !target.supportsRun ||
-		target.runtimeArch != "x86_64" || target.runtimeContract != capacity.RuntimeContract ||
+		target.runtimeArch != "x86_64" || target.runtimeContract != runtimeid.Contract ||
 		!fitsPhysical(target.perVM, request.Resources) {
 		return bin{}, false
 	}
@@ -728,7 +728,7 @@ func incompatibility(candidate item, target bin) string {
 	if candidate.role == "run" && !target.supportsRun {
 		return reasonRunRole
 	}
-	if target.runtimeArch != "x86_64" || target.runtimeContract != capacity.RuntimeContract {
+	if target.runtimeArch != "x86_64" || target.runtimeContract != runtimeid.Contract {
 		return reasonRuntimeCompatibility
 	}
 	if candidate.role == "run" && ((candidate.runtimeIdentityID != "" && candidate.runtimeIdentityID != target.runtimeIdentityID) ||
@@ -766,14 +766,14 @@ func place(target *bin, candidate item) bool {
 	return true
 }
 
-func fitsResources(available, required capacity.ResourceVector) bool {
+func fitsResources(available, required ResourceVector) bool {
 	return available.CPUMillis >= required.CPUMillis &&
 		available.MemoryBytes >= required.MemoryBytes &&
 		available.GuestEphemeralDiskBytes >= required.GuestEphemeralDiskBytes &&
 		available.VMSlots >= required.VMSlots
 }
 
-func fitsPhysical(available, required capacity.ResourceVector) bool {
+func fitsPhysical(available, required ResourceVector) bool {
 	return available.CPUMillis >= required.CPUMillis &&
 		available.MemoryBytes >= required.MemoryBytes &&
 		available.GuestEphemeralDiskBytes >= required.GuestEphemeralDiskBytes

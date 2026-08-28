@@ -1,14 +1,12 @@
 package capacity
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
-	"strings"
 	"time"
+
+	"github.com/helmrdotdev/helmr/internal/runtimeid"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 type WorkerGroupStatus string
@@ -49,126 +47,9 @@ type ResourceVector struct {
 const WorkerTemplateSchema = "helmr.worker-template.v0"
 
 const (
-	RuntimeContract       = "helmr.vm-runtime.v0"
 	SubstrateFormatExt4   = "ext4"
 	SubstrateContractExt4 = "helmr.substrate.ext4.v0"
 )
-
-type CPUTemplateKind string
-
-const (
-	CPUTemplateNone   CPUTemplateKind = "none"
-	CPUTemplateCustom CPUTemplateKind = "custom"
-)
-
-type CPUTemplateSelector struct {
-	Kind   CPUTemplateKind `json:"kind"`
-	Digest string          `json:"digest,omitempty"`
-}
-
-type CPUShape struct {
-	VCPUCount       int32  `json:"vcpu_count"`
-	CPUConfigDigest string `json:"cpu_config_digest"`
-}
-
-type RuntimeProfile struct {
-	ID                        string              `json:"id"`
-	Arch                      string              `json:"arch"`
-	Contract                  string              `json:"contract"`
-	VMRuntimeDescriptorDigest string              `json:"vm_runtime_descriptor_digest"`
-	FirecrackerDigest         string              `json:"firecracker_digest"`
-	FirecrackerVersion        string              `json:"firecracker_version"`
-	SnapshotFormatVersion     string              `json:"snapshot_format_version"`
-	HostKernelRelease         string              `json:"host_kernel_release"`
-	CPUTemplate               CPUTemplateSelector `json:"cpu_template"`
-	KernelDigest              string              `json:"kernel_digest"`
-	InitramfsDigest           string              `json:"initramfs_digest"`
-	RootfsDigest              string              `json:"rootfs_digest"`
-}
-
-func (p RuntimeProfile) ExpectedID() (string, error) {
-	if err := p.validateSelector(); err != nil {
-		return "", err
-	}
-	payload, err := json.Marshal(struct {
-		Domain                    string              `json:"domain"`
-		Backend                   string              `json:"backend"`
-		Arch                      string              `json:"arch"`
-		Contract                  string              `json:"contract"`
-		VMRuntimeDescriptorDigest string              `json:"vm_runtime_descriptor_digest"`
-		FirecrackerDigest         string              `json:"firecracker_digest"`
-		FirecrackerVersion        string              `json:"firecracker_version"`
-		SnapshotFormatVersion     string              `json:"snapshot_format_version"`
-		HostKernelRelease         string              `json:"host_kernel_release"`
-		CPUTemplate               CPUTemplateSelector `json:"cpu_template"`
-		KernelDigest              string              `json:"kernel_digest"`
-		InitramfsDigest           string              `json:"initramfs_digest"`
-		RootfsDigest              string              `json:"rootfs_digest"`
-	}{
-		Domain: "helmr.vm-runtime-identity.v0", Backend: "firecracker",
-		Arch: p.Arch, Contract: p.Contract,
-		VMRuntimeDescriptorDigest: p.VMRuntimeDescriptorDigest,
-		FirecrackerDigest:         p.FirecrackerDigest, FirecrackerVersion: p.FirecrackerVersion,
-		SnapshotFormatVersion: p.SnapshotFormatVersion, HostKernelRelease: p.HostKernelRelease,
-		CPUTemplate: p.CPUTemplate, KernelDigest: p.KernelDigest,
-		InitramfsDigest: p.InitramfsDigest, RootfsDigest: p.RootfsDigest,
-	})
-	if err != nil {
-		return "", err
-	}
-	return sha256Digest(payload), nil
-}
-
-func (p RuntimeProfile) Validate() error {
-	expected, err := p.ExpectedID()
-	if err != nil {
-		return err
-	}
-	if p.ID != expected {
-		return errors.New("runtime.id does not match the canonical runtime selector")
-	}
-	return nil
-}
-
-func (p RuntimeProfile) validateSelector() error {
-	var problems []error
-	if p.Arch != "x86_64" || p.Contract != RuntimeContract {
-		problems = append(problems, errors.New("runtime architecture or contract is not supported"))
-	}
-	for _, field := range []struct{ name, value string }{
-		{name: "vm_runtime_descriptor_digest", value: p.VMRuntimeDescriptorDigest},
-		{name: "firecracker_digest", value: p.FirecrackerDigest},
-		{name: "kernel_digest", value: p.KernelDigest},
-		{name: "initramfs_digest", value: p.InitramfsDigest},
-		{name: "rootfs_digest", value: p.RootfsDigest},
-	} {
-		if !validSHA256Digest(field.value) {
-			problems = append(problems, fmt.Errorf("runtime.%s must be a canonical SHA-256 digest", field.name))
-		}
-	}
-	if !validSemanticVersion(p.FirecrackerVersion) {
-		problems = append(problems, errors.New("runtime.firecracker_version must be a canonical semantic version"))
-	}
-	if !validSemanticVersion(p.SnapshotFormatVersion) {
-		problems = append(problems, errors.New("runtime.snapshot_format_version must be a canonical semantic version"))
-	}
-	if p.HostKernelRelease == "" || strings.TrimSpace(p.HostKernelRelease) != p.HostKernelRelease || len(p.HostKernelRelease) > 255 {
-		problems = append(problems, errors.New("runtime.host_kernel_release must be a non-empty canonical release string"))
-	}
-	switch p.CPUTemplate.Kind {
-	case CPUTemplateNone:
-		if p.CPUTemplate.Digest != "" {
-			problems = append(problems, errors.New("runtime.cpu_template.digest must be empty for kind none"))
-		}
-	case CPUTemplateCustom:
-		if !validSHA256Digest(p.CPUTemplate.Digest) {
-			problems = append(problems, errors.New("runtime.cpu_template.digest must be a canonical SHA-256 digest for kind custom"))
-		}
-	default:
-		problems = append(problems, errors.New("runtime.cpu_template.kind must be none or custom"))
-	}
-	return errors.Join(problems...)
-}
 
 type SubstrateProfile struct {
 	Format   string `json:"format,omitempty"`
@@ -176,12 +57,12 @@ type SubstrateProfile struct {
 }
 
 type WorkerTemplate struct {
-	Schema    string           `json:"schema"`
-	Runtime   RuntimeProfile   `json:"runtime"`
-	CPUShapes []CPUShape       `json:"cpu_shapes"`
-	Substrate SubstrateProfile `json:"substrate"`
-	Capacity  ResourceVector   `json:"capacity"`
-	PerVM     ResourceVector   `json:"per_vm"`
+	Schema    string               `json:"schema"`
+	Runtime   runtimeid.Profile    `json:"runtime"`
+	CPUShapes []runtimeid.CPUShape `json:"cpu_shapes"`
+	Substrate SubstrateProfile     `json:"substrate"`
+	Capacity  ResourceVector       `json:"capacity"`
+	PerVM     ResourceVector       `json:"per_vm"`
 }
 
 func (t WorkerTemplate) Validate() error {
@@ -228,7 +109,7 @@ func (t WorkerTemplate) Validate() error {
 			if shape.VCPUCount != want {
 				problems = append(problems, fmt.Errorf("cpu_shapes[%d].vcpu_count must be %d", index, want))
 			}
-			if !validSHA256Digest(shape.CPUConfigDigest) {
+			if !sha256sum.ValidDigest(shape.CPUConfigDigest) {
 				problems = append(problems, fmt.Errorf("cpu_shapes[%d].cpu_config_digest must be a canonical SHA-256 digest", index))
 			}
 		}
@@ -237,39 +118,6 @@ func (t WorkerTemplate) Validate() error {
 		problems = append(problems, errors.New("run Workers require positive VM slots"))
 	}
 	return errors.Join(problems...)
-}
-
-func validSHA256Digest(value string) bool {
-	if len(value) != len("sha256:")+sha256.Size*2 || !strings.HasPrefix(value, "sha256:") {
-		return false
-	}
-	for _, character := range value[len("sha256:"):] {
-		if character < '0' || character > '9' && character < 'a' || character > 'f' {
-			return false
-		}
-	}
-	return true
-}
-
-func validSemanticVersion(value string) bool {
-	parts := strings.Split(value, ".")
-	if len(parts) != 3 {
-		return false
-	}
-	for _, part := range parts {
-		if part == "" || (len(part) > 1 && part[0] == '0') {
-			return false
-		}
-		if _, err := strconv.ParseUint(part, 10, 32); err != nil {
-			return false
-		}
-	}
-	return true
-}
-
-func sha256Digest(value []byte) string {
-	digest := sha256.Sum256(value)
-	return "sha256:" + hex.EncodeToString(digest[:])
 }
 
 type PlanRequest struct {

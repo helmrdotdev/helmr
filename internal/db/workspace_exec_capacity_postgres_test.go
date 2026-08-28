@@ -7,8 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	capacitycontract "github.com/helmrdotdev/helmr/capacity"
-	capacityledger "github.com/helmrdotdev/helmr/internal/capacity"
+	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/deployment"
@@ -371,8 +370,8 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 				`, interleavedRuntimeID)
 			},
 		}
-		plan, err := capacityledger.Plan(ctx, store, dbtest.DefaultWorkerGroupID, capacitycontract.PlanRequest{
-			Pools: []capacitycontract.PoolRequest{{
+		plan, err := capacity.Plan(ctx, store, dbtest.DefaultWorkerGroupID, capacity.PlanRequest{
+			Pools: []capacity.PoolRequest{{
 				PoolID:               dbtest.DefaultWorkerPoolID,
 				MaxAdditionalWorkers: 1,
 			}},
@@ -417,8 +416,8 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 					definitionID, dbtest.DefaultCPUConfigID, workspaceID, processID, versionID)
 			},
 		}
-		plan, err := capacityledger.Plan(ctx, store, dbtest.DefaultWorkerGroupID, capacitycontract.PlanRequest{
-			Pools: []capacitycontract.PoolRequest{{
+		plan, err := capacity.Plan(ctx, store, dbtest.DefaultWorkerGroupID, capacity.PlanRequest{
+			Pools: []capacity.PoolRequest{{
 				PoolID:               dbtest.DefaultWorkerPoolID,
 				MaxAdditionalWorkers: 1,
 			}},

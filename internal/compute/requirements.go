@@ -21,7 +21,7 @@ type Placement struct {
 
 type RunRuntimeRequirements struct {
 	Resources ResourceVector
-	Runtime   runtimeid.Selector
+	Runtime   runtimeid.Profile
 	Placement Placement
 }
 
@@ -63,7 +63,7 @@ func RunRuntimeRequirementsFromFields(fields RunRuntimeRequirementFields) (RunRu
 			DiskMiB:   fields.RequestedDiskMiB,
 			Slots:     fields.RequestedExecutionSlots,
 		},
-		Runtime: runtimeid.Selector{
+		Runtime: runtimeid.Profile{
 			ID:              fields.RuntimeID,
 			Arch:            fields.RuntimeArch,
 			Contract:        fields.VMRuntimeContract,

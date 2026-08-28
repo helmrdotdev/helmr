@@ -661,7 +661,7 @@ func testHostRuntimeEvidence(t *testing.T, maxVCPUCount int64, artifacts runtime
 	return evidence
 }
 
-func mustDeriveTestRuntimeIdentity(t *testing.T, evidence HostRuntimeEvidence) runtimeid.Selector {
+func mustDeriveTestRuntimeIdentity(t *testing.T, evidence HostRuntimeEvidence) runtimeid.Profile {
 	t.Helper()
 	identity, err := deriveHostRuntimeIdentity(evidence)
 	if err != nil {
