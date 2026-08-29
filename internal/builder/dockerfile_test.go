@@ -6,7 +6,7 @@ import (
 )
 
 func TestInstalledDockerfileIsTheOnlyGraphThatRunsUserInstall(t *testing.T) {
-	image := "ghcr.io/helmrdotdev/helmr-bundle-builder@sha256:" + strings.Repeat("a", 64)
+	image := "ghcr.io/helmrdotdev/helmr/bundle-builder@sha256:" + strings.Repeat("a", 64)
 	raw, err := InstalledDockerfile(image, InstallPlan{Argv: []string{
 		"npx", "--yes", "yarn@8.0.0", "install", "--immutable",
 	}, SecretIDs: []string{"NPM_TOKEN"}})
@@ -31,7 +31,7 @@ func TestInstalledDockerfileIsTheOnlyGraphThatRunsUserInstall(t *testing.T) {
 }
 
 func TestFinalGraphsUseOnlyTheInstalledOCIContext(t *testing.T) {
-	image := "ghcr.io/helmrdotdev/helmr-bundle-builder@sha256:" + strings.Repeat("a", 64)
+	image := "ghcr.io/helmrdotdev/helmr/bundle-builder@sha256:" + strings.Repeat("a", 64)
 	for name, render := range map[string]func(string) ([]byte, error){
 		"analysis": AnalysisDockerfile,
 		"final":    Dockerfile,
@@ -100,7 +100,7 @@ func TestInstalledDockerfileQuotesCustomInstallAsOneBuildKitArgument(t *testing.
 }
 
 func TestDockerfilesRejectMutableBuilderReference(t *testing.T) {
-	mutable := "ghcr.io/helmrdotdev/helmr-bundle-builder:latest"
+	mutable := "ghcr.io/helmrdotdev/helmr/bundle-builder:latest"
 	if _, err := InstalledDockerfile(mutable, InstallPlan{Argv: []string{"npm", "ci"}}); err == nil {
 		t.Fatal("InstalledDockerfile accepted a mutable builder tag")
 	}

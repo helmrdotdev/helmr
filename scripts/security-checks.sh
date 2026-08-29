@@ -33,7 +33,7 @@ check_id_token_permissions() {
 			allowed = job_environment_release ||
 				(current_file == ".github/workflows/release.yaml" &&
 				 current_job == "platform-release-dev" &&
-				 job_environment_dev)
+				 !job_has_environment)
 			if (current_job != "" && id_token_count > 0 && !allowed) {
 				for (i = 1; i <= id_token_count; i++) {
 					fail_at(id_token_file[i], id_token_line[i], id_token_grant[i] " in job \"" current_job "\" is outside the closed release identity allowlist")
@@ -42,7 +42,7 @@ check_id_token_permissions() {
 			current_job = ""
 			current_file = ""
 			job_environment_release = 0
-			job_environment_dev = 0
+			job_has_environment = 0
 			id_token_count = 0
 			in_environment_block = 0
 		}
@@ -55,7 +55,7 @@ check_id_token_permissions() {
 			current_job = ""
 			current_file = ""
 			job_environment_release = 0
-			job_environment_dev = 0
+			job_has_environment = 0
 			id_token_count = 0
 			in_environment_block = 0
 		}
@@ -86,18 +86,16 @@ check_id_token_permissions() {
 			}
 
 			if (current_job != "") {
-				if (line ~ /^    ["\047]?environment["\047]?[[:space:]]*:[[:space:]]*["\047]?release-production["\047]?([[:space:]#]|$)/) {
+				if (line ~ /^    ["\047]?environment["\047]?[[:space:]]*:/) {
+					job_has_environment = 1
+				}
+				if (line ~ /^    ["\047]?environment["\047]?[[:space:]]*:[[:space:]]*["\047]?release["\047]?([[:space:]#]|$)/) {
 					job_environment_release = 1
-					in_environment_block = 0
-				} else if (line ~ /^    ["\047]?environment["\047]?[[:space:]]*:[[:space:]]*["\047]?dev-runtime["\047]?([[:space:]#]|$)/) {
-					job_environment_dev = 1
 					in_environment_block = 0
 				} else if (line ~ /^    ["\047]?environment["\047]?[[:space:]]*:[[:space:]]*(#.*)?$/) {
 					in_environment_block = 1
-				} else if (in_environment_block && line ~ /^      ["\047]?name["\047]?[[:space:]]*:[[:space:]]*["\047]?release-production["\047]?([[:space:]#]|$)/) {
+				} else if (in_environment_block && line ~ /^      ["\047]?name["\047]?[[:space:]]*:[[:space:]]*["\047]?release["\047]?([[:space:]#]|$)/) {
 					job_environment_release = 1
-				} else if (in_environment_block && line ~ /^      ["\047]?name["\047]?[[:space:]]*:[[:space:]]*["\047]?dev-runtime["\047]?([[:space:]#]|$)/) {
-					job_environment_dev = 1
 				} else if (in_environment_block && line !~ /^      / && line !~ /^[[:space:]]*$/) {
 					in_environment_block = 0
 				}

@@ -158,12 +158,12 @@ variable "cloudfront_origin_domain_name" {
 }
 
 variable "helmr_version" {
-  description = "Helmr release version to deploy, for example vX.Y.Z. Used to resolve official controlplane and worker artifacts."
+  description = "Exact Helmr release tag to deploy, vX.Y.Z or vX.Y.Z-prerelease. Used to resolve official controlplane and worker artifacts."
   type        = string
 
   validation {
-    condition     = trimspace(var.helmr_version) != ""
-    error_message = "helmr_version must not be empty."
+    condition     = can(regex("^v(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)([.]((0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?$", var.helmr_version))
+    error_message = "helmr_version must be an exact vX.Y.Z or vX.Y.Z-prerelease tag."
   }
 }
 

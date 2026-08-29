@@ -46,8 +46,7 @@ Commands:
   controlplane-image-build
   controlplane-image-push
 
-This Product-owned tool builds and publishes release artifacts. Managed Cloud
-environment composition and validation live in the private cloud repository.
+This tool builds and publishes Helmr release artifacts.
 EOF
 }
 

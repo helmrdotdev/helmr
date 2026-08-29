@@ -81,11 +81,11 @@ canonical_path() {
 }
 
 resolve_latest_release_tag() {
-  local filename="$1"
+  local target="$1"
   local releases_json
 
   releases_json="$(curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=100")"
-  printf "%s\n" "$releases_json" | awk -v filename="$filename" '
+  printf "%s\n" "$releases_json" | awk -v target="$target" '
     /^  \{/ {
       tag = ""
       draft = 1
@@ -105,7 +105,7 @@ resolve_latest_release_tag() {
       name = $0
       sub(/^[^:]*:[[:space:]]*"/, "", name)
       sub(/".*$/, "", name)
-      if (name == filename) {
+      if (name == "helmr-" tag "-" target ".tar.gz") {
         has_archive = 1
       } else if (name == "checksums.txt") {
         has_checksums = 1
@@ -209,10 +209,8 @@ else
       ;;
   esac
 
-  filename="$APP-$target.tar.gz"
-
   if [ -z "$requested_version" ]; then
-    release_tag="$(resolve_latest_release_tag "$filename")"
+    release_tag="$(resolve_latest_release_tag "$target")"
     if [ -z "$release_tag" ]; then
       print_message error "Failed to resolve latest Helmr release."
       exit 1
@@ -225,6 +223,7 @@ else
     esac
   fi
 
+  filename="$APP-$release_tag-$target.tar.gz"
   specific_version="$release_tag"
   base_url="https://github.com/$REPO/releases/download/$release_tag"
   url="$base_url/$filename"

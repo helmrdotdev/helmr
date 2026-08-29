@@ -3,6 +3,9 @@
 This module resolves immutable Helmr release artifacts for AWS deployments.
 Terraform/OpenTofu does not build images; it reads a release manifest and passes the resulting
 Control Plane image and worker AMI into the infrastructure modules.
+Set `helmr_version` to one exact `vX.Y.Z[-pre]` cohort. Older artifacts may
+remain available, but that does not guarantee a safe Platform or data
+downgrade.
 
 Default manifest URL:
 

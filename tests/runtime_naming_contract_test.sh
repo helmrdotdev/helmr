@@ -65,6 +65,8 @@ require_text 'ExecStart=/usr/local/bin/worker' \
 
 require_text 'CONTROLPLANE_IMAGE_REPOSITORY: ghcr.io/${{ github.repository }}/control-plane' \
   "${root}/.github/workflows/release.yaml" "release workflow does not publish the nested Control Plane package"
+require_text 'BUILDER_IMAGE_REPOSITORY: ghcr.io/${{ github.repository }}/bundle-builder' \
+  "${root}/.github/workflows/release.yaml" "release workflow does not publish the nested bundle-builder package"
 reject_text 'ghcr.io/${{ github.repository_owner }}/helmr-controlplane' \
   "${root}/.github/workflows/release.yaml" "removed Control Plane package publication path remains"
 
@@ -96,6 +98,13 @@ require_text 'filepath.Join(os.TempDir(), "helmr-worker", "vms", "guest")' \
   "${root}/internal/firecracker/config.go" "Firecracker temporary state path changed"
 require_text 'WORKER_IMAGE_NAME="${WORKER_IMAGE_NAME:-helmr-worker-image}"' \
   "${root}/scripts/aws-release-artifacts.sh" "Worker image infrastructure identity changed"
+require_text 'base_name="${2:-helmr-worker}"' \
+  "${root}/scripts/release-worker-image-identity.sh" "Worker AMI release name does not use the helmr-worker base"
+for variables in infra/aws/modules/release-artifacts/variables.tf \
+  infra/aws/quickstart/variables.tf infra/aws/standard/variables.tf; do
+  require_text 'condition     = can(regex("^v(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)([.]((0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?$"' \
+    "${root}/${variables}" "${variables} does not require an exact Helmr release tag"
+done
 require_text '.schema == "helmr.worker-host-artifacts.v0"' \
   "${root}/infra/aws/modules/worker-image/templates/build-worker-image.sh.tftpl" \
   "Worker host-artifact schema identity changed"

@@ -57,8 +57,8 @@ write_release_fixture() {
   local tmp="$1"
   mkdir -p "$tmp/source"
   write_helmr_binary "$tmp/source/helmr" "v9.8.7 (0123456789abcdef0123456789abcdef01234567)"
-  tar -C "$tmp/source" -czf "$tmp/helmr-linux-amd64.tar.gz" helmr
-  printf '%s  helmr-linux-amd64.tar.gz\n' "$(sha256_file "$tmp/helmr-linux-amd64.tar.gz")" > "$tmp/checksums.txt"
+  tar -C "$tmp/source" -czf "$tmp/helmr-v9.8.7-linux-amd64.tar.gz" helmr
+  printf '%s  helmr-v9.8.7-linux-amd64.tar.gz\n' "$(sha256_file "$tmp/helmr-v9.8.7-linux-amd64.tar.gz")" > "$tmp/checksums.txt"
 }
 
 test_canonical_version_at_target_skips_install() {
@@ -121,9 +121,9 @@ case "\$url" in
       exit 1
     fi
     ;;
-  "https://github.com/helmrdotdev/helmr/releases/download/v9.8.7/helmr-linux-amd64.tar.gz")
+  "https://github.com/helmrdotdev/helmr/releases/download/v9.8.7/helmr-v9.8.7-linux-amd64.tar.gz")
     printf '%s\n' "\$url" > "$tmp/download-url"
-    cp "$tmp/helmr-linux-amd64.tar.gz" "\$out"
+    cp "$tmp/helmr-v9.8.7-linux-amd64.tar.gz" "\$out"
     ;;
   "https://github.com/helmrdotdev/helmr/releases/download/v9.8.7/checksums.txt")
     cp "$tmp/checksums.txt" "\$out"
@@ -165,7 +165,7 @@ test_latest_release_skips_non_cli_release() {
     "prerelease": false,
     "assets": [
       {
-        "name": "helmr-linux-amd64.tar.gz"
+        "name": "helmr-v9.8.7-linux-amd64.tar.gz"
       },
       {
         "name": "checksums.txt"
@@ -183,7 +183,7 @@ JSON
     SHELL=/bin/sh \
     "$repo_root/install" --no-modify-path >/dev/null
 
-  assert_equal "https://github.com/helmrdotdev/helmr/releases/download/v9.8.7/helmr-linux-amd64.tar.gz" "$(cat "$tmp/download-url")" "download url"
+  assert_equal "https://github.com/helmrdotdev/helmr/releases/download/v9.8.7/helmr-v9.8.7-linux-amd64.tar.gz" "$(cat "$tmp/download-url")" "download url"
   assert_file "$tmp/install/helmr"
 }
 
@@ -204,7 +204,7 @@ test_same_version_elsewhere_on_path_does_not_skip_install() {
     SHELL=/bin/sh \
     "$repo_root/install" --version v9.8.7 --no-modify-path >/dev/null
 
-  assert_equal "https://github.com/helmrdotdev/helmr/releases/download/v9.8.7/helmr-linux-amd64.tar.gz" "$(cat "$tmp/download-url")" "download url"
+  assert_equal "https://github.com/helmrdotdev/helmr/releases/download/v9.8.7/helmr-v9.8.7-linux-amd64.tar.gz" "$(cat "$tmp/download-url")" "download url"
   assert_file "$tmp/install/helmr"
 }
 

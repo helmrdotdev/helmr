@@ -2,7 +2,7 @@
 set -euo pipefail
 
 release_tag="${1:-}"
-base_name="${2:-helmr-release-image}"
+base_name="${2:-helmr-worker}"
 base_state_key="${3:-helmr/stacks/release-worker-image/terraform.tfstate}"
 
 die() {
@@ -28,7 +28,7 @@ slugify() {
 
 [ -n "$release_tag" ] || die "usage: scripts/release-worker-image-identity.sh <release-tag> [base-name] [base-state-key]"
 
-if ! printf '%s' "$release_tag" | grep -Eq '^v[0-9]+[.][0-9]+[.][0-9]+(-[0-9A-Za-z-]+([.][0-9A-Za-z-]+)*)?$'; then
+if ! printf '%s' "$release_tag" | grep -Eq '^v(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)([.]((0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?$'; then
   die "release tag must match vX.Y.Z or vX.Y.Z-prerelease"
 fi
 
