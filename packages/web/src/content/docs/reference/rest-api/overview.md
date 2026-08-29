@@ -30,7 +30,8 @@ Workspace file content is a JSON object whose `data_base64` field contains the
 file bytes. The SDK and the CLI's default output decode that value. Run logs
 and events are finite JSON pages.
 
-Console/session management, public callback, worker, capacity, and Admin APIs
-use other prefixes and are not aliases for the `/v1` Developer API. Self-hosted
+Console/session management and public callbacks use `/api`, Admin uses
+`/admin/api/v1`, Capacity uses `/capacity/v1`, and the Worker protocol uses
+`/worker/v1`. None are aliases for the `/v1` Developer API. Self-hosted
 operators can integrate trusted scaling automation through the separate
 [Capacity deployment protocol](/docs/self-hosting/capacity-scaling/).

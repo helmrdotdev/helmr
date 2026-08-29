@@ -61,7 +61,7 @@ func TestWorkerAppendLogsReturnsConflictForChangedReplay(t *testing.T) {
 		db:  workerLogReplayStore{replayMatches: false},
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	request := httptest.NewRequest(http.MethodPost, "/api/worker/v0/run/logs/append", bytes.NewReader(body))
+	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/logs/append", bytes.NewReader(body))
 	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
 		WorkerInstanceID: workerID, WorkerGroupID: lease.WorkerGroupID, WorkerEpoch: lease.WorkerEpoch,
 	}))
@@ -92,7 +92,7 @@ func TestWorkerAppendLogsAcceptsIdenticalReplay(t *testing.T) {
 		db:  workerLogReplayStore{replayMatches: true, params: &params},
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	request := httptest.NewRequest(http.MethodPost, "/api/worker/v0/run/logs/append", bytes.NewReader(body))
+	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/logs/append", bytes.NewReader(body))
 	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
 		WorkerInstanceID: workerID, WorkerGroupID: lease.WorkerGroupID, WorkerEpoch: lease.WorkerEpoch,
 	}))
@@ -144,7 +144,7 @@ func TestWorkerAppendLogsReplaysAfterLeaseIsNoLongerLive(t *testing.T) {
 		},
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	request := httptest.NewRequest(http.MethodPost, "/api/worker/v0/run/logs/append", bytes.NewReader(body))
+	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/logs/append", bytes.NewReader(body))
 	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
 		WorkerInstanceID: workerID, WorkerGroupID: lease.WorkerGroupID,
 		WorkerEpoch: lease.WorkerEpoch}))
@@ -178,7 +178,7 @@ func TestWorkerAppendLogsRejectsAnotherWorkersFence(t *testing.T) {
 		},
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	request := httptest.NewRequest(http.MethodPost, "/api/worker/v0/run/logs/append", bytes.NewReader(body))
+	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/logs/append", bytes.NewReader(body))
 	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
 		WorkerInstanceID: uuid.Must(uuid.NewV7()),
 		WorkerGroupID:    lease.WorkerGroupID,

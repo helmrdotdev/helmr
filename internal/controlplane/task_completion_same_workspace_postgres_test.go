@@ -105,7 +105,7 @@ UPDATE runs SET retry_policy = '{"enabled":true}'::jsonb WHERE id = $1`, fixture
 	}
 	request := httptest.NewRequest(
 		http.MethodPost,
-		"/api/worker/v0/run/tasks/complete",
+		"/worker/v1/run/tasks/complete",
 		bytes.NewReader(body),
 	)
 	request = request.WithContext(context.WithValue(

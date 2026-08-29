@@ -33,7 +33,7 @@ func TestWorkerEnrollmentGuardAllowsTargetFleetBurstFromOneSource(t *testing.T) 
 }
 
 func TestWorkerEnrollmentSourceUsesLastForwardedAddress(t *testing.T) {
-	request := httptest.NewRequest("POST", "/api/worker/v0/enrollment", nil)
+	request := httptest.NewRequest("POST", "/worker/v1/enrollment", nil)
 	request.RemoteAddr = "10.0.0.5:1234"
 	request.Header.Set("X-Forwarded-For", "198.51.100.1, 203.0.113.8")
 	if got := workerEnrollmentSource(request); got != "203.0.113.8" {

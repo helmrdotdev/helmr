@@ -73,7 +73,7 @@ func TestWorkerRuntimeReconcileTargetRoundTripsActionWorkspaceAuthority(t *testi
 				WorkspaceArchitecture:     "x86_64",
 			}
 			server := &Server{log: discardTestLogger(), db: &runtimeReconcileTargetStore{rows: []db.ListRuntimeReconcileTargetsRow{row}}}
-			request := httptest.NewRequest(http.MethodPost, "/api/worker/v0/run/runtime-instances/reconcile", strings.NewReader(`{}`))
+			request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/runtime-instances/reconcile", strings.NewReader(`{}`))
 			request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
 				WorkerInstanceID: workerID,
 				WorkerGroupID:    "run-workers",
@@ -105,7 +105,7 @@ func TestWorkerRuntimeReconcileReturnsBoundedBatch(t *testing.T) {
 		{ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), WorkerEpoch: 7, DesiredState: db.RuntimeDesiredStateClosed, ObservedState: db.RuntimeObservedStateClosing},
 	}}
 	server := &Server{log: discardTestLogger(), db: store}
-	request := httptest.NewRequest(http.MethodPost, "/api/worker/v0/run/runtime-instances/reconcile", strings.NewReader(`{}`))
+	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/runtime-instances/reconcile", strings.NewReader(`{}`))
 	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
 		WorkerInstanceID: workerID, WorkerGroupID: "run-workers", WorkerEpoch: 7,
 	}))

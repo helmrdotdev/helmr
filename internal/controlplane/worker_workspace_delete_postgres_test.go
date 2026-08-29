@@ -96,7 +96,7 @@ SELECT worker_instances.claim_version, worker_groups.claim_version
 			t.Fatal(err)
 		}
 		httpRequest := httptest.NewRequest(
-			http.MethodPost, "/api/worker/v0/workspaces/delete", bytes.NewReader(body),
+			http.MethodPost, "/worker/v1/run/workspaces/delete", bytes.NewReader(body),
 		)
 		httpRequest = httpRequest.WithContext(context.WithValue(
 			httpRequest.Context(), workerContextKey{}, worker,

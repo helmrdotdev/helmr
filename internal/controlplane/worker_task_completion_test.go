@@ -34,7 +34,7 @@ func TestWorkerCompleteTaskReplaysPreviousEpochWithoutCAS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	httpRequest := httptest.NewRequest(http.MethodPost, "/api/worker/v0/run/tasks/complete", bytes.NewReader(body))
+	httpRequest := httptest.NewRequest(http.MethodPost, "/worker/v1/run/tasks/complete", bytes.NewReader(body))
 	httpRequest = httpRequest.WithContext(context.WithValue(httpRequest.Context(), workerContextKey{}, workerActor{
 		WorkerInstanceID: workerID,
 		WorkerGroupID:    lease.WorkerGroupID,
@@ -65,7 +65,7 @@ func TestWorkerCompleteTaskRejectsChangedTerminalRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	httpRequest := httptest.NewRequest(http.MethodPost, "/api/worker/v0/run/tasks/complete", bytes.NewReader(body))
+	httpRequest := httptest.NewRequest(http.MethodPost, "/worker/v1/run/tasks/complete", bytes.NewReader(body))
 	httpRequest = httpRequest.WithContext(context.WithValue(httpRequest.Context(), workerContextKey{}, workerActor{
 		WorkerInstanceID: workerID,
 		WorkerGroupID:    lease.WorkerGroupID,
@@ -104,7 +104,7 @@ func TestWorkerCompleteTaskRejectsUnknownFields(t *testing.T) {
 	server := &Server{log: taskCompletionTestLogger(), db: &workerTaskCompletionReplayStore{}}
 	httpRequest := httptest.NewRequest(
 		http.MethodPost,
-		"/api/worker/v0/run/tasks/complete",
+		"/worker/v1/run/tasks/complete",
 		bytes.NewReader(body),
 	)
 	response := httptest.NewRecorder()

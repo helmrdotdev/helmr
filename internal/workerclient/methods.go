@@ -15,7 +15,7 @@ import (
 
 func (c *Client) EnrollWorker(ctx context.Context, token string, request workerapi.EnrollmentRequest) (workerapi.EnrollmentResponse, error) {
 	var response workerapi.EnrollmentResponse
-	if err := c.postJSON(ctx, "/api/worker/v0/enrollment", token, request, &response); err != nil {
+	if err := c.postJSON(ctx, "/worker/v1/enrollment", token, request, &response); err != nil {
 		return workerapi.EnrollmentResponse{}, err
 	}
 	return response, nil
@@ -25,7 +25,7 @@ func (c *Client) DiscoverRunLeases(ctx context.Context) (workerapi.RunLeaseDisco
 	var response workerapi.RunLeaseDiscoveryResponse
 	if err := c.postWorkerJSON(
 		ctx,
-		"/api/worker/v0/run/leases/discover",
+		"/worker/v1/run/leases/discover",
 		workerapi.RunLeaseDiscoveryRequest{},
 		&response,
 	); err != nil {
@@ -41,7 +41,7 @@ func (c *Client) ClaimRunLease(
 	var response workerapi.RunLeaseClaimResponse
 	if err := c.postWorkerJSON(
 		ctx,
-		"/api/worker/v0/run/leases/claim",
+		"/worker/v1/run/leases/claim",
 		workerapi.RunLeaseClaimRequest(work),
 		&response,
 	); err != nil {
@@ -57,7 +57,7 @@ func (c *Client) AcknowledgeRunStart(
 	var response workerapi.RunStartResponse
 	if err := c.postWorkerJSON(
 		ctx,
-		"/api/worker/v0/run/leases/start",
+		"/worker/v1/run/leases/start",
 		request,
 		&response,
 	); err != nil {
@@ -73,7 +73,7 @@ func (c *Client) AcknowledgeRunResumeRelease(
 	var response workerapi.RunResumeReleaseResponse
 	if err := c.postWorkerJSON(
 		ctx,
-		"/api/worker/v0/run/leases/resume-release",
+		"/worker/v1/run/leases/resume-release",
 		request,
 		&response,
 	); err != nil {
@@ -88,7 +88,7 @@ func (c *Client) AcknowledgeRunEntrypoint(
 ) error {
 	return c.postWorkerJSON(
 		ctx,
-		"/api/worker/v0/run/leases/entrypoint",
+		"/worker/v1/run/leases/entrypoint",
 		request,
 		nil,
 	)
@@ -96,7 +96,7 @@ func (c *Client) AcknowledgeRunEntrypoint(
 
 func (c *Client) ClaimWorkspaceMount(ctx context.Context, capabilities workerapi.Capabilities) (workerapi.WorkspaceMountClaimResponse, error) {
 	var response workerapi.WorkspaceMountClaimResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/workspace-mounts/claim", workerapi.WorkspaceMountClaimRequest{Capabilities: capabilities}, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/workspace-mounts/claim", workerapi.WorkspaceMountClaimRequest{Capabilities: capabilities}, &response); err != nil {
 		return workerapi.WorkspaceMountClaimResponse{}, err
 	}
 	return response, nil
@@ -104,7 +104,7 @@ func (c *Client) ClaimWorkspaceMount(ctx context.Context, capabilities workerapi
 
 func (c *Client) RenewWorkspaceMount(ctx context.Context, request workerapi.WorkspaceMountRenewRequest) (workerapi.WorkspaceMountResponse, error) {
 	var response workerapi.WorkspaceMountResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/workspace-mounts/renew", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/workspace-mounts/renew", request, &response); err != nil {
 		return workerapi.WorkspaceMountResponse{}, err
 	}
 	return response, nil
@@ -112,7 +112,7 @@ func (c *Client) RenewWorkspaceMount(ctx context.Context, request workerapi.Work
 
 func (c *Client) MarkWorkspaceMountMounted(ctx context.Context, request workerapi.WorkspaceMountMountedRequest) (workerapi.WorkspaceMountResponse, error) {
 	var response workerapi.WorkspaceMountResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/workspace-mounts/mounted", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/workspace-mounts/mounted", request, &response); err != nil {
 		return workerapi.WorkspaceMountResponse{}, err
 	}
 	return response, nil
@@ -120,7 +120,7 @@ func (c *Client) MarkWorkspaceMountMounted(ctx context.Context, request workerap
 
 func (c *Client) CaptureWorkspaceMount(ctx context.Context, request workerapi.WorkspaceMountCaptureRequest) (workerapi.WorkspaceMountCaptureResponse, error) {
 	var response workerapi.WorkspaceMountCaptureResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/workspace-mounts/capture", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/workspace-mounts/capture", request, &response); err != nil {
 		return workerapi.WorkspaceMountCaptureResponse{}, err
 	}
 	return response, nil
@@ -128,7 +128,7 @@ func (c *Client) CaptureWorkspaceMount(ctx context.Context, request workerapi.Wo
 
 func (c *Client) StopWorkspaceMount(ctx context.Context, request workerapi.WorkspaceMountStopRequest) (workerapi.WorkspaceMountResponse, error) {
 	var response workerapi.WorkspaceMountResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/workspace-mounts/stop", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/workspace-mounts/stop", request, &response); err != nil {
 		return workerapi.WorkspaceMountResponse{}, err
 	}
 	return response, nil
@@ -136,7 +136,7 @@ func (c *Client) StopWorkspaceMount(ctx context.Context, request workerapi.Works
 
 func (c *Client) FailWorkspaceMount(ctx context.Context, request workerapi.WorkspaceMountFailRequest) (workerapi.WorkspaceMountResponse, error) {
 	var response workerapi.WorkspaceMountResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/workspace-mounts/fail", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/workspace-mounts/fail", request, &response); err != nil {
 		return workerapi.WorkspaceMountResponse{}, err
 	}
 	return response, nil
@@ -144,7 +144,7 @@ func (c *Client) FailWorkspaceMount(ctx context.Context, request workerapi.Works
 
 func (c *Client) ClaimWorkspaceExec(ctx context.Context, request workerapi.WorkspaceExecClaimRequest) (workerapi.WorkspaceExecClaimResponse, error) {
 	var response workerapi.WorkspaceExecClaimResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/workspace-execs/claim", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/workspace-execs/claim", request, &response); err != nil {
 		return workerapi.WorkspaceExecClaimResponse{}, err
 	}
 	return response, nil
@@ -152,7 +152,7 @@ func (c *Client) ClaimWorkspaceExec(ctx context.Context, request workerapi.Works
 
 func (c *Client) CompleteWorkspaceExec(ctx context.Context, request workerapi.WorkspaceExecCompleteRequest) (workerapi.WorkspaceMountResponse, error) {
 	var response workerapi.WorkspaceMountResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/workspace-execs/complete", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/workspace-execs/complete", request, &response); err != nil {
 		return workerapi.WorkspaceMountResponse{}, err
 	}
 	return response, nil
@@ -160,7 +160,7 @@ func (c *Client) CompleteWorkspaceExec(ctx context.Context, request workerapi.Wo
 
 func (c *Client) AppendActorOutput(ctx context.Context, request workerapi.AppendActorOutputRequest) (workerapi.AppendActorOutputResponse, error) {
 	var response workerapi.AppendActorOutputResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/sessions/outputs/append", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/sessions/outputs/append", request, &response); err != nil {
 		return workerapi.AppendActorOutputResponse{}, err
 	}
 	return response, nil
@@ -168,7 +168,7 @@ func (c *Client) AppendActorOutput(ctx context.Context, request workerapi.Append
 
 func (c *Client) RegisterRuntimeSubstrate(ctx context.Context, request workerapi.RuntimeSubstrateRegisterRequest) (workerapi.RuntimeSubstrateRegisterResponse, error) {
 	var response workerapi.RuntimeSubstrateRegisterResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/runtime-substrates/register", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/runtime-substrates/register", request, &response); err != nil {
 		return workerapi.RuntimeSubstrateRegisterResponse{}, err
 	}
 	return response, nil
@@ -176,19 +176,19 @@ func (c *Client) RegisterRuntimeSubstrate(ctx context.Context, request workerapi
 
 func (c *Client) ActivateWorker(ctx context.Context, capabilities workerapi.Capabilities) (workerapi.StatusResponse, error) {
 	var response workerapi.StatusResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/instance/activate", workerapi.ActivateRequest{Capabilities: capabilities}, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/instance/activate", workerapi.ActivateRequest{Capabilities: capabilities}, &response); err != nil {
 		return workerapi.StatusResponse{}, err
 	}
 	return response, nil
 }
 
 func (c *Client) ReportWorkerStartupRecovery(ctx context.Context, request workerapi.StartupRecoveryRequest) error {
-	return c.postWorkerJSON(ctx, "/api/worker/v0/instance/recover", request, nil)
+	return c.postWorkerJSON(ctx, "/worker/v1/instance/recover", request, nil)
 }
 
 func (c *Client) ObserveWorker(ctx context.Context, observation workerapi.Observation) (workerapi.StatusResponse, error) {
 	var response workerapi.StatusResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/instance/observations", workerapi.ObserveRequest{Observation: observation}, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/instance/observations", workerapi.ObserveRequest{Observation: observation}, &response); err != nil {
 		return workerapi.StatusResponse{}, err
 	}
 	return response, nil
@@ -196,7 +196,7 @@ func (c *Client) ObserveWorker(ctx context.Context, observation workerapi.Observ
 
 func (c *Client) DrainWorker(ctx context.Context) (workerapi.StatusResponse, error) {
 	var response workerapi.StatusResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/instance/drain", struct{}{}, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/instance/drain", struct{}{}, &response); err != nil {
 		return workerapi.StatusResponse{}, err
 	}
 	return response, nil
@@ -207,7 +207,7 @@ func (c *Client) CompleteWorkerDrain(ctx context.Context, request workerapi.Drai
 	var lastErr error
 	for attempt := range attempts {
 		var response workerapi.StatusResponse
-		lastErr = c.postWorkerJSON(ctx, "/api/worker/v0/instance/drain/complete", request, &response)
+		lastErr = c.postWorkerJSON(ctx, "/worker/v1/instance/drain/complete", request, &response)
 		if lastErr == nil {
 			return response, nil
 		}
@@ -248,7 +248,7 @@ func (c *Client) FenceWorker(ctx context.Context, reasonCode string) error {
 	var lastErr error
 	request := workerapi.FenceRequest{ReasonCode: reasonCode}
 	for attempt := range attempts {
-		lastErr = c.postWorkerJSON(ctx, "/api/worker/v0/instance/fence", request, nil)
+		lastErr = c.postWorkerJSON(ctx, "/worker/v1/instance/fence", request, nil)
 		if lastErr == nil {
 			return nil
 		}
@@ -269,7 +269,7 @@ func (c *Client) FenceWorker(ctx context.Context, reasonCode string) error {
 
 func (c *Client) GetWorkerStatus(ctx context.Context) (workerapi.StatusResponse, error) {
 	var response workerapi.StatusResponse
-	if err := c.getWorkerJSON(ctx, "/api/worker/v0/instance", &response); err != nil {
+	if err := c.getWorkerJSON(ctx, "/worker/v1/instance", &response); err != nil {
 		return workerapi.StatusResponse{}, err
 	}
 	return response, nil
@@ -277,7 +277,7 @@ func (c *Client) GetWorkerStatus(ctx context.Context) (workerapi.StatusResponse,
 
 func (c *Client) ListRuntimeReconcileTargets(ctx context.Context) (workerapi.RuntimeReconcileResponse, error) {
 	var response workerapi.RuntimeReconcileResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/runtime-instances/reconcile", workerapi.RuntimeReconcileRequest{}, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/runtime-instances/reconcile", workerapi.RuntimeReconcileRequest{}, &response); err != nil {
 		return workerapi.RuntimeReconcileResponse{}, err
 	}
 	return response, nil
@@ -285,7 +285,7 @@ func (c *Client) ListRuntimeReconcileTargets(ctx context.Context) (workerapi.Run
 
 func (c *Client) MarkRuntimeInstanceReady(ctx context.Context, request workerapi.RuntimeInstanceStateRequest) (workerapi.RuntimeInstance, error) {
 	var response workerapi.RuntimeInstance
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/runtime-instances/ready", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/runtime-instances/ready", request, &response); err != nil {
 		return workerapi.RuntimeInstance{}, err
 	}
 	return response, nil
@@ -293,7 +293,7 @@ func (c *Client) MarkRuntimeInstanceReady(ctx context.Context, request workerapi
 
 func (c *Client) MarkRuntimeInstanceClosed(ctx context.Context, request workerapi.RuntimeInstanceStateRequest) (workerapi.RuntimeInstance, error) {
 	var response workerapi.RuntimeInstance
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/runtime-instances/closed", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/runtime-instances/closed", request, &response); err != nil {
 		return workerapi.RuntimeInstance{}, err
 	}
 	return response, nil
@@ -301,7 +301,7 @@ func (c *Client) MarkRuntimeInstanceClosed(ctx context.Context, request workerap
 
 func (c *Client) MarkRuntimeInstanceFailed(ctx context.Context, request workerapi.RuntimeInstanceStateRequest) (workerapi.RuntimeInstance, error) {
 	var response workerapi.RuntimeInstance
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/runtime-instances/failed", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/runtime-instances/failed", request, &response); err != nil {
 		return workerapi.RuntimeInstance{}, err
 	}
 	return response, nil
@@ -314,7 +314,7 @@ func (c *Client) RenewRunLease(
 	var response workerapi.RunLeaseRenewResponse
 	if err := c.postWorkerJSON(
 		ctx,
-		"/api/worker/v0/run/leases/renew",
+		"/worker/v1/run/leases/renew",
 		workerapi.RunLeaseRenewRequest{
 			Lease:             lease.Fence(),
 			ExpectedExpiresAt: lease.ExpiresAt,
@@ -333,7 +333,7 @@ func (c *Client) BeginRunFinalization(
 	var response workerapi.BeginRunFinalizationResponse
 	if err := c.postWorkerJSON(
 		ctx,
-		"/api/worker/v0/run/finalization/begin",
+		"/worker/v1/run/finalization/begin",
 		request,
 		&response,
 	); err != nil {
@@ -347,7 +347,7 @@ func (c *Client) CommitActorTurn(
 	request workerapi.CommitActorTurnRequest,
 ) (workerapi.CommitActorTurnResponse, error) {
 	var response workerapi.CommitActorTurnResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/sessions/turns/commit", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/sessions/turns/commit", request, &response); err != nil {
 		return workerapi.CommitActorTurnResponse{}, err
 	}
 	return response, nil
@@ -358,7 +358,7 @@ func (c *Client) SendRunActorInput(
 	request workerapi.SendActorInputRequest,
 ) (workerapi.SendActorInputResponse, error) {
 	var response workerapi.SendActorInputResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/sessions/inputs/send", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/sessions/inputs/send", request, &response); err != nil {
 		return workerapi.SendActorInputResponse{}, err
 	}
 	return response, nil
@@ -369,7 +369,7 @@ func (c *Client) StartRunActor(
 	request workerapi.StartActorRequest,
 ) (workerapi.StartActorResponse, error) {
 	var response workerapi.StartActorResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/actors/start", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/actors/start", request, &response); err != nil {
 		return workerapi.StartActorResponse{}, err
 	}
 	return response, nil
@@ -380,7 +380,7 @@ func (c *Client) GetRunSessionStatus(
 	request workerapi.SessionReferenceRequest,
 ) (workerapi.SessionStatusResponse, error) {
 	var response workerapi.SessionStatusResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/sessions/retrieve", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/sessions/retrieve", request, &response); err != nil {
 		return workerapi.SessionStatusResponse{}, err
 	}
 	return response, nil
@@ -391,7 +391,7 @@ func (c *Client) CloseRunSession(
 	request workerapi.CloseSessionRequest,
 ) (workerapi.CloseSessionResponse, error) {
 	var response workerapi.CloseSessionResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/sessions/close", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/sessions/close", request, &response); err != nil {
 		return workerapi.CloseSessionResponse{}, err
 	}
 	return response, nil
@@ -402,7 +402,7 @@ func (c *Client) ReadRunSessionOutputPage(
 	request workerapi.ReadSessionOutputPageRequest,
 ) (workerapi.ReadSessionOutputPageResponse, error) {
 	var response workerapi.ReadSessionOutputPageResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/sessions/outputs/read-page", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/sessions/outputs/read-page", request, &response); err != nil {
 		return workerapi.ReadSessionOutputPageResponse{}, err
 	}
 	return response, nil
@@ -413,7 +413,7 @@ func (c *Client) CreateRunWorkspace(
 	request workerapi.CreateWorkspaceRequest,
 ) (workerapi.CreateWorkspaceResponse, error) {
 	var response workerapi.CreateWorkspaceResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/workspaces/create", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/workspaces/create", request, &response); err != nil {
 		return workerapi.CreateWorkspaceResponse{}, err
 	}
 	return response, nil
@@ -424,7 +424,7 @@ func (c *Client) RetrieveRunWorkspace(
 	request workerapi.RetrieveWorkspaceRequest,
 ) (workerapi.RetrieveWorkspaceResponse, error) {
 	var response workerapi.RetrieveWorkspaceResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/workspaces/retrieve", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/workspaces/retrieve", request, &response); err != nil {
 		return workerapi.RetrieveWorkspaceResponse{}, err
 	}
 	return response, nil
@@ -435,7 +435,7 @@ func (c *Client) ReadRunWorkspaceFile(
 	request workerapi.ReadWorkspaceFileRequest,
 ) (workerapi.ReadWorkspaceFileResponse, error) {
 	var response workerapi.ReadWorkspaceFileResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/workspaces/files/read", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/workspaces/files/read", request, &response); err != nil {
 		return workerapi.ReadWorkspaceFileResponse{}, err
 	}
 	return response, nil
@@ -446,7 +446,7 @@ func (c *Client) StatRunWorkspaceFile(
 	request workerapi.ReadWorkspaceFileRequest,
 ) (workerapi.StatWorkspaceFileResponse, error) {
 	var response workerapi.StatWorkspaceFileResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/workspaces/files/stat", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/workspaces/files/stat", request, &response); err != nil {
 		return workerapi.StatWorkspaceFileResponse{}, err
 	}
 	return response, nil
@@ -457,7 +457,7 @@ func (c *Client) ListRunWorkspaceFiles(
 	request workerapi.ListWorkspaceFilesRequest,
 ) (workerapi.ListWorkspaceFilesResponse, error) {
 	var response workerapi.ListWorkspaceFilesResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/workspaces/files/list", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/workspaces/files/list", request, &response); err != nil {
 		return workerapi.ListWorkspaceFilesResponse{}, err
 	}
 	return response, nil
@@ -468,7 +468,7 @@ func (c *Client) ExecuteRunWorkspace(
 	request workerapi.ExecuteWorkspaceRequest,
 ) (workerapi.ExecuteWorkspaceResponse, error) {
 	var response workerapi.ExecuteWorkspaceResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/workspaces/exec", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/workspaces/exec", request, &response); err != nil {
 		return workerapi.ExecuteWorkspaceResponse{}, err
 	}
 	return response, nil
@@ -479,7 +479,7 @@ func (c *Client) PollRunWorkspaceExec(
 	request workerapi.PollWorkspaceExecRequest,
 ) (workerapi.ExecuteWorkspaceResponse, error) {
 	var response workerapi.ExecuteWorkspaceResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/workspaces/exec/poll", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/workspaces/exec/poll", request, &response); err != nil {
 		return workerapi.ExecuteWorkspaceResponse{}, err
 	}
 	return response, nil
@@ -490,7 +490,7 @@ func (c *Client) DeleteRunWorkspace(
 	request workerapi.DeleteWorkspaceRequest,
 ) (workerapi.DeleteWorkspaceResponse, error) {
 	var response workerapi.DeleteWorkspaceResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/workspaces/delete", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/workspaces/delete", request, &response); err != nil {
 		return workerapi.DeleteWorkspaceResponse{}, err
 	}
 	return response, nil
@@ -501,7 +501,7 @@ func (c *Client) InvokeChildTask(
 	request workerapi.InvokeChildTaskRequest,
 ) (workerapi.InvokeChildTaskResponse, error) {
 	var response workerapi.InvokeChildTaskResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/tasks/invoke", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/tasks/invoke", request, &response); err != nil {
 		return workerapi.InvokeChildTaskResponse{}, err
 	}
 	return response, nil
@@ -513,7 +513,7 @@ func (c *Client) CompleteTask(
 ) error {
 	return c.postWorkerJSON(
 		ctx,
-		"/api/worker/v0/run/tasks/complete",
+		"/worker/v1/run/tasks/complete",
 		request,
 		nil,
 	)
@@ -523,7 +523,7 @@ func (c *Client) CompleteActor(
 	ctx context.Context,
 	request workerapi.CompleteActorRequest,
 ) error {
-	return c.postWorkerJSON(ctx, "/api/worker/v0/run/sessions/complete", request, nil)
+	return c.postWorkerJSON(ctx, "/worker/v1/run/sessions/complete", request, nil)
 }
 
 func (c *Client) AppendRunLog(
@@ -533,7 +533,7 @@ func (c *Client) AppendRunLog(
 	observedSeq uint64,
 	content []byte,
 ) error {
-	return c.postWorkerJSON(ctx, "/api/worker/v0/run/logs/append", workerapi.RunLogAppendRequest{
+	return c.postWorkerJSON(ctx, "/worker/v1/run/logs/append", workerapi.RunLogAppendRequest{
 		Lease:         lease.Fence(),
 		Stream:        stream,
 		ObservedSeq:   observedSeq,
@@ -542,16 +542,16 @@ func (c *Client) AppendRunLog(
 }
 
 func (c *Client) UpdateRunMetadata(ctx context.Context, request workerapi.UpdateRunMetadataRequest) error {
-	return c.postWorkerJSON(ctx, "/api/worker/v0/run/metadata/update", request, nil)
+	return c.postWorkerJSON(ctx, "/worker/v1/run/metadata/update", request, nil)
 }
 
 func (c *Client) AppendStructuredRunLog(ctx context.Context, request workerapi.StructuredLogRequest) error {
-	return c.postWorkerJSON(ctx, "/api/worker/v0/run/structured-logs/append", request, nil)
+	return c.postWorkerJSON(ctx, "/worker/v1/run/structured-logs/append", request, nil)
 }
 
 func (c *Client) CreateRuntimeToken(ctx context.Context, request workerapi.CreateTokenRequest) (api.TokenResponse, error) {
 	var response api.TokenResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/tokens/create", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/tokens/create", request, &response); err != nil {
 		return api.TokenResponse{}, err
 	}
 	return response, nil
@@ -559,7 +559,7 @@ func (c *Client) CreateRuntimeToken(ctx context.Context, request workerapi.Creat
 
 func (c *Client) CreateRunWait(ctx context.Context, request workerapi.CreateRunWaitRequest) (workerapi.CreateRunWaitResponse, error) {
 	var response workerapi.CreateRunWaitResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/waits/create", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/waits/create", request, &response); err != nil {
 		return workerapi.CreateRunWaitResponse{}, err
 	}
 	return response, nil
@@ -567,7 +567,7 @@ func (c *Client) CreateRunWait(ctx context.Context, request workerapi.CreateRunW
 
 func (c *Client) PollRunWait(ctx context.Context, request workerapi.RunWaitPollRequest) (workerapi.RunWaitPollResponse, error) {
 	var response workerapi.RunWaitPollResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/waits/poll", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/waits/poll", request, &response); err != nil {
 		return workerapi.RunWaitPollResponse{}, err
 	}
 	return response, nil
@@ -575,7 +575,7 @@ func (c *Client) PollRunWait(ctx context.Context, request workerapi.RunWaitPollR
 
 func (c *Client) AcknowledgeRunWaitResume(ctx context.Context, request workerapi.RunWaitResumeAckRequest) (workerapi.RunWaitResumeAckResponse, error) {
 	var response workerapi.RunWaitResumeAckResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/waits/resume-ack", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/waits/resume-ack", request, &response); err != nil {
 		return workerapi.RunWaitResumeAckResponse{}, err
 	}
 	return response, nil
@@ -583,7 +583,7 @@ func (c *Client) AcknowledgeRunWaitResume(ctx context.Context, request workerapi
 
 func (c *Client) MarkCheckpointReady(ctx context.Context, request workerapi.CheckpointReadyRequest) (workerapi.CheckpointResponse, error) {
 	var response workerapi.CheckpointResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/checkpoints/ready", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/checkpoints/ready", request, &response); err != nil {
 		return workerapi.CheckpointResponse{}, err
 	}
 	return response, nil
@@ -591,7 +591,7 @@ func (c *Client) MarkCheckpointReady(ctx context.Context, request workerapi.Chec
 
 func (c *Client) MarkCheckpointFailed(ctx context.Context, request workerapi.CheckpointFailedRequest) (workerapi.CheckpointResponse, error) {
 	var response workerapi.CheckpointResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/run/checkpoints/failed", request, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/checkpoints/failed", request, &response); err != nil {
 		return workerapi.CheckpointResponse{}, err
 	}
 	return response, nil

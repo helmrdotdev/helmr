@@ -48,7 +48,7 @@ func TestWorkerCaptureWorkspaceMountRejectsLegacyAndInvalidIdentityShapes(t *tes
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodPost, "/api/worker/v0/run/workspace-mounts/capture", strings.NewReader(test.body))
+			request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/workspace-mounts/capture", strings.NewReader(test.body))
 			response := httptest.NewRecorder()
 			(&Server{}).workerCaptureWorkspaceMount(response, request)
 			if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), test.want) {
@@ -168,7 +168,7 @@ UPDATE workspace_mounts
 		if err != nil {
 			t.Fatal(err)
 		}
-		httpRequest := httptest.NewRequest(http.MethodPost, "/api/worker/v0/run/workspace-mounts/capture", strings.NewReader(string(body)))
+		httpRequest := httptest.NewRequest(http.MethodPost, "/worker/v1/run/workspace-mounts/capture", strings.NewReader(string(body)))
 		httpRequest = httpRequest.WithContext(context.WithValue(httpRequest.Context(), workerContextKey{}, workerActor{
 			WorkerInstanceID: fixture.WorkerID, WorkerGroupID: runtest.WorkerGroup, WorkerEpoch: 1,
 		}))

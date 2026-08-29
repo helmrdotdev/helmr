@@ -110,7 +110,7 @@ SELECT worker_instances.claim_version, worker_groups.claim_version
 	}
 	request := httptest.NewRequest(
 		http.MethodPost,
-		"/api/worker/v0/run/checkpoints/failed",
+		"/worker/v1/run/checkpoints/failed",
 		bytes.NewReader(requestBody),
 	)
 	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
