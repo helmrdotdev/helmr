@@ -104,6 +104,8 @@ run "controlplane_uses_execution_only_runtime_authority" {
     condition = (
       length(jsondecode(aws_ecs_task_definition.controlplane.container_definitions)) == 1 &&
       jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[0].name == "controlplane" &&
+      jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[0].entryPoint == ["/usr/local/bin/control-plane"] &&
+      jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].entryPoint == ["dispatcher"] &&
       { for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[0].environment : item.name => item.value }.PUBLIC_URL == "http://controlplane.example.test" &&
       { for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[0].environment : item.name => item.value }.PLATFORM_STORE_URI == var.platform_store_uri &&
       aws_lb_target_group.controlplane.health_check[0].path == "/readyz"

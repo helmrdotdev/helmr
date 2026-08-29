@@ -7,7 +7,7 @@ script="${root}/scripts/publish-materialized-platform-release.sh"
 rg -q 'nixos/nix:[^@[:space:]]+@sha256:[0-9a-f]{64}' "${script}"
 rg -F 'git -C "${ROOT}" archive --format=tar HEAD | tar -xf - -C "${source_dir}"' "${script}" >/dev/null
 rg -F 'develop path:/work' "${script}" >/dev/null
-rg -F 'go -C /work run ./cmd/helmr-controlplane release publish' "${script}" >/dev/null
+rg -F 'go -C /work run ./cmd/control-plane release publish' "${script}" >/dev/null
 rg -F -- '--env PLATFORM_STORE_URI' "${script}" >/dev/null
 if rg -F 'source=${ROOT},target=/work' "${script}" >/dev/null ||
   rg -F -- '--privileged' "${script}" >/dev/null ||

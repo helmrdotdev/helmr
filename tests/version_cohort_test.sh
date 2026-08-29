@@ -14,12 +14,12 @@ trap 'rm -rf "$tmp"' EXIT
 ldflags="-X github.com/helmrdotdev/helmr/internal/version.Version=$version -X github.com/helmrdotdev/helmr/internal/version.SourceCommit=$source_commit"
 
 cd "$repo_root"
-for command in helmr helmr-controlplane helmr-dispatcher; do
+for command in helmr control-plane dispatcher; do
   go build -trimpath -ldflags="$ldflags" -o "$tmp/$command" "./cmd/$command"
 done
 worker=$(HELMR_PLATFORM_VERSION="$version" nix build --impure --no-link --print-out-paths .#worker)
 
-for binary in "$tmp/helmr" "$tmp/helmr-controlplane" "$tmp/helmr-dispatcher" "$worker/bin/helmr-worker"; do
+for binary in "$tmp/helmr" "$tmp/control-plane" "$tmp/dispatcher" "$worker/bin/worker"; do
   actual=$($binary --version)
   [ "$actual" = "$expected" ] || {
     printf '%s reported %s, expected %s\n' "$binary" "$actual" "$expected" >&2

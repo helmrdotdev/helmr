@@ -54,8 +54,8 @@ go-test-race: | console-build
 test-linux-compile:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) test -c -o /tmp/helmr-guestd-linux-amd64.test ./cmd/guestd
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) test -c -o /tmp/helmr-firecracker-linux-amd64.test ./internal/firecracker
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) test -c -o /tmp/helmr-worker-linux-amd64.test ./cmd/helmr-worker
-	rm -f /tmp/helmr-guestd-linux-amd64.test /tmp/helmr-firecracker-linux-amd64.test /tmp/helmr-worker-linux-amd64.test
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) test -c -o /tmp/worker-linux-amd64.test ./cmd/worker
+	rm -f /tmp/helmr-guestd-linux-amd64.test /tmp/helmr-firecracker-linux-amd64.test /tmp/worker-linux-amd64.test
 
 lint: go-lint
 
@@ -96,7 +96,7 @@ migration:
 	$(GO) run github.com/golang-migrate/migrate/v4/cmd/migrate@$(MIGRATE_VERSION) create -seq -digits 6 -ext sql -dir internal/db/schema/migrations "$(name)"
 
 migrate-up:
-	$(GO) run ./cmd/helmr-controlplane migrate up
+	$(GO) run ./cmd/control-plane migrate up
 
 migrate-down:
 	$(GO) run github.com/golang-migrate/migrate/v4/cmd/migrate@$(MIGRATE_VERSION) -path internal/db/schema/migrations -database "$$DATABASE_URL" down 1

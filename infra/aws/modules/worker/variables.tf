@@ -28,7 +28,7 @@ variable "subnet_ids" {
 }
 
 variable "ami_id" {
-  description = "Worker AMI with Firecracker, jailer, routed-TAP prerequisites, and helmr-worker installed."
+  description = "Worker AMI with Firecracker, jailer, routed-TAP prerequisites, and worker installed."
   type        = string
 }
 
@@ -147,7 +147,7 @@ variable "termination_lifecycle_heartbeat_timeout_seconds" {
 }
 
 variable "termination_drain_timeout_seconds" {
-  description = "Maximum seconds helmr-worker drain should wait for active executions."
+  description = "Maximum seconds worker drain should wait for active executions."
   type        = number
   default     = 1800
 }
@@ -159,9 +159,9 @@ variable "lifecycle_heartbeat_interval_seconds" {
 }
 
 variable "worker_binary_path" {
-  description = "Path or command name for the helmr-worker binary on the worker AMI."
+  description = "Absolute path to the worker binary on the worker AMI."
   type        = string
-  default     = "helmr-worker"
+  default     = "/usr/local/bin/worker"
 }
 
 variable "root_volume_size_gb" {
@@ -200,7 +200,7 @@ variable "root_volume_throughput" {
 }
 
 variable "worker_disk_mib" {
-  description = "Optional filesystem capacity ceiling in MiB before worker_disk_reserve_mib is withheld. When null, helmr-worker detects local filesystem capacity."
+  description = "Optional filesystem capacity ceiling in MiB before worker_disk_reserve_mib is withheld. When null, worker detects local filesystem capacity."
   type        = number
   default     = null
   nullable    = true

@@ -9,7 +9,7 @@ test_bin="${tmp}/bin"
 mkdir -p "${host}/bin" "${host}/share/helmr" "${test_bin}"
 
 source_commit="$(git -C "${repo_root}" rev-parse HEAD)"
-cat >"${host}/bin/helmr-worker" <<'EOF'
+cat >"${host}/bin/worker" <<'EOF'
 #!/usr/bin/env bash
 exit 0
 EOF
@@ -47,19 +47,19 @@ jq -e '
   (keys | sort) == ["arch", "files", "schema"] and
   .schema == "helmr.worker-host-artifacts.v0" and
   .arch == "amd64" and
-  [.files[].path] == ["cpu-template-helper", "firecracker", "helmr-worker", "jailer", "mkfs.ext4", "mke2fs.conf"] and
+  [.files[].path] == ["cpu-template-helper", "firecracker", "jailer", "mkfs.ext4", "worker", "mke2fs.conf"] and
   all(.files[];
     ((.path == "mke2fs.conf" and .mode == "0444") or (.path != "mke2fs.conf" and .mode == "0755")) and
     (.size_bytes | type == "number" and . > 0) and
     (.digest | test("^sha256:[0-9a-f]{64}$")))
 ' "${tmp}/bundle-a/worker-host-artifacts.json" >/dev/null
 
-expected_entries="$(printf '%s\n' cpu-template-helper firecracker helmr-worker jailer mkfs.ext4 mke2fs.conf worker-host-artifacts.json)"
+expected_entries="$(printf '%s\n' cpu-template-helper firecracker jailer mkfs.ext4 worker mke2fs.conf worker-host-artifacts.json)"
 [ "$(tar -tf "${tmp}/bundle-a/worker-host-artifacts.tar")" = "${expected_entries}" ]
 
 mkdir "${tmp}/unpacked"
 tar -C "${tmp}/unpacked" -xf "${tmp}/bundle-a/worker-host-artifacts.tar"
-for name in cpu-template-helper firecracker helmr-worker jailer mkfs.ext4; do
+for name in cpu-template-helper firecracker jailer mkfs.ext4 worker; do
   cmp "${host}/bin/${name}" "${tmp}/unpacked/${name}"
 done
 cmp "${host}/share/helmr/mke2fs.conf" "${tmp}/unpacked/mke2fs.conf"

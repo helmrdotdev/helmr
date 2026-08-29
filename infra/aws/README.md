@@ -26,7 +26,7 @@ Product contract.
 Run Product artifact operations through `scripts/aws-release-artifacts.sh`.
 The release workflow publishes a digest-pinned Control Plane image, regional Worker
 AMIs, and the signed Platform release. The Control Plane image contains only
-`helmr-controlplane` and `helmr-dispatcher`; deployment capacity automation is not a
+`control-plane` and `dispatcher`; deployment capacity automation is not a
 Product release artifact.
 
 Before enabling or updating Control Plane services, run the database migration task

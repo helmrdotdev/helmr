@@ -142,7 +142,7 @@ variable "clickhouse_password_kms_key_arns" {
 }
 
 variable "controlplane_image" {
-  description = "Container image URI containing helmr-controlplane, helmr-dispatcher, and deployment tooling. Managed release flows should pass a digest-pinned image."
+  description = "Container image URI containing control-plane, dispatcher, and deployment tooling. Managed release flows should pass a digest-pinned image."
   type        = string
 
   validation {
@@ -197,9 +197,9 @@ variable "platform_store_kms_key_arn" {
 }
 
 variable "controlplane_entrypoint" {
-  description = "Container entrypoint for helmr-controlplane."
+  description = "Container entrypoint for the Control Plane."
   type        = list(string)
-  default     = ["helmr-controlplane"]
+  default     = ["/usr/local/bin/control-plane"]
 }
 
 variable "controlplane_cpu" {

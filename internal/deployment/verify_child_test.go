@@ -8,8 +8,8 @@ func TestVerifierChildModeRequiresExactPrivateArguments(t *testing.T) {
 	}
 	for _, arguments := range [][]string{
 		nil,
-		{"helmr-worker"},
-		{"helmr-worker", "status"},
+		{"worker"},
+		{"worker", "status"},
 	} {
 		handled, err := RunVerifierChild(arguments)
 		if handled || err != nil {
@@ -17,9 +17,9 @@ func TestVerifierChildModeRequiresExactPrivateArguments(t *testing.T) {
 		}
 	}
 	for _, arguments := range [][]string{
-		{"helmr-worker", verifierChildArgument},
-		{"helmr-worker", verifierChildArgument, "unknown"},
-		{"helmr-worker", verifierChildArgument, "program", "extra"},
+		{"worker", verifierChildArgument},
+		{"worker", verifierChildArgument, "unknown"},
+		{"worker", verifierChildArgument, "program", "extra"},
 	} {
 		handled, err := RunVerifierChild(arguments)
 		if !handled || err == nil {

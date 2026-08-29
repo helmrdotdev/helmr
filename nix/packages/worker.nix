@@ -7,7 +7,7 @@
 
 let
   moduleFiles = lib.fileset.unions [
-    ../../cmd/helmr-worker
+    ../../cmd/worker
     ../../go.mod
     ../../go.sum
     ../../internal
@@ -21,7 +21,7 @@ let
   };
 in
 buildGoModule {
-  pname = "helmr-worker";
+  pname = "worker";
   inherit version;
 
   src = lib.fileset.toSource {
@@ -33,7 +33,7 @@ buildGoModule {
   overrideModAttrs = _: {
     src = moduleSource;
   };
-  subPackages = [ "cmd/helmr-worker" ];
+  subPackages = [ "cmd/worker" ];
 
   preBuild = ''
     export CGO_ENABLED=0
@@ -42,11 +42,11 @@ buildGoModule {
   '';
   doCheck = false;
   postInstall = ''
-    if [ -x "$out/bin/linux_amd64/helmr-worker" ]; then
-      install -m 0755 "$out/bin/linux_amd64/helmr-worker" "$out/bin/helmr-worker"
+    if [ -x "$out/bin/linux_amd64/worker" ]; then
+      install -m 0755 "$out/bin/linux_amd64/worker" "$out/bin/worker"
       rm -rf "$out/bin/linux_amd64"
     fi
-    test -x "$out/bin/helmr-worker"
+    test -x "$out/bin/worker"
   '';
   ldflags = [
     "-s"
@@ -59,7 +59,7 @@ buildGoModule {
     description = "Helmr Firecracker worker";
     homepage = "https://helmr.dev";
     license = lib.licenses.asl20;
-    mainProgram = "helmr-worker";
+    mainProgram = "worker";
     platforms = lib.platforms.all;
   };
 }

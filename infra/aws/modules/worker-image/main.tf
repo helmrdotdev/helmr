@@ -56,7 +56,7 @@ locals {
             action = "ExecuteBash"
             inputs = {
               commands = [
-                "test -x /usr/local/bin/helmr-worker",
+                "test -x /usr/local/bin/worker",
                 "test -f /usr/local/sbin/helmr-prepare-root && test ! -L /usr/local/sbin/helmr-prepare-root && test -x /usr/local/sbin/helmr-prepare-root",
                 "test \"$(stat -c %a /usr/local/sbin/helmr-prepare-root)\" = 755",
                 "test \"$(sha256sum /usr/local/sbin/helmr-prepare-root | awk '{print $1}')\" = \"${local.prepare_root_digest}\"",

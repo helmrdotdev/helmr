@@ -25,7 +25,7 @@ assert_equal() {
 if grep -Fq '#smoke-linux' "${script}"; then
   fail "Worker release materialization must not require the Linux-only smoke shell"
 fi
-if grep -Fq 'go -C "${ROOT}" run ./cmd/helmr-controlplane release publish' "${script}"; then
+if grep -Fq 'go -C "${ROOT}" run ./cmd/control-plane release publish' "${script}"; then
   fail "Platform release publication must not keep a host publisher fallback"
 fi
 assert_contains "${script}" 'HelmrRuntimeBundleDigest' \
@@ -313,22 +313,22 @@ esac
 EOF
 chmod 0755 "${controlplane_bin}"/*
 PATH="${controlplane_bin}:${PATH}" MOCK_RUNTIME_DESCRIPTOR_PATH="${controlplane_runtime_release}/runtime.descriptor.json" MOCK_TIMEZONE_DATA_PATH="${controlplane_timezone_data}" CONTROLPLANE_IMAGE_CONTEXT="${controlplane_context}" CONTROLPLANE_IMAGE_PLATFORM=linux/amd64 \
-  "${controlplane_build_script}" example.invalid/helmr-controlplane:test
+  "${controlplane_build_script}" example.invalid/helmr/control-plane:test
 base_image="$(jq -r '.baseImage' "${controlplane_build_contract}")"
 assert_contains "${controlplane_context}/Dockerfile" "FROM ${base_image}" "digest-pinned Control Plane base"
 PATH="${controlplane_bin}:${PATH}" MOCK_RUNTIME_DESCRIPTOR_PATH="${controlplane_runtime_release}/runtime.descriptor.json" MOCK_TIMEZONE_DATA_PATH="${controlplane_timezone_data}" "${repo_root}/scripts/verify-controlplane-image-build.sh" \
-  "${controlplane_context}/build-inputs.json" example.invalid/helmr-controlplane:test
+  "${controlplane_context}/build-inputs.json" example.invalid/helmr/control-plane:test
 
 release_build_inputs="${tmp}/release-build-inputs.json"
 jq '.buildVersion = "v0.0.0-test"' "${controlplane_context}/build-inputs.json" >"${release_build_inputs}"
 RELEASE_TAG=v0.0.0-test PATH="${controlplane_bin}:${PATH}" MOCK_RUNTIME_DESCRIPTOR_PATH="${controlplane_runtime_release}/runtime.descriptor.json" MOCK_TIMEZONE_DATA_PATH="${controlplane_timezone_data}" "${repo_root}/scripts/verify-controlplane-image-build.sh" \
-  "${release_build_inputs}" example.invalid/helmr-controlplane:test
+  "${release_build_inputs}" example.invalid/helmr/control-plane:test
 
 drifted="${tmp}/drifted-build-inputs.json"
 jq '.sourceCommit = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' \
   "${controlplane_context}/build-inputs.json" >"${drifted}"
 if PATH="${controlplane_bin}:${PATH}" MOCK_RUNTIME_DESCRIPTOR_PATH="${controlplane_runtime_release}/runtime.descriptor.json" MOCK_TIMEZONE_DATA_PATH="${controlplane_timezone_data}" "${repo_root}/scripts/verify-controlplane-image-build.sh" \
-  "${drifted}" example.invalid/helmr-controlplane:test >/dev/null 2>&1; then
+  "${drifted}" example.invalid/helmr/control-plane:test >/dev/null 2>&1; then
   fail "Control Plane image verification must reject source-commit drift"
 fi
 

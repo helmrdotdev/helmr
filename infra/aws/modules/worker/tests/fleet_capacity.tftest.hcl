@@ -76,7 +76,7 @@ run "execution_worker_is_immutable_and_launch_gated" {
   assert {
     condition = (
       strcontains(base64decode(aws_launch_template.worker.user_data), "/usr/local/sbin/helmr-prepare-root '128849018880'") &&
-      strcontains(base64decode(aws_launch_template.worker.user_data), "ExecStart=helmr-worker") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "ExecStart=/usr/local/bin/worker") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "WORKER_POOL_NAME=execution-v1") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "CPU_TEMPLATE_HELPER_PATH=/usr/local/bin/cpu-template-helper") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "WORKER_NETWORK_RESOLVER_IPV4=10.20.0.2") &&

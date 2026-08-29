@@ -89,7 +89,7 @@ run "baseline_execution_generation" {
   assert {
     condition = (
       local.worker_pool_name == "execution-${sha256(jsonencode(local.worker_generation_inputs))}" &&
-      local.worker_pool_name == "execution-ee2940950a5b9da1719a959f5dd87481c7a9c961034e4eec06787db429f08e2f" &&
+      local.worker_pool_name == "execution-4daf8e93449319ed64043da298d4de8ad4ec8edbc2cf6a9d3bde84b57c0cc698" &&
       length(local.worker_pool_name) == 74 &&
       can(regex("^execution-[0-9a-f]{64}$", local.worker_pool_name)) &&
       length(output.worker_generation_definitions) == 1 &&
@@ -105,7 +105,7 @@ run "immutable_capacity_change_rotates_generation" {
   variables { worker_vm_scratch_disk_mib = 40960 }
 
   assert {
-    condition     = local.worker_pool_name == "execution-bc6c41165c0bf8cd6feefc64cfce8470db5626d0b895bc839e6b67d8a4c19749"
+    condition     = local.worker_pool_name == "execution-d8f83870eeae5a8398ecf86ec270e623ab728656ddc1d7c382a1d5f0d1f72ab4"
     error_message = "an immutable execution-shape change must rotate the Pool generation"
   }
 }
@@ -120,7 +120,7 @@ run "scale_policy_does_not_rotate_generation" {
 
   assert {
     condition = (
-      local.worker_pool_name == "execution-ee2940950a5b9da1719a959f5dd87481c7a9c961034e4eec06787db429f08e2f" &&
+      local.worker_pool_name == "execution-4daf8e93449319ed64043da298d4de8ad4ec8edbc2cf6a9d3bde84b57c0cc698" &&
       one(values(output.worker_generation_definitions)).min_size == 5 &&
       one(values(output.worker_generation_definitions)).max_size == 9
     )

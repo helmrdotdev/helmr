@@ -1024,7 +1024,7 @@ resource "aws_ecs_task_definition" "dispatcher" {
     name       = "dispatcher"
     image      = var.controlplane_image
     essential  = true
-    entryPoint = ["helmr-dispatcher"]
+    entryPoint = ["dispatcher"]
     environment = [
       for key, value in local.dispatcher_environment : {
         name  = key

@@ -33,7 +33,7 @@ host_dir=$2
 [ -d "${host_dir}/bin" ] || die "Worker host bin directory does not exist: ${host_dir}/bin"
 [ -d "${host_dir}/share/helmr" ] || die "Worker host share directory does not exist: ${host_dir}/share/helmr"
 
-files=(cpu-template-helper firecracker helmr-worker jailer mkfs.ext4)
+files=(cpu-template-helper firecracker jailer mkfs.ext4 worker)
 for name in "${files[@]}"; do
   path="${host_dir}/bin/${name}"
   [ ! -L "${path}" ] && [ -f "${path}" ] && [ -x "${path}" ] ||
@@ -44,9 +44,9 @@ config_path="${host_dir}/share/helmr/mke2fs.conf"
   die "Worker host mke2fs config must be a regular non-symlink file: ${config_path}"
 
 if command -v file >/dev/null 2>&1; then
-  file "${host_dir}/bin/helmr-worker" | grep -F 'ELF 64-bit' >/dev/null ||
+  file "${host_dir}/bin/worker" | grep -F 'ELF 64-bit' >/dev/null ||
     die "Worker executable is not a 64-bit ELF binary"
-  file "${host_dir}/bin/helmr-worker" | grep -Eq 'x86-64|x86_64' ||
+  file "${host_dir}/bin/worker" | grep -Eq 'x86-64|x86_64' ||
     die "Worker executable is not built for x86_64"
   file "${host_dir}/bin/mkfs.ext4" | grep -F 'ELF 64-bit' >/dev/null ||
     die "Substrate generator is not a 64-bit ELF binary"
@@ -98,7 +98,7 @@ jq -cn \
 ' >"${payload}/worker-host-artifacts.json"
 chmod 0644 "${payload}/worker-host-artifacts.json"
 
-members=(cpu-template-helper firecracker helmr-worker jailer mkfs.ext4 mke2fs.conf worker-host-artifacts.json)
+members=(cpu-template-helper firecracker jailer mkfs.ext4 worker mke2fs.conf worker-host-artifacts.json)
 tar \
   --sort=name \
   --mtime='@0' \

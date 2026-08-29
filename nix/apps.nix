@@ -56,6 +56,7 @@ let
           bash tests/platform_release_publish_test.sh
           bash tests/publish_materialized_platform_release_test.sh
           bash tests/release_smoke_selector_test.sh
+          bash tests/runtime_naming_contract_test.sh
           bash tests/worker_host_bundle_test.sh
           bash tests/worker_runtime_bundle_test.sh
           bash tests/linux_worker_host_bundle_materialize_test.sh

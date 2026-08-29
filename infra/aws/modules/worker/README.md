@@ -8,7 +8,7 @@ volume. The module does not build the worker AMI.
 
 The AMI must provide:
 
-- `helmr-worker` at `worker_binary_path`
+- `worker` at `worker_binary_path`
 - the worker unit named by `worker_service_name`
 - AWS CLI v2 and `curl`
 - `/usr/local/sbin/helmr-prepare-root`, matching the checked-in
@@ -26,7 +26,7 @@ instance family that supports EC2 nested virtualization, such as C8i/M8i/R8i. Le
 metal worker instances and for instance families that do not support the option.
 
 The module writes `/etc/helmr/worker.env` from Terraform inputs and Secrets Manager values, then
-starts `helmr-worker` and a small lifecycle watcher. Every execution Worker allocates
+starts `worker` and a small lifecycle watcher. Every execution Worker allocates
 and mounts fixed runtime-cache and VM-arena ext4 filesystems. Deployment builds run in the
 user-owned local or CI builder, never on a managed Worker.
 
@@ -44,7 +44,7 @@ entries and use the corresponding typed input where one exists; other values are
 by the module.
 
 Size `root_volume_size_gb`, `root_volume_iops`, and `root_volume_throughput` for expected
-runtime/cache load. Leave `worker_disk_mib` null to let `helmr-worker` detect local
+runtime/cache load. Leave `worker_disk_mib` null to let `worker` detect local
 filesystem capacity, or set it when the capacity advertised to the Control Plane should be capped.
 `worker_disk_reserve_mib` is always passed explicitly (default `1024`) and is withheld before
 workload, scratch, and cache partitions are certified.
@@ -70,7 +70,7 @@ exact drain path. Fixed capacity is expressed with equal minimum and maximum val
 
 When capacity is raised, the launch lifecycle hook keeps the instance out of service until the
 worker systemd unit is active. During scale-in or instance refresh, the termination
-lifecycle hook gives `helmr-worker drain` time to stop accepting leases and wait for active
+lifecycle hook gives `worker drain` time to stop accepting leases and wait for active
 executions before the instance terminates.
 
 Launch-template changes do not start an automatic instance refresh. Drain the

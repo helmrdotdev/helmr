@@ -63,7 +63,7 @@ PLATFORM_STORE_URI="${store_uri}" docker run --rm \
       --option sandbox false \
       --option filter-syscalls false \
       develop path:/work \
-      -c go -C /work run ./cmd/helmr-controlplane release publish \
+      -c go -C /work run ./cmd/control-plane release publish \
         --store "${PLATFORM_STORE_URI}" \
         --input /input
   '
