@@ -319,6 +319,11 @@ assert_contains "${controlplane_context}/Dockerfile" "FROM ${base_image}" "diges
 PATH="${controlplane_bin}:${PATH}" MOCK_RUNTIME_DESCRIPTOR_PATH="${controlplane_runtime_release}/runtime.descriptor.json" MOCK_TIMEZONE_DATA_PATH="${controlplane_timezone_data}" "${repo_root}/scripts/verify-controlplane-image-build.sh" \
   "${controlplane_context}/build-inputs.json" example.invalid/helmr-controlplane:test
 
+release_build_inputs="${tmp}/release-build-inputs.json"
+jq '.buildVersion = "v0.0.0-test"' "${controlplane_context}/build-inputs.json" >"${release_build_inputs}"
+RELEASE_TAG=v0.0.0-test PATH="${controlplane_bin}:${PATH}" MOCK_RUNTIME_DESCRIPTOR_PATH="${controlplane_runtime_release}/runtime.descriptor.json" MOCK_TIMEZONE_DATA_PATH="${controlplane_timezone_data}" "${repo_root}/scripts/verify-controlplane-image-build.sh" \
+  "${release_build_inputs}" example.invalid/helmr-controlplane:test
+
 drifted="${tmp}/drifted-build-inputs.json"
 jq '.sourceCommit = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' \
   "${controlplane_context}/build-inputs.json" >"${drifted}"

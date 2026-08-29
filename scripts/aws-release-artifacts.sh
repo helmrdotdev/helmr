@@ -305,14 +305,10 @@ prepare_worker_host_bundle() (
   bundle_dir="${work}/bundle"
   info "building the canonical Worker host artifacts"
   source_commit="$(git -C "${ROOT}" rev-parse HEAD)"
-  if [ -n "${RELEASE_TAG:-}" ]; then
-    expected_identity="${RELEASE_TAG} (${source_commit})"
-    host_dir="$(HELMR_PLATFORM_VERSION="${RELEASE_TAG}" nix build --impure -L --no-link --print-out-paths "${ROOT}#workerHost")"
-    [ "$("${host_dir}/bin/helmr-worker" --version)" = "${expected_identity}" ] ||
-      die "Worker does not report the release cohort identity"
-  else
-    host_dir="$(nix build -L --no-link --print-out-paths "${ROOT}#workerHost")"
-  fi
+  expected_identity="${RELEASE_TAG} (${source_commit})"
+  host_dir="$(HELMR_PLATFORM_VERSION="${RELEASE_TAG}" nix build --impure -L --no-link --print-out-paths "${ROOT}#workerHost")"
+  [ "$("${host_dir}/bin/helmr-worker" --version)" = "${expected_identity}" ] ||
+    die "Worker does not report the release cohort identity"
   nix develop "${ROOT}" -c \
     "${ROOT}/scripts/materialize-worker-host-bundle.sh" "${bundle_dir}" "${host_dir}" >/dev/null
   receipt="${bundle_dir}/worker-host-bundle.json"

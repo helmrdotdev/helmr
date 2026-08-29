@@ -5,7 +5,7 @@ repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 receipt="${1:-}"
 image_uri="${2:-}"
 platform="${CONTROLPLANE_IMAGE_PLATFORM:-linux/amd64}"
-build_version="${HELMR_BUILD_VERSION:-}"
+build_version="${RELEASE_TAG:-${HELMR_BUILD_VERSION:-}}"
 docker_bin="${DOCKER_BIN:-docker}"
 
 if [ -z "${receipt}" ] || [ -z "${image_uri}" ]; then
