@@ -286,6 +286,11 @@ func (s *Server) mountRoutes(router chi.Router) {
 	router.Get("/healthz", s.healthz)
 	router.Get("/readyz", s.readyz)
 	router.Route("/api", s.mountManagementRoutes)
+	router.Group(func(r chi.Router) {
+		r.Use(limitAPIRequestBody)
+		s.mountCapacityRoutes(r)
+		s.mountWorkerRoutes(r)
+	})
 	router.Route("/admin/api/v1", s.mountAdminRoutes)
 	router.Route("/v1", s.mountDeveloperRoutes)
 }
@@ -370,8 +375,6 @@ func (s *Server) mountManagementRoutes(r chi.Router) {
 	r.Options("/public/tokens/{tokenID}/complete", s.completeTokenBearerPreflight)
 	s.mountAuthRoutes(r)
 	s.mountSessionRoutes(r)
-	s.mountCapacityRoutes(r)
-	s.mountWorkerRoutes(r)
 }
 
 func limitAPIRequestBody(next http.Handler) http.Handler {
@@ -597,7 +600,7 @@ func (s *Server) mountDeveloperRoutes(r chi.Router) {
 }
 
 func (s *Server) mountWorkerRoutes(r chi.Router) {
-	r.Route("/worker/v0", func(r chi.Router) {
+	r.Route("/worker/v1", func(r chi.Router) {
 		r.Post("/enrollment", s.workerEnroll)
 		r.Post("/instance/token", s.workerAuthToken)
 		r.With(s.requireRecoveringWorker).Post("/instance/recover", s.workerStartupRecovery)

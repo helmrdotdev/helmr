@@ -6,7 +6,7 @@ description: Connect trusted provider-specific scaling automation to a self-host
 # Custom capacity scaling
 
 Build a provider-specific scaler against the Capacity deployment protocol at
-`/api/capacity/v0`. Helmr supplies desired-capacity and Worker lifecycle state.
+`/capacity/v1`. Helmr supplies desired-capacity and Worker lifecycle state.
 Your scaler owns provider policy and mutations, including creating and
 terminating hosts.
 
@@ -42,14 +42,14 @@ The Control Plane base URL is shown as `$CONTROL_PLANE_URL` below.
 
 | Method and path | Purpose |
 | --- | --- |
-| `GET /api/capacity/v0/worker-groups/resolve?region_id=...&name=...` | Resolve a Worker group by canonical Region ID and name. |
-| `GET /api/capacity/v0/worker-groups/{group_id}/pools/resolve?name=...` | Resolve a pool in a Worker group. |
-| `PUT /api/capacity/v0/worker-groups/{group_id}/primary-pools` | Select the primary pool with a group claim-version fence. |
-| `POST /api/capacity/v0/worker-groups/{group_id}/plan` | Compute provider-neutral additional Worker recommendations. |
-| `GET /api/capacity/v0/worker-instances` | List Worker instances for inventory and lifecycle reconciliation. |
-| `GET /api/capacity/v0/worker-instances/{instance_id}` | Read one Worker instance. |
-| `POST /api/capacity/v0/worker-instances/{instance_id}/drain` | Start claim- and epoch-fenced drain. |
-| `POST /api/capacity/v0/worker-instances/{instance_id}/lost` | Confirm that the provider host is absent. |
+| `GET /capacity/v1/worker-groups/resolve?region_id=...&name=...` | Resolve a Worker group by canonical Region ID and name. |
+| `GET /capacity/v1/worker-groups/{group_id}/pools/resolve?name=...` | Resolve a pool in a Worker group. |
+| `PUT /capacity/v1/worker-groups/{group_id}/primary-pools` | Select the primary pool with a group claim-version fence. |
+| `POST /capacity/v1/worker-groups/{group_id}/plan` | Compute provider-neutral additional Worker recommendations. |
+| `GET /capacity/v1/worker-instances` | List Worker instances for inventory and lifecycle reconciliation. |
+| `GET /capacity/v1/worker-instances/{instance_id}` | Read one Worker instance. |
+| `POST /capacity/v1/worker-instances/{instance_id}/drain` | Start claim- and epoch-fenced drain. |
+| `POST /capacity/v1/worker-instances/{instance_id}/lost` | Confirm that the provider host is absent. |
 
 Worker group, pool, and instance IDs are canonical UUIDv7 values. `region_id`,
 names, and provider `resource_id` values are opaque canonical strings.
@@ -66,7 +66,7 @@ printf 'Authorization: Bearer %s\n' "$CAPACITY_TOKEN" |
   --header 'Accept: application/json' \
   --data-urlencode "region_id=$REGION_ID" \
   --data-urlencode "name=$GROUP_NAME" \
-  "$CONTROL_PLANE_URL/api/capacity/v0/worker-groups/resolve"
+  "$CONTROL_PLANE_URL/capacity/v1/worker-groups/resolve"
 
 printf 'Authorization: Bearer %s\n' "$CAPACITY_TOKEN" |
   curl --fail-with-body \
@@ -75,7 +75,7 @@ printf 'Authorization: Bearer %s\n' "$CAPACITY_TOKEN" |
   --header 'Accept: application/json' \
   --header 'Content-Type: application/json' \
   --data '{"pools":[{"pool_id":"019...","max_additional_workers":10}]}' \
-  "$CONTROL_PLANE_URL/api/capacity/v0/worker-groups/$GROUP_ID/plan"
+  "$CONTROL_PLANE_URL/capacity/v1/worker-groups/$GROUP_ID/plan"
 ```
 
 The plan response has this shape:
@@ -171,7 +171,7 @@ printf 'Authorization: Bearer %s\n' "$CAPACITY_TOKEN" |
   --header 'Accept: application/json' \
   --header 'Content-Type: application/json' \
   --data "{\"expected_epoch\":$CURRENT_EPOCH,\"expected_claim_version\":$CLAIM_VERSION,\"require_zero_queued_demand\":true}" \
-  "$CONTROL_PLANE_URL/api/capacity/v0/worker-instances/$INSTANCE_ID/drain"
+  "$CONTROL_PLANE_URL/capacity/v1/worker-instances/$INSTANCE_ID/drain"
 ```
 
 The epoch and claim version fence the exact Worker ownership observed by the
@@ -208,8 +208,8 @@ limited to 16 KiB.
 
 ## Compatibility
 
-`/api/capacity/v0` is the supported integration boundary. Additive response
-fields may appear within `v0`; clients must ignore unknown fields. A breaking
+`/capacity/v1` is the supported integration boundary. Additive response
+fields may appear within `v1`; clients must ignore unknown fields. A breaking
 wire change requires a new route version.
 
 The historical Go module release `capacity/v0.1.0` remains downloadable for

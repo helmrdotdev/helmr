@@ -49,19 +49,21 @@ func hashCapacityToken(raw string) ([]byte, error) {
 }
 
 func (s *Server) mountCapacityRoutes(r chi.Router) {
-	r.Route("/capacity/v0", func(r chi.Router) {
-		r.Use(s.requireCapacity)
-		r.Get("/worker-groups/resolve", s.capacityResolveWorkerGroup)
-		r.Get("/worker-groups/{workerGroupID}/pools/resolve", s.capacityResolveWorkerPool)
-		r.With(limitRequestBody(capacityRequestBodyLimit)).
-			Put("/worker-groups/{workerGroupID}/primary-pools", s.capacityReconcileWorkerGroupPrimaryPools)
-		r.With(limitRequestBody(capacityRequestBodyLimit)).
-			Post("/worker-groups/{workerGroupID}/plan", s.capacityPlan)
-		r.Get("/worker-instances", s.capacityListWorkerInstances)
-		r.Get("/worker-instances/{workerInstanceID}", s.capacityGetWorkerInstance)
-		r.Post("/worker-instances/{workerInstanceID}/lost", s.capacityConfirmWorkerInstanceProviderAbsent)
-		r.With(limitRequestBody(capacityRequestBodyLimit)).
-			Post("/worker-instances/{workerInstanceID}/drain", s.capacityDrainWorkerInstance)
+	r.Route("/capacity/v1", func(r chi.Router) {
+		r.Group(func(r chi.Router) {
+			r.Use(s.requireCapacity)
+			r.Get("/worker-groups/resolve", s.capacityResolveWorkerGroup)
+			r.Get("/worker-groups/{workerGroupID}/pools/resolve", s.capacityResolveWorkerPool)
+			r.With(limitRequestBody(capacityRequestBodyLimit)).
+				Put("/worker-groups/{workerGroupID}/primary-pools", s.capacityReconcileWorkerGroupPrimaryPools)
+			r.With(limitRequestBody(capacityRequestBodyLimit)).
+				Post("/worker-groups/{workerGroupID}/plan", s.capacityPlan)
+			r.Get("/worker-instances", s.capacityListWorkerInstances)
+			r.Get("/worker-instances/{workerInstanceID}", s.capacityGetWorkerInstance)
+			r.Post("/worker-instances/{workerInstanceID}/lost", s.capacityConfirmWorkerInstanceProviderAbsent)
+			r.With(limitRequestBody(capacityRequestBodyLimit)).
+				Post("/worker-instances/{workerInstanceID}/drain", s.capacityDrainWorkerInstance)
+		})
 	})
 }
 

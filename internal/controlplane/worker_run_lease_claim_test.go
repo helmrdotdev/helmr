@@ -164,7 +164,7 @@ func runWorkerLeaseClaimRequest(
 ) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(
 		http.MethodPost,
-		"/api/worker/v0/run/leases/claim",
+		"/worker/v1/run/leases/claim",
 		bytes.NewReader(body),
 	)
 	request = request.WithContext(context.WithValue(

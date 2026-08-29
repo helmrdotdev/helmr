@@ -12,7 +12,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/db"
 )
+
+type routeWorkerAuthStore struct{ db.Querier }
 
 func TestControlPlaneRoutesMatchCurrentProtocol(t *testing.T) {
 	router := chi.NewRouter()
@@ -43,10 +46,6 @@ GET /admin/api/v1/worker-groups
 GET /admin/api/v1/worker-groups/{groupID}
 GET /admin/api/v1/worker-groups/{groupID}/pools
 GET /api/auth/device/status
-GET /api/capacity/v0/worker-groups/resolve
-GET /api/capacity/v0/worker-groups/{workerGroupID}/pools/resolve
-GET /api/capacity/v0/worker-instances
-GET /api/capacity/v0/worker-instances/{workerInstanceID}
 GET /api/invitations
 GET /api/me
 GET /api/members
@@ -84,7 +83,10 @@ GET /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspace
 GET /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/files/content
 GET /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/files/stat
 GET /api/regions
-GET /api/worker/v0/instance
+GET /capacity/v1/worker-groups/resolve
+GET /capacity/v1/worker-groups/{workerGroupID}/pools/resolve
+GET /capacity/v1/worker-instances
+GET /capacity/v1/worker-instances/{workerInstanceID}
 GET /healthz
 GET /readyz
 GET /v1/actors
@@ -116,6 +118,7 @@ GET /v1/workspaces/{workspaceID}/exec/{processID}
 GET /v1/workspaces/{workspaceID}/files
 GET /v1/workspaces/{workspaceID}/files/content
 GET /v1/workspaces/{workspaceID}/files/stat
+GET /worker/v1/instance
 OPTIONS /api/public/tokens/{tokenID}/complete
 PATCH /admin/api/v1/regions/{regionID}
 PATCH /admin/api/v1/worker-groups/{groupID}
@@ -144,9 +147,6 @@ POST /api/auth/logout
 POST /api/auth/magic-link/finish
 POST /api/auth/magic-link/invite/start
 POST /api/auth/magic-link/start
-POST /api/capacity/v0/worker-groups/{workerGroupID}/plan
-POST /api/capacity/v0/worker-instances/{workerInstanceID}/drain
-POST /api/capacity/v0/worker-instances/{workerInstanceID}/lost
 POST /api/invitations
 POST /api/organizations
 POST /api/projects
@@ -170,61 +170,9 @@ POST /api/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}/com
 POST /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/exec
 POST /api/public/tokens/{tokenID}/complete
 POST /api/token-callbacks/{tokenID}/{callbackSecret}
-POST /api/worker/v0/enrollment
-POST /api/worker/v0/instance/activate
-POST /api/worker/v0/instance/drain
-POST /api/worker/v0/instance/drain/complete
-POST /api/worker/v0/instance/fence
-POST /api/worker/v0/instance/observations
-POST /api/worker/v0/instance/recover
-POST /api/worker/v0/instance/token
-POST /api/worker/v0/run/actors/start
-POST /api/worker/v0/run/checkpoints/failed
-POST /api/worker/v0/run/checkpoints/ready
-POST /api/worker/v0/run/finalization/begin
-POST /api/worker/v0/run/leases/claim
-POST /api/worker/v0/run/leases/discover
-POST /api/worker/v0/run/leases/entrypoint
-POST /api/worker/v0/run/leases/renew
-POST /api/worker/v0/run/leases/resume-release
-POST /api/worker/v0/run/leases/start
-POST /api/worker/v0/run/logs/append
-POST /api/worker/v0/run/metadata/update
-POST /api/worker/v0/run/runtime-instances/closed
-POST /api/worker/v0/run/runtime-instances/failed
-POST /api/worker/v0/run/runtime-instances/ready
-POST /api/worker/v0/run/runtime-instances/reconcile
-POST /api/worker/v0/run/runtime-substrates/register
-POST /api/worker/v0/run/sessions/close
-POST /api/worker/v0/run/sessions/complete
-POST /api/worker/v0/run/sessions/inputs/send
-POST /api/worker/v0/run/sessions/outputs/append
-POST /api/worker/v0/run/sessions/outputs/read-page
-POST /api/worker/v0/run/sessions/retrieve
-POST /api/worker/v0/run/sessions/turns/commit
-POST /api/worker/v0/run/structured-logs/append
-POST /api/worker/v0/run/tasks/complete
-POST /api/worker/v0/run/tasks/invoke
-POST /api/worker/v0/run/tokens/create
-POST /api/worker/v0/run/waits/create
-POST /api/worker/v0/run/waits/poll
-POST /api/worker/v0/run/waits/resume-ack
-POST /api/worker/v0/run/workspace-execs/claim
-POST /api/worker/v0/run/workspace-execs/complete
-POST /api/worker/v0/run/workspace-mounts/capture
-POST /api/worker/v0/run/workspace-mounts/claim
-POST /api/worker/v0/run/workspace-mounts/fail
-POST /api/worker/v0/run/workspace-mounts/mounted
-POST /api/worker/v0/run/workspace-mounts/renew
-POST /api/worker/v0/run/workspace-mounts/stop
-POST /api/worker/v0/run/workspaces/create
-POST /api/worker/v0/run/workspaces/delete
-POST /api/worker/v0/run/workspaces/exec
-POST /api/worker/v0/run/workspaces/exec/poll
-POST /api/worker/v0/run/workspaces/files/list
-POST /api/worker/v0/run/workspaces/files/read
-POST /api/worker/v0/run/workspaces/files/stat
-POST /api/worker/v0/run/workspaces/retrieve
+POST /capacity/v1/worker-groups/{workerGroupID}/plan
+POST /capacity/v1/worker-instances/{workerInstanceID}/drain
+POST /capacity/v1/worker-instances/{workerInstanceID}/lost
 POST /v1/actors/{actorDeclaredID}/start
 POST /v1/deployment-bundles/finalize
 POST /v1/deployment-bundles/upload-plan
@@ -241,7 +189,62 @@ POST /v1/tokens
 POST /v1/tokens/{tokenID}/cancel
 POST /v1/tokens/{tokenID}/complete
 POST /v1/workspaces/{workspaceID}/exec
-PUT /api/capacity/v0/worker-groups/{workerGroupID}/primary-pools
+POST /worker/v1/enrollment
+POST /worker/v1/instance/activate
+POST /worker/v1/instance/drain
+POST /worker/v1/instance/drain/complete
+POST /worker/v1/instance/fence
+POST /worker/v1/instance/observations
+POST /worker/v1/instance/recover
+POST /worker/v1/instance/token
+POST /worker/v1/run/actors/start
+POST /worker/v1/run/checkpoints/failed
+POST /worker/v1/run/checkpoints/ready
+POST /worker/v1/run/finalization/begin
+POST /worker/v1/run/leases/claim
+POST /worker/v1/run/leases/discover
+POST /worker/v1/run/leases/entrypoint
+POST /worker/v1/run/leases/renew
+POST /worker/v1/run/leases/resume-release
+POST /worker/v1/run/leases/start
+POST /worker/v1/run/logs/append
+POST /worker/v1/run/metadata/update
+POST /worker/v1/run/runtime-instances/closed
+POST /worker/v1/run/runtime-instances/failed
+POST /worker/v1/run/runtime-instances/ready
+POST /worker/v1/run/runtime-instances/reconcile
+POST /worker/v1/run/runtime-substrates/register
+POST /worker/v1/run/sessions/close
+POST /worker/v1/run/sessions/complete
+POST /worker/v1/run/sessions/inputs/send
+POST /worker/v1/run/sessions/outputs/append
+POST /worker/v1/run/sessions/outputs/read-page
+POST /worker/v1/run/sessions/retrieve
+POST /worker/v1/run/sessions/turns/commit
+POST /worker/v1/run/structured-logs/append
+POST /worker/v1/run/tasks/complete
+POST /worker/v1/run/tasks/invoke
+POST /worker/v1/run/tokens/create
+POST /worker/v1/run/waits/create
+POST /worker/v1/run/waits/poll
+POST /worker/v1/run/waits/resume-ack
+POST /worker/v1/run/workspace-execs/claim
+POST /worker/v1/run/workspace-execs/complete
+POST /worker/v1/run/workspace-mounts/capture
+POST /worker/v1/run/workspace-mounts/claim
+POST /worker/v1/run/workspace-mounts/fail
+POST /worker/v1/run/workspace-mounts/mounted
+POST /worker/v1/run/workspace-mounts/renew
+POST /worker/v1/run/workspace-mounts/stop
+POST /worker/v1/run/workspaces/create
+POST /worker/v1/run/workspaces/delete
+POST /worker/v1/run/workspaces/exec
+POST /worker/v1/run/workspaces/exec/poll
+POST /worker/v1/run/workspaces/files/list
+POST /worker/v1/run/workspaces/files/read
+POST /worker/v1/run/workspaces/files/stat
+POST /worker/v1/run/workspaces/retrieve
+PUT /capacity/v1/worker-groups/{workerGroupID}/primary-pools
 `), "\n")
 	if !slices.IsSorted(want) {
 		t.Fatal("Control Plane route snapshot must stay sorted")
@@ -268,7 +271,11 @@ func TestRouterFallbacksUseHTTPErrorEnvelope(t *testing.T) {
 		status int
 		code   string
 	}{
-		{name: "not found", method: http.MethodGet, path: "/v1/missing", status: http.StatusNotFound, code: "not_found"},
+		{name: "Developer API not found", method: http.MethodGet, path: "/v1/missing", status: http.StatusNotFound, code: "not_found"},
+		{name: "Capacity not found", method: http.MethodGet, path: "/capacity/v1/missing", status: http.StatusNotFound, code: "not_found"},
+		{name: "Worker not found", method: http.MethodGet, path: "/worker/v1/missing", status: http.StatusNotFound, code: "not_found"},
+		{name: "old Capacity root", method: http.MethodGet, path: "/api/capacity/v0/worker-instances", status: http.StatusNotFound, code: "not_found"},
+		{name: "old Worker root", method: http.MethodGet, path: "/api/worker/v0/instance", status: http.StatusNotFound, code: "not_found"},
 		{name: "method not allowed", method: http.MethodPost, path: "/healthz", status: http.StatusMethodNotAllowed, code: "method_not_allowed"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -280,11 +287,89 @@ func TestRouterFallbacksUseHTTPErrorEnvelope(t *testing.T) {
 			if got := decodeHTTPError(t, response.Body.Bytes()).Code; got != test.code {
 				t.Fatalf("code = %q, want %q", got, test.code)
 			}
+			if location := response.Header().Get("Location"); location != "" {
+				t.Fatalf("Location = %q, want no redirect", location)
+			}
 			if _, err := uuid.Parse(response.Header().Get(requestIDHeader)); err != nil {
 				t.Fatalf("%s is not a UUID: %v", requestIDHeader, err)
 			}
 			if test.status == http.StatusMethodNotAllowed && response.Header().Get("Allow") != http.MethodGet {
 				t.Fatalf("Allow = %q, want %q", response.Header().Get("Allow"), http.MethodGet)
+			}
+		})
+	}
+}
+
+func TestMachineRoutesPreserveAuthenticationBoundaries(t *testing.T) {
+	capacityTokenHash, err := hashCapacityToken(capacityTestToken())
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{
+		db:                    &routeWorkerAuthStore{},
+		capacityTokenHash:     capacityTokenHash,
+		workerTokenSigningKey: []byte(strings.Repeat("w", 32)),
+		workerEnrollmentGuard: newWorkerEnrollmentGuard(),
+	}
+	router := chi.NewRouter()
+	server.mountRoutes(router)
+
+	for _, test := range []struct {
+		name          string
+		path          string
+		authorization string
+		status        int
+	}{
+		{name: "Capacity missing", path: "/capacity/v1/worker-instances", status: http.StatusUnauthorized},
+		{name: "Capacity foreign", path: "/capacity/v1/worker-instances", authorization: "Bearer hlmr_test_product", status: http.StatusUnauthorized},
+		{name: "Worker missing", path: "/worker/v1/instance", status: http.StatusUnauthorized},
+		{name: "Worker foreign", path: "/worker/v1/instance", authorization: "Bearer " + capacityTestToken(), status: http.StatusUnauthorized},
+		{name: "Worker enrollment bootstrap", path: "/worker/v1/enrollment", status: http.StatusBadRequest},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, test.path, nil)
+			if test.path == "/worker/v1/instance" || test.path == "/capacity/v1/worker-instances" {
+				request.Method = http.MethodGet
+			}
+			request.Header.Set("Authorization", test.authorization)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != test.status {
+				t.Fatalf("status = %d, want %d: %s", response.Code, test.status, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestMachineRoutesPreserveRequestBodyLimits(t *testing.T) {
+	capacityTokenHash, err := hashCapacityToken(capacityTestToken())
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{capacityTokenHash: capacityTokenHash}
+	router := chi.NewRouter()
+	server.mountRoutes(router)
+
+	for _, test := range []struct {
+		name   string
+		path   string
+		length int64
+	}{
+		{name: "Capacity common limit", path: "/capacity/v1/worker-instances/01900000-0000-7000-8000-000000000000/lost", length: apiRequestBodyLimit + 1},
+		{name: "Worker common limit", path: "/worker/v1/instance/observations", length: apiRequestBodyLimit + 1},
+		{name: "Capacity mutation limit", path: "/capacity/v1/worker-groups/01900000-0000-7000-8000-000000000000/plan", length: capacityRequestBodyLimit + 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, test.path, strings.NewReader("x"))
+			request.ContentLength = test.length
+			request.Header.Set("Authorization", "Bearer "+capacityTestToken())
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != http.StatusRequestEntityTooLarge {
+				t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusRequestEntityTooLarge, response.Body.String())
+			}
+			if got := decodeHTTPError(t, response.Body.Bytes()).Code; got != "request_too_large" {
+				t.Fatalf("code = %q, want request_too_large", got)
 			}
 		})
 	}
