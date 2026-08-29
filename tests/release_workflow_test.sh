@@ -51,9 +51,9 @@ reject_text "repair" "$workflow" \
   "release workflow still contains the retired same-tag repair path"
 require_text "name: version cohort" "$workflow" \
   "release workflow does not gate publication on one version cohort"
-require_text 'RELEASE_TAG="$GITHUB_REF_NAME" tests/version_cohort_test.sh "$GITHUB_REF_NAME" "$(git rev-parse HEAD)"' "$workflow" \
+require_text 'RELEASE_TAG="$GITHUB_REF_NAME" nix develop --command tests/version_cohort_test.sh "$GITHUB_REF_NAME" "$(git rev-parse HEAD)"' "$workflow" \
   "release cohort check is not bound to the tag and full source commit"
-require_text 'HELMR_PLATFORM_VERSION="$RELEASE_TAG"' "$workflow" \
+require_text 'HELMR_PLATFORM_VERSION="${RELEASE_TAG}" nix build --impure' "$repo_root/scripts/aws-release-artifacts.sh" \
   "Worker release does not pass the canonical cohort identity"
 require_text "SourceCommit=\${source_commit}" "$workflow" \
   "CLI release does not stamp the full source commit"

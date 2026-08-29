@@ -10,16 +10,12 @@ arch="${arch%%/*}"
 context="${CONTROLPLANE_IMAGE_CONTEXT:-$repo_root/dist/controlplane-image}"
 build_contract="$repo_root/images/controlplane-image-build.json"
 nix_builder_image="nixos/nix:2.31.2@sha256:c7cc6c8cb5d81bed19997247629604708fda95c99c43ac362daa05b6a68e8a24"
-build_version="${HELMR_BUILD_VERSION:-}"
+build_version="${RELEASE_TAG:-${HELMR_BUILD_VERSION:-}}"
 source_commit="$(git -C "$repo_root" rev-parse HEAD)"
 ldflags="-s -w"
 
 if [ -z "$image_uri" ]; then
   echo "usage: scripts/build-controlplane-image.sh <image-uri>" >&2
-  exit 1
-fi
-if [ -n "${RELEASE_TAG:-}" ] && [ "$build_version" != "$RELEASE_TAG" ]; then
-  echo "HELMR_BUILD_VERSION must match RELEASE_TAG" >&2
   exit 1
 fi
 [ -z "$(git -C "$repo_root" status --porcelain --untracked-files=all)" ] || {

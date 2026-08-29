@@ -307,9 +307,7 @@ prepare_worker_host_bundle() (
   source_commit="$(git -C "${ROOT}" rev-parse HEAD)"
   if [ -n "${RELEASE_TAG:-}" ]; then
     expected_identity="${RELEASE_TAG} (${source_commit})"
-    [ "${HELMR_PLATFORM_VERSION:-}" = "${RELEASE_TAG}" ] ||
-      die "HELMR_PLATFORM_VERSION must match the release tag"
-    host_dir="$(HELMR_PLATFORM_VERSION="${HELMR_PLATFORM_VERSION}" nix build --impure -L --no-link --print-out-paths "${ROOT}#workerHost")"
+    host_dir="$(HELMR_PLATFORM_VERSION="${RELEASE_TAG}" nix build --impure -L --no-link --print-out-paths "${ROOT}#workerHost")"
     [ "$("${host_dir}/bin/helmr-worker" --version)" = "${expected_identity}" ] ||
       die "Worker does not report the release cohort identity"
   else
@@ -925,7 +923,6 @@ controlplane_image_build() {
   # shellcheck disable=SC2016
   nix develop "${ROOT}#images" -c env \
     CONTROLPLANE_IMAGE_CONTEXT="${context}" \
-    HELMR_BUILD_VERSION="${RELEASE_TAG:-}" \
     IMAGE_URI="${image_uri}" \
     bash -ceu '
       cd "$1"

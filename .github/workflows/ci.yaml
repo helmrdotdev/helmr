@@ -108,7 +108,7 @@ jobs:
 
       - uses: ./.github/actions/setup-nix
 
-      - run: tests/version_cohort_test.sh
+      - run: nix develop --command tests/version_cohort_test.sh
       - run: nix run .#ci-boot-artifacts-repro
 
   ci-complete:

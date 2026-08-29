@@ -31,7 +31,7 @@ jobs:
       - uses: ./.github/actions/setup-nix
 
       - name: Verify release cohort
-        run: RELEASE_TAG="$GITHUB_REF_NAME" tests/version_cohort_test.sh "$GITHUB_REF_NAME" "$(git rev-parse HEAD)"
+        run: RELEASE_TAG="$GITHUB_REF_NAME" nix develop --command tests/version_cohort_test.sh "$GITHUB_REF_NAME" "$(git rev-parse HEAD)"
 
   platform-release:
     name: platform release
@@ -236,7 +236,6 @@ jobs:
       - name: Build controlplane image
         env:
           IMAGE_URI: ${{ env.CONTROLPLANE_IMAGE_REPOSITORY }}:${{ env.RELEASE_TAG }}
-          HELMR_BUILD_VERSION: ${{ env.RELEASE_TAG }}
         run: |
           nix develop .#images --command ./scripts/build-controlplane-image.sh "$IMAGE_URI"
           mkdir -p dist
@@ -329,7 +328,6 @@ jobs:
           WORKER_IMAGE_ROOT_VOLUME_ENCRYPTED: "false"
         run: |
           nix develop .#infra --command bash -euo pipefail <<'EOF'
-          export HELMR_PLATFORM_VERSION="$RELEASE_TAG"
           scripts/aws-release-artifacts.sh check
           scripts/aws-release-artifacts.sh worker-image-init
           scripts/aws-release-artifacts.sh worker-image-apply
