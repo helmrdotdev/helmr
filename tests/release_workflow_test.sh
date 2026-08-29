@@ -197,6 +197,34 @@ require_job_text "github-release" 'name: Helmr ${{ env.RELEASE_TAG }}' \
   "GitHub Release does not use the approved display name"
 require_job_text "github-release" "dist/worker/worker-image.json" \
   "GitHub Release omits worker-image.json"
+require_job_text "publish" "./.github/actions/setup-nix" \
+  "AWS manifest signing does not use the pinned Nix toolchain"
+require_job_text "publish" "id-token: write" \
+  "AWS manifest signing has no keyless OIDC authority"
+require_job_text "publish" "nix develop .#images --command" \
+  "AWS manifest signing does not use the pinned image toolchain"
+require_job_text "publish" "cosign sign-blob" \
+  "AWS release manifest is not signed"
+require_job_text "publish" "--bundle dist/aws-artifacts.sigstore.json" \
+  "AWS release manifest signing does not write the exact companion bundle"
+require_job_text "publish" "dist/aws-artifacts.json" \
+  "AWS release manifest signing does not use the exact manifest path"
+reject_job_text "publish" "cosign verify-blob" \
+  "producer workflow reverifies the freshly signed AWS release manifest"
+reject_job_text "platform-release-dev" "aws-artifacts" \
+  "development Platform signing also signs an AWS release manifest"
+require_job_text "github-release" "dist/aws-artifacts.sigstore.json" \
+  "GitHub Release omits the AWS release manifest signature evidence"
+
+publish_job="$(job_text publish)"
+manifest_line="$(printf '%s\n' "$publish_job" | rg -n -F 'scripts/write-aws-release-manifest.sh' | cut -d: -f1)"
+sign_line="$(printf '%s\n' "$publish_job" | rg -n -F 'cosign sign-blob' | cut -d: -f1)"
+artifact_line="$(printf '%s\n' "$publish_job" | rg -n -F 'name: aws-release-manifest' | cut -d: -f1)"
+if [ -z "$manifest_line" ] || [ -z "$sign_line" ] || [ -z "$artifact_line" ] ||
+  [ "$manifest_line" -ge "$sign_line" ] || [ "$sign_line" -ge "$artifact_line" ]; then
+  printf '%s\n' "AWS release manifest must be finalized, signed, then uploaded" >&2
+  exit 1
+fi
 github_release_before_action="$(
   job_text "github-release" |
     awk 'index($0, "softprops/action-gh-release@") { exit } { print }'

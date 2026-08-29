@@ -448,7 +448,7 @@ jobs:
       controlplane_image: ${{ steps.push.outputs.controlplane_image }}
     permissions:
       contents: read
-      id-token: write # Needed to verify Worker AMIs through the AWS release role. security-check: allow-id-token
+      id-token: write # Needed to verify Worker AMIs and sign the AWS release manifest. security-check: allow-id-token
       packages: write # Needed to publish the official Control Plane image.
     env:
       RELEASE_TAG: ${{ github.ref_name }}
@@ -468,8 +468,8 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 1
           persist-credentials: false
-          sparse-checkout: scripts
-          sparse-checkout-cone-mode: true
+
+      - uses: ./.github/actions/setup-nix
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -519,12 +519,23 @@ jobs:
             "$(cat dist/platform-release/platform-release-provenance.json)" \
             dist/aws-artifacts.json
 
+      - name: Sign AWS release manifest
+        run: |
+          nix develop .#images --command \
+            cosign sign-blob \
+              --yes \
+              --new-bundle-format=true \
+              --bundle dist/aws-artifacts.sigstore.json \
+              dist/aws-artifacts.json
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: aws-release-manifest
           if-no-files-found: error
           retention-days: 30
-          path: dist/aws-artifacts.json
+          path: |
+            dist/aws-artifacts.json
+            dist/aws-artifacts.sigstore.json
 
   verify-public-images:
     name: verify public images
@@ -631,6 +642,7 @@ jobs:
             dist/platform-release/platform-release.sigstore.json
             dist/platform-release/platform-release-provenance.json
             dist/aws-artifacts.json
+            dist/aws-artifacts.sigstore.json
             dist/worker/worker-image.json
 
   typescript-sdk-packages:
