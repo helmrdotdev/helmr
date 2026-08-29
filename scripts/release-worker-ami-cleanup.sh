@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-base_name="${1:-${WORKER_IMAGE_NAME_BASE:-helmr-release-image}}"
+base_name="${1:-${WORKER_IMAGE_NAME_BASE:-helmr-worker}}"
 regions_arg="${2:-${WORKER_AMI_REGIONS:-${WORKER_IMAGE_DISTRIBUTION_REGIONS:-${AWS_REGION:-us-east-1}}}}"
 keep="${3:-${RELEASE_WORKER_AMI_KEEP:-${WORKER_IMAGE_CLEANUP_KEEP:-4}}}"
 
@@ -60,7 +60,7 @@ for region in "${regions[@]}"; do
 
   candidates="$(
     printf '%s\n' "${images}" |
-      jq -c --arg prefix "${name_prefix}" '
+      jq -c --arg pattern "^${name_prefix}-v(0|[1-9][0-9]*)-(0|[1-9][0-9]*)-(0|[1-9][0-9]*)(-[0-9a-z]+(-[0-9a-z]+)*)?-[0-9a-f]{10}$" '
         [
           .Images[]?
           | select((.Public // false) == true)
@@ -68,7 +68,7 @@ for region in "${regions[@]}"; do
           | (($image.Tags // [])
               | map(select(.Key == "HelmrWorkerImageName"))
               | .[0].Value // "") as $worker_name
-          | select($worker_name == $prefix or ($worker_name | startswith($prefix + "-")))
+          | select($worker_name | test($pattern))
           | {
               image_id: .ImageId,
               name: (.Name // ""),

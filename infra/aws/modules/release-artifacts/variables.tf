@@ -1,10 +1,10 @@
 variable "helmr_version" {
-  description = "Helmr release version, for example vX.Y.Z. Used to resolve official release artifacts."
+  description = "Exact Helmr release tag, vX.Y.Z or vX.Y.Z-prerelease, used to resolve official release artifacts."
   type        = string
 
   validation {
-    condition     = trimspace(var.helmr_version) != ""
-    error_message = "helmr_version must not be empty."
+    condition     = can(regex("^v(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)([.]((0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?$", var.helmr_version))
+    error_message = "helmr_version must be an exact vX.Y.Z or vX.Y.Z-prerelease tag."
   }
 }
 

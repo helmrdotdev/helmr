@@ -1,12 +1,19 @@
 # Release security
 
-Helmr releases four independent products:
+One `vX.Y.Z[-pre]` tag releases the complete Helmr Platform cohort:
 
 - the Control Plane container image;
 - the execution Worker AMI;
 - the signed Platform release containing the immutable Runtime closure used by
   verified Deployment bundles;
 - the digest-pinned local/CI bundle-builder image.
+- the `@helmr/proto` and `@helmr/sdk` npm packages.
+
+The `release` Environment admits the tag only after every required AWS value is
+present. Public images and manifests are published first, a fresh
+environmentless job resolves both images anonymously by digest, and only then
+does the workflow create the GitHub Release and idempotently publish both npm
+packages. Development signing is environmentless and cannot publish.
 
 The Platform release is built from one source commit by Nix. Its deterministic
 archive and Sigstore bundle bind the exact runtime bytes to the release
@@ -28,4 +35,5 @@ no delete authority. Referenced Deployment runtime digests are GC roots.
 
 Control Plane images and Worker AMIs are built directly from the same checked
 out source. Publication is immutable: a failed release is abandoned and the
-next attempt uses a new prerelease tag.
+next attempt uses a new prerelease tag. Artifact retirement is a separate,
+approved operation and never runs during tag publication.

@@ -87,11 +87,27 @@ cat >"$tmp/images.json" <<'JSON'
 {
   "Images": [
     {
+      "ImageId": "ami-victim",
+      "Name": "victim",
+      "CreationDate": "2025-12-30T00:00:00.000Z",
+      "Public": true,
+      "Tags": [{"Key":"HelmrWorkerImageName","Value":"helmr-worker-victim"}],
+      "BlockDeviceMappings": [{"Ebs":{"SnapshotId":"snap-victim"}}]
+    },
+    {
+      "ImageId": "ami-public-name",
+      "Name": "public-name",
+      "CreationDate": "2025-12-31T00:00:00.000Z",
+      "Public": true,
+      "Tags": [{"Key":"HelmrWorkerImageName","Value":"helmr-worker-image"}],
+      "BlockDeviceMappings": [{"Ebs":{"SnapshotId":"snap-public-name"}}]
+    },
+    {
       "ImageId": "ami-oldest",
       "Name": "oldest",
       "CreationDate": "2026-01-01T00:00:00.000Z",
       "Public": true,
-      "Tags": [{"Key":"HelmrWorkerImageName","Value":"helmr-release-image-v0-1-1-rc-1"}],
+      "Tags": [{"Key":"HelmrWorkerImageName","Value":"helmr-worker-v0-1-1-rc-1-0000000001"}],
       "BlockDeviceMappings": [{"Ebs":{"SnapshotId":"snap-oldest"}}]
     },
     {
@@ -99,7 +115,7 @@ cat >"$tmp/images.json" <<'JSON'
       "Name": "second",
       "CreationDate": "2026-01-02T00:00:00.000Z",
       "Public": true,
-      "Tags": [{"Key":"HelmrWorkerImageName","Value":"helmr-release-image-v0-1-1-rc-2"}],
+      "Tags": [{"Key":"HelmrWorkerImageName","Value":"helmr-worker-v0-1-1-rc-2-0000000002"}],
       "BlockDeviceMappings": [{"Ebs":{"SnapshotId":"snap-second-a"}},{"Ebs":{"SnapshotId":"snap-second-b"}}]
     },
     {
@@ -107,35 +123,35 @@ cat >"$tmp/images.json" <<'JSON'
       "Name": "keep-1",
       "CreationDate": "2026-01-03T00:00:00.000Z",
       "Public": true,
-      "Tags": [{"Key":"HelmrWorkerImageName","Value":"helmr-release-image-v0-1-1-rc-3"}]
+      "Tags": [{"Key":"HelmrWorkerImageName","Value":"helmr-worker-v0-1-1-rc-3-0000000003"}]
     },
     {
       "ImageId": "ami-keep-2",
       "Name": "keep-2",
       "CreationDate": "2026-01-04T00:00:00.000Z",
       "Public": true,
-      "Tags": [{"Key":"HelmrWorkerImageName","Value":"helmr-release-image-v0-1-1-rc-4"}]
+      "Tags": [{"Key":"HelmrWorkerImageName","Value":"helmr-worker-v0-1-1-rc-4-0000000004"}]
     },
     {
       "ImageId": "ami-private",
       "Name": "private",
       "CreationDate": "2026-01-05T00:00:00.000Z",
       "Public": false,
-      "Tags": [{"Key":"HelmrWorkerImageName","Value":"helmr-release-image-v0-1-1-rc-private"}]
+      "Tags": [{"Key":"HelmrWorkerImageName","Value":"helmr-worker-v0-1-1-rc-private-0000000005"}]
     },
     {
       "ImageId": "ami-other",
       "Name": "other",
       "CreationDate": "2026-01-06T00:00:00.000Z",
       "Public": true,
-      "Tags": [{"Key":"HelmrWorkerImageName","Value":"other-release-image-v0-1-1"}]
+      "Tags": [{"Key":"HelmrWorkerImageName","Value":"other-release-image-v0-1-1-0000000006"}]
     },
     {
       "ImageId": "ami-keep-3",
       "Name": "keep-3",
       "CreationDate": "2026-01-07T00:00:00.000Z",
       "Public": true,
-      "Tags": [{"Key":"HelmrWorkerImageName","Value":"helmr-release-image-v0-1-1-rc-5"}]
+      "Tags": [{"Key":"HelmrWorkerImageName","Value":"helmr-worker-v0-1-1-rc-5-0000000007"}]
     }
   ]
 }
@@ -143,7 +159,7 @@ JSON
 
 touch "$tmp/calls"
 MOCK_AWS_CALLS="$tmp/calls" MOCK_AWS_IMAGES="$tmp/images.json" PATH="$tmp/bin:$PATH" \
-  "$repo_root/scripts/release-worker-ami-cleanup.sh" helmr-release-image "us-east-1, us-west-2" 3
+  "$repo_root/scripts/release-worker-ami-cleanup.sh" helmr-worker "us-east-1, us-west-2" 3
 
 assert_contains "$tmp/calls" "deregister region=us-east-1 image=ami-oldest" "oldest image in first region should be deleted"
 assert_contains "$tmp/calls" "deregister region=us-east-1 image=ami-second" "second-oldest image in first region should be deleted"
@@ -151,11 +167,15 @@ assert_contains "$tmp/calls" "delete-snapshot region=us-east-1 snapshot=snap-old
 assert_contains "$tmp/calls" "delete-snapshot region=us-east-1 snapshot=snap-second-a" "first second-oldest snapshot should be deleted"
 assert_contains "$tmp/calls" "delete-snapshot region=us-east-1 snapshot=snap-second-b" "second second-oldest snapshot should be deleted"
 assert_contains "$tmp/calls" "deregister region=us-west-2 image=ami-oldest" "oldest image in second region should be deleted"
+assert_not_contains "$tmp/calls" "ami-victim" "unrelated prefix-v image should not be deregistered"
+assert_not_contains "$tmp/calls" "snap-victim" "unrelated prefix-v image snapshot should not be deleted"
+assert_not_contains "$tmp/calls" "ami-public-name" "non-release public image should not be deregistered"
+assert_not_contains "$tmp/calls" "snap-public-name" "non-release public image snapshot should not be deleted"
 assert_not_contains "$tmp/calls" "ami-private" "private image should not be deleted"
 assert_not_contains "$tmp/calls" "ami-other" "unrelated release image should not be deleted"
 assert_not_contains "$tmp/calls" "ami-keep-3" "newest matching image should be kept"
 
-if "$repo_root/scripts/release-worker-ami-cleanup.sh" helmr-release-image us-east-1 invalid 2>/dev/null; then
+if "$repo_root/scripts/release-worker-ami-cleanup.sh" helmr-worker us-east-1 invalid 2>/dev/null; then
   fail "invalid keep count should fail"
 fi
 

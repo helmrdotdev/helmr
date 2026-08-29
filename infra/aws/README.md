@@ -1,8 +1,7 @@
 # Helmr AWS Infrastructure
 
-This directory contains provider-generic AWS building blocks and public release
-artifact tooling for Helmr. It does not contain the Managed Cloud root stack,
-capacity policy, provider credentials, or Cloud validation campaign.
+This directory contains reusable AWS building blocks and public release artifact
+tooling for Helmr.
 
 ## Layout
 
@@ -17,9 +16,9 @@ capacity policy, provider credentials, or Cloud validation campaign.
 - `stacks/worker-image` is the public Worker AMI build pipeline.
 
 Self-hosting operators own their surrounding network, ClickHouse service,
-capacity policy, credentials, and drift management. Managed Cloud composes
-these modules from its private deployment repository without changing their
-Product contract.
+capacity policy, credentials, backups, upgrades, recovery, and drift
+management. Pin one exact Helmr release cohort; availability of an older
+release does not guarantee a safe downgrade of runtime or persisted data.
 
 ## Release artifacts
 
@@ -27,7 +26,8 @@ Run Product artifact operations through `scripts/aws-release-artifacts.sh`.
 The release workflow publishes a digest-pinned Control Plane image, regional Worker
 AMIs, and the signed Platform release. The Control Plane image contains only
 `control-plane` and `dispatcher`; deployment capacity automation is not a
-Product release artifact.
+Product release artifact. The Control Plane and bundle-builder GHCR packages
+are public and should be consumed by immutable digest.
 
 Before enabling or updating Control Plane services, run the database migration task
 for the exact image. Keep `/healthz` for process health and use `/readyz` for

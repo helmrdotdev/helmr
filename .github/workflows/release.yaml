@@ -4,14 +4,13 @@ on:
   push:
     tags:
       - "v*"
-      - "sdk/typescript/v*"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 env:
-  PLATFORM_RELEASE_TAG_PATTERN: '^v[0-9]+[.][0-9]+[.][0-9]+(-[0-9A-Za-z-]+([.][0-9A-Za-z-]+)*)?$'
+  PLATFORM_RELEASE_TAG_PATTERN: '^v(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)([.]((0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?$'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -20,9 +19,22 @@ concurrency:
 jobs:
   version-cohort:
     name: version cohort
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     steps:
+      - name: Reject a release rerun
+        if: github.run_attempt != 1
+        run: |
+          echo "release tags are single-attempt; create a new prerelease tag after any failed or partial publication" >&2
+          exit 1
+
+      - name: Validate release tag
+        run: |
+          if ! printf '%s' "$GITHUB_REF_NAME" | grep -Eq "$PLATFORM_RELEASE_TAG_PATTERN"; then
+            echo "release tag must match vX.Y.Z or vX.Y.Z-prerelease" >&2
+            exit 1
+          fi
+
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           ref: ${{ github.sha }}
@@ -33,16 +45,76 @@ jobs:
       - name: Verify release cohort
         run: RELEASE_TAG="$GITHUB_REF_NAME" nix develop --command tests/version_cohort_test.sh "$GITHUB_REF_NAME" "$(git rev-parse HEAD)"
 
-  platform-release:
-    name: platform release
+  release-admission:
+    name: release admission
     if: startsWith(github.ref, 'refs/tags/v')
     needs: version-cohort
     runs-on: ubuntu-24.04
-    environment: release-production
+    environment: release
+    permissions:
+      contents: read
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+      RELEASE_AWS_ROLE_ARN: ${{ vars.RELEASE_AWS_ROLE_ARN }}
+      RELEASE_AWS_STATE_BUCKET: ${{ vars.RELEASE_AWS_STATE_BUCKET }}
+      RELEASE_WORKER_IMAGE_ARTIFACT_BUCKET: ${{ vars.RELEASE_WORKER_IMAGE_ARTIFACT_BUCKET }}
+    steps:
+      - name: Reject a release rerun
+        if: github.run_attempt != 1
+        run: |
+          echo "release tags are single-attempt; create a new prerelease tag after any failed or partial publication" >&2
+          exit 1
+
+      - name: Check release settings
+        run: |
+          [ -n "$RELEASE_AWS_ROLE_ARN" ] || {
+            echo "RELEASE_AWS_ROLE_ARN is required" >&2
+            exit 1
+          }
+          [ -n "$RELEASE_AWS_STATE_BUCKET" ] || {
+            echo "RELEASE_AWS_STATE_BUCKET is required" >&2
+            exit 1
+          }
+          [ -n "$RELEASE_WORKER_IMAGE_ARTIFACT_BUCKET" ] || {
+            echo "RELEASE_WORKER_IMAGE_ARTIFACT_BUCKET is required" >&2
+            exit 1
+          }
+
+      - name: Refuse an existing GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          status="$(
+            curl --silent --show-error \
+              --output /dev/null \
+              --write-out '%{http_code}' \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer $GITHUB_TOKEN" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG"
+          )" || exit 1
+          case "$status" in
+            404) ;;
+            200) echo "GitHub Release $RELEASE_TAG already exists; a new prerelease tag is required" >&2; exit 1 ;;
+            *) echo "failed to check GitHub Release $RELEASE_TAG: HTTP $status" >&2; exit 1 ;;
+          esac
+
+  platform-release:
+    name: platform release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: release-admission
+    runs-on: ubuntu-24.04
+    environment: release
     permissions:
       contents: read
       id-token: write # Needed for keyless Platform release signing. security-check: allow-id-token
     steps:
+      - name: Reject a release rerun
+        if: github.run_attempt != 1
+        run: |
+          echo "release tags are single-attempt; create a new prerelease tag after any failed or partial publication" >&2
+          exit 1
+
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           ref: ${{ github.sha }}
@@ -69,7 +141,6 @@ jobs:
       startsWith(github.ref, 'refs/heads/') &&
       github.ref != 'refs/heads/main'
     runs-on: ubuntu-24.04
-    environment: dev-runtime
     permissions:
       contents: read
       id-token: write # Needed for keyless development release signing. security-check: allow-id-token
@@ -96,9 +167,9 @@ jobs:
   bundle-builder-image:
     name: bundle builder image
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: version-cohort
+    needs: release-admission
     runs-on: ubuntu-24.04
-    environment: release-production
+    environment: release
     permissions:
       contents: read
       packages: write
@@ -106,8 +177,14 @@ jobs:
       image: ${{ steps.publish.outputs.image }}
     env:
       RELEASE_TAG: ${{ github.ref_name }}
-      BUILDER_IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/helmr-bundle-builder
+      BUILDER_IMAGE_REPOSITORY: ghcr.io/${{ github.repository }}/bundle-builder
     steps:
+      - name: Reject a release rerun
+        if: github.run_attempt != 1
+        run: |
+          echo "release tags are single-attempt; create a new prerelease tag after any failed or partial publication" >&2
+          exit 1
+
       - name: Validate release tag
         run: |
           if ! printf '%s' "$RELEASE_TAG" | grep -Eq "$PLATFORM_RELEASE_TAG_PATTERN"; then
@@ -140,8 +217,6 @@ jobs:
           digest="$(docker buildx imagetools inspect "$image_tag" --format '{{json .Manifest.Digest}}' | jq -er '.')"
           image="$BUILDER_IMAGE_REPOSITORY@$digest"
           docker logout ghcr.io
-          public_digest="$(docker buildx imagetools inspect "$image" --format '{{json .Manifest.Digest}}' | jq -er '.')"
-          [ "$public_digest" = "$digest" ]
           printf 'image=%s\n' "$image" >>"$GITHUB_OUTPUT"
           mkdir -p dist
           jq -cS -n \
@@ -167,6 +242,12 @@ jobs:
       RELEASE_TAG: ${{ github.ref_name }}
       BUNDLE_BUILDER_IMAGE: ${{ needs.bundle-builder-image.outputs.image }}
     steps:
+      - name: Reject a release rerun
+        if: github.run_attempt != 1
+        run: |
+          echo "release tags are single-attempt; create a new prerelease tag after any failed or partial publication" >&2
+          exit 1
+
       - name: Validate release tag
         run: |
           if ! printf '%s' "$RELEASE_TAG" | grep -Eq "$PLATFORM_RELEASE_TAG_PATTERN"; then
@@ -199,10 +280,10 @@ jobs:
               -ldflags="-s -w -X github.com/helmrdotdev/helmr/internal/version.Version=${RELEASE_TAG} -X github.com/helmrdotdev/helmr/internal/version.SourceCommit=${source_commit} -X main.deploymentBundleBuilderImage=${BUNDLE_BUILDER_IMAGE}" \
               -o "$out_dir/helmr" \
               ./cmd/helmr
-            tar -C "$out_dir" -czf "dist/helmr-${os}-${arch}.tar.gz" helmr
+            tar -C "$out_dir" -czf "dist/helmr-${RELEASE_TAG}-${os}-${arch}.tar.gz" helmr
           done
           cd dist
-          sha256sum helmr-*.tar.gz >checksums.txt
+          sha256sum "helmr-${RELEASE_TAG}-"*.tar.gz >checksums.txt
           EOF
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -211,21 +292,27 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           path: |
-            dist/helmr-linux-amd64.tar.gz
-            dist/helmr-linux-arm64.tar.gz
-            dist/helmr-darwin-amd64.tar.gz
-            dist/helmr-darwin-arm64.tar.gz
+            dist/helmr-v*-linux-amd64.tar.gz
+            dist/helmr-v*-linux-arm64.tar.gz
+            dist/helmr-v*-darwin-amd64.tar.gz
+            dist/helmr-v*-darwin-arm64.tar.gz
             dist/checksums.txt
 
   controlplane-image:
     name: controlplane image
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: version-cohort
+    needs: release-admission
     runs-on: ubuntu-24.04
     env:
       RELEASE_TAG: ${{ github.ref_name }}
       CONTROLPLANE_IMAGE_REPOSITORY: ghcr.io/${{ github.repository }}/control-plane
     steps:
+      - name: Reject a release rerun
+        if: github.run_attempt != 1
+        run: |
+          echo "release tags are single-attempt; create a new prerelease tag after any failed or partial publication" >&2
+          exit 1
+
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           ref: ${{ github.sha }}
@@ -251,10 +338,10 @@ jobs:
   worker-ami:
     name: worker AMI
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: version-cohort
+    needs: release-admission
     runs-on: ubuntu-24.04
     timeout-minutes: 360
-    environment: release-production
+    environment: release
     permissions:
       contents: read
       id-token: write # Needed to assume the AWS release role through GitHub OIDC. security-check: allow-id-token
@@ -266,33 +353,21 @@ jobs:
       STATE_BUCKET: ${{ vars.RELEASE_AWS_STATE_BUCKET }}
       WORKER_IMAGE_ARTIFACT_BUCKET: ${{ vars.RELEASE_WORKER_IMAGE_ARTIFACT_BUCKET }}
       STATE_KEY_BASE: ${{ vars.RELEASE_AWS_STATE_KEY || 'helmr/stacks/release-worker-image/terraform.tfstate' }}
-      WORKER_IMAGE_NAME_BASE: ${{ vars.RELEASE_WORKER_IMAGE_NAME || 'helmr-release-image' }}
-      RELEASE_WORKER_AMI_KEEP: ${{ vars.RELEASE_WORKER_AMI_KEEP || '4' }}
+      WORKER_IMAGE_NAME_BASE: ${{ vars.RELEASE_WORKER_IMAGE_NAME || 'helmr-worker' }}
       IMAGE_WAIT_INTERVAL_SECONDS: ${{ vars.RELEASE_WORKER_IMAGE_WAIT_INTERVAL_SECONDS || '60' }}
       IMAGE_WAIT_TIMEOUT_SECONDS: ${{ vars.RELEASE_IMAGE_WAIT_TIMEOUT_SECONDS || '14400' }}
       TOFU_APPLY_ARGS: -auto-approve
     steps:
+      - name: Reject a release rerun
+        if: github.run_attempt != 1
+        run: |
+          echo "release tags are single-attempt; create a new prerelease tag after any failed or partial publication" >&2
+          exit 1
+
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-
-      - name: Check AWS release settings
-        env:
-          RELEASE_AWS_ROLE_ARN: ${{ vars.RELEASE_AWS_ROLE_ARN }}
-        run: |
-          [ -n "$RELEASE_AWS_ROLE_ARN" ] || {
-            echo "RELEASE_AWS_ROLE_ARN is required" >&2
-            exit 1
-          }
-          [ -n "$STATE_BUCKET" ] || {
-            echo "RELEASE_AWS_STATE_BUCKET is required" >&2
-            exit 1
-          }
-          [ -n "$WORKER_IMAGE_ARTIFACT_BUCKET" ] || {
-            echo "RELEASE_WORKER_IMAGE_ARTIFACT_BUCKET is required" >&2
-            exit 1
-          }
 
       - uses: aws-actions/configure-aws-credentials@d979d5b3a71173a29b74b5b88418bfda9437d885
         with:
@@ -331,10 +406,6 @@ jobs:
           scripts/aws-release-artifacts.sh check
           scripts/aws-release-artifacts.sh worker-image-init
           scripts/aws-release-artifacts.sh worker-image-apply
-          scripts/release-worker-ami-cleanup.sh \
-            "$WORKER_IMAGE_NAME_BASE" \
-            "$WORKER_AMI_REGIONS" \
-            "$RELEASE_WORKER_AMI_KEEP"
           scripts/aws-release-artifacts.sh worker-image-start
           scripts/aws-release-artifacts.sh worker-image-wait
           worker_image_json="$(scripts/aws-release-artifacts.sh worker-image-receipt)"
@@ -356,7 +427,7 @@ jobs:
           path: dist/worker-image.json
 
   publish:
-    name: publish
+    name: publish artifacts
     if: >-
       always() &&
       startsWith(github.ref, 'refs/tags/v') &&
@@ -372,9 +443,11 @@ jobs:
       - controlplane-image
       - worker-ami
     runs-on: ubuntu-24.04
-    environment: release-production
+    environment: release
+    outputs:
+      controlplane_image: ${{ steps.push.outputs.controlplane_image }}
     permissions:
-      contents: write # Needed to create or update GitHub Release assets.
+      contents: read
       id-token: write # Needed to verify Worker AMIs through the AWS release role. security-check: allow-id-token
       packages: write # Needed to publish the official Control Plane image.
     env:
@@ -384,6 +457,12 @@ jobs:
       WORKER_AMI_REGIONS: ${{ vars.RELEASE_WORKER_AMI_REGIONS || 'us-east-1,us-west-2,ap-northeast-1' }}
       AWS_REGION: ${{ vars.RELEASE_AWS_REGION || 'us-east-1' }}
     steps:
+      - name: Reject a release rerun
+        if: github.run_attempt != 1
+        run: |
+          echo "release tags are single-attempt; create a new prerelease tag after any failed or partial publication" >&2
+          exit 1
+
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           ref: ${{ github.sha }}
@@ -396,16 +475,6 @@ jobs:
         with:
           name: platform-release-assets
           path: dist/platform-release
-
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: bundle-builder-release
-          path: dist/bundle-builder
-
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: cli-release-assets
-          path: dist
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -450,49 +519,149 @@ jobs:
             "$(cat dist/platform-release/platform-release-provenance.json)" \
             dist/aws-artifacts.json
 
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: aws-release-manifest
+          if-no-files-found: error
+          retention-days: 30
+          path: dist/aws-artifacts.json
+
+  verify-public-images:
+    name: verify public images
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - bundle-builder-image
+      - publish
+    runs-on: ubuntu-24.04
+    permissions: {}
+    env:
+      BUNDLE_BUILDER_IMAGE: ${{ needs.bundle-builder-image.outputs.image }}
+      CONTROLPLANE_IMAGE: ${{ needs.publish.outputs.controlplane_image }}
+    steps:
+      - name: Reject a release rerun
+        if: github.run_attempt != 1
+        run: |
+          echo "release tags are single-attempt; create a new prerelease tag after any failed or partial publication" >&2
+          exit 1
+
+      - name: Resolve images anonymously by digest
+        run: |
+          mkdir -p "$RUNNER_TEMP/anonymous-docker"
+          for image in "$CONTROLPLANE_IMAGE" "$BUNDLE_BUILDER_IMAGE"; do
+            DOCKER_CONFIG="$RUNNER_TEMP/anonymous-docker" docker buildx imagetools inspect "$image" >/dev/null
+          done
+
+  github-release:
+    name: GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - publish
+      - verify-public-images
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: write # Needed to create the GitHub Release.
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - name: Reject a release rerun
+        if: github.run_attempt != 1
+        run: |
+          echo "release tags are single-attempt; create a new prerelease tag after any failed or partial publication" >&2
+          exit 1
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: platform-release-assets
+          path: dist/platform-release
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: bundle-builder-release
+          path: dist/bundle-builder
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: cli-release-assets
+          path: dist
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: worker-image-artifact
+          path: dist/worker
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: aws-release-manifest
+          path: dist
+
+      - name: Refuse an existing GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          status="$(
+            curl --silent --show-error \
+              --output /dev/null \
+              --write-out '%{http_code}' \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer $GITHUB_TOKEN" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG"
+          )" || exit 1
+          case "$status" in
+            404) ;;
+            200) echo "GitHub Release $RELEASE_TAG already exists; a new prerelease tag is required" >&2; exit 1 ;;
+            *) echo "failed to check GitHub Release $RELEASE_TAG: HTTP $status" >&2; exit 1 ;;
+          esac
+
       - uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda
         with:
           tag_name: ${{ env.RELEASE_TAG }}
+          name: Helmr ${{ env.RELEASE_TAG }}
           prerelease: ${{ contains(env.RELEASE_TAG, '-') }}
           make_latest: ${{ contains(env.RELEASE_TAG, '-') && 'false' || 'true' }}
           files: |
-            dist/helmr-linux-amd64.tar.gz
-            dist/helmr-linux-arm64.tar.gz
-            dist/helmr-darwin-amd64.tar.gz
-            dist/helmr-darwin-arm64.tar.gz
+            dist/helmr-v*-linux-amd64.tar.gz
+            dist/helmr-v*-linux-arm64.tar.gz
+            dist/helmr-v*-darwin-amd64.tar.gz
+            dist/helmr-v*-darwin-arm64.tar.gz
             dist/checksums.txt
             dist/bundle-builder/bundle-builder.json
             dist/platform-release/platform-release.tar
             dist/platform-release/platform-release.sigstore.json
             dist/platform-release/platform-release-provenance.json
             dist/aws-artifacts.json
+            dist/worker/worker-image.json
 
   typescript-sdk-packages:
     name: typescript sdk packages
-    if: startsWith(github.ref, 'refs/tags/sdk/typescript/v')
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: release-admission
     runs-on: ubuntu-24.04
     outputs:
-      platform_tag: ${{ steps.version.outputs.platform_tag }}
       sdk_version: ${{ steps.version.outputs.sdk_version }}
     env:
-      SDK_RELEASE_TAG: ${{ github.ref_name }}
+      RELEASE_TAG: ${{ github.ref_name }}
     steps:
-      - name: Validate TypeScript SDK release tag
+      - name: Reject a release rerun
+        if: github.run_attempt != 1
+        run: |
+          echo "release tags are single-attempt; create a new prerelease tag after any failed or partial publication" >&2
+          exit 1
+
+      - name: Resolve TypeScript SDK version
         id: version
         run: |
-          if ! printf '%s' "$SDK_RELEASE_TAG" |
-            grep -Eq '^sdk/typescript/v[0-9]+[.][0-9]+[.][0-9]+(-[0-9A-Za-z-]+([.][0-9A-Za-z-]+)*)?$'; then
-            echo "invalid TypeScript SDK release tag" >&2
+          if ! printf '%s' "$RELEASE_TAG" | grep -Eq "$PLATFORM_RELEASE_TAG_PATTERN"; then
+            echo "release tag must match vX.Y.Z or vX.Y.Z-prerelease" >&2
             exit 1
           fi
-          git check-ref-format --allow-onelevel "$SDK_RELEASE_TAG"
-          sdk_version="${SDK_RELEASE_TAG#sdk/typescript/v}"
+          sdk_version="${RELEASE_TAG#v}"
           printf 'sdk_version=%s\n' "$sdk_version" >>"$GITHUB_OUTPUT"
-          printf 'platform_tag=v%s\n' "$sdk_version" >>"$GITHUB_OUTPUT"
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: ${{ github.ref }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - uses: ./.github/actions/setup-nix
@@ -516,15 +685,22 @@ jobs:
 
   typescript-sdk-npm-publish:
     name: typescript sdk npm publish
-    if: startsWith(github.ref, 'refs/tags/sdk/typescript/v')
+    if: startsWith(github.ref, 'refs/tags/v')
     needs:
+      - github-release
       - typescript-sdk-packages
     runs-on: ubuntu-24.04
-    environment: release-production
+    environment: release
     permissions:
       contents: read
       id-token: write # Needed for npm Trusted Publishing. security-check: allow-id-token
     steps:
+      - name: Reject a release rerun
+        if: github.run_attempt != 1
+        run: |
+          echo "release tags are single-attempt; create a new prerelease tag after any failed or partial publication" >&2
+          exit 1
+
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: typescript-sdk-npm-packages
@@ -538,14 +714,19 @@ jobs:
 
       - name: Publish npm packages
         env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
           SDK_VERSION: ${{ needs.typescript-sdk-packages.outputs.sdk_version }}
         run: |
+          release_json="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft)"
+          jq -e '.isDraft == false' <<<"$release_json"
+
           publish_package() {
             package_name="$1"
             tarball="$2"
             if npm view "${package_name}@${SDK_VERSION}" version --json --prefer-online >/dev/null 2>&1; then
-              echo "${package_name}@${SDK_VERSION} is already published; skipping"
-              return
+              echo "${package_name}@${SDK_VERSION} is already published; a new prerelease tag is required" >&2
+              exit 1
             fi
             npm_tag=latest
             case "$SDK_VERSION" in
@@ -555,31 +736,3 @@ jobs:
           }
           publish_package @helmr/proto dist/npm-tarballs/helmr-proto-*.tgz
           publish_package @helmr/sdk dist/npm-tarballs/helmr-sdk-*.tgz
-
-  typescript-sdk-release:
-    name: typescript sdk release
-    if: startsWith(github.ref, 'refs/tags/sdk/typescript/v')
-    needs:
-      - typescript-sdk-packages
-      - typescript-sdk-npm-publish
-    runs-on: ubuntu-24.04
-    environment: release-production
-    permissions:
-      contents: write # Needed to create the SDK GitHub release.
-    env:
-      PLATFORM_TAG: ${{ needs.typescript-sdk-packages.outputs.platform_tag }}
-      SDK_RELEASE_TAG: ${{ github.ref_name }}
-      SDK_VERSION: ${{ needs.typescript-sdk-packages.outputs.sdk_version }}
-    steps:
-      - uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda
-        with:
-          tag_name: ${{ env.SDK_RELEASE_TAG }}
-          name: TypeScript SDK ${{ env.SDK_VERSION }}
-          prerelease: ${{ contains(env.SDK_VERSION, '-') }}
-          make_latest: ${{ contains(env.SDK_VERSION, '-') && 'false' || 'true' }}
-          body: |
-            TypeScript SDK release for Helmr ${{ env.PLATFORM_TAG }}.
-
-            Packages:
-            - https://www.npmjs.com/package/@helmr/proto/v/${{ env.SDK_VERSION }}
-            - https://www.npmjs.com/package/@helmr/sdk/v/${{ env.SDK_VERSION }}
