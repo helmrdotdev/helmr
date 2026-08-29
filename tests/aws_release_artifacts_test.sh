@@ -42,6 +42,8 @@ assert_contains "${controlplane_build_script}" 'path:/work#packages.x86_64-linux
   "Control Plane image Runtime build uses a path input"
 assert_contains "${controlplane_build_script}" 'path:/work#packages.x86_64-linux.timezoneData' \
   "Control Plane image timezone build uses a path input"
+assert_contains "${script}" 'Worker does not report the release cohort identity' \
+  "Worker release reported identity"
 if grep -Fq 'source=${repo_root},target=/work' "${controlplane_build_script}"; then
   fail "Control Plane image must not mount Product Git metadata into the Linux builder"
 fi
@@ -51,10 +53,23 @@ trap 'rm -rf "${tmp}"' EXIT
 stdout="${tmp}/stdout"
 stderr="${tmp}/stderr"
 
+if (
+  set -- help
+  export STATE_DIR="${tmp}/worker-image-missing-release-tag"
+  # shellcheck source=/dev/null
+  source "${script}" >/dev/null
+  require_clean_product_checkout() { fail "missing release tag must fail before checkout or AWS work"; }
+  worker_image_apply
+) >"${stdout}" 2>"${stderr}"; then
+  fail "Worker image apply must require a release tag"
+fi
+assert_contains "${stderr}" "RELEASE_TAG is required to publish Worker artifacts" \
+  "Worker image release tag guard"
+
 apply_args_file="${tmp}/worker-image-apply.args"
 (
   set -- help
-  export STATE_DIR="${tmp}/worker-image-apply"
+  export RELEASE_TAG=v0.0.0-test STATE_DIR="${tmp}/worker-image-apply"
   # shellcheck source=/dev/null
   source "${script}" >/dev/null
   require_clean_product_checkout() { :; }
@@ -303,6 +318,11 @@ base_image="$(jq -r '.baseImage' "${controlplane_build_contract}")"
 assert_contains "${controlplane_context}/Dockerfile" "FROM ${base_image}" "digest-pinned Control Plane base"
 PATH="${controlplane_bin}:${PATH}" MOCK_RUNTIME_DESCRIPTOR_PATH="${controlplane_runtime_release}/runtime.descriptor.json" MOCK_TIMEZONE_DATA_PATH="${controlplane_timezone_data}" "${repo_root}/scripts/verify-controlplane-image-build.sh" \
   "${controlplane_context}/build-inputs.json" example.invalid/helmr-controlplane:test
+
+release_build_inputs="${tmp}/release-build-inputs.json"
+jq '.buildVersion = "v0.0.0-test"' "${controlplane_context}/build-inputs.json" >"${release_build_inputs}"
+RELEASE_TAG=v0.0.0-test PATH="${controlplane_bin}:${PATH}" MOCK_RUNTIME_DESCRIPTOR_PATH="${controlplane_runtime_release}/runtime.descriptor.json" MOCK_TIMEZONE_DATA_PATH="${controlplane_timezone_data}" "${repo_root}/scripts/verify-controlplane-image-build.sh" \
+  "${release_build_inputs}" example.invalid/helmr-controlplane:test
 
 drifted="${tmp}/drifted-build-inputs.json"
 jq '.sourceCommit = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' \

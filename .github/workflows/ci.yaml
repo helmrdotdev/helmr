@@ -98,6 +98,19 @@ jobs:
 
       - run: nix develop .#images --command bash tests/bundle_builder_e2e.sh
 
+  release-contracts:
+    name: release contracts
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-nix
+
+      - run: nix develop --command tests/version_cohort_test.sh
+      - run: nix run .#ci-boot-artifacts-repro
+
   ci-complete:
     name: ci complete
     runs-on: ubuntu-24.04
@@ -106,6 +119,7 @@ jobs:
       - repo
       - postgres
       - bundle-builder
+      - release-contracts
     if: always()
     steps:
       - name: Check required CI jobs
@@ -115,17 +129,19 @@ jobs:
             "${{ needs.nix-flake.result }}" \
             "${{ needs.repo.result }}" \
             "${{ needs.postgres.result }}" \
-            "${{ needs.bundle-builder.result }}"
+            "${{ needs.bundle-builder.result }}" \
+            "${{ needs.release-contracts.result }}"
           do
             if [ "$result" != "success" ]; then
               failed=1
             fi
           done
           if [ "$failed" -ne 0 ]; then
-            printf 'CI dependency results: nix-flake=%s repo=%s postgres=%s bundle-builder=%s\n' \
+            printf 'CI dependency results: nix-flake=%s repo=%s postgres=%s bundle-builder=%s release-contracts=%s\n' \
               "${{ needs.nix-flake.result }}" \
               "${{ needs.repo.result }}" \
               "${{ needs.postgres.result }}" \
-              "${{ needs.bundle-builder.result }}" >&2
+              "${{ needs.bundle-builder.result }}" \
+              "${{ needs.release-contracts.result }}" >&2
             exit 1
           fi

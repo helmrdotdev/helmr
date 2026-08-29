@@ -6,18 +6,6 @@ on:
       - "v*"
       - "sdk/typescript/v*"
   workflow_dispatch:
-    inputs:
-      mode:
-        description: Release operation
-        required: true
-        default: repair
-        type: choice
-        options:
-          - repair
-          - dev-platform
-      tag:
-        description: Existing platform release tag to repair
-        required: false
 
 permissions:
   contents: read
@@ -30,9 +18,25 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  version-cohort:
+    name: version cohort
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-nix
+
+      - name: Verify release cohort
+        run: RELEASE_TAG="$GITHUB_REF_NAME" nix develop --command tests/version_cohort_test.sh "$GITHUB_REF_NAME" "$(git rev-parse HEAD)"
+
   platform-release:
     name: platform release
     if: startsWith(github.ref, 'refs/tags/v')
+    needs: version-cohort
     runs-on: ubuntu-24.04
     environment: release-production
     permissions:
@@ -62,7 +66,6 @@ jobs:
     name: development platform release
     if: >-
       github.event_name == 'workflow_dispatch' &&
-      inputs.mode == 'dev-platform' &&
       startsWith(github.ref, 'refs/heads/') &&
       github.ref != 'refs/heads/main'
     runs-on: ubuntu-24.04
@@ -90,75 +93,10 @@ jobs:
           retention-days: 7
           path: dist/platform-release
 
-  platform-release-repair:
-    name: consume platform release
-    if: >-
-      github.event_name == 'workflow_dispatch' &&
-      inputs.mode == 'repair' &&
-      github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-    env:
-      GH_TOKEN: ${{ github.token }}
-      RELEASE_TAG: ${{ inputs.tag }}
-    steps:
-      - name: Validate release tag
-        run: |
-          if ! printf '%s' "$RELEASE_TAG" | grep -Eq "$PLATFORM_RELEASE_TAG_PATTERN"; then
-            echo "release tag must match vX.Y.Z or vX.Y.Z-prerelease" >&2
-            exit 1
-          fi
-          git check-ref-format --allow-onelevel "$RELEASE_TAG"
-
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          ref: refs/tags/${{ inputs.tag }}
-          persist-credentials: false
-
-      - uses: ./.github/actions/setup-nix
-
-      - name: Download and verify Platform release
-        run: |
-          mkdir -p dist/platform-release
-          gh release download "$RELEASE_TAG" \
-            --pattern 'platform-release*' \
-            --dir dist/platform-release
-          cosign verify-blob \
-            --bundle dist/platform-release/platform-release.sigstore.json \
-            --certificate-identity \
-              "https://github.com/helmrdotdev/helmr/.github/workflows/release.yaml@refs/tags/$RELEASE_TAG" \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            dist/platform-release/platform-release.tar
-          archive_sha256="sha256:$(sha256sum dist/platform-release/platform-release.tar | awk '{print $1}')"
-          archive_size="$(stat -c '%s' dist/platform-release/platform-release.tar)"
-          source_commit="$(git rev-parse HEAD)"
-          jq -e \
-            --arg digest "$archive_sha256" \
-            --argjson size "$archive_size" \
-            --arg sourceCommit "$source_commit" \
-            --arg sourceRef "refs/tags/$RELEASE_TAG" \
-            '.formatVersion == 0 and
-             .archive.digest == $digest and
-             .archive.sizeBytes == $size and
-             .sourceCommit == $sourceCommit and
-             .sourceRef == $sourceRef' \
-            dist/platform-release/platform-release-provenance.json >/dev/null
-
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: platform-release-assets
-          if-no-files-found: error
-          retention-days: 7
-          path: dist/platform-release
-
   bundle-builder-image:
     name: bundle builder image
-    if: >-
-      startsWith(github.ref, 'refs/tags/v') ||
-      (github.event_name == 'workflow_dispatch' &&
-       inputs.mode == 'repair' &&
-       github.ref == 'refs/heads/main')
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: version-cohort
     runs-on: ubuntu-24.04
     environment: release-production
     permissions:
@@ -167,7 +105,7 @@ jobs:
     outputs:
       image: ${{ steps.publish.outputs.image }}
     env:
-      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      RELEASE_TAG: ${{ github.ref_name }}
       BUILDER_IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/helmr-bundle-builder
     steps:
       - name: Validate release tag
@@ -180,7 +118,7 @@ jobs:
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: refs/tags/${{ env.RELEASE_TAG }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - uses: ./.github/actions/setup-nix
@@ -222,15 +160,11 @@ jobs:
 
   cli:
     name: cli
-    if: >-
-      startsWith(github.ref, 'refs/tags/v') ||
-      (github.event_name == 'workflow_dispatch' &&
-       inputs.mode == 'repair' &&
-       github.ref == 'refs/heads/main')
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     needs: bundle-builder-image
     env:
-      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      RELEASE_TAG: ${{ github.ref_name }}
       BUNDLE_BUILDER_IMAGE: ${{ needs.bundle-builder-image.outputs.image }}
     steps:
       - name: Validate release tag
@@ -243,7 +177,7 @@ jobs:
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: refs/tags/${{ env.RELEASE_TAG }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - uses: ./.github/actions/setup-nix
@@ -253,6 +187,7 @@ jobs:
           nix develop --command bash -euo pipefail <<'EOF'
           bun install --frozen-lockfile --ignore-scripts
           scripts/build-runtime-entry.sh --check
+          source_commit="$(git rev-parse HEAD)"
           mkdir -p dist/cli
           for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
             os="${target%/*}"
@@ -261,7 +196,7 @@ jobs:
             mkdir -p "$out_dir"
             CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build \
               -trimpath \
-              -ldflags="-s -w -X github.com/helmrdotdev/helmr/internal/version.Version=${RELEASE_TAG} -X main.deploymentBundleBuilderImage=${BUNDLE_BUILDER_IMAGE}" \
+              -ldflags="-s -w -X github.com/helmrdotdev/helmr/internal/version.Version=${RELEASE_TAG} -X github.com/helmrdotdev/helmr/internal/version.SourceCommit=${source_commit} -X main.deploymentBundleBuilderImage=${BUNDLE_BUILDER_IMAGE}" \
               -o "$out_dir/helmr" \
               ./cmd/helmr
             tar -C "$out_dir" -czf "dist/helmr-${os}-${arch}.tar.gz" helmr
@@ -284,19 +219,16 @@ jobs:
 
   controlplane-image:
     name: controlplane image
-    if: >-
-      startsWith(github.ref, 'refs/tags/v') ||
-      (github.event_name == 'workflow_dispatch' &&
-       inputs.mode == 'repair' &&
-       github.ref == 'refs/heads/main')
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: version-cohort
     runs-on: ubuntu-24.04
     env:
-      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      RELEASE_TAG: ${{ github.ref_name }}
       CONTROLPLANE_IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/helmr-controlplane
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: refs/tags/${{ env.RELEASE_TAG }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - uses: ./.github/actions/setup-nix
@@ -304,7 +236,6 @@ jobs:
       - name: Build controlplane image
         env:
           IMAGE_URI: ${{ env.CONTROLPLANE_IMAGE_REPOSITORY }}:${{ env.RELEASE_TAG }}
-          HELMR_BUILD_VERSION: ${{ env.RELEASE_TAG }}
         run: |
           nix develop .#images --command ./scripts/build-controlplane-image.sh "$IMAGE_URI"
           mkdir -p dist
@@ -319,11 +250,8 @@ jobs:
 
   worker-ami:
     name: worker AMI
-    if: >-
-      startsWith(github.ref, 'refs/tags/v') ||
-      (github.event_name == 'workflow_dispatch' &&
-       inputs.mode == 'repair' &&
-       github.ref == 'refs/heads/main')
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: version-cohort
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     environment: release-production
@@ -331,7 +259,7 @@ jobs:
       contents: read
       id-token: write # Needed to assume the AWS release role through GitHub OIDC. security-check: allow-id-token
     env:
-      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      RELEASE_TAG: ${{ github.ref_name }}
       WORKER_AMI_REGIONS: ${{ vars.RELEASE_WORKER_AMI_REGIONS || 'us-east-1,us-west-2,ap-northeast-1' }}
       AWS_REGION: ${{ vars.RELEASE_AWS_REGION || 'us-east-1' }}
       STATE_REGION: ${{ vars.RELEASE_AWS_STATE_REGION || vars.RELEASE_AWS_REGION || 'us-east-1' }}
@@ -346,7 +274,7 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: refs/tags/${{ env.RELEASE_TAG }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Check AWS release settings
@@ -431,19 +359,14 @@ jobs:
     name: publish
     if: >-
       always() &&
-      (startsWith(github.ref, 'refs/tags/v') ||
-       (github.event_name == 'workflow_dispatch' &&
-        inputs.mode == 'repair' &&
-        github.ref == 'refs/heads/main')) &&
+      startsWith(github.ref, 'refs/tags/v') &&
       needs.cli.result == 'success' &&
       needs.bundle-builder-image.result == 'success' &&
       needs.controlplane-image.result == 'success' &&
       needs.worker-ami.result == 'success' &&
-      (needs.platform-release.result == 'success' ||
-       needs.platform-release-repair.result == 'success')
+      needs.platform-release.result == 'success'
     needs:
       - platform-release
-      - platform-release-repair
       - bundle-builder-image
       - cli
       - controlplane-image
@@ -455,15 +378,15 @@ jobs:
       id-token: write # Needed to verify Worker AMIs through the AWS release role. security-check: allow-id-token
       packages: write # Needed to publish the official Control Plane image.
     env:
-      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      RELEASE_TAG: ${{ github.ref_name }}
       CONTROLPLANE_IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/helmr-controlplane
-      IMAGE_URI: ghcr.io/${{ github.repository_owner }}/helmr-controlplane:${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      IMAGE_URI: ghcr.io/${{ github.repository_owner }}/helmr-controlplane:${{ github.ref_name }}
       WORKER_AMI_REGIONS: ${{ vars.RELEASE_WORKER_AMI_REGIONS || 'us-east-1,us-west-2,ap-northeast-1' }}
       AWS_REGION: ${{ vars.RELEASE_AWS_REGION || 'us-east-1' }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: refs/tags/${{ env.RELEASE_TAG }}
+          ref: ${{ github.sha }}
           fetch-depth: 1
           persist-credentials: false
           sparse-checkout: scripts

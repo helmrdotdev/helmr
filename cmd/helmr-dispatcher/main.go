@@ -21,6 +21,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/token"
+	"github.com/helmrdotdev/helmr/internal/version"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -32,6 +33,10 @@ const (
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--version" {
+		fmt.Println(version.String())
+		return
+	}
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	if err := runDispatcher(context.Background(), log); err != nil {
 		log.Error("dispatcher stopped", "error", err)

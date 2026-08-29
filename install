@@ -233,7 +233,7 @@ else
     installed_version="$("$installed_path" --version 2>/dev/null || true)"
     target_path="$(canonical_path "$INSTALL_DIR/$APP" 2>/dev/null || true)"
     installed_path="$(canonical_path "$installed_path" 2>/dev/null || printf "%s\n" "$installed_path")"
-    if [ "$installed_version" = "$specific_version" ] && [ "$installed_path" = "$target_path" ]; then
+    if [ "${installed_version%% *}" = "$specific_version" ] && [ "$installed_path" = "$target_path" ]; then
       print_message info "${MUTED}Helmr $specific_version is already installed.${NC}"
       exit 0
     fi

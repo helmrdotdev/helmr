@@ -298,18 +298,22 @@ worker_image_artifact_exists() {
 }
 
 prepare_worker_host_bundle() (
-  local bucket bundle_dir bundle_digest bundle_key bundle_status bundle_uri host_dir kms_key_arn manifest_digest receipt work
+  local bucket bundle_dir bundle_digest bundle_key bundle_status bundle_uri expected_identity host_dir kms_key_arn manifest_digest receipt source_commit work
   mkdir -p "${STATE_DIR}"
   work="$(mktemp -d "${STATE_DIR}/worker-host-bundle.XXXXXX")"
   trap 'rm -rf "${work}"' EXIT
   bundle_dir="${work}/bundle"
   info "building the canonical Worker host artifacts"
-  host_dir="$(nix build -L --no-link --print-out-paths "${ROOT}#workerHost")"
+  source_commit="$(git -C "${ROOT}" rev-parse HEAD)"
+  expected_identity="${RELEASE_TAG} (${source_commit})"
+  host_dir="$(HELMR_PLATFORM_VERSION="${RELEASE_TAG}" nix build --impure -L --no-link --print-out-paths "${ROOT}#workerHost")"
+  [ "$("${host_dir}/bin/helmr-worker" --version)" = "${expected_identity}" ] ||
+    die "Worker does not report the release cohort identity"
   nix develop "${ROOT}" -c \
     "${ROOT}/scripts/materialize-worker-host-bundle.sh" "${bundle_dir}" "${host_dir}" >/dev/null
   receipt="${bundle_dir}/worker-host-bundle.json"
   validate_worker_host_bundle_receipt "${receipt}" || die "Worker host bundle receipt is invalid"
-  [ "$(jq -r '.sourceCommit' "${receipt}")" = "$(git -C "${ROOT}" rev-parse HEAD)" ] ||
+  [ "$(jq -r '.sourceCommit' "${receipt}")" = "${source_commit}" ] ||
     die "Worker host bundle was not produced from the current source commit"
   bundle_digest="$(jq -r '.bundle.digest' "${receipt}")"
   manifest_digest="$(jq -r '.manifest.digest' "${receipt}")"
@@ -501,6 +505,7 @@ prepare_worker_runtime_bundle() (
 
 worker_image_apply() {
   local definition marker
+  [ -n "${RELEASE_TAG:-}" ] || die "RELEASE_TAG is required to publish Worker artifacts"
   require_clean_product_checkout
   mkdir -p "${STATE_DIR}"
   rm -f "${WORKER_IMAGE_DEFINITION_FILE}"

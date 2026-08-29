@@ -56,9 +56,25 @@ test_binary_install_copies_only_binary() {
 write_release_fixture() {
   local tmp="$1"
   mkdir -p "$tmp/source"
-  write_helmr_binary "$tmp/source/helmr" "v9.8.7"
+  write_helmr_binary "$tmp/source/helmr" "v9.8.7 (0123456789abcdef0123456789abcdef01234567)"
   tar -C "$tmp/source" -czf "$tmp/helmr-linux-amd64.tar.gz" helmr
   printf '%s  helmr-linux-amd64.tar.gz\n' "$(sha256_file "$tmp/helmr-linux-amd64.tar.gz")" > "$tmp/checksums.txt"
+}
+
+test_canonical_version_at_target_skips_install() {
+  local tmp
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' RETURN
+
+  mkdir -p "$tmp/install" "$tmp/home" "$tmp/stub-bin"
+  write_helmr_binary "$tmp/install/helmr" "v9.8.7 (0123456789abcdef0123456789abcdef01234567)"
+  write_uname_stub "$tmp"
+
+  PATH="$tmp/install:$tmp/stub-bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+    HELMR_INSTALL_DIR="$tmp/install" \
+    HOME="$tmp/home" \
+    SHELL=/bin/sh \
+    "$repo_root/install" --version v9.8.7 --no-modify-path >/dev/null
 }
 
 write_uname_stub() {
@@ -210,6 +226,7 @@ test_path_snippet_quotes_install_dir_and_handles_spaced_home() {
 }
 
 test_binary_install_copies_only_binary
+test_canonical_version_at_target_skips_install
 test_latest_release_skips_non_cli_release
 test_same_version_elsewhere_on_path_does_not_skip_install
 test_path_snippet_quotes_install_dir_and_handles_spaced_home
