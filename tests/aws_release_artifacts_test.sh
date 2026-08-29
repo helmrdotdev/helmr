@@ -42,14 +42,36 @@ assert_contains "${controlplane_build_script}" 'path:/work#packages.x86_64-linux
   "Control Plane image Runtime build uses a path input"
 assert_contains "${controlplane_build_script}" 'path:/work#packages.x86_64-linux.timezoneData' \
   "Control Plane image timezone build uses a path input"
+assert_contains "${controlplane_build_script}" 'HELMR_BUILD_VERSION must match RELEASE_TAG' \
+  "Control Plane release version input"
+assert_contains "${script}" 'HELMR_PLATFORM_VERSION must match the release tag' \
+  "Worker release version input"
+assert_contains "${script}" 'Worker does not report the release cohort identity' \
+  "Worker release reported identity"
 if grep -Fq 'source=${repo_root},target=/work' "${controlplane_build_script}"; then
   fail "Control Plane image must not mount Product Git metadata into the Linux builder"
+fi
+if RELEASE_TAG=v1.2.3 HELMR_BUILD_VERSION=v1.2.4 \
+  "${controlplane_build_script}" example.invalid/helmr:test >/dev/null 2>&1; then
+  fail "Control Plane builder accepted a release version mismatch"
 fi
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 stdout="${tmp}/stdout"
 stderr="${tmp}/stderr"
+
+if (
+  set -- help
+  export RELEASE_TAG=v1.2.3
+  export HELMR_PLATFORM_VERSION=v1.2.4
+  export STATE_DIR="${tmp}/worker-version-mismatch"
+  # shellcheck source=/dev/null
+  source "${script}" >/dev/null
+  prepare_worker_host_bundle
+) >/dev/null 2>&1; then
+  fail "Worker builder accepted a release cohort mismatch"
+fi
 
 apply_args_file="${tmp}/worker-image-apply.args"
 (

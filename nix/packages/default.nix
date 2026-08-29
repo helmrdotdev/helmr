@@ -63,10 +63,19 @@ let
     vendorHash = "sha256-ClZv8xMyxFuGNnLy135R/MIgWp3MWpZU3bq4FJAfK8U=";
   };
   revision = self.shortRev or self.dirtyShortRev or "dirty";
-  helmrVersion = "0.0.0-dev+${revision}";
+  releaseVersion = builtins.getEnv "HELMR_PLATFORM_VERSION";
+  platformVersion = if releaseVersion == "" then "0.0.0-dev+${revision}" else releaseVersion;
+  sourceCommit =
+    self.rev or (
+      if self ? dirtyRev then
+        builtins.substring 0 40 self.dirtyRev
+      else
+        "0000000000000000000000000000000000000000"
+    );
   helmr = pkgs.callPackage ./helmr.nix {
     buildGoModule = buildGo127Module;
-    version = helmrVersion;
+    version = platformVersion;
+    inherit sourceCommit;
     bun = pkgsBun.bun;
   };
   runtimeRelease =
@@ -93,7 +102,11 @@ let
         cp -a ${runtimeReleaseUnchecked} "$out"
       '';
   firecrackerReleaseVersion = "1.16.1";
-  worker = pkgs.callPackage ./worker.nix { buildGoModule = buildGo127Module; };
+  worker = pkgs.callPackage ./worker.nix {
+    buildGoModule = buildGo127Module;
+    version = platformVersion;
+    inherit sourceCommit;
+  };
   firecrackerRuntime = pkgs.stdenvNoCC.mkDerivation {
     pname = "firecracker-runtime";
     version = firecrackerReleaseVersion;

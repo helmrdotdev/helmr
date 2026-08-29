@@ -5,6 +5,7 @@
   nodejs_24,
   bun,
   version,
+  sourceCommit,
 }:
 
 let
@@ -44,6 +45,7 @@ buildGoModule {
     "-s"
     "-w"
     "-X github.com/helmrdotdev/helmr/internal/version.Version=${version}"
+    "-X github.com/helmrdotdev/helmr/internal/version.SourceCommit=${sourceCommit}"
   ];
 
   nativeBuildInputs = [

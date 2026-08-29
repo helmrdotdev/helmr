@@ -27,5 +27,5 @@ blocked. Control Plane and Workers may read immutable runtime objects but have
 no delete authority. Referenced Deployment runtime digests are GC roots.
 
 Control Plane images and Worker AMIs are built directly from the same checked
-out source. Release repair never rebuilds signed bytes: it downloads and
-verifies the existing archive, provenance, and Sigstore bundle.
+out source. Publication is immutable: a failed release is abandoned and the
+next attempt uses a new prerelease tag.

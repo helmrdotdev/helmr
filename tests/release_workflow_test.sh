@@ -21,6 +21,16 @@ require_text() {
   fi
 }
 
+reject_text() {
+  text="$1"
+  file="$2"
+  message="$3"
+  if rg -F -- "$text" "$file" >/dev/null; then
+    printf '%s\n' "$message" >&2
+    exit 1
+  fi
+}
+
 require_text "name: platform release" "$workflow" \
   "release workflow does not build the Platform release"
 if rg -F -e '"capacity/v*"' -e "name: capacity module" "$workflow" >/dev/null; then
@@ -37,12 +47,16 @@ require_text "id-token: write" "$workflow" \
   "Platform release signing has no OIDC authority"
 require_text "./scripts/build-platform-release.sh dist/platform-release" "$workflow" \
   "release jobs do not share the deterministic Platform release builder"
-require_text "--pattern 'platform-release*'" "$workflow" \
-  "repair does not consume the published Platform release"
-require_text "cosign verify-blob" "$workflow" \
-  "repair does not verify the published Platform release"
-require_text "refs/tags/\$RELEASE_TAG" "$workflow" \
-  "repair verification is not bound to the exact tag workflow identity"
+reject_text "repair" "$workflow" \
+  "release workflow still contains the retired same-tag repair path"
+require_text "name: version cohort" "$workflow" \
+  "release workflow does not gate publication on one version cohort"
+require_text 'RELEASE_TAG="$GITHUB_REF_NAME" tests/version_cohort_test.sh "$GITHUB_REF_NAME" "$(git rev-parse HEAD)"' "$workflow" \
+  "release cohort check is not bound to the tag and full source commit"
+require_text 'HELMR_PLATFORM_VERSION="$RELEASE_TAG"' "$workflow" \
+  "Worker release does not pass the canonical cohort identity"
+require_text "SourceCommit=\${source_commit}" "$workflow" \
+  "CLI release does not stamp the full source commit"
 require_text "platform-release/platform-release.tar" "$workflow" \
   "GitHub release omits the Platform release archive"
 require_text "platform-release/platform-release.sigstore.json" "$workflow" \

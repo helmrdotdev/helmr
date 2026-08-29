@@ -12,10 +12,12 @@ import (
 
 func TestRootCommandPrintsVersion(t *testing.T) {
 	const testVersion = "v0.0.0-test"
-	originalVersion := version.Version
+	const testCommit = "0123456789abcdef0123456789abcdef01234567"
+	originalVersion, originalSourceCommit := version.Version, version.SourceCommit
 	version.Version = testVersion
+	version.SourceCommit = testCommit
 	t.Cleanup(func() {
-		version.Version = originalVersion
+		version.Version, version.SourceCommit = originalVersion, originalSourceCommit
 	})
 
 	var out bytes.Buffer
@@ -26,7 +28,7 @@ func TestRootCommandPrintsVersion(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(out.String()) != testVersion {
+	if strings.TrimSpace(out.String()) != testVersion+" ("+testCommit+")" {
 		t.Fatalf("version output = %q", out.String())
 	}
 }

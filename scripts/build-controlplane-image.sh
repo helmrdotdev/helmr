@@ -11,10 +11,15 @@ context="${CONTROLPLANE_IMAGE_CONTEXT:-$repo_root/dist/controlplane-image}"
 build_contract="$repo_root/images/controlplane-image-build.json"
 nix_builder_image="nixos/nix:2.31.2@sha256:c7cc6c8cb5d81bed19997247629604708fda95c99c43ac362daa05b6a68e8a24"
 build_version="${HELMR_BUILD_VERSION:-}"
+source_commit="$(git -C "$repo_root" rev-parse HEAD)"
 ldflags="-s -w"
 
 if [ -z "$image_uri" ]; then
   echo "usage: scripts/build-controlplane-image.sh <image-uri>" >&2
+  exit 1
+fi
+if [ -n "${RELEASE_TAG:-}" ] && [ "$build_version" != "$RELEASE_TAG" ]; then
+  echo "HELMR_BUILD_VERSION must match RELEASE_TAG" >&2
   exit 1
 fi
 [ -z "$(git -C "$repo_root" status --porcelain --untracked-files=all)" ] || {
@@ -39,6 +44,7 @@ jq -e --arg platform "$platform" '
 if [ -n "$build_version" ]; then
   ldflags="$ldflags -X github.com/helmrdotdev/helmr/internal/version.Version=$build_version"
 fi
+ldflags="$ldflags -X github.com/helmrdotdev/helmr/internal/version.SourceCommit=$source_commit"
 
 rm -rf "$context"
 mkdir -p "$context"
@@ -96,6 +102,15 @@ for command in helmr-controlplane helmr-dispatcher; do
     -o "$context/$command" \
     "./cmd/$command"
 done
+if [ -n "$build_version" ]; then
+  expected_identity="$build_version ($source_commit)"
+  for command in helmr-controlplane helmr-dispatcher; do
+    [ "$("$context/$command" --version)" = "$expected_identity" ] || {
+      echo "$command does not report the release cohort identity" >&2
+      exit 1
+    }
+  done
+fi
 
 cat >"$context/Dockerfile" <<EOF
 FROM ${base_image}
@@ -117,7 +132,6 @@ printf '%s\n' "$local_image_id" | grep -Eq '^sha256:[0-9a-f]{64}$' || {
   echo "docker did not return a content-addressed local image identity for $image_uri" >&2
   exit 1
 }
-source_commit="$(git -C "$repo_root" rev-parse HEAD)"
 if command -v sha256sum >/dev/null 2>&1; then
   runtime_descriptor_sha256="$(sha256sum "$context/runtime.descriptor.json" | awk '{print $1}')"
   timezone_manifest_sha256="$(sha256sum "$context/tzdb_names.txt" | awk '{print $1}')"

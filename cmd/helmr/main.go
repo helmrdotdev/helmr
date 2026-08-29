@@ -23,7 +23,7 @@ func main() {
 func newRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "helmr",
-		Version:       version.Version,
+		Version:       version.String(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
