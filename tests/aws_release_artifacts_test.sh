@@ -53,10 +53,23 @@ trap 'rm -rf "${tmp}"' EXIT
 stdout="${tmp}/stdout"
 stderr="${tmp}/stderr"
 
+if (
+  set -- help
+  export STATE_DIR="${tmp}/worker-image-missing-release-tag"
+  # shellcheck source=/dev/null
+  source "${script}" >/dev/null
+  require_clean_product_checkout() { fail "missing release tag must fail before checkout or AWS work"; }
+  worker_image_apply
+) >"${stdout}" 2>"${stderr}"; then
+  fail "Worker image apply must require a release tag"
+fi
+assert_contains "${stderr}" "RELEASE_TAG is required to publish Worker artifacts" \
+  "Worker image release tag guard"
+
 apply_args_file="${tmp}/worker-image-apply.args"
 (
   set -- help
-  export STATE_DIR="${tmp}/worker-image-apply"
+  export RELEASE_TAG=v0.0.0-test STATE_DIR="${tmp}/worker-image-apply"
   # shellcheck source=/dev/null
   source "${script}" >/dev/null
   require_clean_product_checkout() { :; }

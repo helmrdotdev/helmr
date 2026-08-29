@@ -509,6 +509,7 @@ prepare_worker_runtime_bundle() (
 
 worker_image_apply() {
   local definition marker
+  [ -n "${RELEASE_TAG:-}" ] || die "RELEASE_TAG is required to publish Worker artifacts"
   require_clean_product_checkout
   mkdir -p "${STATE_DIR}"
   rm -f "${WORKER_IMAGE_DEFINITION_FILE}"
