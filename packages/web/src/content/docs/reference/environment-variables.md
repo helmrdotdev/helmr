@@ -105,7 +105,7 @@ Email delivery is disabled by default. Set `EMAIL_PROVIDER` to choose a sender:
 
 ### Database bootstrap command
 
-`helmr-controlplane database-bootstrap [reset]` uses a separate administrative
+`control-plane database-bootstrap [reset]` uses a separate administrative
 connection to create or reset the application database role. These variables
 are command inputs; the long-running Control Plane does not read the
 administrative credentials.
@@ -129,7 +129,7 @@ The dispatcher uses the same single base64-encoded 32-byte
 `WORKSPACE_FENCING_KEY` as the Control Plane service.
 
 The AWS Control Plane module provisions cluster-mode disabled ElastiCache Valkey/Redis for the
-Control Plane event stream and injects `REDIS_URL` into `helmr-controlplane`.
+Control Plane event stream and injects `REDIS_URL` into the Control Plane service.
 
 ## Worker
 

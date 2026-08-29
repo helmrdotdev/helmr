@@ -107,10 +107,12 @@ fi
 
 require_text "./scripts/build-controlplane-image.sh \"\$IMAGE_URI\"" "$workflow" \
   "Control Plane image is not built from its source-only builder"
-require_text "COPY helmr-controlplane /usr/local/bin/helmr-controlplane" "$controlplane_builder" \
+require_text "COPY control-plane /usr/local/bin/control-plane" "$controlplane_builder" \
   "Control Plane image omits the Control Plane binary"
-require_text "COPY helmr-dispatcher /usr/local/bin/helmr-dispatcher" "$controlplane_builder" \
+require_text "COPY dispatcher /usr/local/bin/dispatcher" "$controlplane_builder" \
   "Control Plane image omits the Dispatcher binary"
+require_text 'ENTRYPOINT ["/usr/local/bin/control-plane"]' "$controlplane_builder" \
+  "Control Plane image does not start the Control Plane binary"
 require_text "COPY runtime.descriptor.json /usr/local/share/helmr/runtime.descriptor.json" "$controlplane_builder" \
   "Control Plane image omits the canonical Runtime descriptor"
 require_text "COPY zoneinfo/ /usr/share/zoneinfo/" "$controlplane_builder" \

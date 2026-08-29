@@ -324,7 +324,7 @@ func configuredEmailSender(log *slog.Logger, cfg config.ControlPlane) email.Send
 
 func runMigrate(log *slog.Logger, args []string) error {
 	if len(args) != 1 || args[0] != "up" {
-		return errors.New("usage: helmr-controlplane migrate up")
+		return errors.New("usage: control-plane migrate up")
 	}
 	cfg, err := config.LoadDatabase()
 	if err != nil {

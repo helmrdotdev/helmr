@@ -30,7 +30,7 @@ Platform release, Control Plane image, and Worker AMIs from a clean exact commit
 local receipts live under `.helmr-release-artifacts/` by default.
 
 `scripts/build-controlplane-image.sh` builds a source-only image containing
-`helmr-controlplane` and `helmr-dispatcher`. It intentionally excludes deployment
+`control-plane` and `dispatcher`. It intentionally excludes deployment
 capacity commands and provider policy.
 
 `scripts/aws-bootstrap-helmr-secrets.sh` populates the empty Secrets Manager

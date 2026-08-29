@@ -90,7 +90,7 @@ trap - EXIT
 chmod 0444 "$context/runtime.descriptor.json" "$context/tzdb_names.txt"
 chmod -R u+rwX,go+rX,go-w "$context/zoneinfo"
 
-for command in helmr-controlplane helmr-dispatcher; do
+for command in control-plane dispatcher; do
   GOFLAGS='' GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build \
     -tags embed_console \
     -trimpath \
@@ -100,7 +100,7 @@ for command in helmr-controlplane helmr-dispatcher; do
 done
 if [ -n "$build_version" ]; then
   expected_identity="$build_version ($source_commit)"
-  for command in helmr-controlplane helmr-dispatcher; do
+  for command in control-plane dispatcher; do
     [ "$("$context/$command" --version)" = "$expected_identity" ] || {
       echo "$command does not report the release cohort identity" >&2
       exit 1
@@ -110,12 +110,12 @@ fi
 
 cat >"$context/Dockerfile" <<EOF
 FROM ${base_image}
-COPY helmr-controlplane /usr/local/bin/helmr-controlplane
-COPY helmr-dispatcher /usr/local/bin/helmr-dispatcher
+COPY control-plane /usr/local/bin/control-plane
+COPY dispatcher /usr/local/bin/dispatcher
 COPY runtime.descriptor.json /usr/local/share/helmr/runtime.descriptor.json
 COPY zoneinfo/ /usr/share/zoneinfo/
 COPY tzdb_names.txt /usr/local/share/helmr/tzdb_names.txt
-ENTRYPOINT ["/usr/local/bin/helmr-controlplane"]
+ENTRYPOINT ["/usr/local/bin/control-plane"]
 EOF
 
 docker build \

@@ -30,7 +30,7 @@ cp "${root}/scripts/materialize-worker-host-bundle.sh" "${repo}/scripts/material
 chmod 0755 "${repo}/scripts/"*.sh
 printf 'tracked\n' >"${repo}/tracked"
 
-for name in cpu-template-helper firecracker helmr-worker jailer mkfs.ext4; do
+for name in cpu-template-helper firecracker jailer mkfs.ext4 worker; do
   printf '#!/usr/bin/env sh\nexit 0\n' >"${host}/bin/${name}"
   chmod 0755 "${host}/bin/${name}"
 done

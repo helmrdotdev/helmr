@@ -1,5 +1,5 @@
 output "controlplane_image" {
-  description = "Resolved helmr-controlplane image URI."
+  description = "Resolved Control Plane image URI."
   value       = local.controlplane_image
 }
 

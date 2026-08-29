@@ -307,7 +307,7 @@ prepare_worker_host_bundle() (
   source_commit="$(git -C "${ROOT}" rev-parse HEAD)"
   expected_identity="${RELEASE_TAG} (${source_commit})"
   host_dir="$(HELMR_PLATFORM_VERSION="${RELEASE_TAG}" nix build --impure -L --no-link --print-out-paths "${ROOT}#workerHost")"
-  [ "$("${host_dir}/bin/helmr-worker" --version)" = "${expected_identity}" ] ||
+  [ "$("${host_dir}/bin/worker" --version)" = "${expected_identity}" ] ||
     die "Worker does not report the release cohort identity"
   nix develop "${ROOT}" -c \
     "${ROOT}/scripts/materialize-worker-host-bundle.sh" "${bundle_dir}" "${host_dir}" >/dev/null

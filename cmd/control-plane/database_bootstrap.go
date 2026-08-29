@@ -30,7 +30,7 @@ type databaseBootstrapConfig struct {
 
 func runDatabaseBootstrap(ctx context.Context, args []string) error {
 	if len(args) > 1 || len(args) == 1 && args[0] != "reset" {
-		return errors.New("usage: helmr-controlplane database-bootstrap [reset]")
+		return errors.New("usage: control-plane database-bootstrap [reset]")
 	}
 	cfg, err := loadDatabaseBootstrapConfig()
 	if err != nil {

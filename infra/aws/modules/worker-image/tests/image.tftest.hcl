@@ -49,7 +49,7 @@ run "image_installs_verified_worker_artifacts" {
 
   assert {
     condition = (
-      strcontains(aws_imagebuilder_component.worker.data, "/usr/local/bin/helmr-worker") &&
+      strcontains(aws_imagebuilder_component.worker.data, "/usr/local/bin/worker") &&
       strcontains(aws_imagebuilder_component.worker.data, "/usr/local/bin/cpu-template-helper") &&
       strcontains(aws_imagebuilder_component.worker.data, "/usr/local/bin/firecracker") &&
       strcontains(aws_imagebuilder_component.worker.data, "/usr/local/libexec/helmr/mkfs.ext4") &&

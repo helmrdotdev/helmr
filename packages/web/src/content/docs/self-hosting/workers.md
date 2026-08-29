@@ -54,13 +54,13 @@ New instances start protected from scale-in. Launch-template changes do not auto
 For a manual diagnostic drain:
 
 ```sh
-helmr-worker drain --timeout 30m
+worker drain --timeout 30m
 ```
 
 Do not reduce desired capacity or terminate a host first: provider scaling must not bypass the claim-fenced drain path. Check connectivity and activation with:
 
 ```sh
-helmr-worker status
+worker status
 ```
 
 The status command exits non-zero unless the worker can authenticate to the Control Plane and is active.

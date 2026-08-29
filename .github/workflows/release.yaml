@@ -224,7 +224,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       RELEASE_TAG: ${{ github.ref_name }}
-      CONTROLPLANE_IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/helmr-controlplane
+      CONTROLPLANE_IMAGE_REPOSITORY: ghcr.io/${{ github.repository }}/control-plane
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
@@ -379,8 +379,8 @@ jobs:
       packages: write # Needed to publish the official Control Plane image.
     env:
       RELEASE_TAG: ${{ github.ref_name }}
-      CONTROLPLANE_IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/helmr-controlplane
-      IMAGE_URI: ghcr.io/${{ github.repository_owner }}/helmr-controlplane:${{ github.ref_name }}
+      CONTROLPLANE_IMAGE_REPOSITORY: ghcr.io/${{ github.repository }}/control-plane
+      IMAGE_URI: ghcr.io/${{ github.repository }}/control-plane:${{ github.ref_name }}
       WORKER_AMI_REGIONS: ${{ vars.RELEASE_WORKER_AMI_REGIONS || 'us-east-1,us-west-2,ap-northeast-1' }}
       AWS_REGION: ${{ vars.RELEASE_AWS_REGION || 'us-east-1' }}
     steps:

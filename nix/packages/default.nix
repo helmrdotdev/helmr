@@ -147,10 +147,10 @@ in
     bundleBuilderImage
     runtimeRelease
     ;
-  workerHost = pkgs.runCommand "helmr-worker-host" { } ''
+  workerHost = pkgs.runCommand "worker-host" { } ''
     install -d "$out/bin" "$out/share/helmr"
     install -m 0755 "${firecrackerRuntime}/bin/cpu-template-helper" "$out/bin/cpu-template-helper"
-    install -m 0755 "${worker}/bin/helmr-worker" "$out/bin/helmr-worker"
+    install -m 0755 "${worker}/bin/worker" "$out/bin/worker"
     install -m 0755 "${firecrackerRuntime}/bin/firecracker" "$out/bin/firecracker"
     install -m 0755 "${firecrackerRuntime}/bin/jailer" "$out/bin/jailer"
     install -m 0755 "${lib.getBin substrateGenerator}/bin/mke2fs" "$out/bin/mkfs.ext4"

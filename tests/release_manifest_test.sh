@@ -6,7 +6,7 @@ script="${repo_root}/scripts/write-aws-release-manifest.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "${tmp}"' EXIT
 
-controlplane_image="ghcr.io/helmrdotdev/helmr-controlplane@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+controlplane_image="ghcr.io/helmrdotdev/helmr/control-plane@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 platform_release='{"archive":{"digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","mediaType":"application/vnd.helmr.platform-release.v0+tar","sizeBytes":4096},"formatVersion":0,"sourceCommit":"dddddddddddddddddddddddddddddddddddddddd","sourceRef":"refs/tags/v0.1.0"}'
 component_digest="sha256:1111111111111111111111111111111111111111111111111111111111111111"
 image_digest="sha256:2222222222222222222222222222222222222222222222222222222222222222"
@@ -60,7 +60,7 @@ jq -e \
   .platformRelease == $release
 ' "${tmp}/aws-artifacts.json" >/dev/null
 
-if "${script}" "ghcr.io/helmrdotdev/helmr-controlplane:latest" "${worker_image}" "${platform_release}" "${tmp}/tagged-image.json" 2>/dev/null; then
+if "${script}" "ghcr.io/helmrdotdev/helmr/control-plane:latest" "${worker_image}" "${platform_release}" "${tmp}/tagged-image.json" 2>/dev/null; then
   echo "tagged Control Plane image was accepted" >&2
   exit 1
 fi
