@@ -51,7 +51,7 @@ func TestProgramCompilerResultRoundTrip(t *testing.T) {
 func testProgramCompilerResult(t *testing.T) ProgramCompilerResult {
 	t.Helper()
 	compiler := testCompilerInputs()
-	optionsDigest, err := compilerOptionsDigest(compiler, "24.16.0")
+	optionsDigest, err := compilerOptionsDigest(compiler, "24.20.0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func testProgramCompilerResult(t *testing.T) ProgramCompilerResult {
 		},
 		DiscoveryCandidates: []string{sourcePath},
 		Execution: ProgramCompilerExecution{
-			NodeVersion:   "24.16.0",
+			NodeVersion:   "24.20.0",
 			OptionsDigest: optionsDigest,
 		},
 		ExternalEdges: []ProgramExternalEdge{},

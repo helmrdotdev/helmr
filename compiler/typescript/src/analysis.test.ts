@@ -19,7 +19,7 @@ async function analyzeProject(options: {
 }) {
   const compiled = await compileProgram({
     ...options,
-    nodeVersion: "24.16.0",
+    nodeVersion: "24.20.0",
     outputRoot: await outputRoot(),
     runtimeRoot: options.root,
   })

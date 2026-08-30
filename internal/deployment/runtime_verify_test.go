@@ -95,7 +95,7 @@ func TestRuntimeTopologyRejectsOpenOrDivergentLayout(t *testing.T) {
 		"metadata Node flags": func(artifact *memoryArtifact) {
 			invalid := RuntimeMetadata{
 				Architecture: ArchitectureX8664, FormatVersion: RuntimeMetadataFormatVersion,
-				NodeVersion:      "24.16.0",
+				NodeVersion:      "24.20.0",
 				ProgramNodeFlags: []string{NodeNoExperimentalStripTypes, "--enable-source-maps"},
 				RuntimeContract:  RuntimeContract,
 			}
@@ -202,7 +202,7 @@ func newRuntimeTopology(t *testing.T) (RuntimeDescriptor, *memoryArtifact) {
 	metadata := RuntimeMetadata{
 		Architecture:     ArchitectureX8664,
 		FormatVersion:    RuntimeMetadataFormatVersion,
-		NodeVersion:      "24.16.0",
+		NodeVersion:      "24.20.0",
 		ProgramNodeFlags: []string{NodeNoStripTypes, "--enable-source-maps"},
 		RuntimeContract:  RuntimeContract,
 	}

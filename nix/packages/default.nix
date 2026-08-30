@@ -5,6 +5,7 @@
   nixpkgs-unstable,
   nixpkgs-bun,
   nixpkgs-go,
+  nixpkgs-node,
 }:
 
 let
@@ -12,6 +13,7 @@ let
   inherit (pkgs) lib;
   pkgsUnstable = import nixpkgs-unstable { inherit system; };
   pkgsBun = import nixpkgs-bun { inherit system; };
+  pkgsNode = import nixpkgs-node { inherit system; };
   # The pinned package set no longer supports x86_64-darwin; retain its existing construction there.
   pkgsGo = if system == "x86_64-darwin" then null else import nixpkgs-go { inherit system; };
   goPackage =
@@ -24,7 +26,7 @@ let
   squashfsTools = pkgs.callPackage ./squashfs-tools.nix { };
   timezoneData = pkgs.callPackage ./timezone-data.nix { };
   runtimeReleaseUnchecked = pkgs.callPackage ./runtime-release.nix { inherit squashfsTools; };
-  compiler = pkgs.callPackage ./compiler.nix { };
+  compiler = pkgs.callPackage ./compiler.nix { nodejs_24 = pkgsNode.nodejs_24; };
   bundleBuilder = pkgs.callPackage ./bundle-builder.nix {
     buildGoModule = buildGo127Module;
   };
@@ -37,6 +39,9 @@ let
       timezoneData
       ;
     bun = pkgsBun.bun;
+    nodejs_24 = pkgsNode.nodejs_24;
+    pnpm = pkgs.pnpm.override { nodejs = pkgsNode.nodejs_24; };
+    yarn = pkgs.yarn.override { nodejs = pkgsNode.nodejs_24; };
   };
   buildGo127Module =
     if pkgsGo == null then
@@ -79,6 +84,7 @@ let
     version = platformVersion;
     inherit sourceCommit;
     bun = pkgsBun.bun;
+    nodejs_24 = pkgsNode.nodejs_24;
   };
   runtimeRelease =
     pkgs.runCommand "helmr-runtime-release-verified"
@@ -140,6 +146,8 @@ in
     helmr
     worker
     ;
+  nodejs = pkgsNode.nodejs_24;
+  protocGenEs = pkgsNode.protoc-gen-es;
   inherit staticcheck;
   inherit unparam;
   inherit squashfsTools;

@@ -54,7 +54,7 @@ func TestRuntimeMetadataRoundTrip(t *testing.T) {
 	metadata := RuntimeMetadata{
 		Architecture:     ArchitectureX8664,
 		FormatVersion:    RuntimeMetadataFormatVersion,
-		NodeVersion:      "24.16.0",
+		NodeVersion:      "24.20.0",
 		ProgramNodeFlags: []string{NodeNoStripTypes, "--enable-source-maps"},
 		RuntimeContract:  RuntimeContract,
 	}
@@ -62,7 +62,7 @@ func TestRuntimeMetadataRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = `{"architecture":"x86_64","formatVersion":0,"nodeVersion":"24.16.0","programNodeFlags":["--no-strip-types","--enable-source-maps"],"runtimeContract":"helmr.runtime.v0"}`
+	const want = `{"architecture":"x86_64","formatVersion":0,"nodeVersion":"24.20.0","programNodeFlags":["--no-strip-types","--enable-source-maps"],"runtimeContract":"helmr.runtime.v0"}`
 	if string(raw) != want {
 		t.Fatalf("canonical runtime metadata = %q, want %q", raw, want)
 	}

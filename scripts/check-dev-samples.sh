@@ -23,7 +23,7 @@ bun -e '
       await mkdir(output)
       return compileProgram({
         root: ".", runtimeRoot: process.cwd(), architecture: "x86_64",
-        manager: "bun", nodeVersion: "24.16.0", outputRoot: output,
+        manager: "bun", nodeVersion: "24.20.0", outputRoot: output,
         config: { dirs, ignorePatterns: [] },
       })
     }

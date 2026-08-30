@@ -36,11 +36,11 @@ rec {
     helmrPackages.staticcheck
     helmrPackages.unparam
     helmrPackages.bun
-    pkgs.nodejs
+    helmrPackages.nodejs
     pkgs.python3
     pkgs.buf
     pkgsUnstable.protoc-gen-go
-    pkgsUnstable.protoc-gen-es
+    helmrPackages.protocGenEs
     pkgsUnstable.sqlc
     pkgs.jq
     pkgs.zstd
