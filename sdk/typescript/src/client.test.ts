@@ -531,7 +531,7 @@ describe("HelmrClient Tokens", () => {
           id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
           status: "pending",
           callback_url: "https://api.example.test/v1/token-callbacks/token/secret",
-          public_access_token: "hlmr_pat_secret",
+          public_access_token: "hlmr_pub_secret",
           timeout_at: "2026-07-24T12:00:00Z",
           metadata: { approval: true },
           tags: ["review"],
@@ -1332,7 +1332,7 @@ describe("HelmrClient Runs", () => {
         createdAt: "2026-07-24T11:50:00Z",
         updatedAt: "2026-07-24T11:50:00Z",
         callbackUrl: "https://api.example.test/callback",
-        publicAccessToken: "hlmr_pat_secret",
+        publicAccessToken: "hlmr_pub_secret",
       }),
       tokenWait: async () => null,
     })

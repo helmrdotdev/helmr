@@ -59,7 +59,7 @@ func (k CredentialKey) Derive(tokenID uuid.UUID) (Credentials, error) {
 		return Credentials{}, fmt.Errorf("derive token bearer credential: %w", err)
 	}
 	callbackSecret := base64.RawURLEncoding.EncodeToString(callback)
-	publicAccessToken := "hlmr_pat_" + base64.RawURLEncoding.EncodeToString(bearer)
+	publicAccessToken := "hlmr_pub_" + base64.RawURLEncoding.EncodeToString(bearer)
 	callbackHash := sha256.Sum256([]byte(callbackSecret))
 	bearerHash := sha256.Sum256([]byte(publicAccessToken))
 	return Credentials{

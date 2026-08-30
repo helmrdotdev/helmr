@@ -111,7 +111,7 @@ func TestHandleTokenCreateRetryUsesRenewedAssignment(t *testing.T) {
 		response: api.TokenResponse{
 			ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc39", Status: "pending",
 			CallbackURL:       "https://api.example.test/api/token-callbacks/tok/callback",
-			PublicAccessToken: "hlmr_pat_secret",
+			PublicAccessToken: "hlmr_pub_secret",
 			Metadata:          json.RawMessage(`{}`),
 			CreatedAt:         time.Now().UTC(),
 			UpdatedAt:         time.Now().UTC(),
@@ -166,7 +166,7 @@ func TestHandleTokenCreateWritesCorrelatedDecision(t *testing.T) {
 		response: api.TokenResponse{
 			ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37", Status: "pending",
 			CallbackURL:       "https://api.example.test/api/token-callbacks/tok/callback",
-			PublicAccessToken: "hlmr_pat_secret", TimeoutAt: timeoutAt,
+			PublicAccessToken: "hlmr_pub_secret", TimeoutAt: timeoutAt,
 			Metadata: json.RawMessage(`{"approval":true}`), Tags: []string{"review"},
 			CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
 		},

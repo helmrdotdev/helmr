@@ -22,7 +22,7 @@ func TestTokenCreateResponseRemainsOriginalPendingProjection(t *testing.T) {
 	}
 	credentials := auth.Credentials{
 		CallbackSecret:    "callback-secret",
-		PublicAccessToken: "hlmr_pat_secret",
+		PublicAccessToken: "hlmr_pub_secret",
 	}
 	for _, state := range []db.TokenState{
 		db.TokenStateCompleted,
