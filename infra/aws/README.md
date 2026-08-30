@@ -5,7 +5,7 @@ tooling for Helmr.
 
 ## Layout
 
-- `modules/bootstrap` creates durable release/state foundations.
+- `modules/bootstrap` is the reusable deployment foundation child module.
 - `modules/network` creates a reusable VPC and subnet topology.
 - `modules/controlplane` creates the Product Control Plane data plane and accepts external
   deployment-owned secret ARNs.
@@ -13,6 +13,7 @@ tooling for Helmr.
 - `modules/worker` creates a generic Firecracker Worker host group.
 - `modules/worker-image` defines the public Worker AMI build.
 - `quickstart` and `standard` are self-hosted compositions.
+- `stacks/release-build` is the standalone OSS release artifact foundation.
 - `stacks/worker-image` is the public Worker AMI build pipeline.
 
 Self-hosting operators own their surrounding network, ClickHouse service,
@@ -22,7 +23,8 @@ release does not guarantee a safe downgrade of runtime or persisted data.
 
 ## Release artifacts
 
-Run Product artifact operations through `scripts/aws-release-artifacts.sh`.
+Run release-build foundation and Worker image operations through
+`scripts/aws-release-artifacts.sh`.
 The release workflow publishes a digest-pinned Control Plane image, regional Worker
 AMIs, and the signed Platform release. The Control Plane image contains only
 `control-plane` and `dispatcher`; deployment capacity automation is not a

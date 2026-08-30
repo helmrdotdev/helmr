@@ -5,15 +5,15 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=release-artifact-contracts.sh
 source "${ROOT}/scripts/release-artifact-contracts.sh"
 TF_BIN="${TF_BIN:-tofu}"
-AWS_REGION="${AWS_REGION:-us-east-1}"
+export AWS_REGION="${AWS_REGION:-us-east-1}"
 STATE_REGION="${STATE_REGION:-}"
 STATE_KEY="${STATE_KEY:-}"
 WORKER_IMAGE_NAME="${WORKER_IMAGE_NAME:-helmr-worker-image}"
 WORKER_IMAGE_DISTRIBUTION_REGIONS="${WORKER_IMAGE_DISTRIBUTION_REGIONS:-}"
 WORKER_IMAGE_AMI_PUBLIC="${WORKER_IMAGE_AMI_PUBLIC:-}"
 WORKER_IMAGE_ROOT_VOLUME_ENCRYPTED="${WORKER_IMAGE_ROOT_VOLUME_ENCRYPTED:-}"
-BOOTSTRAP_NAME="${BOOTSTRAP_NAME:-helmr-release}"
-BOOTSTRAP_STACK="${BOOTSTRAP_STACK:-${ROOT}/infra/aws/modules/bootstrap}"
+RELEASE_BUILD_NAME="${RELEASE_BUILD_NAME:-helmr-release}"
+RELEASE_BUILD_STACK="${RELEASE_BUILD_STACK:-${ROOT}/infra/aws/stacks/release-build}"
 WORKER_IMAGE_STACK="${WORKER_IMAGE_STACK:-${ROOT}/infra/aws/stacks/worker-image}"
 STATE_DIR="${STATE_DIR:-${ROOT}/.helmr-release-artifacts}"
 IMAGE_ARN_FILE="${STATE_DIR}/worker-image-build-version-arn"
@@ -23,8 +23,6 @@ WORKER_HOST_ARTIFACTS_MANIFEST_FILE="${STATE_DIR}/worker-host-artifacts.json"
 WORKER_HOST_BUNDLE_RECEIPT_FILE="${STATE_DIR}/worker-host-bundle.json"
 WORKER_RUNTIME_ARTIFACTS_MANIFEST_FILE="${STATE_DIR}/worker-runtime-artifacts.json"
 WORKER_RUNTIME_BUNDLE_RECEIPT_FILE="${STATE_DIR}/worker-runtime-bundle.json"
-CONTROLPLANE_IMAGE_PROVENANCE_FILE="${STATE_DIR}/controlplane-image-provenance.json"
-CONTROLPLANE_IMAGE_URI_FILE="${STATE_DIR}/controlplane-image-uri"
 IMAGE_WAIT_INTERVAL_SECONDS="${IMAGE_WAIT_INTERVAL_SECONDS:-60}"
 IMAGE_WAIT_TIMEOUT_SECONDS="${IMAGE_WAIT_TIMEOUT_SECONDS:-7200}"
 
@@ -34,18 +32,15 @@ Usage: scripts/aws-release-artifacts.sh <command>
 
 Commands:
   check
-  bootstrap-init
-  bootstrap-plan
-  bootstrap-apply
-  bootstrap-output
-  platform-release-publish
+  release-build-init
+  release-build-plan
+  release-build-apply
+  release-build-output
   worker-image-init
   worker-image-apply
   worker-image-start
   worker-image-wait
   worker-image-receipt
-  controlplane-image-build
-  controlplane-image-push
 
 This tool builds and publishes Helmr release artifacts.
 EOF
@@ -133,114 +128,34 @@ check() {
   aws sts get-caller-identity --region "${AWS_REGION}"
 }
 
-bootstrap_init() {
+release_build_init() {
   need_state_bucket
   need_state_region
-  "${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" init \
+  "${TF_BIN}" -chdir="${RELEASE_BUILD_STACK}" init \
     -reconfigure \
     -input=false \
     "-backend-config=bucket=${STATE_BUCKET}" \
     "-backend-config=region=${STATE_REGION}"
 }
 
-bootstrap_principal_arn() {
-  caller_arn="$(aws sts get-caller-identity --region "${AWS_REGION}" --query Arn --output text)"
-  case "${caller_arn}" in
-    arn:*:sts::*:assumed-role/*/*)
-      partition="$(printf '%s\n' "${caller_arn}" | cut -d: -f2)"
-      account_id="$(printf '%s\n' "${caller_arn}" | cut -d: -f5)"
-      role_and_session="${caller_arn#*:assumed-role/}"
-      printf 'arn:%s:iam::%s:role/%s\n' "${partition}" "${account_id}" "${role_and_session%/*}"
-      ;;
-    arn:*:iam::*:role/* | arn:*:iam::*:user/*)
-      printf '%s\n' "${caller_arn}"
-      ;;
-    *)
-      die "bootstrap requires an IAM role or user principal; set the Platform publisher principal JSON override when using ${caller_arn}"
-      ;;
-  esac
-}
-
-bootstrap_publishers() {
-  principal_arn="$(bootstrap_principal_arn)"
-  publishers="${PLATFORM_PUBLISHER_PRINCIPAL_ARNS_JSON:-$(jq -cn --arg arn "${principal_arn}" '[$arn]')}"
-  printf '%s\n' "${publishers}" | jq -e 'type == "array" and length > 0 and all(.[]; type == "string")' >/dev/null ||
-    die "PLATFORM_PUBLISHER_PRINCIPAL_ARNS_JSON must be a non-empty JSON string array"
-  printf '%s\n' "${publishers}"
-}
-
-bootstrap_plan() {
-  bootstrap_init
-  publishers="$(bootstrap_publishers)"
-  "${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" plan \
+release_build_plan() {
+  release_build_init
+  "${TF_BIN}" -chdir="${RELEASE_BUILD_STACK}" plan \
     -input=false \
     -lock=false \
-    -var="name=${BOOTSTRAP_NAME}" \
-    -var="platform_publisher_principal_arns=${publishers}"
+    -var="name=${RELEASE_BUILD_NAME}"
 }
 
-bootstrap_apply() {
-  bootstrap_init
-  publishers="$(bootstrap_publishers)"
-  tf_apply "${BOOTSTRAP_STACK}" \
-    -var="name=${BOOTSTRAP_NAME}" \
-    -var="platform_publisher_principal_arns=${publishers}"
+release_build_apply() {
+  release_build_init
+  tf_apply "${RELEASE_BUILD_STACK}" \
+    -var="name=${RELEASE_BUILD_NAME}"
 }
 
-bootstrap_output() {
-  bootstrap_init >&2
-  artifact_bucket="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw release_artifact_bucket_name)"
+release_build_output() {
+  release_build_init >&2
+  artifact_bucket="$("${TF_BIN}" -chdir="${RELEASE_BUILD_STACK}" output -raw release_artifact_bucket_name)"
   printf 'export WORKER_IMAGE_ARTIFACT_BUCKET=%q\n' "${artifact_bucket}"
-  for output_name in \
-    controlplane_release_repository_url \
-    controlplane_release_repository_arn \
-    platform_publisher_role_arn \
-    platform_store_uri \
-    platform_store_bucket_arn \
-    platform_store_kms_key_arn; do
-    value="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw "${output_name}")"
-    printf 'export %s=%q\n' "$(printf '%s' "${output_name}" | tr '[:lower:]' '[:upper:]')" "${value}"
-  done
-}
-
-bootstrap_contract_value() {
-  environment_name="$1"
-  output_name="$2"
-  value="${!environment_name:-}"
-  if [ -z "${value}" ]; then
-    value="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw "${output_name}")"
-  fi
-  [ -n "${value}" ] || die "${environment_name} is required"
-  printf '%s\n' "${value}"
-}
-
-with_platform_publisher() {
-  local role_arn credentials access_key_id secret_access_key session_token
-  role_arn="$(bootstrap_contract_value PLATFORM_PUBLISHER_ROLE_ARN platform_publisher_role_arn)"
-  credentials="$(
-    aws sts assume-role \
-      --region "${AWS_REGION}" \
-      --role-arn "${role_arn}" \
-      --role-session-name "helmr-release-$(date -u +%s)-$$" \
-      --output json
-  )"
-  printf '%s\n' "${credentials}" | jq -e '
-    .Credentials |
-    (.AccessKeyId | type == "string" and length > 0) and
-    (.SecretAccessKey | type == "string" and length > 0) and
-    (.SessionToken | type == "string" and length > 0)
-  ' >/dev/null || die "platform publisher role did not return complete temporary credentials"
-
-  access_key_id="$(printf '%s\n' "${credentials}" | jq -r '.Credentials.AccessKeyId')"
-  secret_access_key="$(printf '%s\n' "${credentials}" | jq -r '.Credentials.SecretAccessKey')"
-  session_token="$(printf '%s\n' "${credentials}" | jq -r '.Credentials.SessionToken')"
-  env -u AWS_PROFILE -u AWS_DEFAULT_PROFILE \
-    AWS_ACCESS_KEY_ID="${access_key_id}" \
-    AWS_SECRET_ACCESS_KEY="${secret_access_key}" \
-    AWS_SESSION_TOKEN="${session_token}" \
-    AWS_REGION="${AWS_REGION}" \
-    AWS_DEFAULT_REGION="${AWS_REGION}" \
-    "$@"
 }
 
 worker_image_artifact_bucket() {
@@ -248,11 +163,11 @@ worker_image_artifact_bucket() {
     printf '%s\n' "${WORKER_IMAGE_ARTIFACT_BUCKET}"
     return 0
   fi
-  if artifact_bucket="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw release_artifact_bucket_name 2>/dev/null)"; then
+  if artifact_bucket="$("${TF_BIN}" -chdir="${RELEASE_BUILD_STACK}" output -raw release_artifact_bucket_name 2>/dev/null)"; then
     printf '%s\n' "${artifact_bucket}"
     return 0
   fi
-  die "WORKER_IMAGE_ARTIFACT_BUCKET is required; run bootstrap-apply and export bootstrap-output"
+  die "WORKER_IMAGE_ARTIFACT_BUCKET is required; run release-build-apply and export release-build-output"
 }
 
 tf_bool() {
@@ -287,18 +202,6 @@ bucket_kms_key_arn() {
     --query 'ServerSideEncryptionConfiguration.Rules[0].ApplyServerSideEncryptionByDefault.KMSMasterKeyID' \
     --output text 2>/dev/null | awk '$0 != "None" { print }'
 }
-
-platform_release_publish() (
-  local release runtime_digest
-  require_clean_product_checkout
-  platform_store_uri="$(bootstrap_contract_value PLATFORM_STORE_URI platform_store_uri)"
-  release="$(nix build -L --no-link --print-out-paths "${ROOT}#platformRelease")"
-  with_platform_publisher "${ROOT}/scripts/publish-materialized-platform-release.sh" \
-    "${platform_store_uri}" "${release}"
-  runtime_digest="$(jq -er '.runtime.digest' "${release}/platform-release.json")"
-  info "Platform runtime published: ${runtime_digest}"
-  printf '%s\n' "${runtime_digest}"
-)
 
 worker_image_artifact_exists() {
   local bucket=$1 key=$2 error status
@@ -899,120 +802,18 @@ worker_image_receipt() {
   jq -c . "${WORKER_IMAGE_RECEIPT_FILE}"
 }
 
-controlplane_image_repository() {
-  bootstrap_contract_value CONTROLPLANE_RELEASE_REPOSITORY_URL controlplane_release_repository_url
-}
-
-controlplane_image_uri() {
-  repository="$(controlplane_image_repository)"
-  tag="${CONTROLPLANE_IMAGE_TAG:-$(git -C "${ROOT}" rev-parse --short=12 HEAD)-$(date -u +%Y%m%d%H%M%S)-$$}"
-  printf '%s:%s\n' "${repository}" "${tag}"
-}
-
-controlplane_image_digest_uri() {
-  image_uri=$1
-  [ "${image_uri#*@}" = "${image_uri}" ] || die "controlplane-image-push requires a tag image URI, got digest-pinned image: ${image_uri}"
-
-  repository="${image_uri%:*}"
-  tag="${image_uri##*:}"
-  repository_name="${repository#*/}"
-  [ -n "${repository_name}" ] && [ "${repository_name}" != "${repository}" ] || die "controlplane image URI must include an ECR registry: ${image_uri}"
-  [ -n "${tag}" ] && [ "${tag}" != "${image_uri}" ] || die "controlplane image URI must include a tag: ${image_uri}"
-
-  digest="$(with_platform_publisher aws ecr describe-images \
-    --region "${AWS_REGION}" \
-    --repository-name "${repository_name}" \
-    --image-ids "imageTag=${tag}" \
-    --query 'imageDetails[0].imageDigest' \
-    --output text)"
-  case "${digest}" in
-    sha256:*) printf '%s@%s\n' "${repository}" "${digest}" ;;
-    *) die "could not resolve pushed digest for ${image_uri}" ;;
-  esac
-}
-
-controlplane_image_context() {
-  printf '%s\n' "${STATE_DIR}/controlplane-image"
-}
-
-controlplane_image_build() {
-  need_command docker
-  require_clean_product_checkout
-  image_uri="$(controlplane_image_uri)"
-  context="$(controlplane_image_context)"
-
-  # shellcheck disable=SC2016
-  nix develop "${ROOT}#images" -c env \
-    CONTROLPLANE_IMAGE_CONTEXT="${context}" \
-    IMAGE_URI="${image_uri}" \
-    bash -ceu '
-      cd "$1"
-      ./scripts/build-controlplane-image.sh "$IMAGE_URI"
-    ' bash "${ROOT}"
-
-  printf '%s\n' "${image_uri}" >"${CONTROLPLANE_IMAGE_URI_FILE}"
-  info "controlplane image built: ${image_uri}"
-  printf '%s\n' "${image_uri}"
-}
-
-controlplane_image_push() {
-  need_command aws
-  need_command docker
-  require_clean_product_checkout
-  image_uri="${CONTROLPLANE_IMAGE_URI:-}"
-  if [ -z "${image_uri}" ] && [ -f "${CONTROLPLANE_IMAGE_URI_FILE}" ]; then
-    image_uri="$(cat "${CONTROLPLANE_IMAGE_URI_FILE}")"
-  fi
-  [ -n "${image_uri}" ] || die "CONTROLPLANE_IMAGE_URI is required, or run controlplane-image-build first"
-  build_inputs_file="$(controlplane_image_context)/build-inputs.json"
-  [ -f "${build_inputs_file}" ] || die "Control Plane image build-input receipt is missing; run controlplane-image-build first"
-  expected_source_commit="$(git -C "${ROOT}" rev-parse HEAD)"
-  "${ROOT}/scripts/verify-controlplane-image-build.sh" "${build_inputs_file}" "${image_uri}" ||
-    die "Control Plane image build-input verification failed"
-  registry="${image_uri%%/*}"
-  (
-    docker_config="$(mktemp -d "${STATE_DIR}/docker-config.XXXXXX")"
-    trap 'docker --config "${docker_config}" logout "${registry}" >/dev/null 2>&1 || true; rm -rf "${docker_config}"' EXIT
-    with_platform_publisher aws ecr get-login-password --region "${AWS_REGION}" |
-      docker --config "${docker_config}" login --username AWS --password-stdin "${registry}"
-    docker --config "${docker_config}" push "${image_uri}"
-  )
-  digest_image_uri="$(controlplane_image_digest_uri "${image_uri}")"
-  repository="${digest_image_uri%@*}"
-  repository_name="${repository#*/}"
-  digest="${digest_image_uri#*@}"
-  jq -cn \
-    --arg digest "${digest}" \
-    --arg repository "${repository_name}" \
-    --arg source_commit "${expected_source_commit}" \
-    --slurpfile build_inputs "${build_inputs_file}" \
-    '{
-      buildInputs: $build_inputs[0],
-      formatVersion: 1,
-      image: {digest: $digest, repository: $repository},
-      sourceCommit: $source_commit
-    }' >"${CONTROLPLANE_IMAGE_PROVENANCE_FILE}"
-  chmod 0600 "${CONTROLPLANE_IMAGE_PROVENANCE_FILE}"
-  printf '%s\n' "${digest_image_uri}" >"${CONTROLPLANE_IMAGE_URI_FILE}"
-  info "controlplane image pushed: ${digest_image_uri}"
-  printf '%s\n' "${digest_image_uri}"
-}
-
 command=${1:-}
 case "${command}" in
   check) check ;;
-  bootstrap-init) bootstrap_init ;;
-  bootstrap-plan) bootstrap_plan ;;
-  bootstrap-apply) bootstrap_apply ;;
-  bootstrap-output) bootstrap_output ;;
-  platform-release-publish) platform_release_publish ;;
+  release-build-init) release_build_init ;;
+  release-build-plan) release_build_plan ;;
+  release-build-apply) release_build_apply ;;
+  release-build-output) release_build_output ;;
   worker-image-init) tf_init "${WORKER_IMAGE_STACK}" ;;
   worker-image-apply) worker_image_apply ;;
   worker-image-start) worker_image_start ;;
   worker-image-wait) shift; worker_image_wait "$@" ;;
   worker-image-receipt) worker_image_receipt ;;
-  controlplane-image-build) controlplane_image_build ;;
-  controlplane-image-push) controlplane_image_push ;;
   -h|--help|help|"") usage ;;
   *) usage >&2; die "unknown command: ${command}" ;;
 esac

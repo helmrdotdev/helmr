@@ -6,9 +6,10 @@ repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 script="${repo_root}/scripts/aws-release-artifacts.sh"
 controlplane_build_script="${repo_root}/scripts/build-controlplane-image.sh"
 controlplane_build_contract="${repo_root}/images/controlplane-image-build.json"
-bootstrap_main="${repo_root}/infra/aws/modules/bootstrap/main.tf"
-bootstrap_outputs="${repo_root}/infra/aws/modules/bootstrap/outputs.tf"
 bootstrap_versions="${repo_root}/infra/aws/modules/bootstrap/versions.tf"
+release_build_main="${repo_root}/infra/aws/stacks/release-build/main.tf"
+release_build_outputs="${repo_root}/infra/aws/stacks/release-build/outputs.tf"
+release_build_versions="${repo_root}/infra/aws/stacks/release-build/versions.tf"
 
 fail() {
   printf 'not ok - %s\n' "$1" >&2
@@ -47,15 +48,17 @@ assert_contains "${controlplane_build_script}" 'path:/work#packages.x86_64-linux
   "Control Plane image timezone build uses a path input"
 assert_contains "${script}" 'Worker does not report the release cohort identity' \
   "Worker release reported identity"
-assert_contains "${bootstrap_versions}" 'backend "s3"' "bootstrap S3 backend"
-assert_contains "${bootstrap_versions}" 'helmr/stacks/bootstrap/terraform.tfstate' \
-  "bootstrap fixed state key"
-assert_contains "${bootstrap_versions}" 'use_lockfile = true' "bootstrap native lockfile"
-if grep -Eq '^resource "[^"]+" "(terraform_state|source_artifacts)"' "${bootstrap_main}"; then
-  fail "bootstrap must not declare terraform_state or source_artifacts resources"
+if grep -Fq 'backend "s3"' "${bootstrap_versions}"; then
+  fail "bootstrap child module must not declare a backend"
 fi
-if grep -Eq '^output "(bucket_name|kms_key_arn)"' "${bootstrap_outputs}"; then
-  fail "bootstrap must not output backend coordinates"
+assert_contains "${release_build_versions}" 'backend "s3"' "release-build S3 backend"
+assert_contains "${release_build_versions}" 'helmr/stacks/release-build/terraform.tfstate' \
+  "release-build fixed state key"
+assert_contains "${release_build_versions}" 'use_lockfile = true' "release-build native lockfile"
+assert_equal 6 "$(grep -Ec '^resource "' "${release_build_main}")" "release-build resource count"
+assert_equal 1 "$(grep -Ec '^output "' "${release_build_outputs}")" "release-build output count"
+if grep -Eq 'bootstrap-(init|plan|apply|output)|platform-release-publish|controlplane-image-(build|push)' "${script}"; then
+  fail "release helper must expose only live release-build and Worker image commands"
 fi
 if grep -Fq 'source=${repo_root},target=/work' "${controlplane_build_script}"; then
   fail "Control Plane image must not mount Product Git metadata into the Linux builder"
@@ -66,113 +69,86 @@ trap 'rm -rf "${tmp}"' EXIT
 stdout="${tmp}/stdout"
 stderr="${tmp}/stderr"
 
-bootstrap_bin="${tmp}/bootstrap-bin"
-bootstrap_tf_args="${tmp}/bootstrap-tofu.args"
-bootstrap_aws_args="${tmp}/bootstrap-aws.args"
-mkdir -p "${bootstrap_bin}"
-cat >"${bootstrap_bin}/tofu" <<'EOF'
+release_build_bin="${tmp}/release-build-bin"
+release_build_tf_args="${tmp}/release-build-tofu.args"
+mkdir -p "${release_build_bin}"
+cat >"${release_build_bin}/tofu" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"${TF_ARGS_FILE:?}"
+[ -z "${EXPECTED_AWS_REGION:-}" ] || [ "${AWS_REGION:-}" = "${EXPECTED_AWS_REGION}" ]
 [ "${2:-}" != init ] || printf 'mock tofu init\n'
 case "${*: -1}" in
   release_artifact_bucket_name) printf 'release-artifacts\n' ;;
-  controlplane_release_repository_url) printf 'example.invalid/control-plane\n' ;;
-  controlplane_release_repository_arn) printf 'arn:aws:ecr:us-west-2:123456789012:repository/control-plane\n' ;;
-  platform_publisher_role_arn) printf 'arn:aws:iam::123456789012:role/platform-publisher\n' ;;
-  platform_store_uri) printf 's3://platform-store/objects\n' ;;
-  platform_store_bucket_arn) printf 'arn:aws:s3:::platform-store\n' ;;
-  platform_store_kms_key_arn) printf 'arn:aws:kms:us-west-2:123456789012:key/platform-store\n' ;;
 esac
 EOF
-cat >"${bootstrap_bin}/aws" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\n' "$*" >>"${AWS_ARGS_FILE:?}"
-[ "${1:-}:${2:-}" = sts:get-caller-identity ]
-printf 'arn:aws:iam::123456789012:role/release-admin\n'
-EOF
-chmod 0755 "${bootstrap_bin}"/*
+chmod 0755 "${release_build_bin}"/*
 
-for bootstrap_command in bootstrap-init bootstrap-plan bootstrap-apply bootstrap-output; do
-  : >"${bootstrap_tf_args}"
-  : >"${bootstrap_aws_args}"
+for release_build_command in release-build-init release-build-plan release-build-apply release-build-output; do
+  : >"${release_build_tf_args}"
   if env -u STATE_BUCKET \
-    STATE_REGION=us-west-2 TF_BIN="${bootstrap_bin}/tofu" \
-    TF_ARGS_FILE="${bootstrap_tf_args}" AWS_ARGS_FILE="${bootstrap_aws_args}" \
-    PATH="${bootstrap_bin}:${PATH}" \
-    "${script}" "${bootstrap_command}" >"${stdout}" 2>"${stderr}"; then
-    fail "${bootstrap_command} must require STATE_BUCKET"
+    STATE_REGION=us-west-2 TF_BIN="${release_build_bin}/tofu" \
+    TF_ARGS_FILE="${release_build_tf_args}" PATH="${release_build_bin}:${PATH}" \
+    "${script}" "${release_build_command}" >"${stdout}" 2>"${stderr}"; then
+    fail "${release_build_command} must require STATE_BUCKET"
   fi
-  [ ! -s "${bootstrap_tf_args}" ] || fail "${bootstrap_command} must reject a missing bucket before tofu"
-  [ ! -s "${bootstrap_aws_args}" ] || fail "${bootstrap_command} must reject a missing bucket before AWS"
+  [ ! -s "${release_build_tf_args}" ] || fail "${release_build_command} must reject a missing bucket before tofu"
 
-  : >"${bootstrap_tf_args}"
-  : >"${bootstrap_aws_args}"
+  : >"${release_build_tf_args}"
   if env -u STATE_REGION \
-    AWS_REGION=us-east-1 STATE_BUCKET=retained-state TF_BIN="${bootstrap_bin}/tofu" \
-    TF_ARGS_FILE="${bootstrap_tf_args}" AWS_ARGS_FILE="${bootstrap_aws_args}" \
-    PATH="${bootstrap_bin}:${PATH}" \
-    "${script}" "${bootstrap_command}" >"${stdout}" 2>"${stderr}"; then
-    fail "${bootstrap_command} must require explicit STATE_REGION"
+    AWS_REGION=us-east-1 STATE_BUCKET=retained-state TF_BIN="${release_build_bin}/tofu" \
+    TF_ARGS_FILE="${release_build_tf_args}" PATH="${release_build_bin}:${PATH}" \
+    "${script}" "${release_build_command}" >"${stdout}" 2>"${stderr}"; then
+    fail "${release_build_command} must require explicit STATE_REGION"
   fi
-  [ ! -s "${bootstrap_tf_args}" ] || fail "${bootstrap_command} must reject a missing region before tofu"
-  [ ! -s "${bootstrap_aws_args}" ] || fail "${bootstrap_command} must reject a missing region before AWS"
+  [ ! -s "${release_build_tf_args}" ] || fail "${release_build_command} must reject a missing region before tofu"
 done
 
-: >"${bootstrap_tf_args}"
-STATE_BUCKET=retained-state STATE_REGION=us-west-2 STATE_KEY=ignored \
-  TF_BIN="${bootstrap_bin}/tofu" TF_ARGS_FILE="${bootstrap_tf_args}" AWS_ARGS_FILE="${bootstrap_aws_args}" \
-  PATH="${bootstrap_bin}:${PATH}" "${script}" bootstrap-init
-assert_equal "-chdir=${repo_root}/infra/aws/modules/bootstrap init -reconfigure -input=false -backend-config=bucket=retained-state -backend-config=region=us-west-2" \
-  "$(cat "${bootstrap_tf_args}")" "bootstrap init arguments"
+: >"${release_build_tf_args}"
+env -u AWS_REGION EXPECTED_AWS_REGION=us-east-1 \
+  STATE_BUCKET=retained-state STATE_REGION=us-west-2 STATE_KEY=ignored \
+  TF_BIN="${release_build_bin}/tofu" TF_ARGS_FILE="${release_build_tf_args}" \
+  PATH="${release_build_bin}:${PATH}" "${script}" release-build-init
+assert_equal "-chdir=${repo_root}/infra/aws/stacks/release-build init -reconfigure -input=false -backend-config=bucket=retained-state -backend-config=region=us-west-2" \
+  "$(cat "${release_build_tf_args}")" "release-build init arguments"
 
-: >"${bootstrap_tf_args}"
-: >"${bootstrap_aws_args}"
+: >"${release_build_tf_args}"
 STATE_BUCKET=retained-state STATE_REGION=us-west-2 STATE_KEY=ignored \
-  TF_BIN="${bootstrap_bin}/tofu" TF_ARGS_FILE="${bootstrap_tf_args}" AWS_ARGS_FILE="${bootstrap_aws_args}" \
-  PATH="${bootstrap_bin}:${PATH}" "${script}" bootstrap-plan
-assert_equal 2 "$(wc -l <"${bootstrap_tf_args}" | tr -d ' ')" "bootstrap plan command count"
-assert_contains "${bootstrap_tf_args}" '-chdir='"${repo_root}"'/infra/aws/modules/bootstrap init -reconfigure -input=false -backend-config=bucket=retained-state -backend-config=region=us-west-2' \
-  "bootstrap plan initialization"
-assert_contains "${bootstrap_tf_args}" 'plan -input=false -lock=false -var=name=helmr-release -var=platform_publisher_principal_arns=["arn:aws:iam::123456789012:role/release-admin"]' \
-  "bootstrap plan arguments"
+  TF_BIN="${release_build_bin}/tofu" TF_ARGS_FILE="${release_build_tf_args}" \
+  PATH="${release_build_bin}:${PATH}" "${script}" release-build-plan
+assert_equal 2 "$(wc -l <"${release_build_tf_args}" | tr -d ' ')" "release-build plan command count"
+assert_contains "${release_build_tf_args}" '-chdir='"${repo_root}"'/infra/aws/stacks/release-build init -reconfigure -input=false -backend-config=bucket=retained-state -backend-config=region=us-west-2' \
+  "release-build plan initialization"
+assert_contains "${release_build_tf_args}" 'plan -input=false -lock=false -var=name=helmr-release' \
+  "release-build plan arguments"
 
-: >"${bootstrap_tf_args}"
+: >"${release_build_tf_args}"
 STATE_BUCKET=retained-state STATE_REGION=us-west-2 \
-  TF_BIN="${bootstrap_bin}/tofu" TF_ARGS_FILE="${bootstrap_tf_args}" AWS_ARGS_FILE="${bootstrap_aws_args}" \
-  PATH="${bootstrap_bin}:${PATH}" "${script}" bootstrap-apply
-assert_equal 2 "$(wc -l <"${bootstrap_tf_args}" | tr -d ' ')" "bootstrap apply command count"
-assert_contains "${bootstrap_tf_args}" 'init -reconfigure -input=false -backend-config=bucket=retained-state -backend-config=region=us-west-2' \
-  "bootstrap apply initialization"
-assert_contains "${bootstrap_tf_args}" 'apply -var=name=helmr-release -var=platform_publisher_principal_arns=["arn:aws:iam::123456789012:role/release-admin"]' \
-  "bootstrap apply arguments"
+  TF_BIN="${release_build_bin}/tofu" TF_ARGS_FILE="${release_build_tf_args}" \
+  PATH="${release_build_bin}:${PATH}" "${script}" release-build-apply
+assert_equal 2 "$(wc -l <"${release_build_tf_args}" | tr -d ' ')" "release-build apply command count"
+assert_contains "${release_build_tf_args}" 'init -reconfigure -input=false -backend-config=bucket=retained-state -backend-config=region=us-west-2' \
+  "release-build apply initialization"
+assert_contains "${release_build_tf_args}" 'apply -var=name=helmr-release' \
+  "release-build apply arguments"
 
-: >"${bootstrap_tf_args}"
-if STATE_BUCKET=retained-state STATE_REGION=us-west-2 PLATFORM_PUBLISHER_PRINCIPAL_ARNS_JSON='{}' \
-  TF_BIN="${bootstrap_bin}/tofu" TF_ARGS_FILE="${bootstrap_tf_args}" AWS_ARGS_FILE="${bootstrap_aws_args}" \
-  PATH="${bootstrap_bin}:${PATH}" "${script}" bootstrap-apply >"${stdout}" 2>"${stderr}"; then
-  fail "bootstrap apply must validate the publisher principals"
-fi
-assert_equal 1 "$(wc -l <"${bootstrap_tf_args}" | tr -d ' ')" "invalid bootstrap apply command count"
-
-: >"${bootstrap_tf_args}"
+: >"${release_build_tf_args}"
 STATE_BUCKET=retained-state STATE_REGION=us-west-2 STATE_KEY=ignored \
-  TF_BIN="${bootstrap_bin}/tofu" TF_ARGS_FILE="${bootstrap_tf_args}" AWS_ARGS_FILE="${bootstrap_aws_args}" \
-  PATH="${bootstrap_bin}:${PATH}" "${script}" bootstrap-output >"${stdout}" 2>"${stderr}"
-assert_equal 8 "$(wc -l <"${bootstrap_tf_args}" | tr -d ' ')" "bootstrap output command count"
-assert_equal 7 "$(wc -l <"${stdout}" | tr -d ' ')" "bootstrap output export count"
-assert_contains "${stdout}" 'export WORKER_IMAGE_ARTIFACT_BUCKET=release-artifacts' "bootstrap artifact output"
-assert_contains "${stderr}" 'mock tofu init' "bootstrap init diagnostics"
+  TF_BIN="${release_build_bin}/tofu" TF_ARGS_FILE="${release_build_tf_args}" \
+  PATH="${release_build_bin}:${PATH}" "${script}" release-build-output >"${stdout}" 2>"${stderr}"
+assert_equal 2 "$(wc -l <"${release_build_tf_args}" | tr -d ' ')" "release-build output command count"
+assert_equal 1 "$(wc -l <"${stdout}" | tr -d ' ')" "release-build output export count"
+assert_contains "${stdout}" 'export WORKER_IMAGE_ARTIFACT_BUCKET=release-artifacts' "release-build bucket output"
+assert_contains "${stderr}" 'mock tofu init' "release-build init diagnostics"
 if grep -Eq '^export STATE_(BUCKET|REGION)=' "${stdout}"; then
-  fail "bootstrap output must not echo backend coordinates"
+  fail "release-build output must not echo backend coordinates"
 fi
 
-: >"${bootstrap_tf_args}"
+: >"${release_build_tf_args}"
 env -u STATE_REGION AWS_REGION=us-west-2 STATE_BUCKET=retained-state STATE_KEY=custom-worker-key \
-  TF_BIN="${bootstrap_bin}/tofu" TF_ARGS_FILE="${bootstrap_tf_args}" AWS_ARGS_FILE="${bootstrap_aws_args}" \
-  PATH="${bootstrap_bin}:${PATH}" "${script}" worker-image-init
-assert_contains "${bootstrap_tf_args}" '-backend-config=region=us-west-2 -backend-config=key=custom-worker-key' \
+  TF_BIN="${release_build_bin}/tofu" TF_ARGS_FILE="${release_build_tf_args}" \
+  PATH="${release_build_bin}:${PATH}" "${script}" worker-image-init
+assert_contains "${release_build_tf_args}" '-backend-config=region=us-west-2 -backend-config=key=custom-worker-key' \
   "Worker image configurable backend key"
 
 if (
@@ -300,92 +276,6 @@ jq -e -s '
 ' <<<"${runtime_bundle}" >/dev/null || fail "Worker runtime bundle must return one exact JSON object"
 assert_contains "${bundle_stderr}" "runtime build progress" "Worker runtime build progress stream"
 assert_contains "${bundle_stderr}" "runtime upload progress" "Worker runtime upload progress stream"
-
-platform_release="${tmp}/platform-release"
-platform_bin="${tmp}/platform-bin"
-mkdir -p "${platform_release}/objects/sha256" "${platform_bin}"
-printf '{"formatVersion":0,"runtime":{"architecture":"x86_64","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","formatVersion":0,"mediaType":"application/vnd.helmr.runtime.v0+squashfs","runtimeContract":"helmr.runtime.v0","sizeBytes":6}}' >"${platform_release}/platform-release.json"
-printf 'object' >"${platform_release}/objects/sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-
-cat >"${platform_bin}/git" <<'EOF'
-#!/usr/bin/env bash
-case " $* " in
-  *' archive '*) tar -cf - -T /dev/null ;;
-  *) exit 0 ;;
-esac
-EOF
-cat >"${platform_bin}/tofu" <<'EOF'
-#!/usr/bin/env bash
-case "${*: -1}" in
-  platform_publisher_role_arn) printf 'arn:aws:iam::123456789012:role/platform-publisher\n' ;;
-  platform_store_uri) printf 's3://platform-store/objects\n' ;;
-  *) exit 1 ;;
-esac
-EOF
-cat >"${platform_bin}/aws" <<'EOF'
-#!/usr/bin/env bash
-jq -cn '{Credentials:{AccessKeyId:"test",SecretAccessKey:"test",SessionToken:"test"}}'
-EOF
-cat >"${platform_bin}/nix" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-case "${1:-}" in
-  build)
-    printf '%s\n' "${MOCK_PLATFORM_RELEASE}"
-    ;;
-  *) exit 1 ;;
-esac
-EOF
-cat >"${platform_bin}/docker" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-[ "${AWS_REGION:-}" = us-east-1 ]
-[ "${AWS_DEFAULT_REGION:-}" = us-east-1 ]
-[ -z "${AWS_PROFILE+x}" ]
-[ "${AWS_ACCESS_KEY_ID:-}" = test ]
-[ "${AWS_SECRET_ACCESS_KEY:-}" = test ]
-[ "${AWS_SESSION_TOKEN:-}" = test ]
-while [ "$#" -gt 0 ]; do
-  if [ "$1" = "--mount" ] && [[ "${2:-}" = *,target=/input,readonly ]]; then
-    input=${2#*source=}
-    input=${input%%,*}
-    break
-  fi
-  shift
-done
-[ -n "${input:-}" ]
-object="$(find "${input}/objects/sha256" -maxdepth 1 -type f -print -quit)"
-if stat -f '%Lp' "${object}" >/dev/null 2>&1; then
-  mode="$(stat -f '%Lp' "${object}")"
-else
-  mode="$(stat -c '%a' "${object}")"
-fi
-[ "${mode}" = 400 ]
-printf '%s\n' "${input}" >"${MOCK_PLATFORM_RELEASE_INPUT_MARKER}"
-exit 42
-EOF
-chmod 0755 "${platform_bin}"/*
-
-for default_region in unset us-west-2; do
-  platform_state="${tmp}/platform-state-${default_region}"
-  platform_input_marker="${tmp}/platform-input-${default_region}"
-  mkdir -p "${platform_state}"
-  if [ "${default_region}" = unset ]; then
-    region_env=(-u AWS_REGION -u AWS_DEFAULT_REGION)
-  else
-    region_env=(-u AWS_REGION AWS_DEFAULT_REGION="${default_region}")
-  fi
-  if env "${region_env[@]}" \
-    STATE_DIR="${platform_state}" TF_BIN="${platform_bin}/tofu" \
-    MOCK_PLATFORM_RELEASE="${platform_release}" \
-    MOCK_PLATFORM_RELEASE_INPUT_MARKER="${platform_input_marker}" \
-    PATH="${platform_bin}:${PATH}" \
-    "${script}" platform-release-publish >"${stdout}" 2>"${stderr}"; then
-    fail "platform-release-publish should surface publisher failure"
-  fi
-  [ -s "${platform_input_marker}" ] || fail "publisher must receive the sealed release tree"
-  [ ! -e "$(cat "${platform_input_marker}")" ] || fail "failed publisher must remove its sealed release tree"
-done
 
 controlplane_bin="${tmp}/controlplane-bin"
 controlplane_context="${tmp}/controlplane-context"
