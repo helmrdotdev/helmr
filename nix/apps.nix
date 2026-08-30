@@ -43,6 +43,7 @@ let
           actionlint
           scripts/security-checks.sh
           bash -n scripts/dev-console-stack.sh
+          bash tests/ci_workflow_test.sh
           bash tests/install_test.sh
           bash tests/release_manifest_test.sh
           bash tests/release_artifact_contracts_test.sh
