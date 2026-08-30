@@ -177,6 +177,19 @@ ciApps
     ${ciApps.ci-infra-test.program}
     ${ciApps.ci-postgres.program}
   '';
+  ci-version-cohort =
+    app "ci-version-cohort" "verify one version across the release cohort"
+      [
+        pkgs.bash
+        pkgs.coreutils
+        pkgs.git
+        helmrPackages.goPackage
+        pkgs.nix
+        pkgs.stdenv.cc
+      ]
+      ''
+        exec bash ./tests/version_cohort_test.sh "$@"
+      '';
   dev = app "dev" "run the local Helmr control plane and console dashboard" toolsets.appRuntime ''
     exec ./scripts/dev-console-stack.sh "$@"
   '';
@@ -184,19 +197,45 @@ ciApps
     exec ./scripts/measure-dispatch.sh "$@"
   '';
   ci-boot-artifacts =
-    app "ci-boot-artifacts" "build and stage guest boot artifacts for CI" toolsets.appRuntime
+    app "ci-boot-artifacts" "build and stage guest boot artifacts for CI"
+      [
+        helmrPackages.apko
+        pkgs.bash
+        pkgs.coreutils
+        pkgs.curl
+        pkgs.docker
+        pkgs.findutils
+        pkgs.gawk
+        pkgs.git
+        pkgs.gnugrep
+        pkgs.gnumake
+        pkgs.gnutar
+        helmrPackages.goPackage
+        pkgs.jq
+        pkgs.ruby
+        helmrPackages.squashfsTools
+      ]
       ''
         exec ./scripts/ci-boot-artifacts.sh "$@"
       '';
   ci-boot-artifacts-repro =
     app "ci-boot-artifacts-repro" "prove guest boot artifact reproducibility for CI"
-      (
-        toolsets.appRuntime
-        ++ [
-          pkgs.gnutar
-          pkgs.nix
-        ]
-      )
+      [
+        pkgs.bash
+        pkgs.coreutils
+        pkgs.curl
+        pkgs.diffutils
+        pkgs.findutils
+        pkgs.gawk
+        pkgs.git
+        pkgs.gnugrep
+        pkgs.gnumake
+        pkgs.gnused
+        pkgs.gnutar
+        helmrPackages.goPackage
+        pkgs.jq
+        pkgs.nix
+      ]
       ''
         bash ./tests/netboot_inputs_test.sh
         bash ./tests/boot_artifacts_make_test.sh
