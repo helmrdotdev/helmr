@@ -6,7 +6,7 @@ import (
 	"net"
 	"testing"
 
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -24,7 +24,7 @@ func TestParseWaitRequest(t *testing.T) {
 	metadata := `{"source":"program"}`
 	request, err := parseWaitRequest(
 		staticRunLease{lease: workerapi.RunLease{ID: "lease-1"}},
-		&runv0.RunWaitRequested{
+		&programv0.RunWaitRequested{
 			CorrelationId:  "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 			RunWaitId:      "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
 			ResumeAttachId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
@@ -57,7 +57,7 @@ func TestParseWaitRequestRejectsNonObjectMetadata(t *testing.T) {
 	metadata := `[]`
 	_, err := parseWaitRequest(
 		staticRunLease{},
-		&runv0.RunWaitRequested{
+		&programv0.RunWaitRequested{
 			CorrelationId:  "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 			RunWaitId:      "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
 			ResumeAttachId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
@@ -91,7 +91,7 @@ func TestHandleWaitReturnsExactWaitIdentity(t *testing.T) {
 	}
 	result := make(chan error, 1)
 	go func() {
-		result <- task.handleWait(context.Background(), &runv0.RunWaitRequested{
+		result <- task.handleWait(context.Background(), &programv0.RunWaitRequested{
 			CorrelationId: correlationID, RunWaitId: runWaitID,
 			ResumeAttachId: resumeAttachID, Kind: "sleep",
 		})

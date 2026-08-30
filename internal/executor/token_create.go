@@ -11,14 +11,14 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func (task *guestRunLeaseTask) handleTokenCreate(
 	ctx context.Context,
-	requested *runv0.TokenCreateRequested,
+	requested *programv0.TokenCreateRequested,
 ) error {
 	request, err := workerTokenCreateRequest(requested)
 	if err != nil {
@@ -39,7 +39,7 @@ func (task *guestRunLeaseTask) handleTokenCreate(
 			if marshalErr != nil {
 				return fmt.Errorf("encode token create failure: %w", marshalErr)
 			}
-			if writeErr := wire.WriteResumeDecision(task.program.session.Stream(), &runv0.ResumeDecision{
+			if writeErr := wire.WriteResumeDecision(task.program.session.Stream(), &programv0.ResumeDecision{
 				CorrelationId: request.CorrelationID,
 				Kind:          "failed",
 				DataJson:      string(data),
@@ -54,7 +54,7 @@ func (task *guestRunLeaseTask) handleTokenCreate(
 	if err != nil {
 		return fmt.Errorf("encode token create decision: %w", err)
 	}
-	if err := wire.WriteResumeDecision(task.program.session.Stream(), &runv0.ResumeDecision{
+	if err := wire.WriteResumeDecision(task.program.session.Stream(), &programv0.ResumeDecision{
 		CorrelationId: request.CorrelationID,
 		Kind:          "completed",
 		DataJson:      string(data),
@@ -80,7 +80,7 @@ func tokenCreateFailure(err error) (workerapi.RuntimeOperationFailure, bool) {
 }
 
 func workerTokenCreateRequest(
-	requested *runv0.TokenCreateRequested,
+	requested *programv0.TokenCreateRequested,
 ) (workerapi.CreateTokenRequest, error) {
 	if requested == nil {
 		return workerapi.CreateTokenRequest{}, errors.New("token create request is required")

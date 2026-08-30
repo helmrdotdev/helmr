@@ -10,7 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -27,7 +27,7 @@ func TestEncodeProgramStartPreservesTaskPayloadPresence(t *testing.T) {
 	if !bytes.Equal(first, second) {
 		t.Fatal("Program-start encoding is not deterministic")
 	}
-	var absent runv0.ProgramStart
+	var absent programv0.ProgramStart
 	if err := frameio.ReadProtoFrame(bytes.NewReader(first), &absent); err != nil {
 		t.Fatalf("read Program-start frame: %v", err)
 	}
@@ -41,7 +41,7 @@ func TestEncodeProgramStartPreservesTaskPayloadPresence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encodeProgramStart JSON null: %v", err)
 	}
-	var present runv0.ProgramStart
+	var present programv0.ProgramStart
 	if err := frameio.ReadProtoFrame(bytes.NewReader(body), &present); err != nil {
 		t.Fatalf("read Program-start JSON null frame: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestEncodeProgramStartActorAndScheduleCause(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encodeProgramStart Actor: %v", err)
 	}
-	var message runv0.ProgramStart
+	var message programv0.ProgramStart
 	if err := frameio.ReadProtoFrame(bytes.NewReader(body), &message); err != nil {
 		t.Fatalf("read Actor Program-start frame: %v", err)
 	}

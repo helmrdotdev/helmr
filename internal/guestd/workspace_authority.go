@@ -13,7 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/frameio"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"google.golang.org/protobuf/proto"
@@ -93,7 +93,7 @@ func handleProgramResumeGrantConnection(
 	if err := mounts.installResumedProgramAuthorityLocked(entry, authority, clock()); err != nil {
 		return err
 	}
-	grant := &runv0.ResumeAttach{
+	grant := &programv0.ResumeAttach{
 		RunId: fence.GetRunId(), AttemptNumber: fence.GetAttemptNumber(),
 		RunLeaseId: fence.GetRunLeaseId(), RunWaitId: request.GetRunWaitId(),
 		CheckpointId: request.GetCheckpointId(), ResumeAttachId: request.GetResumeAttachId(),

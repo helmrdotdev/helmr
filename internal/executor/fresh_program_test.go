@@ -15,7 +15,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -162,9 +162,9 @@ func TestStartFreshProgramDoesNotReleaseAfterStartRejection(t *testing.T) {
 			proofSent <- err
 			return
 		}
-		proofSent <- frameio.WriteProtoFrame(guest, &runv0.RunEvent{
-			Event: &runv0.RunEvent_ProgramProcessStarted{
-				ProgramProcessStarted: &runv0.ProgramProcessStarted{
+		proofSent <- frameio.WriteProtoFrame(guest, &programv0.RunEvent{
+			Event: &programv0.RunEvent_ProgramProcessStarted{
+				ProgramProcessStarted: &programv0.ProgramProcessStarted{
 					RunId:         claim.Lease.RunID,
 					AttemptNumber: uint32(claim.Lease.AttemptNumber),
 					RunLeaseId:    claim.Lease.ID,
@@ -214,9 +214,9 @@ func TestStartFreshProgramFailsExactMountOnTypedStartFailure(t *testing.T) {
 			guestResult <- err
 			return
 		}
-		guestResult <- frameio.WriteProtoFrame(guest, &runv0.RunEvent{
-			Event: &runv0.RunEvent_ProgramProcessStartFailed{
-				ProgramProcessStartFailed: &runv0.ProgramProcessStartFailed{
+		guestResult <- frameio.WriteProtoFrame(guest, &programv0.RunEvent{
+			Event: &programv0.RunEvent_ProgramProcessStartFailed{
+				ProgramProcessStartFailed: &programv0.ProgramProcessStartFailed{
 					RunId:         claim.Lease.RunID,
 					AttemptNumber: uint32(claim.Lease.AttemptNumber),
 					RunLeaseId:    claim.Lease.ID,
@@ -269,9 +269,9 @@ func TestStartFreshProgramRejectsNoncanonicalStartFailureDiagnosticWithoutFailin
 	defer unregister()
 	go func() {
 		_ = readFreshProgramAdmission(guest, claim.Lease)
-		_ = frameio.WriteProtoFrame(guest, &runv0.RunEvent{
-			Event: &runv0.RunEvent_ProgramProcessStartFailed{
-				ProgramProcessStartFailed: &runv0.ProgramProcessStartFailed{
+		_ = frameio.WriteProtoFrame(guest, &programv0.RunEvent{
+			Event: &programv0.RunEvent_ProgramProcessStartFailed{
+				ProgramProcessStartFailed: &programv0.ProgramProcessStartFailed{
 					RunId:         claim.Lease.RunID,
 					AttemptNumber: uint32(claim.Lease.AttemptNumber),
 					RunLeaseId:    claim.Lease.ID,
@@ -312,9 +312,9 @@ func TestStartFreshProgramRejectsMismatchedStartFailureProofWithoutFailingMount(
 	defer unregister()
 	go func() {
 		_ = readFreshProgramAdmission(guest, claim.Lease)
-		_ = frameio.WriteProtoFrame(guest, &runv0.RunEvent{
-			Event: &runv0.RunEvent_ProgramProcessStartFailed{
-				ProgramProcessStartFailed: &runv0.ProgramProcessStartFailed{
+		_ = frameio.WriteProtoFrame(guest, &programv0.RunEvent{
+			Event: &programv0.RunEvent_ProgramProcessStartFailed{
+				ProgramProcessStartFailed: &programv0.ProgramProcessStartFailed{
 					RunId: "other-run", AttemptNumber: uint32(claim.Lease.AttemptNumber),
 					RunLeaseId: claim.Lease.ID, Phase: "start", Diagnostic: "safe",
 				},
@@ -385,19 +385,19 @@ func TestValidateFreshProgramClaimRejectsSecretAggregateAboveBound(t *testing.T)
 func TestAwaitTaskCompletionRequiresFinalMatchingQuiescenceProof(t *testing.T) {
 	tests := []struct {
 		name   string
-		events []*runv0.RunEvent
+		events []*programv0.RunEvent
 		want   string
 	}{
 		{
 			name: "missing proof",
-			events: []*runv0.RunEvent{
+			events: []*programv0.RunEvent{
 				testTaskSucceededEvent(`null`),
 			},
 			want: "EOF",
 		},
 		{
 			name: "proof before outcome",
-			events: []*runv0.RunEvent{
+			events: []*programv0.RunEvent{
 				testProgramQuiescedEvent(workerapi.RunLeaseAssignment{
 					ID: "lease-1", RunID: "run-1", AttemptNumber: 2,
 				}),
@@ -406,7 +406,7 @@ func TestAwaitTaskCompletionRequiresFinalMatchingQuiescenceProof(t *testing.T) {
 		},
 		{
 			name: "mismatched proof",
-			events: []*runv0.RunEvent{
+			events: []*programv0.RunEvent{
 				testTaskSucceededEvent(`null`),
 				testProgramQuiescedEvent(workerapi.RunLeaseAssignment{
 					ID: "other", RunID: "run-1", AttemptNumber: 2,
@@ -416,7 +416,7 @@ func TestAwaitTaskCompletionRequiresFinalMatchingQuiescenceProof(t *testing.T) {
 		},
 		{
 			name: "duplicate outcome",
-			events: []*runv0.RunEvent{
+			events: []*programv0.RunEvent{
 				testTaskSucceededEvent(`null`),
 				testTaskSucceededEvent(`null`),
 			},
@@ -424,7 +424,7 @@ func TestAwaitTaskCompletionRequiresFinalMatchingQuiescenceProof(t *testing.T) {
 		},
 		{
 			name: "malformed output",
-			events: []*runv0.RunEvent{
+			events: []*programv0.RunEvent{
 				testTaskSucceededEvent(`{`),
 			},
 			want: "not unambiguous JSON",
@@ -446,10 +446,10 @@ func TestAwaitTaskCompletionRequiresFinalMatchingQuiescenceProof(t *testing.T) {
 				lease: workerapi.RunLeaseAssignment{
 					ID: "lease-1", RunID: "run-1", AttemptNumber: 2,
 				},
-				entrypoint: &runv0.EntrypointIdentity{
+				entrypoint: &programv0.EntrypointIdentity{
 					DeclaredId: "deploy",
-					Kind: &runv0.EntrypointIdentity_Task{
-						Task: &runv0.TaskEntrypoint{},
+					Kind: &programv0.EntrypointIdentity_Task{
+						Task: &programv0.TaskEntrypoint{},
 					},
 				},
 			}
@@ -472,44 +472,44 @@ func TestFreshProgramDispatchesActorInputSendForTaskAndActor(t *testing.T) {
 	lease := workerapi.RunLeaseAssignment{
 		ID: "lease-1", RunID: "run-1", AttemptNumber: 2,
 	}
-	send := &runv0.SessionInputSendRequested{
+	send := &programv0.SessionInputSendRequested{
 		CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000111",
 		SessionId:     "019c10d5-a6f7-7af1-8f5f-000000000112",
 		DataJson:      `{"message":"hello"}`,
 	}
 	tests := []struct {
 		name       string
-		entrypoint *runv0.EntrypointIdentity
-		outcome    *runv0.RunEvent
-		await      func(*freshProgram, freshProgramEventSink, func(context.Context, *runv0.SessionInputSendRequested) error) error
+		entrypoint *programv0.EntrypointIdentity
+		outcome    *programv0.RunEvent
+		await      func(*freshProgram, freshProgramEventSink, func(context.Context, *programv0.SessionInputSendRequested) error) error
 	}{
 		{
 			name: "Task",
-			entrypoint: &runv0.EntrypointIdentity{
-				Kind: &runv0.EntrypointIdentity_Task{Task: &runv0.TaskEntrypoint{}},
+			entrypoint: &programv0.EntrypointIdentity{
+				Kind: &programv0.EntrypointIdentity_Task{Task: &programv0.TaskEntrypoint{}},
 			},
 			outcome: testTaskSucceededEvent(`null`),
-			await: func(program *freshProgram, events freshProgramEventSink, callback func(context.Context, *runv0.SessionInputSendRequested) error) error {
+			await: func(program *freshProgram, events freshProgramEventSink, callback func(context.Context, *programv0.SessionInputSendRequested) error) error {
 				_, _, err := program.awaitTaskCompletion(t.Context(), events, nil, callback, nil, nil)
 				return err
 			},
 		},
 		{
 			name: "Actor",
-			entrypoint: &runv0.EntrypointIdentity{
-				Kind: &runv0.EntrypointIdentity_Actor{Actor: &runv0.ActorEntrypoint{}},
+			entrypoint: &programv0.EntrypointIdentity{
+				Kind: &programv0.EntrypointIdentity_Actor{Actor: &programv0.ActorEntrypoint{}},
 			},
-			outcome: &runv0.RunEvent{
-				Event: &runv0.RunEvent_ActorOutcome{
-					ActorOutcome: &runv0.ActorOutcome{
+			outcome: &programv0.RunEvent{
+				Event: &programv0.RunEvent_ActorOutcome{
+					ActorOutcome: &programv0.ActorOutcome{
 						TerminalInputSequence: new(int64(0)),
-						Outcome: &runv0.ActorOutcome_Succeeded{
-							Succeeded: &runv0.ActorSucceeded{},
+						Outcome: &programv0.ActorOutcome_Succeeded{
+							Succeeded: &programv0.ActorSucceeded{},
 						},
 					},
 				},
 			},
-			await: func(program *freshProgram, events freshProgramEventSink, callback func(context.Context, *runv0.SessionInputSendRequested) error) error {
+			await: func(program *freshProgram, events freshProgramEventSink, callback func(context.Context, *programv0.SessionInputSendRequested) error) error {
 				_, _, err := program.awaitActorCompletion(t.Context(), events, nil, nil, callback, nil, nil, nil)
 				return err
 			},
@@ -520,8 +520,8 @@ func TestFreshProgramDispatchesActorInputSendForTaskAndActor(t *testing.T) {
 			guest, host := net.Pipe()
 			go func() {
 				defer guest.Close()
-				_ = frameio.WriteProtoFrame(guest, &runv0.RunEvent{
-					Event: &runv0.RunEvent_SessionInputSendRequested{
+				_ = frameio.WriteProtoFrame(guest, &programv0.RunEvent{
+					Event: &programv0.RunEvent_SessionInputSendRequested{
 						SessionInputSendRequested: send,
 					},
 				})
@@ -533,11 +533,11 @@ func TestFreshProgramDispatchesActorInputSendForTaskAndActor(t *testing.T) {
 				lease:      lease,
 				entrypoint: test.entrypoint,
 			}
-			var observed *runv0.SessionInputSendRequested
+			var observed *programv0.SessionInputSendRequested
 			err := test.await(
 				program,
 				&testFreshProgramEventSink{},
-				func(_ context.Context, requested *runv0.SessionInputSendRequested) error {
+				func(_ context.Context, requested *programv0.SessionInputSendRequested) error {
 					observed = requested
 					return nil
 				},
@@ -558,7 +558,7 @@ func TestFreshProgramDispatchesActorOutputAppend(t *testing.T) {
 	lease := workerapi.RunLeaseAssignment{
 		ID: "lease-1", RunID: "run-1", AttemptNumber: 2,
 	}
-	requested := &runv0.ActorOutputAppendRequested{
+	requested := &programv0.ActorOutputAppendRequested{
 		CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000112",
 		DataJson:      `{"status":"working"}`,
 		ContentType:   "application/json",
@@ -566,17 +566,17 @@ func TestFreshProgramDispatchesActorOutputAppend(t *testing.T) {
 	guest, host := net.Pipe()
 	go func() {
 		defer guest.Close()
-		_ = frameio.WriteProtoFrame(guest, &runv0.RunEvent{
-			Event: &runv0.RunEvent_ActorOutputAppendRequested{
+		_ = frameio.WriteProtoFrame(guest, &programv0.RunEvent{
+			Event: &programv0.RunEvent_ActorOutputAppendRequested{
 				ActorOutputAppendRequested: requested,
 			},
 		})
-		_ = frameio.WriteProtoFrame(guest, &runv0.RunEvent{
-			Event: &runv0.RunEvent_ActorOutcome{
-				ActorOutcome: &runv0.ActorOutcome{
+		_ = frameio.WriteProtoFrame(guest, &programv0.RunEvent{
+			Event: &programv0.RunEvent_ActorOutcome{
+				ActorOutcome: &programv0.ActorOutcome{
 					TerminalInputSequence: new(int64(0)),
-					Outcome: &runv0.ActorOutcome_Succeeded{
-						Succeeded: &runv0.ActorSucceeded{},
+					Outcome: &programv0.ActorOutcome_Succeeded{
+						Succeeded: &programv0.ActorSucceeded{},
 					},
 				},
 			},
@@ -586,18 +586,18 @@ func TestFreshProgramDispatchesActorOutputAppend(t *testing.T) {
 	program := &freshProgram{
 		session: fakeGuestSession{stream: host},
 		lease:   lease,
-		entrypoint: &runv0.EntrypointIdentity{
-			Kind: &runv0.EntrypointIdentity_Actor{Actor: &runv0.ActorEntrypoint{}},
+		entrypoint: &programv0.EntrypointIdentity{
+			Kind: &programv0.EntrypointIdentity_Actor{Actor: &programv0.ActorEntrypoint{}},
 		},
 	}
-	var observed *runv0.ActorOutputAppendRequested
+	var observed *programv0.ActorOutputAppendRequested
 	_, _, err := program.awaitActorCompletion(
 		t.Context(),
 		&testFreshProgramEventSink{},
 		nil,
 		nil,
 		nil,
-		func(_ context.Context, value *runv0.ActorOutputAppendRequested) error {
+		func(_ context.Context, value *programv0.ActorOutputAppendRequested) error {
 			observed = value
 			return nil
 		},
@@ -626,9 +626,9 @@ func serveFreshProgramProtocol(
 	if len(controlPlane.snapshot()) != 0 {
 		return errors.New("control plane ACK preceded process-started proof")
 	}
-	if err := frameio.WriteProtoFrame(conn, &runv0.RunEvent{
-		Event: &runv0.RunEvent_ProgramProcessStarted{
-			ProgramProcessStarted: &runv0.ProgramProcessStarted{
+	if err := frameio.WriteProtoFrame(conn, &programv0.RunEvent{
+		Event: &programv0.RunEvent_ProgramProcessStarted{
+			ProgramProcessStarted: &programv0.ProgramProcessStarted{
 				RunId:         lease.RunID,
 				AttemptNumber: uint32(lease.AttemptNumber),
 				RunLeaseId:    lease.ID,
@@ -637,7 +637,7 @@ func serveFreshProgramProtocol(
 	}); err != nil {
 		return err
 	}
-	var command runv0.ProgramSupervisorCommand
+	var command programv0.ProgramSupervisorCommand
 	if err := frameio.ReadProtoFrame(conn, &command); err != nil {
 		return err
 	}
@@ -649,25 +649,25 @@ func serveFreshProgramProtocol(
 		!onlyControlCalls(controlPlane.snapshot(), "start") {
 		return errors.New("program-start release preceded start ACK")
 	}
-	if err := frameio.WriteProtoFrame(conn, &runv0.RunEvent{
-		Event: &runv0.RunEvent_StdoutChunk{StdoutChunk: []byte("loading")},
+	if err := frameio.WriteProtoFrame(conn, &programv0.RunEvent{
+		Event: &programv0.RunEvent_StdoutChunk{StdoutChunk: []byte("loading")},
 	}); err != nil {
 		return err
 	}
-	if err := frameio.WriteProtoFrame(conn, &runv0.RunEvent{
-		Event: &runv0.RunEvent_StderrChunk{StderrChunk: []byte("notice")},
+	if err := frameio.WriteProtoFrame(conn, &programv0.RunEvent{
+		Event: &programv0.RunEvent_StderrChunk{StderrChunk: []byte("notice")},
 	}); err != nil {
 		return err
 	}
-	identity := &runv0.EntrypointIdentity{
+	identity := &programv0.EntrypointIdentity{
 		DeclaredId: "deploy",
-		Kind: &runv0.EntrypointIdentity_Task{
-			Task: &runv0.TaskEntrypoint{},
+		Kind: &programv0.EntrypointIdentity_Task{
+			Task: &programv0.TaskEntrypoint{},
 		},
 	}
-	if err := frameio.WriteProtoFrame(conn, &runv0.RunEvent{
-		Event: &runv0.RunEvent_EntrypointReady{
-			EntrypointReady: &runv0.EntrypointReady{
+	if err := frameio.WriteProtoFrame(conn, &programv0.RunEvent{
+		Event: &programv0.RunEvent_EntrypointReady{
+			EntrypointReady: &programv0.EntrypointReady{
 				RunId:         lease.RunID,
 				AttemptNumber: uint32(lease.AttemptNumber),
 				Entrypoint:    identity,
@@ -692,8 +692,8 @@ func serveFreshProgramProtocol(
 	if err := frameio.WriteProtoFrame(conn, testTaskSucceededEvent(`{"ok":true}`)); err != nil {
 		return err
 	}
-	if err := frameio.WriteProtoFrame(conn, &runv0.RunEvent{
-		Event: &runv0.RunEvent_StdoutChunk{StdoutChunk: []byte("done")},
+	if err := frameio.WriteProtoFrame(conn, &programv0.RunEvent{
+		Event: &programv0.RunEvent_StdoutChunk{StdoutChunk: []byte("done")},
 	}); err != nil {
 		return err
 	}
@@ -717,22 +717,22 @@ func onlyControlCalls(calls []string, allowed ...string) bool {
 	return true
 }
 
-func testTaskSucceededEvent(output string) *runv0.RunEvent {
-	return &runv0.RunEvent{
-		Event: &runv0.RunEvent_TaskOutcome{
-			TaskOutcome: &runv0.TaskOutcome{
-				Outcome: &runv0.TaskOutcome_Succeeded{
-					Succeeded: &runv0.TaskSucceeded{OutputJson: output},
+func testTaskSucceededEvent(output string) *programv0.RunEvent {
+	return &programv0.RunEvent{
+		Event: &programv0.RunEvent_TaskOutcome{
+			TaskOutcome: &programv0.TaskOutcome{
+				Outcome: &programv0.TaskOutcome_Succeeded{
+					Succeeded: &programv0.TaskSucceeded{OutputJson: output},
 				},
 			},
 		},
 	}
 }
 
-func testProgramQuiescedEvent(lease workerapi.RunLeaseAssignment) *runv0.RunEvent {
-	return &runv0.RunEvent{
-		Event: &runv0.RunEvent_ProgramQuiesced{
-			ProgramQuiesced: &runv0.ProgramQuiesced{
+func testProgramQuiescedEvent(lease workerapi.RunLeaseAssignment) *programv0.RunEvent {
+	return &programv0.RunEvent{
+		Event: &programv0.RunEvent_ProgramQuiesced{
+			ProgramQuiesced: &programv0.ProgramQuiesced{
 				RunId:         lease.RunID,
 				AttemptNumber: uint32(lease.AttemptNumber),
 				RunLeaseId:    lease.ID,
@@ -781,7 +781,7 @@ func readFreshProgramAdmission(
 		fence.GetBaseWorkspaceVersionId() != lease.BaseWorkspaceVersionID {
 		return fmt.Errorf("program authority = %+v", &authority)
 	}
-	var request runv0.ProgramRunRequest
+	var request programv0.ProgramRunRequest
 	if err := frameio.ReadProtoFrame(conn, &request); err != nil {
 		return err
 	}
@@ -793,7 +793,7 @@ func readFreshProgramAdmission(
 		request.GetStartDeadlineUnixMs() != lease.StartDeadlineAt.UnixMilli() {
 		return fmt.Errorf("program request = %+v", &request)
 	}
-	var command runv0.ProgramSupervisorCommand
+	var command programv0.ProgramSupervisorCommand
 	if err := frameio.ReadProtoFrame(conn, &command); err != nil {
 		return err
 	}
@@ -833,14 +833,14 @@ func testFreshProgramClaim(
 ) workerapi.RunLeaseClaimResponse {
 	t.Helper()
 	var start bytes.Buffer
-	if err := frameio.WriteProtoFrame(&start, &runv0.ProgramStart{
+	if err := frameio.WriteProtoFrame(&start, &programv0.ProgramStart{
 		RunId:                "run-1",
 		AttemptNumber:        2,
 		EntrypointDeclaredId: "deploy",
-		Entrypoint: &runv0.ProgramStart_Task{
-			Task: &runv0.TaskStart{
-				Payload: &runv0.TaskStart_NoPayload{
-					NoPayload: &runv0.NoPayload{},
+		Entrypoint: &programv0.ProgramStart_Task{
+			Task: &programv0.TaskStart{
+				Payload: &programv0.TaskStart_NoPayload{
+					NoPayload: &programv0.NoPayload{},
 				},
 			},
 		},
@@ -947,7 +947,7 @@ func (s *testFreshProgramEventSink) AppendRunLog(
 func (s *testFreshProgramEventSink) ApplyRunMetadata(
 	context.Context,
 	workerapi.RunLeaseAssignment,
-	*runv0.MetadataUpdated,
+	*programv0.MetadataUpdated,
 ) error {
 	return nil
 }
@@ -956,7 +956,7 @@ func (s *testFreshProgramEventSink) RecordStructuredRunLog(
 	context.Context,
 	workerapi.RunLeaseAssignment,
 	uint64,
-	*runv0.StructuredLogRequested,
+	*programv0.StructuredLogRequested,
 ) error {
 	return nil
 }

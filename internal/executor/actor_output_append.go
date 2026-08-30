@@ -8,14 +8,14 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/ids"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func (task *guestRunLeaseTask) handleActorOutputAppend(
 	ctx context.Context,
-	requested *runv0.ActorOutputAppendRequested,
+	requested *programv0.ActorOutputAppendRequested,
 ) error {
 	request, err := workerActorOutputAppendRequest(requested)
 	if err != nil {
@@ -60,7 +60,7 @@ func (task *guestRunLeaseTask) handleActorOutputAppend(
 	if err != nil {
 		return fmt.Errorf("encode actor output append decision: %w", err)
 	}
-	if err := wire.WriteResumeDecision(task.program.session.Stream(), &runv0.ResumeDecision{
+	if err := wire.WriteResumeDecision(task.program.session.Stream(), &programv0.ResumeDecision{
 		CorrelationId: request.CorrelationID,
 		Kind:          kind,
 		DataJson:      string(data),
@@ -71,7 +71,7 @@ func (task *guestRunLeaseTask) handleActorOutputAppend(
 }
 
 func workerActorOutputAppendRequest(
-	requested *runv0.ActorOutputAppendRequested,
+	requested *programv0.ActorOutputAppendRequested,
 ) (workerapi.AppendActorOutputRequest, error) {
 	if requested == nil {
 		return workerapi.AppendActorOutputRequest{}, errors.New("actor output append request is required")

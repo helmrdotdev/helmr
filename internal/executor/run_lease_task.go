@@ -11,7 +11,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
@@ -237,7 +237,7 @@ func (sink runLeaseProgramEventSink) AppendRunLog(
 func (sink runLeaseProgramEventSink) ApplyRunMetadata(
 	ctx context.Context,
 	lease workerapi.RunLeaseAssignment,
-	request *runv0.MetadataUpdated,
+	request *programv0.MetadataUpdated,
 ) error {
 	controlPlane, err := requireRunObservabilityControlPlane(sink.controlPlane)
 	if err != nil {
@@ -250,7 +250,7 @@ func (sink runLeaseProgramEventSink) RecordStructuredRunLog(
 	ctx context.Context,
 	lease workerapi.RunLeaseAssignment,
 	sequence uint64,
-	request *runv0.StructuredLogRequested,
+	request *programv0.StructuredLogRequested,
 ) error {
 	controlPlane, err := requireRunObservabilityControlPlane(sink.controlPlane)
 	if err != nil {
@@ -285,7 +285,7 @@ func workerRunLeaseFromAssignment(orgID string, assignment workerapi.RunLeaseAss
 	}
 }
 
-func (task *guestRunLeaseTask) handleWait(ctx context.Context, wait *runv0.RunWaitRequested) error {
+func (task *guestRunLeaseTask) handleWait(ctx context.Context, wait *programv0.RunWaitRequested) error {
 	if task.waits == nil {
 		return errors.New("run lease task wait control plane is required")
 	}
@@ -303,7 +303,7 @@ func (task *guestRunLeaseTask) handleWait(ctx context.Context, wait *runv0.RunWa
 		if len(decision.Data) == 0 {
 			decision.Data = json.RawMessage(`null`)
 		}
-		if err := wire.WriteResumeDecision(task.program.session.Stream(), &runv0.ResumeDecision{
+		if err := wire.WriteResumeDecision(task.program.session.Stream(), &programv0.ResumeDecision{
 			RunWaitId:      wait.GetRunWaitId(),
 			CorrelationId:  wait.GetCorrelationId(),
 			ResumeAttachId: wait.GetResumeAttachId(),
@@ -317,17 +317,17 @@ func (task *guestRunLeaseTask) handleWait(ctx context.Context, wait *runv0.RunWa
 	return task.waits.Wait(ctx, runtimeWait)
 }
 
-func (task *guestRunLeaseTask) processCheckpointRunEvent(ctx context.Context, event *runv0.RunEvent) error {
+func (task *guestRunLeaseTask) processCheckpointRunEvent(ctx context.Context, event *programv0.RunEvent) error {
 	if event == nil {
 		return errors.New("checkpoint program event is required")
 	}
 	task.program.observedEventSeq++
 	switch value := event.Event.(type) {
-	case *runv0.RunEvent_StdoutChunk:
+	case *programv0.RunEvent_StdoutChunk:
 		return taskControlEvents{task: task}.AppendRunLog(ctx, workerapi.RunLeaseAssignment{}, workerapi.LogStreamStdout, task.program.observedEventSeq, value.StdoutChunk)
-	case *runv0.RunEvent_StderrChunk:
+	case *programv0.RunEvent_StderrChunk:
 		return taskControlEvents{task: task}.AppendRunLog(ctx, workerapi.RunLeaseAssignment{}, workerapi.LogStreamStderr, task.program.observedEventSeq, value.StderrChunk)
-	case *runv0.RunEvent_MetadataUpdated:
+	case *programv0.RunEvent_MetadataUpdated:
 		return processRunMetadataEvent(
 			ctx,
 			taskControlEvents{task: task},
@@ -335,7 +335,7 @@ func (task *guestRunLeaseTask) processCheckpointRunEvent(ctx context.Context, ev
 			task.program.session.Stream(),
 			value.MetadataUpdated,
 		)
-	case *runv0.RunEvent_StructuredLogRequested:
+	case *programv0.RunEvent_StructuredLogRequested:
 		return processStructuredLogEvent(
 			ctx,
 			taskControlEvents{task: task},
@@ -344,20 +344,20 @@ func (task *guestRunLeaseTask) processCheckpointRunEvent(ctx context.Context, ev
 			task.program.observedEventSeq,
 			value.StructuredLogRequested,
 		)
-	case *runv0.RunEvent_TaskChildInvokeRequested:
+	case *programv0.RunEvent_TaskChildInvokeRequested:
 		return task.handleChildTaskInvoke(ctx, value.TaskChildInvokeRequested)
-	case *runv0.RunEvent_ActorStartRequested,
-		*runv0.RunEvent_SessionStatusRequested,
-		*runv0.RunEvent_SessionCloseRequested,
-		*runv0.RunEvent_SessionOutputPageRequested:
+	case *programv0.RunEvent_ActorStartRequested,
+		*programv0.RunEvent_SessionStatusRequested,
+		*programv0.RunEvent_SessionCloseRequested,
+		*programv0.RunEvent_SessionOutputPageRequested:
 		return task.handleActorRuntime(ctx, event)
-	case *runv0.RunEvent_WorkspaceCreateRequested,
-		*runv0.RunEvent_WorkspaceRetrieveRequested,
-		*runv0.RunEvent_WorkspaceFileReadRequested,
-		*runv0.RunEvent_WorkspaceFileStatRequested,
-		*runv0.RunEvent_WorkspaceFileListRequested,
-		*runv0.RunEvent_WorkspaceExecRequested,
-		*runv0.RunEvent_WorkspaceDeleteRequested:
+	case *programv0.RunEvent_WorkspaceCreateRequested,
+		*programv0.RunEvent_WorkspaceRetrieveRequested,
+		*programv0.RunEvent_WorkspaceFileReadRequested,
+		*programv0.RunEvent_WorkspaceFileStatRequested,
+		*programv0.RunEvent_WorkspaceFileListRequested,
+		*programv0.RunEvent_WorkspaceExecRequested,
+		*programv0.RunEvent_WorkspaceDeleteRequested:
 		return task.handleWorkspaceRuntime(ctx, event)
 	default:
 		return errors.New("unsupported program event while checkpoint pause is pending")
@@ -415,15 +415,15 @@ func (task *guestRunLeaseTask) Wait(ctx context.Context) (RunLeaseTaskResult, er
 	}, nil
 }
 
-func workerActorOutcome(outcome *runv0.ActorOutcome) (workerapi.ActorOutcome, error) {
+func workerActorOutcome(outcome *programv0.ActorOutcome) (workerapi.ActorOutcome, error) {
 	if err := validateFreshActorOutcome(outcome); err != nil {
 		return workerapi.ActorOutcome{}, err
 	}
 	converted := workerapi.ActorOutcome{TerminalInputSequence: outcome.GetTerminalInputSequence()}
 	switch value := outcome.GetOutcome().(type) {
-	case *runv0.ActorOutcome_Succeeded:
+	case *programv0.ActorOutcome_Succeeded:
 		converted.Succeeded = &workerapi.ActorSucceeded{}
-	case *runv0.ActorOutcome_Failed:
+	case *programv0.ActorOutcome_Failed:
 		failure := canonicalTaskFailure(value.Failed.GetMessage(), value.Failed.DetailsJson)
 		converted.Failed = &failure
 	default:
@@ -457,7 +457,7 @@ func (events taskControlEvents) AppendRunLog(
 func (events taskControlEvents) ApplyRunMetadata(
 	ctx context.Context,
 	_ workerapi.RunLeaseAssignment,
-	request *runv0.MetadataUpdated,
+	request *programv0.MetadataUpdated,
 ) error {
 	controlPlane, err := requireRunObservabilityControlPlane(events.task.controlPlane)
 	if err != nil {
@@ -480,7 +480,7 @@ func (events taskControlEvents) RecordStructuredRunLog(
 	ctx context.Context,
 	_ workerapi.RunLeaseAssignment,
 	sequence uint64,
-	request *runv0.StructuredLogRequested,
+	request *programv0.StructuredLogRequested,
 ) error {
 	controlPlane, err := requireRunObservabilityControlPlane(events.task.controlPlane)
 	if err != nil {
@@ -852,19 +852,19 @@ func checkpointWorkspaceBase(target workspace.ResetTarget) (workerapi.Checkpoint
 	return base, nil
 }
 
-func workerTaskOutcome(outcome *runv0.TaskOutcome) (workerapi.TaskOutcome, error) {
+func workerTaskOutcome(outcome *programv0.TaskOutcome) (workerapi.TaskOutcome, error) {
 	if err := validateFreshTaskOutcome(outcome); err != nil {
 		return workerapi.TaskOutcome{}, err
 	}
 	switch value := outcome.GetOutcome().(type) {
-	case *runv0.TaskOutcome_Succeeded:
+	case *programv0.TaskOutcome_Succeeded:
 		return workerapi.TaskOutcome{Succeeded: &workerapi.TaskSucceeded{
 			Output: json.RawMessage(value.Succeeded.GetOutputJson()),
 		}}, nil
-	case *runv0.TaskOutcome_Failed:
+	case *programv0.TaskOutcome_Failed:
 		failure := canonicalTaskFailure(value.Failed.GetMessage(), value.Failed.DetailsJson)
 		return workerapi.TaskOutcome{Failed: &failure}, nil
-	case *runv0.TaskOutcome_PayloadInvalid:
+	case *programv0.TaskOutcome_PayloadInvalid:
 		failure := canonicalTaskFailure(
 			value.PayloadInvalid.GetMessage(),
 			value.PayloadInvalid.DetailsJson,

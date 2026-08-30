@@ -9,7 +9,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -20,7 +20,7 @@ type childTaskInvokeControlPlane interface {
 
 func (task *guestRunLeaseTask) handleChildTaskInvoke(
 	ctx context.Context,
-	requested *runv0.TaskChildInvokeRequested,
+	requested *programv0.TaskChildInvokeRequested,
 ) error {
 	request, err := workerChildTaskInvokeRequest(requested)
 	if err != nil {
@@ -79,7 +79,7 @@ func (task *guestRunLeaseTask) handleChildTaskInvoke(
 				if len(decision.Data) == 0 {
 					decision.Data = json.RawMessage(`null`)
 				}
-				return wire.WriteResumeDecision(task.program.session.Stream(), &runv0.ResumeDecision{
+				return wire.WriteResumeDecision(task.program.session.Stream(), &programv0.ResumeDecision{
 					RunWaitId:      response.OpenedWait.RunWaitID,
 					CorrelationId:  request.CorrelationID,
 					ResumeAttachId: response.OpenedWait.ResumeAttachID,
@@ -106,7 +106,7 @@ func (task *guestRunLeaseTask) handleChildTaskInvoke(
 	if err != nil {
 		return fmt.Errorf("encode child task invocation decision: %w", err)
 	}
-	if err := wire.WriteResumeDecision(task.program.session.Stream(), &runv0.ResumeDecision{
+	if err := wire.WriteResumeDecision(task.program.session.Stream(), &programv0.ResumeDecision{
 		CorrelationId:  request.CorrelationID,
 		RunWaitId:      request.RunWaitID,
 		ResumeAttachId: request.ResumeAttachID,
@@ -119,7 +119,7 @@ func (task *guestRunLeaseTask) handleChildTaskInvoke(
 }
 
 func workerChildTaskInvokeRequest(
-	requested *runv0.TaskChildInvokeRequested,
+	requested *programv0.TaskChildInvokeRequested,
 ) (workerapi.InvokeChildTaskRequest, error) {
 	if requested == nil {
 		return workerapi.InvokeChildTaskRequest{}, errors.New("child task invocation request is required")

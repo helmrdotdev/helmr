@@ -1,5 +1,5 @@
 import { create, fromBinary, toBinary, type GenMessage } from "@bufbuild/protobuf"
-import { runProto } from "@helmr/proto"
+import { programProto } from "@helmr/proto"
 import { spawn } from "node:child_process"
 import {
   actor,
@@ -29,8 +29,8 @@ describe("runProgram", () => {
     const output: Uint8Array[] = []
     const lifecycle: string[] = []
     const input = observedFrames([
-      frameMessage(runProto.ProgramStartSchema, start),
-      frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start)),
+      frameMessage(programProto.ProgramStartSchema, start),
+      frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start)),
     ], async () => {
       lifecycle.push("input-closed")
     })
@@ -66,8 +66,8 @@ describe("runProgram", () => {
     for (const item of cases) {
       let closeCount = 0
       const input = observedFrames([
-        frameMessage(runProto.ProgramStartSchema, item.start),
-        frameMessage(runProto.EntrypointReleaseSchema, releaseFor(item.start)),
+        frameMessage(programProto.ProgramStartSchema, item.start),
+        frameMessage(programProto.EntrypointReleaseSchema, releaseFor(item.start)),
       ], async () => {
         closeCount++
       })
@@ -85,8 +85,8 @@ describe("runProgram", () => {
     const start = taskStart("noPayload")
     const output: Uint8Array[] = []
     const input = observedFrames([
-      frameMessage(runProto.ProgramStartSchema, start),
-      frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start)),
+      frameMessage(programProto.ProgramStartSchema, start),
+      frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start)),
     ], async () => {
       throw new Error("input release failed")
     })
@@ -106,7 +106,7 @@ describe("runProgram", () => {
     let closeCount = 0
     const start = taskStart("noPayload")
     const input = observedFrames([
-      frameMessage(runProto.ProgramStartSchema, start),
+      frameMessage(programProto.ProgramStartSchema, start),
     ], async () => {
       closeCount++
     })
@@ -180,8 +180,8 @@ describe("runProgram", () => {
       stderr += value
     })
     child.stdin.write(concatenate(
-      frameMessage(runProto.ProgramStartSchema, start),
-      frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start)),
+      frameMessage(programProto.ProgramStartSchema, start),
+      frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start)),
     ))
 
     let timeout: ReturnType<typeof setTimeout> | undefined
@@ -224,8 +224,8 @@ describe("runProgram", () => {
     const output: Uint8Array[] = []
     await runProgram(locatorURL, programIO({
       input: frames(
-        frameMessage(runProto.ProgramStartSchema, start),
-        frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start)),
+        frameMessage(programProto.ProgramStartSchema, start),
+        frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start)),
       ),
       definition,
       output,
@@ -246,8 +246,8 @@ describe("runProgram", () => {
     const output: Uint8Array[] = []
     await runProgram(locatorURL, programIO({
       input: frames(
-        frameMessage(runProto.ProgramStartSchema, start),
-        frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start)),
+        frameMessage(programProto.ProgramStartSchema, start),
+        frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start)),
       ),
       definition,
       output,
@@ -276,8 +276,8 @@ describe("runProgram", () => {
     const output: Uint8Array[] = []
     const events = [deferred<void>(), deferred<void>(), deferred<void>()]
     async function* input(): AsyncIterable<Uint8Array> {
-      yield frameMessage(runProto.ProgramStartSchema, start)
-      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+      yield frameMessage(programProto.ProgramStartSchema, start)
+      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
 
       await events[0]!.promise
       const first = readEvent(output[1]!).event
@@ -342,8 +342,8 @@ describe("runProgram", () => {
     const output: Uint8Array[] = []
     const waitWritten = deferred<void>()
     async function* input(): AsyncIterable<Uint8Array> {
-      yield frameMessage(runProto.ProgramStartSchema, start)
-      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+      yield frameMessage(programProto.ProgramStartSchema, start)
+      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
       await waitWritten.promise
       const wait = readEvent(output[1]!).event
       if (wait.case !== "runWaitRequested") return
@@ -381,8 +381,8 @@ describe("runProgram", () => {
     const output: Uint8Array[] = []
     const waitWritten = deferred<void>()
     async function* input(): AsyncIterable<Uint8Array> {
-      yield frameMessage(runProto.ProgramStartSchema, start)
-      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+      yield frameMessage(programProto.ProgramStartSchema, start)
+      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
       await waitWritten.promise
       const wait = readEvent(output[1]!).event
       if (wait.case !== "runWaitRequested") return
@@ -418,8 +418,8 @@ describe("runProgram", () => {
     const output: Uint8Array[] = []
     const waitWritten = deferred<void>()
     async function* input(): AsyncIterable<Uint8Array> {
-      yield frameMessage(runProto.ProgramStartSchema, start)
-      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+      yield frameMessage(programProto.ProgramStartSchema, start)
+      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
       await waitWritten.promise
       const wait = readEvent(output[1]!).event
       if (wait.case !== "runWaitRequested") return
@@ -449,8 +449,8 @@ describe("runProgram", () => {
     const output: Uint8Array[] = []
     const waitWritten = deferred<void>()
     async function* input(): AsyncIterable<Uint8Array> {
-      yield frameMessage(runProto.ProgramStartSchema, start)
-      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+      yield frameMessage(programProto.ProgramStartSchema, start)
+      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
       await waitWritten.promise
       const wait = readEvent(output[1]!).event
       if (wait.case !== "runWaitRequested") return
@@ -484,8 +484,8 @@ describe("runProgram", () => {
     const output: Uint8Array[] = []
     const waitWritten = deferred<void>()
     async function* input(): AsyncIterable<Uint8Array> {
-      yield frameMessage(runProto.ProgramStartSchema, start)
-      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+      yield frameMessage(programProto.ProgramStartSchema, start)
+      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
       await waitWritten.promise
       const wait = readEvent(output[1]!).event
       if (wait.case !== "runWaitRequested") return
@@ -523,8 +523,8 @@ describe("runProgram", () => {
     const output: Uint8Array[] = []
     const waitWritten = deferred<void>()
     async function* input(): AsyncIterable<Uint8Array> {
-      yield frameMessage(runProto.ProgramStartSchema, start)
-      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+      yield frameMessage(programProto.ProgramStartSchema, start)
+      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
       await waitWritten.promise
       const wait = readEvent(output[1]!).event
       if (wait.case !== "runWaitRequested") return
@@ -593,8 +593,8 @@ describe("runProgram", () => {
       const output: Uint8Array[] = []
       const requestWritten = deferred<void>()
       async function* input(): AsyncIterable<Uint8Array> {
-        yield frameMessage(runProto.ProgramStartSchema, start)
-        yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+        yield frameMessage(programProto.ProgramStartSchema, start)
+        yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
         await requestWritten.promise
         const request = readEvent(output[1]!).event
         const correlationId = request.case === "runWaitRequested"
@@ -628,8 +628,8 @@ describe("runProgram", () => {
     const output: Uint8Array[] = []
     await expect(runProgram(locatorURL, programIO({
       input: frames(
-        frameMessage(runProto.ProgramStartSchema, start),
-        frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start)),
+        frameMessage(programProto.ProgramStartSchema, start),
+        frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start)),
       ),
       definition,
       output,
@@ -649,8 +649,8 @@ describe("runProgram", () => {
     const output: Uint8Array[] = []
     await expect(runProgram(locatorURL, programIO({
       input: frames(
-        frameMessage(runProto.ProgramStartSchema, start),
-        frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start)),
+        frameMessage(programProto.ProgramStartSchema, start),
+        frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start)),
       ),
       definition,
       output,
@@ -676,8 +676,8 @@ describe("runProgram", () => {
     const output: Uint8Array[] = []
     await expect(runProgram(locatorURL, programIO({
       input: frames(
-        frameMessage(runProto.ProgramStartSchema, start),
-        frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start)),
+        frameMessage(programProto.ProgramStartSchema, start),
+        frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start)),
       ),
       definition,
       output,
@@ -702,8 +702,8 @@ describe("runProgram", () => {
     const output: Uint8Array[] = []
     const appendWritten = deferred<void>()
     async function* input(): AsyncIterable<Uint8Array> {
-      yield frameMessage(runProto.ProgramStartSchema, start)
-      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+      yield frameMessage(programProto.ProgramStartSchema, start)
+      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
       await appendWritten.promise
       const event = readEvent(output[1]!).event
       expect(event.case).toBe("actorOutputAppendRequested")
@@ -760,8 +760,8 @@ describe("runProgram", () => {
     const output: Uint8Array[] = []
     const appendWritten = deferred<void>()
     async function* input(): AsyncIterable<Uint8Array> {
-      yield frameMessage(runProto.ProgramStartSchema, start)
-      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+      yield frameMessage(programProto.ProgramStartSchema, start)
+      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
       await appendWritten.promise
       const event = readEvent(output[1]!).event
       expect(event.case).toBe("actorOutputAppendRequested")
@@ -806,8 +806,8 @@ describe("runProgram", () => {
     const output: Uint8Array[] = []
     const sendsWritten = deferred<void>()
     async function* input(): AsyncIterable<Uint8Array> {
-      yield frameMessage(runProto.ProgramStartSchema, start)
-      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+      yield frameMessage(programProto.ProgramStartSchema, start)
+      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
       await sendsWritten.promise
       const first = readEvent(output[1]!).event
       const second = readEvent(output[2]!).event
@@ -923,8 +923,8 @@ describe("runProgram", () => {
     const output: Uint8Array[] = []
     const requested = deferred<void>()
     async function* input(): AsyncIterable<Uint8Array> {
-      yield frameMessage(runProto.ProgramStartSchema, start)
-      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+      yield frameMessage(programProto.ProgramStartSchema, start)
+      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
       await requested.promise
       const event = readEvent(output[1]!).event
       expect(event.case).toBe("taskChildInvokeRequested")
@@ -999,8 +999,8 @@ describe("runProgram", () => {
     const output: Uint8Array[] = []
     const requestWritten = [deferred<void>(), deferred<void>()]
     async function* input(): AsyncIterable<Uint8Array> {
-      yield frameMessage(runProto.ProgramStartSchema, start)
-      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+      yield frameMessage(programProto.ProgramStartSchema, start)
+      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
       for (let index = 0; index < 2; index++) {
         await requestWritten[index]!.promise
         const event = readEvent(output[index + 1]!).event
@@ -1070,8 +1070,8 @@ describe("runProgram", () => {
     const output: Uint8Array[] = []
     const requested = Array.from({ length: 7 }, () => deferred<void>())
     async function* input(): AsyncIterable<Uint8Array> {
-      yield frameMessage(runProto.ProgramStartSchema, start)
-      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+      yield frameMessage(programProto.ProgramStartSchema, start)
+      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
       const responses = [
         '{"workspace_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}',
         '{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32","key":"build-cache","sandbox_id":"cache","deployment_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35","status":"available","secrets":[{"name":"TOKEN","env":"TOKEN"}],"last_activity_at":"2026-07-26T00:00:00Z","created_at":"2026-07-26T00:00:00Z","updated_at":"2026-07-26T00:00:00Z"}',
@@ -1165,8 +1165,8 @@ describe("runProgram", () => {
     const output: Uint8Array[] = []
     const requested = deferred<void>()
     async function* input(): AsyncIterable<Uint8Array> {
-      yield frameMessage(runProto.ProgramStartSchema, start)
-      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+      yield frameMessage(programProto.ProgramStartSchema, start)
+      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
       await requested.promise
       const event = readEvent(output[1]!).event
       expect(event.case).toBe("taskChildInvokeRequested")
@@ -1227,8 +1227,8 @@ describe("runProgram", () => {
     const output: Uint8Array[] = []
     const requested = deferred<void>()
     async function* input(): AsyncIterable<Uint8Array> {
-      yield frameMessage(runProto.ProgramStartSchema, start)
-      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+      yield frameMessage(programProto.ProgramStartSchema, start)
+      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
       await requested.promise
       const event = readEvent(output[1]!).event
       if (event.case !== "taskChildInvokeRequested") return
@@ -1291,8 +1291,8 @@ describe("runProgram", () => {
     const createWritten = deferred<void>()
     const waitWritten = deferred<void>()
     async function* input(): AsyncIterable<Uint8Array> {
-      yield frameMessage(runProto.ProgramStartSchema, start)
-      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+      yield frameMessage(programProto.ProgramStartSchema, start)
+      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
       await createWritten.promise
       const createEvent = readEvent(output[1]!).event
       expect(createEvent.case).toBe("tokenCreateRequested")
@@ -1369,8 +1369,8 @@ describe("runProgram", () => {
     const createWritten = deferred<void>()
     const waitWritten = deferred<void>()
     async function* input(): AsyncIterable<Uint8Array> {
-      yield frameMessage(runProto.ProgramStartSchema, start)
-      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+      yield frameMessage(programProto.ProgramStartSchema, start)
+      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
       await createWritten.promise
       const createEvent = readEvent(output[1]!).event
       if (createEvent.case !== "tokenCreateRequested") return
@@ -1426,8 +1426,8 @@ describe("runProgram", () => {
     const output: Uint8Array[] = []
     const writes = [deferred<void>(), deferred<void>(), deferred<void>()]
     async function* input(): AsyncIterable<Uint8Array> {
-      yield frameMessage(runProto.ProgramStartSchema, start)
-      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+      yield frameMessage(programProto.ProgramStartSchema, start)
+      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
 
       await writes[0]!.promise
       const set = readEvent(output[1]!).event
@@ -1497,8 +1497,8 @@ describe("runProgram", () => {
       const output: Uint8Array[] = []
       await runProgram(locatorURL, programIO({
         input: frames(
-          frameMessage(runProto.ProgramStartSchema, start),
-          frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start)),
+          frameMessage(programProto.ProgramStartSchema, start),
+          frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start)),
         ),
         definition,
         output,
@@ -1532,8 +1532,8 @@ describe("runProgram", () => {
     const output: Uint8Array[] = []
     await runProgram(locatorURL, programIO({
       input: frames(
-        frameMessage(runProto.ProgramStartSchema, start),
-        frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start)),
+        frameMessage(programProto.ProgramStartSchema, start),
+        frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start)),
       ),
       definition,
       output,
@@ -1566,8 +1566,8 @@ describe("runProgram", () => {
     const output: Uint8Array[] = []
     const sendWritten = deferred<void>()
     async function* input(): AsyncIterable<Uint8Array> {
-      yield frameMessage(runProto.ProgramStartSchema, start)
-      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+      yield frameMessage(programProto.ProgramStartSchema, start)
+      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
       await sendWritten.promise
       const send = readEvent(output[1]!).event
       if (send.case !== "sessionInputSendRequested") return
@@ -1619,8 +1619,8 @@ describe("runProgram", () => {
     const output: Uint8Array[] = []
     const sendWritten = deferred<void>()
     async function* input(): AsyncIterable<Uint8Array> {
-      yield frameMessage(runProto.ProgramStartSchema, start)
-      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+      yield frameMessage(programProto.ProgramStartSchema, start)
+      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
       await sendWritten.promise
       const send = readEvent(output[1]!).event
       if (send.case !== "sessionInputSendRequested") return
@@ -1672,7 +1672,7 @@ describe("runProgram", () => {
     const ready = deferred<void>()
     const output: Uint8Array[] = []
     const running = runProgram(locatorURL, programIO({
-      input: gatedFrames(frameMessage(runProto.ProgramStartSchema, start), gate.promise, frameMessage(runProto.EntrypointReleaseSchema, release)),
+      input: gatedFrames(frameMessage(programProto.ProgramStartSchema, start), gate.promise, frameMessage(programProto.EntrypointReleaseSchema, release)),
       definition,
       output,
       onWrite: () => ready.resolve(),
@@ -1721,9 +1721,9 @@ describe("runProgram", () => {
     const output: Uint8Array[] = []
     const running = runProgram(locatorURL, programIO({
       input: gatedFrames(
-        frameMessage(runProto.ProgramStartSchema, start),
+        frameMessage(programProto.ProgramStartSchema, start),
         gate.promise,
-        frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start)),
+        frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start)),
       ),
       definition,
       output,
@@ -1761,8 +1761,8 @@ describe("runProgram", () => {
     let correlationId = ""
     let runWaitId = ""
     async function* input(): AsyncIterable<Uint8Array> {
-      yield frameMessage(runProto.ProgramStartSchema, start)
-      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+      yield frameMessage(programProto.ProgramStartSchema, start)
+      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
       await waitWritten.promise
       const event = readEvent(output[1]!).event
       expect(event.case).toBe("runWaitRequested")
@@ -1772,8 +1772,8 @@ describe("runProgram", () => {
       expect(event.value.kind).toBe("timer")
       expect(event.value.timeoutMs).toBe(60_000n)
       expect(JSON.parse(event.value.paramsJson)).toEqual({ duration: "1m" })
-      yield frameMessage(runProto.ResumeDecisionSchema, create(
-        runProto.ResumeDecisionSchema,
+      yield frameMessage(programProto.ResumeDecisionSchema, create(
+        programProto.ResumeDecisionSchema,
         {
           runWaitId: event.value.runWaitId,
           correlationId: event.value.correlationId,
@@ -1823,13 +1823,13 @@ describe("runProgram", () => {
     const output: Uint8Array[] = []
     const waitWritten = deferred<void>()
     async function* input(): AsyncIterable<Uint8Array> {
-      yield frameMessage(runProto.ProgramStartSchema, start)
-      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+      yield frameMessage(programProto.ProgramStartSchema, start)
+      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
       await waitWritten.promise
       const event = readEvent(output[1]!).event
       if (event.case !== "runWaitRequested") return
-      yield frameMessage(runProto.ResumeDecisionSchema, create(
-        runProto.ResumeDecisionSchema,
+      yield frameMessage(programProto.ResumeDecisionSchema, create(
+        programProto.ResumeDecisionSchema,
         {
           correlationId: event.value.correlationId,
           runWaitId: event.value.runWaitId,
@@ -1874,8 +1874,8 @@ describe("runProgram", () => {
 
     await runProgram(locatorURL, programIO({
       input: frames(
-        frameMessage(runProto.ProgramStartSchema, start),
-        frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start)),
+        frameMessage(programProto.ProgramStartSchema, start),
+        frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start)),
       ),
       definition,
       output,
@@ -1912,8 +1912,8 @@ describe("runProgram", () => {
 
     await expect(runProgram(locatorURL, programIO({
       input: frames(
-        frameMessage(runProto.ProgramStartSchema, start),
-        frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start)),
+        frameMessage(programProto.ProgramStartSchema, start),
+        frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start)),
       ),
       definition,
       output,
@@ -1934,8 +1934,8 @@ describe("runProgram", () => {
 
     await runProgram(locatorURL, programIO({
       input: frames(
-        frameMessage(runProto.ProgramStartSchema, start),
-        frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start)),
+        frameMessage(programProto.ProgramStartSchema, start),
+        frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start)),
       ),
       definition,
       output,
@@ -1967,8 +1967,8 @@ describe("runProgram", () => {
 
     await runProgram(locatorURL, programIO({
       input: frames(
-        frameMessage(runProto.ProgramStartSchema, start),
-        frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start)),
+        frameMessage(programProto.ProgramStartSchema, start),
+        frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start)),
       ),
       definition,
       output,
@@ -1992,8 +1992,8 @@ describe("runProgram", () => {
 
       await runProgram(locatorURL, programIO({
         input: frames(
-          frameMessage(runProto.ProgramStartSchema, start),
-          frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start)),
+          frameMessage(programProto.ProgramStartSchema, start),
+          frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start)),
         ),
         definition,
         output,
@@ -2013,8 +2013,8 @@ describe("runProgram", () => {
 
     await expect(runProgram(locatorURL, programIO({
       input: frames(
-        frameMessage(runProto.ProgramStartSchema, start),
-        frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start)),
+        frameMessage(programProto.ProgramStartSchema, start),
+        frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start)),
       ),
       definition,
       output,
@@ -2034,8 +2034,8 @@ describe("runProgram", () => {
     })
     const start = taskStart("noPayload")
     const input = concatenate(
-      frameMessage(runProto.ProgramStartSchema, start),
-      frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start)),
+      frameMessage(programProto.ProgramStartSchema, start),
+      frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start)),
     )
 
     await runProgram(locatorURL, programIO({
@@ -2060,7 +2060,7 @@ describe("runProgram", () => {
 
     await expect(
       runProgram(locatorURL, programIO({
-        input: frames(frameMessage(runProto.ProgramStartSchema, taskStart("noPayload"))),
+        input: frames(frameMessage(programProto.ProgramStartSchema, taskStart("noPayload"))),
         definition,
         output,
       })),
@@ -2103,7 +2103,7 @@ describe("runProgram", () => {
       },
     })
     const start = taskStart("noPayload")
-    const wrong = create(runProto.EntrypointReleaseSchema, {
+    const wrong = create(programProto.EntrypointReleaseSchema, {
       runId: start.runId,
       attemptNumber: start.attemptNumber + 1,
       entrypoint: taskIdentity("deploy"),
@@ -2112,8 +2112,8 @@ describe("runProgram", () => {
     await expect(
       runProgram(locatorURL, programIO({
         input: frames(
-          frameMessage(runProto.ProgramStartSchema, start),
-          frameMessage(runProto.EntrypointReleaseSchema, wrong),
+          frameMessage(programProto.ProgramStartSchema, start),
+          frameMessage(programProto.EntrypointReleaseSchema, wrong),
         ),
         definition,
         output: [],
@@ -2178,15 +2178,15 @@ function programIO(options: {
 function taskStart(
   payload: "noPayload" | "payloadJson",
   value = new Uint8Array(),
-): runProto.ProgramStart {
-  return create(runProto.ProgramStartSchema, {
+): programProto.ProgramStart {
+  return create(programProto.ProgramStartSchema, {
     entrypointDeclaredId: "deploy",
     runId: "run-1",
     attemptNumber: 1,
-    cause: create(runProto.RunCauseSchema, {
+    cause: create(programProto.RunCauseSchema, {
       kind: {
         case: "api",
-        value: create(runProto.ApiCauseSchema),
+        value: create(programProto.ApiCauseSchema),
       },
     }),
     deploymentId: "deployment-1",
@@ -2195,11 +2195,11 @@ function taskStart(
     baseWorkspaceVersionId: "version-1",
     entrypoint: {
       case: "task",
-      value: create(runProto.TaskStartSchema, {
+      value: create(programProto.TaskStartSchema, {
         payload: payload === "noPayload"
           ? {
               case: "noPayload",
-              value: create(runProto.NoPayloadSchema),
+              value: create(programProto.NoPayloadSchema),
             }
           : {
               case: "payloadJson",
@@ -2210,13 +2210,13 @@ function taskStart(
   })
 }
 
-function actorStart(start: bigint, highWatermark: bigint): runProto.ProgramStart {
-  return create(runProto.ProgramStartSchema, {
+function actorStart(start: bigint, highWatermark: bigint): programProto.ProgramStart {
+  return create(programProto.ProgramStartSchema, {
     entrypointDeclaredId: "worker",
     runId: "run-1",
     attemptNumber: 1,
-    cause: create(runProto.RunCauseSchema, {
-      kind: { case: "actorStart", value: create(runProto.ActorStartCauseSchema) },
+    cause: create(programProto.RunCauseSchema, {
+      kind: { case: "actorStart", value: create(programProto.ActorStartCauseSchema) },
     }),
     deploymentId: "deployment-1",
     deploymentVersion: "v1",
@@ -2224,7 +2224,7 @@ function actorStart(start: bigint, highWatermark: bigint): runProto.ProgramStart
     baseWorkspaceVersionId: "version-1",
     entrypoint: {
       case: "actor",
-      value: create(runProto.ActorStartSchema, {
+      value: create(programProto.ActorStartSchema, {
         sessionId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
         startInputSequence: start,
         inputHighWatermark: highWatermark,
@@ -2233,8 +2233,8 @@ function actorStart(start: bigint, highWatermark: bigint): runProto.ProgramStart
   })
 }
 
-function releaseFor(start: runProto.ProgramStart): runProto.EntrypointRelease {
-  return create(runProto.EntrypointReleaseSchema, {
+function releaseFor(start: programProto.ProgramStart): programProto.EntrypointRelease {
+  return create(programProto.EntrypointReleaseSchema, {
     runId: start.runId,
     attemptNumber: start.attemptNumber,
     entrypoint: start.entrypoint.case === "actor"
@@ -2243,19 +2243,19 @@ function releaseFor(start: runProto.ProgramStart): runProto.EntrypointRelease {
   })
 }
 
-function actorIdentity(declaredId: string): runProto.EntrypointIdentity {
-  return create(runProto.EntrypointIdentitySchema, {
+function actorIdentity(declaredId: string): programProto.EntrypointIdentity {
+  return create(programProto.EntrypointIdentitySchema, {
     declaredId,
-    kind: { case: "actor", value: create(runProto.ActorEntrypointSchema) },
+    kind: { case: "actor", value: create(programProto.ActorEntrypointSchema) },
   })
 }
 
-function taskIdentity(declaredId: string): runProto.EntrypointIdentity {
-  return create(runProto.EntrypointIdentitySchema, {
+function taskIdentity(declaredId: string): programProto.EntrypointIdentity {
+  return create(programProto.EntrypointIdentitySchema, {
     declaredId,
     kind: {
       case: "task",
-      value: create(runProto.TaskEntrypointSchema),
+      value: create(programProto.TaskEntrypointSchema),
     },
   })
 }
@@ -2273,8 +2273,8 @@ function actorDecision(
   dataJson: string,
   wait?: { runWaitId: string; resumeAttachId: string },
 ): Uint8Array {
-  return frameMessage(runProto.ResumeDecisionSchema, create(
-    runProto.ResumeDecisionSchema,
+  return frameMessage(programProto.ResumeDecisionSchema, create(
+    programProto.ResumeDecisionSchema,
     {
       correlationId,
       kind,
@@ -2308,18 +2308,18 @@ function frame(body: Uint8Array): Uint8Array {
   return result
 }
 
-function readEvent(value: Uint8Array): runProto.RunEvent {
+function readEvent(value: Uint8Array): programProto.RunEvent {
   const length = new DataView(
     value.buffer,
     value.byteOffset,
     value.byteLength,
   ).getUint32(0)
   expect(length).toBe(value.byteLength - 4)
-  return fromBinary(runProto.RunEventSchema, value.subarray(4))
+  return fromBinary(programProto.RunEventSchema, value.subarray(4))
 }
 
-function readConcatenatedEvents(value: Uint8Array): runProto.RunEvent[] {
-  const result: runProto.RunEvent[] = []
+function readConcatenatedEvents(value: Uint8Array): programProto.RunEvent[] {
+  const result: programProto.RunEvent[] = []
   let offset = 0
   while (offset < value.byteLength) {
     if (value.byteLength - offset < 4) throw new Error("truncated event header")
@@ -2331,7 +2331,7 @@ function readConcatenatedEvents(value: Uint8Array): runProto.RunEvent[] {
     offset += 4
     if (value.byteLength - offset < size) throw new Error("truncated event body")
     result.push(fromBinary(
-      runProto.RunEventSchema,
+      programProto.RunEventSchema,
       value.subarray(offset, offset + size),
     ))
     offset += size

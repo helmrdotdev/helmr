@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/frameio"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -20,7 +20,7 @@ import (
 
 func (task *guestRunLeaseTask) handleActorTurnCommit(
 	ctx context.Context,
-	requested *runv0.ActorTurnCommitRequested,
+	requested *programv0.ActorTurnCommitRequested,
 ) error {
 	if requested == nil || strings.TrimSpace(requested.GetCorrelationId()) == "" || requested.GetTargetInputSequence() <= 0 {
 		return errors.New("actor turn commit request is invalid")
@@ -42,7 +42,7 @@ func (task *guestRunLeaseTask) handleActorTurnCommit(
 	task.mu.Unlock()
 	stopClose := context.AfterFunc(ctx, func() { _ = stream.Close() })
 	defer stopClose()
-	pause := &runv0.ActorTurnCommitPauseRequest{
+	pause := &programv0.ActorTurnCommitPauseRequest{
 		CorrelationId: requested.GetCorrelationId(), TargetInputSequence: requested.GetTargetInputSequence(),
 		RunId: lease.RunID, AttemptNumber: uint32(lease.AttemptNumber), RunLeaseId: lease.ID,
 		ExpectedTreeDigest: expected.Digest, ExpectedTreeSizeBytes: expected.SizeBytes,
@@ -134,7 +134,7 @@ func (task *guestRunLeaseTask) handleActorTurnCommit(
 	defer cancelProof()
 	stopProofClose := context.AfterFunc(proofCtx, func() { _ = stream.Close() })
 	defer stopProofClose()
-	if err := wire.WriteResumeDecision(stream, &runv0.ResumeDecision{
+	if err := wire.WriteResumeDecision(stream, &programv0.ResumeDecision{
 		CorrelationId: requested.GetCorrelationId(), Kind: "committed", DataJson: string(decisionData),
 	}); err != nil {
 		return fmt.Errorf("write actor turn commit decision: %w", err)
@@ -321,8 +321,8 @@ func renewControlPlaneActorTurnAuthority(
 func (task *guestRunLeaseTask) readActorTurnCommitReady(
 	ctx context.Context,
 	reader *bufio.Reader,
-	request *runv0.ActorTurnCommitPauseRequest,
-) (*runv0.ActorTurnCommitPauseReady, *workspace.WorkspaceArtifact, error) {
+	request *programv0.ActorTurnCommitPauseRequest,
+) (*programv0.ActorTurnCommitPauseReady, *workspace.WorkspaceArtifact, error) {
 	var artifact *workspace.WorkspaceArtifact
 	for {
 		prefix, err := reader.Peek(4)
@@ -365,17 +365,17 @@ func (task *guestRunLeaseTask) readActorTurnCommitReady(
 		if err != nil {
 			return nil, nil, err
 		}
-		var event runv0.RunEvent
+		var event programv0.RunEvent
 		if err := proto.Unmarshal(body, &event); err != nil {
 			return nil, nil, fmt.Errorf("unmarshal actor turn commit interleaved event: %w", err)
 		}
 		task.program.observedEventSeq++
 		switch value := event.Event.(type) {
-		case *runv0.RunEvent_StdoutChunk:
+		case *programv0.RunEvent_StdoutChunk:
 			err = taskControlEvents{task: task}.AppendRunLog(ctx, workerapi.RunLeaseAssignment{}, workerapi.LogStreamStdout, task.program.observedEventSeq, value.StdoutChunk)
-		case *runv0.RunEvent_StderrChunk:
+		case *programv0.RunEvent_StderrChunk:
 			err = taskControlEvents{task: task}.AppendRunLog(ctx, workerapi.RunLeaseAssignment{}, workerapi.LogStreamStderr, task.program.observedEventSeq, value.StderrChunk)
-		case *runv0.RunEvent_MetadataUpdated:
+		case *programv0.RunEvent_MetadataUpdated:
 			err = taskControlEvents{task: task}.ApplyRunMetadata(ctx, workerapi.RunLeaseAssignment{}, value.MetadataUpdated)
 			if err == nil || isRuntimeOperationRejection(err) {
 				err = writeRuntimeOperationDecision(
@@ -386,7 +386,7 @@ func (task *guestRunLeaseTask) readActorTurnCommitReady(
 					"Run metadata request was rejected",
 				)
 			}
-		case *runv0.RunEvent_StructuredLogRequested:
+		case *programv0.RunEvent_StructuredLogRequested:
 			err = taskControlEvents{task: task}.RecordStructuredRunLog(
 				ctx, workerapi.RunLeaseAssignment{}, task.program.observedEventSeq, value.StructuredLogRequested,
 			)

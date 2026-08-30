@@ -10,20 +10,20 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func (task *guestRunLeaseTask) handleResourceRuntime(
 	ctx context.Context,
-	event *runv0.RunEvent,
+	event *programv0.RunEvent,
 ) error {
 	switch event.GetEvent().(type) {
-	case *runv0.RunEvent_ActorStartRequested,
-		*runv0.RunEvent_SessionStatusRequested,
-		*runv0.RunEvent_SessionCloseRequested,
-		*runv0.RunEvent_SessionOutputPageRequested:
+	case *programv0.RunEvent_ActorStartRequested,
+		*programv0.RunEvent_SessionStatusRequested,
+		*programv0.RunEvent_SessionCloseRequested,
+		*programv0.RunEvent_SessionOutputPageRequested:
 		return task.handleActorRuntime(ctx, event)
 	default:
 		return task.handleWorkspaceRuntime(ctx, event)
@@ -32,7 +32,7 @@ func (task *guestRunLeaseTask) handleResourceRuntime(
 
 func (task *guestRunLeaseTask) handleActorRuntime(
 	ctx context.Context,
-	event *runv0.RunEvent,
+	event *programv0.RunEvent,
 ) error {
 	controlPlane, ok := task.controlPlane.(ActorRuntimeControlPlane)
 	if !ok {
@@ -43,7 +43,7 @@ func (task *guestRunLeaseTask) handleActorRuntime(
 	var completed any
 	var failed *workerapi.RuntimeOperationFailure
 	switch value := event.Event.(type) {
-	case *runv0.RunEvent_ActorStartRequested:
+	case *programv0.RunEvent_ActorStartRequested:
 		request, err := workerActorStartRequest(value.ActorStartRequested)
 		if err != nil {
 			return err
@@ -69,7 +69,7 @@ func (task *guestRunLeaseTask) handleActorRuntime(
 		if response.CorrelationID != correlationID {
 			return errors.New("actor start response correlation mismatch")
 		}
-	case *runv0.RunEvent_SessionStatusRequested:
+	case *programv0.RunEvent_SessionStatusRequested:
 		request, err := workerSessionReferenceRequest(value.SessionStatusRequested)
 		if err != nil {
 			return err
@@ -95,7 +95,7 @@ func (task *guestRunLeaseTask) handleActorRuntime(
 		if response.CorrelationID != correlationID {
 			return errors.New("session status response correlation mismatch")
 		}
-	case *runv0.RunEvent_SessionCloseRequested:
+	case *programv0.RunEvent_SessionCloseRequested:
 		base, err := workerSessionReferenceRequestFromClose(value.SessionCloseRequested)
 		if err != nil {
 			return err
@@ -125,7 +125,7 @@ func (task *guestRunLeaseTask) handleActorRuntime(
 		if response.CorrelationID != correlationID {
 			return errors.New("session close response correlation mismatch")
 		}
-	case *runv0.RunEvent_SessionOutputPageRequested:
+	case *programv0.RunEvent_SessionOutputPageRequested:
 		base, err := workerSessionReferenceRequestFromOutput(value.SessionOutputPageRequested)
 		if err != nil {
 			return err
@@ -177,7 +177,7 @@ func (task *guestRunLeaseTask) handleActorRuntime(
 	if err != nil {
 		return fmt.Errorf("encode actor runtime decision: %w", err)
 	}
-	return wire.WriteResumeDecision(task.program.session.Stream(), &runv0.ResumeDecision{
+	return wire.WriteResumeDecision(task.program.session.Stream(), &programv0.ResumeDecision{
 		CorrelationId: correlationID,
 		Kind:          kind,
 		DataJson:      string(data),
@@ -185,7 +185,7 @@ func (task *guestRunLeaseTask) handleActorRuntime(
 }
 
 func workerActorStartRequest(
-	requested *runv0.ActorStartRequested,
+	requested *programv0.ActorStartRequested,
 ) (workerapi.StartActorRequest, error) {
 	if requested == nil {
 		return workerapi.StartActorRequest{}, errors.New("actor start request is required")
@@ -229,7 +229,7 @@ func workerActorStartRequest(
 }
 
 func workerSessionReferenceRequest(
-	requested *runv0.SessionStatusRequested,
+	requested *programv0.SessionStatusRequested,
 ) (workerapi.SessionReferenceRequest, error) {
 	if requested == nil {
 		return workerapi.SessionReferenceRequest{}, errors.New("session status request is required")
@@ -241,7 +241,7 @@ func workerSessionReferenceRequest(
 }
 
 func workerSessionReferenceRequestFromClose(
-	requested *runv0.SessionCloseRequested,
+	requested *programv0.SessionCloseRequested,
 ) (workerapi.SessionReferenceRequest, error) {
 	if requested == nil {
 		return workerapi.SessionReferenceRequest{}, errors.New("session close request is required")
@@ -253,7 +253,7 @@ func workerSessionReferenceRequestFromClose(
 }
 
 func workerSessionReferenceRequestFromOutput(
-	requested *runv0.SessionOutputPageRequested,
+	requested *programv0.SessionOutputPageRequested,
 ) (workerapi.SessionReferenceRequest, error) {
 	if requested == nil {
 		return workerapi.SessionReferenceRequest{}, errors.New("session output page request is required")

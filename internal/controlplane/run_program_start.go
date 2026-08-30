@@ -12,7 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"github.com/jackc/pgx/v5/pgtype"
 	"google.golang.org/protobuf/proto"
 )
@@ -63,7 +63,7 @@ func encodeProgramStart(
 	if err != nil {
 		return nil, err
 	}
-	message := &runv0.ProgramStart{
+	message := &programv0.ProgramStart{
 		EntrypointDeclaredId:   run.EntrypointDeclaredID,
 		RunId:                  runID,
 		AttemptNumber:          uint32(attempt.Number),
@@ -80,13 +80,13 @@ func encodeProgramStart(
 		if err != nil {
 			return nil, err
 		}
-		message.Entrypoint = &runv0.ProgramStart_Task{Task: task}
+		message.Entrypoint = &programv0.ProgramStart_Task{Task: task}
 	case "actor":
 		actorStart, err := programStartActor(run, attempt, actor)
 		if err != nil {
 			return nil, err
 		}
-		message.Entrypoint = &runv0.ProgramStart_Actor{Actor: actorStart}
+		message.Entrypoint = &programv0.ProgramStart_Actor{Actor: actorStart}
 	default:
 		return nil, fmt.Errorf("program-start entrypoint kind %q is unsupported", run.EntrypointKind)
 	}
@@ -113,7 +113,7 @@ func programStartTask(
 	run db.Run,
 	actor *db.Session,
 	definition db.DeploymentDefinition,
-) (*runv0.TaskStart, error) {
+) (*programv0.TaskStart, error) {
 	if actor != nil ||
 		run.SessionID.Valid ||
 		run.SessionInputStartSequence.Valid ||
@@ -133,8 +133,8 @@ func programStartTask(
 		if run.Payload != nil {
 			return nil, errors.New("payload-free task run contains a payload")
 		}
-		return &runv0.TaskStart{
-			Payload: &runv0.TaskStart_NoPayload{NoPayload: &runv0.NoPayload{}},
+		return &programv0.TaskStart{
+			Payload: &programv0.TaskStart_NoPayload{NoPayload: &programv0.NoPayload{}},
 		}, nil
 	case deployment.SchemaKindStandard:
 		if run.Payload == nil {
@@ -143,8 +143,8 @@ func programStartTask(
 		if !json.Valid(run.Payload) {
 			return nil, errors.New("task run payload is not valid JSON")
 		}
-		return &runv0.TaskStart{
-			Payload: &runv0.TaskStart_PayloadJson{
+		return &programv0.TaskStart{
+			Payload: &programv0.TaskStart_PayloadJson{
 				PayloadJson: append([]byte(nil), run.Payload...),
 			},
 		}, nil
@@ -157,7 +157,7 @@ func programStartActor(
 	run db.Run,
 	attempt db.RunAttempt,
 	actor *db.Session,
-) (*runv0.ActorStart, error) {
+) (*programv0.ActorStart, error) {
 	if actor == nil ||
 		!run.SessionID.Valid ||
 		actor.ID != run.SessionID ||
@@ -178,7 +178,7 @@ func programStartActor(
 	if err != nil {
 		return nil, err
 	}
-	start := &runv0.ActorStart{
+	start := &programv0.ActorStart{
 		SessionId:          sessionID,
 		StartInputSequence: attempt.SessionInputStartSequence.Int64,
 		InputHighWatermark: run.SessionInputHighWatermark.Int64,
@@ -190,7 +190,7 @@ func programStartActor(
 	return start, nil
 }
 
-func programStartCause(run db.Run) (*runv0.RunCause, error) {
+func programStartCause(run db.Run) (*programv0.RunCause, error) {
 	hasSchedule := run.ScheduleID.Valid ||
 		run.ScheduleGeneration.Valid ||
 		run.ScheduledAt.Valid ||
@@ -202,12 +202,12 @@ func programStartCause(run db.Run) (*runv0.RunCause, error) {
 		if run.EntrypointKind != "task" || hasSchedule || hasParent {
 			return nil, errors.New("API run cause contains unrelated authority")
 		}
-		return &runv0.RunCause{Kind: &runv0.RunCause_Api{Api: &runv0.ApiCause{}}}, nil
+		return &programv0.RunCause{Kind: &programv0.RunCause_Api{Api: &programv0.ApiCause{}}}, nil
 	case "manual":
 		if run.EntrypointKind != "task" || hasSchedule || hasParent {
 			return nil, errors.New("manual run cause contains unrelated authority")
 		}
-		return &runv0.RunCause{Kind: &runv0.RunCause_Manual{Manual: &runv0.ManualCause{}}}, nil
+		return &programv0.RunCause{Kind: &programv0.RunCause_Manual{Manual: &programv0.ManualCause{}}}, nil
 	case "child":
 		if run.EntrypointKind != "task" ||
 			hasSchedule ||
@@ -219,8 +219,8 @@ func programStartCause(run db.Run) (*runv0.RunCause, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &runv0.RunCause{
-			Kind: &runv0.RunCause_Child{Child: &runv0.ChildCause{ParentRunId: parentID}},
+		return &programv0.RunCause{
+			Kind: &programv0.RunCause_Child{Child: &programv0.ChildCause{ParentRunId: parentID}},
 		}, nil
 	case "schedule":
 		if run.EntrypointKind != "task" ||
@@ -236,7 +236,7 @@ func programStartCause(run db.Run) (*runv0.RunCause, error) {
 		if err != nil {
 			return nil, err
 		}
-		schedule := &runv0.ScheduleCause{
+		schedule := &programv0.ScheduleCause{
 			ScheduleId:        scheduleID,
 			ScheduledAtUnixMs: run.ScheduledAt.Time.UnixMilli(),
 			Timezone:          run.ScheduleTimezone.String,
@@ -245,22 +245,22 @@ func programStartCause(run db.Run) (*runv0.RunCause, error) {
 			value := run.PreviousScheduledAt.Time.UnixMilli()
 			schedule.PreviousScheduledAtUnixMs = &value
 		}
-		return &runv0.RunCause{
-			Kind: &runv0.RunCause_Schedule{Schedule: schedule},
+		return &programv0.RunCause{
+			Kind: &programv0.RunCause_Schedule{Schedule: schedule},
 		}, nil
 	case "actor_start":
 		if run.EntrypointKind != "actor" || hasSchedule || hasParent {
 			return nil, errors.New("actor-start run cause authority is inconsistent")
 		}
-		return &runv0.RunCause{
-			Kind: &runv0.RunCause_ActorStart{ActorStart: &runv0.ActorStartCause{}},
+		return &programv0.RunCause{
+			Kind: &programv0.RunCause_ActorStart{ActorStart: &programv0.ActorStartCause{}},
 		}, nil
 	case "continuation":
 		if run.EntrypointKind != "actor" || hasSchedule || hasParent {
 			return nil, errors.New("continuation run cause authority is inconsistent")
 		}
-		return &runv0.RunCause{
-			Kind: &runv0.RunCause_Continuation{Continuation: &runv0.ContinuationCause{}},
+		return &programv0.RunCause{
+			Kind: &programv0.RunCause_Continuation{Continuation: &programv0.ContinuationCause{}},
 		}, nil
 	default:
 		return nil, fmt.Errorf("run cause kind %q is unsupported", run.CauseKind)

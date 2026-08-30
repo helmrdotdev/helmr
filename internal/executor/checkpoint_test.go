@@ -15,7 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/frameio"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
@@ -241,7 +241,7 @@ func TestRuntimeCheckpointerSeparatesWorkspaceCaptureFromRuntimeManifest(t *test
 
 func TestRuntimeCheckpointerProcessesRunEventsBeforePauseReady(t *testing.T) {
 	stream := newInterleavedCheckpointStream(t,
-		[]proto.Message{&runv0.RunEvent{Event: &runv0.RunEvent_StdoutChunk{StdoutChunk: []byte("flushed before checkpoint")}}},
+		[]proto.Message{&programv0.RunEvent{Event: &programv0.RunEvent_StdoutChunk{StdoutChunk: []byte("flushed before checkpoint")}}},
 		"run-wait-id-1", "checkpoint-1",
 	)
 	artifact := checkpointArtifact(t)
@@ -257,7 +257,7 @@ func TestRuntimeCheckpointerProcessesRunEventsBeforePauseReady(t *testing.T) {
 		tempDir:   t.TempDir(),
 		stream:    stream,
 		workspace: testCheckpointWorkspaceBase(),
-		runEvent: func(_ context.Context, event *runv0.RunEvent) error {
+		runEvent: func(_ context.Context, event *programv0.RunEvent) error {
 			events = append(events, string(event.GetStdoutChunk()))
 			return nil
 		},

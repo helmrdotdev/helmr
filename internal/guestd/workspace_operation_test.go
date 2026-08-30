@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/frameio"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/wire"
@@ -104,7 +104,7 @@ func TestRestoredWorkspaceMaterializesExactTargetBeforeRebindingAuthority(t *tes
 		released: make(chan struct{}),
 	}}
 	waits := newWaitingRunRegistry()
-	if _, err := waits.registerProgram(&runv0.CheckpointPauseRequest{
+	if _, err := waits.registerProgram(&programv0.CheckpointPauseRequest{
 		RunId: "run-1", AttemptNumber: 1, RunWaitId: "wait-1", CorrelationId: "correlation-1",
 		CheckpointId: "checkpoint-b", ResumeAttachId: "resume-b", CheckpointRequestVersion: 1,
 	}); err != nil {

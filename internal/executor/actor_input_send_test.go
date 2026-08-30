@@ -10,7 +10,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -75,7 +75,7 @@ func TestHandleActorInputSendWritesCorrelatedDecision(t *testing.T) {
 	}
 	result := make(chan error, 1)
 	go func() {
-		result <- task.handleActorInputSend(t.Context(), &runv0.SessionInputSendRequested{
+		result <- task.handleActorInputSend(t.Context(), &programv0.SessionInputSendRequested{
 			CorrelationId:  correlationID,
 			SessionId:      "019c10d5-a6f7-7af1-8f5f-000000000111",
 			DataJson:       `{"hello":"world"}`,
@@ -135,7 +135,7 @@ func TestHandleActorInputSendRetryKeepsStableFenceAcrossRenewal(t *testing.T) {
 	go renewRunSourceReceiptAfterAttempt(task, firstAttempt)
 	result := make(chan error, 1)
 	go func() {
-		result <- task.handleActorInputSend(t.Context(), &runv0.SessionInputSendRequested{
+		result <- task.handleActorInputSend(t.Context(), &programv0.SessionInputSendRequested{
 			CorrelationId: correlationID,
 			SessionId:     "019c10d5-a6f7-7af1-8f5f-000000000111",
 			DataJson:      `{"hello":"again"}`,
