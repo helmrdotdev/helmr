@@ -7,7 +7,8 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/helmrdotdev/helmr/internal/auth"
@@ -41,7 +42,7 @@ func TestBrowserAuthUsesSessionDomainForIssuedSession(t *testing.T) {
 	raw, err := server.issueSessionForOrg(
 		httptest.NewRequest("POST", "/", nil),
 		queries,
-		pgtype.UUID{Bytes: uuid.Must(uuid.NewV7()), Valid: true},
+		pgtype.UUID{Bytes: uuid.NewV7(), Valid: true},
 		pgtype.UUID{},
 	)
 	if err != nil {

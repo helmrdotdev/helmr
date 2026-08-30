@@ -5,7 +5,8 @@ import (
 	"encoding/base64"
 	"testing"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )

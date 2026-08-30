@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
@@ -141,9 +142,9 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 	if !sameSecretPlacements(taskRun.SecretPlacements, selectedSecrets) {
 		return taskAuthorityError("schedule Secret selection does not match its generation")
 	}
-	runID := uuid.Must(uuid.NewV7())
-	workspaceID := uuid.Must(uuid.NewV7())
-	initialVersionID := uuid.Must(uuid.NewV7())
+	runID := uuid.NewV7()
+	workspaceID := uuid.NewV7()
+	initialVersionID := uuid.NewV7()
 	createdWorkspace, err := queries.CreateWorkspaceForScheduleFire(
 		ctx,
 		db.CreateWorkspaceForScheduleFireParams{

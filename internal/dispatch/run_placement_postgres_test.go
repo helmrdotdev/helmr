@@ -10,7 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -1073,8 +1074,8 @@ func convertRunToActor(
 	runID uuid.UUID,
 ) {
 	t.Helper()
-	actorID := uuid.Must(uuid.NewV7())
-	definitionID := uuid.Must(uuid.NewV7())
+	actorID := uuid.NewV7()
+	definitionID := uuid.NewV7()
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 ALTER TABLE run_attempts
 ALTER CONSTRAINT run_attempts_run_id_entrypoint_kind_workspace_id_fkey
@@ -1209,12 +1210,12 @@ SELECT workspace_leases.id, workspace_leases.base_version_id,
 		t.Fatal(err)
 	}
 
-	runWaitID := uuid.Must(uuid.NewV7())
-	checkpointID := uuid.Must(uuid.NewV7())
-	privateVersionID := uuid.Must(uuid.NewV7())
-	privateArtifactID := uuid.Must(uuid.NewV7())
+	runWaitID := uuid.NewV7()
+	checkpointID := uuid.NewV7()
+	privateVersionID := uuid.NewV7()
+	privateArtifactID := uuid.NewV7()
 	privateDigest := "sha256:" + strings.Repeat("5", 64)
-	resumeAttachID := uuid.Must(uuid.NewV7())
+	resumeAttachID := uuid.NewV7()
 	tx, err := fixture.pool.Begin(fixture.ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -2140,12 +2141,12 @@ SELECT id, base_version_id FROM workspace_leases WHERE owner_run_lease_id = $1`,
 	); err != nil {
 		t.Fatal(err)
 	}
-	actorID := uuid.Must(uuid.NewV7())
-	actorDefinitionID := uuid.Must(uuid.NewV7())
-	waitID := uuid.Must(uuid.NewV7())
-	checkpointID := uuid.Must(uuid.NewV7())
-	privateVersionID := uuid.Must(uuid.NewV7())
-	privateArtifactID := uuid.Must(uuid.NewV7())
+	actorID := uuid.NewV7()
+	actorDefinitionID := uuid.NewV7()
+	waitID := uuid.NewV7()
+	checkpointID := uuid.NewV7()
+	privateVersionID := uuid.NewV7()
+	privateArtifactID := uuid.NewV7()
 	privateDigest := "sha256:" + strings.Repeat("6", 64)
 	// This fixture converts the already-granted Task source into an Actor source.
 	// Production Actor creation does not perform that conversion, but deferring
@@ -2208,7 +2209,7 @@ INSERT INTO run_waits (
     attempt_number, prior_run_lease_id, resume_attach_id
 ) VALUES ($1, $2, $3, $4, 'timer', now() - interval '1 second', 'completed', '{}'::jsonb,
           now(), 'resume_pending', 3, 1, $5, $6)`, waitID, fixture.environmentID, fixture.runID,
-		fixture.workspaceID, grant.Lease.ID, uuid.Must(uuid.NewV7()))
+		fixture.workspaceID, grant.Lease.ID, uuid.NewV7())
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO run_checkpoints (
     id, run_id, attempt_number, run_wait_id, source_run_lease_id,
@@ -2347,7 +2348,7 @@ func (fixture runPlacementFixture) candidate() ReadyRunCandidate {
 }
 
 func newRunPlacementFixture(t *testing.T) runPlacementFixture {
-	return newRunPlacementFixtureWithSeed(t, uuid.NewString())
+	return newRunPlacementFixtureWithSeed(t, uuid.New().String())
 }
 
 func newRunPlacementFixtureWithSeed(t *testing.T, seed string) runPlacementFixture {
@@ -2355,7 +2356,7 @@ func newRunPlacementFixtureWithSeed(t *testing.T, seed string) runPlacementFixtu
 	ctx := context.Background()
 	pool := newDispatchIntegrationDB(t, ctx)
 	id := func(kind string) uuid.UUID {
-		return uuid.NewSHA1(uuid.NameSpaceOID, []byte(seed+":"+kind))
+		return deterministicUUID(seed + ":" + kind)
 	}
 	fixture := runPlacementFixture{
 		ctx:           ctx,

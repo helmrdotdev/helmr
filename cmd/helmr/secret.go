@@ -6,7 +6,8 @@ import (
 	"io"
 	"strings"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/spf13/cobra"
@@ -169,7 +170,7 @@ func secretRotateCommand() *cobra.Command {
 				return err
 			}
 			if strings.TrimSpace(idempotencyKey) == "" {
-				idempotencyKey = uuid.Must(uuid.NewV7()).String()
+				idempotencyKey = uuid.NewV7().String()
 			}
 			record, err := controlPlane.RotateSecret(
 				cmd.Context(),
@@ -234,7 +235,7 @@ func secretRevokeCommand() *cobra.Command {
 				return err
 			}
 			if strings.TrimSpace(idempotencyKey) == "" {
-				idempotencyKey = uuid.Must(uuid.NewV7()).String()
+				idempotencyKey = uuid.NewV7().String()
 			}
 			secret, err := controlPlane.RevokeSecret(
 				cmd.Context(),

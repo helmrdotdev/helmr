@@ -5,7 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -43,19 +44,19 @@ func New(t *testing.T) Fixture {
 	}
 	fixture := Fixture{
 		Pool:                  database.Pool,
-		OrgID:                 uuid.Must(uuid.NewV7()),
-		ProjectID:             uuid.Must(uuid.NewV7()),
-		EnvironmentID:         uuid.Must(uuid.NewV7()),
-		DeploymentID:          uuid.Must(uuid.NewV7()),
-		TaskDefinitionID:      uuid.Must(uuid.NewV7()),
-		WorkspaceDefinitionID: uuid.Must(uuid.NewV7()),
-		WorkerID:              uuid.Must(uuid.NewV7()),
-		WorkerPoolID:          uuid.Must(uuid.NewV7()),
+		OrgID:                 uuid.NewV7(),
+		ProjectID:             uuid.NewV7(),
+		EnvironmentID:         uuid.NewV7(),
+		DeploymentID:          uuid.NewV7(),
+		TaskDefinitionID:      uuid.NewV7(),
+		WorkspaceDefinitionID: uuid.NewV7(),
+		WorkerID:              uuid.NewV7(),
+		WorkerPoolID:          uuid.NewV7(),
 		RuntimeIdentityID:     dbtest.Digest("run-lease-test-runtime"),
 		CPUConfigDigest:       dbtest.Digest("run-lease-test-cpu-config"),
 	}
-	programID := uuid.Must(uuid.NewV7())
-	imageID := uuid.Must(uuid.NewV7())
+	programID := uuid.NewV7()
+	imageID := uuid.NewV7()
 	bundleDigest := dbtest.Digest("bundle")
 	runtimeArtifactDigest := dbtest.Digest("runtime-artifact")
 	programDigest := dbtest.Digest("program")
@@ -74,7 +75,7 @@ func New(t *testing.T) Fixture {
 			id, token_id, region_id, name
 		)
 		SELECT $1, token.id, $2, $1 FROM token
-	`, WorkerGroup, Region, uuid.Must(uuid.NewV7()), dbtest.Hash("run-test-worker-group"))
+	`, WorkerGroup, Region, uuid.NewV7(), dbtest.Hash("run-test-worker-group"))
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO organizations (id, name, slug)
 		VALUES ($1, 'Run Lease Test', $2)
@@ -183,7 +184,7 @@ func New(t *testing.T) Fixture {
 			8, 8, '{}'::jsonb, $7, now(), now(), now()
 		)
 	`, fixture.WorkerID, fixture.WorkerID.String(), WorkerGroup,
-		fixture.WorkerPoolID, uuid.Must(uuid.NewV7()), fixture.RuntimeIdentityID,
+		fixture.WorkerPoolID, uuid.NewV7(), fixture.RuntimeIdentityID,
 		fixture.CPUConfigDigest)
 	return fixture
 }
@@ -191,13 +192,13 @@ func New(t *testing.T) Fixture {
 func (fixture Fixture) AddRunLease(t *testing.T, state string, assignedAt time.Time) RunLease {
 	t.Helper()
 	ctx := t.Context()
-	workspaceID := uuid.Must(uuid.NewV7())
-	versionID := uuid.Must(uuid.NewV7())
-	runID := uuid.Must(uuid.NewV7())
-	runtimeID := uuid.Must(uuid.NewV7())
-	mountID := uuid.Must(uuid.NewV7())
-	leaseID := uuid.Must(uuid.NewV7())
-	workspaceLeaseID := uuid.Must(uuid.NewV7())
+	workspaceID := uuid.NewV7()
+	versionID := uuid.NewV7()
+	runID := uuid.NewV7()
+	runtimeID := uuid.NewV7()
+	mountID := uuid.NewV7()
+	leaseID := uuid.NewV7()
+	workspaceLeaseID := uuid.NewV7()
 	tx, err := fixture.Pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -332,8 +333,8 @@ func (fixture Fixture) ConvertToActor(
 	retryPolicy string,
 ) uuid.UUID {
 	t.Helper()
-	actorDefinitionID := uuid.Must(uuid.NewV7())
-	actorID := uuid.Must(uuid.NewV7())
+	actorDefinitionID := uuid.NewV7()
+	actorID := uuid.NewV7()
 	dbtest.MustExec(t, ctx, fixture.Pool, `
 ALTER TABLE run_attempts
 ALTER CONSTRAINT run_attempts_run_id_entrypoint_kind_workspace_id_fkey

@@ -10,7 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -168,13 +169,13 @@ SELECT runs.workspace_id,
 		t.Fatal(err)
 	}
 
-	parentRunID := uuid.Must(uuid.NewV7())
-	parentLeaseID := uuid.Must(uuid.NewV7())
-	parentWorkspaceLeaseID := uuid.Must(uuid.NewV7())
-	waitID := uuid.Must(uuid.NewV7())
-	checkpointID := uuid.Must(uuid.NewV7())
-	claimID := uuid.Must(uuid.NewV7())
-	operationID := uuid.Must(uuid.NewV7())
+	parentRunID := uuid.NewV7()
+	parentLeaseID := uuid.NewV7()
+	parentWorkspaceLeaseID := uuid.NewV7()
+	waitID := uuid.NewV7()
+	checkpointID := uuid.NewV7()
+	claimID := uuid.NewV7()
+	operationID := uuid.NewV7()
 	expiresAt := time.Now().Add(10 * time.Minute).UTC().Truncate(time.Microsecond)
 	retryPolicy := `{"enabled":false}`
 	if retry {
@@ -275,7 +276,7 @@ INSERT INTO run_waits (
 	$6, '{"Method":"call"}'::jsonb, 3, 1, $7, 1, 1, $8,
 	'parked'
 )`, waitID, base.EnvironmentID, parentRunID, workspaceID, work.RunID,
-		claimID, parentLeaseID, uuid.Must(uuid.NewV7()))
+		claimID, parentLeaseID, uuid.NewV7())
 	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO run_checkpoints (
     id, run_id, attempt_number, run_wait_id, source_run_lease_id,

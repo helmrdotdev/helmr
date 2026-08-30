@@ -7,7 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/retry"
@@ -41,8 +42,8 @@ func (g OwnedFinalization) RecoverExecutionLeaseLoss(
 	request ExecutionLeaseRecoveryRequest,
 ) (bool, error) {
 	if g.tx == nil || g.currentRun != request.RunID || len(g.descendants) == 0 ||
-		request.RunID == uuid.Nil || request.WorkspaceID == uuid.Nil ||
-		request.AttemptNumber <= 0 || request.RunLeaseID == uuid.Nil {
+		request.RunID == uuid.Nil() || request.WorkspaceID == uuid.Nil() ||
+		request.AttemptNumber <= 0 || request.RunLeaseID == uuid.Nil() {
 		return false, errors.New("Run execution lease recovery authority is invalid")
 	}
 	target := g.descendants[0]

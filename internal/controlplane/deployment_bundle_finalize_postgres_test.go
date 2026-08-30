@@ -8,7 +8,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -186,7 +187,7 @@ func TestFinishFinalizedDeploymentBundlePostgresVerifiesSameDigestInAnotherEnvir
 	); err != nil {
 		t.Fatal(err)
 	}
-	otherEnvironment := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	otherEnvironment := pgvalue.UUID(uuid.NewV7())
 	if _, err := fixture.server.db.CreateEnvironment(t.Context(), db.CreateEnvironmentParams{
 		ID: otherEnvironment, OrgID: pgvalue.UUID(fixture.orgID), ProjectID: fixture.projectID,
 		Slug: "preview", Name: "Preview", ColorHex: "#315FCE",
@@ -253,9 +254,9 @@ func newDeploymentFinalizePostgresFixture(t *testing.T) deploymentFinalizePostgr
 	if _, err := queries.CreateRegion(t.Context(), db.CreateRegionParams{ID: regionID, DisplayName: "Test"}); err != nil {
 		t.Fatal(err)
 	}
-	orgID := uuid.Must(uuid.NewV7())
-	projectUUID := uuid.Must(uuid.NewV7())
-	environmentUUID := uuid.Must(uuid.NewV7())
+	orgID := uuid.NewV7()
+	projectUUID := uuid.NewV7()
+	environmentUUID := uuid.NewV7()
 	projectID := pgvalue.UUID(projectUUID)
 	environmentID := pgvalue.UUID(environmentUUID)
 	if _, err := queries.CreateOrganization(t.Context(), db.CreateOrganizationParams{

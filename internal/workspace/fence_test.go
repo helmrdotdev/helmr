@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 func TestFencingKeyDerivesStableCapability(t *testing.T) {
@@ -61,8 +61,8 @@ func TestFencingKeyRejectsInvalidInput(t *testing.T) {
 		edit func(*FenceInput)
 		want string
 	}{
-		{name: "missing lease", edit: func(input *FenceInput) { input.LeaseID = uuid.Nil }, want: "lease ID"},
-		{name: "missing workspace", edit: func(input *FenceInput) { input.WorkspaceID = uuid.Nil }, want: "workspace ID"},
+		{name: "missing lease", edit: func(input *FenceInput) { input.LeaseID = uuid.Nil() }, want: "lease ID"},
+		{name: "missing workspace", edit: func(input *FenceInput) { input.WorkspaceID = uuid.Nil() }, want: "workspace ID"},
 		{name: "invalid generation", edit: func(input *FenceInput) { input.WriterGeneration = 0 }, want: "must be positive"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

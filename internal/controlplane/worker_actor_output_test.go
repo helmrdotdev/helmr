@@ -5,15 +5,16 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func TestParseWorkerActorOutputAppendNormalizesPayload(t *testing.T) {
-	lease := validRunLeaseAssignment(uuid.Must(uuid.NewV7()))
+	lease := validRunLeaseAssignment(uuid.NewV7())
 	request := workerapi.AppendActorOutputRequest{
-		Lease: lease.Fence(), CorrelationID: uuid.Must(uuid.NewV7()).String(),
+		Lease: lease.Fence(), CorrelationID: uuid.NewV7().String(),
 		Data: json.RawMessage(`{"b":2,"a":1}`), ContentType: " application/json ",
 		IdempotencyKey: "output-1",
 	}
@@ -45,7 +46,7 @@ func TestParseWorkerActorOutputAppendNormalizesPayload(t *testing.T) {
 }
 
 func TestActorOutputAppendFailurePreservesSemanticCodes(t *testing.T) {
-	conflict := idempotency.ConflictError{ClaimID: uuid.Must(uuid.NewV7())}
+	conflict := idempotency.ConflictError{ClaimID: uuid.NewV7()}
 	tests := []struct {
 		err  error
 		code string

@@ -5,7 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -42,7 +43,7 @@ func TestTimerWaitReconcilerCompletesDueHotWait(t *testing.T) {
 		t.Fatal(err)
 	}
 	wait, err := fixture.queries.RegisterTimerRunWait(ctx, db.RegisterTimerRunWaitParams{
-		ID:                             pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ID:                             pgvalue.UUID(uuid.NewV7()),
 		EnvironmentID:                  pgvalue.UUID(fixture.environmentID),
 		DueAt:                          pgvalue.Timestamptz(time.Now().UTC().Add(-time.Second)),
 		IdleTimeoutMs:                  pgtype.Int8{Int64: 30_000, Valid: true},
@@ -50,7 +51,7 @@ func TestTimerWaitReconcilerCompletesDueHotWait(t *testing.T) {
 		AttemptNumber:                  1,
 		CurrentRunLeaseID:              pgvalue.UUID(work.leaseID),
 		CheckpointDueAt:                pgvalue.Timestamptz(time.Now().UTC().Add(time.Second)),
-		ResumeAttachID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ResumeAttachID:                 pgvalue.UUID(uuid.NewV7()),
 		Metadata:                       []byte(`{}`),
 		Tags:                           []string{},
 		RunID:                          pgvalue.UUID(work.runID),

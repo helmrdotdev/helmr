@@ -8,7 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -126,8 +127,8 @@ func TestTruncateUTF8SuppliesValidNonemptyDiagnostic(t *testing.T) {
 
 func scheduleAt(at time.Time) db.Schedule {
 	return db.Schedule{
-		ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		EnvironmentID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ID:                   pgvalue.UUID(uuid.NewV7()),
+		EnvironmentID:        pgvalue.UUID(uuid.NewV7()),
 		CronPattern:          "0 9 * * *",
 		Timezone:             "Asia/Tokyo",
 		CronSemanticsVersion: CronSemanticsVersion,

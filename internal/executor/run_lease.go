@@ -7,7 +7,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -63,10 +64,7 @@ func (e Executor) ExecuteRunLease(
 		return fmt.Errorf("renew run lease before finalization: %w", err)
 	}
 
-	operationID, err := uuid.NewV7()
-	if err != nil {
-		return fmt.Errorf("create run finalization operation ID: %w", err)
-	}
+	operationID := uuid.NewV7()
 	kind := runFinalizationKind(result)
 	beginRequest := workerapi.BeginRunFinalizationRequest{
 		Lease: current.Fence(), ProgramQuiesced: result.ProgramQuiesced,

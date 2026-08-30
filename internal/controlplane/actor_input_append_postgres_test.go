@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 func TestActorInputAppendPostgresRejectsOversizedCanonicalInputWithoutResidue(
@@ -59,7 +59,7 @@ SELECT sessions.next_input_sequence,
 		return value
 	}
 	before := readState()
-	recordID := uuid.Must(uuid.NewV7())
+	recordID := uuid.NewV7()
 	_, err = fixture.server.appendActorInput(t.Context(), appendActorInputRequest{
 		EnvironmentID:  fixture.environmentID,
 		SessionID:      started.SessionID,

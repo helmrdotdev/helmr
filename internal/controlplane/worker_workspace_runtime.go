@@ -6,7 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -350,7 +351,7 @@ func (s *Server) workerPollWorkspaceExec(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	processID, err := parseCanonicalUUID("process_id", request.ProcessID)
-	if err != nil || processID == uuid.Nil {
+	if err != nil || processID == uuid.Nil() {
 		writeError(w, badRequest(errors.New("workspace exec process_id is invalid")))
 		return
 	}

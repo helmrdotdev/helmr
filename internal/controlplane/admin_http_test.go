@@ -11,8 +11,9 @@ import (
 	"strings"
 	"testing"
 
+	"uuid"
+
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
@@ -36,8 +37,8 @@ type adminHTTPQuerier struct {
 
 func (q *adminHTTPQuerier) GetAuthSessionByTokenHash(context.Context, []byte) (db.GetAuthSessionByTokenHashRow, error) {
 	return db.GetAuthSessionByTokenHashRow{
-		ID:          pgtype.UUID{Bytes: uuid.Must(uuid.NewV7()), Valid: true},
-		UserID:      pgtype.UUID{Bytes: uuid.Must(uuid.NewV7()), Valid: true},
+		ID:          pgtype.UUID{Bytes: uuid.NewV7(), Valid: true},
+		UserID:      pgtype.UUID{Bytes: uuid.NewV7(), Valid: true},
 		DisplayName: "Administrator",
 		Admin:       q.admin,
 	}, nil
@@ -167,7 +168,7 @@ func TestAdminHTTPRequiresPlatformAdminSession(t *testing.T) {
 
 func TestAdminHTTPWorkerGroupTokenRotationIsNeverCached(t *testing.T) {
 	queries := &adminHTTPQuerier{admin: true}
-	groupID := uuid.Must(uuid.NewV7()).String()
+	groupID := uuid.NewV7().String()
 	response := httptest.NewRecorder()
 	adminHTTPRouter(t, queries).ServeHTTP(response, adminHTTPRequest(
 		http.MethodPost,
@@ -231,7 +232,7 @@ func TestAdminHTTPCreatesLogicalWorkerGroup(t *testing.T) {
 
 func TestAdminHTTPLifecycleConflictUsesConflictResponse(t *testing.T) {
 	queries := &adminHTTPQuerier{admin: true, conflict: true}
-	groupID := uuid.Must(uuid.NewV7()).String()
+	groupID := uuid.NewV7().String()
 	response := httptest.NewRecorder()
 	adminHTTPRouter(t, queries).ServeHTTP(response, adminHTTPRequest(
 		http.MethodPost,
@@ -248,7 +249,7 @@ func TestAdminHTTPLifecycleConflictUsesConflictResponse(t *testing.T) {
 
 func TestAdminHTTPLifecycleRejectsInvalidVersion(t *testing.T) {
 	queries := &adminHTTPQuerier{admin: true}
-	groupID := uuid.Must(uuid.NewV7()).String()
+	groupID := uuid.NewV7().String()
 	response := httptest.NewRecorder()
 	adminHTTPRouter(t, queries).ServeHTTP(response, adminHTTPRequest(
 		http.MethodPost,
@@ -262,7 +263,7 @@ func TestAdminHTTPLifecycleRejectsInvalidVersion(t *testing.T) {
 
 func TestAdminHTTPLifecycleMissingGroupUsesNotFoundResponse(t *testing.T) {
 	queries := &adminHTTPQuerier{admin: true, missing: true}
-	groupID := uuid.Must(uuid.NewV7()).String()
+	groupID := uuid.NewV7().String()
 	response := httptest.NewRecorder()
 	adminHTTPRouter(t, queries).ServeHTTP(response, adminHTTPRequest(
 		http.MethodPost,

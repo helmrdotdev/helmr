@@ -4,19 +4,20 @@ import (
 	"context"
 	"testing"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestCreateTaskBuildsCompleteAdmissionTuple(t *testing.T) {
-	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	workspaceID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	environmentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	versionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	secretID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	secretVersionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	runID := pgvalue.UUID(uuid.NewV7())
+	workspaceID := pgvalue.UUID(uuid.NewV7())
+	environmentID := pgvalue.UUID(uuid.NewV7())
+	versionID := pgvalue.UUID(uuid.NewV7())
+	secretID := pgvalue.UUID(uuid.NewV7())
+	secretVersionID := pgvalue.UUID(uuid.NewV7())
 	store := &taskStore{
 		bindings: []db.LockWorkspaceSecretsForAdmissionRow{{
 			WorkspaceID:          workspaceID,

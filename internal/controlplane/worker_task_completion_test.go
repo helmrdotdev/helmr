@@ -11,14 +11,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestWorkerCompleteTaskReplaysPreviousEpochWithoutCAS(t *testing.T) {
-	workerID := uuid.Must(uuid.NewV7())
+	workerID := uuid.NewV7()
 	request := validTaskCompletionRequest(t)
 	lease := validRunLeaseAssignment(workerID)
 	lease.WorkerEpoch = 1
@@ -53,7 +54,7 @@ func TestWorkerCompleteTaskReplaysPreviousEpochWithoutCAS(t *testing.T) {
 }
 
 func TestWorkerCompleteTaskRejectsChangedTerminalRequest(t *testing.T) {
-	workerID := uuid.Must(uuid.NewV7())
+	workerID := uuid.NewV7()
 	request := validTaskCompletionRequest(t)
 	lease := validRunLeaseAssignment(workerID)
 	request.Lease = lease.Fence()

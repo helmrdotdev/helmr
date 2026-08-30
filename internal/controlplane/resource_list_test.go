@@ -7,7 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -15,7 +16,7 @@ import (
 )
 
 func TestDeploymentListCursorRoundTripAndScope(t *testing.T) {
-	id := uuid.Must(uuid.NewV7())
+	id := uuid.NewV7()
 	raw, err := encodeDeploymentListCursor(deploymentListCursor{
 		ProjectID: "project-1", EnvironmentID: "environment-1",
 		CreatedAt: time.Date(2026, time.August, 6, 12, 0, 0, 0, time.UTC), ID: id.String(),
@@ -44,7 +45,7 @@ func TestDeploymentListQueryRejectsUnknownParameters(t *testing.T) {
 }
 
 func TestTokenListCursorBindsStatus(t *testing.T) {
-	id := uuid.Must(uuid.NewV7())
+	id := uuid.NewV7()
 	raw, err := encodeTokenListCursor(tokenListCursor{
 		ProjectID: "project-1", EnvironmentID: "environment-1", Status: "completed",
 		CreatedAt: time.Date(2026, time.August, 6, 12, 0, 0, 0, time.UTC), ID: id.String(),
@@ -67,8 +68,8 @@ func TestTokenListCursorBindsStatus(t *testing.T) {
 func TestWorkspaceListItemExcludesSecretPlacements(t *testing.T) {
 	now := pgvalue.Timestamptz(time.Date(2026, time.August, 6, 12, 0, 0, 0, time.UTC))
 	item, err := workspaceListItem(
-		pgvalue.UUID(uuid.Must(uuid.NewV7())), pgvalue.Text("repository"), "repository-agent",
-		pgvalue.UUID(uuid.Must(uuid.NewV7())), db.WorkspaceStateActive, now, now, now,
+		pgvalue.UUID(uuid.NewV7()), pgvalue.Text("repository"), "repository-agent",
+		pgvalue.UUID(uuid.NewV7()), db.WorkspaceStateActive, now, now, now,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -81,9 +82,9 @@ func TestWorkspaceListItemExcludesSecretPlacements(t *testing.T) {
 func TestRunListItemProjectsOnlyCollectionFields(t *testing.T) {
 	now := pgvalue.Timestamptz(time.Date(2026, time.August, 6, 12, 0, 0, 0, time.UTC))
 	item, err := projectRunListItem(db.ListRunListItemsRow{
-		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), Status: db.RunStatusRunning,
+		ID: pgvalue.UUID(uuid.NewV7()), Status: db.RunStatusRunning,
 		EntrypointKind: "task", EntrypointDeclaredID: "resize-image",
-		WorkspaceID: pgvalue.UUID(uuid.Must(uuid.NewV7())), CurrentAttemptNumber: 1,
+		WorkspaceID: pgvalue.UUID(uuid.NewV7()), CurrentAttemptNumber: 1,
 		CreatedAt: now, StartedAt: now, TerminalAt: pgtype.Timestamptz{},
 	})
 	if err != nil {

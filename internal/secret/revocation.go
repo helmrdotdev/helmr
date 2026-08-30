@@ -5,7 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -73,7 +74,7 @@ func (r *RevocationReconciler) ReconcileBatch(
 	revocationGeneration int64,
 	limit int32,
 ) (int, error) {
-	if environmentID == uuid.Nil || secretID == uuid.Nil ||
+	if environmentID == uuid.Nil() || secretID == uuid.Nil() ||
 		revocationGeneration <= 0 {
 		return 0, errors.New("secret revocation authority is required")
 	}

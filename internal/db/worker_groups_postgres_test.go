@@ -6,7 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -19,8 +20,8 @@ func TestWorkerEpochOwnsLivenessAndActivationReplayPreservesIt(t *testing.T) {
 	ctx := context.Background()
 	pool := newPostgresDB(t, ctx)
 	q := db.New(pool)
-	workerID := uuid.Must(uuid.NewV7())
-	serviceID := uuid.Must(uuid.NewV7())
+	workerID := uuid.NewV7()
+	serviceID := uuid.NewV7()
 	secretHash := []byte("epoch-liveness-secret")
 	enrollTestWorker(t, ctx, q, workerID, "epoch-liveness-worker", secretHash)
 
@@ -109,7 +110,7 @@ func TestWorkerEpochOwnsLivenessAndActivationReplayPreservesIt(t *testing.T) {
 		t.Fatalf("same service changed liveness = observed:%+v runtime:%+v", preservedObservedAt, preservedRuntimePause)
 	}
 
-	nextEpoch := authenticate(uuid.Must(uuid.NewV7()))
+	nextEpoch := authenticate(uuid.NewV7())
 	if !nextEpoch.CurrentEpoch.Valid || nextEpoch.CurrentEpoch.Int64 != firstEpoch.CurrentEpoch.Int64+1 || nextEpoch.State != db.WorkerInstanceStateRegistering {
 		t.Fatalf("new service epoch = %+v", nextEpoch)
 	}
@@ -127,7 +128,7 @@ func TestDrainingWorkerActivationSurvivesRestartAndLostResponse(t *testing.T) {
 	ctx := context.Background()
 	pool := newPostgresDB(t, ctx)
 	q := db.New(pool)
-	workerID := uuid.Must(uuid.NewV7())
+	workerID := uuid.NewV7()
 	secretHash := []byte("draining-restart-secret")
 	enrollTestWorker(t, ctx, q, workerID, "draining-restart-worker", secretHash)
 	authenticate := func(serviceID uuid.UUID) db.AuthenticateWorkerInstanceCredentialRow {
@@ -156,7 +157,7 @@ func TestDrainingWorkerActivationSurvivesRestartAndLostResponse(t *testing.T) {
 		return authorized
 	}
 
-	firstServiceID := uuid.Must(uuid.NewV7())
+	firstServiceID := uuid.NewV7()
 	firstEpoch := authenticate(firstServiceID)
 	firstActivation := testWorkerActivationParams(workerID, firstEpoch.CurrentEpoch)
 	active, err := q.ActivateWorkerInstance(ctx, firstActivation)
@@ -201,7 +202,7 @@ func TestDrainingWorkerActivationSurvivesRestartAndLostResponse(t *testing.T) {
 		t.Fatalf("mismatched draining pool fence error = %v, want pgx.ErrNoRows", err)
 	}
 
-	nextEpoch := authenticate(uuid.Must(uuid.NewV7()))
+	nextEpoch := authenticate(uuid.NewV7())
 	if nextEpoch.State != db.WorkerInstanceStateDraining ||
 		nextEpoch.CurrentEpoch.Int64 != firstEpoch.CurrentEpoch.Int64+1 {
 		t.Fatalf("restarted draining epoch = %+v", nextEpoch)
@@ -353,13 +354,13 @@ func TestDeploymentWorkerInstanceLossIsFencedAndReplaySafe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	credentialID := uuid.Must(uuid.NewV7())
+	credentialID := uuid.NewV7()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO worker_instance_credentials (
 			id, worker_group_id, worker_instance_id, key_prefix, claim_version,
 			secret_hash
 		) VALUES ($1, $2, $3, $4, $5, $6)
-	`, credentialID, dbtest.DefaultWorkerGroupID, workerID, uuid.NewString(), initial.ClaimVersion, []byte("loss-secret")); err != nil {
+	`, credentialID, dbtest.DefaultWorkerGroupID, workerID, uuid.New().String(), initial.ClaimVersion, []byte("loss-secret")); err != nil {
 		t.Fatal(err)
 	}
 	lost, err := q.MarkWorkerInstanceLost(ctx, db.MarkWorkerInstanceLostParams{
@@ -401,7 +402,7 @@ func TestDeploymentWorkerInstanceLossTerminallyFencesRegisteringIdentity(t *test
 	ctx := context.Background()
 	pool := newPostgresDB(t, ctx)
 	q := db.New(pool)
-	workerID := uuid.Must(uuid.NewV7())
+	workerID := uuid.NewV7()
 	resourceID := "registering-lost-" + workerID.String()
 	secretHash := []byte("registering-lost-secret")
 	credential := enrollTestWorker(t, ctx, q, workerID, resourceID, secretHash)
@@ -430,7 +431,7 @@ func TestDeploymentWorkerInstanceLossTerminallyFencesRegisteringIdentity(t *test
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("lost registering credential authentication error = %v, want pgx.ErrNoRows", err)
 	}
-	replacementID := uuid.Must(uuid.NewV7())
+	replacementID := uuid.NewV7()
 	replacement, err := q.EnrollWorkerInstance(ctx, enrollmentParams(
 		replacementID, resourceID, []byte("replacement-secret"),
 	))
@@ -469,6 +470,6 @@ func enrollmentParams(workerID uuid.UUID, resourceID string, secretHash []byte) 
 		WorkerPoolID: pgvalue.UUID(uuid.MustParse(dbtest.DefaultWorkerPoolID)), PoolName: "default",
 		WorkerInstanceID: pgvalue.UUID(workerID), ResourceID: resourceID,
 		CurrentServiceID: pgvalue.NewUUIDv7(), CredentialID: pgvalue.NewUUIDv7(),
-		KeyPrefix: uuid.NewString(), SecretHash: secretHash,
+		KeyPrefix: uuid.New().String(), SecretHash: secretHash,
 	}
 }

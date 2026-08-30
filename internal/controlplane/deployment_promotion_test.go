@@ -6,7 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
@@ -28,7 +29,7 @@ func TestReconcileSchedulesPinsPerFireWorkspaceAuthority(t *testing.T) {
 		`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}`,
 	)
 	sandbox := promotionSandboxDefinition(target, "reporting")
-	secretID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	secretID := pgvalue.UUID(uuid.NewV7())
 	store := &promotionScheduleStore{
 		definitions: []db.DeploymentDefinition{scheduled, ordinary, sandbox},
 		secrets: map[string]db.Secret{
@@ -96,8 +97,8 @@ func TestReconcileSchedulesLocksSchedulesBeforeSecrets(t *testing.T) {
 			sandbox,
 		},
 		secrets: map[string]db.Secret{
-			"A_TOKEN": {ID: pgvalue.UUID(uuid.Must(uuid.NewV7()))},
-			"Z_TOKEN": {ID: pgvalue.UUID(uuid.Must(uuid.NewV7()))},
+			"A_TOKEN": {ID: pgvalue.UUID(uuid.NewV7())},
+			"Z_TOKEN": {ID: pgvalue.UUID(uuid.NewV7())},
 		},
 	}
 
@@ -125,7 +126,7 @@ func TestReconcileSchedulesLocksSchedulesBeforeSecrets(t *testing.T) {
 
 func TestScheduleResponseProjectsTimedDeclaration(t *testing.T) {
 	now := time.Date(2026, 7, 24, 3, 0, 0, 0, time.UTC)
-	scheduleID := uuid.Must(uuid.NewV7())
+	scheduleID := uuid.NewV7()
 	row := db.Schedule{
 		ID:                   pgvalue.UUID(scheduleID),
 		TaskDeclaredID:       "daily-report",
@@ -155,10 +156,10 @@ func TestScheduleResponseProjectsTimedDeclaration(t *testing.T) {
 
 func promotionTestDeployment() db.Deployment {
 	return db.Deployment{
-		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:         pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		ProjectID:     pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		EnvironmentID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ID:            pgvalue.UUID(uuid.NewV7()),
+		OrgID:         pgvalue.UUID(uuid.NewV7()),
+		ProjectID:     pgvalue.UUID(uuid.NewV7()),
+		EnvironmentID: pgvalue.UUID(uuid.NewV7()),
 	}
 }
 
@@ -174,7 +175,7 @@ func promotionTaskDefinition(
 		t.Fatal(err)
 	}
 	return db.DeploymentDefinition{
-		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ID:              pgvalue.UUID(uuid.NewV7()),
 		EnvironmentID:   target.EnvironmentID,
 		DeploymentID:    target.ID,
 		Kind:            "task",
@@ -187,7 +188,7 @@ func promotionTaskDefinition(
 
 func promotionSandboxDefinition(target db.Deployment, declaredID string) db.DeploymentDefinition {
 	return db.DeploymentDefinition{
-		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ID:            pgvalue.UUID(uuid.NewV7()),
 		EnvironmentID: target.EnvironmentID,
 		DeploymentID:  target.ID,
 		Kind:          "sandbox",

@@ -7,7 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -199,7 +200,7 @@ func (d *Authority) PlaceWorkspaceExec(
 		requested, err := db.New(tx).EnsureProcessWorkspaceMountRequested(
 			ctx,
 			db.EnsureProcessWorkspaceMountRequestedParams{
-				ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				ID:                 pgvalue.UUID(uuid.NewV7()),
 				Request:            []byte(`{"kind":"workspace_exec"}`),
 				OrgID:              authority.orgID,
 				WorkspaceID:        authority.workspaceID,
@@ -414,7 +415,7 @@ func (d *Authority) createWorkspaceExecRuntime(
 	if err := lockRunWorkerCapacity(ctx, tx, runAuthority, worker); err != nil {
 		return WorkspaceExecPlacement{}, err
 	}
-	runtimeID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	runtimeID := pgvalue.UUID(uuid.NewV7())
 	runtime, err := db.New(tx).CreateWorkspaceExecRuntimeReservation(
 		ctx,
 		db.CreateWorkspaceExecRuntimeReservationParams{
@@ -522,7 +523,7 @@ func (d *Authority) grantWorkspaceExec(
 	runtime runRuntime,
 	mount runWorkspaceMount,
 ) error {
-	leaseUUID := uuid.Must(uuid.NewV7())
+	leaseUUID := uuid.NewV7()
 	leaseID := pgvalue.UUID(leaseUUID)
 	workspaceUUID, err := pgvalue.UUIDValue(authority.workspaceID)
 	if err != nil {

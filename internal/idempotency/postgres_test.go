@@ -6,7 +6,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
@@ -170,9 +171,9 @@ func TestPostgresClaimSlotIsScopedByEnvironment(t *testing.T) {
 
 func seedClaimEnvironment(t *testing.T, pool *pgxpool.Pool) uuid.UUID {
 	t.Helper()
-	orgID := uuid.Must(uuid.NewV7())
-	projectID := uuid.Must(uuid.NewV7())
-	environmentID := uuid.Must(uuid.NewV7())
+	orgID := uuid.NewV7()
+	projectID := uuid.NewV7()
+	environmentID := uuid.NewV7()
 	regionID := "claim-" + environmentID.String()
 	if _, err := pool.Exec(t.Context(), `
 		INSERT INTO organizations (id, name, slug)

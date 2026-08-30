@@ -4,7 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -87,8 +88,8 @@ func placeWorkspaceExecForClaim(
 	fixture runPlacementFixture,
 ) (uuid.UUID, uuid.UUID) {
 	t.Helper()
-	claimID := uuid.Must(uuid.NewV7())
-	processID := uuid.Must(uuid.NewV7())
+	claimID := uuid.NewV7()
+	processID := uuid.NewV7()
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE workspaces
    SET owner_run_id = NULL

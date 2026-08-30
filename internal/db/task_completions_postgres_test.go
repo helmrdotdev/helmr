@@ -7,7 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -143,8 +144,8 @@ func TestRestoredTaskFailureRollsBackPhysicalFrontier(t *testing.T) {
 	fixture := newRunLeaseClaimFixture(t, ctx)
 	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
 	authority := startTaskCompletionWork(t, ctx, fixture, work)
-	restoredVersionID := uuid.Must(uuid.NewV7())
-	artifactID := uuid.Must(uuid.NewV7())
+	restoredVersionID := uuid.NewV7()
+	artifactID := uuid.NewV7()
 	digest := dbtest.Digest("restored-task-frontier")
 	dbtest.MustExec(t, ctx, fixture.pool, `
 		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
@@ -386,7 +387,7 @@ func beginTaskCompletionFinalization(
 		       finalization_request_fingerprint = 'test-finalization'
 		 WHERE id = $1
 		   AND state = 'running'
-	`, work.leaseID, uuid.Must(uuid.NewV7()))
+	`, work.leaseID, uuid.NewV7())
 }
 
 func completeTaskAttemptQueries(

@@ -9,7 +9,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
@@ -96,7 +97,7 @@ func (s *Server) workerSendActorInput(w http.ResponseWriter, r *http.Request) {
 	record, err := s.appendActorInput(r.Context(), appendActorInputRequest{
 		EnvironmentID:  pgvalue.MustUUIDValue(source.EnvironmentID),
 		SessionID:      pgvalue.MustUUIDValue(target.ID),
-		RecordID:       uuid.Must(uuid.NewV7()),
+		RecordID:       uuid.NewV7(),
 		Data:           request.Input,
 		SourceKind:     "run",
 		SourceRunID:    pgvalue.MustUUIDValue(source.RunID),

@@ -12,7 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
@@ -1312,7 +1313,7 @@ func (p *PreparedRuntimePool) removeReadyEntryAtLocked(key string, entries []pre
 
 func preparedRuntimeWorkspaceMountFromSource(source workerapi.RuntimeSource) workerapi.WorkspaceMount {
 	return workerapi.WorkspaceMount{
-		ID:                      uuid.Must(uuid.NewV7()).String(),
+		ID:                      uuid.NewV7().String(),
 		WorkspaceID:             strings.TrimSpace(source.WorkspaceID),
 		DeploymentDefinitionID:  strings.TrimSpace(source.DeploymentDefinitionID),
 		Target:                  *source.WorkspaceTarget,

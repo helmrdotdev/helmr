@@ -10,7 +10,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/outbox"
@@ -63,7 +64,7 @@ func NewDeliveryWorker(log *slog.Logger, store DeliveryStore, reconcile Reconcil
 		log:       log,
 		store:     store,
 		reconcile: reconcile,
-		workerID:  uuid.Must(uuid.NewV7()).String(),
+		workerID:  uuid.NewV7().String(),
 		interval:  tokenDeliveryPollInterval,
 		claimFor:  tokenDeliveryClaimLease,
 		claimSize: tokenDeliveryClaimLimit,

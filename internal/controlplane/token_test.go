@@ -8,7 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -31,7 +32,7 @@ func TestTokenCreateResponseRemainsOriginalPendingProjection(t *testing.T) {
 	} {
 		t.Run(string(state), func(t *testing.T) {
 			row := db.Token{
-				ID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				ID:        pgvalue.UUID(uuid.NewV7()),
 				State:     state,
 				Result:    json.RawMessage(`{"approved":true}`),
 				Error:     json.RawMessage(`{"code":"terminal"}`),
@@ -70,10 +71,10 @@ func TestTokenCreateResponseRemainsOriginalPendingProjection(t *testing.T) {
 
 func TestExpiredTokenOperationCommitsTerminalTransition(t *testing.T) {
 	tokenRow := db.Token{
-		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:         pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		ProjectID:     pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		EnvironmentID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ID:            pgvalue.UUID(uuid.NewV7()),
+		OrgID:         pgvalue.UUID(uuid.NewV7()),
+		ProjectID:     pgvalue.UUID(uuid.NewV7()),
+		EnvironmentID: pgvalue.UUID(uuid.NewV7()),
 	}
 
 	t.Run("complete", func(t *testing.T) {

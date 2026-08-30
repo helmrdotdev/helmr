@@ -4,13 +4,14 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestValidateTokenWaitActorCursor(t *testing.T) {
-	actorID := pgtype.UUID{Bytes: uuid.Must(uuid.NewV7()), Valid: true}
-	runID := uuid.Must(uuid.NewV7())
+	actorID := pgtype.UUID{Bytes: uuid.NewV7(), Valid: true}
+	runID := uuid.NewV7()
 	run := tokenWaitLockedRun{
 		id: runID, actorID: actorID, entrypointKind: "actor",
 	}
@@ -36,7 +37,7 @@ func TestValidateTokenWaitActorCursor(t *testing.T) {
 }
 
 func TestValidateTokenWaitTaskRejectsActorCursor(t *testing.T) {
-	run := tokenWaitLockedRun{id: uuid.Must(uuid.NewV7()), entrypointKind: "task"}
+	run := tokenWaitLockedRun{id: uuid.NewV7(), entrypointKind: "task"}
 	if err := validateTokenWaitActorCursor(
 		pgtype.Int8{}, pgtype.UUID{}, pgtype.UUID{}, 0, 0, run, "task", pgtype.Int8{},
 	); err != nil {

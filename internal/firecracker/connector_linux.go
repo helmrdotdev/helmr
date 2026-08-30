@@ -25,12 +25,13 @@ import (
 	"syscall"
 	"time"
 
+	"uuid"
+
 	"github.com/containernetworking/plugins/pkg/ns"
 	"github.com/firecracker-microvm/firecracker-go-sdk"
 	"github.com/firecracker-microvm/firecracker-go-sdk/client/models"
 	"github.com/firecracker-microvm/firecracker-go-sdk/client/operations"
 	"github.com/firecracker-microvm/firecracker-go-sdk/vsock"
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/firecracker/datapath"
@@ -156,7 +157,7 @@ func (c *Connector) probeGuest(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("resolve startup probe runtime identity: %w", err)
 	}
-	ownerID := uuid.Must(uuid.NewV7()).String()
+	ownerID := uuid.NewV7().String()
 	session, err := c.connect(probeCtx, vm.ConnectRequest{
 		ID:        ownerID,
 		OwnerKind: vm.OwnerRuntime,
@@ -2300,7 +2301,7 @@ func ignoreStopSignalError(err error, signal syscall.Signal) error {
 
 func safeSnapshotID(id string) string {
 	if id == "" {
-		return uuid.Must(uuid.NewV7()).String()
+		return uuid.NewV7().String()
 	}
 	out := make([]byte, 0, len(id))
 	for _, r := range id {
@@ -2309,7 +2310,7 @@ func safeSnapshotID(id string) string {
 		}
 	}
 	if len(out) == 0 {
-		return uuid.Must(uuid.NewV7()).String()
+		return uuid.NewV7().String()
 	}
 	return string(out)
 }

@@ -7,7 +7,8 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -197,8 +198,8 @@ func lockOwnedFinalization(
 	request OwnedFinalizationRequest,
 	beforeRuntime func() error,
 ) (OwnedFinalization, error) {
-	if tx == nil || request.OrgID == uuid.Nil || request.ProjectID == uuid.Nil ||
-		request.EnvironmentID == uuid.Nil || request.RunID == uuid.Nil {
+	if tx == nil || request.OrgID == uuid.Nil() || request.ProjectID == uuid.Nil() ||
+		request.EnvironmentID == uuid.Nil() || request.RunID == uuid.Nil() {
 		return OwnedFinalization{}, errors.New("owned run finalization graph authority is required")
 	}
 	scope := CancellationRequest{
@@ -276,7 +277,7 @@ func lockOwnedFinalization(
 // resolving the current Run's boundary Wait. The current Run is terminalized
 // by the caller in the same transaction.
 func (g OwnedFinalization) CancelDescendants(ctx context.Context) (int, error) {
-	if g.tx == nil || g.currentRun == uuid.Nil || len(g.descendants) == 0 ||
+	if g.tx == nil || g.currentRun == uuid.Nil() || len(g.descendants) == 0 ||
 		g.descendants[0].id != g.currentRun {
 		return 0, errors.New("owned run finalization graph is invalid")
 	}
@@ -369,7 +370,7 @@ func (g OwnedFinalization) FailCurrentForSecretRevocation(
 func (g OwnedFinalization) ChargeRuntimePreparationFailure(
 	ctx context.Context,
 ) (bool, error) {
-	if g.tx == nil || g.currentRun == uuid.Nil || len(g.descendants) == 0 ||
+	if g.tx == nil || g.currentRun == uuid.Nil() || len(g.descendants) == 0 ||
 		g.descendants[0].id != g.currentRun {
 		return false, errors.New("runtime preparation failure authority is invalid")
 	}
@@ -471,9 +472,9 @@ func (c *Canceler) Cancel(
 	ctx context.Context,
 	request CancellationRequest,
 ) (CancellationResult, error) {
-	if request.OrgID == uuid.Nil || request.ProjectID == uuid.Nil ||
-		request.EnvironmentID == uuid.Nil ||
-		request.RunID == uuid.Nil {
+	if request.OrgID == uuid.Nil() || request.ProjectID == uuid.Nil() ||
+		request.EnvironmentID == uuid.Nil() ||
+		request.RunID == uuid.Nil() {
 		return CancellationResult{}, errors.New("run cancellation scope and ID are required")
 	}
 	tx, err := c.db.Begin(ctx)

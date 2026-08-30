@@ -5,7 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -20,10 +21,10 @@ func TestAttemptSecretDeliveryLocksCompleteWorkspacePlacementSet(t *testing.T) {
 	if err := fixture.pool.QueryRow(ctx, `SELECT workspace_id FROM runs WHERE id = $1`, work.runID).Scan(&workspaceID); err != nil {
 		t.Fatal(err)
 	}
-	secretID := uuid.Must(uuid.NewV7())
-	oldVersionID := uuid.Must(uuid.NewV7())
-	currentVersionID := uuid.Must(uuid.NewV7())
-	resolutionID := uuid.Must(uuid.NewV7())
+	secretID := uuid.NewV7()
+	oldVersionID := uuid.NewV7()
+	currentVersionID := uuid.NewV7()
+	resolutionID := uuid.NewV7()
 
 	tx, err := fixture.pool.Begin(ctx)
 	if err != nil {

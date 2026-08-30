@@ -7,7 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -250,8 +251,8 @@ func prepareClaimableRunMount(t *testing.T) (runPlacementFixture, pgtype.UUID) {
 func prepareClaimableWorkspaceExecMount(t *testing.T) (runPlacementFixture, uuid.UUID, pgtype.UUID) {
 	t.Helper()
 	fixture := newRunPlacementFixture(t)
-	claimID := uuid.Must(uuid.NewV7())
-	processID := uuid.Must(uuid.NewV7())
+	claimID := uuid.NewV7()
+	processID := uuid.NewV7()
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE workspaces SET owner_run_id = NULL WHERE id = $1`, fixture.workspaceID)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
@@ -302,11 +303,11 @@ INSERT INTO idempotency_claims (
 
 func cloneClaimableRunMount(t *testing.T, fixture runPlacementFixture, sourceMountID pgtype.UUID) pgtype.UUID {
 	t.Helper()
-	workspaceID := uuid.Must(uuid.NewV7())
-	versionID := uuid.Must(uuid.NewV7())
-	runID := uuid.Must(uuid.NewV7())
-	runtimeID := uuid.Must(uuid.NewV7())
-	mountID := uuid.Must(uuid.NewV7())
+	workspaceID := uuid.NewV7()
+	versionID := uuid.NewV7()
+	runID := uuid.NewV7()
+	runtimeID := uuid.NewV7()
+	mountID := uuid.NewV7()
 	tx, err := fixture.pool.Begin(fixture.ctx)
 	if err != nil {
 		t.Fatal(err)

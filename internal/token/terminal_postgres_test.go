@@ -7,7 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -24,7 +25,7 @@ func TestTokenTerminalQueriesPublishExactlyOneReconciliationIntent(t *testing.T)
 		if err := fixture.pool.QueryRow(ctx, `SELECT workspace_id FROM runs WHERE id = $1`, work.runID).Scan(&workspaceID); err != nil {
 			t.Fatal(err)
 		}
-		waitID := uuid.Must(uuid.NewV7())
+		waitID := uuid.NewV7()
 		insertTokenWaitFixture(t, ctx, fixture, waitID, work.runID, workspaceID, tokenID, work.leaseID, 1)
 
 		params := tokenCompletionParams(fixture, tokenID, "sha256:first", `{"approved":true}`)
@@ -85,7 +86,7 @@ func TestTokenTerminalQueriesPublishExactlyOneReconciliationIntent(t *testing.T)
 	t.Run("expiry redelivery", func(t *testing.T) {
 		expiredAt := time.Now().Add(-time.Minute)
 		tokenID := createTokenTerminalTestToken(t, ctx, fixture, expiredAt)
-		publicAccessTokenID := uuid.Must(uuid.NewV7())
+		publicAccessTokenID := uuid.NewV7()
 		dbtest.MustExec(t, ctx, fixture.pool, `
 			INSERT INTO public_access_tokens (
 			    id, token_id, token_hash, created_at, updated_at, expires_at
@@ -175,7 +176,7 @@ func TestTokenCompletionRollsBackWhenReconciliationIntentFails(t *testing.T) {
 
 func createTokenTerminalTestToken(t *testing.T, ctx context.Context, fixture runLeaseClaimFixture, timeoutAt time.Time) uuid.UUID {
 	t.Helper()
-	id := uuid.Must(uuid.NewV7())
+	id := uuid.NewV7()
 	insertExpiry := timeoutAt
 	if !insertExpiry.After(time.Now()) {
 		insertExpiry = time.Now().Add(time.Hour)
@@ -214,7 +215,7 @@ func tokenCompletionParams(fixture runLeaseClaimFixture, tokenID uuid.UUID, fing
 		CompletionFingerprint: fingerprintBytes[:32], OrgID: pgvalue.UUID(fixture.orgID),
 		ProjectID: pgvalue.UUID(fixture.projectID), EnvironmentID: pgvalue.UUID(fixture.environmentID),
 		ID: pgvalue.UUID(tokenID), Result: []byte(data),
-		OutboxMessageID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OutboxMessageID: pgvalue.UUID(uuid.NewV7()),
 	}
 }
 
@@ -222,7 +223,7 @@ func tokenCancellationParams(fixture runLeaseClaimFixture, tokenID uuid.UUID) db
 	return db.CancelTokenParams{
 		OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), ID: pgvalue.UUID(tokenID),
-		OutboxMessageID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OutboxMessageID: pgvalue.UUID(uuid.NewV7()),
 	}
 }
 

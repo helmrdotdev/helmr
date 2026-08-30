@@ -13,8 +13,9 @@ import (
 	"strings"
 	"time"
 
+	"uuid"
+
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -334,7 +335,7 @@ func (s *Server) createTokenInTransaction(
 	expiresAt := pgvalue.Timestamptz(
 		now.Time.Add(time.Duration(input.TimeoutMS) * time.Millisecond),
 	)
-	tokenID := uuid.Must(uuid.NewV7())
+	tokenID := uuid.NewV7()
 	credentials, err := s.tokenCredentialKey.Derive(tokenID)
 	if err != nil {
 		return api.TokenResponse{}, nil, err
@@ -349,7 +350,7 @@ func (s *Server) createTokenInTransaction(
 	if err != nil {
 		return api.TokenResponse{}, nil, fmt.Errorf("create token: %w", err)
 	}
-	publicAccessID := uuid.Must(uuid.NewV7())
+	publicAccessID := uuid.NewV7()
 	_, err = q.CreatePublicAccessToken(ctx, db.CreatePublicAccessTokenParams{
 		ID:        pgvalue.UUID(publicAccessID),
 		TokenID:   tokenRow.ID,
@@ -848,7 +849,7 @@ func (s *Server) completeTokenRecord(
 			OrgID:                 tokenRow.OrgID, ProjectID: tokenRow.ProjectID,
 			EnvironmentID: tokenRow.EnvironmentID, ID: tokenRow.ID,
 			Result:          canonical,
-			OutboxMessageID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OutboxMessageID: pgvalue.UUID(uuid.NewV7()),
 		})
 		if err != nil {
 			return err
@@ -953,7 +954,7 @@ func (s *Server) cancelTokenRecord(
 		row, err := work.q.CancelToken(ctx, db.CancelTokenParams{
 			OrgID: tokenRow.OrgID, ProjectID: tokenRow.ProjectID,
 			EnvironmentID: tokenRow.EnvironmentID, ID: tokenRow.ID,
-			OutboxMessageID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OutboxMessageID: pgvalue.UUID(uuid.NewV7()),
 		})
 		if err != nil {
 			return err

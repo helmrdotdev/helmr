@@ -8,7 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
@@ -101,7 +102,7 @@ func TestReconcileScheduleLocksAnUnchangedSchedule(t *testing.T) {
 	}
 	defer tx.Rollback(t.Context())
 	if _, err := db.New(tx).ReconcileSchedule(t.Context(), db.ReconcileScheduleParams{
-		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ID:                     pgvalue.UUID(uuid.NewV7()),
 		EnvironmentID:          value.EnvironmentID,
 		TaskDeclaredID:         value.TaskDeclaredID,
 		DeploymentDefinitionID: value.DeploymentDefinitionID,
@@ -232,7 +233,7 @@ func TestReconcileScheduleDoesNotReviveErroredAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := queries.ReconcileSchedule(t.Context(), db.ReconcileScheduleParams{
-		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ID:                     pgvalue.UUID(uuid.NewV7()),
 		EnvironmentID:          before.EnvironmentID,
 		TaskDeclaredID:         before.TaskDeclaredID,
 		DeploymentDefinitionID: before.DeploymentDefinitionID,
@@ -274,15 +275,15 @@ func TestReconcileScheduleDoesNotReviveErroredAuthority(t *testing.T) {
 
 func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, string) {
 	t.Helper()
-	orgID := uuid.Must(uuid.NewV7())
-	projectID := uuid.Must(uuid.NewV7())
-	environmentID := uuid.Must(uuid.NewV7())
-	deploymentID := uuid.Must(uuid.NewV7())
-	taskDefinitionID := uuid.Must(uuid.NewV7())
-	workspaceDefinitionID := uuid.Must(uuid.NewV7())
-	scheduleID := uuid.Must(uuid.NewV7())
-	secretID := uuid.Must(uuid.NewV7())
-	secretVersionID := uuid.Must(uuid.NewV7())
+	orgID := uuid.NewV7()
+	projectID := uuid.NewV7()
+	environmentID := uuid.NewV7()
+	deploymentID := uuid.NewV7()
+	taskDefinitionID := uuid.NewV7()
+	workspaceDefinitionID := uuid.NewV7()
+	scheduleID := uuid.NewV7()
+	secretID := uuid.NewV7()
+	secretVersionID := uuid.NewV7()
 	regionID := "schedule-" + environmentID.String()
 
 	dbtest.MustExec(t, t.Context(), pool, `
@@ -414,7 +415,7 @@ func seedScheduleArtifact(
 	seed string,
 ) uuid.UUID {
 	t.Helper()
-	id := uuid.Must(uuid.NewV7())
+	id := uuid.NewV7()
 	digest := dbtest.Digest(seed)
 	mediaType := "application/octet-stream"
 	switch kind {

@@ -7,7 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
@@ -72,7 +73,7 @@ func CreateContinuation(
 	workspace db.Workspace,
 	bindings []db.LockWorkspaceSecretsForAdmissionRow,
 ) (pgtype.UUID, error) {
-	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	runID := pgvalue.UUID(uuid.NewV7())
 	traceID, err := tracing.NewTraceID()
 	if err != nil {
 		return pgtype.UUID{}, err

@@ -7,7 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
@@ -515,7 +516,7 @@ func actorNeedsContinuation(actor db.Session) bool {
 }
 
 func createActorContinuation(ctx context.Context, store db.Querier, actor db.Session, ws db.Workspace, secrets []secret.DeliveryEnvelope, now pgtype.Timestamptz) error {
-	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	runID := pgvalue.UUID(uuid.NewV7())
 	traceID, err := tracing.NewTraceID()
 	if err != nil {
 		return err

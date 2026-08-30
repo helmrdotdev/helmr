@@ -8,8 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"uuid"
+
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -17,13 +18,13 @@ import (
 
 func TestProjectRunSnapshotPreservesTerminalContract(t *testing.T) {
 	createdAt := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
-	runID := uuid.Must(uuid.NewV7())
+	runID := uuid.NewV7()
 	record := runSnapshotRecord{
 		id: pgvalue.UUID(runID), status: db.RunStatusFailed,
 		entrypointKind: "task", entrypointDeclaredID: "resize-image",
-		deploymentID:         pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		deploymentID:         pgvalue.UUID(uuid.NewV7()),
 		deploymentVersion:    "2026.07.24.1",
-		workspaceID:          pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		workspaceID:          pgvalue.UUID(uuid.NewV7()),
 		currentAttemptNumber: 3, causeKind: "api",
 		metadata: []byte(`{"source":"backend"}`), tags: []string{"image"},
 		failure:    []byte(`{"code":"task_failed","message":"resize failed","details":{"image_id":"image-1"}}`),
@@ -52,13 +53,13 @@ func TestProjectRunSnapshotPreservesTerminalContract(t *testing.T) {
 func TestProjectRunSnapshotMapsScheduledCause(t *testing.T) {
 	scheduledAt := time.Date(2026, 7, 24, 12, 0, 0, 0, time.FixedZone("offset", 9*60*60))
 	record := runSnapshotRecord{
-		id: pgvalue.UUID(uuid.Must(uuid.NewV7())), status: db.RunStatusRunning,
+		id: pgvalue.UUID(uuid.NewV7()), status: db.RunStatusRunning,
 		entrypointKind: "task", entrypointDeclaredID: "cleanup",
-		deploymentID:         pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		deploymentID:         pgvalue.UUID(uuid.NewV7()),
 		deploymentVersion:    "2026.07.24.1",
-		workspaceID:          pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		workspaceID:          pgvalue.UUID(uuid.NewV7()),
 		currentAttemptNumber: 1, causeKind: "schedule",
-		scheduleID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		scheduleID:       pgvalue.UUID(uuid.NewV7()),
 		scheduledAt:      pgvalue.Timestamptz(scheduledAt),
 		scheduleTimezone: pgvalue.Text("Asia/Tokyo"),
 		metadata:         []byte(`{}`),
@@ -78,7 +79,7 @@ func TestProjectRunSnapshotMapsScheduledCause(t *testing.T) {
 
 func TestRunListCursorIsBoundToScopeAndFilter(t *testing.T) {
 	createdAt := time.Date(2026, 7, 24, 12, 0, 0, 123, time.UTC)
-	runID := uuid.Must(uuid.NewV7())
+	runID := uuid.NewV7()
 	statuses := []db.RunStatus{db.RunStatusRunning, db.RunStatusWaiting}
 	raw, err := encodeRunListCursor(runListCursor{
 		ProjectID: "project", EnvironmentID: "environment",
@@ -129,8 +130,8 @@ func TestRunReadDeniesBeforeScopeLookup(t *testing.T) {
 	route.URLParams.Add("environmentID", "missing")
 	ctx := context.WithValue(request.Context(), chi.RouteCtxKey, route)
 	ctx = context.WithValue(ctx, actorContextKey{}, auth.Actor{
-		Kind: auth.ActorKindAPIKey, OrgID: uuid.Must(uuid.NewV7()),
-		ProjectID: uuid.Must(uuid.NewV7()).String(), EnvironmentID: uuid.Must(uuid.NewV7()).String(),
+		Kind: auth.ActorKindAPIKey, OrgID: uuid.NewV7(),
+		ProjectID: uuid.NewV7().String(), EnvironmentID: uuid.NewV7().String(),
 	})
 	recorder := httptest.NewRecorder()
 

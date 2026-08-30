@@ -8,8 +8,9 @@ import (
 	"io"
 	"net/http"
 
+	"uuid"
+
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -92,7 +93,7 @@ func (s *Server) sendSessionInput(w http.ResponseWriter, r *http.Request) {
 	record, err := s.appendActorInput(r.Context(), appendActorInputRequest{
 		EnvironmentID:  environmentUUID,
 		SessionID:      actorID,
-		RecordID:       uuid.Must(uuid.NewV7()),
+		RecordID:       uuid.NewV7(),
 		Data:           canonicalInput,
 		SourceKind:     "external",
 		IdempotencyKey: idempotencyKey,

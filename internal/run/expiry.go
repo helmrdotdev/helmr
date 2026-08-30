@@ -5,7 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -28,9 +29,9 @@ func ExpireParentOwnedChild(
 	tx pgx.Tx,
 	request ChildExpiryRequest,
 ) (bool, error) {
-	if tx == nil || request.OrgID == uuid.Nil || request.ProjectID == uuid.Nil ||
-		request.EnvironmentID == uuid.Nil || request.ParentRunID == uuid.Nil ||
-		request.ChildRunID == uuid.Nil {
+	if tx == nil || request.OrgID == uuid.Nil() || request.ProjectID == uuid.Nil() ||
+		request.EnvironmentID == uuid.Nil() || request.ParentRunID == uuid.Nil() ||
+		request.ChildRunID == uuid.Nil() {
 		return false, errors.New("parent-owned child expiry authority is required")
 	}
 	scope := CancellationRequest{

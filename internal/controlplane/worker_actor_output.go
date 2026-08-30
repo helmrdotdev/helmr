@@ -10,7 +10,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
@@ -243,7 +244,7 @@ func (s *Server) appendActorOutput(
 			ProducerRunID:              authority.run.ID,
 			ProducerAttemptNumber:      authority.attempt.Number,
 			ExpectedRequestFingerprint: fingerprint,
-			ID:                         pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			ID:                         pgvalue.UUID(uuid.NewV7()),
 			Data:                       parsed.data,
 			ContentType:                parsed.contentType,
 		})
@@ -285,7 +286,7 @@ func actorOutputRecordFromReceipt(
 		return db.SessionRecord{}, err
 	}
 	recordID, err := ids.Parse(receipt.SessionRecordID)
-	if err != nil || recordID == uuid.Nil || receipt.Sequence <= 0 || receipt.Sequence > maxSessionOutputSequence {
+	if err != nil || recordID == uuid.Nil() || receipt.Sequence <= 0 || receipt.Sequence > maxSessionOutputSequence {
 		return db.SessionRecord{}, errActorOutputAppendConflict
 	}
 	record, err := q.GetActorOutputRecordByID(ctx, db.GetActorOutputRecordByIDParams{

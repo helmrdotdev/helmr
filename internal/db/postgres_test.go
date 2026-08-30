@@ -4,7 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -27,9 +28,9 @@ func seedPostgres(t *testing.T, ctx context.Context, pool *pgxpool.Pool) postgre
 	t.Helper()
 	ids := postgresIDs{
 		orgID:         dbtest.DefaultOrgID,
-		projectID:     uuid.Must(uuid.NewV7()),
-		environmentID: uuid.Must(uuid.NewV7()),
-		deploymentID:  uuid.Must(uuid.NewV7()),
+		projectID:     uuid.NewV7(),
+		environmentID: uuid.NewV7(),
+		deploymentID:  uuid.NewV7(),
 	}
 	projectSlug := "project-" + dbtest.ShortID(ids.projectID)
 	environmentSlug := "env-" + dbtest.ShortID(ids.environmentID)
@@ -90,7 +91,7 @@ func seedPostgresArtifact(
 	label string,
 ) uuid.UUID {
 	t.Helper()
-	id := uuid.Must(uuid.NewV7())
+	id := uuid.NewV7()
 	digest := dbtest.Digest(label + "-" + ids.deploymentID.String())
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
@@ -118,7 +119,7 @@ func newPostgresDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	if _, err := queries.CreateWorkerGroup(ctx, db.CreateWorkerGroupParams{
-		ID: dbtest.DefaultWorkerGroupID, TokenID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ID: dbtest.DefaultWorkerGroupID, TokenID: pgvalue.UUID(uuid.NewV7()),
 		TokenHash: make([]byte, 32), RegionID: dbtest.DefaultRegionID,
 		Name: dbtest.DefaultWorkerGroupID,
 	}); err != nil {

@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,7 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -237,8 +239,8 @@ func (s *Server) getCurrentDeployment(w http.ResponseWriter, r *http.Request) {
 }
 
 func deploymentVersion(id uuid.UUID) string {
-	seconds, nanoseconds := id.Time().UnixTime()
-	return time.Unix(seconds, nanoseconds).UTC().Format("20060102") + "." + id.String()
+	milliseconds := int64(binary.BigEndian.Uint64(id[:]) >> 16)
+	return time.UnixMilli(milliseconds).UTC().Format("20060102") + "." + id.String()
 }
 
 func deploymentResponse(record db.Deployment) api.DeploymentResponse {

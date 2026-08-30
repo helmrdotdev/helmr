@@ -6,7 +6,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -43,7 +44,7 @@ func TestActorOutputAppendPostgresSequencesAndReplays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	recordID := uuid.Must(uuid.NewV7())
+	recordID := uuid.NewV7()
 	row, err := db.New(tx).AppendActorOutputRecord(t.Context(), db.AppendActorOutputRecordParams{
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), ClaimID: acquired.Claim.ID,
 		SessionID: pgvalue.UUID(started.SessionID), ProducerRunID: pgvalue.UUID(started.BootRunID),

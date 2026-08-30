@@ -7,8 +7,9 @@ import (
 	"net/http"
 	"strings"
 
+	"uuid"
+
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -183,7 +184,7 @@ func (s *Server) adminCreateWorkerGroup(w http.ResponseWriter, r *http.Request) 
 			return errors.New("get worker group region")
 		}
 		created, err = work.q.CreateWorkerGroup(r.Context(), db.CreateWorkerGroupParams{
-			ID: uuid.Must(uuid.NewV7()).String(), TokenID: pgvalue.UUID(uuid.Must(uuid.NewV7())), TokenHash: token.Hash,
+			ID: uuid.NewV7().String(), TokenID: pgvalue.UUID(uuid.NewV7()), TokenHash: token.Hash,
 			RegionID: request.RegionID, Name: request.Name, Description: description,
 		})
 		if isUniqueViolation(err) {
@@ -368,7 +369,7 @@ func (s *Server) adminCreateWorkerPool(w http.ResponseWriter, r *http.Request) {
 			return conflict(errors.New("worker group state or claim version changed"))
 		}
 		created, err = work.q.CreatePendingWorkerPool(r.Context(), db.CreatePendingWorkerPoolParams{
-			WorkerPoolID: pgvalue.UUID(uuid.Must(uuid.NewV7())), Name: request.Name,
+			WorkerPoolID: pgvalue.UUID(uuid.NewV7()), Name: request.Name,
 			WorkerGroupID: groupID, ExpectedGroupClaimVersion: request.ExpectedGroupClaimVersion,
 		})
 		if isUniqueViolation(err) {
@@ -542,12 +543,12 @@ func adminGroupID(w http.ResponseWriter, r *http.Request) (string, bool) {
 func adminWorkerPoolIDs(w http.ResponseWriter, r *http.Request) (string, uuid.UUID, bool) {
 	groupID, ok := adminGroupID(w, r)
 	if !ok {
-		return "", uuid.Nil, false
+		return "", uuid.Nil(), false
 	}
 	poolID, err := ids.Parse(chi.URLParam(r, "poolID"))
 	if err != nil {
 		writeError(w, badRequest(errors.New("worker pool ID must be a canonical UUIDv7")))
-		return "", uuid.Nil, false
+		return "", uuid.Nil(), false
 	}
 	return groupID, poolID, true
 }

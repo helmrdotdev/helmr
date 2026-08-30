@@ -7,7 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -355,8 +356,8 @@ func TestOwnedFinalizationExhaustsDifferentWorkspaceChildRuntimePreparation(t *t
 	fixture := newPostgresFixture(t)
 	parent := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
 	child := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
-	claimID := uuid.Must(uuid.NewV7())
-	waitID := uuid.Must(uuid.NewV7())
+	claimID := uuid.NewV7()
+	waitID := uuid.NewV7()
 	dbtest.MustExec(t, ctx, fixture.pool, `
 INSERT INTO idempotency_claims (
     id, environment_id, operation, slot_hash,
@@ -385,7 +386,7 @@ SELECT $1, runs.environment_id, runs.id, runs.workspace_id, 'child',
        $4
   FROM runs
  WHERE runs.id = $5`,
-		waitID, child.runID, claimID, uuid.Must(uuid.NewV7()), parent.runID)
+		waitID, child.runID, claimID, uuid.NewV7(), parent.runID)
 
 	exhaustRuntimePreparation(t, ctx, fixture, child.runID)
 
@@ -504,8 +505,8 @@ func TestCancelerResolvesDifferentWorkspaceChildWait(t *testing.T) {
 			fixture := newPostgresFixture(t)
 			parent := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
 			child := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
-			claimID := uuid.Must(uuid.NewV7())
-			waitID := uuid.Must(uuid.NewV7())
+			claimID := uuid.NewV7()
+			waitID := uuid.NewV7()
 			dbtest.MustExec(t, ctx, fixture.pool, `
 INSERT INTO idempotency_claims (
     id, environment_id, operation, slot_hash,
@@ -553,7 +554,7 @@ SELECT $1, runs.environment_id, runs.id, runs.workspace_id, 'child',
 				child.runID,
 				claimID,
 				suspension,
-				uuid.Must(uuid.NewV7()),
+				uuid.NewV7(),
 				parent.runID,
 			)
 

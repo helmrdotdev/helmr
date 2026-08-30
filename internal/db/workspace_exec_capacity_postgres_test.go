@@ -6,7 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -35,11 +36,11 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 	ids := seedPostgres(t, ctx, pool)
 	queries := db.New(pool)
 
-	definitionID := uuid.Must(uuid.NewV7())
-	workspaceID := uuid.Must(uuid.NewV7())
-	versionID := uuid.Must(uuid.NewV7())
-	claimID := uuid.Must(uuid.NewV7())
-	processID := uuid.Must(uuid.NewV7())
+	definitionID := uuid.NewV7()
+	workspaceID := uuid.NewV7()
+	versionID := uuid.NewV7()
+	claimID := uuid.NewV7()
+	processID := uuid.NewV7()
 	manifest, err := json.Marshal(deployment.SandboxManifest{Resources: deployment.ResourcesManifest{
 		MilliCPU:  1000,
 		MemoryMiB: 1024,
@@ -191,7 +192,7 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 			}
 			defer func() { _ = tx.Rollback(context.Background()) }()
 			dbtest.MustExec(t, ctx, tx, `SET CONSTRAINTS ALL DEFERRED`)
-			dbtest.MustExec(t, ctx, tx, `UPDATE workspaces SET `+authority.column+` = $2 WHERE id = $1`, workspaceID, uuid.Must(uuid.NewV7()))
+			dbtest.MustExec(t, ctx, tx, `UPDATE workspaces SET `+authority.column+` = $2 WHERE id = $1`, workspaceID, uuid.NewV7())
 			requireVisible(db.New(tx), false, authority.name)
 		})
 	}
@@ -203,7 +204,7 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 		}
 		defer func() { _ = tx.Rollback(context.Background()) }()
 		dbtest.MustExec(t, ctx, tx, `SET CONSTRAINTS ALL DEFERRED`)
-		dbtest.MustExec(t, ctx, tx, `UPDATE workspaces SET head_version_id = $2 WHERE id = $1`, workspaceID, uuid.Must(uuid.NewV7()))
+		dbtest.MustExec(t, ctx, tx, `UPDATE workspaces SET head_version_id = $2 WHERE id = $1`, workspaceID, uuid.NewV7())
 		requireVisible(db.New(tx), false, "mismatched head")
 	})
 
@@ -211,7 +212,7 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 		t.Fatalf("eligible rows = %+v, want process %s", rows, processID)
 	}
 
-	workerID := uuid.Must(uuid.NewV7())
+	workerID := uuid.NewV7()
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO worker_instances (
 			id, resource_id, worker_group_id, worker_pool_id, state,
@@ -229,9 +230,9 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 			8, 1, '{}'::jsonb, $7, now(), now(), now()
 		)
 	`, workerID, "capacity-"+workerID.String(), dbtest.DefaultWorkerGroupID,
-		dbtest.DefaultWorkerPoolID, uuid.Must(uuid.NewV7()), dbtest.DefaultRuntimeID,
+		dbtest.DefaultWorkerPoolID, uuid.NewV7(), dbtest.DefaultRuntimeID,
 		dbtest.DefaultCPUConfigID)
-	runtimeID := uuid.Must(uuid.NewV7())
+	runtimeID := uuid.NewV7()
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO runtime_instances (
 			id, org_id, worker_group_id, project_id, environment_id, region_id,
@@ -257,10 +258,10 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 	`, runtimeID, processID, versionID)
 	requireAccounted(queries, "same-process live Runtime", uuid.MustParse(dbtest.DefaultWorkerPoolID))
 
-	leaseProcessClaimID := uuid.Must(uuid.NewV7())
-	leaseProcessID := uuid.Must(uuid.NewV7())
-	mountID := uuid.Must(uuid.NewV7())
-	leaseID := uuid.Must(uuid.NewV7())
+	leaseProcessClaimID := uuid.NewV7()
+	leaseProcessID := uuid.NewV7()
+	mountID := uuid.NewV7()
+	leaseID := uuid.NewV7()
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO workspace_mounts (
 			id, org_id, worker_group_id, project_id, environment_id, region_id,
@@ -334,7 +335,7 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 	}
 
 	t.Run("full Plan remains blocked when Runtime is reclaimed after Exec discovery", func(t *testing.T) {
-		interleavedRuntimeID := uuid.Must(uuid.NewV7())
+		interleavedRuntimeID := uuid.NewV7()
 		dbtest.MustExec(t, ctx, pool, `
 			INSERT INTO runtime_instances (
 				id, org_id, worker_group_id, project_id, environment_id, region_id,
@@ -392,7 +393,7 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 	})
 
 	t.Run("full Plan keeps candidate demand when Runtime is reserved after Exec discovery", func(t *testing.T) {
-		interleavedRuntimeID := uuid.Must(uuid.NewV7())
+		interleavedRuntimeID := uuid.NewV7()
 		store := workspaceExecInterleavedPlanStore{
 			Queries: queries,
 			afterExec: func() {

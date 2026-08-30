@@ -7,7 +7,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -48,7 +49,7 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		org, err = work.q.CreateOrganization(r.Context(), db.CreateOrganizationParams{
-			ID:   pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			ID:   pgvalue.UUID(uuid.NewV7()),
 			Name: name,
 			Slug: slug,
 		})

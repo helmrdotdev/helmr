@@ -6,7 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -281,7 +282,7 @@ func TestAdminWorkerPoolPostgresCheckpointReadySerializesWithPoolDrain(t *testin
 	fixture := newAdminPoolPostgresFixture(t, product.pool, "us-east-1")
 	target := fixture.addActivePool(t, "checkpoint-source")
 	checkpoint := seedRestorableCheckpointForWorkerPool(t, product, fixture, target)
-	serviceID := uuid.Must(uuid.NewV7())
+	serviceID := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), product.pool, `
 UPDATE worker_instances
    SET current_epoch = 1,
@@ -559,12 +560,12 @@ VALUES ($1, 'Worker Pool Test')
 ON CONFLICT (id) DO NOTHING`, regionID)
 	q := db.New(pool)
 	group, err := q.CreateWorkerGroup(t.Context(), db.CreateWorkerGroupParams{
-		ID:          uuid.Must(uuid.NewV7()).String(),
+		ID:          uuid.NewV7().String(),
 		RegionID:    regionID,
 		Name:        "worker-pool-test",
 		Description: "",
 		TokenID:     pgvalue.NewUUIDv7(),
-		TokenHash:   dbtest.Hash(uuid.NewString()),
+		TokenHash:   dbtest.Hash(uuid.New().String()),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -664,8 +665,8 @@ SELECT id, deployment_definition_id
 		t.Fatal(err)
 	}
 	live := adminPoolLiveRuntime{
-		workerID:  uuid.Must(uuid.NewV7()),
-		runtimeID: uuid.Must(uuid.NewV7()),
+		workerID:  uuid.NewV7(),
+		runtimeID: uuid.NewV7(),
 	}
 	dbtest.MustExec(t, t.Context(), product.pool, `
 INSERT INTO worker_instances (
@@ -682,7 +683,7 @@ INSERT INTO worker_instances (
     4000, 8589934592, 34359738368,
     1000, 1073741824, 4294967296,
     4, 4, '{"vendor":"test"}'::jsonb, $8, now(), now(), now()
-)`, live.workerID, fixture.group.ID, pool.ID, uuid.Must(uuid.NewV7()),
+)`, live.workerID, fixture.group.ID, pool.ID, uuid.NewV7(),
 		fixture.runtimeIdentityID, fixture.substrateFormat, fixture.substrateContract,
 		dbtest.Digest("live-runtime-cpu-environment"))
 	dbtest.MustExec(t, t.Context(), product.pool, `
@@ -762,15 +763,15 @@ SELECT deployment_definition_id, head_version_id
 		t.Fatal(err)
 	}
 
-	workerID := uuid.Must(uuid.NewV7())
-	runtimeSubstrateID := uuid.Must(uuid.NewV7())
-	runtimeID := uuid.Must(uuid.NewV7())
-	runID := uuid.Must(uuid.NewV7())
-	runLeaseID := uuid.Must(uuid.NewV7())
-	mountID := uuid.Must(uuid.NewV7())
-	workspaceLeaseID := uuid.Must(uuid.NewV7())
-	waitID := uuid.Must(uuid.NewV7())
-	checkpointID := uuid.Must(uuid.NewV7())
+	workerID := uuid.NewV7()
+	runtimeSubstrateID := uuid.NewV7()
+	runtimeID := uuid.NewV7()
+	runID := uuid.NewV7()
+	runLeaseID := uuid.NewV7()
+	mountID := uuid.NewV7()
+	workspaceLeaseID := uuid.NewV7()
+	waitID := uuid.NewV7()
+	checkpointID := uuid.NewV7()
 
 	dbtest.MustExec(t, t.Context(), product.pool, `
 INSERT INTO worker_instances (
@@ -882,7 +883,7 @@ INSERT INTO run_waits (
 ) VALUES (
     $1, $2, $3, $4, 'timer', now(), 'completed', '{}'::jsonb, now(),
     'released', 1, 1, $5, now()
-)`, waitID, product.environmentID, runID, product.workspaceIDs[0], uuid.Must(uuid.NewV7()))
+)`, waitID, product.environmentID, runID, product.workspaceIDs[0], uuid.NewV7())
 	dbtest.MustExec(t, t.Context(), product.pool, `
 INSERT INTO run_checkpoints (
     id, run_id, attempt_number, run_wait_id,

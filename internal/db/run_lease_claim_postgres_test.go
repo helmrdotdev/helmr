@@ -6,7 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -160,7 +161,7 @@ UPDATE workspace_mounts
 		t.Fatal("checkpoint source did not return one Run/Workspace Lease and Runtime receipt")
 	}
 	if _, err := fixture.queries.GetRunCheckpointSource(ctx, GetRunCheckpointSourceParams{
-		SourceWorkspaceLeaseID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		SourceWorkspaceLeaseID: pgvalue.UUID(uuid.NewV7()),
 		SourceRunLeaseID:       pgvalue.UUID(assigned.leaseID),
 		RunID:                  locators.RunID,
 		AttemptNumber:          locators.AttemptNumber,
@@ -169,7 +170,7 @@ UPDATE workspace_mounts
 		t.Fatalf("mismatched source Workspace Lease error = %v, want no rows", err)
 	}
 	if _, err := fixture.queries.LockRunLeaseClaimWait(ctx, LockRunLeaseClaimWaitParams{
-		ID:                pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ID:                pgvalue.UUID(uuid.NewV7()),
 		EnvironmentID:     locators.EnvironmentID,
 		RunID:             locators.RunID,
 		AttemptNumber:     locators.AttemptNumber,
@@ -179,26 +180,26 @@ UPDATE workspace_mounts
 		t.Fatalf("missing restore Wait error = %v, want no rows", err)
 	}
 	if _, err := fixture.queries.LockRestorableRunCheckpoint(ctx, LockRestorableRunCheckpointParams{
-		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ID:            pgvalue.UUID(uuid.NewV7()),
 		RunID:         locators.RunID,
 		AttemptNumber: locators.AttemptNumber,
-		RunWaitID:     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		RunWaitID:     pgvalue.UUID(uuid.NewV7()),
 		WorkspaceID:   locators.WorkspaceID,
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("missing restore Checkpoint error = %v, want no rows", err)
 	}
 	if _, err := fixture.queries.LockReadyRunCheckpoint(ctx, LockReadyRunCheckpointParams{
-		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ID:            pgvalue.UUID(uuid.NewV7()),
 		RunID:         locators.RunID,
 		AttemptNumber: locators.AttemptNumber,
-		RunWaitID:     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		RunWaitID:     pgvalue.UUID(uuid.NewV7()),
 		WorkspaceID:   locators.WorkspaceID,
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("missing restore Checkpoint error = %v, want no rows", err)
 	}
 	if _, err := fixture.queries.GetRunCheckpointSource(ctx, GetRunCheckpointSourceParams{
-		SourceWorkspaceLeaseID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		SourceRunLeaseID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		SourceWorkspaceLeaseID: pgvalue.UUID(uuid.NewV7()),
+		SourceRunLeaseID:       pgvalue.UUID(uuid.NewV7()),
 		RunID:                  locators.RunID,
 		AttemptNumber:          locators.AttemptNumber,
 		WorkspaceID:            locators.WorkspaceID,
@@ -213,7 +214,7 @@ UPDATE workspace_mounts
 	}
 	if _, err := fixture.queries.GetRunLeaseClaimLocators(ctx, GetRunLeaseClaimLocatorsParams{
 		ID: pgvalue.UUID(assigned.leaseID), LeaseSequence: 1,
-		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(uuid.NewV7()),
 		WorkerEpoch: 1}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("cross-worker locator error = %v, want no rows", err)
 	}

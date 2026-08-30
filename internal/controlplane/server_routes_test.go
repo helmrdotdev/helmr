@@ -10,8 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"uuid"
+
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 )
 

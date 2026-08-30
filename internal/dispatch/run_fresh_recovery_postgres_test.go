@@ -4,7 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -26,7 +27,7 @@ UPDATE run_leases
    SET start_deadline_at = transaction_timestamp() + interval '5 minutes',
        expires_at = transaction_timestamp() + interval '10 minutes'
  WHERE id = $1`, leaseID)
-			newServiceID := uuid.Must(uuid.NewV7())
+			newServiceID := uuid.NewV7()
 			dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE worker_instances
    SET state = 'registering', current_epoch = 2, current_service_id = $2,
@@ -242,7 +243,7 @@ SELECT runs.status, runs.current_attempt_number, runs.current_run_lease_id,
 
 func TestCheckpointingLeaseLossInvalidatesSuspensionAndRetries(t *testing.T) {
 	fixture, leaseID, _ := prepareFreshRunLease(t)
-	waitID, checkpointID, resumeAttachID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	waitID, checkpointID, resumeAttachID := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	var workspaceLeaseID, baseVersionID pgtype.UUID
 	if err := fixture.pool.QueryRow(fixture.ctx, `
 SELECT workspace_leases.id, workspace_leases.base_version_id
@@ -320,7 +321,7 @@ SELECT runs.status, runs.current_attempt_number, runs.current_run_lease_id,
 
 func TestFinalizingLeaseLossPreservesReceiptAndRetries(t *testing.T) {
 	fixture, leaseID, _ := prepareFreshRunLease(t)
-	operationID := uuid.Must(uuid.NewV7())
+	operationID := uuid.NewV7()
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
    SET state = 'finalizing', claimed_at = assigned_at, started_at = assigned_at,
@@ -502,7 +503,7 @@ SELECT runs.status, runs.current_attempt_number, sessions.state,
 
 func TestFreshRunningLeaseRetryFailsClosedWhenSecretAuthorityChanged(t *testing.T) {
 	fixture, leaseID, _ := prepareFreshRunLease(t)
-	secretID, versionID, resolutionID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	secretID, versionID, resolutionID := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	tx, err := fixture.pool.Begin(fixture.ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -638,7 +639,7 @@ UPDATE run_leases
 
 func convertFreshRunToActor(t *testing.T, fixture runPlacementFixture) uuid.UUID {
 	t.Helper()
-	actorID, actorDefinitionID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	actorID, actorDefinitionID := uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 ALTER TABLE run_attempts
 ALTER CONSTRAINT run_attempts_run_id_entrypoint_kind_workspace_id_fkey

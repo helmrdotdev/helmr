@@ -14,7 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
@@ -688,7 +689,7 @@ func createFinalizedDeployment(
 			kind = db.ArtifactKindDeploymentProgram
 		}
 		artifact, err := queries.CreateArtifact(ctx, db.CreateArtifactParams{
-			ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), OrgID: orgID, ProjectID: projectID,
+			ID: pgvalue.UUID(uuid.NewV7()), OrgID: orgID, ProjectID: projectID,
 			EnvironmentID: environmentID, Digest: descriptor.Digest, Kind: kind,
 			SizeBytes: descriptor.SizeBytes, MediaType: descriptor.MediaType,
 		})
@@ -698,7 +699,7 @@ func createFinalizedDeployment(
 		artifacts[descriptor.Digest] = artifact
 	}
 	programArtifact := artifacts[prepared.bundle.Program.Artifact.Digest]
-	deploymentID := uuid.Must(uuid.NewV7())
+	deploymentID := uuid.NewV7()
 	record, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
 		ID: pgvalue.UUID(deploymentID), OrgID: orgID, ProjectID: projectID,
 		EnvironmentID: environmentID, Version: deploymentVersion(deploymentID),
@@ -716,7 +717,7 @@ func createFinalizedDeployment(
 			artifactID = artifacts[definition.artifact.Digest].ID
 		}
 		if _, err := queries.CreateDeploymentDefinition(ctx, db.CreateDeploymentDefinitionParams{
-			ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), EnvironmentID: environmentID,
+			ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: environmentID,
 			DeploymentID: record.ID, Kind: definition.kind, DeclaredID: definition.declaredID,
 			ManifestVersion: deployment.DeploymentPlanFormatVersion,
 			Manifest:        definition.manifest, ManifestDigest: definition.manifestDigest,

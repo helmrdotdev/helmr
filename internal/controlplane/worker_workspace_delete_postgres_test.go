@@ -11,7 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
@@ -38,8 +39,8 @@ UPDATE runs
 UPDATE run_attempts SET entrypoint_entered_at = now()
  WHERE run_id = $1 AND number = 1`, work.RunID)
 
-	workspaceID := uuid.Must(uuid.NewV7())
-	versionID := uuid.Must(uuid.NewV7())
+	workspaceID := uuid.NewV7()
+	versionID := uuid.NewV7()
 	tx, err := fixture.Pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -80,7 +81,7 @@ SELECT worker_instances.claim_version, worker_groups.claim_version
 	request := workerapi.DeleteWorkspaceRequest{
 		RetrieveWorkspaceRequest: workerapi.RetrieveWorkspaceRequest{
 			Lease:         workerapi.RunLeaseFence{ID: work.LeaseID.String(), LeaseSequence: 1},
-			CorrelationID: uuid.Must(uuid.NewV7()).String(),
+			CorrelationID: uuid.NewV7().String(),
 			Workspace:     workerapi.WorkspaceAddress{WorkspaceID: workspaceID.String()},
 		},
 		IdempotencyKey: "worker-delete-replay",

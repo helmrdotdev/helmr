@@ -8,7 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -38,7 +39,7 @@ func (s *Server) startDeviceCode(w http.ResponseWriter, r *http.Request) {
 	ttl := s.effectiveDeviceCodeTTL()
 	pollEvery := s.effectiveDevicePollEvery()
 	_, err = s.db.CreateDeviceCode(r.Context(), db.CreateDeviceCodeParams{
-		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ID:                  pgvalue.UUID(uuid.NewV7()),
 		UserCodeHash:        userHash,
 		DeviceCodeHash:      deviceHash,
 		ExpiresAt:           pgvalue.Timestamptz(time.Now().Add(ttl)),

@@ -5,7 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -32,7 +33,7 @@ func TestCanStartContinuationIncludesClosingBacklog(t *testing.T) {
 }
 
 func TestRecordResolutionProjectsExternalInput(t *testing.T) {
-	recordID := uuid.Must(uuid.NewV7())
+	recordID := uuid.NewV7()
 	createdAt := time.Date(2026, 7, 23, 1, 2, 3, 456000000, time.UTC)
 	resolution, err := RecordResolution(db.SessionRecord{
 		ID: pgvalue.UUID(recordID), Sequence: 7, Data: []byte(`{"nested":{"ok":true}}`),
@@ -58,9 +59,9 @@ func TestRecordResolutionProjectsExternalInput(t *testing.T) {
 }
 
 func TestRecordResolutionProjectsRunSource(t *testing.T) {
-	runID := uuid.Must(uuid.NewV7())
+	runID := uuid.NewV7()
 	resolution, err := RecordResolution(db.SessionRecord{
-		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), Sequence: 1, Data: []byte(`null`),
+		ID: pgvalue.UUID(uuid.NewV7()), Sequence: 1, Data: []byte(`null`),
 		SourceKind: pgvalue.Text("run"), SourceRunID: pgvalue.UUID(runID),
 		CreatedAt: pgvalue.Timestamptz(time.Unix(1, 0).UTC()),
 	})

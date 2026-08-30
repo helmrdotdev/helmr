@@ -7,8 +7,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"uuid"
+
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -70,7 +71,7 @@ SELECT sessions.state,
 	if _, err := fixture.server.appendActorInput(t.Context(), appendActorInputRequest{
 		EnvironmentID: fixture.environmentID,
 		SessionID:     started.SessionID,
-		RecordID:      uuid.Must(uuid.NewV7()),
+		RecordID:      uuid.NewV7(),
 		Data:          json.RawMessage(`{"message":"continue"}`),
 		SourceKind:    "external",
 	}); err != nil {
@@ -103,8 +104,8 @@ func TestCancelRunHTTPDeniesBeforeRunValidation(t *testing.T) {
 	route.URLParams.Add("runID", "not-a-run")
 	ctx := context.WithValue(request.Context(), chi.RouteCtxKey, route)
 	ctx = context.WithValue(ctx, actorContextKey{}, auth.Actor{
-		Kind: auth.ActorKindAPIKey, OrgID: uuid.Must(uuid.NewV7()),
-		ProjectID: uuid.Must(uuid.NewV7()).String(), EnvironmentID: uuid.Must(uuid.NewV7()).String(),
+		Kind: auth.ActorKindAPIKey, OrgID: uuid.NewV7(),
+		ProjectID: uuid.NewV7().String(), EnvironmentID: uuid.NewV7().String(),
 	})
 	recorder := httptest.NewRecorder()
 

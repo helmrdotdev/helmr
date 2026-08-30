@@ -9,7 +9,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
@@ -156,7 +157,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 			return fmt.Errorf("lock actor start deployment authority: %w", err)
 		}
 		workspaceID := pgvalue.UUID(normalized.WorkspaceID)
-		if normalized.DisallowedWorkspaceID != uuid.Nil &&
+		if normalized.DisallowedWorkspaceID != uuid.Nil() &&
 			workspaceID == pgvalue.UUID(normalized.DisallowedWorkspaceID) {
 			return errActorStartWorkspaceConflict
 		}
@@ -234,8 +235,8 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 		if len(managedRetryPolicy) == 0 {
 			managedRetryPolicy = runAuthority.RetryPolicy
 		}
-		actorID := uuid.Must(uuid.NewV7())
-		runID := uuid.Must(uuid.NewV7())
+		actorID := uuid.NewV7()
+		runID := uuid.NewV7()
 		rootSpanID, err := tracing.NewSpanID()
 		if err != nil {
 			return err
@@ -272,7 +273,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 		var initialRecordID *uuid.UUID
 		inputHighWatermark := int64(0)
 		if normalized.InputPresent {
-			recordID := uuid.Must(uuid.NewV7())
+			recordID := uuid.NewV7()
 			if _, err := work.q.CreateActorStartInputRecord(ctx, db.CreateActorStartInputRecordParams{
 				ID: pgvalue.UUID(recordID), Data: normalized.Input, ClaimID: claimID,
 				EnvironmentID: pgvalue.UUID(normalized.EnvironmentID), SessionID: pgvalue.UUID(actorID),
@@ -337,8 +338,8 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 }
 
 func normalizeActorStart(request actorStartRequest) (normalizedActorStart, error) {
-	if request.OrgID == uuid.Nil || request.ProjectID == uuid.Nil ||
-		request.EnvironmentID == uuid.Nil {
+	if request.OrgID == uuid.Nil() || request.ProjectID == uuid.Nil() ||
+		request.EnvironmentID == uuid.Nil() {
 		return normalizedActorStart{}, errActorStartInvalid
 	}
 	if err := api.ValidateActorDeclaredID(request.ActorDeclaredID); err != nil {
@@ -351,7 +352,7 @@ func normalizeActorStart(request actorStartRequest) (normalizedActorStart, error
 		key := *request.Key
 		request.Key = &key
 	}
-	if request.WorkspaceID == uuid.Nil {
+	if request.WorkspaceID == uuid.Nil() {
 		return normalizedActorStart{}, errActorStartInvalid
 	}
 	workspaceRaw, err := json.Marshal(api.WorkspaceIDTarget{ID: request.WorkspaceID.String()})

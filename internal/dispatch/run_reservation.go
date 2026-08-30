@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -124,7 +125,7 @@ func (d *Authority) prepareRunWorkspace(
 	if err := lockRunWorkerCapacity(ctx, tx, authority, worker); err != nil {
 		return runWorkspaceMount{}, err
 	}
-	runtimeID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	runtimeID := pgvalue.UUID(uuid.NewV7())
 	var reservedAt time.Time
 	if err := tx.QueryRow(ctx, `SELECT transaction_timestamp()`).Scan(&reservedAt); err != nil {
 		return runWorkspaceMount{}, fmt.Errorf("sample run reservation time: %w", err)
@@ -229,7 +230,7 @@ func (d *Authority) useRunRuntime(
 	requested, err := db.New(tx).EnsureRunWorkspaceMountRequested(
 		ctx,
 		db.EnsureRunWorkspaceMountRequestedParams{
-			ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			ID:                 pgvalue.UUID(uuid.NewV7()),
 			Request:            []byte(`{"kind":"run"}`),
 			OrgID:              authority.orgID,
 			WorkspaceID:        authority.workspaceID,

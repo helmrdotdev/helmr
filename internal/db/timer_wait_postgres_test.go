@@ -5,7 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -27,7 +28,7 @@ func TestTimerWaitRegistrationAndHotCompletion(t *testing.T) {
 	}
 	dueAt := time.Now().UTC().Add(-time.Millisecond)
 	wait, err := fixture.queries.RegisterTimerRunWait(ctx, RegisterTimerRunWaitParams{
-		ID:                             pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ID:                             pgvalue.UUID(uuid.NewV7()),
 		EnvironmentID:                  pgvalue.UUID(fixture.environmentID),
 		DueAt:                          pgvalue.Timestamptz(dueAt),
 		IdleTimeoutMs:                  pgtype.Int8{Int64: 30_000, Valid: true},
@@ -35,7 +36,7 @@ func TestTimerWaitRegistrationAndHotCompletion(t *testing.T) {
 		AttemptNumber:                  1,
 		CurrentRunLeaseID:              pgvalue.UUID(work.leaseID),
 		CheckpointDueAt:                pgvalue.Timestamptz(time.Now().Add(time.Second)),
-		ResumeAttachID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ResumeAttachID:                 pgvalue.UUID(uuid.NewV7()),
 		Metadata:                       []byte(`{}`), Tags: []string{},
 		RunID:                       pgvalue.UUID(work.runID),
 		ExpectedRunningStateVersion: runVersion,
@@ -76,7 +77,7 @@ func TestTimerWaitRegistrationAndHotCompletion(t *testing.T) {
 		   SET completed_actor_record_id = $2,
 		       completed_actor_record_direction = 'input'
 		 WHERE id = $1
-	`, wait.ID, uuid.Must(uuid.NewV7())); err == nil {
+	`, wait.ID, uuid.NewV7()); err == nil {
 		t.Fatal("timer Wait accepted a completed Actor record")
 	}
 }

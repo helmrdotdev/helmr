@@ -7,7 +7,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -42,13 +43,13 @@ type appendActorInputRequest struct {
 // Claim acquisition, append, receipt completion, wait wakeup, continuation
 // admission, and repair intent are one transaction.
 func (s *Server) appendActorInput(ctx context.Context, request appendActorInputRequest) (db.SessionRecord, error) {
-	if request.EnvironmentID == uuid.Nil || request.SessionID == uuid.Nil || request.RecordID == uuid.Nil {
+	if request.EnvironmentID == uuid.Nil() || request.SessionID == uuid.Nil() || request.RecordID == uuid.Nil() {
 		return db.SessionRecord{}, errActorInputAppendConflict
 	}
 	if request.SourceKind != "external" && request.SourceKind != "run" {
 		return db.SessionRecord{}, errActorInputAppendConflict
 	}
-	if (request.SourceKind == "run") != (request.SourceRunID != uuid.Nil) {
+	if (request.SourceKind == "run") != (request.SourceRunID != uuid.Nil()) {
 		return db.SessionRecord{}, errActorInputAppendConflict
 	}
 	if len(request.Data) == 0 || !json.Valid(request.Data) {
@@ -115,7 +116,7 @@ func (s *Server) appendActorInput(ctx context.Context, request appendActorInputR
 			return fmt.Errorf("lock actor input continuation secret authority: %w", err)
 		}
 		sourceRunID := pgtype.UUID{}
-		if request.SourceRunID != uuid.Nil {
+		if request.SourceRunID != uuid.Nil() {
 			sourceRunID = pgvalue.UUID(request.SourceRunID)
 		}
 		appended, err := work.q.AppendActorInputRecord(ctx, db.AppendActorInputRecordParams{
@@ -234,7 +235,7 @@ func actorInputRecordFromReceipt(
 		return db.SessionRecord{}, err
 	}
 	recordID, err := ids.Parse(receipt.SessionRecordID)
-	if err != nil || recordID == uuid.Nil || receipt.Sequence <= 0 || receipt.Sequence > maxActorSequence {
+	if err != nil || recordID == uuid.Nil() || receipt.Sequence <= 0 || receipt.Sequence > maxActorSequence {
 		return db.SessionRecord{}, errActorInputAppendConflict
 	}
 	record, err := q.GetActorInputRecordByIDForUpdate(ctx, db.GetActorInputRecordByIDForUpdateParams{

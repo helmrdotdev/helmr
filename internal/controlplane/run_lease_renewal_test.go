@@ -7,7 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
@@ -114,7 +115,7 @@ func TestRenewRunLeaseAllowsDrainingOwner(t *testing.T) {
 
 func TestRenewRunLeaseUsesRestoredPhysicalFrontier(t *testing.T) {
 	server, store, worker, _ := validRunLeaseRenewalFixture(t)
-	restored := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	restored := pgvalue.UUID(uuid.NewV7())
 	if restored == store.authority.attempt.BaseWorkspaceVersionID {
 		t.Fatal("restored frontier unexpectedly matches the Attempt base")
 	}

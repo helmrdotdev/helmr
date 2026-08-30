@@ -9,7 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -167,7 +168,7 @@ func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	record, err := s.db.IssueAPIKey(r.Context(), db.IssueAPIKeyParams{
-		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ID:              pgvalue.UUID(uuid.NewV7()),
 		OrgID:           pgvalue.UUID(actor.OrgID),
 		ProjectID:       projectUUID,
 		EnvironmentID:   environmentUUID,
@@ -190,7 +191,7 @@ func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if _, err := s.db.CreateAPIKeyGrant(r.Context(), db.CreateAPIKeyGrantParams{
-				ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				ID:              pgvalue.UUID(uuid.NewV7()),
 				OrgID:           pgvalue.UUID(actor.OrgID),
 				APIKeyID:        record.ID,
 				Permission:      string(permission),

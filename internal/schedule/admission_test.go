@@ -5,7 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -15,7 +16,7 @@ func TestBuildAdmissionProducesStablePlatformInput(t *testing.T) {
 	scheduledAt := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
 	lastScheduledAt := scheduledAt.Add(-24 * time.Hour)
 	value := db.Schedule{
-		ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ID:                   pgvalue.UUID(uuid.NewV7()),
 		CronPattern:          "0 9 * * *",
 		Timezone:             "Asia/Tokyo",
 		CronSemanticsVersion: CronSemanticsVersion,
@@ -47,7 +48,7 @@ func TestBuildAdmissionProducesStablePlatformInput(t *testing.T) {
 func TestBuildAdmissionSkipsMissedInstants(t *testing.T) {
 	scheduledAt := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
 	admission, err := BuildAdmissionAt(db.Schedule{
-		ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ID:                   pgvalue.UUID(uuid.NewV7()),
 		CronPattern:          "0 9 * * *",
 		Timezone:             "Asia/Tokyo",
 		CronSemanticsVersion: CronSemanticsVersion,

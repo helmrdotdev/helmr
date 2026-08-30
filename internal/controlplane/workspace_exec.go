@@ -14,7 +14,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -191,7 +192,7 @@ func (s *Server) admitWorkspaceExec(ctx context.Context, request workspaceExecRe
 		return workspaceExecAdmission{}, fmt.Errorf("%w: creator type is invalid", errWorkspaceExecInvalid)
 	}
 	creatorID, err := uuid.Parse(request.Creator.SubjectID)
-	if err != nil || creatorID == uuid.Nil || creatorID.String() != request.Creator.SubjectID {
+	if err != nil || creatorID == uuid.Nil() || creatorID.String() != request.Creator.SubjectID {
 		return workspaceExecAdmission{}, fmt.Errorf("%w: creator ID is invalid", errWorkspaceExecInvalid)
 	}
 	normalized, err := normalizeWorkspaceExec(request)
@@ -291,7 +292,7 @@ func (s *Server) admitWorkspaceExec(ctx context.Context, request workspaceExecRe
 			return errWorkspaceBusy
 		}
 
-		processID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+		processID := pgvalue.UUID(uuid.NewV7())
 		process, err := work.q.CreateWorkspaceExec(ctx, db.CreateWorkspaceExecParams{
 			ID:                   processID,
 			OrgID:                authority.OrgID,
@@ -324,12 +325,12 @@ func workspaceExecCreatorFromActor(principal auth.Actor) workspaceExecCreator {
 	creator := workspaceExecCreator{SubjectType: string(principal.Kind)}
 	switch principal.Kind {
 	case auth.ActorKindAPIKey:
-		if principal.APIKeyID != uuid.Nil {
+		if principal.APIKeyID != uuid.Nil() {
 			creator.SubjectID = principal.APIKeyID.String()
 			return creator
 		}
 	case auth.ActorKindSession:
-		if principal.SessionID != uuid.Nil {
+		if principal.SessionID != uuid.Nil() {
 			creator.SubjectID = principal.SessionID.String()
 			return creator
 		}

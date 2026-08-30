@@ -9,7 +9,8 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/deployment"
 )
 
@@ -23,7 +24,7 @@ func TestDeploymentDefinitionManifestJSONBRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	definitionID := uuid.Must(uuid.NewV7())
+	definitionID := uuid.NewV7()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO deployment_definitions (
 			id, environment_id, deployment_id, kind, declared_id,

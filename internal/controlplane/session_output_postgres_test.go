@@ -9,7 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -48,7 +49,7 @@ func TestActorOutputReadPostgresPagesProvenanceAndRetention(t *testing.T) {
 	`, first.SessionID); err != nil {
 		t.Fatal(err)
 	}
-	continuationID := uuid.Must(uuid.NewV7())
+	continuationID := uuid.NewV7()
 	queueOriginAt := time.Now().UTC()
 	continuation, err := db.New(fixture.pool).CreateActorContinuationRun(
 		t.Context(),
@@ -80,9 +81,9 @@ func TestActorOutputReadPostgresPagesProvenanceAndRetention(t *testing.T) {
 	}
 
 	recordIDs := []uuid.UUID{
-		uuid.Must(uuid.NewV7()),
-		uuid.Must(uuid.NewV7()),
-		uuid.Must(uuid.NewV7()),
+		uuid.NewV7(),
+		uuid.NewV7(),
+		uuid.NewV7(),
 	}
 	createdAt := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
 	tx, err := fixture.pool.Begin(t.Context())
@@ -235,7 +236,7 @@ func TestActorOutputReadPostgresPagesProvenanceAndRetention(t *testing.T) {
 		t.Fatalf("retention floor boundary page = %+v", floorBoundaryPage)
 	}
 
-	missingRequest := sessionReadPostgresRequest("/", uuid.Must(uuid.NewV7()).String(), principal)
+	missingRequest := sessionReadPostgresRequest("/", uuid.NewV7().String(), principal)
 	missingRecorder := httptest.NewRecorder()
 	fixture.server.readSessionOutputHTTP(missingRecorder, missingRequest)
 	if missingRecorder.Code != http.StatusNotFound ||

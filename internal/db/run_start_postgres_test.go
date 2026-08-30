@@ -6,7 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -278,7 +279,7 @@ func TestRunEntrypointQueriesCommitOnceAndRejectExpiredLease(t *testing.T) {
 		t.Fatalf("replay Run = %s, want %s", pgvalue.UUIDString(replay.RunID), pgvalue.UUIDString(locators.RunID))
 	}
 
-	waitID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	waitID := pgvalue.UUID(uuid.NewV7())
 	if _, err := fixture.pool.Exec(ctx, `
 		INSERT INTO run_waits (
 			id, environment_id, run_id, workspace_id, kind, condition_state,
@@ -289,7 +290,7 @@ func TestRunEntrypointQueriesCommitOnceAndRejectExpiredLease(t *testing.T) {
 			now() + interval '1 minute', 'hot', 2, $5, $6, $7
 		)
 	`, waitID, workUUID(fixture.environmentID), locators.RunID, locators.WorkspaceID,
-		locators.AttemptNumber, workUUID(work.leaseID), pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		locators.AttemptNumber, workUUID(work.leaseID), pgvalue.UUID(uuid.NewV7()),
 	); err != nil {
 		t.Fatal(err)
 	}

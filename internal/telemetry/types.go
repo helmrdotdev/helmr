@@ -5,7 +5,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/api"
 )
 

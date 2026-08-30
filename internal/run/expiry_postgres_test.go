@@ -7,7 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -25,7 +26,7 @@ func TestParentOwnedQueuedChildExpiryResolvesEveryWaitState(t *testing.T) {
 			fixture := newPostgresFixture(t)
 			parent := newQueuedChildParent(t, ctx, fixture, suspension)
 			child := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
-			claimID := uuid.Must(uuid.NewV7())
+			claimID := uuid.NewV7()
 			childID := child.runID.String()
 
 			tx, err := fixture.pool.Begin(ctx)
@@ -181,7 +182,7 @@ func newQueuedChildParent(
 	t.Helper()
 	work := fixture.addRun(t, "starting", time.Now().Add(-time.Minute))
 	parent := queuedChildParent{
-		waitID:  uuid.Must(uuid.NewV7()),
+		waitID:  uuid.NewV7(),
 		runID:   work.runID,
 		leaseID: work.leaseID,
 	}
@@ -213,7 +214,7 @@ func newQueuedChildParent(
 			resume_attach_id
 		) VALUES ($1, $2, $3, $4, 'timer', now() + interval '1 hour', 2, 1, $5, $6)
 	`, parent.waitID, fixture.environmentID, parent.runID, parent.workspaceID,
-		parent.leaseID, uuid.Must(uuid.NewV7()))
+		parent.leaseID, uuid.NewV7())
 
 	switch suspension {
 	case db.RunWaitStateHot:
@@ -234,7 +235,7 @@ func newQueuedChildParent(
 		`, parent.runID, parent.leaseID).Scan(&workspaceLeaseID, &baseVersionID); err != nil {
 			t.Fatal(err)
 		}
-		checkpointID := uuid.Must(uuid.NewV7())
+		checkpointID := uuid.NewV7()
 		parent.checkpointID = pgvalue.UUID(checkpointID)
 		dbtest.MustExec(t, ctx, fixture.pool, `
 			INSERT INTO run_checkpoints (

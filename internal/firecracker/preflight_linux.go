@@ -11,7 +11,8 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"golang.org/x/sys/unix"
 )
 
@@ -106,7 +107,7 @@ func checkHardLinkLayout(cfg Config) error {
 }
 
 func proveHardLink(label, source, directory string) error {
-	target := filepath.Join(directory, ".hardlink-"+uuid.Must(uuid.NewV7()).String())
+	target := filepath.Join(directory, ".hardlink-"+uuid.NewV7().String())
 	defer os.Remove(target)
 	if err := os.Link(source, target); err != nil {
 		return fmt.Errorf("prove %s hard-link layout: %w", label, err)

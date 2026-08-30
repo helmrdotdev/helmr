@@ -5,15 +5,16 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func TestParseWorkerActorInputSendRequiresSessionID(t *testing.T) {
-	lease := validRunLeaseAssignment(uuid.Must(uuid.NewV7()))
+	lease := validRunLeaseAssignment(uuid.NewV7())
 	request := workerapi.SendActorInputRequest{
-		Lease: lease.Fence(), CorrelationID: uuid.Must(uuid.NewV7()).String(),
+		Lease: lease.Fence(), CorrelationID: uuid.NewV7().String(),
 		SessionID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
 		Input:     json.RawMessage(`{"hello":"world"}`), IdempotencyKey: "send-1",
 	}
@@ -42,7 +43,7 @@ func TestParseWorkerActorInputSendRequiresSessionID(t *testing.T) {
 }
 
 func TestActorInputSendFailurePreservesSemanticCodes(t *testing.T) {
-	conflict := idempotency.ConflictError{ClaimID: uuid.Must(uuid.NewV7())}
+	conflict := idempotency.ConflictError{ClaimID: uuid.NewV7()}
 	tests := []struct {
 		err  error
 		code string

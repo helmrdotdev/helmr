@@ -6,7 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/jackc/pgx/v5"
@@ -54,12 +55,12 @@ func TestConfirmWorkerInstanceProviderAbsentWaitsForLiveLeaseThenReclaims(t *tes
 	if len(workSet) != 1 || workSet[0].ID != pgvalue.UUID(fixture.WorkerID) {
 		t.Fatalf("provider work set = %+v, want Worker %s", workSet, fixture.WorkerID)
 	}
-	credentialID := uuid.Must(uuid.NewV7())
+	credentialID := uuid.NewV7()
 	if _, err := fixture.Pool.Exec(ctx, `
 		INSERT INTO worker_instance_credentials (
 			id, worker_group_id, worker_instance_id, key_prefix, secret_hash
 		) VALUES ($1, $2, $3, $4, $5)
-	`, credentialID, runtest.WorkerGroup, fixture.WorkerID, uuid.NewString(), []byte("provider-absence-secret")); err != nil {
+	`, credentialID, runtest.WorkerGroup, fixture.WorkerID, uuid.New().String(), []byte("provider-absence-secret")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -193,7 +194,7 @@ func TestConfirmWorkerInstanceProviderAbsentRejectsTerminalReadyAndUnknownWorker
 	}
 	for name, id := range map[string]uuid.UUID{
 		"termination ready": fixture.WorkerID,
-		"unknown":           uuid.Must(uuid.NewV7()),
+		"unknown":           uuid.NewV7(),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := confirmProviderAbsent(ctx, fixture.Pool, id); err == nil {

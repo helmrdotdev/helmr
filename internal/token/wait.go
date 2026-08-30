@@ -6,7 +6,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -74,9 +75,9 @@ func (r *WaitReconciler) RegisterWait(
 	ctx context.Context,
 	request WaitRegistration,
 ) (WaitRegistrationResult, error) {
-	if request.TokenID == uuid.Nil || request.WaitID == uuid.Nil ||
-		request.ResumeAttachID == uuid.Nil || request.RunLeaseID == uuid.Nil ||
-		request.WorkerInstanceID == uuid.Nil {
+	if request.TokenID == uuid.Nil() || request.WaitID == uuid.Nil() ||
+		request.ResumeAttachID == uuid.Nil() || request.RunLeaseID == uuid.Nil() ||
+		request.WorkerInstanceID == uuid.Nil() {
 		return WaitRegistrationResult{}, errors.New("token wait registration IDs are required")
 	}
 	if request.LeaseSequence <= 0 || request.WorkerEpoch <= 0 || request.WorkerGroupID == "" ||
@@ -393,7 +394,7 @@ func (r *WaitReconciler) ReconcileBatch(
 	tokenID uuid.UUID,
 	limit int32,
 ) (WaitBatch, error) {
-	if environmentID == uuid.Nil || tokenID == uuid.Nil {
+	if environmentID == uuid.Nil() || tokenID == uuid.Nil() {
 		return WaitBatch{}, errors.New("token wait reconciliation IDs are required")
 	}
 	if limit <= 0 {

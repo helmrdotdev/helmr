@@ -11,7 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -47,7 +48,7 @@ func openIsolatedDatabase(t *testing.T, dsn string) Database {
 		admin.Close()
 		t.Fatal(err)
 	}
-	name := "helmr_test_" + strings.ReplaceAll(uuid.NewString(), "-", "_")
+	name := "helmr_test_" + strings.ReplaceAll(uuid.New().String(), "-", "_")
 	if _, err := admin.Exec(
 		t.Context(),
 		"CREATE DATABASE "+pgx.Identifier{name}.Sanitize(),

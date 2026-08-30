@@ -3,7 +3,8 @@ package controlplane
 import (
 	"testing"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -12,15 +13,15 @@ import (
 )
 
 func TestProjectCheckpointWorkspaceBaseKeepsOriginalArtifactSeparate(t *testing.T) {
-	versionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	versionID := pgvalue.UUID(uuid.NewV7())
 	authority := db.GetCheckpointWorkspaceBaseAuthorityRow{
 		VersionID:       versionID,
-		ParentVersionID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		ArtifactID:      pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ParentVersionID: pgvalue.UUID(uuid.NewV7()),
+		ArtifactID:      pgvalue.UUID(uuid.NewV7()),
 		ArtifactKind:    db.NullArtifactKind{ArtifactKind: db.ArtifactKindWorkspaceVersion, Valid: true},
 		VersionKind:     db.WorkspaceVersionKindUser,
 		ContentDigest:   digestWith("1"), LogicalSizeBytes: 5, EntryCount: 2,
-		SourceWorkspaceLeaseID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		SourceWorkspaceLeaseID: pgvalue.UUID(uuid.NewV7()),
 		OwnershipGeneration:    2, WriterGeneration: 3,
 		ArtifactRowKind:   db.NullArtifactKind{ArtifactKind: db.ArtifactKindWorkspaceVersion, Valid: true},
 		ArtifactDigest:    pgvalue.Text(digestWith("2")),
@@ -48,7 +49,7 @@ func TestProjectCheckpointWorkspaceBaseKeepsOriginalArtifactSeparate(t *testing.
 }
 
 func TestProjectCheckpointWorkspaceBaseSupportsCanonicalEmptyBase(t *testing.T) {
-	versionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	versionID := pgvalue.UUID(uuid.NewV7())
 	projected, err := projectCheckpointWorkspaceBase(db.GetCheckpointWorkspaceBaseAuthorityRow{
 		VersionID: versionID, VersionKind: db.WorkspaceVersionKindSystem,
 		ContentDigest: workspace.CanonicalEmptyTreeDigest,

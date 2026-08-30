@@ -12,7 +12,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -85,7 +86,7 @@ func NewWorker(log *slog.Logger, store Store, admitter Admitter) (*Worker, error
 		log:         log,
 		store:       store,
 		admitter:    admitter,
-		workerID:    uuid.Must(uuid.NewV7()).String(),
+		workerID:    uuid.NewV7().String(),
 		interval:    pollInterval,
 		limit:       claimLimit,
 		concurrency: claimConcurrency,
