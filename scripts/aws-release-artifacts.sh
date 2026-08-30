@@ -6,7 +6,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${ROOT}/scripts/release-artifact-contracts.sh"
 TF_BIN="${TF_BIN:-tofu}"
 AWS_REGION="${AWS_REGION:-us-east-1}"
-STATE_REGION="${STATE_REGION:-${AWS_REGION}}"
+STATE_REGION="${STATE_REGION:-}"
 STATE_KEY="${STATE_KEY:-}"
 WORKER_IMAGE_NAME="${WORKER_IMAGE_NAME:-helmr-worker-image}"
 WORKER_IMAGE_DISTRIBUTION_REGIONS="${WORKER_IMAGE_DISTRIBUTION_REGIONS:-}"
@@ -35,6 +35,7 @@ Usage: scripts/aws-release-artifacts.sh <command>
 Commands:
   check
   bootstrap-init
+  bootstrap-plan
   bootstrap-apply
   bootstrap-output
   platform-release-publish
@@ -83,12 +84,16 @@ need_state_bucket() {
   [ -n "${STATE_BUCKET:-}" ] || die "STATE_BUCKET is required"
 }
 
+need_state_region() {
+  [ -n "${STATE_REGION:-}" ] || die "STATE_REGION is required"
+}
+
 tf_init() {
   stack=$1
   need_state_bucket
   backend_args=(
     "-backend-config=bucket=${STATE_BUCKET}"
-    "-backend-config=region=${STATE_REGION}"
+    "-backend-config=region=${STATE_REGION:-${AWS_REGION}}"
   )
   if [ -n "${STATE_KEY}" ]; then
     backend_args+=("-backend-config=key=${STATE_KEY}")
@@ -129,7 +134,13 @@ check() {
 }
 
 bootstrap_init() {
-  "${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" init -backend=false
+  need_state_bucket
+  need_state_region
+  "${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" init \
+    -reconfigure \
+    -input=false \
+    "-backend-config=bucket=${STATE_BUCKET}" \
+    "-backend-config=region=${STATE_REGION}"
 }
 
 bootstrap_principal_arn() {
@@ -150,21 +161,35 @@ bootstrap_principal_arn() {
   esac
 }
 
-bootstrap_apply() {
+bootstrap_publishers() {
   principal_arn="$(bootstrap_principal_arn)"
   publishers="${PLATFORM_PUBLISHER_PRINCIPAL_ARNS_JSON:-$(jq -cn --arg arn "${principal_arn}" '[$arn]')}"
   printf '%s\n' "${publishers}" | jq -e 'type == "array" and length > 0 and all(.[]; type == "string")' >/dev/null ||
     die "PLATFORM_PUBLISHER_PRINCIPAL_ARNS_JSON must be a non-empty JSON string array"
+  printf '%s\n' "${publishers}"
+}
+
+bootstrap_plan() {
+  bootstrap_init
+  publishers="$(bootstrap_publishers)"
+  "${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" plan \
+    -input=false \
+    -lock=false \
+    -var="name=${BOOTSTRAP_NAME}" \
+    -var="platform_publisher_principal_arns=${publishers}"
+}
+
+bootstrap_apply() {
+  bootstrap_init
+  publishers="$(bootstrap_publishers)"
   tf_apply "${BOOTSTRAP_STACK}" \
     -var="name=${BOOTSTRAP_NAME}" \
     -var="platform_publisher_principal_arns=${publishers}"
 }
 
 bootstrap_output() {
-  bucket="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw bucket_name)"
+  bootstrap_init >&2
   artifact_bucket="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw release_artifact_bucket_name)"
-  printf 'export STATE_BUCKET=%q\n' "${bucket}"
-  printf 'export STATE_REGION=%q\n' "${STATE_REGION}"
   printf 'export WORKER_IMAGE_ARTIFACT_BUCKET=%q\n' "${artifact_bucket}"
   for output_name in \
     controlplane_release_repository_url \
@@ -257,7 +282,7 @@ s3_object_arn() {
 bucket_kms_key_arn() {
   bucket=$1
   aws s3api get-bucket-encryption \
-    --region "${STATE_REGION}" \
+    --region "${STATE_REGION:-${AWS_REGION}}" \
     --bucket "${bucket}" \
     --query 'ServerSideEncryptionConfiguration.Rules[0].ApplyServerSideEncryptionByDefault.KMSMasterKeyID' \
     --output text 2>/dev/null | awk '$0 != "None" { print }'
@@ -977,6 +1002,7 @@ command=${1:-}
 case "${command}" in
   check) check ;;
   bootstrap-init) bootstrap_init ;;
+  bootstrap-plan) bootstrap_plan ;;
   bootstrap-apply) bootstrap_apply ;;
   bootstrap-output) bootstrap_output ;;
   platform-release-publish) platform_release_publish ;;

@@ -1,13 +1,3 @@
-output "bucket_name" {
-  description = "S3 bucket name for Terraform state."
-  value       = aws_s3_bucket.terraform_state.bucket
-}
-
-output "kms_key_arn" {
-  description = "KMS key ARN for Terraform state encryption."
-  value       = aws_kms_key.terraform_state.arn
-}
-
 output "release_artifact_bucket_name" {
   description = "S3 bucket name for immutable release artifacts consumed by image infrastructure."
   value       = aws_s3_bucket.release_artifacts.bucket
