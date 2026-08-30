@@ -24,7 +24,7 @@ describe("tokens", () => {
         return {
           id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
           callbackUrl: "https://api.example.test/callback",
-          publicAccessToken: "hlmr_pat_secret",
+          publicAccessToken: "hlmr_pub_secret",
           timeoutAt: "2026-07-24T12:00:00Z",
           status: "pending",
           metadata: { approval: true },

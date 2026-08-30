@@ -32,6 +32,9 @@ func TestCredentialKeyDerivesStableSeparatedCredentials(t *testing.T) {
 		!bytes.Equal(first.PublicAccessHash, second.PublicAccessHash) {
 		t.Fatal("credential derivation is not stable")
 	}
+	if !strings.HasPrefix(first.PublicAccessToken, "hlmr_pub_") {
+		t.Fatalf("public access token = %q", first.PublicAccessToken)
+	}
 	if first.CallbackSecret == first.PublicAccessToken ||
 		bytes.Equal(first.CallbackFingerprint, first.PublicAccessHash) {
 		t.Fatal("callback and bearer credentials are not domain separated")
