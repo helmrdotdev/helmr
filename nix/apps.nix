@@ -47,6 +47,7 @@ let
           bash tests/release_manifest_test.sh
           bash tests/release_artifact_contracts_test.sh
           bash tests/release_workflow_test.sh
+          bash tests/release_manifest_verify_test.sh
           bash tests/release_worker_ami_cleanup_test.sh
           bash tests/release_worker_image_identity_test.sh
           bash tests/pre_aws_release_gate_test.sh
