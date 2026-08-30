@@ -40,7 +40,7 @@ describe("v0 compiler contract", () => {
       ].join("\n"),
     )
     const compiled = await compileConfig({
-      nodeVersion: "24.16.0",
+      nodeVersion: "24.20.0",
       outputRoot: await output(),
       root,
     })
@@ -494,7 +494,7 @@ describe("v0 compiler contract", () => {
       /^sha256:[0-9a-f]{64}$/,
     )
     expect(manifest.execution).toEqual({
-      nodeVersion: "24.16.0",
+      nodeVersion: "24.20.0",
       optionsDigest: compiled.optionsDigest,
     })
     expect(manifest.tsconfigs).toEqual([
@@ -594,7 +594,7 @@ describe("v0 compiler contract", () => {
     const second = await compileProgram({
       architecture: "x86_64",
       config: { dirs: ["tasks"], ignorePatterns: [] },
-      nodeVersion: "24.16.0",
+      nodeVersion: "24.20.0",
       outputRoot: await output(),
       root: secondRoot,
       runtimeRoot: secondRoot,
@@ -617,7 +617,7 @@ async function compile(root: string) {
   return compileProgram({
     architecture: "x86_64",
     config: { dirs: ["tasks"], ignorePatterns: [] },
-    nodeVersion: "24.16.0",
+    nodeVersion: "24.20.0",
     outputRoot: await output(),
     root,
     runtimeRoot: root,

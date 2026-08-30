@@ -96,7 +96,7 @@ func starterPackageJSON() string {
   "devEngines": {
     "runtime": {
       "name": "node",
-      "version": "24.16.0",
+      "version": "24.20.0",
       "onFail": "error"
     }
   },
