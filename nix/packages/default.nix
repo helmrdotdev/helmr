@@ -12,9 +12,15 @@ let
   inherit (pkgs) lib;
   pkgsUnstable = import nixpkgs-unstable { inherit system; };
   pkgsBun = import nixpkgs-bun { inherit system; };
-  goPackage = pkgs.callPackage "${nixpkgs-go}/pkgs/development/compilers/go/1.27.nix" {
-    inherit buildGo127Module;
-  };
+  # The pinned package set no longer supports x86_64-darwin; retain its existing construction there.
+  pkgsGo = if system == "x86_64-darwin" then null else import nixpkgs-go { inherit system; };
+  goPackage =
+    if pkgsGo == null then
+      pkgs.callPackage "${nixpkgs-go}/pkgs/development/compilers/go/1.27.nix" {
+        inherit buildGo127Module;
+      }
+    else
+      pkgsGo.go_1_27;
   squashfsTools = pkgs.callPackage ./squashfs-tools.nix { };
   timezoneData = pkgs.callPackage ./timezone-data.nix { };
   runtimeReleaseUnchecked = pkgs.callPackage ./runtime-release.nix { inherit squashfsTools; };
@@ -32,9 +38,11 @@ let
       ;
     bun = pkgsBun.bun;
   };
-  buildGo127Module = pkgs.callPackage "${nixpkgs}/pkgs/build-support/go/module.nix" {
-    go = goPackage;
-  };
+  buildGo127Module =
+    if pkgsGo == null then
+      pkgs.callPackage "${nixpkgs}/pkgs/build-support/go/module.nix" { go = goPackage; }
+    else
+      pkgsGo.buildGo127Module;
   staticcheck = buildGo127Module {
     pname = "staticcheck";
     version = "2026.2.1";
