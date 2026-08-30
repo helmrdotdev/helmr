@@ -146,7 +146,7 @@ let
               tofu test
             )
           done
-          for stack in quickstart standard; do
+          for stack in quickstart stacks/release-build standard; do
             (
               cd "infra/aws/$stack"
               tofu init -backend=false -input=false

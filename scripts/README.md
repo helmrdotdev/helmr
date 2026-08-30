@@ -25,13 +25,14 @@ real KVM host and is not emulated in hosted CI.
 
 ## Product release artifacts
 
-`scripts/aws-release-artifacts.sh` builds and publishes the Product-owned
-Platform release, Control Plane image, and Worker AMIs from a clean exact commit. Its
-local receipts live under `.helmr-release-artifacts/` by default.
+`scripts/aws-release-artifacts.sh` manages the release-build foundation and
+Product-owned Worker image operations. Its local receipts live under
+`.helmr-release-artifacts/` by default.
 
 `scripts/build-controlplane-image.sh` builds a source-only image containing
 `control-plane` and `dispatcher`. It intentionally excludes deployment
-capacity commands and provider policy.
+capacity commands and provider policy. The release workflow publishes that
+image and the signed Platform release.
 
 `scripts/aws-bootstrap-helmr-secrets.sh` populates the empty Secrets Manager
 containers emitted by generic self-host AWS compositions. It writes values
