@@ -174,9 +174,9 @@ func installRunInstruction(plan InstallPlan) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	mounts := ""
+	var mounts strings.Builder
 	for _, id := range secretIDs {
-		mounts += "--mount=type=secret,id=" + id + ",uid=65532,gid=65532,mode=0400,required=true "
+		mounts.WriteString("--mount=type=secret,id=" + id + ",uid=65532,gid=65532,mode=0400,required=true ")
 	}
 	if plan.CustomCommand != "" {
 		if len(plan.CustomCommand) > 16<<10 || strings.IndexByte(plan.CustomCommand, 0) >= 0 {
@@ -188,7 +188,7 @@ func installRunInstruction(plan InstallPlan) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return "RUN " + mounts + command, nil
+		return "RUN " + mounts.String() + command, nil
 	}
 	if len(plan.Argv) == 0 {
 		return "", errors.New("install plan is empty")
@@ -197,7 +197,7 @@ func installRunInstruction(plan InstallPlan) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return "RUN " + mounts + command, nil
+	return "RUN " + mounts.String() + command, nil
 }
 
 func dockerRunJSON(argv []string) (string, error) {

@@ -753,12 +753,10 @@ func (r *PlacementReconciler) placeRunCandidates(
 			close(results)
 			return collectRunPlacementResults(results, ctx.Err())
 		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			defer func() { <-r.runParallel }()
 			results <- r.placeRunCandidate(ctx, item)
-		}()
+		})
 	}
 	wg.Wait()
 	close(results)

@@ -338,9 +338,7 @@ func (p *PreparedRuntimePool) ReconcileDesiredRuntimes(ctx context.Context, clie
 				}
 				active[ref] = struct{}{}
 				launched++
-				attempts.Add(1)
-				go func() {
-					defer attempts.Done()
+				attempts.Go(func() {
 					admitted := false
 					err := p.reconcileRuntimeTarget(workCtx, client, target, func() {
 						admitted = true
@@ -350,7 +348,7 @@ func (p *PreparedRuntimePool) ReconcileDesiredRuntimes(ctx context.Context, clie
 						decisions <- false
 					}
 					results <- runtimeReconcileResult{ref: ref, err: err}
-				}()
+				})
 			}
 			productive := false
 			for decided := 0; decided < launched; {

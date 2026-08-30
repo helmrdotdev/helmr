@@ -146,12 +146,10 @@ func TestFinalizeBundlePublishesExactlyOneConcurrentWriter(t *testing.T) {
 	errorsByWriter := make([]error, 2)
 	var group sync.WaitGroup
 	for writer := range errorsByWriter {
-		group.Add(1)
-		go func() {
-			defer group.Done()
+		group.Go(func() {
 			<-start
 			_, errorsByWriter[writer] = FinalizeBundle(context.Background(), output, input)
-		}()
+		})
 	}
 	close(start)
 	group.Wait()

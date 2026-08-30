@@ -91,12 +91,12 @@ func TestEventsCommandFollowsRunEvents(t *testing.T) {
 	oldPollInterval := runFollowPollInterval
 	runFollowPollInterval = time.Millisecond
 	t.Cleanup(func() { runFollowPollInterval = oldPollInterval })
-	var requests int32
+	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/events" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
-		request := atomic.AddInt32(&requests, 1)
+		request := requests.Add(1)
 		if request == 1 {
 			next := "cursor-next"
 			_ = json.NewEncoder(w).Encode(api.RunEventPage{
@@ -127,7 +127,7 @@ func TestEventsCommandFollowsRunEvents(t *testing.T) {
 	if !strings.Contains(out.String(), `"id":"event-1"`) || !strings.Contains(out.String(), `"id":"event-2"`) {
 		t.Fatalf("output = %q", out.String())
 	}
-	if requests < 2 {
+	if requests := requests.Load(); requests < 2 {
 		t.Fatalf("requests = %d", requests)
 	}
 }
@@ -295,9 +295,9 @@ func TestRunLogsWaitReadyRetriesTelemetryLag(t *testing.T) {
 
 func TestRunEventsWaitReadyStopsAtBound(t *testing.T) {
 	withFastRunTelemetryPoll(t)
-	var requests int32
+	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&requests, 1)
+		requests.Add(1)
 		writeRunTelemetryTestError(w, http.StatusServiceUnavailable, "telemetry_lagging")
 	}))
 	defer server.Close()
@@ -311,7 +311,7 @@ func TestRunEventsWaitReadyStopsAtBound(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "wait for run telemetry readiness: context deadline exceeded") {
 		t.Fatalf("err=%v", err)
 	}
-	if requests := atomic.LoadInt32(&requests); requests < 2 {
+	if requests := requests.Load(); requests < 2 {
 		t.Fatalf("requests=%d, want retries", requests)
 	}
 }

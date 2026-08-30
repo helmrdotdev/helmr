@@ -503,13 +503,11 @@ func TestMarkRuntimeInstanceFailedChargesOnceUnderConcurrentReplay(t *testing.T)
 	errorsByCall := make(chan error, 2)
 	var workers sync.WaitGroup
 	for range 2 {
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
+		workers.Go(func() {
 			<-start
 			_, err := server.markRuntimeInstanceFailed(ctx, runtest.WorkerGroup, params)
 			errorsByCall <- err
-		}()
+		})
 	}
 	close(start)
 	workers.Wait()
