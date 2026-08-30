@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
@@ -343,13 +343,13 @@ func TestWorkerObservationFollowsTheLiveEpochThroughDrain(t *testing.T) {
 
 func insertRegisteringWorker(t *testing.T, ctx context.Context, pool *pgxpool.Pool, updatedAt time.Time, withEpoch bool) uuid.UUID {
 	t.Helper()
-	id := uuid.Must(uuid.NewV7())
+	id := uuid.NewV7()
 	var epoch any
 	var serviceID any
 	var epochStartedAt any
 	if withEpoch {
 		epoch = int64(1)
-		serviceID = uuid.Must(uuid.NewV7())
+		serviceID = uuid.NewV7()
 		epochStartedAt = updatedAt
 	}
 	if _, err := pool.Exec(ctx, `
@@ -366,8 +366,8 @@ func insertRegisteringWorker(t *testing.T, ctx context.Context, pool *pgxpool.Po
 
 func insertActiveWorkerWithObservation(t *testing.T, ctx context.Context, pool *pgxpool.Pool, observedAt time.Time) uuid.UUID {
 	t.Helper()
-	id := uuid.Must(uuid.NewV7())
-	serviceID := uuid.Must(uuid.NewV7())
+	id := uuid.NewV7()
+	serviceID := uuid.NewV7()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO worker_instances (
 			id, resource_id, worker_group_id, worker_pool_id, state,

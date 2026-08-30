@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"

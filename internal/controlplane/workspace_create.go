@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
@@ -74,11 +74,11 @@ type workspaceCreateReceipt struct {
 func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateRequest) (workspaceCreateResult, error) {
 	switch request.Declaration.Kind {
 	case workspaceDeclarationPromoted:
-		if request.Declaration.RunID != uuid.Nil || request.Authorize != nil {
+		if request.Declaration.RunID != uuid.Nil() || request.Authorize != nil {
 			return workspaceCreateResult{}, errWorkspaceCreateInvalid
 		}
 	case workspaceDeclarationRunPinned:
-		if request.Declaration.RunID == uuid.Nil || request.Authorize == nil {
+		if request.Declaration.RunID == uuid.Nil() || request.Authorize == nil {
 			return workspaceCreateResult{}, errWorkspaceCreateInvalid
 		}
 	default:
@@ -206,8 +206,8 @@ func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateReq
 			}
 		}
 
-		workspaceID := uuid.Must(uuid.NewV7())
-		versionID := uuid.Must(uuid.NewV7())
+		workspaceID := uuid.NewV7()
+		versionID := uuid.NewV7()
 		key := pgtype.Text{}
 		if request.Key != nil {
 			key = pgtype.Text{String: *request.Key, Valid: true}

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -47,7 +47,7 @@ func (s *Server) workerRegisterRuntimeSubstrate(w http.ResponseWriter, r *http.R
 			return errors.New("lock runtime substrate authority")
 		}
 		params := db.InsertRuntimeSubstrateParams{
-			ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			ID:                     pgvalue.UUID(uuid.NewV7()),
 			OrgID:                  authority.OrgID,
 			ProjectID:              authority.ProjectID,
 			EnvironmentID:          authority.EnvironmentID,

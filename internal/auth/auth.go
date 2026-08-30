@@ -4,8 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/ids"
 )
 
@@ -50,11 +50,11 @@ func (a Actor) EnvironmentScope() (Scope, bool) {
 		return Scope{}, false
 	}
 	projectID, err := ids.Parse(a.ProjectID)
-	if err != nil || projectID == uuid.Nil {
+	if err != nil || projectID == uuid.Nil() {
 		return Scope{}, false
 	}
 	environmentID, err := ids.Parse(a.EnvironmentID)
-	if err != nil || environmentID == uuid.Nil {
+	if err != nil || environmentID == uuid.Nil() {
 		return Scope{}, false
 	}
 	return Scope{OrgID: a.OrgID, ProjectID: a.ProjectID, EnvironmentID: a.EnvironmentID}, true

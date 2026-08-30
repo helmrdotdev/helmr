@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"sync"
 	"syscall"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
@@ -73,7 +73,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("prepare verifier host: %w", err)
 	}
-	serviceID := uuid.Must(uuid.NewV7()).String()
+	serviceID := uuid.NewV7().String()
 	process, err := worker.Acquire(workDir, worker.ProcessIdentity{ServiceID: serviceID})
 	if err != nil {
 		return fmt.Errorf("acquire worker supervisor singleton: %w", err)

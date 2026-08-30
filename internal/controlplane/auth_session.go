@@ -3,8 +3,8 @@ package controlplane
 import (
 	"errors"
 	"net/http"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"

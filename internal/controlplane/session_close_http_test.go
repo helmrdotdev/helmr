@@ -6,8 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 )
@@ -54,8 +54,8 @@ func TestDecodeActorCloseRequestIsClosedAndPresenceAware(t *testing.T) {
 }
 
 func TestAuthorizeActorCloseRequiresExactPermission(t *testing.T) {
-	projectID := uuid.Must(uuid.NewV7()).String()
-	environmentID := uuid.Must(uuid.NewV7()).String()
+	projectID := uuid.NewV7().String()
+	environmentID := uuid.NewV7().String()
 	apiKey := auth.Actor{
 		Kind: auth.ActorKindAPIKey, Role: auth.RoleDeveloper,
 		ProjectID: projectID, EnvironmentID: environmentID,

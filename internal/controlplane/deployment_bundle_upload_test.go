@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
@@ -17,7 +17,7 @@ import (
 
 func TestPlanDeploymentBundleUploadsRequiresOwnerProofBeforeSkipping(t *testing.T) {
 	raw, bundle := controlPlaneDeploymentBundle(t)
-	orgID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	orgID := pgvalue.UUID(uuid.NewV7())
 	store := &bundleUploadStoreFixture{
 		objects: map[string]cas.Object{
 			bundle.Runtime.Artifact.Digest: bundleCASObject(bundle.Runtime.Artifact),
@@ -77,7 +77,7 @@ func TestPlanDeploymentBundleUploadsRequiresOwnerProofBeforeSkipping(t *testing.
 
 func TestPlanDeploymentBundleUploadsFailsClosedOnRuntimeOrOwnedObjectDrift(t *testing.T) {
 	raw, bundle := controlPlaneDeploymentBundle(t)
-	orgID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	orgID := pgvalue.UUID(uuid.NewV7())
 	for name, configure := range map[string]func(*bundleUploadStoreFixture, *bundleOwnershipFixture){
 		"Runtime": func(store *bundleUploadStoreFixture, _ *bundleOwnershipFixture) {
 			store.objects[bundle.Runtime.Artifact.Digest] = cas.Object{

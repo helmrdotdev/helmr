@@ -4,8 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
@@ -114,9 +114,9 @@ func TestSecretMutationReplayComparesExactEncryptedVersion(t *testing.T) {
 
 func seedSecretEnvironment(t *testing.T, pool *pgxpool.Pool) uuid.UUID {
 	t.Helper()
-	orgID := uuid.Must(uuid.NewV7())
-	projectID := uuid.Must(uuid.NewV7())
-	environmentID := uuid.Must(uuid.NewV7())
+	orgID := uuid.NewV7()
+	projectID := uuid.NewV7()
+	environmentID := uuid.NewV7()
 	regionID := "secret-" + environmentID.String()
 	if _, err := pool.Exec(t.Context(), `
 		INSERT INTO organizations (id, name, slug)

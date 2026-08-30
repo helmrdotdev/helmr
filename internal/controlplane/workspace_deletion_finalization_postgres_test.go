@@ -3,8 +3,8 @@ package controlplane
 import (
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
@@ -191,8 +191,8 @@ UPDATE runtime_instances
 		fixture.unmount(t)
 		fixture.loseRuntime(t)
 		fixture.setDeleting(t, true)
-		claimID := uuid.Must(uuid.NewV7())
-		processID := uuid.Must(uuid.NewV7())
+		claimID := uuid.NewV7()
+		processID := uuid.NewV7()
 		var versionID uuid.UUID
 		if err := fixture.base.Pool.QueryRow(t.Context(), `
 SELECT head_version_id FROM workspaces WHERE id = $1`, fixture.workspaceID).Scan(&versionID); err != nil {

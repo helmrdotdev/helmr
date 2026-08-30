@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -1214,7 +1214,7 @@ func (s *Server) commitSameWorkspaceChildCheckpointReady(
 			-time.Duration(request.Priority) * time.Second,
 		),
 	)
-	childRunID := uuid.Must(uuid.NewV7())
+	childRunID := uuid.NewV7()
 	rootSpanID, err := tracing.NewSpanID()
 	if err != nil {
 		return err
@@ -1375,7 +1375,7 @@ func recordCheckpointWorkspaceVersion(
 		return pgtype.UUID{}, fmt.Errorf("record checkpoint workspace CAS object: %w", err)
 	}
 	artifactRow, err := store.CreateArtifact(ctx, db.CreateArtifactParams{
-		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), OrgID: authority.run.OrgID,
+		ID: pgvalue.UUID(uuid.NewV7()), OrgID: authority.run.OrgID,
 		ProjectID: authority.run.ProjectID, EnvironmentID: authority.run.EnvironmentID,
 		Digest: artifact.Digest, Kind: db.ArtifactKindWorkspaceVersion, SizeBytes: artifact.SizeBytes,
 		MediaType: artifact.MediaType, CreatedByWorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
@@ -1384,7 +1384,7 @@ func recordCheckpointWorkspaceVersion(
 		return pgtype.UUID{}, fmt.Errorf("record checkpoint workspace artifact: %w", err)
 	}
 	version, err := store.CreatePrivateCheckpointWorkspaceVersion(ctx, db.CreatePrivateCheckpointWorkspaceVersionParams{
-		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ID:            pgvalue.UUID(uuid.NewV7()),
 		EnvironmentID: authority.run.EnvironmentID,
 		WorkspaceID:   authority.workspace.ID, ParentVersionID: authority.workspaceLease.BaseVersionID,
 		ArtifactID: artifactRow.ID, ContentDigest: capture.tree.Digest,
@@ -1414,7 +1414,7 @@ func recordCheckpointRuntimeArtifacts(
 			return fmt.Errorf("record checkpoint CAS object %s/%d: %w", proof.role, proof.ordinal, err)
 		}
 		artifact, err := store.CreateArtifact(ctx, db.CreateArtifactParams{
-			ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), OrgID: authority.run.OrgID,
+			ID: pgvalue.UUID(uuid.NewV7()), OrgID: authority.run.OrgID,
 			ProjectID: authority.run.ProjectID, EnvironmentID: authority.run.EnvironmentID,
 			Digest: proof.artifact.Digest, Kind: proof.kind, SizeBytes: proof.artifact.SizeBytes,
 			MediaType: proof.artifact.MediaType, CreatedByWorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),

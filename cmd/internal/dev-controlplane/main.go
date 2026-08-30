@@ -17,8 +17,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/bootstrap"
 	"github.com/helmrdotdev/helmr/internal/cas"
@@ -441,7 +441,7 @@ ON CONFLICT (id) DO UPDATE
 		return
 	}
 	if _, err := queries.CreateAuthSession(ctx, db.CreateAuthSessionParams{
-		ID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ID:        pgvalue.UUID(uuid.NewV7()),
 		UserID:    pgvalue.UUID(userID),
 		TokenHash: hash,
 		ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(30 * 24 * time.Hour), Valid: true},

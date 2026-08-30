@@ -7,8 +7,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
@@ -50,10 +50,10 @@ func (k FencingKey) Valid() bool {
 }
 
 func (k FencingKey) Derive(input FenceInput) (FencingCapability, error) {
-	if input.LeaseID == uuid.Nil {
+	if input.LeaseID == uuid.Nil() {
 		return FencingCapability{}, errors.New("workspace lease ID is required")
 	}
-	if input.WorkspaceID == uuid.Nil {
+	if input.WorkspaceID == uuid.Nil() {
 		return FencingCapability{}, errors.New("workspace ID is required")
 	}
 	if input.OwnershipGeneration <= 0 || input.WriterGeneration <= 0 || input.MountFencingGeneration <= 0 {

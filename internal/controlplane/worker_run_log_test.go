@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -48,7 +48,7 @@ func (s workerLogReplayStore) AppendRunLogChunk(_ context.Context, params db.App
 }
 
 func TestWorkerAppendLogsReturnsConflictForChangedReplay(t *testing.T) {
-	workerID := uuid.Must(uuid.NewV7())
+	workerID := uuid.NewV7()
 	lease := validRunLeaseAssignment(workerID)
 	body, err := json.Marshal(workerapi.RunLogAppendRequest{
 		Lease: lease.Fence(), Stream: workerapi.LogStreamStdout, ObservedSeq: 1,
@@ -78,7 +78,7 @@ func TestWorkerAppendLogsReturnsConflictForChangedReplay(t *testing.T) {
 }
 
 func TestWorkerAppendLogsAcceptsIdenticalReplay(t *testing.T) {
-	workerID := uuid.Must(uuid.NewV7())
+	workerID := uuid.NewV7()
 	lease := validRunLeaseAssignment(workerID)
 	body, err := json.Marshal(workerapi.RunLogAppendRequest{
 		Lease: lease.Fence(), Stream: workerapi.LogStreamStdout, ObservedSeq: 1,
@@ -113,7 +113,7 @@ func TestWorkerAppendLogsAcceptsIdenticalReplay(t *testing.T) {
 }
 
 func TestWorkerAppendLogsReplaysAfterLeaseIsNoLongerLive(t *testing.T) {
-	workerID := uuid.Must(uuid.NewV7())
+	workerID := uuid.NewV7()
 	lease := validRunLeaseAssignment(workerID)
 	body, err := json.Marshal(workerapi.RunLogAppendRequest{
 		Lease: lease.Fence(), Stream: workerapi.LogStreamStdout, ObservedSeq: 1,
@@ -161,7 +161,7 @@ func TestWorkerAppendLogsReplaysAfterLeaseIsNoLongerLive(t *testing.T) {
 }
 
 func TestWorkerAppendLogsRejectsAnotherWorkersFence(t *testing.T) {
-	workerID := uuid.Must(uuid.NewV7())
+	workerID := uuid.NewV7()
 	lease := validRunLeaseAssignment(workerID)
 	body, err := json.Marshal(workerapi.RunLogAppendRequest{
 		Lease: lease.Fence(), Stream: workerapi.LogStreamStdout, ObservedSeq: 1,
@@ -180,7 +180,7 @@ func TestWorkerAppendLogsRejectsAnotherWorkersFence(t *testing.T) {
 	}
 	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/logs/append", bytes.NewReader(body))
 	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
-		WorkerInstanceID: uuid.Must(uuid.NewV7()),
+		WorkerInstanceID: uuid.NewV7(),
 		WorkerGroupID:    lease.WorkerGroupID,
 		WorkerEpoch:      lease.WorkerEpoch,
 	}))

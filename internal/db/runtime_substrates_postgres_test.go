@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -21,7 +21,7 @@ func TestRuntimeSubstrateRegistrationIsImmutableAndConcurrent(t *testing.T) {
 	ids := seedPostgres(t, ctx, pool)
 	queries := db.New(pool)
 
-	definitionID := uuid.Must(uuid.NewV7())
+	definitionID := uuid.NewV7()
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO deployment_definitions (
 			id, environment_id, deployment_id, kind, declared_id,
@@ -31,7 +31,7 @@ func TestRuntimeSubstrateRegistrationIsImmutableAndConcurrent(t *testing.T) {
 	`, definitionID, ids.environmentID, ids.deploymentID, ids.workspaceImageArtifactID)
 
 	params := db.InsertRuntimeSubstrateParams{
-		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ID:                     pgvalue.UUID(uuid.NewV7()),
 		OrgID:                  pgvalue.UUID(ids.orgID),
 		ProjectID:              pgvalue.UUID(ids.projectID),
 		EnvironmentID:          pgvalue.UUID(ids.environmentID),
@@ -48,7 +48,7 @@ func TestRuntimeSubstrateRegistrationIsImmutableAndConcurrent(t *testing.T) {
 	first := getRuntimeSubstrateRegistration(t, ctx, queries, params)
 
 	replay := params
-	replay.ID = pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	replay.ID = pgvalue.UUID(uuid.NewV7())
 	rows, err = queries.InsertRuntimeSubstrate(ctx, replay)
 	if err != nil || rows != 0 {
 		t.Fatalf("replay rows=%d error=%v", rows, err)
@@ -69,7 +69,7 @@ func TestRuntimeSubstrateRegistrationIsImmutableAndConcurrent(t *testing.T) {
 	}
 
 	concurrent := params
-	concurrent.ID = pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	concurrent.ID = pgvalue.UUID(uuid.NewV7())
 	concurrent.SubstrateContract = substrate.Contract + ".concurrent"
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -88,7 +88,7 @@ func TestRuntimeSubstrateRegistrationIsImmutableAndConcurrent(t *testing.T) {
 	failure := make(chan error, 1)
 	go func() {
 		other := concurrent
-		other.ID = pgvalue.UUID(uuid.Must(uuid.NewV7()))
+		other.ID = pgvalue.UUID(uuid.NewV7())
 		if inserted, insertErr := queries.InsertRuntimeSubstrate(ctx, other); insertErr != nil {
 			failure <- insertErr
 		} else if inserted != 0 {
@@ -151,11 +151,11 @@ func TestLockRuntimeSubstrateAuthorityFencesWorkerAndContract(t *testing.T) {
 			return value
 		}},
 		{name: "another worker", mutate: func(value db.LockRuntimeSubstrateAuthorityParams) db.LockRuntimeSubstrateAuthorityParams {
-			value.WorkerInstanceID = pgvalue.UUID(uuid.Must(uuid.NewV7()))
+			value.WorkerInstanceID = pgvalue.UUID(uuid.NewV7())
 			return value
 		}},
 		{name: "another definition", mutate: func(value db.LockRuntimeSubstrateAuthorityParams) db.LockRuntimeSubstrateAuthorityParams {
-			value.DeploymentDefinitionID = pgvalue.UUID(uuid.Must(uuid.NewV7()))
+			value.DeploymentDefinitionID = pgvalue.UUID(uuid.NewV7())
 			return value
 		}},
 		{name: "format mismatch", mutate: func(value db.LockRuntimeSubstrateAuthorityParams) db.LockRuntimeSubstrateAuthorityParams {
@@ -216,11 +216,11 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 }) runtimeSubstrateAuthorityFixture {
 	t.Helper()
 	orgID := dbtest.DefaultOrgID
-	projectID := uuid.Must(uuid.NewV7())
-	environmentID := uuid.Must(uuid.NewV7())
-	deploymentID := uuid.Must(uuid.NewV7())
-	programArtifactID := uuid.Must(uuid.NewV7())
-	imageArtifactID := uuid.Must(uuid.NewV7())
+	projectID := uuid.NewV7()
+	environmentID := uuid.NewV7()
+	deploymentID := uuid.NewV7()
+	programArtifactID := uuid.NewV7()
+	imageArtifactID := uuid.NewV7()
 	bundleDigest := dbtest.Digest("authority-bundle-" + deploymentID.String())
 	runtimeDigest := dbtest.Digest("authority-runtime-" + deploymentID.String())
 	programDigest := dbtest.Digest("authority-program-" + deploymentID.String())
@@ -258,7 +258,7 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 		)
 	`, deploymentID, orgID, projectID, environmentID,
 		bundleDigest, runtimeDigest, programArtifactID)
-	definitionID := uuid.Must(uuid.NewV7())
+	definitionID := uuid.NewV7()
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO deployment_definitions (
 			id, environment_id, deployment_id, kind, declared_id,
@@ -269,8 +269,8 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 		)
 	`, definitionID, environmentID, deploymentID, imageArtifactID)
 
-	workspaceID := uuid.Must(uuid.NewV7())
-	rootVersionID := uuid.Must(uuid.NewV7())
+	workspaceID := uuid.NewV7()
+	rootVersionID := uuid.NewV7()
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -303,7 +303,7 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 		t.Fatal(err)
 	}
 
-	workerID := uuid.Must(uuid.NewV7())
+	workerID := uuid.NewV7()
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO worker_instances (
 			id, resource_id, worker_group_id, worker_pool_id, state,
@@ -325,9 +325,9 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 			8, 1, '{}'::jsonb, $7, now(), now(), now()
 		)
 	`, workerID, "authority-"+workerID.String(), dbtest.DefaultWorkerGroupID,
-		dbtest.DefaultWorkerPoolID, uuid.Must(uuid.NewV7()), dbtest.DefaultRuntimeID,
+		dbtest.DefaultWorkerPoolID, uuid.NewV7(), dbtest.DefaultRuntimeID,
 		dbtest.DefaultCPUConfigID)
-	runtimeID := uuid.Must(uuid.NewV7())
+	runtimeID := uuid.NewV7()
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO runtime_instances (
 			id, org_id, worker_group_id, project_id, environment_id, region_id,

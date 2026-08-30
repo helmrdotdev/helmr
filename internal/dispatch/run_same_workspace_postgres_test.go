@@ -5,8 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -33,12 +33,12 @@ SELECT workspace_leases.id, workspace_leases.base_version_id,
 		t.Fatal(err)
 	}
 
-	waitID := uuid.Must(uuid.NewV7())
-	bCheckpointID := uuid.Must(uuid.NewV7())
-	childID := uuid.Must(uuid.NewV7())
-	claimID := uuid.Must(uuid.NewV7())
-	bVersionID := uuid.Must(uuid.NewV7())
-	bArtifactID := uuid.Must(uuid.NewV7())
+	waitID := uuid.NewV7()
+	bCheckpointID := uuid.NewV7()
+	childID := uuid.NewV7()
+	claimID := uuid.NewV7()
+	bVersionID := uuid.NewV7()
+	bArtifactID := uuid.NewV7()
 	bDigest := "sha256:" + strings.Repeat("9", 64)
 	tx, err := fixture.pool.Begin(fixture.ctx)
 	if err != nil {
@@ -102,7 +102,7 @@ INSERT INTO run_waits (
     $1, $2, $3, $4, 'child', $5, true, 'test-task', $6,
     '{"Method":"call"}'::jsonb, 3, 1, $7, $8, 'parked'
 )`, waitID, fixture.environmentID, fixture.runID, fixture.workspaceID,
-		childID, claimID, parentLease.ID, uuid.Must(uuid.NewV7()))
+		childID, claimID, parentLease.ID, uuid.NewV7())
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO run_checkpoints (
     id, run_id, attempt_number, run_wait_id, source_run_lease_id,
@@ -214,12 +214,12 @@ SELECT id FROM workspace_leases WHERE owner_run_lease_id = $1`, childLease.ID).S
 
 	// B now performs its own same-Workspace call to C. This makes B's later
 	// restore a real nested A→B→C authority path while Workspace ownership stays A.
-	innerWaitID := uuid.Must(uuid.NewV7())
-	innerCheckpointID := uuid.Must(uuid.NewV7())
-	grandchildID := uuid.Must(uuid.NewV7())
-	grandchildClaimID := uuid.Must(uuid.NewV7())
-	nestedBaseVersionID := uuid.Must(uuid.NewV7())
-	nestedBaseArtifactID := uuid.Must(uuid.NewV7())
+	innerWaitID := uuid.NewV7()
+	innerCheckpointID := uuid.NewV7()
+	grandchildID := uuid.NewV7()
+	grandchildClaimID := uuid.NewV7()
+	nestedBaseVersionID := uuid.NewV7()
+	nestedBaseArtifactID := uuid.NewV7()
 	nestedBaseDigest := "sha256:" + strings.Repeat("7", 64)
 	tx, err = fixture.pool.Begin(fixture.ctx)
 	if err != nil {
@@ -283,7 +283,7 @@ INSERT INTO run_waits (
     $1, $2, $3, $4, 'child', $5, true, 'test-task', $6,
     '{"Method":"call"}'::jsonb, 3, 1, $7, $8, 'parked'
 )`, innerWaitID, fixture.environmentID, childID, fixture.workspaceID,
-		grandchildID, grandchildClaimID, childLease.ID, uuid.Must(uuid.NewV7()))
+		grandchildID, grandchildClaimID, childLease.ID, uuid.NewV7())
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO run_checkpoints (
     id, run_id, attempt_number, run_wait_id, source_run_lease_id,
@@ -324,10 +324,10 @@ UPDATE workspace_leases
 		t.Fatal(err)
 	}
 
-	nestedResultVersionID := uuid.Must(uuid.NewV7())
-	nestedResultArtifactID := uuid.Must(uuid.NewV7())
-	grandchildRunLeaseID := uuid.Must(uuid.NewV7())
-	grandchildWorkspaceLeaseID := uuid.Must(uuid.NewV7())
+	nestedResultVersionID := uuid.NewV7()
+	nestedResultArtifactID := uuid.NewV7()
+	grandchildRunLeaseID := uuid.NewV7()
+	grandchildWorkspaceLeaseID := uuid.NewV7()
 	nestedResultDigest := "sha256:" + strings.Repeat("6", 64)
 	tx, err = fixture.pool.Begin(fixture.ctx)
 	if err != nil {
@@ -621,8 +621,8 @@ SELECT workspace_leases.id, workspace_mounts.fencing_generation,
 		t.Fatalf("recovered nested grant owner=%s ownership=%d workspaceWriter=%d outerWriter=%d resumeWriter=%d",
 			pgvalue.UUIDString(ownerRunID), ownershipGeneration, workspaceWriter, childWriter, resumeWriter)
 	}
-	cVersionID := uuid.Must(uuid.NewV7())
-	cArtifactID := uuid.Must(uuid.NewV7())
+	cVersionID := uuid.NewV7()
+	cArtifactID := uuid.NewV7()
 	cDigest := "sha256:" + strings.Repeat("8", 64)
 	tx, err = fixture.pool.Begin(fixture.ctx)
 	if err != nil {
@@ -818,7 +818,7 @@ func assertSameWorkspaceChildMountRejectsStaleReceipt(
 			_, err := q.EnsureRunWorkspaceMountRequested(
 				fixture.ctx,
 				db.EnsureRunWorkspaceMountRequestedParams{
-					ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+					ID:                 pgvalue.UUID(uuid.NewV7()),
 					Request:            []byte(`{"kind":"run"}`),
 					OrgID:              pgvalue.UUID(fixture.orgID),
 					WorkspaceID:        pgvalue.UUID(fixture.workspaceID),

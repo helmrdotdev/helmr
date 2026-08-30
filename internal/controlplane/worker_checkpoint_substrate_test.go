@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -13,11 +13,11 @@ import (
 )
 
 func TestCheckpointSubstrateAuthorityMatchesRelationalIdentity(t *testing.T) {
-	orgID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	projectID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	environmentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	definitionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	substrateID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	orgID := pgvalue.UUID(uuid.NewV7())
+	projectID := pgvalue.UUID(uuid.NewV7())
+	environmentID := pgvalue.UUID(uuid.NewV7())
+	definitionID := pgvalue.UUID(uuid.NewV7())
+	substrateID := pgvalue.UUID(uuid.NewV7())
 	authority := runLeaseClaimAuthority{
 		run: db.Run{
 			OrgID:         orgID,
@@ -79,7 +79,7 @@ func TestCheckpointSubstrateAuthorityMatchesRelationalIdentity(t *testing.T) {
 	}
 
 	crossTenant := store
-	crossTenant.row.EnvironmentID = pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	crossTenant.row.EnvironmentID = pgvalue.UUID(uuid.NewV7())
 	if err := validateCheckpointSubstrateAuthority(
 		context.Background(),
 		crossTenant,

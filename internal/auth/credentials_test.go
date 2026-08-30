@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 func TestCredentialKeyDerivesStableSeparatedCredentials(t *testing.T) {
@@ -54,7 +54,7 @@ func TestCredentialKeyRejectsInvalidAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := key.Derive(uuid.Nil); err == nil {
+	if _, err := key.Derive(uuid.Nil()); err == nil {
 		t.Fatal("nil Token ID was accepted")
 	}
 }

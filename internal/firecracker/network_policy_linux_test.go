@@ -12,9 +12,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/firecracker-microvm/firecracker-go-sdk"
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/firecracker/datapath"
 	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/vm"
@@ -41,7 +41,7 @@ func TestRoutedNetworkLifecyclePrivileged(t *testing.T) {
 	if err := connector.datapath.VerifyKernel(); err != nil {
 		t.Fatal(err)
 	}
-	owner := vm.Owner{Kind: vm.OwnerRuntime, ID: uuid.Must(uuid.NewV7()).String()}
+	owner := vm.Owner{Kind: vm.OwnerRuntime, ID: uuid.NewV7().String()}
 	statePath := filepath.Join(stateDir, owner.ID)
 	if err := os.Mkdir(statePath, 0o700); err != nil {
 		t.Fatal(err)
@@ -187,8 +187,8 @@ func TestNetworkAllocationLockIsStableOutsideOwnerStateRoot(t *testing.T) {
 		NetworkCapacity: 2,
 	}}
 	owners := []vm.Owner{
-		{Kind: vm.OwnerRuntime, ID: uuid.Must(uuid.NewV7()).String()},
-		{Kind: vm.OwnerRuntime, ID: uuid.Must(uuid.NewV7()).String()},
+		{Kind: vm.OwnerRuntime, ID: uuid.NewV7().String()},
+		{Kind: vm.OwnerRuntime, ID: uuid.NewV7().String()},
 	}
 	for _, owner := range owners {
 		if _, err := createOwnerStateRoot(stateDir, owner); err != nil {
@@ -240,7 +240,7 @@ func TestNetworkAllocationLockIsStableOutsideOwnerStateRoot(t *testing.T) {
 
 func TestNetworkAllocationRejectsSymlinkLock(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "guest")
-	owner := vm.Owner{Kind: vm.OwnerRuntime, ID: uuid.Must(uuid.NewV7()).String()}
+	owner := vm.Owner{Kind: vm.OwnerRuntime, ID: uuid.NewV7().String()}
 	if _, err := createOwnerStateRoot(stateDir, owner); err != nil {
 		t.Fatal(err)
 	}

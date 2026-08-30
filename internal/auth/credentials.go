@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 const CredentialKeySize = 32
@@ -44,7 +44,7 @@ func (k CredentialKey) Valid() bool {
 }
 
 func (k CredentialKey) Derive(tokenID uuid.UUID) (Credentials, error) {
-	if tokenID == uuid.Nil {
+	if tokenID == uuid.Nil() {
 		return Credentials{}, errors.New("token ID is required")
 	}
 	if !k.Valid() {

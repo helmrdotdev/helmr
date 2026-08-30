@@ -9,8 +9,8 @@ import (
 	"io"
 	"log/slog"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/outbox"
@@ -83,7 +83,7 @@ func NewRevocationDeliveryWorker(
 		log:       log,
 		store:     store,
 		reconcile: reconcile,
-		workerID:  uuid.Must(uuid.NewV7()).String(),
+		workerID:  uuid.NewV7().String(),
 		interval:  secretRevocationPollInterval,
 		claimFor:  secretRevocationClaimLease,
 		claimSize: secretRevocationClaimLimit,

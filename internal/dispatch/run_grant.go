@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
@@ -97,8 +97,8 @@ SELECT transaction_timestamp(),
 	if err != nil {
 		return db.RunLease{}, fmt.Errorf("allocate run lease sequence: %w", err)
 	}
-	runLeaseID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	workspaceLeaseUUID := uuid.Must(uuid.NewV7())
+	runLeaseID := pgvalue.UUID(uuid.NewV7())
+	workspaceLeaseUUID := uuid.NewV7()
 	workspaceLeaseID := pgvalue.UUID(workspaceLeaseUUID)
 	workspaceUUID, err := pgvalue.UUIDValue(authority.workspaceID)
 	if err != nil {

@@ -4,16 +4,16 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
 func TestDiscoverWorkerRunLeasesReturnsOnlyExactWorkTuples(t *testing.T) {
-	workerID := uuid.Must(uuid.NewV7())
-	firstLeaseID := uuid.Must(uuid.NewV7())
-	secondLeaseID := uuid.Must(uuid.NewV7())
+	workerID := uuid.NewV7()
+	firstLeaseID := uuid.NewV7()
+	secondLeaseID := uuid.NewV7()
 	store := &runLeaseDiscoveryStore{
 		rows: []db.DiscoverWorkerRunLeaseWorkRow{
 			{ID: pgvalue.UUID(firstLeaseID), LeaseSequence: 3},
@@ -51,7 +51,7 @@ func TestDiscoverWorkerRunLeasesReturnsAnEmptyList(t *testing.T) {
 		context.Background(),
 		&runLeaseDiscoveryStore{},
 		"run-workers",
-		pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		pgvalue.UUID(uuid.NewV7()),
 		1,
 	)
 	if err != nil {
@@ -68,7 +68,7 @@ func TestDiscoverWorkerRunLeasesPropagatesStorageFailure(t *testing.T) {
 		context.Background(),
 		&runLeaseDiscoveryStore{err: expected},
 		"run-workers",
-		pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		pgvalue.UUID(uuid.NewV7()),
 		1,
 	)
 	if !errors.Is(err, expected) {

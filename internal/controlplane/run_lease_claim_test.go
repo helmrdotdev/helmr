@@ -5,8 +5,8 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -1454,7 +1454,7 @@ func validRunLeaseClaimSecretFixture(
 
 func validRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsRow, runLeaseClaimAuthority) {
 	id := func() pgtype.UUID {
-		return pgvalue.UUID(uuid.Must(uuid.NewV7()))
+		return pgvalue.UUID(uuid.NewV7())
 	}
 	orgID := id()
 	projectID := id()
@@ -1463,7 +1463,7 @@ func validRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsRow, r
 	workspaceID := id()
 	deploymentID := id()
 	definitionID := id()
-	workerInstanceID := uuid.Must(uuid.NewV7())
+	workerInstanceID := uuid.NewV7()
 	runtimeID := id()
 	runLeaseID := id()
 	mountID := id()

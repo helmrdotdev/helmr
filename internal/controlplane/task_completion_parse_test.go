@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )
@@ -68,7 +68,7 @@ func TestParseTaskCompletionFailureRequiresRollback(t *testing.T) {
 		t.Fatalf("parsed completion = %+v", parsed)
 	}
 
-	request.Workspace.RolledBack.Target.BaseWorkspaceVersionID = uuid.Must(uuid.NewV7()).String()
+	request.Workspace.RolledBack.Target.BaseWorkspaceVersionID = uuid.NewV7().String()
 	if _, err := parseTaskCompletionRequest(request); err == nil {
 		t.Fatal("rollback outside the admitted base was accepted")
 	}
@@ -130,7 +130,7 @@ func TestParseTaskCompletionRejectsOpenOrMismatchedShapes(t *testing.T) {
 
 func validTaskCompletionRequest(t *testing.T) workerapi.CompleteTaskRequest {
 	t.Helper()
-	lease := validRunLeaseAssignment(uuid.Must(uuid.NewV7()))
+	lease := validRunLeaseAssignment(uuid.NewV7())
 	lease.StartDeadlineAt = time.Unix(1_800_000_000, 123_456_789).UTC()
 	lease.ExpiresAt = time.Unix(1_800_000_100, 987_654_321).UTC()
 	return workerapi.CompleteTaskRequest{
@@ -189,7 +189,7 @@ func validTaskWorkspaceRollback(
 
 func validWorkspaceFinalizationReceipt(lease workerapi.RunLeaseAssignment) workerapi.WorkspaceFinalizationReceipt {
 	return workerapi.WorkspaceFinalizationReceipt{
-		OperationID: uuid.Must(uuid.NewV7()).String(),
+		OperationID: uuid.NewV7().String(),
 		Fence: workerapi.WorkspaceFinalizationFence{
 			WorkerInstanceID: lease.WorkerInstanceID, WorkerEpoch: lease.WorkerEpoch,
 			RuntimeInstanceID: lease.RuntimeInstanceID, RuntimeIdentityID: lease.RuntimeIdentityID,

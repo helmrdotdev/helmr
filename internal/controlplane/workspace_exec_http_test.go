@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"uuid"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -36,11 +36,11 @@ func (s *workspaceExecHTTPStore) GetWorkspaceExec(
 }
 
 func TestGetWorkspaceExecHTTPProjectsEveryPublicState(t *testing.T) {
-	orgID := uuid.Must(uuid.NewV7())
-	projectID := uuid.Must(uuid.NewV7())
-	environmentID := uuid.Must(uuid.NewV7())
-	workspaceID := uuid.Must(uuid.NewV7())
-	processID := uuid.Must(uuid.NewV7())
+	orgID := uuid.NewV7()
+	projectID := uuid.NewV7()
+	environmentID := uuid.NewV7()
+	workspaceID := uuid.NewV7()
+	processID := uuid.NewV7()
 	principal := workspaceExecHTTPPrincipal(orgID, projectID, environmentID)
 	want := db.GetWorkspaceExecParams{
 		OrgID: pgvalue.UUID(orgID), ProjectID: pgvalue.UUID(projectID),
@@ -98,11 +98,11 @@ func TestGetWorkspaceExecHTTPProjectsEveryPublicState(t *testing.T) {
 }
 
 func TestGetWorkspaceExecHTTPRequiresExecPermissionAndValidIDs(t *testing.T) {
-	orgID := uuid.Must(uuid.NewV7())
-	projectID := uuid.Must(uuid.NewV7())
-	environmentID := uuid.Must(uuid.NewV7())
-	workspaceID := uuid.Must(uuid.NewV7())
-	processID := uuid.Must(uuid.NewV7())
+	orgID := uuid.NewV7()
+	projectID := uuid.NewV7()
+	environmentID := uuid.NewV7()
+	workspaceID := uuid.NewV7()
+	processID := uuid.NewV7()
 	store := &workspaceExecHTTPStore{}
 	server := &Server{db: store}
 
@@ -140,11 +140,11 @@ func TestGetWorkspaceExecHTTPRequiresExecPermissionAndValidIDs(t *testing.T) {
 }
 
 func TestGetWorkspaceExecHTTPIsolatesEveryAuthorityCoordinate(t *testing.T) {
-	orgID := uuid.Must(uuid.NewV7())
-	projectID := uuid.Must(uuid.NewV7())
-	environmentID := uuid.Must(uuid.NewV7())
-	workspaceID := uuid.Must(uuid.NewV7())
-	processID := uuid.Must(uuid.NewV7())
+	orgID := uuid.NewV7()
+	projectID := uuid.NewV7()
+	environmentID := uuid.NewV7()
+	workspaceID := uuid.NewV7()
+	processID := uuid.NewV7()
 	store := &workspaceExecHTTPStore{
 		want: db.GetWorkspaceExecParams{
 			OrgID: pgvalue.UUID(orgID), ProjectID: pgvalue.UUID(projectID),
@@ -161,11 +161,11 @@ func TestGetWorkspaceExecHTTPIsolatesEveryAuthorityCoordinate(t *testing.T) {
 		workspaceID uuid.UUID
 		processID   uuid.UUID
 	}{
-		{name: "organization", principal: workspaceExecHTTPPrincipal(uuid.Must(uuid.NewV7()), projectID, environmentID), workspaceID: workspaceID, processID: processID},
-		{name: "project", principal: workspaceExecHTTPPrincipal(orgID, uuid.Must(uuid.NewV7()), environmentID), workspaceID: workspaceID, processID: processID},
-		{name: "environment", principal: workspaceExecHTTPPrincipal(orgID, projectID, uuid.Must(uuid.NewV7())), workspaceID: workspaceID, processID: processID},
-		{name: "workspace", principal: workspaceExecHTTPPrincipal(orgID, projectID, environmentID), workspaceID: uuid.Must(uuid.NewV7()), processID: processID},
-		{name: "process", principal: workspaceExecHTTPPrincipal(orgID, projectID, environmentID), workspaceID: workspaceID, processID: uuid.Must(uuid.NewV7())},
+		{name: "organization", principal: workspaceExecHTTPPrincipal(uuid.NewV7(), projectID, environmentID), workspaceID: workspaceID, processID: processID},
+		{name: "project", principal: workspaceExecHTTPPrincipal(orgID, uuid.NewV7(), environmentID), workspaceID: workspaceID, processID: processID},
+		{name: "environment", principal: workspaceExecHTTPPrincipal(orgID, projectID, uuid.NewV7()), workspaceID: workspaceID, processID: processID},
+		{name: "workspace", principal: workspaceExecHTTPPrincipal(orgID, projectID, environmentID), workspaceID: uuid.NewV7(), processID: processID},
+		{name: "process", principal: workspaceExecHTTPPrincipal(orgID, projectID, environmentID), workspaceID: workspaceID, processID: uuid.NewV7()},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -183,7 +183,7 @@ func TestGetWorkspaceExecHTTPIsolatesEveryAuthorityCoordinate(t *testing.T) {
 
 func workspaceExecHTTPPrincipal(orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID) auth.Actor {
 	return auth.Actor{
-		OrgID: orgID, APIKeyID: uuid.Must(uuid.NewV7()), Kind: auth.ActorKindAPIKey, Role: auth.RoleDeveloper,
+		OrgID: orgID, APIKeyID: uuid.NewV7(), Kind: auth.ActorKindAPIKey, Role: auth.RoleDeveloper,
 		ProjectID: projectID.String(), EnvironmentID: environmentID.String(),
 		Permissions: []auth.Permission{auth.PermissionWorkspaceExecCreate},
 	}

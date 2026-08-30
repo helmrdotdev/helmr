@@ -5,26 +5,26 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/column"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 )
 
 func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
-	deploymentID := uuid.Must(uuid.NewV7())
-	runID := uuid.Must(uuid.NewV7())
-	runLeaseID := uuid.Must(uuid.NewV7())
+	deploymentID := uuid.NewV7()
+	runID := uuid.NewV7()
+	runLeaseID := uuid.NewV7()
 	attemptNumber := int32(2)
 	observedAt := time.Date(2026, 7, 3, 1, 2, 3, 456000000, time.UTC)
 	client := &fakeBatchClient{}
 	writer := NewWriter(client)
 
 	if err := writer.WriteEvents(context.Background(), []telemetry.EventRecord{{
-		OrgID:          uuid.Must(uuid.NewV7()),
-		ProjectID:      uuid.Must(uuid.NewV7()),
-		EnvironmentID:  uuid.Must(uuid.NewV7()),
+		OrgID:          uuid.NewV7(),
+		ProjectID:      uuid.NewV7(),
+		EnvironmentID:  uuid.NewV7(),
 		SubjectKind:    "run",
 		SubjectID:      runID,
 		EventKind:      "run.started",
@@ -60,9 +60,9 @@ func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
 	}
 
 	if err := writer.WriteRunLogs(context.Background(), []telemetry.RunLogRecord{{
-		OrgID:          uuid.Must(uuid.NewV7()),
-		ProjectID:      uuid.Must(uuid.NewV7()),
-		EnvironmentID:  uuid.Must(uuid.NewV7()),
+		OrgID:          uuid.NewV7(),
+		ProjectID:      uuid.NewV7(),
+		EnvironmentID:  uuid.NewV7(),
 		RunID:          runID,
 		RunLeaseID:     runLeaseID,
 		AttemptNumber:  attemptNumber,
@@ -87,9 +87,9 @@ func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
 	}
 
 	if err := writer.WriteMeterEvents(context.Background(), []telemetry.MeterEventRecord{{
-		OrgID:          uuid.Must(uuid.NewV7()),
-		ProjectID:      uuid.Must(uuid.NewV7()),
-		EnvironmentID:  uuid.Must(uuid.NewV7()),
+		OrgID:          uuid.NewV7(),
+		ProjectID:      uuid.NewV7(),
+		EnvironmentID:  uuid.NewV7(),
 		SourceType:     "run_lease",
 		SourceID:       runLeaseID,
 		RunID:          &runID,
@@ -119,12 +119,12 @@ func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
 	}
 
 	if err := writer.WriteTerminalOutput(context.Background(), []telemetry.TerminalOutputRecord{{
-		OrgID:          uuid.Must(uuid.NewV7()),
-		ProjectID:      uuid.Must(uuid.NewV7()),
-		EnvironmentID:  uuid.Must(uuid.NewV7()),
-		WorkspaceID:    uuid.Must(uuid.NewV7()),
+		OrgID:          uuid.NewV7(),
+		ProjectID:      uuid.NewV7(),
+		EnvironmentID:  uuid.NewV7(),
+		WorkspaceID:    uuid.NewV7(),
 		ResourceKind:   "workspace_process",
-		ResourceID:     uuid.Must(uuid.NewV7()),
+		ResourceID:     uuid.NewV7(),
 		StreamName:     "output",
 		OffsetStart:    10,
 		OffsetEnd:      15,

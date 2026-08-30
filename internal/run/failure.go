@@ -3,7 +3,7 @@ package run
 import (
 	"encoding/json"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 type Failure struct {

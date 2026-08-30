@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -81,7 +81,7 @@ func UUID(value uuid.UUID) pgtype.UUID {
 }
 
 func NewUUIDv7() pgtype.UUID {
-	return UUID(uuid.Must(uuid.NewV7()))
+	return UUID(uuid.NewV7())
 }
 
 func NewUUIDv7Batch(count int32) []pgtype.UUID {
@@ -94,7 +94,7 @@ func NewUUIDv7Batch(count int32) []pgtype.UUID {
 
 func UUIDValue(value pgtype.UUID) (uuid.UUID, error) {
 	if !value.Valid {
-		return uuid.Nil, fmt.Errorf("uuid is null")
+		return uuid.Nil(), fmt.Errorf("uuid is null")
 	}
 	return uuid.UUID(value.Bytes), nil
 }

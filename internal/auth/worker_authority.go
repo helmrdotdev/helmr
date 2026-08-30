@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 type EpochExchangeInput struct {
@@ -24,7 +24,7 @@ type WorkerTokenAuthority struct {
 }
 
 func (input EpochExchangeInput) Validate() error {
-	if input.ServiceID == uuid.Nil {
+	if input.ServiceID == uuid.Nil() {
 		return errors.New("service_id is required")
 	}
 	return nil
@@ -40,10 +40,10 @@ func (authority WorkerTokenAuthority) Claims(input EpochExchangeInput, issuedAt,
 	if strings.TrimSpace(authority.WorkerGroupID) == "" || strings.TrimSpace(authority.WorkerGroupID) != authority.WorkerGroupID {
 		return WorkerClaims{}, errors.New("worker_group_id must be nonempty and canonical")
 	}
-	if authority.WorkerInstanceID == uuid.Nil {
+	if authority.WorkerInstanceID == uuid.Nil() {
 		return WorkerClaims{}, errors.New("worker_instance_id is required")
 	}
-	if authority.CredentialID == uuid.Nil {
+	if authority.CredentialID == uuid.Nil() {
 		return WorkerClaims{}, errors.New("credential_id is required")
 	}
 	if authority.WorkerEpoch <= 0 || authority.ClaimVersion <= 0 || authority.GroupClaimVersion <= 0 {

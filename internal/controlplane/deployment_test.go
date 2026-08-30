@@ -2,17 +2,14 @@ package controlplane
 
 import (
 	"testing"
-	"time"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 func TestDeploymentVersionUsesCreationDateAndID(t *testing.T) {
-	id := uuid.Must(uuid.NewV7())
-	seconds, nanoseconds := id.Time().UnixTime()
-	createdAt := time.Unix(seconds, nanoseconds)
+	id := uuid.MustParse("019b76da-a800-7000-8000-000000000000")
 
-	if got, want := deploymentVersion(id), createdAt.UTC().Format("20060102")+"."+id.String(); got != want {
+	if got, want := deploymentVersion(id), "20260101."+id.String(); got != want {
 		t.Fatalf("deploymentVersion() = %q, want %q", got, want)
 	}
 }

@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -88,7 +88,7 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 		if _, err := work.q.PromoteDeployment(
 			r.Context(),
 			db.PromoteDeploymentParams{
-				ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				ID:                  pgvalue.UUID(uuid.NewV7()),
 				OrgID:               target.OrgID,
 				ProjectID:           target.ProjectID,
 				EnvironmentID:       target.EnvironmentID,
@@ -192,7 +192,7 @@ func reconcileSchedules(
 		plan := &plans[i]
 		scheduledIDs = append(scheduledIDs, plan.definition.DeclaredID)
 		record, err := store.ReconcileSchedule(ctx, db.ReconcileScheduleParams{
-			ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			ID:                     pgvalue.UUID(uuid.NewV7()),
 			EnvironmentID:          target.EnvironmentID,
 			TaskDeclaredID:         plan.definition.DeclaredID,
 			DeploymentDefinitionID: plan.definition.ID,

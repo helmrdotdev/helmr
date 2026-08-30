@@ -6,15 +6,15 @@ import (
 	"fmt"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
 func TestSecretRevocationDeliveryReconcilesAndDelivers(t *testing.T) {
-	environmentID := uuid.Must(uuid.NewV7())
-	secretID := uuid.Must(uuid.NewV7())
+	environmentID := uuid.NewV7()
+	secretID := uuid.NewV7()
 	message := secretRevocationMessage(environmentID, secretID, 3)
 	store := &secretRevocationDeliveryStore{
 		messages: []db.OutboxMessage{message},
@@ -72,8 +72,8 @@ func TestSecretRevocationDeliveryReconcilesAndDelivers(t *testing.T) {
 
 func TestSecretRevocationDeliveryContinuesFullBatch(t *testing.T) {
 	message := secretRevocationMessage(
-		uuid.Must(uuid.NewV7()),
-		uuid.Must(uuid.NewV7()),
+		uuid.NewV7(),
+		uuid.NewV7(),
 		1,
 	)
 	store := &secretRevocationDeliveryStore{
@@ -114,8 +114,8 @@ func TestSecretRevocationDeliveryContinuesFullBatch(t *testing.T) {
 
 func TestSecretRevocationDeliveryRetriesReconciliationFailure(t *testing.T) {
 	message := secretRevocationMessage(
-		uuid.Must(uuid.NewV7()),
-		uuid.Must(uuid.NewV7()),
+		uuid.NewV7(),
+		uuid.NewV7(),
 		1,
 	)
 	message.Attempts = 3
@@ -156,8 +156,8 @@ func TestSecretRevocationDeliveryRetriesReconciliationFailure(t *testing.T) {
 
 func TestSecretRevocationDeliveryDeadLettersInvalidPayload(t *testing.T) {
 	message := secretRevocationMessage(
-		uuid.Must(uuid.NewV7()),
-		uuid.Must(uuid.NewV7()),
+		uuid.NewV7(),
+		uuid.NewV7(),
 		1,
 	)
 	message.Payload = []byte(
@@ -244,7 +244,7 @@ func secretRevocationMessage(
 	generation int64,
 ) db.OutboxMessage {
 	return db.OutboxMessage{
-		ID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ID:    pgvalue.UUID(uuid.NewV7()),
 		Lane:  "control",
 		Topic: "secret.revoked",
 		Payload: []byte(

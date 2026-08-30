@@ -10,8 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -180,10 +180,10 @@ func NewDeploymentFinalizeRequest(
 	key string,
 	fingerprint DeploymentFinalizeFingerprint,
 ) (Request, error) {
-	if environmentID == uuid.Nil {
+	if environmentID == uuid.Nil() {
 		return nil, errors.New("idempotency environment is required")
 	}
-	if projectID == uuid.Nil {
+	if projectID == uuid.Nil() {
 		return nil, errors.New("project ID is required")
 	}
 	if _, err := deploymentDigestBytes(fingerprint.BundleDigest); err != nil {
@@ -216,17 +216,17 @@ func NewSecretCreateRequest(environmentID uuid.UUID, name string, key string) (R
 }
 
 func NewSecretRotateRequest(environmentID uuid.UUID, secretID uuid.UUID, key string) (Request, error) {
-	if secretID == uuid.Nil {
+	if secretID == uuid.Nil() {
 		return nil, errors.New("secret ID is required")
 	}
 	return newSecretValueRequest(environmentID, operationSecretRotate, secretID[:], key, nil)
 }
 
 func NewSecretRevokeRequest(environmentID uuid.UUID, secretID uuid.UUID, key string) (Request, error) {
-	if environmentID == uuid.Nil {
+	if environmentID == uuid.Nil() {
 		return nil, errors.New("idempotency environment is required")
 	}
-	if secretID == uuid.Nil {
+	if secretID == uuid.Nil() {
 		return nil, errors.New("secret ID is required")
 	}
 	return sealedRequest{value: request{
@@ -248,10 +248,10 @@ func NewRunMetadataRequest(
 	mutationJSON []byte,
 	leaseFenceFingerprint string,
 ) (Request, error) {
-	if environmentID == uuid.Nil {
+	if environmentID == uuid.Nil() {
 		return nil, errors.New("idempotency environment is required")
 	}
-	if runID == uuid.Nil {
+	if runID == uuid.Nil() {
 		return nil, errors.New("run ID is required")
 	}
 	if attemptNumber <= 0 {
@@ -295,10 +295,10 @@ func NewRunMetadataRequest(
 }
 
 func NewActorInputSendRequest(environmentID uuid.UUID, actorID uuid.UUID, key string, inputJSON []byte) (Request, error) {
-	if environmentID == uuid.Nil {
+	if environmentID == uuid.Nil() {
 		return nil, errors.New("idempotency environment is required")
 	}
-	if actorID == uuid.Nil {
+	if actorID == uuid.Nil() {
 		return nil, errors.New("actor ID is required")
 	}
 	canonicalInput, err := jsoncanon.Transform(inputJSON)
@@ -324,10 +324,10 @@ func NewActorOutputAppendRequest(
 	dataJSON []byte,
 	contentType string,
 ) (Request, error) {
-	if environmentID == uuid.Nil {
+	if environmentID == uuid.Nil() {
 		return nil, errors.New("idempotency environment is required")
 	}
-	if actorID == uuid.Nil {
+	if actorID == uuid.Nil() {
 		return nil, errors.New("actor ID is required")
 	}
 	canonicalData, err := jsoncanon.Transform(dataJSON)
@@ -360,10 +360,10 @@ func NewActorOutputAppendRequest(
 }
 
 func NewActorCloseRequest(environmentID uuid.UUID, actorID uuid.UUID, key string) (Request, error) {
-	if environmentID == uuid.Nil {
+	if environmentID == uuid.Nil() {
 		return nil, errors.New("idempotency environment is required")
 	}
-	if actorID == uuid.Nil {
+	if actorID == uuid.Nil() {
 		return nil, errors.New("actor ID is required")
 	}
 	return sealedRequest{value: request{
@@ -383,7 +383,7 @@ func NewRuntimeTokenCreateRequest(
 	key string,
 	input TokenCreateFingerprint,
 ) (Request, error) {
-	if runID == uuid.Nil {
+	if runID == uuid.Nil() {
 		return nil, errors.New("token creating run ID is required")
 	}
 	scope := append([]byte("runtime\x00"), runID[:]...)
@@ -404,7 +404,7 @@ func newTokenCreateRequest(
 	key string,
 	input TokenCreateFingerprint,
 ) (Request, error) {
-	if environmentID == uuid.Nil {
+	if environmentID == uuid.Nil() {
 		return nil, errors.New("idempotency environment is required")
 	}
 	metadata, err := canonicalJSONOr(input.Metadata, `{}`)
@@ -444,10 +444,10 @@ func NewTokenCompleteRequest(
 	key string,
 	resultJSON []byte,
 ) (Request, error) {
-	if environmentID == uuid.Nil {
+	if environmentID == uuid.Nil() {
 		return nil, errors.New("idempotency environment is required")
 	}
-	if tokenID == uuid.Nil {
+	if tokenID == uuid.Nil() {
 		return nil, errors.New("token ID is required")
 	}
 	canonical, err := jsoncanon.Transform(resultJSON)
@@ -466,10 +466,10 @@ func NewTokenCompleteRequest(
 }
 
 func NewTokenCancelRequest(environmentID uuid.UUID, tokenID uuid.UUID, key string) (Request, error) {
-	if environmentID == uuid.Nil {
+	if environmentID == uuid.Nil() {
 		return nil, errors.New("idempotency environment is required")
 	}
-	if tokenID == uuid.Nil {
+	if tokenID == uuid.Nil() {
 		return nil, errors.New("token ID is required")
 	}
 	return sealedRequest{value: request{
@@ -489,7 +489,7 @@ func NewActorStartRequest(
 	key string,
 	input ActorStartFingerprint,
 ) (Request, error) {
-	if environmentID == uuid.Nil {
+	if environmentID == uuid.Nil() {
 		return nil, errors.New("idempotency environment is required")
 	}
 	if actorDeclaredID == "" {
@@ -565,7 +565,7 @@ func NewExternalWorkspaceCreateRequest(
 ) (Request, error) {
 	return newWorkspaceCreateRequest(
 		environmentID,
-		workspaceCreateScope("external", uuid.Nil, workspaceDeclaredID),
+		workspaceCreateScope("external", uuid.Nil(), workspaceDeclaredID),
 		workspaceDeclaredID,
 		key,
 		input,
@@ -579,7 +579,7 @@ func NewRuntimeWorkspaceCreateRequest(
 	key string,
 	input WorkspaceCreateFingerprint,
 ) (Request, error) {
-	if runID == uuid.Nil {
+	if runID == uuid.Nil() {
 		return nil, errors.New("workspace creating run ID is required")
 	}
 	return newWorkspaceCreateRequest(
@@ -598,7 +598,7 @@ func newWorkspaceCreateRequest(
 	key string,
 	input WorkspaceCreateFingerprint,
 ) (Request, error) {
-	if environmentID == uuid.Nil {
+	if environmentID == uuid.Nil() {
 		return nil, errors.New("idempotency environment is required")
 	}
 	if workspaceDeclaredID == "" {
@@ -639,7 +639,7 @@ func workspaceCreateScope(kind string, runID uuid.UUID, declaredID string) []byt
 	scope := make([]byte, 0, len(kind)+1+len(runID)+1+len(declaredID))
 	scope = append(scope, kind...)
 	scope = append(scope, 0)
-	if runID != uuid.Nil {
+	if runID != uuid.Nil() {
 		scope = append(scope, runID[:]...)
 		scope = append(scope, 0)
 	}
@@ -647,10 +647,10 @@ func workspaceCreateScope(kind string, runID uuid.UUID, declaredID string) []byt
 }
 
 func NewWorkspaceDeleteRequest(environmentID uuid.UUID, workspaceID uuid.UUID, key string) (Request, error) {
-	if environmentID == uuid.Nil {
+	if environmentID == uuid.Nil() {
 		return nil, errors.New("idempotency environment is required")
 	}
-	if workspaceID == uuid.Nil {
+	if workspaceID == uuid.Nil() {
 		return nil, errors.New("workspace ID is required")
 	}
 	return sealedRequest{value: request{
@@ -670,10 +670,10 @@ func NewWorkspaceExecRequest(
 	key string,
 	input WorkspaceExecFingerprint,
 ) (Request, error) {
-	if environmentID == uuid.Nil {
+	if environmentID == uuid.Nil() {
 		return nil, errors.New("idempotency environment is required")
 	}
-	if workspaceID == uuid.Nil {
+	if workspaceID == uuid.Nil() {
 		return nil, errors.New("workspace ID is required")
 	}
 	env, err := canonicalJSONOr(input.Env, `{}`)
@@ -717,7 +717,7 @@ func NewTaskStartRequest(
 	key string,
 	input TaskStartFingerprint,
 ) (Request, error) {
-	if environmentID == uuid.Nil {
+	if environmentID == uuid.Nil() {
 		return nil, errors.New("idempotency environment is required")
 	}
 	if taskDeclaredID == "" {
@@ -791,7 +791,7 @@ func NewTaskChildInvokeRequest(
 	key string,
 	input TaskChildInvokeFingerprint,
 ) (Request, error) {
-	if parentRunID == uuid.Nil {
+	if parentRunID == uuid.Nil() {
 		return nil, errors.New("parent run ID is required")
 	}
 	if taskDeclaredID == "" {
@@ -859,7 +859,7 @@ func canonicalJSONOr(value json.RawMessage, fallback string) ([]byte, error) {
 }
 
 func newSecretValueRequest(environmentID uuid.UUID, operation operation, scope []byte, key string, fields []byte) (Request, error) {
-	if environmentID == uuid.Nil {
+	if environmentID == uuid.Nil() {
 		return nil, errors.New("idempotency environment is required")
 	}
 	return sealedRequest{value: request{
@@ -897,7 +897,7 @@ func (t *Transaction) Acquire(ctx context.Context, input Request) (Result, error
 		return Result{}, errors.New("idempotency request is required")
 	}
 	request := input.idempotencyRequest()
-	if request.environmentID == uuid.Nil {
+	if request.environmentID == uuid.Nil() {
 		return Result{}, errors.New("idempotency environment is required")
 	}
 	if !supportedOperation(request.operation) {
@@ -1004,7 +1004,7 @@ func (t *Transaction) create(
 	fingerprint [sha256.Size]byte,
 ) (Result, error) {
 	claim, err := t.store.CreateIdempotencyClaim(ctx, db.CreateIdempotencyClaimParams{
-		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ID:                 pgvalue.UUID(uuid.NewV7()),
 		EnvironmentID:      pgvalue.UUID(request.environmentID),
 		Operation:          string(request.operation),
 		SlotHash:           slotHash[:],

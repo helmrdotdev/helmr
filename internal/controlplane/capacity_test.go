@@ -13,9 +13,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -287,7 +287,7 @@ func TestCapacityProviderAbsenceUsesExactWorkerIdentity(t *testing.T) {
 }
 
 func TestCapacityResolveAndPlanHandlers(t *testing.T) {
-	groupID := uuid.Must(uuid.NewV7()).String()
+	groupID := uuid.NewV7().String()
 	poolID := pgvalue.NewUUIDv7()
 	template := capacityHTTPTemplate(t)
 	store := &capacityPlanStore{group: db.WorkerGroup{
@@ -385,7 +385,7 @@ func TestCapacityWorkerInstanceListParamsAreBounded(t *testing.T) {
 
 func TestCapacityWorkerInstanceReadContract(t *testing.T) {
 	workerID := pgvalue.NewUUIDv7()
-	groupID := uuid.Must(uuid.NewV7()).String()
+	groupID := uuid.NewV7().String()
 	poolID := pgvalue.NewUUIDv7()
 	now := time.Now().UTC()
 	row := db.ListCapacityWorkerInstancesRow{

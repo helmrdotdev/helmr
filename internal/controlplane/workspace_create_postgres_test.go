@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -312,7 +312,7 @@ SELECT state, state_version, deployment_definition_id, key,
 		t.Fatal(err)
 	}
 	if tombstone.state != db.WorkspaceStateDeleted || tombstone.stateVersion != 3 ||
-		tombstone.deploymentDefinitionID == uuid.Nil || tombstone.key != nil ||
+		tombstone.deploymentDefinitionID == uuid.Nil() || tombstone.key != nil ||
 		tombstone.sandboxDeclaredID != nil || tombstone.headVersionID != nil ||
 		tombstone.deletedAt.IsZero() {
 		t.Fatalf("workspace tombstone = %+v", tombstone)
@@ -447,9 +447,9 @@ SELECT head_version_id, deployment_definition_id
   FROM workspaces WHERE id = $1`, workspaceID).Scan(&headVersionID, &sandboxDefinitionID); err != nil {
 		t.Fatal(err)
 	}
-	workerID := uuid.Must(uuid.NewV7())
-	runtimeID := uuid.Must(uuid.NewV7())
-	substrateID := uuid.Must(uuid.NewV7())
+	workerID := uuid.NewV7()
+	runtimeID := uuid.NewV7()
+	substrateID := uuid.NewV7()
 	if _, err := product.pool.Exec(t.Context(), `
 INSERT INTO runtime_substrates (
     id, org_id, project_id, environment_id, deployment_definition_id,
@@ -477,7 +477,7 @@ INSERT INTO worker_instances (
     4000, 8589934592, 34359738368,
     1000, 1073741824, 4294967296,
     4, 4, '{"vendor":"test"}'::jsonb, $8, now(), now(), now()
-)`, workerID, poolFixture.group.ID, workerPool.ID, uuid.Must(uuid.NewV7()),
+)`, workerID, poolFixture.group.ID, workerPool.ID, uuid.NewV7(),
 		poolFixture.runtimeIdentityID, poolFixture.substrateFormat,
 		poolFixture.substrateContract, dbtest.Digest("workspace-delete-cpu-environment"),
 	); err != nil {
@@ -503,7 +503,7 @@ INSERT INTO runtime_instances (
 	); err != nil {
 		t.Fatal(err)
 	}
-	mountID := uuid.Must(uuid.NewV7())
+	mountID := uuid.NewV7()
 	if _, err := product.pool.Exec(t.Context(), `
 INSERT INTO workspace_mounts (
     id, org_id, worker_group_id, project_id, environment_id, region_id,

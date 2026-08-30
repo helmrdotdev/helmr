@@ -5,8 +5,8 @@ import (
 	"slices"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -44,7 +44,7 @@ func TestActorCompletionAuthorityRejectsInvalidRestoredWorkspaceBase(t *testing.
 			name: "wrong parent",
 			mutate: func(_ *runLeaseClaimAuthority, store *runLeaseClaimStore) {
 				target := store.resetTargets[store.readyCheckpoint.PrivateWorkspaceVersionID]
-				target.ParentVersionID = pgvalue.UUID(uuid.Must(uuid.NewV7()))
+				target.ParentVersionID = pgvalue.UUID(uuid.NewV7())
 				store.resetTargets[store.readyCheckpoint.PrivateWorkspaceVersionID] = target
 			},
 		},
@@ -87,7 +87,7 @@ func TestActorCompletionAuthorityRejectsInvalidRestoredWorkspaceBase(t *testing.
 
 func TestActorCompletionAuthorityDoesNotCompareRetryAttemptWithRunBase(t *testing.T) {
 	completion, authority, store := validActorCompletionAuthority(t, false)
-	authority.run.BaseWorkspaceVersionID = pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	authority.run.BaseWorkspaceVersionID = pgvalue.UUID(uuid.NewV7())
 	if authority.attempt.BaseWorkspaceVersionID != authority.workspace.HeadVersionID {
 		t.Fatal("test fixture attempt does not start from the current Workspace head")
 	}
@@ -105,7 +105,7 @@ func TestRestoredSameWorkspaceActorCompletionRejectsBrokenProducerReceipts(t *te
 			name: "C parent is not checkpoint P",
 			mutate: func(_ *runLeaseClaimAuthority, store *runLeaseClaimStore, _ pgtype.UUID, cID pgtype.UUID) {
 				c := store.resetTargets[cID]
-				c.ParentVersionID = pgvalue.UUID(uuid.Must(uuid.NewV7()))
+				c.ParentVersionID = pgvalue.UUID(uuid.NewV7())
 				store.resetTargets[cID] = c
 			},
 		},
@@ -176,8 +176,8 @@ func validSameWorkspaceActorCompletionBase(
 	_, authority, store := validActorCompletionAuthority(t, true)
 	pID := authority.workspaceLease.BaseVersionID
 	p := store.resetTargets[pID]
-	cID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	childSourceID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	cID := pgvalue.UUID(uuid.NewV7())
+	childSourceID := pgvalue.UUID(uuid.NewV7())
 	c := p
 	c.VersionID = cID
 	c.ParentVersionID = pID
@@ -214,7 +214,7 @@ func validActorCompletionAuthority(
 	var authority runLeaseClaimAuthority
 	if restored {
 		_, _, authority = validCheckpointRestoreRunLeaseClaimFixture(true)
-		restoredBase := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+		restoredBase := pgvalue.UUID(uuid.NewV7())
 		authority.workspaceLease.BaseVersionID = restoredBase
 		authority.workspaceMount.MaterializedVersionID = restoredBase
 		authority.checkpoint.PrivateWorkspaceVersionID = restoredBase
@@ -276,11 +276,11 @@ func validActorCompletionAuthority(
 		base.ParentVersionID = authority.workspace.HeadVersionID
 		base.OwnershipGeneration = authority.workspace.OwnershipGeneration
 		base.WriterGeneration = authority.workspace.WriterGeneration - 1
-		sourceLeaseID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+		sourceLeaseID := pgvalue.UUID(uuid.NewV7())
 		base.SourceWorkspaceLeaseID = sourceLeaseID
 		checkpointID := authority.runtime.RestoreCheckpointID
-		waitID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-		sourceRunLeaseID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+		waitID := pgvalue.UUID(uuid.NewV7())
+		sourceRunLeaseID := pgvalue.UUID(uuid.NewV7())
 		store.resetTargets = map[pgtype.UUID]db.GetWorkspaceResetTargetAuthorityRow{
 			authority.workspaceLease.BaseVersionID: base,
 		}

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -17,7 +17,7 @@ import (
 )
 
 func TestPublicWorkspaceExecProcessProjectsOnlySafeStatesAndTerminalData(t *testing.T) {
-	processID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	processID := pgvalue.UUID(uuid.NewV7())
 	exitCode := int32(0)
 	resource, err := publicWorkspaceExecProcess(db.WorkspaceProcess{
 		ID:       processID,
@@ -221,15 +221,15 @@ func TestNormalizeWorkspaceExecOutcomeRejectsAmbiguousExit(t *testing.T) {
 }
 
 func TestWorkspaceExecPublicationSecretsRequireCurrentResolution(t *testing.T) {
-	processID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	processID := pgvalue.UUID(uuid.NewV7())
 	valid := db.LockProcessSecretDeliveryRow{
 		Secret: db.Secret{
 			State:                "active",
 			RevocationGeneration: 3,
 		},
-		ResolutionID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ResolutionID:                   pgvalue.UUID(uuid.NewV7()),
 		ResolutionProcessID:            processID,
-		ResolutionSecretVersionID:      pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ResolutionSecretVersionID:      pgvalue.UUID(uuid.NewV7()),
 		ResolutionRevocationGeneration: pgtype.Int8{Int64: 3, Valid: true},
 	}
 	if !workspaceExecPublicationSecretsValid(

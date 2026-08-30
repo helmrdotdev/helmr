@@ -5,8 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 )
@@ -37,9 +37,9 @@ func TestPublicLifecycleProjectionsRejectUnknownInternalValues(t *testing.T) {
 
 func TestResourceCollectionCursorsRoundTripOwnerScope(t *testing.T) {
 	createdAt := time.Date(2026, 8, 5, 12, 0, 0, 123, time.UTC).Format(time.RFC3339Nano)
-	id := uuid.Must(uuid.NewV7()).String()
+	id := uuid.NewV7().String()
 	apiKeyCursor := apiKeyListCursor{
-		ProjectID: uuid.Must(uuid.NewV7()).String(), EnvironmentID: uuid.Must(uuid.NewV7()).String(),
+		ProjectID: uuid.NewV7().String(), EnvironmentID: uuid.NewV7().String(),
 		Filter: "active", CreatedAt: createdAt, ID: id,
 	}
 	raw, err := encodeAPIKeyListCursor(apiKeyCursor)
@@ -52,7 +52,7 @@ func TestResourceCollectionCursorsRoundTripOwnerScope(t *testing.T) {
 	}
 
 	invitationCursor := invitationListCursor{
-		OrgID: uuid.Must(uuid.NewV7()).String(), CreatedAt: createdAt, ID: id,
+		OrgID: uuid.NewV7().String(), CreatedAt: createdAt, ID: id,
 	}
 	raw, err = encodeInvitationListCursor(invitationCursor)
 	if err != nil {

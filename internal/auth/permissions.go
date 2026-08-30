@@ -4,7 +4,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 type Permission string
@@ -40,7 +40,7 @@ type Scope struct {
 }
 
 func (a Actor) HasPermission(permission Permission, scope Scope) bool {
-	if scope.OrgID != uuid.Nil && a.OrgID != uuid.Nil && scope.OrgID != a.OrgID {
+	if scope.OrgID != uuid.Nil() && a.OrgID != uuid.Nil() && scope.OrgID != a.OrgID {
 		return false
 	}
 	if a.Kind == ActorKindAPIKey {

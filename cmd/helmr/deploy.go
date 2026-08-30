@@ -7,8 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/helmrdotdev/helmr/internal/deployment"
@@ -93,7 +93,7 @@ func deployCommand() *cobra.Command {
 			}
 			idempotencyKey = strings.TrimSpace(idempotencyKey)
 			if idempotencyKey == "" {
-				idempotencyKey = uuid.Must(uuid.NewV7()).String()
+				idempotencyKey = uuid.NewV7().String()
 			}
 			if err := reporter.Step("Finalizing deployment"); err != nil {
 				return err

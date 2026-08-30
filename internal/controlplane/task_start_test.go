@@ -5,16 +5,16 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 func TestNormalizeTaskStartCanonicalizesCallerSemantics(t *testing.T) {
-	workspaceID := uuid.Must(uuid.NewV7())
+	workspaceID := uuid.NewV7()
 	ttl := int64(60_000)
 	concurrencyKey := "customer:1"
 	normalized, err := normalizeTaskStart(taskStartRequest{
-		OrgID: uuid.Must(uuid.NewV7()), ProjectID: uuid.Must(uuid.NewV7()),
-		EnvironmentID: uuid.Must(uuid.NewV7()), TaskDeclaredID: "resize-image",
+		OrgID: uuid.NewV7(), ProjectID: uuid.NewV7(),
+		EnvironmentID: uuid.NewV7(), TaskDeclaredID: "resize-image",
 		PayloadPresent: true, Payload: json.RawMessage(`{"b":2,"a":1}`),
 		WorkspaceID: workspaceID,
 		QueueName:   "images", ConcurrencyKey: &concurrencyKey, QueuedTTLMS: &ttl,
@@ -36,10 +36,10 @@ func TestNormalizeTaskStartCanonicalizesCallerSemantics(t *testing.T) {
 }
 
 func TestNormalizeTaskStartRejectsInvalidCallerValues(t *testing.T) {
-	workspaceID := uuid.Must(uuid.NewV7())
+	workspaceID := uuid.NewV7()
 	base := taskStartRequest{
-		OrgID: uuid.Must(uuid.NewV7()), ProjectID: uuid.Must(uuid.NewV7()),
-		EnvironmentID: uuid.Must(uuid.NewV7()), TaskDeclaredID: "task",
+		OrgID: uuid.NewV7(), ProjectID: uuid.NewV7(),
+		EnvironmentID: uuid.NewV7(), TaskDeclaredID: "task",
 		WorkspaceID: workspaceID,
 	}
 	invalidKey := " leading"
@@ -65,7 +65,7 @@ func TestNormalizeTaskStartRejectsInvalidCallerValues(t *testing.T) {
 }
 
 func TestTaskStartReceiptRoundTrip(t *testing.T) {
-	runID := uuid.Must(uuid.NewV7())
+	runID := uuid.NewV7()
 	raw, err := json.Marshal(taskStartReceipt{RunID: runID.String()})
 	if err != nil {
 		t.Fatal(err)

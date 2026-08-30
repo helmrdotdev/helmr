@@ -3,7 +3,7 @@ package auth
 import (
 	"errors"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 const (
@@ -15,12 +15,12 @@ const (
 func ActorPrincipal(actor Actor) (string, error) {
 	switch actor.Kind {
 	case ActorKindSession:
-		if actor.UserID == uuid.Nil {
+		if actor.UserID == uuid.Nil() {
 			return "", errors.New("user identity is required")
 		}
 		return principalPrefixUser + actor.UserID.String(), nil
 	case ActorKindAPIKey:
-		if actor.APIKeyID == uuid.Nil {
+		if actor.APIKeyID == uuid.Nil() {
 			return "", errors.New("api key identity is required")
 		}
 		return principalPrefixAPIKey + actor.APIKeyID.String(), nil

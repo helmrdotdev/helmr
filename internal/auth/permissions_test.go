@@ -3,7 +3,7 @@ package auth
 import (
 	"testing"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 func TestAPIKeyPermissionIsLimitedByCreatorRole(t *testing.T) {

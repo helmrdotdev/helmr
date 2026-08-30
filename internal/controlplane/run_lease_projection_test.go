@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -291,9 +291,9 @@ func TestProjectWorkspaceAttachmentProjectsArtifactResetTarget(t *testing.T) {
 }
 
 func validRunLeaseProjectionAuthority() runLeaseProjectionAuthority {
-	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	workspaceID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	versionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	runID := pgvalue.UUID(uuid.NewV7())
+	workspaceID := pgvalue.UUID(uuid.NewV7())
+	versionID := pgvalue.UUID(uuid.NewV7())
 	attemptNumber := int32(1)
 	runtimeID := pgvalue.UUID(uuid.New())
 	mountID := pgvalue.UUID(uuid.New())

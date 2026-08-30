@@ -2,14 +2,14 @@ package dispatch
 
 import (
 	"testing"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
 func TestValidateRunRuntimeUsesCheckpointContractOnlyForRestore(t *testing.T) {
-	workspaceDefinitionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	deploymentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	workspaceDefinitionID := pgvalue.UUID(uuid.NewV7())
+	deploymentID := pgvalue.UUID(uuid.NewV7())
 	authority := runPlacementAuthority{
 		workspaceDefinitionID: workspaceDefinitionID,
 		deploymentID:          deploymentID,
@@ -19,7 +19,7 @@ func TestValidateRunRuntimeUsesCheckpointContractOnlyForRestore(t *testing.T) {
 		},
 	}
 	runtime := runRuntime{
-		id:                      pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		id:                      pgvalue.UUID(uuid.NewV7()),
 		deploymentDefinition:    workspaceDefinitionID,
 		programDeployment:       deploymentID,
 		cpuMillis:               1000,
@@ -30,14 +30,14 @@ func TestValidateRunRuntimeUsesCheckpointContractOnlyForRestore(t *testing.T) {
 	if err := validateRunRuntime(authority, runtime); err != nil {
 		t.Fatalf("fresh runtime validation failed: %v", err)
 	}
-	runtime.restoreCheckpoint = pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	runtime.restoreCheckpoint = pgvalue.UUID(uuid.NewV7())
 	if err := validateRunRuntime(authority, runtime); err != nil {
 		t.Fatalf("fresh runtime rejected historical restore provenance: %v", err)
 	}
 
-	authority.restoreCheckpointID = pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	authority.restoreCheckpointID = pgvalue.UUID(uuid.NewV7())
 	authority.restoreRuntimeIdentityID = "sha256:source"
-	authority.restoreSubstrateID = pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	authority.restoreSubstrateID = pgvalue.UUID(uuid.NewV7())
 	if err := validateRunRuntime(authority, runtime); err == nil {
 		t.Fatal("restore accepted a runtime without the checkpoint identity")
 	}

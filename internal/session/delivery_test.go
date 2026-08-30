@@ -4,16 +4,16 @@ import (
 	"context"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
 func TestSessionInputDeliveryReconcilesIntent(t *testing.T) {
-	environmentID := uuid.Must(uuid.NewV7())
-	sessionID := uuid.Must(uuid.NewV7())
-	recordID := uuid.Must(uuid.NewV7())
+	environmentID := uuid.NewV7()
+	sessionID := uuid.NewV7()
+	recordID := uuid.NewV7()
 	message := sessionInputReconcileMessage(environmentID, sessionID, recordID)
 	store := &sessionDeliveryStore{messages: []db.OutboxMessage{message}}
 	var gotEnvironmentID, gotSessionID, gotRecordID uuid.UUID
@@ -45,7 +45,7 @@ func TestSessionInputDeliveryReconcilesIntent(t *testing.T) {
 }
 
 func TestSessionInputDeliveryRetriesDeferredContinuation(t *testing.T) {
-	message := sessionInputReconcileMessage(uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()))
+	message := sessionInputReconcileMessage(uuid.NewV7(), uuid.NewV7(), uuid.NewV7())
 	store := &sessionDeliveryStore{messages: []db.OutboxMessage{message}}
 	worker, err := NewDeliveryWorker(nil, store,
 		func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (bool, error) { return true, nil },
@@ -65,8 +65,8 @@ func TestSessionInputDeliveryRetriesDeferredContinuation(t *testing.T) {
 }
 
 func TestSessionInputDeliveryReconcilesCloseIntent(t *testing.T) {
-	environmentID := uuid.Must(uuid.NewV7())
-	sessionID := uuid.Must(uuid.NewV7())
+	environmentID := uuid.NewV7()
+	sessionID := uuid.NewV7()
 	message := sessionCloseReconcileMessage(environmentID, sessionID)
 	store := &sessionDeliveryStore{messages: []db.OutboxMessage{message}}
 	var gotEnvironmentID, gotSessionID uuid.UUID
@@ -97,8 +97,8 @@ func TestSessionInputDeliveryReconcilesCloseIntent(t *testing.T) {
 
 func TestSessionInputDeliveryRetriesDeferredClose(t *testing.T) {
 	message := sessionCloseReconcileMessage(
-		uuid.Must(uuid.NewV7()),
-		uuid.Must(uuid.NewV7()),
+		uuid.NewV7(),
+		uuid.NewV7(),
 	)
 	store := &sessionDeliveryStore{messages: []db.OutboxMessage{message}}
 	worker, err := NewDeliveryWorker(nil, store,
@@ -123,7 +123,7 @@ func TestSessionInputDeliveryRetriesDeferredClose(t *testing.T) {
 }
 
 func TestSessionInputDeliveryDeadLettersInvalidIntent(t *testing.T) {
-	message := sessionInputReconcileMessage(uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()))
+	message := sessionInputReconcileMessage(uuid.NewV7(), uuid.NewV7(), uuid.NewV7())
 	message.Payload = []byte(`{"environmentId":"invalid","sessionId":"invalid","recordId":"invalid","extra":true}`)
 	store := &sessionDeliveryStore{messages: []db.OutboxMessage{message}}
 	worker, err := NewDeliveryWorker(nil, store,
@@ -146,7 +146,7 @@ func TestSessionInputDeliveryDeadLettersInvalidIntent(t *testing.T) {
 
 func sessionInputReconcileMessage(environmentID, sessionID, recordID uuid.UUID) db.OutboxMessage {
 	return db.OutboxMessage{
-		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), Lane: "control", Topic: "session.input.reconcile",
+		ID: pgvalue.UUID(uuid.NewV7()), Lane: "control", Topic: "session.input.reconcile",
 		Payload: []byte(`{"environmentId":"` + environmentID.String() + `","sessionId":"` + sessionID.String() + `","recordId":"` + recordID.String() + `"}`),
 		State:   "claimed", Attempts: 1, ClaimedBy: pgvalue.Text("worker"),
 		ClaimExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
@@ -155,7 +155,7 @@ func sessionInputReconcileMessage(environmentID, sessionID, recordID uuid.UUID) 
 
 func sessionCloseReconcileMessage(environmentID, sessionID uuid.UUID) db.OutboxMessage {
 	return db.OutboxMessage{
-		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), Lane: "control", Topic: "session.close.reconcile",
+		ID: pgvalue.UUID(uuid.NewV7()), Lane: "control", Topic: "session.close.reconcile",
 		Payload: []byte(`{"environmentId":"` + environmentID.String() + `","sessionId":"` + sessionID.String() + `"}`),
 		State:   "claimed", Attempts: 1, ClaimedBy: pgvalue.Text("worker"),
 		ClaimExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -69,9 +69,9 @@ func TestParseSessionOutputPageOptionsRejectsClosedQueryViolations(t *testing.T)
 }
 
 func TestProjectSessionOutput(t *testing.T) {
-	recordUUID := uuid.Must(uuid.NewV7())
-	runID := uuid.Must(uuid.NewV7())
-	deploymentID := uuid.Must(uuid.NewV7())
+	recordUUID := uuid.NewV7()
+	runID := uuid.NewV7()
+	deploymentID := uuid.NewV7()
 	createdAt := time.Date(2030, 1, 2, 3, 4, 5, 0, time.FixedZone("offset", 9*60*60))
 	record, err := projectSessionOutput(db.ReadPublicActorOutputPageRow{
 		RecordID:              pgvalue.UUID(recordUUID),
@@ -101,8 +101,8 @@ func TestProjectSessionOutput(t *testing.T) {
 
 func TestAuthorizeActorOutputReadBeforeLookup(t *testing.T) {
 	scope := auth.Scope{
-		ProjectID:     uuid.Must(uuid.NewV7()).String(),
-		EnvironmentID: uuid.Must(uuid.NewV7()).String(),
+		ProjectID:     uuid.NewV7().String(),
+		EnvironmentID: uuid.NewV7().String(),
 	}
 	for _, role := range []auth.Role{
 		auth.RoleOwner,

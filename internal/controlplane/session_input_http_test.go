@@ -8,9 +8,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"uuid"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -125,11 +125,11 @@ func TestActorInputBodyLimitAllowsMaximumEscapedEnvelope(t *testing.T) {
 }
 
 func TestSendActorInputEnforcesAPIKeyPermissionAndEnvironmentScope(t *testing.T) {
-	orgID := uuid.Must(uuid.NewV7())
-	projectID := uuid.Must(uuid.NewV7())
-	environmentID := uuid.Must(uuid.NewV7())
-	otherEnvironmentID := uuid.Must(uuid.NewV7())
-	actorID := uuid.Must(uuid.NewV7())
+	orgID := uuid.NewV7()
+	projectID := uuid.NewV7()
+	environmentID := uuid.NewV7()
+	otherEnvironmentID := uuid.NewV7()
+	actorID := uuid.NewV7()
 	body := `{"input":{"type":"continue"},"idempotency_key":"message:1"}`
 
 	t.Run("missing permission", func(t *testing.T) {
@@ -188,7 +188,7 @@ func TestSendActorInputEnforcesAPIKeyPermissionAndEnvironmentScope(t *testing.T)
 			actorID,
 			"message:1",
 			[]byte(`{"type":"continue"}`),
-			uuid.Must(uuid.NewV7()),
+			uuid.NewV7(),
 			9,
 		)
 		store.calls = nil
@@ -211,9 +211,9 @@ func TestSendActorInputEnforcesAPIKeyPermissionAndEnvironmentScope(t *testing.T)
 }
 
 func TestSendActorInputDeniesViewerSessionBeforeActorLookup(t *testing.T) {
-	orgID := uuid.Must(uuid.NewV7())
-	projectID := uuid.Must(uuid.NewV7())
-	environmentID := uuid.Must(uuid.NewV7())
+	orgID := uuid.NewV7()
+	projectID := uuid.NewV7()
+	environmentID := uuid.NewV7()
 	store := newActorInputClaimStore()
 	store.project = db.Project{
 		ID:    pgvalue.UUID(projectID),
@@ -231,7 +231,7 @@ func TestSendActorInputDeniesViewerSessionBeforeActorLookup(t *testing.T) {
 		auth.Actor{OrgID: orgID, Kind: auth.ActorKindSession, Role: auth.RoleViewer},
 		projectID.String(),
 		environmentID.String(),
-		uuid.Must(uuid.NewV7()).String(),
+		uuid.NewV7().String(),
 	)
 	recorder := httptest.NewRecorder()
 	server.sendSessionInput(recorder, request)

@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -425,7 +425,7 @@ func (s *Server) capacityConfirmWorkerInstanceProviderAbsent(w http.ResponseWrit
 func capacityWorkerInstanceID(r *http.Request) (uuid.UUID, error) {
 	id, err := ids.Parse(chi.URLParam(r, "workerInstanceID"))
 	if err != nil {
-		return uuid.Nil, errors.New("worker_instance_id must be a canonical UUIDv7")
+		return uuid.Nil(), errors.New("worker_instance_id must be a canonical UUIDv7")
 	}
 	return id, nil
 }

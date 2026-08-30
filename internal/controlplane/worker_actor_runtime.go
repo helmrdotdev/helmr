@@ -8,8 +8,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
@@ -47,7 +47,7 @@ func (s *Server) workerStartActor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	correlationID, err := parseCanonicalUUID("correlation_id", request.CorrelationID)
-	if err != nil || correlationID == uuid.Nil {
+	if err != nil || correlationID == uuid.Nil() {
 		writeError(w, badRequest(errors.New("actor start correlation_id is invalid")))
 		return
 	}

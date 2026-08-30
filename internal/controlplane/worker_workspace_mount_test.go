@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -74,9 +74,9 @@ SELECT runs.workspace_id, runs.base_workspace_version_id,
 	); err != nil {
 		t.Fatal(err)
 	}
-	claimID := uuid.Must(uuid.NewV7())
-	processID := uuid.Must(uuid.NewV7())
-	creatorID := uuid.Must(uuid.NewV7())
+	claimID := uuid.NewV7()
+	processID := uuid.NewV7()
+	creatorID := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 INSERT INTO idempotency_claims (
     id, environment_id, operation, slot_hash, request_fingerprint,

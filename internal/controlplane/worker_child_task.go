@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
@@ -173,7 +173,7 @@ func (s *Server) workerInvokeChildTask(w http.ResponseWriter, r *http.Request) {
 		CorrelationID: request.CorrelationID,
 		OpenedWait:    result.openedWait,
 	}
-	if result.RunID != uuid.Nil {
+	if result.RunID != uuid.Nil() {
 		response.Completed = &workerapi.ChildTaskStartResult{RunID: result.RunID.String()}
 	}
 	writeJSON(w, http.StatusOK, response)
@@ -455,7 +455,7 @@ func (s *Server) invokeChildTask(
 		if admission.QueuedTTLMS != nil {
 			queuedExpiresAt = pgvalue.Timestamptz(now.Add(time.Duration(*admission.QueuedTTLMS) * time.Millisecond))
 		}
-		runID := uuid.Must(uuid.NewV7())
+		runID := uuid.NewV7()
 		rootSpanID, err := tracing.NewSpanID()
 		if err != nil {
 			return err

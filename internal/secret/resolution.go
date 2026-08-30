@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -92,7 +92,7 @@ func resolutionColumns(resolutions []Resolution) (
 	versionIDs := make([]pgtype.UUID, len(resolutions))
 	generations := make([]int64, len(resolutions))
 	for index, resolution := range resolutions {
-		ids[index] = pgvalue.UUID(uuid.Must(uuid.NewV7()))
+		ids[index] = pgvalue.UUID(uuid.NewV7())
 		kinds[index] = resolution.PlacementKind
 		targets[index] = resolution.PlacementTarget
 		secretIDs[index] = resolution.SecretID

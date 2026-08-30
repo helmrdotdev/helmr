@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -79,9 +79,9 @@ func (a *workspaceExecRecoveryAuthority) FailPendingWorkspaceExec(
 }
 
 func TestReconcileWorkspaceExecsRecoversLostAuthorityBeforePlacement(t *testing.T) {
-	orgID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	processID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	workspaceID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	orgID := pgvalue.UUID(uuid.NewV7())
+	processID := pgvalue.UUID(uuid.NewV7())
+	workspaceID := pgvalue.UUID(uuid.NewV7())
 	authority := &workspaceExecRecoveryAuthority{}
 	reconciler := PlacementReconciler{
 		workspaceExecDiscovery: workspaceExecRecoveryDiscovery{
@@ -150,8 +150,8 @@ func TestReconcileWorkspaceExecsPropagatesMountClaimExpiryFailure(t *testing.T) 
 }
 
 func TestReconcileWorkspaceExecsFailsExpiredPendingCandidate(t *testing.T) {
-	orgID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	processID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	orgID := pgvalue.UUID(uuid.NewV7())
+	processID := pgvalue.UUID(uuid.NewV7())
 	authority := &workspaceExecRecoveryAuthority{}
 	reconciler := PlacementReconciler{
 		workspaceExecDiscovery: workspaceExecRecoveryDiscovery{
@@ -175,7 +175,7 @@ func TestReconcileWorkspaceExecsFailsExpiredPendingCandidate(t *testing.T) {
 }
 
 func TestClassifyWorkspaceExecRecovery(t *testing.T) {
-	stagedVersionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	stagedVersionID := pgvalue.UUID(uuid.NewV7())
 	tests := []struct {
 		name      string
 		process   db.WorkspaceProcessState

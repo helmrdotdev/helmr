@@ -7,8 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -387,5 +387,5 @@ func (fixture runLeaseClaimFixture) runningRunLogParams(
 }
 
 func randomPGUUID() pgtype.UUID {
-	return pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	return pgvalue.UUID(uuid.NewV7())
 }

@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -271,7 +271,7 @@ func TestAdminWorkerPoolIDsRequireCanonicalUUIDv7(t *testing.T) {
 	store := newAdminPoolStore(group, pool)
 	for _, path := range []string{
 		"/admin/api/v1/worker-groups/not-a-group/pools",
-		"/admin/api/v1/worker-groups/" + group.ID + "/pools/" + uuid.NewString() + "/drain",
+		"/admin/api/v1/worker-groups/" + group.ID + "/pools/" + uuid.New().String() + "/drain",
 	} {
 		response := httptest.NewRecorder()
 		adminHTTPRouter(t, store).ServeHTTP(response, adminHTTPRequest(http.MethodPost, path, `{}`))
@@ -282,8 +282,8 @@ func TestAdminWorkerPoolIDsRequireCanonicalUUIDv7(t *testing.T) {
 }
 
 func adminPoolFixture() (db.WorkerGroup, db.WorkerPool) {
-	groupID := uuid.Must(uuid.NewV7()).String()
-	poolID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	groupID := uuid.NewV7().String()
+	poolID := pgvalue.UUID(uuid.NewV7())
 	return db.WorkerGroup{
 		ID: groupID, RegionID: "default", Name: "default", State: db.WorkerGroupStateActive,
 		ClaimVersion: 4,

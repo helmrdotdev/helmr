@@ -9,8 +9,8 @@ import (
 	"io"
 	"log/slog"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/outbox"
@@ -67,7 +67,7 @@ func NewDeliveryWorker(
 	}
 	return &DeliveryWorker{
 		log: log, store: store, reconcile: reconcile, close: close,
-		workerID: uuid.Must(uuid.NewV7()).String(), interval: sessionDeliveryPollInterval,
+		workerID: uuid.NewV7().String(), interval: sessionDeliveryPollInterval,
 		claimFor: sessionDeliveryClaimLease, claimSize: sessionDeliveryClaimLimit,
 		now: func() time.Time { return time.Now().UTC() },
 	}, nil

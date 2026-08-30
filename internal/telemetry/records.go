@@ -3,7 +3,7 @@ package telemetry
 import (
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 type EventRecord struct {

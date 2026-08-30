@@ -7,14 +7,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	chdriver "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 )
 
 func TestHistoricalReaderListsTerminalOutputFromClickHouse(t *testing.T) {
-	resourceID := uuid.Must(uuid.NewV7())
+	resourceID := uuid.NewV7()
 	observedAt := time.Date(2026, 7, 2, 1, 2, 3, 123000000, time.UTC)
 	ingestedAt := time.Date(2026, 7, 2, 1, 2, 4, 456000000, time.UTC)
 	client := &fakeHistoricalClient{
@@ -49,8 +49,8 @@ func TestHistoricalReaderListsTerminalOutputFromClickHouse(t *testing.T) {
 	}
 	reader := NewReader(client)
 	page, err := reader.ListTerminalOutput(context.Background(), telemetry.TerminalOutputQuery{
-		OrgID:        uuid.Must(uuid.NewV7()),
-		WorkspaceID:  uuid.Must(uuid.NewV7()),
+		OrgID:        uuid.NewV7(),
+		WorkspaceID:  uuid.NewV7(),
 		ResourceKind: "workspace_process",
 		ResourceID:   resourceID,
 		StreamName:   "output",
@@ -84,6 +84,19 @@ func TestHistoricalRowsDeclareClickHouseTagsForSelectedColumns(t *testing.T) {
 	assertClickHouseTags(t, terminalOutputHistoryRow{}, []string{
 		"stream_name", "offset_start", "offset_end", "content", "observed_at", "ingested_at",
 	})
+}
+
+func TestHistoricalRowsMapUUIDStrings(t *testing.T) {
+	runID := uuid.NewV7().String()
+	deploymentID := uuid.NewV7().String()
+	runLeaseID := uuid.NewV7().String()
+	event := (eventRow{RunID: &runID, DeploymentID: &deploymentID, RunLeaseID: &runLeaseID}).event()
+	if event.RunID == nil || *event.RunID != runID || event.DeploymentID == nil || *event.DeploymentID != deploymentID {
+		t.Fatalf("event UUIDs = run %v, deployment %v", event.RunID, event.DeploymentID)
+	}
+	if got := (runLogRow{RunID: runID, RunLeaseID: runLeaseID}).chunk().RunID; got != runID {
+		t.Fatalf("run log UUID = %q, want %q", got, runID)
+	}
 }
 
 type fakeHistoricalClient struct {

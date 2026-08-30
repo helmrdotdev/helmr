@@ -11,8 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
@@ -47,9 +47,9 @@ func (s *runtimeReconcileTargetStore) ListRuntimeReconcileTargets(
 }
 
 func TestWorkerRuntimeReconcileTargetRoundTripsActionWorkspaceAuthority(t *testing.T) {
-	runtimeID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	workerID := uuid.Must(uuid.NewV7())
-	baseVersionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	runtimeID := pgvalue.UUID(uuid.NewV7())
+	workerID := uuid.NewV7()
+	baseVersionID := pgvalue.UUID(uuid.NewV7())
 	tests := []struct {
 		name       string
 		desired    db.RuntimeDesiredState
@@ -99,10 +99,10 @@ func TestWorkerRuntimeReconcileTargetRoundTripsActionWorkspaceAuthority(t *testi
 }
 
 func TestWorkerRuntimeReconcileReturnsBoundedBatch(t *testing.T) {
-	workerID := uuid.Must(uuid.NewV7())
+	workerID := uuid.NewV7()
 	store := &runtimeReconcileTargetStore{rows: []db.ListRuntimeReconcileTargetsRow{
-		{ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), WorkerEpoch: 7, DesiredState: db.RuntimeDesiredStateClosed, ObservedState: db.RuntimeObservedStateReady},
-		{ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), WorkerEpoch: 7, DesiredState: db.RuntimeDesiredStateClosed, ObservedState: db.RuntimeObservedStateClosing},
+		{ID: pgvalue.UUID(uuid.NewV7()), WorkerEpoch: 7, DesiredState: db.RuntimeDesiredStateClosed, ObservedState: db.RuntimeObservedStateReady},
+		{ID: pgvalue.UUID(uuid.NewV7()), WorkerEpoch: 7, DesiredState: db.RuntimeDesiredStateClosed, ObservedState: db.RuntimeObservedStateClosing},
 	}}
 	server := &Server{log: discardTestLogger(), db: store}
 	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/runtime-instances/reconcile", strings.NewReader(`{}`))
@@ -149,11 +149,11 @@ func (s *runtimeRestoreProjectionStore) GetCheckpointWorkspaceBaseAuthority(
 }
 
 func TestPopulateRuntimeRestoreSourceKeepsCapturedFrontierWithoutRequeryingBase(t *testing.T) {
-	checkpointID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	waitID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	sourceVersionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	capturedVersionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	checkpointID := pgvalue.UUID(uuid.NewV7())
+	runID := pgvalue.UUID(uuid.NewV7())
+	waitID := pgvalue.UUID(uuid.NewV7())
+	sourceVersionID := pgvalue.UUID(uuid.NewV7())
+	capturedVersionID := pgvalue.UUID(uuid.NewV7())
 	manifest, err := json.Marshal(workerapi.CheckpointManifest{
 		WorkspaceState: workerapi.CheckpointWorkspaceState{Base: workerapi.CheckpointWorkspaceBase{
 			ArtifactDigest: validDigest('e'), ArtifactSizeBytes: 512,

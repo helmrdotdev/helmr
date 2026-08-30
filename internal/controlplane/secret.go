@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"uuid"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -458,7 +458,7 @@ func decodeSecretListCursor(raw string) (secretListCursor, error) {
 func parseSecretID(raw string) (uuid.UUID, error) {
 	id, err := ids.Parse(raw)
 	if err != nil {
-		return uuid.Nil, errors.New("secret ID is invalid")
+		return uuid.Nil(), errors.New("secret ID is invalid")
 	}
 	return id, nil
 }

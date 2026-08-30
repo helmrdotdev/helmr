@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -55,15 +55,15 @@ func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("generate worker instance credential"))
 		return
 	}
-	workerInstanceID := uuid.Must(uuid.NewV7())
+	workerInstanceID := uuid.NewV7()
 	credential, err := s.db.EnrollWorkerInstance(r.Context(), db.EnrollWorkerInstanceParams{
 		TokenHash:        tokenHash,
-		WorkerPoolID:     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		WorkerPoolID:     pgvalue.UUID(uuid.NewV7()),
 		PoolName:         request.PoolName,
 		WorkerInstanceID: pgvalue.UUID(workerInstanceID),
-		CurrentServiceID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		CurrentServiceID: pgvalue.UUID(uuid.NewV7()),
 		ResourceID:       request.ResourceID,
-		CredentialID:     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		CredentialID:     pgvalue.UUID(uuid.NewV7()),
 		KeyPrefix:        generated.KeyPrefix,
 		SecretHash:       generated.TokenHash,
 	})

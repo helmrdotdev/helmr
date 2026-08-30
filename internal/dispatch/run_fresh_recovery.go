@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/secret"
@@ -109,11 +109,11 @@ func (d *Authority) recoverRunExecutionLease(
 
 func uuidFromPG(value pgtype.UUID) (uuid.UUID, error) {
 	if !value.Valid {
-		return uuid.Nil, errors.New("Run lease recovery UUID is required")
+		return uuid.Nil(), errors.New("Run lease recovery UUID is required")
 	}
 	parsed := uuid.UUID(value.Bytes)
-	if parsed == uuid.Nil {
-		return uuid.Nil, errors.New("Run lease recovery UUID is required")
+	if parsed == uuid.Nil() {
+		return uuid.Nil(), errors.New("Run lease recovery UUID is required")
 	}
 	return parsed, nil
 }

@@ -11,8 +11,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -26,16 +26,16 @@ func TestCreateSameWorkspaceChildRunQueryMatchesGreenfieldSchema(t *testing.T) {
 	_, err := db.New(fixture.Pool).CreateSameWorkspaceChildRunFromParentDeployment(
 		t.Context(),
 		db.CreateSameWorkspaceChildRunFromParentDeploymentParams{
-			RunWaitID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			RunWaitID:              pgvalue.UUID(uuid.NewV7()),
 			EntrypointDeclaredID:   pgvalue.Text("test-task"),
-			ClaimID:                pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			ParentRunLeaseID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			SuspendCheckpointID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			BaseWorkspaceVersionID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			ClaimID:                pgvalue.UUID(uuid.NewV7()),
+			ParentRunLeaseID:       pgvalue.UUID(uuid.NewV7()),
+			SuspendCheckpointID:    pgvalue.UUID(uuid.NewV7()),
+			BaseWorkspaceVersionID: pgvalue.UUID(uuid.NewV7()),
 			EnvironmentID:          pgvalue.UUID(fixture.EnvironmentID),
-			ParentRunID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			ParentRunID:            pgvalue.UUID(uuid.NewV7()),
 			ParentAttemptNumber:    1,
-			ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			ID:                     pgvalue.UUID(uuid.NewV7()),
 			QueueName:              "default",
 			QueueOriginAt:          pgvalue.Timestamptz(time.Now()),
 			QueueScoreAt:           pgvalue.Timestamptz(time.Now()),
@@ -52,9 +52,9 @@ func TestCreateSameWorkspaceChildRunQueryMatchesGreenfieldSchema(t *testing.T) {
 func TestWorkerCheckpointFailedRejectsInvalidPinnedRetryPolicyPermanently(t *testing.T) {
 	fixture := runtest.New(t)
 	work := fixture.AddRunLease(t, "starting", time.Now().Add(-time.Minute))
-	waitID := uuid.Must(uuid.NewV7())
-	checkpointID := uuid.Must(uuid.NewV7())
-	resumeAttachID := uuid.Must(uuid.NewV7())
+	waitID := uuid.NewV7()
+	checkpointID := uuid.NewV7()
+	resumeAttachID := uuid.NewV7()
 	var workspaceID, workspaceLeaseID, baseVersionID uuid.UUID
 	if err := fixture.Pool.QueryRow(t.Context(), `
 SELECT runs.workspace_id, workspace_leases.id, workspace_leases.base_version_id

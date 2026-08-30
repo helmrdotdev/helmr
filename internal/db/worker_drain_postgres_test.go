@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -21,13 +21,13 @@ func TestWorkerDrainPublishesExactTerminalReceiptAndReplays(t *testing.T) {
 	pool := newPostgresDB(t, ctx)
 	q := db.New(pool)
 	workerID := insertActiveWorkerWithObservation(t, ctx, pool, time.Now().UTC())
-	credentialID := uuid.Must(uuid.NewV7())
+	credentialID := uuid.NewV7()
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO worker_instance_credentials (
 			id, worker_group_id, worker_instance_id, key_prefix, claim_version,
 			secret_hash
 		) VALUES ($1, $2, $3, $4, 1, $5)
-	`, credentialID, dbtest.DefaultWorkerGroupID, workerID, uuid.NewString(), []byte("drain-secret"))
+	`, credentialID, dbtest.DefaultWorkerGroupID, workerID, uuid.New().String(), []byte("drain-secret"))
 
 	draining, err := q.DrainWorkerInstance(ctx, db.DrainWorkerInstanceParams{
 		ID:                   pgvalue.UUID(workerID),
@@ -101,7 +101,7 @@ func TestWorkerDrainReplayPublishesOwnerlessCleanupUntilRuntimeClosed(t *testing
 		   SET state = 'draining', claim_version = 2, draining_at = now()
 		 WHERE id = $1
 	`, fixture.workerID)
-	mountID := uuid.Must(uuid.NewV7())
+	mountID := uuid.NewV7()
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO workspace_mounts (
 			id, org_id, worker_group_id, project_id, environment_id, region_id,
@@ -381,7 +381,7 @@ SELECT runtime_instances.id, workspaces.head_version_id
 	); err != nil {
 		t.Fatal(err)
 	}
-	mountID := uuid.Must(uuid.NewV7())
+	mountID := uuid.NewV7()
 	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO workspace_mounts (
     id, org_id, worker_group_id, project_id, environment_id, region_id,
@@ -396,7 +396,7 @@ SELECT $1, runtime_instances.org_id, runtime_instances.worker_group_id,
        runtime_instances.id, 'unmounting', 7, now(), now(), 'discard', 'worker_draining'
   FROM runtime_instances
  WHERE runtime_instances.id = $3`, mountID, baseVersionID, runtimeID)
-	newServiceID := uuid.Must(uuid.NewV7())
+	newServiceID := uuid.NewV7()
 	dbtest.MustExec(t, ctx, pool, `
 UPDATE worker_instances
    SET state = 'registering', current_epoch = 2, current_service_id = $2,
@@ -426,13 +426,13 @@ func TestWorkerFencePublishesExactLostReceiptAndReplays(t *testing.T) {
 	pool := newPostgresDB(t, ctx)
 	q := db.New(pool)
 	workerID := insertActiveWorkerWithObservation(t, ctx, pool, time.Now().UTC())
-	credentialID := uuid.Must(uuid.NewV7())
+	credentialID := uuid.NewV7()
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO worker_instance_credentials (
 			id, worker_group_id, worker_instance_id, key_prefix, claim_version,
 			secret_hash
 		) VALUES ($1, $2, $3, $4, 1, $5)
-	`, credentialID, dbtest.DefaultWorkerGroupID, workerID, uuid.NewString(), []byte("fence-secret"))
+	`, credentialID, dbtest.DefaultWorkerGroupID, workerID, uuid.New().String(), []byte("fence-secret"))
 
 	params := db.FenceWorkerInstanceParams{
 		ID:                   pgvalue.UUID(workerID),

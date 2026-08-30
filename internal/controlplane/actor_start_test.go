@@ -5,16 +5,16 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 func TestNormalizeActorStartCanonicalizesRunOptionsAndPreservesInputPresence(t *testing.T) {
 	key := "thread:42"
 	ttl := maxQueuedRunTTLMS
-	workspaceID := uuid.Must(uuid.NewV7())
+	workspaceID := uuid.NewV7()
 	normalized, err := normalizeActorStart(actorStartRequest{
-		OrgID: uuid.Must(uuid.NewV7()), ProjectID: uuid.Must(uuid.NewV7()),
-		EnvironmentID:   uuid.Must(uuid.NewV7()),
+		OrgID: uuid.NewV7(), ProjectID: uuid.NewV7(),
+		EnvironmentID:   uuid.NewV7(),
 		ActorDeclaredID: "operator.v1", WorkspaceID: workspaceID,
 		Key: &key, InputPresent: true, Input: json.RawMessage(`null`),
 		ManagedQueueName: "default", ManagedQueuedTTLMS: &ttl,
@@ -42,10 +42,10 @@ func TestNormalizeActorStartCanonicalizesRunOptionsAndPreservesInputPresence(t *
 }
 
 func TestNormalizeActorStartLimitsNormalizedTagSet(t *testing.T) {
-	workspaceID := uuid.Must(uuid.NewV7())
+	workspaceID := uuid.NewV7()
 	request := actorStartRequest{
-		OrgID: uuid.Must(uuid.NewV7()), ProjectID: uuid.Must(uuid.NewV7()),
-		EnvironmentID:   uuid.Must(uuid.NewV7()),
+		OrgID: uuid.NewV7(), ProjectID: uuid.NewV7(),
+		EnvironmentID:   uuid.NewV7(),
 		ActorDeclaredID: "operator.v1", WorkspaceID: workspaceID,
 		ManagedRunTags: []string{"same", "same", "same", "same", "same", "same", "same", "same", "same", "same", "same"},
 	}
@@ -59,10 +59,10 @@ func TestNormalizeActorStartLimitsNormalizedTagSet(t *testing.T) {
 }
 
 func TestNormalizeActorStartRejectsInvalidCallerOverridesAndOversizeFields(t *testing.T) {
-	workspaceID := uuid.Must(uuid.NewV7())
+	workspaceID := uuid.NewV7()
 	base := actorStartRequest{
-		OrgID: uuid.Must(uuid.NewV7()), ProjectID: uuid.Must(uuid.NewV7()),
-		EnvironmentID:   uuid.Must(uuid.NewV7()),
+		OrgID: uuid.NewV7(), ProjectID: uuid.NewV7(),
+		EnvironmentID:   uuid.NewV7(),
 		ActorDeclaredID: "operator.v1", WorkspaceID: workspaceID,
 		ManagedQueueName: "default",
 	}
@@ -85,10 +85,10 @@ func TestNormalizeActorStartRejectsInvalidCallerOverridesAndOversizeFields(t *te
 }
 
 func TestNormalizeActorStartUsesExactConcurrencyKeyBoundaryDomain(t *testing.T) {
-	workspaceID := uuid.Must(uuid.NewV7())
+	workspaceID := uuid.NewV7()
 	base := actorStartRequest{
-		OrgID: uuid.Must(uuid.NewV7()), ProjectID: uuid.Must(uuid.NewV7()),
-		EnvironmentID:   uuid.Must(uuid.NewV7()),
+		OrgID: uuid.NewV7(), ProjectID: uuid.NewV7(),
+		EnvironmentID:   uuid.NewV7(),
 		ActorDeclaredID: "operator.v1", WorkspaceID: workspaceID,
 	}
 	nonBreakingSpace := "\u00a0opaque\u00a0"
@@ -106,10 +106,10 @@ func TestNormalizeActorStartUsesExactConcurrencyKeyBoundaryDomain(t *testing.T) 
 }
 
 func TestActorStartReceiptRoundTrip(t *testing.T) {
-	recordID := uuid.Must(uuid.NewV7())
+	recordID := uuid.NewV7()
 	value := actorStartResult{
-		SessionID:       uuid.Must(uuid.NewV7()),
-		InitialRecordID: &recordID, BootRunID: uuid.Must(uuid.NewV7()),
+		SessionID:       uuid.NewV7(),
+		InitialRecordID: &recordID, BootRunID: uuid.NewV7(),
 	}
 	raw, err := json.Marshal(actorStartReceiptFromResult(value))
 	if err != nil {

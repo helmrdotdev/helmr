@@ -9,8 +9,8 @@ import (
 	"io"
 	"net/http/httptest"
 	"testing"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -107,7 +107,7 @@ func TestWorkerWorkspaceFileReadCommitsBeforeCAS(t *testing.T) {
 	requestBody, err := json.Marshal(workerapi.ReadWorkspaceFileRequest{
 		RetrieveWorkspaceRequest: workerapi.RetrieveWorkspaceRequest{
 			Lease:         receipt.Fence(),
-			CorrelationID: uuid.Must(uuid.NewV7()).String(),
+			CorrelationID: uuid.NewV7().String(),
 			Workspace:     workerapi.WorkspaceAddress{WorkspaceID: pgvalue.UUIDString(record.ID)},
 		},
 		Path: "src/main.txt",

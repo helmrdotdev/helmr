@@ -6,8 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -30,7 +30,7 @@ func TestCreateProjectSelectsFirstRegionWhenDefaultIsOmitted(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	orgID := uuid.Must(uuid.NewV7())
+	orgID := uuid.NewV7()
 	if _, err := queries.CreateOrganization(ctx, db.CreateOrganizationParams{
 		ID: pgvalue.UUID(orgID), Name: "Test", Slug: "test",
 	}); err != nil {
@@ -64,7 +64,7 @@ func TestCreateProjectRequiresARegionWhenDefaultIsOmitted(t *testing.T) {
 		t.Fatal(err)
 	}
 	queries := db.New(database.Pool)
-	orgID := uuid.Must(uuid.NewV7())
+	orgID := uuid.NewV7()
 	if _, err := queries.CreateOrganization(ctx, db.CreateOrganizationParams{
 		ID: pgvalue.UUID(orgID), Name: "Test", Slug: "test",
 	}); err != nil {

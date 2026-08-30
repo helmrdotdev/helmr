@@ -7,8 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -40,7 +40,7 @@ func TestTokenWaitRegistrationImmediatelyMatchesTerminalTokenAfterEmptyReconcile
 	if err := fixture.pool.QueryRow(ctx, `SELECT state_version FROM runs WHERE id = $1`, work.runID).Scan(&expectedRunVersion); err != nil {
 		t.Fatal(err)
 	}
-	waitID := uuid.Must(uuid.NewV7())
+	waitID := uuid.NewV7()
 	registration := tokenWaitRegistrationRequest(t, ctx, fixture, work, tokenID, waitID)
 	registered, err := reconciler.RegisterWait(ctx, registration)
 	if err != nil {
@@ -85,7 +85,7 @@ func TestTokenWaitRegistrationBeforeCompletionIsReconciled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitID := uuid.Must(uuid.NewV7())
+	waitID := uuid.NewV7()
 	registration := tokenWaitRegistrationRequest(t, ctx, fixture, work, tokenID, waitID)
 	registered, err := reconciler.RegisterWait(ctx, registration)
 	if err != nil {
@@ -138,7 +138,7 @@ func TestTokenCompletionReconcilesEveryWaitingRunInBoundedBatches(t *testing.T) 
 			fixture,
 			work,
 			tokenID,
-			uuid.Must(uuid.NewV7()),
+			uuid.NewV7(),
 		)
 		registered, err := reconciler.RegisterWait(ctx, request)
 		if err != nil {
@@ -198,14 +198,14 @@ func TestTokenWaitSchemaRejectsCrossEnvironmentReference(t *testing.T) {
 	ctx := context.Background()
 	fixture := newRunLeaseClaimFixture(t, ctx)
 	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
-	otherEnvironmentID := uuid.Must(uuid.NewV7())
+	otherEnvironmentID := uuid.NewV7()
 	dbtest.MustExec(t, ctx, fixture.pool, `
 		INSERT INTO environments (
 		    id, org_id, project_id, slug, name, color_hex
 		) VALUES ($1, $2, $3, $4, 'Other Environment', '#3366ff')
 	`, otherEnvironmentID, fixture.orgID, fixture.projectID,
 		"other-"+dbtest.ShortID(otherEnvironmentID))
-	otherTokenID := uuid.Must(uuid.NewV7())
+	otherTokenID := uuid.NewV7()
 	if _, err := fixture.queries.CreateToken(ctx, db.CreateTokenParams{
 		ID:    pgvalue.UUID(otherTokenID),
 		OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
@@ -230,8 +230,8 @@ func TestTokenWaitSchemaRejectsCrossEnvironmentReference(t *testing.T) {
 		    token_registration_run_state_version, expected_run_state_version,
 		    attempt_number, current_run_lease_id, resume_attach_id
 		) VALUES ($1, $2, $3, $4, 'token', $5, 0, 1, 1, $6, $7)
-	`, uuid.Must(uuid.NewV7()), fixture.environmentID, work.runID, workspaceID,
-		otherTokenID, work.leaseID, uuid.Must(uuid.NewV7())); err == nil {
+	`, uuid.NewV7(), fixture.environmentID, work.runID, workspaceID,
+		otherTokenID, work.leaseID, uuid.NewV7()); err == nil {
 		t.Fatal("cross-Environment Token Wait reference was accepted")
 	}
 }
@@ -286,7 +286,7 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 	if err != nil {
 		t.Fatal(err)
 	}
-	registration := tokenWaitRegistrationRequest(t, ctx, fixture, work, tokenID, uuid.Must(uuid.NewV7()))
+	registration := tokenWaitRegistrationRequest(t, ctx, fixture, work, tokenID, uuid.NewV7())
 	if mode.actor {
 		registration.ActorSpeculativeInputSequence = pgtype.Int8{Int64: 2, Valid: true}
 	}
@@ -301,7 +301,7 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 	if err := fixture.pool.QueryRow(ctx, `SELECT base_version_id FROM workspace_leases WHERE id = $1`, authority.workspaceLeaseID).Scan(&baseVersionID); err != nil {
 		t.Fatal(err)
 	}
-	checkpointID := uuid.Must(uuid.NewV7())
+	checkpointID := uuid.NewV7()
 	if _, err := fixture.queries.CreateRunCheckpoint(ctx, db.CreateRunCheckpointParams{
 		ID:    pgvalue.UUID(checkpointID),
 		RunID: pgvalue.UUID(work.runID), AttemptNumber: int32(1),
@@ -628,7 +628,7 @@ func testPendingRootTokenWaitCheckpointReadyCommitsAtomicParkingFacts(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	registration := tokenWaitRegistrationRequest(t, ctx, fixture, work, tokenID, uuid.Must(uuid.NewV7()))
+	registration := tokenWaitRegistrationRequest(t, ctx, fixture, work, tokenID, uuid.NewV7())
 	if actor {
 		registration.ActorSpeculativeInputSequence = pgtype.Int8{Int64: 1, Valid: true}
 	}
@@ -639,9 +639,9 @@ func testPendingRootTokenWaitCheckpointReadyCommitsAtomicParkingFacts(t *testing
 	if _, err := fixture.pool.Exec(ctx, `UPDATE run_waits SET checkpoint_due_at = transaction_timestamp() WHERE id = $1`, registered.WaitID); err != nil {
 		t.Fatal(err)
 	}
-	checkpointID := uuid.Must(uuid.NewV7())
-	privateVersionID := uuid.Must(uuid.NewV7())
-	workspaceArtifactID := uuid.Must(uuid.NewV7())
+	checkpointID := uuid.NewV7()
+	privateVersionID := uuid.NewV7()
+	workspaceArtifactID := uuid.NewV7()
 	workspaceDigest := dbtest.Digest("checkpoint-workspace-artifact-" + checkpointID.String())
 	workspaceTreeDigest := dbtest.Digest("checkpoint-workspace-tree-" + checkpointID.String())
 	tx, err := fixture.pool.Begin(ctx)
@@ -859,7 +859,7 @@ func TestTokenWaitRegistrationConcurrentReplayConverges(t *testing.T) {
 	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
 	startTaskCompletionWork(t, ctx, fixture, work)
 	tokenID := createTokenTerminalTestToken(t, ctx, fixture, time.Now().Add(time.Hour))
-	request := tokenWaitRegistrationRequest(t, ctx, fixture, work, tokenID, uuid.Must(uuid.NewV7()))
+	request := tokenWaitRegistrationRequest(t, ctx, fixture, work, tokenID, uuid.NewV7())
 	reconciler, err := NewWaitReconciler(fixture.pool)
 	if err != nil {
 		t.Fatal(err)
@@ -903,7 +903,7 @@ func TestTokenWaitRegistrationReplaySurvivesParkedCompletion(t *testing.T) {
 	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
 	startTaskCompletionWork(t, ctx, fixture, work)
 	tokenID := createTokenTerminalTestToken(t, ctx, fixture, time.Now().Add(time.Hour))
-	request := tokenWaitRegistrationRequest(t, ctx, fixture, work, tokenID, uuid.Must(uuid.NewV7()))
+	request := tokenWaitRegistrationRequest(t, ctx, fixture, work, tokenID, uuid.NewV7())
 	reconciler, err := NewWaitReconciler(fixture.pool)
 	if err != nil {
 		t.Fatal(err)
@@ -921,7 +921,7 @@ func TestTokenWaitRegistrationReplaySurvivesParkedCompletion(t *testing.T) {
 	`, work.runID).Scan(&workspaceID, &workspaceLeaseID, &baseVersionID); err != nil {
 		t.Fatal(err)
 	}
-	checkpointID := uuid.Must(uuid.NewV7())
+	checkpointID := uuid.NewV7()
 	dbtest.MustExec(t, ctx, fixture.pool, `
 		INSERT INTO run_checkpoints (
 		    id, run_id, attempt_number, run_wait_id,
@@ -985,7 +985,7 @@ func TestTokenWaitRegistrationAllowsDrainingInFlightWorker(t *testing.T) {
 	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
 	startTaskCompletionWork(t, ctx, fixture, work)
 	tokenID := createTokenTerminalTestToken(t, ctx, fixture, time.Now().Add(time.Hour))
-	request := tokenWaitRegistrationRequest(t, ctx, fixture, work, tokenID, uuid.Must(uuid.NewV7()))
+	request := tokenWaitRegistrationRequest(t, ctx, fixture, work, tokenID, uuid.NewV7())
 	dbtest.MustExec(t, ctx, fixture.pool, `UPDATE worker_groups SET state = 'draining' WHERE id = $1`, request.WorkerGroupID)
 	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE worker_instances SET state = 'draining', draining_at = transaction_timestamp() WHERE id = $1
@@ -1006,7 +1006,7 @@ func TestTokenWaitRegistrationRejectsExpiredPhysicalAuthority(t *testing.T) {
 	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
 	startTaskCompletionWork(t, ctx, fixture, work)
 	tokenID := createTokenTerminalTestToken(t, ctx, fixture, time.Now().Add(time.Hour))
-	waitID := uuid.Must(uuid.NewV7())
+	waitID := uuid.NewV7()
 	request := tokenWaitRegistrationRequest(t, ctx, fixture, work, tokenID, waitID)
 	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE run_leases
@@ -1046,7 +1046,7 @@ func TestTokenWaitRegistrationAcceptsChildRun(t *testing.T) {
 		 WHERE id = $2
 	`, parent.runID, child.runID)
 	tokenID := createTokenTerminalTestToken(t, ctx, fixture, time.Now().Add(time.Hour))
-	waitID := uuid.Must(uuid.NewV7())
+	waitID := uuid.NewV7()
 	request := tokenWaitRegistrationRequest(t, ctx, fixture, child, tokenID, waitID)
 	reconciler, err := NewWaitReconciler(fixture.pool)
 	if err != nil {
@@ -1075,7 +1075,7 @@ func tokenWaitRegistrationRequest(
 ) WaitRegistration {
 	t.Helper()
 	request := WaitRegistration{
-		TokenID: tokenID, WaitID: waitID, ResumeAttachID: uuid.Must(uuid.NewV7()),
+		TokenID: tokenID, WaitID: waitID, ResumeAttachID: uuid.NewV7(),
 		RunLeaseID:         work.leaseID,
 		RequestFingerprint: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 	}
@@ -1275,7 +1275,7 @@ func newTokenWaitReconcileSetup(
 	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
 	setup := tokenWaitReconcileSetup{
 		tokenID: createTokenTerminalTestToken(t, ctx, fixture, tokenTimeout),
-		waitID:  uuid.Must(uuid.NewV7()), runID: work.runID, leaseID: work.leaseID,
+		waitID:  uuid.NewV7(), runID: work.runID, leaseID: work.leaseID,
 	}
 	if err := fixture.pool.QueryRow(ctx, `SELECT workspace_id FROM runs WHERE id = $1`, work.runID).Scan(&setup.workspaceID); err != nil {
 		t.Fatal(err)
@@ -1315,7 +1315,7 @@ func newTokenWaitReconcileSetup(
 		`, setup.runID, setup.leaseID).Scan(&workspaceLeaseID, &baseVersionID); err != nil {
 			t.Fatal(err)
 		}
-		checkpointID := uuid.Must(uuid.NewV7())
+		checkpointID := uuid.NewV7()
 		setup.checkpointID = pgvalue.UUID(checkpointID)
 		dbtest.MustExec(t, ctx, fixture.pool, `
 			INSERT INTO run_checkpoints (
@@ -1382,7 +1382,7 @@ func insertTokenWaitFixture(
 			attempt_number, current_run_lease_id, resume_attach_id
 		) VALUES ($1, $2, $3, $4, 'token', $5, $6 - 1, $6, 1, $7, $8)
 	`, waitID, fixture.environmentID, runID, workspaceID, tokenID,
-		expectedRunStateVersion, leaseID, uuid.Must(uuid.NewV7()))
+		expectedRunStateVersion, leaseID, uuid.NewV7())
 }
 
 func reconcileTokenWaitBatch(

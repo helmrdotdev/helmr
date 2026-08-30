@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -33,8 +33,8 @@ func TestWorkspaceResetTargetAuthorityProjectsPrivateVersionWithinExactWorkspace
 		t.Fatal(err)
 	}
 
-	artifactID := uuid.Must(uuid.NewV7())
-	privateVersionID := uuid.Must(uuid.NewV7())
+	artifactID := uuid.NewV7()
+	privateVersionID := uuid.NewV7()
 	digest := dbtest.Digest("private-workspace-reset-target")
 	dbtest.MustExec(t, ctx, fixture.pool, `
 		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)

@@ -8,8 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -33,8 +33,8 @@ func TestActorInputWaitAppendAndRegistrationOrdersConverge(t *testing.T) {
 			if err := fixture.pool.QueryRow(ctx, `SELECT state_version FROM runs WHERE id = $1`, work.runID).Scan(&runVersion); err != nil {
 				t.Fatal(err)
 			}
-			waitID := uuid.Must(uuid.NewV7())
-			recordID := uuid.Must(uuid.NewV7())
+			waitID := uuid.NewV7()
+			recordID := uuid.NewV7()
 			register := func() RunWait {
 				wait, err := fixture.queries.RegisterActorInputRunWait(ctx, RegisterActorInputRunWaitParams{
 					ID: pgvalue.UUID(waitID), EnvironmentID: pgvalue.UUID(fixture.environmentID),
@@ -44,7 +44,7 @@ func TestActorInputWaitAppendAndRegistrationOrdersConverge(t *testing.T) {
 					ActorSpeculativeInputSequence: pgtype.Int8{Int64: 2, Valid: true},
 					CurrentRunLeaseID:             pgvalue.UUID(work.leaseID),
 					CheckpointDueAt:               pgvalue.Timestamptz(time.Now().Add(30 * time.Second)),
-					ResumeAttachID:                pgvalue.UUID(uuid.Must(uuid.NewV7())), Metadata: []byte(`{}`), Tags: []string{},
+					ResumeAttachID:                pgvalue.UUID(uuid.NewV7()), Metadata: []byte(`{}`), Tags: []string{},
 					RunID: pgvalue.UUID(work.runID), ExpectedRunningStateVersion: runVersion,
 				})
 				if err != nil {
@@ -121,7 +121,7 @@ func TestActorInputAppendConcurrentSequencesAndKeyedReplay(t *testing.T) {
 			start.Wait()
 			row, err := fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
 				EnvironmentID: pgvalue.UUID(fixture.environmentID), SessionID: pgvalue.UUID(actorID),
-				ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), Data: []byte(`{"sender":` + string(rune('0'+index)) + `}`),
+				ID: pgvalue.UUID(uuid.NewV7()), Data: []byte(`{"sender":` + string(rune('0'+index)) + `}`),
 				SourceKind: pgvalue.Text("external"),
 			})
 			if err != nil {
@@ -145,7 +145,7 @@ func TestActorInputAppendConcurrentSequencesAndKeyedReplay(t *testing.T) {
 		t.Fatalf("concurrent sequences = %+v", sequences)
 	}
 
-	claimID := uuid.Must(uuid.NewV7())
+	claimID := uuid.NewV7()
 	fingerprint := bytes.Repeat([]byte{7}, 32)
 	dbtest.MustExec(t, ctx, fixture.pool, `
 		INSERT INTO idempotency_claims (
@@ -153,7 +153,7 @@ func TestActorInputAppendConcurrentSequencesAndKeyedReplay(t *testing.T) {
 			request_fingerprint, accepted_at, expires_at
 		) VALUES ($1, $2, 'session.input.send', $3, $4, now(), now() + interval '30 days')
 	`, claimID, fixture.environmentID, dbtest.Hash("actor-input-slot"), fingerprint)
-	recordID := uuid.Must(uuid.NewV7())
+	recordID := uuid.NewV7()
 	first, err := fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), ClaimID: pgvalue.UUID(claimID),
 		SessionID: pgvalue.UUID(actorID), ExpectedRequestFingerprint: fingerprint,
@@ -181,7 +181,7 @@ func TestActorInputAppendConcurrentSequencesAndKeyedReplay(t *testing.T) {
 	replay, err := fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), ClaimID: pgvalue.UUID(claimID),
 		SessionID: pgvalue.UUID(actorID), ExpectedRequestFingerprint: fingerprint,
-		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), Data: []byte(`{"keyed":true}`), SourceKind: pgvalue.Text("run"),
+		ID: pgvalue.UUID(uuid.NewV7()), Data: []byte(`{"keyed":true}`), SourceKind: pgvalue.Text("run"),
 		SourceRunID: pgvalue.UUID(work.runID),
 	})
 	if err != nil || replay.Appended || replay.ID != first.ID || replay.Sequence != first.Sequence ||
@@ -198,7 +198,7 @@ func TestActorInputAppendConcurrentSequencesAndKeyedReplay(t *testing.T) {
 	mismatch, err := fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), ClaimID: pgvalue.UUID(claimID),
 		SessionID: pgvalue.UUID(actorID), ExpectedRequestFingerprint: bytes.Repeat([]byte{8}, 32),
-		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), Data: []byte(`{"keyed":false}`), SourceKind: pgvalue.Text("run"),
+		ID: pgvalue.UUID(uuid.NewV7()), Data: []byte(`{"keyed":false}`), SourceKind: pgvalue.Text("run"),
 		SourceRunID: pgvalue.UUID(work.runID),
 	})
 	if err != nil || !mismatch.ClaimFingerprintMismatch || mismatch.ID != first.ID {
@@ -212,9 +212,9 @@ func TestActorInputRunSourceTransactionRollbackLeavesNoResidue(t *testing.T) {
 	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
 	actorID := fixture.convertToActor(t, ctx, work, `{"enabled":false}`)
 
-	recordID := uuid.Must(uuid.NewV7())
-	reconcileID := uuid.Must(uuid.NewV7())
-	claimID := uuid.Must(uuid.NewV7())
+	recordID := uuid.NewV7()
+	reconcileID := uuid.NewV7()
+	claimID := uuid.NewV7()
 	fingerprint := bytes.Repeat([]byte{13}, 32)
 	tx, err := fixture.pool.Begin(ctx)
 	if err != nil {
@@ -336,7 +336,7 @@ func TestActorInputSequenceSafeIntegerBoundaryPreservesCompletedReplay(t *testin
 		UPDATE sessions SET next_input_sequence = $2 WHERE id = $1
 	`, actorID, maxSafeSequence)
 
-	claimID := uuid.Must(uuid.NewV7())
+	claimID := uuid.NewV7()
 	fingerprint := bytes.Repeat([]byte{9}, 32)
 	dbtest.MustExec(t, ctx, fixture.pool, `
 		INSERT INTO idempotency_claims (
@@ -344,7 +344,7 @@ func TestActorInputSequenceSafeIntegerBoundaryPreservesCompletedReplay(t *testin
 			request_fingerprint, accepted_at, expires_at
 		) VALUES ($1, $2, 'session.input.send', $3, $4, now(), now() + interval '30 days')
 	`, claimID, fixture.environmentID, dbtest.Hash("actor-input-max-slot"), fingerprint)
-	recordID := uuid.Must(uuid.NewV7())
+	recordID := uuid.NewV7()
 	first, err := fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
 		EnvironmentID:              pgvalue.UUID(fixture.environmentID),
 		ClaimID:                    pgvalue.UUID(claimID),
@@ -371,7 +371,7 @@ func TestActorInputSequenceSafeIntegerBoundaryPreservesCompletedReplay(t *testin
 	_, err = fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
 		EnvironmentID: pgvalue.UUID(fixture.environmentID),
 		SessionID:     pgvalue.UUID(actorID),
-		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ID:            pgvalue.UUID(uuid.NewV7()),
 		Data:          []byte(`{"after":"maximum"}`),
 		SourceKind:    pgvalue.Text("external"),
 	})
@@ -384,7 +384,7 @@ func TestActorInputSequenceSafeIntegerBoundaryPreservesCompletedReplay(t *testin
 		ClaimID:                    pgvalue.UUID(claimID),
 		SessionID:                  pgvalue.UUID(actorID),
 		ExpectedRequestFingerprint: fingerprint,
-		ID:                         pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ID:                         pgvalue.UUID(uuid.NewV7()),
 		Data:                       []byte(`{"at":"maximum"}`),
 		SourceKind:                 pgvalue.Text("external"),
 	})
@@ -420,14 +420,14 @@ func TestActorInputWaitTimeoutReleasesHotRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	wait, err := fixture.queries.RegisterActorInputRunWait(ctx, RegisterActorInputRunWaitParams{
-		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), EnvironmentID: pgvalue.UUID(fixture.environmentID),
+		ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: pgvalue.UUID(fixture.environmentID),
 		TimeoutAt:     pgvalue.Timestamptz(time.Now().Add(-time.Millisecond)),
 		IdleTimeoutMs: pgtype.Int8{Int64: 30_000, Valid: true}, SessionID: pgvalue.UUID(actorID),
 		AfterInputSequence:             pgtype.Int8{Int64: 2, Valid: true},
 		RegistrationRequestFingerprint: pgvalue.Text(dbtest.Digest("actor-input-timeout")), AttemptNumber: 1,
 		ActorSpeculativeInputSequence: pgtype.Int8{Int64: 2, Valid: true}, CurrentRunLeaseID: pgvalue.UUID(work.leaseID),
 		CheckpointDueAt: pgvalue.Timestamptz(time.Now().Add(30 * time.Second)),
-		ResumeAttachID:  pgvalue.UUID(uuid.Must(uuid.NewV7())), Metadata: []byte(`{}`), Tags: []string{},
+		ResumeAttachID:  pgvalue.UUID(uuid.NewV7()), Metadata: []byte(`{}`), Tags: []string{},
 		RunID: pgvalue.UUID(work.runID), ExpectedRunningStateVersion: runVersion,
 	})
 	if err != nil {
@@ -489,7 +489,7 @@ func TestActorInputClosingContinuationCASCreatesOneRun(t *testing.T) {
 	`, actorID)
 	input, err := fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), SessionID: pgvalue.UUID(actorID),
-		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), Data: []byte(`{"wake":true}`), SourceKind: pgvalue.Text("external"),
+		ID: pgvalue.UUID(uuid.NewV7()), Data: []byte(`{"wake":true}`), SourceKind: pgvalue.Text("external"),
 	})
 	if err != nil || input.Sequence != 3 {
 		t.Fatalf("wake input = %+v, %v", input, err)
@@ -518,7 +518,7 @@ func TestActorInputClosingContinuationCASCreatesOneRun(t *testing.T) {
 		go func() {
 			start.Wait()
 			run, err := fixture.queries.CreateActorContinuationRun(ctx, CreateActorContinuationRunParams{
-				RunID:         pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				RunID:         pgvalue.UUID(uuid.NewV7()),
 				QueueOriginAt: pgvalue.Timestamptz(time.Now().UTC()),
 				TraceID:       pgvalue.Text("11111111111111111111111111111111"), RootSpanID: "2222222222222222",
 				EnvironmentID: pgvalue.UUID(fixture.environmentID), SessionID: pgvalue.UUID(actorID),

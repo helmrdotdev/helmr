@@ -6,8 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"uuid"
 
-	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/ids"
 )
 
 func TestRequestCorrelationGeneratesServerOwnedUUIDv7(t *testing.T) {
@@ -22,12 +23,8 @@ func TestRequestCorrelationGeneratesServerOwnedUUIDv7(t *testing.T) {
 	handler.ServeHTTP(response, request)
 
 	requestID := response.Header().Get(requestIDHeader)
-	parsed, err := uuid.Parse(requestID)
-	if err != nil {
+	if err := ids.Validate(requestID); err != nil {
 		t.Fatalf("%s = %q: %v", requestIDHeader, requestID, err)
-	}
-	if parsed.Version() != 7 {
-		t.Fatalf("request ID version = %d, want 7", parsed.Version())
 	}
 	if requestID == "caller-controlled" {
 		t.Fatal("request ID trusted caller input")

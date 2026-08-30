@@ -24,12 +24,12 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/firecracker-microvm/firecracker-go-sdk"
 	"github.com/firecracker-microvm/firecracker-go-sdk/client/models"
 	"github.com/firecracker-microvm/firecracker-go-sdk/client/operations"
 	"github.com/firecracker-microvm/firecracker-go-sdk/vsock"
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/runtimeid"
@@ -674,7 +674,7 @@ func TestRestoreRecordsUnpackPhasesOnFilepackFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	manifestBytes, identity := testRestoreManifestAndIdentity(t, cfg, "checkpoint-1")
-	runtimeInstanceID := uuid.Must(uuid.NewV7()).String()
+	runtimeInstanceID := uuid.NewV7().String()
 	var mu sync.Mutex
 	var phases []vm.RuntimePhase
 
@@ -732,7 +732,7 @@ func TestUnpackRestoreArtifactReturnsFilepackStats(t *testing.T) {
 	if _, err := packRuntimeFile(context.Background(), raw, pack, filepackScratchRole); err != nil {
 		t.Fatal(err)
 	}
-	owner := vm.Owner{Kind: vm.OwnerRuntime, ID: uuid.Must(uuid.NewV7()).String()}
+	owner := vm.Owner{Kind: vm.OwnerRuntime, ID: uuid.NewV7().String()}
 	ownerDir, err := createOwnerStateRoot(cfg.StateDir, owner)
 	if err != nil {
 		t.Fatal(err)
@@ -1545,7 +1545,7 @@ func TestRuntimeKernelArgsDescribeExactDriveTopology(t *testing.T) {
 
 func TestMaterializeAcceptsOnlyCompleteProgramDriveSet(t *testing.T) {
 	source := &recordingReadOnlyDriveSource{}
-	runtimeInstanceID := uuid.Must(uuid.NewV7()).String()
+	runtimeInstanceID := uuid.NewV7().String()
 	rootfsDigest := "sha256:" + strings.Repeat("0", 64)
 	artifacts := testProbeRuntimeArtifacts()
 	artifacts.Rootfs.Digest = rootfsDigest
@@ -1606,7 +1606,7 @@ func TestMaterializeRecordsScratchDiskPhase(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			runtimeInstanceID := uuid.Must(uuid.NewV7()).String()
+			runtimeInstanceID := uuid.NewV7().String()
 			var phases []vm.RuntimePhase
 
 			_, err = connector.materialize(t.Context(), vm.MaterializeRequest{
@@ -1646,7 +1646,7 @@ func TestMaterializeRecordsScratchDiskPhase(t *testing.T) {
 }
 
 func TestMaterializeRequiresActivationProbedCPUShape(t *testing.T) {
-	runtimeInstanceID := uuid.Must(uuid.NewV7()).String()
+	runtimeInstanceID := uuid.NewV7().String()
 	rootfsDigest := testCanonicalDigest("0")
 	artifacts := testProbeRuntimeArtifacts()
 	artifacts.Rootfs.Digest = rootfsDigest
@@ -1730,7 +1730,7 @@ func TestSessionRuntimeFailsClosedUntilHostEvidenceIsBound(t *testing.T) {
 
 func TestSessionEntryPointsRejectWorkloadRuntimeIdentityMismatch(t *testing.T) {
 	connector := testConnector(t, testRestoreConfig(t))
-	runtimeInstanceID := uuid.Must(uuid.NewV7()).String()
+	runtimeInstanceID := uuid.NewV7().String()
 	binding := vm.WorkloadBinding{
 		WorkerEpoch:       1,
 		OwnerID:           runtimeInstanceID,

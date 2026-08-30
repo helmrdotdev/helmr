@@ -5,15 +5,15 @@ import (
 	"errors"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
 func TestDeliveryWorkerReconcilesAndDeliversTokenIntent(t *testing.T) {
-	environmentID := uuid.Must(uuid.NewV7())
-	tokenID := uuid.Must(uuid.NewV7())
+	environmentID := uuid.NewV7()
+	tokenID := uuid.NewV7()
 	message := tokenReconcileMessage(environmentID, tokenID)
 	store := &tokenDeliveryStore{messages: []db.OutboxMessage{message}}
 	var gotEnvironmentID, gotTokenID uuid.UUID
@@ -52,8 +52,8 @@ func TestDeliveryWorkerReconcilesAndDeliversTokenIntent(t *testing.T) {
 }
 
 func TestDeliveryWorkerContinuesFullBoundedBatch(t *testing.T) {
-	environmentID := uuid.Must(uuid.NewV7())
-	tokenID := uuid.Must(uuid.NewV7())
+	environmentID := uuid.NewV7()
+	tokenID := uuid.NewV7()
 	message := tokenReconcileMessage(environmentID, tokenID)
 	store := &tokenDeliveryStore{messages: []db.OutboxMessage{message}}
 	worker, err := NewDeliveryWorker(nil, store, func(
@@ -78,8 +78,8 @@ func TestDeliveryWorkerContinuesFullBoundedBatch(t *testing.T) {
 }
 
 func TestDeliveryWorkerRetriesReconciliationFailure(t *testing.T) {
-	environmentID := uuid.Must(uuid.NewV7())
-	tokenID := uuid.Must(uuid.NewV7())
+	environmentID := uuid.NewV7()
+	tokenID := uuid.NewV7()
 	message := tokenReconcileMessage(environmentID, tokenID)
 	message.Attempts = 3
 	store := &tokenDeliveryStore{messages: []db.OutboxMessage{message}}
@@ -105,8 +105,8 @@ func TestDeliveryWorkerRetriesReconciliationFailure(t *testing.T) {
 }
 
 func TestDeliveryWorkerRetainsIntentWhileCheckpointReadinessIsPending(t *testing.T) {
-	environmentID := uuid.Must(uuid.NewV7())
-	tokenID := uuid.Must(uuid.NewV7())
+	environmentID := uuid.NewV7()
+	tokenID := uuid.NewV7()
 	message := tokenReconcileMessage(environmentID, tokenID)
 	store := &tokenDeliveryStore{messages: []db.OutboxMessage{message}}
 	worker, err := NewDeliveryWorker(nil, store, func(
@@ -131,7 +131,7 @@ func TestDeliveryWorkerRetainsIntentWhileCheckpointReadinessIsPending(t *testing
 }
 
 func TestDeliveryWorkerDeadLettersInvalidTokenIntent(t *testing.T) {
-	message := tokenReconcileMessage(uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()))
+	message := tokenReconcileMessage(uuid.NewV7(), uuid.NewV7())
 	message.Payload = []byte(`{"environmentId":"invalid","tokenId":"invalid"}`)
 	store := &tokenDeliveryStore{messages: []db.OutboxMessage{message}}
 	worker, err := NewDeliveryWorker(nil, store, func(
@@ -198,7 +198,7 @@ func (s *tokenDeliveryStore) DeadLetterOutboxMessage(context.Context, db.DeadLet
 
 func tokenReconcileMessage(environmentID, tokenID uuid.UUID) db.OutboxMessage {
 	return db.OutboxMessage{
-		ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ID:             pgvalue.UUID(uuid.NewV7()),
 		Lane:           "control",
 		Topic:          "token.reconcile",
 		Payload:        []byte(`{"environmentId":"` + environmentID.String() + `","tokenId":"` + tokenID.String() + `"}`),

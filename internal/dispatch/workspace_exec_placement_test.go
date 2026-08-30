@@ -2,13 +2,13 @@ package dispatch
 
 import (
 	"testing"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
 func TestValidateWorkspaceExecRuntimeIgnoresHistoricalRestoreProvenance(t *testing.T) {
-	definitionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	definitionID := pgvalue.UUID(uuid.NewV7())
 	authority := workspaceExecAuthority{
 		workspaceDefinitionID: definitionID,
 		resources: runResources{
@@ -18,7 +18,7 @@ func TestValidateWorkspaceExecRuntimeIgnoresHistoricalRestoreProvenance(t *testi
 	}
 	runtime := runRuntime{
 		deploymentDefinition:    definitionID,
-		restoreCheckpoint:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		restoreCheckpoint:       pgvalue.UUID(uuid.NewV7()),
 		cpuMillis:               1000,
 		memoryBytes:             2 << 30,
 		guestEphemeralDiskBytes: 8 << 30,

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -130,7 +130,7 @@ func TestTaskCompletionDeadlineUsesFrozenFinalizationExpiry(t *testing.T) {
 }
 
 func TestTaskCompletionRejectsRollbackOutsideRunBase(t *testing.T) {
-	runBase := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	runBase := pgvalue.UUID(uuid.NewV7())
 	authority := runLeaseClaimAuthority{
 		run: db.Run{EntrypointKind: "task", BaseWorkspaceVersionID: runBase},
 		attempt: db.RunAttempt{
@@ -145,7 +145,7 @@ func TestTaskCompletionRejectsRollbackOutsideRunBase(t *testing.T) {
 	completion := parsedTaskCompletion{
 		kind: taskCompletionFailed,
 		rollback: &parsedTaskWorkspaceRollback{
-			baseID: uuid.Must(uuid.NewV7()),
+			baseID: uuid.NewV7(),
 		},
 	}
 	if err := validateTaskCompletionAuthority(
@@ -204,9 +204,9 @@ func TestTaskCompletionRejectsFinalizationKindMismatch(t *testing.T) {
 }
 
 func TestTaskCompletionMountUpdateUsesLeaseFrontier(t *testing.T) {
-	runBase := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	leaseBase := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	newVersion := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	runBase := pgvalue.UUID(uuid.NewV7())
+	leaseBase := pgvalue.UUID(uuid.NewV7())
+	newVersion := pgvalue.UUID(uuid.NewV7())
 	authority := runLeaseClaimAuthority{
 		run:            db.Run{BaseWorkspaceVersionID: runBase},
 		workspaceLease: db.WorkspaceLease{BaseVersionID: leaseBase},
@@ -227,8 +227,8 @@ func TestTaskCompletionMountUpdateUsesLeaseFrontier(t *testing.T) {
 }
 
 func TestTaskWorkspaceRollbackMatchesCanonicalRootVersion(t *testing.T) {
-	baseID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	workspaceID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	baseID := pgvalue.UUID(uuid.NewV7())
+	workspaceID := pgvalue.UUID(uuid.NewV7())
 	authority := runLeaseClaimAuthority{
 		run:       db.Run{BaseWorkspaceVersionID: baseID},
 		workspace: db.Workspace{ID: workspaceID},
@@ -247,18 +247,18 @@ func TestTaskWorkspaceRollbackMatchesCanonicalRootVersion(t *testing.T) {
 	if err := validateTaskWorkspaceRollback(context.Background(), store, authority, rollback); err != nil {
 		t.Fatal(err)
 	}
-	store.version.ArtifactID = pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	store.version.ArtifactID = pgvalue.UUID(uuid.NewV7())
 	if err := validateTaskWorkspaceRollback(context.Background(), store, authority, rollback); !errors.Is(err, errStaleTaskCompletion) {
 		t.Fatalf("root with Artifact error = %v", err)
 	}
 }
 
 func TestTaskWorkspaceRollbackMatchesVersionArtifact(t *testing.T) {
-	baseID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	workspaceID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	artifactID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	parentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	sourceLeaseID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	baseID := pgvalue.UUID(uuid.NewV7())
+	workspaceID := pgvalue.UUID(uuid.NewV7())
+	artifactID := pgvalue.UUID(uuid.NewV7())
+	parentID := pgvalue.UUID(uuid.NewV7())
+	sourceLeaseID := pgvalue.UUID(uuid.NewV7())
 	tree := workspace.TreeIdentity{Digest: "sha256:" + strings.Repeat("b", 64), SizeBytes: 12, EntryCount: 2}
 	artifact := workspace.ArtifactIdentity{
 		Digest: "sha256:" + strings.Repeat("a", 64), MediaType: workspace.ArtifactMediaType,
@@ -300,22 +300,22 @@ func TestTaskWorkspaceRollbackMatchesVersionArtifact(t *testing.T) {
 func TestRecordTaskWorkspaceVersionSeparatesTreeAndArtifactIdentity(t *testing.T) {
 	authority := runLeaseClaimAuthority{
 		run: db.Run{
-			OrgID: pgvalue.UUID(uuid.Must(uuid.NewV7())), ProjectID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			EnvironmentID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID: pgvalue.UUID(uuid.NewV7()), ProjectID: pgvalue.UUID(uuid.NewV7()),
+			EnvironmentID: pgvalue.UUID(uuid.NewV7()),
 		},
 		workspace: db.Workspace{
-			ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), OwnershipGeneration: 1, WriterGeneration: 2,
+			ID: pgvalue.UUID(uuid.NewV7()), OwnershipGeneration: 1, WriterGeneration: 2,
 		},
 		workspaceLease: db.WorkspaceLease{
-			ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), BaseVersionID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			ID: pgvalue.UUID(uuid.NewV7()), BaseVersionID: pgvalue.UUID(uuid.NewV7()),
 		},
 		workspaceMount: db.WorkspaceMount{
-			ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), RuntimeInstanceID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			ID: pgvalue.UUID(uuid.NewV7()), RuntimeInstanceID: pgvalue.UUID(uuid.NewV7()),
 			FencingGeneration: 3,
 		},
-		runtime: db.RuntimeInstance{ID: pgvalue.UUID(uuid.Must(uuid.NewV7()))},
+		runtime: db.RuntimeInstance{ID: pgvalue.UUID(uuid.NewV7())},
 	}
-	versionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	versionID := pgvalue.UUID(uuid.NewV7())
 	store := &taskWorkspaceVersionFixture{versionID: versionID}
 	capture := parsedTaskWorkspaceCapture{
 		tree: workspace.TreeIdentity{
@@ -327,7 +327,7 @@ func TestRecordTaskWorkspaceVersionSeparatesTreeAndArtifactIdentity(t *testing.T
 		},
 	}
 	got, err := recordTaskWorkspaceVersion(
-		context.Background(), store, workerActor{WorkerInstanceID: uuid.Must(uuid.NewV7())},
+		context.Background(), store, workerActor{WorkerInstanceID: uuid.NewV7()},
 		authority, capture, pgvalue.Timestamptz(time.Now()),
 	)
 	if err != nil {

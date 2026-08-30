@@ -9,9 +9,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"uuid"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -486,16 +486,16 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 	t.Helper()
 	pool := openActorStartPostgres(t)
 	fixture := actorStartPostgresFixture{
-		pool: pool, orgID: uuid.Must(uuid.NewV7()), projectID: uuid.Must(uuid.NewV7()),
-		environmentID: uuid.Must(uuid.NewV7()), workspaceIDs: make([]uuid.UUID, workspaceCount),
+		pool: pool, orgID: uuid.NewV7(), projectID: uuid.NewV7(),
+		environmentID: uuid.NewV7(), workspaceIDs: make([]uuid.UUID, workspaceCount),
 		workspaceRefs: make([]string, workspaceCount), workspaceKeys: make([]string, workspaceCount),
 	}
-	deploymentID := uuid.Must(uuid.NewV7())
+	deploymentID := uuid.NewV7()
 	fixture.deploymentID = deploymentID
-	actorDefinitionID := uuid.Must(uuid.NewV7())
-	taskDefinitionID := uuid.Must(uuid.NewV7())
-	workspaceDefinitionID := uuid.Must(uuid.NewV7())
-	programID, imageID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	actorDefinitionID := uuid.NewV7()
+	taskDefinitionID := uuid.NewV7()
+	workspaceDefinitionID := uuid.NewV7()
+	programID, imageID := uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO regions (id, display_name)
 		VALUES ('us-east-1', 'Actor Start Test')
@@ -575,7 +575,7 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 		UPDATE environments SET current_deployment_id = $1 WHERE id = $2
 	`, deploymentID, fixture.environmentID)
 
-	secretID, secretVersionID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	secretID, secretVersionID := uuid.NewV7(), uuid.NewV7()
 	tx, err := pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -593,7 +593,7 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 		          decode(repeat('02', 16), 'hex'))
 	`, secretVersionID, secretID)
 	for index := range workspaceCount {
-		workspaceID, versionID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+		workspaceID, versionID := uuid.NewV7(), uuid.NewV7()
 		fixture.workspaceIDs[index] = workspaceID
 		fixture.workspaceRefs[index] = workspaceID.String()
 		fixture.workspaceKeys[index] = fmt.Sprintf("workspace:%d", index)

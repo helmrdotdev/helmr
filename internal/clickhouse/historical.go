@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 )
@@ -127,32 +127,32 @@ LIMIT @row_limit`
 }
 
 type eventRow struct {
-	Seq            uint64     `ch:"seq"`
-	RunID          *uuid.UUID `ch:"run_id"`
-	DeploymentID   *uuid.UUID `ch:"deployment_id"`
-	RunLeaseID     *uuid.UUID `ch:"run_lease_id"`
-	AttemptNumber  *int32     `ch:"attempt_number"`
-	TraceID        string     `ch:"trace_id"`
-	SpanID         string     `ch:"span_id"`
-	Traceparent    string     `ch:"traceparent"`
-	Category       string     `ch:"category"`
-	Severity       string     `ch:"severity"`
-	Source         string     `ch:"source"`
-	EventKind      string     `ch:"event_kind"`
-	Message        string     `ch:"message"`
-	Body           string     `ch:"body"`
-	RedactionClass string     `ch:"redaction_class"`
-	ObservedAt     time.Time  `ch:"observed_at"`
+	Seq            uint64    `ch:"seq"`
+	RunID          *string   `ch:"run_id"`
+	DeploymentID   *string   `ch:"deployment_id"`
+	RunLeaseID     *string   `ch:"run_lease_id"`
+	AttemptNumber  *int32    `ch:"attempt_number"`
+	TraceID        string    `ch:"trace_id"`
+	SpanID         string    `ch:"span_id"`
+	Traceparent    string    `ch:"traceparent"`
+	Category       string    `ch:"category"`
+	Severity       string    `ch:"severity"`
+	Source         string    `ch:"source"`
+	EventKind      string    `ch:"event_kind"`
+	Message        string    `ch:"message"`
+	Body           string    `ch:"body"`
+	RedactionClass string    `ch:"redaction_class"`
+	ObservedAt     time.Time `ch:"observed_at"`
 }
 
 func (r eventRow) event() api.RunEvent {
 	var runID, deploymentID *string
 	if r.RunID != nil {
-		value := r.RunID.String()
+		value := *r.RunID
 		runID = &value
 	}
 	if r.DeploymentID != nil {
-		value := r.DeploymentID.String()
+		value := *r.DeploymentID
 		deploymentID = &value
 	}
 	at := r.ObservedAt.UTC()
@@ -182,8 +182,8 @@ func (r eventRow) event() api.RunEvent {
 }
 
 type runLogRow struct {
-	RunID         uuid.UUID `ch:"run_id"`
-	RunLeaseID    uuid.UUID `ch:"run_lease_id"`
+	RunID         string    `ch:"run_id"`
+	RunLeaseID    string    `ch:"run_lease_id"`
 	AttemptNumber int32     `ch:"attempt_number"`
 	StreamName    string    `ch:"stream_name"`
 	Seq           uint64    `ch:"seq"`
@@ -230,7 +230,7 @@ func (r runLogRow) chunk() api.RunLogChunk {
 	}
 	return api.RunLogChunk{
 		ID:            telemetry.Cursor(int64(r.Seq)),
-		RunID:         r.RunID.String(),
+		RunID:         r.RunID,
 		AttemptNumber: r.AttemptNumber,
 		Stream:        r.StreamName,
 		ContentBase64: contentBase64,

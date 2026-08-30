@@ -3,8 +3,8 @@ package db_test
 import (
 	"context"
 	"testing"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -15,9 +15,9 @@ func TestCapacityWorkerListingProjectsCurrentRowPerOpaqueLocator(t *testing.T) {
 	pool := newPostgresDB(t, ctx)
 	queries := db.New(pool)
 	resourceID := "operator-host-1"
-	oldID := uuid.Must(uuid.NewV7())
-	currentID := uuid.Must(uuid.NewV7())
-	oldServiceID := uuid.Must(uuid.NewV7())
+	oldID := uuid.NewV7()
+	currentID := uuid.NewV7()
+	oldServiceID := uuid.NewV7()
 
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO worker_instances (

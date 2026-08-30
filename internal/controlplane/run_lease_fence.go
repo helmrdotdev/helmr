@@ -2,8 +2,8 @@ package controlplane
 
 import (
 	"errors"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )

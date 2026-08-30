@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
@@ -190,7 +190,7 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 			return err
 		}
 		artifact, err := work.q.CreateArtifact(r.Context(), db.CreateArtifactParams{
-			ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), OrgID: params.orgID,
+			ID: pgvalue.UUID(uuid.NewV7()), OrgID: params.orgID,
 			ProjectID: params.mount.ProjectID, EnvironmentID: params.mount.EnvironmentID,
 			Digest: verified.artifact.Digest,
 			Kind:   db.ArtifactKindWorkspaceVersion, SizeBytes: verified.artifact.SizeBytes,
@@ -206,7 +206,7 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 				WorkspaceMountID:   params.mount.ID,
 				WorkerInstanceID:   params.workerID,
 				WorkerEpoch:        params.epoch,
-				WorkspaceVersionID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				WorkspaceVersionID: pgvalue.UUID(uuid.NewV7()),
 				ArtifactID:         artifact.ID,
 				ContentDigest:      verified.tree.Digest,
 				SizeBytes:          verified.tree.SizeBytes,

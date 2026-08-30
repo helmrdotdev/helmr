@@ -10,8 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -202,7 +202,7 @@ func (s *Server) createInvitation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	record, err := s.db.CreateInvitation(r.Context(), db.CreateInvitationParams{
-		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ID:              pgvalue.UUID(uuid.NewV7()),
 		OrgID:           pgvalue.UUID(actor.OrgID),
 		InviteeEmail:    email,
 		Role:            role,

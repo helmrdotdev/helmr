@@ -6,8 +6,8 @@ import (
 	"os"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -157,21 +157,21 @@ SELECT runs.workspace_id,
 		t.Fatal(err)
 	}
 
-	privateVersionID := uuid.Must(uuid.NewV7())
-	privateArtifactID := uuid.Must(uuid.NewV7())
-	checkpointVersionID := uuid.Must(uuid.NewV7())
-	checkpointArtifactID := uuid.Must(uuid.NewV7())
-	sourceRuntimeID := uuid.Must(uuid.NewV7())
-	sourceMountID := uuid.Must(uuid.NewV7())
-	sourceLeaseID := uuid.Must(uuid.NewV7())
-	sourceWorkspaceLeaseID := uuid.Must(uuid.NewV7())
-	childRunID := uuid.Must(uuid.NewV7())
-	childClaimID := uuid.Must(uuid.NewV7())
-	childLeaseID := uuid.Must(uuid.NewV7())
-	childWorkspaceLeaseID := uuid.Must(uuid.NewV7())
-	waitID := uuid.Must(uuid.NewV7())
-	checkpointID := uuid.Must(uuid.NewV7())
-	operationID := uuid.Must(uuid.NewV7())
+	privateVersionID := uuid.NewV7()
+	privateArtifactID := uuid.NewV7()
+	checkpointVersionID := uuid.NewV7()
+	checkpointArtifactID := uuid.NewV7()
+	sourceRuntimeID := uuid.NewV7()
+	sourceMountID := uuid.NewV7()
+	sourceLeaseID := uuid.NewV7()
+	sourceWorkspaceLeaseID := uuid.NewV7()
+	childRunID := uuid.NewV7()
+	childClaimID := uuid.NewV7()
+	childLeaseID := uuid.NewV7()
+	childWorkspaceLeaseID := uuid.NewV7()
+	waitID := uuid.NewV7()
+	checkpointID := uuid.NewV7()
+	operationID := uuid.NewV7()
 	expiresAt := time.Now().Add(10 * time.Minute).UTC().Truncate(time.Microsecond)
 	privateDigest := dbtest.Digest("restored-actor-private-base")
 	checkpointDigest := dbtest.Digest("restored-actor-checkpoint-base")
@@ -381,7 +381,7 @@ INSERT INTO run_waits (
     '{"Method":"call"}'::jsonb,
     'pending', 'parked', 1, 1, $7, $8
 )`, waitID, base.EnvironmentID, work.RunID, workspaceID, childRunID, childClaimID,
-		sourceLeaseID, uuid.Must(uuid.NewV7()))
+		sourceLeaseID, uuid.NewV7())
 	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO run_checkpoints (
     id, run_id, attempt_number, run_wait_id, source_run_lease_id,

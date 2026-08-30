@@ -8,15 +8,15 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
 func TestWorkerDiscoverRunLeasesReturnsExactTuples(t *testing.T) {
-	workerID := uuid.Must(uuid.NewV7())
-	leaseID := uuid.Must(uuid.NewV7())
+	workerID := uuid.NewV7()
+	leaseID := uuid.NewV7()
 	store := &runLeaseDiscoveryStore{
 		rows: []db.DiscoverWorkerRunLeaseWorkRow{{
 			ID:            pgvalue.UUID(leaseID),

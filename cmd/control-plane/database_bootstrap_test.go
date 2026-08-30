@@ -6,8 +6,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -118,7 +118,7 @@ func TestBootstrapDatabasePostgres(t *testing.T) {
 	}
 	defer adminPool.Close()
 
-	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")[:16]
+	suffix := strings.ReplaceAll(uuid.New().String(), "-", "")[:16]
 	databaseName := "helmr_bootstrap_" + suffix
 	adminRole := "helmr_admin_" + suffix
 	applicationRole := "helmr_app_" + suffix

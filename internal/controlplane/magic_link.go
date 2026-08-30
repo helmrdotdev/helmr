@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -211,7 +211,7 @@ func (s *Server) createPendingMagicLink(r *http.Request, purpose db.MagicLinkPur
 		}
 		expiresAt = time.Now().Add(s.effectiveMagicLinkTTL())
 		link, err = work.q.CreateMagicLink(r.Context(), db.CreateMagicLinkParams{
-			ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			ID:            pgvalue.UUID(uuid.NewV7()),
 			Purpose:       purpose,
 			TokenHash:     tokenHash,
 			Email:         email,
@@ -441,8 +441,8 @@ func (s *Server) upsertMagicLinkAuthIdentity(r *http.Request, queries db.Querier
 		claims = []byte(`{}`)
 	}
 	return queries.UpsertMagicLinkAuthIdentity(r.Context(), db.UpsertMagicLinkAuthIdentityParams{
-		UserID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		IdentityID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		UserID:           pgvalue.UUID(uuid.NewV7()),
+		IdentityID:       pgvalue.UUID(uuid.NewV7()),
 		IdentityProvider: identity.Provider,
 		IdentitySubject:  identity.Subject,
 		DisplayName:      identity.DisplayName,

@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pglock"
 	"github.com/jackc/pgx/v5"

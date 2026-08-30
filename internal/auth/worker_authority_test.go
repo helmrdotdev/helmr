@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 func TestWorkerTokenAuthorityClaims(t *testing.T) {
@@ -27,7 +27,7 @@ func TestWorkerTokenAuthorityClaims(t *testing.T) {
 
 func TestEpochExchangeInputRejectsMissingServiceID(t *testing.T) {
 	input := validExchangeInput()
-	input.ServiceID = uuid.Nil
+	input.ServiceID = uuid.Nil()
 	if err := input.Validate(); err == nil || !strings.Contains(err.Error(), "service_id") {
 		t.Fatalf("error = %v", err)
 	}

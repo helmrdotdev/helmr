@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
@@ -178,7 +178,7 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 			workspace.HasActiveLease || workspace.HasActiveProcess {
 			return errTaskWorkspaceUnavailable
 		}
-		runID := uuid.Must(uuid.NewV7())
+		runID := uuid.NewV7()
 		rootSpanID, err := tracing.NewSpanID()
 		if err != nil {
 			return err
@@ -261,14 +261,14 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 }
 
 func normalizeTaskStart(request taskStartRequest) (normalizedTaskStart, error) {
-	if request.OrgID == uuid.Nil || request.ProjectID == uuid.Nil ||
-		request.EnvironmentID == uuid.Nil {
+	if request.OrgID == uuid.Nil() || request.ProjectID == uuid.Nil() ||
+		request.EnvironmentID == uuid.Nil() {
 		return normalizedTaskStart{}, errTaskStartInvalid
 	}
 	if err := api.ValidateDefinitionID(request.TaskDeclaredID); err != nil {
 		return normalizedTaskStart{}, fmt.Errorf("%w: %v", errTaskStartInvalid, err)
 	}
-	if request.WorkspaceID == uuid.Nil {
+	if request.WorkspaceID == uuid.Nil() {
 		return normalizedTaskStart{}, errTaskStartInvalid
 	}
 	workspaceRaw, err := json.Marshal(api.WorkspaceIDTarget{ID: request.WorkspaceID.String()})

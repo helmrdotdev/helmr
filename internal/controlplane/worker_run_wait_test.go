@@ -5,8 +5,8 @@ import (
 	"math"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -149,9 +149,9 @@ func TestActorInputWaitIdleTimeoutReadsFullImmutableManifest(t *testing.T) {
 
 func TestParseRequestedRunWaitIdentity(t *testing.T) {
 	request := workerapi.CreateRunWaitRequest{
-		CorrelationID:  uuid.Must(uuid.NewV7()).String(),
-		RunWaitID:      uuid.Must(uuid.NewV7()).String(),
-		ResumeAttachID: uuid.Must(uuid.NewV7()).String(),
+		CorrelationID:  uuid.NewV7().String(),
+		RunWaitID:      uuid.NewV7().String(),
+		ResumeAttachID: uuid.NewV7().String(),
 	}
 	identity, err := parseRequestedRunWaitIdentity(request)
 	if err != nil {
@@ -174,8 +174,8 @@ func TestParseRequestedRunWaitIdentity(t *testing.T) {
 }
 
 func TestValidateRootRunWaitActorCursor(t *testing.T) {
-	actorID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	actorID := pgvalue.UUID(uuid.NewV7())
+	runID := pgvalue.UUID(uuid.NewV7())
 	authority := runLeaseClaimAuthority{
 		run:       db.Run{ID: runID, EntrypointKind: "actor", SessionID: actorID},
 		actor:     db.Session{ID: actorID, CurrentRunID: runID, State: "open", CommittedInputSequence: 4, NextInputSequence: 6},

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/jackc/pgx/v5"
 )
@@ -127,7 +127,7 @@ func copyRows(t *testing.T, ctx context.Context, tx pgx.Tx, table string, column
 }
 
 func measurementUUID(kind string, index int) uuid.UUID {
-	return uuid.NewSHA1(uuid.NameSpaceOID, []byte(fmt.Sprintf("helmr-dispatch-measure:%s:%d", kind, index)))
+	return deterministicUUID(fmt.Sprintf("helmr-dispatch-measure:%s:%d", kind, index))
 }
 
 func dispatchMeasurementScope(index, rows, scopes int, skewed bool) (string, any) {

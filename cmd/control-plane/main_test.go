@@ -14,9 +14,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/controlplane"
@@ -368,7 +368,7 @@ func newSmokeDatabase(t *testing.T, ctx context.Context) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbName := "helmr_smoke_" + strings.ReplaceAll(uuid.Must(uuid.NewV7()).String(), "-", "")
+	dbName := "helmr_smoke_" + strings.ReplaceAll(uuid.NewV7().String(), "-", "")
 	dbIdentifier := pgx.Identifier{dbName}.Sanitize()
 	if _, err := admin.Exec(ctx, "CREATE DATABASE "+dbIdentifier); err != nil {
 		admin.Close()

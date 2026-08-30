@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
@@ -509,7 +509,7 @@ func recordTaskWorkspaceVersion(
 		return pgtype.UUID{}, fmt.Errorf("record task workspace CAS object: %w", err)
 	}
 	artifactRow, err := store.CreateArtifact(ctx, db.CreateArtifactParams{
-		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), OrgID: authority.run.OrgID,
+		ID: pgvalue.UUID(uuid.NewV7()), OrgID: authority.run.OrgID,
 		ProjectID: authority.run.ProjectID, EnvironmentID: authority.run.EnvironmentID,
 		Digest: artifact.Digest, Kind: db.ArtifactKindWorkspaceVersion,
 		SizeBytes: artifact.SizeBytes, MediaType: artifact.MediaType,
@@ -519,7 +519,7 @@ func recordTaskWorkspaceVersion(
 		return pgtype.UUID{}, fmt.Errorf("record task workspace artifact: %w", err)
 	}
 	version, err := store.PublishTaskWorkspaceVersion(ctx, db.PublishTaskWorkspaceVersionParams{
-		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ID:            pgvalue.UUID(uuid.NewV7()),
 		EnvironmentID: authority.run.EnvironmentID, WorkspaceID: authority.workspace.ID,
 		ParentVersionID: authority.workspaceLease.BaseVersionID, ArtifactID: artifactRow.ID,
 		ContentDigest: capture.tree.Digest, SizeBytes: capture.tree.SizeBytes, EntryCount: int32(capture.tree.EntryCount),

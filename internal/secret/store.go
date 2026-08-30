@@ -15,8 +15,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -109,8 +109,8 @@ func (s *Store) create(ctx context.Context, environmentID uuid.UUID, name string
 	if err := ValidateName(name); err != nil {
 		return db.Secret{}, err
 	}
-	secretID := uuid.Must(uuid.NewV7())
-	versionID := uuid.Must(uuid.NewV7())
+	secretID := uuid.NewV7()
+	versionID := uuid.NewV7()
 	encrypted, err := s.encrypt(environmentID, secretID, versionID, 1, value)
 	if err != nil {
 		return db.Secret{}, err
@@ -149,7 +149,7 @@ func (s *Store) rotate(ctx context.Context, environmentID uuid.UUID, secretID uu
 		if err != nil {
 			return db.Secret{}, err
 		}
-		versionID := uuid.Must(uuid.NewV7())
+		versionID := uuid.NewV7()
 		version := current.Version + 1
 		encrypted, err := s.encrypt(environmentID, secretID, versionID, version, value)
 		if err != nil {
@@ -457,7 +457,7 @@ func (s *Store) Revoke(ctx context.Context, environmentID uuid.UUID, secretID uu
 			return db.GetSecretSnapshotRow{}, fmt.Errorf("marshal secret revocation intent: %w", err)
 		}
 		if _, err := queries.CreateOutboxMessage(ctx, db.CreateOutboxMessageParams{
-			ID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			ID:           pgvalue.UUID(uuid.NewV7()),
 			Lane:         "control",
 			Topic:        "secret.revoked",
 			PartitionKey: secretID.String(),

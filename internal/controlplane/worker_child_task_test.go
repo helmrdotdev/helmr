@@ -10,8 +10,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
@@ -67,7 +67,7 @@ func TestSameWorkspaceChildRequestRejectsExplicitNullRetryPolicy(t *testing.T) {
 }
 
 func TestNormalizeWorkerChildTaskRequestUsesParentScopeAndCallerOptions(t *testing.T) {
-	workspaceID := uuid.Must(uuid.NewV7()).String()
+	workspaceID := uuid.NewV7().String()
 	concurrencyKey := "customer:1"
 	normalized, err := normalizeWorkerChildTaskRequest(
 		workerapi.InvokeChildTaskRequest{
@@ -90,9 +90,9 @@ func TestNormalizeWorkerChildTaskRequestUsesParentScopeAndCallerOptions(t *testi
 			IdempotencyKey: "resize:image-1",
 		},
 		db.GetLiveRunLeaseLocatorsRow{
-			OrgID:         pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			ProjectID:     pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			EnvironmentID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:         pgvalue.UUID(uuid.NewV7()),
+			ProjectID:     pgvalue.UUID(uuid.NewV7()),
+			EnvironmentID: pgvalue.UUID(uuid.NewV7()),
 		},
 	)
 	if err != nil {
@@ -117,9 +117,9 @@ func TestNormalizeWorkerChildTaskRequestUsesParentScopeAndCallerOptions(t *testi
 }
 
 func TestSourceChildWorkspaceRequiresExactPair(t *testing.T) {
-	environmentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	sourceID := uuid.Must(uuid.NewV7())
-	targetID := uuid.Must(uuid.NewV7())
+	environmentID := pgvalue.UUID(uuid.NewV7())
+	sourceID := uuid.NewV7()
+	targetID := uuid.NewV7()
 	source := db.Workspace{ID: pgvalue.UUID(sourceID), EnvironmentID: environmentID}
 	target := db.Workspace{ID: pgvalue.UUID(targetID), EnvironmentID: environmentID}
 	locators := db.GetLiveRunLeaseLocatorsRow{EnvironmentID: environmentID}
@@ -144,8 +144,8 @@ func TestSourceChildWorkspaceRequiresExactPair(t *testing.T) {
 }
 
 func TestDecodeChildTaskReceiptRequiresCanonicalAuthority(t *testing.T) {
-	runID := uuid.Must(uuid.NewV7())
-	workspaceID := uuid.Must(uuid.NewV7())
+	runID := uuid.NewV7()
+	workspaceID := uuid.NewV7()
 	receipt, err := decodeChildTaskReceipt([]byte(
 		`{"runId":"` + runID.String() +
 			`","workspaceId":"` + workspaceID.String() + `"}`,
@@ -166,14 +166,14 @@ func TestDecodeChildTaskReceiptRequiresCanonicalAuthority(t *testing.T) {
 }
 
 func TestReplayBoundSameWorkspaceChildCallUsesReceiptAuthority(t *testing.T) {
-	environmentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	parentRunID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	childRunID := uuid.Must(uuid.NewV7())
-	workspaceID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	waitID := uuid.Must(uuid.NewV7())
-	baseID := uuid.Must(uuid.NewV7())
-	claimID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	resumeAttachID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	environmentID := pgvalue.UUID(uuid.NewV7())
+	parentRunID := pgvalue.UUID(uuid.NewV7())
+	childRunID := uuid.NewV7()
+	workspaceID := pgvalue.UUID(uuid.NewV7())
+	waitID := uuid.NewV7()
+	baseID := uuid.NewV7()
+	claimID := pgvalue.UUID(uuid.NewV7())
+	resumeAttachID := pgvalue.UUID(uuid.NewV7())
 	const digest = "sha256:9999999999999999999999999999999999999999999999999999999999999999"
 	store := &sameWorkspaceChildReplayStore{
 		wait: db.RunWait{
@@ -186,7 +186,7 @@ func TestReplayBoundSameWorkspaceChildCallUsesReceiptAuthority(t *testing.T) {
 			ConditionState:           db.WaitStateCompleted,
 			ConditionResult:          json.RawMessage(`{"ok":true,"output":7}`),
 			ResumeAttachID:           resumeAttachID,
-			ResumeWorkspaceVersionID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			ResumeWorkspaceVersionID: pgvalue.UUID(uuid.NewV7()),
 		},
 	}
 	response, err := replayBoundSameWorkspaceChildCall(
@@ -195,7 +195,7 @@ func TestReplayBoundSameWorkspaceChildCallUsesReceiptAuthority(t *testing.T) {
 		childTaskInvokeInput{
 			Request: workerapi.InvokeChildTaskRequest{
 				Lease: workerapi.RunLeaseFence{
-					ID: uuid.Must(uuid.NewV7()).String(), LeaseSequence: 1,
+					ID: uuid.NewV7().String(), LeaseSequence: 1,
 				},
 			},
 			Normalized: normalizedTaskStart{
@@ -243,27 +243,27 @@ func TestReplayBoundSameWorkspaceChildCallRejectsDifferentFrontier(t *testing.T)
 		childTaskInvokeInput{
 			Request: workerapi.InvokeChildTaskRequest{
 				Lease: workerapi.RunLeaseFence{
-					ID: uuid.Must(uuid.NewV7()).String(), LeaseSequence: 1,
+					ID: uuid.NewV7().String(), LeaseSequence: 1,
 				},
 			},
 			Normalized: normalizedTaskStart{
 				taskStartRequest: taskStartRequest{TaskDeclaredID: "child"},
 			},
-			RunWaitID:      uuid.Must(uuid.NewV7()),
-			ResumeAttachID: uuid.Must(uuid.NewV7()),
+			RunWaitID:      uuid.NewV7(),
+			ResumeAttachID: uuid.NewV7(),
 		},
 		runLeaseClaimAuthority{run: db.Run{
-			ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			EnvironmentID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			WorkspaceID:   pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			ID:            pgvalue.UUID(uuid.NewV7()),
+			EnvironmentID: pgvalue.UUID(uuid.NewV7()),
+			WorkspaceID:   pgvalue.UUID(uuid.NewV7()),
 		}},
-		db.IdempotencyClaim{ID: pgvalue.UUID(uuid.Must(uuid.NewV7()))},
+		db.IdempotencyClaim{ID: pgvalue.UUID(uuid.NewV7())},
 		"sha256:"+strings.Repeat("0", 64),
 		childTaskReceipt{
-			RunID:                  uuid.Must(uuid.NewV7()).String(),
-			RunWaitID:              uuid.Must(uuid.NewV7()).String(),
-			ResumeAttachID:         uuid.Must(uuid.NewV7()).String(),
-			BaseWorkspaceVersionID: uuid.Must(uuid.NewV7()).String(),
+			RunID:                  uuid.NewV7().String(),
+			RunWaitID:              uuid.NewV7().String(),
+			ResumeAttachID:         uuid.NewV7().String(),
+			BaseWorkspaceVersionID: uuid.NewV7().String(),
 			BaseWorkspaceDigest:    "sha256:" + strings.Repeat("0", 64),
 		},
 	)
@@ -288,7 +288,7 @@ func (s *sameWorkspaceChildReplayStore) GetBoundSameWorkspaceChildCallReplay(
 }
 
 func TestChildTaskResultProjectsTerminalOutcome(t *testing.T) {
-	runID := uuid.Must(uuid.NewV7()).String()
+	runID := uuid.NewV7().String()
 
 	tests := []struct {
 		name string
@@ -332,7 +332,7 @@ func TestChildTaskResultProjectsTerminalOutcome(t *testing.T) {
 
 func TestChildTaskResultRejectsIncompleteTerminalState(t *testing.T) {
 	_, err := childTaskResult(db.Run{
-		ID:     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ID:     pgvalue.UUID(uuid.NewV7()),
 		Status: db.RunStatusFailed,
 	})
 	if err == nil {

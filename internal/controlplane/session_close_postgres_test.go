@@ -8,9 +8,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"uuid"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/session"
@@ -337,9 +337,9 @@ func TestActorCloseHTTPSessionPostgresRejectsInvalidScopeAsCallerError(t *testin
 		sessionClosePostgresRequest(
 			`{}`,
 			principal,
-			uuid.Must(uuid.NewV7()).String(),
-			uuid.Must(uuid.NewV7()).String(),
-			uuid.Must(uuid.NewV7()).String(),
+			uuid.NewV7().String(),
+			uuid.NewV7().String(),
+			uuid.NewV7().String(),
 		),
 	)
 	if recorder.Code != http.StatusBadRequest ||
@@ -452,7 +452,7 @@ func assertActorCloseContinuation(
 		t.Fatal(err)
 	}
 	if state != "closing" || closeSequence != 1 || manualRunCancelled ||
-		currentRunID == uuid.Nil || continuations != 1 || closeIntents != 1 {
+		currentRunID == uuid.Nil() || continuations != 1 || closeIntents != 1 {
 		t.Fatalf(
 			"closing state=%s boundary=%d manual=%v current=%s continuations=%d close=%d",
 			state, closeSequence, manualRunCancelled, currentRunID,

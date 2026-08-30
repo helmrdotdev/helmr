@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
@@ -44,7 +44,7 @@ func TestParseCheckpointReadyRequestBindsDurableRestoreAuthority(t *testing.T) {
 
 func TestParseCheckpointReadyRequestRejectsMismatchedRecoveryPoint(t *testing.T) {
 	request := validCheckpointReadyRequest()
-	request.Manifest.RecoveryPoint.RunWaitID = uuid.Must(uuid.NewV7()).String()
+	request.Manifest.RecoveryPoint.RunWaitID = uuid.NewV7().String()
 	if _, _, err := parseCheckpointReadyRequest(request); err == nil || !strings.Contains(err.Error(), "recovery_point") {
 		t.Fatalf("err = %v, want recovery point mismatch", err)
 	}
@@ -119,16 +119,16 @@ func TestDecideActorCheckpointFailureStopsAtRunExpiry(t *testing.T) {
 }
 
 func validCheckpointReadyRequest() workerapi.CheckpointReadyRequest {
-	runID := uuid.Must(uuid.NewV7()).String()
-	waitID := uuid.Must(uuid.NewV7()).String()
-	checkpointID := uuid.Must(uuid.NewV7()).String()
+	runID := uuid.NewV7().String()
+	waitID := uuid.NewV7().String()
+	checkpointID := uuid.NewV7().String()
 	runtimeIdentity := digestWith("1")
 	lease := workerapi.RunLeaseAssignment{
-		ID: uuid.Must(uuid.NewV7()).String(), RunID: runID, AttemptNumber: 1, LeaseSequence: 1,
-		WorkerGroupID: "run-test", WorkerInstanceID: uuid.Must(uuid.NewV7()).String(), WorkerEpoch: 1,
-		RuntimeInstanceID: uuid.Must(uuid.NewV7()).String(), RuntimeIdentityID: runtimeIdentity,
-		WorkspaceID: uuid.Must(uuid.NewV7()).String(), WorkspaceMountID: uuid.Must(uuid.NewV7()).String(),
-		WorkspaceLeaseID: uuid.Must(uuid.NewV7()).String(), BaseWorkspaceVersionID: uuid.Must(uuid.NewV7()).String(),
+		ID: uuid.NewV7().String(), RunID: runID, AttemptNumber: 1, LeaseSequence: 1,
+		WorkerGroupID: "run-test", WorkerInstanceID: uuid.NewV7().String(), WorkerEpoch: 1,
+		RuntimeInstanceID: uuid.NewV7().String(), RuntimeIdentityID: runtimeIdentity,
+		WorkspaceID: uuid.NewV7().String(), WorkspaceMountID: uuid.NewV7().String(),
+		WorkspaceLeaseID: uuid.NewV7().String(), BaseWorkspaceVersionID: uuid.NewV7().String(),
 		OwnershipGeneration: 1, WriterGeneration: 1, MountFencingGeneration: 1,
 		RequestedCPUMillis: 1000, RequestedMemoryBytes: 1 << 30, RequestedExecutionSlots: 1,
 		MaxActiveDurationMs: 60_000, StartDeadlineAt: time.Now().UTC().Add(-time.Minute),
@@ -146,7 +146,7 @@ func validCheckpointReadyRequest() workerapi.CheckpointReadyRequest {
 		Manifest: workerapi.CheckpointManifest{
 			RecoveryPoint: workerapi.CheckpointRecoveryPoint{
 				ID: checkpointID, RunID: runID, AttemptNumber: 1, RunWaitID: waitID,
-				CorrelationID: uuid.Must(uuid.NewV7()).String(),
+				CorrelationID: uuid.NewV7().String(),
 				Runtime: workerapi.CheckpointRuntime{
 					Backend: "firecracker", ID: runtimeIdentity, Arch: string(deployment.ArchitectureX8664),
 					Contract: "helmr.vm-runtime.v0", KernelDigest: digestWith("4"),

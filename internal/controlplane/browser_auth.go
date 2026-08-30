@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -252,8 +252,8 @@ func (s *Server) upsertAuthIdentity(r *http.Request, queries db.Querier, identit
 		claims = []byte(`{}`)
 	}
 	return queries.UpsertAuthIdentity(r.Context(), db.UpsertAuthIdentityParams{
-		UserID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		IdentityID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		UserID:           pgvalue.UUID(uuid.NewV7()),
+		IdentityID:       pgvalue.UUID(uuid.NewV7()),
 		IdentityProvider: identity.Provider,
 		IdentitySubject:  identity.Subject,
 		DisplayName:      identity.DisplayName,
@@ -287,7 +287,7 @@ func (s *Server) issueSessionForOrg(r *http.Request, queries db.Querier, userID 
 		return "", err
 	}
 	_, err = queries.CreateAuthSession(r.Context(), db.CreateAuthSessionParams{
-		ID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ID:        pgvalue.UUID(uuid.NewV7()),
 		OrgID:     orgID,
 		UserID:    userID,
 		TokenHash: hash,

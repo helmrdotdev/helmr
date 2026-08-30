@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -346,7 +346,7 @@ func (s *Server) requestWorkerRunWaitCheckpoint(
 			wait.SuspensionState != db.RunWaitStateHot || !wait.CheckpointDueAt.Valid {
 			return errStaleRunLeaseClaim
 		}
-		checkpointID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+		checkpointID := pgvalue.UUID(uuid.NewV7())
 		if _, err := work.q.CreateRunCheckpoint(ctx, db.CreateRunCheckpointParams{
 			ID: checkpointID, RunID: authority.run.ID,
 			AttemptNumber: authority.attempt.Number, RunWaitID: wait.ID,

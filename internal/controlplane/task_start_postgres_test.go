@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -159,7 +159,7 @@ func TestCreateKeylessDetachedChildTaskRunFromParentDeployment(t *testing.T) {
 	`, fixture.workspaceIDs[1]).Scan(&targetVersionID); err != nil {
 		t.Fatal(err)
 	}
-	runID := uuid.Must(uuid.NewV7())
+	runID := uuid.NewV7()
 	rootSpanID, err := tracing.NewSpanID()
 	if err != nil {
 		t.Fatal(err)

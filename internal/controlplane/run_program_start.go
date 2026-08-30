@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/frameio"
@@ -269,7 +269,7 @@ func programStartCause(run db.Run) (*programv0.RunCause, error) {
 
 func requiredClaimUUIDString(name string, value pgtype.UUID) (string, error) {
 	id, err := pgvalue.UUIDValue(value)
-	if err != nil || id == uuid.Nil {
+	if err != nil || id == uuid.Nil() {
 		return "", fmt.Errorf("%s is required", name)
 	}
 	return id.String(), nil

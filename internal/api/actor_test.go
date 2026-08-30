@@ -5,14 +5,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 func TestValidateActorAndSessionIdentifiers(t *testing.T) {
 	if err := ValidateActorDeclaredID("operator.v1"); err != nil {
 		t.Fatalf("ValidateActorDeclaredID() error = %v", err)
 	}
-	if err := ValidateSessionID(uuid.Must(uuid.NewV7()).String()); err != nil {
+	if err := ValidateSessionID(uuid.NewV7().String()); err != nil {
 		t.Fatalf("ValidateSessionID() error = %v", err)
 	}
 	if err := ValidateActorKey("thread:東京"); err != nil {

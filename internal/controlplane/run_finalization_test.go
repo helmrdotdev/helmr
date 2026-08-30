@@ -6,8 +6,8 @@ import (
 	"slices"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
@@ -54,7 +54,7 @@ func TestParseRunFinalizationRejectsMismatchedQuiescenceProof(t *testing.T) {
 	}
 
 	request = validRunFinalizationRequest()
-	request.ProgramQuiesced.RunLeaseID = uuid.Must(uuid.NewV7()).String()
+	request.ProgramQuiesced.RunLeaseID = uuid.NewV7().String()
 	if _, err := parseRunFinalization(request); err == nil {
 		t.Fatal("mismatched Run Lease was accepted")
 	}
@@ -120,7 +120,7 @@ func TestBeginRunFinalizationRejectsUnenteredAttempt(t *testing.T) {
 
 func TestBeginRunFinalizationRejectsMissingSameWorkspaceParentEdge(t *testing.T) {
 	server, store, worker, request, parsed := validRunFinalizationFixture(t)
-	parentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	parentID := pgvalue.UUID(uuid.NewV7())
 	store.renewal.ParentRunID = parentID
 	store.renewal.ParentOwnsLifecycle = pgtype.Bool{Bool: true, Valid: true}
 	store.authority.run.ParentRunID = parentID
@@ -173,7 +173,7 @@ func TestBeginRunFinalizationRejectsChangedReplay(t *testing.T) {
 	if _, err := server.beginRunFinalization(context.Background(), worker, request, parsed); err != nil {
 		t.Fatal(err)
 	}
-	request.OperationID = uuid.Must(uuid.NewV7()).String()
+	request.OperationID = uuid.NewV7().String()
 	changed, err := parseRunFinalization(request)
 	if err != nil {
 		t.Fatal(err)
@@ -188,7 +188,7 @@ func TestBeginRunFinalizationRejectsChangedReplay(t *testing.T) {
 
 func TestBeginRunFinalizationAcceptsActorOwner(t *testing.T) {
 	server, store, worker, request, parsed := validRunFinalizationFixture(t)
-	actorID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	actorID := pgvalue.UUID(uuid.NewV7())
 	store.renewal.SessionID = actorID
 	store.authority.run.EntrypointKind = "actor"
 	store.authority.run.SessionID = actorID
@@ -205,13 +205,13 @@ func TestBeginRunFinalizationAcceptsActorOwner(t *testing.T) {
 
 func TestBeginRunFinalizationAcceptsDifferentWorkspaceParentOwnedChild(t *testing.T) {
 	server, store, worker, request, parsed := validRunFinalizationFixture(t)
-	parentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	parentID := pgvalue.UUID(uuid.NewV7())
 	store.renewal.ParentRunID = parentID
 	store.renewal.ParentOwnsLifecycle = pgtype.Bool{Bool: true, Valid: true}
 	store.authority.run.ParentRunID = parentID
 	store.authority.run.ParentOwnsLifecycle = store.renewal.ParentOwnsLifecycle
 	store.authority.parentRun = db.Run{
-		ID: parentID, WorkspaceID: pgvalue.UUID(uuid.Must(uuid.NewV7())), Status: db.RunStatusWaiting,
+		ID: parentID, WorkspaceID: pgvalue.UUID(uuid.NewV7()), Status: db.RunStatusWaiting,
 	}
 
 	if _, err := server.beginRunFinalization(context.Background(), worker, request, parsed); err != nil {
@@ -237,7 +237,7 @@ func TestBeginRunFinalizationAcceptsReset(t *testing.T) {
 
 func TestLockLiveRunFinalizationAuthorityLocksLineageBeforePhysicalAuthority(t *testing.T) {
 	_, store, worker, receipt := validRunLeaseRenewalFixture(t)
-	id := func() pgtype.UUID { return pgvalue.UUID(uuid.Must(uuid.NewV7())) }
+	id := func() pgtype.UUID { return pgvalue.UUID(uuid.NewV7()) }
 	environmentID := store.renewal.EnvironmentID
 	workspaceID := store.renewal.WorkspaceID
 	actorID := id()
@@ -341,7 +341,7 @@ func validRunFinalizationFixture(
 		ProgramQuiesced: workerapi.RunQuiescenceProof{
 			RunID: receipt.RunID, AttemptNumber: receipt.AttemptNumber, RunLeaseID: receipt.ID,
 		},
-		OperationID: uuid.Must(uuid.NewV7()).String(), Kind: workerapi.RunFinalizationCapture,
+		OperationID: uuid.NewV7().String(), Kind: workerapi.RunFinalizationCapture,
 	}
 	parsed, err := parseRunFinalization(request)
 	if err != nil {
@@ -450,7 +450,7 @@ func (s *runLeaseClaimStore) BeginRunWorkspaceLeaseFinalization(
 }
 
 func validRunFinalizationRequest() workerapi.BeginRunFinalizationRequest {
-	lease := validRunLeaseAssignment(uuid.Must(uuid.NewV7()))
+	lease := validRunLeaseAssignment(uuid.NewV7())
 	lease.StartDeadlineAt = time.Unix(1_800_000_000, 123_456_789).UTC()
 	lease.ExpiresAt = time.Unix(1_800_000_100, 987_654_321).UTC()
 	return workerapi.BeginRunFinalizationRequest{
@@ -458,7 +458,7 @@ func validRunFinalizationRequest() workerapi.BeginRunFinalizationRequest {
 		ProgramQuiesced: workerapi.RunQuiescenceProof{
 			RunID: lease.RunID, AttemptNumber: lease.AttemptNumber, RunLeaseID: lease.ID,
 		},
-		OperationID: uuid.Must(uuid.NewV7()).String(),
+		OperationID: uuid.NewV7().String(),
 		Kind:        workerapi.RunFinalizationCapture,
 	}
 }

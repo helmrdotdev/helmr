@@ -5,8 +5,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -22,7 +22,7 @@ func TestWorkerEnrollmentTokenSelectsGroupAndRecordsUse(t *testing.T) {
 		WorkerPoolID: pgvalue.UUID(uuid.MustParse(dbtest.DefaultWorkerPoolID)), PoolName: "default",
 		WorkerInstanceID: pgvalue.NewUUIDv7(), ResourceID: "enrollment-host",
 		CurrentServiceID: pgvalue.NewUUIDv7(), CredentialID: pgvalue.NewUUIDv7(),
-		KeyPrefix: uuid.NewString(), SecretHash: []byte("instance-secret"),
+		KeyPrefix: uuid.New().String(), SecretHash: []byte("instance-secret"),
 	}
 	credential, err := q.EnrollWorkerInstance(ctx, params)
 	if err != nil {
@@ -54,7 +54,7 @@ func TestWorkerEnrollmentRejectsUnknownTokenAndDrainingGroup(t *testing.T) {
 		WorkerPoolID: pgvalue.UUID(uuid.MustParse(dbtest.DefaultWorkerPoolID)), PoolName: "default",
 		WorkerInstanceID: pgvalue.NewUUIDv7(), ResourceID: "unknown-token-host",
 		CurrentServiceID: pgvalue.NewUUIDv7(), CredentialID: pgvalue.NewUUIDv7(),
-		KeyPrefix: uuid.NewString(), SecretHash: []byte("instance-secret"),
+		KeyPrefix: uuid.New().String(), SecretHash: []byte("instance-secret"),
 	}
 	unknown := base
 	unknown.TokenHash = bytes.Repeat([]byte{1}, 32)

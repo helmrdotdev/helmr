@@ -8,8 +8,8 @@ import (
 	"os"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -66,8 +66,8 @@ func TestCommitActorTurnRejectsSkippedInputSequence(t *testing.T) {
 func TestCommitActorTurnPublishesUnchangedRestoredCheckpointBase(t *testing.T) {
 	server, store, worker, request, _ := newActorTurnCommitFixture(t)
 	oldHead := store.authority.workspace.HeadVersionID
-	restoredBase := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	store.authority.runtime.RestoreCheckpointID = pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	restoredBase := pgvalue.UUID(uuid.NewV7())
+	store.authority.runtime.RestoreCheckpointID = pgvalue.UUID(uuid.NewV7())
 	store.restoredCheckpointCursor = 2
 	store.authority.workspaceMount.MaterializedVersionID = restoredBase
 	store.authority.workspaceLease.BaseVersionID = restoredBase
@@ -107,8 +107,8 @@ func TestCommitActorTurnPublishesUnchangedRestoredCheckpointBase(t *testing.T) {
 func TestCommitActorTurnInvalidatesRestoredCheckpointBeforePublishingChangedTurn(t *testing.T) {
 	server, store, worker, request, _ := newActorTurnCommitFixture(t)
 	oldHead := store.authority.workspace.HeadVersionID
-	restoredBase := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	store.authority.runtime.RestoreCheckpointID = pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	restoredBase := pgvalue.UUID(uuid.NewV7())
+	store.authority.runtime.RestoreCheckpointID = pgvalue.UUID(uuid.NewV7())
 	store.restoredCheckpointCursor = 1
 	store.authority.workspaceMount.MaterializedVersionID = restoredBase
 	store.authority.workspaceLease.BaseVersionID = restoredBase
@@ -463,7 +463,7 @@ func newActorTurnCommitFixture(t *testing.T) (
 		committedAt: pgvalue.Timestamptz(now),
 	}
 	request := workerapi.CommitActorTurnRequest{
-		Lease: assignment.Fence(), CorrelationID: uuid.Must(uuid.NewV7()).String(),
+		Lease: assignment.Fence(), CorrelationID: uuid.NewV7().String(),
 		TargetInputSequence: 2, BaseWorkspaceVersionID: assignment.BaseWorkspaceVersionID,
 		Tree: workerapi.WorkspaceTreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest},
 	}

@@ -3,15 +3,15 @@ package controlplane
 import (
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
 func TestProjectSessionStatusCollapsesInternalStates(t *testing.T) {
 	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
-	actorID := uuid.Must(uuid.NewV7())
+	actorID := uuid.NewV7()
 	for state, want := range map[string]api.SessionStatus{
 		"open":      api.SessionStatusOpen,
 		"closing":   api.SessionStatusOpen,
@@ -34,7 +34,7 @@ func TestProjectSessionStatusCollapsesInternalStates(t *testing.T) {
 		}
 	}
 
-	runID := uuid.Must(uuid.NewV7())
+	runID := uuid.NewV7()
 	failed, err := projectSessionStatus(sessionReadRecord{
 		id: pgvalue.UUID(actorID), state: "failed",
 		createdAt: pgvalue.Timestamptz(now), updatedAt: pgvalue.Timestamptz(now),

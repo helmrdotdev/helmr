@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 )
 

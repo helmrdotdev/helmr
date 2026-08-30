@@ -5,8 +5,8 @@ import (
 	"crypto/sha256"
 	"strings"
 	"testing"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/jackc/pgx/v5/pgconn"
 )

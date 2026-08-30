@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"uuid"
 
-	"github.com/google/uuid"
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -140,7 +140,7 @@ func workerStructuredLogRequest(
 
 func validateRuntimeCorrelationID(raw string) error {
 	value, err := uuid.Parse(raw)
-	if err != nil || value == uuid.Nil || value.String() != raw {
+	if err != nil || value == uuid.Nil() || value.String() != raw {
 		return errors.New("runtime operation correlation ID is invalid")
 	}
 	return nil

@@ -13,10 +13,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/felixge/httpsnoop"
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/auth"
@@ -824,7 +824,7 @@ func (s *Server) effectiveDevicePollEvery() time.Duration {
 func parseUUIDParam(r *http.Request, name string) (uuid.UUID, error) {
 	id, err := ids.Parse(chi.URLParam(r, name))
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("%s must be a canonical UUIDv7", name)
+		return uuid.Nil(), fmt.Errorf("%s must be a canonical UUIDv7", name)
 	}
 	return id, nil
 }

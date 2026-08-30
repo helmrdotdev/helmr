@@ -9,8 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -154,14 +154,14 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 			return errors.New("load default region")
 		}
 		project, err = work.q.CreateProjectWithDefaultEnvironment(r.Context(), db.CreateProjectWithDefaultEnvironmentParams{
-			ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			ID:                   pgvalue.UUID(uuid.NewV7()),
 			OrgID:                pgvalue.UUID(actor.OrgID),
 			DefaultRegionID:      region.ID,
 			Slug:                 slug,
 			Name:                 name,
 			IsDefault:            false,
-			EnvironmentID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			StagingEnvironmentID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			EnvironmentID:        pgvalue.UUID(uuid.NewV7()),
+			StagingEnvironmentID: pgvalue.UUID(uuid.NewV7()),
 		})
 		if err != nil {
 			if isUniqueViolation(err) {
@@ -263,7 +263,7 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 	orgID := pgvalue.UUID(actor.OrgID)
 	targetProjectID := pgvalue.UUID(projectID)
 	job, err := s.db.CreateDeletionJob(r.Context(), db.CreateDeletionJobParams{
-		ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ID:                   pgvalue.UUID(uuid.NewV7()),
 		OrgID:                orgID,
 		TargetType:           "project",
 		TargetID:             targetProjectID,
@@ -382,7 +382,7 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 			return errors.New("load project")
 		}
 		environment, err = work.q.CreateEnvironment(r.Context(), db.CreateEnvironmentParams{
-			ID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			ID:        pgvalue.UUID(uuid.NewV7()),
 			OrgID:     pgvalue.UUID(actor.OrgID),
 			ProjectID: pgvalue.UUID(projectID),
 			Slug:      slug,
@@ -550,7 +550,7 @@ func (s *Server) deleteEnvironment(w http.ResponseWriter, r *http.Request) {
 	targetProjectID := pgvalue.UUID(projectID)
 	targetEnvironmentID := pgvalue.UUID(environmentID)
 	job, err := s.db.CreateDeletionJob(r.Context(), db.CreateDeletionJobParams{
-		ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ID:                   pgvalue.UUID(uuid.NewV7()),
 		OrgID:                orgID,
 		TargetType:           "environment",
 		TargetID:             targetEnvironmentID,
