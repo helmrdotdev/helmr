@@ -44,9 +44,7 @@ func TestWorkspaceMountClaimIsExclusive(t *testing.T) {
 		var wg sync.WaitGroup
 		for _, token := range []string{"first", "second"} {
 			token := token
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				<-start
 				row, err := db.New(fixture.pool).ClaimWorkspaceMount(
 					fixture.ctx,
@@ -56,7 +54,7 @@ func TestWorkspaceMountClaimIsExclusive(t *testing.T) {
 					err = errors.New("claimed an unexpected mount")
 				}
 				results <- err
-			}()
+			})
 		}
 		close(start)
 		wg.Wait()

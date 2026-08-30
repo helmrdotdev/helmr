@@ -660,7 +660,7 @@ func readMicrocodeVersion(readFile func(string) ([]byte, error)) (string, error)
 		return "", fmt.Errorf("cpu microcode evidence from %s is not bounded non-empty UTF-8", path)
 	}
 	var version string
-	for _, line := range strings.Split(string(raw), "\n") {
+	for line := range strings.SplitSeq(string(raw), "\n") {
 		name, value, found := strings.Cut(line, ":")
 		if !found || strings.TrimSpace(name) != "microcode" {
 			continue

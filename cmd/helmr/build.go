@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/builder"
@@ -320,14 +321,15 @@ func executeDockerBuildx(
 	if err != nil {
 		return errors.New("helmr build requires Docker Buildx")
 	}
-	output := "type=" + request.OutputType + ",dest=" + request.Output
+	var output strings.Builder
+	output.WriteString("type=" + request.OutputType + ",dest=" + request.Output)
 	attributeNames := make([]string, 0, len(request.OutputAttributes))
 	for name := range request.OutputAttributes {
 		attributeNames = append(attributeNames, name)
 	}
 	slices.Sort(attributeNames)
 	for _, name := range attributeNames {
-		output += "," + name + "=" + request.OutputAttributes[name]
+		output.WriteString("," + name + "=" + request.OutputAttributes[name])
 	}
 	arguments := []string{
 		"buildx",
@@ -335,7 +337,7 @@ func executeDockerBuildx(
 		"--platform", "linux/amd64",
 		"--file", request.Dockerfile,
 		"--target", request.Target,
-		"--output", output,
+		"--output", output.String(),
 		"--build-arg", "SOURCE_DATE_EPOCH=0",
 		"--provenance=false",
 		"--progress", "plain",

@@ -254,7 +254,7 @@ func validatePresignedQuarantine(request *awsv4.PresignedHTTPRequest, expected c
 	if len(signedHeaderValues) != 1 {
 		return errors.New("presigned quarantine signed-header declaration is invalid")
 	}
-	for _, name := range strings.Split(signedHeaderValues[0], ";") {
+	for name := range strings.SplitSeq(signedHeaderValues[0], ";") {
 		signedNames[strings.ToLower(strings.TrimSpace(name))] = struct{}{}
 	}
 

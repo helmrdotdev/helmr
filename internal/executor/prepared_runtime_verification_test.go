@@ -71,9 +71,7 @@ func TestPreparedRuntimePoolAllowsConcurrentRuntimeVerificationMisses(t *testing
 	var wg sync.WaitGroup
 
 	for range workers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			got, _, err := pool.verifyRuntime(descriptor, func() (deployment.RuntimeIndex, error) {
 				calls.Add(1)
 				entered <- struct{}{}
@@ -81,7 +79,7 @@ func TestPreparedRuntimePoolAllowsConcurrentRuntimeVerificationMisses(t *testing
 				return index, nil
 			})
 			results <- err == nil && got == index
-		}()
+		})
 	}
 	for range workers {
 		<-entered

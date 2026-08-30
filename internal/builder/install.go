@@ -129,7 +129,7 @@ func isExactPackageManagerVersion(version string) bool {
 	if matches == nil {
 		return false
 	}
-	for _, identifier := range strings.Split(matches[4], ".") {
+	for identifier := range strings.SplitSeq(matches[4], ".") {
 		if len(identifier) > 1 && identifier[0] == '0' && identifier[0] >= '0' && identifier[0] <= '9' {
 			numeric := true
 			for _, char := range identifier {

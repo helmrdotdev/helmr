@@ -154,11 +154,9 @@ func TestApplySerializesConcurrentBootstrap(t *testing.T) {
 	errorsByReplica := make([]error, 2)
 	var wait sync.WaitGroup
 	for index := range errorsByReplica {
-		wait.Add(1)
-		go func() {
-			defer wait.Done()
+		wait.Go(func() {
 			errorsByReplica[index] = Apply(ctx, database.Pool, cfg)
-		}()
+		})
 	}
 	wait.Wait()
 	for _, err := range errorsByReplica {

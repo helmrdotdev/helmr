@@ -147,7 +147,7 @@ func loadLocationFromRoot(name string, root string) (*time.Location, error) {
 func validateZoneName(name string) error {
 	zoneNamesOnce.Do(func() {
 		zoneNames = make(map[string]struct{})
-		for _, zoneName := range strings.Fields(zoneNamesManifest) {
+		for zoneName := range strings.FieldsSeq(zoneNamesManifest) {
 			zoneNames[zoneName] = struct{}{}
 		}
 	})
