@@ -7,7 +7,6 @@ import (
 	"crypto/cipher"
 	"errors"
 	"testing"
-
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"

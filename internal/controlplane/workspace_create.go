@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
-
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"

@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-
 	"uuid"
 
 	"github.com/go-chi/chi/v5"

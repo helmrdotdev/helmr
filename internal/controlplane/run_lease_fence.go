@@ -2,7 +2,6 @@ package controlplane
 
 import (
 	"errors"
-
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/ids"

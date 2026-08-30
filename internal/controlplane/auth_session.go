@@ -3,7 +3,6 @@ package controlplane
 import (
 	"errors"
 	"net/http"
-
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"

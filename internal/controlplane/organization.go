@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"

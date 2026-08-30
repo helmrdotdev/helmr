@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"testing"
 	"time"
-
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/auth"

@@ -24,7 +24,6 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
-
 	"uuid"
 
 	"github.com/containernetworking/plugins/pkg/ns"

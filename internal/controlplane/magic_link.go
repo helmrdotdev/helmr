@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"time"
-
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-
 	"uuid"
 
 	"github.com/go-chi/chi/v5"

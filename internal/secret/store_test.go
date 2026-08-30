@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/base64"
 	"testing"
-
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"

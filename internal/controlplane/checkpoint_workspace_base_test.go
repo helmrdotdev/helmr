@@ -2,7 +2,6 @@ package controlplane
 
 import (
 	"testing"
-
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"

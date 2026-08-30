@@ -3,7 +3,6 @@ package token
 import (
 	"errors"
 	"testing"
-
 	"uuid"
 
 	"github.com/jackc/pgx/v5/pgtype"

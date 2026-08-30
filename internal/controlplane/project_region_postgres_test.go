@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/auth"

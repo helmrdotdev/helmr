@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
 	"uuid"
 
 	chdriver "github.com/ClickHouse/clickhouse-go/v2/lib/driver"

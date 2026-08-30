@@ -14,7 +14,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
 	"uuid"
 
 	"github.com/alicebob/miniredis/v2"

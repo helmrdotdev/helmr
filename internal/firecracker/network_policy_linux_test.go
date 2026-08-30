@@ -12,7 +12,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
 	"uuid"
 
 	"github.com/firecracker-microvm/firecracker-go-sdk"

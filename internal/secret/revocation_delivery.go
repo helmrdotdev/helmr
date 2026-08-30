@@ -9,7 +9,6 @@ import (
 	"io"
 	"log/slog"
 	"time"
-
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"

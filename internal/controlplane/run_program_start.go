@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"

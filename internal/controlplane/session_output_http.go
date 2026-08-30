@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-
 	"uuid"
 
 	"github.com/go-chi/chi/v5"

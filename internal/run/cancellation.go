@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"

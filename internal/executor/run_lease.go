@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"time"
-
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/httpclient"

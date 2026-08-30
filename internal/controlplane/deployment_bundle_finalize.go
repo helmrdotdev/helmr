@@ -13,7 +13,6 @@ import (
 	"runtime/debug"
 	"strings"
 	"time"
-
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"

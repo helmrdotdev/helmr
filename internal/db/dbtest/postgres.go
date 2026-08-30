@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
 	"uuid"
 
 	"github.com/jackc/pgx/v5"

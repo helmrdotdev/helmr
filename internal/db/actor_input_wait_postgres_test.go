@@ -8,7 +8,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"

@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
 	"uuid"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/column"

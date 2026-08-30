@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"

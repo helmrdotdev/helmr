@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"strings"
 	"testing"
-
 	"uuid"
 
 	"github.com/go-chi/chi/v5"

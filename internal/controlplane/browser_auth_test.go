@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
-
 	"uuid"
 
 	"github.com/jackc/pgx/v5/pgtype"

@@ -3,7 +3,6 @@ package pgvalue
 import (
 	"testing"
 	"time"
-
 	"uuid"
 
 	"github.com/jackc/pgx/v5/pgtype"

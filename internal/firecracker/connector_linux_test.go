@@ -24,7 +24,6 @@ import (
 	"syscall"
 	"testing"
 	"time"
-
 	"uuid"
 
 	"github.com/firecracker-microvm/firecracker-go-sdk"

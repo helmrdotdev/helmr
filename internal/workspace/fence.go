@@ -7,7 +7,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/sha256sum"

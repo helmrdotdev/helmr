@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-
 	"uuid"
 
 	"github.com/go-chi/chi/v5"

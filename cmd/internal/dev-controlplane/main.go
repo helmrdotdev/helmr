@@ -17,7 +17,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/auth"

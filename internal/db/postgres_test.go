@@ -3,7 +3,6 @@ package db_test
 import (
 	"context"
 	"testing"
-
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/capacity"

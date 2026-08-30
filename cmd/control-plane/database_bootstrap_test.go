@@ -6,7 +6,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-
 	"uuid"
 
 	"github.com/jackc/pgx/v5"

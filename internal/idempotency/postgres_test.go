@@ -5,7 +5,6 @@ import (
 	"errors"
 	"sync"
 	"testing"
-
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
