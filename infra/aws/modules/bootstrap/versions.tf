@@ -1,6 +1,11 @@
 terraform {
   required_version = ">= 1.10"
 
+  backend "s3" {
+    key          = "helmr/stacks/bootstrap/terraform.tfstate"
+    use_lockfile = true
+  }
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
