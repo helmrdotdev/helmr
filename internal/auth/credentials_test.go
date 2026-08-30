@@ -2,6 +2,7 @@ package auth
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"uuid"
@@ -56,5 +57,30 @@ func TestCredentialKeyRejectsInvalidAuthority(t *testing.T) {
 	}
 	if _, err := key.Derive(uuid.Nil()); err == nil {
 		t.Fatal("nil Token ID was accepted")
+	}
+}
+
+func TestGenerateWorkerInstanceSecret(t *testing.T) {
+	hashSecret := make([]byte, MACKeySize)
+	for index := range hashSecret {
+		hashSecret[index] = byte(index + 1)
+	}
+	generated, err := GenerateWorkerInstanceSecret(hashSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(generated.Raw, WorkerInstanceSecretPrefix) {
+		t.Fatalf("raw = %q, want prefix %q", generated.Raw, WorkerInstanceSecretPrefix)
+	}
+	if WorkerInstanceSecretPrefix != "hlmr_wi_" {
+		t.Fatalf("WorkerInstanceSecretPrefix = %q, want hlmr_wi_", WorkerInstanceSecretPrefix)
+	}
+	randomPart := generated.Raw[len(WorkerInstanceSecretPrefix):]
+	wantKeyPrefix := WorkerInstanceSecretPrefix + randomPart[:8]
+	if generated.KeyPrefix != wantKeyPrefix {
+		t.Fatalf("KeyPrefix = %q, want %q", generated.KeyPrefix, wantKeyPrefix)
+	}
+	if len(generated.TokenHash) == 0 {
+		t.Fatal("TokenHash is empty")
 	}
 }

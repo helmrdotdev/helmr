@@ -5,7 +5,7 @@ import (
 )
 
 const (
-	WorkerInstanceSecretPrefix = "helmr_worker_instance_"
+	WorkerInstanceSecretPrefix = "hlmr_wi_"
 	workerSecretBytes          = 32
 )
 
