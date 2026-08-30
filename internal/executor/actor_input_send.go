@@ -9,7 +9,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -18,7 +18,7 @@ const maxJavaScriptSafeInteger = int64(9007199254740991)
 
 func (task *guestRunLeaseTask) handleActorInputSend(
 	ctx context.Context,
-	requested *runv0.SessionInputSendRequested,
+	requested *programv0.SessionInputSendRequested,
 ) error {
 	request, err := workerActorInputSendRequest(requested)
 	if err != nil {
@@ -59,7 +59,7 @@ func (task *guestRunLeaseTask) handleActorInputSend(
 	if err != nil {
 		return fmt.Errorf("encode actor input send decision: %w", err)
 	}
-	if err := wire.WriteResumeDecision(task.program.session.Stream(), &runv0.ResumeDecision{
+	if err := wire.WriteResumeDecision(task.program.session.Stream(), &programv0.ResumeDecision{
 		CorrelationId: request.CorrelationID,
 		Kind:          kind,
 		DataJson:      string(data),
@@ -70,7 +70,7 @@ func (task *guestRunLeaseTask) handleActorInputSend(
 }
 
 func workerActorInputSendRequest(
-	requested *runv0.SessionInputSendRequested,
+	requested *programv0.SessionInputSendRequested,
 ) (workerapi.SendActorInputRequest, error) {
 	if requested == nil {
 		return workerapi.SendActorInputRequest{}, errors.New("actor input send request is required")

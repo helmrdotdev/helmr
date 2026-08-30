@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 )
 
@@ -269,15 +269,15 @@ func workspaceBasicExecImageCommandOptions() imageCommandOptions {
 
 func workspaceBasicExecSecrets(
 	deliveries []*workspacev0.WorkspaceSecretDelivery,
-) ([]*runv0.ProgramSecret, error) {
-	secrets := make([]*runv0.ProgramSecret, 0, len(deliveries))
+) ([]*programv0.ProgramSecret, error) {
+	secrets := make([]*programv0.ProgramSecret, 0, len(deliveries))
 	for _, delivery := range deliveries {
-		secret := &runv0.ProgramSecret{Value: bytes.Clone(delivery.GetValue())}
+		secret := &programv0.ProgramSecret{Value: bytes.Clone(delivery.GetValue())}
 		switch delivery.GetPlacementKind() {
 		case "env":
-			secret.Placement = &runv0.ProgramSecret_Env{Env: delivery.GetPlacementTarget()}
+			secret.Placement = &programv0.ProgramSecret_Env{Env: delivery.GetPlacementTarget()}
 		case "file":
-			secret.Placement = &runv0.ProgramSecret_File{File: delivery.GetPlacementTarget()}
+			secret.Placement = &programv0.ProgramSecret_File{File: delivery.GetPlacementTarget()}
 		default:
 			clear(secret.Value)
 			clearProgramSecretValues(secrets)

@@ -12,14 +12,14 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func (task *guestRunLeaseTask) handleWorkspaceRuntime(
 	ctx context.Context,
-	event *runv0.RunEvent,
+	event *programv0.RunEvent,
 ) error {
 	controlPlane, ok := task.controlPlane.(WorkspaceRuntimeControlPlane)
 	if !ok {
@@ -29,7 +29,7 @@ func (task *guestRunLeaseTask) handleWorkspaceRuntime(
 	var completed any
 	var failed *workerapi.RuntimeOperationFailure
 	switch value := event.Event.(type) {
-	case *runv0.RunEvent_WorkspaceCreateRequested:
+	case *programv0.RunEvent_WorkspaceCreateRequested:
 		request, err := workerWorkspaceCreateRequest(value.WorkspaceCreateRequested)
 		if err != nil {
 			return err
@@ -54,7 +54,7 @@ func (task *guestRunLeaseTask) handleWorkspaceRuntime(
 			completed = response.Completed
 		}
 		failed = response.Failed
-	case *runv0.RunEvent_WorkspaceRetrieveRequested:
+	case *programv0.RunEvent_WorkspaceRetrieveRequested:
 		request, err := workerWorkspaceRetrieveRequest(
 			value.WorkspaceRetrieveRequested.GetCorrelationId(),
 			value.WorkspaceRetrieveRequested.GetWorkspace(),
@@ -82,7 +82,7 @@ func (task *guestRunLeaseTask) handleWorkspaceRuntime(
 			completed = response.Completed
 		}
 		failed = response.Failed
-	case *runv0.RunEvent_WorkspaceFileReadRequested:
+	case *programv0.RunEvent_WorkspaceFileReadRequested:
 		base, err := workerWorkspaceRetrieveRequest(
 			value.WorkspaceFileReadRequested.GetCorrelationId(),
 			value.WorkspaceFileReadRequested.GetWorkspace(),
@@ -114,7 +114,7 @@ func (task *guestRunLeaseTask) handleWorkspaceRuntime(
 			completed = response.Completed
 		}
 		failed = response.Failed
-	case *runv0.RunEvent_WorkspaceFileStatRequested:
+	case *programv0.RunEvent_WorkspaceFileStatRequested:
 		base, err := workerWorkspaceRetrieveRequest(
 			value.WorkspaceFileStatRequested.GetCorrelationId(),
 			value.WorkspaceFileStatRequested.GetWorkspace(),
@@ -146,7 +146,7 @@ func (task *guestRunLeaseTask) handleWorkspaceRuntime(
 			completed = response.Completed
 		}
 		failed = response.Failed
-	case *runv0.RunEvent_WorkspaceFileListRequested:
+	case *programv0.RunEvent_WorkspaceFileListRequested:
 		base, err := workerWorkspaceRetrieveRequest(
 			value.WorkspaceFileListRequested.GetCorrelationId(),
 			value.WorkspaceFileListRequested.GetWorkspace(),
@@ -185,7 +185,7 @@ func (task *guestRunLeaseTask) handleWorkspaceRuntime(
 			completed = response.Completed
 		}
 		failed = response.Failed
-	case *runv0.RunEvent_WorkspaceExecRequested:
+	case *programv0.RunEvent_WorkspaceExecRequested:
 		request, err := workerWorkspaceExecRequest(value.WorkspaceExecRequested)
 		if err != nil {
 			return err
@@ -199,7 +199,7 @@ func (task *guestRunLeaseTask) handleWorkspaceRuntime(
 			completed = response.Completed
 		}
 		failed = response.Failed
-	case *runv0.RunEvent_WorkspaceDeleteRequested:
+	case *programv0.RunEvent_WorkspaceDeleteRequested:
 		base, err := workerWorkspaceRetrieveRequest(
 			value.WorkspaceDeleteRequested.GetCorrelationId(),
 			value.WorkspaceDeleteRequested.GetWorkspace(),
@@ -249,7 +249,7 @@ func (task *guestRunLeaseTask) handleWorkspaceRuntime(
 	if err != nil {
 		return fmt.Errorf("encode workspace runtime decision: %w", err)
 	}
-	return wire.WriteResumeDecision(task.program.session.Stream(), &runv0.ResumeDecision{
+	return wire.WriteResumeDecision(task.program.session.Stream(), &programv0.ResumeDecision{
 		CorrelationId: correlationID,
 		Kind:          kind,
 		DataJson:      string(data),
@@ -315,7 +315,7 @@ func (task *guestRunLeaseTask) executeWorkspaceRuntime(
 }
 
 func workerWorkspaceCreateRequest(
-	requested *runv0.WorkspaceCreateRequested,
+	requested *programv0.WorkspaceCreateRequested,
 ) (workerapi.CreateWorkspaceRequest, error) {
 	if requested == nil {
 		return workerapi.CreateWorkspaceRequest{}, errors.New("workspace create request is required")
@@ -333,9 +333,9 @@ func workerWorkspaceCreateRequest(
 		}
 		secret := api.WorkspaceSecret{Name: placement.GetName()}
 		switch value := placement.GetPlacement().(type) {
-		case *runv0.WorkspaceSecretPlacement_Env:
+		case *programv0.WorkspaceSecretPlacement_Env:
 			secret.Env = value.Env
-		case *runv0.WorkspaceSecretPlacement_File:
+		case *programv0.WorkspaceSecretPlacement_File:
 			secret.File = value.File
 		default:
 			return workerapi.CreateWorkspaceRequest{}, errors.New("workspace secret target is required")
@@ -353,7 +353,7 @@ func workerWorkspaceCreateRequest(
 
 func workerWorkspaceRetrieveRequest(
 	correlationID string,
-	address *runv0.WorkspaceAddress,
+	address *programv0.WorkspaceAddress,
 ) (workerapi.RetrieveWorkspaceRequest, error) {
 	if err := validateRuntimeWorkspaceCorrelation(correlationID); err != nil {
 		return workerapi.RetrieveWorkspaceRequest{}, err
@@ -371,7 +371,7 @@ func workerWorkspaceRetrieveRequest(
 }
 
 func workerWorkspaceExecRequest(
-	requested *runv0.WorkspaceExecRequested,
+	requested *programv0.WorkspaceExecRequested,
 ) (workerapi.ExecuteWorkspaceRequest, error) {
 	if requested == nil {
 		return workerapi.ExecuteWorkspaceRequest{}, errors.New("workspace exec request is required")

@@ -17,7 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/frameio"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
@@ -152,7 +152,7 @@ type runtimeCheckpointer struct {
 	tempDir    string
 	stream     io.ReadWriteCloser
 	workspace  workerapi.CheckpointWorkspaceBase
-	runEvent   func(context.Context, *runv0.RunEvent) error
+	runEvent   func(context.Context, *programv0.RunEvent) error
 	freezeGate *sync.Mutex
 	onFrozen   func()
 }
@@ -224,7 +224,7 @@ func (c runtimeCheckpointer) suspendGuestForCheckpoint(ctx context.Context, requ
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if err := wire.WriteCheckpointPauseRequest(c.stream, &runv0.CheckpointPauseRequest{
+	if err := wire.WriteCheckpointPauseRequest(c.stream, &programv0.CheckpointPauseRequest{
 		RunId:                    request.RunID,
 		AttemptNumber:            uint32(request.AttemptNumber),
 		RunLeaseId:               request.RunLeaseID,
@@ -341,7 +341,7 @@ func (c runtimeCheckpointer) readPauseReady(ctx context.Context, reader *bufio.R
 		if err != nil {
 			return nil, err
 		}
-		var event runv0.RunEvent
+		var event programv0.RunEvent
 		if err := proto.Unmarshal(body, &event); err != nil {
 			return nil, fmt.Errorf("unmarshal checkpoint interleaved run event: %w", err)
 		}

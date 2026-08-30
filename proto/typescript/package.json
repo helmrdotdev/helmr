@@ -8,7 +8,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "gen": "cd ../.. && buf generate proto --path proto/run.proto --path proto/workspace.proto --template proto/buf.gen.yaml",
+    "gen": "cd ../.. && buf generate proto --path proto/program.proto --path proto/workspace.proto --template proto/buf.gen.yaml",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

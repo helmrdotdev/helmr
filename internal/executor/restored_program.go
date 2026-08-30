@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/frameio"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -90,9 +90,9 @@ func (r ProgramRunner) startResumedProgram(
 		lease: claim.Lease, authority: authority, mounts: r.WorkspaceMounts,
 		controlPlane: controlPlane,
 	}
-	var entrypoint *runv0.EntrypointIdentity
+	var entrypoint *programv0.EntrypointIdentity
 	if err := runWithFreshAdmissionRenewal(ctx, state, func(operationCtx context.Context) error {
-		attach := &runv0.ResumeAttach{
+		attach := &programv0.ResumeAttach{
 			RunId: claim.Lease.RunID, AttemptNumber: uint32(claim.Lease.AttemptNumber),
 			RunLeaseId: claim.Lease.ID, RunWaitId: resume.runWaitID, CheckpointId: resume.checkpointID,
 			ResumeAttachId: resume.resumeAttachID, ResumeRequestVersion: resume.resumeRequestVersion,
@@ -107,7 +107,7 @@ func (r ProgramRunner) startResumedProgram(
 		if err != nil {
 			return err
 		}
-		decision := &runv0.ResumeDecision{
+		decision := &programv0.ResumeDecision{
 			RunWaitId: resume.runWaitID, Kind: kind, DataJson: string(data), RequireConsumedAck: true,
 			CheckpointId: resume.checkpointID, ResumeAttachId: resume.resumeAttachID,
 			ResumeRequestVersion: resume.resumeRequestVersion, RunLeaseId: claim.Lease.ID,
@@ -257,20 +257,20 @@ func validateResumedProgramMount(
 func resumedEntrypoint(
 	kind string,
 	declaredID string,
-) (*runv0.EntrypointIdentity, error) {
+) (*programv0.EntrypointIdentity, error) {
 	switch kind {
 	case "task":
-		return &runv0.EntrypointIdentity{
+		return &programv0.EntrypointIdentity{
 			DeclaredId: declaredID,
-			Kind: &runv0.EntrypointIdentity_Task{
-				Task: &runv0.TaskEntrypoint{},
+			Kind: &programv0.EntrypointIdentity_Task{
+				Task: &programv0.TaskEntrypoint{},
 			},
 		}, nil
 	case "actor":
-		return &runv0.EntrypointIdentity{
+		return &programv0.EntrypointIdentity{
 			DeclaredId: declaredID,
-			Kind: &runv0.EntrypointIdentity_Actor{
-				Actor: &runv0.ActorEntrypoint{},
+			Kind: &programv0.EntrypointIdentity_Actor{
+				Actor: &programv0.ActorEntrypoint{},
 			},
 		}, nil
 	default:

@@ -6,11 +6,11 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/frameio"
-	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	"github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"google.golang.org/protobuf/proto"
 )
 
-func WriteCheckpointPauseRequest(w io.Writer, request *runv0.CheckpointPauseRequest) error {
+func WriteCheckpointPauseRequest(w io.Writer, request *programv0.CheckpointPauseRequest) error {
 	if request == nil {
 		return fmt.Errorf("checkpoint pause request is required")
 	}
@@ -37,7 +37,7 @@ func WriteCheckpointPauseReady(w io.Writer, runWaitID string, checkpointID strin
 	}, 0)
 }
 
-func WriteActorTurnCommitPauseRequest(w io.Writer, request *runv0.ActorTurnCommitPauseRequest) error {
+func WriteActorTurnCommitPauseRequest(w io.Writer, request *programv0.ActorTurnCommitPauseRequest) error {
 	if request == nil {
 		return fmt.Errorf("actor turn commit pause request is required")
 	}
@@ -55,7 +55,7 @@ func WriteActorTurnCommitPauseRequest(w io.Writer, request *runv0.ActorTurnCommi
 	return err
 }
 
-func WriteActorTurnCommitPauseReady(w io.Writer, ready *runv0.ActorTurnCommitPauseReady) error {
+func WriteActorTurnCommitPauseReady(w io.Writer, ready *programv0.ActorTurnCommitPauseReady) error {
 	if ready == nil {
 		return fmt.Errorf("actor turn commit pause ready is required")
 	}
@@ -73,7 +73,7 @@ func WriteActorTurnCommitPauseReady(w io.Writer, ready *runv0.ActorTurnCommitPau
 	return err
 }
 
-func WriteActorTurnCommitApplied(w io.Writer, applied *runv0.ActorTurnCommitApplied) error {
+func WriteActorTurnCommitApplied(w io.Writer, applied *programv0.ActorTurnCommitApplied) error {
 	if applied == nil {
 		return fmt.Errorf("actor turn commit applied proof is required")
 	}
@@ -90,7 +90,7 @@ func WriteActorTurnCommitApplied(w io.Writer, applied *runv0.ActorTurnCommitAppl
 	return err
 }
 
-func WriteResumeDecision(w io.Writer, decision *runv0.ResumeDecision) error {
+func WriteResumeDecision(w io.Writer, decision *programv0.ResumeDecision) error {
 	if decision == nil {
 		return fmt.Errorf("resume decision is required")
 	}
@@ -108,11 +108,11 @@ func WriteResumeDecision(w io.Writer, decision *runv0.ResumeDecision) error {
 	return err
 }
 
-func ReadCheckpointPauseRequest(header StreamHeader, reader io.Reader, bodyLen uint64) (*runv0.CheckpointPauseRequest, error) {
+func ReadCheckpointPauseRequest(header StreamHeader, reader io.Reader, bodyLen uint64) (*programv0.CheckpointPauseRequest, error) {
 	if header.Type != StreamTypeCheckpointPauseRequest {
 		return nil, fmt.Errorf("expected checkpoint pause request frame, got %q", header.Type)
 	}
-	var request runv0.CheckpointPauseRequest
+	var request programv0.CheckpointPauseRequest
 	if err := readProtoStreamBody(reader, bodyLen, &request); err != nil {
 		return nil, fmt.Errorf("read checkpoint pause request: %w", err)
 	}
@@ -123,11 +123,11 @@ func ReadCheckpointPauseRequest(header StreamHeader, reader io.Reader, bodyLen u
 	return &request, nil
 }
 
-func ReadActorTurnCommitPauseRequest(header StreamHeader, reader io.Reader, bodyLen uint64) (*runv0.ActorTurnCommitPauseRequest, error) {
+func ReadActorTurnCommitPauseRequest(header StreamHeader, reader io.Reader, bodyLen uint64) (*programv0.ActorTurnCommitPauseRequest, error) {
 	if header.Type != StreamTypeActorTurnCommitPause {
 		return nil, fmt.Errorf("expected actor turn commit pause request frame, got %q", header.Type)
 	}
-	var request runv0.ActorTurnCommitPauseRequest
+	var request programv0.ActorTurnCommitPauseRequest
 	if err := readProtoStreamBody(reader, bodyLen, &request); err != nil {
 		return nil, fmt.Errorf("read actor turn commit pause request: %w", err)
 	}
@@ -137,11 +137,11 @@ func ReadActorTurnCommitPauseRequest(header StreamHeader, reader io.Reader, body
 	return &request, nil
 }
 
-func ReadActorTurnCommitPauseReady(header StreamHeader, reader io.Reader, bodyLen uint64) (*runv0.ActorTurnCommitPauseReady, error) {
+func ReadActorTurnCommitPauseReady(header StreamHeader, reader io.Reader, bodyLen uint64) (*programv0.ActorTurnCommitPauseReady, error) {
 	if header.Type != StreamTypeActorTurnCommitReady {
 		return nil, fmt.Errorf("expected actor turn commit pause ready frame, got %q", header.Type)
 	}
-	var ready runv0.ActorTurnCommitPauseReady
+	var ready programv0.ActorTurnCommitPauseReady
 	if err := readProtoStreamBody(reader, bodyLen, &ready); err != nil {
 		return nil, fmt.Errorf("read actor turn commit pause ready: %w", err)
 	}
@@ -151,11 +151,11 @@ func ReadActorTurnCommitPauseReady(header StreamHeader, reader io.Reader, bodyLe
 	return &ready, nil
 }
 
-func ReadActorTurnCommitApplied(header StreamHeader, reader io.Reader, bodyLen uint64) (*runv0.ActorTurnCommitApplied, error) {
+func ReadActorTurnCommitApplied(header StreamHeader, reader io.Reader, bodyLen uint64) (*programv0.ActorTurnCommitApplied, error) {
 	if header.Type != StreamTypeActorTurnCommitApplied {
 		return nil, fmt.Errorf("expected actor turn commit applied frame, got %q", header.Type)
 	}
-	var applied runv0.ActorTurnCommitApplied
+	var applied programv0.ActorTurnCommitApplied
 	if err := readProtoStreamBody(reader, bodyLen, &applied); err != nil {
 		return nil, fmt.Errorf("read actor turn commit applied proof: %w", err)
 	}
@@ -165,11 +165,11 @@ func ReadActorTurnCommitApplied(header StreamHeader, reader io.Reader, bodyLen u
 	return &applied, nil
 }
 
-func ReadResumeDecision(header StreamHeader, reader io.Reader, bodyLen uint64) (*runv0.ResumeDecision, error) {
+func ReadResumeDecision(header StreamHeader, reader io.Reader, bodyLen uint64) (*programv0.ResumeDecision, error) {
 	if header.Type != StreamTypeResumeDecision {
 		return nil, fmt.Errorf("expected resume decision frame, got %q", header.Type)
 	}
-	var decision runv0.ResumeDecision
+	var decision programv0.ResumeDecision
 	if err := readProtoStreamBody(reader, bodyLen, &decision); err != nil {
 		return nil, fmt.Errorf("read resume decision: %w", err)
 	}

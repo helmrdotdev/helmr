@@ -1,5 +1,5 @@
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf"
-import { runProto } from "@helmr/proto"
+import { programProto } from "@helmr/proto"
 import {
   canonicalizeJsonValue,
   createWorkspaceRef,
@@ -184,7 +184,7 @@ class FrameReader {
 class ResumeDecisionRouter {
   readonly #reader: FrameReader
   readonly #pending = new Map<string, {
-    readonly resolve: (decision: runProto.ResumeDecision) => void
+    readonly resolve: (decision: programProto.ResumeDecision) => void
     readonly reject: (error: Error) => void
   }>()
   #reading = false
@@ -193,11 +193,11 @@ class ResumeDecisionRouter {
     this.#reader = reader
   }
 
-  register(correlationId: string): Promise<runProto.ResumeDecision> {
+  register(correlationId: string): Promise<programProto.ResumeDecision> {
     if (this.#pending.has(correlationId)) {
       return Promise.reject(new Error("duplicate runtime correlation id"))
     }
-    const result = new Promise<runProto.ResumeDecision>((resolve, reject) => {
+    const result = new Promise<programProto.ResumeDecision>((resolve, reject) => {
       this.#pending.set(correlationId, { resolve, reject })
     })
     this.#pump()
@@ -219,7 +219,7 @@ class ResumeDecisionRouter {
       try {
         while (this.#pending.size > 0) {
           const decision = fromBinary(
-            runProto.ResumeDecisionSchema,
+            programProto.ResumeDecisionSchema,
             await this.#reader.read(),
           )
           const pending = this.#pending.get(decision.correlationId)
@@ -333,8 +333,8 @@ async function requestRuntimeDecision(
   io: ProgramIO,
   decisions: ResumeDecisionRouter,
   correlationId: string,
-  event: runProto.RunEvent["event"],
-): Promise<runProto.ResumeDecision> {
+  event: programProto.RunEvent["event"],
+): Promise<programProto.ResumeDecision> {
   const pending = decisions.register(correlationId)
   try {
     await writeRunEvent(io, event)
@@ -354,7 +354,7 @@ async function requestRuntimeDecision(
 }
 
 function requireWaitDecision(
-  decision: runProto.ResumeDecision,
+  decision: programProto.ResumeDecision,
   correlationId: string,
   runWaitId: string,
   resumeAttachId: string,
@@ -376,7 +376,7 @@ function requireWaitDecision(
 
 async function writeRuntimeProtocolEvent(
   io: ProgramIO,
-  event: runProto.RunEvent["event"],
+  event: programProto.RunEvent["event"],
 ): Promise<void> {
   try {
     await writeRunEvent(io, event)
@@ -401,7 +401,7 @@ export async function runProgram(
   io = defaultProgramIO(),
 ): Promise<void> {
   const reader = new FrameReader(io.input)
-  const start = fromBinary(runProto.ProgramStartSchema, await reader.read())
+  const start = fromBinary(programProto.ProgramStartSchema, await reader.read())
   validateProgramStart(start)
 
   const index = await loadProgramIndex(locatorURL, io)
@@ -442,7 +442,7 @@ export async function runProgram(
   const identity = entrypointIdentity(kind, start.entrypointDeclaredId)
   await writeRunEvent(io, {
     case: "entrypointReady",
-    value: create(runProto.EntrypointReadySchema, {
+    value: create(programProto.EntrypointReadySchema, {
       runId: start.runId,
       attemptNumber: start.attemptNumber,
       entrypoint: identity,
@@ -450,7 +450,7 @@ export async function runProgram(
   })
 
   const release = fromBinary(
-    runProto.EntrypointReleaseSchema,
+    programProto.EntrypointReleaseSchema,
     await reader.read(),
   )
   validateEntrypointRelease(release, start, kind)
@@ -584,7 +584,7 @@ function resolveModuleURL(locatorURL: URL, modulePath: string): URL {
   return pathToFileURL(resolved)
 }
 
-function validateProgramStart(start: runProto.ProgramStart): void {
+function validateProgramStart(start: programProto.ProgramStart): void {
   if (
     start.runId === "" ||
     start.attemptNumber === 0 ||
@@ -601,7 +601,7 @@ function validateProgramStart(start: runProto.ProgramStart): void {
 }
 
 function validateEntrypointContract(
-  start: runProto.ProgramStart,
+  start: programProto.ProgramStart,
   definition: InternalTaskDefinition | InternalActorDefinition,
 ): void {
   if (definition.kind === "actor") {
@@ -631,24 +631,24 @@ function validateEntrypointContract(
 function entrypointIdentity(
   kind: "task" | "actor",
   declaredId: string,
-): runProto.EntrypointIdentity {
-  return create(runProto.EntrypointIdentitySchema, {
+): programProto.EntrypointIdentity {
+  return create(programProto.EntrypointIdentitySchema, {
     declaredId,
     kind: kind === "task"
       ? {
           case: "task",
-          value: create(runProto.TaskEntrypointSchema),
+          value: create(programProto.TaskEntrypointSchema),
         }
       : {
           case: "actor",
-          value: create(runProto.ActorEntrypointSchema),
+          value: create(programProto.ActorEntrypointSchema),
         },
   })
 }
 
 function validateEntrypointRelease(
-  release: runProto.EntrypointRelease,
-  start: runProto.ProgramStart,
+  release: programProto.EntrypointRelease,
+  start: programProto.ProgramStart,
   kind: "task" | "actor",
 ): void {
   if (
@@ -662,7 +662,7 @@ function validateEntrypointRelease(
 }
 
 async function runTask(
-  start: runProto.ProgramStart,
+  start: programProto.ProgramStart,
   definition: InternalTaskDefinition,
   io: ProgramIO,
   decisions: ResumeDecisionRouter,
@@ -742,10 +742,10 @@ async function runTask(
   }
   await writeRunEvent(io, {
     case: "taskOutcome",
-    value: create(runProto.TaskOutcomeSchema, {
+    value: create(programProto.TaskOutcomeSchema, {
       outcome: {
         case: "succeeded",
-        value: create(runProto.TaskSucceededSchema, {
+        value: create(programProto.TaskSucceededSchema, {
           outputJson: new TextDecoder().decode(normalized),
         }),
       },
@@ -754,7 +754,7 @@ async function runTask(
 }
 
 function programRuntimeOperations(
-  start: runProto.ProgramStart,
+  start: programProto.ProgramStart,
   io: ProgramIO,
   decisions: ResumeDecisionRouter,
   waitGate: ConsumingWaitGate,
@@ -804,7 +804,7 @@ function programRuntimeOperations(
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "taskChildInvokeRequested",
-        value: create(runProto.TaskChildInvokeRequestedSchema, {
+        value: create(programProto.TaskChildInvokeRequestedSchema, {
           correlationId,
           declaredId: target.declaredId,
           method: "start",
@@ -882,7 +882,7 @@ function programRuntimeOperations(
           correlationId,
           {
             case: "taskChildInvokeRequested",
-            value: create(runProto.TaskChildInvokeRequestedSchema, {
+            value: create(programProto.TaskChildInvokeRequestedSchema, {
               correlationId,
               runWaitId,
               resumeAttachId,
@@ -911,7 +911,7 @@ function programRuntimeOperations(
         if (decision.requireConsumedAck) {
           await writeRuntimeProtocolEvent(io, {
             case: "resumeConsumed",
-            value: create(runProto.ResumeConsumedSchema, {
+            value: create(programProto.ResumeConsumedSchema, {
               runWaitId: decision.runWaitId,
               checkpointId: decision.checkpointId,
               resumeAttachId: decision.resumeAttachId,
@@ -958,7 +958,7 @@ function programRuntimeOperations(
     try {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "runWaitRequested",
-        value: create(runProto.RunWaitRequestedSchema, {
+        value: create(programProto.RunWaitRequestedSchema, {
           correlationId,
           runWaitId,
           resumeAttachId,
@@ -980,7 +980,7 @@ function programRuntimeOperations(
       if (decision.requireConsumedAck) {
         await writeRuntimeProtocolEvent(io, {
           case: "resumeConsumed",
-          value: create(runProto.ResumeConsumedSchema, {
+          value: create(programProto.ResumeConsumedSchema, {
             runWaitId: decision.runWaitId,
             checkpointId: decision.checkpointId,
             resumeAttachId: decision.resumeAttachId,
@@ -1033,7 +1033,7 @@ function programRuntimeOperations(
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "sessionInputSendRequested",
-        value: create(runProto.SessionInputSendRequestedSchema, {
+        value: create(programProto.SessionInputSendRequestedSchema, {
           correlationId,
           sessionId,
           dataJson: new TextDecoder().decode(normalized),
@@ -1084,7 +1084,7 @@ function programRuntimeOperations(
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "actorStartRequested",
-        value: create(runProto.ActorStartRequestedSchema, {
+        value: create(programProto.ActorStartRequestedSchema, {
           correlationId,
           declaredId,
           workspaceId: workspaceRefID(options.workspace),
@@ -1133,7 +1133,7 @@ function programRuntimeOperations(
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "sessionStatusRequested",
-        value: create(runProto.SessionStatusRequestedSchema, {
+        value: create(programProto.SessionStatusRequestedSchema, {
           correlationId, sessionId,
         }),
       })
@@ -1158,7 +1158,7 @@ function programRuntimeOperations(
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "sessionCloseRequested",
-        value: create(runProto.SessionCloseRequestedSchema, {
+        value: create(programProto.SessionCloseRequestedSchema, {
           correlationId,
           sessionId,
           ...(request?.idempotencyKey === undefined
@@ -1212,7 +1212,7 @@ function programRuntimeOperations(
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "sessionOutputPageRequested",
-        value: create(runProto.SessionOutputPageRequestedSchema, {
+        value: create(programProto.SessionOutputPageRequestedSchema, {
           correlationId,
           sessionId,
           ...(query?.after === undefined
@@ -1260,7 +1260,7 @@ function programRuntimeOperations(
     return abortableRuntimeOperation(operation, signal)
   }
   const workspaceAddress = (workspaceId: string) =>
-    create(runProto.WorkspaceAddressSchema, { workspaceId })
+    create(programProto.WorkspaceAddressSchema, { workspaceId })
   const performWorkspaceCreate = async (
     declaredId: string,
     request: WorkspaceCreateRequest = {},
@@ -1271,12 +1271,12 @@ function programRuntimeOperations(
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "workspaceCreateRequested",
-        value: create(runProto.WorkspaceCreateRequestedSchema, {
+        value: create(programProto.WorkspaceCreateRequestedSchema, {
           correlationId,
           declaredId,
           ...(request.key === undefined ? {} : { key: request.key }),
           secrets: encodeWorkspaceSecrets(request.secrets).map((secret) =>
-            create(runProto.WorkspaceSecretPlacementSchema, {
+            create(programProto.WorkspaceSecretPlacementSchema, {
               name: secret.name,
               placement: "env" in secret
                 ? { case: "env", value: secret.env }
@@ -1317,7 +1317,7 @@ function programRuntimeOperations(
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "workspaceRetrieveRequested",
-        value: create(runProto.WorkspaceRetrieveRequestedSchema, {
+        value: create(programProto.WorkspaceRetrieveRequestedSchema, {
           correlationId,
           workspace: workspaceAddress(workspaceId),
         }),
@@ -1343,7 +1343,7 @@ function programRuntimeOperations(
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "workspaceFileReadRequested",
-        value: create(runProto.WorkspaceFileReadRequestedSchema, {
+        value: create(programProto.WorkspaceFileReadRequestedSchema, {
           correlationId,
           workspace: workspaceAddress(workspaceId),
           path: filePath,
@@ -1370,7 +1370,7 @@ function programRuntimeOperations(
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "workspaceFileStatRequested",
-        value: create(runProto.WorkspaceFileStatRequestedSchema, {
+        value: create(programProto.WorkspaceFileStatRequestedSchema, {
           correlationId,
           workspace: workspaceAddress(workspaceId),
           path: filePath,
@@ -1402,7 +1402,7 @@ function programRuntimeOperations(
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "workspaceFileListRequested",
-        value: create(runProto.WorkspaceFileListRequestedSchema, {
+        value: create(programProto.WorkspaceFileListRequestedSchema, {
           correlationId,
           workspace: workspaceAddress(workspaceId),
           path: filePath,
@@ -1437,7 +1437,7 @@ function programRuntimeOperations(
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "workspaceExecRequested",
-        value: create(runProto.WorkspaceExecRequestedSchema, {
+        value: create(programProto.WorkspaceExecRequestedSchema, {
           correlationId,
           workspace: workspaceAddress(workspaceId),
           command: [...request.command],
@@ -1471,7 +1471,7 @@ function programRuntimeOperations(
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "workspaceDeleteRequested",
-        value: create(runProto.WorkspaceDeleteRequestedSchema, {
+        value: create(programProto.WorkspaceDeleteRequestedSchema, {
           correlationId,
           workspace: workspaceAddress(workspaceId),
           ...(request.idempotencyKey === undefined
@@ -1504,7 +1504,7 @@ function programRuntimeOperations(
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "tokenCreateRequested",
-        value: create(runProto.TokenCreateRequestedSchema, {
+        value: create(programProto.TokenCreateRequestedSchema, {
           correlationId,
           ...(timeoutMs === undefined ? {} : { timeoutMs: BigInt(timeoutMs) }),
           ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
@@ -1540,7 +1540,7 @@ function programRuntimeOperations(
     try {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "runWaitRequested",
-        value: create(runProto.RunWaitRequestedSchema, {
+        value: create(programProto.RunWaitRequestedSchema, {
           correlationId,
           runWaitId,
           resumeAttachId,
@@ -1567,7 +1567,7 @@ function programRuntimeOperations(
       if (decision.requireConsumedAck) {
         await writeRuntimeProtocolEvent(io, {
           case: "resumeConsumed",
-          value: create(runProto.ResumeConsumedSchema, {
+          value: create(programProto.ResumeConsumedSchema, {
             runWaitId: decision.runWaitId,
             checkpointId: decision.checkpointId,
             resumeAttachId: decision.resumeAttachId,
@@ -1608,7 +1608,7 @@ function programRuntimeOperations(
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "metadataUpdated",
-        value: create(runProto.MetadataUpdatedSchema, {
+        value: create(programProto.MetadataUpdatedSchema, {
           correlationId,
           operation: request.operation,
           ...(request.operation === "set"
@@ -1663,7 +1663,7 @@ function programRuntimeOperations(
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "structuredLogRequested",
-        value: create(runProto.StructuredLogRequestedSchema, {
+        value: create(programProto.StructuredLogRequestedSchema, {
           correlationId,
           level,
           message,
@@ -1967,7 +1967,7 @@ function normalizeActorInputIdempotencyKey(
 }
 
 function requireRuntimeOperationDecision(
-  decision: runProto.ResumeDecision,
+  decision: programProto.ResumeDecision,
   correlationId: string,
   operation: string,
 ): void {
@@ -2125,7 +2125,7 @@ function tokenWaitIdleTimeoutMilliseconds(duration: Duration): number {
 }
 
 async function runActor(
-  start: runProto.ProgramStart,
+  start: programProto.ProgramStart,
   definition: InternalActorDefinition,
   io: ProgramIO,
   decisions: ResumeDecisionRouter,
@@ -2168,18 +2168,18 @@ async function runActor(
   }
   await writeRunEvent(io, {
     case: "actorOutcome",
-    value: create(runProto.ActorOutcomeSchema, {
+    value: create(programProto.ActorOutcomeSchema, {
       terminalInputSequence: cursor.value,
       outcome: {
         case: "succeeded",
-        value: create(runProto.ActorSucceededSchema),
+        value: create(programProto.ActorSucceededSchema),
       },
     }),
   })
 }
 
 function actorSelf(
-  start: runProto.ProgramStart,
+  start: programProto.ProgramStart,
   io: ProgramIO,
   decisions: ResumeDecisionRouter,
   cursor: { value: bigint },
@@ -2197,7 +2197,7 @@ function actorSelf(
     const correlationId = newUUIDv7()
     const decision = await requestRuntimeDecision(io, decisions, correlationId, {
       case: "actorTurnCommitRequested",
-      value: create(runProto.ActorTurnCommitRequestedSchema, {
+      value: create(programProto.ActorTurnCommitRequestedSchema, {
         correlationId,
         targetInputSequence: cursor.value,
       }),
@@ -2223,7 +2223,7 @@ function actorSelf(
         : durationMilliseconds(options.idleTimeout)
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "runWaitRequested",
-        value: create(runProto.RunWaitRequestedSchema, {
+        value: create(programProto.RunWaitRequestedSchema, {
           correlationId,
           runWaitId,
           resumeAttachId,
@@ -2251,7 +2251,7 @@ function actorSelf(
       if (decision.requireConsumedAck) {
         await writeRuntimeProtocolEvent(io, {
           case: "resumeConsumed",
-          value: create(runProto.ResumeConsumedSchema, {
+          value: create(programProto.ResumeConsumedSchema, {
             runWaitId: decision.runWaitId,
             checkpointId: decision.checkpointId,
             resumeAttachId: decision.resumeAttachId,
@@ -2316,7 +2316,7 @@ function actorSelf(
     const correlationId = newUUIDv7()
     const decision = await requestRuntimeDecision(io, decisions, correlationId, {
       case: "actorOutputAppendRequested",
-      value: create(runProto.ActorOutputAppendRequestedSchema, {
+      value: create(programProto.ActorOutputAppendRequestedSchema, {
         correlationId,
         dataJson: new TextDecoder().decode(normalized),
         contentType: options?.contentType ?? "application/json",
@@ -2389,7 +2389,7 @@ function actorReceive(result: Promise<ActorSessionInputResult>): ActorSessionRec
 }
 
 function requireActorDecision(
-  decision: runProto.ResumeDecision,
+  decision: programProto.ResumeDecision,
   correlationId: string,
   kind: string,
   operation: string,
@@ -2599,7 +2599,7 @@ function concurrentSessionReceiveError(): Error {
 }
 
 function actorContext(
-  start: runProto.ProgramStart,
+  start: programProto.ProgramStart,
   signal: AbortSignal,
 ): ActorContext {
   if (start.entrypoint.case !== "actor") {
@@ -2621,11 +2621,11 @@ async function writeActorFailure(
   const normalizedMessage = canonicalFailureMessage(message, "actor failed")
   await writeRunEvent(io, {
     case: "actorOutcome",
-    value: create(runProto.ActorOutcomeSchema, {
+    value: create(programProto.ActorOutcomeSchema, {
       terminalInputSequence,
       outcome: {
         case: "failed",
-        value: create(runProto.ActorFailedSchema, {
+        value: create(programProto.ActorFailedSchema, {
           message: normalizedMessage,
         }),
       },
@@ -2634,7 +2634,7 @@ async function writeActorFailure(
 }
 
 function taskContext(
-  start: runProto.ProgramStart,
+  start: programProto.ProgramStart,
   signal = new AbortController().signal,
 ): TaskContext {
   return Object.freeze({
@@ -2644,7 +2644,7 @@ function taskContext(
 }
 
 function executionContext(
-  start: runProto.ProgramStart,
+  start: programProto.ProgramStart,
   signal: AbortSignal,
 ): ExecutionContext {
   return Object.freeze({
@@ -2662,7 +2662,7 @@ function executionContext(
   }) as ExecutionContext
 }
 
-function runCause(cause: runProto.RunCause): RunCause {
+function runCause(cause: programProto.RunCause): RunCause {
   switch (cause.kind.case) {
     case "api":
       return { type: "api" }
@@ -2716,18 +2716,18 @@ async function writeTaskFailure(
   }
   await writeRunEvent(io, {
     case: "taskOutcome",
-    value: create(runProto.TaskOutcomeSchema, {
+    value: create(programProto.TaskOutcomeSchema, {
       outcome: kind === "failed"
         ? {
             case: "failed",
-            value: create(runProto.TaskFailedSchema, {
+            value: create(programProto.TaskFailedSchema, {
               message: normalizedMessage,
               ...(detailsJson === undefined ? {} : { detailsJson }),
             }),
           }
         : {
             case: "payloadInvalid",
-            value: create(runProto.TaskPayloadInvalidSchema, {
+            value: create(programProto.TaskPayloadInvalidSchema, {
               message: normalizedMessage,
               ...(detailsJson === undefined ? {} : { detailsJson }),
             }),
@@ -2790,11 +2790,11 @@ function canonicalFailureMessage(message: string, fallback: string): string {
 
 async function writeRunEvent(
   io: ProgramIO,
-  event: runProto.RunEvent["event"],
+  event: programProto.RunEvent["event"],
 ): Promise<void> {
   const body = toBinary(
-    runProto.RunEventSchema,
-    create(runProto.RunEventSchema, { event }),
+    programProto.RunEventSchema,
+    create(programProto.RunEventSchema, { event }),
   )
   await io.write(frame(body))
 }

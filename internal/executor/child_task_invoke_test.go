@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/httpclient"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -101,7 +101,7 @@ func TestHandleChildTaskInvokeDoesNotBlockRunLeaseRenewal(t *testing.T) {
 	}
 	invokeResult := make(chan error, 1)
 	go func() {
-		invokeResult <- task.handleChildTaskInvoke(t.Context(), &runv0.TaskChildInvokeRequested{
+		invokeResult <- task.handleChildTaskInvoke(t.Context(), &programv0.TaskChildInvokeRequested{
 			CorrelationId: correlationID,
 			DeclaredId:    "resize-image",
 			Method:        "start",
@@ -159,7 +159,7 @@ func TestHandleChildTaskInvokeWritesCorrelatedDecision(t *testing.T) {
 	}
 	result := make(chan error, 1)
 	go func() {
-		result <- task.handleChildTaskInvoke(t.Context(), &runv0.TaskChildInvokeRequested{
+		result <- task.handleChildTaskInvoke(t.Context(), &programv0.TaskChildInvokeRequested{
 			CorrelationId:  correlationID,
 			DeclaredId:     "resize-image",
 			Method:         "start",
@@ -222,7 +222,7 @@ func TestHandleChildTaskCallRejectsCompletedResponseWithoutOpenedWait(t *testing
 		controlPlane: controlPlane,
 		lease:        lease,
 	}
-	err := task.handleChildTaskInvoke(t.Context(), &runv0.TaskChildInvokeRequested{
+	err := task.handleChildTaskInvoke(t.Context(), &programv0.TaskChildInvokeRequested{
 		CorrelationId: correlationID, DeclaredId: "resize-image", Method: "call",
 		RunWaitId: runWaitID, ResumeAttachId: resumeAttachID,
 		WorkspaceJson: `{}`, OptionsJson: `{}`,
@@ -233,7 +233,7 @@ func TestHandleChildTaskCallRejectsCompletedResponseWithoutOpenedWait(t *testing
 }
 
 func TestWorkerChildTaskInvokeRequestRejectsUnknownMethod(t *testing.T) {
-	_, err := workerChildTaskInvokeRequest(&runv0.TaskChildInvokeRequested{
+	_, err := workerChildTaskInvokeRequest(&programv0.TaskChildInvokeRequested{
 		CorrelationId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc28",
 		DeclaredId:    "resize-image", Method: "enqueue",
 		WorkspaceJson: `{}`, OptionsJson: `{}`,
@@ -274,7 +274,7 @@ func TestHandleChildTaskInvokeRetryKeepsStableFenceAcrossRenewal(t *testing.T) {
 	go renewRunSourceReceiptAfterAttempt(task, firstAttempt)
 	result := make(chan error, 1)
 	go func() {
-		result <- task.handleChildTaskInvoke(t.Context(), &runv0.TaskChildInvokeRequested{
+		result <- task.handleChildTaskInvoke(t.Context(), &programv0.TaskChildInvokeRequested{
 			CorrelationId: correlationID,
 			DeclaredId:    "resize-image",
 			Method:        "start",
@@ -341,7 +341,7 @@ func TestHandleChildTaskCallContinuesOpenedWait(t *testing.T) {
 	}
 	result := make(chan error, 1)
 	go func() {
-		result <- task.handleChildTaskInvoke(t.Context(), &runv0.TaskChildInvokeRequested{
+		result <- task.handleChildTaskInvoke(t.Context(), &programv0.TaskChildInvokeRequested{
 			CorrelationId:                 correlationID,
 			RunWaitId:                     runWaitID,
 			ResumeAttachId:                resumeAttachID,
@@ -407,7 +407,7 @@ func TestHandleChildTaskInvokeReturnsSemanticFailureToRuntime(t *testing.T) {
 	}
 	result := make(chan error, 1)
 	go func() {
-		result <- task.handleChildTaskInvoke(t.Context(), &runv0.TaskChildInvokeRequested{
+		result <- task.handleChildTaskInvoke(t.Context(), &programv0.TaskChildInvokeRequested{
 			CorrelationId:  correlationID,
 			RunWaitId:      runWaitID,
 			ResumeAttachId: resumeAttachID,

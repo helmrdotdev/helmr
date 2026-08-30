@@ -24,7 +24,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -86,9 +86,9 @@ type programConnection interface {
 }
 
 type programHostControl struct {
-	pause      *runv0.CheckpointPauseRequest
-	turnCommit *runv0.ActorTurnCommitPauseRequest
-	decision   *runv0.ResumeDecision
+	pause      *programv0.CheckpointPauseRequest
+	turnCommit *programv0.ActorTurnCommitPauseRequest
+	decision   *programv0.ResumeDecision
 	err        error
 }
 
@@ -99,7 +99,7 @@ type programOutputPause struct {
 
 type programOutputPump struct {
 	file   *os.File
-	event  func([]byte) *runv0.RunEvent
+	event  func([]byte) *programv0.RunEvent
 	stream *programEventStream
 	errors chan<- error
 	pause  chan programOutputPause
@@ -171,7 +171,7 @@ func handleProgramRunConnection(
 		return errors.New("program run authority is not valid for the workspace mount")
 	}
 	defer releaseMount()
-	var request runv0.ProgramRunRequest
+	var request programv0.ProgramRunRequest
 	if err := frameio.ReadProtoFrame(programConn, &request); err != nil {
 		return fmt.Errorf("read program run request: %w", err)
 	}
@@ -228,8 +228,8 @@ func handleProgramRunConnection(
 
 func readProgramSecrets(
 	reader io.Reader,
-	request *runv0.ProgramRunRequest,
-) ([]*runv0.ProgramSecret, error) {
+	request *programv0.ProgramRunRequest,
+) ([]*programv0.ProgramSecret, error) {
 	if request.GetSecretCount() > maxProgramSecretPlacements {
 		return nil, fmt.Errorf(
 			"program secret_count %d exceeds max %d",
@@ -238,7 +238,7 @@ func readProgramSecrets(
 		)
 	}
 	secrets := make(
-		[]*runv0.ProgramSecret,
+		[]*programv0.ProgramSecret,
 		0,
 		int(request.GetSecretCount()),
 	)
@@ -250,7 +250,7 @@ func readProgramSecrets(
 	}()
 	var plaintextBytes uint64
 	for range request.GetSecretCount() {
-		var command runv0.ProgramSupervisorCommand
+		var command programv0.ProgramSupervisorCommand
 		if err := readProgramCommand(
 			reader,
 			maxProgramSecretFrameBytes,
@@ -272,7 +272,7 @@ func readProgramSecrets(
 		}
 		secrets = append(secrets, secret)
 	}
-	var command runv0.ProgramSupervisorCommand
+	var command programv0.ProgramSupervisorCommand
 	if err := readProgramCommand(
 		reader,
 		maxProgramControlFrameBytes,
@@ -304,7 +304,7 @@ func readProgramSecrets(
 func readProgramCommand(
 	reader io.Reader,
 	maxBytes uint32,
-	command *runv0.ProgramSupervisorCommand,
+	command *programv0.ProgramSupervisorCommand,
 ) error {
 	body, err := frameio.ReadMessageFrameBounded(reader, maxBytes)
 	if err != nil {
@@ -316,7 +316,7 @@ func readProgramCommand(
 	return nil
 }
 
-func validateProgramRunRequest(request *runv0.ProgramRunRequest) error {
+func validateProgramRunRequest(request *programv0.ProgramRunRequest) error {
 	if strings.TrimSpace(request.GetRunId()) == "" {
 		return errors.New("program run_id is required")
 	}
@@ -357,7 +357,7 @@ func validateProgramRunRequest(request *runv0.ProgramRunRequest) error {
 	return nil
 }
 
-func validateProgramSecrets(secrets []*runv0.ProgramSecret) error {
+func validateProgramSecrets(secrets []*programv0.ProgramSecret) error {
 	envNames := make(map[string]struct{}, len(secrets))
 	previousPlacement := ""
 	previousFile := ""
@@ -366,7 +366,7 @@ func validateProgramSecrets(secrets []*runv0.ProgramSecret) error {
 			return errors.New("program secret is required")
 		}
 		switch placement := secret.GetPlacement().(type) {
-		case *runv0.ProgramSecret_Env:
+		case *programv0.ProgramSecret_Env:
 			name := strings.TrimSpace(placement.Env)
 			if placement.Env != name || !validEnvironmentName(name) {
 				return errors.New("program secret environment placement is invalid")
@@ -395,7 +395,7 @@ func validateProgramSecrets(secrets []*runv0.ProgramSecret) error {
 				return errors.New("program secret deliveries are not in canonical order")
 			}
 			previousPlacement = key
-		case *runv0.ProgramSecret_File:
+		case *programv0.ProgramSecret_File:
 			if err := validateProgramSecretFilePath(placement.File); err != nil {
 				return err
 			}
@@ -457,8 +457,8 @@ func validateProgramSecretFilePath(value string) error {
 func newProgramProcess(
 	ctx context.Context,
 	entry *workspaceMountEntry,
-	request *runv0.ProgramRunRequest,
-	secrets []*runv0.ProgramSecret,
+	request *programv0.ProgramRunRequest,
+	secrets []*programv0.ProgramSecret,
 ) (*programProcess, func(), error) {
 	if request == nil {
 		return nil, func() {}, errors.New("program run request is required")
@@ -634,10 +634,10 @@ func managedProgramNodeFlags() ([]string, error) {
 	return append([]string(nil), metadata.ProgramNodeFlags...), nil
 }
 
-func programWorkspaceSecretPaths(workspaceRoot string, secrets []*runv0.ProgramSecret) []string {
+func programWorkspaceSecretPaths(workspaceRoot string, secrets []*programv0.ProgramSecret) []string {
 	paths := make([]string, 0, len(secrets))
 	for _, secret := range secrets {
-		placement, ok := secret.GetPlacement().(*runv0.ProgramSecret_File)
+		placement, ok := secret.GetPlacement().(*programv0.ProgramSecret_File)
 		if !ok {
 			continue
 		}
@@ -656,7 +656,7 @@ func programWorkspaceSecretPaths(workspaceRoot string, secrets []*runv0.ProgramS
 
 func stageProgramSecrets(
 	imageRoot string,
-	secrets []*runv0.ProgramSecret,
+	secrets []*programv0.ProgramSecret,
 	runtimeUser *resolvedRuntimeUser,
 	env *[]string,
 ) (func(), error) {
@@ -682,9 +682,9 @@ func stageProgramSecrets(
 	}
 	for _, secret := range secrets {
 		switch placement := secret.GetPlacement().(type) {
-		case *runv0.ProgramSecret_Env:
+		case *programv0.ProgramSecret_Env:
 			*env = setEnvValue(*env, placement.Env, string(secret.GetValue()))
-		case *runv0.ProgramSecret_File:
+		case *programv0.ProgramSecret_File:
 			targetCleanup, err := prepareProgramSecretTarget(
 				imageRoot,
 				placement.File,
@@ -812,7 +812,7 @@ func prepareProgramSecretTarget(
 func superviseProgram(
 	ctx context.Context,
 	conn programConnection,
-	request *runv0.ProgramRunRequest,
+	request *programv0.ProgramRunRequest,
 	process *programProcess,
 	waits *waitingRunRegistry,
 	mounts *workspaceOperationRegistry,
@@ -837,9 +837,9 @@ func superviseProgram(
 	}
 	stopStream := context.AfterFunc(ctx, stream.closeCurrentConn)
 	defer stopStream()
-	if err := stream.write(&runv0.RunEvent{
-		Event: &runv0.RunEvent_ProgramProcessStarted{
-			ProgramProcessStarted: &runv0.ProgramProcessStarted{
+	if err := stream.write(&programv0.RunEvent{
+		Event: &programv0.RunEvent_ProgramProcessStarted{
+			ProgramProcessStarted: &programv0.ProgramProcessStarted{
 				RunId:         request.GetRunId(),
 				AttemptNumber: request.GetAttemptNumber(),
 				RunLeaseId:    request.GetRunLeaseId(),
@@ -854,15 +854,15 @@ func superviseProgram(
 		stream,
 		outputErrors,
 		process.stdout,
-		func(chunk []byte) *runv0.RunEvent {
-			return &runv0.RunEvent{
-				Event: &runv0.RunEvent_StdoutChunk{StdoutChunk: chunk},
+		func(chunk []byte) *programv0.RunEvent {
+			return &programv0.RunEvent{
+				Event: &programv0.RunEvent_StdoutChunk{StdoutChunk: chunk},
 			}
 		},
 		process.stderr,
-		func(chunk []byte) *runv0.RunEvent {
-			return &runv0.RunEvent{
-				Event: &runv0.RunEvent_StderrChunk{StderrChunk: chunk},
+		func(chunk []byte) *programv0.RunEvent {
+			return &programv0.RunEvent{
+				Event: &programv0.RunEvent_StderrChunk{StderrChunk: chunk},
 			}
 		},
 	)
@@ -877,7 +877,7 @@ func superviseProgram(
 		return err
 	}
 	defer conn.SetReadDeadline(time.Time{})
-	var command runv0.ProgramSupervisorCommand
+	var command programv0.ProgramSupervisorCommand
 	if err := readProgramCommand(
 		conn,
 		maxProgramControlFrameBytes,
@@ -898,7 +898,7 @@ func superviseProgram(
 		return fmt.Errorf("write program-start frame: %w", err)
 	}
 	request.ProgramStartFrame = nil
-	var readyEvent runv0.RunEvent
+	var readyEvent programv0.RunEvent
 	if err := readProgramReady(
 		ctx,
 		deadline,
@@ -953,8 +953,8 @@ func superviseProgram(
 func relayProgram(
 	ctx context.Context,
 	conn programConnection,
-	request *runv0.ProgramRunRequest,
-	entrypoint *runv0.EntrypointIdentity,
+	request *programv0.ProgramRunRequest,
+	entrypoint *programv0.EntrypointIdentity,
 	process *programProcess,
 	stream *programEventStream,
 	outputErrors <-chan error,
@@ -965,14 +965,14 @@ func relayProgram(
 	workspaceEntry *workspaceMountEntry,
 ) error {
 	defer stream.closeCurrentConn()
-	events := make(chan *runv0.RunEvent)
+	events := make(chan *programv0.RunEvent)
 	controlErrors := make(chan error, 1)
 	readerDone := make(chan struct{})
 	defer close(readerDone)
 	go func() {
 		defer close(events)
 		for {
-			var event runv0.RunEvent
+			var event programv0.RunEvent
 			if err := frameio.ReadProtoFrameBounded(
 				process.control,
 				maxProgramOutcomeFrameBytes,
@@ -999,8 +999,8 @@ func relayProgram(
 	outcomeSeen := false
 	quiesced := false
 	var pendingWait *programWaitIdentity
-	var pendingTurnCommit *runv0.ActorTurnCommitRequested
-	var pendingPause *runv0.CheckpointPauseRequest
+	var pendingTurnCommit *programv0.ActorTurnCommitRequested
+	var pendingPause *programv0.CheckpointPauseRequest
 	pendingRuntimeOperations := make(map[string]string)
 	for !processExited || !controlClosed {
 		select {
@@ -1206,12 +1206,12 @@ func relayProgram(
 			}
 			var outcomeErr error
 			switch entrypoint.GetKind().(type) {
-			case *runv0.EntrypointIdentity_Task:
+			case *programv0.EntrypointIdentity_Task:
 				outcomeErr = validateTaskOutcome(event.GetTaskOutcome())
 				if event.GetActorOutcome() != nil {
 					outcomeErr = errors.New("task program emitted an actor outcome")
 				}
-			case *runv0.EntrypointIdentity_Actor:
+			case *programv0.EntrypointIdentity_Actor:
 				outcomeErr = validateActorOutcome(event.GetActorOutcome())
 				if event.GetTaskOutcome() != nil {
 					outcomeErr = errors.New("actor program emitted a task outcome")
@@ -1372,9 +1372,9 @@ func relayProgram(
 	if processErr != nil {
 		return fmt.Errorf("program process exited: %w", processErr)
 	}
-	return stream.write(&runv0.RunEvent{
-		Event: &runv0.RunEvent_ProgramQuiesced{
-			ProgramQuiesced: &runv0.ProgramQuiesced{
+	return stream.write(&programv0.RunEvent{
+		Event: &programv0.RunEvent_ProgramQuiesced{
+			ProgramQuiesced: &programv0.ProgramQuiesced{
 				RunId:         request.GetRunId(),
 				AttemptNumber: request.GetAttemptNumber(),
 				RunLeaseId:    request.GetRunLeaseId(),
@@ -1385,7 +1385,7 @@ func relayProgram(
 
 func writeProgramProcessStartFailed(
 	conn programConnection,
-	request *runv0.ProgramRunRequest,
+	request *programv0.ProgramRunRequest,
 	phase string,
 ) error {
 	if conn == nil || request == nil {
@@ -1398,9 +1398,9 @@ func writeProgramProcessStartFailed(
 		return err
 	}
 	defer conn.SetWriteDeadline(time.Time{})
-	return frameio.WriteProtoFrame(conn, &runv0.RunEvent{
-		Event: &runv0.RunEvent_ProgramProcessStartFailed{
-			ProgramProcessStartFailed: &runv0.ProgramProcessStartFailed{
+	return frameio.WriteProtoFrame(conn, &programv0.RunEvent{
+		Event: &programv0.RunEvent_ProgramProcessStartFailed{
+			ProgramProcessStartFailed: &programv0.ProgramProcessStartFailed{
 				RunId:         request.GetRunId(),
 				AttemptNumber: request.GetAttemptNumber(),
 				RunLeaseId:    request.GetRunLeaseId(),
@@ -1455,7 +1455,7 @@ func newProgramWaitIdentity(
 
 func validateImmediateProgramWaitDecision(
 	wait *programWaitIdentity,
-	decision *runv0.ResumeDecision,
+	decision *programv0.ResumeDecision,
 ) error {
 	if wait == nil || decision == nil ||
 		decision.GetCorrelationId() != wait.correlationID ||
@@ -1509,31 +1509,31 @@ func programCorrelationPending(
 	return pending
 }
 
-func runtimeResourceOperationIdentity(event *runv0.RunEvent) (string, string, bool) {
+func runtimeResourceOperationIdentity(event *programv0.RunEvent) (string, string, bool) {
 	switch value := event.GetEvent().(type) {
-	case *runv0.RunEvent_ActorStartRequested:
+	case *programv0.RunEvent_ActorStartRequested:
 		return strings.TrimSpace(value.ActorStartRequested.GetCorrelationId()), "actor start", true
-	case *runv0.RunEvent_SessionStatusRequested:
+	case *programv0.RunEvent_SessionStatusRequested:
 		return strings.TrimSpace(value.SessionStatusRequested.GetCorrelationId()), "session status read", true
-	case *runv0.RunEvent_SessionCloseRequested:
+	case *programv0.RunEvent_SessionCloseRequested:
 		return strings.TrimSpace(value.SessionCloseRequested.GetCorrelationId()), "session close", true
-	case *runv0.RunEvent_SessionOutputPageRequested:
+	case *programv0.RunEvent_SessionOutputPageRequested:
 		return strings.TrimSpace(value.SessionOutputPageRequested.GetCorrelationId()), "session output page read", true
-	case *runv0.RunEvent_ActorOutputAppendRequested:
+	case *programv0.RunEvent_ActorOutputAppendRequested:
 		return strings.TrimSpace(value.ActorOutputAppendRequested.GetCorrelationId()), "actor output append", true
-	case *runv0.RunEvent_WorkspaceCreateRequested:
+	case *programv0.RunEvent_WorkspaceCreateRequested:
 		return strings.TrimSpace(value.WorkspaceCreateRequested.GetCorrelationId()), "workspace create", true
-	case *runv0.RunEvent_WorkspaceRetrieveRequested:
+	case *programv0.RunEvent_WorkspaceRetrieveRequested:
 		return strings.TrimSpace(value.WorkspaceRetrieveRequested.GetCorrelationId()), "workspace retrieve", true
-	case *runv0.RunEvent_WorkspaceFileReadRequested:
+	case *programv0.RunEvent_WorkspaceFileReadRequested:
 		return strings.TrimSpace(value.WorkspaceFileReadRequested.GetCorrelationId()), "workspace file read", true
-	case *runv0.RunEvent_WorkspaceFileStatRequested:
+	case *programv0.RunEvent_WorkspaceFileStatRequested:
 		return strings.TrimSpace(value.WorkspaceFileStatRequested.GetCorrelationId()), "workspace file stat", true
-	case *runv0.RunEvent_WorkspaceFileListRequested:
+	case *programv0.RunEvent_WorkspaceFileListRequested:
 		return strings.TrimSpace(value.WorkspaceFileListRequested.GetCorrelationId()), "workspace file list", true
-	case *runv0.RunEvent_WorkspaceExecRequested:
+	case *programv0.RunEvent_WorkspaceExecRequested:
 		return strings.TrimSpace(value.WorkspaceExecRequested.GetCorrelationId()), "workspace exec", true
-	case *runv0.RunEvent_WorkspaceDeleteRequested:
+	case *programv0.RunEvent_WorkspaceDeleteRequested:
 		return strings.TrimSpace(value.WorkspaceDeleteRequested.GetCorrelationId()), "workspace delete", true
 	default:
 		return "", "", false
@@ -1581,14 +1581,14 @@ func readProgramHostControl(conn programConnection) <-chan programHostControl {
 
 func pauseAndResumeProgram(
 	ctx context.Context,
-	run *runv0.ProgramRunRequest,
+	run *programv0.ProgramRunRequest,
 	wait *programWaitIdentity,
-	pause *runv0.CheckpointPauseRequest,
+	pause *programv0.CheckpointPauseRequest,
 	process *programProcess,
 	stream *programEventStream,
 	registry *waitingRunRegistry,
 	outputs *programOutputCoordinator,
-	events <-chan *runv0.RunEvent,
+	events <-chan *programv0.RunEvent,
 	controlErrors <-chan error,
 ) (programConnection, error) {
 	if registry == nil {
@@ -1633,8 +1633,8 @@ func pauseAndResumeProgram(
 		return nil, fmt.Errorf("write program checkpoint pause proof: %w", err)
 	}
 	var resumed programConnection
-	var attach *runv0.ResumeAttach
-	var decision *runv0.ResumeDecision
+	var attach *programv0.ResumeAttach
+	var decision *programv0.ResumeDecision
 	for decision == nil {
 		attached, candidateAttach, err := registration.wait(ctx)
 		if err != nil {
@@ -1698,7 +1698,7 @@ func pauseAndResumeProgram(
 	if err := promoteProgramResumeLease(run, pause, attach, consumed); err != nil {
 		return nil, err
 	}
-	ack := &runv0.ResumeAck{
+	ack := &programv0.ResumeAck{
 		RunWaitId: pause.GetRunWaitId(), CheckpointId: pause.GetCheckpointId(),
 		ResumeAttachId: pause.GetResumeAttachId(), ResumeRequestVersion: attach.GetResumeRequestVersion(),
 		RunLeaseId: attach.GetRunLeaseId(), CorrelationId: pause.GetCorrelationId(),
@@ -1720,10 +1720,10 @@ func pauseAndResumeProgram(
 }
 
 func promoteProgramResumeLease(
-	run *runv0.ProgramRunRequest,
-	pause *runv0.CheckpointPauseRequest,
-	attach *runv0.ResumeAttach,
-	consumed *runv0.ResumeConsumed,
+	run *programv0.ProgramRunRequest,
+	pause *programv0.CheckpointPauseRequest,
+	attach *programv0.ResumeAttach,
+	consumed *programv0.ResumeConsumed,
 ) error {
 	if run == nil || pause == nil || attach == nil || consumed == nil ||
 		attach.GetRunId() != run.GetRunId() ||
@@ -1744,9 +1744,9 @@ func promoteProgramResumeLease(
 func pauseActorTurnCommit(
 	ctx context.Context,
 	conn programConnection,
-	run *runv0.ProgramRunRequest,
-	requested *runv0.ActorTurnCommitRequested,
-	pause *runv0.ActorTurnCommitPauseRequest,
+	run *programv0.ProgramRunRequest,
+	requested *programv0.ActorTurnCommitRequested,
+	pause *programv0.ActorTurnCommitPauseRequest,
 	process *programProcess,
 	stream *programEventStream,
 	outputs *programOutputCoordinator,
@@ -1819,7 +1819,7 @@ func pauseActorTurnCommit(
 			return fmt.Errorf("write actor turn workspace capture: %w", err)
 		}
 	}
-	ready := &runv0.ActorTurnCommitPauseReady{
+	ready := &programv0.ActorTurnCommitPauseReady{
 		CorrelationId: pause.GetCorrelationId(), TargetInputSequence: pause.GetTargetInputSequence(),
 		RunId: pause.GetRunId(), AttemptNumber: pause.GetAttemptNumber(), RunLeaseId: pause.GetRunLeaseId(),
 		TreeDigest: tree.Digest, TreeSizeBytes: tree.SizeBytes,
@@ -1857,7 +1857,7 @@ func pauseActorTurnCommit(
 	); err != nil {
 		return err
 	}
-	applied := &runv0.ActorTurnCommitApplied{
+	applied := &programv0.ActorTurnCommitApplied{
 		CorrelationId: pause.GetCorrelationId(), TargetInputSequence: pause.GetTargetInputSequence(),
 		RunId: pause.GetRunId(), AttemptNumber: pause.GetAttemptNumber(), RunLeaseId: pause.GetRunLeaseId(),
 		PreviousBaseWorkspaceVersionId: pause.GetExpectedBaseWorkspaceVersionId(),
@@ -1878,7 +1878,7 @@ func pauseActorTurnCommit(
 	return nil
 }
 
-func validateResumeDecisionAuthority(decision *runv0.ResumeDecision) error {
+func validateResumeDecisionAuthority(decision *programv0.ResumeDecision) error {
 	if decision == nil {
 		return errors.New("program resume decision is required")
 	}
@@ -1917,7 +1917,7 @@ func validateResumeDecisionAuthority(decision *runv0.ResumeDecision) error {
 	}
 }
 
-func validateRuntimeOperationDecision(decision *runv0.ResumeDecision) error {
+func validateRuntimeOperationDecision(decision *programv0.ResumeDecision) error {
 	if decision == nil ||
 		strings.TrimSpace(decision.GetCorrelationId()) == "" ||
 		(decision.GetKind() != "completed" && decision.GetKind() != "failed") ||
@@ -1936,9 +1936,9 @@ func validateRuntimeOperationDecision(decision *runv0.ResumeDecision) error {
 
 func awaitProgramResumeConsumed(
 	ctx context.Context,
-	events <-chan *runv0.RunEvent,
+	events <-chan *programv0.RunEvent,
 	controlErrors <-chan error,
-) (*runv0.ResumeConsumed, error) {
+) (*programv0.ResumeConsumed, error) {
 	select {
 	case event, ok := <-events:
 		if !ok {
@@ -1959,7 +1959,7 @@ func awaitProgramResumeConsumed(
 	}
 }
 
-func (stream *programEventStream) writeResumeAck(ack *runv0.ResumeAck) error {
+func (stream *programEventStream) writeResumeAck(ack *programv0.ResumeAck) error {
 	stream.mu.Lock()
 	defer stream.mu.Unlock()
 	return stream.writeLocked(func(conn programConnection) error {
@@ -1967,7 +1967,7 @@ func (stream *programEventStream) writeResumeAck(ack *runv0.ResumeAck) error {
 	})
 }
 
-func validateProgramCheckpointPause(run *runv0.ProgramRunRequest, wait *programWaitIdentity, pause *runv0.CheckpointPauseRequest) error {
+func validateProgramCheckpointPause(run *programv0.ProgramRunRequest, wait *programWaitIdentity, pause *programv0.CheckpointPauseRequest) error {
 	if run == nil || wait == nil || pause == nil ||
 		pause.GetRunId() != run.GetRunId() ||
 		pause.GetAttemptNumber() != run.GetAttemptNumber() ||
@@ -1982,12 +1982,12 @@ func validateProgramCheckpointPause(run *runv0.ProgramRunRequest, wait *programW
 	return nil
 }
 
-func validateTaskOutcome(outcome *runv0.TaskOutcome) error {
+func validateTaskOutcome(outcome *programv0.TaskOutcome) error {
 	if outcome == nil {
 		return errors.New("task outcome is required")
 	}
 	switch value := outcome.GetOutcome().(type) {
-	case *runv0.TaskOutcome_Succeeded:
+	case *programv0.TaskOutcome_Succeeded:
 		if value.Succeeded == nil {
 			return errors.New("task succeeded outcome is empty")
 		}
@@ -1998,7 +1998,7 @@ func validateTaskOutcome(outcome *runv0.TaskOutcome) error {
 		if _, err := jsoncanon.Transform(raw); err != nil {
 			return errors.New("task succeeded output is not unambiguous JSON")
 		}
-	case *runv0.TaskOutcome_Failed:
+	case *programv0.TaskOutcome_Failed:
 		if value.Failed == nil {
 			return errors.New("task failed outcome is empty")
 		}
@@ -2008,7 +2008,7 @@ func validateTaskOutcome(outcome *runv0.TaskOutcome) error {
 		); err != nil {
 			return fmt.Errorf("invalid task failure: %w", err)
 		}
-	case *runv0.TaskOutcome_PayloadInvalid:
+	case *programv0.TaskOutcome_PayloadInvalid:
 		if value.PayloadInvalid == nil {
 			return errors.New("task payload-invalid outcome is empty")
 		}
@@ -2024,7 +2024,7 @@ func validateTaskOutcome(outcome *runv0.TaskOutcome) error {
 	return nil
 }
 
-func validateActorOutcome(outcome *runv0.ActorOutcome) error {
+func validateActorOutcome(outcome *programv0.ActorOutcome) error {
 	if outcome == nil {
 		return errors.New("actor outcome is required")
 	}
@@ -2032,11 +2032,11 @@ func validateActorOutcome(outcome *runv0.ActorOutcome) error {
 		return errors.New("actor terminal input sequence is negative")
 	}
 	switch value := outcome.GetOutcome().(type) {
-	case *runv0.ActorOutcome_Succeeded:
+	case *programv0.ActorOutcome_Succeeded:
 		if value.Succeeded == nil {
 			return errors.New("actor succeeded outcome is empty")
 		}
-	case *runv0.ActorOutcome_Failed:
+	case *programv0.ActorOutcome_Failed:
 		if value.Failed == nil {
 			return errors.New("actor failed outcome is empty")
 		}
@@ -2140,7 +2140,7 @@ func (process *programProcess) start(
 	return nil
 }
 
-func clearProgramSecretValues(secrets []*runv0.ProgramSecret) {
+func clearProgramSecretValues(secrets []*programv0.ProgramSecret) {
 	for _, secret := range secrets {
 		if secret == nil {
 			continue
@@ -2164,7 +2164,7 @@ func readProgramReady(
 	ctx context.Context,
 	deadline time.Time,
 	reader io.Reader,
-	event *runv0.RunEvent,
+	event *programv0.RunEvent,
 ) error {
 	result := make(chan error, 1)
 	go func() {
@@ -2250,7 +2250,7 @@ func closeProgramFiles(files ...io.Closer) {
 	}
 }
 
-func (stream *programEventStream) write(event *runv0.RunEvent) error {
+func (stream *programEventStream) write(event *programv0.RunEvent) error {
 	for {
 		stream.mu.Lock()
 		if stream.closed || stream.conn == nil {
@@ -2301,7 +2301,7 @@ func (stream *programEventStream) replaceConn(conn programConnection) (programCo
 	return previous, true
 }
 
-func (stream *programEventStream) replaceConnWithResumeAck(conn programConnection, ack *runv0.ResumeAck) (programConnection, error) {
+func (stream *programEventStream) replaceConnWithResumeAck(conn programConnection, ack *programv0.ResumeAck) (programConnection, error) {
 	stream.mu.Lock()
 	if stream.closed || stream.conn == nil {
 		stream.mu.Unlock()
@@ -2367,8 +2367,8 @@ func (stream *programEventStream) hasResumeReplay() bool {
 func (stream *programEventStream) retainResumeReplay(
 	ctx context.Context,
 	registration waitingRunRegistration,
-	decision *runv0.ResumeDecision,
-	ack *runv0.ResumeAck,
+	decision *programv0.ResumeDecision,
+	ack *programv0.ResumeAck,
 ) {
 	stream.mu.Lock()
 	stream.replayCount++
@@ -2411,9 +2411,9 @@ func (stream *programEventStream) retainResumeReplay(
 	}()
 }
 
-func readResumeDecisionUntilDone(conn programConnection, done <-chan struct{}) (*runv0.ResumeDecision, error) {
+func readResumeDecisionUntilDone(conn programConnection, done <-chan struct{}) (*programv0.ResumeDecision, error) {
 	type result struct {
-		decision *runv0.ResumeDecision
+		decision *programv0.ResumeDecision
 		err      error
 	}
 	read := make(chan result, 1)
@@ -2437,14 +2437,14 @@ func readResumeDecisionUntilDone(conn programConnection, done <-chan struct{}) (
 func readResumeDecision(
 	ctx context.Context,
 	reader io.Reader,
-) (*runv0.ResumeDecision, error) {
+) (*programv0.ResumeDecision, error) {
 	type result struct {
-		decision *runv0.ResumeDecision
+		decision *programv0.ResumeDecision
 		err      error
 	}
 	read := make(chan result, 1)
 	go func() {
-		var decision runv0.ResumeDecision
+		var decision programv0.ResumeDecision
 		err := frameio.ReadProtoFrame(reader, &decision)
 		read <- result{decision: &decision, err: err}
 	}()
@@ -2487,7 +2487,7 @@ func (stream *programEventStream) writeCheckpointPauseReady(runWaitID string, ch
 	})
 }
 
-func (stream *programEventStream) writeActorTurnCommitPauseReady(ready *runv0.ActorTurnCommitPauseReady) error {
+func (stream *programEventStream) writeActorTurnCommitPauseReady(ready *programv0.ActorTurnCommitPauseReady) error {
 	stream.mu.Lock()
 	defer stream.mu.Unlock()
 	return stream.writeLocked(func(conn programConnection) error {
@@ -2495,7 +2495,7 @@ func (stream *programEventStream) writeActorTurnCommitPauseReady(ready *runv0.Ac
 	})
 }
 
-func (stream *programEventStream) writeActorTurnCommitApplied(applied *runv0.ActorTurnCommitApplied) error {
+func (stream *programEventStream) writeActorTurnCommitApplied(applied *programv0.ActorTurnCommitApplied) error {
 	stream.mu.Lock()
 	defer stream.mu.Unlock()
 	return stream.writeLocked(func(conn programConnection) error {
@@ -2541,14 +2541,14 @@ func newProgramOutputCoordinator(
 	stream *programEventStream,
 	errorChannel chan<- error,
 	stdout io.ReadCloser,
-	stdoutEvent func([]byte) *runv0.RunEvent,
+	stdoutEvent func([]byte) *programv0.RunEvent,
 	stderr io.ReadCloser,
-	stderrEvent func([]byte) *runv0.RunEvent,
+	stderrEvent func([]byte) *programv0.RunEvent,
 ) (*programOutputCoordinator, error) {
 	readers := []struct {
 		name   string
 		reader io.ReadCloser
-		event  func([]byte) *runv0.RunEvent
+		event  func([]byte) *programv0.RunEvent
 	}{
 		{name: "stdout", reader: stdout, event: stdoutEvent},
 		{name: "stderr", reader: stderr, event: stderrEvent},

@@ -14,7 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/frameio"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
@@ -403,11 +403,11 @@ func serveRestoredGrant(conn net.Conn) error {
 
 func serveRestoredResume(conn net.Conn) error {
 	defer conn.Close()
-	var attach runv0.ResumeAttach
+	var attach programv0.ResumeAttach
 	if err := frameio.ReadProtoFrame(conn, &attach); err != nil {
 		return err
 	}
-	var decision runv0.ResumeDecision
+	var decision programv0.ResumeDecision
 	if err := frameio.ReadProtoFrame(conn, &decision); err != nil {
 		return err
 	}
@@ -415,7 +415,7 @@ func serveRestoredResume(conn net.Conn) error {
 		decision.GetCorrelationId() != attach.GetCorrelationId() {
 		return errors.New("unexpected restored decision")
 	}
-	return frameio.WriteProtoFrame(conn, &runv0.ResumeAck{
+	return frameio.WriteProtoFrame(conn, &programv0.ResumeAck{
 		RunWaitId: attach.GetRunWaitId(), CheckpointId: attach.GetCheckpointId(),
 		ResumeAttachId: attach.GetResumeAttachId(), ResumeRequestVersion: attach.GetResumeRequestVersion(),
 		RunLeaseId: attach.GetRunLeaseId(), CorrelationId: attach.GetCorrelationId(),

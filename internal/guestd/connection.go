@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/frameio"
-	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	"github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"google.golang.org/protobuf/proto"
 )
@@ -20,7 +20,7 @@ import (
 type connectionStart struct {
 	streamHeader wire.StreamHeader
 	bodyLen      uint64
-	attach       *runv0.ResumeAttach
+	attach       *programv0.ResumeAttach
 }
 
 func handleConnection(ctx context.Context, conn io.ReadWriteCloser, logger *slog.Logger, registry *waitingRunRegistry, workspaceRegistry *workspaceOperationRegistry) (bool, error) {
@@ -93,14 +93,14 @@ func readConnectionStart(conn io.Reader) (connectionStart, error) {
 	if _, err := io.ReadFull(conn, body); err != nil {
 		return connectionStart{}, fmt.Errorf("read resume attach frame: %w", err)
 	}
-	var attach runv0.ResumeAttach
+	var attach programv0.ResumeAttach
 	if err := proto.Unmarshal(body, &attach); err != nil {
 		return connectionStart{}, fmt.Errorf("decode resume attach: %w", err)
 	}
 	return validateResumeAttach(&attach)
 }
 
-func validateResumeAttach(attach *runv0.ResumeAttach) (connectionStart, error) {
+func validateResumeAttach(attach *programv0.ResumeAttach) (connectionStart, error) {
 	if strings.TrimSpace(attach.CheckpointId) == "" || strings.TrimSpace(attach.RunWaitId) == "" || strings.TrimSpace(attach.RunLeaseId) == "" {
 		return connectionStart{}, errors.New("resume attach is missing required fields")
 	}

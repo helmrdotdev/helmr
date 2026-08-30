@@ -11,7 +11,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -81,8 +81,8 @@ func (controlPlane *actorRuntimeContractControlPlane) ReadRunSessionOutputPage(
 }
 
 func TestWorkerActorStartRequestPreservesInputPresence(t *testing.T) {
-	base := func() *runv0.ActorStartRequested {
-		return &runv0.ActorStartRequested{
+	base := func() *programv0.ActorStartRequested {
+		return &programv0.ActorStartRequested{
 			CorrelationId:  "019c0225-f0c9-7f66-8a23-7782ca0a8461",
 			DeclaredId:     "mailbox",
 			WorkspaceId:    "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
@@ -109,7 +109,7 @@ func TestWorkerActorStartRequestPreservesInputPresence(t *testing.T) {
 }
 
 func TestWorkerSessionReferencesRequireCanonicalCorrelationAndID(t *testing.T) {
-	request := &runv0.SessionStatusRequested{
+	request := &programv0.SessionStatusRequested{
 		CorrelationId: "019c0225-f0c9-7f66-8a23-7782ca0a8461",
 		SessionId:     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
 	}
@@ -129,8 +129,8 @@ func TestWorkerSessionReferencesRequireCanonicalCorrelationAndID(t *testing.T) {
 
 func TestActorRuntimeVerticalContract(t *testing.T) {
 	const correlationID = "019c0225-f0c9-7f66-8a23-7782ca0a8461"
-	event := &runv0.RunEvent{Event: &runv0.RunEvent_ActorStartRequested{
-		ActorStartRequested: &runv0.ActorStartRequested{
+	event := &programv0.RunEvent{Event: &programv0.RunEvent_ActorStartRequested{
+		ActorStartRequested: &programv0.ActorStartRequested{
 			CorrelationId:  correlationID,
 			DeclaredId:     "mailbox",
 			WorkspaceId:    "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
@@ -198,19 +198,19 @@ func TestActorRuntimeVerticalContract(t *testing.T) {
 		controlPlane := &actorRuntimeContractControlPlane{
 			testRunLeaseControlPlane: &testRunLeaseControlPlane{},
 		}
-		events := []*runv0.RunEvent{
-			{Event: &runv0.RunEvent_SessionStatusRequested{
-				SessionStatusRequested: &runv0.SessionStatusRequested{
+		events := []*programv0.RunEvent{
+			{Event: &programv0.RunEvent_SessionStatusRequested{
+				SessionStatusRequested: &programv0.SessionStatusRequested{
 					CorrelationId: correlationID, SessionId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
 				},
 			}},
-			{Event: &runv0.RunEvent_SessionCloseRequested{
-				SessionCloseRequested: &runv0.SessionCloseRequested{
+			{Event: &programv0.RunEvent_SessionCloseRequested{
+				SessionCloseRequested: &programv0.SessionCloseRequested{
 					CorrelationId: correlationID, SessionId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
 				},
 			}},
-			{Event: &runv0.RunEvent_SessionOutputPageRequested{
-				SessionOutputPageRequested: &runv0.SessionOutputPageRequested{
+			{Event: &programv0.RunEvent_SessionOutputPageRequested{
+				SessionOutputPageRequested: &programv0.SessionOutputPageRequested{
 					CorrelationId: correlationID, SessionId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
 					Limit: 25,
 				},
@@ -271,9 +271,9 @@ func TestActorRuntimeRetryUsesRenewedAssignment(t *testing.T) {
 	}()
 	result := make(chan error, 1)
 	go func() {
-		result <- task.handleActorRuntime(t.Context(), &runv0.RunEvent{
-			Event: &runv0.RunEvent_ActorStartRequested{
-				ActorStartRequested: &runv0.ActorStartRequested{
+		result <- task.handleActorRuntime(t.Context(), &programv0.RunEvent{
+			Event: &programv0.RunEvent_ActorStartRequested{
+				ActorStartRequested: &programv0.ActorStartRequested{
 					CorrelationId: correlationID, DeclaredId: "mailbox",
 					WorkspaceId:    "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
 					RunOptionsJson: `{}`,
@@ -385,9 +385,9 @@ func TestRunSourceRuntimeCapsAttemptBeforeAssignmentExpiry(t *testing.T) {
 
 func runActorRuntimeContract(
 	t *testing.T,
-	event *runv0.RunEvent,
+	event *programv0.RunEvent,
 	controlPlane *actorRuntimeContractControlPlane,
-) (*runv0.ResumeDecision, error) {
+) (*programv0.ResumeDecision, error) {
 	t.Helper()
 	lease := testFreshProgramClaim(t).Lease
 	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()

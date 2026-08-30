@@ -18,7 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"google.golang.org/protobuf/proto"
@@ -77,8 +77,8 @@ func (c *runtimePhaseCollector) Snapshot() []workerapi.CheckpointPhase {
 	return result
 }
 
-func readResumeAck(ctx context.Context, session vm.Session) (*runv0.ResumeAck, error) {
-	var ack runv0.ResumeAck
+func readResumeAck(ctx context.Context, session vm.Session) (*programv0.ResumeAck, error) {
+	var ack programv0.ResumeAck
 	if err := readProtoFrameContext(ctx, session, &ack); err != nil {
 		return nil, err
 	}
@@ -141,7 +141,7 @@ func readProtoFrameFromReaderContext(
 
 func parseWaitRequest(
 	leases workerapi.RunLeaseProvider,
-	wait *runv0.RunWaitRequested,
+	wait *programv0.RunWaitRequested,
 ) (WaitRequest, error) {
 	if leases == nil {
 		return WaitRequest{}, errors.New("run lease provider is required")

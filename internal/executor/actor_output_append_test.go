@@ -10,7 +10,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -66,7 +66,7 @@ func TestHandleActorOutputAppendWritesCorrelatedDecision(t *testing.T) {
 	}
 	result := make(chan error, 1)
 	go func() {
-		result <- task.handleActorOutputAppend(t.Context(), &runv0.ActorOutputAppendRequested{
+		result <- task.handleActorOutputAppend(t.Context(), &programv0.ActorOutputAppendRequested{
 			CorrelationId:  correlationID,
 			DataJson:       `{"status":"working"}`,
 			ContentType:    "application/json",
@@ -128,7 +128,7 @@ func TestHandleActorOutputAppendRetryKeepsStableFenceAcrossRenewal(t *testing.T)
 	go renewRunSourceReceiptAfterAttempt(task, firstAttempt)
 	result := make(chan error, 1)
 	go func() {
-		result <- task.handleActorOutputAppend(t.Context(), &runv0.ActorOutputAppendRequested{
+		result <- task.handleActorOutputAppend(t.Context(), &programv0.ActorOutputAppendRequested{
 			CorrelationId: correlationID,
 			DataJson:      `{"status":"done"}`,
 			ContentType:   "application/json",

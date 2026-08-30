@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"google.golang.org/protobuf/proto"
@@ -22,10 +22,10 @@ func TestActorTurnCommitBarrierBlocksProcessesAndAdvancesAuthorityFrontier(t *te
 		t.Fatal(err)
 	}
 	defer releaseProgram()
-	run := &runv0.ProgramRunRequest{
+	run := &programv0.ProgramRunRequest{
 		RunId: "run-1", AttemptNumber: 2, RunLeaseId: "run-lease-1",
 	}
-	pause := &runv0.ActorTurnCommitPauseRequest{
+	pause := &programv0.ActorTurnCommitPauseRequest{
 		RunId: "run-1", AttemptNumber: 2, RunLeaseId: "run-lease-1",
 		ExpectedBaseWorkspaceVersionId: "version-1",
 	}
@@ -118,8 +118,8 @@ func TestActorTurnCommitBarrierRejectsActiveWorkspaceExec(t *testing.T) {
 	entry.authority = testWorkspaceRunAuthority(time.Now().Add(time.Minute))
 	entry.processAdmissions = 1
 	_, _, err := entry.acquireActorTurnCommit(
-		&runv0.ProgramRunRequest{RunId: "run-1", AttemptNumber: 2, RunLeaseId: "run-lease-1"},
-		&runv0.ActorTurnCommitPauseRequest{RunId: "run-1", AttemptNumber: 2, RunLeaseId: "run-lease-1"},
+		&programv0.ProgramRunRequest{RunId: "run-1", AttemptNumber: 2, RunLeaseId: "run-lease-1"},
+		&programv0.ActorTurnCommitPauseRequest{RunId: "run-1", AttemptNumber: 2, RunLeaseId: "run-lease-1"},
 	)
 	if err == nil || !strings.Contains(err.Error(), "no active exec") {
 		t.Fatalf("active process barrier error = %v", err)
@@ -133,7 +133,7 @@ func TestActorTurnCommitFrontierRejectsStaleBase(t *testing.T) {
 	entry := testWorkspaceAuthorityEntry()
 	entry.authority = testWorkspaceRunAuthority(time.Now().Add(time.Minute))
 	entry.turnCommitBlocked = true
-	pause := &runv0.ActorTurnCommitPauseRequest{
+	pause := &programv0.ActorTurnCommitPauseRequest{
 		RunId: "run-1", AttemptNumber: 2, RunLeaseId: "run-lease-1",
 	}
 	registry := newWorkspaceOperationRegistry()
@@ -163,7 +163,7 @@ func TestActorTurnCommitFrontierRejectsExpiredAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer releaseProgram()
-	pause := &runv0.ActorTurnCommitPauseRequest{
+	pause := &programv0.ActorTurnCommitPauseRequest{
 		RunId: "run-1", AttemptNumber: 2, RunLeaseId: "run-lease-1",
 	}
 	if err := registry.advanceActorTurnWorkspaceFrontier(entry, pause, "version-1", "version-2"); err == nil ||
@@ -188,8 +188,8 @@ func TestActorTurnCommitBlocksWorkspaceFinalizationUntilReleased(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer releaseProgram()
-	run := &runv0.ProgramRunRequest{RunId: "run-1", AttemptNumber: 2, RunLeaseId: "run-lease-1"}
-	pause := &runv0.ActorTurnCommitPauseRequest{RunId: "run-1", AttemptNumber: 2, RunLeaseId: "run-lease-1"}
+	run := &programv0.ProgramRunRequest{RunId: "run-1", AttemptNumber: 2, RunLeaseId: "run-lease-1"}
+	pause := &programv0.ActorTurnCommitPauseRequest{RunId: "run-1", AttemptNumber: 2, RunLeaseId: "run-lease-1"}
 	releaseTurn, _, err := entry.acquireActorTurnCommit(run, pause)
 	if err != nil {
 		t.Fatal(err)
@@ -227,8 +227,8 @@ func TestActorTurnCommitBlocksMountRetirementUntilReleased(t *testing.T) {
 	}
 	defer releaseProgram()
 	releaseTurn, _, err := entry.acquireActorTurnCommit(
-		&runv0.ProgramRunRequest{RunId: "run-1", AttemptNumber: 2, RunLeaseId: "run-lease-1"},
-		&runv0.ActorTurnCommitPauseRequest{RunId: "run-1", AttemptNumber: 2, RunLeaseId: "run-lease-1"},
+		&programv0.ProgramRunRequest{RunId: "run-1", AttemptNumber: 2, RunLeaseId: "run-lease-1"},
+		&programv0.ActorTurnCommitPauseRequest{RunId: "run-1", AttemptNumber: 2, RunLeaseId: "run-lease-1"},
 	)
 	if err != nil {
 		t.Fatal(err)

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/frameio"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"google.golang.org/protobuf/proto"
@@ -49,7 +49,7 @@ func TestProgramResumeGrantRequiresInstalledWorkspaceAuthority(t *testing.T) {
 	}
 	defer releaseProgram()
 	waits := newWaitingRunRegistry()
-	pause := &runv0.CheckpointPauseRequest{
+	pause := &programv0.CheckpointPauseRequest{
 		RunId: "run-1", AttemptNumber: 2, RunLeaseId: "source-lease",
 		RunWaitId: "wait-1", CorrelationId: "correlation-1", CheckpointId: "checkpoint-1",
 		ResumeAttachId: "attach-1", CheckpointRequestVersion: 3,
@@ -73,7 +73,7 @@ func TestProgramResumeGrantRequiresInstalledWorkspaceAuthority(t *testing.T) {
 	if err := frameio.ReadProtoFrame(bytes.NewReader(stream.written.Bytes()), &response); err != nil {
 		t.Fatal(err)
 	}
-	attach := &runv0.ResumeAttach{
+	attach := &programv0.ResumeAttach{
 		RunId: "run-1", AttemptNumber: 2, RunLeaseId: "run-lease-1",
 		RunWaitId: "wait-1", CorrelationId: "correlation-1", CheckpointId: "checkpoint-1",
 		ResumeAttachId: "attach-1", ResumeRequestVersion: 4,
@@ -162,7 +162,7 @@ func TestProgramRestoreVerificationRequiresExactFrozenRegistration(t *testing.T)
 		released: make(chan struct{}),
 	}}
 	waits := newWaitingRunRegistry()
-	if _, err := waits.registerProgram(&runv0.CheckpointPauseRequest{
+	if _, err := waits.registerProgram(&programv0.CheckpointPauseRequest{
 		RunId: "run-1", AttemptNumber: 2, RunWaitId: "wait-1", CorrelationId: "correlation-1",
 		CheckpointId: "checkpoint-1", ResumeAttachId: "attach-1", CheckpointRequestVersion: 3,
 	}); err != nil {

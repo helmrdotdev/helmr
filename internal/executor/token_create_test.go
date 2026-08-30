@@ -11,7 +11,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -67,7 +67,7 @@ func TestHandleTokenCreateReturnsSemanticFailureToRuntime(t *testing.T) {
 	}
 	result := make(chan error, 1)
 	go func() {
-		result <- task.handleTokenCreate(t.Context(), &runv0.TokenCreateRequested{
+		result <- task.handleTokenCreate(t.Context(), &programv0.TokenCreateRequested{
 			CorrelationId: correlationID,
 		})
 	}()
@@ -134,7 +134,7 @@ func TestHandleTokenCreateRetryUsesRenewedAssignment(t *testing.T) {
 	go renewRunSourceReceiptAfterAttempt(task, firstAttempt)
 	result := make(chan error, 1)
 	go func() {
-		result <- task.handleTokenCreate(t.Context(), &runv0.TokenCreateRequested{
+		result <- task.handleTokenCreate(t.Context(), &programv0.TokenCreateRequested{
 			CorrelationId: correlationID,
 		})
 	}()
@@ -181,7 +181,7 @@ func TestHandleTokenCreateWritesCorrelatedDecision(t *testing.T) {
 	}
 	result := make(chan error, 1)
 	go func() {
-		result <- task.handleTokenCreate(t.Context(), &runv0.TokenCreateRequested{
+		result <- task.handleTokenCreate(t.Context(), &programv0.TokenCreateRequested{
 			CorrelationId: correlationID,
 			TimeoutMs:     &timeoutMS,
 			Tags:          []string{"review"},

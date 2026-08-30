@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"google.golang.org/protobuf/proto"
 )
@@ -29,14 +29,14 @@ type waitingRunSlot struct {
 	checkpointRequestVersion int64
 	correlationID            string
 	attached                 chan waitingRunAttachment
-	accepted                 *runv0.ResumeAttach
-	appliedDecision          *runv0.ResumeDecision
-	appliedAck               *runv0.ResumeAck
+	accepted                 *programv0.ResumeAttach
+	appliedDecision          *programv0.ResumeDecision
+	appliedAck               *programv0.ResumeAck
 	granted                  *programResumeGrant
 }
 
 type programResumeGrant struct {
-	attach *runv0.ResumeAttach
+	attach *programv0.ResumeAttach
 	lock   func()
 	unlock func()
 	valid  func(time.Time) bool
@@ -44,10 +44,10 @@ type programResumeGrant struct {
 
 type waitingRunAttachment struct {
 	stream io.ReadWriter
-	attach *runv0.ResumeAttach
+	attach *programv0.ResumeAttach
 }
 
-func (r *waitingRunRegistry) registerProgram(request *runv0.CheckpointPauseRequest) (waitingRunRegistration, error) {
+func (r *waitingRunRegistry) registerProgram(request *programv0.CheckpointPauseRequest) (waitingRunRegistration, error) {
 	if request == nil || request.GetRunWaitId() == "" || request.GetCheckpointId() == "" ||
 		request.GetResumeAttachId() == "" || request.GetCheckpointRequestVersion() <= 0 ||
 		request.GetCorrelationId() == "" {
@@ -131,7 +131,7 @@ func (r *waitingRunRegistry) verifyFrozenProgram(request *workspacev0.VerifyProg
 		slot.appliedDecision == nil && slot.appliedAck == nil
 }
 
-func (r *waitingRunRegistry) attachResume(attach *runv0.ResumeAttach, stream io.ReadWriter) error {
+func (r *waitingRunRegistry) attachResume(attach *programv0.ResumeAttach, stream io.ReadWriter) error {
 	if attach == nil {
 		return fmt.Errorf("resume attach is required")
 	}
@@ -176,10 +176,10 @@ func (r *waitingRunRegistry) attachResume(attach *runv0.ResumeAttach, stream io.
 	select {
 	case slot.attached <- waitingRunAttachment{
 		stream: stream,
-		attach: proto.Clone(attach).(*runv0.ResumeAttach),
+		attach: proto.Clone(attach).(*programv0.ResumeAttach),
 	}:
 		if slot.accepted == nil {
-			slot.accepted = proto.Clone(attach).(*runv0.ResumeAttach)
+			slot.accepted = proto.Clone(attach).(*programv0.ResumeAttach)
 		}
 		return nil
 	default:
@@ -209,23 +209,23 @@ func (r *waitingRunRegistry) grantProgramResume(grant *programResumeGrant) error
 	if slot.accepted != nil && !proto.Equal(slot.accepted, attach) {
 		return errors.New("program resume grant changed an accepted authority")
 	}
-	grant.attach = proto.Clone(attach).(*runv0.ResumeAttach)
+	grant.attach = proto.Clone(attach).(*programv0.ResumeAttach)
 	slot.granted = grant
 	return nil
 }
 
-func (r waitingRunRegistration) markApplied(decision *runv0.ResumeDecision, ack *runv0.ResumeAck) {
+func (r waitingRunRegistration) markApplied(decision *programv0.ResumeDecision, ack *programv0.ResumeAck) {
 	r.registry.mu.Lock()
 	defer r.registry.mu.Unlock()
-	r.slot.appliedDecision = proto.Clone(decision).(*runv0.ResumeDecision)
-	r.slot.appliedAck = proto.Clone(ack).(*runv0.ResumeAck)
+	r.slot.appliedDecision = proto.Clone(decision).(*programv0.ResumeDecision)
+	r.slot.appliedAck = proto.Clone(ack).(*programv0.ResumeAck)
 }
 
-func (r waitingRunRegistration) wait(ctx context.Context) (io.ReadWriter, *runv0.ResumeAttach, error) {
+func (r waitingRunRegistration) wait(ctx context.Context) (io.ReadWriter, *programv0.ResumeAttach, error) {
 	return r.waitStream(ctx, nil)
 }
 
-func (r waitingRunRegistration) waitStream(ctx context.Context, stopped <-chan struct{}) (io.ReadWriter, *runv0.ResumeAttach, error) {
+func (r waitingRunRegistration) waitStream(ctx context.Context, stopped <-chan struct{}) (io.ReadWriter, *programv0.ResumeAttach, error) {
 	select {
 	case attached := <-r.slot.attached:
 		return attached.stream, attached.attach, nil

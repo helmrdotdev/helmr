@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/wire"
@@ -173,7 +173,7 @@ func TestHandleActorTurnCommitAdvancesAllLocalWorkspaceFrontiers(t *testing.T) {
 			guestResult <- err
 			return
 		}
-		if err := wire.WriteActorTurnCommitPauseReady(guest, &runv0.ActorTurnCommitPauseReady{
+		if err := wire.WriteActorTurnCommitPauseReady(guest, &programv0.ActorTurnCommitPauseReady{
 			CorrelationId: pause.GetCorrelationId(), TargetInputSequence: pause.GetTargetInputSequence(),
 			RunId: pause.GetRunId(), AttemptNumber: pause.GetAttemptNumber(), RunLeaseId: pause.GetRunLeaseId(),
 			TreeDigest: tree.Digest, TreeSizeBytes: tree.SizeBytes,
@@ -205,7 +205,7 @@ func TestHandleActorTurnCommitAdvancesAllLocalWorkspaceFrontiers(t *testing.T) {
 		}
 		close(decisionSeen)
 		<-applyGate
-		if err := wire.WriteActorTurnCommitApplied(guest, &runv0.ActorTurnCommitApplied{
+		if err := wire.WriteActorTurnCommitApplied(guest, &programv0.ActorTurnCommitApplied{
 			CorrelationId: pause.GetCorrelationId(), TargetInputSequence: pause.GetTargetInputSequence(),
 			RunId: pause.GetRunId(), AttemptNumber: pause.GetAttemptNumber(), RunLeaseId: pause.GetRunLeaseId(),
 			PreviousBaseWorkspaceVersionId: pause.GetExpectedBaseWorkspaceVersionId(),
@@ -221,7 +221,7 @@ func TestHandleActorTurnCommitAdvancesAllLocalWorkspaceFrontiers(t *testing.T) {
 	defer cancel()
 	hostResult := make(chan error, 1)
 	go func() {
-		hostResult <- task.handleActorTurnCommit(ctx, &runv0.ActorTurnCommitRequested{
+		hostResult <- task.handleActorTurnCommit(ctx, &programv0.ActorTurnCommitRequested{
 			CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000099", TargetInputSequence: 1,
 		})
 	}()
@@ -299,7 +299,7 @@ func TestHandleActorTurnCommitRejectsMismatchedAppliedProofWithoutInstallingFron
 			guestResult <- err
 			return
 		}
-		if err := wire.WriteActorTurnCommitPauseReady(guest, &runv0.ActorTurnCommitPauseReady{
+		if err := wire.WriteActorTurnCommitPauseReady(guest, &programv0.ActorTurnCommitPauseReady{
 			CorrelationId: pause.GetCorrelationId(), TargetInputSequence: pause.GetTargetInputSequence(),
 			RunId: pause.GetRunId(), AttemptNumber: pause.GetAttemptNumber(), RunLeaseId: pause.GetRunLeaseId(),
 			TreeDigest: target.Tree.Digest, TreeSizeBytes: target.Tree.SizeBytes,
@@ -318,7 +318,7 @@ func TestHandleActorTurnCommitRejectsMismatchedAppliedProofWithoutInstallingFron
 			guestResult <- err
 			return
 		}
-		if err := wire.WriteActorTurnCommitApplied(guest, &runv0.ActorTurnCommitApplied{
+		if err := wire.WriteActorTurnCommitApplied(guest, &programv0.ActorTurnCommitApplied{
 			CorrelationId: pause.GetCorrelationId(), TargetInputSequence: pause.GetTargetInputSequence(),
 			RunId: pause.GetRunId(), AttemptNumber: pause.GetAttemptNumber(), RunLeaseId: pause.GetRunLeaseId(),
 			PreviousBaseWorkspaceVersionId: pause.GetExpectedBaseWorkspaceVersionId(),
@@ -329,7 +329,7 @@ func TestHandleActorTurnCommitRejectsMismatchedAppliedProofWithoutInstallingFron
 		}
 		guestResult <- nil
 	}()
-	err = task.handleActorTurnCommit(t.Context(), &runv0.ActorTurnCommitRequested{
+	err = task.handleActorTurnCommit(t.Context(), &programv0.ActorTurnCommitRequested{
 		CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000100", TargetInputSequence: 1,
 	})
 	if err == nil || !strings.Contains(err.Error(), "applied proof") {
@@ -377,7 +377,7 @@ func TestHandleActorTurnCommitStopsMissingAppliedProofAtLeaseExpiry(t *testing.T
 			guestResult <- err
 			return
 		}
-		if err := wire.WriteActorTurnCommitPauseReady(guest, &runv0.ActorTurnCommitPauseReady{
+		if err := wire.WriteActorTurnCommitPauseReady(guest, &programv0.ActorTurnCommitPauseReady{
 			CorrelationId: pause.GetCorrelationId(), TargetInputSequence: pause.GetTargetInputSequence(),
 			RunId: pause.GetRunId(), AttemptNumber: pause.GetAttemptNumber(), RunLeaseId: pause.GetRunLeaseId(),
 			TreeDigest: target.Tree.Digest, TreeSizeBytes: target.Tree.SizeBytes,
@@ -399,7 +399,7 @@ func TestHandleActorTurnCommitStopsMissingAppliedProofAtLeaseExpiry(t *testing.T
 		guestResult <- err
 	}()
 	started := time.Now()
-	err = task.handleActorTurnCommit(t.Context(), &runv0.ActorTurnCommitRequested{
+	err = task.handleActorTurnCommit(t.Context(), &programv0.ActorTurnCommitRequested{
 		CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000103", TargetInputSequence: 1,
 	})
 	if err == nil || !strings.Contains(err.Error(), "applied header") {
@@ -440,10 +440,10 @@ func TestHandleActorTurnCommitStopsBlockedDecisionWriteAtLeaseExpiry(t *testing.
 		reader := bufio.NewReader(guest)
 		header, bodyLen, err := wire.ReadStreamFrameHeader(reader)
 		if err == nil {
-			var pause *runv0.ActorTurnCommitPauseRequest
+			var pause *programv0.ActorTurnCommitPauseRequest
 			pause, err = wire.ReadActorTurnCommitPauseRequest(header, reader, bodyLen)
 			if err == nil {
-				err = wire.WriteActorTurnCommitPauseReady(guest, &runv0.ActorTurnCommitPauseReady{
+				err = wire.WriteActorTurnCommitPauseReady(guest, &programv0.ActorTurnCommitPauseReady{
 					CorrelationId: pause.GetCorrelationId(), TargetInputSequence: pause.GetTargetInputSequence(),
 					RunId: pause.GetRunId(), AttemptNumber: pause.GetAttemptNumber(), RunLeaseId: pause.GetRunLeaseId(),
 					TreeDigest: target.Tree.Digest, TreeSizeBytes: target.Tree.SizeBytes,
@@ -457,7 +457,7 @@ func TestHandleActorTurnCommitStopsBlockedDecisionWriteAtLeaseExpiry(t *testing.
 		guestResult <- err
 	}()
 	started := time.Now()
-	err = task.handleActorTurnCommit(t.Context(), &runv0.ActorTurnCommitRequested{
+	err = task.handleActorTurnCommit(t.Context(), &programv0.ActorTurnCommitRequested{
 		CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000104", TargetInputSequence: 1,
 	})
 	close(stopGuest)

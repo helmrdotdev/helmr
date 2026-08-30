@@ -8,7 +8,7 @@ import (
 	"io"
 
 	"github.com/google/uuid"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -30,7 +30,7 @@ func updateRunMetadata(
 	ctx context.Context,
 	controlPlane runObservabilityControlPlane,
 	lease workerapi.RunLeaseAssignment,
-	requested *runv0.MetadataUpdated,
+	requested *programv0.MetadataUpdated,
 ) error {
 	request, err := workerRunMetadataRequest(requested)
 	if err != nil {
@@ -63,7 +63,7 @@ func appendStructuredRunLog(
 	controlPlane runObservabilityControlPlane,
 	lease workerapi.RunLeaseAssignment,
 	sequence uint64,
-	requested *runv0.StructuredLogRequested,
+	requested *programv0.StructuredLogRequested,
 ) error {
 	request, err := workerStructuredLogRequest(requested, sequence)
 	if err != nil {
@@ -92,7 +92,7 @@ func sendStructuredRunLogRequest(
 }
 
 func workerRunMetadataRequest(
-	requested *runv0.MetadataUpdated,
+	requested *programv0.MetadataUpdated,
 ) (workerapi.UpdateRunMetadataRequest, error) {
 	if requested == nil {
 		return workerapi.UpdateRunMetadataRequest{}, errors.New("run metadata request is required")
@@ -121,7 +121,7 @@ func workerRunMetadataRequest(
 }
 
 func workerStructuredLogRequest(
-	requested *runv0.StructuredLogRequested,
+	requested *programv0.StructuredLogRequested,
 	sequence uint64,
 ) (workerapi.StructuredLogRequest, error) {
 	if requested == nil {
@@ -151,7 +151,7 @@ func processRunMetadataEvent(
 	events freshProgramEventSink,
 	lease workerapi.RunLeaseAssignment,
 	stream io.Writer,
-	requested *runv0.MetadataUpdated,
+	requested *programv0.MetadataUpdated,
 ) error {
 	if requested == nil {
 		return errors.New("run metadata request is required")
@@ -172,7 +172,7 @@ func processStructuredLogEvent(
 	lease workerapi.RunLeaseAssignment,
 	stream io.Writer,
 	sequence uint64,
-	requested *runv0.StructuredLogRequested,
+	requested *programv0.StructuredLogRequested,
 ) error {
 	if requested == nil {
 		return errors.New("structured log request is required")
@@ -194,7 +194,7 @@ func writeRuntimeOperationDecision(
 	fallbackCode string,
 	fallbackMessage string,
 ) error {
-	decision := &runv0.ResumeDecision{
+	decision := &programv0.ResumeDecision{
 		CorrelationId: correlationID,
 		Kind:          "completed",
 		DataJson:      `{}`,

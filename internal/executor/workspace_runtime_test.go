@@ -10,7 +10,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -95,14 +95,14 @@ func TestWorkspaceRuntimeVerticalContract(t *testing.T) {
 		}
 		key := "build-cache"
 		idempotencyKey := "create:build-cache"
-		decision, err := runWorkspaceRuntimeContract(t, &runv0.RunEvent{
-			Event: &runv0.RunEvent_WorkspaceCreateRequested{
-				WorkspaceCreateRequested: &runv0.WorkspaceCreateRequested{
+		decision, err := runWorkspaceRuntimeContract(t, &programv0.RunEvent{
+			Event: &programv0.RunEvent_WorkspaceCreateRequested{
+				WorkspaceCreateRequested: &programv0.WorkspaceCreateRequested{
 					CorrelationId: correlationID, DeclaredId: "cache", Key: &key,
 					IdempotencyKey: &idempotencyKey,
-					Secrets: []*runv0.WorkspaceSecretPlacement{{
+					Secrets: []*programv0.WorkspaceSecretPlacement{{
 						Name: "TOKEN",
-						Placement: &runv0.WorkspaceSecretPlacement_Env{
+						Placement: &programv0.WorkspaceSecretPlacement_Env{
 							Env: "TOKEN",
 						},
 					}},
@@ -130,9 +130,9 @@ func TestWorkspaceRuntimeVerticalContract(t *testing.T) {
 				},
 			},
 		}
-		decision, err := runWorkspaceRuntimeContract(t, &runv0.RunEvent{
-			Event: &runv0.RunEvent_WorkspaceCreateRequested{
-				WorkspaceCreateRequested: &runv0.WorkspaceCreateRequested{
+		decision, err := runWorkspaceRuntimeContract(t, &programv0.RunEvent{
+			Event: &programv0.RunEvent_WorkspaceCreateRequested{
+				WorkspaceCreateRequested: &programv0.WorkspaceCreateRequested{
 					CorrelationId: correlationID, DeclaredId: "cache",
 				},
 			},
@@ -163,11 +163,11 @@ func TestWorkspaceRuntimeVerticalContract(t *testing.T) {
 			}},
 		}
 		timeout := uint64(1_000)
-		decision, err := runWorkspaceRuntimeContract(t, &runv0.RunEvent{
-			Event: &runv0.RunEvent_WorkspaceExecRequested{
-				WorkspaceExecRequested: &runv0.WorkspaceExecRequested{
+		decision, err := runWorkspaceRuntimeContract(t, &programv0.RunEvent{
+			Event: &programv0.RunEvent_WorkspaceExecRequested{
+				WorkspaceExecRequested: &programv0.WorkspaceExecRequested{
 					CorrelationId: correlationID,
-					Workspace: &runv0.WorkspaceAddress{
+					Workspace: &programv0.WorkspaceAddress{
 						WorkspaceId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
 					},
 					Command:   []string{"sh", "-c", "printf ok"},
@@ -191,7 +191,7 @@ func TestWorkspaceRuntimeVerticalContract(t *testing.T) {
 func TestWorkerWorkspaceRequestsRequireTypedCanonicalIdentity(t *testing.T) {
 	_, err := workerWorkspaceRetrieveRequest(
 		"019C0225-F0C9-7F66-8A23-7782CA0A8461",
-		&runv0.WorkspaceAddress{WorkspaceId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},
+		&programv0.WorkspaceAddress{WorkspaceId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},
 	)
 	if err == nil {
 		t.Fatal("non-canonical correlation ID was accepted")
@@ -242,9 +242,9 @@ func TestWorkspaceRuntimeRetryUsesRenewedAssignment(t *testing.T) {
 
 func runWorkspaceRuntimeContract(
 	t *testing.T,
-	event *runv0.RunEvent,
+	event *programv0.RunEvent,
 	controlPlane *workspaceRuntimeContractControlPlane,
-) (*runv0.ResumeDecision, error) {
+) (*programv0.ResumeDecision, error) {
 	t.Helper()
 	lease := testFreshProgramClaim(t).Lease
 	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
