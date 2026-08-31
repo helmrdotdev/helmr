@@ -10,9 +10,7 @@ CREATE TABLE organizations (
 
 CREATE TYPE telemetry_stream_kind AS ENUM (
     'run_log',
-    'event',
-    'terminal_output',
-    'meter_event'
+    'event'
 );
 
 CREATE TABLE regions (
@@ -2114,11 +2112,7 @@ CREATE TABLE telemetry_outbox (
     environment_id UUID NOT NULL,
     run_id UUID,
     deployment_id UUID,
-    workspace_id UUID,
-    resource_kind TEXT NOT NULL DEFAULT '',
-    resource_id UUID,
     run_lease_id UUID,
-    meter_event_id BIGINT,
     attempt_number INTEGER CHECK (attempt_number IS NULL OR attempt_number > 0),
     trace_id TEXT CHECK (trace_id IS NULL OR (trace_id ~ '^[0-9a-f]{32}$' AND trace_id <> '00000000000000000000000000000000')),
     span_id TEXT CHECK (span_id IS NULL OR (span_id ~ '^[0-9a-f]{16}$' AND span_id <> '0000000000000000')),
@@ -2133,20 +2127,19 @@ CREATE TABLE telemetry_outbox (
     content BYTEA,
     size_bytes BIGINT CHECK (size_bytes IS NULL OR size_bytes >= 0),
     observed_seq BIGINT CHECK (observed_seq IS NULL OR observed_seq >= 0),
-    offset_start BIGINT CHECK (offset_start IS NULL OR offset_start >= 0),
-    offset_end BIGINT CHECK (offset_end IS NULL OR offset_end >= 0),
     redaction_class TEXT NOT NULL DEFAULT 'internal',
     retention_class TEXT NOT NULL DEFAULT 'standard',
     snapshot_version BIGINT CHECK (snapshot_version IS NULL OR snapshot_version > 0),
     state TEXT NOT NULL DEFAULT 'pending'
-        CHECK (state IN ('pending', 'claimed', 'written', 'failed', 'dead_lettered')),
+        CHECK (state IN ('pending', 'claimed', 'written', 'failed')),
     retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
     next_retry_at TIMESTAMPTZ,
     written_at TIMESTAMPTZ,
     published_at TIMESTAMPTZ,
     publish_attempts INTEGER NOT NULL DEFAULT 0 CHECK (publish_attempts >= 0),
     publish_locked_until TIMESTAMPTZ,
-    last_error TEXT NOT NULL DEFAULT '',
+    ingest_error TEXT NOT NULL DEFAULT '',
+    publish_error TEXT NOT NULL DEFAULT '',
     observed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -2179,55 +2172,16 @@ CREATE TABLE telemetry_outbox (
             AND content IS NOT NULL
             AND size_bytes IS NOT NULL
             AND observed_seq IS NOT NULL
-            AND offset_start IS NULL
-            AND offset_end IS NULL
         )
-    ),
-    CHECK (
-        stream_kind <> 'terminal_output'
-        OR (
-            source_kind = 'workspace_process'
-            AND resource_kind = source_kind
-            AND resource_id = source_id
-            AND workspace_id IS NOT NULL
-            AND stream_name <> ''
-            AND content IS NOT NULL
-            AND size_bytes IS NOT NULL
-            AND offset_start IS NOT NULL
-            AND offset_end IS NOT NULL
-            AND offset_end >= offset_start
-        )
-    ),
-    CHECK (
-        stream_kind <> 'meter_event'
-        OR (
-            meter_event_id IS NOT NULL
-            AND run_id IS NOT NULL
-            AND deployment_id IS NULL
-            AND source_kind = 'run_lease'
-            AND attempt_number IS NOT NULL
-            AND idempotency_key IS NOT NULL
-            AND btrim(kind) <> ''
-            AND payload IS NOT NULL
-            AND content IS NULL
-            AND observed_seq IS NULL
-            AND offset_start IS NULL
-            AND offset_end IS NULL
-        )
-    ),
-    CHECK ((stream_kind = 'meter_event') = (meter_event_id IS NOT NULL))
+    )
 );
 
 CREATE UNIQUE INDEX telemetry_outbox_idempotency_idx
     ON telemetry_outbox (org_id, stream_kind, source_kind, source_id, stream_name, idempotency_key);
 CREATE INDEX telemetry_outbox_publish_ready_idx
     ON telemetry_outbox (stream_kind, org_id, source_kind, source_id, stream_name, id)
-    WHERE stream_kind IN ('event', 'run_log', 'terminal_output')
-      AND published_at IS NULL
-      AND state <> 'dead_lettered';
-CREATE INDEX telemetry_outbox_ingest_ready_idx
-    ON telemetry_outbox (stream_kind, source_kind, source_id, stream_name, id)
-    WHERE written_at IS NULL;
+    WHERE stream_kind = 'event'
+      AND published_at IS NULL;
 CREATE INDEX telemetry_outbox_ingest_claim_idx
     ON telemetry_outbox (stream_kind, id)
     WHERE written_at IS NULL AND state IN ('pending', 'claimed', 'failed');
@@ -2549,68 +2503,6 @@ CREATE TABLE run_checkpoint_artifacts (
         REFERENCES artifacts(id)
         ON DELETE RESTRICT
 );
-
-CREATE TABLE meter_events (
-    id BIGINT GENERATED ALWAYS AS IDENTITY,
-    org_id UUID NOT NULL,
-    project_id UUID NOT NULL,
-    environment_id UUID NOT NULL,
-    run_id UUID,
-    run_lease_id UUID,
-    attempt_number INTEGER CHECK (attempt_number IS NULL OR attempt_number > 0),
-    trace_id TEXT CHECK (trace_id IS NULL OR (trace_id ~ '^[0-9a-f]{32}$' AND trace_id <> '00000000000000000000000000000000')),
-    span_id TEXT CHECK (span_id IS NULL OR (span_id ~ '^[0-9a-f]{16}$' AND span_id <> '0000000000000000')),
-    meter TEXT NOT NULL CHECK (btrim(meter) <> ''),
-    quantity NUMERIC NOT NULL CHECK (quantity >= 0),
-    unit TEXT NOT NULL CHECK (btrim(unit) <> ''),
-    measured_from TIMESTAMPTZ,
-    measured_to TIMESTAMPTZ,
-    occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    details JSONB NOT NULL DEFAULT '{}'::jsonb,
-    idempotency_key TEXT NOT NULL CHECK (btrim(idempotency_key) <> ''),
-    idempotency_fingerprint TEXT NOT NULL CHECK (btrim(idempotency_fingerprint) <> ''),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (id),
-    FOREIGN KEY (org_id, project_id, environment_id, run_id, run_lease_id, attempt_number)
-        REFERENCES run_leases(org_id, project_id, environment_id, run_id, id, attempt_number)
-        ON DELETE RESTRICT,
-    CHECK (
-        (run_id IS NOT NULL AND run_lease_id IS NOT NULL
-         AND attempt_number IS NOT NULL)
-    ),
-    CHECK (
-        (measured_from IS NULL AND measured_to IS NULL)
-        OR
-        (measured_from IS NOT NULL AND measured_to IS NOT NULL AND measured_from < measured_to)
-    ),
-    CHECK (jsonb_typeof(details) = 'object')
-);
-
-ALTER TABLE telemetry_outbox
-    ADD CONSTRAINT telemetry_outbox_meter_event_id_fkey
-    FOREIGN KEY (meter_event_id)
-    REFERENCES meter_events(id)
-    ON DELETE RESTRICT;
-
-CREATE UNIQUE INDEX meter_events_run_lease_idempotency_uidx
-    ON meter_events (org_id, run_lease_id, meter, idempotency_key)
-    WHERE run_lease_id IS NOT NULL;
-
-CREATE INDEX meter_events_scope_meter_time_idx
-    ON meter_events (org_id, project_id, environment_id, meter, occurred_at DESC, id DESC);
-
-CREATE INDEX meter_events_trace_idx
-    ON meter_events (trace_id, created_at)
-    WHERE trace_id IS NOT NULL;
-
-CREATE INDEX meter_events_run_meter_idx
-    ON meter_events (org_id, run_id, meter)
-    INCLUDE (quantity)
-    WHERE run_id IS NOT NULL;
-
-CREATE UNIQUE INDEX telemetry_outbox_meter_event_uidx
-    ON telemetry_outbox (meter_event_id)
-    WHERE meter_event_id IS NOT NULL;
 
 CREATE TABLE run_waits (
     id UUID PRIMARY KEY,

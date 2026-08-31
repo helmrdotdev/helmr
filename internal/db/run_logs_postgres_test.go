@@ -64,29 +64,17 @@ func TestAppendRunLogChunkRequiresExactCurrentReceipt(t *testing.T) {
 	if _, err := fixture.queries.AppendRunLogChunk(ctx, changed); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("changed replay error = %v, want no rows", err)
 	}
-	var chunks, events, meterOutbox, meters int
+	var chunks, events int
 	if err := fixture.pool.QueryRow(ctx, `
 		SELECT count(*) FILTER (WHERE stream_kind = 'run_log'),
-		       count(*) FILTER (WHERE stream_kind = 'event'),
-		       count(*) FILTER (WHERE stream_kind = 'meter_event')
+		       count(*) FILTER (WHERE stream_kind = 'event')
 		  FROM telemetry_outbox
 		 WHERE run_lease_id = $1
-	`, params.RunLeaseID).Scan(&chunks, &events, &meterOutbox); err != nil {
+	`, params.RunLeaseID).Scan(&chunks, &events); err != nil {
 		t.Fatal(err)
 	}
-	if err := fixture.pool.QueryRow(ctx, `
-		SELECT count(*) FROM meter_events WHERE run_lease_id = $1 AND meter = 'log_bytes'
-	`, params.RunLeaseID).Scan(&meters); err != nil {
-		t.Fatal(err)
-	}
-	if chunks != 1 || events != 1 || meterOutbox != 1 || meters != 1 {
-		t.Fatalf(
-			"replay side effects = chunks %d events %d meter outbox %d meters %d",
-			chunks,
-			events,
-			meterOutbox,
-			meters,
-		)
+	if chunks != 1 || events != 1 {
+		t.Fatalf("replay side effects = chunks %d events %d", chunks, events)
 	}
 
 	mismatches := []struct {
@@ -204,29 +192,17 @@ func TestAppendRunLogChunkRequiresCoherentRunAndLeaseState(t *testing.T) {
 			t.Fatalf("checkpoint replay first=%+v replay=%+v", first, replay)
 		}
 
-		var chunks, events, meterOutbox, meters int
+		var chunks, events int
 		if err := fixture.pool.QueryRow(ctx, `
 			SELECT count(*) FILTER (WHERE stream_kind = 'run_log'),
-			       count(*) FILTER (WHERE stream_kind = 'event'),
-			       count(*) FILTER (WHERE stream_kind = 'meter_event')
+			       count(*) FILTER (WHERE stream_kind = 'event')
 			  FROM telemetry_outbox
 			 WHERE run_lease_id = $1
-		`, params.RunLeaseID).Scan(&chunks, &events, &meterOutbox); err != nil {
+		`, params.RunLeaseID).Scan(&chunks, &events); err != nil {
 			t.Fatal(err)
 		}
-		if err := fixture.pool.QueryRow(ctx, `
-			SELECT count(*) FROM meter_events WHERE run_lease_id = $1 AND meter = 'log_bytes'
-		`, params.RunLeaseID).Scan(&meters); err != nil {
-			t.Fatal(err)
-		}
-		if chunks != 1 || events != 1 || meterOutbox != 1 || meters != 1 {
-			t.Fatalf(
-				"checkpoint replay side effects = chunks %d events %d meter outbox %d meters %d",
-				chunks,
-				events,
-				meterOutbox,
-				meters,
-			)
+		if chunks != 1 || events != 1 {
+			t.Fatalf("checkpoint replay side effects = chunks %d events %d", chunks, events)
 		}
 	})
 
@@ -334,18 +310,51 @@ func TestAppendRunLogChunkConcurrentReplay(t *testing.T) {
 			t.Fatalf("writer %d seq = %d, want %d", index, sequences[index], sequences[0])
 		}
 	}
-	var chunks, events, meters int
+	var chunks, events int
 	if err := fixture.pool.QueryRow(ctx, `
 		SELECT count(*) FILTER (WHERE stream_kind = 'run_log'),
-		       count(*) FILTER (WHERE stream_kind = 'event'),
-		       count(*) FILTER (WHERE stream_kind = 'meter_event')
+		       count(*) FILTER (WHERE stream_kind = 'event')
 		  FROM telemetry_outbox
 		 WHERE run_lease_id = $1
-	`, params.RunLeaseID).Scan(&chunks, &events, &meters); err != nil {
+	`, params.RunLeaseID).Scan(&chunks, &events); err != nil {
 		t.Fatal(err)
 	}
-	if chunks != 1 || events != 1 || meters != 1 {
-		t.Fatalf("concurrent replay side effects = chunks %d events %d meters %d", chunks, events, meters)
+	if chunks != 1 || events != 1 {
+		t.Fatalf("concurrent replay side effects = chunks %d events %d", chunks, events)
+	}
+}
+
+func TestAppendRunLogChunkEmptyContentOmitsEventSideEffectsOnReplay(t *testing.T) {
+	ctx := context.Background()
+	fixture := newRunLeaseClaimFixture(t, ctx)
+	params := fixture.runningRunLogParams(t, ctx)
+	params.Content = []byte{}
+
+	first, err := fixture.queries.AppendRunLogChunk(ctx, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.ReplayMatches || first.SizeBytes.Int64 != 0 {
+		t.Fatalf("empty append = %+v", first)
+	}
+	replay, err := fixture.queries.AppendRunLogChunk(ctx, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !replay.ReplayMatches || replay.Seq != first.Seq {
+		t.Fatalf("empty replay = %+v, want seq %d", replay, first.Seq)
+	}
+	var chunks, events int
+	if err := fixture.pool.QueryRow(ctx, `
+		SELECT count(*) FILTER (WHERE stream_kind = 'run_log'),
+		       count(*) FILTER (WHERE stream_kind = 'event')
+		  FROM telemetry_outbox
+		 WHERE run_lease_id = $1
+	`, params.RunLeaseID).Scan(&chunks, &events); err != nil {
+		t.Fatal(err)
+	}
+	if chunks != 1 || events != 1 {
+		t.Fatalf("empty chunk side effects = chunks %d events %d", chunks, events)
 	}
 }
 

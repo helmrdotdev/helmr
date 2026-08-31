@@ -6,11 +6,7 @@ SELECT
             WHERE state <> 'written' OR written_at IS NULL
         ),
         0
-    )::bigint AS pending_seq,
-    COALESCE(
-        BOOL_OR(state = 'dead_lettered'),
-        false
-    )::boolean AS dead_lettered_after
+    )::bigint AS pending_seq
 FROM telemetry_outbox
 WHERE org_id = sqlc.arg(org_id)
   AND run_id = sqlc.arg(run_id)

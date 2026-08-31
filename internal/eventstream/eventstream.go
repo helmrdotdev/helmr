@@ -88,12 +88,18 @@ func (s *Stream) RunPublisher(ctx context.Context) error {
 			continue
 		}
 		for _, row := range claimed {
-			if err := s.publishOutboxRow(ctx, row); err != nil {
-				s.log.Warn("publish live telemetry outbox row failed", "outbox_id", row.OutboxID, "stream_kind", row.StreamKind, "error", err)
+			if err := s.publishEventOutboxRow(ctx, row); err != nil {
+				s.log.Warn("publish live telemetry outbox row failed",
+					"outbox_id", row.OutboxID,
+					"stream_kind", row.StreamKind,
+					"attempts", row.Attempts,
+					"pending_age", time.Since(pgvalue.Time(row.CreatedAt)).Truncate(time.Millisecond),
+					"error", err,
+				)
 				if markErr := s.db.MarkLiveTelemetryOutboxFailed(ctx, db.MarkLiveTelemetryOutboxFailedParams{
-					ID:         row.OutboxID,
-					LastError:  err.Error(),
-					RetryAfter: pgvalue.Interval(liveTelemetryPublisherBackoff(int(row.Attempts))),
+					ID:           row.OutboxID,
+					PublishError: err.Error(),
+					RetryAfter:   pgvalue.Interval(liveTelemetryPublisherBackoff(int(row.Attempts))),
 				}); markErr != nil {
 					s.log.Warn("mark live telemetry outbox failed", "outbox_id", row.OutboxID, "error", markErr)
 					if sleepErr := sleepWithContext(ctx, liveTelemetryPublisherBackoff(int(row.Attempts))); sleepErr != nil {
@@ -112,17 +118,6 @@ func (s *Stream) RunPublisher(ctx context.Context) error {
 	}
 }
 
-func (s *Stream) publishOutboxRow(ctx context.Context, row db.ClaimLiveTelemetryOutboxRow) error {
-	switch row.StreamKind {
-	case db.TelemetryStreamKindEvent:
-		return s.publishEventOutboxRow(ctx, row)
-	case db.TelemetryStreamKindTerminalOutput:
-		return s.publishTerminalOutputOutboxRow(ctx, row)
-	default:
-		return fmt.Errorf("unsupported live telemetry stream kind %q", row.StreamKind)
-	}
-}
-
 func (s *Stream) publishEventOutboxRow(ctx context.Context, row db.ClaimLiveTelemetryOutboxRow) error {
 	event := eventResponseFromClaim(row)
 	payload, err := json.Marshal(event)
@@ -130,15 +125,6 @@ func (s *Stream) publishEventOutboxRow(ctx context.Context, row db.ClaimLiveTele
 		return fmt.Errorf("encode event: %w", err)
 	}
 	return s.publishJSON(ctx, row.StreamKey, redisEventID(row.Seq), "event", payload, row.Seq)
-}
-
-func (s *Stream) publishTerminalOutputOutboxRow(ctx context.Context, row db.ClaimLiveTelemetryOutboxRow) error {
-	chunk := terminalOutputChunkFromClaim(row)
-	payload, err := json.Marshal(chunk)
-	if err != nil {
-		return fmt.Errorf("encode terminal output: %w", err)
-	}
-	return s.publishJSON(ctx, row.StreamKey, redisEventID(row.OffsetEnd), "terminal_output", payload, row.OffsetEnd)
 }
 
 func (s *Stream) publishJSON(ctx context.Context, streamKey string, id string, field string, payload []byte, seq int64) error {
@@ -358,18 +344,6 @@ func sleepWithContext(ctx context.Context, duration time.Duration) error {
 
 func eventResponseFromClaim(event db.ClaimLiveTelemetryOutboxRow) api.RunEvent {
 	return apiEventResponse(event.Seq, event.RunID, event.DeploymentID, event.RunLeaseID, event.AttemptNumber, event.TraceID, event.SpanID, event.Traceparent, event.Category, event.Severity, event.Source, event.Kind, event.Message, event.Payload, event.RedactionClass, event.CreatedAt, event.OccurredAt)
-}
-
-func terminalOutputChunkFromClaim(row db.ClaimLiveTelemetryOutboxRow) telemetry.TerminalOutputChunk {
-	return telemetry.TerminalOutputChunk{
-		ID:          strconv.FormatInt(row.OffsetEnd, 10),
-		Stream:      row.StreamName,
-		OffsetStart: row.OffsetStart,
-		OffsetEnd:   row.OffsetEnd,
-		Data:        row.Content,
-		ObservedAt:  pgvalue.Time(row.OccurredAt),
-		CreatedAt:   pgvalue.Time(row.CreatedAt),
-	}
 }
 
 func apiEventResponse(seq int64, runID pgtype.UUID, deploymentID pgtype.UUID, _ pgtype.UUID, attemptNumberValue pgtype.Int4, traceIDValue pgtype.Text, spanIDValue pgtype.Text, traceparentValue pgtype.Text, category string, severity string, source string, rawKind string, message string, payload []byte, redactionClass string, createdAt pgtype.Timestamptz, occurredAt pgtype.Timestamptz) api.RunEvent {

@@ -12,11 +12,10 @@ const (
 type TelemetryOutboxState = string
 
 const (
-	TelemetryOutboxStatePending      TelemetryOutboxState = "pending"
-	TelemetryOutboxStateClaimed      TelemetryOutboxState = "claimed"
-	TelemetryOutboxStateWritten      TelemetryOutboxState = "written"
-	TelemetryOutboxStateFailed       TelemetryOutboxState = "failed"
-	TelemetryOutboxStateDeadLettered TelemetryOutboxState = "dead_lettered"
+	TelemetryOutboxStatePending TelemetryOutboxState = "pending"
+	TelemetryOutboxStateClaimed TelemetryOutboxState = "claimed"
+	TelemetryOutboxStateWritten TelemetryOutboxState = "written"
+	TelemetryOutboxStateFailed  TelemetryOutboxState = "failed"
 )
 
 type DeletionJobStatus = string

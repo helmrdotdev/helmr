@@ -19,11 +19,7 @@ SELECT
             WHERE state <> 'written' OR written_at IS NULL
         ),
         0
-    )::bigint AS pending_seq,
-    COALESCE(
-        BOOL_OR(state = 'dead_lettered'),
-        false
-    )::boolean AS dead_lettered_after
+    )::bigint AS pending_seq
 FROM telemetry_outbox
 WHERE org_id = $1
   AND run_id = $2
@@ -57,9 +53,8 @@ type GetRunTelemetryFrontierParams struct {
 }
 
 type GetRunTelemetryFrontierRow struct {
-	ObservedSeq       int64 `json:"observed_seq"`
-	PendingSeq        int64 `json:"pending_seq"`
-	DeadLetteredAfter bool  `json:"dead_lettered_after"`
+	ObservedSeq int64 `json:"observed_seq"`
+	PendingSeq  int64 `json:"pending_seq"`
 }
 
 func (q *Queries) GetRunTelemetryFrontier(ctx context.Context, arg GetRunTelemetryFrontierParams) (GetRunTelemetryFrontierRow, error) {
@@ -72,6 +67,6 @@ func (q *Queries) GetRunTelemetryFrontier(ctx context.Context, arg GetRunTelemet
 		arg.FilterValues,
 	)
 	var i GetRunTelemetryFrontierRow
-	err := row.Scan(&i.ObservedSeq, &i.PendingSeq, &i.DeadLetteredAfter)
+	err := row.Scan(&i.ObservedSeq, &i.PendingSeq)
 	return i, err
 }

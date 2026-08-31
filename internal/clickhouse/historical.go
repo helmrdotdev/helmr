@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
-	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
@@ -90,42 +89,6 @@ LIMIT @row_limit`
 	return telemetry.RunLogChunkPage{Chunks: chunks, LastSeq: last, Historical: len(chunks)}, nil
 }
 
-func (r *Reader) ListTerminalOutput(ctx context.Context, q telemetry.TerminalOutputQuery) (telemetry.TerminalOutputPage, error) {
-	sql := `SELECT stream_name, offset_start, offset_end, content, observed_at, ingested_at
-FROM helmr_telemetry.terminal_outputs FINAL
-WHERE org_id = @org_id
-  AND project_id = @project_id
-  AND environment_id = @environment_id
-  AND workspace_id = @workspace_id
-  AND resource_kind = @resource_kind
-  AND resource_id = @resource_id
-  AND stream_name = @stream_name
-  AND offset_end > @after
-ORDER BY offset_start ASC
-LIMIT @row_limit`
-	var rows []terminalOutputHistoryRow
-	if err := r.client.Select(ctx, &rows, sql,
-		Named("org_id", q.OrgID),
-		Named("project_id", q.ProjectID),
-		Named("environment_id", q.EnvironmentID),
-		Named("workspace_id", q.WorkspaceID),
-		Named("resource_kind", q.ResourceKind),
-		Named("resource_id", q.ResourceID),
-		Named("stream_name", q.StreamName),
-		Named("after", uint64(q.AfterOffset)),
-		Named("row_limit", uint32(q.Limit)),
-	); err != nil {
-		return telemetry.TerminalOutputPage{}, fmt.Errorf("%w: %v", telemetry.ErrHistoricalUnavailable, err)
-	}
-	chunks := make([]telemetry.TerminalOutputChunk, 0, len(rows))
-	last := q.AfterOffset
-	for _, row := range rows {
-		chunks = append(chunks, row.chunk(q.ResourceKind, q.ResourceID))
-		last = int64(row.OffsetEnd)
-	}
-	return telemetry.TerminalOutputPage{Chunks: chunks, LastOffset: last, Historical: len(chunks)}, nil
-}
-
 type eventRow struct {
 	Seq            uint64    `ch:"seq"`
 	RunID          *string   `ch:"run_id"`
@@ -191,36 +154,6 @@ type runLogRow struct {
 	Content       string    `ch:"content"`
 	SizeBytes     uint64    `ch:"size_bytes"`
 	ObservedAt    time.Time `ch:"observed_at"`
-}
-
-type terminalOutputHistoryRow struct {
-	StreamName  string    `ch:"stream_name"`
-	OffsetStart uint64    `ch:"offset_start"`
-	OffsetEnd   uint64    `ch:"offset_end"`
-	Content     string    `ch:"content"`
-	ObservedAt  time.Time `ch:"observed_at"`
-	IngestedAt  time.Time `ch:"ingested_at"`
-}
-
-func (r terminalOutputHistoryRow) chunk(resourceKind string, resourceID uuid.UUID) telemetry.TerminalOutputChunk {
-	content, err := base64.StdEncoding.DecodeString(r.Content)
-	if err != nil {
-		content = []byte(r.Content)
-	}
-	observed := r.ObservedAt.UTC()
-	created := r.IngestedAt.UTC()
-	if created.IsZero() {
-		created = observed
-	}
-	return telemetry.TerminalOutputChunk{
-		ID:          fmt.Sprintf("terminal:%s:%s:%s:%d", resourceKind, resourceID.String(), r.StreamName, r.OffsetEnd),
-		Stream:      r.StreamName,
-		OffsetStart: int64(r.OffsetStart),
-		OffsetEnd:   int64(r.OffsetEnd),
-		Data:        content,
-		ObservedAt:  observed,
-		CreatedAt:   created,
-	}
 }
 
 func (r runLogRow) chunk() api.RunLogChunk {

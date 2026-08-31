@@ -233,10 +233,8 @@ func (ns NullRunCheckpointArtifactRole) Value() (driver.Value, error) {
 type TelemetryStreamKind string
 
 const (
-	TelemetryStreamKindRunLog         TelemetryStreamKind = "run_log"
-	TelemetryStreamKindEvent          TelemetryStreamKind = "event"
-	TelemetryStreamKindTerminalOutput TelemetryStreamKind = "terminal_output"
-	TelemetryStreamKindMeterEvent     TelemetryStreamKind = "meter_event"
+	TelemetryStreamKindRunLog TelemetryStreamKind = "run_log"
+	TelemetryStreamKindEvent  TelemetryStreamKind = "event"
 )
 
 func (e *TelemetryStreamKind) Scan(src interface{}) error {
@@ -556,28 +554,6 @@ type MagicLink struct {
 	ConsumedAt       pgtype.Timestamptz `json:"consumed_at"`
 	ConsumedByUserID pgtype.UUID        `json:"consumed_by_user_id"`
 	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
-}
-
-type MeterEvent struct {
-	ID                     int64              `json:"id"`
-	OrgID                  pgtype.UUID        `json:"org_id"`
-	ProjectID              pgtype.UUID        `json:"project_id"`
-	EnvironmentID          pgtype.UUID        `json:"environment_id"`
-	RunID                  pgtype.UUID        `json:"run_id"`
-	RunLeaseID             pgtype.UUID        `json:"run_lease_id"`
-	AttemptNumber          pgtype.Int4        `json:"attempt_number"`
-	TraceID                pgtype.Text        `json:"trace_id"`
-	SpanID                 pgtype.Text        `json:"span_id"`
-	Meter                  string             `json:"meter"`
-	Quantity               pgtype.Numeric     `json:"quantity"`
-	Unit                   string             `json:"unit"`
-	MeasuredFrom           pgtype.Timestamptz `json:"measured_from"`
-	MeasuredTo             pgtype.Timestamptz `json:"measured_to"`
-	OccurredAt             pgtype.Timestamptz `json:"occurred_at"`
-	Details                []byte             `json:"details"`
-	IdempotencyKey         string             `json:"idempotency_key"`
-	IdempotencyFingerprint string             `json:"idempotency_fingerprint"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 }
 
 type OrgMember struct {
@@ -1066,11 +1042,7 @@ type TelemetryOutbox struct {
 	EnvironmentID      pgtype.UUID         `json:"environment_id"`
 	RunID              pgtype.UUID         `json:"run_id"`
 	DeploymentID       pgtype.UUID         `json:"deployment_id"`
-	WorkspaceID        pgtype.UUID         `json:"workspace_id"`
-	ResourceKind       string              `json:"resource_kind"`
-	ResourceID         pgtype.UUID         `json:"resource_id"`
 	RunLeaseID         pgtype.UUID         `json:"run_lease_id"`
-	MeterEventID       pgtype.Int8         `json:"meter_event_id"`
 	AttemptNumber      pgtype.Int4         `json:"attempt_number"`
 	TraceID            pgtype.Text         `json:"trace_id"`
 	SpanID             pgtype.Text         `json:"span_id"`
@@ -1085,8 +1057,6 @@ type TelemetryOutbox struct {
 	Content            []byte              `json:"content"`
 	SizeBytes          pgtype.Int8         `json:"size_bytes"`
 	ObservedSeq        pgtype.Int8         `json:"observed_seq"`
-	OffsetStart        pgtype.Int8         `json:"offset_start"`
-	OffsetEnd          pgtype.Int8         `json:"offset_end"`
 	RedactionClass     string              `json:"redaction_class"`
 	RetentionClass     string              `json:"retention_class"`
 	SnapshotVersion    pgtype.Int8         `json:"snapshot_version"`
@@ -1097,7 +1067,8 @@ type TelemetryOutbox struct {
 	PublishedAt        pgtype.Timestamptz  `json:"published_at"`
 	PublishAttempts    int32               `json:"publish_attempts"`
 	PublishLockedUntil pgtype.Timestamptz  `json:"publish_locked_until"`
-	LastError          string              `json:"last_error"`
+	IngestError        string              `json:"ingest_error"`
+	PublishError       string              `json:"publish_error"`
 	ObservedAt         pgtype.Timestamptz  `json:"observed_at"`
 	CreatedAt          pgtype.Timestamptz  `json:"created_at"`
 	UpdatedAt          pgtype.Timestamptz  `json:"updated_at"`

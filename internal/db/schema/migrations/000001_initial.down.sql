@@ -3,8 +3,6 @@ DROP TABLE IF EXISTS run_waits;
 DROP TABLE IF EXISTS outbox_messages;
 DROP TABLE IF EXISTS public_access_tokens;
 DROP TABLE IF EXISTS tokens;
-ALTER TABLE telemetry_outbox DROP CONSTRAINT IF EXISTS telemetry_outbox_meter_event_id_fkey;
-DROP TABLE IF EXISTS meter_events;
 DROP TABLE IF EXISTS run_checkpoint_artifacts;
 ALTER TABLE runtime_instances DROP CONSTRAINT IF EXISTS runtime_instances_restore_checkpoint_workspace_fkey;
 ALTER TABLE runtime_instances DROP CONSTRAINT IF EXISTS runtime_instances_restore_checkpoint_execution_fkey;
