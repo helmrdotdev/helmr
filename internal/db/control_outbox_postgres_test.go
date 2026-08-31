@@ -126,6 +126,38 @@ func TestControlOutboxPruneIsBoundedAndProtectsLiveStates(t *testing.T) {
 	}
 }
 
+func TestControlOutboxDeadLettersOnlyUnsupportedTopics(t *testing.T) {
+	ctx := context.Background()
+	pool := newPostgresDB(t, ctx)
+	queries := db.New(pool)
+
+	knownID := uuid.NewV7()
+	unknownID := uuid.NewV7()
+	insertControlOutbox(t, ctx, pool, knownID, "token.reconcile", "pending", time.Time{})
+	insertControlOutbox(t, ctx, pool, unknownID, "unknown.topic", "pending", time.Time{})
+
+	rows, err := queries.DeadLetterUnsupportedControlOutbox(ctx, db.DeadLetterUnsupportedControlOutboxParams{
+		SupportedTopics: []string{
+			"session.input.reconcile",
+			"session.close.reconcile",
+			"token.reconcile",
+			"secret.revoked",
+		},
+		RowLimit: 100,
+	})
+	if err != nil || len(rows) != 1 || pgvalue.MustUUIDValue(rows[0].ID) != unknownID || rows[0].State != "dead_lettered" {
+		t.Fatalf("dead-letter unsupported = %+v, %v", rows, err)
+	}
+	assertControlOutboxPresent(t, ctx, pool, knownID)
+	var knownState string
+	if err := pool.QueryRow(ctx, `SELECT state FROM control_outbox WHERE id = $1`, knownID).Scan(&knownState); err != nil {
+		t.Fatal(err)
+	}
+	if knownState != "pending" {
+		t.Fatalf("known topic state = %q, want pending", knownState)
+	}
+}
+
 func insertControlOutbox(
 	t *testing.T,
 	ctx context.Context,

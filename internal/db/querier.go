@@ -138,6 +138,7 @@ type Querier interface {
 	CreateWorkspaceFromRunDeployment(ctx context.Context, arg CreateWorkspaceFromRunDeploymentParams) (CreateWorkspaceFromRunDeploymentRow, error)
 	CreateWorkspaceSecret(ctx context.Context, arg CreateWorkspaceSecretParams) (WorkspaceSecret, error)
 	DeadLetterControlOutbox(ctx context.Context, arg DeadLetterControlOutboxParams) (ControlOutbox, error)
+	DeadLetterUnsupportedControlOutbox(ctx context.Context, arg DeadLetterUnsupportedControlOutboxParams) ([]ControlOutbox, error)
 	DelayActorCheckpointFailureRetry(ctx context.Context, arg DelayActorCheckpointFailureRetryParams) (Run, error)
 	DelayActorRunRetry(ctx context.Context, arg DelayActorRunRetryParams) (Run, error)
 	DelayCheckpointFailureRetry(ctx context.Context, arg DelayCheckpointFailureRetryParams) (Run, error)

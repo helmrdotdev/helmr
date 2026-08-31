@@ -189,6 +189,61 @@ func (q *Queries) DeadLetterControlOutbox(ctx context.Context, arg DeadLetterCon
 	return i, err
 }
 
+const deadLetterUnsupportedControlOutbox = `-- name: DeadLetterUnsupportedControlOutbox :many
+WITH candidates AS (
+    SELECT id
+    FROM control_outbox
+    WHERE state = 'pending'
+      AND NOT (topic = ANY($1::text[]))
+    ORDER BY created_at, id
+    LIMIT $2
+    FOR UPDATE SKIP LOCKED
+)
+UPDATE control_outbox
+SET state = 'dead_lettered',
+    last_error = 'unsupported control outbox topic'
+FROM candidates
+WHERE control_outbox.id = candidates.id
+RETURNING control_outbox.id, control_outbox.topic, control_outbox.payload, control_outbox.state, control_outbox.attempts, control_outbox.available_at, control_outbox.claimed_by, control_outbox.claim_expires_at, control_outbox.last_error, control_outbox.created_at, control_outbox.delivered_at
+`
+
+type DeadLetterUnsupportedControlOutboxParams struct {
+	SupportedTopics []string `json:"supported_topics"`
+	RowLimit        int32    `json:"row_limit"`
+}
+
+func (q *Queries) DeadLetterUnsupportedControlOutbox(ctx context.Context, arg DeadLetterUnsupportedControlOutboxParams) ([]ControlOutbox, error) {
+	rows, err := q.db.Query(ctx, deadLetterUnsupportedControlOutbox, arg.SupportedTopics, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ControlOutbox
+	for rows.Next() {
+		var i ControlOutbox
+		if err := rows.Scan(
+			&i.ID,
+			&i.Topic,
+			&i.Payload,
+			&i.State,
+			&i.Attempts,
+			&i.AvailableAt,
+			&i.ClaimedBy,
+			&i.ClaimExpiresAt,
+			&i.LastError,
+			&i.CreatedAt,
+			&i.DeliveredAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const deliverControlOutbox = `-- name: DeliverControlOutbox :one
 UPDATE control_outbox
 SET state = 'delivered',

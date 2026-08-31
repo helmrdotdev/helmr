@@ -77,6 +77,23 @@ WHERE id = sqlc.arg(id)
   AND claim_expires_at > now()
 RETURNING *;
 
+-- name: DeadLetterUnsupportedControlOutbox :many
+WITH candidates AS (
+    SELECT id
+    FROM control_outbox
+    WHERE state = 'pending'
+      AND NOT (topic = ANY(sqlc.arg(supported_topics)::text[]))
+    ORDER BY created_at, id
+    LIMIT sqlc.arg(row_limit)
+    FOR UPDATE SKIP LOCKED
+)
+UPDATE control_outbox
+SET state = 'dead_lettered',
+    last_error = 'unsupported control outbox topic'
+FROM candidates
+WHERE control_outbox.id = candidates.id
+RETURNING control_outbox.*;
+
 -- name: PruneDeliveredControlOutbox :many
 DELETE FROM control_outbox
  WHERE id IN (

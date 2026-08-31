@@ -17,7 +17,15 @@ const (
 	lifecycleEvery     = time.Minute
 )
 
+var supportedTopics = []string{
+	"session.input.reconcile",
+	"session.close.reconcile",
+	"token.reconcile",
+	"secret.revoked",
+}
+
 type LifecycleStore interface {
+	DeadLetterUnsupportedControlOutbox(context.Context, db.DeadLetterUnsupportedControlOutboxParams) ([]db.ControlOutbox, error)
 	PruneDeliveredControlOutbox(context.Context, db.PruneDeliveredControlOutboxParams) ([]pgtype.UUID, error)
 	ControlOutboxLifecycle(context.Context) (db.ControlOutboxLifecycleRow, error)
 }
@@ -64,22 +72,39 @@ func (l *Lifecycle) Run(ctx context.Context) error {
 }
 
 func (l *Lifecycle) tick(ctx context.Context) error {
-	pruned, err := l.store.PruneDeliveredControlOutbox(ctx, db.PruneDeliveredControlOutboxParams{
-		RetainFor: pgvalue.Interval(l.retain),
-		RowLimit:  l.limit,
+	deadLettered, err := l.store.DeadLetterUnsupportedControlOutbox(ctx, db.DeadLetterUnsupportedControlOutboxParams{
+		SupportedTopics: supportedTopics,
+		RowLimit:        l.limit,
 	})
 	if err != nil {
 		return err
+	}
+	for _, message := range deadLettered {
+		LogDeadLettered(l.log, pgvalue.MustUUIDValue(message.ID).String(), message.Topic, errors.New("unsupported control outbox topic"))
+	}
+	prunedCount := 0
+	for {
+		pruned, err := l.store.PruneDeliveredControlOutbox(ctx, db.PruneDeliveredControlOutboxParams{
+			RetainFor: pgvalue.Interval(l.retain),
+			RowLimit:  l.limit,
+		})
+		if err != nil {
+			return err
+		}
+		prunedCount += len(pruned)
+		if len(pruned) < int(l.limit) {
+			break
+		}
 	}
 	stats, err := l.store.ControlOutboxLifecycle(ctx)
 	if err != nil {
 		return err
 	}
 	attrs := []any{
-		"pruned", len(pruned),
+		"pruned", prunedCount,
 		"dead_lettered", stats.DeadLettered,
 	}
-	if len(pruned) == 0 && stats.DeadLettered == 0 && !stats.OldestPendingAt.Valid {
+	if prunedCount == 0 && stats.DeadLettered == 0 && !stats.OldestPendingAt.Valid {
 		return nil
 	}
 	if stats.OldestPendingAt.Valid {
