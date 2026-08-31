@@ -28,11 +28,6 @@ type scheduleReconciliation struct {
 }
 
 func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
-	var request struct{}
-	if err := decodeOptionalJSON(r.Body, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid deployment promotion request: %w", err)))
-		return
-	}
 	deploymentID, err := parseUUIDParam(r, "deploymentID")
 	if err != nil {
 		writeError(w, badRequest(err))

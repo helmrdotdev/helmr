@@ -290,18 +290,12 @@ func TestDeploySkipPromotionDoesNotPromote(t *testing.T) {
 	}
 }
 
-func TestDeploymentPromoteSendsEmptyRequestAndRejectsReasonFlag(t *testing.T) {
+func TestDeploymentPromote(t *testing.T) {
 	const deploymentID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"
-	var promoteBody string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/deployments/"+deploymentID+"/promote" {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Fatal(err)
-		}
-		promoteBody = strings.TrimSpace(string(body))
 		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
 			ID: deploymentID, Version: "v-test", CreatedAt: time.Now(),
 		})
@@ -318,20 +312,8 @@ func TestDeploymentPromoteSendsEmptyRequestAndRejectsReasonFlag(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if promoteBody != "{}" {
-		t.Fatalf("promote body = %q, want {}", promoteBody)
-	}
 	if out.String() != "v-test\n" {
 		t.Fatalf("output = %q", out.String())
-	}
-
-	rejected := newRootCommand()
-	rejected.SetOut(io.Discard)
-	rejected.SetErr(io.Discard)
-	rejected.SetArgs([]string{"deployment", "promote", deploymentID, "--reason", "rollback"})
-	err := rejected.Execute()
-	if err == nil || !strings.Contains(err.Error(), "unknown flag: --reason") {
-		t.Fatalf("error = %v, want unknown --reason flag", err)
 	}
 }
 

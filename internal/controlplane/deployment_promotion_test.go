@@ -3,16 +3,10 @@ package controlplane
 import (
 	"context"
 	"errors"
-	"io"
-	"log/slog"
-	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 	"uuid"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
@@ -126,24 +120,6 @@ func TestReconcileSchedulesLocksSchedulesBeforeSecrets(t *testing.T) {
 	}
 	if len(store.lockedNames) != 2 || store.lockedNames[0] != "A_TOKEN" || store.lockedNames[1] != "Z_TOKEN" {
 		t.Fatalf("Secret lookup names = %v, want canonical complete set", store.lockedNames)
-	}
-}
-
-func TestPromoteDeploymentRejectsLegacyReasonField(t *testing.T) {
-	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"reason":"rollback"}`))
-	route := chi.NewRouteContext()
-	route.URLParams.Add("deploymentID", uuid.NewV7().String())
-	request = request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, route))
-	recorder := httptest.NewRecorder()
-
-	server.promoteDeployment(recorder, request)
-
-	if recorder.Code != http.StatusBadRequest {
-		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
-	}
-	if !strings.Contains(recorder.Body.String(), "reason") {
-		t.Fatalf("error = %s, want rejected reason field", recorder.Body.String())
 	}
 }
 

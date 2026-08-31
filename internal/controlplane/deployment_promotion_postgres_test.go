@@ -42,7 +42,7 @@ func TestPromoteDeploymentPostgres(t *testing.T) {
 
 	t.Run("invalid and cross-scope targets fail", func(t *testing.T) {
 		fixture.setCurrent(t, fixture.currentID)
-		recorder := fixture.promote(t, uuid.NewV7(), "{}", principal, "", "")
+		recorder := fixture.promote(t, uuid.NewV7(), principal, "", "")
 		if recorder.Code != http.StatusNotFound {
 			t.Fatalf("invalid target status=%d body=%s", recorder.Code, recorder.Body.String())
 		}
@@ -50,7 +50,7 @@ func TestPromoteDeploymentPostgres(t *testing.T) {
 			t.Fatalf("current after invalid target = %s, want %s", got, fixture.currentID)
 		}
 
-		recorder = fixture.promote(t, fixture.otherID, "{}", principal, "", "")
+		recorder = fixture.promote(t, fixture.otherID, principal, "", "")
 		if recorder.Code != http.StatusNotFound {
 			t.Fatalf("cross-scope status=%d body=%s", recorder.Code, recorder.Body.String())
 		}
@@ -61,7 +61,7 @@ func TestPromoteDeploymentPostgres(t *testing.T) {
 
 	t.Run("schedule reconciliation rolls back", func(t *testing.T) {
 		fixture.setCurrent(t, fixture.currentID)
-		recorder := fixture.promote(t, fixture.scheduledID, "{}", principal, "", "")
+		recorder := fixture.promote(t, fixture.scheduledID, principal, "", "")
 		if recorder.Code != http.StatusBadRequest {
 			t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 		}
@@ -82,28 +82,9 @@ func TestPromoteDeploymentPostgres(t *testing.T) {
 		}
 	})
 
-	t.Run("empty body and object promote", func(t *testing.T) {
-		fixture.setCurrent(t, fixture.currentID)
-		recorder := fixture.promote(t, fixture.olderID, "", principal, "", "")
-		if recorder.Code != http.StatusOK {
-			t.Fatalf("empty body status=%d body=%s", recorder.Code, recorder.Body.String())
-		}
-		if got := fixture.currentDeployment(t); got != fixture.olderID {
-			t.Fatalf("current after empty body = %s, want %s", got, fixture.olderID)
-		}
-
-		recorder = fixture.promote(t, fixture.currentID, "{}", principal, "", "")
-		if recorder.Code != http.StatusOK {
-			t.Fatalf("object body status=%d body=%s", recorder.Code, recorder.Body.String())
-		}
-		if got := fixture.currentDeployment(t); got != fixture.currentID {
-			t.Fatalf("current after object body = %s, want %s", got, fixture.currentID)
-		}
-	})
-
 	t.Run("older immutable deployment", func(t *testing.T) {
 		fixture.setCurrent(t, fixture.currentID)
-		recorder := fixture.promote(t, fixture.olderID, "{}", principal, "", "")
+		recorder := fixture.promote(t, fixture.olderID, principal, "", "")
 		if recorder.Code != http.StatusOK {
 			t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 		}
@@ -138,7 +119,7 @@ func TestPromoteDeploymentPostgres(t *testing.T) {
 			Kind: auth.ActorKindSession, Role: auth.RoleDeveloper,
 		}
 		recorder := fixture.promote(
-			t, fixture.olderID, "{}", session,
+			t, fixture.olderID, session,
 			fixture.projectID.String(), fixture.environmentID.String(),
 		)
 		if recorder.Code != http.StatusOK {
@@ -164,7 +145,7 @@ func TestPromoteDeploymentPostgres(t *testing.T) {
 
 		done := make(chan *httptest.ResponseRecorder, 1)
 		go func() {
-			done <- fixture.promote(t, fixture.olderID, "{}", principal, "", "")
+			done <- fixture.promote(t, fixture.olderID, principal, "", "")
 		}()
 		deadline := time.Now().Add(5 * time.Second)
 		for {
@@ -236,17 +217,12 @@ func (fixture deploymentPromotionPostgresFixture) currentDeployment(t *testing.T
 func (fixture deploymentPromotionPostgresFixture) promote(
 	t *testing.T,
 	deploymentID uuid.UUID,
-	body string,
 	principal auth.Actor,
 	projectID string,
 	environmentID string,
 ) *httptest.ResponseRecorder {
 	t.Helper()
-	var reader io.Reader = http.NoBody
-	if body != "" {
-		reader = strings.NewReader(body)
-	}
-	request := httptest.NewRequest(http.MethodPost, "/", reader)
+	request := httptest.NewRequest(http.MethodPost, "/", http.NoBody)
 	route := chi.NewRouteContext()
 	route.URLParams.Add("deploymentID", deploymentID.String())
 	if projectID != "" {
