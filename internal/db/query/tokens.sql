@@ -127,7 +127,7 @@ reconciliation_intent AS (
         payload,
         available_at
     )
-    SELECT sqlc.arg(outbox_message_id)::uuid,
+    SELECT sqlc.arg(control_outbox_id)::uuid,
            'token.reconcile',
            jsonb_build_object(
                'environmentId', changed.environment_id::text,
@@ -207,7 +207,7 @@ reconciliation_intent AS (
         payload,
         available_at
     )
-    SELECT sqlc.arg(outbox_message_id)::uuid,
+    SELECT sqlc.arg(control_outbox_id)::uuid,
            'token.reconcile',
            jsonb_build_object(
                'environmentId', changed.environment_id::text,
@@ -228,9 +228,9 @@ SELECT selected_token.*,
   FROM selected_token;
 
 -- name: ExpireDueTokens :many
-WITH provided_outbox_ids AS MATERIALIZED (
+WITH provided_control_outbox_ids AS MATERIALIZED (
     SELECT id, ordinality
-      FROM unnest(sqlc.arg(outbox_message_ids)::uuid[])
+      FROM unnest(sqlc.arg(control_outbox_ids)::uuid[])
            WITH ORDINALITY AS supplied(id, ordinality)
 ),
 candidates AS MATERIALIZED (
@@ -250,7 +250,7 @@ expired AS (
      FROM candidates
      WHERE tokens.id = candidates.id
        AND tokens.state = 'pending'
-       AND cardinality(sqlc.arg(outbox_message_ids)::uuid[])
+       AND cardinality(sqlc.arg(control_outbox_ids)::uuid[])
            >= (SELECT count(*) FROM candidates)
     RETURNING tokens.*
 ),
@@ -266,7 +266,7 @@ reconciliation_intents AS (
         payload,
         available_at
     )
-    SELECT provided_outbox_ids.id,
+    SELECT provided_control_outbox_ids.id,
            'token.reconcile',
            jsonb_build_object(
                'environmentId', expired.environment_id::text,
@@ -275,13 +275,13 @@ reconciliation_intents AS (
            transaction_timestamp()
       FROM expired
       JOIN ordered_expired USING (id)
-      JOIN provided_outbox_ids USING (ordinality)
+      JOIN provided_control_outbox_ids USING (ordinality)
     RETURNING id
 )
 SELECT expired.*
   FROM expired
   JOIN ordered_expired USING (id)
-  JOIN provided_outbox_ids USING (ordinality)
+  JOIN provided_control_outbox_ids USING (ordinality)
   JOIN reconciliation_intents
-    ON reconciliation_intents.id = provided_outbox_ids.id
+    ON reconciliation_intents.id = provided_control_outbox_ids.id
  ORDER BY expired.expires_at, expired.id;

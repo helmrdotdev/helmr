@@ -848,7 +848,7 @@ func (s *Server) completeTokenRecord(
 			OrgID:                 tokenRow.OrgID, ProjectID: tokenRow.ProjectID,
 			EnvironmentID: tokenRow.EnvironmentID, ID: tokenRow.ID,
 			Result:          canonical,
-			OutboxMessageID: pgvalue.UUID(uuid.NewV7()),
+			ControlOutboxID: pgvalue.UUID(uuid.NewV7()),
 		})
 		if err != nil {
 			return err
@@ -953,7 +953,7 @@ func (s *Server) cancelTokenRecord(
 		row, err := work.q.CancelToken(ctx, db.CancelTokenParams{
 			OrgID: tokenRow.OrgID, ProjectID: tokenRow.ProjectID,
 			EnvironmentID: tokenRow.EnvironmentID, ID: tokenRow.ID,
-			OutboxMessageID: pgvalue.UUID(uuid.NewV7()),
+			ControlOutboxID: pgvalue.UUID(uuid.NewV7()),
 		})
 		if err != nil {
 			return err

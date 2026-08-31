@@ -190,7 +190,7 @@ func (w *DeliveryWorker) deadLetter(ctx context.Context, message db.ControlOutbo
 		return errors.Join(cause, err)
 	}
 	outbox.LogDeadLettered(w.log, pgvalue.UUIDString(message.ID), message.Topic, cause)
-	return cause
+	return nil
 }
 
 type sessionInputReconcilePayload struct {

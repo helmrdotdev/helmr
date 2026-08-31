@@ -142,8 +142,8 @@ func TestSessionInputDeliveryDeadLettersInvalidIntent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := worker.tick(context.Background()); err == nil {
-		t.Fatal("invalid payload should surface its dead-letter cause")
+	if err := worker.tick(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 	if !store.deadLettered || store.retried || store.delivered != 0 {
 		t.Fatalf("invalid delivery = dead-lettered %v retried %v delivered %d", store.deadLettered, store.retried, store.delivered)
@@ -175,8 +175,8 @@ func TestSessionInputDeliveryDeadLettersUnsupportedTopic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := worker.tick(context.Background()); err == nil {
-		t.Fatal("unsupported topic should surface its dead-letter cause")
+	if err := worker.tick(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 	if !store.deadLettered || !strings.Contains(logs.String(), `"topic":"session.unknown.reconcile"`) {
 		t.Fatalf("unsupported topic = dead-lettered %v logs %s", store.deadLettered, logs.String())

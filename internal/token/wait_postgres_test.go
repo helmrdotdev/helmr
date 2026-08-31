@@ -1225,7 +1225,7 @@ func TestTokenWaitReconcilerTransitionsHotCheckpointingAndParkedWaits(t *testing
 		fixture := newRunLeaseClaimFixture(t, ctx)
 		setup := newTokenWaitReconcileSetup(t, ctx, fixture, db.RunWaitStateCheckpointing, time.Now().Add(-time.Minute))
 		expired, err := fixture.queries.ExpireDueTokens(ctx, db.ExpireDueTokensParams{
-			OutboxMessageIds: pgvalue.NewUUIDv7Batch(100),
+			ControlOutboxIds: pgvalue.NewUUIDv7Batch(100),
 			LimitCount:       100,
 		})
 		if err != nil || len(expired) != 1 {

@@ -22,9 +22,6 @@ func RetryAfter(attempt int32) time.Duration {
 }
 
 func LogDeadLettered(log *slog.Logger, id string, topic string, cause error) {
-	if log == nil {
-		return
-	}
 	log.Warn("control outbox dead-lettered", "id", id, "topic", topic, "error", cause)
 }
 

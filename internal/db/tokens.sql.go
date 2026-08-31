@@ -91,7 +91,7 @@ type CancelTokenParams struct {
 	ProjectID       pgtype.UUID `json:"project_id"`
 	EnvironmentID   pgtype.UUID `json:"environment_id"`
 	ID              pgtype.UUID `json:"id"`
-	OutboxMessageID pgtype.UUID `json:"outbox_message_id"`
+	ControlOutboxID pgtype.UUID `json:"control_outbox_id"`
 }
 
 type CancelTokenRow struct {
@@ -124,7 +124,7 @@ func (q *Queries) CancelToken(ctx context.Context, arg CancelTokenParams) (Cance
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ID,
-		arg.OutboxMessageID,
+		arg.ControlOutboxID,
 	)
 	var i CancelTokenRow
 	err := row.Scan(
@@ -244,7 +244,7 @@ type CompleteTokenParams struct {
 	EnvironmentID         pgtype.UUID `json:"environment_id"`
 	ID                    pgtype.UUID `json:"id"`
 	Result                []byte      `json:"result"`
-	OutboxMessageID       pgtype.UUID `json:"outbox_message_id"`
+	ControlOutboxID       pgtype.UUID `json:"control_outbox_id"`
 }
 
 type CompleteTokenRow struct {
@@ -280,7 +280,7 @@ func (q *Queries) CompleteToken(ctx context.Context, arg CompleteTokenParams) (C
 		arg.EnvironmentID,
 		arg.ID,
 		arg.Result,
-		arg.OutboxMessageID,
+		arg.ControlOutboxID,
 	)
 	var i CompleteTokenRow
 	err := row.Scan(
@@ -380,7 +380,7 @@ func (q *Queries) CreateToken(ctx context.Context, arg CreateTokenParams) (Token
 }
 
 const expireDueTokens = `-- name: ExpireDueTokens :many
-WITH provided_outbox_ids AS MATERIALIZED (
+WITH provided_control_outbox_ids AS MATERIALIZED (
     SELECT id, ordinality
       FROM unnest($1::uuid[])
            WITH ORDINALITY AS supplied(id, ordinality)
@@ -418,7 +418,7 @@ reconciliation_intents AS (
         payload,
         available_at
     )
-    SELECT provided_outbox_ids.id,
+    SELECT provided_control_outbox_ids.id,
            'token.reconcile',
            jsonb_build_object(
                'environmentId', expired.environment_id::text,
@@ -427,20 +427,20 @@ reconciliation_intents AS (
            transaction_timestamp()
       FROM expired
       JOIN ordered_expired USING (id)
-      JOIN provided_outbox_ids USING (ordinality)
+      JOIN provided_control_outbox_ids USING (ordinality)
     RETURNING id
 )
 SELECT expired.id, expired.org_id, expired.project_id, expired.environment_id, expired.state, expired.expires_at, expired.callback_secret_fingerprint, expired.completion_fingerprint, expired.result, expired.error, expired.metadata, expired.tags, expired.created_at, expired.updated_at, expired.completed_at, expired.expired_at, expired.cancelled_at
   FROM expired
   JOIN ordered_expired USING (id)
-  JOIN provided_outbox_ids USING (ordinality)
+  JOIN provided_control_outbox_ids USING (ordinality)
   JOIN reconciliation_intents
-    ON reconciliation_intents.id = provided_outbox_ids.id
+    ON reconciliation_intents.id = provided_control_outbox_ids.id
  ORDER BY expired.expires_at, expired.id
 `
 
 type ExpireDueTokensParams struct {
-	OutboxMessageIds []pgtype.UUID `json:"outbox_message_ids"`
+	ControlOutboxIds []pgtype.UUID `json:"control_outbox_ids"`
 	LimitCount       int32         `json:"limit_count"`
 }
 
@@ -465,7 +465,7 @@ type ExpireDueTokensRow struct {
 }
 
 func (q *Queries) ExpireDueTokens(ctx context.Context, arg ExpireDueTokensParams) ([]ExpireDueTokensRow, error) {
-	rows, err := q.db.Query(ctx, expireDueTokens, arg.OutboxMessageIds, arg.LimitCount)
+	rows, err := q.db.Query(ctx, expireDueTokens, arg.ControlOutboxIds, arg.LimitCount)
 	if err != nil {
 		return nil, err
 	}

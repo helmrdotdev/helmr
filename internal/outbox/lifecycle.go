@@ -14,7 +14,7 @@ import (
 const (
 	DeliveredRetention = 24 * time.Hour
 	pruneBatchSize     = int32(100)
-	lifecycleEvery     = 5 * time.Second
+	lifecycleEvery     = time.Minute
 )
 
 type LifecycleStore interface {
@@ -78,6 +78,9 @@ func (l *Lifecycle) tick(ctx context.Context) error {
 	attrs := []any{
 		"pruned", len(pruned),
 		"dead_lettered", stats.DeadLettered,
+	}
+	if len(pruned) == 0 && stats.DeadLettered == 0 && !stats.OldestPendingAt.Valid {
+		return nil
 	}
 	if stats.OldestPendingAt.Valid {
 		attrs = append(attrs, "oldest_pending_age", l.now().UTC().Sub(stats.OldestPendingAt.Time))

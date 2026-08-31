@@ -89,7 +89,7 @@ func (w *DeliveryWorker) Run(ctx context.Context) error {
 
 func (w *DeliveryWorker) tick(ctx context.Context) error {
 	if _, err := w.store.ExpireDueTokens(ctx, db.ExpireDueTokensParams{
-		OutboxMessageIds: pgvalue.NewUUIDv7Batch(w.batchSize),
+		ControlOutboxIds: pgvalue.NewUUIDv7Batch(w.batchSize),
 		LimitCount:       w.batchSize,
 	}); err != nil {
 		return fmt.Errorf("expire due tokens: %w", err)
@@ -198,7 +198,7 @@ func (w *DeliveryWorker) deadLetter(ctx context.Context, message db.ControlOutbo
 		return errors.Join(cause, err)
 	}
 	outbox.LogDeadLettered(w.log, pgvalue.UUIDString(message.ID), message.Topic, cause)
-	return cause
+	return nil
 }
 
 type tokenReconcilePayload struct {

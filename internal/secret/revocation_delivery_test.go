@@ -187,8 +187,8 @@ func TestSecretRevocationDeliveryDeadLettersInvalidPayload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := worker.tick(context.Background()); err == nil {
-		t.Fatal("expected invalid payload failure")
+	if err := worker.tick(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 	if !store.deadLettered || store.retried || store.delivered != 0 {
 		t.Fatalf(

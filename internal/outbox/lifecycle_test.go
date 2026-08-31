@@ -44,6 +44,23 @@ func TestLifecycleLogsPendingAgeAndDeadLetterCount(t *testing.T) {
 	}
 }
 
+func TestLifecycleDoesNotLogAnEmptyTick(t *testing.T) {
+	var logs bytes.Buffer
+	loop, err := NewLifecycle(
+		slog.New(slog.NewJSONHandler(&logs, nil)),
+		&lifecycleStore{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := loop.tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if logs.Len() != 0 {
+		t.Fatalf("empty lifecycle log = %s", logs.String())
+	}
+}
+
 type lifecycleStore struct {
 	pruned []pgtype.UUID
 	stats  db.ControlOutboxLifecycleRow
