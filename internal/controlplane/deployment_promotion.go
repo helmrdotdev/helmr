@@ -6,11 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
-	"strings"
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
@@ -30,11 +28,6 @@ type scheduleReconciliation struct {
 }
 
 func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
-	var request api.PromoteDeploymentRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid deployment promotion request: %w", err)))
-		return
-	}
 	deploymentID, err := parseUUIDParam(r, "deploymentID")
 	if err != nil {
 		writeError(w, badRequest(err))
@@ -48,16 +41,6 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 	}
 	if !actor.HasPermission(auth.PermissionTasksDeploy, scope) {
 		writeError(w, forbidden(errors.New("permission is required")))
-		return
-	}
-	principal, err := auth.ActorPrincipal(actor)
-	if err != nil {
-		writeError(w, forbidden(err))
-		return
-	}
-	reason := strings.TrimSpace(request.Reason)
-	if len(reason) > 1024 {
-		writeError(w, badRequest(errors.New("promotion reason exceeds 1024 bytes")))
 		return
 	}
 	effectiveFrom := time.Now().UTC()
@@ -85,16 +68,13 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 		); err != nil {
 			return err
 		}
-		if _, err := work.q.PromoteDeployment(
+		if err := work.q.PromoteDeployment(
 			r.Context(),
 			db.PromoteDeploymentParams{
-				ID:                  pgvalue.UUID(uuid.NewV7()),
-				OrgID:               target.OrgID,
-				ProjectID:           target.ProjectID,
-				EnvironmentID:       target.EnvironmentID,
-				DeploymentID:        target.ID,
-				PromotedByPrincipal: principal,
-				Reason:              reason,
+				OrgID:         target.OrgID,
+				ProjectID:     target.ProjectID,
+				EnvironmentID: target.EnvironmentID,
+				DeploymentID:  target.ID,
 			},
 		); err != nil {
 			return fmt.Errorf("promote deployment: %w", err)

@@ -9,9 +9,8 @@ sidebarLabel: deployment
 ```text
 helmr deployment list [-p PROJECT] [-e ENV] [--json]
 helmr deployment get DEPLOYMENT [-p PROJECT] [-e ENV] [--json]
-helmr deployment promote DEPLOYMENT [-p PROJECT] [-e ENV] [--reason TEXT]
+helmr deployment promote DEPLOYMENT [-p PROJECT] [-e ENV]
 ```
 
 `list` and `get` are read operations. `promote` moves the selected
-Environment's current Deployment pointer to an already deployed version;
-`--reason` records an optional promotion reason.
+Environment's current Deployment pointer to an already deployed version.

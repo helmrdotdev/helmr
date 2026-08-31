@@ -118,10 +118,6 @@ type DeploymentListItem struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
-type PromoteDeploymentRequest struct {
-	Reason string `json:"reason,omitempty"`
-}
-
 type ListDeploymentsResponse struct {
 	Deployments []DeploymentListItem `json:"deployments"`
 	NextCursor  string               `json:"next_cursor,omitempty"`

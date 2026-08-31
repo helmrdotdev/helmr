@@ -406,98 +406,28 @@ func (q *Queries) LockDeploymentPromotionTarget(ctx context.Context, arg LockDep
 	return i, err
 }
 
-const promoteDeployment = `-- name: PromoteDeployment :one
-WITH target AS (
-    SELECT deployments.id,
-           deployments.org_id,
-           deployments.project_id,
-           deployments.environment_id
-      FROM deployments
-     WHERE deployments.org_id = $1
-       AND deployments.project_id = $2
-       AND deployments.environment_id = $3
-       AND deployments.id = $4
-),
-previous AS (
-    SELECT environments.current_deployment_id
-      FROM environments
-      JOIN target ON target.org_id = environments.org_id
-                 AND target.project_id = environments.project_id
-                 AND target.environment_id = environments.id
-     FOR NO KEY UPDATE OF environments
-),
-updated_environment AS (
-    UPDATE environments
-       SET current_deployment_id = target.id,
-           updated_at = now()
-      FROM target, previous
-     WHERE environments.org_id = target.org_id
-       AND environments.project_id = target.project_id
-       AND environments.id = target.environment_id
-    RETURNING environments.current_deployment_id
-),
-promotion AS (
-    INSERT INTO deployment_promotions (
-        id,
-        environment_id,
-        deployment_id,
-        previous_deployment_id,
-        promoted_by_principal,
-        reason
-    )
-    SELECT $5,
-           target.environment_id,
-           target.id,
-           previous.current_deployment_id,
-           $6,
-           $7
-      FROM target
-      JOIN previous ON true
-      JOIN updated_environment ON true
-    RETURNING id, environment_id, deployment_id, previous_deployment_id, promoted_by_principal, reason, created_at
-)
-SELECT id, environment_id, deployment_id, previous_deployment_id, promoted_by_principal, reason, created_at FROM promotion
+const promoteDeployment = `-- name: PromoteDeployment :exec
+UPDATE environments
+   SET current_deployment_id = $1,
+       updated_at = now()
+ WHERE org_id = $2
+   AND project_id = $3
+   AND id = $4
 `
 
 type PromoteDeploymentParams struct {
-	OrgID               pgtype.UUID `json:"org_id"`
-	ProjectID           pgtype.UUID `json:"project_id"`
-	EnvironmentID       pgtype.UUID `json:"environment_id"`
-	DeploymentID        pgtype.UUID `json:"deployment_id"`
-	ID                  pgtype.UUID `json:"id"`
-	PromotedByPrincipal string      `json:"promoted_by_principal"`
-	Reason              string      `json:"reason"`
+	DeploymentID  pgtype.UUID `json:"deployment_id"`
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
 }
 
-type PromoteDeploymentRow struct {
-	ID                   pgtype.UUID        `json:"id"`
-	EnvironmentID        pgtype.UUID        `json:"environment_id"`
-	DeploymentID         pgtype.UUID        `json:"deployment_id"`
-	PreviousDeploymentID pgtype.UUID        `json:"previous_deployment_id"`
-	PromotedByPrincipal  string             `json:"promoted_by_principal"`
-	Reason               string             `json:"reason"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
-}
-
-func (q *Queries) PromoteDeployment(ctx context.Context, arg PromoteDeploymentParams) (PromoteDeploymentRow, error) {
-	row := q.db.QueryRow(ctx, promoteDeployment,
+func (q *Queries) PromoteDeployment(ctx context.Context, arg PromoteDeploymentParams) error {
+	_, err := q.db.Exec(ctx, promoteDeployment,
+		arg.DeploymentID,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
-		arg.DeploymentID,
-		arg.ID,
-		arg.PromotedByPrincipal,
-		arg.Reason,
 	)
-	var i PromoteDeploymentRow
-	err := row.Scan(
-		&i.ID,
-		&i.EnvironmentID,
-		&i.DeploymentID,
-		&i.PreviousDeploymentID,
-		&i.PromotedByPrincipal,
-		&i.Reason,
-		&i.CreatedAt,
-	)
-	return i, err
+	return err
 }
