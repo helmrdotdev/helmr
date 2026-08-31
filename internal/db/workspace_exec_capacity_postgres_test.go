@@ -314,7 +314,7 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 		UPDATE runtime_instances
 		   SET desired_state = 'closed', desired_version = 2,
 		       observed_state = 'closed', observed_version = 1,
-		       observed_desired_version = 2, closing_at = now(), closed_at = now(),
+		       observed_desired_version = 2,
 		       reserved_process_id = NULL, reserved_workspace_version_id = NULL,
 		       reservation_expires_at = NULL,
 		       reclaimed_at = now(), reclaim_evidence = '{}'::jsonb,
@@ -361,7 +361,7 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 					UPDATE runtime_instances
 					   SET desired_state = 'closed', desired_version = 2,
 					       observed_state = 'closed', observed_version = 1,
-					       observed_desired_version = 2, closing_at = now(), closed_at = now(),
+					       observed_desired_version = 2,
 					       reserved_process_id = NULL, reserved_workspace_version_id = NULL,
 					       reservation_expires_at = NULL,
 					       reclaimed_at = now(), reclaim_evidence = '{}'::jsonb,

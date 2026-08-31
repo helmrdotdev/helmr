@@ -53,7 +53,7 @@ WITH transitioned AS (
        AND runtime_instances.worker_epoch = target.current_epoch
        AND runtime_instances.reclaimed_at IS NULL
        AND runtime_instances.desired_state <> 'closed'
-       AND runtime_instances.observed_state IN ('allocated', 'preparing', 'ready')
+       AND runtime_instances.observed_state IN ('allocated', 'ready')
        AND NOT EXISTS (
            SELECT 1 FROM run_leases
             WHERE run_leases.runtime_instance_id = runtime_instances.id
@@ -110,7 +110,7 @@ WITH target AS (
 ), lost_runtimes AS (
     UPDATE runtime_instances
        SET observed_state = 'lost', observed_version = observed_version + 1,
-           observed_at = now(), lost_at = now(), terminal_at = now(),
+           observed_at = now(), terminal_at = now(),
            terminal_reason_code = sqlc.arg(reason_code),
            reserved_run_id = NULL, reserved_attempt_number = NULL,
            reserved_process_id = NULL, reserved_workspace_version_id = NULL,
@@ -119,7 +119,7 @@ WITH target AS (
      WHERE runtime_instances.worker_instance_id = target.id
        AND runtime_instances.worker_epoch = target.current_epoch
        AND runtime_instances.reclaimed_at IS NULL
-       AND runtime_instances.observed_state IN ('allocated', 'preparing', 'ready', 'closing')
+       AND runtime_instances.observed_state IN ('allocated', 'ready')
     RETURNING runtime_instances.id
 )
 SELECT target.*
@@ -176,7 +176,7 @@ SELECT worker_instances.*,
         (SELECT count(*) FROM runtime_instances
          WHERE runtime_instances.worker_instance_id = worker_instances.id
            AND runtime_instances.worker_epoch = worker_instances.current_epoch
-           AND runtime_instances.observed_state IN ('allocated', 'preparing', 'ready', 'closing')))::int AS active_executions
+           AND runtime_instances.observed_state IN ('allocated', 'ready')))::int AS active_executions
   FROM worker_instances
   JOIN worker_groups ON worker_groups.id = worker_instances.worker_group_id
   LEFT JOIN runtime_identities ON runtime_identities.id = worker_instances.runtime_identity_id

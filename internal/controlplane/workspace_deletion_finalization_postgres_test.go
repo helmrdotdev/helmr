@@ -73,7 +73,7 @@ func (f workspaceDeletionPhysicalFixture) loseRuntime(t *testing.T) {
 	t.Helper()
 	dbtest.MustExec(t, t.Context(), f.base.Pool, `
 UPDATE runtime_instances
-   SET observed_state = 'lost', lost_at = now(), terminal_at = now(),
+   SET observed_state = 'lost', terminal_at = now(),
        terminal_reason_code = 'test_lost'
  WHERE id = $1`, f.runtimeID)
 }
@@ -169,7 +169,7 @@ func TestWorkspaceDeleteFinalizationAuthorityBlockers(t *testing.T) {
 		fixture.unmount(t)
 		dbtest.MustExec(t, t.Context(), fixture.base.Pool, `
 UPDATE runtime_instances
-   SET observed_state = 'failed', failed_at = now(), terminal_at = now(),
+   SET observed_state = 'failed', terminal_at = now(),
        terminal_reason_code = 'test_failed'
  WHERE id = $1`, fixture.runtimeID)
 		fixture.setDeleting(t, true)

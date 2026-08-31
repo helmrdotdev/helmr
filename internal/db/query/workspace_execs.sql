@@ -151,7 +151,7 @@ WITH target AS (
        AND runtime_instances.reserved_process_id = sqlc.arg(process_id)
        AND runtime_instances.reservation_expires_at <= transaction_timestamp()
        AND runtime_instances.reclaimed_at IS NULL
-       AND runtime_instances.observed_state IN ('allocated', 'preparing', 'ready')
+       AND runtime_instances.observed_state IN ('allocated', 'ready')
      FOR UPDATE
 ), stopped_mount AS (
     UPDATE workspace_mounts

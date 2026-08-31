@@ -70,7 +70,7 @@ WITH target AS (
 ), lost_runtimes AS (
     UPDATE runtime_instances AS runtimes
        SET observed_state = 'lost', observed_version = runtimes.observed_version + 1,
-           observed_at = now(), lost_at = now(), terminal_at = now(),
+           observed_at = now(), terminal_at = now(),
            terminal_reason_code = sqlc.arg(reason_code),
            reserved_run_id = NULL, reserved_attempt_number = NULL,
            reserved_process_id = NULL, reserved_workspace_version_id = NULL,
@@ -79,7 +79,7 @@ WITH target AS (
      WHERE runtimes.worker_instance_id = target.id
        AND runtimes.worker_epoch = target.current_epoch
        AND runtimes.reclaimed_at IS NULL
-       AND runtimes.observed_state IN ('allocated', 'preparing', 'ready', 'closing')
+       AND runtimes.observed_state IN ('allocated', 'ready')
     RETURNING runtimes.id
 )
 -- Immediate fencing revokes credentials and terminalizes mount/runtime

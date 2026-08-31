@@ -687,7 +687,7 @@ SELECT first_lease_at,
  FOR UPDATE;
 
 -- name: RequestQueuedRunRuntimeCleanup :exec
-WITH closing_runtimes AS (
+WITH close_runtimes AS (
     UPDATE runtime_instances
        SET desired_state = 'closed',
            desired_version = CASE
@@ -698,14 +698,14 @@ WITH closing_runtimes AS (
            desired_reason = 'queued_ttl_expired',
            updated_at = transaction_timestamp()
      WHERE reserved_run_id = sqlc.arg(run_id)
-       AND observed_state IN ('allocated', 'preparing', 'ready', 'closing')
+       AND observed_state IN ('allocated', 'ready')
     RETURNING id
 )
 UPDATE workspace_mounts
    SET state = 'unmounting',
        stopped_at = coalesce(stopped_at, transaction_timestamp()),
        updated_at = transaction_timestamp()
- WHERE runtime_instance_id IN (SELECT id FROM closing_runtimes)
+ WHERE runtime_instance_id IN (SELECT id FROM close_runtimes)
    AND state IN ('mounting', 'mounted');
 
 -- name: ExpireQueuedRunAttempt :execrows

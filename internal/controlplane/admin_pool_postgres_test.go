@@ -296,8 +296,6 @@ UPDATE runtime_instances
        observed_state = 'allocated',
        observed_version = 0,
        observed_desired_version = 0,
-       closing_at = NULL,
-       closed_at = NULL,
        reclaimed_at = NULL,
        reclaim_evidence = NULL,
        terminal_at = NULL,
@@ -713,8 +711,6 @@ UPDATE runtime_instances
        observed_version = 1,
        observed_desired_version = 2,
        observed_at = now(),
-       closing_at = now(),
-       closed_at = now(),
        terminal_at = now(),
        terminal_reason_code = 'drained',
        reclaimed_at = now(),
@@ -820,13 +816,13 @@ INSERT INTO runtime_instances (
     reserved_guest_ephemeral_disk_bytes, reserved_execution_slots,
     workspace_id, desired_state, desired_version, desired_reason,
     observed_state, observed_version, observed_desired_version,
-    closing_at, closed_at, reclaimed_at, reclaim_evidence,
+    reclaimed_at, reclaim_evidence,
     terminal_at, terminal_reason_code
 ) VALUES (
     $1, $2, $3, $4, $5, 'us-east-1', $6, $7, $8, $9,
     1, 1, $10, 1000, 1073741824, 4294967296, 1, $11,
     'closed', 2, 'checkpointed', 'closed', 2, 2,
-    now(), now(), now(), '{"method":"checkpointed"}'::jsonb,
+    now(), '{"method":"checkpointed"}'::jsonb,
     now(), 'checkpointed'
 )`, runtimeID, product.orgID, fixture.group.ID, product.projectID,
 		product.environmentID, workerID, fixture.runtimeIdentityID, sandboxDefinitionID,

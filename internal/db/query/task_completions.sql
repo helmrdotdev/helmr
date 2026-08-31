@@ -137,7 +137,7 @@ WITH authority AS MATERIALIZED (
        AND (runtime_instances.desired_state = 'ready'
             OR (runtime_instances.desired_state = 'closed'
                 AND runtime_instances.desired_reason = 'same_workspace_child_attempt_finished'))
-       AND runtime_instances.observed_state IN ('ready', 'closing')
+       AND runtime_instances.observed_state = 'ready'
       JOIN workspace_mounts
         ON workspace_mounts.id = workspace_leases.workspace_mount_id
        AND workspace_mounts.org_id = runtime_instances.org_id

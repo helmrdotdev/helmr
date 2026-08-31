@@ -303,7 +303,7 @@ WITH candidates AS (
        AND workspace_mounts.guest_channel_token_hash <> ''
        AND workspace_mounts.guest_channel_token_expires_at <= transaction_timestamp()
        AND runtime_instances.reclaimed_at IS NULL
-       AND runtime_instances.observed_state IN ('allocated','preparing','ready','closing')
+       AND runtime_instances.observed_state IN ('allocated','ready')
      ORDER BY workspace_mounts.guest_channel_token_expires_at, workspace_mounts.id
      LIMIT sqlc.arg(limit_count)
      FOR UPDATE OF workspace_mounts, runtime_instances SKIP LOCKED
@@ -408,8 +408,7 @@ WITH stopped AS (
            observed_desired_version = CASE WHEN runtime_instances.desired_state = 'closed'
                                            THEN runtime_instances.desired_version
                                            ELSE runtime_instances.desired_version + 1 END,
-           observed_at = now(), closing_at = COALESCE(runtime_instances.closing_at, now()),
-           closed_at = now(), terminal_at = now(), terminal_reason_code = 'workspace_unmounted',
+           observed_at = now(), terminal_at = now(), terminal_reason_code = 'workspace_unmounted',
            terminal_error = NULL, reclaimed_at = now(),
            reclaim_evidence = sqlc.arg(cleanup_proof)::jsonb,
            reserved_run_id = NULL, reserved_attempt_number = NULL,
@@ -420,7 +419,7 @@ WITH stopped AS (
        AND runtime_instances.id = stopped.runtime_instance_id
        AND runtime_instances.worker_instance_id = stopped.worker_instance_id
        AND runtime_instances.worker_epoch = stopped.worker_epoch
-       AND runtime_instances.observed_state IN ('allocated','preparing','ready','closing')
+       AND runtime_instances.observed_state IN ('allocated','ready')
     RETURNING runtime_instances.*
 )
 SELECT stopped.* FROM stopped
@@ -467,7 +466,7 @@ WITH target AS (
        AND runtime_instances.id = workspace_mounts.runtime_instance_id
        AND runtime_instances.worker_instance_id = workspace_mounts.worker_instance_id
        AND runtime_instances.worker_epoch = workspace_mounts.worker_epoch
-       AND runtime_instances.observed_state IN ('allocated','preparing','ready','closing')
+       AND runtime_instances.observed_state IN ('allocated','ready')
        AND runtime_instances.reclaimed_at IS NULL
      WHERE workspace_mounts.org_id = sqlc.arg(org_id)
        AND workspace_mounts.id = sqlc.arg(id)
@@ -480,7 +479,7 @@ WITH target AS (
 ), failed_runtime AS (
     UPDATE runtime_instances
        SET observed_state = 'failed', observed_version = observed_version + 1,
-           observed_at = now(), failed_at = now(), terminal_at = now(),
+           observed_at = now(), terminal_at = now(),
            terminal_reason_code = 'workspace_mount_failed',
            terminal_error = sqlc.narg(error),
            reserved_run_id = NULL, reserved_attempt_number = NULL,

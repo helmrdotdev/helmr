@@ -625,7 +625,7 @@ WITH target AS (
        AND runtime_instances.id = workspace_mounts.runtime_instance_id
        AND runtime_instances.worker_instance_id = workspace_mounts.worker_instance_id
        AND runtime_instances.worker_epoch = workspace_mounts.worker_epoch
-       AND runtime_instances.observed_state IN ('allocated','preparing','ready','closing')
+       AND runtime_instances.observed_state IN ('allocated','ready')
        AND runtime_instances.reclaimed_at IS NULL
      WHERE workspace_mounts.org_id = $3
        AND workspace_mounts.id = $4
@@ -638,7 +638,7 @@ WITH target AS (
 ), failed_runtime AS (
     UPDATE runtime_instances
        SET observed_state = 'failed', observed_version = observed_version + 1,
-           observed_at = now(), failed_at = now(), terminal_at = now(),
+           observed_at = now(), terminal_at = now(),
            terminal_reason_code = 'workspace_mount_failed',
            terminal_error = $2,
            reserved_run_id = NULL, reserved_attempt_number = NULL,
@@ -649,7 +649,7 @@ WITH target AS (
        AND runtime_instances.id = target.runtime_instance_id
        AND runtime_instances.worker_instance_id = target.worker_instance_id
        AND runtime_instances.worker_epoch = target.worker_epoch
-    RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.vm_vcpu_count, runtime_instances.cpu_config_digest, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.reclaim_evidence, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
+    RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.vm_vcpu_count, runtime_instances.cpu_config_digest, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.ready_at, runtime_instances.terminal_at, runtime_instances.reclaimed_at, runtime_instances.reclaim_evidence, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.updated_at
 )
 UPDATE workspace_mounts
    SET state = 'failed', failed_at = now(), terminal_at = now(),
@@ -795,7 +795,7 @@ WITH candidates AS (
        AND workspace_mounts.guest_channel_token_hash <> ''
        AND workspace_mounts.guest_channel_token_expires_at <= transaction_timestamp()
        AND runtime_instances.reclaimed_at IS NULL
-       AND runtime_instances.observed_state IN ('allocated','preparing','ready','closing')
+       AND runtime_instances.observed_state IN ('allocated','ready')
      ORDER BY workspace_mounts.guest_channel_token_expires_at, workspace_mounts.id
      LIMIT $1
      FOR UPDATE OF workspace_mounts, runtime_instances SKIP LOCKED
@@ -1293,8 +1293,7 @@ WITH stopped AS (
            observed_desired_version = CASE WHEN runtime_instances.desired_state = 'closed'
                                            THEN runtime_instances.desired_version
                                            ELSE runtime_instances.desired_version + 1 END,
-           observed_at = now(), closing_at = COALESCE(runtime_instances.closing_at, now()),
-           closed_at = now(), terminal_at = now(), terminal_reason_code = 'workspace_unmounted',
+           observed_at = now(), terminal_at = now(), terminal_reason_code = 'workspace_unmounted',
            terminal_error = NULL, reclaimed_at = now(),
            reclaim_evidence = $8::jsonb,
            reserved_run_id = NULL, reserved_attempt_number = NULL,
@@ -1305,8 +1304,8 @@ WITH stopped AS (
        AND runtime_instances.id = stopped.runtime_instance_id
        AND runtime_instances.worker_instance_id = stopped.worker_instance_id
        AND runtime_instances.worker_epoch = stopped.worker_epoch
-       AND runtime_instances.observed_state IN ('allocated','preparing','ready','closing')
-    RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.vm_vcpu_count, runtime_instances.cpu_config_digest, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.reclaim_evidence, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
+       AND runtime_instances.observed_state IN ('allocated','ready')
+    RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.vm_vcpu_count, runtime_instances.cpu_config_digest, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.ready_at, runtime_instances.terminal_at, runtime_instances.reclaimed_at, runtime_instances.reclaim_evidence, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.updated_at
 )
 SELECT stopped.id, stopped.org_id, stopped.worker_group_id, stopped.project_id, stopped.environment_id, stopped.region_id, stopped.worker_instance_id, stopped.worker_epoch, stopped.workspace_id, stopped.materialized_version_id, stopped.runtime_instance_id, stopped.guest_channel_token_hash, stopped.guest_channel_token_expires_at, stopped.state, stopped.request, stopped.dirty_generation, stopped.fencing_generation, stopped.finalization_kind, stopped.finalization_reason_code, stopped.finalization_error, stopped.staged_version_id, stopped.requested_at, stopped.mounted_at, stopped.unmounted_at, stopped.stopped_at, stopped.lost_at, stopped.failed_at, stopped.terminal_at, stopped.terminal_reason_code, stopped.terminal_error, stopped.created_at, stopped.updated_at FROM stopped
   JOIN closed_runtime ON closed_runtime.id = stopped.runtime_instance_id

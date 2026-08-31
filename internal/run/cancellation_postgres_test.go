@@ -238,7 +238,7 @@ UPDATE runs
 		`DELETE FROM workspace_mounts WHERE runtime_instance_id = $1`, runtimeID)
 	dbtest.MustExec(t, ctx, fixture.pool, `
 UPDATE runtime_instances
-   SET observed_state = 'preparing', observed_version = 2,
+   SET observed_state = 'allocated', observed_version = 2,
        observed_desired_version = 0, ready_at = NULL,
        reserved_run_id = $2, reserved_attempt_number = 1,
        reserved_workspace_version_id = (

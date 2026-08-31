@@ -184,20 +184,20 @@ func TestWorkerStartupRecoveryLosesMountBeforeReclaimingOldRuntime(t *testing.T)
 	var mountLostAt, mountTerminalAt pgtype.Timestamptz
 	var runtimeState, runtimeReason string
 	var runtimeVersion int64
-	var runtimeLostAt, runtimeTerminalAt, reclaimedAt pgtype.Timestamptz
+	var runtimeTerminalAt, reclaimedAt pgtype.Timestamptz
 	if err := pool.QueryRow(ctx, `
 SELECT workspace_mounts.state, workspace_mounts.terminal_reason_code,
        workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code,
        workspace_mounts.lost_at, workspace_mounts.terminal_at,
        runtime_instances.observed_state, runtime_instances.observed_version,
-       runtime_instances.terminal_reason_code, runtime_instances.lost_at,
+       runtime_instances.terminal_reason_code,
        runtime_instances.terminal_at, runtime_instances.reclaimed_at
   FROM workspace_mounts
   JOIN runtime_instances ON runtime_instances.id = workspace_mounts.runtime_instance_id
  WHERE workspace_mounts.id = $1`, mountID).Scan(
 		&mountState, &mountReason, &finalizationKind, &finalizationReason,
 		&mountLostAt, &mountTerminalAt, &runtimeState, &runtimeVersion,
-		&runtimeReason, &runtimeLostAt, &runtimeTerminalAt, &reclaimedAt,
+		&runtimeReason, &runtimeTerminalAt, &reclaimedAt,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -205,10 +205,10 @@ SELECT workspace_mounts.state, workspace_mounts.terminal_reason_code,
 		finalizationKind != "discard" || finalizationReason != "worker_draining" ||
 		!mountLostAt.Valid || !mountTerminalAt.Valid || runtimeState != "lost" ||
 		runtimeVersion != 1 || runtimeReason != "worker_startup_reclaimed" ||
-		!runtimeLostAt.Valid || !runtimeTerminalAt.Valid || !reclaimedAt.Valid {
-		t.Fatalf("startup recovery mount=%s/%s finalization=%s/%s lost=%v terminal=%v runtime=%s/%d/%s lost=%v terminal=%v reclaimed=%v",
+		!runtimeTerminalAt.Valid || !reclaimedAt.Valid {
+		t.Fatalf("startup recovery mount=%s/%s finalization=%s/%s lost=%v terminal=%v runtime=%s/%d/%s terminal=%v reclaimed=%v",
 			mountState, mountReason, finalizationKind, finalizationReason, mountLostAt,
-			mountTerminalAt, runtimeState, runtimeVersion, runtimeReason, runtimeLostAt,
+			mountTerminalAt, runtimeState, runtimeVersion, runtimeReason,
 			runtimeTerminalAt, reclaimedAt)
 	}
 	if _, err := q.CompleteWorkerStartupRecovery(ctx, params); err != nil {
@@ -230,6 +230,62 @@ SELECT workspace_mounts.lost_at, runtime_instances.reclaimed_at,
 		replayRuntimeVersion != runtimeVersion {
 		t.Fatalf("startup recovery replay changed receipts mount=%v runtime=%v version=%d",
 			replayMountLostAt, replayReclaimedAt, replayRuntimeVersion)
+	}
+}
+
+func TestWorkerStartupRecoveryPreservesFailedAndLostRuntimeDiagnostics(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		state  string
+		reason string
+		code   string
+	}{
+		{state: "failed", reason: "test_failed", code: "preserve-failed"},
+		{state: "lost", reason: "test_lost", code: "preserve-lost"},
+	} {
+		t.Run(tc.state, func(t *testing.T) {
+			pool := newPostgresDB(t, ctx)
+			prepared := prepareOldEpochStartupRecovery(t, ctx, pool)
+			dbtest.MustExec(t, ctx, pool, `
+UPDATE runtime_instances
+   SET observed_state = $2, observed_version = observed_version + 1,
+       terminal_at = now(), terminal_reason_code = $3,
+       terminal_error = jsonb_build_object('code', $4::text)
+ WHERE id = $1`, prepared.runtimeID, tc.state, tc.reason, tc.code)
+
+			var wantState, wantReason, wantCode string
+			var wantTerminalAt pgtype.Timestamptz
+			if err := pool.QueryRow(ctx, `
+SELECT observed_state, terminal_at, terminal_reason_code, terminal_error ->> 'code'
+  FROM runtime_instances
+ WHERE id = $1`, prepared.runtimeID).Scan(
+				&wantState, &wantTerminalAt, &wantReason, &wantCode,
+			); err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := db.New(pool).CompleteWorkerStartupRecovery(ctx, prepared.params); err != nil {
+				t.Fatal(err)
+			}
+
+			var state, reason, code string
+			var terminalAt, reclaimedAt pgtype.Timestamptz
+			var reclaimEvidence []byte
+			if err := pool.QueryRow(ctx, `
+SELECT observed_state, terminal_at, terminal_reason_code, terminal_error ->> 'code',
+       reclaimed_at, reclaim_evidence
+  FROM runtime_instances
+ WHERE id = $1`, prepared.runtimeID).Scan(
+				&state, &terminalAt, &reason, &code, &reclaimedAt, &reclaimEvidence,
+			); err != nil {
+				t.Fatal(err)
+			}
+			if state != wantState || terminalAt != wantTerminalAt || reason != wantReason ||
+				code != wantCode || !reclaimedAt.Valid || len(reclaimEvidence) == 0 {
+				t.Fatalf("preserved %s runtime = state:%s terminal:%v reason:%s code:%s reclaimed:%v evidence:%s",
+					tc.state, state, terminalAt, reason, code, reclaimedAt.Valid, reclaimEvidence)
+			}
+		})
 	}
 }
 

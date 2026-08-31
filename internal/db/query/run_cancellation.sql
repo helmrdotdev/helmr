@@ -406,8 +406,8 @@ SELECT runs.id AS run_id,
        worker_instances.termination_ready_at AS worker_termination_ready_at,
        runtime_instances.desired_state AS runtime_desired_state,
        runtime_instances.observed_state AS runtime_observed_state,
-       runtime_instances.lost_at AS runtime_lost_at,
-       runtime_instances.failed_at AS runtime_failed_at,
+       CASE WHEN runtime_instances.observed_state = 'lost' THEN runtime_instances.terminal_at END::timestamptz AS runtime_lost_at,
+       CASE WHEN runtime_instances.observed_state = 'failed' THEN runtime_instances.terminal_at END::timestamptz AS runtime_failed_at,
        workspace_leases.state AS workspace_lease_state,
        workspace_mounts.state AS mount_state,
        workspace_mounts.lost_at AS mount_lost_at,
@@ -551,7 +551,7 @@ WITH candidate_runtimes AS (
     SELECT runtime_instances.id AS runtime_instance_id
       FROM runtime_instances
      WHERE runtime_instances.reserved_run_id = sqlc.arg(run_id)
-), closing_runtimes AS (
+), close_runtimes AS (
     UPDATE runtime_instances
        SET desired_state = 'closed',
            desired_version = CASE
@@ -564,7 +564,7 @@ WITH candidate_runtimes AS (
      WHERE runtime_instances.id IN (
            SELECT runtime_instance_id FROM candidate_runtimes
        )
-       AND runtime_instances.observed_state IN ('allocated', 'preparing', 'ready', 'closing')
+       AND runtime_instances.observed_state IN ('allocated', 'ready')
     RETURNING runtime_instances.id
 )
 UPDATE workspace_mounts
@@ -574,7 +574,7 @@ UPDATE workspace_mounts
  WHERE runtime_instance_id IN (
        SELECT runtime_instance_id FROM candidate_runtimes
        UNION
-       SELECT id FROM closing_runtimes
+       SELECT id FROM close_runtimes
    )
    AND state IN ('mounting', 'mounted');
 

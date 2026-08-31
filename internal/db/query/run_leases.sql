@@ -838,8 +838,8 @@ SELECT runs.org_id,
         OR worker_instances.lost_at <= transaction_timestamp()
         OR worker_instances.termination_ready_at <= transaction_timestamp()
         OR worker_instances.current_epoch IS DISTINCT FROM run_leases.worker_epoch
-        OR runtime_instances.lost_at <= transaction_timestamp()
-        OR runtime_instances.failed_at <= transaction_timestamp()
+        OR (runtime_instances.observed_state = 'lost' AND runtime_instances.terminal_at <= transaction_timestamp())
+        OR (runtime_instances.observed_state = 'failed' AND runtime_instances.terminal_at <= transaction_timestamp())
         OR workspace_mounts.lost_at <= transaction_timestamp()
         OR workspace_mounts.failed_at <= transaction_timestamp())
  ORDER BY LEAST(
@@ -855,8 +855,8 @@ SELECT runs.org_id,
               END,
               COALESCE(worker_instances.lost_at, 'infinity'::timestamptz),
               COALESCE(worker_instances.termination_ready_at, 'infinity'::timestamptz),
-              COALESCE(runtime_instances.lost_at, 'infinity'::timestamptz),
-              COALESCE(runtime_instances.failed_at, 'infinity'::timestamptz),
+              CASE WHEN runtime_instances.observed_state = 'lost' THEN runtime_instances.terminal_at ELSE 'infinity'::timestamptz END,
+              CASE WHEN runtime_instances.observed_state = 'failed' THEN runtime_instances.terminal_at ELSE 'infinity'::timestamptz END,
               COALESCE(workspace_mounts.lost_at, 'infinity'::timestamptz),
               COALESCE(workspace_mounts.failed_at, 'infinity'::timestamptz)
           ),
@@ -915,8 +915,8 @@ WITH RECURSIVE candidates AS MATERIALIZED (
                 AND transaction_timestamp() >= runs.active_started_at
                     + (GREATEST(runs.max_active_duration_ms - runs.active_elapsed_ms, 0)::text
                        || ' milliseconds')::interval)
-            OR runtime_instances.lost_at <= transaction_timestamp()
-            OR runtime_instances.failed_at <= transaction_timestamp()
+            OR (runtime_instances.observed_state = 'lost' AND runtime_instances.terminal_at <= transaction_timestamp())
+            OR (runtime_instances.observed_state = 'failed' AND runtime_instances.terminal_at <= transaction_timestamp())
             OR worker_instances.lost_at <= transaction_timestamp()
             OR worker_instances.termination_ready_at <= transaction_timestamp()
             OR worker_instances.current_epoch IS DISTINCT FROM run_leases.worker_epoch
@@ -1185,8 +1185,8 @@ WITH RECURSIVE candidates AS MATERIALIZED (
      FOR UPDATE OF worker_instances
 ), locked_runtimes AS MATERIALIZED (
     SELECT locked_workers.*,
-           runtime_instances.lost_at AS runtime_lost_at,
-           runtime_instances.failed_at AS runtime_failed_at
+           CASE WHEN runtime_instances.observed_state = 'lost' THEN runtime_instances.terminal_at END::timestamptz AS runtime_lost_at,
+           CASE WHEN runtime_instances.observed_state = 'failed' THEN runtime_instances.terminal_at END::timestamptz AS runtime_failed_at
       FROM locked_workers
       JOIN runtime_instances
         ON runtime_instances.id = locked_workers.runtime_instance_id

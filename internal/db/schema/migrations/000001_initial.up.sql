@@ -2856,23 +2856,17 @@ CREATE TABLE runtime_instances (
     desired_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     desired_reason TEXT NOT NULL CHECK (btrim(desired_reason) <> ''),
     observed_state TEXT NOT NULL DEFAULT 'allocated'
-        CHECK (observed_state IN ('allocated', 'preparing', 'ready', 'closing', 'closed', 'failed', 'lost')),
+        CHECK (observed_state IN ('allocated', 'ready', 'closed', 'failed', 'lost')),
     observed_version BIGINT NOT NULL DEFAULT 0 CHECK (observed_version >= 0),
     observed_desired_version BIGINT NOT NULL DEFAULT 0 CHECK (observed_desired_version >= 0 AND observed_desired_version <= desired_version),
     observed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     allocated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    preparing_at TIMESTAMPTZ,
     ready_at TIMESTAMPTZ,
-    closing_at TIMESTAMPTZ,
-    closed_at TIMESTAMPTZ,
-    lost_at TIMESTAMPTZ,
-    failed_at TIMESTAMPTZ,
+    terminal_at TIMESTAMPTZ,
     reclaimed_at TIMESTAMPTZ,
     reclaim_evidence JSONB,
-    terminal_at TIMESTAMPTZ,
     terminal_reason_code TEXT,
     terminal_error JSONB,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, id),
     UNIQUE (worker_group_id, worker_instance_id, worker_epoch, id),
@@ -2938,27 +2932,20 @@ CREATE TABLE runtime_instances (
          AND reserved_workspace_version_id IS NOT NULL
          AND reservation_expires_at IS NOT NULL)
     ),
-    CHECK (reserved_workspace_version_id IS NULL OR observed_state IN ('allocated', 'preparing', 'ready')),
+    CHECK (reserved_workspace_version_id IS NULL OR observed_state IN ('allocated', 'ready')),
     CHECK (desired_state <> 'closed' OR desired_version > 1),
-    CHECK (observed_desired_version < desired_version OR desired_state <> 'closed' OR observed_state IN ('closing', 'closed', 'failed', 'lost')),
-    CHECK (preparing_at IS NULL OR preparing_at >= allocated_at),
-    CHECK (ready_at IS NULL OR (ready_at >= allocated_at AND (preparing_at IS NULL OR ready_at >= preparing_at))),
-    CHECK (closing_at IS NULL OR (closing_at >= allocated_at AND (ready_at IS NULL OR closing_at >= ready_at))),
-    CHECK (closed_at IS NULL OR (closing_at IS NOT NULL AND closed_at >= closing_at)),
-    CHECK (failed_at IS NULL OR failed_at >= GREATEST(allocated_at, COALESCE(preparing_at, allocated_at), COALESCE(ready_at, allocated_at), COALESCE(closing_at, allocated_at))),
-    CHECK (lost_at IS NULL OR lost_at >= GREATEST(allocated_at, COALESCE(preparing_at, allocated_at), COALESCE(ready_at, allocated_at), COALESCE(closing_at, allocated_at))),
-    CHECK (terminal_at IS NULL OR terminal_at >= GREATEST(allocated_at, COALESCE(preparing_at, allocated_at), COALESCE(ready_at, allocated_at), COALESCE(closing_at, allocated_at))),
+    CHECK (observed_desired_version < desired_version OR desired_state <> 'closed' OR observed_state IN ('closed', 'failed', 'lost')),
+    CHECK (ready_at IS NULL OR ready_at >= allocated_at),
+    CHECK (terminal_at IS NULL OR (terminal_at >= allocated_at AND (ready_at IS NULL OR terminal_at >= ready_at))),
     CHECK (reclaimed_at IS NULL OR (observed_state IN ('closed', 'failed', 'lost') AND terminal_at IS NOT NULL AND reclaimed_at >= terminal_at)),
     CHECK ((reclaimed_at IS NULL) = (reclaim_evidence IS NULL)),
     CHECK (reclaim_evidence IS NULL OR jsonb_typeof(reclaim_evidence) = 'object'),
     CHECK (
-        (observed_state = 'allocated' AND preparing_at IS NULL AND ready_at IS NULL AND closing_at IS NULL AND closed_at IS NULL AND failed_at IS NULL AND lost_at IS NULL AND reclaimed_at IS NULL AND terminal_at IS NULL AND terminal_reason_code IS NULL AND terminal_error IS NULL)
-        OR (observed_state = 'preparing' AND preparing_at IS NOT NULL AND ready_at IS NULL AND closing_at IS NULL AND closed_at IS NULL AND failed_at IS NULL AND lost_at IS NULL AND reclaimed_at IS NULL AND terminal_at IS NULL AND terminal_reason_code IS NULL AND terminal_error IS NULL)
-        OR (observed_state = 'ready' AND preparing_at IS NOT NULL AND ready_at IS NOT NULL AND closing_at IS NULL AND closed_at IS NULL AND failed_at IS NULL AND lost_at IS NULL AND reclaimed_at IS NULL AND terminal_at IS NULL AND terminal_reason_code IS NULL AND terminal_error IS NULL)
-        OR (observed_state = 'closing' AND closing_at IS NOT NULL AND closed_at IS NULL AND failed_at IS NULL AND lost_at IS NULL AND reclaimed_at IS NULL AND terminal_at IS NULL AND terminal_reason_code IS NULL AND terminal_error IS NULL)
-        OR (observed_state = 'closed' AND closing_at IS NOT NULL AND closed_at IS NOT NULL AND failed_at IS NULL AND lost_at IS NULL AND reclaimed_at IS NOT NULL AND terminal_at IS NOT NULL AND terminal_reason_code IS NOT NULL AND terminal_error IS NULL)
-        OR (observed_state = 'failed' AND failed_at IS NOT NULL AND closed_at IS NULL AND lost_at IS NULL AND terminal_at IS NOT NULL AND terminal_reason_code IS NOT NULL)
-        OR (observed_state = 'lost' AND lost_at IS NOT NULL AND closed_at IS NULL AND failed_at IS NULL AND terminal_at IS NOT NULL AND terminal_reason_code IS NOT NULL)
+        (observed_state = 'allocated' AND ready_at IS NULL AND terminal_at IS NULL AND terminal_reason_code IS NULL AND terminal_error IS NULL AND reclaimed_at IS NULL)
+        OR (observed_state = 'ready' AND ready_at IS NOT NULL AND terminal_at IS NULL AND terminal_reason_code IS NULL AND terminal_error IS NULL AND reclaimed_at IS NULL)
+        OR (observed_state = 'closed' AND terminal_at IS NOT NULL AND terminal_reason_code IS NOT NULL AND terminal_error IS NULL AND reclaimed_at IS NOT NULL)
+        OR (observed_state = 'failed' AND terminal_at IS NOT NULL AND terminal_reason_code IS NOT NULL)
+        OR (observed_state = 'lost' AND terminal_at IS NOT NULL AND terminal_reason_code IS NOT NULL)
     ),
     CHECK (terminal_reason_code IS NULL OR (btrim(terminal_reason_code) <> '' AND octet_length(terminal_reason_code) <= 128)),
     CHECK (terminal_error IS NULL OR jsonb_typeof(terminal_error) = 'object')
@@ -2993,7 +2980,7 @@ CREATE INDEX runtime_instances_deployment_definition_idx
 
 CREATE INDEX runtime_instances_worker_active_idx
     ON runtime_instances (worker_instance_id, worker_epoch, observed_state, id)
-    WHERE observed_state IN ('allocated', 'preparing', 'ready', 'closing')
+    WHERE observed_state IN ('allocated', 'ready')
        OR (observed_state IN ('failed', 'lost') AND reclaimed_at IS NULL);
 
 CREATE INDEX runtime_instances_reclaim_idx

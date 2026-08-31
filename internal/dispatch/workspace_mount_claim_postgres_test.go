@@ -387,7 +387,6 @@ SELECT (jsonb_populate_record(
         'reserved_run_id', $4::text,
         'reserved_workspace_version_id', $5::text,
         'reservation_expires_at', transaction_timestamp() + interval '10 minutes',
-        'created_at', transaction_timestamp(),
         'updated_at', transaction_timestamp()
     )
 )).*
@@ -424,7 +423,6 @@ func markExpiredClaimRuntimeReclaimed(t *testing.T, fixture runPlacementFixture,
 UPDATE runtime_instances
    SET observed_state = 'closed', observed_version = observed_version + 1,
        observed_desired_version = desired_version, observed_at = transaction_timestamp(),
-       closing_at = transaction_timestamp(), closed_at = transaction_timestamp(),
        terminal_at = transaction_timestamp(), terminal_reason_code = desired_reason,
        reclaimed_at = transaction_timestamp(), reclaim_evidence = '{}'::jsonb,
        reserved_run_id = NULL, reserved_attempt_number = NULL,

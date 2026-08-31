@@ -229,7 +229,6 @@ WITH target AS (
        SET observed_state = CASE WHEN observed_state IN ('closed','failed','lost') THEN observed_state ELSE 'lost' END,
            observed_version = observed_version + 1,
            observed_at = now(),
-           lost_at = CASE WHEN observed_state IN ('closed','failed','lost') THEN lost_at ELSE now() END,
            terminal_at = COALESCE(terminal_at, now()),
            terminal_reason_code = COALESCE(terminal_reason_code, 'worker_startup_reclaimed'),
            reclaimed_at = now(),
@@ -990,7 +989,7 @@ WITH live_workers AS (
            COALESCE((SELECT count(*) FROM runtime_instances
                       WHERE runtime_instances.worker_instance_id = live_workers.worker_instance_id
                         AND runtime_instances.worker_epoch = live_workers.worker_epoch
-                        AND (runtime_instances.observed_state IN ('allocated', 'preparing', 'ready', 'closing')
+                        AND (runtime_instances.observed_state IN ('allocated', 'ready')
                              OR (runtime_instances.observed_state IN ('failed', 'lost') AND runtime_instances.reclaimed_at IS NULL))), 0)::bigint AS vm_slots,
            COALESCE((SELECT count(*) FROM run_leases
                       WHERE run_leases.worker_instance_id = live_workers.worker_instance_id
@@ -999,7 +998,7 @@ WITH live_workers AS (
            COALESCE((SELECT count(*) FROM runtime_instances
                       WHERE runtime_instances.worker_instance_id = live_workers.worker_instance_id
                         AND runtime_instances.worker_epoch = live_workers.worker_epoch
-                        AND runtime_instances.observed_state IN ('allocated', 'preparing')), 0)::bigint AS runtime_starts
+                        AND runtime_instances.observed_state = 'allocated'), 0)::bigint AS runtime_starts
       FROM live_workers
 )
 SELECT live_workers.worker_group_id,
@@ -1405,7 +1404,7 @@ WITH target AS (
 ), lost_runtimes AS (
     UPDATE runtime_instances
        SET observed_state = 'lost', observed_version = observed_version + 1,
-           observed_at = now(), lost_at = now(), terminal_at = now(),
+           observed_at = now(), terminal_at = now(),
            terminal_reason_code = 'external_instance_drift',
            reserved_run_id = NULL, reserved_attempt_number = NULL,
            reserved_process_id = NULL, reserved_workspace_version_id = NULL,
@@ -1414,7 +1413,7 @@ WITH target AS (
      WHERE runtime_instances.worker_instance_id = target.id
        AND runtime_instances.worker_epoch = target.current_epoch
        AND runtime_instances.reclaimed_at IS NULL
-       AND runtime_instances.observed_state IN ('allocated', 'preparing', 'ready', 'closing')
+       AND runtime_instances.observed_state IN ('allocated', 'ready')
     RETURNING runtime_instances.id
 ), completed AS (
     SELECT target.id, target.resource_id, target.worker_group_id, target.state,
@@ -1505,11 +1504,6 @@ WITH runtime_candidates AS MATERIALIZED (
            END,
            observed_version = runtime_instances.observed_version + 1,
            observed_at = now(),
-           lost_at = CASE
-               WHEN runtime_instances.observed_state = 'failed'
-               THEN runtime_instances.lost_at
-               ELSE COALESCE(runtime_instances.lost_at, now())
-           END,
            terminal_at = COALESCE(runtime_instances.terminal_at, now()),
            terminal_reason_code = COALESCE(
                runtime_instances.terminal_reason_code,

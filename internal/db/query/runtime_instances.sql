@@ -65,7 +65,7 @@ SELECT runtime_instances.*,
  WHERE runtime_instances.reclaimed_at IS NULL
    AND (
        (runtime_instances.desired_state = 'ready'
-       AND runtime_instances.observed_state IN ('allocated', 'preparing')
+       AND runtime_instances.observed_state = 'allocated'
        AND runtime_instances.observed_desired_version < runtime_instances.desired_version
         AND worker.state = 'active'
         AND worker.observed_at >= transaction_timestamp()
@@ -74,7 +74,7 @@ SELECT runtime_instances.*,
        )
        OR
        (runtime_instances.desired_state = 'closed'
-        AND runtime_instances.observed_state IN ('allocated', 'preparing', 'ready', 'closing'))
+        AND runtime_instances.observed_state IN ('allocated', 'ready'))
        OR
        (runtime_instances.observed_state = 'failed'
         AND runtime_instances.reclaimed_at IS NULL
@@ -327,7 +327,7 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
        AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
        AND runtime_instances.desired_version = sqlc.arg(desired_version)
        AND runtime_instances.observed_version = sqlc.arg(expected_observed_version)
-       AND runtime_instances.observed_state IN ('allocated', 'preparing')
+       AND runtime_instances.observed_state = 'allocated'
        AND (runtime_instances.runtime_substrate_id IS NULL
             OR runtime_instances.runtime_substrate_id = sqlc.arg(runtime_substrate_id))
      FOR UPDATE OF runtime_instances
@@ -392,14 +392,14 @@ UPDATE runtime_instances
    SET runtime_substrate_id = sqlc.arg(runtime_substrate_id),
        observed_state = 'ready', observed_version = observed_version + 1,
        observed_desired_version = sqlc.arg(desired_version), observed_at = now(),
-       preparing_at = COALESCE(preparing_at, now()), ready_at = COALESCE(ready_at, now()),
+       ready_at = COALESCE(ready_at, now()),
        updated_at = now()
   FROM runtime_authority
  WHERE runtime_instances.id = sqlc.arg(id) AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
    AND runtime_authority.runtime_instance_id = runtime_instances.id
    AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch) AND runtime_instances.desired_version = sqlc.arg(desired_version)
    AND runtime_instances.observed_version = sqlc.arg(expected_observed_version)
-   AND runtime_instances.observed_state IN ('allocated', 'preparing')
+   AND runtime_instances.observed_state = 'allocated'
    AND runtime_instances.vm_vcpu_count = sqlc.arg(vm_vcpu_count)
    AND runtime_instances.cpu_config_digest = sqlc.arg(cpu_config_digest)
    AND (runtime_instances.runtime_substrate_id IS NULL
@@ -415,7 +415,6 @@ RETURNING runtime_instances.*;
 UPDATE runtime_instances
    SET observed_state = 'closed', observed_version = observed_version + 1,
        observed_desired_version = desired_version, observed_at = now(),
-       closing_at = COALESCE(closing_at, now()), closed_at = now(),
        terminal_at = now(), terminal_reason_code = sqlc.arg(reason_code),
        terminal_error = NULL, reclaimed_at = now(),
        reclaim_evidence = sqlc.arg(cleanup_proof)::jsonb,
@@ -426,13 +425,13 @@ UPDATE runtime_instances
    AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
    AND runtime_instances.desired_state = 'closed' AND runtime_instances.desired_version = sqlc.arg(desired_version)
    AND observed_version = sqlc.arg(expected_observed_version)
-   AND observed_state IN ('allocated','preparing','ready','closing')
+   AND observed_state IN ('allocated','ready')
 RETURNING runtime_instances.*;
 
 -- name: MarkRuntimeInstanceFailed :one
 UPDATE runtime_instances
    SET observed_state = 'failed', observed_version = observed_version + 1,
-       observed_at = now(), failed_at = now(), terminal_at = now(),
+       observed_at = now(), terminal_at = now(),
        terminal_reason_code = sqlc.arg(reason_code), terminal_error = sqlc.narg(error),
        reserved_run_id = NULL, reserved_attempt_number = NULL,
        reserved_process_id = NULL, reserved_workspace_version_id = NULL,
@@ -442,7 +441,7 @@ UPDATE runtime_instances
    AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
    AND runtime_instances.desired_version = sqlc.arg(desired_version)
    AND observed_version = sqlc.arg(expected_observed_version)
-   AND observed_state IN ('allocated','preparing','ready','closing')
+   AND observed_state IN ('allocated','ready')
 RETURNING runtime_instances.*;
 
 -- name: GetRuntimePreparationFailureAuthority :one
@@ -473,7 +472,7 @@ SELECT runtime_instances.reserved_run_id,
    AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
    AND runtime_instances.desired_version = sqlc.arg(desired_version)
    AND runtime_instances.observed_version = sqlc.arg(expected_observed_version)
-   AND runtime_instances.observed_state IN ('allocated','preparing','ready','closing');
+   AND runtime_instances.observed_state IN ('allocated','ready');
 
 -- name: LockRuntimePreparationFailureAuthority :one
 SELECT runtime_instances.reserved_run_id,
@@ -503,7 +502,7 @@ SELECT runtime_instances.reserved_run_id,
    AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
    AND runtime_instances.desired_version = sqlc.arg(desired_version)
    AND runtime_instances.observed_version = sqlc.arg(expected_observed_version)
-   AND runtime_instances.observed_state IN ('allocated','preparing','ready','closing')
+   AND runtime_instances.observed_state IN ('allocated','ready')
  FOR UPDATE OF runtime_instances;
 
 -- name: ReclaimFailedRuntimeInstance :one

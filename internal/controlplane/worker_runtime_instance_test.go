@@ -102,7 +102,7 @@ func TestWorkerRuntimeReconcileReturnsBoundedBatch(t *testing.T) {
 	workerID := uuid.NewV7()
 	store := &runtimeReconcileTargetStore{rows: []db.ListRuntimeReconcileTargetsRow{
 		{ID: pgvalue.UUID(uuid.NewV7()), WorkerEpoch: 7, DesiredState: db.RuntimeDesiredStateClosed, ObservedState: db.RuntimeObservedStateReady},
-		{ID: pgvalue.UUID(uuid.NewV7()), WorkerEpoch: 7, DesiredState: db.RuntimeDesiredStateClosed, ObservedState: db.RuntimeObservedStateClosing},
+		{ID: pgvalue.UUID(uuid.NewV7()), WorkerEpoch: 7, DesiredState: db.RuntimeDesiredStateClosed, ObservedState: db.RuntimeObservedStateAllocated},
 	}}
 	server := &Server{log: discardTestLogger(), db: store}
 	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/runtime-instances/reconcile", strings.NewReader(`{}`))
@@ -328,7 +328,7 @@ SELECT runtime_instance_id FROM run_leases WHERE id = $1`, work.LeaseID).Scan(&r
 				}
 				dbtest.MustExec(t, t.Context(), fixture.Pool, `
 UPDATE runtime_instances
-   SET observed_state = 'preparing', observed_version = 2,
+   SET observed_state = 'allocated', observed_version = 2,
        observed_desired_version = 0, ready_at = NULL
  WHERE id = $1`, runtimeID)
 				return fixture, work, runtimeID
@@ -401,7 +401,7 @@ SELECT runtime_instance_id FROM run_leases WHERE id = $1`, work.LeaseID).Scan(&r
 		`DELETE FROM workspace_mounts WHERE runtime_instance_id = $1`, runtimeID)
 	dbtest.MustExec(t, ctx, fixture.Pool, `
 UPDATE runtime_instances
-   SET observed_state = 'preparing', observed_version = 2,
+   SET observed_state = 'allocated', observed_version = 2,
        observed_desired_version = 0, ready_at = NULL,
        reserved_run_id = $2, reserved_attempt_number = 1,
        reserved_workspace_version_id = (
@@ -454,7 +454,7 @@ SELECT runtime_instance_id FROM run_leases WHERE id = $1`, work.LeaseID).Scan(&r
 			}
 			dbtest.MustExec(t, ctx, fixture.Pool, `
 UPDATE runtime_instances
-   SET observed_state = 'preparing', observed_version = 2,
+   SET observed_state = 'allocated', observed_version = 2,
        observed_desired_version = 0, ready_at = NULL,
        reserved_run_id = $2, reserved_attempt_number = 1,
        reserved_workspace_version_id = (
@@ -482,7 +482,7 @@ SELECT runtime_instances.observed_state, runs.runtime_preparation_count
  WHERE runtime_instances.id = $1`, runtimeID, work.RunID).Scan(&state, &count); err != nil {
 				t.Fatal(err)
 			}
-			if state != db.RuntimeObservedStatePreparing || count != 0 {
+			if state != db.RuntimeObservedStateAllocated || count != 0 {
 				t.Fatalf("stale authority changed state = runtime:%s count:%d", state, count)
 			}
 		})
@@ -549,7 +549,7 @@ SELECT run_leases.runtime_instance_id, runs.state_version
 UPDATE runs SET current_run_lease_id = NULL WHERE id = $1`, work.RunID)
 	dbtest.MustExec(t, ctx, fixture.Pool, `
 UPDATE runtime_instances
-   SET observed_state = 'preparing', observed_version = 2,
+   SET observed_state = 'allocated', observed_version = 2,
        observed_desired_version = 0, ready_at = NULL,
        reserved_run_id = $2, reserved_attempt_number = 1,
        reserved_workspace_version_id = (
@@ -597,7 +597,7 @@ SELECT runs.runtime_preparation_count,
 		t.Fatal(err)
 	}
 	if currentLease.Valid {
-		if count != 0 || runtimeState != db.RuntimeObservedStatePreparing {
+		if count != 0 || runtimeState != db.RuntimeObservedStateAllocated {
 			t.Fatalf("Lease won = count:%d runtime:%s", count, runtimeState)
 		}
 	} else if count != 1 || runtimeState != db.RuntimeObservedStateFailed {
