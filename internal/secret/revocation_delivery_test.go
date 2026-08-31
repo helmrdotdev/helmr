@@ -1,9 +1,12 @@
 package secret
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 	"uuid"
@@ -17,7 +20,7 @@ func TestSecretRevocationDeliveryReconcilesAndDelivers(t *testing.T) {
 	secretID := uuid.NewV7()
 	message := secretRevocationMessage(environmentID, secretID, 3)
 	store := &secretRevocationDeliveryStore{
-		messages: []db.OutboxMessage{message},
+		messages: []db.ControlOutbox{message},
 	}
 	var gotEnvironmentID, gotSecretID uuid.UUID
 	var gotGeneration int64
@@ -45,7 +48,7 @@ func TestSecretRevocationDeliveryReconcilesAndDelivers(t *testing.T) {
 	if err := worker.tick(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if store.claim.Lane != "control" || len(store.claim.Topics) != 1 ||
+	if len(store.claim.Topics) != 1 ||
 		store.claim.Topics[0] != "secret.revoked" {
 		t.Fatalf("claim = %+v", store.claim)
 	}
@@ -77,7 +80,7 @@ func TestSecretRevocationDeliveryContinuesFullBatch(t *testing.T) {
 		1,
 	)
 	store := &secretRevocationDeliveryStore{
-		messages: []db.OutboxMessage{message},
+		messages: []db.ControlOutbox{message},
 	}
 	worker, err := NewRevocationDeliveryWorker(
 		nil,
@@ -120,7 +123,7 @@ func TestSecretRevocationDeliveryRetriesReconciliationFailure(t *testing.T) {
 	)
 	message.Attempts = 3
 	store := &secretRevocationDeliveryStore{
-		messages: []db.OutboxMessage{message},
+		messages: []db.ControlOutbox{message},
 	}
 	worker, err := NewRevocationDeliveryWorker(
 		nil,
@@ -164,10 +167,11 @@ func TestSecretRevocationDeliveryDeadLettersInvalidPayload(t *testing.T) {
 		`{"environmentId":"invalid","secretId":"invalid","revocationGeneration":0}`,
 	)
 	store := &secretRevocationDeliveryStore{
-		messages: []db.OutboxMessage{message},
+		messages: []db.ControlOutbox{message},
 	}
+	var logs bytes.Buffer
 	worker, err := NewRevocationDeliveryWorker(
-		nil,
+		slog.New(slog.NewJSONHandler(&logs, nil)),
 		store,
 		func(
 			context.Context,
@@ -194,58 +198,62 @@ func TestSecretRevocationDeliveryDeadLettersInvalidPayload(t *testing.T) {
 			store.delivered,
 		)
 	}
+	if !strings.Contains(logs.String(), `"msg":"control outbox dead-lettered"`) ||
+		!strings.Contains(logs.String(), `"topic":"secret.revoked"`) ||
+		!strings.Contains(logs.String(), pgvalue.UUIDString(message.ID)) {
+		t.Fatalf("dead-letter warning = %s", logs.String())
+	}
 }
 
 type secretRevocationDeliveryStore struct {
-	messages     []db.OutboxMessage
-	claim        db.ClaimOutboxMessagesParams
+	messages     []db.ControlOutbox
+	claim        db.ClaimControlOutboxParams
 	delivered    int32
 	retried      bool
 	retryAt      time.Time
 	deadLettered bool
 }
 
-func (s *secretRevocationDeliveryStore) ClaimOutboxMessages(
+func (s *secretRevocationDeliveryStore) ClaimControlOutbox(
 	_ context.Context,
-	claim db.ClaimOutboxMessagesParams,
-) ([]db.OutboxMessage, error) {
+	claim db.ClaimControlOutboxParams,
+) ([]db.ControlOutbox, error) {
 	s.claim = claim
 	return s.messages, nil
 }
 
-func (s *secretRevocationDeliveryStore) DeliverOutboxMessage(
+func (s *secretRevocationDeliveryStore) DeliverControlOutbox(
 	_ context.Context,
-	params db.DeliverOutboxMessageParams,
-) (db.OutboxMessage, error) {
+	params db.DeliverControlOutboxParams,
+) (db.ControlOutbox, error) {
 	s.delivered = params.ClaimAttempt
-	return db.OutboxMessage{}, nil
+	return db.ControlOutbox{}, nil
 }
 
-func (s *secretRevocationDeliveryStore) RetryOutboxMessage(
+func (s *secretRevocationDeliveryStore) RetryControlOutbox(
 	_ context.Context,
-	params db.RetryOutboxMessageParams,
-) (db.OutboxMessage, error) {
+	params db.RetryControlOutboxParams,
+) (db.ControlOutbox, error) {
 	s.retried = true
 	s.retryAt = params.AvailableAt.Time
-	return db.OutboxMessage{}, nil
+	return db.ControlOutbox{}, nil
 }
 
-func (s *secretRevocationDeliveryStore) DeadLetterOutboxMessage(
+func (s *secretRevocationDeliveryStore) DeadLetterControlOutbox(
 	context.Context,
-	db.DeadLetterOutboxMessageParams,
-) (db.OutboxMessage, error) {
+	db.DeadLetterControlOutboxParams,
+) (db.ControlOutbox, error) {
 	s.deadLettered = true
-	return db.OutboxMessage{}, nil
+	return db.ControlOutbox{}, nil
 }
 
 func secretRevocationMessage(
 	environmentID uuid.UUID,
 	secretID uuid.UUID,
 	generation int64,
-) db.OutboxMessage {
-	return db.OutboxMessage{
+) db.ControlOutbox {
+	return db.ControlOutbox{
 		ID:    pgvalue.UUID(uuid.NewV7()),
-		Lane:  "control",
 		Topic: "secret.revoked",
 		Payload: []byte(
 			`{"environmentId":"` + environmentID.String() +

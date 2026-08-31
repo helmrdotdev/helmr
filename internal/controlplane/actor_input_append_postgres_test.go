@@ -42,9 +42,9 @@ SELECT sessions.next_input_sequence,
        (SELECT count(*) FROM idempotency_claims
          WHERE environment_id = sessions.environment_id
            AND operation = 'session.input.send'),
-       (SELECT count(*) FROM outbox_messages
+       (SELECT count(*) FROM control_outbox
          WHERE topic = 'session.input.reconcile'
-           AND partition_key = sessions.id::text)
+           AND payload->>'sessionId' = sessions.id::text)
   FROM sessions
  WHERE sessions.id = $1`,
 			started.SessionID,

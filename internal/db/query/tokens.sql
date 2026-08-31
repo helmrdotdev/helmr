@@ -121,18 +121,14 @@ changed AS (
     SELECT id, environment_id FROM expired
 ),
 reconciliation_intent AS (
-    INSERT INTO outbox_messages (
+    INSERT INTO control_outbox (
         id,
-        lane,
         topic,
-        partition_key,
         payload,
         available_at
     )
     SELECT sqlc.arg(outbox_message_id)::uuid,
-           'control',
            'token.reconcile',
-           changed.id::text,
            jsonb_build_object(
                'environmentId', changed.environment_id::text,
                'tokenId', changed.id::text
@@ -205,18 +201,14 @@ changed AS (
     SELECT id, environment_id FROM expired
 ),
 reconciliation_intent AS (
-    INSERT INTO outbox_messages (
+    INSERT INTO control_outbox (
         id,
-        lane,
         topic,
-        partition_key,
         payload,
         available_at
     )
     SELECT sqlc.arg(outbox_message_id)::uuid,
-           'control',
            'token.reconcile',
-           changed.id::text,
            jsonb_build_object(
                'environmentId', changed.environment_id::text,
                'tokenId', changed.id::text
@@ -268,18 +260,14 @@ ordered_expired AS MATERIALIZED (
       FROM expired
 ),
 reconciliation_intents AS (
-    INSERT INTO outbox_messages (
+    INSERT INTO control_outbox (
         id,
-        lane,
         topic,
-        partition_key,
         payload,
         available_at
     )
     SELECT provided_outbox_ids.id,
-           'control',
            'token.reconcile',
-           expired.id::text,
            jsonb_build_object(
                'environmentId', expired.environment_id::text,
                'tokenId', expired.id::text
@@ -288,10 +276,12 @@ reconciliation_intents AS (
       FROM expired
       JOIN ordered_expired USING (id)
       JOIN provided_outbox_ids USING (ordinality)
-    RETURNING partition_key
+    RETURNING id
 )
 SELECT expired.*
   FROM expired
+  JOIN ordered_expired USING (id)
+  JOIN provided_outbox_ids USING (ordinality)
   JOIN reconciliation_intents
-    ON reconciliation_intents.partition_key = expired.id::text
+    ON reconciliation_intents.id = provided_outbox_ids.id
  ORDER BY expired.expires_at, expired.id;

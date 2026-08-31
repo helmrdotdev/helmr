@@ -27,22 +27,22 @@ const (
 )
 
 type RevocationDeliveryStore interface {
-	ClaimOutboxMessages(
+	ClaimControlOutbox(
 		context.Context,
-		db.ClaimOutboxMessagesParams,
-	) ([]db.OutboxMessage, error)
-	DeliverOutboxMessage(
+		db.ClaimControlOutboxParams,
+	) ([]db.ControlOutbox, error)
+	DeliverControlOutbox(
 		context.Context,
-		db.DeliverOutboxMessageParams,
-	) (db.OutboxMessage, error)
-	RetryOutboxMessage(
+		db.DeliverControlOutboxParams,
+	) (db.ControlOutbox, error)
+	RetryControlOutbox(
 		context.Context,
-		db.RetryOutboxMessageParams,
-	) (db.OutboxMessage, error)
-	DeadLetterOutboxMessage(
+		db.RetryControlOutboxParams,
+	) (db.ControlOutbox, error)
+	DeadLetterControlOutbox(
 		context.Context,
-		db.DeadLetterOutboxMessageParams,
-	) (db.OutboxMessage, error)
+		db.DeadLetterControlOutboxParams,
+	) (db.ControlOutbox, error)
 }
 
 type RevocationReconcileBatch func(
@@ -109,12 +109,11 @@ func (w *RevocationDeliveryWorker) Run(ctx context.Context) error {
 
 func (w *RevocationDeliveryWorker) tick(ctx context.Context) error {
 	now := w.now().UTC()
-	messages, err := w.store.ClaimOutboxMessages(
+	messages, err := w.store.ClaimControlOutbox(
 		ctx,
-		db.ClaimOutboxMessagesParams{
+		db.ClaimControlOutboxParams{
 			ClaimedBy:      pgtype.Text{String: w.workerID, Valid: true},
 			ClaimExpiresAt: pgvalue.TimestamptzUTCZeroInvalid(now.Add(w.claimFor)),
-			Lane:           "control",
 			Topics:         []string{"secret.revoked"},
 			RowLimit:       w.claimSize,
 		},
@@ -133,7 +132,7 @@ func (w *RevocationDeliveryWorker) tick(ctx context.Context) error {
 
 func (w *RevocationDeliveryWorker) process(
 	ctx context.Context,
-	message db.OutboxMessage,
+	message db.ControlOutbox,
 ) error {
 	payload, err := decodeSecretRevocationPayload(message.Payload)
 	if err != nil {
@@ -157,9 +156,9 @@ func (w *RevocationDeliveryWorker) process(
 	if examined >= int(w.batchSize) {
 		return w.continueBatch(ctx, message)
 	}
-	_, err = w.store.DeliverOutboxMessage(
+	_, err = w.store.DeliverControlOutbox(
 		ctx,
-		db.DeliverOutboxMessageParams{
+		db.DeliverControlOutboxParams{
 			ID:           message.ID,
 			ClaimedBy:    message.ClaimedBy,
 			ClaimAttempt: message.Attempts,
@@ -173,11 +172,11 @@ func (w *RevocationDeliveryWorker) process(
 
 func (w *RevocationDeliveryWorker) continueBatch(
 	ctx context.Context,
-	message db.OutboxMessage,
+	message db.ControlOutbox,
 ) error {
-	_, err := w.store.RetryOutboxMessage(
+	_, err := w.store.RetryControlOutbox(
 		ctx,
-		db.RetryOutboxMessageParams{
+		db.RetryControlOutboxParams{
 			ID:           message.ID,
 			ClaimedBy:    message.ClaimedBy,
 			ClaimAttempt: message.Attempts,
@@ -196,13 +195,13 @@ func (w *RevocationDeliveryWorker) continueBatch(
 
 func (w *RevocationDeliveryWorker) retry(
 	ctx context.Context,
-	message db.OutboxMessage,
+	message db.ControlOutbox,
 	cause error,
 	after time.Duration,
 ) error {
-	_, err := w.store.RetryOutboxMessage(
+	_, err := w.store.RetryControlOutbox(
 		ctx,
-		db.RetryOutboxMessageParams{
+		db.RetryControlOutboxParams{
 			ID:           message.ID,
 			ClaimedBy:    message.ClaimedBy,
 			ClaimAttempt: message.Attempts,
@@ -220,12 +219,12 @@ func (w *RevocationDeliveryWorker) retry(
 
 func (w *RevocationDeliveryWorker) deadLetter(
 	ctx context.Context,
-	message db.OutboxMessage,
+	message db.ControlOutbox,
 	cause error,
 ) error {
-	_, err := w.store.DeadLetterOutboxMessage(
+	_, err := w.store.DeadLetterControlOutbox(
 		ctx,
-		db.DeadLetterOutboxMessageParams{
+		db.DeadLetterControlOutboxParams{
 			ID:           message.ID,
 			ClaimedBy:    message.ClaimedBy,
 			ClaimAttempt: message.Attempts,
@@ -235,7 +234,11 @@ func (w *RevocationDeliveryWorker) deadLetter(
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
-	return errors.Join(cause, err)
+	if err != nil {
+		return errors.Join(cause, err)
+	}
+	outbox.LogDeadLettered(w.log, pgvalue.UUIDString(message.ID), message.Topic, cause)
+	return cause
 }
 
 type secretRevocationPayload struct {

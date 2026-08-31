@@ -456,13 +456,11 @@ func (s *Store) Revoke(ctx context.Context, environmentID uuid.UUID, secretID uu
 		if err != nil {
 			return db.GetSecretSnapshotRow{}, fmt.Errorf("marshal secret revocation intent: %w", err)
 		}
-		if _, err := queries.CreateOutboxMessage(ctx, db.CreateOutboxMessageParams{
-			ID:           pgvalue.UUID(uuid.NewV7()),
-			Lane:         "control",
-			Topic:        "secret.revoked",
-			PartitionKey: secretID.String(),
-			Payload:      payload,
-			AvailableAt:  pgvalue.TimestamptzUTCZeroInvalid(time.Now()),
+		if _, err := queries.CreateControlOutbox(ctx, db.CreateControlOutboxParams{
+			ID:          pgvalue.UUID(uuid.NewV7()),
+			Topic:       "secret.revoked",
+			Payload:     payload,
+			AvailableAt: pgvalue.TimestamptzUTCZeroInvalid(time.Now()),
 		}); err != nil {
 			return db.GetSecretSnapshotRow{}, fmt.Errorf("create secret revocation intent: %w", err)
 		}

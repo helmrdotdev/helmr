@@ -2045,11 +2045,9 @@ CREATE TABLE public_access_tokens (
         ON DELETE CASCADE
 );
 
-CREATE TABLE outbox_messages (
+CREATE TABLE control_outbox (
     id UUID PRIMARY KEY,
-    lane TEXT NOT NULL CHECK (btrim(lane) <> '' AND octet_length(lane) <= 128),
     topic TEXT NOT NULL CHECK (btrim(topic) <> '' AND octet_length(topic) <= 128),
-    partition_key TEXT NOT NULL CHECK (btrim(partition_key) <> '' AND octet_length(partition_key) <= 512),
     payload JSONB NOT NULL CHECK (
         jsonb_typeof(payload) = 'object'
     ),
@@ -2077,8 +2075,8 @@ CREATE TABLE outbox_messages (
     )
 );
 
-CREATE INDEX outbox_messages_delivery_idx
-    ON outbox_messages (lane, topic, available_at, id)
+CREATE INDEX control_outbox_delivery_idx
+    ON control_outbox (topic, available_at, id)
     WHERE state IN ('pending', 'claimed');
 
 CREATE TABLE telemetry_outbox (

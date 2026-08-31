@@ -1,6 +1,7 @@
 package outbox
 
 import (
+	"log/slog"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -18,6 +19,13 @@ func RetryAfter(attempt int32) time.Duration {
 		return time.Minute
 	}
 	return time.Duration(1<<uint(attempt-1)) * time.Second
+}
+
+func LogDeadLettered(log *slog.Logger, id string, topic string, cause error) {
+	if log == nil {
+		return
+	}
+	log.Warn("control outbox dead-lettered", "id", id, "topic", topic, "error", cause)
 }
 
 func Error(cause error, fallback string) pgtype.Text {

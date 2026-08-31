@@ -29,10 +29,10 @@ const (
 type DeliveryStore interface {
 	ExpireDueTokens(context.Context, db.ExpireDueTokensParams) ([]db.ExpireDueTokensRow, error)
 	ExpireDuePublicAccessTokens(context.Context, int32) ([]db.PublicAccessToken, error)
-	ClaimOutboxMessages(context.Context, db.ClaimOutboxMessagesParams) ([]db.OutboxMessage, error)
-	DeliverOutboxMessage(context.Context, db.DeliverOutboxMessageParams) (db.OutboxMessage, error)
-	RetryOutboxMessage(context.Context, db.RetryOutboxMessageParams) (db.OutboxMessage, error)
-	DeadLetterOutboxMessage(context.Context, db.DeadLetterOutboxMessageParams) (db.OutboxMessage, error)
+	ClaimControlOutbox(context.Context, db.ClaimControlOutboxParams) ([]db.ControlOutbox, error)
+	DeliverControlOutbox(context.Context, db.DeliverControlOutboxParams) (db.ControlOutbox, error)
+	RetryControlOutbox(context.Context, db.RetryControlOutboxParams) (db.ControlOutbox, error)
+	DeadLetterControlOutbox(context.Context, db.DeadLetterControlOutboxParams) (db.ControlOutbox, error)
 }
 
 type ReconcileBatch func(context.Context, uuid.UUID, uuid.UUID, int32) (WaitBatch, error)
@@ -98,10 +98,9 @@ func (w *DeliveryWorker) tick(ctx context.Context) error {
 		return fmt.Errorf("expire due token public access credentials: %w", err)
 	}
 	now := w.now().UTC()
-	messages, err := w.store.ClaimOutboxMessages(ctx, db.ClaimOutboxMessagesParams{
+	messages, err := w.store.ClaimControlOutbox(ctx, db.ClaimControlOutboxParams{
 		ClaimedBy:      pgtype.Text{String: w.workerID, Valid: true},
 		ClaimExpiresAt: pgvalue.TimestamptzUTCZeroInvalid(now.Add(w.claimFor)),
-		Lane:           "control",
 		Topics:         []string{"token.reconcile"},
 		RowLimit:       w.claimSize,
 	})
@@ -117,7 +116,7 @@ func (w *DeliveryWorker) tick(ctx context.Context) error {
 	return errors.Join(failures...)
 }
 
-func (w *DeliveryWorker) process(ctx context.Context, message db.OutboxMessage) error {
+func (w *DeliveryWorker) process(ctx context.Context, message db.ControlOutbox) error {
 	payload, err := decodeTokenReconcilePayload(message.Payload)
 	if err != nil {
 		return w.deadLetter(ctx, message, err)
@@ -132,7 +131,7 @@ func (w *DeliveryWorker) process(ctx context.Context, message db.OutboxMessage) 
 	if batch.Examined >= int(w.batchSize) {
 		return w.continueBatch(ctx, message)
 	}
-	_, err = w.store.DeliverOutboxMessage(ctx, db.DeliverOutboxMessageParams{
+	_, err = w.store.DeliverControlOutbox(ctx, db.DeliverControlOutboxParams{
 		ID:           message.ID,
 		ClaimedBy:    message.ClaimedBy,
 		ClaimAttempt: message.Attempts,
@@ -143,8 +142,8 @@ func (w *DeliveryWorker) process(ctx context.Context, message db.OutboxMessage) 
 	return err
 }
 
-func (w *DeliveryWorker) deferBatch(ctx context.Context, message db.OutboxMessage, after time.Duration) error {
-	_, err := w.store.RetryOutboxMessage(ctx, db.RetryOutboxMessageParams{
+func (w *DeliveryWorker) deferBatch(ctx context.Context, message db.ControlOutbox, after time.Duration) error {
+	_, err := w.store.RetryControlOutbox(ctx, db.RetryControlOutboxParams{
 		ID:           message.ID,
 		ClaimedBy:    message.ClaimedBy,
 		ClaimAttempt: message.Attempts,
@@ -157,8 +156,8 @@ func (w *DeliveryWorker) deferBatch(ctx context.Context, message db.OutboxMessag
 	return err
 }
 
-func (w *DeliveryWorker) continueBatch(ctx context.Context, message db.OutboxMessage) error {
-	_, err := w.store.RetryOutboxMessage(ctx, db.RetryOutboxMessageParams{
+func (w *DeliveryWorker) continueBatch(ctx context.Context, message db.ControlOutbox) error {
+	_, err := w.store.RetryControlOutbox(ctx, db.RetryControlOutboxParams{
 		ID:           message.ID,
 		ClaimedBy:    message.ClaimedBy,
 		ClaimAttempt: message.Attempts,
@@ -171,8 +170,8 @@ func (w *DeliveryWorker) continueBatch(ctx context.Context, message db.OutboxMes
 	return err
 }
 
-func (w *DeliveryWorker) retry(ctx context.Context, message db.OutboxMessage, cause error, after time.Duration) error {
-	_, err := w.store.RetryOutboxMessage(ctx, db.RetryOutboxMessageParams{
+func (w *DeliveryWorker) retry(ctx context.Context, message db.ControlOutbox, cause error, after time.Duration) error {
+	_, err := w.store.RetryControlOutbox(ctx, db.RetryControlOutboxParams{
 		ID:           message.ID,
 		ClaimedBy:    message.ClaimedBy,
 		ClaimAttempt: message.Attempts,
@@ -185,8 +184,8 @@ func (w *DeliveryWorker) retry(ctx context.Context, message db.OutboxMessage, ca
 	return errors.Join(cause, err)
 }
 
-func (w *DeliveryWorker) deadLetter(ctx context.Context, message db.OutboxMessage, cause error) error {
-	_, err := w.store.DeadLetterOutboxMessage(ctx, db.DeadLetterOutboxMessageParams{
+func (w *DeliveryWorker) deadLetter(ctx context.Context, message db.ControlOutbox, cause error) error {
+	_, err := w.store.DeadLetterControlOutbox(ctx, db.DeadLetterControlOutboxParams{
 		ID:           message.ID,
 		ClaimedBy:    message.ClaimedBy,
 		ClaimAttempt: message.Attempts,
@@ -195,7 +194,11 @@ func (w *DeliveryWorker) deadLetter(ctx context.Context, message db.OutboxMessag
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
-	return errors.Join(cause, err)
+	if err != nil {
+		return errors.Join(cause, err)
+	}
+	outbox.LogDeadLettered(w.log, pgvalue.UUIDString(message.ID), message.Topic, cause)
+	return cause
 }
 
 type tokenReconcilePayload struct {

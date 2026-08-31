@@ -11,44 +11,41 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const claimOutboxMessages = `-- name: ClaimOutboxMessages :many
+const claimControlOutbox = `-- name: ClaimControlOutbox :many
 WITH candidates AS (
     SELECT id
-    FROM outbox_messages
+    FROM control_outbox
     WHERE (
         (state = 'pending' AND available_at <= now())
         OR
         (state = 'claimed' AND claim_expires_at <= now())
       )
-      AND outbox_messages.lane = $3
-      AND outbox_messages.topic = ANY($4::text[])
+      AND control_outbox.topic = ANY($3::text[])
     ORDER BY available_at, id
-    LIMIT $5
+    LIMIT $4
     FOR UPDATE SKIP LOCKED
 )
-UPDATE outbox_messages
+UPDATE control_outbox
 SET state = 'claimed',
     attempts = attempts + 1,
     claimed_by = $1,
     claim_expires_at = $2
 FROM candidates
-WHERE outbox_messages.id = candidates.id
-RETURNING outbox_messages.id, outbox_messages.lane, outbox_messages.topic, outbox_messages.partition_key, outbox_messages.payload, outbox_messages.state, outbox_messages.attempts, outbox_messages.available_at, outbox_messages.claimed_by, outbox_messages.claim_expires_at, outbox_messages.last_error, outbox_messages.created_at, outbox_messages.delivered_at
+WHERE control_outbox.id = candidates.id
+RETURNING control_outbox.id, control_outbox.topic, control_outbox.payload, control_outbox.state, control_outbox.attempts, control_outbox.available_at, control_outbox.claimed_by, control_outbox.claim_expires_at, control_outbox.last_error, control_outbox.created_at, control_outbox.delivered_at
 `
 
-type ClaimOutboxMessagesParams struct {
+type ClaimControlOutboxParams struct {
 	ClaimedBy      pgtype.Text        `json:"claimed_by"`
 	ClaimExpiresAt pgtype.Timestamptz `json:"claim_expires_at"`
-	Lane           string             `json:"lane"`
 	Topics         []string           `json:"topics"`
 	RowLimit       int32              `json:"row_limit"`
 }
 
-func (q *Queries) ClaimOutboxMessages(ctx context.Context, arg ClaimOutboxMessagesParams) ([]OutboxMessage, error) {
-	rows, err := q.db.Query(ctx, claimOutboxMessages,
+func (q *Queries) ClaimControlOutbox(ctx context.Context, arg ClaimControlOutboxParams) ([]ControlOutbox, error) {
+	rows, err := q.db.Query(ctx, claimControlOutbox,
 		arg.ClaimedBy,
 		arg.ClaimExpiresAt,
-		arg.Lane,
 		arg.Topics,
 		arg.RowLimit,
 	)
@@ -56,14 +53,12 @@ func (q *Queries) ClaimOutboxMessages(ctx context.Context, arg ClaimOutboxMessag
 		return nil, err
 	}
 	defer rows.Close()
-	var items []OutboxMessage
+	var items []ControlOutbox
 	for rows.Next() {
-		var i OutboxMessage
+		var i ControlOutbox
 		if err := rows.Scan(
 			&i.ID,
-			&i.Lane,
 			&i.Topic,
-			&i.PartitionKey,
 			&i.Payload,
 			&i.State,
 			&i.Attempts,
@@ -84,12 +79,28 @@ func (q *Queries) ClaimOutboxMessages(ctx context.Context, arg ClaimOutboxMessag
 	return items, nil
 }
 
-const createOutboxMessage = `-- name: CreateOutboxMessage :one
-INSERT INTO outbox_messages (
+const controlOutboxLifecycle = `-- name: ControlOutboxLifecycle :one
+SELECT MIN(created_at) FILTER (WHERE state = 'pending')::timestamptz AS oldest_pending_at,
+       COUNT(*) FILTER (WHERE state = 'dead_lettered')::bigint AS dead_lettered
+  FROM control_outbox
+`
+
+type ControlOutboxLifecycleRow struct {
+	OldestPendingAt pgtype.Timestamptz `json:"oldest_pending_at"`
+	DeadLettered    int64              `json:"dead_lettered"`
+}
+
+func (q *Queries) ControlOutboxLifecycle(ctx context.Context) (ControlOutboxLifecycleRow, error) {
+	row := q.db.QueryRow(ctx, controlOutboxLifecycle)
+	var i ControlOutboxLifecycleRow
+	err := row.Scan(&i.OldestPendingAt, &i.DeadLettered)
+	return i, err
+}
+
+const createControlOutbox = `-- name: CreateControlOutbox :one
+INSERT INTO control_outbox (
     id,
-    lane,
     topic,
-    partition_key,
     payload,
     available_at
 )
@@ -97,37 +108,29 @@ VALUES (
     $1,
     $2,
     $3,
-    $4,
-    $5,
-    $6
+    $4
 )
-RETURNING id, lane, topic, partition_key, payload, state, attempts, available_at, claimed_by, claim_expires_at, last_error, created_at, delivered_at
+RETURNING id, topic, payload, state, attempts, available_at, claimed_by, claim_expires_at, last_error, created_at, delivered_at
 `
 
-type CreateOutboxMessageParams struct {
-	ID           pgtype.UUID        `json:"id"`
-	Lane         string             `json:"lane"`
-	Topic        string             `json:"topic"`
-	PartitionKey string             `json:"partition_key"`
-	Payload      []byte             `json:"payload"`
-	AvailableAt  pgtype.Timestamptz `json:"available_at"`
+type CreateControlOutboxParams struct {
+	ID          pgtype.UUID        `json:"id"`
+	Topic       string             `json:"topic"`
+	Payload     []byte             `json:"payload"`
+	AvailableAt pgtype.Timestamptz `json:"available_at"`
 }
 
-func (q *Queries) CreateOutboxMessage(ctx context.Context, arg CreateOutboxMessageParams) (OutboxMessage, error) {
-	row := q.db.QueryRow(ctx, createOutboxMessage,
+func (q *Queries) CreateControlOutbox(ctx context.Context, arg CreateControlOutboxParams) (ControlOutbox, error) {
+	row := q.db.QueryRow(ctx, createControlOutbox,
 		arg.ID,
-		arg.Lane,
 		arg.Topic,
-		arg.PartitionKey,
 		arg.Payload,
 		arg.AvailableAt,
 	)
-	var i OutboxMessage
+	var i ControlOutbox
 	err := row.Scan(
 		&i.ID,
-		&i.Lane,
 		&i.Topic,
-		&i.PartitionKey,
 		&i.Payload,
 		&i.State,
 		&i.Attempts,
@@ -141,8 +144,8 @@ func (q *Queries) CreateOutboxMessage(ctx context.Context, arg CreateOutboxMessa
 	return i, err
 }
 
-const deadLetterOutboxMessage = `-- name: DeadLetterOutboxMessage :one
-UPDATE outbox_messages
+const deadLetterControlOutbox = `-- name: DeadLetterControlOutbox :one
+UPDATE control_outbox
 SET state = 'dead_lettered',
     claimed_by = NULL,
     claim_expires_at = NULL,
@@ -152,29 +155,27 @@ WHERE id = $2
   AND claimed_by = $3
   AND attempts = $4
   AND claim_expires_at > now()
-RETURNING id, lane, topic, partition_key, payload, state, attempts, available_at, claimed_by, claim_expires_at, last_error, created_at, delivered_at
+RETURNING id, topic, payload, state, attempts, available_at, claimed_by, claim_expires_at, last_error, created_at, delivered_at
 `
 
-type DeadLetterOutboxMessageParams struct {
+type DeadLetterControlOutboxParams struct {
 	LastError    pgtype.Text `json:"last_error"`
 	ID           pgtype.UUID `json:"id"`
 	ClaimedBy    pgtype.Text `json:"claimed_by"`
 	ClaimAttempt int32       `json:"claim_attempt"`
 }
 
-func (q *Queries) DeadLetterOutboxMessage(ctx context.Context, arg DeadLetterOutboxMessageParams) (OutboxMessage, error) {
-	row := q.db.QueryRow(ctx, deadLetterOutboxMessage,
+func (q *Queries) DeadLetterControlOutbox(ctx context.Context, arg DeadLetterControlOutboxParams) (ControlOutbox, error) {
+	row := q.db.QueryRow(ctx, deadLetterControlOutbox,
 		arg.LastError,
 		arg.ID,
 		arg.ClaimedBy,
 		arg.ClaimAttempt,
 	)
-	var i OutboxMessage
+	var i ControlOutbox
 	err := row.Scan(
 		&i.ID,
-		&i.Lane,
 		&i.Topic,
-		&i.PartitionKey,
 		&i.Payload,
 		&i.State,
 		&i.Attempts,
@@ -188,8 +189,8 @@ func (q *Queries) DeadLetterOutboxMessage(ctx context.Context, arg DeadLetterOut
 	return i, err
 }
 
-const deliverOutboxMessage = `-- name: DeliverOutboxMessage :one
-UPDATE outbox_messages
+const deliverControlOutbox = `-- name: DeliverControlOutbox :one
+UPDATE control_outbox
 SET state = 'delivered',
     claimed_by = NULL,
     claim_expires_at = NULL,
@@ -200,23 +201,21 @@ WHERE id = $1
   AND claimed_by = $2
   AND attempts = $3
   AND claim_expires_at > now()
-RETURNING id, lane, topic, partition_key, payload, state, attempts, available_at, claimed_by, claim_expires_at, last_error, created_at, delivered_at
+RETURNING id, topic, payload, state, attempts, available_at, claimed_by, claim_expires_at, last_error, created_at, delivered_at
 `
 
-type DeliverOutboxMessageParams struct {
+type DeliverControlOutboxParams struct {
 	ID           pgtype.UUID `json:"id"`
 	ClaimedBy    pgtype.Text `json:"claimed_by"`
 	ClaimAttempt int32       `json:"claim_attempt"`
 }
 
-func (q *Queries) DeliverOutboxMessage(ctx context.Context, arg DeliverOutboxMessageParams) (OutboxMessage, error) {
-	row := q.db.QueryRow(ctx, deliverOutboxMessage, arg.ID, arg.ClaimedBy, arg.ClaimAttempt)
-	var i OutboxMessage
+func (q *Queries) DeliverControlOutbox(ctx context.Context, arg DeliverControlOutboxParams) (ControlOutbox, error) {
+	row := q.db.QueryRow(ctx, deliverControlOutbox, arg.ID, arg.ClaimedBy, arg.ClaimAttempt)
+	var i ControlOutbox
 	err := row.Scan(
 		&i.ID,
-		&i.Lane,
 		&i.Topic,
-		&i.PartitionKey,
 		&i.Payload,
 		&i.State,
 		&i.Attempts,
@@ -230,8 +229,46 @@ func (q *Queries) DeliverOutboxMessage(ctx context.Context, arg DeliverOutboxMes
 	return i, err
 }
 
-const retryOutboxMessage = `-- name: RetryOutboxMessage :one
-UPDATE outbox_messages
+const pruneDeliveredControlOutbox = `-- name: PruneDeliveredControlOutbox :many
+DELETE FROM control_outbox
+ WHERE id IN (
+    SELECT id
+      FROM control_outbox
+     WHERE state = 'delivered'
+       AND delivered_at < now() - $1::interval
+     ORDER BY delivered_at, id
+     LIMIT $2
+ )
+RETURNING id
+`
+
+type PruneDeliveredControlOutboxParams struct {
+	RetainFor pgtype.Interval `json:"retain_for"`
+	RowLimit  int32           `json:"row_limit"`
+}
+
+func (q *Queries) PruneDeliveredControlOutbox(ctx context.Context, arg PruneDeliveredControlOutboxParams) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, pruneDeliveredControlOutbox, arg.RetainFor, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const retryControlOutbox = `-- name: RetryControlOutbox :one
+UPDATE control_outbox
 SET state = 'pending',
     claimed_by = NULL,
     claim_expires_at = NULL,
@@ -242,10 +279,10 @@ WHERE id = $3
   AND claimed_by = $4
   AND attempts = $5
   AND claim_expires_at > now()
-RETURNING id, lane, topic, partition_key, payload, state, attempts, available_at, claimed_by, claim_expires_at, last_error, created_at, delivered_at
+RETURNING id, topic, payload, state, attempts, available_at, claimed_by, claim_expires_at, last_error, created_at, delivered_at
 `
 
-type RetryOutboxMessageParams struct {
+type RetryControlOutboxParams struct {
 	AvailableAt  pgtype.Timestamptz `json:"available_at"`
 	LastError    pgtype.Text        `json:"last_error"`
 	ID           pgtype.UUID        `json:"id"`
@@ -253,20 +290,18 @@ type RetryOutboxMessageParams struct {
 	ClaimAttempt int32              `json:"claim_attempt"`
 }
 
-func (q *Queries) RetryOutboxMessage(ctx context.Context, arg RetryOutboxMessageParams) (OutboxMessage, error) {
-	row := q.db.QueryRow(ctx, retryOutboxMessage,
+func (q *Queries) RetryControlOutbox(ctx context.Context, arg RetryControlOutboxParams) (ControlOutbox, error) {
+	row := q.db.QueryRow(ctx, retryControlOutbox,
 		arg.AvailableAt,
 		arg.LastError,
 		arg.ID,
 		arg.ClaimedBy,
 		arg.ClaimAttempt,
 	)
-	var i OutboxMessage
+	var i ControlOutbox
 	err := row.Scan(
 		&i.ID,
-		&i.Lane,
 		&i.Topic,
-		&i.PartitionKey,
 		&i.Payload,
 		&i.State,
 		&i.Attempts,

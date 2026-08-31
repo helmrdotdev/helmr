@@ -153,7 +153,7 @@ func TestTokenCompletionRollsBackWhenReconciliationIntentFails(t *testing.T) {
 	`)
 	dbtest.MustExec(t, ctx, fixture.pool, `
 		CREATE TRIGGER reject_token_reconciliation_intent
-		BEFORE INSERT ON outbox_messages
+		BEFORE INSERT ON control_outbox
 		FOR EACH ROW EXECUTE FUNCTION reject_token_reconciliation_intent()
 	`)
 
@@ -236,9 +236,9 @@ func assertTokenReconciliationIntent(t *testing.T, ctx context.Context, fixture 
 		           'environmentId', $1::uuid::text,
 		           'tokenId', $2::uuid::text
 		       )), true)
-		  FROM outbox_messages
+		  FROM control_outbox
 		 WHERE topic = 'token.reconcile'
-		   AND partition_key = $2::uuid::text
+		   AND payload->>'tokenId' = $2::uuid::text
 	`, fixture.environmentID, tokenID).Scan(&count, &payloadMatches); err != nil {
 		t.Fatal(err)
 	}

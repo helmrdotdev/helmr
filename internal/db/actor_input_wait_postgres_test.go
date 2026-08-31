@@ -264,7 +264,7 @@ func TestActorInputRunSourceTransactionRollbackLeavesNoResidue(t *testing.T) {
 		       (SELECT count(*) FROM session_records WHERE id = $2),
 		       (SELECT count(*) FROM idempotency_claims
 		         WHERE environment_id = $3 AND operation = 'session.input.send'),
-		       (SELECT count(*) FROM outbox_messages WHERE id = $4)
+		       (SELECT count(*) FROM control_outbox WHERE id = $4)
 		  FROM sessions
 		 WHERE id = $1
 	`, actorID, recordID, fixture.environmentID, reconcileID).Scan(
