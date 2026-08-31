@@ -394,7 +394,7 @@ UPDATE run_waits
 RETURNING *;
 
 -- name: RequestCheckpointFailureRuntimeClose :one
-WITH closing_runtime AS (
+WITH close_runtime AS (
     UPDATE runtime_instances
        SET desired_state = 'closed',
            desired_version = desired_version + 1,
@@ -417,13 +417,13 @@ UPDATE workspace_mounts
    SET state = 'unmounting',
        stopped_at = COALESCE(stopped_at, sqlc.arg(failed_at)),
        updated_at = sqlc.arg(failed_at)
-  FROM closing_runtime
+  FROM close_runtime
  WHERE workspace_mounts.id = sqlc.arg(workspace_mount_id)
    AND workspace_mounts.org_id = sqlc.arg(org_id)
    AND workspace_mounts.project_id = sqlc.arg(project_id)
    AND workspace_mounts.environment_id = sqlc.arg(environment_id)
    AND workspace_mounts.workspace_id = sqlc.arg(workspace_id)
-   AND workspace_mounts.runtime_instance_id = closing_runtime.id
+   AND workspace_mounts.runtime_instance_id = close_runtime.id
    AND workspace_mounts.worker_instance_id = sqlc.arg(worker_instance_id)
    AND workspace_mounts.worker_epoch = sqlc.arg(worker_epoch)
    AND workspace_mounts.fencing_generation = sqlc.arg(mount_fencing_generation)

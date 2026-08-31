@@ -65,9 +65,7 @@ type RuntimeObservedState = string
 
 const (
 	RuntimeObservedStateAllocated RuntimeObservedState = "allocated"
-	RuntimeObservedStatePreparing RuntimeObservedState = "preparing"
 	RuntimeObservedStateReady     RuntimeObservedState = "ready"
-	RuntimeObservedStateClosing   RuntimeObservedState = "closing"
 	RuntimeObservedStateClosed    RuntimeObservedState = "closed"
 	RuntimeObservedStateFailed    RuntimeObservedState = "failed"
 	RuntimeObservedStateLost      RuntimeObservedState = "lost"

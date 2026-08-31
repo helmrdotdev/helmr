@@ -256,11 +256,11 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, assignedAt time.T
 			reserved_cpu_millis, reserved_memory_bytes,
 			reserved_guest_ephemeral_disk_bytes, reserved_execution_slots,
 			workspace_id, program_deployment_id, desired_reason, observed_state,
-			observed_version, observed_desired_version, preparing_at, ready_at
+			observed_version, observed_desired_version, ready_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, 1, 1, $12,
 			1000, 1073741824, 2147483648, 1,
-			$10, $11, 'test', 'ready', 1, 1, now(), now()
+			$10, $11, 'test', 'ready', 1, 1, now()
 		)
 	`, runtimeID, fixture.OrgID, WorkerGroup, fixture.ProjectID,
 		fixture.EnvironmentID, Region, fixture.WorkerID,

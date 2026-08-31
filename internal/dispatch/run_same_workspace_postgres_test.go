@@ -882,8 +882,7 @@ UPDATE workspace_mounts
 UPDATE runtime_instances
    SET desired_state = 'closed', desired_version = desired_version + 1,
        observed_state = 'closed', observed_desired_version = desired_version + 1,
-       observed_version = observed_version + 1, closing_at = transaction_timestamp(),
-       closed_at = transaction_timestamp(), terminal_at = transaction_timestamp(),
+       observed_version = observed_version + 1, terminal_at = transaction_timestamp(),
        terminal_reason_code = 'checkpointed', reclaimed_at = transaction_timestamp(),
        reclaim_evidence = jsonb_build_object(
            'method', 'session_closed',

@@ -31,7 +31,7 @@ func TestRunRuntimeReadyRequiresConvergedReadyIntent(t *testing.T) {
 	}
 	for name, mutate := range map[string]func(*runRuntime){
 		"close requested":      func(runtime *runRuntime) { runtime.desiredState = db.RuntimeDesiredStateClosed },
-		"not physically ready": func(runtime *runRuntime) { runtime.observedState = db.RuntimeObservedStatePreparing },
+		"not physically ready": func(runtime *runRuntime) { runtime.observedState = db.RuntimeObservedStateAllocated },
 		"stale observation":    func(runtime *runRuntime) { runtime.observedDesiredVersion-- },
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -180,7 +180,6 @@ UPDATE runtime_instances
    SET observed_state = 'ready',
        observed_version = 1,
        observed_desired_version = desired_version,
-       preparing_at = transaction_timestamp(),
        ready_at = transaction_timestamp(),
        observed_at = transaction_timestamp()
  WHERE id = $1`,
@@ -611,7 +610,7 @@ UPDATE runs SET queue_concurrency_limit = 4 WHERE id = $1`, fixture.runID)
 UPDATE runtime_instances
    SET observed_state = 'ready', observed_version = 1,
        observed_desired_version = desired_version,
-       preparing_at = transaction_timestamp(), ready_at = transaction_timestamp(),
+       ready_at = transaction_timestamp(),
        observed_at = transaction_timestamp()
  WHERE id = $1`, reserved.RuntimeInstanceID)
 	mounting, err := fixture.authority.PlaceReadyRun(fixture.ctx, fixture.candidate())
@@ -1299,7 +1298,7 @@ UPDATE workspace_mounts
 UPDATE runtime_instances
    SET desired_state = 'closed', desired_version = desired_version + 1,
        observed_state = 'closed', observed_desired_version = desired_version + 1,
-       observed_version = observed_version + 1, closing_at = now(), closed_at = now(),
+       observed_version = observed_version + 1,
        terminal_at = now(), terminal_reason_code = 'checkpointed',
        reclaimed_at = now(),
        reclaim_evidence = jsonb_build_object('method', 'session_closed', 'completed_at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')),
@@ -1539,7 +1538,6 @@ UPDATE workspace_mounts
 UPDATE runtime_instances
    SET observed_state = 'closed', observed_version = observed_version + 1,
        observed_desired_version = desired_version, observed_at = transaction_timestamp(),
-       closing_at = transaction_timestamp(), closed_at = transaction_timestamp(),
        terminal_at = transaction_timestamp(), terminal_reason_code = 'test_reclaimed',
        reclaimed_at = transaction_timestamp(),
        reclaim_evidence = jsonb_build_object('method', 'session_closed', 'completed_at', to_char(transaction_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
@@ -1699,7 +1697,7 @@ UPDATE workspace_mounts
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE runtime_instances
    SET observed_state = 'failed', observed_version = observed_version + 1,
-       observed_at = transaction_timestamp(), failed_at = transaction_timestamp(),
+       observed_at = transaction_timestamp(),
        terminal_at = transaction_timestamp(), terminal_reason_code = 'test_runtime_failed',
        reserved_run_id = NULL, reserved_attempt_number = NULL,
        reserved_workspace_version_id = NULL, reservation_expires_at = NULL
@@ -2229,7 +2227,7 @@ UPDATE run_leases SET state = 'checkpointed', claimed_at = assigned_at, started_
 	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE runtime_instances SET desired_state = 'closed', desired_version = desired_version + 1,
        observed_state = 'closed', observed_desired_version = desired_version + 1,
-       observed_version = observed_version + 1, closing_at = now(), closed_at = now(),
+       observed_version = observed_version + 1,
        terminal_at = now(), terminal_reason_code = 'checkpointed', reclaimed_at = now(),
        reclaim_evidence = jsonb_build_object('method', 'session_closed', 'completed_at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')),
        reserved_run_id = NULL, reserved_attempt_number = NULL,

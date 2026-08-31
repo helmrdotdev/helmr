@@ -223,7 +223,7 @@ func TestConfirmWorkerInstanceProviderAbsentPreservesFailedRuntimeDiagnostics(t 
 	if _, err := fixture.Pool.Exec(ctx, `
 		UPDATE runtime_instances
 		   SET observed_state = 'failed', observed_version = observed_version + 1,
-		       observed_at = now(), failed_at = now(), terminal_at = now(),
+		       observed_at = now(), terminal_at = now(),
 		       terminal_reason_code = 'workspace_mount_failed',
 		       terminal_error = '{"code":"preserve-me"}'::jsonb
 		 WHERE id = $1
@@ -234,19 +234,19 @@ func TestConfirmWorkerInstanceProviderAbsentPreservesFailedRuntimeDiagnostics(t 
 		t.Fatal(err)
 	}
 	var state, reason, code string
-	var failedAt, reclaimedAt pgtype.Timestamptz
+	var terminalAt, reclaimedAt pgtype.Timestamptz
 	if err := fixture.Pool.QueryRow(ctx, `
 		SELECT observed_state, terminal_reason_code, terminal_error ->> 'code',
-		       failed_at, reclaimed_at
+		       terminal_at, reclaimed_at
 		  FROM runtime_instances
 		 WHERE id = $1
-	`, runtimeID).Scan(&state, &reason, &code, &failedAt, &reclaimedAt); err != nil {
+	`, runtimeID).Scan(&state, &reason, &code, &terminalAt, &reclaimedAt); err != nil {
 		t.Fatal(err)
 	}
 	if state != "failed" || reason != "workspace_mount_failed" || code != "preserve-me" ||
-		!failedAt.Valid || !reclaimedAt.Valid {
-		t.Fatalf("preserved failed runtime = state:%q reason:%q code:%q failed:%v reclaimed:%v",
-			state, reason, code, failedAt.Valid, reclaimedAt.Valid)
+		!terminalAt.Valid || !reclaimedAt.Valid {
+		t.Fatalf("preserved failed runtime = state:%q reason:%q code:%q terminal:%v reclaimed:%v",
+			state, reason, code, terminalAt.Valid, reclaimedAt.Valid)
 	}
 }
 
@@ -270,7 +270,7 @@ func TestConfirmWorkerInstanceProviderAbsentPreservesLostRuntimeDiagnostics(t *t
 	if _, err := fixture.Pool.Exec(ctx, `
 		UPDATE runtime_instances
 		   SET observed_state = 'lost', observed_version = observed_version + 1,
-		       observed_at = now(), lost_at = now(), terminal_at = now(),
+		       observed_at = now(), terminal_at = now(),
 		       terminal_reason_code = 'runtime_lease_lost',
 		       terminal_error = '{"code":"keep-lost"}'::jsonb
 		 WHERE id = $1
@@ -281,19 +281,19 @@ func TestConfirmWorkerInstanceProviderAbsentPreservesLostRuntimeDiagnostics(t *t
 		t.Fatal(err)
 	}
 	var state, reason, code string
-	var lostAt, reclaimedAt pgtype.Timestamptz
+	var terminalAt, reclaimedAt pgtype.Timestamptz
 	if err := fixture.Pool.QueryRow(ctx, `
 		SELECT observed_state, terminal_reason_code, terminal_error ->> 'code',
-		       lost_at, reclaimed_at
+		       terminal_at, reclaimed_at
 		  FROM runtime_instances
 		 WHERE id = $1
-	`, runtimeID).Scan(&state, &reason, &code, &lostAt, &reclaimedAt); err != nil {
+	`, runtimeID).Scan(&state, &reason, &code, &terminalAt, &reclaimedAt); err != nil {
 		t.Fatal(err)
 	}
 	if state != "lost" || reason != "runtime_lease_lost" || code != "keep-lost" ||
-		!lostAt.Valid || !reclaimedAt.Valid {
-		t.Fatalf("preserved lost runtime = state:%q reason:%q code:%q lost:%v reclaimed:%v",
-			state, reason, code, lostAt.Valid, reclaimedAt.Valid)
+		!terminalAt.Valid || !reclaimedAt.Valid {
+		t.Fatalf("preserved lost runtime = state:%q reason:%q code:%q terminal:%v reclaimed:%v",
+			state, reason, code, terminalAt.Valid, reclaimedAt.Valid)
 	}
 }
 

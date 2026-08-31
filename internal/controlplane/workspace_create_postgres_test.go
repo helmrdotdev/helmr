@@ -492,11 +492,11 @@ INSERT INTO runtime_instances (
     reserved_guest_ephemeral_disk_bytes, reserved_execution_slots,
     workspace_id, desired_reason,
     observed_state, observed_version, observed_desired_version,
-    preparing_at, ready_at
+    ready_at
 ) VALUES (
     $1, $2, $3, $4, $5, 'us-east-1', $6, $7, $8, $9,
     1, 1, $10, 1000, 1073741824, 4294967296, 1,
-    $11, 'placed', 'ready', 1, 1, now(), now()
+    $11, 'placed', 'ready', 1, 1, now()
 )`, runtimeID, product.orgID, poolFixture.group.ID, product.projectID,
 		product.environmentID, workerID, poolFixture.runtimeIdentityID,
 		sandboxDefinitionID, substrateID, poolFixture.cpuConfigDigest, workspaceID,
@@ -646,7 +646,7 @@ UPDATE workspace_mounts
 	}
 	if _, err := product.pool.Exec(t.Context(), `
 UPDATE runtime_instances
-   SET observed_state = 'failed', failed_at = now(), terminal_at = now(),
+   SET observed_state = 'failed', terminal_at = now(),
        terminal_reason_code = 'test_failed'
  WHERE id = $1`, runtimeID); err != nil {
 		t.Fatal(err)
@@ -654,7 +654,7 @@ UPDATE runtime_instances
 	assertFinalizedCount(0, "unreclaimed failed runtime")
 	if _, err := product.pool.Exec(t.Context(), `
 UPDATE runtime_instances
-   SET observed_state = 'lost', failed_at = NULL, lost_at = now(),
+   SET observed_state = 'lost',
        terminal_at = now(), terminal_reason_code = 'test_lost'
  WHERE id = $1`, runtimeID); err != nil {
 		t.Fatal(err)

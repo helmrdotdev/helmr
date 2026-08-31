@@ -596,7 +596,7 @@ SELECT worker_instances.per_vm_cpu_millis >= $4
             WHERE runtime_instances.worker_instance_id = worker_instances.id
               AND runtime_instances.worker_epoch = worker_instances.current_epoch
               AND (
-                  runtime_instances.observed_state IN ('allocated', 'preparing', 'ready', 'closing')
+                  runtime_instances.observed_state IN ('allocated', 'ready')
                   OR (
                       runtime_instances.observed_state IN ('failed', 'lost')
                       AND runtime_instances.reclaimed_at IS NULL
@@ -608,7 +608,7 @@ SELECT worker_instances.per_vm_cpu_millis >= $4
              FROM runtime_instances
             WHERE runtime_instances.worker_instance_id = worker_instances.id
               AND runtime_instances.worker_epoch = worker_instances.current_epoch
-              AND runtime_instances.observed_state IN ('allocated', 'preparing')
+              AND runtime_instances.observed_state = 'allocated'
        )
        AND worker_instances.epoch_cpu_millis - usage.cpu_millis >= $4
        AND worker_instances.epoch_memory_bytes - usage.memory_bytes >= $5

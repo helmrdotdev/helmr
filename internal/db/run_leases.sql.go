@@ -1132,8 +1132,8 @@ SELECT runs.org_id,
         OR worker_instances.lost_at <= transaction_timestamp()
         OR worker_instances.termination_ready_at <= transaction_timestamp()
         OR worker_instances.current_epoch IS DISTINCT FROM run_leases.worker_epoch
-        OR runtime_instances.lost_at <= transaction_timestamp()
-        OR runtime_instances.failed_at <= transaction_timestamp()
+        OR (runtime_instances.observed_state = 'lost' AND runtime_instances.terminal_at <= transaction_timestamp())
+        OR (runtime_instances.observed_state = 'failed' AND runtime_instances.terminal_at <= transaction_timestamp())
         OR workspace_mounts.lost_at <= transaction_timestamp()
         OR workspace_mounts.failed_at <= transaction_timestamp())
  ORDER BY LEAST(
@@ -1149,8 +1149,8 @@ SELECT runs.org_id,
               END,
               COALESCE(worker_instances.lost_at, 'infinity'::timestamptz),
               COALESCE(worker_instances.termination_ready_at, 'infinity'::timestamptz),
-              COALESCE(runtime_instances.lost_at, 'infinity'::timestamptz),
-              COALESCE(runtime_instances.failed_at, 'infinity'::timestamptz),
+              CASE WHEN runtime_instances.observed_state = 'lost' THEN runtime_instances.terminal_at ELSE 'infinity'::timestamptz END,
+              CASE WHEN runtime_instances.observed_state = 'failed' THEN runtime_instances.terminal_at ELSE 'infinity'::timestamptz END,
               COALESCE(workspace_mounts.lost_at, 'infinity'::timestamptz),
               COALESCE(workspace_mounts.failed_at, 'infinity'::timestamptz)
           ),
@@ -1879,7 +1879,7 @@ func (q *Queries) LockRunLeaseClaimRun(ctx context.Context, arg LockRunLeaseClai
 }
 
 const lockRunLeaseClaimRuntime = `-- name: LockRunLeaseClaimRuntime :one
-SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, runtime_identity_id, deployment_definition_id, runtime_substrate_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, workspace_id, program_deployment_id, restore_checkpoint_id, reserved_run_id, reserved_attempt_number, reserved_process_id, reserved_workspace_version_id, reservation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, preparing_at, ready_at, closing_at, closed_at, lost_at, failed_at, reclaimed_at, reclaim_evidence, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
+SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, runtime_identity_id, deployment_definition_id, runtime_substrate_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, workspace_id, program_deployment_id, restore_checkpoint_id, reserved_run_id, reserved_attempt_number, reserved_process_id, reserved_workspace_version_id, reservation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at
   FROM runtime_instances
  WHERE id = $1
    AND org_id = $2
@@ -1953,18 +1953,12 @@ func (q *Queries) LockRunLeaseClaimRuntime(ctx context.Context, arg LockRunLease
 		&i.ObservedDesiredVersion,
 		&i.ObservedAt,
 		&i.AllocatedAt,
-		&i.PreparingAt,
 		&i.ReadyAt,
-		&i.ClosingAt,
-		&i.ClosedAt,
-		&i.LostAt,
-		&i.FailedAt,
+		&i.TerminalAt,
 		&i.ReclaimedAt,
 		&i.ReclaimEvidence,
-		&i.TerminalAt,
 		&i.TerminalReasonCode,
 		&i.TerminalError,
-		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
 	return i, err
@@ -2797,8 +2791,8 @@ WITH RECURSIVE candidates AS MATERIALIZED (
                 AND transaction_timestamp() >= runs.active_started_at
                     + (GREATEST(runs.max_active_duration_ms - runs.active_elapsed_ms, 0)::text
                        || ' milliseconds')::interval)
-            OR runtime_instances.lost_at <= transaction_timestamp()
-            OR runtime_instances.failed_at <= transaction_timestamp()
+            OR (runtime_instances.observed_state = 'lost' AND runtime_instances.terminal_at <= transaction_timestamp())
+            OR (runtime_instances.observed_state = 'failed' AND runtime_instances.terminal_at <= transaction_timestamp())
             OR worker_instances.lost_at <= transaction_timestamp()
             OR worker_instances.termination_ready_at <= transaction_timestamp()
             OR worker_instances.current_epoch IS DISTINCT FROM run_leases.worker_epoch
@@ -3067,8 +3061,8 @@ WITH RECURSIVE candidates AS MATERIALIZED (
      FOR UPDATE OF worker_instances
 ), locked_runtimes AS MATERIALIZED (
     SELECT locked_workers.org_id, locked_workers.project_id, locked_workers.environment_id, locked_workers.workspace_id, locked_workers.run_id, locked_workers.state_version, locked_workers.current_attempt_number, locked_workers.session_input_start_sequence, locked_workers.session_input_high_watermark, locked_workers.max_active_duration_ms, locked_workers.active_elapsed_ms, locked_workers.active_started_at, locked_workers.entrypoint_kind, locked_workers.session_id, locked_workers.actor_run_generation, locked_workers.actor_committed_input_sequence, locked_workers.actor_next_input_sequence, locked_workers.run_lease_id, locked_workers.worker_instance_id, locked_workers.worker_epoch, locked_workers.runtime_instance_id, locked_workers.workspace_lease_id, locked_workers.workspace_mount_id, locked_workers.run_wait_id, locked_workers.restore_checkpoint_id, locked_workers.condition_state, locked_workers.ownership_generation, locked_workers.writer_generation, locked_workers.nested_same_workspace, locked_workers.enclosing_wait_id, locked_workers.enclosing_parent_run_id, locked_workers.enclosing_parent_attempt_number, locked_workers.enclosing_expected_parent_state_version, locked_workers.enclosing_parent_run_lease_id, locked_workers.enclosing_suspend_checkpoint_id, locked_workers.enclosing_base_workspace_version_id, locked_workers.enclosing_child_writer_generation, locked_workers.worker_lost_at,
-           runtime_instances.lost_at AS runtime_lost_at,
-           runtime_instances.failed_at AS runtime_failed_at
+           CASE WHEN runtime_instances.observed_state = 'lost' THEN runtime_instances.terminal_at END::timestamptz AS runtime_lost_at,
+           CASE WHEN runtime_instances.observed_state = 'failed' THEN runtime_instances.terminal_at END::timestamptz AS runtime_failed_at
       FROM locked_workers
       JOIN runtime_instances
         ON runtime_instances.id = locked_workers.runtime_instance_id

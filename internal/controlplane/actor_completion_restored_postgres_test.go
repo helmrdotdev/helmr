@@ -197,8 +197,8 @@ INSERT INTO runtime_instances (
     reserved_guest_ephemeral_disk_bytes, reserved_execution_slots,
     workspace_id, program_deployment_id, desired_state, desired_version,
     desired_at, desired_reason, observed_state, observed_version,
-    observed_desired_version, observed_at, allocated_at, preparing_at, ready_at,
-    closing_at, closed_at, reclaimed_at, reclaim_evidence, terminal_at,
+    observed_desired_version, observed_at, allocated_at, ready_at,
+    reclaimed_at, reclaim_evidence, terminal_at,
     terminal_reason_code
 )
 SELECT $2, org_id, worker_group_id, project_id, environment_id, region_id,
@@ -208,8 +208,8 @@ SELECT $2, org_id, worker_group_id, project_id, environment_id, region_id,
        reserved_guest_ephemeral_disk_bytes, reserved_execution_slots,
        workspace_id, program_deployment_id, 'closed', 2,
        transaction_timestamp(), 'checkpointed', 'closed', 2, 2,
-       transaction_timestamp(), allocated_at, preparing_at, ready_at,
-       transaction_timestamp(), transaction_timestamp(), transaction_timestamp(),
+       transaction_timestamp(), allocated_at, ready_at,
+       transaction_timestamp(),
        jsonb_build_object('method', 'session_closed', 'completed_at', to_char(transaction_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')),
        transaction_timestamp(), 'checkpointed'
   FROM runtime_instances WHERE id = $1`, runtimeID, sourceRuntimeID)

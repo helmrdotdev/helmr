@@ -129,7 +129,7 @@ UPDATE runs SET runtime_preparation_count = $2 WHERE id = $1`,
 				fixture.runID, test.initialCount)
 			dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE runtime_instances
-   SET observed_state = 'failed', failed_at = transaction_timestamp(),
+   SET observed_state = 'failed',
        terminal_at = transaction_timestamp(), terminal_reason_code = 'workspace_mount_failed'
  WHERE id = $1`, runtimeID)
 

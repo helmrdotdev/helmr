@@ -867,18 +867,12 @@ type RuntimeInstance struct {
 	ObservedDesiredVersion          int64              `json:"observed_desired_version"`
 	ObservedAt                      pgtype.Timestamptz `json:"observed_at"`
 	AllocatedAt                     pgtype.Timestamptz `json:"allocated_at"`
-	PreparingAt                     pgtype.Timestamptz `json:"preparing_at"`
 	ReadyAt                         pgtype.Timestamptz `json:"ready_at"`
-	ClosingAt                       pgtype.Timestamptz `json:"closing_at"`
-	ClosedAt                        pgtype.Timestamptz `json:"closed_at"`
-	LostAt                          pgtype.Timestamptz `json:"lost_at"`
-	FailedAt                        pgtype.Timestamptz `json:"failed_at"`
+	TerminalAt                      pgtype.Timestamptz `json:"terminal_at"`
 	ReclaimedAt                     pgtype.Timestamptz `json:"reclaimed_at"`
 	ReclaimEvidence                 []byte             `json:"reclaim_evidence"`
-	TerminalAt                      pgtype.Timestamptz `json:"terminal_at"`
 	TerminalReasonCode              pgtype.Text        `json:"terminal_reason_code"`
 	TerminalError                   []byte             `json:"terminal_error"`
-	CreatedAt                       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                       pgtype.Timestamptz `json:"updated_at"`
 }
 
