@@ -51,21 +51,3 @@ type RunLogRecord struct {
 	Source         string    `json:"source"`
 	ObservedAt     time.Time `json:"observed_at"`
 }
-
-type TerminalOutputRecord struct {
-	OrgID          uuid.UUID `json:"org_id"`
-	ProjectID      uuid.UUID `json:"project_id"`
-	EnvironmentID  uuid.UUID `json:"environment_id"`
-	WorkspaceID    uuid.UUID `json:"workspace_id"`
-	ResourceKind   string    `json:"resource_kind"`
-	ResourceID     uuid.UUID `json:"resource_id"`
-	StreamName     string    `json:"stream_name"`
-	OffsetStart    uint64    `json:"offset_start"`
-	OffsetEnd      uint64    `json:"offset_end"`
-	Content        string    `json:"content"`
-	SizeBytes      uint64    `json:"size_bytes"`
-	IdempotencyKey string    `json:"idempotency_key"`
-	RetentionClass string    `json:"retention_class"`
-	RedactionClass string    `json:"redaction_class"`
-	ObservedAt     time.Time `json:"observed_at"`
-}

@@ -176,68 +176,6 @@ event AS (
            now()
       FROM event_input
     RETURNING id
-),
-meter_event AS (
-    INSERT INTO meter_events (
-        org_id, project_id, environment_id, run_id, run_lease_id,
-        attempt_number, trace_id, span_id, meter,
-        quantity, unit, details,
-        idempotency_key, idempotency_fingerprint
-    )
-    SELECT current_run_lease.org_id,
-           current_run_lease.project_id,
-           current_run_lease.environment_id,
-           selected_chunk.run_id,
-           selected_chunk.run_lease_id,
-           current_run_lease.attempt_number,
-           current_run_lease.trace_id,
-           current_run_lease.span_id,
-           'log_bytes',
-           selected_chunk.size_bytes,
-           'bytes',
-           jsonb_build_object('stream', selected_chunk.stream, 'observed_seq', selected_chunk.observed_seq),
-           'log:' || selected_chunk.run_id::text || ':' || selected_chunk.attempt_number::text || ':' || selected_chunk.stream::text || ':' || selected_chunk.observed_seq::text,
-           jsonb_build_object(
-               'quantity', selected_chunk.size_bytes,
-               'unit', 'bytes',
-               'details', jsonb_build_object('stream', selected_chunk.stream, 'observed_seq', selected_chunk.observed_seq)
-           )::text
-      FROM selected_chunk
-      JOIN current_run_lease ON current_run_lease.org_id = selected_chunk.org_id
-                            AND current_run_lease.id = selected_chunk.run_id
-     WHERE selected_chunk.is_new
-       AND selected_chunk.size_bytes > 0
-    ON CONFLICT (org_id, run_lease_id, meter, idempotency_key)
-        WHERE run_lease_id IS NOT NULL
-    DO UPDATE SET idempotency_fingerprint = meter_events.idempotency_fingerprint
-     WHERE meter_events.idempotency_fingerprint = excluded.idempotency_fingerprint
-    RETURNING id, org_id, project_id, environment_id, run_id, run_lease_id, attempt_number, trace_id, span_id, meter, quantity, unit, measured_from, measured_to, occurred_at, details, idempotency_key, idempotency_fingerprint, created_at
-),
-meter_event_outbox AS (
-    INSERT INTO telemetry_outbox (
-        org_id, stream_kind, source_kind, source_id, project_id,
-        environment_id, run_id, run_lease_id, meter_event_id, attempt_number,
-        trace_id, span_id, kind, payload, idempotency_key, observed_at
-    )
-    SELECT meter_event.org_id,
-           'meter_event',
-           'run_lease',
-           meter_event.run_lease_id,
-           meter_event.project_id,
-           meter_event.environment_id,
-           meter_event.run_id,
-           meter_event.run_lease_id,
-           meter_event.id,
-           meter_event.attempt_number,
-           meter_event.trace_id,
-           meter_event.span_id,
-           meter_event.meter,
-           meter_event.details,
-           meter_event.idempotency_key,
-           meter_event.occurred_at
-      FROM meter_event
-    ON CONFLICT DO NOTHING
-    RETURNING id
 )
 SELECT selected_chunk.org_id,
        selected_chunk.run_id,
@@ -251,12 +189,6 @@ SELECT selected_chunk.org_id,
        selected_chunk.created_at,
        selected_chunk.replay_matches
  FROM selected_chunk
- WHERE (SELECT count(*) FROM event) >= 0
-   AND (
-       NOT selected_chunk.is_new
-       OR selected_chunk.size_bytes = 0
-       OR EXISTS (SELECT 1 FROM meter_event_outbox)
-   )
 `
 
 type AppendRunLogChunkParams struct {

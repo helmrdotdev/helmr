@@ -838,7 +838,7 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	if !exactFit || overShape {
 		t.Fatalf("fixed guest exact/over shape fence = %t/%t", exactFit, overShape)
 	}
-	logicalTables := []string{"idempotency_claims", "schedules", "workspaces", "sessions", "session_records", "runs", "run_attempts", "run_waits", "run_checkpoints", "run_checkpoint_artifacts", "meter_events", "telemetry_outbox"}
+	logicalTables := []string{"idempotency_claims", "schedules", "workspaces", "sessions", "session_records", "runs", "run_attempts", "run_waits", "run_checkpoints", "run_checkpoint_artifacts", "telemetry_outbox"}
 	var placementLeaks int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*) FROM information_schema.columns
@@ -938,18 +938,132 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 
 func assertTelemetrySchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
-	var meterIdempotencyIndexes int
+	var meterTables int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM information_schema.tables
+		 WHERE table_schema = 'public'
+		   AND table_name = 'meter_events'
+	`).Scan(&meterTables); err != nil {
+		t.Fatal(err)
+	}
+	if meterTables != 0 {
+		t.Fatalf("meter_events tables = %d, want 0", meterTables)
+	}
+
+	var streamKinds []string
+	rows, err := pool.Query(ctx, `
+		SELECT enumlabel
+		  FROM pg_enum
+		  JOIN pg_type ON pg_type.oid = pg_enum.enumtypid
+		 WHERE pg_type.typname = 'telemetry_stream_kind'
+		 ORDER BY enumlabel
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var label string
+		if err := rows.Scan(&label); err != nil {
+			t.Fatal(err)
+		}
+		streamKinds = append(streamKinds, label)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(streamKinds, ",") != "event,run_log" {
+		t.Fatalf("telemetry_stream_kind = %v, want [event run_log]", streamKinds)
+	}
+
+	var removedColumns int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM information_schema.columns
+		 WHERE table_schema = 'public'
+		   AND table_name = 'telemetry_outbox'
+		   AND column_name = ANY($1::text[])
+	`, []string{
+		"meter_event_id",
+		"workspace_id",
+		"resource_kind",
+		"resource_id",
+		"offset_start",
+		"offset_end",
+		"last_error",
+	}).Scan(&removedColumns); err != nil {
+		t.Fatal(err)
+	}
+	if removedColumns != 0 {
+		t.Fatalf("removed telemetry_outbox columns still present = %d", removedColumns)
+	}
+
+	var sinkErrorColumns int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM information_schema.columns
+		 WHERE table_schema = 'public'
+		   AND table_name = 'telemetry_outbox'
+		   AND column_name = ANY($1::text[])
+	`, []string{"ingest_error", "publish_error"}).Scan(&sinkErrorColumns); err != nil {
+		t.Fatal(err)
+	}
+	if sinkErrorColumns != 2 {
+		t.Fatalf("telemetry_outbox sink error columns = %d, want 2", sinkErrorColumns)
+	}
+
+	var ingestReadyIndexes int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*)
 		  FROM pg_indexes
 		 WHERE schemaname = 'public'
-		   AND tablename = 'meter_events'
-		   AND indexname = 'meter_events_run_lease_idempotency_uidx'
-	`).Scan(&meterIdempotencyIndexes); err != nil {
+		   AND tablename = 'telemetry_outbox'
+		   AND indexname = 'telemetry_outbox_ingest_ready_idx'
+	`).Scan(&ingestReadyIndexes); err != nil {
 		t.Fatal(err)
 	}
-	if meterIdempotencyIndexes != 1 {
-		t.Fatalf("meter source idempotency indexes = %d, want 1", meterIdempotencyIndexes)
+	if ingestReadyIndexes != 0 {
+		t.Fatalf("telemetry_outbox ingest-ready indexes = %d, want 0", ingestReadyIndexes)
+	}
+
+	var publishReadyDef string
+	if err := pool.QueryRow(ctx, `
+		SELECT indexdef
+		  FROM pg_indexes
+		 WHERE schemaname = 'public'
+		   AND tablename = 'telemetry_outbox'
+		   AND indexname = 'telemetry_outbox_publish_ready_idx'
+	`).Scan(&publishReadyDef); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(publishReadyDef, "stream_kind = 'event'") ||
+		strings.Contains(publishReadyDef, "terminal_output") ||
+		strings.Contains(publishReadyDef, "dead_lettered") {
+		t.Fatalf("publish-ready index = %q", publishReadyDef)
+	}
+
+	_, err = pool.Exec(ctx, `
+		INSERT INTO telemetry_outbox (
+			org_id, stream_kind, source_kind, source_id, project_id, environment_id,
+			deployment_id, kind, state
+		) VALUES (
+			'00000000-0000-4000-8000-000000000001',
+			'event',
+			'deployment',
+			'00000000-0000-4000-8000-000000000001',
+			'00000000-0000-4000-8000-000000000001',
+			'00000000-0000-4000-8000-000000000001',
+			'00000000-0000-4000-8000-000000000001',
+			'x',
+			'dead_lettered'
+		)
+	`)
+	if err == nil {
+		t.Fatal("dead_lettered telemetry_outbox state was accepted")
+	}
+	if !strings.Contains(err.Error(), "check constraint") {
+		t.Fatalf("dead_lettered insert error = %v, want check constraint", err)
 	}
 }
 

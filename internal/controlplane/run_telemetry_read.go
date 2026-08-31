@@ -309,9 +309,6 @@ func (s *Server) requireProjectedRunTelemetry(
 	if err != nil {
 		return fmt.Errorf("read run telemetry frontier: %w", err)
 	}
-	if frontier.DeadLetteredAfter {
-		return telemetry.ErrHistoricalUnavailable
-	}
 	if frontier.PendingSeq > after ||
 		(requireComplete && frontier.ObservedSeq > projectedThrough) {
 		return telemetry.LaggingError{

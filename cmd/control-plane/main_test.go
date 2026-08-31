@@ -348,10 +348,6 @@ func (r controlplanetestTelemetryReader) ListRunLogChunks(context.Context, telem
 	return telemetry.RunLogChunkPage{}, nil
 }
 
-func (r controlplanetestTelemetryReader) ListTerminalOutput(context.Context, telemetry.TerminalOutputQuery) (telemetry.TerminalOutputPage, error) {
-	return telemetry.TerminalOutputPage{}, nil
-}
-
 type panicTxBeginner struct{}
 
 func (panicTxBeginner) Begin(context.Context) (pgx.Tx, error) {

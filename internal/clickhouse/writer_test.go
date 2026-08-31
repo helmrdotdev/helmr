@@ -85,64 +85,6 @@ func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
 	if got := runLogBatch.rows[0][4]; got != runLeaseID {
 		t.Fatalf("run log run_lease_id = %v, want %s", got, runLeaseID)
 	}
-
-	if err := writer.WriteMeterEvents(context.Background(), []telemetry.MeterEventRecord{{
-		OrgID:          uuid.NewV7(),
-		ProjectID:      uuid.NewV7(),
-		EnvironmentID:  uuid.NewV7(),
-		SourceType:     "run_lease",
-		SourceID:       runLeaseID,
-		RunID:          &runID,
-		AttemptNumber:  &attemptNumber,
-		TraceID:        "trace",
-		SpanID:         "span",
-		Meter:          "active_time",
-		Quantity:       "123",
-		Unit:           "milliseconds",
-		MeasuredTo:     &observedAt,
-		Details:        `{"phase":"final"}`,
-		IdempotencyKey: "meter-key",
-		Fingerprint:    "meter-fingerprint",
-		OccurredAt:     observedAt,
-		CreatedAt:      observedAt,
-	}}); err != nil {
-		t.Fatal(err)
-	}
-	meterBatch := client.takeLast(t)
-	assertQueryContains(t, meterBatch.query, "INSERT INTO helmr_telemetry.meter_events", "quantity", "occurred_at")
-	assertRowShape(t, meterBatch.rows, 1, 20)
-	if got := meterBatch.rows[0][10]; got != "active_time" {
-		t.Fatalf("meter event meter = %v, want active_time", got)
-	}
-	if got := meterBatch.rows[0][11]; got != "123" {
-		t.Fatalf("meter event quantity = %v, want 123", got)
-	}
-
-	if err := writer.WriteTerminalOutput(context.Background(), []telemetry.TerminalOutputRecord{{
-		OrgID:          uuid.NewV7(),
-		ProjectID:      uuid.NewV7(),
-		EnvironmentID:  uuid.NewV7(),
-		WorkspaceID:    uuid.NewV7(),
-		ResourceKind:   "workspace_process",
-		ResourceID:     uuid.NewV7(),
-		StreamName:     "output",
-		OffsetStart:    10,
-		OffsetEnd:      15,
-		Content:        "aGVsbG8=",
-		SizeBytes:      5,
-		IdempotencyKey: "terminal-key",
-		RetentionClass: "standard",
-		RedactionClass: "standard",
-		ObservedAt:     observedAt,
-	}}); err != nil {
-		t.Fatal(err)
-	}
-	terminalBatch := client.takeLast(t)
-	assertQueryContains(t, terminalBatch.query, "INSERT INTO helmr_telemetry.terminal_outputs", "offset_start", "observed_at")
-	assertRowShape(t, terminalBatch.rows, 1, 15)
-	if got := terminalBatch.rows[0][7]; got != uint64(10) {
-		t.Fatalf("terminal offset_start = %v, want 10", got)
-	}
 }
 
 type fakeBatchClient struct {
