@@ -1,8 +1,11 @@
 package token
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 	"uuid"
@@ -15,7 +18,7 @@ func TestDeliveryWorkerReconcilesAndDeliversTokenIntent(t *testing.T) {
 	environmentID := uuid.NewV7()
 	tokenID := uuid.NewV7()
 	message := tokenReconcileMessage(environmentID, tokenID)
-	store := &tokenDeliveryStore{messages: []db.OutboxMessage{message}}
+	store := &tokenDeliveryStore{messages: []db.ControlOutbox{message}}
 	var gotEnvironmentID, gotTokenID uuid.UUID
 	var gotLimit int32
 	worker, err := NewDeliveryWorker(nil, store, func(
@@ -33,7 +36,7 @@ func TestDeliveryWorkerReconcilesAndDeliversTokenIntent(t *testing.T) {
 	if err := worker.tick(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if store.claim.Lane != "control" || len(store.claim.Topics) != 1 ||
+	if len(store.claim.Topics) != 1 ||
 		store.claim.Topics[0] != "token.reconcile" {
 		t.Fatalf("claim = %+v", store.claim)
 	}
@@ -55,7 +58,7 @@ func TestDeliveryWorkerContinuesFullBoundedBatch(t *testing.T) {
 	environmentID := uuid.NewV7()
 	tokenID := uuid.NewV7()
 	message := tokenReconcileMessage(environmentID, tokenID)
-	store := &tokenDeliveryStore{messages: []db.OutboxMessage{message}}
+	store := &tokenDeliveryStore{messages: []db.ControlOutbox{message}}
 	worker, err := NewDeliveryWorker(nil, store, func(
 		context.Context,
 		uuid.UUID,
@@ -82,7 +85,7 @@ func TestDeliveryWorkerRetriesReconciliationFailure(t *testing.T) {
 	tokenID := uuid.NewV7()
 	message := tokenReconcileMessage(environmentID, tokenID)
 	message.Attempts = 3
-	store := &tokenDeliveryStore{messages: []db.OutboxMessage{message}}
+	store := &tokenDeliveryStore{messages: []db.ControlOutbox{message}}
 	worker, err := NewDeliveryWorker(nil, store, func(
 		context.Context,
 		uuid.UUID,
@@ -108,7 +111,7 @@ func TestDeliveryWorkerRetainsIntentWhileCheckpointReadinessIsPending(t *testing
 	environmentID := uuid.NewV7()
 	tokenID := uuid.NewV7()
 	message := tokenReconcileMessage(environmentID, tokenID)
-	store := &tokenDeliveryStore{messages: []db.OutboxMessage{message}}
+	store := &tokenDeliveryStore{messages: []db.ControlOutbox{message}}
 	worker, err := NewDeliveryWorker(nil, store, func(
 		context.Context,
 		uuid.UUID,
@@ -133,8 +136,9 @@ func TestDeliveryWorkerRetainsIntentWhileCheckpointReadinessIsPending(t *testing
 func TestDeliveryWorkerDeadLettersInvalidTokenIntent(t *testing.T) {
 	message := tokenReconcileMessage(uuid.NewV7(), uuid.NewV7())
 	message.Payload = []byte(`{"environmentId":"invalid","tokenId":"invalid"}`)
-	store := &tokenDeliveryStore{messages: []db.OutboxMessage{message}}
-	worker, err := NewDeliveryWorker(nil, store, func(
+	store := &tokenDeliveryStore{messages: []db.ControlOutbox{message}}
+	var logs bytes.Buffer
+	worker, err := NewDeliveryWorker(slog.New(slog.NewJSONHandler(&logs, nil)), store, func(
 		context.Context,
 		uuid.UUID,
 		uuid.UUID,
@@ -146,17 +150,22 @@ func TestDeliveryWorkerDeadLettersInvalidTokenIntent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := worker.tick(context.Background()); err == nil {
-		t.Fatal("expected invalid payload failure")
+	if err := worker.tick(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 	if !store.deadLettered || store.retried || store.delivered != 0 {
 		t.Fatalf("invalid delivery = dead-lettered %v retried %v delivered %d", store.deadLettered, store.retried, store.delivered)
 	}
+	if !strings.Contains(logs.String(), `"msg":"control outbox dead-lettered"`) ||
+		!strings.Contains(logs.String(), `"topic":"token.reconcile"`) ||
+		!strings.Contains(logs.String(), pgvalue.UUIDString(message.ID)) {
+		t.Fatalf("dead-letter warning = %s", logs.String())
+	}
 }
 
 type tokenDeliveryStore struct {
-	messages              []db.OutboxMessage
-	claim                 db.ClaimOutboxMessagesParams
+	messages              []db.ControlOutbox
+	claim                 db.ClaimControlOutboxParams
 	delivered             int32
 	retried               bool
 	retryAt               time.Time
@@ -175,31 +184,30 @@ func (s *tokenDeliveryStore) ExpireDuePublicAccessTokens(_ context.Context, limi
 	return nil, nil
 }
 
-func (s *tokenDeliveryStore) ClaimOutboxMessages(_ context.Context, claim db.ClaimOutboxMessagesParams) ([]db.OutboxMessage, error) {
+func (s *tokenDeliveryStore) ClaimControlOutbox(_ context.Context, claim db.ClaimControlOutboxParams) ([]db.ControlOutbox, error) {
 	s.claim = claim
 	return s.messages, nil
 }
 
-func (s *tokenDeliveryStore) DeliverOutboxMessage(_ context.Context, params db.DeliverOutboxMessageParams) (db.OutboxMessage, error) {
+func (s *tokenDeliveryStore) DeliverControlOutbox(_ context.Context, params db.DeliverControlOutboxParams) (db.ControlOutbox, error) {
 	s.delivered = params.ClaimAttempt
-	return db.OutboxMessage{}, nil
+	return db.ControlOutbox{}, nil
 }
 
-func (s *tokenDeliveryStore) RetryOutboxMessage(_ context.Context, params db.RetryOutboxMessageParams) (db.OutboxMessage, error) {
+func (s *tokenDeliveryStore) RetryControlOutbox(_ context.Context, params db.RetryControlOutboxParams) (db.ControlOutbox, error) {
 	s.retried = true
 	s.retryAt = params.AvailableAt.Time
-	return db.OutboxMessage{}, nil
+	return db.ControlOutbox{}, nil
 }
 
-func (s *tokenDeliveryStore) DeadLetterOutboxMessage(context.Context, db.DeadLetterOutboxMessageParams) (db.OutboxMessage, error) {
+func (s *tokenDeliveryStore) DeadLetterControlOutbox(context.Context, db.DeadLetterControlOutboxParams) (db.ControlOutbox, error) {
 	s.deadLettered = true
-	return db.OutboxMessage{}, nil
+	return db.ControlOutbox{}, nil
 }
 
-func tokenReconcileMessage(environmentID, tokenID uuid.UUID) db.OutboxMessage {
-	return db.OutboxMessage{
+func tokenReconcileMessage(environmentID, tokenID uuid.UUID) db.ControlOutbox {
+	return db.ControlOutbox{
 		ID:             pgvalue.UUID(uuid.NewV7()),
-		Lane:           "control",
 		Topic:          "token.reconcile",
 		Payload:        []byte(`{"environmentId":"` + environmentID.String() + `","tokenId":"` + tokenID.String() + `"}`),
 		State:          "claimed",

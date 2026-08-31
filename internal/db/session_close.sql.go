@@ -151,15 +151,13 @@ func (q *Queries) CompleteIdleActorClose(ctx context.Context, arg CompleteIdleAc
 }
 
 const createActorCloseReconcileOutbox = `-- name: CreateActorCloseReconcileOutbox :exec
-INSERT INTO outbox_messages (id, lane, topic, partition_key, payload, available_at)
+INSERT INTO control_outbox (id, topic, payload, available_at)
 VALUES (
     $1,
-    'control',
     'session.close.reconcile',
-    $2::uuid::text,
     jsonb_build_object(
-        'environmentId', $3::uuid::text,
-        'sessionId', $2::uuid::text
+        'environmentId', $2::uuid::text,
+        'sessionId', $3::uuid::text
     ),
     transaction_timestamp()
 )
@@ -168,12 +166,12 @@ ON CONFLICT (id) DO NOTHING
 
 type CreateActorCloseReconcileOutboxParams struct {
 	ID            pgtype.UUID `json:"id"`
-	SessionID     pgtype.UUID `json:"session_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
+	SessionID     pgtype.UUID `json:"session_id"`
 }
 
 func (q *Queries) CreateActorCloseReconcileOutbox(ctx context.Context, arg CreateActorCloseReconcileOutboxParams) error {
-	_, err := q.db.Exec(ctx, createActorCloseReconcileOutbox, arg.ID, arg.SessionID, arg.EnvironmentID)
+	_, err := q.db.Exec(ctx, createActorCloseReconcileOutbox, arg.ID, arg.EnvironmentID, arg.SessionID)
 	return err
 }
 

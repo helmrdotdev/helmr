@@ -119,6 +119,102 @@ func TestTokenWaitRegistrationBeforeCompletionIsReconciled(t *testing.T) {
 	}
 }
 
+func TestTokenReconcileConvergesAfterControlOutboxPrune(t *testing.T) {
+	ctx := context.Background()
+	fixture := newRunLeaseClaimFixture(t, ctx)
+	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
+	startTaskCompletionWork(t, ctx, fixture, work)
+	tokenID := createTokenTerminalTestToken(t, ctx, fixture, time.Now().Add(time.Hour))
+	reconciler, err := NewWaitReconciler(fixture.pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitID := uuid.NewV7()
+	if _, err := reconciler.RegisterWait(ctx, tokenWaitRegistrationRequest(t, ctx, fixture, work, tokenID, waitID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.queries.CompleteToken(ctx, tokenCompletionParams(
+		fixture, tokenID, "sha256:prune-converge", `{"approved":true}`,
+	)); err != nil {
+		t.Fatal(err)
+	}
+	batch, err := reconciler.ReconcileBatch(ctx, fixture.environmentID, tokenID, 100)
+	if err != nil || batch.Examined != 1 || batch.Resolved != 1 {
+		t.Fatalf("first reconcile = %+v, %v", batch, err)
+	}
+
+	claimed, err := fixture.queries.ClaimControlOutbox(ctx, db.ClaimControlOutboxParams{
+		ClaimedBy:      pgvalue.Text("worker"),
+		ClaimExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		Topics:         []string{"token.reconcile"},
+		RowLimit:       8,
+	})
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim = %+v, %v", claimed, err)
+	}
+	if _, err := fixture.queries.DeliverControlOutbox(ctx, db.DeliverControlOutboxParams{
+		ID: claimed[0].ID, ClaimedBy: claimed[0].ClaimedBy, ClaimAttempt: claimed[0].Attempts,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, ctx, fixture.pool, `
+		UPDATE control_outbox
+		   SET delivered_at = now() - interval '25 hours'
+		 WHERE id = $1
+	`, claimed[0].ID)
+	pruned, err := fixture.queries.PruneDeliveredControlOutbox(ctx, db.PruneDeliveredControlOutboxParams{
+		RetainFor: pgvalue.Interval(24 * time.Hour),
+		RowLimit:  32,
+	})
+	if err != nil || len(pruned) != 1 {
+		t.Fatalf("prune = %v, %v", pruned, err)
+	}
+
+	var runVersion int64
+	var status db.RunStatus
+	var condition db.WaitState
+	var suspension db.RunWaitState
+	if err := fixture.pool.QueryRow(ctx, `
+		SELECT runs.status, runs.state_version, run_waits.condition_state, run_waits.suspension_state
+		  FROM runs JOIN run_waits ON run_waits.run_id = runs.id
+		 WHERE runs.id = $1 AND run_waits.id = $2
+	`, work.runID, waitID).Scan(&status, &runVersion, &condition, &suspension); err != nil {
+		t.Fatal(err)
+	}
+
+	payload := []byte(`{"environmentId":"` + fixture.environmentID.String() + `","tokenId":"` + tokenID.String() + `"}`)
+	if _, err := fixture.queries.CreateControlOutbox(ctx, db.CreateControlOutboxParams{
+		ID: pgvalue.UUID(uuid.NewV7()), Topic: "token.reconcile", Payload: payload,
+		AvailableAt: pgvalue.Timestamptz(time.Now()),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	replay, err := reconciler.ReconcileBatch(ctx, fixture.environmentID, tokenID, 100)
+	if err != nil || replay.Examined != 0 || replay.Resolved != 0 {
+		t.Fatalf("re-enqueue reconcile = %+v, %v", replay, err)
+	}
+
+	var replayVersion int64
+	var replayStatus db.RunStatus
+	var replayCondition db.WaitState
+	var replaySuspension db.RunWaitState
+	if err := fixture.pool.QueryRow(ctx, `
+		SELECT runs.status, runs.state_version, run_waits.condition_state, run_waits.suspension_state
+		  FROM runs JOIN run_waits ON run_waits.run_id = runs.id
+		 WHERE runs.id = $1 AND run_waits.id = $2
+	`, work.runID, waitID).Scan(&replayStatus, &replayVersion, &replayCondition, &replaySuspension); err != nil {
+		t.Fatal(err)
+	}
+	if replayStatus != status || replayVersion != runVersion ||
+		replayCondition != condition || replaySuspension != suspension {
+		t.Fatalf(
+			"re-enqueue mutated authority: before %s/%d/%s/%s after %s/%d/%s/%s",
+			status, runVersion, condition, suspension,
+			replayStatus, replayVersion, replayCondition, replaySuspension,
+		)
+	}
+}
+
 func TestTokenCompletionReconcilesEveryWaitingRunInBoundedBatches(t *testing.T) {
 	ctx := context.Background()
 	fixture := newRunLeaseClaimFixture(t, ctx)
@@ -1129,7 +1225,7 @@ func TestTokenWaitReconcilerTransitionsHotCheckpointingAndParkedWaits(t *testing
 		fixture := newRunLeaseClaimFixture(t, ctx)
 		setup := newTokenWaitReconcileSetup(t, ctx, fixture, db.RunWaitStateCheckpointing, time.Now().Add(-time.Minute))
 		expired, err := fixture.queries.ExpireDueTokens(ctx, db.ExpireDueTokensParams{
-			OutboxMessageIds: pgvalue.NewUUIDv7Batch(100),
+			ControlOutboxIds: pgvalue.NewUUIDv7Batch(100),
 			LimitCount:       100,
 		})
 		if err != nil || len(expired) != 1 {

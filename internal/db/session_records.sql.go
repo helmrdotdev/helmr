@@ -412,15 +412,13 @@ func (q *Queries) CompleteActorOutputClaim(ctx context.Context, arg CompleteActo
 }
 
 const createActorInputReconcileOutbox = `-- name: CreateActorInputReconcileOutbox :exec
-INSERT INTO outbox_messages (id, lane, topic, partition_key, payload, available_at)
+INSERT INTO control_outbox (id, topic, payload, available_at)
 VALUES (
     $1,
-    'control',
     'session.input.reconcile',
-    $2::uuid::text,
     jsonb_build_object(
-        'environmentId', $3::uuid::text,
-        'sessionId', $2::uuid::text,
+        'environmentId', $2::uuid::text,
+        'sessionId', $3::uuid::text,
         'recordId', $4::uuid::text
     ),
     transaction_timestamp()
@@ -430,16 +428,16 @@ ON CONFLICT (id) DO NOTHING
 
 type CreateActorInputReconcileOutboxParams struct {
 	ID            pgtype.UUID `json:"id"`
-	SessionID     pgtype.UUID `json:"session_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
+	SessionID     pgtype.UUID `json:"session_id"`
 	RecordID      pgtype.UUID `json:"record_id"`
 }
 
 func (q *Queries) CreateActorInputReconcileOutbox(ctx context.Context, arg CreateActorInputReconcileOutboxParams) error {
 	_, err := q.db.Exec(ctx, createActorInputReconcileOutbox,
 		arg.ID,
-		arg.SessionID,
 		arg.EnvironmentID,
+		arg.SessionID,
 		arg.RecordID,
 	)
 	return err

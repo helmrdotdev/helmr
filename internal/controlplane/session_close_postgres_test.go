@@ -442,7 +442,7 @@ func assertActorCloseContinuation(
 	if err := fixture.pool.QueryRow(t.Context(), `
 		SELECT
 		    (SELECT count(*) FROM runs WHERE session_id = $1 AND cause_kind = 'continuation'),
-		    (SELECT count(*) FROM outbox_messages
+		    (SELECT count(*) FROM control_outbox
 		      WHERE topic = 'session.close.reconcile'
 		        AND payload->>'sessionId' = $1::text)
 	`, actorID).Scan(

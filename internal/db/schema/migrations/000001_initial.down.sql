@@ -1,6 +1,6 @@
 ALTER TABLE run_checkpoints DROP CONSTRAINT IF EXISTS run_checkpoints_run_wait_id_fkey;
 DROP TABLE IF EXISTS run_waits;
-DROP TABLE IF EXISTS outbox_messages;
+DROP TABLE IF EXISTS control_outbox;
 DROP TABLE IF EXISTS public_access_tokens;
 DROP TABLE IF EXISTS tokens;
 DROP TABLE IF EXISTS run_checkpoint_artifacts;

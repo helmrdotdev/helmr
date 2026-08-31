@@ -343,12 +343,10 @@ SELECT *
  FOR UPDATE;
 
 -- name: CreateActorInputReconcileOutbox :exec
-INSERT INTO outbox_messages (id, lane, topic, partition_key, payload, available_at)
+INSERT INTO control_outbox (id, topic, payload, available_at)
 VALUES (
     sqlc.arg(id),
-    'control',
     'session.input.reconcile',
-    sqlc.arg(session_id)::uuid::text,
     jsonb_build_object(
         'environmentId', sqlc.arg(environment_id)::uuid::text,
         'sessionId', sqlc.arg(session_id)::uuid::text,

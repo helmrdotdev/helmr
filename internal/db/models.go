@@ -427,6 +427,20 @@ type CasObject struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type ControlOutbox struct {
+	ID             pgtype.UUID        `json:"id"`
+	Topic          string             `json:"topic"`
+	Payload        []byte             `json:"payload"`
+	State          string             `json:"state"`
+	Attempts       int32              `json:"attempts"`
+	AvailableAt    pgtype.Timestamptz `json:"available_at"`
+	ClaimedBy      pgtype.Text        `json:"claimed_by"`
+	ClaimExpiresAt pgtype.Timestamptz `json:"claim_expires_at"`
+	LastError      pgtype.Text        `json:"last_error"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	DeliveredAt    pgtype.Timestamptz `json:"delivered_at"`
+}
+
 type DeletionJob struct {
 	ID                   pgtype.UUID           `json:"id"`
 	OrgID                pgtype.UUID           `json:"org_id"`
@@ -562,22 +576,6 @@ type Organization struct {
 	Slug      string             `json:"slug"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
-}
-
-type OutboxMessage struct {
-	ID             pgtype.UUID        `json:"id"`
-	Lane           string             `json:"lane"`
-	Topic          string             `json:"topic"`
-	PartitionKey   string             `json:"partition_key"`
-	Payload        []byte             `json:"payload"`
-	State          string             `json:"state"`
-	Attempts       int32              `json:"attempts"`
-	AvailableAt    pgtype.Timestamptz `json:"available_at"`
-	ClaimedBy      pgtype.Text        `json:"claimed_by"`
-	ClaimExpiresAt pgtype.Timestamptz `json:"claim_expires_at"`
-	LastError      pgtype.Text        `json:"last_error"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	DeliveredAt    pgtype.Timestamptz `json:"delivered_at"`
 }
 
 type Project struct {

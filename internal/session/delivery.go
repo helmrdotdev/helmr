@@ -29,10 +29,10 @@ const (
 )
 
 type DeliveryStore interface {
-	ClaimOutboxMessages(context.Context, db.ClaimOutboxMessagesParams) ([]db.OutboxMessage, error)
-	DeliverOutboxMessage(context.Context, db.DeliverOutboxMessageParams) (db.OutboxMessage, error)
-	RetryOutboxMessage(context.Context, db.RetryOutboxMessageParams) (db.OutboxMessage, error)
-	DeadLetterOutboxMessage(context.Context, db.DeadLetterOutboxMessageParams) (db.OutboxMessage, error)
+	ClaimControlOutbox(context.Context, db.ClaimControlOutboxParams) ([]db.ControlOutbox, error)
+	DeliverControlOutbox(context.Context, db.DeliverControlOutboxParams) (db.ControlOutbox, error)
+	RetryControlOutbox(context.Context, db.RetryControlOutboxParams) (db.ControlOutbox, error)
+	DeadLetterControlOutbox(context.Context, db.DeadLetterControlOutboxParams) (db.ControlOutbox, error)
 }
 
 type DeliveryWorker struct {
@@ -90,10 +90,10 @@ func (w *DeliveryWorker) Run(ctx context.Context) error {
 
 func (w *DeliveryWorker) tick(ctx context.Context) error {
 	now := w.now().UTC()
-	messages, err := w.store.ClaimOutboxMessages(ctx, db.ClaimOutboxMessagesParams{
+	messages, err := w.store.ClaimControlOutbox(ctx, db.ClaimControlOutboxParams{
 		ClaimedBy:      pgtype.Text{String: w.workerID, Valid: true},
 		ClaimExpiresAt: pgvalue.TimestamptzUTCZeroInvalid(now.Add(w.claimFor)),
-		Lane:           "control", Topics: []string{
+		Topics: []string{
 			"session.input.reconcile",
 			"session.close.reconcile",
 		}, RowLimit: w.claimSize,
@@ -110,7 +110,7 @@ func (w *DeliveryWorker) tick(ctx context.Context) error {
 	return errors.Join(failures...)
 }
 
-func (w *DeliveryWorker) process(ctx context.Context, message db.OutboxMessage) error {
+func (w *DeliveryWorker) process(ctx context.Context, message db.ControlOutbox) error {
 	if message.Topic == "session.close.reconcile" {
 		return w.processClose(ctx, message)
 	}
@@ -128,7 +128,7 @@ func (w *DeliveryWorker) process(ctx context.Context, message db.OutboxMessage) 
 	if deferred {
 		return w.retry(ctx, message, errors.New("session input continuation is waiting for workspace authority"), outbox.RetryAfter(message.Attempts))
 	}
-	_, err = w.store.DeliverOutboxMessage(ctx, db.DeliverOutboxMessageParams{
+	_, err = w.store.DeliverControlOutbox(ctx, db.DeliverControlOutboxParams{
 		ID: message.ID, ClaimedBy: message.ClaimedBy, ClaimAttempt: message.Attempts,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -139,7 +139,7 @@ func (w *DeliveryWorker) process(ctx context.Context, message db.OutboxMessage) 
 
 func (w *DeliveryWorker) processClose(
 	ctx context.Context,
-	message db.OutboxMessage,
+	message db.ControlOutbox,
 ) error {
 	payload, err := decodeSessionCloseReconcilePayload(message.Payload)
 	if err != nil {
@@ -157,7 +157,7 @@ func (w *DeliveryWorker) processClose(
 			outbox.RetryAfter(message.Attempts),
 		)
 	}
-	_, err = w.store.DeliverOutboxMessage(ctx, db.DeliverOutboxMessageParams{
+	_, err = w.store.DeliverControlOutbox(ctx, db.DeliverControlOutboxParams{
 		ID: message.ID, ClaimedBy: message.ClaimedBy, ClaimAttempt: message.Attempts,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -166,8 +166,8 @@ func (w *DeliveryWorker) processClose(
 	return err
 }
 
-func (w *DeliveryWorker) retry(ctx context.Context, message db.OutboxMessage, cause error, after time.Duration) error {
-	_, err := w.store.RetryOutboxMessage(ctx, db.RetryOutboxMessageParams{
+func (w *DeliveryWorker) retry(ctx context.Context, message db.ControlOutbox, cause error, after time.Duration) error {
+	_, err := w.store.RetryControlOutbox(ctx, db.RetryControlOutboxParams{
 		ID: message.ID, ClaimedBy: message.ClaimedBy, ClaimAttempt: message.Attempts,
 		AvailableAt: pgvalue.TimestamptzUTCZeroInvalid(w.now().UTC().Add(after)),
 		LastError:   outbox.Error(cause, "session reconciliation delivery failed"),
@@ -178,15 +178,19 @@ func (w *DeliveryWorker) retry(ctx context.Context, message db.OutboxMessage, ca
 	return errors.Join(cause, err)
 }
 
-func (w *DeliveryWorker) deadLetter(ctx context.Context, message db.OutboxMessage, cause error) error {
-	_, err := w.store.DeadLetterOutboxMessage(ctx, db.DeadLetterOutboxMessageParams{
+func (w *DeliveryWorker) deadLetter(ctx context.Context, message db.ControlOutbox, cause error) error {
+	_, err := w.store.DeadLetterControlOutbox(ctx, db.DeadLetterControlOutboxParams{
 		ID: message.ID, ClaimedBy: message.ClaimedBy, ClaimAttempt: message.Attempts,
 		LastError: outbox.Error(cause, "session reconciliation delivery failed"),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
-	return errors.Join(cause, err)
+	if err != nil {
+		return errors.Join(cause, err)
+	}
+	outbox.LogDeadLettered(w.log, pgvalue.UUIDString(message.ID), message.Topic, cause)
+	return nil
 }
 
 type sessionInputReconcilePayload struct {

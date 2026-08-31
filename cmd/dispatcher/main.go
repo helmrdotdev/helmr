@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
+	"github.com/helmrdotdev/helmr/internal/outbox"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
@@ -234,6 +235,10 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure run wait deadline reconciliation delivery: %w", err)
 	}
+	controlOutboxLifecycle, err := outbox.NewLifecycle(log, queries)
+	if err != nil {
+		return fmt.Errorf("configure control outbox lifecycle: %w", err)
+	}
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -247,6 +252,7 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 		func() error { return runWaitDeadlineDelivery.Run(runCtx) },
 		func() error { return actorInputDelivery.Run(runCtx) },
 		func() error { return telemetryIngestor.Run(runCtx) },
+		func() error { return controlOutboxLifecycle.Run(runCtx) },
 	}
 	errc := make(chan error, len(runners))
 	var wg sync.WaitGroup

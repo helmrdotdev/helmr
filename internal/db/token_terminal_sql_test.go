@@ -20,7 +20,7 @@ func TestTokenTerminalQueriesPublishReconciliationIntentWithoutLockingRuns(t *te
 	for name, transitionSource := range transitionSources {
 		query := namedTokenQuery(t, string(body), name)
 		for _, required := range []string{
-			"INSERT INTO outbox_messages",
+			"INSERT INTO control_outbox",
 			"'token.reconcile'",
 			"'environmentId'",
 			"'tokenId'",
@@ -33,7 +33,7 @@ func TestTokenTerminalQueriesPublishReconciliationIntentWithoutLockingRuns(t *te
 		if strings.Contains(query, "UPDATE run_waits") || strings.Contains(query, "UPDATE runs") {
 			t.Fatalf("%s locks Run-owned authority from the Token transaction:\n%s", name, query)
 		}
-		if count := strings.Count(query, "INSERT INTO outbox_messages"); count != 1 {
+		if count := strings.Count(query, "INSERT INTO control_outbox"); count != 1 {
 			t.Fatalf("%s publishes %d reconciliation intents, want one:\n%s", name, count, query)
 		}
 	}

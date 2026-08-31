@@ -1,13 +1,17 @@
 package session
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5"
 )
 
 func TestSessionInputDeliveryReconcilesIntent(t *testing.T) {
@@ -15,7 +19,7 @@ func TestSessionInputDeliveryReconcilesIntent(t *testing.T) {
 	sessionID := uuid.NewV7()
 	recordID := uuid.NewV7()
 	message := sessionInputReconcileMessage(environmentID, sessionID, recordID)
-	store := &sessionDeliveryStore{messages: []db.OutboxMessage{message}}
+	store := &sessionDeliveryStore{messages: []db.ControlOutbox{message}}
 	var gotEnvironmentID, gotSessionID, gotRecordID uuid.UUID
 	worker, err := NewDeliveryWorker(nil, store,
 		func(_ context.Context, environmentID, sessionID, recordID uuid.UUID) (bool, error) {
@@ -30,8 +34,7 @@ func TestSessionInputDeliveryReconcilesIntent(t *testing.T) {
 	if err := worker.tick(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if store.claim.Lane != "control" ||
-		len(store.claim.Topics) != 2 ||
+	if len(store.claim.Topics) != 2 ||
 		store.claim.Topics[0] != "session.input.reconcile" ||
 		store.claim.Topics[1] != "session.close.reconcile" {
 		t.Fatalf("claim = %+v", store.claim)
@@ -46,7 +49,7 @@ func TestSessionInputDeliveryReconcilesIntent(t *testing.T) {
 
 func TestSessionInputDeliveryRetriesDeferredContinuation(t *testing.T) {
 	message := sessionInputReconcileMessage(uuid.NewV7(), uuid.NewV7(), uuid.NewV7())
-	store := &sessionDeliveryStore{messages: []db.OutboxMessage{message}}
+	store := &sessionDeliveryStore{messages: []db.ControlOutbox{message}}
 	worker, err := NewDeliveryWorker(nil, store,
 		func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (bool, error) { return true, nil },
 		func(context.Context, uuid.UUID, uuid.UUID) (bool, error) { return false, nil },
@@ -68,7 +71,7 @@ func TestSessionInputDeliveryReconcilesCloseIntent(t *testing.T) {
 	environmentID := uuid.NewV7()
 	sessionID := uuid.NewV7()
 	message := sessionCloseReconcileMessage(environmentID, sessionID)
-	store := &sessionDeliveryStore{messages: []db.OutboxMessage{message}}
+	store := &sessionDeliveryStore{messages: []db.ControlOutbox{message}}
 	var gotEnvironmentID, gotSessionID uuid.UUID
 	worker, err := NewDeliveryWorker(nil, store,
 		func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (bool, error) {
@@ -100,7 +103,7 @@ func TestSessionInputDeliveryRetriesDeferredClose(t *testing.T) {
 		uuid.NewV7(),
 		uuid.NewV7(),
 	)
-	store := &sessionDeliveryStore{messages: []db.OutboxMessage{message}}
+	store := &sessionDeliveryStore{messages: []db.ControlOutbox{message}}
 	worker, err := NewDeliveryWorker(nil, store,
 		func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (bool, error) { return false, nil },
 		func(context.Context, uuid.UUID, uuid.UUID) (bool, error) { return true, nil },
@@ -125,8 +128,11 @@ func TestSessionInputDeliveryRetriesDeferredClose(t *testing.T) {
 func TestSessionInputDeliveryDeadLettersInvalidIntent(t *testing.T) {
 	message := sessionInputReconcileMessage(uuid.NewV7(), uuid.NewV7(), uuid.NewV7())
 	message.Payload = []byte(`{"environmentId":"invalid","sessionId":"invalid","recordId":"invalid","extra":true}`)
-	store := &sessionDeliveryStore{messages: []db.OutboxMessage{message}}
-	worker, err := NewDeliveryWorker(nil, store,
+	store := &sessionDeliveryStore{messages: []db.ControlOutbox{message}}
+	var logs bytes.Buffer
+	worker, err := NewDeliveryWorker(
+		slog.New(slog.NewJSONHandler(&logs, nil)),
+		store,
 		func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (bool, error) {
 			t.Fatal("invalid intent reached reconciler")
 			return false, nil
@@ -136,26 +142,86 @@ func TestSessionInputDeliveryDeadLettersInvalidIntent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := worker.tick(context.Background()); err == nil {
-		t.Fatal("invalid payload should surface its dead-letter cause")
+	if err := worker.tick(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 	if !store.deadLettered || store.retried || store.delivered != 0 {
 		t.Fatalf("invalid delivery = dead-lettered %v retried %v delivered %d", store.deadLettered, store.retried, store.delivered)
 	}
+	if !strings.Contains(logs.String(), `"msg":"control outbox dead-lettered"`) ||
+		!strings.Contains(logs.String(), `"topic":"session.input.reconcile"`) ||
+		!strings.Contains(logs.String(), pgvalue.UUIDString(message.ID)) {
+		t.Fatalf("dead-letter warning = %s", logs.String())
+	}
 }
 
-func sessionInputReconcileMessage(environmentID, sessionID, recordID uuid.UUID) db.OutboxMessage {
-	return db.OutboxMessage{
-		ID: pgvalue.UUID(uuid.NewV7()), Lane: "control", Topic: "session.input.reconcile",
+func TestSessionInputDeliveryDeadLettersUnsupportedTopic(t *testing.T) {
+	message := sessionInputReconcileMessage(uuid.NewV7(), uuid.NewV7(), uuid.NewV7())
+	message.Topic = "session.unknown.reconcile"
+	store := &sessionDeliveryStore{messages: []db.ControlOutbox{message}}
+	var logs bytes.Buffer
+	worker, err := NewDeliveryWorker(
+		slog.New(slog.NewJSONHandler(&logs, nil)),
+		store,
+		func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (bool, error) {
+			t.Fatal("unsupported topic reached input reconciler")
+			return false, nil
+		},
+		func(context.Context, uuid.UUID, uuid.UUID) (bool, error) {
+			t.Fatal("unsupported topic reached close reconciler")
+			return false, nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := worker.tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !store.deadLettered || !strings.Contains(logs.String(), `"topic":"session.unknown.reconcile"`) {
+		t.Fatalf("unsupported topic = dead-lettered %v logs %s", store.deadLettered, logs.String())
+	}
+}
+
+func TestSessionInputDeliveryDoesNotWarnWhenDeadLetterClaimIsLost(t *testing.T) {
+	message := sessionInputReconcileMessage(uuid.NewV7(), uuid.NewV7(), uuid.NewV7())
+	message.Payload = []byte(`{"environmentId":"invalid","sessionId":"invalid","recordId":"invalid"}`)
+	store := &sessionDeliveryStore{messages: []db.ControlOutbox{message}, deadLetterErr: pgx.ErrNoRows}
+	var logs bytes.Buffer
+	worker, err := NewDeliveryWorker(
+		slog.New(slog.NewJSONHandler(&logs, nil)),
+		store,
+		func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (bool, error) {
+			t.Fatal("invalid intent reached reconciler")
+			return false, nil
+		},
+		func(context.Context, uuid.UUID, uuid.UUID) (bool, error) { return false, nil },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := worker.tick(context.Background()); err != nil {
+		t.Fatalf("lost claim = %v", err)
+	}
+	if store.deadLettered || strings.Contains(logs.String(), "control outbox dead-lettered") {
+		t.Fatalf("lost claim warned = dead-lettered %v logs %s", store.deadLettered, logs.String())
+	}
+}
+
+func sessionInputReconcileMessage(environmentID, sessionID, recordID uuid.UUID) db.ControlOutbox {
+	return db.ControlOutbox{
+		ID:      pgvalue.UUID(uuid.NewV7()),
+		Topic:   "session.input.reconcile",
 		Payload: []byte(`{"environmentId":"` + environmentID.String() + `","sessionId":"` + sessionID.String() + `","recordId":"` + recordID.String() + `"}`),
 		State:   "claimed", Attempts: 1, ClaimedBy: pgvalue.Text("worker"),
 		ClaimExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 	}
 }
 
-func sessionCloseReconcileMessage(environmentID, sessionID uuid.UUID) db.OutboxMessage {
-	return db.OutboxMessage{
-		ID: pgvalue.UUID(uuid.NewV7()), Lane: "control", Topic: "session.close.reconcile",
+func sessionCloseReconcileMessage(environmentID, sessionID uuid.UUID) db.ControlOutbox {
+	return db.ControlOutbox{
+		ID:      pgvalue.UUID(uuid.NewV7()),
+		Topic:   "session.close.reconcile",
 		Payload: []byte(`{"environmentId":"` + environmentID.String() + `","sessionId":"` + sessionID.String() + `"}`),
 		State:   "claimed", Attempts: 1, ClaimedBy: pgvalue.Text("worker"),
 		ClaimExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
@@ -163,43 +229,47 @@ func sessionCloseReconcileMessage(environmentID, sessionID uuid.UUID) db.OutboxM
 }
 
 type sessionDeliveryStore struct {
-	messages     []db.OutboxMessage
-	claim        db.ClaimOutboxMessagesParams
-	delivered    int32
-	retried      bool
-	retryAt      time.Time
-	deadLettered bool
+	messages      []db.ControlOutbox
+	claim         db.ClaimControlOutboxParams
+	delivered     int32
+	retried       bool
+	retryAt       time.Time
+	deadLettered  bool
+	deadLetterErr error
 }
 
-func (s *sessionDeliveryStore) ClaimOutboxMessages(
+func (s *sessionDeliveryStore) ClaimControlOutbox(
 	_ context.Context,
-	claim db.ClaimOutboxMessagesParams,
-) ([]db.OutboxMessage, error) {
+	claim db.ClaimControlOutboxParams,
+) ([]db.ControlOutbox, error) {
 	s.claim = claim
 	return s.messages, nil
 }
 
-func (s *sessionDeliveryStore) DeliverOutboxMessage(
+func (s *sessionDeliveryStore) DeliverControlOutbox(
 	_ context.Context,
-	params db.DeliverOutboxMessageParams,
-) (db.OutboxMessage, error) {
+	params db.DeliverControlOutboxParams,
+) (db.ControlOutbox, error) {
 	s.delivered = params.ClaimAttempt
-	return db.OutboxMessage{}, nil
+	return db.ControlOutbox{}, nil
 }
 
-func (s *sessionDeliveryStore) RetryOutboxMessage(
+func (s *sessionDeliveryStore) RetryControlOutbox(
 	_ context.Context,
-	params db.RetryOutboxMessageParams,
-) (db.OutboxMessage, error) {
+	params db.RetryControlOutboxParams,
+) (db.ControlOutbox, error) {
 	s.retried = true
 	s.retryAt = params.AvailableAt.Time
-	return db.OutboxMessage{}, nil
+	return db.ControlOutbox{}, nil
 }
 
-func (s *sessionDeliveryStore) DeadLetterOutboxMessage(
+func (s *sessionDeliveryStore) DeadLetterControlOutbox(
 	context.Context,
-	db.DeadLetterOutboxMessageParams,
-) (db.OutboxMessage, error) {
+	db.DeadLetterControlOutboxParams,
+) (db.ControlOutbox, error) {
+	if s.deadLetterErr != nil {
+		return db.ControlOutbox{}, s.deadLetterErr
+	}
 	s.deadLettered = true
-	return db.OutboxMessage{}, nil
+	return db.ControlOutbox{}, nil
 }
