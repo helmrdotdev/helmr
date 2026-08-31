@@ -788,6 +788,18 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 	if definitionKinds != 1 {
 		t.Fatalf("deployment definition kind constraint = %d, want 1", definitionKinds)
 	}
+	var promotions int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM pg_class
+		 WHERE relnamespace = 'public'::regnamespace
+		   AND relname = 'deployment_promotions'
+	`).Scan(&promotions); err != nil {
+		t.Fatal(err)
+	}
+	if promotions != 0 {
+		t.Fatalf("deployment_promotions relation present")
+	}
 }
 
 func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {

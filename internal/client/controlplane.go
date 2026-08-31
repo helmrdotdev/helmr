@@ -533,7 +533,7 @@ func (c *Client) GetDeployment(ctx context.Context, deploymentID string, scope E
 	return response, nil
 }
 
-func (c *Client) PromoteDeployment(ctx context.Context, deployment string, input api.PromoteDeploymentRequest, scope EnvironmentScopeOptions) (api.DeploymentResponse, error) {
+func (c *Client) PromoteDeployment(ctx context.Context, deployment string, scope EnvironmentScopeOptions) (api.DeploymentResponse, error) {
 	if err := ids.Validate(deployment); err != nil {
 		return api.DeploymentResponse{}, err
 	}
@@ -543,7 +543,7 @@ func (c *Client) PromoteDeployment(ctx context.Context, deployment string, input
 	}
 	path := environmentScopedResourcePath(basePath, deployment, "/promote")
 	var response api.DeploymentResponse
-	if err := c.postJSON(ctx, path, input, &response); err != nil {
+	if err := c.postJSON(ctx, path, struct{}{}, &response); err != nil {
 		return api.DeploymentResponse{}, err
 	}
 	return response, nil

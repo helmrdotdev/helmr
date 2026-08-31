@@ -45,7 +45,6 @@ DROP TABLE IF EXISTS idempotency_claims;
 DROP TABLE IF EXISTS runtime_substrates;
 DROP TABLE IF EXISTS deployment_definitions;
 ALTER TABLE environments DROP CONSTRAINT IF EXISTS environments_current_deployment_fk;
-DROP TABLE IF EXISTS deployment_promotions;
 ALTER TABLE environments DROP COLUMN IF EXISTS current_deployment_id;
 DROP TABLE IF EXISTS deployments;
 DROP TABLE IF EXISTS artifacts;

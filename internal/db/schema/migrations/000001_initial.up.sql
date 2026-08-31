@@ -662,25 +662,6 @@ CREATE INDEX deployment_definitions_artifact_idx
 ALTER TABLE environments
     ADD COLUMN current_deployment_id UUID;
 
-CREATE TABLE deployment_promotions (
-    id UUID PRIMARY KEY,
-    environment_id UUID NOT NULL,
-    deployment_id UUID NOT NULL,
-    previous_deployment_id UUID,
-    promoted_by_principal TEXT NOT NULL DEFAULT '',
-    reason TEXT NOT NULL DEFAULT '',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    FOREIGN KEY (environment_id)
-        REFERENCES environments(id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (environment_id, deployment_id)
-        REFERENCES deployments(environment_id, id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (environment_id, previous_deployment_id)
-        REFERENCES deployments(environment_id, id)
-        ON DELETE RESTRICT
-);
-
 ALTER TABLE environments
     ADD CONSTRAINT environments_current_deployment_fk
     FOREIGN KEY (id, current_deployment_id)
@@ -3079,10 +3060,6 @@ CREATE INDEX device_codes_pending_expiry_idx ON device_codes(expires_at) WHERE s
 CREATE INDEX environments_current_deployment_idx
     ON environments(org_id, project_id, current_deployment_id)
     WHERE current_deployment_id IS NOT NULL;
-CREATE INDEX deployment_promotions_deployment_idx
-    ON deployment_promotions(environment_id, deployment_id);
-CREATE INDEX deployment_promotions_environment_created_idx
-    ON deployment_promotions(environment_id, created_at DESC);
 CREATE INDEX artifacts_scope_kind_created_idx
     ON artifacts(org_id, project_id, environment_id, kind, created_at DESC);
 CREATE INDEX artifacts_digest_idx

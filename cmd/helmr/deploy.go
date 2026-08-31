@@ -115,7 +115,7 @@ func deployCommand() *cobra.Command {
 				return err
 			}
 			promoted, err := controlPlane.PromoteDeployment(
-				cmd.Context(), created.ID, api.PromoteDeploymentRequest{Reason: "deploy"}, scope,
+				cmd.Context(), created.ID, scope,
 			)
 			if err != nil {
 				return err
@@ -350,7 +350,6 @@ func (r cliDeployReporter) DeploymentResult(value api.DeploymentResponse, phase 
 func promoteCommand() *cobra.Command {
 	var projectID string
 	var environmentID string
-	var reason string
 	cmd := &cobra.Command{
 		Use:   "promote DEPLOYMENT",
 		Short: "Promote an immutable deployment to current.",
@@ -363,12 +362,11 @@ func promoteCommand() *cobra.Command {
 			if !controlPlane.UsesSessionScopedRoutes() && (cmd.Flags().Changed("project") || cmd.Flags().Changed("env")) {
 				return errors.New("--project and --env require helmr login; API keys are already environment scoped")
 			}
-			request := api.PromoteDeploymentRequest{Reason: strings.TrimSpace(reason)}
 			scope, err := environmentScopeForClient(cmd.Context(), controlPlane, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			value, err := controlPlane.PromoteDeployment(cmd.Context(), args[0], request, scope)
+			value, err := controlPlane.PromoteDeployment(cmd.Context(), args[0], scope)
 			if err != nil {
 				return err
 			}
@@ -378,7 +376,6 @@ func promoteCommand() *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&projectID, "project", "p", "", "Project ID or slug for the deployment.")
 	cmd.Flags().StringVarP(&environmentID, "env", "e", "", "Environment ID or slug for the deployment.")
-	cmd.Flags().StringVar(&reason, "reason", "", "Promotion reason.")
 	return cmd
 }
 

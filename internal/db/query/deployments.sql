@@ -44,57 +44,13 @@ SELECT *
  WHERE environment_id = sqlc.arg(environment_id)
    AND bundle_digest = sqlc.arg(bundle_digest);
 
--- name: PromoteDeployment :one
-WITH target AS (
-    SELECT deployments.id,
-           deployments.org_id,
-           deployments.project_id,
-           deployments.environment_id
-      FROM deployments
-     WHERE deployments.org_id = sqlc.arg(org_id)
-       AND deployments.project_id = sqlc.arg(project_id)
-       AND deployments.environment_id = sqlc.arg(environment_id)
-       AND deployments.id = sqlc.arg(deployment_id)
-),
-previous AS (
-    SELECT environments.current_deployment_id
-      FROM environments
-      JOIN target ON target.org_id = environments.org_id
-                 AND target.project_id = environments.project_id
-                 AND target.environment_id = environments.id
-     FOR NO KEY UPDATE OF environments
-),
-updated_environment AS (
-    UPDATE environments
-       SET current_deployment_id = target.id,
-           updated_at = now()
-      FROM target, previous
-     WHERE environments.org_id = target.org_id
-       AND environments.project_id = target.project_id
-       AND environments.id = target.environment_id
-    RETURNING environments.current_deployment_id
-),
-promotion AS (
-    INSERT INTO deployment_promotions (
-        id,
-        environment_id,
-        deployment_id,
-        previous_deployment_id,
-        promoted_by_principal,
-        reason
-    )
-    SELECT sqlc.arg(id),
-           target.environment_id,
-           target.id,
-           previous.current_deployment_id,
-           sqlc.arg(promoted_by_principal),
-           sqlc.arg(reason)
-      FROM target
-      JOIN previous ON true
-      JOIN updated_environment ON true
-    RETURNING *
-)
-SELECT * FROM promotion;
+-- name: PromoteDeployment :exec
+UPDATE environments
+   SET current_deployment_id = sqlc.arg(deployment_id),
+       updated_at = now()
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND id = sqlc.arg(environment_id);
 
 -- name: LockDeploymentPromotionTarget :one
 SELECT deployments.*

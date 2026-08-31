@@ -473,16 +473,6 @@ type DeploymentDefinition struct {
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
-type DeploymentPromotion struct {
-	ID                   pgtype.UUID        `json:"id"`
-	EnvironmentID        pgtype.UUID        `json:"environment_id"`
-	DeploymentID         pgtype.UUID        `json:"deployment_id"`
-	PreviousDeploymentID pgtype.UUID        `json:"previous_deployment_id"`
-	PromotedByPrincipal  string             `json:"promoted_by_principal"`
-	Reason               string             `json:"reason"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
-}
-
 type DeviceCode struct {
 	ID                  pgtype.UUID        `json:"id"`
 	OrgID               pgtype.UUID        `json:"org_id"`

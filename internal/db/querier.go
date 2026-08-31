@@ -447,7 +447,7 @@ type Querier interface {
 	MarkWorkspaceDeleting(ctx context.Context, arg MarkWorkspaceDeletingParams) (Workspace, error)
 	MarkWorkspaceExecRecoveryRequired(ctx context.Context, arg MarkWorkspaceExecRecoveryRequiredParams) (Workspace, error)
 	MarkWorkspaceMountMounted(ctx context.Context, arg MarkWorkspaceMountMountedParams) (WorkspaceMount, error)
-	PromoteDeployment(ctx context.Context, arg PromoteDeploymentParams) (PromoteDeploymentRow, error)
+	PromoteDeployment(ctx context.Context, arg PromoteDeploymentParams) error
 	PruneTelemetryOutboxWritten(ctx context.Context, retainFor pgtype.Interval) ([]int64, error)
 	PublishRestoredActorCheckpointWorkspaceVersion(ctx context.Context, arg PublishRestoredActorCheckpointWorkspaceVersionParams) (WorkspaceVersion, error)
 	PublishTaskWorkspaceVersion(ctx context.Context, arg PublishTaskWorkspaceVersionParams) (WorkspaceVersion, error)
