@@ -12,8 +12,10 @@ import (
 )
 
 const claimEventIngestBatch = `-- name: ClaimEventIngestBatch :many
-WITH claimed AS (
-    SELECT telemetry_outbox.id
+WITH candidates AS (
+    SELECT telemetry_outbox.id,
+           octet_length(telemetry_outbox.message)::bigint
+               + octet_length(telemetry_outbox.payload::text)::bigint AS size_bytes
       FROM telemetry_outbox
      WHERE telemetry_outbox.stream_kind = 'event'
        AND telemetry_outbox.written_at IS NULL
@@ -23,11 +25,20 @@ WITH claimed AS (
      LIMIT $1
      FOR UPDATE SKIP LOCKED
 ),
+claimed AS (
+    SELECT sized.id
+      FROM (
+          SELECT candidates.id,
+                 SUM(candidates.size_bytes) OVER (ORDER BY candidates.id ASC) AS cumulative_size_bytes
+            FROM candidates
+      ) AS sized
+     WHERE sized.cumulative_size_bytes <= $2::bigint
+),
 updated AS (
     UPDATE telemetry_outbox
        SET state = 'claimed',
            retry_count = telemetry_outbox.retry_count + 1,
-           next_retry_at = now() + $2::interval,
+           next_retry_at = now() + $3::interval,
            updated_at = now()
       FROM claimed
      WHERE telemetry_outbox.id = claimed.id
@@ -66,6 +77,7 @@ SELECT updated.id AS outbox_id,
 
 type ClaimEventIngestBatchParams struct {
 	RowLimit      int32           `json:"row_limit"`
+	MaxBatchBytes int64           `json:"max_batch_bytes"`
 	LeaseDuration pgtype.Interval `json:"lease_duration"`
 }
 
@@ -100,7 +112,7 @@ type ClaimEventIngestBatchRow struct {
 }
 
 func (q *Queries) ClaimEventIngestBatch(ctx context.Context, arg ClaimEventIngestBatchParams) ([]ClaimEventIngestBatchRow, error) {
-	rows, err := q.db.Query(ctx, claimEventIngestBatch, arg.RowLimit, arg.LeaseDuration)
+	rows, err := q.db.Query(ctx, claimEventIngestBatch, arg.RowLimit, arg.MaxBatchBytes, arg.LeaseDuration)
 	if err != nil {
 		return nil, err
 	}
@@ -299,8 +311,9 @@ func (q *Queries) ClaimLiveTelemetryOutbox(ctx context.Context, arg ClaimLiveTel
 }
 
 const claimRunLogIngestBatch = `-- name: ClaimRunLogIngestBatch :many
-WITH claimed AS (
-    SELECT telemetry_outbox.id
+WITH candidates AS (
+    SELECT telemetry_outbox.id,
+           telemetry_outbox.size_bytes
       FROM telemetry_outbox
      WHERE telemetry_outbox.stream_kind = 'run_log'
        AND telemetry_outbox.written_at IS NULL
@@ -310,11 +323,20 @@ WITH claimed AS (
      LIMIT $1
      FOR UPDATE SKIP LOCKED
 ),
+claimed AS (
+    SELECT sized.id
+      FROM (
+          SELECT candidates.id,
+                 SUM(candidates.size_bytes) OVER (ORDER BY candidates.id ASC) AS cumulative_size_bytes
+            FROM candidates
+      ) AS sized
+     WHERE sized.cumulative_size_bytes <= $2::bigint
+),
 updated AS (
     UPDATE telemetry_outbox
        SET state = 'claimed',
            retry_count = telemetry_outbox.retry_count + 1,
-           next_retry_at = now() + $2::interval,
+           next_retry_at = now() + $3::interval,
            updated_at = now()
       FROM claimed
      WHERE telemetry_outbox.id = claimed.id
@@ -341,6 +363,7 @@ SELECT updated.id AS outbox_id,
 
 type ClaimRunLogIngestBatchParams struct {
 	RowLimit      int32           `json:"row_limit"`
+	MaxBatchBytes int64           `json:"max_batch_bytes"`
 	LeaseDuration pgtype.Interval `json:"lease_duration"`
 }
 
@@ -363,7 +386,7 @@ type ClaimRunLogIngestBatchRow struct {
 }
 
 func (q *Queries) ClaimRunLogIngestBatch(ctx context.Context, arg ClaimRunLogIngestBatchParams) ([]ClaimRunLogIngestBatchRow, error) {
-	rows, err := q.db.Query(ctx, claimRunLogIngestBatch, arg.RowLimit, arg.LeaseDuration)
+	rows, err := q.db.Query(ctx, claimRunLogIngestBatch, arg.RowLimit, arg.MaxBatchBytes, arg.LeaseDuration)
 	if err != nil {
 		return nil, err
 	}
@@ -396,6 +419,42 @@ func (q *Queries) ClaimRunLogIngestBatch(ctx context.Context, arg ClaimRunLogIng
 		return nil, err
 	}
 	return items, nil
+}
+
+const getTelemetryOutboxLifecycle = `-- name: GetTelemetryOutboxLifecycle :one
+SELECT LEAST(
+           (SELECT created_at
+              FROM telemetry_outbox
+             WHERE stream_kind = 'event'
+               AND written_at IS NULL
+               AND state IN ('pending', 'claimed', 'failed')
+               AND (next_retry_at IS NULL OR next_retry_at <= now())
+             ORDER BY id ASC LIMIT 1),
+           (SELECT created_at
+              FROM telemetry_outbox
+             WHERE stream_kind = 'run_log'
+               AND written_at IS NULL
+               AND state IN ('pending', 'claimed', 'failed')
+               AND (next_retry_at IS NULL OR next_retry_at <= now())
+             ORDER BY id ASC LIMIT 1)
+       )::timestamptz AS oldest_retry_created_at,
+       (SELECT written_at
+          FROM telemetry_outbox
+         WHERE written_at < now() - $1::interval
+           AND ((stream_kind = 'event' AND published_at IS NOT NULL) OR stream_kind = 'run_log')
+         ORDER BY written_at ASC, id ASC LIMIT 1) AS oldest_gc_written_at
+`
+
+type GetTelemetryOutboxLifecycleRow struct {
+	OldestRetryCreatedAt pgtype.Timestamptz `json:"oldest_retry_created_at"`
+	OldestGcWrittenAt    pgtype.Timestamptz `json:"oldest_gc_written_at"`
+}
+
+func (q *Queries) GetTelemetryOutboxLifecycle(ctx context.Context, retainFor pgtype.Interval) (GetTelemetryOutboxLifecycleRow, error) {
+	row := q.db.QueryRow(ctx, getTelemetryOutboxLifecycle, retainFor)
+	var i GetTelemetryOutboxLifecycleRow
+	err := row.Scan(&i.OldestRetryCreatedAt, &i.OldestGcWrittenAt)
+	return i, err
 }
 
 const markLiveTelemetryOutboxFailed = `-- name: MarkLiveTelemetryOutboxFailed :exec
@@ -432,7 +491,7 @@ func (q *Queries) MarkLiveTelemetryOutboxPublished(ctx context.Context, id int64
 	return err
 }
 
-const markTelemetryOutboxBatchFailed = `-- name: MarkTelemetryOutboxBatchFailed :exec
+const markTelemetryOutboxBatchFailed = `-- name: MarkTelemetryOutboxBatchFailed :execrows
 UPDATE telemetry_outbox
    SET state = 'failed',
        next_retry_at = now() + $1::interval,
@@ -448,12 +507,15 @@ type MarkTelemetryOutboxBatchFailedParams struct {
 	Ids         []int64         `json:"ids"`
 }
 
-func (q *Queries) MarkTelemetryOutboxBatchFailed(ctx context.Context, arg MarkTelemetryOutboxBatchFailedParams) error {
-	_, err := q.db.Exec(ctx, markTelemetryOutboxBatchFailed, arg.RetryAfter, arg.IngestError, arg.Ids)
-	return err
+func (q *Queries) MarkTelemetryOutboxBatchFailed(ctx context.Context, arg MarkTelemetryOutboxBatchFailedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markTelemetryOutboxBatchFailed, arg.RetryAfter, arg.IngestError, arg.Ids)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
-const markTelemetryOutboxWritten = `-- name: MarkTelemetryOutboxWritten :exec
+const markTelemetryOutboxWritten = `-- name: MarkTelemetryOutboxWritten :execrows
 UPDATE telemetry_outbox
    SET state = 'written',
        written_at = now(),
@@ -462,40 +524,44 @@ UPDATE telemetry_outbox
        updated_at = now(),
        ingest_error = ''
  WHERE id = ANY($1::bigint[])
+   AND written_at IS NULL
 `
 
-func (q *Queries) MarkTelemetryOutboxWritten(ctx context.Context, ids []int64) error {
-	_, err := q.db.Exec(ctx, markTelemetryOutboxWritten, ids)
-	return err
+func (q *Queries) MarkTelemetryOutboxWritten(ctx context.Context, ids []int64) (int64, error) {
+	result, err := q.db.Exec(ctx, markTelemetryOutboxWritten, ids)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
-const pruneTelemetryOutboxWritten = `-- name: PruneTelemetryOutboxWritten :many
+const pruneTelemetryOutboxWritten = `-- name: PruneTelemetryOutboxWritten :execrows
+WITH eligible AS (
+    SELECT id
+      FROM telemetry_outbox
+     WHERE written_at < now() - $1::interval
+       AND (
+            (stream_kind = 'event' AND published_at IS NOT NULL)
+            OR stream_kind = 'run_log'
+       )
+     ORDER BY written_at ASC, id ASC
+     LIMIT $2
+     FOR UPDATE SKIP LOCKED
+)
 DELETE FROM telemetry_outbox
- WHERE written_at IS NOT NULL
-   AND written_at < now() - $1::interval
-   AND (
-        (stream_kind = 'event' AND published_at IS NOT NULL)
-        OR stream_kind = 'run_log'
-   )
-RETURNING id
+ USING eligible
+ WHERE telemetry_outbox.id = eligible.id
 `
 
-func (q *Queries) PruneTelemetryOutboxWritten(ctx context.Context, retainFor pgtype.Interval) ([]int64, error) {
-	rows, err := q.db.Query(ctx, pruneTelemetryOutboxWritten, retainFor)
+type PruneTelemetryOutboxWrittenParams struct {
+	RetainFor pgtype.Interval `json:"retain_for"`
+	RowLimit  int32           `json:"row_limit"`
+}
+
+func (q *Queries) PruneTelemetryOutboxWritten(ctx context.Context, arg PruneTelemetryOutboxWrittenParams) (int64, error) {
+	result, err := q.db.Exec(ctx, pruneTelemetryOutboxWritten, arg.RetainFor, arg.RowLimit)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
-	defer rows.Close()
-	var items []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		items = append(items, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+	return result.RowsAffected(), nil
 }

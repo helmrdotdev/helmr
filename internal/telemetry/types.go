@@ -56,6 +56,11 @@ type RunLogChunkPage struct {
 }
 
 type IngestWriter interface {
-	WriteEvents(context.Context, []EventRecord) error
-	WriteRunLogs(context.Context, []RunLogRecord) error
+	WriteEvents(context.Context, []EventRecord) ([]RejectedRow, error)
+	WriteRunLogs(context.Context, []RunLogRecord) ([]RejectedRow, error)
+}
+
+type RejectedRow struct {
+	Index int
+	Err   error
 }

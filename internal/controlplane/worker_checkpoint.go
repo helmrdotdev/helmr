@@ -18,6 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
@@ -583,6 +584,9 @@ func finishCheckpointFailedActor(
 	if err != nil {
 		return err
 	}
+	if err := telemetry.ValidateEvent(eventKind, payload); err != nil {
+		return err
+	}
 	if _, err := store.AppendRunEvent(ctx, db.AppendRunEventParams{
 		OrgID: authority.run.OrgID, RunID: authority.run.ID, Kind: eventKind, Payload: payload,
 	}); err != nil {
@@ -662,6 +666,9 @@ func finishCheckpointFailedTask(
 		Reason string `json:"reason"`
 	}{Reason: reason})
 	if err != nil {
+		return err
+	}
+	if err := telemetry.ValidateEvent(eventKind, payload); err != nil {
 		return err
 	}
 	if _, err := store.AppendRunEvent(ctx, db.AppendRunEventParams{

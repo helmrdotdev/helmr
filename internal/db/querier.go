@@ -262,6 +262,7 @@ type Querier interface {
 	GetTaskCompletionReplay(ctx context.Context, arg GetTaskCompletionReplayParams) (pgtype.Text, error)
 	GetTaskCompletionTime(ctx context.Context) (pgtype.Timestamptz, error)
 	GetTaskWorkspaceResetVersion(ctx context.Context, arg GetTaskWorkspaceResetVersionParams) (WorkspaceVersion, error)
+	GetTelemetryOutboxLifecycle(ctx context.Context, retainFor pgtype.Interval) (GetTelemetryOutboxLifecycleRow, error)
 	GetTimerRunWaitRegistrationReplay(ctx context.Context, arg GetTimerRunWaitRegistrationReplayParams) (RunWait, error)
 	GetToken(ctx context.Context, arg GetTokenParams) (Token, error)
 	GetTokenByID(ctx context.Context, id pgtype.UUID) (Token, error)
@@ -443,15 +444,15 @@ type Querier interface {
 	MarkRuntimeInstanceReady(ctx context.Context, arg MarkRuntimeInstanceReadyParams) (RuntimeInstance, error)
 	MarkScheduleAdmissionErrored(ctx context.Context, arg MarkScheduleAdmissionErroredParams) (Schedule, error)
 	MarkScheduleAdmissionRetryable(ctx context.Context, arg MarkScheduleAdmissionRetryableParams) (Schedule, error)
-	MarkTelemetryOutboxBatchFailed(ctx context.Context, arg MarkTelemetryOutboxBatchFailedParams) error
-	MarkTelemetryOutboxWritten(ctx context.Context, ids []int64) error
+	MarkTelemetryOutboxBatchFailed(ctx context.Context, arg MarkTelemetryOutboxBatchFailedParams) (int64, error)
+	MarkTelemetryOutboxWritten(ctx context.Context, ids []int64) (int64, error)
 	MarkWorkerInstanceLost(ctx context.Context, arg MarkWorkerInstanceLostParams) (MarkWorkerInstanceLostRow, error)
 	MarkWorkspaceDeleting(ctx context.Context, arg MarkWorkspaceDeletingParams) (Workspace, error)
 	MarkWorkspaceExecRecoveryRequired(ctx context.Context, arg MarkWorkspaceExecRecoveryRequiredParams) (Workspace, error)
 	MarkWorkspaceMountMounted(ctx context.Context, arg MarkWorkspaceMountMountedParams) (WorkspaceMount, error)
 	PromoteDeployment(ctx context.Context, arg PromoteDeploymentParams) error
 	PruneDeliveredControlOutbox(ctx context.Context, arg PruneDeliveredControlOutboxParams) ([]pgtype.UUID, error)
-	PruneTelemetryOutboxWritten(ctx context.Context, retainFor pgtype.Interval) ([]int64, error)
+	PruneTelemetryOutboxWritten(ctx context.Context, arg PruneTelemetryOutboxWrittenParams) (int64, error)
 	PublishRestoredActorCheckpointWorkspaceVersion(ctx context.Context, arg PublishRestoredActorCheckpointWorkspaceVersionParams) (WorkspaceVersion, error)
 	PublishTaskWorkspaceVersion(ctx context.Context, arg PublishTaskWorkspaceVersionParams) (WorkspaceVersion, error)
 	ReadPublicActorOutputPage(ctx context.Context, arg ReadPublicActorOutputPageParams) ([]ReadPublicActorOutputPageRow, error)

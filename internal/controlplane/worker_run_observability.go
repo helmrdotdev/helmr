@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -140,6 +141,9 @@ func (s *Server) workerUpdateRunMetadata(w http.ResponseWriter, r *http.Request)
 		if err != nil {
 			return err
 		}
+		if err := telemetry.ValidateEvent("Run metadata updated", payload); err != nil {
+			return err
+		}
 		if _, err := work.q.CreateRunMetadataEvent(
 			r.Context(),
 			db.CreateRunMetadataEventParams{
@@ -221,6 +225,10 @@ func (s *Server) workerAppendStructuredLog(w http.ResponseWriter, r *http.Reques
 		"attributes": json.RawMessage(attributes),
 	}))
 	if err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
+	if err := telemetry.ValidateRunLog(content); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}

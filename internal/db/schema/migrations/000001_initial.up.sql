@@ -2165,8 +2165,9 @@ CREATE INDEX telemetry_outbox_ingest_claim_idx
     ON telemetry_outbox (stream_kind, id)
     WHERE written_at IS NULL AND state IN ('pending', 'claimed', 'failed');
 CREATE INDEX telemetry_outbox_written_gc_idx
-    ON telemetry_outbox (id)
-    WHERE written_at IS NOT NULL;
+    ON telemetry_outbox (written_at, id)
+    WHERE written_at IS NOT NULL
+      AND ((stream_kind = 'event' AND published_at IS NOT NULL) OR stream_kind = 'run_log');
 
 CREATE TABLE run_leases (
     id UUID PRIMARY KEY,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -21,20 +22,34 @@ const (
 	defaultIngestIdleEvery     = 250 * time.Millisecond
 	defaultIngestRetryAfter    = 2 * time.Second
 	defaultOutboxRetainFor     = 24 * time.Hour
+	defaultOutboxGCEvery       = time.Second
+	defaultOutboxGCBatchSize   = int32(2500)
 )
+
+type ingestStore interface {
+	ClaimEventIngestBatch(context.Context, db.ClaimEventIngestBatchParams) ([]db.ClaimEventIngestBatchRow, error)
+	ClaimRunLogIngestBatch(context.Context, db.ClaimRunLogIngestBatchParams) ([]db.ClaimRunLogIngestBatchRow, error)
+	MarkTelemetryOutboxWritten(context.Context, []int64) (int64, error)
+	MarkTelemetryOutboxBatchFailed(context.Context, db.MarkTelemetryOutboxBatchFailedParams) (int64, error)
+	PruneTelemetryOutboxWritten(context.Context, db.PruneTelemetryOutboxWrittenParams) (int64, error)
+	GetTelemetryOutboxLifecycle(context.Context, pgtype.Interval) (db.GetTelemetryOutboxLifecycleRow, error)
+}
 
 type Ingestor struct {
 	log           *slog.Logger
-	db            db.Querier
+	db            ingestStore
 	writer        IngestWriter
 	batchSize     int32
+	batchBytes    int64
 	leaseDuration time.Duration
 	idleEvery     time.Duration
 	retryAfter    time.Duration
 	outboxRetain  time.Duration
+	gcEvery       time.Duration
+	gcBatchSize   int32
 }
 
-func NewIngestor(log *slog.Logger, queries db.Querier, writer IngestWriter) (*Ingestor, error) {
+func NewIngestor(log *slog.Logger, queries ingestStore, writer IngestWriter) (*Ingestor, error) {
 	if queries == nil {
 		return nil, fmt.Errorf("telemetry ingester database is required")
 	}
@@ -49,10 +64,13 @@ func NewIngestor(log *slog.Logger, queries db.Querier, writer IngestWriter) (*In
 		db:            queries,
 		writer:        writer,
 		batchSize:     defaultIngestBatchSize,
+		batchBytes:    MaxTelemetryBatchBytes,
 		leaseDuration: defaultIngestLeaseDuration,
 		idleEvery:     defaultIngestIdleEvery,
 		retryAfter:    defaultIngestRetryAfter,
 		outboxRetain:  defaultOutboxRetainFor,
+		gcEvery:       defaultOutboxGCEvery,
+		gcBatchSize:   defaultOutboxGCBatchSize,
 	}
 	if ingester.batchSize <= 0 {
 		return nil, fmt.Errorf("telemetry ingester batch size must be positive")
@@ -61,6 +79,19 @@ func NewIngestor(log *slog.Logger, queries db.Querier, writer IngestWriter) (*In
 }
 
 func (i *Ingestor) Run(ctx context.Context) error {
+	runCtx, cancel := context.WithCancel(ctx)
+	gcDone := make(chan struct{})
+	go func() {
+		defer close(gcDone)
+		i.runGC(runCtx)
+	}()
+	err := i.runIngest(runCtx)
+	cancel()
+	<-gcDone
+	return err
+}
+
+func (i *Ingestor) runIngest(ctx context.Context) error {
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -76,9 +107,6 @@ func (i *Ingestor) Run(ctx context.Context) error {
 			hadError = true
 			i.log.Warn("ingest run log telemetry failed", "error", err)
 		}
-		if _, err := i.db.PruneTelemetryOutboxWritten(ctx, pgvalue.Interval(i.outboxRetain)); err != nil {
-			i.log.Warn("prune telemetry outbox failed", "error", err)
-		}
 		if hadError {
 			if err := sleep(ctx, i.retryAfter); err != nil {
 				return err
@@ -93,9 +121,45 @@ func (i *Ingestor) Run(ctx context.Context) error {
 	}
 }
 
+func (i *Ingestor) runGC(ctx context.Context) {
+	ticker := time.NewTicker(i.gcEvery)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			pruned, err := i.db.PruneTelemetryOutboxWritten(ctx, db.PruneTelemetryOutboxWrittenParams{
+				RetainFor: pgvalue.Interval(i.outboxRetain), RowLimit: i.gcBatchSize,
+			})
+			if err != nil {
+				i.log.Warn("prune telemetry outbox failed", "error", err)
+				continue
+			}
+			lifecycle, err := i.db.GetTelemetryOutboxLifecycle(ctx, pgvalue.Interval(i.outboxRetain))
+			if err != nil {
+				i.log.Warn("read telemetry outbox lifecycle failed", "error", err)
+				continue
+			}
+			if pruned == 0 && !lifecycle.OldestRetryCreatedAt.Valid && !lifecycle.OldestGcWrittenAt.Valid {
+				continue
+			}
+			attrs := []any{"pruned", pruned}
+			if lifecycle.OldestRetryCreatedAt.Valid {
+				attrs = append(attrs, "oldest_retry_age", time.Since(lifecycle.OldestRetryCreatedAt.Time).Truncate(time.Millisecond))
+			}
+			if lifecycle.OldestGcWrittenAt.Valid {
+				attrs = append(attrs, "oldest_gc_eligible_age", time.Since(lifecycle.OldestGcWrittenAt.Time).Truncate(time.Millisecond))
+			}
+			i.log.Info("telemetry outbox lifecycle", attrs...)
+		}
+	}
+}
+
 func (i *Ingestor) ingestEvents(ctx context.Context) (int, error) {
 	rows, err := i.db.ClaimEventIngestBatch(ctx, db.ClaimEventIngestBatchParams{
 		RowLimit:      i.batchSize,
+		MaxBatchBytes: i.batchBytes,
 		LeaseDuration: pgvalue.Interval(i.leaseDuration),
 	})
 	if err != nil || len(rows) == 0 {
@@ -124,7 +188,7 @@ func (i *Ingestor) ingestEvents(ctx context.Context) (int, error) {
 	if len(ids) == 0 {
 		return len(rows), firstErr
 	}
-	if err := i.db.MarkTelemetryOutboxWritten(ctx, ids); err != nil {
+	if err := i.markWritten(ctx, ids); err != nil {
 		return len(rows), err
 	}
 	return len(rows), firstErr
@@ -133,6 +197,7 @@ func (i *Ingestor) ingestEvents(ctx context.Context) (int, error) {
 func (i *Ingestor) ingestRunLogs(ctx context.Context) (int, error) {
 	rows, err := i.db.ClaimRunLogIngestBatch(ctx, db.ClaimRunLogIngestBatchParams{
 		RowLimit:      i.batchSize,
+		MaxBatchBytes: i.batchBytes,
 		LeaseDuration: pgvalue.Interval(i.leaseDuration),
 	})
 	if err != nil || len(rows) == 0 {
@@ -161,7 +226,7 @@ func (i *Ingestor) ingestRunLogs(ctx context.Context) (int, error) {
 	if len(ids) == 0 {
 		return len(rows), firstErr
 	}
-	if err := i.db.MarkTelemetryOutboxWritten(ctx, ids); err != nil {
+	if err := i.markWritten(ctx, ids); err != nil {
 		return len(rows), err
 	}
 	return len(rows), firstErr
@@ -175,28 +240,27 @@ func (i *Ingestor) writeEventCandidates(ctx context.Context, candidates []eventI
 	for _, candidate := range candidates {
 		records = append(records, candidate.record)
 	}
-	if err := i.writer.WriteEvents(ctx, records); err == nil {
-		return candidates, nil
+	result, sendErr := i.writer.WriteEvents(ctx, records)
+	if sendErr != nil {
+		return nil, errors.Join(sendErr, i.markFailed(ctx, eventCandidateIDs(candidates), sendErr))
 	}
-	successes := make([]eventIngestCandidate, 0, len(candidates))
-	var firstErr error
-	for _, candidate := range candidates {
-		if err := i.writer.WriteEvents(ctx, []EventRecord{candidate.record}); err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
-			i.log.Warn("ingest event row failed",
-				"outbox_id", candidate.outboxID,
-				"retry_count", candidate.retryCount,
-				"pending_age", time.Since(candidate.createdAt).Truncate(time.Millisecond),
-				"error", err,
-			)
-			_ = i.markFailed(ctx, []int64{candidate.outboxID}, err)
+	rejected := rejectedIndexes(result)
+	successes := make([]eventIngestCandidate, 0, len(candidates)-len(rejected))
+	failedIDs := make([]int64, 0, len(rejected))
+	var rejectionErr error
+	for idx, candidate := range candidates {
+		cause, failed := rejected[idx]
+		if !failed {
+			successes = append(successes, candidate)
 			continue
 		}
-		successes = append(successes, candidate)
+		failedIDs = append(failedIDs, candidate.outboxID)
+		rejectionErr = errors.Join(rejectionErr, cause)
+		i.log.Warn("ingest event row rejected", "outbox_id", candidate.outboxID,
+			"retry_count", candidate.retryCount,
+			"pending_age", time.Since(candidate.createdAt).Truncate(time.Millisecond), "error", cause)
 	}
-	return successes, firstErr
+	return successes, errors.Join(rejectionErr, i.markFailed(ctx, failedIDs, rejectionErr))
 }
 
 func (i *Ingestor) writeRunLogCandidates(ctx context.Context, candidates []runLogIngestCandidate) ([]runLogIngestCandidate, error) {
@@ -207,39 +271,80 @@ func (i *Ingestor) writeRunLogCandidates(ctx context.Context, candidates []runLo
 	for _, candidate := range candidates {
 		records = append(records, candidate.record)
 	}
-	if err := i.writer.WriteRunLogs(ctx, records); err == nil {
-		return candidates, nil
+	result, sendErr := i.writer.WriteRunLogs(ctx, records)
+	if sendErr != nil {
+		return nil, errors.Join(sendErr, i.markFailed(ctx, runLogCandidateIDs(candidates), sendErr))
 	}
-	successes := make([]runLogIngestCandidate, 0, len(candidates))
-	var firstErr error
-	for _, candidate := range candidates {
-		if err := i.writer.WriteRunLogs(ctx, []RunLogRecord{candidate.record}); err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
-			i.log.Warn("ingest run log row failed",
-				"outbox_id", candidate.outboxID,
-				"retry_count", candidate.retryCount,
-				"pending_age", time.Since(candidate.createdAt).Truncate(time.Millisecond),
-				"error", err,
-			)
-			_ = i.markFailed(ctx, []int64{candidate.outboxID}, err)
+	rejected := rejectedIndexes(result)
+	successes := make([]runLogIngestCandidate, 0, len(candidates)-len(rejected))
+	failedIDs := make([]int64, 0, len(rejected))
+	var rejectionErr error
+	for idx, candidate := range candidates {
+		cause, failed := rejected[idx]
+		if !failed {
+			successes = append(successes, candidate)
 			continue
 		}
-		successes = append(successes, candidate)
+		failedIDs = append(failedIDs, candidate.outboxID)
+		rejectionErr = errors.Join(rejectionErr, cause)
+		i.log.Warn("ingest run log row rejected", "outbox_id", candidate.outboxID,
+			"retry_count", candidate.retryCount,
+			"pending_age", time.Since(candidate.createdAt).Truncate(time.Millisecond), "error", cause)
 	}
-	return successes, firstErr
+	return successes, errors.Join(rejectionErr, i.markFailed(ctx, failedIDs, rejectionErr))
 }
 
 func (i *Ingestor) markFailed(ctx context.Context, ids []int64, cause error) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	return i.db.MarkTelemetryOutboxBatchFailed(ctx, db.MarkTelemetryOutboxBatchFailedParams{
+	updated, err := i.db.MarkTelemetryOutboxBatchFailed(ctx, db.MarkTelemetryOutboxBatchFailedParams{
 		Ids:         ids,
 		RetryAfter:  pgvalue.Interval(i.retryAfter),
 		IngestError: truncateError(cause),
 	})
+	if err != nil {
+		return err
+	}
+	if updated != int64(len(ids)) {
+		return fmt.Errorf("mark telemetry outbox failed rows: updated %d, want %d", updated, len(ids))
+	}
+	return nil
+}
+
+func (i *Ingestor) markWritten(ctx context.Context, ids []int64) error {
+	updated, err := i.db.MarkTelemetryOutboxWritten(ctx, ids)
+	if err != nil {
+		return err
+	}
+	if updated != int64(len(ids)) {
+		return fmt.Errorf("mark telemetry outbox written rows: updated %d, want %d", updated, len(ids))
+	}
+	return nil
+}
+
+func rejectedIndexes(rows []RejectedRow) map[int]error {
+	rejected := make(map[int]error, len(rows))
+	for _, row := range rows {
+		rejected[row.Index] = row.Err
+	}
+	return rejected
+}
+
+func eventCandidateIDs(candidates []eventIngestCandidate) []int64 {
+	ids := make([]int64, len(candidates))
+	for idx := range candidates {
+		ids[idx] = candidates[idx].outboxID
+	}
+	return ids
+}
+
+func runLogCandidateIDs(candidates []runLogIngestCandidate) []int64 {
+	ids := make([]int64, len(candidates))
+	for idx := range candidates {
+		ids[idx] = candidates[idx].outboxID
+	}
+	return ids
 }
 
 type eventIngestCandidate struct {

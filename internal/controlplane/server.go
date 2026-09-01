@@ -33,15 +33,17 @@ import (
 )
 
 const (
-	readinessTimeout           = 2 * time.Second
-	apiRequestBodyLimit        = int64(128 << 20)
-	deploymentRequestBodyLimit = archive.MaxSourceArtifactBytes + 2<<20
-	workerLogRequestBodyLimit  = int64(256 << 10)
-	taskCompletionBodyLimit    = int64(17 << 20)
-	workspaceExecResultLimit   = int64(10 << 20)
-	secretRequestBodyLimit     = int64(1 << 20)
-	adminRequestBodyLimit      = int64(64 << 10)
-	maxPageSize                = int32(500)
+	readinessTimeout             = 2 * time.Second
+	apiRequestBodyLimit          = int64(128 << 20)
+	deploymentRequestBodyLimit   = archive.MaxSourceArtifactBytes + 2<<20
+	workerLogRequestBodyLimit    = int64(256 << 10)
+	workerRunLogRequestBodyLimit = int64(len(`{"lease":{"id":"00000000-0000-7000-8000-000000000000","lease_sequence":9223372036854775807},"stream":"stdout","observed_seq":9223372036854775807,"content_base64":""}`) +
+		((telemetry.MaxRunLogContentBytes + 2) / 3 * 4))
+	taskCompletionBodyLimit  = int64(17 << 20)
+	workspaceExecResultLimit = int64(10 << 20)
+	secretRequestBodyLimit   = int64(1 << 20)
+	adminRequestBodyLimit    = int64(64 << 10)
+	maxPageSize              = int32(500)
 )
 
 type SecretManager interface {
@@ -658,7 +660,7 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 				r.With(limitRequestBody(tokenRequestBodyLimit)).Post("/run/tokens/create", s.workerCreateToken)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/tasks/complete", s.workerCompleteTask)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/sessions/complete", s.workerCompleteActor)
-				r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/run/logs/append", s.workerAppendRunLogs)
+				r.With(limitRequestBody(workerRunLogRequestBodyLimit)).Post("/run/logs/append", s.workerAppendRunLogs)
 				r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/run/structured-logs/append", s.workerAppendStructuredLog)
 				r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/run/metadata/update", s.workerUpdateRunMetadata)
 			})
