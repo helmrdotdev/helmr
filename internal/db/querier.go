@@ -126,7 +126,6 @@ type Querier interface {
 	CreateRunMetadataEvent(ctx context.Context, arg CreateRunMetadataEventParams) (int64, error)
 	CreateRunRuntimeReservation(ctx context.Context, arg CreateRunRuntimeReservationParams) (CreateRunRuntimeReservationRow, error)
 	CreateSameWorkspaceChildRunFromParentDeployment(ctx context.Context, arg CreateSameWorkspaceChildRunFromParentDeploymentParams) (CreateSameWorkspaceChildRunFromParentDeploymentRow, error)
-	CreateScheduleSecret(ctx context.Context, arg CreateScheduleSecretParams) (ScheduleSecret, error)
 	CreateSecret(ctx context.Context, arg CreateSecretParams) (CreateSecretRow, error)
 	CreateTaskRetryAttempt(ctx context.Context, arg CreateTaskRetryAttemptParams) (RunAttempt, error)
 	CreateToken(ctx context.Context, arg CreateTokenParams) (Token, error)
@@ -145,7 +144,7 @@ type Querier interface {
 	DelayTaskRunRetry(ctx context.Context, arg DelayTaskRunRetryParams) (Run, error)
 	DeleteEnvironment(ctx context.Context, arg DeleteEnvironmentParams) (Environment, error)
 	DeleteProject(ctx context.Context, arg DeleteProjectParams) (Project, error)
-	DeleteScheduleSecrets(ctx context.Context, arg DeleteScheduleSecretsParams) error
+	DeleteScheduleSecretsForSchedules(ctx context.Context, arg DeleteScheduleSecretsForSchedulesParams) error
 	DeliverControlOutbox(ctx context.Context, arg DeliverControlOutboxParams) (ControlOutbox, error)
 	DenyDeviceCode(ctx context.Context, arg DenyDeviceCodeParams) (DeviceCode, error)
 	DetachActorFromCancelledRun(ctx context.Context, arg DetachActorFromCancelledRunParams) (int64, error)
@@ -295,6 +294,7 @@ type Querier interface {
 	InsertAssignedRunLease(ctx context.Context, arg InsertAssignedRunLeaseParams) (RunLease, error)
 	InsertRunWorkspaceLease(ctx context.Context, arg InsertRunWorkspaceLeaseParams) (WorkspaceLease, error)
 	InsertRuntimeSubstrate(ctx context.Context, arg InsertRuntimeSubstrateParams) (int64, error)
+	InsertScheduleSecrets(ctx context.Context, arg InsertScheduleSecretsParams) (int64, error)
 	InsertWorkerPoolCPUShape(ctx context.Context, arg InsertWorkerPoolCPUShapeParams) (int64, error)
 	InsertWorkspaceExecLease(ctx context.Context, arg InsertWorkspaceExecLeaseParams) (WorkspaceLease, error)
 	InvalidateFailedRunCheckpoint(ctx context.Context, arg InvalidateFailedRunCheckpointParams) (RunCheckpoint, error)
@@ -464,7 +464,7 @@ type Querier interface {
 	ReclaimFailedRuntimeInstance(ctx context.Context, arg ReclaimFailedRuntimeInstanceParams) (RuntimeInstance, error)
 	ReconcileActorTerminalRun(ctx context.Context, arg ReconcileActorTerminalRunParams) (Session, error)
 	ReconcileProviderAbsentWorkerRuntimes(ctx context.Context, workerInstanceID pgtype.UUID) (int64, error)
-	ReconcileSchedule(ctx context.Context, arg ReconcileScheduleParams) (ReconcileScheduleRow, error)
+	ReconcileSchedules(ctx context.Context, arg ReconcileSchedulesParams) ([]ReconcileSchedulesRow, error)
 	RecordRunTerminalEvent(ctx context.Context, arg RecordRunTerminalEventParams) error
 	RecordWorkerObservation(ctx context.Context, arg RecordWorkerObservationParams) (WorkerInstance, error)
 	RecoverExpiredRunResumes(ctx context.Context, limitCount int32) ([]RecoverExpiredRunResumesRow, error)

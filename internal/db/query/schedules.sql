@@ -1,5 +1,43 @@
--- name: ReconcileSchedule :one
-WITH reconciled AS (
+-- name: ReconcileSchedules :many
+WITH input AS (
+SELECT batch.id,
+       batch.task_declared_id,
+       batch.deployment_definition_id,
+       batch.deployment_id,
+       batch.cron_pattern,
+       batch.timezone,
+       batch.effective_from,
+       batch.next_fire_at,
+       batch.ordinality
+  FROM ROWS FROM (
+      unnest(sqlc.arg(ids)::uuid[]),
+      unnest(sqlc.arg(task_declared_ids)::text[]),
+      unnest(sqlc.arg(deployment_definition_ids)::uuid[]),
+      unnest(sqlc.arg(deployment_ids)::uuid[]),
+      unnest(sqlc.arg(cron_patterns)::text[]),
+      unnest(sqlc.arg(timezones)::text[]),
+      unnest(sqlc.arg(effective_froms)::timestamptz[]),
+      unnest(sqlc.arg(next_fire_ats)::timestamptz[])
+  ) WITH ORDINALITY AS batch(
+      id,
+      task_declared_id,
+      deployment_definition_id,
+      deployment_id,
+      cron_pattern,
+      timezone,
+      effective_from,
+      next_fire_at,
+      ordinality
+  )
+ WHERE cardinality(sqlc.arg(ids)::uuid[]) BETWEEN 1 AND 10000
+   AND cardinality(sqlc.arg(ids)::uuid[]) = cardinality(sqlc.arg(task_declared_ids)::text[])
+   AND cardinality(sqlc.arg(ids)::uuid[]) = cardinality(sqlc.arg(deployment_definition_ids)::uuid[])
+   AND cardinality(sqlc.arg(ids)::uuid[]) = cardinality(sqlc.arg(deployment_ids)::uuid[])
+   AND cardinality(sqlc.arg(ids)::uuid[]) = cardinality(sqlc.arg(cron_patterns)::text[])
+   AND cardinality(sqlc.arg(ids)::uuid[]) = cardinality(sqlc.arg(timezones)::text[])
+   AND cardinality(sqlc.arg(ids)::uuid[]) = cardinality(sqlc.arg(effective_froms)::timestamptz[])
+   AND cardinality(sqlc.arg(ids)::uuid[]) = cardinality(sqlc.arg(next_fire_ats)::timestamptz[])
+), reconciled AS (
 INSERT INTO schedules (
     id,
     environment_id,
@@ -13,19 +51,18 @@ INSERT INTO schedules (
     effective_from,
     next_fire_at
 )
-VALUES (
-    sqlc.arg(id),
-    sqlc.arg(environment_id),
-    sqlc.arg(task_declared_id),
-    sqlc.arg(deployment_definition_id),
-    sqlc.arg(deployment_id),
-    sqlc.arg(cron_pattern),
-    sqlc.arg(timezone),
-    sqlc.arg(cron_semantics_version),
-    sqlc.arg(state),
-    sqlc.arg(effective_from),
-    sqlc.narg(next_fire_at)
-)
+SELECT input.id,
+       sqlc.arg(environment_id),
+       input.task_declared_id,
+       input.deployment_definition_id,
+       input.deployment_id,
+       input.cron_pattern,
+       input.timezone,
+       sqlc.arg(cron_semantics_version),
+       'active',
+       input.effective_from,
+       input.next_fire_at
+  FROM input
 ON CONFLICT (environment_id, task_declared_id)
 DO UPDATE
    SET deployment_definition_id = excluded.deployment_definition_id,
@@ -49,19 +86,39 @@ DO UPDATE
     OR schedules.cron_pattern IS DISTINCT FROM excluded.cron_pattern
     OR schedules.timezone IS DISTINCT FROM excluded.timezone
     OR schedules.cron_semantics_version IS DISTINCT FROM excluded.cron_semantics_version
-RETURNING *
+RETURNING schedules.id, schedules.environment_id, schedules.task_declared_id
 ), existing AS (
-SELECT schedules.*
-  FROM schedules
- WHERE environment_id = sqlc.arg(environment_id)
-   AND task_declared_id = sqlc.arg(task_declared_id)
-   AND NOT EXISTS (SELECT 1 FROM reconciled)
- FOR UPDATE
-)
-SELECT * FROM reconciled
+SELECT schedules.id,
+       schedules.environment_id,
+       schedules.task_declared_id,
+       input.ordinality
+  FROM input
+  JOIN schedules
+    ON schedules.environment_id = sqlc.arg(environment_id)
+   AND schedules.task_declared_id = input.task_declared_id
+ WHERE NOT EXISTS (
+       SELECT 1
+         FROM reconciled
+        WHERE reconciled.task_declared_id = input.task_declared_id
+   )
+ FOR UPDATE OF schedules
+), result AS (
+SELECT reconciled.id,
+       reconciled.environment_id,
+       reconciled.task_declared_id,
+       input.ordinality
+  FROM reconciled
+  JOIN input USING (task_declared_id)
 UNION ALL
-SELECT * FROM existing
-LIMIT 1;
+SELECT existing.id,
+       existing.environment_id,
+       existing.task_declared_id,
+       existing.ordinality
+  FROM existing
+)
+SELECT id, environment_id, task_declared_id
+  FROM result
+ ORDER BY ordinality;
 
 -- name: ArchiveOmittedSchedules :exec
 WITH archived AS (
@@ -124,12 +181,37 @@ SELECT schedules.*
  ORDER BY schedules.task_declared_id, schedules.id
  LIMIT sqlc.arg(limit_count)::integer;
 
--- name: DeleteScheduleSecrets :exec
+-- name: DeleteScheduleSecretsForSchedules :exec
 DELETE FROM schedule_secrets
  WHERE environment_id = sqlc.arg(environment_id)
-   AND schedule_id = sqlc.arg(schedule_id);
+   AND schedule_id = ANY(sqlc.arg(schedule_ids)::uuid[]);
 
--- name: CreateScheduleSecret :one
+-- name: InsertScheduleSecrets :execrows
+WITH valid AS (
+SELECT true AS ok
+ WHERE cardinality(sqlc.arg(schedule_ids)::uuid[]) BETWEEN 1 AND 10000
+   AND cardinality(sqlc.arg(placement_schedule_ids)::uuid[]) <= 640000
+   AND cardinality(sqlc.arg(placement_schedule_ids)::uuid[]) = cardinality(sqlc.arg(placement_kinds)::text[])
+   AND cardinality(sqlc.arg(placement_schedule_ids)::uuid[]) = cardinality(sqlc.arg(placement_targets)::text[])
+   AND cardinality(sqlc.arg(placement_schedule_ids)::uuid[]) = cardinality(sqlc.arg(secret_ids)::uuid[])
+   AND NOT EXISTS (
+       SELECT 1
+         FROM unnest(sqlc.arg(placement_schedule_ids)::uuid[]) AS placement_schedule_id
+        WHERE NOT (placement_schedule_id = ANY(sqlc.arg(schedule_ids)::uuid[]))
+   )
+), input AS (
+SELECT batch.schedule_id,
+       batch.placement_kind,
+       batch.placement_target,
+       batch.secret_id
+  FROM ROWS FROM (
+      unnest(sqlc.arg(placement_schedule_ids)::uuid[]),
+      unnest(sqlc.arg(placement_kinds)::text[]),
+      unnest(sqlc.arg(placement_targets)::text[]),
+      unnest(sqlc.arg(secret_ids)::uuid[])
+  ) AS batch(schedule_id, placement_kind, placement_target, secret_id)
+  JOIN valid ON true
+)
 INSERT INTO schedule_secrets (
     schedule_id,
     environment_id,
@@ -137,14 +219,12 @@ INSERT INTO schedule_secrets (
     placement_target,
     secret_id
 )
-VALUES (
-    sqlc.arg(schedule_id),
-    sqlc.arg(environment_id),
-    sqlc.arg(placement_kind),
-    sqlc.arg(placement_target),
-    sqlc.arg(secret_id)
-)
-RETURNING *;
+SELECT input.schedule_id,
+       sqlc.arg(environment_id),
+       input.placement_kind,
+       input.placement_target,
+       input.secret_id
+  FROM input;
 
 -- name: ListScheduleSecrets :many
 SELECT *

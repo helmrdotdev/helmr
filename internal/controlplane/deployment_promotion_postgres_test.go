@@ -8,7 +8,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 	"uuid"
@@ -20,6 +22,11 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workspace"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -79,6 +86,118 @@ func TestPromoteDeploymentPostgres(t *testing.T) {
 		}
 		if schedules != 0 {
 			t.Fatalf("schedules = %d, want 0 after rollback", schedules)
+		}
+	})
+
+	t.Run("unchanged schedule preserves runtime state", func(t *testing.T) {
+		fixture.setCurrent(t, fixture.currentID)
+		secretID, versionID := uuid.NewV7(), uuid.NewV7()
+		if _, err := db.New(fixture.pool).CreateSecret(t.Context(), db.CreateSecretParams{
+			ID: pgvalue.UUID(secretID), EnvironmentID: pgvalue.UUID(fixture.environmentID),
+			Name: "REPORT_TOKEN", VersionID: pgvalue.UUID(versionID),
+			Nonce: make([]byte, 12), Ciphertext: make([]byte, 16),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		first := fixture.promote(t, fixture.scheduledID, principal, "", "")
+		if first.Code != http.StatusOK {
+			t.Fatalf("first promotion status=%d body=%s", first.Code, first.Body.String())
+		}
+		lastFire := time.Date(2026, 7, 24, 9, 0, 0, 0, time.UTC)
+		claimExpires := lastFire.Add(time.Minute)
+		retryAfter := lastFire.Add(2 * time.Minute)
+		dbtest.MustExec(t, t.Context(), fixture.pool, `
+			UPDATE schedules
+			   SET generation = 7,
+			       state_version = 9,
+			       last_fire_at = $1,
+			       claimed_by = 'worker-test',
+			       claim_expires_at = $2,
+			       retry_step = 2,
+			       retry_after = $3
+			 WHERE environment_id = $4
+			   AND task_declared_id = 'daily-report'
+		`, lastFire, claimExpires, retryAfter, fixture.environmentID)
+		second := fixture.promote(t, fixture.scheduledID, principal, "", "")
+		if second.Code != http.StatusOK {
+			t.Fatalf("second promotion status=%d body=%s", second.Code, second.Body.String())
+		}
+		var unchanged bool
+		if err := fixture.pool.QueryRow(t.Context(), `
+			SELECT schedules.generation = 7
+			   AND schedules.state_version = 9
+			   AND schedules.state = 'active'
+			   AND schedules.last_fire_at = $1
+			   AND schedules.claimed_by = 'worker-test'
+			   AND schedules.claim_expires_at = $2
+			   AND schedules.retry_step = 2
+			   AND schedules.retry_after = $3
+			  FROM schedules
+			  JOIN schedule_secrets
+			    ON schedule_secrets.environment_id = schedules.environment_id
+			   AND schedule_secrets.schedule_id = schedules.id
+			 WHERE schedules.environment_id = $4
+			   AND schedules.task_declared_id = 'daily-report'
+		`, lastFire, claimExpires, retryAfter, fixture.environmentID).Scan(&unchanged); err != nil {
+			t.Fatal(err)
+		}
+		if !unchanged {
+			t.Fatal("unchanged promotion reset schedule or Secret placement state")
+		}
+	})
+
+	t.Run("revoked secret leaves committed schedule intact", func(t *testing.T) {
+		fixture.setCurrent(t, fixture.scheduledID)
+		dbtest.MustExec(t, t.Context(), fixture.pool, `
+			UPDATE secrets
+			   SET state = 'revoked',
+			       state_version = state_version + 1,
+			       current_version_id = NULL,
+			       revocation_generation = revocation_generation + 1,
+			       revoked_at = now(),
+			       updated_at = now()
+			 WHERE environment_id = $1
+			   AND name = 'REPORT_TOKEN'
+		`, fixture.environmentID)
+		var before string
+		if err := fixture.pool.QueryRow(t.Context(), `
+			SELECT row_to_json(snapshot)::text
+			  FROM (
+			      SELECT schedules.*, array_agg(schedule_secrets.* ORDER BY schedule_secrets.placement_kind, schedule_secrets.placement_target) AS placements
+			        FROM schedules
+			        LEFT JOIN schedule_secrets
+			          ON schedule_secrets.environment_id = schedules.environment_id
+			         AND schedule_secrets.schedule_id = schedules.id
+			       WHERE schedules.environment_id = $1
+			       GROUP BY schedules.id
+			  ) AS snapshot
+		`, fixture.environmentID).Scan(&before); err != nil {
+			t.Fatal(err)
+		}
+		recorder := fixture.promote(t, fixture.scheduledID, principal, "", "")
+		if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "REPORT_TOKEN") {
+			t.Fatalf("revoked Secret status=%d body=%s", recorder.Code, recorder.Body.String())
+		}
+		if got := fixture.currentDeployment(t); got != fixture.scheduledID {
+			t.Fatalf("current after revoked Secret = %s, want %s", got, fixture.scheduledID)
+		}
+		var after string
+		if err := fixture.pool.QueryRow(t.Context(), `
+			SELECT row_to_json(snapshot)::text
+			  FROM (
+			      SELECT schedules.*, array_agg(schedule_secrets.* ORDER BY schedule_secrets.placement_kind, schedule_secrets.placement_target) AS placements
+			        FROM schedules
+			        LEFT JOIN schedule_secrets
+			          ON schedule_secrets.environment_id = schedules.environment_id
+			         AND schedule_secrets.schedule_id = schedules.id
+			       WHERE schedules.environment_id = $1
+			       GROUP BY schedules.id
+			  ) AS snapshot
+		`, fixture.environmentID).Scan(&after); err != nil {
+			t.Fatal(err)
+		}
+		if after != before {
+			t.Fatal("failed promotion changed the committed schedule snapshot")
 		}
 	})
 
@@ -188,6 +307,490 @@ func TestPromoteDeploymentPostgres(t *testing.T) {
 	})
 }
 
+func TestPromoteDeploymentPostgresMaximumBulkBudget(t *testing.T) {
+	if os.Getenv("HELMR_TEST_DEPLOYMENT_PROMOTION_SCALE") != "1" {
+		t.Skip("HELMR_TEST_DEPLOYMENT_PROMOTION_SCALE is not set")
+	}
+	fixture := newDeploymentPromotionPostgresFixture(t)
+	scheduleCount, placementCount := prepareDeploymentPromotionScaleFixture(t, fixture)
+	principal := fixture.apiKeyPrincipal()
+	beginner := &deploymentPromotionCountingBeginner{pool: fixture.pool}
+	fixture.server.tx = beginner
+
+	var walBefore string
+	var tempFilesBefore, tempBytesBefore int64
+	if err := fixture.pool.QueryRow(t.Context(), `
+		SELECT pg_current_wal_insert_lsn()::text, temp_files, temp_bytes
+		  FROM pg_stat_database
+		 WHERE datname = current_database()
+	`).Scan(&walBefore, &tempFilesBefore, &tempBytesBefore); err != nil {
+		t.Fatal(err)
+	}
+	baseline, stopHeapSampling := startDeploymentFinalizeHeapSampling()
+	started := time.Now()
+	recorder := fixture.promote(t, fixture.scheduledID, principal, "", "")
+	elapsed := time.Since(started)
+	heapDelta := stopHeapSampling()
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("maximum promotion status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var walBytes, tempFilesAfter, tempBytesAfter int64
+	if err := fixture.pool.QueryRow(t.Context(), `
+		SELECT pg_wal_lsn_diff(pg_current_wal_insert_lsn(), $1::pg_lsn)::bigint,
+		       temp_files,
+		       temp_bytes
+		  FROM pg_stat_database
+		 WHERE datname = current_database()
+	`, walBefore).Scan(&walBytes, &tempFilesAfter, &tempBytesAfter); err != nil {
+		t.Fatal(err)
+	}
+	storedSchedules, storedPlacements := fixture.promotionScaleCardinalities(t)
+	t.Logf(
+		"deployment promotion bulk budget: schedules=%d placements=%d elapsed=%s tx=%s statements=%d schedule_bulk=%d secret_bulk=%d payload_bytes=%d heap_baseline=%d heap_delta=%d wal_bytes=%d temp_files=%d temp_bytes=%d",
+		storedSchedules, storedPlacements, elapsed, beginner.transactionDuration(),
+		beginner.statements.Load(), beginner.scheduleBulk.Load(), beginner.secretBulk.Load(),
+		beginner.payloadBytes.Load(), baseline, heapDelta, walBytes,
+		tempFilesAfter-tempFilesBefore, tempBytesAfter-tempBytesBefore,
+	)
+	if storedSchedules != scheduleCount || storedPlacements != placementCount {
+		t.Fatalf(
+			"stored schedules/placements = %d/%d, want %d/%d",
+			storedSchedules, storedPlacements, scheduleCount, placementCount,
+		)
+	}
+	if statements := beginner.statements.Load(); statements > 9 {
+		t.Fatalf("transaction statements = %d, budget <= 9", statements)
+	}
+	if beginner.scheduleBulk.Load() != 1 || beginner.secretBulk.Load() != 2 {
+		t.Fatalf(
+			"bulk schedule/Secret statements = %d/%d, want 1/2",
+			beginner.scheduleBulk.Load(), beginner.secretBulk.Load(),
+		)
+	}
+	if elapsed > 65*time.Second {
+		t.Fatalf("elapsed/lock time = %s, budget <= 65s", elapsed)
+	}
+	if heapDelta > 512<<20 {
+		t.Fatalf("additional sampled heap = %d, budget <= %d", heapDelta, 512<<20)
+	}
+	if payload := beginner.payloadBytes.Load(); payload > 268_728_386 {
+		t.Fatalf("statement/payload bytes = %d, budget <= 268728386", payload)
+	}
+	if walBytes > 304<<20 {
+		t.Fatalf("WAL bytes = %d, budget <= %d", walBytes, 304<<20)
+	}
+	if tempBytesAfter-tempBytesBefore > 128<<20 {
+		t.Fatalf("temporary bytes = %d, budget <= %d", tempBytesAfter-tempBytesBefore, 128<<20)
+	}
+	bulkStarted := make(chan struct{}, 1)
+	cancelBeginner := &deploymentPromotionCountingBeginner{
+		pool: fixture.pool, secretBulkStarted: bulkStarted,
+	}
+	fixture.server.tx = cancelBeginner
+	blocker, err := fixture.pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = blocker.Rollback(context.Background()) })
+	if _, err := blocker.Exec(t.Context(), `
+		SELECT schedule_id
+		  FROM schedule_secrets
+		 WHERE environment_id = $1
+		 ORDER BY schedule_id, placement_kind, placement_target
+		 LIMIT 1
+		 FOR UPDATE
+	`, fixture.environmentID); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		done <- fixture.promoteContext(ctx, t, fixture.scheduledID, principal, "", "")
+	}()
+	select {
+	case <-bulkStarted:
+	case completed := <-done:
+		t.Fatalf(
+			"promotion completed before bulk Secret replacement: status=%d body=%s",
+			completed.Code, completed.Body.String(),
+		)
+	case <-time.After(5 * time.Second):
+		var query, waitType, waitEvent string
+		if err := fixture.pool.QueryRow(t.Context(), `
+			SELECT query, coalesce(wait_event_type, ''), coalesce(wait_event, '')
+			  FROM pg_stat_activity
+			 WHERE pid = $1
+		`, cancelBeginner.backendPID.Load()).Scan(&query, &waitType, &waitEvent); err != nil {
+			t.Fatalf("bulk Secret replacement did not start; inspect activity: %v", err)
+		}
+		t.Fatalf(
+			"bulk Secret replacement did not start: wait=%s/%s query=%s",
+			waitType, waitEvent, query,
+		)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var waiting bool
+		if err := fixture.pool.QueryRow(t.Context(), `
+			SELECT EXISTS (
+				SELECT 1
+				  FROM pg_stat_activity
+				 WHERE pid = $1
+				   AND wait_event_type = 'Lock'
+				   AND position('DeleteScheduleSecretsForSchedules' IN query) > 0
+			)
+		`, cancelBeginner.backendPID.Load()).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("bulk Secret replacement did not reach the PostgreSQL lock wait")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	canceledAt := time.Now()
+	cancel()
+	select {
+	case canceled := <-done:
+		if canceled.Code == http.StatusOK {
+			t.Fatal("canceled maximum promotion succeeded")
+		}
+	case <-time.After(50 * time.Millisecond):
+		t.Fatal("canceled promotion exceeded 50ms rollback budget")
+	}
+	rollbackElapsed := time.Since(canceledAt)
+	if err := blocker.Rollback(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	storedSchedules, storedPlacements = fixture.promotionScaleCardinalities(t)
+	if got := fixture.currentDeployment(t); got != fixture.scheduledID ||
+		storedSchedules != scheduleCount || storedPlacements != placementCount {
+		t.Fatalf(
+			"state after cancellation: current=%s schedules=%d placements=%d",
+			got, storedSchedules, storedPlacements,
+		)
+	}
+	var invalidSchedules, invalidPlacements int
+	if err := fixture.pool.QueryRow(t.Context(), `
+		SELECT (SELECT count(*)
+		          FROM schedules
+		         WHERE environment_id = $1
+		           AND (deployment_id <> $2 OR generation <> 1 OR state_version <> 1 OR state <> 'active')),
+		       (SELECT count(*)
+		          FROM schedule_secrets
+		          JOIN secrets ON secrets.environment_id = schedule_secrets.environment_id
+		                      AND secrets.id = schedule_secrets.secret_id
+		         WHERE schedule_secrets.environment_id = $1
+		           AND (schedule_secrets.placement_kind <> 'env'
+		                OR schedule_secrets.placement_target <> secrets.name))
+	`, fixture.environmentID, fixture.scheduledID).Scan(&invalidSchedules, &invalidPlacements); err != nil {
+		t.Fatal(err)
+	}
+	if invalidSchedules != 0 || invalidPlacements != 0 {
+		t.Fatalf("mixed state after cancellation: schedules=%d placements=%d", invalidSchedules, invalidPlacements)
+	}
+	t.Logf("deployment promotion bulk cancellation rollback: %s", rollbackElapsed)
+}
+
+func TestPromoteDeploymentPostgresAvoidsScheduleAdmissionSecretLockInversion(t *testing.T) {
+	fixture := newDeploymentPromotionPostgresFixture(t)
+	principal := fixture.apiKeyPrincipal()
+	secretID, versionID := uuid.NewV7(), uuid.NewV7()
+	if _, err := db.New(fixture.pool).CreateSecret(t.Context(), db.CreateSecretParams{
+		ID: pgvalue.UUID(secretID), EnvironmentID: pgvalue.UUID(fixture.environmentID),
+		Name: "REPORT_TOKEN", VersionID: pgvalue.UUID(versionID),
+		Nonce: make([]byte, 12), Ciphertext: make([]byte, 16),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	first := fixture.promote(t, fixture.scheduledID, principal, "", "")
+	if first.Code != http.StatusOK {
+		t.Fatalf("initial promotion status=%d body=%s", first.Code, first.Body.String())
+	}
+
+	admission, err := fixture.pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = admission.Rollback(context.Background()) })
+	if _, err := admission.Exec(t.Context(), `
+		SELECT id
+		  FROM schedules
+		 WHERE environment_id = $1
+		   AND task_declared_id = 'daily-report'
+		 FOR UPDATE
+	`, fixture.environmentID); err != nil {
+		t.Fatal(err)
+	}
+
+	beginner := &deploymentPromotionCountingBeginner{pool: fixture.pool}
+	fixture.server.tx = beginner
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		done <- fixture.promoteContext(
+			t.Context(), t, fixture.scheduledID, principal, "", "",
+		)
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var waiting bool
+		if pid := beginner.backendPID.Load(); pid != 0 {
+			if err := fixture.pool.QueryRow(t.Context(), `
+				SELECT EXISTS (
+					SELECT 1
+					  FROM pg_stat_activity
+					 WHERE pid = $1
+					   AND wait_event_type = 'Lock'
+					   AND position('ReconcileSchedules' IN query) > 0
+				)
+			`, pid).Scan(&waiting); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if waiting {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("promotion did not wait on the admission-held schedule")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if _, err := admission.Exec(t.Context(), `SET LOCAL lock_timeout = '500ms'`); err != nil {
+		t.Fatal(err)
+	}
+	// Workspace Secret insertion takes this FK key-share lock after admission
+	// locks the schedule. It must coexist with promotion's Secret lock.
+	if _, err := admission.Exec(t.Context(), `
+		SELECT id
+		  FROM secrets
+		 WHERE environment_id = $1
+		   AND name = 'REPORT_TOKEN'
+		 FOR KEY SHARE
+	`, fixture.environmentID); err != nil {
+		t.Fatalf("schedule admission Secret reference blocked by promotion: %v", err)
+	}
+	if err := admission.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case promoted := <-done:
+		if promoted.Code != http.StatusOK {
+			t.Fatalf("promotion status=%d body=%s", promoted.Code, promoted.Body.String())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("promotion did not resume after schedule admission committed")
+	}
+}
+
+func prepareDeploymentPromotionScaleFixture(
+	t *testing.T,
+	fixture deploymentPromotionPostgresFixture,
+) (int, int) {
+	t.Helper()
+	const scheduleCount = 9_999
+	placements := make([]api.WorkspaceSecret, workspace.MaxSecretPlacements)
+	queries := db.New(fixture.pool)
+	for index := range placements {
+		name := fmt.Sprintf("SECRET_%02d", index)
+		placements[index] = api.WorkspaceSecret{Name: name, Env: name}
+		secretID, versionID := uuid.NewV7(), uuid.NewV7()
+		if _, err := queries.CreateSecret(t.Context(), db.CreateSecretParams{
+			ID: pgvalue.UUID(secretID), EnvironmentID: pgvalue.UUID(fixture.environmentID),
+			Name: name, VersionID: pgvalue.UUID(versionID),
+			Nonce: make([]byte, 12), Ciphertext: make([]byte, 16),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	taskManifest, taskDigest, err := deployment.CanonicalManifestAndDigest(promotionScaleJSON(t, deployment.TaskManifest{
+		Payload: deployment.SchemaManifest{Kind: deployment.SchemaKindStandard},
+		Run: deployment.RunManifest{
+			Queue: "default", MaxDurationMs: 300_000,
+			Retry: deployment.RetryManifest{Enabled: false},
+		},
+		Schedule: &deployment.ScheduleManifest{
+			Cron: "0 9 * * *", Timezone: "UTC",
+			Workspace: deployment.ScheduleWorkspaceManifest{
+				SandboxDeclaredID: "reporting", Secrets: placements,
+			},
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var imageID pgtype.UUID
+	if err := fixture.pool.QueryRow(t.Context(), `
+		SELECT id FROM artifacts
+		 WHERE environment_id = $1 AND kind = 'workspace_image'
+		 LIMIT 1
+	`, fixture.environmentID).Scan(&imageID); err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, t.Context(), fixture.pool, `
+		DELETE FROM deployment_definitions WHERE deployment_id = $1
+	`, fixture.scheduledID)
+	definitionCount := scheduleCount + 1
+	params := db.CreateDeploymentDefinitionsParams{
+		EnvironmentID:   pgvalue.UUID(fixture.environmentID),
+		DeploymentID:    pgvalue.UUID(fixture.scheduledID),
+		ManifestVersion: deployment.DeploymentPlanFormatVersion,
+		Ids:             make([]pgtype.UUID, definitionCount), Kinds: make([]string, definitionCount),
+		DeclaredIds: make([]string, definitionCount), Manifests: make([][]byte, definitionCount),
+		ManifestDigests: make([][]byte, definitionCount), ArtifactIds: make([]pgtype.UUID, definitionCount),
+	}
+	params.Ids[0] = pgvalue.UUID(uuid.NewV7())
+	params.Kinds[0] = string(deployment.DefinitionKindSandbox)
+	params.DeclaredIds[0] = "reporting"
+	params.Manifests[0] = []byte(`{}`)
+	params.ManifestDigests[0] = make([]byte, 32)
+	params.ArtifactIds[0] = imageID
+	for index := 1; index < definitionCount; index++ {
+		params.Ids[index] = pgvalue.UUID(uuid.NewV7())
+		params.Kinds[index] = string(deployment.DefinitionKindTask)
+		params.DeclaredIds[index] = fmt.Sprintf("task-%05d", index-1)
+		params.Manifests[index] = taskManifest
+		params.ManifestDigests[index] = taskDigest[:]
+	}
+	inserted, err := queries.CreateDeploymentDefinitions(t.Context(), params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inserted != int64(definitionCount) {
+		t.Fatalf("inserted definitions = %d, want %d", inserted, definitionCount)
+	}
+	return scheduleCount, scheduleCount * len(placements)
+}
+
+func promotionScaleJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
+}
+
+func (fixture deploymentPromotionPostgresFixture) promotionScaleCardinalities(t *testing.T) (int, int) {
+	t.Helper()
+	var schedules, placements int
+	if err := fixture.pool.QueryRow(t.Context(), `
+		SELECT (SELECT count(*) FROM schedules WHERE environment_id = $1),
+		       (SELECT count(*) FROM schedule_secrets WHERE environment_id = $1)
+	`, fixture.environmentID).Scan(&schedules, &placements); err != nil {
+		t.Fatal(err)
+	}
+	return schedules, placements
+}
+
+type deploymentPromotionCountingBeginner struct {
+	pool              *pgxpool.Pool
+	statements        atomic.Int64
+	scheduleBulk      atomic.Int64
+	secretBulk        atomic.Int64
+	payloadBytes      atomic.Int64
+	transactionNanos  atomic.Int64
+	backendPID        atomic.Int64
+	secretBulkStarted chan struct{}
+}
+
+func (b *deploymentPromotionCountingBeginner) Begin(ctx context.Context) (pgx.Tx, error) {
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	b.backendPID.Store(int64(tx.Conn().PgConn().PID()))
+	return &deploymentPromotionCountingTx{Tx: tx, owner: b, started: time.Now()}, nil
+}
+
+func (b *deploymentPromotionCountingBeginner) transactionDuration() time.Duration {
+	return time.Duration(b.transactionNanos.Load())
+}
+
+type deploymentPromotionCountingTx struct {
+	pgx.Tx
+	owner   *deploymentPromotionCountingBeginner
+	started time.Time
+}
+
+func (tx *deploymentPromotionCountingTx) Exec(
+	ctx context.Context, sql string, args ...any,
+) (pgconn.CommandTag, error) {
+	tx.record(sql, args)
+	return tx.Tx.Exec(ctx, sql, args...)
+}
+
+func (tx *deploymentPromotionCountingTx) Query(
+	ctx context.Context, sql string, args ...any,
+) (pgx.Rows, error) {
+	tx.record(sql, args)
+	return tx.Tx.Query(ctx, sql, args...)
+}
+
+func (tx *deploymentPromotionCountingTx) QueryRow(
+	ctx context.Context, sql string, args ...any,
+) pgx.Row {
+	tx.record(sql, args)
+	return tx.Tx.QueryRow(ctx, sql, args...)
+}
+
+func (tx *deploymentPromotionCountingTx) Commit(ctx context.Context) error {
+	err := tx.Tx.Commit(ctx)
+	tx.owner.transactionNanos.Store(int64(time.Since(tx.started)))
+	return err
+}
+
+func (tx *deploymentPromotionCountingTx) record(sql string, args []any) {
+	tx.owner.statements.Add(1)
+	tx.owner.payloadBytes.Add(int64(len(sql)) + deploymentPromotionArgumentBytes(args))
+	if strings.Contains(sql, "-- name: ReconcileSchedules") {
+		tx.owner.scheduleBulk.Add(1)
+	}
+	if strings.Contains(sql, "-- name: DeleteScheduleSecretsForSchedules") ||
+		strings.Contains(sql, "-- name: InsertScheduleSecrets") {
+		tx.owner.secretBulk.Add(1)
+		if strings.Contains(sql, "-- name: DeleteScheduleSecretsForSchedules") && tx.owner.secretBulkStarted != nil {
+			select {
+			case tx.owner.secretBulkStarted <- struct{}{}:
+			default:
+			}
+		}
+	}
+}
+
+func deploymentPromotionArgumentBytes(args []any) int64 {
+	var total int64
+	for _, arg := range args {
+		switch value := arg.(type) {
+		case []pgtype.UUID:
+			total += int64(len(value) * 16)
+		case []pgtype.Timestamptz:
+			total += int64(len(value) * 8)
+		case []string:
+			for _, item := range value {
+				total += int64(len(item))
+			}
+		case []byte:
+			total += int64(len(value))
+		case pgtype.UUID:
+			total += 16
+		case int32:
+			total += 4
+		case int64:
+			total += 8
+		case string:
+			total += int64(len(value))
+		}
+	}
+	return total
+}
+
+var _ TxBeginner = (*deploymentPromotionCountingBeginner)(nil)
+
 func (fixture deploymentPromotionPostgresFixture) apiKeyPrincipal() auth.Actor {
 	return auth.Actor{
 		OrgID: fixture.orgID, Kind: auth.ActorKindAPIKey, Role: auth.RoleDeveloper,
@@ -222,6 +825,20 @@ func (fixture deploymentPromotionPostgresFixture) promote(
 	environmentID string,
 ) *httptest.ResponseRecorder {
 	t.Helper()
+	return fixture.promoteContext(
+		t.Context(), t, deploymentID, principal, projectID, environmentID,
+	)
+}
+
+func (fixture deploymentPromotionPostgresFixture) promoteContext(
+	ctx context.Context,
+	t *testing.T,
+	deploymentID uuid.UUID,
+	principal auth.Actor,
+	projectID string,
+	environmentID string,
+) *httptest.ResponseRecorder {
+	t.Helper()
 	request := httptest.NewRequest(http.MethodPost, "/", http.NoBody)
 	route := chi.NewRouteContext()
 	route.URLParams.Add("deploymentID", deploymentID.String())
@@ -231,7 +848,7 @@ func (fixture deploymentPromotionPostgresFixture) promote(
 	if environmentID != "" {
 		route.URLParams.Add("environmentID", environmentID)
 	}
-	ctx := context.WithValue(request.Context(), chi.RouteCtxKey, route)
+	ctx = context.WithValue(ctx, chi.RouteCtxKey, route)
 	ctx = context.WithValue(ctx, actorContextKey{}, principal)
 	recorder := httptest.NewRecorder()
 	fixture.server.promoteDeployment(recorder, request.WithContext(ctx))
