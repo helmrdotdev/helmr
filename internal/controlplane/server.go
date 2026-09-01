@@ -439,7 +439,7 @@ func (s *Server) mountSessionRoutes(r chi.Router) {
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireSession)
 		r.Get("/projects", s.listProjects)
-		r.Get("/projects/{projectID}", s.getProject)
+		r.Get("/projects/{projectRef}", s.getProject)
 		r.Get("/projects/{projectID}/environments/{environmentID}", s.getEnvironment)
 		r.Post("/projects/{projectID}/environments/{environmentID}/deployment-bundles/upload-plan", s.planDeploymentBundleUpload)
 		r.Post("/projects/{projectID}/environments/{environmentID}/deployment-bundles/finalize", s.finalizeDeploymentBundle)

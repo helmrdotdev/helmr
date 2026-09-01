@@ -31,8 +31,24 @@ const (
 	deploymentObjectUploadNoProgressTimeout = 2 * time.Minute
 )
 
-func (c *Client) ListProjects(ctx context.Context) (api.ListProjectsResponse, error) {
-	req, err := c.newRequest(ctx, http.MethodGet, "/api/projects", nil)
+type ListProjectsOptions struct {
+	Cursor string
+	Limit  int32
+}
+
+func (c *Client) ListProjects(ctx context.Context, opts ListProjectsOptions) (api.ListProjectsResponse, error) {
+	path := "/api/projects"
+	query := url.Values{}
+	if cursor := strings.TrimSpace(opts.Cursor); cursor != "" {
+		query.Set("cursor", cursor)
+	}
+	if opts.Limit > 0 {
+		query.Set("limit", strconv.FormatInt(int64(opts.Limit), 10))
+	}
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return api.ListProjectsResponse{}, err
 	}

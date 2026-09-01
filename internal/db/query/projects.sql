@@ -48,6 +48,12 @@ SELECT *
  WHERE org_id = sqlc.arg(org_id)
    AND id = sqlc.arg(id);
 
+-- name: GetProjectBySlug :one
+SELECT *
+  FROM projects
+ WHERE org_id = sqlc.arg(org_id)
+   AND slug = sqlc.arg(slug);
+
 -- name: UpdateProjectDetails :one
 UPDATE projects
    SET slug = sqlc.arg(slug),
@@ -74,7 +80,13 @@ UPDATE projects
 SELECT *
   FROM projects
  WHERE org_id = sqlc.arg(org_id)
- ORDER BY is_default DESC, lower(slug), created_at ASC;
+   AND (
+       NOT sqlc.arg(has_after)::boolean
+       OR ((NOT is_default), slug, id) >
+          ((NOT sqlc.arg(after_is_default)::boolean), sqlc.arg(after_slug)::text, sqlc.arg(after_id)::uuid)
+   )
+ ORDER BY is_default DESC, slug ASC, id ASC
+ LIMIT sqlc.arg(row_limit);
 
 -- name: ListProjectsForUpdate :many
 SELECT *

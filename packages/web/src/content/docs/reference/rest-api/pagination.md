@@ -30,3 +30,9 @@ Run logs and Run events also use finite cursor pages. Following is client-side
 polling from the returned cursor, not an infinite response stream. Actor
 Session output uses a different durable integer sequence contract:
 `after`, `next_after`, and `has_more`.
+
+The session-authenticated Console transport also applies this opaque cursor
+contract to `GET /api/projects`, with a default limit of 50 and maximum of 100.
+That endpoint returns project summaries; fetch one project by ID or slug to
+load its Environments. UUID-shaped project references are interpreted as IDs,
+so project slugs cannot use UUID syntax.

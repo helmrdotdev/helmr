@@ -16,6 +16,7 @@
   ],
   "overrides": {
     "@babel/core": "7.29.7",
+    "browserslist": "4.28.8",
     "esbuild": "0.28.1",
     "fast-uri": "3.1.5",
     "js-yaml": "4.3.1",

@@ -3,7 +3,7 @@ import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createEffect, createMemo, createSignal, For, Show, type JSX } from "solid-js";
 import { ApiError } from "../lib/api";
 import { getMe } from "../lib/auth";
-import { createProject, listProjects, listRegions } from "../lib/projects";
+import { createProject, listRegions } from "../lib/projects";
 import { rememberProjectScope } from "../lib/scope";
 import { AuthLoading, AuthScreen, AuthTitle } from "../ui/AuthScreen";
 import { ui } from "../ui/styles";
@@ -40,13 +40,6 @@ export function ProjectNew() {
     retry: false,
     staleTime: 60_000,
   }));
-  const projects = createQuery(() => ({
-    queryKey: ["projects"],
-    queryFn: listProjects,
-    enabled: !!me.data?.org_id,
-    retry: false,
-    staleTime: 30_000,
-  }));
   const regions = createQuery(() => ({
     queryKey: ["regions"],
     queryFn: listRegions,
@@ -55,9 +48,7 @@ export function ProjectNew() {
     staleTime: 60_000,
   }));
   const regionOptions = createMemo(() => regions.data?.regions ?? []);
-  const firstProject = createMemo(() =>
-    !projects.isPending && !projects.isError && (projects.data?.projects.length ?? 0) === 0,
-  );
+  const firstProject = createMemo(() => me.data?.project_required === true);
 
   createEffect(() => {
     if (!selectedRegionID()) setSelectedRegionID(regionOptions()[0]?.id ?? "");
@@ -169,7 +160,7 @@ export function ProjectNew() {
   );
 
   return (
-    <Show when={!me.isPending && !projects.isPending && !regions.isPending} fallback={<AuthLoading>Loading...</AuthLoading>}>
+    <Show when={!me.isPending && !regions.isPending} fallback={<AuthLoading>Loading...</AuthLoading>}>
       <Show
         when={firstProject()}
         fallback={

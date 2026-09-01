@@ -62,9 +62,20 @@ func projectListCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			response, err := controlPlane.ListProjects(cmd.Context())
-			if err != nil {
-				return err
+			response := api.ListProjectsResponse{Projects: []api.ProjectSummary{}}
+			cursor := ""
+			for {
+				page, err := controlPlane.ListProjects(cmd.Context(), client.ListProjectsOptions{
+					Cursor: cursor, Limit: 100,
+				})
+				if err != nil {
+					return err
+				}
+				response.Projects = append(response.Projects, page.Projects...)
+				if page.NextCursor == "" {
+					break
+				}
+				cursor = page.NextCursor
 			}
 			if jsonOutput {
 				return writeJSON(cmd.OutOrStdout(), response)
@@ -91,10 +102,6 @@ func projectGetCommand() *cobra.Command {
 				return err
 			}
 			project, err := resolveProject(cmd.Context(), controlPlane, args[0])
-			if err != nil {
-				return err
-			}
-			project, err = controlPlane.GetProject(cmd.Context(), project.ID)
 			if err != nil {
 				return err
 			}
@@ -161,10 +168,6 @@ func projectUpdateCommand() *cobra.Command {
 				return err
 			}
 			project, err := resolveProject(cmd.Context(), controlPlane, args[0])
-			if err != nil {
-				return err
-			}
-			project, err = controlPlane.GetProject(cmd.Context(), project.ID)
 			if err != nil {
 				return err
 			}
@@ -242,10 +245,6 @@ func envListCommand() *cobra.Command {
 				return err
 			}
 			project, err := resolveProject(cmd.Context(), controlPlane, projectRef)
-			if err != nil {
-				return err
-			}
-			project, err = controlPlane.GetProject(cmd.Context(), project.ID)
 			if err != nil {
 				return err
 			}
@@ -468,17 +467,11 @@ func requireProjectFlag(cmd *cobra.Command) (string, error) {
 }
 
 func resolveProject(ctx context.Context, controlPlane *client.Client, ref string) (api.ProjectSummary, error) {
-	response, err := controlPlane.ListProjects(ctx)
-	if err != nil {
-		return api.ProjectSummary{}, err
-	}
 	ref = strings.TrimSpace(ref)
-	for _, project := range response.Projects {
-		if project.ID == ref || project.Slug == strings.ToLower(ref) {
-			return project, nil
-		}
+	if ref == "" {
+		return api.ProjectSummary{}, errors.New("project reference is required")
 	}
-	return api.ProjectSummary{}, fmt.Errorf("project %q not found", ref)
+	return controlPlane.GetProject(ctx, ref)
 }
 
 func resolveProjectEnvironment(ctx context.Context, controlPlane *client.Client, projectRef string, environmentRef string) (api.ProjectSummary, api.EnvironmentSummary, error) {

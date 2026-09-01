@@ -50,7 +50,6 @@ GET /api/invitations
 GET /api/me
 GET /api/members
 GET /api/projects
-GET /api/projects/{projectID}
 GET /api/projects/{projectID}/environments/{environmentID}
 GET /api/projects/{projectID}/environments/{environmentID}/actors
 GET /api/projects/{projectID}/environments/{environmentID}/actors/{actorID}
@@ -82,6 +81,7 @@ GET /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspace
 GET /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/files
 GET /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/files/content
 GET /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/files/stat
+GET /api/projects/{projectRef}
 GET /api/regions
 GET /capacity/v1/worker-groups/resolve
 GET /capacity/v1/worker-groups/{workerGroupID}/pools/resolve

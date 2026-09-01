@@ -694,6 +694,28 @@ func TestListRunsOptionsAndListRunLogs(t *testing.T) {
 	}
 }
 
+func TestListProjectsOptions(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.RequestURI() != "/api/projects?cursor=cursor-1&limit=50" {
+			t.Fatalf("request URI = %s", r.URL.RequestURI())
+		}
+		_ = json.NewEncoder(w).Encode(api.ListProjectsResponse{NextCursor: "cursor-2"})
+	}))
+	defer server.Close()
+
+	controlPlane, err := New(server.URL, WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := controlPlane.ListProjects(context.Background(), ListProjectsOptions{Cursor: "cursor-1", Limit: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.NextCursor != "cursor-2" {
+		t.Fatalf("page = %+v", page)
+	}
+}
+
 func TestRevokeSecretUsesExplicitOperation(t *testing.T) {
 	var request api.RevokeSecretRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
