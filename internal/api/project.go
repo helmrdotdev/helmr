@@ -32,7 +32,8 @@ type EnvironmentSummary struct {
 }
 
 type ListProjectsResponse struct {
-	Projects []ProjectSummary `json:"projects"`
+	Projects   []ProjectSummary `json:"projects"`
+	NextCursor string           `json:"next_cursor,omitempty"`
 }
 
 type CreateProjectRequest struct {

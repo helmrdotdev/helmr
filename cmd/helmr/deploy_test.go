@@ -18,16 +18,16 @@ import (
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
-func writeSessionScopeProjects(t *testing.T, w http.ResponseWriter, projectSlug, environmentSlug string) {
+func writeSessionScopeProject(t *testing.T, w http.ResponseWriter, projectSlug, environmentSlug string) {
 	t.Helper()
-	if err := json.NewEncoder(w).Encode(api.ListProjectsResponse{Projects: []api.ProjectSummary{{
+	if err := json.NewEncoder(w).Encode(api.ProjectSummary{
 		ID:   "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30",
 		Slug: projectSlug,
 		Environments: []api.EnvironmentSummary{{
 			ID:   "019c10d5-a6f7-7af2-8f5f-bb97bcc0dc32",
 			Slug: environmentSlug,
 		}},
-	}}}); err != nil {
+	}); err != nil {
 		t.Fatal(err)
 	}
 }

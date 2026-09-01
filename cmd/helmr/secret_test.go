@@ -18,8 +18,8 @@ func TestSecretCreateCommand(t *testing.T) {
 	state := installTestCLIConfig(t)
 	var request api.CreateSecretRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/api/projects" {
-			writeSessionScopeProjects(t, w, "project-1", "env-1")
+		if r.Method == http.MethodGet && r.URL.Path == "/api/projects/project-1" {
+			writeSessionScopeProject(t, w, "project-1", "env-1")
 			return
 		}
 		if r.Method != http.MethodPost || r.URL.Path != "/api/projects/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30/environments/019c10d5-a6f7-7af2-8f5f-bb97bcc0dc32/secrets" {
@@ -84,8 +84,8 @@ func TestSecretListCommand(t *testing.T) {
 	state := installTestCLIConfig(t)
 	secretTime := time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/api/projects" {
-			writeSessionScopeProjects(t, w, "project-1", "env-1")
+		if r.Method == http.MethodGet && r.URL.Path == "/api/projects/project-1" {
+			writeSessionScopeProject(t, w, "project-1", "env-1")
 			return
 		}
 		if r.Method != http.MethodGet || r.URL.Path != "/api/projects/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30/environments/019c10d5-a6f7-7af2-8f5f-bb97bcc0dc32/secrets" {
@@ -123,8 +123,8 @@ func TestSecretGetCommandReturnsMetadataOnly(t *testing.T) {
 	state := installTestCLIConfig(t)
 	secretTime := time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/api/projects" {
-			writeSessionScopeProjects(t, w, "project-1", "env-1")
+		if r.Method == http.MethodGet && r.URL.Path == "/api/projects/project-1" {
+			writeSessionScopeProject(t, w, "project-1", "env-1")
 			return
 		}
 		if r.Method != http.MethodGet || r.URL.Path != "/api/projects/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30/environments/019c10d5-a6f7-7af2-8f5f-bb97bcc0dc32/secrets/"+testSecretID {
@@ -159,8 +159,8 @@ func TestSecretRevokeCommand(t *testing.T) {
 	state := installTestCLIConfig(t)
 	var request api.RevokeSecretRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/api/projects" {
-			writeSessionScopeProjects(t, w, "project-1", "env-1")
+		if r.Method == http.MethodGet && r.URL.Path == "/api/projects/project-1" {
+			writeSessionScopeProject(t, w, "project-1", "env-1")
 			return
 		}
 		if r.Method != http.MethodPost || r.URL.Path != "/api/projects/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30/environments/019c10d5-a6f7-7af2-8f5f-bb97bcc0dc32/secrets/"+testSecretID+"/revoke" {

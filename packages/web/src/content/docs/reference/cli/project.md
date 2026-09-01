@@ -15,6 +15,8 @@ helmr project delete PROJECT --yes
 ```
 
 `update` requires at least one changed field. `delete` requires `--yes`.
+`project list` traverses all available pages before writing output, so a failed
+later page does not produce a partial text or JSON result.
 
 `env` is a top-level command:
 
@@ -28,3 +30,5 @@ helmr env delete ENVIRONMENT --project PROJECT --yes
 
 Project and Environment arguments accept a slug or ID. Generated slugs are
 used when `--slug` is omitted; Environment color also defaults from the slug.
+Project slugs cannot use UUID syntax because UUID-shaped references are project
+IDs.

@@ -326,7 +326,7 @@ export function ScopeSwitcher() {
                   ref={projectSearchRef}
                   class={searchInputClass}
                   type="text"
-                  placeholder="Find a project…"
+                  placeholder="Find loaded projects…"
                   value={projectQuery()}
                   onInput={(event) => setProjectQuery(event.currentTarget.value)}
                   autocomplete="off"
@@ -362,6 +362,17 @@ export function ScopeSwitcher() {
                 </Show>
               </div>
               <div class={"border-t border-console-border bg-console-bg-panel p-1"}>
+                <Show when={scope.hasMoreProjects()}>
+                  <button
+                    type="button"
+                    class={createActionClass}
+                    disabled={scope.isLoadingMoreProjects()}
+                    onClick={() => scope.loadMoreProjects()}
+                  >
+                    <span class={createIconClass} aria-hidden="true">↓</span>
+                    <span class={"truncate"}>{scope.isLoadingMoreProjects() ? "Loading…" : "Load more projects"}</span>
+                  </button>
+                </Show>
                 <button type="button" class={createActionClass} onClick={startCreateProject}>
                   <span class={createIconClass} aria-hidden="true">+</span>
                   <span class={"truncate"}>New project</span>

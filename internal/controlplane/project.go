@@ -2,18 +2,22 @@ package controlplane
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"uuid"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/region"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -21,6 +25,18 @@ import (
 )
 
 var scopeSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+
+const (
+	projectListDefaultLimit = int32(50)
+	projectListMaxLimit     = int32(100)
+)
+
+type projectListCursor struct {
+	OrgID     string `json:"org_id"`
+	IsDefault bool   `json:"is_default"`
+	Slug      string `json:"slug"`
+	ID        string `json:"id"`
+}
 
 func protectedEnvironmentSlug(slug string) bool {
 	return slug == "production" || slug == "staging"
@@ -54,27 +70,43 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("organization is required")))
 		return
 	}
-	projects, err := s.db.ListProjects(r.Context(), pgvalue.UUID(actor.OrgID))
+	limit, cursor, err := parseProjectListQuery(r, actor.OrgID)
+	if err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
+	params := db.ListProjectsParams{
+		OrgID: pgvalue.UUID(actor.OrgID), RowLimit: limit + 1,
+	}
+	if cursor != nil {
+		params.HasAfter = true
+		params.AfterIsDefault = cursor.IsDefault
+		params.AfterSlug = cursor.Slug
+		params.AfterID = pgvalue.UUID(uuid.MustParse(cursor.ID))
+	}
+	projects, err := s.db.ListProjects(r.Context(), params)
 	if err != nil {
 		writeError(w, errors.New("list projects"))
 		return
 	}
+	hasMore := len(projects) > int(limit)
+	if hasMore {
+		projects = projects[:limit]
+	}
 	response := api.ListProjectsResponse{Projects: make([]api.ProjectSummary, 0, len(projects))}
 	for _, project := range projects {
-		item := projectResponse(projectRecordFromDB(project))
-		environments, err := s.db.ListEnvironments(r.Context(), db.ListEnvironmentsParams{
-			OrgID:     project.OrgID,
-			ProjectID: project.ID,
+		response.Projects = append(response.Projects, projectResponse(projectRecordFromDB(project)))
+	}
+	if hasMore {
+		last := projects[len(projects)-1]
+		response.NextCursor, err = encodeProjectListCursor(projectListCursor{
+			OrgID: actor.OrgID.String(), IsDefault: last.IsDefault,
+			Slug: last.Slug, ID: pgvalue.UUIDString(last.ID),
 		})
 		if err != nil {
-			writeError(w, errors.New("list environments"))
+			writeError(w, errors.New("list projects"))
 			return
 		}
-		item.Environments = make([]api.EnvironmentSummary, 0, len(environments))
-		for _, environment := range environments {
-			item.Environments = append(item.Environments, environmentResponse(environmentRecordFromDB(environment)))
-		}
-		response.Projects = append(response.Projects, item)
 	}
 	writeJSON(w, http.StatusOK, response)
 }
@@ -84,16 +116,25 @@ func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, unavailable(errors.New("project storage is not configured")))
 		return
 	}
-	projectID, err := parseUUIDParam(r, "projectID")
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
 	actor := actorFromContext(r.Context())
-	project, err := s.db.GetProject(r.Context(), db.GetProjectParams{
-		OrgID: pgvalue.UUID(actor.OrgID),
-		ID:    pgvalue.UUID(projectID),
-	})
+	ref := strings.TrimSpace(chi.URLParam(r, "projectRef"))
+	projectID, idErr := ids.Parse(ref)
+	var project db.Project
+	var err error
+	if idErr == nil {
+		project, err = s.db.GetProject(r.Context(), db.GetProjectParams{
+			OrgID: pgvalue.UUID(actor.OrgID), ID: pgvalue.UUID(projectID),
+		})
+	} else {
+		slug := strings.ToLower(ref)
+		if !scopeSlugPattern.MatchString(slug) {
+			writeError(w, badRequest(errors.New("invalid project reference")))
+			return
+		}
+		project, err = s.db.GetProjectBySlug(r.Context(), db.GetProjectBySlugParams{
+			OrgID: pgvalue.UUID(actor.OrgID), Slug: slug,
+		})
+	}
 	if isNoRows(err) {
 		writeError(w, notFound(errors.New("project not found")))
 		return
@@ -110,6 +151,58 @@ func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
+func parseProjectListQuery(r *http.Request, orgID uuid.UUID) (int32, *projectListCursor, error) {
+	values := r.URL.Query()
+	for name, entries := range values {
+		if name != "cursor" && name != "limit" {
+			return 0, nil, fmt.Errorf("query parameter %q is not supported", name)
+		}
+		if len(entries) != 1 || strings.TrimSpace(entries[0]) == "" {
+			return 0, nil, fmt.Errorf("query parameter %q must appear once", name)
+		}
+	}
+	limit := projectListDefaultLimit
+	if raw := values.Get("limit"); raw != "" {
+		parsed, err := strconv.ParseInt(raw, 10, 32)
+		if err != nil || parsed < 1 || parsed > int64(projectListMaxLimit) {
+			return 0, nil, errors.New("limit must be an integer in [1,100]")
+		}
+		limit = int32(parsed)
+	}
+	if raw := values.Get("cursor"); raw != "" {
+		cursor, err := decodeProjectListCursor(raw)
+		if err != nil {
+			return 0, nil, err
+		}
+		if cursor.OrgID != orgID.String() {
+			return 0, nil, errors.New("project cursor belongs to another organization")
+		}
+		return limit, &cursor, nil
+	}
+	return limit, nil, nil
+}
+
+func encodeProjectListCursor(cursor projectListCursor) (string, error) {
+	raw, err := json.Marshal(cursor)
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+func decodeProjectListCursor(raw string) (projectListCursor, error) {
+	payload, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return projectListCursor{}, errors.New("project cursor is malformed")
+	}
+	var cursor projectListCursor
+	if err := json.Unmarshal(payload, &cursor); err != nil || ids.Validate(cursor.OrgID) != nil ||
+		cursor.Slug == "" || ids.Validate(cursor.ID) != nil {
+		return projectListCursor{}, errors.New("project cursor is malformed")
+	}
+	return cursor, nil
+}
+
 func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		writeError(w, unavailable(errors.New("project storage is not configured")))
@@ -120,7 +213,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(fmt.Errorf("invalid project request JSON: %w", err)))
 		return
 	}
-	slug, name, err := normalizeScopeCreateInput(request.Slug, request.Name)
+	slug, name, err := normalizeProjectInput(request.Slug, request.Name)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -205,7 +298,7 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(fmt.Errorf("invalid project request JSON: %w", err)))
 		return
 	}
-	slug, name, err := normalizeScopeCreateInput(request.Slug, request.Name)
+	slug, name, err := normalizeProjectInput(request.Slug, request.Name)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -609,6 +702,17 @@ func normalizeScopeCreateInput(slug string, name string) (string, string, error)
 	}
 	if len(name) > 80 || strings.ContainsFunc(name, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
 		return "", "", errors.New("name must be 1-80 characters and contain no control characters")
+	}
+	return slug, name, nil
+}
+
+func normalizeProjectInput(slug string, name string) (string, string, error) {
+	slug, name, err := normalizeScopeCreateInput(slug, name)
+	if err != nil {
+		return "", "", err
+	}
+	if _, err := ids.Parse(slug); err == nil {
+		return "", "", errors.New("project slug must not be a UUID")
 	}
 	return slug, name, nil
 }

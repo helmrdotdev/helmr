@@ -24,6 +24,7 @@ export type Project = {
 
 export type ListProjectsResponse = {
   projects: Project[];
+  next_cursor?: string;
 };
 
 export type Region = {
@@ -53,8 +54,47 @@ export type CreateEnvironmentInput = {
   color_hex: string;
 };
 
-export async function listProjects(): Promise<ListProjectsResponse> {
-  return request<ListProjectsResponse>("/api/projects");
+function resolveProject(projects: Project[], projectID: string): Project | undefined {
+  return projects.find((project) => project.id === projectID) ??
+    projects.find((project) => project.is_default) ??
+    projects[0];
+}
+
+export function resolveProjectSelection(
+  projects: Project[],
+  projectID: string,
+  detail: Project | undefined,
+  detailNotFound: boolean,
+  rejectedProjectIDs: ReadonlySet<string> = new Set(),
+): { project: Project | undefined; settled: boolean } {
+  if (!projectID) return { project: resolveProject(projects, ""), settled: true };
+  if (detailNotFound) {
+    return {
+      project: resolveProject(
+        projects.filter((project) => project.id !== projectID && !rejectedProjectIDs.has(project.id)),
+        "",
+      ),
+      settled: true,
+    };
+  }
+  if (detail?.id === projectID) return { project: detail, settled: true };
+  return { project: undefined, settled: false };
+}
+
+export function resolveScopeID(resolvedID: string | undefined, requestedID: string, settled: boolean): string {
+  return resolvedID ?? (settled ? "" : requestedID);
+}
+
+export async function listProjects(cursor?: string, limit?: number): Promise<ListProjectsResponse> {
+  const params = new URLSearchParams();
+  if (cursor) params.set("cursor", cursor);
+  if (limit) params.set("limit", String(limit));
+  const query = params.toString();
+  return request<ListProjectsResponse>(`/api/projects${query ? `?${query}` : ""}`);
+}
+
+export async function getProject(projectRef: string): Promise<Project> {
+  return request<Project>(`/api/projects/${encodeURIComponent(projectRef)}`);
 }
 
 export async function listRegions(): Promise<ListRegionsResponse> {

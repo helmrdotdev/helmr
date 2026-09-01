@@ -307,6 +307,34 @@ func (q *Queries) GetProject(ctx context.Context, arg GetProjectParams) (Project
 	return i, err
 }
 
+const getProjectBySlug = `-- name: GetProjectBySlug :one
+SELECT id, org_id, default_region_id, slug, name, is_default, created_at, updated_at
+  FROM projects
+ WHERE org_id = $1
+   AND slug = $2
+`
+
+type GetProjectBySlugParams struct {
+	OrgID pgtype.UUID `json:"org_id"`
+	Slug  string      `json:"slug"`
+}
+
+func (q *Queries) GetProjectBySlug(ctx context.Context, arg GetProjectBySlugParams) (Project, error) {
+	row := q.db.QueryRow(ctx, getProjectBySlug, arg.OrgID, arg.Slug)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.DefaultRegionID,
+		&i.Slug,
+		&i.Name,
+		&i.IsDefault,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const listEnvironments = `-- name: ListEnvironments :many
 SELECT id, org_id, project_id, slug, name, color_hex, is_default, created_at, updated_at, current_deployment_id
   FROM environments
@@ -355,11 +383,33 @@ const listProjects = `-- name: ListProjects :many
 SELECT id, org_id, default_region_id, slug, name, is_default, created_at, updated_at
   FROM projects
  WHERE org_id = $1
- ORDER BY is_default DESC, lower(slug), created_at ASC
+   AND (
+       NOT $2::boolean
+       OR ((NOT is_default), slug, id) >
+          ((NOT $3::boolean), $4::text, $5::uuid)
+   )
+ ORDER BY is_default DESC, slug ASC, id ASC
+ LIMIT $6
 `
 
-func (q *Queries) ListProjects(ctx context.Context, orgID pgtype.UUID) ([]Project, error) {
-	rows, err := q.db.Query(ctx, listProjects, orgID)
+type ListProjectsParams struct {
+	OrgID          pgtype.UUID `json:"org_id"`
+	HasAfter       bool        `json:"has_after"`
+	AfterIsDefault bool        `json:"after_is_default"`
+	AfterSlug      string      `json:"after_slug"`
+	AfterID        pgtype.UUID `json:"after_id"`
+	RowLimit       int32       `json:"row_limit"`
+}
+
+func (q *Queries) ListProjects(ctx context.Context, arg ListProjectsParams) ([]Project, error) {
+	rows, err := q.db.Query(ctx, listProjects,
+		arg.OrgID,
+		arg.HasAfter,
+		arg.AfterIsDefault,
+		arg.AfterSlug,
+		arg.AfterID,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}

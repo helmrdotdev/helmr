@@ -1,6 +1,14 @@
-import { createQuery } from "@tanstack/solid-query";
-import { createContext, createEffect, createMemo, createSignal, useContext, type JSX } from "solid-js";
-import { listProjects, type Environment, type Project } from "./projects";
+import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
+import { batch, createContext, createEffect, createMemo, createSignal, useContext, type JSX } from "solid-js";
+import { ApiError } from "./api";
+import {
+  getProject,
+  listProjects,
+  resolveProjectSelection,
+  resolveScopeID,
+  type Environment,
+  type Project,
+} from "./projects";
 
 const PROJECT_STORAGE_KEY = "helmr.project_id";
 const ENVIRONMENT_STORAGE_KEY = "helmr.environment_id";
@@ -14,6 +22,9 @@ type ScopeContextValue = {
   selectedEnvironmentID: () => string;
   setSelectedProjectID: (id: string) => void;
   setSelectedEnvironmentID: (id: string) => void;
+  hasMoreProjects: () => boolean;
+  loadMoreProjects: () => void;
+  isLoadingMoreProjects: () => boolean;
   isLoading: () => boolean;
   error: () => unknown;
 };
@@ -52,12 +63,6 @@ export function rememberProjectScope(project: Project) {
   }
 }
 
-function resolveProject(projects: Project[], projectID: string): Project | undefined {
-  return projects.find((project) => project.id === projectID) ??
-    projects.find((project) => project.is_default) ??
-    projects[0];
-}
-
 function resolveEnvironment(
   project: Project | undefined,
   environmentID: string,
@@ -75,24 +80,56 @@ export function ScopeProvider(props: { children: JSX.Element }) {
   const [selectedProjectID, setSelectedProjectIDState] = createSignal(localStorage.getItem(PROJECT_STORAGE_KEY) ?? "");
   const [selectedEnvironmentID, setSelectedEnvironmentIDState] = createSignal(localStorage.getItem(ENVIRONMENT_STORAGE_KEY) ?? "");
   const [environmentSelections, setEnvironmentSelections] = createSignal(readEnvironmentSelections());
-  const projectsQuery = createQuery(() => ({
-    queryKey: ["projects"],
-    queryFn: listProjects,
+  const [rejectedProjectIDs, setRejectedProjectIDs] = createSignal<ReadonlySet<string>>(new Set());
+  const projectsQuery = createInfiniteQuery(() => ({
+    queryKey: ["projects", "list"],
+    queryFn: ({ pageParam }) => listProjects(pageParam || undefined),
+    initialPageParam: "",
+    getNextPageParam: (page) => page.next_cursor,
     retry: false,
   }));
 
-  const projects = createMemo(() => projectsQuery.data?.projects ?? []);
-  const selectedProject = createMemo(() => resolveProject(projects(), selectedProjectID()));
+  const projects = createMemo(() => projectsQuery.data?.pages.flatMap((page) => page.projects) ?? []);
+  const projectDetailQuery = createQuery(() => ({
+    queryKey: ["projects", "detail", selectedProjectID()],
+    queryFn: () => getProject(selectedProjectID()),
+    enabled: selectedProjectID() !== "",
+    retry: false,
+  }));
+  const projectDetailNotFound = createMemo(() =>
+    projectDetailQuery.error instanceof ApiError && projectDetailQuery.error.status === 404,
+  );
+  const projectResolution = createMemo(() => resolveProjectSelection(
+    projects(), selectedProjectID(), projectDetailQuery.data, projectDetailNotFound(), rejectedProjectIDs(),
+  ));
+  const selectedProject = createMemo(() => projectResolution().project);
+  const projectResolutionSettled = createMemo(() =>
+    projectResolution().settled && (selectedProjectID() !== "" || projectsQuery.isSuccess),
+  );
   const selectedEnvironment = createMemo(() =>
     resolveEnvironment(selectedProject(), selectedEnvironmentID(), environmentSelections()),
   );
 
+  const selectProjectID = (id: string) => {
+    batch(() => {
+      setSelectedProjectIDState(id);
+      setSelectedEnvironmentIDState(environmentSelections()[id] ?? "");
+    });
+  };
+
   createEffect(() => {
     const project = selectedProject();
-    if (project && selectedProjectID() !== project.id) {
-      setSelectedProjectIDState(project.id);
-    } else if (!project && projectsQuery.isSuccess && selectedProjectID()) {
-      setSelectedProjectIDState("");
+    const projectID = selectedProjectID();
+    if (projectDetailNotFound() && projectID) {
+      batch(() => {
+        setRejectedProjectIDs((current) => {
+          if (current.has(projectID)) return current;
+          return new Set([...current, projectID]);
+        });
+        if (project) selectProjectID(project.id);
+      });
+    } else if (project && projectID !== project.id) {
+      selectProjectID(project.id);
     }
   });
 
@@ -100,16 +137,25 @@ export function ScopeProvider(props: { children: JSX.Element }) {
     const environment = selectedEnvironment();
     if (environment && selectedEnvironmentID() !== environment.id) {
       setSelectedEnvironmentIDState(environment.id);
-    } else if (!environment && projectsQuery.isSuccess && selectedEnvironmentID()) {
+    } else if (!environment && projectDetailQuery.isSuccess && selectedEnvironmentID()) {
       setSelectedEnvironmentIDState("");
     }
   });
 
   createEffect(() => {
     const projectID = selectedProjectID();
+    if (projectDetailNotFound() && projectResolutionSettled()) {
+      const fallbackID = selectedProject()?.id;
+      if (fallbackID) {
+        localStorage.setItem(PROJECT_STORAGE_KEY, fallbackID);
+      } else {
+        localStorage.removeItem(PROJECT_STORAGE_KEY);
+      }
+      return;
+    }
     if (projectID) {
       localStorage.setItem(PROJECT_STORAGE_KEY, projectID);
-    } else if (projectsQuery.isSuccess) {
+    } else if (projectsQuery.isSuccess && projectResolutionSettled()) {
       localStorage.removeItem(PROJECT_STORAGE_KEY);
     }
   });
@@ -118,9 +164,10 @@ export function ScopeProvider(props: { children: JSX.Element }) {
     const project = selectedProject();
     const environment = selectedEnvironment();
     if (!project) {
-      if (projectsQuery.isSuccess) localStorage.removeItem(ENVIRONMENT_STORAGE_KEY);
+      if (projectsQuery.isSuccess && projectResolutionSettled()) localStorage.removeItem(ENVIRONMENT_STORAGE_KEY);
       return;
     }
+    if (!projectDetailQuery.isSuccess) return;
     if (!environment) {
       localStorage.removeItem(ENVIRONMENT_STORAGE_KEY);
       setEnvironmentSelections((current) => {
@@ -140,24 +187,20 @@ export function ScopeProvider(props: { children: JSX.Element }) {
     });
   });
 
-  const setSelectedProjectID = (id: string) => {
-    setSelectedProjectIDState(id);
-    const project = projects().find((candidate) => candidate.id === id);
-    const environment = resolveEnvironment(project, "", environmentSelections());
-    setSelectedEnvironmentIDState(environment?.id ?? "");
-  };
-
   return (
     <ScopeContext.Provider value={{
       projects,
       selectedProject,
       selectedEnvironment,
-      selectedProjectID: () => selectedProject()?.id ?? "",
-      selectedEnvironmentID: () => selectedEnvironment()?.id ?? "",
-      setSelectedProjectID,
+      selectedProjectID: () => resolveScopeID(selectedProject()?.id, selectedProjectID(), projectResolutionSettled()),
+      selectedEnvironmentID: () => resolveScopeID(selectedEnvironment()?.id, selectedEnvironmentID(), projectResolutionSettled()),
+      setSelectedProjectID: selectProjectID,
       setSelectedEnvironmentID: setSelectedEnvironmentIDState,
-      isLoading: () => projectsQuery.isPending,
-      error: () => projectsQuery.error,
+      hasMoreProjects: () => projectsQuery.hasNextPage,
+      loadMoreProjects: () => { void projectsQuery.fetchNextPage(); },
+      isLoadingMoreProjects: () => projectsQuery.isFetchingNextPage,
+      isLoading: () => projectsQuery.isPending || (selectedProjectID() !== "" && projectDetailQuery.isPending),
+      error: () => projectsQuery.error ?? projectDetailQuery.error,
     }}>
       {props.children}
     </ScopeContext.Provider>
