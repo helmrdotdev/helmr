@@ -146,6 +146,20 @@ func (q *Queries) ListOrganizationIDs(ctx context.Context, rowLimit int32) ([]pg
 	return items, nil
 }
 
+const lockOrganizationForProjectDefaults = `-- name: LockOrganizationForProjectDefaults :one
+SELECT id
+  FROM organizations
+ WHERE id = $1
+ FOR NO KEY UPDATE
+`
+
+func (q *Queries) LockOrganizationForProjectDefaults(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, lockOrganizationForProjectDefaults, id)
+	var id_2 pgtype.UUID
+	err := row.Scan(&id_2)
+	return id_2, err
+}
+
 const lockOrganizationsForSelfHostedSetup = `-- name: LockOrganizationsForSelfHostedSetup :exec
 LOCK TABLE organizations IN EXCLUSIVE MODE
 `

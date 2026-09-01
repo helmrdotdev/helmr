@@ -18,15 +18,6 @@ const (
 	TelemetryOutboxStateFailed  TelemetryOutboxState = "failed"
 )
 
-type DeletionJobStatus = string
-
-const (
-	DeletionJobStatusQueued    DeletionJobStatus = "queued"
-	DeletionJobStatusRunning   DeletionJobStatus = "running"
-	DeletionJobStatusCompleted DeletionJobStatus = "completed"
-	DeletionJobStatusFailed    DeletionJobStatus = "failed"
-)
-
 type DeviceCodeStatus = string
 
 const (

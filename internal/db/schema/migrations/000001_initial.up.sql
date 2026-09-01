@@ -72,30 +72,6 @@ CREATE TABLE org_members (
     PRIMARY KEY (org_id, user_id)
 );
 
-CREATE TYPE deletion_job_target_type AS ENUM (
-    'project',
-    'environment'
-);
-
-CREATE TABLE deletion_jobs (
-    id UUID PRIMARY KEY,
-    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    target_type deletion_job_target_type NOT NULL,
-    target_id UUID NOT NULL,
-    target_project_id UUID,
-    target_slug TEXT NOT NULL DEFAULT '',
-    target_name TEXT NOT NULL DEFAULT '',
-    requested_by_principal TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'queued'
-        CHECK (status IN ('queued', 'running', 'completed', 'failed')),
-    failure TEXT NOT NULL DEFAULT '',
-    deleted_counts JSONB NOT NULL DEFAULT '{}'::jsonb,
-    requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    started_at TIMESTAMPTZ,
-    completed_at TIMESTAMPTZ,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
 CREATE TABLE projects (
     id UUID PRIMARY KEY,
     org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -3016,7 +2992,6 @@ CREATE UNIQUE INDEX environments_one_default_idx ON environments(org_id, project
     WHERE is_default;
 CREATE UNIQUE INDEX projects_org_slug_idx ON projects(org_id, slug);
 CREATE UNIQUE INDEX environments_org_project_slug_idx ON environments(org_id, project_id, slug);
-CREATE INDEX deletion_jobs_org_status_requested_idx ON deletion_jobs(org_id, status, requested_at DESC);
 CREATE INDEX runs_org_created_idx ON runs(org_id, created_at DESC);
 CREATE INDEX runs_org_status_created_idx ON runs(org_id, status, created_at DESC);
 CREATE INDEX runs_scope_created_idx ON runs(org_id, project_id, environment_id, created_at DESC, id DESC);

@@ -4,6 +4,12 @@ LOCK TABLE organizations IN EXCLUSIVE MODE;
 -- name: CountOrganizations :one
 SELECT count(*) FROM organizations;
 
+-- name: LockOrganizationForProjectDefaults :one
+SELECT id
+  FROM organizations
+ WHERE id = sqlc.arg(id)
+ FOR NO KEY UPDATE;
+
 -- name: CreateOrganization :one
 INSERT INTO organizations (id, name, slug)
 VALUES (
