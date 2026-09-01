@@ -66,7 +66,6 @@ type Querier interface {
 	CompleteActorOutputClaim(ctx context.Context, arg CompleteActorOutputClaimParams) (IdempotencyClaim, error)
 	CompleteCheckpointingChildRunWait(ctx context.Context, arg CompleteCheckpointingChildRunWaitParams) (RunWait, error)
 	CompleteCheckpointingRunWait(ctx context.Context, arg CompleteCheckpointingRunWaitParams) (RunWait, error)
-	CompleteDeletionJob(ctx context.Context, arg CompleteDeletionJobParams) (DeletionJob, error)
 	CompleteHotChildRunWait(ctx context.Context, arg CompleteHotChildRunWaitParams) (RunWait, error)
 	CompleteHotRunWait(ctx context.Context, arg CompleteHotRunWaitParams) (RunWait, error)
 	CompleteIdempotencyClaim(ctx context.Context, arg CompleteIdempotencyClaimParams) (IdempotencyClaim, error)
@@ -103,7 +102,6 @@ type Querier interface {
 	CreateCheckpointFailureRetryAttempt(ctx context.Context, arg CreateCheckpointFailureRetryAttemptParams) (RunAttempt, error)
 	CreateChildRunFromParentDeployment(ctx context.Context, arg CreateChildRunFromParentDeploymentParams) (CreateChildRunFromParentDeploymentRow, error)
 	CreateControlOutbox(ctx context.Context, arg CreateControlOutboxParams) (ControlOutbox, error)
-	CreateDeletionJob(ctx context.Context, arg CreateDeletionJobParams) (DeletionJob, error)
 	CreateDeployment(ctx context.Context, arg CreateDeploymentParams) (Deployment, error)
 	CreateDeploymentDefinitions(ctx context.Context, arg CreateDeploymentDefinitionsParams) (int64, error)
 	CreateDeviceCode(ctx context.Context, arg CreateDeviceCodeParams) (DeviceCode, error)
@@ -165,7 +163,6 @@ type Querier interface {
 	FailCheckpointRunLease(ctx context.Context, arg FailCheckpointRunLeaseParams) (RunLease, error)
 	FailCheckpointRunWait(ctx context.Context, arg FailCheckpointRunWaitParams) (RunWait, error)
 	FailCheckpointingRunWait(ctx context.Context, arg FailCheckpointingRunWaitParams) (RunWait, error)
-	FailDeletionJob(ctx context.Context, arg FailDeletionJobParams) (DeletionJob, error)
 	FailHotRunWait(ctx context.Context, arg FailHotRunWaitParams) (RunWait, error)
 	FailIdempotencyClaim(ctx context.Context, arg FailIdempotencyClaimParams) (IdempotencyClaim, error)
 	FailParkedRunWait(ctx context.Context, arg FailParkedRunWaitParams) (RunWait, error)
@@ -318,7 +315,6 @@ type Querier interface {
 	ListPendingWorkspaceExecCandidates(ctx context.Context, rowLimit int32) ([]ListPendingWorkspaceExecCandidatesRow, error)
 	ListPendingWorkspaceExecCapacityCandidates(ctx context.Context, arg ListPendingWorkspaceExecCapacityCandidatesParams) ([]ListPendingWorkspaceExecCapacityCandidatesRow, error)
 	ListProjects(ctx context.Context, arg ListProjectsParams) ([]Project, error)
-	ListProjectsForUpdate(ctx context.Context, orgID pgtype.UUID) ([]Project, error)
 	ListQueuedRunEligibleScopes(ctx context.Context, arg ListQueuedRunEligibleScopesParams) ([]ListQueuedRunEligibleScopesRow, error)
 	ListQueuedRunPlacementCandidates(ctx context.Context, arg ListQueuedRunPlacementCandidatesParams) ([]ListQueuedRunPlacementCandidatesRow, error)
 	ListQueuedRunPlanningCandidatesForScopes(ctx context.Context, arg ListQueuedRunPlanningCandidatesForScopesParams) ([]ListQueuedRunPlanningCandidatesForScopesRow, error)
@@ -376,6 +372,7 @@ type Querier interface {
 	LockLiveIdempotencyClaim(ctx context.Context, arg LockLiveIdempotencyClaimParams) (LockLiveIdempotencyClaimRow, error)
 	LockLiveRunLease(ctx context.Context, arg LockLiveRunLeaseParams) (RunLease, error)
 	LockMagicLinkRecipient(ctx context.Context, lockKey int64) error
+	LockOrganizationForProjectDefaults(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error)
 	LockOrganizationsForSelfHostedSetup(ctx context.Context) error
 	LockParentOwnedChildWait(ctx context.Context, arg LockParentOwnedChildWaitParams) (RunWait, error)
 	LockProcessSecretDelivery(ctx context.Context, arg LockProcessSecretDeliveryParams) ([]LockProcessSecretDeliveryRow, error)
@@ -427,7 +424,6 @@ type Querier interface {
 	LockWorkspaceSecretsForAdmission(ctx context.Context, workspaceID pgtype.UUID) ([]LockWorkspaceSecretsForAdmissionRow, error)
 	LoseExpiredWorkspaceMountClaims(ctx context.Context, limitCount int32) ([]LoseExpiredWorkspaceMountClaimsRow, error)
 	LoseWorkspaceExecMount(ctx context.Context, arg LoseWorkspaceExecMountParams) (WorkspaceMount, error)
-	MarkDeletionJobRunning(ctx context.Context, arg MarkDeletionJobRunningParams) (DeletionJob, error)
 	MarkLiveTelemetryOutboxFailed(ctx context.Context, arg MarkLiveTelemetryOutboxFailedParams) error
 	MarkLiveTelemetryOutboxPublished(ctx context.Context, id int64) error
 	MarkMagicLinkDeliveryFailed(ctx context.Context, id pgtype.UUID) (int64, error)
@@ -450,6 +446,7 @@ type Querier interface {
 	MarkWorkspaceExecRecoveryRequired(ctx context.Context, arg MarkWorkspaceExecRecoveryRequiredParams) (Workspace, error)
 	MarkWorkspaceMountMounted(ctx context.Context, arg MarkWorkspaceMountMountedParams) (WorkspaceMount, error)
 	PromoteDeployment(ctx context.Context, arg PromoteDeploymentParams) error
+	PromoteFirstProjectDefault(ctx context.Context, orgID pgtype.UUID) (int64, error)
 	PruneDeliveredControlOutbox(ctx context.Context, arg PruneDeliveredControlOutboxParams) (int64, error)
 	PruneTelemetryOutboxWritten(ctx context.Context, arg PruneTelemetryOutboxWrittenParams) (int64, error)
 	PublishRestoredActorCheckpointWorkspaceVersion(ctx context.Context, arg PublishRestoredActorCheckpointWorkspaceVersionParams) (WorkspaceVersion, error)
@@ -520,7 +517,6 @@ type Querier interface {
 	RunFinalizationScopeIsClear(ctx context.Context, arg RunFinalizationScopeIsClearParams) (pgtype.Bool, error)
 	SealWorkerPool(ctx context.Context, arg SealWorkerPoolParams) (WorkerPool, error)
 	SetActorCurrentRun(ctx context.Context, arg SetActorCurrentRunParams) (Session, error)
-	SetDefaultProject(ctx context.Context, arg SetDefaultProjectParams) (int64, error)
 	SetInitialWorkerGroupPrimaryPool(ctx context.Context, arg SetInitialWorkerGroupPrimaryPoolParams) (WorkerGroup, error)
 	SetRunCurrentLease(ctx context.Context, arg SetRunCurrentLeaseParams) (Run, error)
 	SetWorkerGroupPrimaryPool(ctx context.Context, arg SetWorkerGroupPrimaryPoolParams) (WorkerGroup, error)

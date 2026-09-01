@@ -53,6 +53,7 @@ func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDow
 	assertExecutionAttachmentConstraints(t, dbctx, pool)
 	assertRunWaitWorkspaceSuccession(t, dbctx, pool)
 	assertPrimitiveLifecycleSchema(t, dbctx, pool)
+	assertNoDeletionJobSchema(t, dbctx, pool)
 	assertNoBusinessDatabaseLogic(t, dbctx, pool)
 	if !verifyDown {
 		return
@@ -82,7 +83,32 @@ func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDow
 	assertExecutionAttachmentConstraints(t, dbctx, pool)
 	assertRunWaitWorkspaceSuccession(t, dbctx, pool)
 	assertPrimitiveLifecycleSchema(t, dbctx, pool)
+	assertNoDeletionJobSchema(t, dbctx, pool)
 	assertNoBusinessDatabaseLogic(t, dbctx, pool)
+}
+
+func assertNoDeletionJobSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+	var tableExists bool
+	if err := pool.QueryRow(ctx, `SELECT to_regclass('public.deletion_jobs') IS NOT NULL`).Scan(&tableExists); err != nil {
+		t.Fatal(err)
+	}
+	if tableExists {
+		t.Fatal("deletion_jobs table exists")
+	}
+	var typeCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM pg_type
+		  JOIN pg_namespace ON pg_namespace.oid = pg_type.typnamespace
+		 WHERE pg_namespace.nspname = 'public'
+		   AND pg_type.typname = 'deletion_job_target_type'
+	`).Scan(&typeCount); err != nil {
+		t.Fatal(err)
+	}
+	if typeCount != 0 {
+		t.Fatalf("deletion job types = %d, want 0", typeCount)
+	}
 }
 
 func assertPrimitiveLifecycleSchema(
@@ -95,7 +121,6 @@ func assertPrimitiveLifecycleSchema(
 		"region_state",
 		"worker_group_state",
 		"telemetry_outbox_state",
-		"deletion_job_status",
 		"device_code_status",
 		"worker_instance_state",
 		"public_access_token_state",
@@ -130,7 +155,6 @@ func assertPrimitiveLifecycleSchema(
 	tableNames := []string{
 		"worker_groups",
 		"telemetry_outbox",
-		"deletion_jobs",
 		"device_codes",
 		"worker_instances",
 		"public_access_tokens",
@@ -154,7 +178,6 @@ func assertPrimitiveLifecycleSchema(
 	columnNames := []string{
 		"state",
 		"state",
-		"status",
 		"status",
 		"state",
 		"state",

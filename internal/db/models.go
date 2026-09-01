@@ -58,48 +58,6 @@ func (ns NullArtifactKind) Value() (driver.Value, error) {
 	return string(ns.ArtifactKind), nil
 }
 
-type DeletionJobTargetType string
-
-const (
-	DeletionJobTargetTypeProject     DeletionJobTargetType = "project"
-	DeletionJobTargetTypeEnvironment DeletionJobTargetType = "environment"
-)
-
-func (e *DeletionJobTargetType) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = DeletionJobTargetType(s)
-	case string:
-		*e = DeletionJobTargetType(s)
-	default:
-		return fmt.Errorf("unsupported scan type for DeletionJobTargetType: %T", src)
-	}
-	return nil
-}
-
-type NullDeletionJobTargetType struct {
-	DeletionJobTargetType DeletionJobTargetType `json:"deletion_job_target_type"`
-	Valid                 bool                  `json:"valid"` // Valid is true if DeletionJobTargetType is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullDeletionJobTargetType) Scan(value interface{}) error {
-	if value == nil {
-		ns.DeletionJobTargetType, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.DeletionJobTargetType.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullDeletionJobTargetType) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.DeletionJobTargetType), nil
-}
-
 type MagicLinkPurpose string
 
 const (
@@ -431,24 +389,6 @@ type ControlOutbox struct {
 	LastError      pgtype.Text        `json:"last_error"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	DeliveredAt    pgtype.Timestamptz `json:"delivered_at"`
-}
-
-type DeletionJob struct {
-	ID                   pgtype.UUID           `json:"id"`
-	OrgID                pgtype.UUID           `json:"org_id"`
-	TargetType           DeletionJobTargetType `json:"target_type"`
-	TargetID             pgtype.UUID           `json:"target_id"`
-	TargetProjectID      pgtype.UUID           `json:"target_project_id"`
-	TargetSlug           string                `json:"target_slug"`
-	TargetName           string                `json:"target_name"`
-	RequestedByPrincipal string                `json:"requested_by_principal"`
-	Status               string                `json:"status"`
-	Failure              string                `json:"failure"`
-	DeletedCounts        []byte                `json:"deleted_counts"`
-	RequestedAt          pgtype.Timestamptz    `json:"requested_at"`
-	StartedAt            pgtype.Timestamptz    `json:"started_at"`
-	CompletedAt          pgtype.Timestamptz    `json:"completed_at"`
-	UpdatedAt            pgtype.Timestamptz    `json:"updated_at"`
 }
 
 type Deployment struct {

@@ -72,8 +72,6 @@ DROP TABLE IF EXISTS environments;
 DROP TABLE IF EXISTS projects;
 ALTER TABLE organizations DROP COLUMN IF EXISTS default_region_id;
 DROP TABLE IF EXISTS regions;
-DROP TABLE IF EXISTS deletion_jobs;
-DROP TYPE IF EXISTS deletion_job_target_type;
 DROP TABLE IF EXISTS org_members;
 DROP TYPE IF EXISTS org_member_role;
 DROP TABLE IF EXISTS auth_identities;
