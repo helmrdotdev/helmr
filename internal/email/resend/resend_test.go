@@ -73,15 +73,34 @@ func TestResendEmailSenderPropagatesSendError(t *testing.T) {
 	}
 }
 
-type recordingResendEmailService struct {
-	request *resendapi.SendEmailRequest
-	options *resendapi.SendEmailOptions
-	err     error
+func TestResendEmailSenderPropagatesCancellation(t *testing.T) {
+	service := &recordingResendEmailService{waitForCancellation: true}
+	sender := Sender{from: "noreply@example.test", emails: service}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		done <- sender.SendEmail(ctx, email.Message{To: "owner@example.test", Subject: "Hello"})
+	}()
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("SendEmail error = %v, want cancellation", err)
+	}
 }
 
-func (s *recordingResendEmailService) SendWithOptions(_ context.Context, params *resendapi.SendEmailRequest, options *resendapi.SendEmailOptions) (*resendapi.SendEmailResponse, error) {
+type recordingResendEmailService struct {
+	request             *resendapi.SendEmailRequest
+	options             *resendapi.SendEmailOptions
+	err                 error
+	waitForCancellation bool
+}
+
+func (s *recordingResendEmailService) SendWithOptions(ctx context.Context, params *resendapi.SendEmailRequest, options *resendapi.SendEmailOptions) (*resendapi.SendEmailResponse, error) {
 	s.request = params
 	s.options = options
+	if s.waitForCancellation {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	if s.err != nil {
 		return nil, s.err
 	}
