@@ -166,7 +166,7 @@ func TestTokenReconcileConvergesAfterControlOutboxPrune(t *testing.T) {
 		RetainFor: pgvalue.Interval(24 * time.Hour),
 		RowLimit:  32,
 	})
-	if err != nil || len(pruned) != 1 {
+	if err != nil || pruned != 1 {
 		t.Fatalf("prune = %v, %v", pruned, err)
 	}
 

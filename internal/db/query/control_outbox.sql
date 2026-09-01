@@ -78,23 +78,23 @@ WHERE id = sqlc.arg(id)
 RETURNING *;
 
 -- name: DeadLetterUnsupportedControlOutbox :many
-WITH candidates AS (
-    SELECT id
+WITH candidate_prefix AS MATERIALIZED (
+    SELECT id, topic
     FROM control_outbox
     WHERE state = 'pending'
-      AND NOT (topic = ANY(sqlc.arg(supported_topics)::text[]))
     ORDER BY created_at, id
     LIMIT sqlc.arg(row_limit)
-    FOR UPDATE SKIP LOCKED
 )
 UPDATE control_outbox
 SET state = 'dead_lettered',
     last_error = 'unsupported control outbox topic'
-FROM candidates
-WHERE control_outbox.id = candidates.id
+FROM candidate_prefix
+WHERE control_outbox.id = candidate_prefix.id
+  AND control_outbox.state = 'pending'
+  AND NOT (candidate_prefix.topic = ANY(sqlc.arg(supported_topics)::text[]))
 RETURNING control_outbox.*;
 
--- name: PruneDeliveredControlOutbox :many
+-- name: PruneDeliveredControlOutbox :execrows
 DELETE FROM control_outbox
  WHERE id IN (
     SELECT id
@@ -103,10 +103,28 @@ DELETE FROM control_outbox
        AND delivered_at < now() - sqlc.arg(retain_for)::interval
      ORDER BY delivered_at, id
      LIMIT sqlc.arg(row_limit)
- )
-RETURNING id;
+ );
 
 -- name: ControlOutboxLifecycle :one
-SELECT MIN(created_at) FILTER (WHERE state = 'pending')::timestamptz AS oldest_pending_at,
-       COUNT(*) FILTER (WHERE state = 'dead_lettered')::bigint AS dead_lettered
-  FROM control_outbox;
+WITH dead_letter_sample AS (
+    SELECT 1
+      FROM control_outbox
+     WHERE state = 'dead_lettered'
+     ORDER BY created_at, id
+     LIMIT (sqlc.arg(dead_letter_limit)::integer + 1)
+),
+dead_letter_counts AS (
+    SELECT COUNT(*)::bigint AS rows
+      FROM dead_letter_sample
+)
+SELECT (
+           SELECT available_at
+             FROM control_outbox
+            WHERE state = 'pending'
+              AND available_at <= now()
+            ORDER BY available_at, id
+            LIMIT 1
+       )::timestamptz AS oldest_eligible_at,
+       LEAST(dead_letter_counts.rows, sqlc.arg(dead_letter_limit)::bigint)::bigint AS dead_lettered_rows,
+       (dead_letter_counts.rows > sqlc.arg(dead_letter_limit)::bigint)::boolean AS dead_lettered_overflow
+  FROM dead_letter_counts;
