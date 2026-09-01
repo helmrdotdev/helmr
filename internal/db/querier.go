@@ -88,7 +88,6 @@ type Querier interface {
 	ControlOutboxLifecycle(ctx context.Context, deadLetterLimit int64) (ControlOutboxLifecycleRow, error)
 	CountOrganizations(ctx context.Context) (int64, error)
 	CountRecentMagicLinks(ctx context.Context, arg CountRecentMagicLinksParams) (int64, error)
-	CreateAPIKeyGrant(ctx context.Context, arg CreateAPIKeyGrantParams) (APIKeyGrant, error)
 	CreateActor(ctx context.Context, arg CreateActorParams) (Session, error)
 	CreateActorCheckpointFailureRetryAttempt(ctx context.Context, arg CreateActorCheckpointFailureRetryAttemptParams) (RunAttempt, error)
 	CreateActorCloseReconcileOutbox(ctx context.Context, arg CreateActorCloseReconcileOutboxParams) error
@@ -302,7 +301,6 @@ type Querier interface {
 	InvalidateRestoredActorCheckpoint(ctx context.Context, arg InvalidateRestoredActorCheckpointParams) (RunCheckpoint, error)
 	InvalidateRunCheckpoints(ctx context.Context, arg InvalidateRunCheckpointsParams) error
 	IssueAPIKey(ctx context.Context, arg IssueAPIKeyParams) (APIKey, error)
-	ListAPIKeyGrants(ctx context.Context, arg ListAPIKeyGrantsParams) ([]APIKeyGrant, error)
 	ListAPIKeys(ctx context.Context, arg ListAPIKeysParams) ([]ListAPIKeysRow, error)
 	ListCancellationLineage(ctx context.Context, arg ListCancellationLineageParams) ([]ListCancellationLineageRow, error)
 	ListCapacityWorkerInstances(ctx context.Context, arg ListCapacityWorkerInstancesParams) ([]ListCapacityWorkerInstancesRow, error)

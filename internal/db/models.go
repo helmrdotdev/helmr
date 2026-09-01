@@ -365,6 +365,7 @@ type APIKey struct {
 	EnvironmentID   pgtype.UUID        `json:"environment_id"`
 	CreatedByUserID pgtype.UUID        `json:"created_by_user_id"`
 	Role            OrgMemberRole      `json:"role"`
+	Permissions     []string           `json:"permissions"`
 	Name            string             `json:"name"`
 	KeyPrefix       string             `json:"key_prefix"`
 	TokenHash       []byte             `json:"token_hash"`
@@ -372,15 +373,6 @@ type APIKey struct {
 	LastUsedAt      pgtype.Timestamptz `json:"last_used_at"`
 	ExpiresAt       pgtype.Timestamptz `json:"expires_at"`
 	RevokedAt       pgtype.Timestamptz `json:"revoked_at"`
-}
-
-type APIKeyGrant struct {
-	ID              pgtype.UUID        `json:"id"`
-	OrgID           pgtype.UUID        `json:"org_id"`
-	APIKeyID        pgtype.UUID        `json:"api_key_id"`
-	Permission      string             `json:"permission"`
-	CreatedByUserID pgtype.UUID        `json:"created_by_user_id"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
 type Artifact struct {

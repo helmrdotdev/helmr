@@ -8,22 +8,15 @@ import (
 )
 
 func TestPermissionsFromAPIKeyKeepsGrantablePermissions(t *testing.T) {
-	permissions, err := permissionsFromAPIKey([]byte(`[
-		{"permission":" sessions.read "},
-		{"permission":"members.manage"},
-		{"permission":"unknown"}
-	]`))
-	if err != nil {
-		t.Fatal(err)
-	}
+	permissions := permissionsFromAPIKey([]string{" sessions.read ", "members.manage", "unknown"})
 	want := []auth.Permission{auth.PermissionSessionsRead}
 	if !reflect.DeepEqual(permissions, want) {
 		t.Fatalf("permissions = %v, want %v", permissions, want)
 	}
 }
 
-func TestPermissionsFromAPIKeyRejectsUnsupportedPayloadType(t *testing.T) {
-	if _, err := permissionsFromAPIKey(42); err == nil {
-		t.Fatal("expected unsupported grant payload type to fail")
+func TestPermissionsFromAPIKeyReturnsNilWithoutKnownPermission(t *testing.T) {
+	if permissions := permissionsFromAPIKey([]string{"members.manage", "unknown"}); permissions != nil {
+		t.Fatalf("permissions = %v, want nil", permissions)
 	}
 }

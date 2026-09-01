@@ -13,7 +13,6 @@ sql:
         emit_interface: true
         rename:
           api_key: APIKey
-          api_key_grant: APIKeyGrant
           api_key_id: APIKeyID
           artifact_kind_run_checkpoint_vm_state: ArtifactKindRunCheckpointVMState
           available_cpu_millis: AvailableCPUMillis
