@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 	"uuid"
@@ -84,15 +85,7 @@ func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 			writeError(w, errors.New("format api key"))
 			return
 		}
-		grants, err := s.db.ListAPIKeyGrants(r.Context(), db.ListAPIKeyGrantsParams{
-			OrgID:    row.OrgID,
-			APIKeyID: row.ID,
-		})
-		if err != nil {
-			writeError(w, errors.New("list api key permissions"))
-			return
-		}
-		item.Permissions = apiKeyPermissionGrantsFromRows(grants)
+		item.Permissions = apiKeyPermissionGrantsFromPermissions(row.Permissions)
 		items = append(items, item)
 	}
 	response := api.ListAPIKeysResponse{APIKeys: items}
@@ -148,7 +141,7 @@ func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	permissionGrants, err := normalizeAPIKeyPermissionGrants(input.Permissions)
+	permissionGrants, permissions, err := normalizeAPIKeyPermissionGrants(input.Permissions)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -173,6 +166,7 @@ func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 		EnvironmentID:   environmentUUID,
 		CreatedByUserID: pgvalue.UUID(actor.UserID),
 		Role:            db.OrgMemberRole(actor.Role),
+		Permissions:     permissions,
 		Name:            name,
 		KeyPrefix:       generated.KeyPrefix,
 		TokenHash:       generated.TokenHash,
@@ -181,25 +175,6 @@ func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, errors.New("create api key"))
 		return
-	}
-	for _, grant := range permissionGrants {
-		for _, scope := range grant.Scopes {
-			permission, ok := apiKeyScopePermission(scope)
-			if !ok {
-				writeError(w, badRequest(fmt.Errorf("unsupported permission scope %q", scope)))
-				return
-			}
-			if _, err := s.db.CreateAPIKeyGrant(r.Context(), db.CreateAPIKeyGrantParams{
-				ID:              pgvalue.UUID(uuid.NewV7()),
-				OrgID:           pgvalue.UUID(actor.OrgID),
-				APIKeyID:        record.ID,
-				Permission:      string(permission),
-				CreatedByUserID: pgvalue.UUID(actor.UserID),
-			}); err != nil {
-				writeError(w, errors.New("create api key permission"))
-				return
-			}
-		}
 	}
 	summary, err := apiKeySummaryFromRecord(record)
 	if err != nil {
@@ -265,32 +240,46 @@ func validAPIKeyFilter(filter string) bool {
 	}
 }
 
-func normalizeAPIKeyPermissionGrants(grants []api.APIKeyPermissionGrant) ([]api.APIKeyPermissionGrant, error) {
+func normalizeAPIKeyPermissionGrants(grants []api.APIKeyPermissionGrant) ([]api.APIKeyPermissionGrant, []string, error) {
 	if len(grants) == 0 {
-		return nil, errors.New("permissions must include at least one grant")
+		return nil, nil, errors.New("permissions must include at least one grant")
 	}
-	scopes := make([]api.APIKeyScope, 0, len(grants))
-	seen := map[api.APIKeyScope]struct{}{}
+	permissions := make([]string, 0, len(grants))
+	seen := map[string]struct{}{}
 	for _, grant := range grants {
 		if len(grant.Scopes) == 0 {
-			return nil, errors.New("permission grants must include at least one scope")
+			return nil, nil, errors.New("permission grants must include at least one scope")
 		}
 		for _, scope := range grant.Scopes {
 			normalizedScope, ok := normalizeAPIKeyScope(scope)
 			if !ok {
-				return nil, fmt.Errorf("unsupported permission scope %q", scope)
+				return nil, nil, fmt.Errorf("unsupported permission scope %q", scope)
 			}
-			if _, ok := seen[normalizedScope]; ok {
+			permission, ok := apiKeyScopePermission(normalizedScope)
+			if !ok {
+				return nil, nil, fmt.Errorf("unsupported permission scope %q", scope)
+			}
+			value := string(permission)
+			if _, ok := seen[value]; ok {
 				continue
 			}
-			seen[normalizedScope] = struct{}{}
-			scopes = append(scopes, normalizedScope)
+			seen[value] = struct{}{}
+			permissions = append(permissions, value)
 		}
 	}
-	if len(scopes) == 0 {
-		return nil, errors.New("permissions must include at least one supported scope")
+	if len(permissions) == 0 {
+		return nil, nil, errors.New("permissions must include at least one supported scope")
 	}
-	return []api.APIKeyPermissionGrant{{Scopes: scopes}}, nil
+	sort.Strings(permissions)
+	scopes := make([]api.APIKeyScope, 0, len(permissions))
+	for _, permission := range permissions {
+		scope, ok := apiKeyPermissionScope(permission)
+		if !ok {
+			return nil, nil, fmt.Errorf("unsupported permission %q", permission)
+		}
+		scopes = append(scopes, scope)
+	}
+	return []api.APIKeyPermissionGrant{{Scopes: scopes}}, permissions, nil
 }
 
 func normalizeAPIKeyScope(scope api.APIKeyScope) (api.APIKeyScope, bool) {
@@ -422,10 +411,10 @@ func apiKeyPermissionScope(permission string) (api.APIKeyScope, bool) {
 	}
 }
 
-func apiKeyPermissionGrantsFromRows(rows []db.APIKeyGrant) []api.APIKeyPermissionGrant {
-	scopes := make([]api.APIKeyScope, 0, len(rows))
-	for _, row := range rows {
-		scope, ok := apiKeyPermissionScope(row.Permission)
+func apiKeyPermissionGrantsFromPermissions(permissions []string) []api.APIKeyPermissionGrant {
+	scopes := make([]api.APIKeyScope, 0, len(permissions))
+	for _, permission := range permissions {
+		scope, ok := apiKeyPermissionScope(permission)
 		if !ok {
 			continue
 		}

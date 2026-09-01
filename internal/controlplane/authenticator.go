@@ -2,7 +2,6 @@ package controlplane
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -45,10 +44,7 @@ func (a dbAuthenticator) Authenticate(ctx context.Context, bearerToken string) (
 	if err != nil {
 		return auth.Actor{}, fmt.Errorf("api key environment id: %w", err)
 	}
-	permissions, err := permissionsFromAPIKey(row.Grants)
-	if err != nil {
-		return auth.Actor{}, fmt.Errorf("api key grants: %w", err)
-	}
+	permissions := permissionsFromAPIKey(row.Permissions)
 	apiKeyID, err := pgvalue.UUIDValue(row.ID)
 	if err != nil {
 		return auth.Actor{}, fmt.Errorf("api key id: %w", err)
@@ -64,46 +60,16 @@ func (a dbAuthenticator) Authenticate(ctx context.Context, bearerToken string) (
 	}, nil
 }
 
-type apiKeyGrantRow struct {
-	Permission string `json:"permission"`
-}
-
-func permissionsFromAPIKey(rawValue any) ([]auth.Permission, error) {
-	raw, err := apiKeyGrantJSON(rawValue)
-	if err != nil {
-		return nil, err
-	}
-	if len(raw) == 0 {
-		return nil, nil
-	}
-	var rows []apiKeyGrantRow
-	if err := json.Unmarshal(raw, &rows); err != nil {
-		return nil, err
-	}
-	permissions := make([]auth.Permission, 0, len(rows))
-	for _, row := range rows {
-		permission, ok := auth.ParseAPIKeyGrant(row.Permission)
+func permissionsFromAPIKey(values []string) []auth.Permission {
+	permissions := make([]auth.Permission, 0, len(values))
+	for _, value := range values {
+		permission, ok := auth.ParseAPIKeyGrant(value)
 		if ok {
 			permissions = append(permissions, permission)
 		}
 	}
 	if len(permissions) == 0 {
-		return nil, nil
+		return nil
 	}
-	return permissions, nil
-}
-
-func apiKeyGrantJSON(rawValue any) ([]byte, error) {
-	switch raw := rawValue.(type) {
-	case nil:
-		return nil, nil
-	case []byte:
-		return raw, nil
-	case string:
-		return []byte(raw), nil
-	case json.RawMessage:
-		return []byte(raw), nil
-	default:
-		return nil, fmt.Errorf("unsupported grant payload type %T", rawValue)
-	}
+	return permissions
 }

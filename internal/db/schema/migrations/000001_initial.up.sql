@@ -189,6 +189,7 @@ CREATE TABLE api_keys (
     environment_id UUID NOT NULL,
     created_by_user_id UUID,
     role org_member_role NOT NULL,
+    permissions TEXT[] NOT NULL CHECK (cardinality(permissions) > 0),
     name TEXT NOT NULL CHECK (btrim(name) <> ''),
     key_prefix TEXT NOT NULL CHECK (btrim(key_prefix) <> ''),
     token_hash BYTEA NOT NULL UNIQUE,
@@ -202,21 +203,6 @@ CREATE TABLE api_keys (
         ON DELETE CASCADE,
     FOREIGN KEY (org_id, project_id, environment_id)
         REFERENCES environments(org_id, project_id, id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (org_id, created_by_user_id)
-        REFERENCES org_members(org_id, user_id)
-        ON DELETE SET NULL (created_by_user_id)
-);
-
-CREATE TABLE api_key_grants (
-    id UUID PRIMARY KEY,
-    org_id UUID NOT NULL,
-    api_key_id UUID NOT NULL,
-    permission TEXT NOT NULL CHECK (btrim(permission) <> ''),
-    created_by_user_id UUID,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    FOREIGN KEY (org_id, api_key_id)
-        REFERENCES api_keys(org_id, id)
         ON DELETE CASCADE,
     FOREIGN KEY (org_id, created_by_user_id)
         REFERENCES org_members(org_id, user_id)
@@ -3057,7 +3043,6 @@ CREATE INDEX magic_links_invitation_active_idx ON magic_links(invitation_id, cre
     WHERE invitation_id IS NOT NULL AND sent_at IS NOT NULL AND consumed_at IS NULL AND revoked_at IS NULL;
 CREATE INDEX api_keys_org_active_idx ON api_keys(org_id, created_at DESC) WHERE revoked_at IS NULL;
 CREATE UNIQUE INDEX api_keys_scope_active_name_idx ON api_keys(org_id, project_id, environment_id, name) WHERE revoked_at IS NULL;
-CREATE UNIQUE INDEX api_key_grants_unique_idx ON api_key_grants(org_id, api_key_id, permission);
 CREATE INDEX device_codes_pending_expiry_idx ON device_codes(expires_at) WHERE status = 'pending';
 CREATE INDEX environments_current_deployment_idx
     ON environments(org_id, project_id, current_deployment_id)
