@@ -80,20 +80,40 @@ func (q *Queries) ClaimControlOutbox(ctx context.Context, arg ClaimControlOutbox
 }
 
 const controlOutboxLifecycle = `-- name: ControlOutboxLifecycle :one
-SELECT MIN(created_at) FILTER (WHERE state = 'pending')::timestamptz AS oldest_pending_at,
-       COUNT(*) FILTER (WHERE state = 'dead_lettered')::bigint AS dead_lettered
-  FROM control_outbox
+WITH dead_letter_sample AS (
+    SELECT 1
+      FROM control_outbox
+     WHERE state = 'dead_lettered'
+     ORDER BY created_at, id
+     LIMIT ($1::integer + 1)
+),
+dead_letter_counts AS (
+    SELECT COUNT(*)::bigint AS rows
+      FROM dead_letter_sample
+)
+SELECT (
+           SELECT available_at
+             FROM control_outbox
+            WHERE state = 'pending'
+              AND available_at <= now()
+            ORDER BY available_at, id
+            LIMIT 1
+       )::timestamptz AS oldest_eligible_at,
+       LEAST(dead_letter_counts.rows, $1::bigint)::bigint AS dead_lettered_rows,
+       (dead_letter_counts.rows > $1::bigint)::boolean AS dead_lettered_overflow
+  FROM dead_letter_counts
 `
 
 type ControlOutboxLifecycleRow struct {
-	OldestPendingAt pgtype.Timestamptz `json:"oldest_pending_at"`
-	DeadLettered    int64              `json:"dead_lettered"`
+	OldestEligibleAt     pgtype.Timestamptz `json:"oldest_eligible_at"`
+	DeadLetteredRows     int64              `json:"dead_lettered_rows"`
+	DeadLetteredOverflow bool               `json:"dead_lettered_overflow"`
 }
 
-func (q *Queries) ControlOutboxLifecycle(ctx context.Context) (ControlOutboxLifecycleRow, error) {
-	row := q.db.QueryRow(ctx, controlOutboxLifecycle)
+func (q *Queries) ControlOutboxLifecycle(ctx context.Context, deadLetterLimit int64) (ControlOutboxLifecycleRow, error) {
+	row := q.db.QueryRow(ctx, controlOutboxLifecycle, deadLetterLimit)
 	var i ControlOutboxLifecycleRow
-	err := row.Scan(&i.OldestPendingAt, &i.DeadLettered)
+	err := row.Scan(&i.OldestEligibleAt, &i.DeadLetteredRows, &i.DeadLetteredOverflow)
 	return i, err
 }
 
@@ -190,20 +210,20 @@ func (q *Queries) DeadLetterControlOutbox(ctx context.Context, arg DeadLetterCon
 }
 
 const deadLetterUnsupportedControlOutbox = `-- name: DeadLetterUnsupportedControlOutbox :many
-WITH candidates AS (
-    SELECT id
+WITH candidate_prefix AS MATERIALIZED (
+    SELECT id, topic
     FROM control_outbox
     WHERE state = 'pending'
-      AND NOT (topic = ANY($1::text[]))
     ORDER BY created_at, id
     LIMIT $2
-    FOR UPDATE SKIP LOCKED
 )
 UPDATE control_outbox
 SET state = 'dead_lettered',
     last_error = 'unsupported control outbox topic'
-FROM candidates
-WHERE control_outbox.id = candidates.id
+FROM candidate_prefix
+WHERE control_outbox.id = candidate_prefix.id
+  AND control_outbox.state = 'pending'
+  AND NOT (candidate_prefix.topic = ANY($1::text[]))
 RETURNING control_outbox.id, control_outbox.topic, control_outbox.payload, control_outbox.state, control_outbox.attempts, control_outbox.available_at, control_outbox.claimed_by, control_outbox.claim_expires_at, control_outbox.last_error, control_outbox.created_at, control_outbox.delivered_at
 `
 
@@ -284,7 +304,7 @@ func (q *Queries) DeliverControlOutbox(ctx context.Context, arg DeliverControlOu
 	return i, err
 }
 
-const pruneDeliveredControlOutbox = `-- name: PruneDeliveredControlOutbox :many
+const pruneDeliveredControlOutbox = `-- name: PruneDeliveredControlOutbox :execrows
 DELETE FROM control_outbox
  WHERE id IN (
     SELECT id
@@ -294,7 +314,6 @@ DELETE FROM control_outbox
      ORDER BY delivered_at, id
      LIMIT $2
  )
-RETURNING id
 `
 
 type PruneDeliveredControlOutboxParams struct {
@@ -302,24 +321,12 @@ type PruneDeliveredControlOutboxParams struct {
 	RowLimit  int32           `json:"row_limit"`
 }
 
-func (q *Queries) PruneDeliveredControlOutbox(ctx context.Context, arg PruneDeliveredControlOutboxParams) ([]pgtype.UUID, error) {
-	rows, err := q.db.Query(ctx, pruneDeliveredControlOutbox, arg.RetainFor, arg.RowLimit)
+func (q *Queries) PruneDeliveredControlOutbox(ctx context.Context, arg PruneDeliveredControlOutboxParams) (int64, error) {
+	result, err := q.db.Exec(ctx, pruneDeliveredControlOutbox, arg.RetainFor, arg.RowLimit)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
-	defer rows.Close()
-	var items []pgtype.UUID
-	for rows.Next() {
-		var id pgtype.UUID
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		items = append(items, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+	return result.RowsAffected(), nil
 }
 
 const retryControlOutbox = `-- name: RetryControlOutbox :one

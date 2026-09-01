@@ -2079,6 +2079,22 @@ CREATE INDEX control_outbox_delivery_idx
     ON control_outbox (topic, available_at, id)
     WHERE state IN ('pending', 'claimed');
 
+CREATE INDEX control_outbox_delivered_prune_idx
+    ON control_outbox (delivered_at, id)
+    WHERE state = 'delivered';
+
+CREATE INDEX control_outbox_pending_created_idx
+    ON control_outbox (created_at, id)
+    WHERE state = 'pending';
+
+CREATE INDEX control_outbox_pending_available_idx
+    ON control_outbox (available_at, id)
+    WHERE state = 'pending';
+
+CREATE INDEX control_outbox_dead_lettered_created_idx
+    ON control_outbox (created_at, id)
+    WHERE state = 'dead_lettered';
+
 CREATE TABLE telemetry_outbox (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     org_id UUID NOT NULL,

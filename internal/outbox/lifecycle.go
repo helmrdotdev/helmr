@@ -8,13 +8,14 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const (
-	DeliveredRetention = 24 * time.Hour
-	pruneBatchSize     = int32(100)
-	lifecycleEvery     = time.Minute
+	DeliveredRetention         = 24 * time.Hour
+	lifecycleBatchSize         = int32(2500)
+	lifecyclePruneBatchCount   = 16
+	deadLetterObservationLimit = int64(1000)
+	lifecycleEvery             = time.Minute
 )
 
 var supportedTopics = []string{
@@ -26,8 +27,8 @@ var supportedTopics = []string{
 
 type LifecycleStore interface {
 	DeadLetterUnsupportedControlOutbox(context.Context, db.DeadLetterUnsupportedControlOutboxParams) ([]db.ControlOutbox, error)
-	PruneDeliveredControlOutbox(context.Context, db.PruneDeliveredControlOutboxParams) ([]pgtype.UUID, error)
-	ControlOutboxLifecycle(context.Context) (db.ControlOutboxLifecycleRow, error)
+	PruneDeliveredControlOutbox(context.Context, db.PruneDeliveredControlOutboxParams) (int64, error)
+	ControlOutboxLifecycle(context.Context, int64) (db.ControlOutboxLifecycleRow, error)
 }
 
 type Lifecycle struct {
@@ -51,7 +52,7 @@ func NewLifecycle(log *slog.Logger, store LifecycleStore) (*Lifecycle, error) {
 		store:    store,
 		interval: lifecycleEvery,
 		retain:   DeliveredRetention,
-		limit:    pruneBatchSize,
+		limit:    lifecycleBatchSize,
 		now:      func() time.Time { return time.Now().UTC() },
 	}, nil
 }
@@ -82,8 +83,8 @@ func (l *Lifecycle) tick(ctx context.Context) error {
 	for _, message := range deadLettered {
 		LogDeadLettered(l.log, pgvalue.MustUUIDValue(message.ID).String(), message.Topic, errors.New("unsupported control outbox topic"))
 	}
-	prunedCount := 0
-	for {
+	var prunedCount int64
+	for range lifecyclePruneBatchCount {
 		pruned, err := l.store.PruneDeliveredControlOutbox(ctx, db.PruneDeliveredControlOutboxParams{
 			RetainFor: pgvalue.Interval(l.retain),
 			RowLimit:  l.limit,
@@ -91,24 +92,25 @@ func (l *Lifecycle) tick(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		prunedCount += len(pruned)
-		if len(pruned) < int(l.limit) {
+		prunedCount += pruned
+		if pruned < int64(l.limit) {
 			break
 		}
 	}
-	stats, err := l.store.ControlOutboxLifecycle(ctx)
+	stats, err := l.store.ControlOutboxLifecycle(ctx, deadLetterObservationLimit)
 	if err != nil {
 		return err
 	}
 	attrs := []any{
 		"pruned", prunedCount,
-		"dead_lettered", stats.DeadLettered,
+		"dead_lettered_rows", stats.DeadLetteredRows,
+		"dead_lettered_overflow", stats.DeadLetteredOverflow,
 	}
-	if prunedCount == 0 && stats.DeadLettered == 0 && !stats.OldestPendingAt.Valid {
+	if prunedCount == 0 && stats.DeadLetteredRows == 0 && !stats.OldestEligibleAt.Valid {
 		return nil
 	}
-	if stats.OldestPendingAt.Valid {
-		attrs = append(attrs, "oldest_pending_age", l.now().UTC().Sub(stats.OldestPendingAt.Time))
+	if stats.OldestEligibleAt.Valid {
+		attrs = append(attrs, "oldest_eligible_age", l.now().UTC().Sub(stats.OldestEligibleAt.Time))
 	}
 	l.log.Info("control outbox lifecycle", attrs...)
 	return nil
