@@ -133,17 +133,41 @@ func (s *Server) sendMagicLink(r *http.Request, purpose db.MagicLinkPurpose, ema
 		URL:       linkURL,
 		ExpiresAt: expiresAt,
 	}
-	if s.magicLinkDebugURLs {
-		if err := s.deliverMagicLink(context.Background(), message, purpose, email, orgID, invitationID, link.ID); err != nil {
-			return "", err
-		}
-		return linkURL, nil
+	linkID := pgvalue.MustUUIDValue(link.ID).String()
+	job := magicLinkDeliveryJob{
+		id:      linkID,
+		purpose: string(purpose),
+		deliver: func(ctx context.Context) error {
+			return s.deliverMagicLink(ctx, message, purpose, email, orgID, invitationID, link.ID)
+		},
+		fail: func(ctx context.Context) error {
+			_, err := s.db.MarkMagicLinkDeliveryFailed(ctx, link.ID)
+			return err
+		},
 	}
-	go func() {
-		if err := s.deliverMagicLink(context.Background(), message, purpose, email, orgID, invitationID, link.ID); err != nil {
-			s.log.Warn("send magic link failed", "purpose", purpose, "error", err)
+	if s.magicLinkDebugURLs {
+		job.done = make(chan error, 1)
+	}
+	accepted := s.magicLinkDelivery.enqueue(job)
+	if !accepted {
+		failureCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), s.magicLinkDelivery.shutdownTimeout)
+		defer cancel()
+		if markErr := s.markMagicLinkDeliveryFailed(failureCtx, link.ID); markErr != nil {
+			return "", fmt.Errorf("magic link delivery queue unavailable; mark delivery failed: %w", markErr)
 		}
-	}()
+		return "", errors.New("magic link delivery queue unavailable")
+	}
+	if s.magicLinkDebugURLs {
+		select {
+		case err := <-job.done:
+			if err != nil {
+				return "", err
+			}
+			return linkURL, nil
+		case <-r.Context().Done():
+			return "", r.Context().Err()
+		}
+	}
 	return "", nil
 }
 

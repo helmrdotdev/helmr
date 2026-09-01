@@ -150,6 +150,8 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	redisClient := redis.NewClient(redisOptions)
 	defer redisClient.Close()
 	mailer := configuredEmailSender(log, cfg)
+	shutdownTimeout := 10 * time.Second
+	magicLinkDelivery := controlplane.NewMagicLinkDelivery(log, shutdownTimeout)
 	eventStream, err := eventstream.New(log, queries, redisClient, eventstream.Config{
 		TelemetryReader: telemetryReader,
 	})
@@ -205,6 +207,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		EventStream:           eventStream,
 		TelemetryReader:       telemetryReader,
 		Mailer:                mailer,
+		MagicLinkDelivery:     magicLinkDelivery,
 		AuthProvider:          authProvider,
 		WorkerTokenSigningKey: cfg.WorkerTokenSigningKey,
 		CapacityToken:         cfg.CapacityToken,
@@ -229,8 +232,9 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		{name: "live telemetry publisher", run: eventStream.RunPublisher},
 		{name: "Run retry readiness", run: runRetryReady.Run},
 		{name: "queued child Run expiry", run: queuedChildExpiry.Run},
+		{name: "magic link delivery", run: magicLinkDelivery.Run},
 	}
-	return serveControlPlane(ctx, log, server, workflows, 10*time.Second)
+	return serveControlPlane(ctx, log, server, workflows, shutdownTimeout)
 }
 
 func serveControlPlane(

@@ -113,6 +113,8 @@ func (m SMTPSender) SendEmail(ctx context.Context, message Message) error {
 		return err
 	}
 	defer conn.Close()
+	stopCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stopCancel()
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(deadline)
 	}

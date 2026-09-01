@@ -82,6 +82,7 @@ type Server struct {
 	apiOrigin             *url.URL
 	authProvider          AuthProvider
 	mailer                email.Sender
+	magicLinkDelivery     *MagicLinkDelivery
 	magicLinkDebugURLs    bool
 	adminEmails           map[string]struct{}
 	sessionTTL            time.Duration
@@ -121,6 +122,7 @@ type ServerConfig struct {
 	EventStream         SubjectEventReader
 	TelemetryReader     telemetry.Reader
 	Mailer              email.Sender
+	MagicLinkDelivery   *MagicLinkDelivery
 	AuthProvider        AuthProvider
 
 	WorkerTokenSigningKey []byte
@@ -200,6 +202,9 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 			mailer = email.Unconfigured{}
 		}
 	}
+	if _, unconfigured := mailer.(email.Unconfigured); !unconfigured && cfg.MagicLinkDelivery == nil {
+		return nil, errors.New("magic link delivery worker is required")
+	}
 	workerTokenTTL := cfg.WorkerTokenTTL
 	if workerTokenTTL <= 0 {
 		workerTokenTTL = defaultWorkerTokenTTL
@@ -241,6 +246,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		apiOrigin:             apiOrigin,
 		authProvider:          cfg.AuthProvider,
 		mailer:                mailer,
+		magicLinkDelivery:     cfg.MagicLinkDelivery,
 		magicLinkDebugURLs:    cfg.MagicLinkDebugURLs,
 		adminEmails:           adminEmails,
 		sessionTTL:            cfg.SessionTTL,
