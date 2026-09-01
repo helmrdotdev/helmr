@@ -26,7 +26,7 @@ type runLeaseExecutionProjection struct {
 	workspaceMount      db.WorkspaceMount
 	runWait             db.RunWait
 	checkpoint          db.RunCheckpoint
-	checkpointArtifacts []db.ListRunCheckpointArtifactAuthorityRow
+	checkpointArtifacts checkpointArtifactAuthority
 }
 
 func projectRunLeaseExecution(
@@ -36,7 +36,7 @@ func projectRunLeaseExecution(
 	case runLeaseClaimFresh:
 		if authority.runWait.ID.Valid ||
 			authority.checkpoint.ID.Valid ||
-			len(authority.checkpointArtifacts) != 0 {
+			!authority.checkpointArtifacts.empty() {
 			return workerapi.RunLeaseExecution{}, errors.New("fresh run lease contains resume authority")
 		}
 		start, err := encodeProgramStart(
@@ -436,69 +436,73 @@ type runLeaseCheckpointProjection struct {
 	Artifacts []workerapi.RunLeaseCheckpointArtifact
 }
 
+type checkpointArtifactDescriptor struct {
+	digest    string
+	sizeBytes int64
+	mediaType string
+}
+
+type checkpointArtifactAuthority struct {
+	runtimeConfig checkpointArtifactDescriptor
+	vmState       checkpointArtifactDescriptor
+	memory        checkpointArtifactDescriptor
+	scratchDisk   checkpointArtifactDescriptor
+}
+
+func (authority checkpointArtifactAuthority) empty() bool {
+	return authority == (checkpointArtifactAuthority{})
+}
+
+func checkpointArtifactAuthorityFromReady(row db.GetReadyRunCheckpointRow) checkpointArtifactAuthority {
+	return checkpointArtifactAuthority{
+		runtimeConfig: checkpointArtifactDescriptor{
+			digest: row.RuntimeConfigDigest, sizeBytes: row.RuntimeConfigSizeBytes, mediaType: row.RuntimeConfigMediaType,
+		},
+		vmState: checkpointArtifactDescriptor{
+			digest: row.VMStateDigest, sizeBytes: row.VMStateSizeBytes, mediaType: row.VMStateMediaType,
+		},
+		memory: checkpointArtifactDescriptor{
+			digest: row.MemoryDigest, sizeBytes: row.MemorySizeBytes, mediaType: row.MemoryMediaType,
+		},
+		scratchDisk: checkpointArtifactDescriptor{
+			digest: row.ScratchDiskDigest, sizeBytes: row.ScratchDiskSizeBytes, mediaType: row.ScratchDiskMediaType,
+		},
+	}
+}
+
 func projectRunLeaseCheckpoint(
 	checkpoint db.RunCheckpoint,
-	rows []db.ListRunCheckpointArtifactAuthorityRow,
+	authority checkpointArtifactAuthority,
 ) (runLeaseCheckpointProjection, error) {
 	if checkpoint.State != db.RunCheckpointStateReady || !json.Valid(checkpoint.RestoreManifest) {
 		return runLeaseCheckpointProjection{}, errors.New("run checkpoint authority is invalid")
 	}
-	artifacts := make([]workerapi.RunLeaseCheckpointArtifact, 0, len(rows))
-	priorRank := -1
-	var priorOrdinal int32
-	counts := map[db.RunCheckpointArtifactRole]int{}
-	for index, row := range rows {
-		role := string(row.Role)
-		rank, ok := checkpointArtifactRoleRank(row.Role)
-		if !ok || row.Ordinal < 0 {
-			return runLeaseCheckpointProjection{}, errors.New("run checkpoint artifact membership is invalid")
-		}
-		if index > 0 &&
-			(rank < priorRank || (rank == priorRank && row.Ordinal <= priorOrdinal)) {
-			return runLeaseCheckpointProjection{}, errors.New("run checkpoint artifact membership is not canonically ordered")
-		}
+	descriptors := [4]struct {
+		role       string
+		descriptor checkpointArtifactDescriptor
+	}{
+		{role: "runtime_config", descriptor: authority.runtimeConfig},
+		{role: "vm_state", descriptor: authority.vmState},
+		{role: "memory", descriptor: authority.memory},
+		{role: "scratch_disk", descriptor: authority.scratchDisk},
+	}
+	artifacts := make([]workerapi.RunLeaseCheckpointArtifact, 0, len(descriptors))
+	for _, item := range descriptors {
 		object, err := projectCASObject(
-			row.Digest,
-			row.SizeBytes,
-			row.MediaType,
+			item.descriptor.digest,
+			item.descriptor.sizeBytes,
+			item.descriptor.mediaType,
 			"run checkpoint artifact",
 		)
 		if err != nil {
 			return runLeaseCheckpointProjection{}, err
 		}
 		artifacts = append(artifacts, workerapi.RunLeaseCheckpointArtifact{
-			Role: role, Ordinal: row.Ordinal, Object: object,
+			Role: item.role, Ordinal: 0, Object: object,
 		})
-		priorRank = rank
-		priorOrdinal = row.Ordinal
-		if row.Ordinal != int32(counts[row.Role]) {
-			return runLeaseCheckpointProjection{}, errors.New("run checkpoint artifact ordinals are not contiguous")
-		}
-		counts[row.Role]++
-	}
-	if counts[db.RunCheckpointArtifactRoleRuntimeConfig] != 1 ||
-		counts[db.RunCheckpointArtifactRoleVMState] != 1 ||
-		counts[db.RunCheckpointArtifactRoleMemory] != 1 ||
-		counts[db.RunCheckpointArtifactRoleScratchDisk] != 1 {
-		return runLeaseCheckpointProjection{}, errors.New("run checkpoint artifact membership is incomplete")
 	}
 	return runLeaseCheckpointProjection{
 		Manifest:  append(json.RawMessage(nil), checkpoint.RestoreManifest...),
 		Artifacts: artifacts,
 	}, nil
-}
-
-func checkpointArtifactRoleRank(role db.RunCheckpointArtifactRole) (int, bool) {
-	switch role {
-	case db.RunCheckpointArtifactRoleRuntimeConfig:
-		return 0, true
-	case db.RunCheckpointArtifactRoleVMState:
-		return 1, true
-	case db.RunCheckpointArtifactRoleMemory:
-		return 2, true
-	case db.RunCheckpointArtifactRoleScratchDisk:
-		return 3, true
-	default:
-		return 0, false
-	}
 }

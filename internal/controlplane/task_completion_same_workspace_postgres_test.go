@@ -276,17 +276,20 @@ INSERT INTO run_waits (
 	'parked'
 )`, waitID, base.EnvironmentID, parentRunID, workspaceID, work.RunID,
 		claimID, parentLeaseID, uuid.NewV7())
+	checkpointArtifacts := dbtest.InsertCheckpointArtifacts(t, ctx, tx, parentRunID, checkpointID.String())
 	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO run_checkpoints (
     id, run_id, attempt_number, run_wait_id, source_run_lease_id,
     source_workspace_lease_id, workspace_id, base_workspace_version_id,
-    private_workspace_version_id, state, restore_manifest,
+    private_workspace_version_id, runtime_config_artifact_id, vm_state_artifact_id,
+    memory_artifact_id, scratch_disk_artifact_id, state, restore_manifest,
     ready_request_fingerprint, ready_at
 ) VALUES (
-    $1, $2, 1, $3, $4, $5, $6, $7, $7, 'ready',
+    $1, $2, 1, $3, $4, $5, $6, $7, $7, $8, $9, $10, $11, 'ready',
     '{"kind":"suspend"}'::jsonb, 'completion-test-ready', transaction_timestamp()
 )`, checkpointID, parentRunID, waitID, parentLeaseID,
-		parentWorkspaceLeaseID, workspaceID, baseVersionID)
+		parentWorkspaceLeaseID, workspaceID, baseVersionID,
+		checkpointArtifacts.RuntimeConfig, checkpointArtifacts.VMState, checkpointArtifacts.Memory, checkpointArtifacts.ScratchDisk)
 	dbtest.MustExec(t, ctx, tx, `
 UPDATE run_waits
    SET suspend_checkpoint_id = $2,

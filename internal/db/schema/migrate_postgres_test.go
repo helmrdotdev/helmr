@@ -465,7 +465,7 @@ INSERT INTO cas_objects (
     '00000000-0000-7000-8000-000000000901',
     'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
     1,
-    'application/octet-stream'
+    'application/vnd.helmr.program.v0+squashfs'
 );
 INSERT INTO artifacts (
     id, org_id, project_id, environment_id, digest, kind,
@@ -482,6 +482,55 @@ INSERT INTO artifacts (
     '00000000-0000-7000-8000-000000000904'
 );
 `); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `SET LOCAL enable_seqscan = off`); err != nil {
+		t.Fatal(err)
+	}
+	planRows, err := tx.Query(ctx, `
+EXPLAIN (COSTS OFF)
+DELETE FROM artifacts
+ WHERE org_id = '00000000-0000-7000-8000-000000000901'
+   AND digest = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var planLines []string
+	for planRows.Next() {
+		var line string
+		if err := planRows.Scan(&line); err != nil {
+			planRows.Close()
+			t.Fatal(err)
+		}
+		planLines = append(planLines, line)
+	}
+	if err := planRows.Err(); err != nil {
+		planRows.Close()
+		t.Fatal(err)
+	}
+	planRows.Close()
+	if plan := strings.Join(planLines, "\n"); !strings.Contains(plan, "artifacts_cas_scope_idx") {
+		t.Fatalf("CAS child delete plan does not use artifacts_cas_scope_idx:\n%s", plan)
+	}
+	if _, err := tx.Exec(ctx, "SAVEPOINT mismatched_artifact_descriptor"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `
+INSERT INTO artifacts (
+    id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type
+) VALUES (
+    '00000000-0000-7000-8000-000000000908',
+    '00000000-0000-7000-8000-000000000901',
+    '00000000-0000-7000-8000-000000000902',
+    '00000000-0000-7000-8000-000000000903',
+    'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    'deployment_program', 2, 'application/vnd.helmr.program.v0+squashfs'
+)
+`); err == nil {
+		t.Fatal("Artifact descriptor mismatch bypassed CAS authority")
+	}
+	if _, err := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT mismatched_artifact_descriptor"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(ctx, "SAVEPOINT delete_artifact_creator"); err != nil {
@@ -832,7 +881,7 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 		SELECT count(*) FROM pg_class
 		 WHERE relnamespace = 'public'::regnamespace
 		   AND relname = ANY($1::text[])
-	`, []string{"worker_commands", "run_checkpoint_restores", "worker_assignments", "runtime_routes"}).Scan(&forbiddenRelations); err != nil {
+	`, []string{"worker_commands", "run_checkpoint_restores", "run_checkpoint_artifacts", "worker_assignments", "runtime_routes"}).Scan(&forbiddenRelations); err != nil {
 		t.Fatal(err)
 	}
 	if forbiddenRelations != 0 {
@@ -873,7 +922,7 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	if !exactFit || overShape {
 		t.Fatalf("fixed guest exact/over shape fence = %t/%t", exactFit, overShape)
 	}
-	logicalTables := []string{"idempotency_claims", "schedules", "workspaces", "sessions", "session_records", "runs", "run_attempts", "run_waits", "run_checkpoints", "run_checkpoint_artifacts", "telemetry_outbox"}
+	logicalTables := []string{"idempotency_claims", "schedules", "workspaces", "sessions", "session_records", "runs", "run_attempts", "run_waits", "run_checkpoints", "telemetry_outbox"}
 	var placementLeaks int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*) FROM information_schema.columns
@@ -924,6 +973,45 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	}
 	if indexCount != len(requiredIndexes) {
 		t.Fatalf("required managed-worker indexes = %d, want %d", indexCount, len(requiredIndexes))
+	}
+
+	var checkpointArtifactColumns int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM information_schema.columns
+		 WHERE table_schema = 'public' AND table_name = 'run_checkpoints'
+		   AND column_name = ANY($1::text[])
+	`, []string{"runtime_config_artifact_id", "vm_state_artifact_id", "memory_artifact_id", "scratch_disk_artifact_id"}).Scan(&checkpointArtifactColumns); err != nil {
+		t.Fatal(err)
+	}
+	if checkpointArtifactColumns != 4 {
+		t.Fatalf("fixed checkpoint artifact columns = %d, want 4", checkpointArtifactColumns)
+	}
+	var checkpointConstraints int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM pg_constraint
+		 WHERE connamespace = 'public'::regnamespace
+		   AND conname = ANY($1::text[])
+	`, []string{
+		"cas_objects_descriptor_key",
+		"artifacts_cas_descriptor_fk",
+		"run_checkpoints_artifact_shape_check",
+		"run_checkpoints_ready_artifacts_check",
+		"run_checkpoints_runtime_config_artifact_fk",
+		"run_checkpoints_vm_state_artifact_fk",
+		"run_checkpoints_memory_artifact_fk",
+		"run_checkpoints_scratch_disk_artifact_fk",
+	}).Scan(&checkpointConstraints); err != nil {
+		t.Fatal(err)
+	}
+	if checkpointConstraints != 8 {
+		t.Fatalf("checkpoint descriptor constraints = %d, want 8", checkpointConstraints)
+	}
+	var casScopeIndexDefinition string
+	if err := pool.QueryRow(ctx, `SELECT pg_get_indexdef('public.artifacts_cas_scope_idx'::regclass)`).Scan(&casScopeIndexDefinition); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(casScopeIndexDefinition, "USING btree (org_id, digest)") {
+		t.Fatalf("artifacts_cas_scope_idx definition = %q", casScopeIndexDefinition)
 	}
 
 	var placementColumns int

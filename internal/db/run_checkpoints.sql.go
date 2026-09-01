@@ -11,47 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const addRunCheckpointArtifact = `-- name: AddRunCheckpointArtifact :one
-INSERT INTO run_checkpoint_artifacts (
-    run_checkpoint_id,
-    role,
-    ordinal,
-    artifact_id
-)
-VALUES (
-    $1,
-    $2,
-    $3,
-    $4
-)
-RETURNING run_checkpoint_id, role, ordinal, artifact_id, created_at
-`
-
-type AddRunCheckpointArtifactParams struct {
-	RunCheckpointID pgtype.UUID               `json:"run_checkpoint_id"`
-	Role            RunCheckpointArtifactRole `json:"role"`
-	Ordinal         int32                     `json:"ordinal"`
-	ArtifactID      pgtype.UUID               `json:"artifact_id"`
-}
-
-func (q *Queries) AddRunCheckpointArtifact(ctx context.Context, arg AddRunCheckpointArtifactParams) (RunCheckpointArtifact, error) {
-	row := q.db.QueryRow(ctx, addRunCheckpointArtifact,
-		arg.RunCheckpointID,
-		arg.Role,
-		arg.Ordinal,
-		arg.ArtifactID,
-	)
-	var i RunCheckpointArtifact
-	err := row.Scan(
-		&i.RunCheckpointID,
-		&i.Role,
-		&i.Ordinal,
-		&i.ArtifactID,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const checkpointRunLease = `-- name: CheckpointRunLease :one
 UPDATE run_leases
    SET state = 'checkpointed',
@@ -769,7 +728,7 @@ VALUES (
     $11,
     $12
 )
-RETURNING id, run_id, attempt_number, run_wait_id, source_run_lease_id, source_workspace_lease_id, workspace_id, base_workspace_version_id, private_workspace_version_id, actor_speculative_input_sequence, state, restore_manifest, ready_request_fingerprint, failed_request_fingerprint, expires_at, created_at, ready_at, invalidated_at, invalidation_reason_code
+RETURNING run_checkpoints.id, run_checkpoints.run_id, run_checkpoints.attempt_number, run_checkpoints.run_wait_id, run_checkpoints.source_run_lease_id, run_checkpoints.source_workspace_lease_id, run_checkpoints.workspace_id, run_checkpoints.base_workspace_version_id, run_checkpoints.private_workspace_version_id, run_checkpoints.runtime_config_artifact_id, run_checkpoints.vm_state_artifact_id, run_checkpoints.memory_artifact_id, run_checkpoints.scratch_disk_artifact_id, run_checkpoints.actor_speculative_input_sequence, run_checkpoints.state, run_checkpoints.restore_manifest, run_checkpoints.ready_request_fingerprint, run_checkpoints.failed_request_fingerprint, run_checkpoints.expires_at, run_checkpoints.created_at, run_checkpoints.ready_at, run_checkpoints.invalidated_at, run_checkpoints.invalidation_reason_code
 `
 
 type CreateRunCheckpointParams struct {
@@ -813,6 +772,10 @@ func (q *Queries) CreateRunCheckpoint(ctx context.Context, arg CreateRunCheckpoi
 		&i.WorkspaceID,
 		&i.BaseWorkspaceVersionID,
 		&i.PrivateWorkspaceVersionID,
+		&i.RuntimeConfigArtifactID,
+		&i.VMStateArtifactID,
+		&i.MemoryArtifactID,
+		&i.ScratchDiskArtifactID,
 		&i.ActorSpeculativeInputSequence,
 		&i.State,
 		&i.RestoreManifest,
@@ -1098,13 +1061,43 @@ func (q *Queries) GetCheckpointReadyReplay(ctx context.Context, id pgtype.UUID) 
 }
 
 const getReadyRunCheckpoint = `-- name: GetReadyRunCheckpoint :one
-SELECT run_checkpoints.id, run_checkpoints.run_id, run_checkpoints.attempt_number, run_checkpoints.run_wait_id, run_checkpoints.source_run_lease_id, run_checkpoints.source_workspace_lease_id, run_checkpoints.workspace_id, run_checkpoints.base_workspace_version_id, run_checkpoints.private_workspace_version_id, run_checkpoints.actor_speculative_input_sequence, run_checkpoints.state, run_checkpoints.restore_manifest, run_checkpoints.ready_request_fingerprint, run_checkpoints.failed_request_fingerprint, run_checkpoints.expires_at, run_checkpoints.created_at, run_checkpoints.ready_at, run_checkpoints.invalidated_at, run_checkpoints.invalidation_reason_code
+SELECT run_checkpoints.id, run_checkpoints.run_id, run_checkpoints.attempt_number, run_checkpoints.run_wait_id, run_checkpoints.source_run_lease_id, run_checkpoints.source_workspace_lease_id, run_checkpoints.workspace_id, run_checkpoints.base_workspace_version_id, run_checkpoints.private_workspace_version_id, run_checkpoints.runtime_config_artifact_id, run_checkpoints.vm_state_artifact_id, run_checkpoints.memory_artifact_id, run_checkpoints.scratch_disk_artifact_id, run_checkpoints.actor_speculative_input_sequence, run_checkpoints.state, run_checkpoints.restore_manifest, run_checkpoints.ready_request_fingerprint, run_checkpoints.failed_request_fingerprint, run_checkpoints.expires_at, run_checkpoints.created_at, run_checkpoints.ready_at, run_checkpoints.invalidated_at, run_checkpoints.invalidation_reason_code,
+       runtime_config_artifact.digest AS runtime_config_digest,
+       runtime_config_artifact.size_bytes AS runtime_config_size_bytes,
+       runtime_config_artifact.media_type AS runtime_config_media_type,
+       vm_state_artifact.digest AS vm_state_digest,
+       vm_state_artifact.size_bytes AS vm_state_size_bytes,
+       vm_state_artifact.media_type AS vm_state_media_type,
+       memory_artifact.digest AS memory_digest,
+       memory_artifact.size_bytes AS memory_size_bytes,
+       memory_artifact.media_type AS memory_media_type,
+       scratch_disk_artifact.digest AS scratch_disk_digest,
+       scratch_disk_artifact.size_bytes AS scratch_disk_size_bytes,
+       scratch_disk_artifact.media_type AS scratch_disk_media_type
   FROM run_checkpoints
   JOIN run_waits
     ON run_waits.run_id = run_checkpoints.run_id
    AND run_waits.attempt_number = run_checkpoints.attempt_number
    AND run_waits.workspace_id = run_checkpoints.workspace_id
    AND run_waits.id = run_checkpoints.run_wait_id
+  JOIN runs
+    ON runs.id = run_checkpoints.run_id
+  JOIN artifacts AS runtime_config_artifact
+    ON runtime_config_artifact.id = run_checkpoints.runtime_config_artifact_id
+   AND runtime_config_artifact.environment_id = runs.environment_id
+   AND runtime_config_artifact.kind = 'run_checkpoint_config'
+  JOIN artifacts AS vm_state_artifact
+    ON vm_state_artifact.id = run_checkpoints.vm_state_artifact_id
+   AND vm_state_artifact.environment_id = runs.environment_id
+   AND vm_state_artifact.kind = 'run_checkpoint_vm_state'
+  JOIN artifacts AS memory_artifact
+    ON memory_artifact.id = run_checkpoints.memory_artifact_id
+   AND memory_artifact.environment_id = runs.environment_id
+   AND memory_artifact.kind = 'run_checkpoint_memory'
+  JOIN artifacts AS scratch_disk_artifact
+    ON scratch_disk_artifact.id = run_checkpoints.scratch_disk_artifact_id
+   AND scratch_disk_artifact.environment_id = runs.environment_id
+   AND scratch_disk_artifact.kind = 'run_checkpoint_scratch_disk'
  WHERE run_checkpoints.run_id = $1
    AND run_checkpoints.attempt_number = $2
    AND run_checkpoints.id = $3
@@ -1117,29 +1110,61 @@ type GetReadyRunCheckpointParams struct {
 	ID            pgtype.UUID `json:"id"`
 }
 
-func (q *Queries) GetReadyRunCheckpoint(ctx context.Context, arg GetReadyRunCheckpointParams) (RunCheckpoint, error) {
+type GetReadyRunCheckpointRow struct {
+	RunCheckpoint          RunCheckpoint `json:"run_checkpoint"`
+	RuntimeConfigDigest    string        `json:"runtime_config_digest"`
+	RuntimeConfigSizeBytes int64         `json:"runtime_config_size_bytes"`
+	RuntimeConfigMediaType string        `json:"runtime_config_media_type"`
+	VMStateDigest          string        `json:"vm_state_digest"`
+	VMStateSizeBytes       int64         `json:"vm_state_size_bytes"`
+	VMStateMediaType       string        `json:"vm_state_media_type"`
+	MemoryDigest           string        `json:"memory_digest"`
+	MemorySizeBytes        int64         `json:"memory_size_bytes"`
+	MemoryMediaType        string        `json:"memory_media_type"`
+	ScratchDiskDigest      string        `json:"scratch_disk_digest"`
+	ScratchDiskSizeBytes   int64         `json:"scratch_disk_size_bytes"`
+	ScratchDiskMediaType   string        `json:"scratch_disk_media_type"`
+}
+
+func (q *Queries) GetReadyRunCheckpoint(ctx context.Context, arg GetReadyRunCheckpointParams) (GetReadyRunCheckpointRow, error) {
 	row := q.db.QueryRow(ctx, getReadyRunCheckpoint, arg.RunID, arg.AttemptNumber, arg.ID)
-	var i RunCheckpoint
+	var i GetReadyRunCheckpointRow
 	err := row.Scan(
-		&i.ID,
-		&i.RunID,
-		&i.AttemptNumber,
-		&i.RunWaitID,
-		&i.SourceRunLeaseID,
-		&i.SourceWorkspaceLeaseID,
-		&i.WorkspaceID,
-		&i.BaseWorkspaceVersionID,
-		&i.PrivateWorkspaceVersionID,
-		&i.ActorSpeculativeInputSequence,
-		&i.State,
-		&i.RestoreManifest,
-		&i.ReadyRequestFingerprint,
-		&i.FailedRequestFingerprint,
-		&i.ExpiresAt,
-		&i.CreatedAt,
-		&i.ReadyAt,
-		&i.InvalidatedAt,
-		&i.InvalidationReasonCode,
+		&i.RunCheckpoint.ID,
+		&i.RunCheckpoint.RunID,
+		&i.RunCheckpoint.AttemptNumber,
+		&i.RunCheckpoint.RunWaitID,
+		&i.RunCheckpoint.SourceRunLeaseID,
+		&i.RunCheckpoint.SourceWorkspaceLeaseID,
+		&i.RunCheckpoint.WorkspaceID,
+		&i.RunCheckpoint.BaseWorkspaceVersionID,
+		&i.RunCheckpoint.PrivateWorkspaceVersionID,
+		&i.RunCheckpoint.RuntimeConfigArtifactID,
+		&i.RunCheckpoint.VMStateArtifactID,
+		&i.RunCheckpoint.MemoryArtifactID,
+		&i.RunCheckpoint.ScratchDiskArtifactID,
+		&i.RunCheckpoint.ActorSpeculativeInputSequence,
+		&i.RunCheckpoint.State,
+		&i.RunCheckpoint.RestoreManifest,
+		&i.RunCheckpoint.ReadyRequestFingerprint,
+		&i.RunCheckpoint.FailedRequestFingerprint,
+		&i.RunCheckpoint.ExpiresAt,
+		&i.RunCheckpoint.CreatedAt,
+		&i.RunCheckpoint.ReadyAt,
+		&i.RunCheckpoint.InvalidatedAt,
+		&i.RunCheckpoint.InvalidationReasonCode,
+		&i.RuntimeConfigDigest,
+		&i.RuntimeConfigSizeBytes,
+		&i.RuntimeConfigMediaType,
+		&i.VMStateDigest,
+		&i.VMStateSizeBytes,
+		&i.VMStateMediaType,
+		&i.MemoryDigest,
+		&i.MemorySizeBytes,
+		&i.MemoryMediaType,
+		&i.ScratchDiskDigest,
+		&i.ScratchDiskSizeBytes,
+		&i.ScratchDiskMediaType,
 	)
 	return i, err
 }
@@ -1369,7 +1394,7 @@ UPDATE run_checkpoints
    AND source_run_lease_id = $7
    AND workspace_id = $8
    AND state = 'creating'
-RETURNING id, run_id, attempt_number, run_wait_id, source_run_lease_id, source_workspace_lease_id, workspace_id, base_workspace_version_id, private_workspace_version_id, actor_speculative_input_sequence, state, restore_manifest, ready_request_fingerprint, failed_request_fingerprint, expires_at, created_at, ready_at, invalidated_at, invalidation_reason_code
+RETURNING id, run_id, attempt_number, run_wait_id, source_run_lease_id, source_workspace_lease_id, workspace_id, base_workspace_version_id, private_workspace_version_id, runtime_config_artifact_id, vm_state_artifact_id, memory_artifact_id, scratch_disk_artifact_id, actor_speculative_input_sequence, state, restore_manifest, ready_request_fingerprint, failed_request_fingerprint, expires_at, created_at, ready_at, invalidated_at, invalidation_reason_code
 `
 
 type InvalidateFailedRunCheckpointParams struct {
@@ -1405,6 +1430,10 @@ func (q *Queries) InvalidateFailedRunCheckpoint(ctx context.Context, arg Invalid
 		&i.WorkspaceID,
 		&i.BaseWorkspaceVersionID,
 		&i.PrivateWorkspaceVersionID,
+		&i.RuntimeConfigArtifactID,
+		&i.VMStateArtifactID,
+		&i.MemoryArtifactID,
+		&i.ScratchDiskArtifactID,
 		&i.ActorSpeculativeInputSequence,
 		&i.State,
 		&i.RestoreManifest,
@@ -1419,60 +1448,8 @@ func (q *Queries) InvalidateFailedRunCheckpoint(ctx context.Context, arg Invalid
 	return i, err
 }
 
-const listRunCheckpointArtifactAuthority = `-- name: ListRunCheckpointArtifactAuthority :many
-SELECT members.role,
-       members.ordinal,
-       artifacts.digest,
-       artifacts.size_bytes,
-       artifacts.media_type
-  FROM run_checkpoint_artifacts AS members
-  JOIN run_checkpoints
-    ON run_checkpoints.id = members.run_checkpoint_id
-  JOIN runs
-    ON runs.id = run_checkpoints.run_id
-  JOIN artifacts
-    ON artifacts.environment_id = runs.environment_id
-   AND artifacts.id = members.artifact_id
- WHERE members.run_checkpoint_id = $1
- ORDER BY members.role, members.ordinal
-`
-
-type ListRunCheckpointArtifactAuthorityRow struct {
-	Role      RunCheckpointArtifactRole `json:"role"`
-	Ordinal   int32                     `json:"ordinal"`
-	Digest    string                    `json:"digest"`
-	SizeBytes int64                     `json:"size_bytes"`
-	MediaType string                    `json:"media_type"`
-}
-
-func (q *Queries) ListRunCheckpointArtifactAuthority(ctx context.Context, runCheckpointID pgtype.UUID) ([]ListRunCheckpointArtifactAuthorityRow, error) {
-	rows, err := q.db.Query(ctx, listRunCheckpointArtifactAuthority, runCheckpointID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListRunCheckpointArtifactAuthorityRow
-	for rows.Next() {
-		var i ListRunCheckpointArtifactAuthorityRow
-		if err := rows.Scan(
-			&i.Role,
-			&i.Ordinal,
-			&i.Digest,
-			&i.SizeBytes,
-			&i.MediaType,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const lockCreatingRunCheckpoint = `-- name: LockCreatingRunCheckpoint :one
-SELECT id, run_id, attempt_number, run_wait_id, source_run_lease_id, source_workspace_lease_id, workspace_id, base_workspace_version_id, private_workspace_version_id, actor_speculative_input_sequence, state, restore_manifest, ready_request_fingerprint, failed_request_fingerprint, expires_at, created_at, ready_at, invalidated_at, invalidation_reason_code
+SELECT id, run_id, attempt_number, run_wait_id, source_run_lease_id, source_workspace_lease_id, workspace_id, base_workspace_version_id, private_workspace_version_id, runtime_config_artifact_id, vm_state_artifact_id, memory_artifact_id, scratch_disk_artifact_id, actor_speculative_input_sequence, state, restore_manifest, ready_request_fingerprint, failed_request_fingerprint, expires_at, created_at, ready_at, invalidated_at, invalidation_reason_code
   FROM run_checkpoints
  WHERE id = $1
    AND run_id = $2
@@ -1516,6 +1493,10 @@ func (q *Queries) LockCreatingRunCheckpoint(ctx context.Context, arg LockCreatin
 		&i.WorkspaceID,
 		&i.BaseWorkspaceVersionID,
 		&i.PrivateWorkspaceVersionID,
+		&i.RuntimeConfigArtifactID,
+		&i.VMStateArtifactID,
+		&i.MemoryArtifactID,
+		&i.ScratchDiskArtifactID,
 		&i.ActorSpeculativeInputSequence,
 		&i.State,
 		&i.RestoreManifest,
@@ -1531,16 +1512,46 @@ func (q *Queries) LockCreatingRunCheckpoint(ctx context.Context, arg LockCreatin
 }
 
 const lockRestorableRunCheckpoint = `-- name: LockRestorableRunCheckpoint :one
-SELECT id, run_id, attempt_number, run_wait_id, source_run_lease_id, source_workspace_lease_id, workspace_id, base_workspace_version_id, private_workspace_version_id, actor_speculative_input_sequence, state, restore_manifest, ready_request_fingerprint, failed_request_fingerprint, expires_at, created_at, ready_at, invalidated_at, invalidation_reason_code
+SELECT run_checkpoints.id, run_checkpoints.run_id, run_checkpoints.attempt_number, run_checkpoints.run_wait_id, run_checkpoints.source_run_lease_id, run_checkpoints.source_workspace_lease_id, run_checkpoints.workspace_id, run_checkpoints.base_workspace_version_id, run_checkpoints.private_workspace_version_id, run_checkpoints.runtime_config_artifact_id, run_checkpoints.vm_state_artifact_id, run_checkpoints.memory_artifact_id, run_checkpoints.scratch_disk_artifact_id, run_checkpoints.actor_speculative_input_sequence, run_checkpoints.state, run_checkpoints.restore_manifest, run_checkpoints.ready_request_fingerprint, run_checkpoints.failed_request_fingerprint, run_checkpoints.expires_at, run_checkpoints.created_at, run_checkpoints.ready_at, run_checkpoints.invalidated_at, run_checkpoints.invalidation_reason_code,
+       runtime_config_artifact.digest AS runtime_config_digest,
+       runtime_config_artifact.size_bytes AS runtime_config_size_bytes,
+       runtime_config_artifact.media_type AS runtime_config_media_type,
+       vm_state_artifact.digest AS vm_state_digest,
+       vm_state_artifact.size_bytes AS vm_state_size_bytes,
+       vm_state_artifact.media_type AS vm_state_media_type,
+       memory_artifact.digest AS memory_digest,
+       memory_artifact.size_bytes AS memory_size_bytes,
+       memory_artifact.media_type AS memory_media_type,
+       scratch_disk_artifact.digest AS scratch_disk_digest,
+       scratch_disk_artifact.size_bytes AS scratch_disk_size_bytes,
+       scratch_disk_artifact.media_type AS scratch_disk_media_type
   FROM run_checkpoints
- WHERE id = $1
-   AND run_id = $2
-   AND attempt_number = $3
-   AND run_wait_id = $4
-   AND workspace_id = $5
-   AND state = 'ready'
-   AND (expires_at IS NULL OR expires_at > transaction_timestamp())
- FOR UPDATE
+  JOIN runs
+    ON runs.id = run_checkpoints.run_id
+  JOIN artifacts AS runtime_config_artifact
+    ON runtime_config_artifact.id = run_checkpoints.runtime_config_artifact_id
+   AND runtime_config_artifact.environment_id = runs.environment_id
+   AND runtime_config_artifact.kind = 'run_checkpoint_config'
+  JOIN artifacts AS vm_state_artifact
+    ON vm_state_artifact.id = run_checkpoints.vm_state_artifact_id
+   AND vm_state_artifact.environment_id = runs.environment_id
+   AND vm_state_artifact.kind = 'run_checkpoint_vm_state'
+  JOIN artifacts AS memory_artifact
+    ON memory_artifact.id = run_checkpoints.memory_artifact_id
+   AND memory_artifact.environment_id = runs.environment_id
+   AND memory_artifact.kind = 'run_checkpoint_memory'
+  JOIN artifacts AS scratch_disk_artifact
+    ON scratch_disk_artifact.id = run_checkpoints.scratch_disk_artifact_id
+   AND scratch_disk_artifact.environment_id = runs.environment_id
+   AND scratch_disk_artifact.kind = 'run_checkpoint_scratch_disk'
+ WHERE run_checkpoints.id = $1
+   AND run_checkpoints.run_id = $2
+   AND run_checkpoints.attempt_number = $3
+   AND run_checkpoints.run_wait_id = $4
+   AND run_checkpoints.workspace_id = $5
+   AND run_checkpoints.state = 'ready'
+   AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > transaction_timestamp())
+ FOR UPDATE OF run_checkpoints
 `
 
 type LockRestorableRunCheckpointParams struct {
@@ -1551,7 +1562,23 @@ type LockRestorableRunCheckpointParams struct {
 	WorkspaceID   pgtype.UUID `json:"workspace_id"`
 }
 
-func (q *Queries) LockRestorableRunCheckpoint(ctx context.Context, arg LockRestorableRunCheckpointParams) (RunCheckpoint, error) {
+type LockRestorableRunCheckpointRow struct {
+	RunCheckpoint          RunCheckpoint `json:"run_checkpoint"`
+	RuntimeConfigDigest    string        `json:"runtime_config_digest"`
+	RuntimeConfigSizeBytes int64         `json:"runtime_config_size_bytes"`
+	RuntimeConfigMediaType string        `json:"runtime_config_media_type"`
+	VMStateDigest          string        `json:"vm_state_digest"`
+	VMStateSizeBytes       int64         `json:"vm_state_size_bytes"`
+	VMStateMediaType       string        `json:"vm_state_media_type"`
+	MemoryDigest           string        `json:"memory_digest"`
+	MemorySizeBytes        int64         `json:"memory_size_bytes"`
+	MemoryMediaType        string        `json:"memory_media_type"`
+	ScratchDiskDigest      string        `json:"scratch_disk_digest"`
+	ScratchDiskSizeBytes   int64         `json:"scratch_disk_size_bytes"`
+	ScratchDiskMediaType   string        `json:"scratch_disk_media_type"`
+}
+
+func (q *Queries) LockRestorableRunCheckpoint(ctx context.Context, arg LockRestorableRunCheckpointParams) (LockRestorableRunCheckpointRow, error) {
 	row := q.db.QueryRow(ctx, lockRestorableRunCheckpoint,
 		arg.ID,
 		arg.RunID,
@@ -1559,27 +1586,43 @@ func (q *Queries) LockRestorableRunCheckpoint(ctx context.Context, arg LockResto
 		arg.RunWaitID,
 		arg.WorkspaceID,
 	)
-	var i RunCheckpoint
+	var i LockRestorableRunCheckpointRow
 	err := row.Scan(
-		&i.ID,
-		&i.RunID,
-		&i.AttemptNumber,
-		&i.RunWaitID,
-		&i.SourceRunLeaseID,
-		&i.SourceWorkspaceLeaseID,
-		&i.WorkspaceID,
-		&i.BaseWorkspaceVersionID,
-		&i.PrivateWorkspaceVersionID,
-		&i.ActorSpeculativeInputSequence,
-		&i.State,
-		&i.RestoreManifest,
-		&i.ReadyRequestFingerprint,
-		&i.FailedRequestFingerprint,
-		&i.ExpiresAt,
-		&i.CreatedAt,
-		&i.ReadyAt,
-		&i.InvalidatedAt,
-		&i.InvalidationReasonCode,
+		&i.RunCheckpoint.ID,
+		&i.RunCheckpoint.RunID,
+		&i.RunCheckpoint.AttemptNumber,
+		&i.RunCheckpoint.RunWaitID,
+		&i.RunCheckpoint.SourceRunLeaseID,
+		&i.RunCheckpoint.SourceWorkspaceLeaseID,
+		&i.RunCheckpoint.WorkspaceID,
+		&i.RunCheckpoint.BaseWorkspaceVersionID,
+		&i.RunCheckpoint.PrivateWorkspaceVersionID,
+		&i.RunCheckpoint.RuntimeConfigArtifactID,
+		&i.RunCheckpoint.VMStateArtifactID,
+		&i.RunCheckpoint.MemoryArtifactID,
+		&i.RunCheckpoint.ScratchDiskArtifactID,
+		&i.RunCheckpoint.ActorSpeculativeInputSequence,
+		&i.RunCheckpoint.State,
+		&i.RunCheckpoint.RestoreManifest,
+		&i.RunCheckpoint.ReadyRequestFingerprint,
+		&i.RunCheckpoint.FailedRequestFingerprint,
+		&i.RunCheckpoint.ExpiresAt,
+		&i.RunCheckpoint.CreatedAt,
+		&i.RunCheckpoint.ReadyAt,
+		&i.RunCheckpoint.InvalidatedAt,
+		&i.RunCheckpoint.InvalidationReasonCode,
+		&i.RuntimeConfigDigest,
+		&i.RuntimeConfigSizeBytes,
+		&i.RuntimeConfigMediaType,
+		&i.VMStateDigest,
+		&i.VMStateSizeBytes,
+		&i.VMStateMediaType,
+		&i.MemoryDigest,
+		&i.MemorySizeBytes,
+		&i.MemoryMediaType,
+		&i.ScratchDiskDigest,
+		&i.ScratchDiskSizeBytes,
+		&i.ScratchDiskMediaType,
 	)
 	return i, err
 }
@@ -1588,18 +1631,44 @@ const markRunCheckpointReady = `-- name: MarkRunCheckpointReady :one
 UPDATE run_checkpoints
    SET state = 'ready',
        private_workspace_version_id = $1,
-       restore_manifest = $2,
-       ready_request_fingerprint = $3,
+       runtime_config_artifact_id = $2,
+       vm_state_artifact_id = $3,
+       memory_artifact_id = $4,
+       scratch_disk_artifact_id = $5,
+       restore_manifest = $6,
+       ready_request_fingerprint = $7,
        ready_at = now()
- WHERE run_id = $4
-   AND attempt_number = $5
-   AND id = $6
-   AND state = 'creating'
-RETURNING id, run_id, attempt_number, run_wait_id, source_run_lease_id, source_workspace_lease_id, workspace_id, base_workspace_version_id, private_workspace_version_id, actor_speculative_input_sequence, state, restore_manifest, ready_request_fingerprint, failed_request_fingerprint, expires_at, created_at, ready_at, invalidated_at, invalidation_reason_code
+  FROM runs,
+       artifacts AS runtime_config_artifact,
+       artifacts AS vm_state_artifact,
+       artifacts AS memory_artifact,
+       artifacts AS scratch_disk_artifact
+ WHERE run_checkpoints.run_id = $8
+   AND run_checkpoints.attempt_number = $9
+   AND run_checkpoints.id = $10
+   AND run_checkpoints.state = 'creating'
+   AND runs.id = run_checkpoints.run_id
+   AND runtime_config_artifact.id = $2
+   AND runtime_config_artifact.environment_id = runs.environment_id
+   AND runtime_config_artifact.kind = 'run_checkpoint_config'
+   AND vm_state_artifact.id = $3
+   AND vm_state_artifact.environment_id = runs.environment_id
+   AND vm_state_artifact.kind = 'run_checkpoint_vm_state'
+   AND memory_artifact.id = $4
+   AND memory_artifact.environment_id = runs.environment_id
+   AND memory_artifact.kind = 'run_checkpoint_memory'
+   AND scratch_disk_artifact.id = $5
+   AND scratch_disk_artifact.environment_id = runs.environment_id
+   AND scratch_disk_artifact.kind = 'run_checkpoint_scratch_disk'
+RETURNING run_checkpoints.id, run_checkpoints.run_id, run_checkpoints.attempt_number, run_checkpoints.run_wait_id, run_checkpoints.source_run_lease_id, run_checkpoints.source_workspace_lease_id, run_checkpoints.workspace_id, run_checkpoints.base_workspace_version_id, run_checkpoints.private_workspace_version_id, run_checkpoints.runtime_config_artifact_id, run_checkpoints.vm_state_artifact_id, run_checkpoints.memory_artifact_id, run_checkpoints.scratch_disk_artifact_id, run_checkpoints.actor_speculative_input_sequence, run_checkpoints.state, run_checkpoints.restore_manifest, run_checkpoints.ready_request_fingerprint, run_checkpoints.failed_request_fingerprint, run_checkpoints.expires_at, run_checkpoints.created_at, run_checkpoints.ready_at, run_checkpoints.invalidated_at, run_checkpoints.invalidation_reason_code
 `
 
 type MarkRunCheckpointReadyParams struct {
 	PrivateWorkspaceVersionID pgtype.UUID `json:"private_workspace_version_id"`
+	RuntimeConfigArtifactID   pgtype.UUID `json:"runtime_config_artifact_id"`
+	VMStateArtifactID         pgtype.UUID `json:"vm_state_artifact_id"`
+	MemoryArtifactID          pgtype.UUID `json:"memory_artifact_id"`
+	ScratchDiskArtifactID     pgtype.UUID `json:"scratch_disk_artifact_id"`
 	RestoreManifest           []byte      `json:"restore_manifest"`
 	ReadyRequestFingerprint   pgtype.Text `json:"ready_request_fingerprint"`
 	RunID                     pgtype.UUID `json:"run_id"`
@@ -1610,6 +1679,10 @@ type MarkRunCheckpointReadyParams struct {
 func (q *Queries) MarkRunCheckpointReady(ctx context.Context, arg MarkRunCheckpointReadyParams) (RunCheckpoint, error) {
 	row := q.db.QueryRow(ctx, markRunCheckpointReady,
 		arg.PrivateWorkspaceVersionID,
+		arg.RuntimeConfigArtifactID,
+		arg.VMStateArtifactID,
+		arg.MemoryArtifactID,
+		arg.ScratchDiskArtifactID,
 		arg.RestoreManifest,
 		arg.ReadyRequestFingerprint,
 		arg.RunID,
@@ -1627,6 +1700,10 @@ func (q *Queries) MarkRunCheckpointReady(ctx context.Context, arg MarkRunCheckpo
 		&i.WorkspaceID,
 		&i.BaseWorkspaceVersionID,
 		&i.PrivateWorkspaceVersionID,
+		&i.RuntimeConfigArtifactID,
+		&i.VMStateArtifactID,
+		&i.MemoryArtifactID,
+		&i.ScratchDiskArtifactID,
 		&i.ActorSpeculativeInputSequence,
 		&i.State,
 		&i.RestoreManifest,

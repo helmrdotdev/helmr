@@ -50,17 +50,18 @@ func (s *Server) workerClaimRunLease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	responseAuthority := runLeaseClaimResponseAuthority{
-		mode:           authority.mode,
-		actor:          authority.actor,
-		run:            authority.run,
-		attempt:        authority.attempt,
-		runtime:        authority.runtime,
-		runLease:       authority.runLease,
-		workspace:      authority.workspace,
-		workspaceMount: authority.workspaceMount,
-		workspaceLease: authority.workspaceLease,
-		runWait:        authority.runWait,
-		checkpoint:     authority.checkpoint,
+		mode:                authority.mode,
+		actor:               authority.actor,
+		run:                 authority.run,
+		attempt:             authority.attempt,
+		runtime:             authority.runtime,
+		runLease:            authority.runLease,
+		workspace:           authority.workspace,
+		workspaceMount:      authority.workspaceMount,
+		workspaceLease:      authority.workspaceLease,
+		runWait:             authority.runWait,
+		checkpoint:          authority.checkpoint,
+		checkpointArtifacts: authority.checkpointArtifacts,
 	}
 	projection, err := loadRunLeaseClaimProjection(r.Context(), s.db, responseAuthority)
 	if err != nil {

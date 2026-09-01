@@ -252,7 +252,9 @@ CREATE TABLE cas_objects (
     size_bytes BIGINT NOT NULL CHECK (size_bytes >= 0),
     media_type TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (org_id, digest)
+    PRIMARY KEY (org_id, digest),
+    CONSTRAINT cas_objects_descriptor_key
+        UNIQUE (org_id, digest, size_bytes, media_type)
 );
 
 CREATE TYPE artifact_kind AS ENUM (
@@ -519,8 +521,9 @@ CREATE TABLE artifacts (
     FOREIGN KEY (org_id, project_id, environment_id)
         REFERENCES environments(org_id, project_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, digest)
-        REFERENCES cas_objects(org_id, digest)
+    CONSTRAINT artifacts_cas_descriptor_fk
+        FOREIGN KEY (org_id, digest, size_bytes, media_type)
+        REFERENCES cas_objects(org_id, digest, size_bytes, media_type)
         ON DELETE CASCADE
 );
 
@@ -2346,6 +2349,10 @@ CREATE TABLE run_checkpoints (
     workspace_id UUID NOT NULL,
     base_workspace_version_id UUID NOT NULL,
     private_workspace_version_id UUID,
+    runtime_config_artifact_id UUID,
+    vm_state_artifact_id UUID,
+    memory_artifact_id UUID,
+    scratch_disk_artifact_id UUID,
     actor_speculative_input_sequence BIGINT CHECK (
         actor_speculative_input_sequence IS NULL
         OR actor_speculative_input_sequence >= 0
@@ -2379,6 +2386,22 @@ CREATE TABLE run_checkpoints (
         ON DELETE RESTRICT,
     FOREIGN KEY (workspace_id, private_workspace_version_id)
         REFERENCES workspace_versions(workspace_id, id)
+        ON DELETE RESTRICT,
+    CONSTRAINT run_checkpoints_runtime_config_artifact_fk
+        FOREIGN KEY (runtime_config_artifact_id)
+        REFERENCES artifacts(id)
+        ON DELETE RESTRICT,
+    CONSTRAINT run_checkpoints_vm_state_artifact_fk
+        FOREIGN KEY (vm_state_artifact_id)
+        REFERENCES artifacts(id)
+        ON DELETE RESTRICT,
+    CONSTRAINT run_checkpoints_memory_artifact_fk
+        FOREIGN KEY (memory_artifact_id)
+        REFERENCES artifacts(id)
+        ON DELETE RESTRICT,
+    CONSTRAINT run_checkpoints_scratch_disk_artifact_fk
+        FOREIGN KEY (scratch_disk_artifact_id)
+        REFERENCES artifacts(id)
         ON DELETE RESTRICT,
     CHECK (
         jsonb_typeof(restore_manifest) = 'object'
@@ -2423,6 +2446,25 @@ CREATE TABLE run_checkpoints (
     CHECK (
         failed_request_fingerprint IS NULL
         OR (state = 'invalid' AND invalidation_reason_code = 'checkpoint_failed')
+    ),
+    CONSTRAINT run_checkpoints_artifact_shape_check CHECK (
+        (
+            runtime_config_artifact_id IS NULL
+            AND vm_state_artifact_id IS NULL
+            AND memory_artifact_id IS NULL
+            AND scratch_disk_artifact_id IS NULL
+        )
+        OR
+        (
+            runtime_config_artifact_id IS NOT NULL
+            AND vm_state_artifact_id IS NOT NULL
+            AND memory_artifact_id IS NOT NULL
+            AND scratch_disk_artifact_id IS NOT NULL
+        )
+    ),
+    CONSTRAINT run_checkpoints_ready_artifacts_check CHECK (
+        state <> 'ready'
+        OR runtime_config_artifact_id IS NOT NULL
     )
 );
 
@@ -2439,28 +2481,6 @@ CREATE INDEX run_checkpoints_wait_idx
 CREATE UNIQUE INDEX run_checkpoints_creating_uidx
     ON run_checkpoints (run_id, attempt_number, run_wait_id)
     WHERE state = 'creating';
-
-CREATE TYPE run_checkpoint_artifact_role AS ENUM (
-    'runtime_config',
-    'vm_state',
-    'memory',
-    'scratch_disk'
-);
-
-CREATE TABLE run_checkpoint_artifacts (
-    run_checkpoint_id UUID NOT NULL,
-    role run_checkpoint_artifact_role NOT NULL,
-    ordinal INTEGER NOT NULL DEFAULT 0 CHECK (ordinal >= 0),
-    artifact_id UUID NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (run_checkpoint_id, role, ordinal),
-    FOREIGN KEY (run_checkpoint_id)
-        REFERENCES run_checkpoints(id)
-        ON DELETE RESTRICT,
-    FOREIGN KEY (artifact_id)
-        REFERENCES artifacts(id)
-        ON DELETE RESTRICT
-);
 
 CREATE TABLE run_waits (
     id UUID PRIMARY KEY,
@@ -3024,8 +3044,8 @@ CREATE INDEX environments_current_deployment_idx
     WHERE current_deployment_id IS NOT NULL;
 CREATE INDEX artifacts_scope_kind_created_idx
     ON artifacts(org_id, project_id, environment_id, kind, created_at DESC);
-CREATE INDEX artifacts_digest_idx
-    ON artifacts(digest);
+CREATE INDEX artifacts_cas_scope_idx
+    ON artifacts(org_id, digest);
 CREATE UNIQUE INDEX telemetry_outbox_run_log_observed_idx
     ON telemetry_outbox(org_id, run_id, attempt_number, stream_name, observed_seq)
     WHERE stream_kind = 'run_log';
@@ -3038,7 +3058,6 @@ CREATE INDEX telemetry_outbox_run_lease_idx ON telemetry_outbox(org_id, run_id, 
 CREATE INDEX telemetry_outbox_run_attempt_number_idx ON telemetry_outbox(org_id, run_id, attempt_number, id)
     WHERE attempt_number IS NOT NULL;
 CREATE INDEX run_checkpoints_run_state_idx ON run_checkpoints(run_id, state, created_at DESC);
-CREATE INDEX run_checkpoint_artifacts_role_idx ON run_checkpoint_artifacts(run_checkpoint_id, role, ordinal);
 CREATE INDEX tokens_scope_created_idx ON tokens(org_id, project_id, environment_id, created_at DESC, id DESC);
 CREATE INDEX tokens_scope_state_idx ON tokens(org_id, project_id, environment_id, state, created_at DESC, id DESC);
 CREATE INDEX tokens_expiry_pending_idx ON tokens(expires_at, id)

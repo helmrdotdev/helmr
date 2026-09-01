@@ -16,24 +16,24 @@ import (
 )
 
 type runLeaseClaimProjection struct {
-	program             db.GetDeploymentProgramAuthorityRow
-	definition          db.DeploymentDefinition
-	resetTarget         db.GetWorkspaceResetTargetAuthorityRow
-	checkpointArtifacts []db.ListRunCheckpointArtifactAuthorityRow
+	program     db.GetDeploymentProgramAuthorityRow
+	definition  db.DeploymentDefinition
+	resetTarget db.GetWorkspaceResetTargetAuthorityRow
 }
 
 type runLeaseClaimResponseAuthority struct {
-	mode           runLeaseClaimMode
-	actor          db.Session
-	run            db.Run
-	attempt        db.RunAttempt
-	runtime        db.RuntimeInstance
-	runLease       db.RunLease
-	workspace      db.Workspace
-	workspaceMount db.WorkspaceMount
-	workspaceLease db.WorkspaceLease
-	runWait        db.RunWait
-	checkpoint     db.RunCheckpoint
+	mode                runLeaseClaimMode
+	actor               db.Session
+	run                 db.Run
+	attempt             db.RunAttempt
+	runtime             db.RuntimeInstance
+	runLease            db.RunLease
+	workspace           db.Workspace
+	workspaceMount      db.WorkspaceMount
+	workspaceLease      db.WorkspaceLease
+	runWait             db.RunWait
+	checkpoint          db.RunCheckpoint
+	checkpointArtifacts checkpointArtifactAuthority
 }
 
 type SecretDeliveryOpener interface {
@@ -75,15 +75,6 @@ func loadRunLeaseClaimProjection(
 	)
 	if err != nil {
 		return runLeaseClaimProjection{}, fmt.Errorf("load run lease workspace reset target authority: %w", err)
-	}
-	if authority.mode == runLeaseClaimRestore {
-		projection.checkpointArtifacts, err = store.ListRunCheckpointArtifactAuthority(
-			ctx,
-			authority.checkpoint.ID,
-		)
-		if err != nil {
-			return runLeaseClaimProjection{}, fmt.Errorf("load run lease checkpoint artifact authority: %w", err)
-		}
 	}
 	return projection, nil
 }
@@ -133,7 +124,7 @@ func projectRunLeaseClaimResponse(
 		workspaceMount:      authority.workspaceMount,
 		runWait:             authority.runWait,
 		checkpoint:          authority.checkpoint,
-		checkpointArtifacts: projection.checkpointArtifacts,
+		checkpointArtifacts: authority.checkpointArtifacts,
 	})
 	if err != nil {
 		return workerapi.RunLeaseClaimResponse{}, err

@@ -164,18 +164,18 @@ func populateRuntimeRestoreSource(
 		!row.ReservedAttemptNumber.Valid || store == nil {
 		return errors.New("restored runtime reservation authority is incomplete")
 	}
-	checkpoint, err := store.GetReadyRunCheckpoint(ctx, db.GetReadyRunCheckpointParams{
+	checkpointRow, err := store.GetReadyRunCheckpoint(ctx, db.GetReadyRunCheckpointParams{
 		RunID: row.ReservedRunID, AttemptNumber: row.ReservedAttemptNumber.Int32,
 		ID: row.RestoreCheckpointID,
 	})
 	if err != nil {
 		return fmt.Errorf("load restored runtime checkpoint authority: %w", err)
 	}
-	artifacts, err := store.ListRunCheckpointArtifactAuthority(ctx, row.RestoreCheckpointID)
-	if err != nil {
-		return fmt.Errorf("load restored runtime checkpoint artifacts: %w", err)
-	}
-	projected, err := projectRunLeaseCheckpoint(checkpoint, artifacts)
+	checkpoint := checkpointRow.RunCheckpoint
+	projected, err := projectRunLeaseCheckpoint(
+		checkpoint,
+		checkpointArtifactAuthorityFromReady(checkpointRow),
+	)
 	if err != nil {
 		return fmt.Errorf("project restored runtime checkpoint: %w", err)
 	}

@@ -139,8 +139,10 @@ func TestRestoreRunLeaseClaimDoesNotOpenSecrets(t *testing.T) {
 	}
 	authority.checkpoint = db.RunCheckpoint{
 		ID: pgvalue.UUID(uuid.New()), RunID: authority.run.ID,
-		AttemptNumber: authority.attempt.Number,
-		State:         db.RunCheckpointStateReady,
+		AttemptNumber:           authority.attempt.Number,
+		State:                   db.RunCheckpointStateReady,
+		RuntimeConfigArtifactID: pgvalue.UUID(uuid.New()), VMStateArtifactID: pgvalue.UUID(uuid.New()),
+		MemoryArtifactID: pgvalue.UUID(uuid.New()), ScratchDiskArtifactID: pgvalue.UUID(uuid.New()),
 	}
 	authority.checkpoint.RestoreManifest = testCheckpointManifest(
 		t,
@@ -150,12 +152,7 @@ func TestRestoreRunLeaseClaimDoesNotOpenSecrets(t *testing.T) {
 		authority.runWait.ID,
 	)
 	authority.runtime.RestoreCheckpointID = authority.checkpoint.ID
-	projection.checkpointArtifacts = []db.ListRunCheckpointArtifactAuthorityRow{
-		{Role: db.RunCheckpointArtifactRoleRuntimeConfig, Ordinal: 0, Digest: validDigest('a'), SizeBytes: 8, MediaType: "application/example"},
-		{Role: db.RunCheckpointArtifactRoleVMState, Ordinal: 0, Digest: validDigest('b'), SizeBytes: 4, MediaType: "application/example"},
-		{Role: db.RunCheckpointArtifactRoleMemory, Ordinal: 0, Digest: validDigest('c'), SizeBytes: 16, MediaType: "application/example"},
-		{Role: db.RunCheckpointArtifactRoleScratchDisk, Ordinal: 0, Digest: validDigest('d'), SizeBytes: 12, MediaType: "application/example"},
-	}
+	authority.checkpointArtifacts = validCheckpointArtifactAuthority()
 	response, err := projectRunLeaseClaimResponse(
 		context.Background(),
 		authority,

@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -794,13 +795,111 @@ func testPendingRootTokenWaitCheckpointReadyCommitsAtomicParkingFacts(t *testing
 	}); err != nil {
 		t.Fatal(err)
 	}
+	checkpointArtifacts := dbtest.InsertCheckpointArtifacts(t, ctx, fixture.pool, work.runID, checkpointID.String())
+	wrongEnvironmentID := uuid.NewV7()
+	dbtest.MustExec(t, ctx, fixture.pool, `
+		INSERT INTO environments (id, org_id, project_id, slug, name, color_hex)
+		VALUES ($1, $2, $3, $4, 'Wrong checkpoint environment', '#000000')
+	`, wrongEnvironmentID, fixture.orgID, fixture.projectID, "wrong-checkpoint-"+dbtest.ShortID(wrongEnvironmentID))
+	dbtest.MustExec(t, ctx, fixture.pool, `UPDATE artifacts SET environment_id = $1 WHERE id = $2`,
+		wrongEnvironmentID, checkpointArtifacts.Memory)
 	if _, err := queries.MarkRunCheckpointReady(ctx, db.MarkRunCheckpointReadyParams{
 		PrivateWorkspaceVersionID: pgvalue.UUID(privateVersionID),
+		RuntimeConfigArtifactID:   pgvalue.UUID(checkpointArtifacts.RuntimeConfig),
+		VMStateArtifactID:         pgvalue.UUID(checkpointArtifacts.VMState),
+		MemoryArtifactID:          pgvalue.UUID(checkpointArtifacts.Memory),
+		ScratchDiskArtifactID:     pgvalue.UUID(checkpointArtifacts.ScratchDisk),
+		RestoreManifest:           []byte(`{"recovery_point":{"runtime":{"backend":"firecracker"}}}`),
+		ReadyRequestFingerprint:   pgvalue.Text(dbtest.Digest("checkpoint-ready-wrong-environment-" + checkpointID.String())),
+		RunID:                     pgvalue.UUID(work.runID), AttemptNumber: int32(1), ID: pgvalue.UUID(checkpointID),
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("cross-environment checkpoint artifact error = %v, want no rows", err)
+	}
+	dbtest.MustExec(t, ctx, fixture.pool, `UPDATE artifacts SET environment_id = $1 WHERE id = $2`,
+		fixture.environmentID, checkpointArtifacts.Memory)
+	if _, err := queries.MarkRunCheckpointReady(ctx, db.MarkRunCheckpointReadyParams{
+		PrivateWorkspaceVersionID: pgvalue.UUID(privateVersionID),
+		RuntimeConfigArtifactID:   pgvalue.UUID(checkpointArtifacts.VMState),
+		VMStateArtifactID:         pgvalue.UUID(checkpointArtifacts.RuntimeConfig),
+		MemoryArtifactID:          pgvalue.UUID(checkpointArtifacts.Memory),
+		ScratchDiskArtifactID:     pgvalue.UUID(checkpointArtifacts.ScratchDisk),
+		RestoreManifest:           []byte(`{"recovery_point":{"runtime":{"backend":"firecracker"}}}`),
+		ReadyRequestFingerprint:   pgvalue.Text(dbtest.Digest("checkpoint-ready-wrong-kinds-" + checkpointID.String())),
+		RunID:                     pgvalue.UUID(work.runID), AttemptNumber: int32(1), ID: pgvalue.UUID(checkpointID),
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("wrong checkpoint artifact kinds error = %v, want no rows", err)
+	}
+	if _, err := queries.MarkRunCheckpointReady(ctx, db.MarkRunCheckpointReadyParams{
+		PrivateWorkspaceVersionID: pgvalue.UUID(privateVersionID),
+		RuntimeConfigArtifactID:   pgvalue.UUID(checkpointArtifacts.RuntimeConfig),
+		VMStateArtifactID:         pgvalue.UUID(checkpointArtifacts.VMState),
+		MemoryArtifactID:          pgvalue.UUID(checkpointArtifacts.Memory),
+		ScratchDiskArtifactID:     pgvalue.UUID(checkpointArtifacts.ScratchDisk),
 		RestoreManifest:           []byte(`{"recovery_point":{"runtime":{"backend":"firecracker"}}}`),
 		ReadyRequestFingerprint:   pgvalue.Text(dbtest.Digest("checkpoint-ready-" + checkpointID.String())),
 		RunID:                     pgvalue.UUID(work.runID), AttemptNumber: int32(1), ID: pgvalue.UUID(checkpointID),
 	}); err != nil {
 		t.Fatal(err)
+	}
+	dbtest.MustExec(t, ctx, tx, `SAVEPOINT missing_checkpoint_artifact`)
+	if _, err := tx.Exec(ctx, `UPDATE run_checkpoints SET memory_artifact_id = NULL WHERE id = $1`, checkpointID); err == nil {
+		t.Fatal("database accepted a ready checkpoint with a missing artifact")
+	}
+	dbtest.MustExec(t, ctx, tx, `ROLLBACK TO SAVEPOINT missing_checkpoint_artifact`)
+	if _, err := tx.Exec(ctx, `UPDATE run_checkpoints SET runtime_config_artifact_id = $1 WHERE id = $2`,
+		checkpointArtifacts.VMState, checkpointID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.GetReadyRunCheckpoint(ctx, db.GetReadyRunCheckpointParams{
+		RunID: pgvalue.UUID(work.runID), AttemptNumber: 1, ID: pgvalue.UUID(checkpointID),
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("wrong-kind persisted checkpoint read error = %v, want no rows", err)
+	}
+	if _, err := queries.LockRestorableRunCheckpoint(ctx, db.LockRestorableRunCheckpointParams{
+		ID: pgvalue.UUID(checkpointID), RunID: pgvalue.UUID(work.runID), AttemptNumber: 1,
+		RunWaitID: pgvalue.UUID(registered.WaitID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("wrong-kind restore lock error = %v, want no rows", err)
+	}
+	dbtest.MustExec(t, ctx, tx, `UPDATE run_checkpoints SET runtime_config_artifact_id = $1 WHERE id = $2`,
+		checkpointArtifacts.RuntimeConfig, checkpointID)
+	dbtest.MustExec(t, ctx, tx, `UPDATE artifacts SET environment_id = $1 WHERE id = $2`,
+		wrongEnvironmentID, checkpointArtifacts.Memory)
+	if _, err := queries.GetReadyRunCheckpoint(ctx, db.GetReadyRunCheckpointParams{
+		RunID: pgvalue.UUID(work.runID), AttemptNumber: 1, ID: pgvalue.UUID(checkpointID),
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("cross-environment persisted checkpoint read error = %v, want no rows", err)
+	}
+	if _, err := queries.LockRestorableRunCheckpoint(ctx, db.LockRestorableRunCheckpointParams{
+		ID: pgvalue.UUID(checkpointID), RunID: pgvalue.UUID(work.runID), AttemptNumber: 1,
+		RunWaitID: pgvalue.UUID(registered.WaitID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("cross-environment restore lock error = %v, want no rows", err)
+	}
+	dbtest.MustExec(t, ctx, tx, `UPDATE artifacts SET environment_id = $1 WHERE id = $2`,
+		fixture.environmentID, checkpointArtifacts.Memory)
+	if _, err := queries.LockRestorableRunCheckpoint(ctx, db.LockRestorableRunCheckpointParams{
+		ID: pgvalue.UUID(checkpointID), RunID: pgvalue.UUID(work.runID), AttemptNumber: 1,
+		RunWaitID: pgvalue.UUID(registered.WaitID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
+	}); err != nil {
+		t.Fatalf("corrected restore lock: %v", err)
+	}
+	dbtest.MustExec(t, ctx, tx, `SAVEPOINT referenced_checkpoint_cas`)
+	if _, err := tx.Exec(ctx, `DELETE FROM cas_objects WHERE org_id = $1 AND digest = $2`,
+		fixture.orgID, dbtest.Digest(checkpointID.String()+"-runtime-config")); err == nil {
+		t.Fatal("CAS deletion bypassed a ready checkpoint artifact reference")
+	}
+	dbtest.MustExec(t, ctx, tx, `ROLLBACK TO SAVEPOINT referenced_checkpoint_cas`)
+	unattachedSeed := "unattached-checkpoint-artifact-" + checkpointID.String()
+	unattached := dbtest.InsertCheckpointArtifacts(t, ctx, tx, work.runID, unattachedSeed)
+	dbtest.MustExec(t, ctx, tx, `DELETE FROM cas_objects WHERE org_id = $1 AND digest = $2`,
+		fixture.orgID, dbtest.Digest(unattachedSeed+"-runtime-config"))
+	var unattachedArtifactCount int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM artifacts WHERE id = $1`, unattached.RuntimeConfig).Scan(&unattachedArtifactCount); err != nil {
+		t.Fatal(err)
+	}
+	if unattachedArtifactCount != 0 {
+		t.Fatal("unreferenced Artifact did not cascade with its CAS object")
 	}
 	if _, err := queries.CloseRunActiveIntervalForCheckpoint(ctx, db.CloseRunActiveIntervalForCheckpointParams{
 		ID: pgvalue.UUID(work.runID), OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
@@ -1018,17 +1117,22 @@ func TestTokenWaitRegistrationReplaySurvivesParkedCompletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkpointID := uuid.NewV7()
+	checkpointArtifacts := dbtest.InsertCheckpointArtifacts(t, ctx, fixture.pool, work.runID, checkpointID.String())
 	dbtest.MustExec(t, ctx, fixture.pool, `
 		INSERT INTO run_checkpoints (
 		    id, run_id, attempt_number, run_wait_id,
 		    source_run_lease_id, source_workspace_lease_id, workspace_id,
 		    base_workspace_version_id, private_workspace_version_id,
+		    runtime_config_artifact_id, vm_state_artifact_id,
+		    memory_artifact_id, scratch_disk_artifact_id,
 		    state, restore_manifest, ready_request_fingerprint, ready_at
 		) VALUES (
 		    $1, $2, 1, $3, $4, $5, $6, $7, $7,
+		    $8, $9, $10, $11,
 		    'ready', '{"test":true}'::jsonb, 'sha256:test-ready', transaction_timestamp()
 		)
-	`, checkpointID, work.runID, request.WaitID, work.leaseID, workspaceLeaseID, workspaceID, baseVersionID)
+	`, checkpointID, work.runID, request.WaitID, work.leaseID, workspaceLeaseID, workspaceID, baseVersionID,
+		checkpointArtifacts.RuntimeConfig, checkpointArtifacts.VMState, checkpointArtifacts.Memory, checkpointArtifacts.ScratchDisk)
 	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE run_leases
 		   SET state = 'checkpointed', checkpointed_at = transaction_timestamp(),
@@ -1413,17 +1517,22 @@ func newTokenWaitReconcileSetup(
 		}
 		checkpointID := uuid.NewV7()
 		setup.checkpointID = pgvalue.UUID(checkpointID)
+		checkpointArtifacts := dbtest.InsertCheckpointArtifacts(t, ctx, fixture.pool, setup.runID, checkpointID.String())
 		dbtest.MustExec(t, ctx, fixture.pool, `
 			INSERT INTO run_checkpoints (
 			    id, run_id, attempt_number, run_wait_id,
 			    source_run_lease_id, source_workspace_lease_id, workspace_id,
 			    base_workspace_version_id, private_workspace_version_id,
+			    runtime_config_artifact_id, vm_state_artifact_id,
+			    memory_artifact_id, scratch_disk_artifact_id,
 			    state, restore_manifest, ready_request_fingerprint, ready_at
 			) VALUES (
 			    $1, $2, 1, $3, $4, $5, $6, $7, $7,
+			    $8, $9, $10, $11,
 			    'ready', '{"test":true}'::jsonb, 'sha256:test-ready', transaction_timestamp()
 			)
-		`, checkpointID, setup.runID, setup.waitID, setup.leaseID, workspaceLeaseID, setup.workspaceID, baseVersionID)
+		`, checkpointID, setup.runID, setup.waitID, setup.leaseID, workspaceLeaseID, setup.workspaceID, baseVersionID,
+			checkpointArtifacts.RuntimeConfig, checkpointArtifacts.VMState, checkpointArtifacts.Memory, checkpointArtifacts.ScratchDisk)
 		dbtest.MustExec(t, ctx, fixture.pool, `
 			UPDATE run_leases
 			   SET state = 'checkpointed',
