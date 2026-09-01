@@ -4,9 +4,15 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"os"
+	"runtime"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
@@ -16,6 +22,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -208,6 +216,418 @@ func TestFinishFinalizedDeploymentBundlePostgresVerifiesSameDigestInAnotherEnvir
 		t.Fatalf("object reads = %d, want full verification", store.getCount)
 	}
 }
+
+func TestRegisterFinalizedDeploymentBundlePostgresMaximumBulkBudget(t *testing.T) {
+	if os.Getenv("HELMR_TEST_DEPLOYMENT_FINALIZE_SCALE") != "1" {
+		t.Skip("HELMR_TEST_DEPLOYMENT_FINALIZE_SCALE is not set")
+	}
+	fixture := newDeploymentFinalizePostgresFixture(t)
+	fixture.prepared.definitions = deploymentFinalizeScaleDefinitions(10_000)
+	beginner := &deploymentFinalizeCountingBeginner{pool: fixture.pool}
+	fixture.server.tx = beginner
+
+	var walBefore string
+	var tempFilesBefore, tempBytesBefore int64
+	if err := fixture.pool.QueryRow(t.Context(), `
+		SELECT pg_current_wal_insert_lsn()::text, temp_files, temp_bytes
+		  FROM pg_stat_database
+		 WHERE datname = current_database()
+	`).Scan(&walBefore, &tempFilesBefore, &tempBytesBefore); err != nil {
+		t.Fatal(err)
+	}
+
+	baseline, stopHeapSampling := startDeploymentFinalizeHeapSampling()
+	started := time.Now()
+	response, err := fixture.server.registerFinalizedDeploymentBundle(
+		t.Context(), fixture.orgID, fixture.projectID, fixture.environmentID, fixture.prepared,
+		fixture.idempotencyRequest(t, "maximum-bulk-budget"),
+	)
+	elapsed := time.Since(started)
+	heapDelta := stopHeapSampling()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.ID == "" {
+		t.Fatal("maximum finalization returned no deployment")
+	}
+
+	var walBytes, tempFilesAfter, tempBytesAfter int64
+	if err := fixture.pool.QueryRow(t.Context(), `
+		SELECT pg_wal_lsn_diff(pg_current_wal_insert_lsn(), $1::pg_lsn)::bigint,
+		       temp_files,
+		       temp_bytes
+		  FROM pg_stat_database
+		 WHERE datname = current_database()
+	`, walBefore).Scan(&walBytes, &tempFilesAfter, &tempBytesAfter); err != nil {
+		t.Fatal(err)
+	}
+	var stored int
+	if err := fixture.pool.QueryRow(
+		t.Context(), `SELECT count(*) FROM deployment_definitions WHERE environment_id = $1`, fixture.environmentID,
+	).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf(
+		"deployment finalization bulk budget: count=%d elapsed=%s statements=%d bulk_statements=%d payload_bytes=%d heap_baseline=%d heap_delta=%d wal_bytes=%d temp_files=%d temp_bytes=%d",
+		stored, elapsed, beginner.statements.Load(), beginner.bulkStatements.Load(), beginner.bulkPayloadBytes.Load(),
+		baseline, heapDelta, walBytes, tempFilesAfter-tempFilesBefore, tempBytesAfter-tempBytesBefore,
+	)
+	if stored != 10_000 {
+		t.Fatalf("stored definitions = %d, want 10000", stored)
+	}
+	if statements := beginner.statements.Load(); statements > 10 {
+		t.Fatalf("transaction statements = %d, budget <= 10", statements)
+	}
+	if bulkStatements := beginner.bulkStatements.Load(); bulkStatements != 1 {
+		t.Fatalf("bulk statements = %d, want 1", bulkStatements)
+	}
+	if elapsed > 1850*time.Millisecond {
+		t.Fatalf("elapsed/lock time = %s, budget <= 1.85s", elapsed)
+	}
+	if heapDelta > 8<<20 {
+		t.Fatalf("additional sampled heap = %d, budget <= %d", heapDelta, 8<<20)
+	}
+	if payload := beginner.bulkPayloadBytes.Load(); payload > 5_700_000 {
+		t.Fatalf("bulk statement/payload bytes = %d, budget <= 5700000", payload)
+	}
+	if walBytes > 64<<20 {
+		t.Fatalf("WAL bytes = %d, budget <= %d", walBytes, 64<<20)
+	}
+	if tempFilesAfter != tempFilesBefore || tempBytesAfter != tempBytesBefore {
+		t.Fatalf(
+			"bulk insert created temp files/bytes: files=%d bytes=%d",
+			tempFilesAfter-tempFilesBefore, tempBytesAfter-tempBytesBefore,
+		)
+	}
+}
+
+func TestRegisterFinalizedDeploymentBundlePostgresCancellationRollsBackBulk(t *testing.T) {
+	if os.Getenv("HELMR_TEST_DEPLOYMENT_FINALIZE_SCALE") != "1" {
+		t.Skip("HELMR_TEST_DEPLOYMENT_FINALIZE_SCALE is not set")
+	}
+	fixture := newDeploymentFinalizePostgresFixture(t)
+	fixture.prepared.definitions = deploymentFinalizeScaleDefinitions(10_000)
+	bulkStarted := make(chan struct{}, 1)
+	beginner := &deploymentFinalizeCountingBeginner{pool: fixture.pool, bulkStarted: bulkStarted}
+	fixture.server.tx = beginner
+
+	blocker, err := fixture.pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = blocker.Rollback(context.Background()) })
+	if _, err := blocker.Exec(t.Context(), `LOCK TABLE deployment_definitions IN ACCESS EXCLUSIVE MODE`); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		_, err := fixture.server.registerFinalizedDeploymentBundle(
+			ctx, fixture.orgID, fixture.projectID, fixture.environmentID, fixture.prepared,
+			fixture.idempotencyRequest(t, "cancel-bulk"),
+		)
+		done <- err
+	}()
+	select {
+	case <-bulkStarted:
+	case <-time.After(time.Second):
+		t.Fatal("bulk definition insert did not start")
+	}
+	backendPID := beginner.backendPID.Load()
+	deadline := time.Now().Add(time.Second)
+	for {
+		var waitingOnBulkLock bool
+		if err := fixture.pool.QueryRow(t.Context(), `
+			SELECT EXISTS (
+				SELECT 1
+				  FROM pg_stat_activity
+				 WHERE pid = $1
+				   AND wait_event_type = 'Lock'
+				   AND position('CreateDeploymentDefinitions' IN query) > 0
+			)
+		`, backendPID).Scan(&waitingOnBulkLock); err != nil {
+			t.Fatal(err)
+		}
+		if waitingOnBulkLock {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("bulk definition insert did not reach the PostgreSQL lock wait")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	canceledAt := time.Now()
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("canceled finalization succeeded")
+		}
+	case <-time.After(1150 * time.Millisecond):
+		t.Fatal("canceled finalization exceeded 1.15s rollback budget")
+	}
+	t.Logf("deployment finalization bulk cancellation rollback: %s", time.Since(canceledAt))
+	if err := blocker.Rollback(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	var definitions, deployments int
+	if err := fixture.pool.QueryRow(t.Context(), `
+		SELECT (SELECT count(*) FROM deployment_definitions WHERE environment_id = $1),
+		       (SELECT count(*) FROM deployments WHERE environment_id = $1)
+	`, fixture.environmentID).Scan(&definitions, &deployments); err != nil {
+		t.Fatal(err)
+	}
+	if definitions != 0 || deployments != 0 {
+		t.Fatalf("definitions/deployments after cancellation = %d/%d, want 0/0", definitions, deployments)
+	}
+}
+
+func TestCreateDeploymentDefinitionsPostgresRejectsMalformedBatchesAtomically(t *testing.T) {
+	fixture := newDeploymentFinalizePostgresFixture(t)
+	created, err := fixture.server.registerFinalizedDeploymentBundle(
+		t.Context(), fixture.orgID, fixture.projectID, fixture.environmentID, fixture.prepared,
+		fixture.idempotencyRequest(t, "malformed-batches"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deploymentUUID, err := uuid.Parse(created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queries := db.New(fixture.pool)
+
+	t.Run("mismatched cardinality", func(t *testing.T) {
+		params := deploymentDefinitionBatchParams(fixture.environmentID, pgvalue.UUID(deploymentUUID), 2)
+		params.Kinds = params.Kinds[:1]
+		inserted, err := queries.CreateDeploymentDefinitions(t.Context(), params)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if inserted != 0 {
+			t.Fatalf("inserted = %d, want 0", inserted)
+		}
+	})
+	t.Run("over admitted maximum", func(t *testing.T) {
+		params := deploymentDefinitionBatchParams(fixture.environmentID, pgvalue.UUID(deploymentUUID), 10_001)
+		inserted, err := queries.CreateDeploymentDefinitions(t.Context(), params)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if inserted != 0 {
+			t.Fatalf("inserted = %d, want 0", inserted)
+		}
+	})
+	t.Run("duplicate generated ID", func(t *testing.T) {
+		params := deploymentDefinitionBatchParams(fixture.environmentID, pgvalue.UUID(deploymentUUID), 2)
+		params.Ids[1] = params.Ids[0]
+		if _, err := queries.CreateDeploymentDefinitions(t.Context(), params); err == nil {
+			t.Fatal("duplicate definition IDs succeeded")
+		}
+	})
+	t.Run("duplicate membership", func(t *testing.T) {
+		params := deploymentDefinitionBatchParams(fixture.environmentID, pgvalue.UUID(deploymentUUID), 2)
+		params.DeclaredIds[1] = params.DeclaredIds[0]
+		if _, err := queries.CreateDeploymentDefinitions(t.Context(), params); err == nil {
+			t.Fatal("duplicate definition membership succeeded")
+		}
+	})
+	t.Run("cross-scope artifact", func(t *testing.T) {
+		otherEnvironmentID := pgvalue.UUID(uuid.NewV7())
+		if _, err := queries.CreateEnvironment(t.Context(), db.CreateEnvironmentParams{
+			ID: otherEnvironmentID, OrgID: pgvalue.UUID(fixture.orgID), ProjectID: fixture.projectID,
+			Slug: "other", Name: "Other", ColorHex: "#315FCE",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		digest := "sha256:" + strings.Repeat("d", 64)
+		if _, err := queries.UpsertCasObject(t.Context(), db.UpsertCasObjectParams{
+			OrgID: pgvalue.UUID(fixture.orgID), Digest: digest, SizeBytes: 1, MediaType: "application/octet-stream",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		artifact, err := queries.CreateArtifact(t.Context(), db.CreateArtifactParams{
+			ID: pgvalue.UUID(uuid.NewV7()), OrgID: pgvalue.UUID(fixture.orgID), ProjectID: fixture.projectID,
+			EnvironmentID: otherEnvironmentID, Digest: digest, Kind: db.ArtifactKindWorkspaceImage,
+			SizeBytes: 1, MediaType: "application/octet-stream",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		params := deploymentDefinitionBatchParams(fixture.environmentID, pgvalue.UUID(deploymentUUID), 1)
+		params.Kinds[0] = "sandbox"
+		params.ArtifactIds[0] = artifact.ID
+		if _, err := queries.CreateDeploymentDefinitions(t.Context(), params); err == nil {
+			t.Fatal("cross-scope artifact succeeded")
+		}
+	})
+
+	var stored int
+	if err := fixture.pool.QueryRow(
+		t.Context(), `SELECT count(*) FROM deployment_definitions WHERE deployment_id = $1`, deploymentUUID,
+	).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored != 0 {
+		t.Fatalf("definitions after malformed batches = %d, want 0", stored)
+	}
+}
+
+func deploymentFinalizeScaleDefinitions(count int) []finalizedDeploymentDefinition {
+	definitions := make([]finalizedDeploymentDefinition, count)
+	for index := range definitions {
+		definitions[index] = finalizedDeploymentDefinition{
+			kind: "task", declaredID: fmt.Sprintf("task-%05d", index),
+			manifest: []byte(`{}`), manifestDigest: make([]byte, 32),
+		}
+	}
+	return definitions
+}
+
+func deploymentDefinitionBatchParams(
+	environmentID, deploymentID pgtype.UUID,
+	count int,
+) db.CreateDeploymentDefinitionsParams {
+	params := db.CreateDeploymentDefinitionsParams{
+		Ids: make([]pgtype.UUID, count), Kinds: make([]string, count),
+		DeclaredIds: make([]string, count), Manifests: make([][]byte, count),
+		ManifestDigests: make([][]byte, count), ArtifactIds: make([]pgtype.UUID, count),
+		EnvironmentID: environmentID, DeploymentID: deploymentID,
+		ManifestVersion: deployment.DeploymentPlanFormatVersion,
+	}
+	for index := range count {
+		params.Ids[index] = pgvalue.UUID(uuid.NewV7())
+		params.Kinds[index] = "task"
+		params.DeclaredIds[index] = fmt.Sprintf("task-%05d", index)
+		params.Manifests[index] = []byte(`{}`)
+		params.ManifestDigests[index] = make([]byte, 32)
+	}
+	return params
+}
+
+type deploymentFinalizeCountingBeginner struct {
+	pool             *pgxpool.Pool
+	statements       atomic.Int64
+	bulkStatements   atomic.Int64
+	bulkPayloadBytes atomic.Int64
+	bulkStarted      chan struct{}
+	backendPID       atomic.Int64
+}
+
+func (b *deploymentFinalizeCountingBeginner) Begin(ctx context.Context) (pgx.Tx, error) {
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if b.bulkStarted != nil {
+		var backendPID int64
+		if err := tx.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&backendPID); err != nil {
+			_ = tx.Rollback(ctx)
+			return nil, err
+		}
+		b.backendPID.Store(backendPID)
+	}
+	return &deploymentFinalizeCountingTx{Tx: tx, owner: b}, nil
+}
+
+type deploymentFinalizeCountingTx struct {
+	pgx.Tx
+	owner *deploymentFinalizeCountingBeginner
+}
+
+func (tx *deploymentFinalizeCountingTx) Exec(
+	ctx context.Context, sql string, args ...any,
+) (pgconn.CommandTag, error) {
+	tx.record(sql, args)
+	return tx.Tx.Exec(ctx, sql, args...)
+}
+
+func (tx *deploymentFinalizeCountingTx) Query(
+	ctx context.Context, sql string, args ...any,
+) (pgx.Rows, error) {
+	tx.record(sql, args)
+	return tx.Tx.Query(ctx, sql, args...)
+}
+
+func (tx *deploymentFinalizeCountingTx) QueryRow(
+	ctx context.Context, sql string, args ...any,
+) pgx.Row {
+	tx.record(sql, args)
+	return tx.Tx.QueryRow(ctx, sql, args...)
+}
+
+func (tx *deploymentFinalizeCountingTx) record(sql string, args []any) {
+	tx.owner.statements.Add(1)
+	if !strings.Contains(sql, "-- name: CreateDeploymentDefinitions") {
+		return
+	}
+	tx.owner.bulkStatements.Add(1)
+	tx.owner.bulkPayloadBytes.Add(int64(len(sql)) + deploymentDefinitionArgumentBytes(args))
+	if tx.owner.bulkStarted != nil {
+		select {
+		case tx.owner.bulkStarted <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func deploymentDefinitionArgumentBytes(args []any) int64 {
+	var total int64
+	for _, arg := range args {
+		switch value := arg.(type) {
+		case []pgtype.UUID:
+			total += int64(len(value) * 16)
+		case []string:
+			for _, item := range value {
+				total += int64(len(item))
+			}
+		case [][]byte:
+			for _, item := range value {
+				total += int64(len(item))
+			}
+		case pgtype.UUID:
+			total += 16
+		case int32:
+			total += 4
+		}
+	}
+	return total
+}
+
+func startDeploymentFinalizeHeapSampling() (uint64, func() uint64) {
+	runtime.GC()
+	var baseline runtime.MemStats
+	runtime.ReadMemStats(&baseline)
+	var peak atomic.Uint64
+	peak.Store(baseline.Alloc)
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				var current runtime.MemStats
+				runtime.ReadMemStats(&current)
+				for observed := peak.Load(); current.Alloc > observed && !peak.CompareAndSwap(observed, current.Alloc); observed = peak.Load() {
+				}
+			case <-stop:
+				return
+			}
+		}
+	}()
+	return baseline.Alloc, func() uint64 {
+		close(stop)
+		<-done
+		return peak.Load() - baseline.Alloc
+	}
+}
+
+var _ TxBeginner = (*deploymentFinalizeCountingBeginner)(nil)
 
 type deploymentFinalizeTrackingStore struct {
 	cas.UploadStore
