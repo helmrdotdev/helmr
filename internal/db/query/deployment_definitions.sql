@@ -1,4 +1,35 @@
--- name: CreateDeploymentDefinition :one
+-- name: CreateDeploymentDefinitions :execrows
+WITH input_definitions AS (
+    SELECT input_ids.id,
+           input_kinds.kind,
+           input_declared_ids.declared_id,
+           input_manifests.manifest,
+           input_manifest_digests.manifest_digest,
+           input_artifact_ids.artifact_id
+      FROM unnest(sqlc.arg(ids)::uuid[])
+           WITH ORDINALITY AS input_ids(id, position)
+      JOIN unnest(sqlc.arg(kinds)::text[])
+           WITH ORDINALITY AS input_kinds(kind, position)
+        ON input_kinds.position = input_ids.position
+      JOIN unnest(sqlc.arg(declared_ids)::text[])
+           WITH ORDINALITY AS input_declared_ids(declared_id, position)
+        ON input_declared_ids.position = input_ids.position
+      JOIN unnest(sqlc.arg(manifests)::jsonb[])
+           WITH ORDINALITY AS input_manifests(manifest, position)
+        ON input_manifests.position = input_ids.position
+      JOIN unnest(sqlc.arg(manifest_digests)::bytea[])
+           WITH ORDINALITY AS input_manifest_digests(manifest_digest, position)
+        ON input_manifest_digests.position = input_ids.position
+      JOIN unnest(sqlc.arg(artifact_ids)::uuid[])
+           WITH ORDINALITY AS input_artifact_ids(artifact_id, position)
+        ON input_artifact_ids.position = input_ids.position
+     WHERE cardinality(sqlc.arg(ids)::uuid[]) BETWEEN 0 AND 10000
+       AND cardinality(sqlc.arg(kinds)::text[]) = cardinality(sqlc.arg(ids)::uuid[])
+       AND cardinality(sqlc.arg(declared_ids)::text[]) = cardinality(sqlc.arg(ids)::uuid[])
+       AND cardinality(sqlc.arg(manifests)::jsonb[]) = cardinality(sqlc.arg(ids)::uuid[])
+       AND cardinality(sqlc.arg(manifest_digests)::bytea[]) = cardinality(sqlc.arg(ids)::uuid[])
+       AND cardinality(sqlc.arg(artifact_ids)::uuid[]) = cardinality(sqlc.arg(ids)::uuid[])
+)
 INSERT INTO deployment_definitions (
     id,
     environment_id,
@@ -9,18 +40,17 @@ INSERT INTO deployment_definitions (
     manifest,
     manifest_digest,
     artifact_id
-) VALUES (
-    sqlc.arg(id),
-    sqlc.arg(environment_id),
-    sqlc.arg(deployment_id),
-    sqlc.arg(kind),
-    sqlc.arg(declared_id),
-    sqlc.arg(manifest_version),
-    sqlc.arg(manifest),
-    sqlc.arg(manifest_digest),
-    sqlc.narg(artifact_id)
 )
-RETURNING *;
+SELECT input_definitions.id,
+       sqlc.arg(environment_id),
+       sqlc.arg(deployment_id),
+       input_definitions.kind,
+       input_definitions.declared_id,
+       sqlc.arg(manifest_version),
+       input_definitions.manifest,
+       input_definitions.manifest_digest,
+       input_definitions.artifact_id
+  FROM input_definitions;
 
 -- name: GetDeploymentDefinition :one
 SELECT deployment_definitions.*

@@ -106,7 +106,7 @@ type Querier interface {
 	CreateControlOutbox(ctx context.Context, arg CreateControlOutboxParams) (ControlOutbox, error)
 	CreateDeletionJob(ctx context.Context, arg CreateDeletionJobParams) (DeletionJob, error)
 	CreateDeployment(ctx context.Context, arg CreateDeploymentParams) (Deployment, error)
-	CreateDeploymentDefinition(ctx context.Context, arg CreateDeploymentDefinitionParams) (DeploymentDefinition, error)
+	CreateDeploymentDefinitions(ctx context.Context, arg CreateDeploymentDefinitionsParams) (int64, error)
 	CreateDeviceCode(ctx context.Context, arg CreateDeviceCodeParams) (DeviceCode, error)
 	CreateEnvironment(ctx context.Context, arg CreateEnvironmentParams) (Environment, error)
 	CreateIdempotencyClaim(ctx context.Context, arg CreateIdempotencyClaimParams) (IdempotencyClaim, error)

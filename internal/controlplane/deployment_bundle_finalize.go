@@ -710,22 +710,67 @@ func createFinalizedDeployment(
 	if err != nil {
 		return db.Deployment{}, fmt.Errorf("create deployment: %w", err)
 	}
-	for _, definition := range prepared.definitions {
-		var artifactID pgtype.UUID
-		if definition.artifact != nil {
-			artifactID = artifacts[definition.artifact.Digest].ID
-		}
-		if _, err := queries.CreateDeploymentDefinition(ctx, db.CreateDeploymentDefinitionParams{
-			ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: environmentID,
-			DeploymentID: record.ID, Kind: definition.kind, DeclaredID: definition.declaredID,
-			ManifestVersion: deployment.DeploymentPlanFormatVersion,
-			Manifest:        definition.manifest, ManifestDigest: definition.manifestDigest,
-			ArtifactID: artifactID,
-		}); err != nil {
-			return db.Deployment{}, fmt.Errorf("create deployment definition: %w", err)
-		}
+	if err := createFinalizedDeploymentDefinitions(
+		ctx, queries, environmentID, record.ID, prepared.definitions, artifacts,
+	); err != nil {
+		return db.Deployment{}, err
 	}
 	return record, nil
+}
+
+type deploymentDefinitionCreator interface {
+	CreateDeploymentDefinitions(context.Context, db.CreateDeploymentDefinitionsParams) (int64, error)
+}
+
+func createFinalizedDeploymentDefinitions(
+	ctx context.Context,
+	queries deploymentDefinitionCreator,
+	environmentID, deploymentID pgtype.UUID,
+	definitions []finalizedDeploymentDefinition,
+	artifacts map[string]db.Artifact,
+) error {
+	definitionCount := len(definitions)
+	definitionParams := db.CreateDeploymentDefinitionsParams{
+		Ids:             make([]pgtype.UUID, definitionCount),
+		Kinds:           make([]string, definitionCount),
+		DeclaredIds:     make([]string, definitionCount),
+		Manifests:       make([][]byte, definitionCount),
+		ManifestDigests: make([][]byte, definitionCount),
+		ArtifactIds:     make([]pgtype.UUID, definitionCount),
+		EnvironmentID:   environmentID,
+		DeploymentID:    deploymentID,
+		ManifestVersion: deployment.DeploymentPlanFormatVersion,
+	}
+	for index, definition := range definitions {
+		definitionParams.Ids[index] = pgvalue.UUID(uuid.NewV7())
+		definitionParams.Kinds[index] = definition.kind
+		definitionParams.DeclaredIds[index] = definition.declaredID
+		definitionParams.Manifests[index] = definition.manifest
+		definitionParams.ManifestDigests[index] = definition.manifestDigest
+		if definition.artifact == nil {
+			continue
+		}
+		artifact, ok := artifacts[definition.artifact.Digest]
+		if !ok {
+			return fmt.Errorf(
+				"create deployment definition: artifact %q is not registered",
+				definition.artifact.Digest,
+			)
+		}
+		definitionParams.ArtifactIds[index] = artifact.ID
+	}
+	inserted, err := queries.CreateDeploymentDefinitions(ctx, definitionParams)
+	if err != nil {
+		return fmt.Errorf("create deployment definition: %w", err)
+	}
+	if inserted != int64(definitionCount) {
+		return fmt.Errorf(
+			"create deployment definition: inserted %d of %d rows",
+			inserted,
+			definitionCount,
+		)
+	}
+	return nil
 }
 
 func completeDeploymentFinalization(

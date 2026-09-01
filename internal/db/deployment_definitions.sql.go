@@ -11,7 +11,38 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const createDeploymentDefinition = `-- name: CreateDeploymentDefinition :one
+const createDeploymentDefinitions = `-- name: CreateDeploymentDefinitions :execrows
+WITH input_definitions AS (
+    SELECT input_ids.id,
+           input_kinds.kind,
+           input_declared_ids.declared_id,
+           input_manifests.manifest,
+           input_manifest_digests.manifest_digest,
+           input_artifact_ids.artifact_id
+      FROM unnest($4::uuid[])
+           WITH ORDINALITY AS input_ids(id, position)
+      JOIN unnest($5::text[])
+           WITH ORDINALITY AS input_kinds(kind, position)
+        ON input_kinds.position = input_ids.position
+      JOIN unnest($6::text[])
+           WITH ORDINALITY AS input_declared_ids(declared_id, position)
+        ON input_declared_ids.position = input_ids.position
+      JOIN unnest($7::jsonb[])
+           WITH ORDINALITY AS input_manifests(manifest, position)
+        ON input_manifests.position = input_ids.position
+      JOIN unnest($8::bytea[])
+           WITH ORDINALITY AS input_manifest_digests(manifest_digest, position)
+        ON input_manifest_digests.position = input_ids.position
+      JOIN unnest($9::uuid[])
+           WITH ORDINALITY AS input_artifact_ids(artifact_id, position)
+        ON input_artifact_ids.position = input_ids.position
+     WHERE cardinality($4::uuid[]) BETWEEN 0 AND 10000
+       AND cardinality($5::text[]) = cardinality($4::uuid[])
+       AND cardinality($6::text[]) = cardinality($4::uuid[])
+       AND cardinality($7::jsonb[]) = cardinality($4::uuid[])
+       AND cardinality($8::bytea[]) = cardinality($4::uuid[])
+       AND cardinality($9::uuid[]) = cardinality($4::uuid[])
+)
 INSERT INTO deployment_definitions (
     id,
     environment_id,
@@ -22,58 +53,47 @@ INSERT INTO deployment_definitions (
     manifest,
     manifest_digest,
     artifact_id
-) VALUES (
-    $1,
-    $2,
-    $3,
-    $4,
-    $5,
-    $6,
-    $7,
-    $8,
-    $9
 )
-RETURNING id, environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest, artifact_id, created_at
+SELECT input_definitions.id,
+       $1,
+       $2,
+       input_definitions.kind,
+       input_definitions.declared_id,
+       $3,
+       input_definitions.manifest,
+       input_definitions.manifest_digest,
+       input_definitions.artifact_id
+  FROM input_definitions
 `
 
-type CreateDeploymentDefinitionParams struct {
-	ID              pgtype.UUID `json:"id"`
-	EnvironmentID   pgtype.UUID `json:"environment_id"`
-	DeploymentID    pgtype.UUID `json:"deployment_id"`
-	Kind            string      `json:"kind"`
-	DeclaredID      string      `json:"declared_id"`
-	ManifestVersion int32       `json:"manifest_version"`
-	Manifest        []byte      `json:"manifest"`
-	ManifestDigest  []byte      `json:"manifest_digest"`
-	ArtifactID      pgtype.UUID `json:"artifact_id"`
+type CreateDeploymentDefinitionsParams struct {
+	EnvironmentID   pgtype.UUID   `json:"environment_id"`
+	DeploymentID    pgtype.UUID   `json:"deployment_id"`
+	ManifestVersion int32         `json:"manifest_version"`
+	Ids             []pgtype.UUID `json:"ids"`
+	Kinds           []string      `json:"kinds"`
+	DeclaredIds     []string      `json:"declared_ids"`
+	Manifests       [][]byte      `json:"manifests"`
+	ManifestDigests [][]byte      `json:"manifest_digests"`
+	ArtifactIds     []pgtype.UUID `json:"artifact_ids"`
 }
 
-func (q *Queries) CreateDeploymentDefinition(ctx context.Context, arg CreateDeploymentDefinitionParams) (DeploymentDefinition, error) {
-	row := q.db.QueryRow(ctx, createDeploymentDefinition,
-		arg.ID,
+func (q *Queries) CreateDeploymentDefinitions(ctx context.Context, arg CreateDeploymentDefinitionsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, createDeploymentDefinitions,
 		arg.EnvironmentID,
 		arg.DeploymentID,
-		arg.Kind,
-		arg.DeclaredID,
 		arg.ManifestVersion,
-		arg.Manifest,
-		arg.ManifestDigest,
-		arg.ArtifactID,
+		arg.Ids,
+		arg.Kinds,
+		arg.DeclaredIds,
+		arg.Manifests,
+		arg.ManifestDigests,
+		arg.ArtifactIds,
 	)
-	var i DeploymentDefinition
-	err := row.Scan(
-		&i.ID,
-		&i.EnvironmentID,
-		&i.DeploymentID,
-		&i.Kind,
-		&i.DeclaredID,
-		&i.ManifestVersion,
-		&i.Manifest,
-		&i.ManifestDigest,
-		&i.ArtifactID,
-		&i.CreatedAt,
-	)
-	return i, err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getDefinitionSnapshot = `-- name: GetDefinitionSnapshot :one
