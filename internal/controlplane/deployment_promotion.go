@@ -24,7 +24,7 @@ type scheduleReconciliation struct {
 	manifest   deployment.ScheduleManifest
 	placements []workspace.SecretPlacement
 	nextFireAt time.Time
-	record     db.ReconcileScheduleRow
+	record     db.ReconcileSchedulesRow
 }
 
 func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
@@ -167,37 +167,13 @@ func reconcileSchedules(
 	sort.Slice(plans, func(i, j int) bool {
 		return plans[i].definition.DeclaredID < plans[j].definition.DeclaredID
 	})
-	scheduledIDs := make([]string, 0, len(plans))
-	for i := range plans {
-		plan := &plans[i]
-		scheduledIDs = append(scheduledIDs, plan.definition.DeclaredID)
-		record, err := store.ReconcileSchedule(ctx, db.ReconcileScheduleParams{
-			ID:                     pgvalue.UUID(uuid.NewV7()),
-			EnvironmentID:          target.EnvironmentID,
-			TaskDeclaredID:         plan.definition.DeclaredID,
-			DeploymentDefinitionID: plan.definition.ID,
-			DeploymentID:           target.ID,
-			CronPattern:            plan.manifest.Cron,
-			Timezone:               plan.manifest.Timezone,
-			CronSemanticsVersion:   schedule.CronSemanticsVersion,
-			State:                  "active",
-			EffectiveFrom:          pgvalue.Timestamptz(effectiveFrom),
-			NextFireAt:             pgvalue.Timestamptz(plan.nextFireAt),
-		})
-		if err != nil {
-			return fmt.Errorf("reconcile schedule %q: %w", plan.definition.DeclaredID, err)
+	for index := 1; index < len(plans); index++ {
+		if plans[index-1].definition.DeclaredID == plans[index].definition.DeclaredID {
+			return badRequest(fmt.Errorf(
+				"duplicate scheduled task %q",
+				plans[index].definition.DeclaredID,
+			))
 		}
-		plan.record = record
-	}
-	if err := store.ArchiveOmittedSchedules(
-		ctx,
-		db.ArchiveOmittedSchedulesParams{
-			EffectiveFrom:   pgvalue.Timestamptz(effectiveFrom),
-			EnvironmentID:   target.EnvironmentID,
-			TaskDeclaredIds: scheduledIDs,
-		},
-	); err != nil {
-		return fmt.Errorf("archive omitted schedules: %w", err)
 	}
 	secretIDs := make(map[string]pgtype.UUID)
 	for _, plan := range plans {
@@ -230,24 +206,94 @@ func reconcileSchedules(
 			}
 		}
 	}
-	for _, plan := range plans {
-		if err := store.DeleteScheduleSecrets(ctx, db.DeleteScheduleSecretsParams{
-			EnvironmentID: target.EnvironmentID,
-			ScheduleID:    plan.record.ID,
-		}); err != nil {
-			return fmt.Errorf("replace schedule %q Secret selection: %w", plan.definition.DeclaredID, err)
+	scheduledIDs := make([]string, 0, len(plans))
+	if len(plans) > 0 {
+		params := db.ReconcileSchedulesParams{
+			Ids:                     make([]pgtype.UUID, len(plans)),
+			TaskDeclaredIds:         make([]string, len(plans)),
+			DeploymentDefinitionIds: make([]pgtype.UUID, len(plans)),
+			DeploymentIds:           make([]pgtype.UUID, len(plans)),
+			CronPatterns:            make([]string, len(plans)),
+			Timezones:               make([]string, len(plans)),
+			EffectiveFroms:          make([]pgtype.Timestamptz, len(plans)),
+			NextFireAts:             make([]pgtype.Timestamptz, len(plans)),
+			EnvironmentID:           target.EnvironmentID,
+			CronSemanticsVersion:    schedule.CronSemanticsVersion,
 		}
-		for _, placement := range plan.placements {
-			if _, err := store.CreateScheduleSecret(ctx, db.CreateScheduleSecretParams{
-				ScheduleID:      plan.record.ID,
-				EnvironmentID:   target.EnvironmentID,
-				PlacementKind:   placement.Kind,
-				PlacementTarget: placement.Target,
-				SecretID:        secretIDs[placement.Name],
-			}); err != nil {
-				return fmt.Errorf("install schedule %q Secret selection: %w", plan.definition.DeclaredID, err)
+		for index := range plans {
+			plan := &plans[index]
+			params.Ids[index] = pgvalue.UUID(uuid.NewV7())
+			params.TaskDeclaredIds[index] = plan.definition.DeclaredID
+			params.DeploymentDefinitionIds[index] = plan.definition.ID
+			params.DeploymentIds[index] = target.ID
+			params.CronPatterns[index] = plan.manifest.Cron
+			params.Timezones[index] = plan.manifest.Timezone
+			params.EffectiveFroms[index] = pgvalue.Timestamptz(effectiveFrom)
+			params.NextFireAts[index] = pgvalue.Timestamptz(plan.nextFireAt)
+		}
+		records, err := store.ReconcileSchedules(ctx, params)
+		if err != nil {
+			return fmt.Errorf("reconcile schedules: %w", err)
+		}
+		if len(records) != len(plans) {
+			return fmt.Errorf("reconcile schedules: returned %d rows for %d inputs", len(records), len(plans))
+		}
+		for index := range records {
+			if records[index].TaskDeclaredID != plans[index].definition.DeclaredID {
+				return fmt.Errorf(
+					"reconcile schedules: row %d is task %q, expected %q",
+					index, records[index].TaskDeclaredID, plans[index].definition.DeclaredID,
+				)
 			}
+			plans[index].record = records[index]
 		}
+	}
+	for i := range plans {
+		plan := &plans[i]
+		scheduledIDs = append(scheduledIDs, plan.definition.DeclaredID)
+	}
+	if err := store.ArchiveOmittedSchedules(
+		ctx,
+		db.ArchiveOmittedSchedulesParams{
+			EffectiveFrom:   pgvalue.Timestamptz(effectiveFrom),
+			EnvironmentID:   target.EnvironmentID,
+			TaskDeclaredIds: scheduledIDs,
+		},
+	); err != nil {
+		return fmt.Errorf("archive omitted schedules: %w", err)
+	}
+	if len(plans) == 0 {
+		return nil
+	}
+	deletion := db.DeleteScheduleSecretsForSchedulesParams{
+		ScheduleIds:   make([]pgtype.UUID, len(plans)),
+		EnvironmentID: target.EnvironmentID,
+	}
+	insertion := db.InsertScheduleSecretsParams{
+		ScheduleIds:   deletion.ScheduleIds,
+		EnvironmentID: target.EnvironmentID,
+	}
+	for index, plan := range plans {
+		deletion.ScheduleIds[index] = plan.record.ID
+		for _, placement := range plan.placements {
+			insertion.PlacementScheduleIds = append(insertion.PlacementScheduleIds, plan.record.ID)
+			insertion.PlacementKinds = append(insertion.PlacementKinds, placement.Kind)
+			insertion.PlacementTargets = append(insertion.PlacementTargets, placement.Target)
+			insertion.SecretIds = append(insertion.SecretIds, secretIDs[placement.Name])
+		}
+	}
+	if err := store.DeleteScheduleSecretsForSchedules(ctx, deletion); err != nil {
+		return fmt.Errorf("delete schedule Secret selections: %w", err)
+	}
+	inserted, err := store.InsertScheduleSecrets(ctx, insertion)
+	if err != nil {
+		return fmt.Errorf("insert schedule Secret selections: %w", err)
+	}
+	if inserted != int64(len(insertion.PlacementScheduleIds)) {
+		return fmt.Errorf(
+			"insert schedule Secret selections: installed %d of %d placements",
+			inserted, len(insertion.PlacementScheduleIds),
+		)
 	}
 	return nil
 }

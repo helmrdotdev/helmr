@@ -93,7 +93,7 @@ WHERE environment_id = sqlc.arg(environment_id)
   AND state = 'active'
   AND current_version_id IS NOT NULL
 ORDER BY secrets.id
-FOR UPDATE;
+FOR NO KEY UPDATE;
 
 -- name: GetSecretSnapshotByName :one
 SELECT

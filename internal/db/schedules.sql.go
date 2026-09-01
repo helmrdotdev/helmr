@@ -185,52 +185,6 @@ func (q *Queries) ClaimDueSchedules(ctx context.Context, arg ClaimDueSchedulesPa
 	return items, nil
 }
 
-const createScheduleSecret = `-- name: CreateScheduleSecret :one
-INSERT INTO schedule_secrets (
-    schedule_id,
-    environment_id,
-    placement_kind,
-    placement_target,
-    secret_id
-)
-VALUES (
-    $1,
-    $2,
-    $3,
-    $4,
-    $5
-)
-RETURNING schedule_id, environment_id, placement_kind, placement_target, secret_id, created_at
-`
-
-type CreateScheduleSecretParams struct {
-	ScheduleID      pgtype.UUID `json:"schedule_id"`
-	EnvironmentID   pgtype.UUID `json:"environment_id"`
-	PlacementKind   string      `json:"placement_kind"`
-	PlacementTarget string      `json:"placement_target"`
-	SecretID        pgtype.UUID `json:"secret_id"`
-}
-
-func (q *Queries) CreateScheduleSecret(ctx context.Context, arg CreateScheduleSecretParams) (ScheduleSecret, error) {
-	row := q.db.QueryRow(ctx, createScheduleSecret,
-		arg.ScheduleID,
-		arg.EnvironmentID,
-		arg.PlacementKind,
-		arg.PlacementTarget,
-		arg.SecretID,
-	)
-	var i ScheduleSecret
-	err := row.Scan(
-		&i.ScheduleID,
-		&i.EnvironmentID,
-		&i.PlacementKind,
-		&i.PlacementTarget,
-		&i.SecretID,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const createWorkspaceForScheduleFire = `-- name: CreateWorkspaceForScheduleFire :one
 WITH selected_definition AS (
     SELECT schedules.environment_id,
@@ -368,19 +322,19 @@ func (q *Queries) CreateWorkspaceForScheduleFire(ctx context.Context, arg Create
 	return i, err
 }
 
-const deleteScheduleSecrets = `-- name: DeleteScheduleSecrets :exec
+const deleteScheduleSecretsForSchedules = `-- name: DeleteScheduleSecretsForSchedules :exec
 DELETE FROM schedule_secrets
  WHERE environment_id = $1
-   AND schedule_id = $2
+   AND schedule_id = ANY($2::uuid[])
 `
 
-type DeleteScheduleSecretsParams struct {
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	ScheduleID    pgtype.UUID `json:"schedule_id"`
+type DeleteScheduleSecretsForSchedulesParams struct {
+	EnvironmentID pgtype.UUID   `json:"environment_id"`
+	ScheduleIds   []pgtype.UUID `json:"schedule_ids"`
 }
 
-func (q *Queries) DeleteScheduleSecrets(ctx context.Context, arg DeleteScheduleSecretsParams) error {
-	_, err := q.db.Exec(ctx, deleteScheduleSecrets, arg.EnvironmentID, arg.ScheduleID)
+func (q *Queries) DeleteScheduleSecretsForSchedules(ctx context.Context, arg DeleteScheduleSecretsForSchedulesParams) error {
+	_, err := q.db.Exec(ctx, deleteScheduleSecretsForSchedules, arg.EnvironmentID, arg.ScheduleIds)
 	return err
 }
 
@@ -552,6 +506,71 @@ func (q *Queries) GetScheduledRunReceipt(ctx context.Context, arg GetScheduledRu
 		&i.TerminalAt,
 	)
 	return i, err
+}
+
+const insertScheduleSecrets = `-- name: InsertScheduleSecrets :execrows
+WITH valid AS (
+SELECT true AS ok
+ WHERE cardinality($2::uuid[]) BETWEEN 1 AND 10000
+   AND cardinality($3::uuid[]) <= 640000
+   AND cardinality($3::uuid[]) = cardinality($4::text[])
+   AND cardinality($3::uuid[]) = cardinality($5::text[])
+   AND cardinality($3::uuid[]) = cardinality($6::uuid[])
+   AND NOT EXISTS (
+       SELECT 1
+         FROM unnest($3::uuid[]) AS placement_schedule_id
+        WHERE NOT (placement_schedule_id = ANY($2::uuid[]))
+   )
+), input AS (
+SELECT batch.schedule_id,
+       batch.placement_kind,
+       batch.placement_target,
+       batch.secret_id
+  FROM ROWS FROM (
+      unnest($3::uuid[]),
+      unnest($4::text[]),
+      unnest($5::text[]),
+      unnest($6::uuid[])
+  ) AS batch(schedule_id, placement_kind, placement_target, secret_id)
+  JOIN valid ON true
+)
+INSERT INTO schedule_secrets (
+    schedule_id,
+    environment_id,
+    placement_kind,
+    placement_target,
+    secret_id
+)
+SELECT input.schedule_id,
+       $1,
+       input.placement_kind,
+       input.placement_target,
+       input.secret_id
+  FROM input
+`
+
+type InsertScheduleSecretsParams struct {
+	EnvironmentID        pgtype.UUID   `json:"environment_id"`
+	ScheduleIds          []pgtype.UUID `json:"schedule_ids"`
+	PlacementScheduleIds []pgtype.UUID `json:"placement_schedule_ids"`
+	PlacementKinds       []string      `json:"placement_kinds"`
+	PlacementTargets     []string      `json:"placement_targets"`
+	SecretIds            []pgtype.UUID `json:"secret_ids"`
+}
+
+func (q *Queries) InsertScheduleSecrets(ctx context.Context, arg InsertScheduleSecretsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertScheduleSecrets,
+		arg.EnvironmentID,
+		arg.ScheduleIds,
+		arg.PlacementScheduleIds,
+		arg.PlacementKinds,
+		arg.PlacementTargets,
+		arg.SecretIds,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const listScheduleSecrets = `-- name: ListScheduleSecrets :many
@@ -879,8 +898,46 @@ func (q *Queries) MarkScheduleAdmissionRetryable(ctx context.Context, arg MarkSc
 	return i, err
 }
 
-const reconcileSchedule = `-- name: ReconcileSchedule :one
-WITH reconciled AS (
+const reconcileSchedules = `-- name: ReconcileSchedules :many
+WITH input AS (
+SELECT batch.id,
+       batch.task_declared_id,
+       batch.deployment_definition_id,
+       batch.deployment_id,
+       batch.cron_pattern,
+       batch.timezone,
+       batch.effective_from,
+       batch.next_fire_at,
+       batch.ordinality
+  FROM ROWS FROM (
+      unnest($1::uuid[]),
+      unnest($2::text[]),
+      unnest($3::uuid[]),
+      unnest($4::uuid[]),
+      unnest($5::text[]),
+      unnest($6::text[]),
+      unnest($7::timestamptz[]),
+      unnest($8::timestamptz[])
+  ) WITH ORDINALITY AS batch(
+      id,
+      task_declared_id,
+      deployment_definition_id,
+      deployment_id,
+      cron_pattern,
+      timezone,
+      effective_from,
+      next_fire_at,
+      ordinality
+  )
+ WHERE cardinality($1::uuid[]) BETWEEN 1 AND 10000
+   AND cardinality($1::uuid[]) = cardinality($2::text[])
+   AND cardinality($1::uuid[]) = cardinality($3::uuid[])
+   AND cardinality($1::uuid[]) = cardinality($4::uuid[])
+   AND cardinality($1::uuid[]) = cardinality($5::text[])
+   AND cardinality($1::uuid[]) = cardinality($6::text[])
+   AND cardinality($1::uuid[]) = cardinality($7::timestamptz[])
+   AND cardinality($1::uuid[]) = cardinality($8::timestamptz[])
+), reconciled AS (
 INSERT INTO schedules (
     id,
     environment_id,
@@ -894,19 +951,18 @@ INSERT INTO schedules (
     effective_from,
     next_fire_at
 )
-VALUES (
-    $1,
-    $2,
-    $3,
-    $4,
-    $5,
-    $6,
-    $7,
-    $8,
-    $9,
-    $10,
-    $11
-)
+SELECT input.id,
+       $9,
+       input.task_declared_id,
+       input.deployment_definition_id,
+       input.deployment_id,
+       input.cron_pattern,
+       input.timezone,
+       $10,
+       'active',
+       input.effective_from,
+       input.next_fire_at
+  FROM input
 ON CONFLICT (environment_id, task_declared_id)
 DO UPDATE
    SET deployment_definition_id = excluded.deployment_definition_id,
@@ -930,98 +986,87 @@ DO UPDATE
     OR schedules.cron_pattern IS DISTINCT FROM excluded.cron_pattern
     OR schedules.timezone IS DISTINCT FROM excluded.timezone
     OR schedules.cron_semantics_version IS DISTINCT FROM excluded.cron_semantics_version
-RETURNING id, environment_id, target_kind, task_declared_id, deployment_definition_id, deployment_id, cron_pattern, timezone, cron_semantics_version, generation, state, state_version, effective_from, next_fire_at, last_fire_at, claimed_by, claim_expires_at, retry_step, retry_after, last_failure, created_at, updated_at
+RETURNING schedules.id, schedules.environment_id, schedules.task_declared_id
 ), existing AS (
-SELECT schedules.id, schedules.environment_id, schedules.target_kind, schedules.task_declared_id, schedules.deployment_definition_id, schedules.deployment_id, schedules.cron_pattern, schedules.timezone, schedules.cron_semantics_version, schedules.generation, schedules.state, schedules.state_version, schedules.effective_from, schedules.next_fire_at, schedules.last_fire_at, schedules.claimed_by, schedules.claim_expires_at, schedules.retry_step, schedules.retry_after, schedules.last_failure, schedules.created_at, schedules.updated_at
-  FROM schedules
- WHERE environment_id = $2
-   AND task_declared_id = $3
-   AND NOT EXISTS (SELECT 1 FROM reconciled)
- FOR UPDATE
-)
-SELECT id, environment_id, target_kind, task_declared_id, deployment_definition_id, deployment_id, cron_pattern, timezone, cron_semantics_version, generation, state, state_version, effective_from, next_fire_at, last_fire_at, claimed_by, claim_expires_at, retry_step, retry_after, last_failure, created_at, updated_at FROM reconciled
+SELECT schedules.id,
+       schedules.environment_id,
+       schedules.task_declared_id,
+       input.ordinality
+  FROM input
+  JOIN schedules
+    ON schedules.environment_id = $9
+   AND schedules.task_declared_id = input.task_declared_id
+ WHERE NOT EXISTS (
+       SELECT 1
+         FROM reconciled
+        WHERE reconciled.task_declared_id = input.task_declared_id
+   )
+ FOR UPDATE OF schedules
+), result AS (
+SELECT reconciled.id,
+       reconciled.environment_id,
+       reconciled.task_declared_id,
+       input.ordinality
+  FROM reconciled
+  JOIN input USING (task_declared_id)
 UNION ALL
-SELECT id, environment_id, target_kind, task_declared_id, deployment_definition_id, deployment_id, cron_pattern, timezone, cron_semantics_version, generation, state, state_version, effective_from, next_fire_at, last_fire_at, claimed_by, claim_expires_at, retry_step, retry_after, last_failure, created_at, updated_at FROM existing
-LIMIT 1
+SELECT existing.id,
+       existing.environment_id,
+       existing.task_declared_id,
+       existing.ordinality
+  FROM existing
+)
+SELECT id, environment_id, task_declared_id
+  FROM result
+ ORDER BY ordinality
 `
 
-type ReconcileScheduleParams struct {
-	ID                     pgtype.UUID        `json:"id"`
-	EnvironmentID          pgtype.UUID        `json:"environment_id"`
-	TaskDeclaredID         string             `json:"task_declared_id"`
-	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
-	DeploymentID           pgtype.UUID        `json:"deployment_id"`
-	CronPattern            string             `json:"cron_pattern"`
-	Timezone               string             `json:"timezone"`
-	CronSemanticsVersion   string             `json:"cron_semantics_version"`
-	State                  string             `json:"state"`
-	EffectiveFrom          pgtype.Timestamptz `json:"effective_from"`
-	NextFireAt             pgtype.Timestamptz `json:"next_fire_at"`
+type ReconcileSchedulesParams struct {
+	Ids                     []pgtype.UUID        `json:"ids"`
+	TaskDeclaredIds         []string             `json:"task_declared_ids"`
+	DeploymentDefinitionIds []pgtype.UUID        `json:"deployment_definition_ids"`
+	DeploymentIds           []pgtype.UUID        `json:"deployment_ids"`
+	CronPatterns            []string             `json:"cron_patterns"`
+	Timezones               []string             `json:"timezones"`
+	EffectiveFroms          []pgtype.Timestamptz `json:"effective_froms"`
+	NextFireAts             []pgtype.Timestamptz `json:"next_fire_ats"`
+	EnvironmentID           pgtype.UUID          `json:"environment_id"`
+	CronSemanticsVersion    string               `json:"cron_semantics_version"`
 }
 
-type ReconcileScheduleRow struct {
-	ID                     pgtype.UUID        `json:"id"`
-	EnvironmentID          pgtype.UUID        `json:"environment_id"`
-	TargetKind             string             `json:"target_kind"`
-	TaskDeclaredID         string             `json:"task_declared_id"`
-	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
-	DeploymentID           pgtype.UUID        `json:"deployment_id"`
-	CronPattern            string             `json:"cron_pattern"`
-	Timezone               string             `json:"timezone"`
-	CronSemanticsVersion   string             `json:"cron_semantics_version"`
-	Generation             int64              `json:"generation"`
-	State                  string             `json:"state"`
-	StateVersion           int64              `json:"state_version"`
-	EffectiveFrom          pgtype.Timestamptz `json:"effective_from"`
-	NextFireAt             pgtype.Timestamptz `json:"next_fire_at"`
-	LastFireAt             pgtype.Timestamptz `json:"last_fire_at"`
-	ClaimedBy              pgtype.Text        `json:"claimed_by"`
-	ClaimExpiresAt         pgtype.Timestamptz `json:"claim_expires_at"`
-	RetryStep              pgtype.Int2        `json:"retry_step"`
-	RetryAfter             pgtype.Timestamptz `json:"retry_after"`
-	LastFailure            []byte             `json:"last_failure"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+type ReconcileSchedulesRow struct {
+	ID             pgtype.UUID `json:"id"`
+	EnvironmentID  pgtype.UUID `json:"environment_id"`
+	TaskDeclaredID string      `json:"task_declared_id"`
 }
 
-func (q *Queries) ReconcileSchedule(ctx context.Context, arg ReconcileScheduleParams) (ReconcileScheduleRow, error) {
-	row := q.db.QueryRow(ctx, reconcileSchedule,
-		arg.ID,
+func (q *Queries) ReconcileSchedules(ctx context.Context, arg ReconcileSchedulesParams) ([]ReconcileSchedulesRow, error) {
+	rows, err := q.db.Query(ctx, reconcileSchedules,
+		arg.Ids,
+		arg.TaskDeclaredIds,
+		arg.DeploymentDefinitionIds,
+		arg.DeploymentIds,
+		arg.CronPatterns,
+		arg.Timezones,
+		arg.EffectiveFroms,
+		arg.NextFireAts,
 		arg.EnvironmentID,
-		arg.TaskDeclaredID,
-		arg.DeploymentDefinitionID,
-		arg.DeploymentID,
-		arg.CronPattern,
-		arg.Timezone,
 		arg.CronSemanticsVersion,
-		arg.State,
-		arg.EffectiveFrom,
-		arg.NextFireAt,
 	)
-	var i ReconcileScheduleRow
-	err := row.Scan(
-		&i.ID,
-		&i.EnvironmentID,
-		&i.TargetKind,
-		&i.TaskDeclaredID,
-		&i.DeploymentDefinitionID,
-		&i.DeploymentID,
-		&i.CronPattern,
-		&i.Timezone,
-		&i.CronSemanticsVersion,
-		&i.Generation,
-		&i.State,
-		&i.StateVersion,
-		&i.EffectiveFrom,
-		&i.NextFireAt,
-		&i.LastFireAt,
-		&i.ClaimedBy,
-		&i.ClaimExpiresAt,
-		&i.RetryStep,
-		&i.RetryAfter,
-		&i.LastFailure,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ReconcileSchedulesRow
+	for rows.Next() {
+		var i ReconcileSchedulesRow
+		if err := rows.Scan(&i.ID, &i.EnvironmentID, &i.TaskDeclaredID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

@@ -755,7 +755,7 @@ WHERE environment_id = $1
   AND state = 'active'
   AND current_version_id IS NOT NULL
 ORDER BY secrets.id
-FOR UPDATE
+FOR NO KEY UPDATE
 `
 
 type LockActiveSecretsByNameForWorkspaceCreateParams struct {

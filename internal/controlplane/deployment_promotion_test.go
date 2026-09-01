@@ -44,19 +44,19 @@ func TestReconcileSchedulesPinsPerFireWorkspaceAuthority(t *testing.T) {
 		t.Fatalf("reconciled = %d, want 1", len(store.reconciled))
 	}
 	got := store.reconciled[0]
-	if got.TaskDeclaredID != "daily-report" ||
-		got.DeploymentID != target.ID ||
-		got.DeploymentDefinitionID != scheduled.ID ||
-		got.State != "active" ||
-		!got.NextFireAt.Valid ||
-		!got.NextFireAt.Time.Equal(time.Date(2026, 7, 24, 9, 0, 0, 0, time.UTC)) {
+	if len(got.TaskDeclaredIds) != 1 || got.TaskDeclaredIds[0] != "daily-report" ||
+		got.DeploymentIds[0] != target.ID ||
+		got.DeploymentDefinitionIds[0] != scheduled.ID ||
+		!got.NextFireAts[0].Valid ||
+		!got.NextFireAts[0].Time.Equal(time.Date(2026, 7, 24, 9, 0, 0, 0, time.UTC)) {
 		t.Fatalf("reconciled Schedule = %+v", got)
 	}
-	if len(store.createdSecrets) != 1 ||
-		store.createdSecrets[0].PlacementKind != "env" ||
-		store.createdSecrets[0].PlacementTarget != "REPORT_TOKEN" ||
-		store.createdSecrets[0].SecretID != secretID {
-		t.Fatalf("Schedule Secret selection = %+v", store.createdSecrets)
+	if len(store.deletedSecrets) != 1 || len(store.insertedSecrets) != 1 ||
+		len(store.insertedSecrets[0].PlacementKinds) != 1 ||
+		store.insertedSecrets[0].PlacementKinds[0] != "env" ||
+		store.insertedSecrets[0].PlacementTargets[0] != "REPORT_TOKEN" ||
+		store.insertedSecrets[0].SecretIds[0] != secretID {
+		t.Fatalf("Schedule Secret deletion/insertion = %+v/%+v", store.deletedSecrets, store.insertedSecrets)
 	}
 	if len(store.archived) != 1 ||
 		len(store.archived[0].TaskDeclaredIds) != 1 ||
@@ -86,7 +86,30 @@ func TestReconcileSchedulesRejectsMissingSandboxBeforeMutation(t *testing.T) {
 	}
 }
 
-func TestReconcileSchedulesLocksSchedulesBeforeSecrets(t *testing.T) {
+func TestReconcileSchedulesRejectsDuplicateTasksBeforeMutation(t *testing.T) {
+	target := promotionTestDeployment()
+	sandbox := promotionSandboxDefinition(target, "runtime")
+	first := promotionTaskDefinition(
+		t, target, "daily-report",
+		`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * *","timezone":"UTC","workspace":{"sandboxId":"runtime","secrets":[]}}}`,
+	)
+	second := first
+	second.ID = pgvalue.UUID(uuid.NewV7())
+	store := &promotionScheduleStore{
+		definitions: []db.DeploymentDefinition{first, second, sandbox},
+	}
+
+	err := reconcileSchedules(t.Context(), store, target, time.Now().UTC())
+	if err == nil || len(store.events) != 0 {
+		t.Fatalf("reconcile error = %v, mutation events = %v", err, store.events)
+	}
+	var statusError apiError
+	if !errors.As(err, &statusError) || statusError.kind != errBadRequest {
+		t.Fatalf("error = %v, want bad request", err)
+	}
+}
+
+func TestReconcileSchedulesLocksSecretsBeforeMutation(t *testing.T) {
 	target := promotionTestDeployment()
 	sandbox := promotionSandboxDefinition(target, "runtime")
 	store := &promotionScheduleStore{
@@ -105,10 +128,11 @@ func TestReconcileSchedulesLocksSchedulesBeforeSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantPrefix := []string{
-		"reconcile:a-task",
-		"reconcile:z-task",
-		"archive",
 		"secrets",
+		"reconcile",
+		"archive",
+		"delete-secrets",
+		"insert-secrets",
 	}
 	if len(store.events) < len(wantPrefix) {
 		t.Fatalf("events = %v, want prefix %v", store.events, wantPrefix)
@@ -197,13 +221,14 @@ func promotionSandboxDefinition(target db.Deployment, declaredID string) db.Depl
 
 type promotionScheduleStore struct {
 	db.Querier
-	definitions    []db.DeploymentDefinition
-	secrets        map[string]db.Secret
-	reconciled     []db.ReconcileScheduleParams
-	createdSecrets []db.CreateScheduleSecretParams
-	archived       []db.ArchiveOmittedSchedulesParams
-	events         []string
-	lockedNames    []string
+	definitions     []db.DeploymentDefinition
+	secrets         map[string]db.Secret
+	reconciled      []db.ReconcileSchedulesParams
+	deletedSecrets  []db.DeleteScheduleSecretsForSchedulesParams
+	insertedSecrets []db.InsertScheduleSecretsParams
+	archived        []db.ArchiveOmittedSchedulesParams
+	events          []string
+	lockedNames     []string
 }
 
 func (s *promotionScheduleStore) ListDeploymentDefinitionsForDeployment(
@@ -213,13 +238,20 @@ func (s *promotionScheduleStore) ListDeploymentDefinitionsForDeployment(
 	return s.definitions, nil
 }
 
-func (s *promotionScheduleStore) ReconcileSchedule(
+func (s *promotionScheduleStore) ReconcileSchedules(
 	_ context.Context,
-	params db.ReconcileScheduleParams,
-) (db.ReconcileScheduleRow, error) {
+	params db.ReconcileSchedulesParams,
+) ([]db.ReconcileSchedulesRow, error) {
 	s.reconciled = append(s.reconciled, params)
-	s.events = append(s.events, "reconcile:"+params.TaskDeclaredID)
-	return db.ReconcileScheduleRow{ID: params.ID, EnvironmentID: params.EnvironmentID}, nil
+	s.events = append(s.events, "reconcile")
+	rows := make([]db.ReconcileSchedulesRow, len(params.Ids))
+	for index := range rows {
+		rows[index] = db.ReconcileSchedulesRow{
+			ID: params.Ids[index], EnvironmentID: params.EnvironmentID,
+			TaskDeclaredID: params.TaskDeclaredIds[index],
+		}
+	}
+	return rows, nil
 }
 
 func (s *promotionScheduleStore) LockActiveSecretsByNameForWorkspaceCreate(
@@ -239,19 +271,22 @@ func (s *promotionScheduleStore) LockActiveSecretsByNameForWorkspaceCreate(
 	return secrets, nil
 }
 
-func (s *promotionScheduleStore) DeleteScheduleSecrets(
-	context.Context,
-	db.DeleteScheduleSecretsParams,
+func (s *promotionScheduleStore) DeleteScheduleSecretsForSchedules(
+	_ context.Context,
+	params db.DeleteScheduleSecretsForSchedulesParams,
 ) error {
+	s.events = append(s.events, "delete-secrets")
+	s.deletedSecrets = append(s.deletedSecrets, params)
 	return nil
 }
 
-func (s *promotionScheduleStore) CreateScheduleSecret(
+func (s *promotionScheduleStore) InsertScheduleSecrets(
 	_ context.Context,
-	params db.CreateScheduleSecretParams,
-) (db.ScheduleSecret, error) {
-	s.createdSecrets = append(s.createdSecrets, params)
-	return db.ScheduleSecret{}, nil
+	params db.InsertScheduleSecretsParams,
+) (int64, error) {
+	s.events = append(s.events, "insert-secrets")
+	s.insertedSecrets = append(s.insertedSecrets, params)
+	return int64(len(params.PlacementScheduleIds)), nil
 }
 
 func (s *promotionScheduleStore) ArchiveOmittedSchedules(

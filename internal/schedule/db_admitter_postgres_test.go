@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workspace"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -100,18 +101,17 @@ func TestReconcileScheduleLocksAnUnchangedSchedule(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(t.Context())
-	if _, err := db.New(tx).ReconcileSchedule(t.Context(), db.ReconcileScheduleParams{
-		ID:                     pgvalue.UUID(uuid.NewV7()),
-		EnvironmentID:          value.EnvironmentID,
-		TaskDeclaredID:         value.TaskDeclaredID,
-		DeploymentDefinitionID: value.DeploymentDefinitionID,
-		DeploymentID:           value.DeploymentID,
-		CronPattern:            value.CronPattern,
-		Timezone:               value.Timezone,
-		CronSemanticsVersion:   value.CronSemanticsVersion,
-		State:                  value.State,
-		EffectiveFrom:          value.EffectiveFrom,
-		NextFireAt:             value.NextFireAt,
+	if _, err := db.New(tx).ReconcileSchedules(t.Context(), db.ReconcileSchedulesParams{
+		Ids:                     []pgtype.UUID{pgvalue.UUID(uuid.NewV7())},
+		TaskDeclaredIds:         []string{value.TaskDeclaredID},
+		DeploymentDefinitionIds: []pgtype.UUID{value.DeploymentDefinitionID},
+		DeploymentIds:           []pgtype.UUID{value.DeploymentID},
+		CronPatterns:            []string{value.CronPattern},
+		Timezones:               []string{value.Timezone},
+		EffectiveFroms:          []pgtype.Timestamptz{value.EffectiveFrom},
+		NextFireAts:             []pgtype.Timestamptz{value.NextFireAt},
+		EnvironmentID:           value.EnvironmentID,
+		CronSemanticsVersion:    value.CronSemanticsVersion,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -231,18 +231,17 @@ func TestReconcileScheduleDoesNotReviveErroredAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.ReconcileSchedule(t.Context(), db.ReconcileScheduleParams{
-		ID:                     pgvalue.UUID(uuid.NewV7()),
-		EnvironmentID:          before.EnvironmentID,
-		TaskDeclaredID:         before.TaskDeclaredID,
-		DeploymentDefinitionID: before.DeploymentDefinitionID,
-		DeploymentID:           before.DeploymentID,
-		CronPattern:            before.CronPattern,
-		Timezone:               before.Timezone,
-		CronSemanticsVersion:   before.CronSemanticsVersion,
-		State:                  "active",
-		EffectiveFrom:          before.EffectiveFrom,
-		NextFireAt:             before.NextFireAt,
+	if _, err := queries.ReconcileSchedules(t.Context(), db.ReconcileSchedulesParams{
+		Ids:                     []pgtype.UUID{pgvalue.UUID(uuid.NewV7())},
+		TaskDeclaredIds:         []string{before.TaskDeclaredID},
+		DeploymentDefinitionIds: []pgtype.UUID{before.DeploymentDefinitionID},
+		DeploymentIds:           []pgtype.UUID{before.DeploymentID},
+		CronPatterns:            []string{before.CronPattern},
+		Timezones:               []string{before.Timezone},
+		EffectiveFroms:          []pgtype.Timestamptz{before.EffectiveFrom},
+		NextFireAts:             []pgtype.Timestamptz{before.NextFireAt},
+		EnvironmentID:           before.EnvironmentID,
+		CronSemanticsVersion:    before.CronSemanticsVersion,
 	}); err != nil {
 		t.Fatal(err)
 	}
