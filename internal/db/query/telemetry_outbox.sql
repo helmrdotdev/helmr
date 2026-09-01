@@ -1,6 +1,8 @@
 -- name: ClaimEventIngestBatch :many
-WITH claimed AS (
-    SELECT telemetry_outbox.id
+WITH candidates AS (
+    SELECT telemetry_outbox.id,
+           octet_length(telemetry_outbox.message)::bigint
+               + octet_length(telemetry_outbox.payload::text)::bigint AS size_bytes
       FROM telemetry_outbox
      WHERE telemetry_outbox.stream_kind = 'event'
        AND telemetry_outbox.written_at IS NULL
@@ -9,6 +11,15 @@ WITH claimed AS (
      ORDER BY telemetry_outbox.id ASC
      LIMIT sqlc.arg(row_limit)
      FOR UPDATE SKIP LOCKED
+),
+claimed AS (
+    SELECT sized.id
+      FROM (
+          SELECT candidates.id,
+                 SUM(candidates.size_bytes) OVER (ORDER BY candidates.id ASC) AS cumulative_size_bytes
+            FROM candidates
+      ) AS sized
+     WHERE sized.cumulative_size_bytes <= sqlc.arg(max_batch_bytes)::bigint
 ),
 updated AS (
     UPDATE telemetry_outbox
@@ -51,8 +62,9 @@ SELECT updated.id AS outbox_id,
  ORDER BY updated.id ASC;
 
 -- name: ClaimRunLogIngestBatch :many
-WITH claimed AS (
-    SELECT telemetry_outbox.id
+WITH candidates AS (
+    SELECT telemetry_outbox.id,
+           telemetry_outbox.size_bytes
       FROM telemetry_outbox
      WHERE telemetry_outbox.stream_kind = 'run_log'
        AND telemetry_outbox.written_at IS NULL
@@ -61,6 +73,15 @@ WITH claimed AS (
      ORDER BY telemetry_outbox.id ASC
      LIMIT sqlc.arg(row_limit)
      FOR UPDATE SKIP LOCKED
+),
+claimed AS (
+    SELECT sized.id
+      FROM (
+          SELECT candidates.id,
+                 SUM(candidates.size_bytes) OVER (ORDER BY candidates.id ASC) AS cumulative_size_bytes
+            FROM candidates
+      ) AS sized
+     WHERE sized.cumulative_size_bytes <= sqlc.arg(max_batch_bytes)::bigint
 ),
 updated AS (
     UPDATE telemetry_outbox
@@ -169,7 +190,7 @@ UPDATE telemetry_outbox
  WHERE id = sqlc.arg(id)
    AND published_at IS NULL;
 
--- name: MarkTelemetryOutboxWritten :exec
+-- name: MarkTelemetryOutboxWritten :execrows
 UPDATE telemetry_outbox
    SET state = 'written',
        written_at = now(),
@@ -177,9 +198,10 @@ UPDATE telemetry_outbox
        next_retry_at = NULL,
        updated_at = now(),
        ingest_error = ''
- WHERE id = ANY(sqlc.arg(ids)::bigint[]);
+ WHERE id = ANY(sqlc.arg(ids)::bigint[])
+   AND written_at IS NULL;
 
--- name: MarkTelemetryOutboxBatchFailed :exec
+-- name: MarkTelemetryOutboxBatchFailed :execrows
 UPDATE telemetry_outbox
    SET state = 'failed',
        next_retry_at = now() + sqlc.arg(retry_after)::interval,
@@ -188,12 +210,42 @@ UPDATE telemetry_outbox
  WHERE id = ANY(sqlc.arg(ids)::bigint[])
    AND written_at IS NULL;
 
--- name: PruneTelemetryOutboxWritten :many
+-- name: PruneTelemetryOutboxWritten :execrows
+WITH eligible AS (
+    SELECT id
+      FROM telemetry_outbox
+     WHERE written_at < now() - sqlc.arg(retain_for)::interval
+       AND (
+            (stream_kind = 'event' AND published_at IS NOT NULL)
+            OR stream_kind = 'run_log'
+       )
+     ORDER BY written_at ASC, id ASC
+     LIMIT sqlc.arg(row_limit)
+     FOR UPDATE SKIP LOCKED
+)
 DELETE FROM telemetry_outbox
- WHERE written_at IS NOT NULL
-   AND written_at < now() - sqlc.arg(retain_for)::interval
-   AND (
-        (stream_kind = 'event' AND published_at IS NOT NULL)
-        OR stream_kind = 'run_log'
-   )
-RETURNING id;
+ USING eligible
+ WHERE telemetry_outbox.id = eligible.id;
+
+-- name: GetTelemetryOutboxLifecycle :one
+SELECT LEAST(
+           (SELECT created_at
+              FROM telemetry_outbox
+             WHERE stream_kind = 'event'
+               AND written_at IS NULL
+               AND state IN ('pending', 'claimed', 'failed')
+               AND (next_retry_at IS NULL OR next_retry_at <= now())
+             ORDER BY id ASC LIMIT 1),
+           (SELECT created_at
+              FROM telemetry_outbox
+             WHERE stream_kind = 'run_log'
+               AND written_at IS NULL
+               AND state IN ('pending', 'claimed', 'failed')
+               AND (next_retry_at IS NULL OR next_retry_at <= now())
+             ORDER BY id ASC LIMIT 1)
+       )::timestamptz AS oldest_retry_created_at,
+       (SELECT written_at
+          FROM telemetry_outbox
+         WHERE written_at < now() - sqlc.arg(retain_for)::interval
+           AND ((stream_kind = 'event' AND published_at IS NOT NULL) OR stream_kind = 'run_log')
+         ORDER BY written_at ASC, id ASC LIMIT 1) AS oldest_gc_written_at;

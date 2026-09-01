@@ -158,6 +158,9 @@ func appendDeploymentLifecycleEvent(ctx context.Context, store deploymentEventAp
 	if err != nil {
 		return err
 	}
+	if err := telemetry.ValidateEvent(message, payload); err != nil {
+		return err
+	}
 	_, err = store.AppendDeploymentEvent(ctx, db.AppendDeploymentEventParams{
 		OrgID:          orgID,
 		ProjectID:      projectID,

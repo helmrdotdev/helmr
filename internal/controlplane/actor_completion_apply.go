@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -500,6 +501,9 @@ func finishActorRun(ctx context.Context, store db.Querier, authority runLeaseCla
 		Reason string `json:"reason,omitempty"`
 	}{Reason: decision.runReason.String})
 	if err != nil {
+		return err
+	}
+	if err := telemetry.ValidateEvent(eventKind, payload); err != nil {
 		return err
 	}
 	if _, err := store.AppendRunEvent(ctx, db.AppendRunEventParams{OrgID: authority.run.OrgID, RunID: authority.run.ID, Kind: eventKind, Payload: payload}); err != nil {

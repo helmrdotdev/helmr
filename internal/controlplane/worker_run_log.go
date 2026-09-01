@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -43,6 +44,10 @@ func (s *Server) workerAppendRunLogs(w http.ResponseWriter, r *http.Request) {
 	content, err := base64.StdEncoding.DecodeString(request.ContentBase64)
 	if err != nil {
 		writeError(w, badRequest(errors.New("log content is not valid base64")))
+		return
+	}
+	if err := telemetry.ValidateRunLog(content); err != nil {
+		writeError(w, badRequest(err))
 		return
 	}
 	kind := "log.stdout"

@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
@@ -700,6 +701,9 @@ func finishTask(
 	if err != nil {
 		return err
 	}
+	if err := telemetry.ValidateEvent(eventKind, payload); err != nil {
+		return err
+	}
 	if _, err := store.AppendRunEvent(ctx, db.AppendRunEventParams{
 		OrgID: authority.run.OrgID, RunID: authority.run.ID, Kind: eventKind, Payload: payload,
 	}); err != nil {
@@ -773,6 +777,9 @@ func finishSameWorkspaceChild(
 		Reason string `json:"reason,omitempty"`
 	}{Reason: reason.String})
 	if err != nil {
+		return err
+	}
+	if err := telemetry.ValidateEvent(eventKind, payload); err != nil {
 		return err
 	}
 	if _, err := store.AppendRunEvent(ctx, db.AppendRunEventParams{
