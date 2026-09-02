@@ -21,8 +21,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-var errSessionOutputCursorExpired = errors.New("session output cursor is older than the retained output")
-
 const (
 	sessionOutputDefaultLimit = int32(50)
 	sessionOutputMaxLimit     = int32(100)
@@ -88,12 +86,6 @@ func (s *Server) readSessionOutputHTTP(w http.ResponseWriter, r *http.Request) {
 			writeError(w, notFound(codedError{code: "session_not_found", message: "session not found"}))
 			return
 		}
-		if errors.Is(err, errSessionOutputCursorExpired) {
-			writeError(w, gone(codedError{
-				code: "session_output_cursor_expired", message: err.Error(),
-			}))
-			return
-		}
 		s.writeSessionOutputReadAuthorityError(w)
 		return
 	}
@@ -156,25 +148,18 @@ func readSessionOutputPage(
 		return api.SessionOutputPage{}, pgx.ErrNoRows
 	}
 	first := rows[0]
-	if first.OutputRetentionFloor < 1 ||
-		first.OutputRetentionFloor > maxSessionOutputFrontier ||
-		first.NextOutputSequence < first.OutputRetentionFloor ||
+	if first.NextOutputSequence < 1 ||
 		first.NextOutputSequence > maxSessionOutputFrontier ||
 		first.EffectiveAfter < 0 ||
 		first.EffectiveAfter > maxSessionOutputSequence {
 		return api.SessionOutputPage{}, errors.New("session output projection is invalid")
 	}
-	if afterPresent && afterSequence+1 < first.OutputRetentionFloor {
-		return api.SessionOutputPage{}, errSessionOutputCursorExpired
-	}
-
 	response := api.SessionOutputPage{
 		Records:   make([]api.SessionOutput, 0, min(len(rows), int(limit))),
 		NextAfter: first.EffectiveAfter,
 	}
 	for _, row := range rows {
 		if row.SessionID != first.SessionID ||
-			row.OutputRetentionFloor != first.OutputRetentionFloor ||
 			row.NextOutputSequence != first.NextOutputSequence ||
 			row.EffectiveAfter != first.EffectiveAfter {
 			return api.SessionOutputPage{}, errors.New("session output projection is inconsistent")

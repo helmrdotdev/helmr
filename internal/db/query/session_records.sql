@@ -275,19 +275,17 @@ SELECT *
 -- name: ReadPublicActorOutputPage :many
 WITH scoped_actor AS MATERIALIZED (
     SELECT sessions.id,
-           sessions.output_retention_floor,
            sessions.next_output_sequence,
            CASE
                WHEN sqlc.arg(after_present)::boolean
                THEN sqlc.arg(after_sequence)::bigint
-               ELSE sessions.output_retention_floor - 1
+               ELSE 0
            END::bigint AS effective_after
      FROM sessions
      WHERE sessions.environment_id = sqlc.arg(environment_id)
        AND sessions.id = sqlc.arg(session_id)
 )
 SELECT scoped_actor.id AS session_id,
-       scoped_actor.output_retention_floor,
        scoped_actor.next_output_sequence,
        scoped_actor.effective_after::bigint AS effective_after,
        page.record_id,

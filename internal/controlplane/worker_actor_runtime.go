@@ -297,8 +297,6 @@ func (s *Server) workerReadSessionOutputPage(w http.ResponseWriter, r *http.Requ
 		code, message := "session_output_unavailable", "Actor output is unavailable"
 		if errors.Is(err, pgx.ErrNoRows) {
 			code, message = "session_not_found", "Session was not found"
-		} else if errors.Is(err, errSessionOutputCursorExpired) {
-			code, message = "session_output_cursor_expired", err.Error()
 		} else {
 			writeError(w, errors.New("read run-sourced session output"))
 			return
