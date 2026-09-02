@@ -2,6 +2,7 @@ package db_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"sort"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestTelemetryOutboxGCScaleBudget(t *testing.T) {
@@ -571,12 +573,12 @@ func TestTelemetryOutboxSinkErrorsStayIndependentAndGCGates(t *testing.T) {
 	dbtest.MustExec(t, ctx, pool, `
 		UPDATE telemetry_outbox SET ingest_error = 'clickhouse failed' WHERE id = $1
 	`, eventID)
-	if err := queries.MarkLiveTelemetryOutboxFailed(ctx, db.MarkLiveTelemetryOutboxFailedParams{
-		ID:           eventID,
-		RetryAfter:   pgvalue.Interval(-time.Second),
-		PublishError: "redis failed again",
-	}); err != nil {
-		t.Fatal(err)
+	if updated, err := queries.MarkLiveTelemetryOutboxBatchFailed(ctx, db.MarkLiveTelemetryOutboxBatchFailedParams{
+		Ids:           []int64{eventID},
+		RetryAfters:   []pgtype.Interval{pgvalue.Interval(-time.Second)},
+		PublishErrors: []string{"redis failed again"},
+	}); err != nil || updated != 1 {
+		t.Fatalf("mark live failed updated = %d err = %v, want 1", updated, err)
 	}
 	if err := pool.QueryRow(ctx, `
 		SELECT ingest_error, publish_error FROM telemetry_outbox WHERE id = $1
@@ -602,8 +604,8 @@ func TestTelemetryOutboxSinkErrorsStayIndependentAndGCGates(t *testing.T) {
 	if ingestError != "clickhouse failed" || publishError != "redis failed again" {
 		t.Fatalf("after publish claim errors = ingest %q publish %q", ingestError, publishError)
 	}
-	if err := queries.MarkLiveTelemetryOutboxPublished(ctx, eventID); err != nil {
-		t.Fatal(err)
+	if updated, err := queries.MarkLiveTelemetryOutboxBatchPublished(ctx, []int64{eventID}); err != nil || updated != 1 {
+		t.Fatalf("mark live published updated = %d err = %v, want 1", updated, err)
 	}
 	if err := pool.QueryRow(ctx, `
 		SELECT ingest_error, publish_error FROM telemetry_outbox WHERE id = $1
@@ -755,6 +757,9 @@ func TestTelemetryOutboxLeaseExpiryReclaimAndSourceOrder(t *testing.T) {
 	`, ids.deploymentID).Scan(&firstEventID, &secondEventID); err != nil {
 		t.Fatal(err)
 	}
+	dbtest.MustExec(t, ctx, pool, `
+		UPDATE telemetry_outbox SET stream_name = 'alternate' WHERE id = $1
+	`, secondEventID)
 	if firstEventID == secondEventID {
 		t.Fatal("expected two deployment events")
 	}
@@ -855,8 +860,8 @@ func TestTelemetryOutboxLeaseExpiryReclaimAndSourceOrder(t *testing.T) {
 	if err != nil || len(liveReclaimed) != 1 || liveReclaimed[0].OutboxID != firstEventID {
 		t.Fatalf("live reclaim = %+v err=%v, want %d", liveReclaimed, err, firstEventID)
 	}
-	if err := queries.MarkLiveTelemetryOutboxPublished(ctx, firstEventID); err != nil {
-		t.Fatal(err)
+	if updated, err := queries.MarkLiveTelemetryOutboxBatchPublished(ctx, []int64{firstEventID}); err != nil || updated != 1 {
+		t.Fatalf("mark first live published updated = %d err = %v, want 1", updated, err)
 	}
 	liveNext, err := queries.ClaimLiveTelemetryOutbox(ctx, db.ClaimLiveTelemetryOutboxParams{
 		RowLimit:      2,
@@ -864,5 +869,61 @@ func TestTelemetryOutboxLeaseExpiryReclaimAndSourceOrder(t *testing.T) {
 	})
 	if err != nil || len(liveNext) != 1 || liveNext[0].OutboxID != secondEventID {
 		t.Fatalf("live claim after earlier published = %+v err=%v, want %d", liveNext, err, secondEventID)
+	}
+}
+
+func TestLiveTelemetryOutboxBatchCompletion(t *testing.T) {
+	ctx := t.Context()
+	pool := newPostgresDB(t, ctx)
+	ids := seedPostgres(t, ctx, pool)
+	queries := db.New(pool)
+	outboxIDs := make([]int64, 3)
+	for index := range outboxIDs {
+		sourceID := uuid.NewV7()
+		if err := pool.QueryRow(ctx, `
+			INSERT INTO telemetry_outbox (
+				org_id, stream_kind, source_kind, source_id, project_id,
+				environment_id, deployment_id, source, kind, message
+			) VALUES ($1, 'event', 'deployment', $2, $3, $4, $2, 'control', 'deployment.ready', $5)
+			RETURNING id
+		`, ids.orgID, sourceID, ids.projectID, ids.environmentID, fmt.Sprintf("event-%d", index)).Scan(&outboxIDs[index]); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if updated, err := queries.MarkLiveTelemetryOutboxBatchPublished(ctx, []int64{outboxIDs[0], outboxIDs[2]}); err != nil || updated != 2 {
+		t.Fatalf("mark published updated = %d err = %v, want 2", updated, err)
+	}
+	retryAfter := pgvalue.Interval(time.Minute)
+	if updated, err := queries.MarkLiveTelemetryOutboxBatchFailed(ctx, db.MarkLiveTelemetryOutboxBatchFailedParams{
+		Ids:           []int64{outboxIDs[1]},
+		RetryAfters:   []pgtype.Interval{retryAfter},
+		PublishErrors: []string{"redis unavailable"},
+	}); err != nil || updated != 1 {
+		t.Fatalf("mark failed updated = %d err = %v, want 1", updated, err)
+	}
+
+	var published bool
+	var publishError string
+	var retryScheduled bool
+	if err := pool.QueryRow(ctx, `
+		SELECT published_at IS NOT NULL, publish_error, publish_locked_until > now()
+		  FROM telemetry_outbox WHERE id = $1
+	`, outboxIDs[1]).Scan(&published, &publishError, &retryScheduled); err != nil {
+		t.Fatal(err)
+	}
+	if published || publishError != "redis unavailable" || !retryScheduled {
+		t.Fatalf("failed row = published %t error %q retry_scheduled %t", published, publishError, retryScheduled)
+	}
+
+	if updated, err := queries.MarkLiveTelemetryOutboxBatchFailed(ctx, db.MarkLiveTelemetryOutboxBatchFailedParams{
+		Ids:           []int64{outboxIDs[0]},
+		RetryAfters:   []pgtype.Interval{retryAfter},
+		PublishErrors: []string{"late failure"},
+	}); err != nil || updated != 0 {
+		t.Fatalf("published failure updated = %d err = %v, want 0", updated, err)
+	}
+	if updated, err := queries.MarkLiveTelemetryOutboxBatchPublished(ctx, []int64{outboxIDs[2] + 1_000_000}); err != nil || updated != 0 {
+		t.Fatalf("missing published updated = %d err = %v, want 0", updated, err)
 	}
 }

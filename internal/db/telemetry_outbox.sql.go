@@ -174,7 +174,6 @@ WITH claimed AS (
                AND earlier_outbox.org_id = telemetry_outbox.org_id
                AND earlier_outbox.source_kind = telemetry_outbox.source_kind
                AND earlier_outbox.source_id = telemetry_outbox.source_id
-               AND earlier_outbox.stream_name = telemetry_outbox.stream_name
                AND earlier_outbox.id < telemetry_outbox.id
        )
      ORDER BY telemetry_outbox.id ASC
@@ -457,38 +456,58 @@ func (q *Queries) GetTelemetryOutboxLifecycle(ctx context.Context, retainFor pgt
 	return i, err
 }
 
-const markLiveTelemetryOutboxFailed = `-- name: MarkLiveTelemetryOutboxFailed :exec
+const markLiveTelemetryOutboxBatchFailed = `-- name: MarkLiveTelemetryOutboxBatchFailed :execrows
+WITH failures AS (
+    SELECT input_ids.id,
+           input_retries.retry_after,
+           input_errors.publish_error
+      FROM unnest($1::bigint[])
+           WITH ORDINALITY AS input_ids(id, position)
+      JOIN unnest($2::interval[])
+           WITH ORDINALITY AS input_retries(retry_after, position)
+        ON input_retries.position = input_ids.position
+      JOIN unnest($3::text[])
+           WITH ORDINALITY AS input_errors(publish_error, position)
+        ON input_errors.position = input_ids.position
+)
 UPDATE telemetry_outbox
-   SET publish_locked_until = now() + $1::interval,
+   SET publish_locked_until = now() + failures.retry_after,
        updated_at = now(),
-       publish_error = $2
- WHERE id = $3
+       publish_error = failures.publish_error
+  FROM failures
+ WHERE telemetry_outbox.id = failures.id
    AND published_at IS NULL
 `
 
-type MarkLiveTelemetryOutboxFailedParams struct {
-	RetryAfter   pgtype.Interval `json:"retry_after"`
-	PublishError string          `json:"publish_error"`
-	ID           int64           `json:"id"`
+type MarkLiveTelemetryOutboxBatchFailedParams struct {
+	Ids           []int64           `json:"ids"`
+	RetryAfters   []pgtype.Interval `json:"retry_afters"`
+	PublishErrors []string          `json:"publish_errors"`
 }
 
-func (q *Queries) MarkLiveTelemetryOutboxFailed(ctx context.Context, arg MarkLiveTelemetryOutboxFailedParams) error {
-	_, err := q.db.Exec(ctx, markLiveTelemetryOutboxFailed, arg.RetryAfter, arg.PublishError, arg.ID)
-	return err
+func (q *Queries) MarkLiveTelemetryOutboxBatchFailed(ctx context.Context, arg MarkLiveTelemetryOutboxBatchFailedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markLiveTelemetryOutboxBatchFailed, arg.Ids, arg.RetryAfters, arg.PublishErrors)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
-const markLiveTelemetryOutboxPublished = `-- name: MarkLiveTelemetryOutboxPublished :exec
+const markLiveTelemetryOutboxBatchPublished = `-- name: MarkLiveTelemetryOutboxBatchPublished :execrows
 UPDATE telemetry_outbox
    SET published_at = now(),
        publish_locked_until = NULL,
        updated_at = now(),
        publish_error = ''
- WHERE id = $1
+ WHERE id = ANY($1::bigint[])
 `
 
-func (q *Queries) MarkLiveTelemetryOutboxPublished(ctx context.Context, id int64) error {
-	_, err := q.db.Exec(ctx, markLiveTelemetryOutboxPublished, id)
-	return err
+func (q *Queries) MarkLiveTelemetryOutboxBatchPublished(ctx context.Context, ids []int64) (int64, error) {
+	result, err := q.db.Exec(ctx, markLiveTelemetryOutboxBatchPublished, ids)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const markTelemetryOutboxBatchFailed = `-- name: MarkTelemetryOutboxBatchFailed :execrows

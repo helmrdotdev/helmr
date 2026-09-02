@@ -126,7 +126,6 @@ WITH claimed AS (
                AND earlier_outbox.org_id = telemetry_outbox.org_id
                AND earlier_outbox.source_kind = telemetry_outbox.source_kind
                AND earlier_outbox.source_id = telemetry_outbox.source_id
-               AND earlier_outbox.stream_name = telemetry_outbox.stream_name
                AND earlier_outbox.id < telemetry_outbox.id
        )
      ORDER BY telemetry_outbox.id ASC
@@ -174,20 +173,34 @@ SELECT updated.id AS outbox_id,
   FROM updated
  ORDER BY updated.id ASC;
 
--- name: MarkLiveTelemetryOutboxPublished :exec
+-- name: MarkLiveTelemetryOutboxBatchPublished :execrows
 UPDATE telemetry_outbox
    SET published_at = now(),
        publish_locked_until = NULL,
        updated_at = now(),
        publish_error = ''
- WHERE id = sqlc.arg(id);
+ WHERE id = ANY(sqlc.arg(ids)::bigint[]);
 
--- name: MarkLiveTelemetryOutboxFailed :exec
+-- name: MarkLiveTelemetryOutboxBatchFailed :execrows
+WITH failures AS (
+    SELECT input_ids.id,
+           input_retries.retry_after,
+           input_errors.publish_error
+      FROM unnest(sqlc.arg(ids)::bigint[])
+           WITH ORDINALITY AS input_ids(id, position)
+      JOIN unnest(sqlc.arg(retry_afters)::interval[])
+           WITH ORDINALITY AS input_retries(retry_after, position)
+        ON input_retries.position = input_ids.position
+      JOIN unnest(sqlc.arg(publish_errors)::text[])
+           WITH ORDINALITY AS input_errors(publish_error, position)
+        ON input_errors.position = input_ids.position
+)
 UPDATE telemetry_outbox
-   SET publish_locked_until = now() + sqlc.arg(retry_after)::interval,
+   SET publish_locked_until = now() + failures.retry_after,
        updated_at = now(),
-       publish_error = sqlc.arg(publish_error)
- WHERE id = sqlc.arg(id)
+       publish_error = failures.publish_error
+  FROM failures
+ WHERE telemetry_outbox.id = failures.id
    AND published_at IS NULL;
 
 -- name: MarkTelemetryOutboxWritten :execrows
