@@ -4890,42 +4890,41 @@ async function compileProgram(options) {
       architecture: options.architecture,
       exports: analysisExports(namespaces)
     });
-    const canonicalSources = [
-      ...new Set(analyzed.declarationLocator.declarations.map((item) => item.modulePath))
-    ].sort(compareUTF82);
+    const declarationsBySource = new Map;
+    for (const declaration of analyzed.declarationLocator.declarations) {
+      const exports = declarationsBySource.get(declaration.modulePath) ?? [];
+      exports.push(declaration.exportName);
+      declarationsBySource.set(declaration.modulePath, exports);
+    }
+    const canonicalSourceGroups = [...declarationsBySource].sort(([left], [right]) => compareUTF82(left, right));
     const generated = new Map;
     const files = new Map;
     const finalOutputs = [];
-    const localPackageGroups = [
-      aggregate.localPackages
-    ];
     const metafiles = [aggregate.metafile];
-    const externalEdgeGroups = [];
     const runtimeRoot = resolve5(options.runtimeRoot ?? RUNTIME_PROGRAM_ROOT);
-    for (const source2 of canonicalSources) {
-      const selected = analyzed.declarationLocator.declarations.filter((item) => item.modulePath === source2);
-      const path = generatedModulePath(source2);
-      const compiled = await bundleEntry({
-        root,
-        entrySource: finalEntry(source2, selected.map((item) => item.exportName)),
+    const finalBundle = await bundleEntries({
+      root,
+      outputRoot: analysisRoot,
+      entries: canonicalSourceGroups.map(([source2, exportNames]) => ({
+        source: source2,
+        entrySource: finalEntry(source2, exportNames),
         sourcefile: `<helmr-final-${source2}>`,
-        outfile: resolve5(root, path),
-        nodeVersion: options.nodeVersion,
-        runtimeRoot,
-        localPackages: canonicalLocalPackages
-      });
-      const sourceMap = normalizeSourceMap(root, resolve5(root, path), source2, compiled.map, compiled.localPackages);
+        outfile: resolve5(analysisRoot, generatedModulePath(source2))
+      })),
+      nodeVersion: options.nodeVersion,
+      runtimeRoot,
+      localPackages: canonicalLocalPackages
+    });
+    metafiles.push(finalBundle.metafile);
+    for (const [source2, compiled] of finalBundle.outputs) {
+      const path = generatedModulePath(source2);
+      const sourceMap = normalizeSourceMap(root, resolve5(analysisRoot, path), source2, compiled.map, compiled.localPackages);
       const analysisModulePath = resolve5(analysisRoot, path);
-      await mkdir(dirname3(analysisModulePath), { recursive: true });
-      await writeFile(analysisModulePath, compiled.code);
       await writeFile(`${analysisModulePath}.map`, sourceMap);
       await verifyFinalModule(analysisModulePath, source2, analyzed, options.architecture);
       generated.set(source2, path);
       files.set(path, compiled.code);
       files.set(`${path}.map`, sourceMap);
-      metafiles.push(compiled.metafile);
-      localPackageGroups.push(compiled.localPackages);
-      externalEdgeGroups.push(compiled.externalEdges);
       finalOutputs.push({
         moduleDigest: `sha256:${sha256(compiled.code)}`,
         modulePath: path,
@@ -4953,9 +4952,9 @@ async function compileProgram(options) {
     });
     const configBytes = canonicalizeJsonValue(options.config);
     files.set("helmr/config.json", configBytes);
-    const localPackages = mergeLocalPackages(localPackageGroups);
-    const externalEdges = mergeExternalEdges(externalEdgeGroups);
-    const inputs = await compilerInputs(root, metafiles, localPackages);
+    const externalEdges = finalBundle.externalEdges;
+    const inputs = await compilerInputs(root, metafiles, canonicalLocalPackages, new Set(["<helmr-analysis>", ...finalBundle.virtualInputs]));
+    const localPackages = sortedLocalPackages(localPackagesForInputs(new Set(inputs.map((input) => input.path)), new Map(canonicalLocalPackages.map((item) => [item.installedRoot, item]))));
     const tsconfigs = await compilerTSConfigs(root, inputs.map((item) => item.path));
     files.set("helmr/compiler-result.json", canonicalizeJsonValue({
       compiler: compilerContract(),
@@ -5004,6 +5003,7 @@ function compilerOptionsDigestForTarget(target) {
     bundle: true,
     esbuildVersion: ESBUILD_VERSION,
     format: "esm",
+    finalEntryGraph: "multi-entry",
     legalComments: "none",
     metafile: true,
     packages: "bundle",
@@ -5016,8 +5016,7 @@ function compilerOptionsDigestForTarget(target) {
     treeShaking: true,
     declarationExtensions,
     sourceSemantics: "pinned-esbuild",
-    target,
-    write: false
+    target
   });
   return `sha256:${sha256(canonical)}`;
 }
@@ -5025,7 +5024,8 @@ async function bundleEntry(options) {
   const localPackages = new Map(options.localPackages.map((item) => [item.installedRoot, item]));
   const externalEdges = [];
   const result = await build2({
-    ...baseOptions(options.root, options.outfile, options.runtimeRoot, options.nodeVersion, localPackages, externalEdges),
+    ...baseOptions(options.root, options.runtimeRoot, options.nodeVersion, localPackages, externalEdges),
+    outfile: options.outfile,
     stdin: {
       contents: options.entrySource,
       loader: "js",
@@ -5034,14 +5034,61 @@ async function bundleEntry(options) {
     }
   });
   const output = {
-    ...outputFiles(requireOutputFiles(result.outputFiles), options.outfile),
+    ...singleOutputFiles(requireOutputFiles(result.outputFiles), options.outfile),
     localPackages: sortedLocalPackages(localPackages),
     externalEdges: sortedExternalEdges(externalEdges),
     metafile: requiredMetafile(result.metafile)
   };
   return output;
 }
-function baseOptions(root, outfile, runtimeRoot, nodeVersion, localPackages, externalEdges) {
+async function bundleEntries(options) {
+  const localPackages = new Map(options.localPackages.map((item) => [item.installedRoot, item]));
+  const externalEdges = [];
+  const entries = new Map(options.entries.map((entry) => [entry.sourcefile, entry]));
+  const result = await build2({
+    ...baseOptions(options.root, options.runtimeRoot, options.nodeVersion, localPackages, externalEdges, [finalEntryPlugin(options.root, entries)]),
+    entryPoints: options.entries.map((entry) => ({
+      in: entry.sourcefile,
+      out: projectPath3(options.outputRoot, entry.outfile).slice(0, -4)
+    })),
+    outdir: options.outputRoot,
+    outExtension: { ".js": ".mjs" },
+    write: true
+  });
+  const metafile = requiredMetafile(result.metafile);
+  const outputPaths = new Set(Object.keys(metafile.outputs).map((path) => resolve5(options.root, path)));
+  if (outputPaths.size !== options.entries.length * 2) {
+    throw new Error("esbuild output topology does not match the v0 contract");
+  }
+  const externalEdgesByImporter = new Map;
+  for (const edge of externalEdges) {
+    const importerEdges = externalEdgesByImporter.get(edge.importer) ?? [];
+    importerEdges.push(edge);
+    externalEdgesByImporter.set(edge.importer, importerEdges);
+  }
+  const outputs = new Map;
+  const externalEdgeGroups = [];
+  for (const entry of options.entries) {
+    if (!outputPaths.has(entry.outfile) || !outputPaths.has(`${entry.outfile}.map`)) {
+      throw new Error("esbuild output topology does not match the v0 contract");
+    }
+    const output = requiredMetafileOutput(options.root, metafile, entry.outfile);
+    const inputPaths = outputInputPaths(options.root, output.inputs);
+    externalEdgeGroups.push(externalEdgesForOutput(output, inputPaths, externalEdgesByImporter));
+    outputs.set(entry.source, {
+      code: await readFile2(entry.outfile),
+      localPackages: sortedLocalPackages(localPackagesForInputs(inputPaths, localPackages)),
+      map: await readFile2(`${entry.outfile}.map`)
+    });
+  }
+  return {
+    externalEdges: mergeExternalEdges(externalEdgeGroups),
+    metafile,
+    outputs,
+    virtualInputs: new Set(options.entries.map((entry) => `helmr-final:${entry.sourcefile}`))
+  };
+}
+function baseOptions(root, runtimeRoot, nodeVersion, localPackages, externalEdges, plugins = []) {
   return {
     absWorkingDir: root,
     bundle: true,
@@ -5049,10 +5096,9 @@ function baseOptions(root, outfile, runtimeRoot, nodeVersion, localPackages, ext
     legalComments: "none",
     logLevel: "silent",
     metafile: true,
-    outfile,
     packages: "bundle",
     platform: "node",
-    plugins: [dependencyBoundary(root, runtimeRoot, localPackages, externalEdges)],
+    plugins: [...plugins, dependencyBoundary(root, runtimeRoot, localPackages, externalEdges)],
     banner: {
       js: 'import { createRequire as __helmrCreateRequire } from "node:module"; const require = __helmrCreateRequire(import.meta.url);'
     },
@@ -5102,6 +5148,53 @@ function esbuildNodeTarget(nodeVersion) {
     throw new Error("Compiler Node version must be an exact canonical SemVer");
   }
   return `node${nodeVersion}`;
+}
+function finalEntryPlugin(root, entries) {
+  return {
+    name: "helmr-final-entry",
+    setup(build3) {
+      build3.onResolve({ filter: /^<helmr-final-/ }, (args) => {
+        return { namespace: "helmr-final", path: args.path };
+      });
+      build3.onLoad({ filter: /.*/, namespace: "helmr-final" }, (args) => {
+        const entry = entries.get(args.path);
+        if (entry === undefined) {
+          return { errors: [{ text: `unknown final entry ${args.path}` }] };
+        }
+        return {
+          contents: entry.entrySource,
+          loader: "js",
+          resolveDir: root
+        };
+      });
+    }
+  };
+}
+function requiredMetafileOutput(root, metafile, outfile) {
+  const matches = Object.entries(metafile.outputs).filter(([path]) => resolve5(root, path) === outfile);
+  if (matches.length !== 1) {
+    throw new Error("esbuild metafile output does not match the v0 topology");
+  }
+  return matches[0][1];
+}
+function outputInputPaths(root, inputs) {
+  return new Set(Object.entries(inputs).filter(([, input]) => input.bytesInOutput > 0).map(([path]) => projectPath3(root, resolve5(root, path))));
+}
+function localPackagesForInputs(inputs, localPackages) {
+  const paths = [...inputs];
+  return new Map([...localPackages].filter(([installedRoot]) => paths.some((path) => path === installedRoot || path.startsWith(`${installedRoot}/`))));
+}
+function externalEdgesForOutput(output, inputs, externalEdgesByImporter) {
+  const emitted = new Set(output.imports.filter((item) => item.external).map((item) => `${item.kind}\x00${item.path}`));
+  const externalEdges = [];
+  for (const input of inputs) {
+    for (const edge of externalEdgesByImporter.get(input) ?? []) {
+      if (emitted.has(`${edge.kind}\x00${edge.runtimePath}`)) {
+        externalEdges.push(edge);
+      }
+    }
+  }
+  return externalEdges;
 }
 function dependencyBoundary(root, runtimeRoot, localPackages, externalEdges) {
   const canonicalRoot = resolve5(root);
@@ -5170,28 +5263,12 @@ function localPackageForPath(path, localPackages) {
 function sortedLocalPackages(localPackages) {
   return [...localPackages.values()].sort((left, right) => compareUTF82(left.installedRoot, right.installedRoot));
 }
-function mergeLocalPackages(groups) {
-  const merged = new Map;
-  for (const group of groups) {
-    for (const localPackage of group) {
-      const previous = merged.get(localPackage.installedRoot);
-      if (previous !== undefined && (previous.name !== localPackage.name || previous.sourceRoot !== localPackage.sourceRoot)) {
-        throw new Error(`installed local package ${JSON.stringify(localPackage.installedRoot)} changed classification`);
-      }
-      merged.set(localPackage.installedRoot, localPackage);
-    }
-  }
-  return sortedLocalPackages(merged);
-}
 function sortedExternalEdges(edges) {
-  return [...edges].sort((left, right) => compareUTF82(externalEdgeKey(left), externalEdgeKey(right)));
+  const unique = new Map(edges.map((edge) => [externalEdgeKey(edge), edge]));
+  return [...unique.values()].sort((left, right) => compareUTF82(externalEdgeKey(left), externalEdgeKey(right)));
 }
 function mergeExternalEdges(groups) {
-  const merged = new Map;
-  for (const edge of groups.flat()) {
-    merged.set(externalEdgeKey(edge), edge);
-  }
-  return sortedExternalEdges([...merged.values()]);
+  return sortedExternalEdges(groups.flat());
 }
 function externalEdgeKey(edge) {
   return [
@@ -5251,10 +5328,10 @@ function normalizeSourceMap(root, outfile, source2, raw, localPackages) {
     throw new Error("esbuild source map does not match the v0 topology");
   }
   const sources = map["sources"].map((item) => {
-    if (item.includes("%3Chelmr-final-") || item.includes("<helmr-final-")) {
+    const decoded = decodeURIComponent(item);
+    if (decoded === `helmr-final:<helmr-final-${source2}>`) {
       return programSourceURL(source2);
     }
-    const decoded = decodeURIComponent(item);
     const absolute = resolve5(dirname3(outfile), decoded);
     const path = projectPath3(root, absolute);
     if (!inside3(relative4(root, absolute)) || hasNodeModules2(path) && localPackageForPath(path, new Map(localPackages.map((item2) => [item2.installedRoot, item2]))) === undefined) {
@@ -5272,7 +5349,7 @@ function normalizeSourceMap(root, outfile, source2, raw, localPackages) {
 function programSourceURL(path) {
   return pathToFileURL(resolve5(RUNTIME_PROGRAM_ROOT, path)).href;
 }
-function outputFiles(files, outfile) {
+function singleOutputFiles(files, outfile) {
   const code = files.find((file) => file.path === outfile);
   const map = files.find((file) => file.path === `${outfile}.map`);
   if (code === undefined || map === undefined || files.length !== 2) {
@@ -5290,11 +5367,11 @@ function requiredMetafile(metafile) {
     throw new Error("esbuild returned no metafile");
   return metafile;
 }
-async function compilerInputs(root, metafiles, localPackages) {
+async function compilerInputs(root, metafiles, localPackages, virtualInputs) {
   const paths = new Set;
   for (const metafile of metafiles) {
     for (const input of Object.keys(metafile.inputs)) {
-      if (input.startsWith("<"))
+      if (virtualInputs.has(input))
         continue;
       const absolute = await realpath4(resolve5(root, input));
       const path = projectPath3(root, absolute);

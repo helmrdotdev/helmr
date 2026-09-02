@@ -100,9 +100,6 @@ func ParseProgramCompilerResult(raw []byte) (ProgramCompilerResult, error) {
 func canonicalProgramCompilerResult(
 	result ProgramCompilerResult,
 ) ([]byte, error) {
-	if err := validateProgramCompilerResult(result); err != nil {
-		return nil, err
-	}
 	raw, err := json.Marshal(result)
 	if err != nil {
 		return nil, err
@@ -202,7 +199,10 @@ func validateProgramCompilerResult(manifest ProgramCompilerResult) error {
 		if err := validateProgramModule(output); err != nil {
 			return fmt.Errorf("program compiler result output %d: %w", index, err)
 		}
-		if !slices.Contains(manifest.DiscoveryCandidates, output.SourcePath) {
+		if _, found := slices.BinarySearch(
+			manifest.DiscoveryCandidates,
+			output.SourcePath,
+		); !found {
 			return fmt.Errorf(
 				"program compiler result output %d is not a discovery candidate",
 				index,
@@ -220,7 +220,10 @@ func validateProgramCompilerResult(manifest ProgramCompilerResult) error {
 			validateArtifactPath(selection.SourcePath, programArtifact) != nil {
 			return fmt.Errorf("program compiler result selection %d is invalid", index)
 		}
-		if !slices.Contains(manifest.DiscoveryCandidates, selection.SourcePath) {
+		if _, found := slices.BinarySearch(
+			manifest.DiscoveryCandidates,
+			selection.SourcePath,
+		); !found {
 			return fmt.Errorf(
 				"program compiler result selection %d is not a discovery candidate",
 				index,
@@ -320,6 +323,7 @@ func compilerOptionsDigest(
 		DeclarationExtensions []string `json:"declarationExtensions"`
 		EsbuildVersion        string   `json:"esbuildVersion"`
 		Format                string   `json:"format"`
+		FinalEntryGraph       string   `json:"finalEntryGraph"`
 		LegalComments         string   `json:"legalComments"`
 		Metafile              bool     `json:"metafile"`
 		Packages              string   `json:"packages"`
@@ -332,7 +336,6 @@ func compilerOptionsDigest(
 		Splitting             bool     `json:"splitting"`
 		Target                string   `json:"target"`
 		TreeShaking           bool     `json:"treeShaking"`
-		Write                 bool     `json:"write"`
 	}{
 		APIVersion:            compiler.APIVersion,
 		Banner:                `import { createRequire as __helmrCreateRequire } from "node:module"; const require = __helmrCreateRequire(import.meta.url);`,
@@ -340,6 +343,7 @@ func compilerOptionsDigest(
 		DeclarationExtensions: compiler.Source.DeclarationExtensions,
 		EsbuildVersion:        compiler.Esbuild.Version,
 		Format:                "esm",
+		FinalEntryGraph:       "multi-entry",
 		LegalComments:         "none",
 		Metafile:              true,
 		Packages:              "bundle",
@@ -352,7 +356,6 @@ func compilerOptionsDigest(
 		Splitting:             false,
 		Target:                "node" + nodeVersion,
 		TreeShaking:           true,
-		Write:                 false,
 	}
 	encoded, err := json.Marshal(input)
 	if err != nil {
