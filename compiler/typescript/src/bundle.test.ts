@@ -202,6 +202,32 @@ describe("v0 compiler contract", () => {
     }])
   })
 
+  test("preserves real source paths containing the virtual entry prefix", async () => {
+    const root = await project()
+    const dependency = "lib/<helmr-final-user>.ts"
+    await source(root, dependency, 'export const value = "real-source"\n')
+    await source(
+      root,
+      "tasks/example.ts",
+      [
+        'import { task } from "@helmr/sdk"',
+        `import { value } from ${JSON.stringify(`../${dependency}`)}`,
+        'export const declaration = task({ id: "source-map-prefix", run: () => value })',
+      ].join("\n"),
+    )
+
+    const compiled = await compile(root)
+    const mapPath = [...compiled.files.keys()].find((path) =>
+      path.endsWith(".mjs.map")
+    )!
+    const sourceMap = JSON.parse(
+      new TextDecoder().decode(compiled.files.get(mapPath)),
+    )
+    expect(sourceMap.sources).toContain(
+      pathToFileURL(resolve("/opt/helmr/program", dependency)).href,
+    )
+  })
+
   test("preserves Node import and require export conditions", async () => {
     const root = await project()
     await source(
@@ -331,6 +357,63 @@ describe("v0 compiler contract", () => {
     expect(output).toContain(
       resolve(root, "node_modules/registry-package/index.mjs"),
     )
+  })
+
+  test("attributes emitted external edges across disjoint final entries", async () => {
+    const root = await project()
+    for (const name of ["first-package", "second-package", "dropped-package"]) {
+      await source(
+        root,
+        `node_modules/${name}/package.json`,
+        JSON.stringify({ name, type: "module", exports: "./index.mjs" }),
+      )
+      await source(
+        root,
+        `node_modules/${name}/index.mjs`,
+        `export const value = ${JSON.stringify(name)}\n`,
+      )
+    }
+    await source(
+      root,
+      "tasks/first.ts",
+      [
+        'import { task } from "@helmr/sdk"',
+        'import { value } from "first-package"',
+        'if (false) void import("dropped-package")',
+        'export const declaration = task({ id: "first", run: () => value })',
+      ].join("\n"),
+    )
+    await source(
+      root,
+      "tasks/second.ts",
+      [
+        'import { task } from "@helmr/sdk"',
+        'import { value } from "second-package"',
+        'export const declaration = task({ id: "second", run: () => value })',
+      ].join("\n"),
+    )
+
+    const compiled = await compile(root)
+    const manifest = JSON.parse(
+      new TextDecoder().decode(compiled.files.get("helmr/compiler-result.json")),
+    )
+    expect(
+      manifest.externalEdges
+        .map((edge: { specifier: string }) => edge.specifier)
+        .filter((specifier: string) => specifier !== "@helmr/sdk"),
+    ).toEqual(["first-package", "second-package"])
+    for (const output of manifest.outputs) {
+      const code = new TextDecoder().decode(
+        compiled.files.get(output.modulePath),
+      )
+      const own = output.sourcePath === "tasks/first.ts"
+        ? "first-package"
+        : "second-package"
+      const other = own === "first-package" ? "second-package" : "first-package"
+      expect(code).toContain(resolve(root, `node_modules/${own}/index.mjs`))
+      expect(code).not.toContain(resolve(root, `node_modules/${other}/index.mjs`))
+      expect(code).not.toContain("dropped-package")
+    }
   })
 
   test("bundles copied file dependencies from the installed-tree local map", async () => {
@@ -611,6 +694,56 @@ describe("v0 compiler contract", () => {
       root: invalidRoot,
     })).rejects.toThrow("exact canonical SemVer")
   })
+
+  test("records source paths that begin with the virtual namespace", async () => {
+    const root = await project()
+    const sourcePath = "helmr-final:tasks/example.ts"
+    await source(root, sourcePath, task("colon-source"))
+    const compiled = await compileProgram({
+      architecture: "x86_64",
+      config: { dirs: ["helmr-final:tasks"], ignorePatterns: [] },
+      nodeVersion: "24.20.0",
+      outputRoot: await output(),
+      root,
+      runtimeRoot: root,
+    })
+    const manifest = JSON.parse(
+      new TextDecoder().decode(compiled.files.get("helmr/compiler-result.json")),
+    )
+    expect(
+      manifest.inputs.map((input: { path: string }) => input.path),
+    ).toContain(sourcePath)
+  })
+
+  test("compiles many shared entries deterministically without chunks", async () => {
+    const root = await project()
+    await source(root, "lib/shared.ts", 'export const shared = "shared"\n')
+    const sourceCount = 100
+    for (let index = 0; index < sourceCount; index++) {
+      await source(
+        root,
+        `tasks/task-${index}.ts`,
+        [
+          'import { task } from "@helmr/sdk"',
+          'import { shared } from "../lib/shared.ts"',
+          `export const declaration = task({ id: "task-${index}", run: () => shared })`,
+        ].join("\n"),
+      )
+    }
+
+    const first = await compile(root)
+    const second = await compile(root)
+    const paths = [...first.files.keys()]
+    expect(paths.filter((path) => path.endsWith(".mjs"))).toHaveLength(
+      sourceCount,
+    )
+    expect(paths.filter((path) => path.endsWith(".mjs.map"))).toHaveLength(
+      sourceCount,
+    )
+    expect(first.files.size).toBe(sourceCount * 2 + 2)
+    expect([...second.files]).toEqual([...first.files])
+  }, 30_000)
+
 })
 
 async function compile(root: string) {

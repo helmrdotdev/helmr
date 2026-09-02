@@ -3361,18 +3361,19 @@ async function bundleFile(options) {
   const localPackages = new Map(options.localPackages.map((item) => [item.installedRoot, item]));
   const externalEdges = [];
   const result = await build2({
-    ...baseOptions(options.root, options.outfile, options.runtimeRoot, options.nodeVersion, localPackages, externalEdges),
-    entryPoints: [options.entry]
+    ...baseOptions(options.root, options.runtimeRoot, options.nodeVersion, localPackages, externalEdges),
+    entryPoints: [options.entry],
+    outfile: options.outfile
   });
   const output = {
-    ...outputFiles(requireOutputFiles(result.outputFiles), options.outfile),
+    ...singleOutputFiles(requireOutputFiles(result.outputFiles), options.outfile),
     localPackages: sortedLocalPackages(localPackages),
     externalEdges: sortedExternalEdges(externalEdges),
     metafile: requiredMetafile(result.metafile)
   };
   return output;
 }
-function baseOptions(root, outfile, runtimeRoot, nodeVersion, localPackages, externalEdges) {
+function baseOptions(root, runtimeRoot, nodeVersion, localPackages, externalEdges, plugins = []) {
   return {
     absWorkingDir: root,
     bundle: true,
@@ -3380,10 +3381,9 @@ function baseOptions(root, outfile, runtimeRoot, nodeVersion, localPackages, ext
     legalComments: "none",
     logLevel: "silent",
     metafile: true,
-    outfile,
     packages: "bundle",
     platform: "node",
-    plugins: [dependencyBoundary(root, runtimeRoot, localPackages, externalEdges)],
+    plugins: [...plugins, dependencyBoundary(root, runtimeRoot, localPackages, externalEdges)],
     banner: {
       js: 'import { createRequire as __helmrCreateRequire } from "node:module"; const require = __helmrCreateRequire(import.meta.url);'
     },
@@ -3469,7 +3469,8 @@ function sortedLocalPackages(localPackages) {
   return [...localPackages.values()].sort((left, right) => compareUTF82(left.installedRoot, right.installedRoot));
 }
 function sortedExternalEdges(edges) {
-  return [...edges].sort((left, right) => compareUTF82(externalEdgeKey(left), externalEdgeKey(right)));
+  const unique = new Map(edges.map((edge) => [externalEdgeKey(edge), edge]));
+  return [...unique.values()].sort((left, right) => compareUTF82(externalEdgeKey(left), externalEdgeKey(right)));
 }
 function externalEdgeKey(edge) {
   return [
@@ -3481,7 +3482,7 @@ function externalEdgeKey(edge) {
     edge.runtimePath
   ].join("\x00");
 }
-function outputFiles(files, outfile) {
+function singleOutputFiles(files, outfile) {
   const code = files.find((file) => file.path === outfile);
   const map = files.find((file) => file.path === `${outfile}.map`);
   if (code === undefined || map === undefined || files.length !== 2) {

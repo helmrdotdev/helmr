@@ -78,6 +78,19 @@ interface BundledOutput {
   readonly metafile: Metafile
 }
 
+interface OutputFiles {
+  readonly code: Uint8Array
+  readonly localPackages: readonly LocalPackage[]
+  readonly map: Uint8Array
+}
+
+interface FinalEntry {
+  readonly entrySource: string
+  readonly outfile: string
+  readonly source: string
+  readonly sourcefile: string
+}
+
 interface ExternalEdge {
   readonly importer: string
   readonly kind: string
@@ -141,11 +154,15 @@ export async function compileProgram(options: {
       architecture: options.architecture,
       exports: analysisExports(namespaces),
     })
-    const canonicalSources = [
-      ...new Set(
-        analyzed.declarationLocator.declarations.map((item) => item.modulePath),
-      ),
-    ].sort(compareUTF8)
+    const declarationsBySource = new Map<string, string[]>()
+    for (const declaration of analyzed.declarationLocator.declarations) {
+      const exports = declarationsBySource.get(declaration.modulePath) ?? []
+      exports.push(declaration.exportName)
+      declarationsBySource.set(declaration.modulePath, exports)
+    }
+    const canonicalSourceGroups = [...declarationsBySource].sort(
+      ([left], [right]) => compareUTF8(left, right),
+    )
     const generated = new Map<string, string>()
     const files = new Map<string, Uint8Array>()
     const finalOutputs: Array<{
@@ -155,38 +172,34 @@ export async function compileProgram(options: {
       readonly sourceMapPath: string
       readonly sourcePath: string
     }> = []
-    const localPackageGroups: Array<readonly LocalPackage[]> = [
-      aggregate.localPackages,
-    ]
     const metafiles = [aggregate.metafile]
     // Aggregate execution is producer-only analysis. Only final declaration
-    // modules contribute dependencies to the executable Program closure.
-    const externalEdgeGroups: Array<readonly ExternalEdge[]> = []
+    // modules contribute external edges to the executable Program closure.
     const runtimeRoot = resolve(options.runtimeRoot ?? RUNTIME_PROGRAM_ROOT)
-    for (const source of canonicalSources) {
-      const selected = analyzed.declarationLocator.declarations.filter(
-        (item) => item.modulePath === source,
-      )
-      const path = generatedModulePath(source)
-      const compiled = await bundleEntry({
-        root,
-        entrySource: finalEntry(source, selected.map((item) => item.exportName)),
+    const finalBundle = await bundleEntries({
+      root,
+      outputRoot: analysisRoot,
+      entries: canonicalSourceGroups.map(([source, exportNames]) => ({
+        source,
+        entrySource: finalEntry(source, exportNames),
         sourcefile: `<helmr-final-${source}>`,
-        outfile: resolve(root, path),
-        nodeVersion: options.nodeVersion,
-        runtimeRoot,
-        localPackages: canonicalLocalPackages,
-      })
+        outfile: resolve(analysisRoot, generatedModulePath(source)),
+      })),
+      nodeVersion: options.nodeVersion,
+      runtimeRoot,
+      localPackages: canonicalLocalPackages,
+    })
+    metafiles.push(finalBundle.metafile)
+    for (const [source, compiled] of finalBundle.outputs) {
+      const path = generatedModulePath(source)
       const sourceMap = normalizeSourceMap(
         root,
-        resolve(root, path),
+        resolve(analysisRoot, path),
         source,
         compiled.map,
         compiled.localPackages,
       )
       const analysisModulePath = resolve(analysisRoot, path)
-      await mkdir(dirname(analysisModulePath), { recursive: true })
-      await writeFile(analysisModulePath, compiled.code)
       await writeFile(`${analysisModulePath}.map`, sourceMap)
       await verifyFinalModule(
         analysisModulePath,
@@ -197,9 +210,6 @@ export async function compileProgram(options: {
       generated.set(source, path)
       files.set(path, compiled.code)
       files.set(`${path}.map`, sourceMap)
-      metafiles.push(compiled.metafile)
-      localPackageGroups.push(compiled.localPackages)
-      externalEdgeGroups.push(compiled.externalEdges)
       finalOutputs.push({
         moduleDigest: `sha256:${sha256(compiled.code)}`,
         modulePath: path,
@@ -231,9 +241,19 @@ export async function compileProgram(options: {
       options.config as unknown as JsonValue,
     )
     files.set("helmr/config.json", configBytes)
-    const localPackages = mergeLocalPackages(localPackageGroups)
-    const externalEdges = mergeExternalEdges(externalEdgeGroups)
-    const inputs = await compilerInputs(root, metafiles, localPackages)
+    const externalEdges = finalBundle.externalEdges
+    const inputs = await compilerInputs(
+      root,
+      metafiles,
+      canonicalLocalPackages,
+      new Set(["<helmr-analysis>", ...finalBundle.virtualInputs]),
+    )
+    const localPackages = sortedLocalPackages(localPackagesForInputs(
+      new Set(inputs.map((input) => input.path)),
+      new Map(
+        canonicalLocalPackages.map((item) => [item.installedRoot, item]),
+      ),
+    ))
     const tsconfigs = await compilerTSConfigs(root, inputs.map((item) => item.path))
     files.set(
       "helmr/compiler-result.json",
@@ -325,6 +345,7 @@ function compilerOptionsDigestForTarget(target: string): string {
     bundle: true,
     esbuildVersion: ESBUILD_VERSION,
     format: "esm",
+    finalEntryGraph: "multi-entry",
     legalComments: "none",
     metafile: true,
     packages: "bundle",
@@ -338,7 +359,6 @@ function compilerOptionsDigestForTarget(target: string): string {
     declarationExtensions,
     sourceSemantics: "pinned-esbuild",
     target,
-    write: false,
   } as unknown as JsonValue)
   return `sha256:${sha256(canonical)}`
 }
@@ -358,16 +378,16 @@ async function bundleFile(options: {
   const result = await build({
     ...baseOptions(
       options.root,
-      options.outfile,
       options.runtimeRoot,
       options.nodeVersion,
       localPackages,
       externalEdges,
     ),
     entryPoints: [options.entry],
+    outfile: options.outfile,
   })
   const output = {
-    ...outputFiles(requireOutputFiles(result.outputFiles), options.outfile),
+    ...singleOutputFiles(requireOutputFiles(result.outputFiles), options.outfile),
     localPackages: sortedLocalPackages(localPackages),
     externalEdges: sortedExternalEdges(externalEdges),
     metafile: requiredMetafile(result.metafile),
@@ -391,12 +411,12 @@ async function bundleEntry(options: {
   const result = await build({
     ...baseOptions(
       options.root,
-      options.outfile,
       options.runtimeRoot,
       options.nodeVersion,
       localPackages,
       externalEdges,
     ),
+    outfile: options.outfile,
     stdin: {
       contents: options.entrySource,
       loader: "js",
@@ -405,7 +425,7 @@ async function bundleEntry(options: {
     },
   })
   const output = {
-    ...outputFiles(requireOutputFiles(result.outputFiles), options.outfile),
+    ...singleOutputFiles(requireOutputFiles(result.outputFiles), options.outfile),
     localPackages: sortedLocalPackages(localPackages),
     externalEdges: sortedExternalEdges(externalEdges),
     metafile: requiredMetafile(result.metafile),
@@ -413,13 +433,95 @@ async function bundleEntry(options: {
   return output
 }
 
+async function bundleEntries(options: {
+  readonly root: string
+  readonly outputRoot: string
+  readonly entries: readonly FinalEntry[]
+  readonly nodeVersion: string
+  readonly runtimeRoot: string
+  readonly localPackages: readonly LocalPackage[]
+}): Promise<{
+  readonly externalEdges: readonly ExternalEdge[]
+  readonly metafile: Metafile
+  readonly outputs: ReadonlyMap<string, OutputFiles>
+  readonly virtualInputs: ReadonlySet<string>
+}> {
+  const localPackages = new Map(
+    options.localPackages.map((item) => [item.installedRoot, item]),
+  )
+  const externalEdges: ExternalEdge[] = []
+  const entries = new Map(
+    options.entries.map((entry) => [entry.sourcefile, entry]),
+  )
+  const result = await build({
+    ...baseOptions(
+      options.root,
+      options.runtimeRoot,
+      options.nodeVersion,
+      localPackages,
+      externalEdges,
+      [finalEntryPlugin(options.root, entries)],
+    ),
+    entryPoints: options.entries.map((entry) => ({
+      in: entry.sourcefile,
+      out: projectPath(options.outputRoot, entry.outfile).slice(0, -4),
+    })),
+    outdir: options.outputRoot,
+    outExtension: { ".js": ".mjs" },
+    write: true,
+  })
+  const metafile = requiredMetafile(result.metafile)
+  const outputPaths = new Set(
+    Object.keys(metafile.outputs).map((path) => resolve(options.root, path)),
+  )
+  if (outputPaths.size !== options.entries.length * 2) {
+    throw new Error("esbuild output topology does not match the v0 contract")
+  }
+  const externalEdgesByImporter = new Map<string, ExternalEdge[]>()
+  for (const edge of externalEdges) {
+    const importerEdges = externalEdgesByImporter.get(edge.importer) ?? []
+    importerEdges.push(edge)
+    externalEdgesByImporter.set(edge.importer, importerEdges)
+  }
+  const outputs = new Map<string, OutputFiles>()
+  const externalEdgeGroups: Array<readonly ExternalEdge[]> = []
+  for (const entry of options.entries) {
+    if (
+      !outputPaths.has(entry.outfile) ||
+      !outputPaths.has(`${entry.outfile}.map`)
+    ) {
+      throw new Error("esbuild output topology does not match the v0 contract")
+    }
+    const output = requiredMetafileOutput(options.root, metafile, entry.outfile)
+    const inputPaths = outputInputPaths(options.root, output.inputs)
+    externalEdgeGroups.push(
+      externalEdgesForOutput(output, inputPaths, externalEdgesByImporter),
+    )
+    outputs.set(entry.source, {
+      code: await readFile(entry.outfile),
+      localPackages: sortedLocalPackages(
+        localPackagesForInputs(inputPaths, localPackages),
+      ),
+      map: await readFile(`${entry.outfile}.map`),
+    })
+  }
+  return {
+    externalEdges: mergeExternalEdges(externalEdgeGroups),
+    metafile,
+    outputs,
+    virtualInputs: new Set(
+      options.entries.map((entry) => `helmr-final:${entry.sourcefile}`),
+    ),
+  }
+}
+
 function baseOptions(
   root: string,
-  outfile: string,
   runtimeRoot: string,
   nodeVersion: string,
   localPackages: Map<string, LocalPackage>,
   externalEdges: ExternalEdge[],
+  plugins: readonly Plugin[] = [],
 ): BuildOptions {
   return {
     absWorkingDir: root,
@@ -428,10 +530,9 @@ function baseOptions(
     legalComments: "none",
     logLevel: "silent",
     metafile: true,
-    outfile,
     packages: "bundle",
     platform: "node",
-    plugins: [dependencyBoundary(
+    plugins: [...plugins, dependencyBoundary(
       root,
       runtimeRoot,
       localPackages,
@@ -514,6 +615,91 @@ function esbuildNodeTarget(nodeVersion: string): string {
     throw new Error("Compiler Node version must be an exact canonical SemVer")
   }
   return `node${nodeVersion}`
+}
+
+function finalEntryPlugin(
+  root: string,
+  entries: ReadonlyMap<string, FinalEntry>,
+): Plugin {
+  return {
+    name: "helmr-final-entry",
+    setup(build) {
+      build.onResolve({ filter: /^<helmr-final-/ }, (args) => {
+        return { namespace: "helmr-final", path: args.path }
+      })
+      build.onLoad({ filter: /.*/, namespace: "helmr-final" }, (args) => {
+        const entry = entries.get(args.path)
+        if (entry === undefined) {
+          return { errors: [{ text: `unknown final entry ${args.path}` }] }
+        }
+        return {
+          contents: entry.entrySource,
+          loader: "js",
+          resolveDir: root,
+        }
+      })
+    },
+  }
+}
+
+function requiredMetafileOutput(
+  root: string,
+  metafile: Metafile,
+  outfile: string,
+): Metafile["outputs"][string] {
+  const matches = Object.entries(metafile.outputs).filter(([path]) =>
+    resolve(root, path) === outfile
+  )
+  if (matches.length !== 1) {
+    throw new Error("esbuild metafile output does not match the v0 topology")
+  }
+  return matches[0]![1]
+}
+
+function outputInputPaths(
+  root: string,
+  inputs: Metafile["outputs"][string]["inputs"],
+): ReadonlySet<string> {
+  return new Set(
+    Object.entries(inputs)
+      .filter(([, input]) => input.bytesInOutput > 0)
+      .map(([path]) => projectPath(root, resolve(root, path))),
+  )
+}
+
+function localPackagesForInputs(
+  inputs: ReadonlySet<string>,
+  localPackages: ReadonlyMap<string, LocalPackage>,
+): ReadonlyMap<string, LocalPackage> {
+  const paths = [...inputs]
+  return new Map(
+    [...localPackages].filter(([installedRoot]) =>
+      paths.some((path) =>
+        path === installedRoot || path.startsWith(`${installedRoot}/`)
+      )
+    ),
+  )
+}
+
+function externalEdgesForOutput(
+  output: Metafile["outputs"][string],
+  inputs: ReadonlySet<string>,
+  externalEdgesByImporter: ReadonlyMap<string, readonly ExternalEdge[]>,
+): readonly ExternalEdge[] {
+  const emitted = new Set(
+    output.imports
+      .filter((item) => item.external)
+      .map((item) => `${item.kind}\0${item.path}`),
+  )
+  const externalEdges: ExternalEdge[] = []
+  for (const input of inputs) {
+    for (const edge of externalEdgesByImporter.get(input) ?? []) {
+      if (emitted.has(`${edge.kind}\0${edge.runtimePath}`)) {
+        externalEdges.push(edge)
+      }
+    }
+  }
+  return externalEdges
 }
 
 function dependencyBoundary(
@@ -607,32 +793,13 @@ function sortedLocalPackages(
   )
 }
 
-function mergeLocalPackages(
-  groups: readonly (readonly LocalPackage[])[],
-): readonly LocalPackage[] {
-  const merged = new Map<string, LocalPackage>()
-  for (const group of groups) {
-    for (const localPackage of group) {
-      const previous = merged.get(localPackage.installedRoot)
-      if (
-        previous !== undefined &&
-        (previous.name !== localPackage.name ||
-          previous.sourceRoot !== localPackage.sourceRoot)
-      ) {
-        throw new Error(
-          `installed local package ${JSON.stringify(localPackage.installedRoot)} changed classification`,
-        )
-      }
-      merged.set(localPackage.installedRoot, localPackage)
-    }
-  }
-  return sortedLocalPackages(merged)
-}
-
 function sortedExternalEdges(
   edges: readonly ExternalEdge[],
 ): readonly ExternalEdge[] {
-  return [...edges].sort((left, right) =>
+  const unique = new Map(
+    edges.map((edge) => [externalEdgeKey(edge), edge]),
+  )
+  return [...unique.values()].sort((left, right) =>
     compareUTF8(externalEdgeKey(left), externalEdgeKey(right))
   )
 }
@@ -640,11 +807,7 @@ function sortedExternalEdges(
 function mergeExternalEdges(
   groups: readonly (readonly ExternalEdge[])[],
 ): readonly ExternalEdge[] {
-  const merged = new Map<string, ExternalEdge>()
-  for (const edge of groups.flat()) {
-    merged.set(externalEdgeKey(edge), edge)
-  }
-  return sortedExternalEdges([...merged.values()])
+  return sortedExternalEdges(groups.flat())
 }
 
 function externalEdgeKey(edge: ExternalEdge): string {
@@ -754,10 +917,10 @@ function normalizeSourceMap(
     throw new Error("esbuild source map does not match the v0 topology")
   }
   const sources = (map["sources"] as string[]).map((item) => {
-    if (item.includes("%3Chelmr-final-") || item.includes("<helmr-final-")) {
+    const decoded = decodeURIComponent(item)
+    if (decoded === `helmr-final:<helmr-final-${source}>`) {
       return programSourceURL(source)
     }
-    const decoded = decodeURIComponent(item)
     const absolute = resolve(dirname(outfile), decoded)
     const path = projectPath(root, absolute)
     if (
@@ -784,7 +947,7 @@ function programSourceURL(path: string): string {
   return pathToFileURL(resolve(RUNTIME_PROGRAM_ROOT, path)).href
 }
 
-function outputFiles(
+function singleOutputFiles(
   files: readonly { readonly path: string; readonly contents: Uint8Array }[],
   outfile: string,
 ): { readonly code: Uint8Array; readonly map: Uint8Array } {
@@ -812,11 +975,12 @@ async function compilerInputs(
   root: string,
   metafiles: readonly Metafile[],
   localPackages: readonly LocalPackage[],
+  virtualInputs: ReadonlySet<string>,
 ): Promise<readonly { readonly digest: string; readonly path: string }[]> {
   const paths = new Set<string>()
   for (const metafile of metafiles) {
     for (const input of Object.keys(metafile.inputs)) {
-      if (input.startsWith("<")) continue
+      if (virtualInputs.has(input)) continue
       const absolute = await realpath(resolve(root, input))
       const path = projectPath(root, absolute)
       if (!inside(relative(root, absolute))) continue
