@@ -3,17 +3,187 @@ package db_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func TestRunWorkerCapacitySelectionFindsViableWorkerPastPlannerLimit(t *testing.T) {
+	ctx := context.Background()
+	pool := newPostgresDB(t, ctx)
+	seedCapacityQueryWorkers(t, ctx, pool, 1002, 1001)
+	q := db.New(pool)
+	bins, err := q.ListWorkerCapacityBins(ctx, db.ListWorkerCapacityBinsParams{
+		WorkerGroupID: dbtest.DefaultWorkerGroupID, ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
+		RowLimit: 1001,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bins) != 1001 {
+		t.Fatalf("planner Worker prefix has %d rows, want 1001", len(bins))
+	}
+	if bins[len(bins)-1].WorkerInstanceID != capacityQueryWorkerID(1001) {
+		t.Fatalf("planner Worker prefix ends at %s", pgvalue.UUIDString(bins[len(bins)-1].WorkerInstanceID))
+	}
+
+	selected, err := q.SelectRunWorkerCapacity(ctx, runCapacitySelectionParams())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := capacityQueryWorkerID(1002)
+	if selected.WorkerInstanceID != want {
+		t.Fatalf("selected Worker = %s, want %s", pgvalue.UUIDString(selected.WorkerInstanceID), pgvalue.UUIDString(want))
+	}
+}
+
+func TestRunWorkerCapacityPressureCandidatesPageByWorkerID(t *testing.T) {
+	ctx := context.Background()
+	pool := newPostgresDB(t, ctx)
+	seedCapacityQueryWorkers(t, ctx, pool, 129, 0)
+	q := db.New(pool)
+	params := runCapacityPressureParams()
+	params.RowLimit = 128
+
+	first, err := q.ListRunWorkerCapacityPressureCandidates(ctx, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 128 {
+		t.Fatalf("first pressure page has %d rows, want 128", len(first))
+	}
+	if first[0].WorkerInstanceID != capacityQueryWorkerID(1) || first[127].WorkerInstanceID != capacityQueryWorkerID(128) {
+		t.Fatalf("first pressure page bounds = %s..%s", pgvalue.UUIDString(first[0].WorkerInstanceID),
+			pgvalue.UUIDString(first[len(first)-1].WorkerInstanceID))
+	}
+	params.AfterWorkerInstanceID = first[len(first)-1].WorkerInstanceID
+	second, err := q.ListRunWorkerCapacityPressureCandidates(ctx, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second) != 1 || second[0].WorkerInstanceID != capacityQueryWorkerID(129) {
+		t.Fatalf("second pressure page = %+v, want Worker 129", second)
+	}
+}
+
+func TestRunWorkerCapacityRestoreCompatibilityMatchesPlanner(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		cpuDigest     string
+		workerFormat  string
+		requestFormat string
+	}{
+		{name: "compatible", cpuDigest: dbtest.DefaultCPUConfigID, workerFormat: capacity.SubstrateFormatExt4, requestFormat: capacity.SubstrateFormatExt4},
+		{name: "cpu shape mismatch", cpuDigest: dbtest.Digest("wrong-cpu"), workerFormat: capacity.SubstrateFormatExt4, requestFormat: capacity.SubstrateFormatExt4},
+		{name: "substrate mismatch", cpuDigest: dbtest.DefaultCPUConfigID, workerFormat: capacity.SubstrateFormatExt4, requestFormat: "squashfs"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			pool := newPostgresDB(t, ctx)
+			seedCapacityQueryWorkers(t, ctx, pool, 1, 0)
+			plannerCompatible := capacity.CanRestore(capacity.RestoreRequirements{
+				WorkerGroupID: dbtest.DefaultWorkerGroupID, RuntimeIdentityID: dbtest.DefaultRuntimeID,
+				VCPUCount: 1, CPUConfigDigest: test.cpuDigest,
+				SubstrateFormat: test.requestFormat, SubstrateContract: capacity.SubstrateContractExt4,
+				Resources: capacity.ResourceVector{CPUMillis: 1000, MemoryBytes: 1 << 30, GuestEphemeralDiskBytes: 32 << 30, VMSlots: 1},
+			}, capacity.Pool{
+				WorkerGroupID: dbtest.DefaultWorkerGroupID, RuntimeIdentityID: dbtest.DefaultRuntimeID,
+				SubstrateFormat: test.workerFormat, SubstrateContract: capacity.SubstrateContractExt4,
+				PerVM:     capacity.ResourceVector{CPUMillis: 4000, MemoryBytes: 8 << 30, GuestEphemeralDiskBytes: 32 << 30, VMSlots: 1},
+				CPUShapes: []runtimeid.CPUShape{{VCPUCount: 1, CPUConfigDigest: dbtest.DefaultCPUConfigID}},
+			})
+			immediateParams := runCapacitySelectionParams()
+			immediateParams.RequiredRuntimeIdentityID = dbtest.DefaultRuntimeID
+			immediateParams.RequiredWorkerGroupID = dbtest.DefaultWorkerGroupID
+			immediateParams.RequiredVMVCPUCount = 1
+			immediateParams.RequiredCPUConfigDigest = test.cpuDigest
+			immediateParams.RequiredSubstrateFormat = test.requestFormat
+			immediateParams.RequiredSubstrateContract = capacity.SubstrateContractExt4
+			_, immediateErr := db.New(pool).SelectRunWorkerCapacity(ctx, immediateParams)
+
+			pressureParams := runCapacityPressureParams()
+			pressureParams.RequiredRuntimeIdentityID = immediateParams.RequiredRuntimeIdentityID
+			pressureParams.RequiredWorkerGroupID = immediateParams.RequiredWorkerGroupID
+			pressureParams.RequiredVMVCPUCount = immediateParams.RequiredVMVCPUCount
+			pressureParams.RequiredCPUConfigDigest = immediateParams.RequiredCPUConfigDigest
+			pressureParams.RequiredSubstrateFormat = immediateParams.RequiredSubstrateFormat
+			pressureParams.RequiredSubstrateContract = immediateParams.RequiredSubstrateContract
+			pressure, err := db.New(pool).ListRunWorkerCapacityPressureCandidates(ctx, pressureParams)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (immediateErr == nil) != plannerCompatible || (len(pressure) == 1) != plannerCompatible {
+				t.Fatalf("planner = %v, immediate error = %v, pressure rows = %d", plannerCompatible, immediateErr, len(pressure))
+			}
+			if immediateErr != nil && !errors.Is(immediateErr, pgx.ErrNoRows) {
+				t.Fatal(immediateErr)
+			}
+		})
+	}
+}
+
+func runCapacitySelectionParams() db.SelectRunWorkerCapacityParams {
+	return db.SelectRunWorkerCapacityParams{
+		RegionID: dbtest.DefaultRegionID, ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
+		RunArchitecture: "x86_64", VMRuntimeContract: runtimeid.Contract,
+		RequiredCPUMillis: 1000, RequiredMemoryBytes: 1 << 30,
+		RequiredGuestEphemeralDiskBytes: 32 << 30,
+	}
+}
+
+func runCapacityPressureParams() db.ListRunWorkerCapacityPressureCandidatesParams {
+	base := runCapacitySelectionParams()
+	return db.ListRunWorkerCapacityPressureCandidatesParams{
+		RegionID: base.RegionID, ObservationFreshnessSeconds: base.ObservationFreshnessSeconds,
+		RunArchitecture: base.RunArchitecture, VMRuntimeContract: base.VMRuntimeContract,
+		RequiredCPUMillis: base.RequiredCPUMillis, RequiredMemoryBytes: base.RequiredMemoryBytes,
+		RequiredGuestEphemeralDiskBytes: base.RequiredGuestEphemeralDiskBytes, RowLimit: 128,
+	}
+}
+
+func seedCapacityQueryWorkers(t *testing.T, ctx context.Context, pool *pgxpool.Pool, count, paused int) {
+	t.Helper()
+	dbtest.MustExec(t, ctx, pool, `
+INSERT INTO worker_instances (
+    id, resource_id, worker_group_id, worker_pool_id, state,
+    current_epoch, current_service_id, runtime_identity_id,
+    substrate_format, substrate_contract,
+    epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
+    per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes,
+    max_vm_slots, max_runtime_starts, cpu_environment, cpu_environment_digest,
+    run_paused_reason, observed_at, epoch_started_at, activated_at
+)
+SELECT ('00000000-0000-7000-8000-' || lpad(value::text, 12, '0'))::uuid,
+       'capacity-worker-' || value,
+       $1, $2, 'active', 1,
+       ('10000000-0000-7000-8000-' || lpad(value::text, 12, '0'))::uuid,
+       $3, $4, $5,
+       8000, 17179869184, 274877906944,
+       4000, 8589934592, 34359738368,
+       8, 8, '{}'::jsonb, $6,
+       CASE WHEN value <= $7 THEN 'test-incompatible' ELSE NULL END,
+       now(), now(), now()
+  FROM generate_series(1, $8::integer) AS value`,
+		dbtest.DefaultWorkerGroupID, dbtest.DefaultWorkerPoolID, dbtest.DefaultRuntimeID,
+		capacity.SubstrateFormatExt4, capacity.SubstrateContractExt4,
+		dbtest.DefaultCPUConfigID, paused, count,
+	)
+}
+
+func capacityQueryWorkerID(value int) pgtype.UUID {
+	return pgvalue.UUID(uuid.MustParse(fmt.Sprintf("00000000-0000-7000-8000-%012d", value)))
+}
 
 func TestWorkerEpochOwnsLivenessAndActivationReplayPreservesIt(t *testing.T) {
 	ctx := context.Background()
@@ -48,6 +218,7 @@ func TestWorkerEpochOwnsLivenessAndActivationReplayPreservesIt(t *testing.T) {
 	bins, err := q.ListWorkerCapacityBins(ctx, db.ListWorkerCapacityBinsParams{
 		WorkerGroupID:               dbtest.DefaultWorkerGroupID,
 		ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
+		RowLimit:                    100,
 	})
 	if err != nil {
 		t.Fatal(err)

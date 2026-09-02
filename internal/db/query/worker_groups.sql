@@ -731,6 +731,8 @@ WITH live_workers AS (
        AND worker_groups.state = 'active'
        AND worker_instances.observed_at >= transaction_timestamp()
            - sqlc.arg(observation_freshness_seconds)::bigint * interval '1 second'
+     ORDER BY worker_instances.id
+     LIMIT sqlc.arg(row_limit)
 ), usage AS (
     SELECT live_workers.worker_instance_id,
            COALESCE((SELECT sum(runtime_instances.reserved_cpu_millis)
@@ -795,8 +797,183 @@ SELECT live_workers.worker_group_id,
             WHERE worker_pool_cpu_shapes.worker_pool_id = live_workers.worker_pool_id
 	       ), ARRAY[]::text[])::text[] AS cpu_shape_config_digests
   FROM live_workers
-  JOIN usage USING (worker_instance_id)
+ JOIN usage USING (worker_instance_id)
  ORDER BY live_workers.worker_instance_id;
+
+-- name: SelectRunWorkerCapacity :one
+WITH compatible_workers AS (
+    SELECT worker_groups.id AS worker_group_id,
+           worker_instances.id AS worker_instance_id,
+           worker_instances.current_epoch AS worker_epoch,
+           worker_instances.runtime_identity_id,
+           worker_instances.epoch_cpu_millis,
+           worker_instances.epoch_memory_bytes,
+           worker_instances.epoch_guest_ephemeral_disk_bytes,
+           worker_instances.max_vm_slots,
+           worker_instances.max_runtime_starts
+      FROM worker_groups
+      JOIN worker_instances
+        ON worker_instances.worker_group_id = worker_groups.id
+       AND worker_instances.state = 'active'
+       AND worker_instances.current_epoch IS NOT NULL
+      JOIN worker_pools
+        ON worker_pools.id = worker_instances.worker_pool_id
+       AND worker_pools.worker_group_id = worker_instances.worker_group_id
+       AND worker_pools.state = 'active'
+      JOIN runtime_identities
+        ON runtime_identities.id = worker_instances.runtime_identity_id
+     WHERE worker_groups.region_id = sqlc.arg(region_id)
+       AND worker_groups.state = 'active'
+       AND worker_instances.observed_at >= transaction_timestamp()
+           - sqlc.arg(observation_freshness_seconds)::bigint * interval '1 second'
+       AND worker_instances.run_paused_reason IS NULL
+       AND worker_instances.runtime_paused_reason IS NULL
+       AND runtime_identities.runtime_arch = sqlc.arg(run_architecture)
+       AND runtime_identities.vm_runtime_contract = sqlc.arg(vm_runtime_contract)
+       AND worker_instances.per_vm_cpu_millis >= sqlc.arg(required_cpu_millis)
+       AND worker_instances.per_vm_memory_bytes >= sqlc.arg(required_memory_bytes)
+       AND worker_instances.per_vm_guest_ephemeral_disk_bytes >= sqlc.arg(required_guest_ephemeral_disk_bytes)
+       AND (
+           (sqlc.arg(required_runtime_identity_id)::text = ''
+            AND worker_groups.primary_pool_id IS NOT NULL
+            AND worker_instances.worker_pool_id = worker_groups.primary_pool_id)
+           OR
+           (sqlc.arg(required_runtime_identity_id)::text <> ''
+            AND worker_groups.id = sqlc.arg(required_worker_group_id)
+            AND worker_instances.runtime_identity_id = sqlc.arg(required_runtime_identity_id)
+            AND worker_instances.substrate_format = sqlc.arg(required_substrate_format)
+            AND worker_instances.substrate_contract = sqlc.arg(required_substrate_contract)
+            AND sqlc.arg(required_vm_vcpu_count)::integer > 0
+            AND sqlc.arg(required_cpu_config_digest)::text <> ''
+            AND EXISTS (
+                SELECT 1
+                  FROM worker_pool_cpu_shapes
+                 WHERE worker_pool_cpu_shapes.worker_pool_id = worker_instances.worker_pool_id
+                   AND worker_pool_cpu_shapes.vcpu_count = sqlc.arg(required_vm_vcpu_count)
+                   AND worker_pool_cpu_shapes.cpu_config_digest = sqlc.arg(required_cpu_config_digest)
+            ))
+       )
+), available_workers AS (
+    SELECT compatible_workers.*,
+           usage.cpu_millis,
+           usage.memory_bytes,
+           usage.guest_ephemeral_disk_bytes,
+           usage.vm_slots,
+           usage.run_consumers,
+           usage.runtime_starts
+      FROM compatible_workers
+     CROSS JOIN LATERAL (
+         SELECT COALESCE((
+                    SELECT sum(runtime_instances.reserved_cpu_millis)
+                      FROM runtime_instances
+                     WHERE runtime_instances.worker_instance_id = compatible_workers.worker_instance_id
+                       AND runtime_instances.worker_epoch = compatible_workers.worker_epoch
+                       AND runtime_instances.reclaimed_at IS NULL
+                ), 0) AS cpu_millis,
+                COALESCE((
+                    SELECT sum(runtime_instances.reserved_memory_bytes)
+                      FROM runtime_instances
+                     WHERE runtime_instances.worker_instance_id = compatible_workers.worker_instance_id
+                       AND runtime_instances.worker_epoch = compatible_workers.worker_epoch
+                       AND runtime_instances.reclaimed_at IS NULL
+                ), 0) AS memory_bytes,
+                COALESCE((
+                    SELECT sum(runtime_instances.reserved_guest_ephemeral_disk_bytes)
+                      FROM runtime_instances
+                     WHERE runtime_instances.worker_instance_id = compatible_workers.worker_instance_id
+                       AND runtime_instances.worker_epoch = compatible_workers.worker_epoch
+                       AND runtime_instances.reclaimed_at IS NULL
+                ), 0) AS guest_ephemeral_disk_bytes,
+                COALESCE((
+                    SELECT count(*)
+                      FROM runtime_instances
+                     WHERE runtime_instances.worker_instance_id = compatible_workers.worker_instance_id
+                       AND runtime_instances.worker_epoch = compatible_workers.worker_epoch
+                       AND (runtime_instances.observed_state IN ('allocated', 'ready')
+                            OR (runtime_instances.observed_state IN ('failed', 'lost')
+                                AND runtime_instances.reclaimed_at IS NULL))
+                ), 0)::bigint AS vm_slots,
+                COALESCE((
+                    SELECT count(*)
+                      FROM run_leases
+                     WHERE run_leases.worker_instance_id = compatible_workers.worker_instance_id
+                       AND run_leases.worker_epoch = compatible_workers.worker_epoch
+                       AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
+                ), 0)::bigint AS run_consumers,
+                COALESCE((
+                    SELECT count(*)
+                      FROM runtime_instances
+                     WHERE runtime_instances.worker_instance_id = compatible_workers.worker_instance_id
+                       AND runtime_instances.worker_epoch = compatible_workers.worker_epoch
+                       AND runtime_instances.observed_state = 'allocated'
+                ), 0)::bigint AS runtime_starts
+     ) AS usage
+)
+SELECT worker_group_id,
+       worker_instance_id,
+       worker_epoch,
+       runtime_identity_id
+  FROM available_workers
+ WHERE epoch_cpu_millis - cpu_millis >= sqlc.arg(required_cpu_millis)
+   AND epoch_memory_bytes - memory_bytes >= sqlc.arg(required_memory_bytes)
+   AND epoch_guest_ephemeral_disk_bytes - guest_ephemeral_disk_bytes >= sqlc.arg(required_guest_ephemeral_disk_bytes)
+   AND max_vm_slots > vm_slots
+   AND max_vm_slots > run_consumers
+   AND max_runtime_starts > runtime_starts
+ ORDER BY worker_instance_id
+ LIMIT 1;
+
+-- name: ListRunWorkerCapacityPressureCandidates :many
+SELECT worker_groups.id AS worker_group_id,
+       worker_instances.id AS worker_instance_id,
+       worker_instances.current_epoch AS worker_epoch,
+       worker_instances.runtime_identity_id
+  FROM worker_groups
+  JOIN worker_instances
+    ON worker_instances.worker_group_id = worker_groups.id
+   AND worker_instances.state = 'active'
+   AND worker_instances.current_epoch IS NOT NULL
+  JOIN worker_pools
+    ON worker_pools.id = worker_instances.worker_pool_id
+   AND worker_pools.worker_group_id = worker_instances.worker_group_id
+   AND worker_pools.state = 'active'
+  JOIN runtime_identities
+    ON runtime_identities.id = worker_instances.runtime_identity_id
+ WHERE worker_groups.region_id = sqlc.arg(region_id)
+   AND worker_groups.state = 'active'
+   AND (sqlc.narg(after_worker_instance_id)::uuid IS NULL
+        OR worker_instances.id > sqlc.narg(after_worker_instance_id))
+   AND worker_instances.observed_at >= transaction_timestamp()
+       - sqlc.arg(observation_freshness_seconds)::bigint * interval '1 second'
+   AND worker_instances.run_paused_reason IS NULL
+   AND worker_instances.runtime_paused_reason IS NULL
+   AND runtime_identities.runtime_arch = sqlc.arg(run_architecture)
+   AND runtime_identities.vm_runtime_contract = sqlc.arg(vm_runtime_contract)
+   AND worker_instances.per_vm_cpu_millis >= sqlc.arg(required_cpu_millis)
+   AND worker_instances.per_vm_memory_bytes >= sqlc.arg(required_memory_bytes)
+   AND worker_instances.per_vm_guest_ephemeral_disk_bytes >= sqlc.arg(required_guest_ephemeral_disk_bytes)
+   AND (
+       (sqlc.arg(required_runtime_identity_id)::text = ''
+        AND worker_groups.primary_pool_id IS NOT NULL
+        AND worker_instances.worker_pool_id = worker_groups.primary_pool_id)
+       OR
+       (sqlc.arg(required_runtime_identity_id)::text <> ''
+        AND worker_groups.id = sqlc.arg(required_worker_group_id)
+        AND worker_instances.runtime_identity_id = sqlc.arg(required_runtime_identity_id)
+        AND worker_instances.substrate_format = sqlc.arg(required_substrate_format)
+        AND worker_instances.substrate_contract = sqlc.arg(required_substrate_contract)
+        AND sqlc.arg(required_vm_vcpu_count)::integer > 0
+        AND sqlc.arg(required_cpu_config_digest)::text <> ''
+        AND EXISTS (
+            SELECT 1
+              FROM worker_pool_cpu_shapes
+             WHERE worker_pool_cpu_shapes.worker_pool_id = worker_instances.worker_pool_id
+               AND worker_pool_cpu_shapes.vcpu_count = sqlc.arg(required_vm_vcpu_count)
+               AND worker_pool_cpu_shapes.cpu_config_digest = sqlc.arg(required_cpu_config_digest)
+        ))
+   )
+ ORDER BY worker_instances.id
+ LIMIT sqlc.arg(row_limit);
 
 -- name: MarkWorkerInstanceLost :one
 WITH target AS (

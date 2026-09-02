@@ -256,8 +256,24 @@ func Plan(ctx context.Context, store Store, workerGroupID string, request PlanRe
 		if placed {
 			continue
 		}
-		compatiblePools := requestedPoolsForCandidate(plans, candidate)
-		if len(compatiblePools) == 0 {
+		var compatiblePoolIndexes [maximumPlanningPools]int
+		compatiblePoolCount := 0
+		for index := range plans {
+			plan := &plans[index]
+			if candidate.restore != nil {
+				if !CanRestore(*candidate.restore, plan.pool) {
+					continue
+				}
+			} else if !candidate.targetPoolID.Valid || candidate.targetPoolID != plan.id {
+				continue
+			}
+			if incompatibility(candidate, plan.template) != "" {
+				continue
+			}
+			compatiblePoolIndexes[compatiblePoolCount] = index
+			compatiblePoolCount++
+		}
+		if compatiblePoolCount == 0 {
 			if candidate.restore != nil {
 				reasons[reasonRuntimeCompatibility]++
 			} else if _, exists := planByID[candidate.targetPoolID.Bytes]; !exists {
@@ -268,7 +284,8 @@ func Plan(ctx context.Context, store Store, workerGroupID string, request PlanRe
 			continue
 		}
 		assigned := false
-		for _, plan := range compatiblePools {
+		for _, planIndex := range compatiblePoolIndexes[:compatiblePoolCount] {
+			plan := &plans[planIndex]
 			for index := range plan.bins {
 				if place(&plan.bins[index], candidate) {
 					plan.result.CompatibleQueuedItems++
@@ -286,7 +303,8 @@ func Plan(ctx context.Context, store Store, workerGroupID string, request PlanRe
 		if assigned {
 			continue
 		}
-		for _, plan := range compatiblePools {
+		for _, planIndex := range compatiblePoolIndexes[:compatiblePoolCount] {
+			plan := &plans[planIndex]
 			if int32(len(plan.bins)) >= plan.max {
 				plan.result.Saturated = true
 				continue
@@ -383,28 +401,9 @@ func candidateMatchesBin(candidate item, target bin) bool {
 	return candidate.targetPoolID.Valid && candidate.targetPoolID == target.workerPoolID
 }
 
-func requestedPoolsForCandidate(plans []poolPlan, candidate item) []*poolPlan {
-	result := make([]*poolPlan, 0, len(plans))
-	for index := range plans {
-		plan := &plans[index]
-		if candidate.restore != nil {
-			if !CanRestore(*candidate.restore, plan.pool) {
-				continue
-			}
-		} else if !candidate.targetPoolID.Valid || candidate.targetPoolID != plan.id {
-			continue
-		}
-		if incompatibility(candidate, plan.template) != "" {
-			continue
-		}
-		result = append(result, plan)
-	}
-	return result
-}
-
 func discoverItems(ctx context.Context, store Store, group db.WorkerGroup, scanSeed string) ([]item, map[[16]byte]struct{}, bool, error) {
-	result := make([]item, 0)
-	accountedPoolIDs := make(map[[16]byte]struct{})
+	result := make([]item, 0, maximumPlanningCandidates)
+	accountedPoolIDs := make(map[[16]byte]struct{}, maximumPlanningPools)
 	complete := true
 	{
 		remaining := maximumPlanningCandidates
@@ -432,36 +431,43 @@ func discoverItems(ctx context.Context, store Store, group db.WorkerGroup, scanS
 				return nil, nil, false, fmt.Errorf("list capacity planning run usage: got %d rows for %d scopes", len(usage), len(scopes))
 			}
 			visited += int32(len(scopes))
-			for index, scope := range scopes {
+			for index := range scopes {
 				if usage[index].ScopeOrdinal != int64(index+1) {
 					return nil, nil, false, fmt.Errorf("list capacity planning run usage: ordinal %d at index %d", usage[index].ScopeOrdinal, index)
 				}
-				if remaining <= 0 {
-					complete = false
-					break
+			}
+			rows, err := store.ListQueuedRunPlanningCandidatesForScopes(ctx, planningCandidateParams(scopes, remaining+1))
+			if err != nil {
+				return nil, nil, false, fmt.Errorf("list capacity planning run candidates: %w", err)
+			}
+			if len(rows) > int(remaining) {
+				complete = false
+				rows = rows[:remaining]
+			}
+			var admission queueAdmissionState
+			var admissionOrdinal int64
+			for _, row := range rows {
+				if row.ScopeOrdinal < 1 || row.ScopeOrdinal > int64(len(scopes)) {
+					return nil, nil, false, fmt.Errorf("list capacity planning run candidates: ordinal %d outside page of %d scopes", row.ScopeOrdinal, len(scopes))
 				}
-				rows, err := store.ListQueuedRunPlanningCandidatesForScopes(ctx, planningCandidateParams(scope, remaining+1))
-				if err != nil {
-					return nil, nil, false, fmt.Errorf("list capacity planning run candidates: %w", err)
+				if row.ScopeOrdinal != admissionOrdinal {
+					admission = queueAdmissionStateFromUsage(usage[row.ScopeOrdinal-1])
+					admissionOrdinal = row.ScopeOrdinal
 				}
-				if len(rows) > int(remaining) {
-					complete = false
-					rows = rows[:remaining]
+				candidate := runItem(row)
+				if candidate.reason == "" && !admission.admit(row.QueueConcurrencyLimit) {
+					candidate.reason = reasonQueueConcurrency
 				}
-				admission := queueAdmissionStateFromUsage(usage[index])
-				for _, row := range rows {
-					candidate := runItem(row)
-					if candidate.reason == "" && !admission.admit(row.QueueConcurrencyLimit) {
-						candidate.reason = reasonQueueConcurrency
-					}
-					result = append(result, candidate)
-					remaining--
-				}
+				result = append(result, candidate)
+				remaining--
 			}
 			last := scopes[len(scopes)-1]
 			after = last
 			if len(scopes) < int(pageLimit) {
 				break
+			}
+			if remaining == 0 {
+				complete = false
 			}
 		}
 		if visited >= maximumPlanningScopes {
@@ -511,13 +517,22 @@ func planningUsageParams(scopes []db.ListQueuedRunEligibleScopesRow) db.ListQueu
 	return params
 }
 
-func planningCandidateParams(scope db.ListQueuedRunEligibleScopesRow, limit int32) db.ListQueuedRunPlanningCandidatesForScopesParams {
-	return db.ListQueuedRunPlanningCandidatesForScopesParams{
-		PerScopeLimit: limit,
-		OrgIds:        []pgtype.UUID{scope.OrgID}, ProjectIds: []pgtype.UUID{scope.ProjectID},
-		EnvironmentIds: []pgtype.UUID{scope.EnvironmentID}, RegionIds: []string{scope.RegionID},
-		ConcurrencyKeys: []string{scope.ConcurrencyKey}, QueueNames: []string{scope.QueueName},
+func planningCandidateParams(scopes []db.ListQueuedRunEligibleScopesRow, limit int32) db.ListQueuedRunPlanningCandidatesForScopesParams {
+	params := db.ListQueuedRunPlanningCandidatesForScopesParams{
+		RowLimit: limit, OrgIds: make([]pgtype.UUID, 0, len(scopes)),
+		ProjectIds: make([]pgtype.UUID, 0, len(scopes)), EnvironmentIds: make([]pgtype.UUID, 0, len(scopes)),
+		RegionIds: make([]string, 0, len(scopes)), ConcurrencyKeys: make([]string, 0, len(scopes)),
+		QueueNames: make([]string, 0, len(scopes)),
 	}
+	for _, scope := range scopes {
+		params.OrgIds = append(params.OrgIds, scope.OrgID)
+		params.ProjectIds = append(params.ProjectIds, scope.ProjectID)
+		params.EnvironmentIds = append(params.EnvironmentIds, scope.EnvironmentID)
+		params.RegionIds = append(params.RegionIds, scope.RegionID)
+		params.ConcurrencyKeys = append(params.ConcurrencyKeys, scope.ConcurrencyKey)
+		params.QueueNames = append(params.QueueNames, scope.QueueName)
+	}
+	return params
 }
 
 func queueAdmissionStateFromUsage(usage db.ListQueuedRunPlanningUsageRow) queueAdmissionState {
@@ -604,6 +619,7 @@ func freshExecutionItem(key string, manifestVersion int32, manifestJSON []byte) 
 func currentBins(ctx context.Context, store Store, workerGroupID string) ([]bin, bool, error) {
 	rows, err := store.ListWorkerCapacityBins(ctx, db.ListWorkerCapacityBinsParams{
 		WorkerGroupID: workerGroupID, ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
+		RowLimit: maximumPlanningWorkers + 1,
 	})
 	if err != nil {
 		return nil, false, fmt.Errorf("list current Worker capacity bins: %w", err)
@@ -648,80 +664,6 @@ func binFromRow(row db.ListWorkerCapacityBinsRow) bin {
 		}
 	}
 	return result
-}
-
-type RunRequirements struct {
-	Resources         ResourceVector
-	Architecture      string
-	WorkerGroupID     string
-	RuntimeIdentityID string
-	VCPUCount         int32
-	CPUConfigDigest   string
-	SubstrateFormat   string
-	SubstrateContract string
-}
-
-func SelectRunWorker(rows []db.ListWorkerCapacityBinsRow, request RunRequirements) (db.ListWorkerCapacityBinsRow, bool) {
-	for _, row := range rows {
-		target, compatible := hardCompatibleRunWorker(row, request)
-		if !compatible {
-			continue
-		}
-		if !fitsResources(target.resources, request.Resources) || target.runConsumers <= 0 || target.runtimeStarts <= 0 {
-			continue
-		}
-		return row, true
-	}
-	return db.ListWorkerCapacityBinsRow{}, false
-}
-
-// RunWorkerCapacityPressureCandidates returns only Workers that can safely
-// host the Run after an existing idle Runtime is physically reclaimed. Dynamic
-// free-capacity counters are deliberately ignored; every identity, profile,
-// pause, architecture, and per-VM ceiling remains part of the filter.
-func RunWorkerCapacityPressureCandidates(rows []db.ListWorkerCapacityBinsRow, request RunRequirements) []db.ListWorkerCapacityBinsRow {
-	result := make([]db.ListWorkerCapacityBinsRow, 0, len(rows))
-	for _, row := range rows {
-		if _, compatible := hardCompatibleRunWorker(row, request); compatible {
-			result = append(result, row)
-		}
-	}
-	return result
-}
-
-func hardCompatibleRunWorker(row db.ListWorkerCapacityBinsRow, request RunRequirements) (bin, bool) {
-	target := binFromRow(row)
-	if target.runPaused || target.runtimePaused || !target.supportsRun ||
-		target.runtimeArch != "x86_64" || target.runtimeContract != runtimeid.Contract ||
-		!fitsPhysical(target.perVM, request.Resources) {
-		return bin{}, false
-	}
-	if request.Architecture != "" && target.runtimeArch != request.Architecture {
-		return bin{}, false
-	}
-	if request.RuntimeIdentityID == "" {
-		if !row.PrimaryPoolID.Valid || row.WorkerPoolID != row.PrimaryPoolID {
-			return bin{}, false
-		}
-	} else if !CanRestore(RestoreRequirements{
-		WorkerGroupID: request.WorkerGroupID, RuntimeIdentityID: request.RuntimeIdentityID,
-		VCPUCount: request.VCPUCount, CPUConfigDigest: request.CPUConfigDigest,
-		SubstrateFormat: request.SubstrateFormat, SubstrateContract: request.SubstrateContract,
-		Resources: request.Resources,
-	}, Pool{
-		WorkerGroupID: target.workerGroupID, RuntimeIdentityID: target.runtimeIdentityID,
-		SubstrateFormat: target.substrateFormat, SubstrateContract: target.substrateContract,
-		PerVM: target.perVM, CPUShapes: target.cpuShapes,
-	}) {
-		return bin{}, false
-	}
-	if request.SubstrateFormat != "" && target.substrateFormat != request.SubstrateFormat {
-		return bin{}, false
-	}
-	if request.SubstrateContract != "" && target.substrateContract != request.SubstrateContract {
-		return bin{}, false
-	}
-	return target, true
 }
 
 func incompatibility(candidate item, target bin) string {

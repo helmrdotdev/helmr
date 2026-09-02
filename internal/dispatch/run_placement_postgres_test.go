@@ -67,12 +67,12 @@ func mustRunCandidateParams(t *testing.T, scope planningScope, limit int32) db.L
 }
 
 func planningCandidateParams(scopes []planningScope, limit int32) (db.ListQueuedRunPlanningCandidatesForScopesParams, error) {
-	if len(scopes) == 0 || len(scopes) > 32 {
-		return db.ListQueuedRunPlanningCandidatesForScopesParams{}, fmt.Errorf("planning candidate scope count must be between 1 and 32: %d", len(scopes))
+	if len(scopes) == 0 || len(scopes) > 128 {
+		return db.ListQueuedRunPlanningCandidatesForScopesParams{}, fmt.Errorf("planning candidate scope count must be between 1 and 128: %d", len(scopes))
 	}
 	params := db.ListQueuedRunPlanningCandidatesForScopesParams{
-		PerScopeLimit: limit,
-		OrgIds:        make([]pgtype.UUID, 0, len(scopes)), ProjectIds: make([]pgtype.UUID, 0, len(scopes)),
+		RowLimit: limit,
+		OrgIds:   make([]pgtype.UUID, 0, len(scopes)), ProjectIds: make([]pgtype.UUID, 0, len(scopes)),
 		EnvironmentIds: make([]pgtype.UUID, 0, len(scopes)), RegionIds: make([]string, 0, len(scopes)),
 		ConcurrencyKeys: make([]string, 0, len(scopes)), QueueNames: make([]string, 0, len(scopes)),
 	}
@@ -306,7 +306,7 @@ SELECT runs.current_run_lease_id,
 }
 
 func TestPlaceReadyRunEvictsOneIdleMountUnderCapacityPressure(t *testing.T) {
-	fixture := newRunPlacementFixture(t)
+	fixture := newRunPlacementFixtureWithSeed(t, "pressure-pagination")
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE worker_instances
    SET max_vm_slots = 1,
@@ -442,6 +442,59 @@ INSERT INTO workspace_processes (
 	}
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `DELETE FROM workspace_processes WHERE id = $1`, processID)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `DELETE FROM idempotency_claims WHERE id = $1`, processClaimID)
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+INSERT INTO worker_instances (
+    id, resource_id, worker_group_id, worker_pool_id, state,
+    current_epoch, current_service_id, runtime_identity_id,
+    substrate_format, substrate_contract,
+    epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
+    per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes,
+    max_vm_slots, max_runtime_starts, cpu_environment, cpu_environment_digest,
+    observed_at, epoch_started_at, activated_at
+)
+SELECT ('00000000-0000-8000-8000-' || lpad(value::text, 12, '0'))::uuid,
+       'pressure-full-' || value, source.worker_group_id, source.worker_pool_id, 'active',
+       source.current_epoch,
+       ('01000000-0000-8000-8000-' || lpad(value::text, 12, '0'))::uuid,
+       source.runtime_identity_id, source.substrate_format, source.substrate_contract,
+       source.epoch_cpu_millis, source.epoch_memory_bytes, source.epoch_guest_ephemeral_disk_bytes,
+       source.per_vm_cpu_millis, source.per_vm_memory_bytes, source.per_vm_guest_ephemeral_disk_bytes,
+       1, 1, source.cpu_environment, source.cpu_environment_digest,
+       now(), now(), now()
+	  FROM worker_instances AS source
+	 CROSS JOIN generate_series(1, 128) AS value
+	 WHERE source.id = $1`, fixture.workerID)
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+INSERT INTO workspaces (
+    id, environment_id, region_id, deployment_definition_id,
+    state, desired_state, deleted_at
+)
+SELECT ('20000000-0000-8000-8000-' || lpad(value::text, 12, '0'))::uuid,
+       source.environment_id, source.region_id, source.deployment_definition_id,
+       'deleted', 'deleted', now()
+  FROM workspaces AS source
+ CROSS JOIN generate_series(1, 128) AS value
+ WHERE source.id = $1`, fixture.workspaceID)
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+INSERT INTO runtime_instances (
+    id, org_id, worker_group_id, project_id, environment_id, region_id,
+    worker_instance_id, runtime_identity_id, deployment_definition_id,
+    worker_epoch, vm_vcpu_count, cpu_config_digest,
+    reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes,
+    reserved_execution_slots, workspace_id, desired_reason
+)
+SELECT ('10000000-0000-8000-8000-' || lpad(value::text, 12, '0'))::uuid,
+       source.org_id, source.worker_group_id, source.project_id, source.environment_id, source.region_id,
+       ('00000000-0000-8000-8000-' || lpad(value::text, 12, '0'))::uuid,
+       source.runtime_identity_id, source.deployment_definition_id,
+       source.worker_epoch, source.vm_vcpu_count, source.cpu_config_digest,
+	   source.reserved_cpu_millis, source.reserved_memory_bytes,
+	   source.reserved_guest_ephemeral_disk_bytes, source.reserved_execution_slots,
+	   ('20000000-0000-8000-8000-' || lpad(value::text, 12, '0'))::uuid,
+	   'test-capacity-full'
+  FROM runtime_instances AS source
+ CROSS JOIN generate_series(1, 128) AS value
+ WHERE source.id = $1`, mounted.RuntimeInstanceID)
 
 	if _, err := fixture.authority.PlaceReadyRun(fixture.ctx, secondCandidate); !errors.Is(err, ErrCapacityUnavailable) {
 		t.Fatalf("capacity pressure placement error = %v, want ErrCapacityUnavailable", err)
@@ -666,7 +719,7 @@ func TestQueuedRunCandidateBatchPreservesScopeAndQueueOrder(t *testing.T) {
 			QueueName: "measure-0000",
 		},
 	}
-	params, err := planningCandidateParams(scopes, 3)
+	params, err := planningCandidateParams(scopes, 6)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -715,6 +768,17 @@ SELECT id
 					pgvalue.UUIDString(rows[scopeIndex*3+index].RunID), pgvalue.UUIDString(id))
 			}
 		}
+	}
+	prefixParams, err := planningCandidateParams(scopes, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefix, err := db.New(fixture.pool).ListQueuedRunPlanningCandidatesForScopes(fixture.ctx, prefixParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prefix) != 4 || prefix[0].ScopeOrdinal != 1 || prefix[2].ScopeOrdinal != 1 || prefix[3].ScopeOrdinal != 2 {
+		t.Fatalf("global candidate prefix = %+v, want three rows from scope 1 then one from scope 2", prefix)
 	}
 
 	isolationParams, err := planningCandidateParams(scopes[:1], 3)
