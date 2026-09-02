@@ -87,8 +87,13 @@ func (s *Stream) RunPublisher(ctx context.Context) error {
 			}
 			continue
 		}
-		for _, row := range claimed {
-			if err := s.publishEventOutboxRow(ctx, row); err != nil {
+		publishErrors := s.publishEventOutboxBatch(ctx, claimed)
+		publishedIDs := make([]int64, 0, len(claimed))
+		failedIDs := make([]int64, 0, len(claimed))
+		failureRetryAfters := make([]pgtype.Interval, 0, len(claimed))
+		failureMessages := make([]string, 0, len(claimed))
+		for index, row := range claimed {
+			if err := publishErrors[index]; err != nil {
 				s.log.Warn("publish live telemetry outbox row failed",
 					"outbox_id", row.OutboxID,
 					"stream_kind", row.StreamKind,
@@ -96,86 +101,102 @@ func (s *Stream) RunPublisher(ctx context.Context) error {
 					"pending_age", time.Since(pgvalue.Time(row.CreatedAt)).Truncate(time.Millisecond),
 					"error", err,
 				)
-				if markErr := s.db.MarkLiveTelemetryOutboxFailed(ctx, db.MarkLiveTelemetryOutboxFailedParams{
-					ID:           row.OutboxID,
-					PublishError: err.Error(),
-					RetryAfter:   pgvalue.Interval(liveTelemetryPublisherBackoff(int(row.Attempts))),
-				}); markErr != nil {
-					s.log.Warn("mark live telemetry outbox failed", "outbox_id", row.OutboxID, "error", markErr)
-					if sleepErr := sleepWithContext(ctx, liveTelemetryPublisherBackoff(int(row.Attempts))); sleepErr != nil {
-						return sleepErr
-					}
-				}
+				retryAfter := liveTelemetryPublisherBackoff(int(row.Attempts))
+				failedIDs = append(failedIDs, row.OutboxID)
+				failureRetryAfters = append(failureRetryAfters, pgvalue.Interval(retryAfter))
+				failureMessages = append(failureMessages, err.Error())
 				continue
 			}
-			if err := s.db.MarkLiveTelemetryOutboxPublished(ctx, row.OutboxID); err != nil {
-				s.log.Warn("mark live telemetry outbox published failed", "outbox_id", row.OutboxID, "error", err)
-				if sleepErr := sleepWithContext(ctx, liveTelemetryPublisherBackoff(int(row.Attempts))); sleepErr != nil {
-					return sleepErr
-				}
+			publishedIDs = append(publishedIDs, row.OutboxID)
+		}
+
+		completionFailed := false
+		if len(publishedIDs) > 0 {
+			updated, err := s.db.MarkLiveTelemetryOutboxBatchPublished(ctx, publishedIDs)
+			if err != nil || updated != int64(len(publishedIDs)) {
+				completionFailed = true
+				s.log.Warn("mark live telemetry outbox batch published failed",
+					"expected", len(publishedIDs), "updated", updated, "error", err)
+			}
+		}
+		if len(failedIDs) > 0 {
+			updated, err := s.db.MarkLiveTelemetryOutboxBatchFailed(ctx, db.MarkLiveTelemetryOutboxBatchFailedParams{
+				Ids:           failedIDs,
+				RetryAfters:   failureRetryAfters,
+				PublishErrors: failureMessages,
+			})
+			if err != nil || updated != int64(len(failedIDs)) {
+				completionFailed = true
+				s.log.Warn("mark live telemetry outbox batch failed",
+					"expected", len(failedIDs), "updated", updated, "error", err)
+			}
+		}
+		if completionFailed {
+			if err := sleepWithContext(ctx, liveTelemetryPublisherRetryMin); err != nil {
+				return err
 			}
 		}
 	}
 }
 
-func (s *Stream) publishEventOutboxRow(ctx context.Context, row db.ClaimLiveTelemetryOutboxRow) error {
-	event := eventResponseFromClaim(row)
-	payload, err := json.Marshal(event)
-	if err != nil {
-		return fmt.Errorf("encode event: %w", err)
-	}
-	return s.publishJSON(ctx, row.StreamKey, redisEventID(row.Seq), "event", payload, row.Seq)
-}
-
-func (s *Stream) publishJSON(ctx context.Context, streamKey string, id string, field string, payload []byte, seq int64) error {
-	add := func() error {
-		return s.redis.XAdd(ctx, &redis.XAddArgs{
-			Stream: streamKey,
+func (s *Stream) publishEventOutboxBatch(ctx context.Context, rows []db.ClaimLiveTelemetryOutboxRow) []error {
+	results := make([]error, len(rows))
+	payloads := make([][]byte, len(rows))
+	commands := make([]*redis.StringCmd, len(rows))
+	pipeline := s.redis.Pipeline()
+	for index, row := range rows {
+		payload, err := json.Marshal(eventResponseFromClaim(row))
+		if err != nil {
+			results[index] = fmt.Errorf("encode event: %w", err)
+			continue
+		}
+		payloads[index] = payload
+		commands[index] = pipeline.XAdd(ctx, &redis.XAddArgs{
+			Stream: row.StreamKey,
 			MaxLen: liveTelemetryStreamMaxLen,
 			Approx: true,
-			ID:     id,
-			Values: map[string]any{field: string(payload)},
-		}).Err()
+			ID:     redisEventID(row.Seq),
+			Values: map[string]any{"event": string(payload)},
+		})
 	}
-	err := add()
-	if err == nil {
-		return nil
-	}
-	if !redisIDAlreadyExists(err) {
-		return err
-	}
-	records, rangeErr := s.redis.XRangeN(ctx, streamKey, id, id, 1).Result()
-	if rangeErr != nil {
-		return rangeErr
-	}
-	if len(records) == 0 {
-		if advanced, advancedErr := s.streamAdvancedPastID(ctx, streamKey, seq); advancedErr != nil {
-			return advancedErr
-		} else if advanced {
-			return nil
+	_, _ = pipeline.Exec(ctx)
+	verificationCommands := make([]*redis.XMessageSliceCmd, len(rows))
+	verificationPipeline := s.redis.Pipeline()
+	for index, command := range commands {
+		if command == nil {
+			continue
 		}
-		return err
+		err := command.Err()
+		if redisIDAlreadyExists(err) {
+			id := redisEventID(rows[index].Seq)
+			verificationCommands[index] = verificationPipeline.XRangeN(ctx, rows[index].StreamKey, id, id, 1)
+			continue
+		}
+		results[index] = err
 	}
-	existing, ok := records[0].Values[field].(string)
-	if !ok || existing != string(payload) {
-		return fmt.Errorf("live telemetry stream record %s conflicts with outbox %s", id, field)
+	_, _ = verificationPipeline.Exec(ctx)
+	for index, command := range verificationCommands {
+		if command == nil {
+			continue
+		}
+		records, err := command.Result()
+		results[index] = verifyPublishedJSON(redisEventID(rows[index].Seq), payloads[index], records, err)
 	}
-	return nil
+	return results
 }
 
-func (s *Stream) streamAdvancedPastID(ctx context.Context, streamKey string, seq int64) (bool, error) {
-	records, err := s.redis.XRevRangeN(ctx, streamKey, "+", "-", 1).Result()
+func verifyPublishedJSON(id string, payload []byte, records []redis.XMessage, err error) error {
 	if err != nil {
-		return false, err
+		return err
 	}
 	if len(records) == 0 {
-		return false, nil
+		return nil
 	}
-	latestSeq, err := redisSeq(records[0].ID)
-	if err != nil {
-		return false, err
+	existing, ok := records[0].Values["event"].(string)
+	if !ok || existing != string(payload) {
+		return fmt.Errorf("live telemetry stream record %s conflicts with outbox event", id)
 	}
-	return latestSeq > seq, nil
+	return nil
 }
 
 func (s *Stream) ReadSubject(ctx context.Context, orgID uuid.UUID, subjectType string, subjectID uuid.UUID, cursor int64, onEvent func(api.RunEvent) error, onIdle func() error) error {

@@ -155,9 +155,11 @@ let
             )
           done
         '';
-    ci-postgres = app "ci-postgres" "run Postgres-backed CI tests" toolsets.appRuntime ''
-      exec ./scripts/ci-postgres.sh "$@"
-    '';
+    ci-postgres =
+      app "ci-postgres" "run Postgres-backed CI tests" (toolsets.appRuntime ++ [ pkgs.redis ])
+        ''
+          exec ./scripts/ci-postgres.sh "$@"
+        '';
   };
 in
 ciApps

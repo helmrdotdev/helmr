@@ -423,8 +423,8 @@ type Querier interface {
 	LockWorkspaceSecretsForAdmission(ctx context.Context, workspaceID pgtype.UUID) ([]LockWorkspaceSecretsForAdmissionRow, error)
 	LoseExpiredWorkspaceMountClaims(ctx context.Context, limitCount int32) ([]LoseExpiredWorkspaceMountClaimsRow, error)
 	LoseWorkspaceExecMount(ctx context.Context, arg LoseWorkspaceExecMountParams) (WorkspaceMount, error)
-	MarkLiveTelemetryOutboxFailed(ctx context.Context, arg MarkLiveTelemetryOutboxFailedParams) error
-	MarkLiveTelemetryOutboxPublished(ctx context.Context, id int64) error
+	MarkLiveTelemetryOutboxBatchFailed(ctx context.Context, arg MarkLiveTelemetryOutboxBatchFailedParams) (int64, error)
+	MarkLiveTelemetryOutboxBatchPublished(ctx context.Context, ids []int64) (int64, error)
 	MarkMagicLinkDeliveryFailed(ctx context.Context, id pgtype.UUID) (int64, error)
 	MarkMagicLinkSent(ctx context.Context, id pgtype.UUID) (int64, error)
 	MarkPublicAccessTokenUsed(ctx context.Context, id pgtype.UUID) (PublicAccessToken, error)
