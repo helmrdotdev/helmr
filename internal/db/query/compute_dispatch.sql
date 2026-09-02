@@ -559,7 +559,7 @@ WITH input_scopes AS (
       JOIN unnest(sqlc.arg(queue_names)::text[])
            WITH ORDINALITY AS input_queues(queue_name, position)
         ON input_queues.position = input_orgs.position
-     WHERE cardinality(sqlc.arg(org_ids)::uuid[]) BETWEEN 1 AND 32
+     WHERE cardinality(sqlc.arg(org_ids)::uuid[]) BETWEEN 1 AND 128
        AND cardinality(sqlc.arg(project_ids)::uuid[]) = cardinality(sqlc.arg(org_ids)::uuid[])
        AND cardinality(sqlc.arg(environment_ids)::uuid[]) = cardinality(sqlc.arg(org_ids)::uuid[])
        AND cardinality(sqlc.arg(region_ids)::text[]) = cardinality(sqlc.arg(org_ids)::uuid[])
@@ -650,10 +650,12 @@ SELECT runs.org_id,
        LIMIT 1
   ) AS capacity_restore ON true
  WHERE runs.org_id = input_scopes.org_id
+   AND (get_byte(uuid_send(runs.org_id), 15) & 63) =
+       (get_byte(uuid_send(input_scopes.org_id), 15) & 63)
    AND runs.project_id = input_scopes.project_id
    AND runs.environment_id = input_scopes.environment_id
    AND workspaces.region_id = input_scopes.region_id
-   AND runs.concurrency_key IS NOT DISTINCT FROM NULLIF(input_scopes.concurrency_key, '')::text
+   AND coalesce(runs.concurrency_key, '') = input_scopes.concurrency_key
    AND runs.queue_name = input_scopes.queue_name
    AND runs.status = 'queued'
    AND runs.current_run_lease_id IS NULL
@@ -843,6 +845,7 @@ SELECT runs.org_id,
  )
    AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
  ORDER BY runs.queue_score_at, runs.id
- LIMIT sqlc.arg(per_scope_limit)
+ LIMIT sqlc.arg(row_limit)
  ) AS candidates
- ORDER BY input_scopes.scope_ordinal, candidates.candidate_score_at, candidates.run_id;
+ ORDER BY input_scopes.scope_ordinal, candidates.candidate_score_at, candidates.run_id
+ LIMIT sqlc.arg(row_limit);

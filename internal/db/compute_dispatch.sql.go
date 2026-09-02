@@ -899,7 +899,7 @@ WITH input_scopes AS (
       JOIN unnest($7::text[])
            WITH ORDINALITY AS input_queues(queue_name, position)
         ON input_queues.position = input_orgs.position
-     WHERE cardinality($2::uuid[]) BETWEEN 1 AND 32
+     WHERE cardinality($2::uuid[]) BETWEEN 1 AND 128
        AND cardinality($3::uuid[]) = cardinality($2::uuid[])
        AND cardinality($4::uuid[]) = cardinality($2::uuid[])
        AND cardinality($5::text[]) = cardinality($2::uuid[])
@@ -990,10 +990,12 @@ SELECT runs.org_id,
        LIMIT 1
   ) AS capacity_restore ON true
  WHERE runs.org_id = input_scopes.org_id
+   AND (get_byte(uuid_send(runs.org_id), 15) & 63) =
+       (get_byte(uuid_send(input_scopes.org_id), 15) & 63)
    AND runs.project_id = input_scopes.project_id
    AND runs.environment_id = input_scopes.environment_id
    AND workspaces.region_id = input_scopes.region_id
-   AND runs.concurrency_key IS NOT DISTINCT FROM NULLIF(input_scopes.concurrency_key, '')::text
+   AND coalesce(runs.concurrency_key, '') = input_scopes.concurrency_key
    AND runs.queue_name = input_scopes.queue_name
    AND runs.status = 'queued'
    AND runs.current_run_lease_id IS NULL
@@ -1186,10 +1188,11 @@ SELECT runs.org_id,
  LIMIT $1
  ) AS candidates
  ORDER BY input_scopes.scope_ordinal, candidates.candidate_score_at, candidates.run_id
+ LIMIT $1
 `
 
 type ListQueuedRunPlanningCandidatesForScopesParams struct {
-	PerScopeLimit   int32         `json:"per_scope_limit"`
+	RowLimit        int32         `json:"row_limit"`
 	OrgIds          []pgtype.UUID `json:"org_ids"`
 	ProjectIds      []pgtype.UUID `json:"project_ids"`
 	EnvironmentIds  []pgtype.UUID `json:"environment_ids"`
@@ -1219,7 +1222,7 @@ type ListQueuedRunPlanningCandidatesForScopesRow struct {
 
 func (q *Queries) ListQueuedRunPlanningCandidatesForScopes(ctx context.Context, arg ListQueuedRunPlanningCandidatesForScopesParams) ([]ListQueuedRunPlanningCandidatesForScopesRow, error) {
 	rows, err := q.db.Query(ctx, listQueuedRunPlanningCandidatesForScopes,
-		arg.PerScopeLimit,
+		arg.RowLimit,
 		arg.OrgIds,
 		arg.ProjectIds,
 		arg.EnvironmentIds,

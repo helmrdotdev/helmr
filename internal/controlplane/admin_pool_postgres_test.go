@@ -484,6 +484,7 @@ func TestAdminWorkerPoolPostgresRestorableCheckpointRequiresAnotherCompatibleSup
 		WorkerGroupID:               fixture.group.ID,
 		RegionID:                    "us-east-1",
 		ObservationFreshnessSeconds: 60,
+		RowLimit:                    100,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -507,6 +508,7 @@ func TestAdminWorkerPoolPostgresRestorableCheckpointRequiresAnotherCompatibleSup
 		WorkerGroupID:               fixture.group.ID,
 		RegionID:                    "us-east-1",
 		ObservationFreshnessSeconds: 60,
+		RowLimit:                    100,
 	})
 	if err != nil {
 		t.Fatal(err)

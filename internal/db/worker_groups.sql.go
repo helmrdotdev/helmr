@@ -931,6 +931,125 @@ func (q *Queries) ListCapacityWorkerPools(ctx context.Context, arg ListCapacityW
 	return items, nil
 }
 
+const listRunWorkerCapacityPressureCandidates = `-- name: ListRunWorkerCapacityPressureCandidates :many
+SELECT worker_groups.id AS worker_group_id,
+       worker_instances.id AS worker_instance_id,
+       worker_instances.current_epoch AS worker_epoch,
+       worker_instances.runtime_identity_id
+  FROM worker_groups
+  JOIN worker_instances
+    ON worker_instances.worker_group_id = worker_groups.id
+   AND worker_instances.state = 'active'
+   AND worker_instances.current_epoch IS NOT NULL
+  JOIN worker_pools
+    ON worker_pools.id = worker_instances.worker_pool_id
+   AND worker_pools.worker_group_id = worker_instances.worker_group_id
+   AND worker_pools.state = 'active'
+  JOIN runtime_identities
+    ON runtime_identities.id = worker_instances.runtime_identity_id
+ WHERE worker_groups.region_id = $1
+   AND worker_groups.state = 'active'
+   AND ($2::uuid IS NULL
+        OR worker_instances.id > $2)
+   AND worker_instances.observed_at >= transaction_timestamp()
+       - $3::bigint * interval '1 second'
+   AND worker_instances.run_paused_reason IS NULL
+   AND worker_instances.runtime_paused_reason IS NULL
+   AND runtime_identities.runtime_arch = $4
+   AND runtime_identities.vm_runtime_contract = $5
+   AND worker_instances.per_vm_cpu_millis >= $6
+   AND worker_instances.per_vm_memory_bytes >= $7
+   AND worker_instances.per_vm_guest_ephemeral_disk_bytes >= $8
+   AND (
+       ($9::text = ''
+        AND worker_groups.primary_pool_id IS NOT NULL
+        AND worker_instances.worker_pool_id = worker_groups.primary_pool_id)
+       OR
+       ($9::text <> ''
+        AND worker_groups.id = $10
+        AND worker_instances.runtime_identity_id = $9
+        AND worker_instances.substrate_format = $11
+        AND worker_instances.substrate_contract = $12
+        AND $13::integer > 0
+        AND $14::text <> ''
+        AND EXISTS (
+            SELECT 1
+              FROM worker_pool_cpu_shapes
+             WHERE worker_pool_cpu_shapes.worker_pool_id = worker_instances.worker_pool_id
+               AND worker_pool_cpu_shapes.vcpu_count = $13
+               AND worker_pool_cpu_shapes.cpu_config_digest = $14
+        ))
+   )
+ ORDER BY worker_instances.id
+ LIMIT $15
+`
+
+type ListRunWorkerCapacityPressureCandidatesParams struct {
+	RegionID                        string      `json:"region_id"`
+	AfterWorkerInstanceID           pgtype.UUID `json:"after_worker_instance_id"`
+	ObservationFreshnessSeconds     int64       `json:"observation_freshness_seconds"`
+	RunArchitecture                 string      `json:"run_architecture"`
+	VMRuntimeContract               string      `json:"vm_runtime_contract"`
+	RequiredCPUMillis               int64       `json:"required_cpu_millis"`
+	RequiredMemoryBytes             int64       `json:"required_memory_bytes"`
+	RequiredGuestEphemeralDiskBytes int64       `json:"required_guest_ephemeral_disk_bytes"`
+	RequiredRuntimeIdentityID       string      `json:"required_runtime_identity_id"`
+	RequiredWorkerGroupID           string      `json:"required_worker_group_id"`
+	RequiredSubstrateFormat         string      `json:"required_substrate_format"`
+	RequiredSubstrateContract       string      `json:"required_substrate_contract"`
+	RequiredVMVCPUCount             int32       `json:"required_vm_vcpu_count"`
+	RequiredCPUConfigDigest         string      `json:"required_cpu_config_digest"`
+	RowLimit                        int32       `json:"row_limit"`
+}
+
+type ListRunWorkerCapacityPressureCandidatesRow struct {
+	WorkerGroupID     string      `json:"worker_group_id"`
+	WorkerInstanceID  pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch       pgtype.Int8 `json:"worker_epoch"`
+	RuntimeIdentityID pgtype.Text `json:"runtime_identity_id"`
+}
+
+func (q *Queries) ListRunWorkerCapacityPressureCandidates(ctx context.Context, arg ListRunWorkerCapacityPressureCandidatesParams) ([]ListRunWorkerCapacityPressureCandidatesRow, error) {
+	rows, err := q.db.Query(ctx, listRunWorkerCapacityPressureCandidates,
+		arg.RegionID,
+		arg.AfterWorkerInstanceID,
+		arg.ObservationFreshnessSeconds,
+		arg.RunArchitecture,
+		arg.VMRuntimeContract,
+		arg.RequiredCPUMillis,
+		arg.RequiredMemoryBytes,
+		arg.RequiredGuestEphemeralDiskBytes,
+		arg.RequiredRuntimeIdentityID,
+		arg.RequiredWorkerGroupID,
+		arg.RequiredSubstrateFormat,
+		arg.RequiredSubstrateContract,
+		arg.RequiredVMVCPUCount,
+		arg.RequiredCPUConfigDigest,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRunWorkerCapacityPressureCandidatesRow
+	for rows.Next() {
+		var i ListRunWorkerCapacityPressureCandidatesRow
+		if err := rows.Scan(
+			&i.WorkerGroupID,
+			&i.WorkerInstanceID,
+			&i.WorkerEpoch,
+			&i.RuntimeIdentityID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWorkerCapacityBins = `-- name: ListWorkerCapacityBins :many
 WITH live_workers AS (
     SELECT worker_groups.id AS worker_group_id,
@@ -969,6 +1088,8 @@ WITH live_workers AS (
        AND worker_groups.state = 'active'
        AND worker_instances.observed_at >= transaction_timestamp()
            - $3::bigint * interval '1 second'
+     ORDER BY worker_instances.id
+     LIMIT $4
 ), usage AS (
     SELECT live_workers.worker_instance_id,
            COALESCE((SELECT sum(runtime_instances.reserved_cpu_millis)
@@ -1033,7 +1154,7 @@ SELECT live_workers.worker_group_id,
             WHERE worker_pool_cpu_shapes.worker_pool_id = live_workers.worker_pool_id
 	       ), ARRAY[]::text[])::text[] AS cpu_shape_config_digests
   FROM live_workers
-  JOIN usage USING (worker_instance_id)
+ JOIN usage USING (worker_instance_id)
  ORDER BY live_workers.worker_instance_id
 `
 
@@ -1041,6 +1162,7 @@ type ListWorkerCapacityBinsParams struct {
 	WorkerGroupID               string `json:"worker_group_id"`
 	RegionID                    string `json:"region_id"`
 	ObservationFreshnessSeconds int64  `json:"observation_freshness_seconds"`
+	RowLimit                    int32  `json:"row_limit"`
 }
 
 type ListWorkerCapacityBinsRow struct {
@@ -1070,7 +1192,12 @@ type ListWorkerCapacityBinsRow struct {
 }
 
 func (q *Queries) ListWorkerCapacityBins(ctx context.Context, arg ListWorkerCapacityBinsParams) ([]ListWorkerCapacityBinsRow, error) {
-	rows, err := q.db.Query(ctx, listWorkerCapacityBins, arg.WorkerGroupID, arg.RegionID, arg.ObservationFreshnessSeconds)
+	rows, err := q.db.Query(ctx, listWorkerCapacityBins,
+		arg.WorkerGroupID,
+		arg.RegionID,
+		arg.ObservationFreshnessSeconds,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1798,6 +1925,179 @@ func (q *Queries) SealWorkerPool(ctx context.Context, arg SealWorkerPoolParams) 
 		&i.SealedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const selectRunWorkerCapacity = `-- name: SelectRunWorkerCapacity :one
+WITH compatible_workers AS (
+    SELECT worker_groups.id AS worker_group_id,
+           worker_instances.id AS worker_instance_id,
+           worker_instances.current_epoch AS worker_epoch,
+           worker_instances.runtime_identity_id,
+           worker_instances.epoch_cpu_millis,
+           worker_instances.epoch_memory_bytes,
+           worker_instances.epoch_guest_ephemeral_disk_bytes,
+           worker_instances.max_vm_slots,
+           worker_instances.max_runtime_starts
+      FROM worker_groups
+      JOIN worker_instances
+        ON worker_instances.worker_group_id = worker_groups.id
+       AND worker_instances.state = 'active'
+       AND worker_instances.current_epoch IS NOT NULL
+      JOIN worker_pools
+        ON worker_pools.id = worker_instances.worker_pool_id
+       AND worker_pools.worker_group_id = worker_instances.worker_group_id
+       AND worker_pools.state = 'active'
+      JOIN runtime_identities
+        ON runtime_identities.id = worker_instances.runtime_identity_id
+     WHERE worker_groups.region_id = $4
+       AND worker_groups.state = 'active'
+       AND worker_instances.observed_at >= transaction_timestamp()
+           - $5::bigint * interval '1 second'
+       AND worker_instances.run_paused_reason IS NULL
+       AND worker_instances.runtime_paused_reason IS NULL
+       AND runtime_identities.runtime_arch = $6
+       AND runtime_identities.vm_runtime_contract = $7
+       AND worker_instances.per_vm_cpu_millis >= $1
+       AND worker_instances.per_vm_memory_bytes >= $2
+       AND worker_instances.per_vm_guest_ephemeral_disk_bytes >= $3
+       AND (
+           ($8::text = ''
+            AND worker_groups.primary_pool_id IS NOT NULL
+            AND worker_instances.worker_pool_id = worker_groups.primary_pool_id)
+           OR
+           ($8::text <> ''
+            AND worker_groups.id = $9
+            AND worker_instances.runtime_identity_id = $8
+            AND worker_instances.substrate_format = $10
+            AND worker_instances.substrate_contract = $11
+            AND $12::integer > 0
+            AND $13::text <> ''
+            AND EXISTS (
+                SELECT 1
+                  FROM worker_pool_cpu_shapes
+                 WHERE worker_pool_cpu_shapes.worker_pool_id = worker_instances.worker_pool_id
+                   AND worker_pool_cpu_shapes.vcpu_count = $12
+                   AND worker_pool_cpu_shapes.cpu_config_digest = $13
+            ))
+       )
+), available_workers AS (
+    SELECT compatible_workers.worker_group_id, compatible_workers.worker_instance_id, compatible_workers.worker_epoch, compatible_workers.runtime_identity_id, compatible_workers.epoch_cpu_millis, compatible_workers.epoch_memory_bytes, compatible_workers.epoch_guest_ephemeral_disk_bytes, compatible_workers.max_vm_slots, compatible_workers.max_runtime_starts,
+           usage.cpu_millis,
+           usage.memory_bytes,
+           usage.guest_ephemeral_disk_bytes,
+           usage.vm_slots,
+           usage.run_consumers,
+           usage.runtime_starts
+      FROM compatible_workers
+     CROSS JOIN LATERAL (
+         SELECT COALESCE((
+                    SELECT sum(runtime_instances.reserved_cpu_millis)
+                      FROM runtime_instances
+                     WHERE runtime_instances.worker_instance_id = compatible_workers.worker_instance_id
+                       AND runtime_instances.worker_epoch = compatible_workers.worker_epoch
+                       AND runtime_instances.reclaimed_at IS NULL
+                ), 0) AS cpu_millis,
+                COALESCE((
+                    SELECT sum(runtime_instances.reserved_memory_bytes)
+                      FROM runtime_instances
+                     WHERE runtime_instances.worker_instance_id = compatible_workers.worker_instance_id
+                       AND runtime_instances.worker_epoch = compatible_workers.worker_epoch
+                       AND runtime_instances.reclaimed_at IS NULL
+                ), 0) AS memory_bytes,
+                COALESCE((
+                    SELECT sum(runtime_instances.reserved_guest_ephemeral_disk_bytes)
+                      FROM runtime_instances
+                     WHERE runtime_instances.worker_instance_id = compatible_workers.worker_instance_id
+                       AND runtime_instances.worker_epoch = compatible_workers.worker_epoch
+                       AND runtime_instances.reclaimed_at IS NULL
+                ), 0) AS guest_ephemeral_disk_bytes,
+                COALESCE((
+                    SELECT count(*)
+                      FROM runtime_instances
+                     WHERE runtime_instances.worker_instance_id = compatible_workers.worker_instance_id
+                       AND runtime_instances.worker_epoch = compatible_workers.worker_epoch
+                       AND (runtime_instances.observed_state IN ('allocated', 'ready')
+                            OR (runtime_instances.observed_state IN ('failed', 'lost')
+                                AND runtime_instances.reclaimed_at IS NULL))
+                ), 0)::bigint AS vm_slots,
+                COALESCE((
+                    SELECT count(*)
+                      FROM run_leases
+                     WHERE run_leases.worker_instance_id = compatible_workers.worker_instance_id
+                       AND run_leases.worker_epoch = compatible_workers.worker_epoch
+                       AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
+                ), 0)::bigint AS run_consumers,
+                COALESCE((
+                    SELECT count(*)
+                      FROM runtime_instances
+                     WHERE runtime_instances.worker_instance_id = compatible_workers.worker_instance_id
+                       AND runtime_instances.worker_epoch = compatible_workers.worker_epoch
+                       AND runtime_instances.observed_state = 'allocated'
+                ), 0)::bigint AS runtime_starts
+     ) AS usage
+)
+SELECT worker_group_id,
+       worker_instance_id,
+       worker_epoch,
+       runtime_identity_id
+  FROM available_workers
+ WHERE epoch_cpu_millis - cpu_millis >= $1
+   AND epoch_memory_bytes - memory_bytes >= $2
+   AND epoch_guest_ephemeral_disk_bytes - guest_ephemeral_disk_bytes >= $3
+   AND max_vm_slots > vm_slots
+   AND max_vm_slots > run_consumers
+   AND max_runtime_starts > runtime_starts
+ ORDER BY worker_instance_id
+ LIMIT 1
+`
+
+type SelectRunWorkerCapacityParams struct {
+	RequiredCPUMillis               int64  `json:"required_cpu_millis"`
+	RequiredMemoryBytes             int64  `json:"required_memory_bytes"`
+	RequiredGuestEphemeralDiskBytes int64  `json:"required_guest_ephemeral_disk_bytes"`
+	RegionID                        string `json:"region_id"`
+	ObservationFreshnessSeconds     int64  `json:"observation_freshness_seconds"`
+	RunArchitecture                 string `json:"run_architecture"`
+	VMRuntimeContract               string `json:"vm_runtime_contract"`
+	RequiredRuntimeIdentityID       string `json:"required_runtime_identity_id"`
+	RequiredWorkerGroupID           string `json:"required_worker_group_id"`
+	RequiredSubstrateFormat         string `json:"required_substrate_format"`
+	RequiredSubstrateContract       string `json:"required_substrate_contract"`
+	RequiredVMVCPUCount             int32  `json:"required_vm_vcpu_count"`
+	RequiredCPUConfigDigest         string `json:"required_cpu_config_digest"`
+}
+
+type SelectRunWorkerCapacityRow struct {
+	WorkerGroupID     string      `json:"worker_group_id"`
+	WorkerInstanceID  pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch       pgtype.Int8 `json:"worker_epoch"`
+	RuntimeIdentityID pgtype.Text `json:"runtime_identity_id"`
+}
+
+func (q *Queries) SelectRunWorkerCapacity(ctx context.Context, arg SelectRunWorkerCapacityParams) (SelectRunWorkerCapacityRow, error) {
+	row := q.db.QueryRow(ctx, selectRunWorkerCapacity,
+		arg.RequiredCPUMillis,
+		arg.RequiredMemoryBytes,
+		arg.RequiredGuestEphemeralDiskBytes,
+		arg.RegionID,
+		arg.ObservationFreshnessSeconds,
+		arg.RunArchitecture,
+		arg.VMRuntimeContract,
+		arg.RequiredRuntimeIdentityID,
+		arg.RequiredWorkerGroupID,
+		arg.RequiredSubstrateFormat,
+		arg.RequiredSubstrateContract,
+		arg.RequiredVMVCPUCount,
+		arg.RequiredCPUConfigDigest,
+	)
+	var i SelectRunWorkerCapacityRow
+	err := row.Scan(
+		&i.WorkerGroupID,
+		&i.WorkerInstanceID,
+		&i.WorkerEpoch,
+		&i.RuntimeIdentityID,
 	)
 	return i, err
 }

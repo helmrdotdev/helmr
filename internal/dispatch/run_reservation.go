@@ -7,10 +7,10 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
+	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -482,19 +482,29 @@ type runWorker struct {
 	runtimeIdentityID string
 }
 
+const runWorkerPressurePageSize = int32(128)
+
 func selectRunWorker(
 	ctx context.Context,
 	tx pgx.Tx,
 	authority runPlacementAuthority,
 ) (runWorker, error) {
-	rows, err := db.New(tx).ListWorkerCapacityBins(ctx, db.ListWorkerCapacityBinsParams{
+	selected, err := db.New(tx).SelectRunWorkerCapacity(ctx, db.SelectRunWorkerCapacityParams{
 		RegionID: authority.regionID, ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
+		RunArchitecture: authority.architecture, VMRuntimeContract: runtimeid.Contract,
+		RequiredCPUMillis: authority.resources.cpuMillis, RequiredMemoryBytes: authority.resources.memoryBytes,
+		RequiredGuestEphemeralDiskBytes: authority.resources.guestEphemeralDiskBytes,
+		RequiredWorkerGroupID:           authority.restoreWorkerGroupID,
+		RequiredRuntimeIdentityID:       authority.restoreRuntimeIdentityID,
+		RequiredVMVCPUCount:             authority.restoreVMVCPUCount,
+		RequiredCPUConfigDigest:         authority.restoreCPUConfigDigest,
+		RequiredSubstrateFormat:         authority.restoreSubstrateFormat,
+		RequiredSubstrateContract:       authority.restoreSubstrateContract,
 	})
 	if err != nil {
 		return runWorker{}, err
 	}
-	selected, ok := capacity.SelectRunWorker(rows, runCapacityRequirements(authority))
-	if !ok || !selected.WorkerEpoch.Valid || !selected.RuntimeIdentityID.Valid {
+	if !selected.WorkerEpoch.Valid || !selected.RuntimeIdentityID.Valid {
 		return runWorker{}, pgx.ErrNoRows
 	}
 	return runWorker{
@@ -508,74 +518,84 @@ func requestRunCapacityPressure(
 	tx pgx.Tx,
 	authority runPlacementAuthority,
 ) (bool, error) {
-	rows, err := db.New(tx).ListWorkerCapacityBins(ctx, db.ListWorkerCapacityBinsParams{
-		RegionID: authority.regionID, ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
-	})
-	if err != nil {
-		return false, fmt.Errorf("list run capacity pressure candidates: %w", err)
-	}
-	if _, available := capacity.SelectRunWorker(rows, runCapacityRequirements(authority)); available {
+	if _, err := selectRunWorker(ctx, tx, authority); err == nil {
 		return false, nil
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return false, fmt.Errorf("recheck immediate run capacity: %w", err)
 	}
-	for _, selected := range capacity.RunWorkerCapacityPressureCandidates(rows, runCapacityRequirements(authority)) {
-		if !selected.WorkerEpoch.Valid || !selected.RuntimeIdentityID.Valid {
-			continue
-		}
-		if err := lockWorkerFence(ctx, tx, workerFence{
-			GroupID: selected.WorkerGroupID, RegionID: authority.regionID,
-			WorkerInstanceID: selected.WorkerInstanceID, WorkerEpoch: selected.WorkerEpoch.Int64,
-			RunArchitecture: authority.architecture, RequirePrimary: !authority.restoreCheckpointID.Valid,
-		}); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				continue
-			}
-			return false, fmt.Errorf("lock run capacity pressure worker: %w", err)
-		}
-		if err := checkLockedWorkerRuntimeAdmission(
-			ctx, tx, selected.WorkerInstanceID, selected.WorkerEpoch.Int64,
-		); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				continue
-			}
-			return false, fmt.Errorf("check run capacity pressure Runtime admission: %w", err)
-		}
-		worker := runWorker{
-			groupID: selected.WorkerGroupID, workerID: selected.WorkerInstanceID,
-			workerEpoch: selected.WorkerEpoch.Int64, runtimeIdentityID: selected.RuntimeIdentityID.String,
-		}
-		if err := lockRunWorkerCapacity(ctx, tx, authority, worker); err == nil {
-			return false, nil
-		} else if !errors.Is(err, ErrCapacityUnavailable) {
-			return false, fmt.Errorf("recheck run capacity pressure worker: %w", err)
-		}
-		mounts, err := db.New(tx).RequestCapacityPressureIdleWorkspaceMountStopsForWorker(
+	var after pgtype.UUID
+	for {
+		rows, err := db.New(tx).ListRunWorkerCapacityPressureCandidates(
 			ctx,
-			db.RequestCapacityPressureIdleWorkspaceMountStopsForWorkerParams{
-				WorkerInstanceID: selected.WorkerInstanceID,
-				WorkerEpoch:      selected.WorkerEpoch.Int64,
-				LimitCount:       1,
+			db.ListRunWorkerCapacityPressureCandidatesParams{
+				RegionID: authority.regionID, AfterWorkerInstanceID: after,
+				ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
+				RunArchitecture:             authority.architecture, VMRuntimeContract: runtimeid.Contract,
+				RequiredCPUMillis:               authority.resources.cpuMillis,
+				RequiredMemoryBytes:             authority.resources.memoryBytes,
+				RequiredGuestEphemeralDiskBytes: authority.resources.guestEphemeralDiskBytes,
+				RequiredWorkerGroupID:           authority.restoreWorkerGroupID,
+				RequiredRuntimeIdentityID:       authority.restoreRuntimeIdentityID,
+				RequiredVMVCPUCount:             authority.restoreVMVCPUCount,
+				RequiredCPUConfigDigest:         authority.restoreCPUConfigDigest,
+				RequiredSubstrateFormat:         authority.restoreSubstrateFormat,
+				RequiredSubstrateContract:       authority.restoreSubstrateContract,
+				RowLimit:                        runWorkerPressurePageSize,
 			},
 		)
 		if err != nil {
-			return false, fmt.Errorf("request run capacity pressure Workspace stop: %w", err)
+			return false, fmt.Errorf("list run capacity pressure candidates: %w", err)
 		}
-		if len(mounts) > 0 {
-			return true, nil
+		for _, selected := range rows {
+			after = selected.WorkerInstanceID
+			if !selected.WorkerEpoch.Valid || !selected.RuntimeIdentityID.Valid {
+				continue
+			}
+			if err := lockWorkerFence(ctx, tx, workerFence{
+				GroupID: selected.WorkerGroupID, RegionID: authority.regionID,
+				WorkerInstanceID: selected.WorkerInstanceID, WorkerEpoch: selected.WorkerEpoch.Int64,
+				RunArchitecture: authority.architecture, RequirePrimary: !authority.restoreCheckpointID.Valid,
+			}); err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					continue
+				}
+				return false, fmt.Errorf("lock run capacity pressure worker: %w", err)
+			}
+			if err := checkLockedWorkerRuntimeAdmission(
+				ctx, tx, selected.WorkerInstanceID, selected.WorkerEpoch.Int64,
+			); err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					continue
+				}
+				return false, fmt.Errorf("check run capacity pressure Runtime admission: %w", err)
+			}
+			worker := runWorker{
+				groupID: selected.WorkerGroupID, workerID: selected.WorkerInstanceID,
+				workerEpoch: selected.WorkerEpoch.Int64, runtimeIdentityID: selected.RuntimeIdentityID.String,
+			}
+			if err := lockRunWorkerCapacity(ctx, tx, authority, worker); err == nil {
+				return false, nil
+			} else if !errors.Is(err, ErrCapacityUnavailable) {
+				return false, fmt.Errorf("recheck run capacity pressure worker: %w", err)
+			}
+			mounts, err := db.New(tx).RequestCapacityPressureIdleWorkspaceMountStopsForWorker(
+				ctx,
+				db.RequestCapacityPressureIdleWorkspaceMountStopsForWorkerParams{
+					WorkerInstanceID: selected.WorkerInstanceID,
+					WorkerEpoch:      selected.WorkerEpoch.Int64,
+					LimitCount:       1,
+				},
+			)
+			if err != nil {
+				return false, fmt.Errorf("request run capacity pressure Workspace stop: %w", err)
+			}
+			if len(mounts) > 0 {
+				return true, nil
+			}
 		}
-	}
-	return false, nil
-}
-
-func runCapacityRequirements(authority runPlacementAuthority) capacity.RunRequirements {
-	return capacity.RunRequirements{
-		Resources: capacity.ResourceVector{
-			CPUMillis: authority.resources.cpuMillis, MemoryBytes: authority.resources.memoryBytes,
-			GuestEphemeralDiskBytes: authority.resources.guestEphemeralDiskBytes, VMSlots: 1,
-		},
-		Architecture: authority.architecture, WorkerGroupID: authority.restoreWorkerGroupID,
-		RuntimeIdentityID: authority.restoreRuntimeIdentityID, VCPUCount: authority.restoreVMVCPUCount,
-		CPUConfigDigest: authority.restoreCPUConfigDigest,
-		SubstrateFormat: authority.restoreSubstrateFormat, SubstrateContract: authority.restoreSubstrateContract,
+		if len(rows) < int(runWorkerPressurePageSize) {
+			return false, nil
+		}
 	}
 }
 
