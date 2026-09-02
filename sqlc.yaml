@@ -41,13 +41,15 @@ sql:
           required_vm_vcpu_count: RequiredVMVCPUCount
           reserved_cpu_millis: ReservedCPUMillis
           run_ids: RunIDs
-          run_checkpoint_artifact_role_vm_state: RunCheckpointArtifactRoleVMState
           run_available_cpu_millis: RunAvailableCPUMillis
           run_available_vm_slots: RunAvailableVMSlots
           run_lease_ids: RunLeaseIDs
           runtime_ids: RuntimeIDs
           vm_runtime_contract: VMRuntimeContract
           vm_runtime_descriptor_digest: VMRuntimeDescriptorDigest
+          vm_state_artifact_id: VMStateArtifactID
+          vm_state_media_type: VMStateMediaType
+          vm_state_size_bytes: VMStateSizeBytes
           vm_vcpu_count: VMVCPUCount
           vcpu_count: VCPUCount
           worker_pool_ids: WorkerPoolIDs

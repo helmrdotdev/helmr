@@ -382,18 +382,22 @@ INSERT INTO run_waits (
     'pending', 'parked', 1, 1, $7, $8
 )`, waitID, base.EnvironmentID, work.RunID, workspaceID, childRunID, childClaimID,
 		sourceLeaseID, uuid.NewV7())
+	checkpointArtifacts := dbtest.InsertCheckpointArtifacts(t, ctx, tx, work.RunID, checkpointID.String())
 	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO run_checkpoints (
     id, run_id, attempt_number, run_wait_id, source_run_lease_id,
     source_workspace_lease_id, workspace_id, base_workspace_version_id,
     private_workspace_version_id, actor_speculative_input_sequence,
+    runtime_config_artifact_id, vm_state_artifact_id,
+    memory_artifact_id, scratch_disk_artifact_id,
     state, restore_manifest,
     ready_request_fingerprint, ready_at
 ) VALUES (
     $1, $2, 1, $3, $4, $5, $6, $7, $8,
-    2, 'ready', '{"kind":"suspend"}'::jsonb, 'restored-actor-ready', transaction_timestamp()
+    2, $9, $10, $11, $12, 'ready', '{"kind":"suspend"}'::jsonb, 'restored-actor-ready', transaction_timestamp()
 )`, checkpointID, work.RunID, waitID, sourceLeaseID, sourceWorkspaceLeaseID,
-		workspaceID, headVersionID, checkpointVersionID)
+		workspaceID, headVersionID, checkpointVersionID,
+		checkpointArtifacts.RuntimeConfig, checkpointArtifacts.VMState, checkpointArtifacts.Memory, checkpointArtifacts.ScratchDisk)
 	dbtest.MustExec(t, ctx, tx, `
 UPDATE run_waits
    SET condition_state = 'completed', condition_result = '{}'::jsonb,

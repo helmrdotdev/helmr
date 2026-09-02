@@ -879,17 +879,22 @@ INSERT INTO run_waits (
     $1, $2, $3, $4, 'timer', now(), 'completed', '{}'::jsonb, now(),
     'released', 1, 1, $5, now()
 )`, waitID, product.environmentID, runID, product.workspaceIDs[0], uuid.NewV7())
+	checkpointArtifacts := dbtest.InsertCheckpointArtifacts(t, t.Context(), product.pool, runID, checkpointID.String())
 	dbtest.MustExec(t, t.Context(), product.pool, `
 INSERT INTO run_checkpoints (
     id, run_id, attempt_number, run_wait_id,
     source_run_lease_id, source_workspace_lease_id, workspace_id,
     base_workspace_version_id, private_workspace_version_id,
+    runtime_config_artifact_id, vm_state_artifact_id,
+    memory_artifact_id, scratch_disk_artifact_id,
     state, restore_manifest, ready_request_fingerprint, ready_at
 ) VALUES (
     $1, $2, 1, $3, $4, $5, $6, $7, $7,
+    $8, $9, $10, $11,
     'ready', '{"kind":"suspend"}'::jsonb, 'checkpoint-ready', now()
 )`, checkpointID, runID, waitID, runLeaseID, workspaceLeaseID,
-		product.workspaceIDs[0], baseVersionID)
+		product.workspaceIDs[0], baseVersionID,
+		checkpointArtifacts.RuntimeConfig, checkpointArtifacts.VMState, checkpointArtifacts.Memory, checkpointArtifacts.ScratchDisk)
 	return adminPoolCheckpoint{
 		workerID: workerID, runtimeID: runtimeID,
 		runLeaseID: runLeaseID, checkpointID: checkpointID,

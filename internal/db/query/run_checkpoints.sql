@@ -29,35 +29,42 @@ VALUES (
     sqlc.arg(restore_manifest),
     sqlc.narg(expires_at)
 )
-RETURNING *;
-
--- name: AddRunCheckpointArtifact :one
-INSERT INTO run_checkpoint_artifacts (
-    run_checkpoint_id,
-    role,
-    ordinal,
-    artifact_id
-)
-VALUES (
-    sqlc.arg(run_checkpoint_id),
-    sqlc.arg(role),
-    sqlc.arg(ordinal),
-    sqlc.arg(artifact_id)
-)
-RETURNING *;
+RETURNING run_checkpoints.*;
 
 -- name: MarkRunCheckpointReady :one
 UPDATE run_checkpoints
    SET state = 'ready',
        private_workspace_version_id = sqlc.arg(private_workspace_version_id),
+       runtime_config_artifact_id = sqlc.arg(runtime_config_artifact_id),
+       vm_state_artifact_id = sqlc.arg(vm_state_artifact_id),
+       memory_artifact_id = sqlc.arg(memory_artifact_id),
+       scratch_disk_artifact_id = sqlc.arg(scratch_disk_artifact_id),
        restore_manifest = sqlc.arg(restore_manifest),
        ready_request_fingerprint = sqlc.arg(ready_request_fingerprint),
        ready_at = now()
- WHERE run_id = sqlc.arg(run_id)
-   AND attempt_number = sqlc.arg(attempt_number)
-   AND id = sqlc.arg(id)
-   AND state = 'creating'
-RETURNING *;
+  FROM runs,
+       artifacts AS runtime_config_artifact,
+       artifacts AS vm_state_artifact,
+       artifacts AS memory_artifact,
+       artifacts AS scratch_disk_artifact
+ WHERE run_checkpoints.run_id = sqlc.arg(run_id)
+   AND run_checkpoints.attempt_number = sqlc.arg(attempt_number)
+   AND run_checkpoints.id = sqlc.arg(id)
+   AND run_checkpoints.state = 'creating'
+   AND runs.id = run_checkpoints.run_id
+   AND runtime_config_artifact.id = sqlc.arg(runtime_config_artifact_id)
+   AND runtime_config_artifact.environment_id = runs.environment_id
+   AND runtime_config_artifact.kind = 'run_checkpoint_config'
+   AND vm_state_artifact.id = sqlc.arg(vm_state_artifact_id)
+   AND vm_state_artifact.environment_id = runs.environment_id
+   AND vm_state_artifact.kind = 'run_checkpoint_vm_state'
+   AND memory_artifact.id = sqlc.arg(memory_artifact_id)
+   AND memory_artifact.environment_id = runs.environment_id
+   AND memory_artifact.kind = 'run_checkpoint_memory'
+   AND scratch_disk_artifact.id = sqlc.arg(scratch_disk_artifact_id)
+   AND scratch_disk_artifact.environment_id = runs.environment_id
+   AND scratch_disk_artifact.kind = 'run_checkpoint_scratch_disk'
+RETURNING run_checkpoints.*;
 
 -- name: LockCreatingRunCheckpoint :one
 SELECT *
@@ -431,29 +438,89 @@ UPDATE workspace_mounts
 RETURNING workspace_mounts.*;
 
 -- name: GetReadyRunCheckpoint :one
-SELECT run_checkpoints.*
+SELECT sqlc.embed(run_checkpoints),
+       runtime_config_artifact.digest AS runtime_config_digest,
+       runtime_config_artifact.size_bytes AS runtime_config_size_bytes,
+       runtime_config_artifact.media_type AS runtime_config_media_type,
+       vm_state_artifact.digest AS vm_state_digest,
+       vm_state_artifact.size_bytes AS vm_state_size_bytes,
+       vm_state_artifact.media_type AS vm_state_media_type,
+       memory_artifact.digest AS memory_digest,
+       memory_artifact.size_bytes AS memory_size_bytes,
+       memory_artifact.media_type AS memory_media_type,
+       scratch_disk_artifact.digest AS scratch_disk_digest,
+       scratch_disk_artifact.size_bytes AS scratch_disk_size_bytes,
+       scratch_disk_artifact.media_type AS scratch_disk_media_type
   FROM run_checkpoints
   JOIN run_waits
     ON run_waits.run_id = run_checkpoints.run_id
    AND run_waits.attempt_number = run_checkpoints.attempt_number
    AND run_waits.workspace_id = run_checkpoints.workspace_id
    AND run_waits.id = run_checkpoints.run_wait_id
+  JOIN runs
+    ON runs.id = run_checkpoints.run_id
+  JOIN artifacts AS runtime_config_artifact
+    ON runtime_config_artifact.id = run_checkpoints.runtime_config_artifact_id
+   AND runtime_config_artifact.environment_id = runs.environment_id
+   AND runtime_config_artifact.kind = 'run_checkpoint_config'
+  JOIN artifacts AS vm_state_artifact
+    ON vm_state_artifact.id = run_checkpoints.vm_state_artifact_id
+   AND vm_state_artifact.environment_id = runs.environment_id
+   AND vm_state_artifact.kind = 'run_checkpoint_vm_state'
+  JOIN artifacts AS memory_artifact
+    ON memory_artifact.id = run_checkpoints.memory_artifact_id
+   AND memory_artifact.environment_id = runs.environment_id
+   AND memory_artifact.kind = 'run_checkpoint_memory'
+  JOIN artifacts AS scratch_disk_artifact
+    ON scratch_disk_artifact.id = run_checkpoints.scratch_disk_artifact_id
+   AND scratch_disk_artifact.environment_id = runs.environment_id
+   AND scratch_disk_artifact.kind = 'run_checkpoint_scratch_disk'
  WHERE run_checkpoints.run_id = sqlc.arg(run_id)
    AND run_checkpoints.attempt_number = sqlc.arg(attempt_number)
    AND run_checkpoints.id = sqlc.arg(id)
    AND run_checkpoints.state = 'ready';
 
 -- name: LockRestorableRunCheckpoint :one
-SELECT *
+SELECT sqlc.embed(run_checkpoints),
+       runtime_config_artifact.digest AS runtime_config_digest,
+       runtime_config_artifact.size_bytes AS runtime_config_size_bytes,
+       runtime_config_artifact.media_type AS runtime_config_media_type,
+       vm_state_artifact.digest AS vm_state_digest,
+       vm_state_artifact.size_bytes AS vm_state_size_bytes,
+       vm_state_artifact.media_type AS vm_state_media_type,
+       memory_artifact.digest AS memory_digest,
+       memory_artifact.size_bytes AS memory_size_bytes,
+       memory_artifact.media_type AS memory_media_type,
+       scratch_disk_artifact.digest AS scratch_disk_digest,
+       scratch_disk_artifact.size_bytes AS scratch_disk_size_bytes,
+       scratch_disk_artifact.media_type AS scratch_disk_media_type
   FROM run_checkpoints
- WHERE id = sqlc.arg(id)
-   AND run_id = sqlc.arg(run_id)
-   AND attempt_number = sqlc.arg(attempt_number)
-   AND run_wait_id = sqlc.arg(run_wait_id)
-   AND workspace_id = sqlc.arg(workspace_id)
-   AND state = 'ready'
-   AND (expires_at IS NULL OR expires_at > transaction_timestamp())
- FOR UPDATE;
+  JOIN runs
+    ON runs.id = run_checkpoints.run_id
+  JOIN artifacts AS runtime_config_artifact
+    ON runtime_config_artifact.id = run_checkpoints.runtime_config_artifact_id
+   AND runtime_config_artifact.environment_id = runs.environment_id
+   AND runtime_config_artifact.kind = 'run_checkpoint_config'
+  JOIN artifacts AS vm_state_artifact
+    ON vm_state_artifact.id = run_checkpoints.vm_state_artifact_id
+   AND vm_state_artifact.environment_id = runs.environment_id
+   AND vm_state_artifact.kind = 'run_checkpoint_vm_state'
+  JOIN artifacts AS memory_artifact
+    ON memory_artifact.id = run_checkpoints.memory_artifact_id
+   AND memory_artifact.environment_id = runs.environment_id
+   AND memory_artifact.kind = 'run_checkpoint_memory'
+  JOIN artifacts AS scratch_disk_artifact
+    ON scratch_disk_artifact.id = run_checkpoints.scratch_disk_artifact_id
+   AND scratch_disk_artifact.environment_id = runs.environment_id
+   AND scratch_disk_artifact.kind = 'run_checkpoint_scratch_disk'
+ WHERE run_checkpoints.id = sqlc.arg(id)
+   AND run_checkpoints.run_id = sqlc.arg(run_id)
+   AND run_checkpoints.attempt_number = sqlc.arg(attempt_number)
+   AND run_checkpoints.run_wait_id = sqlc.arg(run_wait_id)
+   AND run_checkpoints.workspace_id = sqlc.arg(workspace_id)
+   AND run_checkpoints.state = 'ready'
+   AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > transaction_timestamp())
+ FOR UPDATE OF run_checkpoints;
 
 -- name: GetRunCheckpointSource :one
 SELECT sqlc.embed(run_leases),
@@ -474,20 +541,3 @@ SELECT sqlc.embed(run_leases),
    AND run_leases.run_id = sqlc.arg(run_id)
    AND run_leases.attempt_number = sqlc.arg(attempt_number)
    AND run_leases.workspace_id = sqlc.arg(workspace_id);
-
--- name: ListRunCheckpointArtifactAuthority :many
-SELECT members.role,
-       members.ordinal,
-       artifacts.digest,
-       artifacts.size_bytes,
-       artifacts.media_type
-  FROM run_checkpoint_artifacts AS members
-  JOIN run_checkpoints
-    ON run_checkpoints.id = members.run_checkpoint_id
-  JOIN runs
-    ON runs.id = run_checkpoints.run_id
-  JOIN artifacts
-    ON artifacts.environment_id = runs.environment_id
-   AND artifacts.id = members.artifact_id
- WHERE members.run_checkpoint_id = sqlc.arg(run_checkpoint_id)
- ORDER BY members.role, members.ordinal;

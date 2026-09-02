@@ -32,7 +32,7 @@ type parsedCheckpointReady struct {
 	capture        parsedTaskWorkspaceCapture
 	manifest       []byte
 	fingerprint    string
-	artifacts      []checkpointArtifactProof
+	artifacts      checkpointArtifactProofs
 	requestVersion int64
 }
 
@@ -46,10 +46,33 @@ type parsedCheckpointFailed struct {
 }
 
 type checkpointArtifactProof struct {
-	role     db.RunCheckpointArtifactRole
-	ordinal  int32
-	kind     db.ArtifactKind
-	artifact workerapi.CheckpointArtifact
+	role      string
+	kind      db.ArtifactKind
+	mediaType string
+	artifact  workerapi.CheckpointArtifact
+}
+
+type checkpointArtifactProofs struct {
+	runtimeConfig checkpointArtifactProof
+	vmState       checkpointArtifactProof
+	memory        checkpointArtifactProof
+	scratchDisk   checkpointArtifactProof
+}
+
+func (proofs checkpointArtifactProofs) all() [4]checkpointArtifactProof {
+	return [4]checkpointArtifactProof{
+		proofs.runtimeConfig,
+		proofs.vmState,
+		proofs.memory,
+		proofs.scratchDisk,
+	}
+}
+
+type checkpointArtifactIDs struct {
+	runtimeConfig pgtype.UUID
+	vmState       pgtype.UUID
+	memory        pgtype.UUID
+	scratchDisk   pgtype.UUID
 }
 
 func (s *Server) workerMarkCheckpointReady(w http.ResponseWriter, r *http.Request) {
@@ -767,7 +790,7 @@ func parseCheckpointReadyRequest(request workerapi.CheckpointReadyRequest) (pars
 	}, normalized, nil
 }
 
-func validateCheckpointReadyManifest(request workerapi.CheckpointReadyRequest) ([]byte, []checkpointArtifactProof, error) {
+func validateCheckpointReadyManifest(request workerapi.CheckpointReadyRequest) ([]byte, checkpointArtifactProofs, error) {
 	return validateCheckpointManifest(
 		request.Manifest,
 		request.CheckpointID,
@@ -785,12 +808,12 @@ func validateCheckpointManifest(
 	attemptNumber int32,
 	runWaitID string,
 	runtimeIdentityID string,
-) ([]byte, []checkpointArtifactProof, error) {
+) ([]byte, checkpointArtifactProofs, error) {
 	recovery := manifest.RecoveryPoint
 	if recovery.ID != checkpointID || recovery.RunID != runID ||
 		recovery.AttemptNumber != attemptNumber || recovery.RunWaitID != runWaitID ||
 		strings.TrimSpace(recovery.CorrelationID) == "" {
-		return nil, nil, errors.New("manifest recovery_point does not match checkpoint request")
+		return nil, checkpointArtifactProofs{}, errors.New("manifest recovery_point does not match checkpoint request")
 	}
 	identity := recovery.Runtime
 	if identity.Backend != "firecracker" ||
@@ -802,71 +825,72 @@ func validateCheckpointManifest(
 		!taskWorkspaceDigestPattern.MatchString(identity.ConfigDigest) ||
 		identity.VMVCPUCount <= 0 ||
 		!taskWorkspaceDigestPattern.MatchString(identity.CPUConfigDigest) {
-		return nil, nil, errors.New("manifest runtime identity is invalid")
+		return nil, checkpointArtifactProofs{}, errors.New("manifest runtime identity is invalid")
 	}
-	proofs := []checkpointArtifactProof{
-		{role: db.RunCheckpointArtifactRoleRuntimeConfig, kind: db.ArtifactKindRunCheckpointConfig, artifact: manifest.RuntimeState.ConfigArtifact},
-		{role: db.RunCheckpointArtifactRoleVMState, kind: db.ArtifactKindRunCheckpointVMState, artifact: manifest.RuntimeState.VMStateArtifact},
-		{role: db.RunCheckpointArtifactRoleScratchDisk, kind: db.ArtifactKindRunCheckpointScratchDisk, artifact: manifest.RuntimeState.ScratchDiskArtifact},
+	if len(manifest.RuntimeState.MemoryArtifacts) != 1 {
+		return nil, checkpointArtifactProofs{}, errors.New("manifest runtime_state.memory_artifacts must contain exactly one artifact")
 	}
-	for index, artifact := range manifest.RuntimeState.MemoryArtifacts {
-		proofs = append(proofs, checkpointArtifactProof{
-			role: db.RunCheckpointArtifactRoleMemory, ordinal: int32(index),
-			kind: db.ArtifactKindRunCheckpointMemory, artifact: artifact,
-		})
+	proofs := checkpointArtifactProofs{
+		runtimeConfig: checkpointArtifactProof{
+			role: "runtime_config", kind: db.ArtifactKindRunCheckpointConfig,
+			mediaType: cas.CheckpointRuntimeConfigMediaType, artifact: manifest.RuntimeState.ConfigArtifact,
+		},
+		vmState: checkpointArtifactProof{
+			role: "vm_state", kind: db.ArtifactKindRunCheckpointVMState,
+			mediaType: cas.CheckpointVMStateMediaType, artifact: manifest.RuntimeState.VMStateArtifact,
+		},
+		memory: checkpointArtifactProof{
+			role: "memory", kind: db.ArtifactKindRunCheckpointMemory,
+			mediaType: cas.CheckpointMemoryMediaType, artifact: manifest.RuntimeState.MemoryArtifacts[0],
+		},
+		scratchDisk: checkpointArtifactProof{
+			role: "scratch_disk", kind: db.ArtifactKindRunCheckpointScratchDisk,
+			mediaType: cas.CheckpointScratchDiskMediaType, artifact: manifest.RuntimeState.ScratchDiskArtifact,
+		},
 	}
-	if len(manifest.RuntimeState.MemoryArtifacts) == 0 {
-		return nil, nil, errors.New("manifest runtime_state.memory_artifacts is required")
-	}
-	expectedMedia := map[db.RunCheckpointArtifactRole]string{
-		db.RunCheckpointArtifactRoleRuntimeConfig: cas.CheckpointRuntimeConfigMediaType,
-		db.RunCheckpointArtifactRoleVMState:       cas.CheckpointVMStateMediaType,
-		db.RunCheckpointArtifactRoleScratchDisk:   cas.CheckpointScratchDiskMediaType,
-		db.RunCheckpointArtifactRoleMemory:        cas.CheckpointMemoryMediaType,
-	}
-	for _, proof := range proofs {
+	for _, proof := range proofs.all() {
 		if !taskWorkspaceDigestPattern.MatchString(proof.artifact.Digest) || proof.artifact.SizeBytes <= 0 ||
-			proof.artifact.MediaType != expectedMedia[proof.role] {
-			return nil, nil, fmt.Errorf("manifest checkpoint artifact %s/%d is invalid", proof.role, proof.ordinal)
+			proof.artifact.MediaType != proof.mediaType {
+			return nil, checkpointArtifactProofs{}, fmt.Errorf("manifest checkpoint artifact %s is invalid", proof.role)
 		}
 	}
 	if len(manifest.RuntimeState.Config) == 0 || !json.Valid(manifest.RuntimeState.Config) {
-		return nil, nil, errors.New("manifest runtime_state.config must be valid JSON")
+		return nil, checkpointArtifactProofs{}, errors.New("manifest runtime_state.config must be valid JSON")
 	}
 	if identity.Substrate != nil &&
 		(!taskWorkspaceDigestPattern.MatchString(identity.Substrate.Digest) ||
 			strings.TrimSpace(identity.Substrate.Format) == "" ||
 			strings.TrimSpace(identity.Substrate.Contract) == "") {
-		return nil, nil, errors.New("manifest runtime substrate identity is invalid")
+		return nil, checkpointArtifactProofs{}, errors.New("manifest runtime substrate identity is invalid")
 	}
 	encoded, err := json.Marshal(manifest)
 	if err != nil {
-		return nil, nil, fmt.Errorf("encode checkpoint manifest: %w", err)
+		return nil, checkpointArtifactProofs{}, fmt.Errorf("encode checkpoint manifest: %w", err)
 	}
 	encoded, err = canonicalJSON(encoded)
 	if err != nil || len(encoded) > 65536 {
 		if err == nil {
 			err = errors.New("checkpoint manifest exceeds 64 KiB")
 		}
-		return nil, nil, err
+		return nil, checkpointArtifactProofs{}, err
 	}
 	return encoded, proofs, nil
 }
 
 func (s *Server) verifyCheckpointRuntimeArtifacts(
 	ctx context.Context,
-	proofs []checkpointArtifactProof,
+	proofs checkpointArtifactProofs,
 ) error {
 	if s.cas == nil {
 		return errors.New("checkpoint CAS is not configured")
 	}
-	for _, proof := range proofs {
+	for _, proof := range proofs.all() {
 		object, err := s.cas.Stat(ctx, proof.artifact.Digest)
 		if err != nil {
-			return fmt.Errorf("checkpoint artifact %s/%d is missing from CAS: %w", proof.role, proof.ordinal, err)
+			return fmt.Errorf("checkpoint artifact %s is missing from CAS: %w", proof.role, err)
 		}
 		if object.Digest != proof.artifact.Digest || object.SizeBytes != proof.artifact.SizeBytes || object.MediaType != proof.artifact.MediaType {
-			return fmt.Errorf("checkpoint artifact %s/%d does not match CAS authority", proof.role, proof.ordinal)
+			return fmt.Errorf("checkpoint artifact %s does not match CAS authority", proof.role)
 		}
 	}
 	return nil
@@ -1035,11 +1059,14 @@ func (s *Server) commitCheckpointReady(
 		if err != nil {
 			return err
 		}
-		if err := recordCheckpointRuntimeArtifacts(ctx, work.q, worker, authority, ready.checkpointID, ready.artifacts); err != nil {
+		artifactIDs, err := recordCheckpointRuntimeArtifacts(ctx, work.q, worker, authority, ready.artifacts)
+		if err != nil {
 			return err
 		}
 		if _, err := work.q.MarkRunCheckpointReady(ctx, db.MarkRunCheckpointReadyParams{
 			PrivateWorkspaceVersionID: workspaceVersionID, RestoreManifest: ready.manifest,
+			RuntimeConfigArtifactID: artifactIDs.runtimeConfig, VMStateArtifactID: artifactIDs.vmState,
+			MemoryArtifactID: artifactIDs.memory, ScratchDiskArtifactID: artifactIDs.scratchDisk,
 			ReadyRequestFingerprint: pgvalue.Text(ready.fingerprint), RunID: authority.run.ID,
 			AttemptNumber: authority.attempt.Number, ID: pgvalue.UUID(ready.checkpointID),
 		}); err != nil {
@@ -1410,30 +1437,49 @@ func recordCheckpointRuntimeArtifacts(
 	store db.Querier,
 	worker workerActor,
 	authority runLeaseClaimAuthority,
-	checkpointID uuid.UUID,
-	proofs []checkpointArtifactProof,
-) error {
-	for _, proof := range proofs {
-		if _, err := store.UpsertCasObject(ctx, db.UpsertCasObjectParams{
-			OrgID: authority.run.OrgID, Digest: proof.artifact.Digest,
-			SizeBytes: proof.artifact.SizeBytes, MediaType: proof.artifact.MediaType,
-		}); err != nil {
-			return fmt.Errorf("record checkpoint CAS object %s/%d: %w", proof.role, proof.ordinal, err)
-		}
-		artifact, err := store.CreateArtifact(ctx, db.CreateArtifactParams{
-			ID: pgvalue.UUID(uuid.NewV7()), OrgID: authority.run.OrgID,
-			ProjectID: authority.run.ProjectID, EnvironmentID: authority.run.EnvironmentID,
-			Digest: proof.artifact.Digest, Kind: proof.kind, SizeBytes: proof.artifact.SizeBytes,
-			MediaType: proof.artifact.MediaType, CreatedByWorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-		})
-		if err != nil {
-			return fmt.Errorf("record checkpoint artifact %s/%d: %w", proof.role, proof.ordinal, err)
-		}
-		if _, err := store.AddRunCheckpointArtifact(ctx, db.AddRunCheckpointArtifactParams{
-			RunCheckpointID: pgvalue.UUID(checkpointID), Role: proof.role, Ordinal: proof.ordinal, ArtifactID: artifact.ID,
-		}); err != nil {
-			return fmt.Errorf("record checkpoint artifact membership %s/%d: %w", proof.role, proof.ordinal, err)
-		}
+	proofs checkpointArtifactProofs,
+) (checkpointArtifactIDs, error) {
+	var ids checkpointArtifactIDs
+	artifacts := [4]struct {
+		proof checkpointArtifactProof
+		id    *pgtype.UUID
+	}{
+		{proof: proofs.runtimeConfig, id: &ids.runtimeConfig},
+		{proof: proofs.vmState, id: &ids.vmState},
+		{proof: proofs.memory, id: &ids.memory},
+		{proof: proofs.scratchDisk, id: &ids.scratchDisk},
 	}
-	return nil
+	for _, item := range artifacts {
+		artifactID, err := recordCheckpointRuntimeArtifact(ctx, store, worker, authority, item.proof)
+		if err != nil {
+			return checkpointArtifactIDs{}, err
+		}
+		*item.id = artifactID
+	}
+	return ids, nil
+}
+
+func recordCheckpointRuntimeArtifact(
+	ctx context.Context,
+	store db.Querier,
+	worker workerActor,
+	authority runLeaseClaimAuthority,
+	proof checkpointArtifactProof,
+) (pgtype.UUID, error) {
+	if _, err := store.UpsertCasObject(ctx, db.UpsertCasObjectParams{
+		OrgID: authority.run.OrgID, Digest: proof.artifact.Digest,
+		SizeBytes: proof.artifact.SizeBytes, MediaType: proof.artifact.MediaType,
+	}); err != nil {
+		return pgtype.UUID{}, fmt.Errorf("record checkpoint CAS object %s: %w", proof.role, err)
+	}
+	artifact, err := store.CreateArtifact(ctx, db.CreateArtifactParams{
+		ID: pgvalue.UUID(uuid.NewV7()), OrgID: authority.run.OrgID,
+		ProjectID: authority.run.ProjectID, EnvironmentID: authority.run.EnvironmentID,
+		Digest: proof.artifact.Digest, Kind: proof.kind, SizeBytes: proof.artifact.SizeBytes,
+		MediaType: proof.artifact.MediaType, CreatedByWorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+	})
+	if err != nil {
+		return pgtype.UUID{}, fmt.Errorf("record checkpoint artifact %s: %w", proof.role, err)
+	}
+	return artifact.ID, nil
 }

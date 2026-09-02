@@ -23,7 +23,11 @@ func TestParseCheckpointReadyRequestBindsDurableRestoreAuthority(t *testing.T) {
 	}
 	if parsed.waitID.String() != request.RunWaitID || parsed.checkpointID.String() != request.CheckpointID ||
 		parsed.requestVersion != request.RequestVersion ||
-		parsed.capture.tree.Digest != request.WorkspaceCapture.Tree.Digest || len(parsed.artifacts) != 4 ||
+		parsed.capture.tree.Digest != request.WorkspaceCapture.Tree.Digest ||
+		parsed.artifacts.runtimeConfig.artifact.Digest != request.Manifest.RuntimeState.ConfigArtifact.Digest ||
+		parsed.artifacts.vmState.artifact.Digest != request.Manifest.RuntimeState.VMStateArtifact.Digest ||
+		parsed.artifacts.memory.artifact.Digest != request.Manifest.RuntimeState.MemoryArtifacts[0].Digest ||
+		parsed.artifacts.scratchDisk.artifact.Digest != request.Manifest.RuntimeState.ScratchDiskArtifact.Digest ||
 		parsed.fingerprint == "" || len(parsed.manifest) == 0 {
 		t.Fatalf("parsed checkpoint-ready = %+v", parsed)
 	}
@@ -39,6 +43,23 @@ func TestParseCheckpointReadyRequestBindsDurableRestoreAuthority(t *testing.T) {
 	}
 	if changedParsed.fingerprint == parsed.fingerprint {
 		t.Fatal("changed Workspace proof retained checkpoint-ready fingerprint")
+	}
+}
+
+func TestParseCheckpointReadyRequestRequiresExactlyOneMemoryArtifact(t *testing.T) {
+	for _, artifacts := range [][]workerapi.CheckpointArtifact{
+		nil,
+		{
+			{Digest: digestWith("d"), SizeBytes: 100, MediaType: cas.CheckpointMemoryMediaType},
+			{Digest: digestWith("e"), SizeBytes: 100, MediaType: cas.CheckpointMemoryMediaType},
+		},
+	} {
+		request := validCheckpointReadyRequest()
+		request.Manifest.RuntimeState.MemoryArtifacts = artifacts
+		if _, _, err := parseCheckpointReadyRequest(request); err == nil ||
+			!strings.Contains(err.Error(), "exactly one") {
+			t.Fatalf("memory artifacts = %d, err = %v", len(artifacts), err)
+		}
 	}
 }
 

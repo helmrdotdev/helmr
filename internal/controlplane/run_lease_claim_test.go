@@ -1238,8 +1238,8 @@ func (s *runLeaseClaimStore) GetWorkspaceResetTargetAuthority(
 func (s *runLeaseClaimStore) GetReadyRunCheckpoint(
 	context.Context,
 	db.GetReadyRunCheckpointParams,
-) (db.RunCheckpoint, error) {
-	return s.readyCheckpoint, nil
+) (db.GetReadyRunCheckpointRow, error) {
+	return readyCheckpointRow(s.readyCheckpoint), nil
 }
 
 func (s *runLeaseClaimStore) GetRunWait(
@@ -1352,9 +1352,9 @@ func (s *runLeaseClaimStore) LockRunStartWait(context.Context, db.LockRunStartWa
 	return s.authority.runWait, nil
 }
 
-func (s *runLeaseClaimStore) LockRestorableRunCheckpoint(context.Context, db.LockRestorableRunCheckpointParams) (db.RunCheckpoint, error) {
+func (s *runLeaseClaimStore) LockRestorableRunCheckpoint(context.Context, db.LockRestorableRunCheckpointParams) (db.LockRestorableRunCheckpointRow, error) {
 	s.calls = append(s.calls, "checkpoint")
-	return s.authority.checkpoint, nil
+	return restorableCheckpointRow(s.authority.checkpoint), nil
 }
 
 func (s *runLeaseClaimStore) LockReadyRunCheckpoint(context.Context, db.LockReadyRunCheckpointParams) (db.RunCheckpoint, error) {
@@ -1671,7 +1671,12 @@ func validCheckpointRestoreRunLeaseClaimFixture(actor bool) (workerActor, db.Get
 		BaseWorkspaceVersionID:    authority.attempt.BaseWorkspaceVersionID,
 		PrivateWorkspaceVersionID: privateVersionID,
 		State:                     db.RunCheckpointStateReady,
+		RuntimeConfigArtifactID:   pgvalue.UUID(uuid.New()),
+		VMStateArtifactID:         pgvalue.UUID(uuid.New()),
+		MemoryArtifactID:          pgvalue.UUID(uuid.New()),
+		ScratchDiskArtifactID:     pgvalue.UUID(uuid.New()),
 	}
+	authority.checkpointArtifacts = validCheckpointArtifactAuthority()
 	authority.runtime.RestoreCheckpointID = checkpointID
 	if actor {
 		authority.checkpoint.ActorSpeculativeInputSequence = pgtype.Int8{Int64: 2, Valid: true}
@@ -1694,6 +1699,22 @@ func validCheckpointRestoreRunLeaseClaimFixture(actor bool) (workerActor, db.Get
 		MountFencingGeneration: 1,
 	}
 	return worker, locators, authority
+}
+
+func readyCheckpointRow(checkpoint db.RunCheckpoint) db.GetReadyRunCheckpointRow {
+	artifacts := validCheckpointArtifactAuthority()
+	return db.GetReadyRunCheckpointRow{
+		RunCheckpoint:       checkpoint,
+		RuntimeConfigDigest: artifacts.runtimeConfig.digest, RuntimeConfigSizeBytes: artifacts.runtimeConfig.sizeBytes, RuntimeConfigMediaType: artifacts.runtimeConfig.mediaType,
+		VMStateDigest: artifacts.vmState.digest, VMStateSizeBytes: artifacts.vmState.sizeBytes, VMStateMediaType: artifacts.vmState.mediaType,
+		MemoryDigest: artifacts.memory.digest, MemorySizeBytes: artifacts.memory.sizeBytes, MemoryMediaType: artifacts.memory.mediaType,
+		ScratchDiskDigest: artifacts.scratchDisk.digest, ScratchDiskSizeBytes: artifacts.scratchDisk.sizeBytes, ScratchDiskMediaType: artifacts.scratchDisk.mediaType,
+	}
+}
+
+func restorableCheckpointRow(checkpoint db.RunCheckpoint) db.LockRestorableRunCheckpointRow {
+	ready := readyCheckpointRow(checkpoint)
+	return db.LockRestorableRunCheckpointRow(ready)
 }
 
 func validSameWorkspaceChildRunLeaseClaimFixture(actorParent bool) (workerActor, db.GetRunLeaseClaimLocatorsRow, runLeaseClaimAuthority) {

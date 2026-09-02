@@ -144,50 +144,6 @@ func (ns NullOrgMemberRole) Value() (driver.Value, error) {
 	return string(ns.OrgMemberRole), nil
 }
 
-type RunCheckpointArtifactRole string
-
-const (
-	RunCheckpointArtifactRoleRuntimeConfig RunCheckpointArtifactRole = "runtime_config"
-	RunCheckpointArtifactRoleVMState       RunCheckpointArtifactRole = "vm_state"
-	RunCheckpointArtifactRoleMemory        RunCheckpointArtifactRole = "memory"
-	RunCheckpointArtifactRoleScratchDisk   RunCheckpointArtifactRole = "scratch_disk"
-)
-
-func (e *RunCheckpointArtifactRole) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = RunCheckpointArtifactRole(s)
-	case string:
-		*e = RunCheckpointArtifactRole(s)
-	default:
-		return fmt.Errorf("unsupported scan type for RunCheckpointArtifactRole: %T", src)
-	}
-	return nil
-}
-
-type NullRunCheckpointArtifactRole struct {
-	RunCheckpointArtifactRole RunCheckpointArtifactRole `json:"run_checkpoint_artifact_role"`
-	Valid                     bool                      `json:"valid"` // Valid is true if RunCheckpointArtifactRole is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullRunCheckpointArtifactRole) Scan(value interface{}) error {
-	if value == nil {
-		ns.RunCheckpointArtifactRole, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.RunCheckpointArtifactRole.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullRunCheckpointArtifactRole) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.RunCheckpointArtifactRole), nil
-}
-
 type TelemetryStreamKind string
 
 const (
@@ -627,6 +583,10 @@ type RunCheckpoint struct {
 	WorkspaceID                   pgtype.UUID        `json:"workspace_id"`
 	BaseWorkspaceVersionID        pgtype.UUID        `json:"base_workspace_version_id"`
 	PrivateWorkspaceVersionID     pgtype.UUID        `json:"private_workspace_version_id"`
+	RuntimeConfigArtifactID       pgtype.UUID        `json:"runtime_config_artifact_id"`
+	VMStateArtifactID             pgtype.UUID        `json:"vm_state_artifact_id"`
+	MemoryArtifactID              pgtype.UUID        `json:"memory_artifact_id"`
+	ScratchDiskArtifactID         pgtype.UUID        `json:"scratch_disk_artifact_id"`
 	ActorSpeculativeInputSequence pgtype.Int8        `json:"actor_speculative_input_sequence"`
 	State                         string             `json:"state"`
 	RestoreManifest               []byte             `json:"restore_manifest"`
@@ -637,14 +597,6 @@ type RunCheckpoint struct {
 	ReadyAt                       pgtype.Timestamptz `json:"ready_at"`
 	InvalidatedAt                 pgtype.Timestamptz `json:"invalidated_at"`
 	InvalidationReasonCode        pgtype.Text        `json:"invalidation_reason_code"`
-}
-
-type RunCheckpointArtifact struct {
-	RunCheckpointID pgtype.UUID               `json:"run_checkpoint_id"`
-	Role            RunCheckpointArtifactRole `json:"role"`
-	Ordinal         int32                     `json:"ordinal"`
-	ArtifactID      pgtype.UUID               `json:"artifact_id"`
-	CreatedAt       pgtype.Timestamptz        `json:"created_at"`
 }
 
 type RunLease struct {

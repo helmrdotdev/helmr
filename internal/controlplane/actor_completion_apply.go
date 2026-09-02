@@ -236,13 +236,14 @@ func validateRestoredActorCompletionBase(
 		base.OwnershipGeneration != authority.workspace.OwnershipGeneration {
 		return errStaleActorCompletion
 	}
-	checkpoint, err := store.GetReadyRunCheckpoint(ctx, db.GetReadyRunCheckpointParams{
+	checkpointRow, err := store.GetReadyRunCheckpoint(ctx, db.GetReadyRunCheckpointParams{
 		RunID: authority.run.ID, AttemptNumber: authority.attempt.Number,
 		ID: authority.runtime.RestoreCheckpointID,
 	})
 	if err != nil {
 		return staleActorCompletion(err)
 	}
+	checkpoint := checkpointRow.RunCheckpoint
 	wait, err := store.GetRunWait(ctx, db.GetRunWaitParams{
 		RunID: authority.run.ID, AttemptNumber: authority.attempt.Number, ID: checkpoint.RunWaitID,
 	})

@@ -32,6 +32,7 @@ type runLeaseClaimAuthority struct {
 	sameWorkspaceAncestors []db.LockSameWorkspaceAncestorsRow
 	runWait                db.RunWait
 	checkpoint             db.RunCheckpoint
+	checkpointArtifacts    checkpointArtifactAuthority
 	sourceRunLease         db.RunLease
 	sourceWorkspaceLease   db.WorkspaceLease
 	sourceRuntime          db.RuntimeInstance
@@ -527,7 +528,7 @@ func claimSameWorkspaceChildRunLeaseInTx(
 	if err != nil {
 		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
 	}
-	if err := validateSameWorkspaceChildCheckpoint(childWait, checkpoint, authority); err != nil {
+	if err := validateSameWorkspaceChildCheckpoint(childWait, checkpoint.RunCheckpoint, authority); err != nil {
 		return runLeaseClaimAuthority{}, err
 	}
 
@@ -741,7 +742,7 @@ func claimCheckpointRestoreRunLeaseInTx(
 		return runLeaseClaimAuthority{}, err
 	}
 
-	authority.checkpoint, err = q.LockRestorableRunCheckpoint(ctx, db.LockRestorableRunCheckpointParams{
+	checkpoint, err := q.LockRestorableRunCheckpoint(ctx, db.LockRestorableRunCheckpointParams{
 		ID:            authority.runWait.SuspendCheckpointID,
 		RunID:         locators.RunID,
 		AttemptNumber: locators.AttemptNumber,
@@ -751,6 +752,8 @@ func claimCheckpointRestoreRunLeaseInTx(
 	if err != nil {
 		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
 	}
+	authority.checkpoint = checkpoint.RunCheckpoint
+	authority.checkpointArtifacts = checkpointArtifactAuthorityFromReady(db.GetReadyRunCheckpointRow(checkpoint))
 	if err := validateCheckpointRestore(authority); err != nil {
 		return runLeaseClaimAuthority{}, err
 	}

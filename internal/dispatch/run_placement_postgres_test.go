@@ -1258,18 +1258,21 @@ INSERT INTO run_waits (
 		runWaitID, fixture.environmentID, fixture.runID, fixture.workspaceID,
 		granted.Lease.ID, resumeAttachID,
 	)
+	checkpointArtifacts := dbtest.InsertCheckpointArtifacts(t, fixture.ctx, tx, fixture.runID, checkpointID.String())
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO run_checkpoints (
     id, run_id, attempt_number, run_wait_id, source_run_lease_id,
     source_workspace_lease_id, workspace_id, base_workspace_version_id,
-    private_workspace_version_id, state, restore_manifest,
+    private_workspace_version_id, runtime_config_artifact_id, vm_state_artifact_id,
+    memory_artifact_id, scratch_disk_artifact_id, state, restore_manifest,
     ready_request_fingerprint, ready_at
 ) VALUES (
-    $1, $2, 1, $3, $4, $5, $6, $7, $8,
+    $1, $2, 1, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
     'ready', '{"kind":"suspend"}'::jsonb, 'test-ready', now()
 )`,
 		checkpointID, fixture.runID, runWaitID, granted.Lease.ID,
 		sourceWorkspaceLeaseID, fixture.workspaceID, baseVersionID, privateVersionID,
+		checkpointArtifacts.RuntimeConfig, checkpointArtifacts.VMState, checkpointArtifacts.Memory, checkpointArtifacts.ScratchDisk,
 	)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE run_waits
@@ -2205,18 +2208,22 @@ INSERT INTO run_waits (
     condition_result, condition_terminal_at, suspension_state, expected_run_state_version,
     attempt_number, prior_run_lease_id, resume_attach_id
 ) VALUES ($1, $2, $3, $4, 'timer', now() - interval '1 second', 'completed', '{}'::jsonb,
-          now(), 'resume_pending', 3, 1, $5, $6)`, waitID, fixture.environmentID, fixture.runID,
+		  now(), 'resume_pending', 3, 1, $5, $6)`, waitID, fixture.environmentID, fixture.runID,
 		fixture.workspaceID, grant.Lease.ID, uuid.NewV7())
+	checkpointArtifacts := dbtest.InsertCheckpointArtifacts(t, fixture.ctx, tx, fixture.runID, checkpointID.String())
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO run_checkpoints (
     id, run_id, attempt_number, run_wait_id, source_run_lease_id,
     source_workspace_lease_id, workspace_id, base_workspace_version_id,
     private_workspace_version_id, actor_speculative_input_sequence,
+    runtime_config_artifact_id, vm_state_artifact_id,
+    memory_artifact_id, scratch_disk_artifact_id,
     state, restore_manifest, ready_request_fingerprint, ready_at
-) VALUES ($1, $2, 1, $3, $4, $5, $6, $7, $8, 1,
+) VALUES ($1, $2, 1, $3, $4, $5, $6, $7, $8, 1, $9, $10, $11, $12,
           'ready', '{"kind":"suspend"}'::jsonb, 'test-ready', now())`,
 		checkpointID, fixture.runID, waitID, grant.Lease.ID, sourceWorkspaceLeaseID,
-		fixture.workspaceID, baseVersionID, privateVersionID)
+		fixture.workspaceID, baseVersionID, privateVersionID,
+		checkpointArtifacts.RuntimeConfig, checkpointArtifacts.VMState, checkpointArtifacts.Memory, checkpointArtifacts.ScratchDisk)
 	dbtest.MustExec(t, fixture.ctx, tx, `UPDATE run_waits SET suspend_checkpoint_id = $2, resume_request_version = 1 WHERE id = $1`, waitID, checkpointID)
 	dbtest.MustExec(t, fixture.ctx, tx, `UPDATE runs SET current_run_lease_id = NULL, state_version = 3 WHERE id = $1`, fixture.runID)
 	dbtest.MustExec(t, fixture.ctx, tx, `

@@ -59,15 +59,12 @@ func TestProjectRunLeaseExecutionProjectsCheckpointRestoreOnly(t *testing.T) {
 	}
 	checkpoint := db.RunCheckpoint{
 		ID: checkpointID, RunID: run.ID, AttemptNumber: attempt.Number,
-		State:           db.RunCheckpointStateReady,
-		RestoreManifest: testCheckpointManifest(t, checkpointID, run.ID, attempt.Number, waitID),
+		State: db.RunCheckpointStateReady, RuntimeConfigArtifactID: pgvalue.UUID(uuid.New()),
+		VMStateArtifactID: pgvalue.UUID(uuid.New()), MemoryArtifactID: pgvalue.UUID(uuid.New()),
+		ScratchDiskArtifactID: pgvalue.UUID(uuid.New()),
+		RestoreManifest:       testCheckpointManifest(t, checkpointID, run.ID, attempt.Number, waitID),
 	}
-	artifacts := []db.ListRunCheckpointArtifactAuthorityRow{
-		{Role: db.RunCheckpointArtifactRoleRuntimeConfig, Ordinal: 0, Digest: validDigest('a'), SizeBytes: 8, MediaType: "application/example"},
-		{Role: db.RunCheckpointArtifactRoleVMState, Ordinal: 0, Digest: validDigest('b'), SizeBytes: 4, MediaType: "application/example"},
-		{Role: db.RunCheckpointArtifactRoleMemory, Ordinal: 0, Digest: validDigest('c'), SizeBytes: 16, MediaType: "application/example"},
-		{Role: db.RunCheckpointArtifactRoleScratchDisk, Ordinal: 0, Digest: validDigest('d'), SizeBytes: 12, MediaType: "application/example"},
-	}
+	artifacts := validCheckpointArtifactAuthority()
 	execution, err := projectRunLeaseExecution(runLeaseExecutionProjection{
 		mode: runLeaseClaimRestore, run: run, attempt: attempt, definition: definition,
 		runtime: db.RuntimeInstance{RestoreCheckpointID: checkpointID},
@@ -171,29 +168,13 @@ func TestProjectRunWaitDecisionDistinguishesAbsentAndJSONNull(t *testing.T) {
 
 func TestProjectRunLeaseCheckpointRequiresCanonicalArtifactAuthority(t *testing.T) {
 	checkpoint := db.RunCheckpoint{
-		ID:              pgvalue.UUID(uuid.New()),
-		State:           db.RunCheckpointStateReady,
+		ID: pgvalue.UUID(uuid.New()), State: db.RunCheckpointStateReady,
+		RuntimeConfigArtifactID: pgvalue.UUID(uuid.New()), VMStateArtifactID: pgvalue.UUID(uuid.New()),
+		MemoryArtifactID: pgvalue.UUID(uuid.New()), ScratchDiskArtifactID: pgvalue.UUID(uuid.New()),
 		RestoreManifest: []byte(`{"version":0}`),
 	}
-	rows := []db.ListRunCheckpointArtifactAuthorityRow{
-		{
-			Role: db.RunCheckpointArtifactRoleRuntimeConfig, Ordinal: 0,
-			Digest: validDigest('a'), SizeBytes: 8, MediaType: "application/example",
-		},
-		{
-			Role: db.RunCheckpointArtifactRoleVMState, Ordinal: 0,
-			Digest: validDigest('b'), SizeBytes: 4, MediaType: "application/example",
-		},
-		{
-			Role: db.RunCheckpointArtifactRoleMemory, Ordinal: 0,
-			Digest: validDigest('c'), SizeBytes: 16, MediaType: "application/example",
-		},
-		{
-			Role: db.RunCheckpointArtifactRoleScratchDisk, Ordinal: 0,
-			Digest: validDigest('d'), SizeBytes: 12, MediaType: "application/example",
-		},
-	}
-	projected, err := projectRunLeaseCheckpoint(checkpoint, rows)
+	artifacts := validCheckpointArtifactAuthority()
+	projected, err := projectRunLeaseCheckpoint(checkpoint, artifacts)
 	if err != nil {
 		t.Fatalf("projectRunLeaseCheckpoint: %v", err)
 	}
@@ -204,9 +185,18 @@ func TestProjectRunLeaseCheckpointRequiresCanonicalArtifactAuthority(t *testing.
 		t.Fatalf("unexpected checkpoint Artifacts: %#v", projected.Artifacts)
 	}
 
-	rows[2].Role = db.RunCheckpointArtifactRoleRuntimeConfig
-	if _, err := projectRunLeaseCheckpoint(checkpoint, rows); err == nil {
-		t.Fatal("noncanonical checkpoint Artifact authority was accepted")
+	artifacts.memory.digest = "invalid"
+	if _, err := projectRunLeaseCheckpoint(checkpoint, artifacts); err == nil {
+		t.Fatal("invalid checkpoint Artifact descriptor was accepted")
+	}
+}
+
+func validCheckpointArtifactAuthority() checkpointArtifactAuthority {
+	return checkpointArtifactAuthority{
+		runtimeConfig: checkpointArtifactDescriptor{digest: validDigest('a'), sizeBytes: 8, mediaType: "application/example"},
+		vmState:       checkpointArtifactDescriptor{digest: validDigest('b'), sizeBytes: 4, mediaType: "application/example"},
+		memory:        checkpointArtifactDescriptor{digest: validDigest('c'), sizeBytes: 16, mediaType: "application/example"},
+		scratchDisk:   checkpointArtifactDescriptor{digest: validDigest('d'), sizeBytes: 12, mediaType: "application/example"},
 	}
 }
 

@@ -27,8 +27,7 @@ import (
 
 type runtimeRestoreProjectionStore struct {
 	db.Querier
-	checkpoint db.RunCheckpoint
-	artifacts  []db.ListRunCheckpointArtifactAuthorityRow
+	checkpoint db.GetReadyRunCheckpointRow
 	baseCalls  int
 }
 
@@ -129,15 +128,8 @@ func TestWorkerRuntimeReconcileReturnsBoundedBatch(t *testing.T) {
 func (s *runtimeRestoreProjectionStore) GetReadyRunCheckpoint(
 	context.Context,
 	db.GetReadyRunCheckpointParams,
-) (db.RunCheckpoint, error) {
+) (db.GetReadyRunCheckpointRow, error) {
 	return s.checkpoint, nil
-}
-
-func (s *runtimeRestoreProjectionStore) ListRunCheckpointArtifactAuthority(
-	context.Context,
-	pgtype.UUID,
-) ([]db.ListRunCheckpointArtifactAuthorityRow, error) {
-	return s.artifacts, nil
 }
 
 func (s *runtimeRestoreProjectionStore) GetCheckpointWorkspaceBaseAuthority(
@@ -166,16 +158,18 @@ func TestPopulateRuntimeRestoreSourceKeepsCapturedFrontierWithoutRequeryingBase(
 		t.Fatal(err)
 	}
 	store := &runtimeRestoreProjectionStore{
-		checkpoint: db.RunCheckpoint{
-			ID: checkpointID, RunID: runID, RunWaitID: waitID, AttemptNumber: 2,
-			State:                  db.RunCheckpointStateReady,
-			BaseWorkspaceVersionID: sourceVersionID, RestoreManifest: manifest,
-		},
-		artifacts: []db.ListRunCheckpointArtifactAuthorityRow{
-			{Role: db.RunCheckpointArtifactRoleRuntimeConfig, Digest: validDigest('a'), SizeBytes: 1, MediaType: "application/example"},
-			{Role: db.RunCheckpointArtifactRoleVMState, Digest: validDigest('b'), SizeBytes: 2, MediaType: "application/example"},
-			{Role: db.RunCheckpointArtifactRoleMemory, Digest: validDigest('c'), SizeBytes: 3, MediaType: "application/example"},
-			{Role: db.RunCheckpointArtifactRoleScratchDisk, Digest: validDigest('d'), SizeBytes: 4, MediaType: "application/example"},
+		checkpoint: db.GetReadyRunCheckpointRow{
+			RunCheckpoint: db.RunCheckpoint{
+				ID: checkpointID, RunID: runID, RunWaitID: waitID, AttemptNumber: 2,
+				State: db.RunCheckpointStateReady, BaseWorkspaceVersionID: sourceVersionID,
+				RuntimeConfigArtifactID: pgvalue.UUID(uuid.New()), VMStateArtifactID: pgvalue.UUID(uuid.New()),
+				MemoryArtifactID: pgvalue.UUID(uuid.New()), ScratchDiskArtifactID: pgvalue.UUID(uuid.New()),
+				RestoreManifest: manifest,
+			},
+			RuntimeConfigDigest: validDigest('a'), RuntimeConfigSizeBytes: 1, RuntimeConfigMediaType: "application/example",
+			VMStateDigest: validDigest('b'), VMStateSizeBytes: 2, VMStateMediaType: "application/example",
+			MemoryDigest: validDigest('c'), MemorySizeBytes: 3, MemoryMediaType: "application/example",
+			ScratchDiskDigest: validDigest('d'), ScratchDiskSizeBytes: 4, ScratchDiskMediaType: "application/example",
 		},
 	}
 	targetArtifact := workerapi.WorkspaceArtifact{
