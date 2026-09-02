@@ -25,7 +25,7 @@ UPDATE sessions
    AND committed_input_sequence = $8
    AND $1 = $8 + 1
    AND $1 < next_input_sequence
-RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, state_version, manual_run_cancelled, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, input_retention_floor, output_retention_floor, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, state, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
+RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, state_version, manual_run_cancelled, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, state, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
 `
 
 type AdvanceActorTurnCursorParams struct {
@@ -67,8 +67,6 @@ func (q *Queries) AdvanceActorTurnCursor(ctx context.Context, arg AdvanceActorTu
 		&i.NextInputSequence,
 		&i.CommittedInputSequence,
 		&i.NextOutputSequence,
-		&i.InputRetentionFloor,
-		&i.OutputRetentionFloor,
 		&i.RunQueueName,
 		&i.RunConcurrencyKey,
 		&i.RunQueueConcurrencyLimit,

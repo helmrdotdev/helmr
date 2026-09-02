@@ -54,6 +54,7 @@ func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDow
 	assertRunWaitWorkspaceSuccession(t, dbctx, pool)
 	assertPrimitiveLifecycleSchema(t, dbctx, pool)
 	assertNoDeletionJobSchema(t, dbctx, pool)
+	assertNoRedundantGlobalIDUniqueness(t, dbctx, pool)
 	assertNoBusinessDatabaseLogic(t, dbctx, pool)
 	if !verifyDown {
 		return
@@ -84,7 +85,76 @@ func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDow
 	assertRunWaitWorkspaceSuccession(t, dbctx, pool)
 	assertPrimitiveLifecycleSchema(t, dbctx, pool)
 	assertNoDeletionJobSchema(t, dbctx, pool)
+	assertNoRedundantGlobalIDUniqueness(t, dbctx, pool)
 	assertNoBusinessDatabaseLogic(t, dbctx, pool)
+}
+
+func assertNoRedundantGlobalIDUniqueness(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+	rows, err := pool.Query(ctx, `
+SELECT redundant.conrelid::regclass::text, redundant.conname
+  FROM pg_constraint AS redundant
+  JOIN pg_attribute AS id_column
+    ON id_column.attrelid = redundant.conrelid
+   AND id_column.attname = 'id'
+   AND NOT id_column.attisdropped
+ WHERE redundant.contype = 'u'
+   AND cardinality(redundant.conkey) > 1
+   AND id_column.attnum = ANY(redundant.conkey)
+   AND EXISTS (
+       SELECT 1
+         FROM pg_constraint AS primary_key
+        WHERE primary_key.conrelid = redundant.conrelid
+          AND primary_key.contype = 'p'
+          AND primary_key.conkey = ARRAY[id_column.attnum]::smallint[]
+   )
+   AND NOT EXISTS (
+       SELECT 1
+         FROM pg_constraint AS foreign_key
+        WHERE foreign_key.contype = 'f'
+          AND foreign_key.confrelid = redundant.conrelid
+          AND foreign_key.confkey @> redundant.conkey
+          AND foreign_key.confkey <@ redundant.conkey
+   )
+ ORDER BY 1, 2
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var violations []string
+	for rows.Next() {
+		var table, constraint string
+		if err := rows.Scan(&table, &constraint); err != nil {
+			t.Fatal(err)
+		}
+		violations = append(violations, table+"."+constraint)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("global-ID-implied UNIQUE constraints without an exact FK consumer: %v", violations)
+	}
+
+	var apiKeyIndexIsNonUnique bool
+	var apiKeyIndexDefinition string
+	if err := pool.QueryRow(ctx, `
+SELECT NOT pg_index.indisunique, pg_get_indexdef(pg_index.indexrelid)
+  FROM pg_index
+ WHERE pg_index.indexrelid = 'api_keys_scope_created_idx'::regclass
+`).Scan(&apiKeyIndexIsNonUnique, &apiKeyIndexDefinition); err != nil {
+		t.Fatal(err)
+	}
+	if !apiKeyIndexIsNonUnique {
+		t.Fatal("api_keys_scope_created_idx is unique")
+	}
+	if !strings.HasSuffix(
+		apiKeyIndexDefinition,
+		"USING btree (org_id, project_id, environment_id, created_at DESC, id DESC)",
+	) {
+		t.Fatalf("api_keys_scope_created_idx definition = %q", apiKeyIndexDefinition)
+	}
 }
 
 func assertNoDeletionJobSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {

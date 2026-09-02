@@ -17,7 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func TestActorOutputReadPostgresPagesProvenanceAndRetention(t *testing.T) {
+func TestActorOutputReadPostgresPagesAndProvenance(t *testing.T) {
 	fixture := newActorStartPostgresFixture(t, 2)
 	firstKey, secondKey := "output:first", "output:empty"
 	first, err := fixture.server.startActor(t.Context(), fixture.request(0, &firstKey, "output-first"))
@@ -172,67 +172,6 @@ func TestActorOutputReadPostgresPagesProvenanceAndRetention(t *testing.T) {
 		futurePage.NextAfter != maxSessionOutputSequence ||
 		futurePage.HasMore {
 		t.Fatalf("future page = %+v", futurePage)
-	}
-
-	retention, err := fixture.pool.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := retention.Exec(t.Context(), `
-		DELETE FROM session_records
-		 WHERE session_id = $1
-		   AND direction = 'output'
-		   AND sequence < 3
-	`, first.SessionID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := retention.Exec(t.Context(), `
-		UPDATE sessions SET output_retention_floor = 3 WHERE id = $1
-	`, first.SessionID); err != nil {
-		t.Fatal(err)
-	}
-
-	beforeCommit := readSessionOutputPostgresHTTP(t, fixture, principal, first.SessionID.String(), "/")
-	if len(beforeCommit.Records) != 3 || beforeCommit.Records[0].Sequence != 1 {
-		t.Fatalf("uncommitted retention mixed into read = %+v", beforeCommit)
-	}
-	if err := retention.Commit(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fixture.pool.Exec(t.Context(), `
-		UPDATE sessions
-		   SET state = 'closed',
-		       current_run_id = NULL,
-		       closed_at = transaction_timestamp()
-		 WHERE id = $1
-	`, first.SessionID); err != nil {
-		t.Fatal(err)
-	}
-
-	expiredRequest := sessionReadPostgresRequest("/?after=0", first.SessionID.String(), principal)
-	expiredRecorder := httptest.NewRecorder()
-	fixture.server.readSessionOutputHTTP(expiredRecorder, expiredRequest)
-	if expiredRecorder.Code != http.StatusGone ||
-		decodeHTTPError(t, expiredRecorder.Body.Bytes()).Code != "session_output_cursor_expired" {
-		t.Fatalf("expired response = %d %s", expiredRecorder.Code, expiredRecorder.Body.String())
-	}
-	retainedPage := readSessionOutputPostgresHTTP(t, fixture, principal, first.SessionID.String(), "/")
-	if len(retainedPage.Records) != 1 ||
-		retainedPage.Records[0].Sequence != 3 ||
-		retainedPage.NextAfter != 3 {
-		t.Fatalf("retained page = %+v", retainedPage)
-	}
-	floorBoundaryPage := readSessionOutputPostgresHTTP(
-		t,
-		fixture,
-		principal,
-		first.SessionID.String(),
-		"/?after=2",
-	)
-	if len(floorBoundaryPage.Records) != 1 ||
-		floorBoundaryPage.Records[0].Sequence != 3 ||
-		floorBoundaryPage.NextAfter != 3 {
-		t.Fatalf("retention floor boundary page = %+v", floorBoundaryPage)
 	}
 
 	missingRequest := sessionReadPostgresRequest("/", uuid.NewV7().String(), principal)

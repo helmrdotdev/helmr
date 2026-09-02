@@ -420,12 +420,6 @@ func (r *workspaceOperationRegistry) claimProgramLocked(
 		r.mu.Unlock()
 		return func() {}, errors.New("workspace already has an active managed program")
 	}
-	for _, existing := range r.programClaims {
-		if existing.authority.GetFence().GetRunLeaseId() == authority.GetFence().GetRunLeaseId() {
-			r.mu.Unlock()
-			return func() {}, errors.New("managed program run lease is already active")
-		}
-	}
 	claim := &managedProgramClaim{
 		entry:     entry,
 		authority: proto.Clone(authority).(*workspacev0.WorkspaceRunAuthority),

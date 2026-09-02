@@ -860,8 +860,6 @@ type Session struct {
 	NextInputSequence        int64              `json:"next_input_sequence"`
 	CommittedInputSequence   int64              `json:"committed_input_sequence"`
 	NextOutputSequence       int64              `json:"next_output_sequence"`
-	InputRetentionFloor      int64              `json:"input_retention_floor"`
-	OutputRetentionFloor     int64              `json:"output_retention_floor"`
 	RunQueueName             string             `json:"run_queue_name"`
 	RunConcurrencyKey        pgtype.Text        `json:"run_concurrency_key"`
 	RunQueueConcurrencyLimit pgtype.Int8        `json:"run_queue_concurrency_limit"`
