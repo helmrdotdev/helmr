@@ -42,8 +42,6 @@ export const ui = {
     "inline-flex h-7 min-h-7 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-xs border border-console-border bg-[linear-gradient(to_bottom,#fbfcfd_0%,#eef1f3_100%)] px-2.5 py-0 font-mono text-[11.5px] font-medium leading-none text-console-text transition duration-100 hover:border-console-border-strong hover:bg-[linear-gradient(to_bottom,#f3f5f7_0%,#dfe5ea_100%)] hover:text-console-text disabled:cursor-not-allowed disabled:opacity-45",
   ghostButton:
     "inline-flex h-7 min-h-7 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-xs border border-transparent bg-transparent px-2 py-0 font-mono text-[11.5px] font-medium leading-none text-console-muted transition duration-100 hover:border-console-border-strong hover:bg-console-bg-panel hover:text-console-text disabled:cursor-not-allowed disabled:opacity-45",
-  dangerButton:
-    "inline-flex h-7 min-h-7 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-xs border border-console-danger bg-console-danger px-2.5 py-0 font-mono text-[11.5px] font-medium leading-none text-white transition duration-100 hover:border-[#9f312b] hover:bg-[#9f312b] disabled:cursor-not-allowed disabled:opacity-45",
   dangerOutlineButton:
     "inline-flex h-7 min-h-7 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-xs border border-[#d77b73] bg-[#fff1ef] px-2.5 py-0 font-mono text-[11.5px] font-medium leading-none text-console-danger transition duration-100 hover:border-[#9f312b] hover:bg-[#9f312b] hover:text-white disabled:cursor-not-allowed disabled:opacity-45",
   iconButton:

@@ -1,9 +1,8 @@
 import { useQueryClient } from "@tanstack/solid-query";
 import { createEffect, createMemo, createSignal, Show } from "solid-js";
 import { ApiError } from "../lib/api";
-import { deleteProject, updateProject } from "../lib/projects";
+import { updateProject } from "../lib/projects";
 import { useScope } from "../lib/scope";
-import { Modal } from "../ui/Modal";
 import { ui } from "../ui/styles";
 
 function slugify(value: string): string {
@@ -31,11 +30,6 @@ export function Projects() {
   const [slugTouched, setSlugTouched] = createSignal(false);
   const [saving, setSaving] = createSignal(false);
   const [saveError, setSaveError] = createSignal<string | null>(null);
-
-  const [deleting, setDeleting] = createSignal(false);
-  const [deleteConfirmation, setDeleteConfirmation] = createSignal("");
-  const [deleteSubmitting, setDeleteSubmitting] = createSignal(false);
-  const [deleteError, setDeleteError] = createSignal<string | null>(null);
 
   const project = createMemo(() => scope.selectedProject());
   const hasProject = createMemo(() => !!project());
@@ -72,38 +66,6 @@ export function Projects() {
       setSaveError(formErrorMessage(error));
     } finally {
       setSaving(false);
-    }
-  }
-
-  function openDeleteProject() {
-    setDeleteConfirmation("");
-    setDeleteError(null);
-    setDeleting(true);
-  }
-
-  function closeDeleteProject() {
-    if (deleteSubmitting()) return;
-    setDeleting(false);
-    setDeleteConfirmation("");
-    setDeleteError(null);
-  }
-
-  async function submitDeleteProject(event: SubmitEvent) {
-    event.preventDefault();
-    const current = project();
-    if (!current || deleteConfirmation().trim() !== current.slug) return;
-    setDeleteSubmitting(true);
-    setDeleteError(null);
-    try {
-      await deleteProject(current.id);
-      scope.setSelectedProjectID("");
-      await queryClient.invalidateQueries({ queryKey: ["projects"] });
-      setDeleting(false);
-      setDeleteConfirmation("");
-    } catch (error) {
-      setDeleteError(formErrorMessage(error));
-    } finally {
-      setDeleteSubmitting(false);
     }
   }
 
@@ -165,57 +127,6 @@ export function Projects() {
             </button>
           </div>
         </form>
-
-        <section class="mt-5 max-w-220 border border-[#e6aaa4] bg-[#fffafa] px-4 py-4">
-          <h2 class={ui.h2}>Danger zone</h2>
-          <p class="mt-1.5 text-[12.5px] leading-normal text-console-muted">
-            Delete the current project and all environments, deployments, runs, secrets, schedules, and scoped grants.
-          </p>
-          <div class={ui.actionRow}>
-            <button type="button" class={ui.dangerOutlineButton} onClick={openDeleteProject}>
-              Delete
-            </button>
-          </div>
-        </section>
-      </Show>
-
-      <Show when={deleting() && project()}>
-        {(current) => (
-          <Modal title={`Delete ${current().name}`} onClose={closeDeleteProject} closeDisabled={deleteSubmitting()}>
-            <form onSubmit={submitDeleteProject}>
-              <p class={ui.warning}>
-                This hard deletes the project. If another project exists, Helmr will select the next available project.
-              </p>
-              <label class={ui.field}>
-                <span>Type {current().slug} to confirm</span>
-                <input
-                  type="text"
-                  class={ui.input}
-                  value={deleteConfirmation()}
-                  onInput={(event) => setDeleteConfirmation(event.currentTarget.value)}
-                  autocomplete="off"
-                  spellcheck={false}
-                  autofocus
-                />
-              </label>
-              <Show when={deleteError()}>
-                <p class={ui.fieldError} role="alert">{deleteError()}</p>
-              </Show>
-              <div class={ui.modalActions}>
-                <button type="button" class={ui.secondaryButton} disabled={deleteSubmitting()} onClick={closeDeleteProject}>
-                  Cancel
-                </button>
-                <button
-                  class={ui.dangerButton}
-                  type="submit"
-                  disabled={deleteSubmitting() || deleteConfirmation().trim() !== current().slug}
-                >
-                  {deleteSubmitting() ? "Deleting..." : "Delete"}
-                </button>
-              </div>
-            </form>
-          </Modal>
-        )}
       </Show>
     </>
   );

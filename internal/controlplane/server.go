@@ -523,10 +523,8 @@ func (s *Server) mountSessionRoutes(r chi.Router) {
 		})
 		r.Post("/projects", s.createProject)
 		r.Patch("/projects/{projectID}", s.updateProject)
-		r.Delete("/projects/{projectID}", s.deleteProject)
 		r.Post("/projects/{projectID}/environments", s.createEnvironment)
 		r.Patch("/projects/{projectID}/environments/{environmentID}", s.updateEnvironment)
-		r.Delete("/projects/{projectID}/environments/{environmentID}", s.deleteEnvironment)
 	})
 }
 

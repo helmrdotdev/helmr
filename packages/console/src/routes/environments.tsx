@@ -2,7 +2,7 @@ import { useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { defaultEnvironmentColor, ENVIRONMENT_COLOR_PRESETS, normalizeEnvironmentColor } from "../features/projects/display";
 import { ApiError } from "../lib/api";
-import { createEnvironment, deleteEnvironment, type Environment } from "../lib/projects";
+import { createEnvironment, type Environment } from "../lib/projects";
 import { useScope } from "../lib/scope";
 import { Modal } from "../ui/Modal";
 import { envDotStyle, ui } from "../ui/styles";
@@ -59,11 +59,6 @@ export function Environments() {
   const [submitting, setSubmitting] = createSignal(false);
   const [formError, setFormError] = createSignal<string | null>(null);
 
-  const [environmentToDelete, setEnvironmentToDelete] = createSignal<Environment | null>(null);
-  const [deleteConfirmation, setDeleteConfirmation] = createSignal("");
-  const [deleteSubmitting, setDeleteSubmitting] = createSignal(false);
-  const [deleteError, setDeleteError] = createSignal<string | null>(null);
-
   const project = createMemo(() => scope.selectedProject());
   const environments = createMemo(() => project()?.environments ?? []);
 
@@ -82,20 +77,6 @@ export function Environments() {
     if (submitting()) return;
     setCreating(false);
     setFormError(null);
-  }
-
-  function openDeleteEnvironment(env: Environment) {
-    if (isProtectedEnvironment(env)) return;
-    setEnvironmentToDelete(env);
-    setDeleteConfirmation("");
-    setDeleteError(null);
-  }
-
-  function closeDeleteEnvironment() {
-    if (deleteSubmitting()) return;
-    setEnvironmentToDelete(null);
-    setDeleteConfirmation("");
-    setDeleteError(null);
   }
 
   async function submitCreateEnvironment(event: SubmitEvent) {
@@ -119,28 +100,6 @@ export function Environments() {
       setFormError(formErrorMessage(error));
     } finally {
       setSubmitting(false);
-    }
-  }
-
-  async function submitDeleteEnvironment(event: SubmitEvent) {
-    event.preventDefault();
-    const currentProject = project();
-    const env = environmentToDelete();
-    if (!currentProject || !env || deleteConfirmation().trim() !== env.slug) return;
-    setDeleteSubmitting(true);
-    setDeleteError(null);
-    try {
-      await deleteEnvironment(currentProject.id, env.id);
-      if (scope.selectedEnvironmentID() === env.id) {
-        scope.setSelectedEnvironmentID("");
-      }
-      await queryClient.invalidateQueries({ queryKey: ["projects"] });
-      setEnvironmentToDelete(null);
-      setDeleteConfirmation("");
-    } catch (error) {
-      setDeleteError(formErrorMessage(error));
-    } finally {
-      setDeleteSubmitting(false);
     }
   }
 
@@ -196,14 +155,6 @@ export function Environments() {
                             Use
                           </button>
                         </Show>
-                        <button
-                          type="button"
-                          class={ui.dangerOutlineButton}
-                          disabled={isProtectedEnvironment(env)}
-                          onClick={() => openDeleteEnvironment(env)}
-                        >
-                          Delete
-                        </button>
                       </div>
                     </td>
                   </tr>
@@ -295,45 +246,6 @@ export function Environments() {
                 </button>
                 <button class={ui.button} type="submit" disabled={submitting() || !name().trim() || !slug().trim()}>
                   {submitting() ? "Creating..." : "Create"}
-                </button>
-              </div>
-            </form>
-          </Modal>
-        )}
-      </Show>
-
-      <Show when={environmentToDelete()}>
-        {(env) => (
-          <Modal title={`Delete ${env().name}`} onClose={closeDeleteEnvironment} closeDisabled={deleteSubmitting()}>
-            <form onSubmit={submitDeleteEnvironment}>
-              <p class={ui.warning}>
-                This hard deletes the environment and the data scoped to it. Production and staging environments cannot be deleted.
-              </p>
-              <label class={ui.field}>
-                <span>Type {env().slug} to confirm</span>
-                <input
-                  type="text"
-                  class={ui.input}
-                  value={deleteConfirmation()}
-                  onInput={(event) => setDeleteConfirmation(event.currentTarget.value)}
-                  autocomplete="off"
-                  spellcheck={false}
-                  autofocus
-                />
-              </label>
-              <Show when={deleteError()}>
-                <p class={ui.fieldError} role="alert">{deleteError()}</p>
-              </Show>
-              <div class={ui.modalActions}>
-                <button type="button" class={ui.secondaryButton} disabled={deleteSubmitting()} onClick={closeDeleteEnvironment}>
-                  Cancel
-                </button>
-                <button
-                  class={ui.dangerButton}
-                  type="submit"
-                  disabled={deleteSubmitting() || deleteConfirmation().trim() !== env().slug}
-                >
-                  {deleteSubmitting() ? "Deleting..." : "Delete"}
                 </button>
               </div>
             </form>
