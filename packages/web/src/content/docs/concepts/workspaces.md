@@ -15,7 +15,6 @@ The public lifecycle is deliberately bounded:
 | --- | --- |
 | Create | Create from a Sandbox declared ID, optionally with key, Secrets, and idempotency key. |
 | Retrieve/list | Address by UUID, page the collection, or look up one exact key. |
-| Files | Read, stat, or page a committed directory without running a shell. |
 | Exec | Run one bounded command and receive exit code, stdout, and stderr. |
 | Delete | Remove the Workspace from normal use. |
 
@@ -39,13 +38,14 @@ const result = await workspace.exec({
   timeout: "5m",
   idempotencyKey: "workspace:status:1",
 })
-
-const readme = await workspace.files.read("README.md")
 ```
 
 Direct exec is not a Run: it has one terminal response and no Task result,
 Run logs, or events. It accepts explicit argv, optional cwd, environment,
 stdin, timeout, and a required idempotency key.
+
+Exec runs the supplied command inside the mounted Workspace and may mutate its
+filesystem. It is a command-execution capability, not a read-only file API.
 
 Workspace state and the image root are distinct. Use relative paths for files
 that should live in the mounted Workspace. Secret values never belong in exec

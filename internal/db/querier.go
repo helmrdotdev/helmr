@@ -284,8 +284,6 @@ type Querier interface {
 	GetWorkspaceListItemByKey(ctx context.Context, arg GetWorkspaceListItemByKeyParams) (GetWorkspaceListItemByKeyRow, error)
 	GetWorkspaceMountForWorkerTransition(ctx context.Context, arg GetWorkspaceMountForWorkerTransitionParams) (WorkspaceMount, error)
 	GetWorkspaceResetTargetAuthority(ctx context.Context, arg GetWorkspaceResetTargetAuthorityParams) (GetWorkspaceResetTargetAuthorityRow, error)
-	GetWorkspaceVersion(ctx context.Context, arg GetWorkspaceVersionParams) (WorkspaceVersion, error)
-	GetWorkspaceVersionArtifact(ctx context.Context, arg GetWorkspaceVersionArtifactParams) (Artifact, error)
 	GrantUserAdmin(ctx context.Context, userID pgtype.UUID) error
 	InsertAssignedRunLease(ctx context.Context, arg InsertAssignedRunLeaseParams) (RunLease, error)
 	InsertRunWorkspaceLease(ctx context.Context, arg InsertRunWorkspaceLeaseParams) (WorkspaceLease, error)

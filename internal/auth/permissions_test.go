@@ -75,7 +75,7 @@ func TestGranularWorkspacePermissionsDoNotEscalate(t *testing.T) {
 		EnvironmentID: scope.EnvironmentID,
 		Permissions: []Permission{
 			PermissionWorkspacesRead,
-			PermissionWorkspaceFilesRead,
+			PermissionRunsRead,
 		},
 	}
 

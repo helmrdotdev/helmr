@@ -337,9 +337,6 @@ func (program *freshProgram) awaitTaskCompletion(
 			*programv0.RunEvent_SessionOutputPageRequested,
 			*programv0.RunEvent_WorkspaceCreateRequested,
 			*programv0.RunEvent_WorkspaceRetrieveRequested,
-			*programv0.RunEvent_WorkspaceFileReadRequested,
-			*programv0.RunEvent_WorkspaceFileStatRequested,
-			*programv0.RunEvent_WorkspaceFileListRequested,
 			*programv0.RunEvent_WorkspaceExecRequested,
 			*programv0.RunEvent_WorkspaceDeleteRequested:
 			if outcome != nil {
@@ -507,9 +504,6 @@ func (program *freshProgram) awaitActorCompletion(
 			*programv0.RunEvent_SessionOutputPageRequested,
 			*programv0.RunEvent_WorkspaceCreateRequested,
 			*programv0.RunEvent_WorkspaceRetrieveRequested,
-			*programv0.RunEvent_WorkspaceFileReadRequested,
-			*programv0.RunEvent_WorkspaceFileStatRequested,
-			*programv0.RunEvent_WorkspaceFileListRequested,
 			*programv0.RunEvent_WorkspaceExecRequested,
 			*programv0.RunEvent_WorkspaceDeleteRequested:
 			if outcome != nil {

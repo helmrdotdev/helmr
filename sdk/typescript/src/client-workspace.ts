@@ -7,17 +7,12 @@ import type { RequestOptions } from "./request"
 import {
   parseWorkspaceDeleteReceipt,
   parseWorkspaceExecResult,
-  parseWorkspaceFileContent,
-  parseWorkspaceFileEntry,
-  parseWorkspaceFilePage,
   parseWorkspace,
   brandWorkspaceAddress,
   type WorkspaceDeleteRequest,
   type WorkspaceDeleteReceipt,
   type WorkspaceExecRequest,
   type WorkspaceExecResult,
-  type WorkspaceFileEntry,
-  type WorkspaceFileListQuery,
   type WorkspaceRef,
   type Workspace,
   type WorkspaceStatus,
@@ -132,47 +127,8 @@ export function createClientWorkspaceRef(
 ): WorkspaceRef {
   const workspaceID = resourceID(id, "Workspace ID")
   const path = `/v1/workspaces/${encodeURIComponent(workspaceID)}`
-  const files: WorkspaceRef["files"] = Object.freeze({
-    async read(filePath: string, options: RequestOptions = {}): Promise<Uint8Array> {
-      return parseWorkspaceFileContent(await transport.request(
-        "GET",
-        `${path}/files/content?${new URLSearchParams({ path: filePath }).toString()}`,
-        options.signal === undefined ? {} : { signal: options.signal },
-      ))
-    },
-    async stat(filePath: string, options: RequestOptions = {}): Promise<WorkspaceFileEntry> {
-      return parseWorkspaceFileEntry(await transport.request(
-        "GET",
-        `${path}/files/stat?${new URLSearchParams({ path: filePath }).toString()}`,
-        options.signal === undefined ? {} : { signal: options.signal },
-      ))
-    },
-    async list(
-      filePath: string,
-      queryInput: WorkspaceFileListQuery = {},
-      options: RequestOptions = {},
-    ): Promise<CursorPage<WorkspaceFileEntry>> {
-      const query = new URLSearchParams({ path: filePath })
-      if (queryInput.cursor !== undefined) {
-        if (queryInput.cursor.length === 0) throw new Error("Workspace file cursor is required")
-        query.set("cursor", queryInput.cursor)
-      }
-      if (queryInput.limit !== undefined) {
-        if (!Number.isInteger(queryInput.limit) || queryInput.limit < 1 || queryInput.limit > 100) {
-          throw new Error("Workspace file limit must be an integer in [1,100]")
-        }
-        query.set("limit", queryInput.limit.toString())
-      }
-      return parseWorkspaceFilePage(await transport.request(
-        "GET",
-        `${path}/files?${query.toString()}`,
-        options.signal === undefined ? {} : { signal: options.signal },
-      ))
-    },
-  })
   const ref = {
     id: workspaceID,
-    files,
     async retrieve(options: RequestOptions = {}): Promise<Workspace> {
       return parseWorkspace(await transport.request(
         "GET",

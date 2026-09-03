@@ -17,7 +17,6 @@ export type ApiKeyScope =
   | "workspaces:create"
   | "workspaces:read"
   | "workspaces:delete"
-  | "workspace-files:read"
   | "workspace-exec:create"
   | "secrets:write"
   | "tasks:deploy";

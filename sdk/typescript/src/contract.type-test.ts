@@ -43,7 +43,6 @@ import {
   type SessionOutputWriter,
   type SourceDirectory,
   type SourceFile,
-  type WorkspaceFiles,
   type WorkspaceRef,
   type WorkspaceSecretPlacement,
 } from "."
@@ -102,9 +101,7 @@ export function assertGreenfieldTypes(): void {
     for (const value of values) await writer.write(value)
     await writer.close()
   }
-  const listRoot = (files: WorkspaceFiles) => files.list(".")
   void writeValues
-  void listRoot
 
   const placement: WorkspaceSecretPlacement = { env: "TOKEN" }
   const secretCreate: SecretCreateRequest = {

@@ -312,8 +312,6 @@ func normalizeAPIKeyScope(scope api.APIKeyScope) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeWorkspacesRead, true
 	case string(api.APIKeyScopeWorkspacesDelete):
 		return api.APIKeyScopeWorkspacesDelete, true
-	case string(api.APIKeyScopeWorkspaceFilesRead):
-		return api.APIKeyScopeWorkspaceFilesRead, true
 	case string(api.APIKeyScopeWorkspaceExecCreate):
 		return api.APIKeyScopeWorkspaceExecCreate, true
 	case string(api.APIKeyScopeSecretsWrite):
@@ -355,8 +353,6 @@ func apiKeyScopePermission(scope api.APIKeyScope) (auth.Permission, bool) {
 		return auth.PermissionWorkspacesRead, true
 	case api.APIKeyScopeWorkspacesDelete:
 		return auth.PermissionWorkspacesDelete, true
-	case api.APIKeyScopeWorkspaceFilesRead:
-		return auth.PermissionWorkspaceFilesRead, true
 	case api.APIKeyScopeWorkspaceExecCreate:
 		return auth.PermissionWorkspaceExecCreate, true
 	case api.APIKeyScopeSecretsWrite:
@@ -398,8 +394,6 @@ func apiKeyPermissionScope(permission string) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeWorkspacesRead, true
 	case string(auth.PermissionWorkspacesDelete):
 		return api.APIKeyScopeWorkspacesDelete, true
-	case string(auth.PermissionWorkspaceFilesRead):
-		return api.APIKeyScopeWorkspaceFilesRead, true
 	case string(auth.PermissionWorkspaceExecCreate):
 		return api.APIKeyScopeWorkspaceExecCreate, true
 	case string(auth.PermissionSecretsWrite):

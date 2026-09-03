@@ -9,9 +9,6 @@ import {
   installRuntimeOperations,
   parseWorkspaceDeleteReceipt,
   parseWorkspaceExecResult,
-  parseWorkspaceFileContent,
-  parseWorkspaceFileEntry,
-  parseWorkspaceFilePage,
   parseWorkspace,
   parseSession,
   parseSessionInputRecord,
@@ -56,8 +53,6 @@ import type {
   WorkspaceDeleteRequest,
   WorkspaceExecRequest,
   WorkspaceExecResult,
-  WorkspaceFileEntry,
-  WorkspaceFileListQuery,
   Workspace,
   WorkspaceCreateRequest,
 } from "@helmr/sdk"
@@ -1333,94 +1328,6 @@ function programRuntimeOperations(
     })
     return abortableRuntimeOperation(operation, signal)
   }
-  const performWorkspaceFileRead = async (
-    workspaceId: string,
-    filePath: string,
-    signal?: AbortSignal,
-  ): Promise<Uint8Array> => {
-    if (signal?.aborted) throw abortSignalReason(signal)
-    const correlationId = newUUIDv7()
-    const operation = runOperations.trackDrainable(async () => {
-      const decision = await requestRuntimeDecision(io, decisions, correlationId, {
-        case: "workspaceFileReadRequested",
-        value: create(programProto.WorkspaceFileReadRequestedSchema, {
-          correlationId,
-          workspace: workspaceAddress(workspaceId),
-          path: filePath,
-        }),
-      })
-      requireRuntimeOperationDecision(decision, correlationId, "Workspace file read")
-      if (decision.kind === "failed") {
-        throw runtimeOperationFailure("Workspace file read", decision.dataJson)
-      }
-      return parseRuntimeProtocolValue(
-        "Workspace file read result",
-        () => parseWorkspaceFileContent(JSON.parse(decision.dataJson)),
-      )
-    })
-    return abortableRuntimeOperation(operation, signal)
-  }
-  const performWorkspaceFileStat = async (
-    workspaceId: string,
-    filePath: string,
-    signal?: AbortSignal,
-  ): Promise<WorkspaceFileEntry> => {
-    if (signal?.aborted) throw abortSignalReason(signal)
-    const correlationId = newUUIDv7()
-    const operation = runOperations.trackDrainable(async () => {
-      const decision = await requestRuntimeDecision(io, decisions, correlationId, {
-        case: "workspaceFileStatRequested",
-        value: create(programProto.WorkspaceFileStatRequestedSchema, {
-          correlationId,
-          workspace: workspaceAddress(workspaceId),
-          path: filePath,
-        }),
-      })
-      requireRuntimeOperationDecision(decision, correlationId, "Workspace file stat")
-      if (decision.kind === "failed") {
-        throw runtimeOperationFailure("Workspace file stat", decision.dataJson)
-      }
-      return parseRuntimeProtocolValue(
-        "Workspace file stat result",
-        () => parseWorkspaceFileEntry(JSON.parse(decision.dataJson)),
-      )
-    })
-    return abortableRuntimeOperation(operation, signal)
-  }
-  const performWorkspaceFileList = async (
-    workspaceId: string,
-    filePath: string,
-    query: WorkspaceFileListQuery = {},
-    signal?: AbortSignal,
-  ) => {
-    if (signal?.aborted) throw abortSignalReason(signal)
-    const limit = query.limit ?? 50
-    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
-      throw new Error("Workspace file list limit must be an integer between 1 and 100")
-    }
-    const correlationId = newUUIDv7()
-    const operation = runOperations.trackDrainable(async () => {
-      const decision = await requestRuntimeDecision(io, decisions, correlationId, {
-        case: "workspaceFileListRequested",
-        value: create(programProto.WorkspaceFileListRequestedSchema, {
-          correlationId,
-          workspace: workspaceAddress(workspaceId),
-          path: filePath,
-          ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
-          limit,
-        }),
-      })
-      requireRuntimeOperationDecision(decision, correlationId, "Workspace file list")
-      if (decision.kind === "failed") {
-        throw runtimeOperationFailure("Workspace file list", decision.dataJson)
-      }
-      return parseRuntimeProtocolValue(
-        "Workspace file list result",
-        () => parseWorkspaceFilePage(JSON.parse(decision.dataJson)),
-      )
-    })
-    return abortableRuntimeOperation(operation, signal)
-  }
   const performWorkspaceExec = async (
     workspaceId: string,
     request: WorkspaceExecRequest,
@@ -1714,15 +1621,6 @@ function programRuntimeOperations(
     },
     workspaceRetrieve(address, signal) {
       return performWorkspaceRetrieve(address, signal)
-    },
-    workspaceFileRead(address, path, signal) {
-      return performWorkspaceFileRead(address, path, signal)
-    },
-    workspaceFileStat(address, path, signal) {
-      return performWorkspaceFileStat(address, path, signal)
-    },
-    workspaceFileList(address, path, query, signal) {
-      return performWorkspaceFileList(address, path, query, signal)
     },
     workspaceExec(address, request, signal) {
       return performWorkspaceExec(address, request, signal)

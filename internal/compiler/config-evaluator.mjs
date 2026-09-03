@@ -2005,19 +2005,7 @@ var workspaces = Object.freeze({
 });
 function createWorkspaceRef(id) {
   const workspaceID = resourceID(id, "Workspace ID");
-  const files = Object.freeze({
-    read(path, options) {
-      return currentRuntimeOperations().workspaceFileRead(workspaceID, path, options?.signal);
-    },
-    stat(path, options) {
-      return currentRuntimeOperations().workspaceFileStat(workspaceID, path, options?.signal);
-    },
-    list(path, query, options) {
-      return currentRuntimeOperations().workspaceFileList(workspaceID, path, query, options?.signal);
-    }
-  });
   const operations = {
-    files,
     retrieve(options) {
       return currentRuntimeOperations().workspaceRetrieve(workspaceID, options?.signal);
     },

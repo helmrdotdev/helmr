@@ -114,34 +114,3 @@ func (q *Queries) GetArtifact(ctx context.Context, arg GetArtifactParams) (Artif
 	)
 	return i, err
 }
-
-const getWorkspaceVersionArtifact = `-- name: GetWorkspaceVersionArtifact :one
-SELECT id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type, created_by_worker_instance_id, created_at
-  FROM artifacts
- WHERE environment_id = $1
-   AND id = $2
-   AND kind = 'workspace_version'
-`
-
-type GetWorkspaceVersionArtifactParams struct {
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	ID            pgtype.UUID `json:"id"`
-}
-
-func (q *Queries) GetWorkspaceVersionArtifact(ctx context.Context, arg GetWorkspaceVersionArtifactParams) (Artifact, error) {
-	row := q.db.QueryRow(ctx, getWorkspaceVersionArtifact, arg.EnvironmentID, arg.ID)
-	var i Artifact
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.Digest,
-		&i.Kind,
-		&i.SizeBytes,
-		&i.MediaType,
-		&i.CreatedByWorkerInstanceID,
-		&i.CreatedAt,
-	)
-	return i, err
-}

@@ -7,8 +7,8 @@ AWS/Firecracker validation. It uses only the v0 public contract:
 - exact create and BasicExec idempotency replay;
 - synchronous one-shot BasicExec with bounded stdin, stdout, and stderr;
 - normal nonzero exit capture into the Workspace head;
-- committed file read, stat, and list without a live VM;
 - typed Task start on the same Workspace and typed Run wait;
+- post-Task Workspace Exec verification of committed head continuity;
 - typed different-Workspace child Task calls from both a Task and an Actor;
 - successive Actor inputs, continuation Run placement, paginated durable output,
   Session close, and output retention after close;

@@ -28,7 +28,6 @@ func TestKeysAreStableAndDomainSeparated(t *testing.T) {
 		first.MagicLink,
 		first.DeviceCode,
 		first.BrowserAuth,
-		first.WorkspaceFileCursor,
 		first.TelemetryCursor,
 	}
 	replayed := [][]byte{
@@ -38,7 +37,6 @@ func TestKeysAreStableAndDomainSeparated(t *testing.T) {
 		second.MagicLink,
 		second.DeviceCode,
 		second.BrowserAuth,
-		second.WorkspaceFileCursor,
 		second.TelemetryCursor,
 	}
 	for index := range values {

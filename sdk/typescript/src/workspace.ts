@@ -1,8 +1,4 @@
-import type {
-  CursorPage,
-  Duration,
-  WorkspaceAddress,
-} from "./contract"
+import type { Duration, WorkspaceAddress } from "./contract"
 import {
   inspectImage,
   type ImageBuilder,
@@ -77,43 +73,6 @@ export interface Workspace {
   readonly updatedAt: string
 }
 
-export type WorkspaceFileEntry =
-  | Readonly<{
-      path: string
-      kind: "file"
-      mode: number
-      sizeBytes: number
-    }>
-  | Readonly<{
-      path: string
-      kind: "directory"
-      mode: number
-    }>
-  | Readonly<{
-      path: string
-      kind: "symlink"
-      mode: number
-      linkTarget: string
-    }>
-
-export interface WorkspaceFileListQuery {
-  readonly cursor?: string
-  readonly limit?: number
-}
-
-export interface WorkspaceFiles {
-  read(path: string, options?: RequestOptions): Promise<Uint8Array>
-  stat(
-    path: string,
-    options?: RequestOptions,
-  ): Promise<WorkspaceFileEntry>
-  list(
-    path: string,
-    query?: WorkspaceFileListQuery,
-    options?: RequestOptions,
-  ): Promise<CursorPage<WorkspaceFileEntry>>
-}
-
 export interface WorkspaceExecRequest {
   readonly command: readonly string[]
   readonly cwd?: string
@@ -138,7 +97,6 @@ export interface WorkspaceDeleteReceipt {
 }
 
 export interface WorkspaceRef extends WorkspaceAddress {
-  readonly files: WorkspaceFiles
   retrieve(options?: RequestOptions): Promise<Workspace>
   exec(
     request: WorkspaceExecRequest,
@@ -351,35 +309,7 @@ export function inspectSandboxDefinition(
 
 export function createWorkspaceRef(id: string): WorkspaceRef {
   const workspaceID = resourceID(id, "Workspace ID")
-  const files: WorkspaceFiles = Object.freeze({
-    read(
-      path: string,
-      options?: RequestOptions,
-    ): Promise<Uint8Array> {
-      return currentRuntimeOperations().workspaceFileRead(
-        workspaceID, path, options?.signal,
-      )
-    },
-    stat(
-      path: string,
-      options?: RequestOptions,
-    ): Promise<WorkspaceFileEntry> {
-      return currentRuntimeOperations().workspaceFileStat(
-        workspaceID, path, options?.signal,
-      )
-    },
-    list(
-      path: string,
-      query?: WorkspaceFileListQuery,
-      options?: RequestOptions,
-    ): Promise<CursorPage<WorkspaceFileEntry>> {
-      return currentRuntimeOperations().workspaceFileList(
-        workspaceID, path, query, options?.signal,
-      )
-    },
-  })
   const operations: Omit<WorkspaceRef, keyof WorkspaceAddress> = {
-    files,
     retrieve(options) {
       return currentRuntimeOperations().workspaceRetrieve(
         workspaceID, options?.signal,
@@ -463,72 +393,6 @@ function parseWorkspaceSecret(value: unknown): WorkspaceSecretInfo {
   return Object.freeze({
     name: input["name"],
     ...(hasEnv ? { env: input["env"] as string } : { file: input["file"] as string }),
-  })
-}
-
-export function parseWorkspaceFileEntry(value: unknown): WorkspaceFileEntry {
-  const input = workspaceObject(value, "Workspace file entry")
-  if (
-    typeof input["path"] !== "string" ||
-    typeof input["mode"] !== "number" ||
-    !Number.isInteger(input["mode"])
-  ) {
-    throw new Error("Workspace file entry identity is invalid")
-  }
-  switch (input["kind"]) {
-    case "file":
-      if (typeof input["size_bytes"] !== "number" || !Number.isSafeInteger(input["size_bytes"])) {
-        throw new Error("Workspace file entry.size_bytes must be an integer")
-      }
-      return Object.freeze({
-        path: input["path"],
-        kind: "file",
-        mode: input["mode"],
-        sizeBytes: input["size_bytes"],
-      })
-    case "directory":
-      return Object.freeze({
-        path: input["path"],
-        kind: "directory",
-        mode: input["mode"],
-      })
-    case "symlink":
-      if (typeof input["link_target"] !== "string") {
-        throw new Error("Workspace symlink entry.link_target must be a string")
-      }
-      return Object.freeze({
-        path: input["path"],
-        kind: "symlink",
-        mode: input["mode"],
-        linkTarget: input["link_target"],
-      })
-    default:
-      throw new Error("Workspace file entry.kind is invalid")
-  }
-}
-
-export function parseWorkspaceFileContent(value: unknown): Uint8Array {
-  const response = workspaceObject(value, "Workspace file response")
-  return decodeWorkspaceBase64(
-    response["data_base64"],
-    "Workspace file response.data_base64",
-  )
-}
-
-export function parseWorkspaceFilePage(
-  value: unknown,
-): CursorPage<WorkspaceFileEntry> {
-  const response = workspaceObject(value, "Workspace file list response")
-  if (!Array.isArray(response["items"])) {
-    throw new Error("Workspace file list response.items must be an array")
-  }
-  const nextCursor = response["next_cursor"]
-  if (nextCursor !== undefined && typeof nextCursor !== "string") {
-    throw new Error("Workspace file list response.next_cursor must be a string")
-  }
-  return Object.freeze({
-    items: Object.freeze(response["items"].map(parseWorkspaceFileEntry)),
-    ...(nextCursor === undefined ? {} : { nextCursor }),
   })
 }
 

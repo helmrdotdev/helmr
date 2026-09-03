@@ -1045,9 +1045,6 @@ describe("runProgram", () => {
           idempotencyKey: "create:cache",
         })
         const workspace = await created.retrieve()
-        const content = await created.files.read("result.txt")
-        const entry = await created.files.stat("result.txt")
-        const page = await created.files.list(".", { limit: 10 })
         const executed = await created.exec({
           command: ["sh", "-c", "printf ok"],
           stdin: new Uint8Array([1, 2, 3]),
@@ -1057,9 +1054,6 @@ describe("runProgram", () => {
         const deleted = await created.delete({ idempotencyKey: "delete:cache" })
         return {
           id: workspace.id,
-          content: new TextDecoder().decode(content),
-          kind: entry.kind,
-          count: page.items.length,
           exitCode: executed.exitCode,
           stdout: new TextDecoder().decode(executed.stdout),
           deleted: deleted.workspaceId,
@@ -1068,16 +1062,13 @@ describe("runProgram", () => {
     })
     const start = taskStart("noPayload")
     const output: Uint8Array[] = []
-    const requested = Array.from({ length: 7 }, () => deferred<void>())
+    const requested = Array.from({ length: 4 }, () => deferred<void>())
     async function* input(): AsyncIterable<Uint8Array> {
       yield frameMessage(programProto.ProgramStartSchema, start)
       yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
       const responses = [
         '{"workspace_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}',
         '{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32","key":"build-cache","sandbox_id":"cache","deployment_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35","status":"available","secrets":[{"name":"TOKEN","env":"TOKEN"}],"last_activity_at":"2026-07-26T00:00:00Z","created_at":"2026-07-26T00:00:00Z","updated_at":"2026-07-26T00:00:00Z"}',
-        '{"data_base64":"b2s="}',
-        '{"path":"result.txt","kind":"file","mode":420,"size_bytes":2}',
-        '{"items":[{"path":"result.txt","kind":"file","mode":420,"size_bytes":2}]}',
         '{"exit_code":0,"stdout_base64":"b2s=","stderr_base64":""}',
         '{"workspace_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}',
       ]
@@ -1110,9 +1101,6 @@ describe("runProgram", () => {
     expect(observed).toEqual([
       "workspaceCreateRequested",
       "workspaceRetrieveRequested",
-      "workspaceFileReadRequested",
-      "workspaceFileStatRequested",
-      "workspaceFileListRequested",
       "workspaceExecRequested",
       "workspaceDeleteRequested",
     ])
@@ -1121,7 +1109,7 @@ describe("runProgram", () => {
     if (outcome.case === "taskOutcome" &&
       outcome.value.outcome.case === "succeeded") {
       expect(outcome.value.outcome.value.outputJson).toBe(
-        '{"content":"ok","count":1,"deleted":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32","exitCode":0,"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32","kind":"file","stdout":"ok"}',
+        '{"deleted":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32","exitCode":0,"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32","stdout":"ok"}',
       )
     }
   })

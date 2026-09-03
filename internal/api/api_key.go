@@ -61,7 +61,6 @@ const (
 	APIKeyScopeWorkspacesCreate    APIKeyScope = "workspaces:create"
 	APIKeyScopeWorkspacesRead      APIKeyScope = "workspaces:read"
 	APIKeyScopeWorkspacesDelete    APIKeyScope = "workspaces:delete"
-	APIKeyScopeWorkspaceFilesRead  APIKeyScope = "workspace-files:read"
 	APIKeyScopeWorkspaceExecCreate APIKeyScope = "workspace-exec:create"
 	APIKeyScopeSecretsWrite        APIKeyScope = "secrets:write"
 	APIKeyScopeTasksDeploy         APIKeyScope = "tasks:deploy"

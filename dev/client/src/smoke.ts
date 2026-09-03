@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto"
 import { mkdir, rename, writeFile } from "node:fs/promises"
 import { dirname } from "node:path"
 import {
@@ -10,7 +9,6 @@ import {
   type RunLogRecord,
   type Run,
   type WorkspaceExecResult,
-  type WorkspaceFileEntry,
   type WorkspaceRef,
 } from "@helmr/sdk"
 import type {
@@ -36,11 +34,7 @@ type Evidence = {
   readonly workspaceKey: string
   readonly initialExec: ExecEvidence
   readonly replayExec: ExecEvidence
-  readonly committedFile: {
-    readonly path: string
-    readonly sizeBytes: number
-    readonly digest: string
-  }
+  readonly postTaskExec: ExecEvidence
   readonly taskRunId: string
   readonly taskOutput: JsonValue
   readonly taskLogs: readonly RunLogRecord[]
@@ -172,26 +166,6 @@ async function runSmoke(): Promise<Evidence> {
     "BasicExec idempotency replay changed the result",
   )
 
-  const fileBytes = await byKey.files.read(markerPath, {
-    signal: AbortSignal.timeout(30_000),
-  })
-  const fileText = new TextDecoder().decode(fileBytes)
-  assert(fileText.includes(`marker=${config.marker}`), "committed file missed the exec marker")
-  assert(fileText.includes(`stdin=stdin:${config.marker}`), "committed file missed stdin")
-  const fileStat = await byKey.files.stat(markerPath, {
-    signal: AbortSignal.timeout(30_000),
-  })
-  assertFile(fileStat, markerPath, fileBytes.byteLength)
-  const listing = await byKey.files.list(
-    markerDirectory,
-    { limit: 100 },
-    { signal: AbortSignal.timeout(30_000) },
-  )
-  assert(
-    listing.items.some((entry) => entry.path === markerPath),
-    "committed file was absent from the directory listing",
-  )
-
   const taskMarker = `${config.marker}-task`
   const started = await client.tasks.start<typeof runtimeSmoke>(
     "runtime-smoke",
@@ -231,9 +205,15 @@ async function runSmoke(): Promise<Evidence> {
     taskEvents.items.some((event) => event.runId === started.id),
     "Task events did not include the completed Run",
   )
-  const taskFile = new TextDecoder().decode(await byKey.files.read(markerPath, {
-    signal: AbortSignal.timeout(30_000),
-  }))
+  const postTaskExec = await byKey.exec({
+    command: ["cat", markerPath],
+    cwd: "/workspace",
+    idempotencyKey: `workspace:verify-task:${config.marker}`,
+  }, {
+    signal: AbortSignal.timeout(15 * 60_000),
+  })
+  assertEqual(postTaskExec.exitCode, 0, "Task Workspace verification command failed")
+  const taskFile = new TextDecoder().decode(postTaskExec.stdout)
   assert(taskFile.includes(`marker=${taskMarker}`), "Task did not advance the Workspace head")
 
   const childTasks = await runChildTaskSmoke()
@@ -268,11 +248,7 @@ async function runSmoke(): Promise<Evidence> {
     workspaceKey,
     initialExec: execEvidence(initialExec),
     replayExec: execEvidence(replayExec),
-    committedFile: {
-      path: markerPath,
-      sizeBytes: fileBytes.byteLength,
-      digest: createHash("sha256").update(fileBytes).digest("hex"),
-    },
+    postTaskExec: execEvidence(postTaskExec),
     taskRunId: started.id,
     taskOutput,
     taskLogs: taskLogs.items,
@@ -615,14 +591,6 @@ function assertExec(result: WorkspaceExecResult, marker: string): void {
   assertEqual(result.exitCode, 7, "BasicExec did not preserve its nonzero exit code")
   assert(stdout.includes(`stdout:${marker}:stdin:${marker}`), "BasicExec stdout mismatch")
   assert(stderr.includes(`stderr:${marker}`), "BasicExec stderr mismatch")
-}
-
-function assertFile(entry: WorkspaceFileEntry, path: string, sizeBytes: number): void {
-  assertEqual(entry.path, path, "Workspace file stat path mismatch")
-  assertEqual(entry.kind, "file", "Workspace file stat kind mismatch")
-  if (entry.kind === "file") {
-    assertEqual(entry.sizeBytes, sizeBytes, "Workspace file stat size mismatch")
-  }
 }
 
 function execEvidence(result: WorkspaceExecResult): ExecEvidence {

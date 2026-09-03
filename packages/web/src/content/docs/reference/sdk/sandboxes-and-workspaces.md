@@ -24,9 +24,6 @@ secrets? })`; the result is a `WorkspaceRef`.
 | API | Result |
 | --- | --- |
 | `retrieve()` | Current Workspace record and status. |
-| `files.read(path)` | File bytes. |
-| `files.stat(path)` | One committed file or directory entry. |
-| `files.list(path, { cursor?, limit? })` | A finite page, limit 1–100. |
 | `exec({ command, idempotencyKey, cwd?, env?, stdin?, timeout? })` | Bounded stdout, stderr, and exit code. |
 | `delete({ idempotencyKey? })` | Deletion receipt. |
 

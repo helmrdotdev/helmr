@@ -131,11 +131,6 @@ const API_KEY_SCOPE_OPTIONS: {
     description: "Allow automation to delete Workspaces.",
   },
   {
-    value: "workspace-files:read",
-    label: "Read workspace files",
-    description: "Allow automation to read committed Workspace files.",
-  },
-  {
     value: "workspace-exec:create",
     label: "Run workspace commands",
     description: "Allow automation to run bounded synchronous BasicExec commands.",

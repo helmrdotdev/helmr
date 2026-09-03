@@ -9,25 +9,23 @@ import (
 const RootKeySize = 32
 
 const (
-	sessionDomain             = "helmr.auth.session.v0"
-	invitationDomain          = "helmr.auth.invitation.v0"
-	workerInstanceDomain      = "helmr.auth.worker-instance.v0"
-	magicLinkDomain           = "helmr.auth.magic-link.v0"
-	deviceCodeDomain          = "helmr.auth.device-code.v0"
-	browserAuthDomain         = "helmr.auth.browser-auth.v0"
-	workspaceFileCursorDomain = "helmr.auth.workspace-file-cursor.v0"
-	telemetryCursorDomain     = "helmr.auth.telemetry-cursor.v0"
+	sessionDomain         = "helmr.auth.session.v0"
+	invitationDomain      = "helmr.auth.invitation.v0"
+	workerInstanceDomain  = "helmr.auth.worker-instance.v0"
+	magicLinkDomain       = "helmr.auth.magic-link.v0"
+	deviceCodeDomain      = "helmr.auth.device-code.v0"
+	browserAuthDomain     = "helmr.auth.browser-auth.v0"
+	telemetryCursorDomain = "helmr.auth.telemetry-cursor.v0"
 )
 
 type Keys struct {
-	Session             []byte
-	Invitation          []byte
-	WorkerInstance      []byte
-	MagicLink           []byte
-	DeviceCode          []byte
-	BrowserAuth         []byte
-	WorkspaceFileCursor []byte
-	TelemetryCursor     []byte
+	Session         []byte
+	Invitation      []byte
+	WorkerInstance  []byte
+	MagicLink       []byte
+	DeviceCode      []byte
+	BrowserAuth     []byte
+	TelemetryCursor []byte
 }
 
 func NewKeys(root []byte) (Keys, error) {
@@ -40,14 +38,13 @@ func NewKeys(root []byte) (Keys, error) {
 		return mac.Sum(nil)
 	}
 	return Keys{
-		Session:             derive(sessionDomain),
-		Invitation:          derive(invitationDomain),
-		WorkerInstance:      derive(workerInstanceDomain),
-		MagicLink:           derive(magicLinkDomain),
-		DeviceCode:          derive(deviceCodeDomain),
-		BrowserAuth:         derive(browserAuthDomain),
-		WorkspaceFileCursor: derive(workspaceFileCursorDomain),
-		TelemetryCursor:     derive(telemetryCursorDomain),
+		Session:         derive(sessionDomain),
+		Invitation:      derive(invitationDomain),
+		WorkerInstance:  derive(workerInstanceDomain),
+		MagicLink:       derive(magicLinkDomain),
+		DeviceCode:      derive(deviceCodeDomain),
+		BrowserAuth:     derive(browserAuthDomain),
+		TelemetryCursor: derive(telemetryCursorDomain),
 	}, nil
 }
 
@@ -58,6 +55,5 @@ func (k Keys) Valid() bool {
 		len(k.MagicLink) == RootKeySize &&
 		len(k.DeviceCode) == RootKeySize &&
 		len(k.BrowserAuth) == RootKeySize &&
-		len(k.WorkspaceFileCursor) == RootKeySize &&
 		len(k.TelemetryCursor) == RootKeySize
 }

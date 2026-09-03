@@ -27,7 +27,6 @@ const (
 	PermissionWorkspacesCreate    Permission = "workspaces.create"
 	PermissionWorkspacesRead      Permission = "workspaces.read"
 	PermissionWorkspacesDelete    Permission = "workspaces.delete"
-	PermissionWorkspaceFilesRead  Permission = "workspace.files.read"
 	PermissionWorkspaceExecCreate Permission = "workspace.exec.create"
 	PermissionSecretsWrite        Permission = "secrets.write"
 	PermissionTasksDeploy         Permission = "tasks.deploy"
@@ -77,7 +76,6 @@ func RoleAllows(role Role, permission Permission) bool {
 			PermissionWorkspacesCreate,
 			PermissionWorkspacesRead,
 			PermissionWorkspacesDelete,
-			PermissionWorkspaceFilesRead,
 			PermissionWorkspaceExecCreate,
 			PermissionTasksDeploy:
 			return true
@@ -89,8 +87,7 @@ func RoleAllows(role Role, permission Permission) bool {
 		case PermissionRunsRead,
 			PermissionSessionsRead,
 			PermissionTokensRead,
-			PermissionWorkspacesRead,
-			PermissionWorkspaceFilesRead:
+			PermissionWorkspacesRead:
 			return true
 		default:
 			return false
@@ -117,7 +114,6 @@ func ParseAPIKeyGrant(value string) (Permission, bool) {
 		PermissionWorkspacesCreate,
 		PermissionWorkspacesRead,
 		PermissionWorkspacesDelete,
-		PermissionWorkspaceFilesRead,
 		PermissionWorkspaceExecCreate,
 		PermissionSecretsWrite,
 		PermissionTasksDeploy:

@@ -52,9 +52,6 @@ type ActorRuntimeControlPlane interface {
 type WorkspaceRuntimeControlPlane interface {
 	CreateRunWorkspace(context.Context, workerapi.CreateWorkspaceRequest) (workerapi.CreateWorkspaceResponse, error)
 	RetrieveRunWorkspace(context.Context, workerapi.RetrieveWorkspaceRequest) (workerapi.RetrieveWorkspaceResponse, error)
-	ReadRunWorkspaceFile(context.Context, workerapi.ReadWorkspaceFileRequest) (workerapi.ReadWorkspaceFileResponse, error)
-	StatRunWorkspaceFile(context.Context, workerapi.ReadWorkspaceFileRequest) (workerapi.StatWorkspaceFileResponse, error)
-	ListRunWorkspaceFiles(context.Context, workerapi.ListWorkspaceFilesRequest) (workerapi.ListWorkspaceFilesResponse, error)
 	ExecuteRunWorkspace(context.Context, workerapi.ExecuteWorkspaceRequest) (workerapi.ExecuteWorkspaceResponse, error)
 	PollRunWorkspaceExec(context.Context, workerapi.PollWorkspaceExecRequest) (workerapi.ExecuteWorkspaceResponse, error)
 	DeleteRunWorkspace(context.Context, workerapi.DeleteWorkspaceRequest) (workerapi.DeleteWorkspaceResponse, error)
@@ -353,9 +350,6 @@ func (task *guestRunLeaseTask) processCheckpointRunEvent(ctx context.Context, ev
 		return task.handleActorRuntime(ctx, event)
 	case *programv0.RunEvent_WorkspaceCreateRequested,
 		*programv0.RunEvent_WorkspaceRetrieveRequested,
-		*programv0.RunEvent_WorkspaceFileReadRequested,
-		*programv0.RunEvent_WorkspaceFileStatRequested,
-		*programv0.RunEvent_WorkspaceFileListRequested,
 		*programv0.RunEvent_WorkspaceExecRequested,
 		*programv0.RunEvent_WorkspaceDeleteRequested:
 		return task.handleWorkspaceRuntime(ctx, event)

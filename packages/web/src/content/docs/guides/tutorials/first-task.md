@@ -95,12 +95,17 @@ helmr task start hello \
 ```
 
 The start returns a Run ID. `--wait` also waits for the terminal result. The
-Workspace remains after the Run, so inspect the file the Task committed:
+Workspace remains after the Run. You can use Workspace exec to print the file
+the Task committed:
 
 ```sh
-helmr workspace files read greeting.txt \
-  --project demo --env development --id "$WORKSPACE_ID"
+helmr workspace exec \
+  --project demo --env development --id "$WORKSPACE_ID" \
+  --idempotency-key tutorial:read-greeting -- cat greeting.txt
 ```
+
+This requires `workspace-exec:create`. Exec runs a command and may mutate the
+Workspace; it is not a read-only file inspection API.
 
 Next, see [Inspect a run](/docs/guides/how-to/inspect-a-run/) for logs and
 events, or [Durable agent](/docs/guides/tutorials/durable-agent/) for continuing
