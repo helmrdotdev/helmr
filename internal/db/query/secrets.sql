@@ -116,8 +116,7 @@ LEFT JOIN LATERAL (
     LIMIT 1
 ) AS latest ON true
 WHERE secrets.environment_id = sqlc.arg(environment_id)
-  AND secrets.name = sqlc.arg(name)
-  AND secrets.state <> 'deleted';
+  AND secrets.name = sqlc.arg(name);
 
 -- name: GetSecretSnapshot :one
 SELECT
@@ -140,15 +139,13 @@ LEFT JOIN LATERAL (
     LIMIT 1
 ) AS latest ON true
 WHERE secrets.environment_id = sqlc.arg(environment_id)
-  AND secrets.id = sqlc.arg(id)
-  AND secrets.state <> 'deleted';
+  AND secrets.id = sqlc.arg(id);
 
 -- name: GetSecret :one
 SELECT secrets.*
 FROM secrets
 WHERE environment_id = sqlc.arg(environment_id)
-  AND id = sqlc.arg(id)
-  AND state <> 'deleted';
+  AND id = sqlc.arg(id);
 
 -- name: GetSecretVersion :one
 SELECT secret_versions.*
@@ -198,7 +195,6 @@ LEFT JOIN LATERAL (
     LIMIT 1
 ) AS latest ON true
 WHERE secrets.environment_id = sqlc.arg(environment_id)
-  AND secrets.state <> 'deleted'
   AND (
       sqlc.narg(after_name)::text IS NULL
       OR (secrets.name, secrets.id) >

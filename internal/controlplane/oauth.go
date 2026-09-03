@@ -86,10 +86,6 @@ func (p *githubOAuthProvider) ResolveWithToken(ctx context.Context, code string,
 		email = primaryEmail
 		emailVerified = true
 	}
-	claims, err := json.Marshal(map[string]any{"login": user.Login})
-	if err != nil {
-		return authIdentity{}, nil, err
-	}
 	return authIdentity{
 		Provider:        "github",
 		Subject:         strconv.FormatInt(user.ID, 10),
@@ -99,7 +95,6 @@ func (p *githubOAuthProvider) ResolveWithToken(ctx context.Context, code string,
 		EmailVerified:   emailVerified,
 		VerifiedEmails:  verifiedEmails,
 		EmailLookupErr:  errorString(emailErr),
-		Claims:          claims,
 	}, token, nil
 }
 

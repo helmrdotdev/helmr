@@ -308,7 +308,6 @@ type AuthIdentity struct {
 	Provider    string             `json:"provider"`
 	Subject     string             `json:"subject"`
 	Email       pgtype.Text        `json:"email"`
-	Claims      []byte             `json:"claims"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 	LastLoginAt pgtype.Timestamptz `json:"last_login_at"`
@@ -818,7 +817,6 @@ type Secret struct {
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
 	RevokedAt            pgtype.Timestamptz `json:"revoked_at"`
-	DeletedAt            pgtype.Timestamptz `json:"deleted_at"`
 }
 
 type SecretResolution struct {

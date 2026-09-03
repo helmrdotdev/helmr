@@ -139,7 +139,6 @@ upserted_identity AS (
         provider,
         subject,
         email,
-        claims,
         last_login_at
     )
     SELECT
@@ -148,12 +147,10 @@ upserted_identity AS (
         sqlc.arg(identity_provider) AS provider,
         sqlc.arg(identity_subject) AS subject,
         sqlc.arg(email) AS email,
-        sqlc.arg(claims) AS claims,
         now() AS last_login_at
       FROM target_user
     ON CONFLICT (provider, subject) DO UPDATE
        SET email = EXCLUDED.email,
-           claims = EXCLUDED.claims,
            updated_at = now(),
            last_login_at = now()
     RETURNING user_id

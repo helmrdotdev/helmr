@@ -1,9 +1,6 @@
 package controlplane
 
-import (
-	"context"
-	"encoding/json"
-)
+import "context"
 
 type authIdentity struct {
 	Provider        string
@@ -14,7 +11,6 @@ type authIdentity struct {
 	EmailVerified   bool
 	VerifiedEmails  []string
 	EmailLookupErr  string
-	Claims          json.RawMessage
 }
 
 type AuthProvider interface {
