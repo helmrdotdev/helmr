@@ -1,14 +1,3 @@
--- name: GetWorkspaceVersion :one
-SELECT workspace_versions.*
-  FROM workspace_versions
-  JOIN workspaces
-    ON workspaces.environment_id = workspace_versions.environment_id
-   AND workspaces.id = workspace_versions.workspace_id
- WHERE workspace_versions.environment_id = sqlc.arg(environment_id)
-   AND workspace_versions.workspace_id = sqlc.arg(workspace_id)
-   AND workspace_versions.id = sqlc.arg(id)
-   AND workspace_versions.state = 'committed';
-
 -- name: GetWorkspaceResetTargetAuthority :one
 SELECT workspace_versions.id AS version_id,
        workspace_versions.parent_version_id,

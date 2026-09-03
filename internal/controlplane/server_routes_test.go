@@ -78,9 +78,6 @@ GET /api/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}
 GET /api/projects/{projectID}/environments/{environmentID}/workspaces
 GET /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}
 GET /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/exec/{processID}
-GET /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/files
-GET /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/files/content
-GET /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/files/stat
 GET /api/projects/{projectRef}
 GET /api/regions
 GET /capacity/v1/worker-groups/resolve
@@ -115,9 +112,6 @@ GET /v1/tokens/{tokenID}
 GET /v1/workspaces
 GET /v1/workspaces/{workspaceID}
 GET /v1/workspaces/{workspaceID}/exec/{processID}
-GET /v1/workspaces/{workspaceID}/files
-GET /v1/workspaces/{workspaceID}/files/content
-GET /v1/workspaces/{workspaceID}/files/stat
 GET /worker/v1/instance
 OPTIONS /api/public/tokens/{tokenID}/complete
 PATCH /admin/api/v1/regions/{regionID}
@@ -240,9 +234,6 @@ POST /worker/v1/run/workspaces/create
 POST /worker/v1/run/workspaces/delete
 POST /worker/v1/run/workspaces/exec
 POST /worker/v1/run/workspaces/exec/poll
-POST /worker/v1/run/workspaces/files/list
-POST /worker/v1/run/workspaces/files/read
-POST /worker/v1/run/workspaces/files/stat
 POST /worker/v1/run/workspaces/retrieve
 PUT /capacity/v1/worker-groups/{workerGroupID}/primary-pools
 `), "\n")

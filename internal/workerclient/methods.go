@@ -430,39 +430,6 @@ func (c *Client) RetrieveRunWorkspace(
 	return response, nil
 }
 
-func (c *Client) ReadRunWorkspaceFile(
-	ctx context.Context,
-	request workerapi.ReadWorkspaceFileRequest,
-) (workerapi.ReadWorkspaceFileResponse, error) {
-	var response workerapi.ReadWorkspaceFileResponse
-	if err := c.postWorkerJSON(ctx, "/worker/v1/run/workspaces/files/read", request, &response); err != nil {
-		return workerapi.ReadWorkspaceFileResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) StatRunWorkspaceFile(
-	ctx context.Context,
-	request workerapi.ReadWorkspaceFileRequest,
-) (workerapi.StatWorkspaceFileResponse, error) {
-	var response workerapi.StatWorkspaceFileResponse
-	if err := c.postWorkerJSON(ctx, "/worker/v1/run/workspaces/files/stat", request, &response); err != nil {
-		return workerapi.StatWorkspaceFileResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) ListRunWorkspaceFiles(
-	ctx context.Context,
-	request workerapi.ListWorkspaceFilesRequest,
-) (workerapi.ListWorkspaceFilesResponse, error) {
-	var response workerapi.ListWorkspaceFilesResponse
-	if err := c.postWorkerJSON(ctx, "/worker/v1/run/workspaces/files/list", request, &response); err != nil {
-		return workerapi.ListWorkspaceFilesResponse{}, err
-	}
-	return response, nil
-}
-
 func (c *Client) ExecuteRunWorkspace(
 	ctx context.Context,
 	request workerapi.ExecuteWorkspaceRequest,

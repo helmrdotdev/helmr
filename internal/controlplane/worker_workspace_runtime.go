@@ -8,7 +8,6 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -115,137 +114,6 @@ func (s *Server) workerRetrieveWorkspace(w http.ResponseWriter, r *http.Request)
 	}
 	writeJSON(w, http.StatusOK, workerapi.RetrieveWorkspaceResponse{
 		CorrelationID: request.CorrelationID, Completed: &snapshot,
-	})
-}
-
-func (s *Server) workerReadWorkspaceFile(w http.ResponseWriter, r *http.Request) {
-	var request workerapi.ReadWorkspaceFileRequest
-	if !s.decodeWorkerWorkspaceFileRequest(w, r, &request, "workspace file read") {
-		return
-	}
-	worker := workerFromContext(r.Context())
-	var content api.WorkspaceFileContent
-	var source workspaceFileSource
-	err := s.inTx(r.Context(), func(work *txWork) error {
-		runSource, err := authorizeWorkerRunSource(r.Context(), work.q, worker, request.Lease)
-		if err != nil {
-			return err
-		}
-		record, err := resolveWorkerWorkspace(r.Context(), work.q, runSource, request.Workspace)
-		if err != nil {
-			return err
-		}
-		source, err = s.resolveCurrentWorkspaceFileSource(r.Context(), work.q, record)
-		return err
-	})
-	if err == nil {
-		content, err = s.readWorkspaceFileSource(r.Context(), source, request.Path)
-	}
-	if failure, handled := s.workerWorkspaceFileFailure(w, request.Lease.ID, "read", err); handled {
-		if failure != nil {
-			writeJSON(w, http.StatusOK, workerapi.ReadWorkspaceFileResponse{
-				CorrelationID: request.CorrelationID, Failed: failure,
-			})
-		}
-		return
-	}
-	writeJSON(w, http.StatusOK, workerapi.ReadWorkspaceFileResponse{
-		CorrelationID: request.CorrelationID, Completed: &content,
-	})
-}
-
-func (s *Server) workerStatWorkspaceFile(w http.ResponseWriter, r *http.Request) {
-	var request workerapi.ReadWorkspaceFileRequest
-	if !s.decodeWorkerWorkspaceFileRequest(w, r, &request, "workspace file stat") {
-		return
-	}
-	worker := workerFromContext(r.Context())
-	var entry api.WorkspaceFileEntry
-	var source workspaceFileSource
-	err := s.inTx(r.Context(), func(work *txWork) error {
-		runSource, err := authorizeWorkerRunSource(r.Context(), work.q, worker, request.Lease)
-		if err != nil {
-			return err
-		}
-		record, err := resolveWorkerWorkspace(r.Context(), work.q, runSource, request.Workspace)
-		if err != nil {
-			return err
-		}
-		source, err = s.resolveCurrentWorkspaceFileSource(r.Context(), work.q, record)
-		return err
-	})
-	if err == nil {
-		entry, err = s.statWorkspaceFileSource(r.Context(), source, request.Path)
-	}
-	if failure, handled := s.workerWorkspaceFileFailure(w, request.Lease.ID, "stat", err); handled {
-		if failure != nil {
-			writeJSON(w, http.StatusOK, workerapi.StatWorkspaceFileResponse{
-				CorrelationID: request.CorrelationID, Failed: failure,
-			})
-		}
-		return
-	}
-	writeJSON(w, http.StatusOK, workerapi.StatWorkspaceFileResponse{
-		CorrelationID: request.CorrelationID, Completed: &entry,
-	})
-}
-
-func (s *Server) workerListWorkspaceFiles(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("run storage is not configured")))
-		return
-	}
-	var request workerapi.ListWorkspaceFilesRequest
-	if err := decodeWorkerActorRequest(r, &request, "workspace file list"); err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	if err := validateWorkerWorkspaceRequest(request.RetrieveWorkspaceRequest); err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	target, err := validateWorkspaceFilePath(request.Path)
-	if err != nil || request.Limit < 1 || request.Limit > workspaceFileListMaxLimit {
-		writeError(w, badRequest(errors.New("workspace file list request is invalid")))
-		return
-	}
-	request.Path = target
-	worker := workerFromContext(r.Context())
-	var page api.WorkspaceFilePage
-	var record db.Workspace
-	var source workspaceFileSource
-	var after string
-	var now time.Time
-	err = s.inTx(r.Context(), func(work *txWork) error {
-		runSource, err := authorizeWorkerRunSource(r.Context(), work.q, worker, request.Lease)
-		if err != nil {
-			return err
-		}
-		record, err = resolveWorkerWorkspace(r.Context(), work.q, runSource, request.Workspace)
-		if err != nil {
-			return err
-		}
-		now = time.Now()
-		source, after, err = s.resolveWorkspaceFileListSource(
-			r.Context(), work.q, record, request.Path, request.Cursor, now,
-		)
-		return err
-	})
-	if err == nil {
-		page, err = s.listWorkspaceFileSource(
-			r.Context(), pgvalue.UUIDString(record.ID), source, request.Path, after, request.Limit, now,
-		)
-	}
-	if failure, handled := s.workerWorkspaceFileFailure(w, request.Lease.ID, "list", err); handled {
-		if failure != nil {
-			writeJSON(w, http.StatusOK, workerapi.ListWorkspaceFilesResponse{
-				CorrelationID: request.CorrelationID, Failed: failure,
-			})
-		}
-		return
-	}
-	writeJSON(w, http.StatusOK, workerapi.ListWorkspaceFilesResponse{
-		CorrelationID: request.CorrelationID, Completed: &page,
 	})
 }
 
@@ -529,33 +397,6 @@ func validateWorkerWorkspaceCorrelation(value string) error {
 	return nil
 }
 
-func (s *Server) decodeWorkerWorkspaceFileRequest(
-	w http.ResponseWriter,
-	r *http.Request,
-	request *workerapi.ReadWorkspaceFileRequest,
-	label string,
-) bool {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("run storage is not configured")))
-		return false
-	}
-	if err := decodeWorkerActorRequest(r, request, label); err != nil {
-		writeError(w, badRequest(err))
-		return false
-	}
-	if err := validateWorkerWorkspaceRequest(request.RetrieveWorkspaceRequest); err != nil {
-		writeError(w, badRequest(err))
-		return false
-	}
-	target, err := validateWorkspaceFilePath(request.Path)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return false
-	}
-	request.Path = target
-	return true
-}
-
 func (s *Server) writeWorkerWorkspaceReadResult(
 	w http.ResponseWriter,
 	correlationID string,
@@ -574,36 +415,6 @@ func (s *Server) writeWorkerWorkspaceReadResult(
 	}
 	s.writeWorkerWorkspaceSourceError(w, operation, runID, err)
 	return true
-}
-
-func (s *Server) workerWorkspaceFileFailure(
-	w http.ResponseWriter,
-	runID string,
-	operation string,
-	err error,
-) (*workerapi.RuntimeOperationFailure, bool) {
-	if err == nil {
-		return nil, false
-	}
-	if errors.Is(err, errStaleWorkerRunSource) {
-		s.writeWorkerWorkspaceSourceError(w, operation, runID, err)
-		return nil, true
-	}
-	if failure, ok := workerWorkspaceReferenceFailure(err); ok {
-		return &failure, true
-	}
-	switch {
-	case errors.Is(err, archive.ErrTarEntryNotFound):
-		return &workerapi.RuntimeOperationFailure{Code: "workspace_file_not_found", Message: "Workspace file was not found"}, true
-	case errors.Is(err, errWorkspaceFileCursorExpired):
-		return &workerapi.RuntimeOperationFailure{Code: "workspace_file_cursor_expired", Message: "Workspace file cursor expired"}, true
-	case errors.Is(err, errWorkspaceFileCursorInvalid):
-		return &workerapi.RuntimeOperationFailure{Code: "invalid_workspace_file_cursor", Message: "Workspace file cursor is invalid"}, true
-	default:
-		s.log.Error("read run-sourced Workspace file", "operation", operation, "run_id", runID, "error", err)
-		writeError(w, errors.New("read run-sourced workspace file"))
-		return nil, true
-	}
 }
 
 func workerWorkspaceReferenceFailure(err error) (workerapi.RuntimeOperationFailure, bool) {

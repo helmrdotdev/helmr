@@ -39,24 +39,6 @@ func (*workspaceRuntimeContractControlPlane) RetrieveRunWorkspace(
 	panic("unexpected Workspace retrieve")
 }
 
-func (*workspaceRuntimeContractControlPlane) ReadRunWorkspaceFile(
-	context.Context, workerapi.ReadWorkspaceFileRequest,
-) (workerapi.ReadWorkspaceFileResponse, error) {
-	panic("unexpected Workspace file read")
-}
-
-func (*workspaceRuntimeContractControlPlane) StatRunWorkspaceFile(
-	context.Context, workerapi.ReadWorkspaceFileRequest,
-) (workerapi.StatWorkspaceFileResponse, error) {
-	panic("unexpected Workspace file stat")
-}
-
-func (*workspaceRuntimeContractControlPlane) ListRunWorkspaceFiles(
-	context.Context, workerapi.ListWorkspaceFilesRequest,
-) (workerapi.ListWorkspaceFilesResponse, error) {
-	panic("unexpected Workspace file list")
-}
-
 func (controlPlane *workspaceRuntimeContractControlPlane) ExecuteRunWorkspace(
 	_ context.Context,
 	request workerapi.ExecuteWorkspaceRequest,

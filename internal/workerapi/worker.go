@@ -470,35 +470,6 @@ type RetrieveWorkspaceResponse struct {
 	Failed        *RuntimeOperationFailure `json:"failed,omitempty"`
 }
 
-type ReadWorkspaceFileRequest struct {
-	RetrieveWorkspaceRequest
-	Path string `json:"path"`
-}
-
-type ReadWorkspaceFileResponse struct {
-	CorrelationID string                    `json:"correlation_id"`
-	Completed     *api.WorkspaceFileContent `json:"completed,omitempty"`
-	Failed        *RuntimeOperationFailure  `json:"failed,omitempty"`
-}
-
-type StatWorkspaceFileResponse struct {
-	CorrelationID string                   `json:"correlation_id"`
-	Completed     *api.WorkspaceFileEntry  `json:"completed,omitempty"`
-	Failed        *RuntimeOperationFailure `json:"failed,omitempty"`
-}
-
-type ListWorkspaceFilesRequest struct {
-	ReadWorkspaceFileRequest
-	Cursor string `json:"cursor,omitempty"`
-	Limit  int32  `json:"limit"`
-}
-
-type ListWorkspaceFilesResponse struct {
-	CorrelationID string                   `json:"correlation_id"`
-	Completed     *api.WorkspaceFilePage   `json:"completed,omitempty"`
-	Failed        *RuntimeOperationFailure `json:"failed,omitempty"`
-}
-
 type ExecuteWorkspaceRequest struct {
 	RetrieveWorkspaceRequest
 	Command        []string          `json:"command"`

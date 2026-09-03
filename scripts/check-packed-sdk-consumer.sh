@@ -50,7 +50,6 @@ import {
   type StandardSchemaV1,
   type TaskConfigWithPayload,
   type TokenCompleteRequest,
-  type WorkspaceFiles,
   workspaces,
 } from "@helmr/sdk"
 
@@ -84,14 +83,9 @@ function outputHelper(writer: SessionOutputWriter): Promise<void> {
   return writer.close()
 }
 
-function filesHelper(files: WorkspaceFiles) {
-  return files.list(".")
-}
-
 const secretRequest: SecretCreateRequest = { name: "TOKEN", value: "secret" }
 const tokenRequest: TokenCompleteRequest = { result: null }
 void outputHelper
-void filesHelper
 void secretRequest
 void tokenRequest
 void copiedImage

@@ -1525,12 +1525,6 @@ func runtimeResourceOperationIdentity(event *programv0.RunEvent) (string, string
 		return strings.TrimSpace(value.WorkspaceCreateRequested.GetCorrelationId()), "workspace create", true
 	case *programv0.RunEvent_WorkspaceRetrieveRequested:
 		return strings.TrimSpace(value.WorkspaceRetrieveRequested.GetCorrelationId()), "workspace retrieve", true
-	case *programv0.RunEvent_WorkspaceFileReadRequested:
-		return strings.TrimSpace(value.WorkspaceFileReadRequested.GetCorrelationId()), "workspace file read", true
-	case *programv0.RunEvent_WorkspaceFileStatRequested:
-		return strings.TrimSpace(value.WorkspaceFileStatRequested.GetCorrelationId()), "workspace file stat", true
-	case *programv0.RunEvent_WorkspaceFileListRequested:
-		return strings.TrimSpace(value.WorkspaceFileListRequested.GetCorrelationId()), "workspace file list", true
 	case *programv0.RunEvent_WorkspaceExecRequested:
 		return strings.TrimSpace(value.WorkspaceExecRequested.GetCorrelationId()), "workspace exec", true
 	case *programv0.RunEvent_WorkspaceDeleteRequested:

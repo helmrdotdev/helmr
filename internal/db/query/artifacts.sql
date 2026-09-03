@@ -29,10 +29,3 @@ SELECT *
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id);
-
--- name: GetWorkspaceVersionArtifact :one
-SELECT *
-  FROM artifacts
- WHERE environment_id = sqlc.arg(environment_id)
-   AND id = sqlc.arg(id)
-   AND kind = 'workspace_version';

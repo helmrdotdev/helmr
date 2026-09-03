@@ -76,7 +76,6 @@ func sessionPermissions(role auth.Role) []string {
 		auth.PermissionWorkspacesCreate,
 		auth.PermissionWorkspacesRead,
 		auth.PermissionWorkspacesDelete,
-		auth.PermissionWorkspaceFilesRead,
 		auth.PermissionWorkspaceExecCreate,
 		auth.PermissionSecretsWrite,
 		auth.PermissionTasksDeploy,

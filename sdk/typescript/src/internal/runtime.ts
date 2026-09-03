@@ -27,11 +27,8 @@ import type {
   WorkspaceDeleteReceipt,
   WorkspaceExecRequest,
   WorkspaceExecResult,
-  WorkspaceFileEntry,
-  WorkspaceFileListQuery,
   Workspace,
 } from "../workspace"
-import type { CursorPage } from "../contract"
 
 const runtimeOperationsSymbol = Symbol.for("helmr.sdk.v0.runtime_operations")
 
@@ -85,22 +82,6 @@ export interface RuntimeOperations {
     workspaceId: string,
     signal?: AbortSignal,
   ) => Promise<Workspace>
-  readonly workspaceFileRead: (
-    workspaceId: string,
-    path: string,
-    signal?: AbortSignal,
-  ) => Promise<Uint8Array>
-  readonly workspaceFileStat: (
-    workspaceId: string,
-    path: string,
-    signal?: AbortSignal,
-  ) => Promise<WorkspaceFileEntry>
-  readonly workspaceFileList: (
-    workspaceId: string,
-    path: string,
-    query?: WorkspaceFileListQuery,
-    signal?: AbortSignal,
-  ) => Promise<CursorPage<WorkspaceFileEntry>>
   readonly workspaceExec: (
     workspaceId: string,
     request: WorkspaceExecRequest,
