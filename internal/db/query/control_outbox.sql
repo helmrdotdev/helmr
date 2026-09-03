@@ -78,20 +78,20 @@ WHERE id = sqlc.arg(id)
 RETURNING *;
 
 -- name: DeadLetterUnsupportedControlOutbox :many
-WITH candidate_prefix AS MATERIALIZED (
-    SELECT id, topic
+WITH candidates AS MATERIALIZED (
+    SELECT id
     FROM control_outbox
     WHERE state = 'pending'
+      AND NOT (topic = ANY(sqlc.arg(supported_topics)::text[]))
     ORDER BY created_at, id
     LIMIT sqlc.arg(row_limit)
 )
 UPDATE control_outbox
 SET state = 'dead_lettered',
     last_error = 'unsupported control outbox topic'
-FROM candidate_prefix
-WHERE control_outbox.id = candidate_prefix.id
+FROM candidates
+WHERE control_outbox.id = candidates.id
   AND control_outbox.state = 'pending'
-  AND NOT (candidate_prefix.topic = ANY(sqlc.arg(supported_topics)::text[]))
 RETURNING control_outbox.*;
 
 -- name: PruneDeliveredControlOutbox :execrows
