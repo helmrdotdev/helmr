@@ -210,20 +210,20 @@ func (q *Queries) DeadLetterControlOutbox(ctx context.Context, arg DeadLetterCon
 }
 
 const deadLetterUnsupportedControlOutbox = `-- name: DeadLetterUnsupportedControlOutbox :many
-WITH candidate_prefix AS MATERIALIZED (
-    SELECT id, topic
+WITH candidates AS MATERIALIZED (
+    SELECT id
     FROM control_outbox
     WHERE state = 'pending'
+      AND NOT (topic = ANY($1::text[]))
     ORDER BY created_at, id
     LIMIT $2
 )
 UPDATE control_outbox
 SET state = 'dead_lettered',
     last_error = 'unsupported control outbox topic'
-FROM candidate_prefix
-WHERE control_outbox.id = candidate_prefix.id
+FROM candidates
+WHERE control_outbox.id = candidates.id
   AND control_outbox.state = 'pending'
-  AND NOT (candidate_prefix.topic = ANY($1::text[]))
 RETURNING control_outbox.id, control_outbox.topic, control_outbox.payload, control_outbox.state, control_outbox.attempts, control_outbox.available_at, control_outbox.claimed_by, control_outbox.claim_expires_at, control_outbox.last_error, control_outbox.created_at, control_outbox.delivered_at
 `
 

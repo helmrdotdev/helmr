@@ -173,6 +173,80 @@ func TestControlOutboxDeadLettersOnlyUnsupportedTopics(t *testing.T) {
 	}
 }
 
+func TestControlOutboxDeadLettersUnsupportedAfterSupportedPrefixSaturation(t *testing.T) {
+	ctx := context.Background()
+	pool := newPostgresDB(t, ctx)
+	queries := db.New(pool)
+
+	const rowLimit int32 = 2
+	supportedTopics := []string{
+		"session.input.reconcile",
+		"session.close.reconcile",
+		"token.reconcile",
+		"secret.revoked",
+	}
+
+	insertPendingAt := func(id uuid.UUID, topic string, createdAt time.Time) {
+		dbtest.MustExec(t, ctx, pool, `
+			INSERT INTO control_outbox (id, topic, payload, state, created_at)
+			VALUES ($1, $2, '{}'::jsonb, 'pending', $3)
+		`, id, topic, createdAt)
+	}
+
+	unsupportedStart := time.Date(2026, time.January, 1, 12, 0, 0, 0, time.UTC)
+	supportedIDs := []uuid.UUID{uuid.NewV7(), uuid.NewV7()}
+	oldestUnsupportedID := uuid.NewV7()
+	nextUnsupportedID := uuid.NewV7()
+	newestUnsupportedID := uuid.NewV7()
+	insertPendingAt(supportedIDs[0], "token.reconcile", unsupportedStart.Add(-2*time.Hour))
+	insertPendingAt(supportedIDs[1], "token.reconcile", unsupportedStart.Add(-time.Hour))
+	insertPendingAt(oldestUnsupportedID, "unknown.oldest", unsupportedStart)
+	insertPendingAt(nextUnsupportedID, "unknown.next", unsupportedStart.Add(time.Hour))
+	insertPendingAt(newestUnsupportedID, "unknown.newest", unsupportedStart.Add(2*time.Hour))
+
+	rows, err := queries.DeadLetterUnsupportedControlOutbox(ctx, db.DeadLetterUnsupportedControlOutboxParams{
+		SupportedTopics: supportedTopics,
+		RowLimit:        rowLimit,
+	})
+	if err != nil {
+		t.Fatalf("dead-letter unsupported after supported prefix = %+v, %v", rows, err)
+	}
+	if len(rows) != int(rowLimit) {
+		t.Fatalf("dead-lettered rows = %d, want %d", len(rows), rowLimit)
+	}
+	deadLetteredIDs := make(map[uuid.UUID]bool, len(rows))
+	for _, row := range rows {
+		if row.State != "dead_lettered" {
+			t.Fatalf("dead-lettered row state = %q, want dead_lettered", row.State)
+		}
+		deadLetteredIDs[pgvalue.MustUUIDValue(row.ID)] = true
+	}
+	for _, id := range []uuid.UUID{oldestUnsupportedID, nextUnsupportedID} {
+		if !deadLetteredIDs[id] {
+			t.Fatalf("oldest unsupported row %s was not dead-lettered", id)
+		}
+	}
+	var pendingSupportedCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)::integer
+		  FROM control_outbox
+		 WHERE id = ANY($1::uuid[])
+		   AND state = 'pending'
+	`, pgUUIDs(supportedIDs)).Scan(&pendingSupportedCount); err != nil {
+		t.Fatal(err)
+	}
+	if pendingSupportedCount != len(supportedIDs) {
+		t.Fatalf("supported pending rows = %d, want %d", pendingSupportedCount, len(supportedIDs))
+	}
+	var newestUnsupportedState string
+	if err := pool.QueryRow(ctx, `SELECT state FROM control_outbox WHERE id = $1`, newestUnsupportedID).Scan(&newestUnsupportedState); err != nil {
+		t.Fatal(err)
+	}
+	if newestUnsupportedState != "pending" {
+		t.Fatalf("newest unsupported topic state = %q, want pending", newestUnsupportedState)
+	}
+}
+
 func TestControlOutboxLifecycleScaleBudget(t *testing.T) {
 	if os.Getenv("HELMR_TEST_CONTROL_OUTBOX_SCALE") != "1" {
 		t.Skip("HELMR_TEST_CONTROL_OUTBOX_SCALE is not set")
@@ -234,17 +308,17 @@ func TestControlOutboxLifecycleScaleBudget(t *testing.T) {
 	}
 	unsupportedPlan := controlOutboxExplain(t, ctx, unsupportedTx, `
 		EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT)
-		WITH candidate_prefix AS MATERIALIZED (
-			SELECT id, topic FROM control_outbox
+		WITH candidates AS MATERIALIZED (
+			SELECT id FROM control_outbox
 			 WHERE state = 'pending'
+			   AND NOT (topic = ANY($1::text[]))
 			 ORDER BY created_at, id LIMIT 2500
 		)
 		UPDATE control_outbox
 		   SET state = 'dead_lettered', last_error = 'unsupported control outbox topic'
-		  FROM candidate_prefix
-		 WHERE control_outbox.id = candidate_prefix.id
+		  FROM candidates
+		 WHERE control_outbox.id = candidates.id
 		   AND control_outbox.state = 'pending'
-		   AND NOT (candidate_prefix.topic = ANY($1::text[]))
 	`, []string{"token.reconcile", "secret.revoked", "session.input.reconcile", "session.close.reconcile"})
 	if err := unsupportedTx.Rollback(ctx); err != nil {
 		t.Fatal(err)
@@ -418,17 +492,21 @@ func assertControlOutboxPresent(t *testing.T, ctx context.Context, pool *pgxpool
 
 func countControlOutbox(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids ...uuid.UUID) int {
 	t.Helper()
-	values := make([]pgtype.UUID, len(ids))
-	for i, id := range ids {
-		values[i] = pgvalue.UUID(id)
-	}
 	var count int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*)::integer
 		  FROM control_outbox
 		 WHERE id = ANY($1::uuid[])
-	`, values).Scan(&count); err != nil {
+	`, pgUUIDs(ids)).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	return count
+}
+
+func pgUUIDs(ids []uuid.UUID) []pgtype.UUID {
+	values := make([]pgtype.UUID, len(ids))
+	for i, id := range ids {
+		values[i] = pgvalue.UUID(id)
+	}
+	return values
 }
