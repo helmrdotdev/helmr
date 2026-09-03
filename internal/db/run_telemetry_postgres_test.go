@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -21,31 +22,57 @@ func TestTelemetryOutboxGCScaleBudget(t *testing.T) {
 		t.Skip("HELMR_TEST_TELEMETRY_GC_SCALE is not set")
 	}
 	ctx := t.Context()
-	pool := newPostgresDB(t, ctx)
+	fixture := runtest.New(t)
+	pool := fixture.Pool
 	queries := db.New(pool)
-	orgID := uuid.NewV7()
-	projectID := uuid.NewV7()
-	environmentID := uuid.NewV7()
-	runID := uuid.NewV7()
+	const replayLeaseCount = 64
+	leaseIDs := make([]pgtype.UUID, replayLeaseCount)
+	runIDs := make([]pgtype.UUID, replayLeaseCount)
+	for index := range replayLeaseCount {
+		work := fixture.AddRunLease(t, "assigned", time.Now().Add(-time.Minute))
+		leaseIDs[index] = pgvalue.UUID(work.LeaseID)
+		runIDs[index] = pgvalue.UUID(work.RunID)
+	}
+	orgID := fixture.OrgID
+	projectID := fixture.ProjectID
+	environmentID := fixture.EnvironmentID
 
 	start := time.Now()
 	dbtest.MustExec(t, ctx, pool, `
+		WITH replay_leases AS (
+			SELECT run_lease_id, run_id, ordinality
+			  FROM unnest($4::uuid[], $5::uuid[]) WITH ORDINALITY
+			       AS leases(run_lease_id, run_id, ordinality)
+		)
 		INSERT INTO telemetry_outbox (
 			org_id, stream_kind, source_kind, source_id, project_id, environment_id,
-			run_id, stream_name, content, size_bytes, observed_seq, source, kind,
-			message, state, written_at
+			run_id, run_lease_id, attempt_number, stream_name, content, size_bytes,
+			observed_seq, source, kind, message, state, written_at
 		)
-		SELECT $1, 'run_log', 'run', $2, $3, $4,
-		       $2, 'stdout', '\x00', 1, generated, 'worker', 'run.log',
+		SELECT $1, 'run_log', 'run', replay_leases.run_id, $2, $3,
+		       replay_leases.run_id, replay_leases.run_lease_id, 1,
+		       (ARRAY['stdout', 'stderr', 'structured'])[
+		           ((generated - 1) / $6::bigint) % 3 + 1
+		       ],
+		       '\x00', 1, ((generated - 1) / ($6::bigint * 3)) + 1,
+		       'worker', 'run.log',
 		       'run.log', 'written',
 		       CASE WHEN generated <= 100000
 		            THEN now() - interval '25 hours'
 		            ELSE now() - interval '23 hours'
 		       END
 		  FROM generate_series(1, 1000000) AS generated
-	`, orgID, runID, projectID, environmentID)
-	dbtest.MustExec(t, ctx, pool, `ANALYZE telemetry_outbox`)
-	t.Logf("seeded 1,000,000 rows (100,000 eligible) in %s", time.Since(start))
+		  JOIN replay_leases
+		    ON replay_leases.ordinality = ((generated - 1) % $6::bigint) + 1
+	`, orgID, projectID, environmentID, leaseIDs, runIDs, replayLeaseCount)
+	t.Logf(
+		"seeded 1,000,000 rows (100,000 eligible; %d real Run Leases; 3 streams; 5,208-5,209 observed sequences per lease/stream) in %s",
+		replayLeaseCount,
+		time.Since(start),
+	)
+	measureTelemetryReplayIndexes(t, ctx, pool, telemetryReplayScaleFixture{
+		leaseIDs: leaseIDs,
+	})
 
 	var tableBytes, indexBytes int64
 	if err := pool.QueryRow(ctx, `

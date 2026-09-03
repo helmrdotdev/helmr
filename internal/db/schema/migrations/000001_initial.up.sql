@@ -2994,8 +2994,9 @@ CREATE INDEX telemetry_outbox_run_id_idx ON telemetry_outbox(run_id)
     WHERE run_id IS NOT NULL;
 CREATE INDEX telemetry_outbox_deployment_id_idx ON telemetry_outbox(deployment_id)
     WHERE deployment_id IS NOT NULL;
-CREATE INDEX telemetry_outbox_run_lease_idx ON telemetry_outbox(org_id, run_id, run_lease_id, id)
-    WHERE run_lease_id IS NOT NULL;
+CREATE INDEX telemetry_outbox_run_log_replay_idx
+    ON telemetry_outbox(run_lease_id, stream_name, observed_seq, id)
+    WHERE stream_kind = 'run_log' AND source_kind = 'run';
 CREATE INDEX telemetry_outbox_run_attempt_number_idx ON telemetry_outbox(org_id, run_id, attempt_number, id)
     WHERE attempt_number IS NOT NULL;
 CREATE INDEX tokens_scope_created_idx ON tokens(org_id, project_id, environment_id, created_at DESC, id DESC);
