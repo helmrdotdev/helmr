@@ -556,10 +556,13 @@ func TestTelemetryOutboxSinkErrorsStayIndependentAndGCGates(t *testing.T) {
 		t.Fatalf("after ingest claim errors = ingest %q publish %q", ingestError, publishError)
 	}
 
-	if updated, err := queries.MarkTelemetryOutboxWritten(ctx, []int64{eventID}); err != nil || updated != 1 {
+	writeParams := db.MarkTelemetryOutboxWrittenParams{
+		Ids: []int64{eventID}, ExpectedRetryCounts: []int32{claimed[0].RetryCount},
+	}
+	if updated, err := queries.MarkTelemetryOutboxWritten(ctx, writeParams); err != nil || updated != 1 {
 		t.Fatalf("mark written updated = %d err = %v, want 1", updated, err)
 	}
-	if updated, err := queries.MarkTelemetryOutboxWritten(ctx, []int64{eventID}); err != nil || updated != 0 {
+	if updated, err := queries.MarkTelemetryOutboxWritten(ctx, writeParams); err != nil || updated != 0 {
 		t.Fatalf("second mark written updated = %d err = %v, want 0", updated, err)
 	}
 	if err := pool.QueryRow(ctx, `
@@ -574,9 +577,10 @@ func TestTelemetryOutboxSinkErrorsStayIndependentAndGCGates(t *testing.T) {
 		UPDATE telemetry_outbox SET ingest_error = 'clickhouse failed' WHERE id = $1
 	`, eventID)
 	if updated, err := queries.MarkLiveTelemetryOutboxBatchFailed(ctx, db.MarkLiveTelemetryOutboxBatchFailedParams{
-		Ids:           []int64{eventID},
-		RetryAfters:   []pgtype.Interval{pgvalue.Interval(-time.Second)},
-		PublishErrors: []string{"redis failed again"},
+		Ids:                     []int64{eventID},
+		ExpectedPublishAttempts: []int32{0},
+		RetryAfters:             []pgtype.Interval{pgvalue.Interval(-time.Second)},
+		PublishErrors:           []string{"redis failed again"},
 	}); err != nil || updated != 1 {
 		t.Fatalf("mark live failed updated = %d err = %v, want 1", updated, err)
 	}
@@ -604,7 +608,9 @@ func TestTelemetryOutboxSinkErrorsStayIndependentAndGCGates(t *testing.T) {
 	if ingestError != "clickhouse failed" || publishError != "redis failed again" {
 		t.Fatalf("after publish claim errors = ingest %q publish %q", ingestError, publishError)
 	}
-	if updated, err := queries.MarkLiveTelemetryOutboxBatchPublished(ctx, []int64{eventID}); err != nil || updated != 1 {
+	if updated, err := queries.MarkLiveTelemetryOutboxBatchPublished(ctx, db.MarkLiveTelemetryOutboxBatchPublishedParams{
+		Ids: []int64{eventID}, ExpectedPublishAttempts: []int32{live[0].Attempts},
+	}); err != nil || updated != 1 {
 		t.Fatalf("mark live published updated = %d err = %v, want 1", updated, err)
 	}
 	if err := pool.QueryRow(ctx, `
@@ -860,7 +866,9 @@ func TestTelemetryOutboxLeaseExpiryReclaimAndSourceOrder(t *testing.T) {
 	if err != nil || len(liveReclaimed) != 1 || liveReclaimed[0].OutboxID != firstEventID {
 		t.Fatalf("live reclaim = %+v err=%v, want %d", liveReclaimed, err, firstEventID)
 	}
-	if updated, err := queries.MarkLiveTelemetryOutboxBatchPublished(ctx, []int64{firstEventID}); err != nil || updated != 1 {
+	if updated, err := queries.MarkLiveTelemetryOutboxBatchPublished(ctx, db.MarkLiveTelemetryOutboxBatchPublishedParams{
+		Ids: []int64{firstEventID}, ExpectedPublishAttempts: []int32{liveReclaimed[0].Attempts},
+	}); err != nil || updated != 1 {
 		t.Fatalf("mark first live published updated = %d err = %v, want 1", updated, err)
 	}
 	liveNext, err := queries.ClaimLiveTelemetryOutbox(ctx, db.ClaimLiveTelemetryOutboxParams{
@@ -869,6 +877,279 @@ func TestTelemetryOutboxLeaseExpiryReclaimAndSourceOrder(t *testing.T) {
 	})
 	if err != nil || len(liveNext) != 1 || liveNext[0].OutboxID != secondEventID {
 		t.Fatalf("live claim after earlier published = %+v err=%v, want %d", liveNext, err, secondEventID)
+	}
+}
+
+func TestTelemetryOutboxIngestResultsFenceReclaimedGenerations(t *testing.T) {
+	ctx := t.Context()
+	pool := newPostgresDB(t, ctx)
+	ids := seedPostgres(t, ctx, pool)
+	queries := db.New(pool)
+
+	insertEvent := func(label string) int64 {
+		t.Helper()
+		sourceID := uuid.NewV7()
+		var id int64
+		if err := pool.QueryRow(ctx, `
+			INSERT INTO telemetry_outbox (
+				org_id, stream_kind, source_kind, source_id, project_id,
+				environment_id, deployment_id, kind, message
+			) VALUES ($1, 'event', 'deployment', $2, $3, $4, $2, 'deployment.ready', $5)
+			RETURNING id
+		`, ids.orgID, sourceID, ids.projectID, ids.environmentID, label).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	insertRunLog := func(label string) int64 {
+		t.Helper()
+		runID := uuid.NewV7()
+		var id int64
+		if err := pool.QueryRow(ctx, `
+			INSERT INTO telemetry_outbox (
+				org_id, stream_kind, source_kind, source_id, project_id,
+				environment_id, run_id, stream_name, content, size_bytes,
+				observed_seq, source, kind, message
+			) VALUES (
+				$1, 'run_log', 'run', $2, $3, $4, $2, 'stdout', '\x00', 1,
+				1, 'worker', 'run.log', $5
+			)
+			RETURNING id
+		`, ids.orgID, runID, ids.projectID, ids.environmentID, label).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+
+	eventSuccessID := insertEvent("event-success")
+	eventFailureID := insertEvent("event-failure")
+	runLogSuccessID := insertRunLog("run-log-success")
+	runLogFailureID := insertRunLog("run-log-failure")
+	eventClaims, err := queries.ClaimEventIngestBatch(ctx, db.ClaimEventIngestBatchParams{
+		RowLimit: 2, MaxBatchBytes: 1 << 20, LeaseDuration: pgvalue.Interval(time.Minute),
+	})
+	if err != nil || len(eventClaims) != 2 {
+		t.Fatalf("event claims = %+v err=%v", eventClaims, err)
+	}
+	runLogClaims, err := queries.ClaimRunLogIngestBatch(ctx, db.ClaimRunLogIngestBatchParams{
+		RowLimit: 2, MaxBatchBytes: 2, LeaseDuration: pgvalue.Interval(time.Minute),
+	})
+	if err != nil || len(runLogClaims) != 2 {
+		t.Fatalf("run-log claims = %+v err=%v", runLogClaims, err)
+	}
+	dbtest.MustExec(t, ctx, pool, `
+		UPDATE telemetry_outbox
+		   SET next_retry_at = now() - interval '1 second'
+		 WHERE id = ANY($1::bigint[])
+	`, []int64{eventSuccessID, eventFailureID, runLogSuccessID, runLogFailureID})
+	eventReclaims, err := queries.ClaimEventIngestBatch(ctx, db.ClaimEventIngestBatchParams{
+		RowLimit: 2, MaxBatchBytes: 1 << 20, LeaseDuration: pgvalue.Interval(time.Minute),
+	})
+	if err != nil || len(eventReclaims) != 2 {
+		t.Fatalf("event reclaims = %+v err=%v", eventReclaims, err)
+	}
+	runLogReclaims, err := queries.ClaimRunLogIngestBatch(ctx, db.ClaimRunLogIngestBatchParams{
+		RowLimit: 2, MaxBatchBytes: 2, LeaseDuration: pgvalue.Interval(time.Minute),
+	})
+	if err != nil || len(runLogReclaims) != 2 {
+		t.Fatalf("run-log reclaims = %+v err=%v", runLogReclaims, err)
+	}
+
+	type ingestState struct {
+		state       string
+		retryCount  int32
+		nextRetryAt string
+		ingestError string
+		written     bool
+	}
+	readState := func(id int64) ingestState {
+		t.Helper()
+		var value ingestState
+		if err := pool.QueryRow(ctx, `
+			SELECT state, retry_count, COALESCE(next_retry_at::text, ''), ingest_error,
+			       written_at IS NOT NULL
+			  FROM telemetry_outbox WHERE id = $1
+		`, id).Scan(&value.state, &value.retryCount, &value.nextRetryAt, &value.ingestError, &value.written); err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	eventSuccessReclaimed := readState(eventSuccessID)
+	eventFailureReclaimed := readState(eventFailureID)
+	runLogSuccessReclaimed := readState(runLogSuccessID)
+	runLogFailureReclaimed := readState(runLogFailureID)
+
+	if updated, err := queries.MarkTelemetryOutboxWritten(ctx, db.MarkTelemetryOutboxWrittenParams{
+		Ids: []int64{eventSuccessID, runLogSuccessID},
+		ExpectedRetryCounts: []int32{
+			eventClaims[0].RetryCount,
+			runLogClaims[0].RetryCount,
+		},
+	}); err != nil || updated != 0 {
+		t.Fatalf("stale success updated = %d err=%v, want 0", updated, err)
+	}
+	if got := readState(eventSuccessID); got != eventSuccessReclaimed {
+		t.Fatalf("stale success changed reclaimed row: got %+v want %+v", got, eventSuccessReclaimed)
+	}
+	if got := readState(runLogSuccessID); got != runLogSuccessReclaimed {
+		t.Fatalf("stale run-log success changed reclaimed row: got %+v want %+v", got, runLogSuccessReclaimed)
+	}
+	if updated, err := queries.MarkTelemetryOutboxBatchFailed(ctx, db.MarkTelemetryOutboxBatchFailedParams{
+		Ids: []int64{eventFailureID, runLogFailureID},
+		ExpectedRetryCounts: []int32{
+			eventClaims[1].RetryCount,
+			runLogClaims[1].RetryCount,
+		},
+		RetryAfter: pgvalue.Interval(time.Minute), IngestError: "stale failure",
+	}); err != nil || updated != 0 {
+		t.Fatalf("stale failure updated = %d err=%v, want 0", updated, err)
+	}
+	if got := readState(eventFailureID); got != eventFailureReclaimed {
+		t.Fatalf("stale failure changed reclaimed row: got %+v want %+v", got, eventFailureReclaimed)
+	}
+	if got := readState(runLogFailureID); got != runLogFailureReclaimed {
+		t.Fatalf("stale run-log failure changed reclaimed row: got %+v want %+v", got, runLogFailureReclaimed)
+	}
+
+	if updated, err := queries.MarkTelemetryOutboxWritten(ctx, db.MarkTelemetryOutboxWrittenParams{
+		Ids:                 []int64{eventSuccessID, runLogSuccessID},
+		ExpectedRetryCounts: []int32{eventReclaims[0].RetryCount, runLogClaims[0].RetryCount},
+	}); err != nil || updated != 1 {
+		t.Fatalf("mixed current/stale success updated = %d err=%v, want 1", updated, err)
+	}
+	if updated, err := queries.MarkTelemetryOutboxBatchFailed(ctx, db.MarkTelemetryOutboxBatchFailedParams{
+		Ids:                 []int64{eventFailureID, runLogFailureID},
+		ExpectedRetryCounts: []int32{eventReclaims[1].RetryCount, runLogClaims[1].RetryCount},
+		RetryAfter:          pgvalue.Interval(time.Minute),
+		IngestError:         "new event owner failure",
+	}); err != nil || updated != 1 {
+		t.Fatalf("mixed current/stale failure updated = %d err=%v, want 1", updated, err)
+	}
+	if got := readState(runLogSuccessID); got != runLogSuccessReclaimed {
+		t.Fatalf("mixed success changed stale run-log row: got %+v want %+v", got, runLogSuccessReclaimed)
+	}
+	if got := readState(runLogFailureID); got != runLogFailureReclaimed {
+		t.Fatalf("mixed failure changed stale run-log row: got %+v want %+v", got, runLogFailureReclaimed)
+	}
+	if updated, err := queries.MarkTelemetryOutboxWritten(ctx, db.MarkTelemetryOutboxWrittenParams{
+		Ids: []int64{runLogSuccessID}, ExpectedRetryCounts: []int32{runLogReclaims[0].RetryCount},
+	}); err != nil || updated != 1 {
+		t.Fatalf("current run-log success updated = %d err=%v, want 1", updated, err)
+	}
+	if updated, err := queries.MarkTelemetryOutboxBatchFailed(ctx, db.MarkTelemetryOutboxBatchFailedParams{
+		Ids: []int64{runLogFailureID}, ExpectedRetryCounts: []int32{runLogReclaims[1].RetryCount},
+		RetryAfter: pgvalue.Interval(time.Minute), IngestError: "new run-log owner failure",
+	}); err != nil || updated != 1 {
+		t.Fatalf("current run-log failure updated = %d err=%v, want 1", updated, err)
+	}
+	if got := readState(eventSuccessID); got.state != "written" || got.retryCount != 0 || !got.written {
+		t.Fatalf("current event success state = %+v", got)
+	}
+	if got := readState(eventFailureID); got.state != "failed" || got.retryCount != eventReclaims[1].RetryCount || got.ingestError != "new event owner failure" {
+		t.Fatalf("current event failure state = %+v", got)
+	}
+	if got := readState(runLogSuccessID); got.state != "written" || got.retryCount != 0 || !got.written {
+		t.Fatalf("current run-log success state = %+v", got)
+	}
+	if got := readState(runLogFailureID); got.state != "failed" || got.retryCount != runLogReclaims[1].RetryCount || got.ingestError != "new run-log owner failure" {
+		t.Fatalf("current run-log failure state = %+v", got)
+	}
+}
+
+func TestLiveTelemetryResultsFencePartialReclaim(t *testing.T) {
+	ctx := t.Context()
+	pool := newPostgresDB(t, ctx)
+	ids := seedPostgres(t, ctx, pool)
+	queries := db.New(pool)
+	outboxIDs := make([]int64, 4)
+	for index := range outboxIDs {
+		sourceID := uuid.NewV7()
+		if err := pool.QueryRow(ctx, `
+			INSERT INTO telemetry_outbox (
+				org_id, stream_kind, source_kind, source_id, project_id,
+				environment_id, deployment_id, source, kind, message
+			) VALUES ($1, 'event', 'deployment', $2, $3, $4, $2, 'control', 'deployment.ready', $5)
+			RETURNING id
+		`, ids.orgID, sourceID, ids.projectID, ids.environmentID, fmt.Sprintf("partial-%d", index)).Scan(&outboxIDs[index]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	firstClaims, err := queries.ClaimLiveTelemetryOutbox(ctx, db.ClaimLiveTelemetryOutboxParams{
+		RowLimit: 4, LeaseDuration: pgvalue.Interval(time.Minute),
+	})
+	if err != nil || len(firstClaims) != 4 {
+		t.Fatalf("first live claims = %+v err=%v", firstClaims, err)
+	}
+	dbtest.MustExec(t, ctx, pool, `
+		UPDATE telemetry_outbox
+		   SET publish_locked_until = now() - interval '1 second'
+		 WHERE id = ANY($1::bigint[])
+	`, []int64{outboxIDs[0], outboxIDs[2]})
+	reclaims, err := queries.ClaimLiveTelemetryOutbox(ctx, db.ClaimLiveTelemetryOutboxParams{
+		RowLimit: 4, LeaseDuration: pgvalue.Interval(time.Minute),
+	})
+	if err != nil || len(reclaims) != 2 || reclaims[0].OutboxID != outboxIDs[0] || reclaims[1].OutboxID != outboxIDs[2] {
+		t.Fatalf("live reclaims = %+v err=%v", reclaims, err)
+	}
+
+	type publishState struct {
+		attempts     int32
+		lockedUntil  string
+		publishError string
+		published    bool
+	}
+	readState := func(id int64) publishState {
+		t.Helper()
+		var value publishState
+		if err := pool.QueryRow(ctx, `
+			SELECT publish_attempts, COALESCE(publish_locked_until::text, ''), publish_error,
+			       published_at IS NOT NULL
+			  FROM telemetry_outbox WHERE id = $1
+		`, id).Scan(&value.attempts, &value.lockedUntil, &value.publishError, &value.published); err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	reclaimedSuccess := readState(outboxIDs[0])
+	reclaimedFailure := readState(outboxIDs[2])
+
+	if updated, err := queries.MarkLiveTelemetryOutboxBatchPublished(ctx, db.MarkLiveTelemetryOutboxBatchPublishedParams{
+		Ids:                     []int64{outboxIDs[0], outboxIDs[1]},
+		ExpectedPublishAttempts: []int32{firstClaims[0].Attempts, firstClaims[1].Attempts},
+	}); err != nil || updated != 1 {
+		t.Fatalf("stale partial publish updated = %d err=%v, want 1", updated, err)
+	}
+	if got := readState(outboxIDs[0]); got != reclaimedSuccess {
+		t.Fatalf("stale publish changed reclaimed row: got %+v want %+v", got, reclaimedSuccess)
+	}
+	if updated, err := queries.MarkLiveTelemetryOutboxBatchFailed(ctx, db.MarkLiveTelemetryOutboxBatchFailedParams{
+		Ids:                     []int64{outboxIDs[2], outboxIDs[3]},
+		ExpectedPublishAttempts: []int32{firstClaims[2].Attempts, firstClaims[3].Attempts},
+		RetryAfters:             []pgtype.Interval{pgvalue.Interval(time.Minute), pgvalue.Interval(2 * time.Minute)},
+		PublishErrors:           []string{"stale failure", "current failure"},
+	}); err != nil || updated != 1 {
+		t.Fatalf("stale partial failure updated = %d err=%v, want 1", updated, err)
+	}
+	if got := readState(outboxIDs[2]); got != reclaimedFailure {
+		t.Fatalf("stale failure changed reclaimed row: got %+v want %+v", got, reclaimedFailure)
+	}
+	if updated, err := queries.MarkLiveTelemetryOutboxBatchPublished(ctx, db.MarkLiveTelemetryOutboxBatchPublishedParams{
+		Ids: []int64{outboxIDs[0]}, ExpectedPublishAttempts: []int32{reclaims[0].Attempts},
+	}); err != nil || updated != 1 {
+		t.Fatalf("current reclaimed publish updated = %d err=%v, want 1", updated, err)
+	}
+	if updated, err := queries.MarkLiveTelemetryOutboxBatchFailed(ctx, db.MarkLiveTelemetryOutboxBatchFailedParams{
+		Ids: []int64{outboxIDs[2]}, ExpectedPublishAttempts: []int32{reclaims[1].Attempts},
+		RetryAfters:   []pgtype.Interval{pgvalue.Interval(time.Minute)},
+		PublishErrors: []string{"new owner failure"},
+	}); err != nil || updated != 1 {
+		t.Fatalf("current reclaimed failure updated = %d err=%v, want 1", updated, err)
+	}
+	if got := readState(outboxIDs[0]); !got.published || got.lockedUntil != "" || got.publishError != "" {
+		t.Fatalf("current published state = %+v", got)
+	}
+	if got := readState(outboxIDs[2]); got.published || got.attempts != reclaims[1].Attempts || got.publishError != "new owner failure" {
+		t.Fatalf("current failed state = %+v", got)
 	}
 }
 
@@ -891,14 +1172,17 @@ func TestLiveTelemetryOutboxBatchCompletion(t *testing.T) {
 		}
 	}
 
-	if updated, err := queries.MarkLiveTelemetryOutboxBatchPublished(ctx, []int64{outboxIDs[0], outboxIDs[2]}); err != nil || updated != 2 {
+	if updated, err := queries.MarkLiveTelemetryOutboxBatchPublished(ctx, db.MarkLiveTelemetryOutboxBatchPublishedParams{
+		Ids: []int64{outboxIDs[0], outboxIDs[2]}, ExpectedPublishAttempts: []int32{0, 0},
+	}); err != nil || updated != 2 {
 		t.Fatalf("mark published updated = %d err = %v, want 2", updated, err)
 	}
 	retryAfter := pgvalue.Interval(time.Minute)
 	if updated, err := queries.MarkLiveTelemetryOutboxBatchFailed(ctx, db.MarkLiveTelemetryOutboxBatchFailedParams{
-		Ids:           []int64{outboxIDs[1]},
-		RetryAfters:   []pgtype.Interval{retryAfter},
-		PublishErrors: []string{"redis unavailable"},
+		Ids:                     []int64{outboxIDs[1]},
+		ExpectedPublishAttempts: []int32{0},
+		RetryAfters:             []pgtype.Interval{retryAfter},
+		PublishErrors:           []string{"redis unavailable"},
 	}); err != nil || updated != 1 {
 		t.Fatalf("mark failed updated = %d err = %v, want 1", updated, err)
 	}
@@ -917,13 +1201,16 @@ func TestLiveTelemetryOutboxBatchCompletion(t *testing.T) {
 	}
 
 	if updated, err := queries.MarkLiveTelemetryOutboxBatchFailed(ctx, db.MarkLiveTelemetryOutboxBatchFailedParams{
-		Ids:           []int64{outboxIDs[0]},
-		RetryAfters:   []pgtype.Interval{retryAfter},
-		PublishErrors: []string{"late failure"},
+		Ids:                     []int64{outboxIDs[0]},
+		ExpectedPublishAttempts: []int32{0},
+		RetryAfters:             []pgtype.Interval{retryAfter},
+		PublishErrors:           []string{"late failure"},
 	}); err != nil || updated != 0 {
 		t.Fatalf("published failure updated = %d err = %v, want 0", updated, err)
 	}
-	if updated, err := queries.MarkLiveTelemetryOutboxBatchPublished(ctx, []int64{outboxIDs[2] + 1_000_000}); err != nil || updated != 0 {
+	if updated, err := queries.MarkLiveTelemetryOutboxBatchPublished(ctx, db.MarkLiveTelemetryOutboxBatchPublishedParams{
+		Ids: []int64{outboxIDs[2] + 1_000_000}, ExpectedPublishAttempts: []int32{0},
+	}); err != nil || updated != 0 {
 		t.Fatalf("missing published updated = %d err = %v, want 0", updated, err)
 	}
 }

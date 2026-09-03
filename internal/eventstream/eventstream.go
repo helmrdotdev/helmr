@@ -30,9 +30,15 @@ const (
 	subjectPageSize                  = int32(200)
 )
 
+type liveTelemetryStore interface {
+	ClaimLiveTelemetryOutbox(context.Context, db.ClaimLiveTelemetryOutboxParams) ([]db.ClaimLiveTelemetryOutboxRow, error)
+	MarkLiveTelemetryOutboxBatchPublished(context.Context, db.MarkLiveTelemetryOutboxBatchPublishedParams) (int64, error)
+	MarkLiveTelemetryOutboxBatchFailed(context.Context, db.MarkLiveTelemetryOutboxBatchFailedParams) (int64, error)
+}
+
 type Stream struct {
 	log             *slog.Logger
-	db              db.Querier
+	db              liveTelemetryStore
 	redis           redis.Cmdable
 	telemetryReader telemetry.Reader
 }
@@ -41,7 +47,7 @@ type Config struct {
 	TelemetryReader telemetry.Reader
 }
 
-func New(log *slog.Logger, queries db.Querier, redis redis.Cmdable, configs ...Config) (*Stream, error) {
+func New(log *slog.Logger, queries liveTelemetryStore, redis redis.Cmdable, configs ...Config) (*Stream, error) {
 	if queries == nil {
 		return nil, errors.New("event stream database is required")
 	}
@@ -88,10 +94,8 @@ func (s *Stream) RunPublisher(ctx context.Context) error {
 			continue
 		}
 		publishErrors := s.publishEventOutboxBatch(ctx, claimed)
-		publishedIDs := make([]int64, 0, len(claimed))
-		failedIDs := make([]int64, 0, len(claimed))
-		failureRetryAfters := make([]pgtype.Interval, 0, len(claimed))
-		failureMessages := make([]string, 0, len(claimed))
+		publishedParams := db.MarkLiveTelemetryOutboxBatchPublishedParams{}
+		failedParams := db.MarkLiveTelemetryOutboxBatchFailedParams{}
 		for index, row := range claimed {
 			if err := publishErrors[index]; err != nil {
 				s.log.Warn("publish live telemetry outbox row failed",
@@ -102,33 +106,41 @@ func (s *Stream) RunPublisher(ctx context.Context) error {
 					"error", err,
 				)
 				retryAfter := liveTelemetryPublisherBackoff(int(row.Attempts))
-				failedIDs = append(failedIDs, row.OutboxID)
-				failureRetryAfters = append(failureRetryAfters, pgvalue.Interval(retryAfter))
-				failureMessages = append(failureMessages, err.Error())
+				failedParams.Ids = append(failedParams.Ids, row.OutboxID)
+				failedParams.ExpectedPublishAttempts = append(failedParams.ExpectedPublishAttempts, row.Attempts)
+				failedParams.RetryAfters = append(failedParams.RetryAfters, pgvalue.Interval(retryAfter))
+				failedParams.PublishErrors = append(failedParams.PublishErrors, err.Error())
 				continue
 			}
-			publishedIDs = append(publishedIDs, row.OutboxID)
+			publishedParams.Ids = append(publishedParams.Ids, row.OutboxID)
+			publishedParams.ExpectedPublishAttempts = append(publishedParams.ExpectedPublishAttempts, row.Attempts)
 		}
 
 		completionFailed := false
-		if len(publishedIDs) > 0 {
-			updated, err := s.db.MarkLiveTelemetryOutboxBatchPublished(ctx, publishedIDs)
-			if err != nil || updated != int64(len(publishedIDs)) {
+		if len(publishedParams.Ids) > 0 {
+			updated, err := int64(0), validateLiveTelemetryClaimBatch(
+				publishedParams.Ids, publishedParams.ExpectedPublishAttempts,
+			)
+			if err == nil {
+				updated, err = s.db.MarkLiveTelemetryOutboxBatchPublished(ctx, publishedParams)
+			}
+			if err != nil || updated != int64(len(publishedParams.Ids)) {
 				completionFailed = true
 				s.log.Warn("mark live telemetry outbox batch published failed",
-					"expected", len(publishedIDs), "updated", updated, "error", err)
+					"expected", len(publishedParams.Ids), "updated", updated, "error", err)
 			}
 		}
-		if len(failedIDs) > 0 {
-			updated, err := s.db.MarkLiveTelemetryOutboxBatchFailed(ctx, db.MarkLiveTelemetryOutboxBatchFailedParams{
-				Ids:           failedIDs,
-				RetryAfters:   failureRetryAfters,
-				PublishErrors: failureMessages,
-			})
-			if err != nil || updated != int64(len(failedIDs)) {
+		if len(failedParams.Ids) > 0 {
+			updated, err := int64(0), validateLiveTelemetryClaimBatch(
+				failedParams.Ids, failedParams.ExpectedPublishAttempts,
+			)
+			if err == nil {
+				updated, err = s.db.MarkLiveTelemetryOutboxBatchFailed(ctx, failedParams)
+			}
+			if err != nil || updated != int64(len(failedParams.Ids)) {
 				completionFailed = true
 				s.log.Warn("mark live telemetry outbox batch failed",
-					"expected", len(failedIDs), "updated", updated, "error", err)
+					"expected", len(failedParams.Ids), "updated", updated, "error", err)
 			}
 		}
 		if completionFailed {
@@ -137,6 +149,13 @@ func (s *Stream) RunPublisher(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+func validateLiveTelemetryClaimBatch(ids []int64, attempts []int32) error {
+	if len(ids) != len(attempts) {
+		return fmt.Errorf("live telemetry claim cardinality mismatch: ids %d, publish attempts %d", len(ids), len(attempts))
+	}
+	return nil
 }
 
 func (s *Stream) publishEventOutboxBatch(ctx context.Context, rows []db.ClaimLiveTelemetryOutboxRow) []error {

@@ -174,20 +174,36 @@ SELECT updated.id AS outbox_id,
  ORDER BY updated.id ASC;
 
 -- name: MarkLiveTelemetryOutboxBatchPublished :execrows
+WITH completions AS (
+    SELECT input_ids.id,
+           input_attempts.publish_attempts
+      FROM unnest(sqlc.arg(ids)::bigint[])
+           WITH ORDINALITY AS input_ids(id, position)
+      JOIN unnest(sqlc.arg(expected_publish_attempts)::integer[])
+           WITH ORDINALITY AS input_attempts(publish_attempts, position)
+        ON input_attempts.position = input_ids.position
+)
 UPDATE telemetry_outbox
    SET published_at = now(),
        publish_locked_until = NULL,
        updated_at = now(),
        publish_error = ''
- WHERE id = ANY(sqlc.arg(ids)::bigint[]);
+  FROM completions
+ WHERE telemetry_outbox.id = completions.id
+   AND telemetry_outbox.publish_attempts = completions.publish_attempts
+   AND telemetry_outbox.published_at IS NULL;
 
 -- name: MarkLiveTelemetryOutboxBatchFailed :execrows
 WITH failures AS (
     SELECT input_ids.id,
+           input_attempts.publish_attempts,
            input_retries.retry_after,
            input_errors.publish_error
       FROM unnest(sqlc.arg(ids)::bigint[])
            WITH ORDINALITY AS input_ids(id, position)
+      JOIN unnest(sqlc.arg(expected_publish_attempts)::integer[])
+           WITH ORDINALITY AS input_attempts(publish_attempts, position)
+        ON input_attempts.position = input_ids.position
       JOIN unnest(sqlc.arg(retry_afters)::interval[])
            WITH ORDINALITY AS input_retries(retry_after, position)
         ON input_retries.position = input_ids.position
@@ -201,9 +217,19 @@ UPDATE telemetry_outbox
        publish_error = failures.publish_error
   FROM failures
  WHERE telemetry_outbox.id = failures.id
-   AND published_at IS NULL;
+   AND telemetry_outbox.publish_attempts = failures.publish_attempts
+   AND telemetry_outbox.published_at IS NULL;
 
 -- name: MarkTelemetryOutboxWritten :execrows
+WITH completions AS (
+    SELECT input_ids.id,
+           input_retries.retry_count
+      FROM unnest(sqlc.arg(ids)::bigint[])
+           WITH ORDINALITY AS input_ids(id, position)
+      JOIN unnest(sqlc.arg(expected_retry_counts)::integer[])
+           WITH ORDINALITY AS input_retries(retry_count, position)
+        ON input_retries.position = input_ids.position
+)
 UPDATE telemetry_outbox
    SET state = 'written',
        written_at = now(),
@@ -211,17 +237,30 @@ UPDATE telemetry_outbox
        next_retry_at = NULL,
        updated_at = now(),
        ingest_error = ''
- WHERE id = ANY(sqlc.arg(ids)::bigint[])
-   AND written_at IS NULL;
+  FROM completions
+ WHERE telemetry_outbox.id = completions.id
+   AND telemetry_outbox.retry_count = completions.retry_count
+   AND telemetry_outbox.written_at IS NULL;
 
 -- name: MarkTelemetryOutboxBatchFailed :execrows
+WITH failures AS (
+    SELECT input_ids.id,
+           input_retries.retry_count
+      FROM unnest(sqlc.arg(ids)::bigint[])
+           WITH ORDINALITY AS input_ids(id, position)
+      JOIN unnest(sqlc.arg(expected_retry_counts)::integer[])
+           WITH ORDINALITY AS input_retries(retry_count, position)
+        ON input_retries.position = input_ids.position
+)
 UPDATE telemetry_outbox
    SET state = 'failed',
        next_retry_at = now() + sqlc.arg(retry_after)::interval,
        updated_at = now(),
        ingest_error = sqlc.arg(ingest_error)
- WHERE id = ANY(sqlc.arg(ids)::bigint[])
-   AND written_at IS NULL;
+  FROM failures
+ WHERE telemetry_outbox.id = failures.id
+   AND telemetry_outbox.retry_count = failures.retry_count
+   AND telemetry_outbox.written_at IS NULL;
 
 -- name: PruneTelemetryOutboxWritten :execrows
 WITH eligible AS (
