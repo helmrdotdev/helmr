@@ -11,10 +11,9 @@ helmr project list [--json]
 helmr project get PROJECT [--json]
 helmr project create NAME [--slug SLUG] [--json]
 helmr project update PROJECT [--name NAME] [--slug SLUG] [--json]
-helmr project delete PROJECT --yes
 ```
 
-`update` requires at least one changed field. `delete` requires `--yes`.
+`update` requires at least one changed field.
 `project list` traverses all available pages before writing output, so a failed
 later page does not produce a partial text or JSON result.
 
@@ -25,7 +24,6 @@ helmr env list --project PROJECT [--json]
 helmr env get ENVIRONMENT --project PROJECT [--json]
 helmr env create NAME --project PROJECT [--slug SLUG] [--color '#RRGGBB'] [--json]
 helmr env update ENVIRONMENT --project PROJECT [--name NAME] [--slug SLUG] [--color '#RRGGBB'] [--json]
-helmr env delete ENVIRONMENT --project PROJECT --yes
 ```
 
 Project and Environment arguments accept a slug or ID. Generated slugs are

@@ -138,8 +138,6 @@ type Querier interface {
 	DelayActorRunRetry(ctx context.Context, arg DelayActorRunRetryParams) (Run, error)
 	DelayCheckpointFailureRetry(ctx context.Context, arg DelayCheckpointFailureRetryParams) (Run, error)
 	DelayTaskRunRetry(ctx context.Context, arg DelayTaskRunRetryParams) (Run, error)
-	DeleteEnvironment(ctx context.Context, arg DeleteEnvironmentParams) (Environment, error)
-	DeleteProject(ctx context.Context, arg DeleteProjectParams) (Project, error)
 	DeleteScheduleSecretsForSchedules(ctx context.Context, arg DeleteScheduleSecretsForSchedulesParams) error
 	DeliverControlOutbox(ctx context.Context, arg DeliverControlOutboxParams) (ControlOutbox, error)
 	DenyDeviceCode(ctx context.Context, arg DenyDeviceCodeParams) (DeviceCode, error)
@@ -443,7 +441,6 @@ type Querier interface {
 	MarkWorkspaceExecRecoveryRequired(ctx context.Context, arg MarkWorkspaceExecRecoveryRequiredParams) (Workspace, error)
 	MarkWorkspaceMountMounted(ctx context.Context, arg MarkWorkspaceMountMountedParams) (WorkspaceMount, error)
 	PromoteDeployment(ctx context.Context, arg PromoteDeploymentParams) error
-	PromoteFirstProjectDefault(ctx context.Context, orgID pgtype.UUID) (int64, error)
 	PruneDeliveredControlOutbox(ctx context.Context, arg PruneDeliveredControlOutboxParams) (int64, error)
 	PruneTelemetryOutboxWritten(ctx context.Context, arg PruneTelemetryOutboxWrittenParams) (int64, error)
 	PublishRestoredActorCheckpointWorkspaceVersion(ctx context.Context, arg PublishRestoredActorCheckpointWorkspaceVersionParams) (WorkspaceVersion, error)

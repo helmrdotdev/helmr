@@ -87,14 +87,6 @@ func (c *Client) UpdateProject(ctx context.Context, projectID string, request ap
 	return response, nil
 }
 
-func (c *Client) DeleteProject(ctx context.Context, projectID string) error {
-	req, err := c.newRequest(ctx, http.MethodDelete, "/api/projects/"+url.PathEscape(projectID), nil)
-	if err != nil {
-		return err
-	}
-	return c.doJSON(req, nil)
-}
-
 func (c *Client) GetEnvironment(ctx context.Context, projectID string, environmentID string) (api.EnvironmentSummary, error) {
 	req, err := c.newRequest(ctx, http.MethodGet, projectEnvironmentPath(projectID, environmentID), nil)
 	if err != nil {
@@ -121,14 +113,6 @@ func (c *Client) UpdateEnvironment(ctx context.Context, projectID string, enviro
 		return api.EnvironmentSummary{}, err
 	}
 	return response, nil
-}
-
-func (c *Client) DeleteEnvironment(ctx context.Context, projectID string, environmentID string) error {
-	req, err := c.newRequest(ctx, http.MethodDelete, projectEnvironmentPath(projectID, environmentID), nil)
-	if err != nil {
-		return err
-	}
-	return c.doJSON(req, nil)
 }
 
 func projectEnvironmentPath(projectID string, environmentID string) string {

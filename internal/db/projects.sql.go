@@ -186,67 +186,6 @@ func (q *Queries) CreateProjectWithDefaultEnvironment(ctx context.Context, arg C
 	return i, err
 }
 
-const deleteEnvironment = `-- name: DeleteEnvironment :one
-DELETE FROM environments
- WHERE environments.org_id = $1
-   AND environments.project_id = $2
-   AND environments.id = $3
-   AND environments.slug NOT IN ('production', 'staging')
-RETURNING id, org_id, project_id, slug, name, color_hex, is_default, created_at, updated_at, current_deployment_id
-`
-
-type DeleteEnvironmentParams struct {
-	OrgID     pgtype.UUID `json:"org_id"`
-	ProjectID pgtype.UUID `json:"project_id"`
-	ID        pgtype.UUID `json:"id"`
-}
-
-func (q *Queries) DeleteEnvironment(ctx context.Context, arg DeleteEnvironmentParams) (Environment, error) {
-	row := q.db.QueryRow(ctx, deleteEnvironment, arg.OrgID, arg.ProjectID, arg.ID)
-	var i Environment
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.Slug,
-		&i.Name,
-		&i.ColorHex,
-		&i.IsDefault,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.CurrentDeploymentID,
-	)
-	return i, err
-}
-
-const deleteProject = `-- name: DeleteProject :one
-DELETE FROM projects
- WHERE org_id = $1
-   AND id = $2
-RETURNING id, org_id, default_region_id, slug, name, is_default, created_at, updated_at
-`
-
-type DeleteProjectParams struct {
-	OrgID pgtype.UUID `json:"org_id"`
-	ID    pgtype.UUID `json:"id"`
-}
-
-func (q *Queries) DeleteProject(ctx context.Context, arg DeleteProjectParams) (Project, error) {
-	row := q.db.QueryRow(ctx, deleteProject, arg.OrgID, arg.ID)
-	var i Project
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.DefaultRegionID,
-		&i.Slug,
-		&i.Name,
-		&i.IsDefault,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const getEnvironment = `-- name: GetEnvironment :one
 SELECT id, org_id, project_id, slug, name, color_hex, is_default, created_at, updated_at, current_deployment_id
   FROM environments
@@ -435,28 +374,6 @@ func (q *Queries) ListProjects(ctx context.Context, arg ListProjectsParams) ([]P
 		return nil, err
 	}
 	return items, nil
-}
-
-const promoteFirstProjectDefault = `-- name: PromoteFirstProjectDefault :execrows
-UPDATE projects
-   SET is_default = true,
-       updated_at = now()
- WHERE projects.org_id = $1
-   AND id = (
-       SELECT id
-         FROM projects
-        WHERE projects.org_id = $1
-        ORDER BY slug ASC, id ASC
-        LIMIT 1
-   )
-`
-
-func (q *Queries) PromoteFirstProjectDefault(ctx context.Context, orgID pgtype.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, promoteFirstProjectDefault, orgID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
 }
 
 const updateEnvironmentDetails = `-- name: UpdateEnvironmentDetails :one

@@ -35,8 +35,6 @@ func TestControlPlaneRoutesMatchCurrentProtocol(t *testing.T) {
 	want := strings.Split(strings.TrimSpace(`
 DELETE /api/invitations/{id}
 DELETE /api/members/{userID}
-DELETE /api/projects/{projectID}
-DELETE /api/projects/{projectID}/environments/{environmentID}
 DELETE /api/projects/{projectID}/environments/{environmentID}/api-keys/{id}
 DELETE /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}
 DELETE /v1/workspaces/{workspaceID}

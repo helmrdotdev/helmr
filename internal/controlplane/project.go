@@ -308,46 +308,6 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, projectResponse(projectRecordFromDB(project)))
 }
 
-func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("project storage is not configured")))
-		return
-	}
-	projectID, err := parseUUIDParam(r, "projectID")
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	actor := actorFromContext(r.Context())
-	orgID := pgvalue.UUID(actor.OrgID)
-	targetProjectID := pgvalue.UUID(projectID)
-	err = s.inTx(r.Context(), func(work *txWork) error {
-		if _, err := work.q.LockOrganizationForProjectDefaults(r.Context(), orgID); err != nil {
-			return errors.New("lock organization")
-		}
-		project, err := work.q.DeleteProject(r.Context(), db.DeleteProjectParams{
-			OrgID: orgID,
-			ID:    targetProjectID,
-		})
-		if isNoRows(err) {
-			return notFound(errors.New("project not found"))
-		} else if err != nil {
-			return errors.New("delete project")
-		}
-		if project.IsDefault {
-			if _, err := work.q.PromoteFirstProjectDefault(r.Context(), orgID); err != nil {
-				return errors.New("set default project")
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
 func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		writeError(w, unavailable(errors.New("environment storage is not configured")))
@@ -510,56 +470,6 @@ func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, environmentResponse(environmentRecordFromDB(environment)))
-}
-
-func (s *Server) deleteEnvironment(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("environment storage is not configured")))
-		return
-	}
-	projectID, err := parseUUIDParam(r, "projectID")
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	environmentID, err := parseUUIDParam(r, "environmentID")
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	actor := actorFromContext(r.Context())
-	environment, err := s.db.GetEnvironment(r.Context(), db.GetEnvironmentParams{
-		OrgID:     pgvalue.UUID(actor.OrgID),
-		ProjectID: pgvalue.UUID(projectID),
-		ID:        pgvalue.UUID(environmentID),
-	})
-	if isNoRows(err) {
-		writeError(w, notFound(errors.New("environment not found")))
-		return
-	}
-	if err != nil {
-		writeError(w, errors.New("load environment"))
-		return
-	}
-	if protectedEnvironmentSlug(environment.Slug) {
-		writeError(w, badRequest(errors.New("production and staging environments cannot be deleted")))
-		return
-	}
-	orgID := pgvalue.UUID(actor.OrgID)
-	targetProjectID := pgvalue.UUID(projectID)
-	targetEnvironmentID := pgvalue.UUID(environmentID)
-	if _, err := s.db.DeleteEnvironment(r.Context(), db.DeleteEnvironmentParams{
-		OrgID:     orgID,
-		ProjectID: targetProjectID,
-		ID:        targetEnvironmentID,
-	}); isNoRows(err) {
-		writeError(w, notFound(errors.New("environment not found")))
-		return
-	} else if err != nil {
-		writeError(w, errors.New("delete environment"))
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
 }
 
 func normalizeScopeCreateInput(slug string, name string) (string, string, error) {

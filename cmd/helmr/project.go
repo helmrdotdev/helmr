@@ -27,7 +27,6 @@ func projectCommand() *cobra.Command {
 		projectGetCommand(),
 		projectCreateCommand(),
 		projectUpdateCommand(),
-		projectDeleteCommand(),
 	)
 	return project
 }
@@ -46,7 +45,6 @@ func envCommand() *cobra.Command {
 		envGetCommand(),
 		envCreateCommand(),
 		envUpdateCommand(),
-		envDeleteCommand(),
 	)
 	return env
 }
@@ -196,35 +194,6 @@ func projectUpdateCommand() *cobra.Command {
 	cmd.Flags().StringVar(&name, "name", "", "Project name.")
 	cmd.Flags().StringVar(&slug, "slug", "", "Project slug.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
-	return cmd
-}
-
-func projectDeleteCommand() *cobra.Command {
-	var yes bool
-	cmd := &cobra.Command{
-		Use:   "delete PROJECT --yes",
-		Short: "Delete a project.",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if !yes {
-				return errors.New("project delete requires --yes")
-			}
-			controlPlane, err := sessionControlPlaneClient(cmd)
-			if err != nil {
-				return err
-			}
-			project, err := resolveProject(cmd.Context(), controlPlane, args[0])
-			if err != nil {
-				return err
-			}
-			if err := controlPlane.DeleteProject(cmd.Context(), project.ID); err != nil {
-				return err
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s\n", project.ID)
-			return nil
-		},
-	}
-	cmd.Flags().BoolVar(&yes, "yes", false, "Confirm deletion.")
 	return cmd
 }
 
@@ -416,41 +385,6 @@ func envUpdateCommand() *cobra.Command {
 	cmd.Flags().StringVar(&slug, "slug", "", "Environment slug.")
 	cmd.Flags().StringVar(&colorHex, "color", "", "Environment color as #RRGGBB.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
-	return cmd
-}
-
-func envDeleteCommand() *cobra.Command {
-	var projectRef string
-	var yes bool
-	cmd := &cobra.Command{
-		Use:   "delete ENVIRONMENT --project PROJECT --yes",
-		Short: "Delete an environment.",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			projectRef, err := requireProjectFlag(cmd)
-			if err != nil {
-				return err
-			}
-			if !yes {
-				return errors.New("environment delete requires --yes")
-			}
-			controlPlane, err := sessionControlPlaneClient(cmd)
-			if err != nil {
-				return err
-			}
-			project, environment, err := resolveProjectEnvironment(cmd.Context(), controlPlane, projectRef, args[0])
-			if err != nil {
-				return err
-			}
-			if err := controlPlane.DeleteEnvironment(cmd.Context(), project.ID, environment.ID); err != nil {
-				return err
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s\n", environment.ID)
-			return nil
-		},
-	}
-	cmd.Flags().StringVar(&projectRef, "project", "", "Project slug or ID.")
-	cmd.Flags().BoolVar(&yes, "yes", false, "Confirm deletion.")
 	return cmd
 }
 

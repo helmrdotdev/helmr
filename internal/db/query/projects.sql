@@ -63,25 +63,6 @@ UPDATE projects
    AND id = sqlc.arg(id)
 RETURNING *;
 
--- name: DeleteProject :one
-DELETE FROM projects
- WHERE org_id = sqlc.arg(org_id)
-   AND id = sqlc.arg(id)
-RETURNING *;
-
--- name: PromoteFirstProjectDefault :execrows
-UPDATE projects
-   SET is_default = true,
-       updated_at = now()
- WHERE projects.org_id = sqlc.arg(org_id)
-   AND id = (
-       SELECT id
-         FROM projects
-        WHERE projects.org_id = sqlc.arg(org_id)
-        ORDER BY slug ASC, id ASC
-        LIMIT 1
-   );
-
 -- name: ListProjects :many
 SELECT *
   FROM projects
@@ -116,14 +97,6 @@ UPDATE environments
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND id = sqlc.arg(id)
-RETURNING *;
-
--- name: DeleteEnvironment :one
-DELETE FROM environments
- WHERE environments.org_id = sqlc.arg(org_id)
-   AND environments.project_id = sqlc.arg(project_id)
-   AND environments.id = sqlc.arg(id)
-   AND environments.slug NOT IN ('production', 'staging')
 RETURNING *;
 
 -- name: GetEnvironment :one

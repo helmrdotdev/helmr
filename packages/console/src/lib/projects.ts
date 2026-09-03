@@ -1,4 +1,4 @@
-import { del, postJson, request } from "./api";
+import { postJson, request } from "./api";
 
 export type Environment = {
   id: string;
@@ -116,15 +116,5 @@ export async function createEnvironment(projectID: string, input: CreateEnvironm
   return postJson<CreateEnvironmentInput, Environment>(
     `/api/projects/${encodeURIComponent(projectID)}/environments`,
     input,
-  );
-}
-
-export async function deleteProject(projectID: string): Promise<void> {
-  await del<void>(`/api/projects/${encodeURIComponent(projectID)}`);
-}
-
-export async function deleteEnvironment(projectID: string, environmentID: string): Promise<void> {
-  await del<void>(
-    `/api/projects/${encodeURIComponent(projectID)}/environments/${encodeURIComponent(environmentID)}`,
   );
 }

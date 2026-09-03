@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"sort"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -158,6 +160,53 @@ func TestNormalizeProjectInputRejectsUUIDSlug(t *testing.T) {
 	}
 	if slug, _, err := normalizeProjectInput("PROJECT-SLUG", "Project"); err != nil || slug != "project-slug" {
 		t.Fatalf("ordinary project slug = %q, %v", slug, err)
+	}
+}
+
+func TestCreateProjectsPostgresSerializesFirstDefaultSelection(t *testing.T) {
+	fixture := newProjectListPostgresFixture(t, 0, 0)
+	server := &Server{db: db.New(fixture.pool), tx: fixture.pool}
+	start := make(chan struct{})
+	responses := make(chan int, 2)
+	var ready sync.WaitGroup
+	ready.Add(2)
+
+	for _, slug := range []string{"first", "second"} {
+		go func() {
+			ready.Done()
+			<-start
+			request := httptest.NewRequest(
+				http.MethodPost,
+				"/api/projects",
+				bytes.NewBufferString(fmt.Sprintf(`{"slug":%q,"name":%q}`, slug, slug)),
+			)
+			request.Header.Set("Content-Type", "application/json")
+			request = request.WithContext(context.WithValue(request.Context(), actorContextKey{}, auth.Actor{
+				OrgID: fixture.orgID, Kind: auth.ActorKindSession, Role: auth.RoleOwner,
+			}))
+			response := httptest.NewRecorder()
+			server.createProject(response, request)
+			responses <- response.Code
+		}()
+	}
+
+	ready.Wait()
+	close(start)
+	for range 2 {
+		if status := <-responses; status != http.StatusCreated {
+			t.Fatalf("create status = %d, want %d", status, http.StatusCreated)
+		}
+	}
+	var projectCount, defaultCount int
+	if err := fixture.pool.QueryRow(t.Context(), `
+		SELECT count(*), count(*) FILTER (WHERE is_default)
+		  FROM projects
+		 WHERE org_id = $1
+	`, fixture.orgID).Scan(&projectCount, &defaultCount); err != nil {
+		t.Fatal(err)
+	}
+	if projectCount != 2 || defaultCount != 1 {
+		t.Fatalf("projects/defaults = %d/%d, want 2/1", projectCount, defaultCount)
 	}
 }
 
