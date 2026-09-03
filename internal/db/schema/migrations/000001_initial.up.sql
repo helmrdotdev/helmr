@@ -1,5 +1,3 @@
-CREATE EXTENSION IF NOT EXISTS btree_gist;
-
 CREATE TABLE organizations (
     id UUID PRIMARY KEY,
     name TEXT NOT NULL CHECK (btrim(name) <> ''),
@@ -47,7 +45,6 @@ CREATE TABLE auth_identities (
     provider TEXT NOT NULL CHECK (btrim(provider) <> ''),
     subject TEXT NOT NULL CHECK (btrim(subject) <> ''),
     email TEXT,
-    claims JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_login_at TIMESTAMPTZ,
@@ -206,23 +203,20 @@ CREATE TABLE secrets (
     id UUID PRIMARY KEY,
     environment_id UUID NOT NULL,
     name TEXT NOT NULL CHECK (btrim(name) <> ''),
-    state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'revoked', 'deleted')),
+    state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'revoked')),
     state_version BIGINT NOT NULL DEFAULT 1 CHECK (state_version > 0),
     current_version_id UUID,
     revocation_generation BIGINT NOT NULL DEFAULT 0 CHECK (revocation_generation >= 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     revoked_at TIMESTAMPTZ,
-    deleted_at TIMESTAMPTZ,
     UNIQUE (environment_id, id),
     UNIQUE (environment_id, name),
     FOREIGN KEY (environment_id) REFERENCES environments(id) ON DELETE RESTRICT,
     CHECK (
-        (state = 'active' AND current_version_id IS NOT NULL AND revoked_at IS NULL AND deleted_at IS NULL)
+        (state = 'active' AND current_version_id IS NOT NULL AND revoked_at IS NULL)
         OR
-        (state = 'revoked' AND current_version_id IS NULL AND revoked_at IS NOT NULL AND deleted_at IS NULL)
-        OR
-        (state = 'deleted' AND current_version_id IS NULL AND revoked_at IS NOT NULL AND deleted_at IS NOT NULL)
+        (state = 'revoked' AND current_version_id IS NULL AND revoked_at IS NOT NULL)
     )
 );
 

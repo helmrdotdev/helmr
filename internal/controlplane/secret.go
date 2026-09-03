@@ -513,8 +513,6 @@ func secretPublicStatus(state string) (api.SecretStatus, error) {
 		return api.SecretStatusActive, nil
 	case "revoked":
 		return api.SecretStatusRevoked, nil
-	case "deleted":
-		return api.SecretStatusDeleted, nil
 	default:
 		return "", fmt.Errorf("secret state %q has no public projection", state)
 	}

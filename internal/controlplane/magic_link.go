@@ -2,7 +2,6 @@ package controlplane
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/fnv"
@@ -460,10 +459,6 @@ func (s *Server) completeMagicLinkLogin(r *http.Request, queries db.Querier, ide
 }
 
 func (s *Server) upsertMagicLinkAuthIdentity(r *http.Request, queries db.Querier, identity authIdentity) (db.UpsertMagicLinkAuthIdentityRow, error) {
-	claims := identity.Claims
-	if len(claims) == 0 || !json.Valid(claims) {
-		claims = []byte(`{}`)
-	}
 	return queries.UpsertMagicLinkAuthIdentity(r.Context(), db.UpsertMagicLinkAuthIdentityParams{
 		UserID:           pgvalue.UUID(uuid.NewV7()),
 		IdentityID:       pgvalue.UUID(uuid.NewV7()),
@@ -473,7 +468,6 @@ func (s *Server) upsertMagicLinkAuthIdentity(r *http.Request, queries db.Querier
 		ProfileImageURL:  pgtype.Text{String: identity.ProfileImageURL, Valid: identity.ProfileImageURL != ""},
 		Email:            pgtype.Text{String: identity.Email, Valid: true},
 		Admin:            s.initialAdmin(identity.Email, true),
-		Claims:           claims,
 	})
 }
 
@@ -485,7 +479,6 @@ func magicLinkIdentity(email string) authIdentity {
 		Email:          email,
 		EmailVerified:  true,
 		VerifiedEmails: []string{email},
-		Claims:         json.RawMessage(`{"email_verified":true}`),
 	}
 }
 

@@ -1,7 +1,6 @@
 package controlplane
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -82,15 +81,8 @@ func TestGitHubOAuthProviderFallsBackToPrimaryVerifiedEmail(t *testing.T) {
 		t.Fatalf("profile image URL = %q", identity.ProfileImageURL)
 	}
 
-	var claims map[string]string
-	if err := json.Unmarshal(identity.Claims, &claims); err != nil {
-		t.Fatal(err)
-	}
-	if claims["login"] != "octocat" {
-		t.Fatalf("claims = %+v", claims)
-	}
-	if _, ok := claims["avatar_url"]; ok {
-		t.Fatalf("claims should not duplicate profile image URL: %+v", claims)
+	if identity.DisplayName != "octocat" {
+		t.Fatalf("display name = %q", identity.DisplayName)
 	}
 }
 

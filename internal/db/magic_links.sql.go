@@ -296,7 +296,6 @@ upserted_identity AS (
         provider,
         subject,
         email,
-        claims,
         last_login_at
     )
     SELECT
@@ -305,12 +304,10 @@ upserted_identity AS (
         $6 AS provider,
         $7 AS subject,
         $4 AS email,
-        $9 AS claims,
         now() AS last_login_at
       FROM target_user
     ON CONFLICT (provider, subject) DO UPDATE
        SET email = EXCLUDED.email,
-           claims = EXCLUDED.claims,
            updated_at = now(),
            last_login_at = now()
     RETURNING user_id
@@ -343,7 +340,6 @@ type UpsertMagicLinkAuthIdentityParams struct {
 	IdentityProvider string      `json:"identity_provider"`
 	IdentitySubject  string      `json:"identity_subject"`
 	IdentityID       pgtype.UUID `json:"identity_id"`
-	Claims           []byte      `json:"claims"`
 }
 
 type UpsertMagicLinkAuthIdentityRow struct {
@@ -366,7 +362,6 @@ func (q *Queries) UpsertMagicLinkAuthIdentity(ctx context.Context, arg UpsertMag
 		arg.IdentityProvider,
 		arg.IdentitySubject,
 		arg.IdentityID,
-		arg.Claims,
 	)
 	var i UpsertMagicLinkAuthIdentityRow
 	err := row.Scan(

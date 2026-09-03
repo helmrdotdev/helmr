@@ -247,10 +247,6 @@ func (s *Server) upsertAuthIdentity(r *http.Request, queries db.Querier, identit
 	if identity.Email != "" {
 		email = pgtype.Text{String: identity.Email, Valid: true}
 	}
-	claims := identity.Claims
-	if len(claims) == 0 || !json.Valid(claims) {
-		claims = []byte(`{}`)
-	}
 	return queries.UpsertAuthIdentity(r.Context(), db.UpsertAuthIdentityParams{
 		UserID:           pgvalue.UUID(uuid.NewV7()),
 		IdentityID:       pgvalue.UUID(uuid.NewV7()),
@@ -261,7 +257,6 @@ func (s *Server) upsertAuthIdentity(r *http.Request, queries db.Querier, identit
 		Email:            email,
 		EmailVerified:    identity.EmailVerified,
 		Admin:            s.initialAdmin(identity.Email, identity.EmailVerified),
-		Claims:           claims,
 	})
 }
 

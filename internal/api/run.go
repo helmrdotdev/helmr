@@ -94,7 +94,6 @@ type SecretStatus string
 const (
 	SecretStatusActive  SecretStatus = "active"
 	SecretStatusRevoked SecretStatus = "revoked"
-	SecretStatusDeleted SecretStatus = "deleted"
 )
 
 type ListSecretsResponse struct {
