@@ -88,7 +88,7 @@ for setting in RELEASE_AWS_ROLE_ARN RELEASE_AWS_STATE_BUCKET RELEASE_WORKER_IMAG
   require_job_text "release-admission" "${setting} is required" \
     "release admission does not fail closed on ${setting}"
 done
-for job in platform-release bundle-builder-image worker-ami publish github-release typescript-sdk-npm-publish; do
+for job in platform-release bundle-builder-image worker-ami publish verify-public-images github-release typescript-sdk-npm-publish; do
   require_job_text "$job" "environment: release" \
     "$job is not gated by the release Environment"
 done
@@ -189,8 +189,6 @@ require_job_text "verify-public-images" 'DOCKER_CONFIG="$RUNNER_TEMP/anonymous-d
   "image verification does not use an isolated Docker configuration"
 reject_job_text "verify-public-images" "docker login" \
   "anonymous image verification logs in to a registry"
-reject_job_text "verify-public-images" "environment:" \
-  "anonymous image verification must not receive the release Environment"
 require_job_text "github-release" "- verify-public-images" \
   "GitHub Release does not wait for anonymous image verification"
 require_job_text "github-release" 'name: Helmr ${{ env.RELEASE_TAG }}' \
