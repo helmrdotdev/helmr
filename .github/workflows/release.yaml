@@ -544,6 +544,7 @@ jobs:
       - bundle-builder-image
       - publish
     runs-on: ubuntu-24.04
+    environment: release
     permissions: {}
     env:
       BUNDLE_BUILDER_IMAGE: ${{ needs.bundle-builder-image.outputs.image }}
