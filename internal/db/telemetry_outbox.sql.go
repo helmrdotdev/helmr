@@ -459,14 +459,18 @@ func (q *Queries) GetTelemetryOutboxLifecycle(ctx context.Context, retainFor pgt
 const markLiveTelemetryOutboxBatchFailed = `-- name: MarkLiveTelemetryOutboxBatchFailed :execrows
 WITH failures AS (
     SELECT input_ids.id,
+           input_attempts.publish_attempts,
            input_retries.retry_after,
            input_errors.publish_error
       FROM unnest($1::bigint[])
            WITH ORDINALITY AS input_ids(id, position)
-      JOIN unnest($2::interval[])
+      JOIN unnest($2::integer[])
+           WITH ORDINALITY AS input_attempts(publish_attempts, position)
+        ON input_attempts.position = input_ids.position
+      JOIN unnest($3::interval[])
            WITH ORDINALITY AS input_retries(retry_after, position)
         ON input_retries.position = input_ids.position
-      JOIN unnest($3::text[])
+      JOIN unnest($4::text[])
            WITH ORDINALITY AS input_errors(publish_error, position)
         ON input_errors.position = input_ids.position
 )
@@ -476,17 +480,24 @@ UPDATE telemetry_outbox
        publish_error = failures.publish_error
   FROM failures
  WHERE telemetry_outbox.id = failures.id
-   AND published_at IS NULL
+   AND telemetry_outbox.publish_attempts = failures.publish_attempts
+   AND telemetry_outbox.published_at IS NULL
 `
 
 type MarkLiveTelemetryOutboxBatchFailedParams struct {
-	Ids           []int64           `json:"ids"`
-	RetryAfters   []pgtype.Interval `json:"retry_afters"`
-	PublishErrors []string          `json:"publish_errors"`
+	Ids                     []int64           `json:"ids"`
+	ExpectedPublishAttempts []int32           `json:"expected_publish_attempts"`
+	RetryAfters             []pgtype.Interval `json:"retry_afters"`
+	PublishErrors           []string          `json:"publish_errors"`
 }
 
 func (q *Queries) MarkLiveTelemetryOutboxBatchFailed(ctx context.Context, arg MarkLiveTelemetryOutboxBatchFailedParams) (int64, error) {
-	result, err := q.db.Exec(ctx, markLiveTelemetryOutboxBatchFailed, arg.Ids, arg.RetryAfters, arg.PublishErrors)
+	result, err := q.db.Exec(ctx, markLiveTelemetryOutboxBatchFailed,
+		arg.Ids,
+		arg.ExpectedPublishAttempts,
+		arg.RetryAfters,
+		arg.PublishErrors,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -494,16 +505,33 @@ func (q *Queries) MarkLiveTelemetryOutboxBatchFailed(ctx context.Context, arg Ma
 }
 
 const markLiveTelemetryOutboxBatchPublished = `-- name: MarkLiveTelemetryOutboxBatchPublished :execrows
+WITH completions AS (
+    SELECT input_ids.id,
+           input_attempts.publish_attempts
+      FROM unnest($1::bigint[])
+           WITH ORDINALITY AS input_ids(id, position)
+      JOIN unnest($2::integer[])
+           WITH ORDINALITY AS input_attempts(publish_attempts, position)
+        ON input_attempts.position = input_ids.position
+)
 UPDATE telemetry_outbox
    SET published_at = now(),
        publish_locked_until = NULL,
        updated_at = now(),
        publish_error = ''
- WHERE id = ANY($1::bigint[])
+  FROM completions
+ WHERE telemetry_outbox.id = completions.id
+   AND telemetry_outbox.publish_attempts = completions.publish_attempts
+   AND telemetry_outbox.published_at IS NULL
 `
 
-func (q *Queries) MarkLiveTelemetryOutboxBatchPublished(ctx context.Context, ids []int64) (int64, error) {
-	result, err := q.db.Exec(ctx, markLiveTelemetryOutboxBatchPublished, ids)
+type MarkLiveTelemetryOutboxBatchPublishedParams struct {
+	Ids                     []int64 `json:"ids"`
+	ExpectedPublishAttempts []int32 `json:"expected_publish_attempts"`
+}
+
+func (q *Queries) MarkLiveTelemetryOutboxBatchPublished(ctx context.Context, arg MarkLiveTelemetryOutboxBatchPublishedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markLiveTelemetryOutboxBatchPublished, arg.Ids, arg.ExpectedPublishAttempts)
 	if err != nil {
 		return 0, err
 	}
@@ -511,23 +539,40 @@ func (q *Queries) MarkLiveTelemetryOutboxBatchPublished(ctx context.Context, ids
 }
 
 const markTelemetryOutboxBatchFailed = `-- name: MarkTelemetryOutboxBatchFailed :execrows
+WITH failures AS (
+    SELECT input_ids.id,
+           input_retries.retry_count
+      FROM unnest($3::bigint[])
+           WITH ORDINALITY AS input_ids(id, position)
+      JOIN unnest($4::integer[])
+           WITH ORDINALITY AS input_retries(retry_count, position)
+        ON input_retries.position = input_ids.position
+)
 UPDATE telemetry_outbox
    SET state = 'failed',
        next_retry_at = now() + $1::interval,
        updated_at = now(),
        ingest_error = $2
- WHERE id = ANY($3::bigint[])
-   AND written_at IS NULL
+  FROM failures
+ WHERE telemetry_outbox.id = failures.id
+   AND telemetry_outbox.retry_count = failures.retry_count
+   AND telemetry_outbox.written_at IS NULL
 `
 
 type MarkTelemetryOutboxBatchFailedParams struct {
-	RetryAfter  pgtype.Interval `json:"retry_after"`
-	IngestError string          `json:"ingest_error"`
-	Ids         []int64         `json:"ids"`
+	RetryAfter          pgtype.Interval `json:"retry_after"`
+	IngestError         string          `json:"ingest_error"`
+	Ids                 []int64         `json:"ids"`
+	ExpectedRetryCounts []int32         `json:"expected_retry_counts"`
 }
 
 func (q *Queries) MarkTelemetryOutboxBatchFailed(ctx context.Context, arg MarkTelemetryOutboxBatchFailedParams) (int64, error) {
-	result, err := q.db.Exec(ctx, markTelemetryOutboxBatchFailed, arg.RetryAfter, arg.IngestError, arg.Ids)
+	result, err := q.db.Exec(ctx, markTelemetryOutboxBatchFailed,
+		arg.RetryAfter,
+		arg.IngestError,
+		arg.Ids,
+		arg.ExpectedRetryCounts,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -535,6 +580,15 @@ func (q *Queries) MarkTelemetryOutboxBatchFailed(ctx context.Context, arg MarkTe
 }
 
 const markTelemetryOutboxWritten = `-- name: MarkTelemetryOutboxWritten :execrows
+WITH completions AS (
+    SELECT input_ids.id,
+           input_retries.retry_count
+      FROM unnest($1::bigint[])
+           WITH ORDINALITY AS input_ids(id, position)
+      JOIN unnest($2::integer[])
+           WITH ORDINALITY AS input_retries(retry_count, position)
+        ON input_retries.position = input_ids.position
+)
 UPDATE telemetry_outbox
    SET state = 'written',
        written_at = now(),
@@ -542,12 +596,19 @@ UPDATE telemetry_outbox
        next_retry_at = NULL,
        updated_at = now(),
        ingest_error = ''
- WHERE id = ANY($1::bigint[])
-   AND written_at IS NULL
+  FROM completions
+ WHERE telemetry_outbox.id = completions.id
+   AND telemetry_outbox.retry_count = completions.retry_count
+   AND telemetry_outbox.written_at IS NULL
 `
 
-func (q *Queries) MarkTelemetryOutboxWritten(ctx context.Context, ids []int64) (int64, error) {
-	result, err := q.db.Exec(ctx, markTelemetryOutboxWritten, ids)
+type MarkTelemetryOutboxWrittenParams struct {
+	Ids                 []int64 `json:"ids"`
+	ExpectedRetryCounts []int32 `json:"expected_retry_counts"`
+}
+
+func (q *Queries) MarkTelemetryOutboxWritten(ctx context.Context, arg MarkTelemetryOutboxWrittenParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markTelemetryOutboxWritten, arg.Ids, arg.ExpectedRetryCounts)
 	if err != nil {
 		return 0, err
 	}

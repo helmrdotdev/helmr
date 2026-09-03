@@ -68,6 +68,42 @@ func TestPublishEventOutboxBatchPipelinesInClaimOrder(t *testing.T) {
 	}
 }
 
+func TestLiveTelemetryClaimBatchRejectsInvalidShape(t *testing.T) {
+	if err := validateLiveTelemetryClaimBatch([]int64{1}, nil); err == nil {
+		t.Fatal("mismatched claim cardinality was accepted")
+	}
+}
+
+func TestRunPublisherBacksOffAfterPartialClaimLoss(t *testing.T) {
+	client := openTestRedis(t, nil)
+	store := &partialLiveCompletionStore{
+		rows: []db.ClaimLiveTelemetryOutboxRow{
+			testLiveTelemetryRow(101, "test:events:partial:1"),
+			testLiveTelemetryRow(102, "test:events:partial:2"),
+		},
+		marked: make(chan struct{}),
+	}
+	stream := &Stream{
+		log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, redis: client,
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- stream.RunPublisher(ctx) }()
+	select {
+	case <-store.marked:
+	case <-time.After(time.Second):
+		t.Fatal("publisher did not persist the partial completion")
+	}
+	time.Sleep(50 * time.Millisecond)
+	if calls := store.claimCalls.Load(); calls != 1 {
+		t.Fatalf("claim calls during completion backoff = %d, want 1", calls)
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("publisher exit = %v", err)
+	}
+}
+
 func TestPublishEventOutboxBatchResolvesReplay(t *testing.T) {
 	client := openTestRedis(t, nil)
 	stream := &Stream{redis: client}
@@ -367,6 +403,28 @@ type pipelineRecorder struct {
 	mu    sync.Mutex
 	calls int
 	keys  []string
+}
+
+type partialLiveCompletionStore struct {
+	claimCalls atomic.Int32
+	rows       []db.ClaimLiveTelemetryOutboxRow
+	marked     chan struct{}
+}
+
+func (store *partialLiveCompletionStore) ClaimLiveTelemetryOutbox(context.Context, db.ClaimLiveTelemetryOutboxParams) ([]db.ClaimLiveTelemetryOutboxRow, error) {
+	if store.claimCalls.Add(1) != 1 {
+		return nil, nil
+	}
+	return store.rows, nil
+}
+
+func (store *partialLiveCompletionStore) MarkLiveTelemetryOutboxBatchPublished(_ context.Context, params db.MarkLiveTelemetryOutboxBatchPublishedParams) (int64, error) {
+	close(store.marked)
+	return int64(len(params.Ids) - 1), nil
+}
+
+func (*partialLiveCompletionStore) MarkLiveTelemetryOutboxBatchFailed(context.Context, db.MarkLiveTelemetryOutboxBatchFailedParams) (int64, error) {
+	return 0, nil
 }
 
 func (recorder *pipelineRecorder) DialHook(next redis.DialHook) redis.DialHook {

@@ -29,7 +29,7 @@ const (
 type ingestStore interface {
 	ClaimEventIngestBatch(context.Context, db.ClaimEventIngestBatchParams) ([]db.ClaimEventIngestBatchRow, error)
 	ClaimRunLogIngestBatch(context.Context, db.ClaimRunLogIngestBatchParams) ([]db.ClaimRunLogIngestBatchRow, error)
-	MarkTelemetryOutboxWritten(context.Context, []int64) (int64, error)
+	MarkTelemetryOutboxWritten(context.Context, db.MarkTelemetryOutboxWrittenParams) (int64, error)
 	MarkTelemetryOutboxBatchFailed(context.Context, db.MarkTelemetryOutboxBatchFailedParams) (int64, error)
 	PruneTelemetryOutboxWritten(context.Context, db.PruneTelemetryOutboxWrittenParams) (int64, error)
 	GetTelemetryOutboxLifecycle(context.Context, pgtype.Interval) (db.GetTelemetryOutboxLifecycleRow, error)
@@ -165,7 +165,7 @@ func (i *Ingestor) ingestEvents(ctx context.Context) (int, error) {
 	if err != nil || len(rows) == 0 {
 		return len(rows), err
 	}
-	ids := make([]int64, 0, len(rows))
+	claims := make([]telemetryOutboxClaim, 0, len(rows))
 	candidates := make([]eventIngestCandidate, 0, len(rows))
 	var firstErr error
 	for _, row := range rows {
@@ -181,14 +181,12 @@ func (i *Ingestor) ingestEvents(ctx context.Context) (int, error) {
 		if err != nil && firstErr == nil {
 			firstErr = err
 		}
-		for _, candidate := range successes {
-			ids = append(ids, candidate.outboxID)
-		}
+		claims = append(claims, eventCandidateClaims(successes)...)
 	}
-	if len(ids) == 0 {
+	if len(claims) == 0 {
 		return len(rows), firstErr
 	}
-	if err := i.markWritten(ctx, ids); err != nil {
+	if err := i.markWritten(ctx, claims); err != nil {
 		return len(rows), err
 	}
 	return len(rows), firstErr
@@ -203,7 +201,7 @@ func (i *Ingestor) ingestRunLogs(ctx context.Context) (int, error) {
 	if err != nil || len(rows) == 0 {
 		return len(rows), err
 	}
-	ids := make([]int64, 0, len(rows))
+	claims := make([]telemetryOutboxClaim, 0, len(rows))
 	candidates := make([]runLogIngestCandidate, 0, len(rows))
 	var firstErr error
 	for _, row := range rows {
@@ -219,14 +217,12 @@ func (i *Ingestor) ingestRunLogs(ctx context.Context) (int, error) {
 		if err != nil && firstErr == nil {
 			firstErr = err
 		}
-		for _, candidate := range successes {
-			ids = append(ids, candidate.outboxID)
-		}
+		claims = append(claims, runLogCandidateClaims(successes)...)
 	}
-	if len(ids) == 0 {
+	if len(claims) == 0 {
 		return len(rows), firstErr
 	}
-	if err := i.markWritten(ctx, ids); err != nil {
+	if err := i.markWritten(ctx, claims); err != nil {
 		return len(rows), err
 	}
 	return len(rows), firstErr
@@ -242,11 +238,11 @@ func (i *Ingestor) writeEventCandidates(ctx context.Context, candidates []eventI
 	}
 	result, sendErr := i.writer.WriteEvents(ctx, records)
 	if sendErr != nil {
-		return nil, errors.Join(sendErr, i.markFailed(ctx, eventCandidateIDs(candidates), sendErr))
+		return nil, errors.Join(sendErr, i.markFailed(ctx, eventCandidateClaims(candidates), sendErr))
 	}
 	rejected := rejectedIndexes(result)
 	successes := make([]eventIngestCandidate, 0, len(candidates)-len(rejected))
-	failedIDs := make([]int64, 0, len(rejected))
+	failedClaims := make([]telemetryOutboxClaim, 0, len(rejected))
 	var rejectionErr error
 	for idx, candidate := range candidates {
 		cause, failed := rejected[idx]
@@ -254,13 +250,15 @@ func (i *Ingestor) writeEventCandidates(ctx context.Context, candidates []eventI
 			successes = append(successes, candidate)
 			continue
 		}
-		failedIDs = append(failedIDs, candidate.outboxID)
+		failedClaims = append(failedClaims, telemetryOutboxClaim{
+			outboxID: candidate.outboxID, retryCount: candidate.retryCount,
+		})
 		rejectionErr = errors.Join(rejectionErr, cause)
 		i.log.Warn("ingest event row rejected", "outbox_id", candidate.outboxID,
 			"retry_count", candidate.retryCount,
 			"pending_age", time.Since(candidate.createdAt).Truncate(time.Millisecond), "error", cause)
 	}
-	return successes, errors.Join(rejectionErr, i.markFailed(ctx, failedIDs, rejectionErr))
+	return successes, errors.Join(rejectionErr, i.markFailed(ctx, failedClaims, rejectionErr))
 }
 
 func (i *Ingestor) writeRunLogCandidates(ctx context.Context, candidates []runLogIngestCandidate) ([]runLogIngestCandidate, error) {
@@ -273,11 +271,11 @@ func (i *Ingestor) writeRunLogCandidates(ctx context.Context, candidates []runLo
 	}
 	result, sendErr := i.writer.WriteRunLogs(ctx, records)
 	if sendErr != nil {
-		return nil, errors.Join(sendErr, i.markFailed(ctx, runLogCandidateIDs(candidates), sendErr))
+		return nil, errors.Join(sendErr, i.markFailed(ctx, runLogCandidateClaims(candidates), sendErr))
 	}
 	rejected := rejectedIndexes(result)
 	successes := make([]runLogIngestCandidate, 0, len(candidates)-len(rejected))
-	failedIDs := make([]int64, 0, len(rejected))
+	failedClaims := make([]telemetryOutboxClaim, 0, len(rejected))
 	var rejectionErr error
 	for idx, candidate := range candidates {
 		cause, failed := rejected[idx]
@@ -285,23 +283,30 @@ func (i *Ingestor) writeRunLogCandidates(ctx context.Context, candidates []runLo
 			successes = append(successes, candidate)
 			continue
 		}
-		failedIDs = append(failedIDs, candidate.outboxID)
+		failedClaims = append(failedClaims, telemetryOutboxClaim{
+			outboxID: candidate.outboxID, retryCount: candidate.retryCount,
+		})
 		rejectionErr = errors.Join(rejectionErr, cause)
 		i.log.Warn("ingest run log row rejected", "outbox_id", candidate.outboxID,
 			"retry_count", candidate.retryCount,
 			"pending_age", time.Since(candidate.createdAt).Truncate(time.Millisecond), "error", cause)
 	}
-	return successes, errors.Join(rejectionErr, i.markFailed(ctx, failedIDs, rejectionErr))
+	return successes, errors.Join(rejectionErr, i.markFailed(ctx, failedClaims, rejectionErr))
 }
 
-func (i *Ingestor) markFailed(ctx context.Context, ids []int64, cause error) error {
-	if len(ids) == 0 {
+func (i *Ingestor) markFailed(ctx context.Context, claims []telemetryOutboxClaim, cause error) error {
+	if len(claims) == 0 {
 		return nil
 	}
+	ids, retryCounts, err := telemetryOutboxClaimArrays(claims)
+	if err != nil {
+		return err
+	}
 	updated, err := i.db.MarkTelemetryOutboxBatchFailed(ctx, db.MarkTelemetryOutboxBatchFailedParams{
-		Ids:         ids,
-		RetryAfter:  pgvalue.Interval(i.retryAfter),
-		IngestError: truncateError(cause),
+		Ids:                 ids,
+		ExpectedRetryCounts: retryCounts,
+		RetryAfter:          pgvalue.Interval(i.retryAfter),
+		IngestError:         truncateError(cause),
 	})
 	if err != nil {
 		return err
@@ -312,8 +317,14 @@ func (i *Ingestor) markFailed(ctx context.Context, ids []int64, cause error) err
 	return nil
 }
 
-func (i *Ingestor) markWritten(ctx context.Context, ids []int64) error {
-	updated, err := i.db.MarkTelemetryOutboxWritten(ctx, ids)
+func (i *Ingestor) markWritten(ctx context.Context, claims []telemetryOutboxClaim) error {
+	ids, retryCounts, err := telemetryOutboxClaimArrays(claims)
+	if err != nil {
+		return err
+	}
+	updated, err := i.db.MarkTelemetryOutboxWritten(ctx, db.MarkTelemetryOutboxWrittenParams{
+		Ids: ids, ExpectedRetryCounts: retryCounts,
+	})
 	if err != nil {
 		return err
 	}
@@ -331,20 +342,49 @@ func rejectedIndexes(rows []RejectedRow) map[int]error {
 	return rejected
 }
 
-func eventCandidateIDs(candidates []eventIngestCandidate) []int64 {
-	ids := make([]int64, len(candidates))
+func eventCandidateClaims(candidates []eventIngestCandidate) []telemetryOutboxClaim {
+	claims := make([]telemetryOutboxClaim, len(candidates))
 	for idx := range candidates {
-		ids[idx] = candidates[idx].outboxID
+		claims[idx] = telemetryOutboxClaim{
+			outboxID: candidates[idx].outboxID, retryCount: candidates[idx].retryCount,
+		}
 	}
-	return ids
+	return claims
 }
 
-func runLogCandidateIDs(candidates []runLogIngestCandidate) []int64 {
-	ids := make([]int64, len(candidates))
+func runLogCandidateClaims(candidates []runLogIngestCandidate) []telemetryOutboxClaim {
+	claims := make([]telemetryOutboxClaim, len(candidates))
 	for idx := range candidates {
-		ids[idx] = candidates[idx].outboxID
+		claims[idx] = telemetryOutboxClaim{
+			outboxID: candidates[idx].outboxID, retryCount: candidates[idx].retryCount,
+		}
 	}
-	return ids
+	return claims
+}
+
+func telemetryOutboxClaimArrays(claims []telemetryOutboxClaim) ([]int64, []int32, error) {
+	ids := make([]int64, len(claims))
+	retryCounts := make([]int32, len(claims))
+	for index, claim := range claims {
+		ids[index] = claim.outboxID
+		retryCounts[index] = claim.retryCount
+	}
+	if err := validateTelemetryOutboxClaimBatch(ids, retryCounts); err != nil {
+		return nil, nil, err
+	}
+	return ids, retryCounts, nil
+}
+
+func validateTelemetryOutboxClaimBatch(ids []int64, retryCounts []int32) error {
+	if len(ids) != len(retryCounts) {
+		return fmt.Errorf("telemetry outbox claim cardinality mismatch: ids %d, retry counts %d", len(ids), len(retryCounts))
+	}
+	return nil
+}
+
+type telemetryOutboxClaim struct {
+	outboxID   int64
+	retryCount int32
 }
 
 type eventIngestCandidate struct {
