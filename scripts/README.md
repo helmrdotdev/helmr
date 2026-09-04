@@ -34,6 +34,21 @@ sockets and ClickHouse uses a loopback address derived from Paseo's assigned
 service port, so multiple worktrees can run concurrently without coordinating
 ports. Preview is available on Linux and Apple Silicon macOS.
 
+On x86_64 Linux, run the browser acceptance test with the Playwright and
+Chromium versions pinned by Nix:
+
+```sh
+nix develop .#browser --command bun run test:browser
+```
+
+The command starts and stops its own disposable stack. To validate a service
+that Paseo already supervises, set `HELMR_E2E_BASE_URL` to that service's
+localhost URL; the browser test then reuses it instead of starting another
+stack. Self-contained runs use `PASEO_PORT` when Paseo supplies it, or port
+`4173` otherwise. Set a distinct `HELMR_E2E_PORT` for concurrent
+self-contained runs outside Paseo. The same allocated port also isolates the
+Linux ClickHouse listener.
+
 ## Product release artifacts
 
 `scripts/aws-release-artifacts.sh` manages the release-build foundation and

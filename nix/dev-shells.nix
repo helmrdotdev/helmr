@@ -25,6 +25,9 @@ let
       ;
   };
 
+  playwrightVersion =
+    (builtins.fromJSON (builtins.readFile ../package.json)).devDependencies."@playwright/test";
+
   shellHook = ''
     go_version="$(go version | awk '{print $3}' | sed 's/^go//')"
     if [ "$go_version" != "1.27.0" ]; then
@@ -59,6 +62,23 @@ in
     packages = toolsets.infra;
     inherit shellHook;
   };
+}
+// pkgs.lib.optionalAttrs (system == "x86_64-linux") {
+  browser =
+    assert pkgs.lib.assertMsg (
+      playwrightVersion == pkgs.playwright-driver.version
+    ) "@playwright/test must match the pinned nixpkgs playwright-driver";
+    pkgs.mkShell {
+      packages = toolsets.base ++ [
+        pkgs.redis
+        pkgsClickHouse.clickhouse
+        pkgs.playwright-driver.browsers
+      ];
+      shellHook = shellHook + ''
+        export PLAYWRIGHT_BROWSERS_PATH=${pkgs.playwright-driver.browsers}
+        export PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true
+      '';
+    };
 }
 // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
   smoke-linux = pkgs.mkShell {
