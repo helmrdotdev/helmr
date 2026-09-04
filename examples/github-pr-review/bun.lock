@@ -9,7 +9,7 @@
         "zod": "^4.4.3",
       },
       "devDependencies": {
-        "typescript": "^5.9.3",
+        "typescript": "6.0.3",
       },
     },
   },
@@ -20,7 +20,7 @@
 
     "@helmr/sdk": ["@helmr/sdk@0.1.0", "", { "dependencies": { "@bufbuild/protobuf": "^2.11.0", "@helmr/proto": "0.1.0" } }, "sha512-BeOi5kC5FNSqSMO4ucelO0gKP6kZ6gneA5JpgnqBWXv2EZkLkc5IZTQXWshOxySysR5CWlJpFS6QnqWO9a+Ltg=="],
 
-    "typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
+    "typescript": ["typescript@6.0.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw=="],
 
     "zod": ["zod@4.4.3", "", {}, "sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ=="],
   }

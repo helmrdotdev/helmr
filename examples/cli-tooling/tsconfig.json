@@ -6,7 +6,7 @@
     "strict": true,
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "baseUrl": ".",
+    "types": ["node"],
     "paths": {
       "@helmr/proto": ["../../proto/typescript/src/index.ts"],
       "@helmr/sdk": ["../../sdk/typescript/src/index.ts"],
