@@ -35,7 +35,7 @@ func (s *Server) workerRegisterRuntimeSubstrate(w http.ResponseWriter, r *http.R
 		authority, err := work.q.LockRuntimeSubstrateAuthority(r.Context(), db.LockRuntimeSubstrateAuthorityParams{
 			DeploymentDefinitionID: pgvalue.UUID(workspaceDefinitionID),
 			WorkerInstanceID:       pgvalue.UUID(worker.WorkerInstanceID),
-			WorkerGroupID:          worker.WorkerGroupID,
+			WorkerGroupID:          pgvalue.UUID(worker.WorkerGroupID),
 			WorkerEpoch:            worker.WorkerEpoch,
 			SubstrateFormat:        strings.TrimSpace(request.Format),
 			SubstrateContract:      strings.TrimSpace(request.Contract),

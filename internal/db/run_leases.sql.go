@@ -347,7 +347,7 @@ SELECT run_leases.id,
 `
 
 type DiscoverWorkerRunLeaseWorkParams struct {
-	WorkerGroupID    string      `json:"worker_group_id"`
+	WorkerGroupID    pgtype.UUID `json:"worker_group_id"`
 	RowLimit         int32       `json:"row_limit"`
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
 	WorkerEpoch      int64       `json:"worker_epoch"`
@@ -398,7 +398,7 @@ SELECT environment_id, run_id
 type GetActorInputSendSourceParams struct {
 	ID               pgtype.UUID `json:"id"`
 	LeaseSequence    int64       `json:"lease_sequence"`
-	WorkerGroupID    string      `json:"worker_group_id"`
+	WorkerGroupID    pgtype.UUID `json:"worker_group_id"`
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
 	WorkerEpoch      int64       `json:"worker_epoch"`
 }
@@ -468,7 +468,7 @@ SELECT run_leases.org_id,
 type GetLiveRunLeaseLocatorsParams struct {
 	ID               pgtype.UUID `json:"id"`
 	LeaseSequence    int64       `json:"lease_sequence"`
-	WorkerGroupID    string      `json:"worker_group_id"`
+	WorkerGroupID    pgtype.UUID `json:"worker_group_id"`
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
 	WorkerEpoch      int64       `json:"worker_epoch"`
 }
@@ -568,7 +568,7 @@ SELECT run_leases.org_id,
 type GetRunEntrypointLocatorsParams struct {
 	ID               pgtype.UUID `json:"id"`
 	LeaseSequence    int64       `json:"lease_sequence"`
-	WorkerGroupID    string      `json:"worker_group_id"`
+	WorkerGroupID    pgtype.UUID `json:"worker_group_id"`
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
 	WorkerEpoch      int64       `json:"worker_epoch"`
 }
@@ -746,7 +746,7 @@ SELECT run_leases.org_id,
 type GetRunLeaseClaimLocatorsParams struct {
 	ID               pgtype.UUID `json:"id"`
 	LeaseSequence    int64       `json:"lease_sequence"`
-	WorkerGroupID    string      `json:"worker_group_id"`
+	WorkerGroupID    pgtype.UUID `json:"worker_group_id"`
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
 	WorkerEpoch      int64       `json:"worker_epoch"`
 }
@@ -889,7 +889,7 @@ SELECT run_leases.environment_id,
 type GetRunLeaseSecretDeliveryLocatorsParams struct {
 	ID               pgtype.UUID `json:"id"`
 	LeaseSequence    int64       `json:"lease_sequence"`
-	WorkerGroupID    string      `json:"worker_group_id"`
+	WorkerGroupID    pgtype.UUID `json:"worker_group_id"`
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
 	WorkerEpoch      int64       `json:"worker_epoch"`
 }
@@ -1003,7 +1003,7 @@ SELECT run_leases.org_id,
 type GetRunLeaseStartLocatorsParams struct {
 	ID               pgtype.UUID `json:"id"`
 	LeaseSequence    int64       `json:"lease_sequence"`
-	WorkerGroupID    string      `json:"worker_group_id"`
+	WorkerGroupID    pgtype.UUID `json:"worker_group_id"`
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
 	WorkerEpoch      int64       `json:"worker_epoch"`
 }
@@ -1675,7 +1675,7 @@ type LockRunLeaseClaimMountParams struct {
 	ProjectID         pgtype.UUID `json:"project_id"`
 	EnvironmentID     pgtype.UUID `json:"environment_id"`
 	RegionID          string      `json:"region_id"`
-	WorkerGroupID     string      `json:"worker_group_id"`
+	WorkerGroupID     pgtype.UUID `json:"worker_group_id"`
 	WorkerInstanceID  pgtype.UUID `json:"worker_instance_id"`
 	WorkerEpoch       int64       `json:"worker_epoch"`
 	RuntimeInstanceID pgtype.UUID `json:"runtime_instance_id"`
@@ -1747,7 +1747,7 @@ SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worke
 type LockRunLeaseClaimReadyWorkerParams struct {
 	ObservationFreshnessSeconds int64       `json:"observation_freshness_seconds"`
 	ID                          pgtype.UUID `json:"id"`
-	WorkerGroupID               string      `json:"worker_group_id"`
+	WorkerGroupID               pgtype.UUID `json:"worker_group_id"`
 }
 
 type LockRunLeaseClaimReadyWorkerRow struct {
@@ -1901,7 +1901,7 @@ type LockRunLeaseClaimRuntimeParams struct {
 	ProjectID        pgtype.UUID `json:"project_id"`
 	EnvironmentID    pgtype.UUID `json:"environment_id"`
 	RegionID         string      `json:"region_id"`
-	WorkerGroupID    string      `json:"worker_group_id"`
+	WorkerGroupID    pgtype.UUID `json:"worker_group_id"`
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
 	WorkerEpoch      int64       `json:"worker_epoch"`
 	WorkspaceID      pgtype.UUID `json:"workspace_id"`
@@ -2064,7 +2064,7 @@ SELECT id, resource_id, worker_group_id, worker_pool_id, state, claim_version, c
 
 type LockRunLeaseClaimWorkerParams struct {
 	ID            pgtype.UUID `json:"id"`
-	WorkerGroupID string      `json:"worker_group_id"`
+	WorkerGroupID pgtype.UUID `json:"worker_group_id"`
 }
 
 func (q *Queries) LockRunLeaseClaimWorker(ctx context.Context, arg LockRunLeaseClaimWorkerParams) (WorkerInstance, error) {
@@ -2115,8 +2115,8 @@ SELECT id, token_id, region_id, name, description, state, claim_version, primary
 `
 
 type LockRunLeaseClaimWorkerGroupParams struct {
-	ID       string `json:"id"`
-	RegionID string `json:"region_id"`
+	ID       pgtype.UUID `json:"id"`
+	RegionID string      `json:"region_id"`
 }
 
 func (q *Queries) LockRunLeaseClaimWorkerGroup(ctx context.Context, arg LockRunLeaseClaimWorkerGroupParams) (WorkerGroup, error) {
@@ -2215,7 +2215,7 @@ type LockRunLeaseClaimWorkspaceLeaseParams struct {
 	ProjectID         pgtype.UUID `json:"project_id"`
 	EnvironmentID     pgtype.UUID `json:"environment_id"`
 	RegionID          string      `json:"region_id"`
-	WorkerGroupID     string      `json:"worker_group_id"`
+	WorkerGroupID     pgtype.UUID `json:"worker_group_id"`
 	WorkerInstanceID  pgtype.UUID `json:"worker_instance_id"`
 	WorkerEpoch       int64       `json:"worker_epoch"`
 	RuntimeInstanceID pgtype.UUID `json:"runtime_instance_id"`
@@ -2495,7 +2495,7 @@ type MarkRunLeaseRunningParams struct {
 	WorkspaceID       pgtype.UUID `json:"workspace_id"`
 	AttemptNumber     int32       `json:"attempt_number"`
 	LeaseSequence     int64       `json:"lease_sequence"`
-	WorkerGroupID     string      `json:"worker_group_id"`
+	WorkerGroupID     pgtype.UUID `json:"worker_group_id"`
 	WorkerInstanceID  pgtype.UUID `json:"worker_instance_id"`
 	WorkerEpoch       int64       `json:"worker_epoch"`
 	RuntimeInstanceID pgtype.UUID `json:"runtime_instance_id"`
@@ -2581,7 +2581,7 @@ RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_i
 type MarkRunLeaseStartingParams struct {
 	ID               pgtype.UUID `json:"id"`
 	LeaseSequence    int64       `json:"lease_sequence"`
-	WorkerGroupID    string      `json:"worker_group_id"`
+	WorkerGroupID    pgtype.UUID `json:"worker_group_id"`
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
 	WorkerEpoch      int64       `json:"worker_epoch"`
 }

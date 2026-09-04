@@ -38,7 +38,7 @@ type AdvanceWorkspaceExecMountFenceParams struct {
 	ProjectID                 pgtype.UUID `json:"project_id"`
 	EnvironmentID             pgtype.UUID `json:"environment_id"`
 	RegionID                  string      `json:"region_id"`
-	WorkerGroupID             string      `json:"worker_group_id"`
+	WorkerGroupID             pgtype.UUID `json:"worker_group_id"`
 	WorkerInstanceID          pgtype.UUID `json:"worker_instance_id"`
 	WorkerEpoch               int64       `json:"worker_epoch"`
 	RuntimeInstanceID         pgtype.UUID `json:"runtime_instance_id"`
@@ -247,7 +247,7 @@ RETURNING id, org_id, project_id, environment_id, workspace_id, base_version_id,
 
 type BindWorkspaceExecRuntimeParams struct {
 	RegionID               pgtype.Text `json:"region_id"`
-	WorkerGroupID          pgtype.Text `json:"worker_group_id"`
+	WorkerGroupID          pgtype.UUID `json:"worker_group_id"`
 	WorkerInstanceID       pgtype.UUID `json:"worker_instance_id"`
 	WorkerEpoch            pgtype.Int8 `json:"worker_epoch"`
 	RuntimeInstanceID      pgtype.UUID `json:"runtime_instance_id"`
@@ -638,7 +638,7 @@ SELECT created_runtime.id, created_runtime.org_id, created_runtime.worker_group_
 type CreateWorkspaceExecRuntimeReservationParams struct {
 	ReservedCPUMillis               int64              `json:"reserved_cpu_millis"`
 	WorkerInstanceID                pgtype.UUID        `json:"worker_instance_id"`
-	WorkerGroupID                   string             `json:"worker_group_id"`
+	WorkerGroupID                   pgtype.UUID        `json:"worker_group_id"`
 	WorkerEpoch                     pgtype.Int8        `json:"worker_epoch"`
 	ID                              pgtype.UUID        `json:"id"`
 	OrgID                           pgtype.UUID        `json:"org_id"`
@@ -659,7 +659,7 @@ type CreateWorkspaceExecRuntimeReservationParams struct {
 type CreateWorkspaceExecRuntimeReservationRow struct {
 	ID                              pgtype.UUID        `json:"id"`
 	OrgID                           pgtype.UUID        `json:"org_id"`
-	WorkerGroupID                   string             `json:"worker_group_id"`
+	WorkerGroupID                   pgtype.UUID        `json:"worker_group_id"`
 	ProjectID                       pgtype.UUID        `json:"project_id"`
 	EnvironmentID                   pgtype.UUID        `json:"environment_id"`
 	RegionID                        string             `json:"region_id"`
@@ -1417,7 +1417,7 @@ RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, wo
 type InsertWorkspaceExecLeaseParams struct {
 	ID                     pgtype.UUID        `json:"id"`
 	OrgID                  pgtype.UUID        `json:"org_id"`
-	WorkerGroupID          string             `json:"worker_group_id"`
+	WorkerGroupID          pgtype.UUID        `json:"worker_group_id"`
 	ProjectID              pgtype.UUID        `json:"project_id"`
 	EnvironmentID          pgtype.UUID        `json:"environment_id"`
 	RegionID               string             `json:"region_id"`
@@ -2595,7 +2595,7 @@ type RequestWorkspaceExecMountFinalizationParams struct {
 type RequestWorkspaceExecMountFinalizationRow struct {
 	ID                         pgtype.UUID        `json:"id"`
 	OrgID                      pgtype.UUID        `json:"org_id"`
-	WorkerGroupID              string             `json:"worker_group_id"`
+	WorkerGroupID              pgtype.UUID        `json:"worker_group_id"`
 	ProjectID                  pgtype.UUID        `json:"project_id"`
 	EnvironmentID              pgtype.UUID        `json:"environment_id"`
 	RegionID                   string             `json:"region_id"`

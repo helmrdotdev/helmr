@@ -94,7 +94,7 @@ type ClaimWorkspaceMountParams struct {
 type ClaimWorkspaceMountRow struct {
 	ID                              pgtype.UUID        `json:"id"`
 	OrgID                           pgtype.UUID        `json:"org_id"`
-	WorkerGroupID                   string             `json:"worker_group_id"`
+	WorkerGroupID                   pgtype.UUID        `json:"worker_group_id"`
 	ProjectID                       pgtype.UUID        `json:"project_id"`
 	EnvironmentID                   pgtype.UUID        `json:"environment_id"`
 	RegionID                        string             `json:"region_id"`
@@ -263,7 +263,7 @@ type EnsureProcessWorkspaceMountRequestedParams struct {
 type EnsureProcessWorkspaceMountRequestedRow struct {
 	ID                         pgtype.UUID        `json:"id"`
 	OrgID                      pgtype.UUID        `json:"org_id"`
-	WorkerGroupID              string             `json:"worker_group_id"`
+	WorkerGroupID              pgtype.UUID        `json:"worker_group_id"`
 	ProjectID                  pgtype.UUID        `json:"project_id"`
 	EnvironmentID              pgtype.UUID        `json:"environment_id"`
 	RegionID                   string             `json:"region_id"`
@@ -530,7 +530,7 @@ type EnsureRunWorkspaceMountRequestedParams struct {
 type EnsureRunWorkspaceMountRequestedRow struct {
 	ID                         pgtype.UUID        `json:"id"`
 	OrgID                      pgtype.UUID        `json:"org_id"`
-	WorkerGroupID              string             `json:"worker_group_id"`
+	WorkerGroupID              pgtype.UUID        `json:"worker_group_id"`
 	ProjectID                  pgtype.UUID        `json:"project_id"`
 	EnvironmentID              pgtype.UUID        `json:"environment_id"`
 	RegionID                   string             `json:"region_id"`
@@ -829,7 +829,7 @@ RETURNING lost_mounts.id, lost_mounts.org_id, lost_mounts.worker_group_id, lost_
 type LoseExpiredWorkspaceMountClaimsRow struct {
 	ID                         pgtype.UUID        `json:"id"`
 	OrgID                      pgtype.UUID        `json:"org_id"`
-	WorkerGroupID              string             `json:"worker_group_id"`
+	WorkerGroupID              pgtype.UUID        `json:"worker_group_id"`
 	ProjectID                  pgtype.UUID        `json:"project_id"`
 	EnvironmentID              pgtype.UUID        `json:"environment_id"`
 	RegionID                   string             `json:"region_id"`
@@ -1193,7 +1193,7 @@ type RequestWorkspaceDeleteMountStopParams struct {
 type RequestWorkspaceDeleteMountStopRow struct {
 	ID                         pgtype.UUID        `json:"id"`
 	OrgID                      pgtype.UUID        `json:"org_id"`
-	WorkerGroupID              string             `json:"worker_group_id"`
+	WorkerGroupID              pgtype.UUID        `json:"worker_group_id"`
 	ProjectID                  pgtype.UUID        `json:"project_id"`
 	EnvironmentID              pgtype.UUID        `json:"environment_id"`
 	RegionID                   string             `json:"region_id"`
@@ -1325,7 +1325,7 @@ type StopWorkspaceMountParams struct {
 type StopWorkspaceMountRow struct {
 	ID                         pgtype.UUID        `json:"id"`
 	OrgID                      pgtype.UUID        `json:"org_id"`
-	WorkerGroupID              string             `json:"worker_group_id"`
+	WorkerGroupID              pgtype.UUID        `json:"worker_group_id"`
 	ProjectID                  pgtype.UUID        `json:"project_id"`
 	EnvironmentID              pgtype.UUID        `json:"environment_id"`
 	RegionID                   string             `json:"region_id"`

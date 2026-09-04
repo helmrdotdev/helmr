@@ -21,7 +21,7 @@ import (
 func TestWorkerLifecycleClient(t *testing.T) {
 	claim := workerapi.RunLease{
 		ID: "00000000-0000-0000-0000-000000000001", RunID: "00000000-0000-0000-0000-000000000002",
-		WorkerGroupID: "run-us-east-1", WorkerInstanceID: "00000000-0000-0000-0000-000000000401",
+		WorkerGroupID: "01900000-0000-7000-8000-000000000901", WorkerInstanceID: "00000000-0000-0000-0000-000000000401",
 		WorkerEpoch: 1, LeaseSequence: 1, RuntimeInstanceID: "00000000-0000-0000-0000-000000000501",
 		AttemptNumber: 1, ExpiresAt: time.Date(2026, 5, 8, 12, 5, 0, 0, time.UTC),
 	}
@@ -528,7 +528,7 @@ func TestWorkerClientRefreshesTokenAndReplaysBufferedRequestAfterUnauthorized(t 
 func TestWorkerRunWaitClient(t *testing.T) {
 	claim := workerapi.RunLeaseAssignment{
 		ID: "00000000-0000-0000-0000-000000000001", RunID: "00000000-0000-0000-0000-000000000002",
-		WorkerGroupID: "run-us-east-1", WorkerInstanceID: "00000000-0000-0000-0000-000000000401",
+		WorkerGroupID: "01900000-0000-7000-8000-000000000901", WorkerInstanceID: "00000000-0000-0000-0000-000000000401",
 		WorkerEpoch: 1, LeaseSequence: 1, RuntimeInstanceID: "00000000-0000-0000-0000-000000000501",
 		AttemptNumber: 1, WorkspaceID: "00000000-0000-0000-0000-000000000701",
 		WorkspaceMountID:       "00000000-0000-0000-0000-000000000702",

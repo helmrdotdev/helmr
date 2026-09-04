@@ -100,7 +100,7 @@ SELECT id, worker_group_id, current_epoch, state, claim_version, termination_rea
 
 type CompleteWorkerDrainParams struct {
 	WorkerInstanceID     pgtype.UUID        `json:"worker_instance_id"`
-	WorkerGroupID        string             `json:"worker_group_id"`
+	WorkerGroupID        pgtype.UUID        `json:"worker_group_id"`
 	WorkerEpoch          pgtype.Int8        `json:"worker_epoch"`
 	ExpectedClaimVersion int64              `json:"expected_claim_version"`
 	ObservedAt           pgtype.Timestamptz `json:"observed_at"`
@@ -108,7 +108,7 @@ type CompleteWorkerDrainParams struct {
 
 type CompleteWorkerDrainRow struct {
 	ID                 pgtype.UUID        `json:"id"`
-	WorkerGroupID      string             `json:"worker_group_id"`
+	WorkerGroupID      pgtype.UUID        `json:"worker_group_id"`
 	CurrentEpoch       pgtype.Int8        `json:"current_epoch"`
 	State              string             `json:"state"`
 	ClaimVersion       int64              `json:"claim_version"`
@@ -150,7 +150,7 @@ SELECT worker_instances.id, worker_instances.state, worker_instances.claim_versi
 
 type LockWorkerDrainCompletionParams struct {
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
-	WorkerGroupID    string      `json:"worker_group_id"`
+	WorkerGroupID    pgtype.UUID `json:"worker_group_id"`
 	WorkerEpoch      pgtype.Int8 `json:"worker_epoch"`
 }
 

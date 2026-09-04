@@ -145,7 +145,7 @@ UPDATE workspace_leases
 	if err := tx.Commit(fixture.ctx); err != nil {
 		t.Fatal(err)
 	}
-	hasQueuedDemand, err := capacity.HasQueuedDemand(fixture.ctx, db.New(fixture.pool), fixture.groupID)
+	hasQueuedDemand, err := capacity.HasQueuedDemand(fixture.ctx, db.New(fixture.pool), pgvalue.MustUUIDValue(fixture.groupID))
 	if err != nil {
 		t.Fatal(err)
 	}

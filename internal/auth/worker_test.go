@@ -47,7 +47,7 @@ func TestWorkerTokenUsesCanonicalClaims(t *testing.T) {
 	claims := decodeJWTPart(t, parts[1])
 	wants := map[string]any{
 		"iss": "helmr-controlplane", "sub": "worker-1", "aud": []any{WorkerTokenAudience},
-		"worker_group_id": "group-1", "worker_instance_id": "worker-1",
+		"worker_group_id": "01900000-0000-7000-8000-000000000501", "worker_instance_id": "worker-1",
 		"credential_id": "credential-1", "worker_epoch": float64(7),
 		"claim_version": float64(2), "group_claim_version": float64(4),
 	}
@@ -145,7 +145,7 @@ func TestVerifyWorkerTokenRejectsInvalidTokens(t *testing.T) {
 
 func validWorkerClaims(now time.Time) WorkerClaims {
 	return WorkerClaims{
-		WorkerGroupID: "group-1", WorkerInstanceID: "worker-1", CredentialID: "credential-1", WorkerEpoch: 7,
+		WorkerGroupID: "01900000-0000-7000-8000-000000000501", WorkerInstanceID: "worker-1", CredentialID: "credential-1", WorkerEpoch: 7,
 		ClaimVersion: 2, GroupClaimVersion: 4,
 		IssuedAt: now, ExpiresAt: now.Add(time.Hour),
 	}

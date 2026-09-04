@@ -77,7 +77,7 @@ func (s *Server) completeTask(
 		locators, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 			ID:               pgvalue.UUID(completion.lease.leaseID),
 			LeaseSequence:    request.Lease.LeaseSequence,
-			WorkerGroupID:    worker.WorkerGroupID,
+			WorkerGroupID:    pgvalue.UUID(worker.WorkerGroupID),
 			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 			WorkerEpoch:      worker.WorkerEpoch,
 		})
@@ -269,7 +269,7 @@ func taskCompletionWasReplayed(
 ) (bool, error) {
 	fingerprint, err := store.GetTaskCompletionReplay(ctx, db.GetTaskCompletionReplayParams{
 		RunLeaseID:    pgvalue.UUID(completion.lease.leaseID),
-		LeaseSequence: request.Lease.LeaseSequence, WorkerGroupID: worker.WorkerGroupID,
+		LeaseSequence: request.Lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {

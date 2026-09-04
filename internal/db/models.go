@@ -608,7 +608,7 @@ type RunLease struct {
 	RegionID                         string             `json:"region_id"`
 	LeaseSequence                    int64              `json:"lease_sequence"`
 	AttemptNumber                    int32              `json:"attempt_number"`
-	WorkerGroupID                    string             `json:"worker_group_id"`
+	WorkerGroupID                    pgtype.UUID        `json:"worker_group_id"`
 	WorkerInstanceID                 pgtype.UUID        `json:"worker_instance_id"`
 	WorkerEpoch                      int64              `json:"worker_epoch"`
 	RuntimeInstanceID                pgtype.UUID        `json:"runtime_instance_id"`
@@ -718,7 +718,7 @@ type RuntimeIdentity struct {
 type RuntimeInstance struct {
 	ID                              pgtype.UUID        `json:"id"`
 	OrgID                           pgtype.UUID        `json:"org_id"`
-	WorkerGroupID                   string             `json:"worker_group_id"`
+	WorkerGroupID                   pgtype.UUID        `json:"worker_group_id"`
 	ProjectID                       pgtype.UUID        `json:"project_id"`
 	EnvironmentID                   pgtype.UUID        `json:"environment_id"`
 	RegionID                        string             `json:"region_id"`
@@ -968,7 +968,7 @@ type User struct {
 }
 
 type WorkerGroup struct {
-	ID            string             `json:"id"`
+	ID            pgtype.UUID        `json:"id"`
 	TokenID       pgtype.UUID        `json:"token_id"`
 	RegionID      string             `json:"region_id"`
 	Name          string             `json:"name"`
@@ -991,7 +991,7 @@ type WorkerGroupToken struct {
 type WorkerInstance struct {
 	ID                           pgtype.UUID        `json:"id"`
 	ResourceID                   string             `json:"resource_id"`
-	WorkerGroupID                string             `json:"worker_group_id"`
+	WorkerGroupID                pgtype.UUID        `json:"worker_group_id"`
 	WorkerPoolID                 pgtype.UUID        `json:"worker_pool_id"`
 	State                        string             `json:"state"`
 	ClaimVersion                 int64              `json:"claim_version"`
@@ -1024,7 +1024,7 @@ type WorkerInstance struct {
 
 type WorkerInstanceCredential struct {
 	ID               pgtype.UUID        `json:"id"`
-	WorkerGroupID    string             `json:"worker_group_id"`
+	WorkerGroupID    pgtype.UUID        `json:"worker_group_id"`
 	WorkerInstanceID pgtype.UUID        `json:"worker_instance_id"`
 	KeyPrefix        string             `json:"key_prefix"`
 	ClaimVersion     int64              `json:"claim_version"`
@@ -1037,7 +1037,7 @@ type WorkerInstanceCredential struct {
 
 type WorkerPool struct {
 	ID                              pgtype.UUID        `json:"id"`
-	WorkerGroupID                   string             `json:"worker_group_id"`
+	WorkerGroupID                   pgtype.UUID        `json:"worker_group_id"`
 	Name                            string             `json:"name"`
 	State                           string             `json:"state"`
 	ClaimVersion                    int64              `json:"claim_version"`
@@ -1087,7 +1087,7 @@ type Workspace struct {
 type WorkspaceLease struct {
 	ID                     pgtype.UUID        `json:"id"`
 	OrgID                  pgtype.UUID        `json:"org_id"`
-	WorkerGroupID          string             `json:"worker_group_id"`
+	WorkerGroupID          pgtype.UUID        `json:"worker_group_id"`
 	ProjectID              pgtype.UUID        `json:"project_id"`
 	EnvironmentID          pgtype.UUID        `json:"environment_id"`
 	RegionID               string             `json:"region_id"`
@@ -1118,7 +1118,7 @@ type WorkspaceLease struct {
 type WorkspaceMount struct {
 	ID                         pgtype.UUID        `json:"id"`
 	OrgID                      pgtype.UUID        `json:"org_id"`
-	WorkerGroupID              string             `json:"worker_group_id"`
+	WorkerGroupID              pgtype.UUID        `json:"worker_group_id"`
 	ProjectID                  pgtype.UUID        `json:"project_id"`
 	EnvironmentID              pgtype.UUID        `json:"environment_id"`
 	RegionID                   string             `json:"region_id"`
@@ -1159,7 +1159,7 @@ type WorkspaceProcess struct {
 	BaseVersionID        pgtype.UUID        `json:"base_version_id"`
 	RestoreDesiredState  string             `json:"restore_desired_state"`
 	RegionID             pgtype.Text        `json:"region_id"`
-	WorkerGroupID        pgtype.Text        `json:"worker_group_id"`
+	WorkerGroupID        pgtype.UUID        `json:"worker_group_id"`
 	WorkerInstanceID     pgtype.UUID        `json:"worker_instance_id"`
 	WorkerEpoch          pgtype.Int8        `json:"worker_epoch"`
 	RuntimeInstanceID    pgtype.UUID        `json:"runtime_instance_id"`

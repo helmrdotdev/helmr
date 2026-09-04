@@ -138,7 +138,7 @@ func (s *Server) adminGetWorkerGroup(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	row, err := s.db.GetWorkerGroup(r.Context(), groupID)
+	row, err := s.db.GetWorkerGroup(r.Context(), pgvalue.UUID(groupID))
 	if isNoRows(err) {
 		writeError(w, notFound(errors.New("worker group not found")))
 		return
@@ -183,7 +183,7 @@ func (s *Server) adminCreateWorkerGroup(w http.ResponseWriter, r *http.Request) 
 			return errors.New("get worker group region")
 		}
 		created, err = work.q.CreateWorkerGroup(r.Context(), db.CreateWorkerGroupParams{
-			ID: uuid.NewV7().String(), TokenID: pgvalue.UUID(uuid.NewV7()), TokenHash: token.Hash,
+			ID: pgvalue.UUID(uuid.NewV7()), TokenID: pgvalue.UUID(uuid.NewV7()), TokenHash: token.Hash,
 			RegionID: request.RegionID, Name: request.Name, Description: description,
 		})
 		if isUniqueViolation(err) {
@@ -215,7 +215,7 @@ func (s *Server) adminUpdateWorkerGroup(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	row, err := s.db.UpdateWorkerGroupDescription(r.Context(), db.UpdateWorkerGroupDescriptionParams{
-		ID: groupID, Description: strings.TrimSpace(request.Description),
+		ID: pgvalue.UUID(groupID), Description: strings.TrimSpace(request.Description),
 	})
 	if isNoRows(err) {
 		writeError(w, notFound(errors.New("worker group not found")))
@@ -244,7 +244,7 @@ func (s *Server) adminDisableWorkerGroup(w http.ResponseWriter, r *http.Request)
 	s.adminTransitionWorkerGroup(w, r, workergroup.DisableGroup)
 }
 
-type groupTransition func(context.Context, workergroup.StateStore, string, int64) (workergroup.GroupStatus, error)
+type groupTransition func(context.Context, workergroup.StateStore, uuid.UUID, int64) (workergroup.GroupStatus, error)
 
 func (s *Server) adminTransitionWorkerGroup(w http.ResponseWriter, r *http.Request, transition groupTransition) {
 	groupID, ok := adminGroupID(w, r)
@@ -265,7 +265,7 @@ func (s *Server) adminTransitionWorkerGroup(w http.ResponseWriter, r *http.Reque
 		if err := work.q.LockWorkerGroupMutation(r.Context(), workergroup.StateMutationLockKey(groupID)); err != nil {
 			return errors.New("lock worker group lifecycle")
 		}
-		if _, err := work.q.GetWorkerGroupState(r.Context(), groupID); isNoRows(err) {
+		if _, err := work.q.GetWorkerGroupState(r.Context(), pgvalue.UUID(groupID)); isNoRows(err) {
 			return notFound(errors.New("worker group not found"))
 		} else if err != nil {
 			return errors.New("read worker group lifecycle")
@@ -295,7 +295,7 @@ func (s *Server) adminRotateWorkerGroupToken(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if _, err := s.db.RotateWorkerGroupToken(r.Context(), db.RotateWorkerGroupTokenParams{
-		WorkerGroupID: groupID, TokenHash: token.Hash,
+		WorkerGroupID: pgvalue.UUID(groupID), TokenHash: token.Hash,
 	}); isNoRows(err) {
 		writeError(w, notFound(errors.New("worker group not found")))
 		return
@@ -312,7 +312,7 @@ func (s *Server) adminListWorkerPools(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	group, err := s.db.GetWorkerGroup(r.Context(), groupID)
+	group, err := s.db.GetWorkerGroup(r.Context(), pgvalue.UUID(groupID))
 	if isNoRows(err) {
 		writeError(w, notFound(errors.New("worker group not found")))
 		return
@@ -321,7 +321,7 @@ func (s *Server) adminListWorkerPools(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("get worker group"))
 		return
 	}
-	pools, err := s.db.ListWorkerPools(r.Context(), groupID)
+	pools, err := s.db.ListWorkerPools(r.Context(), pgvalue.UUID(groupID))
 	if err != nil {
 		writeError(w, errors.New("list worker pools"))
 		return
@@ -356,7 +356,7 @@ func (s *Server) adminCreateWorkerPool(w http.ResponseWriter, r *http.Request) {
 	var created db.WorkerPool
 	err := s.inTx(r.Context(), func(work *txWork) error {
 		var err error
-		group, err = work.q.LockWorkerGroupForPoolMutation(r.Context(), groupID)
+		group, err = work.q.LockWorkerGroupForPoolMutation(r.Context(), pgvalue.UUID(groupID))
 		if isNoRows(err) {
 			return notFound(errors.New("worker group not found"))
 		}
@@ -369,7 +369,7 @@ func (s *Server) adminCreateWorkerPool(w http.ResponseWriter, r *http.Request) {
 		}
 		created, err = work.q.CreatePendingWorkerPool(r.Context(), db.CreatePendingWorkerPoolParams{
 			WorkerPoolID: pgvalue.UUID(uuid.NewV7()), Name: request.Name,
-			WorkerGroupID: groupID, ExpectedGroupClaimVersion: request.ExpectedGroupClaimVersion,
+			WorkerGroupID: pgvalue.UUID(groupID), ExpectedGroupClaimVersion: request.ExpectedGroupClaimVersion,
 		})
 		if isUniqueViolation(err) {
 			return conflict(errors.New("worker pool name is already in use"))
@@ -452,7 +452,7 @@ func (s *Server) adminTransitionWorkerPool(w http.ResponseWriter, r *http.Reques
 	var pool db.WorkerPool
 	err := s.inTx(r.Context(), func(work *txWork) error {
 		var err error
-		group, err = work.q.LockWorkerGroupForPoolMutation(r.Context(), groupID)
+		group, err = work.q.LockWorkerGroupForPoolMutation(r.Context(), pgvalue.UUID(groupID))
 		if isNoRows(err) {
 			return notFound(errors.New("worker group not found"))
 		}
@@ -460,7 +460,7 @@ func (s *Server) adminTransitionWorkerPool(w http.ResponseWriter, r *http.Reques
 			return errors.New("lock worker group for pool lifecycle")
 		}
 		pool, err = work.q.LockWorkerPool(r.Context(), db.LockWorkerPoolParams{
-			WorkerGroupID: groupID, WorkerPoolID: pgvalue.UUID(poolID),
+			WorkerGroupID: pgvalue.UUID(groupID), WorkerPoolID: pgvalue.UUID(poolID),
 		})
 		if isNoRows(err) {
 			return notFound(errors.New("worker pool not found"))
@@ -481,7 +481,7 @@ func (s *Server) adminTransitionWorkerPool(w http.ResponseWriter, r *http.Reques
 			return conflict(errors.New("only an unreferenced pending or drained worker pool can be disabled"))
 		}
 		transitioned, err := work.q.TransitionWorkerPoolLifecycle(r.Context(), db.TransitionWorkerPoolLifecycleParams{
-			TargetState: target, WorkerPoolID: pgvalue.UUID(poolID), WorkerGroupID: groupID,
+			TargetState: target, WorkerPoolID: pgvalue.UUID(poolID), WorkerGroupID: pgvalue.UUID(groupID),
 			ExpectedPoolClaimVersion: request.ExpectedPoolClaimVersion,
 		})
 		if isNoRows(err) {
@@ -508,7 +508,7 @@ func adminRegion(row db.Region) api.AdminRegion {
 
 func adminWorkerGroup(row db.WorkerGroup) api.AdminWorkerGroup {
 	return api.AdminWorkerGroup{
-		ID: row.ID, RegionID: row.RegionID, Name: row.Name, Description: row.Description,
+		ID: pgvalue.UUIDString(row.ID), RegionID: row.RegionID, Name: row.Name, Description: row.Description,
 		State: row.State, ClaimVersion: row.ClaimVersion,
 		PrimaryPoolID: adminOptionalUUID(row.PrimaryPoolID),
 	}
@@ -516,7 +516,7 @@ func adminWorkerGroup(row db.WorkerGroup) api.AdminWorkerGroup {
 
 func adminWorkerPool(pool db.WorkerPool, group db.WorkerGroup) api.AdminWorkerPool {
 	return api.AdminWorkerPool{
-		ID: uuid.UUID(pool.ID.Bytes).String(), WorkerGroupID: pool.WorkerGroupID,
+		ID: uuid.UUID(pool.ID.Bytes).String(), WorkerGroupID: pgvalue.UUIDString(pool.WorkerGroupID),
 		Name: pool.Name, State: pool.State, ClaimVersion: pool.ClaimVersion,
 		Primary: group.PrimaryPoolID.Valid && group.PrimaryPoolID.Bytes == pool.ID.Bytes,
 	}
@@ -529,25 +529,25 @@ func adminOptionalUUID(value pgtype.UUID) string {
 	return uuid.UUID(value.Bytes).String()
 }
 
-func adminGroupID(w http.ResponseWriter, r *http.Request) (string, bool) {
+func adminGroupID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	raw := chi.URLParam(r, "groupID")
 	parsed, err := ids.Parse(raw)
 	if err != nil {
 		writeError(w, badRequest(errors.New("worker group ID must be a canonical UUIDv7")))
-		return "", false
+		return uuid.Nil(), false
 	}
-	return parsed.String(), true
+	return parsed, true
 }
 
-func adminWorkerPoolIDs(w http.ResponseWriter, r *http.Request) (string, uuid.UUID, bool) {
+func adminWorkerPoolIDs(w http.ResponseWriter, r *http.Request) (uuid.UUID, uuid.UUID, bool) {
 	groupID, ok := adminGroupID(w, r)
 	if !ok {
-		return "", uuid.Nil(), false
+		return uuid.Nil(), uuid.Nil(), false
 	}
 	poolID, err := ids.Parse(chi.URLParam(r, "poolID"))
 	if err != nil {
 		writeError(w, badRequest(errors.New("worker pool ID must be a canonical UUIDv7")))
-		return "", uuid.Nil(), false
+		return uuid.Nil(), uuid.Nil(), false
 	}
 	return groupID, poolID, true
 }

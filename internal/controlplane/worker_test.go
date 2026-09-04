@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -15,7 +16,7 @@ import (
 )
 
 func TestWorkerActivationDerivesRuntimeStartsFromRunSlots(t *testing.T) {
-	worker := workerActor{WorkerGroupID: "group", WorkerEpoch: 1}
+	worker := workerActor{WorkerGroupID: controlplaneTestWorkerGroupID, WorkerEpoch: 1}
 	capabilities := validWorkerCapabilities(t)
 	if got := workerActivationParams(worker, capabilities, []byte(`{}`)).MaxRuntimeStarts; got != capabilities.ExecutionSlotsAvailable {
 		t.Fatalf("max runtime starts = %d, want %d", got, capabilities.ExecutionSlotsAvailable)
@@ -154,7 +155,7 @@ func TestSealWorkerPoolParamsDerivePendingPoolContract(t *testing.T) {
 	template := workerTemplate(capabilities)
 	poolID := pgvalue.NewUUIDv7()
 
-	got := sealWorkerPoolParams("workers", poolID, template)
+	got := sealWorkerPoolParams(controlplaneTestWorkerGroupID, poolID, template)
 	want := db.SealWorkerPoolParams{
 		RuntimeIdentityID:               pgtype.Text{String: template.Runtime.ID, Valid: true},
 		SubstrateFormat:                 pgtype.Text{String: template.Substrate.Format, Valid: true},
@@ -167,7 +168,7 @@ func TestSealWorkerPoolParamsDerivePendingPoolContract(t *testing.T) {
 		PerVMGuestEphemeralDiskBytes:    pgtype.Int8{Int64: template.PerVM.GuestEphemeralDiskBytes, Valid: true},
 		MaxVMSlots:                      pgtype.Int4{Int32: int32(template.Capacity.VMSlots), Valid: true},
 		WorkerPoolID:                    poolID,
-		WorkerGroupID:                   "workers",
+		WorkerGroupID:                   controlplaneTestWorkerGroupDBID,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("seal params = %#v, want %#v", got, want)
@@ -210,7 +211,7 @@ func TestRuntimeIdentityParamsDeriveCompleteProfile(t *testing.T) {
 func TestWorkerPoolMatchesExactActiveReplay(t *testing.T) {
 	template := workerTemplate(validWorkerCapabilities(t))
 	poolID := pgvalue.NewUUIDv7()
-	pool, shapes := sealedWorkerPool(poolID, "workers", "run-primary", template)
+	pool, shapes := sealedWorkerPool(poolID, controlplaneTestWorkerGroupID, "run-primary", template)
 
 	if !workerPoolMatches(pool, shapes, template) {
 		t.Fatal("exact active Worker Pool replay did not match")
@@ -220,7 +221,7 @@ func TestWorkerPoolMatchesExactActiveReplay(t *testing.T) {
 func TestWorkerPoolMatchesRejectsCPUShapeOrTemplateMismatch(t *testing.T) {
 	template := workerTemplate(validWorkerCapabilities(t))
 	poolID := pgvalue.NewUUIDv7()
-	pool, shapes := sealedWorkerPool(poolID, "workers", "run-primary", template)
+	pool, shapes := sealedWorkerPool(poolID, controlplaneTestWorkerGroupID, "run-primary", template)
 
 	t.Run("CPU shape", func(t *testing.T) {
 		changed := append([]db.WorkerPoolCpuShape(nil), shapes...)
@@ -293,13 +294,13 @@ func TestNormalizeWorkerCapabilitiesRejectsCPUShapeOrTemplateMismatch(t *testing
 
 func sealedWorkerPool(
 	poolID pgtype.UUID,
-	groupID string,
+	groupID uuid.UUID,
 	name string,
 	template capacity.WorkerTemplate,
 ) (db.WorkerPool, []db.WorkerPoolCpuShape) {
 	pool := db.WorkerPool{
 		ID:                              poolID,
-		WorkerGroupID:                   groupID,
+		WorkerGroupID:                   pgvalue.UUID(groupID),
 		Name:                            name,
 		State:                           "active",
 		RuntimeIdentityID:               pgtype.Text{String: template.Runtime.ID, Valid: true},

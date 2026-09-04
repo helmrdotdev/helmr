@@ -121,7 +121,7 @@ SELECT run_leases.environment_id,
 type GetRunMetadataClaimScopeParams struct {
 	RunLeaseID       pgtype.UUID `json:"run_lease_id"`
 	LeaseSequence    int64       `json:"lease_sequence"`
-	WorkerGroupID    string      `json:"worker_group_id"`
+	WorkerGroupID    pgtype.UUID `json:"worker_group_id"`
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
 	WorkerEpoch      int64       `json:"worker_epoch"`
 }

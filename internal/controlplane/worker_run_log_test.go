@@ -70,7 +70,7 @@ func TestMountedWorkerRunLogRouteAcceptsExactMaximumAndRejectsOneByteOver(t *tes
 	store := workerLogReplayStore{
 		replayMatches: true,
 		authorization: &db.AuthorizeWorkerInstanceCredentialRow{
-			WorkerGroupID: lease.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(workerID),
+			WorkerGroupID: pgvalue.UUID(uuid.MustParse(lease.WorkerGroupID)), WorkerInstanceID: pgvalue.UUID(workerID),
 			ClaimVersion: 1, ResourceID: "test-resource", WorkerState: "active",
 			EpochStartedAt: pgtype.Timestamptz{Time: now, Valid: true},
 		},
@@ -141,7 +141,7 @@ func TestWorkerAppendLogsReturnsConflictForChangedReplay(t *testing.T) {
 	}
 	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/logs/append", bytes.NewReader(body))
 	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
-		WorkerInstanceID: workerID, WorkerGroupID: lease.WorkerGroupID, WorkerEpoch: lease.WorkerEpoch,
+		WorkerInstanceID: workerID, WorkerGroupID: uuid.MustParse(lease.WorkerGroupID), WorkerEpoch: lease.WorkerEpoch,
 	}))
 	recorder := httptest.NewRecorder()
 
@@ -172,7 +172,7 @@ func TestWorkerAppendLogsAcceptsIdenticalReplay(t *testing.T) {
 	}
 	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/logs/append", bytes.NewReader(body))
 	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
-		WorkerInstanceID: workerID, WorkerGroupID: lease.WorkerGroupID, WorkerEpoch: lease.WorkerEpoch,
+		WorkerInstanceID: workerID, WorkerGroupID: uuid.MustParse(lease.WorkerGroupID), WorkerEpoch: lease.WorkerEpoch,
 	}))
 	recorder := httptest.NewRecorder()
 
@@ -183,7 +183,7 @@ func TestWorkerAppendLogsAcceptsIdenticalReplay(t *testing.T) {
 	}
 	if pgvalue.UUIDString(params.RunLeaseID) != lease.ID ||
 		params.LeaseSequence != lease.LeaseSequence ||
-		params.WorkerGroupID != lease.WorkerGroupID ||
+		pgvalue.UUIDString(params.WorkerGroupID) != lease.WorkerGroupID ||
 		pgvalue.UUIDString(params.WorkerInstanceID) != lease.WorkerInstanceID ||
 		params.WorkerEpoch != lease.WorkerEpoch {
 		t.Fatalf("database receipt params = %+v", params)
@@ -224,7 +224,7 @@ func TestWorkerAppendLogsReplaysAfterLeaseIsNoLongerLive(t *testing.T) {
 	}
 	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/logs/append", bytes.NewReader(body))
 	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
-		WorkerInstanceID: workerID, WorkerGroupID: lease.WorkerGroupID,
+		WorkerInstanceID: workerID, WorkerGroupID: uuid.MustParse(lease.WorkerGroupID),
 		WorkerEpoch: lease.WorkerEpoch}))
 	recorder := httptest.NewRecorder()
 
@@ -259,7 +259,7 @@ func TestWorkerAppendLogsRejectsAnotherWorkersFence(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/logs/append", bytes.NewReader(body))
 	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
 		WorkerInstanceID: uuid.NewV7(),
-		WorkerGroupID:    lease.WorkerGroupID,
+		WorkerGroupID:    uuid.MustParse(lease.WorkerGroupID),
 		WorkerEpoch:      lease.WorkerEpoch,
 	}))
 	recorder := httptest.NewRecorder()

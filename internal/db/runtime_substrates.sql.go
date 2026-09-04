@@ -151,7 +151,7 @@ SELECT deployments.org_id,
 type LockRuntimeSubstrateAuthorityParams struct {
 	DeploymentDefinitionID pgtype.UUID `json:"deployment_definition_id"`
 	WorkerInstanceID       pgtype.UUID `json:"worker_instance_id"`
-	WorkerGroupID          string      `json:"worker_group_id"`
+	WorkerGroupID          pgtype.UUID `json:"worker_group_id"`
 	WorkerEpoch            int64       `json:"worker_epoch"`
 	SubstrateFormat        string      `json:"substrate_format"`
 	SubstrateContract      string      `json:"substrate_contract"`

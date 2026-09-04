@@ -69,7 +69,7 @@ func (s *Server) workerCreateTimerRunWait(
 	err = s.inTx(r.Context(), func(work *txWork) error {
 		locators, err := work.q.GetLiveRunLeaseLocators(r.Context(), db.GetLiveRunLeaseLocatorsParams{
 			ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: request.Lease.LeaseSequence,
-			WorkerGroupID:    worker.WorkerGroupID,
+			WorkerGroupID:    pgvalue.UUID(worker.WorkerGroupID),
 			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 			WorkerEpoch:      worker.WorkerEpoch,
 		})

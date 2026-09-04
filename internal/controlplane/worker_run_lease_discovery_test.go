@@ -30,7 +30,7 @@ func TestWorkerDiscoverRunLeasesReturnsExactTuples(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/leases/discover", strings.NewReader(`{}`))
 	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
 		WorkerInstanceID: workerID,
-		WorkerGroupID:    "run-workers",
+		WorkerGroupID:    controlplaneTestWorkerGroupID,
 		WorkerEpoch:      9,
 	}))
 	response := httptest.NewRecorder()

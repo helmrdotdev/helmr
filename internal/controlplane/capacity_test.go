@@ -81,7 +81,7 @@ func TestCapacityPrimarySelectionIsAtomicAndReplaySafe(t *testing.T) {
 	server.mountCapacityRoutes(router)
 	poolID := pgvalue.UUIDString(pool.ID)
 	response := capacityJSON(t, capacityRequest(t, router, http.MethodPut,
-		"/capacity/v1/worker-groups/"+group.ID+"/primary-pools",
+		"/capacity/v1/worker-groups/"+pgvalue.UUIDString(group.ID)+"/primary-pools",
 		fmt.Sprintf(`{"expected_group_claim_version":%d,"pool_id":%q}`, group.ClaimVersion, poolID),
 	), http.StatusOK)
 	assertCapacityJSONKeys(t, response, "applied", "worker_group")
@@ -102,7 +102,7 @@ func TestCapacityPrimarySelectionIsAtomicAndReplaySafe(t *testing.T) {
 	replayRouter := chi.NewRouter()
 	replayServer.mountCapacityRoutes(replayRouter)
 	replayed := capacityJSON(t, capacityRequest(t, replayRouter, http.MethodPut,
-		"/capacity/v1/worker-groups/"+group.ID+"/primary-pools",
+		"/capacity/v1/worker-groups/"+pgvalue.UUIDString(group.ID)+"/primary-pools",
 		fmt.Sprintf(`{"expected_group_claim_version":%d,"pool_id":%q}`, group.ClaimVersion, poolID),
 	), http.StatusOK)
 	replayedGroup := capacityJSONObject(t, replayed["worker_group"])
@@ -116,16 +116,16 @@ func TestCapacityDrainUsesExactEpochAndClaimFence(t *testing.T) {
 	now := time.Now().UTC()
 	store := &capacityDrainStore{
 		instance: db.GetCapacityWorkerInstanceRow{
-			ID: workerID, ResourceID: "host-opaque-1", WorkerGroupID: "run-workers",
+			ID: workerID, ResourceID: "host-opaque-1", WorkerGroupID: controlplaneTestWorkerGroupDBID,
 			State: string(db.WorkerInstanceStateActive), ClaimVersion: 7,
 			CurrentEpoch: pgtype.Int8{Int64: 4, Valid: true},
 			CreatedAt:    pgtype.Timestamptz{Time: now, Valid: true},
 			UpdatedAt:    pgtype.Timestamptz{Time: now, Valid: true},
 		},
-		group: db.WorkerGroup{ID: "run-workers", RegionID: "us-east-1"},
+		group: db.WorkerGroup{ID: controlplaneTestWorkerGroupDBID, RegionID: "us-east-1"},
 	}
 	store.draining = db.DrainWorkerInstanceRow{
-		ID: workerID, ResourceID: "host-opaque-1", WorkerGroupID: "run-workers",
+		ID: workerID, ResourceID: "host-opaque-1", WorkerGroupID: controlplaneTestWorkerGroupDBID,
 		State: string(db.WorkerInstanceStateDraining), ClaimVersion: 8,
 		CurrentEpoch: pgtype.Int8{Int64: 4, Valid: true},
 		DrainingAt:   pgtype.Timestamptz{Time: now, Valid: true},
@@ -144,7 +144,7 @@ func TestCapacityDrainUsesExactEpochAndClaimFence(t *testing.T) {
 		`{"expected_epoch":4,"expected_claim_version":7,"require_zero_queued_demand":true}`,
 	), http.StatusOK)
 	assertCapacityJSONKeys(t, result, "claim_version", "created_at", "current_epoch", "draining_at", "id", "resource_id", "status", "updated_at", "worker_group_id", "worker_pool_id")
-	if store.params.ExpectedEpoch.Int64 != 4 || store.params.ExpectedClaimVersion != 7 || store.params.WorkerGroupID != "run-workers" {
+	if store.params.ExpectedEpoch.Int64 != 4 || store.params.ExpectedClaimVersion != 7 || store.params.WorkerGroupID != controlplaneTestWorkerGroupDBID {
 		t.Fatalf("drain params = %+v", store.params)
 	}
 	if result["status"] != "draining" || result["claim_version"] != float64(8) || result["current_epoch"] != float64(4) {
@@ -165,10 +165,10 @@ func TestCapacityDrainDefersForEligibleQueuedDemand(t *testing.T) {
 	workerID := pgvalue.NewUUIDv7()
 	store := &capacityDrainStore{
 		instance: db.GetCapacityWorkerInstanceRow{
-			ID: workerID, WorkerGroupID: "run-workers", State: string(db.WorkerInstanceStateActive),
+			ID: workerID, WorkerGroupID: controlplaneTestWorkerGroupDBID, State: string(db.WorkerInstanceStateActive),
 			ClaimVersion: 7, CurrentEpoch: pgtype.Int8{Int64: 4, Valid: true},
 		},
-		group:      db.WorkerGroup{ID: "run-workers", RegionID: "us-east-1"},
+		group:      db.WorkerGroup{ID: controlplaneTestWorkerGroupDBID, RegionID: "us-east-1"},
 		queuedRuns: []db.ListQueuedRunEligibleScopesRow{{RegionID: "us-east-1"}},
 	}
 	hash, err := hashCapacityToken(capacityTestToken())
@@ -196,11 +196,11 @@ func TestCapacityDrainReplaySkipsQueuedDemandCheck(t *testing.T) {
 	workerID := pgvalue.NewUUIDv7()
 	store := &capacityDrainStore{
 		instance: db.GetCapacityWorkerInstanceRow{
-			ID: workerID, WorkerGroupID: "run-workers", State: string(db.WorkerInstanceStateDraining),
+			ID: workerID, WorkerGroupID: controlplaneTestWorkerGroupDBID, State: string(db.WorkerInstanceStateDraining),
 			ClaimVersion: 8, CurrentEpoch: pgtype.Int8{Int64: 4, Valid: true},
 		},
 		draining: db.DrainWorkerInstanceRow{
-			ID: workerID, WorkerGroupID: "run-workers", State: string(db.WorkerInstanceStateDraining),
+			ID: workerID, WorkerGroupID: controlplaneTestWorkerGroupDBID, State: string(db.WorkerInstanceStateDraining),
 			ClaimVersion: 8, CurrentEpoch: pgtype.Int8{Int64: 4, Valid: true},
 		},
 	}
@@ -226,7 +226,7 @@ func TestCapacityStaleDrainReturnsConflict(t *testing.T) {
 	workerID := pgvalue.NewUUIDv7()
 	store := &capacityDrainStore{
 		instance: db.GetCapacityWorkerInstanceRow{
-			ID: workerID, ResourceID: "host-opaque-1", WorkerGroupID: "run-workers",
+			ID: workerID, ResourceID: "host-opaque-1", WorkerGroupID: controlplaneTestWorkerGroupDBID,
 			State: string(db.WorkerInstanceStateActive), ClaimVersion: 7,
 			CurrentEpoch: pgtype.Int8{Int64: 4, Valid: true},
 		},
@@ -258,13 +258,13 @@ func TestCapacityProviderAbsenceUsesExactWorkerIdentity(t *testing.T) {
 	poolID := pgvalue.NewUUIDv7()
 	store := &capacityDrainStore{
 		instance: db.GetCapacityWorkerInstanceRow{
-			ID: workerID, ResourceID: "i-provider-absent", WorkerGroupID: "run-workers",
+			ID: workerID, ResourceID: "i-provider-absent", WorkerGroupID: controlplaneTestWorkerGroupDBID,
 			WorkerPoolID: poolID, State: string(db.WorkerInstanceStateActive), ClaimVersion: 7,
 			CurrentEpoch: pgtype.Int8{Int64: 4, Valid: true},
 			CreatedAt:    pgtype.Timestamptz{Time: now, Valid: true}, UpdatedAt: pgtype.Timestamptz{Time: now, Valid: true},
 		},
 		providerAbsent: db.ConfirmWorkerInstanceProviderAbsentRow{
-			ID: workerID, ResourceID: "i-provider-absent", WorkerGroupID: "run-workers",
+			ID: workerID, ResourceID: "i-provider-absent", WorkerGroupID: controlplaneTestWorkerGroupDBID,
 			WorkerPoolID: poolID, State: string(db.WorkerInstanceStateLost), ClaimVersion: 8,
 			CurrentEpoch: pgtype.Int8{Int64: 4, Valid: true}, LostAt: pgtype.Timestamptz{Time: now, Valid: true},
 			CreatedAt: pgtype.Timestamptz{Time: now, Valid: true}, UpdatedAt: pgtype.Timestamptz{Time: now, Valid: true},
@@ -288,14 +288,15 @@ func TestCapacityProviderAbsenceUsesExactWorkerIdentity(t *testing.T) {
 
 func TestCapacityResolveAndPlanHandlers(t *testing.T) {
 	groupID := uuid.NewV7().String()
+	groupDBID := pgvalue.UUID(uuid.MustParse(groupID))
 	poolID := pgvalue.NewUUIDv7()
 	template := capacityHTTPTemplate(t)
 	store := &capacityPlanStore{group: db.WorkerGroup{
-		ID: groupID, RegionID: "aws-us-east-1", Name: "default", State: "active",
+		ID: groupDBID, RegionID: "aws-us-east-1", Name: "default", State: "active",
 	}, pool: db.WorkerPool{
-		ID: poolID, WorkerGroupID: groupID, Name: "run-current", State: "active",
+		ID: poolID, WorkerGroupID: groupDBID, Name: "run-current", State: "active",
 	}, planPool: db.ListCapacityWorkerPoolsRow{
-		ID: poolID, WorkerGroupID: groupID, Name: "run-current",
+		ID: poolID, WorkerGroupID: groupDBID, Name: "run-current",
 		RuntimeIdentityID:               pgtype.Text{String: template.Runtime.ID, Valid: true},
 		SubstrateFormat:                 pgtype.Text{String: template.Substrate.Format, Valid: true},
 		SubstrateContract:               pgtype.Text{String: template.Substrate.Contract, Valid: true},
@@ -351,6 +352,9 @@ func TestCapacityResolveAndPlanHandlers(t *testing.T) {
 		body   string
 	}{
 		{method: http.MethodGet, path: "/capacity/v1/worker-groups/resolve?region_id=aws-us-east-1&region_id=other&name=default"},
+		{method: http.MethodGet, path: "/capacity/v1/worker-instances?worker_group_id=not-a-group"},
+		{method: http.MethodGet, path: "/capacity/v1/worker-instances?worker_group_id=%20"},
+		{method: http.MethodGet, path: "/capacity/v1/worker-instances?worker_group_id=%20" + groupID + "%20"},
 		{method: http.MethodPost, path: "/capacity/v1/worker-groups/not-a-group/plan", body: `{}`},
 		{method: http.MethodPost, path: "/capacity/v1/worker-groups/" + groupID + "/plan", body: `{}`},
 	} {
@@ -368,15 +372,15 @@ func TestCapacityResolveAndPlanHandlers(t *testing.T) {
 }
 
 func TestCapacityWorkerInstanceListParamsAreBounded(t *testing.T) {
-	request := httptest.NewRequest(http.MethodGet, "/?worker_group_id=run-workers&resource_id=host-1&resource_id=host-2&status=active&status=draining&has_unreclaimed_runtime=true&limit=50", nil)
+	request := httptest.NewRequest(http.MethodGet, "/?worker_group_id="+controlplaneTestWorkerGroup+"&resource_id=host-1&resource_id=host-2&status=active&status=draining&has_unreclaimed_runtime=true&limit=50", nil)
 	params, err := capacityWorkerInstanceListParams(request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !params.WorkerGroupID.Valid || params.WorkerGroupID.String != "run-workers" || !params.HasUnreclaimedRuntime || params.RowLimit != 50 || strings.Join(params.ResourceIds, ",") != "host-1,host-2" || strings.Join(params.States, ",") != "active,draining" {
+	if !params.WorkerGroupID.Valid || pgvalue.UUIDString(params.WorkerGroupID) != controlplaneTestWorkerGroup || !params.HasUnreclaimedRuntime || params.RowLimit != 50 || strings.Join(params.ResourceIds, ",") != "host-1,host-2" || strings.Join(params.States, ",") != "active,draining" {
 		t.Fatalf("params = %+v", params)
 	}
-	for _, raw := range []string{"/?unsupported=active", "/?status=unknown", "/?resource_id=", "/?resource_id=host-1&resource_id=host-1", "/?has_unreclaimed_runtime=false", "/?has_unreclaimed_runtime=true&has_unreclaimed_runtime=true", "/?limit=0", "/?limit=501"} {
+	for _, raw := range []string{"/?unsupported=active", "/?worker_group_id=", "/?worker_group_id=%20", "/?worker_group_id=%20" + controlplaneTestWorkerGroup + "%20", "/?worker_group_id=run-workers", "/?status=unknown", "/?resource_id=", "/?resource_id=host-1&resource_id=host-1", "/?has_unreclaimed_runtime=false", "/?has_unreclaimed_runtime=true&has_unreclaimed_runtime=true", "/?limit=0", "/?limit=501"} {
 		if _, err := capacityWorkerInstanceListParams(httptest.NewRequest(http.MethodGet, raw, nil)); err == nil {
 			t.Fatalf("params for %q succeeded", raw)
 		}
@@ -386,10 +390,11 @@ func TestCapacityWorkerInstanceListParamsAreBounded(t *testing.T) {
 func TestCapacityWorkerInstanceReadContract(t *testing.T) {
 	workerID := pgvalue.NewUUIDv7()
 	groupID := uuid.NewV7().String()
+	groupDBID := pgvalue.UUID(uuid.MustParse(groupID))
 	poolID := pgvalue.NewUUIDv7()
 	now := time.Now().UTC()
 	row := db.ListCapacityWorkerInstancesRow{
-		ID: workerID, ResourceID: "host-opaque-1", WorkerGroupID: groupID, WorkerPoolID: poolID,
+		ID: workerID, ResourceID: "host-opaque-1", WorkerGroupID: groupDBID, WorkerPoolID: poolID,
 		State: string(db.WorkerInstanceStateActive), ClaimVersion: 7,
 		CurrentEpoch: pgtype.Int8{Int64: 4, Valid: true},
 		CreatedAt:    pgtype.Timestamptz{Time: now, Valid: true},
@@ -420,7 +425,7 @@ func TestCapacityWorkerInstanceReadContract(t *testing.T) {
 	}
 	listed := capacityJSONObject(t, instances[0])
 	assertCapacityJSONKeys(t, listed, "claim_version", "created_at", "current_epoch", "id", "resource_id", "status", "updated_at", "worker_group_id", "worker_pool_id")
-	if store.listParams.WorkerGroupID.String != groupID || strings.Join(store.listParams.States, ",") != "active" || store.listParams.RowLimit != 1 {
+	if pgvalue.UUIDString(store.listParams.WorkerGroupID) != groupID || strings.Join(store.listParams.States, ",") != "active" || store.listParams.RowLimit != 1 {
 		t.Fatalf("list params = %+v", store.listParams)
 	}
 	if listed["id"] != uuid.UUID(workerID.Bytes).String() || listed["resource_id"] != row.ResourceID ||
@@ -469,7 +474,7 @@ func (s *capacityPlanStore) GetWorkerGroupByRegionName(context.Context, db.GetWo
 	return s.group, nil
 }
 
-func (s *capacityPlanStore) GetWorkerGroup(context.Context, string) (db.WorkerGroup, error) {
+func (s *capacityPlanStore) GetWorkerGroup(context.Context, pgtype.UUID) (db.WorkerGroup, error) {
 	return s.group, nil
 }
 
@@ -539,7 +544,7 @@ func (s *capacityDrainStore) ListCapacityWorkerInstances(_ context.Context, para
 	return s.listed, nil
 }
 
-func (s *capacityDrainStore) GetWorkerGroup(context.Context, string) (db.WorkerGroup, error) {
+func (s *capacityDrainStore) GetWorkerGroup(context.Context, pgtype.UUID) (db.WorkerGroup, error) {
 	s.groupCalls++
 	return s.group, nil
 }

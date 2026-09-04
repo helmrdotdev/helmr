@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -63,7 +65,7 @@ const (
 
 type StaleWorkerFenceResult struct {
 	WorkerInstanceID pgtype.UUID
-	WorkerGroupID    string
+	WorkerGroupID    pgtype.UUID
 	WorkerEpoch      pgtype.Int8
 	PreviousState    db.WorkerInstanceState
 	FreshnessAt      time.Time
@@ -240,7 +242,7 @@ func (f *StaleWorkerFencer) ReconcileOnce(ctx context.Context) (StaleWorkerFence
 
 	now := f.clock.Now()
 	type fenceScope struct {
-		groupID      string
+		groupID      pgtype.UUID
 		registration time.Duration
 	}
 	scopes := make([]fenceScope, 0, max(1, len(f.groupGrace)))
@@ -254,7 +256,11 @@ func (f *StaleWorkerFencer) ReconcileOnce(ctx context.Context) (StaleWorkerFence
 		sort.Strings(groupIDs)
 		for _, groupID := range groupIDs {
 			grace := f.groupGrace[groupID]
-			scopes = append(scopes, fenceScope{groupID: groupID, registration: grace.Registration})
+			parsedGroupID, err := ids.Parse(groupID)
+			if err != nil {
+				return cycle, fmt.Errorf("worker group registration grace ID %q is not a canonical UUIDv7", groupID)
+			}
+			scopes = append(scopes, fenceScope{groupID: pgvalue.UUID(parsedGroupID), registration: grace.Registration})
 		}
 	}
 	err := transactions.WithinStaleWorkerFenceTransaction(ctx, func(queries StaleWorkerFenceQueries) error {
@@ -268,7 +274,7 @@ func (f *StaleWorkerFencer) ReconcileOnce(ctx context.Context) (StaleWorkerFence
 				RowLimit:                    f.batch,
 			})
 			if err != nil {
-				return fmt.Errorf("select stale worker fence candidates for group %q: %w", scope.groupID, err)
+				return fmt.Errorf("select stale worker fence candidates for group %q: %w", pgvalue.UUIDString(scope.groupID), err)
 			}
 			cycle.Selected += len(candidates)
 			for _, candidate := range candidates {
@@ -311,7 +317,7 @@ func (f *StaleWorkerFencer) ReconcileOnce(ctx context.Context) (StaleWorkerFence
 	for _, result := range cycle.Results {
 		f.log.Info("stale worker fence result",
 			"worker_instance_id", result.WorkerInstanceID,
-			"worker_group_id", result.WorkerGroupID,
+			"worker_group_id", pgvalue.UUIDString(result.WorkerGroupID),
 			"worker_epoch", result.WorkerEpoch.Int64,
 			"previous_state", result.PreviousState,
 			"freshness_at", result.FreshnessAt,

@@ -9,9 +9,12 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 )
 
@@ -327,6 +330,42 @@ func TestMachineRoutesPreserveAuthenticationBoundaries(t *testing.T) {
 				t.Fatalf("status = %d, want %d: %s", response.Code, test.status, response.Body.String())
 			}
 		})
+	}
+}
+
+func TestWorkerRouteRejectsMalformedJWTGroupBeforeDatabase(t *testing.T) {
+	signingKey := []byte(strings.Repeat("w", auth.WorkerTokenSigningKeySize))
+	now := time.Now().UTC()
+	claims := jwt.MapClaims{
+		"iss":                 auth.WorkerTokenIssuer,
+		"sub":                 "01900000-0000-7000-8000-000000000711",
+		"aud":                 []string{auth.WorkerTokenAudience},
+		"iat":                 now.Add(-time.Minute).Unix(),
+		"exp":                 now.Add(time.Hour).Unix(),
+		"worker_group_id":     "not-a-uuid",
+		"worker_instance_id":  "01900000-0000-7000-8000-000000000711",
+		"credential_id":       "01900000-0000-7000-8000-000000000712",
+		"worker_epoch":        1,
+		"claim_version":       1,
+		"group_claim_version": 1,
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	token.Header["typ"] = "JWT"
+	rawToken, err := token.SignedString(signingKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{db: &routeWorkerAuthStore{}, workerTokenSigningKey: signingKey}
+	router := chi.NewRouter()
+	server.mountWorkerRoutes(router)
+	request := httptest.NewRequest(http.MethodGet, "/worker/v1/instance", nil)
+	request.Header.Set("Authorization", "Bearer "+rawToken)
+	response := httptest.NewRecorder()
+
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401: %s", response.Code, response.Body.String())
 	}
 }
 

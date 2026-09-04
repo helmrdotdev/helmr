@@ -1432,24 +1432,24 @@ func validRunLeaseClaimSecretFixture(
 		RevocationGeneration: 2,
 	}
 	return db.LockAttemptSecretDeliveryRow{
-		WorkspaceSecret: db.WorkspaceSecret{
-			WorkspaceID:     locators.WorkspaceID,
-			EnvironmentID:   locators.EnvironmentID,
-			PlacementKind:   "env",
-			PlacementTarget: "API_KEY",
-			SecretID:        secretID,
-		},
-		Secret:                         secretRow,
-		ResolutionID:                   pgvalue.UUID(uuid.New()),
-		ResolutionRunID:                locators.RunID,
-		ResolutionAttemptNumber:        pgtype.Int4{Int32: locators.AttemptNumber, Valid: true},
-		ResolutionSecretVersionID:      versionID,
-		ResolutionRevocationGeneration: pgtype.Int8{Int64: 2, Valid: true},
-	}, db.SecretVersion{
-		ID:       versionID,
-		SecretID: secretID,
-		Version:  1,
-	}
+			WorkspaceSecret: db.WorkspaceSecret{
+				WorkspaceID:     locators.WorkspaceID,
+				EnvironmentID:   locators.EnvironmentID,
+				PlacementKind:   "env",
+				PlacementTarget: "API_KEY",
+				SecretID:        secretID,
+			},
+			Secret:                         secretRow,
+			ResolutionID:                   pgvalue.UUID(uuid.New()),
+			ResolutionRunID:                locators.RunID,
+			ResolutionAttemptNumber:        pgtype.Int4{Int32: locators.AttemptNumber, Valid: true},
+			ResolutionSecretVersionID:      versionID,
+			ResolutionRevocationGeneration: pgtype.Int8{Int64: 2, Valid: true},
+		}, db.SecretVersion{
+			ID:       versionID,
+			SecretID: secretID,
+			Version:  1,
+		}
 }
 
 func validRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsRow, runLeaseClaimAuthority) {
@@ -1470,11 +1470,12 @@ func validRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsRow, r
 	workspaceLeaseID := id()
 	versionID := id()
 	const (
-		workerGroupID  = "run-workers"
 		regionID       = "us-east-1"
 		protocol       = "v0"
 		runtimeIDValue = "runtime-identity"
 	)
+	workerGroupID := controlplaneTestWorkerGroupID
+	workerGroupDBID := controlplaneTestWorkerGroupDBID
 	worker := workerActor{
 		WorkerInstanceID:  workerInstanceID,
 		WorkerGroupID:     workerGroupID,
@@ -1524,14 +1525,14 @@ func validRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsRow, r
 			BaseWorkspaceVersionID: versionID,
 		},
 		workerGroup: db.WorkerGroup{
-			ID:           workerGroupID,
+			ID:           workerGroupDBID,
 			RegionID:     regionID,
 			State:        db.WorkerGroupStateActive,
 			ClaimVersion: 1,
 		},
 		worker: db.WorkerInstance{
 			ID:                           pgvalue.UUID(workerInstanceID),
-			WorkerGroupID:                workerGroupID,
+			WorkerGroupID:                workerGroupDBID,
 			State:                        db.WorkerInstanceStateActive,
 			ClaimVersion:                 3,
 			CurrentEpoch:                 pgtype.Int8{Int64: 7, Valid: true},
@@ -1561,7 +1562,7 @@ func validRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsRow, r
 			WorkspaceID:                      workspaceID,
 			LeaseSequence:                    1,
 			AttemptNumber:                    1,
-			WorkerGroupID:                    workerGroupID,
+			WorkerGroupID:                    workerGroupDBID,
 			WorkerInstanceID:                 pgvalue.UUID(workerInstanceID),
 			WorkerEpoch:                      7,
 			RuntimeInstanceID:                runtimeID,

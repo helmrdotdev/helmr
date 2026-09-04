@@ -102,7 +102,7 @@ func (s *Server) workerCreateActorInputRunWait(
 	err = s.inTx(r.Context(), func(work *txWork) error {
 		lockedLocators, err := work.q.GetLiveRunLeaseLocators(r.Context(), db.GetLiveRunLeaseLocatorsParams{
 			ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: request.Lease.LeaseSequence,
-			WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+			WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 			WorkerEpoch: worker.WorkerEpoch})
 		if err != nil {
 			return staleRunLeaseClaim(err)

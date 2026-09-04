@@ -506,7 +506,7 @@ func testWaitRequest(kind workerapi.RunWaitKind) WaitRequest {
 
 func testWaitRunLeaseAssignment() workerapi.RunLeaseAssignment {
 	return workerapi.RunLeaseAssignment{
-		ID: "lease-1", RunID: "run-1", AttemptNumber: 2, WorkerGroupID: "run-us-east-1",
+		ID: "lease-1", RunID: "run-1", AttemptNumber: 2, WorkerGroupID: "01900000-0000-7000-8000-000000000902",
 		WorkerInstanceID: "worker-1", WorkerEpoch: 42, LeaseSequence: 1,
 		RuntimeInstanceID: "runtime-instance-1",
 	}

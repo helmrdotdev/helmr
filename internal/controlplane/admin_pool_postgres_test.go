@@ -61,7 +61,7 @@ func TestAdminWorkerPoolPostgresGroupDrainClearsPrimariesAtomically(t *testing.T
 		t.Fatalf("primaries after replacement seal = %+v", afterReplacementSeal)
 	}
 
-	status, err := workergroup.BeginGroupDrain(t.Context(), fixture.q, group.ID, group.ClaimVersion)
+	status, err := workergroup.BeginGroupDrain(t.Context(), fixture.q, pgvalue.MustUUIDValue(group.ID), group.ClaimVersion)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestAdminWorkerPoolPostgresGroupDrainClearsPrimariesAtomically(t *testing.T
 		t.Fatalf("draining group = %+v", draining)
 	}
 
-	replay, err := workergroup.BeginGroupDrain(t.Context(), fixture.q, group.ID, group.ClaimVersion)
+	replay, err := workergroup.BeginGroupDrain(t.Context(), fixture.q, pgvalue.MustUUIDValue(group.ID), group.ClaimVersion)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestWorkerGroupPrimarySelectionPostgresIsAtomicAndReplaySafe(t *testing.T) 
 	pool := fixture.addActivePool(t, "current")
 	server := &Server{db: fixture.q, tx: fixture.pool}
 	command := workerGroupPrimarySelectionCommand{
-		workerGroupID:             fixture.group.ID,
+		workerGroupID:             pgvalue.MustUUIDValue(fixture.group.ID),
 		expectedGroupClaimVersion: fixture.group.ClaimVersion,
 		desired: func(db.WorkerGroup) (pgtype.UUID, error) {
 			return pool.ID, nil
@@ -154,13 +154,13 @@ func TestWorkerGroupPrimarySelectionPostgresSerializesCompetingControllers(t *te
 	server := &Server{db: fixture.q, tx: fixture.pool}
 	commands := []workerGroupPrimarySelectionCommand{
 		{
-			workerGroupID: fixture.group.ID, expectedGroupClaimVersion: fixture.group.ClaimVersion,
+			workerGroupID: pgvalue.MustUUIDValue(fixture.group.ID), expectedGroupClaimVersion: fixture.group.ClaimVersion,
 			desired: func(db.WorkerGroup) (pgtype.UUID, error) {
 				return first.ID, nil
 			},
 		},
 		{
-			workerGroupID: fixture.group.ID, expectedGroupClaimVersion: fixture.group.ClaimVersion,
+			workerGroupID: pgvalue.MustUUIDValue(fixture.group.ID), expectedGroupClaimVersion: fixture.group.ClaimVersion,
 			desired: func(db.WorkerGroup) (pgtype.UUID, error) {
 				return second.ID, nil
 			},
@@ -559,7 +559,7 @@ VALUES ($1, 'Worker Pool Test')
 ON CONFLICT (id) DO NOTHING`, regionID)
 	q := db.New(pool)
 	group, err := q.CreateWorkerGroup(t.Context(), db.CreateWorkerGroupParams{
-		ID:          uuid.NewV7().String(),
+		ID:          pgvalue.UUID(uuid.NewV7()),
 		RegionID:    regionID,
 		Name:        "worker-pool-test",
 		Description: "",

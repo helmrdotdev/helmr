@@ -1852,7 +1852,7 @@ type GetTokenWaitRegistrationReplayParams struct {
 	Metadata                      []byte      `json:"metadata"`
 	Tags                          []string    `json:"tags"`
 	LeaseSequence                 int64       `json:"lease_sequence"`
-	WorkerGroupID                 string      `json:"worker_group_id"`
+	WorkerGroupID                 pgtype.UUID `json:"worker_group_id"`
 	WorkerInstanceID              pgtype.UUID `json:"worker_instance_id"`
 	WorkerEpoch                   int64       `json:"worker_epoch"`
 	ActorSpeculativeInputSequence pgtype.Int8 `json:"actor_speculative_input_sequence"`
@@ -2794,7 +2794,7 @@ type LockTokenWaitRunLeaseParams struct {
 	AttemptNumber     int32       `json:"attempt_number"`
 	WorkspaceID       pgtype.UUID `json:"workspace_id"`
 	LeaseSequence     int64       `json:"lease_sequence"`
-	WorkerGroupID     string      `json:"worker_group_id"`
+	WorkerGroupID     pgtype.UUID `json:"worker_group_id"`
 	WorkerInstanceID  pgtype.UUID `json:"worker_instance_id"`
 	WorkerEpoch       int64       `json:"worker_epoch"`
 	RuntimeInstanceID pgtype.UUID `json:"runtime_instance_id"`

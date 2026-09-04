@@ -236,8 +236,10 @@ func projectRunLeaseAssignment(authority runLeaseProjectionAuthority) (workerapi
 		lease.StartDeadlineAt.Time.After(lease.ExpiresAt.Time) {
 		return workerapi.RunLeaseAssignment{}, errors.New("run lease assignment fields are invalid")
 	}
+	if !lease.WorkerGroupID.Valid {
+		return workerapi.RunLeaseAssignment{}, errors.New("worker group ID is required")
+	}
 	for name, value := range map[string]string{
-		"worker group ID":     lease.WorkerGroupID,
 		"runtime identity ID": lease.RuntimeIdentityID,
 	} {
 		if strings.TrimSpace(value) == "" {
@@ -249,7 +251,7 @@ func projectRunLeaseAssignment(authority runLeaseProjectionAuthority) (workerapi
 		RunID:                            runID,
 		AttemptNumber:                    lease.AttemptNumber,
 		LeaseSequence:                    lease.LeaseSequence,
-		WorkerGroupID:                    lease.WorkerGroupID,
+		WorkerGroupID:                    pgvalue.UUIDString(lease.WorkerGroupID),
 		WorkerInstanceID:                 workerID,
 		WorkerEpoch:                      lease.WorkerEpoch,
 		RuntimeInstanceID:                runtimeID,

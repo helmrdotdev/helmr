@@ -114,7 +114,7 @@ SELECT worker_instances.claim_version, worker_groups.claim_version
 		bytes.NewReader(requestBody),
 	)
 	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
-		WorkerInstanceID: fixture.WorkerID, WorkerGroupID: runtest.WorkerGroup,
+		WorkerInstanceID: fixture.WorkerID, WorkerGroupID: runtest.WorkerGroupID,
 		WorkerEpoch: 1, ClaimVersion: workerClaimVersion, GroupClaimVersion: groupClaimVersion,
 	}))
 	response := httptest.NewRecorder()

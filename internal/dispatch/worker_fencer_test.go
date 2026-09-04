@@ -9,10 +9,26 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+)
+
+const (
+	staleWorkerBuildGroup      = "01900000-0000-7000-8000-000000000802"
+	staleWorkerRunGroup        = "01900000-0000-7000-8000-000000000803"
+	staleWorkerManagedGroup    = "01900000-0000-7000-8000-000000000804"
+	staleWorkerSelfHostedGroup = "01900000-0000-7000-8000-000000000805"
+)
+
+var (
+	staleWorkerBuildGroupID      = pgvalue.UUID(uuid.MustParse(staleWorkerBuildGroup))
+	staleWorkerRunGroupID        = pgvalue.UUID(uuid.MustParse(staleWorkerRunGroup))
+	staleWorkerManagedGroupID    = pgvalue.UUID(uuid.MustParse(staleWorkerManagedGroup))
+	staleWorkerSelfHostedGroupID = pgvalue.UUID(uuid.MustParse(staleWorkerSelfHostedGroup))
 )
 
 func TestStaleWorkerFencerFencesStaleActiveWorker(t *testing.T) {
@@ -117,9 +133,9 @@ func TestStaleWorkerFencerHandlesRegisteringWorkerWithoutObservation(t *testing.
 func TestStaleWorkerFencerIsDeploymentModeAgnostic(t *testing.T) {
 	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
 	managed := staleWorkerCandidate(5, db.WorkerInstanceStateActive, now.Add(-time.Minute), "worker_observation_stale")
-	managed.WorkerGroupID = "managed-run"
+	managed.WorkerGroupID = staleWorkerManagedGroupID
 	selfHosted := staleWorkerCandidate(6, db.WorkerInstanceStateActive, now.Add(-time.Minute), "worker_observation_stale")
-	selfHosted.WorkerGroupID = "self-hosted-run"
+	selfHosted.WorkerGroupID = staleWorkerSelfHostedGroupID
 	store := &fakeStaleWorkerFenceQueries{candidates: []db.ListStaleWorkerFenceCandidatesRow{managed, selfHosted}}
 	fencer := newTestStaleWorkerFencer(t, store, now)
 
@@ -138,17 +154,17 @@ func TestStaleWorkerFencerIsDeploymentModeAgnostic(t *testing.T) {
 func TestStaleWorkerFencerUsesWorkerGroupRegistrationCutoffs(t *testing.T) {
 	now := time.Date(2026, time.July, 14, 12, 0, 0, 0, time.UTC)
 	run := staleWorkerCandidate(7, db.WorkerInstanceStateActive, now.Add(-time.Minute), "worker_observation_stale")
-	run.WorkerGroupID = "run"
+	run.WorkerGroupID = staleWorkerRunGroupID
 	build := staleWorkerCandidate(8, db.WorkerInstanceStateRegistering, now.Add(-time.Minute), "registering_observation_missing")
-	build.WorkerGroupID = "build"
+	build.WorkerGroupID = staleWorkerBuildGroupID
 	store := &fakeStaleWorkerFenceQueries{candidates: []db.ListStaleWorkerFenceCandidatesRow{run, build}}
 	fencer, err := NewStaleWorkerFencer(
 		fakeStaleWorkerFenceTransactions{queries: store},
 		WithStaleWorkerFenceLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
 		WithStaleWorkerFenceClock(fixedStaleWorkerFenceClock{now: now}),
 		WithWorkerGroupRegistrationGrace(map[string]WorkerGroupRegistrationGrace{
-			"run":   {Registration: time.Minute},
-			"build": {Registration: 20 * time.Minute},
+			staleWorkerRunGroup:   {Registration: time.Minute},
+			staleWorkerBuildGroup: {Registration: 20 * time.Minute},
 		}),
 	)
 	if err != nil {
@@ -157,7 +173,7 @@ func TestStaleWorkerFencerUsesWorkerGroupRegistrationCutoffs(t *testing.T) {
 	if _, err := fencer.ReconcileOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(store.listParams) != 2 || store.listParams[0].WorkerGroupID != "build" || store.listParams[1].WorkerGroupID != "run" {
+	if len(store.listParams) != 2 || store.listParams[0].WorkerGroupID != staleWorkerBuildGroupID || store.listParams[1].WorkerGroupID != staleWorkerRunGroupID {
 		t.Fatalf("list scopes = %+v", store.listParams)
 	}
 	if got, want := store.rechecks[0].RegistrationStaleBefore.Time, now.Add(-20*time.Minute); !got.Equal(want) {
@@ -170,15 +186,15 @@ func TestStaleWorkerFencerScopesBatchLimitPerGroup(t *testing.T) {
 	candidates := make([]db.ListStaleWorkerFenceCandidatesRow, 0, 102)
 	for index := range 101 {
 		candidate := staleWorkerCandidate(byte(index+1), db.WorkerInstanceStateActive, now.Add(-time.Minute), "worker_observation_stale")
-		candidate.WorkerGroupID = "build"
+		candidate.WorkerGroupID = staleWorkerBuildGroupID
 		candidates = append(candidates, candidate)
 	}
 	run := staleWorkerCandidate(255, db.WorkerInstanceStateActive, now.Add(-time.Minute), "worker_observation_stale")
-	run.WorkerGroupID = "run"
+	run.WorkerGroupID = staleWorkerRunGroupID
 	candidates = append(candidates, run)
 	store := &fakeStaleWorkerFenceQueries{candidates: candidates}
 	store.recheck = func(_ context.Context, params db.RecheckAndFenceStaleWorkerInstanceParams) (db.RecheckAndFenceStaleWorkerInstanceRow, error) {
-		if params.WorkerGroupID == "build" {
+		if params.WorkerGroupID == staleWorkerBuildGroupID {
 			return db.RecheckAndFenceStaleWorkerInstanceRow{}, pgx.ErrNoRows
 		}
 		return db.RecheckAndFenceStaleWorkerInstanceRow{ID: params.ID, WorkerGroupID: params.WorkerGroupID}, nil
@@ -188,8 +204,8 @@ func TestStaleWorkerFencerScopesBatchLimitPerGroup(t *testing.T) {
 		WithStaleWorkerFenceLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
 		WithStaleWorkerFenceClock(fixedStaleWorkerFenceClock{now: now}),
 		WithWorkerGroupRegistrationGrace(map[string]WorkerGroupRegistrationGrace{
-			"run":   {Registration: time.Minute},
-			"build": {Registration: 20 * time.Minute},
+			staleWorkerRunGroup:   {Registration: time.Minute},
+			staleWorkerBuildGroup: {Registration: 20 * time.Minute},
 		}),
 	)
 	if err != nil {
@@ -199,7 +215,7 @@ func TestStaleWorkerFencerScopesBatchLimitPerGroup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cycle.Fenced != 1 || store.rechecks[len(store.rechecks)-1].WorkerGroupID != "run" {
+	if cycle.Fenced != 1 || store.rechecks[len(store.rechecks)-1].WorkerGroupID != staleWorkerRunGroupID {
 		t.Fatalf("cycle=%+v last recheck=%+v", cycle, store.rechecks[len(store.rechecks)-1])
 	}
 }
@@ -279,7 +295,7 @@ func staleWorkerCandidate(seed byte, state db.WorkerInstanceState, freshness tim
 	id[15] = seed
 	return db.ListStaleWorkerFenceCandidatesRow{
 		ID:            pgtype.UUID{Bytes: id, Valid: true},
-		WorkerGroupID: "run",
+		WorkerGroupID: staleWorkerRunGroupID,
 		CurrentEpoch:  pgtype.Int8{Int64: 7, Valid: true},
 		State:         state,
 		FreshnessAt:   pgtype.Timestamptz{Time: freshness, Valid: true},
@@ -312,7 +328,7 @@ func (queries *fakeStaleWorkerFenceQueries) ListStaleWorkerFenceCandidates(
 	queries.listParams = append(queries.listParams, params)
 	candidates := make([]db.ListStaleWorkerFenceCandidatesRow, 0, len(queries.candidates))
 	for _, candidate := range queries.candidates {
-		if params.WorkerGroupID == "" || candidate.WorkerGroupID == params.WorkerGroupID {
+		if !params.WorkerGroupID.Valid || candidate.WorkerGroupID == params.WorkerGroupID {
 			candidates = append(candidates, candidate)
 		}
 		if len(candidates) == int(params.RowLimit) {

@@ -31,7 +31,7 @@ type runPlacementAuthority struct {
 	restoreCheckpointVersion  pgtype.UUID
 	resumeRunWaitID           pgtype.UUID
 	resumeRequestVersion      int64
-	restoreWorkerGroupID      string
+	restoreWorkerGroupID      pgtype.UUID
 	restoreRuntimeIdentityID  string
 	restoreVMVCPUCount        int32
 	restoreCPUConfigDigest    string

@@ -170,7 +170,7 @@ UPDATE workspace_mounts
 		}
 		httpRequest := httptest.NewRequest(http.MethodPost, "/worker/v1/run/workspace-mounts/capture", strings.NewReader(string(body)))
 		httpRequest = httpRequest.WithContext(context.WithValue(httpRequest.Context(), workerContextKey{}, workerActor{
-			WorkerInstanceID: fixture.WorkerID, WorkerGroupID: runtest.WorkerGroup, WorkerEpoch: 1,
+			WorkerInstanceID: fixture.WorkerID, WorkerGroupID: runtest.WorkerGroupID, WorkerEpoch: 1,
 		}))
 		response := httptest.NewRecorder()
 		server.workerCaptureWorkspaceMount(response, httpRequest)

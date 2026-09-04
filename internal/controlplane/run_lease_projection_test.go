@@ -300,7 +300,7 @@ func validRunLeaseProjectionAuthority() runLeaseProjectionAuthority {
 		runLease: db.RunLease{
 			ID: runLeaseID, RunID: runID, WorkspaceID: workspaceID,
 			AttemptNumber: attemptNumber, LeaseSequence: 2,
-			WorkerGroupID: "workers", WorkerInstanceID: pgvalue.UUID(uuid.New()),
+			WorkerGroupID: controlplaneTestWorkerGroupDBID, WorkerInstanceID: pgvalue.UUID(uuid.New()),
 			WorkerEpoch: 3, RuntimeInstanceID: runtimeID, RuntimeIdentityID: "runtime",
 			RequestedCPUMillis: 1000, RequestedMemoryBytes: 1024,
 			RequestedGuestEphemeralDiskBytes: 2048,

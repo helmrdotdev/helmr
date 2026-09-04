@@ -11,7 +11,7 @@ SELECT workers.id,
        END::text AS reason
   FROM worker_instances AS workers
  WHERE workers.state IN ('registering', 'active', 'draining')
-   AND (sqlc.arg(worker_group_id)::text = '' OR workers.worker_group_id = sqlc.arg(worker_group_id)::text)
+   AND (sqlc.narg(worker_group_id)::uuid IS NULL OR workers.worker_group_id = sqlc.narg(worker_group_id))
    AND (
        (workers.state = 'registering'
         AND workers.observed_at IS NULL

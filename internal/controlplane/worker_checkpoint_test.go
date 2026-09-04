@@ -146,7 +146,7 @@ func validCheckpointReadyRequest() workerapi.CheckpointReadyRequest {
 	runtimeIdentity := digestWith("1")
 	lease := workerapi.RunLeaseAssignment{
 		ID: uuid.NewV7().String(), RunID: runID, AttemptNumber: 1, LeaseSequence: 1,
-		WorkerGroupID: "run-test", WorkerInstanceID: uuid.NewV7().String(), WorkerEpoch: 1,
+		WorkerGroupID: controlplaneTestWorkerGroup, WorkerInstanceID: uuid.NewV7().String(), WorkerEpoch: 1,
 		RuntimeInstanceID: uuid.NewV7().String(), RuntimeIdentityID: runtimeIdentity,
 		WorkspaceID: uuid.NewV7().String(), WorkspaceMountID: uuid.NewV7().String(),
 		WorkspaceLeaseID: uuid.NewV7().String(), BaseWorkspaceVersionID: uuid.NewV7().String(),

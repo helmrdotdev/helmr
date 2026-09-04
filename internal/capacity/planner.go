@@ -44,7 +44,7 @@ const (
 )
 
 type Store interface {
-	GetWorkerGroup(context.Context, string) (db.WorkerGroup, error)
+	GetWorkerGroup(context.Context, pgtype.UUID) (db.WorkerGroup, error)
 	ListCapacityWorkerPools(context.Context, db.ListCapacityWorkerPoolsParams) ([]db.ListCapacityWorkerPoolsRow, error)
 	ListWorkerCapacityBins(context.Context, db.ListWorkerCapacityBinsParams) ([]db.ListWorkerCapacityBinsRow, error)
 	ListQueuedRunEligibleScopes(context.Context, db.ListQueuedRunEligibleScopesParams) ([]db.ListQueuedRunEligibleScopesRow, error)
@@ -66,7 +66,7 @@ type item struct {
 }
 
 type bin struct {
-	workerGroupID     string
+	workerGroupID     uuid.UUID
 	workerPoolID      pgtype.UUID
 	resources         ResourceVector
 	runConsumers      int64
@@ -84,7 +84,7 @@ type bin struct {
 }
 
 type RestoreRequirements struct {
-	WorkerGroupID     string
+	WorkerGroupID     uuid.UUID
 	RuntimeIdentityID string
 	VCPUCount         int32
 	CPUConfigDigest   string
@@ -94,7 +94,7 @@ type RestoreRequirements struct {
 }
 
 type Pool struct {
-	WorkerGroupID     string
+	WorkerGroupID     uuid.UUID
 	RuntimeIdentityID string
 	SubstrateFormat   string
 	SubstrateContract string
@@ -103,7 +103,8 @@ type Pool struct {
 }
 
 func CanRestore(requirements RestoreRequirements, pool Pool) bool {
-	if requirements.WorkerGroupID == "" || pool.WorkerGroupID != requirements.WorkerGroupID ||
+	if requirements.WorkerGroupID == uuid.Nil() || pool.WorkerGroupID == uuid.Nil() ||
+		pool.WorkerGroupID != requirements.WorkerGroupID ||
 		requirements.RuntimeIdentityID == "" || pool.RuntimeIdentityID != requirements.RuntimeIdentityID ||
 		requirements.VCPUCount <= 0 || requirements.CPUConfigDigest == "" ||
 		pool.SubstrateFormat != requirements.SubstrateFormat ||
@@ -128,7 +129,7 @@ type poolPlan struct {
 	result   PoolPlan
 }
 
-func Plan(ctx context.Context, store Store, workerGroupID string, request PlanRequest, now time.Time) (PlanResponse, error) {
+func Plan(ctx context.Context, store Store, workerGroupID uuid.UUID, request PlanRequest, now time.Time) (PlanResponse, error) {
 	if len(request.Pools) == 0 || len(request.Pools) > maximumPlanningPools {
 		return PlanResponse{}, fmt.Errorf("%w: pools must contain between 1 and %d entries", ErrInvalidPlanRequest, maximumPlanningPools)
 	}
@@ -149,7 +150,7 @@ func Plan(ctx context.Context, store Store, workerGroupID string, request PlanRe
 		limits[key] = requested.MaxAdditionalWorkers
 		poolIDs = append(poolIDs, pgvalue.UUID(id))
 	}
-	group, err := store.GetWorkerGroup(ctx, workerGroupID)
+	group, err := store.GetWorkerGroup(ctx, pgvalue.UUID(workerGroupID))
 	if err != nil {
 		return PlanResponse{}, err
 	}
@@ -163,7 +164,7 @@ func Plan(ctx context.Context, store Store, workerGroupID string, request PlanRe
 		return PlanResponse{}, fmt.Errorf("%w: every requested pool must be active in the Worker Group", ErrInvalidPlanRequest)
 	}
 	response := PlanResponse{
-		WorkerGroupID: group.ID, WorkerGroupName: group.Name, RegionID: group.RegionID,
+		WorkerGroupID: pgvalue.UUIDString(group.ID), WorkerGroupName: group.Name, RegionID: group.RegionID,
 		GroupStatus: WorkerGroupStatus(group.State),
 		Complete:    true, ComputedAt: now.UTC(), Pools: make([]PoolPlan, 0, len(rows)),
 		UnmatchedDemand: []Incompatibility{},
@@ -198,7 +199,7 @@ func Plan(ctx context.Context, store Store, workerGroupID string, request PlanRe
 			plan.result.ScaleInBlocked = true
 		}
 	}
-	bins, binsComplete, err := currentBins(ctx, store, group.ID)
+	bins, binsComplete, err := currentBins(ctx, store, pgvalue.MustUUIDValue(group.ID))
 	if err != nil {
 		return PlanResponse{}, err
 	}
@@ -365,8 +366,9 @@ func capacityPoolPlan(row db.ListCapacityWorkerPoolsRow, max int32) (poolPlan, e
 		CPUMillis: row.PerVMCPUMillis.Int64, MemoryBytes: row.PerVMMemoryBytes.Int64,
 		GuestEphemeralDiskBytes: row.PerVMGuestEphemeralDiskBytes.Int64,
 	}
+	workerGroupID := pgvalue.MustUUIDValue(row.WorkerGroupID)
 	template := bin{
-		workerGroupID: row.WorkerGroupID, workerPoolID: row.ID,
+		workerGroupID: workerGroupID, workerPoolID: row.ID,
 		resources: resources, runConsumers: resources.VMSlots, runtimeStarts: resources.VMSlots,
 		supportsRun: true,
 		runtimeArch: "x86_64", runtimeContract: runtimeid.Contract,
@@ -377,7 +379,7 @@ func capacityPoolPlan(row db.ListCapacityWorkerPoolsRow, max int32) (poolPlan, e
 	return poolPlan{
 		id: row.ID, max: max,
 		pool: Pool{
-			WorkerGroupID: row.WorkerGroupID, RuntimeIdentityID: row.RuntimeIdentityID.String,
+			WorkerGroupID: workerGroupID, RuntimeIdentityID: row.RuntimeIdentityID.String,
 			SubstrateFormat: row.SubstrateFormat.String, SubstrateContract: row.SubstrateContract.String,
 			PerVM: perVM, CPUShapes: shapes,
 		},
@@ -566,7 +568,7 @@ func runItem(row db.ListQueuedRunPlanningCandidatesForScopesRow) item {
 	}
 	resources := result.resources
 	if row.RequiredRuntimeIdentityID != "" {
-		if row.RequiredWorkerGroupID == "" || row.RequiredVMVCPUCount <= 0 ||
+		if !row.RequiredWorkerGroupID.Valid || row.RequiredVMVCPUCount <= 0 ||
 			row.RequiredCPUConfigDigest == "" || row.RequiredCPUMillis <= 0 ||
 			row.RequiredMemoryBytes <= 0 || row.RequiredGuestEphemeralDiskBytes <= 0 ||
 			row.RequiredSubstrateFormat == "" || row.RequiredSubstrateContract == "" {
@@ -578,7 +580,7 @@ func runItem(row db.ListQueuedRunPlanningCandidatesForScopesRow) item {
 			GuestEphemeralDiskBytes: row.RequiredGuestEphemeralDiskBytes, VMSlots: 1,
 		}
 		result.restore = &RestoreRequirements{
-			WorkerGroupID: row.RequiredWorkerGroupID, RuntimeIdentityID: row.RequiredRuntimeIdentityID,
+			WorkerGroupID: pgvalue.MustUUIDValue(row.RequiredWorkerGroupID), RuntimeIdentityID: row.RequiredRuntimeIdentityID,
 			VCPUCount: row.RequiredVMVCPUCount, CPUConfigDigest: row.RequiredCPUConfigDigest,
 			SubstrateFormat: row.RequiredSubstrateFormat, SubstrateContract: row.RequiredSubstrateContract,
 			Resources: resources,
@@ -616,9 +618,9 @@ func freshExecutionItem(key string, manifestVersion int32, manifestJSON []byte) 
 	return result
 }
 
-func currentBins(ctx context.Context, store Store, workerGroupID string) ([]bin, bool, error) {
+func currentBins(ctx context.Context, store Store, workerGroupID uuid.UUID) ([]bin, bool, error) {
 	rows, err := store.ListWorkerCapacityBins(ctx, db.ListWorkerCapacityBinsParams{
-		WorkerGroupID: workerGroupID, ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
+		WorkerGroupID: pgvalue.UUID(workerGroupID), ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
 		RowLimit: maximumPlanningWorkers + 1,
 	})
 	if err != nil {
@@ -637,7 +639,7 @@ func currentBins(ctx context.Context, store Store, workerGroupID string) ([]bin,
 
 func binFromRow(row db.ListWorkerCapacityBinsRow) bin {
 	result := bin{
-		workerGroupID: row.WorkerGroupID,
+		workerGroupID: pgvalue.MustUUIDValue(row.WorkerGroupID),
 		workerPoolID:  row.WorkerPoolID,
 		resources: ResourceVector{
 			CPUMillis: row.AvailableCPUMillis, MemoryBytes: row.AvailableMemoryBytes,

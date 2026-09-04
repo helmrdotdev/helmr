@@ -80,7 +80,7 @@ func (s *Server) startRun(
 ) (workerapi.RunLeaseFence, error) {
 	err := s.inTx(ctx, func(work *txWork) error {
 		locators, err := work.q.GetRunLeaseStartLocators(ctx, db.GetRunLeaseStartLocatorsParams{
-			ID: leaseID, LeaseSequence: expected.LeaseSequence, WorkerGroupID: worker.WorkerGroupID,
+			ID: leaseID, LeaseSequence: expected.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
 			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
 		})
 		if err != nil {
@@ -109,7 +109,7 @@ func (s *Server) startRun(
 			authority.runLease, err = work.q.MarkRunLeaseRunning(ctx, db.MarkRunLeaseRunningParams{
 				ID: authority.runLease.ID, RunID: authority.run.ID, WorkspaceID: authority.workspace.ID,
 				AttemptNumber: authority.attempt.Number, LeaseSequence: authority.runLease.LeaseSequence,
-				WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+				WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 				WorkerEpoch: worker.WorkerEpoch, RuntimeInstanceID: authority.runtime.ID, RuntimeIdentityID: authority.runtime.RuntimeIdentityID,
 			})
 			if err != nil {
@@ -231,7 +231,7 @@ func lockRunStartAuthority(
 		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureAttempt, errStaleRunLeaseClaim)
 	}
 	authority.workerGroup, err = q.LockRunLeaseClaimWorkerGroup(ctx, db.LockRunLeaseClaimWorkerGroupParams{
-		ID: worker.WorkerGroupID, RegionID: locators.RegionID,
+		ID: pgvalue.UUID(worker.WorkerGroupID), RegionID: locators.RegionID,
 	})
 	if err != nil {
 		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureWorkerGroup, staleRunLeaseClaim(err))
@@ -240,7 +240,7 @@ func lockRunStartAuthority(
 		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureWorkerGroup, errStaleRunLeaseClaim)
 	}
 	authority.worker, err = q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{
-		ID: pgvalue.UUID(worker.WorkerInstanceID), WorkerGroupID: worker.WorkerGroupID,
+		ID: pgvalue.UUID(worker.WorkerInstanceID), WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
 	})
 	if err != nil {
 		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureWorker, staleRunLeaseClaim(err))
@@ -251,7 +251,7 @@ func lockRunStartAuthority(
 	authority.runtime, err = q.LockRunLeaseClaimRuntime(ctx, db.LockRunLeaseClaimRuntimeParams{
 		ID: locators.RuntimeInstanceID, OrgID: locators.OrgID, ProjectID: locators.ProjectID,
 		EnvironmentID: locators.EnvironmentID, RegionID: locators.RegionID,
-		WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+		WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 		WorkerEpoch: worker.WorkerEpoch, WorkspaceID: locators.WorkspaceID,
 	})
 	if err != nil {
@@ -283,7 +283,7 @@ func lockRunStartAuthority(
 	authority.workspaceMount, err = q.LockRunLeaseClaimMount(ctx, db.LockRunLeaseClaimMountParams{
 		ID: locators.WorkspaceMountID, OrgID: locators.OrgID, ProjectID: locators.ProjectID,
 		EnvironmentID: locators.EnvironmentID, RegionID: locators.RegionID,
-		WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+		WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 		WorkerEpoch: worker.WorkerEpoch, RuntimeInstanceID: locators.RuntimeInstanceID, WorkspaceID: locators.WorkspaceID,
 	})
 	if err != nil {
@@ -292,7 +292,7 @@ func lockRunStartAuthority(
 	authority.workspaceLease, err = q.LockRunLeaseClaimWorkspaceLease(ctx, db.LockRunLeaseClaimWorkspaceLeaseParams{
 		ID: locators.WorkspaceLeaseID, OrgID: locators.OrgID, ProjectID: locators.ProjectID,
 		EnvironmentID: locators.EnvironmentID, RegionID: locators.RegionID,
-		WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+		WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 		WorkerEpoch: worker.WorkerEpoch, RuntimeInstanceID: locators.RuntimeInstanceID,
 		WorkspaceID: locators.WorkspaceID, WorkspaceMountID: locators.WorkspaceMountID,
 	})

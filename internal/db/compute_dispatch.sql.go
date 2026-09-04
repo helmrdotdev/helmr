@@ -96,7 +96,7 @@ SELECT target.id, target.resource_id, target.worker_group_id, target.worker_pool
 
 type DrainWorkerInstanceParams struct {
 	ID                   pgtype.UUID `json:"id"`
-	WorkerGroupID        string      `json:"worker_group_id"`
+	WorkerGroupID        pgtype.UUID `json:"worker_group_id"`
 	ExpectedEpoch        pgtype.Int8 `json:"expected_epoch"`
 	ExpectedClaimVersion int64       `json:"expected_claim_version"`
 }
@@ -104,7 +104,7 @@ type DrainWorkerInstanceParams struct {
 type DrainWorkerInstanceRow struct {
 	ID                           pgtype.UUID        `json:"id"`
 	ResourceID                   string             `json:"resource_id"`
-	WorkerGroupID                string             `json:"worker_group_id"`
+	WorkerGroupID                pgtype.UUID        `json:"worker_group_id"`
 	WorkerPoolID                 pgtype.UUID        `json:"worker_pool_id"`
 	State                        string             `json:"state"`
 	ClaimVersion                 int64              `json:"claim_version"`
@@ -240,7 +240,7 @@ LIMIT 1
 
 type FenceWorkerInstanceParams struct {
 	ID                   pgtype.UUID `json:"id"`
-	WorkerGroupID        string      `json:"worker_group_id"`
+	WorkerGroupID        pgtype.UUID `json:"worker_group_id"`
 	ExpectedEpoch        pgtype.Int8 `json:"expected_epoch"`
 	ExpectedClaimVersion int64       `json:"expected_claim_version"`
 	ReasonCode           pgtype.Text `json:"reason_code"`
@@ -249,7 +249,7 @@ type FenceWorkerInstanceParams struct {
 type FenceWorkerInstanceRow struct {
 	ID                           pgtype.UUID        `json:"id"`
 	ResourceID                   string             `json:"resource_id"`
-	WorkerGroupID                string             `json:"worker_group_id"`
+	WorkerGroupID                pgtype.UUID        `json:"worker_group_id"`
 	WorkerPoolID                 pgtype.UUID        `json:"worker_pool_id"`
 	State                        string             `json:"state"`
 	ClaimVersion                 int64              `json:"claim_version"`
@@ -374,13 +374,13 @@ SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worke
 type GetWorkerInstanceStateParams struct {
 	ObservationFreshnessSeconds int64       `json:"observation_freshness_seconds"`
 	ID                          pgtype.UUID `json:"id"`
-	WorkerGroupID               string      `json:"worker_group_id"`
+	WorkerGroupID               pgtype.UUID `json:"worker_group_id"`
 }
 
 type GetWorkerInstanceStateRow struct {
 	ID                           pgtype.UUID        `json:"id"`
 	ResourceID                   string             `json:"resource_id"`
-	WorkerGroupID                string             `json:"worker_group_id"`
+	WorkerGroupID                pgtype.UUID        `json:"worker_group_id"`
 	WorkerPoolID                 pgtype.UUID        `json:"worker_pool_id"`
 	State                        string             `json:"state"`
 	ClaimVersion                 int64              `json:"claim_version"`
@@ -930,7 +930,7 @@ SELECT runs.org_id,
        runs.queue_concurrency_limit,
        workspace_definitions.manifest_version AS workspace_manifest_version,
        workspace_definitions.manifest AS workspace_manifest,
-       COALESCE(capacity_restore.worker_group_id, '') AS required_worker_group_id,
+       capacity_restore.worker_group_id AS required_worker_group_id,
        COALESCE(capacity_restore.runtime_identity_id, '') AS required_runtime_identity_id,
        COALESCE(capacity_restore.vm_vcpu_count, 0)::integer AS required_vm_vcpu_count,
        COALESCE(capacity_restore.cpu_config_digest, '') AS required_cpu_config_digest,
@@ -1209,7 +1209,7 @@ type ListQueuedRunPlanningCandidatesForScopesRow struct {
 	QueueConcurrencyLimit           pgtype.Int8 `json:"queue_concurrency_limit"`
 	WorkspaceManifestVersion        int32       `json:"workspace_manifest_version"`
 	WorkspaceManifest               []byte      `json:"workspace_manifest"`
-	RequiredWorkerGroupID           string      `json:"required_worker_group_id"`
+	RequiredWorkerGroupID           pgtype.UUID `json:"required_worker_group_id"`
 	RequiredRuntimeIdentityID       string      `json:"required_runtime_identity_id"`
 	RequiredVMVCPUCount             int32       `json:"required_vm_vcpu_count"`
 	RequiredCPUConfigDigest         string      `json:"required_cpu_config_digest"`

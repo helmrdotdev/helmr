@@ -32,7 +32,7 @@ func (s *Server) workerNextRuntimeReconcileTarget(w http.ResponseWriter, r *http
 	}
 	worker := workerFromContext(r.Context())
 	rows, err := s.db.ListRuntimeReconcileTargets(r.Context(), db.ListRuntimeReconcileTargetsParams{
-		WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
+		WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
 		ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
 		RowLimit:                    workerRuntimeReconcileLimit,
 	})
@@ -324,7 +324,7 @@ func (s *Server) workerMarkRuntimeInstance(w http.ResponseWriter, r *http.Reques
 
 func (s *Server) markRuntimeInstanceFailed(
 	ctx context.Context,
-	workerGroupID string,
+	workerGroupID uuid.UUID,
 	params db.MarkRuntimeInstanceFailedParams,
 ) (db.RuntimeInstance, error) {
 	workerFatal := params.ReasonCode.Valid &&
@@ -345,7 +345,7 @@ func (s *Server) markRuntimeInstanceFailed(
 		}
 		return db.RuntimeInstance{}, err
 	}
-	if discovered.WorkerGroupID != workerGroupID {
+	if discovered.WorkerGroupID != pgvalue.UUID(workerGroupID) {
 		return db.RuntimeInstance{}, errors.New("runtime preparation Worker Group authority changed")
 	}
 	if !discovered.ReservedRunID.Valid && !workerFatal {
@@ -470,7 +470,7 @@ func (s *Server) markRuntimeInstanceFailed(
 
 func (s *Server) fenceInvalidWorkerEpoch(
 	ctx context.Context,
-	workerGroupID string,
+	workerGroupID uuid.UUID,
 	workerInstanceID pgtype.UUID,
 	workerEpoch int64,
 ) error {
@@ -485,13 +485,13 @@ func (s *Server) fenceInvalidWorkerEpoch(
 	queries := db.New(tx)
 	poolID, err := queries.GetWorkerInstancePoolID(ctx, db.GetWorkerInstancePoolIDParams{
 		WorkerInstanceID: workerInstanceID,
-		WorkerGroupID:    workerGroupID,
+		WorkerGroupID:    pgvalue.UUID(workerGroupID),
 		WorkerEpoch:      pgtype.Int8{Int64: workerEpoch, Valid: true},
 	})
 	if err != nil {
 		return fmt.Errorf("resolve invalid Worker epoch Pool: %w", err)
 	}
-	group, err := queries.LockWorkerGroupForPoolMutation(ctx, workerGroupID)
+	group, err := queries.LockWorkerGroupForPoolMutation(ctx, pgvalue.UUID(workerGroupID))
 	if err != nil {
 		return fmt.Errorf("lock invalid Worker epoch Group: %w", err)
 	}
@@ -500,7 +500,7 @@ func (s *Server) fenceInvalidWorkerEpoch(
 		return errors.New("invalid Worker epoch Group is inactive")
 	}
 	pool, err := queries.LockWorkerPool(ctx, db.LockWorkerPoolParams{
-		WorkerGroupID: workerGroupID,
+		WorkerGroupID: pgvalue.UUID(workerGroupID),
 		WorkerPoolID:  poolID,
 	})
 	if err != nil {
@@ -511,7 +511,7 @@ func (s *Server) fenceInvalidWorkerEpoch(
 	}
 	worker, err := queries.LockWorkerInstanceForActivation(ctx, db.LockWorkerInstanceForActivationParams{
 		WorkerInstanceID: workerInstanceID,
-		WorkerGroupID:    workerGroupID,
+		WorkerGroupID:    pgvalue.UUID(workerGroupID),
 		WorkerPoolID:     poolID,
 		WorkerEpoch:      pgtype.Int8{Int64: workerEpoch, Valid: true},
 	})
@@ -524,7 +524,7 @@ func (s *Server) fenceInvalidWorkerEpoch(
 	if worker.State == db.WorkerInstanceStateActive {
 		if _, err := queries.DrainWorkerInstance(ctx, db.DrainWorkerInstanceParams{
 			ID:                   workerInstanceID,
-			WorkerGroupID:        workerGroupID,
+			WorkerGroupID:        pgvalue.UUID(workerGroupID),
 			ExpectedEpoch:        pgtype.Int8{Int64: workerEpoch, Valid: true},
 			ExpectedClaimVersion: worker.ClaimVersion,
 		}); err != nil {

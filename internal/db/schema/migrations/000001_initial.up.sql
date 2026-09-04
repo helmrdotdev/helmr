@@ -269,7 +269,7 @@ CREATE TABLE worker_group_tokens (
 );
 
 CREATE TABLE worker_groups (
-    id TEXT PRIMARY KEY CHECK (btrim(id) <> ''),
+    id UUID PRIMARY KEY,
     token_id UUID NOT NULL UNIQUE REFERENCES worker_group_tokens(id) ON DELETE RESTRICT,
     region_id TEXT NOT NULL REFERENCES regions(id) ON DELETE RESTRICT,
     name TEXT NOT NULL CHECK (btrim(name) <> ''),
@@ -314,7 +314,7 @@ CREATE TABLE runtime_identities (
 
 CREATE TABLE worker_pools (
     id UUID PRIMARY KEY,
-    worker_group_id TEXT NOT NULL REFERENCES worker_groups(id) ON DELETE RESTRICT,
+    worker_group_id UUID NOT NULL REFERENCES worker_groups(id) ON DELETE RESTRICT,
     name TEXT NOT NULL CHECK (btrim(name) <> '' AND octet_length(name) <= 128),
     state TEXT NOT NULL DEFAULT 'pending'
         CHECK (state IN ('pending', 'active', 'draining', 'disabled')),
@@ -388,7 +388,7 @@ ALTER TABLE worker_groups
 CREATE TABLE worker_instances (
     id UUID PRIMARY KEY,
     resource_id TEXT NOT NULL CHECK (btrim(resource_id) <> ''),
-    worker_group_id TEXT NOT NULL REFERENCES worker_groups(id) ON DELETE RESTRICT,
+    worker_group_id UUID NOT NULL REFERENCES worker_groups(id) ON DELETE RESTRICT,
     worker_pool_id UUID NOT NULL,
     state TEXT NOT NULL DEFAULT 'registering'
         CHECK (state IN ('registering', 'active', 'draining', 'termination_ready', 'lost')),
@@ -467,7 +467,7 @@ CREATE INDEX worker_instances_active_placement_idx
 
 CREATE TABLE worker_instance_credentials (
     id UUID PRIMARY KEY,
-    worker_group_id TEXT NOT NULL REFERENCES worker_groups(id) ON DELETE RESTRICT,
+    worker_group_id UUID NOT NULL REFERENCES worker_groups(id) ON DELETE RESTRICT,
     worker_instance_id UUID NOT NULL,
     key_prefix TEXT NOT NULL UNIQUE CHECK (btrim(key_prefix) <> ''),
     claim_version BIGINT NOT NULL DEFAULT 1 CHECK (claim_version > 0),
@@ -1447,7 +1447,7 @@ CREATE INDEX runs_retry_ready_idx
 CREATE TABLE workspace_mounts (
     id UUID PRIMARY KEY,
     org_id UUID NOT NULL,
-    worker_group_id TEXT NOT NULL,
+    worker_group_id UUID NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     region_id TEXT NOT NULL,
@@ -1551,7 +1551,7 @@ CREATE INDEX workspace_mounts_claim_expiry_idx
 CREATE TABLE workspace_leases (
     id UUID PRIMARY KEY,
     org_id UUID NOT NULL,
-    worker_group_id TEXT NOT NULL,
+    worker_group_id UUID NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     region_id TEXT NOT NULL,
@@ -1625,7 +1625,7 @@ CREATE TABLE workspace_processes (
     restore_desired_state TEXT NOT NULL
         CHECK (restore_desired_state IN ('active', 'stopped', 'deleted')),
     region_id TEXT,
-    worker_group_id TEXT,
+    worker_group_id UUID,
     worker_instance_id UUID,
     worker_epoch BIGINT CHECK (worker_epoch IS NULL OR worker_epoch > 0),
     runtime_instance_id UUID,
@@ -2109,7 +2109,7 @@ CREATE TABLE run_leases (
     region_id TEXT NOT NULL,
     lease_sequence BIGINT NOT NULL CHECK (lease_sequence > 0),
     attempt_number INTEGER NOT NULL CHECK (attempt_number > 0),
-    worker_group_id TEXT NOT NULL,
+    worker_group_id UUID NOT NULL,
     worker_instance_id UUID NOT NULL,
     worker_epoch BIGINT NOT NULL CHECK (worker_epoch > 0),
     runtime_instance_id UUID NOT NULL,
@@ -2768,7 +2768,7 @@ ALTER TABLE run_waits
 CREATE TABLE runtime_instances (
     id UUID PRIMARY KEY,
     org_id UUID NOT NULL,
-    worker_group_id TEXT NOT NULL,
+    worker_group_id UUID NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     region_id TEXT NOT NULL,

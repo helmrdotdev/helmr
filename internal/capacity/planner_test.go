@@ -12,19 +12,22 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const (
-	plannerTestGroupID           = "group-1"
 	plannerTestRuntimeIdentityID = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	plannerTestCPUConfigDigest   = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	plannerTestSubstrateFormat   = SubstrateFormatExt4
 	plannerTestSubstrateContract = SubstrateContractExt4
 )
 
-var plannerTestNow = time.Unix(100, 0).UTC()
+var (
+	plannerTestGroupID = uuid.MustParse("01900000-0000-7000-8000-000000000301")
+	plannerTestNow     = time.Unix(100, 0).UTC()
+)
 
 func TestPlanFreshRunUsesExactPrimaryPool(t *testing.T) {
 	secondaryID := plannerTestUUID(1)
@@ -396,8 +399,12 @@ func TestDiscoverItemsExactCandidateBudgetCanRemainCompleteOnShortScopePage(t *t
 }
 
 func TestCurrentBinsBoundsWorkerAggregationInput(t *testing.T) {
+	rows := make([]db.ListWorkerCapacityBinsRow, maximumPlanningWorkers+1)
+	for index := range rows {
+		rows[index].WorkerGroupID = pgvalue.UUID(plannerTestGroupID)
+	}
 	store := &countingPlannerStore{plannerStore: plannerStore{
-		bins: make([]db.ListWorkerCapacityBinsRow, maximumPlanningWorkers+1),
+		bins: rows,
 	}}
 	bins, complete, err := currentBins(context.Background(), store, plannerTestGroupID)
 	if err != nil {
@@ -504,6 +511,16 @@ func TestPlanRestoreUsesCompatibleSecondaryPool(t *testing.T) {
 	}
 	if !CanRestore(requirements, plannerPool(secondary)) {
 		t.Fatal("secondary pool must accept the checkpoint")
+	}
+	missingGroup := requirements
+	missingGroup.WorkerGroupID = uuid.Nil()
+	if CanRestore(missingGroup, plannerPool(secondary)) {
+		t.Fatal("restore requirements without a Worker Group must be rejected")
+	}
+	missingGroupPool := plannerPool(secondary)
+	missingGroupPool.WorkerGroupID = uuid.Nil()
+	if CanRestore(requirements, missingGroupPool) {
+		t.Fatal("restore pool without a Worker Group must be rejected")
 	}
 	store := plannerStore{
 		group: plannerTestGroup(primaryID),
@@ -667,14 +684,14 @@ func TestPlanAcceptsZeroAdditionalWorkerBudget(t *testing.T) {
 
 func plannerTestGroup(primaryRunPoolID pgtype.UUID) db.WorkerGroup {
 	return db.WorkerGroup{
-		ID: plannerTestGroupID, Name: "default", RegionID: "us-east-1", State: string(WorkerGroupStatusActive),
+		ID: pgvalue.UUID(plannerTestGroupID), Name: "default", RegionID: "us-east-1", State: string(WorkerGroupStatusActive),
 		PrimaryPoolID: primaryRunPoolID,
 	}
 }
 
 func plannerTestPool(id pgtype.UUID, name string) db.ListCapacityWorkerPoolsRow {
 	return db.ListCapacityWorkerPoolsRow{
-		ID: id, WorkerGroupID: plannerTestGroupID, Name: name,
+		ID: id, WorkerGroupID: pgvalue.UUID(plannerTestGroupID), Name: name,
 		RuntimeIdentityID:               pgtype.Text{String: plannerTestRuntimeIdentityID, Valid: true},
 		SubstrateFormat:                 pgtype.Text{String: plannerTestSubstrateFormat, Valid: true},
 		SubstrateContract:               pgtype.Text{String: plannerTestSubstrateContract, Valid: true},
@@ -698,7 +715,7 @@ func plannerPool(row db.ListCapacityWorkerPoolsRow) Pool {
 		}
 	}
 	return Pool{
-		WorkerGroupID: row.WorkerGroupID, RuntimeIdentityID: row.RuntimeIdentityID.String,
+		WorkerGroupID: pgvalue.MustUUIDValue(row.WorkerGroupID), RuntimeIdentityID: row.RuntimeIdentityID.String,
 		SubstrateFormat: row.SubstrateFormat.String, SubstrateContract: row.SubstrateContract.String,
 		PerVM: ResourceVector{
 			CPUMillis: row.PerVMCPUMillis.Int64, MemoryBytes: row.PerVMMemoryBytes.Int64,
@@ -710,7 +727,7 @@ func plannerPool(row db.ListCapacityWorkerPoolsRow) Pool {
 
 func plannerBin(row db.ListCapacityWorkerPoolsRow, primaryRunPoolID pgtype.UUID) db.ListWorkerCapacityBinsRow {
 	return db.ListWorkerCapacityBinsRow{
-		WorkerGroupID: plannerTestGroupID, PrimaryPoolID: primaryRunPoolID, WorkerPoolID: row.ID,
+		WorkerGroupID: pgvalue.UUID(plannerTestGroupID), PrimaryPoolID: primaryRunPoolID, WorkerPoolID: row.ID,
 		WorkerInstanceID:  plannerTestUUID(row.ID.Bytes[15] + 100),
 		RuntimeIdentityID: row.RuntimeIdentityID, RuntimeArch: "x86_64", VMRuntimeContract: runtimeid.Contract,
 		SubstrateFormat: row.SubstrateFormat.String, SubstrateContract: row.SubstrateContract.String,
@@ -743,7 +760,7 @@ func plannerRestoreRun(seed byte, requirements RestoreRequirements) db.ListQueue
 	return db.ListQueuedRunPlanningCandidatesForScopesRow{
 		RunID: plannerTestUUID(seed), WorkspaceManifestVersion: deployment.DeploymentPlanFormatVersion,
 		WorkspaceManifest:     plannerWorkspaceManifest(),
-		RequiredWorkerGroupID: requirements.WorkerGroupID, RequiredRuntimeIdentityID: requirements.RuntimeIdentityID,
+		RequiredWorkerGroupID: pgvalue.UUID(requirements.WorkerGroupID), RequiredRuntimeIdentityID: requirements.RuntimeIdentityID,
 		RequiredVMVCPUCount: requirements.VCPUCount, RequiredCPUConfigDigest: requirements.CPUConfigDigest,
 		RequiredCPUMillis: requirements.Resources.CPUMillis, RequiredMemoryBytes: requirements.Resources.MemoryBytes,
 		RequiredGuestEphemeralDiskBytes: requirements.Resources.GuestEphemeralDiskBytes,
@@ -853,7 +870,7 @@ func (s *countingPlannerStore) ListWorkerCapacityBins(
 	return s.plannerStore.ListWorkerCapacityBins(ctx, arg)
 }
 
-func (s plannerStore) GetWorkerGroup(context.Context, string) (db.WorkerGroup, error) {
+func (s plannerStore) GetWorkerGroup(context.Context, pgtype.UUID) (db.WorkerGroup, error) {
 	return s.group, nil
 }
 

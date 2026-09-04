@@ -12,6 +12,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -21,7 +22,7 @@ type workerContextKey struct{}
 
 type workerActor struct {
 	WorkerInstanceID  uuid.UUID
-	WorkerGroupID     string
+	WorkerGroupID     uuid.UUID
 	WorkerEpoch       int64
 	ClaimVersion      int64
 	GroupClaimVersion int64
@@ -341,6 +342,11 @@ func (s *Server) requireWorkerState(state workerAuthState, next http.Handler) ht
 			writeError(w, unauthorized(errors.New("worker authentication is required")))
 			return
 		}
+		workerGroupID, err := ids.Parse(payload.WorkerGroupID)
+		if err != nil {
+			writeError(w, unauthorized(errors.New("worker authentication is required")))
+			return
+		}
 		params := db.AuthorizeWorkerInstanceCredentialParams{
 			CredentialID:      pgvalue.UUID(credentialID),
 			ClaimVersion:      payload.ClaimVersion,
@@ -388,7 +394,7 @@ func (s *Server) requireWorkerState(state workerAuthState, next http.Handler) ht
 		}
 		worker := workerActor{
 			WorkerInstanceID:  workerInstanceID,
-			WorkerGroupID:     strings.TrimSpace(row.WorkerGroupID),
+			WorkerGroupID:     pgvalue.MustUUIDValue(row.WorkerGroupID),
 			ClaimVersion:      row.ClaimVersion,
 			GroupClaimVersion: payload.GroupClaimVersion,
 			ResourceID:        strings.TrimSpace(row.ResourceID),
@@ -396,11 +402,7 @@ func (s *Server) requireWorkerState(state workerAuthState, next http.Handler) ht
 			State:             row.WorkerState,
 			EpochStartedAt:    pgvalue.Time(row.EpochStartedAt),
 		}
-		if pgvalue.MustUUIDValue(row.WorkerInstanceID) != workerInstanceID || worker.WorkerGroupID != payload.WorkerGroupID {
-			writeError(w, unauthorized(errors.New("worker authentication is required")))
-			return
-		}
-		if payload.WorkerGroupID != worker.WorkerGroupID || payload.ClaimVersion != worker.ClaimVersion {
+		if pgvalue.MustUUIDValue(row.WorkerInstanceID) != workerInstanceID || worker.WorkerGroupID != workerGroupID || payload.ClaimVersion != worker.ClaimVersion {
 			writeError(w, unauthorized(errors.New("worker authentication is required")))
 			return
 		}

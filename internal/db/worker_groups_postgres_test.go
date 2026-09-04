@@ -93,12 +93,12 @@ func TestRunWorkerCapacityRestoreCompatibilityMatchesPlanner(t *testing.T) {
 			pool := newPostgresDB(t, ctx)
 			seedCapacityQueryWorkers(t, ctx, pool, 1, 0)
 			plannerCompatible := capacity.CanRestore(capacity.RestoreRequirements{
-				WorkerGroupID: dbtest.DefaultWorkerGroupID, RuntimeIdentityID: dbtest.DefaultRuntimeID,
+				WorkerGroupID: dbtest.DefaultWorkerGroupUUID, RuntimeIdentityID: dbtest.DefaultRuntimeID,
 				VCPUCount: 1, CPUConfigDigest: test.cpuDigest,
 				SubstrateFormat: test.requestFormat, SubstrateContract: capacity.SubstrateContractExt4,
 				Resources: capacity.ResourceVector{CPUMillis: 1000, MemoryBytes: 1 << 30, GuestEphemeralDiskBytes: 32 << 30, VMSlots: 1},
 			}, capacity.Pool{
-				WorkerGroupID: dbtest.DefaultWorkerGroupID, RuntimeIdentityID: dbtest.DefaultRuntimeID,
+				WorkerGroupID: dbtest.DefaultWorkerGroupUUID, RuntimeIdentityID: dbtest.DefaultRuntimeID,
 				SubstrateFormat: test.workerFormat, SubstrateContract: capacity.SubstrateContractExt4,
 				PerVM:     capacity.ResourceVector{CPUMillis: 4000, MemoryBytes: 8 << 30, GuestEphemeralDiskBytes: 32 << 30, VMSlots: 1},
 				CPUShapes: []runtimeid.CPUShape{{VCPUCount: 1, CPUConfigDigest: dbtest.DefaultCPUConfigID}},

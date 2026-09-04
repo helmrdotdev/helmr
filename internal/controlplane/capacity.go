@@ -84,7 +84,7 @@ func (s *Server) capacityResolveWorkerPool(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	pool, err := s.db.GetWorkerPoolByGroupName(r.Context(), db.GetWorkerPoolByGroupNameParams{
-		WorkerGroupID: workerGroupID.String(), Name: name,
+		WorkerGroupID: pgvalue.UUID(workerGroupID), Name: name,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, notFound(errors.New("worker pool was not found")))
@@ -101,7 +101,7 @@ func (s *Server) capacityResolveWorkerPool(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, capacity.WorkerPool{
-		ID: pgvalue.MustUUIDValue(pool.ID).String(), WorkerGroupID: pool.WorkerGroupID,
+		ID: pgvalue.MustUUIDValue(pool.ID).String(), WorkerGroupID: pgvalue.UUIDString(pool.WorkerGroupID),
 		Name: pool.Name, Status: status,
 	})
 }
@@ -157,7 +157,7 @@ func (s *Server) capacityReconcileWorkerGroupPrimaryPools(w http.ResponseWriter,
 		return
 	}
 	result, err := s.reconcileWorkerGroupPrimarySelection(r.Context(), workerGroupPrimarySelectionCommand{
-		workerGroupID:             workerGroupID.String(),
+		workerGroupID:             workerGroupID,
 		expectedGroupClaimVersion: request.ExpectedGroupClaimVersion,
 		desired: func(db.WorkerGroup) (pgtype.UUID, error) {
 			return poolID, nil
@@ -191,7 +191,7 @@ func capacityOptionalPoolID(raw string) (pgtype.UUID, error) {
 
 func capacityWorkerGroup(group db.WorkerGroup, status capacity.WorkerGroupStatus) capacity.WorkerGroup {
 	return capacity.WorkerGroup{
-		ID: group.ID, Name: group.Name, RegionID: group.RegionID, Status: status,
+		ID: pgvalue.UUIDString(group.ID), Name: group.Name, RegionID: group.RegionID, Status: status,
 		ClaimVersion:  group.ClaimVersion,
 		PrimaryPoolID: pgvalue.UUIDString(group.PrimaryPoolID),
 	}
@@ -220,7 +220,7 @@ func (s *Server) capacityPlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(fmt.Errorf("invalid capacity plan JSON: %w", err)))
 		return
 	}
-	response, err := capacity.Plan(r.Context(), s.db, workerGroupID.String(), request, time.Now())
+	response, err := capacity.Plan(r.Context(), s.db, workerGroupID, request, time.Now())
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, notFound(errors.New("worker group was not found")))
 		return
@@ -323,7 +323,7 @@ func (s *Server) capacityDrainWorkerInstance(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if request.RequireZeroQueuedDemand && instance.State == string(db.WorkerInstanceStateActive) {
-		present, err := capacity.HasQueuedDemand(r.Context(), s.db, instance.WorkerGroupID)
+		present, err := capacity.HasQueuedDemand(r.Context(), s.db, pgvalue.MustUUIDValue(instance.WorkerGroupID))
 		if err != nil {
 			s.log.Error("check queued demand for capacity drain", "worker_instance_id", id.String(), "error", err)
 			writeError(w, errors.New("check queued demand for worker drain"))
@@ -448,8 +448,12 @@ func capacityWorkerInstanceListParams(r *http.Request) (db.ListCapacityWorkerIns
 	if len(query["worker_group_id"]) > 1 || len(query["has_unreclaimed_runtime"]) > 1 || len(query["limit"]) > 1 {
 		return params, errors.New("worker_group_id, has_unreclaimed_runtime, and limit must not be repeated")
 	}
-	if groupID := strings.TrimSpace(query.Get("worker_group_id")); groupID != "" {
-		params.WorkerGroupID = pgtype.Text{String: groupID, Valid: true}
+	if groupIDs := query["worker_group_id"]; len(groupIDs) == 1 {
+		parsed, err := ids.Parse(groupIDs[0])
+		if err != nil {
+			return params, errors.New("worker_group_id must be a canonical UUIDv7")
+		}
+		params.WorkerGroupID = pgvalue.UUID(parsed)
 	}
 	if raw := strings.TrimSpace(query.Get("has_unreclaimed_runtime")); raw != "" {
 		if raw != "true" {
@@ -522,7 +526,7 @@ func workerPoolPublicStatus(state string) (capacity.WorkerPoolStatus, error) {
 func projectWorkerInstance(
 	id pgtype.UUID,
 	resourceID string,
-	workerGroupID string,
+	workerGroupID pgtype.UUID,
 	workerPoolID pgtype.UUID,
 	status string,
 	claimVersion int64,
@@ -539,7 +543,7 @@ func projectWorkerInstance(
 	}
 	result := capacity.WorkerInstance{
 		ID: uuid.UUID(id.Bytes).String(), ResourceID: resourceID,
-		WorkerGroupID: workerGroupID, WorkerPoolID: uuid.UUID(workerPoolID.Bytes).String(),
+		WorkerGroupID: pgvalue.UUIDString(workerGroupID), WorkerPoolID: uuid.UUID(workerPoolID.Bytes).String(),
 		Status: publicStatus, ClaimVersion: claimVersion,
 		CreatedAt: createdAt.Time, UpdatedAt: updatedAt.Time,
 	}

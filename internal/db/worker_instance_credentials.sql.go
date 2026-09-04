@@ -127,7 +127,7 @@ type AuthenticateWorkerInstanceCredentialParams struct {
 
 type AuthenticateWorkerInstanceCredentialRow struct {
 	ID                pgtype.UUID `json:"id"`
-	WorkerGroupID     string      `json:"worker_group_id"`
+	WorkerGroupID     pgtype.UUID `json:"worker_group_id"`
 	WorkerInstanceID  pgtype.UUID `json:"worker_instance_id"`
 	KeyPrefix         string      `json:"key_prefix"`
 	ClaimVersion      int64       `json:"claim_version"`
@@ -194,7 +194,7 @@ type AuthorizeRecoveringWorkerInstanceCredentialParams struct {
 
 type AuthorizeRecoveringWorkerInstanceCredentialRow struct {
 	ID               pgtype.UUID        `json:"id"`
-	WorkerGroupID    string             `json:"worker_group_id"`
+	WorkerGroupID    pgtype.UUID        `json:"worker_group_id"`
 	WorkerInstanceID pgtype.UUID        `json:"worker_instance_id"`
 	KeyPrefix        string             `json:"key_prefix"`
 	ClaimVersion     int64              `json:"claim_version"`
@@ -268,7 +268,7 @@ type AuthorizeWorkerActivationCredentialParams struct {
 
 type AuthorizeWorkerActivationCredentialRow struct {
 	ID               pgtype.UUID        `json:"id"`
-	WorkerGroupID    string             `json:"worker_group_id"`
+	WorkerGroupID    pgtype.UUID        `json:"worker_group_id"`
 	WorkerInstanceID pgtype.UUID        `json:"worker_instance_id"`
 	KeyPrefix        string             `json:"key_prefix"`
 	ClaimVersion     int64              `json:"claim_version"`
@@ -335,7 +335,7 @@ type AuthorizeWorkerDrainReplayParams struct {
 
 type AuthorizeWorkerDrainReplayRow struct {
 	ID               pgtype.UUID        `json:"id"`
-	WorkerGroupID    string             `json:"worker_group_id"`
+	WorkerGroupID    pgtype.UUID        `json:"worker_group_id"`
 	WorkerInstanceID pgtype.UUID        `json:"worker_instance_id"`
 	KeyPrefix        string             `json:"key_prefix"`
 	ClaimVersion     int64              `json:"claim_version"`
@@ -396,7 +396,7 @@ type AuthorizeWorkerFenceReplayParams struct {
 
 type AuthorizeWorkerFenceReplayRow struct {
 	ID               pgtype.UUID        `json:"id"`
-	WorkerGroupID    string             `json:"worker_group_id"`
+	WorkerGroupID    pgtype.UUID        `json:"worker_group_id"`
 	WorkerInstanceID pgtype.UUID        `json:"worker_instance_id"`
 	KeyPrefix        string             `json:"key_prefix"`
 	ClaimVersion     int64              `json:"claim_version"`
@@ -465,7 +465,7 @@ type AuthorizeWorkerInstanceCredentialParams struct {
 
 type AuthorizeWorkerInstanceCredentialRow struct {
 	ID               pgtype.UUID        `json:"id"`
-	WorkerGroupID    string             `json:"worker_group_id"`
+	WorkerGroupID    pgtype.UUID        `json:"worker_group_id"`
 	WorkerInstanceID pgtype.UUID        `json:"worker_instance_id"`
 	KeyPrefix        string             `json:"key_prefix"`
 	ClaimVersion     int64              `json:"claim_version"`
@@ -599,7 +599,7 @@ type EnrollWorkerInstanceParams struct {
 
 type EnrollWorkerInstanceRow struct {
 	ID               pgtype.UUID        `json:"id"`
-	WorkerGroupID    string             `json:"worker_group_id"`
+	WorkerGroupID    pgtype.UUID        `json:"worker_group_id"`
 	WorkerInstanceID pgtype.UUID        `json:"worker_instance_id"`
 	KeyPrefix        string             `json:"key_prefix"`
 	ClaimVersion     int64              `json:"claim_version"`

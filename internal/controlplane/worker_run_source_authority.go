@@ -36,7 +36,7 @@ func authorizeWorkerRunSource(
 	}
 	locators, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 		ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence,
-		WorkerGroupID:    worker.WorkerGroupID,
+		WorkerGroupID:    pgvalue.UUID(worker.WorkerGroupID),
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 		WorkerEpoch:      worker.WorkerEpoch})
 	if err != nil {

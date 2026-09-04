@@ -35,7 +35,7 @@ func TestEpochExchangeInputRejectsMissingServiceID(t *testing.T) {
 
 func validAuthority() WorkerTokenAuthority {
 	return WorkerTokenAuthority{
-		WorkerGroupID: "group-1", WorkerInstanceID: uuid.MustParse("00000000-0000-0000-0000-000000000001"),
+		WorkerGroupID: uuid.MustParse("01900000-0000-7000-8000-000000000401"), WorkerInstanceID: uuid.MustParse("00000000-0000-0000-0000-000000000001"),
 		CredentialID: uuid.MustParse("00000000-0000-0000-0000-000000000002"), WorkerEpoch: 7,
 		ClaimVersion: 2, GroupClaimVersion: 4,
 	}

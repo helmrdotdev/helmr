@@ -21,7 +21,7 @@ func enterRunEntrypoint(
 		locators, err := work.q.GetRunEntrypointLocators(ctx, db.GetRunEntrypointLocatorsParams{
 			ID:               leaseID,
 			LeaseSequence:    request.Lease.LeaseSequence,
-			WorkerGroupID:    worker.WorkerGroupID,
+			WorkerGroupID:    pgvalue.UUID(worker.WorkerGroupID),
 			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 			WorkerEpoch:      worker.WorkerEpoch,
 		})
@@ -111,7 +111,7 @@ func lockRunEntrypointAuthority(
 	}
 
 	authority.workerGroup, err = q.LockRunLeaseClaimWorkerGroup(ctx, db.LockRunLeaseClaimWorkerGroupParams{
-		ID:       worker.WorkerGroupID,
+		ID:       pgvalue.UUID(worker.WorkerGroupID),
 		RegionID: locators.RegionID,
 	})
 	if err != nil {
@@ -125,7 +125,7 @@ func lockRunEntrypointAuthority(
 
 	authority.worker, err = q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{
 		ID:            pgvalue.UUID(worker.WorkerInstanceID),
-		WorkerGroupID: worker.WorkerGroupID,
+		WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
 	})
 	if err != nil {
 		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
@@ -140,7 +140,7 @@ func lockRunEntrypointAuthority(
 		ProjectID:        locators.ProjectID,
 		EnvironmentID:    locators.EnvironmentID,
 		RegionID:         locators.RegionID,
-		WorkerGroupID:    worker.WorkerGroupID,
+		WorkerGroupID:    pgvalue.UUID(worker.WorkerGroupID),
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 		WorkerEpoch:      worker.WorkerEpoch,
 		WorkspaceID:      locators.WorkspaceID,
@@ -174,7 +174,7 @@ func lockRunEntrypointAuthority(
 		ProjectID:         locators.ProjectID,
 		EnvironmentID:     locators.EnvironmentID,
 		RegionID:          locators.RegionID,
-		WorkerGroupID:     worker.WorkerGroupID,
+		WorkerGroupID:     pgvalue.UUID(worker.WorkerGroupID),
 		WorkerInstanceID:  pgvalue.UUID(worker.WorkerInstanceID),
 		WorkerEpoch:       worker.WorkerEpoch,
 		RuntimeInstanceID: locators.RuntimeInstanceID,
@@ -190,7 +190,7 @@ func lockRunEntrypointAuthority(
 		ProjectID:         locators.ProjectID,
 		EnvironmentID:     locators.EnvironmentID,
 		RegionID:          locators.RegionID,
-		WorkerGroupID:     worker.WorkerGroupID,
+		WorkerGroupID:     pgvalue.UUID(worker.WorkerGroupID),
 		WorkerInstanceID:  pgvalue.UUID(worker.WorkerInstanceID),
 		WorkerEpoch:       worker.WorkerEpoch,
 		RuntimeInstanceID: locators.RuntimeInstanceID,
