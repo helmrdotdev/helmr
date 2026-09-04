@@ -73,6 +73,7 @@ func TestTelemetryOutboxGCScaleBudget(t *testing.T) {
 	measureTelemetryReplayIndexes(t, ctx, pool, telemetryReplayScaleFixture{
 		leaseIDs: leaseIDs,
 	})
+	measureTelemetryUnusedIndexes(t, ctx, pool, pgvalue.UUID(orgID), runIDs[0])
 
 	var tableBytes, indexBytes int64
 	if err := pool.QueryRow(ctx, `
