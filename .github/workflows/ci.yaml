@@ -74,6 +74,18 @@ jobs:
 
       - run: nix run .#ci-postgres
 
+  browser:
+    name: browser
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-nix
+
+      - run: nix develop .#browser --command bash -c 'bun install --frozen-lockfile --ignore-scripts && bun run test:browser'
+
   bundle-builder:
     name: bundle builder
     runs-on: ubuntu-24.04
@@ -106,6 +118,7 @@ jobs:
       - nix-flake
       - repo
       - postgres
+      - browser
       - bundle-builder
       - release-contracts
     if: always()
@@ -117,6 +130,7 @@ jobs:
             "${{ needs.nix-flake.result }}" \
             "${{ needs.repo.result }}" \
             "${{ needs.postgres.result }}" \
+            "${{ needs.browser.result }}" \
             "${{ needs.bundle-builder.result }}" \
             "${{ needs.release-contracts.result }}"
           do
@@ -125,10 +139,11 @@ jobs:
             fi
           done
           if [ "$failed" -ne 0 ]; then
-            printf 'CI dependency results: nix-flake=%s repo=%s postgres=%s bundle-builder=%s release-contracts=%s\n' \
+            printf 'CI dependency results: nix-flake=%s repo=%s postgres=%s browser=%s bundle-builder=%s release-contracts=%s\n' \
               "${{ needs.nix-flake.result }}" \
               "${{ needs.repo.result }}" \
               "${{ needs.postgres.result }}" \
+              "${{ needs.browser.result }}" \
               "${{ needs.bundle-builder.result }}" \
               "${{ needs.release-contracts.result }}" >&2
             exit 1
