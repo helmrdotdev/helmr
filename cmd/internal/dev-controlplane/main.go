@@ -27,6 +27,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/controlplane"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/eventstream"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -383,6 +384,16 @@ func migrate(ctx context.Context, pool *pgxpool.Pool, reset bool) error {
 		if _, err := pool.Exec(ctx, string(migration)); err != nil {
 			return fmt.Errorf("%s: %w", path, err)
 		}
+	}
+	version, err := schema.CurrentVersion()
+	if err != nil {
+		return err
+	}
+	if _, err := pool.Exec(ctx, `CREATE TABLE schema_migrations (version BIGINT NOT NULL PRIMARY KEY, dirty BOOLEAN NOT NULL)`); err != nil {
+		return fmt.Errorf("create migration version table: %w", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO schema_migrations (version, dirty) VALUES ($1, FALSE)`, version); err != nil {
+		return fmt.Errorf("record migration version: %w", err)
 	}
 	return nil
 }
