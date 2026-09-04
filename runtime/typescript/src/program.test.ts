@@ -1839,6 +1839,53 @@ describe("runProgram", () => {
     expect(output).toHaveLength(2)
   })
 
+  test("rejects malformed terminal Wait failure payloads as runtime protocol faults", async () => {
+    const malformed = [
+      "{",
+      "null",
+      "{}",
+      JSON.stringify({ reason_code: "" }),
+      JSON.stringify({ reason_code: 1 }),
+    ]
+    for (const dataJson of malformed) {
+      const definition = task({
+        id: "deploy",
+        async run() {
+          await timers.waitFor("1m")
+        },
+      })
+      const start = taskStart("noPayload")
+      const output: Uint8Array[] = []
+      const waitWritten = Promise.withResolvers<void>()
+      async function* input(): AsyncIterable<Uint8Array> {
+        yield frameMessage(programProto.ProgramStartSchema, start)
+        yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
+        await waitWritten.promise
+        const event = readEvent(output[1]!).event
+        if (event.case !== "runWaitRequested") return
+        yield actorDecision(
+          event.value.correlationId,
+          "failed",
+          dataJson,
+          event.value,
+        )
+      }
+      await expect(runProgram(locatorURL, programIO({
+        input: input(),
+        definition,
+        output,
+        onWrite: () => {
+          if (output.length === 2) waitWritten.resolve()
+        },
+      }))).rejects.toMatchObject({
+        name: "RuntimeProtocolError",
+        cause: expect.any(Error),
+      })
+      expect(output).toHaveLength(2)
+      expect(readEvent(output[1]!).event.case).toBe("runWaitRequested")
+    }
+  })
+
   test("classifies a throwing payload schema as a bounded terminal validation failure", async () => {
     let invoked = false
     const definition = task({
@@ -1911,34 +1958,46 @@ describe("runProgram", () => {
   })
 
   test("reports handler failures without granting retry authority", async () => {
-    const definition = task({
-      id: "deploy",
-      run() {
-        throw new Error("猫".repeat(1_000))
-      },
-    })
-    const start = taskStart("noPayload")
-    const output: Uint8Array[] = []
+    const exact = `${"猫".repeat(341)}a`
+    const over = "猫".repeat(1_000)
+    expect(new TextEncoder().encode(exact).byteLength).toBe(1_024)
+    expect(over.length).toBeLessThan(1_024)
+    expect(new TextEncoder().encode(over).byteLength).toBeGreaterThan(1_024)
 
-    await runProgram(locatorURL, programIO({
-      input: frames(
-        frameMessage(programProto.ProgramStartSchema, start),
-        frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start)),
-      ),
-      definition,
-      output,
-    }))
+    for (const { message, truncated } of [
+      { message: exact, truncated: false },
+      { message: over, truncated: true },
+    ]) {
+      const definition = task({
+        id: "deploy",
+        run() {
+          throw new Error(message)
+        },
+      })
+      const start = taskStart("noPayload")
+      const output: Uint8Array[] = []
 
-    const result = readEvent(output[1]!).event
-    expect(result.case).toBe("taskOutcome")
-    if (result.case === "taskOutcome") {
+      await runProgram(locatorURL, programIO({
+        input: frames(
+          frameMessage(programProto.ProgramStartSchema, start),
+          frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start)),
+        ),
+        definition,
+        output,
+      }))
+
+      const result = readEvent(output[1]!).event
+      expect(result.case).toBe("taskOutcome")
+      if (result.case !== "taskOutcome") continue
       expect(result.value.outcome.case).toBe("failed")
-      if (result.value.outcome.case === "failed") {
-        expect(result.value.outcome.value.message).toEndWith("…")
-        expect(
-          new TextEncoder().encode(result.value.outcome.value.message).byteLength,
-        ).toBeLessThanOrEqual(1_024)
+      if (result.value.outcome.case !== "failed") continue
+      const reported = result.value.outcome.value.message
+      expect(new TextEncoder().encode(reported).byteLength).toBeLessThanOrEqual(1_024)
+      if (truncated) {
+        expect(reported).toEndWith("…")
         expect(result.value.outcome.value.detailsJson).toBeUndefined()
+      } else {
+        expect(reported).toBe(message)
       }
     }
   })
