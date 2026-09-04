@@ -7,7 +7,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
 func TestCapacityWorkerListingProjectsCurrentRowPerOpaqueLocator(t *testing.T) {
@@ -34,7 +33,7 @@ func TestCapacityWorkerListingProjectsCurrentRowPerOpaqueLocator(t *testing.T) {
 		dbtest.DefaultWorkerPoolID)
 
 	rows, err := queries.ListCapacityWorkerInstances(ctx, db.ListCapacityWorkerInstancesParams{
-		WorkerGroupID: pgvalue.Text(dbtest.DefaultWorkerGroupID),
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ResourceIds:   []string{resourceID},
 		States:        []string{},
 		RowLimit:      10,
@@ -47,7 +46,7 @@ func TestCapacityWorkerListingProjectsCurrentRowPerOpaqueLocator(t *testing.T) {
 	}
 
 	rows, err = queries.ListCapacityWorkerInstances(ctx, db.ListCapacityWorkerInstancesParams{
-		WorkerGroupID: pgvalue.Text(dbtest.DefaultWorkerGroupID),
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ResourceIds:   []string{resourceID},
 		States:        []string{string(db.WorkerInstanceStateTerminationReady)},
 		RowLimit:      10,

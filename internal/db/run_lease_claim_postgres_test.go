@@ -15,10 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const (
-	runLeaseTestRegion      = runtest.Region
-	runLeaseTestWorkerGroup = runtest.WorkerGroup
-)
+var runLeaseTestWorkerGroup = pgvalue.UUID(runtest.WorkerGroupID)
 
 type runLeaseClaimFixture struct {
 	pool                  *pgxpool.Pool

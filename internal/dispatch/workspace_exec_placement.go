@@ -574,7 +574,7 @@ func (d *Authority) grantWorkspaceExec(
 	}
 	if _, err := q.BindWorkspaceExecRuntime(ctx, db.BindWorkspaceExecRuntimeParams{
 		RegionID:               pgvalue.Text(authority.regionID),
-		WorkerGroupID:          pgvalue.Text(runtime.groupID),
+		WorkerGroupID:          runtime.groupID,
 		WorkerInstanceID:       runtime.workerID,
 		WorkerEpoch:            pgtype.Int8{Int64: runtime.workerEpoch, Valid: true},
 		RuntimeInstanceID:      runtime.id,

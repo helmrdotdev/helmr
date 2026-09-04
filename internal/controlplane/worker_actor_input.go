@@ -166,7 +166,7 @@ func actorInputSendSourceParams(
 ) db.GetActorInputSendSourceParams {
 	return db.GetActorInputSendSourceParams{
 		ID: pgvalue.UUID(parsed.lease.leaseID), LeaseSequence: request.Lease.LeaseSequence,
-		WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+		WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 		WorkerEpoch: worker.WorkerEpoch}
 }
 

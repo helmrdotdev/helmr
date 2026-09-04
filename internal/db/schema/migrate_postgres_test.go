@@ -43,9 +43,6 @@ func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDow
 	if !exists {
 		t.Fatal("runs table was not created")
 	}
-	assertWorkspaceExecSchema(t, dbctx, pool)
-	assertTelemetrySchema(t, dbctx, pool)
-	assertWorkerSchema(t, dbctx, pool)
 	assertDeploymentDefinitionAuthority(t, dbctx, pool)
 	assertWorkspaceVersionAuthority(t, dbctx, pool)
 	assertArtifactCreatorAuthority(t, dbctx, pool)
@@ -77,6 +74,9 @@ func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDow
 	if !exists {
 		t.Fatal("runs table was not recreated after down migration")
 	}
+	assertWorkspaceExecSchema(t, dbctx, pool)
+	assertTelemetrySchema(t, dbctx, pool)
+	assertWorkerSchema(t, dbctx, pool)
 	assertDeploymentDefinitionAuthority(t, dbctx, pool)
 	assertWorkspaceVersionAuthority(t, dbctx, pool)
 	assertArtifactCreatorAuthority(t, dbctx, pool)
@@ -509,7 +509,7 @@ INSERT INTO worker_group_tokens (
 INSERT INTO worker_groups (
     id, token_id, region_id, name
 ) VALUES (
-    'artifact-test-workers',
+    '01900000-0000-7000-8000-000000000908',
     '00000000-0000-7000-8000-000000000906',
     'artifact-test-region',
     'Artifact test'
@@ -518,7 +518,7 @@ INSERT INTO worker_pools (
     id, worker_group_id, name
 ) VALUES (
     '00000000-0000-7000-8000-000000000907',
-    'artifact-test-workers',
+    '01900000-0000-7000-8000-000000000908',
     'artifact-test-pool'
 );
 INSERT INTO worker_instances (
@@ -526,7 +526,7 @@ INSERT INTO worker_instances (
 ) VALUES (
     '00000000-0000-7000-8000-000000000904',
     'artifact-test-worker',
-    'artifact-test-workers',
+    '01900000-0000-7000-8000-000000000908',
     '00000000-0000-7000-8000-000000000907'
 );
 INSERT INTO cas_objects (
@@ -946,6 +946,7 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 
 func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
+	assertWorkerGroupUUIDSchema(t, ctx, pool)
 	var forbiddenRelations int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*) FROM pg_class
@@ -970,11 +971,11 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 		INSERT INTO worker_group_tokens (id, token_hash)
 		VALUES ('00000000-0000-7000-8000-000000000097', decode(repeat('07', 32), 'hex'));
 		INSERT INTO worker_groups (id, token_id, region_id, name)
-		VALUES ('shape-test', '00000000-0000-7000-8000-000000000097', 'shape-region', 'shape-test');
+		VALUES ('01900000-0000-7000-8000-000000000096', '00000000-0000-7000-8000-000000000097', 'shape-region', 'shape-test');
 		INSERT INTO worker_pools (id, worker_group_id, name)
-		VALUES ('00000000-0000-7000-8000-000000000098', 'shape-test', 'shape-pool');
+		VALUES ('00000000-0000-7000-8000-000000000098', '01900000-0000-7000-8000-000000000096', 'shape-pool');
 		INSERT INTO worker_instances (id, resource_id, worker_group_id, worker_pool_id, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes)
-		VALUES ('00000000-0000-0000-0000-000000000099', 'shape-test', 'shape-test', '00000000-0000-7000-8000-000000000098', 2000, 2147483648, 8589934592);
+		VALUES ('00000000-0000-0000-0000-000000000099', 'shape-test', '01900000-0000-7000-8000-000000000096', '00000000-0000-7000-8000-000000000098', 2000, 2147483648, 8589934592);
 	`); err != nil {
 		t.Fatal(err)
 	}
@@ -1127,6 +1128,73 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 		t.Fatalf("obsolete placement columns = %d, want 0", obsoleteLeaseColumns)
 	}
 
+}
+
+func assertWorkerGroupUUIDSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+	tables := []string{
+		"worker_groups",
+		"worker_pools",
+		"worker_instances",
+		"worker_instance_credentials",
+		"workspace_mounts",
+		"workspace_leases",
+		"workspace_processes",
+		"run_leases",
+		"runtime_instances",
+	}
+	columns := []string{
+		"id",
+		"worker_group_id",
+		"worker_group_id",
+		"worker_group_id",
+		"worker_group_id",
+		"worker_group_id",
+		"worker_group_id",
+		"worker_group_id",
+		"worker_group_id",
+	}
+	nullability := []string{"NO", "NO", "NO", "NO", "NO", "NO", "YES", "NO", "NO"}
+	rows, err := pool.Query(ctx, `
+		WITH expected AS (
+			SELECT *
+			  FROM unnest($1::text[], $2::text[], $3::text[])
+			       AS target(table_name, column_name, is_nullable)
+		), actual AS (
+			SELECT table_name, column_name, data_type, is_nullable
+			  FROM information_schema.columns
+			 WHERE table_schema = 'public'
+			   AND ((table_name = 'worker_groups' AND column_name = 'id')
+			        OR column_name = 'worker_group_id')
+		)
+		SELECT table_name, column_name,
+		       COALESCE(actual.data_type, ''), COALESCE(actual.is_nullable, '')
+		  FROM expected
+		  FULL JOIN actual USING (table_name, column_name)
+		 WHERE expected.table_name IS NULL
+		    OR actual.table_name IS NULL
+		    OR actual.data_type IS DISTINCT FROM 'uuid'
+		    OR actual.is_nullable IS DISTINCT FROM expected.is_nullable
+		 ORDER BY 1, 2
+	`, tables, columns, nullability)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var violations []string
+	for rows.Next() {
+		var table, column, dataType, nullable string
+		if err := rows.Scan(&table, &column, &dataType, &nullable); err != nil {
+			t.Fatal(err)
+		}
+		violations = append(violations, table+"."+column+"="+dataType+" nullable="+nullable)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("Worker Group UUID catalog violations: %v", violations)
+	}
 }
 
 func assertTelemetrySchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {

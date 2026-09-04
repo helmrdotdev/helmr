@@ -2,7 +2,6 @@ package auth
 
 import (
 	"errors"
-	"strings"
 	"time"
 
 	"uuid"
@@ -15,7 +14,7 @@ type EpochExchangeInput struct {
 // WorkerTokenAuthority is loaded by the epoch-exchange transaction. It keeps
 // identity and policy authority out of the supervisor request body.
 type WorkerTokenAuthority struct {
-	WorkerGroupID     string
+	WorkerGroupID     uuid.UUID
 	WorkerInstanceID  uuid.UUID
 	CredentialID      uuid.UUID
 	WorkerEpoch       int64
@@ -37,8 +36,8 @@ func (authority WorkerTokenAuthority) Claims(input EpochExchangeInput, issuedAt,
 	if err := input.Validate(); err != nil {
 		return WorkerClaims{}, err
 	}
-	if strings.TrimSpace(authority.WorkerGroupID) == "" || strings.TrimSpace(authority.WorkerGroupID) != authority.WorkerGroupID {
-		return WorkerClaims{}, errors.New("worker_group_id must be nonempty and canonical")
+	if authority.WorkerGroupID == uuid.Nil() {
+		return WorkerClaims{}, errors.New("worker_group_id is required")
 	}
 	if authority.WorkerInstanceID == uuid.Nil() {
 		return WorkerClaims{}, errors.New("worker_instance_id is required")
@@ -51,7 +50,7 @@ func (authority WorkerTokenAuthority) Claims(input EpochExchangeInput, issuedAt,
 	}
 
 	return WorkerClaims{
-		WorkerGroupID: authority.WorkerGroupID, WorkerInstanceID: authority.WorkerInstanceID.String(),
+		WorkerGroupID: authority.WorkerGroupID.String(), WorkerInstanceID: authority.WorkerInstanceID.String(),
 		CredentialID: authority.CredentialID.String(), WorkerEpoch: authority.WorkerEpoch,
 		ClaimVersion: authority.ClaimVersion, GroupClaimVersion: authority.GroupClaimVersion,
 		IssuedAt: issuedAt, ExpiresAt: expiresAt,

@@ -47,7 +47,7 @@ func (s *Server) claimRunLease(
 	secretLocators, err := s.db.GetRunLeaseSecretDeliveryLocators(ctx, db.GetRunLeaseSecretDeliveryLocatorsParams{
 		ID:               leaseID,
 		LeaseSequence:    leaseSequence,
-		WorkerGroupID:    worker.WorkerGroupID,
+		WorkerGroupID:    pgvalue.UUID(worker.WorkerGroupID),
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 		WorkerEpoch:      worker.WorkerEpoch,
 	})
@@ -71,7 +71,7 @@ func (s *Server) claimRunLease(
 		locators, err := work.q.GetRunLeaseClaimLocators(ctx, db.GetRunLeaseClaimLocatorsParams{
 			ID:               leaseID,
 			LeaseSequence:    leaseSequence,
-			WorkerGroupID:    worker.WorkerGroupID,
+			WorkerGroupID:    pgvalue.UUID(worker.WorkerGroupID),
 			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 			WorkerEpoch:      worker.WorkerEpoch,
 		})
@@ -791,7 +791,7 @@ func claimRunLeasePhysicalInTx(
 ) (runLeaseClaimAuthority, error) {
 	var err error
 	authority.workerGroup, err = q.LockRunLeaseClaimWorkerGroup(ctx, db.LockRunLeaseClaimWorkerGroupParams{
-		ID:       worker.WorkerGroupID,
+		ID:       pgvalue.UUID(worker.WorkerGroupID),
 		RegionID: locators.RegionID,
 	})
 	if err != nil {
@@ -805,7 +805,7 @@ func claimRunLeasePhysicalInTx(
 
 	readyWorker, err := q.LockRunLeaseClaimReadyWorker(ctx, db.LockRunLeaseClaimReadyWorkerParams{
 		ID:                          pgvalue.UUID(worker.WorkerInstanceID),
-		WorkerGroupID:               worker.WorkerGroupID,
+		WorkerGroupID:               pgvalue.UUID(worker.WorkerGroupID),
 		ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
 	})
 	if err != nil {
@@ -823,7 +823,7 @@ func claimRunLeasePhysicalInTx(
 		ProjectID:        locators.ProjectID,
 		EnvironmentID:    locators.EnvironmentID,
 		RegionID:         locators.RegionID,
-		WorkerGroupID:    worker.WorkerGroupID,
+		WorkerGroupID:    pgvalue.UUID(worker.WorkerGroupID),
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 		WorkerEpoch:      worker.WorkerEpoch,
 		WorkspaceID:      locators.WorkspaceID,
@@ -852,7 +852,7 @@ func claimRunLeasePhysicalInTx(
 		ProjectID:         locators.ProjectID,
 		EnvironmentID:     locators.EnvironmentID,
 		RegionID:          locators.RegionID,
-		WorkerGroupID:     worker.WorkerGroupID,
+		WorkerGroupID:     pgvalue.UUID(worker.WorkerGroupID),
 		WorkerInstanceID:  pgvalue.UUID(worker.WorkerInstanceID),
 		WorkerEpoch:       worker.WorkerEpoch,
 		RuntimeInstanceID: locators.RuntimeInstanceID,
@@ -868,7 +868,7 @@ func claimRunLeasePhysicalInTx(
 		ProjectID:         locators.ProjectID,
 		EnvironmentID:     locators.EnvironmentID,
 		RegionID:          locators.RegionID,
-		WorkerGroupID:     worker.WorkerGroupID,
+		WorkerGroupID:     pgvalue.UUID(worker.WorkerGroupID),
 		WorkerInstanceID:  pgvalue.UUID(worker.WorkerInstanceID),
 		WorkerEpoch:       worker.WorkerEpoch,
 		RuntimeInstanceID: locators.RuntimeInstanceID,
@@ -899,7 +899,7 @@ func markRunLeaseStartingInTx(
 	runLease, err := q.MarkRunLeaseStarting(ctx, db.MarkRunLeaseStartingParams{
 		ID:               leaseID,
 		LeaseSequence:    leaseSequence,
-		WorkerGroupID:    worker.WorkerGroupID,
+		WorkerGroupID:    pgvalue.UUID(worker.WorkerGroupID),
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 		WorkerEpoch:      worker.WorkerEpoch,
 	})
@@ -937,7 +937,7 @@ func validateClaimWorker(authenticated workerActor, worker db.WorkerInstance) er
 func validateClaimPhysicalAuthority(worker workerActor, authority runLeaseClaimAuthority) error {
 	lease := authority.runLease
 	runtime := authority.runtime
-	if lease.WorkerGroupID != worker.WorkerGroupID ||
+	if lease.WorkerGroupID != pgvalue.UUID(worker.WorkerGroupID) ||
 		lease.WorkerInstanceID != pgvalue.UUID(worker.WorkerInstanceID) ||
 		lease.WorkerEpoch != worker.WorkerEpoch ||
 		lease.RuntimeInstanceID != runtime.ID ||

@@ -11,7 +11,7 @@ import (
 func validRunLeaseAssignment(workerID uuid.UUID) workerapi.RunLeaseAssignment {
 	return workerapi.RunLeaseAssignment{
 		ID: uuid.NewV7().String(), RunID: uuid.NewV7().String(),
-		AttemptNumber: 1, LeaseSequence: 1, WorkerGroupID: "worker-group",
+		AttemptNumber: 1, LeaseSequence: 1, WorkerGroupID: controlplaneTestWorkerGroup,
 		WorkerInstanceID: workerID.String(), WorkerEpoch: 1,
 		RuntimeInstanceID: uuid.NewV7().String(), RuntimeIdentityID: "runtime-identity",
 		WorkspaceID:            uuid.NewV7().String(),

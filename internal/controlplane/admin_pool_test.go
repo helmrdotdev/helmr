@@ -48,15 +48,15 @@ func (s *adminPoolStore) BeginQuerier(context.Context) (db.Querier, transaction,
 	return s, &adminHTTPTransaction{}, nil
 }
 
-func (s *adminPoolStore) GetWorkerGroup(context.Context, string) (db.WorkerGroup, error) {
+func (s *adminPoolStore) GetWorkerGroup(context.Context, pgtype.UUID) (db.WorkerGroup, error) {
 	return s.group, nil
 }
 
-func (s *adminPoolStore) ListWorkerPools(context.Context, string) ([]db.WorkerPool, error) {
+func (s *adminPoolStore) ListWorkerPools(context.Context, pgtype.UUID) ([]db.WorkerPool, error) {
 	return append([]db.WorkerPool(nil), s.pools...), nil
 }
 
-func (s *adminPoolStore) LockWorkerGroupForPoolMutation(context.Context, string) (db.WorkerGroup, error) {
+func (s *adminPoolStore) LockWorkerGroupForPoolMutation(context.Context, pgtype.UUID) (db.WorkerGroup, error) {
 	s.transactionActions = append(s.transactionActions, "group")
 	return s.group, nil
 }
@@ -104,7 +104,7 @@ func TestAdminWorkerPoolListReturnsCurrentPrimaryRepresentation(t *testing.T) {
 	response := httptest.NewRecorder()
 	adminHTTPRouter(t, store).ServeHTTP(response, adminHTTPRequest(
 		http.MethodGet,
-		"/admin/api/v1/worker-groups/"+group.ID+"/pools",
+		"/admin/api/v1/worker-groups/"+pgvalue.UUIDString(group.ID)+"/pools",
 		"",
 	))
 	if response.Code != http.StatusOK {
@@ -126,7 +126,7 @@ func TestAdminWorkerPoolCreateLocksGroupAndCreatesPendingPool(t *testing.T) {
 	response := httptest.NewRecorder()
 	adminHTTPRouter(t, store).ServeHTTP(response, adminHTTPRequest(
 		http.MethodPost,
-		"/admin/api/v1/worker-groups/"+group.ID+"/pools",
+		"/admin/api/v1/worker-groups/"+pgvalue.UUIDString(group.ID)+"/pools",
 		`{"name":"run-next","expected_group_claim_version":4}`,
 	))
 	if response.Code != http.StatusCreated {
@@ -160,7 +160,7 @@ func TestAdminWorkerPoolPrimarySwitchIsFencedAndReplaySafe(t *testing.T) {
 		response := httptest.NewRecorder()
 		adminHTTPRouter(t, store).ServeHTTP(response, adminHTTPRequest(
 			http.MethodPost,
-			"/admin/api/v1/worker-groups/"+group.ID+"/pools/"+uuid.UUID(pool.ID.Bytes).String()+"/primary",
+			"/admin/api/v1/worker-groups/"+pgvalue.UUIDString(group.ID)+"/pools/"+uuid.UUID(pool.ID.Bytes).String()+"/primary",
 			`{"expected_group_claim_version":4}`,
 		))
 		if response.Code != http.StatusOK {
@@ -190,7 +190,7 @@ func TestAdminWorkerPoolPrimarySwitchIsFencedAndReplaySafe(t *testing.T) {
 		response := httptest.NewRecorder()
 		adminHTTPRouter(t, store).ServeHTTP(response, adminHTTPRequest(
 			http.MethodPost,
-			"/admin/api/v1/worker-groups/"+group.ID+"/pools/"+uuid.UUID(pool.ID.Bytes).String()+"/primary",
+			"/admin/api/v1/worker-groups/"+pgvalue.UUIDString(group.ID)+"/pools/"+uuid.UUID(pool.ID.Bytes).String()+"/primary",
 			`{"expected_group_claim_version":4}`,
 		))
 		if response.Code != http.StatusOK || store.switchCalls != 0 {
@@ -225,7 +225,7 @@ func TestAdminWorkerPoolLifecycleLocksGroupBeforePool(t *testing.T) {
 			response := httptest.NewRecorder()
 			adminHTTPRouter(t, store).ServeHTTP(response, adminHTTPRequest(
 				http.MethodPost,
-				"/admin/api/v1/worker-groups/"+group.ID+"/pools/"+uuid.UUID(pool.ID.Bytes).String()+"/"+test.path,
+				"/admin/api/v1/worker-groups/"+pgvalue.UUIDString(group.ID)+"/pools/"+uuid.UUID(pool.ID.Bytes).String()+"/"+test.path,
 				`{"expected_pool_claim_version":`+jsonNumber(test.claim)+`}`,
 			))
 			if response.Code != http.StatusOK {
@@ -254,7 +254,7 @@ func TestAdminWorkerPoolLifecyclePreservesRestorableSupplySafetyFence(t *testing
 	response := httptest.NewRecorder()
 	adminHTTPRouter(t, store).ServeHTTP(response, adminHTTPRequest(
 		http.MethodPost,
-		"/admin/api/v1/worker-groups/"+group.ID+"/pools/"+uuid.UUID(pool.ID.Bytes).String()+"/drain",
+		"/admin/api/v1/worker-groups/"+pgvalue.UUIDString(group.ID)+"/pools/"+uuid.UUID(pool.ID.Bytes).String()+"/drain",
 		`{"expected_pool_claim_version":4}`,
 	))
 	if response.Code != http.StatusConflict {
@@ -271,7 +271,7 @@ func TestAdminWorkerPoolIDsRequireCanonicalUUIDv7(t *testing.T) {
 	store := newAdminPoolStore(group, pool)
 	for _, path := range []string{
 		"/admin/api/v1/worker-groups/not-a-group/pools",
-		"/admin/api/v1/worker-groups/" + group.ID + "/pools/" + uuid.New().String() + "/drain",
+		"/admin/api/v1/worker-groups/" + pgvalue.UUIDString(group.ID) + "/pools/" + uuid.New().String() + "/drain",
 	} {
 		response := httptest.NewRecorder()
 		adminHTTPRouter(t, store).ServeHTTP(response, adminHTTPRequest(http.MethodPost, path, `{}`))
@@ -282,7 +282,7 @@ func TestAdminWorkerPoolIDsRequireCanonicalUUIDv7(t *testing.T) {
 }
 
 func adminPoolFixture() (db.WorkerGroup, db.WorkerPool) {
-	groupID := uuid.NewV7().String()
+	groupID := pgvalue.UUID(uuid.NewV7())
 	poolID := pgvalue.UUID(uuid.NewV7())
 	return db.WorkerGroup{
 		ID: groupID, RegionID: "default", Name: "default", State: db.WorkerGroupStateActive,

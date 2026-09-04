@@ -88,7 +88,7 @@ func (q *adminHTTPQuerier) LockWorkerGroupMutation(context.Context, int64) error
 	return nil
 }
 
-func (q *adminHTTPQuerier) GetWorkerGroupState(context.Context, string) (db.GetWorkerGroupStateRow, error) {
+func (q *adminHTTPQuerier) GetWorkerGroupState(context.Context, pgtype.UUID) (db.GetWorkerGroupStateRow, error) {
 	if q.missing {
 		return db.GetWorkerGroupStateRow{}, pgx.ErrNoRows
 	}

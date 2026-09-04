@@ -111,7 +111,7 @@ type ActivateWorkerInstanceParams struct {
 	CPUEnvironment               []byte      `json:"cpu_environment"`
 	CPUEnvironmentDigest         pgtype.Text `json:"cpu_environment_digest"`
 	WorkerInstanceID             pgtype.UUID `json:"worker_instance_id"`
-	WorkerGroupID                string      `json:"worker_group_id"`
+	WorkerGroupID                pgtype.UUID `json:"worker_group_id"`
 	WorkerEpoch                  pgtype.Int8 `json:"worker_epoch"`
 }
 
@@ -254,7 +254,7 @@ RETURNING worker_instances.id, worker_instances.resource_id, worker_instances.wo
 
 type CompleteWorkerStartupRecoveryParams struct {
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
-	WorkerGroupID    string      `json:"worker_group_id"`
+	WorkerGroupID    pgtype.UUID `json:"worker_group_id"`
 	WorkerEpoch      pgtype.Int8 `json:"worker_epoch"`
 	RecoveryEvidence []byte      `json:"recovery_evidence"`
 }
@@ -364,7 +364,7 @@ SELECT transitioned.id, transitioned.resource_id,
 type ConfirmWorkerInstanceProviderAbsentRow struct {
 	ID                 pgtype.UUID        `json:"id"`
 	ResourceID         string             `json:"resource_id"`
-	WorkerGroupID      string             `json:"worker_group_id"`
+	WorkerGroupID      pgtype.UUID        `json:"worker_group_id"`
 	WorkerPoolID       pgtype.UUID        `json:"worker_pool_id"`
 	State              string             `json:"state"`
 	ClaimVersion       int64              `json:"claim_version"`
@@ -410,7 +410,7 @@ RETURNING worker_pools.id, worker_pools.worker_group_id, worker_pools.name, work
 type CreatePendingWorkerPoolParams struct {
 	WorkerPoolID              pgtype.UUID `json:"worker_pool_id"`
 	Name                      string      `json:"name"`
-	WorkerGroupID             string      `json:"worker_group_id"`
+	WorkerGroupID             pgtype.UUID `json:"worker_group_id"`
 	ExpectedGroupClaimVersion int64       `json:"expected_group_claim_version"`
 }
 
@@ -459,7 +459,7 @@ RETURNING id, token_id, region_id, name, description, state, claim_version, prim
 `
 
 type CreateWorkerGroupParams struct {
-	ID          string      `json:"id"`
+	ID          pgtype.UUID `json:"id"`
 	RegionID    string      `json:"region_id"`
 	Name        string      `json:"name"`
 	Description string      `json:"description"`
@@ -503,7 +503,7 @@ SELECT id, resource_id, worker_group_id, worker_pool_id, state, claim_version, c
 type GetCapacityWorkerInstanceRow struct {
 	ID                 pgtype.UUID        `json:"id"`
 	ResourceID         string             `json:"resource_id"`
-	WorkerGroupID      string             `json:"worker_group_id"`
+	WorkerGroupID      pgtype.UUID        `json:"worker_group_id"`
 	WorkerPoolID       pgtype.UUID        `json:"worker_pool_id"`
 	State              string             `json:"state"`
 	ClaimVersion       int64              `json:"claim_version"`
@@ -539,7 +539,7 @@ const getWorkerGroup = `-- name: GetWorkerGroup :one
 SELECT id, token_id, region_id, name, description, state, claim_version, primary_pool_id, created_at, updated_at FROM worker_groups WHERE id = $1
 `
 
-func (q *Queries) GetWorkerGroup(ctx context.Context, id string) (WorkerGroup, error) {
+func (q *Queries) GetWorkerGroup(ctx context.Context, id pgtype.UUID) (WorkerGroup, error) {
 	row := q.db.QueryRow(ctx, getWorkerGroup, id)
 	var i WorkerGroup
 	err := row.Scan(
@@ -594,12 +594,12 @@ SELECT id, state, claim_version
 `
 
 type GetWorkerGroupStateRow struct {
-	ID           string `json:"id"`
-	State        string `json:"state"`
-	ClaimVersion int64  `json:"claim_version"`
+	ID           pgtype.UUID `json:"id"`
+	State        string      `json:"state"`
+	ClaimVersion int64       `json:"claim_version"`
 }
 
-func (q *Queries) GetWorkerGroupState(ctx context.Context, workerGroupID string) (GetWorkerGroupStateRow, error) {
+func (q *Queries) GetWorkerGroupState(ctx context.Context, workerGroupID pgtype.UUID) (GetWorkerGroupStateRow, error) {
 	row := q.db.QueryRow(ctx, getWorkerGroupState, workerGroupID)
 	var i GetWorkerGroupStateRow
 	err := row.Scan(&i.ID, &i.State, &i.ClaimVersion)
@@ -616,7 +616,7 @@ SELECT worker_pool_id
 
 type GetWorkerInstancePoolIDParams struct {
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
-	WorkerGroupID    string      `json:"worker_group_id"`
+	WorkerGroupID    pgtype.UUID `json:"worker_group_id"`
 	WorkerEpoch      pgtype.Int8 `json:"worker_epoch"`
 }
 
@@ -637,14 +637,14 @@ SELECT id, resource_id, worker_group_id, worker_pool_id, state, claim_version, c
 `
 
 type GetWorkerInstanceStateByResourceParams struct {
-	WorkerGroupID string `json:"worker_group_id"`
-	ResourceID    string `json:"resource_id"`
+	WorkerGroupID pgtype.UUID `json:"worker_group_id"`
+	ResourceID    string      `json:"resource_id"`
 }
 
 type GetWorkerInstanceStateByResourceRow struct {
 	ID            pgtype.UUID `json:"id"`
 	ResourceID    string      `json:"resource_id"`
-	WorkerGroupID string      `json:"worker_group_id"`
+	WorkerGroupID pgtype.UUID `json:"worker_group_id"`
 	WorkerPoolID  pgtype.UUID `json:"worker_pool_id"`
 	State         string      `json:"state"`
 	ClaimVersion  int64       `json:"claim_version"`
@@ -674,8 +674,8 @@ SELECT id, worker_group_id, name, state, claim_version, runtime_identity_id, sub
 `
 
 type GetWorkerPoolByGroupNameParams struct {
-	WorkerGroupID string `json:"worker_group_id"`
-	Name          string `json:"name"`
+	WorkerGroupID pgtype.UUID `json:"worker_group_id"`
+	Name          string      `json:"name"`
 }
 
 func (q *Queries) GetWorkerPoolByGroupName(ctx context.Context, arg GetWorkerPoolByGroupNameParams) (WorkerPool, error) {
@@ -733,7 +733,7 @@ WITH current_instances AS (
            draining_at, termination_ready_at, lost_at,
            created_at, updated_at
      FROM worker_instances
-     WHERE ($3::text IS NULL OR worker_group_id = $3)
+     WHERE ($3::uuid IS NULL OR worker_group_id = $3)
        AND (
            NOT $4::boolean
            OR EXISTS (
@@ -764,7 +764,7 @@ SELECT id, resource_id, worker_group_id, worker_pool_id, state, claim_version, c
 type ListCapacityWorkerInstancesParams struct {
 	States                []string    `json:"states"`
 	RowLimit              int32       `json:"row_limit"`
-	WorkerGroupID         pgtype.Text `json:"worker_group_id"`
+	WorkerGroupID         pgtype.UUID `json:"worker_group_id"`
 	HasUnreclaimedRuntime bool        `json:"has_unreclaimed_runtime"`
 	ResourceIds           []string    `json:"resource_ids"`
 }
@@ -772,7 +772,7 @@ type ListCapacityWorkerInstancesParams struct {
 type ListCapacityWorkerInstancesRow struct {
 	ID                 pgtype.UUID        `json:"id"`
 	ResourceID         string             `json:"resource_id"`
-	WorkerGroupID      string             `json:"worker_group_id"`
+	WorkerGroupID      pgtype.UUID        `json:"worker_group_id"`
 	WorkerPoolID       pgtype.UUID        `json:"worker_pool_id"`
 	State              string             `json:"state"`
 	ClaimVersion       int64              `json:"claim_version"`
@@ -869,13 +869,13 @@ SELECT worker_pools.id,
 `
 
 type ListCapacityWorkerPoolsParams struct {
-	WorkerGroupID string        `json:"worker_group_id"`
+	WorkerGroupID pgtype.UUID   `json:"worker_group_id"`
 	WorkerPoolIDs []pgtype.UUID `json:"worker_pool_ids"`
 }
 
 type ListCapacityWorkerPoolsRow struct {
 	ID                              pgtype.UUID `json:"id"`
-	WorkerGroupID                   string      `json:"worker_group_id"`
+	WorkerGroupID                   pgtype.UUID `json:"worker_group_id"`
 	Name                            string      `json:"name"`
 	RuntimeIdentityID               pgtype.Text `json:"runtime_identity_id"`
 	SubstrateFormat                 pgtype.Text `json:"substrate_format"`
@@ -994,7 +994,7 @@ type ListRunWorkerCapacityPressureCandidatesParams struct {
 	RequiredMemoryBytes             int64       `json:"required_memory_bytes"`
 	RequiredGuestEphemeralDiskBytes int64       `json:"required_guest_ephemeral_disk_bytes"`
 	RequiredRuntimeIdentityID       string      `json:"required_runtime_identity_id"`
-	RequiredWorkerGroupID           string      `json:"required_worker_group_id"`
+	RequiredWorkerGroupID           pgtype.UUID `json:"required_worker_group_id"`
 	RequiredSubstrateFormat         string      `json:"required_substrate_format"`
 	RequiredSubstrateContract       string      `json:"required_substrate_contract"`
 	RequiredVMVCPUCount             int32       `json:"required_vm_vcpu_count"`
@@ -1003,7 +1003,7 @@ type ListRunWorkerCapacityPressureCandidatesParams struct {
 }
 
 type ListRunWorkerCapacityPressureCandidatesRow struct {
-	WorkerGroupID     string      `json:"worker_group_id"`
+	WorkerGroupID     pgtype.UUID `json:"worker_group_id"`
 	WorkerInstanceID  pgtype.UUID `json:"worker_instance_id"`
 	WorkerEpoch       pgtype.Int8 `json:"worker_epoch"`
 	RuntimeIdentityID pgtype.Text `json:"runtime_identity_id"`
@@ -1083,7 +1083,7 @@ WITH live_workers AS (
        AND worker_pools.state = 'active'
       JOIN runtime_identities
         ON runtime_identities.id = worker_instances.runtime_identity_id
-     WHERE ($1::text = '' OR worker_groups.id = $1)
+     WHERE ($1::uuid IS NULL OR worker_groups.id = $1)
        AND ($2::text = '' OR worker_groups.region_id = $2)
        AND worker_groups.state = 'active'
        AND worker_instances.observed_at >= transaction_timestamp()
@@ -1159,14 +1159,14 @@ SELECT live_workers.worker_group_id,
 `
 
 type ListWorkerCapacityBinsParams struct {
-	WorkerGroupID               string `json:"worker_group_id"`
-	RegionID                    string `json:"region_id"`
-	ObservationFreshnessSeconds int64  `json:"observation_freshness_seconds"`
-	RowLimit                    int32  `json:"row_limit"`
+	WorkerGroupID               pgtype.UUID `json:"worker_group_id"`
+	RegionID                    string      `json:"region_id"`
+	ObservationFreshnessSeconds int64       `json:"observation_freshness_seconds"`
+	RowLimit                    int32       `json:"row_limit"`
 }
 
 type ListWorkerCapacityBinsRow struct {
-	WorkerGroupID                    string      `json:"worker_group_id"`
+	WorkerGroupID                    pgtype.UUID `json:"worker_group_id"`
 	PrimaryPoolID                    pgtype.UUID `json:"primary_pool_id"`
 	WorkerPoolID                     pgtype.UUID `json:"worker_pool_id"`
 	WorkerInstanceID                 pgtype.UUID `json:"worker_instance_id"`
@@ -1318,7 +1318,7 @@ SELECT id, worker_group_id, name, state, claim_version, runtime_identity_id, sub
  ORDER BY name, id
 `
 
-func (q *Queries) ListWorkerPools(ctx context.Context, workerGroupID string) ([]WorkerPool, error) {
+func (q *Queries) ListWorkerPools(ctx context.Context, workerGroupID pgtype.UUID) ([]WorkerPool, error) {
 	rows, err := q.db.Query(ctx, listWorkerPools, workerGroupID)
 	if err != nil {
 		return nil, err
@@ -1373,7 +1373,7 @@ SELECT id, token_id, region_id, name, description, state, claim_version, primary
  FOR UPDATE
 `
 
-func (q *Queries) LockWorkerGroupForPoolMutation(ctx context.Context, workerGroupID string) (WorkerGroup, error) {
+func (q *Queries) LockWorkerGroupForPoolMutation(ctx context.Context, workerGroupID pgtype.UUID) (WorkerGroup, error) {
 	row := q.db.QueryRow(ctx, lockWorkerGroupForPoolMutation, workerGroupID)
 	var i WorkerGroup
 	err := row.Scan(
@@ -1412,7 +1412,7 @@ SELECT id, resource_id, worker_group_id, worker_pool_id, state, claim_version, c
 
 type LockWorkerInstanceForActivationParams struct {
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
-	WorkerGroupID    string      `json:"worker_group_id"`
+	WorkerGroupID    pgtype.UUID `json:"worker_group_id"`
 	WorkerPoolID     pgtype.UUID `json:"worker_pool_id"`
 	WorkerEpoch      pgtype.Int8 `json:"worker_epoch"`
 }
@@ -1470,7 +1470,7 @@ SELECT id, worker_group_id, name, state, claim_version, runtime_identity_id, sub
 `
 
 type LockWorkerPoolParams struct {
-	WorkerGroupID string      `json:"worker_group_id"`
+	WorkerGroupID pgtype.UUID `json:"worker_group_id"`
 	WorkerPoolID  pgtype.UUID `json:"worker_pool_id"`
 }
 
@@ -1573,15 +1573,15 @@ LIMIT 1
 `
 
 type MarkWorkerInstanceLostParams struct {
-	WorkerGroupID        string `json:"worker_group_id"`
-	ResourceID           string `json:"resource_id"`
-	ExpectedClaimVersion int64  `json:"expected_claim_version"`
+	WorkerGroupID        pgtype.UUID `json:"worker_group_id"`
+	ResourceID           string      `json:"resource_id"`
+	ExpectedClaimVersion int64       `json:"expected_claim_version"`
 }
 
 type MarkWorkerInstanceLostRow struct {
 	ID                pgtype.UUID `json:"id"`
 	ResourceID        string      `json:"resource_id"`
-	WorkerGroupID     string      `json:"worker_group_id"`
+	WorkerGroupID     pgtype.UUID `json:"worker_group_id"`
 	State             string      `json:"state"`
 	ClaimVersion      int64       `json:"claim_version"`
 	CurrentEpoch      pgtype.Int8 `json:"current_epoch"`
@@ -1692,7 +1692,7 @@ type RecordWorkerObservationParams struct {
 	RunPausedReason     pgtype.Text `json:"run_paused_reason"`
 	RuntimePausedReason pgtype.Text `json:"runtime_paused_reason"`
 	WorkerInstanceID    pgtype.UUID `json:"worker_instance_id"`
-	WorkerGroupID       string      `json:"worker_group_id"`
+	WorkerGroupID       pgtype.UUID `json:"worker_group_id"`
 	WorkerEpoch         pgtype.Int8 `json:"worker_epoch"`
 }
 
@@ -1810,7 +1810,7 @@ SELECT supplier.id
 type RequireCheckpointRestoreSupplierParams struct {
 	SourceWorkerPoolID pgtype.UUID `json:"source_worker_pool_id"`
 	SourceRunLeaseID   pgtype.UUID `json:"source_run_lease_id"`
-	WorkerGroupID      string      `json:"worker_group_id"`
+	WorkerGroupID      pgtype.UUID `json:"worker_group_id"`
 	WorkerInstanceID   pgtype.UUID `json:"worker_instance_id"`
 	WorkerEpoch        int64       `json:"worker_epoch"`
 }
@@ -1838,8 +1838,8 @@ RETURNING worker_group_tokens.id, worker_group_tokens.token_hash, worker_group_t
 `
 
 type RotateWorkerGroupTokenParams struct {
-	TokenHash     []byte `json:"token_hash"`
-	WorkerGroupID string `json:"worker_group_id"`
+	TokenHash     []byte      `json:"token_hash"`
+	WorkerGroupID pgtype.UUID `json:"worker_group_id"`
 }
 
 func (q *Queries) RotateWorkerGroupToken(ctx context.Context, arg RotateWorkerGroupTokenParams) (WorkerGroupToken, error) {
@@ -1887,7 +1887,7 @@ type SealWorkerPoolParams struct {
 	PerVMGuestEphemeralDiskBytes    pgtype.Int8 `json:"per_vm_guest_ephemeral_disk_bytes"`
 	MaxVMSlots                      pgtype.Int4 `json:"max_vm_slots"`
 	WorkerPoolID                    pgtype.UUID `json:"worker_pool_id"`
-	WorkerGroupID                   string      `json:"worker_group_id"`
+	WorkerGroupID                   pgtype.UUID `json:"worker_group_id"`
 }
 
 func (q *Queries) SealWorkerPool(ctx context.Context, arg SealWorkerPoolParams) (WorkerPool, error) {
@@ -2054,23 +2054,23 @@ SELECT worker_group_id,
 `
 
 type SelectRunWorkerCapacityParams struct {
-	RequiredCPUMillis               int64  `json:"required_cpu_millis"`
-	RequiredMemoryBytes             int64  `json:"required_memory_bytes"`
-	RequiredGuestEphemeralDiskBytes int64  `json:"required_guest_ephemeral_disk_bytes"`
-	RegionID                        string `json:"region_id"`
-	ObservationFreshnessSeconds     int64  `json:"observation_freshness_seconds"`
-	RunArchitecture                 string `json:"run_architecture"`
-	VMRuntimeContract               string `json:"vm_runtime_contract"`
-	RequiredRuntimeIdentityID       string `json:"required_runtime_identity_id"`
-	RequiredWorkerGroupID           string `json:"required_worker_group_id"`
-	RequiredSubstrateFormat         string `json:"required_substrate_format"`
-	RequiredSubstrateContract       string `json:"required_substrate_contract"`
-	RequiredVMVCPUCount             int32  `json:"required_vm_vcpu_count"`
-	RequiredCPUConfigDigest         string `json:"required_cpu_config_digest"`
+	RequiredCPUMillis               int64       `json:"required_cpu_millis"`
+	RequiredMemoryBytes             int64       `json:"required_memory_bytes"`
+	RequiredGuestEphemeralDiskBytes int64       `json:"required_guest_ephemeral_disk_bytes"`
+	RegionID                        string      `json:"region_id"`
+	ObservationFreshnessSeconds     int64       `json:"observation_freshness_seconds"`
+	RunArchitecture                 string      `json:"run_architecture"`
+	VMRuntimeContract               string      `json:"vm_runtime_contract"`
+	RequiredRuntimeIdentityID       string      `json:"required_runtime_identity_id"`
+	RequiredWorkerGroupID           pgtype.UUID `json:"required_worker_group_id"`
+	RequiredSubstrateFormat         string      `json:"required_substrate_format"`
+	RequiredSubstrateContract       string      `json:"required_substrate_contract"`
+	RequiredVMVCPUCount             int32       `json:"required_vm_vcpu_count"`
+	RequiredCPUConfigDigest         string      `json:"required_cpu_config_digest"`
 }
 
 type SelectRunWorkerCapacityRow struct {
-	WorkerGroupID     string      `json:"worker_group_id"`
+	WorkerGroupID     pgtype.UUID `json:"worker_group_id"`
 	WorkerInstanceID  pgtype.UUID `json:"worker_instance_id"`
 	WorkerEpoch       pgtype.Int8 `json:"worker_epoch"`
 	RuntimeIdentityID pgtype.Text `json:"runtime_identity_id"`
@@ -2140,7 +2140,7 @@ RETURNING worker_groups.id, worker_groups.token_id, worker_groups.region_id, wor
 
 type SetInitialWorkerGroupPrimaryPoolParams struct {
 	WorkerPoolID  pgtype.UUID `json:"worker_pool_id"`
-	WorkerGroupID string      `json:"worker_group_id"`
+	WorkerGroupID pgtype.UUID `json:"worker_group_id"`
 }
 
 func (q *Queries) SetInitialWorkerGroupPrimaryPool(ctx context.Context, arg SetInitialWorkerGroupPrimaryPoolParams) (WorkerGroup, error) {
@@ -2174,7 +2174,7 @@ RETURNING worker_groups.id, worker_groups.token_id, worker_groups.region_id, wor
 
 type SetWorkerGroupPrimaryPoolParams struct {
 	PoolID                    pgtype.UUID `json:"pool_id"`
-	WorkerGroupID             string      `json:"worker_group_id"`
+	WorkerGroupID             pgtype.UUID `json:"worker_group_id"`
 	ExpectedGroupClaimVersion int64       `json:"expected_group_claim_version"`
 }
 
@@ -2267,16 +2267,16 @@ LIMIT 1
 `
 
 type TransitionWorkerGroupStateParams struct {
-	TargetState          string `json:"target_state"`
-	WorkerGroupID        string `json:"worker_group_id"`
-	ExpectedClaimVersion int64  `json:"expected_claim_version"`
+	TargetState          string      `json:"target_state"`
+	WorkerGroupID        pgtype.UUID `json:"worker_group_id"`
+	ExpectedClaimVersion int64       `json:"expected_claim_version"`
 }
 
 type TransitionWorkerGroupStateRow struct {
-	ID                string `json:"id"`
-	State             string `json:"state"`
-	ClaimVersion      int64  `json:"claim_version"`
-	TransitionApplied bool   `json:"transition_applied"`
+	ID                pgtype.UUID `json:"id"`
+	State             string      `json:"state"`
+	ClaimVersion      int64       `json:"claim_version"`
+	TransitionApplied bool        `json:"transition_applied"`
 }
 
 func (q *Queries) TransitionWorkerGroupState(ctx context.Context, arg TransitionWorkerGroupStateParams) (TransitionWorkerGroupStateRow, error) {
@@ -2552,7 +2552,7 @@ RETURNING target.id, target.worker_group_id, target.name, target.state, target.c
 type TransitionWorkerPoolLifecycleParams struct {
 	TargetState              string      `json:"target_state"`
 	WorkerPoolID             pgtype.UUID `json:"worker_pool_id"`
-	WorkerGroupID            string      `json:"worker_group_id"`
+	WorkerGroupID            pgtype.UUID `json:"worker_group_id"`
 	ExpectedPoolClaimVersion int64       `json:"expected_pool_claim_version"`
 }
 
@@ -2595,8 +2595,8 @@ RETURNING id, token_id, region_id, name, description, state, claim_version, prim
 `
 
 type UpdateWorkerGroupDescriptionParams struct {
-	Description string `json:"description"`
-	ID          string `json:"id"`
+	Description string      `json:"description"`
+	ID          pgtype.UUID `json:"id"`
 }
 
 func (q *Queries) UpdateWorkerGroupDescription(ctx context.Context, arg UpdateWorkerGroupDescriptionParams) (WorkerGroup, error) {

@@ -137,7 +137,7 @@ func (s *Server) appendActorOutput(
 	locatorParams := db.GetLiveRunLeaseLocatorsParams{
 		ID:               pgvalue.UUID(parsed.lease.leaseID),
 		LeaseSequence:    request.Lease.LeaseSequence,
-		WorkerGroupID:    worker.WorkerGroupID,
+		WorkerGroupID:    pgvalue.UUID(worker.WorkerGroupID),
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 		WorkerEpoch:      worker.WorkerEpoch,
 	}

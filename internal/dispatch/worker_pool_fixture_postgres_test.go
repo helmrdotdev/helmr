@@ -8,6 +8,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -28,7 +29,7 @@ func seedDispatchWorkerPool(
 	t *testing.T,
 	ctx context.Context,
 	pool *pgxpool.Pool,
-	workerGroupID string,
+	workerGroupID pgtype.UUID,
 	spec dispatchWorkerPoolFixture,
 ) {
 	t.Helper()

@@ -3,9 +3,14 @@ package capacity
 import (
 	"context"
 	"testing"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+var queuedDemandTestGroupID = uuid.MustParse("01900000-0000-7000-8000-000000000201")
 
 func TestHasQueuedDemandUsesWorkerGroupRegion(t *testing.T) {
 	for _, test := range []struct {
@@ -21,18 +26,18 @@ func TestHasQueuedDemandUsesWorkerGroupRegion(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := &fakeQueuedDemandStore{
-				group: db.WorkerGroup{ID: "run-workers", RegionID: "us-east-1"},
+				group: db.WorkerGroup{ID: pgvalue.UUID(queuedDemandTestGroupID), RegionID: "us-east-1"},
 				runs:  test.runs, execs: test.execs,
 			}
-			got, err := HasQueuedDemand(t.Context(), store, "run-workers")
+			got, err := HasQueuedDemand(t.Context(), store, queuedDemandTestGroupID)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if got != test.want {
 				t.Fatalf("HasQueuedDemand() = %t, want %t", got, test.want)
 			}
-			if store.groupID != "run-workers" || store.runParams.RegionFilter != "us-east-1" || store.runParams.RowLimit != 1 {
-				t.Fatalf("group = %q, run params = %+v", store.groupID, store.runParams)
+			if store.groupID != pgvalue.UUID(queuedDemandTestGroupID) || store.runParams.RegionFilter != "us-east-1" || store.runParams.RowLimit != 1 {
+				t.Fatalf("group = %v, run params = %+v", store.groupID, store.runParams)
 			}
 			if store.execCalls != test.wantExecs {
 				t.Fatalf("Workspace Exec calls = %d, want %d", store.execCalls, test.wantExecs)
@@ -48,13 +53,13 @@ type fakeQueuedDemandStore struct {
 	group      db.WorkerGroup
 	runs       []db.ListQueuedRunEligibleScopesRow
 	execs      []db.ListPendingWorkspaceExecCapacityCandidatesRow
-	groupID    string
+	groupID    pgtype.UUID
 	runParams  db.ListQueuedRunEligibleScopesParams
 	execParams db.ListPendingWorkspaceExecCapacityCandidatesParams
 	execCalls  int
 }
 
-func (s *fakeQueuedDemandStore) GetWorkerGroup(_ context.Context, id string) (db.WorkerGroup, error) {
+func (s *fakeQueuedDemandStore) GetWorkerGroup(_ context.Context, id pgtype.UUID) (db.WorkerGroup, error) {
 	s.groupID = id
 	return s.group, nil
 }

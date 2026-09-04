@@ -12,9 +12,12 @@ import (
 )
 
 const (
-	Region      = "us-east-1"
-	WorkerGroup = "run-workers"
+	Region          = "us-east-1"
+	WorkerGroup     = "01900000-0000-7000-8000-000000000101"
+	WorkerGroupName = "run-workers"
 )
+
+var WorkerGroupID = uuid.MustParse(WorkerGroup)
 
 type Fixture struct {
 	Pool                  *pgxpool.Pool
@@ -73,8 +76,8 @@ func New(t *testing.T) Fixture {
 		INSERT INTO worker_groups (
 			id, token_id, region_id, name
 		)
-		SELECT $1, token.id, $2, $1 FROM token
-	`, WorkerGroup, Region, uuid.NewV7(), dbtest.Hash("run-test-worker-group"))
+		SELECT $1, token.id, $2, $5 FROM token
+	`, WorkerGroup, Region, uuid.NewV7(), dbtest.Hash("run-test-worker-group"), WorkerGroupName)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO organizations (id, name, slug)
 		VALUES ($1, 'Run Lease Test', $2)

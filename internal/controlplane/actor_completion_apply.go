@@ -46,7 +46,7 @@ func (s *Server) completeActor(ctx context.Context, worker workerActor, request 
 		}
 		locators, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 			ID: pgvalue.UUID(completion.lease.leaseID), LeaseSequence: request.Lease.LeaseSequence,
-			WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+			WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 			WorkerEpoch: worker.WorkerEpoch})
 		if err != nil {
 			return staleActorCompletion(err)
@@ -133,7 +133,7 @@ func (s *Server) completeActor(ctx context.Context, worker workerActor, request 
 func actorCompletionWasReplayed(ctx context.Context, store actorCompletionReplayStore, worker workerActor, request workerapi.CompleteActorRequest, completion parsedActorCompletion) (bool, error) {
 	fingerprint, err := store.GetActorCompletionReplay(ctx, db.GetActorCompletionReplayParams{
 		RunLeaseID:    pgvalue.UUID(completion.lease.leaseID),
-		LeaseSequence: request.Lease.LeaseSequence, WorkerGroupID: worker.WorkerGroupID,
+		LeaseSequence: request.Lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {

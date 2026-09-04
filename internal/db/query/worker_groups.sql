@@ -666,7 +666,7 @@ WITH current_instances AS (
            draining_at, termination_ready_at, lost_at,
            created_at, updated_at
      FROM worker_instances
-     WHERE (sqlc.narg(worker_group_id)::text IS NULL OR worker_group_id = sqlc.narg(worker_group_id))
+     WHERE (sqlc.narg(worker_group_id)::uuid IS NULL OR worker_group_id = sqlc.narg(worker_group_id))
        AND (
            NOT sqlc.arg(has_unreclaimed_runtime)::boolean
            OR EXISTS (
@@ -726,7 +726,7 @@ WITH live_workers AS (
        AND worker_pools.state = 'active'
       JOIN runtime_identities
         ON runtime_identities.id = worker_instances.runtime_identity_id
-     WHERE (sqlc.arg(worker_group_id)::text = '' OR worker_groups.id = sqlc.arg(worker_group_id))
+     WHERE (sqlc.narg(worker_group_id)::uuid IS NULL OR worker_groups.id = sqlc.narg(worker_group_id))
        AND (sqlc.arg(region_id)::text = '' OR worker_groups.region_id = sqlc.arg(region_id))
        AND worker_groups.state = 'active'
        AND worker_instances.observed_at >= transaction_timestamp()

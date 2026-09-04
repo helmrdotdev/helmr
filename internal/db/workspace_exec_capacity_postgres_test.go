@@ -370,7 +370,7 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 				`, interleavedRuntimeID)
 			},
 		}
-		plan, err := capacity.Plan(ctx, store, dbtest.DefaultWorkerGroupID, capacity.PlanRequest{
+		plan, err := capacity.Plan(ctx, store, dbtest.DefaultWorkerGroupUUID, capacity.PlanRequest{
 			Pools: []capacity.PoolRequest{{
 				PoolID:               dbtest.DefaultWorkerPoolID,
 				MaxAdditionalWorkers: 1,
@@ -416,7 +416,7 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 					definitionID, dbtest.DefaultCPUConfigID, workspaceID, processID, versionID)
 			},
 		}
-		plan, err := capacity.Plan(ctx, store, dbtest.DefaultWorkerGroupID, capacity.PlanRequest{
+		plan, err := capacity.Plan(ctx, store, dbtest.DefaultWorkerGroupUUID, capacity.PlanRequest{
 			Pools: []capacity.PoolRequest{{
 				PoolID:               dbtest.DefaultWorkerPoolID,
 				MaxAdditionalWorkers: 1,

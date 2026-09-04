@@ -19,7 +19,7 @@ import (
 
 type runRuntime struct {
 	id                      pgtype.UUID
-	groupID                 string
+	groupID                 pgtype.UUID
 	workerID                pgtype.UUID
 	workerEpoch             int64
 	runtimeIdentityID       string
@@ -476,7 +476,7 @@ SELECT id, worker_instance_id, worker_epoch, runtime_instance_id, state,
 }
 
 type runWorker struct {
-	groupID           string
+	groupID           pgtype.UUID
 	workerID          pgtype.UUID
 	workerEpoch       int64
 	runtimeIdentityID string

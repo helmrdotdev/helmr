@@ -144,7 +144,7 @@ func (s *Server) appendRunLog(
 	}
 	input.RunLeaseID = pgvalue.UUID(parsed.leaseID)
 	input.LeaseSequence = lease.LeaseSequence
-	input.WorkerGroupID = worker.WorkerGroupID
+	input.WorkerGroupID = pgvalue.UUID(worker.WorkerGroupID)
 	input.WorkerInstanceID = pgvalue.UUID(worker.WorkerInstanceID)
 	input.WorkerEpoch = worker.WorkerEpoch
 	input.LeaseFenceFingerprint = fenceFingerprint
@@ -158,7 +158,7 @@ func runMetadataClaimScopeParams(
 ) db.GetRunMetadataClaimScopeParams {
 	return db.GetRunMetadataClaimScopeParams{
 		RunLeaseID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence,
-		WorkerGroupID:    worker.WorkerGroupID,
+		WorkerGroupID:    pgvalue.UUID(worker.WorkerGroupID),
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 		WorkerEpoch:      worker.WorkerEpoch,
 	}

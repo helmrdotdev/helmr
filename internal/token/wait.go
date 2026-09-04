@@ -34,7 +34,7 @@ type WaitRegistration struct {
 	ResumeAttachID                uuid.UUID
 	RunLeaseID                    uuid.UUID
 	LeaseSequence                 int64
-	WorkerGroupID                 string
+	WorkerGroupID                 uuid.UUID
 	WorkerInstanceID              uuid.UUID
 	WorkerEpoch                   int64
 	RequestFingerprint            string
@@ -79,7 +79,7 @@ func (r *WaitReconciler) RegisterWait(
 		request.WorkerInstanceID == uuid.Nil() {
 		return WaitRegistrationResult{}, errors.New("token wait registration IDs are required")
 	}
-	if request.LeaseSequence <= 0 || request.WorkerEpoch <= 0 || request.WorkerGroupID == "" ||
+	if request.LeaseSequence <= 0 || request.WorkerEpoch <= 0 || request.WorkerGroupID == uuid.Nil() ||
 		len(request.RequestFingerprint) != 71 || request.RequestFingerprint[:7] != "sha256:" {
 		return WaitRegistrationResult{}, errors.New("token wait registration fences are invalid")
 	}
@@ -117,7 +117,7 @@ func (r *WaitReconciler) RegisterWait(
 	}
 	locators, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 		ID: pgvalue.UUID(request.RunLeaseID), LeaseSequence: request.LeaseSequence,
-		WorkerGroupID: request.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(request.WorkerInstanceID),
+		WorkerGroupID: pgvalue.UUID(request.WorkerGroupID), WorkerInstanceID: pgvalue.UUID(request.WorkerInstanceID),
 		WorkerEpoch: request.WorkerEpoch,
 	})
 	if err != nil {
@@ -196,14 +196,14 @@ func (r *WaitReconciler) RegisterWait(
 		return WaitRegistrationResult{}, err
 	}
 	workerGroup, err := q.LockRunLeaseClaimWorkerGroup(ctx, db.LockRunLeaseClaimWorkerGroupParams{
-		ID: request.WorkerGroupID, RegionID: locators.RegionID,
+		ID: pgvalue.UUID(request.WorkerGroupID), RegionID: locators.RegionID,
 	})
 	if err != nil ||
 		(workerGroup.State != db.WorkerGroupStateActive && workerGroup.State != db.WorkerGroupStateDraining) {
 		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock active worker group", err)
 	}
 	worker, err := q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{
-		ID: pgtype.UUID{Bytes: request.WorkerInstanceID, Valid: true}, WorkerGroupID: request.WorkerGroupID,
+		ID: pgtype.UUID{Bytes: request.WorkerInstanceID, Valid: true}, WorkerGroupID: pgvalue.UUID(request.WorkerGroupID),
 	})
 	if err != nil ||
 		(worker.State != db.WorkerInstanceStateActive && worker.State != db.WorkerInstanceStateDraining) ||
@@ -215,7 +215,7 @@ func (r *WaitReconciler) RegisterWait(
 	runtime, err := q.LockRunLeaseClaimRuntime(ctx, db.LockRunLeaseClaimRuntimeParams{
 		ID: locators.RuntimeInstanceID, OrgID: locator.OrgID,
 		ProjectID: locator.ProjectID, EnvironmentID: locators.EnvironmentID,
-		RegionID: locators.RegionID, WorkerGroupID: request.WorkerGroupID,
+		RegionID: locators.RegionID, WorkerGroupID: pgvalue.UUID(request.WorkerGroupID),
 		WorkerInstanceID: pgtype.UUID{Bytes: request.WorkerInstanceID, Valid: true}, WorkerEpoch: request.WorkerEpoch,
 		WorkspaceID: locator.WorkspaceID,
 	})
@@ -230,7 +230,7 @@ func (r *WaitReconciler) RegisterWait(
 		AttemptNumber:     attemptNumber,
 		WorkspaceID:       locator.WorkspaceID,
 		LeaseSequence:     request.LeaseSequence,
-		WorkerGroupID:     request.WorkerGroupID,
+		WorkerGroupID:     pgvalue.UUID(request.WorkerGroupID),
 		WorkerInstanceID:  pgvalue.UUID(request.WorkerInstanceID),
 		WorkerEpoch:       request.WorkerEpoch,
 		RuntimeInstanceID: locators.RuntimeInstanceID,
@@ -243,7 +243,7 @@ func (r *WaitReconciler) RegisterWait(
 	mount, err := q.LockRunLeaseClaimMount(ctx, db.LockRunLeaseClaimMountParams{
 		ID: locators.WorkspaceMountID, OrgID: locator.OrgID,
 		ProjectID: locator.ProjectID, EnvironmentID: locators.EnvironmentID,
-		RegionID: locators.RegionID, WorkerGroupID: request.WorkerGroupID,
+		RegionID: locators.RegionID, WorkerGroupID: pgvalue.UUID(request.WorkerGroupID),
 		WorkerInstanceID: pgtype.UUID{Bytes: request.WorkerInstanceID, Valid: true}, WorkerEpoch: request.WorkerEpoch,
 		RuntimeInstanceID: locators.RuntimeInstanceID,
 		WorkspaceID:       locator.WorkspaceID,
@@ -254,7 +254,7 @@ func (r *WaitReconciler) RegisterWait(
 	workspaceLease, err := q.LockRunLeaseClaimWorkspaceLease(ctx, db.LockRunLeaseClaimWorkspaceLeaseParams{
 		ID: locators.WorkspaceLeaseID, OrgID: locator.OrgID,
 		ProjectID: locator.ProjectID, EnvironmentID: locators.EnvironmentID,
-		RegionID: locators.RegionID, WorkerGroupID: request.WorkerGroupID,
+		RegionID: locators.RegionID, WorkerGroupID: pgvalue.UUID(request.WorkerGroupID),
 		WorkerInstanceID: pgtype.UUID{Bytes: request.WorkerInstanceID, Valid: true}, WorkerEpoch: request.WorkerEpoch,
 		RuntimeInstanceID: locators.RuntimeInstanceID,
 		WorkspaceID:       locator.WorkspaceID,
@@ -355,7 +355,7 @@ func replayTokenWaitRegistration(
 			Metadata:                      metadata,
 			Tags:                          tags,
 			LeaseSequence:                 request.LeaseSequence,
-			WorkerGroupID:                 request.WorkerGroupID,
+			WorkerGroupID:                 pgvalue.UUID(request.WorkerGroupID),
 			WorkerInstanceID:              pgvalue.UUID(request.WorkerInstanceID),
 			WorkerEpoch:                   request.WorkerEpoch,
 			ActorSpeculativeInputSequence: request.ActorSpeculativeInputSequence,

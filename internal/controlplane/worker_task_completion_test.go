@@ -37,7 +37,7 @@ func TestWorkerCompleteTaskReplaysPreviousEpochWithoutCAS(t *testing.T) {
 	httpRequest := httptest.NewRequest(http.MethodPost, "/worker/v1/run/tasks/complete", bytes.NewReader(body))
 	httpRequest = httpRequest.WithContext(context.WithValue(httpRequest.Context(), workerContextKey{}, workerActor{
 		WorkerInstanceID: workerID,
-		WorkerGroupID:    lease.WorkerGroupID,
+		WorkerGroupID:    uuid.MustParse(lease.WorkerGroupID),
 		WorkerEpoch:      2,
 	}))
 	response := httptest.NewRecorder()
@@ -68,7 +68,7 @@ func TestWorkerCompleteTaskRejectsChangedTerminalRequest(t *testing.T) {
 	httpRequest := httptest.NewRequest(http.MethodPost, "/worker/v1/run/tasks/complete", bytes.NewReader(body))
 	httpRequest = httpRequest.WithContext(context.WithValue(httpRequest.Context(), workerContextKey{}, workerActor{
 		WorkerInstanceID: workerID,
-		WorkerGroupID:    lease.WorkerGroupID,
+		WorkerGroupID:    uuid.MustParse(lease.WorkerGroupID),
 		WorkerEpoch:      lease.WorkerEpoch,
 	}))
 	response := httptest.NewRecorder()

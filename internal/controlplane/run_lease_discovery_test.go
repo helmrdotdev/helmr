@@ -24,14 +24,14 @@ func TestDiscoverWorkerRunLeasesReturnsOnlyExactWorkTuples(t *testing.T) {
 	response, err := discoverWorkerRunLeases(
 		context.Background(),
 		store,
-		"run-workers",
+		controlplaneTestWorkerGroupID,
 		pgvalue.UUID(workerID),
 		11,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if store.params.WorkerGroupID != "run-workers" ||
+	if store.params.WorkerGroupID != controlplaneTestWorkerGroupDBID ||
 		store.params.WorkerInstanceID != pgvalue.UUID(workerID) ||
 		store.params.WorkerEpoch != 11 ||
 		store.params.RowLimit != workerRunLeaseDiscoveryLimit {
@@ -50,7 +50,7 @@ func TestDiscoverWorkerRunLeasesReturnsAnEmptyList(t *testing.T) {
 	response, err := discoverWorkerRunLeases(
 		context.Background(),
 		&runLeaseDiscoveryStore{},
-		"run-workers",
+		controlplaneTestWorkerGroupID,
 		pgvalue.UUID(uuid.NewV7()),
 		1,
 	)
@@ -67,7 +67,7 @@ func TestDiscoverWorkerRunLeasesPropagatesStorageFailure(t *testing.T) {
 	_, err := discoverWorkerRunLeases(
 		context.Background(),
 		&runLeaseDiscoveryStore{err: expected},
-		"run-workers",
+		controlplaneTestWorkerGroupID,
 		pgvalue.UUID(uuid.NewV7()),
 		1,
 	)

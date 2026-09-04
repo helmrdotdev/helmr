@@ -20,7 +20,7 @@ import (
 func TestTaskCompletionReplayUsesOnlyTerminalReceipt(t *testing.T) {
 	workerID := uuid.MustParse("00000000-0000-0000-0000-000000000001")
 	leaseID := uuid.MustParse("00000000-0000-0000-0000-000000000002")
-	worker := workerActor{WorkerInstanceID: workerID, WorkerGroupID: "workers"}
+	worker := workerActor{WorkerInstanceID: workerID, WorkerGroupID: controlplaneTestWorkerGroupID}
 	request := workerapi.CompleteTaskRequest{Lease: workerapi.RunLeaseFence{
 		ID:            leaseID.String(),
 		LeaseSequence: 7,
@@ -37,7 +37,7 @@ func TestTaskCompletionReplayUsesOnlyTerminalReceipt(t *testing.T) {
 	}
 	if store.last.RunLeaseID != pgvalue.UUID(leaseID) ||
 		store.last.LeaseSequence != 7 ||
-		store.last.WorkerGroupID != worker.WorkerGroupID ||
+		store.last.WorkerGroupID != pgvalue.UUID(worker.WorkerGroupID) ||
 		store.last.WorkerInstanceID != pgvalue.UUID(workerID) {
 		t.Fatalf("unexpected replay selector: %+v", store.last)
 	}

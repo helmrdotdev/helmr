@@ -53,7 +53,7 @@ type GetRuntimePreparationFailureAuthorityParams struct {
 type GetRuntimePreparationFailureAuthorityRow struct {
 	ReservedRunID         pgtype.UUID `json:"reserved_run_id"`
 	ReservedAttemptNumber pgtype.Int4 `json:"reserved_attempt_number"`
-	WorkerGroupID         string      `json:"worker_group_id"`
+	WorkerGroupID         pgtype.UUID `json:"worker_group_id"`
 	WorkerPoolID          pgtype.UUID `json:"worker_pool_id"`
 	OrgID                 pgtype.UUID `json:"org_id"`
 	ProjectID             pgtype.UUID `json:"project_id"`
@@ -178,14 +178,14 @@ type ListRuntimeReconcileTargetsParams struct {
 	ObservationFreshnessSeconds int64       `json:"observation_freshness_seconds"`
 	RowLimit                    int32       `json:"row_limit"`
 	WorkerInstanceID            pgtype.UUID `json:"worker_instance_id"`
-	WorkerGroupID               string      `json:"worker_group_id"`
+	WorkerGroupID               pgtype.UUID `json:"worker_group_id"`
 	WorkerEpoch                 int64       `json:"worker_epoch"`
 }
 
 type ListRuntimeReconcileTargetsRow struct {
 	ID                              pgtype.UUID        `json:"id"`
 	OrgID                           pgtype.UUID        `json:"org_id"`
-	WorkerGroupID                   string             `json:"worker_group_id"`
+	WorkerGroupID                   pgtype.UUID        `json:"worker_group_id"`
 	ProjectID                       pgtype.UUID        `json:"project_id"`
 	EnvironmentID                   pgtype.UUID        `json:"environment_id"`
 	RegionID                        string             `json:"region_id"`
@@ -377,7 +377,7 @@ type LockRuntimePreparationFailureAuthorityParams struct {
 type LockRuntimePreparationFailureAuthorityRow struct {
 	ReservedRunID         pgtype.UUID `json:"reserved_run_id"`
 	ReservedAttemptNumber pgtype.Int4 `json:"reserved_attempt_number"`
-	WorkerGroupID         string      `json:"worker_group_id"`
+	WorkerGroupID         pgtype.UUID `json:"worker_group_id"`
 	WorkerPoolID          pgtype.UUID `json:"worker_pool_id"`
 	OrgID                 pgtype.UUID `json:"org_id"`
 	ProjectID             pgtype.UUID `json:"project_id"`

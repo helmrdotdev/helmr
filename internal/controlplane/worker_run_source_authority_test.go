@@ -15,7 +15,7 @@ func TestAuthorizeWorkerRunSourceRequiresWorkerAndLiveFence(t *testing.T) {
 		{
 			name: "wrong worker",
 			mutate: func(worker *workerActor, _ *runLeaseClaimAuthorityFixture) {
-				worker.WorkerGroupID = "other"
+				worker.WorkerGroupID = controlplaneOtherWorkerGroupID
 			},
 		},
 		{

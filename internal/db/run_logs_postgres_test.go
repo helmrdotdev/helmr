@@ -83,7 +83,9 @@ func TestAppendRunLogChunkRequiresExactCurrentReceipt(t *testing.T) {
 	}{
 		{"Run Lease", func(p *AppendRunLogChunkParams) { p.RunLeaseID = randomPGUUID() }},
 		{"lease sequence", func(p *AppendRunLogChunkParams) { p.LeaseSequence++ }},
-		{"worker group", func(p *AppendRunLogChunkParams) { p.WorkerGroupID += "-stale" }},
+		{"worker group", func(p *AppendRunLogChunkParams) {
+			p.WorkerGroupID = pgvalue.UUID(uuid.MustParse("01900000-0000-7000-8000-000000000003"))
+		}},
 		{"worker", func(p *AppendRunLogChunkParams) { p.WorkerInstanceID = randomPGUUID() }},
 		{"worker epoch", func(p *AppendRunLogChunkParams) { p.WorkerEpoch++ }},
 	}

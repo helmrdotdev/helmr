@@ -3,18 +3,21 @@ package capacity
 import (
 	"context"
 	"fmt"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type queuedDemandStore interface {
-	GetWorkerGroup(context.Context, string) (db.WorkerGroup, error)
+	GetWorkerGroup(context.Context, pgtype.UUID) (db.WorkerGroup, error)
 	ListQueuedRunEligibleScopes(context.Context, db.ListQueuedRunEligibleScopesParams) ([]db.ListQueuedRunEligibleScopesRow, error)
 	ListPendingWorkspaceExecCapacityCandidates(context.Context, db.ListPendingWorkspaceExecCapacityCandidatesParams) ([]db.ListPendingWorkspaceExecCapacityCandidatesRow, error)
 }
 
-func HasQueuedDemand(ctx context.Context, store queuedDemandStore, workerGroupID string) (bool, error) {
-	group, err := store.GetWorkerGroup(ctx, workerGroupID)
+func HasQueuedDemand(ctx context.Context, store queuedDemandStore, workerGroupID uuid.UUID) (bool, error) {
+	group, err := store.GetWorkerGroup(ctx, pgvalue.UUID(workerGroupID))
 	if err != nil {
 		return false, fmt.Errorf("get Worker Group: %w", err)
 	}

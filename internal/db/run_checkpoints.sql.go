@@ -152,7 +152,7 @@ type CloseCheckpointSourceRuntimeParams struct {
 type CloseCheckpointSourceRuntimeRow struct {
 	ID                         pgtype.UUID        `json:"id"`
 	OrgID                      pgtype.UUID        `json:"org_id"`
-	WorkerGroupID              string             `json:"worker_group_id"`
+	WorkerGroupID              pgtype.UUID        `json:"worker_group_id"`
 	ProjectID                  pgtype.UUID        `json:"project_id"`
 	EnvironmentID              pgtype.UUID        `json:"environment_id"`
 	RegionID                   string             `json:"region_id"`

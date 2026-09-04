@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -14,12 +15,12 @@ const workerRunLeaseDiscoveryLimit int32 = 64
 func discoverWorkerRunLeases(
 	ctx context.Context,
 	store db.Querier,
-	workerGroupID string,
+	workerGroupID uuid.UUID,
 	workerInstanceID pgtype.UUID,
 	workerEpoch int64,
 ) (workerapi.RunLeaseDiscoveryResponse, error) {
 	rows, err := store.DiscoverWorkerRunLeaseWork(ctx, db.DiscoverWorkerRunLeaseWorkParams{
-		WorkerGroupID:    workerGroupID,
+		WorkerGroupID:    pgvalue.UUID(workerGroupID),
 		RowLimit:         workerRunLeaseDiscoveryLimit,
 		WorkerInstanceID: workerInstanceID,
 		WorkerEpoch:      workerEpoch,

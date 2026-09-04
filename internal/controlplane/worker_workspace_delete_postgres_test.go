@@ -74,7 +74,7 @@ SELECT worker_instances.claim_version, worker_groups.claim_version
 		t.Fatal(err)
 	}
 	worker := workerActor{
-		WorkerInstanceID: fixture.WorkerID, WorkerGroupID: runtest.WorkerGroup,
+		WorkerInstanceID: fixture.WorkerID, WorkerGroupID: runtest.WorkerGroupID,
 		WorkerEpoch: 1, ClaimVersion: workerClaimVersion, GroupClaimVersion: groupClaimVersion,
 	}
 	request := workerapi.DeleteWorkspaceRequest{

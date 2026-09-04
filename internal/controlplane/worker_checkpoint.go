@@ -156,7 +156,7 @@ func (s *Server) workerMarkCheckpointFailed(w http.ResponseWriter, r *http.Reque
 	err = s.inTx(r.Context(), func(work *txWork) error {
 		locators, err := work.q.GetLiveRunLeaseLocators(r.Context(), db.GetLiveRunLeaseLocatorsParams{
 			ID: pgvalue.UUID(parsed.lease.leaseID), LeaseSequence: normalized.Lease.LeaseSequence,
-			WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+			WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 			WorkerEpoch: worker.WorkerEpoch})
 		if err != nil {
 			return staleRunLeaseClaim(err)
@@ -943,7 +943,7 @@ func (s *Server) commitCheckpointReady(
 	err := s.inTx(ctx, func(work *txWork) error {
 		locators, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 			ID: pgvalue.UUID(ready.lease.leaseID), LeaseSequence: request.Lease.LeaseSequence,
-			WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+			WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 			WorkerEpoch: worker.WorkerEpoch})
 		if err != nil {
 			return staleRunLeaseClaim(err)
@@ -967,7 +967,7 @@ func (s *Server) commitCheckpointReady(
 		}
 		sourcePoolID := authority.worker.WorkerPoolID
 		sourcePool, err := work.q.LockWorkerPool(ctx, db.LockWorkerPoolParams{
-			WorkerGroupID: worker.WorkerGroupID,
+			WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
 			WorkerPoolID:  sourcePoolID,
 		})
 		if err != nil {
@@ -1044,7 +1044,7 @@ func (s *Server) commitCheckpointReady(
 		}
 		if _, err := work.q.RequireCheckpointRestoreSupplier(ctx, db.RequireCheckpointRestoreSupplierParams{
 			SourceRunLeaseID:   authority.runLease.ID,
-			WorkerGroupID:      worker.WorkerGroupID,
+			WorkerGroupID:      pgvalue.UUID(worker.WorkerGroupID),
 			WorkerInstanceID:   pgvalue.UUID(worker.WorkerInstanceID),
 			WorkerEpoch:        worker.WorkerEpoch,
 			SourceWorkerPoolID: sourcePoolID,

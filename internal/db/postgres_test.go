@@ -120,7 +120,7 @@ func newPostgresDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 	if _, err := queries.CreateWorkerGroup(ctx, db.CreateWorkerGroupParams{
 		ID: dbtest.DefaultWorkerGroupID, TokenID: pgvalue.UUID(uuid.NewV7()),
 		TokenHash: make([]byte, 32), RegionID: dbtest.DefaultRegionID,
-		Name: dbtest.DefaultWorkerGroupID,
+		Name: dbtest.DefaultWorkerGroupName,
 	}); err != nil {
 		t.Fatal(err)
 	}

@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"errors"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -16,7 +17,7 @@ type workerGroupPrimaryResult struct {
 }
 
 type workerGroupPrimarySelectionCommand struct {
-	workerGroupID             string
+	workerGroupID             uuid.UUID
 	expectedGroupClaimVersion int64
 	desired                   func(db.WorkerGroup) (pgtype.UUID, error)
 }
@@ -30,7 +31,7 @@ func (s *Server) reconcileWorkerGroupPrimarySelection(
 ) (workerGroupPrimaryResult, error) {
 	result := workerGroupPrimaryResult{pools: make(map[string]db.WorkerPool)}
 	err := s.inTx(ctx, func(work *txWork) error {
-		group, err := work.q.LockWorkerGroupForPoolMutation(ctx, command.workerGroupID)
+		group, err := work.q.LockWorkerGroupForPoolMutation(ctx, pgvalue.UUID(command.workerGroupID))
 		if isNoRows(err) {
 			return notFound(errors.New("worker group not found"))
 		}
@@ -48,7 +49,7 @@ func (s *Server) reconcileWorkerGroupPrimarySelection(
 			return badRequest(errors.New("primary pool is required"))
 		}
 		pool, err := work.q.LockWorkerPool(ctx, db.LockWorkerPoolParams{
-			WorkerGroupID: command.workerGroupID,
+			WorkerGroupID: pgvalue.UUID(command.workerGroupID),
 			WorkerPoolID:  desired,
 		})
 		if isNoRows(err) {
@@ -72,7 +73,7 @@ func (s *Server) reconcileWorkerGroupPrimarySelection(
 			return conflict(errors.New("worker group state, claim version, or primary selection changed"))
 		}
 		group, err = work.q.SetWorkerGroupPrimaryPool(ctx, db.SetWorkerGroupPrimaryPoolParams{
-			PoolID: desired, WorkerGroupID: command.workerGroupID,
+			PoolID: desired, WorkerGroupID: pgvalue.UUID(command.workerGroupID),
 			ExpectedGroupClaimVersion: command.expectedGroupClaimVersion,
 		})
 		if isNoRows(err) {

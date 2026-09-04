@@ -75,7 +75,7 @@ func TestWorkerRuntimeReconcileTargetRoundTripsActionWorkspaceAuthority(t *testi
 			request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/runtime-instances/reconcile", strings.NewReader(`{}`))
 			request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
 				WorkerInstanceID: workerID,
-				WorkerGroupID:    "run-workers",
+				WorkerGroupID:    controlplaneTestWorkerGroupID,
 				WorkerEpoch:      7,
 			}))
 			response := httptest.NewRecorder()
@@ -106,7 +106,7 @@ func TestWorkerRuntimeReconcileReturnsBoundedBatch(t *testing.T) {
 	server := &Server{log: discardTestLogger(), db: store}
 	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/runtime-instances/reconcile", strings.NewReader(`{}`))
 	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
-		WorkerInstanceID: workerID, WorkerGroupID: "run-workers", WorkerEpoch: 7,
+		WorkerInstanceID: workerID, WorkerGroupID: controlplaneTestWorkerGroupID, WorkerEpoch: 7,
 	}))
 	response := httptest.NewRecorder()
 
@@ -120,7 +120,7 @@ func TestWorkerRuntimeReconcileReturnsBoundedBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(decoded.Items) != 2 || store.params.RowLimit != workerRuntimeReconcileLimit ||
-		store.params.WorkerEpoch != 7 || store.params.WorkerGroupID != "run-workers" {
+		store.params.WorkerEpoch != 7 || store.params.WorkerGroupID != controlplaneTestWorkerGroupDBID {
 		t.Fatalf("items = %d params = %+v", len(decoded.Items), store.params)
 	}
 }
@@ -253,7 +253,7 @@ func TestMarkRuntimeInstanceFailedChargesExactReservedRun(t *testing.T) {
 	ctx := context.Background()
 	fixture, work, runtimeID := prepareReservedRuntimeFailure(t)
 	server := &Server{db: db.New(fixture.Pool), tx: fixture.Pool}
-	failed, err := server.markRuntimeInstanceFailed(ctx, runtest.WorkerGroup, db.MarkRuntimeInstanceFailedParams{
+	failed, err := server.markRuntimeInstanceFailed(ctx, runtest.WorkerGroupID, db.MarkRuntimeInstanceFailedParams{
 		ReasonCode: pgtype.Text{String: "runtime_reconcile_failed", Valid: true},
 		Error:      []byte(`{"message":"worker runtime infrastructure failed"}`),
 		ID:         runtimeID, WorkerInstanceID: pgvalue.UUID(fixture.WorkerID), WorkerEpoch: 1,
@@ -282,7 +282,7 @@ func TestMarkRuntimeInstanceFailedFencesFatalWorkerEpoch(t *testing.T) {
 	ctx := t.Context()
 	fixture, work, runtimeID := prepareReservedRuntimeFailure(t)
 	server := &Server{db: db.New(fixture.Pool), tx: fixture.Pool}
-	if _, err := server.markRuntimeInstanceFailed(ctx, runtest.WorkerGroup, db.MarkRuntimeInstanceFailedParams{
+	if _, err := server.markRuntimeInstanceFailed(ctx, runtest.WorkerGroupID, db.MarkRuntimeInstanceFailedParams{
 		ReasonCode: pgtype.Text{String: workerapi.RuntimeFailureWorkerInvalid, Valid: true},
 		Error:      []byte(`{"message":"worker runtime infrastructure failed"}`),
 		ID:         runtimeID, WorkerInstanceID: pgvalue.UUID(fixture.WorkerID), WorkerEpoch: 1,
@@ -350,7 +350,7 @@ UPDATE runtime_instances
 		t.Run(test.name, func(t *testing.T) {
 			fixture, work, runtimeID := test.prepare(t)
 			server := &Server{db: db.New(fixture.Pool), tx: fixture.Pool}
-			_, err := server.markRuntimeInstanceFailed(t.Context(), runtest.WorkerGroup, db.MarkRuntimeInstanceFailedParams{
+			_, err := server.markRuntimeInstanceFailed(t.Context(), runtest.WorkerGroupID, db.MarkRuntimeInstanceFailedParams{
 				ReasonCode: pgtype.Text{String: workerapi.RuntimeFailureWorkerInvalid, Valid: true},
 				Error:      []byte(`{"message":"worker runtime infrastructure failed"}`),
 				ID:         runtimeID, WorkerInstanceID: pgvalue.UUID(fixture.WorkerID), WorkerEpoch: 1,
@@ -458,7 +458,7 @@ UPDATE runtime_instances
 			test.stale(t, fixture, work)
 
 			server := &Server{db: db.New(fixture.Pool), tx: fixture.Pool}
-			_, err := server.markRuntimeInstanceFailed(ctx, runtest.WorkerGroup, db.MarkRuntimeInstanceFailedParams{
+			_, err := server.markRuntimeInstanceFailed(ctx, runtest.WorkerGroupID, db.MarkRuntimeInstanceFailedParams{
 				ReasonCode: pgtype.Text{String: "runtime_reconcile_failed", Valid: true},
 				Error:      []byte(`{"message":"worker runtime infrastructure failed"}`),
 				ID:         runtimeID, WorkerInstanceID: pgvalue.UUID(fixture.WorkerID), WorkerEpoch: 1,
@@ -499,7 +499,7 @@ func TestMarkRuntimeInstanceFailedChargesOnceUnderConcurrentReplay(t *testing.T)
 	for range 2 {
 		workers.Go(func() {
 			<-start
-			_, err := server.markRuntimeInstanceFailed(ctx, runtest.WorkerGroup, params)
+			_, err := server.markRuntimeInstanceFailed(ctx, runtest.WorkerGroupID, params)
 			errorsByCall <- err
 		})
 	}
@@ -555,7 +555,7 @@ UPDATE runtime_instances
 	results := make(chan error, 2)
 	go func() {
 		<-start
-		_, err := server.markRuntimeInstanceFailed(ctx, runtest.WorkerGroup, db.MarkRuntimeInstanceFailedParams{
+		_, err := server.markRuntimeInstanceFailed(ctx, runtest.WorkerGroupID, db.MarkRuntimeInstanceFailedParams{
 			ReasonCode: pgtype.Text{String: workerapi.RuntimeFailureReconcile, Valid: true},
 			Error:      []byte(`{"message":"runtime preparation failed"}`),
 			ID:         runtimeID, WorkerInstanceID: pgvalue.UUID(fixture.WorkerID), WorkerEpoch: 1,
@@ -622,7 +622,7 @@ func TestMarkRuntimeInstanceFailedSerializesWithFullPlacement(t *testing.T) {
 	results := make(chan error, 2)
 	go func() {
 		<-start
-		_, err := server.markRuntimeInstanceFailed(ctx, runtest.WorkerGroup, db.MarkRuntimeInstanceFailedParams{
+		_, err := server.markRuntimeInstanceFailed(ctx, runtest.WorkerGroupID, db.MarkRuntimeInstanceFailedParams{
 			ReasonCode: pgtype.Text{String: workerapi.RuntimeFailureReconcile, Valid: true},
 			Error:      []byte(`{"message":"runtime preparation failed"}`),
 			ID:         runtimeID, WorkerInstanceID: pgvalue.UUID(fixture.WorkerID), WorkerEpoch: 1,
@@ -664,7 +664,7 @@ func TestMarkRuntimeInstanceFailedSerializesWithTerminalization(t *testing.T) {
 	cancelResult := make(chan error, 1)
 	go func() {
 		<-start
-		_, err := server.markRuntimeInstanceFailed(ctx, runtest.WorkerGroup, db.MarkRuntimeInstanceFailedParams{
+		_, err := server.markRuntimeInstanceFailed(ctx, runtest.WorkerGroupID, db.MarkRuntimeInstanceFailedParams{
 			ReasonCode: pgtype.Text{String: workerapi.RuntimeFailureReconcile, Valid: true},
 			Error:      []byte(`{"message":"runtime preparation failed"}`),
 			ID:         runtimeID, WorkerInstanceID: pgvalue.UUID(fixture.WorkerID), WorkerEpoch: 1,

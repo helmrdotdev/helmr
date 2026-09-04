@@ -529,7 +529,7 @@ UPDATE run_leases SET finalization_request_fingerprint = $2 WHERE id = $1`,
 		},
 		pool: base.Pool,
 		worker: workerActor{
-			WorkerInstanceID: base.WorkerID, WorkerGroupID: runtest.WorkerGroup,
+			WorkerInstanceID: base.WorkerID, WorkerGroupID: runtest.WorkerGroupID,
 			WorkerEpoch: 1, ClaimVersion: 1, GroupClaimVersion: 1,
 		},
 		request: request, runID: work.RunID, leaseID: work.LeaseID,

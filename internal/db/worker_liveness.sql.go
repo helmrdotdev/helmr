@@ -24,7 +24,7 @@ SELECT workers.id,
        END::text AS reason
   FROM worker_instances AS workers
  WHERE workers.state IN ('registering', 'active', 'draining')
-   AND ($1::text = '' OR workers.worker_group_id = $1::text)
+   AND ($1::uuid IS NULL OR workers.worker_group_id = $1)
    AND (
        (workers.state = 'registering'
         AND workers.observed_at IS NULL
@@ -43,7 +43,7 @@ SELECT workers.id,
 `
 
 type ListStaleWorkerFenceCandidatesParams struct {
-	WorkerGroupID               string             `json:"worker_group_id"`
+	WorkerGroupID               pgtype.UUID        `json:"worker_group_id"`
 	RegistrationStaleBefore     pgtype.Timestamptz `json:"registration_stale_before"`
 	ObservationFreshnessSeconds int64              `json:"observation_freshness_seconds"`
 	RowLimit                    int32              `json:"row_limit"`
@@ -51,7 +51,7 @@ type ListStaleWorkerFenceCandidatesParams struct {
 
 type ListStaleWorkerFenceCandidatesRow struct {
 	ID            pgtype.UUID        `json:"id"`
-	WorkerGroupID string             `json:"worker_group_id"`
+	WorkerGroupID pgtype.UUID        `json:"worker_group_id"`
 	CurrentEpoch  pgtype.Int8        `json:"current_epoch"`
 	State         string             `json:"state"`
 	FreshnessAt   pgtype.Timestamptz `json:"freshness_at"`
@@ -153,7 +153,7 @@ SELECT target.id, target.worker_group_id, target.current_epoch, target.state
 
 type RecheckAndFenceStaleWorkerInstanceParams struct {
 	ID                          pgtype.UUID        `json:"id"`
-	WorkerGroupID               string             `json:"worker_group_id"`
+	WorkerGroupID               pgtype.UUID        `json:"worker_group_id"`
 	ExpectedEpoch               pgtype.Int8        `json:"expected_epoch"`
 	RegistrationStaleBefore     pgtype.Timestamptz `json:"registration_stale_before"`
 	ObservationFreshnessSeconds int64              `json:"observation_freshness_seconds"`
@@ -162,7 +162,7 @@ type RecheckAndFenceStaleWorkerInstanceParams struct {
 
 type RecheckAndFenceStaleWorkerInstanceRow struct {
 	ID            pgtype.UUID `json:"id"`
-	WorkerGroupID string      `json:"worker_group_id"`
+	WorkerGroupID pgtype.UUID `json:"worker_group_id"`
 	CurrentEpoch  pgtype.Int8 `json:"current_epoch"`
 	State         string      `json:"state"`
 }

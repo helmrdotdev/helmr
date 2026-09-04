@@ -61,7 +61,7 @@ func rollback(ctx context.Context, tx pgx.Tx) {
 }
 
 type workerFence struct {
-	GroupID          string
+	GroupID          pgtype.UUID
 	RegionID         string
 	WorkerInstanceID pgtype.UUID
 	WorkerEpoch      int64
@@ -75,7 +75,7 @@ type workerFence struct {
 // in-flight placements. Observation freshness is rechecked while those
 // authority rows remain locked.
 func lockWorkerFence(ctx context.Context, tx pgx.Tx, fence workerFence) error {
-	var groupID string
+	var groupID pgtype.UUID
 	err := tx.QueryRow(ctx, `
 SELECT id
   FROM worker_groups

@@ -7,9 +7,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pglock"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -37,30 +39,34 @@ func runWorkerGroupStateCommand(ctx context.Context, output io.Writer, args []st
 	if command != "status" && command != "pause" && command != "activate" && command != "drain" && command != "disable" {
 		return fmt.Errorf("unknown worker-group command %q", command)
 	}
+	parsedGroupID, err := ids.Parse(groupID)
+	if err != nil {
+		return errors.New("worker group id must be a canonical UUIDv7")
+	}
 	return withWorkerStore(ctx, func(pool *pgxpool.Pool, store *db.Queries) error {
 		var result workergroup.GroupStatus
 		var err error
 		switch command {
 		case "status":
-			result, err = workergroup.ReadGroupStatus(ctx, store, groupID)
+			result, err = workergroup.ReadGroupStatus(ctx, store, parsedGroupID)
 		case "pause":
-			err = withWorkerGroupStateLease(ctx, pool, groupID, func() error {
-				result, err = workergroup.PauseGroup(ctx, store, groupID, expectedClaimVersion)
+			err = withWorkerGroupStateLease(ctx, pool, parsedGroupID, func() error {
+				result, err = workergroup.PauseGroup(ctx, store, parsedGroupID, expectedClaimVersion)
 				return err
 			})
 		case "activate":
-			err = withWorkerGroupStateLease(ctx, pool, groupID, func() error {
-				result, err = workergroup.ActivateGroup(ctx, store, groupID, expectedClaimVersion)
+			err = withWorkerGroupStateLease(ctx, pool, parsedGroupID, func() error {
+				result, err = workergroup.ActivateGroup(ctx, store, parsedGroupID, expectedClaimVersion)
 				return err
 			})
 		case "drain":
-			err = withWorkerGroupStateLease(ctx, pool, groupID, func() error {
-				result, err = workergroup.BeginGroupDrain(ctx, store, groupID, expectedClaimVersion)
+			err = withWorkerGroupStateLease(ctx, pool, parsedGroupID, func() error {
+				result, err = workergroup.BeginGroupDrain(ctx, store, parsedGroupID, expectedClaimVersion)
 				return err
 			})
 		case "disable":
-			err = withWorkerGroupStateLease(ctx, pool, groupID, func() error {
-				result, err = workergroup.DisableGroup(ctx, store, groupID, expectedClaimVersion)
+			err = withWorkerGroupStateLease(ctx, pool, parsedGroupID, func() error {
+				result, err = workergroup.DisableGroup(ctx, store, parsedGroupID, expectedClaimVersion)
 				return err
 			})
 		}
@@ -95,15 +101,19 @@ func runWorkerInstanceStateCommand(ctx context.Context, output io.Writer, args [
 	if command != "status" && command != "lose" {
 		return fmt.Errorf("unknown worker-instance command %q", command)
 	}
+	parsedGroupID, err := ids.Parse(groupID)
+	if err != nil {
+		return errors.New("worker group id must be a canonical UUIDv7")
+	}
 	return withWorkerStore(ctx, func(pool *pgxpool.Pool, store *db.Queries) error {
 		var result workergroup.InstanceStatus
 		var err error
 		switch command {
 		case "status":
-			result, err = workergroup.ReadInstanceStatus(ctx, store, groupID, resourceID)
+			result, err = workergroup.ReadInstanceStatus(ctx, store, parsedGroupID, resourceID)
 		case "lose":
-			err = withWorkerGroupStateLease(ctx, pool, groupID, func() error {
-				result, err = workergroup.MarkInstanceLost(ctx, store, groupID, resourceID, expectedClaimVersion)
+			err = withWorkerGroupStateLease(ctx, pool, parsedGroupID, func() error {
+				result, err = workergroup.MarkInstanceLost(ctx, store, parsedGroupID, resourceID, expectedClaimVersion)
 				return err
 			})
 		}
@@ -127,7 +137,7 @@ func withWorkerStore(ctx context.Context, run func(*pgxpool.Pool, *db.Queries) e
 	return run(pool, db.New(pool))
 }
 
-func withWorkerGroupStateLease(ctx context.Context, pool *pgxpool.Pool, groupID string, run func() error) (runErr error) {
+func withWorkerGroupStateLease(ctx context.Context, pool *pgxpool.Pool, groupID uuid.UUID, run func() error) (runErr error) {
 	guard, err := pglock.Acquire(ctx, pool, []int64{workergroup.StateMutationLockKey(groupID)})
 	if err != nil {
 		return fmt.Errorf("acquire worker group lifecycle lease: %w", err)

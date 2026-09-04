@@ -412,7 +412,7 @@ UPDATE run_leases
 			},
 		}, pool: base.Pool,
 		worker: workerActor{
-			WorkerInstanceID: base.WorkerID, WorkerGroupID: runtest.WorkerGroup,
+			WorkerInstanceID: base.WorkerID, WorkerGroupID: runtest.WorkerGroupID,
 			WorkerEpoch: 1, ClaimVersion: 1, GroupClaimVersion: 1,
 		},
 		request: request, childRunID: work.RunID, parentRunID: parentRunID,

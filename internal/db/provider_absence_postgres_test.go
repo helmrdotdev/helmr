@@ -42,7 +42,7 @@ func TestConfirmWorkerInstanceProviderAbsentWaitsForLiveLeaseThenReclaims(t *tes
 		t.Fatal(err)
 	}
 	workSet, err := queries.ListCapacityWorkerInstances(ctx, ListCapacityWorkerInstancesParams{
-		WorkerGroupID:         pgtype.Text{String: runtest.WorkerGroup, Valid: true},
+		WorkerGroupID:         pgvalue.UUID(runtest.WorkerGroupID),
 		HasUnreclaimedRuntime: true,
 		ResourceIds:           []string{},
 		States:                []string{},
@@ -163,7 +163,7 @@ func TestConfirmWorkerInstanceProviderAbsentWaitsForLiveLeaseThenReclaims(t *tes
 	}
 
 	rows, err := queries.ListCapacityWorkerInstances(ctx, ListCapacityWorkerInstancesParams{
-		WorkerGroupID:         pgtype.Text{String: runtest.WorkerGroup, Valid: true},
+		WorkerGroupID:         pgvalue.UUID(runtest.WorkerGroupID),
 		HasUnreclaimedRuntime: true,
 		ResourceIds:           []string{},
 		States:                []string{},

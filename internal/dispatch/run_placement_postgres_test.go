@@ -144,7 +144,7 @@ type runPlacementFixture struct {
 	runID         uuid.UUID
 	workspaceID   uuid.UUID
 	workerID      uuid.UUID
-	groupID       string
+	groupID       pgtype.UUID
 }
 
 func TestPlaceReadyRunPreparesMountAndGrantsFencedLeases(t *testing.T) {
@@ -2435,7 +2435,7 @@ func newRunPlacementFixtureWithSeed(t *testing.T, seed string) runPlacementFixtu
 		runID:         id("run"),
 		workspaceID:   id("workspace"),
 		workerID:      id("worker"),
-		groupID:       "run-placement-" + strings.ReplaceAll(id("group").String(), "-", ""),
+		groupID:       pgvalue.UUID(uuid.MustParse("01900000-0000-7000-8000-000000000801")),
 	}
 	key := bytes.Repeat([]byte{7}, workspace.FencingKeySize)
 	var err error
@@ -2554,8 +2554,8 @@ WITH token AS (
 INSERT INTO worker_groups (
     id, token_id, region_id, name
 )
-SELECT $1, token.id, 'us-east-1', $1 FROM token`,
-		fixture.groupID, id("worker-group-token"), dbtest.Hash("run-placement-worker-group"),
+SELECT $1, token.id, 'us-east-1', $4 FROM token`,
+		fixture.groupID, id("worker-group-token"), dbtest.Hash("run-placement-worker-group"), "run-placement-workers",
 	)
 	poolSpec := dispatchWorkerPoolFixture{
 		substrateFormat:                 capacity.SubstrateFormatExt4,
