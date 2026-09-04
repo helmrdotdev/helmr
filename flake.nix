@@ -4,6 +4,7 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    nixpkgs-clickhouse.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     nixpkgs-bun.url = "github:NixOS/nixpkgs/09061f748ee21f68a089cd5d91ec1859cd93d0be";
     nixpkgs-go.url = "github:NixOS/nixpkgs/30a8631bb18996a3cf754344f31f1a49050e56b9";
     nixpkgs-node.url = "github:NixOS/nixpkgs/c5c4a43b0e8056328ec4529f735cabdb8f1942bb";
@@ -14,6 +15,7 @@
       self,
       nixpkgs,
       nixpkgs-unstable,
+      nixpkgs-clickhouse,
       nixpkgs-bun,
       nixpkgs-go,
       nixpkgs-node,
@@ -59,6 +61,7 @@
             system
             nixpkgs
             nixpkgs-unstable
+            nixpkgs-clickhouse
             ;
           helmrPackages = self.packages.${system};
         }

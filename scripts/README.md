@@ -23,6 +23,17 @@ Use the narrower `ci-*` Nix apps while iterating. The aggregate runs the
 Firecracker probe only on x86_64 Linux. Firecracker execution still requires a
 real KVM host and is not emulated in hosted CI.
 
+## Development console
+
+`nix run .#dev` runs the control plane and Vite console for interactive local
+development. Paseo's `preview` service runs the same stack directly from the
+Nix development environment, builds the console, and serves it with the control
+plane on one port. Preview state is disposable and isolated under the
+worktree's `.helmr-dev` directory. On Linux, PostgreSQL and Redis use Unix
+sockets and ClickHouse uses a loopback address derived from Paseo's assigned
+service port, so multiple worktrees can run concurrently without coordinating
+ports. Preview is available on Linux and Apple Silicon macOS.
+
 ## Product release artifacts
 
 `scripts/aws-release-artifacts.sh` manages the release-build foundation and

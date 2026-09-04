@@ -1,0 +1,11 @@
+{
+  "worktree": {
+    "setup": "nix develop --command bun install --frozen-lockfile --ignore-scripts"
+  },
+  "scripts": {
+    "preview": {
+      "type": "service",
+      "command": "HELMR_DEV_CONSOLE_MODE=preview HELMR_DEV_CONSOLE_PORT=\"$PASEO_PORT\" PUBLIC_URL=\"$PASEO_URL\" nix develop --command ./scripts/dev-console-stack.sh"
+    }
+  }
+}

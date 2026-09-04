@@ -2,11 +2,13 @@
   system,
   nixpkgs,
   nixpkgs-unstable,
+  nixpkgs-clickhouse,
   helmrPackages,
 }:
 
 let
   pkgs = import nixpkgs { inherit system; };
+  pkgsClickHouse = import nixpkgs-clickhouse { inherit system; };
   pkgsUnstable = import nixpkgs-unstable {
     inherit system;
     config.allowUnfreePredicate =
@@ -41,7 +43,10 @@ let
 in
 {
   default = pkgs.mkShell {
-    packages = toolsets.base;
+    packages =
+      toolsets.base
+      ++ [ pkgs.redis ]
+      ++ pkgs.lib.optionals (system != "x86_64-darwin") [ pkgsClickHouse.clickhouse ];
     inherit shellHook;
   };
 

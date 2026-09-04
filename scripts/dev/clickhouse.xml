@@ -1,0 +1,23 @@
+<clickhouse>
+  <logger>
+    <level>warning</level>
+    <console>true</console>
+  </logger>
+  <listen_host from_env="HELMR_DEV_CLICKHOUSE_HOST" />
+  <http_port>8123</http_port>
+  <tcp_port>9000</tcp_port>
+  <interserver_http_port>9009</interserver_http_port>
+  <path from_env="HELMR_DEV_CLICKHOUSE_PATH" />
+  <tmp_path from_env="HELMR_DEV_CLICKHOUSE_TMP_PATH" />
+  <user_files_path from_env="HELMR_DEV_CLICKHOUSE_USER_FILES_PATH" />
+  <format_schema_path from_env="HELMR_DEV_CLICKHOUSE_FORMAT_SCHEMA_PATH" />
+  <users_config from_env="HELMR_DEV_CLICKHOUSE_USERS_CONFIG" />
+  <user_directories>
+    <users_xml>
+      <path from_env="HELMR_DEV_CLICKHOUSE_USERS_CONFIG" />
+    </users_xml>
+    <local_directory>
+      <path from_env="HELMR_DEV_CLICKHOUSE_ACCESS_PATH" />
+    </local_directory>
+  </user_directories>
+</clickhouse>
