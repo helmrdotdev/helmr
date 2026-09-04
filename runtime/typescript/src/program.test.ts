@@ -179,10 +179,10 @@ describe("runProgram", () => {
     child.stderr.on("data", (value: string) => {
       stderr += value
     })
-    child.stdin.write(concatenate(
+    child.stdin.write(Buffer.concat([
       frameMessage(programProto.ProgramStartSchema, start),
       frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start)),
-    ))
+    ]))
 
     let timeout: ReturnType<typeof setTimeout> | undefined
     try {
@@ -205,7 +205,7 @@ describe("runProgram", () => {
       if (child.exitCode === null && child.signalCode === null) child.kill()
       await closed.catch(() => {})
     }
-    expect(readConcatenatedEvents(concatenate(...output)).map((event) =>
+    expect(readConcatenatedEvents(Buffer.concat(output)).map((event) =>
       event.event.case
     )).toEqual(["entrypointReady", "taskOutcome"])
   })
@@ -274,7 +274,7 @@ describe("runProgram", () => {
     })
     const start = actorStart(0n, 2n)
     const output: Uint8Array[] = []
-    const events = [deferred<void>(), deferred<void>(), deferred<void>()]
+    const events = [Promise.withResolvers<void>(), Promise.withResolvers<void>(), Promise.withResolvers<void>()]
     async function* input(): AsyncIterable<Uint8Array> {
       yield frameMessage(programProto.ProgramStartSchema, start)
       yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
@@ -340,7 +340,7 @@ describe("runProgram", () => {
     })
     const start = actorStart(0n, 1n)
     const output: Uint8Array[] = []
-    const waitWritten = deferred<void>()
+    const waitWritten = Promise.withResolvers<void>()
     async function* input(): AsyncIterable<Uint8Array> {
       yield frameMessage(programProto.ProgramStartSchema, start)
       yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
@@ -379,7 +379,7 @@ describe("runProgram", () => {
     })
     const start = actorStart(0n, 1n)
     const output: Uint8Array[] = []
-    const waitWritten = deferred<void>()
+    const waitWritten = Promise.withResolvers<void>()
     async function* input(): AsyncIterable<Uint8Array> {
       yield frameMessage(programProto.ProgramStartSchema, start)
       yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
@@ -416,7 +416,7 @@ describe("runProgram", () => {
     })
     const start = actorStart(0n, 0n)
     const output: Uint8Array[] = []
-    const waitWritten = deferred<void>()
+    const waitWritten = Promise.withResolvers<void>()
     async function* input(): AsyncIterable<Uint8Array> {
       yield frameMessage(programProto.ProgramStartSchema, start)
       yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
@@ -447,7 +447,7 @@ describe("runProgram", () => {
     })
     const start = actorStart(0n, 2n)
     const output: Uint8Array[] = []
-    const waitWritten = deferred<void>()
+    const waitWritten = Promise.withResolvers<void>()
     async function* input(): AsyncIterable<Uint8Array> {
       yield frameMessage(programProto.ProgramStartSchema, start)
       yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
@@ -482,7 +482,7 @@ describe("runProgram", () => {
     })
     const start = actorStart(0n, 2n)
     const output: Uint8Array[] = []
-    const waitWritten = deferred<void>()
+    const waitWritten = Promise.withResolvers<void>()
     async function* input(): AsyncIterable<Uint8Array> {
       yield frameMessage(programProto.ProgramStartSchema, start)
       yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
@@ -521,7 +521,7 @@ describe("runProgram", () => {
     })
     const start = actorStart(0n, 1n)
     const output: Uint8Array[] = []
-    const waitWritten = deferred<void>()
+    const waitWritten = Promise.withResolvers<void>()
     async function* input(): AsyncIterable<Uint8Array> {
       yield frameMessage(programProto.ProgramStartSchema, start)
       yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
@@ -591,7 +591,7 @@ describe("runProgram", () => {
       })
       const start = actorStart(0n, 1n)
       const output: Uint8Array[] = []
-      const requestWritten = deferred<void>()
+      const requestWritten = Promise.withResolvers<void>()
       async function* input(): AsyncIterable<Uint8Array> {
         yield frameMessage(programProto.ProgramStartSchema, start)
         yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
@@ -662,7 +662,7 @@ describe("runProgram", () => {
   })
 
   test("tracks output pipe before it emits its first append", async () => {
-    const sourceGate = deferred<void>()
+    const sourceGate = Promise.withResolvers<void>()
     const definition = actor({
       id: "worker",
       run(self) {
@@ -700,7 +700,7 @@ describe("runProgram", () => {
     })
     const start = actorStart(0n, 0n)
     const output: Uint8Array[] = []
-    const appendWritten = deferred<void>()
+    const appendWritten = Promise.withResolvers<void>()
     async function* input(): AsyncIterable<Uint8Array> {
       yield frameMessage(programProto.ProgramStartSchema, start)
       yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
@@ -758,7 +758,7 @@ describe("runProgram", () => {
     })
     const start = actorStart(0n, 0n)
     const output: Uint8Array[] = []
-    const appendWritten = deferred<void>()
+    const appendWritten = Promise.withResolvers<void>()
     async function* input(): AsyncIterable<Uint8Array> {
       yield frameMessage(programProto.ProgramStartSchema, start)
       yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
@@ -804,7 +804,7 @@ describe("runProgram", () => {
     })
     const start = taskStart("noPayload")
     const output: Uint8Array[] = []
-    const sendsWritten = deferred<void>()
+    const sendsWritten = Promise.withResolvers<void>()
     async function* input(): AsyncIterable<Uint8Array> {
       yield frameMessage(programProto.ProgramStartSchema, start)
       yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
@@ -921,7 +921,7 @@ describe("runProgram", () => {
     })
     const start = taskStart("noPayload")
     const output: Uint8Array[] = []
-    const requested = deferred<void>()
+    const requested = Promise.withResolvers<void>()
     async function* input(): AsyncIterable<Uint8Array> {
       yield frameMessage(programProto.ProgramStartSchema, start)
       yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
@@ -997,7 +997,7 @@ describe("runProgram", () => {
     })
     const start = taskStart("noPayload")
     const output: Uint8Array[] = []
-    const requestWritten = [deferred<void>(), deferred<void>()]
+    const requestWritten = [Promise.withResolvers<void>(), Promise.withResolvers<void>()]
     async function* input(): AsyncIterable<Uint8Array> {
       yield frameMessage(programProto.ProgramStartSchema, start)
       yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
@@ -1062,7 +1062,7 @@ describe("runProgram", () => {
     })
     const start = taskStart("noPayload")
     const output: Uint8Array[] = []
-    const requested = Array.from({ length: 4 }, () => deferred<void>())
+    const requested = Array.from({ length: 4 }, () => Promise.withResolvers<void>())
     async function* input(): AsyncIterable<Uint8Array> {
       yield frameMessage(programProto.ProgramStartSchema, start)
       yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
@@ -1151,7 +1151,7 @@ describe("runProgram", () => {
     })
     const start = actorStart(4n, 4n)
     const output: Uint8Array[] = []
-    const requested = deferred<void>()
+    const requested = Promise.withResolvers<void>()
     async function* input(): AsyncIterable<Uint8Array> {
       yield frameMessage(programProto.ProgramStartSchema, start)
       yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
@@ -1213,7 +1213,7 @@ describe("runProgram", () => {
     })
     const start = taskStart("noPayload")
     const output: Uint8Array[] = []
-    const requested = deferred<void>()
+    const requested = Promise.withResolvers<void>()
     async function* input(): AsyncIterable<Uint8Array> {
       yield frameMessage(programProto.ProgramStartSchema, start)
       yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
@@ -1276,8 +1276,8 @@ describe("runProgram", () => {
     })
     const start = taskStart("noPayload")
     const output: Uint8Array[] = []
-    const createWritten = deferred<void>()
-    const waitWritten = deferred<void>()
+    const createWritten = Promise.withResolvers<void>()
+    const waitWritten = Promise.withResolvers<void>()
     async function* input(): AsyncIterable<Uint8Array> {
       yield frameMessage(programProto.ProgramStartSchema, start)
       yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
@@ -1354,8 +1354,8 @@ describe("runProgram", () => {
     })
     const start = taskStart("noPayload")
     const output: Uint8Array[] = []
-    const createWritten = deferred<void>()
-    const waitWritten = deferred<void>()
+    const createWritten = Promise.withResolvers<void>()
+    const waitWritten = Promise.withResolvers<void>()
     async function* input(): AsyncIterable<Uint8Array> {
       yield frameMessage(programProto.ProgramStartSchema, start)
       yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
@@ -1412,7 +1412,7 @@ describe("runProgram", () => {
     })
     const start = taskStart("noPayload")
     const output: Uint8Array[] = []
-    const writes = [deferred<void>(), deferred<void>(), deferred<void>()]
+    const writes = [Promise.withResolvers<void>(), Promise.withResolvers<void>(), Promise.withResolvers<void>()]
     async function* input(): AsyncIterable<Uint8Array> {
       yield frameMessage(programProto.ProgramStartSchema, start)
       yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
@@ -1552,7 +1552,7 @@ describe("runProgram", () => {
     })
     const start = actorStart(0n, 0n)
     const output: Uint8Array[] = []
-    const sendWritten = deferred<void>()
+    const sendWritten = Promise.withResolvers<void>()
     async function* input(): AsyncIterable<Uint8Array> {
       yield frameMessage(programProto.ProgramStartSchema, start)
       yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
@@ -1605,7 +1605,7 @@ describe("runProgram", () => {
     })
     const start = taskStart("noPayload")
     const output: Uint8Array[] = []
-    const sendWritten = deferred<void>()
+    const sendWritten = Promise.withResolvers<void>()
     async function* input(): AsyncIterable<Uint8Array> {
       yield frameMessage(programProto.ProgramStartSchema, start)
       yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
@@ -1656,8 +1656,8 @@ describe("runProgram", () => {
     })
     const start = taskStart("noPayload")
     const release = releaseFor(start)
-    const gate = deferred<void>()
-    const ready = deferred<void>()
+    const gate = Promise.withResolvers<void>()
+    const ready = Promise.withResolvers<void>()
     const output: Uint8Array[] = []
     const running = runProgram(locatorURL, programIO({
       input: gatedFrames(frameMessage(programProto.ProgramStartSchema, start), gate.promise, frameMessage(programProto.EntrypointReleaseSchema, release)),
@@ -1704,8 +1704,8 @@ describe("runProgram", () => {
       },
     })
     const start = taskStart("payloadJson", new TextEncoder().encode("null"))
-    const gate = deferred<void>()
-    const ready = deferred<void>()
+    const gate = Promise.withResolvers<void>()
+    const ready = Promise.withResolvers<void>()
     const output: Uint8Array[] = []
     const running = runProgram(locatorURL, programIO({
       input: gatedFrames(
@@ -1745,7 +1745,7 @@ describe("runProgram", () => {
     })
     const start = taskStart("noPayload")
     const output: Uint8Array[] = []
-    const waitWritten = deferred<void>()
+    const waitWritten = Promise.withResolvers<void>()
     let correlationId = ""
     let runWaitId = ""
     async function* input(): AsyncIterable<Uint8Array> {
@@ -1809,7 +1809,7 @@ describe("runProgram", () => {
     })
     const start = taskStart("noPayload")
     const output: Uint8Array[] = []
-    const waitWritten = deferred<void>()
+    const waitWritten = Promise.withResolvers<void>()
     async function* input(): AsyncIterable<Uint8Array> {
       yield frameMessage(programProto.ProgramStartSchema, start)
       yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
@@ -2021,10 +2021,10 @@ describe("runProgram", () => {
       },
     })
     const start = taskStart("noPayload")
-    const input = concatenate(
+    const input = Buffer.concat([
       frameMessage(programProto.ProgramStartSchema, start),
       frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start)),
-    )
+    ])
 
     await runProgram(locatorURL, programIO({
       input: byteFrames(input),
@@ -2356,17 +2356,6 @@ async function* byteFrames(value: Uint8Array): AsyncIterable<Uint8Array> {
   for (const byte of value) yield new Uint8Array([byte])
 }
 
-function concatenate(...values: Uint8Array[]): Uint8Array {
-  const length = values.reduce((sum, value) => sum + value.byteLength, 0)
-  const result = new Uint8Array(length)
-  let offset = 0
-  for (const value of values) {
-    result.set(value, offset)
-    offset += value.byteLength
-  }
-  return result
-}
-
 async function* gatedFrames(
   first: Uint8Array,
   gate: Promise<void>,
@@ -2375,15 +2364,4 @@ async function* gatedFrames(
   yield first
   await gate
   yield second
-}
-
-function deferred<T>(): {
-  readonly promise: Promise<T>
-  readonly resolve: (value: T) => void
-} {
-  let resolve!: (value: T) => void
-  const promise = new Promise<T>((done) => {
-    resolve = done
-  })
-  return { promise, resolve }
 }

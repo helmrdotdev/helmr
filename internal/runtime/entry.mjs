@@ -4096,11 +4096,10 @@ class ResumeDecisionRouter {
     if (this.#pending.has(correlationId)) {
       return Promise.reject(new Error("duplicate runtime correlation id"));
     }
-    const result = new Promise((resolve, reject) => {
-      this.#pending.set(correlationId, { resolve, reject });
-    });
+    const { promise, resolve, reject } = Promise.withResolvers();
+    this.#pending.set(correlationId, { resolve, reject });
     this.#pump();
-    return result;
+    return promise;
   }
   cancel(correlationId) {
     this.#pending.delete(correlationId);
@@ -4252,6 +4251,21 @@ async function writeRuntimeProtocolEvent(io, event) {
       cause: error
     });
   }
+}
+async function acknowledgeResumeConsumed(io, decision) {
+  if (!decision.requireConsumedAck)
+    return;
+  await writeRuntimeProtocolEvent(io, {
+    case: "resumeConsumed",
+    value: create(exports_program_pb.ResumeConsumedSchema, {
+      runWaitId: decision.runWaitId,
+      checkpointId: decision.checkpointId,
+      resumeAttachId: decision.resumeAttachId,
+      resumeRequestVersion: decision.resumeRequestVersion,
+      runLeaseId: decision.runLeaseId,
+      correlationId: decision.correlationId
+    })
+  });
 }
 function parseRuntimeProtocolValue(label, parse) {
   try {
@@ -4558,19 +4572,7 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
           })
         });
         requireWaitDecision(decision, correlationId, runWaitId, resumeAttachId, "Task child call");
-        if (decision.requireConsumedAck) {
-          await writeRuntimeProtocolEvent(io, {
-            case: "resumeConsumed",
-            value: create(exports_program_pb.ResumeConsumedSchema, {
-              runWaitId: decision.runWaitId,
-              checkpointId: decision.checkpointId,
-              resumeAttachId: decision.resumeAttachId,
-              resumeRequestVersion: decision.resumeRequestVersion,
-              runLeaseId: decision.runLeaseId,
-              correlationId: decision.correlationId
-            })
-          });
-        }
+        await acknowledgeResumeConsumed(io, decision);
         if (decision.kind === "cancelled" && actorCursor !== undefined) {
           const failure = parseRuntimeProtocolValue("Actor child Task cancellation decision", () => resumeFailure(decision.dataJson));
           throw runOperations.cancel(failure.reasonCode);
@@ -4604,19 +4606,7 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
         })
       });
       requireWaitDecision(decision, correlationId, runWaitId, resumeAttachId, "timer resume");
-      if (decision.requireConsumedAck) {
-        await writeRuntimeProtocolEvent(io, {
-          case: "resumeConsumed",
-          value: create(exports_program_pb.ResumeConsumedSchema, {
-            runWaitId: decision.runWaitId,
-            checkpointId: decision.checkpointId,
-            resumeAttachId: decision.resumeAttachId,
-            resumeRequestVersion: decision.resumeRequestVersion,
-            runLeaseId: decision.runLeaseId,
-            correlationId: decision.correlationId
-          })
-        });
-      }
+      await acknowledgeResumeConsumed(io, decision);
       if (decision.kind === "cancelled" && actorCursor !== undefined) {
         const failure = parseRuntimeProtocolValue("Actor timer cancellation decision", () => resumeFailure(decision.dataJson));
         throw runOperations.cancel(failure.reasonCode);
@@ -4948,19 +4938,7 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
         })
       });
       requireWaitDecision(decision, correlationId, runWaitId, resumeAttachId, "Token resume");
-      if (decision.requireConsumedAck) {
-        await writeRuntimeProtocolEvent(io, {
-          case: "resumeConsumed",
-          value: create(exports_program_pb.ResumeConsumedSchema, {
-            runWaitId: decision.runWaitId,
-            checkpointId: decision.checkpointId,
-            resumeAttachId: decision.resumeAttachId,
-            resumeRequestVersion: decision.resumeRequestVersion,
-            runLeaseId: decision.runLeaseId,
-            correlationId: decision.correlationId
-          })
-        });
-      }
+      await acknowledgeResumeConsumed(io, decision);
       if (decision.kind === "cancelled" && actorCursor !== undefined) {
         const failure = parseRuntimeProtocolValue("Actor Token cancellation decision", () => resumeFailure(decision.dataJson));
         throw runOperations.cancel(failure.reasonCode);
@@ -5009,7 +4987,7 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
     if (typeof message !== "string") {
       throw new Error("logger message must be a string");
     }
-    if (new TextEncoder().encode(message).byteLength > MAX_RUN_LOG_MESSAGE_BYTES) {
+    if (Buffer.byteLength(message) > MAX_RUN_LOG_MESSAGE_BYTES) {
       throw new Error(`logger message must be at most ${MAX_RUN_LOG_MESSAGE_BYTES} UTF-8 bytes`);
     }
     const attributesJson = canonicalizeLogAttributes(attributes);
@@ -5097,7 +5075,7 @@ function normalizeMetadataKey(value) {
   if (typeof value !== "string" || value === "") {
     throw new Error("metadata key must be a nonempty string");
   }
-  if (new TextEncoder().encode(value).byteLength > 512) {
+  if (Buffer.byteLength(value) > 512) {
     throw new Error("metadata key must be at most 512 UTF-8 bytes");
   }
   return value;
@@ -5130,7 +5108,7 @@ function normalizeTokenIdempotencyKey(value) {
   if (value === undefined)
     return;
   const normalized = trimGoSpace(value);
-  if (new TextEncoder().encode(normalized).byteLength > 512) {
+  if (Buffer.byteLength(normalized) > 512) {
     throw new Error("Token idempotency key must be at most 512 UTF-8 bytes");
   }
   return normalized === "" ? undefined : normalized;
@@ -5233,7 +5211,7 @@ function normalizeActorInputIdempotencyKey(value) {
   if (value === undefined)
     return;
   const normalized = trimGoSpace(value);
-  if (new TextEncoder().encode(normalized).byteLength > 512) {
+  if (Buffer.byteLength(normalized) > 512) {
     throw actorInputSendError("invalid_idempotency_key", "Actor input idempotency key must be at most 512 UTF-8 bytes");
   }
   return normalized === "" ? undefined : normalized;
@@ -5271,14 +5249,11 @@ async function abortableRuntimeOperation(operation, signal) {
     return operation;
   if (signal.aborted)
     throw abortSignalReason(signal);
-  let rejectAbort;
-  const aborted = new Promise((_resolve, reject) => {
-    rejectAbort = reject;
-  });
-  const onAbort = () => rejectAbort?.(abortSignalReason(signal));
+  const aborted = Promise.withResolvers();
+  const onAbort = () => aborted.reject(abortSignalReason(signal));
   signal.addEventListener("abort", onAbort, { once: true });
   try {
-    return await Promise.race([operation, aborted]);
+    return await Promise.race([operation, aborted.promise]);
   } finally {
     signal.removeEventListener("abort", onAbort);
   }
@@ -5287,16 +5262,10 @@ function abortSignalReason(signal) {
   return signal.reason === undefined ? new DOMException("The operation was aborted", "AbortError") : signal.reason;
 }
 function resumeFailure(dataJson) {
-  let value;
-  try {
-    value = JSON.parse(dataJson);
-  } catch {
-    throw new Error("terminal Wait failure data must be valid JSON");
-  }
-  if (value === null || typeof value !== "object" || Array.isArray(value) || typeof value.reason_code !== "string" || value.reason_code.trim() === "") {
-    throw new Error("terminal Wait failure data must contain reason_code");
-  }
-  return { reasonCode: value.reason_code };
+  const value = parseObjectJSON(dataJson, "terminal Wait failure data");
+  return {
+    reasonCode: stringField(value, "reason_code", "terminal Wait failure data")
+  };
 }
 function durationMilliseconds(duration, label = "timer duration") {
   const match = /^([1-9][0-9]*)(ms|s|m|h|d)$/.exec(duration);
@@ -5413,19 +5382,7 @@ function actorSelf(start, io, decisions, cursor, waitGate, actorOperations) {
         })
       });
       requireWaitDecision(decision, correlationId, runWaitId, resumeAttachId, "Actor input resume");
-      if (decision.requireConsumedAck) {
-        await writeRuntimeProtocolEvent(io, {
-          case: "resumeConsumed",
-          value: create(exports_program_pb.ResumeConsumedSchema, {
-            runWaitId: decision.runWaitId,
-            checkpointId: decision.checkpointId,
-            resumeAttachId: decision.resumeAttachId,
-            resumeRequestVersion: decision.resumeRequestVersion,
-            runLeaseId: decision.runLeaseId,
-            correlationId: decision.correlationId
-          })
-        });
-      }
+      await acknowledgeResumeConsumed(io, decision);
       if (decision.kind === "completed") {
         const delivered = parseRuntimeProtocolValue("Actor input delivery", () => parseActorInputDelivery(decision.dataJson));
         if (BigInt(delivered.record.sequence) !== cursor.value + 1n) {
@@ -5776,15 +5733,14 @@ function validationDetails(issues) {
   };
 }
 function boundedUtf8(value, maxBytes) {
-  const encoder2 = new TextEncoder;
-  if (encoder2.encode(value).byteLength <= maxBytes)
+  if (Buffer.byteLength(value) <= maxBytes)
     return value;
   const suffix = "…";
-  const suffixBytes = encoder2.encode(suffix).byteLength;
+  const suffixBytes = Buffer.byteLength(suffix);
   let result = "";
   let size = 0;
   for (const character of value) {
-    const characterBytes = encoder2.encode(character).byteLength;
+    const characterBytes = Buffer.byteLength(character);
     if (size + characterBytes + suffixBytes > maxBytes)
       break;
     result += character;

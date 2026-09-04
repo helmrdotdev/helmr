@@ -192,11 +192,11 @@ class ResumeDecisionRouter {
     if (this.#pending.has(correlationId)) {
       return Promise.reject(new Error("duplicate runtime correlation id"))
     }
-    const result = new Promise<programProto.ResumeDecision>((resolve, reject) => {
-      this.#pending.set(correlationId, { resolve, reject })
-    })
+    const { promise, resolve, reject } =
+      Promise.withResolvers<programProto.ResumeDecision>()
+    this.#pending.set(correlationId, { resolve, reject })
     this.#pump()
-    return result
+    return promise
   }
 
   cancel(correlationId: string): void {
@@ -380,6 +380,24 @@ async function writeRuntimeProtocolEvent(
       cause: error,
     })
   }
+}
+
+async function acknowledgeResumeConsumed(
+  io: ProgramIO,
+  decision: programProto.ResumeDecision,
+): Promise<void> {
+  if (!decision.requireConsumedAck) return
+  await writeRuntimeProtocolEvent(io, {
+    case: "resumeConsumed",
+    value: create(programProto.ResumeConsumedSchema, {
+      runWaitId: decision.runWaitId,
+      checkpointId: decision.checkpointId,
+      resumeAttachId: decision.resumeAttachId,
+      resumeRequestVersion: decision.resumeRequestVersion,
+      runLeaseId: decision.runLeaseId,
+      correlationId: decision.correlationId,
+    }),
+  })
 }
 
 function parseRuntimeProtocolValue<T>(label: string, parse: () => T): T {
@@ -903,19 +921,7 @@ function programRuntimeOperations(
           resumeAttachId,
           "Task child call",
         )
-        if (decision.requireConsumedAck) {
-          await writeRuntimeProtocolEvent(io, {
-            case: "resumeConsumed",
-            value: create(programProto.ResumeConsumedSchema, {
-              runWaitId: decision.runWaitId,
-              checkpointId: decision.checkpointId,
-              resumeAttachId: decision.resumeAttachId,
-              resumeRequestVersion: decision.resumeRequestVersion,
-              runLeaseId: decision.runLeaseId,
-              correlationId: decision.correlationId,
-            }),
-          })
-        }
+        await acknowledgeResumeConsumed(io, decision)
         if (decision.kind === "cancelled" && actorCursor !== undefined) {
           const failure = parseRuntimeProtocolValue(
             "Actor child Task cancellation decision",
@@ -972,19 +978,7 @@ function programRuntimeOperations(
         resumeAttachId,
         "timer resume",
       )
-      if (decision.requireConsumedAck) {
-        await writeRuntimeProtocolEvent(io, {
-          case: "resumeConsumed",
-          value: create(programProto.ResumeConsumedSchema, {
-            runWaitId: decision.runWaitId,
-            checkpointId: decision.checkpointId,
-            resumeAttachId: decision.resumeAttachId,
-            resumeRequestVersion: decision.resumeRequestVersion,
-            runLeaseId: decision.runLeaseId,
-            correlationId: decision.correlationId,
-          }),
-        })
-      }
+      await acknowledgeResumeConsumed(io, decision)
       if (decision.kind === "cancelled" && actorCursor !== undefined) {
         const failure = parseRuntimeProtocolValue(
           "Actor timer cancellation decision",
@@ -1471,19 +1465,7 @@ function programRuntimeOperations(
         resumeAttachId,
         "Token resume",
       )
-      if (decision.requireConsumedAck) {
-        await writeRuntimeProtocolEvent(io, {
-          case: "resumeConsumed",
-          value: create(programProto.ResumeConsumedSchema, {
-            runWaitId: decision.runWaitId,
-            checkpointId: decision.checkpointId,
-            resumeAttachId: decision.resumeAttachId,
-            resumeRequestVersion: decision.resumeRequestVersion,
-            runLeaseId: decision.runLeaseId,
-            correlationId: decision.correlationId,
-          }),
-        })
-      }
+      await acknowledgeResumeConsumed(io, decision)
       if (decision.kind === "cancelled" && actorCursor !== undefined) {
         const failure = parseRuntimeProtocolValue(
           "Actor Token cancellation decision",
@@ -1560,7 +1542,7 @@ function programRuntimeOperations(
     if (typeof message !== "string") {
       throw new Error("logger message must be a string")
     }
-    if (new TextEncoder().encode(message).byteLength > MAX_RUN_LOG_MESSAGE_BYTES) {
+    if (Buffer.byteLength(message) > MAX_RUN_LOG_MESSAGE_BYTES) {
       throw new Error(
         `logger message must be at most ${MAX_RUN_LOG_MESSAGE_BYTES} UTF-8 bytes`,
       )
@@ -1653,7 +1635,7 @@ function normalizeMetadataKey(value: string): string {
   if (typeof value !== "string" || value === "") {
     throw new Error("metadata key must be a nonempty string")
   }
-  if (new TextEncoder().encode(value).byteLength > 512) {
+  if (Buffer.byteLength(value) > 512) {
     throw new Error("metadata key must be at most 512 UTF-8 bytes")
   }
   return value
@@ -1696,7 +1678,7 @@ function normalizeTokenIdempotencyKey(
 ): string | undefined {
   if (value === undefined) return undefined
   const normalized = trimGoSpace(value)
-  if (new TextEncoder().encode(normalized).byteLength > 512) {
+  if (Buffer.byteLength(normalized) > 512) {
     throw new Error("Token idempotency key must be at most 512 UTF-8 bytes")
   }
   return normalized === "" ? undefined : normalized
@@ -1855,7 +1837,7 @@ function normalizeActorInputIdempotencyKey(
 ): string | undefined {
   if (value === undefined) return undefined
   const normalized = trimGoSpace(value)
-  if (new TextEncoder().encode(normalized).byteLength > 512) {
+  if (Buffer.byteLength(normalized) > 512) {
     throw actorInputSendError(
       "invalid_idempotency_key",
       "Actor input idempotency key must be at most 512 UTF-8 bytes",
@@ -1942,14 +1924,11 @@ async function abortableRuntimeOperation<T>(
 ): Promise<T> {
   if (signal === undefined) return operation
   if (signal.aborted) throw abortSignalReason(signal)
-  let rejectAbort: ((reason?: unknown) => void) | undefined
-  const aborted = new Promise<never>((_resolve, reject) => {
-    rejectAbort = reject
-  })
-  const onAbort = () => rejectAbort?.(abortSignalReason(signal))
+  const aborted = Promise.withResolvers<never>()
+  const onAbort = () => aborted.reject(abortSignalReason(signal))
   signal.addEventListener("abort", onAbort, { once: true })
   try {
-    return await Promise.race([operation, aborted])
+    return await Promise.race([operation, aborted.promise])
   } finally {
     signal.removeEventListener("abort", onAbort)
   }
@@ -1962,22 +1941,14 @@ function abortSignalReason(signal: AbortSignal): unknown {
 }
 
 function resumeFailure(dataJson: string): { readonly reasonCode: string } {
-  let value: unknown
-  try {
-    value = JSON.parse(dataJson)
-  } catch {
-    throw new Error("terminal Wait failure data must be valid JSON")
+  const value = parseObjectJSON(dataJson, "terminal Wait failure data")
+  return {
+    reasonCode: stringField(
+      value,
+      "reason_code",
+      "terminal Wait failure data",
+    ),
   }
-  if (
-    value === null ||
-    typeof value !== "object" ||
-    Array.isArray(value) ||
-    typeof (value as { readonly reason_code?: unknown }).reason_code !== "string" ||
-    (value as { readonly reason_code: string }).reason_code.trim() === ""
-  ) {
-    throw new Error("terminal Wait failure data must contain reason_code")
-  }
-  return { reasonCode: (value as { readonly reason_code: string }).reason_code }
 }
 
 function durationMilliseconds(duration: string, label = "timer duration"): number {
@@ -2146,19 +2117,7 @@ function actorSelf(
         resumeAttachId,
         "Actor input resume",
       )
-      if (decision.requireConsumedAck) {
-        await writeRuntimeProtocolEvent(io, {
-          case: "resumeConsumed",
-          value: create(programProto.ResumeConsumedSchema, {
-            runWaitId: decision.runWaitId,
-            checkpointId: decision.checkpointId,
-            resumeAttachId: decision.resumeAttachId,
-            resumeRequestVersion: decision.resumeRequestVersion,
-            runLeaseId: decision.runLeaseId,
-            correlationId: decision.correlationId,
-          }),
-        })
-      }
+      await acknowledgeResumeConsumed(io, decision)
       if (decision.kind === "completed") {
         const delivered = parseRuntimeProtocolValue(
           "Actor input delivery",
@@ -2663,14 +2622,13 @@ function validationDetails(
 }
 
 function boundedUtf8(value: string, maxBytes: number): string {
-  const encoder = new TextEncoder()
-  if (encoder.encode(value).byteLength <= maxBytes) return value
+  if (Buffer.byteLength(value) <= maxBytes) return value
   const suffix = "…"
-  const suffixBytes = encoder.encode(suffix).byteLength
+  const suffixBytes = Buffer.byteLength(suffix)
   let result = ""
   let size = 0
   for (const character of value) {
-    const characterBytes = encoder.encode(character).byteLength
+    const characterBytes = Buffer.byteLength(character)
     if (size + characterBytes + suffixBytes > maxBytes) break
     result += character
     size += characterBytes
