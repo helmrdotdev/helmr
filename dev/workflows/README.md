@@ -6,9 +6,6 @@ self-hosted and managed-cloud deployments: task authoring, image builds,
 sandboxed execution, payload validation, declared secrets, writable workspaces,
 logs, events, tokens, and agent SDK integration.
 
-Company operating workflows live in `../../../company/automation`, not in this
-product repo.
-
 ## Tasks
 
 | Task | Purpose |
