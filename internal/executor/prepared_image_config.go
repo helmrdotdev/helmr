@@ -15,8 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-// readPreparedImageConfig moves the mounted-substrate guest's OCI verification
-// to the worker. It validates the entire image, including bytes after tar EOF.
+// readPreparedImageConfig verifies the full image digest, including bytes after tar EOF.
 func readPreparedImageConfig(ctx context.Context, path string, artifact workerapi.CASObject) (_ *workspacev0.RuntimeImageConfig, retErr error) {
 	input, err := os.Open(path)
 	if err != nil {
