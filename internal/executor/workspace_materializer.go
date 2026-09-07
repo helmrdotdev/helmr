@@ -801,8 +801,6 @@ func (m WorkspaceMaterializer) restoreCASObjectWithCache(ctx context.Context, te
 		return nil
 	})
 	if err == nil {
-		// The private link or open FD survives eviction of the public name.
-		// Copying and hashing do not hold the cache namespace lock.
 		if finishCachedArtifact(pinnedPath, pinnedSource, artifact.SizeBytes) == nil && validateCachedArtifact(pinnedPath, artifact) == nil {
 			return pinnedPath, pinnedCleanup, nil
 		}
@@ -849,8 +847,7 @@ func (m WorkspaceMaterializer) restoreCASObjectWithCache(ctx context.Context, te
 		}
 	}()
 	err = localcache.WithRootLock(cacheRoot, func(lock localcache.RootLock) error {
-		// This staging inode has already passed size and digest verification.
-		// Replacing a concurrent publisher is safe: both contain the same bytes.
+		// Publish the verified inode even if another writer filled this digest key.
 		if err := os.Rename(stagedPath, cachePath); err != nil {
 			return fmt.Errorf("publish %s artifact cache: %w", label, err)
 		}

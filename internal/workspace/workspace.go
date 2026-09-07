@@ -55,8 +55,7 @@ func CreateWorkspaceArtifactFromRootWithExcludesContext(ctx context.Context, roo
 	return createWorkspaceArtifactContext(ctx, root, tempDir, trustedRoot, excludePatterns, nil)
 }
 
-// CaptureWorkspaceArtifactContext also computes the canonical tree while
-// archiving. Callers that only need an artifact do not pay for tree hashing.
+// CaptureWorkspaceArtifactContext computes the canonical tree during archiving.
 func CaptureWorkspaceArtifactContext(ctx context.Context, root, tempDir, trustedRoot string, excludePatterns []string) (WorkspaceArtifact, TreeIdentity, func(), error) {
 	tree := newArtifactTreeRecorder()
 	artifact, cleanup, err := createWorkspaceArtifactContext(ctx, root, tempDir, trustedRoot, excludePatterns, tree)
