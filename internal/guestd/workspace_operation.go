@@ -1242,15 +1242,12 @@ func handleWorkspaceStop(ctx context.Context, conn io.ReadWriter, registry *work
 			return fmt.Errorf("create workspace stop temp dir: %w", err)
 		}
 		defer os.RemoveAll(tempDir)
-		artifact, cleanupArtifact, err = workspace.CreateWorkspaceArtifactFromRoot(entry.workspaceRoot, tempDir, filepath.Dir(entry.workspaceRoot))
+		var tree workspace.TreeIdentity
+		artifact, tree, cleanupArtifact, err = workspace.CaptureWorkspaceArtifactContext(ctx, entry.workspaceRoot, tempDir, filepath.Dir(entry.workspaceRoot), nil)
 		if err != nil {
 			return fmt.Errorf("capture workspace stop artifact: %w", err)
 		}
 		defer cleanupArtifact()
-		tree, err := workspace.InspectArtifactTreeContext(ctx, artifact.Path, artifact.SizeBytes)
-		if err != nil {
-			return fmt.Errorf("inspect workspace stop artifact tree: %w", err)
-		}
 		response.CapturedTree = &workspacev0.WorkspaceTreeIdentity{
 			Digest: tree.Digest, SizeBytes: tree.SizeBytes, EntryCount: uint32(tree.EntryCount),
 		}

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/iotest"
 
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
@@ -163,5 +164,55 @@ func TestVerifyArtifactRejectsSparseMetadata(t *testing.T) {
 	}
 	if err := VerifyArtifact(bytes.NewReader(body.Bytes()), artifact, TreeIdentity{}); err == nil {
 		t.Fatal("sparse Artifact was accepted")
+	}
+}
+
+func TestInspectArtifactStreamingEnvelope(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "file"), []byte("payload"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	artifact, captured, cleanup, err := CaptureWorkspaceArtifactContext(t.Context(), root, t.TempDir(), root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	valid, err := os.ReadFile(artifact.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name    string
+		body    []byte
+		size    int64
+		digest  string
+		entries int
+		valid   bool
+	}{
+		{"valid", valid, int64(len(valid)), artifact.Digest, 1, true},
+		{"short_body", valid[:600], artifact.SizeBytes, artifact.Digest, 1, false},
+		{"short_declared", valid, 600, artifact.Digest, 1, false},
+		{"long_declared", valid, artifact.SizeBytes + 1, artifact.Digest, 1, false},
+		{"extra_body", append(append([]byte{}, valid...), 1), artifact.SizeBytes, artifact.Digest, 1, false},
+		{"matching_digest_with_trailer", append(append([]byte{}, valid...), 1), artifact.SizeBytes + 1, sha256sum.DigestBytes(append(append([]byte{}, valid...), 1)), 1, false},
+		{"wrong_digest", valid, artifact.SizeBytes, CanonicalEmptyTreeDigest, 1, false},
+		{"wrong_entries", valid, artifact.SizeBytes, artifact.Digest, 0, false},
+	}
+	// Inspection must not rely on writable temporary storage.
+	t.Setenv("TMPDIR", filepath.Join(root, "does-not-exist"))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			descriptor := artifact
+			descriptor.SizeBytes = tc.size
+			descriptor.Digest = tc.digest
+			descriptor.EntryCount = tc.entries
+			tree, err := InspectArtifact(iotest.OneByteReader(bytes.NewReader(tc.body)), descriptor)
+			if (err == nil) != tc.valid {
+				t.Fatalf("tree=%+v error=%v valid=%v", tree, err, tc.valid)
+			}
+			if tc.valid && tree != captured {
+				t.Fatalf("tree=%+v want %+v", tree, captured)
+			}
+		})
 	}
 }

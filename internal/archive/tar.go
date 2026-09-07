@@ -27,6 +27,10 @@ const (
 )
 
 type TarOptions struct {
+	// ObserveEntry receives normalized metadata in emitted order and returns
+	// a sink for regular-file bytes. It applies to non-CanonicalSource archives.
+	// An observer or payload error aborts and removes the archive.
+	ObserveEntry      func(*tar.Header) (io.Writer, error)
 	CanonicalSource   bool
 	CanonicalMetadata bool
 	ExcludePatterns   []string
@@ -358,7 +362,7 @@ func appendTree(
 			return nil
 		}
 		sortKey := rel
-		if entry.IsDir() {
+		if entry.IsDir() && options.CanonicalMetadata {
 			sortKey += "/"
 		}
 		entries = append(entries, pendingEntry{
@@ -406,6 +410,16 @@ func appendTree(
 		if err := writer.WriteHeader(header); err != nil {
 			return err
 		}
+		var content io.Writer = writer
+		if options.ObserveEntry != nil {
+			observer, err := options.ObserveEntry(header)
+			if err != nil {
+				return err
+			}
+			if observer != nil {
+				content = io.MultiWriter(writer, observer)
+			}
+		}
 		if !info.Mode().IsRegular() {
 			continue
 		}
@@ -413,7 +427,7 @@ func appendTree(
 		if err != nil {
 			return err
 		}
-		_, copyErr := io.Copy(writer, contextReader{ctx: ctx, reader: file})
+		_, copyErr := io.Copy(content, contextReader{ctx: ctx, reader: file})
 		closeErr := file.Close()
 		if copyErr != nil {
 			return copyErr

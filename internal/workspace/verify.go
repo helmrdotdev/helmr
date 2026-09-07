@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"os"
 	"path"
@@ -32,45 +33,21 @@ func InspectArtifact(body io.Reader, artifact WorkspaceArtifact) (TreeIdentity, 
 		artifact.EntryCount < 0 || artifact.EntryCount > MaxArtifactEntries {
 		return TreeIdentity{}, errors.New("workspace artifact descriptor is invalid")
 	}
-	verificationRoot, err := os.MkdirTemp("", "helmr-workspace-artifact-*")
-	if err != nil {
-		return TreeIdentity{}, fmt.Errorf("create workspace artifact verification root: %w", err)
-	}
-	defer os.RemoveAll(verificationRoot)
-	archiveFile, err := os.CreateTemp(verificationRoot, "artifact-*.tar")
-	if err != nil {
-		return TreeIdentity{}, fmt.Errorf("create workspace artifact verification file: %w", err)
-	}
-	archivePath := archiveFile.Name()
 	hash := sha256.New()
-	written, copyErr := io.CopyN(io.MultiWriter(archiveFile, hash), body, artifact.SizeBytes)
-	var extra [1]byte
-	extraCount, extraErr := body.Read(extra[:])
-	closeErr := archiveFile.Close()
-	if copyErr != nil || written != artifact.SizeBytes {
+	bodyLimit := &io.LimitedReader{R: io.TeeReader(body, hash), N: artifact.SizeBytes}
+	tree, err := inspectArtifactTreeContext(context.Background(), bodyLimit)
+	if err != nil {
+		return TreeIdentity{}, err
+	}
+	if bodyLimit.N != 0 {
 		return TreeIdentity{}, errors.New("workspace artifact ended before its declared size")
 	}
-	if extraErr != io.EOF || extraCount != 0 {
+	var extra [1]byte
+	if n, err := io.ReadFull(body, extra[:]); n != 0 || err != io.EOF {
 		return TreeIdentity{}, errors.New("workspace artifact exceeds its declared size")
-	}
-	if closeErr != nil {
-		return TreeIdentity{}, fmt.Errorf("close workspace artifact verification file: %w", closeErr)
 	}
 	if sha256sum.DigestHash(hash) != artifact.Digest {
 		return TreeIdentity{}, errors.New("workspace artifact bytes do not match its digest")
-	}
-
-	file, err := os.Open(archivePath)
-	if err != nil {
-		return TreeIdentity{}, fmt.Errorf("open workspace artifact verification file: %w", err)
-	}
-	tree, inspectErr := inspectArtifactTree(file, artifact.SizeBytes)
-	fileCloseErr := file.Close()
-	if inspectErr != nil {
-		return TreeIdentity{}, inspectErr
-	}
-	if fileCloseErr != nil {
-		return TreeIdentity{}, fmt.Errorf("close workspace artifact: %w", fileCloseErr)
 	}
 	if tree.EntryCount != artifact.EntryCount {
 		return TreeIdentity{}, errors.New("workspace artifact entry count does not match its descriptor")
@@ -87,20 +64,21 @@ func InspectArtifactTreeContext(ctx context.Context, path string, sizeBytes int6
 		return TreeIdentity{}, fmt.Errorf("open workspace artifact: %w", err)
 	}
 	defer file.Close()
-	return inspectArtifactTreeContext(ctx, file, sizeBytes)
+	body := &io.LimitedReader{R: file, N: sizeBytes}
+	tree, err := inspectArtifactTreeContext(ctx, body)
+	if err != nil {
+		return TreeIdentity{}, err
+	}
+	if body.N != 0 {
+		return TreeIdentity{}, errors.New("workspace artifact ended before its declared size")
+	}
+	return tree, nil
 }
 
-func inspectArtifactTree(file *os.File, archiveSize int64) (TreeIdentity, error) {
-	return inspectArtifactTreeContext(context.Background(), file, archiveSize)
-}
-
-func inspectArtifactTreeContext(ctx context.Context, file *os.File, archiveSize int64) (TreeIdentity, error) {
-	reader := tar.NewReader(contextReader{ctx: ctx, reader: file})
-	digest := sha256.New()
-	_, _ = io.WriteString(digest, TreeDigestDomain)
-	identity := TreeIdentity{}
-	previousPath := ""
-	directories := make(map[string]struct{})
+func inspectArtifactTreeContext(ctx context.Context, body io.Reader) (TreeIdentity, error) {
+	input := contextReader{ctx: ctx, reader: body}
+	reader := tar.NewReader(input)
+	tree := newArtifactTreeRecorder()
 	for {
 		if err := ctx.Err(); err != nil {
 			return TreeIdentity{}, err
@@ -110,98 +88,127 @@ func inspectArtifactTreeContext(ctx context.Context, file *os.File, archiveSize 
 			if err := ctx.Err(); err != nil {
 				return TreeIdentity{}, err
 			}
-			position, seekErr := file.Seek(0, io.SeekCurrent)
-			if seekErr != nil {
-				return TreeIdentity{}, fmt.Errorf("inspect workspace artifact envelope: %w", seekErr)
-			}
-			if position != archiveSize {
+			var extra [1]byte
+			n, err := io.ReadFull(input, extra[:])
+			if n != 0 {
 				return TreeIdentity{}, errors.New("workspace artifact contains trailing bytes")
 			}
-			identity.Digest = sha256sum.DigestHash(digest)
-			return identity, nil
+			if err != io.EOF {
+				return TreeIdentity{}, fmt.Errorf("finish workspace artifact: %w", err)
+			}
+			return tree.result(), nil
 		}
 		if err != nil {
 			return TreeIdentity{}, fmt.Errorf("read workspace artifact: %w", err)
 		}
-		name := header.Name
-		if name == "" || strings.IndexByte(name, 0) >= 0 || path.IsAbs(name) || path.Clean(name) != name ||
-			name == "." || name == ".." || strings.HasPrefix(name, "../") ||
-			(previousPath != "" && name <= previousPath) {
-			return TreeIdentity{}, fmt.Errorf("workspace artifact path %q is invalid or out of order", name)
-		}
-		previousPath = name
-		parent := path.Dir(name)
-		if parent != "." {
-			if _, ok := directories[parent]; !ok {
-				return TreeIdentity{}, fmt.Errorf("workspace artifact entry %q has no directory parent", name)
-			}
-		}
-		identity.EntryCount++
-		if identity.EntryCount > MaxArtifactEntries {
-			return TreeIdentity{}, errors.New("workspace artifact contains too many entries")
-		}
-		if header.Mode < 0 || header.Mode&^0o777 != 0 {
-			return TreeIdentity{}, fmt.Errorf("workspace artifact entry %q has unsupported mode", name)
-		}
-		mode := uint32(header.Mode)
-		var kind byte
-		var payloadLength uint64
-		switch header.Typeflag {
-		case tar.TypeDir:
-			if header.Size != 0 || header.Linkname != "" {
-				return TreeIdentity{}, fmt.Errorf("workspace artifact directory %q is invalid", name)
-			}
-			kind = treeEntryDirectory
-			directories[name] = struct{}{}
-		case tar.TypeReg:
-			if header.Linkname != "" {
-				return TreeIdentity{}, fmt.Errorf("workspace artifact file %q is invalid", name)
-			}
-			if err := archive.ValidateTarRegularFileSize(header, &identity.SizeBytes, MaxArtifactExtractedBytes); err != nil {
-				return TreeIdentity{}, fmt.Errorf("workspace artifact file %q is invalid: %w", name, err)
-			}
-			kind = treeEntryFile
-			payloadLength = uint64(header.Size)
-		case tar.TypeSymlink:
-			if header.Size != 0 || header.Linkname == "" || strings.IndexByte(header.Linkname, 0) >= 0 || path.IsAbs(header.Linkname) {
-				return TreeIdentity{}, fmt.Errorf("workspace artifact symlink %q is invalid", name)
-			}
-			resolved := path.Clean(path.Join(path.Dir(name), header.Linkname))
-			if resolved == ".." || strings.HasPrefix(resolved, "../") {
-				return TreeIdentity{}, fmt.Errorf("workspace artifact symlink %q escapes the root", name)
-			}
-			kind = treeEntrySymlink
-			mode = 0o777
-			payloadLength = uint64(len(header.Linkname))
-		default:
-			return TreeIdentity{}, fmt.Errorf("workspace artifact entry %q has unsupported type", name)
-		}
-		if _, err := digest.Write([]byte{kind}); err != nil {
+		output, err := tree.observeHeader(header)
+		if err != nil {
 			return TreeIdentity{}, err
 		}
-		if err := writeTreeUint32(digest, uint32(len(name))); err != nil {
-			return TreeIdentity{}, err
-		}
-		if _, err := io.WriteString(digest, name); err != nil {
-			return TreeIdentity{}, err
-		}
-		if err := writeTreeUint32(digest, mode); err != nil {
-			return TreeIdentity{}, err
-		}
-		if err := writeTreeUint64(digest, payloadLength); err != nil {
-			return TreeIdentity{}, err
-		}
-		switch kind {
-		case treeEntryFile:
-			if _, err := io.CopyN(digest, reader, header.Size); err != nil {
-				return TreeIdentity{}, fmt.Errorf("read workspace artifact file %q: %w", name, err)
-			}
-		case treeEntrySymlink:
-			if _, err := io.WriteString(digest, header.Linkname); err != nil {
-				return TreeIdentity{}, err
+		if header.Typeflag == tar.TypeReg {
+			if _, err := io.CopyN(output, reader, header.Size); err != nil {
+				return TreeIdentity{}, fmt.Errorf("read workspace artifact file %q: %w", header.Name, err)
 			}
 		}
 	}
+}
+
+// artifactTreeRecorder is shared by archive creation and untrusted archive
+// inspection, so both hash the same validated metadata and file bytes.
+type artifactTreeRecorder struct {
+	digest       hash.Hash
+	identity     TreeIdentity
+	previousPath string
+	directories  map[string]struct{}
+}
+
+func newArtifactTreeRecorder() *artifactTreeRecorder {
+	digest := sha256.New()
+	_, _ = io.WriteString(digest, TreeDigestDomain)
+	return &artifactTreeRecorder{digest: digest, directories: make(map[string]struct{})}
+}
+
+func (tree *artifactTreeRecorder) result() TreeIdentity {
+	identity := tree.identity
+	identity.Digest = sha256sum.DigestHash(tree.digest)
+	return identity
+}
+
+func (tree *artifactTreeRecorder) observeHeader(header *tar.Header) (io.Writer, error) {
+	name := header.Name
+	if name == "" || strings.IndexByte(name, 0) >= 0 || path.IsAbs(name) || path.Clean(name) != name ||
+		name == "." || name == ".." || strings.HasPrefix(name, "../") ||
+		(tree.previousPath != "" && name <= tree.previousPath) {
+		return nil, fmt.Errorf("workspace artifact path %q is invalid or out of order", name)
+	}
+	tree.previousPath = name
+	parent := path.Dir(name)
+	if parent != "." {
+		if _, ok := tree.directories[parent]; !ok {
+			return nil, fmt.Errorf("workspace artifact entry %q has no directory parent", name)
+		}
+	}
+	tree.identity.EntryCount++
+	if tree.identity.EntryCount > MaxArtifactEntries {
+		return nil, errors.New("workspace artifact contains too many entries")
+	}
+	if header.Mode < 0 || header.Mode&^0o777 != 0 {
+		return nil, fmt.Errorf("workspace artifact entry %q has unsupported mode", name)
+	}
+	mode := uint32(header.Mode)
+	var kind byte
+	var payloadLength uint64
+	switch header.Typeflag {
+	case tar.TypeDir:
+		if header.Size != 0 || header.Linkname != "" {
+			return nil, fmt.Errorf("workspace artifact directory %q is invalid", name)
+		}
+		kind = treeEntryDirectory
+		tree.directories[name] = struct{}{}
+	case tar.TypeReg:
+		if header.Linkname != "" {
+			return nil, fmt.Errorf("workspace artifact file %q is invalid", name)
+		}
+		if err := archive.ValidateTarRegularFileSize(header, &tree.identity.SizeBytes, MaxArtifactExtractedBytes); err != nil {
+			return nil, fmt.Errorf("workspace artifact file %q is invalid: %w", name, err)
+		}
+		kind = treeEntryFile
+		payloadLength = uint64(header.Size)
+	case tar.TypeSymlink:
+		if header.Size != 0 || header.Linkname == "" || strings.IndexByte(header.Linkname, 0) >= 0 || path.IsAbs(header.Linkname) {
+			return nil, fmt.Errorf("workspace artifact symlink %q is invalid", name)
+		}
+		resolved := path.Clean(path.Join(path.Dir(name), header.Linkname))
+		if resolved == ".." || strings.HasPrefix(resolved, "../") {
+			return nil, fmt.Errorf("workspace artifact symlink %q escapes the root", name)
+		}
+		kind = treeEntrySymlink
+		mode = 0o777
+		payloadLength = uint64(len(header.Linkname))
+	default:
+		return nil, fmt.Errorf("workspace artifact entry %q has unsupported type", name)
+	}
+	if _, err := tree.digest.Write([]byte{kind}); err != nil {
+		return nil, err
+	}
+	if err := writeTreeUint32(tree.digest, uint32(len(name))); err != nil {
+		return nil, err
+	}
+	if _, err := io.WriteString(tree.digest, name); err != nil {
+		return nil, err
+	}
+	if err := writeTreeUint32(tree.digest, mode); err != nil {
+		return nil, err
+	}
+	if err := writeTreeUint64(tree.digest, payloadLength); err != nil {
+		return nil, err
+	}
+	if kind == treeEntrySymlink {
+		if _, err := io.WriteString(tree.digest, header.Linkname); err != nil {
+			return nil, err
+		}
+	}
+	return tree.digest, nil
 }
 
 type contextReader struct {

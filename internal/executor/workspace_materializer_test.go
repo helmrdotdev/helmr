@@ -1741,3 +1741,171 @@ type discardReadWriteCloser struct{}
 func (discardReadWriteCloser) Read([]byte) (int, error)    { return 0, io.EOF }
 func (discardReadWriteCloser) Write(p []byte) (int, error) { return len(p), nil }
 func (discardReadWriteCloser) Close() error                { return nil }
+
+func TestArtifactCachePinSurvivesReplacementAndEviction(t *testing.T) {
+	root := t.TempDir()
+	public := filepath.Join(root, "artifact")
+	oldBytes := []byte("old-corrupt")
+	if err := os.WriteFile(public, oldBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var pin string
+	var source *os.File
+	var cleanup func()
+	if err := localcache.WithRootLock(root, func(localcache.RootLock) error {
+		var err error
+		pin, source, cleanup, err = pinCachedArtifact(t.TempDir(), "pin", public)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	newer := filepath.Join(root, ".replacement")
+	newBytes := []byte("correct replacement")
+	if err := os.WriteFile(newer, newBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := localcache.WithRootLock(root, func(localcache.RootLock) error { return os.Rename(newer, public) }); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateCachedArtifact(pin, workerapi.CASObject{Digest: sha256sum.DigestBytes(newBytes), SizeBytes: int64(len(newBytes))}); err == nil {
+		t.Fatal("invalid pinned inode accepted")
+	}
+	cleanup()
+	body, err := os.ReadFile(public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(body, newBytes) {
+		t.Fatal("pin cleanup changed replacement")
+	}
+	if err := localcache.WithRootLock(root, func(localcache.RootLock) error {
+		var err error
+		pin, source, cleanup, err = pinCachedArtifact(t.TempDir(), "pin", public)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if _, err := localcache.EnforceByteLimit(root, 1, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(public); !os.IsNotExist(err) {
+		t.Fatalf("public entry not evicted: %v", err)
+	}
+	if err := finishCachedArtifact(pin, source, int64(len(newBytes))); err != nil {
+		t.Fatal(err)
+	}
+	body, err = os.ReadFile(pin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(body, newBytes) {
+		t.Fatal("eviction changed private artifact")
+	}
+}
+
+func TestArtifactCacheConcurrentRestoreAndEviction(t *testing.T) {
+	store, mount := testWorkspaceMountArtifacts(t)
+	cache, temp := t.TempDir(), t.TempDir()
+	materializer := WorkspaceMaterializer{CAS: store, ArtifactCacheDir: cache}
+	var group sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		group.Go(func() {
+			for j := 0; j < 10; j++ {
+				path, cleanup, err := materializer.restoreCASObject(t.Context(), temp, "image", mount.WorkspaceImage)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				content, readErr := os.ReadFile(path)
+				cleanup()
+				if readErr != nil {
+					t.Error(readErr)
+					return
+				}
+				if string(content) != "oci image" {
+					t.Errorf("wrong content: %q", content)
+					return
+				}
+				if _, err := localcache.EnforceByteLimit(filepath.Join(cache, "sha256"), 1, nil); err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		})
+	}
+	group.Wait()
+	pins, err := filepath.Glob(filepath.Join(cache, "sha256", ".pinned-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pins) != 0 {
+		t.Fatalf("leaked pins: %v", pins)
+	}
+}
+
+func TestArtifactCacheFallbackCopiesPinnedFD(t *testing.T) {
+	root := t.TempDir()
+	public := filepath.Join(root, "cache")
+	if err := os.WriteFile(public, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source, err := os.Open(public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	if err := os.Remove(public); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(public, []byte("new"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, "private")
+	if err := finishCachedArtifact(target, source, 3); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "old" {
+		t.Fatalf("copied replacement: %q", body)
+	}
+	if _, err := source.Stat(); !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("source FD not closed: %v", err)
+	}
+	source, err = os.Open(public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := finishCachedArtifact(target, source, 3); err == nil {
+		t.Fatal("existing private target overwritten")
+	}
+	if _, err := source.Stat(); !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("source FD leaked on failure: %v", err)
+	}
+}
+
+func TestArtifactCacheFallbackRejectsSizeBeforeCopy(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "cache")
+	target := filepath.Join(root, "private")
+	if err := os.WriteFile(path, []byte("oversized"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := finishCachedArtifact(target, source, 1); err == nil {
+		t.Fatal("size mismatch accepted")
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("oversized source was copied: %v", err)
+	}
+	if _, err := source.Stat(); !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("source FD leaked: %v", err)
+	}
+}
