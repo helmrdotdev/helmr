@@ -326,6 +326,9 @@ func projectActorTurnResponse(
 }
 
 func staleActorTurnCommit(err error) error {
+	if errors.Is(err, errStaleWorkerClaims) {
+		return err
+	}
 	if err == nil || errors.Is(err, pgx.ErrNoRows) || errors.Is(err, errStaleRunLeaseClaim) ||
 		errors.Is(err, errStaleRunFinalization) {
 		return errStaleActorTurnCommit

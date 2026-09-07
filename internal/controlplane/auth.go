@@ -20,6 +20,9 @@ import (
 type actorContextKey struct{}
 type workerContextKey struct{}
 
+// Claims can change after HTTP authentication while a request waits for authority locks.
+var errStaleWorkerClaims = errors.New("worker authentication claims are stale")
+
 type workerActor struct {
 	WorkerInstanceID  uuid.UUID
 	WorkerGroupID     uuid.UUID
@@ -519,4 +522,12 @@ func isSecureRequest(r *http.Request) bool {
 	return r.TLS != nil ||
 		strings.EqualFold(r.Header.Get("x-forwarded-proto"), "https") ||
 		strings.EqualFold(r.Header.Get("cloudfront-forwarded-proto"), "https")
+}
+
+func writeStaleWorkerClaims(w http.ResponseWriter, err error) bool {
+	if !errors.Is(err, errStaleWorkerClaims) {
+		return false
+	}
+	writeError(w, unauthorized(errors.New("worker authentication is required")))
+	return true
 }

@@ -45,6 +45,9 @@ func authorizeWorkerRunSource(
 	authority, err := lockLiveRunLeaseAuthority(
 		ctx, q, worker, pgvalue.UUID(parsed.leaseID), lease.LeaseSequence, locators,
 	)
+	if errors.Is(err, errStaleWorkerClaims) {
+		return workerRunSourceAuthority{}, err
+	}
 	if err != nil ||
 		authority.run.Status != db.RunStatusRunning ||
 		authority.runLease.State != db.RunLeaseStateRunning ||

@@ -49,6 +49,9 @@ func (s *Server) workerStart(w http.ResponseWriter, r *http.Request) {
 		r.Context(), workerFromContext(r.Context()), pgvalue.UUID(leaseID), request.Lease, arm,
 	)
 	if err != nil {
+		if writeStaleWorkerClaims(w, err) {
+			return
+		}
 		if errors.Is(err, errStaleRunLeaseClaim) {
 			if point, ok := staleAuthorityPointOf(err); ok {
 				s.log.Warn(
@@ -237,7 +240,7 @@ func lockRunStartAuthority(
 		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureWorkerGroup, staleRunLeaseClaim(err))
 	}
 	if authority.workerGroup.ClaimVersion != worker.GroupClaimVersion {
-		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureWorkerGroup, errStaleRunLeaseClaim)
+		return runLeaseClaimAuthority{}, errStaleWorkerClaims
 	}
 	authority.worker, err = q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{
 		ID: pgvalue.UUID(worker.WorkerInstanceID), WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),

@@ -118,6 +118,9 @@ func (s *Server) workerMarkCheckpointReady(w http.ResponseWriter, r *http.Reques
 			writeJSON(w, http.StatusOK, replay)
 			return
 		}
+		if writeStaleWorkerClaims(w, err) {
+			return
+		}
 		if errors.Is(err, errStaleRunLeaseClaim) || errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, conflict(errors.New("worker checkpoint-ready receipt is stale")))
 			return
@@ -251,6 +254,9 @@ func (s *Server) workerMarkCheckpointFailed(w http.ResponseWriter, r *http.Reque
 			writeJSON(w, http.StatusOK, response)
 			return
 		}
+	}
+	if writeStaleWorkerClaims(w, err) {
+		return
 	}
 	if errors.Is(err, errStaleRunLeaseClaim) || errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, conflict(errors.New("worker checkpoint-failed receipt is stale")))

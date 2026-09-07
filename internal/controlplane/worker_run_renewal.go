@@ -44,6 +44,9 @@ func (s *Server) workerRenewRunLease(w http.ResponseWriter, r *http.Request) {
 	renewed, err := s.renewRunLease(
 		r.Context(), worker, pgvalue.UUID(parsed.leaseID), request.Lease, request.ExpectedExpiresAt,
 	)
+	if writeStaleWorkerClaims(w, err) {
+		return
+	}
 	if errors.Is(err, errStaleRunLeaseClaim) {
 		writeError(w, conflict(errors.New("worker run lease fence is stale")))
 		return

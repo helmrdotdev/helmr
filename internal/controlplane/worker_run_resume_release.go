@@ -45,6 +45,9 @@ func (s *Server) workerAcknowledgeRunResumeRelease(w http.ResponseWriter, r *htt
 		r.Context(), workerFromContext(r.Context()), pgvalue.UUID(parsedLease.leaseID), request.Lease, proof,
 	)
 	if err != nil {
+		if writeStaleWorkerClaims(w, err) {
+			return
+		}
 		if errors.Is(err, errStaleRunLeaseClaim) {
 			writeError(w, conflict(errors.New("run resume release acknowledgement is stale")))
 			return

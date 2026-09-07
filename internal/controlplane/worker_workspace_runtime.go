@@ -61,7 +61,7 @@ func (s *Server) workerCreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 	if err != nil {
-		if errors.Is(err, errStaleWorkerRunSource) {
+		if errors.Is(err, errStaleWorkerRunSource) || errors.Is(err, errStaleWorkerClaims) {
 			s.writeWorkerWorkspaceSourceError(w, "create", request.Lease.ID, err)
 			return
 		}
@@ -166,7 +166,7 @@ func (s *Server) workerExecuteWorkspace(w http.ResponseWriter, r *http.Request) 
 		},
 	})
 	if err != nil {
-		if errors.Is(err, errStaleWorkerRunSource) {
+		if errors.Is(err, errStaleWorkerRunSource) || errors.Is(err, errStaleWorkerClaims) {
 			s.writeWorkerWorkspaceSourceError(w, "exec", request.Lease.ID, err)
 			return
 		}
@@ -326,7 +326,7 @@ func (s *Server) workerDeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 	if err != nil {
-		if errors.Is(err, errStaleWorkerRunSource) {
+		if errors.Is(err, errStaleWorkerRunSource) || errors.Is(err, errStaleWorkerClaims) {
 			s.writeWorkerWorkspaceSourceError(w, "delete", request.Lease.ID, err)
 			return
 		}
@@ -498,6 +498,9 @@ func (s *Server) writeWorkerWorkspaceSourceError(
 	runID string,
 	err error,
 ) {
+	if writeStaleWorkerClaims(w, err) {
+		return
+	}
 	if errors.Is(err, errStaleWorkerRunSource) {
 		writeError(w, conflict(errStaleWorkerRunSource))
 		return

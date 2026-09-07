@@ -147,6 +147,9 @@ func (s *Server) workerCreateTimerRunWait(
 		}
 		return nil
 	})
+	if writeStaleWorkerClaims(w, err) {
+		return
+	}
 	if errors.Is(err, errStaleRunLeaseClaim) {
 		writeError(w, conflict(errors.New("worker timer wait receipt is stale")))
 		return

@@ -37,6 +37,9 @@ func (s *Server) workerCommitActorTurn(w http.ResponseWriter, r *http.Request) {
 	}
 	worker := workerFromContext(r.Context())
 	response, err := s.commitActorTurn(r.Context(), worker, request, commit)
+	if writeStaleWorkerClaims(w, err) {
+		return
+	}
 	if errors.Is(err, errStaleActorTurnCommit) {
 		writeError(w, conflict(errStaleActorTurnCommit))
 		return

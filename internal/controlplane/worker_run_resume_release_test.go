@@ -1,8 +1,12 @@
 package controlplane
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -154,6 +158,34 @@ func TestAcknowledgeRunResumeReleaseAllowsRunningLeaseWhileGroupDrains(t *testin
 		context.Background(), worker, store.authority.runLease.ID, expected.Fence(), proof,
 	); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestWorkerResumeReleaseRefreshesClaimsBeforeReleasingWait(t *testing.T) {
+	for _, group := range []bool{false, true} {
+		server, store, worker, expected, _ := validRunResumeReleaseFixture(t)
+		if group {
+			store.authority.workerGroup.ClaimVersion++
+		} else {
+			store.authority.worker.ClaimVersion++
+			store.authority.worker.State = db.WorkerInstanceStateDraining
+		}
+		request := workerapi.RunResumeReleaseRequest{
+			Lease:     expected.Fence(),
+			RunWaitID: uuid.NewV7().String(), CheckpointID: uuid.NewV7().String(),
+			ResumeAttachID: uuid.NewV7().String(), ResumeRequestVersion: 1,
+		}
+		body, err := json.Marshal(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := httptest.NewRequest(http.MethodPost, "/worker/v1/run/resume-release", bytes.NewReader(body))
+		r = r.WithContext(context.WithValue(r.Context(), workerContextKey{}, worker))
+		response := httptest.NewRecorder()
+		server.workerAcknowledgeRunResumeRelease(response, r)
+		if response.Code != http.StatusUnauthorized || store.releaseWrites != 0 {
+			t.Fatalf("group=%t status=%d writes=%d body=%s", group, response.Code, store.releaseWrites, response.Body.String())
+		}
 	}
 }
 

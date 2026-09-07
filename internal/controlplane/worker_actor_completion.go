@@ -37,6 +37,9 @@ func (s *Server) workerCompleteActor(w http.ResponseWriter, r *http.Request) {
 	}
 	worker := workerFromContext(r.Context())
 	if err := s.completeActor(r.Context(), worker, request, completion); err != nil {
+		if writeStaleWorkerClaims(w, err) {
+			return
+		}
 		if errors.Is(err, errStaleActorCompletion) {
 			writeError(w, conflict(errStaleActorCompletion))
 			return

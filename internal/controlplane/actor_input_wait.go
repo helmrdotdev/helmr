@@ -184,6 +184,9 @@ func (s *Server) workerCreateActorInputRunWait(
 		registered, err = session.CompleteWait(r.Context(), work.q, registered, record)
 		return err
 	})
+	if writeStaleWorkerClaims(w, err) {
+		return
+	}
 	if errors.Is(err, errStaleRunLeaseClaim) {
 		writeError(w, conflict(errors.New("worker actor input wait receipt is stale")))
 		return

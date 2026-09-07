@@ -797,10 +797,12 @@ func claimRunLeasePhysicalInTx(
 	if err != nil {
 		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
 	}
-	if (authority.workerGroup.State != db.WorkerGroupStateActive &&
-		authority.workerGroup.State != db.WorkerGroupStateDraining) ||
-		authority.workerGroup.ClaimVersion != worker.GroupClaimVersion {
+	if authority.workerGroup.State != db.WorkerGroupStateActive &&
+		authority.workerGroup.State != db.WorkerGroupStateDraining {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
+	}
+	if authority.workerGroup.ClaimVersion != worker.GroupClaimVersion {
+		return runLeaseClaimAuthority{}, errStaleWorkerClaims
 	}
 
 	readyWorker, err := q.LockRunLeaseClaimReadyWorker(ctx, db.LockRunLeaseClaimReadyWorkerParams{
@@ -927,9 +929,11 @@ func validateClaimWorkspace(run db.Run, workspace db.Workspace) error {
 func validateClaimWorker(authenticated workerActor, worker db.WorkerInstance) error {
 	if !worker.CurrentEpoch.Valid ||
 		worker.CurrentEpoch.Int64 != authenticated.WorkerEpoch ||
-		worker.ClaimVersion != authenticated.ClaimVersion ||
 		(worker.State != db.WorkerInstanceStateActive && worker.State != db.WorkerInstanceStateDraining) {
 		return errStaleRunLeaseClaim
+	}
+	if worker.ClaimVersion != authenticated.ClaimVersion {
+		return errStaleWorkerClaims
 	}
 	return nil
 }

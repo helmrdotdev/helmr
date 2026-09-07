@@ -1022,6 +1022,9 @@ func completeChildTaskInvokeAuthority(
 		locators,
 		authority,
 	); err != nil {
+		if errors.Is(err, errStaleWorkerClaims) {
+			return err
+		}
 		return staleAuthority(staleAuthorityChildTask, childTaskInvokePointPhysicalAuthority, errChildTaskInvokeStale)
 	}
 	if (authority.run.Status != db.RunStatusRunning &&
@@ -1111,6 +1114,9 @@ func (s *Server) writeChildTaskInvokeError(
 	method string,
 	err error,
 ) {
+	if writeStaleWorkerClaims(w, err) {
+		return
+	}
 	var idempotencyConflict idempotency.ConflictError
 	var failure workerapi.RuntimeOperationFailure
 	switch {
