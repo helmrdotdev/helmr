@@ -140,7 +140,7 @@ if rg -n "pull_request_target" .github/workflows .github/actions; then
 	fail=1
 fi
 
-if rg -n 'actions/cache' .github/workflows/release.yaml; then
+if rg -n 'actions/cache|nix-community/cache-nix-action' .github/workflows/release.yaml; then
 	echo "release workflows must not use GitHub Actions cache" >&2
 	fail=1
 fi

@@ -17,6 +17,10 @@ jobs:
   nix-flake:
     name: nix flake
     runs-on: ubuntu-24.04
+    env:
+      NIX_CONFIG: |
+        keep-derivations = true
+        keep-outputs = true
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
@@ -24,11 +28,32 @@ jobs:
 
       - uses: ./.github/actions/setup-nix
 
+      # PR caches are scoped to their merge ref; release never restores them.
+      - name: Cache Nix check dependencies
+        uses: nix-community/cache-nix-action@099b5eda36d156fcdd6477de3db9e7fa4caf800f
+        with:
+          primary-key: nix-flake-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'flake.nix', 'nix/**', 'go.mod', 'go.sum') }}-${{ github.sha }}
+          restore-prefixes-first-match: nix-flake-${{ runner.os }}-${{ runner.arch }}-
+          # GC target, not a hard archive-size limit.
+          gc-max-store-size: 2G
+
       - run: nix flake check --show-trace
+
+      - name: Retain current check dependencies for caching
+        run: |
+          nix config show keep-derivations
+          nix config show keep-outputs
+          # A path flake loses the Git revision and would root different derivations.
+          nix build --out-link "$RUNNER_TEMP/ci-check" --impure --expr \
+            'builtins.attrValues ((builtins.getFlake ("git+file://" + toString ./.)).checks.x86_64-linux)'
+
 
   repo:
     name: ${{ matrix.name }}
     runs-on: ubuntu-24.04
+    env:
+      GOCACHE: /tmp/helmr-ci-go-build
+      GOMODCACHE: /tmp/helmr-ci-go-mod
     strategy:
       fail-fast: false
       matrix:
@@ -60,6 +85,22 @@ jobs:
 
       - uses: ./.github/actions/setup-nix
 
+      - name: Cache Go compilation and modules
+        if: matrix.app == 'ci-go-race'
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: |
+            ${{ env.GOCACHE }}
+            ${{ env.GOMODCACHE }}
+          key: go-race-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'go.mod', 'go.sum') }}-${{ github.sha }}
+          restore-keys: go-race-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'go.mod', 'go.sum') }}-
+
+      - name: Prepare check environment
+        run: >-
+          nix build --no-link --impure --expr
+          'let flake = builtins.getFlake ("git+file://" + toString ./.);
+          in builtins.dirOf (builtins.dirOf flake.apps.x86_64-linux.${{ matrix.app }}.program)'
+
       - run: nix run .#${{ matrix.app }}
 
   postgres:
@@ -71,6 +112,12 @@ jobs:
           persist-credentials: false
 
       - uses: ./.github/actions/setup-nix
+
+      - name: Prepare check environment
+        run: >-
+          nix build --no-link --impure --expr
+          'let flake = builtins.getFlake ("git+file://" + toString ./.);
+          in builtins.dirOf (builtins.dirOf flake.apps.x86_64-linux.ci-postgres.program)'
 
       - run: nix run .#ci-postgres
 
@@ -84,7 +131,22 @@ jobs:
 
       - uses: ./.github/actions/setup-nix
 
-      - run: nix develop .#browser --command bash -c 'bun install --frozen-lockfile --ignore-scripts && bun run test:browser'
+      - name: Prepare check environment
+        run: >-
+          nix build --no-link --impure --expr
+          'let flake = builtins.getFlake ("git+file://" + toString ./.);
+          in builtins.dirOf (builtins.dirOf flake.apps.x86_64-linux.ci-browser.program)'
+
+      - run: nix run .#ci-browser
+
+      - name: Upload browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: browser-failure
+          path: test-results/
+          retention-days: 7
+          if-no-files-found: ignore
 
   bundle-builder:
     name: bundle builder
@@ -96,11 +158,28 @@ jobs:
 
       - uses: ./.github/actions/setup-nix
 
-      - run: nix develop .#images --command bash tests/bundle_builder_e2e.sh
+      - name: Restore shared Nix dependencies
+        uses: nix-community/cache-nix-action@099b5eda36d156fcdd6477de3db9e7fa4caf800f
+        with:
+          primary-key: nix-flake-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'flake.nix', 'nix/**', 'go.mod', 'go.sum') }}-${{ github.sha }}
+          restore-prefixes-first-match: nix-flake-${{ runner.os }}-${{ runner.arch }}-
+          save: false
+
+      - name: Prepare check environment
+        run: >-
+          nix build --no-link --impure --expr
+          'let flake = builtins.getFlake ("git+file://" + toString ./.);
+          in builtins.dirOf (builtins.dirOf flake.apps.x86_64-linux.ci-bundle-builder.program)'
+
+      - run: nix run .#ci-bundle-builder
 
   release-contracts:
-    name: release contracts
+    name: release contracts (${{ matrix.app }})
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [ci-version-cohort, ci-boot-artifacts-repro]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
@@ -108,8 +187,13 @@ jobs:
 
       - uses: ./.github/actions/setup-nix
 
-      - run: nix run .#ci-version-cohort
-      - run: nix run .#ci-boot-artifacts-repro
+      - name: Prepare check environment
+        run: >-
+          nix build --no-link --impure --expr
+          'let flake = builtins.getFlake ("git+file://" + toString ./.);
+          in builtins.dirOf (builtins.dirOf flake.apps.x86_64-linux.${{ matrix.app }}.program)'
+
+      - run: nix run .#${{ matrix.app }}
 
   ci-complete:
     name: ci complete

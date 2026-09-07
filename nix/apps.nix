@@ -2,6 +2,7 @@
   system,
   nixpkgs,
   nixpkgs-unstable,
+  nixpkgs-clickhouse,
   helmrPackages,
 }:
 
@@ -36,7 +37,7 @@ let
 
   ciApps = {
     ci-policy =
-      app "ci-policy" "run repository policy and release script checks for CI" toolsets.ciChecks
+      app "ci-policy" "run repository policy and release script checks for CI" toolsets.ciPolicy
         ''
           bun install --frozen-lockfile --ignore-scripts
           bun audit
@@ -67,7 +68,7 @@ let
           bash tests/guest_init_cgroup_test.sh
         '';
     ci-generated =
-      app "ci-generated" "check generated artifacts and formatting for CI" toolsets.ciChecks
+      app "ci-generated" "check generated artifacts and formatting for CI" toolsets.ciGenerated
         ''
           bun install --frozen-lockfile --ignore-scripts
           scripts/build-compiler-entry.sh --check
@@ -78,7 +79,7 @@ let
           git diff --exit-code
         '';
     ci-typescript =
-      app "ci-typescript" "run TypeScript type checks and tests for CI" toolsets.ciChecks
+      app "ci-typescript" "run TypeScript type checks and tests for CI" toolsets.ciTypescript
         ''
           ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
             export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib ]}
@@ -90,26 +91,26 @@ let
           bun run build:web
         '';
     ci-go-lint =
-      app "ci-go-lint" "run Go lint checks with embedded console assets for CI" toolsets.ciChecks
+      app "ci-go-lint" "run Go lint checks with embedded console assets for CI" toolsets.ciGoLint
         ''
           bun install --frozen-lockfile --ignore-scripts
           make lint
         '';
     ci-go-build =
-      app "ci-go-build" "build Go commands with embedded console assets for CI" toolsets.ciChecks
+      app "ci-go-build" "build Go commands with embedded console assets for CI" toolsets.ciGoConsole
         ''
           bun install --frozen-lockfile --ignore-scripts
           make build
         '';
     ci-go-race =
-      app "ci-go-race" "run Go race tests with embedded console assets for CI" toolsets.ciChecks
+      app "ci-go-race" "run Go race tests with embedded console assets for CI" toolsets.ciGoConsole
         ''
           export HELMR_SKIP_POSTGRES_TESTS=1
           bun install --frozen-lockfile --ignore-scripts
           make test-race
         '';
     ci-linux-compile =
-      app "ci-linux-compile" "cross-compile Linux Go test binaries for CI" toolsets.ciChecks
+      app "ci-linux-compile" "cross-compile Linux Go test binaries for CI" toolsets.ciGo
         ''
           make test-linux-compile
         '';
@@ -126,7 +127,8 @@ let
           go test ./internal/firecracker -run '^TestPackagedFirecrackerProbeOutputIsAccepted$' -count=1
         '';
     ci-linux-lint =
-      app "ci-linux-lint" "run Linux-targeted Go static analysis for CI" toolsets.ciChecks
+      app "ci-linux-lint" "run Linux-targeted Go static analysis for CI"
+        (toolsets.ciGoConsole ++ [ helmrPackages.staticcheck ])
         ''
           bun install --frozen-lockfile --ignore-scripts
           make console-build
@@ -155,11 +157,9 @@ let
             )
           done
         '';
-    ci-postgres =
-      app "ci-postgres" "run Postgres-backed CI tests" (toolsets.appRuntime ++ [ pkgs.redis ])
-        ''
-          exec ./scripts/ci-postgres.sh "$@"
-        '';
+    ci-postgres = app "ci-postgres" "run Postgres-backed CI tests" toolsets.ciPostgres ''
+      exec ./scripts/ci-postgres.sh "$@"
+    '';
   };
 in
 ciApps
@@ -179,6 +179,11 @@ ciApps
     ${ciApps.ci-infra-test.program}
     ${ciApps.ci-postgres.program}
   '';
+  ci-bundle-builder =
+    app "ci-bundle-builder" "run the canonical bundle builder end-to-end tests" toolsets.ciBundleBuilder
+      ''
+        exec bash ./tests/bundle_builder_e2e.sh
+      '';
   ci-version-cohort =
     app "ci-version-cohort" "verify one version across the release cohort"
       [
@@ -249,6 +254,33 @@ ciApps
   '';
 }
 // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
+  ci-browser =
+    let
+      pkgsClickHouse = import nixpkgs-clickhouse { inherit system; };
+      playwrightVersion =
+        (builtins.fromJSON (builtins.readFile ../package.json)).devDependencies."@playwright/test";
+    in
+    assert pkgs.lib.assertMsg (
+      playwrightVersion == pkgs.playwright-driver.version
+    ) "@playwright/test must match the pinned nixpkgs playwright-driver";
+    app "ci-browser" "run the console browser acceptance test"
+      (
+        toolsets.ciGoConsole
+        ++ [
+          pkgs.postgresql_18
+          pkgs.redis
+          pkgsClickHouse.clickhouse
+          pkgs.curl
+          pkgs.playwright-driver.browsers
+        ]
+      )
+      ''
+        export PLAYWRIGHT_BROWSERS_PATH=${pkgs.playwright-driver.browsers}
+        export PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true
+        bun install --frozen-lockfile --ignore-scripts
+        bun run test:browser
+      '';
+
   smoke-linux =
     app "smoke-linux" "build artifacts and check Linux Firecracker prerequisites" toolsets.appRuntime
       ''
