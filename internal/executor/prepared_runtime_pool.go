@@ -706,6 +706,13 @@ func (p *PreparedRuntimePool) prepareAndStore(
 		return failInstance(err)
 	}
 	defer cleanupWorkspaceImage()
+	var mountedImageConfig *workspacev0.RuntimeImageConfig
+	if topology.Substrate != nil && target.Source.Restore == nil {
+		mountedImageConfig, err = readPreparedImageConfig(ctx, workspaceImagePath, mount.WorkspaceImage)
+		if err != nil {
+			return failInstance(err)
+		}
+	}
 	if err := p.verifyReservedWorkspaceVersion(ctx, materializer, tempDir, mount); err != nil {
 		return failInstance(err)
 	}
@@ -790,7 +797,7 @@ func (p *PreparedRuntimePool) prepareAndStore(
 		}
 	}()
 	if target.Source.Restore == nil {
-		if err := p.prepareGuestRuntime(ctx, session, key, mount, workspaceImagePath); err != nil {
+		if err := p.prepareGuestRuntime(ctx, session, key, mount, workspaceImagePath, mountedImageConfig); err != nil {
 			p.logInfo("prepared runtime pool guest prepare failed", "runtime_instance_id", runtimeInstanceID, "error", err.Error())
 			return failInstance(err)
 		}
@@ -1326,7 +1333,7 @@ func preparedRuntimeWorkspaceMountFromSource(source workerapi.RuntimeSource) wor
 	}
 }
 
-func (p *PreparedRuntimePool) prepareGuestRuntime(ctx context.Context, session vm.Session, key string, mount workerapi.WorkspaceMount, workspaceImagePath string) error {
+func (p *PreparedRuntimePool) prepareGuestRuntime(ctx context.Context, session vm.Session, key string, mount workerapi.WorkspaceMount, workspaceImagePath string, mountedImageConfig *workspacev0.RuntimeImageConfig) error {
 	stream, err := session.OpenStream(ctx)
 	if err != nil {
 		return fmt.Errorf("open prepared runtime stream: %w", err)
@@ -1339,8 +1346,9 @@ func (p *PreparedRuntimePool) prepareGuestRuntime(ctx context.Context, session v
 		return fmt.Errorf("write prepared runtime header: %w", err)
 	}
 	request := &workspacev0.PrepareWorkspaceRuntimeRequest{
-		RuntimeInstanceId: key,
-		MountPath:         strings.TrimSpace(mount.WorkspaceMountPath),
+		RuntimeInstanceId:  key,
+		MountedImageConfig: mountedImageConfig,
+		MountPath:          strings.TrimSpace(mount.WorkspaceMountPath),
 		WorkspaceImage: &workspacev0.WorkspaceArtifact{
 			Digest:    strings.TrimSpace(mount.WorkspaceImage.Digest),
 			MediaType: strings.TrimSpace(mount.WorkspaceImage.MediaType),
@@ -1352,25 +1360,28 @@ func (p *PreparedRuntimePool) prepareGuestRuntime(ctx context.Context, session v
 		return fmt.Errorf("write prepared runtime request: %w", err)
 	}
 	started := time.Now()
-	if err := writeFileFrameWithMetadataContext(ctx, session, stream, wire.StreamHeader{
-		Type:        wire.StreamTypeRunImage,
-		WorkspaceID: mount.WorkspaceID,
-	}, workspaceImagePath, strings.TrimSpace(mount.WorkspaceImage.Digest), mount.WorkspaceImage.SizeBytes); err != nil {
-		// The guest can reject the request while the host is still streaming a
-		// large image. Preserve the guest's structured failure instead of
-		// reporting only the resulting broken pipe.
-		responseCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		var response workspacev0.PrepareWorkspaceRuntimeResponse
-		if responseErr := readProtoFrameFromReaderContext(responseCtx, session, stream, &response); responseErr == nil {
-			if phaseError := workspaceMountPhaseError(response.GetPhases()); phaseError != "" {
-				return fmt.Errorf("prepared runtime rejected workspace image: %s: %w", phaseError, err)
+	if mountedImageConfig == nil {
+		if err := writeFileFrameWithMetadataContext(ctx, session, stream, wire.StreamHeader{
+			Type:        wire.StreamTypeRunImage,
+			WorkspaceID: mount.WorkspaceID,
+		}, workspaceImagePath, strings.TrimSpace(mount.WorkspaceImage.Digest), mount.WorkspaceImage.SizeBytes); err != nil {
+			// The guest can reject the request while the host is still streaming a
+			// large image. Preserve the guest's structured failure instead of
+			// reporting only the resulting broken pipe.
+			responseCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			var response workspacev0.PrepareWorkspaceRuntimeResponse
+			if responseErr := readProtoFrameFromReaderContext(responseCtx, session, stream, &response); responseErr == nil {
+				if phaseError := workspaceMountPhaseError(response.GetPhases()); phaseError != "" {
+					return fmt.Errorf("prepared runtime rejected workspace image: %s: %w", phaseError, err)
+				}
+				return fmt.Errorf("prepared runtime returned state %q while writing workspace image: %w", response.GetState(), err)
 			}
-			return fmt.Errorf("prepared runtime returned state %q while writing workspace image: %w", response.GetState(), err)
+			return fmt.Errorf("write prepared runtime workspace image: %w", err)
 		}
-		return fmt.Errorf("write prepared runtime workspace image: %w", err)
+		p.logInfo("prepared runtime pool workspace image sent", "runtime_instance_id", key, "duration_ms", time.Since(started).Milliseconds(), "size_bytes", mount.WorkspaceImage.SizeBytes)
 	}
-	p.logInfo("prepared runtime pool workspace image sent", "runtime_instance_id", key, "duration_ms", time.Since(started).Milliseconds(), "size_bytes", mount.WorkspaceImage.SizeBytes)
+
 	var response workspacev0.PrepareWorkspaceRuntimeResponse
 	started = time.Now()
 	if err := readProtoFrameFromReaderContext(ctx, session, stream, &response); err != nil {

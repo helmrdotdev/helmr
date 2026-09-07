@@ -21,13 +21,17 @@ func guestdSubstrateRoot() string {
 }
 
 func imageFromMountedSubstrate(r io.Reader, substrateRoot string) (ociImage, func(), error) {
-	substrateRoot = filepath.Clean(strings.TrimSpace(substrateRoot))
-	if substrateRoot == "" || substrateRoot == "." {
-		return ociImage{}, func() {}, errors.New("runtime substrate root is required")
-	}
 	config, err := oci.ReadConfig(r)
 	if err != nil {
 		return ociImage{}, func() {}, err
+	}
+	return imageFromMountedSubstrateConfig(config, substrateRoot)
+}
+
+func imageFromMountedSubstrateConfig(config oci.RuntimeConfig, substrateRoot string) (ociImage, func(), error) {
+	substrateRoot = filepath.Clean(strings.TrimSpace(substrateRoot))
+	if substrateRoot == "" || substrateRoot == "." {
+		return ociImage{}, func() {}, errors.New("runtime substrate root is required")
 	}
 	imageRoot, cleanup, err := createOverlayImageRoot(substrateRoot)
 	if err != nil {

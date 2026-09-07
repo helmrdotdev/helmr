@@ -152,10 +152,21 @@ message MaterializeWorkspaceResponse {
   WorkspaceResetTarget target = 4;
 }
 
+// OCI runtime settings verified by the worker for the mounted substrate.
+message RuntimeImageConfig {
+  repeated string env = 1;
+  string working_dir = 2;
+  string user = 3;
+  repeated string entrypoint = 4;
+  repeated string cmd = 5;
+}
+
 message PrepareWorkspaceRuntimeRequest {
   string runtime_instance_id = 1;
   string mount_path = 2;
   WorkspaceArtifact workspace_image = 3;
+  // When present, the substrate is already mounted and no image frame follows.
+  RuntimeImageConfig mounted_image_config = 4;
 }
 
 message PrepareWorkspaceRuntimeResponse {

@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"strings"
+
+	"github.com/helmrdotdev/helmr/internal/oci"
 )
 
 const guestdSubstrateRootEnv = "HELMR_GUESTD_SUBSTRATE_ROOT"
@@ -16,5 +18,9 @@ func guestdSubstrateRoot() string {
 }
 
 func imageFromMountedSubstrate(io.Reader, string) (ociImage, func(), error) {
+	return ociImage{}, func() {}, errors.New("runtime substrate overlay is only supported on Linux")
+}
+
+func imageFromMountedSubstrateConfig(oci.RuntimeConfig, string) (ociImage, func(), error) {
 	return ociImage{}, func() {}, errors.New("runtime substrate overlay is only supported on Linux")
 }
