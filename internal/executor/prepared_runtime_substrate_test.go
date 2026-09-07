@@ -82,8 +82,13 @@ func TestPreparedRuntimeRestoreRebuildsAndRegistersSubstrateWithoutSubstrateCAS(
 	if err := os.WriteFile(substratePath, []byte("rebuilt substrate"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	key, err := substrate.CacheKey(substrate.Source{WorkspaceImageDigest: fixture.WorkspaceImage.Digest, WorkspaceImageMediaType: fixture.WorkspaceImage.MediaType})
+	if err != nil {
+		t.Fatal(err)
+	}
 	resolver := &restoreSubstrateResolver{
 		result: substrate.Result{
+			CacheKey:  key,
 			Path:      substratePath,
 			Digest:    "sha256:" + strings.Repeat("a", 64),
 			Format:    substrate.Format,
@@ -210,3 +215,16 @@ func (r *immutableSubstrateRegistrar) RegisterRuntimeSubstrate(
 
 var _ RuntimeSubstrateResolver = (*restoreSubstrateResolver)(nil)
 var _ RuntimeSubstrateRegistrar = (*immutableSubstrateRegistrar)(nil)
+
+func TestRuntimeSubstrateRejectsDifferentImageIdentity(t *testing.T) {
+	_, mount := testWorkspaceMountArtifacts(t)
+	path := t.TempDir() + "/image.tar"
+	if err := os.WriteFile(path, []byte("oci image"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	resolver := &restoreSubstrateResolver{result: substrate.Result{CacheKey: "wrong-image"}}
+	topology, err := runtimeSubstrateTopology(context.Background(), resolver, path, mount)
+	if err == nil || topology.Substrate != nil {
+		t.Fatalf("topology = %v, err = %v", topology, err)
+	}
+}

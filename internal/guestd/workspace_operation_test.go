@@ -582,3 +582,12 @@ func TestWorkspaceOperationRegistryDefersRetiredCleanupUntilRelease(t *testing.T
 		t.Fatalf("old workspace root after release err = %v, want not exist", err)
 	}
 }
+
+func TestPreparedImageConfigRequiresMountedSubstrate(t *testing.T) {
+	t.Setenv(guestdSubstrateRootEnv, "")
+	_, cleanup, err := restorePreparedWorkspaceImage(strings.NewReader(""), &workspacev0.PrepareWorkspaceRuntimeRequest{MountedImageConfig: &workspacev0.RuntimeImageConfig{}})
+	cleanup()
+	if err == nil || !strings.Contains(err.Error(), "requires a mounted substrate") {
+		t.Fatalf("error = %v", err)
+	}
+}

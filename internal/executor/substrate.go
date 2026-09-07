@@ -29,12 +29,20 @@ func runtimeSubstrateTopology(ctx context.Context, resolver RuntimeSubstrateReso
 	if resolver == nil {
 		return vm.RuntimeTopology{}, nil
 	}
-	result, err := resolver.Resolve(ctx, imagePath, substrate.Source{
+	source := substrate.Source{
 		WorkspaceImageDigest:    mount.WorkspaceImage.Digest,
 		WorkspaceImageMediaType: mount.WorkspaceImage.MediaType,
-	})
+	}
+	key, err := substrate.CacheKey(source)
 	if err != nil {
 		return vm.RuntimeTopology{}, err
+	}
+	result, err := resolver.Resolve(ctx, imagePath, source)
+	if err != nil {
+		return vm.RuntimeTopology{}, err
+	}
+	if result.CacheKey != key {
+		return vm.RuntimeTopology{}, errors.New("runtime substrate does not match workspace image identity")
 	}
 	return vm.RuntimeTopology{Substrate: &vm.RuntimeSubstrate{
 		Source: &runtimeSubstrateCacheSource{

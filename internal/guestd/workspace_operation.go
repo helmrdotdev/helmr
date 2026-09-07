@@ -18,6 +18,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/frameio"
+	"github.com/helmrdotdev/helmr/internal/oci"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/wire"
@@ -1135,6 +1136,16 @@ func restoreWorkspaceMountWorkspaceImage(conn io.Reader, request *workspacev0.Ma
 
 func restorePreparedWorkspaceImage(conn io.Reader, request *workspacev0.PrepareWorkspaceRuntimeRequest) (ociImage, func(), error) {
 	cleanup := func() {}
+	if config := request.GetMountedImageConfig(); config != nil {
+		substrateRoot := guestdSubstrateRoot()
+		if substrateRoot == "" {
+			return ociImage{}, cleanup, errors.New("prepared image config requires a mounted substrate")
+		}
+		return imageFromMountedSubstrateConfig(oci.RuntimeConfig{
+			Env: config.GetEnv(), WorkingDir: config.GetWorkingDir(), User: config.GetUser(),
+			Entrypoint: config.GetEntrypoint(), Cmd: config.GetCmd(),
+		}, substrateRoot)
+	}
 	header, bodyLen, err := wire.ReadStreamFrameHeader(conn)
 	if err != nil {
 		return ociImage{}, cleanup, fmt.Errorf("read prepared workspace image stream header: %w", err)
