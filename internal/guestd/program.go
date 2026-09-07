@@ -1792,7 +1792,7 @@ func pauseActorTurnCommit(
 	if err != nil {
 		return fmt.Errorf("prepare actor turn workspace capture staging: %w", err)
 	}
-	artifact, cleanup, err := workspace.CreateWorkspaceArtifactFromRootWithExcludesContext(
+	artifact, tree, cleanup, err := workspace.CaptureWorkspaceArtifactContext(
 		turnCtx,
 		process.workspaceRoot,
 		tempRoot,
@@ -1803,10 +1803,6 @@ func pauseActorTurnCommit(
 		return fmt.Errorf("capture actor turn workspace: %w", err)
 	}
 	defer cleanup()
-	tree, err := workspace.InspectArtifactTreeContext(turnCtx, artifact.Path, artifact.SizeBytes)
-	if err != nil {
-		return fmt.Errorf("inspect actor turn workspace capture: %w", err)
-	}
 	changed := tree != expectedTree
 	if changed {
 		if err := stream.writeWorkspaceArtifactFile(run.GetRunId(), artifact); err != nil {

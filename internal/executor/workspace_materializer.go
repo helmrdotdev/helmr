@@ -788,26 +788,26 @@ func (m WorkspaceMaterializer) restoreCASObjectWithCache(ctx context.Context, te
 		return "", func() {}, workspaceMountFailure{code: "workspace_mount_cache_unavailable", err: fmt.Errorf("create %s artifact cache dir: %w", label, err)}
 	}
 	cacheRoot := filepath.Join(cacheDir, "sha256")
-	var linkedPath string
-	var linkedCleanup func()
+	var pinnedPath string
+	var pinnedCleanup func()
+	var pinnedSource *os.File
 	err = localcache.WithRootLock(cacheRoot, func(lock localcache.RootLock) error {
-		if err := validateCachedArtifact(cachePath, artifact); err == nil {
-			if touchErr := localcache.Touch(cachePath); touchErr == nil {
-				path, cleanup, linkErr := linkCachedArtifact(tempDir, label, cachePath)
-				if linkErr == nil {
-					linkedPath = path
-					linkedCleanup = cleanup
-					return nil
-				}
-			}
-			_ = os.Remove(cachePath)
+		var pinErr error
+		pinnedPath, pinnedSource, pinnedCleanup, pinErr = pinCachedArtifact(tempDir, label, cachePath)
+		if pinErr != nil {
+			return errArtifactCacheMiss
 		}
-		return errArtifactCacheMiss
+		_ = localcache.Touch(cachePath)
+		return nil
 	})
 	if err == nil {
-		return linkedPath, linkedCleanup, nil
-	}
-	if !errors.Is(err, errArtifactCacheMiss) {
+		// The private link or open FD survives eviction of the public name.
+		// Copying and hashing do not hold the cache namespace lock.
+		if finishCachedArtifact(pinnedPath, pinnedSource, artifact.SizeBytes) == nil && validateCachedArtifact(pinnedPath, artifact) == nil {
+			return pinnedPath, pinnedCleanup, nil
+		}
+		pinnedCleanup()
+	} else if !errors.Is(err, errArtifactCacheMiss) {
 		return "", func() {}, workspaceMountFailure{code: "workspace_mount_cache_unavailable", err: fmt.Errorf("open %s artifact cache: %w", label, err)}
 	}
 	reader, err := m.CAS.Get(ctx, strings.TrimSpace(artifact.Digest))
@@ -849,19 +849,8 @@ func (m WorkspaceMaterializer) restoreCASObjectWithCache(ctx context.Context, te
 		}
 	}()
 	err = localcache.WithRootLock(cacheRoot, func(lock localcache.RootLock) error {
-		if err := validateCachedArtifact(cachePath, artifact); err == nil {
-			if touchErr := localcache.Touch(cachePath); touchErr == nil {
-				_ = os.Remove(stagedPath)
-				stagedPath = ""
-				path, cleanup, linkErr := linkCachedArtifact(tempDir, label, cachePath)
-				if linkErr == nil {
-					linkedPath = path
-					linkedCleanup = cleanup
-					return nil
-				}
-			}
-			_ = os.Remove(cachePath)
-		}
+		// This staging inode has already passed size and digest verification.
+		// Replacing a concurrent publisher is safe: both contain the same bytes.
 		if err := os.Rename(stagedPath, cachePath); err != nil {
 			return fmt.Errorf("publish %s artifact cache: %w", label, err)
 		}
@@ -869,19 +858,84 @@ func (m WorkspaceMaterializer) restoreCASObjectWithCache(ctx context.Context, te
 		if _, err := lock.EnforceByteLimit(m.ArtifactCacheMaxBytes, cleanArtifactCachePreserveSet(map[string]bool{cachePath: true})); err != nil {
 			return fmt.Errorf("evict %s artifact cache: %w", label, err)
 		}
-		path, cleanup, err := linkCachedArtifact(tempDir, label, cachePath)
-		if err != nil {
-			_ = os.Remove(cachePath)
-			return fmt.Errorf("link %s artifact cache: %w", label, err)
-		}
-		linkedPath = path
-		linkedCleanup = cleanup
-		return nil
+		var pinErr error
+		pinnedPath, pinnedSource, pinnedCleanup, pinErr = pinCachedArtifact(tempDir, label, cachePath)
+		return pinErr
 	})
 	if err != nil {
 		return "", func() {}, workspaceMountFailure{code: "workspace_mount_cache_unavailable", err: err}
 	}
-	return linkedPath, linkedCleanup, nil
+	if err := finishCachedArtifact(pinnedPath, pinnedSource, artifact.SizeBytes); err != nil {
+		pinnedCleanup()
+		return "", func() {}, workspaceMountFailure{code: "workspace_mount_cache_unavailable", err: err}
+	}
+	return pinnedPath, pinnedCleanup, nil
+}
+
+// pinCachedArtifact runs under the cache root lock. A hardlink pins the inode
+// directly at its final private path. If linking fails (for example across
+// filesystems), an open FD pins the source until it can be copied outside lock.
+func pinCachedArtifact(tempDir, label, cachePath string) (string, *os.File, func(), error) {
+	info, err := os.Stat(cachePath)
+	if err != nil {
+		return "", nil, func() {}, err
+	}
+	if !info.Mode().IsRegular() {
+		return "", nil, func() {}, errors.New("cached artifact is not a regular file")
+	}
+	file, err := os.CreateTemp(tempDir, label+"-*")
+	if err != nil {
+		return "", nil, func() {}, err
+	}
+	path := file.Name()
+	var source *os.File
+	cleanup := func() {
+		if source != nil {
+			_ = source.Close()
+		}
+		_ = os.Remove(path)
+	}
+	if err := file.Close(); err != nil {
+		cleanup()
+		return "", nil, func() {}, err
+	}
+	if err := os.Remove(path); err != nil {
+		cleanup()
+		return "", nil, func() {}, err
+	}
+	if err := os.Link(cachePath, path); err == nil {
+		return path, nil, cleanup, nil
+	}
+	source, err = os.Open(cachePath)
+	if err != nil {
+		cleanup()
+		return "", nil, func() {}, err
+	}
+	return path, source, cleanup, nil
+}
+
+func finishCachedArtifact(path string, source *os.File, expectedSize int64) error {
+	if source == nil {
+		return nil
+	}
+	defer source.Close()
+	info, err := source.Stat()
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return errors.New("cached artifact is not a regular file")
+	}
+	if info.Size() != expectedSize {
+		return errors.New("cached artifact size mismatch")
+	}
+	target, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(target, source)
+	closeErr := target.Close()
+	return errors.Join(copyErr, closeErr)
 }
 
 var errArtifactCacheMiss = errors.New("artifact cache miss")
@@ -931,43 +985,6 @@ func validateCachedArtifact(path string, artifact workerapi.CASObject) error {
 		return fmt.Errorf("cached artifact digest mismatch")
 	}
 	return nil
-}
-
-func linkCachedArtifact(tempDir string, label string, cachePath string) (string, func(), error) {
-	file, err := os.CreateTemp(tempDir, label+"-*")
-	if err != nil {
-		return "", func() {}, fmt.Errorf("create %s artifact temp file: %w", label, err)
-	}
-	path := file.Name()
-	if err := file.Close(); err != nil {
-		_ = os.Remove(path)
-		return "", func() {}, fmt.Errorf("close %s artifact temp file: %w", label, err)
-	}
-	if err := os.Remove(path); err != nil {
-		return "", func() {}, fmt.Errorf("replace %s artifact temp file: %w", label, err)
-	}
-	if err := os.Link(cachePath, path); err != nil {
-		source, openErr := os.Open(cachePath)
-		if openErr != nil {
-			return "", func() {}, openErr
-		}
-		defer source.Close()
-		target, createErr := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-		if createErr != nil {
-			return "", func() {}, createErr
-		}
-		_, copyErr := io.Copy(target, source)
-		closeErr := target.Close()
-		if copyErr != nil {
-			_ = os.Remove(path)
-			return "", func() {}, copyErr
-		}
-		if closeErr != nil {
-			_ = os.Remove(path)
-			return "", func() {}, closeErr
-		}
-	}
-	return path, func() { _ = os.Remove(path) }, nil
 }
 
 func (m WorkspaceMaterializer) registerWorkspaceMount(ctx context.Context, session vm.Session, mount workerapi.WorkspaceMount, workspaceArtifactPath string, runtimeInstanceID string) error {

@@ -3,6 +3,8 @@ package archive
 import (
 	"archive/tar"
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -687,3 +689,47 @@ func writeTestFile(t *testing.T, path string, content string) {
 		t.Fatal(err)
 	}
 }
+
+func TestTarObserverFailureAndCancellationRemoveArchive(t *testing.T) {
+	for _, mode := range []string{"header_error", "payload_error", "cancel"} {
+		t.Run(mode, func(t *testing.T) {
+			root, temp := t.TempDir(), t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, "file"), []byte("content"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			expected := errors.New("observer failed")
+			observer := func(*tar.Header) (io.Writer, error) {
+				switch mode {
+				case "header_error":
+					return nil, expected
+				case "cancel":
+					cancel()
+					return io.Discard, nil
+				default:
+					return failingTarObserver{err: expected}, nil
+				}
+			}
+			_, cleanup, err := CreateTarWithOptionsContext(ctx, root, temp, TarOptions{ObserveEntry: observer})
+			cleanup()
+			if mode == "cancel" {
+				expected = context.Canceled
+			}
+			if !errors.Is(err, expected) {
+				t.Fatalf("error=%v want %v", err, expected)
+			}
+			entries, err := os.ReadDir(temp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 0 {
+				t.Fatalf("leaked files: %v", entries)
+			}
+		})
+	}
+}
+
+type failingTarObserver struct{ err error }
+
+func (w failingTarObserver) Write([]byte) (int, error) { return 0, w.err }

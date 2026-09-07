@@ -52,14 +52,33 @@ func CreateWorkspaceArtifactFromRootWithExcludes(root string, tempDir string, tr
 }
 
 func CreateWorkspaceArtifactFromRootWithExcludesContext(ctx context.Context, root string, tempDir string, trustedRoot string, excludePatterns []string) (WorkspaceArtifact, func(), error) {
+	return createWorkspaceArtifactContext(ctx, root, tempDir, trustedRoot, excludePatterns, nil)
+}
+
+// CaptureWorkspaceArtifactContext also computes the canonical tree while
+// archiving. Callers that only need an artifact do not pay for tree hashing.
+func CaptureWorkspaceArtifactContext(ctx context.Context, root, tempDir, trustedRoot string, excludePatterns []string) (WorkspaceArtifact, TreeIdentity, func(), error) {
+	tree := newArtifactTreeRecorder()
+	artifact, cleanup, err := createWorkspaceArtifactContext(ctx, root, tempDir, trustedRoot, excludePatterns, tree)
+	if err != nil {
+		return WorkspaceArtifact{}, TreeIdentity{}, cleanup, err
+	}
+	return artifact, tree.result(), cleanup, nil
+}
+
+func createWorkspaceArtifactContext(ctx context.Context, root, tempDir, trustedRoot string, excludePatterns []string, tree *artifactTreeRecorder) (WorkspaceArtifact, func(), error) {
 	if err := validateRootInside(root, trustedRoot); err != nil {
 		return WorkspaceArtifact{}, func() {}, err
 	}
-	tarArchive, cleanup, err := archive.CreateTarWithOptionsContext(ctx, root, tempDir, archive.TarOptions{
+	options := archive.TarOptions{
 		ExcludePatterns: append([]string(nil), excludePatterns...),
 		MaxBytes:        MaxArtifactExtractedBytes,
 		MaxEntries:      MaxArtifactEntries,
-	})
+	}
+	if tree != nil {
+		options.ObserveEntry = tree.observeHeader
+	}
+	tarArchive, cleanup, err := archive.CreateTarWithOptionsContext(ctx, root, tempDir, options)
 	if err != nil {
 		return WorkspaceArtifact{}, func() {}, fmt.Errorf("create workspace artifact: %w", err)
 	}
