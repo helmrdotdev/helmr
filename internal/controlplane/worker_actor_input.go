@@ -75,6 +75,9 @@ func (s *Server) workerSendActorInput(w http.ResponseWriter, r *http.Request) {
 				r.Context(), work.q, worker, request, source.EnvironmentID,
 			)
 		}); err != nil {
+			if writeStaleWorkerClaims(w, err) {
+				return
+			}
 			if errors.Is(err, errStaleActorInputSend) {
 				writeError(w, conflict(errStaleActorInputSend))
 				return
@@ -110,6 +113,9 @@ func (s *Server) workerSendActorInput(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, failedActorInputSend(
 				request.CorrelationID, failure.Code, failure.Message, failure.Retryable,
 			))
+			return
+		}
+		if writeStaleWorkerClaims(w, err) {
 			return
 		}
 		if errors.Is(err, errStaleActorInputSend) {
@@ -180,7 +186,7 @@ func authorizeActorInputSendSource(
 	authority, err := authorizeWorkerRunSource(ctx, q, worker, request.Lease)
 	if err != nil || authority.EnvironmentID != environmentID {
 		if err != nil {
-			return fmt.Errorf("%w: %v", errStaleActorInputSend, err)
+			return fmt.Errorf("%w: %w", errStaleActorInputSend, err)
 		}
 		return errStaleActorInputSend
 	}

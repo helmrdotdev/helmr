@@ -117,10 +117,12 @@ func lockRunEntrypointAuthority(
 	if err != nil {
 		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
 	}
-	if (authority.workerGroup.State != db.WorkerGroupStateActive &&
-		authority.workerGroup.State != db.WorkerGroupStateDraining) ||
-		authority.workerGroup.ClaimVersion != worker.GroupClaimVersion {
+	if authority.workerGroup.State != db.WorkerGroupStateActive &&
+		authority.workerGroup.State != db.WorkerGroupStateDraining {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
+	}
+	if authority.workerGroup.ClaimVersion != worker.GroupClaimVersion {
+		return runLeaseClaimAuthority{}, errStaleWorkerClaims
 	}
 
 	authority.worker, err = q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{

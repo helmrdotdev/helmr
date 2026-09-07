@@ -51,6 +51,9 @@ func (s *Server) workerEnterRunEntrypoint(w http.ResponseWriter, r *http.Request
 		pgvalue.UUID(leaseID),
 		request,
 	); err != nil {
+		if writeStaleWorkerClaims(w, err) {
+			return
+		}
 		if errors.Is(err, errStaleRunLeaseClaim) {
 			writeError(w, conflict(errors.New("run entrypoint acknowledgement is stale")))
 			return

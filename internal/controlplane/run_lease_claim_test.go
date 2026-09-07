@@ -426,8 +426,8 @@ func TestClaimFreshTaskRunLeaseInTxRejectsStaleGroupGeneration(t *testing.T) {
 		authority.runLease.LeaseSequence,
 		locators,
 	)
-	if !errors.Is(err, errStaleRunLeaseClaim) {
-		t.Fatalf("error = %v, want stale claim", err)
+	if !errors.Is(err, errStaleWorkerClaims) {
+		t.Fatalf("error = %v, want stale worker claims", err)
 	}
 	if !slices.Equal(store.calls, []string{"run", "workspace", "attempt", "worker_group"}) {
 		t.Fatalf("stale group generation progressed claim: %v", store.calls)

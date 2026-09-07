@@ -247,6 +247,9 @@ func (s *Server) workerPollRunWait(w http.ResponseWriter, r *http.Request) {
 		if wait.CheckpointDueAt.Valid && !time.Now().Before(wait.CheckpointDueAt.Time) {
 			wait, err = s.requestWorkerRunWaitCheckpoint(r.Context(), worker, request.Lease, parsed, waitID)
 			if err != nil {
+				if writeStaleWorkerClaims(w, err) {
+					return
+				}
 				if errors.Is(err, errStaleRunLeaseClaim) || isNoRows(err) {
 					writeError(w, conflict(errors.New("worker run wait checkpoint request is stale")))
 				} else {

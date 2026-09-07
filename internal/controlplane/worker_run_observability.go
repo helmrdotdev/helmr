@@ -171,6 +171,9 @@ func (s *Server) workerUpdateRunMetadata(w http.ResponseWriter, r *http.Request)
 	})
 	if err != nil {
 		var conflictErr idempotency.ConflictError
+		if writeStaleWorkerClaims(w, err) {
+			return
+		}
 		switch {
 		case errors.As(err, &conflictErr):
 			writeError(w, conflict(conflictErr))

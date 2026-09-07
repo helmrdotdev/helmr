@@ -107,7 +107,7 @@ func (s *Server) workerStartActor(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := s.startActor(r.Context(), normalized)
 	if err != nil {
-		if errors.Is(err, errStaleWorkerRunSource) {
+		if errors.Is(err, errStaleWorkerRunSource) || errors.Is(err, errStaleWorkerClaims) {
 			s.writeWorkerActorSourceError(w, "start", request.Lease.ID, err)
 			return
 		}
@@ -162,7 +162,7 @@ func (s *Server) workerGetSessionStatus(w http.ResponseWriter, r *http.Request) 
 		return err
 	})
 	if err != nil {
-		if errors.Is(err, errStaleWorkerRunSource) {
+		if errors.Is(err, errStaleWorkerRunSource) || errors.Is(err, errStaleWorkerClaims) {
 			s.writeWorkerActorSourceError(w, "status", request.Lease.ID, err)
 			return
 		}
@@ -214,7 +214,7 @@ func (s *Server) workerCloseSession(w http.ResponseWriter, r *http.Request) {
 		return err
 	})
 	if err != nil {
-		if errors.Is(err, errStaleWorkerRunSource) {
+		if errors.Is(err, errStaleWorkerRunSource) || errors.Is(err, errStaleWorkerClaims) {
 			s.writeWorkerActorSourceError(w, "close", request.Lease.ID, err)
 			return
 		}
@@ -243,7 +243,7 @@ func (s *Server) workerCloseSession(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 	if err != nil {
-		if errors.Is(err, errStaleWorkerRunSource) {
+		if errors.Is(err, errStaleWorkerRunSource) || errors.Is(err, errStaleWorkerClaims) {
 			s.writeWorkerActorSourceError(w, "close", request.Lease.ID, err)
 			return
 		}
@@ -290,7 +290,7 @@ func (s *Server) workerReadSessionOutputPage(w http.ResponseWriter, r *http.Requ
 		return err
 	})
 	if err != nil {
-		if errors.Is(err, errStaleWorkerRunSource) {
+		if errors.Is(err, errStaleWorkerRunSource) || errors.Is(err, errStaleWorkerClaims) {
 			s.writeWorkerActorSourceError(w, "output-page", request.Lease.ID, err)
 			return
 		}
@@ -408,6 +408,9 @@ func (s *Server) writeWorkerActorSourceError(
 	runID string,
 	err error,
 ) {
+	if writeStaleWorkerClaims(w, err) {
+		return
+	}
 	if errors.Is(err, errStaleWorkerRunSource) {
 		writeError(w, conflict(errStaleWorkerRunSource))
 		return

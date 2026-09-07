@@ -42,6 +42,9 @@ func (s *Server) workerClaimRunLease(w http.ResponseWriter, r *http.Request) {
 		request.LeaseSequence,
 	)
 	if err != nil {
+		if writeStaleWorkerClaims(w, err) {
+			return
+		}
 		if errors.Is(err, errStaleRunLeaseClaim) {
 			writeError(w, conflict(errors.New("run lease claim is stale")))
 			return

@@ -37,6 +37,9 @@ func (s *Server) workerCompleteTask(w http.ResponseWriter, r *http.Request) {
 	}
 	worker := workerFromContext(r.Context())
 	if err := s.completeTask(r.Context(), worker, request, completion); err != nil {
+		if writeStaleWorkerClaims(w, err) {
+			return
+		}
 		if errors.Is(err, errStaleTaskCompletion) {
 			if point, ok := staleAuthorityPointOf(err); ok {
 				s.log.Warn(

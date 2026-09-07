@@ -76,6 +76,9 @@ func (s *Server) workerAppendActorOutput(w http.ResponseWriter, r *http.Request)
 			})
 			return
 		}
+		if writeStaleWorkerClaims(w, err) {
+			return
+		}
 		if errors.Is(err, errStaleActorOutputAppend) {
 			writeError(w, conflict(errStaleActorOutputAppend))
 			return

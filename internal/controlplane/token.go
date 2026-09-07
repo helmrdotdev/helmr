@@ -403,6 +403,9 @@ func lockTokenCreateAuthority(
 	authority, err := lockLiveRunLeaseAuthority(
 		ctx, q, worker, pgvalue.UUID(parsed.leaseID), lease.LeaseSequence, locators,
 	)
+	if errors.Is(err, errStaleWorkerClaims) {
+		return db.GetLiveRunLeaseLocatorsRow{}, runLeaseClaimAuthority{}, err
+	}
 	if err != nil ||
 		authority.run.Status != db.RunStatusRunning ||
 		authority.runLease.State != db.RunLeaseStateRunning ||
@@ -1158,6 +1161,9 @@ func tokenFromCancelRow(row db.CancelTokenRow) db.Token {
 }
 
 func (s *Server) writeTokenError(w http.ResponseWriter, err error) {
+	if writeStaleWorkerClaims(w, err) {
+		return
+	}
 	var conflictError idempotency.ConflictError
 	switch {
 	case errors.As(err, &conflictError):

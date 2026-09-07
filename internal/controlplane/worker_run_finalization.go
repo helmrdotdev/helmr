@@ -38,6 +38,9 @@ func (s *Server) workerBeginRunFinalization(w http.ResponseWriter, r *http.Reque
 	worker := workerFromContext(r.Context())
 	response, err := s.beginRunFinalization(r.Context(), worker, request, parsed)
 	if err != nil {
+		if writeStaleWorkerClaims(w, err) {
+			return
+		}
 		if errors.Is(err, errStaleRunFinalization) {
 			writeError(w, conflict(errStaleRunFinalization))
 			return
