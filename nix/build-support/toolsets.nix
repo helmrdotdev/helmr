@@ -84,10 +84,82 @@ rec {
     pkgs.xz
   ];
 
-  ciChecks = repoChecks ++ [ pkgs.gnutar ] ++ image;
+  # CI apps declare their own execution tools instead of pulling the developer
+  # environment (including image tools, language servers and generators).
+  ciShell = [
+    pkgs.bash
+    pkgs.coreutils
+    pkgs.diffutils
+    pkgs.findutils
+    pkgs.gawk
+    pkgs.gnugrep
+    pkgs.gnused
+    pkgs.git
+  ];
+
+  ciPolicy = ciShell ++ [
+    helmrPackages.bun
+    pkgs.actionlint
+    pkgs.zizmor
+    pkgs.ripgrep
+    pkgs.file
+    pkgs.curl
+    pkgs.gnumake
+    pkgs.gnutar
+    pkgs.gzip
+    pkgs.jq
+  ];
+
+  ciGo = ciShell ++ [
+    helmrPackages.goPackage
+    pkgs.stdenv.cc
+    pkgs.gnumake
+  ];
+
+  ciGoConsole = ciGo ++ [
+    helmrPackages.bun
+    helmrPackages.nodejs
+  ];
+
+  ciGoLint = ciGoConsole ++ [
+    helmrPackages.staticcheck
+    helmrPackages.unparam
+  ];
+
+  ciGenerated = ciGoConsole ++ [
+    bpfClang
+    pkgs.buf
+    pkgsUnstable.protoc-gen-go
+    helmrPackages.protocGenEs
+    pkgsUnstable.sqlc
+    pkgs.protobuf
+  ];
+
+  ciTypescript = ciShell ++ [
+    helmrPackages.bun
+    helmrPackages.nodejs
+    pkgs.rsync
+    pkgs.gnutar
+    pkgs.gzip
+  ];
+
+  ciPostgres = ciGo ++ [
+    pkgs.postgresql_18
+    pkgs.redis
+  ];
+
+  ciBundleBuilder = ciGo ++ [
+    pkgs.nix
+    pkgs.curl
+    pkgs.docker
+    pkgs.skopeo
+    pkgs.jq
+    pkgs.ripgrep
+    helmrPackages.squashfsTools
+  ];
 
   runtimeProbe =
-    repoChecks
+    ciGo
     ++ lib.optionals (stdenv.isLinux && stdenv.isx86_64) [
       helmrPackages.firecrackerRuntime
     ];

@@ -60,6 +60,12 @@ jobs:
 
       - uses: ./.github/actions/setup-nix
 
+      - name: Prepare check environment
+        run: >-
+          nix build --no-link --impure --expr
+          'let flake = builtins.getFlake (toString ./.);
+          in builtins.dirOf (builtins.dirOf flake.apps.x86_64-linux.${{ matrix.app }}.program)'
+
       - run: nix run .#${{ matrix.app }}
 
   postgres:
@@ -71,6 +77,12 @@ jobs:
           persist-credentials: false
 
       - uses: ./.github/actions/setup-nix
+
+      - name: Prepare check environment
+        run: >-
+          nix build --no-link --impure --expr
+          'let flake = builtins.getFlake (toString ./.);
+          in builtins.dirOf (builtins.dirOf flake.apps.x86_64-linux.ci-postgres.program)'
 
       - run: nix run .#ci-postgres
 
@@ -84,7 +96,22 @@ jobs:
 
       - uses: ./.github/actions/setup-nix
 
-      - run: nix develop .#browser --command bash -c 'bun install --frozen-lockfile --ignore-scripts && bun run test:browser'
+      - name: Prepare check environment
+        run: >-
+          nix build --no-link --impure --expr
+          'let flake = builtins.getFlake (toString ./.);
+          in builtins.dirOf (builtins.dirOf flake.apps.x86_64-linux.ci-browser.program)'
+
+      - run: nix run .#ci-browser
+
+      - name: Upload browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: browser-failure
+          path: test-results/
+          retention-days: 7
+          if-no-files-found: ignore
 
   bundle-builder:
     name: bundle builder
@@ -96,7 +123,13 @@ jobs:
 
       - uses: ./.github/actions/setup-nix
 
-      - run: nix develop .#images --command bash tests/bundle_builder_e2e.sh
+      - name: Prepare check environment
+        run: >-
+          nix build --no-link --impure --expr
+          'let flake = builtins.getFlake (toString ./.);
+          in builtins.dirOf (builtins.dirOf flake.apps.x86_64-linux.ci-bundle-builder.program)'
+
+      - run: nix run .#ci-bundle-builder
 
   release-contracts:
     name: release contracts
@@ -108,7 +141,19 @@ jobs:
 
       - uses: ./.github/actions/setup-nix
 
+      - name: Prepare check environment
+        run: >-
+          nix build --no-link --impure --expr
+          'let flake = builtins.getFlake (toString ./.);
+          in builtins.dirOf (builtins.dirOf flake.apps.x86_64-linux.ci-version-cohort.program)'
+
       - run: nix run .#ci-version-cohort
+      - name: Prepare check environment
+        run: >-
+          nix build --no-link --impure --expr
+          'let flake = builtins.getFlake (toString ./.);
+          in builtins.dirOf (builtins.dirOf flake.apps.x86_64-linux.ci-boot-artifacts-repro.program)'
+
       - run: nix run .#ci-boot-artifacts-repro
 
   ci-complete:

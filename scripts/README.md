@@ -12,14 +12,29 @@ Run the repository lane aggregate for the current platform with:
 nix run .#ci-checks
 ```
 
-For full GitHub CI parity, also run the flake and bundle-builder checks:
+On x86_64 Linux, also run the artifact and browser checks for full GitHub CI parity:
 
 ```sh
 nix flake check --show-trace
-nix develop .#images --command bash tests/bundle_builder_e2e.sh
+nix run .#ci-bundle-builder
+nix run .#ci-version-cohort
+nix run .#ci-boot-artifacts-repro
+nix run .#ci-browser
 ```
 
-Use the narrower `ci-*` Nix apps while iterating. The aggregate runs the
+Use the narrower `ci-*` Nix apps while iterating. Their runtime inputs are
+specific to each check; interactive shells retain the full development tools.
+The boot reproducibility check requires a clean checkout. CI separates Nix app
+preparation from execution so step durations distinguish environment construction
+from validation. Go race tests use `-count=1` to execute tests even when compiled
+packages are cached. Browser failure screenshots and traces are retained as the
+`browser-failure` Actions artifact for seven days.
+
+All checks still run on every PR and main push. The required `ci complete` check
+rejects failure, cancellation, or a skipped dependency. Release builds use their
+existing separate workflow and setup action.
+
+The aggregate runs the
 Firecracker probe only on x86_64 Linux. Firecracker execution still requires a
 real KVM host and is not emulated in hosted CI.
 

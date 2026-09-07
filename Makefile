@@ -49,7 +49,7 @@ go-test: | console-build
 test-race: go-test-race
 
 go-test-race: | console-build
-	CGO_ENABLED=1 $(GO) test -race $(GO_CONSOLE_TAGS) ./...
+	CGO_ENABLED=1 $(GO) test -race -count=1 $(GO_CONSOLE_TAGS) ./...
 
 test-linux-compile:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) test -c -o /tmp/helmr-guestd-linux-amd64.test ./cmd/guestd

@@ -74,6 +74,7 @@
             system
             nixpkgs
             nixpkgs-unstable
+            nixpkgs-clickhouse
             ;
           helmrPackages = self.packages.${system};
         }
