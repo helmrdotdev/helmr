@@ -84,8 +84,6 @@ rec {
     pkgs.xz
   ];
 
-  # CI apps declare their own execution tools instead of pulling the developer
-  # environment (including image tools, language servers and generators).
   ciShell = [
     pkgs.bash
     pkgs.coreutils

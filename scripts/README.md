@@ -36,12 +36,17 @@ existing separate workflow and setup action. Version-cohort and boot-reproducibi
 checks run independently in the release-contract matrix; both must pass.
 
 The Nix flake job pilots a CI-only store cache keyed by OS, architecture,
-Nix/Go dependency inputs and commit. A prefix match can reuse dependencies from an
-earlier commit. Pull-request caches remain isolated to their merge ref and are
-never restored by release builds. The 2 GiB pre-save GC target is not a hard
-archive limit. Measure cold, exact-hit and new-commit prefix-hit runs including
-restore and post-job save time before extending the cache to other jobs. The race job independently pilots a
-Go compilation/module cache under `/tmp/helmr-ci-go-{build,mod}` on the disposable Linux runner, keyed by OS,
+Nix/Go dependency inputs and commit. A job/OS/architecture prefix can reuse
+existing store paths after input changes; Nix still evaluates the current inputs.
+The bundle-builder job restores the same cache without saving or waiting for the
+current flake job. Both checks run regardless of cache hits. Pull-request caches remain isolated to their merge ref and are
+never restored by release builds. Current check outputs are GC roots, and
+`keep-outputs` preserves their build dependencies. The 2 GiB pre-save GC target
+only removes unrooted paths; the retained closure can exceed it. Measure cold, exact-hit and new-commit prefix-hit runs including
+restore and post-job save time before extending the cache to other jobs.
+
+The race job independently pilots a Go compilation/module cache under
+`/tmp/helmr-ci-go-{build,mod}` on the disposable Linux runner, keyed by OS,
 architecture, pinned toolchain/dependencies and commit. It still runs all race
 tests with `-count=1`; cache hits never skip the check. Only one job writes each
 cache family. Neither cache changes the repository's storage quota or eviction
