@@ -4,14 +4,14 @@
   "type": "module",
   "version": "0.1.0",
   "scripts": {
+    "test": "bun build src/program.test.ts --target=node --sourcemap=inline --outfile dist/program.test.mjs && node --enable-source-maps --test --test-timeout=5000 dist/program.test.mjs",
     "typecheck": "tsc --noEmit",
     "typecheck:program": "tsc --noEmit -p tsconfig.program.json"
   },
   "dependencies": {
     "@bufbuild/protobuf": "^2.11.0",
     "@helmr/sdk": "workspace:*",
-    "@helmr/proto": "workspace:*",
-    "uuid": "14.0.2"
+    "@helmr/proto": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^24.7.2",

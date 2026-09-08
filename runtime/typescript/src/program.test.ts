@@ -1,4 +1,5 @@
-import { create, fromBinary, toBinary, type GenMessage } from "@bufbuild/protobuf"
+import { create, fromBinary, toBinary } from "@bufbuild/protobuf"
+import type { GenMessage } from "@bufbuild/protobuf/codegenv2"
 import { programProto } from "@helmr/proto"
 import { spawn } from "node:child_process"
 import {
@@ -14,7 +15,8 @@ import {
   sessions,
   workspaces,
 } from "@helmr/sdk"
-import { describe, expect, test } from "bun:test"
+import assert from "node:assert/strict"
+import { describe, test } from "node:test"
 
 import { runProgram, type ProgramIO } from "./program"
 
@@ -44,7 +46,7 @@ describe("runProgram", () => {
       },
     }))
 
-    expect(lifecycle).toEqual([
+    assert.deepEqual(lifecycle, [
       "entrypointReady",
       "taskOutcome",
       "input-closed",
@@ -76,7 +78,7 @@ describe("runProgram", () => {
         definition: item.definition,
         output: [],
       }))
-      expect(closeCount).toBe(1)
+      assert.equal(closeCount, 1)
     }
   })
 
@@ -91,12 +93,12 @@ describe("runProgram", () => {
       throw new Error("input release failed")
     })
 
-    await expect(runProgram(locatorURL, programIO({
+    await assert.rejects(runProgram(locatorURL, programIO({
       input,
       definition,
       output,
-    }))).rejects.toThrow("input release failed")
-    expect(output.map((value) => readEvent(value).event.case)).toEqual([
+    })), { message: /input release failed/ })
+    assert.deepEqual(output.map((value) => readEvent(value).event.case), [
       "entrypointReady",
       "taskOutcome",
     ])
@@ -111,12 +113,12 @@ describe("runProgram", () => {
       closeCount++
     })
 
-    await expect(runProgram(locatorURL, programIO({
+    await assert.rejects(runProgram(locatorURL, programIO({
       input,
       definition: task({ id: "other", run: () => null }),
       output: [],
-    }))).rejects.toThrow("does not match")
-    expect(closeCount).toBe(0)
+    })), { message: /does not match/ })
+    assert.equal(closeCount, 0)
   })
 
   test("generated Runtime exits while its parent retains stdin", async () => {
@@ -195,7 +197,7 @@ describe("runProgram", () => {
           }, 5_000)
         }),
       ])
-      expect({ result, stderr }).toEqual({
+      assert.deepEqual({ result, stderr }, {
         result: { code: 0, signal: null },
         stderr: "",
       })
@@ -205,9 +207,9 @@ describe("runProgram", () => {
       if (child.exitCode === null && child.signalCode === null) child.kill()
       await closed.catch(() => {})
     }
-    expect(readConcatenatedEvents(Buffer.concat(output)).map((event) =>
+    assert.deepEqual(readConcatenatedEvents(Buffer.concat(output)).map((event) =>
       event.event.case
-    )).toEqual(["entrypointReady", "taskOutcome"])
+    ), ["entrypointReady", "taskOutcome"])
   })
 
   test("reports an Actor return with its terminal cursor", async () => {
@@ -230,13 +232,13 @@ describe("runProgram", () => {
       definition,
       output,
     }))
-    expect(actorID).toBe("worker")
-    expect(sessionID).toBe("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33")
+    assert.equal(actorID, "worker")
+    assert.equal(sessionID, "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33")
     const outcome = readEvent(output[1]!).event
-    expect(outcome.case).toBe("actorOutcome")
+    assert.equal(outcome.case, "actorOutcome")
     if (outcome.case === "actorOutcome") {
-      expect(outcome.value.terminalInputSequence).toBe(0n)
-      expect(outcome.value.outcome.case).toBe("succeeded")
+      assert.equal(outcome.value.terminalInputSequence, 0n)
+      assert.equal(outcome.value.outcome.case, "succeeded")
     }
   })
 
@@ -253,12 +255,12 @@ describe("runProgram", () => {
       output,
     }))
     const outcome = readEvent(output[1]!).event
-    expect(outcome.case).toBe("actorOutcome")
+    assert.equal(outcome.case, "actorOutcome")
     if (outcome.case === "actorOutcome") {
-      expect(outcome.value.terminalInputSequence).toBe(4n)
-      expect(outcome.value.outcome.case).toBe("failed")
+      assert.equal(outcome.value.terminalInputSequence, 4n)
+      assert.equal(outcome.value.outcome.case, "failed")
       if (outcome.value.outcome.case === "failed") {
-        expect(outcome.value.outcome.value.message).toBe("boom")
+        assert.equal(outcome.value.outcome.value.message, "boom")
       }
     }
   })
@@ -281,28 +283,28 @@ describe("runProgram", () => {
 
       await events[0]!.promise
       const first = readEvent(output[1]!).event
-      expect(first.case).toBe("runWaitRequested")
+      assert.equal(first.case, "runWaitRequested")
       if (first.case !== "runWaitRequested") return
-      expect(first.value.kind).toBe("actor_input")
-      expect(JSON.parse(first.value.paramsJson).after_input_sequence).toBe(0)
-      expect(first.value.actorSpeculativeInputSequence).toBe(0n)
-      expect(first.value.timeoutMs).toBe(1n)
-      expect(first.value.idleTimeoutMs).toBe(1501n)
+      assert.equal(first.value.kind, "actor_input")
+      assert.equal(JSON.parse(first.value.paramsJson).after_input_sequence, 0)
+      assert.equal(first.value.actorSpeculativeInputSequence, 0n)
+      assert.equal(first.value.timeoutMs, 1n)
+      assert.equal(first.value.idleTimeoutMs, 1501n)
       yield actorDecision(first.value.correlationId, "completed", actorInput(1, "one"), first.value)
 
       await events[1]!.promise
       const commit = readEvent(output[2]!).event
-      expect(commit.case).toBe("actorTurnCommitRequested")
+      assert.equal(commit.case, "actorTurnCommitRequested")
       if (commit.case !== "actorTurnCommitRequested") return
-      expect(commit.value.targetInputSequence).toBe(1n)
+      assert.equal(commit.value.targetInputSequence, 1n)
       yield actorDecision(commit.value.correlationId, "committed", "null")
 
       await events[2]!.promise
       const second = readEvent(output[3]!).event
-      expect(second.case).toBe("runWaitRequested")
+      assert.equal(second.case, "runWaitRequested")
       if (second.case !== "runWaitRequested") return
-      expect(JSON.parse(second.value.paramsJson).after_input_sequence).toBe(1)
-      expect(second.value.actorSpeculativeInputSequence).toBe(1n)
+      assert.equal(JSON.parse(second.value.paramsJson).after_input_sequence, 1)
+      assert.equal(second.value.actorSpeculativeInputSequence, 1n)
       yield actorDecision(second.value.correlationId, "completed", actorInput(2, "two"), second.value)
     }
     await runProgram(locatorURL, programIO({
@@ -315,12 +317,12 @@ describe("runProgram", () => {
         }
       },
     }))
-    expect(received).toEqual(["one", "two"])
+    assert.deepEqual(received, ["one", "two"])
     const outcome = readEvent(output[4]!).event
-    expect(outcome.case).toBe("actorOutcome")
+    assert.equal(outcome.case, "actorOutcome")
     if (outcome.case === "actorOutcome") {
-      expect(outcome.value.terminalInputSequence).toBe(2n)
-      expect(outcome.value.outcome.case).toBe("succeeded")
+      assert.equal(outcome.value.terminalInputSequence, 2n)
+      assert.equal(outcome.value.outcome.case, "succeeded")
     }
   })
 
@@ -355,8 +357,8 @@ describe("runProgram", () => {
       output,
       onWrite: () => { if (output.length === 2) waitWritten.resolve() },
     }))
-    expect(overlapError).toBe("ConcurrentSessionReceiveError")
-    expect(output.map((frame) => readEvent(frame).event.case)).toEqual([
+    assert.equal(overlapError, "ConcurrentSessionReceiveError")
+    assert.deepEqual(output.map((frame) => readEvent(frame).event.case), [
       "entrypointReady",
       "runWaitRequested",
       "actorOutcome",
@@ -394,8 +396,8 @@ describe("runProgram", () => {
       output,
       onWrite: () => { if (output.length === 2) waitWritten.resolve() },
     }))
-    expect(timerError).toBe("only one consuming Wait may be pending")
-    expect(output.map((frame) => readEvent(frame).event.case)).toEqual([
+    assert.equal(timerError, "only one consuming Wait may be pending")
+    assert.deepEqual(output.map((frame) => readEvent(frame).event.case), [
       "entrypointReady",
       "runWaitRequested",
       "actorOutcome",
@@ -430,14 +432,14 @@ describe("runProgram", () => {
         wait.value,
       )
     }
-    await expect(runProgram(locatorURL, programIO({
+    await assert.rejects(runProgram(locatorURL, programIO({
       input: input(),
       definition,
       output,
       onWrite: () => { if (output.length === 2) waitWritten.resolve() },
-    }))).rejects.toThrow("run_cancelled")
-    expect(signalAborted).toBe(true)
-    expect(output).toHaveLength(2)
+    })), { message: /run_cancelled/ })
+    assert.equal(signalAborted, true)
+    assert.equal(output.length, 2)
   })
 
   test("treats a non-contiguous Actor input record as a runtime protocol fault", async () => {
@@ -456,13 +458,13 @@ describe("runProgram", () => {
       if (wait.case !== "runWaitRequested") return
       yield actorDecision(wait.value.correlationId, "completed", actorInput(2, "skipped"), wait.value)
     }
-    await expect(runProgram(locatorURL, programIO({
+    await assert.rejects(runProgram(locatorURL, programIO({
       input: input(),
       definition,
       output,
       onWrite: () => { if (output.length === 2) waitWritten.resolve() },
-    }))).rejects.toThrow("next contiguous record")
-    expect(output.map((frame) => readEvent(frame).event.case)).toEqual([
+    })), { message: /next contiguous record/ })
+    assert.deepEqual(output.map((frame) => readEvent(frame).event.case), [
       "entrypointReady",
       "runWaitRequested",
     ])
@@ -491,14 +493,14 @@ describe("runProgram", () => {
       if (wait.case !== "runWaitRequested") return
       yield actorDecision(wait.value.correlationId, "completed", actorInput(2, "skipped"), wait.value)
     }
-    await expect(runProgram(locatorURL, programIO({
+    await assert.rejects(runProgram(locatorURL, programIO({
       input: input(),
       definition,
       output,
       onWrite: () => { if (output.length === 2) waitWritten.resolve() },
-    }))).rejects.toThrow("next contiguous record")
-    expect(caught).toBe(true)
-    expect(output).toHaveLength(2)
+    })), { message: /next contiguous record/ })
+    assert.equal(caught, true)
+    assert.equal(output.length, 2)
   })
 
   test("aborts Actor context when an input Wait is cancelled", async () => {
@@ -535,16 +537,16 @@ describe("runProgram", () => {
         wait.value,
       )
     }
-    await expect(runProgram(locatorURL, programIO({
+    await assert.rejects(runProgram(locatorURL, programIO({
       input: input(),
       definition,
       output,
       onWrite: () => { if (output.length === 2) waitWritten.resolve() },
-    }))).rejects.toThrow("run_cancelled")
-    expect(caughtName).toBe("AbortError")
-    expect(signalAborted).toBe(true)
-    expect(signalReason).toContain("run_cancelled")
-    expect(output).toHaveLength(2)
+    })), { message: /run_cancelled/ })
+    assert.equal(caughtName, "AbortError")
+    assert.equal(signalAborted, true)
+    assert.ok(signalReason.includes("run_cancelled"))
+    assert.equal(output.length, 2)
   })
 
   test("rejects malformed Actor channel records as runtime protocol faults", async () => {
@@ -609,13 +611,13 @@ describe("runProgram", () => {
           request.case === "runWaitRequested" ? request.value : undefined,
         )
       }
-      await expect(runProgram(locatorURL, programIO({
+      await assert.rejects(runProgram(locatorURL, programIO({
         input: input(),
         definition,
         output,
         onWrite: () => { if (output.length === 2) requestWritten.resolve() },
-      }))).rejects.toThrow("was invalid")
-      expect(output).toHaveLength(2)
+      })), { message: /was invalid/ })
+      assert.equal(output.length, 2)
     }
   })
 
@@ -626,7 +628,7 @@ describe("runProgram", () => {
     })
     const start = actorStart(0n, 1n)
     const output: Uint8Array[] = []
-    await expect(runProgram(locatorURL, programIO({
+    await assert.rejects(runProgram(locatorURL, programIO({
       input: frames(
         frameMessage(programProto.ProgramStartSchema, start),
         frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start)),
@@ -634,8 +636,8 @@ describe("runProgram", () => {
       definition,
       output,
       failWriteAt: 2,
-    }))).rejects.toThrow("failed to write runtime operation request")
-    expect(output.map((frame) => readEvent(frame).event.case)).toEqual([
+    })), { message: /failed to write runtime operation request/ })
+    assert.deepEqual(output.map((frame) => readEvent(frame).event.case), [
       "entrypointReady",
     ])
   })
@@ -647,15 +649,15 @@ describe("runProgram", () => {
     })
     const start = actorStart(0n, 0n)
     const output: Uint8Array[] = []
-    await expect(runProgram(locatorURL, programIO({
+    await assert.rejects(runProgram(locatorURL, programIO({
       input: frames(
         frameMessage(programProto.ProgramStartSchema, start),
         frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start)),
       ),
       definition,
       output,
-    }))).rejects.toThrow("runtime operations still pending")
-    expect(output.map((frame) => readEvent(frame).event.case)).toEqual([
+    })), { message: /runtime operations still pending/ })
+    assert.deepEqual(output.map((frame) => readEvent(frame).event.case), [
       "entrypointReady",
       "actorOutputAppendRequested",
     ])
@@ -674,15 +676,15 @@ describe("runProgram", () => {
     })
     const start = actorStart(0n, 0n)
     const output: Uint8Array[] = []
-    await expect(runProgram(locatorURL, programIO({
+    await assert.rejects(runProgram(locatorURL, programIO({
       input: frames(
         frameMessage(programProto.ProgramStartSchema, start),
         frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start)),
       ),
       definition,
       output,
-    }))).rejects.toThrow("runtime operations still pending")
-    expect(output.map((frame) => readEvent(frame).event.case)).toEqual([
+    })), { message: /runtime operations still pending/ })
+    assert.deepEqual(output.map((frame) => readEvent(frame).event.case), [
       "entrypointReady",
     ])
   })
@@ -706,11 +708,11 @@ describe("runProgram", () => {
       yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
       await appendWritten.promise
       const event = readEvent(output[1]!).event
-      expect(event.case).toBe("actorOutputAppendRequested")
+      assert.equal(event.case, "actorOutputAppendRequested")
       if (event.case !== "actorOutputAppendRequested") return
-      expect(JSON.parse(event.value.dataJson)).toEqual({ event: "ready" })
-      expect(event.value.contentType).toBe("application/vnd.helmr.test+json")
-      expect(event.value.idempotencyKey).toBe("output-1")
+      assert.deepEqual(JSON.parse(event.value.dataJson), { event: "ready" })
+      assert.equal(event.value.contentType, "application/vnd.helmr.test+json")
+      assert.equal(event.value.idempotencyKey, "output-1")
       yield actorDecision(event.value.correlationId, "completed", JSON.stringify({
         id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc51",
         sequence: 1,
@@ -730,7 +732,7 @@ describe("runProgram", () => {
       output,
       onWrite: () => { if (output.length === 2) appendWritten.resolve() },
     }))
-    expect(appended).toEqual({
+    assert.deepEqual(appended, {
       id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc51",
       sequence: 1,
       data: { event: "ready" },
@@ -764,7 +766,7 @@ describe("runProgram", () => {
       yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
       await appendWritten.promise
       const event = readEvent(output[1]!).event
-      expect(event.case).toBe("actorOutputAppendRequested")
+      assert.equal(event.case, "actorOutputAppendRequested")
       if (event.case !== "actorOutputAppendRequested") return
       yield actorDecision(event.value.correlationId, "failed", JSON.stringify({
         code: "idempotency_conflict",
@@ -778,16 +780,15 @@ describe("runProgram", () => {
       output,
       onWrite: () => { if (output.length === 2) appendWritten.resolve() },
     }))
-    expect(failure).toMatchObject({
-      name: "HelmrError",
-      code: "idempotency_conflict",
-      message: "output key conflicts with an earlier append",
-    })
-    expect(Object.hasOwn(failure as object, "retryable")).toBe(false)
+    assert.ok(failure instanceof Error)
+    assert.equal(failure.name, "HelmrError")
+    assert.ok("code" in failure)
+    assert.equal(failure.code, "idempotency_conflict")
+    assert.equal(failure.message, "output key conflicts with an earlier append")
+    assert.equal(Object.hasOwn(failure as object, "retryable"), false)
   })
 
   test("sends Actor input from a Task with concurrent correlation-safe decisions", async () => {
-    const mailbox = actor({ id: "mailbox", run() {} })
     let sent: unknown
     const definition = task({
       id: "deploy",
@@ -811,19 +812,15 @@ describe("runProgram", () => {
       await sendsWritten.promise
       const first = readEvent(output[1]!).event
       const second = readEvent(output[2]!).event
-      expect(first.case).toBe("sessionInputSendRequested")
-      expect(second.case).toBe("sessionInputSendRequested")
+      assert.equal(first.case, "sessionInputSendRequested")
+      assert.equal(second.case, "sessionInputSendRequested")
       if (first.case !== "sessionInputSendRequested" ||
           second.case !== "sessionInputSendRequested") return
-      expect(first.value.sessionId).toBe(
-        "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-      )
-      expect(first.value.dataJson).toBe('{"a":2,"z":1}')
-      expect(first.value.idempotencyKey).toBe("first")
-      expect(second.value.sessionId).toBe(
-        "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-      )
-      expect(second.value.dataJson).toBe("null")
+      assert.equal(first.value.sessionId, "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33")
+      assert.equal(first.value.dataJson, '{"a":2,"z":1}')
+      assert.equal(first.value.idempotencyKey, "first")
+      assert.equal(second.value.sessionId, "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33")
+      assert.equal(second.value.dataJson, "null")
       yield actorDecision(second.value.correlationId, "completed", JSON.stringify({
         id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
         sequence: 2,
@@ -851,7 +848,7 @@ describe("runProgram", () => {
       output,
       onWrite: () => { if (output.length === 3) sendsWritten.resolve() },
     }))
-    expect(sent).toEqual([
+    assert.deepEqual(sent, [
       {
         id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34",
         sequence: 1,
@@ -873,7 +870,7 @@ describe("runProgram", () => {
         createdAt: "2026-07-26T00:00:01Z",
       },
     ])
-    expect(output.map((frame) => readEvent(frame).event.case)).toEqual([
+    assert.deepEqual(output.map((frame) => readEvent(frame).event.case), [
       "entrypointReady",
       "sessionInputSendRequested",
       "sessionInputSendRequested",
@@ -898,7 +895,7 @@ describe("runProgram", () => {
     const definition = task({
       id: "deploy",
       async run() {
-        return await child.start(
+        const run = await child.start(
           { imageId: "image-1" },
           {
             workspace: workspaces.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"),
@@ -917,6 +914,7 @@ describe("runProgram", () => {
             tags: ["image"],
           },
         )
+        return { id: run.id }
       },
     })
     const start = taskStart("noPayload")
@@ -927,16 +925,14 @@ describe("runProgram", () => {
       yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
       await requested.promise
       const event = readEvent(output[1]!).event
-      expect(event.case).toBe("taskChildInvokeRequested")
+      assert.equal(event.case, "taskChildInvokeRequested")
       if (event.case !== "taskChildInvokeRequested") return
-      expect(event.value.declaredId).toBe("resize-image")
-      expect(event.value.method).toBe("start")
-      expect(event.value.payloadPresent).toBe(true)
-      expect(event.value.payloadJson).toBe('{"imageId":"image-1"}')
-      expect(event.value.workspaceJson).toBe(
-        '{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}',
-      )
-      expect(JSON.parse(event.value.optionsJson)).toEqual({
+      assert.equal(event.value.declaredId, "resize-image")
+      assert.equal(event.value.method, "start")
+      assert.equal(event.value.payloadPresent, true)
+      assert.equal(event.value.payloadJson, '{"imageId":"image-1"}')
+      assert.equal(event.value.workspaceJson, '{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}')
+      assert.deepEqual(JSON.parse(event.value.optionsJson), {
         metadata: { source: "parent" },
         queue: "priority",
         retry: {
@@ -950,7 +946,7 @@ describe("runProgram", () => {
         },
         tags: ["image"],
       })
-      expect(event.value.idempotencyKey).toBe("resize:image-1")
+      assert.equal(event.value.idempotencyKey, "resize:image-1")
       yield actorDecision(
         event.value.correlationId,
         "completed",
@@ -965,17 +961,18 @@ describe("runProgram", () => {
         if (output.length === 2) requested.resolve()
       },
     }))
-    expect(output.map((frame) => readEvent(frame).event.case)).toEqual([
+    assert.deepEqual(output.map((frame) => readEvent(frame).event.case), [
       "entrypointReady",
       "taskChildInvokeRequested",
       "taskOutcome",
     ])
     const outcome = readEvent(output[2]!).event
-    expect(outcome.case).toBe("taskOutcome")
-    if (outcome.case === "taskOutcome" && outcome.value.outcome.case === "succeeded") {
-      expect(outcome.value.outcome.value.outputJson).toBe(
-        '{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"}',
-      )
+    assert.equal(outcome.case, "taskOutcome")
+    if (outcome.case === "taskOutcome") {
+      assert.equal(outcome.value.outcome.case, "succeeded")
+      if (outcome.value.outcome.case === "succeeded") {
+        assert.equal(outcome.value.outcome.value.outputJson, '{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"}')
+      }
     }
   })
 
@@ -1022,8 +1019,8 @@ describe("runProgram", () => {
         if (output.length === 3) requestWritten[1]!.resolve()
       },
     }))
-    expect(observed).toEqual([undefined, "null"])
-    expect(output.map((frame) => readEvent(frame).event.case)).toEqual([
+    assert.deepEqual(observed, [undefined, "null"])
+    assert.deepEqual(output.map((frame) => readEvent(frame).event.case), [
       "entrypointReady",
       "actorStartRequested",
       "actorStartRequested",
@@ -1078,10 +1075,11 @@ describe("runProgram", () => {
         if (event.case === undefined) return
         observed.push(event.case)
         if (event.case === "workspaceCreateRequested") {
-          expect(event.value.secrets).toMatchObject([{
+          assert.equal(event.value.secrets.length, 1)
+          assert.partialDeepStrictEqual(event.value.secrets[0], {
             name: "TOKEN",
             placement: { case: "env", value: "TOKEN" },
-          }])
+          })
         }
         const correlationId = "correlationId" in event.value
           ? event.value.correlationId as string
@@ -1098,19 +1096,17 @@ describe("runProgram", () => {
         if (index >= 0 && index < requested.length) requested[index]!.resolve()
       },
     }))
-    expect(observed).toEqual([
+    assert.deepEqual(observed, [
       "workspaceCreateRequested",
       "workspaceRetrieveRequested",
       "workspaceExecRequested",
       "workspaceDeleteRequested",
     ])
     const outcome = readEvent(output.at(-1)!).event
-    expect(outcome.case).toBe("taskOutcome")
+    assert.equal(outcome.case, "taskOutcome")
     if (outcome.case === "taskOutcome" &&
       outcome.value.outcome.case === "succeeded") {
-      expect(outcome.value.outcome.value.outputJson).toBe(
-        '{"deleted":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32","exitCode":0,"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32","stdout":"ok"}',
-      )
+      assert.equal(outcome.value.outcome.value.outputJson, '{"deleted":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32","exitCode":0,"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32","stdout":"ok"}')
     }
   })
 
@@ -1157,11 +1153,11 @@ describe("runProgram", () => {
       yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
       await requested.promise
       const event = readEvent(output[1]!).event
-      expect(event.case).toBe("taskChildInvokeRequested")
+      assert.equal(event.case, "taskChildInvokeRequested")
       if (event.case !== "taskChildInvokeRequested") return
-      expect(event.value.method).toBe("call")
-      expect(event.value.actorSpeculativeInputSequence).toBe(4n)
-      expect(event.value.idempotencyKey).toBe("resize:image-1")
+      assert.equal(event.value.method, "call")
+      assert.equal(event.value.actorSpeculativeInputSequence, 4n)
+      assert.equal(event.value.idempotencyKey, "resize:image-1")
       yield actorDecision(
         event.value.correlationId,
         "completed",
@@ -1181,13 +1177,13 @@ describe("runProgram", () => {
         if (output.length === 2) requested.resolve()
       },
     }))
-    expect(overlappingWaitError).toBe("only one consuming Wait may be pending")
-    expect(result).toEqual({
+    assert.equal(overlappingWaitError, "only one consuming Wait may be pending")
+    assert.deepEqual(result, {
       ok: true,
       output: { resized: true },
       run: { id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" },
     })
-    expect(output.map((frame) => readEvent(frame).event.case)).toEqual([
+    assert.deepEqual(output.map((frame) => readEvent(frame).event.case), [
       "entrypointReady",
       "taskChildInvokeRequested",
       "actorOutcome",
@@ -1220,8 +1216,8 @@ describe("runProgram", () => {
       await requested.promise
       const event = readEvent(output[1]!).event
       if (event.case !== "taskChildInvokeRequested") return
-      expect(event.value.method).toBe("call")
-      expect(event.value.actorSpeculativeInputSequence).toBeUndefined()
+      assert.equal(event.value.method, "call")
+      assert.equal(event.value.actorSpeculativeInputSequence, undefined)
       yield actorDecision(
         event.value.correlationId,
         "completed",
@@ -1245,13 +1241,13 @@ describe("runProgram", () => {
         if (output.length === 2) requested.resolve()
       },
     }))
-    expect(failure).toBeInstanceOf(Error)
-    expect(failure).toMatchObject({
-      name: "RunFailure",
-      message: "resize failed",
-      code: "task_failed",
-      details: { stage: "decode" },
-    })
+    assert.ok(failure instanceof Error)
+    assert.equal(failure.name, "RunFailure")
+    assert.equal(failure.message, "resize failed")
+    assert.ok("code" in failure)
+    assert.equal(failure.code, "task_failed")
+    assert.ok("details" in failure)
+    assert.partialDeepStrictEqual(failure.details, { stage: "decode" })
   })
 
   test("creates and waits for an externally completed Token", async () => {
@@ -1283,12 +1279,12 @@ describe("runProgram", () => {
       yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
       await createWritten.promise
       const createEvent = readEvent(output[1]!).event
-      expect(createEvent.case).toBe("tokenCreateRequested")
+      assert.equal(createEvent.case, "tokenCreateRequested")
       if (createEvent.case !== "tokenCreateRequested") return
-      expect(createEvent.value.timeoutMs).toBe(600_000n)
-      expect(createEvent.value.idempotencyKey).toBe("approval-1")
-      expect(createEvent.value.metadataJson).toBe('{"approval":true}')
-      expect(createEvent.value.tags).toEqual(["review"])
+      assert.equal(createEvent.value.timeoutMs, 600_000n)
+      assert.equal(createEvent.value.idempotencyKey, "approval-1")
+      assert.equal(createEvent.value.metadataJson, '{"approval":true}')
+      assert.deepEqual(createEvent.value.tags, ["review"])
       yield actorDecision(
         createEvent.value.correlationId,
         "completed",
@@ -1306,14 +1302,14 @@ describe("runProgram", () => {
       )
       await waitWritten.promise
       const waitEvent = readEvent(output[2]!).event
-      expect(waitEvent.case).toBe("runWaitRequested")
+      assert.equal(waitEvent.case, "runWaitRequested")
       if (waitEvent.case !== "runWaitRequested") return
-      expect(waitEvent.value.kind).toBe("token")
-      expect(waitEvent.value.timeoutMs).toBe(1_800_000n)
-      expect(waitEvent.value.idleTimeoutMs).toBe(45_000n)
-      expect(waitEvent.value.metadataJson).toBe('{"stage":"approval"}')
-      expect(waitEvent.value.tags).toEqual(["human"])
-      expect(JSON.parse(waitEvent.value.paramsJson)).toEqual({
+      assert.equal(waitEvent.value.kind, "token")
+      assert.equal(waitEvent.value.timeoutMs, 1_800_000n)
+      assert.equal(waitEvent.value.idleTimeoutMs, 45_000n)
+      assert.equal(waitEvent.value.metadataJson, '{"stage":"approval"}')
+      assert.deepEqual(waitEvent.value.tags, ["human"])
+      assert.deepEqual(JSON.parse(waitEvent.value.paramsJson), {
         token_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
       })
       yield actorDecision(
@@ -1332,8 +1328,8 @@ describe("runProgram", () => {
         if (output.length === 3) waitWritten.resolve()
       },
     }))
-    expect(completed).toEqual({ approved: true })
-    expect(output.map((frame) => readEvent(frame).event.case)).toEqual([
+    assert.deepEqual(completed, { approved: true })
+    assert.deepEqual(output.map((frame) => readEvent(frame).event.case), [
       "entrypointReady",
       "tokenCreateRequested",
       "runWaitRequested",
@@ -1392,12 +1388,12 @@ describe("runProgram", () => {
         if (output.length === 3) waitWritten.resolve()
       },
     }))
-    expect(failure).toMatchObject({
-      name: "HelmrError",
-      code: "token_expired",
-      message: "Token expired",
-    })
-    expect(Object.hasOwn(failure as object, "retryable")).toBe(false)
+    assert.ok(failure instanceof Error)
+    assert.equal(failure.name, "HelmrError")
+    assert.ok("code" in failure)
+    assert.equal(failure.code, "token_expired")
+    assert.equal(failure.message, "Token expired")
+    assert.equal(Object.hasOwn(failure as object, "retryable"), false)
   })
 
   test("emits acknowledged metadata mutations and structured logs", async () => {
@@ -1419,9 +1415,9 @@ describe("runProgram", () => {
 
       await writes[0]!.promise
       const set = readEvent(output[1]!).event
-      expect(set.case).toBe("metadataUpdated")
+      assert.equal(set.case, "metadataUpdated")
       if (set.case !== "metadataUpdated") return
-      expect(set.value).toMatchObject({
+      assert.partialDeepStrictEqual(set.value, {
         operation: "set",
         key: "phase",
         valueJson: '"running"',
@@ -1430,9 +1426,9 @@ describe("runProgram", () => {
 
       await writes[1]!.promise
       const increment = readEvent(output[2]!).event
-      expect(increment.case).toBe("metadataUpdated")
+      assert.equal(increment.case, "metadataUpdated")
       if (increment.case !== "metadataUpdated") return
-      expect(increment.value).toMatchObject({
+      assert.partialDeepStrictEqual(increment.value, {
         operation: "increment",
         key: "steps",
         amount: 2,
@@ -1441,13 +1437,13 @@ describe("runProgram", () => {
 
       await writes[2]!.promise
       const log = readEvent(output[3]!).event
-      expect(log.case).toBe("structuredLogRequested")
+      assert.equal(log.case, "structuredLogRequested")
       if (log.case !== "structuredLogRequested") return
-      expect(log.value).toMatchObject({
+      assert.partialDeepStrictEqual(log.value, {
         level: "error",
         message: "step failed",
       })
-      expect(JSON.parse(log.value.attributesJson)).toEqual({
+      assert.deepEqual(JSON.parse(log.value.attributesJson), {
         retryable: false,
         step: 2,
       })
@@ -1463,12 +1459,11 @@ describe("runProgram", () => {
         }
       },
     }))
-    expect(readEvent(output[4]!).event.case).toBe("taskOutcome")
+    assert.equal(readEvent(output[4]!).event.case, "taskOutcome")
   })
 
-  test.each(["0.5s", "01s", " 1s"])(
-    "rejects non-canonical Token duration %s before emission",
-    async (timeout) => {
+  for (const timeout of ["0.5s", "01s", " 1s"]) {
+    test(`rejects non-canonical Token duration ${timeout} before emission`, async () => {
       let caught: unknown
       const definition = task({
         id: "deploy",
@@ -1491,17 +1486,16 @@ describe("runProgram", () => {
         definition,
         output,
       }))
-      expect(caught).toBeInstanceOf(Error)
-      expect((caught as Error).message).toContain("positive integer")
-      expect(output.map((frame) => readEvent(frame).event.case)).toEqual([
+      assert.ok(caught instanceof Error)
+      assert.ok(((caught as Error).message).includes("positive integer"))
+      assert.deepEqual(output.map((frame) => readEvent(frame).event.case), [
         "entrypointReady",
         "taskOutcome",
       ])
-    },
-  )
+    })
+  }
 
   test("rejects an oversized Actor input idempotency key before emission", async () => {
-    const mailbox = actor({ id: "mailbox", run() {} })
     let failure: unknown
     const definition = task({
       id: "deploy",
@@ -1526,19 +1520,18 @@ describe("runProgram", () => {
       definition,
       output,
     }))
-    expect(failure).toMatchObject({
-      name: "HelmrError",
-      code: "invalid_idempotency_key",
-    })
-    expect(Object.hasOwn(failure as object, "retryable")).toBe(false)
-    expect(output.map((frame) => readEvent(frame).event.case)).toEqual([
+    assert.ok(failure instanceof Error)
+    assert.equal(failure.name, "HelmrError")
+    assert.ok("code" in failure)
+    assert.equal(failure.code, "invalid_idempotency_key")
+    assert.equal(Object.hasOwn(failure as object, "retryable"), false)
+    assert.deepEqual(output.map((frame) => readEvent(frame).event.case), [
       "entrypointReady",
       "taskOutcome",
     ])
   })
 
   test("surfaces an Actor input send semantic failure to Actor user code", async () => {
-    const mailbox = actor({ id: "mailbox", run() {} })
     let failure: unknown
     const definition = actor({
       id: "worker",
@@ -1571,17 +1564,16 @@ describe("runProgram", () => {
       output,
       onWrite: () => { if (output.length === 2) sendWritten.resolve() },
     }))
-    expect(failure).toMatchObject({
-      name: "HelmrError",
-      code: "actor_not_open",
-      message: "Actor does not accept new input",
-    })
-    expect(Object.hasOwn(failure as object, "retryable")).toBe(false)
-    expect(readEvent(output[2]!).event.case).toBe("actorOutcome")
+    assert.ok(failure instanceof Error)
+    assert.equal(failure.name, "HelmrError")
+    assert.ok("code" in failure)
+    assert.equal(failure.code, "actor_not_open")
+    assert.equal(failure.message, "Actor does not accept new input")
+    assert.equal(Object.hasOwn(failure as object, "retryable"), false)
+    assert.equal(readEvent(output[2]!).event.case, "actorOutcome")
   })
 
   test("does not emit a pre-aborted send and drains a post-emission abort", async () => {
-    const mailbox = actor({ id: "mailbox", run() {} })
     const preAborted = new AbortController()
     preAborted.abort(new DOMException("pre-aborted", "AbortError"))
     const postEmission = new AbortController()
@@ -1634,11 +1626,11 @@ describe("runProgram", () => {
         }
       },
     }))
-    expect(failures).toHaveLength(2)
-    expect(failures.map((failure) =>
+    assert.equal(failures.length, 2)
+    assert.deepEqual(failures.map((failure) =>
       failure instanceof Error ? failure.message : String(failure)
-    )).toEqual(["pre-aborted", "post-emission"])
-    expect(output.map((frame) => readEvent(frame).event.case)).toEqual([
+    ), ["pre-aborted", "post-emission"])
+    assert.deepEqual(output.map((frame) => readEvent(frame).event.case), [
       "entrypointReady",
       "sessionInputSendRequested",
       "taskOutcome",
@@ -1667,18 +1659,18 @@ describe("runProgram", () => {
     }))
 
     await ready.promise
-    expect(invoked).toBe(false)
-    expect(readEvent(output[0]!).event.case).toBe("entrypointReady")
+    assert.equal(invoked, false)
+    assert.equal(readEvent(output[0]!).event.case, "entrypointReady")
 
     gate.resolve()
     await running
-    expect(invoked).toBe(true)
+    assert.equal(invoked, true)
     const result = readEvent(output[1]!).event
-    expect(result.case).toBe("taskOutcome")
+    assert.equal(result.case, "taskOutcome")
     if (result.case === "taskOutcome") {
-      expect(result.value.outcome.case).toBe("succeeded")
+      assert.equal(result.value.outcome.case, "succeeded")
       if (result.value.outcome.case === "succeeded") {
-        expect(result.value.outcome.value.outputJson).toBe('{"runId":"run-1"}')
+        assert.equal(result.value.outcome.value.outputJson, '{"runId":"run-1"}')
       }
     }
   })
@@ -1719,18 +1711,18 @@ describe("runProgram", () => {
     }))
 
     await ready.promise
-    expect(validated).toBe(false)
-    expect(received).toBeUndefined()
+    assert.equal(validated, false)
+    assert.equal(received, undefined)
     gate.resolve()
     await running
-    expect(validated).toBe(true)
-    expect(received).toBeNull()
+    assert.equal(validated, true)
+    assert.equal(received, null)
     const result = readEvent(output[1]!).event
-    expect(result.case).toBe("taskOutcome")
+    assert.equal(result.case, "taskOutcome")
     if (result.case === "taskOutcome") {
-      expect(result.value.outcome.case).toBe("succeeded")
+      assert.equal(result.value.outcome.case, "succeeded")
       if (result.value.outcome.case === "succeeded") {
-        expect(result.value.outcome.value.outputJson).toBe("null")
+        assert.equal(result.value.outcome.value.outputJson, "null")
       }
     }
   })
@@ -1753,18 +1745,18 @@ describe("runProgram", () => {
       yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
       await waitWritten.promise
       const event = readEvent(output[1]!).event
-      expect(event.case).toBe("runWaitRequested")
+      assert.equal(event.case, "runWaitRequested")
       if (event.case !== "runWaitRequested") return
       correlationId = event.value.correlationId
       runWaitId = event.value.runWaitId
       const allocatedIds = [correlationId, runWaitId, event.value.resumeAttachId]
       for (const id of allocatedIds) {
-        expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+        assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
       }
-      expect(new Set(allocatedIds).size).toBe(allocatedIds.length)
-      expect(event.value.kind).toBe("timer")
-      expect(event.value.timeoutMs).toBe(60_000n)
-      expect(JSON.parse(event.value.paramsJson)).toEqual({ duration: "1m" })
+      assert.equal(new Set(allocatedIds).size, allocatedIds.length)
+      assert.equal(event.value.kind, "timer")
+      assert.equal(event.value.timeoutMs, 60_000n)
+      assert.deepEqual(JSON.parse(event.value.paramsJson), { duration: "1m" })
       yield frameMessage(programProto.ResumeDecisionSchema, create(
         programProto.ResumeDecisionSchema,
         {
@@ -1791,17 +1783,17 @@ describe("runProgram", () => {
     }))
 
     const consumed = readEvent(output[2]!).event
-    expect(consumed.case).toBe("resumeConsumed")
+    assert.equal(consumed.case, "resumeConsumed")
     if (consumed.case === "resumeConsumed") {
-      expect(consumed.value.runWaitId).toBe(runWaitId)
-      expect(consumed.value.resumeRequestVersion).toBe(4n)
-      expect(consumed.value.correlationId).toBe(correlationId)
+      assert.equal(consumed.value.runWaitId, runWaitId)
+      assert.equal(consumed.value.resumeRequestVersion, 4n)
+      assert.equal(consumed.value.correlationId, correlationId)
     }
 
     const result = readEvent(output[3]!).event
-    expect(result.case).toBe("taskOutcome")
+    assert.equal(result.case, "taskOutcome")
     if (result.case === "taskOutcome" && result.value.outcome.case === "succeeded") {
-      expect(result.value.outcome.value.outputJson).toBe('{"resumed":true}')
+      assert.equal(result.value.outcome.value.outputJson, '{"resumed":true}')
     }
   })
 
@@ -1810,6 +1802,7 @@ describe("runProgram", () => {
       id: "deploy",
       async run() {
         await timers.waitFor("1m")
+        return null
       },
     })
     const start = taskStart("noPayload")
@@ -1833,15 +1826,15 @@ describe("runProgram", () => {
       ))
     }
 
-    await expect(runProgram(locatorURL, programIO({
+    await assert.rejects(runProgram(locatorURL, programIO({
       input: input(),
       definition,
       output,
       onWrite: () => {
         if (output.length === 2) waitWritten.resolve()
       },
-    }))).rejects.toThrow("did not match the pending Wait")
-    expect(output).toHaveLength(2)
+    })), { message: /did not match the pending Wait/ })
+    assert.equal(output.length, 2)
   })
 
   test("rejects malformed terminal Wait failure payloads as runtime protocol faults", async () => {
@@ -1857,6 +1850,7 @@ describe("runProgram", () => {
         id: "deploy",
         async run() {
           await timers.waitFor("1m")
+          return null
         },
       })
       const start = taskStart("noPayload")
@@ -1875,19 +1869,21 @@ describe("runProgram", () => {
           event.value,
         )
       }
-      await expect(runProgram(locatorURL, programIO({
+      await assert.rejects(runProgram(locatorURL, programIO({
         input: input(),
         definition,
         output,
         onWrite: () => {
           if (output.length === 2) waitWritten.resolve()
         },
-      }))).rejects.toMatchObject({
-        name: "RuntimeProtocolError",
-        cause: expect.any(Error),
+      })), (error: unknown) => {
+        assert.ok(error instanceof Error)
+        assert.equal(error.name, "RuntimeProtocolError")
+        assert.ok(error.cause instanceof Error)
+        return true
       })
-      expect(output).toHaveLength(2)
-      expect(readEvent(output[1]!).event.case).toBe("runWaitRequested")
+      assert.equal(output.length, 2)
+      assert.equal(readEvent(output[1]!).event.case, "runWaitRequested")
     }
   })
 
@@ -1921,16 +1917,16 @@ describe("runProgram", () => {
       output,
     }))
 
-    expect(invoked).toBe(false)
+    assert.equal(invoked, false)
     const result = readEvent(output[1]!).event
-    expect(result.case).toBe("taskOutcome")
+    assert.equal(result.case, "taskOutcome")
     if (result.case === "taskOutcome") {
-      expect(result.value.outcome.case).toBe("payloadInvalid")
+      assert.equal(result.value.outcome.case, "payloadInvalid")
       if (result.value.outcome.case === "payloadInvalid") {
-        expect(result.value.outcome.value.message).toBe("task payload failed validation")
+        assert.equal(result.value.outcome.value.message, "task payload failed validation")
         const details = JSON.parse(result.value.outcome.value.detailsJson!)
-        expect(details.message).toEndWith("…")
-        expect(new TextEncoder().encode(details.message).byteLength).toBeLessThanOrEqual(2_048)
+        assert.ok(details.message.endsWith("…"))
+        assert.ok(new TextEncoder().encode(details.message).byteLength <= 2_048)
       }
     }
   })
@@ -1950,7 +1946,7 @@ describe("runProgram", () => {
     const start = taskStart("payloadJson", new TextEncoder().encode("{}"))
     const output: Uint8Array[] = []
 
-    await expect(runProgram(locatorURL, programIO({
+    await assert.rejects(runProgram(locatorURL, programIO({
       input: frames(
         frameMessage(programProto.ProgramStartSchema, start),
         frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start)),
@@ -1958,16 +1954,16 @@ describe("runProgram", () => {
       definition,
       output,
       failWriteAt: 2,
-    }))).rejects.toThrow("closed control stream")
-    expect(output).toHaveLength(1)
+    })), { message: /closed control stream/ })
+    assert.equal(output.length, 1)
   })
 
   test("reports handler failures without granting retry authority", async () => {
     const exact = `${"猫".repeat(341)}a`
     const over = "猫".repeat(1_000)
-    expect(new TextEncoder().encode(exact).byteLength).toBe(1_024)
-    expect(over.length).toBeLessThan(1_024)
-    expect(new TextEncoder().encode(over).byteLength).toBeGreaterThan(1_024)
+    assert.equal(new TextEncoder().encode(exact).byteLength, 1_024)
+    assert.ok(over.length < 1_024)
+    assert.ok(new TextEncoder().encode(over).byteLength > 1_024)
 
     for (const { message, truncated } of [
       { message: exact, truncated: false },
@@ -1992,17 +1988,17 @@ describe("runProgram", () => {
       }))
 
       const result = readEvent(output[1]!).event
-      expect(result.case).toBe("taskOutcome")
+      assert.equal(result.case, "taskOutcome")
       if (result.case !== "taskOutcome") continue
-      expect(result.value.outcome.case).toBe("failed")
+      assert.equal(result.value.outcome.case, "failed")
       if (result.value.outcome.case !== "failed") continue
       const reported = result.value.outcome.value.message
-      expect(new TextEncoder().encode(reported).byteLength).toBeLessThanOrEqual(1_024)
+      assert.ok(new TextEncoder().encode(reported).byteLength <= 1_024)
       if (truncated) {
-        expect(reported).toEndWith("…")
-        expect(result.value.outcome.value.detailsJson).toBeUndefined()
+        assert.ok(reported.endsWith("…"))
+        assert.equal(result.value.outcome.value.detailsJson, undefined)
       } else {
-        expect(reported).toBe(message)
+        assert.equal(reported, message)
       }
     }
   })
@@ -2027,9 +2023,9 @@ describe("runProgram", () => {
     }))
 
     const result = readEvent(output[1]!).event
-    expect(result.case).toBe("taskOutcome")
+    assert.equal(result.case, "taskOutcome")
     if (result.case === "taskOutcome" && result.value.outcome.case === "failed") {
-      expect(result.value.outcome.value.message).toBe("failed")
+      assert.equal(result.value.outcome.value.message, "failed")
     }
   })
 
@@ -2051,9 +2047,9 @@ describe("runProgram", () => {
         output,
       }))
       const result = readEvent(output[1]!).event
-      expect(result.case).toBe("taskOutcome")
+      assert.equal(result.case, "taskOutcome")
       if (result.case === "taskOutcome") {
-        expect(result.value.outcome.case).toBe("failed")
+        assert.equal(result.value.outcome.case, "failed")
       }
     }
   })
@@ -2063,7 +2059,7 @@ describe("runProgram", () => {
     const start = taskStart("noPayload")
     const output: Uint8Array[] = []
 
-    await expect(runProgram(locatorURL, programIO({
+    await assert.rejects(runProgram(locatorURL, programIO({
       input: frames(
         frameMessage(programProto.ProgramStartSchema, start),
         frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start)),
@@ -2071,8 +2067,8 @@ describe("runProgram", () => {
       definition,
       output,
       failWriteAt: 2,
-    }))).rejects.toThrow("closed control stream")
-    expect(output).toHaveLength(1)
+    })), { message: /closed control stream/ })
+    assert.equal(output.length, 1)
   })
 
   test("reads frames split into single-byte chunks", async () => {
@@ -2096,7 +2092,7 @@ describe("runProgram", () => {
       output: [],
     }))
 
-    expect(invoked).toBe(true)
+    assert.equal(invoked, true)
   })
 
   test("rejects a mismatched branded export before entrypoint ready", async () => {
@@ -2110,15 +2106,13 @@ describe("runProgram", () => {
     })
     const output: Uint8Array[] = []
 
-    await expect(
-      runProgram(locatorURL, programIO({
+    await assert.rejects(runProgram(locatorURL, programIO({
         input: frames(frameMessage(programProto.ProgramStartSchema, taskStart("noPayload"))),
         definition,
         output,
-      })),
-    ).rejects.toThrow("does not match")
-    expect(output).toHaveLength(0)
-    expect(invoked).toBe(false)
+      })), { message: /does not match/ })
+    assert.equal(output.length, 0)
+    assert.equal(invoked, false)
   })
 
   test("rejects malformed and oversized frames before declaration import", async () => {
@@ -2128,8 +2122,7 @@ describe("runProgram", () => {
     new DataView(oversized.buffer).setUint32(0, 256 * 1024 * 1024 + 1)
 
     for (const input of [malformed, oversized]) {
-      await expect(
-        runProgram(locatorURL, {
+      await assert.rejects(runProgram(locatorURL, {
           input: frames(input),
           write: async () => {},
           readLocator: async () => {
@@ -2139,10 +2132,9 @@ describe("runProgram", () => {
             imported = true
             return {}
           },
-        }),
-      ).rejects.toThrow()
+        }))
     }
-    expect(imported).toBe(false)
+    assert.equal(imported, false)
   })
 
   test("rejects an identity-mismatched release without invoking the handler", async () => {
@@ -2161,17 +2153,15 @@ describe("runProgram", () => {
       entrypoint: taskIdentity("deploy"),
     })
 
-    await expect(
-      runProgram(locatorURL, programIO({
+    await assert.rejects(runProgram(locatorURL, programIO({
         input: frames(
           frameMessage(programProto.ProgramStartSchema, start),
           frameMessage(programProto.EntrypointReleaseSchema, wrong),
         ),
         definition,
         output: [],
-      })),
-    ).rejects.toThrow("does not match")
-    expect(invoked).toBe(false)
+      })), { message: /does not match/ })
+    assert.equal(invoked, false)
   })
 })
 
@@ -2366,7 +2356,7 @@ function readEvent(value: Uint8Array): programProto.RunEvent {
     value.byteOffset,
     value.byteLength,
   ).getUint32(0)
-  expect(length).toBe(value.byteLength - 4)
+  assert.equal(length, value.byteLength - 4)
   return fromBinary(programProto.RunEventSchema, value.subarray(4))
 }
 

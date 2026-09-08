@@ -57,7 +57,7 @@ import type {
   WorkspaceCreateRequest,
 } from "@helmr/sdk"
 import { createWriteStream, promises as fs } from "node:fs"
-import { v7 as newUUIDv7 } from "uuid"
+import { randomUUIDv7 as newUUIDv7 } from "node:crypto"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 
