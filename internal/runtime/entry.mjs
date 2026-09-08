@@ -4012,7 +4012,7 @@ function trimGoSpace(value) {
 }
 // runtime/typescript/src/program.ts
 import { createWriteStream, promises as fs } from "node:fs";
-import { randomBytes } from "node:crypto";
+import { randomUUIDv7 as newUUIDv7 } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 var MAX_PROGRAM_FRAME_BYTES = 256 * 1024 * 1024;
@@ -4022,18 +4022,6 @@ var MAX_RUN_LOG_MESSAGE_BYTES = 4 * 1024;
 var MAX_RUN_LOG_ATTRIBUTES_BYTES = 16 * 1024;
 var MAX_TASK_ERROR_MESSAGE_BYTES = 1024;
 var MAX_ACTOR_INPUT_BYTES = 1 * 1024 * 1024;
-function newUUIDv7() {
-  const bytes = randomBytes(16);
-  let timestamp = Date.now();
-  for (let index = 5;index >= 0; index -= 1) {
-    bytes[index] = timestamp & 255;
-    timestamp = Math.floor(timestamp / 256);
-  }
-  bytes[6] = bytes[6] & 15 | 112;
-  bytes[8] = bytes[8] & 63 | 128;
-  const hex = bytes.toString("hex");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
 
 class FrameReader {
   #iterator;
