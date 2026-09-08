@@ -313,7 +313,8 @@ func (m WorkspaceMaterializer) dispatchWorkspaceBasicExec(
 			errors.New("workspace mount guest channel token is required"),
 		)
 	}
-	if strings.TrimSpace(exec.ProcessID) == "" ||
+	if strings.TrimSpace(exec.BaseVersionID) == "" ||
+		strings.TrimSpace(exec.ProcessID) == "" ||
 		strings.TrimSpace(exec.RequestFingerprint) == "" ||
 		strings.TrimSpace(exec.WorkspaceLeaseID) == "" ||
 		strings.TrimSpace(exec.WriteCapability) == "" {
@@ -337,6 +338,9 @@ func (m WorkspaceMaterializer) dispatchWorkspaceBasicExec(
 		)
 	}
 	request := &workspacev0.WorkspaceBasicExecRequest{
+		BaseWorkspaceVersionId: strings.TrimSpace(exec.BaseVersionID),
+		OwnershipGeneration:    exec.OwnershipGeneration,
+		WriterGeneration:       exec.WriterGeneration,
 		Envelope: &workspacev0.WorkspaceOperationEnvelope{
 			OperationId:                strings.TrimSpace(exec.ProcessID),
 			WorkspaceMountId:           strings.TrimSpace(exec.WorkspaceMountID),

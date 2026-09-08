@@ -16,6 +16,7 @@ type WorkspaceExecClaimResponse struct {
 }
 
 type WorkspaceExec struct {
+	BaseVersionID       string           `json:"base_version_id"`
 	ProcessID           string           `json:"process_id"`
 	WorkspaceID         string           `json:"workspace_id"`
 	WorkspaceMountID    string           `json:"workspace_mount_id"`

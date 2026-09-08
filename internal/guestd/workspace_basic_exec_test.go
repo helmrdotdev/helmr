@@ -2,9 +2,11 @@ package guestd
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 )
@@ -24,12 +26,13 @@ func TestWorkspaceBasicExecReplaysOneExecution(t *testing.T) {
 			}
 		},
 	}
+	registry := testWorkspaceBasicExecRegistry(entry)
 	request := testWorkspaceBasicExecRequest("process-1", strings.Repeat("a", 64))
 	first := make(chan *workspacev0.WorkspaceBasicExecResult, 1)
 	second := make(chan *workspacev0.WorkspaceBasicExecResult, 1)
-	go func() { first <- entry.runWorkspaceBasicExec(context.Background(), request) }()
+	go func() { first <- registry.runWorkspaceBasicExec(context.Background(), entry, request) }()
 	<-started
-	go func() { second <- entry.runWorkspaceBasicExec(context.Background(), request) }()
+	go func() { second <- registry.runWorkspaceBasicExec(context.Background(), entry, request) }()
 	close(release)
 	firstResult := <-first
 	secondResult := <-second
@@ -58,39 +61,35 @@ func TestWorkspaceBasicExecSurvivesCallerDisconnect(t *testing.T) {
 			}
 		},
 	}
+	registry := testWorkspaceBasicExecRegistry(entry)
 	request := testWorkspaceBasicExecRequest("process-1", strings.Repeat("a", 64))
 	ctx, cancel := context.WithCancel(context.Background())
 	disconnected := make(chan *workspacev0.WorkspaceBasicExecResult, 1)
-	go func() { disconnected <- entry.runWorkspaceBasicExec(ctx, request) }()
+	go func() { disconnected <- registry.runWorkspaceBasicExec(ctx, entry, request) }()
 	<-started
 	cancel()
 	if result := <-disconnected; result.GetOutcome() != "workspace_exec_result_uncertain" {
 		t.Fatalf("disconnect outcome = %q", result.GetOutcome())
 	}
 	close(release)
-	replayed := entry.runWorkspaceBasicExec(context.Background(), request)
+	replayed := registry.runWorkspaceBasicExec(context.Background(), entry, request)
 	if replayed.GetOutcome() != "exited" || runs.Load() != 1 {
 		t.Fatalf("replay outcome = %q, executions = %d", replayed.GetOutcome(), runs.Load())
 	}
 }
 
 func TestWorkspaceBasicExecRejectsFingerprintChange(t *testing.T) {
-	entry := &workspaceMountEntry{
-		basicExec: &workspaceBasicExec{
-			operationID: "process-1",
-			fingerprint: strings.Repeat("a", 64),
-			done:        closedWorkspaceBasicExecDone(),
-			result: &workspacev0.WorkspaceBasicExecResult{
-				Outcome: "exited", RequestFingerprint: strings.Repeat("a", 64),
-			},
-		},
+	entry := &workspaceMountEntry{basicExecRun: func(*workspacev0.WorkspaceBasicExecRequest) *workspacev0.WorkspaceBasicExecResult {
+		return &workspacev0.WorkspaceBasicExecResult{Outcome: "exited"}
+	}}
+	registry := testWorkspaceBasicExecRegistry(entry)
+	first := registry.runWorkspaceBasicExec(context.Background(), entry, testWorkspaceBasicExecRequest("process-1", strings.Repeat("a", 64)))
+	if first.GetOutcome() != "exited" {
+		t.Fatal(first)
 	}
-	result := entry.runWorkspaceBasicExec(
-		context.Background(),
-		testWorkspaceBasicExecRequest("process-1", strings.Repeat("b", 64)),
-	)
+	result := registry.runWorkspaceBasicExec(context.Background(), entry, testWorkspaceBasicExecRequest("process-1", strings.Repeat("b", 64)))
 	if result.GetOutcome() != "workspace_exec_fingerprint_conflict" {
-		t.Fatalf("outcome = %q", result.GetOutcome())
+		t.Fatal(result)
 	}
 }
 
@@ -104,12 +103,13 @@ func TestWorkspaceBasicExecRejectsAnotherOperation(t *testing.T) {
 			}
 		},
 	}
-	first := entry.runWorkspaceBasicExec(
-		context.Background(),
+	registry := testWorkspaceBasicExecRegistry(entry)
+	first := registry.runWorkspaceBasicExec(
+		context.Background(), entry,
 		testWorkspaceBasicExecRequest("process-1", strings.Repeat("a", 64)),
 	)
-	second := entry.runWorkspaceBasicExec(
-		context.Background(),
+	second := registry.runWorkspaceBasicExec(
+		context.Background(), entry,
 		testWorkspaceBasicExecRequest("process-2", strings.Repeat("b", 64)),
 	)
 	if first.GetOutcome() != "exited" || second.GetOutcome() != "workspace_exec_unavailable" {
@@ -134,16 +134,17 @@ func TestWorkspaceBasicExecRejectsAnotherOperationWhileRunning(t *testing.T) {
 			}
 		},
 	}
+	registry := testWorkspaceBasicExecRegistry(entry)
 	first := make(chan *workspacev0.WorkspaceBasicExecResult, 1)
 	go func() {
-		first <- entry.runWorkspaceBasicExec(
-			context.Background(),
+		first <- registry.runWorkspaceBasicExec(
+			context.Background(), entry,
 			testWorkspaceBasicExecRequest("process-1", strings.Repeat("a", 64)),
 		)
 	}()
 	<-started
-	second := entry.runWorkspaceBasicExec(
-		context.Background(),
+	second := registry.runWorkspaceBasicExec(
+		context.Background(), entry,
 		testWorkspaceBasicExecRequest("process-2", strings.Repeat("b", 64)),
 	)
 	close(release)
@@ -176,13 +177,38 @@ func testWorkspaceBasicExecRequest(
 	return &workspacev0.WorkspaceBasicExecRequest{
 		Envelope: &workspacev0.WorkspaceOperationEnvelope{
 			OperationId: processID, RequestFingerprint: fingerprint,
+			WorkspaceMountId: "mount-1", WorkspaceId: "workspace-1", ChannelToken: "channel-token",
+			InstanceLeaseId: "process-lease", WriteLeaseId: "process-lease", FencingToken: "capability", FencingGeneration: 1, OperationExpiresAtUnixNano: time.Now().Add(time.Minute).UnixNano(),
 		},
+		BaseWorkspaceVersionId: "version-1", OwnershipGeneration: 1, WriterGeneration: 1,
 		RequestJson: `{"command":["true"],"cwd":"/workspace","env":{},"timeout_ms":1000}`,
 	}
 }
 
-func closedWorkspaceBasicExecDone() chan struct{} {
-	done := make(chan struct{})
-	close(done)
-	return done
+func testWorkspaceBasicExecRegistry(entry *workspaceMountEntry) *workspaceOperationRegistry {
+	entry.workspaceID = "workspace-1"
+	entry.channelToken = "channel-token"
+	entry.baseVersionID = "version-1"
+	entry.fencingGeneration = 1
+	registry := newWorkspaceOperationRegistry()
+	registry.register("mount-1", entry)
+	return registry
+}
+
+// Existing finalization/turn-commit fixtures simulate an independently admitted process.
+func (entry *workspaceMountEntry) beginWorkspaceExecAdmission() (func(), error) {
+	entry.processesMu.Lock()
+	if entry.authorityState == workspaceAuthorityFinalizing ||
+		entry.recoveryRequired ||
+		entry.turnCommitBlocked {
+		entry.processesMu.Unlock()
+		return func() {}, errors.New("workspace is unavailable for exec admission")
+	}
+	entry.processAdmissions++
+	entry.processesMu.Unlock()
+	return func() {
+		entry.processesMu.Lock()
+		entry.processAdmissions--
+		entry.processesMu.Unlock()
+	}, nil
 }

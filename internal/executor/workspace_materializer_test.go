@@ -474,6 +474,7 @@ func TestWorkspaceMaterializerDispatchesBasicExec(t *testing.T) {
 	session := &workspaceMaterializerTestSession{operation: clientStream}
 	secretValue := []byte("secret-value")
 	exec := workerapi.WorkspaceExec{
+		BaseVersionID:       "version-2",
 		ProcessID:           "process-1",
 		WorkspaceID:         "workspace-1",
 		WorkspaceMountID:    "mount-1",
@@ -505,7 +506,8 @@ func TestWorkspaceMaterializerDispatchesBasicExec(t *testing.T) {
 			guestDone <- err
 			return
 		}
-		if request.GetEnvelope().GetChannelToken() != "channel-token" ||
+		if request.GetBaseWorkspaceVersionId() != exec.BaseVersionID || request.GetOwnershipGeneration() != exec.OwnershipGeneration || request.GetWriterGeneration() != exec.WriterGeneration ||
+			request.GetEnvelope().GetChannelToken() != "channel-token" ||
 			request.GetEnvelope().GetFencingToken() != exec.WriteCapability ||
 			string(request.GetStdin()) != "input" ||
 			len(request.GetSecrets()) != 1 ||
@@ -563,7 +565,7 @@ func TestWorkspaceMaterializerRejectsMismatchedBasicExecClaim(t *testing.T) {
 			GuestdChannelToken: "channel-token",
 		},
 		workerapi.WorkspaceExec{
-			ProcessID: "process-1", WorkspaceMountID: "mount-2",
+			BaseVersionID: "version-2", ProcessID: "process-1", WorkspaceMountID: "mount-2",
 			WorkspaceID: "workspace-1", RequestFingerprint: strings.Repeat("a", 64),
 			WorkspaceLeaseID: "lease-1", WriteCapability: "capability-1",
 			FencingGeneration: 1, OwnershipGeneration: 1, WriterGeneration: 1,

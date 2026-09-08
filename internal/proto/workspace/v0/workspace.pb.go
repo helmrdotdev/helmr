@@ -2226,13 +2226,16 @@ func (x *StopWorkspaceResponse) GetCapturedTree() *WorkspaceTreeIdentity {
 }
 
 type WorkspaceBasicExecRequest struct {
-	state         protoimpl.MessageState      `protogen:"open.v1"`
-	Envelope      *WorkspaceOperationEnvelope `protobuf:"bytes,1,opt,name=envelope,proto3" json:"envelope,omitempty"`
-	RequestJson   string                      `protobuf:"bytes,2,opt,name=request_json,json=requestJson,proto3" json:"request_json,omitempty"`
-	Secrets       []*WorkspaceSecretDelivery  `protobuf:"bytes,3,rep,name=secrets,proto3" json:"secrets,omitempty"`
-	Stdin         []byte                      `protobuf:"bytes,4,opt,name=stdin,proto3" json:"stdin,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state                  protoimpl.MessageState      `protogen:"open.v1"`
+	Envelope               *WorkspaceOperationEnvelope `protobuf:"bytes,1,opt,name=envelope,proto3" json:"envelope,omitempty"`
+	RequestJson            string                      `protobuf:"bytes,2,opt,name=request_json,json=requestJson,proto3" json:"request_json,omitempty"`
+	Secrets                []*WorkspaceSecretDelivery  `protobuf:"bytes,3,rep,name=secrets,proto3" json:"secrets,omitempty"`
+	Stdin                  []byte                      `protobuf:"bytes,4,opt,name=stdin,proto3" json:"stdin,omitempty"`
+	BaseWorkspaceVersionId string                      `protobuf:"bytes,5,opt,name=base_workspace_version_id,json=baseWorkspaceVersionId,proto3" json:"base_workspace_version_id,omitempty"`
+	OwnershipGeneration    int64                       `protobuf:"varint,6,opt,name=ownership_generation,json=ownershipGeneration,proto3" json:"ownership_generation,omitempty"`
+	WriterGeneration       int64                       `protobuf:"varint,7,opt,name=writer_generation,json=writerGeneration,proto3" json:"writer_generation,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *WorkspaceBasicExecRequest) Reset() {
@@ -2291,6 +2294,27 @@ func (x *WorkspaceBasicExecRequest) GetStdin() []byte {
 		return x.Stdin
 	}
 	return nil
+}
+
+func (x *WorkspaceBasicExecRequest) GetBaseWorkspaceVersionId() string {
+	if x != nil {
+		return x.BaseWorkspaceVersionId
+	}
+	return ""
+}
+
+func (x *WorkspaceBasicExecRequest) GetOwnershipGeneration() int64 {
+	if x != nil {
+		return x.OwnershipGeneration
+	}
+	return 0
+}
+
+func (x *WorkspaceBasicExecRequest) GetWriterGeneration() int64 {
+	if x != nil {
+		return x.WriterGeneration
+	}
+	return 0
 }
 
 type WorkspaceBasicExecResult struct {
@@ -2622,12 +2646,15 @@ const file_workspace_proto_rawDesc = "" +
 	"\x11captured_artifact\x18\x02 \x01(\v2%.helmr.workspace.v0.WorkspaceArtifactR\x10capturedArtifact\x12\x1d\n" +
 	"\n" +
 	"error_json\x18\x03 \x01(\tR\terrorJson\x12N\n" +
-	"\rcaptured_tree\x18\x04 \x01(\v2).helmr.workspace.v0.WorkspaceTreeIdentityR\fcapturedTree\"\xe7\x01\n" +
+	"\rcaptured_tree\x18\x04 \x01(\v2).helmr.workspace.v0.WorkspaceTreeIdentityR\fcapturedTree\"\x82\x03\n" +
 	"\x19WorkspaceBasicExecRequest\x12J\n" +
 	"\benvelope\x18\x01 \x01(\v2..helmr.workspace.v0.WorkspaceOperationEnvelopeR\benvelope\x12!\n" +
 	"\frequest_json\x18\x02 \x01(\tR\vrequestJson\x12E\n" +
 	"\asecrets\x18\x03 \x03(\v2+.helmr.workspace.v0.WorkspaceSecretDeliveryR\asecrets\x12\x14\n" +
-	"\x05stdin\x18\x04 \x01(\fR\x05stdin\"\xd1\x01\n" +
+	"\x05stdin\x18\x04 \x01(\fR\x05stdin\x129\n" +
+	"\x19base_workspace_version_id\x18\x05 \x01(\tR\x16baseWorkspaceVersionId\x121\n" +
+	"\x14ownership_generation\x18\x06 \x01(\x03R\x13ownershipGeneration\x12+\n" +
+	"\x11writer_generation\x18\a \x01(\x03R\x10writerGeneration\"\xd1\x01\n" +
 	"\x18WorkspaceBasicExecResult\x12\x1d\n" +
 	"\n" +
 	"error_json\x18\x01 \x01(\tR\terrorJson\x12\x1b\n" +
