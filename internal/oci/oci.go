@@ -335,6 +335,9 @@ func inspectBlobs(r io.Reader) ([]byte, map[string]inspectedBlob, error) {
 			var buf bytes.Buffer
 			writer := io.Writer(hash)
 			if header.Size >= 0 && header.Size <= maxJSONBlobBytes {
+				if header.Size > 0 {
+					buf.Grow(int(header.Size))
+				}
 				writer = io.MultiWriter(hash, &buf)
 			}
 			if _, err := io.Copy(writer, reader); err != nil {
@@ -346,7 +349,7 @@ func inspectBlobs(r io.Reader) ([]byte, map[string]inspectedBlob, error) {
 			}
 			blob := inspectedBlob{size: header.Size}
 			if header.Size <= maxJSONBlobBytes {
-				blob.body = append([]byte(nil), buf.Bytes()...)
+				blob.body = buf.Bytes()
 			}
 			blobs[digest] = blob
 		case name == "oci-layout":
