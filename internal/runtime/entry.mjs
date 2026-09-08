@@ -4012,7 +4012,86 @@ function trimGoSpace(value) {
 }
 // runtime/typescript/src/program.ts
 import { createWriteStream, promises as fs } from "node:fs";
-import { randomBytes } from "node:crypto";
+// node_modules/.bun/uuid@14.0.2/node_modules/uuid/dist-node/rng.js
+var rnds8 = new Uint8Array(16);
+function rng() {
+  return crypto.getRandomValues(rnds8);
+}
+
+// node_modules/.bun/uuid@14.0.2/node_modules/uuid/dist-node/stringify.js
+var byteToHex = [];
+for (let i = 0;i < 256; ++i) {
+  byteToHex.push((i + 256).toString(16).slice(1));
+}
+function unsafeStringify(arr, offset = 0) {
+  return (byteToHex[arr[offset + 0]] + byteToHex[arr[offset + 1]] + byteToHex[arr[offset + 2]] + byteToHex[arr[offset + 3]] + "-" + byteToHex[arr[offset + 4]] + byteToHex[arr[offset + 5]] + "-" + byteToHex[arr[offset + 6]] + byteToHex[arr[offset + 7]] + "-" + byteToHex[arr[offset + 8]] + byteToHex[arr[offset + 9]] + "-" + byteToHex[arr[offset + 10]] + byteToHex[arr[offset + 11]] + byteToHex[arr[offset + 12]] + byteToHex[arr[offset + 13]] + byteToHex[arr[offset + 14]] + byteToHex[arr[offset + 15]]).toLowerCase();
+}
+
+// node_modules/.bun/uuid@14.0.2/node_modules/uuid/dist-node/v7.js
+var _state = {};
+function v7(options, buf, offset) {
+  let bytes;
+  if (options) {
+    bytes = v7Bytes(options.random ?? options.rng?.() ?? rng(), options.msecs, options.seq, buf, offset);
+  } else {
+    const now = Date.now();
+    const rnds = rng();
+    updateV7State(_state, now, rnds);
+    bytes = v7Bytes(rnds, _state.msecs, _state.seq, buf, offset);
+  }
+  return buf ?? unsafeStringify(bytes);
+}
+function updateV7State(state, now, rnds) {
+  state.msecs ??= -Infinity;
+  state.seq ??= 0;
+  if (now > state.msecs) {
+    state.seq = v7Sequence(rnds);
+    state.msecs = now;
+  } else {
+    state.seq = state.seq + 1 | 0;
+    if (state.seq === 0) {
+      state.msecs++;
+    }
+  }
+  return state;
+}
+function v7Bytes(rnds, msecs, seq, buf, offset = 0) {
+  if (rnds.length < 16) {
+    throw new Error("Random bytes length must be >= 16");
+  }
+  if (!buf) {
+    buf = new Uint8Array(16);
+    offset = 0;
+  } else {
+    if (offset < 0 || offset + 16 > buf.length) {
+      throw new RangeError(`UUID byte range ${offset}:${offset + 15} is out of buffer bounds`);
+    }
+  }
+  msecs ??= Date.now();
+  seq ??= v7Sequence(rnds);
+  buf[offset++] = msecs / 1099511627776 & 255;
+  buf[offset++] = msecs / 4294967296 & 255;
+  buf[offset++] = msecs / 16777216 & 255;
+  buf[offset++] = msecs / 65536 & 255;
+  buf[offset++] = msecs / 256 & 255;
+  buf[offset++] = msecs & 255;
+  buf[offset++] = 112 | seq >>> 28 & 15;
+  buf[offset++] = seq >>> 20 & 255;
+  buf[offset++] = 128 | seq >>> 14 & 63;
+  buf[offset++] = seq >>> 6 & 255;
+  buf[offset++] = seq << 2 & 255 | rnds[10] & 3;
+  buf[offset++] = rnds[11];
+  buf[offset++] = rnds[12];
+  buf[offset++] = rnds[13];
+  buf[offset++] = rnds[14];
+  buf[offset++] = rnds[15];
+  return buf;
+}
+function v7Sequence(rnds) {
+  return (rnds[6] & 127) << 24 | rnds[7] << 16 | rnds[8] << 8 | rnds[9];
+}
+var v7_default = v7;
+// runtime/typescript/src/program.ts
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 var MAX_PROGRAM_FRAME_BYTES = 256 * 1024 * 1024;
@@ -4022,18 +4101,6 @@ var MAX_RUN_LOG_MESSAGE_BYTES = 4 * 1024;
 var MAX_RUN_LOG_ATTRIBUTES_BYTES = 16 * 1024;
 var MAX_TASK_ERROR_MESSAGE_BYTES = 1024;
 var MAX_ACTOR_INPUT_BYTES = 1 * 1024 * 1024;
-function newUUIDv7() {
-  const bytes = randomBytes(16);
-  let timestamp = Date.now();
-  for (let index = 5;index >= 0; index -= 1) {
-    bytes[index] = timestamp & 255;
-    timestamp = Math.floor(timestamp / 256);
-  }
-  bytes[6] = bytes[6] & 15 | 112;
-  bytes[8] = bytes[8] & 63 | 128;
-  const hex = bytes.toString("hex");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
 
 class FrameReader {
   #iterator;
@@ -4488,7 +4555,7 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
     if (idempotencyKey === undefined && process.env["NODE_ENV"] !== "production") {
       process.emitWarning(`Task "${target.declaredId}" was started without an idempotencyKey; retrying the parent Run may create another child Run.`, { code: "HELMR_KEYLESS_CHILD_TASK_START" });
     }
-    const correlationId = newUUIDv7();
+    const correlationId = v7_default();
     const payloadJson = target.payloadPresent ? new TextDecoder().decode(canonicalizeJsonValue(payload)) : undefined;
     const workspaceJson = new TextDecoder().decode(canonicalizeJsonValue({ id: workspaceRefID(options.workspace) }));
     const requestOptions = {
@@ -4541,9 +4608,9 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
     const operation = runOperations.track(async () => {
       const releaseWait = waitGate.acquire();
       try {
-        const correlationId = newUUIDv7();
-        const runWaitId = newUUIDv7();
-        const resumeAttachId = newUUIDv7();
+        const correlationId = v7_default();
+        const runWaitId = v7_default();
+        const resumeAttachId = v7_default();
         const payloadJson = target.payloadPresent ? new TextDecoder().decode(canonicalizeJsonValue(payload)) : undefined;
         const workspaceJson = new TextDecoder().decode(canonicalizeJsonValue({ id: workspaceRefID(options.workspace) }));
         const requestOptions = {
@@ -4589,9 +4656,9 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
   };
   const performWait = async (params, timeoutMs) => {
     const releaseWait = waitGate.acquire();
-    const correlationId = newUUIDv7();
-    const runWaitId = newUUIDv7();
-    const resumeAttachId = newUUIDv7();
+    const correlationId = v7_default();
+    const runWaitId = v7_default();
+    const resumeAttachId = v7_default();
     try {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "runWaitRequested",
@@ -4629,7 +4696,7 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
     if (normalized.byteLength > MAX_ACTOR_INPUT_BYTES) {
       throw actorInputSendError("actor_input_too_large", `Actor input exceeds ${MAX_ACTOR_INPUT_BYTES} bytes`);
     }
-    const correlationId = newUUIDv7();
+    const correlationId = v7_default();
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "sessionInputSendRequested",
@@ -4651,7 +4718,7 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
   const performActorStart = async (declaredId, options) => {
     if (options.signal?.aborted)
       throw abortSignalReason(options.signal);
-    const correlationId = newUUIDv7();
+    const correlationId = v7_default();
     const run = options.run;
     const runOptions = {
       ...run?.queue === undefined ? {} : { queue: run.queue },
@@ -4695,7 +4762,7 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
   const performSessionStatus = async (sessionId, signal) => {
     if (signal?.aborted)
       throw abortSignalReason(signal);
-    const correlationId = newUUIDv7();
+    const correlationId = v7_default();
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "sessionStatusRequested",
@@ -4715,7 +4782,7 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
   const performSessionClose = async (sessionId, request, signal) => {
     if (signal?.aborted)
       throw abortSignalReason(signal);
-    const correlationId = newUUIDv7();
+    const correlationId = v7_default();
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "sessionCloseRequested",
@@ -4751,7 +4818,7 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
     if (query?.limit !== undefined && (!Number.isInteger(query.limit) || query.limit < 1 || query.limit > 100)) {
       throw new Error("Session output limit must be an integer in [1,100]");
     }
-    const correlationId = newUUIDv7();
+    const correlationId = v7_default();
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "sessionOutputPageRequested",
@@ -4791,7 +4858,7 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
   const performWorkspaceCreate = async (declaredId, request = {}, signal) => {
     if (signal?.aborted)
       throw abortSignalReason(signal);
-    const correlationId = newUUIDv7();
+    const correlationId = v7_default();
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "workspaceCreateRequested",
@@ -4822,7 +4889,7 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
   const performWorkspaceRetrieve = async (workspaceId, signal) => {
     if (signal?.aborted)
       throw abortSignalReason(signal);
-    const correlationId = newUUIDv7();
+    const correlationId = v7_default();
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "workspaceRetrieveRequested",
@@ -4846,7 +4913,7 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
     if (timeoutMs !== undefined && timeoutMs > 900000) {
       throw new Error("Workspace exec timeout must not exceed 15m");
     }
-    const correlationId = newUUIDv7();
+    const correlationId = v7_default();
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "workspaceExecRequested",
@@ -4872,7 +4939,7 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
   const performWorkspaceDelete = async (workspaceId, request = {}, signal) => {
     if (signal?.aborted)
       throw abortSignalReason(signal);
-    const correlationId = newUUIDv7();
+    const correlationId = v7_default();
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "workspaceDeleteRequested",
@@ -4891,7 +4958,7 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
     return abortableRuntimeOperation(operation, signal);
   };
   const performTokenCreate = async (request) => {
-    const correlationId = newUUIDv7();
+    const correlationId = v7_default();
     const timeoutMs = request.timeout === undefined ? undefined : durationMilliseconds(request.timeout, "Token timeout");
     const metadataJson = request.metadata === undefined ? undefined : new TextDecoder().decode(canonicalizeJsonValue(request.metadata));
     const idempotencyKey = normalizeTokenIdempotencyKey(request.idempotencyKey);
@@ -4916,9 +4983,9 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
   };
   const performTokenWait = async (tokenId, options) => {
     const releaseWait = waitGate.acquire();
-    const correlationId = newUUIDv7();
-    const runWaitId = newUUIDv7();
-    const resumeAttachId = newUUIDv7();
+    const correlationId = v7_default();
+    const runWaitId = v7_default();
+    const resumeAttachId = v7_default();
     const timeoutMs = options.timeout === undefined ? undefined : durationMilliseconds(options.timeout, "Token Wait timeout");
     const idleTimeoutMs = options.idleTimeout === undefined ? undefined : tokenWaitIdleTimeoutMilliseconds(options.idleTimeout);
     try {
@@ -4955,7 +5022,7 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
     }
   };
   const performMetadataMutation = async (request) => {
-    const correlationId = newUUIDv7();
+    const correlationId = v7_default();
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "metadataUpdated",
@@ -4991,7 +5058,7 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
       throw new Error(`logger message must be at most ${MAX_RUN_LOG_MESSAGE_BYTES} UTF-8 bytes`);
     }
     const attributesJson = canonicalizeLogAttributes(attributes);
-    const correlationId = newUUIDv7();
+    const correlationId = v7_default();
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "structuredLogRequested",
@@ -5344,7 +5411,7 @@ function actorSelf(start, io, decisions, cursor, waitGate, actorOperations) {
   const commitPriorTurn = async () => {
     if (cursor.value === committedBoundary)
       return;
-    const correlationId = newUUIDv7();
+    const correlationId = v7_default();
     const decision = await requestRuntimeDecision(io, decisions, correlationId, {
       case: "actorTurnCommitRequested",
       value: create(exports_program_pb.ActorTurnCommitRequestedSchema, {
@@ -5358,9 +5425,9 @@ function actorSelf(start, io, decisions, cursor, waitGate, actorOperations) {
   const performReceive = async (options, releaseWait) => {
     try {
       await commitPriorTurn();
-      const correlationId = newUUIDv7();
-      const runWaitId = newUUIDv7();
-      const resumeAttachId = newUUIDv7();
+      const correlationId = v7_default();
+      const runWaitId = v7_default();
+      const resumeAttachId = v7_default();
       const timeoutMs = options?.timeout === undefined ? undefined : durationMilliseconds(options.timeout);
       const idleTimeoutMs = options?.idleTimeout === undefined ? undefined : durationMilliseconds(options.idleTimeout);
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
@@ -5421,7 +5488,7 @@ function actorSelf(start, io, decisions, cursor, waitGate, actorOperations) {
   };
   const performAppend = async (value, options) => {
     const normalized = canonicalizeJsonValue(value);
-    const correlationId = newUUIDv7();
+    const correlationId = v7_default();
     const decision = await requestRuntimeDecision(io, decisions, correlationId, {
       case: "actorOutputAppendRequested",
       value: create(exports_program_pb.ActorOutputAppendRequestedSchema, {

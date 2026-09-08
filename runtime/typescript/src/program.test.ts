@@ -1757,6 +1757,11 @@ describe("runProgram", () => {
       if (event.case !== "runWaitRequested") return
       correlationId = event.value.correlationId
       runWaitId = event.value.runWaitId
+      const allocatedIds = [correlationId, runWaitId, event.value.resumeAttachId]
+      for (const id of allocatedIds) {
+        expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+      }
+      expect(new Set(allocatedIds).size).toBe(allocatedIds.length)
       expect(event.value.kind).toBe("timer")
       expect(event.value.timeoutMs).toBe(60_000n)
       expect(JSON.parse(event.value.paramsJson)).toEqual({ duration: "1m" })
