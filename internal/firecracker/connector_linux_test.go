@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -79,7 +80,7 @@ func TestProbeGuestRequiresBoundRuntimeEvidence(t *testing.T) {
 func TestSnapshotRuntimeConfigIncludesNetworkTopology(t *testing.T) {
 	cfg := (Config{NetworkResolverIPv4: "10.0.0.2"}).WithDefaults()
 	runtimeID := testRuntimeIdentity(t, "sha256:1111111111111111111111111111111111111111111111111111111111111111", "sha256:2222222222222222222222222222222222222222222222222222222222222222", "sha256:3333333333333333333333333333333333333333333333333333333333333333").ID
-	digest, manifestBytes, err := snapshotRuntimeConfig(cfg, "checkpoint-1", runtimeID, testCPUConfigDigest(cfg.VCPUCount), "sha256:1111111111111111111111111111111111111111111111111111111111111111", "sha256:2222222222222222222222222222222222222222222222222222222222222222", "sha256:3333333333333333333333333333333333333333333333333333333333333333", defaultKernelArgs, vm.RuntimeTopology{})
+	digest, manifestBytes, err := snapshotRuntimeConfig(cfg, "checkpoint-1", runtimeID, testCPUConfigDigest(cfg.VCPUCount), "sha256:1111111111111111111111111111111111111111111111111111111111111111", "sha256:2222222222222222222222222222222222222222222222222222222222222222", "sha256:3333333333333333333333333333333333333333333333333333333333333333", runtimeKernelArgs(vm.RuntimeTopology{}, nil, cfg.NetworkResolverIPv4), vm.RuntimeTopology{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +137,7 @@ func TestSnapshotRuntimeConfigBindsManagedProgramTopology(t *testing.T) {
 	drives := testProgramDrives(&recordingReadOnlyDriveSource{})
 	_, manifestBytes, err := snapshotRuntimeConfig(
 		cfg, "checkpoint-1", runtimeID, testCPUConfigDigest(cfg.VCPUCount), "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-		"sha256:2222222222222222222222222222222222222222222222222222222222222222", "sha256:3333333333333333333333333333333333333333333333333333333333333333", defaultKernelArgs+" helmr.program=1", vm.RuntimeTopology{}, drives,
+		"sha256:2222222222222222222222222222222222222222222222222222222222222222", "sha256:3333333333333333333333333333333333333333333333333333333333333333", runtimeKernelArgs(vm.RuntimeTopology{}, drives, cfg.NetworkResolverIPv4), vm.RuntimeTopology{}, drives,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -145,7 +146,7 @@ func TestSnapshotRuntimeConfigBindsManagedProgramTopology(t *testing.T) {
 	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
 		t.Fatal(err)
 	}
-	if manifest.RecoveryPoint.Runtime.KernelArgs != defaultKernelArgs+" helmr.program=1" {
+	if manifest.RecoveryPoint.Runtime.KernelArgs != runtimeKernelArgs(vm.RuntimeTopology{}, drives, cfg.NetworkResolverIPv4) {
 		t.Fatalf("kernel args = %q", manifest.RecoveryPoint.Runtime.KernelArgs)
 	}
 	program := manifest.RecoveryPoint.Runtime.Program
@@ -228,7 +229,7 @@ func TestSnapshotRuntimeConfigIncludesSubstrateIdentity(t *testing.T) {
 		SizeBytes: 4096,
 	}}
 	runtimeID := testRuntimeIdentity(t, "sha256:1111111111111111111111111111111111111111111111111111111111111111", "sha256:2222222222222222222222222222222222222222222222222222222222222222", "sha256:3333333333333333333333333333333333333333333333333333333333333333").ID
-	_, manifestBytes, err := snapshotRuntimeConfig(cfg, "checkpoint-1", runtimeID, testCPUConfigDigest(cfg.VCPUCount), "sha256:1111111111111111111111111111111111111111111111111111111111111111", "sha256:2222222222222222222222222222222222222222222222222222222222222222", "sha256:3333333333333333333333333333333333333333333333333333333333333333", defaultKernelArgs+" helmr.substrate=1", topology)
+	_, manifestBytes, err := snapshotRuntimeConfig(cfg, "checkpoint-1", runtimeID, testCPUConfigDigest(cfg.VCPUCount), "sha256:1111111111111111111111111111111111111111111111111111111111111111", "sha256:2222222222222222222222222222222222222222222222222222222222222222", "sha256:3333333333333333333333333333333333333333333333333333333333333333", runtimeKernelArgs(topology, nil, cfg.NetworkResolverIPv4), topology)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,19 +339,19 @@ func (e testWrappedErrors) WrappedErrors() []error {
 func TestSnapshotRuntimeConfigRequiresResolver(t *testing.T) {
 	cfg := (Config{}).WithDefaults()
 	runtimeID := testRuntimeIdentity(t, "sha256:1111111111111111111111111111111111111111111111111111111111111111", "sha256:2222222222222222222222222222222222222222222222222222222222222222", "sha256:3333333333333333333333333333333333333333333333333333333333333333").ID
-	_, _, err := snapshotRuntimeConfig(cfg, "checkpoint-1", runtimeID, testCPUConfigDigest(cfg.VCPUCount), "sha256:1111111111111111111111111111111111111111111111111111111111111111", "sha256:2222222222222222222222222222222222222222222222222222222222222222", "sha256:3333333333333333333333333333333333333333333333333333333333333333", defaultKernelArgs, vm.RuntimeTopology{})
+	_, _, err := snapshotRuntimeConfig(cfg, "checkpoint-1", runtimeID, testCPUConfigDigest(cfg.VCPUCount), "sha256:1111111111111111111111111111111111111111111111111111111111111111", "sha256:2222222222222222222222222222222222222222222222222222222222222222", "sha256:3333333333333333333333333333333333333333333333333333333333333333", runtimeKernelArgs(vm.RuntimeTopology{}, nil, cfg.NetworkResolverIPv4), vm.RuntimeTopology{})
 	if err == nil {
 		t.Fatal("expected missing resolver error")
 	}
 }
 
 func TestStaticNetworkInterfaceMatchesVMRuntimeContract(t *testing.T) {
-	iface := staticNetworkInterface("10.0.0.2")
-	if iface.StaticConfiguration == nil || iface.StaticConfiguration.IPConfiguration == nil {
+	iface := staticNetworkInterface()
+	if iface.StaticConfiguration == nil {
 		t.Fatalf("interface = %+v", iface)
 	}
 	static := iface.StaticConfiguration
-	if static.HostDevName != GuestTapNameV0 || static.MacAddress != GuestMACV0 || static.IPConfiguration.IPAddr.String() != GuestNetworkCIDRV0 || static.IPConfiguration.Gateway.String() != GuestGatewayIPv4V0 || static.IPConfiguration.IfName != GuestInterfaceNameV0 || len(static.IPConfiguration.Nameservers) != 1 || static.IPConfiguration.Nameservers[0] != "10.0.0.2" {
+	if static.HostDevName != GuestTapNameV0 || static.MacAddress != GuestMACV0 || static.IPConfiguration != nil {
 		t.Fatalf("static interface = %+v", static)
 	}
 }
@@ -489,7 +490,7 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 				CPUConfigDigest:  testCPUConfigDigest(cfg.VCPUCount),
 				MemoryMiB:        cfg.MemoryMiB,
 				ScratchDiskMiB:   cfg.ScratchDiskMiB,
-				KernelArgs:       defaultKernelArgs,
+				KernelArgs:       runtimeKernelArgs(vm.RuntimeTopology{}, nil, cfg.NetworkResolverIPv4),
 				KernelDigest:     kernelDigest,
 				InitramfsDigest:  initramfsDigest,
 				RootfsDigest:     rootfsDigest,
@@ -549,6 +550,12 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 		},
 		{name: "manifest memory exceeds worker capacity", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.MemoryMiB = cfg.MemoryMiB + 1 }, want: "checkpoint manifest memory"},
 		{name: "manifest scratch disk exceeds worker capacity", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.ScratchDiskMiB = cfg.ScratchDiskMiB + 1 }, want: "checkpoint manifest scratch disk size"},
+		{name: "legacy kernel IP bootstrap", editManifest: func(m *snapshotManifest) {
+			m.RecoveryPoint.Runtime.KernelArgs = strings.Replace(m.RecoveryPoint.Runtime.KernelArgs, "helmr.ip=", "ip=", 1)
+		}, want: "checkpoint manifest runtime ports or kernel args do not match"},
+		{name: "old VM descriptor", editManifest: func(m *snapshotManifest) {
+			m.RecoveryPoint.Runtime.DescriptorDigest = "sha256:8502b2ce12e03d6576a88c976059fabb7f62cb9b05a99c9ca5d1839cfb1f2e30"
+		}, want: "descriptor"},
 		{name: "manifest kernel args", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.KernelArgs = "other" }, want: "checkpoint manifest runtime ports or kernel args do not match"},
 		{name: "manifest guest port", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.GuestPort++ }, want: "checkpoint manifest runtime ports or kernel args do not match"},
 		{name: "manifest health port", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.HealthPort++ }, want: "checkpoint manifest runtime ports or kernel args do not match"},
@@ -594,7 +601,7 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 				manifestBytes,
 				identity,
 				vm.RuntimeTopology{},
-				defaultKernelArgs,
+				runtimeKernelArgs(vm.RuntimeTopology{}, nil, cfg.NetworkResolverIPv4),
 				nil,
 			)
 			if tt.want == "" {
@@ -635,7 +642,7 @@ func TestValidateRestoreIdentityUsesManifestRuntimeShape(t *testing.T) {
 		manifestBytes,
 		identity,
 		vm.RuntimeTopology{},
-		defaultKernelArgs,
+		runtimeKernelArgs(vm.RuntimeTopology{}, nil, cfg.NetworkResolverIPv4),
 		nil,
 	)
 	if err != nil {
@@ -1521,25 +1528,81 @@ func TestRuntimeDrivesUseFixedProgramOrder(t *testing.T) {
 }
 
 func TestRuntimeKernelArgsDescribeExactDriveTopology(t *testing.T) {
+	const baseArgs = defaultKernelArgs + " helmr.ip=192.168.127.2::192.168.127.1:255.255.255.252::eth0:off:10.0.0.2::"
 	source := &recordingReadOnlyDriveSource{}
 	program := []vm.ReadOnlyDrive{
 		{ID: vm.ProgramRuntimeDrive, Source: source},
 		{ID: vm.ProgramDrive, Source: source},
 	}
-	if got := runtimeKernelArgs(vm.RuntimeTopology{}, nil); got != defaultKernelArgs {
+	if got := runtimeKernelArgs(vm.RuntimeTopology{}, nil, "10.0.0.2"); got != baseArgs {
 		t.Fatalf("default args = %q", got)
 	}
 	if got := runtimeKernelArgs(
 		vm.RuntimeTopology{Substrate: &vm.RuntimeSubstrate{}},
-		nil,
-	); got != defaultKernelArgs+" helmr.substrate=1" {
+		nil, "10.0.0.2",
+	); got != baseArgs+" helmr.substrate=1" {
 		t.Fatalf("substrate args = %q", got)
 	}
 	if got := runtimeKernelArgs(
 		vm.RuntimeTopology{Substrate: &vm.RuntimeSubstrate{}},
-		program,
-	); got != defaultKernelArgs+" helmr.substrate=1 helmr.program=1" {
+		program, "10.0.0.2",
+	); got != baseArgs+" helmr.substrate=1 helmr.program=1" {
 		t.Fatalf("Program args = %q", got)
+	}
+}
+
+func TestGuestNetworkArgsSurviveSDKSetupAndMatchRestore(t *testing.T) {
+	source := &recordingReadOnlyDriveSource{}
+	topology := vm.RuntimeTopology{Substrate: &vm.RuntimeSubstrate{}}
+	drives := []vm.ReadOnlyDrive{
+		{ID: vm.ProgramRuntimeDrive, Source: source},
+		{ID: vm.ProgramDrive, Source: source},
+	}
+	for _, test := range []struct {
+		name     string
+		topology vm.RuntimeTopology
+		drives   []vm.ReadOnlyDrive
+	}{
+		{name: "qualification"},
+		{name: "runtime", topology: topology},
+		{name: "materialization", topology: topology, drives: drives},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			connector := &Connector{cfg: Config{NetworkResolverIPv4: "10.0.0.2"}}
+			if test.name != "qualification" {
+				connector.kernelArgs = runtimeKernelArgs(test.topology, test.drives, connector.cfg.NetworkResolverIPv4)
+			}
+			expectedRestoreArgs := runtimeKernelArgs(test.topology, test.drives, connector.cfg.NetworkResolverIPv4)
+			if connector.kernelArgsValue() != expectedRestoreArgs {
+				t.Fatal("launch and restore arguments differ")
+			}
+			machine := &firecracker.Machine{Cfg: firecracker.Config{
+				KernelArgs:        connector.kernelArgsValue(),
+				NetworkInterfaces: firecracker.NetworkInterfaces{staticNetworkInterface()},
+			}}
+			if err := firecracker.SetupKernelArgsHandler.Fn(context.Background(), machine); err != nil {
+				t.Fatal(err)
+			}
+			tokens := make(map[string]int)
+			for _, token := range strings.Fields(machine.Cfg.KernelArgs) {
+				key, _, _ := strings.Cut(token, "=")
+				switch key {
+				case "ip", "nfsaddrs", "initcall_debug", "ignore_loglevel", "async.dyndbg":
+					t.Fatalf("unexpected kernel argument %q", token)
+				}
+				tokens[key]++
+			}
+			if tokens["helmr.ip"] != 1 {
+				t.Fatalf("helmr.ip count = %d", tokens["helmr.ip"])
+			}
+			want := strings.Fields(expectedRestoreArgs)
+			got := strings.Fields(machine.Cfg.KernelArgs)
+			slices.Sort(want)
+			slices.Sort(got)
+			if !slices.Equal(got, want) {
+				t.Fatalf("effective SDK arguments = %v, want %v", got, want)
+			}
+		})
 	}
 }
 
@@ -2153,7 +2216,7 @@ func testRestoreManifestAndIdentity(t *testing.T, cfg Config, checkpointID strin
 				CPUConfigDigest:  testCPUConfigDigest(cfg.VCPUCount),
 				MemoryMiB:        cfg.MemoryMiB,
 				ScratchDiskMiB:   cfg.ScratchDiskMiB,
-				KernelArgs:       defaultKernelArgs,
+				KernelArgs:       runtimeKernelArgs(vm.RuntimeTopology{}, nil, cfg.NetworkResolverIPv4),
 				KernelDigest:     kernelDigest,
 				InitramfsDigest:  initramfsDigest,
 				RootfsDigest:     rootfsDigest,

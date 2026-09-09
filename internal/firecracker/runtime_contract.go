@@ -36,6 +36,7 @@ const (
 	defaultRuntimeProfileName  = "default"
 	runtimeSubstrateKernelFlag = "helmr.substrate=1"
 	runtimeProgramKernelFlag   = "helmr.program=1"
+	runtimeIPKernelParameter   = "helmr.ip"
 	snapshotBackend            = "firecracker"
 	snapshotCreateType         = "Full"
 	snapshotMemoryBackend      = "File"
@@ -174,7 +175,7 @@ func CanonicalVMRuntimeDescriptor() VMRuntimeDescriptor {
 			Profiles: []VMRuntimeBootProfile{
 				{Name: defaultRuntimeProfileName, KernelArgs: defaultKernelArgs},
 			},
-			DynamicFlags: []string{runtimeSubstrateKernelFlag, runtimeProgramKernelFlag},
+			DynamicFlags: []string{runtimeSubstrateKernelFlag, runtimeProgramKernelFlag, runtimeIPKernelParameter + "=<static_ipv4_config>"},
 		},
 		Devices: VMRuntimeDeviceDescriptor{
 			Drives: drives, NetworkID: guestNetworkInterfaceID,

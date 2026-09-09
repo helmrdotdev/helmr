@@ -79,7 +79,7 @@ func NewConnector(cfg Config) (*Connector, error) {
 	return &Connector{
 		cfg:         cfg,
 		artifacts:   artifacts,
-		kernelArgs:  defaultKernelArgs,
+		kernelArgs:  runtimeKernelArgs(vm.RuntimeTopology{}, nil, cfg.NetworkResolverIPv4),
 		datapath:    datapath.NewManager(),
 		hostRuntime: newHostRuntimeEvidenceStore(),
 	}, nil
@@ -219,7 +219,7 @@ func (c *Connector) connectorForRequest(
 	}
 	child := *c
 	child.cfg = cfg
-	child.kernelArgs = runtimeKernelArgs(request.Topology, nil)
+	child.kernelArgs = runtimeKernelArgs(request.Topology, nil, cfg.NetworkResolverIPv4)
 	return &child, nil
 }
 
@@ -255,7 +255,7 @@ func (c *Connector) materialize(ctx context.Context, request vm.MaterializeReque
 	}
 	child := *c
 	child.cfg = cfg
-	child.kernelArgs = runtimeKernelArgs(request.Topology, request.ReadOnlyDrives)
+	child.kernelArgs = runtimeKernelArgs(request.Topology, request.ReadOnlyDrives, c.cfg.NetworkResolverIPv4)
 	return child.start(
 		ctx,
 		request.ID,
@@ -547,8 +547,14 @@ func (c *Connector) validateMaterializeRequest(request vm.MaterializeRequest) er
 func runtimeKernelArgs(
 	topology vm.RuntimeTopology,
 	readOnlyDrives []vm.ReadOnlyDrive,
+	resolverIPv4 string,
 ) string {
-	args := defaultKernelArgs
+	guestIP, guestNetwork, _ := net.ParseCIDR(GuestNetworkCIDRV0)
+	// Root init configures the interface after initramfs has loaded virtio_net.
+	// Giving this configuration to the SDK would also enable kernel IP autoconfiguration.
+	args := defaultKernelArgs + fmt.Sprintf(" %s=%s::%s:%s::%s:off:%s::",
+		runtimeIPKernelParameter, guestIP, GuestGatewayIPv4V0,
+		net.IP(guestNetwork.Mask), GuestInterfaceNameV0, strings.TrimSpace(resolverIPv4))
 	if topology.Substrate != nil {
 		args += " " + runtimeSubstrateKernelFlag
 	}
@@ -594,7 +600,7 @@ func (c *Connector) configForResources(resources compute.ResourceVector, operati
 
 func (c *Connector) kernelArgsValue() string {
 	if strings.TrimSpace(c.kernelArgs) == "" {
-		return defaultKernelArgs
+		return runtimeKernelArgs(vm.RuntimeTopology{}, nil, c.cfg.NetworkResolverIPv4)
 	}
 	return c.kernelArgs
 }
@@ -646,7 +652,7 @@ func (c *Connector) restore(ctx context.Context, request vm.RestoreRequest) (vm.
 			return nil, err
 		}
 	}
-	kernelArgs := runtimeKernelArgs(request.Topology, request.ReadOnlyDrives)
+	kernelArgs := runtimeKernelArgs(request.Topology, request.ReadOnlyDrives, c.cfg.NetworkResolverIPv4)
 	manifest, restoreCfg, err := c.validateRestoreIdentity(
 		request.ID,
 		request.Manifest,
@@ -1044,7 +1050,7 @@ func (c *Connector) prepareSession(ctx context.Context, instanceID string, owner
 		MachineCfg:   runtimeMachineConfiguration(runtimeDescriptor, c.cfg),
 	}
 	machineCfg.NetNS = filepath.Join("/var/run/netns", instanceID)
-	machineCfg.NetworkInterfaces = firecracker.NetworkInterfaces{staticNetworkInterface(c.cfg.NetworkResolverIPv4)}
+	machineCfg.NetworkInterfaces = firecracker.NetworkInterfaces{staticNetworkInterface()}
 	var networkBinding *installedNetworkBinding
 	defer func() {
 		if retErr != nil && networkBinding != nil {
