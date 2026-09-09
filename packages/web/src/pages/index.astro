@@ -449,11 +449,11 @@ const renderedActor = {
       <div class="hero-inner">
         <div class="hero-copy">
           <h1 class="headline hero-title">
-            The code-first runtime <span class="faint">for AI agents.</span>
+            Build background coding agents. <span class="faint">Own how they work.</span>
           </h1>
           <p class="hero-lede">
-            Define agent work in TypeScript. Run it in isolated Linux microVMs
-            with durable workspaces and human input.
+            Define the workflow, tools, and approval points in code. Inspect the
+            source. Run it on infrastructure you control.
           </p>
           <div class="hero-actions">
             <a class="btn btn-dark" href="/docs/quickstart">Start building</a>
@@ -809,9 +809,10 @@ const renderedActor = {
   }
 
   .hero-title {
-    max-width: 18ch;
+    max-width: none;
+    white-space: nowrap;
     font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
-    font-size: clamp(3.6rem, 5.5vw, 4.85rem);
+    font-size: clamp(2rem, 3.5vw, 3.3rem);
     font-weight: 500;
     line-height: 0.98;
     letter-spacing: -0.05em;
@@ -1426,7 +1427,7 @@ const renderedActor = {
     }
 
     .hero-title {
-      font-size: clamp(3.25rem, 5.8vw, 4rem);
+      font-size: clamp(1.5rem, 3.5vw, 2.4rem);
     }
 
     .hero-print canvas {
@@ -1493,7 +1494,7 @@ const renderedActor = {
 
   @media (max-width: 600px) {
     .hero-title {
-      font-size: clamp(1.7rem, 8.8vw, 2.2rem);
+      font-size: clamp(1rem, 5.5vw, 2rem);
       letter-spacing: -0.035em;
       text-wrap: nowrap;
     }
