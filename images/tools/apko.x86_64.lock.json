@@ -401,22 +401,22 @@
       },
       {
         "name": "gzip",
-        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/gzip-1.14-r1.apk",
-        "version": "1.14-r1",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/gzip-1.14-r2.apk",
+        "version": "1.14-r2",
         "architecture": "x86_64",
         "signature": {
-          "range": "bytes=0-720",
-          "checksum": "sha1-+azvvrFpETxP8lsPP9prICDaTOQ="
+          "range": "bytes=0-719",
+          "checksum": "sha1-y8Hpm4m4moTq/aBWJjFCkeN3jV4="
         },
         "control": {
-          "range": "bytes=721-1331",
-          "checksum": "sha1-iSVYsZvLDrMwCb3gnFtbpUqtVZw="
+          "range": "bytes=720-1329",
+          "checksum": "sha1-3QWOL0/gRCWgFrAhyQtQzvBShvA="
         },
         "data": {
-          "range": "bytes=1332-66613",
-          "checksum": "sha256-rm9Fktzm05FuERh+YkQX/3s1HHsiJ3xFlc/aVa9yAgs="
+          "range": "bytes=1330-66658",
+          "checksum": "sha256-wb2OSUOsVogAxh+0/03nXhlWf9ah3fo2zivmVZvtly4="
         },
-        "checksum": "Q1iSVYsZvLDrMwCb3gnFtbpUqtVZw="
+        "checksum": "Q13QWOL0/gRCWgFrAhyQtQzvBShvA="
       },
       {
         "name": "oniguruma",
