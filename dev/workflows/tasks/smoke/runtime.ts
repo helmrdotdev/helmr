@@ -176,11 +176,22 @@ async function checkWorkspace(marker: string, largeFileKiB: number, expectedPrev
   await mkdir(nestedDir, { recursive: true })
   const id = randomUUID()
   const smallPath = `${nestedDir}/marker.txt`
+  const largePayload = "x".repeat(largeFileKiB * 1024)
+  const digest = createHash("sha256").update(largePayload).digest("hex")
+  const largePath = `${nestedDir}/large-${largeFileKiB}k.txt`
+  let previousLargeDigest: string | null = null
+  let previousLargeBytes: number | null = null
   let previousMarkerMatched = false
   if (expectedPreviousMarker !== undefined) {
     const previous = await readFile(smallPath, "utf8")
     if (!previous.includes(expectedPreviousMarker)) {
       throw new Error(`sandbox marker file did not contain expected previous marker ${expectedPreviousMarker}`)
+    }
+    const previousLarge = await readFile(largePath)
+    previousLargeBytes = previousLarge.byteLength
+    previousLargeDigest = createHash("sha256").update(previousLarge).digest("hex")
+    if (previousLargeBytes !== largePayload.length || previousLargeDigest !== digest) {
+      throw new Error(`sandbox prior large file mismatch: bytes=${previousLargeBytes}, digest=${previousLargeDigest}`)
     }
     previousMarkerMatched = true
   }
@@ -190,9 +201,6 @@ async function checkWorkspace(marker: string, largeFileKiB: number, expectedPrev
     throw new Error("sandbox marker file did not round-trip")
   }
 
-  const largePayload = "x".repeat(largeFileKiB * 1024)
-  const digest = createHash("sha256").update(largePayload).digest("hex")
-  const largePath = `${nestedDir}/large-${largeFileKiB}k.txt`
   await writeFile(largePath, largePayload)
   const largeStat = await stat(largePath)
   const largeReadBack = await readFile(largePath, "utf8")
@@ -211,6 +219,8 @@ async function checkWorkspace(marker: string, largeFileKiB: number, expectedPrev
       largeBytes: largeStat.size,
       digest,
       previousMarkerMatched,
+      previousLargeDigest,
+      previousLargeBytes,
     },
   }
 }

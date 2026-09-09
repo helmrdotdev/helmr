@@ -131,6 +131,8 @@ async function runSmoke(): Promise<Evidence> {
 
   const markerDirectory = "sandbox-smoke/nested"
   const markerPath = `${markerDirectory}/marker.txt`
+  const largeFileKiB = 256
+  const largePath = `${markerDirectory}/large-${largeFileKiB}k.txt`
   const stdin = `stdin:${config.marker}\n`
   const execOptions = {
     command: [
@@ -138,6 +140,7 @@ async function runSmoke(): Promise<Evidence> {
       "-ceu",
       [
         `mkdir -p ${markerDirectory}`,
+        `node -e 'require("node:fs").writeFileSync("${largePath}", "x".repeat(${largeFileKiB} * 1024))'`,
         "IFS= read -r line",
         `printf 'marker=%s\\nstdin=%s\\n' "$SMOKE_MARKER" "$line" > ${markerPath}`,
         "printf 'stdout:%s:%s\\n' \"$SMOKE_MARKER\" \"$line\"",
@@ -177,7 +180,7 @@ async function runSmoke(): Promise<Evidence> {
         expectedEnvironment: "unknown",
         exerciseToken: false,
         tokenTimeout: 120,
-        largeFileKiB: 256,
+        largeFileKiB,
       },
       workspace: byKey,
       idempotencyKey: `task:start:${config.marker}`,

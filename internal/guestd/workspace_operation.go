@@ -66,7 +66,6 @@ type workspaceMountEntry struct {
 	workspaceRoot     string
 	cleanup           func()
 	processesMu       sync.Mutex
-	basicExecMu       sync.Mutex
 	basicExec         *workspaceBasicExec
 	basicExecRun      func(*workspacev0.WorkspaceBasicExecRequest) *workspacev0.WorkspaceBasicExecResult
 	active            int
@@ -74,6 +73,8 @@ type workspaceMountEntry struct {
 	authorityMu       sync.Mutex
 	authority         *workspacev0.WorkspaceRunAuthority
 	previousExpiry    int64
+	// stopping is terminal for new admissions, protected by turn/finalization locks.
+	stopping          bool
 	finalizationMu    sync.Mutex
 	turnCommitMu      sync.Mutex
 	finalizationRoot  string
@@ -219,7 +220,7 @@ func (r *workspaceOperationRegistry) acquire(workspaceMountID string, workspaceI
 		entry.processesMu.Lock()
 		finalizing := entry.authorityState == workspaceAuthorityFinalizing || entry.recoveryRequired
 		entry.processesMu.Unlock()
-		if finalizing || r.hasProgramClaimLocked(entry) {
+		if finalizing || entry.basicExec != nil || r.hasProgramClaimLocked(entry) {
 			r.mu.Unlock()
 			entry.finalizationMu.Unlock()
 			entry.turnCommitMu.Unlock()
@@ -332,6 +333,11 @@ func (r *workspaceOperationRegistry) retire(workspaceMountID string, entry *work
 	defer entry.turnCommitMu.Unlock()
 	entry.finalizationMu.Lock()
 	defer entry.finalizationMu.Unlock()
+	r.retireLocked(workspaceMountID, entry)
+}
+
+// Caller holds the entry turn/finalization locks.
+func (r *workspaceOperationRegistry) retireLocked(workspaceMountID string, entry *workspaceMountEntry) {
 	r.mu.Lock()
 	current := r.entries[workspaceMountID]
 	if current != entry {
@@ -413,6 +419,12 @@ func (r *workspaceOperationRegistry) claimProgramLocked(
 	entry *workspaceMountEntry,
 	authority *workspacev0.WorkspaceRunAuthority,
 ) (func(), error) {
+	if entry.stopping {
+		return func() {}, errors.New("workspace mount is stopping")
+	}
+	if entry.basicExec != nil {
+		return func() {}, errors.New("workspace mount is owned by an exec operation")
+	}
 	if authority == nil || authority.GetFence() == nil {
 		return func() {}, errors.New("managed program authority is required")
 	}
@@ -1234,20 +1246,36 @@ func handleWorkspaceStop(ctx context.Context, conn io.ReadWriter, registry *work
 		return errors.New("workspace stop channel token or fencing generation is invalid")
 	}
 	defer release()
+	entry.turnCommitMu.Lock()
+	defer entry.turnCommitMu.Unlock()
+	entry.finalizationMu.Lock()
+	defer entry.finalizationMu.Unlock()
+	if !registry.currentExactLocked(entry, envelope.WorkspaceMountId, envelope.WorkspaceId, envelope.ChannelToken, envelope.FencingGeneration) {
+		return errors.New("workspace stop mount is no longer current")
+	}
+	registry.mu.Lock()
+	hasProgram := registry.hasProgramClaimLocked(entry)
+	registry.mu.Unlock()
 	entry.processesMu.Lock()
 	activeExecs := entry.processAdmissions
 	entry.processesMu.Unlock()
-	if activeExecs != 0 {
+	if activeExecs != 0 || hasProgram {
 		return errors.New("workspace stop requires no active exec")
 	}
 	finalize := request.GetFinalizeStop() || !request.GetCaptureBeforeStop()
+	if request.GetCaptureBeforeStop() && finalize {
+		return errors.New("workspace stop capture and finalize must be separate requests")
+	}
+	// Stop is distinct from a committed Run finalization, which permits succession.
+	entry.stopping = true
+	// Keep admission fenced across capture, CP promotion and the later finalize request.
+	entry.processesMu.Lock()
+	entry.authorityState = workspaceAuthorityFinalizing
+	entry.processesMu.Unlock()
 	response := &workspacev0.StopWorkspaceResponse{State: "stopped"}
 	var artifact workspace.WorkspaceArtifact
 	var cleanupArtifact func()
 	if request.GetCaptureBeforeStop() {
-		if finalize {
-			return errors.New("workspace stop capture and finalize must be separate requests")
-		}
 		tempDir, err := mkdirGuestdTemp("helmr-workspace-stop-*")
 		if err != nil {
 			return fmt.Errorf("create workspace stop temp dir: %w", err)
@@ -1285,7 +1313,7 @@ func handleWorkspaceStop(ctx context.Context, conn io.ReadWriter, registry *work
 		}
 	}
 	if finalize {
-		registry.retire(envelope.WorkspaceMountId, entry)
+		registry.retireLocked(envelope.WorkspaceMountId, entry)
 	}
 	return nil
 }
@@ -1336,11 +1364,10 @@ func handleWorkspaceBasicExecConnection(
 			errors.New("workspace BasicExec identity is incomplete"),
 		)
 	}
-	entry, release, ok := registry.acquire(
+	entry, release, ok := registry.acquireAuthorityMount(
 		envelope.WorkspaceMountId,
 		envelope.WorkspaceId,
 		envelope.ChannelToken,
-		envelope.FencingGeneration,
 	)
 	if !ok {
 		return fail(
@@ -1367,7 +1394,7 @@ func handleWorkspaceBasicExecConnection(
 			errors.New("workspace BasicExec fingerprint is required"),
 		)
 	}
-	return frameio.WriteProtoFrame(conn, entry.runWorkspaceBasicExec(ctx, &request))
+	return frameio.WriteProtoFrame(conn, registry.runWorkspaceBasicExec(ctx, entry, &request))
 }
 
 func workspaceRootForImage(imageRoot, mountPath string) (string, error) {

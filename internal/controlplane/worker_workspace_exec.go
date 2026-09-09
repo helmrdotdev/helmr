@@ -77,6 +77,11 @@ func (s *Server) workerClaimWorkspaceExec(w http.ResponseWriter, r *http.Request
 		if authority.WorkspaceProcess.State == db.WorkspaceProcessStateExitRequested {
 			return nil
 		}
+		if !authority.WorkspaceLease.BaseVersionID.Valid ||
+			authority.WorkspaceLease.BaseVersionID != authority.WorkspaceProcess.BaseVersionID ||
+			authority.WorkspaceLease.BaseVersionID != authority.WorkspaceMount.MaterializedVersionID {
+			return pgx.ErrNoRows
+		}
 		if authority.WorkspaceProcess.State == db.WorkspaceProcessStateStarting {
 			started, err := work.q.StartWorkspaceExec(r.Context(), db.StartWorkspaceExecParams{
 				ProcessID:        authority.WorkspaceProcess.ID,
@@ -134,6 +139,7 @@ func (s *Server) workerClaimWorkspaceExec(w http.ResponseWriter, r *http.Request
 	defer clearWorkspaceSecretDeliveries(deliveries)
 	writeJSON(w, http.StatusOK, workerapi.WorkspaceExecClaimResponse{
 		Exec: &workerapi.WorkspaceExec{
+			BaseVersionID:       pgvalue.MustUUIDValue(authority.WorkspaceLease.BaseVersionID).String(),
 			ProcessID:           pgvalue.MustUUIDValue(authority.WorkspaceProcess.ID).String(),
 			WorkspaceID:         pgvalue.MustUUIDValue(authority.WorkspaceProcess.WorkspaceID).String(),
 			WorkspaceMountID:    pgvalue.MustUUIDValue(authority.WorkspaceMount.ID).String(),

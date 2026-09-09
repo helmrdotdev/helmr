@@ -237,6 +237,9 @@ message WorkspaceBasicExecRequest {
   string request_json = 2;
   repeated WorkspaceSecretDelivery secrets = 3;
   bytes stdin = 4;
+  string base_workspace_version_id = 5;
+  int64 ownership_generation = 6;
+  int64 writer_generation = 7;
 }
 
 message WorkspaceBasicExecResult {
