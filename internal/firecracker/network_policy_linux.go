@@ -1405,15 +1405,9 @@ func netipPrefix(network *net.IPNet) (netip.Prefix, bool) {
 	return netip.PrefixFrom(address.Unmap(), ones).Masked(), true
 }
 
-func staticNetworkInterface(resolverIPv4 string) firecracker.NetworkInterface {
-	guestIP, guestNetwork, _ := net.ParseCIDR(GuestNetworkCIDRV0)
-	guestNetwork.IP = guestIP
+func staticNetworkInterface() firecracker.NetworkInterface {
 	return firecracker.NetworkInterface{StaticConfiguration: &firecracker.StaticNetworkConfiguration{
 		HostDevName: GuestTapNameV0,
 		MacAddress:  GuestMACV0,
-		IPConfiguration: &firecracker.IPConfiguration{
-			IPAddr: *guestNetwork, Gateway: net.ParseIP(GuestGatewayIPv4V0).To4(),
-			Nameservers: []string{resolverIPv4}, IfName: GuestInterfaceNameV0,
-		},
 	}}
 }

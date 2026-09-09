@@ -1199,6 +1199,8 @@ func TestWorkspaceMaterializerFailsWorkspaceMountOnFatalHeartbeatError(t *testin
 }
 
 func TestRunWorkspaceMountPropagatesCloseFailureAndRetainsPreparedRuntimeCheckout(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	preparedClient, preparedServer := net.Pipe()
 	defer preparedServer.Close()
 	store, workspaceMount := testWorkspaceMountArtifacts(t)
@@ -1229,17 +1231,20 @@ func TestRunWorkspaceMountPropagatesCloseFailureAndRetainsPreparedRuntimeCheckou
 	}}
 	go acknowledgePreparedWorkspaceMount(t, preparedServer, workspaceMount, key)
 	client := &workspaceMaterializerTestClient{
-		renewErrors: []error{errors.New("renew failed")},
+		onMounted: cancel,
 	}
 	materializer := WorkspaceMaterializer{
 		CAS:         store,
 		TempDir:     t.TempDir(),
-		Heartbeat:   time.Millisecond,
+		Heartbeat:   time.Hour,
 		PollEvery:   time.Hour,
 		RuntimePool: pool,
 	}
 
-	err := materializer.RunWorkspaceMount(context.Background(), workspaceMount, client)
+	err := materializer.RunWorkspaceMount(ctx, workspaceMount, client)
+	if len(client.mounted) != 1 {
+		t.Fatalf("mounted requests = %d, want 1", len(client.mounted))
+	}
 	if !errors.Is(err, closeFailure) {
 		t.Fatalf("materializer error = %v, want close failure", err)
 	}

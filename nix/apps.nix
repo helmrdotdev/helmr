@@ -66,6 +66,7 @@ let
           bash tests/netboot_inputs_test.sh
           bash tests/boot_artifacts_make_test.sh
           bash tests/guest_init_cgroup_test.sh
+          bash tests/guest_init_network_test.sh
         '';
     ci-generated =
       app "ci-generated" "check generated artifacts and formatting for CI" toolsets.ciGenerated
@@ -247,6 +248,7 @@ ciApps
         bash ./tests/netboot_inputs_test.sh
         bash ./tests/boot_artifacts_make_test.sh
         bash ./tests/guest_init_cgroup_test.sh
+        bash ./tests/guest_init_network_test.sh
         exec ./tests/boot_artifacts_reproducibility_test.sh "$@"
       '';
   doctor = app "doctor" "check Helmr host prerequisites" toolsets.appRuntime ''
