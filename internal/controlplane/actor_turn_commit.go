@@ -124,11 +124,10 @@ func (s *Server) commitActorTurn(
 			return staleActorTurnCommit(err)
 		}
 		restoredBase := authority.workspaceLease.BaseVersionID != authority.workspace.HeadVersionID
-		if restoredBase && (base.ParentVersionID != authority.workspace.HeadVersionID ||
-			base.OwnershipGeneration != authority.workspace.OwnershipGeneration ||
-			base.WriterGeneration != authority.workspace.WriterGeneration ||
-			!authority.runtime.RestoreCheckpointID.Valid) {
-			return errStaleActorTurnCommit
+		if restoredBase {
+			if err := validateRestoredActorBase(ctx, work.q, authority, base); err != nil {
+				return staleActorTurnCommit(err)
+			}
 		}
 		changed := commit.tree.Digest != base.ContentDigest ||
 			commit.tree.SizeBytes != base.LogicalSizeBytes || commit.tree.EntryCount != int(base.EntryCount)
@@ -175,7 +174,7 @@ func (s *Server) commitActorTurn(
 					CommittedAt: committedAt, VersionID: authority.workspaceLease.BaseVersionID,
 					WorkspaceID: authority.workspace.ID, ExpectedParentVersionID: authority.workspace.HeadVersionID,
 					OwnershipGeneration: authority.workspace.OwnershipGeneration,
-					WriterGeneration:    authority.workspace.WriterGeneration,
+					WriterGeneration:    base.WriterGeneration,
 					RestoreCheckpointID: authority.runtime.RestoreCheckpointID,
 					RunID:               authority.run.ID, AttemptNumber: authority.attempt.Number,
 				},
@@ -330,7 +329,7 @@ func staleActorTurnCommit(err error) error {
 		return err
 	}
 	if err == nil || errors.Is(err, pgx.ErrNoRows) || errors.Is(err, errStaleRunLeaseClaim) ||
-		errors.Is(err, errStaleRunFinalization) {
+		errors.Is(err, errStaleRunFinalization) || errors.Is(err, errStaleActorCompletion) {
 		return errStaleActorTurnCommit
 	}
 	return err

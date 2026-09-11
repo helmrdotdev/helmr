@@ -256,8 +256,22 @@ func TestWorkspaceDeletePublishesOwnerlessMountCleanupOnce(t *testing.T) {
 }
 
 func TestWorkspaceDeleteWithoutActiveMountSucceeds(t *testing.T) {
+	for _, recoveryRequired := range []bool{false, true} {
+		t.Run(fmt.Sprintf("recovery_required=%t", recoveryRequired), func(t *testing.T) {
+			testWorkspaceDeleteWithoutActiveMountSucceeds(t, recoveryRequired)
+		})
+	}
+}
+
+func testWorkspaceDeleteWithoutActiveMountSucceeds(t *testing.T, recoveryRequired bool) {
 	product := newActorStartPostgresFixture(t, 1)
 	workspaceID := product.workspaceIDs[0]
+	if recoveryRequired {
+		dbtest.MustExec(t, t.Context(), product.pool, `
+UPDATE workspaces
+   SET state = 'recovery_required', desired_state = 'stopped', dirty_state = 'dirty_state_lost'
+ WHERE id = $1`, workspaceID)
+	}
 	var originalKey, originalDeclaredID string
 	if err := product.pool.QueryRow(t.Context(), `
 SELECT key, sandbox_declared_id FROM workspaces WHERE id = $1`, workspaceID).Scan(
@@ -278,12 +292,15 @@ SELECT key, sandbox_declared_id FROM workspaces WHERE id = $1`, workspaceID).Sca
 		t.Fatalf("delete result = %+v", deleted)
 	}
 	var state db.WorkspaceState
+	var desiredState, dirtyState string
 	if err := product.pool.QueryRow(t.Context(), `
-SELECT state FROM workspaces WHERE id = $1`, workspaceID).Scan(&state); err != nil {
+SELECT state, desired_state, dirty_state FROM workspaces WHERE id = $1`, workspaceID).Scan(
+		&state, &desiredState, &dirtyState,
+	); err != nil {
 		t.Fatal(err)
 	}
-	if state != db.WorkspaceStateDeleting {
-		t.Fatalf("workspace state = %s, want deleting", state)
+	if state != db.WorkspaceStateDeleting || desiredState != "deleted" || dirtyState != "clean" {
+		t.Fatalf("workspace state = %s/%s/%s, want deleting/deleted/clean", state, desiredState, dirtyState)
 	}
 	finalized, err := product.server.db.FinalizeDeletingWorkspaces(t.Context(), 10)
 	if err != nil {

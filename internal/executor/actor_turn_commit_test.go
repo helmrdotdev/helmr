@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/frameio"
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
@@ -144,6 +145,7 @@ func TestHandleActorTurnCommitAdvancesAllLocalWorkspaceFrontiers(t *testing.T) {
 	applyGate := make(chan struct{})
 	guestResult := make(chan error, 1)
 	go func() {
+		defer guest.Close()
 		reader := bufio.NewReader(guest)
 		header, bodyLen, err := wire.ReadStreamFrameHeader(reader)
 		if err != nil {
@@ -182,13 +184,9 @@ func TestHandleActorTurnCommitAdvancesAllLocalWorkspaceFrontiers(t *testing.T) {
 			guestResult <- err
 			return
 		}
-		header, bodyLen, err = wire.ReadStreamFrameHeader(reader)
-		if err != nil {
-			guestResult <- err
-			return
-		}
-		decision, err := wire.ReadResumeDecision(header, reader, bodyLen)
-		if err != nil {
+		// The paused guest reads a protobuf message, not a host-control stream frame.
+		var decision programv0.ResumeDecision
+		if err := frameio.ReadProtoFrame(reader, &decision); err != nil {
 			guestResult <- err
 			return
 		}
@@ -199,7 +197,8 @@ func TestHandleActorTurnCommitAdvancesAllLocalWorkspaceFrontiers(t *testing.T) {
 			guestResult <- err
 			return
 		}
-		if decision.GetKind() != "committed" || payload.WorkspaceVersionID != "version-2" {
+		if decision.GetCorrelationId() != pause.GetCorrelationId() ||
+			decision.GetKind() != "committed" || payload.WorkspaceVersionID != "version-2" {
 			guestResult <- errors.New("commit decision did not carry the new workspace frontier")
 			return
 		}
@@ -230,7 +229,13 @@ func TestHandleActorTurnCommitAdvancesAllLocalWorkspaceFrontiers(t *testing.T) {
 		t.Fatalf("renew during Actor turn capture: %v", err)
 	}
 	close(captureGate)
-	<-decisionSeen
+	select {
+	case <-decisionSeen:
+	case err := <-guestResult:
+		t.Fatalf("guest could not read the actor turn commit decision: %v", err)
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
 	task.mu.Lock()
 	baseBeforeProof := task.lease.BaseWorkspaceVersionID
 	task.mu.Unlock()
@@ -288,6 +293,7 @@ func TestHandleActorTurnCommitRejectsMismatchedAppliedProofWithoutInstallingFron
 	}
 	guestResult := make(chan error, 1)
 	go func() {
+		defer guest.Close()
 		reader := bufio.NewReader(guest)
 		header, bodyLen, err := wire.ReadStreamFrameHeader(reader)
 		if err != nil {
@@ -308,13 +314,8 @@ func TestHandleActorTurnCommitRejectsMismatchedAppliedProofWithoutInstallingFron
 			guestResult <- err
 			return
 		}
-		header, bodyLen, err = wire.ReadStreamFrameHeader(reader)
-		if err != nil {
-			guestResult <- err
-			return
-		}
-		decision, err := wire.ReadResumeDecision(header, reader, bodyLen)
-		if err != nil {
+		var decision programv0.ResumeDecision
+		if err := frameio.ReadProtoFrame(reader, &decision); err != nil {
 			guestResult <- err
 			return
 		}
@@ -366,6 +367,7 @@ func TestHandleActorTurnCommitStopsMissingAppliedProofAtLeaseExpiry(t *testing.T
 	}
 	guestResult := make(chan error, 1)
 	go func() {
+		defer guest.Close()
 		reader := bufio.NewReader(guest)
 		header, bodyLen, err := wire.ReadStreamFrameHeader(reader)
 		if err != nil {
@@ -386,11 +388,8 @@ func TestHandleActorTurnCommitStopsMissingAppliedProofAtLeaseExpiry(t *testing.T
 			guestResult <- err
 			return
 		}
-		header, bodyLen, err = wire.ReadStreamFrameHeader(reader)
-		if err == nil {
-			_, err = wire.ReadResumeDecision(header, reader, bodyLen)
-		}
-		if err != nil {
+		var decision programv0.ResumeDecision
+		if err := frameio.ReadProtoFrame(reader, &decision); err != nil {
 			guestResult <- err
 			return
 		}

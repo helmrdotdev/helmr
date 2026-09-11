@@ -63,6 +63,20 @@ func TestCommitActorTurnRejectsSkippedInputSequence(t *testing.T) {
 	}
 }
 
+// Unit-store setup complements the owning PostgreSQL transition regression.
+func configureRestoredActorTurn(t *testing.T, store *actorTurnCommitStore) {
+	t.Helper()
+	a := &store.authority
+	source := pgvalue.UUID(uuid.NewV7())
+	sourceRun := pgvalue.UUID(uuid.NewV7())
+	wait := pgvalue.UUID(uuid.NewV7())
+	store.resetTarget.WriterGeneration = a.workspace.WriterGeneration - 1
+	store.resetTarget.SourceWorkspaceLeaseID = source
+	store.readyCheckpoint = db.RunCheckpoint{ID: a.runtime.RestoreCheckpointID, RunID: a.run.ID, AttemptNumber: a.attempt.Number, RunWaitID: wait, WorkspaceID: a.workspace.ID, BaseWorkspaceVersionID: a.workspace.HeadVersionID, PrivateWorkspaceVersionID: a.workspaceLease.BaseVersionID, SourceWorkspaceLeaseID: source, SourceRunLeaseID: sourceRun, State: db.RunCheckpointStateReady}
+	store.runWait = db.RunWait{ID: wait, RunID: a.run.ID, AttemptNumber: a.attempt.Number, Kind: db.WaitKindTimer, WorkspaceID: a.workspace.ID, PriorRunLeaseID: sourceRun, SuspendCheckpointID: a.runtime.RestoreCheckpointID, SuspensionState: db.RunWaitStateReleased, CheckpointRequestVersion: 1, CheckpointAckVersion: 1, ResumeRequestVersion: 1, ResumeAckVersion: 1}
+	store.workspaceLeases = map[pgtype.UUID]db.WorkspaceLease{source: {ID: source, WorkspaceID: a.workspace.ID, BaseVersionID: a.workspace.HeadVersionID, State: db.WorkspaceLeaseStateReleased, OwnershipGeneration: a.workspace.OwnershipGeneration, WriterGeneration: store.resetTarget.WriterGeneration}}
+}
+
 func TestCommitActorTurnPublishesUnchangedRestoredCheckpointBase(t *testing.T) {
 	server, store, worker, request, _ := newActorTurnCommitFixture(t)
 	oldHead := store.authority.workspace.HeadVersionID
@@ -74,7 +88,7 @@ func TestCommitActorTurnPublishesUnchangedRestoredCheckpointBase(t *testing.T) {
 	store.resetTarget.VersionID = restoredBase
 	store.resetTarget.ParentVersionID = oldHead
 	store.resetTarget.OwnershipGeneration = store.authority.workspace.OwnershipGeneration
-	store.resetTarget.WriterGeneration = store.authority.workspace.WriterGeneration
+	configureRestoredActorTurn(t, store)
 	assignment, err := projectActorTurnTestAssignment(store.authority)
 	if err != nil {
 		t.Fatal(err)
@@ -115,7 +129,7 @@ func TestCommitActorTurnInvalidatesRestoredCheckpointBeforePublishingChangedTurn
 	store.resetTarget.VersionID = restoredBase
 	store.resetTarget.ParentVersionID = oldHead
 	store.resetTarget.OwnershipGeneration = store.authority.workspace.OwnershipGeneration
-	store.resetTarget.WriterGeneration = store.authority.workspace.WriterGeneration
+	configureRestoredActorTurn(t, store)
 	assignment, err := projectActorTurnTestAssignment(store.authority)
 	if err != nil {
 		t.Fatal(err)
@@ -330,7 +344,8 @@ func (s *actorTurnCommitStore) PublishRestoredActorCheckpointWorkspaceVersion(
 	params db.PublishRestoredActorCheckpointWorkspaceVersionParams,
 ) (db.WorkspaceVersion, error) {
 	if params.VersionID != s.authority.workspaceLease.BaseVersionID ||
-		params.ExpectedParentVersionID != s.authority.workspace.HeadVersionID {
+		params.ExpectedParentVersionID != s.authority.workspace.HeadVersionID ||
+		params.WriterGeneration != s.resetTarget.WriterGeneration {
 		return db.WorkspaceVersion{}, errors.New("restored checkpoint publish fence mismatch")
 	}
 	s.restoredPublishes++

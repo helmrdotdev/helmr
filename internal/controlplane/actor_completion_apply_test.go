@@ -160,7 +160,7 @@ func TestRestoredSameWorkspaceActorCompletionRejectsBrokenProducerReceipts(t *te
 		t.Run(test.name, func(t *testing.T) {
 			authority, store, pID, cID := validSameWorkspaceActorCompletionBase(t)
 			test.mutate(&authority, store, pID, cID)
-			if err := validateRestoredActorCompletionBase(
+			if err := validateRestoredActorBase(
 				t.Context(), store, authority, store.resetTargets[cID],
 			); !errors.Is(err, errStaleActorCompletion) {
 				t.Fatalf("error = %v, want stale Actor completion", err)

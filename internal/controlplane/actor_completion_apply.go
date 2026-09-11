@@ -185,7 +185,7 @@ func validateActorCompletionAuthority(
 		if err != nil {
 			return staleActorCompletion(err)
 		}
-		if err := validateRestoredActorCompletionBase(ctx, store, authority, base); err != nil {
+		if err := validateRestoredActorBase(ctx, store, authority, base); err != nil {
 			return err
 		}
 	}
@@ -225,7 +225,7 @@ func validateActorCompletionAuthority(
 	return nil
 }
 
-func validateRestoredActorCompletionBase(
+func validateRestoredActorBase(
 	ctx context.Context,
 	store db.Querier,
 	authority runLeaseClaimAuthority,
@@ -253,7 +253,7 @@ func validateRestoredActorCompletionBase(
 	if checkpoint.ID != authority.runtime.RestoreCheckpointID ||
 		checkpoint.WorkspaceID != authority.workspace.ID ||
 		checkpoint.BaseWorkspaceVersionID != authority.workspace.HeadVersionID ||
-		checkpoint.BaseWorkspaceVersionID != authority.attempt.BaseWorkspaceVersionID ||
+		(wait.Kind != db.WaitKindActorInput && checkpoint.BaseWorkspaceVersionID != authority.attempt.BaseWorkspaceVersionID) ||
 		checkpoint.SourceRunLeaseID != wait.PriorRunLeaseID ||
 		wait.SuspendCheckpointID != checkpoint.ID ||
 		wait.SuspensionState != db.RunWaitStateReleased ||
@@ -278,6 +278,28 @@ func validateRestoredActorCompletionBase(
 		authority.workspace.OwnershipGeneration,
 	) {
 		return errStaleActorCompletion
+	}
+
+	if wait.Kind == db.WaitKindActorInput {
+		if checkpoint.ActorSpeculativeInputSequence != wait.ActorSpeculativeInputSequence || validateRunWaitActorCursor(authority, wait) != nil {
+			return errStaleActorCompletion
+		}
+		source, err := store.GetRunCheckpointSource(ctx, db.GetRunCheckpointSourceParams{
+			SourceWorkspaceLeaseID: checkpoint.SourceWorkspaceLeaseID, SourceRunLeaseID: checkpoint.SourceRunLeaseID,
+			RunID: authority.run.ID, AttemptNumber: authority.attempt.Number, WorkspaceID: authority.workspace.ID,
+		})
+		if err != nil {
+			return staleActorCompletion(err)
+		}
+		sourceAuthority := authority
+		sourceAuthority.checkpoint = checkpoint
+		sourceAuthority.sourceRunLease = source.RunLease
+		sourceAuthority.sourceWorkspaceLease = source.WorkspaceLease
+		sourceAuthority.sourceRuntime = source.RuntimeInstance
+		if validateCheckpointSource(sourceAuthority) != nil || source.RuntimeInstance.DesiredState != db.RuntimeDesiredStateClosed ||
+			source.RuntimeInstance.ObservedState != db.RuntimeObservedStateClosed {
+			return errStaleActorCompletion
+		}
 	}
 
 	if sameWorkspaceParentResumeWait(wait) {

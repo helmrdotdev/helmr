@@ -773,6 +773,17 @@ func claimCheckpointRestoreRunLeaseInTx(
 	if err := validateCheckpointSource(authority); err != nil {
 		return runLeaseClaimAuthority{}, err
 	}
+	if authority.run.EntrypointKind == "actor" && authority.runWait.Kind == db.WaitKindActorInput {
+		base, err := getActorTurnVersion(ctx, q, authority, authority.checkpoint.PrivateWorkspaceVersionID)
+		if err != nil {
+			return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
+		}
+		if authority.sourceRuntime.DesiredState != db.RuntimeDesiredStateClosed ||
+			authority.sourceRuntime.ObservedState != db.RuntimeObservedStateClosed ||
+			!validActorCompletionVersionSource(base, authority.sourceWorkspaceLease, authority.workspace.HeadVersionID, authority.workspace.OwnershipGeneration) {
+			return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
+		}
+	}
 	if authority.runtime.RestoreCheckpointID != authority.checkpoint.ID {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
@@ -1066,9 +1077,13 @@ func validateCheckpointRestoreWait(
 
 func validateCheckpointRestore(authority runLeaseClaimAuthority) error {
 	checkpoint := authority.checkpoint
+	expectedBase := authority.attempt.BaseWorkspaceVersionID
+	if authority.run.EntrypointKind == "actor" && authority.runWait.Kind == db.WaitKindActorInput {
+		expectedBase = authority.workspace.HeadVersionID
+	}
 	if checkpoint.State != db.RunCheckpointStateReady ||
 		checkpoint.SourceRunLeaseID != authority.runWait.PriorRunLeaseID ||
-		checkpoint.BaseWorkspaceVersionID != authority.attempt.BaseWorkspaceVersionID {
+		checkpoint.BaseWorkspaceVersionID != expectedBase {
 		return errStaleRunLeaseClaim
 	}
 	if sameWorkspaceParentResumeWait(authority.runWait) {
