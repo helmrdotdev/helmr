@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -106,13 +107,17 @@ func (source *runtimeSubstrateCacheSource) MaterializeInto(
 		retErr = errors.Join(retErr, closeErr)
 	}()
 	hash := sha256.New()
-	written, err := io.Copy(io.MultiWriter(output, hash), &contextReader{ctx: ctx, reader: input})
+	written, err := io.Copy(io.MultiWriter(substrateProjectionWriter{file: output}, hash), &contextReader{ctx: ctx, reader: input})
 	if err != nil {
 		return "", fmt.Errorf("copy runtime substrate into arena: %w", err)
 	}
 	actualDigest := sha256sum.FormatDigest(hash.Sum(nil))
 	if written != source.sizeBytes || actualDigest != source.digest {
 		return "", errors.New("runtime substrate arena projection does not match source identity")
+	}
+	// Seeking over a trailing zero chunk does not extend the file.
+	if err := output.Truncate(written); err != nil {
+		return "", fmt.Errorf("size runtime substrate arena projection: %w", err)
 	}
 	if err := output.Sync(); err != nil {
 		return "", fmt.Errorf("sync runtime substrate arena projection: %w", err)
@@ -125,6 +130,20 @@ func (source *runtimeSubstrateCacheSource) MaterializeInto(
 	}
 	keep = true
 	return destination, nil
+}
+
+type substrateProjectionWriter struct {
+	file *os.File
+}
+
+func (writer substrateProjectionWriter) Write(data []byte) (int, error) {
+	if bytes.Count(data, []byte{0}) != len(data) {
+		return writer.file.Write(data)
+	}
+	if _, err := writer.file.Seek(int64(len(data)), io.SeekCurrent); err != nil {
+		return 0, err
+	}
+	return len(data), nil
 }
 
 type contextReader struct {
