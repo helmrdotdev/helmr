@@ -78,6 +78,8 @@ type PreparedRuntimePool struct {
 	activityWake      chan struct{}
 	closed            bool
 	verifiedRuntimes  map[deployment.RuntimeDescriptor]deployment.RuntimeIndex
+	programDescriptor deployment.ProgramDescriptor
+	programIndex      *deployment.ProgramIndex
 }
 
 type preparedRuntimeEntry struct {
@@ -942,13 +944,6 @@ func (p *PreparedRuntimePool) prepareProgram(
 	if p.PlatformStore == nil {
 		return nil, func() error { return nil }, errors.New("managed runtime delivery is not configured")
 	}
-	if string(p.RuntimeArchitecture) != target.Source.WorkspaceArchitecture {
-		return nil, func() error { return nil }, fmt.Errorf(
-			"managed runtime architecture %q does not match workspace architecture %q",
-			p.RuntimeArchitecture,
-			target.Source.WorkspaceArchitecture,
-		)
-	}
 	runtimeDescriptor := deployment.RuntimeDescriptor{
 		Architecture:    p.RuntimeArchitecture,
 		Digest:          program.Runtime.Digest,
@@ -998,13 +993,14 @@ func (p *PreparedRuntimePool) prepareProgram(
 			closeSnapshots(),
 		)
 	}
+	programDescriptor := deployment.ProgramDescriptor{
+		Digest: program.Artifact.Digest, SizeBytes: program.Artifact.SizeBytes, MediaType: program.Artifact.MediaType,
+	}
 	programSnapshot, err := deployment.SnapshotProgram(
 		ctx,
 		p.CAS,
 		tempDir,
-		deployment.ProgramDescriptor{
-			Digest: program.Artifact.Digest, SizeBytes: program.Artifact.SizeBytes, MediaType: program.Artifact.MediaType,
-		},
+		programDescriptor,
 	)
 	if err != nil {
 		return nil, func() error { return nil }, errors.Join(err, closeSnapshots())
@@ -1012,12 +1008,9 @@ func (p *PreparedRuntimePool) prepareProgram(
 	closeSnapshots = func() error {
 		return errors.Join(runtimeSnapshot.Close(), programSnapshot.Close())
 	}
-	programIndex, err := deployment.VerifyProgram(
-		ctx,
-		p.VerifierCgroupRoot,
-		target.ID,
-		programSnapshot,
-	)
+	programIndex, err := p.verifyProgram(ctx, programDescriptor, func() (deployment.ProgramIndex, error) {
+		return deployment.VerifyProgram(ctx, p.VerifierCgroupRoot, target.ID, programSnapshot)
+	})
 	if err != nil {
 		return nil, func() error { return nil }, errors.Join(
 			fmt.Errorf("verify program: %w", err),
@@ -1049,6 +1042,40 @@ func (p *PreparedRuntimePool) prepareProgram(
 			Source: programSnapshot,
 		},
 	}, closeSnapshots, nil
+}
+
+// Callers must verify a fresh snapshot against descriptor before every call,
+// including memo hits.
+func (p *PreparedRuntimePool) verifyProgram(
+	ctx context.Context,
+	descriptor deployment.ProgramDescriptor,
+	verify func() (deployment.ProgramIndex, error),
+) (deployment.ProgramIndex, error) {
+	if err := ctx.Err(); err != nil {
+		return deployment.ProgramIndex{}, err
+	}
+	p.mu.Lock()
+	cached := p.programIndex
+	if p.programDescriptor != descriptor {
+		cached = nil
+	}
+	p.mu.Unlock()
+	if cached != nil {
+		return cached.Clone(), nil
+	}
+	index, err := verify()
+	if err != nil {
+		return deployment.ProgramIndex{}, err
+	}
+	owned := index.Clone()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return deployment.ProgramIndex{}, err
+	}
+	p.programDescriptor = descriptor
+	p.programIndex = &owned
+	return index, nil
 }
 
 func (p *PreparedRuntimePool) verifyRuntime(

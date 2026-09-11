@@ -273,6 +273,10 @@ func validateProgramVerification(verified programVerification) error {
 	return nil
 }
 
+func (index ProgramIndex) Clone() ProgramIndex {
+	return cloneProgramIndex(index)
+}
+
 func cloneProgramIndex(index ProgramIndex) ProgramIndex {
 	declarations := make([]ProgramIndexDeclaration, len(index.Declarations))
 	copy(declarations, index.Declarations)
