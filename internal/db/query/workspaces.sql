@@ -238,6 +238,8 @@ SELECT workspaces.*,
 UPDATE workspaces
    SET state = 'deleting',
        desired_state = 'deleted',
+       -- Explicit deletion discards lost dirty state; it does not recover a version.
+       dirty_state = CASE WHEN dirty_state = 'dirty_state_lost' THEN 'clean' ELSE dirty_state END,
        state_version = state_version + 1,
        updated_at = now()
  WHERE environment_id = sqlc.arg(environment_id)

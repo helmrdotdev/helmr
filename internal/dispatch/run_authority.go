@@ -104,6 +104,7 @@ func lockRunPlacementAuthority(
 	var actorRunGeneration int64
 	var actorCommittedInputSequence int64
 	var actorNextInputSequence int64
+	var workspaceHeadVersionID pgtype.UUID
 	var err error
 	if err := tx.QueryRow(ctx, `
 SELECT entrypoint_kind, session_id
@@ -416,6 +417,7 @@ SELECT workspaces.deployment_definition_id,
        workspaces.region_id,
        workspaces.ownership_generation,
        workspaces.writer_generation,
+       workspaces.head_version_id,
        workspace_definitions.manifest_version,
        workspace_definitions.manifest
   FROM workspaces
@@ -445,6 +447,7 @@ SELECT workspaces.deployment_definition_id,
 		&authority.regionID,
 		&authority.ownershipGeneration,
 		&authority.writerGeneration,
+		&workspaceHeadVersionID,
 		&manifestVersion,
 		&manifest,
 	)
@@ -571,7 +574,9 @@ SELECT source_lease.worker_group_id,
    AND run_checkpoints.run_wait_id = run_waits.id
    AND run_checkpoints.workspace_id = run_waits.workspace_id
 	   AND run_checkpoints.state = 'ready'
-	   AND run_checkpoints.base_workspace_version_id = $8
+	   AND run_checkpoints.base_workspace_version_id = CASE
+           WHEN $11 = 'actor' AND run_waits.kind = 'actor_input' THEN $15::uuid
+           ELSE $8::uuid END
 	   AND run_checkpoints.private_workspace_version_id = $14
    AND (($11 = 'task' AND run_checkpoints.actor_speculative_input_sequence IS NULL)
         OR ($11 = 'actor'
@@ -594,6 +599,39 @@ SELECT source_lease.worker_group_id,
    AND source_workspace_lease.owner_run_lease_id = source_lease.id
 	   AND source_workspace_lease.base_version_id = run_checkpoints.base_workspace_version_id
    AND source_workspace_lease.state IN ('released', 'fenced')
+   AND ($11 <> 'actor' OR run_waits.kind <> 'actor_input' OR (
+       workspace_versions.parent_version_id = run_checkpoints.base_workspace_version_id
+       AND workspace_versions.source_workspace_lease_id = source_workspace_lease.id
+       AND workspace_versions.ownership_generation = source_workspace_lease.ownership_generation
+       AND workspace_versions.writer_generation = source_workspace_lease.writer_generation
+       AND source_workspace_lease.ownership_generation = $16
+       -- A recovered restore owns the current fence; its checkpoint source is immutable.
+       AND (source_workspace_lease.writer_generation = $17 OR (
+           source_workspace_lease.writer_generation < $17 AND EXISTS (
+               SELECT 1
+                 FROM workspace_leases AS restored_workspace_lease
+                 JOIN run_leases AS restored_lease
+                   ON restored_lease.id = restored_workspace_lease.owner_run_lease_id
+                  AND restored_lease.run_id = run_checkpoints.run_id
+                  AND restored_lease.attempt_number = run_checkpoints.attempt_number
+                  AND restored_lease.workspace_id = run_checkpoints.workspace_id
+                  AND restored_lease.state = 'expired'
+                  AND restored_lease.terminal_reason_code IN ('lease_expired', 'worker_lost', 'runtime_failed')
+                 JOIN runtime_instances AS restored_runtime
+                   ON restored_runtime.id = restored_lease.runtime_instance_id
+                  AND restored_runtime.workspace_id = run_checkpoints.workspace_id
+                  AND restored_runtime.restore_checkpoint_id = run_checkpoints.id
+                WHERE restored_workspace_lease.workspace_id = run_checkpoints.workspace_id
+                  AND restored_workspace_lease.ownership_generation = $16
+                  AND restored_workspace_lease.writer_generation = $17
+                  AND restored_workspace_lease.base_version_id = run_checkpoints.private_workspace_version_id
+                  AND restored_workspace_lease.owner_process_id IS NULL
+                  AND restored_workspace_lease.state = 'expired'
+                  AND restored_workspace_lease.terminal_reason_code = restored_lease.terminal_reason_code
+           )
+       ))
+       AND source_workspace_lease.owner_process_id IS NULL
+   ))
   JOIN runtime_instances AS source_runtime
     ON source_runtime.id = source_lease.runtime_instance_id
    AND source_runtime.workspace_id = run_checkpoints.workspace_id
@@ -610,7 +648,9 @@ SELECT source_lease.worker_group_id,
    AND runtime_substrates.project_id = source_runtime.project_id
    AND runtime_substrates.environment_id = source_runtime.environment_id
    AND runtime_substrates.deployment_definition_id = source_runtime.deployment_definition_id
- WHERE run_waits.id = $1
+ WHERE ($11 <> 'actor' OR run_waits.kind <> 'actor_input' OR
+        (source_runtime.desired_state = 'closed' AND source_runtime.observed_state = 'closed'))
+   AND run_waits.id = $1
    AND run_waits.run_id = $2
    AND run_waits.attempt_number = $3
    AND run_waits.workspace_id = $4
@@ -634,6 +674,7 @@ SELECT source_lease.worker_group_id,
 			actorCommittedInputSequence,
 			actorNextInputSequence-1,
 			authority.restoreCheckpointVersion,
+			workspaceHeadVersionID, authority.ownershipGeneration, authority.writerGeneration,
 		).Scan(
 			&authority.restoreWorkerGroupID,
 			&authority.restoreRuntimeIdentityID,

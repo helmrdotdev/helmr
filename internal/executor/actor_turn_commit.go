@@ -134,7 +134,7 @@ func (task *guestRunLeaseTask) handleActorTurnCommit(
 	defer cancelProof()
 	stopProofClose := context.AfterFunc(proofCtx, func() { _ = stream.Close() })
 	defer stopProofClose()
-	if err := wire.WriteResumeDecision(stream, &programv0.ResumeDecision{
+	if err := frameio.WriteProtoFrame(stream, &programv0.ResumeDecision{
 		CorrelationId: requested.GetCorrelationId(), Kind: "committed", DataJson: string(decisionData),
 	}); err != nil {
 		return fmt.Errorf("write actor turn commit decision: %w", err)
