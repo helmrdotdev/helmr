@@ -1044,8 +1044,8 @@ func (p *PreparedRuntimePool) prepareProgram(
 	}, closeSnapshots, nil
 }
 
-// verifyProgram retains only the last successful descriptor. Snapshots must be
-// freshly verified before calling it; the memo owns no files or target authority.
+// Callers must verify a fresh snapshot against descriptor before every call,
+// including memo hits.
 func (p *PreparedRuntimePool) verifyProgram(
 	ctx context.Context,
 	descriptor deployment.ProgramDescriptor,
@@ -1063,8 +1063,6 @@ func (p *PreparedRuntimePool) verifyProgram(
 	if cached != nil {
 		return cached.Clone(), nil
 	}
-	// Concurrent misses can verify independently; never hold the pool lock
-	// across the isolated verifier. Published copies are never mutated.
 	index, err := verify()
 	if err != nil {
 		return deployment.ProgramIndex{}, err

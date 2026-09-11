@@ -27,7 +27,6 @@ func TestPreparedProgramMemoDescriptorAndOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Mutating both the verifier-owned input and returned miss must not reach the memo.
 	first.Declarations[0].Locator.ExportName = "changed"
 	*index.Queues[0].ConcurrencyLimit = 9
 	hit, err := pool.verifyProgram(t.Context(), descriptor, verify)
@@ -56,7 +55,6 @@ func TestPreparedProgramMemoDescriptorAndOwnership(t *testing.T) {
 		if _, err := pool.verifyProgram(t.Context(), changed, verify); err != nil || calls != before+1 {
 			t.Fatalf("field %d did not invalidate: %v", i, err)
 		}
-		// Only one entry: replacing with another descriptor evicts the first.
 		if _, err := pool.verifyProgram(t.Context(), descriptor, verify); err != nil || calls != before+2 {
 			t.Fatalf("field %d did not evict: %v", i, err)
 		}

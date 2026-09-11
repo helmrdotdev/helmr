@@ -273,7 +273,6 @@ func validateProgramVerification(verified programVerification) error {
 	return nil
 }
 
-// Clone returns an independent copy, including declarations and queue limits.
 func (index ProgramIndex) Clone() ProgramIndex {
 	return cloneProgramIndex(index)
 }
