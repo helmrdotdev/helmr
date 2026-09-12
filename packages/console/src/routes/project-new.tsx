@@ -6,6 +6,7 @@ import { getMe } from "../lib/auth";
 import { createProject, listRegions } from "../lib/projects";
 import { rememberProjectScope } from "../lib/scope";
 import { AuthLoading, AuthScreen, AuthTitle } from "../ui/AuthScreen";
+import { PageHeader } from "../ui/PageHeader";
 import { ui } from "../ui/styles";
 
 function slugify(value: string): string {
@@ -165,11 +166,7 @@ export function ProjectNew() {
         when={firstProject()}
         fallback={
     <div class={ui.page}>
-      <div class={ui.pageHeader}>
-        <div>
-          <h1 class={ui.h1}>New project</h1>
-        </div>
-      </div>
+      <PageHeader title="New project" />
 
       {form()}
     </div>

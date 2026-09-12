@@ -4,7 +4,12 @@ import { defaultEnvironmentColor, ENVIRONMENT_COLOR_PRESETS, normalizeEnvironmen
 import { ApiError } from "../lib/api";
 import { createEnvironment, type Environment } from "../lib/projects";
 import { useScope } from "../lib/scope";
+import { DataTable } from "../ui/DataTable";
+import { IDText } from "../ui/IDText";
 import { Modal } from "../ui/Modal";
+import { PageHeader } from "../ui/PageHeader";
+import { StatePanel } from "../ui/StatePanel";
+import { StatusBadge } from "../ui/StatusBadge";
 import { envDotStyle, ui } from "../ui/styles";
 
 const PROTECTED_ENVIRONMENT_SLUGS = new Set(["production", "staging"]);
@@ -32,18 +37,17 @@ function isProtectedEnvironment(env: Environment): boolean {
 
 function EnvironmentStatus(props: { env: Environment; selected: boolean }) {
   return (
-    <div class="flex flex-wrap items-center gap-1.5">
+    <span class="inline-flex flex-wrap items-center gap-1.5">
       <Show when={isProtectedEnvironment(props.env)}>
-        <span class="border border-console-border bg-console-bg-panel px-1.5 py-0.5 font-mono text-[10px] font-medium uppercase tracking-[0.04em] text-console-subtle">
-          Protected
-        </span>
+        <StatusBadge resource="environment" status="protected" />
       </Show>
       <Show when={props.selected}>
-        <span class="border border-console-accent bg-console-accent-soft px-1.5 py-0.5 font-mono text-[10px] font-medium uppercase tracking-[0.04em] text-console-accent">
-          Current
-        </span>
+        <StatusBadge resource="environment" status="current" />
       </Show>
-    </div>
+      <Show when={!isProtectedEnvironment(props.env) && !props.selected}>
+        <span class="text-console-faint">—</span>
+      </Show>
+    </span>
   );
 }
 
@@ -105,64 +109,41 @@ export function Environments() {
 
   return (
     <>
-      <div class={ui.pageHeader}>
-        <div>
-          <h1 class={ui.h1}>Environments</h1>
-        </div>
-        <button type="button" class={ui.button} disabled={!project()} onClick={openCreateEnvironment}>
-          New environment
-        </button>
-      </div>
-
-      <Show
-        when={project()}
-        fallback={
-          <div class={ui.emptyState}>
-            <strong class="text-console-text">No project selected.</strong>
-          </div>
+      <PageHeader
+        title="Environments"
+        subtitle="Environments of the selected project. The current one scopes every other console page."
+        actions={
+          <button type="button" class={ui.button} disabled={!project()} onClick={openCreateEnvironment}>
+            New environment
+          </button>
         }
-      >
-        <div class={ui.tableWrap}>
-          <table class={ui.dataTable}>
-            <thead>
+      />
+
+      <Show when={project()} fallback={<StatePanel empty="No project selected." />}>
+        <DataTable columns={["Environment", "Slug", "Status", "ID", { label: "Actions", srOnly: true }]} minWidth="min-w-200">
+          <For each={environments()}>
+            {(env) => (
               <tr>
-                <th>Environment</th>
-                <th>Slug</th>
-                <th>Status</th>
-                <th>ID</th>
-                <th></th>
+                <td>
+                  <span class="inline-flex items-center gap-2.5 font-medium text-console-text">
+                    <span class="inline-block size-1.5 shrink-0 rounded-full" style={envDotStyle(env.color_hex)} />
+                    {env.name}
+                  </span>
+                </td>
+                <td><code>{env.slug}</code></td>
+                <td><EnvironmentStatus env={env} selected={scope.selectedEnvironmentID() === env.id} /></td>
+                <td><IDText value={env.id} /></td>
+                <td class={ui.actionsCell}>
+                  <Show when={scope.selectedEnvironmentID() !== env.id}>
+                    <button type="button" class={ui.secondaryButton} onClick={() => scope.setSelectedEnvironmentID(env.id)}>
+                      Use
+                    </button>
+                  </Show>
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              <For each={environments()}>
-                {(env) => (
-                  <tr>
-                    <td>
-                      <div class={ui.tableCellStack}>
-                        <div class="flex items-center gap-2.5 font-medium text-console-text">
-                          <span class="inline-block size-1.5 shrink-0 rounded-full" style={envDotStyle(env.color_hex)} />
-                          {env.name}
-                        </div>
-                      </div>
-                    </td>
-                    <td><code>{env.slug}</code></td>
-                    <td><EnvironmentStatus env={env} selected={scope.selectedEnvironmentID() === env.id} /></td>
-                    <td><code>{env.id}</code></td>
-                    <td class={ui.actionsCell}>
-                      <div class="flex items-center justify-end gap-1.5">
-                        <Show when={scope.selectedEnvironmentID() !== env.id}>
-                          <button type="button" class={ui.secondaryButton} onClick={() => scope.setSelectedEnvironmentID(env.id)}>
-                            Use
-                          </button>
-                        </Show>
-                      </div>
-                    </td>
-                  </tr>
-                )}
-              </For>
-            </tbody>
-          </table>
-        </div>
+            )}
+          </For>
+        </DataTable>
       </Show>
 
       <Show when={creating() && project()}>

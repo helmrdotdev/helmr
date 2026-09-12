@@ -1,11 +1,16 @@
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
-import { formatRelative } from "../features/runs/display";
 import { ApiError } from "../lib/api";
 import { createSecret, listSecrets, revokeSecret, rotateSecret, type Secret } from "../lib/secrets";
 import { useScope } from "../lib/scope";
 import { ActionMenu } from "../ui/ActionMenu";
+import { DataTable } from "../ui/DataTable";
+import { formatID } from "../ui/id";
 import { Modal } from "../ui/Modal";
+import { PageHeader } from "../ui/PageHeader";
+import { RelativeTime } from "../ui/RelativeTime";
+import { StatePanel } from "../ui/StatePanel";
+import { StatusBadge } from "../ui/StatusBadge";
 import { envDotStyle, ui } from "../ui/styles";
 
 const SECRET_ERROR_MESSAGES: Record<string, string> = {
@@ -18,10 +23,6 @@ const INTERNAL_ERROR_MESSAGE = "Something went wrong. Please try again.";
 function secretErrorMessage(error: unknown): string {
   if (error instanceof ApiError) return SECRET_ERROR_MESSAGES[error.code] ?? error.message ?? INTERNAL_ERROR_MESSAGE;
   return INTERNAL_ERROR_MESSAGE;
-}
-
-function shortScopeID(id: string): string {
-  return id.slice(0, 8);
 }
 
 function SecretModal(props: {
@@ -70,7 +71,7 @@ function SecretModal(props: {
               <span class={ui.scopeTargetDot} style={envDotStyle(props.environmentColorHex)} aria-hidden="true" />
             </Show>
             <span>{props.projectName}</span>
-            <code>{shortScopeID(props.projectID)} / {shortScopeID(props.environmentID)}</code>
+            <code>{formatID(props.projectID)} / {formatID(props.environmentID)}</code>
           </div>
         </div>
         <label class={ui.field}>
@@ -119,9 +120,9 @@ function SecretRow(props: {
   return (
     <tr>
       <td><code>{props.secret.name}</code></td>
-      <td>{props.secret.status}</td>
-      <td>{props.secret.rotated_at ? formatRelative(props.secret.rotated_at) : "Never"}</td>
-      <td>{formatRelative(props.secret.created_at)}</td>
+      <td><StatusBadge resource="secret" status={props.secret.status} /></td>
+      <td><RelativeTime value={props.secret.rotated_at} fallback="never" /></td>
+      <td><RelativeTime value={props.secret.created_at} /></td>
       <td class={ui.actionsCell}>
         <ActionMenu
           label={`Actions for ${props.secret.name}`}
@@ -179,46 +180,31 @@ export function Secrets() {
 
   return (
     <>
-      <div class={ui.pageHeader}>
-        <div>
-          <h1 class={ui.h1}>Secrets</h1>
-          <p class={ui.pageSubtitle}>Environment-scoped secret names for tasks. Values are never displayed after saving.</p>
-        </div>
-        <button class={ui.button} type="button" disabled={!scope.selectedEnvironmentID()} onClick={() => setModalSecret(null)}>Set secret</button>
-      </div>
+      <PageHeader
+        title="Secrets"
+        subtitle="Environment-scoped secret names for tasks. Values are never displayed after saving."
+        actions={<button class={ui.button} type="button" disabled={!scope.selectedEnvironmentID()} onClick={() => setModalSecret(null)}>Set secret</button>}
+      />
 
       <Show when={secrets.isError}>
-        <p class={ui.error} role="alert">{secrets.error instanceof ApiError ? secretErrorMessage(secrets.error) : "Could not load secrets."}</p>
+        <StatePanel error={secrets.error instanceof ApiError ? secretErrorMessage(secrets.error) : "Could not load secrets."} />
       </Show>
 
-      <Show when={!secrets.isPending} fallback={<p class={ui.muted}>Loading secrets...</p>}>
-        <Show when={(secrets.data?.secrets.length ?? 0) > 0} fallback={<p class={ui.emptyState}>No secrets found.</p>}>
-          <div class={ui.tableWrap}>
-            <table class={ui.dataTable}>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>State</th>
-                  <th>Rotated</th>
-                  <th>Created</th>
-                  <th><span class="sr-only">Actions</span></th>
-                </tr>
-              </thead>
-              <tbody>
-                <For each={secrets.data?.secrets ?? []}>
-                  {(secret) => (
-                    <SecretRow
-                      secret={secret}
-                      revoking={revokingID() === secret.id}
-                      error={revokeError()?.id === secret.id ? revokeError()?.message ?? null : null}
-                      onUpdate={setModalSecret}
-                      onRevoke={revoke}
-                    />
-                  )}
-                </For>
-              </tbody>
-            </table>
-          </div>
+      <Show when={!secrets.isPending} fallback={<StatePanel loading="Loading secrets..." />}>
+        <Show when={(secrets.data?.secrets.length ?? 0) > 0} fallback={<StatePanel empty="No secrets found." />}>
+          <DataTable columns={["Name", "State", "Rotated", "Created", { label: "Actions", srOnly: true }]} minWidth="min-w-225">
+            <For each={secrets.data?.secrets ?? []}>
+              {(secret) => (
+                <SecretRow
+                  secret={secret}
+                  revoking={revokingID() === secret.id}
+                  error={revokeError()?.id === secret.id ? revokeError()?.message ?? null : null}
+                  onUpdate={setModalSecret}
+                  onRevoke={revoke}
+                />
+              )}
+            </For>
+          </DataTable>
         </Show>
       </Show>
 

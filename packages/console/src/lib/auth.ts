@@ -6,7 +6,7 @@ export type Me = {
   profile_image_url: string | null;
   org_id?: string | null;
   role?: string | null;
-  permissions?: string[];
+  permissions: string[];
   admin: boolean;
   organization_required: boolean;
   project_required: boolean;
@@ -16,6 +16,10 @@ export type Me = {
 
 export async function getMe(): Promise<Me> {
   return request<Me>("/api/me");
+}
+
+export function hasPermission(me: Me | undefined, permission: string): boolean {
+  return me?.permissions.includes(permission) ?? false;
 }
 
 export function onboardingRedirectPath(me: Me): string | null {

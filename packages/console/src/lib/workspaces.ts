@@ -18,10 +18,33 @@ export type Workspace = {
   updated_at: string;
 };
 
+export type WorkspaceListItem = Omit<Workspace, "secrets">;
+
+export type ListWorkspacesResponse = {
+  workspaces: WorkspaceListItem[];
+  next_cursor?: string;
+};
+
 export type WorkspaceScope = {
   projectID: string;
   environmentID: string;
 };
+
+export async function listWorkspaces(
+  scope: WorkspaceScope,
+  options: { cursor?: string | undefined; limit?: number | undefined } = {},
+): Promise<ListWorkspacesResponse> {
+  if (!scope.projectID || !scope.environmentID) {
+    throw new Error("Workspace project and environment are required");
+  }
+  const params = new URLSearchParams();
+  if (options.cursor) params.set("cursor", options.cursor);
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  const query = params.size === 0 ? "" : `?${params.toString()}`;
+  return request<ListWorkspacesResponse>(
+    `/api/projects/${encodeURIComponent(scope.projectID)}/environments/${encodeURIComponent(scope.environmentID)}/workspaces${query}`,
+  );
+}
 
 export async function getWorkspace(
   id: string,

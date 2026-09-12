@@ -2,7 +2,11 @@ import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createSignal, For, Show } from "solid-js";
 import { ApiError } from "../lib/api";
 import { createAdminRegion, listAdminRegions, updateAdminRegion, type AdminRegion } from "../lib/admin";
+import { DataTable } from "../ui/DataTable";
+import { IDText } from "../ui/IDText";
 import { Modal } from "../ui/Modal";
+import { PageHeader } from "../ui/PageHeader";
+import { StatePanel } from "../ui/StatePanel";
 import { ui } from "../ui/styles";
 
 function errorMessage(error: unknown): string {
@@ -62,25 +66,33 @@ export function AdminRegions() {
 
   return (
     <div class={ui.page}>
-      <div class={ui.pageHeader}>
-        <div><h1 class={ui.h1}>Regions</h1><p class={ui.pageSubtitle}>Logical placement domains available to projects and Worker Groups.</p></div>
-        <button type="button" class={ui.button} onClick={() => { setError(null); setCreating(true); }}>New Region</button>
-      </div>
-      <Show when={!regions.isPending} fallback={<p class={ui.muted}>Loading Regions...</p>}>
-        <Show when={!regions.isError} fallback={<p class={ui.error}>Could not load Regions.</p>}>
-          <Show when={(regions.data?.regions.length ?? 0) > 0} fallback={<div class={ui.emptyState}><strong class="text-console-text">No Regions configured.</strong><button type="button" class={ui.button} onClick={() => setCreating(true)}>Create Region</button></div>}>
-            <div class={ui.tableWrap}>
-              <table class={ui.dataTable}>
-                <thead><tr><th>Region</th><th>Location</th><th></th></tr></thead>
-                <tbody><For each={regions.data?.regions ?? []}>{(region) => (
+      <PageHeader
+        title="Regions"
+        subtitle="Logical placement domains available to projects and Worker Groups."
+        actions={<button type="button" class={ui.button} onClick={() => { setError(null); setCreating(true); }}>New Region</button>}
+      />
+      <Show when={!regions.isPending} fallback={<StatePanel loading="Loading Regions..." />}>
+        <Show when={!regions.isError} fallback={<StatePanel error="Could not load Regions." />}>
+          <Show
+            when={(regions.data?.regions.length ?? 0) > 0}
+            fallback={
+              <StatePanel empty="No Regions configured.">
+                <button type="button" class={ui.button} onClick={() => setCreating(true)}>Create Region</button>
+              </StatePanel>
+            }
+          >
+            <DataTable columns={["Region", "ID", "Location", { label: "Actions", srOnly: true }]}>
+              <For each={regions.data?.regions ?? []}>
+                {(region) => (
                   <tr>
-                    <td><div class={ui.tableCellStack}><strong>{region.display_name}</strong><div><code>{region.id}</code></div></div></td>
-                    <td>{region.location || "—"}</td>
+                    <td><strong class="font-medium text-console-text">{region.display_name}</strong></td>
+                    <td><IDText value={region.id} /></td>
+                    <td>{region.location || <span class="text-console-faint">—</span>}</td>
                     <td class={ui.actionsCell}><button type="button" class={ui.secondaryButton} onClick={() => { setError(null); setEditing(region); }}>Edit</button></td>
                   </tr>
-                )}</For></tbody>
-              </table>
-            </div>
+                )}
+              </For>
+            </DataTable>
           </Show>
         </Show>
       </Show>

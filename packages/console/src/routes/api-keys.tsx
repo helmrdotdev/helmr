@@ -8,14 +8,19 @@ import {
   revokeApiKey,
   type ApiKeyScope,
   type ApiKeyIssued,
-  type ApiKeyStatus,
   type ApiKeySummary,
   type ListFilter,
 } from "../lib/api-keys";
 import { useScope } from "../lib/scope";
 import { ActionMenu } from "../ui/ActionMenu";
+import { DataTable } from "../ui/DataTable";
+import { formatID } from "../ui/id";
 import { Modal } from "../ui/Modal";
-import { envDotStyle, statusBadgeClass, ui } from "../ui/styles";
+import { PageHeader } from "../ui/PageHeader";
+import { RelativeTime } from "../ui/RelativeTime";
+import { StatePanel } from "../ui/StatePanel";
+import { StatusBadge } from "../ui/StatusBadge";
+import { envDotStyle, ui } from "../ui/styles";
 
 const FILTER_OPTIONS: SelectOption<ListFilter>[] = [
   { value: "active", label: "Active" },
@@ -32,12 +37,6 @@ const EXPIRY_OPTIONS: SelectOption<ExpiryValue>[] = [
   { value: "90", label: "90 days" },
   { value: "365", label: "1 year" },
 ];
-
-const STATUS_LABELS: Record<ApiKeyStatus, string> = {
-  active: "Active",
-  expired: "Expired",
-  revoked: "Revoked",
-};
 
 const API_KEY_ERROR_MESSAGES: Record<string, string> = {
   forbidden: "You do not have permission to manage API keys.",
@@ -151,46 +150,6 @@ function apiKeyErrorMessage(error: unknown): string {
   return INTERNAL_ERROR_MESSAGE;
 }
 
-function relativeTime(iso: string | null): string {
-  if (!iso) return "—";
-  const time = new Date(iso).getTime();
-  if (Number.isNaN(time)) return "—";
-
-  const diff = time - Date.now();
-  const abs = Math.abs(diff);
-  const past = diff < 0;
-  if (abs < 45_000) return past ? "just now" : "in a few seconds";
-
-  const minute = 60_000;
-  const hour = 60 * minute;
-  const day = 24 * hour;
-  const units = [
-    { name: "year", value: 365 * day },
-    { name: "month", value: 30 * day },
-    { name: "day", value: day },
-    { name: "hour", value: hour },
-    { name: "minute", value: minute },
-  ];
-  const unit = units.find((candidate) => abs >= candidate.value) ?? units[units.length - 1];
-  if (!unit) return "—";
-  const count = Math.max(1, Math.round(abs / unit.value));
-
-  if (unit.name === "day" && count === 1) {
-    return past ? "yesterday" : "tomorrow";
-  }
-  return past
-    ? `${count} ${unit.name}${count === 1 ? "" : "s"} ago`
-    : `in ${count} ${unit.name}${count === 1 ? "" : "s"}`;
-}
-
-function expiryText(iso: string | null): string {
-  return iso ? relativeTime(iso) : "never";
-}
-
-function lastUsedText(iso: string | null): string {
-  return iso ? relativeTime(iso) : "never";
-}
-
 function validateLabel(value: string): string | null {
   const label = value.trim();
   if (label.length < 1 || label.length > 64 || /[\u0000-\u001F\u007F]/.test(label)) {
@@ -202,30 +161,13 @@ function validateLabel(value: string): string | null {
 function permissionText(keyItem: ApiKeySummary): string {
   const grants = keyItem.permissions ?? [];
   if (grants.length === 0) return "Not reported";
-  const scope = `${shortScopeID(keyItem.project_id)} / ${shortScopeID(keyItem.environment_id)}`;
+  const scope = `${formatID(keyItem.project_id)} / ${formatID(keyItem.environment_id)}`;
   return grants.map((grant) => {
     const labels = API_KEY_SCOPE_OPTIONS
       .filter((option) => grant.scopes.includes(option.value))
       .map((option) => option.label);
     return `${scope}: ${labels.length > 0 ? labels.join(", ") : "Custom permissions"}`;
   }).join("; ");
-}
-
-function shortScopeID(id: string): string {
-  return id.slice(0, 8);
-}
-
-function ApiKeyStatusBadge(props: { status: ApiKeyStatus }) {
-  const tone = (): "succeeded" | "expired" | "revoked" => {
-    if (props.status === "active") return "succeeded";
-    if (props.status === "expired") return "expired";
-    return "revoked";
-  };
-  return (
-    <span class={statusBadgeClass(tone())}>
-      {STATUS_LABELS[props.status]}
-    </span>
-  );
 }
 
 function ApiKeyRow(props: {
@@ -239,10 +181,10 @@ function ApiKeyRow(props: {
       <td>{props.keyItem.name}</td>
       <td><code>{props.keyItem.key_prefix}...</code></td>
       <td>{permissionText(props.keyItem)}</td>
-      <td><ApiKeyStatusBadge status={props.keyItem.status} /></td>
-      <td>{lastUsedText(props.keyItem.last_used_at)}</td>
-      <td>{relativeTime(props.keyItem.created_at)}</td>
-      <td>{expiryText(props.keyItem.expires_at)}</td>
+      <td><StatusBadge resource="api_key" status={props.keyItem.status} /></td>
+      <td><RelativeTime value={props.keyItem.last_used_at} fallback="never" /></td>
+      <td><RelativeTime value={props.keyItem.created_at} /></td>
+      <td><RelativeTime value={props.keyItem.expires_at} fallback="never" /></td>
       <td class={ui.actionsCell}>
         <Show when={props.keyItem.status === "active"} fallback={<span class={ui.muted}>No actions</span>}>
           <ActionMenu
@@ -362,7 +304,7 @@ function IssueApiKeyModal(props: {
                 <span class={ui.scopeTargetDot} style={envDotStyle(props.environmentColorHex)} aria-hidden="true" />
               </Show>
               <span>{props.projectName}</span>
-              <code>{shortScopeID(props.projectID)} / {shortScopeID(props.environmentID)}</code>
+              <code>{formatID(props.projectID)} / {formatID(props.environmentID)}</code>
             </div>
           </div>
           <label class={ui.field}>
@@ -478,20 +420,20 @@ export function ApiKeys() {
 
   return (
     <>
-      <div class={ui.pageHeader}>
-        <div>
-          <h1 class={ui.h1}>API keys</h1>
-          <p class={ui.pageSubtitle}>Machine credentials for automation, limited by the permissions selected when each key is generated.</p>
-        </div>
-        <button
-          class={ui.button}
-          type="button"
-          disabled={!scope.selectedProjectID() || !scope.selectedEnvironmentID()}
-          onClick={() => setModalOpen(true)}
-        >
-          Generate new API key
-        </button>
-      </div>
+      <PageHeader
+        title="API keys"
+        subtitle="Machine credentials for automation, limited by the permissions selected when each key is generated."
+        actions={
+          <button
+            class={ui.button}
+            type="button"
+            disabled={!scope.selectedProjectID() || !scope.selectedEnvironmentID()}
+            onClick={() => setModalOpen(true)}
+          >
+            Generate new API key
+          </button>
+        }
+      />
 
       <div class={ui.toolbar}>
         <div class={ui.toolbarSide} />
@@ -510,39 +452,26 @@ export function ApiKeys() {
       </div>
 
       <Show when={keys.isError}>
-        <p class={ui.error} role="alert">{apiKeyErrorMessage(keys.error)}</p>
+        <StatePanel error={apiKeyErrorMessage(keys.error)} />
       </Show>
 
-      <Show when={!keys.isPending} fallback={<p class={ui.muted}>Loading API keys...</p>}>
-        <Show when={keyItems().length > 0} fallback={<p class={ui.emptyState}>No API keys found.</p>}>
-          <div class={ui.tableWrap}>
-            <table class={ui.apiKeyTable}>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Key prefix</th>
-                  <th>Permissions</th>
-                  <th>Status</th>
-                  <th>Last used</th>
-                  <th>Created</th>
-                  <th>Expires</th>
-                  <th><span class="sr-only">Actions</span></th>
-                </tr>
-              </thead>
-              <tbody>
-                <For each={keyItems()}>
-                  {(keyItem) => (
-                    <ApiKeyRow
-                      keyItem={keyItem}
-                      revoking={revokingId() === keyItem.id}
-                      error={revokeError()?.id === keyItem.id ? revokeError()?.message ?? null : null}
-                      onRevoke={revoke}
-                    />
-                  )}
-                </For>
-              </tbody>
-            </table>
-          </div>
+      <Show when={!keys.isPending} fallback={<StatePanel loading="Loading API keys..." />}>
+        <Show when={keyItems().length > 0} fallback={<StatePanel empty="No API keys found." />}>
+          <DataTable
+            columns={["Name", "Key prefix", "Permissions", "Status", "Last used", "Created", "Expires", { label: "Actions", srOnly: true }]}
+            minWidth="min-w-270"
+          >
+            <For each={keyItems()}>
+              {(keyItem) => (
+                <ApiKeyRow
+                  keyItem={keyItem}
+                  revoking={revokingId() === keyItem.id}
+                  error={revokeError()?.id === keyItem.id ? revokeError()?.message ?? null : null}
+                  onRevoke={revoke}
+                />
+              )}
+            </For>
+          </DataTable>
           <Show when={keys.hasNextPage}>
             <div class={ui.actionRow}>
               <button

@@ -43,6 +43,29 @@ export type SessionAddress = {
   environmentID: string;
 };
 
+export type ListSessionsResponse = {
+  sessions: Session[];
+  next_cursor?: string;
+};
+
+export async function listSessions(options: {
+  projectID: string;
+  environmentID: string;
+  cursor?: string | undefined;
+  limit?: number | undefined;
+}): Promise<ListSessionsResponse> {
+  if (!options.projectID || !options.environmentID) {
+    throw new Error("Session project and environment are required");
+  }
+  const params = new URLSearchParams();
+  if (options.cursor) params.set("cursor", options.cursor);
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  const query = params.size === 0 ? "" : `?${params.toString()}`;
+  return request<ListSessionsResponse>(
+    `/api/projects/${encodeURIComponent(options.projectID)}/environments/${encodeURIComponent(options.environmentID)}/sessions${query}`,
+  );
+}
+
 export async function getSession(address: SessionAddress): Promise<Session> {
   return request<Session>(sessionAPIPath(address));
 }

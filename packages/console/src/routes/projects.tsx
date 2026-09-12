@@ -3,6 +3,8 @@ import { createEffect, createMemo, createSignal, Show } from "solid-js";
 import { ApiError } from "../lib/api";
 import { updateProject } from "../lib/projects";
 import { useScope } from "../lib/scope";
+import { PageHeader } from "../ui/PageHeader";
+import { StatePanel } from "../ui/StatePanel";
 import { ui } from "../ui/styles";
 
 function slugify(value: string): string {
@@ -71,20 +73,9 @@ export function Projects() {
 
   return (
     <>
-      <div class={ui.pageHeader}>
-        <div>
-          <h1 class={ui.h1}>Project</h1>
-        </div>
-      </div>
+      <PageHeader title="Project" subtitle="Name and slug of the selected project." />
 
-      <Show
-        when={hasProject()}
-        fallback={
-          <div class={ui.emptyState}>
-            <strong class="text-console-text">No project selected.</strong>
-          </div>
-        }
-      >
+      <Show when={hasProject()} fallback={<StatePanel empty="No project selected." />}>
         <form class="max-w-220 border border-console-border-strong bg-console-surface px-4 py-4" onSubmit={submitProject}>
           <h2 class={ui.h2}>Profile</h2>
           <label class={ui.field}>
