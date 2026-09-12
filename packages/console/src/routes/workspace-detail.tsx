@@ -232,7 +232,7 @@ export function WorkspaceDetail() {
         title="Workspace"
         back={{ href: "/workspaces", label: "Workspaces" }}
         badge={<Show when={workspace.data}>{(current) => <StatusBadge resource="workspace" status={current().status} />}</Show>}
-        subtitle={<Show when={workspace.data}>{(current) => <IDText value={current().id} full />}</Show>}
+        subtitle={<Show when={workspace.data}>{(current) => <IDText value={current().id} mode="full" />}</Show>}
         actions={
           <Show when={workspace.data && hasPermission(me.data, "workspaces.delete")}>
             <button type="button" class={ui.dangerOutlineButton} onClick={() => setDeleting(true)}>Delete</button>
@@ -284,14 +284,14 @@ export function WorkspaceDetail() {
                     </DetailItem>
                     <DetailItem label="Sandbox"><code>{current().sandbox_id}</code></DetailItem>
                     <DetailItem label="Deployment">
-                      <IDText value={current().deployment_id} full href={deploymentHref(current().deployment_id)} />
+                      <IDText value={current().deployment_id} mode="link" href={deploymentHref(current().deployment_id)} />
                     </DetailItem>
                     <DetailItem label="Owner">
                       <Show when={current().owner?.session_id}>
-                        {(sessionID) => <IDText value={sessionID()} full href={sessionConsolePath(sessionID(), projectID(), environmentID())} />}
+                        {(sessionID) => <IDText value={sessionID()} mode="link" href={sessionConsolePath(sessionID(), projectID(), environmentID())} />}
                       </Show>
                       <Show when={!current().owner?.session_id && current().owner?.run_id}>
-                        {(runID) => <IDText value={runID()} full href={runHref(runID(), projectID(), environmentID())} />}
+                        {(runID) => <IDText value={runID()} mode="link" href={runHref(runID(), projectID(), environmentID())} />}
                       </Show>
                       <Show when={!current().owner?.session_id && !current().owner?.run_id}>
                         <span class="text-console-faint">—</span>

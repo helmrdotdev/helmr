@@ -4,6 +4,7 @@ import { createMemo, createSignal, For, Show } from "solid-js";
 import { deploymentHref } from "../features/deployments/navigation";
 import { runHref } from "../features/runs/navigation";
 import { CancelTokenModal, CompleteTokenModal } from "../features/tokens/TokenActions";
+import { tokenHref } from "../features/tokens/navigation";
 import { ApiError } from "../lib/api";
 import { getMe, hasPermission } from "../lib/auth";
 import { getCurrentDeployment } from "../lib/deployments";
@@ -11,6 +12,7 @@ import { cancelRun, listRuns, type RunListItem } from "../lib/runs";
 import { useScope } from "../lib/scope";
 import { listSessions, sessionConsolePath, type Session } from "../lib/sessions";
 import { listTokens, type TokenListItem } from "../lib/tokens";
+import { ActionMenu, type ActionMenuItem } from "../ui/ActionMenu";
 import { ConfirmModal } from "../ui/ConfirmModal";
 import { DataTable } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
@@ -175,6 +177,11 @@ export function Overview() {
   const [cancellingToken, setCancellingToken] = createSignal<TokenListItem | null>(null);
   const [cancellingRun, setCancellingRun] = createSignal<RunListItem | null>(null);
 
+  const tokenActions = (token: TokenListItem): ActionMenuItem[] => [
+    ...(can("tokens.complete") ? [{ label: "Complete", onSelect: () => setCompleting(token) }] : []),
+    ...(can("tokens.cancel") ? [{ label: "Cancel", tone: "danger" as const, onSelect: () => setCancellingToken(token) }] : []),
+  ];
+
   const refreshTokens = async () => {
     await queryClient.invalidateQueries({ queryKey: ["tokens"] });
   };
@@ -224,35 +231,28 @@ export function Overview() {
                         {(row) => row.kind === "token" ? (
                           <tr>
                             <td><span class={ui.muted}>Token</span></td>
-                            <td><IDText value={row.token.id} /></td>
+                            <td><IDText value={row.token.id} mode="link" href={tokenHref(row.token.id)} /></td>
                             <td><TagList tags={row.token.tags} /></td>
                             <td><StatusBadge resource="token" status="pending" /></td>
                             <td><span class={ui.muted}>expires </span><RelativeTime value={row.token.timeout_at} /></td>
                             <td class={ui.actionsCell}>
-                              <div class="flex justify-end gap-1.5">
-                                <Show when={can("tokens.complete")}>
-                                  <button type="button" class={ui.button} onClick={() => setCompleting(row.token)}>Complete</button>
-                                </Show>
-                                <Show when={can("tokens.cancel")}>
-                                  <button type="button" class={ui.dangerOutlineButton} onClick={() => setCancellingToken(row.token)}>Cancel</button>
-                                </Show>
-                              </div>
+                              <Show when={tokenActions(row.token).length > 0}>
+                                <ActionMenu label={`Actions for Token ${row.token.id}`} items={tokenActions(row.token)} />
+                              </Show>
                             </td>
                           </tr>
                         ) : (
                           <tr>
                             <td><span class={ui.muted}>Actor</span></td>
                             <td>
-                              <A href={runHref(row.run.id, projectID(), environmentID())} class="font-medium text-console-text hover:text-console-accent">
+                              <A href={sessionConsolePath(row.run.session_id!, projectID(), environmentID())} class="font-medium text-console-text hover:text-console-accent">
                                 {row.run.entrypoint.id}
                               </A>
                             </td>
                             <td><TagList tags={[]} /></td>
                             <td><StatusBadge resource="run" status="waiting" /></td>
                             <td><RelativeTime value={row.run.created_at} /></td>
-                            <td class={ui.actionsCell}>
-                              <A class={ui.secondaryButton} href={sessionConsolePath(row.run.session_id!, projectID(), environmentID())}>Open Session</A>
-                            </td>
+                            <td class={ui.actionsCell} />
                           </tr>
                         )}
                       </For>
@@ -291,7 +291,7 @@ export function Overview() {
                             <td><span class={ui.muted}>{row.run.entrypoint.kind}</span></td>
                             <td><StatusBadge resource="run" status={row.run.status} /></td>
                             <td><RelativeTime value={row.at} /></td>
-                            <td><IDText value={row.run.id} /></td>
+                            <td><IDText value={row.run.id} mode="link" href={runHref(row.run.id, projectID(), environmentID())} /></td>
                           </tr>
                         ) : (
                           <tr>
@@ -304,6 +304,7 @@ export function Overview() {
                             <td>
                               <IDText
                                 value={row.session.failure?.details.run_id ?? ""}
+                                mode="link"
                                 href={row.session.failure?.details.run_id ? runHref(row.session.failure.details.run_id, projectID(), environmentID()) : undefined}
                               />
                             </td>
@@ -326,7 +327,7 @@ export function Overview() {
                     when={inProgressItems().length > 0}
                     fallback={<StatePanel empty="Nothing is running." hint="Queued, running, retrying, and cancelling Runs appear here." />}
                   >
-                    <DataTable columns={["Entrypoint", "Kind", "Status", "Attempt", "Created", { label: "Actions", srOnly: true }]}>
+                    <DataTable columns={["Entrypoint", "Kind", "Status", "Attempt", "Created", "Run", { label: "Actions", srOnly: true }]}>
                       <For each={inProgressItems().slice(0, SECTION_ROWS)}>
                         {(run) => (
                           <tr>
@@ -337,9 +338,13 @@ export function Overview() {
                             <td><StatusBadge resource="run" status={run.status} /></td>
                             <td>{run.current_attempt_number}</td>
                             <td><RelativeTime value={run.created_at} /></td>
+                            <td><IDText value={run.id} mode="link" href={runHref(run.id, projectID(), environmentID())} /></td>
                             <td class={ui.actionsCell}>
                               <Show when={can("runs.manage") && run.status !== "cancel_requested"}>
-                                <button type="button" class={ui.dangerOutlineButton} onClick={() => setCancellingRun(run)}>Cancel</button>
+                                <ActionMenu
+                                  label={`Actions for ${run.entrypoint.id}`}
+                                  items={[{ label: "Cancel run", tone: "danger", onSelect: () => setCancellingRun(run) }]}
+                                />
                               </Show>
                             </td>
                           </tr>
@@ -353,7 +358,7 @@ export function Overview() {
 
               <section class="min-w-0">
                 <SectionHeader title="Deployments" actions={<A class={ui.ghostButton} href="/deployments">Deployments</A>} />
-                <DataTable columns={["Current version", "Digest", "Created", "ID"]}>
+                <DataTable columns={["Current version", "Digest", "Created"]}>
                   <tr>
                     <td>
                       <A href={deploymentHref(deployment().id)} class="font-medium text-console-text hover:text-console-accent">
@@ -362,7 +367,6 @@ export function Overview() {
                     </td>
                     <td><IDText value={deployment().bundle_digest} /></td>
                     <td><RelativeTime value={deployment().created_at} /></td>
-                    <td><IDText value={deployment().id} /></td>
                   </tr>
                 </DataTable>
               </section>

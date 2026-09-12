@@ -150,19 +150,24 @@ async function createToken(page: Page, tag: string): Promise<string> {
   return token.id;
 }
 
-test("a pending Token can be completed from its detail page and cancelled from the list", async ({ page }) => {
+test("a pending Token is completed and cancelled from its detail page; list rows only link", async ({ page }) => {
   await login(page);
   const completeID = await createToken(page, "complete-me");
   const cancelID = await createToken(page, "cancel-me");
+  const shortCancelID = cancelID.slice(cancelID.lastIndexOf("-") + 1);
 
   await page.goto(`/tokens/${completeID}`);
   await expect(page.getByRole("heading", { name: "Token", exact: true })).toBeVisible();
-  await expect(page.locator("main")).toContainText(completeID);
+  // The full ID appears once, under the title, as the click-to-copy control.
+  await expect(page.getByRole("button", { name: `Copy ${completeID}` })).toBeVisible();
+  await expect(page.locator("main").getByText(completeID, { exact: true })).toHaveCount(1);
   await expect(page.locator("main")).not.toContainText("callback_url");
   await expect(page.locator("main")).not.toContainText("token-callbacks");
   await expect(page.locator("main")).not.toContainText("hlmr_pub_");
   await page.getByRole("button", { name: "Complete" }).click();
   const completeDialog = page.getByRole("dialog", { name: "Complete Token" });
+  await expect(completeDialog).toContainText(completeID);
+  await expect(completeDialog).toContainText("complete-me");
   await completeDialog.getByLabel("Result (JSON)").fill('{"approved": true}');
   await completeDialog.getByRole("button", { name: "Complete" }).click();
   await expect(completeDialog).toHaveCount(0);
@@ -171,14 +176,21 @@ test("a pending Token can be completed from its detail page and cancelled from t
   await expect(page.getByRole("button", { name: "Complete" })).toHaveCount(0);
 
   await page.goto("/tokens");
+  await expect(page.getByRole("row", { name: /complete-me/ })).toContainText("Completed");
   const cancelRow = page.getByRole("row", { name: /cancel-me/ });
   await expect(cancelRow).toContainText("Pending");
-  await cancelRow.getByRole("button", { name: "Cancel" }).click();
-  await page.getByRole("dialog", { name: "Cancel Token" }).getByRole("button", { name: "Cancel Token" }).click();
-  await expect(page.getByRole("dialog")).toHaveCount(0);
-  await expect(cancelRow).toContainText("Cancelled");
-  await expect(cancelRow.getByRole("button", { name: "Cancel" })).toHaveCount(0);
-  await expect(page.getByRole("row", { name: /complete-me/ })).toContainText("Completed");
-  await page.getByRole("row", { name: /cancel-me/ }).getByRole("link").first().click();
+  await expect(cancelRow.getByRole("button")).toHaveCount(0);
+  await expect(cancelRow).not.toContainText("…");
+  const cancelLink = cancelRow.getByRole("link", { name: shortCancelID, exact: true });
+  await expect(cancelLink).toHaveAttribute("title", cancelID);
+  await cancelLink.click();
   await expect(page).toHaveURL(`/tokens/${cancelID}`);
+
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  const cancelDialog = page.getByRole("dialog", { name: "Cancel Token" });
+  await expect(cancelDialog).toContainText(cancelID);
+  await cancelDialog.getByRole("button", { name: "Cancel Token" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.locator("main")).toContainText("Cancelled");
+  await expect(page.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0);
 });

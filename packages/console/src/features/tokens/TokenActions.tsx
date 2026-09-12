@@ -2,9 +2,12 @@ import { createSignal, Show } from "solid-js";
 import { ApiError } from "../../lib/api";
 import { cancelToken, completeToken, type TokenListItem } from "../../lib/tokens";
 import { ConfirmModal } from "../../ui/ConfirmModal";
-import { IDText } from "../../ui/IDText";
 import { Modal } from "../../ui/Modal";
 import { ui } from "../../ui/styles";
+import { TagList } from "../../ui/TagList";
+
+// List rows only carry tags; the detail page passes the full Token with metadata.
+type ActionTarget = TokenListItem & { metadata?: unknown };
 
 export function tokenActionErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof ApiError && error.code === "forbidden") return "You do not have permission to do this.";
@@ -12,8 +15,27 @@ export function tokenActionErrorMessage(error: unknown, fallback: string): strin
   return fallback;
 }
 
+function TokenSummary(props: { token: ActionTarget }) {
+  return (
+    <dl class="mt-2.5 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1.5 border border-console-border-strong bg-console-bg-panel px-3 py-2.5 text-[12px]">
+      <dt class="font-mono text-[10.5px] font-medium uppercase tracking-[0.04em] text-console-subtle">Token</dt>
+      <dd class="m-0 break-all font-mono text-[11.5px] text-console-text">{props.token.id}</dd>
+      <dt class="font-mono text-[10.5px] font-medium uppercase tracking-[0.04em] text-console-subtle">Tags</dt>
+      <dd class="m-0"><TagList tags={props.token.tags} /></dd>
+      <Show when={props.token.metadata !== undefined}>
+        <dt class="font-mono text-[10.5px] font-medium uppercase tracking-[0.04em] text-console-subtle">Metadata</dt>
+        <dd class="m-0 min-w-0">
+          <pre class="m-0 max-h-32 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-normal text-console-text">
+            {JSON.stringify(props.token.metadata ?? null, null, 2)}
+          </pre>
+        </dd>
+      </Show>
+    </dl>
+  );
+}
+
 export function CompleteTokenModal(props: {
-  token: TokenListItem;
+  token: ActionTarget;
   projectID: string;
   environmentID: string;
   onClose: () => void;
@@ -51,9 +73,10 @@ export function CompleteTokenModal(props: {
   return (
     <Modal title="Complete Token" onClose={props.onClose} closeDisabled={submitting()}>
       <form onSubmit={submit}>
-        <p class={ui.modalIntro}>
-          The result is delivered to the waiting Run as JSON. Token <IDText value={props.token.id} />.
-        </p>
+        <div class={ui.modalIntro}>
+          The result is delivered to the waiting Run as JSON.
+          <TokenSummary token={props.token} />
+        </div>
         <label class={ui.field}>
           <span>Result (JSON)</span>
           <textarea
@@ -82,7 +105,7 @@ export function CompleteTokenModal(props: {
 }
 
 export function CancelTokenModal(props: {
-  token: TokenListItem;
+  token: ActionTarget;
   projectID: string;
   environmentID: string;
   onClose: () => void;
@@ -105,7 +128,8 @@ export function CancelTokenModal(props: {
       }}
       errorMessage={(error) => tokenActionErrorMessage(error, "Could not cancel this Token.")}
     >
-      The waiting Run receives a cancelled Token and cannot be completed later. Token <IDText value={props.token.id} />.
+      The waiting Run receives a cancelled Token and cannot be completed later.
+      <TokenSummary token={props.token} />
     </ConfirmModal>
   );
 }

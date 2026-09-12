@@ -104,10 +104,11 @@ export function Runs() {
                   <td>
                     <IDText
                       value={run.session_id ?? ""}
+                      mode="link"
                       href={runSessionConsolePath(run, projectID(), environmentID())}
                     />
                   </td>
-                  <td><IDText value={run.workspace_id} href={`/workspaces/${run.workspace_id}`} /></td>
+                  <td><IDText value={run.workspace_id} mode="link" href={`/workspaces/${run.workspace_id}`} /></td>
                   <td>{run.current_attempt_number}</td>
                   <td><RelativeTime value={run.created_at} /></td>
                   <td><IDText value={run.id} /></td>

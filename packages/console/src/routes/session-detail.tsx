@@ -64,7 +64,7 @@ function ConversationRecord(props: { entry: ConversationEntry; projectID: string
             <span class="inline-flex items-center gap-1">
               · source {record().source.type}
               <Show when={record().source.run_id}>
-                {(runID) => <IDText value={runID()} href={runHref(runID(), props.projectID, props.environmentID)} />}
+                {(runID) => <IDText value={runID()} mode="link" href={runHref(runID(), props.projectID, props.environmentID)} />}
               </Show>
             </span>
           )}
@@ -72,9 +72,9 @@ function ConversationRecord(props: { entry: ConversationEntry; projectID: string
         <Show when={output()}>
           {(record) => (
             <span class="inline-flex items-center gap-1">
-              · run <IDText value={record().provenance.run_id} href={runHref(record().provenance.run_id, props.projectID, props.environmentID)} />
+              · run <IDText value={record().provenance.run_id} mode="link" href={runHref(record().provenance.run_id, props.projectID, props.environmentID)} />
               · attempt {record().provenance.attempt_number}
-              · deployment <IDText value={record().provenance.deployment_id} href={deploymentHref(record().provenance.deployment_id)} />
+              · deployment <IDText value={record().provenance.deployment_id} mode="link" href={deploymentHref(record().provenance.deployment_id)} />
             </span>
           )}
         </Show>
@@ -213,7 +213,7 @@ export function SessionDetail() {
         title={session.data?.actor_id ?? "Session"}
         back={{ href: "/sessions", label: "Sessions" }}
         badge={<Show when={session.data}>{(current) => <StatusBadge resource="session" status={current().status} />}</Show>}
-        subtitle={<IDText value={sessionID()} full />}
+        subtitle={<IDText value={sessionID()} mode="full" />}
         actions={
           <Show when={can("sessions.close") && open()}>
             <button type="button" class={ui.dangerOutlineButton} onClick={() => setClosing(true)}>Close Session</button>
@@ -304,7 +304,7 @@ export function SessionDetail() {
                           <For each={runs()}>
                             {(run) => (
                               <tr>
-                                <td><IDText value={run.id} href={runHref(run.id, projectID(), environmentID())} /></td>
+                                <td><IDText value={run.id} mode="link" href={runHref(run.id, projectID(), environmentID())} /></td>
                                 <td><StatusBadge resource="run" status={run.status} /></td>
                                 <td>{run.current_attempt_number}</td>
                                 <td><RelativeTime value={run.created_at} /></td>
@@ -331,7 +331,6 @@ export function SessionDetail() {
                 </div>
 
                 <DetailList title="Session details">
-                  <DetailItem label="ID"><IDText value={current().id} full /></DetailItem>
                   <DetailItem label="Actor ID"><code>{current().actor_id}</code></DetailItem>
                   <DetailItem label="Key">
                     <Show when={current().key} fallback={<span class="text-console-faint">—</span>}>
@@ -340,17 +339,17 @@ export function SessionDetail() {
                   </DetailItem>
                   <DetailItem label="Status"><StatusBadge resource="session" status={current().status} /></DetailItem>
                   <DetailItem label="Deployment">
-                    <IDText value={current().deployment_id} full href={deploymentHref(current().deployment_id)} />
+                    <IDText value={current().deployment_id} mode="link" href={deploymentHref(current().deployment_id)} />
                   </DetailItem>
                   <DetailItem label="Workspace">
                     <IDText
                       value={current().workspace_id ?? ""}
-                      full
+                      mode="link"
                       href={current().workspace_id ? `/workspaces/${current().workspace_id}` : undefined}
                     />
                   </DetailItem>
                   <DetailItem label="Current Run">
-                    <IDText value={current().current_run_id ?? ""} full href={optionalRunHref(current().current_run_id)} />
+                    <IDText value={current().current_run_id ?? ""} mode="link" href={optionalRunHref(current().current_run_id)} />
                   </DetailItem>
                   <Show when={current().failure}>
                     {(failure) => (
@@ -360,7 +359,7 @@ export function SessionDetail() {
                           <Show when={failure().message}>{(message) => <span class="block text-console-muted">{message()}</span>}</Show>
                         </DetailItem>
                         <DetailItem label="Failing Run">
-                          <IDText value={failure().details.run_id ?? ""} full href={optionalRunHref(failure().details.run_id)} />
+                          <IDText value={failure().details.run_id ?? ""} mode="link" href={optionalRunHref(failure().details.run_id)} />
                         </DetailItem>
                       </>
                     )}

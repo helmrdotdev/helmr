@@ -173,7 +173,7 @@ export function RunDetail() {
         title={run.data?.entrypoint.id ?? "Run"}
         back={{ href: "/runs", label: "Runs" }}
         badge={<Show when={run.data}>{(current) => <StatusBadge resource="run" status={current().status} />}</Show>}
-        subtitle={<Show when={run.data}>{(current) => <IDText value={current().id} full />}</Show>}
+        subtitle={<Show when={run.data}>{(current) => <IDText value={current().id} mode="full" />}</Show>}
         actions={
           <Show when={can("runs.manage") && live() && run.data?.status !== "cancel_requested"}>
             <button type="button" class={ui.dangerOutlineButton} onClick={() => setCancelling(true)}>Cancel Run</button>
@@ -194,7 +194,7 @@ export function RunDetail() {
                     {(path) => (
                       <div class="flex flex-wrap items-center gap-2 border border-[#9bb9e8] bg-[#eef4ff] px-3 py-2 text-[12.5px] text-console-text">
                         <span>
-                          Actor Run of Session <IDText value={current().session_id ?? ""} href={path()} />
+                          Actor Run of Session <IDText value={current().session_id ?? ""} mode="link" href={path()} />
                         </span>
                         <span class={ui.muted}>· cause {current().cause.type} · attempt {current().current_attempt_number}</span>
                         <A class={cx(ui.secondaryButton, "ml-auto")} href={path()}>Open Session</A>
@@ -267,17 +267,16 @@ export function RunDetail() {
                 </div>
 
                 <DetailList title="Run details">
-                  <DetailItem label="ID"><IDText value={current().id} full /></DetailItem>
                   <DetailItem label="Entrypoint">{current().entrypoint.kind} · {current().entrypoint.id}</DetailItem>
                   <Show when={sessionPath()}>
                     {(path) => (
                       <DetailItem label="Session">
-                        <IDText value={current().session_id ?? ""} full href={path()} />
+                        <IDText value={current().session_id ?? ""} mode="link" href={path()} />
                       </DetailItem>
                     )}
                   </Show>
                   <DetailItem label="Workspace">
-                    <IDText value={current().workspace_id} full href={`/workspaces/${current().workspace_id}`} />
+                    <IDText value={current().workspace_id} mode="link" href={`/workspaces/${current().workspace_id}`} />
                   </DetailItem>
                   <DetailItem label="Deployment">
                     <A class="text-console-accent" href={deploymentHref(current().deployment.id)}>{current().deployment.version}</A>

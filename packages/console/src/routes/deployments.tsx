@@ -1,13 +1,14 @@
 import { A } from "@solidjs/router";
-import { createInfiniteQuery, createQuery, useQueryClient } from "@tanstack/solid-query";
+import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { deploymentHref } from "../features/deployments/navigation";
+import { canPromoteDeployment, PromoteDeploymentModal } from "../features/deployments/PromoteDeploymentModal";
 import { defaultEnvironmentColor } from "../features/projects/display";
 import { ApiError } from "../lib/api";
 import { getMe, hasPermission } from "../lib/auth";
-import { getCurrentDeployment, listDeployments, promoteDeployment, type Deployment } from "../lib/deployments";
+import { getCurrentDeployment, listDeployments, type Deployment } from "../lib/deployments";
 import { useScope } from "../lib/scope";
-import { ConfirmModal } from "../ui/ConfirmModal";
+import { ActionMenu } from "../ui/ActionMenu";
 import { DataTable } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
 import { PageHeader } from "../ui/PageHeader";
@@ -45,12 +46,12 @@ function DeploymentRow(props: {
       </td>
       <td><IDText value={props.deployment.bundle_digest} /></td>
       <td><RelativeTime value={props.deployment.created_at} /></td>
-      <td><IDText value={props.deployment.id} /></td>
       <td class={ui.actionsCell}>
-        <Show when={props.canPromote && !props.current}>
-          <button type="button" class={ui.secondaryButton} onClick={() => props.onPromote(props.deployment)}>
-            Promote
-          </button>
+        <Show when={props.canPromote}>
+          <ActionMenu
+            label={`Actions for ${props.deployment.version}`}
+            items={[{ label: "Promote", onSelect: () => props.onPromote(props.deployment) }]}
+          />
         </Show>
       </td>
     </tr>
@@ -59,7 +60,6 @@ function DeploymentRow(props: {
 
 export function Deployments() {
   const scope = useScope();
-  const queryClient = useQueryClient();
   const projectID = () => scope.selectedProjectID();
   const environmentID = () => scope.selectedEnvironmentID();
   const enabled = () => !!projectID() && !!environmentID();
@@ -105,14 +105,18 @@ export function Deployments() {
           when={items().length > 0}
           fallback={<StatePanel empty="No Deployments yet." hint={<>Run <code>helmr deploy</code> against this environment to create the first one.</>} />}
         >
-          <DataTable columns={["Version", "Status", "Digest", "Created", "ID", { label: "Actions", srOnly: true }]} minWidth="min-w-200">
+          <DataTable columns={["Version", "Status", "Digest", "Created", { label: "Actions", srOnly: true }]} minWidth="min-w-180">
             <For each={items()}>
               {(deployment) => (
                 <DeploymentRow
                   deployment={deployment}
                   current={deployment.id === currentID()}
                   environmentColor={environmentColor()}
-                  canPromote={hasPermission(me.data, "tasks.deploy")}
+                  canPromote={canPromoteDeployment({
+                    permitted: hasPermission(me.data, "tasks.deploy"),
+                    currentLoaded: current.isSuccess,
+                    isCurrent: deployment.id === currentID(),
+                  })}
                   onPromote={setPromoting}
                 />
               )}
@@ -135,23 +139,13 @@ export function Deployments() {
 
       <Show when={promoting()}>
         {(deployment) => (
-          <ConfirmModal
-            title="Promote Deployment"
-            confirmLabel="Promote"
-            busyLabel="Promoting..."
+          <PromoteDeploymentModal
+            deployment={deployment()}
+            projectID={projectID()}
+            environmentID={environmentID()}
+            environmentName={scope.selectedEnvironment()?.name}
             onClose={() => setPromoting(null)}
-            onConfirm={async () => {
-              await promoteDeployment(deployment().id, resourceScope());
-              await queryClient.invalidateQueries({ queryKey: ["deployments"] });
-              await queryClient.invalidateQueries({ queryKey: ["schedules"] });
-            }}
-            errorMessage={(error) => (error instanceof ApiError && error.code === "forbidden"
-              ? "You do not have permission to promote Deployments."
-              : error instanceof ApiError ? error.message : "Could not promote this Deployment.")}
-          >
-            <strong>{deployment().version}</strong> becomes the current Deployment for{" "}
-            <strong>{scope.selectedEnvironment()?.name ?? "this environment"}</strong>. New Runs use its definitions and its schedules take effect.
-          </ConfirmModal>
+          />
         )}
       </Show>
     </section>
