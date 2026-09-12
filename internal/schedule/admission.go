@@ -11,6 +11,28 @@ import (
 
 const upcomingCount = 5
 
+type ErrorCode string
+
+const (
+	ErrorUnsupportedCronVersion  ErrorCode = "unsupported_cron_version"
+	ErrorInvalidSchedule         ErrorCode = "invalid_schedule"
+	ErrorInvalidCron             ErrorCode = "invalid_cron"
+	ErrorTaskNotFound            ErrorCode = "task_not_found"
+	ErrorProgramUnavailable      ErrorCode = "program_unavailable"
+	ErrorInvalidDefinition       ErrorCode = "invalid_definition"
+	ErrorSecretSelectionMismatch ErrorCode = "secret_selection_mismatch"
+	ErrorSandboxNotFound         ErrorCode = "sandbox_not_found"
+)
+
+type AdmissionError struct {
+	Code    ErrorCode
+	Message string
+}
+
+func (e *AdmissionError) Error() string {
+	return e.Message
+}
+
 type Admission struct {
 	Schedule    db.Schedule
 	ScheduledAt time.Time
@@ -33,13 +55,13 @@ func BuildAdmission(value db.Schedule) (Admission, error) {
 func BuildAdmissionAt(value db.Schedule, now time.Time) (Admission, error) {
 	if value.CronSemanticsVersion != CronSemanticsVersion {
 		return Admission{}, &AdmissionError{
-			Code:    ErrorGenerationInvalid,
+			Code:    ErrorUnsupportedCronVersion,
 			Message: fmt.Sprintf("unsupported cron semantics %q", value.CronSemanticsVersion),
 		}
 	}
 	if !value.NextFireAt.Valid {
 		return Admission{}, &AdmissionError{
-			Code:    ErrorGenerationInvalid,
+			Code:    ErrorInvalidSchedule,
 			Message: "schedule has no pending instant",
 		}
 	}
@@ -51,7 +73,7 @@ func BuildAdmissionAt(value db.Schedule, now time.Time) (Admission, error) {
 	upcoming, err := NextCronTimes(value.CronPattern, value.Timezone, anchor, upcomingCount)
 	if err != nil {
 		return Admission{}, &AdmissionError{
-			Code:    ErrorInputInvalid,
+			Code:    ErrorInvalidCron,
 			Message: err.Error(),
 		}
 	}
@@ -72,7 +94,7 @@ func BuildAdmissionAt(value db.Schedule, now time.Time) (Admission, error) {
 	payload, err := json.Marshal(input)
 	if err != nil {
 		return Admission{}, &AdmissionError{
-			Code:    ErrorInputInvalid,
+			Code:    ErrorInvalidSchedule,
 			Message: fmt.Sprintf("encode scheduled Task input: %v", err),
 		}
 	}

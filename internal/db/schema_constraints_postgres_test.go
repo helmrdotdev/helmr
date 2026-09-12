@@ -1,7 +1,9 @@
 package db
 
 import (
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 	"uuid"
@@ -51,7 +53,7 @@ func TestSchemaFailurePayloadsRejectNullAndPreserveLifecycle(t *testing.T) {
 		{"run system failed", `UPDATE runs SET status='system_failed', terminal_at=now(), failure=$2 WHERE id=$1`, "system_failed", work.runID},
 		{"session failed", `UPDATE sessions SET state='failed', failed_at=now(), failure=$2 WHERE id=$1`, "run_failed", sessionID},
 		{"session cancelled", `UPDATE sessions SET state='cancelled', failure=$2 WHERE id=$1`, "cancelled", sessionID},
-		{"schedule errored", `UPDATE schedules SET state='errored', last_failure=$2 WHERE id=$1`, "input_invalid", scheduleID},
+		{"schedule errored", `UPDATE schedules SET state='errored', last_failure=$2 WHERE id=$1`, "invalid_schedule", scheduleID},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tx, err := fixture.pool.Begin(ctx)
@@ -83,7 +85,7 @@ func TestSchemaFailurePayloadsRejectNullAndPreserveLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	dbtest.MustExec(t, ctx, tx, `UPDATE schedules SET state='errored', last_failure='{"code":"input_invalid","message":"failed","details":{}}' WHERE id=$1`, scheduleID)
+	dbtest.MustExec(t, ctx, tx, `UPDATE schedules SET state='errored', last_failure='{"code":"invalid_schedule","message":"failed","details":{}}' WHERE id=$1`, scheduleID)
 	dbtest.MustExec(t, ctx, tx, `UPDATE schedules SET state='active' WHERE id=$1`, scheduleID)
 	rejectSchemaRow(t, tx, "23514", `UPDATE schedules SET last_failure='{"code":null,"message":"failed","details":{}}' WHERE id=$1`, scheduleID)
 	dbtest.MustExec(t, ctx, tx, `UPDATE schedules SET state='archived', deployment_id=NULL, deployment_definition_id=NULL, next_fire_at=NULL WHERE id=$1`, scheduleID)
@@ -300,5 +302,59 @@ func TestSchemaCurrentTerminalStatesRequireTheirEventTime(t *testing.T) {
 			// Constraint failure recovery preserves a usable transaction and terminal row.
 			dbtest.MustExec(t, ctx, tx, "UPDATE "+tc.table+" SET updated_at=updated_at WHERE id=$1", tc.id)
 		})
+	}
+}
+
+func TestSchemaDiagnosticCodesAreStructural(t *testing.T) {
+	ctx := t.Context()
+	fixture := newRunLeaseClaimFixture(t, ctx)
+	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
+	sessionID := fixture.convertToActor(t, ctx, work, `{"enabled":false}`)
+	scheduleID := uuid.NewV7()
+	dbtest.MustExec(t, ctx, fixture.pool, `INSERT INTO schedules (id,environment_id,task_declared_id,deployment_definition_id,deployment_id,cron_pattern,timezone,state,effective_from,next_fire_at)
+ SELECT $1,environment_id,declared_id,id,deployment_id,'* * * * *','UTC','active',now(),now() FROM deployment_definitions WHERE id=$2`, scheduleID, fixture.taskDefinitionID)
+	tx, err := fixture.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	for _, tc := range []struct {
+		name, statement string
+		id              uuid.UUID
+	}{
+		{"schedule", `UPDATE schedules SET state='errored',last_failure=$2 WHERE id=$1`, scheduleID},
+		{"session", `UPDATE sessions SET state='failed',failed_at=now(),failure=$2 WHERE id=$1`, sessionID},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, code := range []string{"x", strings.Repeat("x", 128), "future_diagnostic"} {
+				payload, _ := json.Marshal(map[string]any{"code": code, "message": "diagnosis", "details": map[string]any{}})
+				dbtest.MustExec(t, ctx, tx, tc.statement, tc.id, payload)
+			}
+			for _, code := range []any{nil, 42, true, "", " ", "Uppercase", "bad-code", "é", "x\n", strings.Repeat("x", 129)} {
+				payload, _ := json.Marshal(map[string]any{"code": code, "message": "diagnosis", "details": map[string]any{}})
+				rejectSchemaRow(t, tx, "23514", tc.statement, tc.id, payload)
+			}
+		})
+	}
+	rejectSchemaRow(t, tx, "23514", `UPDATE sessions SET failure='{"code":"cancelled","message":"cancelled","details":{}}' WHERE id=$1`, sessionID)
+	rejectSchemaRow(t, tx, "23514", `UPDATE sessions SET state='cancelled',failed_at=NULL WHERE id=$1`, sessionID)
+	dbtest.MustExec(t, ctx, tx, `UPDATE sessions SET state='cancelled',failed_at=NULL,failure='{"code":"cancelled","message":"cancelled","details":{}}' WHERE id=$1`, sessionID)
+	dbtest.MustExec(t, ctx, tx, `UPDATE sessions SET state='failed',failed_at=now(),failure='{"code":"future_diagnostic","message":"diagnosis","details":{}}' WHERE id=$1`, sessionID)
+	dbtest.MustExec(t, ctx, tx, `UPDATE schedules SET state='active' WHERE id=$1`, scheduleID)
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{`SELECT last_failure->>'code' FROM schedules WHERE id=$1`, `SELECT failure->>'code' FROM sessions WHERE id=$1`} {
+		id := scheduleID
+		if strings.Contains(q, "FROM sessions") {
+			id = sessionID
+		}
+		var code string
+		if err := fixture.pool.QueryRow(ctx, q, id).Scan(&code); err != nil {
+			t.Fatal(err)
+		}
+		if code != "future_diagnostic" {
+			t.Fatalf("stored code=%q", code)
+		}
 	}
 }

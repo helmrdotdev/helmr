@@ -8,12 +8,7 @@ import { timestampString } from "./internal/timestamp"
 import { validateTaskId } from "./schema/task"
 
 export interface ScheduleFailure {
-  readonly code:
-    | "task_authority_invalid"
-    | "sandbox_authority_invalid"
-    | "architecture_incompatible"
-    | "generation_invalid"
-    | "input_invalid"
+  readonly code: string
   readonly message: string
   readonly details: Readonly<Record<string, JsonValue>>
 }
@@ -161,15 +156,6 @@ function parseSchedule(value: unknown): Schedule {
 function parseScheduleFailure(value: unknown): ScheduleFailure {
   const input = scheduleObject(value, "Schedule failure")
   const code = requiredString(input, "code", "Schedule failure")
-  if (
-    code !== "task_authority_invalid" &&
-    code !== "sandbox_authority_invalid" &&
-    code !== "architecture_incompatible" &&
-    code !== "generation_invalid" &&
-    code !== "input_invalid"
-  ) {
-    throw new Error("Schedule failure.code is invalid")
-  }
   return Object.freeze({
     code,
     message: requiredString(input, "message", "Schedule failure"),

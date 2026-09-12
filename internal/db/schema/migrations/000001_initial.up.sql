@@ -744,13 +744,7 @@ CREATE TABLE schedules (
         AND last_failure ?& ARRAY['code', 'message', 'details']
         AND last_failure - ARRAY['code', 'message', 'details'] = '{}'::jsonb
         AND jsonb_typeof(last_failure->'code') = 'string'
-        AND last_failure->>'code' IN (
-            'task_authority_invalid',
-            'sandbox_authority_invalid',
-            'architecture_incompatible',
-            'generation_invalid',
-            'input_invalid'
-        )
+        AND last_failure->>'code' ~ '^[a-z][a-z0-9_]{0,127}$'
         AND jsonb_typeof(last_failure->'message') = 'string'
         AND last_failure->>'message' = btrim(last_failure->>'message')
         AND octet_length(last_failure->>'message') BETWEEN 1 AND 1024
@@ -978,7 +972,9 @@ CREATE TABLE sessions (
          AND failure - ARRAY['code', 'message', 'details'] = '{}'::jsonb
          AND jsonb_typeof(failure->'code') = 'string'
          AND (
-             (state = 'failed' AND failure->>'code' IN ('no_progress', 'run_failed', 'run_expired', 'platform_failure'))
+             (state = 'failed'
+              AND failure->>'code' ~ '^[a-z][a-z0-9_]{0,127}$'
+              AND failure->>'code' <> 'cancelled')
              OR (state = 'cancelled' AND failure->>'code' = 'cancelled')
          )
          AND jsonb_typeof(failure->'message') = 'string'

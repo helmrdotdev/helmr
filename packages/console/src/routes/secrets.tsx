@@ -16,7 +16,6 @@ import { envDotStyle, ui } from "../ui/styles";
 const SECRET_ERROR_MESSAGES: Record<string, string> = {
   forbidden: "You do not have permission to manage secrets.",
   not_found: "This secret no longer exists.",
-  internal: "Something went wrong. Please try again.",
 };
 const INTERNAL_ERROR_MESSAGE = "Something went wrong. Please try again.";
 

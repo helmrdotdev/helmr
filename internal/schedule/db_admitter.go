@@ -93,7 +93,7 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 		return err
 	}
 	if !lockedSchedule.DeploymentID.Valid || !lockedSchedule.DeploymentDefinitionID.Valid {
-		return taskAuthorityError("schedule has no pinned task authority")
+		return &AdmissionError{Code: ErrorInvalidSchedule, Message: "schedule has no pinned task"}
 	}
 	task, err := queries.GetDeploymentDefinition(ctx, db.GetDeploymentDefinitionParams{
 		EnvironmentID: lockedSchedule.EnvironmentID,
@@ -102,20 +102,20 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 		DeclaredID:    lockedSchedule.TaskDeclaredID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return taskAuthorityError("scheduled task is absent from the accepted deployment")
+		return &AdmissionError{Code: ErrorTaskNotFound, Message: "scheduled task is absent from the accepted deployment"}
 	}
 	if err != nil {
 		return err
 	}
 	if task.ID != lockedSchedule.DeploymentDefinitionID {
-		return taskAuthorityError("schedule task authority does not match its generation")
+		return &AdmissionError{Code: ErrorInvalidSchedule, Message: "schedule task does not match its pinned definition"}
 	}
 	program, err := queries.GetDeploymentProgramAuthority(ctx, db.GetDeploymentProgramAuthorityParams{
 		EnvironmentID: lockedSchedule.EnvironmentID,
 		DeploymentID:  lockedSchedule.DeploymentID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return taskAuthorityError("scheduled task program authority is unavailable")
+		return &AdmissionError{Code: ErrorProgramUnavailable, Message: "scheduled task program is unavailable"}
 	}
 	if err != nil {
 		return err
@@ -128,7 +128,7 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 		program.QueueConfig,
 	)
 	if err != nil {
-		return taskAuthorityError("scheduled task manifest authority is invalid")
+		return &AdmissionError{Code: ErrorInvalidDefinition, Message: "scheduled task definition is invalid"}
 	}
 
 	selectedSecrets, err := queries.ListScheduleSecrets(ctx, db.ListScheduleSecretsParams{
@@ -139,7 +139,7 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 		return err
 	}
 	if !sameSecretPlacements(taskRun.SecretPlacements, selectedSecrets) {
-		return taskAuthorityError("schedule Secret selection does not match its generation")
+		return &AdmissionError{Code: ErrorSecretSelectionMismatch, Message: "schedule Secret selection does not match its definition"}
 	}
 	runID := uuid.NewV7()
 	workspaceID := uuid.NewV7()
@@ -156,7 +156,7 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 		},
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return sandboxAuthorityError("schedule Sandbox is absent from its pinned deployment")
+		return &AdmissionError{Code: ErrorSandboxNotFound, Message: "schedule Sandbox is absent from its pinned deployment"}
 	}
 	if err != nil {
 		return err
@@ -228,14 +228,6 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 		return fmt.Errorf("commit schedule run admission: %w", err)
 	}
 	return nil
-}
-
-func taskAuthorityError(message string) error {
-	return &AdmissionError{Code: ErrorTaskAuthorityInvalid, Message: message}
-}
-
-func sandboxAuthorityError(message string) error {
-	return &AdmissionError{Code: ErrorSandboxAuthorityInvalid, Message: message}
 }
 
 func sameSecretPlacements(

@@ -160,7 +160,7 @@ func TestScheduleResponseProjectsTimedDeclaration(t *testing.T) {
 		State:                "errored",
 		EffectiveFrom:        pgvalue.Timestamptz(now),
 		NextFireAt:           pgvalue.Timestamptz(now.Add(time.Hour)),
-		LastFailure:          []byte(`{"code":"sandbox_authority_invalid","message":"Sandbox is unavailable","details":{}}`),
+		LastFailure:          []byte(`{"code":"future_schedule_failure","message":"diagnosis","details":{"custom":1}}`),
 		CreatedAt:            pgvalue.Timestamptz(now.Add(-time.Hour)),
 		UpdatedAt:            pgvalue.Timestamptz(now),
 	}
@@ -172,7 +172,9 @@ func TestScheduleResponseProjectsTimedDeclaration(t *testing.T) {
 		response.TaskID != row.TaskDeclaredID ||
 		response.Status != api.ScheduleStatusErrored ||
 		response.LastFailure == nil ||
-		response.LastFailure.Code != "sandbox_authority_invalid" {
+		response.LastFailure.Code != "future_schedule_failure" ||
+		response.LastFailure.Message != "diagnosis" ||
+		string(response.LastFailure.Details) != `{"custom":1}` {
 		t.Fatalf("response = %+v", response)
 	}
 }

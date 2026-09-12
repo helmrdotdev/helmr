@@ -3862,9 +3862,6 @@ function parseSessionInputRecord(value) {
 function parseSessionFailure(value) {
   const input = objectValue(value, "Session failure");
   const code = requiredString(input, "code", "Session failure");
-  if (code !== "cancelled" && code !== "no_progress" && code !== "run_failed" && code !== "run_expired" && code !== "platform_failure") {
-    throw new Error("Session failure.code is invalid");
-  }
   const details = objectValue(input["details"], "Session failure.details");
   const runId = details["run_id"] === undefined ? undefined : resourceID(details["run_id"], "Session failure.details.run_id");
   return Object.freeze({

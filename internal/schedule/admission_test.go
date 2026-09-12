@@ -2,6 +2,7 @@ package schedule
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 	"uuid"
@@ -78,5 +79,28 @@ func TestBuildAdmissionRejectsUnknownSemantics(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("unknown cron contract was accepted")
+	}
+}
+
+func TestBuildAdmissionDiagnosticCauses(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*db.Schedule)
+		code   ErrorCode
+	}{
+		{"unsupported version", func(s *db.Schedule) { s.CronSemanticsVersion = "other" }, ErrorUnsupportedCronVersion},
+		{"missing instant", func(s *db.Schedule) { s.NextFireAt.Valid = false }, ErrorInvalidSchedule},
+		{"invalid cron", func(s *db.Schedule) { s.CronPattern = "invalid" }, ErrorInvalidCron},
+		{"invalid timezone", func(s *db.Schedule) { s.Timezone = "no/such-zone" }, ErrorInvalidCron},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := scheduleAt(time.Now().UTC())
+			tc.change(&s)
+			_, err := BuildAdmissionAt(s, time.Now().UTC())
+			var failure *AdmissionError
+			if !errors.As(err, &failure) || failure.Code != tc.code {
+				t.Fatalf("error=%v, want %s", err, tc.code)
+			}
+		})
 	}
 }

@@ -81,7 +81,7 @@ func TestWorkerPersistsBoundedPermanentError(t *testing.T) {
 	now := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
 	store := &workerStore{claimed: []db.Schedule{scheduleAt(now)}}
 	admitter := &workerAdmitter{err: &AdmissionError{
-		Code:    ErrorSandboxAuthorityInvalid,
+		Code:    ErrorSandboxNotFound,
 		Message: string(make([]byte, 2048)),
 	}}
 	worker, err := NewWorker(nil, store, admitter)
@@ -104,7 +104,7 @@ func TestWorkerPersistsBoundedPermanentError(t *testing.T) {
 	if err := json.Unmarshal(transition.LastFailure, &failure); err != nil {
 		t.Fatal(err)
 	}
-	if failure.Code != string(ErrorSandboxAuthorityInvalid) {
+	if failure.Code != string(ErrorSandboxNotFound) {
 		t.Fatalf("last failure code = %q", failure.Code)
 	}
 	if len(failure.Message) > 1024 {

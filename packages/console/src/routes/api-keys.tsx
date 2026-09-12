@@ -41,11 +41,8 @@ const EXPIRY_OPTIONS: SelectOption<ExpiryValue>[] = [
 const API_KEY_ERROR_MESSAGES: Record<string, string> = {
   forbidden: "You do not have permission to manage API keys.",
   invalid_label: "Name must be 1-64 characters and contain no control characters.",
-  invalid_expiry: "Choose a valid expiry from the dropdown.",
   invalid_permissions: "Select at least one API key permission.",
-  invalid_filter: "Invalid filter.",
   not_found: "This key was already revoked or removed.",
-  internal: "Something went wrong. Please try again.",
 };
 const INTERNAL_ERROR_MESSAGE = "Something went wrong. Please try again.";
 

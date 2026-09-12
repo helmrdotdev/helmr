@@ -23,6 +23,12 @@ HTTP status and stable `code` for program flow; do not parse `message`. The SDK
 surfaces these as `APIError` values with `code`, optional `requestId`, and
 optional `details`.
 
+Resource diagnostics are separate from this HTTP error envelope. Schedule
+`last_failure.code` and Session `failure.code` are diagnostic strings, not closed
+lists. You can handle a known code specifically; keep a general fallback for new
+codes and display `message` without parsing it. They do not replace resource status,
+authorization, or retry rules. A cancelled Session retains the `cancelled` code.
+
 Write request bodies use `idempotency_key` where the endpoint supports stable
 retries, including Task/Actor starts, Session input/close, Workspace creation,
 exec/deletion, Secret changes, Token changes, and Deployment creation. SDK

@@ -399,12 +399,7 @@ export interface ActorStartOptions {
 
 export type SessionStatus = "open" | "closed" | "cancelled" | "failed"
 
-export type SessionFailureCode =
-  | "cancelled"
-  | "no_progress"
-  | "run_failed"
-  | "run_expired"
-  | "platform_failure"
+export type SessionFailureCode = string
 
 export interface SessionFailure {
   readonly code: SessionFailureCode
