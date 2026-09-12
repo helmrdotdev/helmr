@@ -1,31 +1,37 @@
 import { A, useParams, useSearchParams } from "@solidjs/router";
-import { createQuery } from "@tanstack/solid-query";
+import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import { deploymentHref } from "../features/deployments/navigation";
 import { ApiError } from "../lib/api";
+import { getMe, hasPermission } from "../lib/auth";
 import { runSessionConsolePath } from "../lib/sessions";
 import {
+  cancelRun,
   getRun,
   getRunEvents,
   getRunLogs,
+  isTerminalRunStatus,
   type RunEventPage,
   type RunLogPage,
   type RunLogRecord,
 } from "../lib/runs";
 import { useScope } from "../lib/scope";
+import { ConfirmModal } from "../ui/ConfirmModal";
 import { IDText } from "../ui/IDText";
 import { PageHeader } from "../ui/PageHeader";
 import { DetailItem, DetailList, Panel } from "../ui/Panel";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatePanel } from "../ui/StatePanel";
 import { StatusBadge } from "../ui/StatusBadge";
-import { ui } from "../ui/styles";
+import { cx, ui } from "../ui/styles";
 
 const pageSize = 200;
+const pollInterval = 5_000;
 
-function runErrorMessage(error: unknown): string {
+function runErrorMessage(error: unknown, fallback = "Could not load this Run."): string {
+  if (error instanceof ApiError && error.code === "forbidden") return "You do not have permission to do this.";
   if (error instanceof ApiError) return error.message;
-  return "Could not load this Run.";
+  return fallback;
 }
 
 function decodeBase64(value: string): string {
@@ -64,29 +70,39 @@ export function RunDetail() {
   const params = useParams();
   const [searchParams] = useSearchParams();
   const scope = useScope();
+  const queryClient = useQueryClient();
   const runID = createMemo(() => params["run_id"]?.trim() ?? "");
   const projectID = createMemo(() => searchParamValue(searchParams["project_id"]) || scope.selectedProjectID());
   const environmentID = createMemo(() => searchParamValue(searchParams["environment_id"]) || scope.selectedEnvironmentID());
   const enabled = createMemo(() => !!runID() && !!projectID() && !!environmentID());
+
+  const me = createQuery(() => ({ queryKey: ["me"], queryFn: getMe, retry: false, staleTime: 60_000 }));
+  const can = (permission: string) => hasPermission(me.data, permission);
 
   const run = createQuery(() => ({
     queryKey: ["run", runID(), projectID(), environmentID()],
     queryFn: () => getRun(runID(), projectID(), environmentID()),
     enabled: enabled(),
     retry: false,
+    refetchInterval: (query) => (query.state.data && !isTerminalRunStatus(query.state.data.status) ? pollInterval : false),
   }));
+  const live = () => !!run.data && !isTerminalRunStatus(run.data.status);
+  const sessionPath = createMemo(() => (run.data ? runSessionConsolePath(run.data, projectID(), environmentID()) : undefined));
   const initialLogs = createQuery(() => ({
     queryKey: ["run-logs", runID(), projectID(), environmentID()],
     queryFn: () => getRunLogs(runID(), projectID(), environmentID(), { limit: pageSize }),
     enabled: enabled(),
     retry: false,
+    refetchInterval: live() ? pollInterval : false,
   }));
   const initialEvents = createQuery(() => ({
     queryKey: ["run-events", runID(), projectID(), environmentID()],
     queryFn: () => getRunEvents(runID(), projectID(), environmentID(), { limit: pageSize }),
     enabled: enabled(),
     retry: false,
+    refetchInterval: live() ? pollInterval : false,
   }));
+  const [cancelling, setCancelling] = createSignal(false);
   const [logPages, setLogPages] = createSignal<RunLogPage[]>([]);
   const [eventPages, setEventPages] = createSignal<RunEventPage[]>([]);
   const [loadingLogs, setLoadingLogs] = createSignal(false);
@@ -158,6 +174,11 @@ export function RunDetail() {
         back={{ href: "/runs", label: "Runs" }}
         badge={<Show when={run.data}>{(current) => <StatusBadge resource="run" status={current().status} />}</Show>}
         subtitle={<Show when={run.data}>{(current) => <IDText value={current().id} full />}</Show>}
+        actions={
+          <Show when={can("runs.manage") && live() && run.data?.status !== "cancel_requested"}>
+            <button type="button" class={ui.dangerOutlineButton} onClick={() => setCancelling(true)}>Cancel Run</button>
+          </Show>
+        }
       />
 
       <Show when={run.isError}>
@@ -169,6 +190,17 @@ export function RunDetail() {
             {(current) => (
               <div class="grid grid-cols-[minmax(0,1fr)_300px] items-start gap-3.5 max-[960px]:grid-cols-1">
                 <div class="flex min-w-0 flex-col gap-3">
+                  <Show when={sessionPath()}>
+                    {(path) => (
+                      <div class="flex flex-wrap items-center gap-2 border border-[#9bb9e8] bg-[#eef4ff] px-3 py-2 text-[12.5px] text-console-text">
+                        <span>
+                          Actor Run of Session <IDText value={current().session_id ?? ""} href={path()} />
+                        </span>
+                        <span class={ui.muted}>· cause {current().cause.type} · attempt {current().current_attempt_number}</span>
+                        <A class={cx(ui.secondaryButton, "ml-auto")} href={path()}>Open Session</A>
+                      </div>
+                    )}
+                  </Show>
                   <Show when={current().output !== undefined}>
                     <JSONPanel title="Output" value={current().output} />
                   </Show>
@@ -237,10 +269,10 @@ export function RunDetail() {
                 <DetailList title="Run details">
                   <DetailItem label="ID"><IDText value={current().id} full /></DetailItem>
                   <DetailItem label="Entrypoint">{current().entrypoint.kind} · {current().entrypoint.id}</DetailItem>
-                  <Show when={runSessionConsolePath(current(), projectID(), environmentID())}>
-                    {(sessionPath) => (
+                  <Show when={sessionPath()}>
+                    {(path) => (
                       <DetailItem label="Session">
-                        <IDText value={current().session_id!} full href={sessionPath()} />
+                        <IDText value={current().session_id ?? ""} full href={path()} />
                       </DetailItem>
                     )}
                   </Show>
@@ -260,6 +292,26 @@ export function RunDetail() {
             )}
           </Show>
         </Show>
+      </Show>
+
+      <Show when={cancelling() && run.data}>
+        {(current) => (
+          <ConfirmModal
+            title="Cancel Run"
+            confirmLabel="Cancel Run"
+            busyLabel="Cancelling..."
+            tone="danger"
+            onClose={() => setCancelling(false)}
+            onConfirm={async () => {
+              await cancelRun(current().id, projectID(), environmentID());
+              await queryClient.invalidateQueries({ queryKey: ["run", current().id] });
+              await queryClient.invalidateQueries({ queryKey: ["runs"] });
+            }}
+            errorMessage={(error) => runErrorMessage(error, "Could not cancel this Run.")}
+          >
+            Cancellation is requested for <strong>{current().entrypoint.id}</strong> (<IDText value={current().id} />). A running attempt stops at its next checkpoint.
+          </ConfirmModal>
+        )}
       </Show>
     </section>
   );
