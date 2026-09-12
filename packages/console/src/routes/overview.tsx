@@ -178,8 +178,8 @@ export function Overview() {
   const [cancellingRun, setCancellingRun] = createSignal<RunListItem | null>(null);
 
   const tokenActions = (token: TokenListItem): ActionMenuItem[] => [
-    ...(can("tokens.complete") ? [{ label: "Complete…", onSelect: () => setCompleting(token) }] : []),
-    ...(can("tokens.cancel") ? [{ label: "Cancel…", tone: "danger" as const, onSelect: () => setCancellingToken(token) }] : []),
+    ...(can("tokens.complete") ? [{ label: "Complete", onSelect: () => setCompleting(token) }] : []),
+    ...(can("tokens.cancel") ? [{ label: "Cancel", tone: "danger" as const, onSelect: () => setCancellingToken(token) }] : []),
   ];
 
   const refreshTokens = async () => {
@@ -252,12 +252,7 @@ export function Overview() {
                             <td><TagList tags={[]} /></td>
                             <td><StatusBadge resource="run" status="waiting" /></td>
                             <td><RelativeTime value={row.run.created_at} /></td>
-                            <td class={ui.actionsCell}>
-                              <ActionMenu
-                                label={`Actions for ${row.run.entrypoint.id}`}
-                                items={[{ label: "Open Session", href: sessionConsolePath(row.run.session_id!, projectID(), environmentID()) }]}
-                              />
-                            </td>
+                            <td class={ui.actionsCell} />
                           </tr>
                         )}
                       </For>
@@ -348,7 +343,7 @@ export function Overview() {
                               <Show when={can("runs.manage") && run.status !== "cancel_requested"}>
                                 <ActionMenu
                                   label={`Actions for ${run.entrypoint.id}`}
-                                  items={[{ label: "Cancel Run…", tone: "danger", onSelect: () => setCancellingRun(run) }]}
+                                  items={[{ label: "Cancel run", tone: "danger", onSelect: () => setCancellingRun(run) }]}
                                 />
                               </Show>
                             </td>
