@@ -126,8 +126,8 @@ if [ "${CONSOLE_MODE}" = "preview" ]; then
   export REDIS_URL="unix://${redis_socket}?db=0"
 
   clickhouse_host="127.0.0.1"
-  if [ "$(uname -s)" = "Linux" ] && [ -n "${PASEO_PORT:-}" ]; then
-    clickhouse_host="127.1.$((PASEO_PORT / 256)).$((PASEO_PORT % 256))"
+  if [ "$(uname -s)" = "Linux" ]; then
+    clickhouse_host="127.1.$((CONSOLE_PORT / 256)).$((CONSOLE_PORT % 256))"
   fi
   clickhouse_root="$(dirname "$(dirname "$(readlink -f "$(command -v clickhouse)")")")"
   export HELMR_DEV_CLICKHOUSE_HOST="${clickhouse_host}"
