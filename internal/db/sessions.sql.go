@@ -480,20 +480,25 @@ SELECT sessions.id, sessions.environment_id, sessions.actor_declared_id, session
    AND deployment_definitions.declared_id = sessions.actor_declared_id
  WHERE sessions.environment_id = $3
    AND (
-       $4::timestamptz IS NULL
+       coalesce(cardinality($4::text[]), 0) = 0
+       OR sessions.state = ANY($4::text[])
+   )
+   AND (
+       $5::timestamptz IS NULL
        OR (sessions.created_at, sessions.id) < (
-           $4::timestamptz,
-           $5::uuid
+           $5::timestamptz,
+           $6::uuid
        )
    )
  ORDER BY sessions.created_at DESC, sessions.id DESC
- LIMIT $6
+ LIMIT $7
 `
 
 type ListSessionSnapshotsParams struct {
 	OrgID          pgtype.UUID        `json:"org_id"`
 	ProjectID      pgtype.UUID        `json:"project_id"`
 	EnvironmentID  pgtype.UUID        `json:"environment_id"`
+	States         []string           `json:"states"`
 	AfterCreatedAt pgtype.Timestamptz `json:"after_created_at"`
 	AfterID        pgtype.UUID        `json:"after_id"`
 	LimitCount     int32              `json:"limit_count"`
@@ -539,6 +544,7 @@ func (q *Queries) ListSessionSnapshots(ctx context.Context, arg ListSessionSnaps
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
+		arg.States,
 		arg.AfterCreatedAt,
 		arg.AfterID,
 		arg.LimitCount,

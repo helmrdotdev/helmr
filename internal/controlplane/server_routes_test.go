@@ -71,6 +71,7 @@ GET /api/projects/{projectID}/environments/{environmentID}/secrets
 GET /api/projects/{projectID}/environments/{environmentID}/secrets/{secretID}
 GET /api/projects/{projectID}/environments/{environmentID}/sessions
 GET /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}
+GET /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/inputs
 GET /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/outputs
 GET /api/projects/{projectID}/environments/{environmentID}/tasks
 GET /api/projects/{projectID}/environments/{environmentID}/tasks/{taskID}
@@ -105,6 +106,7 @@ GET /v1/secrets
 GET /v1/secrets/{secretID}
 GET /v1/sessions
 GET /v1/sessions/{sessionID}
+GET /v1/sessions/{sessionID}/inputs
 GET /v1/sessions/{sessionID}/outputs
 GET /v1/tasks
 GET /v1/tasks/{taskID}

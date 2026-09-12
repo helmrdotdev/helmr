@@ -636,6 +636,7 @@ func TestListRunsOptionsAndListRunLogs(t *testing.T) {
 		switch r.URL.Path {
 		case "/v1/runs":
 			if got := r.URL.Query()["status"]; !slices.Equal(got, []string{"running", "waiting"}) ||
+				r.URL.Query().Get("session_id") != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33" ||
 				r.URL.Query().Get("cursor") != "cursor-1" ||
 				r.URL.Query().Get("limit") != "25" {
 				t.Fatalf("query = %s", r.URL.RawQuery)
@@ -669,9 +670,10 @@ func TestListRunsOptionsAndListRunLogs(t *testing.T) {
 		t.Fatal(err)
 	}
 	runs, err := client.ListRuns(context.Background(), ListRunsOptions{
-		Statuses: []string{"running", "waiting"},
-		Cursor:   "cursor-1",
-		Limit:    25,
+		Statuses:  []string{"running", "waiting"},
+		SessionID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
+		Cursor:    "cursor-1",
+		Limit:     25,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -689,7 +691,7 @@ func TestListRunsOptionsAndListRunLogs(t *testing.T) {
 		logs.NextCursor != "cursor-next" {
 		t.Fatalf("logs = %+v", logs)
 	}
-	if got := strings.Join(paths, ","); got != "/v1/runs?cursor=cursor-1&limit=25&status=running&status=waiting,/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs" {
+	if got := strings.Join(paths, ","); got != "/v1/runs?cursor=cursor-1&limit=25&session_id=019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33&status=running&status=waiting,/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs" {
 		t.Fatalf("paths = %s", got)
 	}
 }

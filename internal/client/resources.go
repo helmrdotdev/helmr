@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	maxActorOutputReadLimit = int32(100)
-	maxActorOutputSequence  = int64(1<<53 - 1)
+	maxSessionRecordReadLimit = int32(100)
+	maxSessionRecordSequence  = int64(1<<53 - 1)
 )
 
 func (c *Client) BaseURL() string {
@@ -145,10 +145,11 @@ func (c *Client) RetrieveSession(
 }
 
 type SessionListOptions struct {
-	Cursor  string
-	Limit   int32
-	ActorID string
-	Key     string
+	Statuses []string
+	Cursor   string
+	Limit    int32
+	ActorID  string
+	Key      string
 	EnvironmentScopeOptions
 }
 
@@ -158,9 +159,14 @@ func (c *Client) ListSessions(ctx context.Context, opts SessionListOptions) (api
 	if hasActorID != hasKey {
 		return api.ListSessionsResponse{}, errors.New("actor ID and key must be provided together")
 	}
+	for _, status := range opts.Statuses {
+		if err := api.ValidateSessionStatus(status); err != nil {
+			return api.ListSessionsResponse{}, err
+		}
+	}
 	if hasActorID {
-		if opts.Cursor != "" || opts.Limit != 0 {
-			return api.ListSessionsResponse{}, errors.New("cursor and limit are not accepted with actor ID and key")
+		if opts.Cursor != "" || opts.Limit != 0 || len(opts.Statuses) != 0 {
+			return api.ListSessionsResponse{}, errors.New("cursor, limit and status are not accepted with actor ID and key")
 		}
 		if err := api.ValidateActorDeclaredID(opts.ActorID); err != nil {
 			return api.ListSessionsResponse{}, err
@@ -176,6 +182,9 @@ func (c *Client) ListSessions(ctx context.Context, opts SessionListOptions) (api
 		return api.ListSessionsResponse{}, err
 	}
 	values := url.Values{}
+	for _, status := range opts.Statuses {
+		values.Add("status", status)
+	}
 	if opts.Cursor != "" {
 		values.Set("cursor", opts.Cursor)
 	}
@@ -203,7 +212,10 @@ func (c *Client) ListSessions(ctx context.Context, opts SessionListOptions) (api
 	return response, nil
 }
 
-type ActorOutputReadOptions struct {
+// SessionRecordReadOptions pages a Session's input or output records by
+// sequence: After selects records with a greater sequence and Limit bounds
+// the page.
+type SessionRecordReadOptions struct {
 	After *int64
 	Limit int32
 	EnvironmentScopeOptions
@@ -212,30 +224,56 @@ type ActorOutputReadOptions struct {
 func (c *Client) ReadSessionOutputs(
 	ctx context.Context,
 	sessionID string,
-	opts ActorOutputReadOptions,
+	opts SessionRecordReadOptions,
 ) (api.SessionOutputPage, error) {
-	if err := ids.Validate(sessionID); err != nil {
+	var response api.SessionOutputPage
+	if err := c.readSessionRecords(ctx, sessionID, "outputs", opts, &response); err != nil {
 		return api.SessionOutputPage{}, err
 	}
-	if opts.After != nil && (*opts.After < 0 || *opts.After > maxActorOutputSequence) {
-		return api.SessionOutputPage{}, fmt.Errorf(
-			"actor output after must be in [0,%d] when present",
-			maxActorOutputSequence,
-		)
+	if response.Records == nil {
+		response.Records = []api.SessionOutput{}
 	}
-	if opts.Limit < 0 || opts.Limit > maxActorOutputReadLimit {
-		return api.SessionOutputPage{}, fmt.Errorf(
-			"actor output limit must be in [1,%d] when present",
-			maxActorOutputReadLimit,
-		)
+	return response, nil
+}
+
+func (c *Client) ReadSessionInputs(
+	ctx context.Context,
+	sessionID string,
+	opts SessionRecordReadOptions,
+) (api.SessionInputPage, error) {
+	var response api.SessionInputPage
+	if err := c.readSessionRecords(ctx, sessionID, "inputs", opts, &response); err != nil {
+		return api.SessionInputPage{}, err
+	}
+	if response.Records == nil {
+		response.Records = []api.SessionInput{}
+	}
+	return response, nil
+}
+
+func (c *Client) readSessionRecords(
+	ctx context.Context,
+	sessionID string,
+	direction string,
+	opts SessionRecordReadOptions,
+	response any,
+) error {
+	if err := ids.Validate(sessionID); err != nil {
+		return err
+	}
+	if opts.After != nil && (*opts.After < 0 || *opts.After > maxSessionRecordSequence) {
+		return fmt.Errorf("session %s after must be in [0,%d] when present", direction, maxSessionRecordSequence)
+	}
+	if opts.Limit < 0 || opts.Limit > maxSessionRecordReadLimit {
+		return fmt.Errorf("session %s limit must be in [1,%d] when present", direction, maxSessionRecordReadLimit)
 	}
 	path, err := c.environmentScopedPath(
 		opts.ProjectID,
 		opts.EnvironmentID,
-		"/sessions/"+url.PathEscape(sessionID)+"/outputs",
+		"/sessions/"+url.PathEscape(sessionID)+"/"+direction,
 	)
 	if err != nil {
-		return api.SessionOutputPage{}, err
+		return err
 	}
 	values := url.Values{}
 	if opts.After != nil {
@@ -247,16 +285,9 @@ func (c *Client) ReadSessionOutputs(
 	path += "?" + values.Encode()
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return api.SessionOutputPage{}, err
+		return err
 	}
-	var response api.SessionOutputPage
-	if err := c.doJSON(req, &response); err != nil {
-		return api.SessionOutputPage{}, err
-	}
-	if response.Records == nil {
-		response.Records = []api.SessionOutput{}
-	}
-	return response, nil
+	return c.doJSON(req, response)
 }
 
 type EnvironmentScopeOptions struct {

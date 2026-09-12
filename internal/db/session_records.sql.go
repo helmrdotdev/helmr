@@ -843,6 +843,103 @@ func (q *Queries) LockActorInputCurrentRun(ctx context.Context, arg LockActorInp
 	return i, err
 }
 
+const readPublicActorInputPage = `-- name: ReadPublicActorInputPage :many
+WITH scoped_actor AS MATERIALIZED (
+    SELECT sessions.id,
+           sessions.next_input_sequence,
+           CASE
+               WHEN $2::boolean
+               THEN $3::bigint
+               ELSE 0
+           END::bigint AS effective_after
+     FROM sessions
+     WHERE sessions.environment_id = $4
+       AND sessions.id = $5
+)
+SELECT scoped_actor.id AS session_id,
+       scoped_actor.next_input_sequence,
+       scoped_actor.effective_after::bigint AS effective_after,
+       page.record_id,
+       coalesce(page.sequence, 0)::bigint AS sequence,
+       coalesce(page.data, 'null'::jsonb)::jsonb AS data,
+       coalesce(page.source_kind, '')::text AS source_kind,
+       page.source_run_id,
+       coalesce(page.created_at, 'epoch'::timestamptz)::timestamptz AS created_at
+  FROM scoped_actor
+  LEFT JOIN LATERAL (
+      SELECT session_records.id AS record_id,
+             session_records.sequence,
+             session_records.data,
+             session_records.source_kind,
+             session_records.source_run_id,
+             session_records.created_at
+        FROM session_records
+       WHERE session_records.session_id = scoped_actor.id
+         AND session_records.direction = 'input'
+         AND session_records.sequence > scoped_actor.effective_after
+         AND session_records.sequence < scoped_actor.next_input_sequence
+       ORDER BY session_records.sequence, session_records.id
+       LIMIT $1::integer
+  ) AS page ON true
+ ORDER BY page.sequence NULLS LAST, page.record_id NULLS LAST
+`
+
+type ReadPublicActorInputPageParams struct {
+	LimitCount    int32       `json:"limit_count"`
+	AfterPresent  bool        `json:"after_present"`
+	AfterSequence int64       `json:"after_sequence"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	SessionID     pgtype.UUID `json:"session_id"`
+}
+
+type ReadPublicActorInputPageRow struct {
+	SessionID         pgtype.UUID        `json:"session_id"`
+	NextInputSequence int64              `json:"next_input_sequence"`
+	EffectiveAfter    int64              `json:"effective_after"`
+	RecordID          pgtype.UUID        `json:"record_id"`
+	Sequence          int64              `json:"sequence"`
+	Data              []byte             `json:"data"`
+	SourceKind        string             `json:"source_kind"`
+	SourceRunID       pgtype.UUID        `json:"source_run_id"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) ReadPublicActorInputPage(ctx context.Context, arg ReadPublicActorInputPageParams) ([]ReadPublicActorInputPageRow, error) {
+	rows, err := q.db.Query(ctx, readPublicActorInputPage,
+		arg.LimitCount,
+		arg.AfterPresent,
+		arg.AfterSequence,
+		arg.EnvironmentID,
+		arg.SessionID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ReadPublicActorInputPageRow
+	for rows.Next() {
+		var i ReadPublicActorInputPageRow
+		if err := rows.Scan(
+			&i.SessionID,
+			&i.NextInputSequence,
+			&i.EffectiveAfter,
+			&i.RecordID,
+			&i.Sequence,
+			&i.Data,
+			&i.SourceKind,
+			&i.SourceRunID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readPublicActorOutputPage = `-- name: ReadPublicActorOutputPage :many
 WITH scoped_actor AS MATERIALIZED (
     SELECT sessions.id,

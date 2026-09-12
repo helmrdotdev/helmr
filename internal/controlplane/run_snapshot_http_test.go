@@ -79,16 +79,17 @@ func TestProjectRunSnapshotMapsScheduledCause(t *testing.T) {
 func TestRunListCursorIsBoundToScopeAndFilter(t *testing.T) {
 	createdAt := time.Date(2026, 7, 24, 12, 0, 0, 123, time.UTC)
 	runID := uuid.NewV7()
+	sessionID := uuid.NewV7().String()
 	statuses := []db.RunStatus{db.RunStatusRunning, db.RunStatusWaiting}
 	raw, err := encodeRunListCursor(runListCursor{
 		ProjectID: "project", EnvironmentID: "environment",
-		Statuses: runStatusStrings(statuses), CreatedAt: createdAt.Format(time.RFC3339Nano),
-		RunID: runID.String(),
+		Statuses: runStatusStrings(statuses), SessionID: sessionID,
+		CreatedAt: createdAt.Format(time.RFC3339Nano), RunID: runID.String(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	cursor, err := parseRunListCursor(raw, "project", "environment", statuses)
+	cursor, err := parseRunListCursor(raw, "project", "environment", statuses, sessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,14 +97,36 @@ func TestRunListCursorIsBoundToScopeAndFilter(t *testing.T) {
 		t.Fatalf("unexpected cursor: %+v", cursor)
 	}
 	if _, err := parseRunListCursor(
-		raw, "project", "another-environment", statuses,
+		raw, "project", "another-environment", statuses, sessionID,
 	); err == nil {
 		t.Fatal("cross-Environment cursor was accepted")
 	}
 	if _, err := parseRunListCursor(
-		raw, "project", "environment", []db.RunStatus{db.RunStatusFailed},
+		raw, "project", "environment", []db.RunStatus{db.RunStatusFailed}, sessionID,
 	); err == nil {
 		t.Fatal("cursor with another status filter was accepted")
+	}
+	if _, err := parseRunListCursor(
+		raw, "project", "environment", statuses, uuid.NewV7().String(),
+	); err == nil {
+		t.Fatal("cursor with another session_id filter was accepted")
+	}
+	if _, err := parseRunListCursor(raw, "project", "environment", statuses, ""); err == nil {
+		t.Fatal("Session-bound cursor was accepted without the session_id filter")
+	}
+
+	unfiltered, err := encodeRunListCursor(runListCursor{
+		ProjectID: "project", EnvironmentID: "environment",
+		Statuses: []string{}, CreatedAt: createdAt.Format(time.RFC3339Nano), RunID: runID.String(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parseRunListCursor(unfiltered, "project", "environment", nil, ""); err != nil {
+		t.Fatalf("unfiltered cursor was rejected: %v", err)
+	}
+	if _, err := parseRunListCursor(unfiltered, "project", "environment", nil, sessionID); err == nil {
+		t.Fatal("unfiltered cursor was accepted with a session_id filter")
 	}
 }
 
@@ -114,10 +137,40 @@ func TestRunListQueryRejectsEmptyAndRepeatedPagination(t *testing.T) {
 		"/v1/runs?cursor=one&cursor=two",
 		"/v1/runs?limit=",
 		"/v1/runs?limit=10&limit=20",
+		"/v1/runs?session_id=",
+		"/v1/runs?session_id=" + uuid.NewV7().String() + "&session_id=" + uuid.NewV7().String(),
+		"/v1/runs?actor_id=operator",
 	} {
 		request := httptest.NewRequest(http.MethodGet, target, nil)
 		if err := validateRunListQuery(request); err == nil {
 			t.Fatalf("%s was accepted", target)
+		}
+	}
+}
+
+func TestParseRunSessionFilter(t *testing.T) {
+	sessionID := uuid.NewV7()
+	got, err := parseRunSessionFilter(httptest.NewRequest(
+		http.MethodGet, "/v1/runs?session_id="+sessionID.String(), nil,
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Valid || pgvalue.UUIDString(got) != sessionID.String() {
+		t.Fatalf("session filter = %+v", got)
+	}
+	absent, err := parseRunSessionFilter(httptest.NewRequest(http.MethodGet, "/v1/runs", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if absent.Valid {
+		t.Fatalf("absent session filter = %+v", absent)
+	}
+	for _, raw := range []string{"not-a-uuid", "00000000-0000-0000-0000-000000000000"} {
+		if _, err := parseRunSessionFilter(httptest.NewRequest(
+			http.MethodGet, "/v1/runs?session_id="+raw, nil,
+		)); err == nil {
+			t.Fatalf("session_id %q was accepted", raw)
 		}
 	}
 }

@@ -924,6 +924,106 @@ describe("HelmrClient Schedules", () => {
 })
 
 describe("HelmrClient Sessions", () => {
+  test("lists Sessions by public status with bound pagination", async () => {
+    const requests: string[] = []
+    const client = new HelmrClient({
+      url: "https://api.example.test",
+      apiKey: "api-key",
+      fetch: (async (input: URL | RequestInfo) => {
+        requests.push(String(input))
+        return Response.json({ sessions: [], next_cursor: "cursor-next" })
+      }) as typeof fetch,
+    })
+
+    const page = await client.sessions.list({
+      status: ["open", "failed"],
+      cursor: "cursor-previous",
+      limit: 5,
+    })
+    expect(page).toEqual({ items: [], nextCursor: "cursor-next" })
+    await client.sessions.list({ status: "closed" })
+    expect(requests).toEqual([
+      "https://api.example.test/v1/sessions?status=open&status=failed&cursor=cursor-previous&limit=5",
+      "https://api.example.test/v1/sessions?status=closed",
+    ])
+    await expect(client.sessions.list({
+      // @ts-expect-error stored Session states are not public statuses.
+      status: "closing",
+    })).rejects.toThrow("Session list status is invalid")
+    await expect(client.sessions.list({
+      actorId: "operator",
+      key: "thread:1",
+      // @ts-expect-error the exact key lookup does not filter by status.
+      status: "open",
+    })).rejects.toThrow("does not accept status, cursor or limit")
+    expect(requests).toHaveLength(2)
+  })
+
+  test("reads the durable Session input log in sequence order", async () => {
+    const requests: string[] = []
+    const client = new HelmrClient({
+      url: "https://api.example.test",
+      apiKey: "api-key",
+      fetch: (async (input: URL | RequestInfo) => {
+        requests.push(String(input))
+        return Response.json({
+          records: [
+            {
+              id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
+              sequence: 2,
+              data: { type: "continue" },
+              source: { type: "external" },
+              created_at: "2026-07-24T11:50:01Z",
+            },
+            {
+              id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
+              sequence: 3,
+              data: null,
+              source: { type: "run", run_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" },
+              created_at: "2026-07-24T11:50:02Z",
+            },
+          ],
+          next_after: 3,
+          has_more: true,
+        })
+      }) as typeof fetch,
+    })
+    const session = client.sessions.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33")
+
+    const page = await session.input.list({ after: 1, limit: 2 })
+    expect(page).toEqual({
+      records: [
+        {
+          id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
+          sequence: 2,
+          data: { type: "continue" },
+          source: { type: "external" },
+          createdAt: "2026-07-24T11:50:01Z",
+        },
+        {
+          id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
+          sequence: 3,
+          data: null,
+          source: { type: "run", runId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" },
+          createdAt: "2026-07-24T11:50:02Z",
+        },
+      ],
+      nextAfter: 3,
+      hasMore: true,
+    })
+    await session.input.list()
+    expect(requests).toEqual([
+      "https://api.example.test/v1/sessions/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33/inputs?after=1&limit=2",
+      "https://api.example.test/v1/sessions/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33/inputs",
+    ])
+    await expect(session.input.list({ limit: 0 })).rejects.toThrow(
+      "Session input limit must be an integer in [1,100]",
+    )
+    await expect(session.input.list({ after: -1 })).rejects.toThrow(
+      "Session input after must be a non-negative safe integer",
+    )
+  })
+
   test("requires failure for an unsuccessful Session", async () => {
     const sessionId = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"
     const client = new HelmrClient({
@@ -1017,6 +1117,7 @@ describe("HelmrClient Runs", () => {
     const signal = new AbortController().signal
     const listed = await client.runs.list({
       status: ["running", "waiting"],
+      sessionId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
       cursor: "cursor-previous",
       limit: 10,
     }, { signal })
@@ -1031,7 +1132,10 @@ describe("HelmrClient Runs", () => {
     expect(listed.items).toHaveLength(1)
     expect(listed.nextCursor).toBe("cursor-next")
     expect(requests[1]).toBe(
-      "https://api.example.test/v1/runs?status=running&status=waiting&cursor=cursor-previous&limit=10",
+      "https://api.example.test/v1/runs?status=running&status=waiting&session_id=019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33&cursor=cursor-previous&limit=10",
+    )
+    await expect(client.runs.list({ sessionId: "not-a-session" })).rejects.toThrow(
+      "Run list Session ID",
     )
   })
 

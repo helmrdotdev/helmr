@@ -61,6 +61,26 @@ func TestSessionRoutes(t *testing.T) {
 			scope:   EnvironmentScopeOptions{ProjectID: "project-1", EnvironmentID: "env-1"},
 			request: testReadSessionOutputs,
 		},
+		{
+			name: "developer inputs", path: "/v1/sessions/" + testSessionID + "/inputs",
+			request: testReadSessionInputs,
+		},
+		{
+			name: "management inputs", scoped: true,
+			path:    "/api/projects/project-1/environments/env-1/sessions/" + testSessionID + "/inputs",
+			scope:   EnvironmentScopeOptions{ProjectID: "project-1", EnvironmentID: "env-1"},
+			request: testReadSessionInputs,
+		},
+		{
+			name: "developer list", path: "/v1/sessions",
+			request: testListSessions,
+		},
+		{
+			name: "management list", scoped: true,
+			path:    "/api/projects/project-1/environments/env-1/sessions",
+			scope:   EnvironmentScopeOptions{ProjectID: "project-1", EnvironmentID: "env-1"},
+			request: testListSessions,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -93,6 +113,19 @@ func TestSessionRoutes(t *testing.T) {
 						t.Fatalf("query = %q", r.URL.RawQuery)
 					}
 					_ = json.NewEncoder(w).Encode(api.SessionOutputPage{Records: []api.SessionOutput{{Sequence: 8}}, NextAfter: 8, HasMore: true})
+				case r.Method == http.MethodGet && r.URL.Path[len(r.URL.Path)-7:] == "/inputs":
+					if r.URL.RawQuery != "after=3&limit=10" {
+						t.Fatalf("query = %q", r.URL.RawQuery)
+					}
+					_ = json.NewEncoder(w).Encode(api.SessionInputPage{
+						Records:   []api.SessionInput{{Sequence: 4, Source: api.SessionInputSource{Type: "external"}}},
+						NextAfter: 4, HasMore: false,
+					})
+				case r.Method == http.MethodGet && r.URL.Path[len(r.URL.Path)-9:] == "/sessions":
+					if r.URL.RawQuery != "limit=5&status=open&status=failed" {
+						t.Fatalf("query = %q", r.URL.RawQuery)
+					}
+					_ = json.NewEncoder(w).Encode(api.ListSessionsResponse{Sessions: []api.Session{actorStatusFixture()}, NextCursor: "next"})
 				case r.Method == http.MethodGet:
 					_ = json.NewEncoder(w).Encode(actorStatusFixture())
 				default:
@@ -151,13 +184,41 @@ func testGetSession(t *testing.T, client *Client, scope EnvironmentScopeOptions)
 func testReadSessionOutputs(t *testing.T, client *Client, scope EnvironmentScopeOptions) {
 	t.Helper()
 	after := int64(7)
-	response, err := client.ReadSessionOutputs(context.Background(), testSessionID, ActorOutputReadOptions{
+	response, err := client.ReadSessionOutputs(context.Background(), testSessionID, SessionRecordReadOptions{
 		After: &after, Limit: 25, EnvironmentScopeOptions: scope,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(response.Records) != 1 || response.Records[0].Sequence != 8 || response.NextAfter != 8 || !response.HasMore {
+		t.Fatalf("response = %+v", response)
+	}
+}
+
+func testReadSessionInputs(t *testing.T, client *Client, scope EnvironmentScopeOptions) {
+	t.Helper()
+	after := int64(3)
+	response, err := client.ReadSessionInputs(context.Background(), testSessionID, SessionRecordReadOptions{
+		After: &after, Limit: 10, EnvironmentScopeOptions: scope,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Records) != 1 || response.Records[0].Sequence != 4 ||
+		response.Records[0].Source.Type != "external" || response.NextAfter != 4 || response.HasMore {
+		t.Fatalf("response = %+v", response)
+	}
+}
+
+func testListSessions(t *testing.T, client *Client, scope EnvironmentScopeOptions) {
+	t.Helper()
+	response, err := client.ListSessions(context.Background(), SessionListOptions{
+		Statuses: []string{"open", "failed"}, Limit: 5, EnvironmentScopeOptions: scope,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Sessions) != 1 || response.Sessions[0].ID != testSessionID || response.NextCursor != "next" {
 		t.Fatalf("response = %+v", response)
 	}
 }
@@ -216,11 +277,28 @@ func TestSessionClientsValidateBeforeTransport(t *testing.T) {
 		t.Fatal("missing input was accepted")
 	}
 	tooLarge := int64(1 << 53)
-	if _, err := client.ReadSessionOutputs(context.Background(), testSessionID, ActorOutputReadOptions{After: &tooLarge}); err == nil {
+	if _, err := client.ReadSessionOutputs(context.Background(), testSessionID, SessionRecordReadOptions{After: &tooLarge}); err == nil {
 		t.Fatal("unsafe cursor was accepted")
 	}
-	if _, err := client.ReadSessionOutputs(context.Background(), testSessionID, ActorOutputReadOptions{Limit: 101}); err == nil {
+	if _, err := client.ReadSessionOutputs(context.Background(), testSessionID, SessionRecordReadOptions{Limit: 101}); err == nil {
 		t.Fatal("oversized limit was accepted")
+	}
+	if _, err := client.ReadSessionInputs(context.Background(), "invalid", SessionRecordReadOptions{}); err == nil {
+		t.Fatal("invalid Session ID was accepted for input read")
+	}
+	if _, err := client.ReadSessionInputs(context.Background(), testSessionID, SessionRecordReadOptions{Limit: 101}); err == nil {
+		t.Fatal("oversized input limit was accepted")
+	}
+	if _, err := client.ListSessions(context.Background(), SessionListOptions{Statuses: []string{"closing"}}); err == nil {
+		t.Fatal("stored Session state was accepted as a public status")
+	}
+	if _, err := client.ListSessions(context.Background(), SessionListOptions{
+		ActorID: "operator.v1", Key: "thread:1", Statuses: []string{"open"},
+	}); err == nil {
+		t.Fatal("status was accepted with the exact key lookup")
+	}
+	if _, err := client.ListRuns(context.Background(), ListRunsOptions{SessionID: "not-a-session"}); err == nil {
+		t.Fatal("invalid run list Session ID was accepted")
 	}
 	if requests != 0 {
 		t.Fatalf("transport requests = %d", requests)

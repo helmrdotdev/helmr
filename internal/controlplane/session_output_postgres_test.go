@@ -169,7 +169,7 @@ func TestActorOutputReadPostgresPagesAndProvenance(t *testing.T) {
 		"/?after=9007199254740991",
 	)
 	if len(futurePage.Records) != 0 ||
-		futurePage.NextAfter != maxSessionOutputSequence ||
+		futurePage.NextAfter != maxSessionRecordSequence ||
 		futurePage.HasMore {
 		t.Fatalf("future page = %+v", futurePage)
 	}

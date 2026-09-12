@@ -338,6 +338,11 @@ export interface SessionOutputQuery {
   readonly limit?: number
 }
 
+export interface SessionInputQuery {
+  readonly after?: number
+  readonly limit?: number
+}
+
 export interface SessionOutputWriter {
   write(value: Serializable): Promise<SessionOutputRecord>
   close(): Promise<void>
@@ -357,6 +362,12 @@ export interface ActorSessionOutput {
 
 export interface SessionOutputPage {
   readonly records: readonly SessionOutputRecord[]
+  readonly nextAfter: number
+  readonly hasMore: boolean
+}
+
+export interface SessionInputPage {
+  readonly records: readonly SessionInputRecord[]
   readonly nextAfter: number
   readonly hasMore: boolean
 }

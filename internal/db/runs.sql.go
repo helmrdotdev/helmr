@@ -1876,14 +1876,18 @@ SELECT runs.id,
        OR runs.status = ANY($4::text[])
    )
    AND (
-       $5::timestamptz IS NULL
+       $5::uuid IS NULL
+       OR runs.session_id = $5::uuid
+   )
+   AND (
+       $6::timestamptz IS NULL
        OR (runs.created_at, runs.id) < (
-           $5::timestamptz,
-           $6::uuid
+           $6::timestamptz,
+           $7::uuid
        )
    )
  ORDER BY runs.created_at DESC, runs.id DESC
- LIMIT $7
+ LIMIT $8
 `
 
 type ListRunListItemsParams struct {
@@ -1891,6 +1895,7 @@ type ListRunListItemsParams struct {
 	ProjectID      pgtype.UUID        `json:"project_id"`
 	EnvironmentID  pgtype.UUID        `json:"environment_id"`
 	Statuses       []string           `json:"statuses"`
+	SessionID      pgtype.UUID        `json:"session_id"`
 	AfterCreatedAt pgtype.Timestamptz `json:"after_created_at"`
 	AfterID        pgtype.UUID        `json:"after_id"`
 	LimitCount     int32              `json:"limit_count"`
@@ -1915,6 +1920,7 @@ func (q *Queries) ListRunListItems(ctx context.Context, arg ListRunListItemsPara
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.Statuses,
+		arg.SessionID,
 		arg.AfterCreatedAt,
 		arg.AfterID,
 		arg.LimitCount,

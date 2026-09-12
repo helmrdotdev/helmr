@@ -22,13 +22,13 @@ import (
 )
 
 const (
-	sessionOutputDefaultLimit = int32(50)
-	sessionOutputMaxLimit     = int32(100)
-	maxSessionOutputSequence  = int64(1<<53 - 1)
-	maxSessionOutputFrontier  = int64(1 << 53)
+	sessionRecordDefaultLimit = int32(50)
+	sessionRecordMaxLimit     = int32(100)
+	maxSessionRecordSequence  = int64(1<<53 - 1)
+	maxSessionRecordFrontier  = int64(1 << 53)
 )
 
-type sessionOutputReadRequest struct {
+type sessionRecordPageRequest struct {
 	after *int64
 	limit int32
 }
@@ -39,14 +39,16 @@ func (s *Server) readSessionOutputHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(codedError{code: "invalid_session_id", message: err.Error()}))
 		return
 	}
-	request, err := parseSessionOutputPageOptions(r)
+	request, err := parseSessionRecordPageOptions(r)
 	if err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_session_output_read", message: err.Error()}))
 		return
 	}
 
 	principal := actorFromContext(r.Context())
-	if err := authorizeSessionOutputReadBeforeLookup(principal); err != nil {
+	if err := authorizeSessionRecordReadBeforeLookup(
+		principal, "session_output_read_authority_unavailable",
+	); err != nil {
 		writeError(w, err)
 		return
 	}
@@ -92,31 +94,31 @@ func (s *Server) readSessionOutputHTTP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
-func parseSessionOutputPageOptions(r *http.Request) (sessionOutputReadRequest, error) {
+func parseSessionRecordPageOptions(r *http.Request) (sessionRecordPageRequest, error) {
 	values, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
-		return sessionOutputReadRequest{}, errors.New("query string is malformed")
+		return sessionRecordPageRequest{}, errors.New("query string is malformed")
 	}
 	for name, entries := range values {
 		if name != "after" && name != "limit" {
-			return sessionOutputReadRequest{}, fmt.Errorf("query parameter %q is not supported", name)
+			return sessionRecordPageRequest{}, fmt.Errorf("query parameter %q is not supported", name)
 		}
 		if len(entries) != 1 || entries[0] == "" {
-			return sessionOutputReadRequest{}, fmt.Errorf("query parameter %q must appear exactly once with a non-empty value", name)
+			return sessionRecordPageRequest{}, fmt.Errorf("query parameter %q must appear exactly once with a non-empty value", name)
 		}
 	}
-	request := sessionOutputReadRequest{limit: sessionOutputDefaultLimit}
+	request := sessionRecordPageRequest{limit: sessionRecordDefaultLimit}
 	if entries, ok := values["after"]; ok {
-		value, err := parseSessionOutputDecimal(entries[0], 0, maxSessionOutputSequence, "after")
+		value, err := parseSessionRecordDecimal(entries[0], 0, maxSessionRecordSequence, "after")
 		if err != nil {
-			return sessionOutputReadRequest{}, err
+			return sessionRecordPageRequest{}, err
 		}
 		request.after = &value
 	}
 	if entries, ok := values["limit"]; ok {
-		value, err := parseSessionOutputDecimal(entries[0], 1, int64(sessionOutputMaxLimit), "limit")
+		value, err := parseSessionRecordDecimal(entries[0], 1, int64(sessionRecordMaxLimit), "limit")
 		if err != nil {
-			return sessionOutputReadRequest{}, err
+			return sessionRecordPageRequest{}, err
 		}
 		request.limit = int32(value)
 	}
@@ -149,9 +151,9 @@ func readSessionOutputPage(
 	}
 	first := rows[0]
 	if first.NextOutputSequence < 1 ||
-		first.NextOutputSequence > maxSessionOutputFrontier ||
+		first.NextOutputSequence > maxSessionRecordFrontier ||
 		first.EffectiveAfter < 0 ||
-		first.EffectiveAfter > maxSessionOutputSequence {
+		first.EffectiveAfter > maxSessionRecordSequence {
 		return api.SessionOutputPage{}, errors.New("session output projection is invalid")
 	}
 	response := api.SessionOutputPage{
@@ -186,7 +188,7 @@ func readSessionOutputPage(
 	return response, nil
 }
 
-func parseSessionOutputDecimal(raw string, minimum, maximum int64, name string) (int64, error) {
+func parseSessionRecordDecimal(raw string, minimum, maximum int64, name string) (int64, error) {
 	for _, value := range []byte(raw) {
 		if value < '0' || value > '9' {
 			return 0, fmt.Errorf("%s must be an integer in [%d,%d]", name, minimum, maximum)
@@ -207,7 +209,7 @@ func projectSessionOutput(row db.ReadPublicActorOutputPageRow) (api.SessionOutpu
 	}
 	if row.Sequence <= row.EffectiveAfter ||
 		row.Sequence >= row.NextOutputSequence ||
-		row.Sequence > maxSessionOutputSequence ||
+		row.Sequence > maxSessionRecordSequence ||
 		!json.Valid(row.Data) ||
 		row.ContentType == "" ||
 		!row.CreatedAt.Valid ||
@@ -236,13 +238,13 @@ func projectSessionOutput(row db.ReadPublicActorOutputPageRow) (api.SessionOutpu
 	}, nil
 }
 
-func authorizeSessionOutputReadBeforeLookup(principal auth.Actor) error {
+func authorizeSessionRecordReadBeforeLookup(principal auth.Actor, unavailableCode string) error {
 	switch principal.Kind {
 	case auth.ActorKindAPIKey:
 		scope, ok := principal.EnvironmentScope()
 		if !ok {
 			return unavailable(codedError{
-				code:      "session_output_read_authority_unavailable",
+				code:      unavailableCode,
 				message:   errAPIKeyEnvironmentScopeRequired.Error(),
 				retryable: true,
 			})

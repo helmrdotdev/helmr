@@ -322,6 +322,46 @@ SELECT scoped_actor.id AS session_id,
   ) AS page ON true
  ORDER BY page.sequence NULLS LAST, page.record_id NULLS LAST;
 
+-- name: ReadPublicActorInputPage :many
+WITH scoped_actor AS MATERIALIZED (
+    SELECT sessions.id,
+           sessions.next_input_sequence,
+           CASE
+               WHEN sqlc.arg(after_present)::boolean
+               THEN sqlc.arg(after_sequence)::bigint
+               ELSE 0
+           END::bigint AS effective_after
+     FROM sessions
+     WHERE sessions.environment_id = sqlc.arg(environment_id)
+       AND sessions.id = sqlc.arg(session_id)
+)
+SELECT scoped_actor.id AS session_id,
+       scoped_actor.next_input_sequence,
+       scoped_actor.effective_after::bigint AS effective_after,
+       page.record_id,
+       coalesce(page.sequence, 0)::bigint AS sequence,
+       coalesce(page.data, 'null'::jsonb)::jsonb AS data,
+       coalesce(page.source_kind, '')::text AS source_kind,
+       page.source_run_id,
+       coalesce(page.created_at, 'epoch'::timestamptz)::timestamptz AS created_at
+  FROM scoped_actor
+  LEFT JOIN LATERAL (
+      SELECT session_records.id AS record_id,
+             session_records.sequence,
+             session_records.data,
+             session_records.source_kind,
+             session_records.source_run_id,
+             session_records.created_at
+        FROM session_records
+       WHERE session_records.session_id = scoped_actor.id
+         AND session_records.direction = 'input'
+         AND session_records.sequence > scoped_actor.effective_after
+         AND session_records.sequence < scoped_actor.next_input_sequence
+       ORDER BY session_records.sequence, session_records.id
+       LIMIT sqlc.arg(limit_count)::integer
+  ) AS page ON true
+ ORDER BY page.sequence NULLS LAST, page.record_id NULLS LAST;
+
 -- name: GetActorInputRecordAtSequenceForUpdate :one
 SELECT *
   FROM session_records

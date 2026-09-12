@@ -137,6 +137,7 @@ export interface TaskPage extends CursorPage<TaskListItem> {
 
 export interface RunListQuery {
   readonly status?: RunStatus | readonly RunStatus[]
+  readonly sessionId?: string
   readonly cursor?: string
   readonly limit?: number
 }
@@ -394,6 +395,9 @@ class ClientRuns implements ClientRunsApi {
       ? queryInput.status
       : [queryInput.status]
     for (const status of statuses) query.append("status", runStatus(status))
+    if (queryInput.sessionId !== undefined) {
+      query.set("session_id", resourceID(queryInput.sessionId, "Run list Session ID"))
+    }
     if (queryInput.cursor !== undefined) {
       if (queryInput.cursor.length === 0) throw new Error("Run cursor is required")
       query.set("cursor", queryInput.cursor)

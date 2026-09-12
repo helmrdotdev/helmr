@@ -445,6 +445,7 @@ type Querier interface {
 	PruneTelemetryOutboxWritten(ctx context.Context, arg PruneTelemetryOutboxWrittenParams) (int64, error)
 	PublishRestoredActorCheckpointWorkspaceVersion(ctx context.Context, arg PublishRestoredActorCheckpointWorkspaceVersionParams) (WorkspaceVersion, error)
 	PublishTaskWorkspaceVersion(ctx context.Context, arg PublishTaskWorkspaceVersionParams) (WorkspaceVersion, error)
+	ReadPublicActorInputPage(ctx context.Context, arg ReadPublicActorInputPageParams) ([]ReadPublicActorInputPageRow, error)
 	ReadPublicActorOutputPage(ctx context.Context, arg ReadPublicActorOutputPageParams) ([]ReadPublicActorOutputPageRow, error)
 	ReadyRunRetries(ctx context.Context, rowLimit int32) ([]ReadyRunRetriesRow, error)
 	// Immediate fencing revokes credentials and terminalizes mount/runtime

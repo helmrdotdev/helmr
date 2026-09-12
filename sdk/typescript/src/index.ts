@@ -22,6 +22,7 @@ export type {
 } from "./client-actor"
 
 export type {
+  ClientSessionRef,
   SessionListQuery,
 } from "./client-session"
 
@@ -112,6 +113,8 @@ export type {
   ActorSessionReceiveOptions,
   ActorSessionReceive,
   SessionInputMetadata,
+  SessionInputPage,
+  SessionInputQuery,
   SessionInputRecord,
   SessionInputSendRequest,
   SessionInputSource,

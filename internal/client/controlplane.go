@@ -730,6 +730,7 @@ func (c *Client) CancelRun(ctx context.Context, id string, opts ...RunScopeOptio
 
 type ListRunsOptions struct {
 	Statuses      []string
+	SessionID     string
 	Cursor        string
 	Limit         int32
 	ProjectID     string
@@ -781,6 +782,12 @@ func (c *Client) ListRuns(ctx context.Context, opts ...ListRunsOptions) (api.Lis
 			if status = strings.TrimSpace(status); status != "" {
 				values.Add("status", status)
 			}
+		}
+		if sessionID := strings.TrimSpace(opts[0].SessionID); sessionID != "" {
+			if err := ids.Validate(sessionID); err != nil {
+				return api.ListRunsResponse{}, fmt.Errorf("run list session ID: %w", err)
+			}
+			values.Set("session_id", sessionID)
 		}
 		if cursor := strings.TrimSpace(opts[0].Cursor); cursor != "" {
 			values.Set("cursor", cursor)

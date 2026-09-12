@@ -648,6 +648,10 @@ SELECT runs.id,
        OR runs.status = ANY(sqlc.arg(statuses)::text[])
    )
    AND (
+       sqlc.narg(session_id)::uuid IS NULL
+       OR runs.session_id = sqlc.narg(session_id)::uuid
+   )
+   AND (
        sqlc.narg(after_created_at)::timestamptz IS NULL
        OR (runs.created_at, runs.id) < (
            sqlc.narg(after_created_at)::timestamptz,

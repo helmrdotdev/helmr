@@ -66,20 +66,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 }
 
 func sessionPermissions(role auth.Role) []string {
-	all := []auth.Permission{
-		auth.PermissionAPIKeysManage,
-		auth.PermissionMembersManage,
-		auth.PermissionProjectsManage,
-		auth.PermissionRunsCreate,
-		auth.PermissionRunsManage,
-		auth.PermissionRunsRead,
-		auth.PermissionWorkspacesCreate,
-		auth.PermissionWorkspacesRead,
-		auth.PermissionWorkspacesDelete,
-		auth.PermissionWorkspaceExecCreate,
-		auth.PermissionSecretsWrite,
-		auth.PermissionTasksDeploy,
-	}
+	all := auth.AllPermissions()
 	permissions := make([]string, 0, len(all))
 	for _, permission := range all {
 		if auth.RoleAllows(role, permission) {

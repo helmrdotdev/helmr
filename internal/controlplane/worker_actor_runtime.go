@@ -272,8 +272,8 @@ func (s *Server) workerReadSessionOutputPage(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	sessionID, err := parseWorkerSessionReference(request.SessionReferenceRequest)
-	if err != nil || request.Limit < 1 || request.Limit > sessionOutputMaxLimit ||
-		(request.After != nil && (*request.After < 0 || *request.After > maxSessionOutputSequence)) {
+	if err != nil || request.Limit < 1 || request.Limit > sessionRecordMaxLimit ||
+		(request.After != nil && (*request.After < 0 || *request.After > maxSessionRecordSequence)) {
 		writeError(w, badRequest(errors.New("session output page request is invalid")))
 		return
 	}

@@ -123,9 +123,12 @@ function parseSessionFailure(value: unknown): SessionFailure {
   })
 }
 
-function sessionStatus(value: unknown): SessionStatus {
+export function sessionStatus(
+  value: unknown,
+  label = "Session response.status",
+): SessionStatus {
   if (value !== "open" && value !== "closed" && value !== "cancelled" && value !== "failed") {
-    throw new Error("Session response.status is invalid")
+    throw new Error(`${label} is invalid`)
   }
   return value
 }
