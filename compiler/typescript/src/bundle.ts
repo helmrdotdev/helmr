@@ -43,7 +43,7 @@ import {
 import { compareUTF8 } from "./utf8"
 
 export const COMPILER_API_VERSION = "helmr.compiler.v0" as const
-export const ESBUILD_VERSION = "0.28.1" as const
+export const ESBUILD_VERSION = "0.28.2" as const
 export const RUNTIME_PROGRAM_ROOT = "/opt/helmr/program" as const
 
 if (esbuildVersion !== ESBUILD_VERSION) {

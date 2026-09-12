@@ -8,15 +8,15 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@solidjs/router": "^0.16.2",
-    "@tanstack/solid-query": "^5.101.4",
-    "solid-js": "^1.9.14"
+    "@solidjs/router": "^1.0.0",
+    "@tanstack/solid-query": "^5.102.8",
+    "solid-js": "^1.9.15"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
     "tailwindcss": "^4.3.3",
-    "typescript": "6.0.3",
-    "vite": "^8.1.5",
-    "vite-plugin-solid": "^2.11.13"
+    "typescript": "7.0.2",
+    "vite": "^8.3.0",
+    "vite-plugin-solid": "^2.11.14"
   }
 }
