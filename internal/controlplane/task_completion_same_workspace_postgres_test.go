@@ -265,13 +265,13 @@ UPDATE runs
 	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO run_waits (
     id, environment_id, run_id, workspace_id, kind, condition_state,
-    child_run_id, child_parent_owned, child_target_declared_id,
+    child_run_id, child_target_declared_id,
 	child_claim_id, child_request, expected_run_state_version,
 	attempt_number, prior_run_lease_id, checkpoint_request_version,
 	checkpoint_ack_version, resume_attach_id,
 	suspension_state
 ) VALUES (
-	$1, $2, $3, $4, 'child', 'pending', $5, true, 'test-task',
+	$1, $2, $3, $4, 'child', 'pending', $5, 'test-task',
 	$6, '{"Method":"call"}'::jsonb, 3, 1, $7, 1, 1, $8,
 	'parked'
 )`, waitID, base.EnvironmentID, parentRunID, workspaceID, work.RunID,

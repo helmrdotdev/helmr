@@ -10,7 +10,7 @@ WITH same_workspace_child_authority AS MATERIALIZED (
       JOIN run_waits AS edge
         ON edge.child_run_id = child.id
        AND edge.workspace_id = child.workspace_id
-       AND edge.child_parent_owned IS TRUE
+       AND edge.kind = 'child'
        AND edge.condition_state = 'pending'
        AND edge.suspension_state = 'parked'
        AND edge.base_workspace_version_id = child.base_workspace_version_id

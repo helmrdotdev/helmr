@@ -263,7 +263,7 @@ UPDATE workspace_versions
           AND run_checkpoints.state = 'invalid'
           AND run_checkpoints.invalidation_reason_code = 'actor_turn_committed'
    )
-RETURNING workspace_versions.id, workspace_versions.environment_id, workspace_versions.workspace_id, workspace_versions.parent_version_id, workspace_versions.artifact_id, workspace_versions.artifact_kind, workspace_versions.kind, workspace_versions.content_digest, workspace_versions.size_bytes, workspace_versions.entry_count, workspace_versions.state, workspace_versions.source_workspace_lease_id, workspace_versions.ownership_generation, workspace_versions.writer_generation, workspace_versions.created_at, workspace_versions.published_at, workspace_versions.discarded_at
+RETURNING workspace_versions.id, workspace_versions.environment_id, workspace_versions.workspace_id, workspace_versions.parent_version_id, workspace_versions.artifact_id, workspace_versions.content_digest, workspace_versions.size_bytes, workspace_versions.entry_count, workspace_versions.state, workspace_versions.source_workspace_lease_id, workspace_versions.ownership_generation, workspace_versions.writer_generation, workspace_versions.created_at, workspace_versions.published_at, workspace_versions.discarded_at
 `
 
 type PublishRestoredActorCheckpointWorkspaceVersionParams struct {
@@ -297,8 +297,6 @@ func (q *Queries) PublishRestoredActorCheckpointWorkspaceVersion(ctx context.Con
 		&i.WorkspaceID,
 		&i.ParentVersionID,
 		&i.ArtifactID,
-		&i.ArtifactKind,
-		&i.Kind,
 		&i.ContentDigest,
 		&i.SizeBytes,
 		&i.EntryCount,

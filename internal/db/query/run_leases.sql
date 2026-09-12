@@ -151,13 +151,17 @@ SELECT run_leases.org_id,
    AND enclosing_waits.attempt_number = parent_runs.current_attempt_number
    AND enclosing_waits.workspace_id = parent_runs.workspace_id
    AND enclosing_waits.child_run_id = runs.id
-   AND enclosing_waits.child_parent_owned IS TRUE
+   AND enclosing_waits.kind = 'child'
+   AND runs.parent_run_id = enclosing_waits.run_id
+   AND runs.parent_owns_lifecycle IS TRUE
    AND enclosing_waits.condition_state = 'pending'
    AND enclosing_waits.suspension_state = 'parked'
   LEFT JOIN run_waits AS parent_enclosing_waits
     ON parent_enclosing_waits.workspace_id = parent_runs.workspace_id
    AND parent_enclosing_waits.child_run_id = parent_runs.id
-   AND parent_enclosing_waits.child_parent_owned IS TRUE
+   AND parent_enclosing_waits.kind = 'child'
+   AND parent_runs.parent_run_id = parent_enclosing_waits.run_id
+   AND parent_runs.parent_owns_lifecycle IS TRUE
    AND parent_enclosing_waits.condition_state = 'pending'
    AND parent_enclosing_waits.suspension_state = 'parked'
  WHERE run_leases.id = sqlc.arg(id)
@@ -232,7 +236,9 @@ SELECT run_leases.org_id,
     ON enclosing_waits.run_id = runs.parent_run_id
    AND enclosing_waits.workspace_id = runs.workspace_id
    AND enclosing_waits.child_run_id = runs.id
-   AND enclosing_waits.child_parent_owned IS TRUE
+   AND enclosing_waits.kind = 'child'
+   AND runs.parent_run_id = enclosing_waits.run_id
+   AND runs.parent_owns_lifecycle IS TRUE
    AND (
        (run_leases.state = 'starting'
         AND enclosing_waits.condition_state = 'pending'
@@ -993,6 +999,7 @@ WITH RECURSIVE candidates AS MATERIALIZED (
     SELECT locked_runs.run_id,
            edge.id AS wait_id,
            parent.id AS parent_run_id,
+           parent.environment_id,
            parent.parent_run_id AS next_parent_run_id,
            parent.parent_owns_lifecycle,
            parent.session_id AS parent_session_id,
@@ -1009,7 +1016,14 @@ WITH RECURSIVE candidates AS MATERIALIZED (
       JOIN run_waits AS edge
         ON edge.child_run_id = locked_runs.run_id
        AND edge.workspace_id = locked_runs.workspace_id
-       AND edge.child_parent_owned IS TRUE
+       AND edge.kind = 'child'
+       AND EXISTS (
+           SELECT 1 FROM runs AS owned_child
+            WHERE owned_child.id = edge.child_run_id
+              AND owned_child.parent_run_id = edge.run_id
+              AND owned_child.environment_id = edge.environment_id
+              AND owned_child.parent_owns_lifecycle IS TRUE
+       )
        AND edge.condition_state = 'pending'
        AND edge.suspension_state = 'parked'
        AND edge.ownership_generation IS NOT NULL
@@ -1026,6 +1040,7 @@ WITH RECURSIVE candidates AS MATERIALIZED (
     SELECT child.run_id,
            edge.id,
            parent.id,
+           parent.environment_id,
            parent.parent_run_id,
            parent.parent_owns_lifecycle,
            parent.session_id,
@@ -1041,7 +1056,9 @@ WITH RECURSIVE candidates AS MATERIALIZED (
       FROM same_workspace_ancestors AS child
       JOIN run_waits AS edge
         ON edge.child_run_id = child.parent_run_id
-       AND edge.child_parent_owned IS TRUE
+       AND edge.kind = 'child'
+       AND edge.run_id = child.next_parent_run_id
+       AND edge.environment_id = child.environment_id
        AND edge.condition_state = 'pending'
        AND edge.suspension_state = 'parked'
        AND edge.ownership_generation = child.ownership_generation
@@ -1552,7 +1569,7 @@ WITH RECURSIVE candidates AS MATERIALIZED (
        AND run_waits.workspace_id = locked_checkpoints.workspace_id
        AND run_waits.attempt_number = locked_checkpoints.enclosing_parent_attempt_number
        AND run_waits.child_run_id = failed_runs.id
-       AND run_waits.child_parent_owned IS TRUE
+       AND run_waits.kind = 'child'
        AND run_waits.condition_state = 'pending'
        AND run_waits.suspension_state = 'parked'
        AND run_waits.expected_run_state_version = locked_checkpoints.enclosing_expected_parent_state_version

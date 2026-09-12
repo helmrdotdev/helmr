@@ -271,7 +271,10 @@ SELECT runs.id,
                LIMIT 1
          ) AS prior_child ON edge.child_writer_generation IS NOT NULL
         WHERE edge.child_run_id = runs.id
-          AND edge.child_parent_owned IS TRUE
+          AND edge.kind = 'child'
+          AND runs.parent_run_id = edge.run_id
+          AND runs.environment_id = edge.environment_id
+          AND runs.parent_owns_lifecycle IS TRUE
           AND edge.workspace_id = runs.workspace_id
           AND edge.condition_state = 'pending'
           AND edge.suspension_state = 'parked'
@@ -755,10 +758,17 @@ WITH RECURSIVE ancestors AS (
        AND parent.status = 'waiting'
        AND parent.current_run_lease_id IS NULL
      WHERE edge.child_run_id = $1
-       AND edge.child_parent_owned IS TRUE
+       AND edge.kind = 'child'
+       AND EXISTS (
+           SELECT 1 FROM runs AS owned_child
+            WHERE owned_child.id = edge.child_run_id
+              AND owned_child.parent_run_id = edge.run_id
+              AND owned_child.environment_id = edge.environment_id
+              AND owned_child.parent_owns_lifecycle IS TRUE
+       )
        AND edge.condition_state = 'pending'
        AND edge.suspension_state = 'parked'
-	       AND edge.ownership_generation IS NOT NULL
+       AND edge.ownership_generation IS NOT NULL
        AND edge.parent_writer_generation IS NOT NULL
     UNION
     SELECT parent.id,
@@ -777,7 +787,7 @@ WITH RECURSIVE ancestors AS (
        AND edge.run_id = parent.id
        AND edge.workspace_id = child.workspace_id
        AND edge.child_run_id = child.id
-       AND edge.child_parent_owned IS TRUE
+       AND edge.kind = 'child'
        AND edge.condition_state = 'pending'
        AND edge.suspension_state = 'parked'
      WHERE child.parent_owns_lifecycle IS TRUE
@@ -831,10 +841,17 @@ WITH RECURSIVE ancestors AS (
        AND parent.status = 'waiting'
        AND parent.current_run_lease_id IS NULL
      WHERE edge.child_run_id = $1
-       AND edge.child_parent_owned IS TRUE
+       AND edge.kind = 'child'
+       AND EXISTS (
+           SELECT 1 FROM runs AS owned_child
+            WHERE owned_child.id = edge.child_run_id
+              AND owned_child.parent_run_id = edge.run_id
+              AND owned_child.environment_id = edge.environment_id
+              AND owned_child.parent_owns_lifecycle IS TRUE
+       )
        AND edge.condition_state = 'pending'
        AND edge.suspension_state = 'parked'
-	       AND edge.ownership_generation IS NOT NULL
+       AND edge.ownership_generation IS NOT NULL
        AND edge.parent_writer_generation IS NOT NULL
     UNION ALL
     SELECT child.wait_id,
@@ -855,7 +872,7 @@ WITH RECURSIVE ancestors AS (
        AND edge.run_id = parent.id
        AND edge.workspace_id = child.workspace_id
        AND edge.child_run_id = child.id
-       AND edge.child_parent_owned IS TRUE
+       AND edge.kind = 'child'
        AND edge.condition_state = 'pending'
        AND edge.suspension_state = 'parked'
      WHERE child.parent_owns_lifecycle IS TRUE

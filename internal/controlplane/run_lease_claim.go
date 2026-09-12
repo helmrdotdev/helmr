@@ -1175,15 +1175,14 @@ func validateActiveEnclosingWait(
 	expectedWriterGeneration int64,
 	authority runLeaseClaimAuthority,
 ) error {
-	if wait.Kind != db.WaitKindChild ||
+	if !child.ParentOwnsLifecycle.Valid || !child.ParentOwnsLifecycle.Bool ||
+		child.ParentRunID != wait.RunID || wait.Kind != db.WaitKindChild ||
 		wait.ConditionState != db.WaitStatePending ||
 		wait.SuspensionState != db.RunWaitStateParked ||
 		wait.CurrentRunLeaseID.Valid ||
 		!wait.PriorRunLeaseID.Valid ||
 		!wait.ChildRunID.Valid ||
 		wait.ChildRunID != child.ID ||
-		!wait.ChildParentOwned.Valid ||
-		!wait.ChildParentOwned.Bool ||
 		!wait.ChildTargetDeclaredID.Valid ||
 		wait.ChildTargetDeclaredID.String != child.EntrypointDeclaredID ||
 		!wait.SuspendCheckpointID.Valid ||
@@ -1212,15 +1211,14 @@ func validateSameWorkspaceChildWait(
 	wait db.RunWait,
 	authority runLeaseClaimAuthority,
 ) error {
-	if wait.Kind != db.WaitKindChild ||
+	if !authority.run.ParentOwnsLifecycle.Valid || !authority.run.ParentOwnsLifecycle.Bool ||
+		authority.run.ParentRunID != wait.RunID || wait.Kind != db.WaitKindChild ||
 		wait.ConditionState != db.WaitStatePending ||
 		wait.SuspensionState != db.RunWaitStateParked ||
 		wait.CurrentRunLeaseID.Valid ||
 		!wait.PriorRunLeaseID.Valid ||
 		!wait.ChildRunID.Valid ||
 		wait.ChildRunID != authority.run.ID ||
-		!wait.ChildParentOwned.Valid ||
-		!wait.ChildParentOwned.Bool ||
 		!wait.ChildTargetDeclaredID.Valid ||
 		wait.ChildTargetDeclaredID.String != authority.run.EntrypointDeclaredID ||
 		wait.SuspendCheckpointID != locators.EnclosingSuspendCheckpointID ||

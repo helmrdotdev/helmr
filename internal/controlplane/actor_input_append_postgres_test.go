@@ -65,7 +65,6 @@ SELECT sessions.next_input_sequence,
 		SessionID:      started.SessionID,
 		RecordID:       recordID,
 		Data:           data,
-		SourceKind:     "external",
 		IdempotencyKey: "oversized-input",
 	})
 	if !errors.Is(err, errActorInputTooLarge) {

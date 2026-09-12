@@ -155,7 +155,6 @@ func TestValidateRunStartArmModesAndReplay(t *testing.T) {
 		authority.runWait.Kind = db.WaitKindChild
 		authority.runWait.ConditionState = db.WaitStateCompleted
 		authority.runWait.ChildRunID = id(9)
-		authority.runWait.ChildParentOwned = pgtype.Bool{Bool: true, Valid: true}
 		if err := validateRunStartArm(restore, authority); err != nil {
 			t.Fatal(err)
 		}

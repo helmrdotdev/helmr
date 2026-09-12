@@ -397,7 +397,7 @@ UPDATE workspace_versions
  WHERE id = $1
    AND workspace_id = $2
    AND state = 'private'
-RETURNING id, environment_id, workspace_id, parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count, state, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
+RETURNING id, environment_id, workspace_id, parent_version_id, artifact_id, content_digest, size_bytes, entry_count, state, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
 `
 
 type CommitStagedWorkspaceExecVersionParams struct {
@@ -414,8 +414,6 @@ func (q *Queries) CommitStagedWorkspaceExecVersion(ctx context.Context, arg Comm
 		&i.WorkspaceID,
 		&i.ParentVersionID,
 		&i.ArtifactID,
-		&i.ArtifactKind,
-		&i.Kind,
 		&i.ContentDigest,
 		&i.SizeBytes,
 		&i.EntryCount,
@@ -1155,7 +1153,7 @@ func (q *Queries) FinalizeWorkspaceExecWorkspace(ctx context.Context, arg Finali
 }
 
 const getStagedWorkspaceExecCapture = `-- name: GetStagedWorkspaceExecCapture :one
-SELECT workspace_versions.id, workspace_versions.environment_id, workspace_versions.workspace_id, workspace_versions.parent_version_id, workspace_versions.artifact_id, workspace_versions.artifact_kind, workspace_versions.kind, workspace_versions.content_digest, workspace_versions.size_bytes, workspace_versions.entry_count, workspace_versions.state, workspace_versions.source_workspace_lease_id, workspace_versions.ownership_generation, workspace_versions.writer_generation, workspace_versions.created_at, workspace_versions.published_at, workspace_versions.discarded_at
+SELECT workspace_versions.id, workspace_versions.environment_id, workspace_versions.workspace_id, workspace_versions.parent_version_id, workspace_versions.artifact_id, workspace_versions.content_digest, workspace_versions.size_bytes, workspace_versions.entry_count, workspace_versions.state, workspace_versions.source_workspace_lease_id, workspace_versions.ownership_generation, workspace_versions.writer_generation, workspace_versions.created_at, workspace_versions.published_at, workspace_versions.discarded_at
   FROM workspace_mounts
   JOIN workspace_versions
     ON workspace_versions.workspace_id = workspace_mounts.workspace_id
@@ -1182,8 +1180,6 @@ func (q *Queries) GetStagedWorkspaceExecCapture(ctx context.Context, arg GetStag
 		&i.WorkspaceID,
 		&i.ParentVersionID,
 		&i.ArtifactID,
-		&i.ArtifactKind,
-		&i.Kind,
 		&i.ContentDigest,
 		&i.SizeBytes,
 		&i.EntryCount,
@@ -2845,18 +2841,21 @@ WITH authority AS (
 ), created AS (
     INSERT INTO workspace_versions (
         id, environment_id, workspace_id,
-        parent_version_id, artifact_id, artifact_kind, kind, content_digest,
+        parent_version_id, artifact_id, content_digest,
         size_bytes, entry_count, state, source_workspace_lease_id,
         ownership_generation, writer_generation
     )
     SELECT $4,
            authority.environment_id, authority.workspace_id, authority.base_version_id,
-           $5, 'workspace_version', 'user',
+           $5,
            $6, $7, $8,
            'private', authority.source_workspace_lease_id,
            authority.ownership_generation, authority.writer_generation
       FROM authority
-    RETURNING id, environment_id, workspace_id, parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count, state, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
+      JOIN artifacts ON artifacts.environment_id = authority.environment_id
+                    AND artifacts.id = $5
+                    AND artifacts.kind = 'workspace_version'
+    RETURNING workspace_versions.id, workspace_versions.environment_id, workspace_versions.workspace_id, workspace_versions.parent_version_id, workspace_versions.artifact_id, workspace_versions.content_digest, workspace_versions.size_bytes, workspace_versions.entry_count, workspace_versions.state, workspace_versions.source_workspace_lease_id, workspace_versions.ownership_generation, workspace_versions.writer_generation, workspace_versions.created_at, workspace_versions.published_at, workspace_versions.discarded_at
 ), staged AS (
     UPDATE workspace_mounts
        SET staged_version_id = created.id,
@@ -2865,7 +2864,7 @@ WITH authority AS (
      WHERE workspace_mounts.id = $1
     RETURNING workspace_mounts.id
 )
-SELECT created.id, created.environment_id, created.workspace_id, created.parent_version_id, created.artifact_id, created.artifact_kind, created.kind, created.content_digest, created.size_bytes, created.entry_count, created.state, created.source_workspace_lease_id, created.ownership_generation, created.writer_generation, created.created_at, created.published_at, created.discarded_at
+SELECT created.id, created.environment_id, created.workspace_id, created.parent_version_id, created.artifact_id, created.content_digest, created.size_bytes, created.entry_count, created.state, created.source_workspace_lease_id, created.ownership_generation, created.writer_generation, created.created_at, created.published_at, created.discarded_at
   FROM created
   JOIN staged ON true
 `
@@ -2882,23 +2881,21 @@ type StageWorkspaceExecCaptureParams struct {
 }
 
 type StageWorkspaceExecCaptureRow struct {
-	ID                     pgtype.UUID          `json:"id"`
-	EnvironmentID          pgtype.UUID          `json:"environment_id"`
-	WorkspaceID            pgtype.UUID          `json:"workspace_id"`
-	ParentVersionID        pgtype.UUID          `json:"parent_version_id"`
-	ArtifactID             pgtype.UUID          `json:"artifact_id"`
-	ArtifactKind           NullArtifactKind     `json:"artifact_kind"`
-	Kind                   WorkspaceVersionKind `json:"kind"`
-	ContentDigest          string               `json:"content_digest"`
-	SizeBytes              int64                `json:"size_bytes"`
-	EntryCount             int32                `json:"entry_count"`
-	State                  string               `json:"state"`
-	SourceWorkspaceLeaseID pgtype.UUID          `json:"source_workspace_lease_id"`
-	OwnershipGeneration    int64                `json:"ownership_generation"`
-	WriterGeneration       int64                `json:"writer_generation"`
-	CreatedAt              pgtype.Timestamptz   `json:"created_at"`
-	PublishedAt            pgtype.Timestamptz   `json:"published_at"`
-	DiscardedAt            pgtype.Timestamptz   `json:"discarded_at"`
+	ID                     pgtype.UUID        `json:"id"`
+	EnvironmentID          pgtype.UUID        `json:"environment_id"`
+	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
+	ParentVersionID        pgtype.UUID        `json:"parent_version_id"`
+	ArtifactID             pgtype.UUID        `json:"artifact_id"`
+	ContentDigest          string             `json:"content_digest"`
+	SizeBytes              int64              `json:"size_bytes"`
+	EntryCount             int32              `json:"entry_count"`
+	State                  string             `json:"state"`
+	SourceWorkspaceLeaseID pgtype.UUID        `json:"source_workspace_lease_id"`
+	OwnershipGeneration    int64              `json:"ownership_generation"`
+	WriterGeneration       int64              `json:"writer_generation"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	PublishedAt            pgtype.Timestamptz `json:"published_at"`
+	DiscardedAt            pgtype.Timestamptz `json:"discarded_at"`
 }
 
 func (q *Queries) StageWorkspaceExecCapture(ctx context.Context, arg StageWorkspaceExecCaptureParams) (StageWorkspaceExecCaptureRow, error) {
@@ -2919,8 +2916,6 @@ func (q *Queries) StageWorkspaceExecCapture(ctx context.Context, arg StageWorksp
 		&i.WorkspaceID,
 		&i.ParentVersionID,
 		&i.ArtifactID,
-		&i.ArtifactKind,
-		&i.Kind,
 		&i.ContentDigest,
 		&i.SizeBytes,
 		&i.EntryCount,

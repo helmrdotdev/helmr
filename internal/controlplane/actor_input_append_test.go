@@ -41,7 +41,6 @@ func TestAppendActorInputCompletedClaimBypassesCurrentActorState(t *testing.T) {
 		SessionID:      actorID,
 		RecordID:       uuid.NewV7(),
 		Data:           []byte(`{"b":2,"a":1}`),
-		SourceKind:     "external",
 		IdempotencyKey: "message:1",
 		Authorize: func(context.Context, db.Querier) error {
 			authorized = true
@@ -79,7 +78,6 @@ func TestAppendActorInputRollsBackNewClaimWhenActorIsUnavailable(t *testing.T) {
 		SessionID:      actorID,
 		RecordID:       uuid.NewV7(),
 		Data:           []byte(`{"message":"queued"}`),
-		SourceKind:     "external",
 		IdempotencyKey: "message:2",
 	})
 	if !errors.Is(err, errActorInputUnavailable) {
@@ -118,7 +116,6 @@ func TestAppendActorInputRollsBackProvisionalRunSourceWhenAuthorityIsStale(t *te
 		SessionID:      actorID,
 		RecordID:       uuid.NewV7(),
 		Data:           []byte(`{"message":"queued"}`),
-		SourceKind:     "run",
 		SourceRunID:    sourceRunID,
 		IdempotencyKey: "message:stale-source",
 		Authorize: func(context.Context, db.Querier) error {
@@ -150,7 +147,6 @@ func TestAppendActorInputRejectsOversizedCanonicalInputBeforeTransaction(t *test
 		SessionID:      actorID,
 		RecordID:       uuid.NewV7(),
 		Data:           data,
-		SourceKind:     "external",
 		IdempotencyKey: "message:3",
 	})
 	if !errors.Is(err, errActorInputTooLarge) {
@@ -187,7 +183,6 @@ func TestAppendActorInputClassifiesLockedSequenceExhaustion(t *testing.T) {
 		SessionID:     actorID,
 		RecordID:      uuid.NewV7(),
 		Data:          []byte(`{"message":"queued"}`),
-		SourceKind:    "external",
 	})
 	if !errors.Is(err, errActorSequenceExhausted) {
 		t.Fatalf("error = %v, want Actor sequence exhausted", err)
@@ -252,8 +247,7 @@ func completeActorInputClaim(
 	store.replayRecord = db.SessionRecord{
 		ID: pgvalue.UUID(recordID), EnvironmentID: pgvalue.UUID(environmentID),
 		SessionID: pgvalue.UUID(actorID), Direction: "input", Sequence: sequence,
-		Data: input, ContentType: "application/json", SourceKind: pgvalue.Text("external"),
-		ClaimID: store.claim.ID, CreatedAt: pgvalue.Timestamptz(time.Now().UTC()),
+		Data: input, ContentType: "application/json", ClaimID: store.claim.ID, CreatedAt: pgvalue.Timestamptz(time.Now().UTC()),
 	}
 }
 
@@ -347,7 +341,6 @@ func (s *actorInputClaimStore) AppendActorInputRecord(
 		Sequence:      s.locator.NextInputSequence,
 		Data:          params.Data,
 		ContentType:   "application/json",
-		SourceKind:    params.SourceKind,
 		SourceRunID:   params.SourceRunID,
 		ClaimID:       params.ClaimID,
 		Appended:      true,

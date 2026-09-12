@@ -486,7 +486,8 @@ func lockSameWorkspaceChildFinalization(
 
 func validateSameWorkspaceChildFinalization(authority runLeaseClaimAuthority) error {
 	wait := authority.runWait
-	if authority.parentRun.Status != db.RunStatusWaiting ||
+	if !authority.run.ParentOwnsLifecycle.Valid || !authority.run.ParentOwnsLifecycle.Bool ||
+		authority.run.ParentRunID != authority.parentRun.ID || authority.parentRun.Status != db.RunStatusWaiting ||
 		authority.parentRun.CurrentAttemptNumber != authority.parentAttempt.Number ||
 		authority.parentRun.CurrentRunLeaseID.Valid ||
 		authority.parentAttempt.TerminalAt.Valid ||
@@ -497,8 +498,6 @@ func validateSameWorkspaceChildFinalization(authority runLeaseClaimAuthority) er
 		wait.RunID != authority.parentRun.ID ||
 		wait.WorkspaceID != authority.workspace.ID ||
 		wait.ChildRunID != authority.run.ID ||
-		!wait.ChildParentOwned.Valid ||
-		!wait.ChildParentOwned.Bool ||
 		!wait.ChildTargetDeclaredID.Valid ||
 		wait.ChildTargetDeclaredID.String != authority.run.EntrypointDeclaredID ||
 		wait.CurrentRunLeaseID.Valid ||

@@ -181,6 +181,7 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
 ), restore_same_workspace_ancestors AS (
     SELECT runtime_instances.id AS runtime_instance_id,
            parent.id AS parent_run_id,
+           parent.environment_id,
            parent.parent_run_id AS next_parent_run_id,
            parent.parent_owns_lifecycle,
            parent.session_id AS parent_session_id,
@@ -192,7 +193,14 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
       JOIN run_waits AS edge
         ON edge.child_run_id = runtime_instances.reserved_run_id
        AND edge.workspace_id = runtime_instances.workspace_id
-       AND edge.child_parent_owned IS TRUE
+       AND edge.kind = 'child'
+       AND EXISTS (
+           SELECT 1 FROM runs AS owned_child
+            WHERE owned_child.id = edge.child_run_id
+              AND owned_child.parent_run_id = edge.run_id
+              AND owned_child.environment_id = edge.environment_id
+              AND owned_child.parent_owns_lifecycle IS TRUE
+       )
        AND edge.condition_state = 'pending'
        AND edge.suspension_state = 'parked'
        AND edge.ownership_generation IS NOT NULL
@@ -208,6 +216,7 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
     UNION ALL
     SELECT child.runtime_instance_id,
            parent.id,
+           parent.environment_id,
            parent.parent_run_id,
            parent.parent_owns_lifecycle,
            parent.session_id,
@@ -216,7 +225,9 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
       FROM restore_same_workspace_ancestors AS child
       JOIN run_waits AS edge
         ON edge.child_run_id = child.parent_run_id
-       AND edge.child_parent_owned IS TRUE
+       AND edge.kind = 'child'
+       AND edge.run_id = child.next_parent_run_id
+       AND edge.environment_id = child.environment_id
        AND edge.condition_state = 'pending'
        AND edge.suspension_state = 'parked'
        AND edge.ownership_generation = child.ownership_generation

@@ -36,7 +36,7 @@ func TestRecordResolutionProjectsExternalInput(t *testing.T) {
 	createdAt := time.Date(2026, 7, 23, 1, 2, 3, 456000000, time.UTC)
 	resolution, err := RecordResolution(db.SessionRecord{
 		ID: pgvalue.UUID(recordID), Sequence: 7, Data: []byte(`{"nested":{"ok":true}}`),
-		SourceKind: pgvalue.Text("external"), CreatedAt: pgvalue.Timestamptz(createdAt),
+		CreatedAt: pgvalue.Timestamptz(createdAt),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -61,8 +61,8 @@ func TestRecordResolutionProjectsRunSource(t *testing.T) {
 	runID := uuid.NewV7()
 	resolution, err := RecordResolution(db.SessionRecord{
 		ID: pgvalue.UUID(uuid.NewV7()), Sequence: 1, Data: []byte(`null`),
-		SourceKind: pgvalue.Text("run"), SourceRunID: pgvalue.UUID(runID),
-		CreatedAt: pgvalue.Timestamptz(time.Unix(1, 0).UTC()),
+		SourceRunID: pgvalue.UUID(runID),
+		CreatedAt:   pgvalue.Timestamptz(time.Unix(1, 0).UTC()),
 	})
 	if err != nil {
 		t.Fatal(err)

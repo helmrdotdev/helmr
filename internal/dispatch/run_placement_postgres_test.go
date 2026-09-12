@@ -356,11 +356,11 @@ SELECT $1, environment_id, region_id, sandbox_declared_id,
  WHERE id = $4`, secondWorkspaceID, secondRunID, secondVersionID, fixture.workspaceID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO workspace_versions (
-    id, environment_id, workspace_id, kind, content_digest,
+    id, environment_id, workspace_id, content_digest,
     size_bytes, entry_count, state,
     ownership_generation, writer_generation, published_at
 )
-SELECT $1, environment_id, $2, kind, content_digest,
+SELECT $1, environment_id, $2, content_digest,
        size_bytes, entry_count, state, 0, 0, transaction_timestamp()
   FROM workspace_versions
  WHERE id = (SELECT head_version_id FROM workspaces WHERE id = $3)`,
@@ -1299,12 +1299,12 @@ INSERT INTO artifacts (
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO workspace_versions (
     id, environment_id, workspace_id,
-    parent_version_id, kind, content_digest, state, source_workspace_lease_id,
-    ownership_generation, writer_generation, artifact_id, artifact_kind,
+    parent_version_id, content_digest, state, source_workspace_lease_id,
+    ownership_generation, writer_generation, artifact_id,
     entry_count, size_bytes
 ) VALUES (
-    $1, $2, $3, $4, 'user', $5, 'private', $6,
-    1, 1, $7, 'workspace_version', 1, 1
+    $1, $2, $3, $4, $5, 'private', $6,
+    1, 1, $7, 1, 1
 )`,
 		privateVersionID, fixture.environmentID, fixture.workspaceID, baseVersionID,
 		privateDigest, sourceWorkspaceLeaseID, privateArtifactID,
@@ -2076,17 +2076,17 @@ UPDATE runs
  WHERE id = $1`, fixture.runID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO workspace_versions (
-    id, environment_id, workspace_id, parent_version_id, kind,
+    id, environment_id, workspace_id, parent_version_id,
     content_digest, size_bytes, entry_count, state,
     source_workspace_lease_id, ownership_generation, writer_generation,
-    artifact_id, artifact_kind, published_at
+    artifact_id, published_at
 )
 SELECT $1, workspace_versions.environment_id, workspace_versions.workspace_id,
-       workspace_versions.id, workspace_versions.kind,
+       workspace_versions.id,
        workspace_versions.content_digest, workspace_versions.size_bytes,
        workspace_versions.entry_count, 'committed', $2,
        workspaces.ownership_generation, workspaces.writer_generation,
-       workspace_versions.artifact_id, workspace_versions.artifact_kind,
+       workspace_versions.artifact_id,
        transaction_timestamp()
   FROM workspace_versions
   JOIN workspaces ON workspaces.id = workspace_versions.workspace_id
@@ -2260,10 +2260,9 @@ VALUES ($1, $2, $3, $4, $5, 'workspace_version', 1, $6)`, privateArtifactID, fix
 		fixture.projectID, fixture.environmentID, privateDigest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO workspace_versions (
-    id, environment_id, workspace_id, parent_version_id,
-    kind, content_digest, state, source_workspace_lease_id, ownership_generation,
-    writer_generation, artifact_id, artifact_kind, entry_count, size_bytes
-) VALUES ($1, $2, $3, $4, 'user', $5, 'private', $6, 1, 1, $7, 'workspace_version', 1, 1)`,
+    id, environment_id, workspace_id, parent_version_id, content_digest, state, source_workspace_lease_id, ownership_generation,
+    writer_generation, artifact_id, entry_count, size_bytes
+) VALUES ($1, $2, $3, $4, $5, 'private', $6, 1, 1, $7, 1, 1)`,
 		privateVersionID, fixture.environmentID, fixture.workspaceID, baseVersionID, privateDigest,
 		sourceWorkspaceLeaseID, privateArtifactID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
@@ -2632,10 +2631,9 @@ INSERT INTO workspaces (
 	)
 	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO workspace_versions (
-    id, environment_id, workspace_id,
-    kind, content_digest, state, ownership_generation, writer_generation, published_at
+    id, environment_id, workspace_id, content_digest, state, ownership_generation, writer_generation, published_at
 ) VALUES (
-    $1, $2, $3, 'system',
+    $1, $2, $3,
     'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',
     'committed', 0, 0, now()
 )`,

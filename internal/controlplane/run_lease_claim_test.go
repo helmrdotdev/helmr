@@ -97,7 +97,6 @@ func TestClaimRunLeaseRoutesDifferentWorkspaceChildWaitToCheckpointRestore(t *te
 	locators.ResumeChildAttemptNumber = 0
 	authority.runWait.Kind = db.WaitKindChild
 	authority.runWait.ChildRunID = childRunID
-	authority.runWait.ChildParentOwned = pgtype.Bool{Bool: true, Valid: true}
 	store := &runLeaseClaimStore{authority: authority, locators: locators}
 	server := &Server{db: store}
 
@@ -648,7 +647,6 @@ func TestValidateSameWorkspaceParentRestoreUsesSuspendCheckpointBAndTargetsChild
 	childRunID := pgvalue.UUID(uuid.New())
 
 	authority.runWait.Kind = db.WaitKindChild
-	authority.runWait.ChildParentOwned = pgtype.Bool{Bool: true, Valid: true}
 	authority.runWait.ChildRunID = childRunID
 	authority.runWait.ConditionState = db.WaitStateCompleted
 	authority.runWait.BaseWorkspaceVersionID = baseVersionID
@@ -687,7 +685,6 @@ func TestValidateSameWorkspaceParentRestoreFailureTargetsSuspendWorkspaceB(t *te
 	baseVersionID := authority.checkpoint.PrivateWorkspaceVersionID
 
 	authority.runWait.Kind = db.WaitKindChild
-	authority.runWait.ChildParentOwned = pgtype.Bool{Bool: true, Valid: true}
 	authority.runWait.ChildRunID = pgvalue.UUID(uuid.New())
 	authority.runWait.ConditionState = db.WaitStateFailed
 	authority.runWait.BaseWorkspaceVersionID = baseVersionID
@@ -1019,6 +1016,8 @@ func TestClaimSameWorkspaceChildRunLeaseInTxExtendsEnclosingWait(t *testing.T) {
 	locators.ParentEnclosingRunID = attachmentOwnerRunID
 	locators.ParentEnclosingAttemptNumber = 1
 	authority.workspace.OwnerRunID = attachmentOwnerRunID
+	authority.parentRun.ParentRunID = attachmentOwnerRunID
+	authority.parentRun.ParentOwnsLifecycle = pgtype.Bool{Bool: true, Valid: true}
 	authority.enclosingWait = activeEnclosingWaitFixture(
 		locators.ParentEnclosingWaitID,
 		attachmentOwnerRunID,
@@ -1069,6 +1068,8 @@ func TestClaimSameWorkspaceChildRunLeaseInTxRejectsBrokenEnclosingChain(t *testi
 	locators.ParentEnclosingRunID = attachmentOwnerRunID
 	locators.ParentEnclosingAttemptNumber = 1
 	authority.workspace.OwnerRunID = attachmentOwnerRunID
+	authority.parentRun.ParentRunID = attachmentOwnerRunID
+	authority.parentRun.ParentOwnsLifecycle = pgtype.Bool{Bool: true, Valid: true}
 	authority.enclosingWait = activeEnclosingWaitFixture(
 		locators.ParentEnclosingWaitID,
 		attachmentOwnerRunID,
@@ -1774,7 +1775,6 @@ func validSameWorkspaceChildRunLeaseClaimFixture(actorParent bool) (workerActor,
 		SuspendCheckpointID:        checkpointID,
 		ResumeAttachID:             resumeAttachID,
 		ChildRunID:                 authority.run.ID,
-		ChildParentOwned:           pgtype.Bool{Bool: true, Valid: true},
 		ChildTargetDeclaredID:      pgtype.Text{String: authority.run.EntrypointDeclaredID, Valid: true},
 		BaseWorkspaceVersionID:     authority.attempt.BaseWorkspaceVersionID,
 		BaseWorkspaceContentDigest: pgtype.Text{String: "sha256:test", Valid: true},
@@ -1861,7 +1861,6 @@ func activeEnclosingWaitFixture(
 		SuspendCheckpointID:        pgvalue.UUID(uuid.New()),
 		ResumeAttachID:             pgvalue.UUID(uuid.New()),
 		ChildRunID:                 child.ID,
-		ChildParentOwned:           pgtype.Bool{Bool: true, Valid: true},
 		ChildTargetDeclaredID:      pgtype.Text{String: child.EntrypointDeclaredID, Valid: true},
 		BaseWorkspaceVersionID:     child.BaseWorkspaceVersionID,
 		BaseWorkspaceContentDigest: pgtype.Text{String: "sha256:outer", Valid: true},

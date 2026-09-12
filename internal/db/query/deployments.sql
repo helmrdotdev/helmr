@@ -10,7 +10,8 @@ INSERT INTO deployments (
     program_artifact_id,
     program_index_digest,
     queue_config
-) VALUES (
+)
+SELECT
     sqlc.arg(id),
     sqlc.arg(org_id),
     sqlc.arg(project_id),
@@ -21,7 +22,10 @@ INSERT INTO deployments (
     sqlc.arg(program_artifact_id),
     sqlc.arg(program_index_digest),
     sqlc.arg(queue_config)
-)
+  FROM artifacts
+ WHERE artifacts.environment_id = sqlc.arg(environment_id)
+   AND artifacts.id = sqlc.arg(program_artifact_id)
+   AND artifacts.kind = 'deployment_program'
 ON CONFLICT (environment_id, bundle_digest) DO UPDATE SET
     bundle_digest = deployments.bundle_digest
 RETURNING *;

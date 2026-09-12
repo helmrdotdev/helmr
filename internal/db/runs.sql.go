@@ -1236,7 +1236,6 @@ WITH selected_target AS MATERIALIZED (
        AND wait.id = $1
        AND wait.kind = 'child'
        AND wait.child_run_id IS NULL
-       AND wait.child_parent_owned IS TRUE
        AND wait.child_target_declared_id = $2
        AND wait.child_claim_id = $3
        AND wait.condition_state = 'pending'

@@ -285,7 +285,6 @@ func replayActorTurnCommit(
 		version.SourceWorkspaceLeaseID != authority.workspaceLease.ID ||
 		version.OwnershipGeneration != authority.workspace.OwnershipGeneration ||
 		version.WriterGeneration != authority.workspace.WriterGeneration ||
-		!version.ArtifactKind.Valid || version.ArtifactKind.ArtifactKind != db.ArtifactKindWorkspaceVersion ||
 		!version.ArtifactRowKind.Valid || version.ArtifactRowKind.ArtifactKind != db.ArtifactKindWorkspaceVersion ||
 		!version.ArtifactDigest.Valid || version.ArtifactDigest.String != commit.artifact.Digest ||
 		!version.ArtifactSizeBytes.Valid || version.ArtifactSizeBytes.Int64 != commit.artifact.SizeBytes ||

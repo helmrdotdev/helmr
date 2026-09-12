@@ -21,7 +21,7 @@ WITH selected_claim AS MATERIALIZED (
        AND idempotency_claims.retired_at IS NULL
      FOR UPDATE
 ), existing_record AS MATERIALIZED (
-    SELECT session_records.id, session_records.environment_id, session_records.session_id, session_records.direction, session_records.sequence, session_records.data, session_records.content_type, session_records.source_kind, session_records.source_run_id, session_records.producer_run_id, session_records.producer_attempt_number, session_records.claim_id, session_records.created_at
+    SELECT session_records.id, session_records.environment_id, session_records.session_id, session_records.direction, session_records.sequence, session_records.data, session_records.content_type, session_records.source_run_id, session_records.producer_run_id, session_records.producer_attempt_number, session_records.claim_id, session_records.created_at
       FROM session_records
       JOIN selected_claim ON selected_claim.id = session_records.claim_id
      WHERE session_records.session_id = $3
@@ -61,7 +61,6 @@ WITH selected_claim AS MATERIALIZED (
         sequence,
         data,
         content_type,
-        source_kind,
         source_run_id,
         claim_id
     )
@@ -73,15 +72,14 @@ WITH selected_claim AS MATERIALIZED (
            $6,
            'application/json',
            $7,
-           $8,
            $2
       FROM allocated
-    RETURNING session_records.id, session_records.environment_id, session_records.session_id, session_records.direction, session_records.sequence, session_records.data, session_records.content_type, session_records.source_kind, session_records.source_run_id, session_records.producer_run_id, session_records.producer_attempt_number, session_records.claim_id, session_records.created_at
+    RETURNING session_records.id, session_records.environment_id, session_records.session_id, session_records.direction, session_records.sequence, session_records.data, session_records.content_type, session_records.source_run_id, session_records.producer_run_id, session_records.producer_attempt_number, session_records.claim_id, session_records.created_at
 )
-SELECT inserted_record.id, inserted_record.environment_id, inserted_record.session_id, inserted_record.direction, inserted_record.sequence, inserted_record.data, inserted_record.content_type, inserted_record.source_kind, inserted_record.source_run_id, inserted_record.producer_run_id, inserted_record.producer_attempt_number, inserted_record.claim_id, inserted_record.created_at, false::boolean AS claim_fingerprint_mismatch, true::boolean AS appended
+SELECT inserted_record.id, inserted_record.environment_id, inserted_record.session_id, inserted_record.direction, inserted_record.sequence, inserted_record.data, inserted_record.content_type, inserted_record.source_run_id, inserted_record.producer_run_id, inserted_record.producer_attempt_number, inserted_record.claim_id, inserted_record.created_at, false::boolean AS claim_fingerprint_mismatch, true::boolean AS appended
   FROM inserted_record
 UNION ALL
-SELECT existing_record.id, existing_record.environment_id, existing_record.session_id, existing_record.direction, existing_record.sequence, existing_record.data, existing_record.content_type, existing_record.source_kind, existing_record.source_run_id, existing_record.producer_run_id, existing_record.producer_attempt_number, existing_record.claim_id, existing_record.created_at,
+SELECT existing_record.id, existing_record.environment_id, existing_record.session_id, existing_record.direction, existing_record.sequence, existing_record.data, existing_record.content_type, existing_record.source_run_id, existing_record.producer_run_id, existing_record.producer_attempt_number, existing_record.claim_id, existing_record.created_at,
        (selected_claim.request_fingerprint <> $4)::boolean
            AS claim_fingerprint_mismatch,
        false::boolean AS appended
@@ -96,7 +94,6 @@ type AppendActorInputRecordParams struct {
 	ExpectedRequestFingerprint []byte      `json:"expected_request_fingerprint"`
 	ID                         pgtype.UUID `json:"id"`
 	Data                       []byte      `json:"data"`
-	SourceKind                 pgtype.Text `json:"source_kind"`
 	SourceRunID                pgtype.UUID `json:"source_run_id"`
 }
 
@@ -108,7 +105,6 @@ type AppendActorInputRecordRow struct {
 	Sequence                 int64              `json:"sequence"`
 	Data                     []byte             `json:"data"`
 	ContentType              string             `json:"content_type"`
-	SourceKind               pgtype.Text        `json:"source_kind"`
 	SourceRunID              pgtype.UUID        `json:"source_run_id"`
 	ProducerRunID            pgtype.UUID        `json:"producer_run_id"`
 	ProducerAttemptNumber    pgtype.Int4        `json:"producer_attempt_number"`
@@ -126,7 +122,6 @@ func (q *Queries) AppendActorInputRecord(ctx context.Context, arg AppendActorInp
 		arg.ExpectedRequestFingerprint,
 		arg.ID,
 		arg.Data,
-		arg.SourceKind,
 		arg.SourceRunID,
 	)
 	var i AppendActorInputRecordRow
@@ -138,7 +133,6 @@ func (q *Queries) AppendActorInputRecord(ctx context.Context, arg AppendActorInp
 		&i.Sequence,
 		&i.Data,
 		&i.ContentType,
-		&i.SourceKind,
 		&i.SourceRunID,
 		&i.ProducerRunID,
 		&i.ProducerAttemptNumber,
@@ -160,7 +154,7 @@ WITH selected_claim AS MATERIALIZED (
        AND idempotency_claims.retired_at IS NULL
      FOR UPDATE
 ), existing_record AS MATERIALIZED (
-    SELECT session_records.id, session_records.environment_id, session_records.session_id, session_records.direction, session_records.sequence, session_records.data, session_records.content_type, session_records.source_kind, session_records.source_run_id, session_records.producer_run_id, session_records.producer_attempt_number, session_records.claim_id, session_records.created_at
+    SELECT session_records.id, session_records.environment_id, session_records.session_id, session_records.direction, session_records.sequence, session_records.data, session_records.content_type, session_records.source_run_id, session_records.producer_run_id, session_records.producer_attempt_number, session_records.claim_id, session_records.created_at
       FROM session_records
       JOIN selected_claim ON selected_claim.id = session_records.claim_id
      WHERE session_records.session_id = $3
@@ -223,12 +217,12 @@ WITH selected_claim AS MATERIALIZED (
            $5,
            $2
       FROM allocated
-    RETURNING session_records.id, session_records.environment_id, session_records.session_id, session_records.direction, session_records.sequence, session_records.data, session_records.content_type, session_records.source_kind, session_records.source_run_id, session_records.producer_run_id, session_records.producer_attempt_number, session_records.claim_id, session_records.created_at
+    RETURNING session_records.id, session_records.environment_id, session_records.session_id, session_records.direction, session_records.sequence, session_records.data, session_records.content_type, session_records.source_run_id, session_records.producer_run_id, session_records.producer_attempt_number, session_records.claim_id, session_records.created_at
 )
-SELECT inserted_record.id, inserted_record.environment_id, inserted_record.session_id, inserted_record.direction, inserted_record.sequence, inserted_record.data, inserted_record.content_type, inserted_record.source_kind, inserted_record.source_run_id, inserted_record.producer_run_id, inserted_record.producer_attempt_number, inserted_record.claim_id, inserted_record.created_at, false::boolean AS claim_fingerprint_mismatch, true::boolean AS appended
+SELECT inserted_record.id, inserted_record.environment_id, inserted_record.session_id, inserted_record.direction, inserted_record.sequence, inserted_record.data, inserted_record.content_type, inserted_record.source_run_id, inserted_record.producer_run_id, inserted_record.producer_attempt_number, inserted_record.claim_id, inserted_record.created_at, false::boolean AS claim_fingerprint_mismatch, true::boolean AS appended
   FROM inserted_record
 UNION ALL
-SELECT existing_record.id, existing_record.environment_id, existing_record.session_id, existing_record.direction, existing_record.sequence, existing_record.data, existing_record.content_type, existing_record.source_kind, existing_record.source_run_id, existing_record.producer_run_id, existing_record.producer_attempt_number, existing_record.claim_id, existing_record.created_at,
+SELECT existing_record.id, existing_record.environment_id, existing_record.session_id, existing_record.direction, existing_record.sequence, existing_record.data, existing_record.content_type, existing_record.source_run_id, existing_record.producer_run_id, existing_record.producer_attempt_number, existing_record.claim_id, existing_record.created_at,
        (selected_claim.request_fingerprint <> $6)::boolean
            AS claim_fingerprint_mismatch,
        false::boolean AS appended
@@ -256,7 +250,6 @@ type AppendActorOutputRecordRow struct {
 	Sequence                 int64              `json:"sequence"`
 	Data                     []byte             `json:"data"`
 	ContentType              string             `json:"content_type"`
-	SourceKind               pgtype.Text        `json:"source_kind"`
 	SourceRunID              pgtype.UUID        `json:"source_run_id"`
 	ProducerRunID            pgtype.UUID        `json:"producer_run_id"`
 	ProducerAttemptNumber    pgtype.Int4        `json:"producer_attempt_number"`
@@ -287,7 +280,6 @@ func (q *Queries) AppendActorOutputRecord(ctx context.Context, arg AppendActorOu
 		&i.Sequence,
 		&i.Data,
 		&i.ContentType,
-		&i.SourceKind,
 		&i.SourceRunID,
 		&i.ProducerRunID,
 		&i.ProducerAttemptNumber,
@@ -481,7 +473,6 @@ INSERT INTO session_records (
     sequence,
     data,
     content_type,
-    source_kind,
     claim_id
 )
 SELECT $1,
@@ -491,10 +482,9 @@ SELECT $1,
        1,
        $2,
        'application/json',
-       'external',
        $3
   FROM advanced
-RETURNING id, environment_id, session_id, direction, sequence, data, content_type, source_kind, source_run_id, producer_run_id, producer_attempt_number, claim_id, created_at
+RETURNING id, environment_id, session_id, direction, sequence, data, content_type, source_run_id, producer_run_id, producer_attempt_number, claim_id, created_at
 `
 
 type CreateActorStartInputRecordParams struct {
@@ -522,7 +512,6 @@ func (q *Queries) CreateActorStartInputRecord(ctx context.Context, arg CreateAct
 		&i.Sequence,
 		&i.Data,
 		&i.ContentType,
-		&i.SourceKind,
 		&i.SourceRunID,
 		&i.ProducerRunID,
 		&i.ProducerAttemptNumber,
@@ -607,7 +596,7 @@ func (q *Queries) GetActorInputCurrentRun(ctx context.Context, arg GetActorInput
 }
 
 const getActorInputRecordAtSequenceForUpdate = `-- name: GetActorInputRecordAtSequenceForUpdate :one
-SELECT id, environment_id, session_id, direction, sequence, data, content_type, source_kind, source_run_id, producer_run_id, producer_attempt_number, claim_id, created_at
+SELECT id, environment_id, session_id, direction, sequence, data, content_type, source_run_id, producer_run_id, producer_attempt_number, claim_id, created_at
   FROM session_records
  WHERE environment_id = $1
    AND session_id = $2
@@ -633,7 +622,6 @@ func (q *Queries) GetActorInputRecordAtSequenceForUpdate(ctx context.Context, ar
 		&i.Sequence,
 		&i.Data,
 		&i.ContentType,
-		&i.SourceKind,
 		&i.SourceRunID,
 		&i.ProducerRunID,
 		&i.ProducerAttemptNumber,
@@ -644,7 +632,7 @@ func (q *Queries) GetActorInputRecordAtSequenceForUpdate(ctx context.Context, ar
 }
 
 const getActorInputRecordByIDForUpdate = `-- name: GetActorInputRecordByIDForUpdate :one
-SELECT id, environment_id, session_id, direction, sequence, data, content_type, source_kind, source_run_id, producer_run_id, producer_attempt_number, claim_id, created_at
+SELECT id, environment_id, session_id, direction, sequence, data, content_type, source_run_id, producer_run_id, producer_attempt_number, claim_id, created_at
   FROM session_records
  WHERE environment_id = $1
    AND session_id = $2
@@ -670,7 +658,6 @@ func (q *Queries) GetActorInputRecordByIDForUpdate(ctx context.Context, arg GetA
 		&i.Sequence,
 		&i.Data,
 		&i.ContentType,
-		&i.SourceKind,
 		&i.SourceRunID,
 		&i.ProducerRunID,
 		&i.ProducerAttemptNumber,
@@ -681,7 +668,7 @@ func (q *Queries) GetActorInputRecordByIDForUpdate(ctx context.Context, arg GetA
 }
 
 const getActorOutputRecordByID = `-- name: GetActorOutputRecordByID :one
-SELECT id, environment_id, session_id, direction, sequence, data, content_type, source_kind, source_run_id, producer_run_id, producer_attempt_number, claim_id, created_at
+SELECT id, environment_id, session_id, direction, sequence, data, content_type, source_run_id, producer_run_id, producer_attempt_number, claim_id, created_at
   FROM session_records
  WHERE environment_id = $1
    AND session_id = $2
@@ -706,7 +693,6 @@ func (q *Queries) GetActorOutputRecordByID(ctx context.Context, arg GetActorOutp
 		&i.Sequence,
 		&i.Data,
 		&i.ContentType,
-		&i.SourceKind,
 		&i.SourceRunID,
 		&i.ProducerRunID,
 		&i.ProducerAttemptNumber,
@@ -862,7 +848,6 @@ SELECT scoped_actor.id AS session_id,
        page.record_id,
        coalesce(page.sequence, 0)::bigint AS sequence,
        coalesce(page.data, 'null'::jsonb)::jsonb AS data,
-       coalesce(page.source_kind, '')::text AS source_kind,
        page.source_run_id,
        coalesce(page.created_at, 'epoch'::timestamptz)::timestamptz AS created_at
   FROM scoped_actor
@@ -870,7 +855,6 @@ SELECT scoped_actor.id AS session_id,
       SELECT session_records.id AS record_id,
              session_records.sequence,
              session_records.data,
-             session_records.source_kind,
              session_records.source_run_id,
              session_records.created_at
         FROM session_records
@@ -899,7 +883,6 @@ type ReadPublicActorInputPageRow struct {
 	RecordID          pgtype.UUID        `json:"record_id"`
 	Sequence          int64              `json:"sequence"`
 	Data              []byte             `json:"data"`
-	SourceKind        string             `json:"source_kind"`
 	SourceRunID       pgtype.UUID        `json:"source_run_id"`
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 }
@@ -926,7 +909,6 @@ func (q *Queries) ReadPublicActorInputPage(ctx context.Context, arg ReadPublicAc
 			&i.RecordID,
 			&i.Sequence,
 			&i.Data,
-			&i.SourceKind,
 			&i.SourceRunID,
 			&i.CreatedAt,
 		); err != nil {

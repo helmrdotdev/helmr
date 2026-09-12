@@ -341,8 +341,6 @@ func validateTaskCompletionAuthority(
 		if !sameWorkspaceChild && authority.enclosingWait.ID.Valid {
 			if authority.enclosingWait.RunID != authority.parentRun.ID ||
 				authority.enclosingWait.ChildRunID != authority.run.ID ||
-				!authority.enclosingWait.ChildParentOwned.Valid ||
-				!authority.enclosingWait.ChildParentOwned.Bool ||
 				authority.enclosingWait.Kind != db.WaitKindChild ||
 				authority.enclosingWait.ConditionState != db.WaitStatePending {
 				return staleAuthority(staleAuthorityTaskCompletion, taskCompletionPointParentAuthority, errStaleTaskCompletion)
@@ -423,16 +421,14 @@ func validateTaskWorkspaceRollback(
 	}
 	switch rollback.target.Kind {
 	case workspace.ResetTargetEmpty:
-		if version.ParentVersionID.Valid || version.ArtifactID.Valid || version.ArtifactKind.Valid ||
-			version.Kind != db.WorkspaceVersionKindSystem || version.SourceWorkspaceLeaseID.Valid ||
+		if version.ParentVersionID.Valid || version.ArtifactID.Valid || version.SourceWorkspaceLeaseID.Valid ||
 			version.OwnershipGeneration != 0 || version.WriterGeneration != 0 ||
 			version.ContentDigest != workspace.CanonicalEmptyTreeDigest || version.SizeBytes != 0 || version.EntryCount != 0 {
 			return errStaleTaskCompletion
 		}
 	case workspace.ResetTargetArtifact:
 		if rollback.target.Artifact == nil || !version.ParentVersionID.Valid || !version.ArtifactID.Valid ||
-			!version.ArtifactKind.Valid || version.ArtifactKind.ArtifactKind != db.ArtifactKindWorkspaceVersion ||
-			!version.SourceWorkspaceLeaseID.Valid || version.Kind != db.WorkspaceVersionKindUser {
+			!version.SourceWorkspaceLeaseID.Valid {
 			return errStaleTaskCompletion
 		}
 		artifact, err := store.GetArtifact(ctx, db.GetArtifactParams{

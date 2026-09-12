@@ -276,10 +276,10 @@ INSERT INTO artifacts (
 	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO workspace_versions (
     id, environment_id, workspace_id, parent_version_id,
-    artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count,
+    artifact_id, content_digest, size_bytes, entry_count,
     state, source_workspace_lease_id, ownership_generation, writer_generation
 ) VALUES (
-    $1, $2, $3, $4, $5, 'workspace_version', 'user', $6, 1, 1,
+    $1, $2, $3, $4, $5, $6, 1, 1,
     'private', $7, $8, 1
 )`, checkpointVersionID, base.EnvironmentID, workspaceID, headVersionID,
 		checkpointArtifactID, checkpointDigest, sourceWorkspaceLeaseID, ownershipGeneration)
@@ -362,22 +362,22 @@ INSERT INTO artifacts (
 	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO workspace_versions (
     id, environment_id, workspace_id, parent_version_id,
-    artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count,
+    artifact_id, content_digest, size_bytes, entry_count,
     state, source_workspace_lease_id, ownership_generation, writer_generation
 ) VALUES (
-    $1, $2, $3, $4, $5, 'workspace_version', 'user', $6, 1, 1,
+    $1, $2, $3, $4, $5, $6, 1, 1,
     'private', $7, $8, $9
 )`, privateVersionID, base.EnvironmentID, workspaceID, checkpointVersionID,
 		privateArtifactID, privateDigest, childWorkspaceLeaseID, ownershipGeneration, int64(2))
 	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO run_waits (
     id, environment_id, run_id, workspace_id, kind,
-    child_run_id, child_parent_owned, child_target_declared_id,
+    child_run_id, child_target_declared_id,
     child_claim_id, child_request,
     condition_state, suspension_state, expected_run_state_version,
     attempt_number, prior_run_lease_id, resume_attach_id
 ) VALUES (
-    $1, $2, $3, $4, 'child', $5, true, 'test-task', $6,
+    $1, $2, $3, $4, 'child', $5, 'test-task', $6,
     '{"Method":"call"}'::jsonb,
     'pending', 'parked', 1, 1, $7, $8
 )`, waitID, base.EnvironmentID, work.RunID, workspaceID, childRunID, childClaimID,

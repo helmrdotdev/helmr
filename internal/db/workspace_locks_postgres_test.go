@@ -50,10 +50,10 @@ func TestWorkspaceResetTargetAuthorityProjectsPrivateVersionWithinExactWorkspace
 	dbtest.MustExec(t, ctx, fixture.pool, `
 		INSERT INTO workspace_versions (
 			id, environment_id, workspace_id, parent_version_id,
-			artifact_id, artifact_kind, kind, content_digest,
+			artifact_id, content_digest,
 			size_bytes, entry_count, state, source_workspace_lease_id,
 			ownership_generation, writer_generation
-		) VALUES ($1, $2, $3, $4, $5, 'workspace_version', 'user', $6,
+		) VALUES ($1, $2, $3, $4, $5, $6,
 		          1, 1, 'private', $7, $8, $9)
 	`, privateVersionID, fixture.environmentID, workspaceID, baseVersionID,
 		artifactID, digest, workspaceLeaseID, ownershipGeneration, writerGeneration)

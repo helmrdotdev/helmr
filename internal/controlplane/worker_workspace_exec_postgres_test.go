@@ -121,8 +121,8 @@ UPDATE workspace_leases
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES($1,$2,1,$3)`, fixture.OrgID, digest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `INSERT INTO artifacts(id,org_id,project_id,environment_id,digest,kind,size_bytes,media_type) VALUES($1,$2,$3,$4,$5,'workspace_version',1,$6)`, artifactID, fixture.OrgID, fixture.ProjectID, fixture.EnvironmentID, digest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
- INSERT INTO workspace_versions(id,environment_id,workspace_id,parent_version_id,artifact_id,artifact_kind,kind,state,content_digest,size_bytes,entry_count,source_workspace_lease_id,ownership_generation,writer_generation,published_at)
- VALUES($1,$2,$3,$4,$5,'workspace_version','user','committed',$6,1,1,$7,$8,$9,now())`, promoted, fixture.EnvironmentID, workspaceID, baseVersionID, artifactID, digest, workspaceLeaseID, owner, writer)
+ INSERT INTO workspace_versions(id,environment_id,workspace_id,parent_version_id,artifact_id,state,content_digest,size_bytes,entry_count,source_workspace_lease_id,ownership_generation,writer_generation,published_at)
+ VALUES($1,$2,$3,$4,$5,'committed',$6,1,1,$7,$8,$9,now())`, promoted, fixture.EnvironmentID, workspaceID, baseVersionID, artifactID, digest, workspaceLeaseID, owner, writer)
 
 	for _, test := range []struct {
 		name, sql string

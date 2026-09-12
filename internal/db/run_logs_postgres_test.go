@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestAppendRunLogChunkRequiresExactCurrentReceipt(t *testing.T) {
@@ -286,43 +287,80 @@ func TestGetRunMetadataClaimScopeUsesStableAttemptAuthority(t *testing.T) {
 }
 
 func TestAppendRunLogChunkConcurrentReplay(t *testing.T) {
-	ctx := context.Background()
-	fixture := newRunLeaseClaimFixture(t, ctx)
-	params := fixture.runningRunLogParams(t, ctx)
-
-	const writers = 8
-	errorsByWriter := make([]error, writers)
-	sequences := make([]int64, writers)
-	var group sync.WaitGroup
-	group.Add(writers)
-	for index := range writers {
-		go func() {
-			defer group.Done()
-			row, err := fixture.queries.AppendRunLogChunk(ctx, params)
-			errorsByWriter[index] = err
-			sequences[index] = row.Seq
-		}()
-	}
-	group.Wait()
-	for index := range writers {
-		if errorsByWriter[index] != nil {
-			t.Fatalf("writer %d error = %v", index, errorsByWriter[index])
+	for _, independent := range []bool{false, true} {
+		name := "same chunk"
+		if independent {
+			name = "independent chunks and streams"
 		}
-		if sequences[index] != sequences[0] {
-			t.Fatalf("writer %d seq = %d, want %d", index, sequences[index], sequences[0])
-		}
-	}
-	var chunks, events int
-	if err := fixture.pool.QueryRow(ctx, `
-		SELECT count(*) FILTER (WHERE stream_kind = 'run_log'),
-		       count(*) FILTER (WHERE stream_kind = 'event')
-		  FROM telemetry_outbox
-		 WHERE run_lease_id = $1
-	`, params.RunLeaseID).Scan(&chunks, &events); err != nil {
-		t.Fatal(err)
-	}
-	if chunks != 1 || events != 1 {
-		t.Fatalf("concurrent replay side effects = chunks %d events %d", chunks, events)
+		t.Run(name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			defer cancel()
+			fixture := newRunLeaseClaimFixture(t, ctx)
+			params := fixture.runningRunLogParams(t, ctx)
+			writers := min(8, int(fixture.pool.Config().MaxConns))
+			if writers < 2 {
+				t.Fatal("concurrent replay needs at least two pool connections")
+			}
+			// Hold all connections before releasing the barrier: lazy pool creation must
+			// not serialize first inserts. Cleanup also releases partial acquisitions.
+			connections := make([]*pgxpool.Conn, writers)
+			for index := range writers {
+				conn, err := fixture.pool.Acquire(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(conn.Release)
+				connections[index] = conn
+			}
+			errorsByWriter := make([]error, writers)
+			sequences := make([]int64, writers)
+			matches := make([]bool, writers)
+			start := make(chan struct{})
+			var group sync.WaitGroup
+			group.Add(writers)
+			for index := range writers {
+				go func() {
+					defer group.Done()
+					input := params
+					if independent {
+						input.ObservedSeq = int64(index/2 + 1)
+						if index%2 == 1 {
+							input.Stream = "stderr"
+							input.Kind = "log.stderr"
+							input.Payload = []byte(`{"stream":"stderr"}`)
+						}
+					}
+					<-start
+					row, err := New(connections[index]).AppendRunLogChunk(ctx, input)
+					errorsByWriter[index], sequences[index], matches[index] = err, row.Seq, row.ReplayMatches
+				}()
+			}
+			close(start)
+			group.Wait()
+			for index := range writers {
+				if errorsByWriter[index] != nil || !matches[index] {
+					t.Fatalf("writer %d: match=%v error=%v", index, matches[index], errorsByWriter[index])
+				}
+				if !independent && sequences[index] != sequences[0] {
+					t.Fatalf("writer %d seq=%d want=%d", index, sequences[index], sequences[0])
+				}
+			}
+			var chunks, events int
+			if err := connections[0].QueryRow(ctx, `
+    SELECT count(*) FILTER (WHERE stream_kind = 'run_log'),
+           count(*) FILTER (WHERE stream_kind = 'event')
+      FROM telemetry_outbox WHERE run_lease_id = $1
+   `, params.RunLeaseID).Scan(&chunks, &events); err != nil {
+				t.Fatal(err)
+			}
+			want := 1
+			if independent {
+				want = writers
+			}
+			if chunks != want || events != want {
+				t.Fatalf("side effects: chunks=%d events=%d want=%d", chunks, events, want)
+			}
+		})
 	}
 }
 

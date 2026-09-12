@@ -64,11 +64,10 @@ INSERT INTO artifacts (
 		bDigest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO workspace_versions (
-    id, environment_id, workspace_id, parent_version_id, artifact_id,
-    artifact_kind, kind, content_digest, size_bytes, entry_count, state,
+    id, environment_id, workspace_id, parent_version_id, artifact_id, content_digest, size_bytes, entry_count, state,
     source_workspace_lease_id, ownership_generation, writer_generation
 ) VALUES (
-    $1, $2, $3, $4, $5, 'workspace_version', 'user', $6, 1, 1,
+    $1, $2, $3, $4, $5, $6, 1, 1,
     'private', $7, 1, 1
 )`, bVersionID, fixture.environmentID, fixture.workspaceID, aVersionID,
 		bArtifactID, bDigest, parentWorkspaceLeaseID)
@@ -94,12 +93,11 @@ INSERT INTO run_attempts (
 ) VALUES ($1, 1, 'task', $2, $3)`, childID, fixture.workspaceID, bVersionID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO run_waits (
-    id, environment_id, run_id, workspace_id, kind, child_run_id,
-    child_parent_owned, child_target_declared_id, child_claim_id,
+    id, environment_id, run_id, workspace_id, kind, child_run_id, child_target_declared_id, child_claim_id,
     child_request, expected_run_state_version, attempt_number,
     prior_run_lease_id, resume_attach_id, suspension_state
 ) VALUES (
-    $1, $2, $3, $4, 'child', $5, true, 'test-task', $6,
+    $1, $2, $3, $4, 'child', $5, 'test-task', $6,
     '{"Method":"call"}'::jsonb, 3, 1, $7, $8, 'parked'
 )`, waitID, fixture.environmentID, fixture.runID, fixture.workspaceID,
 		childID, claimID, parentLease.ID, uuid.NewV7())
@@ -241,11 +239,10 @@ INSERT INTO artifacts (
 		nestedBaseDigest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO workspace_versions (
-    id, environment_id, workspace_id, parent_version_id, artifact_id,
-    artifact_kind, kind, content_digest, size_bytes, entry_count, state,
+    id, environment_id, workspace_id, parent_version_id, artifact_id, content_digest, size_bytes, entry_count, state,
     source_workspace_lease_id, ownership_generation, writer_generation
 ) VALUES (
-    $1, $2, $3, $4, $5, 'workspace_version', 'user', $6, 3, 3,
+    $1, $2, $3, $4, $5, $6, 3, 3,
     'private', $7, 1, 2
 )`, nestedBaseVersionID, fixture.environmentID, fixture.workspaceID, bVersionID,
 		nestedBaseArtifactID, nestedBaseDigest, childWorkspaceLeaseID)
@@ -278,12 +275,11 @@ INSERT INTO run_attempts (
 ) VALUES ($1, 1, 'task', $2, $3)`, grandchildID, fixture.workspaceID, nestedBaseVersionID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO run_waits (
-    id, environment_id, run_id, workspace_id, kind, child_run_id,
-    child_parent_owned, child_target_declared_id, child_claim_id,
+    id, environment_id, run_id, workspace_id, kind, child_run_id, child_target_declared_id, child_claim_id,
     child_request, expected_run_state_version, attempt_number,
     prior_run_lease_id, resume_attach_id, suspension_state
 ) VALUES (
-    $1, $2, $3, $4, 'child', $5, true, 'test-task', $6,
+    $1, $2, $3, $4, 'child', $5, 'test-task', $6,
     '{"Method":"call"}'::jsonb, 3, 1, $7, $8, 'parked'
 )`, innerWaitID, fixture.environmentID, childID, fixture.workspaceID,
 		grandchildID, grandchildClaimID, childLease.ID, uuid.NewV7())
@@ -390,11 +386,10 @@ INSERT INTO artifacts (
 		nestedResultDigest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO workspace_versions (
-    id, environment_id, workspace_id, parent_version_id, artifact_id,
-    artifact_kind, kind, content_digest, size_bytes, entry_count, state,
+    id, environment_id, workspace_id, parent_version_id, artifact_id, content_digest, size_bytes, entry_count, state,
     source_workspace_lease_id, ownership_generation, writer_generation
 ) VALUES (
-    $1, $2, $3, $4, $5, 'workspace_version', 'user', $6, 4, 4,
+    $1, $2, $3, $4, $5, $6, 4, 4,
     'private', $7, 1, 3
 )`, nestedResultVersionID, fixture.environmentID, fixture.workspaceID, nestedBaseVersionID,
 		nestedResultArtifactID, nestedResultDigest, grandchildWorkspaceLeaseID)
@@ -647,11 +642,10 @@ INSERT INTO artifacts (
 		cDigest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO workspace_versions (
-    id, environment_id, workspace_id, parent_version_id, artifact_id,
-    artifact_kind, kind, content_digest, size_bytes, entry_count, state,
+    id, environment_id, workspace_id, parent_version_id, artifact_id, content_digest, size_bytes, entry_count, state,
     source_workspace_lease_id, ownership_generation, writer_generation
 ) VALUES (
-    $1, $2, $3, $4, $5, 'workspace_version', 'user', $6, 2, 2,
+    $1, $2, $3, $4, $5, $6, 2, 2,
     'private', $7, 1, 5
 )`, cVersionID, fixture.environmentID, fixture.workspaceID, nestedResultVersionID,
 		cArtifactID, cDigest, childWorkspaceLeaseID)

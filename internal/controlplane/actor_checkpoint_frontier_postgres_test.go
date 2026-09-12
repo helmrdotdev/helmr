@@ -74,7 +74,7 @@ func newActorCheckpointFixture(t *testing.T) *actorCheckpointFixture {
 	defer tx.Rollback(context.Background())
 	dbtest.MustExec(t, t.Context(), tx, `SET CONSTRAINTS ALL DEFERRED`)
 	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO workspaces(id,environment_id,region_id,sandbox_declared_id,deployment_definition_id,head_version_id) VALUES($1,$2,$3,'test-workspace',$4,$5)`, f.workspaceID, b.EnvironmentID, runtest.Region, b.WorkspaceDefinitionID, f.rootID)
-	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO workspace_versions(id,environment_id,workspace_id,kind,state,content_digest,size_bytes,entry_count,ownership_generation,writer_generation,published_at) VALUES($1,$2,$3,'system','committed',$4,0,0,0,0,now())`, f.rootID, b.EnvironmentID, f.workspaceID, workspace.CanonicalEmptyTreeDigest)
+	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO workspace_versions(id,environment_id,workspace_id,state,content_digest,size_bytes,entry_count,ownership_generation,writer_generation,published_at) VALUES($1,$2,$3,'committed',$4,0,0,0,0,now())`, f.rootID, b.EnvironmentID, f.workspaceID, workspace.CanonicalEmptyTreeDigest)
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -361,7 +361,7 @@ func TestActorCheckpointFrontierPostgres(t *testing.T) {
 			if mode == "close" {
 				f.close(t)
 			} else {
-				_, err := f.server.appendActorInput(t.Context(), appendActorInputRequest{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID, RecordID: uuid.NewV7(), Data: json.RawMessage(`{"sequence":2}`), SourceKind: "external"})
+				_, err := f.server.appendActorInput(t.Context(), appendActorInputRequest{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID, RecordID: uuid.NewV7(), Data: json.RawMessage(`{"sequence":2}`)})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -428,7 +428,7 @@ func TestActorCheckpointFrontierRejectsInvalidRestorePostgres(t *testing.T) {
 	first := f.capture(t, "input1")
 	f.turn(t, 1, first, true)
 	checkpoint := f.suspend(t, first)
-	_, err := f.server.appendActorInput(t.Context(), appendActorInputRequest{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID, RecordID: uuid.NewV7(), Data: json.RawMessage(`{"sequence":2}`), SourceKind: "external"})
+	_, err := f.server.appendActorInput(t.Context(), appendActorInputRequest{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID, RecordID: uuid.NewV7(), Data: json.RawMessage(`{"sequence":2}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -448,7 +448,7 @@ func TestActorCheckpointFrontierRejectsInvalidRestorePostgres(t *testing.T) {
 		{name: "wrong private parent", sql: `UPDATE workspace_versions SET parent_version_id=$2 WHERE id=$1`, args: []any{uuid.MustParse(checkpoint.WorkspaceVersionID), f.rootID}},
 		{name: "private generation rewritten", constraint: "workspace_versions_workspace_id_source_workspace_lease_id__fkey", sql: `UPDATE workspace_versions SET writer_generation=2 WHERE id=$1`, args: []any{uuid.MustParse(checkpoint.WorkspaceVersionID)}},
 		{name: "wrong source lease", constraint: "run_checkpoints_workspace_id_source_run_lease_id_source_wo_fkey", sql: `UPDATE run_checkpoints SET source_workspace_lease_id=$2 WHERE id=$1`, args: []any{uuid.MustParse(checkpoint.CheckpointID), f.claim.workspaceLease.ID}},
-		{name: "wrong private artifact", constraint: "workspace_versions_environment_id_artifact_id_artifact_kin_fkey", sql: `UPDATE workspace_versions SET artifact_id=(SELECT program_artifact_id FROM deployments WHERE id=$2) WHERE id=$1`, args: []any{uuid.MustParse(checkpoint.WorkspaceVersionID), f.DeploymentID}},
+		{name: "wrong private artifact", sql: `UPDATE workspace_versions SET artifact_id=(SELECT program_artifact_id FROM deployments WHERE id=$2) WHERE id=$1`, args: []any{uuid.MustParse(checkpoint.WorkspaceVersionID), f.DeploymentID}},
 		{name: "source still running", constraint: "runtime_instances_check4", sql: `UPDATE runtime_instances SET observed_state='ready' WHERE id=(SELECT runtime_instance_id FROM run_leases WHERE id=(SELECT source_run_lease_id FROM run_checkpoints WHERE id=$1))`, args: []any{uuid.MustParse(checkpoint.CheckpointID)}},
 		{name: "checkpoint invalid", sql: `UPDATE run_checkpoints SET state='invalid',invalidated_at=now(),invalidation_reason_code='test' WHERE id=$1`, args: []any{uuid.MustParse(checkpoint.CheckpointID)}},
 	} {
@@ -493,7 +493,7 @@ func TestActorCheckpointFrontierExpiredBeforePlacementPostgres(t *testing.T) {
 	first := f.capture(t, "input1")
 	f.turn(t, 1, first, true)
 	cp := f.suspend(t, first)
-	if _, err := f.server.appendActorInput(t.Context(), appendActorInputRequest{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID, RecordID: uuid.NewV7(), Data: json.RawMessage(`{"sequence":2}`), SourceKind: "external"}); err != nil {
+	if _, err := f.server.appendActorInput(t.Context(), appendActorInputRequest{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID, RecordID: uuid.NewV7(), Data: json.RawMessage(`{"sequence":2}`)}); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_checkpoints SET expires_at=transaction_timestamp()-interval '1 second' WHERE id=$1`, uuid.MustParse(cp.CheckpointID))
@@ -548,7 +548,7 @@ func TestActorCheckpointFrontierRecoveredRestorePostgres(t *testing.T) {
 			turn := f.turn(t, 1, first, true)
 			cp := f.suspend(t, first)
 			sourceLease := f.claim.workspaceLease.ID
-			if _, err := f.server.appendActorInput(t.Context(), appendActorInputRequest{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID, RecordID: uuid.NewV7(), Data: json.RawMessage(`{"sequence":2}`), SourceKind: "external"}); err != nil {
+			if _, err := f.server.appendActorInput(t.Context(), appendActorInputRequest{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID, RecordID: uuid.NewV7(), Data: json.RawMessage(`{"sequence":2}`)}); err != nil {
 				t.Fatal(err)
 			}
 			for generation := int64(2); generation <= 3; generation++ {
@@ -593,7 +593,7 @@ func TestActorCheckpointFrontierRejectsWrongRecoveredWriterPostgres(t *testing.T
 			first := f.capture(t, "input1")
 			f.turn(t, 1, first, true)
 			f.suspend(t, first)
-			if _, err := f.server.appendActorInput(t.Context(), appendActorInputRequest{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID, RecordID: uuid.NewV7(), Data: json.RawMessage(`{"sequence":2}`), SourceKind: "external"}); err != nil {
+			if _, err := f.server.appendActorInput(t.Context(), appendActorInputRequest{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID, RecordID: uuid.NewV7(), Data: json.RawMessage(`{"sequence":2}`)}); err != nil {
 				t.Fatal(err)
 			}
 			f.placeAndClaim(t)

@@ -1,5 +1,5 @@
 -- name: ReconcileSchedules :many
-WITH input AS (
+WITH raw_input AS (
 SELECT batch.id,
        batch.task_declared_id,
        batch.deployment_definition_id,
@@ -37,6 +37,20 @@ SELECT batch.id,
    AND cardinality(sqlc.arg(ids)::uuid[]) = cardinality(sqlc.arg(timezones)::text[])
    AND cardinality(sqlc.arg(ids)::uuid[]) = cardinality(sqlc.arg(effective_froms)::timestamptz[])
    AND cardinality(sqlc.arg(ids)::uuid[]) = cardinality(sqlc.arg(next_fire_ats)::timestamptz[])
+), input AS MATERIALIZED (
+    SELECT raw_input.*
+      FROM raw_input
+     WHERE NOT EXISTS (
+         SELECT 1
+           FROM raw_input AS candidate
+           LEFT JOIN deployment_definitions AS definition
+             ON definition.environment_id = sqlc.arg(environment_id)
+            AND definition.deployment_id = candidate.deployment_id
+            AND definition.id = candidate.deployment_definition_id
+            AND definition.declared_id = candidate.task_declared_id
+            AND definition.kind = 'task'
+          WHERE definition.id IS NULL
+     )
 ), reconciled AS (
 INSERT INTO schedules (
     id,
@@ -277,7 +291,6 @@ WITH selected_definition AS (
         id,
         environment_id,
         workspace_id,
-        kind,
         state,
         content_digest,
         size_bytes,
@@ -289,7 +302,6 @@ WITH selected_definition AS (
     SELECT sqlc.arg(initial_version_id),
            created_workspace.environment_id,
            created_workspace.id,
-           'system'::workspace_version_kind,
            'committed',
            'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',
            0,

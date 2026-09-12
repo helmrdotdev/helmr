@@ -105,13 +105,12 @@ func TestSchemaWorkspaceVersionArtifactAndFinalizationAuthority(t *testing.T) {
 	dbtest.MustExec(t, ctx, tx, `INSERT INTO artifacts (id,org_id,project_id,environment_id,digest,kind,size_bytes,media_type) VALUES ($1,$2,$3,$4,$5,'workspace_version',1,'application/octet-stream')`, artifactID, fixture.orgID, fixture.projectID, fixture.environmentID, digest)
 	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO workspace_versions (id,environment_id,workspace_id,parent_version_id,
-		 artifact_id,artifact_kind,kind,content_digest,source_workspace_lease_id,ownership_generation,writer_generation)
-		SELECT $1,environment_id,workspace_id,base_version_id,$2,'workspace_version','user',$3,id,ownership_generation,writer_generation
+		 artifact_id,content_digest,source_workspace_lease_id,ownership_generation,writer_generation)
+		SELECT $1,environment_id,workspace_id,base_version_id,$2,$3,id,ownership_generation,writer_generation
 		FROM workspace_leases WHERE owner_run_lease_id=$4
 	`, versionID, artifactID, digest, work.leaseID)
 	for _, set := range []string{
-		"artifact_kind=NULL", "kind='system'", "artifact_id=NULL",
-		"artifact_kind=NULL, artifact_id='00000000-0000-0000-0000-000000000001'",
+		"parent_version_id=NULL", "artifact_id=NULL",
 		"source_workspace_lease_id=NULL",
 	} {
 		t.Run(set, func(t *testing.T) {
@@ -120,10 +119,6 @@ func TestSchemaWorkspaceVersionArtifactAndFinalizationAuthority(t *testing.T) {
 	}
 	rejectSchemaRow(t, tx, "23503", `UPDATE workspace_versions SET artifact_id=$2 WHERE id=$1`, versionID, uuid.NewV7())
 	rejectSchemaRow(t, tx, "23503", `UPDATE workspace_versions SET writer_generation=writer_generation+1 WHERE id=$1`, versionID)
-	// A valid artifact row of the wrong kind still cannot become version authority.
-	otherArtifactID := uuid.NewV7()
-	dbtest.MustExec(t, ctx, tx, `INSERT INTO artifacts (id,org_id,project_id,environment_id,digest,kind,size_bytes,media_type) VALUES ($1,$2,$3,$4,$5,'workspace_image',1,'application/octet-stream')`, otherArtifactID, fixture.orgID, fixture.projectID, fixture.environmentID, digest)
-	rejectSchemaRow(t, tx, "23503", `UPDATE workspace_versions SET artifact_id=$2 WHERE id=$1`, versionID, otherArtifactID)
 
 	// A same-kind artifact in another environment must not cross the composite FK.
 	otherEnvironment, crossScopeArtifact := uuid.NewV7(), uuid.NewV7()
@@ -167,17 +162,17 @@ func TestSchemaProvenanceAndExpiryRejectPartialTuples(t *testing.T) {
 	rejectSchemaRow(t, tx, "23514", `UPDATE idempotency_claims SET expires_at=NULL WHERE id=$1`, claimID)
 	rejectSchemaRow(t, tx, "23514", `UPDATE idempotency_claims SET expires_at=accepted_at+interval '29 days' WHERE id=$1`, claimID)
 	dbtest.MustExec(t, ctx, tx, `UPDATE idempotency_claims SET operation='task.child.invoke', expires_at=NULL WHERE id=$1`, claimID)
-	dbtest.MustExec(t, ctx, tx, `INSERT INTO session_records (id,environment_id,session_id,direction,sequence,data,source_kind) VALUES ($1,$2,$3,'input',10,'{}','external')`, recordID, fixture.environmentID, sessionID)
-	rejectSchemaRow(t, tx, "23514", `UPDATE session_records SET source_kind=NULL WHERE id=$1`, recordID)
-	dbtest.MustExec(t, ctx, tx, `UPDATE session_records SET source_kind='run', source_run_id=$2 WHERE id=$1`, recordID, work.runID)
+	dbtest.MustExec(t, ctx, tx, `INSERT INTO session_records (id,environment_id,session_id,direction,sequence,data) VALUES ($1,$2,$3,'input',10,'{}')`, recordID, fixture.environmentID, sessionID)
+	rejectSchemaRow(t, tx, "23503", `UPDATE session_records SET source_run_id=$2 WHERE id=$1`, recordID, uuid.NewV7())
+	dbtest.MustExec(t, ctx, tx, `UPDATE session_records SET source_run_id=$2 WHERE id=$1`, recordID, work.runID)
 	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO run_waits (id,environment_id,run_id,workspace_id,kind,session_id,after_input_sequence,
-		 condition_state,condition_terminal_at,completed_actor_record_id,completed_actor_record_direction,
+		 condition_state,condition_terminal_at,completed_actor_record_id,
 		 expected_run_state_version,attempt_number,current_run_lease_id,resume_attach_id)
-		SELECT $1,environment_id,id,workspace_id,'actor_input',session_id,0,'completed',now(),$2,'input',state_version,1,$3,$4
+		SELECT $1,environment_id,id,workspace_id,'actor_input',session_id,0,'completed',now(),$2,state_version,1,$3,$4
 		FROM runs WHERE id=$5
 	`, waitID, recordID, work.leaseID, uuid.NewV7(), work.runID)
-	rejectSchemaRow(t, tx, "23514", `UPDATE run_waits SET completed_actor_record_direction=NULL WHERE id=$1`, waitID)
+	rejectSchemaRow(t, tx, "23514", `UPDATE run_waits SET completed_actor_record_id=NULL WHERE id=$1`, waitID)
 	rejectSchemaRow(t, tx, "23503", `UPDATE run_waits SET completed_actor_record_id=$2 WHERE id=$1`, waitID, uuid.NewV7())
 	var outboxID int64
 	if err := tx.QueryRow(ctx, `INSERT INTO telemetry_outbox(org_id,project_id,environment_id,stream_kind,source_kind,source_id,run_id,stream_name,content,size_bytes,observed_seq) VALUES ($1,$2,$3,'run_log','run',$4,$4,'stdout','\x00',1,1) RETURNING id`, fixture.orgID, fixture.projectID, fixture.environmentID, work.runID).Scan(&outboxID); err != nil {

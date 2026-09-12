@@ -335,14 +335,13 @@ func assertPrimitiveLifecycleSchema(
 		  FROM pg_type
 		 WHERE typname = ANY(ARRAY[
 		     'wait_kind',
-		     'artifact_kind',
-		     'workspace_version_kind'
+		     'artifact_kind'
 		 ])
 	`).Scan(&categoricalEnums); err != nil {
 		t.Fatal(err)
 	}
-	if categoricalEnums != 3 {
-		t.Fatalf("categorical enum sentinels = %d, want 3", categoricalEnums)
+	if categoricalEnums != 2 {
+		t.Fatalf("categorical enum sentinels = %d, want 2", categoricalEnums)
 	}
 
 	queryFiles, err := filepath.Glob("../query/*.sql")
@@ -765,7 +764,6 @@ func assertWorkspaceVersionAuthority(t *testing.T, ctx context.Context, pool *pg
 	`, []string{
 		"parent_version_id",
 		"artifact_id",
-		"artifact_kind",
 		"content_digest",
 		"entry_count",
 		"source_workspace_lease_id",
@@ -776,8 +774,8 @@ func assertWorkspaceVersionAuthority(t *testing.T, ctx context.Context, pool *pg
 	}).Scan(&authorityColumns); err != nil {
 		t.Fatal(err)
 	}
-	if authorityColumns != 10 {
-		t.Fatalf("workspace version authority columns = %d, want 10", authorityColumns)
+	if authorityColumns != 9 {
+		t.Fatalf("workspace version authority columns = %d, want 9", authorityColumns)
 	}
 	var emptyTreeCheck bool
 	if err := pool.QueryRow(ctx, `
@@ -826,20 +824,20 @@ func assertWorkspaceVersionAuthority(t *testing.T, ctx context.Context, pool *pg
 	if !fencedSource {
 		t.Fatal("workspace versions do not bind their source lease and writer fence")
 	}
-	var artifactKindBinding bool
+	var artifactScopeBinding bool
 	if err := pool.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1
 			  FROM pg_constraint
 			 WHERE conrelid = 'workspace_versions'::regclass
 			   AND contype = 'f'
-			   AND pg_get_constraintdef(oid) LIKE '%artifact_id, artifact_kind%'
+			   AND pg_get_constraintdef(oid) LIKE '%FOREIGN KEY (environment_id, artifact_id) REFERENCES artifacts(environment_id, id)%'
 		)
-	`).Scan(&artifactKindBinding); err != nil {
+	`).Scan(&artifactScopeBinding); err != nil {
 		t.Fatal(err)
 	}
-	if !artifactKindBinding {
-		t.Fatal("workspace versions do not bind their artifact kind")
+	if !artifactScopeBinding {
+		t.Fatal("workspace versions do not bind their artifact scope")
 	}
 	var mountProjectionColumns int
 	if err := pool.QueryRow(ctx, `

@@ -152,7 +152,6 @@ func TestRestoredSameWorkspaceActorCompletionRejectsBrokenProducerReceipts(t *te
 			name: "wait is no longer a same Workspace child edge",
 			mutate: func(_ *runLeaseClaimAuthority, store *runLeaseClaimStore, _ pgtype.UUID, _ pgtype.UUID) {
 				store.runWait.Kind = db.WaitKindTimer
-				store.runWait.ChildParentOwned = pgtype.Bool{}
 			},
 		},
 	}
@@ -195,7 +194,6 @@ func validSameWorkspaceActorCompletionBase(
 	authority.workspaceLease.WriterGeneration = authority.workspace.WriterGeneration
 	authority.workspaceMount.MaterializedVersionID = cID
 	store.runWait.Kind = db.WaitKindChild
-	store.runWait.ChildParentOwned = pgtype.Bool{Bool: true, Valid: true}
 	store.runWait.ConditionState = db.WaitStateCompleted
 	store.runWait.BaseWorkspaceVersionID = pID
 	store.runWait.ResumeWorkspaceVersionID = cID

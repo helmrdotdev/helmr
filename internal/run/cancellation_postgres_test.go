@@ -374,13 +374,13 @@ UPDATE runs
 	dbtest.MustExec(t, ctx, fixture.pool, `
 INSERT INTO run_waits (
     id, environment_id, run_id, workspace_id, kind,
-    child_run_id, child_parent_owned, child_target_declared_id,
+    child_run_id, child_target_declared_id,
     child_claim_id, child_request, suspension_state,
     expected_run_state_version, attempt_number, current_run_lease_id,
     resume_attach_id
 )
 SELECT $1, runs.environment_id, runs.id, runs.workspace_id, 'child',
-       $2, true, 'test-task', $3, '{}'::jsonb, 'hot',
+       $2, 'test-task', $3, '{}'::jsonb, 'hot',
        runs.state_version, runs.current_attempt_number, runs.current_run_lease_id,
        $4
   FROM runs
@@ -538,13 +538,13 @@ UPDATE runs
 			dbtest.MustExec(t, ctx, fixture.pool, `
 INSERT INTO run_waits (
     id, environment_id, run_id, workspace_id, kind,
-    child_run_id, child_parent_owned, child_target_declared_id,
+    child_run_id, child_target_declared_id,
     child_claim_id, child_request, suspension_state,
     expected_run_state_version, attempt_number, current_run_lease_id,
     resume_attach_id
 )
 SELECT $1, runs.environment_id, runs.id, runs.workspace_id, 'child',
-       $2, true, 'test-task', $3, '{}'::jsonb, $4,
+       $2, 'test-task', $3, '{}'::jsonb, $4,
        runs.state_version, runs.current_attempt_number, runs.current_run_lease_id,
        $5
   FROM runs

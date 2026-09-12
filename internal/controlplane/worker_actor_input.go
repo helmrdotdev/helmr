@@ -101,7 +101,6 @@ func (s *Server) workerSendActorInput(w http.ResponseWriter, r *http.Request) {
 		SessionID:      pgvalue.MustUUIDValue(target.ID),
 		RecordID:       uuid.NewV7(),
 		Data:           request.Input,
-		SourceKind:     "run",
 		SourceRunID:    pgvalue.MustUUIDValue(source.RunID),
 		IdempotencyKey: parsed.idempotencyKey,
 		Authorize: func(ctx context.Context, q db.Querier) error {

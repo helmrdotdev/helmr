@@ -230,48 +230,6 @@ func (ns NullWaitKind) Value() (driver.Value, error) {
 	return string(ns.WaitKind), nil
 }
 
-type WorkspaceVersionKind string
-
-const (
-	WorkspaceVersionKindUser   WorkspaceVersionKind = "user"
-	WorkspaceVersionKindSystem WorkspaceVersionKind = "system"
-)
-
-func (e *WorkspaceVersionKind) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = WorkspaceVersionKind(s)
-	case string:
-		*e = WorkspaceVersionKind(s)
-	default:
-		return fmt.Errorf("unsupported scan type for WorkspaceVersionKind: %T", src)
-	}
-	return nil
-}
-
-type NullWorkspaceVersionKind struct {
-	WorkspaceVersionKind WorkspaceVersionKind `json:"workspace_version_kind"`
-	Valid                bool                 `json:"valid"` // Valid is true if WorkspaceVersionKind is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullWorkspaceVersionKind) Scan(value interface{}) error {
-	if value == nil {
-		ns.WorkspaceVersionKind, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.WorkspaceVersionKind.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullWorkspaceVersionKind) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.WorkspaceVersionKind), nil
-}
-
 type APIKey struct {
 	ID              pgtype.UUID        `json:"id"`
 	OrgID           pgtype.UUID        `json:"org_id"`
@@ -355,7 +313,6 @@ type Deployment struct {
 	BundleDigest          string             `json:"bundle_digest"`
 	RuntimeArtifactDigest string             `json:"runtime_artifact_digest"`
 	ProgramArtifactID     pgtype.UUID        `json:"program_artifact_id"`
-	ProgramArtifactKind   ArtifactKind       `json:"program_artifact_kind"`
 	ProgramIndexDigest    []byte             `json:"program_index_digest"`
 	QueueConfig           []byte             `json:"queue_config"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
@@ -652,7 +609,6 @@ type RunWait struct {
 	IdleTimeoutMs                    pgtype.Int8        `json:"idle_timeout_ms"`
 	TokenID                          pgtype.UUID        `json:"token_id"`
 	ChildRunID                       pgtype.UUID        `json:"child_run_id"`
-	ChildParentOwned                 pgtype.Bool        `json:"child_parent_owned"`
 	ChildTargetDeclaredID            pgtype.Text        `json:"child_target_declared_id"`
 	ChildClaimID                     pgtype.UUID        `json:"child_claim_id"`
 	ChildRequest                     []byte             `json:"child_request"`
@@ -663,7 +619,6 @@ type RunWait struct {
 	ConditionTerminalAt              pgtype.Timestamptz `json:"condition_terminal_at"`
 	ConditionReasonCode              pgtype.Text        `json:"condition_reason_code"`
 	CompletedActorRecordID           pgtype.UUID        `json:"completed_actor_record_id"`
-	CompletedActorRecordDirection    pgtype.Text        `json:"completed_actor_record_direction"`
 	SuspensionState                  string             `json:"suspension_state"`
 	TokenRegistrationRunStateVersion pgtype.Int8        `json:"token_registration_run_state_version"`
 	RegistrationRequestFingerprint   pgtype.Text        `json:"registration_request_fingerprint"`
@@ -773,7 +728,6 @@ type RuntimeSubstrate struct {
 type Schedule struct {
 	ID                     pgtype.UUID        `json:"id"`
 	EnvironmentID          pgtype.UUID        `json:"environment_id"`
-	TargetKind             string             `json:"target_kind"`
 	TaskDeclaredID         string             `json:"task_declared_id"`
 	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
 	DeploymentID           pgtype.UUID        `json:"deployment_id"`
@@ -882,7 +836,6 @@ type SessionRecord struct {
 	Sequence              int64              `json:"sequence"`
 	Data                  []byte             `json:"data"`
 	ContentType           string             `json:"content_type"`
-	SourceKind            pgtype.Text        `json:"source_kind"`
 	SourceRunID           pgtype.UUID        `json:"source_run_id"`
 	ProducerRunID         pgtype.UUID        `json:"producer_run_id"`
 	ProducerAttemptNumber pgtype.Int4        `json:"producer_attempt_number"`
@@ -1189,21 +1142,19 @@ type WorkspaceSecret struct {
 }
 
 type WorkspaceVersion struct {
-	ID                     pgtype.UUID          `json:"id"`
-	EnvironmentID          pgtype.UUID          `json:"environment_id"`
-	WorkspaceID            pgtype.UUID          `json:"workspace_id"`
-	ParentVersionID        pgtype.UUID          `json:"parent_version_id"`
-	ArtifactID             pgtype.UUID          `json:"artifact_id"`
-	ArtifactKind           NullArtifactKind     `json:"artifact_kind"`
-	Kind                   WorkspaceVersionKind `json:"kind"`
-	ContentDigest          string               `json:"content_digest"`
-	SizeBytes              int64                `json:"size_bytes"`
-	EntryCount             int32                `json:"entry_count"`
-	State                  string               `json:"state"`
-	SourceWorkspaceLeaseID pgtype.UUID          `json:"source_workspace_lease_id"`
-	OwnershipGeneration    int64                `json:"ownership_generation"`
-	WriterGeneration       int64                `json:"writer_generation"`
-	CreatedAt              pgtype.Timestamptz   `json:"created_at"`
-	PublishedAt            pgtype.Timestamptz   `json:"published_at"`
-	DiscardedAt            pgtype.Timestamptz   `json:"discarded_at"`
+	ID                     pgtype.UUID        `json:"id"`
+	EnvironmentID          pgtype.UUID        `json:"environment_id"`
+	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
+	ParentVersionID        pgtype.UUID        `json:"parent_version_id"`
+	ArtifactID             pgtype.UUID        `json:"artifact_id"`
+	ContentDigest          string             `json:"content_digest"`
+	SizeBytes              int64              `json:"size_bytes"`
+	EntryCount             int32              `json:"entry_count"`
+	State                  string             `json:"state"`
+	SourceWorkspaceLeaseID pgtype.UUID        `json:"source_workspace_lease_id"`
+	OwnershipGeneration    int64              `json:"ownership_generation"`
+	WriterGeneration       int64              `json:"writer_generation"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	PublishedAt            pgtype.Timestamptz `json:"published_at"`
+	DiscardedAt            pgtype.Timestamptz `json:"discarded_at"`
 }

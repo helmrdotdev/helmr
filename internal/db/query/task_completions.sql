@@ -42,8 +42,6 @@ INSERT INTO workspace_versions (
     workspace_id,
     parent_version_id,
     artifact_id,
-    artifact_kind,
-    kind,
     content_digest,
     size_bytes,
     entry_count,
@@ -53,14 +51,12 @@ INSERT INTO workspace_versions (
     writer_generation,
     published_at
 )
-VALUES (
+SELECT
     sqlc.arg(id),
     sqlc.arg(environment_id),
     sqlc.arg(workspace_id),
     sqlc.arg(parent_version_id),
     sqlc.arg(artifact_id),
-    'workspace_version',
-    'user',
     sqlc.arg(content_digest),
     sqlc.arg(size_bytes),
     sqlc.arg(entry_count),
@@ -69,7 +65,10 @@ VALUES (
     sqlc.arg(ownership_generation),
     sqlc.arg(writer_generation),
     sqlc.arg(published_at)
-)
+  FROM artifacts
+ WHERE artifacts.environment_id = sqlc.arg(environment_id)
+   AND artifacts.id = sqlc.arg(artifact_id)
+   AND artifacts.kind = 'workspace_version'
 RETURNING *;
 
 -- name: UpdateTaskWorkspaceMountFrontier :one
@@ -325,7 +324,7 @@ UPDATE run_waits
    AND run_waits.workspace_id = sqlc.arg(workspace_id)
    AND run_waits.attempt_number = sqlc.arg(parent_attempt_number)
    AND run_waits.child_run_id = sqlc.arg(child_run_id)
-   AND run_waits.child_parent_owned IS TRUE
+   AND run_waits.kind = 'child'
    AND run_waits.condition_state = 'pending'
    AND run_waits.suspension_state = 'parked'
    AND run_waits.expected_run_state_version = sqlc.arg(expected_parent_state_version)
@@ -367,7 +366,7 @@ UPDATE run_waits
    AND run_waits.workspace_id = sqlc.arg(workspace_id)
    AND run_waits.attempt_number = sqlc.arg(parent_attempt_number)
    AND run_waits.child_run_id = sqlc.arg(child_run_id)
-   AND run_waits.child_parent_owned IS TRUE
+   AND run_waits.kind = 'child'
    AND run_waits.condition_state = 'pending'
    AND run_waits.suspension_state = 'parked'
    AND run_waits.expected_run_state_version = sqlc.arg(expected_parent_state_version)

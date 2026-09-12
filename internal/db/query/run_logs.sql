@@ -32,6 +32,7 @@ current_run_lease AS (
          OR (runs.status = 'waiting' AND run_leases.state = 'checkpointing')
        )
        AND run_leases.expires_at > now()
+     FOR NO KEY UPDATE OF runs
 ),
 candidate AS (
     SELECT current_run_lease.*,

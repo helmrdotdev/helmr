@@ -55,8 +55,7 @@ func TestActorInputWaitAppendAndRegistrationOrdersConverge(t *testing.T) {
 			appendRecord := func() AppendActorInputRecordRow {
 				record, err := fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
 					EnvironmentID: pgvalue.UUID(fixture.environmentID), SessionID: pgvalue.UUID(actorID),
-					ID: pgvalue.UUID(recordID), Data: []byte(`{"message":"ready"}`), SourceKind: pgvalue.Text("external"),
-				})
+					ID: pgvalue.UUID(recordID), Data: []byte(`{"message":"ready"}`)})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -97,8 +96,6 @@ func TestActorInputWaitAppendAndRegistrationOrdersConverge(t *testing.T) {
 			}
 			if completed.ConditionState != WaitStateCompleted || completed.SuspensionState != RunWaitStateReleased ||
 				completed.CompletedActorRecordID != record.ID ||
-				completed.CompletedActorRecordDirection.String != "input" ||
-				!completed.CompletedActorRecordDirection.Valid ||
 				status != RunStatusRunning {
 				t.Fatalf("completion = %+v run=%s", completed, status)
 			}
@@ -122,7 +119,6 @@ func TestActorInputAppendConcurrentSequencesAndKeyedReplay(t *testing.T) {
 			row, err := fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
 				EnvironmentID: pgvalue.UUID(fixture.environmentID), SessionID: pgvalue.UUID(actorID),
 				ID: pgvalue.UUID(uuid.NewV7()), Data: []byte(`{"sender":` + string(rune('0'+index)) + `}`),
-				SourceKind: pgvalue.Text("external"),
 			})
 			if err != nil {
 				errs <- err
@@ -157,10 +153,9 @@ func TestActorInputAppendConcurrentSequencesAndKeyedReplay(t *testing.T) {
 	first, err := fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), ClaimID: pgvalue.UUID(claimID),
 		SessionID: pgvalue.UUID(actorID), ExpectedRequestFingerprint: fingerprint,
-		ID: pgvalue.UUID(recordID), Data: []byte(`{"keyed":true}`), SourceKind: pgvalue.Text("run"),
-		SourceRunID: pgvalue.UUID(work.runID),
+		ID: pgvalue.UUID(recordID), Data: []byte(`{"keyed":true}`), SourceRunID: pgvalue.UUID(work.runID),
 	})
-	if err != nil || !first.Appended || pgvalue.TextValue(first.SourceKind) != "run" ||
+	if err != nil || !first.Appended ||
 		first.SourceRunID != pgvalue.UUID(work.runID) {
 		t.Fatalf("keyed append = %+v, %v", first, err)
 	}
@@ -181,8 +176,7 @@ func TestActorInputAppendConcurrentSequencesAndKeyedReplay(t *testing.T) {
 	replay, err := fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), ClaimID: pgvalue.UUID(claimID),
 		SessionID: pgvalue.UUID(actorID), ExpectedRequestFingerprint: fingerprint,
-		ID: pgvalue.UUID(uuid.NewV7()), Data: []byte(`{"keyed":true}`), SourceKind: pgvalue.Text("run"),
-		SourceRunID: pgvalue.UUID(work.runID),
+		ID: pgvalue.UUID(uuid.NewV7()), Data: []byte(`{"keyed":true}`), SourceRunID: pgvalue.UUID(work.runID),
 	})
 	if err != nil || replay.Appended || replay.ID != first.ID || replay.Sequence != first.Sequence ||
 		replay.ClaimFingerprintMismatch || replay.SourceRunID != pgvalue.UUID(work.runID) {
@@ -198,8 +192,7 @@ func TestActorInputAppendConcurrentSequencesAndKeyedReplay(t *testing.T) {
 	mismatch, err := fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), ClaimID: pgvalue.UUID(claimID),
 		SessionID: pgvalue.UUID(actorID), ExpectedRequestFingerprint: bytes.Repeat([]byte{8}, 32),
-		ID: pgvalue.UUID(uuid.NewV7()), Data: []byte(`{"keyed":false}`), SourceKind: pgvalue.Text("run"),
-		SourceRunID: pgvalue.UUID(work.runID),
+		ID: pgvalue.UUID(uuid.NewV7()), Data: []byte(`{"keyed":false}`), SourceRunID: pgvalue.UUID(work.runID),
 	})
 	if err != nil || !mismatch.ClaimFingerprintMismatch || mismatch.ID != first.ID {
 		t.Fatalf("keyed mismatch = %+v, %v", mismatch, err)
@@ -233,7 +226,7 @@ func TestActorInputRunSourceTransactionRollbackLeavesNoResidue(t *testing.T) {
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), ClaimID: pgvalue.UUID(claimID),
 		SessionID: pgvalue.UUID(actorID), ExpectedRequestFingerprint: fingerprint,
 		ID: pgvalue.UUID(recordID), Data: []byte(`{"rollback":true}`),
-		SourceKind: pgvalue.Text("run"), SourceRunID: pgvalue.UUID(work.runID),
+		SourceRunID: pgvalue.UUID(work.runID),
 	})
 	if err != nil || !appended.Appended {
 		t.Fatalf("provisional append = %+v, %v", appended, err)
@@ -352,7 +345,6 @@ func TestActorInputSequenceSafeIntegerBoundaryPreservesCompletedReplay(t *testin
 		ExpectedRequestFingerprint: fingerprint,
 		ID:                         pgvalue.UUID(recordID),
 		Data:                       []byte(`{"at":"maximum"}`),
-		SourceKind:                 pgvalue.Text("external"),
 	})
 	if err != nil || !first.Appended || first.Sequence != maxSafeSequence {
 		t.Fatalf("maximum append = %+v, %v", first, err)
@@ -373,7 +365,6 @@ func TestActorInputSequenceSafeIntegerBoundaryPreservesCompletedReplay(t *testin
 		SessionID:     pgvalue.UUID(actorID),
 		ID:            pgvalue.UUID(uuid.NewV7()),
 		Data:          []byte(`{"after":"maximum"}`),
-		SourceKind:    pgvalue.Text("external"),
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("new append error = %v, want sequence exhaustion", err)
@@ -386,7 +377,6 @@ func TestActorInputSequenceSafeIntegerBoundaryPreservesCompletedReplay(t *testin
 		ExpectedRequestFingerprint: fingerprint,
 		ID:                         pgvalue.UUID(uuid.NewV7()),
 		Data:                       []byte(`{"at":"maximum"}`),
-		SourceKind:                 pgvalue.Text("external"),
 	})
 	if err != nil || replay.Appended || replay.ID != first.ID || replay.Sequence != maxSafeSequence {
 		t.Fatalf("completed replay = %+v, %v", replay, err)
@@ -489,8 +479,7 @@ func TestActorInputClosingContinuationCASCreatesOneRun(t *testing.T) {
 	`, actorID)
 	input, err := fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), SessionID: pgvalue.UUID(actorID),
-		ID: pgvalue.UUID(uuid.NewV7()), Data: []byte(`{"wake":true}`), SourceKind: pgvalue.Text("external"),
-	})
+		ID: pgvalue.UUID(uuid.NewV7()), Data: []byte(`{"wake":true}`)})
 	if err != nil || input.Sequence != 3 {
 		t.Fatalf("wake input = %+v, %v", input, err)
 	}
