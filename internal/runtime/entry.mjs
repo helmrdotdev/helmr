@@ -3859,9 +3859,9 @@ function parseSessionFailure(value) {
     details: Object.freeze(runId === undefined ? {} : { runId })
   });
 }
-function sessionStatus(value) {
+function sessionStatus(value, label = "Session response.status") {
   if (value !== "open" && value !== "closed" && value !== "cancelled" && value !== "failed") {
-    throw new Error("Session response.status is invalid");
+    throw new Error(`${label} is invalid`);
   }
   return value;
 }
