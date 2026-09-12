@@ -245,7 +245,7 @@ SELECT runs.id,
                      edge.ownership_generation
                  AND child_workspace_lease.writer_generation =
                      edge.child_writer_generation
-                 AND child_workspace_lease.state IN ('released', 'fenced', 'expired', 'lost')
+                 AND child_workspace_lease.state IN ('released', 'fenced', 'expired')
                WHERE child_lease.run_id = runs.id
                  AND child_lease.workspace_id = runs.workspace_id
                  AND (

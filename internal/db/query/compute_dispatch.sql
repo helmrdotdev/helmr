@@ -284,7 +284,7 @@ WITH candidate_scopes AS (
                                 )
                                 AND prior_child_workspace_lease.ownership_generation = edge.ownership_generation
                                 AND prior_child_workspace_lease.writer_generation = edge.child_writer_generation
-                                AND prior_child_workspace_lease.state IN ('released', 'fenced', 'expired', 'lost')
+                                AND prior_child_workspace_lease.state IN ('released', 'fenced', 'expired')
                               WHERE prior_child_lease.run_id = runs.id
                                 AND prior_child_lease.workspace_id = runs.workspace_id
                                 AND (
@@ -746,7 +746,7 @@ SELECT runs.org_id,
                             )
                             AND prior_child_workspace_lease.ownership_generation = edge.ownership_generation
                             AND prior_child_workspace_lease.writer_generation = edge.child_writer_generation
-                            AND prior_child_workspace_lease.state IN ('released', 'fenced', 'expired', 'lost')
+                            AND prior_child_workspace_lease.state IN ('released', 'fenced', 'expired')
                           WHERE prior_child_lease.run_id = runs.id
                             AND prior_child_lease.workspace_id = runs.workspace_id
                             AND (

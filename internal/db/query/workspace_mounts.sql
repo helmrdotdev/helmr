@@ -78,7 +78,7 @@ WITH same_workspace_child_authority AS MATERIALIZED (
              )
              AND child_workspace_lease.ownership_generation = edge.ownership_generation
              AND child_workspace_lease.writer_generation = edge.child_writer_generation
-             AND child_workspace_lease.state IN ('released', 'fenced', 'expired', 'lost')
+             AND child_workspace_lease.state IN ('released', 'fenced', 'expired')
            WHERE child_lease.run_id = child.id
              AND child_lease.workspace_id = child.workspace_id
              AND (
@@ -225,7 +225,7 @@ WITH candidate AS (
        AND runtime_instances.reserved_workspace_version_id = workspace_mounts.materialized_version_id
        AND num_nonnulls(runtime_instances.reserved_run_id, runtime_instances.reserved_process_id) = 1
        AND runtime_instances.reservation_expires_at > transaction_timestamp()
-     ORDER BY workspace_mounts.requested_at, workspace_mounts.id
+     ORDER BY workspace_mounts.created_at, workspace_mounts.id
      LIMIT 1
      FOR UPDATE OF workspace_mounts SKIP LOCKED
 ), claimed AS (

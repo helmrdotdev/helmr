@@ -1349,7 +1349,7 @@ UPDATE runs
  WHERE id = $1 AND current_run_lease_id = $2`, fixture.runID, granted.Lease.ID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE run_leases
-   SET state = 'checkpointed', claimed_at = assigned_at, started_at = assigned_at,
+   SET state = 'checkpointed', claimed_at = created_at, started_at = created_at,
        checkpointed_at = now(), terminal_at = now(), terminal_reason_code = 'checkpointed'
  WHERE id = $1`, granted.Lease.ID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
@@ -1518,7 +1518,7 @@ SELECT run_waits.suspension_state,
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
    SET state = 'running',
-       assigned_at = transaction_timestamp() - interval '20 seconds',
+       created_at = transaction_timestamp() - interval '20 seconds',
        start_deadline_at = transaction_timestamp() - interval '19 seconds',
        claimed_at = transaction_timestamp() - interval '18 seconds',
        started_at = transaction_timestamp() - interval '18 seconds'
@@ -1681,7 +1681,7 @@ UPDATE workspace_leases
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
    SET state = 'running',
-       assigned_at = transaction_timestamp() - interval '20 seconds',
+       created_at = transaction_timestamp() - interval '20 seconds',
        start_deadline_at = transaction_timestamp() - interval '19 seconds',
        claimed_at = transaction_timestamp() - interval '18 seconds',
        started_at = transaction_timestamp() - interval '18 seconds'
@@ -1940,7 +1940,7 @@ UPDATE run_checkpoints
 			if tc.maxDuration {
 				dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
-   SET state = 'running', claimed_at = assigned_at, started_at = assigned_at
+   SET state = 'running', claimed_at = created_at, started_at = created_at
  WHERE id = $1`, grant.Lease.ID)
 				dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE runs
@@ -1953,8 +1953,8 @@ UPDATE runs
 			dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 WITH expired AS (
     UPDATE run_leases
-       SET start_deadline_at = assigned_at + interval '1 millisecond',
-           expires_at = assigned_at + interval '2 milliseconds'
+       SET start_deadline_at = created_at + interval '1 millisecond',
+           expires_at = created_at + interval '2 milliseconds'
      WHERE id = $1
     RETURNING id, expires_at
 )
@@ -2050,7 +2050,7 @@ SELECT workspace_leases.id, workspace_mounts.materialized_version_id
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE run_leases
-   SET state = 'completed', claimed_at = assigned_at, started_at = assigned_at,
+   SET state = 'completed', claimed_at = created_at, started_at = created_at,
        terminal_at = transaction_timestamp(), terminal_reason_code = 'completed'
  WHERE id = $1`, granted.Lease.ID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
@@ -2149,7 +2149,7 @@ SELECT id FROM workspace_leases WHERE owner_run_lease_id = $1`,
 	}
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
-   SET state = 'completed', claimed_at = assigned_at, started_at = assigned_at,
+   SET state = 'completed', claimed_at = created_at, started_at = created_at,
        terminal_at = transaction_timestamp(), terminal_reason_code = 'completed'
  WHERE id = $1`, placement.Lease.ID)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
@@ -2291,7 +2291,7 @@ INSERT INTO run_checkpoints (
 	dbtest.MustExec(t, fixture.ctx, tx, `UPDATE run_waits SET suspend_checkpoint_id = $2, resume_request_version = 1 WHERE id = $1`, waitID, checkpointID)
 	dbtest.MustExec(t, fixture.ctx, tx, `UPDATE runs SET current_run_lease_id = NULL, state_version = 3 WHERE id = $1`, fixture.runID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
-UPDATE run_leases SET state = 'checkpointed', claimed_at = assigned_at, started_at = assigned_at,
+UPDATE run_leases SET state = 'checkpointed', claimed_at = created_at, started_at = created_at,
        checkpointed_at = now(), terminal_at = now(), terminal_reason_code = 'checkpointed' WHERE id = $1`, grant.Lease.ID)
 	dbtest.MustExec(t, fixture.ctx, tx, `UPDATE workspace_leases SET state = 'released', released_at = now(), terminal_at = now() WHERE id = $1`, sourceWorkspaceLeaseID)
 	dbtest.MustExec(t, fixture.ctx, tx, `UPDATE workspace_mounts SET state = 'unmounted', unmounted_at = now(), terminal_at = now(), terminal_reason_code = 'checkpointed' WHERE id = $1`, mount.WorkspaceMountID)

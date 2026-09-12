@@ -28,7 +28,7 @@ UPDATE workspace_mounts
    AND materialized_version_id = $12
    AND fencing_generation = $13
    AND state = 'mounted'
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, guest_channel_token_hash, guest_channel_token_expires_at, state, request, dirty_generation, fencing_generation, finalization_kind, finalization_reason_code, finalization_error, staged_version_id, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
+RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, guest_channel_token_hash, guest_channel_token_expires_at, state, request, dirty_generation, fencing_generation, finalization_kind, finalization_reason_code, finalization_error, staged_version_id, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
 `
 
 type AdvanceWorkspaceExecMountFenceParams struct {
@@ -86,7 +86,6 @@ func (q *Queries) AdvanceWorkspaceExecMountFence(ctx context.Context, arg Advanc
 		&i.FinalizationReasonCode,
 		&i.FinalizationError,
 		&i.StagedVersionID,
-		&i.RequestedAt,
 		&i.MountedAt,
 		&i.UnmountedAt,
 		&i.StoppedAt,
@@ -799,7 +798,7 @@ UPDATE workspace_leases
  WHERE id = $2
    AND owner_process_id = $3
    AND state IN ('active', 'releasing')
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, state, owner_run_lease_id, owner_process_id, base_version_id, ownership_generation, writer_generation, mount_fencing_generation, fencing_token_hash, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, terminal_at, terminal_reason_code, terminal_error
+RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, state, owner_run_lease_id, owner_process_id, base_version_id, ownership_generation, writer_generation, mount_fencing_generation, fencing_token_hash, acquired_at, renewed_at, expires_at, released_at, updated_at, terminal_at, terminal_reason_code, terminal_error
 `
 
 type ExpireWorkspaceExecLeaseParams struct {
@@ -835,7 +834,6 @@ func (q *Queries) ExpireWorkspaceExecLease(ctx context.Context, arg ExpireWorksp
 		&i.RenewedAt,
 		&i.ExpiresAt,
 		&i.ReleasedAt,
-		&i.LostAt,
 		&i.UpdatedAt,
 		&i.TerminalAt,
 		&i.TerminalReasonCode,
@@ -985,7 +983,7 @@ UPDATE workspace_leases
  WHERE id = $1
    AND owner_process_id = $2
    AND state IN ('active', 'releasing')
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, state, owner_run_lease_id, owner_process_id, base_version_id, ownership_generation, writer_generation, mount_fencing_generation, fencing_token_hash, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, terminal_at, terminal_reason_code, terminal_error
+RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, state, owner_run_lease_id, owner_process_id, base_version_id, ownership_generation, writer_generation, mount_fencing_generation, fencing_token_hash, acquired_at, renewed_at, expires_at, released_at, updated_at, terminal_at, terminal_reason_code, terminal_error
 `
 
 type FenceWorkspaceExecLeaseForSecretRevocationParams struct {
@@ -1020,7 +1018,6 @@ func (q *Queries) FenceWorkspaceExecLeaseForSecretRevocation(ctx context.Context
 		&i.RenewedAt,
 		&i.ExpiresAt,
 		&i.ReleasedAt,
-		&i.LostAt,
 		&i.UpdatedAt,
 		&i.TerminalAt,
 		&i.TerminalReasonCode,
@@ -1411,7 +1408,7 @@ INSERT INTO workspace_leases (
     $17,
     $18
 )
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, state, owner_run_lease_id, owner_process_id, base_version_id, ownership_generation, writer_generation, mount_fencing_generation, fencing_token_hash, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, terminal_at, terminal_reason_code, terminal_error
+RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, state, owner_run_lease_id, owner_process_id, base_version_id, ownership_generation, writer_generation, mount_fencing_generation, fencing_token_hash, acquired_at, renewed_at, expires_at, released_at, updated_at, terminal_at, terminal_reason_code, terminal_error
 `
 
 type InsertWorkspaceExecLeaseParams struct {
@@ -1481,7 +1478,6 @@ func (q *Queries) InsertWorkspaceExecLease(ctx context.Context, arg InsertWorksp
 		&i.RenewedAt,
 		&i.ExpiresAt,
 		&i.ReleasedAt,
-		&i.LostAt,
 		&i.UpdatedAt,
 		&i.TerminalAt,
 		&i.TerminalReasonCode,
@@ -1678,8 +1674,8 @@ func (q *Queries) ListRecoverableWorkspaceExecCandidates(ctx context.Context, ro
 
 const lockWorkspaceExecFailureAuthority = `-- name: LockWorkspaceExecFailureAuthority :one
 SELECT workspace_processes.id, workspace_processes.org_id, workspace_processes.project_id, workspace_processes.environment_id, workspace_processes.workspace_id, workspace_processes.base_version_id, workspace_processes.restore_desired_state, workspace_processes.region_id, workspace_processes.worker_group_id, workspace_processes.worker_instance_id, workspace_processes.worker_epoch, workspace_processes.runtime_instance_id, workspace_processes.workspace_mount_id, workspace_processes.state, workspace_processes.state_version, workspace_processes.request, workspace_processes.stdin, workspace_processes.stdout, workspace_processes.stderr, workspace_processes.claim_id, workspace_processes.exit_code, workspace_processes.created_by_subject_type, workspace_processes.created_by_subject_id, workspace_processes.created_at, workspace_processes.started_at, workspace_processes.exited_at, workspace_processes.terminal_at, workspace_processes.terminal_reason_code, workspace_processes.error, workspace_processes.updated_at,
-       workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at,
-       workspace_leases.id, workspace_leases.org_id, workspace_leases.worker_group_id, workspace_leases.project_id, workspace_leases.environment_id, workspace_leases.region_id, workspace_leases.worker_instance_id, workspace_leases.worker_epoch, workspace_leases.runtime_instance_id, workspace_leases.workspace_id, workspace_leases.workspace_mount_id, workspace_leases.state, workspace_leases.owner_run_lease_id, workspace_leases.owner_process_id, workspace_leases.base_version_id, workspace_leases.ownership_generation, workspace_leases.writer_generation, workspace_leases.mount_fencing_generation, workspace_leases.fencing_token_hash, workspace_leases.acquired_at, workspace_leases.renewed_at, workspace_leases.expires_at, workspace_leases.released_at, workspace_leases.lost_at, workspace_leases.updated_at, workspace_leases.terminal_at, workspace_leases.terminal_reason_code, workspace_leases.terminal_error
+       workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at,
+       workspace_leases.id, workspace_leases.org_id, workspace_leases.worker_group_id, workspace_leases.project_id, workspace_leases.environment_id, workspace_leases.region_id, workspace_leases.worker_instance_id, workspace_leases.worker_epoch, workspace_leases.runtime_instance_id, workspace_leases.workspace_id, workspace_leases.workspace_mount_id, workspace_leases.state, workspace_leases.owner_run_lease_id, workspace_leases.owner_process_id, workspace_leases.base_version_id, workspace_leases.ownership_generation, workspace_leases.writer_generation, workspace_leases.mount_fencing_generation, workspace_leases.fencing_token_hash, workspace_leases.acquired_at, workspace_leases.renewed_at, workspace_leases.expires_at, workspace_leases.released_at, workspace_leases.updated_at, workspace_leases.terminal_at, workspace_leases.terminal_reason_code, workspace_leases.terminal_error
   FROM workspace_processes
   JOIN workspace_mounts
     ON workspace_mounts.id = workspace_processes.workspace_mount_id
@@ -1780,7 +1776,6 @@ func (q *Queries) LockWorkspaceExecFailureAuthority(ctx context.Context, arg Loc
 		&i.WorkspaceMount.FinalizationReasonCode,
 		&i.WorkspaceMount.FinalizationError,
 		&i.WorkspaceMount.StagedVersionID,
-		&i.WorkspaceMount.RequestedAt,
 		&i.WorkspaceMount.MountedAt,
 		&i.WorkspaceMount.UnmountedAt,
 		&i.WorkspaceMount.StoppedAt,
@@ -1814,7 +1809,6 @@ func (q *Queries) LockWorkspaceExecFailureAuthority(ctx context.Context, arg Loc
 		&i.WorkspaceLease.RenewedAt,
 		&i.WorkspaceLease.ExpiresAt,
 		&i.WorkspaceLease.ReleasedAt,
-		&i.WorkspaceLease.LostAt,
 		&i.WorkspaceLease.UpdatedAt,
 		&i.WorkspaceLease.TerminalAt,
 		&i.WorkspaceLease.TerminalReasonCode,
@@ -1866,8 +1860,8 @@ func (q *Queries) LockWorkspaceExecFailureWorkspace(ctx context.Context, arg Loc
 
 const lockWorkspaceExecRecoveryAuthority = `-- name: LockWorkspaceExecRecoveryAuthority :one
 SELECT workspace_processes.id, workspace_processes.org_id, workspace_processes.project_id, workspace_processes.environment_id, workspace_processes.workspace_id, workspace_processes.base_version_id, workspace_processes.restore_desired_state, workspace_processes.region_id, workspace_processes.worker_group_id, workspace_processes.worker_instance_id, workspace_processes.worker_epoch, workspace_processes.runtime_instance_id, workspace_processes.workspace_mount_id, workspace_processes.state, workspace_processes.state_version, workspace_processes.request, workspace_processes.stdin, workspace_processes.stdout, workspace_processes.stderr, workspace_processes.claim_id, workspace_processes.exit_code, workspace_processes.created_by_subject_type, workspace_processes.created_by_subject_id, workspace_processes.created_at, workspace_processes.started_at, workspace_processes.exited_at, workspace_processes.terminal_at, workspace_processes.terminal_reason_code, workspace_processes.error, workspace_processes.updated_at,
-       workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at,
-       workspace_leases.id, workspace_leases.org_id, workspace_leases.worker_group_id, workspace_leases.project_id, workspace_leases.environment_id, workspace_leases.region_id, workspace_leases.worker_instance_id, workspace_leases.worker_epoch, workspace_leases.runtime_instance_id, workspace_leases.workspace_id, workspace_leases.workspace_mount_id, workspace_leases.state, workspace_leases.owner_run_lease_id, workspace_leases.owner_process_id, workspace_leases.base_version_id, workspace_leases.ownership_generation, workspace_leases.writer_generation, workspace_leases.mount_fencing_generation, workspace_leases.fencing_token_hash, workspace_leases.acquired_at, workspace_leases.renewed_at, workspace_leases.expires_at, workspace_leases.released_at, workspace_leases.lost_at, workspace_leases.updated_at, workspace_leases.terminal_at, workspace_leases.terminal_reason_code, workspace_leases.terminal_error
+       workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at,
+       workspace_leases.id, workspace_leases.org_id, workspace_leases.worker_group_id, workspace_leases.project_id, workspace_leases.environment_id, workspace_leases.region_id, workspace_leases.worker_instance_id, workspace_leases.worker_epoch, workspace_leases.runtime_instance_id, workspace_leases.workspace_id, workspace_leases.workspace_mount_id, workspace_leases.state, workspace_leases.owner_run_lease_id, workspace_leases.owner_process_id, workspace_leases.base_version_id, workspace_leases.ownership_generation, workspace_leases.writer_generation, workspace_leases.mount_fencing_generation, workspace_leases.fencing_token_hash, workspace_leases.acquired_at, workspace_leases.renewed_at, workspace_leases.expires_at, workspace_leases.released_at, workspace_leases.updated_at, workspace_leases.terminal_at, workspace_leases.terminal_reason_code, workspace_leases.terminal_error
   FROM workspace_processes
   JOIN workspace_mounts
     ON workspace_mounts.id = workspace_processes.workspace_mount_id
@@ -1964,7 +1958,6 @@ func (q *Queries) LockWorkspaceExecRecoveryAuthority(ctx context.Context, arg Lo
 		&i.WorkspaceMount.FinalizationReasonCode,
 		&i.WorkspaceMount.FinalizationError,
 		&i.WorkspaceMount.StagedVersionID,
-		&i.WorkspaceMount.RequestedAt,
 		&i.WorkspaceMount.MountedAt,
 		&i.WorkspaceMount.UnmountedAt,
 		&i.WorkspaceMount.StoppedAt,
@@ -1998,7 +1991,6 @@ func (q *Queries) LockWorkspaceExecRecoveryAuthority(ctx context.Context, arg Lo
 		&i.WorkspaceLease.RenewedAt,
 		&i.WorkspaceLease.ExpiresAt,
 		&i.WorkspaceLease.ReleasedAt,
-		&i.WorkspaceLease.LostAt,
 		&i.WorkspaceLease.UpdatedAt,
 		&i.WorkspaceLease.TerminalAt,
 		&i.WorkspaceLease.TerminalReasonCode,
@@ -2009,8 +2001,8 @@ func (q *Queries) LockWorkspaceExecRecoveryAuthority(ctx context.Context, arg Lo
 
 const lockWorkspaceExecSecretRevocationAuthority = `-- name: LockWorkspaceExecSecretRevocationAuthority :one
 SELECT workspace_processes.id, workspace_processes.org_id, workspace_processes.project_id, workspace_processes.environment_id, workspace_processes.workspace_id, workspace_processes.base_version_id, workspace_processes.restore_desired_state, workspace_processes.region_id, workspace_processes.worker_group_id, workspace_processes.worker_instance_id, workspace_processes.worker_epoch, workspace_processes.runtime_instance_id, workspace_processes.workspace_mount_id, workspace_processes.state, workspace_processes.state_version, workspace_processes.request, workspace_processes.stdin, workspace_processes.stdout, workspace_processes.stderr, workspace_processes.claim_id, workspace_processes.exit_code, workspace_processes.created_by_subject_type, workspace_processes.created_by_subject_id, workspace_processes.created_at, workspace_processes.started_at, workspace_processes.exited_at, workspace_processes.terminal_at, workspace_processes.terminal_reason_code, workspace_processes.error, workspace_processes.updated_at,
-       workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at,
-       workspace_leases.id, workspace_leases.org_id, workspace_leases.worker_group_id, workspace_leases.project_id, workspace_leases.environment_id, workspace_leases.region_id, workspace_leases.worker_instance_id, workspace_leases.worker_epoch, workspace_leases.runtime_instance_id, workspace_leases.workspace_id, workspace_leases.workspace_mount_id, workspace_leases.state, workspace_leases.owner_run_lease_id, workspace_leases.owner_process_id, workspace_leases.base_version_id, workspace_leases.ownership_generation, workspace_leases.writer_generation, workspace_leases.mount_fencing_generation, workspace_leases.fencing_token_hash, workspace_leases.acquired_at, workspace_leases.renewed_at, workspace_leases.expires_at, workspace_leases.released_at, workspace_leases.lost_at, workspace_leases.updated_at, workspace_leases.terminal_at, workspace_leases.terminal_reason_code, workspace_leases.terminal_error
+       workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at,
+       workspace_leases.id, workspace_leases.org_id, workspace_leases.worker_group_id, workspace_leases.project_id, workspace_leases.environment_id, workspace_leases.region_id, workspace_leases.worker_instance_id, workspace_leases.worker_epoch, workspace_leases.runtime_instance_id, workspace_leases.workspace_id, workspace_leases.workspace_mount_id, workspace_leases.state, workspace_leases.owner_run_lease_id, workspace_leases.owner_process_id, workspace_leases.base_version_id, workspace_leases.ownership_generation, workspace_leases.writer_generation, workspace_leases.mount_fencing_generation, workspace_leases.fencing_token_hash, workspace_leases.acquired_at, workspace_leases.renewed_at, workspace_leases.expires_at, workspace_leases.released_at, workspace_leases.updated_at, workspace_leases.terminal_at, workspace_leases.terminal_reason_code, workspace_leases.terminal_error
   FROM workspace_processes
   JOIN workspace_mounts
     ON workspace_mounts.id = workspace_processes.workspace_mount_id
@@ -2101,7 +2093,6 @@ func (q *Queries) LockWorkspaceExecSecretRevocationAuthority(ctx context.Context
 		&i.WorkspaceMount.FinalizationReasonCode,
 		&i.WorkspaceMount.FinalizationError,
 		&i.WorkspaceMount.StagedVersionID,
-		&i.WorkspaceMount.RequestedAt,
 		&i.WorkspaceMount.MountedAt,
 		&i.WorkspaceMount.UnmountedAt,
 		&i.WorkspaceMount.StoppedAt,
@@ -2135,7 +2126,6 @@ func (q *Queries) LockWorkspaceExecSecretRevocationAuthority(ctx context.Context
 		&i.WorkspaceLease.RenewedAt,
 		&i.WorkspaceLease.ExpiresAt,
 		&i.WorkspaceLease.ReleasedAt,
-		&i.WorkspaceLease.LostAt,
 		&i.WorkspaceLease.UpdatedAt,
 		&i.WorkspaceLease.TerminalAt,
 		&i.WorkspaceLease.TerminalReasonCode,
@@ -2146,8 +2136,8 @@ func (q *Queries) LockWorkspaceExecSecretRevocationAuthority(ctx context.Context
 
 const lockWorkspaceExecWorkerAuthority = `-- name: LockWorkspaceExecWorkerAuthority :one
 SELECT workspace_processes.id, workspace_processes.org_id, workspace_processes.project_id, workspace_processes.environment_id, workspace_processes.workspace_id, workspace_processes.base_version_id, workspace_processes.restore_desired_state, workspace_processes.region_id, workspace_processes.worker_group_id, workspace_processes.worker_instance_id, workspace_processes.worker_epoch, workspace_processes.runtime_instance_id, workspace_processes.workspace_mount_id, workspace_processes.state, workspace_processes.state_version, workspace_processes.request, workspace_processes.stdin, workspace_processes.stdout, workspace_processes.stderr, workspace_processes.claim_id, workspace_processes.exit_code, workspace_processes.created_by_subject_type, workspace_processes.created_by_subject_id, workspace_processes.created_at, workspace_processes.started_at, workspace_processes.exited_at, workspace_processes.terminal_at, workspace_processes.terminal_reason_code, workspace_processes.error, workspace_processes.updated_at,
-       workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at,
-       workspace_leases.id, workspace_leases.org_id, workspace_leases.worker_group_id, workspace_leases.project_id, workspace_leases.environment_id, workspace_leases.region_id, workspace_leases.worker_instance_id, workspace_leases.worker_epoch, workspace_leases.runtime_instance_id, workspace_leases.workspace_id, workspace_leases.workspace_mount_id, workspace_leases.state, workspace_leases.owner_run_lease_id, workspace_leases.owner_process_id, workspace_leases.base_version_id, workspace_leases.ownership_generation, workspace_leases.writer_generation, workspace_leases.mount_fencing_generation, workspace_leases.fencing_token_hash, workspace_leases.acquired_at, workspace_leases.renewed_at, workspace_leases.expires_at, workspace_leases.released_at, workspace_leases.lost_at, workspace_leases.updated_at, workspace_leases.terminal_at, workspace_leases.terminal_reason_code, workspace_leases.terminal_error,
+       workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at,
+       workspace_leases.id, workspace_leases.org_id, workspace_leases.worker_group_id, workspace_leases.project_id, workspace_leases.environment_id, workspace_leases.region_id, workspace_leases.worker_instance_id, workspace_leases.worker_epoch, workspace_leases.runtime_instance_id, workspace_leases.workspace_id, workspace_leases.workspace_mount_id, workspace_leases.state, workspace_leases.owner_run_lease_id, workspace_leases.owner_process_id, workspace_leases.base_version_id, workspace_leases.ownership_generation, workspace_leases.writer_generation, workspace_leases.mount_fencing_generation, workspace_leases.fencing_token_hash, workspace_leases.acquired_at, workspace_leases.renewed_at, workspace_leases.expires_at, workspace_leases.released_at, workspace_leases.updated_at, workspace_leases.terminal_at, workspace_leases.terminal_reason_code, workspace_leases.terminal_error,
        idempotency_claims.request_fingerprint
   FROM workspace_processes
   JOIN workspace_mounts
@@ -2313,7 +2303,6 @@ func (q *Queries) LockWorkspaceExecWorkerAuthority(ctx context.Context, arg Lock
 		&i.WorkspaceMount.FinalizationReasonCode,
 		&i.WorkspaceMount.FinalizationError,
 		&i.WorkspaceMount.StagedVersionID,
-		&i.WorkspaceMount.RequestedAt,
 		&i.WorkspaceMount.MountedAt,
 		&i.WorkspaceMount.UnmountedAt,
 		&i.WorkspaceMount.StoppedAt,
@@ -2347,7 +2336,6 @@ func (q *Queries) LockWorkspaceExecWorkerAuthority(ctx context.Context, arg Lock
 		&i.WorkspaceLease.RenewedAt,
 		&i.WorkspaceLease.ExpiresAt,
 		&i.WorkspaceLease.ReleasedAt,
-		&i.WorkspaceLease.LostAt,
 		&i.WorkspaceLease.UpdatedAt,
 		&i.WorkspaceLease.TerminalAt,
 		&i.WorkspaceLease.TerminalReasonCode,
@@ -2367,7 +2355,7 @@ UPDATE workspace_mounts
  WHERE id = $2
    AND workspace_id = $3
    AND state IN ('mounting', 'mounted', 'unmounting')
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, guest_channel_token_hash, guest_channel_token_expires_at, state, request, dirty_generation, fencing_generation, finalization_kind, finalization_reason_code, finalization_error, staged_version_id, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
+RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, guest_channel_token_hash, guest_channel_token_expires_at, state, request, dirty_generation, fencing_generation, finalization_kind, finalization_reason_code, finalization_error, staged_version_id, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
 `
 
 type LoseWorkspaceExecMountParams struct {
@@ -2401,7 +2389,6 @@ func (q *Queries) LoseWorkspaceExecMount(ctx context.Context, arg LoseWorkspaceE
 		&i.FinalizationReasonCode,
 		&i.FinalizationError,
 		&i.StagedVersionID,
-		&i.RequestedAt,
 		&i.MountedAt,
 		&i.UnmountedAt,
 		&i.StoppedAt,
@@ -2478,7 +2465,7 @@ UPDATE workspace_leases
  WHERE id = $1
    AND owner_process_id = $2
    AND state IN ('active', 'releasing')
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, state, owner_run_lease_id, owner_process_id, base_version_id, ownership_generation, writer_generation, mount_fencing_generation, fencing_token_hash, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, terminal_at, terminal_reason_code, terminal_error
+RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, state, owner_run_lease_id, owner_process_id, base_version_id, ownership_generation, writer_generation, mount_fencing_generation, fencing_token_hash, acquired_at, renewed_at, expires_at, released_at, updated_at, terminal_at, terminal_reason_code, terminal_error
 `
 
 type ReleaseWorkspaceExecLeaseParams struct {
@@ -2513,7 +2500,6 @@ func (q *Queries) ReleaseWorkspaceExecLease(ctx context.Context, arg ReleaseWork
 		&i.RenewedAt,
 		&i.ExpiresAt,
 		&i.ReleasedAt,
-		&i.LostAt,
 		&i.UpdatedAt,
 		&i.TerminalAt,
 		&i.TerminalReasonCode,
@@ -2567,7 +2553,7 @@ WITH requested AS (
                AND workspace_mounts.finalization_error IS NOT DISTINCT FROM $3
            )
        )
-    RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, guest_channel_token_hash, guest_channel_token_expires_at, state, request, dirty_generation, fencing_generation, finalization_kind, finalization_reason_code, finalization_error, staged_version_id, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
+    RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, guest_channel_token_hash, guest_channel_token_expires_at, state, request, dirty_generation, fencing_generation, finalization_kind, finalization_reason_code, finalization_error, staged_version_id, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
 )
 UPDATE runtime_instances
    SET desired_state = 'closed',
@@ -2580,7 +2566,7 @@ UPDATE runtime_instances
        updated_at = transaction_timestamp()
   FROM requested
  WHERE runtime_instances.id = requested.runtime_instance_id
-RETURNING requested.id, requested.org_id, requested.worker_group_id, requested.project_id, requested.environment_id, requested.region_id, requested.worker_instance_id, requested.worker_epoch, requested.workspace_id, requested.materialized_version_id, requested.runtime_instance_id, requested.guest_channel_token_hash, requested.guest_channel_token_expires_at, requested.state, requested.request, requested.dirty_generation, requested.fencing_generation, requested.finalization_kind, requested.finalization_reason_code, requested.finalization_error, requested.staged_version_id, requested.requested_at, requested.mounted_at, requested.unmounted_at, requested.stopped_at, requested.lost_at, requested.failed_at, requested.terminal_at, requested.terminal_reason_code, requested.terminal_error, requested.created_at, requested.updated_at
+RETURNING requested.id, requested.org_id, requested.worker_group_id, requested.project_id, requested.environment_id, requested.region_id, requested.worker_instance_id, requested.worker_epoch, requested.workspace_id, requested.materialized_version_id, requested.runtime_instance_id, requested.guest_channel_token_hash, requested.guest_channel_token_expires_at, requested.state, requested.request, requested.dirty_generation, requested.fencing_generation, requested.finalization_kind, requested.finalization_reason_code, requested.finalization_error, requested.staged_version_id, requested.mounted_at, requested.unmounted_at, requested.stopped_at, requested.lost_at, requested.failed_at, requested.terminal_at, requested.terminal_reason_code, requested.terminal_error, requested.created_at, requested.updated_at
 `
 
 type RequestWorkspaceExecMountFinalizationParams struct {
@@ -2614,7 +2600,6 @@ type RequestWorkspaceExecMountFinalizationRow struct {
 	FinalizationReasonCode     pgtype.Text        `json:"finalization_reason_code"`
 	FinalizationError          []byte             `json:"finalization_error"`
 	StagedVersionID            pgtype.UUID        `json:"staged_version_id"`
-	RequestedAt                pgtype.Timestamptz `json:"requested_at"`
 	MountedAt                  pgtype.Timestamptz `json:"mounted_at"`
 	UnmountedAt                pgtype.Timestamptz `json:"unmounted_at"`
 	StoppedAt                  pgtype.Timestamptz `json:"stopped_at"`
@@ -2659,7 +2644,6 @@ func (q *Queries) RequestWorkspaceExecMountFinalization(ctx context.Context, arg
 		&i.FinalizationReasonCode,
 		&i.FinalizationError,
 		&i.StagedVersionID,
-		&i.RequestedAt,
 		&i.MountedAt,
 		&i.UnmountedAt,
 		&i.StoppedAt,
@@ -2838,7 +2822,7 @@ func (q *Queries) SetWorkspaceExecResult(ctx context.Context, arg SetWorkspaceEx
 
 const stageWorkspaceExecCapture = `-- name: StageWorkspaceExecCapture :one
 WITH authority AS (
-    SELECT workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at, workspace_processes.base_version_id,
+    SELECT workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at, workspace_processes.base_version_id,
            workspace_leases.id AS source_workspace_lease_id,
            workspace_leases.ownership_generation,
            workspace_leases.writer_generation

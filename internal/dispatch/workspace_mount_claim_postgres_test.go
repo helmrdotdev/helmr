@@ -254,10 +254,10 @@ func prepareClaimableWorkspaceExecMount(t *testing.T) (runPlacementFixture, uuid
 UPDATE workspaces SET owner_run_id = NULL WHERE id = $1`, fixture.workspaceID)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 INSERT INTO idempotency_claims (
-    id, environment_id, operation, slot_hash, request_fingerprint, accepted_at
+    id, environment_id, operation, slot_hash, request_fingerprint, accepted_at, expires_at
 ) VALUES (
-    $1, $2, 'task.child.invoke', decode(repeat('61', 32), 'hex'),
-    decode(repeat('62', 32), 'hex'), transaction_timestamp()
+    $1, $2, 'workspace.exec', decode(repeat('61', 32), 'hex'),
+    decode(repeat('62', 32), 'hex'), transaction_timestamp(), transaction_timestamp() + interval '30 days'
 )`, claimID, fixture.environmentID)
 	if _, err := db.New(fixture.pool).CreateWorkspaceExec(
 		fixture.ctx,
@@ -404,8 +404,7 @@ SELECT (jsonb_populate_record(
         'runtime_instance_id', $5::text,
         'guest_channel_token_hash', '',
         'guest_channel_token_expires_at', NULL,
-        'requested_at', source_mount.requested_at + interval '1 minute',
-        'created_at', transaction_timestamp(),
+        'created_at', source_mount.created_at + interval '1 minute',
         'updated_at', transaction_timestamp()
     )
 )).*
@@ -437,5 +436,40 @@ func claimWorkspaceMountParams(fixture runPlacementFixture, token string) db.Cla
 		WorkerEpoch:                1,
 		GuestChannelTokenHash:      hex.EncodeToString(dbtest.Hash("workspace-mount-" + token)),
 		GuestChannelTokenExpiresAt: pgvalue.TimestamptzUTCZeroInvalid(time.Now().UTC().Add(5 * time.Minute)),
+	}
+}
+
+func TestWorkspaceMountCreationOrdersClaimsAndSurvivesReplay(t *testing.T) {
+	fixture, firstID := prepareClaimableRunMount(t)
+	secondID := cloneClaimableRunMount(t, fixture, firstID)
+	queries := db.New(fixture.pool)
+	var before db.WorkspaceMount
+	if err := fixture.pool.QueryRow(fixture.ctx, `
+		UPDATE workspace_mounts SET created_at=now()-interval '2 minutes', updated_at=now()-interval '1 minute'
+		WHERE id=$1 RETURNING org_id, workspace_id, runtime_instance_id, materialized_version_id, fencing_generation, request, created_at, updated_at
+	`, firstID).Scan(&before.OrgID, &before.WorkspaceID, &before.RuntimeInstanceID, &before.MaterializedVersionID, &before.FencingGeneration, &before.Request, &before.CreatedAt, &before.UpdatedAt); err != nil {
+		t.Fatal(err)
+	}
+	var runID pgtype.UUID
+	var attempt pgtype.Int4
+	if err := fixture.pool.QueryRow(fixture.ctx, `SELECT reserved_run_id,reserved_attempt_number FROM runtime_instances WHERE id=$1`, before.RuntimeInstanceID).Scan(&runID, &attempt); err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := queries.EnsureRunWorkspaceMountRequested(fixture.ctx, db.EnsureRunWorkspaceMountRequestedParams{
+		ID: pgvalue.UUID(uuid.NewV7()), OrgID: before.OrgID, WorkspaceID: before.WorkspaceID,
+		RuntimeInstanceID: before.RuntimeInstanceID, WorkspaceVersionID: before.MaterializedVersionID,
+		FencingGeneration: before.FencingGeneration, Request: before.Request, RunID: runID, AttemptNumber: attempt,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.Inserted || replayed.ID != firstID || replayed.CreatedAt != before.CreatedAt || replayed.UpdatedAt != before.UpdatedAt {
+		t.Fatalf("mount replay changed identity or timestamps: %+v", replayed)
+	}
+	for _, id := range []pgtype.UUID{firstID, secondID} {
+		claimed, err := queries.ClaimWorkspaceMount(fixture.ctx, claimWorkspaceMountParams(fixture, uuid.NewV7().String()))
+		if err != nil || claimed.ID != id {
+			t.Fatalf("claim = %v, %v; want %v", claimed.ID, err, id)
+		}
 	}
 }

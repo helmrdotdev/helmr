@@ -132,8 +132,8 @@ UPDATE runs
  WHERE id = $1`, fixture.runID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE run_leases
-   SET state = 'checkpointed', claimed_at = assigned_at,
-       started_at = assigned_at, checkpointed_at = transaction_timestamp(),
+   SET state = 'checkpointed', claimed_at = created_at,
+       started_at = created_at, checkpointed_at = transaction_timestamp(),
        terminal_at = transaction_timestamp(), terminal_reason_code = 'checkpointed'
  WHERE id = $1`, parentLease.ID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
@@ -316,8 +316,8 @@ UPDATE runs
  WHERE id = $1`, childID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE run_leases
-   SET state = 'checkpointed', claimed_at = assigned_at,
-       started_at = assigned_at, checkpointed_at = transaction_timestamp(),
+   SET state = 'checkpointed', claimed_at = created_at,
+       started_at = created_at, checkpointed_at = transaction_timestamp(),
        terminal_at = transaction_timestamp(), terminal_reason_code = 'checkpointed'
  WHERE id = $1`, childLease.ID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
@@ -350,7 +350,7 @@ INSERT INTO run_leases (
     worker_epoch, runtime_instance_id, runtime_identity_id,
     requested_cpu_millis, requested_memory_bytes,
     requested_guest_ephemeral_disk_bytes, requested_execution_slots,
-    trace_id, span_id, state, assigned_at, start_deadline_at,
+    trace_id, span_id, state, created_at, start_deadline_at,
     claimed_at, started_at, expires_at, terminal_at, terminal_reason_code
 )
 SELECT $1, org_id, project_id, environment_id, $2, workspace_id, region_id,
@@ -358,8 +358,8 @@ SELECT $1, org_id, project_id, environment_id, $2, workspace_id, region_id,
        runtime_instance_id, runtime_identity_id, requested_cpu_millis,
        requested_memory_bytes, requested_guest_ephemeral_disk_bytes,
        requested_execution_slots, '55555555555555555555555555555555',
-       '6666666666666666', 'completed', assigned_at, start_deadline_at,
-       assigned_at, assigned_at, expires_at, transaction_timestamp(), 'completed'
+       '6666666666666666', 'completed', created_at, start_deadline_at,
+       created_at, created_at, expires_at, transaction_timestamp(), 'completed'
   FROM run_leases
  WHERE id = $3`, grandchildRunLeaseID, grandchildID, childLease.ID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
@@ -471,7 +471,7 @@ SELECT workspace_leases.id, workspace_mounts.fencing_generation,
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 WITH expired AS (
     UPDATE run_leases
-       SET assigned_at = transaction_timestamp() - interval '2 minutes',
+       SET created_at = transaction_timestamp() - interval '2 minutes',
            start_deadline_at = transaction_timestamp() - interval '1 minute',
            expires_at = transaction_timestamp() - interval '30 seconds'
      WHERE id = $1
@@ -667,7 +667,7 @@ UPDATE runs
  WHERE id = $1 AND current_run_lease_id = $2`, childID, childLease.ID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE run_leases
-   SET state = 'completed', claimed_at = assigned_at, started_at = assigned_at,
+   SET state = 'completed', claimed_at = created_at, started_at = created_at,
        terminal_at = transaction_timestamp(), terminal_reason_code = 'completed'
  WHERE id = $1`, childLease.ID)
 	dbtest.MustExec(t, fixture.ctx, tx, `

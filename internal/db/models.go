@@ -487,7 +487,6 @@ type PublicAccessToken struct {
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 	LastUsedAt pgtype.Timestamptz `json:"last_used_at"`
 	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
-	RevokedAt  pgtype.Timestamptz `json:"revoked_at"`
 	ExpiredAt  pgtype.Timestamptz `json:"expired_at"`
 	MaxUses    pgtype.Int4        `json:"max_uses"`
 	UsedCount  int32              `json:"used_count"`
@@ -622,7 +621,6 @@ type RunLease struct {
 	ParentSpanID                     pgtype.Text        `json:"parent_span_id"`
 	Traceparent                      pgtype.Text        `json:"traceparent"`
 	State                            string             `json:"state"`
-	AssignedAt                       pgtype.Timestamptz `json:"assigned_at"`
 	StartDeadlineAt                  pgtype.Timestamptz `json:"start_deadline_at"`
 	ClaimedAt                        pgtype.Timestamptz `json:"claimed_at"`
 	StartedAt                        pgtype.Timestamptz `json:"started_at"`
@@ -638,8 +636,9 @@ type RunLease struct {
 	TerminalReasonCode               pgtype.Text        `json:"terminal_reason_code"`
 	TerminalError                    []byte             `json:"terminal_error"`
 	TerminalRequestFingerprint       pgtype.Text        `json:"terminal_request_fingerprint"`
-	CreatedAt                        pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                        pgtype.Timestamptz `json:"updated_at"`
+	// Creation of this issued lease grant, for its fixed placement and lease sequence; claiming and starting are separate events.
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
 type RunWait struct {
@@ -1108,7 +1107,6 @@ type WorkspaceLease struct {
 	RenewedAt              pgtype.Timestamptz `json:"renewed_at"`
 	ExpiresAt              pgtype.Timestamptz `json:"expires_at"`
 	ReleasedAt             pgtype.Timestamptz `json:"released_at"`
-	LostAt                 pgtype.Timestamptz `json:"lost_at"`
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 	TerminalAt             pgtype.Timestamptz `json:"terminal_at"`
 	TerminalReasonCode     pgtype.Text        `json:"terminal_reason_code"`
@@ -1137,7 +1135,6 @@ type WorkspaceMount struct {
 	FinalizationReasonCode     pgtype.Text        `json:"finalization_reason_code"`
 	FinalizationError          []byte             `json:"finalization_error"`
 	StagedVersionID            pgtype.UUID        `json:"staged_version_id"`
-	RequestedAt                pgtype.Timestamptz `json:"requested_at"`
 	MountedAt                  pgtype.Timestamptz `json:"mounted_at"`
 	UnmountedAt                pgtype.Timestamptz `json:"unmounted_at"`
 	StoppedAt                  pgtype.Timestamptz `json:"stopped_at"`
@@ -1146,8 +1143,9 @@ type WorkspaceMount struct {
 	TerminalAt                 pgtype.Timestamptz `json:"terminal_at"`
 	TerminalReasonCode         pgtype.Text        `json:"terminal_reason_code"`
 	TerminalError              []byte             `json:"terminal_error"`
-	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	// Creation of this durable mount request, preserved on matching request replay; mounting completion is recorded by mounted_at.
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
 type WorkspaceProcess struct {

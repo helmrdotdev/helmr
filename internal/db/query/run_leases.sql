@@ -44,7 +44,7 @@ SELECT run_leases.id,
               WHEN 'starting' THEN 0
               ELSE 1
           END,
-          run_leases.assigned_at,
+          run_leases.created_at,
           run_leases.id
  LIMIT LEAST(sqlc.arg(row_limit)::int, (SELECT max_vm_slots FROM worker));
 

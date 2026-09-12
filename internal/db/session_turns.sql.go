@@ -106,7 +106,7 @@ UPDATE workspace_leases
    AND mount_fencing_generation = $14
    AND state = 'active'
    AND expires_at > $2
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, state, owner_run_lease_id, owner_process_id, base_version_id, ownership_generation, writer_generation, mount_fencing_generation, fencing_token_hash, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, terminal_at, terminal_reason_code, terminal_error
+RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, state, owner_run_lease_id, owner_process_id, base_version_id, ownership_generation, writer_generation, mount_fencing_generation, fencing_token_hash, acquired_at, renewed_at, expires_at, released_at, updated_at, terminal_at, terminal_reason_code, terminal_error
 `
 
 type AdvanceActorTurnWorkspaceLeaseFrontierParams struct {
@@ -168,7 +168,6 @@ func (q *Queries) AdvanceActorTurnWorkspaceLeaseFrontier(ctx context.Context, ar
 		&i.RenewedAt,
 		&i.ExpiresAt,
 		&i.ReleasedAt,
-		&i.LostAt,
 		&i.UpdatedAt,
 		&i.TerminalAt,
 		&i.TerminalReasonCode,

@@ -836,7 +836,7 @@ INSERT INTO run_leases (
     worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id,
     requested_cpu_millis, requested_memory_bytes,
     requested_guest_ephemeral_disk_bytes, requested_execution_slots,
-    state, assigned_at, start_deadline_at, claimed_at, started_at,
+    state, created_at, start_deadline_at, claimed_at, started_at,
     expires_at, checkpointed_at, terminal_at, terminal_reason_code
 ) VALUES (
     $1, $2, $3, $4, $5, $6, 'us-east-1', 1, 1, $7, $8, 1, $9, $10,

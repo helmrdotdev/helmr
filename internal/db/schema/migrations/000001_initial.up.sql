@@ -658,7 +658,9 @@ CREATE TABLE idempotency_claims (
     CHECK (
         (operation = 'task.child.invoke' AND expires_at IS NULL)
         OR
-        (operation <> 'task.child.invoke' AND expires_at = accepted_at + interval '30 days')
+        (operation <> 'task.child.invoke'
+         AND expires_at IS NOT NULL
+         AND expires_at = accepted_at + interval '30 days')
     ),
     CHECK (retired_at IS NULL OR retired_at >= accepted_at)
 );
@@ -743,41 +745,24 @@ CREATE TABLE schedules (
     CHECK ((retry_step IS NULL) = (retry_after IS NULL)),
     CHECK (retry_step IS NULL OR state = 'active'),
     CHECK (claimed_by IS NULL OR (state = 'active' AND next_fire_at IS NOT NULL)),
-    CHECK (
-        (state = 'errored'
-         AND last_failure->>'code' IN (
-             'task_authority_invalid',
-             'sandbox_authority_invalid',
-             'architecture_incompatible',
-             'generation_invalid',
-             'input_invalid'
-         )
-         AND jsonb_typeof(last_failure) = 'object'
-         AND last_failure ?& ARRAY['code', 'message', 'details']
-         AND last_failure - ARRAY['code', 'message', 'details'] = '{}'::jsonb
-         AND last_failure->>'message' = btrim(last_failure->>'message')
-         AND octet_length(last_failure->>'message') BETWEEN 1 AND 1024
-         AND jsonb_typeof(last_failure->'details') = 'object')
-        OR
-        (state <> 'errored'
-         AND (
-             last_failure IS NULL
-             OR
-             (last_failure->>'code' IN (
-                  'task_authority_invalid',
-                  'sandbox_authority_invalid',
-                  'architecture_incompatible',
-                  'generation_invalid',
-                  'input_invalid'
-              )
-              AND jsonb_typeof(last_failure) = 'object'
-              AND last_failure ?& ARRAY['code', 'message', 'details']
-              AND last_failure - ARRAY['code', 'message', 'details'] = '{}'::jsonb
-              AND last_failure->>'message' = btrim(last_failure->>'message')
-              AND octet_length(last_failure->>'message') BETWEEN 1 AND 1024
-              AND jsonb_typeof(last_failure->'details') = 'object')
-         ))
-    )
+    CHECK (state <> 'errored' OR last_failure IS NOT NULL),
+    CHECK (last_failure IS NULL OR (
+        jsonb_typeof(last_failure) = 'object'
+        AND last_failure ?& ARRAY['code', 'message', 'details']
+        AND last_failure - ARRAY['code', 'message', 'details'] = '{}'::jsonb
+        AND jsonb_typeof(last_failure->'code') = 'string'
+        AND last_failure->>'code' IN (
+            'task_authority_invalid',
+            'sandbox_authority_invalid',
+            'architecture_incompatible',
+            'generation_invalid',
+            'input_invalid'
+        )
+        AND jsonb_typeof(last_failure->'message') = 'string'
+        AND last_failure->>'message' = btrim(last_failure->>'message')
+        AND octet_length(last_failure->>'message') BETWEEN 1 AND 1024
+        AND jsonb_typeof(last_failure->'details') = 'object'
+    ))
 );
 
 CREATE INDEX schedules_due_idx
@@ -970,6 +955,8 @@ CREATE TABLE sessions (
     closed_at TIMESTAMPTZ,
     cancelled_at TIMESTAMPTZ,
     failed_at TIMESTAMPTZ,
+    CHECK (state <> 'closed' OR closed_at IS NOT NULL),
+    CHECK (state <> 'failed' OR failed_at IS NOT NULL),
     UNIQUE (environment_id, id),
     UNIQUE (id, workspace_id),
     UNIQUE (id, actor_declared_id, deployment_definition_id, workspace_id),
@@ -994,20 +981,17 @@ CREATE TABLE sessions (
     CONSTRAINT sessions_run_metadata_object
         CHECK (jsonb_typeof(run_metadata) = 'object'),
     CHECK (
-        (state = 'failed'
-         AND failure->>'code' IN ('no_progress', 'run_failed', 'run_expired', 'platform_failure')
+        (state IN ('failed', 'cancelled')
+         AND failure IS NOT NULL
          AND jsonb_typeof(failure) = 'object'
          AND failure ?& ARRAY['code', 'message', 'details']
          AND failure - ARRAY['code', 'message', 'details'] = '{}'::jsonb
-         AND failure->>'message' = btrim(failure->>'message')
-         AND octet_length(failure->>'message') BETWEEN 1 AND 1024
-         AND jsonb_typeof(failure->'details') = 'object')
-        OR
-        (state = 'cancelled'
-         AND failure->>'code' = 'cancelled'
-         AND jsonb_typeof(failure) = 'object'
-         AND failure ?& ARRAY['code', 'message', 'details']
-         AND failure - ARRAY['code', 'message', 'details'] = '{}'::jsonb
+         AND jsonb_typeof(failure->'code') = 'string'
+         AND (
+             (state = 'failed' AND failure->>'code' IN ('no_progress', 'run_failed', 'run_expired', 'platform_failure'))
+             OR (state = 'cancelled' AND failure->>'code' = 'cancelled')
+         )
+         AND jsonb_typeof(failure->'message') = 'string'
          AND failure->>'message' = btrim(failure->>'message')
          AND octet_length(failure->>'message') BETWEEN 1 AND 1024
          AND jsonb_typeof(failure->'details') = 'object')
@@ -1228,11 +1212,14 @@ CREATE TABLE runs (
         OR
         (status IN ('failed', 'cancelled', 'expired', 'system_failed')
          AND terminal_at IS NOT NULL
+         AND failure IS NOT NULL
          AND jsonb_typeof(failure) = 'object'
          AND failure ?& ARRAY['code', 'message', 'details']
          AND failure - ARRAY['code', 'message', 'details'] = '{}'::jsonb
+         AND jsonb_typeof(failure->'code') = 'string'
          AND failure->>'code' ~ '^[a-z][a-z0-9_]{0,127}$'
          AND failure->>'code' = btrim(failure->>'code')
+         AND jsonb_typeof(failure->'message') = 'string'
          AND failure->>'message' = btrim(failure->>'message')
          AND octet_length(failure->>'message') BETWEEN 1 AND 1024
          AND jsonb_typeof(failure->'details') = 'object'
@@ -1340,6 +1327,7 @@ CREATE TABLE session_records (
         ON DELETE RESTRICT,
     CHECK (
         (direction = 'input'
+         AND source_kind IS NOT NULL
          AND source_kind IN ('external', 'run')
          AND producer_run_id IS NULL
          AND producer_attempt_number IS NULL
@@ -1467,7 +1455,6 @@ CREATE TABLE workspace_mounts (
     finalization_reason_code TEXT,
     finalization_error JSONB,
     staged_version_id UUID,
-    requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     mounted_at TIMESTAMPTZ,
     unmounted_at TIMESTAMPTZ,
     stopped_at TIMESTAMPTZ,
@@ -1516,21 +1503,27 @@ CREATE TABLE workspace_mounts (
          AND finalization_error IS NULL
          AND staged_version_id IS NULL)
         OR
-        (finalization_kind = 'capture'
+        (finalization_kind IS NOT NULL
+         AND finalization_kind = 'capture'
+         AND finalization_reason_code IS NOT NULL
          AND finalization_reason_code = 'workspace_exec_completed'
          AND finalization_error IS NULL
          AND state IN ('unmounting', 'unmounted', 'failed', 'lost'))
         OR
-        (finalization_kind = 'discard'
+        (finalization_kind IS NOT NULL
+         AND finalization_kind = 'discard'
          AND finalization_reason_code IS NOT NULL
          AND btrim(finalization_reason_code) <> ''
          AND octet_length(finalization_reason_code) <= 128
          AND state IN ('unmounting', 'unmounted', 'failed', 'lost'))
     ),
-    CHECK (staged_version_id IS NULL OR finalization_kind = 'capture'),
+    CHECK (staged_version_id IS NULL OR finalization_kind IS NOT DISTINCT FROM 'capture'),
     CHECK (finalization_error IS NULL OR jsonb_typeof(finalization_error) = 'object'),
     CHECK (terminal_error IS NULL OR jsonb_typeof(terminal_error) = 'object')
 );
+
+COMMENT ON COLUMN workspace_mounts.created_at IS
+    'Creation of this durable mount request, preserved on matching request replay; mounting completion is recorded by mounted_at.';
 
 CREATE UNIQUE INDEX workspace_mounts_workspace_active_uidx
     ON workspace_mounts (workspace_id)
@@ -1541,7 +1534,7 @@ CREATE UNIQUE INDEX workspace_mounts_runtime_active_uidx
     WHERE state IN ('mounting', 'mounted', 'unmounting');
 
 CREATE INDEX workspace_mounts_worker_replay_idx
-    ON workspace_mounts (worker_instance_id, worker_epoch, state, requested_at, id)
+    ON workspace_mounts (worker_instance_id, worker_epoch, state, created_at, id)
     WHERE state IN ('mounting', 'mounted', 'unmounting');
 
 CREATE INDEX workspace_mounts_claim_expiry_idx
@@ -1561,7 +1554,7 @@ CREATE TABLE workspace_leases (
     workspace_id UUID NOT NULL,
     workspace_mount_id UUID NOT NULL,
     state TEXT NOT NULL DEFAULT 'active'
-        CHECK (state IN ('active', 'releasing', 'released', 'expired', 'fenced', 'lost')),
+        CHECK (state IN ('active', 'releasing', 'released', 'expired', 'fenced')),
     owner_run_lease_id UUID,
     owner_process_id UUID,
     base_version_id UUID NOT NULL,
@@ -1573,7 +1566,6 @@ CREATE TABLE workspace_leases (
     renewed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     expires_at TIMESTAMPTZ NOT NULL,
     released_at TIMESTAMPTZ,
-    lost_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     terminal_at TIMESTAMPTZ,
     terminal_reason_code TEXT,
@@ -1603,7 +1595,7 @@ CREATE TABLE workspace_leases (
             AND terminal_error IS NULL
         )
         OR (
-            state IN ('expired', 'fenced', 'lost')
+            state IN ('expired', 'fenced')
             AND terminal_at IS NOT NULL
             AND terminal_reason_code IS NOT NULL
             AND btrim(terminal_reason_code) <> ''
@@ -1611,7 +1603,6 @@ CREATE TABLE workspace_leases (
         )
     ),
     CHECK (state <> 'released' OR released_at IS NOT NULL),
-    CHECK (state <> 'lost' OR lost_at IS NOT NULL),
     CHECK (terminal_error IS NULL OR jsonb_typeof(terminal_error) = 'object')
 );
 
@@ -1803,7 +1794,9 @@ CREATE TABLE workspace_versions (
         OR (
             parent_version_id IS NOT NULL
             AND artifact_id IS NOT NULL
+            AND artifact_kind IS NOT NULL
             AND artifact_kind = 'workspace_version'
+            AND kind = 'user'
             AND source_workspace_lease_id IS NOT NULL
         )
     ),
@@ -1927,6 +1920,9 @@ CREATE TABLE tokens (
     completed_at TIMESTAMPTZ,
     expired_at TIMESTAMPTZ,
     cancelled_at TIMESTAMPTZ,
+    CHECK (state <> 'completed' OR completed_at IS NOT NULL),
+    CHECK (state <> 'expired' OR expired_at IS NOT NULL),
+    CHECK (state <> 'cancelled' OR cancelled_at IS NOT NULL),
     UNIQUE (environment_id, id),
     CHECK (expires_at > created_at),
     CHECK (jsonb_typeof(metadata) = 'object'),
@@ -1941,15 +1937,15 @@ CREATE TABLE public_access_tokens (
     token_id UUID NOT NULL UNIQUE,
     token_hash BYTEA NOT NULL UNIQUE CHECK (octet_length(token_hash) = 32),
     state TEXT NOT NULL DEFAULT 'active'
-        CHECK (state IN ('active', 'revoked', 'expired')),
+        CHECK (state IN ('active', 'expired')),
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_by JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_used_at TIMESTAMPTZ,
     expires_at TIMESTAMPTZ NOT NULL,
-    revoked_at TIMESTAMPTZ,
     expired_at TIMESTAMPTZ,
+    CHECK (state <> 'expired' OR expired_at IS NOT NULL),
     max_uses INTEGER CHECK (max_uses IS NULL OR max_uses > 0),
     used_count INTEGER NOT NULL DEFAULT 0 CHECK (used_count >= 0),
     CHECK (max_uses IS NULL OR used_count <= max_uses),
@@ -2076,6 +2072,7 @@ CREATE TABLE telemetry_outbox (
         stream_kind <> 'run_log'
         OR (
             source_kind = 'run'
+            AND run_id IS NOT NULL
             AND run_id = source_id
             AND stream_name IN ('stdout', 'stderr', 'structured')
             AND content IS NOT NULL
@@ -2137,7 +2134,6 @@ CREATE TABLE run_leases (
             'rejected',
             'expired'
         )),
-    assigned_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     start_deadline_at TIMESTAMPTZ NOT NULL,
     claimed_at TIMESTAMPTZ,
     started_at TIMESTAMPTZ,
@@ -2177,12 +2173,12 @@ CREATE TABLE run_leases (
     FOREIGN KEY (worker_instance_id, worker_group_id)
         REFERENCES worker_instances(id, worker_group_id)
         ON DELETE RESTRICT,
-    CHECK (expires_at > assigned_at),
+    CHECK (expires_at > created_at),
     CHECK (start_deadline_at <= expires_at),
-    CHECK (claimed_at IS NULL OR claimed_at >= assigned_at),
+    CHECK (claimed_at IS NULL OR claimed_at >= created_at),
     CHECK (started_at IS NULL OR (claimed_at IS NOT NULL AND started_at >= claimed_at)),
     CHECK (renewed_at IS NULL OR (
-        renewed_at >= COALESCE(started_at, claimed_at, assigned_at)
+        renewed_at >= COALESCE(started_at, claimed_at, created_at)
         AND (terminal_at IS NULL OR renewed_at <= terminal_at)
     )),
     CHECK ((previous_expires_at IS NULL) = (renewed_at IS NULL)),
@@ -2238,6 +2234,9 @@ CREATE TABLE run_leases (
     ))
 );
 
+COMMENT ON COLUMN run_leases.created_at IS
+    'Creation of this issued lease grant, for its fixed placement and lease sequence; claiming and starting are separate events.';
+
 ALTER TABLE workspace_leases
     ADD CONSTRAINT workspace_leases_owner_run_lease_fk
     FOREIGN KEY (
@@ -2258,8 +2257,7 @@ CREATE UNIQUE INDEX run_leases_run_active_uidx
 
 CREATE UNIQUE INDEX run_leases_runtime_active_uidx
     ON run_leases (runtime_instance_id)
-    WHERE runtime_instance_id IS NOT NULL
-      AND state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing');
+    WHERE state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing');
 
 CREATE INDEX run_leases_worker_replay_idx
     ON run_leases (worker_instance_id, worker_epoch, state, expires_at, id)
@@ -2552,6 +2550,7 @@ CREATE TABLE run_waits (
          AND condition_state = 'completed'
          AND session_id IS NOT NULL
          AND completed_actor_record_id IS NOT NULL
+         AND completed_actor_record_direction IS NOT NULL
          AND completed_actor_record_direction = 'input')
     ),
     CHECK (
@@ -3000,7 +2999,7 @@ CREATE INDEX tokens_scope_state_idx ON tokens(org_id, project_id, environment_id
 CREATE INDEX tokens_expiry_pending_idx ON tokens(expires_at, id)
     WHERE state = 'pending';
 CREATE INDEX tokens_callback_fingerprint_pending_idx ON tokens(callback_secret_fingerprint)
-    WHERE state = 'pending' AND callback_secret_fingerprint <> '';
+    WHERE state = 'pending';
 CREATE INDEX run_waits_run_state_idx
     ON run_waits(run_id, suspension_state, created_at DESC);
 CREATE INDEX workspaces_state_idx ON workspaces(environment_id, state, updated_at DESC);

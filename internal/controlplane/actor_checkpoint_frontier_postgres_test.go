@@ -519,7 +519,7 @@ func TestActorCheckpointFrontierExpiredBeforePlacementPostgres(t *testing.T) {
 func (f *actorCheckpointFixture) expireRestore(t *testing.T) {
 	t.Helper()
 	dbtest.MustExec(t, t.Context(), f.Pool, `WITH expired AS (
- UPDATE run_leases SET start_deadline_at=assigned_at+interval '1 millisecond', expires_at=assigned_at+interval '2 milliseconds' WHERE id=$1 RETURNING id,expires_at
+ UPDATE run_leases SET start_deadline_at=created_at+interval '1 millisecond', expires_at=created_at+interval '2 milliseconds' WHERE id=$1 RETURNING id,expires_at
 ) UPDATE workspace_leases SET expires_at=expired.expires_at FROM expired WHERE owner_run_lease_id=expired.id`, f.claim.runLease.ID)
 	dbtest.MustExec(t, t.Context(), f.Pool, `SELECT pg_sleep(0.01)`)
 	recovered, err := f.placement.RecoverExpiredRunResumes(t.Context(), 10)

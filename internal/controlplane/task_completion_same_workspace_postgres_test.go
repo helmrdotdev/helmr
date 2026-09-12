@@ -223,7 +223,7 @@ INSERT INTO run_leases (
     worker_epoch, runtime_instance_id, runtime_identity_id,
     requested_cpu_millis, requested_memory_bytes,
     requested_guest_ephemeral_disk_bytes, requested_execution_slots,
-    trace_id, span_id, state, assigned_at, start_deadline_at,
+    trace_id, span_id, state, created_at, start_deadline_at,
     claimed_at, started_at, expires_at, checkpointed_at,
     terminal_at, terminal_reason_code
 )
@@ -232,8 +232,8 @@ SELECT $1, org_id, project_id, environment_id, $2, workspace_id, region_id,
        runtime_instance_id, runtime_identity_id, requested_cpu_millis,
        requested_memory_bytes, requested_guest_ephemeral_disk_bytes,
        requested_execution_slots, '77777777777777777777777777777777',
-       '8888888888888888', 'checkpointed', assigned_at, start_deadline_at,
-       assigned_at, assigned_at, expires_at, transaction_timestamp(),
+       '8888888888888888', 'checkpointed', created_at, start_deadline_at,
+       created_at, created_at, expires_at, transaction_timestamp(),
        transaction_timestamp(), 'checkpointed'
   FROM run_leases WHERE id = $3`, parentLeaseID, parentRunID, work.LeaseID)
 	dbtest.MustExec(t, ctx, tx, `
@@ -311,8 +311,8 @@ UPDATE run_attempts
  WHERE run_id = $1 AND number = 1`, work.RunID)
 	dbtest.MustExec(t, ctx, tx, `
 UPDATE run_leases
-   SET state = 'finalizing', claimed_at = COALESCE(claimed_at, assigned_at),
-       started_at = COALESCE(started_at, claimed_at, assigned_at), expires_at = $2,
+   SET state = 'finalizing', claimed_at = COALESCE(claimed_at, created_at),
+       started_at = COALESCE(started_at, claimed_at, created_at), expires_at = $2,
        finalization_operation_id = $3, finalization_kind = $4,
        finalization_started_at = transaction_timestamp(),
        finalization_request_fingerprint = 'completion-test-finalization'

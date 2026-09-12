@@ -338,7 +338,7 @@ func TestConfirmWorkerInstanceProviderAbsentSeesLeaseGrantedBeforeWorkerLockRele
 			worker_epoch, runtime_instance_id, runtime_identity_id,
 			requested_cpu_millis, requested_memory_bytes,
 			requested_guest_ephemeral_disk_bytes, requested_execution_slots,
-			state, assigned_at, start_deadline_at, expires_at
+			state, created_at, start_deadline_at, expires_at
 		)
 		SELECT $1, runs.org_id, runs.project_id, runs.environment_id, runs.id,
 		       runs.workspace_id, $2, 1, 1, $3, runtime_instances.worker_instance_id,
