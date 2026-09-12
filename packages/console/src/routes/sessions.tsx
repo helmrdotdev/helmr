@@ -1,17 +1,28 @@
 import { A } from "@solidjs/router";
 import { createInfiniteQuery } from "@tanstack/solid-query";
-import { createMemo, For, Show } from "solid-js";
+import { createMemo, createSignal, For, Show } from "solid-js";
 import { runHref } from "../features/runs/navigation";
 import { ApiError } from "../lib/api";
 import { useScope } from "../lib/scope";
-import { listSessions, sessionConsolePath, type Session } from "../lib/sessions";
+import { listSessions, sessionConsolePath, type Session, type SessionStatus } from "../lib/sessions";
 import { DataTable } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
 import { PageHeader } from "../ui/PageHeader";
 import { RelativeTime } from "../ui/RelativeTime";
+import { Select, type SelectOption } from "../ui/Select";
 import { StatePanel } from "../ui/StatePanel";
 import { StatusBadge } from "../ui/StatusBadge";
 import { ui } from "../ui/styles";
+
+type SessionFilter = SessionStatus | "all";
+
+const FILTERS: SelectOption<SessionFilter>[] = [
+  { value: "all", label: "All sessions" },
+  { value: "open", label: "Open" },
+  { value: "closed", label: "Closed" },
+  { value: "cancelled", label: "Cancelled" },
+  { value: "failed", label: "Failed" },
+];
 
 function sessionsErrorMessage(error: unknown): string {
   if (error instanceof ApiError && error.code === "forbidden") {
@@ -45,6 +56,7 @@ function SessionRow(props: { session: Session; projectID: string; environmentID:
         />
       </td>
       <td><RelativeTime value={props.session.created_at} /></td>
+      <td><RelativeTime value={props.session.updated_at} /></td>
       <td><IDText value={props.session.id} /></td>
     </tr>
   );
@@ -54,14 +66,19 @@ export function Sessions() {
   const scope = useScope();
   const projectID = () => scope.selectedProjectID();
   const environmentID = () => scope.selectedEnvironmentID();
+  const [filter, setFilter] = createSignal<SessionFilter>("all");
   const sessions = createInfiniteQuery(() => ({
-    queryKey: ["sessions", "list", projectID(), environmentID()],
-    queryFn: ({ pageParam }) => listSessions({
-      projectID: projectID(),
-      environmentID: environmentID(),
-      cursor: pageParam || undefined,
-      limit: 100,
-    }),
+    queryKey: ["sessions", "list", filter(), projectID(), environmentID()],
+    queryFn: ({ pageParam }) => {
+      const status = filter();
+      return listSessions({
+        projectID: projectID(),
+        environmentID: environmentID(),
+        statuses: status === "all" ? undefined : [status],
+        cursor: pageParam || undefined,
+        limit: 100,
+      });
+    },
     initialPageParam: "",
     getNextPageParam: (page) => page.next_cursor,
     enabled: !!projectID() && !!environmentID(),
@@ -74,6 +91,11 @@ export function Sessions() {
       <PageHeader
         title="Sessions"
         subtitle="Actor Sessions in the selected environment, with the Run currently serving each one."
+        actions={
+          <div class="w-44">
+            <Select<SessionFilter> value={filter()} options={FILTERS} onChange={setFilter} ariaLabel="Filter sessions" />
+          </div>
+        }
       />
 
       <Show when={sessions.isError}>
@@ -82,9 +104,16 @@ export function Sessions() {
       <Show when={!sessions.isPending} fallback={<StatePanel loading="Loading Sessions..." />}>
         <Show
           when={items().length > 0}
-          fallback={<StatePanel empty="No Sessions yet." hint="Starting a declared Actor creates a Session." />}
+          fallback={
+            <Show
+              when={filter() === "all"}
+              fallback={<StatePanel empty="No Sessions match this filter." />}
+            >
+              <StatePanel empty="No Sessions yet." hint="Starting a declared Actor creates a Session." />
+            </Show>
+          }
         >
-          <DataTable columns={["Actor", "Key", "Status", "Current run", "Created", "Session"]} minWidth="min-w-200">
+          <DataTable columns={["Actor", "Key", "Status", "Current run", "Created", "Updated", "Session"]} minWidth="min-w-225">
             <For each={items()}>
               {(session) => <SessionRow session={session} projectID={projectID()} environmentID={environmentID()} />}
             </For>

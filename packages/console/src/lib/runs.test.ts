@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 
-import { cancelRun, getRunEvents, getRunLogs, listRuns } from "./runs";
+import { cancelRun, getRunEvents, getRunLogs, isTerminalRunStatus, listRuns } from "./runs";
 
 const originalFetch = globalThis.fetch;
 afterEach(() => {
@@ -86,4 +86,61 @@ test("cancels a run with an empty POST body", async () => {
   expect(requestedUrl).toBe("/api/projects/project-1/environments/env-1/runs/run%2F1/cancel");
   expect(requestInit?.method).toBe("POST");
   expect(requestInit?.body).toBe("{}");
+});
+
+test("lists runs of one kind with the status filter", async () => {
+  let requestedUrl: string | undefined;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    requestedUrl = String(input);
+    return Response.json({ runs: [] });
+  }) as typeof fetch;
+
+  await listRuns({ projectID: "project-1", environmentID: "env-1", filter: "failed", kind: "actor", limit: 100 });
+
+  expect(requestedUrl).toBe("/api/projects/project-1/environments/env-1/runs?status=failed&kind=actor&limit=100");
+});
+
+test("omits the kind filter when every kind is requested", async () => {
+  let requestedUrl: string | undefined;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    requestedUrl = String(input);
+    return Response.json({ runs: [] });
+  }) as typeof fetch;
+
+  await listRuns({ projectID: "project-1", environmentID: "env-1", kind: "all", cursor: "c+/=" });
+
+  expect(requestedUrl).toBe("/api/projects/project-1/environments/env-1/runs?cursor=c%2B%2F%3D&limit=100");
+});
+
+test("lists the runs of one session with a cursor", async () => {
+  let requestedUrl: string | undefined;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    requestedUrl = String(input);
+    return Response.json({ runs: [] });
+  }) as typeof fetch;
+
+  await listRuns({
+    projectID: "project-1",
+    environmentID: "env-1",
+    sessionID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
+    cursor: "run-cursor",
+    limit: 50,
+  });
+
+  expect(requestedUrl).toBe(
+    "/api/projects/project-1/environments/env-1/runs?session_id=019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33&cursor=run-cursor&limit=50",
+  );
+});
+
+test("treats only settled statuses as terminal", () => {
+  expect(isTerminalRunStatus("succeeded")).toBe(true);
+  expect(isTerminalRunStatus("failed")).toBe(true);
+  expect(isTerminalRunStatus("system_failed")).toBe(true);
+  expect(isTerminalRunStatus("cancelled")).toBe(true);
+  expect(isTerminalRunStatus("expired")).toBe(true);
+  expect(isTerminalRunStatus("queued")).toBe(false);
+  expect(isTerminalRunStatus("running")).toBe(false);
+  expect(isTerminalRunStatus("waiting")).toBe(false);
+  expect(isTerminalRunStatus("retry_delayed")).toBe(false);
+  expect(isTerminalRunStatus("cancel_requested")).toBe(false);
 });

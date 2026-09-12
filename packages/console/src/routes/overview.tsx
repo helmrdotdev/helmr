@@ -6,9 +6,9 @@ import { runHref } from "../features/runs/navigation";
 import { ApiError } from "../lib/api";
 import { getMe, hasPermission } from "../lib/auth";
 import { getCurrentDeployment } from "../lib/deployments";
-import { cancelRun, listRuns, type Run } from "../lib/runs";
+import { cancelRun, listRuns, type RunListItem } from "../lib/runs";
 import { useScope } from "../lib/scope";
-import { sessionConsolePath } from "../lib/sessions";
+import { listSessions, sessionConsolePath, type Session } from "../lib/sessions";
 import { cancelToken, completeToken, listTokens, type TokenListItem } from "../lib/tokens";
 import { ConfirmModal } from "../ui/ConfirmModal";
 import { DataTable } from "../ui/DataTable";
@@ -26,7 +26,11 @@ const SECTION_ROWS = 5;
 
 type AttentionRow =
   | { kind: "token"; token: TokenListItem }
-  | { kind: "run"; run: Run };
+  | { kind: "run"; run: RunListItem };
+
+type FailureRow =
+  | { kind: "run"; run: RunListItem; at: string }
+  | { kind: "session"; session: Session; at: string };
 
 function actionErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof ApiError && error.code === "forbidden") return "You do not have permission to do this.";
@@ -34,7 +38,7 @@ function actionErrorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
-function attentionRows(tokens: TokenListItem[], waiting: Run[]): AttentionRow[] {
+function attentionRows(tokens: TokenListItem[], waiting: RunListItem[]): AttentionRow[] {
   const byTimeout = [...tokens].sort((a, b) => a.timeout_at.localeCompare(b.timeout_at));
   const byAge = waiting
     .filter((run) => !!run.session_id)
@@ -43,6 +47,14 @@ function attentionRows(tokens: TokenListItem[], waiting: Run[]): AttentionRow[] 
     ...byTimeout.map((token): AttentionRow => ({ kind: "token", token })),
     ...byAge.map((run): AttentionRow => ({ kind: "run", run })),
   ];
+}
+
+function failureRows(runs: RunListItem[], sessions: Session[]): FailureRow[] {
+  const rows: FailureRow[] = [
+    ...runs.map((run): FailureRow => ({ kind: "run", run, at: run.terminal_at ?? run.created_at })),
+    ...sessions.map((session): FailureRow => ({ kind: "session", session, at: session.updated_at })),
+  ];
+  return rows.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
 }
 
 function MoreRows(props: { total: number }) {
@@ -216,14 +228,21 @@ export function Overview() {
     retry: false,
     refetchInterval: 5_000,
   }));
+  const failedSessions = createQuery(() => ({
+    queryKey: ["sessions", "overview", "failed", projectID(), environmentID()],
+    queryFn: () => listSessions({ ...resourceScope(), statuses: ["failed"], limit: 100 }),
+    enabled: enabled() && hasDeployment(),
+    retry: false,
+    refetchInterval: 5_000,
+  }));
 
   const attention = createMemo(() => attentionRows(pendingTokens.data?.tokens ?? [], waitingRuns.data?.runs ?? []));
   const inProgressItems = createMemo(() => inProgress.data?.runs ?? []);
-  const failedItems = createMemo(() => failedRuns.data?.runs ?? []);
+  const failedItems = createMemo(() => failureRows(failedRuns.data?.runs ?? [], failedSessions.data?.sessions ?? []));
 
   const [completing, setCompleting] = createSignal<TokenListItem | null>(null);
   const [cancellingToken, setCancellingToken] = createSignal<TokenListItem | null>(null);
-  const [cancellingRun, setCancellingRun] = createSignal<Run | null>(null);
+  const [cancellingRun, setCancellingRun] = createSignal<RunListItem | null>(null);
 
   const refreshTokens = async () => {
     await queryClient.invalidateQueries({ queryKey: ["tokens"] });
@@ -313,26 +332,50 @@ export function Overview() {
               </section>
 
               <section class="min-w-0">
-                <SectionHeader title="Recent failures" count={failedItems().length} actions={<A class={ui.ghostButton} href="/runs">Runs</A>} />
-                <Show when={!failedRuns.isPending} fallback={<StatePanel loading="Loading..." />}>
-                  <Show when={failedRuns.isError}>
-                    <StatePanel error={actionErrorMessage(failedRuns.error, "Could not load failed Runs.")} />
+                <SectionHeader
+                  title="Recent failures"
+                  count={failedItems().length}
+                  actions={
+                    <>
+                      <A class={ui.ghostButton} href="/runs">Runs</A>
+                      <A class={ui.ghostButton} href="/sessions">Sessions</A>
+                    </>
+                  }
+                />
+                <Show when={!failedRuns.isPending && !failedSessions.isPending} fallback={<StatePanel loading="Loading..." />}>
+                  <Show when={failedRuns.isError || failedSessions.isError}>
+                    <StatePanel error={actionErrorMessage(failedRuns.error ?? failedSessions.error, "Could not load recent failures.")} />
                   </Show>
                   <Show
                     when={failedItems().length > 0}
-                    fallback={<StatePanel empty="No failed Runs." hint="Application and system failures appear here." />}
+                    fallback={<StatePanel empty="No recent failures." hint="Failed Runs and failed Actor Sessions appear here with the Run that caused them." />}
                   >
                     <DataTable columns={["Entrypoint", "Kind", "Status", "Ended", "Run"]}>
                       <For each={failedItems().slice(0, SECTION_ROWS)}>
-                        {(run) => (
+                        {(row) => row.kind === "run" ? (
                           <tr>
                             <td>
-                              <A href={runHref(run.id, projectID(), environmentID())} class="font-medium text-console-text hover:text-console-accent">{run.entrypoint.id}</A>
+                              <A href={runHref(row.run.id, projectID(), environmentID())} class="font-medium text-console-text hover:text-console-accent">{row.run.entrypoint.id}</A>
                             </td>
-                            <td><span class={ui.muted}>{run.entrypoint.kind}</span></td>
-                            <td><StatusBadge resource="run" status={run.status} /></td>
-                            <td><RelativeTime value={run.terminal_at ?? run.created_at} /></td>
-                            <td><IDText value={run.id} /></td>
+                            <td><span class={ui.muted}>{row.run.entrypoint.kind}</span></td>
+                            <td><StatusBadge resource="run" status={row.run.status} /></td>
+                            <td><RelativeTime value={row.at} /></td>
+                            <td><IDText value={row.run.id} /></td>
+                          </tr>
+                        ) : (
+                          <tr>
+                            <td>
+                              <A href={sessionConsolePath(row.session.id, projectID(), environmentID())} class="font-medium text-console-text hover:text-console-accent">{row.session.actor_id}</A>
+                            </td>
+                            <td><span class={ui.muted}>actor session</span></td>
+                            <td><StatusBadge resource="session" status={row.session.status} /></td>
+                            <td><RelativeTime value={row.at} /></td>
+                            <td>
+                              <IDText
+                                value={row.session.failure?.details.run_id ?? ""}
+                                href={row.session.failure?.details.run_id ? runHref(row.session.failure.details.run_id, projectID(), environmentID()) : undefined}
+                              />
+                            </td>
                           </tr>
                         )}
                       </For>

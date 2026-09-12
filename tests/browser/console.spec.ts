@@ -60,3 +60,37 @@ test("every navigation item resolves to its page", async ({ page }) => {
   await navigation.getByRole("link", { name: "Overview", exact: true }).click();
   await expect(page).toHaveURL("/");
 });
+
+test("the Runs ledger filters by kind through the server", async ({ page }) => {
+  await login(page);
+  await page.goto("/runs");
+  await expect(page.getByRole("heading", { name: "Runs" })).toBeVisible();
+  await expect(page.getByText("No runs match this filter.")).toBeVisible();
+
+  const kindSelect = page.getByRole("button", { name: "Filter runs by kind" });
+  await expect(kindSelect).toHaveText(/All kinds/);
+  const actorRequest = page.waitForRequest((request) =>
+    request.url().includes("/runs?") && new URL(request.url()).searchParams.get("kind") === "actor",
+  );
+  await kindSelect.click();
+  await page.getByRole("option", { name: "Actor" }).click();
+  await actorRequest;
+  await expect(kindSelect).toHaveText(/Actor/);
+  await expect(page.getByText("No runs match this filter.")).toBeVisible();
+});
+
+test("the Sessions page filters by status and shows the empty state", async ({ page }) => {
+  await login(page);
+  await page.goto("/sessions");
+  await expect(page.getByRole("heading", { name: "Sessions" })).toBeVisible();
+  await expect(page.getByText("No Sessions yet.")).toBeVisible();
+
+  const statusSelect = page.getByRole("button", { name: "Filter sessions" });
+  const failedRequest = page.waitForRequest((request) =>
+    request.url().includes("/sessions?") && new URL(request.url()).searchParams.get("status") === "failed",
+  );
+  await statusSelect.click();
+  await page.getByRole("option", { name: "Failed" }).click();
+  await failedRequest;
+  await expect(page.getByText("No Sessions match this filter.")).toBeVisible();
+});

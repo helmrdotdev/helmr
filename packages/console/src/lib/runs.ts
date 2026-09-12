@@ -13,23 +13,33 @@ export type RunStatus =
   | "system_failed";
 
 export type RunFilter = RunStatus | "live" | "all";
+export type RunKind = "task" | "actor";
+export type RunKindFilter = RunKind | "all";
 export type TaskOutput = unknown;
 
-export type Run = {
+// The list projection (`GET runs`) carries only the ledger columns; the
+// snapshot (`GET runs/{id}`) adds cause, deployment, output and failure.
+export type RunListItem = {
   id: string;
   status: RunStatus;
   entrypoint: {
     kind: string;
     id: string;
   };
+  workspace_id: string;
+  session_id?: string;
+  current_attempt_number: number;
+  created_at: string;
+  started_at?: string;
+  terminal_at?: string;
+};
+
+export type Run = RunListItem & {
   deployment: {
     id: string;
     version: string;
   };
-  workspace_id: string;
-  session_id?: string;
   parent_run_id?: string;
-  current_attempt_number: number;
   cause: {
     type: string;
     parent_run_id?: string;
@@ -46,13 +56,10 @@ export type Run = {
     message: string;
     details: Record<string, unknown>;
   };
-  created_at: string;
-  started_at?: string;
-  terminal_at?: string;
 };
 
 export type ListRunsResponse = {
-  runs: Run[];
+  runs: RunListItem[];
   next_cursor?: string;
 };
 
@@ -103,7 +110,9 @@ export type ListRunTelemetryOptions = {
 export type ListRunsOptions = {
   filter?: RunFilter;
   statuses?: RunStatus[];
-  cursor?: string;
+  kind?: RunKindFilter | undefined;
+  sessionID?: string | undefined;
+  cursor?: string | undefined;
   limit?: number;
   projectID: string;
   environmentID: string;
@@ -117,6 +126,10 @@ const LIVE_STATUSES: RunStatus[] = [
   "cancel_requested",
 ];
 
+export function isTerminalRunStatus(status: RunStatus): boolean {
+  return !LIVE_STATUSES.includes(status);
+}
+
 export async function listRuns(options: ListRunsOptions): Promise<ListRunsResponse> {
   const params = new URLSearchParams();
   const statuses =
@@ -127,6 +140,8 @@ export async function listRuns(options: ListRunsOptions): Promise<ListRunsRespon
         ? [options.filter]
         : []);
   for (const status of statuses) params.append("status", status);
+  if (options.kind && options.kind !== "all") params.set("kind", options.kind);
+  if (options.sessionID) params.set("session_id", options.sessionID);
   if (options.cursor) params.set("cursor", options.cursor);
   params.set("limit", String(options.limit ?? 100));
   return request<ListRunsResponse>(
