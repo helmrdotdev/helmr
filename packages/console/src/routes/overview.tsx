@@ -244,7 +244,7 @@ export function Overview() {
                           <tr>
                             <td><span class={ui.muted}>Actor</span></td>
                             <td>
-                              <A href={runHref(row.run.id, projectID(), environmentID())} class="font-medium text-console-text hover:text-console-accent">
+                              <A href={sessionConsolePath(row.run.session_id!, projectID(), environmentID())} class="font-medium text-console-text hover:text-console-accent">
                                 {row.run.entrypoint.id}
                               </A>
                             </td>
@@ -292,7 +292,7 @@ export function Overview() {
                             <td><span class={ui.muted}>{row.run.entrypoint.kind}</span></td>
                             <td><StatusBadge resource="run" status={row.run.status} /></td>
                             <td><RelativeTime value={row.at} /></td>
-                            <td><IDText value={row.run.id} /></td>
+                            <td><IDText value={row.run.id} mode="link" href={runHref(row.run.id, projectID(), environmentID())} /></td>
                           </tr>
                         ) : (
                           <tr>
@@ -328,7 +328,7 @@ export function Overview() {
                     when={inProgressItems().length > 0}
                     fallback={<StatePanel empty="Nothing is running." hint="Queued, running, retrying, and cancelling Runs appear here." />}
                   >
-                    <DataTable columns={["Entrypoint", "Kind", "Status", "Attempt", "Created", { label: "Actions", srOnly: true }]}>
+                    <DataTable columns={["Entrypoint", "Kind", "Status", "Attempt", "Created", "Run", { label: "Actions", srOnly: true }]}>
                       <For each={inProgressItems().slice(0, SECTION_ROWS)}>
                         {(run) => (
                           <tr>
@@ -339,6 +339,7 @@ export function Overview() {
                             <td><StatusBadge resource="run" status={run.status} /></td>
                             <td>{run.current_attempt_number}</td>
                             <td><RelativeTime value={run.created_at} /></td>
+                            <td><IDText value={run.id} mode="link" href={runHref(run.id, projectID(), environmentID())} /></td>
                             <td class={ui.actionsCell}>
                               <Show when={can("runs.manage") && run.status !== "cancel_requested"}>
                                 <button type="button" class={ui.ghostDangerButton} onClick={() => setCancellingRun(run)}>Cancel</button>
