@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/email"
-	resendapi "github.com/resend/resend-go/v3"
+	resendapi "github.com/resend/resend-go/v4"
 )
 
 const httpTimeout = 10 * time.Second
