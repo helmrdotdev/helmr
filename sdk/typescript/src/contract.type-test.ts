@@ -26,6 +26,8 @@ import {
   type TaskInfo,
   type TaskInput,
   type TaskOutput,
+  type ClientSessionRef,
+  type SessionInputPage,
   type SessionRef,
   type TokenCreateResult,
   type TokenCancelRequest,
@@ -230,6 +232,14 @@ export function assertGreenfieldTypes(): void {
   client.sessions.ref(
     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
   ) satisfies SessionRef
+  client.sessions.ref(
+    "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
+  ) satisfies ClientSessionRef
+  client.sessions.ref(
+    "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
+  ).input.list({ after: 0, limit: 10 }) satisfies Promise<SessionInputPage>
+  // @ts-expect-error only the REST client reads the durable Session input log.
+  sessions.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33").input.list()
   tokens.create().then((token) => {
     token satisfies TokenCreateResult & TokenRef
   })

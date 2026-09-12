@@ -166,6 +166,10 @@ SELECT sessions.*,
    AND deployment_definitions.declared_id = sessions.actor_declared_id
  WHERE sessions.environment_id = sqlc.arg(environment_id)
    AND (
+       coalesce(cardinality(sqlc.arg(states)::text[]), 0) = 0
+       OR sessions.state = ANY(sqlc.arg(states)::text[])
+   )
+   AND (
        sqlc.narg(after_created_at)::timestamptz IS NULL
        OR (sessions.created_at, sessions.id) < (
            sqlc.narg(after_created_at)::timestamptz,

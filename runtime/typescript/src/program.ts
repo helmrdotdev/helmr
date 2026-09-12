@@ -2344,6 +2344,7 @@ function parseRuntimeSession(dataJson: string): Session {
     "id",
     "status",
     "updated_at",
+    "workspace_id",
   ]
   const optional = ["current_run_id", "failure", "key"]
   const allowed = new Set([...required, ...optional])

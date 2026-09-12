@@ -3,11 +3,14 @@ import type {
   JsonValue,
   SessionCloseRequest,
   SessionCloseReceipt,
+  SessionInputPage,
+  SessionInputQuery,
   SessionInputRecord,
   SessionInputSendRequest,
   SessionOutputPage,
   SessionOutputQuery,
   SessionRef,
+  SessionStatus,
   Session,
 } from "./contract"
 import { resourceID } from "./internal/id"
@@ -15,6 +18,7 @@ import {
   parseSession,
   parseSessionInputRecord,
   parseSessionOutputRecord,
+  sessionStatus,
 } from "./internal/session"
 import { timestampString } from "./internal/timestamp"
 import type { RequestOptions } from "./request"
@@ -24,15 +28,30 @@ export type SessionListQuery =
   | Readonly<{
       actorId?: never
       key?: never
+      status?: SessionStatus | readonly SessionStatus[]
       cursor?: string
       limit?: number
     }>
   | Readonly<{
       actorId: string
       key: string
+      status?: never
       cursor?: never
       limit?: never
     }>
+
+/**
+ * A Session ref addressed through the REST client. It extends the shared
+ * SessionRef with the durable input log, which only the REST surface reads.
+ */
+export interface ClientSessionRef extends SessionRef {
+  readonly input: SessionRef["input"] & Readonly<{
+    list(
+      query?: SessionInputQuery,
+      options?: RequestOptions,
+    ): Promise<SessionInputPage>
+  }>
+}
 
 export interface ClientSessionsApi {
   retrieve(id: string, options?: RequestOptions): Promise<Session>
@@ -40,7 +59,7 @@ export interface ClientSessionsApi {
     query?: SessionListQuery,
     options?: RequestOptions,
   ): Promise<CursorPage<Session>>
-  ref(id: string): SessionRef
+  ref(id: string): ClientSessionRef
 }
 
 interface SessionTransport {
@@ -89,7 +108,7 @@ export function createClientSessions(
         ...(nextCursor === undefined ? {} : { nextCursor }),
       })
     },
-    ref(id: string): SessionRef {
+    ref(id: string): ClientSessionRef {
       return createSessionRef(resourceID(id, "Session ID"), transport)
     },
   })
@@ -98,20 +117,27 @@ export function createClientSessions(
 export function createSessionRef(
   id: string,
   transport: SessionTransport,
-): SessionRef {
+): ClientSessionRef {
   const sessionID = resourceID(id, "Session ID")
   const basePath = `/v1/sessions/${encodeURIComponent(sessionID)}`
-  const readOutputPage = async (
-    queryInput: SessionOutputQuery,
+  const readRecordPage = async <TRecord>(
+    direction: "inputs" | "outputs",
+    label: string,
+    parseRecord: (value: unknown) => TRecord,
+    queryInput: Readonly<{ after?: number; limit?: number }>,
     options: RequestOptions,
-  ): Promise<SessionOutputPage> => {
+  ): Promise<Readonly<{
+    records: readonly TRecord[]
+    nextAfter: number
+    hasMore: boolean
+  }>> => {
     const query = new URLSearchParams()
     if (queryInput.after !== undefined) {
-      query.set("after", safeSequence(queryInput.after, "Session output after").toString())
+      query.set("after", safeSequence(queryInput.after, `${label} after`).toString())
     }
     if (queryInput.limit !== undefined) {
       if (!Number.isInteger(queryInput.limit) || queryInput.limit < 1 || queryInput.limit > 100) {
-        throw new Error("Session output limit must be an integer in [1,100]")
+        throw new Error(`${label} limit must be an integer in [1,100]`)
       }
       query.set("limit", queryInput.limit.toString())
     }
@@ -119,18 +145,18 @@ export function createSessionRef(
     const response = objectValue(
       await transport.request(
         "GET",
-        `${basePath}/outputs${suffix}`,
+        `${basePath}/${direction}${suffix}`,
         options.signal === undefined ? {} : { signal: options.signal },
       ),
-      "Session output response",
+      `${label} response`,
     )
     if (!Array.isArray(response["records"])) {
-      throw new Error("Session output response.records must be an array")
+      throw new Error(`${label} response.records must be an array`)
     }
     return Object.freeze({
-      records: Object.freeze(response["records"].map(parseSessionOutputRecord)),
-      nextAfter: safeSequence(response["next_after"], "Session output next_after"),
-      hasMore: requiredBoolean(response, "has_more", "Session output response"),
+      records: Object.freeze(response["records"].map(parseRecord)),
+      nextAfter: safeSequence(response["next_after"], `${label} next_after`),
+      hasMore: requiredBoolean(response, "has_more", `${label} response`),
     })
   }
   const output: SessionRef["output"] = Object.freeze({
@@ -138,12 +164,18 @@ export function createSessionRef(
       query: SessionOutputQuery = {},
       options: RequestOptions = {},
     ): Promise<SessionOutputPage> {
-      return readOutputPage(query, options)
+      return readRecordPage("outputs", "Session output", parseSessionOutputRecord, query, options)
     },
   })
   return Object.freeze({
     id: sessionID,
     input: Object.freeze({
+      async list(
+        query: SessionInputQuery = {},
+        options: RequestOptions = {},
+      ): Promise<SessionInputPage> {
+        return readRecordPage("inputs", "Session input", parseSessionInputRecord, query, options)
+      },
       async send(
         input: JsonValue,
         request: SessionInputSendRequest = {},
@@ -199,10 +231,21 @@ function sessionListQuery(queryInput: SessionListQuery): string {
   if (exact && (queryInput.actorId === undefined || queryInput.key === undefined)) {
     throw new Error("Session exact key lookup requires actorId and key")
   }
-  if (exact && (queryInput.cursor !== undefined || queryInput.limit !== undefined)) {
-    throw new Error("Session exact key lookup does not accept cursor or limit")
+  if (
+    exact &&
+    (queryInput.status !== undefined || queryInput.cursor !== undefined || queryInput.limit !== undefined)
+  ) {
+    throw new Error("Session exact key lookup does not accept status, cursor or limit")
   }
   const query = new URLSearchParams()
+  const statuses = queryInput.status === undefined
+    ? []
+    : Array.isArray(queryInput.status)
+    ? queryInput.status
+    : [queryInput.status]
+  for (const status of statuses) {
+    query.append("status", sessionStatus(status, "Session list status"))
+  }
   if (queryInput.actorId !== undefined) {
     validateTaskId(queryInput.actorId)
     query.set("actor_id", queryInput.actorId)

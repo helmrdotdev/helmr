@@ -7,12 +7,14 @@ import type { RequestOptions } from "./request"
 import {
   parseWorkspaceDeleteReceipt,
   parseWorkspaceExecResult,
+  parseWorkspaceOwner,
   parseWorkspace,
   brandWorkspaceAddress,
   type WorkspaceDeleteRequest,
   type WorkspaceDeleteReceipt,
   type WorkspaceExecRequest,
   type WorkspaceExecResult,
+  type WorkspaceOwner,
   type WorkspaceRef,
   type Workspace,
   type WorkspaceStatus,
@@ -24,6 +26,7 @@ export interface WorkspaceListItem {
   readonly sandboxId: string
   readonly deploymentId: string
   readonly status: WorkspaceStatus
+  readonly owner?: WorkspaceOwner
   readonly lastActivityAt: string
   readonly createdAt: string
   readonly updatedAt: string
@@ -105,12 +108,14 @@ function parseWorkspaceListItem(value: unknown): WorkspaceListItem {
   if (status !== "available" && status !== "recovery_required" && status !== "deleting") {
     throw new Error("Workspace list item.status is invalid")
   }
+  const owner = parseWorkspaceOwner(input["owner"], "Workspace list item.owner")
   return Object.freeze({
     id: resourceID(input["id"], "Workspace list item.id"),
     ...(key === undefined ? {} : { key }),
     sandboxId,
     deploymentId: resourceID(input["deployment_id"], "Workspace list item.deployment_id"),
     status,
+    ...(owner === undefined ? {} : { owner }),
     lastActivityAt: workspaceTimestamp(input["last_activity_at"], "last_activity_at"),
     createdAt: workspaceTimestamp(input["created_at"], "created_at"),
     updatedAt: workspaceTimestamp(input["updated_at"], "updated_at"),

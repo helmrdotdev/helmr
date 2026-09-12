@@ -56,6 +56,7 @@ func TestActorReadPostgresProjectsStableStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	if status.ID != result.SessionID.String() ||
+		status.WorkspaceID != fixture.workspaceIDs[0].String() ||
 		status.Status != api.SessionStatusFailed ||
 		status.Failure == nil ||
 		status.Failure.Details.RunID != result.BootRunID.String() ||

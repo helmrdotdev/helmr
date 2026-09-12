@@ -22,6 +22,7 @@ export type {
 } from "./client-actor"
 
 export type {
+  ClientSessionRef,
   SessionListQuery,
 } from "./client-session"
 
@@ -62,6 +63,7 @@ export type {
 } from "./client-secret"
 
 export type {
+  RunEntrypointKind,
   RunListQuery,
   RunLogQuery,
   RunEventQuery,
@@ -112,6 +114,8 @@ export type {
   ActorSessionReceiveOptions,
   ActorSessionReceive,
   SessionInputMetadata,
+  SessionInputPage,
+  SessionInputQuery,
   SessionInputRecord,
   SessionInputSendRequest,
   SessionInputSource,
@@ -205,6 +209,7 @@ export type {
   WorkspaceSecretInfo,
   WorkspaceSecretPlacement,
   Workspace,
+  WorkspaceOwner,
   WorkspaceStatus,
 } from "./workspace"
 

@@ -63,6 +63,7 @@ func (s *Server) listWorkspacesHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		item, err := workspaceListItem(
 			record.ID, record.Key, record.SandboxID, record.DeploymentID, record.State,
+			record.OwnerSessionID, record.OwnerRunID,
 			record.LastActivityAt, record.CreatedAt, record.UpdatedAt,
 		)
 		if err != nil {
@@ -94,6 +95,7 @@ func (s *Server) listWorkspacesHTTP(w http.ResponseWriter, r *http.Request) {
 	for _, row := range rows {
 		item, err := workspaceListItem(
 			row.ID, row.Key, row.SandboxID, row.DeploymentID, row.State,
+			row.OwnerSessionID, row.OwnerRunID,
 			row.LastActivityAt, row.CreatedAt, row.UpdatedAt,
 		)
 		if err != nil {
@@ -122,9 +124,14 @@ func workspaceListItem(
 	sandboxID string,
 	deploymentID pgtype.UUID,
 	state string,
+	ownerSessionID, ownerRunID pgtype.UUID,
 	lastActivityAt, createdAt, updatedAt pgtype.Timestamptz,
 ) (api.WorkspaceListItem, error) {
 	status, err := workspacePublicStatus(state)
+	if err != nil {
+		return api.WorkspaceListItem{}, err
+	}
+	owner, err := workspaceOwner(ownerSessionID, ownerRunID)
 	if err != nil {
 		return api.WorkspaceListItem{}, err
 	}
@@ -135,10 +142,33 @@ func workspaceListItem(
 	}
 	return api.WorkspaceListItem{
 		ID: pgvalue.UUIDString(id), Key: key, SandboxID: sandboxID,
-		DeploymentID: pgvalue.UUIDString(deploymentID), Status: status,
+		DeploymentID: pgvalue.UUIDString(deploymentID), Status: status, Owner: owner,
 		LastActivityAt: pgvalue.Time(lastActivityAt), CreatedAt: pgvalue.Time(createdAt),
 		UpdatedAt: pgvalue.Time(updatedAt),
 	}, nil
+}
+
+// workspaceOwner projects the mutually exclusive owner columns; both unset
+// means the Workspace is unowned.
+func workspaceOwner(ownerSessionID, ownerRunID pgtype.UUID) (*api.WorkspaceOwner, error) {
+	switch {
+	case ownerSessionID.Valid && ownerRunID.Valid:
+		return nil, errors.New("workspace owner projection is ambiguous")
+	case ownerSessionID.Valid:
+		sessionID := pgvalue.UUIDString(ownerSessionID)
+		if err := ids.Validate(sessionID); err != nil {
+			return nil, errors.New("workspace owner Session ID is invalid")
+		}
+		return &api.WorkspaceOwner{SessionID: sessionID}, nil
+	case ownerRunID.Valid:
+		runID := pgvalue.UUIDString(ownerRunID)
+		if err := ids.Validate(runID); err != nil {
+			return nil, errors.New("workspace owner Run ID is invalid")
+		}
+		return &api.WorkspaceOwner{RunID: runID}, nil
+	default:
+		return nil, nil
+	}
 }
 
 func parseWorkspaceListQuery(

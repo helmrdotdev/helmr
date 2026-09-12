@@ -8,7 +8,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -27,15 +29,17 @@ const (
 )
 
 type sessionListCursor struct {
-	ProjectID     string `json:"project_id"`
-	EnvironmentID string `json:"environment_id"`
-	CreatedAt     string `json:"created_at"`
-	SessionID     string `json:"session_id"`
+	ProjectID     string   `json:"project_id"`
+	EnvironmentID string   `json:"environment_id"`
+	Statuses      []string `json:"statuses,omitempty"`
+	CreatedAt     string   `json:"created_at"`
+	SessionID     string   `json:"session_id"`
 }
 
 type parsedSessionListQuery struct {
 	limit          int32
 	cursor         *sessionListCursor
+	statuses       []api.SessionStatus
 	actorID        string
 	key            string
 	exactKeyLookup bool
@@ -45,6 +49,7 @@ type sessionProjectionRow struct {
 	id           pgtype.UUID
 	actorID      string
 	deploymentID pgtype.UUID
+	workspaceID  pgtype.UUID
 	key          pgtype.Text
 	state        string
 	createdAt    pgtype.Timestamptz
@@ -111,6 +116,7 @@ func (s *Server) listSessionsHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := s.db.ListSessionSnapshots(r.Context(), db.ListSessionSnapshotsParams{
 		OrgID: pgvalue.UUID(principal.OrgID), ProjectID: projectID, EnvironmentID: environmentID,
+		States:         sessionStatusStates(query.statuses),
 		AfterCreatedAt: afterCreatedAt, AfterID: afterID, LimitCount: query.limit + 1,
 	})
 	if err != nil {
@@ -133,6 +139,7 @@ func (s *Server) listSessionsHTTP(w http.ResponseWriter, r *http.Request) {
 		last := rows[len(rows)-1]
 		response.NextCursor, err = encodeSessionListCursor(sessionListCursor{
 			ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID,
+			Statuses:  sessionStatusStrings(query.statuses),
 			CreatedAt: last.CreatedAt.Time.UTC().Format(time.RFC3339Nano),
 			SessionID: pgvalue.UUIDString(last.ID),
 		})
@@ -187,6 +194,11 @@ func parseSessionListQuery(rawQuery, projectID, environmentID string) (parsedSes
 	}
 	for name, entries := range values {
 		switch name {
+		case "status":
+			if slices.Contains(entries, "") {
+				return parsedSessionListQuery{}, errors.New(`query parameter "status" must have a non-empty value`)
+			}
+			continue
 		case "cursor", "limit", "actor_id", "key":
 		default:
 			return parsedSessionListQuery{}, fmt.Errorf("query parameter %q is not supported", name)
@@ -201,8 +213,8 @@ func parseSessionListQuery(rawQuery, projectID, environmentID string) (parsedSes
 		return parsedSessionListQuery{}, errors.New("actor_id and key must be provided together")
 	}
 	if hasActorID {
-		if values.Has("cursor") || values.Has("limit") {
-			return parsedSessionListQuery{}, errors.New("cursor and limit are not allowed with actor_id and key")
+		if values.Has("cursor") || values.Has("limit") || values.Has("status") {
+			return parsedSessionListQuery{}, errors.New("cursor, limit and status are not allowed with actor_id and key")
 		}
 		actorID := values.Get("actor_id")
 		key := values.Get("key")
@@ -215,6 +227,11 @@ func parseSessionListQuery(rawQuery, projectID, environmentID string) (parsedSes
 		return parsedSessionListQuery{actorID: actorID, key: key, exactKeyLookup: true}, nil
 	}
 	query := parsedSessionListQuery{limit: sessionListDefaultLimit}
+	statuses, err := parseSessionStatusFilter(values["status"])
+	if err != nil {
+		return parsedSessionListQuery{}, err
+	}
+	query.statuses = statuses
 	if raw := values.Get("limit"); raw != "" {
 		limit, err := strconv.ParseInt(raw, 10, 32)
 		if err != nil || limit < 1 || limit > int64(sessionListMaxLimit) {
@@ -230,6 +247,9 @@ func parseSessionListQuery(rawQuery, projectID, environmentID string) (parsedSes
 		if cursor.ProjectID != projectID || cursor.EnvironmentID != environmentID {
 			return parsedSessionListQuery{}, errors.New("session cursor belongs to another scope")
 		}
+		if !slices.Equal(cursor.Statuses, sessionStatusStrings(statuses)) {
+			return parsedSessionListQuery{}, errors.New("session cursor does not match the status filter")
+		}
 		if _, err := time.Parse(time.RFC3339Nano, cursor.CreatedAt); err != nil {
 			return parsedSessionListQuery{}, errors.New("session cursor is invalid")
 		}
@@ -239,6 +259,35 @@ func parseSessionListQuery(rawQuery, projectID, environmentID string) (parsedSes
 		query.cursor = &cursor
 	}
 	return query, nil
+}
+
+func parseSessionStatusFilter(raw []string) ([]api.SessionStatus, error) {
+	seen := make(map[api.SessionStatus]struct{}, len(raw))
+	statuses := make([]api.SessionStatus, 0, len(raw))
+	for _, entry := range raw {
+		for value := range strings.SplitSeq(entry, ",") {
+			value = strings.TrimSpace(value)
+			if err := api.ValidateSessionStatus(value); err != nil {
+				return nil, err
+			}
+			status := api.SessionStatus(value)
+			if _, ok := seen[status]; ok {
+				continue
+			}
+			seen[status] = struct{}{}
+			statuses = append(statuses, status)
+		}
+	}
+	slices.Sort(statuses)
+	return statuses, nil
+}
+
+func sessionStatusStrings(statuses []api.SessionStatus) []string {
+	values := make([]string, len(statuses))
+	for index, status := range statuses {
+		values[index] = string(status)
+	}
+	return values
 }
 
 func encodeSessionListCursor(cursor sessionListCursor) (string, error) {
@@ -274,23 +323,27 @@ func projectSession(row sessionProjectionRow) (api.Session, error) {
 	if err := ids.Validate(deploymentID); err != nil {
 		return api.Session{}, errors.New("session Deployment ID is invalid")
 	}
+	workspaceID := pgvalue.UUIDString(row.workspaceID)
+	if err := ids.Validate(workspaceID); err != nil {
+		return api.Session{}, errors.New("session Workspace ID is invalid")
+	}
 	return api.Session{
-		ID: status.id, ActorID: row.actorID, DeploymentID: deploymentID,
+		ID: status.id, ActorID: row.actorID, DeploymentID: deploymentID, WorkspaceID: workspaceID,
 		Key: status.key, Status: status.status, CreatedAt: status.createdAt,
 		UpdatedAt: status.updatedAt, CurrentRunID: status.currentRunID, Failure: status.failure,
 	}, nil
 }
 
 func sessionProjectionFromGetRow(row db.GetSessionSnapshotRow) sessionProjectionRow {
-	return sessionProjectionRow{id: row.ID, actorID: row.ActorDeclaredID, deploymentID: row.DeploymentID, key: row.Key, state: row.State, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt, currentRunID: row.CurrentRunID, failure: row.Failure, failureRunID: row.FailureRunID}
+	return sessionProjectionRow{id: row.ID, actorID: row.ActorDeclaredID, deploymentID: row.DeploymentID, workspaceID: row.WorkspaceID, key: row.Key, state: row.State, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt, currentRunID: row.CurrentRunID, failure: row.Failure, failureRunID: row.FailureRunID}
 }
 
 func sessionProjectionFromKeyRow(row db.GetSessionSnapshotByKeyRow) sessionProjectionRow {
-	return sessionProjectionRow{id: row.ID, actorID: row.ActorDeclaredID, deploymentID: row.DeploymentID, key: row.Key, state: row.State, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt, currentRunID: row.CurrentRunID, failure: row.Failure, failureRunID: row.FailureRunID}
+	return sessionProjectionRow{id: row.ID, actorID: row.ActorDeclaredID, deploymentID: row.DeploymentID, workspaceID: row.WorkspaceID, key: row.Key, state: row.State, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt, currentRunID: row.CurrentRunID, failure: row.Failure, failureRunID: row.FailureRunID}
 }
 
 func sessionProjectionFromListRow(row db.ListSessionSnapshotsRow) sessionProjectionRow {
-	return sessionProjectionRow{id: row.ID, actorID: row.ActorDeclaredID, deploymentID: row.DeploymentID, key: row.Key, state: row.State, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt, currentRunID: row.CurrentRunID, failure: row.Failure, failureRunID: row.FailureRunID}
+	return sessionProjectionRow{id: row.ID, actorID: row.ActorDeclaredID, deploymentID: row.DeploymentID, workspaceID: row.WorkspaceID, key: row.Key, state: row.State, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt, currentRunID: row.CurrentRunID, failure: row.Failure, failureRunID: row.FailureRunID}
 }
 
 func (s *Server) writeSessionReadAuthorityError(w http.ResponseWriter, err error) {

@@ -251,7 +251,7 @@ func actorOutputReadCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			page, err := controlPlane.ReadSessionOutputs(cmd.Context(), args[0], client.ActorOutputReadOptions{
+			page, err := controlPlane.ReadSessionOutputs(cmd.Context(), args[0], client.SessionRecordReadOptions{
 				After: afterPointer, Limit: limit, EnvironmentScopeOptions: scope,
 			})
 			if err != nil {

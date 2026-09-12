@@ -61,12 +61,21 @@ export interface WorkspaceCreateRequest {
 export type EncodedWorkspaceSecret = Readonly<{ name: string }> &
   WorkspaceSecretPlacement
 
+/**
+ * The Session or Run that currently owns a Workspace. Absent on an unowned
+ * Workspace.
+ */
+export type WorkspaceOwner =
+  | Readonly<{ sessionId: string; runId?: never }>
+  | Readonly<{ runId: string; sessionId?: never }>
+
 export interface Workspace {
   readonly id: string
   readonly key?: string
   readonly sandboxId: string
   readonly deploymentId: string
   readonly status: WorkspaceStatus
+  readonly owner?: WorkspaceOwner
   readonly secrets: readonly WorkspaceSecretInfo[]
   readonly lastActivityAt: string
   readonly createdAt: string
@@ -367,17 +376,34 @@ export function parseWorkspace(value: unknown): Workspace {
   if (!Array.isArray(input["secrets"])) {
     throw new Error("Workspace response.secrets must be an array")
   }
+  const owner = parseWorkspaceOwner(input["owner"], "Workspace response.owner")
   return Object.freeze({
     id: resourceID(input["id"], "Workspace response.id"),
     ...(key === undefined ? {} : { key }),
     sandboxId,
     deploymentId: resourceID(input["deployment_id"], "Workspace response.deployment_id"),
     status,
+    ...(owner === undefined ? {} : { owner }),
     secrets: Object.freeze(input["secrets"].map(parseWorkspaceSecret)),
     lastActivityAt: workspaceTimestamp(input["last_activity_at"], "last_activity_at"),
     createdAt: workspaceTimestamp(input["created_at"], "created_at"),
     updatedAt: workspaceTimestamp(input["updated_at"], "updated_at"),
   })
+}
+
+export function parseWorkspaceOwner(value: unknown, label: string): WorkspaceOwner | undefined {
+  if (value === undefined) return undefined
+  const input = workspaceObject(value, label)
+  const hasSession = input["session_id"] !== undefined
+  const hasRun = input["run_id"] !== undefined
+  if (hasSession === hasRun) {
+    throw new Error(`${label} must name exactly one of session_id or run_id`)
+  }
+  return Object.freeze(
+    hasSession
+      ? { sessionId: resourceID(input["session_id"], `${label}.session_id`) }
+      : { runId: resourceID(input["run_id"], `${label}.run_id`) },
+  )
 }
 
 function parseWorkspaceSecret(value: unknown): WorkspaceSecretInfo {

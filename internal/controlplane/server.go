@@ -510,6 +510,7 @@ func (s *Server) mountSessionRoutes(r chi.Router) {
 		})
 		r.Get("/projects/{projectID}/environments/{environmentID}/sessions", s.listSessionsHTTP)
 		r.Get("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}", s.getSessionHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/inputs", s.readSessionInputHTTP)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
@@ -590,6 +591,7 @@ func (s *Server) mountDeveloperRoutes(r chi.Router) {
 		})
 		r.Get("/sessions", s.listSessionsHTTP)
 		r.Get("/sessions/{sessionID}", s.getSessionHTTP)
+		r.Get("/sessions/{sessionID}/inputs", s.readSessionInputHTTP)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {

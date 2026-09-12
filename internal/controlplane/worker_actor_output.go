@@ -235,7 +235,7 @@ func (s *Server) appendActorOutput(
 			response, err = projectAppendedActorOutput(ctx, work.q, record)
 			return err
 		}
-		if authority.actor.NextOutputSequence > maxSessionOutputSequence {
+		if authority.actor.NextOutputSequence > maxSessionRecordSequence {
 			return errActorSequenceExhausted
 		}
 
@@ -288,7 +288,7 @@ func actorOutputRecordFromReceipt(
 		return db.SessionRecord{}, err
 	}
 	recordID, err := ids.Parse(receipt.SessionRecordID)
-	if err != nil || recordID == uuid.Nil() || receipt.Sequence <= 0 || receipt.Sequence > maxSessionOutputSequence {
+	if err != nil || recordID == uuid.Nil() || receipt.Sequence <= 0 || receipt.Sequence > maxSessionRecordSequence {
 		return db.SessionRecord{}, errActorOutputAppendConflict
 	}
 	record, err := q.GetActorOutputRecordByID(ctx, db.GetActorOutputRecordByIDParams{
@@ -331,7 +331,7 @@ func projectAppendedActorOutput(
 		!record.ProducerAttemptNumber.Valid ||
 		record.ProducerAttemptNumber.Int32 < 1 ||
 		record.Sequence <= 0 ||
-		record.Sequence > maxSessionOutputSequence ||
+		record.Sequence > maxSessionRecordSequence ||
 		!json.Valid(record.Data) ||
 		record.ContentType == "" ||
 		!record.CreatedAt.Valid {

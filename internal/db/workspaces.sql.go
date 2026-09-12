@@ -354,6 +354,8 @@ SELECT workspaces.id,
        deployment_definitions.declared_id AS sandbox_id,
        deployment_definitions.deployment_id,
        workspaces.state,
+       workspaces.owner_session_id,
+       workspaces.owner_run_id,
        workspaces.last_activity_at,
        workspaces.created_at,
        workspaces.updated_at
@@ -383,6 +385,8 @@ type GetWorkspaceListItemByKeyRow struct {
 	SandboxID      string             `json:"sandbox_id"`
 	DeploymentID   pgtype.UUID        `json:"deployment_id"`
 	State          string             `json:"state"`
+	OwnerSessionID pgtype.UUID        `json:"owner_session_id"`
+	OwnerRunID     pgtype.UUID        `json:"owner_run_id"`
 	LastActivityAt pgtype.Timestamptz `json:"last_activity_at"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
@@ -402,6 +406,8 @@ func (q *Queries) GetWorkspaceListItemByKey(ctx context.Context, arg GetWorkspac
 		&i.SandboxID,
 		&i.DeploymentID,
 		&i.State,
+		&i.OwnerSessionID,
+		&i.OwnerRunID,
 		&i.LastActivityAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -415,6 +421,8 @@ SELECT workspaces.id,
        deployment_definitions.declared_id AS sandbox_id,
        deployment_definitions.deployment_id,
        workspaces.state,
+       workspaces.owner_session_id,
+       workspaces.owner_run_id,
        workspaces.last_activity_at,
        workspaces.created_at,
        workspaces.updated_at
@@ -452,6 +460,8 @@ type ListWorkspaceListItemsRow struct {
 	SandboxID      string             `json:"sandbox_id"`
 	DeploymentID   pgtype.UUID        `json:"deployment_id"`
 	State          string             `json:"state"`
+	OwnerSessionID pgtype.UUID        `json:"owner_session_id"`
+	OwnerRunID     pgtype.UUID        `json:"owner_run_id"`
 	LastActivityAt pgtype.Timestamptz `json:"last_activity_at"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
@@ -480,6 +490,8 @@ func (q *Queries) ListWorkspaceListItems(ctx context.Context, arg ListWorkspaceL
 			&i.SandboxID,
 			&i.DeploymentID,
 			&i.State,
+			&i.OwnerSessionID,
+			&i.OwnerRunID,
 			&i.LastActivityAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,

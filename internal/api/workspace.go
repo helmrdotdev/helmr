@@ -28,12 +28,20 @@ const (
 	WorkspaceStatusDeleting         WorkspaceStatus = "deleting"
 )
 
+// WorkspaceOwner names the Session or Run that currently owns a Workspace.
+// Exactly one of SessionID and RunID is set; an unowned Workspace has no owner.
+type WorkspaceOwner struct {
+	SessionID string `json:"session_id,omitempty"`
+	RunID     string `json:"run_id,omitempty"`
+}
+
 type WorkspaceSnapshot struct {
 	ID             string            `json:"id"`
 	Key            *string           `json:"key,omitempty"`
 	SandboxID      string            `json:"sandbox_id"`
 	DeploymentID   string            `json:"deployment_id"`
 	Status         WorkspaceStatus   `json:"status"`
+	Owner          *WorkspaceOwner   `json:"owner,omitempty"`
 	Secrets        []WorkspaceSecret `json:"secrets"`
 	LastActivityAt time.Time         `json:"last_activity_at"`
 	CreatedAt      time.Time         `json:"created_at"`
@@ -46,6 +54,7 @@ type WorkspaceListItem struct {
 	SandboxID      string          `json:"sandbox_id"`
 	DeploymentID   string          `json:"deployment_id"`
 	Status         WorkspaceStatus `json:"status"`
+	Owner          *WorkspaceOwner `json:"owner,omitempty"`
 	LastActivityAt time.Time       `json:"last_activity_at"`
 	CreatedAt      time.Time       `json:"created_at"`
 	UpdatedAt      time.Time       `json:"updated_at"`

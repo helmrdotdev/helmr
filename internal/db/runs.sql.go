@@ -1876,24 +1876,34 @@ SELECT runs.id,
        OR runs.status = ANY($4::text[])
    )
    AND (
-       $5::timestamptz IS NULL
+       coalesce(cardinality($5::text[]), 0) = 0
+       OR runs.entrypoint_kind = ANY($5::text[])
+   )
+   AND (
+       $6::uuid IS NULL
+       OR runs.session_id = $6::uuid
+   )
+   AND (
+       $7::timestamptz IS NULL
        OR (runs.created_at, runs.id) < (
-           $5::timestamptz,
-           $6::uuid
+           $7::timestamptz,
+           $8::uuid
        )
    )
  ORDER BY runs.created_at DESC, runs.id DESC
- LIMIT $7
+ LIMIT $9
 `
 
 type ListRunListItemsParams struct {
-	OrgID          pgtype.UUID        `json:"org_id"`
-	ProjectID      pgtype.UUID        `json:"project_id"`
-	EnvironmentID  pgtype.UUID        `json:"environment_id"`
-	Statuses       []string           `json:"statuses"`
-	AfterCreatedAt pgtype.Timestamptz `json:"after_created_at"`
-	AfterID        pgtype.UUID        `json:"after_id"`
-	LimitCount     int32              `json:"limit_count"`
+	OrgID           pgtype.UUID        `json:"org_id"`
+	ProjectID       pgtype.UUID        `json:"project_id"`
+	EnvironmentID   pgtype.UUID        `json:"environment_id"`
+	Statuses        []string           `json:"statuses"`
+	EntrypointKinds []string           `json:"entrypoint_kinds"`
+	SessionID       pgtype.UUID        `json:"session_id"`
+	AfterCreatedAt  pgtype.Timestamptz `json:"after_created_at"`
+	AfterID         pgtype.UUID        `json:"after_id"`
+	LimitCount      int32              `json:"limit_count"`
 }
 
 type ListRunListItemsRow struct {
@@ -1915,6 +1925,8 @@ func (q *Queries) ListRunListItems(ctx context.Context, arg ListRunListItemsPara
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.Statuses,
+		arg.EntrypointKinds,
+		arg.SessionID,
 		arg.AfterCreatedAt,
 		arg.AfterID,
 		arg.LimitCount,

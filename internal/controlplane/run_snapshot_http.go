@@ -34,6 +34,8 @@ type runListCursor struct {
 	ProjectID     string   `json:"project_id"`
 	EnvironmentID string   `json:"environment_id"`
 	Statuses      []string `json:"statuses"`
+	Kinds         []string `json:"kinds,omitempty"`
+	SessionID     string   `json:"session_id,omitempty"`
 	CreatedAt     string   `json:"created_at"`
 	RunID         string   `json:"run_id"`
 }
@@ -171,6 +173,16 @@ func (s *Server) listRunSnapshotsHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(codedError{code: "invalid_run_list", message: err.Error()}))
 		return
 	}
+	kinds, err := parseRunKindFilter(r)
+	if err != nil {
+		writeError(w, badRequest(codedError{code: "invalid_run_list", message: err.Error()}))
+		return
+	}
+	sessionID, err := parseRunSessionFilter(r)
+	if err != nil {
+		writeError(w, badRequest(codedError{code: "invalid_run_list", message: err.Error()}))
+		return
+	}
 	limit, err := parseRunListLimit(r)
 	if err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_run_list", message: err.Error()}))
@@ -179,7 +191,9 @@ func (s *Server) listRunSnapshotsHTTP(w http.ResponseWriter, r *http.Request) {
 	var afterCreatedAt pgtype.Timestamptz
 	var afterID pgtype.UUID
 	if raw := strings.TrimSpace(r.URL.Query().Get("cursor")); raw != "" {
-		cursor, err := parseRunListCursor(raw, scope.ProjectID, scope.EnvironmentID, statuses)
+		cursor, err := parseRunListCursor(
+			raw, scope.ProjectID, scope.EnvironmentID, statuses, kinds, pgvalue.UUIDString(sessionID),
+		)
 		if err != nil {
 			writeError(w, badRequest(codedError{code: "invalid_run_cursor", message: err.Error()}))
 			return
@@ -189,8 +203,8 @@ func (s *Server) listRunSnapshotsHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := s.db.ListRunListItems(r.Context(), db.ListRunListItemsParams{
 		OrgID: pgvalue.UUID(scope.OrgID), ProjectID: projectID, EnvironmentID: environmentID,
-		Statuses: statuses, AfterCreatedAt: afterCreatedAt, AfterID: afterID,
-		LimitCount: limit + 1,
+		Statuses: statuses, EntrypointKinds: kinds, SessionID: sessionID,
+		AfterCreatedAt: afterCreatedAt, AfterID: afterID, LimitCount: limit + 1,
 	})
 	if err != nil {
 		s.writeRunReadAuthorityError(w)
@@ -214,8 +228,9 @@ func (s *Server) listRunSnapshotsHTTP(w http.ResponseWriter, r *http.Request) {
 		last := rows[len(rows)-1]
 		nextCursor, err = encodeRunListCursor(runListCursor{
 			ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID,
-			Statuses: runStatusStrings(statuses), CreatedAt: last.CreatedAt.Time.UTC().Format(time.RFC3339Nano),
-			RunID: pgvalue.UUIDString(last.ID),
+			Statuses: runStatusStrings(statuses), Kinds: kinds, SessionID: pgvalue.UUIDString(sessionID),
+			CreatedAt: last.CreatedAt.Time.UTC().Format(time.RFC3339Nano),
+			RunID:     pgvalue.UUIDString(last.ID),
 		})
 		if err != nil {
 			s.writeRunReadAuthorityError(w)
@@ -300,12 +315,12 @@ func validateRunListQuery(r *http.Request) error {
 	query := r.URL.Query()
 	for name := range query {
 		switch name {
-		case "status", "cursor", "limit":
+		case "status", "kind", "session_id", "cursor", "limit":
 		default:
 			return fmt.Errorf("query parameter %q is not supported", name)
 		}
 	}
-	for _, name := range []string{"cursor", "limit"} {
+	for _, name := range []string{"session_id", "cursor", "limit"} {
 		if len(query[name]) > 1 {
 			return fmt.Errorf("%s must not be repeated", name)
 		}
@@ -365,6 +380,42 @@ func runStatusFilter(raw string) (db.RunStatus, bool) {
 	}
 }
 
+// parseRunKindFilter returns the sorted, de-duplicated entrypoint kinds from
+// repeatable or comma-separated kind parameters; nil means no kind filter.
+func parseRunKindFilter(r *http.Request) ([]string, error) {
+	var values []string
+	for _, raw := range r.URL.Query()["kind"] {
+		values = append(values, strings.Split(raw, ",")...)
+	}
+	seen := make(map[string]struct{}, len(values))
+	kinds := make([]string, 0, len(values))
+	for _, raw := range values {
+		kind := strings.TrimSpace(raw)
+		if kind != "task" && kind != "actor" {
+			return nil, fmt.Errorf("kind %q is invalid", raw)
+		}
+		if _, ok := seen[kind]; ok {
+			continue
+		}
+		seen[kind] = struct{}{}
+		kinds = append(kinds, kind)
+	}
+	slices.Sort(kinds)
+	return kinds, nil
+}
+
+func parseRunSessionFilter(r *http.Request) (pgtype.UUID, error) {
+	raw := strings.TrimSpace(r.URL.Query().Get("session_id"))
+	if raw == "" {
+		return pgtype.UUID{}, nil
+	}
+	sessionID, err := ids.Parse(raw)
+	if err != nil {
+		return pgtype.UUID{}, fmt.Errorf("session_id %q is invalid", raw)
+	}
+	return pgvalue.UUID(sessionID), nil
+}
+
 func parseRunListLimit(r *http.Request) (int32, error) {
 	raw := strings.TrimSpace(r.URL.Query().Get("limit"))
 	if raw == "" {
@@ -395,6 +446,8 @@ func parseRunListCursor(
 	projectID string,
 	environmentID string,
 	statuses []db.RunStatus,
+	kinds []string,
+	sessionID string,
 ) (parsedRunListCursor, error) {
 	payload, err := base64.RawURLEncoding.DecodeString(raw)
 	if err != nil {
@@ -411,6 +464,12 @@ func parseRunListCursor(
 	}
 	if !slices.Equal(cursor.Statuses, runStatusStrings(statuses)) {
 		return parsedRunListCursor{}, errors.New("run cursor does not match the status filter")
+	}
+	if !slices.Equal(cursor.Kinds, kinds) {
+		return parsedRunListCursor{}, errors.New("run cursor does not match the kind filter")
+	}
+	if cursor.SessionID != sessionID {
+		return parsedRunListCursor{}, errors.New("run cursor does not match the session_id filter")
 	}
 	createdAt, err := time.Parse(time.RFC3339Nano, cursor.CreatedAt)
 	if err != nil {

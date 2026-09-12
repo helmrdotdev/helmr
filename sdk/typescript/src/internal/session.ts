@@ -34,6 +34,7 @@ export function parseSession(value: unknown): Session {
     id: resourceID(input["id"], "Session response.id"),
     actorId,
     deploymentId: resourceID(input["deployment_id"], "Session response.deployment_id"),
+    workspaceId: resourceID(input["workspace_id"], "Session response.workspace_id"),
     ...(input["key"] === undefined
       ? {}
       : { key: requiredString(input, "key", "Session response") }),
@@ -123,9 +124,12 @@ function parseSessionFailure(value: unknown): SessionFailure {
   })
 }
 
-function sessionStatus(value: unknown): SessionStatus {
+export function sessionStatus(
+  value: unknown,
+  label = "Session response.status",
+): SessionStatus {
   if (value !== "open" && value !== "closed" && value !== "cancelled" && value !== "failed") {
-    throw new Error("Session response.status is invalid")
+    throw new Error(`${label} is invalid`)
   }
   return value
 }

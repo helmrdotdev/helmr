@@ -100,6 +100,20 @@ func projectSessionStatus(record sessionReadRecord) (sessionStatusProjection, er
 	return result, nil
 }
 
+// sessionStatusStates lists the stored Session states that project to the
+// given public statuses. Public open covers stored open and closing.
+func sessionStatusStates(statuses []api.SessionStatus) []string {
+	states := make([]string, 0, len(statuses)+1)
+	for _, status := range statuses {
+		if status == api.SessionStatusOpen {
+			states = append(states, "open", "closing")
+			continue
+		}
+		states = append(states, string(status))
+	}
+	return states
+}
+
 func sessionStatus(state string) (api.SessionStatus, error) {
 	switch state {
 	case "open", "closing":

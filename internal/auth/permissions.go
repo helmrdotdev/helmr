@@ -32,6 +32,34 @@ const (
 	PermissionTasksDeploy         Permission = "tasks.deploy"
 )
 
+// AllPermissions lists every Permission in declaration order. Callers that
+// advertise or enumerate permissions iterate this list instead of repeating
+// the constants.
+func AllPermissions() []Permission {
+	return []Permission{
+		PermissionAPIKeysManage,
+		PermissionMembersManage,
+		PermissionProjectsManage,
+		PermissionRunsCreate,
+		PermissionRunsRead,
+		PermissionRunsManage,
+		PermissionSessionsRead,
+		PermissionActorsStart,
+		PermissionSessionsInputSend,
+		PermissionSessionsClose,
+		PermissionTokensCreate,
+		PermissionTokensRead,
+		PermissionTokensComplete,
+		PermissionTokensCancel,
+		PermissionWorkspacesCreate,
+		PermissionWorkspacesRead,
+		PermissionWorkspacesDelete,
+		PermissionWorkspaceExecCreate,
+		PermissionSecretsWrite,
+		PermissionTasksDeploy,
+	}
+}
+
 type Scope struct {
 	OrgID         uuid.UUID
 	ProjectID     string

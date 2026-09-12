@@ -137,14 +137,18 @@ export interface TaskPage extends CursorPage<TaskListItem> {
 
 export interface RunListQuery {
   readonly status?: RunStatus | readonly RunStatus[]
+  readonly kind?: RunEntrypointKind | readonly RunEntrypointKind[]
+  readonly sessionId?: string
   readonly cursor?: string
   readonly limit?: number
 }
 
+export type RunEntrypointKind = "task" | "actor"
+
 export interface RunListItem {
   readonly id: string
   readonly status: RunStatus
-  readonly entrypoint: Readonly<{ kind: "task" | "actor"; id: string }>
+  readonly entrypoint: Readonly<{ kind: RunEntrypointKind; id: string }>
   readonly workspaceId: string
   readonly sessionId?: string
   readonly currentAttemptNumber: number
@@ -394,6 +398,20 @@ class ClientRuns implements ClientRunsApi {
       ? queryInput.status
       : [queryInput.status]
     for (const status of statuses) query.append("status", runStatus(status))
+    const kinds = queryInput.kind === undefined
+      ? []
+      : Array.isArray(queryInput.kind)
+      ? queryInput.kind
+      : [queryInput.kind]
+    for (const kind of kinds) {
+      if (kind !== "task" && kind !== "actor") {
+        throw new Error("Run list kind is invalid")
+      }
+      query.append("kind", kind)
+    }
+    if (queryInput.sessionId !== undefined) {
+      query.set("session_id", resourceID(queryInput.sessionId, "Run list Session ID"))
+    }
     if (queryInput.cursor !== undefined) {
       if (queryInput.cursor.length === 0) throw new Error("Run cursor is required")
       query.set("cursor", queryInput.cursor)

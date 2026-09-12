@@ -58,7 +58,7 @@ func TestParseSessionOutputPageOptionsRejectsClosedQueryViolations(t *testing.T)
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := parseSessionOutputPageOptions(
+			_, err := parseSessionRecordPageOptions(
 				httptest.NewRequest("GET", "/?"+test.rawQuery, nil),
 			)
 			if err == nil {
@@ -111,29 +111,29 @@ func TestAuthorizeActorOutputReadBeforeLookup(t *testing.T) {
 		auth.RoleViewer,
 	} {
 		t.Run(string(role), func(t *testing.T) {
-			if err := authorizeSessionOutputReadBeforeLookup(auth.Actor{
+			if err := authorizeSessionRecordReadBeforeLookup(auth.Actor{
 				Kind: auth.ActorKindSession,
 				Role: role,
-			}); err != nil {
+			}, "session_output_read_authority_unavailable"); err != nil {
 				t.Fatal(err)
 			}
 		})
 	}
-	if err := authorizeSessionOutputReadBeforeLookup(auth.Actor{
+	if err := authorizeSessionRecordReadBeforeLookup(auth.Actor{
 		Kind:          auth.ActorKindAPIKey,
 		Role:          auth.RoleDeveloper,
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		Permissions:   []auth.Permission{auth.PermissionSessionsRead},
-	}); err != nil {
+	}, "session_output_read_authority_unavailable"); err != nil {
 		t.Fatal(err)
 	}
-	err := authorizeSessionOutputReadBeforeLookup(auth.Actor{
+	err := authorizeSessionRecordReadBeforeLookup(auth.Actor{
 		Kind:          auth.ActorKindAPIKey,
 		Role:          auth.RoleDeveloper,
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
-	})
+	}, "session_output_read_authority_unavailable")
 	var coder errorCoder
 	if !errors.As(err, &coder) || coder.ErrorCode() != "permission_required" {
 		t.Fatalf("error = %v", err)

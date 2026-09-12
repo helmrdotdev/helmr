@@ -91,6 +91,12 @@ type SessionInput struct {
 	CreatedAt time.Time          `json:"created_at"`
 }
 
+type SessionInputPage struct {
+	Records   []SessionInput `json:"records"`
+	NextAfter int64          `json:"next_after"`
+	HasMore   bool           `json:"has_more"`
+}
+
 type CloseSessionRequest struct {
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
 }
@@ -123,6 +129,7 @@ type Session struct {
 	ID           string          `json:"id"`
 	ActorID      string          `json:"actor_id"`
 	DeploymentID string          `json:"deployment_id"`
+	WorkspaceID  string          `json:"workspace_id"`
 	Key          *string         `json:"key,omitempty"`
 	Status       SessionStatus   `json:"status"`
 	CreatedAt    time.Time       `json:"created_at"`
