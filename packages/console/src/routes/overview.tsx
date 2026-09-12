@@ -229,7 +229,7 @@ export function Overview() {
   }));
   const failedRuns = createQuery(() => ({
     queryKey: ["runs", "overview", "failed", projectID(), environmentID()],
-    queryFn: () => listRuns({ ...resourceScope(), statuses: ["failed", "system_failed"], limit: SECTION_ROWS }),
+    queryFn: () => listRuns({ ...resourceScope(), statuses: ["failed", "system_failed"], limit: 100 }),
     enabled: enabled() && hasDeployment(),
     retry: false,
     refetchInterval: 5_000,
@@ -377,7 +377,7 @@ export function Overview() {
                           </tr>
                         </thead>
                         <tbody>
-                          <For each={failedItems()}>
+                          <For each={failedItems().slice(0, SECTION_ROWS)}>
                             {(run) => (
                               <tr>
                                 <td>
@@ -395,6 +395,7 @@ export function Overview() {
                         </tbody>
                       </table>
                     </div>
+                    <MoreRows total={failedItems().length} />
                   </Show>
                 </Show>
               </Section>
