@@ -3656,17 +3656,30 @@ function parseWorkspace(value) {
   if (!Array.isArray(input["secrets"])) {
     throw new Error("Workspace response.secrets must be an array");
   }
+  const owner = parseWorkspaceOwner(input["owner"], "Workspace response.owner");
   return Object.freeze({
     id: resourceID(input["id"], "Workspace response.id"),
     ...key === undefined ? {} : { key },
     sandboxId,
     deploymentId: resourceID(input["deployment_id"], "Workspace response.deployment_id"),
     status,
+    ...owner === undefined ? {} : { owner },
     secrets: Object.freeze(input["secrets"].map(parseWorkspaceSecret)),
     lastActivityAt: workspaceTimestamp(input["last_activity_at"], "last_activity_at"),
     createdAt: workspaceTimestamp(input["created_at"], "created_at"),
     updatedAt: workspaceTimestamp(input["updated_at"], "updated_at")
   });
+}
+function parseWorkspaceOwner(value, label) {
+  if (value === undefined)
+    return;
+  const input = workspaceObject(value, label);
+  const hasSession = input["session_id"] !== undefined;
+  const hasRun = input["run_id"] !== undefined;
+  if (hasSession === hasRun) {
+    throw new Error(`${label} must name exactly one of session_id or run_id`);
+  }
+  return Object.freeze(hasSession ? { sessionId: resourceID(input["session_id"], `${label}.session_id`) } : { runId: resourceID(input["run_id"], `${label}.run_id`) });
 }
 function parseWorkspaceSecret(value) {
   const input = workspaceObject(value, "Workspace Secret");
@@ -3813,6 +3826,7 @@ function parseSession(value) {
     id: resourceID(input["id"], "Session response.id"),
     actorId,
     deploymentId: resourceID(input["deployment_id"], "Session response.deployment_id"),
+    workspaceId: resourceID(input["workspace_id"], "Session response.workspace_id"),
     ...input["key"] === undefined ? {} : { key: requiredString(input, "key", "Session response") },
     status,
     createdAt: timestampString(input["created_at"], "Session response.created_at"),
@@ -5414,7 +5428,8 @@ function parseRuntimeSession(dataJson) {
     "deployment_id",
     "id",
     "status",
-    "updated_at"
+    "updated_at",
+    "workspace_id"
   ];
   const optional = ["current_run_id", "failure", "key"];
   const allowed = new Set([...required, ...optional]);
