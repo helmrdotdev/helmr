@@ -730,6 +730,7 @@ func (c *Client) CancelRun(ctx context.Context, id string, opts ...RunScopeOptio
 
 type ListRunsOptions struct {
 	Statuses      []string
+	Kinds         []string
 	SessionID     string
 	Cursor        string
 	Limit         int32
@@ -782,6 +783,13 @@ func (c *Client) ListRuns(ctx context.Context, opts ...ListRunsOptions) (api.Lis
 			if status = strings.TrimSpace(status); status != "" {
 				values.Add("status", status)
 			}
+		}
+		for _, kind := range opts[0].Kinds {
+			kind = strings.TrimSpace(kind)
+			if kind != "task" && kind != "actor" {
+				return api.ListRunsResponse{}, fmt.Errorf("run list kind %q is invalid", kind)
+			}
+			values.Add("kind", kind)
 		}
 		if sessionID := strings.TrimSpace(opts[0].SessionID); sessionID != "" {
 			if err := ids.Validate(sessionID); err != nil {

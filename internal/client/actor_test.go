@@ -300,6 +300,9 @@ func TestSessionClientsValidateBeforeTransport(t *testing.T) {
 	if _, err := client.ListRuns(context.Background(), ListRunsOptions{SessionID: "not-a-session"}); err == nil {
 		t.Fatal("invalid run list Session ID was accepted")
 	}
+	if _, err := client.ListRuns(context.Background(), ListRunsOptions{Kinds: []string{"schedule"}}); err == nil {
+		t.Fatal("invalid run list kind was accepted")
+	}
 	if requests != 0 {
 		t.Fatalf("transport requests = %d", requests)
 	}

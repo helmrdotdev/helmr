@@ -63,6 +63,7 @@ export type {
 } from "./client-secret"
 
 export type {
+  RunEntrypointKind,
   RunListQuery,
   RunLogQuery,
   RunEventQuery,

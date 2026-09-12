@@ -648,6 +648,10 @@ SELECT runs.id,
        OR runs.status = ANY(sqlc.arg(statuses)::text[])
    )
    AND (
+       coalesce(cardinality(sqlc.arg(entrypoint_kinds)::text[]), 0) = 0
+       OR runs.entrypoint_kind = ANY(sqlc.arg(entrypoint_kinds)::text[])
+   )
+   AND (
        sqlc.narg(session_id)::uuid IS NULL
        OR runs.session_id = sqlc.narg(session_id)::uuid
    )

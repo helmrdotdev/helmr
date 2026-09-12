@@ -19,7 +19,7 @@ import (
 )
 
 func TestRunListPostgresFiltersBySession(t *testing.T) {
-	fixture := newActorStartPostgresFixture(t, 2)
+	fixture := newActorStartPostgresFixture(t, 3)
 	firstKey, secondKey := "runs:first", "runs:second"
 	first, err := fixture.server.startActor(t.Context(), fixture.request(0, &firstKey, "runs-first"))
 	if err != nil {
@@ -60,6 +60,16 @@ func TestRunListPostgresFiltersBySession(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	task, err := fixture.server.startTask(t.Context(), taskStartRequest{
+		OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID,
+		TaskDeclaredID: "resize-image", PayloadPresent: true,
+		Payload:     json.RawMessage(`{"imageId":"image-1"}`),
+		WorkspaceID: fixture.workspaceIDs[2], IdempotencyKey: "runs-task",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	principal := auth.Actor{
 		OrgID: fixture.orgID, Kind: auth.ActorKindAPIKey, Role: auth.RoleDeveloper,
 		ProjectID: fixture.projectID.String(), EnvironmentID: fixture.environmentID.String(),
@@ -70,9 +80,63 @@ func TestRunListPostgresFiltersBySession(t *testing.T) {
 
 	all := listRunsPostgresHTTP(t, fixture, principal, "/v1/runs")
 	if runListIDs(all) != strings.Join([]string{
-		continuationID.String(), second.BootRunID.String(), first.BootRunID.String(),
+		task.RunID.String(), continuationID.String(), second.BootRunID.String(), first.BootRunID.String(),
 	}, ",") || all.NextCursor != "" {
 		t.Fatalf("unfiltered runs = %+v", all)
+	}
+
+	taskRuns := listRunsPostgresHTTP(t, fixture, principal, "/v1/runs?kind=task")
+	if runListIDs(taskRuns) != task.RunID.String() || taskRuns.Runs[0].Entrypoint.Kind != "task" ||
+		taskRuns.Runs[0].SessionID != "" {
+		t.Fatalf("task runs = %+v", taskRuns)
+	}
+	actorRuns := listRunsPostgresHTTP(t, fixture, principal, "/v1/runs?kind=actor")
+	if runListIDs(actorRuns) != strings.Join([]string{
+		continuationID.String(), second.BootRunID.String(), first.BootRunID.String(),
+	}, ",") {
+		t.Fatalf("actor runs = %+v", actorRuns)
+	}
+	for _, item := range actorRuns.Runs {
+		if item.Entrypoint.Kind != "actor" || item.SessionID == "" {
+			t.Fatalf("actor run %s = %+v", item.ID, item)
+		}
+	}
+	if both := listRunsPostgresHTTP(t, fixture, principal, "/v1/runs?kind=actor,task"); runListIDs(both) != runListIDs(all) {
+		t.Fatalf("actor and task runs = %+v", both)
+	}
+	queuedActors := listRunsPostgresHTTP(t, fixture, principal, "/v1/runs?kind=actor&status=queued")
+	if runListIDs(queuedActors) != continuationID.String()+","+second.BootRunID.String() {
+		t.Fatalf("queued actor runs = %+v", queuedActors)
+	}
+	if succeededTasks := listRunsPostgresHTTP(
+		t, fixture, principal, "/v1/runs?kind=task&status=succeeded",
+	); len(succeededTasks.Runs) != 0 {
+		t.Fatalf("succeeded task runs = %+v", succeededTasks)
+	}
+	if taskInSession := listRunsPostgresHTTP(
+		t, fixture, principal, "/v1/runs?kind=task&session_id="+firstSession,
+	); len(taskInSession.Runs) != 0 {
+		t.Fatalf("task runs in Session = %+v", taskInSession)
+	}
+	actorPage := listRunsPostgresHTTP(t, fixture, principal, "/v1/runs?kind=actor&limit=2")
+	if runListIDs(actorPage) != continuationID.String()+","+second.BootRunID.String() || actorPage.NextCursor == "" {
+		t.Fatalf("actor page = %+v", actorPage)
+	}
+	if actorNext := listRunsPostgresHTTP(
+		t, fixture, principal, "/v1/runs?kind=actor&limit=2&cursor="+actorPage.NextCursor,
+	); runListIDs(actorNext) != first.BootRunID.String() || actorNext.NextCursor != "" {
+		t.Fatalf("actor next page = %+v", actorNext)
+	}
+	for _, target := range []string{
+		"/v1/runs?kind=task&limit=2&cursor=" + actorPage.NextCursor,
+		"/v1/runs?limit=2&cursor=" + actorPage.NextCursor,
+	} {
+		recorder := httptest.NewRecorder()
+		fixture.server.listRunSnapshotsHTTP(recorder, runListPostgresRequest(target, principal))
+		if recorder.Code != http.StatusBadRequest ||
+			!strings.Contains(recorder.Body.String(), `"code":"invalid_run_cursor"`) {
+			t.Fatalf("%s response = %d %s", target, recorder.Code, recorder.Body.String())
+		}
 	}
 
 	firstRuns := listRunsPostgresHTTP(t, fixture, principal, "/v1/runs?session_id="+firstSession)
@@ -125,11 +189,13 @@ func TestRunListPostgresFiltersBySession(t *testing.T) {
 			t.Fatalf("%s response = %d %s", target, recorder.Code, recorder.Body.String())
 		}
 	}
-	recorder := httptest.NewRecorder()
-	fixture.server.listRunSnapshotsHTTP(recorder, runListPostgresRequest("/v1/runs?session_id=nope", principal))
-	if recorder.Code != http.StatusBadRequest ||
-		!strings.Contains(recorder.Body.String(), `"code":"invalid_run_list"`) {
-		t.Fatalf("invalid session_id response = %d %s", recorder.Code, recorder.Body.String())
+	for _, target := range []string{"/v1/runs?session_id=nope", "/v1/runs?kind=schedule"} {
+		recorder := httptest.NewRecorder()
+		fixture.server.listRunSnapshotsHTTP(recorder, runListPostgresRequest(target, principal))
+		if recorder.Code != http.StatusBadRequest ||
+			!strings.Contains(recorder.Body.String(), `"code":"invalid_run_list"`) {
+			t.Fatalf("%s response = %d %s", target, recorder.Code, recorder.Body.String())
+		}
 	}
 }
 

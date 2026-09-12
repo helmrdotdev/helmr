@@ -1117,6 +1117,7 @@ describe("HelmrClient Runs", () => {
     const signal = new AbortController().signal
     const listed = await client.runs.list({
       status: ["running", "waiting"],
+      kind: "actor",
       sessionId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
       cursor: "cursor-previous",
       limit: 10,
@@ -1132,11 +1133,17 @@ describe("HelmrClient Runs", () => {
     expect(listed.items).toHaveLength(1)
     expect(listed.nextCursor).toBe("cursor-next")
     expect(requests[1]).toBe(
-      "https://api.example.test/v1/runs?status=running&status=waiting&session_id=019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33&cursor=cursor-previous&limit=10",
+      "https://api.example.test/v1/runs?status=running&status=waiting&kind=actor&session_id=019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33&cursor=cursor-previous&limit=10",
     )
+    await client.runs.list({ kind: ["task", "actor"] })
+    expect(requests[2]).toBe("https://api.example.test/v1/runs?kind=task&kind=actor")
     await expect(client.runs.list({ sessionId: "not-a-session" })).rejects.toThrow(
       "Run list Session ID",
     )
+    await expect(client.runs.list({
+      // @ts-expect-error only task and actor entrypoints exist.
+      kind: "schedule",
+    })).rejects.toThrow("Run list kind is invalid")
   })
 
   test("reads finite structured logs and events with bound query cursors", async () => {
