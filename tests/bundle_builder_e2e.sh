@@ -141,7 +141,7 @@ build_fixture() {
 
 build_fixture npm npm@11.5.1
 build_fixture pnpm pnpm@10.14.0
-build_fixture bun bun@1.3.10
+build_fixture bun bun@1.3.13
 build_fixture yarn yarn@4.9.2
 build_fixture custom "" --install-command ./prepare.sh
 export HELMR_E2E_BUILD_TOKEN="bundle-e2e-secret-sentinel"

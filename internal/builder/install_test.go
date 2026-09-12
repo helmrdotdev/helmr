@@ -82,7 +82,7 @@ func TestSelectInstallPlanRejectsOnlyAmbiguousOrUnsafeProducerMetadata(t *testin
 		"pnpm@https://packages.example/pnpm.tgz",
 		"yarn@4.x",
 		"npm@1.0.0-01",
-		"bun@1.3.10+sha256.deadbeef",
+		"bun@1.3.13+sha256.deadbeef",
 	} {
 		root = writeInstallProject(t, selector, "")
 		if _, err := SelectInstallPlan(root, ""); err == nil {

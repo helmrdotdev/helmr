@@ -12,7 +12,7 @@ import { z } from "zod"
 const base = image("helmr-child-task-smoke")
   .from("node:24-bookworm-slim")
   .workdir("/sandbox")
-  .run(["npm", "install", "-g", "bun@1.3.10"])
+  .run(["npm", "install", "-g", "bun@1.3.13"])
   .workdir("/sandbox")
 
 export const childTaskSmokeCallerWorkspace = sandbox(

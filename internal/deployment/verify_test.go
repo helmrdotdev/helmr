@@ -332,7 +332,7 @@ func newTestProgram(t *testing.T) *testProgram {
 	artifact.addFile(modulePath+".map", sourceMapRaw, 0644)
 	artifact.addFile(sourcePath, sourceRaw, 0644)
 	artifact.addFile("helmr.config.ts", configSourceRaw, 0644)
-	artifact.addFile("package.json", []byte(`{"packageManager":"bun@1.3.10"}`), 0644)
+	artifact.addFile("package.json", []byte(`{"packageManager":"bun@1.3.13"}`), 0644)
 	artifact.addFile("bun.lock", lockfile, 0644)
 
 	return &testProgram{

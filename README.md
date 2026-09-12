@@ -92,7 +92,7 @@ const payload = z.object({
 const base = image("repo-agent")
   .from("node:24-bookworm-slim")
   .workdir("/workspace")
-  .run(["npm", "install", "-g", "bun@1.3.10"])
+  .run(["npm", "install", "-g", "bun@1.3.13"])
   .copy("/workspace/package.json", source.file("package.json"))
   .run(["bun", "install"])
   .run([

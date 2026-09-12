@@ -36,7 +36,7 @@ const base = image("helmr-agent-toolchain-smoke")
     ].join(" && "),
   ])
   .env("PATH", "/root/.nix-profile/bin:/nix/var/nix/profiles/default/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
-  .run(["npm", "install", "-g", "bun@1.3.10"])
+  .run(["npm", "install", "-g", "bun@1.3.13"])
   .workdir("/sandbox")
 
 export const agentToolchainSmokeWorkspace = sandbox({ id: "helmr-agent-toolchain-smoke" })

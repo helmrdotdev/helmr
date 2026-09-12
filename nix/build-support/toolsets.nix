@@ -38,7 +38,7 @@ rec {
     helmrPackages.bun
     helmrPackages.nodejs
     pkgs.python3
-    pkgs.buf
+    pkgsUnstable.buf
     pkgsUnstable.protoc-gen-go
     helmrPackages.protocGenEs
     pkgsUnstable.sqlc
@@ -62,7 +62,7 @@ rec {
   image = [
     helmrPackages.apko
     pkgs.cosign
-    pkgs.docker
+    pkgs.docker_29
     pkgs.e2fsprogs
     helmrPackages.squashfsTools
     pkgs.cpio
@@ -126,7 +126,7 @@ rec {
 
   ciGenerated = ciGoConsole ++ [
     bpfClang
-    pkgs.buf
+    pkgsUnstable.buf
     pkgsUnstable.protoc-gen-go
     helmrPackages.protocGenEs
     pkgsUnstable.sqlc
@@ -149,7 +149,7 @@ rec {
   ciBundleBuilder = ciGo ++ [
     pkgs.nix
     pkgs.curl
-    pkgs.docker
+    pkgs.docker_29
     pkgs.skopeo
     pkgs.jq
     pkgs.ripgrep
