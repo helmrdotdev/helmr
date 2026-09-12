@@ -209,6 +209,7 @@ export type {
   WorkspaceSecretInfo,
   WorkspaceSecretPlacement,
   Workspace,
+  WorkspaceOwner,
   WorkspaceStatus,
 } from "./workspace"
 

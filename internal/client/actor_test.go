@@ -176,7 +176,8 @@ func testGetSession(t *testing.T, client *Client, scope EnvironmentScopeOptions)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.ID != testSessionID || response.Status != api.SessionStatusOpen {
+	if response.ID != testSessionID || response.Status != api.SessionStatusOpen ||
+		response.WorkspaceID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" {
 		t.Fatalf("response = %+v", response)
 	}
 }
@@ -310,7 +311,8 @@ func TestSessionClientsValidateBeforeTransport(t *testing.T) {
 
 func actorStatusFixture() api.Session {
 	return api.Session{
-		ID: testSessionID, ActorID: "operator.v1", DeploymentID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32", Status: api.SessionStatusOpen,
+		ID: testSessionID, ActorID: "operator.v1", DeploymentID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
+		WorkspaceID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", Status: api.SessionStatusOpen,
 		CreatedAt: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC),
 		UpdatedAt: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC),
 	}

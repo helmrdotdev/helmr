@@ -111,8 +111,14 @@ func TestSessionListPostgresFiltersByPublicStatus(t *testing.T) {
 	exact := listSessionsPostgresHTTP(
 		t, fixture, principal, "/v1/sessions?actor_id=operator.v1&key="+url.QueryEscape(keys[1]),
 	)
-	if sessionListIDs(exact) != sessions[1] || exact.Sessions[0].Status != api.SessionStatusOpen || exact.NextCursor != "" {
+	if sessionListIDs(exact) != sessions[1] || exact.Sessions[0].Status != api.SessionStatusOpen ||
+		exact.Sessions[0].WorkspaceID != fixture.workspaceIDs[1].String() || exact.NextCursor != "" {
 		t.Fatalf("exact lookup = %+v", exact)
+	}
+	for index, item := range all.Sessions {
+		if item.WorkspaceID != fixture.workspaceIDs[len(all.Sessions)-1-index].String() {
+			t.Fatalf("Session %s Workspace = %q", item.ID, item.WorkspaceID)
+		}
 	}
 }
 

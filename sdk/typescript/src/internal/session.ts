@@ -34,6 +34,7 @@ export function parseSession(value: unknown): Session {
     id: resourceID(input["id"], "Session response.id"),
     actorId,
     deploymentId: resourceID(input["deployment_id"], "Session response.deployment_id"),
+    workspaceId: resourceID(input["workspace_id"], "Session response.workspace_id"),
     ...(input["key"] === undefined
       ? {}
       : { key: requiredString(input, "key", "Session response") }),

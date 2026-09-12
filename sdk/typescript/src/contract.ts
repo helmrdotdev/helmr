@@ -416,6 +416,7 @@ export interface Session {
   readonly id: string
   readonly actorId: string
   readonly deploymentId: string
+  readonly workspaceId: string
   readonly key?: string
   readonly status: SessionStatus
   readonly createdAt: string

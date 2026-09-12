@@ -238,6 +238,10 @@ func (s *Server) workspaceSnapshot(
 	if err != nil {
 		return api.WorkspaceSnapshot{}, err
 	}
+	owner, err := workspaceOwner(record.OwnerSessionID, record.OwnerRunID)
+	if err != nil {
+		return api.WorkspaceSnapshot{}, err
+	}
 	var key *string
 	if record.Key.Valid {
 		value := record.Key.String
@@ -249,6 +253,7 @@ func (s *Server) workspaceSnapshot(
 		SandboxID:      definition.DeclaredID,
 		DeploymentID:   pgvalue.UUIDString(definition.DeploymentID),
 		Status:         status,
+		Owner:          owner,
 		Secrets:        secrets,
 		LastActivityAt: pgvalue.Time(record.LastActivityAt),
 		CreatedAt:      pgvalue.Time(record.CreatedAt),

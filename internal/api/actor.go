@@ -129,6 +129,7 @@ type Session struct {
 	ID           string          `json:"id"`
 	ActorID      string          `json:"actor_id"`
 	DeploymentID string          `json:"deployment_id"`
+	WorkspaceID  string          `json:"workspace_id"`
 	Key          *string         `json:"key,omitempty"`
 	Status       SessionStatus   `json:"status"`
 	CreatedAt    time.Time       `json:"created_at"`
