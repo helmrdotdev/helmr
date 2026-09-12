@@ -50,10 +50,14 @@ export const ui = {
     "inline-flex size-7 cursor-pointer items-center justify-center rounded-xs border border-transparent bg-transparent p-0 leading-none text-console-muted transition duration-100 hover:border-console-border-strong hover:bg-console-bg-panel hover:text-console-text focus-visible:outline-2 focus-visible:outline-console-accent-soft disabled:cursor-not-allowed disabled:opacity-45 data-[open=true]:border-console-border-strong data-[open=true]:bg-console-bg-panel data-[open=true]:text-console-text",
   actionMenu:
     "fixed z-50 max-h-[min(260px,calc(100vh-16px))] overflow-y-auto rounded-xs border border-console-border-strong bg-console-surface p-0.75 shadow-[0_16px_36px_rgb(15_23_42/0.14)]",
-  actionMenuItem:
-    "flex min-h-7 w-full cursor-pointer items-center justify-start whitespace-nowrap rounded-xs border border-transparent bg-transparent px-2.5 py-1 text-left font-mono text-[11.5px] font-medium leading-snug text-console-text transition-colors hover:border-console-border hover:bg-console-bg-panel focus-visible:border-console-border focus-visible:bg-console-bg-panel focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-45",
+  // The base sets no colour: two Tailwind colour utilities on one element resolve
+  // by stylesheet order, so only the tone variant may set `text-*`.
+  actionMenuItemBase:
+    "flex min-h-7 w-full cursor-pointer items-center justify-start whitespace-nowrap rounded-xs border border-transparent bg-transparent px-2.5 py-1 text-left font-mono text-[11.5px] font-medium leading-snug transition-colors focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-45",
+  actionMenuItemDefault:
+    "text-console-text hover:border-console-border hover:bg-console-bg-panel hover:text-console-text focus-visible:border-console-border focus-visible:bg-console-bg-panel focus-visible:text-console-text",
   actionMenuItemDanger:
-    "text-console-danger-text hover:border-[#d77b73] hover:bg-[#fff1ef] hover:text-console-danger-text focus-visible:border-[#d77b73] focus-visible:bg-[#fff1ef]",
+    "text-console-danger-text hover:border-[#d77b73] hover:bg-[#fff1ef] hover:text-console-danger-text focus-visible:border-[#d77b73] focus-visible:bg-[#fff1ef] focus-visible:text-console-danger-text",
   actionMenuSeparator: "my-1 border-t border-console-border",
   input:
     "h-7 min-h-7 w-full rounded-xs border border-console-border bg-white px-2.5 py-0 text-[12px] leading-none text-console-text outline-none transition placeholder:text-console-faint hover:border-console-border-strong focus:border-console-accent focus:shadow-[0_0_0_2px_rgb(49_95_206/0.12)]",
@@ -123,6 +127,10 @@ export const ui = {
     "my-3.5 block w-full border border-console-border-strong bg-console-bg-panel p-3 text-center font-mono text-[1.25rem] font-medium tracking-[0.16em] text-console-accent",
   authStatus: "mb-2 text-[12.5px] font-medium text-console-text",
 };
+
+export function actionMenuItemClass(tone: "default" | "danger" | undefined): string {
+  return cx(ui.actionMenuItemBase, tone === "danger" ? ui.actionMenuItemDanger : ui.actionMenuItemDefault);
+}
 
 export function envDotClass(tone: "danger" | "warning" | "info" | "purple" | "success" | "neutral"): string {
   const tones = {

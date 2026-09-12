@@ -1,5 +1,5 @@
 import { createMemo, createSignal, createUniqueId, For, onCleanup, onMount, Show } from "solid-js";
-import { cx, ui } from "./styles";
+import { actionMenuItemClass, ui } from "./styles";
 
 export type ActionMenuItem = {
   label: string;
@@ -129,10 +129,7 @@ export function ActionMenu(props: {
 
   const renderItem = (item: ActionMenuItem) => {
     const label = () => item.busyLabel ?? item.label;
-    const itemClass = () => cx(
-      ui.actionMenuItem,
-      item.tone === "danger" && ui.actionMenuItemDanger,
-    );
+    const itemClass = () => actionMenuItemClass(item.tone);
     return (
       <Show
         when={!item.disabled ? item.href : undefined}
