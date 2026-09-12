@@ -19,6 +19,9 @@
   --console-success: #55715d;
   --console-warning: #9a6b16;
   --console-danger: #b43f37;
+  /* Danger text on an untinted surface (row menu items): a clearer red than
+     --console-danger, which reads near-black at 11.5px without a tinted background. */
+  --console-danger-text: #cf3328;
   --console-info: #395f8f;
   --console-mono: "JetBrains Mono", "IBM Plex Mono", "SFMono-Regular", "Menlo", "Consolas", ui-monospace, monospace;
   --console-sans: "Inter", "IBM Plex Sans", "Helvetica Neue", Arial, ui-sans-serif, system-ui, sans-serif;
@@ -43,6 +46,7 @@
   --color-console-success: var(--console-success);
   --color-console-warning: var(--console-warning);
   --color-console-danger: var(--console-danger);
+  --color-console-danger-text: var(--console-danger-text);
   --color-console-info: var(--console-info);
   --font-console-mono: var(--console-mono);
   --font-console-sans: var(--console-sans);
