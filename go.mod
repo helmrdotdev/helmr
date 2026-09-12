@@ -1,6 +1,6 @@
 module github.com/helmrdotdev/helmr
 
-go 1.27.0
+go 1.27.1
 
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.47.0
@@ -12,13 +12,13 @@ require (
 	github.com/cilium/ebpf v0.22.0
 	github.com/containernetworking/plugins v1.9.1
 	github.com/distribution/reference v0.6.0
-	github.com/felixge/httpsnoop v1.0.4
+	github.com/felixge/httpsnoop v1.1.0
 	github.com/firecracker-microvm/firecracker-go-sdk v1.0.0
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/golang-migrate/migrate/v4 v4.19.1
+	github.com/golang-migrate/migrate/v4 v4.20.1
 	github.com/gowebpki/jcs v1.0.1
-	github.com/jackc/pgx/v5 v5.9.2
+	github.com/jackc/pgx/v5 v5.11.0
 	github.com/klauspost/compress v1.18.6
 	github.com/mdlayher/vsock v1.2.1
 	github.com/pelletier/go-toml/v2 v2.3.1
@@ -34,11 +34,11 @@ require (
 	go.opentelemetry.io/otel v1.44.0
 	go.opentelemetry.io/otel/metric v1.44.0
 	go.opentelemetry.io/otel/trace v1.44.0
-	golang.org/x/oauth2 v0.35.0
+	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sync v0.21.0
 	golang.org/x/sys v0.46.0
 	golang.org/x/text v0.38.0
-	google.golang.org/protobuf v1.36.12-0.20260120151049-f2248ac996af
+	google.golang.org/protobuf v1.36.12
 )
 
 require (
@@ -63,7 +63,6 @@ require (
 	github.com/containerd/fifo v1.1.0 // indirect
 	github.com/containernetworking/cni v1.3.0 // indirect
 	github.com/danieljoos/wincred v1.2.3 // indirect
-	github.com/docker/docker v28.5.2+incompatible // indirect
 	github.com/go-faster/city v1.0.1 // indirect
 	github.com/go-faster/errors v0.7.1 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect

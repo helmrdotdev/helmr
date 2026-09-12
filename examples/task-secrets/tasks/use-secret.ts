@@ -3,7 +3,7 @@ import { image, source, task, sandbox } from "@helmr/sdk"
 const base = image("task-secrets")
   .from("node:24-bookworm-slim")
   .workdir("/sandbox")
-  .run(["npm", "install", "-g", "bun@1.3.10"])
+  .run(["npm", "install", "-g", "bun@1.3.13"])
   .copy("/opt/helmr-task/package.json", source.file("package.json"))
   .workdir("/opt/helmr-task")
   .run(["bun", "install"])

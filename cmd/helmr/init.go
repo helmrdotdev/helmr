@@ -92,7 +92,7 @@ func starterPackageJSON() string {
 	return `{
   "private": true,
   "type": "module",
-  "packageManager": "bun@1.3.10",
+  "packageManager": "bun@1.3.13",
   "devEngines": {
     "runtime": {
       "name": "node",
@@ -157,7 +157,7 @@ const starterHelloTask = `import { image, sandbox, source, task } from "@helmr/s
 const runtime = image("hello")
   .from("node:24-bookworm-slim")
   .workdir("/app")
-  .run(["npm", "install", "-g", "bun@1.3.10"])
+  .run(["npm", "install", "-g", "bun@1.3.13"])
   .copy("/app/package.json", source.file("package.json"))
   .run(["bun", "install"])
 

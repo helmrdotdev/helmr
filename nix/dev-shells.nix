@@ -30,12 +30,12 @@ let
 
   shellHook = ''
     go_version="$(go version | awk '{print $3}' | sed 's/^go//')"
-    if [ "$go_version" != "1.27.0" ]; then
-      echo "warning: expected go 1.27.0 from go.mod, got $go_version" >&2
+    if [ "$go_version" != "1.27.1" ]; then
+      echo "warning: expected go 1.27.1 from go.mod, got $go_version" >&2
     fi
     bun_version="$(bun --version)"
-    if [ "$bun_version" != "1.3.10" ]; then
-      echo "warning: expected bun 1.3.10 from package.json, got $bun_version" >&2
+    if [ "$bun_version" != "1.3.13" ]; then
+      echo "warning: expected bun 1.3.13 from package.json, got $bun_version" >&2
     fi
     postgres_version="$(postgres --version | awk '{print $3}')"
     case "$postgres_version" in

@@ -8,7 +8,7 @@ import (
 
 func TestBuildTreeAcceptsManagerNativeOutput(t *testing.T) {
 	tree := newMemoryArtifact()
-	tree.addFile("package.json", []byte(`{"packageManager":"bun@1.3.10"}`), 0644)
+	tree.addFile("package.json", []byte(`{"packageManager":"bun@1.3.13"}`), 0644)
 	tree.addDirectory("node_modules")
 	tree.addDirectory("node_modules/.bin")
 	tree.addDirectory("node_modules/tool")

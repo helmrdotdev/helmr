@@ -211,7 +211,7 @@ ciApps
         pkgs.bash
         pkgs.coreutils
         pkgs.curl
-        pkgs.docker
+        pkgs.docker_29
         pkgs.findutils
         pkgs.gawk
         pkgs.git
