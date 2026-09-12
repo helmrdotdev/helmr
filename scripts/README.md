@@ -59,13 +59,14 @@ real KVM host and is not emulated in hosted CI.
 ## Development console
 
 `nix run .#dev` runs the control plane and Vite console for interactive local
-development. Paseo's `preview` service runs the same stack directly from the
-Nix development environment, builds the console, and serves it with the control
-plane on one port. Preview state is disposable and isolated under the
-worktree's `.helmr-dev` directory. On Linux, PostgreSQL and Redis use Unix
-sockets and ClickHouse uses a loopback address derived from Paseo's assigned
-service port, so multiple worktrees can run concurrently without coordinating
-ports. Preview is available on Linux and Apple Silicon macOS.
+development. `HELMR_DEV_CONSOLE_MODE=preview ./scripts/dev-console-stack.sh`
+runs the same stack directly from the Nix development environment, builds the
+console, and serves it with the control plane on one port
+(`HELMR_DEV_CONSOLE_PORT`, default `3000`). Preview state is disposable and
+isolated under the worktree's `.helmr-dev` directory. On Linux, PostgreSQL and
+Redis use Unix sockets and ClickHouse uses a loopback address derived from the
+console port, so multiple worktrees can run concurrently by choosing distinct
+console ports. Preview is available on Linux and Apple Silicon macOS.
 
 On x86_64 Linux, run the browser acceptance test with the Playwright and
 Chromium versions pinned by Nix:
@@ -74,13 +75,11 @@ Chromium versions pinned by Nix:
 nix develop .#browser --command bun run test:browser
 ```
 
-The command starts and stops its own disposable stack. To validate a service
-that Paseo already supervises, set `HELMR_E2E_BASE_URL` to that service's
-localhost URL; the browser test then reuses it instead of starting another
-stack. Self-contained runs use `PASEO_PORT` when Paseo supplies it, or port
-`4173` otherwise. Set a distinct `HELMR_E2E_PORT` for concurrent
-self-contained runs outside Paseo. The same allocated port also isolates the
-Linux ClickHouse listener.
+The command starts and stops its own disposable stack on port `4173`. To
+validate a preview stack that is already running, set `HELMR_E2E_BASE_URL` to
+its localhost URL; the browser test then reuses it instead of starting another
+stack. Set a distinct `HELMR_E2E_PORT` for concurrent self-contained runs. The
+same port also isolates the Linux ClickHouse listener.
 
 ## Product release artifacts
 
