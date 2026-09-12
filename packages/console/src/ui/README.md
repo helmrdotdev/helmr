@@ -12,3 +12,4 @@ The console UI is intentionally compact, square, and work-focused.
 - Keep arbitrary values for exact UI details that are part of the console visual language, such as `rounded-xs` or fixed table heights.
 
 When a repeated style includes structure or behavior, make a Solid component. When it is a single repeated element style, add a `ui` token. Avoid broad descendant overrides that silently change nested controls.
+- Use `ConfirmModal` for cancel, promote, and other confirmations so the button order, busy state, and error placement stay the same.

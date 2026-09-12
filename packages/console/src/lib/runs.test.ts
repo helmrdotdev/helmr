@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 
-import { getRunEvents, getRunLogs, listRuns } from "./runs";
+import { cancelRun, getRunEvents, getRunLogs, listRuns } from "./runs";
 
 const originalFetch = globalThis.fetch;
 afterEach(() => {
@@ -58,4 +58,32 @@ test("gets finite run log pages with a bound cursor", async () => {
   expect(requestedUrl).toBe(
     "/api/projects/project-1/environments/env-1/runs/run%2F1/logs?cursor=log-cursor&limit=50",
   );
+});
+
+test("lists runs with several statuses as repeated params", async () => {
+  let requestedUrl: string | undefined;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    requestedUrl = String(input);
+    return Response.json({ runs: [] });
+  }) as typeof fetch;
+
+  await listRuns({ projectID: "project-1", environmentID: "env-1", statuses: ["failed", "system_failed"], limit: 5 });
+
+  expect(requestedUrl).toBe("/api/projects/project-1/environments/env-1/runs?status=failed&status=system_failed&limit=5");
+});
+
+test("cancels a run with an empty POST body", async () => {
+  let requestedUrl: string | undefined;
+  let requestInit: RequestInit | undefined;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requestedUrl = String(input);
+    requestInit = init;
+    return Response.json({ id: "run/1", status: "cancel_requested" });
+  }) as typeof fetch;
+
+  await cancelRun("run/1", "project-1", "env-1");
+
+  expect(requestedUrl).toBe("/api/projects/project-1/environments/env-1/runs/run%2F1/cancel");
+  expect(requestInit?.method).toBe("POST");
+  expect(requestInit?.body).toBe("{}");
 });

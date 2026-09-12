@@ -9,16 +9,20 @@ import { ScopeSwitcher } from "./components/ScopeSwitcher";
 import { SettingsLayout } from "./components/SettingsLayout";
 import { getMe, logout } from "./lib/auth";
 import { ScopeProvider, useScope } from "./lib/scope";
+import { listTokens } from "./lib/tokens";
 import { cx, ui } from "./ui/styles";
-import { Dashboard } from "./routes/dashboard";
+import { Overview } from "./routes/overview";
 import { Invite } from "./routes/invite";
 import { Login } from "./routes/login";
 import { AuthGitHubCallback } from "./routes/auth-github-callback";
 import { AuthMagicLinkCallback } from "./routes/auth-magic-link-callback";
 import { RunDetail } from "./routes/run-detail";
 import { Runs } from "./routes/runs";
-import { Schedules } from "./routes/schedules";
-import { Tasks } from "./routes/tasks";
+import { Sessions } from "./routes/sessions";
+import { Tokens } from "./routes/tokens";
+import { Workspaces } from "./routes/workspaces";
+import { Deployments } from "./routes/deployments";
+import { DeploymentDetail } from "./routes/deployment-detail";
 import { ApiKeys } from "./routes/api-keys";
 import { Secrets } from "./routes/secrets";
 import { Members } from "./routes/members";
@@ -33,18 +37,11 @@ import { SessionDetail } from "./routes/session-detail";
 import { AdminRegions } from "./routes/admin-regions";
 import { AdminWorkerGroups } from "./routes/admin-worker-groups";
 
-function TabLink(props: {
-  href: string;
-  children: JSX.Element;
-  matchPrefix?: boolean;
-  activePrefix?: string;
-}) {
+function TabLink(props: { href: string; children: JSX.Element }) {
   const location = useLocation();
-  const active = () => {
-    if (props.activePrefix) return location.pathname.startsWith(props.activePrefix);
-    if (props.matchPrefix) return location.pathname === props.href || location.pathname.startsWith(`${props.href}/`);
-    return location.pathname === props.href;
-  };
+  const active = () =>
+    location.pathname === props.href ||
+    (props.href !== "/" && location.pathname.startsWith(`${props.href}/`));
 
   return (
     <A
@@ -168,6 +165,62 @@ function ProfileMenu() {
   );
 }
 
+function AttentionBadge() {
+  const scope = useScope();
+  const pending = createQuery(() => ({
+    queryKey: ["tokens", "pending-count", scope.selectedProjectID(), scope.selectedEnvironmentID()],
+    queryFn: () => listTokens(
+      { projectID: scope.selectedProjectID(), environmentID: scope.selectedEnvironmentID() },
+      { status: "pending", limit: 99 },
+    ),
+    enabled: !!scope.selectedProjectID() && !!scope.selectedEnvironmentID(),
+    retry: false,
+    refetchInterval: 30_000,
+  }));
+  const label = createMemo(() => {
+    const page = pending.data;
+    if (!page) return null;
+    if (page.next_cursor) return "99+";
+    return page.tokens.length > 0 ? String(page.tokens.length) : null;
+  });
+  return (
+    <Show when={label()}>
+      {(count) => (
+        <A
+          href="/"
+          class={"inline-flex h-7 shrink-0 items-center gap-1 rounded-xs border border-[#e5c26e] bg-[#fff7df] px-2 font-mono text-[11px] font-medium leading-none text-console-warning transition duration-100 hover:border-console-warning"}
+          aria-label={`${count()} pending Tokens need attention`}
+          title="Pending Tokens"
+        >
+          <span class="size-1.5 rounded-full bg-current" aria-hidden="true" />
+          {count()} waiting
+        </A>
+      )}
+    </Show>
+  );
+}
+
+function SettingsLink() {
+  const location = useLocation();
+  const active = () => location.pathname.startsWith("/settings");
+  return (
+    <A
+      href="/settings/projects"
+      class={cx(
+        "grid size-7 shrink-0 cursor-pointer place-items-center rounded-xs border border-transparent bg-transparent text-console-muted transition duration-100 hover:border-console-border-strong hover:bg-console-bg-panel hover:text-console-text",
+        active() && "border-console-border-strong bg-console-bg-panel text-console-text",
+      )}
+      aria-label="Settings"
+      title="Settings"
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="3" />
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+      </svg>
+    </A>
+  );
+}
+
 function AppShell(props: { children?: JSX.Element }) {
   const scope = useScope();
   return (
@@ -176,13 +229,16 @@ function AppShell(props: { children?: JSX.Element }) {
         <ScopeSwitcher />
         <span class={"h-5 w-px shrink-0 bg-console-border"} aria-hidden="true" />
         <nav class={"flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-1 scrollbar-none [&::-webkit-scrollbar]:hidden"} aria-label="Sections">
-          <TabLink href="/">Dashboard</TabLink>
-          <TabLink href="/tasks">Tasks</TabLink>
-          <TabLink href="/runs" matchPrefix>Runs</TabLink>
-          <TabLink href="/schedules">Schedules</TabLink>
-          <TabLink href="/settings/projects" activePrefix="/settings">Settings</TabLink>
+          <TabLink href="/">Overview</TabLink>
+          <TabLink href="/runs">Runs</TabLink>
+          <TabLink href="/sessions">Sessions</TabLink>
+          <TabLink href="/tokens">Tokens</TabLink>
+          <TabLink href="/workspaces">Workspaces</TabLink>
+          <TabLink href="/deployments">Deployments</TabLink>
         </nav>
         <div class={"flex items-center gap-2"}>
+          <AttentionBadge />
+          <SettingsLink />
           <ProfileMenu />
         </div>
       </header>
@@ -227,7 +283,7 @@ const wrapAdmin = (Inner: () => JSX.Element) => () => (
 export function App() {
   return (
     <Router>
-      <Route path="/" component={wrap(Dashboard)} />
+      <Route path="/" component={wrap(Overview)} />
       <Route path="/login" component={Login} />
       <Route path="/invite" component={Invite} />
       <Route path="/auth/device" component={() => <RequireAuth><Device /></RequireAuth>} />
@@ -238,10 +294,13 @@ export function App() {
 
       <Route path="/runs" component={wrap(Runs)} />
       <Route path="/runs/:run_id" component={wrap(RunDetail)} />
+      <Route path="/sessions" component={wrap(Sessions)} />
       <Route path="/sessions/:session_id" component={wrap(SessionDetail)} />
-      <Route path="/schedules" component={wrap(Schedules)} />
-      <Route path="/tasks" component={wrap(Tasks)} />
+      <Route path="/tokens" component={wrap(Tokens)} />
+      <Route path="/workspaces" component={wrap(Workspaces)} />
       <Route path="/workspaces/:workspace_id" component={wrap(WorkspaceDetail)} />
+      <Route path="/deployments" component={wrap(Deployments)} />
+      <Route path="/deployments/:deployment_id" component={wrap(DeploymentDetail)} />
       <Route path="/projects/new" component={() => <RequireAuth allowOnboarding><ProjectNew /></RequireAuth>} />
 
       <Route path="/admin" component={() => <Navigate href="/admin/worker-groups" />} />

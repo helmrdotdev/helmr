@@ -1,4 +1,4 @@
-import { request } from "./api";
+import { postJson, request } from "./api";
 
 export type RunStatus =
   | "queued"
@@ -136,6 +136,13 @@ export async function listRuns(options: ListRunsOptions): Promise<ListRunsRespon
 
 export async function getRun(id: string, projectID: string, environmentID: string): Promise<Run> {
   return request<Run>(`${environmentPath(projectID, environmentID)}/runs/${encodeURIComponent(id)}`);
+}
+
+export async function cancelRun(id: string, projectID: string, environmentID: string): Promise<Run> {
+  return postJson<Record<string, never>, Run>(
+    `${environmentPath(projectID, environmentID)}/runs/${encodeURIComponent(id)}/cancel`,
+    {},
+  );
 }
 
 export async function getRunLogs(

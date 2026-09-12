@@ -3,6 +3,7 @@ import { afterEach, expect, test } from "bun:test";
 import {
   getSession,
   getSessionOutput,
+  listSessions,
   runSessionConsolePath,
   sessionConsolePath,
 } from "./sessions";
@@ -73,4 +74,16 @@ test("links only Runs that belong to a Session", () => {
     "prj_aaaaaaaaaaaaaaaaaaaaaaaaaa",
     "env_aaaaaaaaaaaaaaaaaaaaaaaaaa",
   )).toBeUndefined();
+});
+
+test("lists Sessions with a bounded cursor", async () => {
+  let requestedURL: string | undefined;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    requestedURL = String(input);
+    return Response.json({ sessions: [] });
+  }) as typeof fetch;
+
+  await listSessions({ projectID: "project/1", environmentID: "env-1", cursor: "c1", limit: 100 });
+
+  expect(requestedURL).toBe("/api/projects/project%2F1/environments/env-1/sessions?cursor=c1&limit=100");
 });
