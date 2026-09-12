@@ -12,6 +12,7 @@ import { cancelRun, listRuns, type RunListItem } from "../lib/runs";
 import { useScope } from "../lib/scope";
 import { listSessions, sessionConsolePath, type Session } from "../lib/sessions";
 import { listTokens, type TokenListItem } from "../lib/tokens";
+import { ActionMenu, type ActionMenuItem } from "../ui/ActionMenu";
 import { ConfirmModal } from "../ui/ConfirmModal";
 import { DataTable } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
@@ -176,6 +177,11 @@ export function Overview() {
   const [cancellingToken, setCancellingToken] = createSignal<TokenListItem | null>(null);
   const [cancellingRun, setCancellingRun] = createSignal<RunListItem | null>(null);
 
+  const tokenActions = (token: TokenListItem): ActionMenuItem[] => [
+    ...(can("tokens.complete") ? [{ label: "Complete…", onSelect: () => setCompleting(token) }] : []),
+    ...(can("tokens.cancel") ? [{ label: "Cancel…", tone: "danger" as const, onSelect: () => setCancellingToken(token) }] : []),
+  ];
+
   const refreshTokens = async () => {
     await queryClient.invalidateQueries({ queryKey: ["tokens"] });
   };
@@ -230,14 +236,9 @@ export function Overview() {
                             <td><StatusBadge resource="token" status="pending" /></td>
                             <td><span class={ui.muted}>expires </span><RelativeTime value={row.token.timeout_at} /></td>
                             <td class={ui.actionsCell}>
-                              <div class="flex justify-end gap-1">
-                                <Show when={can("tokens.complete")}>
-                                  <button type="button" class={ui.ghostButton} onClick={() => setCompleting(row.token)}>Complete</button>
-                                </Show>
-                                <Show when={can("tokens.cancel")}>
-                                  <button type="button" class={ui.ghostDangerButton} onClick={() => setCancellingToken(row.token)}>Cancel</button>
-                                </Show>
-                              </div>
+                              <Show when={tokenActions(row.token).length > 0}>
+                                <ActionMenu label={`Actions for Token ${row.token.id}`} items={tokenActions(row.token)} />
+                              </Show>
                             </td>
                           </tr>
                         ) : (
@@ -252,7 +253,10 @@ export function Overview() {
                             <td><StatusBadge resource="run" status="waiting" /></td>
                             <td><RelativeTime value={row.run.created_at} /></td>
                             <td class={ui.actionsCell}>
-                              <A class={ui.ghostButton} href={sessionConsolePath(row.run.session_id!, projectID(), environmentID())}>Open Session</A>
+                              <ActionMenu
+                                label={`Actions for ${row.run.entrypoint.id}`}
+                                items={[{ label: "Open Session", href: sessionConsolePath(row.run.session_id!, projectID(), environmentID()) }]}
+                              />
                             </td>
                           </tr>
                         )}
@@ -342,7 +346,10 @@ export function Overview() {
                             <td><IDText value={run.id} mode="link" href={runHref(run.id, projectID(), environmentID())} /></td>
                             <td class={ui.actionsCell}>
                               <Show when={can("runs.manage") && run.status !== "cancel_requested"}>
-                                <button type="button" class={ui.ghostDangerButton} onClick={() => setCancellingRun(run)}>Cancel</button>
+                                <ActionMenu
+                                  label={`Actions for ${run.entrypoint.id}`}
+                                  items={[{ label: "Cancel Run…", tone: "danger", onSelect: () => setCancellingRun(run) }]}
+                                />
                               </Show>
                             </td>
                           </tr>
