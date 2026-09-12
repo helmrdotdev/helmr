@@ -63,16 +63,16 @@ in
 // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
   browser =
     assert pkgs.lib.assertMsg (
-      playwrightVersion == pkgs.playwright-driver.version
+      playwrightVersion == pkgsUnstable.playwright-driver.version
     ) "@playwright/test must match the pinned nixpkgs playwright-driver";
     pkgs.mkShell {
       packages = toolsets.base ++ [
         pkgs.redis
         pkgsClickHouse.clickhouse
-        pkgs.playwright-driver.browsers
+        pkgsUnstable.playwright-driver.browsers
       ];
       shellHook = shellHook + ''
-        export PLAYWRIGHT_BROWSERS_PATH=${pkgs.playwright-driver.browsers}
+        export PLAYWRIGHT_BROWSERS_PATH=${pkgsUnstable.playwright-driver.browsers}
         export PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true
       '';
     };

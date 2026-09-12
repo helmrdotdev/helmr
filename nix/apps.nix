@@ -263,7 +263,7 @@ ciApps
         (builtins.fromJSON (builtins.readFile ../package.json)).devDependencies."@playwright/test";
     in
     assert pkgs.lib.assertMsg (
-      playwrightVersion == pkgs.playwright-driver.version
+      playwrightVersion == pkgsUnstable.playwright-driver.version
     ) "@playwright/test must match the pinned nixpkgs playwright-driver";
     app "ci-browser" "run the console browser acceptance test"
       (
@@ -273,11 +273,11 @@ ciApps
           pkgs.redis
           pkgsClickHouse.clickhouse
           pkgs.curl
-          pkgs.playwright-driver.browsers
+          pkgsUnstable.playwright-driver.browsers
         ]
       )
       ''
-        export PLAYWRIGHT_BROWSERS_PATH=${pkgs.playwright-driver.browsers}
+        export PLAYWRIGHT_BROWSERS_PATH=${pkgsUnstable.playwright-driver.browsers}
         export PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true
         bun install --frozen-lockfile --ignore-scripts
         bun run test:browser
