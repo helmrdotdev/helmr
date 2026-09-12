@@ -1,4 +1,4 @@
-import { request } from "./api";
+import { postJson, request } from "./api";
 
 export type DefinitionListItem = {
   id: string;
@@ -22,6 +22,24 @@ export type ListSandboxesResponse = {
   next_cursor?: string;
 };
 
+export type StartTaskInput = {
+  workspace: { id: string };
+  payload?: unknown;
+  idempotency_key: string;
+};
+
+export type StartActorInput = {
+  workspace: { id: string };
+  key?: string;
+  input?: unknown;
+  idempotency_key: string;
+};
+
+export type DefinitionScope = {
+  projectID: string;
+  environmentID: string;
+};
+
 export type DefinitionListOptions = {
   projectID: string;
   environmentID: string;
@@ -42,7 +60,29 @@ export async function listSandboxes(options: DefinitionListOptions): Promise<Lis
   return request<ListSandboxesResponse>(definitionPath("sandboxes", options));
 }
 
-function definitionPath(kind: "tasks" | "actors" | "sandboxes", options: DefinitionListOptions): string {
+export async function startTask(
+  taskID: string,
+  scope: DefinitionScope,
+  input: StartTaskInput,
+): Promise<{ run_id: string }> {
+  return postJson<StartTaskInput, { run_id: string }>(
+    `${definitionPath("tasks", scope)}/${encodeURIComponent(taskID)}/start`,
+    input,
+  );
+}
+
+export async function startActor(
+  actorID: string,
+  scope: DefinitionScope,
+  input: StartActorInput,
+): Promise<{ session_id: string; run_id: string }> {
+  return postJson<StartActorInput, { session_id: string; run_id: string }>(
+    `${definitionPath("actors", scope)}/${encodeURIComponent(actorID)}/start`,
+    input,
+  );
+}
+
+function definitionPath(kind: "tasks" | "actors" | "sandboxes", options: DefinitionScope & Partial<DefinitionListOptions>): string {
   if (!options.projectID || !options.environmentID) {
     throw new Error("project and environment are required");
   }

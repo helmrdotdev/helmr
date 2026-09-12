@@ -54,6 +54,12 @@ export type CreateEnvironmentInput = {
   color_hex: string;
 };
 
+export type UpdateEnvironmentInput = {
+  slug: string;
+  name: string;
+  color_hex: string;
+};
+
 function resolveProject(projects: Project[], projectID: string): Project | undefined {
   return projects.find((project) => project.id === projectID) ??
     projects.find((project) => project.is_default) ??
@@ -116,5 +122,16 @@ export async function createEnvironment(projectID: string, input: CreateEnvironm
   return postJson<CreateEnvironmentInput, Environment>(
     `/api/projects/${encodeURIComponent(projectID)}/environments`,
     input,
+  );
+}
+
+export async function updateEnvironment(
+  projectID: string,
+  environmentID: string,
+  input: UpdateEnvironmentInput,
+): Promise<Environment> {
+  return request<Environment>(
+    `/api/projects/${encodeURIComponent(projectID)}/environments/${encodeURIComponent(environmentID)}`,
+    { method: "PATCH", body: JSON.stringify(input) },
   );
 }

@@ -103,6 +103,8 @@ export const ui = {
   modalActions: "mt-3 flex flex-wrap justify-end gap-1.5",
   warning:
     "mb-3 border border-[#d6a33f]/35 bg-[#fff7df] px-3 py-2 text-[12.5px] leading-normal text-[#7b5a12]",
+  codeBlock:
+    "m-0 max-h-130 overflow-auto whitespace-pre-wrap break-words border border-console-border bg-console-bg-panel px-4 py-3 font-mono text-[12px] leading-normal text-console-text",
   rawKey:
     "block select-all overflow-x-auto whitespace-nowrap border border-console-border bg-console-bg-panel p-3 font-mono text-[12px] leading-normal text-console-text",
   scopeTarget:

@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 
-import { cancelToken, completeToken, listTokens } from "./tokens";
+import { cancelToken, completeToken, getToken, isTerminalTokenStatus, listTokens } from "./tokens";
 
 const originalFetch = globalThis.fetch;
 afterEach(() => {
@@ -50,4 +50,19 @@ test("cancels a token with an idempotency key", async () => {
 
 test("requires a scope", () => {
   expect(listTokens({ projectID: "", environmentID: "env-1" })).rejects.toThrow("Token project and environment are required");
+});
+
+test("loads a token by ID", async () => {
+  const calls = captureFetch({ id: "tok/1", status: "completed", tags: [], metadata: {}, result: { ok: true } });
+  const token = await getToken("tok/1", { projectID: "project-1", environmentID: "env-1" });
+  expect(calls[0]?.url).toBe("/api/projects/project-1/environments/env-1/tokens/tok%2F1");
+  expect(calls[0]?.init?.method).toBeUndefined();
+  expect(token.result).toEqual({ ok: true });
+});
+
+test("only pending tokens are non-terminal", () => {
+  expect(isTerminalTokenStatus("pending")).toBe(false);
+  expect(isTerminalTokenStatus("completed")).toBe(true);
+  expect(isTerminalTokenStatus("expired")).toBe(true);
+  expect(isTerminalTokenStatus("cancelled")).toBe(true);
 });

@@ -27,6 +27,7 @@ const TONES = {
   session: { open: "active", closed: "succeeded", cancelled: "expired", failed: "revoked" },
   token: { pending: "waiting", completed: "succeeded", expired: "expired", cancelled: "revoked" },
   workspace: { available: "succeeded", recovery_required: "revoked", deleting: "expired" },
+  workspace_exec: { pending: "waiting", running: "active", exited: "succeeded", failed: "revoked" },
   schedule: { active: "active", errored: "revoked", archived: "expired" },
   deployment: { current: "active" },
   environment: { current: "active", protected: "expired" },

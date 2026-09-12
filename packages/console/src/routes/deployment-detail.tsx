@@ -1,7 +1,9 @@
 import { A, useParams } from "@solidjs/router";
 import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
+import { StartDefinitionModal, type StartKind } from "../features/deployments/StartDefinitionModal";
 import { ApiError } from "../lib/api";
+import { getMe, hasPermission } from "../lib/auth";
 import { getCurrentDeployment, getDeployment, getDeploymentEvents } from "../lib/deployments";
 import { listSchedules } from "../lib/schedules";
 import { useScope } from "../lib/scope";
@@ -40,8 +42,14 @@ function DefinitionTable(props: {
   pending: boolean;
   error: unknown;
   history?: boolean;
+  onStart?: ((id: string) => void) | undefined;
 }) {
   const noun = () => props.label.toLowerCase();
+  const columns = () => [
+    props.label.replace(/e?s$/, ""),
+    ...(props.history ? ["History"] : []),
+    ...(props.onStart ? [{ label: "Actions", srOnly: true }] : []),
+  ];
   return (
     <Show when={!props.pending} fallback={<StatePanel loading={`Loading ${noun()}...`} />}>
       <Show when={!props.error} fallback={<StatePanel error={errorMessage(props.error, `Could not load ${noun()}.`)} />}>
@@ -49,7 +57,7 @@ function DefinitionTable(props: {
           when={(props.items?.length ?? 0) > 0}
           fallback={<StatePanel empty={`This Deployment declares no ${noun()}.`} />}
         >
-          <DataTable columns={props.history ? [props.label.replace(/e?s$/, ""), "History"] : [props.label.replace(/e?s$/, "")]}>
+          <DataTable columns={columns()}>
             <For each={props.items}>
               {(item) => (
                 <tr>
@@ -58,6 +66,13 @@ function DefinitionTable(props: {
                     <td>
                       <A href="/runs" class="font-mono text-[11.5px] text-console-accent hover:text-console-accent-hover">Runs</A>
                     </td>
+                  </Show>
+                  <Show when={props.onStart}>
+                    {(onStart) => (
+                      <td class={ui.actionsCell}>
+                        <button type="button" class={ui.button} onClick={() => onStart()(item.id)}>Start</button>
+                      </td>
+                    )}
                   </Show>
                 </tr>
               )}
@@ -78,6 +93,8 @@ export function DeploymentDetail() {
   const enabled = () => !!deploymentID() && !!projectID() && !!environmentID();
   const resourceScope = () => ({ projectID: projectID(), environmentID: environmentID() });
   const [tab, setTab] = createSignal<Tab>("tasks");
+  const [starting, setStarting] = createSignal<{ kind: StartKind; id: string } | null>(null);
+  const me = createQuery(() => ({ queryKey: ["me"], queryFn: getMe, retry: false, staleTime: 60_000 }));
 
   const deployment = createQuery(() => ({
     queryKey: ["deployments", "detail", deploymentID(), projectID(), environmentID()],
@@ -92,6 +109,13 @@ export function DeploymentDetail() {
     retry: false,
   }));
   const isCurrent = createMemo(() => !!current.data && current.data.id === deploymentID());
+  // Start always targets the current Deployment, so the controls only appear there.
+  const startTask = createMemo(() => isCurrent() && hasPermission(me.data, "runs.create")
+    ? (id: string) => setStarting({ kind: "task", id })
+    : undefined);
+  const startActor = createMemo(() => isCurrent() && hasPermission(me.data, "actors.start")
+    ? (id: string) => setStarting({ kind: "actor", id })
+    : undefined);
 
   const definitionOptions = () => ({ ...resourceScope(), deploymentID: deploymentID(), limit: 100 });
   const tasks = createQuery(() => ({
@@ -172,10 +196,10 @@ export function DeploymentDetail() {
         </div>
 
         <Show when={tab() === "tasks"}>
-          <DefinitionTable label="Tasks" items={tasks.data?.tasks} pending={tasks.isPending} error={tasks.error} history />
+          <DefinitionTable label="Tasks" items={tasks.data?.tasks} pending={tasks.isPending} error={tasks.error} history onStart={startTask()} />
         </Show>
         <Show when={tab() === "actors"}>
-          <DefinitionTable label="Actors" items={actors.data?.actors} pending={actors.isPending} error={actors.error} />
+          <DefinitionTable label="Actors" items={actors.data?.actors} pending={actors.isPending} error={actors.error} onStart={startActor()} />
         </Show>
         <Show when={tab() === "sandboxes"}>
           <DefinitionTable label="Sandboxes" items={sandboxes.data?.sandboxes} pending={sandboxes.isPending} error={sandboxes.error} />
@@ -250,6 +274,18 @@ export function DeploymentDetail() {
             </Show>
           </Show>
         </Show>
+      </Show>
+
+      <Show when={starting()}>
+        {(target) => (
+          <StartDefinitionModal
+            kind={target().kind}
+            definitionID={target().id}
+            projectID={projectID()}
+            environmentID={environmentID()}
+            onClose={() => setStarting(null)}
+          />
+        )}
       </Show>
     </section>
   );
