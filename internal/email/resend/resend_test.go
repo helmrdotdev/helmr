@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/email"
-	resendapi "github.com/resend/resend-go/v3"
+	resendapi "github.com/resend/resend-go/v4"
 )
 
 func TestResendEmailSenderSendsPlainTextEmail(t *testing.T) {
