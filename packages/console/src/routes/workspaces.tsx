@@ -25,7 +25,7 @@ function workspacesErrorMessage(error: unknown): string {
 function WorkspaceRow(props: { workspace: WorkspaceListItem }) {
   return (
     <tr>
-      <td><IDText value={props.workspace.id} href={workspaceHref(props.workspace.id)} /></td>
+      <td><IDText value={props.workspace.id} mode="link" href={workspaceHref(props.workspace.id)} /></td>
       <td>
         <Show when={props.workspace.key} fallback={<span class="text-console-faint">—</span>}>
           {(key) => <code>{key()}</code>}

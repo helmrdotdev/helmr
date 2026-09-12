@@ -1,6 +1,7 @@
 import { A, useParams } from "@solidjs/router";
 import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
+import { canPromoteDeployment, PromoteDeploymentModal } from "../features/deployments/PromoteDeploymentModal";
 import { StartDefinitionModal, type StartKind } from "../features/deployments/StartDefinitionModal";
 import { ApiError } from "../lib/api";
 import { getMe, hasPermission } from "../lib/auth";
@@ -94,6 +95,7 @@ export function DeploymentDetail() {
   const resourceScope = () => ({ projectID: projectID(), environmentID: environmentID() });
   const [tab, setTab] = createSignal<Tab>("tasks");
   const [starting, setStarting] = createSignal<{ kind: StartKind; id: string } | null>(null);
+  const [promoting, setPromoting] = createSignal(false);
   const me = createQuery(() => ({ queryKey: ["me"], queryFn: getMe, retry: false, staleTime: 60_000 }));
 
   const deployment = createQuery(() => ({
@@ -109,6 +111,11 @@ export function DeploymentDetail() {
     retry: false,
   }));
   const isCurrent = createMemo(() => !!current.data && current.data.id === deploymentID());
+  const canPromote = createMemo(() => !!deployment.data && canPromoteDeployment({
+    permitted: hasPermission(me.data, "tasks.deploy"),
+    currentLoaded: current.isSuccess,
+    isCurrent: isCurrent(),
+  }));
   // Start always targets the current Deployment, so the controls only appear there.
   const startTask = createMemo(() => isCurrent() && hasPermission(me.data, "runs.create")
     ? (id: string) => setStarting({ kind: "task", id })
@@ -162,12 +169,19 @@ export function DeploymentDetail() {
         subtitle={
           <Show when={deployment.data}>
             {(record) => (
-              <span class="flex flex-wrap gap-x-4 gap-y-1">
-                <span>Created <RelativeTime value={record().created_at} /></span>
-                <span>Bundle <IDText value={record().bundle_digest} /></span>
-                <span>ID <IDText value={record().id} full /></span>
+              <span class="grid gap-1">
+                <IDText value={record().id} mode="full" />
+                <span class="flex flex-wrap gap-x-4 gap-y-1">
+                  <span>Bundle <IDText value={record().bundle_digest} /></span>
+                  <span>Created <RelativeTime value={record().created_at} /></span>
+                </span>
               </span>
             )}
+          </Show>
+        }
+        actions={
+          <Show when={canPromote()}>
+            <button type="button" class={ui.secondaryButton} onClick={() => setPromoting(true)}>Promote</button>
           </Show>
         }
       />
@@ -274,6 +288,18 @@ export function DeploymentDetail() {
             </Show>
           </Show>
         </Show>
+      </Show>
+
+      <Show when={promoting() && deployment.data}>
+        {(record) => (
+          <PromoteDeploymentModal
+            deployment={record()}
+            projectID={projectID()}
+            environmentID={environmentID()}
+            environmentName={scope.selectedEnvironment()?.name}
+            onClose={() => setPromoting(false)}
+          />
+        )}
       </Show>
 
       <Show when={starting()}>

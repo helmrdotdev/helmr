@@ -62,7 +62,7 @@ export function TokenDetail() {
         title="Token"
         back={{ href: "/tokens", label: "Tokens" }}
         badge={<Show when={token.data}>{(current) => <StatusBadge resource="token" status={current().status} />}</Show>}
-        subtitle={<Show when={token.data}>{(current) => <IDText value={current().id} full />}</Show>}
+        subtitle={<Show when={token.data}>{(current) => <IDText value={current().id} mode="full" />}</Show>}
         actions={
           <Show when={pending()}>
             <Show when={hasPermission(me.data, "tokens.complete")}>
@@ -98,7 +98,6 @@ export function TokenDetail() {
                   </div>
 
                   <DetailList title="Token details">
-                    <DetailItem label="ID"><IDText value={current().id} full /></DetailItem>
                     <DetailItem label="Status"><StatusBadge resource="token" status={current().status} /></DetailItem>
                     <DetailItem label="Tags"><TagList tags={current().tags} /></DetailItem>
                     <DetailItem label="Timeout"><RelativeTime value={current().timeout_at} /></DetailItem>

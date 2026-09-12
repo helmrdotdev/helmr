@@ -52,12 +52,12 @@ function SessionRow(props: { session: Session; projectID: string; environmentID:
       <td>
         <IDText
           value={props.session.current_run_id ?? ""}
+          mode="link"
           href={props.session.current_run_id ? runHref(props.session.current_run_id, props.projectID, props.environmentID) : undefined}
         />
       </td>
       <td><RelativeTime value={props.session.created_at} /></td>
       <td><RelativeTime value={props.session.updated_at} /></td>
-      <td><IDText value={props.session.id} /></td>
     </tr>
   );
 }
@@ -113,7 +113,7 @@ export function Sessions() {
             </Show>
           }
         >
-          <DataTable columns={["Actor", "Key", "Status", "Current run", "Created", "Updated", "Session"]} minWidth="min-w-225">
+          <DataTable columns={["Actor", "Key", "Status", "Current run", "Created", "Updated"]} minWidth="min-w-200">
             <For each={items()}>
               {(session) => <SessionRow session={session} projectID={projectID()} environmentID={environmentID()} />}
             </For>

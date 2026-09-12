@@ -5,7 +5,41 @@ import { cx } from "./styles";
 
 const TEXT = "font-mono text-[11.5px]";
 
-export function IDText(props: { value: string; full?: boolean; href?: string | undefined; fallback?: string }) {
+type Mode = "short" | "link" | "full";
+
+type Props =
+  // Short form as plain text, full value in `title`. List rows and inline references.
+  | { value: string; mode?: "short"; fallback?: string }
+  // Short form as a link to the resource; falls back to short text without an href.
+  | { value: string; mode: "link"; href: string | undefined; fallback?: string }
+  // Full value once, and the text itself copies on click. Detail page headers only.
+  | { value: string; mode: "full"; fallback?: string };
+
+export function IDText(props: Props) {
+  const mode = (): Mode => props.mode ?? "short";
+  const href = () => (props.mode === "link" ? props.href : undefined);
+
+  return (
+    <Show when={props.value} fallback={<span class="text-console-faint">{props.fallback ?? "—"}</span>}>
+      <Show when={mode() === "full"} fallback={
+        <Show
+          when={href()}
+          fallback={<span class={cx(TEXT, "text-console-muted")} title={props.value}>{formatID(props.value)}</span>}
+        >
+          {(target) => (
+            <A href={target()} class={cx(TEXT, "text-console-accent hover:text-console-accent-hover")} title={props.value}>
+              {formatID(props.value)}
+            </A>
+          )}
+        </Show>
+      }>
+        <CopyText value={props.value} />
+      </Show>
+    </Show>
+  );
+}
+
+function CopyText(props: { value: string }) {
   const [copied, setCopied] = createSignal(false);
   let timer: number | undefined;
   onCleanup(() => window.clearTimeout(timer));
@@ -20,47 +54,20 @@ export function IDText(props: { value: string; full?: boolean; href?: string | u
       setCopied(false);
     }
   };
-  const display = () => (props.full ? props.value : formatID(props.value));
-  const copyLabel = () => (copied() ? `Copied ${props.value}` : `Copy ${props.value}`);
 
   return (
-    <Show when={props.value} fallback={<span class="text-console-faint">{props.fallback ?? "—"}</span>}>
-      <Show
-        when={props.href}
-        fallback={
-          <button
-            type="button"
-            class={cx(
-              TEXT,
-              "inline-flex max-w-full cursor-copy items-center gap-1.5 border-0 bg-transparent p-0 text-left text-console-muted underline decoration-dotted decoration-console-faint underline-offset-3 transition hover:text-console-text",
-              props.full && "break-all whitespace-normal",
-            )}
-            title={props.value}
-            aria-label={copyLabel()}
-            onClick={() => void copy()}
-          >
-            <span>{display()}</span>
-            <span class="text-[10px] text-console-accent" aria-hidden="true">{copied() ? "copied" : ""}</span>
-          </button>
-        }
-      >
-        {(href) => (
-          <span class={cx("inline-flex max-w-full items-center gap-1.5", props.full && "break-all whitespace-normal")}>
-            <A href={href()} class={cx(TEXT, "text-console-accent hover:text-console-accent-hover")} title={props.value}>
-              {display()}
-            </A>
-            <button
-              type="button"
-              class="inline-grid size-4 shrink-0 cursor-copy place-items-center rounded-xs border border-transparent bg-transparent p-0 font-mono text-[10px] leading-none text-console-subtle transition hover:border-console-border hover:text-console-text"
-              title="Copy"
-              aria-label={copyLabel()}
-              onClick={() => void copy()}
-            >
-              <span aria-hidden="true">{copied() ? "✓" : "⧉"}</span>
-            </button>
-          </span>
-        )}
-      </Show>
-    </Show>
+    <button
+      type="button"
+      class={cx(
+        TEXT,
+        "inline-flex max-w-full cursor-pointer items-baseline gap-1.5 break-all whitespace-normal border-0 bg-transparent p-0 text-left text-console-muted transition hover:text-console-text",
+      )}
+      title="Click to copy"
+      aria-label={copied() ? `Copied ${props.value}` : `Copy ${props.value}`}
+      onClick={() => void copy()}
+    >
+      <span>{props.value}</span>
+      <span class="text-[10px] text-console-accent" aria-hidden="true">{copied() ? "Copied" : ""}</span>
+    </button>
   );
 }
