@@ -46,10 +46,7 @@ let
 in
 {
   default = pkgs.mkShell {
-    packages =
-      toolsets.base
-      ++ [ pkgs.redis ]
-      ++ pkgs.lib.optionals (system != "x86_64-darwin") [ pkgsClickHouse.clickhouse ];
+    packages = toolsets.base;
     inherit shellHook;
   };
 

@@ -60,13 +60,13 @@ real KVM host and is not emulated in hosted CI.
 
 `nix run .#dev` runs the control plane and Vite console for interactive local
 development. `HELMR_DEV_CONSOLE_MODE=preview ./scripts/dev-console-stack.sh`
-runs the same stack directly from the Nix development environment, builds the
-console, and serves it with the control plane on one port
-(`HELMR_DEV_CONSOLE_PORT`, default `3000`). Preview state is disposable and
-isolated under the worktree's `.helmr-dev` directory. On Linux, PostgreSQL and
-Redis use Unix sockets and ClickHouse uses a loopback address derived from the
-console port, so multiple worktrees can run concurrently by choosing distinct
-console ports. Preview is available on Linux and Apple Silicon macOS.
+runs the stack the browser acceptance test uses: it builds the console and
+serves it with the control plane, Redis and ClickHouse on one port
+(`HELMR_DEV_CONSOLE_PORT`, default `3000`). Run it from `nix develop .#browser`,
+which provides Redis and ClickHouse. Preview state is disposable and isolated
+under the worktree's `.helmr-dev` directory. PostgreSQL and Redis use Unix
+sockets and ClickHouse uses a loopback address derived from the console port,
+so concurrent stacks only need distinct console ports.
 
 On x86_64 Linux, run the browser acceptance test with the Playwright and
 Chromium versions pinned by Nix:
