@@ -1,12 +1,16 @@
 import { A } from "@solidjs/router";
 import { createInfiniteQuery } from "@tanstack/solid-query";
 import { createMemo, For, Show } from "solid-js";
-import { formatRelative } from "../features/runs/display";
 import { runHref } from "../features/runs/navigation";
-import { SessionStatusBadge } from "../features/sessions/display";
 import { ApiError } from "../lib/api";
 import { useScope } from "../lib/scope";
 import { listSessions, sessionConsolePath, type Session } from "../lib/sessions";
+import { DataTable } from "../ui/DataTable";
+import { IDText } from "../ui/IDText";
+import { PageHeader } from "../ui/PageHeader";
+import { RelativeTime } from "../ui/RelativeTime";
+import { StatePanel } from "../ui/StatePanel";
+import { StatusBadge } from "../ui/StatusBadge";
 import { ui } from "../ui/styles";
 
 function sessionsErrorMessage(error: unknown): string {
@@ -33,21 +37,18 @@ function SessionRow(props: { session: Session; projectID: string; environmentID:
           {(key) => <code>{key()}</code>}
         </Show>
       </td>
-      <td><SessionStatusBadge status={props.session.status} /></td>
+      <td><StatusBadge resource="session" status={props.session.status} /></td>
       <td>
         <Show when={props.session.current_run_id} fallback={<span class="text-console-faint">—</span>}>
           {(runID) => (
-            <A
-              href={runHref(runID(), props.projectID, props.environmentID)}
-              class="font-mono text-[11.5px] text-console-accent hover:text-console-accent-hover"
-            >
-              {runID().slice(0, 12)}
+            <A href={runHref(runID(), props.projectID, props.environmentID)} class="text-console-accent hover:text-console-accent-hover">
+              <IDText value={runID()} class="text-inherit hover:text-inherit" />
             </A>
           )}
         </Show>
       </td>
-      <td><span class={ui.muted}>{formatRelative(props.session.created_at)}</span></td>
-      <td><code>{props.session.id.slice(0, 12)}</code></td>
+      <td><RelativeTime value={props.session.created_at} /></td>
+      <td><IDText value={props.session.id} /></td>
     </tr>
   );
 }
@@ -73,47 +74,24 @@ export function Sessions() {
 
   return (
     <section class={ui.page}>
-      <div class={ui.pageHeader}>
-        <div>
-          <h1 class={ui.h1}>Sessions</h1>
-          <p class={ui.pageSubtitle}>
-            Actor Sessions in the selected environment, with the Run currently serving each one.
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        title="Sessions"
+        subtitle="Actor Sessions in the selected environment, with the Run currently serving each one."
+      />
 
       <Show when={sessions.isError}>
-        <p class={ui.error} role="alert">{sessionsErrorMessage(sessions.error)}</p>
+        <StatePanel error={sessionsErrorMessage(sessions.error)} />
       </Show>
-      <Show when={!sessions.isPending} fallback={<p class={ui.muted}>Loading Sessions...</p>}>
+      <Show when={!sessions.isPending} fallback={<StatePanel loading="Loading Sessions..." />}>
         <Show
           when={items().length > 0}
-          fallback={
-            <div class={ui.emptyState}>
-              <strong>No Sessions yet.</strong>
-              <span>Starting a declared Actor creates a Session.</span>
-            </div>
-          }
+          fallback={<StatePanel empty="No Sessions yet." hint="Starting a declared Actor creates a Session." />}
         >
-          <div class={ui.tableWrap}>
-            <table class="min-w-200">
-              <thead>
-                <tr>
-                  <th>Actor</th>
-                  <th>Key</th>
-                  <th>Status</th>
-                  <th>Current run</th>
-                  <th>Created</th>
-                  <th>Session</th>
-                </tr>
-              </thead>
-              <tbody>
-                <For each={items()}>
-                  {(session) => <SessionRow session={session} projectID={projectID()} environmentID={environmentID()} />}
-                </For>
-              </tbody>
-            </table>
-          </div>
+          <DataTable columns={["Actor", "Key", "Status", "Current run", "Created", "Session"]} minWidth="min-w-200">
+            <For each={items()}>
+              {(session) => <SessionRow session={session} projectID={projectID()} environmentID={environmentID()} />}
+            </For>
+          </DataTable>
           <Show when={sessions.hasNextPage}>
             <div class={ui.actionRow}>
               <button

@@ -1,12 +1,17 @@
 import { createInfiniteQuery } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
-import { formatRelative } from "../features/runs/display";
-import { TokenStatusBadge } from "../features/tokens/display";
 import { ApiError } from "../lib/api";
 import { useScope } from "../lib/scope";
 import { listTokens, type TokenStatus } from "../lib/tokens";
+import { DataTable } from "../ui/DataTable";
+import { IDText } from "../ui/IDText";
+import { PageHeader } from "../ui/PageHeader";
+import { RelativeTime } from "../ui/RelativeTime";
 import { Select, type SelectOption } from "../ui/Select";
+import { StatePanel } from "../ui/StatePanel";
+import { StatusBadge } from "../ui/StatusBadge";
 import { ui } from "../ui/styles";
+import { TagList } from "../ui/TagList";
 
 type TokenFilter = TokenStatus | "all";
 
@@ -49,70 +54,37 @@ export function Tokens() {
 
   return (
     <section class={ui.page}>
-      <div class={ui.pageHeader}>
-        <div>
-          <h1 class={ui.h1}>Tokens</h1>
-          <p class={ui.pageSubtitle}>
-            Approvals and callbacks that Runs wait on. Pending Tokens can be completed or cancelled from the Overview.
-          </p>
-        </div>
-        <div class="w-44">
-          <Select<TokenFilter>
-            value={filter()}
-            options={FILTERS}
-            onChange={setFilter}
-            ariaLabel="Filter tokens"
-          />
-        </div>
-      </div>
+      <PageHeader
+        title="Tokens"
+        subtitle="Approvals and callbacks that Runs wait on. Pending Tokens can be completed or cancelled from the Overview."
+        actions={
+          <div class="w-44">
+            <Select<TokenFilter> value={filter()} options={FILTERS} onChange={setFilter} ariaLabel="Filter tokens" />
+          </div>
+        }
+      />
 
       <Show when={tokens.isError}>
-        <p class={ui.error} role="alert">{tokensErrorMessage(tokens.error)}</p>
+        <StatePanel error={tokensErrorMessage(tokens.error)} />
       </Show>
-      <Show when={!tokens.isPending} fallback={<p class={ui.muted}>Loading Tokens...</p>}>
+      <Show when={!tokens.isPending} fallback={<StatePanel loading="Loading Tokens..." />}>
         <Show
           when={items().length > 0}
-          fallback={
-            <div class={ui.emptyState}>
-              <strong>No Tokens match this filter.</strong>
-              <span>Tokens are created by Runs that wait for an approval or callback.</span>
-            </div>
-          }
+          fallback={<StatePanel empty="No Tokens match this filter." hint="Tokens are created by Runs that wait for an approval or callback." />}
         >
-          <div class={ui.tableWrap}>
-            <table class="min-w-200">
-              <thead>
+          <DataTable columns={["Token", "Status", "Tags", "Timeout", "Created"]} minWidth="min-w-200">
+            <For each={items()}>
+              {(token) => (
                 <tr>
-                  <th>Token</th>
-                  <th>Status</th>
-                  <th>Tags</th>
-                  <th>Timeout</th>
-                  <th>Created</th>
+                  <td><IDText value={token.id} /></td>
+                  <td><StatusBadge resource="token" status={token.status} /></td>
+                  <td><TagList tags={token.tags} /></td>
+                  <td><RelativeTime value={token.timeout_at} /></td>
+                  <td><RelativeTime value={token.created_at} /></td>
                 </tr>
-              </thead>
-              <tbody>
-                <For each={items()}>
-                  {(token) => (
-                    <tr>
-                      <td><code>{token.id}</code></td>
-                      <td><TokenStatusBadge status={token.status} /></td>
-                      <td>
-                        <Show when={token.tags.length > 0} fallback={<span class="text-console-faint">—</span>}>
-                          <div class="flex flex-wrap gap-1">
-                            <For each={token.tags}>
-                              {(tag) => <span class="rounded-xs border border-console-border bg-console-bg-panel px-1.5 font-mono text-[10.5px] text-console-muted">{tag}</span>}
-                            </For>
-                          </div>
-                        </Show>
-                      </td>
-                      <td><span class={ui.muted} title={token.timeout_at}>{formatRelative(token.timeout_at)}</span></td>
-                      <td><span class={ui.muted}>{formatRelative(token.created_at)}</span></td>
-                    </tr>
-                  )}
-                </For>
-              </tbody>
-            </table>
-          </div>
+              )}
+            </For>
+          </DataTable>
           <Show when={tokens.hasNextPage}>
             <div class={ui.actionRow}>
               <button

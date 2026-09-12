@@ -1,14 +1,18 @@
 import { A, useParams } from "@solidjs/router";
 import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
-import { createMemo, createSignal, For, Show, type JSX } from "solid-js";
-import { shortDigest } from "../features/deployments/display";
-import { formatRelative } from "../features/runs/display";
+import { createMemo, createSignal, For, Show } from "solid-js";
 import { ApiError } from "../lib/api";
 import { getCurrentDeployment, getDeployment, getDeploymentEvents } from "../lib/deployments";
-import { listSchedules, type Schedule } from "../lib/schedules";
+import { listSchedules } from "../lib/schedules";
 import { useScope } from "../lib/scope";
 import { listActors, listSandboxes, listTasks, type DefinitionListItem } from "../lib/definitions";
-import { cx, statusBadgeClass, ui } from "../ui/styles";
+import { DataTable } from "../ui/DataTable";
+import { IDText } from "../ui/IDText";
+import { PageHeader } from "../ui/PageHeader";
+import { RelativeTime } from "../ui/RelativeTime";
+import { StatePanel } from "../ui/StatePanel";
+import { StatusBadge } from "../ui/StatusBadge";
+import { cx, ui } from "../ui/styles";
 
 const TABS = ["tasks", "actors", "sandboxes", "schedules", "events"] as const;
 type Tab = (typeof TABS)[number];
@@ -30,16 +34,6 @@ function errorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
-function scheduleTone(schedule: Schedule): "active" | "expired" | "revoked" {
-  if (schedule.status === "active") return "active";
-  if (schedule.status === "errored") return "revoked";
-  return "expired";
-}
-
-function dateCell(value: string | undefined): JSX.Element {
-  return value ? formatRelative(value) : <span class="text-console-faint">—</span>;
-}
-
 function DefinitionTable(props: {
   label: string;
   items: DefinitionListItem[] | undefined;
@@ -47,37 +41,28 @@ function DefinitionTable(props: {
   error: unknown;
   history?: boolean;
 }) {
+  const noun = () => props.label.toLowerCase();
   return (
-    <Show when={!props.pending} fallback={<p class={ui.muted}>Loading {props.label.toLowerCase()}...</p>}>
-      <Show when={!props.error} fallback={<p class={ui.error} role="alert">{errorMessage(props.error, `Could not load ${props.label.toLowerCase()}.`)}</p>}>
+    <Show when={!props.pending} fallback={<StatePanel loading={`Loading ${noun()}...`} />}>
+      <Show when={!props.error} fallback={<StatePanel error={errorMessage(props.error, `Could not load ${noun()}.`)} />}>
         <Show
           when={(props.items?.length ?? 0) > 0}
-          fallback={<p class={ui.emptyState}>This Deployment declares no {props.label.toLowerCase()}.</p>}
+          fallback={<StatePanel empty={`This Deployment declares no ${noun()}.`} />}
         >
-          <div class={ui.tableWrap}>
-            <table class="min-w-120">
-              <thead>
+          <DataTable columns={props.history ? [props.label.replace(/e?s$/, ""), "History"] : [props.label.replace(/e?s$/, "")]}>
+            <For each={props.items}>
+              {(item) => (
                 <tr>
-                  <th>{props.label.replace(/e?s$/, "")}</th>
-                  <Show when={props.history}><th>History</th></Show>
+                  <td><strong class="font-medium text-console-text">{item.id}</strong></td>
+                  <Show when={props.history}>
+                    <td>
+                      <A href="/runs" class="font-mono text-[11.5px] text-console-accent hover:text-console-accent-hover">Runs</A>
+                    </td>
+                  </Show>
                 </tr>
-              </thead>
-              <tbody>
-                <For each={props.items}>
-                  {(item) => (
-                    <tr>
-                      <td><strong class="font-medium text-console-text">{item.id}</strong></td>
-                      <Show when={props.history}>
-                        <td>
-                          <A href="/runs" class="font-mono text-[11.5px] text-console-accent hover:text-console-accent-hover">Runs</A>
-                        </td>
-                      </Show>
-                    </tr>
-                  )}
-                </For>
-              </tbody>
-            </table>
-          </div>
+              )}
+            </For>
+          </DataTable>
         </Show>
       </Show>
     </Show>
@@ -146,32 +131,28 @@ export function DeploymentDetail() {
 
   return (
     <section class={ui.page}>
-      <A href="/deployments" class={ui.backLink}>Deployments</A>
-      <div class={ui.pageHeader}>
-        <div>
-          <div class={ui.pageTitle}>
-            <h1 class={ui.h1}>{deployment.data?.version ?? "Deployment"}</h1>
-            <Show when={isCurrent()}>
-              <span class={statusBadgeClass("active")}>current</span>
-            </Show>
-          </div>
+      <PageHeader
+        title={deployment.data?.version ?? "Deployment"}
+        back={{ href: "/deployments", label: "Deployments" }}
+        badge={<Show when={isCurrent()}><StatusBadge resource="deployment" status="current" /></Show>}
+        subtitle={
           <Show when={deployment.data}>
             {(record) => (
-              <p class={cx(ui.pageSubtitle, "flex flex-wrap gap-x-4 gap-y-1")}>
-                <span>Created <strong class="font-medium text-console-text">{formatRelative(record().created_at)}</strong></span>
-                <span>Bundle <code class="font-mono text-[11.5px]" title={record().bundle_digest}>{shortDigest(record().bundle_digest)}</code></span>
-                <span>ID <code class="font-mono text-[11.5px]">{record().id}</code></span>
-              </p>
+              <span class="flex flex-wrap gap-x-4 gap-y-1">
+                <span>Created <RelativeTime value={record().created_at} /></span>
+                <span>Bundle <IDText value={record().bundle_digest} /></span>
+                <span>ID <IDText value={record().id} full /></span>
+              </span>
             )}
           </Show>
-        </div>
-      </div>
+        }
+      />
 
       <Show when={deployment.isError}>
-        <p class={ui.error} role="alert">{errorMessage(deployment.error, "Could not load this Deployment.")}</p>
+        <StatePanel error={errorMessage(deployment.error, "Could not load this Deployment.")} />
       </Show>
       <Show when={deployment.isPending && enabled()}>
-        <p class={ui.muted}>Loading Deployment...</p>
+        <StatePanel loading="Loading Deployment..." />
       </Show>
 
       <Show when={deployment.isSuccess}>
@@ -203,56 +184,34 @@ export function DeploymentDetail() {
         <Show when={tab() === "schedules"}>
           <Show
             when={isCurrent()}
-            fallback={
-              <p class={ui.emptyState}>
-                Schedules are reconciled from the environment's current Deployment. Promote this Deployment to see its schedules take effect.
-              </p>
-            }
+            fallback={<StatePanel empty="Schedules follow the current Deployment." hint="Promote this Deployment to see its schedules take effect." />}
           >
             <Show when={schedules.isError}>
-              <p class={ui.error} role="alert">{errorMessage(schedules.error, "Could not load schedules.")}</p>
+              <StatePanel error={errorMessage(schedules.error, "Could not load schedules.")} />
             </Show>
-            <Show when={!schedules.isPending} fallback={<p class={ui.muted}>Loading schedules...</p>}>
-              <Show when={scheduleItems().length > 0} fallback={<p class={ui.emptyState}>This Deployment declares no schedules.</p>}>
-                <div class={ui.tableWrap}>
-                  <table class="min-w-250">
-                    <thead>
+            <Show when={!schedules.isPending} fallback={<StatePanel loading="Loading schedules..." />}>
+              <Show when={scheduleItems().length > 0} fallback={<StatePanel empty="This Deployment declares no schedules." />}>
+                <DataTable columns={["Task", "Status", "Last failure", "Cron", "Timezone", "Next", "Last", "Generation", "ID"]} minWidth="min-w-250">
+                  <For each={scheduleItems()}>
+                    {(schedule) => (
                       <tr>
-                        <th>Task</th>
-                        <th>Status</th>
-                        <th>Cron</th>
-                        <th>Timezone</th>
-                        <th>Next</th>
-                        <th>Last</th>
-                        <th>Generation</th>
-                        <th>ID</th>
+                        <td><strong class="font-medium text-console-text">{schedule.task_id}</strong></td>
+                        <td><StatusBadge resource="schedule" status={schedule.status} /></td>
+                        <td>
+                          <Show when={schedule.last_failure} fallback={<span class="text-console-faint">—</span>}>
+                            {(failure) => <span class={ui.muted} title={failure().code}>{failure().message}</span>}
+                          </Show>
+                        </td>
+                        <td><code>{schedule.cron.pattern}</code></td>
+                        <td><span class={ui.muted}>{schedule.cron.timezone}</span></td>
+                        <td><RelativeTime value={schedule.next_fire_at} /></td>
+                        <td><RelativeTime value={schedule.last_fire_at} /></td>
+                        <td>{schedule.generation}</td>
+                        <td><IDText value={schedule.id} /></td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      <For each={scheduleItems()}>
-                        {(schedule) => (
-                          <tr class={ui.detailTableRow}>
-                            <td><strong>{schedule.task_id}</strong></td>
-                            <td>
-                              <div class={ui.tableCellStack}>
-                                <span class={statusBadgeClass(scheduleTone(schedule))}>{schedule.status}</span>
-                                <Show when={schedule.last_failure}>
-                                  {(failure) => <span class={ui.muted}>{failure().message}</span>}
-                                </Show>
-                              </div>
-                            </td>
-                            <td><code>{schedule.cron.pattern}</code></td>
-                            <td><span class={ui.muted}>{schedule.cron.timezone}</span></td>
-                            <td>{dateCell(schedule.next_fire_at)}</td>
-                            <td>{dateCell(schedule.last_fire_at)}</td>
-                            <td>{schedule.generation}</td>
-                            <td><code>{schedule.id}</code></td>
-                          </tr>
-                        )}
-                      </For>
-                    </tbody>
-                  </table>
-                </div>
+                    )}
+                  </For>
+                </DataTable>
               </Show>
             </Show>
           </Show>
@@ -260,34 +219,22 @@ export function DeploymentDetail() {
 
         <Show when={tab() === "events"}>
           <Show when={events.isError}>
-            <p class={ui.error} role="alert">{errorMessage(events.error, "Could not load Deployment events.")}</p>
+            <StatePanel error={errorMessage(events.error, "Could not load Deployment events.")} />
           </Show>
-          <Show when={!events.isPending} fallback={<p class={ui.muted}>Loading events...</p>}>
-            <Show when={eventItems().length > 0} fallback={<p class={ui.emptyState}>No events recorded for this Deployment.</p>}>
-              <div class={ui.tableWrap}>
-                <table class="min-w-180">
-                  <thead>
+          <Show when={!events.isPending} fallback={<StatePanel loading="Loading events..." />}>
+            <Show when={eventItems().length > 0} fallback={<StatePanel empty="No events recorded for this Deployment." />}>
+              <DataTable columns={["Kind", "Severity", "Message", "At"]} minWidth="min-w-180">
+                <For each={eventItems()}>
+                  {(event) => (
                     <tr>
-                      <th>Kind</th>
-                      <th>Severity</th>
-                      <th>Message</th>
-                      <th>At</th>
+                      <td><code>{event.kind}</code></td>
+                      <td><span class={ui.muted}>{event.severity}</span></td>
+                      <td>{event.message}</td>
+                      <td><RelativeTime value={event.at} /></td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    <For each={eventItems()}>
-                      {(event) => (
-                        <tr>
-                          <td><code>{event.kind}</code></td>
-                          <td><span class={ui.muted}>{event.severity}</span></td>
-                          <td>{event.message}</td>
-                          <td><span class={ui.muted} title={event.at}>{formatRelative(event.at)}</span></td>
-                        </tr>
-                      )}
-                    </For>
-                  </tbody>
-                </table>
-              </div>
+                  )}
+                </For>
+              </DataTable>
               <Show when={events.hasNextPage}>
                 <div class={ui.actionRow}>
                   <button

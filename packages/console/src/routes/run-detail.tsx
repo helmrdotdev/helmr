@@ -1,7 +1,7 @@
 import { A, useParams, useSearchParams } from "@solidjs/router";
 import { createQuery } from "@tanstack/solid-query";
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
-import { formatRelative, StatusBadge } from "../features/runs/display";
+import { deploymentHref } from "../features/deployments/navigation";
 import { ApiError } from "../lib/api";
 import { runSessionConsolePath } from "../lib/sessions";
 import {
@@ -13,7 +13,13 @@ import {
   type RunLogRecord,
 } from "../lib/runs";
 import { useScope } from "../lib/scope";
-import { cx, ui } from "../ui/styles";
+import { IDText } from "../ui/IDText";
+import { PageHeader } from "../ui/PageHeader";
+import { DetailItem, DetailList, Panel } from "../ui/Panel";
+import { RelativeTime } from "../ui/RelativeTime";
+import { StatePanel } from "../ui/StatePanel";
+import { StatusBadge } from "../ui/StatusBadge";
+import { ui } from "../ui/styles";
 
 const pageSize = 200;
 
@@ -40,24 +46,17 @@ function logText(record: RunLogRecord): string {
   return decodeBase64(record.content_base64 ?? "");
 }
 
-function timeLabel(value: string | undefined): string {
-  if (!value) return "—";
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? "—" : parsed.toLocaleString();
-}
-
 function searchParamValue(value: string | string[] | undefined): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
 function JSONPanel(props: { title: string; value: unknown }) {
   return (
-    <section class="border border-console-border bg-console-surface p-4">
-      <h2 class={cx(ui.h2, "mb-3")}>{props.title}</h2>
+    <Panel title={props.title}>
       <pre class="m-0 max-h-130 overflow-auto whitespace-pre-wrap break-words border border-console-border bg-console-bg-panel px-4 py-3 font-mono text-[12px] leading-normal text-console-text">
         {JSON.stringify(props.value, null, 2)}
       </pre>
-    </section>
+    </Panel>
   );
 }
 
@@ -154,24 +153,18 @@ export function RunDetail() {
 
   return (
     <section class={ui.page}>
-      <div class={ui.pageHeader}>
-        <div>
-          <A href="/runs" class={ui.backLink}>Runs</A>
-          <div class={ui.pageTitle}>
-            <h1 class={ui.h1}>{run.data?.entrypoint.id ?? "Run"}</h1>
-            <Show when={run.data}>{(current) => <StatusBadge status={current().status} />}</Show>
-          </div>
-          <Show when={run.data}>
-            {(current) => <p class="mt-1.5 font-mono text-[12px] text-console-muted">{current().id}</p>}
-          </Show>
-        </div>
-      </div>
+      <PageHeader
+        title={run.data?.entrypoint.id ?? "Run"}
+        back={{ href: "/runs", label: "Runs" }}
+        badge={<Show when={run.data}>{(current) => <StatusBadge resource="run" status={current().status} />}</Show>}
+        subtitle={<Show when={run.data}>{(current) => <IDText value={current().id} full />}</Show>}
+      />
 
       <Show when={run.isError}>
-        <p class={ui.error} role="alert">{runErrorMessage(run.error)}</p>
+        <StatePanel error={runErrorMessage(run.error)} />
       </Show>
-      <Show when={enabled()} fallback={<p class={ui.error}>Run ID and environment scope are required.</p>}>
-        <Show when={!run.isPending} fallback={<p class={ui.muted}>Loading Run...</p>}>
+      <Show when={enabled()} fallback={<StatePanel error="Run ID and environment scope are required." />}>
+        <Show when={!run.isPending} fallback={<StatePanel loading="Loading Run..." />}>
           <Show when={run.data}>
             {(current) => (
               <div class="grid grid-cols-[minmax(0,1fr)_300px] items-start gap-3.5 max-[960px]:grid-cols-1">
@@ -183,17 +176,14 @@ export function RunDetail() {
                     {(failure) => <JSONPanel title="Run failure" value={failure()} />}
                   </Show>
 
-                  <section class="border border-console-border bg-console-surface p-4">
-                    <h2 class={cx(ui.h2, "mb-3")}>Events</h2>
-                    <Show when={!initialEvents.isPending} fallback={<p class={ui.muted}>Loading events...</p>}>
-                      <Show when={events().length > 0} fallback={<p class={ui.emptyState}>No events.</p>}>
+                  <Panel title="Events">
+                    <Show when={!initialEvents.isPending} fallback={<StatePanel loading="Loading events..." />}>
+                      <Show when={events().length > 0} fallback={<StatePanel empty="No events." />}>
                         <ol class="m-0 list-none border border-console-border p-0">
                           <For each={events()}>
                             {(event) => (
                               <li class="grid grid-cols-[110px_1fr] gap-3 border-b border-console-border-soft px-3 py-2.5 last:border-b-0">
-                                <time class="font-mono text-[10.5px] text-console-subtle" datetime={event.at}>
-                                  {formatRelative(event.at)}
-                                </time>
+                                <span class="font-mono text-[10.5px]"><RelativeTime value={event.at} /></span>
                                 <div class="min-w-0">
                                   <div class="font-mono text-[11px] text-console-subtle">
                                     {event.severity} · {event.source} · {event.kind}
@@ -213,19 +203,16 @@ export function RunDetail() {
                         </button>
                       </Show>
                     </Show>
-                  </section>
+                  </Panel>
 
-                  <section class="border border-console-border bg-console-surface p-4">
-                    <h2 class={cx(ui.h2, "mb-3")}>Logs</h2>
-                    <Show when={!initialLogs.isPending} fallback={<p class={ui.muted}>Loading logs...</p>}>
-                      <Show when={logs().length > 0} fallback={<p class={ui.emptyState}>No logs.</p>}>
+                  <Panel title="Logs">
+                    <Show when={!initialLogs.isPending} fallback={<StatePanel loading="Loading logs..." />}>
+                      <Show when={logs().length > 0} fallback={<StatePanel empty="No logs." />}>
                         <ol class="m-0 list-none border border-console-border p-0">
                           <For each={logs()}>
                             {(record) => (
                               <li class="grid grid-cols-[110px_1fr] gap-3 border-b border-console-border-soft px-3 py-2.5 last:border-b-0">
-                                <time class="font-mono text-[10.5px] text-console-subtle" datetime={record.at}>
-                                  {formatRelative(record.at)}
-                                </time>
+                                <span class="font-mono text-[10.5px]"><RelativeTime value={record.at} /></span>
                                 <pre class="m-0 whitespace-pre-wrap break-words font-mono text-[12px] text-console-text">
                                   <span class="text-console-subtle">{record.kind} · attempt {record.attempt_number}</span>{"\n"}
                                   {logText(record)}
@@ -241,44 +228,34 @@ export function RunDetail() {
                         </button>
                       </Show>
                     </Show>
-                  </section>
+                  </Panel>
                   <Show when={pageError()}>
-                    {(message) => <p class={ui.error} role="alert">{message()}</p>}
+                    {(message) => <StatePanel error={message()} />}
                   </Show>
                 </div>
 
-                <aside class="sticky top-13.5 flex flex-col gap-3 max-[960px]:static">
-                  <section class="border border-console-border bg-console-surface px-4 py-3.5">
-                    <h3 class={cx(ui.h3, "mb-3.5")}>Run details</h3>
-                    <dl class="m-0 grid gap-2.5 [&>div]:grid [&>div]:gap-0.75 [&_dt]:font-mono [&_dt]:text-[10px] [&_dt]:uppercase [&_dt]:text-console-subtle [&_dd]:m-0 [&_dd]:break-words [&_dd]:text-[12px]">
-                      <div><dt>ID</dt><dd><code>{current().id}</code></dd></div>
-                      <div><dt>Entrypoint</dt><dd>{current().entrypoint.kind} · {current().entrypoint.id}</dd></div>
-                      <Show when={runSessionConsolePath(current(), projectID(), environmentID())}>
-                        {(sessionPath) => <div>
-                          <dt>Session</dt>
-                          <dd>
-                            <A
-                              class="text-console-accent"
-                              href={sessionPath()}
-                            >
-                              {current().session_id}
-                            </A>
-                          </dd>
-                        </div>}
-                      </Show>
-                      <div>
-                        <dt>Workspace</dt>
-                        <dd><A class="text-console-accent" href={`/workspaces/${current().workspace_id}`}>{current().workspace_id}</A></dd>
-                      </div>
-                      <div><dt>Deployment</dt><dd>{current().deployment.id} · {current().deployment.version}</dd></div>
-                      <div><dt>Attempt</dt><dd>{current().current_attempt_number}</dd></div>
-                      <div><dt>Created</dt><dd title={timeLabel(current().created_at)}>{formatRelative(current().created_at)}</dd></div>
-                      <div><dt>Started</dt><dd>{formatRelative(current().started_at)}</dd></div>
-                      <div><dt>Terminal</dt><dd>{formatRelative(current().terminal_at)}</dd></div>
-                      <div><dt>Cause</dt><dd>{current().cause.type}</dd></div>
-                    </dl>
-                  </section>
-                </aside>
+                <DetailList title="Run details">
+                  <DetailItem label="ID"><IDText value={current().id} full /></DetailItem>
+                  <DetailItem label="Entrypoint">{current().entrypoint.kind} · {current().entrypoint.id}</DetailItem>
+                  <Show when={runSessionConsolePath(current(), projectID(), environmentID())}>
+                    {(sessionPath) => (
+                      <DetailItem label="Session">
+                        <A class="text-console-accent" href={sessionPath()}><IDText value={current().session_id!} full class="text-inherit hover:text-inherit" /></A>
+                      </DetailItem>
+                    )}
+                  </Show>
+                  <DetailItem label="Workspace">
+                    <A class="text-console-accent" href={`/workspaces/${current().workspace_id}`}><IDText value={current().workspace_id} full class="text-inherit hover:text-inherit" /></A>
+                  </DetailItem>
+                  <DetailItem label="Deployment">
+                    <A class="text-console-accent" href={deploymentHref(current().deployment.id)}>{current().deployment.version}</A>
+                  </DetailItem>
+                  <DetailItem label="Attempt">{current().current_attempt_number}</DetailItem>
+                  <DetailItem label="Created"><RelativeTime value={current().created_at} /></DetailItem>
+                  <DetailItem label="Started"><RelativeTime value={current().started_at} /></DetailItem>
+                  <DetailItem label="Terminal"><RelativeTime value={current().terminal_at} /></DetailItem>
+                  <DetailItem label="Cause">{current().cause.type}</DetailItem>
+                </DetailList>
               </div>
             )}
           </Show>

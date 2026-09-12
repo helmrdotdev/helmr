@@ -11,7 +11,12 @@ import {
   type CreateAdminWorkerGroupInput,
 } from "../lib/admin";
 import { ApiError } from "../lib/api";
+import { DataTable } from "../ui/DataTable";
+import { IDText } from "../ui/IDText";
 import { Modal } from "../ui/Modal";
+import { PageHeader } from "../ui/PageHeader";
+import { StatePanel } from "../ui/StatePanel";
+import { StatusBadge } from "../ui/StatusBadge";
 import { ui } from "../ui/styles";
 
 function errorMessage(error: unknown): string {
@@ -103,25 +108,36 @@ export function AdminWorkerGroups() {
 
   return (
     <div class={ui.page}>
-      <div class={ui.pageHeader}>
-        <div><h1 class={ui.h1}>Worker Groups</h1><p class={ui.pageSubtitle}>Execution fleets, routing, and Worker enrollment.</p></div>
-        <button type="button" class={ui.button} disabled={(regions.data?.regions.length ?? 0) === 0} onClick={() => { setError(null); setCreating(true); }}>New Worker Group</button>
-      </div>
+      <PageHeader
+        title="Worker Groups"
+        subtitle="Execution fleets, routing, and Worker enrollment."
+        actions={<button type="button" class={ui.button} disabled={(regions.data?.regions.length ?? 0) === 0} onClick={() => { setError(null); setCreating(true); }}>New Worker Group</button>}
+      />
       <div class={ui.toolbar}>
         <label class={ui.filterField}>Region <select class={ui.input} value={regionFilter()} onChange={(event) => setRegionFilter(event.currentTarget.value)}><option value="">All</option><For each={regions.data?.regions ?? []}>{(region) => <option value={region.id}>{region.display_name}</option>}</For></select></label>
       </div>
-      <Show when={error()}><p class={ui.error} role="alert">{error()}</p></Show>
-      <Show when={!groups.isPending} fallback={<p class={ui.muted}>Loading Worker Groups...</p>}>
-        <Show when={!groups.isError} fallback={<p class={ui.error}>Could not load Worker Groups.</p>}>
-          <Show when={(groups.data?.worker_groups.length ?? 0) > 0} fallback={<div class={ui.emptyState}><strong class="text-console-text">No Worker Groups configured.</strong><Show when={(regions.data?.regions.length ?? 0) > 0} fallback={<a href="/admin/regions" class="text-console-accent">Create a Region first</a>}><button type="button" class={ui.button} onClick={() => setCreating(true)}>Create Worker Group</button></Show></div>}>
-            <div class={ui.tableWrap}>
-              <table class="min-w-220">
-                <thead><tr><th>Worker Group</th><th>Region</th><th>State</th><th>Version</th><th></th></tr></thead>
-                <tbody><For each={groups.data?.worker_groups ?? []}>{(group) => (
+      <Show when={error()}>{(message) => <StatePanel error={message()} />}</Show>
+      <Show when={!groups.isPending} fallback={<StatePanel loading="Loading Worker Groups..." />}>
+        <Show when={!groups.isError} fallback={<StatePanel error="Could not load Worker Groups." />}>
+          <Show
+            when={(groups.data?.worker_groups.length ?? 0) > 0}
+            fallback={
+              <StatePanel empty="No Worker Groups configured.">
+                <Show when={(regions.data?.regions.length ?? 0) > 0} fallback={<a href="/admin/regions" class="text-console-accent">Create a Region first</a>}>
+                  <button type="button" class={ui.button} onClick={() => setCreating(true)}>Create Worker Group</button>
+                </Show>
+              </StatePanel>
+            }
+          >
+            <DataTable columns={["Worker Group", "ID", "Region", "State", "Version", { label: "Actions", srOnly: true }]} minWidth="min-w-220">
+              <For each={groups.data?.worker_groups ?? []}>
+                {(group) => (
                   <tr>
-                    <td><div class={ui.tableCellStack}><strong>{group.name}</strong><div><code>{group.id}</code></div></div></td>
+                    <td><strong class="font-medium text-console-text">{group.name}</strong></td>
+                    <td><IDText value={group.id} /></td>
                     <td><code>{group.region_id}</code></td>
-                    <td>{group.state}</td><td>{group.claim_version}</td>
+                    <td><StatusBadge resource="worker_group" status={group.state} /></td>
+                    <td>{group.claim_version}</td>
                     <td class={ui.actionsCell}><div class="flex items-center justify-end gap-1.5">
                       <button type="button" class={ui.secondaryButton} onClick={() => { setError(null); setEditing(group); }}>Edit</button>
                       <Show when={group.state === "active"}><button type="button" class={ui.secondaryButton} disabled={submitting()} onClick={() => void transition(group, "pause")}>Pause</button></Show>
@@ -131,9 +147,9 @@ export function AdminWorkerGroups() {
                       <button type="button" class={ui.secondaryButton} disabled={submitting()} onClick={() => void rotateToken(group)}>Rotate token</button>
                     </div></td>
                   </tr>
-                )}</For></tbody>
-              </table>
-            </div>
+                )}
+              </For>
+            </DataTable>
           </Show>
         </Show>
       </Show>

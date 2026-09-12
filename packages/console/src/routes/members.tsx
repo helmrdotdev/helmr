@@ -1,6 +1,5 @@
 import { createInfiniteQuery, createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
-import { formatRelative } from "../features/runs/display";
 import { ApiError } from "../lib/api";
 import { getMe } from "../lib/auth";
 import {
@@ -12,16 +11,21 @@ import {
   removeMember,
   revokeInvitation,
   updateMemberRole,
-  type InvitationStatus,
   type MemberRole,
-  type MemberStatus,
   type OrganizationInvitation,
   type OrganizationMember,
 } from "../lib/members";
 import { ActionMenu } from "../ui/ActionMenu";
+import { DataTable } from "../ui/DataTable";
+import { IDText } from "../ui/IDText";
 import { Modal } from "../ui/Modal";
+import { PageHeader } from "../ui/PageHeader";
+import { RelativeTime } from "../ui/RelativeTime";
+import { SectionHeader } from "../ui/SectionHeader";
 import { Select, type SelectOption } from "../ui/Select";
-import { cx, statusBadgeClass, ui } from "../ui/styles";
+import { StatePanel } from "../ui/StatePanel";
+import { StatusBadge } from "../ui/StatusBadge";
+import { cx, ui } from "../ui/styles";
 
 const OWNER_ROLE_OPTION: SelectOption<MemberRole> = { value: "owner", label: "Owner" };
 
@@ -32,25 +36,6 @@ const NON_OWNER_ROLE_OPTIONS: SelectOption<MemberRole>[] = [
 ];
 
 const OWNER_ROLE_OPTIONS: SelectOption<MemberRole>[] = [OWNER_ROLE_OPTION, ...NON_OWNER_ROLE_OPTIONS];
-
-const ROLE_LABELS: Record<MemberRole, string> = {
-  owner: "Owner",
-  admin: "Admin",
-  developer: "Developer",
-  viewer: "Viewer",
-};
-
-const MEMBER_STATUS_LABELS: Record<MemberStatus, string> = {
-  active: "Active",
-  disabled: "Disabled",
-};
-
-const INVITATION_STATUS_LABELS: Record<InvitationStatus, string> = {
-  pending: "Pending",
-  accepted: "Accepted",
-  revoked: "Revoked",
-  expired: "Expired",
-};
 
 const MEMBERS_ERROR_MESSAGES: Record<string, string> = {
   forbidden: "You do not have permission to manage organization members.",
@@ -70,31 +55,12 @@ function membersErrorMessage(error: unknown): string {
   return INTERNAL_ERROR_MESSAGE;
 }
 
-function formatDateTime(value?: string | null): string {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(date);
-}
-
-function formatExpiration(value?: string | null): string {
-  if (!value) return "-";
-  return `${formatDateTime(value)} (${formatRelative(value)})`;
-}
-
 function memberName(member: OrganizationMember): string {
   return member.display_name || member.email || member.user_id;
 }
 
 function memberEmail(member: OrganizationMember): string {
   return member.email ?? "-";
-}
-
-function memberJoinedAt(member: OrganizationMember): string {
-  return formatDateTime(member.created_at);
 }
 
 function canManageFromMe(role?: string | null, permissions?: string[]): boolean {
@@ -113,30 +79,6 @@ function canManageFromMe(role?: string | null, permissions?: string[]): boolean 
 
 function validInviteEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
-}
-
-function RoleBadge(props: { role: MemberRole }) {
-  return <span class={statusBadgeClass(props.role === "owner" ? "waiting" : "expired")}>{ROLE_LABELS[props.role]}</span>;
-}
-
-function MemberStatusBadge(props: { status?: MemberStatus | undefined }) {
-  const status = () => props.status ?? "active";
-  const tone = (): "succeeded" | "revoked" => {
-    if (status() === "disabled") return "revoked";
-    return "succeeded";
-  };
-  return <span class={statusBadgeClass(tone())}>{MEMBER_STATUS_LABELS[status()] ?? status()}</span>;
-}
-
-function InvitationStatusBadge(props: { status?: InvitationStatus | undefined }) {
-  const status = () => props.status ?? "pending";
-  const tone = (): "succeeded" | "waiting" | "revoked" | "expired" => {
-    if (status() === "accepted") return "succeeded";
-    if (status() === "pending") return "waiting";
-    if (status() === "expired") return "expired";
-    return "revoked";
-  };
-  return <span class={statusBadgeClass(tone())}>{INVITATION_STATUS_LABELS[status()] ?? status()}</span>;
 }
 
 function CreateInviteModal(props: {
@@ -285,16 +227,12 @@ function MemberRow(props: {
   const canRemove = () => isActive() && props.canManage && id() !== "" && !props.isCurrentUser && (!isOwner() || props.currentUserRole === "owner");
   const busy = (action: "role" | "remove") => props.action?.id === id() && props.action.action === action;
   return (
-    <tr class={ui.detailTableRow}>
-      <td>
-        <div class={ui.tableCellStack}>
-          <strong>{memberName(props.member)}</strong>
-          <div class={ui.muted}>{props.member.user_id}</div>
-        </div>
-      </td>
+    <tr>
+      <td><strong class="font-medium text-console-text">{memberName(props.member)}</strong></td>
+      <td><IDText value={props.member.user_id} /></td>
       <td>{memberEmail(props.member)}</td>
       <td>
-        <Show when={canChangeRole()} fallback={<RoleBadge role={props.member.role} />}>
+        <Show when={canChangeRole()} fallback={<StatusBadge resource="role" status={props.member.role} />}>
           <Select<MemberRole>
             value={props.member.role}
             options={roleOptions()}
@@ -305,8 +243,8 @@ function MemberRow(props: {
           />
         </Show>
       </td>
-      <td><MemberStatusBadge status={props.member.status} /></td>
-      <td>{memberJoinedAt(props.member)}</td>
+      <td><StatusBadge resource="member" status={props.member.status ?? "active"} /></td>
+      <td><RelativeTime value={props.member.created_at} /></td>
       <td class={ui.actionsCell}>
         <Show when={canRemove()} fallback={<span class={ui.muted}>No actions</span>}>
           <ActionMenu
@@ -339,10 +277,10 @@ function InvitationRow(props: {
   const busy = () => props.action?.id === id() && props.action.action === "revoke";
   return (
     <tr>
-      <td><strong>{props.invitation.email}</strong></td>
-      <td><RoleBadge role={props.invitation.role} /></td>
-      <td><InvitationStatusBadge status={props.invitation.status} /></td>
-      <td>{formatExpiration(props.invitation.expires_at)}</td>
+      <td><strong class="font-medium text-console-text">{props.invitation.email}</strong></td>
+      <td><StatusBadge resource="role" status={props.invitation.role} /></td>
+      <td><StatusBadge resource="invitation" status={props.invitation.status ?? "pending"} /></td>
+      <td><RelativeTime value={props.invitation.expires_at} /></td>
       <td class={ui.actionsCell}>
         <Show when={props.canManage} fallback={<span class={ui.muted}>No actions</span>}>
           <ActionMenu
@@ -455,19 +393,17 @@ export function Members() {
 
   return (
     <>
-      <header class={ui.pageHeader}>
-        <div>
-          <h1 class={ui.h1}>Members</h1>
-          <p class={ui.pageSubtitle}>
-            Organization members, roles, and pending email invitations.
-          </p>
-        </div>
-        <Show when={canManage()}>
-          <button class={ui.button} type="button" onClick={() => setModalOpen(true)}>
-            Invite member
-          </button>
-        </Show>
-      </header>
+      <PageHeader
+        title="Members"
+        subtitle="Organization members, roles, and pending email invitations."
+        actions={
+          <Show when={canManage()}>
+            <button class={ui.button} type="button" onClick={() => setModalOpen(true)}>
+              Invite member
+            </button>
+          </Show>
+        }
+      />
 
       <Show when={!me.isPending && !canManage()}>
         <p class={cx(ui.hasMoreBanner, "border-[#9bb9e8] bg-[#eef4ff] text-console-info")} role="status">
@@ -476,98 +412,69 @@ export function Members() {
       </Show>
 
       <Show when={members.isError}>
-        <p class={ui.error} role="alert">{membersErrorMessage(members.error)}</p>
+        <StatePanel error={membersErrorMessage(members.error)} />
       </Show>
 
       <section class={"mb-7"}>
-        <div class={cx(ui.toolbar, "mb-3")}>
-          <div>
-            <h2 class={ui.h2}>Current members</h2>
-            <p class={ui.pageSubtitle}>Active and disabled accounts currently associated with this organization.</p>
-          </div>
-        </div>
-        <Show when={!members.isPending} fallback={<p class={ui.muted}>Loading members...</p>}>
-          <Show when={(members.data?.members.length ?? 0) > 0} fallback={<p class={ui.emptyState}>No members found.</p>}>
-            <div class={ui.tableWrap}>
-              <table class={"min-w-245"}>
-                <thead>
-                  <tr>
-                    <th>Member</th>
-                    <th>Email</th>
-                    <th>Role</th>
-                    <th>Status</th>
-                    <th>Joined</th>
-                    <th><span class="sr-only">Actions</span></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <For each={members.data?.members ?? []}>
-                    {(member) => {
-                      const id = memberResourceID(member);
-                      return (
-                        <MemberRow
-                          member={member}
-                          canManage={canManage()}
-                          isCurrentUser={isCurrentUser(member)}
-                          currentUserRole={me.data?.role}
-                          action={memberAction()}
-                          error={memberError()?.id === id ? memberError()?.message ?? null : null}
-                          onRoleChange={changeMemberRole}
-                          onRemove={remove}
-                        />
-                      );
-                    }}
-                  </For>
-                </tbody>
-              </table>
-            </div>
+        <SectionHeader
+          title="Current members"
+          count={members.data?.members.length}
+          subtitle="Active and disabled accounts currently associated with this organization."
+        />
+        <Show when={!members.isPending} fallback={<StatePanel loading="Loading members..." />}>
+          <Show when={(members.data?.members.length ?? 0) > 0} fallback={<StatePanel empty="No members found." />}>
+            <DataTable columns={["Member", "User ID", "Email", "Role", "Status", "Joined", { label: "Actions", srOnly: true }]} minWidth="min-w-245">
+              <For each={members.data?.members ?? []}>
+                {(member) => {
+                  const id = memberResourceID(member);
+                  return (
+                    <MemberRow
+                      member={member}
+                      canManage={canManage()}
+                      isCurrentUser={isCurrentUser(member)}
+                      currentUserRole={me.data?.role}
+                      action={memberAction()}
+                      error={memberError()?.id === id ? memberError()?.message ?? null : null}
+                      onRoleChange={changeMemberRole}
+                      onRemove={remove}
+                    />
+                  );
+                }}
+              </For>
+            </DataTable>
           </Show>
         </Show>
       </section>
 
       <section>
-        <div class={cx(ui.toolbar, "mb-3")}>
-          <div>
-            <h2 class={ui.h2}>Pending invitations</h2>
-            <p class={ui.pageSubtitle}>Email invitations that have not been accepted yet.</p>
-          </div>
-        </div>
+        <SectionHeader
+          title="Pending invitations"
+          count={pendingInvitations().length}
+          subtitle="Email invitations that have not been accepted yet."
+        />
 
         <Show when={invitations.isError}>
-          <p class={ui.error} role="alert">{membersErrorMessage(invitations.error)}</p>
+          <StatePanel error={membersErrorMessage(invitations.error)} />
         </Show>
 
-        <Show when={!invitations.isPending} fallback={<p class={ui.muted}>Loading invitations...</p>}>
-          <Show when={pendingInvitations().length > 0} fallback={<p class={ui.emptyState}>No pending invitations.</p>}>
-            <div class={ui.tableWrap}>
-              <table class={"min-w-225"}>
-                <thead>
-                  <tr>
-                    <th>Email</th>
-                    <th>Role</th>
-                    <th>Status</th>
-                    <th>Expires</th>
-                    <th><span class="sr-only">Actions</span></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <For each={pendingInvitations()}>
-                    {(invitation) => {
-                      const id = invitationResourceID(invitation);
-                      return (
-                        <InvitationRow
-                          invitation={invitation}
-                          canManage={canManage()}
-                          action={invitationAction()}
-                          error={invitationError()?.id === id ? invitationError()?.message ?? null : null}
-                          onRevoke={revoke}
-                        />
-                      );
-                    }}
-                  </For>
-                </tbody>
-              </table>
-            </div>
+        <Show when={!invitations.isPending} fallback={<StatePanel loading="Loading invitations..." />}>
+          <Show when={pendingInvitations().length > 0} fallback={<StatePanel empty="No pending invitations." />}>
+            <DataTable columns={["Email", "Role", "Status", "Expires", { label: "Actions", srOnly: true }]} minWidth="min-w-225">
+              <For each={pendingInvitations()}>
+                {(invitation) => {
+                  const id = invitationResourceID(invitation);
+                  return (
+                    <InvitationRow
+                      invitation={invitation}
+                      canManage={canManage()}
+                      action={invitationAction()}
+                      error={invitationError()?.id === id ? invitationError()?.message ?? null : null}
+                      onRevoke={revoke}
+                    />
+                  );
+                }}
+              </For>
+            </DataTable>
             <Show when={invitations.hasNextPage}>
               <div class={ui.actionRow}>
                 <button

@@ -76,17 +76,8 @@ export const ui = {
   toolbar: "mb-3 flex flex-wrap items-center justify-between gap-2.5",
   toolbarSide: "flex flex-wrap items-center gap-2",
   filterField: "inline-flex items-center gap-2 font-mono text-[11.5px] font-medium text-console-muted",
-  metricStrip: "mb-4 grid grid-cols-4 gap-2 max-[960px]:grid-cols-2 max-sm:grid-cols-2",
-  metricCard:
-    "border border-console-border bg-console-surface-raised px-3 py-2.5 transition-colors hover:border-console-border-strong [&>span]:block [&>span]:font-mono [&>span]:text-[10.5px] [&>span]:font-medium [&>span]:text-console-subtle [&>strong]:mt-1 [&>strong]:block [&>strong]:text-[1.25rem] [&>strong]:font-medium [&>strong]:leading-none",
   tableWrap:
     "overflow-x-auto border border-console-border-strong bg-console-surface [scrollbar-color:rgba(15,23,42,0.28)_#ffffff] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-white [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border-2 [&::-webkit-scrollbar-thumb]:border-solid [&::-webkit-scrollbar-thumb]:border-white [&::-webkit-scrollbar-thumb]:bg-slate-300 [&::-webkit-scrollbar-thumb:hover]:bg-slate-400 [&_table]:w-full [&_table]:border-separate [&_table]:border-spacing-0 [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:z-10 [&_thead_th]:h-8 [&_thead_th]:border-b [&_thead_th]:border-console-border [&_thead_th]:bg-console-bg-panel [&_thead_th]:px-3 [&_thead_th]:py-0 [&_thead_th]:text-left [&_thead_th]:font-mono [&_thead_th]:text-[10px] [&_thead_th]:font-medium [&_thead_th]:uppercase [&_thead_th]:tracking-[0.06em] [&_thead_th]:text-console-subtle [&_tbody_tr]:h-9 [&_tbody_tr]:transition-colors [&_tbody_tr:hover]:bg-console-bg-panel [&_tbody_tr:last-child_td]:border-b-0 [&_tbody_td]:h-9 [&_tbody_td]:whitespace-nowrap [&_tbody_td]:border-b [&_tbody_td]:border-console-border-soft [&_tbody_td]:px-3 [&_tbody_td]:py-0 [&_tbody_td]:align-middle [&_tbody_td]:text-[12.5px] [&_tbody_td]:text-console-text [&_tbody_td_code]:font-mono [&_tbody_td_code]:text-[11.5px] [&_tbody_td_code]:text-console-muted",
-  detailTableRow:
-    "!h-12 [&>td]:!h-12 [&>td]:!py-1.5",
-  tableCellStack:
-    "grid gap-0.5 [&>strong]:block [&>strong]:font-medium [&>strong]:leading-tight [&>div]:leading-tight",
-  dataTable: "min-w-225",
-  apiKeyTable: "min-w-270",
   actionsCell: "w-px whitespace-nowrap",
   error: "mt-3 text-[12.5px] font-medium text-console-danger",
   rowError: "mt-1.5 text-xs font-medium leading-snug text-console-danger",
@@ -130,20 +121,6 @@ export const ui = {
     "my-3.5 block w-full border border-console-border-strong bg-console-bg-panel p-3 text-center font-mono text-[1.25rem] font-medium tracking-[0.16em] text-console-accent",
   authStatus: "mb-2 text-[12.5px] font-medium text-console-text",
 };
-
-export function statusBadgeClass(tone: "active" | "waiting" | "succeeded" | "revoked" | "expired"): string {
-  const tones = {
-    active: "border-[#9bb9e8] bg-[#eef4ff] text-console-info",
-    waiting: "border-[#e5c26e] bg-[#fff7df] text-console-warning before:animate-pulse",
-    succeeded: "border-[#a8c3ad] bg-[#eef7f0] text-console-success",
-    revoked: "border-[#e6aaa4] bg-[#fff1ef] text-console-danger",
-    expired: "border-console-border bg-console-bg-panel text-console-muted",
-  };
-  return cx(
-    "inline-flex items-center gap-1.5 whitespace-nowrap rounded-xs border px-2 py-0.5 font-mono text-[11px] font-medium leading-normal before:size-1.5 before:bg-current before:content-['']",
-    tones[tone],
-  );
-}
 
 export function envDotClass(tone: "danger" | "warning" | "info" | "purple" | "success" | "neutral"): string {
   const tones = {

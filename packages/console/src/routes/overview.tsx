@@ -1,8 +1,7 @@
 import { A } from "@solidjs/router";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show, type JSX } from "solid-js";
-import { deploymentHref, shortDigest, shortID } from "../features/deployments/display";
-import { formatRelative, StatusBadge } from "../features/runs/display";
+import { deploymentHref } from "../features/deployments/navigation";
 import { runHref } from "../features/runs/navigation";
 import { ApiError } from "../lib/api";
 import { getMe, hasPermission } from "../lib/auth";
@@ -12,8 +11,16 @@ import { useScope } from "../lib/scope";
 import { sessionConsolePath } from "../lib/sessions";
 import { cancelToken, completeToken, listTokens, type TokenListItem } from "../lib/tokens";
 import { ConfirmModal } from "../ui/ConfirmModal";
+import { DataTable } from "../ui/DataTable";
+import { IDText } from "../ui/IDText";
 import { Modal } from "../ui/Modal";
-import { statusBadgeClass, ui } from "../ui/styles";
+import { PageHeader } from "../ui/PageHeader";
+import { RelativeTime } from "../ui/RelativeTime";
+import { SectionHeader } from "../ui/SectionHeader";
+import { StatePanel } from "../ui/StatePanel";
+import { StatusBadge } from "../ui/StatusBadge";
+import { ui } from "../ui/styles";
+import { TagList } from "../ui/TagList";
 
 const SECTION_ROWS = 5;
 
@@ -41,25 +48,9 @@ function attentionRows(tokens: TokenListItem[], waiting: Run[]): AttentionRow[] 
 function Section(props: { title: string; count?: number; viewAll: JSX.Element; children: JSX.Element }) {
   return (
     <section class="min-w-0">
-      <div class="mb-2 flex min-h-7 items-center justify-between gap-3">
-        <h2 class={ui.h2}>
-          {props.title}
-          <Show when={props.count}>
-            <span class="ml-2 font-mono text-[11px] font-medium text-console-subtle">{props.count}</span>
-          </Show>
-        </h2>
-        <div class="flex items-center gap-1">{props.viewAll}</div>
-      </div>
+      <SectionHeader title={props.title} count={props.count} actions={props.viewAll} />
       {props.children}
     </section>
-  );
-}
-
-function Placeholder(props: { children: JSX.Element }) {
-  return (
-    <div class="m-0 flex min-h-16 flex-col items-center justify-center gap-1 border border-dashed border-console-border bg-console-bg-panel px-5 py-4 text-center text-[12.5px] text-console-muted">
-      {props.children}
-    </div>
   );
 }
 
@@ -155,7 +146,7 @@ function CompleteTokenModal(props: {
     <Modal title="Complete Token" onClose={props.onClose} closeDisabled={submitting()}>
       <form onSubmit={submit}>
         <p class={ui.modalIntro}>
-          The result is delivered to the waiting Run as JSON. Token <code class="font-mono text-[11px]">{props.token.id}</code>.
+          The result is delivered to the waiting Run as JSON. Token <IDText value={props.token.id} />.
         </p>
         <label class={ui.field}>
           <span>Result (JSON)</span>
@@ -252,20 +243,16 @@ export function Overview() {
 
   return (
     <section class={ui.page}>
-      <div class={ui.pageHeader}>
-        <div>
-          <h1 class={ui.h1}>Overview</h1>
-          <p class={ui.pageSubtitle}>
-            What needs a person in this environment, what failed, what is running, and what is deployed.
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        title="Overview"
+        subtitle="What needs a person in this environment, what failed, what is running, and what is deployed."
+      />
 
       <Show when={current.isError}>
-        <p class={ui.error} role="alert">{actionErrorMessage(current.error, "Could not load the current Deployment.")}</p>
+        <StatePanel error={actionErrorMessage(current.error, "Could not load the current Deployment.")} />
       </Show>
       <Show when={current.isPending && enabled()}>
-        <p class={ui.muted}>Loading overview...</p>
+        <StatePanel loading="Loading overview..." />
       </Show>
 
       <Show when={current.isSuccess}>
@@ -282,198 +269,133 @@ export function Overview() {
                   </>
                 }
               >
-                <Show when={!pendingTokens.isPending && !waitingRuns.isPending} fallback={<p class={ui.muted}>Loading...</p>}>
+                <Show when={!pendingTokens.isPending && !waitingRuns.isPending} fallback={<StatePanel loading="Loading..." />}>
                   <Show when={pendingTokens.isError || waitingRuns.isError}>
-                    <p class={ui.error} role="alert">
-                      {actionErrorMessage(pendingTokens.error ?? waitingRuns.error, "Could not load pending work.")}
-                    </p>
+                    <StatePanel error={actionErrorMessage(pendingTokens.error ?? waitingRuns.error, "Could not load pending work.")} />
                   </Show>
                   <Show
                     when={attention().length > 0}
-                    fallback={<Placeholder><strong>Nothing is waiting on you.</strong><span>Pending Tokens and waiting Actor Runs appear here.</span></Placeholder>}
+                    fallback={<StatePanel empty="Nothing is waiting on you." hint="Pending Tokens and waiting Actor Runs appear here." />}
                   >
-                    <div class={ui.tableWrap}>
-                      <table class="min-w-160">
-                        <thead>
+                    <DataTable columns={["Kind", "Item", "Tags", "State", "Time", { label: "Actions", srOnly: true }]} minWidth="min-w-180">
+                      <For each={attention().slice(0, SECTION_ROWS)}>
+                        {(row) => row.kind === "token" ? (
                           <tr>
-                            <th>Kind</th>
-                            <th>Item</th>
-                            <th>State</th>
-                            <th>Time</th>
-                            <th><span class="sr-only">Actions</span></th>
+                            <td><span class={ui.muted}>Token</span></td>
+                            <td><IDText value={row.token.id} /></td>
+                            <td><TagList tags={row.token.tags} /></td>
+                            <td><StatusBadge resource="token" status="pending" /></td>
+                            <td><RelativeTime value={row.token.timeout_at} prefix="expires" /></td>
+                            <td class={ui.actionsCell}>
+                              <div class="flex justify-end gap-1.5">
+                                <Show when={can("tokens.complete")}>
+                                  <button type="button" class={ui.button} onClick={() => setCompleting(row.token)}>Complete</button>
+                                </Show>
+                                <Show when={can("tokens.cancel")}>
+                                  <button type="button" class={ui.dangerOutlineButton} onClick={() => setCancellingToken(row.token)}>Cancel</button>
+                                </Show>
+                              </div>
+                            </td>
                           </tr>
-                        </thead>
-                        <tbody>
-                          <For each={attention().slice(0, SECTION_ROWS)}>
-                            {(row) => row.kind === "token" ? (
-                              <tr>
-                                <td><span class={ui.muted}>Token</span></td>
-                                <td>
-                                  <div class={ui.tableCellStack}>
-                                    <code>{row.token.id}</code>
-                                    <Show when={row.token.tags.length > 0}>
-                                      <div class="flex flex-wrap gap-1">
-                                        <For each={row.token.tags}>
-                                          {(tag) => <span class="rounded-xs border border-console-border bg-console-bg-panel px-1.5 font-mono text-[10.5px] text-console-muted">{tag}</span>}
-                                        </For>
-                                      </div>
-                                    </Show>
-                                  </div>
-                                </td>
-                                <td><span class={statusBadgeClass("waiting")}>pending</span></td>
-                                <td><span class={ui.muted} title={row.token.timeout_at}>expires {formatRelative(row.token.timeout_at)}</span></td>
-                                <td class={ui.actionsCell}>
-                                  <div class="flex justify-end gap-1.5">
-                                    <Show when={can("tokens.complete")}>
-                                      <button type="button" class={ui.button} onClick={() => setCompleting(row.token)}>Complete</button>
-                                    </Show>
-                                    <Show when={can("tokens.cancel")}>
-                                      <button type="button" class={ui.dangerOutlineButton} onClick={() => setCancellingToken(row.token)}>Cancel</button>
-                                    </Show>
-                                  </div>
-                                </td>
-                              </tr>
-                            ) : (
-                              <tr>
-                                <td><span class={ui.muted}>Actor</span></td>
-                                <td>
-                                  <A href={runHref(row.run.id, projectID(), environmentID())} class="font-medium text-console-text hover:text-console-accent">
-                                    {row.run.entrypoint.id}
-                                  </A>
-                                </td>
-                                <td><span class={statusBadgeClass("waiting")}>waiting</span></td>
-                                <td><span class={ui.muted}>{formatRelative(row.run.created_at)}</span></td>
-                                <td class={ui.actionsCell}>
-                                  <A class={ui.secondaryButton} href={sessionConsolePath(row.run.session_id!, projectID(), environmentID())}>Open Session</A>
-                                </td>
-                              </tr>
-                            )}
-                          </For>
-                        </tbody>
-                      </table>
-                    </div>
+                        ) : (
+                          <tr>
+                            <td><span class={ui.muted}>Actor</span></td>
+                            <td>
+                              <A href={runHref(row.run.id, projectID(), environmentID())} class="font-medium text-console-text hover:text-console-accent">
+                                {row.run.entrypoint.id}
+                              </A>
+                            </td>
+                            <td><TagList tags={[]} /></td>
+                            <td><StatusBadge resource="run" status="waiting" /></td>
+                            <td><RelativeTime value={row.run.created_at} /></td>
+                            <td class={ui.actionsCell}>
+                              <A class={ui.secondaryButton} href={sessionConsolePath(row.run.session_id!, projectID(), environmentID())}>Open Session</A>
+                            </td>
+                          </tr>
+                        )}
+                      </For>
+                    </DataTable>
                     <MoreRows total={attention().length} />
                   </Show>
                 </Show>
               </Section>
 
               <Section title="Recent failures" count={failedItems().length} viewAll={<A class={ui.ghostButton} href="/runs">Runs</A>}>
-                <Show when={!failedRuns.isPending} fallback={<p class={ui.muted}>Loading...</p>}>
+                <Show when={!failedRuns.isPending} fallback={<StatePanel loading="Loading..." />}>
                   <Show when={failedRuns.isError}>
-                    <p class={ui.error} role="alert">{actionErrorMessage(failedRuns.error, "Could not load failed Runs.")}</p>
+                    <StatePanel error={actionErrorMessage(failedRuns.error, "Could not load failed Runs.")} />
                   </Show>
                   <Show
                     when={failedItems().length > 0}
-                    fallback={<Placeholder><strong>No failed Runs.</strong><span>Application and system failures appear here.</span></Placeholder>}
+                    fallback={<StatePanel empty="No failed Runs." hint="Application and system failures appear here." />}
                   >
-                    <div class={ui.tableWrap}>
-                      <table class="min-w-140">
-                        <thead>
+                    <DataTable columns={["Entrypoint", "Kind", "Status", "Ended", "Run"]}>
+                      <For each={failedItems().slice(0, SECTION_ROWS)}>
+                        {(run) => (
                           <tr>
-                            <th>Entrypoint</th>
-                            <th>Status</th>
-                            <th>Ended</th>
-                            <th>Run</th>
+                            <td>
+                              <A href={runHref(run.id, projectID(), environmentID())} class="font-medium text-console-text hover:text-console-accent">{run.entrypoint.id}</A>
+                            </td>
+                            <td><span class={ui.muted}>{run.entrypoint.kind}</span></td>
+                            <td><StatusBadge resource="run" status={run.status} /></td>
+                            <td><RelativeTime value={run.terminal_at ?? run.created_at} /></td>
+                            <td><IDText value={run.id} /></td>
                           </tr>
-                        </thead>
-                        <tbody>
-                          <For each={failedItems().slice(0, SECTION_ROWS)}>
-                            {(run) => (
-                              <tr>
-                                <td>
-                                  <div class={ui.tableCellStack}>
-                                    <A href={runHref(run.id, projectID(), environmentID())} class="font-medium text-console-text hover:text-console-accent">{run.entrypoint.id}</A>
-                                    <div class="font-mono text-[10.5px] text-console-subtle">{run.entrypoint.kind}</div>
-                                  </div>
-                                </td>
-                                <td><StatusBadge status={run.status} /></td>
-                                <td><span class={ui.muted}>{formatRelative(run.terminal_at ?? run.created_at)}</span></td>
-                                <td><code>{run.id.slice(0, 12)}</code></td>
-                              </tr>
-                            )}
-                          </For>
-                        </tbody>
-                      </table>
-                    </div>
+                        )}
+                      </For>
+                    </DataTable>
                     <MoreRows total={failedItems().length} />
                   </Show>
                 </Show>
               </Section>
 
               <Section title="In progress" count={inProgressItems().length} viewAll={<A class={ui.ghostButton} href="/runs">Runs</A>}>
-                <Show when={!inProgress.isPending} fallback={<p class={ui.muted}>Loading...</p>}>
+                <Show when={!inProgress.isPending} fallback={<StatePanel loading="Loading..." />}>
                   <Show when={inProgress.isError}>
-                    <p class={ui.error} role="alert">{actionErrorMessage(inProgress.error, "Could not load Runs in progress.")}</p>
+                    <StatePanel error={actionErrorMessage(inProgress.error, "Could not load Runs in progress.")} />
                   </Show>
                   <Show
                     when={inProgressItems().length > 0}
-                    fallback={<Placeholder><strong>Nothing is running.</strong><span>Queued, running, retrying, and cancelling Runs appear here.</span></Placeholder>}
+                    fallback={<StatePanel empty="Nothing is running." hint="Queued, running, retrying, and cancelling Runs appear here." />}
                   >
-                    <div class={ui.tableWrap}>
-                      <table class="min-w-140">
-                        <thead>
+                    <DataTable columns={["Entrypoint", "Kind", "Status", "Attempt", "Created", { label: "Actions", srOnly: true }]}>
+                      <For each={inProgressItems().slice(0, SECTION_ROWS)}>
+                        {(run) => (
                           <tr>
-                            <th>Entrypoint</th>
-                            <th>Status</th>
-                            <th>Attempt</th>
-                            <th>Created</th>
-                            <th><span class="sr-only">Actions</span></th>
+                            <td>
+                              <A href={runHref(run.id, projectID(), environmentID())} class="font-medium text-console-text hover:text-console-accent">{run.entrypoint.id}</A>
+                            </td>
+                            <td><span class={ui.muted}>{run.entrypoint.kind}</span></td>
+                            <td><StatusBadge resource="run" status={run.status} /></td>
+                            <td>{run.current_attempt_number}</td>
+                            <td><RelativeTime value={run.created_at} /></td>
+                            <td class={ui.actionsCell}>
+                              <Show when={can("runs.manage") && run.status !== "cancel_requested"}>
+                                <button type="button" class={ui.dangerOutlineButton} onClick={() => setCancellingRun(run)}>Cancel</button>
+                              </Show>
+                            </td>
                           </tr>
-                        </thead>
-                        <tbody>
-                          <For each={inProgressItems().slice(0, SECTION_ROWS)}>
-                            {(run) => (
-                              <tr>
-                                <td>
-                                  <div class={ui.tableCellStack}>
-                                    <A href={runHref(run.id, projectID(), environmentID())} class="font-medium text-console-text hover:text-console-accent">{run.entrypoint.id}</A>
-                                    <div class="font-mono text-[10.5px] text-console-subtle">{run.entrypoint.kind}</div>
-                                  </div>
-                                </td>
-                                <td><StatusBadge status={run.status} /></td>
-                                <td>{run.current_attempt_number}</td>
-                                <td><span class={ui.muted}>{formatRelative(run.created_at)}</span></td>
-                                <td class={ui.actionsCell}>
-                                  <Show when={can("runs.manage") && run.status !== "cancel_requested"}>
-                                    <button type="button" class={ui.dangerOutlineButton} onClick={() => setCancellingRun(run)}>Cancel</button>
-                                  </Show>
-                                </td>
-                              </tr>
-                            )}
-                          </For>
-                        </tbody>
-                      </table>
-                    </div>
+                        )}
+                      </For>
+                    </DataTable>
                     <MoreRows total={inProgressItems().length} />
                   </Show>
                 </Show>
               </Section>
 
               <Section title="Deployments" viewAll={<A class={ui.ghostButton} href="/deployments">Deployments</A>}>
-                <div class={ui.tableWrap}>
-                  <table class="min-w-140">
-                    <thead>
-                      <tr>
-                        <th>Current version</th>
-                        <th>Digest</th>
-                        <th>Created</th>
-                        <th>ID</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr>
-                        <td>
-                          <A href={deploymentHref(deployment().id)} class="font-medium text-console-text hover:text-console-accent">
-                            {deployment().version}
-                          </A>
-                        </td>
-                        <td><code title={deployment().bundle_digest}>{shortDigest(deployment().bundle_digest)}</code></td>
-                        <td><span class={ui.muted}>{formatRelative(deployment().created_at)}</span></td>
-                        <td><code>{shortID(deployment().id)}</code></td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
+                <DataTable columns={["Current version", "Digest", "Created", "ID"]}>
+                  <tr>
+                    <td>
+                      <A href={deploymentHref(deployment().id)} class="font-medium text-console-text hover:text-console-accent">
+                        {deployment().version}
+                      </A>
+                    </td>
+                    <td><IDText value={deployment().bundle_digest} /></td>
+                    <td><RelativeTime value={deployment().created_at} /></td>
+                    <td><IDText value={deployment().id} /></td>
+                  </tr>
+                </DataTable>
               </Section>
             </div>
           )}
@@ -505,7 +427,7 @@ export function Overview() {
             }}
             errorMessage={(error) => actionErrorMessage(error, "Could not cancel this Token.")}
           >
-            The waiting Run receives a cancelled Token and cannot be completed later. Token <code class="font-mono text-[11px]">{token().id}</code>.
+            The waiting Run receives a cancelled Token and cannot be completed later. Token <IDText value={token().id} />.
           </ConfirmModal>
         )}
       </Show>
@@ -523,7 +445,7 @@ export function Overview() {
             }}
             errorMessage={(error) => actionErrorMessage(error, "Could not cancel this Run.")}
           >
-            Cancellation is requested for <strong>{run().entrypoint.id}</strong> (<code class="font-mono text-[11px]">{run().id.slice(0, 12)}</code>). A running attempt stops at its next checkpoint.
+            Cancellation is requested for <strong>{run().entrypoint.id}</strong> (<IDText value={run().id} />). A running attempt stops at its next checkpoint.
           </ConfirmModal>
         )}
       </Show>
