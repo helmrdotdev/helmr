@@ -1,3 +1,4 @@
+import { statusLabel } from "./label";
 import { cx } from "./styles";
 
 type Tone = "active" | "waiting" | "succeeded" | "revoked" | "expired";
@@ -33,17 +34,12 @@ const TONES = {
   secret: { active: "succeeded", revoked: "revoked" },
   member: { active: "succeeded", disabled: "revoked" },
   invitation: { pending: "waiting", accepted: "succeeded", revoked: "revoked", expired: "expired" },
-  role: { owner: "waiting", admin: "expired", developer: "expired", viewer: "expired" },
+  role: { owner: "active", admin: "expired", developer: "expired", viewer: "expired" },
   worker_group: { active: "active", paused: "waiting", draining: "waiting", disabled: "revoked" },
 } as const satisfies Record<string, Record<string, Tone>>;
 
 export type BadgeResource = keyof typeof TONES;
 export type BadgeStatus<R extends BadgeResource> = keyof (typeof TONES)[R] & string;
-
-export function statusLabel(status: string): string {
-  const spaced = status.replace(/_/g, " ");
-  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
-}
 
 export function StatusBadge<R extends BadgeResource>(props: { resource: R; status: BadgeStatus<R> }) {
   const tone = () => (TONES[props.resource] as Record<string, Tone>)[props.status] ?? "expired";

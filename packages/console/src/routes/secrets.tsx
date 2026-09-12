@@ -5,6 +5,7 @@ import { createSecret, listSecrets, revokeSecret, rotateSecret, type Secret } fr
 import { useScope } from "../lib/scope";
 import { ActionMenu } from "../ui/ActionMenu";
 import { DataTable } from "../ui/DataTable";
+import { formatID } from "../ui/id";
 import { Modal } from "../ui/Modal";
 import { PageHeader } from "../ui/PageHeader";
 import { RelativeTime } from "../ui/RelativeTime";
@@ -22,10 +23,6 @@ const INTERNAL_ERROR_MESSAGE = "Something went wrong. Please try again.";
 function secretErrorMessage(error: unknown): string {
   if (error instanceof ApiError) return SECRET_ERROR_MESSAGES[error.code] ?? error.message ?? INTERNAL_ERROR_MESSAGE;
   return INTERNAL_ERROR_MESSAGE;
-}
-
-function shortScopeID(id: string): string {
-  return id.slice(0, 8);
 }
 
 function SecretModal(props: {
@@ -74,7 +71,7 @@ function SecretModal(props: {
               <span class={ui.scopeTargetDot} style={envDotStyle(props.environmentColorHex)} aria-hidden="true" />
             </Show>
             <span>{props.projectName}</span>
-            <code>{shortScopeID(props.projectID)} / {shortScopeID(props.environmentID)}</code>
+            <code>{formatID(props.projectID)} / {formatID(props.environmentID)}</code>
           </div>
         </div>
         <label class={ui.field}>

@@ -10,6 +10,7 @@ import {
 } from "../lib/auth";
 import { errorMessage } from "../lib/error";
 import { AuthCopy, AuthScreen, AuthTitle } from "../ui/AuthScreen";
+import { RelativeTime } from "../ui/RelativeTime";
 import { ui } from "../ui/styles";
 
 function readParam(value: string | string[] | undefined): string {
@@ -92,7 +93,7 @@ export function Device() {
               <div class={ui.authCode} aria-label="Device code">{code()}</div>
               <p class={ui.authStatus}>Status: {statusText(device().status)}</p>
               <Show when={device().expires_at}>
-                <p class={ui.muted}>Expires at {new Date(device().expires_at ?? "").toLocaleString()}</p>
+                <p class={ui.muted}>Expires <RelativeTime value={device().expires_at} /></p>
               </Show>
               <Show when={device().status === "pending"}>
                 <div class={ui.actionRow}>

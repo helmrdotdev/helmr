@@ -5,7 +5,6 @@ import { deploymentHref } from "../features/deployments/navigation";
 import { ApiError } from "../lib/api";
 import { useScope } from "../lib/scope";
 import { getWorkspace } from "../lib/workspaces";
-import { A } from "@solidjs/router";
 import { DataTable } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
 import { PageHeader } from "../ui/PageHeader";
@@ -88,7 +87,7 @@ export function WorkspaceDetail() {
                     </DetailItem>
                     <DetailItem label="Sandbox ID"><code>{current().sandbox_id}</code></DetailItem>
                     <DetailItem label="Deployment">
-                      <A class="text-console-accent" href={deploymentHref(current().deployment_id)}><IDText value={current().deployment_id} full class="text-inherit hover:text-inherit" /></A>
+                      <IDText value={current().deployment_id} full href={deploymentHref(current().deployment_id)} />
                     </DetailItem>
                     <DetailItem label="Last activity"><RelativeTime value={current().last_activity_at} /></DetailItem>
                     <DetailItem label="Created"><RelativeTime value={current().created_at} /></DetailItem>

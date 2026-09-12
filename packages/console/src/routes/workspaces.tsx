@@ -1,4 +1,3 @@
-import { A } from "@solidjs/router";
 import { createInfiniteQuery } from "@tanstack/solid-query";
 import { createMemo, For, Show } from "solid-js";
 import { ApiError } from "../lib/api";
@@ -27,11 +26,7 @@ function workspaceHref(id: string): string {
 function WorkspaceRow(props: { workspace: WorkspaceListItem }) {
   return (
     <tr>
-      <td>
-        <A href={workspaceHref(props.workspace.id)} class="font-medium text-console-text hover:text-console-accent">
-          {props.workspace.key ?? props.workspace.sandbox_id}
-        </A>
-      </td>
+      <td><IDText value={props.workspace.id} href={workspaceHref(props.workspace.id)} /></td>
       <td>
         <Show when={props.workspace.key} fallback={<span class="text-console-faint">—</span>}>
           {(key) => <code>{key()}</code>}
@@ -40,7 +35,6 @@ function WorkspaceRow(props: { workspace: WorkspaceListItem }) {
       <td><span class={ui.muted}>{props.workspace.sandbox_id}</span></td>
       <td><StatusBadge resource="workspace" status={props.workspace.status} /></td>
       <td><RelativeTime value={props.workspace.updated_at} /></td>
-      <td><IDText value={props.workspace.id} /></td>
     </tr>
   );
 }
@@ -77,7 +71,7 @@ export function Workspaces() {
           when={items().length > 0}
           fallback={<StatePanel empty="No Workspaces yet." hint="Runs and Sessions create Workspaces from their Sandbox." />}
         >
-          <DataTable columns={["Workspace", "Key", "Sandbox", "State", "Updated", "ID"]} minWidth="min-w-200">
+          <DataTable columns={["Workspace", "Key", "Sandbox", "State", "Updated"]} minWidth="min-w-180">
             <For each={items()}>
               {(workspace) => <WorkspaceRow workspace={workspace} />}
             </For>

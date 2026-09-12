@@ -82,11 +82,7 @@ export function Runs() {
                   </td>
                   <td><span class={ui.muted}>{run.entrypoint.kind}</span></td>
                   <td><StatusBadge resource="run" status={run.status} /></td>
-                  <td>
-                    <A href={`/workspaces/${run.workspace_id}`} class="text-console-accent hover:text-console-accent-hover">
-                      <IDText value={run.workspace_id} class="text-inherit hover:text-inherit" />
-                    </A>
-                  </td>
+                  <td><IDText value={run.workspace_id} href={`/workspaces/${run.workspace_id}`} /></td>
                   <td>{run.current_attempt_number}</td>
                   <td><RelativeTime value={run.created_at} /></td>
                   <td><IDText value={run.id} /></td>

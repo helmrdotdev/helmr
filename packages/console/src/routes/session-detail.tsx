@@ -168,7 +168,7 @@ export function SessionDetail() {
                   <DetailItem label="ID"><IDText value={current().id} full /></DetailItem>
                   <DetailItem label="Actor ID"><code>{current().actor_id}</code></DetailItem>
                   <DetailItem label="Deployment">
-                    <A class="text-console-accent" href={deploymentHref(current().deployment_id)}><IDText value={current().deployment_id} full class="text-inherit hover:text-inherit" /></A>
+                    <IDText value={current().deployment_id} full href={deploymentHref(current().deployment_id)} />
                   </DetailItem>
                   <Show when={current().key}>{(key) => <DetailItem label="Key"><code>{key()}</code></DetailItem>}</Show>
                   <DetailItem label="Status"><StatusBadge resource="session" status={current().status} /></DetailItem>
@@ -177,7 +177,7 @@ export function SessionDetail() {
                   <Show when={current().current_run_id}>
                     {(runID) => (
                       <DetailItem label="Current Run">
-                        <A class="text-console-accent" href={runHref(runID(), projectID(), environmentID())}><IDText value={runID()} full class="text-inherit hover:text-inherit" /></A>
+                        <IDText value={runID()} full href={runHref(runID(), projectID(), environmentID())} />
                       </DetailItem>
                     )}
                   </Show>
@@ -188,7 +188,7 @@ export function SessionDetail() {
                         <Show when={failure().details.run_id}>
                           {(runID) => (
                             <DetailItem label="Failure Run">
-                              <A class="text-console-accent" href={runHref(runID(), projectID(), environmentID())}><IDText value={runID()} full class="text-inherit hover:text-inherit" /></A>
+                              <IDText value={runID()} full href={runHref(runID(), projectID(), environmentID())} />
                             </DetailItem>
                           )}
                         </Show>

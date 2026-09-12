@@ -39,13 +39,10 @@ function SessionRow(props: { session: Session; projectID: string; environmentID:
       </td>
       <td><StatusBadge resource="session" status={props.session.status} /></td>
       <td>
-        <Show when={props.session.current_run_id} fallback={<span class="text-console-faint">—</span>}>
-          {(runID) => (
-            <A href={runHref(runID(), props.projectID, props.environmentID)} class="text-console-accent hover:text-console-accent-hover">
-              <IDText value={runID()} class="text-inherit hover:text-inherit" />
-            </A>
-          )}
-        </Show>
+        <IDText
+          value={props.session.current_run_id ?? ""}
+          href={props.session.current_run_id ? runHref(props.session.current_run_id, props.projectID, props.environmentID) : undefined}
+        />
       </td>
       <td><RelativeTime value={props.session.created_at} /></td>
       <td><IDText value={props.session.id} /></td>

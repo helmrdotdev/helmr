@@ -14,6 +14,7 @@ import {
 import { useScope } from "../lib/scope";
 import { ActionMenu } from "../ui/ActionMenu";
 import { DataTable } from "../ui/DataTable";
+import { formatID } from "../ui/id";
 import { Modal } from "../ui/Modal";
 import { PageHeader } from "../ui/PageHeader";
 import { RelativeTime } from "../ui/RelativeTime";
@@ -160,17 +161,13 @@ function validateLabel(value: string): string | null {
 function permissionText(keyItem: ApiKeySummary): string {
   const grants = keyItem.permissions ?? [];
   if (grants.length === 0) return "Not reported";
-  const scope = `${shortScopeID(keyItem.project_id)} / ${shortScopeID(keyItem.environment_id)}`;
+  const scope = `${formatID(keyItem.project_id)} / ${formatID(keyItem.environment_id)}`;
   return grants.map((grant) => {
     const labels = API_KEY_SCOPE_OPTIONS
       .filter((option) => grant.scopes.includes(option.value))
       .map((option) => option.label);
     return `${scope}: ${labels.length > 0 ? labels.join(", ") : "Custom permissions"}`;
   }).join("; ");
-}
-
-function shortScopeID(id: string): string {
-  return id.slice(0, 8);
 }
 
 function ApiKeyRow(props: {
@@ -307,7 +304,7 @@ function IssueApiKeyModal(props: {
                 <span class={ui.scopeTargetDot} style={envDotStyle(props.environmentColorHex)} aria-hidden="true" />
               </Show>
               <span>{props.projectName}</span>
-              <code>{shortScopeID(props.projectID)} / {shortScopeID(props.environmentID)}</code>
+              <code>{formatID(props.projectID)} / {formatID(props.environmentID)}</code>
             </div>
           </div>
           <label class={ui.field}>

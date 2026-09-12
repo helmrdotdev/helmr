@@ -1,6 +1,6 @@
 import { A } from "@solidjs/router";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
-import { createMemo, createSignal, For, Show, type JSX } from "solid-js";
+import { createMemo, createSignal, For, Show } from "solid-js";
 import { deploymentHref } from "../features/deployments/navigation";
 import { runHref } from "../features/runs/navigation";
 import { ApiError } from "../lib/api";
@@ -43,15 +43,6 @@ function attentionRows(tokens: TokenListItem[], waiting: Run[]): AttentionRow[] 
     ...byTimeout.map((token): AttentionRow => ({ kind: "token", token })),
     ...byAge.map((run): AttentionRow => ({ kind: "run", run })),
   ];
-}
-
-function Section(props: { title: string; count?: number; viewAll: JSX.Element; children: JSX.Element }) {
-  return (
-    <section class="min-w-0">
-      <SectionHeader title={props.title} count={props.count} actions={props.viewAll} />
-      {props.children}
-    </section>
-  );
 }
 
 function MoreRows(props: { total: number }) {
@@ -259,16 +250,17 @@ export function Overview() {
         <Show when={current.data} fallback={<CliOnboarding />}>
           {(deployment) => (
             <div class="grid gap-6">
-              <Section
-                title="Needs you"
-                count={attention().length}
-                viewAll={
-                  <>
-                    <A class={ui.ghostButton} href="/tokens">Tokens</A>
-                    <A class={ui.ghostButton} href="/sessions">Sessions</A>
-                  </>
-                }
-              >
+              <section class="min-w-0">
+                <SectionHeader
+                  title="Needs you"
+                  count={attention().length}
+                  actions={
+                    <>
+                      <A class={ui.ghostButton} href="/tokens">Tokens</A>
+                      <A class={ui.ghostButton} href="/sessions">Sessions</A>
+                    </>
+                  }
+                />
                 <Show when={!pendingTokens.isPending && !waitingRuns.isPending} fallback={<StatePanel loading="Loading..." />}>
                   <Show when={pendingTokens.isError || waitingRuns.isError}>
                     <StatePanel error={actionErrorMessage(pendingTokens.error ?? waitingRuns.error, "Could not load pending work.")} />
@@ -285,7 +277,7 @@ export function Overview() {
                             <td><IDText value={row.token.id} /></td>
                             <td><TagList tags={row.token.tags} /></td>
                             <td><StatusBadge resource="token" status="pending" /></td>
-                            <td><RelativeTime value={row.token.timeout_at} prefix="expires" /></td>
+                            <td><span class={ui.muted}>expires </span><RelativeTime value={row.token.timeout_at} /></td>
                             <td class={ui.actionsCell}>
                               <div class="flex justify-end gap-1.5">
                                 <Show when={can("tokens.complete")}>
@@ -318,9 +310,10 @@ export function Overview() {
                     <MoreRows total={attention().length} />
                   </Show>
                 </Show>
-              </Section>
+              </section>
 
-              <Section title="Recent failures" count={failedItems().length} viewAll={<A class={ui.ghostButton} href="/runs">Runs</A>}>
+              <section class="min-w-0">
+                <SectionHeader title="Recent failures" count={failedItems().length} actions={<A class={ui.ghostButton} href="/runs">Runs</A>} />
                 <Show when={!failedRuns.isPending} fallback={<StatePanel loading="Loading..." />}>
                   <Show when={failedRuns.isError}>
                     <StatePanel error={actionErrorMessage(failedRuns.error, "Could not load failed Runs.")} />
@@ -347,9 +340,10 @@ export function Overview() {
                     <MoreRows total={failedItems().length} />
                   </Show>
                 </Show>
-              </Section>
+              </section>
 
-              <Section title="In progress" count={inProgressItems().length} viewAll={<A class={ui.ghostButton} href="/runs">Runs</A>}>
+              <section class="min-w-0">
+                <SectionHeader title="In progress" count={inProgressItems().length} actions={<A class={ui.ghostButton} href="/runs">Runs</A>} />
                 <Show when={!inProgress.isPending} fallback={<StatePanel loading="Loading..." />}>
                   <Show when={inProgress.isError}>
                     <StatePanel error={actionErrorMessage(inProgress.error, "Could not load Runs in progress.")} />
@@ -381,9 +375,10 @@ export function Overview() {
                     <MoreRows total={inProgressItems().length} />
                   </Show>
                 </Show>
-              </Section>
+              </section>
 
-              <Section title="Deployments" viewAll={<A class={ui.ghostButton} href="/deployments">Deployments</A>}>
+              <section class="min-w-0">
+                <SectionHeader title="Deployments" actions={<A class={ui.ghostButton} href="/deployments">Deployments</A>} />
                 <DataTable columns={["Current version", "Digest", "Created", "ID"]}>
                   <tr>
                     <td>
@@ -396,7 +391,7 @@ export function Overview() {
                     <td><IDText value={deployment().id} /></td>
                   </tr>
                 </DataTable>
-              </Section>
+              </section>
             </div>
           )}
         </Show>

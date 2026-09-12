@@ -1,18 +1,11 @@
-import { createSignal, onCleanup } from "solid-js";
+import { A } from "@solidjs/router";
+import { createSignal, onCleanup, Show } from "solid-js";
+import { formatID } from "./id";
 import { cx } from "./styles";
 
-const TAIL = 12;
+const TEXT = "font-mono text-[11.5px]";
 
-export function formatID(value: string): string {
-  const separator = value.indexOf(":");
-  if (separator > 0 && separator < 12) {
-    const digest = value.slice(separator + 1);
-    return digest.length > TAIL ? `${value.slice(0, separator)}:…${digest.slice(-TAIL)}` : value;
-  }
-  return value.length > TAIL + 4 ? `…${value.slice(-TAIL)}` : value;
-}
-
-export function IDText(props: { value: string; full?: boolean; class?: string }) {
+export function IDText(props: { value: string; full?: boolean; href?: string | undefined; fallback?: string }) {
   const [copied, setCopied] = createSignal(false);
   let timer: number | undefined;
   onCleanup(() => window.clearTimeout(timer));
@@ -27,21 +20,47 @@ export function IDText(props: { value: string; full?: boolean; class?: string })
       setCopied(false);
     }
   };
+  const display = () => (props.full ? props.value : formatID(props.value));
+  const copyLabel = () => (copied() ? `Copied ${props.value}` : `Copy ${props.value}`);
 
   return (
-    <button
-      type="button"
-      class={cx(
-        "inline-flex max-w-full cursor-copy items-center gap-1.5 border-0 bg-transparent p-0 text-left font-mono text-[11.5px] text-console-muted underline decoration-dotted decoration-console-faint underline-offset-3 transition hover:text-console-text",
-        props.full && "break-all whitespace-normal",
-        props.class,
-      )}
-      title={props.value}
-      aria-label={`Copy ${props.value}`}
-      onClick={() => void copy()}
-    >
-      <span>{props.full ? props.value : formatID(props.value)}</span>
-      <span class={cx("text-[10px] text-console-accent", !copied() && "hidden")} aria-live="polite">copied</span>
-    </button>
+    <Show when={props.value} fallback={<span class="text-console-faint">{props.fallback ?? "—"}</span>}>
+      <Show
+        when={props.href}
+        fallback={
+          <button
+            type="button"
+            class={cx(
+              TEXT,
+              "inline-flex max-w-full cursor-copy items-center gap-1.5 border-0 bg-transparent p-0 text-left text-console-muted underline decoration-dotted decoration-console-faint underline-offset-3 transition hover:text-console-text",
+              props.full && "break-all whitespace-normal",
+            )}
+            title={props.value}
+            aria-label={copyLabel()}
+            onClick={() => void copy()}
+          >
+            <span>{display()}</span>
+            <span class="text-[10px] text-console-accent" aria-hidden="true">{copied() ? "copied" : ""}</span>
+          </button>
+        }
+      >
+        {(href) => (
+          <span class={cx("inline-flex max-w-full items-center gap-1.5", props.full && "break-all whitespace-normal")}>
+            <A href={href()} class={cx(TEXT, "text-console-accent hover:text-console-accent-hover")} title={props.value}>
+              {display()}
+            </A>
+            <button
+              type="button"
+              class="inline-grid size-4 shrink-0 cursor-copy place-items-center rounded-xs border border-transparent bg-transparent p-0 font-mono text-[10px] leading-none text-console-subtle transition hover:border-console-border hover:text-console-text"
+              title="Copy"
+              aria-label={copyLabel()}
+              onClick={() => void copy()}
+            >
+              <span aria-hidden="true">{copied() ? "✓" : "⧉"}</span>
+            </button>
+          </span>
+        )}
+      </Show>
+    </Show>
   );
 }

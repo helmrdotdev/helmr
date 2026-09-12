@@ -240,12 +240,12 @@ export function RunDetail() {
                   <Show when={runSessionConsolePath(current(), projectID(), environmentID())}>
                     {(sessionPath) => (
                       <DetailItem label="Session">
-                        <A class="text-console-accent" href={sessionPath()}><IDText value={current().session_id!} full class="text-inherit hover:text-inherit" /></A>
+                        <IDText value={current().session_id!} full href={sessionPath()} />
                       </DetailItem>
                     )}
                   </Show>
                   <DetailItem label="Workspace">
-                    <A class="text-console-accent" href={`/workspaces/${current().workspace_id}`}><IDText value={current().workspace_id} full class="text-inherit hover:text-inherit" /></A>
+                    <IDText value={current().workspace_id} full href={`/workspaces/${current().workspace_id}`} />
                   </DetailItem>
                   <DetailItem label="Deployment">
                     <A class="text-console-accent" href={deploymentHref(current().deployment.id)}>{current().deployment.version}</A>
