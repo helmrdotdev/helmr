@@ -13,6 +13,6 @@
   "version": "0.1.0",
   "dependencies": {
     "@helmr/sdk": "latest",
-    "zod": "^4.4.3"
+    "zod": "^4.6.2"
   }
 }

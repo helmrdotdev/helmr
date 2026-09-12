@@ -11,14 +11,14 @@
 }:
 
 let
-  version = "0.28.1";
+  version = "0.28.2";
   esbuildPackage = fetchurl {
     url = "https://registry.npmjs.org/esbuild/-/esbuild-${version}.tgz";
-    hash = "sha512-HrJrvZv5ayxBzPfwphOoNzkzOIIlifzk0KJrGK2c8R4+LKpMtpYLQeUdjnwjWv/LZlkH2laZk+4w78pi99D4Vw==";
+    hash = "sha512-HKVLS8dvII+xoKW9kmqxbRKrnWEXfJJr/FZhhJmiqIB0e053QNYFqOBouTMO/k5sID4MvCiUCvv8b9M4h32wIA==";
   };
   esbuildLinuxX64 = fetchurl {
     url = "https://registry.npmjs.org/@esbuild/linux-x64/-/linux-x64-${version}.tgz";
-    hash = "sha512-u/anNYF2mmVOEDwLtnQ1wOr3EZ9sTNGLWrsYGYwHWzGA3Si84IOkHXlbWTD1NB+9/1lcnweYKO54uhxZydNzfA==";
+    hash = "sha512-4xTZr1FUmSoQW4XIWmit3tzQrUTZM+N3P0XV8xROKYF50XfI7xeO90+1bZvNwxIufQ9hDQVRJH5YhgPVF8A/HQ==";
   };
 in
 stdenvNoCC.mkDerivation {

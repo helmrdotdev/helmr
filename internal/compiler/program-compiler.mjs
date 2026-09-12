@@ -4817,7 +4817,7 @@ function inside2(path) {
 
 // compiler/typescript/src/bundle.ts
 var COMPILER_API_VERSION = "helmr.compiler.v0";
-var ESBUILD_VERSION = "0.28.1";
+var ESBUILD_VERSION = "0.28.2";
 var RUNTIME_PROGRAM_ROOT = "/opt/helmr/program";
 if (esbuildVersion !== ESBUILD_VERSION) {
   throw new Error(`esbuild version ${JSON.stringify(esbuildVersion)} does not match ${ESBUILD_VERSION}`);

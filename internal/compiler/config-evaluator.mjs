@@ -3313,7 +3313,7 @@ function inside(path) {
 }
 
 // compiler/typescript/src/bundle.ts
-var ESBUILD_VERSION = "0.28.1";
+var ESBUILD_VERSION = "0.28.2";
 if (esbuildVersion !== ESBUILD_VERSION) {
   throw new Error(`esbuild version ${JSON.stringify(esbuildVersion)} does not match ${ESBUILD_VERSION}`);
 }

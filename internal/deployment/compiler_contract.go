@@ -110,7 +110,7 @@ func ValidateCompilerInputs(input CompilerInputs) error {
 		input.ConfigEvaluator.Entrypoint != "/nix/helmr/config-evaluator.mjs" ||
 		input.ProgramCompiler.APIVersion != "helmr.compiler.v0" ||
 		input.ProgramCompiler.Entrypoint != "/nix/helmr/program-compiler.mjs" ||
-		input.Esbuild.Version != "0.28.1" ||
+		input.Esbuild.Version != "0.28.2" ||
 		input.Esbuild.BinaryPath != "/nix/helmr/esbuild" ||
 		input.Esbuild.PackagePath != "/nix/node_modules/esbuild" ||
 		input.Output.Aggregate != "analysis-only" ||
