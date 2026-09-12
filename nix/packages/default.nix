@@ -109,7 +109,7 @@ let
         cd ..
         cp -a ${runtimeReleaseUnchecked} "$out"
       '';
-  firecrackerReleaseVersion = "1.16.1";
+  firecrackerReleaseVersion = "1.17.0";
   worker = pkgs.callPackage ./worker.nix {
     buildGoModule = buildGo127Module;
     version = platformVersion;
@@ -121,7 +121,7 @@ let
 
     src = pkgs.fetchurl {
       url = "https://github.com/firecracker-microvm/firecracker/releases/download/v${firecrackerReleaseVersion}/firecracker-v${firecrackerReleaseVersion}-x86_64.tgz";
-      hash = "sha256-OCoCqGnk1tXLFMQFd/lUXoRYAh6osLLT/BDsFNnCQuY=";
+      hash = "sha256-BglKEQiunoKqTCOndaqSdY9T8RddQiJw2dYWLLmt5Vg=";
     };
 
     installPhase = ''

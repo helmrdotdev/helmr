@@ -7,7 +7,7 @@
 
 let
   cfg = config.services.helmr.firecrackerHost;
-  firecrackerReleaseVersion = "1.16.1";
+  firecrackerReleaseVersion = "1.17.0";
   firecrackerPackage =
     assert lib.assertMsg pkgs.stdenv.hostPlatform.isx86_64
       "Helmr Firecracker hosts support only x86_64-linux";
