@@ -636,9 +636,8 @@ type RunLease struct {
 	TerminalReasonCode               pgtype.Text        `json:"terminal_reason_code"`
 	TerminalError                    []byte             `json:"terminal_error"`
 	TerminalRequestFingerprint       pgtype.Text        `json:"terminal_request_fingerprint"`
-	// Creation of this issued lease grant, for its fixed placement and lease sequence; claiming and starting are separate events.
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+	CreatedAt                        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                        pgtype.Timestamptz `json:"updated_at"`
 }
 
 type RunWait struct {
@@ -1143,9 +1142,8 @@ type WorkspaceMount struct {
 	TerminalAt                 pgtype.Timestamptz `json:"terminal_at"`
 	TerminalReasonCode         pgtype.Text        `json:"terminal_reason_code"`
 	TerminalError              []byte             `json:"terminal_error"`
-	// Creation of this durable mount request, preserved on matching request replay; mounting completion is recorded by mounted_at.
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
 }
 
 type WorkspaceProcess struct {

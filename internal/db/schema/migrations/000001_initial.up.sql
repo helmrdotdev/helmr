@@ -1522,9 +1522,6 @@ CREATE TABLE workspace_mounts (
     CHECK (terminal_error IS NULL OR jsonb_typeof(terminal_error) = 'object')
 );
 
-COMMENT ON COLUMN workspace_mounts.created_at IS
-    'Creation of this durable mount request, preserved on matching request replay; mounting completion is recorded by mounted_at.';
-
 CREATE UNIQUE INDEX workspace_mounts_workspace_active_uidx
     ON workspace_mounts (workspace_id)
     WHERE state IN ('mounting', 'mounted', 'unmounting');
@@ -2233,9 +2230,6 @@ CREATE TABLE run_leases (
         btrim(terminal_request_fingerprint) <> '' AND octet_length(terminal_request_fingerprint) <= 128
     ))
 );
-
-COMMENT ON COLUMN run_leases.created_at IS
-    'Creation of this issued lease grant, for its fixed placement and lease sequence; claiming and starting are separate events.';
 
 ALTER TABLE workspace_leases
     ADD CONSTRAINT workspace_leases_owner_run_lease_fk
