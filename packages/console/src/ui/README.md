@@ -9,6 +9,7 @@ The console UI is intentionally compact, square, and work-focused.
 - Use `ConfirmModal` for cancel, promote, and other confirmations so the button order, busy state, and error placement stay the same.
 - Use `ui.actionRow` for ordinary action rows and `ui.modalActions` only inside modals.
 - Use `ui.field`, `ui.fieldError`, `ui.fieldSet`, and `ui.fieldLegend` for forms instead of page-local label and legend classes.
+- Use `ui.codeBlock` for a `<pre>` of JSON, stdout, or stderr on detail pages.
 - Use semantic Tailwind tokens from `styles.css` for new one-off layouts, for example `bg-console-surface`, `border-console-border`, `text-console-muted`, `font-console-mono`.
 - Keep arbitrary values for exact UI details that are part of the console visual language, such as `rounded-xs` or fixed table heights.
 

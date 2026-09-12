@@ -20,6 +20,7 @@ import { RunDetail } from "./routes/run-detail";
 import { Runs } from "./routes/runs";
 import { Sessions } from "./routes/sessions";
 import { Tokens } from "./routes/tokens";
+import { TokenDetail } from "./routes/token-detail";
 import { Workspaces } from "./routes/workspaces";
 import { Deployments } from "./routes/deployments";
 import { DeploymentDetail } from "./routes/deployment-detail";
@@ -297,6 +298,7 @@ export function App() {
       <Route path="/sessions" component={wrap(Sessions)} />
       <Route path="/sessions/:session_id" component={wrap(SessionDetail)} />
       <Route path="/tokens" component={wrap(Tokens)} />
+      <Route path="/tokens/:token_id" component={wrap(TokenDetail)} />
       <Route path="/workspaces" component={wrap(Workspaces)} />
       <Route path="/workspaces/:workspace_id" component={wrap(WorkspaceDetail)} />
       <Route path="/deployments" component={wrap(Deployments)} />

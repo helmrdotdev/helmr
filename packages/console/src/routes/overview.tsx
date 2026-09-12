@@ -3,17 +3,17 @@ import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { deploymentHref } from "../features/deployments/navigation";
 import { runHref } from "../features/runs/navigation";
+import { CancelTokenModal, CompleteTokenModal } from "../features/tokens/TokenActions";
 import { ApiError } from "../lib/api";
 import { getMe, hasPermission } from "../lib/auth";
 import { getCurrentDeployment } from "../lib/deployments";
 import { cancelRun, listRuns, type RunListItem } from "../lib/runs";
 import { useScope } from "../lib/scope";
 import { listSessions, sessionConsolePath, type Session } from "../lib/sessions";
-import { cancelToken, completeToken, listTokens, type TokenListItem } from "../lib/tokens";
+import { listTokens, type TokenListItem } from "../lib/tokens";
 import { ConfirmModal } from "../ui/ConfirmModal";
 import { DataTable } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
-import { Modal } from "../ui/Modal";
 import { PageHeader } from "../ui/PageHeader";
 import { RelativeTime } from "../ui/RelativeTime";
 import { SectionHeader } from "../ui/SectionHeader";
@@ -106,75 +106,6 @@ export default defineConfig({
         </section>
       </div>
     </div>
-  );
-}
-
-function CompleteTokenModal(props: {
-  token: TokenListItem;
-  projectID: string;
-  environmentID: string;
-  onClose: () => void;
-  onCompleted: () => Promise<void>;
-}) {
-  const [result, setResult] = createSignal("{}");
-  const [submitting, setSubmitting] = createSignal(false);
-  const [error, setError] = createSignal<string | null>(null);
-
-  const submit = async (event: Event) => {
-    event.preventDefault();
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(result());
-    } catch {
-      setError("Result must be valid JSON.");
-      return;
-    }
-    setError(null);
-    setSubmitting(true);
-    try {
-      await completeToken(props.token.id, { projectID: props.projectID, environmentID: props.environmentID }, {
-        result: parsed,
-        idempotency_key: crypto.randomUUID(),
-      });
-      await props.onCompleted();
-      props.onClose();
-    } catch (cause) {
-      setError(actionErrorMessage(cause, "Could not complete this Token."));
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <Modal title="Complete Token" onClose={props.onClose} closeDisabled={submitting()}>
-      <form onSubmit={submit}>
-        <p class={ui.modalIntro}>
-          The result is delivered to the waiting Run as JSON. Token <IDText value={props.token.id} />.
-        </p>
-        <label class={ui.field}>
-          <span>Result (JSON)</span>
-          <textarea
-            class={`${ui.textarea} font-mono`}
-            rows={6}
-            value={result()}
-            onInput={(event) => setResult(event.currentTarget.value)}
-            spellcheck={false}
-            autofocus
-          />
-        </label>
-        <Show when={error()}>
-          <p class={ui.fieldError} role="alert">{error()}</p>
-        </Show>
-        <div class={ui.modalActions}>
-          <button type="button" class={ui.secondaryButton} disabled={submitting()} onClick={props.onClose}>
-            Cancel
-          </button>
-          <button type="submit" class={ui.button} disabled={submitting()}>
-            {submitting() ? "Completing..." : "Complete"}
-          </button>
-        </div>
-      </form>
-    </Modal>
   );
 }
 
@@ -453,20 +384,13 @@ export function Overview() {
       </Show>
       <Show when={cancellingToken()}>
         {(token) => (
-          <ConfirmModal
-            title="Cancel Token"
-            confirmLabel="Cancel Token"
-            busyLabel="Cancelling..."
-            tone="danger"
+          <CancelTokenModal
+            token={token()}
+            projectID={projectID()}
+            environmentID={environmentID()}
             onClose={() => setCancellingToken(null)}
-            onConfirm={async () => {
-              await cancelToken(token().id, resourceScope(), { idempotency_key: crypto.randomUUID() });
-              await refreshTokens();
-            }}
-            errorMessage={(error) => actionErrorMessage(error, "Could not cancel this Token.")}
-          >
-            The waiting Run receives a cancelled Token and cannot be completed later. Token <IDText value={token().id} />.
-          </ConfirmModal>
+            onCancelled={refreshTokens}
+          />
         )}
       </Show>
       <Show when={cancellingRun()}>

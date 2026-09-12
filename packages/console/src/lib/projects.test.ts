@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 
-import { getProject, listProjects } from "./projects";
+import { getProject, listProjects, updateEnvironment } from "./projects";
 
 const originalFetch = globalThis.fetch;
 
@@ -31,4 +31,21 @@ test("project detail encodes the project reference", async () => {
   await getProject("project slug");
 
   expect(requested).toBe("/api/projects/project%20slug");
+});
+
+test("environment update patches name and color and resends the slug", async () => {
+  let requested = "";
+  let init: RequestInit | undefined;
+  globalThis.fetch = (async (input, requestInit) => {
+    requested = String(input);
+    init = requestInit;
+    return Response.json({ id: "env-1", slug: "staging", name: "Staging 2", color_hex: "#F59E0B" });
+  }) as typeof fetch;
+
+  const environment = await updateEnvironment("project/1", "env/1", { slug: "staging", name: "Staging 2", color_hex: "#F59E0B" });
+
+  expect(requested).toBe("/api/projects/project%2F1/environments/env%2F1");
+  expect(init?.method).toBe("PATCH");
+  expect(JSON.parse(String(init?.body))).toEqual({ slug: "staging", name: "Staging 2", color_hex: "#F59E0B" });
+  expect(environment.name).toBe("Staging 2");
 });

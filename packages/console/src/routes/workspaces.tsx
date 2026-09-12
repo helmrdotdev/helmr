@@ -1,6 +1,9 @@
-import { createInfiniteQuery } from "@tanstack/solid-query";
-import { createMemo, For, Show } from "solid-js";
+import { createInfiniteQuery, createQuery, useQueryClient } from "@tanstack/solid-query";
+import { createMemo, createSignal, For, Show } from "solid-js";
+import { CreateWorkspaceModal } from "../features/workspaces/CreateWorkspaceModal";
+import { workspaceHref } from "../features/workspaces/navigation";
 import { ApiError } from "../lib/api";
+import { getMe, hasPermission } from "../lib/auth";
 import { useScope } from "../lib/scope";
 import { listWorkspaces, type WorkspaceListItem } from "../lib/workspaces";
 import { DataTable } from "../ui/DataTable";
@@ -19,10 +22,6 @@ function workspacesErrorMessage(error: unknown): string {
   return "Could not load Workspaces.";
 }
 
-function workspaceHref(id: string): string {
-  return `/workspaces/${encodeURIComponent(id)}`;
-}
-
 function WorkspaceRow(props: { workspace: WorkspaceListItem }) {
   return (
     <tr>
@@ -34,15 +33,19 @@ function WorkspaceRow(props: { workspace: WorkspaceListItem }) {
       </td>
       <td><span class={ui.muted}>{props.workspace.sandbox_id}</span></td>
       <td><StatusBadge resource="workspace" status={props.workspace.status} /></td>
-      <td><RelativeTime value={props.workspace.updated_at} /></td>
+      <td><RelativeTime value={props.workspace.last_activity_at} /></td>
+      <td><RelativeTime value={props.workspace.created_at} /></td>
     </tr>
   );
 }
 
 export function Workspaces() {
   const scope = useScope();
+  const queryClient = useQueryClient();
   const projectID = () => scope.selectedProjectID();
   const environmentID = () => scope.selectedEnvironmentID();
+  const me = createQuery(() => ({ queryKey: ["me"], queryFn: getMe, retry: false, staleTime: 60_000 }));
+  const [creating, setCreating] = createSignal(false);
   const workspaces = createInfiniteQuery(() => ({
     queryKey: ["workspaces", "list", projectID(), environmentID()],
     queryFn: ({ pageParam }) => listWorkspaces(
@@ -61,6 +64,13 @@ export function Workspaces() {
       <PageHeader
         title="Workspaces"
         subtitle="Durable filesystems created from Sandbox definitions in the selected environment."
+        actions={
+          <Show when={hasPermission(me.data, "workspaces.create")}>
+            <button type="button" class={ui.button} disabled={!projectID() || !environmentID()} onClick={() => setCreating(true)}>
+              Create Workspace
+            </button>
+          </Show>
+        }
       />
 
       <Show when={workspaces.isError}>
@@ -69,9 +79,9 @@ export function Workspaces() {
       <Show when={!workspaces.isPending} fallback={<StatePanel loading="Loading Workspaces..." />}>
         <Show
           when={items().length > 0}
-          fallback={<StatePanel empty="No Workspaces yet." hint="Runs and Sessions create Workspaces from their Sandbox." />}
+          fallback={<StatePanel empty="No Workspaces yet." hint="Runs and Sessions create Workspaces from their Sandbox, or create one here." />}
         >
-          <DataTable columns={["Workspace", "Key", "Sandbox", "State", "Updated"]} minWidth="min-w-180">
+          <DataTable columns={["Workspace", "Key", "Sandbox", "State", "Last activity", "Created"]} minWidth="min-w-200">
             <For each={items()}>
               {(workspace) => <WorkspaceRow workspace={workspace} />}
             </For>
@@ -89,6 +99,17 @@ export function Workspaces() {
             </div>
           </Show>
         </Show>
+      </Show>
+
+      <Show when={creating()}>
+        <CreateWorkspaceModal
+          projectID={projectID()}
+          environmentID={environmentID()}
+          onClose={() => setCreating(false)}
+          onCreated={async () => {
+            await queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+          }}
+        />
       </Show>
     </section>
   );

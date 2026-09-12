@@ -1,8 +1,9 @@
-import { useQueryClient } from "@tanstack/solid-query";
+import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { defaultEnvironmentColor, ENVIRONMENT_COLOR_PRESETS, normalizeEnvironmentColor } from "../features/projects/display";
 import { ApiError } from "../lib/api";
-import { createEnvironment, type Environment } from "../lib/projects";
+import { getMe, hasPermission } from "../lib/auth";
+import { createEnvironment, updateEnvironment, type Environment } from "../lib/projects";
 import { useScope } from "../lib/scope";
 import { DataTable } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
@@ -35,6 +36,103 @@ function isProtectedEnvironment(env: Environment): boolean {
   return PROTECTED_ENVIRONMENT_SLUGS.has(env.slug);
 }
 
+function ColorField(props: { value: string; onChange: (colorHex: string) => void }) {
+  return (
+    <label class={ui.field}>
+      <span>Color</span>
+      <div class="flex items-center gap-2">
+        <input
+          type="color"
+          class="size-8 cursor-pointer border border-console-border bg-white p-0.5"
+          value={props.value}
+          onInput={(event) => props.onChange(normalizeEnvironmentColor(event.currentTarget.value))}
+          aria-label="Environment color"
+        />
+        <div class="flex flex-wrap gap-1.5">
+          <For each={ENVIRONMENT_COLOR_PRESETS}>
+            {(preset) => (
+              <button
+                type="button"
+                class="size-6 cursor-pointer border border-console-border bg-white p-0.5"
+                aria-label={`Use ${preset}`}
+                onClick={() => props.onChange(preset)}
+              >
+                <span class="block size-full" style={{ "background-color": preset }} />
+              </button>
+            )}
+          </For>
+        </div>
+      </div>
+    </label>
+  );
+}
+
+function EditEnvironmentModal(props: {
+  env: Environment;
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const [name, setName] = createSignal(props.env.name);
+  const [colorHex, setColorHex] = createSignal(normalizeEnvironmentColor(props.env.color_hex));
+  const [submitting, setSubmitting] = createSignal(false);
+  const [formError, setFormError] = createSignal<string | null>(null);
+
+  const submit = async (event: SubmitEvent) => {
+    event.preventDefault();
+    const nextName = name().trim();
+    if (!nextName) {
+      setFormError("Name is required.");
+      return;
+    }
+    setSubmitting(true);
+    setFormError(null);
+    try {
+      // The slug is not editable from the console; the PATCH resends the current one.
+      await updateEnvironment(props.env.project_id, props.env.id, { slug: props.env.slug, name: nextName, color_hex: colorHex() });
+      await props.onSaved();
+      props.onClose();
+    } catch (error) {
+      setFormError(formErrorMessage(error));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal title={`Edit ${props.env.name}`} onClose={props.onClose} closeDisabled={submitting()}>
+      <form onSubmit={submit}>
+        <label class={ui.field}>
+          <span>Name</span>
+          <input
+            type="text"
+            class={ui.input}
+            value={name()}
+            onInput={(event) => setName(event.currentTarget.value)}
+            autocomplete="off"
+            autofocus
+          />
+        </label>
+        <label class={ui.field}>
+          <span>Slug</span>
+          <input type="text" class={ui.input} value={props.env.slug} disabled aria-label="Slug (not editable)" />
+        </label>
+        <ColorField value={colorHex()} onChange={setColorHex} />
+        <Show when={formError()}>
+          <p class={ui.fieldError} role="alert">{formError()}</p>
+        </Show>
+        <div class={ui.modalActions}>
+          <button type="button" class={ui.secondaryButton} disabled={submitting()} onClick={props.onClose}>
+            Cancel
+          </button>
+          <button class={ui.button} type="submit" disabled={submitting() || !name().trim()}>
+            {submitting() ? "Saving..." : "Save"}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 function EnvironmentStatus(props: { env: Environment; selected: boolean }) {
   return (
     <span class="inline-flex flex-wrap items-center gap-1.5">
@@ -54,7 +152,10 @@ function EnvironmentStatus(props: { env: Environment; selected: boolean }) {
 export function Environments() {
   const scope = useScope();
   const queryClient = useQueryClient();
+  const me = createQuery(() => ({ queryKey: ["me"], queryFn: getMe, retry: false, staleTime: 60_000 }));
+  const canManage = () => hasPermission(me.data, "projects.manage");
   const [creating, setCreating] = createSignal(false);
+  const [editing, setEditing] = createSignal<Environment | null>(null);
   const [name, setName] = createSignal("");
   const [slug, setSlug] = createSignal("");
   const [slugTouched, setSlugTouched] = createSignal(false);
@@ -134,11 +235,18 @@ export function Environments() {
                 <td><EnvironmentStatus env={env} selected={scope.selectedEnvironmentID() === env.id} /></td>
                 <td><IDText value={env.id} /></td>
                 <td class={ui.actionsCell}>
-                  <Show when={scope.selectedEnvironmentID() !== env.id}>
-                    <button type="button" class={ui.secondaryButton} onClick={() => scope.setSelectedEnvironmentID(env.id)}>
-                      Use
-                    </button>
-                  </Show>
+                  <div class="flex justify-end gap-1.5">
+                    <Show when={scope.selectedEnvironmentID() !== env.id}>
+                      <button type="button" class={ui.secondaryButton} onClick={() => scope.setSelectedEnvironmentID(env.id)}>
+                        Use
+                      </button>
+                    </Show>
+                    <Show when={canManage()}>
+                      <button type="button" class={ui.secondaryButton} onClick={() => setEditing(env)}>
+                        Edit
+                      </button>
+                    </Show>
+                  </div>
                 </td>
               </tr>
             )}
@@ -186,38 +294,13 @@ export function Environments() {
                   spellcheck={false}
                 />
               </label>
-              <label class={ui.field}>
-                <span>Color</span>
-                <div class="flex items-center gap-2">
-                  <input
-                    type="color"
-                    class="size-8 cursor-pointer border border-console-border bg-white p-0.5"
-                    value={colorHex()}
-                    onInput={(event) => {
-                      setColorTouched(true);
-                      setColorHex(normalizeEnvironmentColor(event.currentTarget.value));
-                    }}
-                    aria-label="Environment color"
-                  />
-                  <div class="flex flex-wrap gap-1.5">
-                    <For each={ENVIRONMENT_COLOR_PRESETS}>
-                      {(preset) => (
-                        <button
-                          type="button"
-                          class="size-6 cursor-pointer border border-console-border bg-white p-0.5"
-                          aria-label={`Use ${preset}`}
-                          onClick={() => {
-                            setColorTouched(true);
-                            setColorHex(preset);
-                          }}
-                        >
-                          <span class="block size-full" style={{ "background-color": preset }} />
-                        </button>
-                      )}
-                    </For>
-                  </div>
-                </div>
-              </label>
+              <ColorField
+                value={colorHex()}
+                onChange={(next) => {
+                  setColorTouched(true);
+                  setColorHex(next);
+                }}
+              />
               <Show when={formError()}>
                 <p class={ui.fieldError} role="alert">{formError()}</p>
               </Show>
@@ -231,6 +314,18 @@ export function Environments() {
               </div>
             </form>
           </Modal>
+        )}
+      </Show>
+
+      <Show when={editing()}>
+        {(env) => (
+          <EditEnvironmentModal
+            env={env()}
+            onClose={() => setEditing(null)}
+            onSaved={async () => {
+              await queryClient.invalidateQueries({ queryKey: ["projects"] });
+            }}
+          />
         )}
       </Show>
     </>
