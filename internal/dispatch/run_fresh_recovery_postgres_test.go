@@ -516,9 +516,9 @@ INSERT INTO secret_versions (id, secret_id, version, nonce, ciphertext)
 VALUES ($1, $2, 1, decode(repeat('01', 12), 'hex'), decode(repeat('02', 16), 'hex'))`,
 		versionID, secretID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
-INSERT INTO workspace_secrets (
+INSERT INTO workspace_secrets (mode,
     workspace_id, environment_id, placement_kind, placement_target, secret_id
-) VALUES ($1, $2, 'env', 'RECOVERY_TOKEN', $3)`,
+) VALUES ('raw', $1, $2, 'env', 'RECOVERY_TOKEN', $3)`,
 		fixture.workspaceID, fixture.environmentID, secretID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO secret_resolutions (

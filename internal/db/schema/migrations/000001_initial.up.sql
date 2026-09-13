@@ -774,6 +774,10 @@ CREATE TABLE schedule_secrets (
         AND octet_length(placement_target) <= 4096
     ),
     secret_id UUID NOT NULL,
+    mode TEXT NOT NULL CHECK (mode IN ('raw', 'protected')),
+    allowed_origins TEXT[] NOT NULL DEFAULT '{}',
+    CHECK ((mode = 'raw' AND cardinality(allowed_origins) = 0)
+        OR (mode = 'protected' AND placement_kind = 'env' AND cardinality(allowed_origins) BETWEEN 1 AND 16)),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (schedule_id, placement_kind, placement_target),
     FOREIGN KEY (environment_id, schedule_id)
@@ -878,6 +882,12 @@ CREATE TABLE workspace_secrets (
         AND octet_length(placement_target) <= 4096
     ),
     secret_id UUID NOT NULL,
+    mode TEXT NOT NULL CHECK (mode IN ('raw', 'protected')),
+    allowed_origins TEXT[] NOT NULL DEFAULT '{}',
+    CHECK ((mode = 'raw' AND cardinality(allowed_origins) = 0)
+        OR (mode = 'protected' AND placement_kind = 'env' AND cardinality(allowed_origins) BETWEEN 1 AND 16)),
+    placeholder TEXT NOT NULL DEFAULT '',
+    CHECK ((mode = 'raw' AND placeholder = '') OR (mode = 'protected' AND placeholder ~ '^hlmr_protected_[a-f0-9]{64}$')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (workspace_id, placement_kind, placement_target),
     UNIQUE (workspace_id, placement_kind, placement_target, secret_id),
@@ -887,6 +897,16 @@ CREATE TABLE workspace_secrets (
     FOREIGN KEY (environment_id, secret_id)
         REFERENCES secrets(environment_id, id)
         ON DELETE RESTRICT
+);
+
+CREATE TABLE workspace_secret_proxy_trust (
+    workspace_id UUID PRIMARY KEY,
+    environment_id UUID NOT NULL,
+    certificate BYTEA NOT NULL,
+    private_key_nonce BYTEA NOT NULL,
+    private_key_ciphertext BYTEA NOT NULL,
+    not_after TIMESTAMPTZ NOT NULL,
+    FOREIGN KEY (environment_id, workspace_id) REFERENCES workspaces(environment_id, id) ON DELETE CASCADE
 );
 
 CREATE INDEX workspace_secrets_secret_idx

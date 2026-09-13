@@ -13,7 +13,7 @@ import {
   encodeWorkspaceSecrets,
   inspectSandboxDefinition,
   type Sandbox,
-  type WorkspaceSecretInput,
+  type WorkspaceSecretBinding,
 } from "./workspace"
 
 export type Cron = Readonly<{
@@ -45,7 +45,7 @@ export type ScheduledTaskConfig<
     cron: Cron
     workspace: Readonly<{
       sandbox: Sandbox
-      secrets?: readonly WorkspaceSecretInput[]
+      secrets?: readonly WorkspaceSecretBinding[]
     }>
     run(
       payload: ScheduledTaskPayload,

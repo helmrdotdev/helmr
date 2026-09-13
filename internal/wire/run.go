@@ -192,3 +192,6 @@ func readProtoStreamBody(reader io.Reader, bodyLen uint64, message proto.Message
 	}
 	return proto.Unmarshal(body, message)
 }
+
+// SecretEnvCollisionDiagnostic is fixed public text; never append underlying launch errors.
+const SecretEnvCollisionDiagnostic = "workspace Secret env binding conflicts with image or execution env; remove the bound name from image ENV and exec env"

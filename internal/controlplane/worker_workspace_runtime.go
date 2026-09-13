@@ -46,9 +46,10 @@ func (s *Server) workerCreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := s.createWorkspace(r.Context(), workspaceCreateRequest{
-		OrgID:         pgvalue.MustUUIDValue(source.OrgID),
-		ProjectID:     pgvalue.MustUUIDValue(source.ProjectID),
-		EnvironmentID: pgvalue.MustUUIDValue(source.EnvironmentID),
+		SourceWorkspaceID: source.WorkspaceID,
+		OrgID:             pgvalue.MustUUIDValue(source.OrgID),
+		ProjectID:         pgvalue.MustUUIDValue(source.ProjectID),
+		EnvironmentID:     pgvalue.MustUUIDValue(source.EnvironmentID),
 		Declaration: workspaceDeclarationSelector{
 			Kind:  workspaceDeclarationRunPinned,
 			RunID: pgvalue.MustUUIDValue(source.RunID),
@@ -56,6 +57,10 @@ func (s *Server) workerCreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		DeclaredID: request.SandboxDeclaredID,
 		Key:        request.Key, Secrets: request.Secrets, IdempotencyKey: idempotencyKey,
 		Authorize: func(ctx context.Context, q db.Querier) error {
+			// Secret rows precede mutable source runtime authority, including replays.
+			if err := authorizeWorkspaceSecretCreate(ctx, q, source.WorkspaceID, source.EnvironmentID, request.Secrets); err != nil {
+				return err
+			}
 			_, err := authorizeWorkerRunSource(ctx, q, worker, request.Lease)
 			return err
 		},
@@ -161,8 +166,15 @@ func (s *Server) workerExecuteWorkspace(w http.ResponseWriter, r *http.Request) 
 		Command: request.Command, Cwd: request.Cwd, Env: request.Env, Stdin: request.Stdin,
 		Timeout: timeout, IdempotencyKey: idempotencyKey,
 		Authorize: func(ctx context.Context, q db.Querier) error {
-			_, err := authorizeWorkerRunSource(ctx, q, worker, request.Lease)
-			return err
+			// Hold target Secret versions before locking the source runtime.
+			if _, err := q.LockWorkspaceSecretsForAdmission(ctx, record.ID); err != nil {
+				return err
+			}
+			live, err := authorizeWorkerRunSource(ctx, q, worker, request.Lease)
+			if err != nil {
+				return err
+			}
+			return authorizeWorkspaceSecretTarget(ctx, q, live.WorkspaceID, record.ID)
 		},
 	})
 	if err != nil {

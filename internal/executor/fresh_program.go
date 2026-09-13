@@ -722,6 +722,9 @@ func (r ProgramRunner) startNewProgram(
 		switch failed.GetPhase() {
 		case "prepare":
 			diagnostic = "Program process preparation failed"
+			if failed.GetDiagnostic() == wire.SecretEnvCollisionDiagnostic {
+				diagnostic = wire.SecretEnvCollisionDiagnostic
+			}
 		case "start":
 			diagnostic = "Program process start failed"
 		default:
@@ -751,6 +754,9 @@ func (r ProgramRunner) startNewProgram(
 		)
 		defer cancelFailure()
 		failure := errors.New("program process failed before start proof")
+		if diagnostic == wire.SecretEnvCollisionDiagnostic {
+			failure = fmt.Errorf("program process failed before start proof: %s", diagnostic)
+		}
 		if err := r.WorkspaceMounts.FailWorkspaceMountSession(
 			failureCtx,
 			claim.Lease.WorkspaceMountID,
@@ -1117,6 +1123,8 @@ func writeFreshProgramAdmission(
 			RunLeaseId:          lease.ID,
 			ProgramStartFrame:   programStart,
 			SecretCount:         uint32(len(claim.Secrets)),
+			ProtectedEnv:        claim.ProtectedEnv.Values(),
+			ProxyCa:             claim.ProtectedEnv.PublicCA(),
 			StartDeadlineUnixMs: lease.StartDeadlineAt.UnixMilli(),
 		},
 	); err != nil {

@@ -2,8 +2,10 @@ package main
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -27,6 +29,7 @@ func workspaceCommand() *cobra.Command {
 }
 
 func workspaceCreateCommand() *cobra.Command {
+	var secretsFile string
 	var projectID string
 	var environmentID string
 	var key string
@@ -45,8 +48,34 @@ func workspaceCreateCommand() *cobra.Command {
 			if command.Flags().Changed("key") {
 				keyPointer = &key
 			}
+			var bindings []api.WorkspaceSecret
+			if secretsFile != "" {
+				file, e := os.Open(secretsFile)
+				if e != nil {
+					return e
+				}
+				defer file.Close()
+				decoder := json.NewDecoder(io.LimitReader(file, 65537))
+				decoder.DisallowUnknownFields()
+				if e := decoder.Decode(&bindings); e != nil {
+					return fmt.Errorf("secrets-file must contain a JSON Workspace binding array (API fields use allowed_origins): %w", e)
+				}
+				var trailing any
+				if e := decoder.Decode(&trailing); e != io.EOF {
+					return errors.New("secrets-file contains trailing JSON")
+				}
+				if bindings == nil {
+					return errors.New("secrets-file must contain an array")
+				}
+				for _, binding := range bindings {
+					if e := api.ValidateWorkspaceSecret(binding); e != nil {
+						return e
+					}
+				}
+			}
 			response, err := controlPlane.CreateWorkspace(command.Context(), args[0], api.CreateWorkspaceRequest{
 				Key:            keyPointer,
+				Secrets:        bindings,
 				IdempotencyKey: idempotencyKey,
 			}, scope)
 			if err != nil {
@@ -60,6 +89,7 @@ func workspaceCreateCommand() *cobra.Command {
 		},
 	}
 	addScopeFlags(command, &projectID, &environmentID)
+	command.Flags().StringVar(&secretsFile, "secrets-file", "", "API JSON array of Workspace Secret bindings (allowed_origins; names and placements, never values).")
 	command.Flags().StringVar(&key, "key", "", "Immutable Workspace key.")
 	command.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Idempotency key for safe retries.")
 	command.Flags().BoolVar(&jsonOutput, "json", false, "Emit JSON.")

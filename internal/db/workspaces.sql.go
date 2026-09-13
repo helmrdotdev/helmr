@@ -157,15 +157,15 @@ INSERT INTO workspace_secrets (
     environment_id,
     placement_kind,
     placement_target,
-    secret_id
+    secret_id, mode, allowed_origins, placeholder
 ) VALUES (
     $1,
     $2,
     $3,
     $4,
-    $5
+    $5, $6, COALESCE($7::text[], '{}'::text[]), $8
 )
-RETURNING workspace_id, environment_id, placement_kind, placement_target, secret_id, created_at
+RETURNING workspace_id, environment_id, placement_kind, placement_target, secret_id, mode, allowed_origins, placeholder, created_at
 `
 
 type CreateWorkspaceSecretParams struct {
@@ -174,6 +174,9 @@ type CreateWorkspaceSecretParams struct {
 	PlacementKind   string      `json:"placement_kind"`
 	PlacementTarget string      `json:"placement_target"`
 	SecretID        pgtype.UUID `json:"secret_id"`
+	Mode            string      `json:"mode"`
+	AllowedOrigins  []string    `json:"allowed_origins"`
+	Placeholder     string      `json:"placeholder"`
 }
 
 func (q *Queries) CreateWorkspaceSecret(ctx context.Context, arg CreateWorkspaceSecretParams) (WorkspaceSecret, error) {
@@ -183,6 +186,9 @@ func (q *Queries) CreateWorkspaceSecret(ctx context.Context, arg CreateWorkspace
 		arg.PlacementKind,
 		arg.PlacementTarget,
 		arg.SecretID,
+		arg.Mode,
+		arg.AllowedOrigins,
+		arg.Placeholder,
 	)
 	var i WorkspaceSecret
 	err := row.Scan(
@@ -191,6 +197,9 @@ func (q *Queries) CreateWorkspaceSecret(ctx context.Context, arg CreateWorkspace
 		&i.PlacementKind,
 		&i.PlacementTarget,
 		&i.SecretID,
+		&i.Mode,
+		&i.AllowedOrigins,
+		&i.Placeholder,
 		&i.CreatedAt,
 	)
 	return i, err

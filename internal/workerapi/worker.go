@@ -251,11 +251,12 @@ type RunLeaseClaimRequest struct {
 }
 
 type RunLeaseClaimResponse struct {
-	Lease     RunLeaseAssignment  `json:"lease"`
-	Program   RuntimeProgram      `json:"program"`
-	Workspace WorkspaceAttachment `json:"workspace"`
-	Secrets   []SecretDelivery    `json:"secrets"`
-	Execution RunLeaseExecution   `json:"execution"`
+	ProtectedEnv *ProtectedEnv       `json:"protected_env,omitempty"`
+	Lease        RunLeaseAssignment  `json:"lease"`
+	Program      RuntimeProgram      `json:"program"`
+	Workspace    WorkspaceAttachment `json:"workspace"`
+	Secrets      []SecretDelivery    `json:"secrets"`
+	Execution    RunLeaseExecution   `json:"execution"`
 }
 
 type RunStartRequest struct {

@@ -46,7 +46,7 @@ import {
   type SourceDirectory,
   type SourceFile,
   type WorkspaceRef,
-  type WorkspaceSecretPlacement,
+  type WorkspaceSecretBinding,
 } from "."
 
 const schema: PayloadSchema<{ readonly value: string }> = {
@@ -105,7 +105,7 @@ export function assertGreenfieldTypes(): void {
   }
   void writeValues
 
-  const placement: WorkspaceSecretPlacement = { env: "TOKEN" }
+  const placement: WorkspaceSecretBinding = { secret: "token", env: {name: "TOKEN", mode: "raw"} }
   const secretCreate: SecretCreateRequest = {
     name: "TOKEN",
     value: "secret",

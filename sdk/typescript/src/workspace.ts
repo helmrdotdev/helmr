@@ -5,7 +5,8 @@ import {
   type InternalImage,
 } from "./image"
 import type { RequestOptions } from "./request"
-import { inspectSecretAddress, type SecretAddress } from "./secret"
+import { validateSecretName } from "./secret"
+import { canonicalSecretOrigin } from "./internal/origin"
 import { validateTaskId } from "./schema/task"
 import { resourceID } from "./internal/id"
 import { timestampString } from "./internal/timestamp"
@@ -42,24 +43,25 @@ export type WorkspaceStatus =
   | "recovery_required"
   | "deleting"
 
-export type WorkspaceSecretPlacement =
-  | Readonly<{ env: string; file?: never }>
-  | Readonly<{ env?: never; file: string }>
-
-export type WorkspaceSecretInput = Readonly<{ secret: SecretAddress }> &
-  WorkspaceSecretPlacement
-
-export type WorkspaceSecretInfo = Readonly<{ name: string }> &
-  WorkspaceSecretPlacement
+/** A fixed Workspace binding. Protected material rotates per HTTP request;
+ * raw values resolve per execution admission and remain unchanged in restored memory.
+ */
+export type WorkspaceSecretBinding = Readonly<{ secret: string }> & (
+  | Readonly<{ env: Readonly<{ name: string; mode: "raw"; allowedOrigins?: never }>; file?: never }>
+  | Readonly<{ env: Readonly<{ name: string; mode: "protected"; allowedOrigins: readonly string[] }>; file?: never }>
+  | Readonly<{ file: Readonly<{ path: string }>; env?: never }>
+)
 
 export interface WorkspaceCreateRequest {
   readonly key?: string
-  readonly secrets?: readonly WorkspaceSecretInput[]
+  readonly secrets?: readonly WorkspaceSecretBinding[]
   readonly idempotencyKey?: string
 }
 
-export type EncodedWorkspaceSecret = Readonly<{ name: string }> &
-  WorkspaceSecretPlacement
+export type EncodedWorkspaceSecret = Readonly<{ secret: string }> & (
+  | Readonly<{ env: Readonly<{ name: string; mode: "raw" | "protected"; allowed_origins?: readonly string[] }>; file?: never }>
+  | Readonly<{ file: Readonly<{ path: string }>; env?: never }>
+)
 
 /**
  * The Session or Run that currently owns a Workspace. Absent on an unowned
@@ -76,7 +78,7 @@ export interface Workspace {
   readonly deploymentId: string
   readonly status: WorkspaceStatus
   readonly owner?: WorkspaceOwner
-  readonly secrets: readonly WorkspaceSecretInfo[]
+  readonly secrets: readonly WorkspaceSecretBinding[]
   readonly lastActivityAt: string
   readonly createdAt: string
   readonly updatedAt: string
@@ -244,49 +246,53 @@ export function workspaceRefID(value: unknown): string {
 }
 
 export function encodeWorkspaceSecrets(
-  inputs: readonly WorkspaceSecretInput[] | undefined,
+  inputs: readonly WorkspaceSecretBinding[] | undefined,
 ): readonly EncodedWorkspaceSecret[] {
   if (inputs === undefined) return Object.freeze([])
-  if (!Array.isArray(inputs)) {
-    throw new Error("Workspace secrets must be an array")
-  }
-  if (inputs.length > 64) {
-    throw new Error("at most 64 Workspace Secret placements are allowed")
-  }
-  return Object.freeze(inputs.map((input) => {
-    if (typeof input !== "object" || input === null || Array.isArray(input)) {
-      throw new Error("Workspace Secret placement must be an object")
-    }
-    if (!Object.hasOwn(input, "secret")) {
-      throw new Error("Workspace Secret placement.secret is required")
-    }
-    const name = inspectSecretAddress(input.secret)
-    if (name === undefined) {
-      throw new Error("Workspace Secret requires secrets.fromName()")
-    }
-    const hasEnv = Object.hasOwn(input, "env") && input.env !== undefined
-    const hasFile = Object.hasOwn(input, "file") && input.file !== undefined
-    if (hasEnv === hasFile) {
-      throw new Error("Workspace Secret requires exactly one of env or file")
-    }
-    const allowed = new Set(hasEnv ? ["secret", "env"] : ["secret", "file"])
-    const unknown = Object.keys(input).find((key) => !allowed.has(key))
-    if (unknown !== undefined) {
-      throw new Error(
-        `Workspace Secret placement has unknown member ${JSON.stringify(unknown)}`,
-      )
-    }
+  if (!Array.isArray(inputs) || inputs.length > 64) throw new Error("Workspace secrets must be an array of at most 64 bindings")
+  const envNames = new Set<string>()
+  const files: string[] = []
+  let originCount = 0
+  const result = inputs.map((input): EncodedWorkspaceSecret => {
+    const value = workspaceObject(input, "Workspace Secret")
+    validateSecretName(value["secret"] as string)
+    const hasEnv = value["env"] !== undefined
+    const hasFile = value["file"] !== undefined
+    if (hasEnv === hasFile) throw new Error("Workspace Secret requires exactly one of env or file")
+    exactBindingKeys(value, ["secret", "env", "file"])
     if (hasEnv) {
-      if (typeof input.env !== "string" || input.env.length === 0) {
-        throw new Error("Workspace Secret env target is required")
-      }
-      return Object.freeze({ name, env: input.env })
+      const env = workspaceObject(value["env"], "Workspace Secret env")
+      const mode = env["mode"]
+      if (mode !== "raw" && mode !== "protected") throw new Error("Workspace Secret env requires explicit raw or protected mode")
+      exactBindingKeys(env, ["name", "mode", "allowedOrigins"])
+      if (mode === "raw" && env["allowedOrigins"] !== undefined) throw new Error("Raw env cannot specify allowedOrigins")
+      const name = env["name"]
+      if (typeof name !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) || name.startsWith("HELMR_") || name.startsWith("LD_") || ["NODE_OPTIONS", "NODE_PATH", "NODE_ICU_DATA", "OPENSSL_CONF", "OPENSSL_MODULES", "OPENSSL_ENGINES", "GCONV_PATH", "LOCPATH"].includes(name) || ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "NODE_USE_ENV_PROXY", "NODE_USE_SYSTEM_CA"].includes(name.toUpperCase())) throw new Error("Invalid or reserved Secret env name")
+      if (envNames.has(name)) throw new Error(`Duplicate Secret env target ${name}`)
+      envNames.add(name)
+      if (mode === "raw") return Object.freeze({ secret: input.secret, env: Object.freeze({ name, mode }) })
+      const origins = env["allowedOrigins"]
+      if (!Array.isArray(origins) || origins.length === 0 || origins.length > 16) throw new Error("Protected env requires 1 to 16 exact HTTPS origins")
+      const allowed_origins = Object.freeze([...new Set(origins.map(canonicalSecretOrigin))].sort())
+      originCount += allowed_origins.length
+      return Object.freeze({ secret: input.secret, env: Object.freeze({ name, mode, allowed_origins }) })
     }
-    if (typeof input.file !== "string" || input.file.length === 0) {
-      throw new Error("Workspace Secret file target is required")
-    }
-    return Object.freeze({ name, file: input.file })
-  }))
+    const file = workspaceObject(value["file"], "Workspace Secret file")
+    exactBindingKeys(file, ["path"])
+    const path = file["path"]
+    if (typeof path !== "string" || path.length > 4096 || !path.startsWith("/") || path === "/" || path.includes("\0") || path.split("/").slice(1).some(part => part === "" || part === "." || part === "..") || ["/workspace", "/var/lib/helmr", "/dev", "/opt/helmr", "/proc", "/sys", "/.helmr-old-root", "/run/helmr"].some(root => path === root || path.startsWith(root + "/"))) throw new Error("Invalid or reserved Secret file path")
+    files.push(path)
+    return Object.freeze({ secret: input.secret, file: Object.freeze({ path }) })
+  })
+  files.sort()
+  if (files.some((path, index) => index > 0 && (path === files[index-1] || path.startsWith(files[index-1] + "/")))) throw new Error("Conflicting Secret file paths")
+  if (originCount > 256) throw new Error("Workspace Secret origins exceed 256")
+  return Object.freeze(result)
+}
+
+function exactBindingKeys(value: Record<string, unknown>, allowed: readonly string[]): void {
+  const unknown = Object.keys(value).find(key => !allowed.includes(key))
+  if (unknown !== undefined) throw new Error(`Workspace Secret has unknown member ${JSON.stringify(unknown)}`)
 }
 
 export function inspectSandboxDefinition(
@@ -406,20 +412,21 @@ export function parseWorkspaceOwner(value: unknown, label: string): WorkspaceOwn
   )
 }
 
-function parseWorkspaceSecret(value: unknown): WorkspaceSecretInfo {
-  const input = workspaceObject(value, "Workspace Secret")
-  if (typeof input["name"] !== "string") {
-    throw new Error("Workspace Secret.name must be a string")
+function parseWorkspaceSecret(value: unknown): WorkspaceSecretBinding {
+  const wire = workspaceObject(value, "Workspace Secret")
+  exactBindingKeys(wire, wire["env"] !== undefined ? ["secret", "env"] : ["secret", "file"])
+  let binding: WorkspaceSecretBinding
+  if (wire["env"] !== undefined) {
+    const env = workspaceObject(wire["env"], "Workspace Secret env")
+    exactBindingKeys(env, ["name", "mode", "allowed_origins"])
+    binding = { secret: wire["secret"], env: { name: env["name"], mode: env["mode"], ...(env["allowed_origins"] === undefined ? {} : { allowedOrigins: env["allowed_origins"] }) } } as WorkspaceSecretBinding
+  } else {
+    binding = { secret: wire["secret"], file: wire["file"] } as WorkspaceSecretBinding
   }
-  const hasEnv = typeof input["env"] === "string"
-  const hasFile = typeof input["file"] === "string"
-  if (hasEnv === hasFile) {
-    throw new Error("Workspace Secret must contain exactly one placement")
-  }
-  return Object.freeze({
-    name: input["name"],
-    ...(hasEnv ? { env: input["env"] as string } : { file: input["file"] as string }),
-  })
+  const normalized = encodeWorkspaceSecrets([binding])[0]!
+  return normalized.env !== undefined
+    ? Object.freeze({ secret: normalized.secret, env: Object.freeze({ name: normalized.env.name, mode: normalized.env.mode, ...(normalized.env.allowed_origins === undefined ? {} : { allowedOrigins: normalized.env.allowed_origins }) }) }) as WorkspaceSecretBinding
+    : Object.freeze({ secret: normalized.secret, file: normalized.file })
 }
 
 export function parseWorkspaceExecResult(

@@ -240,6 +240,8 @@ message WorkspaceBasicExecRequest {
   string base_workspace_version_id = 5;
   int64 ownership_generation = 6;
   int64 writer_generation = 7;
+  map<string,string> protected_env = 8;
+  bytes proxy_ca = 9;
 }
 
 message WorkspaceBasicExecResult {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 	"uuid"
 
@@ -162,12 +163,17 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 		return err
 	}
 	for _, selected := range selectedSecrets {
+		placeholder, err := workspace.SecretPlaceholder(selected.Mode)
+		if err != nil {
+			return err
+		}
 		if _, err := queries.CreateWorkspaceSecret(ctx, db.CreateWorkspaceSecretParams{
 			WorkspaceID:     createdWorkspace.ID,
 			EnvironmentID:   lockedSchedule.EnvironmentID,
 			PlacementKind:   selected.PlacementKind,
 			PlacementTarget: selected.PlacementTarget,
 			SecretID:        selected.SecretID,
+			Mode:            selected.Mode, AllowedOrigins: selected.AllowedOrigins, Placeholder: placeholder,
 		}); err != nil {
 			return err
 		}
@@ -237,12 +243,12 @@ func sameSecretPlacements(
 	if len(expected) != len(selected) {
 		return false
 	}
-	actual := make(map[string]struct{}, len(selected))
+	actual := make(map[string]db.ScheduleSecret, len(selected))
 	for _, placement := range selected {
-		actual[placement.PlacementKind+"\x00"+placement.PlacementTarget] = struct{}{}
+		actual[placement.PlacementKind+"\x00"+placement.PlacementTarget] = placement
 	}
 	for _, placement := range expected {
-		if _, ok := actual[placement.Kind+"\x00"+placement.Target]; !ok {
+		if row, ok := actual[placement.Kind+"\x00"+placement.Target]; !ok || row.Mode != placement.Mode || !slices.Equal(row.AllowedOrigins, placement.AllowedOrigins) {
 			return false
 		}
 	}

@@ -268,6 +268,9 @@ func (entry *workspaceMountEntry) executeWorkspaceBasicExec(
 		return workspaceBasicExecFailure(fingerprint, "workspace_exec_secret_delivery_failed", err)
 	}
 	defer secretCleanup()
+	if err := stageProtectedEnv(entry.imageRoot, request.GetProtectedEnv(), request.GetProxyCa(), &env); err != nil {
+		return workspaceBasicExecFailure(fingerprint, "workspace_exec_secret_delivery_failed", err)
+	}
 	runtimePath, err := entry.workspaceRuntimePath(spec.Command[0], launchCwd, env)
 	if err != nil {
 		return workspaceBasicExecFailure(fingerprint, "workspace_exec_launch_failed", err)

@@ -26,6 +26,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
@@ -68,6 +69,7 @@ type Server struct {
 	platformStore         cas.Reader
 	secrets               SecretManager
 	secretDelivery        SecretDeliveryOpener
+	secretProxy           *secret.Store
 	workspaceFencingKey   workspace.FencingKey
 	tokenCredentialKey    auth.CredentialKey
 	eventStream           SubjectEventReader
@@ -117,6 +119,7 @@ type ServerConfig struct {
 	PlatformStore       cas.Reader
 	Secrets             SecretManager
 	SecretDelivery      SecretDeliveryOpener
+	SecretProxy         *secret.Store
 	WorkspaceFencingKey workspace.FencingKey
 	TokenCredentialKey  auth.CredentialKey
 	EventStream         SubjectEventReader
@@ -232,6 +235,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		platformStore:         cfg.PlatformStore,
 		secrets:               cfg.Secrets,
 		secretDelivery:        cfg.SecretDelivery,
+		secretProxy:           cfg.SecretProxy,
 		workspaceFencingKey:   cfg.WorkspaceFencingKey,
 		tokenCredentialKey:    cfg.TokenCredentialKey,
 		eventStream:           cfg.EventStream,
@@ -615,6 +619,8 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 			r.Post("/instance/observations", s.workerObserve)
 			r.Post("/instance/drain", s.workerDrain)
 			r.Group(func(r chi.Router) {
+				r.With(limitRequestBody(16384)).Post("/run/secret-proxy/prepare", s.workerPrepareSecretProxy)
+				r.With(limitRequestBody(16384)).Post("/run/secret-proxy/resolve", s.workerResolveSecretProxy)
 				r.Post("/run/runtime-instances/reconcile", s.workerNextRuntimeReconcileTarget)
 				r.Post("/run/runtime-instances/ready", s.workerMarkRuntimeInstanceReady)
 				r.Post("/run/runtime-instances/closed", s.workerMarkRuntimeInstanceClosed)

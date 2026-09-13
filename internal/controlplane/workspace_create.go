@@ -38,15 +38,16 @@ func (e WorkspaceKeyConflictError) Error() string {
 }
 
 type workspaceCreateRequest struct {
-	OrgID          uuid.UUID
-	ProjectID      uuid.UUID
-	EnvironmentID  uuid.UUID
-	Declaration    workspaceDeclarationSelector
-	DeclaredID     string
-	Key            *string
-	Secrets        []api.WorkspaceSecret
-	IdempotencyKey string
-	Authorize      func(context.Context, db.Querier) error
+	SourceWorkspaceID pgtype.UUID
+	OrgID             uuid.UUID
+	ProjectID         uuid.UUID
+	EnvironmentID     uuid.UUID
+	Declaration       workspaceDeclarationSelector
+	DeclaredID        string
+	Key               *string
+	Secrets           []api.WorkspaceSecret
+	IdempotencyKey    string
+	Authorize         func(context.Context, db.Querier) error
 }
 
 type workspaceDeclarationSelector struct {
@@ -138,6 +139,11 @@ func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateReq
 				replayed, err := workspaceCreateResultFromReceipt(acquired.Claim.Receipt)
 				if err != nil {
 					return err
+				}
+				if request.SourceWorkspaceID.Valid {
+					if err := authorizeWorkspaceSecretTarget(ctx, work.q, request.SourceWorkspaceID, pgvalue.UUID(replayed.WorkspaceID)); err != nil {
+						return err
+					}
 				}
 				replayed.Replayed = true
 				result = replayed
@@ -273,12 +279,17 @@ func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateReq
 			return fmt.Errorf("create workspace: %w", err)
 		}
 		for _, placement := range placements {
+			placeholder, err := workspace.SecretPlaceholder(placement.Mode)
+			if err != nil {
+				return err
+			}
 			if _, err := work.q.CreateWorkspaceSecret(ctx, db.CreateWorkspaceSecretParams{
 				WorkspaceID:     createdWorkspaceID,
 				EnvironmentID:   pgvalue.UUID(request.EnvironmentID),
 				PlacementKind:   placement.Kind,
 				PlacementTarget: placement.Target,
 				SecretID:        secretIDs[placement.Name],
+				Mode:            placement.Mode, AllowedOrigins: placement.AllowedOrigins, Placeholder: placeholder,
 			}); err != nil {
 				return fmt.Errorf("create workspace secret placement: %w", err)
 			}
@@ -297,9 +308,9 @@ func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateReq
 			item := api.WorkspaceSecret{Name: placement.Name}
 			switch placement.Kind {
 			case "env":
-				item.Env = placement.Target
+				item.Env = &api.SecretEnv{Name: placement.Target, Mode: placement.Mode, AllowedOrigins: placement.AllowedOrigins}
 			case "file":
-				item.File = placement.Target
+				item.File = &api.SecretFile{Path: placement.Target}
 			default:
 				return fmt.Errorf("unsupported workspace secret placement %q", placement.Kind)
 			}
@@ -345,12 +356,12 @@ func normalizeWorkspaceSecretPlacements(input []api.WorkspaceSecret) ([]workspac
 		}
 		placement := workspace.SecretPlacement{Name: value.Name}
 		switch {
-		case value.Env != "":
+		case value.Env != nil:
 			placement.Kind = "env"
-			placement.Target = value.Env
-		case value.File != "":
+			placement.Target, placement.Mode, placement.AllowedOrigins = value.Env.Name, value.Env.Mode, value.Env.AllowedOrigins
+		case value.File != nil:
 			placement.Kind = "file"
-			placement.Target = value.File
+			placement.Target, placement.Mode = value.File.Path, "raw"
 		}
 		placements = append(placements, placement)
 	}

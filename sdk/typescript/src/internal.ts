@@ -49,7 +49,6 @@ export {
   parseSessionInputRecord,
   parseSessionOutputRecord,
 } from "./internal/session"
-export { inspectSecretAddress } from "./secret"
 export { trimGoSpace } from "./internal/strings"
 export { timestampString } from "./internal/timestamp"
 export { validateQueueName } from "./schema/task"

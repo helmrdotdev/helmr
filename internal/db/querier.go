@@ -40,6 +40,12 @@ type Querier interface {
 	BeginRunWorkspaceLeaseFinalization(ctx context.Context, arg BeginRunWorkspaceLeaseFinalizationParams) (WorkspaceLease, error)
 	BindWorkspaceExecRuntime(ctx context.Context, arg BindWorkspaceExecRuntimeParams) (WorkspaceProcess, error)
 	CancelToken(ctx context.Context, arg CancelTokenParams) (CancelTokenRow, error)
+	// One primary command snapshot is the authorization point. No later mutable
+	// lookup may supply material for these captured envelopes.
+	CaptureProtectedSecretEnvelopes(ctx context.Context, arg CaptureProtectedSecretEnvelopesParams) ([]CaptureProtectedSecretEnvelopesRow, error)
+	// TLS preparation is reservation-or-live, distinct from credential use.
+	// Root single-winner persistence occurs separately, without execution row locks.
+	CaptureSecretProxyPreparation(ctx context.Context, arg CaptureSecretProxyPreparationParams) (CaptureSecretProxyPreparationRow, error)
 	ChargeRunRuntimePreparationFailure(ctx context.Context, arg ChargeRunRuntimePreparationFailureParams) (Run, error)
 	CheckpointRunLease(ctx context.Context, arg CheckpointRunLeaseParams) (RunLease, error)
 	ClaimControlOutbox(ctx context.Context, arg ClaimControlOutboxParams) ([]ControlOutbox, error)
@@ -133,6 +139,7 @@ type Querier interface {
 	CreateWorkspaceForScheduleFire(ctx context.Context, arg CreateWorkspaceForScheduleFireParams) (CreateWorkspaceForScheduleFireRow, error)
 	CreateWorkspaceFromCurrentDeployment(ctx context.Context, arg CreateWorkspaceFromCurrentDeploymentParams) (CreateWorkspaceFromCurrentDeploymentRow, error)
 	CreateWorkspaceFromRunDeployment(ctx context.Context, arg CreateWorkspaceFromRunDeploymentParams) (CreateWorkspaceFromRunDeploymentRow, error)
+	CreateWorkspaceProxyTrust(ctx context.Context, arg CreateWorkspaceProxyTrustParams) (WorkspaceSecretProxyTrust, error)
 	CreateWorkspaceSecret(ctx context.Context, arg CreateWorkspaceSecretParams) (WorkspaceSecret, error)
 	DeadLetterControlOutbox(ctx context.Context, arg DeadLetterControlOutboxParams) (ControlOutbox, error)
 	DeadLetterUnsupportedControlOutbox(ctx context.Context, arg DeadLetterUnsupportedControlOutboxParams) ([]ControlOutbox, error)
@@ -283,6 +290,7 @@ type Querier interface {
 	GetWorkspaceLease(ctx context.Context, arg GetWorkspaceLeaseParams) (WorkspaceLease, error)
 	GetWorkspaceListItemByKey(ctx context.Context, arg GetWorkspaceListItemByKeyParams) (GetWorkspaceListItemByKeyRow, error)
 	GetWorkspaceMountForWorkerTransition(ctx context.Context, arg GetWorkspaceMountForWorkerTransitionParams) (WorkspaceMount, error)
+	GetWorkspaceProxyTrust(ctx context.Context, arg GetWorkspaceProxyTrustParams) (WorkspaceSecretProxyTrust, error)
 	GetWorkspaceResetTargetAuthority(ctx context.Context, arg GetWorkspaceResetTargetAuthorityParams) (GetWorkspaceResetTargetAuthorityRow, error)
 	GrantUserAdmin(ctx context.Context, userID pgtype.UUID) error
 	InsertAssignedRunLease(ctx context.Context, arg InsertAssignedRunLeaseParams) (RunLease, error)

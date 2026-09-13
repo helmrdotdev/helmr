@@ -5,8 +5,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -140,5 +143,53 @@ func writeWorkspaceExecCommandResponse(t *testing.T, w http.ResponseWriter, stat
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestWorkspaceCreateSecretsFileUsesNestedAPI(t *testing.T) {
+	var received api.CreateWorkspaceRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || r.URL.Path != "/v1/sandboxes/reviewer/workspaces" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Error(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(api.WorkspaceSnapshot{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"})
+	}))
+	defer server.Close()
+	t.Setenv(helmrAPIURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "synthetic-key")
+	path := filepath.Join(t.TempDir(), "bindings.json")
+	if err := os.WriteFile(path, []byte(`[{"secret":"github-token","env":{"name":"GH_TOKEN","mode":"protected","allowed_origins":["https://api.github.com"]}},{"secret":"raw-token","file":{"path":"/run/secrets/key"}}]`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	command := newRootCommand()
+	command.SetOut(io.Discard)
+	command.SetErr(io.Discard)
+	command.SetArgs([]string{"workspace", "create", "reviewer", "--secrets-file", path})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if len(received.Secrets) != 2 || received.Secrets[0].Name != "github-token" || received.Secrets[0].Env.Mode != "protected" || received.Secrets[0].Env.AllowedOrigins[0] != "https://api.github.com" || received.Secrets[1].File.Path != "/run/secrets/key" {
+		t.Fatal("CLI changed binding metadata")
+	}
+}
+
+func TestWorkspaceSecretsFileDecoderCause(t *testing.T) {
+	t.Setenv(helmrAPIURLEnv, "http://127.0.0.1:1")
+	t.Setenv(helmrAPIKeyEnv, "synthetic-key")
+	path := filepath.Join(t.TempDir(), "bindings.json")
+	if err := os.WriteFile(path, []byte(`[{"secret":"token","env":{"name":"TOKEN","mode":"protected","allowedOrigins":["https://example.com"]}}]`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	command := newRootCommand()
+	command.SetOut(io.Discard)
+	command.SetErr(io.Discard)
+	command.SetArgs([]string{"workspace", "create", "reviewer", "--secrets-file", path})
+	err := command.Execute()
+	if err == nil || !strings.Contains(err.Error(), `unknown field "allowedOrigins"`) || !strings.Contains(err.Error(), "allowed_origins") {
+		t.Fatalf("unhelpful decoder failure: %v", err)
 	}
 }

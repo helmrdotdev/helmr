@@ -682,7 +682,7 @@ func (q *Queries) ListSecrets(ctx context.Context, arg ListSecretsParams) ([]Lis
 
 const listWorkspaceSecrets = `-- name: ListWorkspaceSecrets :many
 SELECT
-    workspace_secrets.workspace_id, workspace_secrets.environment_id, workspace_secrets.placement_kind, workspace_secrets.placement_target, workspace_secrets.secret_id, workspace_secrets.created_at,
+    workspace_secrets.workspace_id, workspace_secrets.environment_id, workspace_secrets.placement_kind, workspace_secrets.placement_target, workspace_secrets.secret_id, workspace_secrets.mode, workspace_secrets.allowed_origins, workspace_secrets.placeholder, workspace_secrets.created_at,
     secrets.name AS secret_name,
     secrets.state AS secret_state,
     secrets.state_version AS secret_state_version,
@@ -700,6 +700,9 @@ type ListWorkspaceSecretsRow struct {
 	PlacementKind        string             `json:"placement_kind"`
 	PlacementTarget      string             `json:"placement_target"`
 	SecretID             pgtype.UUID        `json:"secret_id"`
+	Mode                 string             `json:"mode"`
+	AllowedOrigins       []string           `json:"allowed_origins"`
+	Placeholder          string             `json:"placeholder"`
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 	SecretName           string             `json:"secret_name"`
 	SecretState          string             `json:"secret_state"`
@@ -723,6 +726,9 @@ func (q *Queries) ListWorkspaceSecrets(ctx context.Context, workspaceID pgtype.U
 			&i.PlacementKind,
 			&i.PlacementTarget,
 			&i.SecretID,
+			&i.Mode,
+			&i.AllowedOrigins,
+			&i.Placeholder,
 			&i.CreatedAt,
 			&i.SecretName,
 			&i.SecretState,
@@ -789,7 +795,7 @@ func (q *Queries) LockActiveSecretsByNameForWorkspaceCreate(ctx context.Context,
 
 const lockAttemptSecretDelivery = `-- name: LockAttemptSecretDelivery :many
 SELECT
-    workspace_secrets.workspace_id, workspace_secrets.environment_id, workspace_secrets.placement_kind, workspace_secrets.placement_target, workspace_secrets.secret_id, workspace_secrets.created_at,
+    workspace_secrets.workspace_id, workspace_secrets.environment_id, workspace_secrets.placement_kind, workspace_secrets.placement_target, workspace_secrets.secret_id, workspace_secrets.mode, workspace_secrets.allowed_origins, workspace_secrets.placeholder, workspace_secrets.created_at,
     secrets.id, secrets.environment_id, secrets.name, secrets.state, secrets.state_version, secrets.current_version_id, secrets.revocation_generation, secrets.created_at, secrets.updated_at, secrets.revoked_at,
     secret_resolutions.id AS resolution_id,
     secret_resolutions.run_id AS resolution_run_id,
@@ -844,6 +850,9 @@ func (q *Queries) LockAttemptSecretDelivery(ctx context.Context, arg LockAttempt
 			&i.WorkspaceSecret.PlacementKind,
 			&i.WorkspaceSecret.PlacementTarget,
 			&i.WorkspaceSecret.SecretID,
+			&i.WorkspaceSecret.Mode,
+			&i.WorkspaceSecret.AllowedOrigins,
+			&i.WorkspaceSecret.Placeholder,
 			&i.WorkspaceSecret.CreatedAt,
 			&i.Secret.ID,
 			&i.Secret.EnvironmentID,
@@ -955,7 +964,7 @@ func (q *Queries) LockAttemptSecretResolutionMetadata(ctx context.Context, arg L
 
 const lockProcessSecretDelivery = `-- name: LockProcessSecretDelivery :many
 SELECT
-    workspace_secrets.workspace_id, workspace_secrets.environment_id, workspace_secrets.placement_kind, workspace_secrets.placement_target, workspace_secrets.secret_id, workspace_secrets.created_at,
+    workspace_secrets.workspace_id, workspace_secrets.environment_id, workspace_secrets.placement_kind, workspace_secrets.placement_target, workspace_secrets.secret_id, workspace_secrets.mode, workspace_secrets.allowed_origins, workspace_secrets.placeholder, workspace_secrets.created_at,
     secrets.id, secrets.environment_id, secrets.name, secrets.state, secrets.state_version, secrets.current_version_id, secrets.revocation_generation, secrets.created_at, secrets.updated_at, secrets.revoked_at,
     secret_resolutions.id AS resolution_id,
     secret_resolutions.process_id AS resolution_process_id,
@@ -1006,6 +1015,9 @@ func (q *Queries) LockProcessSecretDelivery(ctx context.Context, arg LockProcess
 			&i.WorkspaceSecret.PlacementKind,
 			&i.WorkspaceSecret.PlacementTarget,
 			&i.WorkspaceSecret.SecretID,
+			&i.WorkspaceSecret.Mode,
+			&i.WorkspaceSecret.AllowedOrigins,
+			&i.WorkspaceSecret.Placeholder,
 			&i.WorkspaceSecret.CreatedAt,
 			&i.Secret.ID,
 			&i.Secret.EnvironmentID,
@@ -1064,7 +1076,7 @@ func (q *Queries) LockSecretVersion(ctx context.Context, arg LockSecretVersionPa
 
 const lockWorkspaceSecretsForAdmission = `-- name: LockWorkspaceSecretsForAdmission :many
 SELECT
-    workspace_secrets.workspace_id, workspace_secrets.environment_id, workspace_secrets.placement_kind, workspace_secrets.placement_target, workspace_secrets.secret_id, workspace_secrets.created_at,
+    workspace_secrets.workspace_id, workspace_secrets.environment_id, workspace_secrets.placement_kind, workspace_secrets.placement_target, workspace_secrets.secret_id, workspace_secrets.mode, workspace_secrets.allowed_origins, workspace_secrets.placeholder, workspace_secrets.created_at,
     secrets.state AS secret_state,
     secrets.state_version AS secret_state_version,
     secrets.current_version_id,
@@ -1082,6 +1094,9 @@ type LockWorkspaceSecretsForAdmissionRow struct {
 	PlacementKind        string             `json:"placement_kind"`
 	PlacementTarget      string             `json:"placement_target"`
 	SecretID             pgtype.UUID        `json:"secret_id"`
+	Mode                 string             `json:"mode"`
+	AllowedOrigins       []string           `json:"allowed_origins"`
+	Placeholder          string             `json:"placeholder"`
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 	SecretState          string             `json:"secret_state"`
 	SecretStateVersion   int64              `json:"secret_state_version"`
@@ -1104,6 +1119,9 @@ func (q *Queries) LockWorkspaceSecretsForAdmission(ctx context.Context, workspac
 			&i.PlacementKind,
 			&i.PlacementTarget,
 			&i.SecretID,
+			&i.Mode,
+			&i.AllowedOrigins,
+			&i.Placeholder,
 			&i.CreatedAt,
 			&i.SecretState,
 			&i.SecretStateVersion,

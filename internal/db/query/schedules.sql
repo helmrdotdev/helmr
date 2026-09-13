@@ -208,6 +208,8 @@ SELECT true AS ok
    AND cardinality(sqlc.arg(placement_schedule_ids)::uuid[]) = cardinality(sqlc.arg(placement_kinds)::text[])
    AND cardinality(sqlc.arg(placement_schedule_ids)::uuid[]) = cardinality(sqlc.arg(placement_targets)::text[])
    AND cardinality(sqlc.arg(placement_schedule_ids)::uuid[]) = cardinality(sqlc.arg(secret_ids)::uuid[])
+   AND cardinality(sqlc.arg(placement_schedule_ids)::uuid[]) = cardinality(sqlc.arg(modes)::text[])
+   AND cardinality(sqlc.arg(placement_schedule_ids)::uuid[]) = cardinality(sqlc.arg(origins_json)::text[])
    AND NOT EXISTS (
        SELECT 1
          FROM unnest(sqlc.arg(placement_schedule_ids)::uuid[]) AS placement_schedule_id
@@ -217,13 +219,15 @@ SELECT true AS ok
 SELECT batch.schedule_id,
        batch.placement_kind,
        batch.placement_target,
-       batch.secret_id
+       batch.secret_id, batch.mode, batch.origins_json
   FROM ROWS FROM (
       unnest(sqlc.arg(placement_schedule_ids)::uuid[]),
       unnest(sqlc.arg(placement_kinds)::text[]),
       unnest(sqlc.arg(placement_targets)::text[]),
-      unnest(sqlc.arg(secret_ids)::uuid[])
-  ) AS batch(schedule_id, placement_kind, placement_target, secret_id)
+      unnest(sqlc.arg(secret_ids)::uuid[]),
+      unnest(sqlc.arg(modes)::text[]),
+      unnest(sqlc.arg(origins_json)::text[])
+  ) AS batch(schedule_id, placement_kind, placement_target, secret_id, mode, origins_json)
   JOIN valid ON true
 )
 INSERT INTO schedule_secrets (
@@ -231,13 +235,13 @@ INSERT INTO schedule_secrets (
     environment_id,
     placement_kind,
     placement_target,
-    secret_id
+    secret_id, mode, allowed_origins
 )
 SELECT input.schedule_id,
        sqlc.arg(environment_id),
        input.placement_kind,
        input.placement_target,
-       input.secret_id
+       input.secret_id, input.mode, ARRAY(SELECT jsonb_array_elements_text(input.origins_json::jsonb))
   FROM input;
 
 -- name: ListScheduleSecrets :many

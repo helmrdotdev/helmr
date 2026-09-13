@@ -422,7 +422,7 @@ func TestValidateBuildPlanSchedule(t *testing.T) {
 			name: "workspace secret target",
 			change: func(manifest *ScheduleManifest) {
 				manifest.Workspace.Secrets = []api.WorkspaceSecret{{
-					Name: "TOKEN", Env: "HELMR_TOKEN",
+					Name: "TOKEN", Env: &api.SecretEnv{Name: "HELMR_TOKEN", Mode: "raw"},
 				}}
 			},
 			errMsg: "reserved workspace secret environment target",

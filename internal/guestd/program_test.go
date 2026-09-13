@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -2399,4 +2400,30 @@ func frameHeader(size uint32) []byte {
 	frame := make([]byte, 4)
 	binary.BigEndian.PutUint32(frame, size)
 	return frame
+}
+
+func TestProgramSecretCollisionDiagnosticIsActionableAndSafe(t *testing.T) {
+	for _, cause := range []error{fmt.Errorf("private detail: %w", errSecretEnvCollision), errors.New("private detail")} {
+		guest, host := net.Pipe()
+		done := make(chan error, 1)
+		go func() {
+			done <- writeProgramProcessStartFailed(guest, testProgramRunRequest(testProgramStartFrame(t)), "prepare", cause)
+		}()
+		var event programv0.RunEvent
+		if err := frameio.ReadProtoFrame(host, &event); err != nil {
+			t.Fatal(err)
+		}
+		diagnostic := event.GetProgramProcessStartFailed().GetDiagnostic()
+		if strings.Contains(diagnostic, "private detail") {
+			t.Fatal("arbitrary error disclosed")
+		}
+		if errors.Is(cause, errSecretEnvCollision) && !strings.Contains(diagnostic, "remove the bound name") {
+			t.Fatalf("collision not actionable: %s", diagnostic)
+		}
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+		guest.Close()
+		host.Close()
+	}
 }

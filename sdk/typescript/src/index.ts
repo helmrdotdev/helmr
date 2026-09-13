@@ -6,7 +6,6 @@ export { logger } from "./logger"
 export { metadata } from "./metadata"
 export { defineConfig } from "./config"
 export { schedules } from "./schedules"
-export { secrets } from "./secret"
 export { queue, task } from "./task"
 export { timers } from "./timers"
 export { tokens } from "./tokens"
@@ -85,9 +84,6 @@ export type {
 
 export type { RequestOptions } from "./request"
 
-export type {
-  SecretAddress,
-} from "./secret"
 
 export type {
   LogAttributes,
@@ -205,9 +201,7 @@ export type {
   WorkspaceMemory,
   WorkspaceRef,
   WorkspaceResources,
-  WorkspaceSecretInput,
-  WorkspaceSecretInfo,
-  WorkspaceSecretPlacement,
+  WorkspaceSecretBinding,
   Workspace,
   WorkspaceOwner,
   WorkspaceStatus,

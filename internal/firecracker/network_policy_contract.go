@@ -18,6 +18,7 @@ const (
 )
 
 type networkPolicyInput struct {
+	SecretProxy      bool
 	Tap              string
 	Peer             string
 	Mark             uint32
@@ -76,6 +77,10 @@ func renderNetworkPolicy(input networkPolicyInput) (string, error) {
 	fmt.Fprintf(&script, "add chain inet %s forward { type filter hook forward priority 0; policy drop; }\n", networkPolicyTableName)
 	fmt.Fprintf(&script, "add chain inet %s egress\n", networkPolicyTableName)
 	fmt.Fprintf(&script, "add chain inet %s postrouting { type nat hook postrouting priority srcnat; policy accept; }\n", networkPolicyTableName)
+	if input.SecretProxy {
+		fmt.Fprintf(&script, "add rule inet %s input iifname %s meta mark %s ip saddr %s ip daddr %s tcp dport 3128 ct state new,established accept\n", networkPolicyTableName, tap, mark, guestIPv4, GuestGatewayIPv4V0)
+		fmt.Fprintf(&script, "add rule inet %s output oifname %s ip saddr %s ip daddr %s tcp sport 3128 ct state established accept\n", networkPolicyTableName, tap, GuestGatewayIPv4V0, guestIPv4)
+	}
 	deniedCounter := runNetworkDeniedCounterName
 	fmt.Fprintf(&script, "add rule inet %s forward meta nfproto ipv6 counter name %s drop\n", networkPolicyTableName, deniedCounter)
 	fmt.Fprintf(&script, "add rule inet %s forward ct state invalid counter name %s drop\n", networkPolicyTableName, deniedCounter)

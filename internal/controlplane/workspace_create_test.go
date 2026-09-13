@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -9,32 +10,32 @@ import (
 
 func TestNormalizeWorkspaceSecretPlacementsCanonicalizesAndRejectsConflicts(t *testing.T) {
 	placements, err := normalizeWorkspaceSecretPlacements([]api.WorkspaceSecret{
-		{Name: "config", File: "/run/helmr-secrets/config.json"},
-		{Name: "github", Env: "GITHUB_TOKEN"},
+		{Name: "config", File: &api.SecretFile{Path: "/run/helmr-secrets/config.json"}},
+		{Name: "github", Env: &api.SecretEnv{Name: "GITHUB_TOKEN", Mode: "raw"}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(placements) != 2 ||
-		placements[0] != (workspace.SecretPlacement{Name: "github", Kind: "env", Target: "GITHUB_TOKEN"}) ||
-		placements[1] != (workspace.SecretPlacement{Name: "config", Kind: "file", Target: "/run/helmr-secrets/config.json"}) {
+		!reflect.DeepEqual(placements[0], workspace.SecretPlacement{Name: "github", Kind: "env", Target: "GITHUB_TOKEN", Mode: "raw"}) ||
+		!reflect.DeepEqual(placements[1], workspace.SecretPlacement{Name: "config", Kind: "file", Target: "/run/helmr-secrets/config.json", Mode: "raw"}) {
 		t.Fatalf("placements = %#v", placements)
 	}
 
 	for name, input := range map[string][]api.WorkspaceSecret{
 		"duplicate env": {
-			{Name: "first", Env: "TOKEN"},
-			{Name: "second", Env: "TOKEN"},
+			{Name: "first", Env: &api.SecretEnv{Name: "TOKEN", Mode: "raw"}},
+			{Name: "second", Env: &api.SecretEnv{Name: "TOKEN", Mode: "raw"}},
 		},
 		"nested file": {
-			{Name: "first", File: "/run/secrets"},
-			{Name: "second", File: "/run/secrets/token"},
+			{Name: "first", File: &api.SecretFile{Path: "/run/secrets"}},
+			{Name: "second", File: &api.SecretFile{Path: "/run/secrets/token"}},
 		},
 		"workspace file": {
-			{Name: "first", File: "/workspace/token"},
+			{Name: "first", File: &api.SecretFile{Path: "/workspace/token"}},
 		},
 		"reserved env": {
-			{Name: "first", Env: "HELMR_RUN_ID"},
+			{Name: "first", Env: &api.SecretEnv{Name: "HELMR_RUN_ID", Mode: "raw"}},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

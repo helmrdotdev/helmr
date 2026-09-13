@@ -228,12 +228,12 @@ func workerWorkspaceCreateRequest(
 		if placement == nil {
 			return workerapi.CreateWorkspaceRequest{}, errors.New("workspace secret placement is required")
 		}
-		secret := api.WorkspaceSecret{Name: placement.GetName()}
+		secret := api.WorkspaceSecret{Name: placement.GetSecret()}
 		switch value := placement.GetPlacement().(type) {
 		case *programv0.WorkspaceSecretPlacement_Env:
-			secret.Env = value.Env
+			secret.Env = &api.SecretEnv{Name: value.Env.GetName(), Mode: value.Env.GetMode(), AllowedOrigins: value.Env.GetAllowedOrigins()}
 		case *programv0.WorkspaceSecretPlacement_File:
-			secret.File = value.File
+			secret.File = &api.SecretFile{Path: value.File.GetPath()}
 		default:
 			return workerapi.CreateWorkspaceRequest{}, errors.New("workspace secret target is required")
 		}

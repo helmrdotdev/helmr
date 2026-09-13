@@ -186,3 +186,7 @@ func countCall(calls []string, target string) int {
 	}
 	return count
 }
+
+func (s *runLeaseClaimStore) ListWorkspaceSecrets(context.Context, pgtype.UUID) ([]db.ListWorkspaceSecretsRow, error) {
+	return nil, nil
+}

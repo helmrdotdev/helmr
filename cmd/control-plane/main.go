@@ -202,6 +202,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		PlatformStore:         platformStore,
 		Secrets:               secretStore,
 		SecretDelivery:        secretStore,
+		SecretProxy:           secretStore,
 		WorkspaceFencingKey:   workspaceFencingKey,
 		TokenCredentialKey:    tokenCredentialKey,
 		EventStream:           eventStream,

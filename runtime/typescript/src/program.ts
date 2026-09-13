@@ -1253,10 +1253,10 @@ function programRuntimeOperations(
           ...(request.key === undefined ? {} : { key: request.key }),
           secrets: encodeWorkspaceSecrets(request.secrets).map((secret) =>
             create(programProto.WorkspaceSecretPlacementSchema, {
-              name: secret.name,
-              placement: "env" in secret
-                ? { case: "env", value: secret.env }
-                : { case: "file", value: secret.file },
+              secret: secret.secret,
+              placement: secret.env !== undefined
+                ? { case: "env", value: create(programProto.SecretEnvBindingSchema, { name: secret.env.name, mode: secret.env.mode, allowedOrigins: [...(secret.env.allowed_origins ?? [])] }) }
+                : { case: "file", value: create(programProto.SecretFileBindingSchema, { path: secret.file.path }) },
             })
           ) ?? [],
           ...(request.idempotencyKey === undefined

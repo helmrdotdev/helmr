@@ -1,8 +1,10 @@
 package firecracker
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/secretproxy"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -30,6 +32,7 @@ const (
 )
 
 type Config struct {
+	PrepareSecretTransport  func(context.Context, string, []netip.Prefix) (*secretproxy.Proxy, error)
 	FirecrackerPath         string
 	CPUTemplateHelperPath   string
 	CPUTemplateSelector     CPUTemplateSelector

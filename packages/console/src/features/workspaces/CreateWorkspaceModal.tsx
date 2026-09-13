@@ -1,5 +1,5 @@
 import { createQuery } from "@tanstack/solid-query";
-import { createMemo, createSignal, For, Show } from "solid-js";
+import { createMemo, createSignal, Index, Show } from "solid-js";
 import { ApiError } from "../../lib/api";
 import { listSandboxes } from "../../lib/definitions";
 import { listSecrets } from "../../lib/secrets";
@@ -9,17 +9,19 @@ import { Select, type SelectOption } from "../../ui/Select";
 import { StatePanel } from "../../ui/StatePanel";
 import { ui } from "../../ui/styles";
 
-type PlacementKind = "env" | "file";
+type PlacementKind = "protected" | "raw" | "file";
 
 type PlacementRow = {
   name: string;
   kind: PlacementKind;
   target: string;
+  origins: string;
 };
 
 const PLACEMENT_KINDS: SelectOption<PlacementKind>[] = [
-  { value: "env", label: "Env var" },
-  { value: "file", label: "File" },
+  { value: "protected", label: "Protected env" },
+  { value: "raw", label: "Raw env" },
+  { value: "file", label: "Raw file" },
 ];
 
 function createErrorMessage(error: unknown): string {
@@ -29,11 +31,17 @@ function createErrorMessage(error: unknown): string {
 }
 
 function placementsToSecrets(rows: readonly PlacementRow[]): WorkspaceSecret[] {
-  return rows.map((row) => (
-    row.kind === "env"
-      ? { name: row.name, env: row.target.trim() }
-      : { name: row.name, file: row.target.trim() }
-  ));
+  return rows.map((row) => {
+    if (row.kind === "file") return { secret: row.name, file: { path: row.target.trim() } };
+    if (row.kind === "raw") return { secret: row.name, env: { name: row.target.trim(), mode: "raw" } };
+    const origins = row.origins.split(/[\s,]+/).filter(Boolean).map((value) => {
+      let url: URL;
+      try { url = new URL(value); } catch { throw new Error("Use exact HTTPS origins, such as https://api.example.com."); }
+      if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash || url.pathname !== "/" || value.includes("?") || value.includes("#")) throw new Error("Use exact HTTPS origins, such as https://api.example.com.");
+      return url.origin;
+    });
+    return { secret: row.name, env: { name: row.target.trim(), mode: "protected", allowed_origins: [...new Set(origins)].sort() } };
+  });
 }
 
 export function CreateWorkspaceModal(props: {
@@ -75,7 +83,7 @@ export function CreateWorkspaceModal(props: {
 
   const addPlacement = () => {
     const first = secretOptions()[0]?.value ?? "";
-    setPlacements((rows) => [...rows, { name: first, kind: "env", target: "" }]);
+    setPlacements((rows) => [...rows, { name: first, kind: "protected", target: "", origins: "" }]);
   };
   const updatePlacement = (index: number, patch: Partial<PlacementRow>) => {
     setPlacements((rows) => rows.map((row, position) => (position === index ? { ...row, ...patch } : row)));
@@ -83,6 +91,8 @@ export function CreateWorkspaceModal(props: {
   const removePlacement = (index: number) => {
     setPlacements((rows) => rows.filter((_, position) => position !== index));
   };
+
+  let attempt: { fingerprint: string; idempotencyKey: string; workspace?: Workspace } | undefined;
 
   const submit = async (event: Event) => {
     event.preventDefault();
@@ -97,18 +107,34 @@ export function CreateWorkspaceModal(props: {
     }
     setError(null);
     setSubmitting(true);
+    let currentAttempt: typeof attempt;
     try {
       const nextKey = key().trim();
-      const secretRows = placementsToSecrets(placements());
-      const workspace = await createWorkspace(sandbox, scope(), {
+      let secretRows: WorkspaceSecret[];
+      try { secretRows = placementsToSecrets(placements()); } catch {
+        setError("Use exact HTTPS origins, such as https://api.example.com.");
+        return;
+      }
+      const capturedScope = scope();
+      const input = {
         ...(nextKey ? { key: nextKey } : {}),
         ...(secretRows.length > 0 ? { secrets: secretRows } : {}),
-        idempotency_key: crypto.randomUUID(),
+      };
+      const fingerprint = JSON.stringify({ scope: capturedScope, sandbox, input });
+      if (attempt?.fingerprint !== fingerprint) attempt = { fingerprint, idempotencyKey: crypto.randomUUID() };
+      currentAttempt = attempt;
+      const workspace = currentAttempt.workspace ?? await createWorkspace(sandbox, capturedScope, {
+        ...input, idempotency_key: currentAttempt.idempotencyKey,
       });
+      currentAttempt.workspace = workspace;
       await props.onCreated(workspace);
       props.onClose();
     } catch (cause) {
-      setError(createErrorMessage(cause));
+      setError(currentAttempt?.workspace
+        ? "Workspace was created, but the view could not be updated. Retry without changing inputs to continue."
+        : cause instanceof ApiError
+          ? createErrorMessage(cause)
+          : "Workspace creation could not be confirmed. Retry without changing inputs to continue with the same request.");
     } finally {
       setSubmitting(false);
     }
@@ -118,7 +144,7 @@ export function CreateWorkspaceModal(props: {
     <Modal title="Create Workspace" onClose={props.onClose} closeDisabled={submitting()}>
       <form onSubmit={submit}>
         <p class={ui.modalIntro}>
-          A Workspace is a durable filesystem created from a Sandbox of the current Deployment.
+          Create from a Sandbox of the current Deployment. Secret bindings are fixed at creation.
         </p>
         <Show when={!sandboxes.isPending} fallback={<StatePanel loading="Loading Sandboxes..." />}>
           <Show when={!sandboxes.isError} fallback={<StatePanel error={createErrorMessage(sandboxes.error)} />}>
@@ -151,33 +177,35 @@ export function CreateWorkspaceModal(props: {
               </label>
               <fieldset class={ui.fieldSet}>
                 <legend class={ui.fieldLegend}>Secret placements</legend>
+                <p class={ui.muted}>Protected env replaces header placeholders for proxy-compatible clients at approved HTTPS origins. Raw placements deliver the value.</p>
+                <Show when={secrets.isError}><StatePanel error="Could not load Secrets." /></Show>
                 <Show when={placements().length > 0} fallback={<p class={ui.muted}>No Secrets are attached.</p>}>
                   <div class="grid gap-1.5">
-                    <For each={placements()}>
+                    <Index each={placements()}>
                       {(row, index) => (
-                        <div class="grid grid-cols-[minmax(0,1fr)_88px_minmax(0,1fr)_auto] items-center gap-1.5">
+                        <div class="grid grid-cols-[minmax(0,1fr)_140px_minmax(0,1fr)_auto] items-center gap-1.5">
                           <Select<string>
-                            value={row.name}
+                            value={row().name}
                             options={secretOptions()}
-                            onChange={(name) => updatePlacement(index(), { name })}
+                            onChange={(name) => updatePlacement(index, { name })}
                             ariaLabel="Secret"
                             placeholder="Secret"
                             disabled={submitting()}
                           />
                           <Select<PlacementKind>
-                            value={row.kind}
+                            value={row().kind}
                             options={PLACEMENT_KINDS}
-                            onChange={(kind) => updatePlacement(index(), { kind })}
+                            onChange={(kind) => updatePlacement(index, { kind })}
                             ariaLabel="Placement"
                             disabled={submitting()}
                           />
                           <input
                             type="text"
                             class={ui.input}
-                            value={row.target}
-                            onInput={(event) => updatePlacement(index(), { target: event.currentTarget.value })}
-                            placeholder={row.kind === "env" ? "API_TOKEN" : "/run/secrets/token"}
-                            aria-label={row.kind === "env" ? "Env var name" : "File path"}
+                            value={row().target}
+                            onInput={(event) => updatePlacement(index, { target: event.currentTarget.value })}
+                            placeholder={row().kind !== "file" ? "API_TOKEN" : "/run/secrets/token"}
+                            aria-label={row().kind !== "file" ? "Env var name" : "File path"}
                             autocomplete="off"
                             spellcheck={false}
                             disabled={submitting()}
@@ -187,13 +215,19 @@ export function CreateWorkspaceModal(props: {
                             class={ui.ghostButton}
                             aria-label="Remove placement"
                             disabled={submitting()}
-                            onClick={() => removePlacement(index())}
+                            onClick={() => removePlacement(index)}
                           >
                             Remove
                           </button>
+                          <Show when={row().kind === "protected"}>
+                            <input class={`${ui.input} col-span-4`} value={row().origins}
+                              onInput={(event) => updatePlacement(index, { origins: event.currentTarget.value })}
+                              placeholder="https://api.example.com" aria-label="Allowed HTTPS origins"
+                              autocomplete="off" spellcheck={false} disabled={submitting()} />
+                          </Show>
                         </div>
                       )}
-                    </For>
+                    </Index>
                   </div>
                 </Show>
                 <div class={ui.actionRow}>

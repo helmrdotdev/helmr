@@ -233,7 +233,18 @@ func cloneProgramIndexDeclaration(
 				[]api.WorkspaceSecret,
 				len(value.Schedule.Workspace.Secrets),
 			)
-			copy(schedule.Workspace.Secrets, value.Schedule.Workspace.Secrets)
+			for index, binding := range value.Schedule.Workspace.Secrets {
+				schedule.Workspace.Secrets[index] = binding
+				if binding.Env != nil {
+					env := *binding.Env
+					env.AllowedOrigins = append([]string(nil), env.AllowedOrigins...)
+					schedule.Workspace.Secrets[index].Env = &env
+				}
+				if binding.File != nil {
+					file := *binding.File
+					schedule.Workspace.Secrets[index].File = &file
+				}
+			}
 			value.Schedule = &schedule
 		}
 		declaration.Task = &value

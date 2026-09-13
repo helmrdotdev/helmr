@@ -226,9 +226,9 @@ func (s *Server) workspaceSnapshot(
 		item := api.WorkspaceSecret{Name: binding.SecretName}
 		switch binding.PlacementKind {
 		case "env":
-			item.Env = binding.PlacementTarget
+			item.Env = &api.SecretEnv{Name: binding.PlacementTarget, Mode: binding.Mode, AllowedOrigins: binding.AllowedOrigins}
 		case "file":
-			item.File = binding.PlacementTarget
+			item.File = &api.SecretFile{Path: binding.PlacementTarget}
 		default:
 			return api.WorkspaceSnapshot{}, fmt.Errorf("unsupported workspace secret placement %q", binding.PlacementKind)
 		}

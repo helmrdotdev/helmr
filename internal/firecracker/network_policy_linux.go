@@ -25,6 +25,7 @@ import (
 
 	"github.com/firecracker-microvm/firecracker-go-sdk"
 	"github.com/helmrdotdev/helmr/internal/firecracker/datapath"
+	"github.com/helmrdotdev/helmr/internal/secretproxy"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
@@ -72,7 +73,10 @@ type networkOwnerManifest struct {
 	PacketMark          uint32 `json:"packet_mark"`
 }
 
+type startupProbeNetworkKey struct{}
+
 type installedNetworkBinding struct {
+	secretProxy                *secretproxy.Proxy
 	connector                  *Connector
 	manifest                   networkOwnerManifest
 	packet                     *datapath.Binding
@@ -615,6 +619,18 @@ func linkAsTuntap(handle *netlink.Handle, name string) (*netlink.Tuntap, error) 
 	return tap, nil
 }
 
+// Only the connector-owned qualification probe has no control-plane reservation.
+// Every real runtime must complete preparation, including Workspaces with no bindings.
+func (c *Connector) prepareSecretTransport(ctx context.Context, runtimeID string, blocked []netip.Prefix) (*secretproxy.Proxy, error) {
+	if ctx.Value(startupProbeNetworkKey{}) == true {
+		return nil, nil
+	}
+	if c.cfg.PrepareSecretTransport == nil {
+		return nil, errors.New("Workspace Secret transport preparation is not configured")
+	}
+	return c.cfg.PrepareSecretTransport(ctx, runtimeID, blocked)
+}
+
 func (c *Connector) installRoutedPolicy(ctx context.Context, binding *installedNetworkBinding) error {
 	m := binding.manifest
 	guestIP := strings.Split(GuestNetworkCIDRV0, "/")[0]
@@ -628,6 +644,37 @@ func (c *Connector) installRoutedPolicy(ctx context.Context, binding *installedN
 	}
 	blocked := append(hostIPv4, linkPool)
 	blocked = append(blocked, c.cfg.NetworkBlockedIPv4CIDRs...)
+	// Preparation precedes ResumeVM, but grants no credential-use authority.
+	{
+		proxy, prepareErr := c.prepareSecretTransport(ctx, m.OwnerID, blocked)
+		if prepareErr != nil {
+			return fmt.Errorf("prepare Workspace Secret transport: %w", prepareErr)
+		}
+		binding.secretProxy = proxy
+		if proxy != nil {
+			var listener net.Listener
+			if err := withNetworkNamespace(binding.namespace, func() error {
+				var e error
+				listener, e = net.Listen("tcp4", net.JoinHostPort(GuestGatewayIPv4V0, strconv.Itoa(secretproxy.Port)))
+				return e
+			}); err != nil {
+				if listener != nil {
+					listener.Close()
+				}
+				proxy.Close()
+				return err
+			}
+			// Serve on ordinary host threads: outbound DNS and sockets stay in host namespace.
+			go func() {
+				if e := proxy.Serve(listener); e != nil {
+					select {
+					case binding.failure <- errors.New("Workspace Secret transport stopped"):
+					default:
+					}
+				}
+			}()
+		}
+	}
 	var packet *datapath.Binding
 	if err := withNetworkNamespace(binding.namespace, func() error {
 		var prepareErr error
@@ -650,6 +697,7 @@ func (c *Connector) installRoutedPolicy(ctx context.Context, binding *installedN
 	script, err := renderNetworkPolicy(networkPolicyInput{
 		Tap: m.TapName, Peer: m.NamespaceVethName, Mark: packet.Mark(),
 		BlockedIPv4CIDRs: blocked,
+		SecretProxy:      binding.secretProxy != nil,
 		ResolverIPv4:     c.cfg.NetworkResolverIPv4,
 		GuestIPv4:        guestIP, TranslationIPv4: netip.MustParsePrefix(m.TranslationIPv4CIDR).Addr().String(),
 	})
@@ -788,6 +836,9 @@ func (binding *installedNetworkBinding) monitor() {
 		case <-ticker.C:
 			if err := binding.verify(true); err != nil {
 				fenceErr := binding.fence()
+				if binding.secretProxy != nil {
+					fenceErr = errors.Join(fenceErr, binding.secretProxy.Close())
+				}
 				_ = binding.packet.Invalidate(err)
 				select {
 				case binding.failure <- errors.Join(err, fenceErr):
@@ -1032,6 +1083,9 @@ func (binding *installedNetworkBinding) Deactivate() error {
 	binding.mu.Lock()
 	defer binding.mu.Unlock()
 	fenceErr := binding.fence()
+	if binding.secretProxy != nil {
+		fenceErr = errors.Join(fenceErr, binding.secretProxy.Close())
+	}
 	var packetErr error
 	if binding.packet != nil {
 		packetErr = withNetworkNamespace(binding.namespace, binding.packet.Deactivate)
@@ -1356,23 +1410,38 @@ func hostIPv4Prefixes(excluded ...netip.Prefix) ([]netip.Prefix, error) {
 	return prefixes, nil
 }
 
-func withNetworkNamespace(target netns.NsHandle, fn func() error) (returnErr error) {
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-	current, err := netns.Get()
-	if err != nil {
-		return fmt.Errorf("open current network namespace: %w", err)
-	}
-	defer current.Close()
-	if err := netns.Set(target); err != nil {
-		return fmt.Errorf("enter network namespace: %w", err)
-	}
-	defer func() {
-		if err := netns.Set(current); err != nil {
-			returnErr = errors.Join(returnErr, fmt.Errorf("restore network namespace: %w", err))
+// A failed restore must retire the contaminated OS thread. The dedicated
+// goroutine returns while locked in that case, causing Go to destroy its thread.
+func withNetworkNamespace(target netns.NsHandle, fn func() error) error {
+	return withNetworkNamespaceRestore(target, fn, netns.Set)
+}
+
+func withNetworkNamespaceRestore(target netns.NsHandle, fn func() error, restore func(netns.NsHandle) error) error {
+	result := make(chan error, 1)
+	go func() {
+		runtime.LockOSThread()
+		current, err := netns.Get()
+		if err != nil {
+			runtime.UnlockOSThread()
+			result <- fmt.Errorf("open current network namespace: %w", err)
+			return
 		}
+		defer current.Close()
+		if err := netns.Set(target); err != nil {
+			runtime.UnlockOSThread()
+			result <- fmt.Errorf("enter network namespace: %w", err)
+			return
+		}
+		callErr := fn()
+		restoreErr := restore(current)
+		if restoreErr == nil {
+			runtime.UnlockOSThread()
+		} else {
+			restoreErr = fmt.Errorf("restore network namespace: %w", restoreErr)
+		}
+		result <- errors.Join(callErr, restoreErr)
 	}()
-	return fn()
+	return <-result
 }
 
 func prefixCapacity(prefix netip.Prefix) uint64 {

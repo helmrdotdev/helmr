@@ -7,7 +7,6 @@ import {
   image,
   logger,
   metadata,
-  secrets,
   task,
   timers,
   tokens,
@@ -1038,7 +1037,7 @@ describe("runProgram", () => {
       async run() {
         const created = await cache.createWorkspace({
           key: "build-cache",
-          secrets: [{ secret: secrets.fromName("TOKEN"), env: "TOKEN" }],
+          secrets: [{ secret: "TOKEN", env: { name: "TOKEN", mode: "raw" } }],
           idempotencyKey: "create:cache",
         })
         const workspace = await created.retrieve()
@@ -1065,7 +1064,7 @@ describe("runProgram", () => {
       yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
       const responses = [
         '{"workspace_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}',
-        '{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32","key":"build-cache","sandbox_id":"cache","deployment_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35","status":"available","secrets":[{"name":"TOKEN","env":"TOKEN"}],"last_activity_at":"2026-07-26T00:00:00Z","created_at":"2026-07-26T00:00:00Z","updated_at":"2026-07-26T00:00:00Z"}',
+        '{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32","key":"build-cache","sandbox_id":"cache","deployment_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35","status":"available","secrets":[{"secret":"TOKEN","env":{"name":"TOKEN","mode":"raw"}}],"last_activity_at":"2026-07-26T00:00:00Z","created_at":"2026-07-26T00:00:00Z","updated_at":"2026-07-26T00:00:00Z"}',
         '{"exit_code":0,"stdout_base64":"b2s=","stderr_base64":""}',
         '{"workspace_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}',
       ]
@@ -1077,8 +1076,8 @@ describe("runProgram", () => {
         if (event.case === "workspaceCreateRequested") {
           assert.equal(event.value.secrets.length, 1)
           assert.partialDeepStrictEqual(event.value.secrets[0], {
-            name: "TOKEN",
-            placement: { case: "env", value: "TOKEN" },
+            secret: "TOKEN",
+            placement: { case: "env", value: {name:"TOKEN",mode:"raw"} },
           })
         }
         const correlationId = "correlationId" in event.value

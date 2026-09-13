@@ -16,6 +16,7 @@ const maxWorkspaceSecretPlacements = 64
 var ErrDeliveryUnavailable = errors.New("secret delivery authority is unavailable")
 
 type DeliveryEnvelope struct {
+	Mode            string
 	PlacementKind   string
 	PlacementTarget string
 	Secret          db.Secret
@@ -86,6 +87,7 @@ func LockAttemptDelivery(
 			versions[versionID] = version
 		}
 		envelopes = append(envelopes, DeliveryEnvelope{
+			Mode:            row.WorkspaceSecret.Mode,
 			PlacementKind:   row.WorkspaceSecret.PlacementKind,
 			PlacementTarget: row.WorkspaceSecret.PlacementTarget,
 			Secret:          row.Secret,
@@ -150,6 +152,7 @@ func LockProcessDelivery(
 			versions[versionID] = version
 		}
 		envelopes = append(envelopes, DeliveryEnvelope{
+			Mode:            row.WorkspaceSecret.Mode,
 			PlacementKind:   row.WorkspaceSecret.PlacementKind,
 			PlacementTarget: row.WorkspaceSecret.PlacementTarget,
 			Secret:          row.Secret,
@@ -189,6 +192,12 @@ func (s *Store) OpenDeliveries(environmentID uuid.UUID, envelopes []DeliveryEnve
 	}
 	materials := make([]DeliveryMaterial, 0, len(envelopes))
 	for _, envelope := range envelopes {
+		if envelope.Mode == "protected" {
+			continue
+		}
+		if envelope.Mode != "raw" {
+			return nil, ErrDeliveryUnavailable
+		}
 		if envelope.Secret.EnvironmentID != pgvalue.UUID(environmentID) ||
 			envelope.Secret.State != "active" ||
 			envelope.Version.SecretID != envelope.Secret.ID ||

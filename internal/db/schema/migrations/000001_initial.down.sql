@@ -21,6 +21,7 @@ ALTER TABLE workspace_mounts DROP CONSTRAINT IF EXISTS workspace_mounts_runtime_
 ALTER TABLE run_leases DROP CONSTRAINT IF EXISTS run_leases_runtime_instance_id_fkey;
 DROP TABLE IF EXISTS runtime_instances;
 DROP TABLE IF EXISTS workspace_mounts;
+DROP TABLE IF EXISTS workspace_secret_proxy_trust;
 DROP TABLE IF EXISTS workspace_secrets;
 DROP TABLE IF EXISTS workspaces CASCADE;
 DROP TABLE IF EXISTS auth_sessions;

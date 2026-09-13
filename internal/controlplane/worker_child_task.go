@@ -279,6 +279,14 @@ func (s *Server) invokeChildTask(
 		} else {
 			targetWorkspaceID = input.Normalized.WorkspaceID
 		}
+		// This also precedes source authority on same-Workspace and replay paths.
+		bindings, err := work.q.LockWorkspaceSecretsForAdmission(ctx, pgvalue.UUID(targetWorkspaceID))
+		if err != nil {
+			return err
+		}
+		if err := authorizeWorkspaceSecretTarget(ctx, work.q, pgvalue.UUID(input.SourceWorkspaceID), pgvalue.UUID(targetWorkspaceID)); err != nil {
+			return err
+		}
 		sameWorkspace := targetWorkspaceID == input.SourceWorkspaceID
 		if sameWorkspace && input.Request.Method != "call" {
 			return errChildTaskSameWorkspace
@@ -390,10 +398,6 @@ func (s *Server) invokeChildTask(
 		}
 		if admission.HasPayload != input.Normalized.PayloadPresent {
 			return errTaskPayloadPresenceInvalid
-		}
-		bindings, err := work.q.LockWorkspaceSecretsForAdmission(ctx, pgvalue.UUID(targetWorkspaceID))
-		if err != nil {
-			return fmt.Errorf("lock child task workspace secrets: %w", err)
 		}
 		for _, binding := range bindings {
 			if binding.SecretState != "active" || !binding.CurrentVersionID.Valid {
@@ -1138,7 +1142,7 @@ func (s *Server) writeChildTaskInvokeError(
 		failure = workerapi.RuntimeOperationFailure{Code: "workspace_not_found", Message: err.Error()}
 	case errors.Is(err, errTaskWorkspaceUnavailable):
 		failure = workerapi.RuntimeOperationFailure{Code: "workspace_unavailable", Message: err.Error(), Retryable: true}
-	case errors.Is(err, errTaskSecretUnavailable):
+	case errors.Is(err, errTaskSecretUnavailable), errors.Is(err, errWorkspaceSecretUnavailable):
 		failure = workerapi.RuntimeOperationFailure{Code: "secret_unavailable", Message: err.Error()}
 	case errors.Is(err, errTaskPayloadPresenceInvalid), errors.Is(err, errTaskStartInvalid):
 		failure = workerapi.RuntimeOperationFailure{Code: "invalid_child_task_invoke", Message: err.Error()}

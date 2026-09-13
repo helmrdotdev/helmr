@@ -510,6 +510,8 @@ SELECT true AS ok
    AND cardinality($3::uuid[]) = cardinality($4::text[])
    AND cardinality($3::uuid[]) = cardinality($5::text[])
    AND cardinality($3::uuid[]) = cardinality($6::uuid[])
+   AND cardinality($3::uuid[]) = cardinality($7::text[])
+   AND cardinality($3::uuid[]) = cardinality($8::text[])
    AND NOT EXISTS (
        SELECT 1
          FROM unnest($3::uuid[]) AS placement_schedule_id
@@ -519,13 +521,15 @@ SELECT true AS ok
 SELECT batch.schedule_id,
        batch.placement_kind,
        batch.placement_target,
-       batch.secret_id
+       batch.secret_id, batch.mode, batch.origins_json
   FROM ROWS FROM (
       unnest($3::uuid[]),
       unnest($4::text[]),
       unnest($5::text[]),
-      unnest($6::uuid[])
-  ) AS batch(schedule_id, placement_kind, placement_target, secret_id)
+      unnest($6::uuid[]),
+      unnest($7::text[]),
+      unnest($8::text[])
+  ) AS batch(schedule_id, placement_kind, placement_target, secret_id, mode, origins_json)
   JOIN valid ON true
 )
 INSERT INTO schedule_secrets (
@@ -533,13 +537,13 @@ INSERT INTO schedule_secrets (
     environment_id,
     placement_kind,
     placement_target,
-    secret_id
+    secret_id, mode, allowed_origins
 )
 SELECT input.schedule_id,
        $1,
        input.placement_kind,
        input.placement_target,
-       input.secret_id
+       input.secret_id, input.mode, ARRAY(SELECT jsonb_array_elements_text(input.origins_json::jsonb))
   FROM input
 `
 
@@ -550,6 +554,8 @@ type InsertScheduleSecretsParams struct {
 	PlacementKinds       []string      `json:"placement_kinds"`
 	PlacementTargets     []string      `json:"placement_targets"`
 	SecretIds            []pgtype.UUID `json:"secret_ids"`
+	Modes                []string      `json:"modes"`
+	OriginsJson          []string      `json:"origins_json"`
 }
 
 func (q *Queries) InsertScheduleSecrets(ctx context.Context, arg InsertScheduleSecretsParams) (int64, error) {
@@ -560,6 +566,8 @@ func (q *Queries) InsertScheduleSecrets(ctx context.Context, arg InsertScheduleS
 		arg.PlacementKinds,
 		arg.PlacementTargets,
 		arg.SecretIds,
+		arg.Modes,
+		arg.OriginsJson,
 	)
 	if err != nil {
 		return 0, err
@@ -568,7 +576,7 @@ func (q *Queries) InsertScheduleSecrets(ctx context.Context, arg InsertScheduleS
 }
 
 const listScheduleSecrets = `-- name: ListScheduleSecrets :many
-SELECT schedule_id, environment_id, placement_kind, placement_target, secret_id, created_at
+SELECT schedule_id, environment_id, placement_kind, placement_target, secret_id, mode, allowed_origins, created_at
   FROM schedule_secrets
  WHERE environment_id = $1
    AND schedule_id = $2
@@ -595,6 +603,8 @@ func (q *Queries) ListScheduleSecrets(ctx context.Context, arg ListScheduleSecre
 			&i.PlacementKind,
 			&i.PlacementTarget,
 			&i.SecretID,
+			&i.Mode,
+			&i.AllowedOrigins,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err

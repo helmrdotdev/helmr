@@ -597,7 +597,7 @@ func prepareDeploymentPromotionScaleFixture(
 	queries := db.New(fixture.pool)
 	for index := range placements {
 		name := fmt.Sprintf("SECRET_%02d", index)
-		placements[index] = api.WorkspaceSecret{Name: name, Env: name}
+		placements[index] = api.WorkspaceSecret{Name: name, Env: &api.SecretEnv{Name: name, Mode: "raw"}}
 		secretID, versionID := uuid.NewV7(), uuid.NewV7()
 		if _, err := queries.CreateSecret(t.Context(), db.CreateSecretParams{
 			ID: pgvalue.UUID(secretID), EnvironmentID: pgvalue.UUID(fixture.environmentID),
@@ -930,7 +930,7 @@ func newDeploymentPromotionPostgresFixture(t *testing.T) deploymentPromotionPost
 		fixture.otherEnvID, "other", digests[3], digests[6], otherProgramID, queueConfig)
 
 	scheduledManifest := []byte(
-		`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * *","timezone":"UTC","workspace":{"sandboxId":"reporting","secrets":[{"env":"REPORT_TOKEN","name":"REPORT_TOKEN"}]}}}`,
+		`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * *","timezone":"UTC","workspace":{"sandboxId":"reporting","secrets":[{"secret":"REPORT_TOKEN","env":{"name":"REPORT_TOKEN","mode":"raw"}}]}}}`,
 	)
 	canonical, digest, err := deployment.CanonicalManifestAndDigest(scheduledManifest)
 	if err != nil {

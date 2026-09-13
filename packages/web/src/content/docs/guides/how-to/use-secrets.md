@@ -17,7 +17,7 @@ The CLI and API return metadata, never the stored value. Bind the Secret when
 creating a Workspace with the SDK:
 
 ```ts
-import { HelmrClient, secrets } from "@helmr/sdk"
+import { HelmrClient } from "@helmr/sdk"
 
 const client = new HelmrClient({
   apiKey: process.env.HELMR_API_KEY!,
@@ -30,12 +30,12 @@ const workspace = await client.sandboxes.createWorkspace(
     idempotencyKey: "workspace:helmrdotdev/helmr",
     secrets: [
       {
-        secret: secrets.fromName("GITHUB_TOKEN"),
-        env: "GITHUB_TOKEN",
+        secret: "GITHUB_TOKEN",
+        env: { name: "GITHUB_TOKEN", mode: "raw" },
       },
       {
-        secret: secrets.fromName("SSH_KEY"),
-        file: "/run/secrets/ssh-key",
+        secret: "SSH_KEY",
+        file: { path: "/run/secrets/ssh-key" },
       },
     ],
   },
@@ -60,3 +60,34 @@ helmr secret revoke SECRET_ID --yes \
 
 Never put credentials in payload, metadata, tags, source archives, logs, or
 Actor output.
+
+## Use a protected bearer header
+
+Install `gh` in the declared Workspace image, then bind the existing
+Project-Environment Secret at creation:
+
+```ts
+const workspace = await client.sandboxes.createWorkspace("reviewer", {
+  secrets: [{ secret: "github-token", env: {
+    name: "GH_TOKEN",
+    mode: "protected",
+    allowedOrigins: ["https://api.github.com"],
+  } }],
+})
+const result = await workspace.exec({
+  command: ["gh", "api", "user"],
+  idempotencyKey: "github-user",
+})
+```
+
+Synthetic local requests were tested with Linux `gh api` 2.97.0 sending the placeholder in its auth header. The trusted proxy supplies
+the current credential only for the approved origin while this Workspace has
+live execution authority. The same synthetic header substitution was tested with Node 24.21.0 `fetch` and a
+literal `Authorization: Bearer ${process.env.GH_TOKEN}` header through the
+configured proxy. Never transform or sign the placeholder. Other clients must
+honor the proxy and public CA configuration.
+
+Use the Console Workspaces → Create Workspace dialog or the CLI `--secrets-file` with the
+same binding schema (`allowed_origins` in JSON). See [Secrets](/docs/concepts/secrets/)
+for exact origin rules, upstream trust, raw-copy revocation limits, and unsupported
+OAuth refresh/auth-cache lifecycle behavior.

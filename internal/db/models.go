@@ -755,6 +755,8 @@ type ScheduleSecret struct {
 	PlacementKind   string             `json:"placement_kind"`
 	PlacementTarget string             `json:"placement_target"`
 	SecretID        pgtype.UUID        `json:"secret_id"`
+	Mode            string             `json:"mode"`
+	AllowedOrigins  []string           `json:"allowed_origins"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
@@ -1138,7 +1140,19 @@ type WorkspaceSecret struct {
 	PlacementKind   string             `json:"placement_kind"`
 	PlacementTarget string             `json:"placement_target"`
 	SecretID        pgtype.UUID        `json:"secret_id"`
+	Mode            string             `json:"mode"`
+	AllowedOrigins  []string           `json:"allowed_origins"`
+	Placeholder     string             `json:"placeholder"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
+type WorkspaceSecretProxyTrust struct {
+	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	EnvironmentID        pgtype.UUID        `json:"environment_id"`
+	Certificate          []byte             `json:"certificate"`
+	PrivateKeyNonce      []byte             `json:"private_key_nonce"`
+	PrivateKeyCiphertext []byte             `json:"private_key_ciphertext"`
+	NotAfter             pgtype.Timestamptz `json:"not_after"`
 }
 
 type WorkspaceVersion struct {

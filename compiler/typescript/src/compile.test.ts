@@ -5,7 +5,6 @@ import {
   image,
   queue,
   schedules,
-  secrets,
   source,
   task,
   sandbox,
@@ -350,7 +349,7 @@ describe("declaration analysis", () => {
       cron: { pattern: "0 3 * * *", timezone: "UTC" },
       workspace: {
         sandbox: maintenance,
-        secrets: [{ secret: secrets.fromName("TOKEN"), env: "TOKEN" }],
+        secrets: [{ secret: "TOKEN", env: {name: "TOKEN", mode: "raw"} }],
       },
       run: () => null,
     })
@@ -377,7 +376,7 @@ describe("declaration analysis", () => {
       timezone: "UTC",
       workspace: {
         sandboxId: "maintenance",
-        secrets: [{ name: "TOKEN", env: "TOKEN" }],
+        secrets: [{ secret: "TOKEN", env: {name: "TOKEN", mode: "raw"} }],
       },
     })
     expect(definition.manifest.payload).toEqual({

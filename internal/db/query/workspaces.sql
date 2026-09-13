@@ -171,13 +171,13 @@ INSERT INTO workspace_secrets (
     environment_id,
     placement_kind,
     placement_target,
-    secret_id
+    secret_id, mode, allowed_origins, placeholder
 ) VALUES (
     sqlc.arg(workspace_id),
     sqlc.arg(environment_id),
     sqlc.arg(placement_kind),
     sqlc.arg(placement_target),
-    sqlc.arg(secret_id)
+    sqlc.arg(secret_id), sqlc.arg(mode), COALESCE(sqlc.arg(allowed_origins)::text[], '{}'::text[]), sqlc.arg(placeholder)
 )
 RETURNING *;
 
