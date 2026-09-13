@@ -448,12 +448,10 @@ const renderedActor = {
     <section class="hero">
       <div class="hero-inner">
         <div class="hero-copy">
-          <h1 class="headline hero-title">
-            Build background coding agents. <span class="faint">Own how they work.</span>
-          </h1>
+          <h1 class="headline hero-title">Build your own software factory.</h1>
           <p class="hero-lede">
-            Define agent work in TypeScript. Run it in isolated Linux microVMs
-            with durable workspaces and human input.
+            Infrastructure and APIs for your own agent harness.
+            <br />Your agents. Your workflows. Your rules.
           </p>
           <div class="hero-actions">
             <a class="btn btn-dark" href="/docs/quickstart">Start building</a>
@@ -797,7 +795,7 @@ const renderedActor = {
   .hero-print canvas {
     display: block;
     width: 100%;
-    height: 268px;
+    height: 230px;
   }
 
   .hero-figure figcaption {
@@ -810,26 +808,16 @@ const renderedActor = {
 
   .hero-title {
     max-width: none;
-    white-space: nowrap;
     font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
-    font-size: clamp(2rem, 3.5vw, 3.3rem);
+    font-size: clamp(2rem, 3.1vw, 3.25rem);
     font-weight: 500;
-    line-height: 0.98;
-    letter-spacing: -0.05em;
-  }
-
-  .hero-title .faint {
-    display: block;
-    margin-top: 0.08em;
-    padding: 0;
-    background: none;
-    color: var(--text);
-    font: inherit;
-    letter-spacing: inherit;
+    line-height: 1.08;
+    letter-spacing: -0.045em;
+    text-wrap: balance;
   }
 
   .hero-lede {
-    margin-top: 1.2rem;
+    margin-top: 1.25rem;
     max-width: 38rem;
     color: var(--text-muted);
     font-size: clamp(1rem, 1.5vw, 1.2rem);
@@ -1426,12 +1414,8 @@ const renderedActor = {
       gap: 2.5rem;
     }
 
-    .hero-title {
-      font-size: clamp(1.5rem, 3.5vw, 2.4rem);
-    }
-
     .hero-print canvas {
-      height: 220px;
+      height: 210px;
     }
 
     .code-section .section-head {
@@ -1454,7 +1438,7 @@ const renderedActor = {
     }
 
     .hero-print canvas {
-      height: 240px;
+      height: 230px;
     }
 
     .homes-grid {
@@ -1494,9 +1478,8 @@ const renderedActor = {
 
   @media (max-width: 600px) {
     .hero-title {
-      font-size: clamp(1rem, 5.5vw, 2rem);
-      letter-spacing: -0.035em;
-      text-wrap: nowrap;
+      font-size: clamp(2rem, 8vw, 2.75rem);
+      letter-spacing: -0.04em;
     }
   }
 </style>
