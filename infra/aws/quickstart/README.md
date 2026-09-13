@@ -154,9 +154,15 @@ override the disk capacity advertised to the Control Plane.
 
 The stack derives each Worker Pool generation name from the complete immutable
 supply definition: Worker module/user-data contract, resolved AMI,
-instance/runtime class, network/store/cache policy, root-volume shape, and
-advertised capacity shape. Changing one of those sealed inputs
-creates a new Pool name; changing only ASG minimum or maximum size does not.
+instance/runtime class, network/store/cache policy, root-volume shape, and advertised
+capacity shape. Changing one of those sealed inputs creates a new Pool name;
+changing only ASG minimum or maximum size does not.
+
+Optional `permissions_boundary_arn` and `external_permissions_boundary_arn`
+attach caller-owned customer-managed IAM boundaries to Control Plane roles and
+the current Worker generation respectively. Null preserves the module defaults.
+External Worker identity for retained generations is sealed only in
+`boundary_policy_arn`.
 Each Pool name keys a distinct Auto Scaling Group and launch template. Before
 changing an immutable input, copy the old entry from
 `worker_generation_definitions` into `retained_worker_generations` with

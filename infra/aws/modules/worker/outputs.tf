@@ -39,6 +39,7 @@ output "sealed_provider_definition" {
     user_data_base64                                = local.worker_user_data_base64
     permission_policy_json                          = local.worker_permission_policy_json
     boundary_policy_json                            = local.worker_boundary_policy_json
+    boundary_policy_arn                             = local.effective_external_boundary_arn
     enable_ssm                                      = local.worker_enable_ssm
     launch_template_version                         = var.sealed_provider_definition == null ? tostring(aws_launch_template.worker.latest_version) : var.sealed_provider_definition.launch_template_version
     health_check_grace_period_seconds               = local.worker_health_check_grace_period_seconds

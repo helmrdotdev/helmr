@@ -193,3 +193,49 @@ run "capacity_api_credential_rejects_plaintext_environment" {
   }
   expect_failures = [terraform_data.bootstrap_preconditions]
 }
+
+run "controlplane_roles_have_no_boundary_by_default" {
+  command = plan
+
+  assert {
+    condition = (
+      aws_iam_role.controlplane_execution.permissions_boundary == null &&
+      aws_iam_role.dispatcher_execution.permissions_boundary == null &&
+      aws_iam_role.database_bootstrap_execution.permissions_boundary == null &&
+      aws_iam_role.controlplane_task.permissions_boundary == null &&
+      aws_iam_role.dispatcher_task.permissions_boundary == null &&
+      aws_iam_role.migration_task.permissions_boundary == null
+    )
+    error_message = "control-plane IAM roles must remain unbounded unless permissions_boundary_arn is supplied"
+  }
+}
+
+run "controlplane_roles_attach_external_boundary" {
+  command = plan
+
+  variables {
+    permissions_boundary_arn = "arn:aws:iam::000000000000:policy/org-controlplane-boundary"
+  }
+
+  assert {
+    condition = (
+      aws_iam_role.controlplane_execution.permissions_boundary == var.permissions_boundary_arn &&
+      aws_iam_role.dispatcher_execution.permissions_boundary == var.permissions_boundary_arn &&
+      aws_iam_role.database_bootstrap_execution.permissions_boundary == var.permissions_boundary_arn &&
+      aws_iam_role.controlplane_task.permissions_boundary == var.permissions_boundary_arn &&
+      aws_iam_role.dispatcher_task.permissions_boundary == var.permissions_boundary_arn &&
+      aws_iam_role.migration_task.permissions_boundary == var.permissions_boundary_arn
+    )
+    error_message = "every control-plane IAM role must attach the supplied permissions boundary"
+  }
+}
+
+run "controlplane_rejects_foreign_boundary_account" {
+  command = plan
+
+  variables {
+    permissions_boundary_arn = "arn:aws:iam::999999999999:policy/org-controlplane-boundary"
+  }
+
+  expect_failures = [terraform_data.bootstrap_preconditions]
+}

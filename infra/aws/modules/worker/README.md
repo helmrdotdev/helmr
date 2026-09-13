@@ -53,6 +53,30 @@ SSM Session Manager access is enabled by default through `AmazonSSMManagedInstan
 inbound SSH rules for bootstrap and smoke debugging. Set `enable_ssm = false` only if the AMI role is
 managed elsewhere.
 
+## Permissions boundaries
+
+By default this module creates and attaches a module-managed permissions boundary that caps the
+worker role at the generated inline policy plus optional SSM statements. Set
+`external_permissions_boundary_arn` to attach a caller-owned customer-managed IAM policy instead.
+The module then reads that policy through `aws_iam_policy`, records the external
+ARN and verified document bytes in `sealed_provider_definition`, and does not
+create or mutate the external policy. Module-managed generations seal
+`boundary_policy_arn = null`; only external generations populate the field.
+The caller owns correctness and immutability of the external boundary; effective
+worker authority is always the intersection of the boundary with the
+module-generated inline role policy. A permissions boundary alone does not
+guarantee isolation when other IAM mechanisms can still grant access.
+
+The deployment role needs `iam:GetPolicy` and `iam:GetPolicyVersion` on the
+external policy ARN so OpenTofu can verify and seal the live document during
+plan/apply.
+
+Retained generations seal external `boundary_policy_arn` and
+`boundary_policy_json`. Legacy sealed objects without `boundary_policy_arn`
+remain module-managed. External policy drift relative to a sealed generation
+fails during plan/apply, and changing `external_permissions_boundary_arn` away
+from a sealed external boundary is rejected for retained pools.
+
 Each fleet is one immutable execution Pool generation. The required
 `worker_pool_name` identifies this exact immutable supply generation.
 The caller must allocate a new canonical Pool name before changing the AMI or

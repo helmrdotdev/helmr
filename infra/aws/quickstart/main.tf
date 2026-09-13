@@ -204,6 +204,7 @@ module "controlplane" {
   secret_recovery_window_in_days             = var.secret_recovery_window_in_days
   cas_object_expiration_days                 = var.cas_object_expiration_days
   cas_noncurrent_version_expiration_days     = var.cas_noncurrent_version_expiration_days
+  permissions_boundary_arn                   = var.permissions_boundary_arn
   tags                                       = local.tags
 }
 
@@ -224,6 +225,7 @@ module "worker_group" {
   instance_type                                   = local.worker_generations[each.key].instance_type
   enable_nested_virtualization                    = local.worker_generations[each.key].enable_nested_virtualization
   enable_ssm                                      = local.worker_generations[each.key].generation_inputs.supply.enable_ssm
+  external_permissions_boundary_arn               = local.worker_generations[each.key].sealed_provider_definition == null ? var.external_permissions_boundary_arn : null
   sealed_provider_definition                      = local.worker_generations[each.key].sealed_provider_definition
   health_check_grace_period_seconds               = local.worker_generations[each.key].lifecycle.health_check_grace_period_seconds
   launch_lifecycle_heartbeat_timeout_seconds      = local.worker_generations[each.key].lifecycle.launch_lifecycle_heartbeat_timeout_seconds

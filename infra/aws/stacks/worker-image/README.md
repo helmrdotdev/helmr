@@ -15,3 +15,6 @@ tofu -chdir=infra/aws/stacks/worker-image apply \
   -var="runtime_artifacts_bundle_s3_uri=s3://..." \
   -var="runtime_artifacts_bundle_digest=sha256:..."
 ```
+
+Optional `permissions_boundary_arn` behavior is documented in
+[`modules/worker-image/README.md`](../modules/worker-image/README.md).

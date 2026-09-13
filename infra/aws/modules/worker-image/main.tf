@@ -128,8 +128,9 @@ locals {
 }
 
 resource "aws_iam_role" "image_builder" {
-  name = "${local.name}-worker-image-builder"
-  tags = var.tags
+  permissions_boundary = var.permissions_boundary_arn
+  name                 = "${local.name}-worker-image-builder"
+  tags                 = var.tags
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"

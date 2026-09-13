@@ -226,6 +226,14 @@ resource "terraform_data" "bootstrap_preconditions" {
       error_message = "enable_cloudfront requires certificate_arn and cloudfront_origin_domain_name so CloudFront can use a TLS ALB origin without pointing at its own viewer hostname."
     }
 
+    precondition {
+      condition = (
+        var.permissions_boundary_arn == null ||
+        can(regex(":iam::${data.aws_caller_identity.current.account_id}:policy/", var.permissions_boundary_arn))
+      )
+      error_message = "permissions_boundary_arn must identify a customer-managed IAM policy in the caller AWS account."
+    }
+
   }
 }
 
@@ -646,8 +654,9 @@ resource "aws_ecs_cluster" "controlplane" {
 }
 
 resource "aws_iam_role" "controlplane_execution" {
-  name = "${local.name}-controlplane-execution"
-  tags = var.tags
+  name                 = "${local.name}-controlplane-execution"
+  permissions_boundary = var.permissions_boundary_arn
+  tags                 = var.tags
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -662,8 +671,9 @@ resource "aws_iam_role" "controlplane_execution" {
 }
 
 resource "aws_iam_role" "dispatcher_execution" {
-  name = "${local.name}-dispatcher-execution"
-  tags = var.tags
+  name                 = "${local.name}-dispatcher-execution"
+  permissions_boundary = var.permissions_boundary_arn
+  tags                 = var.tags
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -678,8 +688,9 @@ resource "aws_iam_role" "dispatcher_execution" {
 }
 
 resource "aws_iam_role" "database_bootstrap_execution" {
-  name = "${local.name}-database-bootstrap-execution"
-  tags = var.tags
+  name                 = "${local.name}-database-bootstrap-execution"
+  permissions_boundary = var.permissions_boundary_arn
+  tags                 = var.tags
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -851,8 +862,9 @@ resource "aws_iam_role_policy" "database_bootstrap_execution" {
 }
 
 resource "aws_iam_role" "controlplane_task" {
-  name = "${local.name}-controlplane-task"
-  tags = var.tags
+  name                 = "${local.name}-controlplane-task"
+  permissions_boundary = var.permissions_boundary_arn
+  tags                 = var.tags
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -924,8 +936,9 @@ resource "aws_iam_role_policy" "controlplane_task" {
 }
 
 resource "aws_iam_role" "dispatcher_task" {
-  name = "${local.name}-dispatcher-task"
-  tags = var.tags
+  name                 = "${local.name}-dispatcher-task"
+  permissions_boundary = var.permissions_boundary_arn
+  tags                 = var.tags
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -940,8 +953,9 @@ resource "aws_iam_role" "dispatcher_task" {
 }
 
 resource "aws_iam_role" "migration_task" {
-  name = "${local.name}-migration-task"
-  tags = var.tags
+  name                 = "${local.name}-migration-task"
+  permissions_boundary = var.permissions_boundary_arn
+  tags                 = var.tags
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"

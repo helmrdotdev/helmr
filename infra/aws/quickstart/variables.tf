@@ -389,6 +389,28 @@ variable "create_worker" {
   default     = false
 }
 
+variable "permissions_boundary_arn" {
+  description = "Optional externally owned customer-managed IAM permissions boundary attached to every Control Plane IAM role. Null preserves the module default of no boundary."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.permissions_boundary_arn == null || can(regex("^arn:aws[a-zA-Z-]*:iam::[0-9]{12}:policy/.+$", var.permissions_boundary_arn))
+    error_message = "permissions_boundary_arn must be null or a customer-managed IAM policy ARN."
+  }
+}
+
+variable "external_permissions_boundary_arn" {
+  description = "Optional externally owned customer-managed IAM permissions boundary for the current Worker generation. Null preserves the module-managed default boundary. Retained external identity is carried only in sealed boundary_policy_arn."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.external_permissions_boundary_arn == null || can(regex("^arn:aws[a-zA-Z-]*:iam::[0-9]{12}:policy/.+$", var.external_permissions_boundary_arn))
+    error_message = "external_permissions_boundary_arn must be null or a customer-managed IAM policy ARN."
+  }
+}
+
 variable "retained_worker_generations" {
   description = "Immutable prior execution Worker Pool generations retained as scale-zero ASG/LT/AMI supply for exact checkpoint restore. Keys must equal execution-sha256(jsonencode(generation_inputs))."
   type = map(object({
@@ -460,6 +482,7 @@ variable "retained_worker_generations" {
       user_data_base64                                = string
       permission_policy_json                          = string
       boundary_policy_json                            = string
+      boundary_policy_arn                             = optional(string)
       enable_ssm                                      = bool
       launch_template_version                         = string
       health_check_grace_period_seconds               = number
@@ -504,6 +527,10 @@ variable "retained_worker_generations" {
       can(base64decode(generation.sealed_provider_definition.user_data_base64)) &&
       can(jsondecode(generation.sealed_provider_definition.permission_policy_json)) &&
       can(jsondecode(generation.sealed_provider_definition.boundary_policy_json)) &&
+      (
+        try(generation.sealed_provider_definition.boundary_policy_arn, null) == null ||
+        can(regex("^arn:aws[a-zA-Z-]*:iam::[0-9]{12}:policy/.+$", generation.sealed_provider_definition.boundary_policy_arn))
+      ) &&
       can(regex("^[1-9][0-9]*$", generation.sealed_provider_definition.launch_template_version)) &&
       generation.sealed_provider_definition.enable_ssm == generation.generation_inputs.supply.enable_ssm &&
       generation.sealed_provider_definition.health_check_grace_period_seconds == generation.generation_inputs.supply.lifecycle.health_check_grace_period_seconds &&

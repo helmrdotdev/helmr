@@ -1,3 +1,14 @@
+variable "permissions_boundary_arn" {
+  description = "Optional caller-owned permissions boundary for the image-build role. This stack never manages the boundary policy."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.permissions_boundary_arn == null || can(regex("^arn:aws[a-zA-Z-]*:iam::[0-9]{12}:policy/.+$", var.permissions_boundary_arn))
+    error_message = "permissions_boundary_arn must be null or a customer-managed IAM policy ARN."
+  }
+}
+
 variable "aws_region" {
   description = "AWS region."
   type        = string

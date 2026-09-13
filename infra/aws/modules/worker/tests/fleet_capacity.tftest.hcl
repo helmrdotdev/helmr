@@ -11,6 +11,16 @@ mock_provider "aws" {
     defaults = { cidr_block = "10.20.0.0/16" }
   }
 
+  mock_data "aws_caller_identity" {
+    defaults = { account_id = "111122223333" }
+  }
+
+  mock_data "aws_iam_policy" {
+    defaults = {
+      policy = "{\"Version\":\"2012-10-17\",\"Statement\":[]}"
+    }
+  }
+
   mock_resource "aws_launch_template" {
     defaults = { id = "lt-00000000000000000" }
   }
@@ -103,8 +113,8 @@ run "worker_without_ssm_has_exact_permission_boundary" {
 
   assert {
     condition = (
-      aws_iam_role.worker.permissions_boundary == aws_iam_policy.worker_boundary.arn &&
-      jsondecode(aws_iam_policy.worker_boundary.policy) == jsondecode(aws_iam_role_policy.worker.policy)
+      aws_iam_role.worker.permissions_boundary == one(aws_iam_policy.worker_boundary[*].arn) &&
+      jsondecode(one(aws_iam_policy.worker_boundary[*].policy)) == jsondecode(aws_iam_role_policy.worker.policy)
     )
     error_message = "workers without SSM must retain a boundary exactly equal to their permissions"
   }

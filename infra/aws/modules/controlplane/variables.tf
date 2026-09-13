@@ -473,3 +473,14 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "permissions_boundary_arn" {
+  description = "Optional externally owned customer-managed IAM permissions boundary attached to every control-plane IAM role. The caller owns correctness and immutability; effective role authority remains the intersection of this boundary with each role policy."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.permissions_boundary_arn == null || can(regex("^arn:aws[a-zA-Z-]*:iam::[0-9]{12}:policy/.+$", var.permissions_boundary_arn))
+    error_message = "permissions_boundary_arn must be null or a customer-managed IAM policy ARN."
+  }
+}

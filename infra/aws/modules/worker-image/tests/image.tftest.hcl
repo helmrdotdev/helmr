@@ -247,3 +247,36 @@ run "distribution_policy_does_not_change_image_definition" {
     error_message = "Region and visibility policy must not be artifact or image-definition identity."
   }
 }
+
+
+run "image_builder_default_boundary_is_unchanged" {
+  command = plan
+
+  assert {
+    condition     = aws_iam_role.image_builder.permissions_boundary == null
+    error_message = "No boundary is attached unless the caller selects one."
+  }
+}
+
+run "image_builder_uses_caller_owned_boundary" {
+  command = plan
+
+  variables {
+    permissions_boundary_arn = "arn:aws:iam::000000000000:policy/image-build-boundary"
+  }
+
+  assert {
+    condition     = aws_iam_role.image_builder.permissions_boundary == var.permissions_boundary_arn
+    error_message = "The Image Builder instance role must use the exact caller-owned boundary."
+  }
+}
+
+run "image_builder_rejects_role_as_boundary" {
+  command = plan
+
+  variables {
+    permissions_boundary_arn = "arn:aws:iam::000000000000:role/not-a-policy"
+  }
+
+  expect_failures = [var.permissions_boundary_arn]
+}

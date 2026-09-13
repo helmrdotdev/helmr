@@ -50,12 +50,24 @@ variable "enable_ssm" {
   default     = true
 }
 
+variable "external_permissions_boundary_arn" {
+  description = "Optional externally owned customer-managed IAM permissions boundary attached to the worker role. When set, this module does not create or mutate that policy; the caller owns correctness and immutability. Effective worker authority remains the intersection of the boundary with the module-generated inline role policy."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.external_permissions_boundary_arn == null || can(regex("^arn:aws[a-zA-Z-]*:iam::[0-9]{12}:policy/.+$", var.external_permissions_boundary_arn))
+    error_message = "external_permissions_boundary_arn must be null or a customer-managed IAM policy ARN."
+  }
+}
+
 variable "sealed_provider_definition" {
   description = "Exact realized provider authority retained for an existing immutable Worker Pool. Null creates the current definition; a value preserves its user data, IAM policies, SSM contract, and launch-template version while the Pool remains restore-capable."
   type = object({
     user_data_base64                                = string
     permission_policy_json                          = string
     boundary_policy_json                            = string
+    boundary_policy_arn                             = optional(string)
     enable_ssm                                      = bool
     launch_template_version                         = string
     health_check_grace_period_seconds               = number
@@ -85,6 +97,10 @@ variable "sealed_provider_definition" {
       can(base64decode(var.sealed_provider_definition.user_data_base64)) &&
       can(jsondecode(var.sealed_provider_definition.permission_policy_json)) &&
       can(jsondecode(var.sealed_provider_definition.boundary_policy_json)) &&
+      (
+        try(var.sealed_provider_definition.boundary_policy_arn, null) == null ||
+        can(regex("^arn:aws[a-zA-Z-]*:iam::[0-9]{12}:policy/.+$", var.sealed_provider_definition.boundary_policy_arn))
+      ) &&
       can(regex("^[1-9][0-9]*$", var.sealed_provider_definition.launch_template_version)) &&
       var.sealed_provider_definition.health_check_grace_period_seconds > 0 &&
       var.sealed_provider_definition.launch_lifecycle_heartbeat_timeout_seconds > var.sealed_provider_definition.lifecycle_heartbeat_interval_seconds &&

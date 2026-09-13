@@ -20,3 +20,13 @@ artifact provenance and are not AMI identity.
 The Product release publishes the exact Runtime object before deployment. A
 Worker retrieves that Control Plane-pinned object, validates it, and admits
 execution only after the real Firecracker qualification path succeeds.
+
+
+### Externally managed permissions boundary
+
+Set `permissions_boundary_arn` to attach a caller-owned customer-managed IAM
+policy to the Image Builder instance role. The default is null and preserves
+existing behavior. This module does not create or modify the external policy.
+The caller owns its permissions, immutability and deployment-role restrictions;
+attaching a boundary is not by itself a complete privilege-isolation guarantee.
+The boundary must allow the role's required artifact, image-build and SSM access.

@@ -139,12 +139,17 @@ supply definition: Worker module/user-data contract,
 resolved AMI, instance/runtime class, network/store/cache policy,
 root-volume shape, roles, and advertised capacity shape. Changing one of those
 sealed inputs creates a new Pool name; changing only ASG minimum or maximum
-size does not. Each Pool name keys a distinct Auto Scaling Group and launch
+size does not. Each Pool name keys a distinct Auto Scaling group and launch
 template. Before changing an immutable input, copy the old entry from
 `worker_generation_definitions` into `retained_worker_generations` with
 `min_size = 0`. The exported entry includes the realized user data, IAM
-documents, SSM choice, and exact launch-template version, so the retained ASG
-does not follow a newer template. Remove a retained entry only after Product
+documents, external boundary ARN and bytes when applicable, SSM choice, and exact
+launch-template version, so the retained ASG does not follow a newer template.
+
+Optional `permissions_boundary_arn` and `external_permissions_boundary_arn`
+attach caller-owned customer-managed IAM boundaries to Control Plane roles and
+the current Worker generation respectively. Null preserves the module defaults.
+Remove a retained entry only after Product
 restore authority no longer references that Pool and its exact drain-to-
 `termination_ready` retirement has completed. Control Plane does not
 authenticate or allowlist the AMI; `worker_generation_bindings` records the
