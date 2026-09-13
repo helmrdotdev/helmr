@@ -45,13 +45,13 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
 	}
 
 	var (
-		definitions int
-		schedules   int
-		workspaces  int
-		sessions    int
-		runs        int
-		queuedRuns  int
-		tokens      int
+		definitions   int
+		schedules     int
+		workspaces    int
+		sessions      int
+		runs          int
+		queuedRuns    int
+		tokens        int
 		scheduleState string
 	)
 	if err := pool.QueryRow(ctx, `
