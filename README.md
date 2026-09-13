@@ -1,255 +1,42 @@
 # Helmr
 
-Helmr is a self-hosted runtime for coding agents.
+**Build your own software factory.**
 
-It provides the infrastructure around an agent SDK: durable writable
-workspaces, controlled credentials, logs, run history, and approval points
-before a task writes back. Task code is written in TypeScript and runs inside
-Firecracker-backed Linux guests managed by your own Control Plane and workers.
+Infrastructure and APIs for your own agent harness.<br>
+Your agents. Your workflows. Your rules.
 
-## Status
+Write your agent logic in TypeScript, bring your tools and integrations, and
+run it in isolated Linux microVMs. Keep your workspace across runs, pause for
+human input, and inspect what happened.
 
-Helmr is in early active development. APIs, deployment shape, and operational
-defaults may change before a stable release. The current codebase is best suited
-for contributors, early adopters, and self-hosted evaluation.
+## What you get
 
-## What Helmr provides
+- **Persistent workspaces** — files and dependencies kept across runs.
+- **Tasks and sessions** — one-shot jobs or agents you can steer over time.
+- **Human input** — pause for approval or external input, then continue.
+- **Secrets and visibility** — runtime secret injection, logs, and run history.
+- **Infrastructure you control** — self-host in your own AWS account.
 
-- TypeScript Tasks and Actors with declared Workspaces, Secrets, Tokens,
-  timers, and run logic
-- Durable writable workspaces mounted inside isolated Linux guests
-- Durable Actor input/output, external completion Tokens, and long timers
-  before reviews, patches, or other side effects
-- Run status, logs, events, payloads, and history in the Control Plane
-- Task-declared secrets injected only at run time
-- A runtime boundary you own: your AWS account, your integrations, your workers
-- A Go Control Plane, worker, `helmr` CLI, TypeScript SDK, and console UI
+## Get started
 
-## Repository layout
-
-- `cmd/` - Go binaries for the CLI, Control Plane, worker, and guest agent
-- `internal/` - Go control-plane, worker, executor, database, and server code
-- `sdk/typescript/` - public task authoring and runtime client APIs
-- `runtime/typescript/` - guest-side TypeScript adapter
-- `proto/` - shared protocol definitions and generated bindings
-- `packages/console/` - self-hosted dashboard
-- `packages/web/` - public website and documentation site
-- `examples/` - runnable task projects
-- `images/` - Firecracker guest boot image recipes
-- `infra/aws/` - OpenTofu/Terraform modules and deployment examples
-- `nix/` and `scripts/` - pinned development, CI, and smoke-test entrypoints
-
-## Prerequisites
-
-The repository is built around a Nix-pinned toolchain. Use Nix when possible so
-Go, Bun, Buf, PostgreSQL, and infrastructure tooling match CI.
+Install the CLI:
 
 ```sh
-nix develop
-nix run .#doctor
+curl -fsSL https://helmr.dev/install | bash
 ```
 
-Without Nix, install the versions expected by `go.mod`, `package.json`, and the
-CI scripts. Firecracker execution requires a Linux host with KVM; macOS is
-useful for control-plane, SDK, CLI, and console development but cannot run the
-Linux microVM smoke path locally.
+Follow the [quickstart](https://helmr.dev/docs/quickstart/) to deploy and run your
+first task. You'll need a running control plane and worker; the
+[self-hosting guide](https://helmr.dev/docs/self-hosting/overview/) covers setup.
 
-## Quick start
+## Explore
 
-Start the local Control Plane and console:
+- [Documentation](https://helmr.dev/docs/)
+- [TypeScript SDK](https://helmr.dev/docs/reference/sdk/overview/)
+- [REST API](https://helmr.dev/docs/reference/rest-api/overview/)
+- [Examples](examples/)
 
-```sh
-nix develop
-make dev
-```
+Early, active development. APIs and deployment details may change before a
+stable release.
 
-The dev stack starts managed PostgreSQL, Redis, and ClickHouse when their URLs
-are not set, runs the Control Plane, and serves the console at:
-
-```text
-http://127.0.0.1:3000/dev/login
-```
-
-Use that URL to create a local owner session. Owned dev state under `.helmr-dev`
-persists across restarts; reset owned Postgres, ClickHouse, and CAS with
-`make dev-reset` when the stack is stopped. Production and Staging start empty;
-select the Demo environment in Settings for synthetic console fixtures (see
-`packages/console/README.md`).
-
-## Define a task
-
-A Task binds JavaScript run logic to an explicit Workspace. You may author it
-in TypeScript and compile it with the project's own build. The code inside the
-Task can call any agent SDK or tool; Helmr owns the adapter protocol around it.
-
-Create a task project with `helmr.config.ts` and one or more task modules:
-
-```ts
-import { image, sandbox, source, task, tokens } from "@helmr/sdk"
-import { writeFile } from "node:fs/promises"
-import { z } from "zod"
-
-const payload = z.object({
-  prNumber: z.number().int().positive(),
-})
-
-const base = image("repo-agent")
-  .from("node:24-bookworm-slim")
-  .workdir("/workspace")
-  .run(["npm", "install", "-g", "bun@1.3.13"])
-  .copy("/workspace/package.json", source.file("package.json"))
-  .run(["bun", "install"])
-  .run([
-    "sh",
-    "-ceu",
-    "apt-get update && apt-get install -y git ripgrep",
-  ])
-
-export const repoSandbox = sandbox({ id: "github-pr-review" })
-  .image(base)
-  .resources({ cpu: 2, memory: "4GiB" })
-
-export const reviewPr = task({
-  id: "review-pr",
-  maxDuration: "15m",
-  payload,
-  run: async (event, ctx) => {
-    // Call your agent SDK or review tooling here.
-    const summary = await reviewPullRequest({
-      cwd: process.cwd(),
-      prNumber: event.prNumber,
-      token: process.env.OPENAI_API_KEY ?? "",
-    })
-
-    const decisionToken = await tokens.create({ timeout: "15m" })
-    const decision = await decisionToken.wait({
-      schema: z.object({ approved: z.boolean() }),
-      metadata: {
-        summary,
-        prompt: "Post this review to GitHub?",
-      },
-    }).unwrap()
-    if (decision.approved) {
-      await writeFile("review-summary.txt", `${summary}\n`)
-    }
-  },
-})
-```
-
-```ts
-import { defineConfig } from "@helmr/sdk"
-
-export default defineConfig({
-  dirs: ["tasks"],
-})
-```
-
-Tasks start in the mounted workspace directory. Use relative paths for workspace
-files; absolute paths keep normal Linux container semantics.
-
-See [examples/](examples/) for deployable task projects, including dependency
-caching, CLI tooling, Token/timer waits, Task Secrets, and GitHub PR review
-flows.
-
-## Run A Task
-
-Remote Runs execute a deployed Task in an existing writable Workspace:
-
-```sh
-helmr deploy PATH/TO/TASK_PROJECT --project PROJECT --env ENVIRONMENT
-
-WORKSPACE_ID="$(helmr workspace create github-pr-review \
-  --key review-pr-123 \
-  --secret-env OPENAI_API_KEY=OPENAI_API_KEY \
-  --idempotency-key review-pr-123-workspace)"
-
-helmr task start review-pr \
-  --workspace "${WORKSPACE_ID}" \
-  --idempotency-key review-pr-123-run \
-  --payload-json '{"owner":"OWNER","repo":"REPO","prNumber":123}'
-```
-
-If a task needs repository files, clone or fetch them from inside the task using
-payload fields and declared secrets. Helmr keeps the runtime substrate generic;
-GitHub is a task integration, not a required run source.
-
-## Payloads and secrets
-
-Payload is audit data. Helmr persists it in plaintext in the database, run
-events, and telemetry. Do not put tokens, API keys, credentials, or sensitive
-personal data in payloads.
-
-Tasks declare the Helmr secret names they need and where each value appears
-inside the guest, such as an environment variable:
-
-```sh
-printf '%s' "$OPENAI_API_KEY" | helmr secret create OPENAI_API_KEY
-helmr task start my-task --workspace WORKSPACE_ID
-```
-
-Runs never receive secret values or binding maps. The deployed task definition is
-the contract; Helmr resolves declared secret names from the selected project
-environment when the run starts.
-
-## Checkpoint encryption
-
-Checkpoint artifacts are encrypted before leaving the worker staging directory.
-Workers require `CHECKPOINT_ENCRYPTION_KEY`, a base64-encoded 32-byte key.
-Use the same key for workers that must restore the same checkpoint state:
-
-```sh
-head -c 32 /dev/urandom | base64
-```
-
-## Development
-
-Common local checks:
-
-```sh
-make test
-make lint
-make build
-bun run typecheck
-```
-
-CI parity and platform-specific checks:
-
-```sh
-nix flake check
-nix run .#ci-checks
-nix run .#ci-policy
-nix run .#ci-generated
-nix run .#ci-typescript
-nix run .#ci-go-lint
-nix run .#ci-go-build
-nix run .#ci-go-race
-nix run .#ci-linux-compile
-nix run .#ci-firecracker-probe
-nix run .#ci-linux-lint
-nix run .#ci-infra-test
-nix run .#ci-postgres
-nix develop .#images --command bash tests/bundle_builder_e2e.sh
-```
-
-The Firecracker probe requires x86_64 Linux. On Linux, `nix flake check` also
-evaluates the Firecracker host NixOS module.
-
-Linux Firecracker smoke tests need a Linux host with KVM:
-
-```sh
-nix run .#smoke-linux
-```
-
-## More documentation
-
-- [SDK](sdk/) - TypeScript SDK and runtime client notes
-- [Runtime](runtime/) - guest-side runtime adapter responsibilities
-- [Examples](examples/) - runnable task projects
-- [AWS infrastructure](infra/aws/) - self-hosted AWS modules and dev smoke flow
-- [Scripts](scripts/) - maintenance and CI helper entrypoints
-- [Images](images/) - guest boot artifact recipes
-- [Proto](proto/) - protocol definitions and generated bindings
-
-## License
-
-Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
+[Apache 2.0](LICENSE).
