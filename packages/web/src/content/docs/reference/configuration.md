@@ -51,14 +51,14 @@ except names ending in `.example`, `.sample`, or `.template`.
 | `image` | `from`, `run`, `copy`, `copyFrom`, `workdir`, `env`, `user` |
 | `source` | `file(path)`, `directory(path)` |
 
-SDK Workspace creation uses inert Secret addresses rather than raw names:
+SDK Workspace creation uses plain Secret names:
 
 ```ts
 secrets: [
-  { secret: secrets.fromName("TOKEN"), env: "TOKEN" },
+  { secret: "TOKEN", env: { name: "TOKEN", mode: "raw" } },
   {
-    secret: secrets.fromName("config-json"),
-    file: "/run/secrets/config.json",
+    secret: "config-json",
+    file: { path: "/run/secrets/config.json" },
   },
 ]
 ```
@@ -67,10 +67,10 @@ The corresponding REST request body uses the canonical wire form:
 
 ```ts
 secrets: [
-  { name: "TOKEN", env: "TOKEN" },
+  { secret: "TOKEN", env: { name: "TOKEN", mode: "raw" } },
   {
-    name: "config-json",
-    file: "/run/secrets/config.json",
+    secret: "config-json",
+    file: { path: "/run/secrets/config.json" },
   },
 ]
 ```

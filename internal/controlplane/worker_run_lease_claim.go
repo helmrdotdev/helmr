@@ -84,6 +84,13 @@ func (s *Server) workerClaimRunLease(w http.ResponseWriter, r *http.Request) {
 		s.writeRunLeaseClaimFailure(w, authority, err)
 		return
 	}
+	if authority.mode == runLeaseClaimFresh {
+		response.ProtectedEnv, err = workspaceProtectedEnv(r.Context(), s.db, authority.workspace.EnvironmentID, authority.workspace.ID)
+		if err != nil {
+			s.writeRunLeaseClaimFailure(w, authority, err)
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, response)
 }
 

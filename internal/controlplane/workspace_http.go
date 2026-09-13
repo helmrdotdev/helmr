@@ -193,10 +193,10 @@ func (s *Server) getWorkspaceByReferenceHTTP(w http.ResponseWriter, r *http.Requ
 func (s *Server) resolveWorkspaceReference(
 	ctx context.Context,
 	reference workspaceReference,
-) (db.Workspace, error) {
+) (db.GetWorkspaceRow, error) {
 	id, err := ids.Parse(reference.ID)
 	if err != nil {
-		return db.Workspace{}, errors.New("workspace ID is invalid")
+		return db.GetWorkspaceRow{}, errors.New("workspace ID is invalid")
 	}
 	return s.db.GetWorkspace(ctx, db.GetWorkspaceParams{
 		OrgID:         pgvalue.UUID(reference.OrgID),
@@ -209,7 +209,7 @@ func (s *Server) resolveWorkspaceReference(
 func (s *Server) workspaceSnapshot(
 	ctx context.Context,
 	q db.Querier,
-	record db.Workspace,
+	record db.GetWorkspaceRow,
 ) (api.WorkspaceSnapshot, error) {
 	bindings, err := q.ListWorkspaceSecrets(ctx, record.ID)
 	if err != nil {
@@ -226,9 +226,9 @@ func (s *Server) workspaceSnapshot(
 		item := api.WorkspaceSecret{Name: binding.SecretName}
 		switch binding.PlacementKind {
 		case "env":
-			item.Env = binding.PlacementTarget
+			item.Env = &api.SecretEnv{Name: binding.PlacementTarget, Mode: binding.Mode, AllowedOrigins: binding.AllowedOrigins}
 		case "file":
-			item.File = binding.PlacementTarget
+			item.File = &api.SecretFile{Path: binding.PlacementTarget}
 		default:
 			return api.WorkspaceSnapshot{}, fmt.Errorf("unsupported workspace secret placement %q", binding.PlacementKind)
 		}

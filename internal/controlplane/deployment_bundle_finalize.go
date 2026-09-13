@@ -320,6 +320,11 @@ func (s *Server) streamDeploymentFinalization(
 				payload = publicDeploymentFinalizeError(completed.err)
 			}
 		}
+		// Completion and cancellation can both be ready in the select. Do not
+		// emit a terminal event after observing that the client disconnected.
+		if r.Context().Err() != nil {
+			return
+		}
 		if err := writeDeploymentFinalizeEvent(w, event, payload); err != nil {
 			cancel()
 			return

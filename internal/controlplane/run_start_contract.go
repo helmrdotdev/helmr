@@ -23,7 +23,7 @@ type runStartValidationAuthority struct {
 	parentRun      db.Run
 	runLease       db.RunLease
 	runtime        db.RuntimeInstance
-	workspace      db.Workspace
+	workspace      db.GetWorkspaceRow
 	workspaceMount db.WorkspaceMount
 	runWait        db.RunWait
 }

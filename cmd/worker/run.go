@@ -119,6 +119,7 @@ func run(log *slog.Logger) error {
 	guestImageDir := filepath.Join(imagesDir, "guest", "out")
 	rootfsPath := filepath.Join(guestImageDir, "rootfs.squashfs")
 	connectorConfig := networkConfig
+	connectorConfig.PrepareSecretTransport = controlPlaneClient.PrepareSecretTransport
 	connectorConfig.FirecrackerPath = cfg.FirecrackerPath
 	connectorConfig.CPUTemplateHelperPath = cfg.CPUTemplateHelperPath
 	connectorConfig.JailerPath = cfg.JailerPath

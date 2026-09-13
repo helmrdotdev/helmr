@@ -512,7 +512,7 @@ func finishActorRun(ctx context.Context, store db.Querier, authority runLeaseCla
 			return staleActorCompletion(err)
 		}
 	} else if actorNeedsContinuation(actor) {
-		if err := createActorContinuation(ctx, store, actor, authority.workspace, secrets, completedAt); err != nil {
+		if err := createActorContinuation(ctx, store, actor, db.LockActorInputWorkspaceRow(authority.workspace), secrets, completedAt); err != nil {
 			return err
 		}
 	}
@@ -541,7 +541,7 @@ func actorNeedsContinuation(actor db.Session) bool {
 		actor.CommittedInputSequence < actor.NextInputSequence-1
 }
 
-func createActorContinuation(ctx context.Context, store db.Querier, actor db.Session, ws db.Workspace, secrets []secret.DeliveryEnvelope, now pgtype.Timestamptz) error {
+func createActorContinuation(ctx context.Context, store db.Querier, actor db.Session, ws db.LockActorInputWorkspaceRow, secrets []secret.DeliveryEnvelope, now pgtype.Timestamptz) error {
 	runID := pgvalue.UUID(uuid.NewV7())
 	traceID, err := tracing.NewTraceID()
 	if err != nil {

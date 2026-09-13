@@ -117,3 +117,23 @@ func TestRunNetworkCounterContractRejectsMissingAndDuplicate(t *testing.T) {
 		}
 	}
 }
+
+func TestSecretProxyNetworkExceptionIsGuestSourceAndPortBound(t *testing.T) {
+	script, err := renderNetworkPolicy(networkPolicyInput{Tap: "tap0", Peer: "host0", Mark: 71, GuestIPv4: "192.168.127.2", TranslationIPv4: "100.96.0.2", BlockedIPv4CIDRs: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}, ResolverIPv4: "10.0.0.2", SecretProxy: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rule := range []string{
+		`input iifname "tap0" meta mark 71 ip saddr 192.168.127.2 ip daddr 192.168.127.1 tcp dport 3128 ct state new,established accept`,
+		`output oifname "tap0" ip saddr 192.168.127.1 ip daddr 192.168.127.2 tcp sport 3128 ct state established accept`,
+		`meta nfproto ipv6 counter name run_denied drop`,
+		`ip daddr @blocked_ipv4 counter name run_denied drop`,
+	} {
+		if !strings.Contains(script, rule) {
+			t.Fatalf("missing narrow policy %s", rule)
+		}
+	}
+	if strings.Contains(renderNetworkPolicyForTest(t), "3128") {
+		t.Fatal("ordinary Workspace opened proxy exception")
+	}
+}

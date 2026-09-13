@@ -184,7 +184,7 @@ func (s *Server) commitActorTurn(
 		}
 		if versionID != authority.workspace.HeadVersionID {
 			previousHeadVersionID := authority.workspace.HeadVersionID
-			authority.workspace, err = work.q.AdvanceActorWorkspaceHead(ctx, db.AdvanceActorWorkspaceHeadParams{
+			updatedWorkspace, updateErr := work.q.AdvanceActorWorkspaceHead(ctx, db.AdvanceActorWorkspaceHeadParams{
 				NewHeadVersionID: versionID, CompletedAt: committedAt, ID: authority.workspace.ID,
 				OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID,
 				EnvironmentID: authority.run.EnvironmentID, SessionID: authority.actor.ID,
@@ -192,6 +192,7 @@ func (s *Server) commitActorTurn(
 				WriterGeneration:      authority.workspace.WriterGeneration,
 				ExpectedHeadVersionID: previousHeadVersionID,
 			})
+			authority.workspace, err = db.LockRunLeaseClaimWorkspaceRow(updatedWorkspace), updateErr
 			if err != nil {
 				return staleActorTurnCommit(err)
 			}

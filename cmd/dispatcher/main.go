@@ -135,7 +135,11 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("configure Run lease reconciler: %w", err)
 	}
 	scheduleAuthority := deployment.NewScheduleAuthority()
-	scheduleAdmitter, err := schedule.NewDBAdmitter(pool, scheduleAuthority)
+	secretStore, err := secret.New(queries, pool, cfg.EncryptionKey)
+	if err != nil {
+		return fmt.Errorf("configure scheduled Workspace CA encryption: %w", err)
+	}
+	scheduleAdmitter, err := schedule.NewDBAdmitter(pool, scheduleAuthority, secretStore.GenerateProxyTrust)
 	if err != nil {
 		return fmt.Errorf("configure schedule admission: %w", err)
 	}

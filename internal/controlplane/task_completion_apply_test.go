@@ -138,7 +138,7 @@ func TestTaskCompletionRejectsRollbackOutsideRunBase(t *testing.T) {
 			BaseWorkspaceVersionID: runBase,
 		},
 		runLease: db.RunLease{State: db.RunLeaseStateFinalizing},
-		workspace: db.Workspace{
+		workspace: db.LockRunLeaseClaimWorkspaceRow{
 			HeadVersionID: runBase,
 		},
 	}
@@ -194,7 +194,7 @@ func TestTaskCompletionRejectsFinalizationKindMismatch(t *testing.T) {
 			FinalizationStartedAt:          pgvalue.Timestamptz(time.Now()),
 			FinalizationRequestFingerprint: pgvalue.Text("sha256:frozen"),
 		},
-		workspace: db.Workspace{HeadVersionID: baseID},
+		workspace: db.LockRunLeaseClaimWorkspaceRow{HeadVersionID: baseID},
 	}
 	if err := validateTaskCompletionAuthority(
 		context.Background(), nil, completion, authority,
@@ -231,7 +231,7 @@ func TestTaskWorkspaceRollbackMatchesCanonicalRootVersion(t *testing.T) {
 	workspaceID := pgvalue.UUID(uuid.NewV7())
 	authority := runLeaseClaimAuthority{
 		run:       db.Run{BaseWorkspaceVersionID: baseID},
-		workspace: db.Workspace{ID: workspaceID},
+		workspace: db.LockRunLeaseClaimWorkspaceRow{ID: workspaceID},
 	}
 	store := &taskWorkspaceRollbackFixture{version: db.WorkspaceVersion{
 		ID: baseID, WorkspaceID: workspaceID, ContentDigest: workspace.CanonicalEmptyTreeDigest, State: db.WorkspaceVersionStateCommitted,
@@ -265,7 +265,7 @@ func TestTaskWorkspaceRollbackMatchesVersionArtifact(t *testing.T) {
 	}
 	authority := runLeaseClaimAuthority{
 		run:       db.Run{BaseWorkspaceVersionID: baseID},
-		workspace: db.Workspace{ID: workspaceID},
+		workspace: db.LockRunLeaseClaimWorkspaceRow{ID: workspaceID},
 	}
 	store := &taskWorkspaceRollbackFixture{
 		version: db.WorkspaceVersion{
@@ -301,7 +301,7 @@ func TestRecordTaskWorkspaceVersionSeparatesTreeAndArtifactIdentity(t *testing.T
 			OrgID: pgvalue.UUID(uuid.NewV7()), ProjectID: pgvalue.UUID(uuid.NewV7()),
 			EnvironmentID: pgvalue.UUID(uuid.NewV7()),
 		},
-		workspace: db.Workspace{
+		workspace: db.LockRunLeaseClaimWorkspaceRow{
 			ID: pgvalue.UUID(uuid.NewV7()), OwnershipGeneration: 1, WriterGeneration: 2,
 		},
 		workspaceLease: db.WorkspaceLease{

@@ -160,7 +160,7 @@ func TestOpenDeliveriesUsesRecordedVersionAfterRotation(t *testing.T) {
 		Nonce:      encrypted.nonce,
 		Ciphertext: encrypted.ciphertext,
 	}
-	materials, err := store.OpenDeliveries(environmentID, []DeliveryEnvelope{{
+	materials, err := store.OpenDeliveries(environmentID, []DeliveryEnvelope{{Mode: "raw",
 		PlacementKind:   "env",
 		PlacementTarget: "TOKEN",
 		Secret:          secret,

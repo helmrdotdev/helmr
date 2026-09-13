@@ -70,9 +70,9 @@ func (s *taskStore) CreateAdmittedRootTaskRun(context.Context, db.CreateAdmitted
 	return s.run, nil
 }
 
-func (s *taskStore) ReserveWorkspaceForRun(_ context.Context, value db.ReserveWorkspaceForRunParams) (db.Workspace, error) {
+func (s *taskStore) ReserveWorkspaceForRun(_ context.Context, value db.ReserveWorkspaceForRunParams) (db.ReserveWorkspaceForRunRow, error) {
 	s.reserve = value
-	return db.Workspace{}, nil
+	return db.ReserveWorkspaceForRunRow{}, nil
 }
 
 func (s *taskStore) CreateAttemptSecretResolutions(_ context.Context, value db.CreateAttemptSecretResolutionsParams) (int64, error) {

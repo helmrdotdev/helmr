@@ -70,7 +70,7 @@ func CreateContinuation(
 	ctx context.Context,
 	store db.Querier,
 	actor db.Session,
-	workspace db.Workspace,
+	workspace db.LockActorInputWorkspaceRow,
 	bindings []db.LockWorkspaceSecretsForAdmissionRow,
 ) (pgtype.UUID, error) {
 	runID := pgvalue.UUID(uuid.NewV7())

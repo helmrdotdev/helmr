@@ -76,10 +76,10 @@ func (a *ScheduleAuthority) ResolveScheduledTask(
 	secretPlacements := make([]workspace.SecretPlacement, 0, len(manifest.Schedule.Workspace.Secrets))
 	for _, placement := range manifest.Schedule.Workspace.Secrets {
 		item := workspace.SecretPlacement{Name: placement.Name}
-		if placement.Env != "" {
-			item.Kind, item.Target = "env", placement.Env
+		if placement.Env != nil {
+			item.Kind, item.Target, item.Mode, item.AllowedOrigins = "env", placement.Env.Name, placement.Env.Mode, placement.Env.AllowedOrigins
 		} else {
-			item.Kind, item.Target = "file", placement.File
+			item.Kind, item.Target, item.Mode = "file", placement.File.Path, "raw"
 		}
 		secretPlacements = append(secretPlacements, item)
 	}

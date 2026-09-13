@@ -49,12 +49,12 @@ func TestAttemptSecretDeliveryLocksCompleteWorkspacePlacementSet(t *testing.T) {
 		`, versionID, secretID, version+1)
 	}
 	dbtest.MustExec(t, ctx, tx, `
-		INSERT INTO workspace_secrets (
+		INSERT INTO workspace_secrets (mode,
 			workspace_id, environment_id, placement_kind, placement_target, secret_id
 		)
 		VALUES
-			($1, $2, 'env', 'TOKEN', $3),
-			($1, $2, 'file', '/run/helmr/token', $3)
+			('raw', $1, $2, 'env', 'TOKEN', $3),
+			('raw', $1, $2, 'file', '/run/secrets/token', $3)
 	`, workspaceID, fixture.environmentID, secretID)
 	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO secret_resolutions (
@@ -88,10 +88,10 @@ func TestAttemptSecretDeliveryLocksCompleteWorkspacePlacementSet(t *testing.T) {
 	}
 
 	dbtest.MustExec(t, ctx, tx, `
-		INSERT INTO workspace_secrets (
+		INSERT INTO workspace_secrets (mode,
 			workspace_id, environment_id, placement_kind, placement_target, secret_id
 		)
-		SELECT $1, $2, 'env', 'TOKEN_' || ordinal::text, $3
+		SELECT 'raw', $1, $2, 'env', 'TOKEN_' || ordinal::text, $3
 		  FROM generate_series(1, 63) AS ordinal
 	`, workspaceID, fixture.environmentID, secretID)
 	rows, err = New(tx).LockAttemptSecretDelivery(ctx, LockAttemptSecretDeliveryParams{

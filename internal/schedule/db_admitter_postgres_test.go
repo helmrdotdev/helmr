@@ -25,7 +25,7 @@ func TestDBAdmitterCommitsOneScheduleAdmissionTuple(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	admitter, err := NewDBAdmitter(pool, fixedAuthority{digest: runtimeDigest})
+	admitter, err := NewDBAdmitter(pool, fixedAuthority{digest: runtimeDigest}, testProxyTrustGenerator(t, pool))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestDBAdmitterRejectsTaskWithoutScheduledPayloadAuthority(t *testing.T) {
 		   AND kind = 'task'
 		   AND declared_id = 'daily-report'
 	`, value.EnvironmentID)
-	admitter, err := NewDBAdmitter(pool, fixedAuthority{digest: runtimeDigest})
+	admitter, err := NewDBAdmitter(pool, fixedAuthority{digest: runtimeDigest}, testProxyTrustGenerator(t, pool))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +177,7 @@ func TestWorkerRetriesSameScheduleInstantWhenWorkspaceSecretIsRevoked(t *testing
 		        LIMIT 1
 		 )
 	`, value.ID)
-	admitter, err := NewDBAdmitter(pool, fixedAuthority{digest: runtimeDigest})
+	admitter, err := NewDBAdmitter(pool, fixedAuthority{digest: runtimeDigest}, testProxyTrustGenerator(t, pool))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -318,7 +318,7 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 	`, deploymentID, orgID, projectID, environmentID,
 		"sha256:"+strings.Repeat("03", 32), runtimeDigest, programArtifactID, queueConfig)
 	taskManifest := []byte(
-		`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * *","timezone":"UTC","workspace":{"sandboxId":"scheduler","secrets":[{"env":"API_TOKEN","name":"API_TOKEN"}]}}}`,
+		`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * *","timezone":"UTC","workspace":{"sandboxId":"scheduler","secrets":[{"secret":"API_TOKEN","env":{"name":"API_TOKEN","mode":"raw"}}]}}}`,
 	)
 	taskManifestHash := sha256.New()
 	_, _ = taskManifestHash.Write([]byte("helmr.deployment-definition-manifest.v0\x00"))
@@ -388,10 +388,10 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 	`, scheduleID, environmentID, taskDefinitionID, deploymentID,
 		scheduledAt, claimExpiresAt)
 	dbtest.MustExec(t, t.Context(), pool, `
-		INSERT INTO schedule_secrets (
+		INSERT INTO schedule_secrets (mode,
 			schedule_id, environment_id, placement_kind, placement_target, secret_id
 		)
-		VALUES ($1, $2, 'env', 'API_TOKEN', $3)
+		VALUES ('raw', $1, $2, 'env', 'API_TOKEN', $3)
 	`, scheduleID, environmentID, secretID)
 	value, err := db.New(pool).GetSchedule(t.Context(), db.GetScheduleParams{
 		EnvironmentID: pgvalue.UUID(environmentID),
@@ -566,7 +566,7 @@ func (fixedAuthority) ResolveScheduledTask(
 		RetryPolicy:         []byte(`{"enabled":false}`),
 		SandboxDeclaredID:   "scheduler",
 		SecretPlacements: []workspace.SecretPlacement{{
-			Name: "API_TOKEN", Kind: "env", Target: "API_TOKEN",
+			Name: "API_TOKEN", Kind: "env", Target: "API_TOKEN", Mode: "raw",
 		}},
 	}, nil
 }

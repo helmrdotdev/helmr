@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import { HelmrClient, actor, secrets, task, workspaces } from "./index"
+import { HelmrClient, actor, task, workspaces } from "./index"
 import { installRuntimeOperations } from "./internal"
 
 describe("HelmrClient Tasks", () => {
@@ -115,13 +115,14 @@ describe("HelmrClient Workspaces", () => {
       sandbox_id: "repository-agent",
       deployment_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
       status: "available",
-      secrets: [],
+      secrets: [{ secret: "token", env: { name: "TOKEN", mode: "protected", allowed_origins: ["https://example.com"] } }],
       last_activity_at: "2026-07-24T11:50:00Z",
       created_at: "2026-07-24T11:50:00Z",
       updated_at: "2026-07-24T11:50:00Z",
     }
     const responses: unknown[] = [
       { ...workspace, owner: { run_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" } },
+      { ...workspace, owner: { session_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33" } },
       workspace,
       {
         ...workspace,
@@ -142,6 +143,9 @@ describe("HelmrClient Workspaces", () => {
     expect((await ref.retrieve()).owner).toEqual({
       runId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
     })
+    const sessionOwned = await ref.retrieve()
+    expect(sessionOwned.owner).toEqual({ sessionId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33" })
+    expect(sessionOwned.secrets).toEqual([{ secret: "token", env: { name: "TOKEN", mode: "protected", allowedOrigins: ["https://example.com"] } }])
     expect((await ref.retrieve()).owner).toBeUndefined()
     await expect(ref.retrieve()).rejects.toThrow(
       "Workspace response.owner must name exactly one of session_id or run_id",
@@ -202,9 +206,9 @@ describe("HelmrClient Workspaces", () => {
     await expect(client.sandboxes.createWorkspace("repository-agent", {
       secrets: [{
         secret: { name: "GITHUB_TOKEN" } as never,
-        env: "GITHUB_TOKEN",
+        env: { name: "GITHUB_TOKEN", mode: "raw" },
       }],
-    })).rejects.toThrow("secrets.fromName()")
+    })).rejects.toThrow("Secret name is invalid")
     expect(requests).toHaveLength(0)
 
     const inertRef = client.workspaces.ref(
@@ -218,8 +222,8 @@ describe("HelmrClient Workspaces", () => {
       {
         key: "repository",
         secrets: [
-          { secret: secrets.fromName("GITHUB_TOKEN"), env: "GITHUB_TOKEN" },
-          { secret: secrets.fromName("MODEL_CONFIG"), file: "/run/secrets/model.json" },
+          { secret: "GITHUB_TOKEN", env: { name: "GITHUB_TOKEN", mode: "raw" } },
+          { secret: "MODEL_CONFIG", file: { path: "/run/secrets/model.json" } },
         ],
         idempotencyKey: "create-repository",
       },
@@ -232,8 +236,8 @@ describe("HelmrClient Workspaces", () => {
     expect(JSON.parse(String(requests[0]!.init?.body))).toEqual({
       key: "repository",
       secrets: [
-        { name: "GITHUB_TOKEN", env: "GITHUB_TOKEN" },
-        { name: "MODEL_CONFIG", file: "/run/secrets/model.json" },
+        { secret: "GITHUB_TOKEN", env: { name: "GITHUB_TOKEN", mode: "raw" } },
+        { secret: "MODEL_CONFIG", file: { path: "/run/secrets/model.json" } },
       ],
       idempotency_key: "create-repository",
     })

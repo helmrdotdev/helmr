@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"testing"
 	"time"
 	"uuid"
@@ -73,7 +74,7 @@ func TestRunPinnedWorkspaceCreateUsesSourceDeploymentAndFencesBeforeClaim(t *tes
 		},
 		DeclaredID: "workspace.v1", Key: &key,
 		Secrets: []api.WorkspaceSecret{
-			{Name: "API_TOKEN", Env: "API_TOKEN"},
+			{Name: "API_TOKEN", Env: &api.SecretEnv{Name: "API_TOKEN", Mode: "raw"}},
 		},
 		IdempotencyKey: "create",
 		Authorize: func(context.Context, db.Querier) error {
@@ -87,7 +88,7 @@ func TestRunPinnedWorkspaceCreateUsesSourceDeploymentAndFencesBeforeClaim(t *tes
 	if created.Snapshot.ID != created.WorkspaceID.String() ||
 		created.Snapshot.Status != api.WorkspaceStatusAvailable ||
 		len(created.Snapshot.Secrets) != 1 ||
-		created.Snapshot.Secrets[0] != (api.WorkspaceSecret{Name: "API_TOKEN", Env: "API_TOKEN"}) {
+		!reflect.DeepEqual(created.Snapshot.Secrets[0], api.WorkspaceSecret{Name: "API_TOKEN", Env: &api.SecretEnv{Name: "API_TOKEN", Mode: "raw"}}) {
 		t.Fatalf("creation snapshot = %+v", created.Snapshot)
 	}
 	if _, err := fixture.pool.Exec(t.Context(), `
@@ -697,5 +698,53 @@ SELECT workspaces.state, workspaces.deployment_definition_id,
 			"workspace=%s definition=%s runtimes=%d",
 			workspaceState, retainedDefinitionID, retainedRuntimeCount,
 		)
+	}
+}
+
+func TestProtectedWorkspaceCreatePersistsFixedMixedBindings(t *testing.T) {
+	fixture := newActorStartPostgresFixture(t, 1)
+	fixture.server.secretProxy = testWorkspaceCAStore(t, fixture.pool)
+	request := workspaceCreateRequest{OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID, Declaration: workspaceDeclarationSelector{Kind: workspaceDeclarationPromoted}, DeclaredID: "workspace.v1", IdempotencyKey: "mixed-protected", Secrets: []api.WorkspaceSecret{
+		{Name: "API_TOKEN", Env: &api.SecretEnv{Name: "GH_TOKEN", Mode: "protected", AllowedOrigins: []string{"HTTPS://API.GITHUB.COM:443/"}}},
+		{Name: "API_TOKEN", Env: &api.SecretEnv{Name: "RAW_TOKEN", Mode: "raw"}},
+		{Name: "API_TOKEN", File: &api.SecretFile{Path: "/run/secrets/key"}},
+	}}
+	result, err := fixture.server.createWorkspace(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := db.New(fixture.pool).ListWorkspaceSecrets(t.Context(), pgvalue.UUID(result.WorkspaceID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 3 || len(result.Snapshot.Secrets) != 3 {
+		t.Fatal("mixed bindings not persisted")
+	}
+	for _, row := range rows {
+		if row.PlacementTarget == "GH_TOKEN" {
+			if row.Mode != "protected" || len(row.AllowedOrigins) != 1 || row.AllowedOrigins[0] != "https://api.github.com" || len(row.Placeholder) != len("hlmr_protected_")+64 {
+				t.Fatal("protected metadata or selector incorrect")
+			}
+		} else if row.Mode != "raw" || row.Placeholder != "" || len(row.AllowedOrigins) != 0 {
+			t.Fatal("raw binding acquired protected state")
+		}
+		if row.SecretID != rows[0].SecretID {
+			t.Fatal("bindings changed stable Secret identity")
+		}
+	}
+	replay, err := fixture.server.createWorkspace(t.Context(), request)
+	if err != nil || !replay.Replayed || replay.WorkspaceID != result.WorkspaceID {
+		t.Fatal("creation replay changed Workspace")
+	}
+	after, err := db.New(fixture.pool).ListWorkspaceSecrets(t.Context(), pgvalue.UUID(result.WorkspaceID))
+	if err != nil || !reflect.DeepEqual(rows, after) {
+		t.Fatal("creation replay changed fixed selectors")
+	}
+	wire, err := json.Marshal(result.Snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(wire, []byte("hlmr_protected_")) || bytes.Contains(wire, []byte("ciphertext")) || bytes.Contains(wire, []byte("private_key")) {
+		t.Fatal("public readback exposed private transport data")
 	}
 }

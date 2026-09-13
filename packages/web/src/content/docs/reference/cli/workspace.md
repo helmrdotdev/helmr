@@ -19,3 +19,25 @@ All commands also accept project/environment scope.
 `--timeout` (default 5m, maximum 15m). It returns bounded stdout/stderr and exits
 with the remote process exit code. The `--` separator is required before the
 remote command.
+
+## Secret bindings at creation
+
+Use one JSON binding array with `--secrets-file`; it contains names and placements,
+never Secret values. The wire schema uses `allowed_origins` (SDK: `allowedOrigins`).
+
+```json
+[
+  {"secret":"github-token","env":{"name":"GH_TOKEN","mode":"protected","allowed_origins":["https://api.github.com"]}},
+  {"secret":"database-password","env":{"name":"PGPASSWORD","mode":"raw"}},
+  {"secret":"client-key","file":{"path":"/run/secrets/client.key"}}
+]
+```
+
+```sh
+helmr workspace create reviewer --secrets-file bindings.json --idempotency-key create-reviewer
+```
+
+Bindings are fixed at Workspace creation. See [Secrets](/docs/concepts/secrets/)
+for client support, upstream trust, rotation, and revocation limits. Console
+Workspaces → Create Workspace offers the same choices;
+Workspace detail shows modes and origins without values.

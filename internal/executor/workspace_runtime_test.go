@@ -83,9 +83,9 @@ func TestWorkspaceRuntimeVerticalContract(t *testing.T) {
 					CorrelationId: correlationID, DeclaredId: "cache", Key: &key,
 					IdempotencyKey: &idempotencyKey,
 					Secrets: []*programv0.WorkspaceSecretPlacement{{
-						Name: "TOKEN",
+						Secret: "TOKEN",
 						Placement: &programv0.WorkspaceSecretPlacement_Env{
-							Env: "TOKEN",
+							Env: &programv0.SecretEnvBinding{Name: "TOKEN", Mode: "raw"},
 						},
 					}},
 				},

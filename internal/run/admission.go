@@ -24,7 +24,7 @@ type TaskRequest struct {
 type Store interface {
 	LockWorkspaceSecretsForAdmission(context.Context, pgtype.UUID) ([]db.LockWorkspaceSecretsForAdmissionRow, error)
 	CreateAdmittedRootTaskRun(context.Context, db.CreateAdmittedRootTaskRunParams) (db.CreateAdmittedRootTaskRunRow, error)
-	ReserveWorkspaceForRun(context.Context, db.ReserveWorkspaceForRunParams) (db.Workspace, error)
+	ReserveWorkspaceForRun(context.Context, db.ReserveWorkspaceForRunParams) (db.ReserveWorkspaceForRunRow, error)
 	secret.AttemptResolutionStore
 }
 

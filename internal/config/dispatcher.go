@@ -22,5 +22,9 @@ func LoadDispatcher() (Dispatcher, error) {
 	if err != nil {
 		return cfg, err
 	}
+	cfg.EncryptionKey, err = rootKey("ENCRYPTION_KEY")
+	if err != nil {
+		return cfg, err
+	}
 	return cfg, nil
 }

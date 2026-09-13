@@ -28,5 +28,4 @@ secrets? })`; the result is a `WorkspaceRef`.
 | `delete({ idempotencyKey? })` | Deletion receipt. |
 
 Workspace statuses are `available`, `recovery_required`, and `deleting`.
-Secrets are placed at creation through `secrets.fromName(name)`
-addresses; plaintext secret values are not part of a Workspace request.
+Secrets are bound at creation using plain string names; plaintext secret values are not part of a Workspace request.

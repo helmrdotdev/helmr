@@ -2234,6 +2234,8 @@ type WorkspaceBasicExecRequest struct {
 	BaseWorkspaceVersionId string                      `protobuf:"bytes,5,opt,name=base_workspace_version_id,json=baseWorkspaceVersionId,proto3" json:"base_workspace_version_id,omitempty"`
 	OwnershipGeneration    int64                       `protobuf:"varint,6,opt,name=ownership_generation,json=ownershipGeneration,proto3" json:"ownership_generation,omitempty"`
 	WriterGeneration       int64                       `protobuf:"varint,7,opt,name=writer_generation,json=writerGeneration,proto3" json:"writer_generation,omitempty"`
+	ProtectedEnv           map[string]string           `protobuf:"bytes,8,rep,name=protected_env,json=protectedEnv,proto3" json:"protected_env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	ProxyCa                []byte                      `protobuf:"bytes,9,opt,name=proxy_ca,json=proxyCa,proto3" json:"proxy_ca,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
 }
@@ -2315,6 +2317,20 @@ func (x *WorkspaceBasicExecRequest) GetWriterGeneration() int64 {
 		return x.WriterGeneration
 	}
 	return 0
+}
+
+func (x *WorkspaceBasicExecRequest) GetProtectedEnv() map[string]string {
+	if x != nil {
+		return x.ProtectedEnv
+	}
+	return nil
+}
+
+func (x *WorkspaceBasicExecRequest) GetProxyCa() []byte {
+	if x != nil {
+		return x.ProxyCa
+	}
+	return nil
 }
 
 type WorkspaceBasicExecResult struct {
@@ -2646,7 +2662,7 @@ const file_workspace_proto_rawDesc = "" +
 	"\x11captured_artifact\x18\x02 \x01(\v2%.helmr.workspace.v0.WorkspaceArtifactR\x10capturedArtifact\x12\x1d\n" +
 	"\n" +
 	"error_json\x18\x03 \x01(\tR\terrorJson\x12N\n" +
-	"\rcaptured_tree\x18\x04 \x01(\v2).helmr.workspace.v0.WorkspaceTreeIdentityR\fcapturedTree\"\x82\x03\n" +
+	"\rcaptured_tree\x18\x04 \x01(\v2).helmr.workspace.v0.WorkspaceTreeIdentityR\fcapturedTree\"\xc4\x04\n" +
 	"\x19WorkspaceBasicExecRequest\x12J\n" +
 	"\benvelope\x18\x01 \x01(\v2..helmr.workspace.v0.WorkspaceOperationEnvelopeR\benvelope\x12!\n" +
 	"\frequest_json\x18\x02 \x01(\tR\vrequestJson\x12E\n" +
@@ -2654,7 +2670,12 @@ const file_workspace_proto_rawDesc = "" +
 	"\x05stdin\x18\x04 \x01(\fR\x05stdin\x129\n" +
 	"\x19base_workspace_version_id\x18\x05 \x01(\tR\x16baseWorkspaceVersionId\x121\n" +
 	"\x14ownership_generation\x18\x06 \x01(\x03R\x13ownershipGeneration\x12+\n" +
-	"\x11writer_generation\x18\a \x01(\x03R\x10writerGeneration\"\xd1\x01\n" +
+	"\x11writer_generation\x18\a \x01(\x03R\x10writerGeneration\x12d\n" +
+	"\rprotected_env\x18\b \x03(\v2?.helmr.workspace.v0.WorkspaceBasicExecRequest.ProtectedEnvEntryR\fprotectedEnv\x12\x19\n" +
+	"\bproxy_ca\x18\t \x01(\fR\aproxyCa\x1a?\n" +
+	"\x11ProtectedEnvEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xd1\x01\n" +
 	"\x18WorkspaceBasicExecResult\x12\x1d\n" +
 	"\n" +
 	"error_json\x18\x01 \x01(\tR\terrorJson\x12\x1b\n" +
@@ -2680,7 +2701,7 @@ func file_workspace_proto_rawDescGZIP() []byte {
 	return file_workspace_proto_rawDescData
 }
 
-var file_workspace_proto_msgTypes = make([]protoimpl.MessageInfo, 34)
+var file_workspace_proto_msgTypes = make([]protoimpl.MessageInfo, 35)
 var file_workspace_proto_goTypes = []any{
 	(*WorkspaceOperationEnvelope)(nil),         // 0: helmr.workspace.v0.WorkspaceOperationEnvelope
 	(*WorkspaceArtifact)(nil),                  // 1: helmr.workspace.v0.WorkspaceArtifact
@@ -2716,6 +2737,7 @@ var file_workspace_proto_goTypes = []any{
 	(*WorkspaceBasicExecRequest)(nil),          // 31: helmr.workspace.v0.WorkspaceBasicExecRequest
 	(*WorkspaceBasicExecResult)(nil),           // 32: helmr.workspace.v0.WorkspaceBasicExecResult
 	(*WorkspaceSecretDelivery)(nil),            // 33: helmr.workspace.v0.WorkspaceSecretDelivery
+	nil,                                        // 34: helmr.workspace.v0.WorkspaceBasicExecRequest.ProtectedEnvEntry
 }
 var file_workspace_proto_depIdxs = []int32{
 	2,  // 0: helmr.workspace.v0.WorkspaceRunAuthority.fence:type_name -> helmr.workspace.v0.WorkspaceAuthorityFence
@@ -2752,11 +2774,12 @@ var file_workspace_proto_depIdxs = []int32{
 	12, // 31: helmr.workspace.v0.StopWorkspaceResponse.captured_tree:type_name -> helmr.workspace.v0.WorkspaceTreeIdentity
 	0,  // 32: helmr.workspace.v0.WorkspaceBasicExecRequest.envelope:type_name -> helmr.workspace.v0.WorkspaceOperationEnvelope
 	33, // 33: helmr.workspace.v0.WorkspaceBasicExecRequest.secrets:type_name -> helmr.workspace.v0.WorkspaceSecretDelivery
-	34, // [34:34] is the sub-list for method output_type
-	34, // [34:34] is the sub-list for method input_type
-	34, // [34:34] is the sub-list for extension type_name
-	34, // [34:34] is the sub-list for extension extendee
-	0,  // [0:34] is the sub-list for field type_name
+	34, // 34: helmr.workspace.v0.WorkspaceBasicExecRequest.protected_env:type_name -> helmr.workspace.v0.WorkspaceBasicExecRequest.ProtectedEnvEntry
+	35, // [35:35] is the sub-list for method output_type
+	35, // [35:35] is the sub-list for method input_type
+	35, // [35:35] is the sub-list for extension type_name
+	35, // [35:35] is the sub-list for extension extendee
+	0,  // [0:35] is the sub-list for field type_name
 }
 
 func init() { file_workspace_proto_init() }
@@ -2774,7 +2797,7 @@ func file_workspace_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_workspace_proto_rawDesc), len(file_workspace_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   34,
+			NumMessages:   35,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

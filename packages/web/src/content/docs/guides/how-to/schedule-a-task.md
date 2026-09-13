@@ -12,7 +12,6 @@ import {
   image,
   sandbox,
   schedules,
-  secrets,
 } from "@helmr/sdk"
 
 export const reportingSandbox = sandbox({
@@ -31,8 +30,8 @@ export const dailyReport = schedules.task({
     sandbox: reportingSandbox,
     secrets: [
       {
-        secret: secrets.fromName("REPORT_TOKEN"),
-        env: "REPORT_TOKEN",
+        secret: "REPORT_TOKEN",
+        env: { name: "REPORT_TOKEN", mode: "raw" },
       },
     ],
   },

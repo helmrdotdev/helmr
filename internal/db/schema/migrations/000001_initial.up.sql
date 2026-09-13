@@ -774,6 +774,10 @@ CREATE TABLE schedule_secrets (
         AND octet_length(placement_target) <= 4096
     ),
     secret_id UUID NOT NULL,
+    mode TEXT NOT NULL CHECK (mode IN ('raw', 'protected')),
+    allowed_origins TEXT[] NOT NULL DEFAULT '{}',
+    CHECK ((mode = 'raw' AND cardinality(allowed_origins) = 0)
+        OR (mode = 'protected' AND placement_kind = 'env' AND cardinality(allowed_origins) BETWEEN 1 AND 16)),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (schedule_id, placement_kind, placement_target),
     FOREIGN KEY (environment_id, schedule_id)
@@ -822,6 +826,21 @@ CREATE TABLE workspaces (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     deleted_at TIMESTAMPTZ,
+    secret_ca_certificate BYTEA,
+    secret_ca_private_key_nonce BYTEA,
+    secret_ca_private_key_ciphertext BYTEA,
+    secret_ca_not_after TIMESTAMPTZ,
+    CHECK (
+        num_nonnulls(secret_ca_certificate, secret_ca_private_key_nonce,
+                     secret_ca_private_key_ciphertext, secret_ca_not_after) = 0
+        OR (
+            num_nonnulls(secret_ca_certificate, secret_ca_private_key_nonce,
+                         secret_ca_private_key_ciphertext, secret_ca_not_after) = 4
+            AND octet_length(secret_ca_certificate) > 0
+            AND octet_length(secret_ca_private_key_nonce) > 0
+            AND octet_length(secret_ca_private_key_ciphertext) > 0
+        )
+    ),
     UNIQUE (environment_id, id),
     UNIQUE (environment_id, id, deployment_definition_id),
     UNIQUE (environment_id, id, region_id),
@@ -878,6 +897,12 @@ CREATE TABLE workspace_secrets (
         AND octet_length(placement_target) <= 4096
     ),
     secret_id UUID NOT NULL,
+    mode TEXT NOT NULL CHECK (mode IN ('raw', 'protected')),
+    allowed_origins TEXT[] NOT NULL DEFAULT '{}',
+    CHECK ((mode = 'raw' AND cardinality(allowed_origins) = 0)
+        OR (mode = 'protected' AND placement_kind = 'env' AND cardinality(allowed_origins) BETWEEN 1 AND 16)),
+    placeholder TEXT NOT NULL DEFAULT '',
+    CHECK ((mode = 'raw' AND placeholder = '') OR (mode = 'protected' AND placeholder ~ '^hlmr_protected_[a-f0-9]{64}$')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (workspace_id, placement_kind, placement_target),
     UNIQUE (workspace_id, placement_kind, placement_target, secret_id),

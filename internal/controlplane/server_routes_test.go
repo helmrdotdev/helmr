@@ -211,6 +211,8 @@ POST /worker/v1/run/runtime-instances/failed
 POST /worker/v1/run/runtime-instances/ready
 POST /worker/v1/run/runtime-instances/reconcile
 POST /worker/v1/run/runtime-substrates/register
+POST /worker/v1/run/secret-proxy/prepare
+POST /worker/v1/run/secret-proxy/resolve
 POST /worker/v1/run/sessions/close
 POST /worker/v1/run/sessions/complete
 POST /worker/v1/run/sessions/inputs/send

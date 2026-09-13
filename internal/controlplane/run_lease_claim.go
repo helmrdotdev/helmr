@@ -17,7 +17,7 @@ type runLeaseClaimAuthority struct {
 	actor                  db.Session
 	parentRun              db.Run
 	run                    db.Run
-	workspace              db.Workspace
+	workspace              db.LockRunLeaseClaimWorkspaceRow
 	parentAttempt          db.RunAttempt
 	attempt                db.RunAttempt
 	workerGroup            db.WorkerGroup
@@ -923,7 +923,7 @@ func markRunLeaseStartingInTx(
 	return authority, nil
 }
 
-func validateClaimWorkspace(run db.Run, workspace db.Workspace) error {
+func validateClaimWorkspace(run db.Run, workspace db.LockRunLeaseClaimWorkspaceRow) error {
 	if workspace.State != db.WorkspaceStateActive ||
 		workspace.DesiredState != db.WorkspaceDesiredStateActive {
 		return errStaleRunLeaseClaim

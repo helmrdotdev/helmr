@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 	"uuid"
@@ -19,7 +20,7 @@ func TestReconcileSchedulesPinsPerFireWorkspaceAuthority(t *testing.T) {
 		t,
 		target,
 		"daily-report",
-		`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * *","timezone":"UTC","workspace":{"sandboxId":"reporting","secrets":[{"env":"REPORT_TOKEN","name":"REPORT_TOKEN"}]}}}`,
+		`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * *","timezone":"UTC","workspace":{"sandboxId":"reporting","secrets":[{"secret":"REPORT_TOKEN","env":{"name":"REPORT_TOKEN","mode":"raw"}}]}}}`,
 	)
 	ordinary := promotionTaskDefinition(
 		t,
@@ -114,8 +115,8 @@ func TestReconcileSchedulesLocksSecretsBeforeMutation(t *testing.T) {
 	sandbox := promotionSandboxDefinition(target, "runtime")
 	store := &promotionScheduleStore{
 		definitions: []db.DeploymentDefinition{
-			promotionTaskDefinition(t, target, "z-task", `{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * *","timezone":"UTC","workspace":{"sandboxId":"runtime","secrets":[{"env":"Z_TOKEN","name":"Z_TOKEN"}]}}}`),
-			promotionTaskDefinition(t, target, "a-task", `{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * *","timezone":"UTC","workspace":{"sandboxId":"runtime","secrets":[{"env":"A_TOKEN","name":"A_TOKEN"}]}}}`),
+			promotionTaskDefinition(t, target, "z-task", `{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * *","timezone":"UTC","workspace":{"sandboxId":"runtime","secrets":[{"secret":"Z_TOKEN","env":{"name":"Z_TOKEN","mode":"raw"}}]}}}`),
+			promotionTaskDefinition(t, target, "a-task", `{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * *","timezone":"UTC","workspace":{"sandboxId":"runtime","secrets":[{"secret":"A_TOKEN","env":{"name":"A_TOKEN","mode":"raw"}}]}}}`),
 			sandbox,
 		},
 		secrets: map[string]db.Secret{
@@ -298,4 +299,39 @@ func (s *promotionScheduleStore) ArchiveOmittedSchedules(
 	s.archived = append(s.archived, params)
 	s.events = append(s.events, "archive")
 	return nil
+}
+
+func TestScheduleAndDirectWorkspaceOriginCapacity(t *testing.T) {
+	for _, variant := range []string{"distinct", "repeated", "ports", "dedup"} {
+		t.Run(variant, func(t *testing.T) {
+			var bindings []api.WorkspaceSecret
+			for i := 0; i < 16; i++ {
+				env := &api.SecretEnv{Name: fmt.Sprintf("TOKEN_%d", i), Mode: "protected"}
+				for j := 0; j < 16; j++ {
+					value := fmt.Sprintf("https://h%d.example.com", i*16+j)
+					switch variant {
+					case "repeated":
+						value = fmt.Sprintf("https://h%d.example.com", j)
+					case "ports":
+						value = fmt.Sprintf("https://example.com:%d", 1000+j)
+					case "dedup":
+						value = "https://EXAMPLE.com:443/"
+					}
+					env.AllowedOrigins = append(env.AllowedOrigins, value)
+				}
+				bindings = append(bindings, api.WorkspaceSecret{Name: "token", Env: env})
+			}
+			for _, extra := range []bool{false, true} {
+				if extra {
+					bindings = append(bindings, api.WorkspaceSecret{Name: "token", Env: &api.SecretEnv{Name: "EXTRA", Mode: "protected", AllowedOrigins: []string{"https://extra.example.com"}}})
+				}
+				_, directErr := normalizeWorkspaceSecretPlacements(bindings)
+				_, scheduleErr := prepareScheduleReconciliation(db.DeploymentDefinition{}, deployment.ScheduleManifest{Cron: "0 * * * *", Timezone: "UTC", Workspace: deployment.ScheduleWorkspaceManifest{SandboxDeclaredID: "box", Secrets: bindings}}, map[string]struct{}{"box": {}}, time.Now())
+				wantErr := extra && variant != "dedup"
+				if (directErr != nil) != wantErr || (scheduleErr != nil) != wantErr {
+					t.Fatalf("extra=%v direct=%v scheduled=%v", extra, directErr, scheduleErr)
+				}
+			}
+		})
+	}
 }

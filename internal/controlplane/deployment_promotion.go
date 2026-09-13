@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -280,6 +281,16 @@ func reconcileSchedules(
 			insertion.PlacementKinds = append(insertion.PlacementKinds, placement.Kind)
 			insertion.PlacementTargets = append(insertion.PlacementTargets, placement.Target)
 			insertion.SecretIds = append(insertion.SecretIds, secretIDs[placement.Name])
+			insertion.Modes = append(insertion.Modes, placement.Mode)
+			origins := placement.AllowedOrigins
+			if origins == nil {
+				origins = []string{}
+			}
+			encoded, err := json.Marshal(origins)
+			if err != nil {
+				return err
+			}
+			insertion.OriginsJson = append(insertion.OriginsJson, string(encoded))
 		}
 	}
 	if err := store.DeleteScheduleSecretsForSchedules(ctx, deletion); err != nil {

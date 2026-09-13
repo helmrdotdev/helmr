@@ -306,7 +306,7 @@ func validRunLeaseProjectionAuthority() runLeaseProjectionAuthority {
 			StartDeadlineAt:                  pgtype.Timestamptz{Time: now.Add(time.Minute), Valid: true},
 			ExpiresAt:                        pgtype.Timestamptz{Time: now.Add(5 * time.Minute), Valid: true},
 		},
-		workspace: db.Workspace{
+		workspace: db.LockRunLeaseClaimWorkspaceRow{
 			ID: workspaceID, OwnershipGeneration: 5, WriterGeneration: 6,
 		},
 		workspaceMount: db.WorkspaceMount{

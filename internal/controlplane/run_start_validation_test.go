@@ -119,7 +119,7 @@ func TestValidateRunStartArmModesAndReplay(t *testing.T) {
 		run:       db.Run{ID: runID, EntrypointKind: "task"},
 		runLease:  db.RunLease{ID: leaseID, State: db.RunLeaseStateStarting},
 		runtime:   db.RuntimeInstance{ID: runtimeID, RestoreCheckpointID: checkpointID},
-		workspace: db.Workspace{OwnershipGeneration: 11, WriterGeneration: 13},
+		workspace: db.GetWorkspaceRow{OwnershipGeneration: 11, WriterGeneration: 13},
 		runWait: db.RunWait{
 			ID: checkpointID, SuspendCheckpointID: checkpointID, ResumeAttachID: attachID,
 			CheckpointRequestVersion: 1, CheckpointAckVersion: 1,

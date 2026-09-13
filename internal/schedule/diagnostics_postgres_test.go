@@ -36,7 +36,7 @@ func TestDBAdmitterDiagnosticCausesRollback(t *testing.T) {
 			} else {
 				dbtest.MustExec(t, t.Context(), pool, tc.setup, value.DeploymentDefinitionID)
 			}
-			admitter, err := NewDBAdmitter(pool, fixedAuthority{digest: digest})
+			admitter, err := NewDBAdmitter(pool, fixedAuthority{digest: digest}, testProxyTrustGenerator(t, pool))
 			if err != nil {
 				t.Fatal(err)
 			}

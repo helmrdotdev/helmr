@@ -2200,30 +2200,6 @@ function inspectImage(value) {
   const imageValue = value;
   return { key: imageValue.key, steps: imageValue.steps };
 }
-// sdk/typescript/src/secret.ts
-var secretAddressBrand = Symbol.for("helmr.sdk.v0.secret-address");
-var secretNamePattern = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
-
-class SecretNameAddress {
-  name;
-  constructor(name) {
-    validateSecretName(name);
-    this.name = name;
-    Object.defineProperty(this, secretAddressBrand, { value: true });
-    Object.freeze(this);
-  }
-}
-var secrets = Object.freeze({
-  fromName(name) {
-    return new SecretNameAddress(name);
-  }
-});
-function validateSecretName(value) {
-  if (!secretNamePattern.test(value)) {
-    throw new Error("Secret name is invalid");
-  }
-}
-
 // sdk/typescript/src/workspace.ts
 var sandboxDefinitionBrand = Symbol.for("helmr.sdk.v0.sandbox");
 var workspaceAddressBrand = Symbol.for("helmr.sdk.v0.workspace-address");

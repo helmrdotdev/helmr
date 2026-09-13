@@ -34,10 +34,6 @@ and `user`. Use `source.file()` and `source.directory()` for files that must be
 baked into the Workspace image. Commands are argv arrays; invoke a shell
 explicitly when you need shell syntax.
 
-For a private base image, pass `from(ref, { auth: { username, password:
-secrets.fromName("REGISTRY_PASSWORD") } })`. The password is a Secret address,
-not a literal value.
-
 Helmr mounts the selected Node runtime as a managed runtime artifact. A separate
 immutable Program artifact supplies the compiled declaration modules and
 installed project dependency tree. The Workspace image supplies the Linux base,

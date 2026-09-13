@@ -29,7 +29,7 @@ buildGoModule {
     fileset = runtimeFiles;
   };
 
-  vendorHash = "sha256-ed4x8bTSUEIn7ruBHwYIUu4xH4cSioKAYN718jFL5DM=";
+  vendorHash = "sha256-rfM0qK5cFRFGQzPCl/8N66bNYpQ10I79IOz06AbBeIw=";
   overrideModAttrs = _: {
     src = moduleSource;
   };

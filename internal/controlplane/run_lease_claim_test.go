@@ -1274,7 +1274,7 @@ func (s *runLeaseClaimStore) LockRunLeaseClaimRun(_ context.Context, params db.L
 	return s.authority.run, nil
 }
 
-func (s *runLeaseClaimStore) LockRunLeaseClaimWorkspace(context.Context, db.LockRunLeaseClaimWorkspaceParams) (db.Workspace, error) {
+func (s *runLeaseClaimStore) LockRunLeaseClaimWorkspace(context.Context, db.LockRunLeaseClaimWorkspaceParams) (db.LockRunLeaseClaimWorkspaceRow, error) {
 	s.calls = append(s.calls, "workspace")
 	return s.authority.workspace, nil
 }
@@ -1400,10 +1400,10 @@ func (s *runLeaseClaimStore) MarkRunRunning(context.Context, db.MarkRunRunningPa
 	return run, nil
 }
 
-func (s *runLeaseClaimStore) TouchRunWorkspaceActivity(context.Context, db.TouchRunWorkspaceActivityParams) (db.Workspace, error) {
+func (s *runLeaseClaimStore) TouchRunWorkspaceActivity(context.Context, db.TouchRunWorkspaceActivityParams) (db.TouchRunWorkspaceActivityRow, error) {
 	s.calls = append(s.calls, "touch_run_workspace")
 	s.startWorkspaceWrites++
-	return s.authority.workspace, nil
+	return db.TouchRunWorkspaceActivityRow(s.authority.workspace), nil
 }
 
 type runLeaseClaimTransaction struct {
@@ -1508,7 +1508,7 @@ func validRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsRow, r
 			CurrentAttemptNumber:   1,
 			CurrentRunLeaseID:      runLeaseID,
 		},
-		workspace: db.Workspace{
+		workspace: db.LockRunLeaseClaimWorkspaceRow{
 			ID:                     workspaceID,
 			DeploymentDefinitionID: definitionID,
 			OwnerRunID:             runID,

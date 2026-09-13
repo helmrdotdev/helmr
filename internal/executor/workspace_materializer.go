@@ -353,8 +353,10 @@ func (m WorkspaceMaterializer) dispatchWorkspaceBasicExec(
 			OperationExpiresAtUnixNano: exec.ExpiresAt.UnixNano(),
 			RequestFingerprint:         strings.TrimSpace(exec.RequestFingerprint),
 		},
-		RequestJson: string(exec.Request),
-		Stdin:       exec.Stdin,
+		RequestJson:  string(exec.Request),
+		ProtectedEnv: exec.ProtectedEnv.Values(),
+		ProxyCa:      exec.ProtectedEnv.PublicCA(),
+		Stdin:        exec.Stdin,
 	}
 	for _, delivery := range exec.Secrets {
 		secret := &workspacev0.WorkspaceSecretDelivery{Value: delivery.Value}

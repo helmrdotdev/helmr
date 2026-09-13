@@ -21,7 +21,7 @@ The TypeScript client also creates Workspaces and is the public surface for
 secret placements:
 
 ```ts
-import { HelmrClient, secrets } from "@helmr/sdk"
+import { HelmrClient } from "@helmr/sdk"
 
 const client = new HelmrClient({
   apiKey: process.env.HELMR_API_KEY!,
@@ -34,8 +34,8 @@ const workspace = await client.sandboxes.createWorkspace(
     idempotencyKey: "workspace:helmrdotdev/helmr",
     secrets: [
       {
-        secret: secrets.fromName("GITHUB_TOKEN"),
-        env: "GITHUB_TOKEN",
+        secret: "GITHUB_TOKEN",
+        env: { name: "GITHUB_TOKEN", mode: "raw" },
       },
     ],
   },

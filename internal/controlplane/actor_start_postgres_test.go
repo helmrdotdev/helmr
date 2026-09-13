@@ -613,9 +613,9 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 			          0, 0, 0, 0, now())
 		`, versionID, fixture.environmentID, workspaceID)
 		dbtest.MustExec(t, t.Context(), tx, `
-			INSERT INTO workspace_secrets (
+			INSERT INTO workspace_secrets (mode,
 			    workspace_id, environment_id, placement_kind, placement_target, secret_id
-			) VALUES ($1, $2, 'env', 'API_TOKEN', $3)
+			) VALUES ('raw', $1, $2, 'env', 'API_TOKEN', $3)
 		`, workspaceID, fixture.environmentID, secretID)
 	}
 	if err := tx.Commit(t.Context()); err != nil {

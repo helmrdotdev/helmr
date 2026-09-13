@@ -36,7 +36,7 @@ func TestDeploymentPlanFromProgramIndex(t *testing.T) {
 		Cron: "0 * * * *", Timezone: "UTC",
 		Workspace: ScheduleWorkspaceManifest{
 			SandboxDeclaredID: "repo",
-			Secrets:           []api.WorkspaceSecret{{Name: "TOKEN", Env: "TOKEN"}},
+			Secrets:           []api.WorkspaceSecret{{Name: "TOKEN", Env: &api.SecretEnv{Name: "TOKEN", Mode: "raw"}}},
 		},
 	}
 	plan, err = DeploymentPlanFromProgramIndex(index)

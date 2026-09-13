@@ -157,6 +157,10 @@ func (c *Connector) probeGuest(ctx context.Context) error {
 		return fmt.Errorf("resolve startup probe runtime identity: %w", err)
 	}
 	ownerID := uuid.NewV7().String()
+	// The local startup health probe is not a CP Runtime reservation and never
+	// receives Workspace credentials or protected transport. Workload paths cannot
+	// supply this private context key.
+	probeCtx = context.WithValue(probeCtx, startupProbeNetworkKey{}, true)
 	session, err := c.connect(probeCtx, vm.ConnectRequest{
 		ID:        ownerID,
 		OwnerKind: vm.OwnerRuntime,

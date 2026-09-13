@@ -498,10 +498,10 @@ func validateScheduleManifest(manifest ScheduleManifest) error {
 			return fmt.Errorf("schedule workspace secret %d: %w", index, err)
 		}
 		item := workspace.SecretPlacement{Name: placement.Name}
-		if placement.Env != "" {
-			item.Kind, item.Target = "env", placement.Env
+		if placement.Env != nil {
+			item.Kind, item.Target, item.Mode, item.AllowedOrigins = "env", placement.Env.Name, placement.Env.Mode, placement.Env.AllowedOrigins
 		} else {
-			item.Kind, item.Target = "file", placement.File
+			item.Kind, item.Target, item.Mode = "file", placement.File.Path, "raw"
 		}
 		placements = append(placements, item)
 	}

@@ -258,13 +258,14 @@ export function WorkspaceDetail() {
                   <div class="grid gap-3.5">
                     <Panel title="Secret placements">
                       <Show when={current().secrets.length > 0} fallback={<StatePanel empty="No Secrets are attached." />}>
-                        <DataTable columns={["Secret", "Placement", "Target"]} minWidth="min-w-0">
+                        <DataTable columns={["Secret", "Target", "Mode", "Origins"]} minWidth="min-w-0">
                           <For each={current().secrets}>
                             {(secret) => (
                               <tr>
-                                <td><code>{secret.name}</code></td>
-                                <td><span class={ui.muted}>{secret.env !== undefined ? "Env var" : "File"}</span></td>
-                                <td><code>{secret.env ?? secret.file}</code></td>
+                                <td><code>{secret.secret}</code></td>
+                                <td><code>{secret.env?.name ?? secret.file?.path}</code></td>
+                                <td>{secret.env?.mode === "protected" ? "Protected env" : secret.env ? "Raw env" : "Raw file"}</td>
+                                <td>{secret.env?.allowed_origins?.join(", ") ?? "—"}</td>
                               </tr>
                             )}
                           </For>

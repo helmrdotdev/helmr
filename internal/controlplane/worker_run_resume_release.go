@@ -125,7 +125,7 @@ func (s *Server) acknowledgeRunResumeRelease(
 			resumeRequestVersion: proof.resumeRequestVersion,
 		}, runStartValidationAuthority{
 			run: authority.run, parentRun: authority.parentRun, runLease: authority.runLease,
-			runtime: authority.runtime, workspace: authority.workspace,
+			runtime: authority.runtime, workspace: db.GetWorkspaceRow(authority.workspace),
 			workspaceMount: authority.workspaceMount, runWait: authority.runWait,
 		}); err != nil {
 			return err

@@ -137,6 +137,11 @@ func (s *Server) workerClaimWorkspaceExec(w http.ResponseWriter, r *http.Request
 		return
 	}
 	defer clearWorkspaceSecretDeliveries(deliveries)
+	protected, err := workspaceProtectedEnv(r.Context(), s.db, authority.WorkspaceProcess.EnvironmentID, authority.WorkspaceProcess.WorkspaceID)
+	if err != nil {
+		writeError(w, conflict(secret.ErrDeliveryUnavailable))
+		return
+	}
 	writeJSON(w, http.StatusOK, workerapi.WorkspaceExecClaimResponse{
 		Exec: &workerapi.WorkspaceExec{
 			BaseVersionID:       pgvalue.MustUUIDValue(authority.WorkspaceLease.BaseVersionID).String(),
@@ -147,6 +152,7 @@ func (s *Server) workerClaimWorkspaceExec(w http.ResponseWriter, r *http.Request
 			Request:             bytes.Clone(authority.WorkspaceProcess.Request),
 			Stdin:               stdin,
 			Secrets:             deliveries,
+			ProtectedEnv:        protected,
 			WorkspaceLeaseID:    pgvalue.MustUUIDValue(authority.WorkspaceLease.ID).String(),
 			WriteCapability:     capability,
 			FencingGeneration:   authority.WorkspaceLease.MountFencingGeneration,

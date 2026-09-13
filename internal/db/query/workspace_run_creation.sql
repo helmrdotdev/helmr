@@ -36,7 +36,7 @@ WITH selected_definition AS (
            sqlc.arg(initial_version_id),
            sqlc.narg(key)
       FROM selected_definition
-    RETURNING *
+    RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at
 ), created_version AS (
     INSERT INTO workspace_versions (
         id,

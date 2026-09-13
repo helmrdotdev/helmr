@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
+	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
@@ -35,22 +37,27 @@ type TaskRun struct {
 }
 
 type DBAdmitter struct {
-	db        TxBeginner
-	authority Authority
-	now       func() time.Time
+	generateProxyTrust func(uuid.UUID, uuid.UUID, time.Time) (secret.ProxyTrust, error)
+	db                 TxBeginner
+	authority          Authority
+	now                func() time.Time
 }
 
-func NewDBAdmitter(database TxBeginner, authority Authority) (*DBAdmitter, error) {
+func NewDBAdmitter(database TxBeginner, authority Authority, generateProxyTrust func(uuid.UUID, uuid.UUID, time.Time) (secret.ProxyTrust, error)) (*DBAdmitter, error) {
 	if database == nil {
 		return nil, errors.New("schedule admission database is required")
 	}
 	if authority == nil {
 		return nil, errors.New("schedule admission authority is required")
 	}
+	if generateProxyTrust == nil {
+		return nil, errors.New("schedule Workspace CA generator is required")
+	}
 	return &DBAdmitter{
-		db:        database,
-		authority: authority,
-		now:       func() time.Time { return time.Now().UTC() },
+		generateProxyTrust: generateProxyTrust,
+		db:                 database,
+		authority:          authority,
+		now:                func() time.Time { return time.Now().UTC() },
 	}, nil
 }
 
@@ -162,12 +169,38 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 		return err
 	}
 	for _, selected := range selectedSecrets {
+		if selected.Mode != "protected" {
+			continue
+		}
+		trust, err := a.generateProxyTrust(pgvalue.MustUUIDValue(lockedSchedule.EnvironmentID), workspaceID, createdWorkspace.CreatedAt.Time)
+		if err != nil {
+			return err
+		}
+		count, err := queries.InitializeWorkspaceSecretCA(ctx, db.InitializeWorkspaceSecretCAParams{
+			EnvironmentID: pgvalue.UUID(trust.EnvironmentID), WorkspaceID: pgvalue.UUID(trust.WorkspaceID),
+			Certificate: trust.Certificate, PrivateKeyNonce: trust.PrivateKeyNonce,
+			PrivateKeyCiphertext: trust.PrivateKeyCiphertext, NotAfter: pgvalue.Timestamptz(trust.NotAfter),
+		})
+		if err != nil {
+			return err
+		}
+		if count != 1 {
+			return errors.New("scheduled Workspace CA creation failed")
+		}
+		break
+	}
+	for _, selected := range selectedSecrets {
+		placeholder, err := workspace.SecretPlaceholder(selected.Mode)
+		if err != nil {
+			return err
+		}
 		if _, err := queries.CreateWorkspaceSecret(ctx, db.CreateWorkspaceSecretParams{
 			WorkspaceID:     createdWorkspace.ID,
 			EnvironmentID:   lockedSchedule.EnvironmentID,
 			PlacementKind:   selected.PlacementKind,
 			PlacementTarget: selected.PlacementTarget,
 			SecretID:        selected.SecretID,
+			Mode:            selected.Mode, AllowedOrigins: selected.AllowedOrigins, Placeholder: placeholder,
 		}); err != nil {
 			return err
 		}
@@ -237,12 +270,12 @@ func sameSecretPlacements(
 	if len(expected) != len(selected) {
 		return false
 	}
-	actual := make(map[string]struct{}, len(selected))
+	actual := make(map[string]db.ScheduleSecret, len(selected))
 	for _, placement := range selected {
-		actual[placement.PlacementKind+"\x00"+placement.PlacementTarget] = struct{}{}
+		actual[placement.PlacementKind+"\x00"+placement.PlacementTarget] = placement
 	}
 	for _, placement := range expected {
-		if _, ok := actual[placement.Kind+"\x00"+placement.Target]; !ok {
+		if row, ok := actual[placement.Kind+"\x00"+placement.Target]; !ok || row.Mode != placement.Mode || !slices.Equal(row.AllowedOrigins, placement.AllowedOrigins) {
 			return false
 		}
 	}

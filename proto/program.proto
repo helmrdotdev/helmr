@@ -73,6 +73,8 @@ message ProgramRunRequest {
   bytes program_start_frame = 4;
   uint32 secret_count = 5;
   int64 start_deadline_unix_ms = 6;
+  map<string,string> protected_env = 7;
+  bytes proxy_ca = 8;
 }
 
 message ProgramSecret {
@@ -297,11 +299,17 @@ message WorkspaceAddress {
   string workspace_id = 1;
 }
 
-message WorkspaceSecretPlacement {
+message SecretEnvBinding {
   string name = 1;
+  string mode = 2;
+  repeated string allowed_origins = 3;
+}
+message SecretFileBinding { string path = 1; }
+message WorkspaceSecretPlacement {
+  string secret = 1;
   oneof placement {
-    string env = 2;
-    string file = 3;
+    SecretEnvBinding env = 2;
+    SecretFileBinding file = 3;
   }
 }
 

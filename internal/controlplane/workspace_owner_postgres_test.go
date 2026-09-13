@@ -85,3 +85,32 @@ func workspaceReadPostgresRequest(target string, workspaceID string, principal a
 	ctx = context.WithValue(ctx, actorContextKey{}, principal)
 	return request.WithContext(ctx)
 }
+
+func TestWorkspaceReadPostgresProjectsRunOwner(t *testing.T) {
+	fixture := newActorStartPostgresFixture(t, 1)
+	started, err := fixture.server.startActor(t.Context(), fixture.request(0, nil, "owner-run"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := fixture.workspaceIDs[0].String()
+	if _, err := fixture.pool.Exec(t.Context(), "UPDATE workspaces SET owner_session_id=NULL,owner_run_id=$2 WHERE id=$1", fixture.workspaceIDs[0], started.BootRunID); err != nil {
+		t.Fatal(err)
+	}
+	principal := auth.Actor{
+		OrgID: fixture.orgID, Kind: auth.ActorKindAPIKey, Role: auth.RoleDeveloper,
+		ProjectID: fixture.projectID.String(), EnvironmentID: fixture.environmentID.String(),
+		Permissions: []auth.Permission{auth.PermissionWorkspacesRead},
+	}
+	recorder := httptest.NewRecorder()
+	fixture.server.getWorkspaceHTTP(recorder, workspaceReadPostgresRequest("/v1/workspaces/"+id, id, principal))
+	var snapshot api.WorkspaceSnapshot
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("get HTTP = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Owner == nil || snapshot.Owner.RunID != started.BootRunID.String() || snapshot.Owner.SessionID != "" {
+		t.Fatalf("Run owner = %+v", snapshot.Owner)
+	}
+}

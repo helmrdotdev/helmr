@@ -279,6 +279,14 @@ func (s *Server) invokeChildTask(
 		} else {
 			targetWorkspaceID = input.Normalized.WorkspaceID
 		}
+		// This also precedes source authority on same-Workspace and replay paths.
+		bindings, err := work.q.LockWorkspaceSecretsForAdmission(ctx, pgvalue.UUID(targetWorkspaceID))
+		if err != nil {
+			return err
+		}
+		if err := authorizeWorkspaceSecretTarget(ctx, work.q, pgvalue.UUID(input.SourceWorkspaceID), pgvalue.UUID(targetWorkspaceID)); err != nil {
+			return err
+		}
 		sameWorkspace := targetWorkspaceID == input.SourceWorkspaceID
 		if sameWorkspace && input.Request.Method != "call" {
 			return errChildTaskSameWorkspace
@@ -391,10 +399,6 @@ func (s *Server) invokeChildTask(
 		if admission.HasPayload != input.Normalized.PayloadPresent {
 			return errTaskPayloadPresenceInvalid
 		}
-		bindings, err := work.q.LockWorkspaceSecretsForAdmission(ctx, pgvalue.UUID(targetWorkspaceID))
-		if err != nil {
-			return fmt.Errorf("lock child task workspace secrets: %w", err)
-		}
 		for _, binding := range bindings {
 			if binding.SecretState != "active" || !binding.CurrentVersionID.Valid {
 				return errTaskSecretUnavailable
@@ -422,7 +426,7 @@ func (s *Server) invokeChildTask(
 		if err != nil {
 			return err
 		}
-		authority.workspace = sourceWorkspace
+		authority.workspace = db.LockRunLeaseClaimWorkspaceRow(sourceWorkspace)
 		if err := completeChildTaskInvokeAuthority(
 			ctx, work.q, input, locators, &authority, true,
 		); err != nil {
@@ -1048,16 +1052,16 @@ func childTaskInvokeScopeMatches(
 }
 
 func sourceChildWorkspace(
-	workspaces []db.Workspace,
+	workspaces []db.LockChildWorkspacePairRow,
 	sourceID uuid.UUID,
 	targetID uuid.UUID,
 	locators db.GetLiveRunLeaseLocatorsRow,
-) (db.Workspace, error) {
+) (db.LockChildWorkspacePairRow, error) {
 	var sourceFound, targetFound bool
-	var source db.Workspace
+	var source db.LockChildWorkspacePairRow
 	for _, workspace := range workspaces {
 		if workspace.EnvironmentID != locators.EnvironmentID {
-			return db.Workspace{}, errTaskWorkspaceUnavailable
+			return db.LockChildWorkspacePairRow{}, errTaskWorkspaceUnavailable
 		}
 		switch pgvalue.MustUUIDValue(workspace.ID) {
 		case sourceID:
@@ -1066,14 +1070,14 @@ func sourceChildWorkspace(
 		case targetID:
 			targetFound = true
 		default:
-			return db.Workspace{}, errTaskWorkspaceUnavailable
+			return db.LockChildWorkspacePairRow{}, errTaskWorkspaceUnavailable
 		}
 	}
 	if !sourceFound {
-		return db.Workspace{}, staleAuthority(staleAuthorityChildTask, childTaskInvokePointWorkspacePair, errChildTaskInvokeStale)
+		return db.LockChildWorkspacePairRow{}, staleAuthority(staleAuthorityChildTask, childTaskInvokePointWorkspacePair, errChildTaskInvokeStale)
 	}
 	if !targetFound || len(workspaces) != 2 {
-		return db.Workspace{}, errTaskWorkspaceUnavailable
+		return db.LockChildWorkspacePairRow{}, errTaskWorkspaceUnavailable
 	}
 	return source, nil
 }
@@ -1138,7 +1142,7 @@ func (s *Server) writeChildTaskInvokeError(
 		failure = workerapi.RuntimeOperationFailure{Code: "workspace_not_found", Message: err.Error()}
 	case errors.Is(err, errTaskWorkspaceUnavailable):
 		failure = workerapi.RuntimeOperationFailure{Code: "workspace_unavailable", Message: err.Error(), Retryable: true}
-	case errors.Is(err, errTaskSecretUnavailable):
+	case errors.Is(err, errTaskSecretUnavailable), errors.Is(err, errWorkspaceSecretUnavailable):
 		failure = workerapi.RuntimeOperationFailure{Code: "secret_unavailable", Message: err.Error()}
 	case errors.Is(err, errTaskPayloadPresenceInvalid), errors.Is(err, errTaskStartInvalid):
 		failure = workerapi.RuntimeOperationFailure{Code: "invalid_child_task_invoke", Message: err.Error()}

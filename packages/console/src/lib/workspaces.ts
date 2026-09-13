@@ -1,10 +1,8 @@
 import { postJson, request } from "./api";
 
-export type WorkspaceSecret = {
-  name: string;
-  env?: string;
-  file?: string;
-};
+export type WorkspaceSecret =
+  | { secret: string; env: { name: string; mode: "raw"; allowed_origins?: never } | { name: string; mode: "protected"; allowed_origins: string[] }; file?: never }
+  | { secret: string; file: { path: string }; env?: never };
 
 export type WorkspaceStatus = "available" | "recovery_required" | "deleting";
 

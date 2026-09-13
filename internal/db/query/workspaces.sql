@@ -37,7 +37,7 @@ WITH selected_definition AS (
            sqlc.arg(initial_version_id),
            sqlc.narg(key)
       FROM selected_definition
-    RETURNING *
+    RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at
 ), created_version AS (
     INSERT INTO workspace_versions (
         id,
@@ -96,7 +96,25 @@ SELECT deployment_definitions.*
  LIMIT 1;
 
 -- name: GetWorkspace :one
-SELECT workspaces.*
+SELECT workspaces.id,
+       workspaces.environment_id,
+       workspaces.region_id,
+       workspaces.sandbox_declared_id,
+       workspaces.deployment_definition_id,
+       workspaces.key,
+       workspaces.state_version,
+       workspaces.owner_session_id,
+       workspaces.owner_run_id,
+       workspaces.ownership_generation,
+       workspaces.writer_generation,
+       workspaces.head_version_id,
+       workspaces.state,
+       workspaces.desired_state,
+       workspaces.dirty_state,
+       workspaces.last_activity_at,
+       workspaces.created_at,
+       workspaces.updated_at,
+       workspaces.deleted_at
   FROM workspaces
   JOIN environments ON environments.id = workspaces.environment_id
  WHERE environments.org_id = sqlc.arg(org_id)
@@ -171,18 +189,36 @@ INSERT INTO workspace_secrets (
     environment_id,
     placement_kind,
     placement_target,
-    secret_id
+    secret_id, mode, allowed_origins, placeholder
 ) VALUES (
     sqlc.arg(workspace_id),
     sqlc.arg(environment_id),
     sqlc.arg(placement_kind),
     sqlc.arg(placement_target),
-    sqlc.arg(secret_id)
+    sqlc.arg(secret_id), sqlc.arg(mode), COALESCE(sqlc.arg(allowed_origins)::text[], '{}'::text[]), sqlc.arg(placeholder)
 )
 RETURNING *;
 
 -- name: LockWorkspaceAdmissionAuthority :one
-SELECT workspaces.*,
+SELECT workspaces.id,
+       workspaces.environment_id,
+       workspaces.region_id,
+       workspaces.sandbox_declared_id,
+       workspaces.deployment_definition_id,
+       workspaces.key,
+       workspaces.state_version,
+       workspaces.owner_session_id,
+       workspaces.owner_run_id,
+       workspaces.ownership_generation,
+       workspaces.writer_generation,
+       workspaces.head_version_id,
+       workspaces.state,
+       workspaces.desired_state,
+       workspaces.dirty_state,
+       workspaces.last_activity_at,
+       workspaces.created_at,
+       workspaces.updated_at,
+       workspaces.deleted_at,
        environments.org_id,
        environments.project_id,
        EXISTS (
@@ -214,7 +250,25 @@ SELECT workspaces.*,
  FOR UPDATE OF workspaces;
 
 -- name: LockWorkspaceForDelete :one
-SELECT workspaces.*,
+SELECT workspaces.id,
+       workspaces.environment_id,
+       workspaces.region_id,
+       workspaces.sandbox_declared_id,
+       workspaces.deployment_definition_id,
+       workspaces.key,
+       workspaces.state_version,
+       workspaces.owner_session_id,
+       workspaces.owner_run_id,
+       workspaces.ownership_generation,
+       workspaces.writer_generation,
+       workspaces.head_version_id,
+       workspaces.state,
+       workspaces.desired_state,
+       workspaces.dirty_state,
+       workspaces.last_activity_at,
+       workspaces.created_at,
+       workspaces.updated_at,
+       workspaces.deleted_at,
        EXISTS (
            SELECT 1
              FROM workspace_leases
@@ -250,7 +304,7 @@ UPDATE workspaces
    AND state IN ('active', 'recovery_required')
    AND owner_session_id IS NULL
    AND owner_run_id IS NULL
-RETURNING *;
+RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at;
 
 -- name: FinalizeDeletingWorkspaces :many
 WITH eligible AS (
@@ -305,7 +359,7 @@ WITH eligible AS (
 SELECT id FROM finalized;
 
 -- name: LockActorInputWorkspace :one
-SELECT *
+SELECT id, environment_id, region_id, sandbox_declared_id, deployment_definition_id, key, state_version, owner_session_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
   FROM workspaces
  WHERE environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id)
@@ -342,7 +396,7 @@ UPDATE workspaces
         WHERE workspace_processes.workspace_id = workspaces.id
           AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
    )
-RETURNING *;
+RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at;
 
 -- name: ReserveWorkspaceForActor :one
 UPDATE workspaces
@@ -373,9 +427,9 @@ UPDATE workspaces
         WHERE workspace_processes.workspace_id = workspaces.id
           AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
    )
-RETURNING *;
+RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at;
 -- name: LockChildWorkspacePair :many
-SELECT *
+SELECT id, environment_id, region_id, sandbox_declared_id, deployment_definition_id, key, state_version, owner_session_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
   FROM workspaces
  WHERE environment_id = sqlc.arg(environment_id)
    AND id = ANY(sqlc.arg(workspace_ids)::uuid[])

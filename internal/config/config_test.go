@@ -95,6 +95,7 @@ func TestLoadDispatcherRejectsInvalidWorkspaceFencingKey(t *testing.T) {
 
 func setDispatcherFencing(t *testing.T) {
 	t.Helper()
+	t.Setenv("ENCRYPTION_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
 	t.Setenv("WORKSPACE_FENCING_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
 }
 
@@ -676,5 +677,19 @@ func TestLoadWorkerRejectsInvalidVMNumbers(t *testing.T) {
 	_, err := LoadWorker()
 	if err == nil {
 		t.Fatal("expected invalid memory error")
+	}
+}
+
+func TestLoadDispatcherRequiresEncryptionKey(t *testing.T) {
+	for _, value := range []string{"", "AQ=="} {
+		t.Run(value, func(t *testing.T) {
+			setDispatcherFencing(t)
+			t.Setenv("DATABASE_URL", "postgres://example")
+			t.Setenv("CLICKHOUSE_URL", "http://example.test")
+			t.Setenv("ENCRYPTION_KEY", value)
+			if _, err := LoadDispatcher(); err == nil {
+				t.Fatal("missing/invalid dispatcher encryption key accepted")
+			}
+		})
 	}
 }

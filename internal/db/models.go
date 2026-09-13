@@ -755,6 +755,8 @@ type ScheduleSecret struct {
 	PlacementKind   string             `json:"placement_kind"`
 	PlacementTarget string             `json:"placement_target"`
 	SecretID        pgtype.UUID        `json:"secret_id"`
+	Mode            string             `json:"mode"`
+	AllowedOrigins  []string           `json:"allowed_origins"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
@@ -1014,25 +1016,29 @@ type WorkerPoolCpuShape struct {
 }
 
 type Workspace struct {
-	ID                     pgtype.UUID        `json:"id"`
-	EnvironmentID          pgtype.UUID        `json:"environment_id"`
-	RegionID               string             `json:"region_id"`
-	SandboxDeclaredID      pgtype.Text        `json:"sandbox_declared_id"`
-	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
-	Key                    pgtype.Text        `json:"key"`
-	StateVersion           int64              `json:"state_version"`
-	OwnerSessionID         pgtype.UUID        `json:"owner_session_id"`
-	OwnerRunID             pgtype.UUID        `json:"owner_run_id"`
-	OwnershipGeneration    int64              `json:"ownership_generation"`
-	WriterGeneration       int64              `json:"writer_generation"`
-	HeadVersionID          pgtype.UUID        `json:"head_version_id"`
-	State                  string             `json:"state"`
-	DesiredState           string             `json:"desired_state"`
-	DirtyState             string             `json:"dirty_state"`
-	LastActivityAt         pgtype.Timestamptz `json:"last_activity_at"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
-	DeletedAt              pgtype.Timestamptz `json:"deleted_at"`
+	ID                           pgtype.UUID        `json:"id"`
+	EnvironmentID                pgtype.UUID        `json:"environment_id"`
+	RegionID                     string             `json:"region_id"`
+	SandboxDeclaredID            pgtype.Text        `json:"sandbox_declared_id"`
+	DeploymentDefinitionID       pgtype.UUID        `json:"deployment_definition_id"`
+	Key                          pgtype.Text        `json:"key"`
+	StateVersion                 int64              `json:"state_version"`
+	OwnerSessionID               pgtype.UUID        `json:"owner_session_id"`
+	OwnerRunID                   pgtype.UUID        `json:"owner_run_id"`
+	OwnershipGeneration          int64              `json:"ownership_generation"`
+	WriterGeneration             int64              `json:"writer_generation"`
+	HeadVersionID                pgtype.UUID        `json:"head_version_id"`
+	State                        string             `json:"state"`
+	DesiredState                 string             `json:"desired_state"`
+	DirtyState                   string             `json:"dirty_state"`
+	LastActivityAt               pgtype.Timestamptz `json:"last_activity_at"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt                    pgtype.Timestamptz `json:"deleted_at"`
+	SecretCaCertificate          []byte             `json:"secret_ca_certificate"`
+	SecretCaPrivateKeyNonce      []byte             `json:"secret_ca_private_key_nonce"`
+	SecretCaPrivateKeyCiphertext []byte             `json:"secret_ca_private_key_ciphertext"`
+	SecretCaNotAfter             pgtype.Timestamptz `json:"secret_ca_not_after"`
 }
 
 type WorkspaceLease struct {
@@ -1138,6 +1144,9 @@ type WorkspaceSecret struct {
 	PlacementKind   string             `json:"placement_kind"`
 	PlacementTarget string             `json:"placement_target"`
 	SecretID        pgtype.UUID        `json:"secret_id"`
+	Mode            string             `json:"mode"`
+	AllowedOrigins  []string           `json:"allowed_origins"`
+	Placeholder     string             `json:"placeholder"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 

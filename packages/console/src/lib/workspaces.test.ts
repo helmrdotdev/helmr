@@ -49,14 +49,14 @@ test("creates a Workspace from a Sandbox with key, placements and idempotency ke
   const calls = captureFetch({ id: "ws-1", secrets: [] }, 201);
   await createWorkspace("agent/box", scope, {
     key: "main",
-    secrets: [{ name: "API_TOKEN", env: "API_TOKEN" }, { name: "cert", file: "/run/cert.pem" }],
+    secrets: [{ secret: "API_TOKEN", env: { name: "API_TOKEN", mode: "raw" } }, { secret: "cert", file: { path: "/run/cert.pem" } }],
     idempotency_key: "key-1",
   });
   expect(calls[0]?.url).toBe(`${base}/sandboxes/agent%2Fbox/workspaces`);
   expect(calls[0]?.init?.method).toBe("POST");
   expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
     key: "main",
-    secrets: [{ name: "API_TOKEN", env: "API_TOKEN" }, { name: "cert", file: "/run/cert.pem" }],
+    secrets: [{ secret: "API_TOKEN", env: { name: "API_TOKEN", mode: "raw" } }, { secret: "cert", file: { path: "/run/cert.pem" } }],
     idempotency_key: "key-1",
   });
 });
@@ -122,4 +122,18 @@ test("decodes base64 exec output as UTF-8", () => {
 
 test("requires a scope", () => {
   expect(listWorkspaces({ projectID: "", environmentID: "env-1" })).rejects.toThrow("Workspace project and environment are required");
+});
+
+test("creates fixed nested bindings in the selected scope without values", async () => {
+  const { createWorkspace } = await import("./workspaces");
+  let body: unknown;
+  let url = "";
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    url = String(input); body = JSON.parse(String(init?.body));
+    return Response.json({id:"workspace"});
+  }) as typeof fetch;
+  const bindings = [{secret:"github-token",env:{name:"GH_TOKEN",mode:"protected" as const,allowed_origins:["https://api.github.com"]}}];
+  await createWorkspace("reviewer", {projectID:"project",environmentID:"environment"}, {secrets: bindings, key: "review", idempotency_key: "retry"});
+  expect(url).toBe("/api/projects/project/environments/environment/sandboxes/reviewer/workspaces");
+  expect(body).toEqual({secrets:bindings,key:"review",idempotency_key:"retry"});
 });

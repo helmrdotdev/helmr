@@ -9,9 +9,19 @@ import (
 )
 
 type WorkspaceSecret struct {
-	Name string `json:"name"`
-	Env  string `json:"env,omitempty"`
-	File string `json:"file,omitempty"`
+	Name string      `json:"secret"`
+	Env  *SecretEnv  `json:"env,omitempty"`
+	File *SecretFile `json:"file,omitempty"`
+}
+
+type SecretEnv struct {
+	Name           string   `json:"name"`
+	Mode           string   `json:"mode"`
+	AllowedOrigins []string `json:"allowed_origins,omitempty"`
+}
+
+type SecretFile struct {
+	Path string `json:"path"`
 }
 
 type CreateWorkspaceRequest struct {
@@ -88,10 +98,20 @@ func ValidateWorkspaceSecret(secret WorkspaceSecret) error {
 	if secret.Name == "" {
 		return errors.New("workspace secret name is required")
 	}
-	hasEnv := secret.Env != ""
-	hasFile := secret.File != ""
+	hasEnv := secret.Env != nil
+	hasFile := secret.File != nil
 	if hasEnv == hasFile {
 		return errors.New("workspace secret must contain exactly one of env or file")
+	}
+	if hasEnv {
+		if secret.Env.Name == "" || (secret.Env.Mode != "raw" && secret.Env.Mode != "protected") {
+			return errors.New("workspace secret env requires name and explicit raw or protected mode")
+		}
+		if secret.Env.Mode == "protected" && len(secret.Env.AllowedOrigins) == 0 || secret.Env.Mode == "raw" && secret.Env.AllowedOrigins != nil {
+			return errors.New("allowed_origins is required only for protected env")
+		}
+	} else if secret.File.Path == "" {
+		return errors.New("workspace secret file path is required")
 	}
 	return nil
 }

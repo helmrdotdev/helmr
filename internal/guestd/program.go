@@ -209,7 +209,7 @@ func handleProgramRunConnection(
 	}
 	process, cleanup, err := newProgramProcess(ctx, entry, &request, secrets)
 	if err != nil {
-		if writeErr := writeProgramProcessStartFailed(programConn, &request, "prepare"); writeErr != nil {
+		if writeErr := writeProgramProcessStartFailed(programConn, &request, "prepare", err); writeErr != nil {
 			return errors.Join(err, fmt.Errorf("write Program process-start failure: %w", writeErr))
 		}
 		return err
@@ -371,7 +371,7 @@ func validateProgramSecrets(secrets []*programv0.ProgramSecret) error {
 			if placement.Env != name || !validEnvironmentName(name) {
 				return errors.New("program secret environment placement is invalid")
 			}
-			if isManagedRuntimeEnvKey(name) {
+			if reservedSecretEnv(name) {
 				return fmt.Errorf(
 					"program secret environment placement %q is reserved",
 					name,
@@ -441,7 +441,7 @@ func validateProgramSecretFilePath(value string) error {
 		value == "/" {
 		return errors.New("program secret file placement is invalid")
 	}
-	if value == "/workspace" ||
+	if value == "/run/helmr" || strings.HasPrefix(value, "/run/helmr/") || value == "/workspace" ||
 		strings.HasPrefix(value, "/workspace/") ||
 		value == "/var/lib/helmr" ||
 		strings.HasPrefix(value, "/var/lib/helmr/") ||
@@ -505,6 +505,10 @@ func newProgramProcess(
 	if err != nil {
 		return nil, func() {}, err
 	}
+	if err := stageProtectedEnv(entry.imageRoot, request.GetProtectedEnv(), request.GetProxyCa(), &env); err != nil {
+		secretCleanup()
+		return nil, func() {}, err
+	}
 	cleanupRuntime, err := mountImageRuntimeFilesystems(entry.imageRoot)
 	if err != nil {
 		secretCleanup()
@@ -517,7 +521,7 @@ func newProgramProcess(
 			managedProgramEntry,
 		}...),
 		defaultRuntimeWorkdir,
-		sanitizeManagedRuntimeEnv(env),
+		env,
 		entry.imageRoot,
 		entry.runtimeUser,
 		imageCommandOptions{
@@ -683,6 +687,10 @@ func stageProgramSecrets(
 	for _, secret := range secrets {
 		switch placement := secret.GetPlacement().(type) {
 		case *programv0.ProgramSecret_Env:
+			if envHasKey(*env, placement.Env) {
+				cleanupAll()
+				return func() {}, errSecretEnvCollision
+			}
 			*env = setEnvValue(*env, placement.Env, string(secret.GetValue()))
 		case *programv0.ProgramSecret_File:
 			targetCleanup, err := prepareProgramSecretTarget(
@@ -1387,6 +1395,7 @@ func writeProgramProcessStartFailed(
 	conn programConnection,
 	request *programv0.ProgramRunRequest,
 	phase string,
+	causes ...error,
 ) error {
 	if conn == nil || request == nil {
 		return errors.New("program process-start failure proof is incomplete")
@@ -1398,6 +1407,12 @@ func writeProgramProcessStartFailed(
 		return err
 	}
 	defer conn.SetWriteDeadline(time.Time{})
+	diagnostic := programProcessStartDiagnostic(phase)
+	for _, cause := range causes {
+		if errors.Is(cause, errSecretEnvCollision) {
+			diagnostic = errSecretEnvCollision.Error()
+		}
+	}
 	return frameio.WriteProtoFrame(conn, &programv0.RunEvent{
 		Event: &programv0.RunEvent_ProgramProcessStartFailed{
 			ProgramProcessStartFailed: &programv0.ProgramProcessStartFailed{
@@ -1405,7 +1420,7 @@ func writeProgramProcessStartFailed(
 				AttemptNumber: request.GetAttemptNumber(),
 				RunLeaseId:    request.GetRunLeaseId(),
 				Phase:         phase,
-				Diagnostic:    programProcessStartDiagnostic(phase),
+				Diagnostic:    diagnostic,
 			},
 		},
 	})

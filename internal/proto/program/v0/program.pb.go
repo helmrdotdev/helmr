@@ -763,6 +763,8 @@ type ProgramRunRequest struct {
 	ProgramStartFrame   []byte                 `protobuf:"bytes,4,opt,name=program_start_frame,json=programStartFrame,proto3" json:"program_start_frame,omitempty"`
 	SecretCount         uint32                 `protobuf:"varint,5,opt,name=secret_count,json=secretCount,proto3" json:"secret_count,omitempty"`
 	StartDeadlineUnixMs int64                  `protobuf:"varint,6,opt,name=start_deadline_unix_ms,json=startDeadlineUnixMs,proto3" json:"start_deadline_unix_ms,omitempty"`
+	ProtectedEnv        map[string]string      `protobuf:"bytes,7,rep,name=protected_env,json=protectedEnv,proto3" json:"protected_env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	ProxyCa             []byte                 `protobuf:"bytes,8,opt,name=proxy_ca,json=proxyCa,proto3" json:"proxy_ca,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -837,6 +839,20 @@ func (x *ProgramRunRequest) GetStartDeadlineUnixMs() int64 {
 		return x.StartDeadlineUnixMs
 	}
 	return 0
+}
+
+func (x *ProgramRunRequest) GetProtectedEnv() map[string]string {
+	if x != nil {
+		return x.ProtectedEnv
+	}
+	return nil
+}
+
+func (x *ProgramRunRequest) GetProxyCa() []byte {
+	if x != nil {
+		return x.ProxyCa
+	}
+	return nil
 }
 
 type ProgramSecret struct {
@@ -3275,9 +3291,113 @@ func (x *WorkspaceAddress) GetWorkspaceId() string {
 	return ""
 }
 
+type SecretEnvBinding struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Name           string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Mode           string                 `protobuf:"bytes,2,opt,name=mode,proto3" json:"mode,omitempty"`
+	AllowedOrigins []string               `protobuf:"bytes,3,rep,name=allowed_origins,json=allowedOrigins,proto3" json:"allowed_origins,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *SecretEnvBinding) Reset() {
+	*x = SecretEnvBinding{}
+	mi := &file_program_proto_msgTypes[42]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SecretEnvBinding) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SecretEnvBinding) ProtoMessage() {}
+
+func (x *SecretEnvBinding) ProtoReflect() protoreflect.Message {
+	mi := &file_program_proto_msgTypes[42]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SecretEnvBinding.ProtoReflect.Descriptor instead.
+func (*SecretEnvBinding) Descriptor() ([]byte, []int) {
+	return file_program_proto_rawDescGZIP(), []int{42}
+}
+
+func (x *SecretEnvBinding) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *SecretEnvBinding) GetMode() string {
+	if x != nil {
+		return x.Mode
+	}
+	return ""
+}
+
+func (x *SecretEnvBinding) GetAllowedOrigins() []string {
+	if x != nil {
+		return x.AllowedOrigins
+	}
+	return nil
+}
+
+type SecretFileBinding struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SecretFileBinding) Reset() {
+	*x = SecretFileBinding{}
+	mi := &file_program_proto_msgTypes[43]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SecretFileBinding) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SecretFileBinding) ProtoMessage() {}
+
+func (x *SecretFileBinding) ProtoReflect() protoreflect.Message {
+	mi := &file_program_proto_msgTypes[43]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SecretFileBinding.ProtoReflect.Descriptor instead.
+func (*SecretFileBinding) Descriptor() ([]byte, []int) {
+	return file_program_proto_rawDescGZIP(), []int{43}
+}
+
+func (x *SecretFileBinding) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
 type WorkspaceSecretPlacement struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	Name  string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Secret string                 `protobuf:"bytes,1,opt,name=secret,proto3" json:"secret,omitempty"`
 	// Types that are valid to be assigned to Placement:
 	//
 	//	*WorkspaceSecretPlacement_Env
@@ -3289,7 +3409,7 @@ type WorkspaceSecretPlacement struct {
 
 func (x *WorkspaceSecretPlacement) Reset() {
 	*x = WorkspaceSecretPlacement{}
-	mi := &file_program_proto_msgTypes[42]
+	mi := &file_program_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3301,7 +3421,7 @@ func (x *WorkspaceSecretPlacement) String() string {
 func (*WorkspaceSecretPlacement) ProtoMessage() {}
 
 func (x *WorkspaceSecretPlacement) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[42]
+	mi := &file_program_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3314,12 +3434,12 @@ func (x *WorkspaceSecretPlacement) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkspaceSecretPlacement.ProtoReflect.Descriptor instead.
 func (*WorkspaceSecretPlacement) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{42}
+	return file_program_proto_rawDescGZIP(), []int{44}
 }
 
-func (x *WorkspaceSecretPlacement) GetName() string {
+func (x *WorkspaceSecretPlacement) GetSecret() string {
 	if x != nil {
-		return x.Name
+		return x.Secret
 	}
 	return ""
 }
@@ -3331,22 +3451,22 @@ func (x *WorkspaceSecretPlacement) GetPlacement() isWorkspaceSecretPlacement_Pla
 	return nil
 }
 
-func (x *WorkspaceSecretPlacement) GetEnv() string {
+func (x *WorkspaceSecretPlacement) GetEnv() *SecretEnvBinding {
 	if x != nil {
 		if x, ok := x.Placement.(*WorkspaceSecretPlacement_Env); ok {
 			return x.Env
 		}
 	}
-	return ""
+	return nil
 }
 
-func (x *WorkspaceSecretPlacement) GetFile() string {
+func (x *WorkspaceSecretPlacement) GetFile() *SecretFileBinding {
 	if x != nil {
 		if x, ok := x.Placement.(*WorkspaceSecretPlacement_File); ok {
 			return x.File
 		}
 	}
-	return ""
+	return nil
 }
 
 type isWorkspaceSecretPlacement_Placement interface {
@@ -3354,11 +3474,11 @@ type isWorkspaceSecretPlacement_Placement interface {
 }
 
 type WorkspaceSecretPlacement_Env struct {
-	Env string `protobuf:"bytes,2,opt,name=env,proto3,oneof"`
+	Env *SecretEnvBinding `protobuf:"bytes,2,opt,name=env,proto3,oneof"`
 }
 
 type WorkspaceSecretPlacement_File struct {
-	File string `protobuf:"bytes,3,opt,name=file,proto3,oneof"`
+	File *SecretFileBinding `protobuf:"bytes,3,opt,name=file,proto3,oneof"`
 }
 
 func (*WorkspaceSecretPlacement_Env) isWorkspaceSecretPlacement_Placement() {}
@@ -3378,7 +3498,7 @@ type WorkspaceCreateRequested struct {
 
 func (x *WorkspaceCreateRequested) Reset() {
 	*x = WorkspaceCreateRequested{}
-	mi := &file_program_proto_msgTypes[43]
+	mi := &file_program_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3390,7 +3510,7 @@ func (x *WorkspaceCreateRequested) String() string {
 func (*WorkspaceCreateRequested) ProtoMessage() {}
 
 func (x *WorkspaceCreateRequested) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[43]
+	mi := &file_program_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3403,7 +3523,7 @@ func (x *WorkspaceCreateRequested) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkspaceCreateRequested.ProtoReflect.Descriptor instead.
 func (*WorkspaceCreateRequested) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{43}
+	return file_program_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *WorkspaceCreateRequested) GetCorrelationId() string {
@@ -3451,7 +3571,7 @@ type WorkspaceRetrieveRequested struct {
 
 func (x *WorkspaceRetrieveRequested) Reset() {
 	*x = WorkspaceRetrieveRequested{}
-	mi := &file_program_proto_msgTypes[44]
+	mi := &file_program_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3463,7 +3583,7 @@ func (x *WorkspaceRetrieveRequested) String() string {
 func (*WorkspaceRetrieveRequested) ProtoMessage() {}
 
 func (x *WorkspaceRetrieveRequested) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[44]
+	mi := &file_program_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3476,7 +3596,7 @@ func (x *WorkspaceRetrieveRequested) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkspaceRetrieveRequested.ProtoReflect.Descriptor instead.
 func (*WorkspaceRetrieveRequested) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{44}
+	return file_program_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *WorkspaceRetrieveRequested) GetCorrelationId() string {
@@ -3509,7 +3629,7 @@ type WorkspaceExecRequested struct {
 
 func (x *WorkspaceExecRequested) Reset() {
 	*x = WorkspaceExecRequested{}
-	mi := &file_program_proto_msgTypes[45]
+	mi := &file_program_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3521,7 +3641,7 @@ func (x *WorkspaceExecRequested) String() string {
 func (*WorkspaceExecRequested) ProtoMessage() {}
 
 func (x *WorkspaceExecRequested) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[45]
+	mi := &file_program_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3534,7 +3654,7 @@ func (x *WorkspaceExecRequested) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkspaceExecRequested.ProtoReflect.Descriptor instead.
 func (*WorkspaceExecRequested) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{45}
+	return file_program_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *WorkspaceExecRequested) GetCorrelationId() string {
@@ -3604,7 +3724,7 @@ type WorkspaceDeleteRequested struct {
 
 func (x *WorkspaceDeleteRequested) Reset() {
 	*x = WorkspaceDeleteRequested{}
-	mi := &file_program_proto_msgTypes[46]
+	mi := &file_program_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3616,7 +3736,7 @@ func (x *WorkspaceDeleteRequested) String() string {
 func (*WorkspaceDeleteRequested) ProtoMessage() {}
 
 func (x *WorkspaceDeleteRequested) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[46]
+	mi := &file_program_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3629,7 +3749,7 @@ func (x *WorkspaceDeleteRequested) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkspaceDeleteRequested.ProtoReflect.Descriptor instead.
 func (*WorkspaceDeleteRequested) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{46}
+	return file_program_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *WorkspaceDeleteRequested) GetCorrelationId() string {
@@ -3664,7 +3784,7 @@ type ProgramQuiesced struct {
 
 func (x *ProgramQuiesced) Reset() {
 	*x = ProgramQuiesced{}
-	mi := &file_program_proto_msgTypes[47]
+	mi := &file_program_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3676,7 +3796,7 @@ func (x *ProgramQuiesced) String() string {
 func (*ProgramQuiesced) ProtoMessage() {}
 
 func (x *ProgramQuiesced) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[47]
+	mi := &file_program_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3689,7 +3809,7 @@ func (x *ProgramQuiesced) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProgramQuiesced.ProtoReflect.Descriptor instead.
 func (*ProgramQuiesced) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{47}
+	return file_program_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *ProgramQuiesced) GetRunId() string {
@@ -3731,7 +3851,7 @@ type RunWaitRequested struct {
 
 func (x *RunWaitRequested) Reset() {
 	*x = RunWaitRequested{}
-	mi := &file_program_proto_msgTypes[48]
+	mi := &file_program_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3743,7 +3863,7 @@ func (x *RunWaitRequested) String() string {
 func (*RunWaitRequested) ProtoMessage() {}
 
 func (x *RunWaitRequested) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[48]
+	mi := &file_program_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3756,7 +3876,7 @@ func (x *RunWaitRequested) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunWaitRequested.ProtoReflect.Descriptor instead.
 func (*RunWaitRequested) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{48}
+	return file_program_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *RunWaitRequested) GetCorrelationId() string {
@@ -3842,7 +3962,7 @@ type TokenCreateRequested struct {
 
 func (x *TokenCreateRequested) Reset() {
 	*x = TokenCreateRequested{}
-	mi := &file_program_proto_msgTypes[49]
+	mi := &file_program_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3854,7 +3974,7 @@ func (x *TokenCreateRequested) String() string {
 func (*TokenCreateRequested) ProtoMessage() {}
 
 func (x *TokenCreateRequested) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[49]
+	mi := &file_program_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3867,7 +3987,7 @@ func (x *TokenCreateRequested) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TokenCreateRequested.ProtoReflect.Descriptor instead.
 func (*TokenCreateRequested) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{49}
+	return file_program_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *TokenCreateRequested) GetTimeoutMs() uint64 {
@@ -3924,7 +4044,7 @@ type TaskChildInvokeRequested struct {
 
 func (x *TaskChildInvokeRequested) Reset() {
 	*x = TaskChildInvokeRequested{}
-	mi := &file_program_proto_msgTypes[50]
+	mi := &file_program_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3936,7 +4056,7 @@ func (x *TaskChildInvokeRequested) String() string {
 func (*TaskChildInvokeRequested) ProtoMessage() {}
 
 func (x *TaskChildInvokeRequested) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[50]
+	mi := &file_program_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3949,7 +4069,7 @@ func (x *TaskChildInvokeRequested) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskChildInvokeRequested.ProtoReflect.Descriptor instead.
 func (*TaskChildInvokeRequested) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{50}
+	return file_program_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *TaskChildInvokeRequested) GetCorrelationId() string {
@@ -4046,7 +4166,7 @@ type CheckpointPauseRequest struct {
 
 func (x *CheckpointPauseRequest) Reset() {
 	*x = CheckpointPauseRequest{}
-	mi := &file_program_proto_msgTypes[51]
+	mi := &file_program_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4058,7 +4178,7 @@ func (x *CheckpointPauseRequest) String() string {
 func (*CheckpointPauseRequest) ProtoMessage() {}
 
 func (x *CheckpointPauseRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[51]
+	mi := &file_program_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4071,7 +4191,7 @@ func (x *CheckpointPauseRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckpointPauseRequest.ProtoReflect.Descriptor instead.
 func (*CheckpointPauseRequest) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{51}
+	return file_program_proto_rawDescGZIP(), []int{53}
 }
 
 func (x *CheckpointPauseRequest) GetRunWaitId() string {
@@ -4153,7 +4273,7 @@ type ResumeAttach struct {
 
 func (x *ResumeAttach) Reset() {
 	*x = ResumeAttach{}
-	mi := &file_program_proto_msgTypes[52]
+	mi := &file_program_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4165,7 +4285,7 @@ func (x *ResumeAttach) String() string {
 func (*ResumeAttach) ProtoMessage() {}
 
 func (x *ResumeAttach) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[52]
+	mi := &file_program_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4178,7 +4298,7 @@ func (x *ResumeAttach) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeAttach.ProtoReflect.Descriptor instead.
 func (*ResumeAttach) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{52}
+	return file_program_proto_rawDescGZIP(), []int{54}
 }
 
 func (x *ResumeAttach) GetCheckpointId() string {
@@ -4255,7 +4375,7 @@ type ResumeDecision struct {
 
 func (x *ResumeDecision) Reset() {
 	*x = ResumeDecision{}
-	mi := &file_program_proto_msgTypes[53]
+	mi := &file_program_proto_msgTypes[55]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4267,7 +4387,7 @@ func (x *ResumeDecision) String() string {
 func (*ResumeDecision) ProtoMessage() {}
 
 func (x *ResumeDecision) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[53]
+	mi := &file_program_proto_msgTypes[55]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4280,7 +4400,7 @@ func (x *ResumeDecision) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeDecision.ProtoReflect.Descriptor instead.
 func (*ResumeDecision) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{53}
+	return file_program_proto_rawDescGZIP(), []int{55}
 }
 
 func (x *ResumeDecision) GetRunWaitId() string {
@@ -4367,7 +4487,7 @@ type ResumeAck struct {
 
 func (x *ResumeAck) Reset() {
 	*x = ResumeAck{}
-	mi := &file_program_proto_msgTypes[54]
+	mi := &file_program_proto_msgTypes[56]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4379,7 +4499,7 @@ func (x *ResumeAck) String() string {
 func (*ResumeAck) ProtoMessage() {}
 
 func (x *ResumeAck) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[54]
+	mi := &file_program_proto_msgTypes[56]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4392,7 +4512,7 @@ func (x *ResumeAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeAck.ProtoReflect.Descriptor instead.
 func (*ResumeAck) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{54}
+	return file_program_proto_rawDescGZIP(), []int{56}
 }
 
 func (x *ResumeAck) GetRunWaitId() string {
@@ -4451,7 +4571,7 @@ type ResumeConsumed struct {
 
 func (x *ResumeConsumed) Reset() {
 	*x = ResumeConsumed{}
-	mi := &file_program_proto_msgTypes[55]
+	mi := &file_program_proto_msgTypes[57]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4463,7 +4583,7 @@ func (x *ResumeConsumed) String() string {
 func (*ResumeConsumed) ProtoMessage() {}
 
 func (x *ResumeConsumed) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[55]
+	mi := &file_program_proto_msgTypes[57]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4476,7 +4596,7 @@ func (x *ResumeConsumed) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeConsumed.ProtoReflect.Descriptor instead.
 func (*ResumeConsumed) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{55}
+	return file_program_proto_rawDescGZIP(), []int{57}
 }
 
 func (x *ResumeConsumed) GetRunWaitId() string {
@@ -4535,7 +4655,7 @@ type MetadataUpdated struct {
 
 func (x *MetadataUpdated) Reset() {
 	*x = MetadataUpdated{}
-	mi := &file_program_proto_msgTypes[56]
+	mi := &file_program_proto_msgTypes[58]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4547,7 +4667,7 @@ func (x *MetadataUpdated) String() string {
 func (*MetadataUpdated) ProtoMessage() {}
 
 func (x *MetadataUpdated) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[56]
+	mi := &file_program_proto_msgTypes[58]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4560,7 +4680,7 @@ func (x *MetadataUpdated) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MetadataUpdated.ProtoReflect.Descriptor instead.
 func (*MetadataUpdated) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{56}
+	return file_program_proto_rawDescGZIP(), []int{58}
 }
 
 func (x *MetadataUpdated) GetOperation() string {
@@ -4617,7 +4737,7 @@ type StructuredLogRequested struct {
 
 func (x *StructuredLogRequested) Reset() {
 	*x = StructuredLogRequested{}
-	mi := &file_program_proto_msgTypes[57]
+	mi := &file_program_proto_msgTypes[59]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4629,7 +4749,7 @@ func (x *StructuredLogRequested) String() string {
 func (*StructuredLogRequested) ProtoMessage() {}
 
 func (x *StructuredLogRequested) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[57]
+	mi := &file_program_proto_msgTypes[59]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4642,7 +4762,7 @@ func (x *StructuredLogRequested) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StructuredLogRequested.ProtoReflect.Descriptor instead.
 func (*StructuredLogRequested) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{57}
+	return file_program_proto_rawDescGZIP(), []int{59}
 }
 
 func (x *StructuredLogRequested) GetCorrelationId() string {
@@ -4729,7 +4849,7 @@ const file_program_proto_rawDesc = "" +
 	"\btimezone\x18\x04 \x01(\tR\btimezoneB \n" +
 	"\x1e_previous_scheduled_at_unix_ms\"\x11\n" +
 	"\x0fActorStartCause\"\x13\n" +
-	"\x11ContinuationCause\"\xfb\x01\n" +
+	"\x11ContinuationCause\"\xb3\x03\n" +
 	"\x11ProgramRunRequest\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12%\n" +
 	"\x0eattempt_number\x18\x02 \x01(\rR\rattemptNumber\x12 \n" +
@@ -4737,7 +4857,12 @@ const file_program_proto_rawDesc = "" +
 	"runLeaseId\x12.\n" +
 	"\x13program_start_frame\x18\x04 \x01(\fR\x11programStartFrame\x12!\n" +
 	"\fsecret_count\x18\x05 \x01(\rR\vsecretCount\x123\n" +
-	"\x16start_deadline_unix_ms\x18\x06 \x01(\x03R\x13startDeadlineUnixMs\"\\\n" +
+	"\x16start_deadline_unix_ms\x18\x06 \x01(\x03R\x13startDeadlineUnixMs\x12Z\n" +
+	"\rprotected_env\x18\a \x03(\v25.helmr.program.v0.ProgramRunRequest.ProtectedEnvEntryR\fprotectedEnv\x12\x19\n" +
+	"\bproxy_ca\x18\b \x01(\fR\aproxyCa\x1a?\n" +
+	"\x11ProtectedEnvEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\\\n" +
 	"\rProgramSecret\x12\x12\n" +
 	"\x03env\x18\x01 \x01(\tH\x00R\x03env\x12\x14\n" +
 	"\x04file\x18\x02 \x01(\tH\x00R\x04file\x12\x14\n" +
@@ -4930,11 +5055,17 @@ const file_program_proto_rawDesc = "" +
 	"\x05limit\x18\x04 \x01(\rR\x05limitB\b\n" +
 	"\x06_after\"5\n" +
 	"\x10WorkspaceAddress\x12!\n" +
-	"\fworkspace_id\x18\x01 \x01(\tR\vworkspaceId\"e\n" +
-	"\x18WorkspaceSecretPlacement\x12\x12\n" +
+	"\fworkspace_id\x18\x01 \x01(\tR\vworkspaceId\"c\n" +
+	"\x10SecretEnvBinding\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
-	"\x03env\x18\x02 \x01(\tH\x00R\x03env\x12\x14\n" +
-	"\x04file\x18\x03 \x01(\tH\x00R\x04fileB\v\n" +
+	"\x04mode\x18\x02 \x01(\tR\x04mode\x12'\n" +
+	"\x0fallowed_origins\x18\x03 \x03(\tR\x0eallowedOrigins\"'\n" +
+	"\x11SecretFileBinding\x12\x12\n" +
+	"\x04path\x18\x01 \x01(\tR\x04path\"\xb2\x01\n" +
+	"\x18WorkspaceSecretPlacement\x12\x16\n" +
+	"\x06secret\x18\x01 \x01(\tR\x06secret\x126\n" +
+	"\x03env\x18\x02 \x01(\v2\".helmr.program.v0.SecretEnvBindingH\x00R\x03env\x129\n" +
+	"\x04file\x18\x03 \x01(\v2#.helmr.program.v0.SecretFileBindingH\x00R\x04fileB\v\n" +
 	"\tplacement\"\x89\x02\n" +
 	"\x18WorkspaceCreateRequested\x12%\n" +
 	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x1f\n" +
@@ -5099,7 +5230,7 @@ func file_program_proto_rawDescGZIP() []byte {
 	return file_program_proto_rawDescData
 }
 
-var file_program_proto_msgTypes = make([]protoimpl.MessageInfo, 59)
+var file_program_proto_msgTypes = make([]protoimpl.MessageInfo, 62)
 var file_program_proto_goTypes = []any{
 	(*ProgramStart)(nil),                // 0: helmr.program.v0.ProgramStart
 	(*TaskStart)(nil),                   // 1: helmr.program.v0.TaskStart
@@ -5143,23 +5274,26 @@ var file_program_proto_goTypes = []any{
 	(*SessionCloseRequested)(nil),       // 39: helmr.program.v0.SessionCloseRequested
 	(*SessionOutputPageRequested)(nil),  // 40: helmr.program.v0.SessionOutputPageRequested
 	(*WorkspaceAddress)(nil),            // 41: helmr.program.v0.WorkspaceAddress
-	(*WorkspaceSecretPlacement)(nil),    // 42: helmr.program.v0.WorkspaceSecretPlacement
-	(*WorkspaceCreateRequested)(nil),    // 43: helmr.program.v0.WorkspaceCreateRequested
-	(*WorkspaceRetrieveRequested)(nil),  // 44: helmr.program.v0.WorkspaceRetrieveRequested
-	(*WorkspaceExecRequested)(nil),      // 45: helmr.program.v0.WorkspaceExecRequested
-	(*WorkspaceDeleteRequested)(nil),    // 46: helmr.program.v0.WorkspaceDeleteRequested
-	(*ProgramQuiesced)(nil),             // 47: helmr.program.v0.ProgramQuiesced
-	(*RunWaitRequested)(nil),            // 48: helmr.program.v0.RunWaitRequested
-	(*TokenCreateRequested)(nil),        // 49: helmr.program.v0.TokenCreateRequested
-	(*TaskChildInvokeRequested)(nil),    // 50: helmr.program.v0.TaskChildInvokeRequested
-	(*CheckpointPauseRequest)(nil),      // 51: helmr.program.v0.CheckpointPauseRequest
-	(*ResumeAttach)(nil),                // 52: helmr.program.v0.ResumeAttach
-	(*ResumeDecision)(nil),              // 53: helmr.program.v0.ResumeDecision
-	(*ResumeAck)(nil),                   // 54: helmr.program.v0.ResumeAck
-	(*ResumeConsumed)(nil),              // 55: helmr.program.v0.ResumeConsumed
-	(*MetadataUpdated)(nil),             // 56: helmr.program.v0.MetadataUpdated
-	(*StructuredLogRequested)(nil),      // 57: helmr.program.v0.StructuredLogRequested
-	nil,                                 // 58: helmr.program.v0.WorkspaceExecRequested.EnvEntry
+	(*SecretEnvBinding)(nil),            // 42: helmr.program.v0.SecretEnvBinding
+	(*SecretFileBinding)(nil),           // 43: helmr.program.v0.SecretFileBinding
+	(*WorkspaceSecretPlacement)(nil),    // 44: helmr.program.v0.WorkspaceSecretPlacement
+	(*WorkspaceCreateRequested)(nil),    // 45: helmr.program.v0.WorkspaceCreateRequested
+	(*WorkspaceRetrieveRequested)(nil),  // 46: helmr.program.v0.WorkspaceRetrieveRequested
+	(*WorkspaceExecRequested)(nil),      // 47: helmr.program.v0.WorkspaceExecRequested
+	(*WorkspaceDeleteRequested)(nil),    // 48: helmr.program.v0.WorkspaceDeleteRequested
+	(*ProgramQuiesced)(nil),             // 49: helmr.program.v0.ProgramQuiesced
+	(*RunWaitRequested)(nil),            // 50: helmr.program.v0.RunWaitRequested
+	(*TokenCreateRequested)(nil),        // 51: helmr.program.v0.TokenCreateRequested
+	(*TaskChildInvokeRequested)(nil),    // 52: helmr.program.v0.TaskChildInvokeRequested
+	(*CheckpointPauseRequest)(nil),      // 53: helmr.program.v0.CheckpointPauseRequest
+	(*ResumeAttach)(nil),                // 54: helmr.program.v0.ResumeAttach
+	(*ResumeDecision)(nil),              // 55: helmr.program.v0.ResumeDecision
+	(*ResumeAck)(nil),                   // 56: helmr.program.v0.ResumeAck
+	(*ResumeConsumed)(nil),              // 57: helmr.program.v0.ResumeConsumed
+	(*MetadataUpdated)(nil),             // 58: helmr.program.v0.MetadataUpdated
+	(*StructuredLogRequested)(nil),      // 59: helmr.program.v0.StructuredLogRequested
+	nil,                                 // 60: helmr.program.v0.ProgramRunRequest.ProtectedEnvEntry
+	nil,                                 // 61: helmr.program.v0.WorkspaceExecRequested.EnvEntry
 }
 var file_program_proto_depIdxs = []int32{
 	4,  // 0: helmr.program.v0.ProgramStart.cause:type_name -> helmr.program.v0.RunCause
@@ -5172,52 +5306,55 @@ var file_program_proto_depIdxs = []int32{
 	8,  // 7: helmr.program.v0.RunCause.schedule:type_name -> helmr.program.v0.ScheduleCause
 	9,  // 8: helmr.program.v0.RunCause.actor_start:type_name -> helmr.program.v0.ActorStartCause
 	10, // 9: helmr.program.v0.RunCause.continuation:type_name -> helmr.program.v0.ContinuationCause
-	12, // 10: helmr.program.v0.ProgramSupervisorCommand.secret_delivery:type_name -> helmr.program.v0.ProgramSecret
-	13, // 11: helmr.program.v0.ProgramSupervisorCommand.secrets_complete:type_name -> helmr.program.v0.ProgramSecretsComplete
-	17, // 12: helmr.program.v0.ProgramSupervisorCommand.start_release:type_name -> helmr.program.v0.ProgramStartRelease
-	22, // 13: helmr.program.v0.ProgramSupervisorCommand.entrypoint_release:type_name -> helmr.program.v0.EntrypointRelease
-	19, // 14: helmr.program.v0.EntrypointIdentity.task:type_name -> helmr.program.v0.TaskEntrypoint
-	20, // 15: helmr.program.v0.EntrypointIdentity.actor:type_name -> helmr.program.v0.ActorEntrypoint
-	18, // 16: helmr.program.v0.EntrypointReady.entrypoint:type_name -> helmr.program.v0.EntrypointIdentity
-	18, // 17: helmr.program.v0.EntrypointRelease.entrypoint:type_name -> helmr.program.v0.EntrypointIdentity
-	48, // 18: helmr.program.v0.RunEvent.run_wait_requested:type_name -> helmr.program.v0.RunWaitRequested
-	56, // 19: helmr.program.v0.RunEvent.metadata_updated:type_name -> helmr.program.v0.MetadataUpdated
-	49, // 20: helmr.program.v0.RunEvent.token_create_requested:type_name -> helmr.program.v0.TokenCreateRequested
-	55, // 21: helmr.program.v0.RunEvent.resume_consumed:type_name -> helmr.program.v0.ResumeConsumed
-	15, // 22: helmr.program.v0.RunEvent.program_process_started:type_name -> helmr.program.v0.ProgramProcessStarted
-	21, // 23: helmr.program.v0.RunEvent.entrypoint_ready:type_name -> helmr.program.v0.EntrypointReady
-	24, // 24: helmr.program.v0.RunEvent.task_outcome:type_name -> helmr.program.v0.TaskOutcome
-	47, // 25: helmr.program.v0.RunEvent.program_quiesced:type_name -> helmr.program.v0.ProgramQuiesced
-	28, // 26: helmr.program.v0.RunEvent.actor_outcome:type_name -> helmr.program.v0.ActorOutcome
-	31, // 27: helmr.program.v0.RunEvent.actor_turn_commit_requested:type_name -> helmr.program.v0.ActorTurnCommitRequested
-	35, // 28: helmr.program.v0.RunEvent.actor_output_append_requested:type_name -> helmr.program.v0.ActorOutputAppendRequested
-	36, // 29: helmr.program.v0.RunEvent.session_input_send_requested:type_name -> helmr.program.v0.SessionInputSendRequested
-	57, // 30: helmr.program.v0.RunEvent.structured_log_requested:type_name -> helmr.program.v0.StructuredLogRequested
-	50, // 31: helmr.program.v0.RunEvent.task_child_invoke_requested:type_name -> helmr.program.v0.TaskChildInvokeRequested
-	37, // 32: helmr.program.v0.RunEvent.actor_start_requested:type_name -> helmr.program.v0.ActorStartRequested
-	38, // 33: helmr.program.v0.RunEvent.session_status_requested:type_name -> helmr.program.v0.SessionStatusRequested
-	39, // 34: helmr.program.v0.RunEvent.session_close_requested:type_name -> helmr.program.v0.SessionCloseRequested
-	40, // 35: helmr.program.v0.RunEvent.session_output_page_requested:type_name -> helmr.program.v0.SessionOutputPageRequested
-	43, // 36: helmr.program.v0.RunEvent.workspace_create_requested:type_name -> helmr.program.v0.WorkspaceCreateRequested
-	44, // 37: helmr.program.v0.RunEvent.workspace_retrieve_requested:type_name -> helmr.program.v0.WorkspaceRetrieveRequested
-	45, // 38: helmr.program.v0.RunEvent.workspace_exec_requested:type_name -> helmr.program.v0.WorkspaceExecRequested
-	46, // 39: helmr.program.v0.RunEvent.workspace_delete_requested:type_name -> helmr.program.v0.WorkspaceDeleteRequested
-	16, // 40: helmr.program.v0.RunEvent.program_process_start_failed:type_name -> helmr.program.v0.ProgramProcessStartFailed
-	25, // 41: helmr.program.v0.TaskOutcome.succeeded:type_name -> helmr.program.v0.TaskSucceeded
-	26, // 42: helmr.program.v0.TaskOutcome.failed:type_name -> helmr.program.v0.TaskFailed
-	27, // 43: helmr.program.v0.TaskOutcome.payload_invalid:type_name -> helmr.program.v0.TaskPayloadInvalid
-	29, // 44: helmr.program.v0.ActorOutcome.succeeded:type_name -> helmr.program.v0.ActorSucceeded
-	30, // 45: helmr.program.v0.ActorOutcome.failed:type_name -> helmr.program.v0.ActorFailed
-	42, // 46: helmr.program.v0.WorkspaceCreateRequested.secrets:type_name -> helmr.program.v0.WorkspaceSecretPlacement
-	41, // 47: helmr.program.v0.WorkspaceRetrieveRequested.workspace:type_name -> helmr.program.v0.WorkspaceAddress
-	41, // 48: helmr.program.v0.WorkspaceExecRequested.workspace:type_name -> helmr.program.v0.WorkspaceAddress
-	58, // 49: helmr.program.v0.WorkspaceExecRequested.env:type_name -> helmr.program.v0.WorkspaceExecRequested.EnvEntry
-	41, // 50: helmr.program.v0.WorkspaceDeleteRequested.workspace:type_name -> helmr.program.v0.WorkspaceAddress
-	51, // [51:51] is the sub-list for method output_type
-	51, // [51:51] is the sub-list for method input_type
-	51, // [51:51] is the sub-list for extension type_name
-	51, // [51:51] is the sub-list for extension extendee
-	0,  // [0:51] is the sub-list for field type_name
+	60, // 10: helmr.program.v0.ProgramRunRequest.protected_env:type_name -> helmr.program.v0.ProgramRunRequest.ProtectedEnvEntry
+	12, // 11: helmr.program.v0.ProgramSupervisorCommand.secret_delivery:type_name -> helmr.program.v0.ProgramSecret
+	13, // 12: helmr.program.v0.ProgramSupervisorCommand.secrets_complete:type_name -> helmr.program.v0.ProgramSecretsComplete
+	17, // 13: helmr.program.v0.ProgramSupervisorCommand.start_release:type_name -> helmr.program.v0.ProgramStartRelease
+	22, // 14: helmr.program.v0.ProgramSupervisorCommand.entrypoint_release:type_name -> helmr.program.v0.EntrypointRelease
+	19, // 15: helmr.program.v0.EntrypointIdentity.task:type_name -> helmr.program.v0.TaskEntrypoint
+	20, // 16: helmr.program.v0.EntrypointIdentity.actor:type_name -> helmr.program.v0.ActorEntrypoint
+	18, // 17: helmr.program.v0.EntrypointReady.entrypoint:type_name -> helmr.program.v0.EntrypointIdentity
+	18, // 18: helmr.program.v0.EntrypointRelease.entrypoint:type_name -> helmr.program.v0.EntrypointIdentity
+	50, // 19: helmr.program.v0.RunEvent.run_wait_requested:type_name -> helmr.program.v0.RunWaitRequested
+	58, // 20: helmr.program.v0.RunEvent.metadata_updated:type_name -> helmr.program.v0.MetadataUpdated
+	51, // 21: helmr.program.v0.RunEvent.token_create_requested:type_name -> helmr.program.v0.TokenCreateRequested
+	57, // 22: helmr.program.v0.RunEvent.resume_consumed:type_name -> helmr.program.v0.ResumeConsumed
+	15, // 23: helmr.program.v0.RunEvent.program_process_started:type_name -> helmr.program.v0.ProgramProcessStarted
+	21, // 24: helmr.program.v0.RunEvent.entrypoint_ready:type_name -> helmr.program.v0.EntrypointReady
+	24, // 25: helmr.program.v0.RunEvent.task_outcome:type_name -> helmr.program.v0.TaskOutcome
+	49, // 26: helmr.program.v0.RunEvent.program_quiesced:type_name -> helmr.program.v0.ProgramQuiesced
+	28, // 27: helmr.program.v0.RunEvent.actor_outcome:type_name -> helmr.program.v0.ActorOutcome
+	31, // 28: helmr.program.v0.RunEvent.actor_turn_commit_requested:type_name -> helmr.program.v0.ActorTurnCommitRequested
+	35, // 29: helmr.program.v0.RunEvent.actor_output_append_requested:type_name -> helmr.program.v0.ActorOutputAppendRequested
+	36, // 30: helmr.program.v0.RunEvent.session_input_send_requested:type_name -> helmr.program.v0.SessionInputSendRequested
+	59, // 31: helmr.program.v0.RunEvent.structured_log_requested:type_name -> helmr.program.v0.StructuredLogRequested
+	52, // 32: helmr.program.v0.RunEvent.task_child_invoke_requested:type_name -> helmr.program.v0.TaskChildInvokeRequested
+	37, // 33: helmr.program.v0.RunEvent.actor_start_requested:type_name -> helmr.program.v0.ActorStartRequested
+	38, // 34: helmr.program.v0.RunEvent.session_status_requested:type_name -> helmr.program.v0.SessionStatusRequested
+	39, // 35: helmr.program.v0.RunEvent.session_close_requested:type_name -> helmr.program.v0.SessionCloseRequested
+	40, // 36: helmr.program.v0.RunEvent.session_output_page_requested:type_name -> helmr.program.v0.SessionOutputPageRequested
+	45, // 37: helmr.program.v0.RunEvent.workspace_create_requested:type_name -> helmr.program.v0.WorkspaceCreateRequested
+	46, // 38: helmr.program.v0.RunEvent.workspace_retrieve_requested:type_name -> helmr.program.v0.WorkspaceRetrieveRequested
+	47, // 39: helmr.program.v0.RunEvent.workspace_exec_requested:type_name -> helmr.program.v0.WorkspaceExecRequested
+	48, // 40: helmr.program.v0.RunEvent.workspace_delete_requested:type_name -> helmr.program.v0.WorkspaceDeleteRequested
+	16, // 41: helmr.program.v0.RunEvent.program_process_start_failed:type_name -> helmr.program.v0.ProgramProcessStartFailed
+	25, // 42: helmr.program.v0.TaskOutcome.succeeded:type_name -> helmr.program.v0.TaskSucceeded
+	26, // 43: helmr.program.v0.TaskOutcome.failed:type_name -> helmr.program.v0.TaskFailed
+	27, // 44: helmr.program.v0.TaskOutcome.payload_invalid:type_name -> helmr.program.v0.TaskPayloadInvalid
+	29, // 45: helmr.program.v0.ActorOutcome.succeeded:type_name -> helmr.program.v0.ActorSucceeded
+	30, // 46: helmr.program.v0.ActorOutcome.failed:type_name -> helmr.program.v0.ActorFailed
+	42, // 47: helmr.program.v0.WorkspaceSecretPlacement.env:type_name -> helmr.program.v0.SecretEnvBinding
+	43, // 48: helmr.program.v0.WorkspaceSecretPlacement.file:type_name -> helmr.program.v0.SecretFileBinding
+	44, // 49: helmr.program.v0.WorkspaceCreateRequested.secrets:type_name -> helmr.program.v0.WorkspaceSecretPlacement
+	41, // 50: helmr.program.v0.WorkspaceRetrieveRequested.workspace:type_name -> helmr.program.v0.WorkspaceAddress
+	41, // 51: helmr.program.v0.WorkspaceExecRequested.workspace:type_name -> helmr.program.v0.WorkspaceAddress
+	61, // 52: helmr.program.v0.WorkspaceExecRequested.env:type_name -> helmr.program.v0.WorkspaceExecRequested.EnvEntry
+	41, // 53: helmr.program.v0.WorkspaceDeleteRequested.workspace:type_name -> helmr.program.v0.WorkspaceAddress
+	54, // [54:54] is the sub-list for method output_type
+	54, // [54:54] is the sub-list for method input_type
+	54, // [54:54] is the sub-list for extension type_name
+	54, // [54:54] is the sub-list for extension extendee
+	0,  // [0:54] is the sub-list for field type_name
 }
 
 func init() { file_program_proto_init() }
@@ -5301,24 +5438,24 @@ func file_program_proto_init() {
 	file_program_proto_msgTypes[37].OneofWrappers = []any{}
 	file_program_proto_msgTypes[39].OneofWrappers = []any{}
 	file_program_proto_msgTypes[40].OneofWrappers = []any{}
-	file_program_proto_msgTypes[42].OneofWrappers = []any{
+	file_program_proto_msgTypes[44].OneofWrappers = []any{
 		(*WorkspaceSecretPlacement_Env)(nil),
 		(*WorkspaceSecretPlacement_File)(nil),
 	}
-	file_program_proto_msgTypes[43].OneofWrappers = []any{}
 	file_program_proto_msgTypes[45].OneofWrappers = []any{}
-	file_program_proto_msgTypes[46].OneofWrappers = []any{}
+	file_program_proto_msgTypes[47].OneofWrappers = []any{}
 	file_program_proto_msgTypes[48].OneofWrappers = []any{}
-	file_program_proto_msgTypes[49].OneofWrappers = []any{}
 	file_program_proto_msgTypes[50].OneofWrappers = []any{}
-	file_program_proto_msgTypes[56].OneofWrappers = []any{}
+	file_program_proto_msgTypes[51].OneofWrappers = []any{}
+	file_program_proto_msgTypes[52].OneofWrappers = []any{}
+	file_program_proto_msgTypes[58].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_program_proto_rawDesc), len(file_program_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   59,
+			NumMessages:   62,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

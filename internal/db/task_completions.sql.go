@@ -1322,7 +1322,7 @@ UPDATE workspaces
         WHERE workspace_processes.workspace_id = workspaces.id
           AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
    )
-RETURNING environments.id, org_id, project_id, slug, name, color_hex, is_default, environments.created_at, environments.updated_at, current_deployment_id, workspaces.id, environment_id, region_id, sandbox_declared_id, deployment_definition_id, key, state_version, owner_session_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, workspaces.created_at, workspaces.updated_at, deleted_at
+RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at
 `
 
 type ReleaseTaskWorkspaceOwnerParams struct {
@@ -1340,16 +1340,6 @@ type ReleaseTaskWorkspaceOwnerParams struct {
 
 type ReleaseTaskWorkspaceOwnerRow struct {
 	ID                     pgtype.UUID        `json:"id"`
-	OrgID                  pgtype.UUID        `json:"org_id"`
-	ProjectID              pgtype.UUID        `json:"project_id"`
-	Slug                   string             `json:"slug"`
-	Name                   string             `json:"name"`
-	ColorHex               string             `json:"color_hex"`
-	IsDefault              bool               `json:"is_default"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
-	CurrentDeploymentID    pgtype.UUID        `json:"current_deployment_id"`
-	ID_2                   pgtype.UUID        `json:"id_2"`
 	EnvironmentID          pgtype.UUID        `json:"environment_id"`
 	RegionID               string             `json:"region_id"`
 	SandboxDeclaredID      pgtype.Text        `json:"sandbox_declared_id"`
@@ -1365,8 +1355,8 @@ type ReleaseTaskWorkspaceOwnerRow struct {
 	DesiredState           string             `json:"desired_state"`
 	DirtyState             string             `json:"dirty_state"`
 	LastActivityAt         pgtype.Timestamptz `json:"last_activity_at"`
-	CreatedAt_2            pgtype.Timestamptz `json:"created_at_2"`
-	UpdatedAt_2            pgtype.Timestamptz `json:"updated_at_2"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 	DeletedAt              pgtype.Timestamptz `json:"deleted_at"`
 }
 
@@ -1386,16 +1376,6 @@ func (q *Queries) ReleaseTaskWorkspaceOwner(ctx context.Context, arg ReleaseTask
 	var i ReleaseTaskWorkspaceOwnerRow
 	err := row.Scan(
 		&i.ID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.Slug,
-		&i.Name,
-		&i.ColorHex,
-		&i.IsDefault,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.CurrentDeploymentID,
-		&i.ID_2,
 		&i.EnvironmentID,
 		&i.RegionID,
 		&i.SandboxDeclaredID,
@@ -1411,8 +1391,8 @@ func (q *Queries) ReleaseTaskWorkspaceOwner(ctx context.Context, arg ReleaseTask
 		&i.DesiredState,
 		&i.DirtyState,
 		&i.LastActivityAt,
-		&i.CreatedAt_2,
-		&i.UpdatedAt_2,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 		&i.DeletedAt,
 	)
 	return i, err
