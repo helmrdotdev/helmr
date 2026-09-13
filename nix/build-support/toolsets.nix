@@ -162,7 +162,14 @@ rec {
       helmrPackages.firecrackerRuntime
     ];
 
-  appRuntime = base ++ image ++ smokeLinux;
+  appRuntime =
+    base
+    ++ image
+    ++ smokeLinux
+    ++ [
+      pkgs.redis
+      pkgs.curl
+    ];
 
   infraTest = [
     pkgs.bash

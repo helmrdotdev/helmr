@@ -7,7 +7,7 @@ CONSOLE_OUT := $(CURDIR)/internal/console/out
 
 MIGRATE_VERSION ?= v4.20.1
 
-.PHONY: all tools generate datapath-bpf proto sqlc fmt modernize modernize-check test go-test test-race go-test-race test-linux-compile lint go-lint build go-build console-build verify dev dev-console-stack images boot-artifacts clean migration migrate-up migrate-down doctor doctor-linux
+.PHONY: all tools generate datapath-bpf proto sqlc fmt modernize modernize-check test go-test test-race go-test-race test-linux-compile lint go-lint build go-build console-build verify dev dev-console-stack dev-reset images boot-artifacts clean migration migrate-up migrate-down doctor doctor-linux
 
 all: verify
 
@@ -80,6 +80,9 @@ dev: dev-console-stack
 
 dev-console-stack:
 	./scripts/dev-console-stack.sh
+
+dev-reset:
+	./scripts/dev-reset.sh
 
 images boot-artifacts:
 	$(MAKE) -C images/guest all

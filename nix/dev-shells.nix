@@ -46,7 +46,10 @@ let
 in
 {
   default = pkgs.mkShell {
-    packages = toolsets.base;
+    packages = toolsets.base ++ [
+      pkgs.redis
+      pkgsClickHouse.clickhouse
+    ];
     inherit shellHook;
   };
 
