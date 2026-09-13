@@ -98,10 +98,10 @@ UPDATE workspaces
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 INSERT INTO idempotency_claims (
     id, environment_id, operation, slot_hash,
-    request_fingerprint, accepted_at
+    request_fingerprint, accepted_at, expires_at
 ) VALUES (
-    $1, $2, 'task.child.invoke', decode(repeat('51', 32), 'hex'),
-    decode(repeat('52', 32), 'hex'), now()
+    $1, $2, 'workspace.exec', decode(repeat('51', 32), 'hex'),
+    decode(repeat('52', 32), 'hex'), now(), now() + interval '30 days'
 )`,
 		claimID,
 		fixture.environmentID,

@@ -41,7 +41,6 @@ type PublicAccessTokenState = string
 
 const (
 	PublicAccessTokenStateActive  PublicAccessTokenState = "active"
-	PublicAccessTokenStateRevoked PublicAccessTokenState = "revoked"
 	PublicAccessTokenStateExpired PublicAccessTokenState = "expired"
 )
 
@@ -188,7 +187,6 @@ const (
 	WorkspaceLeaseStateReleased  WorkspaceLeaseState = "released"
 	WorkspaceLeaseStateExpired   WorkspaceLeaseState = "expired"
 	WorkspaceLeaseStateFenced    WorkspaceLeaseState = "fenced"
-	WorkspaceLeaseStateLost      WorkspaceLeaseState = "lost"
 )
 
 type WorkspaceProcessState = string

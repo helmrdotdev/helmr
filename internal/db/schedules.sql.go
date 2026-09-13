@@ -28,7 +28,7 @@ UPDATE schedules
    AND next_fire_at = $1
    AND claimed_by = $6
    AND claim_expires_at > now()
-RETURNING id, environment_id, target_kind, task_declared_id, deployment_definition_id, deployment_id, cron_pattern, timezone, cron_semantics_version, generation, state, state_version, effective_from, next_fire_at, last_fire_at, claimed_by, claim_expires_at, retry_step, retry_after, last_failure, created_at, updated_at
+RETURNING id, environment_id, task_declared_id, deployment_definition_id, deployment_id, cron_pattern, timezone, cron_semantics_version, generation, state, state_version, effective_from, next_fire_at, last_fire_at, claimed_by, claim_expires_at, retry_step, retry_after, last_failure, created_at, updated_at
 `
 
 type AdvanceScheduleCursorParams struct {
@@ -53,7 +53,6 @@ func (q *Queries) AdvanceScheduleCursor(ctx context.Context, arg AdvanceSchedule
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
-		&i.TargetKind,
 		&i.TaskDeclaredID,
 		&i.DeploymentDefinitionID,
 		&i.DeploymentID,
@@ -133,7 +132,7 @@ UPDATE schedules
        updated_at = now()
   FROM candidates
  WHERE schedules.id = candidates.id
-RETURNING schedules.id, schedules.environment_id, schedules.target_kind, schedules.task_declared_id, schedules.deployment_definition_id, schedules.deployment_id, schedules.cron_pattern, schedules.timezone, schedules.cron_semantics_version, schedules.generation, schedules.state, schedules.state_version, schedules.effective_from, schedules.next_fire_at, schedules.last_fire_at, schedules.claimed_by, schedules.claim_expires_at, schedules.retry_step, schedules.retry_after, schedules.last_failure, schedules.created_at, schedules.updated_at
+RETURNING schedules.id, schedules.environment_id, schedules.task_declared_id, schedules.deployment_definition_id, schedules.deployment_id, schedules.cron_pattern, schedules.timezone, schedules.cron_semantics_version, schedules.generation, schedules.state, schedules.state_version, schedules.effective_from, schedules.next_fire_at, schedules.last_fire_at, schedules.claimed_by, schedules.claim_expires_at, schedules.retry_step, schedules.retry_after, schedules.last_failure, schedules.created_at, schedules.updated_at
 `
 
 type ClaimDueSchedulesParams struct {
@@ -154,7 +153,6 @@ func (q *Queries) ClaimDueSchedules(ctx context.Context, arg ClaimDueSchedulesPa
 		if err := rows.Scan(
 			&i.ID,
 			&i.EnvironmentID,
-			&i.TargetKind,
 			&i.TaskDeclaredID,
 			&i.DeploymentDefinitionID,
 			&i.DeploymentID,
@@ -229,7 +227,6 @@ WITH selected_definition AS (
         id,
         environment_id,
         workspace_id,
-        kind,
         state,
         content_digest,
         size_bytes,
@@ -241,7 +238,6 @@ WITH selected_definition AS (
     SELECT $6,
            created_workspace.environment_id,
            created_workspace.id,
-           'system'::workspace_version_kind,
            'committed',
            'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',
            0,
@@ -339,7 +335,7 @@ func (q *Queries) DeleteScheduleSecretsForSchedules(ctx context.Context, arg Del
 }
 
 const getSchedule = `-- name: GetSchedule :one
-SELECT id, environment_id, target_kind, task_declared_id, deployment_definition_id, deployment_id, cron_pattern, timezone, cron_semantics_version, generation, state, state_version, effective_from, next_fire_at, last_fire_at, claimed_by, claim_expires_at, retry_step, retry_after, last_failure, created_at, updated_at
+SELECT id, environment_id, task_declared_id, deployment_definition_id, deployment_id, cron_pattern, timezone, cron_semantics_version, generation, state, state_version, effective_from, next_fire_at, last_fire_at, claimed_by, claim_expires_at, retry_step, retry_after, last_failure, created_at, updated_at
   FROM schedules
  WHERE environment_id = $1
    AND id = $2
@@ -356,7 +352,6 @@ func (q *Queries) GetSchedule(ctx context.Context, arg GetScheduleParams) (Sched
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
-		&i.TargetKind,
 		&i.TaskDeclaredID,
 		&i.DeploymentDefinitionID,
 		&i.DeploymentID,
@@ -381,7 +376,7 @@ func (q *Queries) GetSchedule(ctx context.Context, arg GetScheduleParams) (Sched
 }
 
 const getScheduleByID = `-- name: GetScheduleByID :one
-SELECT schedules.id, schedules.environment_id, schedules.target_kind, schedules.task_declared_id, schedules.deployment_definition_id, schedules.deployment_id, schedules.cron_pattern, schedules.timezone, schedules.cron_semantics_version, schedules.generation, schedules.state, schedules.state_version, schedules.effective_from, schedules.next_fire_at, schedules.last_fire_at, schedules.claimed_by, schedules.claim_expires_at, schedules.retry_step, schedules.retry_after, schedules.last_failure, schedules.created_at, schedules.updated_at
+SELECT schedules.id, schedules.environment_id, schedules.task_declared_id, schedules.deployment_definition_id, schedules.deployment_id, schedules.cron_pattern, schedules.timezone, schedules.cron_semantics_version, schedules.generation, schedules.state, schedules.state_version, schedules.effective_from, schedules.next_fire_at, schedules.last_fire_at, schedules.claimed_by, schedules.claim_expires_at, schedules.retry_step, schedules.retry_after, schedules.last_failure, schedules.created_at, schedules.updated_at
   FROM schedules
   JOIN environments
     ON environments.id = schedules.environment_id
@@ -409,7 +404,6 @@ func (q *Queries) GetScheduleByID(ctx context.Context, arg GetScheduleByIDParams
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
-		&i.TargetKind,
 		&i.TaskDeclaredID,
 		&i.DeploymentDefinitionID,
 		&i.DeploymentID,
@@ -614,7 +608,7 @@ func (q *Queries) ListScheduleSecrets(ctx context.Context, arg ListScheduleSecre
 }
 
 const listSchedules = `-- name: ListSchedules :many
-SELECT schedules.id, schedules.environment_id, schedules.target_kind, schedules.task_declared_id, schedules.deployment_definition_id, schedules.deployment_id, schedules.cron_pattern, schedules.timezone, schedules.cron_semantics_version, schedules.generation, schedules.state, schedules.state_version, schedules.effective_from, schedules.next_fire_at, schedules.last_fire_at, schedules.claimed_by, schedules.claim_expires_at, schedules.retry_step, schedules.retry_after, schedules.last_failure, schedules.created_at, schedules.updated_at
+SELECT schedules.id, schedules.environment_id, schedules.task_declared_id, schedules.deployment_definition_id, schedules.deployment_id, schedules.cron_pattern, schedules.timezone, schedules.cron_semantics_version, schedules.generation, schedules.state, schedules.state_version, schedules.effective_from, schedules.next_fire_at, schedules.last_fire_at, schedules.claimed_by, schedules.claim_expires_at, schedules.retry_step, schedules.retry_after, schedules.last_failure, schedules.created_at, schedules.updated_at
   FROM schedules
   JOIN environments
     ON environments.id = schedules.environment_id
@@ -664,7 +658,6 @@ func (q *Queries) ListSchedules(ctx context.Context, arg ListSchedulesParams) ([
 		if err := rows.Scan(
 			&i.ID,
 			&i.EnvironmentID,
-			&i.TargetKind,
 			&i.TaskDeclaredID,
 			&i.DeploymentDefinitionID,
 			&i.DeploymentID,
@@ -696,7 +689,7 @@ func (q *Queries) ListSchedules(ctx context.Context, arg ListSchedulesParams) ([
 }
 
 const lockClaimedSchedule = `-- name: LockClaimedSchedule :one
-SELECT schedules.id, schedules.environment_id, schedules.target_kind, schedules.task_declared_id, schedules.deployment_definition_id, schedules.deployment_id, schedules.cron_pattern, schedules.timezone, schedules.cron_semantics_version, schedules.generation, schedules.state, schedules.state_version, schedules.effective_from, schedules.next_fire_at, schedules.last_fire_at, schedules.claimed_by, schedules.claim_expires_at, schedules.retry_step, schedules.retry_after, schedules.last_failure, schedules.created_at, schedules.updated_at,
+SELECT schedules.id, schedules.environment_id, schedules.task_declared_id, schedules.deployment_definition_id, schedules.deployment_id, schedules.cron_pattern, schedules.timezone, schedules.cron_semantics_version, schedules.generation, schedules.state, schedules.state_version, schedules.effective_from, schedules.next_fire_at, schedules.last_fire_at, schedules.claimed_by, schedules.claim_expires_at, schedules.retry_step, schedules.retry_after, schedules.last_failure, schedules.created_at, schedules.updated_at,
        environments.org_id,
        environments.project_id
   FROM schedules
@@ -738,7 +731,6 @@ func (q *Queries) LockClaimedSchedule(ctx context.Context, arg LockClaimedSchedu
 	err := row.Scan(
 		&i.Schedule.ID,
 		&i.Schedule.EnvironmentID,
-		&i.Schedule.TargetKind,
 		&i.Schedule.TaskDeclaredID,
 		&i.Schedule.DeploymentDefinitionID,
 		&i.Schedule.DeploymentID,
@@ -781,7 +773,7 @@ UPDATE schedules
    AND next_fire_at = $5
    AND claimed_by = $6
    AND claim_expires_at > now()
-RETURNING id, environment_id, target_kind, task_declared_id, deployment_definition_id, deployment_id, cron_pattern, timezone, cron_semantics_version, generation, state, state_version, effective_from, next_fire_at, last_fire_at, claimed_by, claim_expires_at, retry_step, retry_after, last_failure, created_at, updated_at
+RETURNING id, environment_id, task_declared_id, deployment_definition_id, deployment_id, cron_pattern, timezone, cron_semantics_version, generation, state, state_version, effective_from, next_fire_at, last_fire_at, claimed_by, claim_expires_at, retry_step, retry_after, last_failure, created_at, updated_at
 `
 
 type MarkScheduleAdmissionErroredParams struct {
@@ -806,7 +798,6 @@ func (q *Queries) MarkScheduleAdmissionErrored(ctx context.Context, arg MarkSche
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
-		&i.TargetKind,
 		&i.TaskDeclaredID,
 		&i.DeploymentDefinitionID,
 		&i.DeploymentID,
@@ -845,7 +836,7 @@ UPDATE schedules
    AND retry_step IS NOT DISTINCT FROM $7
    AND claimed_by = $8
    AND claim_expires_at > now()
-RETURNING id, environment_id, target_kind, task_declared_id, deployment_definition_id, deployment_id, cron_pattern, timezone, cron_semantics_version, generation, state, state_version, effective_from, next_fire_at, last_fire_at, claimed_by, claim_expires_at, retry_step, retry_after, last_failure, created_at, updated_at
+RETURNING id, environment_id, task_declared_id, deployment_definition_id, deployment_id, cron_pattern, timezone, cron_semantics_version, generation, state, state_version, effective_from, next_fire_at, last_fire_at, claimed_by, claim_expires_at, retry_step, retry_after, last_failure, created_at, updated_at
 `
 
 type MarkScheduleAdmissionRetryableParams struct {
@@ -874,7 +865,6 @@ func (q *Queries) MarkScheduleAdmissionRetryable(ctx context.Context, arg MarkSc
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
-		&i.TargetKind,
 		&i.TaskDeclaredID,
 		&i.DeploymentDefinitionID,
 		&i.DeploymentID,
@@ -899,7 +889,7 @@ func (q *Queries) MarkScheduleAdmissionRetryable(ctx context.Context, arg MarkSc
 }
 
 const reconcileSchedules = `-- name: ReconcileSchedules :many
-WITH input AS (
+WITH raw_input AS (
 SELECT batch.id,
        batch.task_declared_id,
        batch.deployment_definition_id,
@@ -937,6 +927,20 @@ SELECT batch.id,
    AND cardinality($1::uuid[]) = cardinality($6::text[])
    AND cardinality($1::uuid[]) = cardinality($7::timestamptz[])
    AND cardinality($1::uuid[]) = cardinality($8::timestamptz[])
+), input AS MATERIALIZED (
+    SELECT raw_input.id, raw_input.task_declared_id, raw_input.deployment_definition_id, raw_input.deployment_id, raw_input.cron_pattern, raw_input.timezone, raw_input.effective_from, raw_input.next_fire_at, raw_input.ordinality
+      FROM raw_input
+     WHERE NOT EXISTS (
+         SELECT 1
+           FROM raw_input AS candidate
+           LEFT JOIN deployment_definitions AS definition
+             ON definition.environment_id = $9
+            AND definition.deployment_id = candidate.deployment_id
+            AND definition.id = candidate.deployment_definition_id
+            AND definition.declared_id = candidate.task_declared_id
+            AND definition.kind = 'task'
+          WHERE definition.id IS NULL
+     )
 ), reconciled AS (
 INSERT INTO schedules (
     id,

@@ -80,7 +80,6 @@ UPDATE run_waits
        token_registration_run_state_version = NULL,
        due_at = NULL,
        child_run_id = $1,
-       child_parent_owned = true,
        child_target_declared_id = 'test-task',
        child_claim_id = $2,
        child_request = '{}'::jsonb

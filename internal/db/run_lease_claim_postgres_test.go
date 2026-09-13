@@ -455,3 +455,31 @@ func (fixture runLeaseClaimFixture) convertToActor(
 		retryPolicy,
 	)
 }
+
+func TestRunLeaseDiscoveryOrdersByCreationWithinState(t *testing.T) {
+	ctx := t.Context()
+	fixture := newRunLeaseClaimFixture(t, ctx)
+	old := time.Now().Add(-time.Minute)
+	newer := fixture.addWork(t, ctx, "assigned", old.Add(time.Second))
+	first := fixture.addWork(t, ctx, "assigned", old)
+	second := fixture.addWork(t, ctx, "assigned", old)
+	starting := fixture.addWork(t, ctx, "starting", old.Add(2*time.Second))
+	if first.leaseID.String() > second.leaseID.String() {
+		first, second = second, first
+	}
+	rows, err := fixture.queries.DiscoverWorkerRunLeaseWork(ctx, DiscoverWorkerRunLeaseWorkParams{
+		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID), WorkerEpoch: 1, RowLimit: 8,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []uuid.UUID{starting.leaseID, first.leaseID, second.leaseID, newer.leaseID}
+	if len(rows) != len(want) {
+		t.Fatalf("discovery count = %d, want %d", len(rows), len(want))
+	}
+	for i, id := range want {
+		if pgvalue.MustUUIDValue(rows[i].ID) != id {
+			t.Fatalf("discovery[%d] = %v, want %v", i, rows[i].ID, id)
+		}
+	}
+}

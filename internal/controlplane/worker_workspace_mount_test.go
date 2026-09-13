@@ -1,8 +1,10 @@
 package controlplane
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -13,6 +15,9 @@ import (
 	"testing"
 	"time"
 	"uuid"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -177,6 +182,39 @@ UPDATE workspace_mounts
 		return response
 	}
 
+	var wrongArtifact pgtype.UUID
+	if err := fixture.Pool.QueryRow(t.Context(), "SELECT program_artifact_id FROM deployments WHERE id=$1", fixture.DeploymentID).Scan(&wrongArtifact); err != nil {
+		t.Fatal(err)
+	}
+	snapshotCapture := func() []byte {
+		var b []byte
+		if err := fixture.Pool.QueryRow(t.Context(), "SELECT jsonb_build_array(to_jsonb(m),to_jsonb(p),(SELECT jsonb_agg(to_jsonb(v) ORDER BY v.id) FROM workspace_versions v WHERE v.workspace_id=m.workspace_id)) FROM workspace_mounts m JOIN workspace_processes p ON p.workspace_mount_id=m.id WHERE m.id=$1", mountID).Scan(&b); err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	for _, badArtifact := range []pgtype.UUID{{}, wrongArtifact, pgvalue.UUID(uuid.NewV7())} {
+		before := snapshotCapture()
+		tx, err := fixture.Pool.Begin(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = db.New(tx).StageWorkspaceExecCapture(t.Context(), db.StageWorkspaceExecCaptureParams{
+			WorkspaceMountID: pgvalue.UUID(mountID), WorkerInstanceID: pgvalue.UUID(fixture.WorkerID), WorkerEpoch: 1,
+			WorkspaceVersionID: pgvalue.UUID(uuid.NewV7()), ArtifactID: badArtifact, ContentDigest: first.Tree.Digest, SizeBytes: first.Tree.SizeBytes, EntryCount: first.Tree.EntryCount,
+		})
+		if !errors.Is(err, pgx.ErrNoRows) {
+			_ = tx.Rollback(t.Context())
+			t.Fatalf("invalid capture artifact: %v", err)
+		}
+		if err := tx.Commit(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(before, snapshotCapture()) {
+			t.Fatal("rejected capture mutated mount, process or versions")
+		}
+	}
+
 	response := capture(first)
 	if response.Code != http.StatusOK {
 		t.Fatalf("first capture = %d %s", response.Code, response.Body.String())
@@ -186,24 +224,24 @@ UPDATE workspace_mounts
 		t.Fatal(err)
 	}
 	versionID := uuid.MustParse(receipt.VersionID)
-	var versionKind db.WorkspaceVersionKind
+	var parentVersionID pgtype.UUID
 	var versionDigest, artifactDigest string
 	var versionSize, artifactSize int64
 	var versionEntries int32
 	if err := fixture.Pool.QueryRow(t.Context(), `
-SELECT workspace_versions.kind, workspace_versions.content_digest, workspace_versions.size_bytes,
+SELECT workspace_versions.parent_version_id, workspace_versions.content_digest, workspace_versions.size_bytes,
        workspace_versions.entry_count, artifacts.digest, artifacts.size_bytes
   FROM workspace_versions
   JOIN artifacts ON artifacts.id = workspace_versions.artifact_id
  WHERE workspace_versions.id = $1`, versionID).Scan(
-		&versionKind, &versionDigest, &versionSize, &versionEntries, &artifactDigest, &artifactSize,
+		&parentVersionID, &versionDigest, &versionSize, &versionEntries, &artifactDigest, &artifactSize,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if versionKind != db.WorkspaceVersionKindUser ||
+	if !parentVersionID.Valid ||
 		versionDigest != first.Tree.Digest || versionSize != first.Tree.SizeBytes || versionEntries != first.Tree.EntryCount ||
 		artifactDigest != first.Artifact.Digest || artifactSize != first.Artifact.SizeBytes {
-		t.Fatalf("version=%s/%s/%d/%d artifact=%s/%d", versionKind, versionDigest, versionSize, versionEntries, artifactDigest, artifactSize)
+		t.Fatalf("version=%v/%s/%d/%d artifact=%s/%d", parentVersionID, versionDigest, versionSize, versionEntries, artifactDigest, artifactSize)
 	}
 	authority, err := server.db.GetWorkspaceResetTargetAuthority(t.Context(), db.GetWorkspaceResetTargetAuthorityParams{
 		OrgID: pgvalue.UUID(fixture.OrgID), ProjectID: pgvalue.UUID(fixture.ProjectID),

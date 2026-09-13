@@ -55,9 +55,9 @@ INSERT INTO workspaces (
 		fixture.WorkspaceDefinitionID, versionID)
 	dbtest.MustExec(t, t.Context(), tx, `
 INSERT INTO workspace_versions (
-    id, environment_id, workspace_id, kind, content_digest, state,
+    id, environment_id, workspace_id, content_digest, state,
     ownership_generation, writer_generation, published_at
-) VALUES ($1, $2, $3, 'system', $4, 'committed', 0, 0, now())`,
+) VALUES ($1, $2, $3, $4, 'committed', 0, 0, now())`,
 		versionID, fixture.EnvironmentID, workspaceID, workspace.CanonicalEmptyTreeDigest)
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)

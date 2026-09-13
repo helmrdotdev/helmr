@@ -356,11 +356,11 @@ SELECT $1, environment_id, region_id, sandbox_declared_id,
  WHERE id = $4`, secondWorkspaceID, secondRunID, secondVersionID, fixture.workspaceID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO workspace_versions (
-    id, environment_id, workspace_id, kind, content_digest,
+    id, environment_id, workspace_id, content_digest,
     size_bytes, entry_count, state,
     ownership_generation, writer_generation, published_at
 )
-SELECT $1, environment_id, $2, kind, content_digest,
+SELECT $1, environment_id, $2, content_digest,
        size_bytes, entry_count, state, 0, 0, transaction_timestamp()
   FROM workspace_versions
  WHERE id = (SELECT head_version_id FROM workspaces WHERE id = $3)`,
@@ -1299,12 +1299,12 @@ INSERT INTO artifacts (
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO workspace_versions (
     id, environment_id, workspace_id,
-    parent_version_id, kind, content_digest, state, source_workspace_lease_id,
-    ownership_generation, writer_generation, artifact_id, artifact_kind,
+    parent_version_id, content_digest, state, source_workspace_lease_id,
+    ownership_generation, writer_generation, artifact_id,
     entry_count, size_bytes
 ) VALUES (
-    $1, $2, $3, $4, 'user', $5, 'private', $6,
-    1, 1, $7, 'workspace_version', 1, 1
+    $1, $2, $3, $4, $5, 'private', $6,
+    1, 1, $7, 1, 1
 )`,
 		privateVersionID, fixture.environmentID, fixture.workspaceID, baseVersionID,
 		privateDigest, sourceWorkspaceLeaseID, privateArtifactID,
@@ -1349,7 +1349,7 @@ UPDATE runs
  WHERE id = $1 AND current_run_lease_id = $2`, fixture.runID, granted.Lease.ID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE run_leases
-   SET state = 'checkpointed', claimed_at = assigned_at, started_at = assigned_at,
+   SET state = 'checkpointed', claimed_at = created_at, started_at = created_at,
        checkpointed_at = now(), terminal_at = now(), terminal_reason_code = 'checkpointed'
  WHERE id = $1`, granted.Lease.ID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
@@ -1518,7 +1518,7 @@ SELECT run_waits.suspension_state,
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
    SET state = 'running',
-       assigned_at = transaction_timestamp() - interval '20 seconds',
+       created_at = transaction_timestamp() - interval '20 seconds',
        start_deadline_at = transaction_timestamp() - interval '19 seconds',
        claimed_at = transaction_timestamp() - interval '18 seconds',
        started_at = transaction_timestamp() - interval '18 seconds'
@@ -1681,7 +1681,7 @@ UPDATE workspace_leases
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
    SET state = 'running',
-       assigned_at = transaction_timestamp() - interval '20 seconds',
+       created_at = transaction_timestamp() - interval '20 seconds',
        start_deadline_at = transaction_timestamp() - interval '19 seconds',
        claimed_at = transaction_timestamp() - interval '18 seconds',
        started_at = transaction_timestamp() - interval '18 seconds'
@@ -1940,7 +1940,7 @@ UPDATE run_checkpoints
 			if tc.maxDuration {
 				dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
-   SET state = 'running', claimed_at = assigned_at, started_at = assigned_at
+   SET state = 'running', claimed_at = created_at, started_at = created_at
  WHERE id = $1`, grant.Lease.ID)
 				dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE runs
@@ -1953,8 +1953,8 @@ UPDATE runs
 			dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 WITH expired AS (
     UPDATE run_leases
-       SET start_deadline_at = assigned_at + interval '1 millisecond',
-           expires_at = assigned_at + interval '2 milliseconds'
+       SET start_deadline_at = created_at + interval '1 millisecond',
+           expires_at = created_at + interval '2 milliseconds'
      WHERE id = $1
     RETURNING id, expires_at
 )
@@ -2050,7 +2050,7 @@ SELECT workspace_leases.id, workspace_mounts.materialized_version_id
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE run_leases
-   SET state = 'completed', claimed_at = assigned_at, started_at = assigned_at,
+   SET state = 'completed', claimed_at = created_at, started_at = created_at,
        terminal_at = transaction_timestamp(), terminal_reason_code = 'completed'
  WHERE id = $1`, granted.Lease.ID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
@@ -2076,17 +2076,17 @@ UPDATE runs
  WHERE id = $1`, fixture.runID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO workspace_versions (
-    id, environment_id, workspace_id, parent_version_id, kind,
+    id, environment_id, workspace_id, parent_version_id,
     content_digest, size_bytes, entry_count, state,
     source_workspace_lease_id, ownership_generation, writer_generation,
-    artifact_id, artifact_kind, published_at
+    artifact_id, published_at
 )
 SELECT $1, workspace_versions.environment_id, workspace_versions.workspace_id,
-       workspace_versions.id, workspace_versions.kind,
+       workspace_versions.id,
        workspace_versions.content_digest, workspace_versions.size_bytes,
        workspace_versions.entry_count, 'committed', $2,
        workspaces.ownership_generation, workspaces.writer_generation,
-       workspace_versions.artifact_id, workspace_versions.artifact_kind,
+       workspace_versions.artifact_id,
        transaction_timestamp()
   FROM workspace_versions
   JOIN workspaces ON workspaces.id = workspace_versions.workspace_id
@@ -2149,7 +2149,7 @@ SELECT id FROM workspace_leases WHERE owner_run_lease_id = $1`,
 	}
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
-   SET state = 'completed', claimed_at = assigned_at, started_at = assigned_at,
+   SET state = 'completed', claimed_at = created_at, started_at = created_at,
        terminal_at = transaction_timestamp(), terminal_reason_code = 'completed'
  WHERE id = $1`, placement.Lease.ID)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
@@ -2260,10 +2260,9 @@ VALUES ($1, $2, $3, $4, $5, 'workspace_version', 1, $6)`, privateArtifactID, fix
 		fixture.projectID, fixture.environmentID, privateDigest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO workspace_versions (
-    id, environment_id, workspace_id, parent_version_id,
-    kind, content_digest, state, source_workspace_lease_id, ownership_generation,
-    writer_generation, artifact_id, artifact_kind, entry_count, size_bytes
-) VALUES ($1, $2, $3, $4, 'user', $5, 'private', $6, 1, 1, $7, 'workspace_version', 1, 1)`,
+    id, environment_id, workspace_id, parent_version_id, content_digest, state, source_workspace_lease_id, ownership_generation,
+    writer_generation, artifact_id, entry_count, size_bytes
+) VALUES ($1, $2, $3, $4, $5, 'private', $6, 1, 1, $7, 1, 1)`,
 		privateVersionID, fixture.environmentID, fixture.workspaceID, baseVersionID, privateDigest,
 		sourceWorkspaceLeaseID, privateArtifactID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
@@ -2291,7 +2290,7 @@ INSERT INTO run_checkpoints (
 	dbtest.MustExec(t, fixture.ctx, tx, `UPDATE run_waits SET suspend_checkpoint_id = $2, resume_request_version = 1 WHERE id = $1`, waitID, checkpointID)
 	dbtest.MustExec(t, fixture.ctx, tx, `UPDATE runs SET current_run_lease_id = NULL, state_version = 3 WHERE id = $1`, fixture.runID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
-UPDATE run_leases SET state = 'checkpointed', claimed_at = assigned_at, started_at = assigned_at,
+UPDATE run_leases SET state = 'checkpointed', claimed_at = created_at, started_at = created_at,
        checkpointed_at = now(), terminal_at = now(), terminal_reason_code = 'checkpointed' WHERE id = $1`, grant.Lease.ID)
 	dbtest.MustExec(t, fixture.ctx, tx, `UPDATE workspace_leases SET state = 'released', released_at = now(), terminal_at = now() WHERE id = $1`, sourceWorkspaceLeaseID)
 	dbtest.MustExec(t, fixture.ctx, tx, `UPDATE workspace_mounts SET state = 'unmounted', unmounted_at = now(), terminal_at = now(), terminal_reason_code = 'checkpointed' WHERE id = $1`, mount.WorkspaceMountID)
@@ -2632,10 +2631,9 @@ INSERT INTO workspaces (
 	)
 	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO workspace_versions (
-    id, environment_id, workspace_id,
-    kind, content_digest, state, ownership_generation, writer_generation, published_at
+    id, environment_id, workspace_id, content_digest, state, ownership_generation, writer_generation, published_at
 ) VALUES (
-    $1, $2, $3, 'system',
+    $1, $2, $3,
     'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',
     'committed', 0, 0, now()
 )`,

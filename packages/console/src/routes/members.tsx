@@ -40,11 +40,8 @@ const OWNER_ROLE_OPTIONS: SelectOption<MemberRole>[] = [OWNER_ROLE_OPTION, ...NO
 const MEMBERS_ERROR_MESSAGES: Record<string, string> = {
   forbidden: "You do not have permission to manage organization members.",
   invalid_email: "Enter a valid email address.",
-  invalid_role: "Choose admin, developer, or viewer.",
   already_member: "That email address is already a member.",
-  invitation_exists: "There is already a pending invitation for that email address.",
   not_found: "This member or invitation is no longer available.",
-  internal: "Something went wrong. Please try again.",
 };
 const INTERNAL_ERROR_MESSAGE = "Something went wrong. Please try again.";
 

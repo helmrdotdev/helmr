@@ -492,7 +492,6 @@ WITH selected_target AS MATERIALIZED (
        AND wait.id = sqlc.arg(run_wait_id)
        AND wait.kind = 'child'
        AND wait.child_run_id IS NULL
-       AND wait.child_parent_owned IS TRUE
        AND wait.child_target_declared_id = sqlc.arg(entrypoint_declared_id)
        AND wait.child_claim_id = sqlc.arg(claim_id)
        AND wait.condition_state = 'pending'

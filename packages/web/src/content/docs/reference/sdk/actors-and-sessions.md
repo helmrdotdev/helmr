@@ -33,3 +33,7 @@ Outside the guest, use `client.actors.start(declaredId, request)` and address
 the returned Session with `client.sessions.ref(id)`. A `SessionRef` provides
 `input.send`, `output.list({ after?, limit? })`, `retrieve`, and `close`.
 Session statuses are `open`, `closed`, `cancelled`, and `failed`.
+A failed Session includes a diagnostic `failure.code` string and `message`; handle
+unfamiliar codes generically. `failure.details.runId`, when present, identifies the
+failed Run. A cancelled Session has the reserved `cancelled` code. Diagnostic
+openness does not add a cancellation operation or change Session lifecycle.

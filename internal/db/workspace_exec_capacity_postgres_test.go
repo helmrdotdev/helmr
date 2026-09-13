@@ -71,10 +71,10 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 	`, workspaceID, ids.environmentID, dbtest.DefaultRegionID, definitionID, versionID)
 	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO workspace_versions (
-			id, environment_id, workspace_id, kind, content_digest, state,
+			id, environment_id, workspace_id, content_digest, state,
 			ownership_generation, writer_generation, published_at
 		) VALUES (
-			$1, $2, $3, 'system',
+			$1, $2, $3,
 			'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',
 			'committed', 0, 0, now()
 		)

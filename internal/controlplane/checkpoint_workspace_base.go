@@ -21,7 +21,6 @@ func projectCheckpointWorkspaceBase(
 		EntryCount: int(authority.EntryCount),
 	}
 	emptyShape := !authority.ParentVersionID.Valid && !authority.ArtifactID.Valid &&
-		!authority.ArtifactKind.Valid && authority.VersionKind == db.WorkspaceVersionKindSystem &&
 		!authority.SourceWorkspaceLeaseID.Valid && authority.OwnershipGeneration == 0 &&
 		authority.WriterGeneration == 0 && !authority.ArtifactRowKind.Valid &&
 		!authority.ArtifactDigest.Valid && !authority.ArtifactSizeBytes.Valid &&
@@ -33,8 +32,7 @@ func projectCheckpointWorkspaceBase(
 		return workerapi.CheckpointWorkspaceBase{MountPath: "/workspace"}, nil
 	}
 	artifactShape := authority.ParentVersionID.Valid && authority.ArtifactID.Valid &&
-		authority.ArtifactKind.Valid && authority.ArtifactKind.ArtifactKind == db.ArtifactKindWorkspaceVersion &&
-		authority.VersionKind == db.WorkspaceVersionKindUser && authority.SourceWorkspaceLeaseID.Valid &&
+		authority.SourceWorkspaceLeaseID.Valid &&
 		authority.OwnershipGeneration > 0 && authority.WriterGeneration > 0 &&
 		authority.ArtifactRowKind.Valid && authority.ArtifactRowKind.ArtifactKind == db.ArtifactKindWorkspaceVersion &&
 		authority.ArtifactDigest.Valid && authority.ArtifactSizeBytes.Valid && authority.ArtifactMediaType.Valid

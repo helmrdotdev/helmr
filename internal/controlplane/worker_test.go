@@ -1,6 +1,10 @@
 package controlplane
 
 import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
@@ -358,6 +362,25 @@ func TestValidateWorkerStartupRecoveryRequiresCanonicalUUIDv7(t *testing.T) {
 			err := validateWorkerStartupRecovery(request, now.Add(-time.Minute), now)
 			if err == nil || !strings.Contains(err.Error(), "canonical UUIDv7") {
 				t.Fatalf("error = %v, want canonical UUIDv7 rejection", err)
+			}
+		})
+	}
+}
+
+func TestWorkerFenceRejectsDiagnosticCodesAsControlInputs(t *testing.T) {
+	// A call past validation has no database executor; these requests must stop first.
+	server := &Server{db: db.New(nil)}
+	for _, reason := range []string{"future_diagnostic", "worker_runtime_invalid", "checkpoint_failed", ""} {
+		t.Run(reason, func(t *testing.T) {
+			body, err := json.Marshal(workerapi.FenceRequest{ReasonCode: reason})
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := httptest.NewRequest(http.MethodPost, "/worker/v1/instance/fence", bytes.NewReader(body))
+			response := httptest.NewRecorder()
+			server.workerFence(response, request)
+			if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"code":"bad_request"`) {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 			}
 		})
 	}

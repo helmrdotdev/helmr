@@ -153,8 +153,8 @@ func TestDBAdmitterRejectsTaskWithoutScheduledPayloadAuthority(t *testing.T) {
 	err = admitter.AdmitSchedule(t.Context(), value)
 	var admissionErr *AdmissionError
 	if !errors.As(err, &admissionErr) ||
-		admissionErr.Code != ErrorTaskAuthorityInvalid {
-		t.Fatalf("admission error = %v, want task_authority_invalid", err)
+		admissionErr.Code != ErrorInvalidDefinition {
+		t.Fatalf("admission error = %v, want invalid_definition", err)
 	}
 	assertScheduleAdmissionCounts(t, pool, value, 0, 0)
 	assertScheduleCursor(t, pool, value, value.NextFireAt.Time, time.Time{})
@@ -219,7 +219,7 @@ func TestReconcileScheduleDoesNotReviveErroredAuthority(t *testing.T) {
 		       state_version = state_version + 1,
 		       claimed_by = NULL,
 		       claim_expires_at = NULL,
-		       last_failure = '{"code":"task_authority_invalid","message":"Task authority is invalid","details":{}}'::jsonb
+		       last_failure = '{"code":"invalid_definition","message":"Task authority is invalid","details":{}}'::jsonb
 		 WHERE id = $1
 	`, value.ID)
 

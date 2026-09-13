@@ -443,7 +443,7 @@ func assertActorStartTupleWithQueue(
 	}
 	if result.InitialRecordID != nil {
 		if err := fixture.pool.QueryRow(t.Context(), `
-			SELECT sequence, source_kind FROM session_records WHERE id = $1
+			SELECT sequence, CASE WHEN source_run_id IS NULL THEN 'external' ELSE 'run' END FROM session_records WHERE id = $1
 		`, *result.InitialRecordID).Scan(&recordSequence, &recordSource); err != nil {
 			t.Fatal(err)
 		}
@@ -606,10 +606,9 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 			fixture.workspaceKeys[index])
 		dbtest.MustExec(t, t.Context(), tx, `
 			INSERT INTO workspace_versions (
-			    id, environment_id, workspace_id,
-			    kind, state, content_digest, size_bytes, entry_count,
+			    id, environment_id, workspace_id, state, content_digest, size_bytes, entry_count,
 			    ownership_generation, writer_generation, published_at
-			) VALUES ($1, $2, $3, 'system', 'committed',
+			) VALUES ($1, $2, $3, 'committed',
 			          'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',
 			          0, 0, 0, 0, now())
 		`, versionID, fixture.environmentID, workspaceID)

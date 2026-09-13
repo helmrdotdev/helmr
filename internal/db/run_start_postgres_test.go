@@ -89,7 +89,7 @@ func TestFreshRunStartQueriesCommitAndReplay(t *testing.T) {
 	}
 	if _, err := fixture.pool.Exec(ctx,
 		`UPDATE run_leases
-		    SET assigned_at = now() - interval '3 minutes',
+		    SET created_at = now() - interval '3 minutes',
 		        start_deadline_at = now() - interval '2 minutes',
 		        claimed_at = now() - interval '2 minutes',
 		        started_at = now() - interval '2 minutes',
@@ -302,7 +302,7 @@ func TestRunEntrypointQueriesCommitOnceAndRejectExpiredLease(t *testing.T) {
 
 	if _, err := fixture.pool.Exec(ctx,
 		`UPDATE run_leases
-		    SET assigned_at = now() - interval '3 minutes',
+		    SET created_at = now() - interval '3 minutes',
 		        start_deadline_at = now() - interval '2 minutes',
 		        claimed_at = now() - interval '2 minutes',
 		        started_at = now() - interval '2 minutes',

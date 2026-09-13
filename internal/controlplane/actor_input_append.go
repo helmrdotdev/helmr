@@ -32,7 +32,6 @@ type appendActorInputRequest struct {
 	SessionID      uuid.UUID
 	RecordID       uuid.UUID
 	Data           json.RawMessage
-	SourceKind     string
 	SourceRunID    uuid.UUID
 	IdempotencyKey string
 	Authorize      func(context.Context, db.Querier) error
@@ -43,12 +42,6 @@ type appendActorInputRequest struct {
 // admission, and repair intent are one transaction.
 func (s *Server) appendActorInput(ctx context.Context, request appendActorInputRequest) (db.SessionRecord, error) {
 	if request.EnvironmentID == uuid.Nil() || request.SessionID == uuid.Nil() || request.RecordID == uuid.Nil() {
-		return db.SessionRecord{}, errActorInputAppendConflict
-	}
-	if request.SourceKind != "external" && request.SourceKind != "run" {
-		return db.SessionRecord{}, errActorInputAppendConflict
-	}
-	if (request.SourceKind == "run") != (request.SourceRunID != uuid.Nil()) {
 		return db.SessionRecord{}, errActorInputAppendConflict
 	}
 	if len(request.Data) == 0 || !json.Valid(request.Data) {
@@ -122,7 +115,7 @@ func (s *Server) appendActorInput(ctx context.Context, request appendActorInputR
 			EnvironmentID: pgvalue.UUID(request.EnvironmentID), ClaimID: claimID,
 			SessionID: pgvalue.UUID(request.SessionID), ExpectedRequestFingerprint: fingerprint,
 			ID: pgvalue.UUID(request.RecordID), Data: canonical,
-			SourceKind: pgvalue.Text(request.SourceKind), SourceRunID: sourceRunID,
+			SourceRunID: sourceRunID,
 		})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -185,13 +178,13 @@ func (s *Server) appendActorInput(ctx context.Context, request appendActorInputR
 			}
 		}
 
-		wait, waitErr := work.q.GetPendingActorInputRunWait(ctx, db.GetPendingActorInputRunWaitParams{
+		wait, waitErr := work.q.LocatePendingActorInputRunWait(ctx, db.LocatePendingActorInputRunWaitParams{
 			EnvironmentID: result.EnvironmentID, SessionID: result.SessionID,
 			RunID: currentRun.ID, AttemptNumber: currentRun.CurrentAttemptNumber,
 			AfterInputSequence: pgtype.Int8{Int64: result.Sequence - 1, Valid: true},
 		})
 		if waitErr == nil {
-			if _, err := session.CompleteWait(ctx, work.q, wait, result); err != nil {
+			if _, err := session.CompleteWait(ctx, work.q, wait, result); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				return err
 			}
 		} else if !errors.Is(waitErr, pgx.ErrNoRows) {
@@ -252,7 +245,7 @@ func actorRecordFromAppend(row db.AppendActorInputRecordRow) db.SessionRecord {
 	return db.SessionRecord{
 		ID: row.ID, EnvironmentID: row.EnvironmentID, SessionID: row.SessionID,
 		Direction: row.Direction, Sequence: row.Sequence, Data: row.Data, ContentType: row.ContentType,
-		SourceKind: row.SourceKind, SourceRunID: row.SourceRunID,
+		SourceRunID:   row.SourceRunID,
 		ProducerRunID: row.ProducerRunID, ProducerAttemptNumber: row.ProducerAttemptNumber,
 		ClaimID: row.ClaimID, CreatedAt: row.CreatedAt,
 	}

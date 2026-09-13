@@ -36,7 +36,6 @@ INSERT INTO session_records (
     sequence,
     data,
     content_type,
-    source_kind,
     claim_id
 )
 SELECT sqlc.arg(id),
@@ -46,7 +45,6 @@ SELECT sqlc.arg(id),
        1,
        sqlc.arg(data),
        'application/json',
-       'external',
        sqlc.narg(claim_id)
   FROM advanced
 RETURNING *;
@@ -101,7 +99,6 @@ WITH selected_claim AS MATERIALIZED (
         sequence,
         data,
         content_type,
-        source_kind,
         source_run_id,
         claim_id
     )
@@ -112,7 +109,6 @@ WITH selected_claim AS MATERIALIZED (
            allocated.allocated_sequence,
            sqlc.arg(data),
            'application/json',
-           sqlc.arg(source_kind),
            sqlc.narg(source_run_id),
            sqlc.narg(claim_id)
       FROM allocated
@@ -341,7 +337,6 @@ SELECT scoped_actor.id AS session_id,
        page.record_id,
        coalesce(page.sequence, 0)::bigint AS sequence,
        coalesce(page.data, 'null'::jsonb)::jsonb AS data,
-       coalesce(page.source_kind, '')::text AS source_kind,
        page.source_run_id,
        coalesce(page.created_at, 'epoch'::timestamptz)::timestamptz AS created_at
   FROM scoped_actor
@@ -349,7 +344,6 @@ SELECT scoped_actor.id AS session_id,
       SELECT session_records.id AS record_id,
              session_records.sequence,
              session_records.data,
-             session_records.source_kind,
              session_records.source_run_id,
              session_records.created_at
         FROM session_records

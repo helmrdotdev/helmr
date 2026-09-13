@@ -33,7 +33,7 @@ func TestTokenTerminalQueriesPublishExactlyOneReconciliationIntent(t *testing.T)
 			t.Fatal(err)
 		}
 		if completed.State != db.TokenStateCompleted || !completed.ReconciliationEnqueued ||
-			completed.AlreadyCompleted || completed.CompletionConflict {
+			completed.AlreadyCompleted || completed.CompletionConflict || !completed.CompletedAt.Valid {
 			t.Fatalf("first completion = %+v", completed)
 		}
 		assertTokenReconciliationIntent(t, ctx, fixture, tokenID, 1)
@@ -49,7 +49,8 @@ func TestTokenTerminalQueriesPublishExactlyOneReconciliationIntent(t *testing.T)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !replay.AlreadyCompleted || replay.CompletionConflict || replay.ReconciliationEnqueued {
+		if !replay.AlreadyCompleted || replay.CompletionConflict || replay.ReconciliationEnqueued ||
+			replay.CompletedAt != completed.CompletedAt || replay.UpdatedAt != completed.UpdatedAt || replay.CreatedAt != completed.CreatedAt {
 			t.Fatalf("matching replay = %+v", replay)
 		}
 		conflictParams := tokenCompletionParams(fixture, tokenID, "sha256:different", `{"approved":false}`)
@@ -69,14 +70,15 @@ func TestTokenTerminalQueriesPublishExactlyOneReconciliationIntent(t *testing.T)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if cancelled.State != db.TokenStateCancelled || !cancelled.ReconciliationEnqueued {
+		if cancelled.State != db.TokenStateCancelled || !cancelled.ReconciliationEnqueued || !cancelled.CancelledAt.Valid {
 			t.Fatalf("first cancellation = %+v", cancelled)
 		}
 		replay, err := fixture.queries.CancelToken(ctx, tokenCancellationParams(fixture, tokenID))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !replay.AlreadyCancelled || replay.ReconciliationEnqueued {
+		if !replay.AlreadyCancelled || replay.ReconciliationEnqueued ||
+			replay.CancelledAt != cancelled.CancelledAt || replay.UpdatedAt != cancelled.UpdatedAt || replay.CreatedAt != cancelled.CreatedAt {
 			t.Fatalf("cancellation replay = %+v", replay)
 		}
 		assertTokenReconciliationIntent(t, ctx, fixture, tokenID, 1)
@@ -103,7 +105,7 @@ func TestTokenTerminalQueriesPublishExactlyOneReconciliationIntent(t *testing.T)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(expired) != 1 || pgvalue.MustUUIDValue(expired[0].ID) != tokenID || expired[0].State != db.TokenStateExpired {
+		if len(expired) != 1 || pgvalue.MustUUIDValue(expired[0].ID) != tokenID || expired[0].State != db.TokenStateExpired || !expired[0].ExpiredAt.Valid {
 			t.Fatalf("first expiry = %+v", expired)
 		}
 		expired, err = fixture.queries.ExpireDueTokens(ctx, db.ExpireDueTokensParams{
@@ -122,7 +124,7 @@ func TestTokenTerminalQueriesPublishExactlyOneReconciliationIntent(t *testing.T)
 		}
 		if len(expiredCredentials) != 1 ||
 			pgvalue.MustUUIDValue(expiredCredentials[0].ID) != publicAccessTokenID ||
-			expiredCredentials[0].State != db.PublicAccessTokenStateExpired {
+			expiredCredentials[0].State != db.PublicAccessTokenStateExpired || !expiredCredentials[0].ExpiredAt.Valid {
 			t.Fatalf("first credential expiry = %+v", expiredCredentials)
 		}
 		expiredCredentials, err = fixture.queries.ExpireDuePublicAccessTokens(ctx, 100)
@@ -162,12 +164,13 @@ func TestTokenCompletionRollsBackWhenReconciliationIntentFails(t *testing.T) {
 	}
 	var state db.TokenState
 	var completionFingerprint []byte
+	var completionTimeAbsent bool
 	if err := fixture.pool.QueryRow(ctx, `
-		SELECT state, completion_fingerprint FROM tokens WHERE id = $1
-	`, tokenID).Scan(&state, &completionFingerprint); err != nil {
+		SELECT state, completion_fingerprint, completed_at IS NULL FROM tokens WHERE id = $1
+	`, tokenID).Scan(&state, &completionFingerprint, &completionTimeAbsent); err != nil {
 		t.Fatal(err)
 	}
-	if state != db.TokenStatePending || len(completionFingerprint) != 0 {
+	if state != db.TokenStatePending || len(completionFingerprint) != 0 || !completionTimeAbsent {
 		t.Fatalf("rolled back Token = state %s fingerprint %x", state, completionFingerprint)
 	}
 	assertTokenReconciliationIntent(t, ctx, fixture, tokenID, 0)
@@ -244,5 +247,37 @@ func assertTokenReconciliationIntent(t *testing.T, ctx context.Context, fixture 
 	}
 	if count != want || !payloadMatches {
 		t.Fatalf("Token reconciliation intents = count %d payload_matches %v, want %d/true", count, payloadMatches, want)
+	}
+}
+
+func TestTokenLateCompletionAndCancellationRecordExpiryOnce(t *testing.T) {
+	ctx := t.Context()
+	fixture := newRunLeaseClaimFixture(t, ctx)
+	for _, operation := range []string{"complete", "cancel"} {
+		t.Run(operation, func(t *testing.T) {
+			id := createTokenTerminalTestToken(t, ctx, fixture, time.Now().Add(-time.Minute))
+			for attempt := 0; attempt < 2; attempt++ {
+				if operation == "complete" {
+					row, err := fixture.queries.CompleteToken(ctx, tokenCompletionParams(fixture, id, "sha256:late", `null`))
+					if err != nil || !row.CompletionExpired || !row.ExpiredAt.Valid || row.CompletedAt.Valid || row.ReconciliationEnqueued != (attempt == 0) {
+						t.Fatalf("late completion attempt %d = %+v, %v", attempt, row, err)
+					}
+				} else {
+					row, err := fixture.queries.CancelToken(ctx, tokenCancellationParams(fixture, id))
+					if err != nil || !row.CancellationExpired || !row.ExpiredAt.Valid || row.CancelledAt.Valid || row.ReconciliationEnqueued != (attempt == 0) {
+						t.Fatalf("late cancellation attempt %d = %+v, %v", attempt, row, err)
+					}
+				}
+				if attempt == 0 {
+					// An unmistakably older observation detects rewriting on redelivery.
+					dbtest.MustExec(t, ctx, fixture.pool, `UPDATE tokens SET expired_at=expires_at+interval '1 second', updated_at=expires_at+interval '1 second' WHERE id=$1`, id)
+				}
+			}
+			var unchanged bool
+			if err := fixture.pool.QueryRow(ctx, `SELECT expired_at=expires_at+interval '1 second' AND updated_at=expired_at FROM tokens WHERE id=$1`, id).Scan(&unchanged); err != nil || !unchanged {
+				t.Fatalf("expiry replay preserved time = %v, %v", unchanged, err)
+			}
+			assertTokenReconciliationIntent(t, ctx, fixture, id, 1)
+		})
 	}
 }

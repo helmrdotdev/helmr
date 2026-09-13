@@ -62,7 +62,7 @@ func TestReadSessionInputPageProjectsSourcesAndBounds(t *testing.T) {
 		return db.ReadPublicActorInputPageRow{
 			SessionID: sessionID, NextInputSequence: 4, EffectiveAfter: 0,
 			RecordID: pgvalue.UUID(recordIDs[index]), Sequence: sequence,
-			Data: []byte(`{"turn":` + string(rune('0'+sequence)) + `}`), SourceKind: sourceKind,
+			Data:        []byte(`{"turn":` + string(rune('0'+sequence)) + `}`),
 			SourceRunID: sourceRunID, CreatedAt: pgtype.Timestamptz{Time: createdAt, Valid: true},
 		}
 	}

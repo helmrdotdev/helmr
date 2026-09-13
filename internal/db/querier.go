@@ -66,6 +66,8 @@ type Querier interface {
 	CompleteCheckpointingChildRunWait(ctx context.Context, arg CompleteCheckpointingChildRunWaitParams) (RunWait, error)
 	CompleteCheckpointingRunWait(ctx context.Context, arg CompleteCheckpointingRunWaitParams) (RunWait, error)
 	CompleteHotChildRunWait(ctx context.Context, arg CompleteHotChildRunWaitParams) (RunWait, error)
+	// Preliminary EXISTS avoids locking a Run for an already-ineligible Wait.
+	// Only the subsequently locked eligible_wait authorizes either write.
 	CompleteHotRunWait(ctx context.Context, arg CompleteHotRunWaitParams) (RunWait, error)
 	CompleteIdempotencyClaim(ctx context.Context, arg CompleteIdempotencyClaimParams) (IdempotencyClaim, error)
 	CompleteIdleActorClose(ctx context.Context, arg CompleteIdleActorCloseParams) (Session, error)
@@ -338,6 +340,7 @@ type Querier interface {
 	ListWorkerPools(ctx context.Context, workerGroupID pgtype.UUID) ([]WorkerPool, error)
 	ListWorkspaceListItems(ctx context.Context, arg ListWorkspaceListItemsParams) ([]ListWorkspaceListItemsRow, error)
 	ListWorkspaceSecrets(ctx context.Context, workspaceID pgtype.UUID) ([]ListWorkspaceSecretsRow, error)
+	LocatePendingActorInputRunWait(ctx context.Context, arg LocatePendingActorInputRunWaitParams) (RunWait, error)
 	LockActiveSecretsByNameForWorkspaceCreate(ctx context.Context, arg LockActiveSecretsByNameForWorkspaceCreateParams) ([]Secret, error)
 	LockActorClose(ctx context.Context, arg LockActorCloseParams) (Session, error)
 	LockActorCloseWorkspace(ctx context.Context, arg LockActorCloseWorkspaceParams) (Workspace, error)

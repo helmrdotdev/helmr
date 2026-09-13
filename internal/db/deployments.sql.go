@@ -23,7 +23,8 @@ INSERT INTO deployments (
     program_artifact_id,
     program_index_digest,
     queue_config
-) VALUES (
+)
+SELECT
     $1,
     $2,
     $3,
@@ -34,10 +35,13 @@ INSERT INTO deployments (
     $8,
     $9,
     $10
-)
+  FROM artifacts
+ WHERE artifacts.environment_id = $4
+   AND artifacts.id = $8
+   AND artifacts.kind = 'deployment_program'
 ON CONFLICT (environment_id, bundle_digest) DO UPDATE SET
     bundle_digest = deployments.bundle_digest
-RETURNING id, org_id, project_id, environment_id, version, bundle_digest, runtime_artifact_digest, program_artifact_id, program_artifact_kind, program_index_digest, queue_config, created_at
+RETURNING id, org_id, project_id, environment_id, version, bundle_digest, runtime_artifact_digest, program_artifact_id, program_index_digest, queue_config, created_at
 `
 
 type CreateDeploymentParams struct {
@@ -76,7 +80,6 @@ func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentPara
 		&i.BundleDigest,
 		&i.RuntimeArtifactDigest,
 		&i.ProgramArtifactID,
-		&i.ProgramArtifactKind,
 		&i.ProgramIndexDigest,
 		&i.QueueConfig,
 		&i.CreatedAt,
@@ -85,7 +88,7 @@ func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentPara
 }
 
 const getCurrentDeployment = `-- name: GetCurrentDeployment :one
-SELECT deployments.id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.version, deployments.bundle_digest, deployments.runtime_artifact_digest, deployments.program_artifact_id, deployments.program_artifact_kind, deployments.program_index_digest, deployments.queue_config, deployments.created_at
+SELECT deployments.id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.version, deployments.bundle_digest, deployments.runtime_artifact_digest, deployments.program_artifact_id, deployments.program_index_digest, deployments.queue_config, deployments.created_at
   FROM deployments
   JOIN environments ON environments.org_id = deployments.org_id
                    AND environments.project_id = deployments.project_id
@@ -115,7 +118,6 @@ func (q *Queries) GetCurrentDeployment(ctx context.Context, arg GetCurrentDeploy
 		&i.BundleDigest,
 		&i.RuntimeArtifactDigest,
 		&i.ProgramArtifactID,
-		&i.ProgramArtifactKind,
 		&i.ProgramIndexDigest,
 		&i.QueueConfig,
 		&i.CreatedAt,
@@ -124,7 +126,7 @@ func (q *Queries) GetCurrentDeployment(ctx context.Context, arg GetCurrentDeploy
 }
 
 const getCurrentDeploymentForRoute = `-- name: GetCurrentDeploymentForRoute :one
-SELECT deployments.id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.version, deployments.bundle_digest, deployments.runtime_artifact_digest, deployments.program_artifact_id, deployments.program_artifact_kind, deployments.program_index_digest, deployments.queue_config, deployments.created_at
+SELECT deployments.id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.version, deployments.bundle_digest, deployments.runtime_artifact_digest, deployments.program_artifact_id, deployments.program_index_digest, deployments.queue_config, deployments.created_at
   FROM deployments
   JOIN environments ON environments.org_id = deployments.org_id
                    AND environments.project_id = deployments.project_id
@@ -154,7 +156,6 @@ func (q *Queries) GetCurrentDeploymentForRoute(ctx context.Context, arg GetCurre
 		&i.BundleDigest,
 		&i.RuntimeArtifactDigest,
 		&i.ProgramArtifactID,
-		&i.ProgramArtifactKind,
 		&i.ProgramIndexDigest,
 		&i.QueueConfig,
 		&i.CreatedAt,
@@ -163,7 +164,7 @@ func (q *Queries) GetCurrentDeploymentForRoute(ctx context.Context, arg GetCurre
 }
 
 const getDeployment = `-- name: GetDeployment :one
-SELECT id, org_id, project_id, environment_id, version, bundle_digest, runtime_artifact_digest, program_artifact_id, program_artifact_kind, program_index_digest, queue_config, created_at
+SELECT id, org_id, project_id, environment_id, version, bundle_digest, runtime_artifact_digest, program_artifact_id, program_index_digest, queue_config, created_at
   FROM deployments
  WHERE org_id = $1
    AND project_id = $2
@@ -195,7 +196,6 @@ func (q *Queries) GetDeployment(ctx context.Context, arg GetDeploymentParams) (D
 		&i.BundleDigest,
 		&i.RuntimeArtifactDigest,
 		&i.ProgramArtifactID,
-		&i.ProgramArtifactKind,
 		&i.ProgramIndexDigest,
 		&i.QueueConfig,
 		&i.CreatedAt,
@@ -204,7 +204,7 @@ func (q *Queries) GetDeployment(ctx context.Context, arg GetDeploymentParams) (D
 }
 
 const getDeploymentByBundleDigest = `-- name: GetDeploymentByBundleDigest :one
-SELECT id, org_id, project_id, environment_id, version, bundle_digest, runtime_artifact_digest, program_artifact_id, program_artifact_kind, program_index_digest, queue_config, created_at
+SELECT id, org_id, project_id, environment_id, version, bundle_digest, runtime_artifact_digest, program_artifact_id, program_index_digest, queue_config, created_at
   FROM deployments
  WHERE environment_id = $1
    AND bundle_digest = $2
@@ -227,7 +227,6 @@ func (q *Queries) GetDeploymentByBundleDigest(ctx context.Context, arg GetDeploy
 		&i.BundleDigest,
 		&i.RuntimeArtifactDigest,
 		&i.ProgramArtifactID,
-		&i.ProgramArtifactKind,
 		&i.ProgramIndexDigest,
 		&i.QueueConfig,
 		&i.CreatedAt,
@@ -236,7 +235,7 @@ func (q *Queries) GetDeploymentByBundleDigest(ctx context.Context, arg GetDeploy
 }
 
 const getDeploymentForOrg = `-- name: GetDeploymentForOrg :one
-SELECT id, org_id, project_id, environment_id, version, bundle_digest, runtime_artifact_digest, program_artifact_id, program_artifact_kind, program_index_digest, queue_config, created_at
+SELECT id, org_id, project_id, environment_id, version, bundle_digest, runtime_artifact_digest, program_artifact_id, program_index_digest, queue_config, created_at
   FROM deployments
  WHERE org_id = $1
    AND id = $2
@@ -259,7 +258,6 @@ func (q *Queries) GetDeploymentForOrg(ctx context.Context, arg GetDeploymentForO
 		&i.BundleDigest,
 		&i.RuntimeArtifactDigest,
 		&i.ProgramArtifactID,
-		&i.ProgramArtifactKind,
 		&i.ProgramIndexDigest,
 		&i.QueueConfig,
 		&i.CreatedAt,
@@ -361,7 +359,7 @@ func (q *Queries) LockDeploymentBundle(ctx context.Context, arg LockDeploymentBu
 }
 
 const lockDeploymentPromotionTarget = `-- name: LockDeploymentPromotionTarget :one
-SELECT deployments.id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.version, deployments.bundle_digest, deployments.runtime_artifact_digest, deployments.program_artifact_id, deployments.program_artifact_kind, deployments.program_index_digest, deployments.queue_config, deployments.created_at
+SELECT deployments.id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.version, deployments.bundle_digest, deployments.runtime_artifact_digest, deployments.program_artifact_id, deployments.program_index_digest, deployments.queue_config, deployments.created_at
   FROM environments
   JOIN deployments
     ON deployments.org_id = environments.org_id
@@ -398,7 +396,6 @@ func (q *Queries) LockDeploymentPromotionTarget(ctx context.Context, arg LockDep
 		&i.BundleDigest,
 		&i.RuntimeArtifactDigest,
 		&i.ProgramArtifactID,
-		&i.ProgramArtifactKind,
 		&i.ProgramIndexDigest,
 		&i.QueueConfig,
 		&i.CreatedAt,

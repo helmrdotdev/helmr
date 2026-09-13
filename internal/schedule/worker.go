@@ -29,25 +29,6 @@ const (
 
 var ErrClaimSuperseded = errors.New("schedule claim was superseded")
 
-type ErrorCode string
-
-const (
-	ErrorTaskAuthorityInvalid     ErrorCode = "task_authority_invalid"
-	ErrorSandboxAuthorityInvalid  ErrorCode = "sandbox_authority_invalid"
-	ErrorArchitectureIncompatible ErrorCode = "architecture_incompatible"
-	ErrorGenerationInvalid        ErrorCode = "generation_invalid"
-	ErrorInputInvalid             ErrorCode = "input_invalid"
-)
-
-type AdmissionError struct {
-	Code    ErrorCode
-	Message string
-}
-
-func (e *AdmissionError) Error() string {
-	return e.Message
-}
-
 type Store interface {
 	ClaimDueSchedules(context.Context, db.ClaimDueSchedulesParams) ([]db.Schedule, error)
 	MarkScheduleAdmissionErrored(context.Context, db.MarkScheduleAdmissionErroredParams) (db.Schedule, error)
@@ -153,9 +134,6 @@ func (w *Worker) process(ctx context.Context, value db.Schedule) error {
 }
 
 func (w *Worker) markErrored(ctx context.Context, value db.Schedule, admissionErr *AdmissionError) error {
-	if !validErrorCode(admissionErr.Code) {
-		return fmt.Errorf("invalid schedule error code %q", admissionErr.Code)
-	}
 	failure, err := json.Marshal(struct {
 		Code    ErrorCode      `json:"code"`
 		Message string         `json:"message"`
@@ -226,19 +204,6 @@ func randomJitter(maximum time.Duration) (time.Duration, error) {
 		return 0, fmt.Errorf("sample schedule retry jitter: %w", err)
 	}
 	return time.Duration(binary.BigEndian.Uint64(buffer[:]) % (uint64(maximum) + 1)), nil
-}
-
-func validErrorCode(code ErrorCode) bool {
-	switch code {
-	case ErrorTaskAuthorityInvalid,
-		ErrorSandboxAuthorityInvalid,
-		ErrorArchitectureIncompatible,
-		ErrorGenerationInvalid,
-		ErrorInputInvalid:
-		return true
-	default:
-		return false
-	}
 }
 
 func truncateUTF8(value string, maximum int) string {

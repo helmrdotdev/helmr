@@ -28,7 +28,7 @@ UPDATE workspace_mounts
    AND materialized_version_id = $12
    AND fencing_generation = $13
    AND state = 'mounted'
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, guest_channel_token_hash, guest_channel_token_expires_at, state, request, dirty_generation, fencing_generation, finalization_kind, finalization_reason_code, finalization_error, staged_version_id, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
+RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, guest_channel_token_hash, guest_channel_token_expires_at, state, request, dirty_generation, fencing_generation, finalization_kind, finalization_reason_code, finalization_error, staged_version_id, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
 `
 
 type AdvanceRunWorkspaceMountFenceParams struct {
@@ -86,7 +86,6 @@ func (q *Queries) AdvanceRunWorkspaceMountFence(ctx context.Context, arg Advance
 		&i.FinalizationReasonCode,
 		&i.FinalizationError,
 		&i.StagedVersionID,
-		&i.RequestedAt,
 		&i.MountedAt,
 		&i.UnmountedAt,
 		&i.StoppedAt,
@@ -484,7 +483,7 @@ INSERT INTO run_leases (
     $23,
     $24
 )
-RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, state, assigned_at, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, state, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
 `
 
 type InsertAssignedRunLeaseParams struct {
@@ -566,7 +565,6 @@ func (q *Queries) InsertAssignedRunLease(ctx context.Context, arg InsertAssigned
 		&i.ParentSpanID,
 		&i.Traceparent,
 		&i.State,
-		&i.AssignedAt,
 		&i.StartDeadlineAt,
 		&i.ClaimedAt,
 		&i.StartedAt,
@@ -628,7 +626,7 @@ INSERT INTO workspace_leases (
     $17,
     $18
 )
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, state, owner_run_lease_id, owner_process_id, base_version_id, ownership_generation, writer_generation, mount_fencing_generation, fencing_token_hash, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, terminal_at, terminal_reason_code, terminal_error
+RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, state, owner_run_lease_id, owner_process_id, base_version_id, ownership_generation, writer_generation, mount_fencing_generation, fencing_token_hash, acquired_at, renewed_at, expires_at, released_at, updated_at, terminal_at, terminal_reason_code, terminal_error
 `
 
 type InsertRunWorkspaceLeaseParams struct {
@@ -698,7 +696,6 @@ func (q *Queries) InsertRunWorkspaceLease(ctx context.Context, arg InsertRunWork
 		&i.RenewedAt,
 		&i.ExpiresAt,
 		&i.ReleasedAt,
-		&i.LostAt,
 		&i.UpdatedAt,
 		&i.TerminalAt,
 		&i.TerminalReasonCode,

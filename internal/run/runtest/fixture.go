@@ -191,7 +191,7 @@ func New(t *testing.T) Fixture {
 	return fixture
 }
 
-func (fixture Fixture) AddRunLease(t *testing.T, state string, assignedAt time.Time) RunLease {
+func (fixture Fixture) AddRunLease(t *testing.T, state string, createdAt time.Time) RunLease {
 	t.Helper()
 	ctx := t.Context()
 	workspaceID := uuid.NewV7()
@@ -223,9 +223,9 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, assignedAt time.T
 	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO workspace_versions (
 			id, environment_id, workspace_id,
-			kind, content_digest, state, ownership_generation, writer_generation, published_at
+			content_digest, state, ownership_generation, writer_generation, published_at
 		) VALUES (
-			$1, $2, $3, 'system',
+			$1, $2, $3,
 			'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',
 			'committed', 0, 0, now()
 		)
@@ -282,7 +282,7 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, assignedAt time.T
 		versionID, runtimeID)
 	var claimedAt any
 	if state == "starting" {
-		claimedAt = assignedAt.Add(time.Second)
+		claimedAt = createdAt.Add(time.Second)
 	}
 	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO run_leases (
@@ -291,7 +291,7 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, assignedAt time.T
 			worker_epoch, runtime_instance_id,
 			runtime_identity_id, requested_cpu_millis,
 			requested_memory_bytes, requested_guest_ephemeral_disk_bytes,
-			requested_execution_slots, state, assigned_at, start_deadline_at,
+			requested_execution_slots, state, created_at, start_deadline_at,
 			claimed_at, expires_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, 1, 1, $8, $9, 1, $10,
@@ -302,7 +302,7 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, assignedAt time.T
 	`, leaseID, fixture.OrgID, fixture.ProjectID, fixture.EnvironmentID, runID,
 		workspaceID, Region, WorkerGroup, fixture.WorkerID,
 		runtimeID, fixture.RuntimeIdentityID,
-		state, assignedAt, claimedAt)
+		state, createdAt, claimedAt)
 	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO workspace_leases (
 			id, org_id, worker_group_id, project_id, environment_id, region_id,
@@ -321,7 +321,7 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, assignedAt time.T
 		UPDATE runs
 		   SET current_run_lease_id = $1, first_lease_at = $2
 		 WHERE id = $3
-	`, leaseID, assignedAt, runID)
+	`, leaseID, createdAt, runID)
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}

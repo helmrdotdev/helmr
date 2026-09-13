@@ -94,7 +94,6 @@ func (s *Server) sendSessionInput(w http.ResponseWriter, r *http.Request) {
 		SessionID:      actorID,
 		RecordID:       uuid.NewV7(),
 		Data:           canonicalInput,
-		SourceKind:     "external",
 		IdempotencyKey: idempotencyKey,
 	})
 	if err != nil {
@@ -112,11 +111,12 @@ func (s *Server) sendSessionInput(w http.ResponseWriter, r *http.Request) {
 func projectSessionInput(record db.SessionRecord) (api.SessionInput, error) {
 	id := pgvalue.UUIDString(record.ID)
 	if ids.Validate(id) != nil || record.Direction != "input" || record.Sequence <= 0 ||
-		!record.CreatedAt.Valid || !record.SourceKind.Valid || len(record.Data) == 0 {
+		!record.CreatedAt.Valid || len(record.Data) == 0 {
 		return api.SessionInput{}, errors.New("session input projection authority is invalid")
 	}
-	source := api.SessionInputSource{Type: record.SourceKind.String}
+	source := api.SessionInputSource{Type: "external"}
 	if record.SourceRunID.Valid {
+		source.Type = "run"
 		source.RunID = pgvalue.UUIDString(record.SourceRunID)
 		if ids.Validate(source.RunID) != nil {
 			return api.SessionInput{}, errors.New("session input source authority is invalid")

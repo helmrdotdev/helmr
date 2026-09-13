@@ -67,6 +67,5 @@ func deriveRunStartMode(locators db.GetRunLeaseStartLocatorsRow) runLeaseClaimMo
 
 func sameWorkspaceParentResumeWait(wait db.RunWait) bool {
 	return wait.Kind == db.WaitKindChild &&
-		wait.ChildParentOwned.Valid && wait.ChildParentOwned.Bool &&
 		wait.OwnershipGeneration.Valid
 }

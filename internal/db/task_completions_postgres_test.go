@@ -159,11 +159,11 @@ func TestRestoredTaskFailureRollsBackPhysicalFrontier(t *testing.T) {
 	dbtest.MustExec(t, ctx, fixture.pool, `
 		INSERT INTO workspace_versions (
 			id, environment_id, workspace_id,
-			parent_version_id, artifact_id, artifact_kind, kind, content_digest,
+			parent_version_id, artifact_id, content_digest,
 			size_bytes, entry_count, state, source_workspace_lease_id,
 			ownership_generation, writer_generation, published_at
 		) VALUES (
-			$1, $2, $3, $4, $5, 'workspace_version', 'user', $6,
+			$1, $2, $3, $4, $5, $6,
 			1, 1, 'committed', $7, 1, 1, now()
 		)
 	`, restoredVersionID, fixture.environmentID, authority.workspaceID, authority.baseVersionID,

@@ -44,10 +44,10 @@ func TestSessionInputReadPostgresPagesInSequenceOrder(t *testing.T) {
 	if _, err := fixture.pool.Exec(t.Context(), `
 		INSERT INTO session_records (
 		    id, environment_id, session_id, direction, sequence, data,
-		    content_type, source_kind, source_run_id, created_at
+		    content_type, source_run_id, created_at
 		) VALUES (
 		    $1, $2, $3, 'input', 2, '{"message":"follow-up"}'::jsonb,
-		    'application/json', 'run', $4, $5
+		    'application/json', $4, $5
 		)
 	`, followUpID, fixture.environmentID, first.SessionID, first.BootRunID, createdAt); err != nil {
 		t.Fatal(err)

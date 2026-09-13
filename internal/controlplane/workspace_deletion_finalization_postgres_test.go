@@ -200,9 +200,9 @@ SELECT head_version_id FROM workspaces WHERE id = $1`, fixture.workspaceID).Scan
 		}
 		dbtest.MustExec(t, t.Context(), fixture.base.Pool, `
 INSERT INTO idempotency_claims (
-    id, environment_id, operation, slot_hash, request_fingerprint, accepted_at
+    id, environment_id, operation, slot_hash, request_fingerprint, accepted_at, expires_at
 ) VALUES ($1, $2, 'workspace.exec', decode(repeat('61', 32), 'hex'),
-          decode(repeat('62', 32), 'hex'), now())`, claimID, fixture.base.EnvironmentID)
+          decode(repeat('62', 32), 'hex'), now(), now() + interval '30 days')`, claimID, fixture.base.EnvironmentID)
 		dbtest.MustExec(t, t.Context(), fixture.base.Pool, `
 INSERT INTO workspace_processes (
     id, org_id, project_id, environment_id, workspace_id, base_version_id,

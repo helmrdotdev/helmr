@@ -266,7 +266,14 @@ UPDATE run_waits
  WHERE id = $2
    AND child_run_id = $3
    AND workspace_id = $4
-   AND child_parent_owned IS TRUE
+   AND kind = 'child'
+   AND EXISTS (
+       SELECT 1 FROM runs AS child
+        WHERE child.id = run_waits.child_run_id
+          AND child.parent_run_id = run_waits.run_id
+          AND child.environment_id = run_waits.environment_id
+          AND child.parent_owns_lifecycle IS TRUE
+   )
    AND condition_state = 'pending'
 	   AND suspension_state = 'parked'
 	   AND current_run_lease_id IS NULL

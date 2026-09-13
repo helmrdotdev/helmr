@@ -233,7 +233,7 @@ INSERT INTO run_leases (
     requested_cpu_millis, requested_memory_bytes,
     requested_guest_ephemeral_disk_bytes, requested_execution_slots,
     trace_id, span_id, parent_span_id, traceparent,
-    state, assigned_at, start_deadline_at, claimed_at, started_at, expires_at,
+    state, created_at, start_deadline_at, claimed_at, started_at, expires_at,
     checkpointed_at, terminal_at, terminal_reason_code
 )
 SELECT $2, org_id, project_id, environment_id, run_id, workspace_id, region_id,
@@ -242,9 +242,9 @@ SELECT $2, org_id, project_id, environment_id, run_id, workspace_id, region_id,
        requested_cpu_millis, requested_memory_bytes,
        requested_guest_ephemeral_disk_bytes, requested_execution_slots,
        trace_id, span_id, parent_span_id, traceparent,
-       'checkpointed', assigned_at - interval '1 minute',
-       start_deadline_at - interval '1 minute', assigned_at - interval '1 minute',
-       assigned_at - interval '1 minute', expires_at,
+       'checkpointed', created_at - interval '1 minute',
+       start_deadline_at - interval '1 minute', created_at - interval '1 minute',
+       created_at - interval '1 minute', expires_at,
        transaction_timestamp(), transaction_timestamp(), 'checkpointed'
   FROM run_leases WHERE id = $1`, work.LeaseID, sourceLeaseID, sourceRuntimeID)
 	dbtest.MustExec(t, ctx, tx, `
@@ -276,10 +276,10 @@ INSERT INTO artifacts (
 	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO workspace_versions (
     id, environment_id, workspace_id, parent_version_id,
-    artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count,
+    artifact_id, content_digest, size_bytes, entry_count,
     state, source_workspace_lease_id, ownership_generation, writer_generation
 ) VALUES (
-    $1, $2, $3, $4, $5, 'workspace_version', 'user', $6, 1, 1,
+    $1, $2, $3, $4, $5, $6, 1, 1,
     'private', $7, $8, 1
 )`, checkpointVersionID, base.EnvironmentID, workspaceID, headVersionID,
 		checkpointArtifactID, checkpointDigest, sourceWorkspaceLeaseID, ownershipGeneration)
@@ -322,7 +322,7 @@ INSERT INTO run_leases (
     worker_epoch, runtime_instance_id, runtime_identity_id,
     requested_cpu_millis, requested_memory_bytes,
     requested_guest_ephemeral_disk_bytes, requested_execution_slots,
-    state, assigned_at, start_deadline_at, claimed_at, started_at, expires_at,
+    state, created_at, start_deadline_at, claimed_at, started_at, expires_at,
     terminal_at, terminal_reason_code
 )
 SELECT $2, org_id, project_id, environment_id, $3, workspace_id, region_id,
@@ -330,7 +330,7 @@ SELECT $2, org_id, project_id, environment_id, $3, workspace_id, region_id,
        worker_epoch, $4, runtime_identity_id,
        requested_cpu_millis, requested_memory_bytes,
        requested_guest_ephemeral_disk_bytes, requested_execution_slots,
-       'completed', assigned_at, start_deadline_at, assigned_at, assigned_at,
+       'completed', created_at, start_deadline_at, created_at, created_at,
        expires_at, transaction_timestamp(), 'completed'
   FROM run_leases WHERE id = $1`, work.LeaseID, childLeaseID, childRunID, sourceRuntimeID)
 	dbtest.MustExec(t, ctx, tx, `
@@ -362,22 +362,22 @@ INSERT INTO artifacts (
 	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO workspace_versions (
     id, environment_id, workspace_id, parent_version_id,
-    artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count,
+    artifact_id, content_digest, size_bytes, entry_count,
     state, source_workspace_lease_id, ownership_generation, writer_generation
 ) VALUES (
-    $1, $2, $3, $4, $5, 'workspace_version', 'user', $6, 1, 1,
+    $1, $2, $3, $4, $5, $6, 1, 1,
     'private', $7, $8, $9
 )`, privateVersionID, base.EnvironmentID, workspaceID, checkpointVersionID,
 		privateArtifactID, privateDigest, childWorkspaceLeaseID, ownershipGeneration, int64(2))
 	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO run_waits (
     id, environment_id, run_id, workspace_id, kind,
-    child_run_id, child_parent_owned, child_target_declared_id,
+    child_run_id, child_target_declared_id,
     child_claim_id, child_request,
     condition_state, suspension_state, expected_run_state_version,
     attempt_number, prior_run_lease_id, resume_attach_id
 ) VALUES (
-    $1, $2, $3, $4, 'child', $5, true, 'test-task', $6,
+    $1, $2, $3, $4, 'child', $5, 'test-task', $6,
     '{"Method":"call"}'::jsonb,
     'pending', 'parked', 1, 1, $7, $8
 )`, waitID, base.EnvironmentID, work.RunID, workspaceID, childRunID, childClaimID,
@@ -426,7 +426,7 @@ UPDATE run_attempts
 	dbtest.MustExec(t, ctx, tx, `
 UPDATE run_leases
    SET state = 'finalizing',
-       started_at = COALESCE(started_at, claimed_at, assigned_at),
+       started_at = COALESCE(started_at, claimed_at, created_at),
        expires_at = $2,
        finalization_operation_id = $3,
        finalization_kind = $4,

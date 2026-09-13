@@ -533,7 +533,9 @@ WITH candidate_scopes AS (
                      AND base.id = edge.base_workspace_version_id
                      AND base.state = 'private'
                    WHERE edge.child_run_id = runs.id
-                     AND edge.child_parent_owned IS TRUE
+                     AND edge.kind = 'child'
+                     AND runs.parent_run_id = edge.run_id
+                     AND runs.parent_owns_lifecycle IS TRUE
                      AND edge.workspace_id = runs.workspace_id
                      AND edge.condition_state = 'pending'
                      AND edge.suspension_state = 'parked'
@@ -565,7 +567,7 @@ WITH candidate_scopes AS (
                                 )
                                 AND prior_child_workspace_lease.ownership_generation = edge.ownership_generation
                                 AND prior_child_workspace_lease.writer_generation = edge.child_writer_generation
-                                AND prior_child_workspace_lease.state IN ('released', 'fenced', 'expired', 'lost')
+                                AND prior_child_workspace_lease.state IN ('released', 'fenced', 'expired')
                               WHERE prior_child_lease.run_id = runs.id
                                 AND prior_child_lease.workspace_id = runs.workspace_id
                                 AND (
@@ -1054,7 +1056,9 @@ SELECT runs.org_id,
                  AND base.id = edge.base_workspace_version_id
                  AND base.state = 'private'
                WHERE edge.child_run_id = runs.id
-                 AND edge.child_parent_owned IS TRUE
+                 AND edge.kind = 'child'
+                     AND runs.parent_run_id = edge.run_id
+                     AND runs.parent_owns_lifecycle IS TRUE
                  AND edge.workspace_id = runs.workspace_id
                  AND edge.condition_state = 'pending'
                  AND edge.suspension_state = 'parked'
@@ -1086,7 +1090,7 @@ SELECT runs.org_id,
                             )
                             AND prior_child_workspace_lease.ownership_generation = edge.ownership_generation
                             AND prior_child_workspace_lease.writer_generation = edge.child_writer_generation
-                            AND prior_child_workspace_lease.state IN ('released', 'fenced', 'expired', 'lost')
+                            AND prior_child_workspace_lease.state IN ('released', 'fenced', 'expired')
                           WHERE prior_child_lease.run_id = runs.id
                             AND prior_child_lease.workspace_id = runs.workspace_id
                             AND (

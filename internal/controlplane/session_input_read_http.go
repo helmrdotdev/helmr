@@ -120,7 +120,6 @@ func readSessionInputPage(
 		record, err := projectSessionInput(db.SessionRecord{
 			ID: row.RecordID, SessionID: row.SessionID, Direction: "input",
 			Sequence: row.Sequence, Data: append(json.RawMessage(nil), row.Data...),
-			SourceKind:  pgtype.Text{String: row.SourceKind, Valid: row.SourceKind != ""},
 			SourceRunID: row.SourceRunID, CreatedAt: row.CreatedAt,
 		})
 		if err != nil {

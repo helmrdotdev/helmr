@@ -2,8 +2,6 @@
 SELECT workspace_versions.id AS version_id,
        workspace_versions.parent_version_id,
        workspace_versions.artifact_id,
-       workspace_versions.artifact_kind,
-       workspace_versions.kind AS version_kind,
        workspace_versions.content_digest,
        workspace_versions.size_bytes AS logical_size_bytes,
        workspace_versions.entry_count,
@@ -26,14 +24,13 @@ SELECT workspace_versions.id AS version_id,
    AND workspace_versions.environment_id = sqlc.arg(environment_id)
    AND workspace_versions.workspace_id = sqlc.arg(workspace_id)
    AND workspace_versions.id = sqlc.arg(version_id)
-   AND workspace_versions.state IN ('committed', 'private');
+   AND workspace_versions.state IN ('committed', 'private')
+   AND (workspace_versions.parent_version_id IS NULL OR artifacts.kind = 'workspace_version');
 
 -- name: GetCheckpointWorkspaceBaseAuthority :one
 SELECT workspace_versions.id AS version_id,
        workspace_versions.parent_version_id,
        workspace_versions.artifact_id,
-       workspace_versions.artifact_kind,
-       workspace_versions.kind AS version_kind,
        workspace_versions.content_digest,
        workspace_versions.size_bytes AS logical_size_bytes,
        workspace_versions.entry_count,
@@ -56,4 +53,5 @@ SELECT workspace_versions.id AS version_id,
    AND workspace_versions.environment_id = sqlc.arg(environment_id)
    AND workspace_versions.workspace_id = sqlc.arg(workspace_id)
    AND workspace_versions.id = sqlc.arg(version_id)
-   AND workspace_versions.state IN ('committed', 'private');
+   AND workspace_versions.state IN ('committed', 'private')
+   AND (workspace_versions.parent_version_id IS NULL OR artifacts.kind = 'workspace_version');

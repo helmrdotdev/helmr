@@ -234,8 +234,7 @@ func TestTaskWorkspaceRollbackMatchesCanonicalRootVersion(t *testing.T) {
 		workspace: db.Workspace{ID: workspaceID},
 	}
 	store := &taskWorkspaceRollbackFixture{version: db.WorkspaceVersion{
-		ID: baseID, WorkspaceID: workspaceID, Kind: db.WorkspaceVersionKindSystem,
-		ContentDigest: workspace.CanonicalEmptyTreeDigest, State: db.WorkspaceVersionStateCommitted,
+		ID: baseID, WorkspaceID: workspaceID, ContentDigest: workspace.CanonicalEmptyTreeDigest, State: db.WorkspaceVersionStateCommitted,
 	}}
 	rollback := parsedTaskWorkspaceRollback{
 		baseID: pgvalue.MustUUIDValue(baseID),
@@ -271,8 +270,7 @@ func TestTaskWorkspaceRollbackMatchesVersionArtifact(t *testing.T) {
 	store := &taskWorkspaceRollbackFixture{
 		version: db.WorkspaceVersion{
 			ID: baseID, WorkspaceID: workspaceID, ParentVersionID: parentID, ArtifactID: artifactID,
-			ArtifactKind: db.NullArtifactKind{ArtifactKind: db.ArtifactKindWorkspaceVersion, Valid: true},
-			Kind:         db.WorkspaceVersionKindUser, ContentDigest: tree.Digest, SizeBytes: tree.SizeBytes,
+			ContentDigest: tree.Digest, SizeBytes: tree.SizeBytes,
 			EntryCount: int32(tree.EntryCount), State: db.WorkspaceVersionStateCommitted,
 			SourceWorkspaceLeaseID: sourceLeaseID,
 		},

@@ -38,7 +38,7 @@ func TestProjectSessionStatusCollapsesInternalStates(t *testing.T) {
 	failed, err := projectSessionStatus(sessionReadRecord{
 		id: pgvalue.UUID(actorID), state: "failed",
 		createdAt: pgvalue.Timestamptz(now), updatedAt: pgvalue.Timestamptz(now),
-		failure:      []byte(`{"code":"run_failed","message":"Session run failed","details":{"run_id":"` + runID.String() + `"}}`),
+		failure:      []byte(`{"code":"future_session_failure","message":"Session run failed","details":{"run_id":"` + runID.String() + `"}}`),
 		failureRunID: pgvalue.UUID(runID),
 	})
 	if err != nil {
@@ -46,7 +46,9 @@ func TestProjectSessionStatusCollapsesInternalStates(t *testing.T) {
 	}
 	if failed.status != api.SessionStatusFailed ||
 		failed.failure == nil ||
-		failed.failure.Details.RunID != runID.String() {
+		failed.failure.Details.RunID != runID.String() ||
+		failed.failure.Code != "future_session_failure" ||
+		failed.failure.Message != "Session run failed" {
 		t.Fatalf("failed status = %+v", failed)
 	}
 }

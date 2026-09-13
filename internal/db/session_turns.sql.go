@@ -106,7 +106,7 @@ UPDATE workspace_leases
    AND mount_fencing_generation = $14
    AND state = 'active'
    AND expires_at > $2
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, state, owner_run_lease_id, owner_process_id, base_version_id, ownership_generation, writer_generation, mount_fencing_generation, fencing_token_hash, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, terminal_at, terminal_reason_code, terminal_error
+RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, state, owner_run_lease_id, owner_process_id, base_version_id, ownership_generation, writer_generation, mount_fencing_generation, fencing_token_hash, acquired_at, renewed_at, expires_at, released_at, updated_at, terminal_at, terminal_reason_code, terminal_error
 `
 
 type AdvanceActorTurnWorkspaceLeaseFrontierParams struct {
@@ -168,7 +168,6 @@ func (q *Queries) AdvanceActorTurnWorkspaceLeaseFrontier(ctx context.Context, ar
 		&i.RenewedAt,
 		&i.ExpiresAt,
 		&i.ReleasedAt,
-		&i.LostAt,
 		&i.UpdatedAt,
 		&i.TerminalAt,
 		&i.TerminalReasonCode,
@@ -264,7 +263,7 @@ UPDATE workspace_versions
           AND run_checkpoints.state = 'invalid'
           AND run_checkpoints.invalidation_reason_code = 'actor_turn_committed'
    )
-RETURNING workspace_versions.id, workspace_versions.environment_id, workspace_versions.workspace_id, workspace_versions.parent_version_id, workspace_versions.artifact_id, workspace_versions.artifact_kind, workspace_versions.kind, workspace_versions.content_digest, workspace_versions.size_bytes, workspace_versions.entry_count, workspace_versions.state, workspace_versions.source_workspace_lease_id, workspace_versions.ownership_generation, workspace_versions.writer_generation, workspace_versions.created_at, workspace_versions.published_at, workspace_versions.discarded_at
+RETURNING workspace_versions.id, workspace_versions.environment_id, workspace_versions.workspace_id, workspace_versions.parent_version_id, workspace_versions.artifact_id, workspace_versions.content_digest, workspace_versions.size_bytes, workspace_versions.entry_count, workspace_versions.state, workspace_versions.source_workspace_lease_id, workspace_versions.ownership_generation, workspace_versions.writer_generation, workspace_versions.created_at, workspace_versions.published_at, workspace_versions.discarded_at
 `
 
 type PublishRestoredActorCheckpointWorkspaceVersionParams struct {
@@ -298,8 +297,6 @@ func (q *Queries) PublishRestoredActorCheckpointWorkspaceVersion(ctx context.Con
 		&i.WorkspaceID,
 		&i.ParentVersionID,
 		&i.ArtifactID,
-		&i.ArtifactKind,
-		&i.Kind,
 		&i.ContentDigest,
 		&i.SizeBytes,
 		&i.EntryCount,

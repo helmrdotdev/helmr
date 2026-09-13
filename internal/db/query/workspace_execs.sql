@@ -724,18 +724,21 @@ WITH authority AS (
 ), created AS (
     INSERT INTO workspace_versions (
         id, environment_id, workspace_id,
-        parent_version_id, artifact_id, artifact_kind, kind, content_digest,
+        parent_version_id, artifact_id, content_digest,
         size_bytes, entry_count, state, source_workspace_lease_id,
         ownership_generation, writer_generation
     )
     SELECT sqlc.arg(workspace_version_id),
            authority.environment_id, authority.workspace_id, authority.base_version_id,
-           sqlc.arg(artifact_id), 'workspace_version', 'user',
+           sqlc.arg(artifact_id),
            sqlc.arg(content_digest), sqlc.arg(size_bytes), sqlc.arg(entry_count),
            'private', authority.source_workspace_lease_id,
            authority.ownership_generation, authority.writer_generation
       FROM authority
-    RETURNING *
+      JOIN artifacts ON artifacts.environment_id = authority.environment_id
+                    AND artifacts.id = sqlc.arg(artifact_id)
+                    AND artifacts.kind = 'workspace_version'
+    RETURNING workspace_versions.*
 ), staged AS (
     UPDATE workspace_mounts
        SET staged_version_id = created.id,

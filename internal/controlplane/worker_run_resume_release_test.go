@@ -138,7 +138,6 @@ func TestAcknowledgeRunResumeReleaseUsesSuspendCheckpointForDifferentWorkspaceCh
 	server, store, worker, expected, proof := validRunResumeReleaseFixture(t)
 	store.authority.runWait.Kind = db.WaitKindChild
 	store.authority.runWait.ChildRunID = pgvalue.UUID(uuid.New())
-	store.authority.runWait.ChildParentOwned = pgtype.Bool{Bool: true, Valid: true}
 
 	if _, err := server.acknowledgeRunResumeRelease(
 		context.Background(), worker, store.authority.runLease.ID, expected.Fence(), proof,

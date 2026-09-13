@@ -72,7 +72,6 @@ SELECT sessions.state,
 		SessionID:     started.SessionID,
 		RecordID:      uuid.NewV7(),
 		Data:          json.RawMessage(`{"message":"continue"}`),
-		SourceKind:    "external",
 	}); err != nil {
 		t.Fatal(err)
 	}

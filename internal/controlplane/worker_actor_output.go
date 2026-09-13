@@ -309,7 +309,7 @@ func actorOutputRecordFromAppend(row db.AppendActorOutputRecordRow) db.SessionRe
 	return db.SessionRecord{
 		ID: row.ID, EnvironmentID: row.EnvironmentID, SessionID: row.SessionID,
 		Direction: row.Direction, Sequence: row.Sequence, Data: row.Data, ContentType: row.ContentType,
-		SourceKind: row.SourceKind, SourceRunID: row.SourceRunID,
+		SourceRunID:   row.SourceRunID,
 		ProducerRunID: row.ProducerRunID, ProducerAttemptNumber: row.ProducerAttemptNumber,
 		ClaimID: row.ClaimID, CreatedAt: row.CreatedAt,
 	}

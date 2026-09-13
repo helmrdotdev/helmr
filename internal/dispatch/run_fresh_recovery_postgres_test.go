@@ -18,7 +18,7 @@ func TestFreshRunLeaseRecoveryRequeuesPrestartAndUnblocksWorkerStartup(t *testin
 			if leaseState == "starting" {
 				dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
-   SET state = 'starting', claimed_at = assigned_at
+   SET state = 'starting', claimed_at = created_at
  WHERE id = $1`, leaseID)
 			}
 			dbtest.MustExec(t, fixture.ctx, fixture.pool, `
@@ -120,7 +120,7 @@ func TestFreshRunLeaseRecoveryChargesExactRuntimeFailureBudget(t *testing.T) {
 			fixture, leaseID, runtimeID := prepareFreshRunLease(t)
 			dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
-   SET state = 'starting', claimed_at = assigned_at,
+   SET state = 'starting', claimed_at = created_at,
        start_deadline_at = transaction_timestamp() + interval '5 minutes',
        expires_at = transaction_timestamp() + interval '10 minutes'
  WHERE id = $1`, leaseID)
@@ -187,7 +187,7 @@ func TestFreshRunningLeaseLossAppliesPinnedRetryPolicy(t *testing.T) {
 			retryPolicy := `{"backoff":{"factor":1,"jitter":"none","maxMs":1,"minMs":1},"enabled":true,"maxAttempts":2}`
 			dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
-   SET state = 'running', claimed_at = assigned_at, started_at = assigned_at,
+   SET state = 'running', claimed_at = created_at, started_at = created_at,
        expires_at = transaction_timestamp() - interval '1 second'
  WHERE id = $1`, leaseID)
 			dbtest.MustExec(t, fixture.ctx, fixture.pool, `
@@ -252,7 +252,7 @@ SELECT workspace_leases.id, workspace_leases.base_version_id
 	}
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
-   SET state = 'checkpointing', claimed_at = assigned_at, started_at = assigned_at,
+   SET state = 'checkpointing', claimed_at = created_at, started_at = created_at,
        expires_at = transaction_timestamp() - interval '1 second'
  WHERE id = $1`, leaseID)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
@@ -323,7 +323,7 @@ func TestFinalizingLeaseLossPreservesReceiptAndRetries(t *testing.T) {
 	operationID := uuid.NewV7()
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
-   SET state = 'finalizing', claimed_at = assigned_at, started_at = assigned_at,
+   SET state = 'finalizing', claimed_at = created_at, started_at = created_at,
        expires_at = transaction_timestamp() - interval '1 second',
        finalization_operation_id = $2, finalization_kind = 'capture',
        finalization_started_at = transaction_timestamp() - interval '2 seconds',
@@ -378,7 +378,7 @@ func TestFreshRunningLeaseLossWithoutRetryTerminalizesRun(t *testing.T) {
 	fixture, leaseID, _ := prepareFreshRunLease(t)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
-   SET state = 'running', claimed_at = assigned_at, started_at = assigned_at,
+   SET state = 'running', claimed_at = created_at, started_at = created_at,
        expires_at = transaction_timestamp() - interval '1 second'
  WHERE id = $1`, leaseID)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
@@ -420,7 +420,7 @@ func TestFreshRunningLeaseHardDeadlineExpiresWithoutRetry(t *testing.T) {
 	fixture, leaseID, _ := prepareFreshRunLease(t)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
-   SET state = 'running', claimed_at = assigned_at, started_at = assigned_at,
+   SET state = 'running', claimed_at = created_at, started_at = created_at,
        start_deadline_at = transaction_timestamp() + interval '5 minutes',
        expires_at = transaction_timestamp() + interval '10 minutes'
  WHERE id = $1`, leaseID)
@@ -460,7 +460,7 @@ func TestFreshActorRunningLeaseLossAppliesPinnedRetryPolicy(t *testing.T) {
 	actorID := convertFreshRunToActor(t, fixture)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
-   SET state = 'running', claimed_at = assigned_at, started_at = assigned_at,
+   SET state = 'running', claimed_at = created_at, started_at = created_at,
        expires_at = transaction_timestamp() - interval '1 second'
  WHERE id = $1`, leaseID)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
@@ -537,7 +537,7 @@ UPDATE secrets
  WHERE id = $1`, secretID)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
-   SET state = 'running', claimed_at = assigned_at, started_at = assigned_at,
+   SET state = 'running', claimed_at = created_at, started_at = created_at,
        expires_at = transaction_timestamp() - interval '1 second'
  WHERE id = $1`, leaseID)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
@@ -629,7 +629,7 @@ func prepareFreshRunLease(t *testing.T) (runPlacementFixture, pgtype.UUID, pgtyp
 	}
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
-   SET assigned_at = transaction_timestamp() - interval '10 minutes',
+   SET created_at = transaction_timestamp() - interval '10 minutes',
        start_deadline_at = transaction_timestamp() - interval '9 minutes',
        expires_at = transaction_timestamp() + interval '5 minutes'
  WHERE id = $1`, granted.Lease.ID)

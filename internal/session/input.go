@@ -52,8 +52,9 @@ func RecordResolution(record db.SessionRecord) (json.RawMessage, error) {
 	if err := json.Unmarshal(record.Data, &value); err != nil {
 		return nil, fmt.Errorf("actor input record data is invalid: %w", err)
 	}
-	source := map[string]any{"type": record.SourceKind.String}
-	if record.SourceKind.String == "run" {
+	source := map[string]any{"type": "external"}
+	if record.SourceRunID.Valid {
+		source["type"] = "run"
 		source["run_id"] = pgvalue.UUIDString(record.SourceRunID)
 	}
 	return json.Marshal(map[string]any{

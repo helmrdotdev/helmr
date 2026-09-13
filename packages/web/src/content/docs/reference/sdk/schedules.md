@@ -31,3 +31,10 @@ External Schedule APIs are read-only: `client.schedules.retrieve(id)` and
 lookup cannot be combined with pagination. Status is `active`, `errored`, or
 `archived`; an errored record includes `lastFailure`. Timing or lifecycle
 changes require another source Deployment promotion.
+
+`lastFailure.code` is an opaque string. Known admission diagnostics include
+`task_not_found`, `program_unavailable`, `invalid_definition`,
+`secret_selection_mismatch`, and `sandbox_not_found`; cron and schedule validation
+use `invalid_cron`, `unsupported_cron_version`, or `invalid_schedule`. Keep a generic
+handling path for unfamiliar codes. The SDK preserves the code, message and details;
+the Schedule status still determines its lifecycle.
