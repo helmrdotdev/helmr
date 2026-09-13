@@ -63,14 +63,18 @@ nix develop
 make dev
 ```
 
-The dev stack starts a disposable PostgreSQL database when `DATABASE_URL`
-is not set, runs the Control Plane, and serves the console at:
+The dev stack starts managed PostgreSQL, Redis, and ClickHouse when their URLs
+are not set, runs the Control Plane, and serves the console at:
 
 ```text
 http://127.0.0.1:3000/dev/login
 ```
 
-Use that URL to create a local owner session and inspect seeded runs.
+Use that URL to create a local owner session. Owned dev state under `.helmr-dev`
+persists across restarts; reset owned Postgres, ClickHouse, and CAS with
+`make dev-reset` when the stack is stopped. Production and Staging start empty;
+select the Demo environment in Settings for synthetic console fixtures (see
+`packages/console/README.md`).
 
 ## Define a task
 

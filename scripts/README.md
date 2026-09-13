@@ -58,28 +58,43 @@ real KVM host and is not emulated in hosted CI.
 
 ## Development console
 
-`nix run .#dev` runs the control plane and Vite console for interactive local
-development. `HELMR_DEV_CONSOLE_MODE=preview ./scripts/dev-console-stack.sh`
-runs the stack the browser acceptance test uses: it builds the console and
-serves it with the control plane, Redis and ClickHouse on one port
-(`HELMR_DEV_CONSOLE_PORT`, default `3000`). Run it from `nix develop .#browser`,
-which provides Redis and ClickHouse. Preview state is disposable and isolated
-under the worktree's `.helmr-dev` directory. PostgreSQL and Redis use Unix
-sockets and ClickHouse uses a loopback address derived from the console port,
-so concurrent stacks only need distinct console ports.
+`nix run .#dev` (or `make dev`) runs the Vite console with hot reload and a
+managed Postgres, Redis, ClickHouse, and synthetic runtime descriptor when
+external URLs are not set. State lives under `$ROOT/.helmr-dev` (override
+`HELMR_DEV_DIR`) with short-path Unix sockets in `$TMPDIR/helmr-<state-hash>`.
+Owned data persists by default; `make dev-reset` clears owned Postgres, ClickHouse,
+and CAS only when the stack is stopped and no owned services are still running.
 
-On x86_64 Linux, run the browser acceptance test with the Playwright and
-Chromium versions pinned by Nix:
+If startup or reset reports an existing `.stack.lock`, stop the stack (or any
+orphaned owned Postgres/Redis/ClickHouse under that state directory), then remove
+`.stack.lock` manually. Locks are never reclaimed automatically.
+
+`HELMR_DEV_CONSOLE_MODE=preview` builds the console once and serves it from the
+control plane on one loopback port (browser tests). Live mode uses separate
+console and control-plane ports; Vite `strictPort` and `HELMR_DEV_BACKEND_URL`
+must agree.
+
+Run stack integration checks:
 
 ```sh
-nix develop .#browser --command bun run test:browser
+./scripts/dev-console-stack.test.sh
 ```
 
-The command starts and stops its own disposable stack on port `4173`. To
-validate a preview stack that is already running, set `HELMR_E2E_BASE_URL` to
-its localhost URL; the browser test then reuses it instead of starting another
-stack. Set a distinct `HELMR_E2E_PORT` for concurrent self-contained runs. The
-same port also isolates the Linux ClickHouse listener.
+Run browser acceptance tests (single managed preview stack, reset per run):
+
+```sh
+bun run test:browser
+```
+
+On x86_64 Linux, use the pinned Playwright browsers:
+
+```sh
+nix run .#ci-browser
+```
+
+To reuse an already-running preview stack with Demo fixtures seeded, set
+`HELMR_E2E_BASE_URL`. Managed runs use `$ROOT/.helmr-dev-e2e` and
+`HELMR_E2E_PORT` (default `4173`).
 
 ## Product release artifacts
 

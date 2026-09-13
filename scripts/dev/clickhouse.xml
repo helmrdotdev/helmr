@@ -4,9 +4,7 @@
     <console>true</console>
   </logger>
   <listen_host from_env="HELMR_DEV_CLICKHOUSE_HOST" />
-  <http_port>8123</http_port>
-  <tcp_port>9000</tcp_port>
-  <interserver_http_port>9009</interserver_http_port>
+  <http_port from_env="HELMR_DEV_CLICKHOUSE_HTTP_PORT" replace="1" />
   <path from_env="HELMR_DEV_CLICKHOUSE_PATH" />
   <tmp_path from_env="HELMR_DEV_CLICKHOUSE_TMP_PATH" />
   <user_files_path from_env="HELMR_DEV_CLICKHOUSE_USER_FILES_PATH" />

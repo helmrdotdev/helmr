@@ -198,9 +198,15 @@ ciApps
       ''
         exec bash ./tests/version_cohort_test.sh "$@"
       '';
-  dev = app "dev" "run the local Helmr control plane and console dashboard" toolsets.appRuntime ''
-    exec ./scripts/dev-console-stack.sh "$@"
-  '';
+  dev =
+    let
+      pkgsClickHouse = import nixpkgs-clickhouse { inherit system; };
+    in
+    app "dev" "run the local Helmr control plane and console dashboard"
+      (toolsets.appRuntime ++ [ pkgsClickHouse.clickhouse ])
+      ''
+        exec ./scripts/dev-console-stack.sh "$@"
+      '';
   measure-dispatch = app "measure-dispatch" "measure PostgreSQL dispatch discovery" toolsets.base ''
     exec ./scripts/measure-dispatch.sh "$@"
   '';
@@ -280,6 +286,7 @@ ciApps
         export PLAYWRIGHT_BROWSERS_PATH=${pkgsUnstable.playwright-driver.browsers}
         export PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true
         bun install --frozen-lockfile --ignore-scripts
+        bash scripts/dev-console-stack.test.sh
         bun run test:browser
       '';
 

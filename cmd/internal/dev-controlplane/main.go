@@ -68,7 +68,8 @@ func main() {
 		os.Exit(1)
 	}
 	defer pool.Close()
-	if err := migrate(ctx, pool, cfg.resetDatabase); err != nil {
+	freshInit, err := migrate(ctx, pool)
+	if err != nil {
 		log.Error("migrate database", "error", err)
 		os.Exit(1)
 	}
@@ -80,7 +81,7 @@ func main() {
 		log.Error("bootstrap platform", "error", err)
 		os.Exit(1)
 	}
-	if cfg.seedData {
+	if cfg.seedData && freshInit {
 		if err := seedDevData(ctx, pool, cfg); err != nil {
 			log.Error("seed dev data", "error", err)
 			os.Exit(1)
@@ -251,7 +252,6 @@ type devConfig struct {
 	encryptionKey                   []byte
 	workspaceFencingKey             []byte
 	tokenCredentialKey              []byte
-	resetDatabase                   bool
 	seedData                        bool
 }
 
@@ -273,9 +273,6 @@ func loadConfig() (devConfig, error) {
 		deploymentRuntimeDescriptorPath: textEnv("DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH", ""),
 		publicURL:                       textEnv("PUBLIC_URL", defaultPublicURL),
 		setupToken:                      secretEnv("SETUP_TOKEN", defaultSetupToken),
-	}
-	if cfg.resetDatabase, err = boolEnv("HELMR_DEV_RESET_DATABASE", false); err != nil {
-		return cfg, err
 	}
 	if cfg.seedData, err = boolEnv("HELMR_DEV_SEED_DATA", true); err != nil {
 		return cfg, err
@@ -351,49 +348,68 @@ func boolEnv(name string, fallback bool) (bool, error) {
 	return parsed, nil
 }
 
-func migrate(ctx context.Context, pool *pgxpool.Pool, reset bool) error {
+func migrate(ctx context.Context, pool *pgxpool.Pool) (bool, error) {
 	var serverVersion int
 	if err := pool.QueryRow(ctx, `SELECT current_setting('server_version_num')::int`).Scan(&serverVersion); err != nil {
-		return err
+		return false, err
 	}
 	if serverVersion < 180000 {
-		return fmt.Errorf("PostgreSQL 18 or newer is required by the Helmr schema baseline; server_version_num=%d", serverVersion)
-	}
-	if reset {
-		if _, err := pool.Exec(ctx, `DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public`); err != nil {
-			return err
-		}
+		return false, fmt.Errorf("PostgreSQL 18 or newer is required by the Helmr schema baseline; server_version_num=%d", serverVersion)
 	}
 	var exists bool
 	if err := pool.QueryRow(ctx, `SELECT to_regclass('public.organizations') IS NOT NULL`).Scan(&exists); err != nil {
-		return err
+		return false, err
 	}
 	if exists {
-		return nil
+		if err := verifySchemaVersion(ctx, pool); err != nil {
+			return false, err
+		}
+		return false, nil
 	}
 	migrations, err := migrationPaths()
 	if err != nil {
-		return err
+		return false, err
 	}
 	sort.Strings(migrations)
 	for _, path := range migrations {
 		migration, err := os.ReadFile(path)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if _, err := pool.Exec(ctx, string(migration)); err != nil {
-			return fmt.Errorf("%s: %w", path, err)
+			return false, fmt.Errorf("%s: %w", path, err)
 		}
 	}
 	version, err := schema.CurrentVersion()
 	if err != nil {
-		return err
+		return false, err
 	}
 	if _, err := pool.Exec(ctx, `CREATE TABLE schema_migrations (version BIGINT NOT NULL PRIMARY KEY, dirty BOOLEAN NOT NULL)`); err != nil {
-		return fmt.Errorf("create migration version table: %w", err)
+		return false, fmt.Errorf("create migration version table: %w", err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO schema_migrations (version, dirty) VALUES ($1, FALSE)`, version); err != nil {
-		return fmt.Errorf("record migration version: %w", err)
+		return false, fmt.Errorf("record migration version: %w", err)
+	}
+	return true, nil
+}
+
+func verifySchemaVersion(ctx context.Context, pool *pgxpool.Pool) error {
+	want, err := schema.CurrentVersion()
+	if err != nil {
+		return err
+	}
+	var version int64
+	var dirty bool
+	if err := pool.QueryRow(ctx, `SELECT version, dirty FROM schema_migrations LIMIT 1`).Scan(&version, &dirty); err != nil {
+		return fmt.Errorf("existing database is missing schema_migrations: %w", err)
+	}
+	if dirty || version != int64(want) {
+		return fmt.Errorf(
+			"database schema version %d (dirty=%v) does not match current schema version %d; reset an owned dev database with make dev-reset or migrate the external database",
+			version,
+			dirty,
+			want,
+		)
 	}
 	return nil
 }
