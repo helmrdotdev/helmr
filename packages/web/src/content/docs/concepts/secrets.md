@@ -1,109 +1,140 @@
 ---
 title: Secrets
-description: Durable Project-Environment values with Workspace raw or protected bindings.
+description: Store credentials and choose how Workspaces use them.
 ---
 
 # Secrets
 
-A Secret is a durable name/value scoped to one Project Environment. Create and
-rotate write its encrypted value; read APIs expose metadata. A Secret does not
-own its delivery mode. Workspace bindings select its stable identity and are
-fixed when the Workspace is created, never overridden per Run.
+A Secret is a named, encrypted value scoped to one Project Environment. Create it
+once and reference its name when creating a Workspace. Secrets persist
+independently of Workspaces, so you can reuse them in new Workspaces and rotate
+values without changing their names. Read APIs return metadata, not the value.
 
-Names are plain SDK strings matching `^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`:
+A binding specifies how a Workspace uses a Secret. Bindings are fixed at
+Workspace creation; later Runs use those bindings and cannot override them.
+
+## Choose a delivery mode
+
+| Placement | What the Workspace receives | Use for |
+| --- | --- | --- |
+| Protected env | A placeholder that Helmr replaces in outgoing HTTP headers for approved HTTPS origins. | API tokens used by proxy-compatible CLI tools and SDKs. |
+| Raw env | The Secret value in an environment variable. | Clients that need the actual value, such as database drivers or request-signing libraries. |
+| File | The Secret value as file contents. | SSH keys and other credentials that a tool reads from disk. |
+
+Raw env and file values can be read by processes in the Workspace. Protected env
+keeps the value outside the Workspace unless you also expose the same Secret
+through a raw binding. Helmr never automatically falls back from protected to raw.
 
 ```ts
 const workspace = await client.sandboxes.createWorkspace("reviewer", {
   secrets: [
-    { secret: "github-token", env: {
-      name: "GH_TOKEN", mode: "protected",
-      allowedOrigins: ["https://api.github.com"],
-    } },
+    {
+      secret: "github-token",
+      env: {
+        name: "GH_TOKEN",
+        mode: "protected",
+        allowedOrigins: ["https://api.github.com"],
+      },
+    },
     { secret: "database-password", env: { name: "PGPASSWORD", mode: "raw" } },
     { secret: "client-key", file: { path: "/run/secrets/client.key" } },
   ],
 })
 ```
 
-Each binding has exactly one `env` or `file`. Env requires an explicit mode;
-files deliver raw bytes. Targets must be unique. Ordinary image and execution
-environment values remain literals and cannot collide with Secret targets.
-Image ENV and exec env must not define a bound name, even with an empty value; exec requests are rejected during validation, and image ENV collisions fail at launch. Runtime paths, managed runtime names (including NODE_OPTIONS and LD_*), and transport environment variables are reserved.
+Secret names must match `^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`. Each binding has
+exactly one `env` or `file` target. Environment bindings require an explicit
+`mode`, and targets must be unique within the Workspace.
 
-## Protected env
+Do not define a bound environment variable in image ENV or execution env, even
+with an empty value. Execution requests reject these collisions; image ENV
+collisions fail at launch. Managed runtime paths, runtime variables such as
+`NODE_OPTIONS` and `LD_*`, and proxy/CA environment variables are reserved.
 
-The guest receives an inert placeholder. A trusted worker HTTP(S) proxy replaces
-literal placeholders in HTTP header values only when the request targets an
-approved exact HTTPS origin and the Workspace has live mounted execution
-authority. Real values are resolved in the control plane on every request and
-are not supplied through protected guest delivery, guest snapshots, or Helmr logs.
-There is no raw fallback. In proxy-inspected HTTP and protected-origin HTTPS
-requests, an unknown, forged, revoked, or unauthorized header placeholder causes
-failure before the request is sent upstream. Other HTTPS origins use opaque
-CONNECT tunnels: a placeholder may be sent unchanged, but no Secret is resolved
-or substituted on those tunnels.
+## Protected environment variables
 
-At most 64 bindings and 16 origins per protected binding are accepted, with at most 256 total origin entries after deduplication within each binding. Repeated origins across bindings and distinct ports count separately toward that total.
+Use the environment variable directly in an HTTP header, such as
+`Authorization: Bearer <value>`. Helmr's proxy checks the Workspace's execution
+authorization and the destination before replacing the placeholder with the
+current Secret value. Invalid or revoked placeholders in inspected headers fail
+before the request is sent upstream.
 
-Origins are canonical DNS HTTPS origins: lowercase hostname, default port 443
-folded away, non-default ports explicit. A trailing `/` is accepted. Wildcards,
-userinfo, paths, queries, fragments, and IP literals are rejected. Runtime DNS
-resolution requires public IPv4 addresses and preserves the worker's effective
-blocked destinations; the checked numeric address is pinned for the connection
-and TLS verifies the hostname. IPv6 upstream transport is not supported.
+### Allowed origins
 
-This requires clients that support the configured HTTP proxy and public CA
-trust. Helmr configures proxy variables, a combined system CA bundle, and Node's
-extra CA/env-proxy settings. Synthetic local HTTPS header replacement was tested with Linux `gh api` 2.97.0 and Node 24.21.0 `fetch` using literal bearer headers. This does not establish other client versions, credential flows, or subscription lifecycles. Certificate-pinned clients, clients ignoring
-proxy/CA settings, and clients transforming the placeholder (for example Basic
-encoding or request signing) are outside this support contract. Body and query
-substitution, protected files, and file templates are not supported.
+`allowedOrigins` lists the exact HTTPS origins that may receive the Secret. For
+example, `https://api.github.com` permits credential use on that origin, while
+`https://api.example.com:8443` specifies a non-default port. Only approve services
+you trust: they receive the real credential, and Helmr does not redact responses
+that return it.
 
-Ordinary permitted public HTTP(S) continues through the proxy. Protected origins
-can receive anonymous requests, such as discovery calls. Helmr does not require
-auth on every path, transparently intercept every client, or block anonymous
-traffic on every network route. Redirects are handled as separate client
-requests: auth is never automatically replayed by the proxy to a new origin.
-Protected-origin transport is HTTP/1.1 only; HTTP/2-only/gRPC clients and
-WebSocket upgrades are not supported there. Upstream connections are not reused
-or automatically retried, including after an uncertain send.
+Origins must use DNS hostnames. Hostnames are normalized to lowercase, the default
+port `443` is omitted, and a trailing `/` is accepted. Wildcards, IP literals,
+user information, paths, queries, and fragments are not allowed.
 
-## Trust and delegation
+A Workspace accepts up to 64 Secret bindings, 16 origins per protected binding,
+and 256 origin entries in total. Duplicate origins within a binding count once;
+the same origin in different bindings and different ports count separately.
 
-Approved servers receive the credential and may reflect it or exchange it for
-another credential. Only approve upstreams you trust. Responses are not redacted.
-External binding authors and host administrators are trusted to choose raw
-bindings and origins under their existing scoped create/deploy permissions.
-This feature isolates guest workloads from protected key delivery; it does not
-protect against malicious binding authors or administrators.
+The proxy connects only to public IPv4 addresses and also applies the Worker's
+blocked destinations. Private-network and IPv6 destinations are not supported.
 
-A guest can delegate only its source Workspace's Secret authority when creating
-another Workspace, executing in an existing one, or starting child tasks,
-including retries. Protected-only authority cannot become raw, acquire another
-Secret, or widen origins. Raw authority permits either mode for that Secret.
-Mixing raw and protected bindings is allowed at distinct targets, but protection
-is per binding and cannot hide independently raw-delivered copies.
+Allowed origins control where a Secret can be used, not all Workspace network
+access. Requests without credentials can still reach permitted destinations.
+HTTPS requests to other origins are tunneled without Secret substitution; a
+placeholder sent there remains a placeholder. The proxy does not automatically
+forward credentials to a new origin after a redirect.
 
-## Rotation, revocation, and retention
+### Client requirements
 
-Protected requests use the current value. Rotation affects the next authorized
-request without recreating the Workspace. Revocation prevents subsequent
-credential resolution; a request already authorized or sent may finish.
+The client must honor Helmr's HTTP proxy and CA trust configuration. Helmr sets
+proxy environment variables, provides a CA bundle, and configures Node's extra CA
+and environment-proxy settings. Certificate-pinned clients and clients that
+ignore these settings cannot use protected env.
 
-Raw env/file values resolve at execution admission. Rotation does not rewrite
-running processes or restored raw bytes. Revocation cannot erase copies already
-delivered to a guest or captured in its memory; raw copies need separate disposal.
-Raw delivery is not a promise that snapshots contain no secret bytes.
+The placeholder must remain unchanged in the header. Basic authentication
+encoding, request signing, and other transformations are not supported. Helmr
+does not substitute values in request bodies, query strings, or files.
 
-Each protected Workspace is created atomically with an encrypted signer and
-public CA trust lasting ten years from Workspace creation. Preparation uses
-that existing CA; missing or invalid material fails closed. Worker-only
-leaf certificates last at most 24 hours and can be reissued under that root on
-restore. No private certificate keys enter the guest. Expired root trust requires
-creating a new Workspace; credential authorization also checks expiry on open
-connections. This does not change Workspace retention: use Workspaces for bounded
-work and delete them when done.
+Connections to protected origins use HTTP/1.1. HTTP/2-only clients, gRPC, and
+WebSocket upgrades are not supported on those origins. The proxy does not retry
+upstream requests automatically; handle retries according to the API's
+idempotency requirements.
 
-OAuth refresh, subscription credential lifecycle, mutable auth-cache writeback,
-and provider adapters are not implemented. Payloads, logs, image literals, source
-archives, and Actor/Token results are not secret channels.
+## Delegation
+
+Code running in a Workspace can use only its existing Secret permissions when
+creating another Workspace, executing in an existing Workspace, or starting a
+child task. It cannot add a Secret, expand allowed origins, or change protected
+access to raw access. If it already has raw access to a Secret, it can delegate
+that Secret in either mode.
+
+Users who can create or deploy bindings choose the mode and allowed origins.
+Protected env protects against disclosure to Workspace processes; it does not
+restrict authorized administrators from choosing raw delivery.
+
+## Rotation and revocation
+
+Protected requests use the current Secret value. Rotation affects the next
+authorized request without recreating the Workspace. Revocation blocks subsequent
+credential resolution, but requests already authorized or sent may finish.
+
+Raw env and file values are selected when execution is admitted. Rotation does
+not rewrite running processes or values restored from snapshots. Revocation
+cannot erase values already delivered to a Workspace or saved in its snapshots;
+remove those copies separately.
+
+Helmr does not refresh OAuth tokens or save credential changes made by a CLI back
+to a Secret. Manage token renewal separately and rotate the stored value when it
+changes. Storing a credential does not manage a provider's subscription session.
+
+## Workspace lifetime
+
+Protected env uses a Workspace-specific CA that is reused after restore. Its
+trust expires ten years after Workspace creation; after expiry, create a new
+Workspace to continue using protected env. Certificate private keys are not
+delivered to the Workspace. This technical limit does not change the recommended
+lifecycle: retain a Workspace for the work that needs it, then delete it.
+
+See [Use secrets](/docs/guides/how-to/use-secrets/) for creation, binding, rotation,
+and revocation commands. Keep credentials out of payloads, metadata, tags, logs,
+source archives, image literals, and Actor/Token results.

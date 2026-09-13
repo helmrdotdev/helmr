@@ -17,8 +17,7 @@ WORKSPACE_ID="$(helmr workspace create repository-agent \
 `--key` is an optional immutable lookup value. `--idempotency-key` is for safe
 request retries; it is not the Workspace key.
 
-The TypeScript client also creates Workspaces and is the public surface for
-secret placements:
+The TypeScript client can also create a Workspace with named Secret bindings:
 
 ```ts
 import { HelmrClient } from "@helmr/sdk"
