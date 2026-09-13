@@ -2,7 +2,7 @@
 
 **Build your own software factory.**
 
-Infrastructure and APIs for your own agent harness.  
+Infrastructure and APIs for your own agent harness.<br>
 Your agents. Your workflows. Your rules.
 
 Write your agent logic in TypeScript, bring your tools and integrations, and
