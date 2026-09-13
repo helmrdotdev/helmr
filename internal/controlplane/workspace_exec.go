@@ -49,7 +49,7 @@ type workspaceExecRequest struct {
 	OrgID          uuid.UUID
 	ProjectID      uuid.UUID
 	EnvironmentID  uuid.UUID
-	Workspace      db.Workspace
+	Workspace      db.GetWorkspaceRow
 	Creator        workspaceExecCreator
 	Command        []string
 	Cwd            string

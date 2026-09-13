@@ -28,7 +28,7 @@ type runLeaseClaimResponseAuthority struct {
 	attempt             db.RunAttempt
 	runtime             db.RuntimeInstance
 	runLease            db.RunLease
-	workspace           db.Workspace
+	workspace           db.LockRunLeaseClaimWorkspaceRow
 	workspaceMount      db.WorkspaceMount
 	workspaceLease      db.WorkspaceLease
 	runWait             db.RunWait

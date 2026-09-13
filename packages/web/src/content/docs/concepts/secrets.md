@@ -95,8 +95,9 @@ running processes or restored raw bytes. Revocation cannot erase copies already
 delivered to a guest or captured in its memory; raw copies need separate disposal.
 Raw delivery is not a promise that snapshots contain no secret bytes.
 
-Each protected Workspace has a private encrypted signer held by the control
-plane and public CA trust lasting ten years from Workspace creation. Worker-only
+Each protected Workspace is created atomically with an encrypted signer and
+public CA trust lasting ten years from Workspace creation. Preparation uses
+that existing CA; missing or invalid material fails closed. Worker-only
 leaf certificates last at most 24 hours and can be reissued under that root on
 restore. No private certificate keys enter the guest. Expired root trust requires
 creating a new Workspace; credential authorization also checks expiry on open

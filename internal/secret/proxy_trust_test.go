@@ -2,46 +2,27 @@ package secret
 
 import (
 	"bytes"
-	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/jackc/pgx/v5"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 	"uuid"
 )
 
-type trustMemory struct {
-	db.Querier
-	row db.WorkspaceSecretProxyTrust
-}
-
-func (m *trustMemory) GetWorkspaceProxyTrust(context.Context, db.GetWorkspaceProxyTrustParams) (db.WorkspaceSecretProxyTrust, error) {
-	if !m.row.WorkspaceID.Valid {
-		return m.row, pgx.ErrNoRows
-	}
-	return m.row, nil
-}
-func (m *trustMemory) CreateWorkspaceProxyTrust(_ context.Context, p db.CreateWorkspaceProxyTrustParams) (db.WorkspaceSecretProxyTrust, error) {
-	m.row = db.WorkspaceSecretProxyTrust(p)
-	return m.row, nil
-}
-
 func TestProxyTrustCustodyLifetimeAndScope(t *testing.T) {
 	store := &Store{encryption: testCipher(t)}
-	memory := &trustMemory{}
 	created := time.Now().Add(-time.Hour)
-	root, err := store.EnsureProxyTrust(t.Context(), memory, uuid.NewV7(), uuid.NewV7(), created)
+	root, err := store.GenerateProxyTrust(uuid.NewV7(), uuid.NewV7(), created)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !root.NotAfter.Time.Equal(created.AddDate(10, 0, 0).Truncate(time.Second)) {
+	if !root.NotAfter.Equal(created.AddDate(10, 0, 0).Truncate(time.Second)) {
 		t.Fatal("root lifetime differs")
 	}
 	certPEM, keyPEM, err := store.ProxyLeaf(root, []string{"api.github.com"})
@@ -61,7 +42,7 @@ func TestProxyTrustCustodyLifetimeAndScope(t *testing.T) {
 	if _, err := cert.Verify(x509.VerifyOptions{Roots: roots, DNSName: "api.github.com"}); err != nil {
 		t.Fatal(err)
 	}
-	if cert.NotAfter.After(time.Now().Add(24*time.Hour)) || cert.NotAfter.After(root.NotAfter.Time) {
+	if cert.NotAfter.After(time.Now().Add(24*time.Hour)) || cert.NotAfter.After(root.NotAfter) {
 		t.Fatal("leaf lifetime exceeded")
 	}
 	block, _ := pem.Decode(keyPEM)
@@ -69,17 +50,14 @@ func TestProxyTrustCustodyLifetimeAndScope(t *testing.T) {
 		t.Fatal("private material was not encrypted")
 	}
 	other := root
-	other.WorkspaceID.Bytes[0] ^= 1
+	other.WorkspaceID = uuid.NewV7()
 	if _, _, err := store.ProxyLeaf(other, []string{"api.github.com"}); err == nil {
 		t.Fatal("cross-Workspace signer decrypt succeeded")
 	}
-	if err := ValidateProxyTrust(root, root.NotAfter.Time); !errors.Is(err, ErrProxyTrustExpired) {
+	if err := ValidateProxyTrust(root.Certificate, root.NotAfter, root.NotAfter); !errors.Is(err, ErrProxyTrustExpired) {
 		t.Fatalf("expiry=%v", err)
 	}
-	again, err := store.EnsureProxyTrust(t.Context(), memory, pgvalue.MustUUIDValue(root.EnvironmentID), pgvalue.MustUUIDValue(root.WorkspaceID), created)
-	if err != nil || !bytes.Equal(root.Certificate, again.Certificate) {
-		t.Fatal("trust changed on reconnect")
-	}
+
 }
 
 func TestProtectedEnvelopeNeverDecryptsForGuest(t *testing.T) {
@@ -94,7 +72,7 @@ func TestProtectedEnvelopeNeverDecryptsForGuest(t *testing.T) {
 
 func TestProxyLeafIssuesMaximumAdmittedHosts(t *testing.T) {
 	store := &Store{encryption: testCipher(t)}
-	root, err := store.EnsureProxyTrust(t.Context(), &trustMemory{}, uuid.NewV7(), uuid.NewV7(), time.Now())
+	root, err := store.GenerateProxyTrust(uuid.NewV7(), uuid.NewV7(), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,5 +98,17 @@ func TestProxyLeafIssuesMaximumAdmittedHosts(t *testing.T) {
 	}
 	if _, _, err := store.ProxyLeaf(root, append(hosts, "extra.example.com")); err == nil {
 		t.Fatal("issuer exceeded validated capacity")
+	}
+}
+
+func TestProxyTrustGenerationFailureReturnsNoMaterial(t *testing.T) {
+	store := &Store{encryption: testCipher(t), rand: strings.NewReader("")}
+	trust, err := store.GenerateProxyTrust(uuid.NewV7(), uuid.NewV7(), time.Now())
+	if err == nil || len(trust.Certificate) != 0 || len(trust.PrivateKeyCiphertext) != 0 || len(trust.PrivateKeyNonce) != 0 {
+		t.Fatal("failed generation returned material")
+	}
+	var missing *Store
+	if _, err := missing.GenerateProxyTrust(uuid.NewV7(), uuid.NewV7(), time.Now()); !errors.Is(err, ErrDeliveryUnavailable) {
+		t.Fatalf("missing generator: %v", err)
 	}
 }

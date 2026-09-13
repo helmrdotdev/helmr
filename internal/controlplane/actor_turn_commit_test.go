@@ -324,10 +324,10 @@ func (s *actorTurnCommitStore) UpdateTaskWorkspaceMountFrontier(
 func (s *actorTurnCommitStore) AdvanceActorWorkspaceHead(
 	_ context.Context,
 	params db.AdvanceActorWorkspaceHeadParams,
-) (db.Workspace, error) {
+) (db.AdvanceActorWorkspaceHeadRow, error) {
 	s.headWrites++
 	s.authority.workspace.HeadVersionID = params.NewHeadVersionID
-	return s.authority.workspace, nil
+	return db.AdvanceActorWorkspaceHeadRow(s.authority.workspace), nil
 }
 
 func (s *actorTurnCommitStore) AdvanceActorTurnWorkspaceLeaseFrontier(

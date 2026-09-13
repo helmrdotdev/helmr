@@ -294,7 +294,7 @@ UPDATE workspaces
         WHERE workspace_leases.workspace_id = workspaces.id
           AND workspace_leases.state IN ('active', 'releasing')
    )
-RETURNING *;
+RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at;
 
 -- name: AdvanceWorkspaceExecMountFence :one
 UPDATE workspace_mounts
@@ -527,7 +527,25 @@ SELECT sqlc.embed(workspace_processes),
  FOR UPDATE OF workspace_processes, workspace_mounts, workspace_leases;
 
 -- name: LockWorkspaceExecFailureWorkspace :one
-SELECT workspaces.*
+SELECT workspaces.id,
+       workspaces.environment_id,
+       workspaces.region_id,
+       workspaces.sandbox_declared_id,
+       workspaces.deployment_definition_id,
+       workspaces.key,
+       workspaces.state_version,
+       workspaces.owner_session_id,
+       workspaces.owner_run_id,
+       workspaces.ownership_generation,
+       workspaces.writer_generation,
+       workspaces.head_version_id,
+       workspaces.state,
+       workspaces.desired_state,
+       workspaces.dirty_state,
+       workspaces.last_activity_at,
+       workspaces.created_at,
+       workspaces.updated_at,
+       workspaces.deleted_at
   FROM workspaces
   JOIN environments ON environments.id = workspaces.environment_id
  WHERE environments.org_id = sqlc.arg(org_id)
@@ -783,7 +801,7 @@ UPDATE workspaces
    AND head_version_id = sqlc.arg(base_version_id)
    AND ownership_generation = sqlc.arg(ownership_generation)
    AND writer_generation = sqlc.arg(writer_generation)
-RETURNING *;
+RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at;
 
 -- name: MarkWorkspaceExecRecoveryRequired :one
 UPDATE workspaces
@@ -796,7 +814,7 @@ UPDATE workspaces
    AND head_version_id = sqlc.arg(base_version_id)
    AND ownership_generation = sqlc.arg(ownership_generation)
    AND writer_generation = sqlc.arg(writer_generation)
-RETURNING *;
+RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at;
 
 -- name: FinalizeWorkspaceExecProcess :one
 UPDATE workspace_processes

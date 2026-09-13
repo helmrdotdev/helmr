@@ -361,9 +361,9 @@ func (s *Server) workerWorkspaceSourceAndRecord(
 	ctx context.Context,
 	worker workerActor,
 	request workerapi.RetrieveWorkspaceRequest,
-) (workerRunSourceAuthority, db.Workspace, error) {
+) (workerRunSourceAuthority, db.GetWorkspaceRow, error) {
 	var source workerRunSourceAuthority
-	var record db.Workspace
+	var record db.GetWorkspaceRow
 	err := s.inTx(ctx, func(work *txWork) error {
 		var err error
 		source, err = authorizeWorkerRunSource(ctx, work.q, worker, request.Lease)
@@ -381,10 +381,10 @@ func resolveWorkerWorkspace(
 	q db.Querier,
 	source workerRunSourceAuthority,
 	address workerapi.WorkspaceAddress,
-) (db.Workspace, error) {
+) (db.GetWorkspaceRow, error) {
 	id, err := ids.Parse(address.WorkspaceID)
 	if err != nil {
-		return db.Workspace{}, err
+		return db.GetWorkspaceRow{}, err
 	}
 	return q.GetWorkspace(ctx, db.GetWorkspaceParams{
 		OrgID: source.OrgID, ProjectID: source.ProjectID, EnvironmentID: source.EnvironmentID,

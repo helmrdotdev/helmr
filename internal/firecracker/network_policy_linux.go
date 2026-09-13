@@ -626,7 +626,7 @@ func (c *Connector) prepareSecretTransport(ctx context.Context, runtimeID string
 		return nil, nil
 	}
 	if c.cfg.PrepareSecretTransport == nil {
-		return nil, errors.New("Workspace Secret transport preparation is not configured")
+		return nil, errors.New("workspace Secret transport preparation is not configured")
 	}
 	return c.cfg.PrepareSecretTransport(ctx, runtimeID, blocked)
 }
@@ -668,7 +668,7 @@ func (c *Connector) installRoutedPolicy(ctx context.Context, binding *installedN
 			go func() {
 				if e := proxy.Serve(listener); e != nil {
 					select {
-					case binding.failure <- errors.New("Workspace Secret transport stopped"):
+					case binding.failure <- errors.New("workspace Secret transport stopped"):
 					default:
 					}
 				}

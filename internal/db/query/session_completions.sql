@@ -64,7 +64,7 @@ UPDATE workspaces
    AND workspaces.state = 'active'
    AND workspaces.desired_state = 'active'
    AND workspaces.dirty_state = 'clean'
-RETURNING *;
+RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at;
 
 -- name: CreateActorRetryAttempt :one
 INSERT INTO run_attempts (
@@ -257,7 +257,7 @@ UPDATE workspaces
         WHERE workspace_processes.workspace_id = workspaces.id
           AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
    )
-RETURNING *;
+RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at;
 
 -- name: CreateActorContinuationRun :one
 WITH created_run AS (

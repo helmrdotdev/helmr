@@ -193,10 +193,10 @@ func (s *Server) getWorkspaceByReferenceHTTP(w http.ResponseWriter, r *http.Requ
 func (s *Server) resolveWorkspaceReference(
 	ctx context.Context,
 	reference workspaceReference,
-) (db.Workspace, error) {
+) (db.GetWorkspaceRow, error) {
 	id, err := ids.Parse(reference.ID)
 	if err != nil {
-		return db.Workspace{}, errors.New("workspace ID is invalid")
+		return db.GetWorkspaceRow{}, errors.New("workspace ID is invalid")
 	}
 	return s.db.GetWorkspace(ctx, db.GetWorkspaceParams{
 		OrgID:         pgvalue.UUID(reference.OrgID),
@@ -209,7 +209,7 @@ func (s *Server) resolveWorkspaceReference(
 func (s *Server) workspaceSnapshot(
 	ctx context.Context,
 	q db.Querier,
-	record db.Workspace,
+	record db.GetWorkspaceRow,
 ) (api.WorkspaceSnapshot, error) {
 	bindings, err := q.ListWorkspaceSecrets(ctx, record.ID)
 	if err != nil {

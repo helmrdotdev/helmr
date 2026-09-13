@@ -48,6 +48,7 @@ func TestSecretProxyLiveAuthorityAndWireRotation(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `INSERT INTO workspace_secrets(workspace_id,environment_id,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder) VALUES($1,$2,$3,'env','GH_TOKEN','protected',ARRAY['https://example.com'],$4)`, workspaceID, fixture.EnvironmentID, created.ID, marker)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE runtime_instances SET reserved_run_id=$2,reserved_attempt_number=1,reserved_workspace_version_id=(SELECT head_version_id FROM workspaces WHERE id=workspace_id),reservation_expires_at=now()+interval '10 minutes' WHERE id=$1`, runtimeID, work.RunID)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE workspace_mounts SET guest_channel_token_hash='synthetic-channel',guest_channel_token_expires_at=now()+interval '10 minutes' WHERE id=$1`, mountID)
+	createTestWorkspaceCA(t, fixture.Pool, store, fixture.EnvironmentID, workspaceID)
 	server := &Server{db: q, tx: fixture.Pool, secretProxy: store, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	actor := workerActor{WorkerInstanceID: fixture.WorkerID, WorkerGroupID: runtest.WorkerGroupID, WorkerEpoch: 1, ClaimVersion: 1, GroupClaimVersion: 1}
 	invoke := func(resolve bool, who workerActor, request workerapi.SecretProxyRequest, out any) error {
@@ -177,6 +178,7 @@ func TestSecretProxyLiveAuthorityAndWireRotation(t *testing.T) {
 	otherMarker := "hlmr_protected_" + strings.Repeat("c", 64)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `INSERT INTO workspace_secrets(workspace_id,environment_id,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder) VALUES($1,$2,$3,'env','GH_TOKEN','protected',ARRAY['https://example.com'],$4)`, otherWorkspace, fixture.EnvironmentID, created.ID, otherMarker)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE workspace_mounts SET guest_channel_token_hash='synthetic-other',guest_channel_token_expires_at=now()+interval '10 minutes' WHERE id=$1`, otherMount)
+	createTestWorkspaceCA(t, fixture.Pool, store, fixture.EnvironmentID, otherWorkspace)
 	var otherPrep workerapi.SecretProxyPreparation
 	if err := invoke(false, actor, workerapi.SecretProxyRequest{RuntimeInstanceID: otherRuntime.String()}, &otherPrep); err != nil {
 		t.Fatal(err)

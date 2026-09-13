@@ -174,7 +174,7 @@ func (r *TimerWaitReconciler) reconcileOne(
 
 func timerWaitAuthorityCurrent(
 	run db.Run,
-	workspace db.Workspace,
+	workspace db.LockRunLeaseClaimWorkspaceRow,
 	attempt db.RunAttempt,
 	wait db.RunWait,
 ) bool {

@@ -128,7 +128,7 @@ UPDATE workspaces
         WHERE workspace_leases.workspace_id = workspaces.id
           AND workspace_leases.state IN ('active', 'releasing')
    )
-RETURNING environments.id, org_id, project_id, slug, name, color_hex, is_default, environments.created_at, environments.updated_at, current_deployment_id, workspaces.id, environment_id, region_id, sandbox_declared_id, deployment_definition_id, key, state_version, owner_session_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, workspaces.created_at, workspaces.updated_at, deleted_at
+RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at
 `
 
 type AdvanceWorkspaceExecWriterParams struct {
@@ -145,16 +145,6 @@ type AdvanceWorkspaceExecWriterParams struct {
 
 type AdvanceWorkspaceExecWriterRow struct {
 	ID                     pgtype.UUID        `json:"id"`
-	OrgID                  pgtype.UUID        `json:"org_id"`
-	ProjectID              pgtype.UUID        `json:"project_id"`
-	Slug                   string             `json:"slug"`
-	Name                   string             `json:"name"`
-	ColorHex               string             `json:"color_hex"`
-	IsDefault              bool               `json:"is_default"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
-	CurrentDeploymentID    pgtype.UUID        `json:"current_deployment_id"`
-	ID_2                   pgtype.UUID        `json:"id_2"`
 	EnvironmentID          pgtype.UUID        `json:"environment_id"`
 	RegionID               string             `json:"region_id"`
 	SandboxDeclaredID      pgtype.Text        `json:"sandbox_declared_id"`
@@ -170,8 +160,8 @@ type AdvanceWorkspaceExecWriterRow struct {
 	DesiredState           string             `json:"desired_state"`
 	DirtyState             string             `json:"dirty_state"`
 	LastActivityAt         pgtype.Timestamptz `json:"last_activity_at"`
-	CreatedAt_2            pgtype.Timestamptz `json:"created_at_2"`
-	UpdatedAt_2            pgtype.Timestamptz `json:"updated_at_2"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 	DeletedAt              pgtype.Timestamptz `json:"deleted_at"`
 }
 
@@ -190,16 +180,6 @@ func (q *Queries) AdvanceWorkspaceExecWriter(ctx context.Context, arg AdvanceWor
 	var i AdvanceWorkspaceExecWriterRow
 	err := row.Scan(
 		&i.ID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.Slug,
-		&i.Name,
-		&i.ColorHex,
-		&i.IsDefault,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.CurrentDeploymentID,
-		&i.ID_2,
 		&i.EnvironmentID,
 		&i.RegionID,
 		&i.SandboxDeclaredID,
@@ -215,8 +195,8 @@ func (q *Queries) AdvanceWorkspaceExecWriter(ctx context.Context, arg AdvanceWor
 		&i.DesiredState,
 		&i.DirtyState,
 		&i.LastActivityAt,
-		&i.CreatedAt_2,
-		&i.UpdatedAt_2,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 		&i.DeletedAt,
 	)
 	return i, err
@@ -1106,7 +1086,7 @@ UPDATE workspaces
    AND head_version_id = $4
    AND ownership_generation = $5
    AND writer_generation = $6
-RETURNING id, environment_id, region_id, sandbox_declared_id, deployment_definition_id, key, state_version, owner_session_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
+RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at
 `
 
 type FinalizeWorkspaceExecWorkspaceParams struct {
@@ -1118,7 +1098,29 @@ type FinalizeWorkspaceExecWorkspaceParams struct {
 	WriterGeneration    int64       `json:"writer_generation"`
 }
 
-func (q *Queries) FinalizeWorkspaceExecWorkspace(ctx context.Context, arg FinalizeWorkspaceExecWorkspaceParams) (Workspace, error) {
+type FinalizeWorkspaceExecWorkspaceRow struct {
+	ID                     pgtype.UUID        `json:"id"`
+	EnvironmentID          pgtype.UUID        `json:"environment_id"`
+	RegionID               string             `json:"region_id"`
+	SandboxDeclaredID      pgtype.Text        `json:"sandbox_declared_id"`
+	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
+	Key                    pgtype.Text        `json:"key"`
+	StateVersion           int64              `json:"state_version"`
+	OwnerSessionID         pgtype.UUID        `json:"owner_session_id"`
+	OwnerRunID             pgtype.UUID        `json:"owner_run_id"`
+	OwnershipGeneration    int64              `json:"ownership_generation"`
+	WriterGeneration       int64              `json:"writer_generation"`
+	HeadVersionID          pgtype.UUID        `json:"head_version_id"`
+	State                  string             `json:"state"`
+	DesiredState           string             `json:"desired_state"`
+	DirtyState             string             `json:"dirty_state"`
+	LastActivityAt         pgtype.Timestamptz `json:"last_activity_at"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt              pgtype.Timestamptz `json:"deleted_at"`
+}
+
+func (q *Queries) FinalizeWorkspaceExecWorkspace(ctx context.Context, arg FinalizeWorkspaceExecWorkspaceParams) (FinalizeWorkspaceExecWorkspaceRow, error) {
 	row := q.db.QueryRow(ctx, finalizeWorkspaceExecWorkspace,
 		arg.VersionID,
 		arg.RestoreDesiredState,
@@ -1127,7 +1129,7 @@ func (q *Queries) FinalizeWorkspaceExecWorkspace(ctx context.Context, arg Finali
 		arg.OwnershipGeneration,
 		arg.WriterGeneration,
 	)
-	var i Workspace
+	var i FinalizeWorkspaceExecWorkspaceRow
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
@@ -1814,7 +1816,25 @@ func (q *Queries) LockWorkspaceExecFailureAuthority(ctx context.Context, arg Loc
 }
 
 const lockWorkspaceExecFailureWorkspace = `-- name: LockWorkspaceExecFailureWorkspace :one
-SELECT workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at
+SELECT workspaces.id,
+       workspaces.environment_id,
+       workspaces.region_id,
+       workspaces.sandbox_declared_id,
+       workspaces.deployment_definition_id,
+       workspaces.key,
+       workspaces.state_version,
+       workspaces.owner_session_id,
+       workspaces.owner_run_id,
+       workspaces.ownership_generation,
+       workspaces.writer_generation,
+       workspaces.head_version_id,
+       workspaces.state,
+       workspaces.desired_state,
+       workspaces.dirty_state,
+       workspaces.last_activity_at,
+       workspaces.created_at,
+       workspaces.updated_at,
+       workspaces.deleted_at
   FROM workspaces
   JOIN environments ON environments.id = workspaces.environment_id
  WHERE environments.org_id = $1
@@ -1827,9 +1847,31 @@ type LockWorkspaceExecFailureWorkspaceParams struct {
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
 }
 
-func (q *Queries) LockWorkspaceExecFailureWorkspace(ctx context.Context, arg LockWorkspaceExecFailureWorkspaceParams) (Workspace, error) {
+type LockWorkspaceExecFailureWorkspaceRow struct {
+	ID                     pgtype.UUID        `json:"id"`
+	EnvironmentID          pgtype.UUID        `json:"environment_id"`
+	RegionID               string             `json:"region_id"`
+	SandboxDeclaredID      pgtype.Text        `json:"sandbox_declared_id"`
+	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
+	Key                    pgtype.Text        `json:"key"`
+	StateVersion           int64              `json:"state_version"`
+	OwnerSessionID         pgtype.UUID        `json:"owner_session_id"`
+	OwnerRunID             pgtype.UUID        `json:"owner_run_id"`
+	OwnershipGeneration    int64              `json:"ownership_generation"`
+	WriterGeneration       int64              `json:"writer_generation"`
+	HeadVersionID          pgtype.UUID        `json:"head_version_id"`
+	State                  string             `json:"state"`
+	DesiredState           string             `json:"desired_state"`
+	DirtyState             string             `json:"dirty_state"`
+	LastActivityAt         pgtype.Timestamptz `json:"last_activity_at"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt              pgtype.Timestamptz `json:"deleted_at"`
+}
+
+func (q *Queries) LockWorkspaceExecFailureWorkspace(ctx context.Context, arg LockWorkspaceExecFailureWorkspaceParams) (LockWorkspaceExecFailureWorkspaceRow, error) {
 	row := q.db.QueryRow(ctx, lockWorkspaceExecFailureWorkspace, arg.OrgID, arg.WorkspaceID)
-	var i Workspace
+	var i LockWorkspaceExecFailureWorkspaceRow
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
@@ -2410,7 +2452,7 @@ UPDATE workspaces
    AND head_version_id = $2
    AND ownership_generation = $3
    AND writer_generation = $4
-RETURNING id, environment_id, region_id, sandbox_declared_id, deployment_definition_id, key, state_version, owner_session_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
+RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at
 `
 
 type MarkWorkspaceExecRecoveryRequiredParams struct {
@@ -2420,14 +2462,36 @@ type MarkWorkspaceExecRecoveryRequiredParams struct {
 	WriterGeneration    int64       `json:"writer_generation"`
 }
 
-func (q *Queries) MarkWorkspaceExecRecoveryRequired(ctx context.Context, arg MarkWorkspaceExecRecoveryRequiredParams) (Workspace, error) {
+type MarkWorkspaceExecRecoveryRequiredRow struct {
+	ID                     pgtype.UUID        `json:"id"`
+	EnvironmentID          pgtype.UUID        `json:"environment_id"`
+	RegionID               string             `json:"region_id"`
+	SandboxDeclaredID      pgtype.Text        `json:"sandbox_declared_id"`
+	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
+	Key                    pgtype.Text        `json:"key"`
+	StateVersion           int64              `json:"state_version"`
+	OwnerSessionID         pgtype.UUID        `json:"owner_session_id"`
+	OwnerRunID             pgtype.UUID        `json:"owner_run_id"`
+	OwnershipGeneration    int64              `json:"ownership_generation"`
+	WriterGeneration       int64              `json:"writer_generation"`
+	HeadVersionID          pgtype.UUID        `json:"head_version_id"`
+	State                  string             `json:"state"`
+	DesiredState           string             `json:"desired_state"`
+	DirtyState             string             `json:"dirty_state"`
+	LastActivityAt         pgtype.Timestamptz `json:"last_activity_at"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt              pgtype.Timestamptz `json:"deleted_at"`
+}
+
+func (q *Queries) MarkWorkspaceExecRecoveryRequired(ctx context.Context, arg MarkWorkspaceExecRecoveryRequiredParams) (MarkWorkspaceExecRecoveryRequiredRow, error) {
 	row := q.db.QueryRow(ctx, markWorkspaceExecRecoveryRequired,
 		arg.WorkspaceID,
 		arg.BaseVersionID,
 		arg.OwnershipGeneration,
 		arg.WriterGeneration,
 	)
-	var i Workspace
+	var i MarkWorkspaceExecRecoveryRequiredRow
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,

@@ -68,10 +68,9 @@ func newSnapshotFixture(t *testing.T, count int, root bool) *snapshotFixture {
 		dbtest.MustExec(t, t.Context(), f.fixture.Pool, "INSERT INTO workspace_secrets(workspace_id,environment_id,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder) VALUES($1,$2,$3,'env',$4,'protected',ARRAY['https://example.com'],$5)", f.workspace, f.fixture.EnvironmentID, record.ID, "TOKEN_"+name, marker)
 	}
 	if root {
-		if _, err := f.store.EnsureProxyTrust(t.Context(), f.q, f.fixture.EnvironmentID, f.workspace, time.Now()); err != nil {
-			t.Fatal(err)
-		}
+		createTestWorkspaceCA(t, f.fixture.Pool, f.store, f.fixture.EnvironmentID, f.workspace)
 	}
+
 	return f
 }
 func (f *snapshotFixture) params() db.CaptureProtectedSecretEnvelopesParams {
@@ -276,8 +275,8 @@ func TestProtectedSnapshotAtomicMultiSecretVersions(t *testing.T) {
 		t.Fatal(err)
 	}
 }
-func TestProtectedPreparationRootSingleWinner(t *testing.T) {
-	f := newSnapshotFixture(t, 1, false)
+func TestProtectedPreparationReusesPersistedRoot(t *testing.T) {
+	f := newSnapshotFixture(t, 1, true)
 	var wg sync.WaitGroup
 	failures := make(chan string, 8)
 	preparations := make(chan workerapi.SecretProxyPreparation, 8)
@@ -303,14 +302,11 @@ func TestProtectedPreparationRootSingleWinner(t *testing.T) {
 	for failure := range failures {
 		t.Error(failure)
 	}
-	var count int
-	if err := f.fixture.Pool.QueryRow(t.Context(), "SELECT count(*) FROM workspace_secret_proxy_trust WHERE workspace_id=$1", f.workspace).Scan(&count); err != nil || count != 1 {
-		t.Fatalf("roots=%d err=%v", count, err)
-	}
-	root, err := f.q.GetWorkspaceProxyTrust(t.Context(), db.GetWorkspaceProxyTrustParams{EnvironmentID: pgvalue.UUID(f.fixture.EnvironmentID), WorkspaceID: pgvalue.UUID(f.workspace)})
+	root, err := f.q.GetWorkspaceSecretCAPublic(t.Context(), db.GetWorkspaceSecretCAPublicParams{EnvironmentID: pgvalue.UUID(f.fixture.EnvironmentID), WorkspaceID: pgvalue.UUID(f.workspace)})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	roots := x509.NewCertPool()
 	roots.AppendCertsFromPEM(root.Certificate)
 	close(preparations)
@@ -546,10 +542,7 @@ func TestProtectedSnapshotRootExpiryUsesCapturedStatementTime(t *testing.T) {
 	f := newSnapshotFixture(t, 1, false)
 	created := time.Now().AddDate(-10, 0, 0).Add(2 * time.Second)
 	dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE workspaces SET created_at=$2 WHERE id=$1", f.workspace, created)
-	root, err := f.store.EnsureProxyTrust(t.Context(), f.q, f.fixture.EnvironmentID, f.workspace, created)
-	if err != nil {
-		t.Fatal(err)
-	}
+	root := createTestWorkspaceCA(t, f.fixture.Pool, f.store, f.fixture.EnvironmentID, f.workspace)
 	rows, err := f.q.CaptureProtectedSecretEnvelopes(t.Context(), f.params())
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("capture before root expiry: %v", err)
@@ -563,7 +556,7 @@ func TestProtectedSnapshotRootExpiryUsesCapturedStatementTime(t *testing.T) {
 	if _, err := tx.Exec(t.Context(), "SELECT transaction_timestamp()"); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(time.Until(root.NotAfter.Time) + 50*time.Millisecond)
+	time.Sleep(time.Until(root.NotAfter) + 50*time.Millisecond)
 	if _, err := f.store.OpenProtected(rows, f.markers); err != nil {
 		t.Fatalf("already captured request lost in-flight authority: %v", err)
 	}

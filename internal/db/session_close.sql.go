@@ -274,9 +274,31 @@ type LockActorCloseWorkspaceParams struct {
 	SessionID     pgtype.UUID `json:"session_id"`
 }
 
-func (q *Queries) LockActorCloseWorkspace(ctx context.Context, arg LockActorCloseWorkspaceParams) (Workspace, error) {
+type LockActorCloseWorkspaceRow struct {
+	ID                     pgtype.UUID        `json:"id"`
+	EnvironmentID          pgtype.UUID        `json:"environment_id"`
+	RegionID               string             `json:"region_id"`
+	SandboxDeclaredID      pgtype.Text        `json:"sandbox_declared_id"`
+	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
+	Key                    pgtype.Text        `json:"key"`
+	StateVersion           int64              `json:"state_version"`
+	OwnerSessionID         pgtype.UUID        `json:"owner_session_id"`
+	OwnerRunID             pgtype.UUID        `json:"owner_run_id"`
+	OwnershipGeneration    int64              `json:"ownership_generation"`
+	WriterGeneration       int64              `json:"writer_generation"`
+	HeadVersionID          pgtype.UUID        `json:"head_version_id"`
+	State                  string             `json:"state"`
+	DesiredState           string             `json:"desired_state"`
+	DirtyState             string             `json:"dirty_state"`
+	LastActivityAt         pgtype.Timestamptz `json:"last_activity_at"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt              pgtype.Timestamptz `json:"deleted_at"`
+}
+
+func (q *Queries) LockActorCloseWorkspace(ctx context.Context, arg LockActorCloseWorkspaceParams) (LockActorCloseWorkspaceRow, error) {
 	row := q.db.QueryRow(ctx, lockActorCloseWorkspace, arg.EnvironmentID, arg.WorkspaceID, arg.SessionID)
-	var i Workspace
+	var i LockActorCloseWorkspaceRow
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,

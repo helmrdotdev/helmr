@@ -49,7 +49,7 @@ WITH selected_definition AS (
            $5,
            $6
       FROM selected_definition
-    RETURNING id, environment_id, region_id, sandbox_declared_id, deployment_definition_id, key, state_version, owner_session_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
+    RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at
 ), created_version AS (
     INSERT INTO workspace_versions (
         id,

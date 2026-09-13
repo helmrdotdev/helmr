@@ -47,7 +47,7 @@ func ReconcileClose(
 			ctx,
 			store,
 			actor,
-			db.Workspace{ID: workspace.ID},
+			db.LockActorInputWorkspaceRow{ID: workspace.ID},
 			bindings,
 		); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -157,7 +157,7 @@ func reconcileCurrentRunClose(
 }
 
 func workspaceCanAdmit(
-	workspace db.Workspace,
+	workspace db.LockActorCloseWorkspaceRow,
 	activity db.GetActorCloseWorkspaceActivityRow,
 ) bool {
 	return workspace.State == db.WorkspaceStateActive &&

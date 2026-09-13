@@ -426,7 +426,7 @@ func (s *Server) invokeChildTask(
 		if err != nil {
 			return err
 		}
-		authority.workspace = sourceWorkspace
+		authority.workspace = db.LockRunLeaseClaimWorkspaceRow(sourceWorkspace)
 		if err := completeChildTaskInvokeAuthority(
 			ctx, work.q, input, locators, &authority, true,
 		); err != nil {
@@ -1052,16 +1052,16 @@ func childTaskInvokeScopeMatches(
 }
 
 func sourceChildWorkspace(
-	workspaces []db.Workspace,
+	workspaces []db.LockChildWorkspacePairRow,
 	sourceID uuid.UUID,
 	targetID uuid.UUID,
 	locators db.GetLiveRunLeaseLocatorsRow,
-) (db.Workspace, error) {
+) (db.LockChildWorkspacePairRow, error) {
 	var sourceFound, targetFound bool
-	var source db.Workspace
+	var source db.LockChildWorkspacePairRow
 	for _, workspace := range workspaces {
 		if workspace.EnvironmentID != locators.EnvironmentID {
-			return db.Workspace{}, errTaskWorkspaceUnavailable
+			return db.LockChildWorkspacePairRow{}, errTaskWorkspaceUnavailable
 		}
 		switch pgvalue.MustUUIDValue(workspace.ID) {
 		case sourceID:
@@ -1070,14 +1070,14 @@ func sourceChildWorkspace(
 		case targetID:
 			targetFound = true
 		default:
-			return db.Workspace{}, errTaskWorkspaceUnavailable
+			return db.LockChildWorkspacePairRow{}, errTaskWorkspaceUnavailable
 		}
 	}
 	if !sourceFound {
-		return db.Workspace{}, staleAuthority(staleAuthorityChildTask, childTaskInvokePointWorkspacePair, errChildTaskInvokeStale)
+		return db.LockChildWorkspacePairRow{}, staleAuthority(staleAuthorityChildTask, childTaskInvokePointWorkspacePair, errChildTaskInvokeStale)
 	}
 	if !targetFound || len(workspaces) != 2 {
-		return db.Workspace{}, errTaskWorkspaceUnavailable
+		return db.LockChildWorkspacePairRow{}, errTaskWorkspaceUnavailable
 	}
 	return source, nil
 }

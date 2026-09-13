@@ -19,6 +19,16 @@ import (
 	"time"
 )
 
+// Keep the process main thread occupied by the test runner in this disposable
+// fixture. Go permanently parks a locked main thread on goroutine exit rather
+// than removing its /proc task, so the disappearance assertion below must use
+// a non-main worker thread.
+func init() {
+	if os.Getenv("HELMR_TEST_NAMESPACE") == "1" {
+		runtime.LockOSThread()
+	}
+}
+
 func TestSecretProxyNamespaceSocketAndFailedRestoreRetirement(t *testing.T) {
 	if os.Getenv("HELMR_TEST_NAMESPACE") != "1" {
 		t.Skip("requires disposable Linux namespace capability")

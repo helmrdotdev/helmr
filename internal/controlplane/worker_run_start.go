@@ -99,7 +99,7 @@ func (s *Server) startRun(
 		}
 		if err := validateRunStartArm(requested, runStartValidationAuthority{
 			run: authority.run, parentRun: authority.parentRun, runLease: authority.runLease,
-			runtime: authority.runtime, workspace: authority.workspace,
+			runtime: authority.runtime, workspace: db.GetWorkspaceRow(authority.workspace),
 			workspaceMount: authority.workspaceMount, runWait: authority.runWait,
 		}); err != nil {
 			return staleAuthority(staleAuthorityRunStart, runStartFailureArm, err)
@@ -127,12 +127,13 @@ func (s *Server) startRun(
 			if err != nil {
 				return staleAuthority(staleAuthorityRunStart, runStartFailureMarkRunRunning, staleRunLeaseClaim(err))
 			}
-			authority.workspace, err = work.q.TouchRunWorkspaceActivity(ctx, db.TouchRunWorkspaceActivityParams{
+			updatedWorkspace, updateErr := work.q.TouchRunWorkspaceActivity(ctx, db.TouchRunWorkspaceActivityParams{
 				ID: authority.workspace.ID, OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID,
 				EnvironmentID:       authority.workspace.EnvironmentID,
 				OwnershipGeneration: authority.workspaceLease.OwnershipGeneration,
 				WriterGeneration:    authority.workspaceLease.WriterGeneration,
 			})
+			authority.workspace, err = db.LockRunLeaseClaimWorkspaceRow(updatedWorkspace), updateErr
 			if err != nil {
 				return staleAuthority(staleAuthorityRunStart, runStartFailureTouchWorkspace, staleRunLeaseClaim(err))
 			}

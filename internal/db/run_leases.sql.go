@@ -2136,7 +2136,25 @@ func (q *Queries) LockRunLeaseClaimWorkerGroup(ctx context.Context, arg LockRunL
 }
 
 const lockRunLeaseClaimWorkspace = `-- name: LockRunLeaseClaimWorkspace :one
-SELECT workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at
+SELECT workspaces.id,
+       workspaces.environment_id,
+       workspaces.region_id,
+       workspaces.sandbox_declared_id,
+       workspaces.deployment_definition_id,
+       workspaces.key,
+       workspaces.state_version,
+       workspaces.owner_session_id,
+       workspaces.owner_run_id,
+       workspaces.ownership_generation,
+       workspaces.writer_generation,
+       workspaces.head_version_id,
+       workspaces.state,
+       workspaces.desired_state,
+       workspaces.dirty_state,
+       workspaces.last_activity_at,
+       workspaces.created_at,
+       workspaces.updated_at,
+       workspaces.deleted_at
   FROM workspaces
   JOIN environments ON environments.id = workspaces.environment_id
  WHERE workspaces.id = $1
@@ -2155,7 +2173,29 @@ type LockRunLeaseClaimWorkspaceParams struct {
 	RegionID      string      `json:"region_id"`
 }
 
-func (q *Queries) LockRunLeaseClaimWorkspace(ctx context.Context, arg LockRunLeaseClaimWorkspaceParams) (Workspace, error) {
+type LockRunLeaseClaimWorkspaceRow struct {
+	ID                     pgtype.UUID        `json:"id"`
+	EnvironmentID          pgtype.UUID        `json:"environment_id"`
+	RegionID               string             `json:"region_id"`
+	SandboxDeclaredID      pgtype.Text        `json:"sandbox_declared_id"`
+	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
+	Key                    pgtype.Text        `json:"key"`
+	StateVersion           int64              `json:"state_version"`
+	OwnerSessionID         pgtype.UUID        `json:"owner_session_id"`
+	OwnerRunID             pgtype.UUID        `json:"owner_run_id"`
+	OwnershipGeneration    int64              `json:"ownership_generation"`
+	WriterGeneration       int64              `json:"writer_generation"`
+	HeadVersionID          pgtype.UUID        `json:"head_version_id"`
+	State                  string             `json:"state"`
+	DesiredState           string             `json:"desired_state"`
+	DirtyState             string             `json:"dirty_state"`
+	LastActivityAt         pgtype.Timestamptz `json:"last_activity_at"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt              pgtype.Timestamptz `json:"deleted_at"`
+}
+
+func (q *Queries) LockRunLeaseClaimWorkspace(ctx context.Context, arg LockRunLeaseClaimWorkspaceParams) (LockRunLeaseClaimWorkspaceRow, error) {
 	row := q.db.QueryRow(ctx, lockRunLeaseClaimWorkspace,
 		arg.ID,
 		arg.OrgID,
@@ -2163,7 +2203,7 @@ func (q *Queries) LockRunLeaseClaimWorkspace(ctx context.Context, arg LockRunLea
 		arg.EnvironmentID,
 		arg.RegionID,
 	)
-	var i Workspace
+	var i LockRunLeaseClaimWorkspaceRow
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
@@ -3829,7 +3869,7 @@ UPDATE workspaces
    AND workspaces.writer_generation = $6
    AND workspaces.state = 'active'
    AND workspaces.desired_state = 'active'
-RETURNING id, environment_id, region_id, sandbox_declared_id, deployment_definition_id, key, state_version, owner_session_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
+RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at
 `
 
 type TouchRunWorkspaceActivityParams struct {
@@ -3841,7 +3881,29 @@ type TouchRunWorkspaceActivityParams struct {
 	WriterGeneration    int64       `json:"writer_generation"`
 }
 
-func (q *Queries) TouchRunWorkspaceActivity(ctx context.Context, arg TouchRunWorkspaceActivityParams) (Workspace, error) {
+type TouchRunWorkspaceActivityRow struct {
+	ID                     pgtype.UUID        `json:"id"`
+	EnvironmentID          pgtype.UUID        `json:"environment_id"`
+	RegionID               string             `json:"region_id"`
+	SandboxDeclaredID      pgtype.Text        `json:"sandbox_declared_id"`
+	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
+	Key                    pgtype.Text        `json:"key"`
+	StateVersion           int64              `json:"state_version"`
+	OwnerSessionID         pgtype.UUID        `json:"owner_session_id"`
+	OwnerRunID             pgtype.UUID        `json:"owner_run_id"`
+	OwnershipGeneration    int64              `json:"ownership_generation"`
+	WriterGeneration       int64              `json:"writer_generation"`
+	HeadVersionID          pgtype.UUID        `json:"head_version_id"`
+	State                  string             `json:"state"`
+	DesiredState           string             `json:"desired_state"`
+	DirtyState             string             `json:"dirty_state"`
+	LastActivityAt         pgtype.Timestamptz `json:"last_activity_at"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt              pgtype.Timestamptz `json:"deleted_at"`
+}
+
+func (q *Queries) TouchRunWorkspaceActivity(ctx context.Context, arg TouchRunWorkspaceActivityParams) (TouchRunWorkspaceActivityRow, error) {
 	row := q.db.QueryRow(ctx, touchRunWorkspaceActivity,
 		arg.ID,
 		arg.EnvironmentID,
@@ -3850,7 +3912,7 @@ func (q *Queries) TouchRunWorkspaceActivity(ctx context.Context, arg TouchRunWor
 		arg.OwnershipGeneration,
 		arg.WriterGeneration,
 	)
-	var i Workspace
+	var i TouchRunWorkspaceActivityRow
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,

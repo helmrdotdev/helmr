@@ -24,11 +24,11 @@ func workspaceProtectedEnv(ctx context.Context, q db.Querier, environmentID, wor
 	if len(env) == 0 {
 		return nil, nil
 	}
-	trust, err := q.GetWorkspaceProxyTrust(ctx, db.GetWorkspaceProxyTrustParams{EnvironmentID: environmentID, WorkspaceID: workspaceID})
+	trust, err := q.GetWorkspaceSecretCAPublic(ctx, db.GetWorkspaceSecretCAPublicParams{EnvironmentID: environmentID, WorkspaceID: workspaceID})
 	if err != nil {
 		return nil, err
 	}
-	if err := secret.ValidateProxyTrust(trust, time.Now()); err != nil {
+	if err := secret.ValidateProxyTrust(trust.Certificate, trust.NotAfter.Time, time.Now()); err != nil {
 		return nil, err
 	}
 	return &workerapi.ProtectedEnv{Env: env, CA: trust.Certificate}, nil

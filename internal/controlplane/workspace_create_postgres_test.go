@@ -703,6 +703,7 @@ SELECT workspaces.state, workspaces.deployment_definition_id,
 
 func TestProtectedWorkspaceCreatePersistsFixedMixedBindings(t *testing.T) {
 	fixture := newActorStartPostgresFixture(t, 1)
+	fixture.server.secretProxy = testWorkspaceCAStore(t, fixture.pool)
 	request := workspaceCreateRequest{OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID, Declaration: workspaceDeclarationSelector{Kind: workspaceDeclarationPromoted}, DeclaredID: "workspace.v1", IdempotencyKey: "mixed-protected", Secrets: []api.WorkspaceSecret{
 		{Name: "API_TOKEN", Env: &api.SecretEnv{Name: "GH_TOKEN", Mode: "protected", AllowedOrigins: []string{"HTTPS://API.GITHUB.COM:443/"}}},
 		{Name: "API_TOKEN", Env: &api.SecretEnv{Name: "RAW_TOKEN", Mode: "raw"}},

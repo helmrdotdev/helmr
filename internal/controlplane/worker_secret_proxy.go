@@ -88,15 +88,12 @@ func (s *Server) workerSecretProxy(w http.ResponseWriter, r *http.Request, resol
 				}
 			}
 			if err == nil {
-				// Immutable root persistence is separate from read-only authority.
-				// The upsert returns the winning root; a leaf is not a Secret grant.
-				var trust db.WorkspaceSecretProxyTrust
-				trust, err = s.secretProxy.EnsureProxyTrust(r.Context(), s.db,
-					pgvalue.MustUUIDValue(captured.EnvironmentID), pgvalue.MustUUIDValue(captured.WorkspaceID), captured.WorkspaceCreatedAt.Time)
-				if err == nil {
-					preparation.Origins = captured.Origins
-					preparation.Certificate, preparation.PrivateKey, err = s.secretProxy.ProxyLeaf(trust, hosts)
-				}
+				preparation.Origins = captured.Origins
+				preparation.Certificate, preparation.PrivateKey, err = s.secretProxy.ProxyLeaf(secret.ProxyTrust{
+					EnvironmentID: pgvalue.MustUUIDValue(captured.EnvironmentID), WorkspaceID: pgvalue.MustUUIDValue(captured.WorkspaceID),
+					Certificate: captured.Certificate, NotAfter: captured.NotAfter.Time,
+					PrivateKeyNonce: captured.PrivateKeyNonce, PrivateKeyCiphertext: captured.PrivateKeyCiphertext,
+				}, hosts)
 			}
 		}
 	}

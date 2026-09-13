@@ -93,6 +93,11 @@ run "controlplane_uses_execution_only_runtime_authority" {
   command = apply
 
   assert {
+    condition     = contains([for item in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].secrets : item.name], "ENCRYPTION_KEY")
+    error_message = "Scheduled protected Workspace creation requires the existing encryption key in dispatcher."
+  }
+
+  assert {
     condition = (
       aws_db_instance.postgres.engine_version == "18" &&
       aws_db_instance.postgres.auto_minor_version_upgrade

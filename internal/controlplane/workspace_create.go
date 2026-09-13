@@ -279,6 +279,27 @@ func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateReq
 			return fmt.Errorf("create workspace: %w", err)
 		}
 		for _, placement := range placements {
+			if placement.Mode != "protected" {
+				continue
+			}
+			trust, err := s.secretProxy.GenerateProxyTrust(request.EnvironmentID, workspaceID, createdAt.Time)
+			if err != nil {
+				return err
+			}
+			count, err := work.q.InitializeWorkspaceSecretCA(ctx, db.InitializeWorkspaceSecretCAParams{
+				EnvironmentID: pgvalue.UUID(trust.EnvironmentID), WorkspaceID: pgvalue.UUID(trust.WorkspaceID),
+				Certificate: trust.Certificate, PrivateKeyNonce: trust.PrivateKeyNonce,
+				PrivateKeyCiphertext: trust.PrivateKeyCiphertext, NotAfter: pgvalue.Timestamptz(trust.NotAfter),
+			})
+			if err != nil {
+				return err
+			}
+			if count != 1 {
+				return errWorkspaceSecretUnavailable
+			}
+			break
+		}
+		for _, placement := range placements {
 			placeholder, err := workspace.SecretPlaceholder(placement.Mode)
 			if err != nil {
 				return err

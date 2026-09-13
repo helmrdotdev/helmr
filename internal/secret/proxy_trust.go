@@ -1,7 +1,6 @@
 package secret
 
 import (
-	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -9,6 +8,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"io"
 	"math/big"
 	"regexp"
 	"time"
@@ -16,7 +16,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/jackc/pgx/v5"
 )
 
 var ErrProxyTrustExpired = errors.New("workspace Secret transport has expired; create a new Workspace")
@@ -25,33 +24,44 @@ func proxyTrustAAD(environmentID, workspaceID uuid.UUID) []byte {
 	return []byte("helmr.workspace-secret-proxy-trust.v0\x00" + environmentID.String() + "\x00" + workspaceID.String())
 }
 
-// EnsureProxyTrust keeps only the encrypted Workspace signer in durable storage.
-// The single-winner upsert is independent of execution authority; no grant is created here.
-func (s *Store) EnsureProxyTrust(ctx context.Context, q db.Querier, environmentID, workspaceID uuid.UUID, createdAt time.Time) (db.WorkspaceSecretProxyTrust, error) {
-	params := db.GetWorkspaceProxyTrustParams{EnvironmentID: pgvalue.UUID(environmentID), WorkspaceID: pgvalue.UUID(workspaceID)}
-	row, err := q.GetWorkspaceProxyTrust(ctx, params)
-	if err == nil {
-		return row, ValidateProxyTrust(row, time.Now())
+// ProxyTrust is encrypted Workspace CA material. Only creation and authorized
+// preparation handle the signer; public delivery and resolution use certificate/expiry.
+type ProxyTrust struct {
+	EnvironmentID        uuid.UUID
+	WorkspaceID          uuid.UUID
+	Certificate          []byte
+	PrivateKeyNonce      []byte
+	PrivateKeyCiphertext []byte
+	NotAfter             time.Time
+}
+
+// GenerateProxyTrust does not persist or retrieve material. Callers persist it
+// only in the transaction that inserted the Workspace, using that row's CreatedAt.
+func (s *Store) GenerateProxyTrust(environmentID, workspaceID uuid.UUID, createdAt time.Time) (ProxyTrust, error) {
+	row := ProxyTrust{EnvironmentID: environmentID, WorkspaceID: workspaceID}
+	if s == nil || s.encryption == nil || createdAt.IsZero() || environmentID == uuid.Nil() || workspaceID == uuid.Nil() {
+		return row, ErrDeliveryUnavailable
 	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return row, err
+	entropy := s.rand
+	if entropy == nil {
+		entropy = rand.Reader
 	}
 	expires := createdAt.AddDate(10, 0, 0).Truncate(time.Second)
 	if !time.Now().Before(expires) {
 		return row, ErrProxyTrustExpired
 	}
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), entropy)
 	if err != nil {
 		return row, err
 	}
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	serial, err := rand.Int(entropy, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
 		return row, err
 	}
 	template := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: "Helmr Workspace Secret transport"},
 		NotBefore: createdAt.Add(-5 * time.Minute), NotAfter: expires, IsCA: true, BasicConstraintsValid: true,
 		MaxPathLenZero: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature}
-	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	der, err := x509.CreateCertificate(entropy, template, template, &key.PublicKey, key)
 	if err != nil {
 		return row, err
 	}
@@ -61,21 +71,22 @@ func (s *Store) EnsureProxyTrust(ctx context.Context, q db.Querier, environmentI
 	}
 	defer clear(private)
 	nonce := make([]byte, s.encryption.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
+	if _, err := io.ReadFull(entropy, nonce); err != nil {
 		return row, err
 	}
 	ciphertext := s.encryption.Seal(nil, nonce, private, proxyTrustAAD(environmentID, workspaceID))
-	return q.CreateWorkspaceProxyTrust(ctx, db.CreateWorkspaceProxyTrustParams{EnvironmentID: params.EnvironmentID, WorkspaceID: params.WorkspaceID,
-		Certificate: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), PrivateKeyNonce: nonce, PrivateKeyCiphertext: ciphertext, NotAfter: pgvalue.Timestamptz(expires)})
+	row.Certificate = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	row.PrivateKeyNonce, row.PrivateKeyCiphertext, row.NotAfter = nonce, ciphertext, expires
+	return row, nil
 }
 
-func ValidateProxyTrust(row db.WorkspaceSecretProxyTrust, now time.Time) error {
-	block, _ := pem.Decode(row.Certificate)
+func ValidateProxyTrust(certificate []byte, notAfter, now time.Time) error {
+	block, _ := pem.Decode(certificate)
 	if block == nil {
 		return ErrDeliveryUnavailable
 	}
 	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil || !cert.IsCA || !row.NotAfter.Valid || !cert.NotAfter.Equal(row.NotAfter.Time) {
+	if err != nil || !cert.IsCA || notAfter.IsZero() || !cert.NotAfter.Equal(notAfter) {
 		return ErrDeliveryUnavailable
 	}
 	if now.Before(cert.NotBefore) || !now.Before(cert.NotAfter) {
@@ -84,15 +95,18 @@ func ValidateProxyTrust(row db.WorkspaceSecretProxyTrust, now time.Time) error {
 	return nil
 }
 
-func (s *Store) ProxyLeaf(row db.WorkspaceSecretProxyTrust, hosts []string) ([]byte, []byte, error) {
+func (s *Store) ProxyLeaf(row ProxyTrust, hosts []string) ([]byte, []byte, error) {
 	if len(hosts) == 0 || len(hosts) > 256 {
 		return nil, nil, ErrDeliveryUnavailable
 	}
-	if err := ValidateProxyTrust(row, time.Now()); err != nil {
+	if err := ValidateProxyTrust(row.Certificate, row.NotAfter, time.Now()); err != nil {
 		return nil, nil, err
 	}
-	environmentID := pgvalue.MustUUIDValue(row.EnvironmentID)
-	workspaceID := pgvalue.MustUUIDValue(row.WorkspaceID)
+	environmentID := row.EnvironmentID
+	workspaceID := row.WorkspaceID
+	if s == nil || s.encryption == nil || len(row.PrivateKeyNonce) != s.encryption.NonceSize() || len(row.PrivateKeyCiphertext) == 0 {
+		return nil, nil, ErrDeliveryUnavailable
+	}
 	private, err := s.encryption.Open(nil, row.PrivateKeyNonce, row.PrivateKeyCiphertext, proxyTrustAAD(environmentID, workspaceID))
 	if err != nil {
 		return nil, nil, ErrDeliveryUnavailable
@@ -171,7 +185,7 @@ func (s *Store) OpenProtected(rows []db.CaptureProtectedSecretEnvelopesRow, sele
 			return nil, ErrDeliveryUnavailable
 		}
 		delete(expected, row.Placeholder)
-		if err := ValidateProxyTrust(db.WorkspaceSecretProxyTrust{Certificate: row.Certificate, NotAfter: row.NotAfter}, row.AuthorizedAt.Time); err != nil {
+		if err := ValidateProxyTrust(row.Certificate, row.NotAfter.Time, row.AuthorizedAt.Time); err != nil {
 			return nil, err
 		}
 	}

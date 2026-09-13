@@ -14,7 +14,7 @@ import (
 const captureProtectedSecretEnvelopes = `-- name: CaptureProtectedSecretEnvelopes :many
 WITH authority AS (
  SELECT r.workspace_id, r.environment_id, r.reservation_expires_at, r.reserved_run_id, r.reserved_process_id,
- w.created_at AS workspace_created_at, statement_timestamp()::timestamptz AS authorized_at,
+ w.secret_ca_certificate AS certificate, w.secret_ca_not_after AS not_after, statement_timestamp()::timestamptz AS authorized_at,
  EXISTS (
   SELECT 1 FROM workspace_leases l
   JOIN workspace_mounts m ON m.id = l.workspace_mount_id
@@ -69,12 +69,11 @@ WITH authority AS (
 )
 SELECT b.placeholder, a.environment_id, s.id AS secret_id,
  v.id AS version_id, v.version, v.nonce, v.ciphertext,
- trust.certificate, trust.not_after, a.authorized_at
+ a.certificate, a.not_after, a.authorized_at
 FROM authority a
 JOIN workspace_secrets b ON b.workspace_id = a.workspace_id AND b.environment_id = a.environment_id
 JOIN secrets s ON s.id = b.secret_id AND s.environment_id = a.environment_id AND s.state = 'active'
 JOIN secret_versions v ON v.secret_id = s.id AND v.id = s.current_version_id
-JOIN workspace_secret_proxy_trust trust ON trust.workspace_id = a.workspace_id AND trust.environment_id = a.environment_id
 WHERE a.live AND b.placement_kind = 'env' AND b.mode = 'protected'
  AND b.placeholder = ANY($1::text[])
  AND $2::text = ANY(b.allowed_origins)
@@ -150,7 +149,8 @@ func (q *Queries) CaptureProtectedSecretEnvelopes(ctx context.Context, arg Captu
 const captureSecretProxyPreparation = `-- name: CaptureSecretProxyPreparation :one
 WITH authority AS (
  SELECT r.workspace_id, r.environment_id, r.reservation_expires_at, r.reserved_run_id, r.reserved_process_id,
- w.created_at AS workspace_created_at, statement_timestamp()::timestamptz AS authorized_at,
+ w.secret_ca_certificate AS certificate, w.secret_ca_not_after AS not_after,
+ w.secret_ca_private_key_nonce AS private_key_nonce, w.secret_ca_private_key_ciphertext AS private_key_ciphertext, statement_timestamp()::timestamptz AS authorized_at,
  EXISTS (
   SELECT 1 FROM workspace_leases l
   JOIN workspace_mounts m ON m.id = l.workspace_mount_id
@@ -203,7 +203,7 @@ WITH authority AS (
   AND r.desired_state = 'ready' AND r.observed_state IN ('allocated', 'ready') AND r.reclaimed_at IS NULL
   AND w.state = 'active' AND w.desired_state = 'active' AND w.deleted_at IS NULL
 )
-SELECT a.environment_id, a.workspace_id, a.workspace_created_at,
+SELECT a.environment_id, a.workspace_id, a.certificate, a.not_after, a.private_key_nonce, a.private_key_ciphertext,
  ARRAY(SELECT DISTINCT unnest(b.allowed_origins) FROM workspace_secrets b
        WHERE b.workspace_id = a.workspace_id AND b.environment_id = a.environment_id
         AND b.placement_kind = 'env' AND b.mode = 'protected')::text[] AS origins
@@ -224,14 +224,17 @@ type CaptureSecretProxyPreparationParams struct {
 }
 
 type CaptureSecretProxyPreparationRow struct {
-	EnvironmentID      pgtype.UUID        `json:"environment_id"`
-	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
-	WorkspaceCreatedAt pgtype.Timestamptz `json:"workspace_created_at"`
-	Origins            []string           `json:"origins"`
+	EnvironmentID        pgtype.UUID        `json:"environment_id"`
+	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	Certificate          []byte             `json:"certificate"`
+	NotAfter             pgtype.Timestamptz `json:"not_after"`
+	PrivateKeyNonce      []byte             `json:"private_key_nonce"`
+	PrivateKeyCiphertext []byte             `json:"private_key_ciphertext"`
+	Origins              []string           `json:"origins"`
 }
 
 // TLS preparation is reservation-or-live, distinct from credential use.
-// Root single-winner persistence occurs separately, without execution row locks.
+// The root is persisted at Workspace creation; preparation only captures existing material.
 func (q *Queries) CaptureSecretProxyPreparation(ctx context.Context, arg CaptureSecretProxyPreparationParams) (CaptureSecretProxyPreparationRow, error) {
 	row := q.db.QueryRow(ctx, captureSecretProxyPreparation,
 		arg.RuntimeInstanceID,
@@ -245,71 +248,68 @@ func (q *Queries) CaptureSecretProxyPreparation(ctx context.Context, arg Capture
 	err := row.Scan(
 		&i.EnvironmentID,
 		&i.WorkspaceID,
-		&i.WorkspaceCreatedAt,
+		&i.Certificate,
+		&i.NotAfter,
+		&i.PrivateKeyNonce,
+		&i.PrivateKeyCiphertext,
 		&i.Origins,
 	)
 	return i, err
 }
 
-const createWorkspaceProxyTrust = `-- name: CreateWorkspaceProxyTrust :one
-INSERT INTO workspace_secret_proxy_trust
- (workspace_id, environment_id, certificate, private_key_nonce, private_key_ciphertext, not_after)
-VALUES ($1, $2, $3,
- $4, $5, $6)
-ON CONFLICT (workspace_id) DO UPDATE SET workspace_id = excluded.workspace_id
-RETURNING workspace_id, environment_id, certificate, private_key_nonce, private_key_ciphertext, not_after
+const getWorkspaceSecretCAPublic = `-- name: GetWorkspaceSecretCAPublic :one
+SELECT secret_ca_certificate AS certificate, secret_ca_not_after AS not_after
+FROM workspaces WHERE environment_id = $1 AND id = $2
 `
 
-type CreateWorkspaceProxyTrustParams struct {
-	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
-	EnvironmentID        pgtype.UUID        `json:"environment_id"`
-	Certificate          []byte             `json:"certificate"`
-	PrivateKeyNonce      []byte             `json:"private_key_nonce"`
-	PrivateKeyCiphertext []byte             `json:"private_key_ciphertext"`
-	NotAfter             pgtype.Timestamptz `json:"not_after"`
-}
-
-func (q *Queries) CreateWorkspaceProxyTrust(ctx context.Context, arg CreateWorkspaceProxyTrustParams) (WorkspaceSecretProxyTrust, error) {
-	row := q.db.QueryRow(ctx, createWorkspaceProxyTrust,
-		arg.WorkspaceID,
-		arg.EnvironmentID,
-		arg.Certificate,
-		arg.PrivateKeyNonce,
-		arg.PrivateKeyCiphertext,
-		arg.NotAfter,
-	)
-	var i WorkspaceSecretProxyTrust
-	err := row.Scan(
-		&i.WorkspaceID,
-		&i.EnvironmentID,
-		&i.Certificate,
-		&i.PrivateKeyNonce,
-		&i.PrivateKeyCiphertext,
-		&i.NotAfter,
-	)
-	return i, err
-}
-
-const getWorkspaceProxyTrust = `-- name: GetWorkspaceProxyTrust :one
-SELECT workspace_id, environment_id, certificate, private_key_nonce, private_key_ciphertext, not_after FROM workspace_secret_proxy_trust
-WHERE environment_id = $1 AND workspace_id = $2
-`
-
-type GetWorkspaceProxyTrustParams struct {
+type GetWorkspaceSecretCAPublicParams struct {
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	WorkspaceID   pgtype.UUID `json:"workspace_id"`
 }
 
-func (q *Queries) GetWorkspaceProxyTrust(ctx context.Context, arg GetWorkspaceProxyTrustParams) (WorkspaceSecretProxyTrust, error) {
-	row := q.db.QueryRow(ctx, getWorkspaceProxyTrust, arg.EnvironmentID, arg.WorkspaceID)
-	var i WorkspaceSecretProxyTrust
-	err := row.Scan(
-		&i.WorkspaceID,
-		&i.EnvironmentID,
-		&i.Certificate,
-		&i.PrivateKeyNonce,
-		&i.PrivateKeyCiphertext,
-		&i.NotAfter,
-	)
+type GetWorkspaceSecretCAPublicRow struct {
+	Certificate []byte             `json:"certificate"`
+	NotAfter    pgtype.Timestamptz `json:"not_after"`
+}
+
+func (q *Queries) GetWorkspaceSecretCAPublic(ctx context.Context, arg GetWorkspaceSecretCAPublicParams) (GetWorkspaceSecretCAPublicRow, error) {
+	row := q.db.QueryRow(ctx, getWorkspaceSecretCAPublic, arg.EnvironmentID, arg.WorkspaceID)
+	var i GetWorkspaceSecretCAPublicRow
+	err := row.Scan(&i.Certificate, &i.NotAfter)
 	return i, err
+}
+
+const initializeWorkspaceSecretCA = `-- name: InitializeWorkspaceSecretCA :execrows
+UPDATE workspaces SET secret_ca_certificate = $1,
+ secret_ca_private_key_nonce = $2,
+ secret_ca_private_key_ciphertext = $3,
+ secret_ca_not_after = $4
+WHERE environment_id = $5 AND id = $6
+ AND secret_ca_certificate IS NULL
+`
+
+type InitializeWorkspaceSecretCAParams struct {
+	Certificate          []byte             `json:"certificate"`
+	PrivateKeyNonce      []byte             `json:"private_key_nonce"`
+	PrivateKeyCiphertext []byte             `json:"private_key_ciphertext"`
+	NotAfter             pgtype.Timestamptz `json:"not_after"`
+	EnvironmentID        pgtype.UUID        `json:"environment_id"`
+	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+}
+
+// Creation-only: caller owns the insert transaction and uses inserted created_at.
+// No preparation or later lifecycle operation may initialize or replace a CA.
+func (q *Queries) InitializeWorkspaceSecretCA(ctx context.Context, arg InitializeWorkspaceSecretCAParams) (int64, error) {
+	result, err := q.db.Exec(ctx, initializeWorkspaceSecretCA,
+		arg.Certificate,
+		arg.PrivateKeyNonce,
+		arg.PrivateKeyCiphertext,
+		arg.NotAfter,
+		arg.EnvironmentID,
+		arg.WorkspaceID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

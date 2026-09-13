@@ -192,6 +192,7 @@ func main() {
 		PlatformStore:         casStore,
 		Secrets:               secretStore,
 		SecretDelivery:        secretStore,
+		SecretProxy:           secretStore,
 		WorkspaceFencingKey:   workspaceFencingKey,
 		TokenCredentialKey:    tokenCredentialKey,
 		WorkerTokenSigningKey: cfg.workerTokenKey,

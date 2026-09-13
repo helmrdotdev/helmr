@@ -826,6 +826,21 @@ CREATE TABLE workspaces (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     deleted_at TIMESTAMPTZ,
+    secret_ca_certificate BYTEA,
+    secret_ca_private_key_nonce BYTEA,
+    secret_ca_private_key_ciphertext BYTEA,
+    secret_ca_not_after TIMESTAMPTZ,
+    CHECK (
+        num_nonnulls(secret_ca_certificate, secret_ca_private_key_nonce,
+                     secret_ca_private_key_ciphertext, secret_ca_not_after) = 0
+        OR (
+            num_nonnulls(secret_ca_certificate, secret_ca_private_key_nonce,
+                         secret_ca_private_key_ciphertext, secret_ca_not_after) = 4
+            AND octet_length(secret_ca_certificate) > 0
+            AND octet_length(secret_ca_private_key_nonce) > 0
+            AND octet_length(secret_ca_private_key_ciphertext) > 0
+        )
+    ),
     UNIQUE (environment_id, id),
     UNIQUE (environment_id, id, deployment_definition_id),
     UNIQUE (environment_id, id, region_id),
@@ -897,16 +912,6 @@ CREATE TABLE workspace_secrets (
     FOREIGN KEY (environment_id, secret_id)
         REFERENCES secrets(environment_id, id)
         ON DELETE RESTRICT
-);
-
-CREATE TABLE workspace_secret_proxy_trust (
-    workspace_id UUID PRIMARY KEY,
-    environment_id UUID NOT NULL,
-    certificate BYTEA NOT NULL,
-    private_key_nonce BYTEA NOT NULL,
-    private_key_ciphertext BYTEA NOT NULL,
-    not_after TIMESTAMPTZ NOT NULL,
-    FOREIGN KEY (environment_id, workspace_id) REFERENCES workspaces(environment_id, id) ON DELETE CASCADE
 );
 
 CREATE INDEX workspace_secrets_secret_idx

@@ -25,7 +25,7 @@ func TestDBAdmitterCommitsOneScheduleAdmissionTuple(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	admitter, err := NewDBAdmitter(pool, fixedAuthority{digest: runtimeDigest})
+	admitter, err := NewDBAdmitter(pool, fixedAuthority{digest: runtimeDigest}, testProxyTrustGenerator(t, pool))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestDBAdmitterRejectsTaskWithoutScheduledPayloadAuthority(t *testing.T) {
 		   AND kind = 'task'
 		   AND declared_id = 'daily-report'
 	`, value.EnvironmentID)
-	admitter, err := NewDBAdmitter(pool, fixedAuthority{digest: runtimeDigest})
+	admitter, err := NewDBAdmitter(pool, fixedAuthority{digest: runtimeDigest}, testProxyTrustGenerator(t, pool))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +177,7 @@ func TestWorkerRetriesSameScheduleInstantWhenWorkspaceSecretIsRevoked(t *testing
 		        LIMIT 1
 		 )
 	`, value.ID)
-	admitter, err := NewDBAdmitter(pool, fixedAuthority{digest: runtimeDigest})
+	admitter, err := NewDBAdmitter(pool, fixedAuthority{digest: runtimeDigest}, testProxyTrustGenerator(t, pool))
 	if err != nil {
 		t.Fatal(err)
 	}

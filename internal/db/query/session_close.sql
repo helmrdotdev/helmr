@@ -27,7 +27,7 @@ UPDATE sessions
 RETURNING *;
 
 -- name: LockActorCloseWorkspace :one
-SELECT *
+SELECT id, environment_id, region_id, sandbox_declared_id, deployment_definition_id, key, state_version, owner_session_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
   FROM workspaces
  WHERE environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(workspace_id)

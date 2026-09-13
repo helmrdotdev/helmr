@@ -397,7 +397,25 @@ SELECT *
  FOR UPDATE;
 
 -- name: LockRunLeaseClaimWorkspace :one
-SELECT workspaces.*
+SELECT workspaces.id,
+       workspaces.environment_id,
+       workspaces.region_id,
+       workspaces.sandbox_declared_id,
+       workspaces.deployment_definition_id,
+       workspaces.key,
+       workspaces.state_version,
+       workspaces.owner_session_id,
+       workspaces.owner_run_id,
+       workspaces.ownership_generation,
+       workspaces.writer_generation,
+       workspaces.head_version_id,
+       workspaces.state,
+       workspaces.desired_state,
+       workspaces.dirty_state,
+       workspaces.last_activity_at,
+       workspaces.created_at,
+       workspaces.updated_at,
+       workspaces.deleted_at
   FROM workspaces
   JOIN environments ON environments.id = workspaces.environment_id
  WHERE workspaces.id = sqlc.arg(id)
@@ -765,7 +783,7 @@ UPDATE workspaces
    AND workspaces.writer_generation = sqlc.arg(writer_generation)
    AND workspaces.state = 'active'
    AND workspaces.desired_state = 'active'
-RETURNING *;
+RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at;
 
 -- name: MarkRunEntrypointEntered :one
 UPDATE run_attempts

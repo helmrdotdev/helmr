@@ -121,9 +121,10 @@ administrative credentials.
 
 ## Dispatcher
 
-Required: `DATABASE_URL`, `CLICKHOUSE_URL`, and `WORKSPACE_FENCING_KEY`.
+Required: `DATABASE_URL`, `CLICKHOUSE_URL`, `WORKSPACE_FENCING_KEY`, and `ENCRYPTION_KEY`.
 
-`ENCRYPTION_KEY` is control-plane authority and is not provided to the dispatcher.
+The dispatcher uses the same `ENCRYPTION_KEY` as the Control Plane to encrypt
+CA signers when it creates protected Workspaces for scheduled tasks.
 
 The dispatcher uses the same single base64-encoded 32-byte
 `WORKSPACE_FENCING_KEY` as the Control Plane service.

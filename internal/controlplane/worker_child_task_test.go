@@ -120,12 +120,12 @@ func TestSourceChildWorkspaceRequiresExactPair(t *testing.T) {
 	environmentID := pgvalue.UUID(uuid.NewV7())
 	sourceID := uuid.NewV7()
 	targetID := uuid.NewV7()
-	source := db.Workspace{ID: pgvalue.UUID(sourceID), EnvironmentID: environmentID}
-	target := db.Workspace{ID: pgvalue.UUID(targetID), EnvironmentID: environmentID}
+	source := db.LockChildWorkspacePairRow{ID: pgvalue.UUID(sourceID), EnvironmentID: environmentID}
+	target := db.LockChildWorkspacePairRow{ID: pgvalue.UUID(targetID), EnvironmentID: environmentID}
 	locators := db.GetLiveRunLeaseLocatorsRow{EnvironmentID: environmentID}
 
 	got, err := sourceChildWorkspace(
-		[]db.Workspace{target, source},
+		[]db.LockChildWorkspacePairRow{target, source},
 		sourceID,
 		targetID,
 		locators,
@@ -134,7 +134,7 @@ func TestSourceChildWorkspaceRequiresExactPair(t *testing.T) {
 		t.Fatalf("sourceChildWorkspace() = %+v, %v", got, err)
 	}
 	if _, err := sourceChildWorkspace(
-		[]db.Workspace{source},
+		[]db.LockChildWorkspacePairRow{source},
 		sourceID,
 		targetID,
 		locators,
