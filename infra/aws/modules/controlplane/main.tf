@@ -150,7 +150,7 @@ locals {
 
   dispatcher_secrets = merge({
     ENCRYPTION_KEY        = aws_secretsmanager_secret.encryption_key.arn
-    DATABASE_URL         = aws_secretsmanager_secret.database_url.arn
+    DATABASE_URL          = aws_secretsmanager_secret.database_url.arn
     WORKSPACE_FENCING_KEY = aws_secretsmanager_secret.workspace_fencing_key.arn
     }, local.telemetry_secrets
   )
