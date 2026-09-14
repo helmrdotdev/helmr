@@ -56,13 +56,15 @@ export function inspectCanonicalConfig(value: unknown): HelmrConfig {
   const record = value as Record<string, unknown>
   const keys = Object.keys(record).sort()
   if (
-    keys.length !== 2 ||
-    keys[0] !== "dirs" ||
-    keys[1] !== "ignorePatterns"
+    keys.length !== 3 ||
+    keys[0] !== "compilePackages" ||
+    keys[1] !== "dirs" ||
+    keys[2] !== "ignorePatterns"
   ) {
     throw new Error("canonical config does not match the build contract")
   }
   return inspectConfig({
+    compilePackages: record["compilePackages"],
     dirs: record["dirs"],
     ignorePatterns: record["ignorePatterns"],
   })

@@ -24,7 +24,7 @@ bun -e '
       return compileProgram({
         root: ".", runtimeRoot: process.cwd(), architecture: "x86_64",
         manager: "bun", nodeVersion: "24.21.0", outputRoot: output,
-        config: { dirs, ignorePatterns: [] },
+        config: { dirs, ignorePatterns: [], compilePackages: [] },
       })
     }
     const result = await compile(["dev/workflows/tasks"], "execution")

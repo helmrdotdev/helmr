@@ -156,7 +156,7 @@ The package manager owns archive installation and integrity. Installed packages
 are external by default, regardless of archive suffix or acquisition spelling.
 The packed SDK contains Node-ready JavaScript and needs no compile selector.
 Project-contained linked source compiles directly. For copied TypeScript source,
-set root `package.json` `helmr.compilePackages` to logical installed package roots
+set `helmr.config.ts` `compilePackages` to logical installed package roots
 such as `node_modules/my-source-package`. The compiler uses the resolved installed
 bytes, not inferred same-name source. Nested installed dependencies need their own
 selection. Review these path policies after install-layout or dependency changes:

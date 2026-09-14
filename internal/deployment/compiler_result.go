@@ -24,7 +24,7 @@ type ProgramCompilerResult struct {
 	Execution           ProgramCompilerExecution   `json:"execution"`
 	ExternalEdges       []ProgramExternalEdge      `json:"externalEdges"`
 	Inputs              []ProgramPathDigest        `json:"inputs"`
-	CompileSelection    ProgramCompileSelection    `json:"compileSelection"`
+	CompilePackages     []ProgramCompilePackage    `json:"compilePackages"`
 	Outputs             []ProgramModule            `json:"outputs"`
 	Selections          []ProgramCompilerSelection `json:"selections"`
 	TSConfigs           []ProgramPathDigest        `json:"tsconfigs"`
@@ -161,10 +161,10 @@ func validateProgramCompilerResult(manifest ProgramCompilerResult) error {
 			return errors.New("program compiler result external edges are not in canonical order")
 		}
 	}
-	if err := validateProgramCompileSelection(manifest.CompileSelection); err != nil {
+	if err := validateProgramCompilePackages(manifest.CompilePackages); err != nil {
 		return err
 	}
-	if err := validateCompiledInputs(manifest.Inputs, manifest.CompileSelection); err != nil {
+	if err := validateCompiledInputs(manifest.Inputs, manifest.CompilePackages); err != nil {
 		return err
 	}
 	for index, config := range manifest.TSConfigs {
@@ -318,6 +318,7 @@ func compilerOptionsDigest(
 		SourcesContent        bool     `json:"sourcesContent"`
 		SourceSemantics       string   `json:"sourceSemantics"`
 		DependencyBoundary    string   `json:"dependencyBoundary"`
+		RootConfig            string   `json:"rootConfig"`
 		Splitting             bool     `json:"splitting"`
 		Target                string   `json:"target"`
 		TreeShaking           bool     `json:"treeShaking"`
@@ -339,6 +340,7 @@ func compilerOptionsDigest(
 		SourcesContent:        false,
 		SourceSemantics:       "pinned-esbuild",
 		DependencyBoundary:    "explicit-installed-roots",
+		RootConfig:            "build-only",
 		Splitting:             false,
 		Target:                "node" + nodeVersion,
 		TreeShaking:           true,
@@ -360,7 +362,7 @@ func verifyProgramCompilerFiles(
 	artifact *inspectedArtifact,
 	manifest ProgramCompilerResult,
 ) error {
-	if err := verifyProgramCompileSelection(ctx, artifact, manifest.CompileSelection); err != nil {
+	if err := verifyProgramCompilePackages(ctx, artifact, manifest.CompilePackages, manifest.Config); err != nil {
 		return err
 	}
 	if err := verifyProgramExternalEdges(artifact, manifest.ExternalEdges); err != nil {
@@ -397,7 +399,7 @@ func verifyProgramCompilerFiles(
 			ctx,
 			artifact,
 			output.SourceMapPath,
-			manifest.CompileSelection,
+			manifest.CompilePackages,
 			inputSet,
 		); err != nil {
 			return err
@@ -470,7 +472,7 @@ func verifyProgramSourceMap(
 	ctx context.Context,
 	artifact *inspectedArtifact,
 	sourceMapPath string,
-	selection ProgramCompileSelection,
+	selection []ProgramCompilePackage,
 	allowedSources map[string]struct{},
 ) error {
 	raw, err := artifact.read(ctx, sourceMapPath, maxProgramFileSizeBytes)

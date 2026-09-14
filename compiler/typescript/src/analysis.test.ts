@@ -196,6 +196,7 @@ function normalizedConfig(
   return {
     dirs: options.dirs.map((value) => value.replace(/^\.\//, "")).sort(),
     ignorePatterns: [...(options.ignorePatterns ?? [])].sort(),
+    compilePackages: [],
   }
 }
 

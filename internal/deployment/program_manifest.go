@@ -23,7 +23,7 @@ type ProgramManifest struct {
 	FormatVersion      int                     `json:"formatVersion"`
 	Config             ProgramPathDigest       `json:"config"`
 	ExternalEdges      []ProgramExternalEdge   `json:"externalEdges"`
-	CompileSelection   ProgramCompileSelection `json:"compileSelection"`
+	CompilePackages    []ProgramCompilePackage `json:"compilePackages"`
 	CompiledInputs     []ProgramPathDigest     `json:"compiledInputs"`
 	Modules            []ProgramModule         `json:"modules"`
 	ProgramIndexDigest string                  `json:"programIndexDigest"`
@@ -128,10 +128,10 @@ func validateProgramManifest(manifest ProgramManifest) error {
 			return errors.New("program manifest external edges are not in canonical order")
 		}
 	}
-	if err := validateProgramCompileSelection(manifest.CompileSelection); err != nil {
+	if err := validateProgramCompilePackages(manifest.CompilePackages); err != nil {
 		return err
 	}
-	if err := validateCompiledInputs(manifest.CompiledInputs, manifest.CompileSelection); err != nil {
+	if err := validateCompiledInputs(manifest.CompiledInputs, manifest.CompilePackages); err != nil {
 		return err
 	}
 	if len(manifest.Modules) == 0 {
@@ -211,7 +211,7 @@ func programManifestFromCompilerResult(
 		FormatVersion:      ProgramManifestFormatVersion,
 		Config:             result.Config,
 		ExternalEdges:      slices.Clone(result.ExternalEdges),
-		CompileSelection:   ProgramCompileSelection{PackageJSONDigest: result.CompileSelection.PackageJSONDigest, Packages: slices.Clone(result.CompileSelection.Packages)},
+		CompilePackages:    slices.Clone(result.CompilePackages),
 		CompiledInputs:     slices.Clone(result.Inputs),
 		Modules:            slices.Clone(result.Outputs),
 		ProgramIndexDigest: indexDigest,
@@ -223,7 +223,7 @@ func verifyProgramManifestFiles(
 	artifact *inspectedArtifact,
 	manifest ProgramManifest,
 ) error {
-	if err := verifyProgramCompileSelection(ctx, artifact, manifest.CompileSelection); err != nil {
+	if err := verifyProgramCompilePackages(ctx, artifact, manifest.CompilePackages, manifest.Config); err != nil {
 		return err
 	}
 	if err := verifyProgramExternalEdges(artifact, manifest.ExternalEdges); err != nil {
@@ -259,7 +259,7 @@ func verifyProgramManifestFiles(
 			ctx,
 			artifact,
 			module.SourceMapPath,
-			manifest.CompileSelection,
+			manifest.CompilePackages,
 			inputSet,
 		); err != nil {
 			return err

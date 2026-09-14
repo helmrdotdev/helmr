@@ -3289,6 +3289,8 @@ function assertUnicodeString(value) {
 }
 
 // sdk/typescript/src/config.ts
+var encoder2 = new TextEncoder;
+var encode2 = TextEncoder.prototype.encode.call.bind(TextEncoder.prototype.encode);
 var arrayPrototype = Array.prototype;
 var objectPrototype = Object.prototype;
 var startsWith = String.prototype.startsWith.call.bind(String.prototype.startsWith);

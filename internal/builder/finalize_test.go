@@ -325,7 +325,7 @@ func writeVerifiedProgramFixture(
 	if encoder == "" {
 		t.Skip("HELMR_SQUASHFS_ENCODER is not set")
 	}
-	configRaw := []byte(`{"dirs":["tasks"],"ignorePatterns":[]}`)
+	configRaw := []byte(`{"compilePackages":[],"dirs":["tasks"],"ignorePatterns":[]}`)
 	sourcePath := "tasks/build.ts"
 	sourceRaw := []byte("export const build = task({ id: \"build\" })\n")
 	moduleHash := sha256.Sum256([]byte(sourcePath))
@@ -366,9 +366,9 @@ func writeVerifiedProgramFixture(
 		Config: deployment.ProgramPathDigest{
 			Digest: sha256sum.DigestBytes(configRaw), Path: "helmr/config.json",
 		},
-		ExternalEdges:    []deployment.ProgramExternalEdge{},
-		CompileSelection: deployment.ProgramCompileSelection{PackageJSONDigest: sha256sum.DigestBytes([]byte(`{"packageManager":"yarn@4.9.2"}`)), Packages: []deployment.ProgramCompilePackage{}},
-		CompiledInputs:   []deployment.ProgramPathDigest{{Path: sourcePath, Digest: sha256sum.DigestBytes(sourceRaw)}},
+		ExternalEdges:   []deployment.ProgramExternalEdge{},
+		CompilePackages: []deployment.ProgramCompilePackage{},
+		CompiledInputs:  []deployment.ProgramPathDigest{{Path: sourcePath, Digest: sha256sum.DigestBytes(sourceRaw)}},
 		Modules: []deployment.ProgramModule{{
 			ModuleDigest: sha256sum.DigestBytes(moduleRaw), ModulePath: modulePath,
 			SourceMapDigest: sha256sum.DigestBytes(sourceMapRaw),

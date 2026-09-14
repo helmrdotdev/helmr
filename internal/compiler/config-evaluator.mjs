@@ -36,6 +36,8 @@ function assertUnicodeString(value) {
 }
 
 // sdk/typescript/src/config.ts
+var encoder2 = new TextEncoder;
+var encode2 = TextEncoder.prototype.encode.call.bind(TextEncoder.prototype.encode);
 var arrayIsArray = Array.isArray;
 var arrayPrototype = Array.prototype;
 var defineProperty = Object.defineProperty;
@@ -78,6 +80,26 @@ function validateDirectory(value) {
   }
   return normalized;
 }
+function validateCompilePackage(value) {
+  if (typeof value !== "string" || !hasOnlyUnicodeScalarValues(value) || hasControl(value) || includes(value, "\\")) {
+    throw new Error("config compilePackages entries must be clean installed package roots");
+  }
+  const parts = split(value, "/");
+  let slot = -1;
+  let invalidPart = false;
+  for (let index = 0;index < parts.length; index++) {
+    const part = parts[index];
+    if (part === "node_modules")
+      slot = index;
+    if (part === "" || part === "." || part === ".." || part === ".helmr" || encode2(encoder2, part).length > 255)
+      invalidPart = true;
+  }
+  const end = slot + (startsWith(parts[slot + 1] ?? "", "@") ? 3 : 2);
+  if (slot < 0 || end !== parts.length || parts.length > 128 || value === "helmr" || startsWith(value, "helmr/") || encode2(encoder2, `/opt/helmr/program/${value}\x00`).length > 4096 || invalidPart) {
+    throw new Error("config compilePackages entries must be clean installed package roots, e.g. node_modules/@scope/package");
+  }
+  return value;
+}
 function validateIgnorePattern(value) {
   if (typeof value !== "string" || value === "" || !hasOnlyUnicodeScalarValues(value) || startsWith(value, "./") || startsWith(value, "/") || endsWith(value, "/") || includes(value, "//") || includes(value, "\\") || hasControl(value) || startsWith(value, "!") || regexpTest(/[[\]{}]/, value) || regexpTest(/[?*+@!]\(/, value)) {
     throw new Error(`unsupported ignorePattern ${JSON.stringify(value)}`);
@@ -108,18 +130,18 @@ function normalizeConfig(value) {
   let invalidKey = !hasOwn(descriptors, "dirs");
   for (let index = 0;index < keys.length; index++) {
     const key = keys[index];
-    if (typeof key !== "string" || key !== "dirs" && key !== "ignorePatterns") {
+    if (typeof key !== "string" || key !== "dirs" && key !== "ignorePatterns" && key !== "compilePackages") {
       invalidKey = true;
       break;
     }
   }
   if (invalidKey) {
-    throw new Error("config requires exactly dirs and optional ignorePatterns");
+    throw new Error("config requires dirs and optional ignorePatterns and compilePackages");
   }
   for (let index = 0;index < keys.length; index++) {
     const key = keys[index];
     if (typeof key !== "string") {
-      throw new Error("config requires exactly dirs and optional ignorePatterns");
+      throw new Error("config requires dirs and optional ignorePatterns and compilePackages");
     }
     const descriptor = descriptors[key];
     if (descriptor === undefined || !descriptor.enumerable || !hasOwn(descriptor, "value")) {
@@ -128,7 +150,9 @@ function normalizeConfig(value) {
   }
   const dirs = normalizeStringSet(descriptors["dirs"]?.value, "config dirs", validateDirectory, true);
   const ignorePatterns = normalizeStringSet(hasOwn(descriptors, "ignorePatterns") ? descriptors["ignorePatterns"]?.value : [], "config ignorePatterns", validateIgnorePattern, false);
+  const compilePackages = normalizeStringSet(hasOwn(descriptors, "compilePackages") ? descriptors["compilePackages"]?.value : [], "config compilePackages", validateCompilePackage, false);
   return freeze({
+    compilePackages: freeze(compilePackages),
     dirs: freeze(dirs),
     ignorePatterns: freeze(ignorePatterns)
   });
@@ -362,18 +386,22 @@ import { createWriteStream } from "node:fs";
 
 // compiler/typescript/src/bundle.ts
 import {
-  build,
+  build as build2,
   version as esbuildVersion
 } from "esbuild";
+import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
 import {
+  lstat,
   mkdir,
   readFile as readFile2,
-  realpath as realpath2,
+  realpath,
   rm,
-  stat as stat2,
+  stat,
   writeFile
 } from "node:fs/promises";
-import { dirname, relative as relative2, resolve as resolve2, sep as sep2 } from "node:path";
+import { dirname as dirname2, relative as relative2, resolve, sep } from "node:path";
+import { pathToFileURL as pathToFileURL2 } from "node:url";
 
 // node_modules/.bun/jsonc-parser@3.3.1/node_modules/jsonc-parser/lib/esm/impl/scanner.js
 function createScanner(text, ignoreTrivia = false) {
@@ -831,63 +859,48 @@ var ParseOptions;
     allowTrailingComma: false
   };
 })(ParseOptions || (ParseOptions = {}));
-function parseTree(text, errors = [], options = ParseOptions.DEFAULT) {
-  let currentParent = { type: "array", offset: -1, length: -1, children: [], parent: undefined };
-  function ensurePropertyComplete(endOffset) {
-    if (currentParent.type === "property") {
-      currentParent.length = endOffset - currentParent.offset;
-      currentParent = currentParent.parent;
+function parse(text, errors = [], options = ParseOptions.DEFAULT) {
+  let currentProperty = null;
+  let currentParent = [];
+  const previousParents = [];
+  function onValue(value) {
+    if (Array.isArray(currentParent)) {
+      currentParent.push(value);
+    } else if (currentProperty !== null) {
+      currentParent[currentProperty] = value;
     }
   }
-  function onValue(valueNode) {
-    currentParent.children.push(valueNode);
-    return valueNode;
-  }
   const visitor = {
-    onObjectBegin: (offset) => {
-      currentParent = onValue({ type: "object", offset, length: -1, parent: currentParent, children: [] });
+    onObjectBegin: () => {
+      const object = {};
+      onValue(object);
+      previousParents.push(currentParent);
+      currentParent = object;
+      currentProperty = null;
     },
-    onObjectProperty: (name, offset, length) => {
-      currentParent = onValue({ type: "property", offset, length: -1, parent: currentParent, children: [] });
-      currentParent.children.push({ type: "string", value: name, offset, length, parent: currentParent });
+    onObjectProperty: (name) => {
+      currentProperty = name;
     },
-    onObjectEnd: (offset, length) => {
-      ensurePropertyComplete(offset + length);
-      currentParent.length = offset + length - currentParent.offset;
-      currentParent = currentParent.parent;
-      ensurePropertyComplete(offset + length);
+    onObjectEnd: () => {
+      currentParent = previousParents.pop();
     },
-    onArrayBegin: (offset, length) => {
-      currentParent = onValue({ type: "array", offset, length: -1, parent: currentParent, children: [] });
+    onArrayBegin: () => {
+      const array = [];
+      onValue(array);
+      previousParents.push(currentParent);
+      currentParent = array;
+      currentProperty = null;
     },
-    onArrayEnd: (offset, length) => {
-      currentParent.length = offset + length - currentParent.offset;
-      currentParent = currentParent.parent;
-      ensurePropertyComplete(offset + length);
+    onArrayEnd: () => {
+      currentParent = previousParents.pop();
     },
-    onLiteralValue: (value, offset, length) => {
-      onValue({ type: getNodeType(value), offset, length, parent: currentParent, value });
-      ensurePropertyComplete(offset + length);
-    },
-    onSeparator: (sep, offset, length) => {
-      if (currentParent.type === "property") {
-        if (sep === ":") {
-          currentParent.colonOffset = offset;
-        } else if (sep === ",") {
-          ensurePropertyComplete(offset);
-        }
-      }
-    },
+    onLiteralValue: onValue,
     onError: (error, offset, length) => {
       errors.push({ error, offset, length });
     }
   };
   visit(text, visitor, options);
-  const result = currentParent.children[0];
-  if (result) {
-    delete result.parent;
-  }
-  return result;
+  return currentParent[0];
 }
 function visit(text, visitor, options = ParseOptions.DEFAULT) {
   const _scanner = createScanner(text, false);
@@ -1141,26 +1154,6 @@ function visit(text, visitor, options = ParseOptions.DEFAULT) {
   }
   return true;
 }
-function getNodeType(value) {
-  switch (typeof value) {
-    case "boolean":
-      return "boolean";
-    case "number":
-      return "number";
-    case "string":
-      return "string";
-    case "object": {
-      if (!value) {
-        return "null";
-      } else if (Array.isArray(value)) {
-        return "array";
-      }
-      return "object";
-    }
-    default:
-      return "null";
-  }
-}
 
 // node_modules/.bun/jsonc-parser@3.3.1/node_modules/jsonc-parser/lib/esm/main.js
 var ScanError;
@@ -1193,7 +1186,7 @@ var SyntaxKind;
   SyntaxKind2[SyntaxKind2["Unknown"] = 16] = "Unknown";
   SyntaxKind2[SyntaxKind2["EOF"] = 17] = "EOF";
 })(SyntaxKind || (SyntaxKind = {}));
-var parseTree2 = parseTree;
+var parse2 = parse;
 var ParseErrorCode;
 (function(ParseErrorCode2) {
   ParseErrorCode2[ParseErrorCode2["InvalidSymbol"] = 1] = "InvalidSymbol";
@@ -1224,9 +1217,6 @@ var textDecoder = new TextDecoder("utf-8", { fatal: true });
 var maxVerificationFailureMessageBytes = 16 << 10;
 
 // compiler/typescript/src/compile-selection.ts
-import { createHash } from "node:crypto";
-import { lstat, readFile, realpath, stat } from "node:fs/promises";
-import { relative, resolve, sep } from "node:path";
 function installedPackageRoot(path) {
   const parts = path.split("/");
   const index = parts.lastIndexOf("node_modules");
@@ -1241,89 +1231,71 @@ function selectedPackage(path, roots) {
   const owner = installedPackageRoot(path);
   return owner !== undefined && roots.has(owner);
 }
-async function readCompileSelection(root) {
-  root = await realpath(root);
-  const raw = await regularManifest(resolve(root, "package.json"));
-  const manifest = parseManifest(raw);
-  const helmr = manifest["helmr"];
-  let selectors = [];
-  if (helmr !== undefined) {
-    if (!object(helmr) || Object.keys(helmr).some((key) => key !== "compilePackages")) {
-      throw new Error("package.json helmr must be an object containing only compilePackages");
+
+// compiler/typescript/src/config-origin.ts
+import { build } from "esbuild";
+import { readFile } from "node:fs/promises";
+import { dirname, extname, relative } from "node:path";
+import { pathToFileURL } from "node:url";
+function configOrigin(root, target) {
+  return {
+    name: "helmr-config-origin",
+    setup(outer) {
+      outer.onLoad({ filter: /\.[cm]?[jt]sx?$/ }, async ({ path }) => {
+        const contents = await readFile(path, "utf8");
+        const extension = extname(path);
+        const loader = extension === ".tsx" ? "tsx" : extension === ".jsx" ? "jsx" : extension.endsWith("ts") ? "ts" : "js";
+        const location = JSON.stringify(relative(root, path));
+        const shim = `
+          import { createRequire } from "node:module";
+          const url = ${JSON.stringify(pathToFileURL(path).href)};
+          const filename = ${JSON.stringify(path)};
+          const dirname = ${JSON.stringify(dirname(path))};
+          const meta = { url, filename, dirname, main: false, resolve() {
+            throw new Error(${JSON.stringify(`Config source ${location}: import.meta.resolve() is unsupported; use a Node-ready installed JavaScript helper for native import resolution`)});
+          }};
+          const resolve = createRequire(url).resolve;
+          export { meta as "import.meta", filename as "__filename",
+            dirname as "__dirname", resolve as "require.resolve" };
+        `;
+        const transformed = await build({
+          absWorkingDir: root,
+          entryPoints: [path],
+          outfile: `${path}.helmr-origin.js`,
+          bundle: false,
+          write: false,
+          platform: "node",
+          target,
+          sourcemap: "inline",
+          sourcesContent: true,
+          logLevel: "silent",
+          inject: ["<helmr-config-origin>"],
+          plugins: [{
+            name: "helmr-captured-config-source",
+            setup(inner) {
+              inner.onResolve({ filter: /^<helmr-config-origin>$/ }, () => ({
+                path,
+                namespace: "helmr-origin"
+              }));
+              inner.onLoad({ filter: /.*/, namespace: "helmr-origin" }, () => ({
+                contents: shim,
+                loader: "js"
+              }));
+              inner.onLoad({ filter: /.*/ }, (args) => args.path === path ? { contents, loader, resolveDir: dirname(path) } : undefined);
+            }
+          }]
+        });
+        if (transformed.outputFiles?.length !== 1) {
+          throw new Error("config origin transform must produce one virtual output");
+        }
+        return {
+          contents: transformed.outputFiles[0].text,
+          loader: "js",
+          resolveDir: dirname(path)
+        };
+      });
     }
-    const value = helmr["compilePackages"];
-    if (value !== undefined) {
-      if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
-        throw new Error("package.json helmr.compilePackages must be a string array");
-      }
-      selectors = value;
-    }
-  }
-  if (new Set(selectors).size !== selectors.length) {
-    throw new Error("package.json helmr.compilePackages contains duplicate selectors");
-  }
-  const packages = [];
-  for (const logicalRoot of [...selectors].sort(compareUTF82)) {
-    try {
-      if (!validPath(logicalRoot) || installedPackageRoot(logicalRoot) !== logicalRoot) {
-        throw new Error("expected a clean project-relative installed package root, e.g. node_modules/@scope/package");
-      }
-      const target = await realpath(resolve(root, logicalRoot));
-      const resolvedRoot = relative(root, target).split(sep).join("/");
-      if (!validPath(resolvedRoot))
-        throw new Error("resolved root escapes project or uses a reserved path");
-      if (!(await stat(target)).isDirectory())
-        throw new Error("selected root is not a directory");
-      if (resolvedRoot.split("/").includes("node_modules") && installedPackageRoot(resolvedRoot) !== resolvedRoot) {
-        throw new Error("resolved root is not an installed package root");
-      }
-      parseManifest(await regularManifest(resolve(target, "package.json")));
-      packages.push({ logicalRoot, resolvedRoot });
-    } catch (error) {
-      throw new Error(`package.json helmr.compilePackages selector ${JSON.stringify(logicalRoot)}: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-  return { packageJsonDigest: `sha256:${createHash("sha256").update(raw).digest("hex")}`, packages };
-}
-function validPath(path) {
-  const parts = path.split("/");
-  return path.isWellFormed() && !/[\\\p{Cc}]/u.test(path) && path !== "helmr" && !path.startsWith("helmr/") && parts.length <= 128 && Buffer.byteLength(`/opt/helmr/program/${path}\x00`) <= 4096 && parts.every((part) => part !== "" && part !== "." && part !== ".." && part !== ".helmr" && Buffer.byteLength(part) <= 255);
-}
-async function regularManifest(path) {
-  const metadata = await lstat(path);
-  if (!metadata.isFile())
-    throw new Error(`package manifest must be a regular file: ${path}`);
-  if (metadata.size > 16 << 20)
-    throw new Error(`package manifest exceeds 16 MiB: ${path}`);
-  return readFile(path);
-}
-function object(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function parseManifest(raw) {
-  const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(raw);
-  const errors = [];
-  const tree = parseTree2(text, errors, { allowTrailingComma: false, disallowComments: true });
-  if (errors.length || tree?.type !== "object")
-    throw new Error("package.json must be a strict JSON object");
-  function visit2(node) {
-    if (node.type === "number" && !Number.isFinite(node.value) || node.type === "string" && !node.value.isWellFormed()) {
-      throw new Error("package.json contains a non-finite number or invalid Unicode string");
-    }
-    if (node.type === "object") {
-      const names = new Set;
-      for (const property of node.children ?? []) {
-        const name = property.children[0].value;
-        if (names.has(name))
-          throw new Error(`package.json contains duplicate object key ${JSON.stringify(name)}`);
-        names.add(name);
-      }
-    }
-    for (const child of node.children ?? [])
-      visit2(child);
-  }
-  visit2(tree);
-  return JSON.parse(text);
+  };
 }
 
 // compiler/typescript/src/bundle.ts
@@ -1332,22 +1304,24 @@ if (esbuildVersion !== ESBUILD_VERSION) {
   throw new Error(`esbuild version ${JSON.stringify(esbuildVersion)} does not match ${ESBUILD_VERSION}`);
 }
 async function compileConfig(options) {
-  const root = await realpath2(options.root);
-  const entry = resolve2(root, "helmr.config.ts");
-  const compileSelection = await readCompileSelection(root);
-  const selectedRoots = new Set(compileSelection.packages.map((item) => item.resolvedRoot));
-  const outputRoot = resolve2(options.outputRoot, "config");
+  const root = await realpath(options.root);
+  const entry = resolve(root, "helmr.config.ts");
+  if (!(await lstat(entry)).isFile()) {
+    throw new Error("helmr.config.ts must be a regular file");
+  }
+  const outputRoot = resolve(options.outputRoot, "config");
   await mkdir(outputRoot, { recursive: false });
   try {
-    const output = resolve2(outputRoot, "config-evaluation.mjs");
+    const output = resolve(outputRoot, "config-evaluation.mjs");
     const compiled = await bundleFile({
       root,
       entry,
       nodeVersion: options.nodeVersion,
       outfile: output,
-      runtimeRoot: root,
-      selectedRoots
+      runtimeRoot: root
     });
+    await compilerTSConfigs(root, Object.keys(compiled.metafile.inputs));
+    await writeFile(`${output}.map`, compiled.map);
     await writeFile(output, compiled.code);
     return {
       path: output,
@@ -1362,8 +1336,14 @@ async function compileConfig(options) {
 }
 async function bundleFile(options) {
   const externalEdges = [];
-  const result = await build({
-    ...baseOptions(options.root, options.runtimeRoot, options.nodeVersion, options.selectedRoots, externalEdges),
+  const result = await build2({
+    ...baseOptions(options.root, options.runtimeRoot, options.nodeVersion, new Set, externalEdges, [configOrigin(options.root, esbuildNodeTarget(options.nodeVersion))], "config"),
+    sourcemap: "linked",
+    logOverride: {
+      "unsupported-require-call": "error",
+      "indirect-require": "error",
+      "unsupported-dynamic-import": "error"
+    },
     entryPoints: [options.entry],
     outfile: options.outfile
   });
@@ -1374,7 +1354,7 @@ async function bundleFile(options) {
   };
   return output;
 }
-function baseOptions(root, runtimeRoot, nodeVersion, selectedRoots, externalEdges, plugins = []) {
+function baseOptions(root, runtimeRoot, nodeVersion, selectedRoots, externalEdges, plugins = [], phase = "program") {
   return {
     absWorkingDir: root,
     bundle: true,
@@ -1384,7 +1364,7 @@ function baseOptions(root, runtimeRoot, nodeVersion, selectedRoots, externalEdge
     metafile: true,
     packages: "bundle",
     platform: "node",
-    plugins: [...plugins, dependencyBoundary(root, runtimeRoot, selectedRoots, externalEdges)],
+    plugins: [...plugins, dependencyBoundary(root, runtimeRoot, selectedRoots, externalEdges, phase)],
     banner: {
       js: 'import { createRequire as __helmrCreateRequire } from "node:module"; const require = __helmrCreateRequire(import.meta.url);'
     },
@@ -1402,16 +1382,21 @@ function esbuildNodeTarget(nodeVersion) {
   }
   return `node${nodeVersion}`;
 }
-function dependencyBoundary(root, runtimeRoot, selectedRoots, externalEdges) {
-  const canonicalRoot = resolve2(root);
+function dependencyBoundary(root, runtimeRoot, selectedRoots, externalEdges, phase) {
+  const canonicalRoot = resolve(root);
   return {
     name: "helmr-dependency-boundary",
-    setup(build2) {
-      build2.onResolve({ filter: /.*/ }, async (args) => {
+    async setup(build3) {
+      const rootConfig = phase === "program" ? await realpath(resolve(canonicalRoot, "helmr.config.ts")).catch((error) => {
+        if (error.code === "ENOENT")
+          return;
+        throw error;
+      }) : undefined;
+      build3.onResolve({ filter: /.*/ }, async (args) => {
         if (args.pluginData === resolvedByBoundary || args.path.startsWith("node:")) {
           return;
         }
-        const result = await build2.resolve(args.path, {
+        const result = await build3.resolve(args.path, {
           importer: args.importer,
           kind: args.kind,
           namespace: args.namespace,
@@ -1423,8 +1408,8 @@ function dependencyBoundary(root, runtimeRoot, selectedRoots, externalEdges) {
           return result;
         if (result.path === "")
           return result;
-        const logicalPath = projectPath(canonicalRoot, resolve2(result.path));
-        const path = await realpath2(result.path);
+        const logicalPath = projectPath(canonicalRoot, resolve(result.path));
+        const path = await realpath(result.path);
         const resolvedPath = projectPath(canonicalRoot, path);
         if (!inside(relative2(canonicalRoot, path))) {
           return {
@@ -1433,17 +1418,23 @@ function dependencyBoundary(root, runtimeRoot, selectedRoots, externalEdges) {
             }]
           };
         }
-        if (selectedPackage(resolvedPath, selectedRoots)) {
-          return { path };
+        if (phase === "program" && path === rootConfig) {
+          return { errors: [{ text: "helmr.config.ts is build-only and cannot be imported by Program source; move shared data or helpers to an ordinary module" }] };
+        }
+        if (phase === "config" && /\.(?:[cm]?ts|tsx|jsx)$/.test(path)) {
+          return;
+        }
+        if (phase === "program" && selectedPackage(resolvedPath, selectedRoots)) {
+          return;
         }
         if (hasNodeModules(resolvedPath)) {
-          const importer = args.importer === "" ? args.importer : projectPath(canonicalRoot, resolve2(args.importer));
+          const importer = args.importer === "" ? args.importer : projectPath(canonicalRoot, resolve(args.importer));
           if (/\.(?:ts|tsx|mts|cts)$/.test(resolvedPath)) {
             return { errors: [{
-              text: `Cannot externalize TypeScript dependency ${JSON.stringify(args.path)} imported by ${JSON.stringify(importer)}: ${resolvedPath}. Node cannot execute TypeScript under node_modules. Add ${JSON.stringify(installedPackageRoot(resolvedPath))} to package.json helmr.compilePackages to compile this installed package, or install Node-ready JavaScript.`
+              text: `Cannot externalize TypeScript dependency ${JSON.stringify(args.path)} imported by ${JSON.stringify(importer)}: ${resolvedPath}. Node cannot execute TypeScript under node_modules. Add ${JSON.stringify(installedPackageRoot(resolvedPath))} to helmr.config.ts compilePackages to compile this installed package, or install Node-ready JavaScript.`
             }] };
           }
-          const runtimePath = resolve2(runtimeRoot, logicalPath);
+          const runtimePath = resolve(runtimeRoot, logicalPath);
           externalEdges.push({
             importer,
             kind: args.kind,
@@ -1452,13 +1443,13 @@ function dependencyBoundary(root, runtimeRoot, selectedRoots, externalEdges) {
             runtimePath,
             specifier: args.path
           });
-          const target = resolve2(runtimeRoot, logicalPath);
+          const target = resolve(runtimeRoot, logicalPath);
           return {
             external: true,
             path: target
           };
         }
-        return { path };
+        return;
       });
     }
   };
@@ -1496,19 +1487,107 @@ function requiredMetafile(metafile) {
     throw new Error("esbuild returned no metafile");
   return metafile;
 }
+async function compilerTSConfigs(root, inputs) {
+  const roots = new Set;
+  for (const input of inputs) {
+    let directory = dirname2(resolve(root, input));
+    for (;; ) {
+      const candidate = resolve(directory, "tsconfig.json");
+      try {
+        await readFile2(candidate);
+        roots.add(candidate);
+        break;
+      } catch (error) {
+        if (error.code !== "ENOENT")
+          throw error;
+      }
+      if (directory === root)
+        break;
+      const parent = dirname2(directory);
+      if (!inside(relative2(root, parent)))
+        break;
+      directory = parent;
+    }
+  }
+  const configs = new Map;
+  const pending = [...roots];
+  while (pending.length !== 0) {
+    const candidate = await realpath(pending.shift());
+    const path = projectPath(root, candidate);
+    if (!inside(path)) {
+      throw new Error(`tsconfig path escapes project: ${candidate}`);
+    }
+    if (configs.has(path))
+      continue;
+    const contents = await readFile2(candidate);
+    configs.set(path, `sha256:${sha256(contents)}`);
+    const errors = [];
+    const document = parse2(contents.toString("utf8"), errors, {
+      allowTrailingComma: true,
+      disallowComments: false
+    });
+    if (errors.length !== 0 || typeof document !== "object" || document === null || Array.isArray(document)) {
+      throw new Error(`tsconfig ${JSON.stringify(path)} is not valid JSONC`);
+    }
+    const extended = document["extends"];
+    const values = typeof extended === "string" ? [extended] : Array.isArray(extended) && extended.every((value) => typeof value === "string") ? extended : extended === undefined ? [] : (() => {
+      throw new Error(`tsconfig ${JSON.stringify(path)} has invalid extends`);
+    })();
+    for (const specifier of values) {
+      pending.push(await resolveTSConfigExtends(candidate, specifier));
+    }
+  }
+  return [...configs].map(([path, digest]) => ({ digest, path })).sort((left, right) => compareUTF82(left.path, right.path));
+}
+async function resolveTSConfigExtends(configPath, specifier) {
+  const directory = dirname2(configPath);
+  if (specifier.startsWith(".") || specifier.startsWith("/") || /^[A-Za-z]:[\\/]/.test(specifier)) {
+    return requiredConfigPath(resolve(directory, specifier));
+  }
+  const require2 = createRequire(pathToFileURL2(configPath));
+  for (const candidate of [specifier, `${specifier}/tsconfig.json`]) {
+    try {
+      return require2.resolve(candidate);
+    } catch (error) {
+      if (error.code !== "MODULE_NOT_FOUND") {
+        throw error;
+      }
+    }
+  }
+  throw new Error(`tsconfig ${JSON.stringify(configPath)} cannot resolve extends ${JSON.stringify(specifier)}`);
+}
+async function requiredConfigPath(candidate) {
+  for (const path of [
+    candidate,
+    `${candidate}.json`,
+    resolve(candidate, "tsconfig.json")
+  ]) {
+    try {
+      if ((await stat(path)).isFile())
+        return path;
+    } catch (error) {
+      if (error.code !== "ENOENT")
+        throw error;
+    }
+  }
+  throw new Error(`extended tsconfig ${JSON.stringify(candidate)} does not exist`);
+}
 function projectPath(root, value) {
-  return relative2(root, value).split(sep2).join("/");
+  return relative2(root, value).split(sep).join("/");
+}
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
 }
 function hasNodeModules(path) {
-  return path.split(sep2).includes("node_modules");
+  return path.split(sep).includes("node_modules");
 }
 function inside(path) {
-  return path === "" || path !== ".." && !path.startsWith(`..${sep2}`) && !path.startsWith("/");
+  return path === "" || path !== ".." && !path.startsWith(`..${sep}`) && !path.startsWith("/");
 }
 
 // compiler/typescript/src/config.ts
 import { lstat as lstat2 } from "node:fs/promises";
-import { pathToFileURL } from "node:url";
+import { pathToFileURL as pathToFileURL3 } from "node:url";
 
 class MissingConfigError extends Error {
   constructor(path) {
@@ -1531,7 +1610,7 @@ async function loadConfig(path) {
   }
   let namespace;
   try {
-    const value = await import(pathToFileURL(path).href);
+    const value = await import(pathToFileURL3(path).href);
     if (typeof value !== "object" || value === null) {
       throw new Error("config did not evaluate to a module namespace");
     }
@@ -1578,9 +1657,9 @@ async function main() {
     throw new Error("Config Evaluator result descriptor is invalid");
   }
   const output = createWriteStream("", { fd, autoClose: false });
-  await new Promise((resolve3, reject) => {
+  await new Promise((resolve2, reject) => {
     output.once("error", reject);
-    output.end(frame, resolve3);
+    output.end(frame, resolve2);
   });
 }
 await main();

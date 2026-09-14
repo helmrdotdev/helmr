@@ -12,18 +12,54 @@ import { tmpdir } from "node:os"
 import { dirname, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 
-import { compileConfig, compileProgram, ESBUILD_VERSION } from "./bundle"
+import { compileConfig, compileProgram, compilerOptionsDigest, ESBUILD_VERSION } from "./bundle"
 import { inspectCanonicalConfig } from "./config"
 
 describe("v0 compiler contract", () => {
+  test("options digest matches Go admission", () => {
+    expect(compilerOptionsDigest("24.20.0")).toBe("sha256:56ebb1218cbd24870c0ac884cb09608fececc729c94f0f8f65614f1a0ec4a909")
+  })
+
+  test.each(["sub", "node_modules/copied"])("shared helper has the same config and full program semantics in %s", async (slot) => {
+    const root = await project()
+    await source(root, "tsconfig.json", '{"compilerOptions":{"jsxFactory":"rootFactory","useDefineForClassFields":true}}')
+    await source(root, `${slot}/package.json`, '{"type":"module"}')
+    await source(root, `${slot}/tsconfig.json`, '{"extends":"./base.json"}')
+    await source(root, `${slot}/base.json`, '{"compilerOptions":{"jsxFactory":"localFactory","useDefineForClassFields":false,"baseUrl":".","paths":{"@nested/*":["own/*"]}}}')
+    await source(root, `${slot}/own/value.ts`, 'export const marker="nested"')
+    await source(root, `${slot}/helper.tsx`, `
+      import {marker} from ${JSON.stringify(slot === "sub" ? "@nested/value.js" : "./own/value.ts")};
+      const rootFactory=()=>"root",localFactory=()=>"local",React={createElement:()=>"default"};
+      let effect="field";class Base{set value(v:number){effect="setter"}}class Child extends Base{value=1}
+      new Child();export const value=(<div/>)+"-"+effect+"-"+marker;
+    `)
+    await source(root, "helmr.config.ts", `import {value} from "./${slot}/helper.tsx";const config={dirs:[value]};export default config`)
+    const config = await compileConfig({ root, outputRoot: await output(), nodeVersion: "24.20.0" })
+    let value: string
+    try { value = (await import(pathToFileURL(config.path).href)).default.dirs[0] } finally { await config.cleanup() }
+    await source(root, "tasks/main.ts", `import {task} from "@helmr/sdk";import {value} from "../${slot}/helper.tsx";export const main=task({id:value,run:()=>value})`)
+    const result = await compile(root, slot.startsWith("node_modules") ? [slot] : [])
+    expect(value).toBe(slot === "sub" ? "local-setter-nested" : "default-field-nested")
+    expect(result.analysis.programDeclarations[0]?.declaredId).toBe(value)
+  })
+
+  test("standalone program compilation accepts canonical config without a root config source", async () => {
+    const root = await project()
+    await source(root, "tasks/main.ts", task("without-config-source"))
+    const compiled = await compile(root)
+    expect(compiled.analysis.programDeclarations[0]?.declaredId).toBe("without-config-source")
+  })
+
   test("accepts only the canonical Config Evaluator handoff", () => {
     expect(inspectCanonicalConfig({
       dirs: ["tasks"],
       ignorePatterns: [],
-    })).toEqual({ dirs: ["tasks"], ignorePatterns: [] })
+      compilePackages: [],
+    })).toEqual({ compilePackages: [], dirs: ["tasks"], ignorePatterns: [] })
     expect(() => inspectCanonicalConfig({
       dirs: ["tasks"],
       ignorePatterns: [],
+      compilePackages: [],
       unknown: true,
     })).toThrow("build contract")
   })
@@ -394,7 +430,7 @@ describe("v0 compiler contract", () => {
       declaredId: "packed-sdk", kind: "task", slots: ["handler"],
     }])
     const result = JSON.parse(new TextDecoder().decode(compiled.files.get("helmr/compiler-result.json")))
-    expect(result.compileSelection.packages).toEqual([])
+    expect(result.compilePackages).toEqual([])
     const code = [...compiled.files].filter(([path]) => path.endsWith(".mjs"))
       .map(([, bytes]) => new TextDecoder().decode(bytes)).join("\n")
     expect(code).toContain(resolve(root, "node_modules/@helmr/sdk/index.mjs"))
@@ -464,7 +500,6 @@ describe("v0 compiler contract", () => {
       "package.json",
       JSON.stringify({
         dependencies: { "@example/local": "file:packages/local" },
-        helmr: { compilePackages: ["node_modules/@example/local"] },
         type: "module",
       }),
     )
@@ -495,11 +530,11 @@ describe("v0 compiler contract", () => {
       ].join("\n"),
     )
 
-    const compiled = await compile(root)
+    const compiled = await compile(root, ["node_modules/@example/local"])
     const manifestRaw = JSON.parse(
       new TextDecoder().decode(compiled.files.get("helmr/compiler-result.json")),
     )
-    expect(manifestRaw.compileSelection.packages).toEqual([{
+    expect(manifestRaw.compilePackages).toEqual([{
       logicalRoot: "node_modules/@example/local",
       resolvedRoot: "node_modules/@example/local",
     }])
@@ -518,7 +553,6 @@ describe("v0 compiler contract", () => {
       "package.json",
       JSON.stringify({
         dependencies: { "@example/workspace": "workspace:*" },
-        helmr: { compilePackages: ["node_modules/@example/workspace"] },
         name: "workspace-root",
         private: true,
         type: "module",
@@ -552,11 +586,11 @@ describe("v0 compiler contract", () => {
       ].join("\n"),
     )
 
-    const compiled = await compile(root)
+    const compiled = await compile(root, ["node_modules/@example/workspace"])
     const result = JSON.parse(
       new TextDecoder().decode(compiled.files.get("helmr/compiler-result.json")),
     )
-    expect(result.compileSelection.packages).toEqual([{
+    expect(result.compilePackages).toEqual([{
       logicalRoot: "node_modules/@example/workspace",
       resolvedRoot: "node_modules/@example/workspace",
     }])
@@ -589,7 +623,7 @@ describe("v0 compiler contract", () => {
   test("selects scoped duplicate instances separately and follows file symlink targets", async () => {
     const root = await project()
     const nested = "node_modules/parent/node_modules/@s/same"
-    await source(root,"package.json",JSON.stringify({type:"module",helmr:{compilePackages:["node_modules/@s/same", "node_modules/parent", nested]}}))
+    await source(root,"package.json",JSON.stringify({type:"module"}))
     for (const [path, value] of [["node_modules/@s/same","root"],[nested,"nested"]]) {
       await source(root,`${path}/package.json`,JSON.stringify({name:"@s/same",type:"module",exports:"./index.ts"}))
       await source(root,`${path}/index.ts`,`export const value: string = ${JSON.stringify(value)}`)
@@ -597,39 +631,40 @@ describe("v0 compiler contract", () => {
     await source(root,"node_modules/parent/package.json",JSON.stringify({type:"module",exports:"./index.ts"}))
     await source(root,"node_modules/parent/index.ts",'export {value} from "@s/same"')
     await source(root,"tasks/duplicates.ts",'import {value as root} from "@s/same"; import {value as nested} from "parent"; import {task} from "@helmr/sdk"; export const declaration=task({id:root+"-"+nested,run:()=>nested})')
-    expect((await compile(root)).analysis.programDeclarations[0]?.declaredId).toBe("root-nested")
+    expect((await compile(root, ["node_modules/@s/same", "node_modules/parent", nested])).analysis.programDeclarations[0]?.declaredId).toBe("root-nested")
     await source(root,"node_modules/unselected/package.json",JSON.stringify({type:"module",exports:"./index.ts"}))
     await source(root,"node_modules/unselected/index.ts",'export const value="unselected"')
     await symlink("../unselected/index.ts",resolve(root,"node_modules/parent/linked.ts"))
     await source(root,"node_modules/parent/index.ts",'export {value} from "./linked.ts"')
-    await expect(compile(root)).rejects.toThrow("node_modules/unselected")
+    await expect(compile(root, ["node_modules/@s/same", "node_modules/parent", nested])).rejects.toThrow("node_modules/unselected")
   })
 
-  test.each(["ts", "tsx", "mts", "cts"])("rejects unselected static %s imports in config and program", async (extension) => {
+  test.each(["ts", "tsx", "mts", "cts"])("config loads installed %s without granting program compilation", async (extension) => {
     const root = await project()
     await source(root, "node_modules/raw/package.json", JSON.stringify({ type: "module", exports: `./index.${extension}` }))
     await source(root, `node_modules/raw/index.${extension}`, 'export const value = "raw"')
     await source(root, "helmr.config.ts", 'import { value } from "raw"; export default { dirs: [value] }')
     await source(root, "tasks/raw.ts", 'import { value } from "raw"; import { task } from "@helmr/sdk"; export const raw = task({id:value, run:()=>value})')
-    await expect(compileConfig({ root, outputRoot: await output(), nodeVersion: "24.19.0" })).rejects.toThrow('imported by "helmr.config.ts"')
+    const config = await compileConfig({ root, outputRoot: await output(), nodeVersion: "24.19.0" })
+    try { expect((await import(pathToFileURL(config.path).href)).default.dirs).toEqual(["raw"]) } finally { await config.cleanup() }
     await expect(compile(root)).rejects.toThrow('node_modules/raw')
   })
 
   test("selection stops at nested package boundaries and preserves external conditional exports and assets", async () => {
     const root = await project()
-    await source(root, "package.json", JSON.stringify({ type: "module", helmr: { compilePackages: ["node_modules/parent"] } }))
+    await source(root, "package.json", JSON.stringify({ type: "module" }))
     await source(root, "node_modules/parent/package.json", JSON.stringify({ type: "module", exports: "./index.ts" }))
     await source(root, "node_modules/parent/index.ts", 'import { value } from "@s/child"; export const id: string = value')
     await source(root, "node_modules/parent/node_modules/@s/child/package.json", JSON.stringify({ type: "module", exports: "./index.ts" }))
     await source(root, "node_modules/parent/node_modules/@s/child/index.ts", 'export const value = "child"')
     await source(root, "tasks/raw.ts", 'import { id } from "parent"; import { task } from "@helmr/sdk"; export const raw = task({id, run:()=>id})')
-    await expect(compile(root)).rejects.toThrow('node_modules/parent/node_modules/@s/child')
+    await expect(compile(root, ["node_modules/parent"])).rejects.toThrow('node_modules/parent/node_modules/@s/child')
     await source(root, "node_modules/parent/node_modules/@s/child/package.json", JSON.stringify({ type: "module", exports: { import: "./index.mjs", require: "./index.cjs" } }))
     await source(root, "node_modules/parent/node_modules/@s/child/index.mjs", 'import { readFileSync } from "node:fs"; export const value = readFileSync(new URL("./asset.txt", import.meta.url), "utf8")')
     await source(root, "node_modules/parent/node_modules/@s/child/index.cjs", 'exports.value = "require-child"')
     await source(root, "node_modules/parent/node_modules/@s/child/asset.txt", "asset-child")
     await source(root, "node_modules/parent/index.ts", 'import { value } from "@s/child"; const required = require("@s/child"); export const id: string = value + required.value')
-    const compiled = await compile(root)
+    const compiled = await compile(root, ["node_modules/parent"])
     expect(compiled.analysis.programDeclarations[0]?.declaredId).toBe("asset-childrequire-child")
     const result = JSON.parse(new TextDecoder().decode(compiled.files.get("helmr/compiler-result.json")))
     expect(result.externalEdges.filter((edge: {specifier: string}) => edge.specifier === "@s/child").map((edge: {resolvedPath: string}) => edge.resolvedPath).sort()).toEqual([
@@ -650,16 +685,15 @@ describe("v0 compiler contract", () => {
     expect(install.exitCode).toBe(0)
     await source(root, "helmr.config.ts", 'import { dirs } from "local"; export default { dirs, ignorePatterns: [] }')
     await source(root, "tasks/real.ts", 'import { id } from "local"; import { task } from "@helmr/sdk"; export const declaration = task({id, run:()=>id})')
-    await expect(compileConfig({ root, outputRoot: await output(), nodeVersion: "24.19.0" })).rejects.toThrow("helmr.compilePackages")
-    await expect(compile(root)).rejects.toThrow("helmr.compilePackages")
-    await source(root, "package.json", JSON.stringify({ ...manifest, helmr: { compilePackages: ["node_modules/local"] } }))
+    await expect(compile(root)).rejects.toThrow("helmr.config.ts compilePackages")
+    await source(root, "helmr.config.ts", 'import { dirs } from "local"; export default { dirs, ignorePatterns: [], compilePackages: ["node_modules/local"] }')
     const config = await compileConfig({ root, outputRoot: await output(), nodeVersion: "24.19.0" })
     try { expect((await import(pathToFileURL(config.path).href)).default.dirs).toEqual(["tasks"]) } finally { await config.cleanup() }
-    const result = await compile(root)
+    const result = await compile(root, ["node_modules/local"])
     expect(result.analysis.programDeclarations[0]?.declaredId).toBe("real-installed")
     const evidence = JSON.parse(new TextDecoder().decode(result.files.get("helmr/compiler-result.json")))
-    expect(evidence.compileSelection.packages[0].logicalRoot).toBe("node_modules/local")
-    expect(evidence.inputs.some((input: {path: string}) => input.path === `${evidence.compileSelection.packages[0].resolvedRoot}/index.ts`)).toBe(true)
+    expect(evidence.compilePackages[0].logicalRoot).toBe("node_modules/local")
+    expect(evidence.inputs.some((input: {path: string}) => input.path === `${evidence.compilePackages[0].resolvedRoot}/index.ts`)).toBe(true)
   })
 
   test("uses project tsconfig paths and records exact compiler authority", async () => {
@@ -799,7 +833,7 @@ describe("v0 compiler contract", () => {
     await source(firstRoot, "tasks/example.ts", task("node-target"))
     const first = await compileProgram({
       architecture: "x86_64",
-      config: { dirs: ["tasks"], ignorePatterns: [] },
+      config: { dirs: ["tasks"], ignorePatterns: [], compilePackages: [] },
       nodeVersion: "22.22.0",
       outputRoot: await output(),
       root: firstRoot,
@@ -810,7 +844,7 @@ describe("v0 compiler contract", () => {
     await source(secondRoot, "tasks/example.ts", task("node-target"))
     const second = await compileProgram({
       architecture: "x86_64",
-      config: { dirs: ["tasks"], ignorePatterns: [] },
+      config: { dirs: ["tasks"], ignorePatterns: [], compilePackages: [] },
       nodeVersion: "24.20.0",
       outputRoot: await output(),
       root: secondRoot,
@@ -822,7 +856,7 @@ describe("v0 compiler contract", () => {
     await source(invalidRoot, "tasks/example.ts", task("invalid-target"))
     await expect(compileProgram({
       architecture: "x86_64",
-      config: { dirs: ["tasks"], ignorePatterns: [] },
+      config: { dirs: ["tasks"], ignorePatterns: [], compilePackages: [] },
       nodeVersion: "24",
       outputRoot: await output(),
       root: invalidRoot,
@@ -835,7 +869,7 @@ describe("v0 compiler contract", () => {
     await source(root, sourcePath, task("colon-source"))
     const compiled = await compileProgram({
       architecture: "x86_64",
-      config: { dirs: ["helmr-final:tasks"], ignorePatterns: [] },
+      config: { dirs: ["helmr-final:tasks"], ignorePatterns: [], compilePackages: [] },
       nodeVersion: "24.20.0",
       outputRoot: await output(),
       root,
@@ -880,10 +914,10 @@ describe("v0 compiler contract", () => {
 
 })
 
-async function compile(root: string) {
+async function compile(root: string, compilePackages: readonly string[] = []) {
   return compileProgram({
     architecture: "x86_64",
-    config: { dirs: ["tasks"], ignorePatterns: [] },
+    config: { dirs: ["tasks"], ignorePatterns: [], compilePackages },
     nodeVersion: "24.20.0",
     outputRoot: await output(),
     root,

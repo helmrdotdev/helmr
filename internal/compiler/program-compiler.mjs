@@ -36,6 +36,8 @@ function assertUnicodeString(value) {
 }
 
 // sdk/typescript/src/config.ts
+var encoder2 = new TextEncoder;
+var encode2 = TextEncoder.prototype.encode.call.bind(TextEncoder.prototype.encode);
 var arrayIsArray = Array.isArray;
 var arrayPrototype = Array.prototype;
 var defineProperty = Object.defineProperty;
@@ -99,6 +101,26 @@ function validateDirectory(value) {
     throw new Error("config dirs entries must be normalized root-relative paths");
   }
   return normalized;
+}
+function validateCompilePackage(value) {
+  if (typeof value !== "string" || !hasOnlyUnicodeScalarValues(value) || hasControl(value) || includes(value, "\\")) {
+    throw new Error("config compilePackages entries must be clean installed package roots");
+  }
+  const parts = split(value, "/");
+  let slot = -1;
+  let invalidPart = false;
+  for (let index = 0;index < parts.length; index++) {
+    const part = parts[index];
+    if (part === "node_modules")
+      slot = index;
+    if (part === "" || part === "." || part === ".." || part === ".helmr" || encode2(encoder2, part).length > 255)
+      invalidPart = true;
+  }
+  const end = slot + (startsWith(parts[slot + 1] ?? "", "@") ? 3 : 2);
+  if (slot < 0 || end !== parts.length || parts.length > 128 || value === "helmr" || startsWith(value, "helmr/") || encode2(encoder2, `/opt/helmr/program/${value}\x00`).length > 4096 || invalidPart) {
+    throw new Error("config compilePackages entries must be clean installed package roots, e.g. node_modules/@scope/package");
+  }
+  return value;
 }
 function validateIgnorePattern(value) {
   if (typeof value !== "string" || value === "" || !hasOnlyUnicodeScalarValues(value) || startsWith(value, "./") || startsWith(value, "/") || endsWith(value, "/") || includes(value, "//") || includes(value, "\\") || hasControl(value) || startsWith(value, "!") || regexpTest(/[[\]{}]/, value) || regexpTest(/[?*+@!]\(/, value)) {
@@ -170,18 +192,18 @@ function normalizeConfig(value) {
   let invalidKey = !hasOwn(descriptors, "dirs");
   for (let index = 0;index < keys.length; index++) {
     const key = keys[index];
-    if (typeof key !== "string" || key !== "dirs" && key !== "ignorePatterns") {
+    if (typeof key !== "string" || key !== "dirs" && key !== "ignorePatterns" && key !== "compilePackages") {
       invalidKey = true;
       break;
     }
   }
   if (invalidKey) {
-    throw new Error("config requires exactly dirs and optional ignorePatterns");
+    throw new Error("config requires dirs and optional ignorePatterns and compilePackages");
   }
   for (let index = 0;index < keys.length; index++) {
     const key = keys[index];
     if (typeof key !== "string") {
-      throw new Error("config requires exactly dirs and optional ignorePatterns");
+      throw new Error("config requires dirs and optional ignorePatterns and compilePackages");
     }
     const descriptor = descriptors[key];
     if (descriptor === undefined || !descriptor.enumerable || !hasOwn(descriptor, "value")) {
@@ -190,7 +212,9 @@ function normalizeConfig(value) {
   }
   const dirs = normalizeStringSet(descriptors["dirs"]?.value, "config dirs", validateDirectory, true);
   const ignorePatterns = normalizeStringSet(hasOwn(descriptors, "ignorePatterns") ? descriptors["ignorePatterns"]?.value : [], "config ignorePatterns", validateIgnorePattern, false);
+  const compilePackages = normalizeStringSet(hasOwn(descriptors, "compilePackages") ? descriptors["compilePackages"]?.value : [], "config compilePackages", validateCompilePackage, false);
   return freeze({
+    compilePackages: freeze(compilePackages),
     dirs: freeze(dirs),
     ignorePatterns: freeze(ignorePatterns)
   });
@@ -776,12 +800,13 @@ function decodeGeneratedFile(value) {
 
 // compiler/typescript/src/bundle.ts
 import {
-  build,
+  build as build2,
   version as esbuildVersion
 } from "esbuild";
-import { createHash as createHash2 } from "node:crypto";
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import {
+  lstat as lstat3,
   mkdir,
   readFile as readFile2,
   realpath as realpath3,
@@ -2145,7 +2170,6 @@ function compareLocatorOccurrence(left, right) {
 }
 
 // compiler/typescript/src/compile-selection.ts
-import { createHash } from "node:crypto";
 import { lstat as lstat2, readFile, realpath as realpath2, stat } from "node:fs/promises";
 import { relative as relative2, resolve as resolve2, sep as sep2 } from "node:path";
 function installedPackageRoot(path) {
@@ -2162,26 +2186,10 @@ function selectedPackage(path, roots) {
   const owner = installedPackageRoot(path);
   return owner !== undefined && roots.has(owner);
 }
-async function readCompileSelection(root) {
+async function resolveCompilePackages(root, selectors) {
   root = await realpath2(root);
-  const raw = await regularManifest(resolve2(root, "package.json"));
-  const manifest = parseManifest(raw);
-  const helmr = manifest["helmr"];
-  let selectors = [];
-  if (helmr !== undefined) {
-    if (!object(helmr) || Object.keys(helmr).some((key) => key !== "compilePackages")) {
-      throw new Error("package.json helmr must be an object containing only compilePackages");
-    }
-    const value = helmr["compilePackages"];
-    if (value !== undefined) {
-      if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
-        throw new Error("package.json helmr.compilePackages must be a string array");
-      }
-      selectors = value;
-    }
-  }
   if (new Set(selectors).size !== selectors.length) {
-    throw new Error("package.json helmr.compilePackages contains duplicate selectors");
+    throw new Error("helmr.config.ts compilePackages contains duplicate selectors");
   }
   const packages = [];
   for (const logicalRoot of [...selectors].sort(compareUTF82)) {
@@ -2201,10 +2209,10 @@ async function readCompileSelection(root) {
       parseManifest(await regularManifest(resolve2(target, "package.json")));
       packages.push({ logicalRoot, resolvedRoot });
     } catch (error) {
-      throw new Error(`package.json helmr.compilePackages selector ${JSON.stringify(logicalRoot)}: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(`helmr.config.ts compilePackages selector ${JSON.stringify(logicalRoot)}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  return { packageJsonDigest: `sha256:${createHash("sha256").update(raw).digest("hex")}`, packages };
+  return packages;
 }
 function validPath(path) {
   const parts = path.split("/");
@@ -2217,9 +2225,6 @@ async function regularManifest(path) {
   if (metadata.size > 16 << 20)
     throw new Error(`package manifest exceeds 16 MiB: ${path}`);
   return readFile(path);
-}
-function object(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function parseManifest(raw) {
   const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(raw);
@@ -2246,6 +2251,9 @@ function parseManifest(raw) {
   visit2(tree);
   return JSON.parse(text);
 }
+
+// compiler/typescript/src/config-origin.ts
+import { build } from "esbuild";
 
 // compiler/typescript/src/bundle.ts
 var COMPILER_API_VERSION = "helmr.compiler.v0";
@@ -2287,8 +2295,8 @@ function compilerContract() {
 async function compileProgram(options) {
   const root = await realpath3(options.root);
   const outputRoot = resolve3(options.outputRoot);
-  const compileSelection = await readCompileSelection(root);
-  const selectedRoots = new Set(compileSelection.packages.map((item) => item.resolvedRoot));
+  const compilePackages = await resolveCompilePackages(root, options.config.compilePackages);
+  const selectedRoots = new Set(compilePackages.map((item) => item.resolvedRoot));
   const modules = await discoverModules(root, options.config);
   if (modules.length === 0) {
     throw new Error("configured dirs contain no declaration source modules");
@@ -2390,7 +2398,7 @@ async function compileProgram(options) {
       discoveryCandidates: modules,
       externalEdges,
       inputs,
-      compileSelection,
+      compilePackages,
       outputs: finalOutputs,
       selections: analyzed.declarationLocator.declarations.map((item) => ({
         declaredId: item.declaredId,
@@ -2438,13 +2446,14 @@ function compilerOptionsDigestForTarget(target) {
     declarationExtensions,
     sourceSemantics: "pinned-esbuild",
     dependencyBoundary: "explicit-installed-roots",
+    rootConfig: "build-only",
     target
   });
   return `sha256:${sha256(canonical)}`;
 }
 async function bundleEntry(options) {
   const externalEdges = [];
-  const result = await build({
+  const result = await build2({
     ...baseOptions(options.root, options.runtimeRoot, options.nodeVersion, options.selectedRoots, externalEdges),
     outfile: options.outfile,
     stdin: {
@@ -2464,7 +2473,7 @@ async function bundleEntry(options) {
 async function bundleEntries(options) {
   const externalEdges = [];
   const entries = new Map(options.entries.map((entry) => [entry.sourcefile, entry]));
-  const result = await build({
+  const result = await build2({
     ...baseOptions(options.root, options.runtimeRoot, options.nodeVersion, options.selectedRoots, externalEdges, [finalEntryPlugin(options.root, entries)]),
     entryPoints: options.entries.map((entry) => ({
       in: entry.sourcefile,
@@ -2506,7 +2515,7 @@ async function bundleEntries(options) {
     virtualInputs: new Set(options.entries.map((entry) => `helmr-final:${entry.sourcefile}`))
   };
 }
-function baseOptions(root, runtimeRoot, nodeVersion, selectedRoots, externalEdges, plugins = []) {
+function baseOptions(root, runtimeRoot, nodeVersion, selectedRoots, externalEdges, plugins = [], phase = "program") {
   return {
     absWorkingDir: root,
     bundle: true,
@@ -2516,7 +2525,7 @@ function baseOptions(root, runtimeRoot, nodeVersion, selectedRoots, externalEdge
     metafile: true,
     packages: "bundle",
     platform: "node",
-    plugins: [...plugins, dependencyBoundary(root, runtimeRoot, selectedRoots, externalEdges)],
+    plugins: [...plugins, dependencyBoundary(root, runtimeRoot, selectedRoots, externalEdges, phase)],
     banner: {
       js: 'import { createRequire as __helmrCreateRequire } from "node:module"; const require = __helmrCreateRequire(import.meta.url);'
     },
@@ -2570,11 +2579,11 @@ function esbuildNodeTarget(nodeVersion) {
 function finalEntryPlugin(root, entries) {
   return {
     name: "helmr-final-entry",
-    setup(build2) {
-      build2.onResolve({ filter: /^<helmr-final-/ }, (args) => {
+    setup(build3) {
+      build3.onResolve({ filter: /^<helmr-final-/ }, (args) => {
         return { namespace: "helmr-final", path: args.path };
       });
-      build2.onLoad({ filter: /.*/, namespace: "helmr-final" }, (args) => {
+      build3.onLoad({ filter: /.*/, namespace: "helmr-final" }, (args) => {
         const entry = entries.get(args.path);
         if (entry === undefined) {
           return { errors: [{ text: `unknown final entry ${args.path}` }] };
@@ -2610,16 +2619,21 @@ function externalEdgesForOutput(output, inputs, externalEdgesByImporter) {
   }
   return externalEdges;
 }
-function dependencyBoundary(root, runtimeRoot, selectedRoots, externalEdges) {
+function dependencyBoundary(root, runtimeRoot, selectedRoots, externalEdges, phase) {
   const canonicalRoot = resolve3(root);
   return {
     name: "helmr-dependency-boundary",
-    setup(build2) {
-      build2.onResolve({ filter: /.*/ }, async (args) => {
+    async setup(build3) {
+      const rootConfig = phase === "program" ? await realpath3(resolve3(canonicalRoot, "helmr.config.ts")).catch((error) => {
+        if (error.code === "ENOENT")
+          return;
+        throw error;
+      }) : undefined;
+      build3.onResolve({ filter: /.*/ }, async (args) => {
         if (args.pluginData === resolvedByBoundary || args.path.startsWith("node:")) {
           return;
         }
-        const result = await build2.resolve(args.path, {
+        const result = await build3.resolve(args.path, {
           importer: args.importer,
           kind: args.kind,
           namespace: args.namespace,
@@ -2641,14 +2655,20 @@ function dependencyBoundary(root, runtimeRoot, selectedRoots, externalEdges) {
             }]
           };
         }
-        if (selectedPackage(resolvedPath, selectedRoots)) {
-          return { path };
+        if (phase === "program" && path === rootConfig) {
+          return { errors: [{ text: "helmr.config.ts is build-only and cannot be imported by Program source; move shared data or helpers to an ordinary module" }] };
+        }
+        if (phase === "config" && /\.(?:[cm]?ts|tsx|jsx)$/.test(path)) {
+          return;
+        }
+        if (phase === "program" && selectedPackage(resolvedPath, selectedRoots)) {
+          return;
         }
         if (hasNodeModules(resolvedPath)) {
           const importer = args.importer === "" ? args.importer : projectPath2(canonicalRoot, resolve3(args.importer));
           if (/\.(?:ts|tsx|mts|cts)$/.test(resolvedPath)) {
             return { errors: [{
-              text: `Cannot externalize TypeScript dependency ${JSON.stringify(args.path)} imported by ${JSON.stringify(importer)}: ${resolvedPath}. Node cannot execute TypeScript under node_modules. Add ${JSON.stringify(installedPackageRoot(resolvedPath))} to package.json helmr.compilePackages to compile this installed package, or install Node-ready JavaScript.`
+              text: `Cannot externalize TypeScript dependency ${JSON.stringify(args.path)} imported by ${JSON.stringify(importer)}: ${resolvedPath}. Node cannot execute TypeScript under node_modules. Add ${JSON.stringify(installedPackageRoot(resolvedPath))} to helmr.config.ts compilePackages to compile this installed package, or install Node-ready JavaScript.`
             }] };
           }
           const runtimePath = resolve3(runtimeRoot, logicalPath);
@@ -2666,7 +2686,7 @@ function dependencyBoundary(root, runtimeRoot, selectedRoots, externalEdges) {
             path: target
           };
         }
-        return { path };
+        return;
       });
     }
   };
@@ -2893,7 +2913,7 @@ function requiredGeneratedPath(generated, source2) {
   return path;
 }
 function sha256(value) {
-  return createHash2("sha256").update(value).digest("hex");
+  return createHash("sha256").update(value).digest("hex");
 }
 function hasNodeModules(path) {
   return path.split(sep3).includes("node_modules");
@@ -2909,10 +2929,11 @@ function inspectCanonicalConfig(value) {
   }
   const record = value;
   const keys = Object.keys(record).sort();
-  if (keys.length !== 2 || keys[0] !== "dirs" || keys[1] !== "ignorePatterns") {
+  if (keys.length !== 3 || keys[0] !== "compilePackages" || keys[1] !== "dirs" || keys[2] !== "ignorePatterns") {
     throw new Error("canonical config does not match the build contract");
   }
   return inspectConfig({
+    compilePackages: record["compilePackages"],
     dirs: record["dirs"],
     ignorePatterns: record["ignorePatterns"]
   });

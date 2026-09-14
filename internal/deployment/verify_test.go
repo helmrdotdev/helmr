@@ -73,7 +73,7 @@ func TestProgramArtifactDoesNotInterpretProducerMetadata(t *testing.T) {
 	program.artifact.files["package.json"] = []byte(
 		`{"packageManager":"yarn@4.9.2"}`,
 	)
-	program.manifest.CompileSelection.PackageJSONDigest = testDigest(string(program.artifact.files["package.json"]))
+
 	program.refreshManifest(t)
 	if _, err := verifyProgramArtifact(context.Background(), program.descriptor); err != nil {
 		t.Fatalf("verifyProgramArtifact rejected producer metadata: %v", err)
@@ -125,12 +125,8 @@ func TestProgramArtifactAcceptsLocalPackageInstallLayouts(t *testing.T) {
 			if copied {
 				resolvedRoot = "node_modules/@example/local"
 			}
-			raw := []byte(`{"helmr":{"compilePackages":["node_modules/@example/local"]}}`)
-			program.artifact.replaceFile("package.json", raw)
-			program.manifest.CompileSelection = ProgramCompileSelection{
-				PackageJSONDigest: testDigest(string(raw)),
-				Packages:          []ProgramCompilePackage{{LogicalRoot: "node_modules/@example/local", ResolvedRoot: resolvedRoot}},
-			}
+			setTestCompilePackages(t, program, []string{"node_modules/@example/local"})
+			program.manifest.CompilePackages = []ProgramCompilePackage{{LogicalRoot: "node_modules/@example/local", ResolvedRoot: resolvedRoot}}
 			program.refreshManifest(t)
 			if _, err := verifyProgramArtifact(
 				context.Background(),
@@ -263,7 +259,7 @@ func newTestProgram(t *testing.T) *testProgram {
 		`import { defineConfig } from "@helmr/sdk"; export default defineConfig({ dirs: ["tasks"] });`,
 	)
 	configRaw := []byte(
-		`{"dirs":["tasks"],"ignorePatterns":[]}`,
+		`{"compilePackages":[],"dirs":["tasks"],"ignorePatterns":[]}`,
 	)
 	sourcePath := "tasks/build.ts"
 	sourceRaw := []byte("export const build = task({ id: \"build\" })\n")
@@ -310,9 +306,9 @@ func newTestProgram(t *testing.T) *testProgram {
 			Digest: testDigest(string(configRaw)),
 			Path:   "helmr/config.json",
 		},
-		ExternalEdges:    []ProgramExternalEdge{},
-		CompiledInputs:   []ProgramPathDigest{{Path: sourcePath, Digest: testDigest(string(sourceRaw))}},
-		CompileSelection: ProgramCompileSelection{PackageJSONDigest: testDigest(`{"packageManager":"bun@1.3.13"}`), Packages: []ProgramCompilePackage{}},
+		ExternalEdges:   []ProgramExternalEdge{},
+		CompiledInputs:  []ProgramPathDigest{{Path: sourcePath, Digest: testDigest(string(sourceRaw))}},
+		CompilePackages: []ProgramCompilePackage{},
 		Modules: []ProgramModule{{
 			ModuleDigest:    testDigest(string(moduleRaw)),
 			ModulePath:      modulePath,

@@ -124,9 +124,9 @@ func testProgramManifest(t *testing.T) ProgramManifest {
 			Digest: "sha256:" + strings.Repeat("4", 64),
 			Path:   "helmr/config.json",
 		},
-		ExternalEdges:    []ProgramExternalEdge{},
-		CompiledInputs:   []ProgramPathDigest{},
-		CompileSelection: ProgramCompileSelection{PackageJSONDigest: testDigest(`{"packageManager":"bun@1.3.13"}`), Packages: []ProgramCompilePackage{}},
+		ExternalEdges:   []ProgramExternalEdge{},
+		CompiledInputs:  []ProgramPathDigest{},
+		CompilePackages: []ProgramCompilePackage{},
 		Modules: []ProgramModule{{
 			ModuleDigest:    "sha256:" + strings.Repeat("b", 64),
 			ModulePath:      modulePath,

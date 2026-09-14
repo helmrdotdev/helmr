@@ -14,6 +14,7 @@ describe("defineConfig", () => {
     dirs.push("./actors")
     ignorePatterns.push("actors/generated/**")
     expect(config).toEqual({
+      compilePackages: [],
       dirs: ["actors", "tasks"],
       ignorePatterns: ["**/*.test.js", "tasks/generated/**"],
     })
@@ -26,6 +27,7 @@ describe("defineConfig", () => {
   test("requires the explicit config shape", () => {
     expect(() => defineConfig({ dirs: [] })).toThrow()
     expect(defineConfig({ dirs: ["tasks"] })).toEqual({
+      compilePackages: [],
       dirs: ["tasks"],
       ignorePatterns: [],
     })
@@ -149,6 +151,7 @@ describe("defineConfig", () => {
         value: () => new Uint8Array(),
       })
       config = inspectConfig({
+        compilePackages: ["node_modules/z", "node_modules/@s/a"],
         dirs: ["tasks/z", "./tasks/a"],
         ignorePatterns: ["tasks/z/**", "**/*.test.js"],
       })
@@ -182,6 +185,7 @@ describe("defineConfig", () => {
       )
     }
     expect(config).toEqual({
+      compilePackages: ["node_modules/@s/a", "node_modules/z"],
       dirs: ["tasks/a", "tasks/z"],
       ignorePatterns: ["**/*.test.js", "tasks/z/**"],
     })
@@ -222,4 +226,20 @@ describe("ignore pattern matching", () => {
     expect(matchesIgnorePattern("**/*.test.ts", ".hidden/a.test.ts")).toBe(true)
     expect(matchesIgnorePattern("tasks/?/a.ts", "tasks/🦀/a.ts")).toBe(true)
   })
+})
+
+test("compile selection is normalized data, not executable or package-name configuration", () => {
+  const selectors = ["node_modules/z", "node_modules/@s/a"]
+  const config = defineConfig({ dirs: ["tasks"], compilePackages: selectors })
+  selectors.push("node_modules/mutated")
+  expect(config.compilePackages).toEqual(["node_modules/@s/a", "node_modules/z"])
+  expect(Object.isFrozen(config.compilePackages)).toBe(true)
+  for (const compilePackages of [null, "a", [null], [4], ["node_modules/a", "node_modules/a"],
+    ["../node_modules/a"], ["node_modules/a/lib"], ["./node_modules/a"],
+    ["node_modules/a/.helmr/node_modules/b"], ["node_modules/a\ud800"], () => []]) {
+    expect(() => inspectConfig({ dirs: ["tasks"], compilePackages })).toThrow()
+  }
+  let called = false
+  expect(() => inspectConfig({ dirs: ["tasks"], get compilePackages() { called = true; return [] } })).toThrow()
+  expect(called).toBe(false)
 })

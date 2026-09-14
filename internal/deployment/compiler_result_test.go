@@ -79,7 +79,7 @@ func testProgramCompilerResult(t *testing.T) ProgramCompilerResult {
 			Digest: "sha256:" + strings.Repeat("9", 64),
 			Path:   sourcePath,
 		}},
-		CompileSelection: ProgramCompileSelection{PackageJSONDigest: testDigest(`{"packageManager":"bun@1.3.13"}`), Packages: []ProgramCompilePackage{}},
+		CompilePackages: []ProgramCompilePackage{},
 		Outputs: []ProgramModule{{
 			ModuleDigest:    "sha256:" + strings.Repeat("b", 64),
 			ModulePath:      modulePath,
@@ -103,5 +103,16 @@ func TestProgramCompilerSelectionsUseDeclarationOrder(t *testing.T) {
 	actor := ProgramCompilerSelection{Kind: DeclarationKindActor, DeclaredID: "a-actor"}
 	if compareProgramCompilerSelection(task, actor) >= 0 {
 		t.Fatal("task selection did not sort before actor selection")
+	}
+}
+
+// Shared with the TypeScript compiler and exercised by Linux artifact admission.
+func TestCompilerOptionsDigestMatchesTypeScript(t *testing.T) {
+	digest, err := compilerOptionsDigest(testCompilerInputs(), "24.20.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if digest != "sha256:56ebb1218cbd24870c0ac884cb09608fececc729c94f0f8f65614f1a0ec4a909" {
+		t.Fatalf("compiler options diverged: %s", digest)
 	}
 }

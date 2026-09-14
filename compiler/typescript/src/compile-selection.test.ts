@@ -2,8 +2,7 @@ import { afterEach, expect, test } from "bun:test"
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
-import { createHash } from "node:crypto"
-import { installedPackageRoot, readCompileSelection, selectedPackage } from "./compile-selection"
+import { installedPackageRoot, resolveCompilePackages, selectedPackage } from "./compile-selection"
 
 const roots: string[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))) })
@@ -35,23 +34,13 @@ test("parent selection does not authorize nested dependencies", () => {
   expect(selectedPackage("node_modules/ab/index.ts", roots)).toBe(false)
 })
 
-test("ignores omitted unused source declarations and hashes the actual root manifest", async () => {
-  const document = { optionalDependencies: { missing: "file:missing" }, workspaces: ["missing/*"] }
-  const root = await fixture(document)
-  expect(await readCompileSelection(root)).toEqual({
-    packageJsonDigest: `sha256:${createHash("sha256").update(JSON.stringify(document)).digest("hex")}`,
-    packages: [],
-  })
+test("root metadata has no compile authority", async () => {
+  const root = await fixture({ optionalDependencies: { missing: "file:missing" }, helmr: {compilePackages: ["node_modules/missing"]} })
+  expect(await resolveCompilePackages(root, [])).toEqual([])
 })
 
-test.each([
-  { helmr: null }, { helmr: [] }, { helmr: { typo: [] } },
-  { helmr: { compilePackages: null } }, { helmr: { compilePackages: "a" } },
-  { helmr: { compilePackages: [null] } }, { helmr: { compilePackages: [4] } },
-  ...["../node_modules/a", "/node_modules/a", "node_modules/a/", "node_modules/a/lib", "node_modules//a", "node_modules/./a", "node_modules/a\\b", "node_modules/a\u0000", "helmr/node_modules/a", "node_modules/a/.helmr/node_modules/b", "node_modules/a\ud800"].map((path) => ({ helmr: { compilePackages: [path] } })),
-  { helmr: { compilePackages: ["node_modules/a", "node_modules/a"] } },
-])("rejects malformed compile policy %j", async (document) => {
-  await expect(readCompileSelection(await fixture(document))).rejects.toThrow()
+test.each(["../node_modules/a", "/node_modules/a", "node_modules/a/", "node_modules/a/lib", "node_modules//a", "node_modules/./a", "node_modules/a\\b", "node_modules/a\u0000", "helmr/node_modules/a", "node_modules/a/.helmr/node_modules/b", "node_modules/a\ud800"])("rejects malformed selector %s", async (selector) => {
+  await expect(resolveCompilePackages(await fixture(), [selector])).rejects.toThrow()
 })
 
 test("retains aliases and unused assertions, canonicalizes isolated installed roots", async () => {
@@ -60,7 +49,7 @@ test("retains aliases and unused assertions, canonicalizes isolated installed ro
   await pkg(root, target)
   await symlink(".bun/real@1/node_modules/real", resolve(root, "node_modules/a"))
   await symlink(".bun/real@1/node_modules/real", resolve(root, "node_modules/z"))
-  expect((await readCompileSelection(root)).packages).toEqual([
+  expect(await resolveCompilePackages(root, ["node_modules/z", "node_modules/a"])).toEqual([
     { logicalRoot: "node_modules/a", resolvedRoot: target },
     { logicalRoot: "node_modules/z", resolvedRoot: target },
   ])
@@ -68,9 +57,9 @@ test("retains aliases and unused assertions, canonicalizes isolated installed ro
 
 test("missing selected roots and missing selected manifests fail", async () => {
   const root = await fixture({ helmr: { compilePackages: ["node_modules/a"] } })
-  await expect(readCompileSelection(root)).rejects.toThrow('selector "node_modules/a"')
+  await expect(resolveCompilePackages(root, ["node_modules/a"])).rejects.toThrow('selector "node_modules/a"')
   await mkdir(resolve(root, "node_modules/a"), { recursive: true })
-  await expect(readCompileSelection(root)).rejects.toThrow("package.json")
+  await expect(resolveCompilePackages(root, ["node_modules/a"])).rejects.toThrow("package.json")
 })
 
 test("rejects selected root escapes, non-root targets and manifest symlinks", async () => {
@@ -78,20 +67,21 @@ test("rejects selected root escapes, non-root targets and manifest symlinks", as
   const outside = await fixture()
   await mkdir(resolve(root, "node_modules"))
   await symlink(outside, resolve(root, "node_modules/a"))
-  await expect(readCompileSelection(root)).rejects.toThrow("escapes project")
+  await expect(resolveCompilePackages(root, ["node_modules/a"])).rejects.toThrow("escapes project")
   await rm(resolve(root, "node_modules/a"))
   await pkg(root, "node_modules/real/dist")
   await symlink("real/dist", resolve(root, "node_modules/a"))
-  await expect(readCompileSelection(root)).rejects.toThrow("not an installed package root")
+  await expect(resolveCompilePackages(root, ["node_modules/a"])).rejects.toThrow("not an installed package root")
   await rm(resolve(root, "node_modules/a"))
   await mkdir(resolve(root, "node_modules/a"))
   await symlink("../../package.json", resolve(root, "node_modules/a/package.json"))
-  await expect(readCompileSelection(root)).rejects.toThrow("regular file")
+  await expect(resolveCompilePackages(root, ["node_modules/a"])).rejects.toThrow("regular file")
 })
 
 test.each(['{"unused":1e400}', '{"unused":"\\ud800"}', '\ufeff{}', '{"helmr":{},"helmr":{}}', '{"helmr":{"compilePackages":[],"compilePackages":[]}}', '{"helmr":{},}', '{/*comment*/"helmr":{}}'])
 ("rejects ambiguous/non-JSON manifest %s", async (raw) => {
   const root = await fixture()
-  await writeFile(resolve(root, "package.json"), raw)
-  await expect(readCompileSelection(root)).rejects.toThrow()
+  await pkg(root, "node_modules/a")
+  await writeFile(resolve(root, "node_modules/a/package.json"), raw)
+  await expect(resolveCompilePackages(root, ["node_modules/a"])).rejects.toThrow()
 })

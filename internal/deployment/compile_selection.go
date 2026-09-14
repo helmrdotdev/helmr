@@ -1,26 +1,18 @@
 package deployment
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"path"
-	"slices"
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
-	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
-// ProgramCompileSelection binds static compile intent to the installed tree.
-// Roots identify actual instances, never a package's acquisition or source.
-type ProgramCompileSelection struct {
-	PackageJSONDigest string                  `json:"packageJsonDigest"`
-	Packages          []ProgramCompilePackage `json:"packages"`
-}
-
+// ProgramCompilePackage records a logical assertion and its actual instance.
+// Evaluated config, not dependency provenance, owns compile intent.
 type ProgramCompilePackage struct {
 	LogicalRoot  string `json:"logicalRoot"`
 	ResolvedRoot string `json:"resolvedRoot"`
@@ -49,12 +41,12 @@ func installedPackageRoot(value string) string {
 	return ""
 }
 
-func selectedPackageContains(selection ProgramCompileSelection, value string) bool {
+func selectedPackageContains(selection []ProgramCompilePackage, value string) bool {
 	owner := installedPackageRoot(value)
 	if owner == "" {
 		return false
 	}
-	for _, selected := range selection.Packages {
+	for _, selected := range selection {
 		if owner == selected.ResolvedRoot {
 			return true
 		}
@@ -67,17 +59,17 @@ func validCompileRoot(value string) bool {
 		!hasReservedOutputSegment(value) && !strings.HasPrefix(value, "helmr/")
 }
 
-func validateProgramCompileSelection(selection ProgramCompileSelection) error {
-	if !sha256DigestPattern.MatchString(selection.PackageJSONDigest) || selection.Packages == nil {
-		return errors.New("compile selection requires package.json digest and packages array")
+func validateProgramCompilePackages(selection []ProgramCompilePackage) error {
+	if selection == nil {
+		return errors.New("compile packages must be an array")
 	}
-	for index, selected := range selection.Packages {
+	for index, selected := range selection {
 		if !validCompileRoot(selected.LogicalRoot) || installedPackageRoot(selected.LogicalRoot) != selected.LogicalRoot ||
 			!validCompileRoot(selected.ResolvedRoot) ||
 			(hasNodeModulesComponent(selected.ResolvedRoot) && installedPackageRoot(selected.ResolvedRoot) != selected.ResolvedRoot) {
 			return fmt.Errorf("compile selection package %d is not an installed package root", index)
 		}
-		if index > 0 && selection.Packages[index-1].LogicalRoot >= selected.LogicalRoot {
+		if index > 0 && selection[index-1].LogicalRoot >= selected.LogicalRoot {
 			return errors.New("compile selection packages are not in canonical order")
 		}
 	}
@@ -95,68 +87,28 @@ func packageManifestObject(raw []byte) (map[string]json.RawMessage, error) {
 	return document, nil
 }
 
-func manifestCompilePackages(raw []byte) ([]string, error) {
-	document, err := packageManifestObject(raw)
-	if err != nil {
-		return nil, err
-	}
-	selectors := []string{}
-	if helmr, exists := document["helmr"]; exists {
-		var options map[string]json.RawMessage
-		if err := json.Unmarshal(helmr, &options); err != nil || options == nil {
-			return nil, errors.New("package.json helmr must be an object containing only compilePackages")
-		}
-		for key := range options {
-			if key != "compilePackages" {
-				return nil, fmt.Errorf("package.json helmr has unknown field %q", key)
-			}
-		}
-		if value, exists := options["compilePackages"]; exists {
-			// JSON null is not an empty collection (including null string elements).
-			var values []json.RawMessage
-			if err := json.Unmarshal(value, &values); err != nil || values == nil {
-				return nil, errors.New("package.json helmr.compilePackages must be a string array")
-			}
-			for _, value := range values {
-				var selector string
-				if bytes.Equal(value, []byte("null")) || json.Unmarshal(value, &selector) != nil {
-					return nil, errors.New("package.json helmr.compilePackages must be a string array")
-				}
-				selectors = append(selectors, selector)
-			}
-		}
-	}
-	slices.Sort(selectors)
-	for index, selector := range selectors {
-		if !validCompileRoot(selector) || installedPackageRoot(selector) != selector ||
-			(index > 0 && selectors[index-1] == selector) {
-			return nil, fmt.Errorf("package.json helmr.compilePackages has invalid or duplicate selector %q", selector)
-		}
-	}
-	return selectors, nil
-}
-
-func verifyProgramCompileSelection(ctx context.Context, artifact *inspectedArtifact, selection ProgramCompileSelection) error {
-	if err := validateProgramCompileSelection(selection); err != nil {
+func verifyProgramCompilePackages(ctx context.Context, artifact *inspectedArtifact, selection []ProgramCompilePackage, configRef ProgramPathDigest) error {
+	if err := validateProgramCompilePackages(selection); err != nil {
 		return err
 	}
-	raw, err := artifact.read(ctx, "package.json", maxProgramFileSizeBytes)
+	if err := verifyProgramPathDigest(ctx, artifact, configRef); err != nil {
+		return err
+	}
+	raw, err := artifact.read(ctx, configRef.Path, maxBuildConfigBytes)
 	if err != nil {
 		return err
 	}
-	if sha256sum.DigestBytes(raw) != selection.PackageJSONDigest {
-		return errors.New("compile selection package.json digest does not match authority")
-	}
-	selectors, err := manifestCompilePackages(raw)
+	config, err := ParseBuildConfig(raw)
 	if err != nil {
 		return err
 	}
-	if len(selectors) != len(selection.Packages) {
-		return errors.New("compile selection does not match package.json helmr.compilePackages")
+	selectors := config.CompilePackages
+	if len(selectors) != len(selection) {
+		return errors.New("compile packages do not match evaluated config")
 	}
-	for index, selected := range selection.Packages {
+	for index, selected := range selection {
 		if selectors[index] != selected.LogicalRoot {
-			return errors.New("compile selection does not match package.json helmr.compilePackages")
+			return errors.New("compile packages do not match evaluated config")
 		}
 		entry, resolved, err := resolveProgramArtifactPath(artifact, selected.LogicalRoot)
 		if err != nil {
@@ -176,7 +128,7 @@ func verifyProgramCompileSelection(ctx context.Context, artifact *inspectedArtif
 	return nil
 }
 
-func validateCompiledInputs(inputs []ProgramPathDigest, selection ProgramCompileSelection) error {
+func validateCompiledInputs(inputs []ProgramPathDigest, selection []ProgramCompilePackage) error {
 	if inputs == nil {
 		return errors.New("compiled inputs must be an array")
 	}

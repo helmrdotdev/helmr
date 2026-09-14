@@ -1,15 +1,11 @@
-import { createHash } from "node:crypto"
 import { lstat, readFile, realpath, stat } from "node:fs/promises"
 import { relative, resolve, sep } from "node:path"
 import { parseTree, type Node, type ParseError } from "jsonc-parser/lib/esm/main.js"
 import { compareUTF8 } from "./utf8"
 
-export interface CompileSelection {
-  readonly packageJsonDigest: string
-  readonly packages: readonly {
-    readonly logicalRoot: string
-    readonly resolvedRoot: string
-  }[]
+export interface CompilePackage {
+  readonly logicalRoot: string
+  readonly resolvedRoot: string
 }
 
 // Return the full instance path, including all parent/store components. A
@@ -28,26 +24,10 @@ export function selectedPackage(path: string, roots: ReadonlySet<string>): boole
   return owner !== undefined && roots.has(owner)
 }
 
-export async function readCompileSelection(root: string): Promise<CompileSelection> {
+export async function resolveCompilePackages(root: string, selectors: readonly string[]): Promise<readonly CompilePackage[]> {
   root = await realpath(root)
-  const raw = await regularManifest(resolve(root, "package.json"))
-  const manifest = parseManifest(raw)
-  const helmr = manifest["helmr"]
-  let selectors: string[] = []
-  if (helmr !== undefined) {
-    if (!object(helmr) || Object.keys(helmr).some((key) => key !== "compilePackages")) {
-      throw new Error("package.json helmr must be an object containing only compilePackages")
-    }
-    const value = helmr["compilePackages"]
-    if (value !== undefined) {
-      if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
-        throw new Error("package.json helmr.compilePackages must be a string array")
-      }
-      selectors = value
-    }
-  }
   if (new Set(selectors).size !== selectors.length) {
-    throw new Error("package.json helmr.compilePackages contains duplicate selectors")
+    throw new Error("helmr.config.ts compilePackages contains duplicate selectors")
   }
   const packages = []
   for (const logicalRoot of [...selectors].sort(compareUTF8)) {
@@ -65,10 +45,10 @@ export async function readCompileSelection(root: string): Promise<CompileSelecti
       parseManifest(await regularManifest(resolve(target, "package.json")))
       packages.push({ logicalRoot, resolvedRoot })
     } catch (error) {
-      throw new Error(`package.json helmr.compilePackages selector ${JSON.stringify(logicalRoot)}: ${error instanceof Error ? error.message : String(error)}`)
+      throw new Error(`helmr.config.ts compilePackages selector ${JSON.stringify(logicalRoot)}: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
-  return { packageJsonDigest: `sha256:${createHash("sha256").update(raw).digest("hex")}`, packages }
+  return packages
 }
 
 function validPath(path: string): boolean {
@@ -85,10 +65,6 @@ async function regularManifest(path: string): Promise<Buffer> {
   if (!metadata.isFile()) throw new Error(`package manifest must be a regular file: ${path}`)
   if (metadata.size > 16 << 20) throw new Error(`package manifest exceeds 16 MiB: ${path}`)
   return readFile(path)
-}
-
-function object(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 function parseManifest(raw: Uint8Array): Record<string, unknown> {

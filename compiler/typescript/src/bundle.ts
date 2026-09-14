@@ -14,6 +14,7 @@ import {
 import { createHash } from "node:crypto"
 import { createRequire } from "node:module"
 import {
+  lstat,
   mkdir,
   readFile,
   realpath,
@@ -37,10 +38,11 @@ import {
   type DeclarationLocator,
 } from "./compile"
 import {
-  readCompileSelection,
+  resolveCompilePackages,
   installedPackageRoot,
   selectedPackage,
 } from "./compile-selection"
+import { configOrigin } from "./config-origin"
 import { compareUTF8 } from "./utf8"
 
 export const COMPILER_API_VERSION = "helmr.compiler.v0" as const
@@ -130,8 +132,8 @@ export async function compileProgram(options: {
 }): Promise<ProgramCompilation> {
   const root = await realpath(options.root)
   const outputRoot = resolve(options.outputRoot)
-  const compileSelection = await readCompileSelection(root)
-  const selectedRoots = new Set(compileSelection.packages.map((item) => item.resolvedRoot))
+  const compilePackages = await resolveCompilePackages(root, options.config.compilePackages)
+  const selectedRoots = new Set(compilePackages.map((item) => item.resolvedRoot))
   const modules = await discoverModules(root, options.config)
   if (modules.length === 0) {
     throw new Error("configured dirs contain no declaration source modules")
@@ -265,7 +267,7 @@ export async function compileProgram(options: {
         discoveryCandidates: modules,
         externalEdges,
         inputs,
-        compileSelection,
+        compilePackages,
         outputs: finalOutputs,
         selections: analyzed.declarationLocator.declarations
           .map((item) => ({
@@ -299,8 +301,9 @@ export async function compileConfig(options: {
 }> {
   const root = await realpath(options.root)
   const entry = resolve(root, "helmr.config.ts")
-  const compileSelection = await readCompileSelection(root)
-  const selectedRoots = new Set(compileSelection.packages.map((item) => item.resolvedRoot))
+  if (!(await lstat(entry)).isFile()) {
+    throw new Error("helmr.config.ts must be a regular file")
+  }
   const outputRoot = resolve(options.outputRoot, "config")
   await mkdir(outputRoot, { recursive: false })
   try {
@@ -311,8 +314,9 @@ export async function compileConfig(options: {
       nodeVersion: options.nodeVersion,
       outfile: output,
       runtimeRoot: root,
-      selectedRoots,
     })
+    await compilerTSConfigs(root, Object.keys(compiled.metafile.inputs))
+    await writeFile(`${output}.map`, compiled.map)
     await writeFile(output, compiled.code)
     return {
       path: output,
@@ -355,6 +359,7 @@ function compilerOptionsDigestForTarget(target: string): string {
     declarationExtensions,
     sourceSemantics: "pinned-esbuild",
     dependencyBoundary: "explicit-installed-roots",
+    rootConfig: "build-only",
     target,
   } as unknown as JsonValue)
   return `sha256:${sha256(canonical)}`
@@ -366,7 +371,6 @@ async function bundleFile(options: {
   readonly nodeVersion: string
   readonly outfile: string
   readonly runtimeRoot: string
-  readonly selectedRoots: ReadonlySet<string>
 }): Promise<BundledOutput> {
   const externalEdges: ExternalEdge[] = []
   const result = await build({
@@ -374,9 +378,17 @@ async function bundleFile(options: {
       options.root,
       options.runtimeRoot,
       options.nodeVersion,
-      options.selectedRoots,
+      new Set(),
       externalEdges,
+      [configOrigin(options.root, esbuildNodeTarget(options.nodeVersion))],
+      "config",
     ),
+    sourcemap: "linked",
+    logOverride: {
+      "unsupported-require-call": "error",
+      "indirect-require": "error",
+      "unsupported-dynamic-import": "error",
+    },
     entryPoints: [options.entry],
     outfile: options.outfile,
   })
@@ -505,6 +517,7 @@ function baseOptions(
   selectedRoots: ReadonlySet<string>,
   externalEdges: ExternalEdge[],
   plugins: readonly Plugin[] = [],
+  phase: "config" | "program" = "program",
 ): BuildOptions {
   return {
     absWorkingDir: root,
@@ -520,6 +533,7 @@ function baseOptions(
       runtimeRoot,
       selectedRoots,
       externalEdges,
+      phase,
     )],
     banner: {
       js: 'import { createRequire as __helmrCreateRequire } from "node:module"; const require = __helmrCreateRequire(import.meta.url);',
@@ -676,11 +690,21 @@ function dependencyBoundary(
   runtimeRoot: string,
   selectedRoots: ReadonlySet<string>,
   externalEdges: ExternalEdge[],
+  phase: "config" | "program",
 ): Plugin {
   const canonicalRoot = resolve(root)
   return {
     name: "helmr-dependency-boundary",
-    setup(build) {
+    async setup(build) {
+      // Program compilation may run without a config source after receiving
+      // canonical config, but any existing root config is build-only by its
+      // resolved module path (including a symlinked root entry).
+      const rootConfig = phase === "program"
+        ? await realpath(resolve(canonicalRoot, "helmr.config.ts")).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return undefined
+          throw error
+        })
+        : undefined
       build.onResolve({ filter: /.*/ }, async (args) => {
         if (
           args.pluginData === resolvedByBoundary ||
@@ -708,8 +732,17 @@ function dependencyBoundary(
             }],
           }
         }
-        if (selectedPackage(resolvedPath, selectedRoots)) {
-          return { path }
+        if (phase === "program" && path === rootConfig) {
+          return { errors: [{ text: "helmr.config.ts is build-only and cannot be imported by Program source; move shared data or helpers to an ordinary module" }] }
+        }
+        // Let esbuild retain native per-file tsconfig metadata for bundled
+        // inputs after validating the same resolution. A bare { path } loses
+        // JSX/class-field options on the resolver plugin boundary.
+        if (phase === "config" && /\.(?:[cm]?ts|tsx|jsx)$/.test(path)) {
+          return undefined
+        }
+        if (phase === "program" && selectedPackage(resolvedPath, selectedRoots)) {
+          return undefined
         }
         if (hasNodeModules(resolvedPath)) {
           const importer = args.importer === ""
@@ -720,7 +753,7 @@ function dependencyBoundary(
               `Cannot externalize TypeScript dependency ${JSON.stringify(args.path)}` +
               ` imported by ${JSON.stringify(importer)}: ${resolvedPath}. ` +
               "Node cannot execute TypeScript under node_modules. " +
-              `Add ${JSON.stringify(installedPackageRoot(resolvedPath))} to package.json helmr.compilePackages ` +
+              `Add ${JSON.stringify(installedPackageRoot(resolvedPath))} to helmr.config.ts compilePackages ` +
               "to compile this installed package, or install Node-ready JavaScript.",
             }] }
           }
@@ -739,7 +772,7 @@ function dependencyBoundary(
             path: target,
           }
         }
-        return { path }
+        return undefined
       })
     },
   }
