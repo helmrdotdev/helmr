@@ -44,6 +44,10 @@ while [ "$#" -gt 0 ]; do
       esac
       shift 2
       ;;
+    --log-driver*)
+      printf 'unexpected logging override in ordinary mode\n' >&2
+      exit 1
+      ;;
     --env)
       printf 'env=%s\n' "$2" >>"${PUBLISH_LOG}"
       shift 2
@@ -145,3 +149,6 @@ run_publisher "${tmp}/worktree.called" "${tmp}/worktree.log" \
   "${tmp}/worktree/scripts/publish-materialized-platform-release.sh"
 
 printf 'ok - materialized Platform release publisher contract\n'
+
+# Exercise the optional credential transport as part of the existing CI entry.
+bash "${root}/tests/publisher_stdin_test.sh"

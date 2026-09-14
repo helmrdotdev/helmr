@@ -246,6 +246,23 @@ nix run .#smoke-linux
 - [Images](images/) - guest boot artifact recipes
 - [Proto](proto/) - protocol definitions and generated bindings
 
+## Prebuilt publication credentials
+
+`scripts/publish-materialized-platform-release.sh --credentials-stdin STORE_URI DIRECTORY`
+accepts one UTF-8 JSON object on stdin, followed by EOF: `version` (integer 1),
+`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_SESSION_TOKEN`. Maximum input
+is 16 KiB; credential strings must be nonempty ASCII letters/digits or `/+=._-`,
+at most 8192 characters each. Duplicate/unknown fields, malformed/truncated JSON,
+extra input and invalid values fail before the Go publisher starts. No shell eval.
+
+This opt-in transport keeps keys out of Docker create configuration and Nix
+initialization: a pipe reaches the final receiver after `nix develop`, which
+exports keys and immediately execs the publisher. The caller supplies valid
+short-lived credentials and handles their lifetime; this mode adds no credential
+refresh or publication retry. Stdin mode disables Docker daemon logging with
+`--log-driver=none`; ordinary mode keeps its existing logging. Ordinary two-argument callers retain the existing
+environment credential contract. Neither mode changes prebuilt artifact admission.
+
 ## License
 
 Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
