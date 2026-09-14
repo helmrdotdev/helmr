@@ -210,7 +210,7 @@ func TestProtectedUpstreamCertificateMismatchFails(t *testing.T) {
 func TestRedirectCannotCarrySubstitutedHeader(t *testing.T) {
 	f := newFixture(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/redirect" {
-			http.Redirect(w, r, "https://public.example/final", 302)
+			http.Redirect(w, r, "https://public.example/final", http.StatusFound)
 			return
 		}
 		if strings.Contains(r.Header.Get("Authorization"), "synthetic-") {
