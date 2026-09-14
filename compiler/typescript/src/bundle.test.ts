@@ -394,7 +394,7 @@ describe("v0 compiler contract", () => {
       declaredId: "packed-sdk", kind: "task", slots: ["handler"],
     }])
     const result = JSON.parse(new TextDecoder().decode(compiled.files.get("helmr/compiler-result.json")))
-    expect(result.localPackages).toEqual([])
+    expect(result.compileSelection.packages).toEqual([])
     const code = [...compiled.files].filter(([path]) => path.endsWith(".mjs"))
       .map(([, bytes]) => new TextDecoder().decode(bytes)).join("\n")
     expect(code).toContain(resolve(root, "node_modules/@helmr/sdk/index.mjs"))
@@ -457,13 +457,14 @@ describe("v0 compiler contract", () => {
     }
   })
 
-  test("bundles copied file dependencies from the installed-tree local map", async () => {
+  test("compiles selected installed bytes without source provenance", async () => {
     const root = await project()
     await source(
       root,
       "package.json",
       JSON.stringify({
         dependencies: { "@example/local": "file:packages/local" },
+        helmr: { compilePackages: ["node_modules/@example/local"] },
         type: "module",
       }),
     )
@@ -476,7 +477,7 @@ describe("v0 compiler contract", () => {
     await source(
       root,
       "packages/local/index.ts",
-      'export const local = "copied-local-package"\n',
+      'export const local = "unrelated-source"\n',
     )
     await source(root, "node_modules/@example/local/package.json", manifest)
     await source(
@@ -498,10 +499,9 @@ describe("v0 compiler contract", () => {
     const manifestRaw = JSON.parse(
       new TextDecoder().decode(compiled.files.get("helmr/compiler-result.json")),
     )
-    expect(manifestRaw.localPackages).toEqual([{
-      installedRoot: "node_modules/@example/local",
-      name: "@example/local",
-      sourceRoot: "packages/local",
+    expect(manifestRaw.compileSelection.packages).toEqual([{
+      logicalRoot: "node_modules/@example/local",
+      resolvedRoot: "node_modules/@example/local",
     }])
     expect(
       manifestRaw.inputs.some(
@@ -511,13 +511,14 @@ describe("v0 compiler contract", () => {
     ).toBe(true)
   })
 
-  test("bundles a workspace installed as a copy", async () => {
+  test("requires explicit selection for a workspace installed as a copy", async () => {
     const root = await project()
     await source(
       root,
       "package.json",
       JSON.stringify({
         dependencies: { "@example/workspace": "workspace:*" },
+        helmr: { compilePackages: ["node_modules/@example/workspace"] },
         name: "workspace-root",
         private: true,
         type: "module",
@@ -555,10 +556,9 @@ describe("v0 compiler contract", () => {
     const result = JSON.parse(
       new TextDecoder().decode(compiled.files.get("helmr/compiler-result.json")),
     )
-    expect(result.localPackages).toEqual([{
-      installedRoot: "node_modules/@example/workspace",
-      name: "@example/workspace",
-      sourceRoot: "packages/workspace",
+    expect(result.compileSelection.packages).toEqual([{
+      logicalRoot: "node_modules/@example/workspace",
+      resolvedRoot: "node_modules/@example/workspace",
     }])
     const output = new TextDecoder().decode(
       compiled.files.get(result.outputs[0].modulePath),
@@ -567,6 +567,99 @@ describe("v0 compiler contract", () => {
     expect(output).not.toContain(
       resolve(root, "node_modules/@example/workspace/index.ts"),
     )
+  })
+
+  test("missing imports and resolved symlink escapes fail in config and program", async () => {
+    for (const escaping of [false, true]) {
+      const root = await project()
+      if (escaping) {
+        const outside = await output()
+        await source(outside, "index.ts", 'export const value = "outside"')
+        await symlink(resolve(outside, "index.ts"), resolve(root, "escape.ts"))
+      }
+      const specifier = escaping ? "./escape.ts" : "missing-package"
+      await source(root, "helmr.config.ts", `import {value} from ${JSON.stringify(specifier)}; export default {dirs:[value]}`)
+      await source(root, "tasks/missing.ts", `import {value} from ${JSON.stringify(escaping ? "../escape.ts" : specifier)}; import {task} from "@helmr/sdk"; export const declaration=task({id:value,run:()=>value})`)
+      const message = escaping ? "escapes submitted source" : "Could not resolve"
+      await expect(compileConfig({root,outputRoot:await output(),nodeVersion:"24.19.0"})).rejects.toThrow(message)
+      await expect(compile(root)).rejects.toThrow(message)
+    }
+  })
+
+  test("selects scoped duplicate instances separately and follows file symlink targets", async () => {
+    const root = await project()
+    const nested = "node_modules/parent/node_modules/@s/same"
+    await source(root,"package.json",JSON.stringify({type:"module",helmr:{compilePackages:["node_modules/@s/same", "node_modules/parent", nested]}}))
+    for (const [path, value] of [["node_modules/@s/same","root"],[nested,"nested"]]) {
+      await source(root,`${path}/package.json`,JSON.stringify({name:"@s/same",type:"module",exports:"./index.ts"}))
+      await source(root,`${path}/index.ts`,`export const value: string = ${JSON.stringify(value)}`)
+    }
+    await source(root,"node_modules/parent/package.json",JSON.stringify({type:"module",exports:"./index.ts"}))
+    await source(root,"node_modules/parent/index.ts",'export {value} from "@s/same"')
+    await source(root,"tasks/duplicates.ts",'import {value as root} from "@s/same"; import {value as nested} from "parent"; import {task} from "@helmr/sdk"; export const declaration=task({id:root+"-"+nested,run:()=>nested})')
+    expect((await compile(root)).analysis.programDeclarations[0]?.declaredId).toBe("root-nested")
+    await source(root,"node_modules/unselected/package.json",JSON.stringify({type:"module",exports:"./index.ts"}))
+    await source(root,"node_modules/unselected/index.ts",'export const value="unselected"')
+    await symlink("../unselected/index.ts",resolve(root,"node_modules/parent/linked.ts"))
+    await source(root,"node_modules/parent/index.ts",'export {value} from "./linked.ts"')
+    await expect(compile(root)).rejects.toThrow("node_modules/unselected")
+  })
+
+  test.each(["ts", "tsx", "mts", "cts"])("rejects unselected static %s imports in config and program", async (extension) => {
+    const root = await project()
+    await source(root, "node_modules/raw/package.json", JSON.stringify({ type: "module", exports: `./index.${extension}` }))
+    await source(root, `node_modules/raw/index.${extension}`, 'export const value = "raw"')
+    await source(root, "helmr.config.ts", 'import { value } from "raw"; export default { dirs: [value] }')
+    await source(root, "tasks/raw.ts", 'import { value } from "raw"; import { task } from "@helmr/sdk"; export const raw = task({id:value, run:()=>value})')
+    await expect(compileConfig({ root, outputRoot: await output(), nodeVersion: "24.19.0" })).rejects.toThrow('imported by "helmr.config.ts"')
+    await expect(compile(root)).rejects.toThrow('node_modules/raw')
+  })
+
+  test("selection stops at nested package boundaries and preserves external conditional exports and assets", async () => {
+    const root = await project()
+    await source(root, "package.json", JSON.stringify({ type: "module", helmr: { compilePackages: ["node_modules/parent"] } }))
+    await source(root, "node_modules/parent/package.json", JSON.stringify({ type: "module", exports: "./index.ts" }))
+    await source(root, "node_modules/parent/index.ts", 'import { value } from "@s/child"; export const id: string = value')
+    await source(root, "node_modules/parent/node_modules/@s/child/package.json", JSON.stringify({ type: "module", exports: "./index.ts" }))
+    await source(root, "node_modules/parent/node_modules/@s/child/index.ts", 'export const value = "child"')
+    await source(root, "tasks/raw.ts", 'import { id } from "parent"; import { task } from "@helmr/sdk"; export const raw = task({id, run:()=>id})')
+    await expect(compile(root)).rejects.toThrow('node_modules/parent/node_modules/@s/child')
+    await source(root, "node_modules/parent/node_modules/@s/child/package.json", JSON.stringify({ type: "module", exports: { import: "./index.mjs", require: "./index.cjs" } }))
+    await source(root, "node_modules/parent/node_modules/@s/child/index.mjs", 'import { readFileSync } from "node:fs"; export const value = readFileSync(new URL("./asset.txt", import.meta.url), "utf8")')
+    await source(root, "node_modules/parent/node_modules/@s/child/index.cjs", 'exports.value = "require-child"')
+    await source(root, "node_modules/parent/node_modules/@s/child/asset.txt", "asset-child")
+    await source(root, "node_modules/parent/index.ts", 'import { value } from "@s/child"; const required = require("@s/child"); export const id: string = value + required.value')
+    const compiled = await compile(root)
+    expect(compiled.analysis.programDeclarations[0]?.declaredId).toBe("asset-childrequire-child")
+    const result = JSON.parse(new TextDecoder().decode(compiled.files.get("helmr/compiler-result.json")))
+    expect(result.externalEdges.filter((edge: {specifier: string}) => edge.specifier === "@s/child").map((edge: {resolvedPath: string}) => edge.resolvedPath).sort()).toEqual([
+      "node_modules/parent/node_modules/@s/child/index.cjs", "node_modules/parent/node_modules/@s/child/index.mjs",
+    ])
+    expect(result.inputs.some((input: {path: string}) => input.path.includes("@s/child"))).toBe(false)
+  })
+
+  test.each(["file-hoisted", "bare-hoisted", "file-isolated"])("real Bun %s install compiles selected bytes in config and full program", async (layout) => {
+    const root = await project()
+    await cp(resolve(root, "node_modules/@helmr/sdk"), resolve(root, "vendor/sdk"), { recursive: true })
+    await source(root, "packages/local/package.json", JSON.stringify({ name: "local", version: "1.0.0", type: "module", exports: "./index.ts" }))
+    await source(root, "packages/local/index.ts", 'export const dirs: string[] = ["tasks"]; export const id: string = "real-installed"')
+    const manifest = { type: "module", private: true, dependencies: { "@helmr/sdk": "file:vendor/sdk", local: `${layout.startsWith("bare") ? "./" : "file:"}packages/local` } }
+    await source(root, "package.json", JSON.stringify(manifest))
+    await rm(resolve(root, "node_modules"), { recursive: true })
+    const install = Bun.spawnSync(["bun", "install", "--ignore-scripts", `--linker=${layout.endsWith("isolated") ? "isolated" : "hoisted"}`], { cwd: root, stdout: "pipe", stderr: "pipe" })
+    expect(install.exitCode).toBe(0)
+    await source(root, "helmr.config.ts", 'import { dirs } from "local"; export default { dirs, ignorePatterns: [] }')
+    await source(root, "tasks/real.ts", 'import { id } from "local"; import { task } from "@helmr/sdk"; export const declaration = task({id, run:()=>id})')
+    await expect(compileConfig({ root, outputRoot: await output(), nodeVersion: "24.19.0" })).rejects.toThrow("helmr.compilePackages")
+    await expect(compile(root)).rejects.toThrow("helmr.compilePackages")
+    await source(root, "package.json", JSON.stringify({ ...manifest, helmr: { compilePackages: ["node_modules/local"] } }))
+    const config = await compileConfig({ root, outputRoot: await output(), nodeVersion: "24.19.0" })
+    try { expect((await import(pathToFileURL(config.path).href)).default.dirs).toEqual(["tasks"]) } finally { await config.cleanup() }
+    const result = await compile(root)
+    expect(result.analysis.programDeclarations[0]?.declaredId).toBe("real-installed")
+    const evidence = JSON.parse(new TextDecoder().decode(result.files.get("helmr/compiler-result.json")))
+    expect(evidence.compileSelection.packages[0].logicalRoot).toBe("node_modules/local")
+    expect(evidence.inputs.some((input: {path: string}) => input.path === `${evidence.compileSelection.packages[0].resolvedRoot}/index.ts`)).toBe(true)
   })
 
   test("uses project tsconfig paths and records exact compiler authority", async () => {

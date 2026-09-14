@@ -73,6 +73,8 @@ func TestProgramArtifactDoesNotInterpretProducerMetadata(t *testing.T) {
 	program.artifact.files["package.json"] = []byte(
 		`{"packageManager":"yarn@4.9.2"}`,
 	)
+	program.manifest.CompileSelection.PackageJSONDigest = testDigest(string(program.artifact.files["package.json"]))
+	program.refreshManifest(t)
 	if _, err := verifyProgramArtifact(context.Background(), program.descriptor); err != nil {
 		t.Fatalf("verifyProgramArtifact rejected producer metadata: %v", err)
 	}
@@ -119,11 +121,16 @@ func TestProgramArtifactAcceptsLocalPackageInstallLayouts(t *testing.T) {
 					"../../packages/local",
 				)
 			}
-			program.manifest.LocalPackages = []ProgramLocalPackage{{
-				InstalledRoot: "node_modules/@example/local",
-				Name:          "@example/local",
-				SourceRoot:    "packages/local",
-			}}
+			resolvedRoot := "packages/local"
+			if copied {
+				resolvedRoot = "node_modules/@example/local"
+			}
+			raw := []byte(`{"helmr":{"compilePackages":["node_modules/@example/local"]}}`)
+			program.artifact.replaceFile("package.json", raw)
+			program.manifest.CompileSelection = ProgramCompileSelection{
+				PackageJSONDigest: testDigest(string(raw)),
+				Packages:          []ProgramCompilePackage{{LogicalRoot: "node_modules/@example/local", ResolvedRoot: resolvedRoot}},
+			}
 			program.refreshManifest(t)
 			if _, err := verifyProgramArtifact(
 				context.Background(),
@@ -303,8 +310,9 @@ func newTestProgram(t *testing.T) *testProgram {
 			Digest: testDigest(string(configRaw)),
 			Path:   "helmr/config.json",
 		},
-		ExternalEdges: []ProgramExternalEdge{},
-		LocalPackages: []ProgramLocalPackage{},
+		ExternalEdges:    []ProgramExternalEdge{},
+		CompiledInputs:   []ProgramPathDigest{{Path: sourcePath, Digest: testDigest(string(sourceRaw))}},
+		CompileSelection: ProgramCompileSelection{PackageJSONDigest: testDigest(`{"packageManager":"bun@1.3.13"}`), Packages: []ProgramCompilePackage{}},
 		Modules: []ProgramModule{{
 			ModuleDigest:    testDigest(string(moduleRaw)),
 			ModulePath:      modulePath,
@@ -486,4 +494,9 @@ func (artifact *memoryArtifact) takeInode() uint64 {
 func testDigest(value string) string {
 	digest := sha256.Sum256([]byte(value))
 	return sha256sum.FormatDigest(digest[:])
+}
+
+func (artifact *memoryArtifact) replaceFile(path string, raw []byte) {
+	artifact.files[path] = raw
+	artifact.mutate(path, func(entry *artifactEntry) { entry.SizeBytes = int64(len(raw)) })
 }

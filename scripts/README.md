@@ -152,11 +152,16 @@ Run the application's typecheck/tests and a full program compilation with the
 matching compiler. Declaration discovery alone does not exercise dependency
 packaging. A local compile does not prove an image build or a deployed runtime.
 
-The package manager owns archive installation and integrity. The compiler treats
-project-local regular `.tgz` and `.tar.gz` `file:` dependencies as installed
-packages, rather than local source directories. Local directory/workspace
-packages retain their source-boundary checks; `link:` targets must be directories.
-Unsupported non-directory targets and paths outside project source are rejected.
+The package manager owns archive installation and integrity. Installed packages
+are external by default, regardless of archive suffix or acquisition spelling.
+The packed SDK contains Node-ready JavaScript and needs no compile selector.
+Project-contained linked source compiles directly. For copied TypeScript source,
+set root `package.json` `helmr.compilePackages` to logical installed package roots
+such as `node_modules/my-source-package`. The compiler uses the resolved installed
+bytes, not inferred same-name source. Nested installed dependencies need their own
+selection. Review these path policies after install-layout or dependency changes:
+a path can silently resolve to a different instance. See the
+[configuration reference](../packages/web/src/content/docs/reference/configuration.md#installed-dependencies-and-source-compilation).
 
 Keep `vendor/` in the captured project so the build can install these files.
 The archives also remain in the program source tree; account for their size.

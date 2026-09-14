@@ -366,8 +366,9 @@ func writeVerifiedProgramFixture(
 		Config: deployment.ProgramPathDigest{
 			Digest: sha256sum.DigestBytes(configRaw), Path: "helmr/config.json",
 		},
-		ExternalEdges: []deployment.ProgramExternalEdge{},
-		LocalPackages: []deployment.ProgramLocalPackage{},
+		ExternalEdges:    []deployment.ProgramExternalEdge{},
+		CompileSelection: deployment.ProgramCompileSelection{PackageJSONDigest: sha256sum.DigestBytes([]byte(`{"packageManager":"yarn@4.9.2"}`)), Packages: []deployment.ProgramCompilePackage{}},
+		CompiledInputs:   []deployment.ProgramPathDigest{{Path: sourcePath, Digest: sha256sum.DigestBytes(sourceRaw)}},
 		Modules: []deployment.ProgramModule{{
 			ModuleDigest: sha256sum.DigestBytes(moduleRaw), ModulePath: modulePath,
 			SourceMapDigest: sha256sum.DigestBytes(sourceMapRaw),

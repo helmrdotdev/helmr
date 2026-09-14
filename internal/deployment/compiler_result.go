@@ -24,7 +24,7 @@ type ProgramCompilerResult struct {
 	Execution           ProgramCompilerExecution   `json:"execution"`
 	ExternalEdges       []ProgramExternalEdge      `json:"externalEdges"`
 	Inputs              []ProgramPathDigest        `json:"inputs"`
-	LocalPackages       []ProgramLocalPackage      `json:"localPackages"`
+	CompileSelection    ProgramCompileSelection    `json:"compileSelection"`
 	Outputs             []ProgramModule            `json:"outputs"`
 	Selections          []ProgramCompilerSelection `json:"selections"`
 	TSConfigs           []ProgramPathDigest        `json:"tsconfigs"`
@@ -119,7 +119,8 @@ func validateProgramCompilerResult(manifest ProgramCompilerResult) error {
 		manifest.Compiler.Output.SourceMaps != "external" ||
 		manifest.Compiler.Source.PackageDependencies != "external" ||
 		manifest.Compiler.Source.Semantics != "pinned-esbuild" ||
-		manifest.Compiler.Source.WorkspaceDependencies != "bundled" ||
+		manifest.Compiler.Source.ProjectSources != "bundled" ||
+		manifest.Compiler.Source.CompilePackages != "explicit-installed-roots" ||
 		!slices.Equal(
 			manifest.Compiler.Source.DeclarationExtensions,
 			[]string{".cjs", ".cts", ".js", ".jsx", ".mjs", ".mts", ".ts", ".tsx"},
@@ -135,7 +136,7 @@ func validateProgramCompilerResult(manifest ProgramCompilerResult) error {
 		return errors.New("program compiler result config authority is invalid")
 	}
 	if manifest.DiscoveryCandidates == nil || manifest.ExternalEdges == nil ||
-		manifest.Inputs == nil || manifest.LocalPackages == nil ||
+		manifest.Inputs == nil ||
 		manifest.Outputs == nil || manifest.Selections == nil ||
 		manifest.TSConfigs == nil {
 		return errors.New("program compiler result collections must be arrays")
@@ -160,29 +161,11 @@ func validateProgramCompilerResult(manifest ProgramCompilerResult) error {
 			return errors.New("program compiler result external edges are not in canonical order")
 		}
 	}
-	for index, localPackage := range manifest.LocalPackages {
-		if err := validateProgramLocalPackage(localPackage); err != nil {
-			return fmt.Errorf("program compiler result local package %d: %w", index, err)
-		}
-		if index > 0 &&
-			manifest.LocalPackages[index-1].InstalledRoot >= localPackage.InstalledRoot {
-			return errors.New("program compiler result local packages are not in canonical order")
-		}
+	if err := validateProgramCompileSelection(manifest.CompileSelection); err != nil {
+		return err
 	}
-	for index, input := range manifest.Inputs {
-		if err := validateProgramPathDigest(input); err != nil {
-			return fmt.Errorf("program compiler result input %d: %w", index, err)
-		}
-		if hasNodeModulesComponent(input.Path) &&
-			!localPackageContains(manifest.LocalPackages, input.Path) {
-			return fmt.Errorf(
-				"program compiler result input %d is not in a local package",
-				index,
-			)
-		}
-		if index > 0 && manifest.Inputs[index-1].Path >= input.Path {
-			return errors.New("program compiler result inputs are not in canonical order")
-		}
+	if err := validateCompiledInputs(manifest.Inputs, manifest.CompileSelection); err != nil {
+		return err
 	}
 	for index, config := range manifest.TSConfigs {
 		if err := validateProgramPathDigest(config); err != nil {
@@ -296,7 +279,8 @@ func validateProgramCompilerAuthority(
 		) ||
 		manifest.Compiler.Source.PackageDependencies != compiler.Source.PackageDependencies ||
 		manifest.Compiler.Source.Semantics != compiler.Source.Semantics ||
-		manifest.Compiler.Source.WorkspaceDependencies != compiler.Source.WorkspaceDependencies {
+		manifest.Compiler.Source.ProjectSources != compiler.Source.ProjectSources ||
+		manifest.Compiler.Source.CompilePackages != compiler.Source.CompilePackages {
 		return errors.New("program compiler result compiler does not match toolchain authority")
 	}
 	if manifest.Execution.NodeVersion != nodeVersion {
@@ -333,6 +317,7 @@ func compilerOptionsDigest(
 		SourceMapSources      string   `json:"sourceMapSources"`
 		SourcesContent        bool     `json:"sourcesContent"`
 		SourceSemantics       string   `json:"sourceSemantics"`
+		DependencyBoundary    string   `json:"dependencyBoundary"`
 		Splitting             bool     `json:"splitting"`
 		Target                string   `json:"target"`
 		TreeShaking           bool     `json:"treeShaking"`
@@ -353,6 +338,7 @@ func compilerOptionsDigest(
 		SourceMapSources:      "absolute-program-urls",
 		SourcesContent:        false,
 		SourceSemantics:       "pinned-esbuild",
+		DependencyBoundary:    "explicit-installed-roots",
 		Splitting:             false,
 		Target:                "node" + nodeVersion,
 		TreeShaking:           true,
@@ -374,7 +360,7 @@ func verifyProgramCompilerFiles(
 	artifact *inspectedArtifact,
 	manifest ProgramCompilerResult,
 ) error {
-	if err := verifyProgramLocalPackages(ctx, artifact, manifest.LocalPackages); err != nil {
+	if err := verifyProgramCompileSelection(ctx, artifact, manifest.CompileSelection); err != nil {
 		return err
 	}
 	if err := verifyProgramExternalEdges(artifact, manifest.ExternalEdges); err != nil {
@@ -411,7 +397,7 @@ func verifyProgramCompilerFiles(
 			ctx,
 			artifact,
 			output.SourceMapPath,
-			manifest.LocalPackages,
+			manifest.CompileSelection,
 			inputSet,
 		); err != nil {
 			return err
@@ -484,7 +470,7 @@ func verifyProgramSourceMap(
 	ctx context.Context,
 	artifact *inspectedArtifact,
 	sourceMapPath string,
-	localPackages []ProgramLocalPackage,
+	selection ProgramCompileSelection,
 	allowedSources map[string]struct{},
 ) error {
 	raw, err := artifact.read(ctx, sourceMapPath, maxProgramFileSizeBytes)
@@ -524,7 +510,7 @@ func verifyProgramSourceMap(
 		source := strings.TrimPrefix(parsed.Path, prefix)
 		if err := validateArtifactPath(source, programArtifact); err != nil ||
 			(hasNodeModulesComponent(source) &&
-				!localPackageContains(localPackages, source)) ||
+				!selectedPackageContains(selection, source)) ||
 			hasReservedOutputSegment(source) ||
 			strings.HasPrefix(source, "helmr/") {
 			return fmt.Errorf("program source map %q contains an invalid source path", sourceMapPath)
@@ -550,19 +536,6 @@ func verifyProgramSourceMap(
 		}
 	}
 	return nil
-}
-
-func localPackageContains(
-	localPackages []ProgramLocalPackage,
-	value string,
-) bool {
-	for _, localPackage := range localPackages {
-		if value == localPackage.InstalledRoot ||
-			strings.HasPrefix(value, localPackage.InstalledRoot+"/") {
-			return true
-		}
-	}
-	return false
 }
 
 func verifyProgramPathDigest(

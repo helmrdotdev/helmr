@@ -76,7 +76,8 @@ stdenvNoCC.mkDerivation {
        .source.declarationExtensions == [".cjs", ".cts", ".js", ".jsx", ".mjs", ".mts", ".ts", ".tsx"] and
        .source.packageDependencies == "external" and
        .source.semantics == "pinned-esbuild" and
-       .source.workspaceDependencies == "bundled"' \
+       .source.projectSources == "bundled" and
+       .source.compilePackages == "explicit-installed-roots"' \
       "$TMPDIR/contract.json" >/dev/null
     [ "$("$tree/helmr/esbuild" --version)" = "${version}" ]
 

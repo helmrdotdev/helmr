@@ -41,6 +41,58 @@ The root `.git` entry is always excluded. Retained root `node_modules` and
 `helmr` paths are rejected. Retained `.env` and `.env.*` basenames are rejected
 except names ending in `.example`, `.sample`, or `.template`.
 
+## Installed dependencies and source compilation
+
+Helmr installs dependencies once and uses that same tree for compilation and the
+Program artifact. Resolved project source outside `node_modules`, including
+contained linked packages, is compiled. Installed packages inside `node_modules`
+are external by default: Node loads their installed JavaScript, conditional
+exports and adjacent assets from that tree. Package names, versions, workspace
+membership and `file:`/archive spellings do not imply compile intent.
+
+To compile an installed package containing TypeScript source, select its logical
+installed root in the project's **root `package.json`**:
+
+```json
+{
+  "helmr": {
+    "compilePackages": [
+      "node_modules/my-source-package",
+      "node_modules/@example/shared",
+      "node_modules/parent/node_modules/nested-source"
+    ]
+  }
+}
+```
+
+This static field applies before `helmr.config.ts` evaluation and to full program
+compilation. `helmr` accepts only the optional `compilePackages` field, a list of
+unique strings. Omission means no installed packages are selected. Paths must be
+clean project-relative POSIX package roots, with no glob, `.` or `..` components.
+Selected roots must exist, resolve within the project and contain `package.json`,
+even when unused. Symlinked selectors are bound to their actual contained instance;
+the compiler transforms the **installed bytes**, without looking for a same-name
+source directory. Selecting a parent does not select its nested `node_modules`
+dependencies. Select each required instance separately.
+
+Normal JavaScript tarballs and linked project source need no selector. Copied
+TypeScript packages do. Bundling is an explicit change to a package's execution:
+file-relative assets, native modules and computed loads may require the package
+to remain external and provide Node-ready JavaScript instead.
+
+For a statically resolved external `.ts`, `.tsx`, `.mts` or `.cts` import under
+`node_modules`, compilation fails with the resolved path and a selection hint.
+Helmr does not inspect the internals of external packages or promise detection of
+arbitrary dynamic loads. Missing required imports still fail; omitted, unused
+optional dependencies are not eagerly inspected.
+
+Selectors are path policies, not version pins. A lockfile or hoisting change may
+make a selected path disappear **or point to a different installed instance
+without an error**. Review selectors when updating dependencies or changing
+install layouts. The compiler result and artifact bind the root manifest digest,
+logical and resolved selected roots, actual compiled-input digests and external
+edges; they make no source-provenance claim.
+
 ## Runtime configuration
 
 | Surface | Fields |

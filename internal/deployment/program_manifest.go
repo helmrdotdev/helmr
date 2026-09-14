@@ -17,15 +17,16 @@ import (
 
 const ProgramManifestFormatVersion = 0
 
-// ProgramManifest binds the final executable Program closure. Producer inputs
-// and build-tool provenance are intentionally outside this contract.
+// ProgramManifest binds the executable closure, static compile policy and actual
+// compiled bytes. Package-manager and build-tool provenance are not authority.
 type ProgramManifest struct {
-	FormatVersion      int                   `json:"formatVersion"`
-	Config             ProgramPathDigest     `json:"config"`
-	ExternalEdges      []ProgramExternalEdge `json:"externalEdges"`
-	LocalPackages      []ProgramLocalPackage `json:"localPackages"`
-	Modules            []ProgramModule       `json:"modules"`
-	ProgramIndexDigest string                `json:"programIndexDigest"`
+	FormatVersion      int                     `json:"formatVersion"`
+	Config             ProgramPathDigest       `json:"config"`
+	ExternalEdges      []ProgramExternalEdge   `json:"externalEdges"`
+	CompileSelection   ProgramCompileSelection `json:"compileSelection"`
+	CompiledInputs     []ProgramPathDigest     `json:"compiledInputs"`
+	Modules            []ProgramModule         `json:"modules"`
+	ProgramIndexDigest string                  `json:"programIndexDigest"`
 }
 
 type ProgramPathDigest struct {
@@ -39,12 +40,6 @@ type ProgramModule struct {
 	SourceMapDigest string `json:"sourceMapDigest"`
 	SourceMapPath   string `json:"sourceMapPath"`
 	SourcePath      string `json:"sourcePath"`
-}
-
-type ProgramLocalPackage struct {
-	InstalledRoot string `json:"installedRoot"`
-	Name          string `json:"name"`
-	SourceRoot    string `json:"sourceRoot"`
 }
 
 type ProgramExternalEdge struct {
@@ -118,7 +113,7 @@ func validateProgramManifest(manifest ProgramManifest) error {
 	if !sha256DigestPattern.MatchString(manifest.ProgramIndexDigest) {
 		return errors.New("program manifest index digest is invalid")
 	}
-	if manifest.ExternalEdges == nil || manifest.LocalPackages == nil ||
+	if manifest.ExternalEdges == nil ||
 		manifest.Modules == nil {
 		return errors.New("program manifest collections must be arrays")
 	}
@@ -133,14 +128,11 @@ func validateProgramManifest(manifest ProgramManifest) error {
 			return errors.New("program manifest external edges are not in canonical order")
 		}
 	}
-	for index, localPackage := range manifest.LocalPackages {
-		if err := validateProgramLocalPackage(localPackage); err != nil {
-			return fmt.Errorf("program manifest local package %d: %w", index, err)
-		}
-		if index > 0 &&
-			manifest.LocalPackages[index-1].InstalledRoot >= localPackage.InstalledRoot {
-			return errors.New("program manifest local packages are not in canonical order")
-		}
+	if err := validateProgramCompileSelection(manifest.CompileSelection); err != nil {
+		return err
+	}
+	if err := validateCompiledInputs(manifest.CompiledInputs, manifest.CompileSelection); err != nil {
+		return err
 	}
 	if len(manifest.Modules) == 0 {
 		return errors.New("program manifest modules must not be empty")
@@ -157,6 +149,11 @@ func validateProgramManifest(manifest ProgramManifest) error {
 }
 
 func validateProgramExternalEdge(edge ProgramExternalEdge) error {
+	switch path.Ext(edge.ResolvedPath) {
+	case ".ts", ".tsx", ".mts", ".cts":
+		return errors.New("external TypeScript under node_modules must be selected for compilation")
+	}
+
 	if edge.Importer == "" || validateArtifactPath(edge.Importer, programArtifact) != nil {
 		return errors.New("importer is invalid")
 	}
@@ -189,20 +186,6 @@ func validateProgramExternalEdge(edge ProgramExternalEdge) error {
 	return nil
 }
 
-func validateProgramLocalPackage(localPackage ProgramLocalPackage) error {
-	if localPackage.Name == "" ||
-		validateArtifactPath(localPackage.SourceRoot, programArtifact) != nil ||
-		hasNodeModulesComponent(localPackage.SourceRoot) ||
-		hasReservedOutputSegment(localPackage.SourceRoot) ||
-		strings.HasPrefix(localPackage.SourceRoot, "helmr/") ||
-		validateArtifactPath(localPackage.InstalledRoot, programArtifact) != nil ||
-		(!hasNodeModulesComponent(localPackage.InstalledRoot) &&
-			localPackage.InstalledRoot != localPackage.SourceRoot) {
-		return errors.New("shape is invalid")
-	}
-	return nil
-}
-
 func validateProgramModule(module ProgramModule) error {
 	if err := validateDeclarationModulePath(module.ModulePath); err != nil {
 		return fmt.Errorf("modulePath: %w", err)
@@ -228,7 +211,8 @@ func programManifestFromCompilerResult(
 		FormatVersion:      ProgramManifestFormatVersion,
 		Config:             result.Config,
 		ExternalEdges:      slices.Clone(result.ExternalEdges),
-		LocalPackages:      slices.Clone(result.LocalPackages),
+		CompileSelection:   ProgramCompileSelection{PackageJSONDigest: result.CompileSelection.PackageJSONDigest, Packages: slices.Clone(result.CompileSelection.Packages)},
+		CompiledInputs:     slices.Clone(result.Inputs),
 		Modules:            slices.Clone(result.Outputs),
 		ProgramIndexDigest: indexDigest,
 	}
@@ -239,7 +223,7 @@ func verifyProgramManifestFiles(
 	artifact *inspectedArtifact,
 	manifest ProgramManifest,
 ) error {
-	if err := verifyProgramLocalPackages(ctx, artifact, manifest.LocalPackages); err != nil {
+	if err := verifyProgramCompileSelection(ctx, artifact, manifest.CompileSelection); err != nil {
 		return err
 	}
 	if err := verifyProgramExternalEdges(artifact, manifest.ExternalEdges); err != nil {
@@ -247,6 +231,13 @@ func verifyProgramManifestFiles(
 	}
 	if err := verifyProgramPathDigest(ctx, artifact, manifest.Config); err != nil {
 		return err
+	}
+	inputSet := make(map[string]struct{}, len(manifest.CompiledInputs))
+	for _, input := range manifest.CompiledInputs {
+		if err := verifyProgramPathDigest(ctx, artifact, input); err != nil {
+			return err
+		}
+		inputSet[input.Path] = struct{}{}
 	}
 	for _, module := range manifest.Modules {
 		if _, err := artifact.require(module.SourcePath, artifactEntryRegular); err != nil {
@@ -268,74 +259,8 @@ func verifyProgramManifestFiles(
 			ctx,
 			artifact,
 			module.SourceMapPath,
-			manifest.LocalPackages,
-			nil,
-		); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func verifyProgramLocalPackages(
-	ctx context.Context,
-	artifact *inspectedArtifact,
-	localPackages []ProgramLocalPackage,
-) error {
-	for _, localPackage := range localPackages {
-		if _, err := artifact.require(
-			localPackage.SourceRoot,
-			artifactEntryDirectory,
-		); err != nil {
-			return fmt.Errorf("program local package %q: %w", localPackage.Name, err)
-		}
-		if err := verifyProgramPackageName(
-			ctx,
-			artifact,
-			localPackage.SourceRoot,
-			localPackage.Name,
-		); err != nil {
-			return err
-		}
-		installed, exists := artifact.entries[localPackage.InstalledRoot]
-		if !exists {
-			return fmt.Errorf(
-				"program local package %q installed root %q is missing",
-				localPackage.Name,
-				localPackage.InstalledRoot,
-			)
-		}
-		installedRoot := localPackage.InstalledRoot
-		switch installed.Kind {
-		case artifactEntryDirectory:
-		case artifactEntrySymlink:
-			resolved, resolvedPath, err := resolveProgramArtifactPath(
-				artifact,
-				localPackage.InstalledRoot,
-			)
-			if err != nil {
-				return fmt.Errorf("program local package %q: %w", localPackage.Name, err)
-			}
-			if resolved.Kind != artifactEntryDirectory ||
-				resolvedPath != localPackage.SourceRoot {
-				return fmt.Errorf(
-					"program local package %q installed link does not resolve to source root",
-					localPackage.Name,
-				)
-			}
-			installedRoot = resolvedPath
-		default:
-			return fmt.Errorf(
-				"program local package %q installed root has kind %q",
-				localPackage.Name,
-				installed.Kind,
-			)
-		}
-		if err := verifyProgramPackageName(
-			ctx,
-			artifact,
-			installedRoot,
-			localPackage.Name,
+			manifest.CompileSelection,
+			inputSet,
 		); err != nil {
 			return err
 		}
@@ -367,33 +292,6 @@ func verifyProgramExternalEdges(
 				edge.Specifier,
 			)
 		}
-	}
-	return nil
-}
-
-func verifyProgramPackageName(
-	ctx context.Context,
-	artifact *inspectedArtifact,
-	root string,
-	expected string,
-) error {
-	raw, err := artifact.read(
-		ctx,
-		path.Join(root, "package.json"),
-		maxProgramFileSizeBytes,
-	)
-	if err != nil {
-		return fmt.Errorf("program local package %q: %w", expected, err)
-	}
-	var document struct {
-		Name string `json:"name"`
-	}
-	if err := json.Unmarshal(raw, &document); err != nil || document.Name != expected {
-		return fmt.Errorf(
-			"program local package root %q does not identify %q",
-			root,
-			expected,
-		)
 	}
 	return nil
 }

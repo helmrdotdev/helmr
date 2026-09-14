@@ -14,7 +14,7 @@ func testCompilerInputs() CompilerInputs {
 		OptionsContractDigest: testDigest("compiler options contract"),
 		Output:                CompilerOutputContract{Aggregate: "analysis-only", FinalModules: "independent", SourceMaps: "external"},
 		ProgramCompiler:       CompilerEntrypoint{APIVersion: "helmr.compiler.v0", Digest: testDigest("program compiler"), Entrypoint: "/nix/helmr/program-compiler.mjs"},
-		Source:                CompilerSourceContract{DeclarationExtensions: []string{".cjs", ".cts", ".js", ".jsx", ".mjs", ".mts", ".ts", ".tsx"}, PackageDependencies: "external", Semantics: "pinned-esbuild", WorkspaceDependencies: "bundled"},
+		Source:                CompilerSourceContract{DeclarationExtensions: []string{".cjs", ".cts", ".js", ".jsx", ".mjs", ".mts", ".ts", ".tsx"}, PackageDependencies: "external", Semantics: "pinned-esbuild", ProjectSources: "bundled", CompilePackages: "explicit-installed-roots"},
 	}
 }
 
@@ -79,7 +79,7 @@ func testProgramCompilerResult(t *testing.T) ProgramCompilerResult {
 			Digest: "sha256:" + strings.Repeat("9", 64),
 			Path:   sourcePath,
 		}},
-		LocalPackages: []ProgramLocalPackage{},
+		CompileSelection: ProgramCompileSelection{PackageJSONDigest: testDigest(`{"packageManager":"bun@1.3.13"}`), Packages: []ProgramCompilePackage{}},
 		Outputs: []ProgramModule{{
 			ModuleDigest:    "sha256:" + strings.Repeat("b", 64),
 			ModulePath:      modulePath,

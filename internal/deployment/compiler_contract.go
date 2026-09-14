@@ -38,7 +38,8 @@ type CompilerSourceContract struct {
 	DeclarationExtensions []string `json:"declarationExtensions"`
 	PackageDependencies   string   `json:"packageDependencies"`
 	Semantics             string   `json:"semantics"`
-	WorkspaceDependencies string   `json:"workspaceDependencies"`
+	ProjectSources        string   `json:"projectSources"`
+	CompilePackages       string   `json:"compilePackages"`
 }
 
 // CompilerInputs describes the Product-owned compiler inside the canonical
@@ -119,7 +120,8 @@ func ValidateCompilerInputs(input CompilerInputs) error {
 		input.Output.SourceMaps != "external" ||
 		input.Source.PackageDependencies != "external" ||
 		input.Source.Semantics != "pinned-esbuild" ||
-		input.Source.WorkspaceDependencies != "bundled" ||
+		input.Source.ProjectSources != "bundled" ||
+		input.Source.CompilePackages != "explicit-installed-roots" ||
 		!slices.Equal(input.Source.DeclarationExtensions,
 			[]string{".cjs", ".cts", ".js", ".jsx", ".mjs", ".mts", ".ts", ".tsx"}) {
 		return errors.New("compiler inputs do not match the v0 contract")

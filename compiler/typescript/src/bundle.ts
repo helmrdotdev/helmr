@@ -37,9 +37,10 @@ import {
   type DeclarationLocator,
 } from "./compile"
 import {
-  deriveLocalPackages,
-  type LocalPackage,
-} from "./local-packages"
+  readCompileSelection,
+  installedPackageRoot,
+  selectedPackage,
+} from "./compile-selection"
 import { compareUTF8 } from "./utf8"
 
 export const COMPILER_API_VERSION = "helmr.compiler.v0" as const
@@ -73,14 +74,12 @@ export interface ProgramCompilation {
 interface BundledOutput {
   readonly code: Uint8Array
   readonly externalEdges: readonly ExternalEdge[]
-  readonly localPackages: readonly LocalPackage[]
   readonly map: Uint8Array
   readonly metafile: Metafile
 }
 
 interface OutputFiles {
   readonly code: Uint8Array
-  readonly localPackages: readonly LocalPackage[]
   readonly map: Uint8Array
 }
 
@@ -115,7 +114,8 @@ export function compilerContract(): JsonValue {
       declarationExtensions: declarationExtensions,
       packageDependencies: "external",
       semantics: "pinned-esbuild",
-      workspaceDependencies: "bundled",
+      projectSources: "bundled",
+      compilePackages: "explicit-installed-roots",
     },
   }
 }
@@ -130,7 +130,8 @@ export async function compileProgram(options: {
 }): Promise<ProgramCompilation> {
   const root = await realpath(options.root)
   const outputRoot = resolve(options.outputRoot)
-  const canonicalLocalPackages = await deriveLocalPackages(root)
+  const compileSelection = await readCompileSelection(root)
+  const selectedRoots = new Set(compileSelection.packages.map((item) => item.resolvedRoot))
   const modules = await discoverModules(root, options.config)
   if (modules.length === 0) {
     throw new Error("configured dirs contain no declaration source modules")
@@ -146,7 +147,7 @@ export async function compileProgram(options: {
       outfile: resolve(root, "helmr/analysis.mjs"),
       nodeVersion: options.nodeVersion,
       runtimeRoot: root,
-      localPackages: canonicalLocalPackages,
+      selectedRoots,
     })
     await writeFile(aggregatePath, aggregate.code)
     const namespaces = await importAggregate(aggregatePath)
@@ -187,7 +188,7 @@ export async function compileProgram(options: {
       })),
       nodeVersion: options.nodeVersion,
       runtimeRoot,
-      localPackages: canonicalLocalPackages,
+      selectedRoots,
     })
     metafiles.push(finalBundle.metafile)
     for (const [source, compiled] of finalBundle.outputs) {
@@ -197,7 +198,7 @@ export async function compileProgram(options: {
         resolve(analysisRoot, path),
         source,
         compiled.map,
-        compiled.localPackages,
+        selectedRoots,
       )
       const analysisModulePath = resolve(analysisRoot, path)
       await writeFile(`${analysisModulePath}.map`, sourceMap)
@@ -245,15 +246,9 @@ export async function compileProgram(options: {
     const inputs = await compilerInputs(
       root,
       metafiles,
-      canonicalLocalPackages,
+      selectedRoots,
       new Set(["<helmr-analysis>", ...finalBundle.virtualInputs]),
     )
-    const localPackages = sortedLocalPackages(localPackagesForInputs(
-      new Set(inputs.map((input) => input.path)),
-      new Map(
-        canonicalLocalPackages.map((item) => [item.installedRoot, item]),
-      ),
-    ))
     const tsconfigs = await compilerTSConfigs(root, inputs.map((item) => item.path))
     files.set(
       "helmr/compiler-result.json",
@@ -270,7 +265,7 @@ export async function compileProgram(options: {
         discoveryCandidates: modules,
         externalEdges,
         inputs,
-        localPackages,
+        compileSelection,
         outputs: finalOutputs,
         selections: analyzed.declarationLocator.declarations
           .map((item) => ({
@@ -304,7 +299,8 @@ export async function compileConfig(options: {
 }> {
   const root = await realpath(options.root)
   const entry = resolve(root, "helmr.config.ts")
-  const localPackages = await deriveLocalPackages(root)
+  const compileSelection = await readCompileSelection(root)
+  const selectedRoots = new Set(compileSelection.packages.map((item) => item.resolvedRoot))
   const outputRoot = resolve(options.outputRoot, "config")
   await mkdir(outputRoot, { recursive: false })
   try {
@@ -315,7 +311,7 @@ export async function compileConfig(options: {
       nodeVersion: options.nodeVersion,
       outfile: output,
       runtimeRoot: root,
-      localPackages,
+      selectedRoots,
     })
     await writeFile(output, compiled.code)
     return {
@@ -358,6 +354,7 @@ function compilerOptionsDigestForTarget(target: string): string {
     treeShaking: true,
     declarationExtensions,
     sourceSemantics: "pinned-esbuild",
+    dependencyBoundary: "explicit-installed-roots",
     target,
   } as unknown as JsonValue)
   return `sha256:${sha256(canonical)}`
@@ -369,18 +366,15 @@ async function bundleFile(options: {
   readonly nodeVersion: string
   readonly outfile: string
   readonly runtimeRoot: string
-  readonly localPackages: readonly LocalPackage[]
+  readonly selectedRoots: ReadonlySet<string>
 }): Promise<BundledOutput> {
-  const localPackages = new Map(
-    options.localPackages.map((item) => [item.installedRoot, item]),
-  )
   const externalEdges: ExternalEdge[] = []
   const result = await build({
     ...baseOptions(
       options.root,
       options.runtimeRoot,
       options.nodeVersion,
-      localPackages,
+      options.selectedRoots,
       externalEdges,
     ),
     entryPoints: [options.entry],
@@ -388,7 +382,6 @@ async function bundleFile(options: {
   })
   const output = {
     ...singleOutputFiles(requireOutputFiles(result.outputFiles), options.outfile),
-    localPackages: sortedLocalPackages(localPackages),
     externalEdges: sortedExternalEdges(externalEdges),
     metafile: requiredMetafile(result.metafile),
   }
@@ -402,18 +395,15 @@ async function bundleEntry(options: {
   readonly sourcefile: string
   readonly outfile: string
   readonly runtimeRoot: string
-  readonly localPackages: readonly LocalPackage[]
+  readonly selectedRoots: ReadonlySet<string>
 }): Promise<BundledOutput> {
-  const localPackages = new Map(
-    options.localPackages.map((item) => [item.installedRoot, item]),
-  )
   const externalEdges: ExternalEdge[] = []
   const result = await build({
     ...baseOptions(
       options.root,
       options.runtimeRoot,
       options.nodeVersion,
-      localPackages,
+      options.selectedRoots,
       externalEdges,
     ),
     outfile: options.outfile,
@@ -426,7 +416,6 @@ async function bundleEntry(options: {
   })
   const output = {
     ...singleOutputFiles(requireOutputFiles(result.outputFiles), options.outfile),
-    localPackages: sortedLocalPackages(localPackages),
     externalEdges: sortedExternalEdges(externalEdges),
     metafile: requiredMetafile(result.metafile),
   }
@@ -439,16 +428,13 @@ async function bundleEntries(options: {
   readonly entries: readonly FinalEntry[]
   readonly nodeVersion: string
   readonly runtimeRoot: string
-  readonly localPackages: readonly LocalPackage[]
+  readonly selectedRoots: ReadonlySet<string>
 }): Promise<{
   readonly externalEdges: readonly ExternalEdge[]
   readonly metafile: Metafile
   readonly outputs: ReadonlyMap<string, OutputFiles>
   readonly virtualInputs: ReadonlySet<string>
 }> {
-  const localPackages = new Map(
-    options.localPackages.map((item) => [item.installedRoot, item]),
-  )
   const externalEdges: ExternalEdge[] = []
   const entries = new Map(
     options.entries.map((entry) => [entry.sourcefile, entry]),
@@ -458,7 +444,7 @@ async function bundleEntries(options: {
       options.root,
       options.runtimeRoot,
       options.nodeVersion,
-      localPackages,
+      options.selectedRoots,
       externalEdges,
       [finalEntryPlugin(options.root, entries)],
     ),
@@ -499,9 +485,6 @@ async function bundleEntries(options: {
     )
     outputs.set(entry.source, {
       code: await readFile(entry.outfile),
-      localPackages: sortedLocalPackages(
-        localPackagesForInputs(inputPaths, localPackages),
-      ),
       map: await readFile(`${entry.outfile}.map`),
     })
   }
@@ -519,7 +502,7 @@ function baseOptions(
   root: string,
   runtimeRoot: string,
   nodeVersion: string,
-  localPackages: Map<string, LocalPackage>,
+  selectedRoots: ReadonlySet<string>,
   externalEdges: ExternalEdge[],
   plugins: readonly Plugin[] = [],
 ): BuildOptions {
@@ -535,7 +518,7 @@ function baseOptions(
     plugins: [...plugins, dependencyBoundary(
       root,
       runtimeRoot,
-      localPackages,
+      selectedRoots,
       externalEdges,
     )],
     banner: {
@@ -667,20 +650,6 @@ function outputInputPaths(
   )
 }
 
-function localPackagesForInputs(
-  inputs: ReadonlySet<string>,
-  localPackages: ReadonlyMap<string, LocalPackage>,
-): ReadonlyMap<string, LocalPackage> {
-  const paths = [...inputs]
-  return new Map(
-    [...localPackages].filter(([installedRoot]) =>
-      paths.some((path) =>
-        path === installedRoot || path.startsWith(`${installedRoot}/`)
-      )
-    ),
-  )
-}
-
 function externalEdgesForOutput(
   output: Metafile["outputs"][string],
   inputs: ReadonlySet<string>,
@@ -705,7 +674,7 @@ function externalEdgesForOutput(
 function dependencyBoundary(
   root: string,
   runtimeRoot: string,
-  localPackages: Map<string, LocalPackage>,
+  selectedRoots: ReadonlySet<string>,
   externalEdges: ExternalEdge[],
 ): Plugin {
   const canonicalRoot = resolve(root)
@@ -739,16 +708,25 @@ function dependencyBoundary(
             }],
           }
         }
-        if (localPackageForPath(logicalPath, localPackages) !== undefined ||
-          localPackageForPath(resolvedPath, localPackages) !== undefined) {
+        if (selectedPackage(resolvedPath, selectedRoots)) {
           return { path }
         }
         if (hasNodeModules(resolvedPath)) {
+          const importer = args.importer === ""
+            ? args.importer
+            : projectPath(canonicalRoot, resolve(args.importer))
+          if (/\.(?:ts|tsx|mts|cts)$/.test(resolvedPath)) {
+            return { errors: [{ text:
+              `Cannot externalize TypeScript dependency ${JSON.stringify(args.path)}` +
+              ` imported by ${JSON.stringify(importer)}: ${resolvedPath}. ` +
+              "Node cannot execute TypeScript under node_modules. " +
+              `Add ${JSON.stringify(installedPackageRoot(resolvedPath))} to package.json helmr.compilePackages ` +
+              "to compile this installed package, or install Node-ready JavaScript.",
+            }] }
+          }
           const runtimePath = resolve(runtimeRoot, logicalPath)
           externalEdges.push({
-            importer: args.importer === ""
-              ? args.importer
-              : projectPath(canonicalRoot, resolve(args.importer)),
+            importer,
             kind: args.kind,
             logicalPath,
             resolvedPath,
@@ -769,29 +747,6 @@ function dependencyBoundary(
 
 const resolvedByBoundary = Object.freeze({})
 
-
-function localPackageForPath(
-  path: string,
-  localPackages: ReadonlyMap<string, LocalPackage>,
-): LocalPackage | undefined {
-  for (const localPackage of localPackages.values()) {
-    if (
-      path === localPackage.installedRoot ||
-      path.startsWith(`${localPackage.installedRoot}/`)
-    ) {
-      return localPackage
-    }
-  }
-  return undefined
-}
-
-function sortedLocalPackages(
-  localPackages: ReadonlyMap<string, LocalPackage>,
-): readonly LocalPackage[] {
-  return [...localPackages.values()].sort((left, right) =>
-    compareUTF8(left.installedRoot, right.installedRoot)
-  )
-}
 
 function sortedExternalEdges(
   edges: readonly ExternalEdge[],
@@ -900,7 +855,7 @@ function normalizeSourceMap(
   outfile: string,
   source: string,
   raw: Uint8Array,
-  localPackages: readonly LocalPackage[],
+  selectedRoots: ReadonlySet<string>,
 ): Uint8Array {
   const value: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(raw))
   if (typeof value !== "object" || value === null) {
@@ -926,10 +881,7 @@ function normalizeSourceMap(
     if (
       !inside(relative(root, absolute)) ||
       (hasNodeModules(path) &&
-        localPackageForPath(
-          path,
-          new Map(localPackages.map((item) => [item.installedRoot, item])),
-        ) === undefined)
+        !selectedPackage(path, selectedRoots))
     ) {
       throw new Error(`source map source escapes first-party Program files: ${item}`)
     }
@@ -974,7 +926,7 @@ function requiredMetafile(metafile: Metafile | undefined): Metafile {
 async function compilerInputs(
   root: string,
   metafiles: readonly Metafile[],
-  localPackages: readonly LocalPackage[],
+  selectedRoots: ReadonlySet<string>,
   virtualInputs: ReadonlySet<string>,
 ): Promise<readonly { readonly digest: string; readonly path: string }[]> {
   const paths = new Set<string>()
@@ -983,15 +935,12 @@ async function compilerInputs(
       if (virtualInputs.has(input)) continue
       const absolute = await realpath(resolve(root, input))
       const path = projectPath(root, absolute)
-      if (!inside(relative(root, absolute))) continue
+      if (!inside(relative(root, absolute))) throw new Error(`compiler input escapes project: ${input}`)
       if (
         hasNodeModules(path) &&
-        !localPackages.some((item) =>
-          path === item.installedRoot ||
-          path.startsWith(`${item.installedRoot}/`)
-        )
+        !selectedPackage(path, selectedRoots)
       ) {
-        continue
+        throw new Error(`compiler input is not in a selected package: ${path}`)
       }
       paths.add(path)
     }
