@@ -40,17 +40,22 @@ export async function deriveLocalPackages(
     const manifest = await packageManifest(resolve(canonicalRoot, sourceRoot))
     const targets = localDependencyTargets(manifest).map((dependency) => ({
       label: dependency,
-      path: resolve(canonicalRoot, sourceRoot, dependency),
+      path: resolve(canonicalRoot, sourceRoot, dependency.slice(dependency.indexOf(":") + 1)),
     }))
     targets.push(...await linkedLocalPackageTargets(canonicalRoot, sourceRoot))
     for (const targetInput of targets) {
       const target = await realpath(targetInput.path)
-      if (!(await stat(target)).isDirectory()) {
-        throw new Error(`local package target ${JSON.stringify(targetInput.label)} is not a directory`)
-      }
+      const metadata = await stat(target)
       const path = projectPath(canonicalRoot, target)
       if (!inside(path) || hasNodeModules(path) || path.startsWith("helmr/")) {
         throw new Error(`local package target ${JSON.stringify(targetInput.label)} escapes project source`)
+      }
+      if (!metadata.isDirectory()) {
+        // Archive installation belongs to the package manager. Only source
+        // directories participate in the local-package bundling map.
+        if (targetInput.label.startsWith("file:") && metadata.isFile() &&
+          /\.(tgz|tar\.gz)$/.test(targetInput.path)) continue
+        throw new Error(`local package target ${JSON.stringify(targetInput.label)} is not a directory`)
       }
       if (!sourceRoots.has(path)) {
         sourceRoots.add(path)
@@ -204,7 +209,7 @@ function localDependencyTargets(manifest: Record<string, unknown>): string[] {
         typeof value === "string" &&
         (value.startsWith("file:") || value.startsWith("link:"))
       ) {
-        targets.add(value.slice(value.indexOf(":") + 1))
+        targets.add(value)
       }
     }
   }

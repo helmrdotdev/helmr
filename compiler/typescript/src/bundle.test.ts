@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test"
 import {
+  cp,
   mkdir,
   mkdtemp,
   readFile,
@@ -358,6 +359,46 @@ describe("v0 compiler contract", () => {
       resolve(root, "node_modules/registry-package/index.mjs"),
     )
   })
+
+  test("compiles config and program with a packed, installed file: dependency", async () => {
+    const root = await project()
+    const packageRoot = await output()
+    await cp(resolve(root, "node_modules/@helmr/sdk"), packageRoot, { recursive: true })
+    const manifest = JSON.parse(await readFile(resolve(packageRoot, "package.json"), "utf8"))
+    manifest.version = "0.0.0-fixture"
+    await source(packageRoot, "package.json", JSON.stringify(manifest))
+    await mkdir(resolve(root, "vendor"))
+    const packed = Bun.spawnSync([
+      process.execPath, "pm", "pack", "--filename", resolve(root, "vendor/sdk.tgz"), "--ignore-scripts",
+    ], { cwd: packageRoot, stdout: "pipe", stderr: "pipe" })
+    expect(packed.exitCode, packed.stderr.toString()).toBe(0)
+    await rm(resolve(root, "node_modules"), { recursive: true })
+    await source(root, "package.json", JSON.stringify({
+      name: "tarball-consumer", private: true, type: "module",
+      dependencies: { "@helmr/sdk": "file:vendor/sdk.tgz" },
+    }))
+    const installed = Bun.spawnSync([process.execPath, "install", "--ignore-scripts"], {
+      cwd: root, stdout: "pipe", stderr: "pipe",
+    })
+    expect(installed.exitCode, installed.stderr.toString()).toBe(0)
+    await source(root, "helmr.config.ts", 'export default { dirs: ["tasks"], ignorePatterns: [] }\n')
+    const config = await compileConfig({ root, outputRoot: await output(), nodeVersion: "24.20.0" })
+    try {
+      expect((await import(pathToFileURL(config.path).href)).default.dirs).toEqual(["tasks"])
+    } finally {
+      await config.cleanup()
+    }
+    await source(root, "tasks/example.ts", task("packed-sdk"))
+    const compiled = await compile(root)
+    expect(compiled.analysis.programDeclarations).toEqual([{
+      declaredId: "packed-sdk", kind: "task", slots: ["handler"],
+    }])
+    const result = JSON.parse(new TextDecoder().decode(compiled.files.get("helmr/compiler-result.json")))
+    expect(result.localPackages).toEqual([])
+    const code = [...compiled.files].filter(([path]) => path.endsWith(".mjs"))
+      .map(([, bytes]) => new TextDecoder().decode(bytes)).join("\n")
+    expect(code).toContain(resolve(root, "node_modules/@helmr/sdk/index.mjs"))
+  }, 30_000)
 
   test("attributes emitted external edges across disjoint final entries", async () => {
     const root = await project()

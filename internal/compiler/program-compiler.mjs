@@ -4634,17 +4634,20 @@ async function deriveLocalPackages(root) {
     const manifest = await packageManifest(resolve4(canonicalRoot, sourceRoot));
     const targets = localDependencyTargets(manifest).map((dependency) => ({
       label: dependency,
-      path: resolve4(canonicalRoot, sourceRoot, dependency)
+      path: resolve4(canonicalRoot, sourceRoot, dependency.slice(dependency.indexOf(":") + 1))
     }));
     targets.push(...await linkedLocalPackageTargets(canonicalRoot, sourceRoot));
     for (const targetInput of targets) {
       const target = await realpath3(targetInput.path);
-      if (!(await stat2(target)).isDirectory()) {
-        throw new Error(`local package target ${JSON.stringify(targetInput.label)} is not a directory`);
-      }
+      const metadata = await stat2(target);
       const path = projectPath2(canonicalRoot, target);
       if (!inside2(path) || hasNodeModules(path) || path.startsWith("helmr/")) {
         throw new Error(`local package target ${JSON.stringify(targetInput.label)} escapes project source`);
+      }
+      if (!metadata.isDirectory()) {
+        if (targetInput.label.startsWith("file:") && metadata.isFile() && /\.(tgz|tar\.gz)$/.test(targetInput.path))
+          continue;
+        throw new Error(`local package target ${JSON.stringify(targetInput.label)} is not a directory`);
       }
       if (!sourceRoots.has(path)) {
         sourceRoots.add(path);
@@ -4765,7 +4768,7 @@ function localDependencyTargets(manifest) {
     }
     for (const value of Object.values(dependencies)) {
       if (typeof value === "string" && (value.startsWith("file:") || value.startsWith("link:"))) {
-        targets.add(value.slice(value.indexOf(":") + 1));
+        targets.add(value);
       }
     }
   }

@@ -111,3 +111,52 @@ image and the signed Platform release.
 containers emitted by generic self-host AWS compositions. It writes values
 directly so Terraform state contains only secret ARNs. It initializes missing
 values only and never replaces an existing value.
+
+## Testing an unreleased SDK locally
+
+For development, build the SDK and proto package from one clean, recorded Helmr
+commit. Use a CLI/compiler and staging runtime from that same source contract;
+local tarballs do not provide cross-version compatibility. This workflow does
+not publish packages or create a release channel.
+
+In an isolated Helmr checkout, enter `nix develop`, then run:
+
+```sh
+bun install --frozen-lockfile
+git rev-parse HEAD
+export PACKAGE_VERSION="0.1.0-dev.$(git rev-parse --short=12 HEAD)"
+bash scripts/build-npm-packages.sh
+bash scripts/pack-npm-packages.sh
+```
+
+Copy the two generated archives from `dist/npm-tarballs/` into the consuming
+project's `vendor/` directory. Set both dependencies to their actual filenames:
+
+```json
+{
+  "dependencies": {
+    "@helmr/sdk": "file:vendor/helmr-sdk-0.1.0-dev.COMMIT.tgz",
+    "@helmr/proto": "file:vendor/helmr-proto-0.1.0-dev.COMMIT.tgz"
+  },
+  "overrides": {
+    "@helmr/proto": "file:vendor/helmr-proto-0.1.0-dev.COMMIT.tgz"
+  }
+}
+```
+
+Replace `COMMIT` with the recorded revision suffix. The Bun override keeps the
+SDK's transitive proto dependency on the same local artifact. Run `bun install`
+once to update the lockfile; retain the archives, lockfile and full source
+revision together. Subsequent checks use `bun install --frozen-lockfile`.
+Run the application's typecheck/tests and a full program compilation with the
+matching compiler. Declaration discovery alone does not exercise dependency
+packaging. A local compile does not prove an image build or a deployed runtime.
+
+The package manager owns archive installation and integrity. The compiler treats
+project-local regular `.tgz` and `.tar.gz` `file:` dependencies as installed
+packages, rather than local source directories. Local directory/workspace
+packages retain their source-boundary checks; `link:` targets must be directories.
+Unsupported non-directory targets and paths outside project source are rejected.
+
+Keep `vendor/` in the captured project so the build can install these files.
+The archives also remain in the program source tree; account for their size.
