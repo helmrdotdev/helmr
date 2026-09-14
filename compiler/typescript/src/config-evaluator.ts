@@ -1,32 +1,18 @@
 import { canonicalizeJsonValue, type JsonValue } from "@helmr/sdk/internal"
 import { createWriteStream } from "node:fs"
-import { compileConfig } from "./bundle"
+import { installModuleExecution } from "@helmr/module-execution"
+import { resolve } from "node:path"
 import { loadConfig } from "./config"
 
 const maxConfigBytes = 1 << 20
 
 async function main(): Promise<void> {
-  if (
-    process.argv.length !== 5 ||
-    process.argv[2] === undefined ||
-    process.argv[3] === undefined ||
-    process.argv[4] === undefined
-  ) {
-    throw new Error(
-      "Config Evaluator requires a Program root, exact Node version, and output root",
-    )
+  if (process.argv.length !== 4 || process.argv[2] === undefined || process.argv[3] === undefined) {
+    throw new Error("Config Evaluator requires a Program root and exact Node version")
   }
-  const compiled = await compileConfig({
-    nodeVersion: process.argv[3],
-    outputRoot: process.argv[4],
-    root: process.argv[2],
-  })
-  let config
-  try {
-    config = await loadConfig(compiled.path)
-  } finally {
-    await compiled.cleanup()
-  }
+  if (process.versions.node !== process.argv[3]) throw new Error("Config Evaluator Node version does not match Runtime")
+  const execution = installModuleExecution({ root: process.argv[2], phase: "config" })
+  const config = await loadConfig(resolve(execution.root, "helmr.config.ts"), execution.importSourceExports)
   const body = canonicalizeJsonValue(config as unknown as JsonValue)
   if (body.byteLength === 0 || body.byteLength > maxConfigBytes) {
     throw new Error("normalized config size is invalid")

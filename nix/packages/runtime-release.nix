@@ -1,5 +1,6 @@
 {
   lib,
+  moduleExecution,
   stdenv,
   stdenvNoCC,
   fetchurl,
@@ -54,6 +55,12 @@ stdenvNoCC.mkDerivation {
     install -m0644 "$upstream/LICENSE" "$tree/share/licenses/node/LICENSE"
     install -m0644 ${../../internal/runtime/entry.mjs} "$tree/helmr/entry.mjs"
 
+    install -m0644 ${../../internal/runtime/module-preload.mjs} "$tree/helmr/module-preload.mjs"
+    cp -a ${moduleExecution}/moduleexecution "$tree/moduleexecution"
+    cp -a ${moduleExecution}/share/licenses/typescript "$tree/share/licenses/typescript"
+    adapter_digest="sha256:$(sha256sum "$tree/moduleexecution/loader.mjs" | cut -d' ' -f1)"
+    typescript_digest="sha256:$(sha256sum "$tree/moduleexecution/typescript.cjs" | cut -d' ' -f1)"
+
     copy_library() {
       name="$1"
       shift
@@ -102,12 +109,15 @@ stdenvNoCC.mkDerivation {
     jq -cSj -n \
       --arg architecture "${architecture}" \
       --arg nodeVersion "${nodeVersion}" \
-      --arg runtimeContract "helmr.runtime.v0" \
+      --arg adapterDigest "$adapter_digest" \
+      --arg typescriptDigest "$typescript_digest" \
+      --arg runtimeContract "helmr.runtime.v1" \
       '{
         architecture:$architecture,
-        formatVersion:0,
+        formatVersion:1,
         nodeVersion:$nodeVersion,
-        programNodeFlags:["--no-strip-types","--enable-source-maps"],
+        programNodeFlags:["--no-strip-types","--no-global-search-paths","--enable-source-maps","--import=file:///opt/helmr/runtime/helmr/module-preload.mjs"],
+        language:{apiVersion:"helmr.module-execution.v1",adapterDigest:$adapterDigest,typescriptDigest:$typescriptDigest,typescriptVersion:"6.0.3"},
         runtimeContract:$runtimeContract
       }' >"$tree/helmr/runtime.json"
 
@@ -171,13 +181,13 @@ stdenvNoCC.mkDerivation {
     jq -cSj -n \
       --arg architecture "${architecture}" \
       --arg digest "$runtime_digest" \
-      --arg mediaType "application/vnd.helmr.runtime.v0+squashfs" \
-      --arg runtimeContract "helmr.runtime.v0" \
+      --arg mediaType "application/vnd.helmr.runtime.v1+squashfs" \
+      --arg runtimeContract "helmr.runtime.v1" \
       --argjson sizeBytes "$runtime_size" \
       '{
         architecture:$architecture,
         digest:$digest,
-        formatVersion:0,
+        formatVersion:1,
         mediaType:$mediaType,
         runtimeContract:$runtimeContract,
         sizeBytes:$sizeBytes

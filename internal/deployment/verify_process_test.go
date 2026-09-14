@@ -261,7 +261,7 @@ func canonicalVerifierProgramIndex(t *testing.T) []byte {
 			},
 			Locator: &ProgramLocator{
 				ExportName: "verify",
-				ModulePath: generatedTestModule("a"),
+				SourcePath: testSourcePath("a"),
 				Slot:       DeclarationSlotHandler,
 			},
 		}},

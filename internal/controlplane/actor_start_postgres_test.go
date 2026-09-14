@@ -540,13 +540,13 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 		VALUES ($1, $2, 1, 'application/vnd.helmr.deployment-bundle.v0+json'),
-		       ($1, $3, 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
+		       ($1, $3, 1, 'application/vnd.helmr.deployment-program.v1+squashfs'),
 		       ($1, $4, 1, 'application/octet-stream'),
-		       ($1, $5, 1, 'application/vnd.helmr.runtime.v0+squashfs')
+		       ($1, $5, 1, 'application/vnd.helmr.runtime.v1+squashfs')
 	`, fixture.orgID, digests[0], digests[1], digests[2], digests[3])
 	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
-		VALUES ($1, $3, $4, $5, $6, 'deployment_program', 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
+		VALUES ($1, $3, $4, $5, $6, 'deployment_program', 1, 'application/vnd.helmr.deployment-program.v1+squashfs'),
 		       ($2, $3, $4, $5, $7, 'workspace_image', 1, 'application/octet-stream')
 	`, programID, imageID, fixture.orgID, fixture.projectID,
 		fixture.environmentID, digests[1], digests[2])

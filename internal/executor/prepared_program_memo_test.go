@@ -172,7 +172,7 @@ func TestPreparedProgramMemoHitPreservesSnapshotAndTargetAuthority(t *testing.T)
 			},
 			Locator: &deployment.ProgramLocator{
 				ExportName: "task",
-				ModulePath: ".helmr/modules/" + strings.Repeat("1", 64) + ".mjs",
+				SourcePath: ".helmr/modules/" + strings.Repeat("1", 64) + ".mjs",
 				Slot:       deployment.DeclarationSlotHandler,
 			},
 		}},

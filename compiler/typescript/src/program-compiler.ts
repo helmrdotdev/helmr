@@ -12,7 +12,7 @@ import {
 import {
   compileProgram,
   compilerContract,
-} from "./bundle"
+} from "./source"
 import { inspectCanonicalConfig } from "./config"
 
 async function main(): Promise<void> {
@@ -21,14 +21,15 @@ async function main(): Promise<void> {
     return
   }
   if (
-    process.argv.length !== 6 ||
+    process.argv.length !== 7 ||
     process.argv[2] === undefined ||
     process.argv[3] === undefined ||
     process.argv[4] === undefined ||
-    process.argv[5] === undefined
+    process.argv[5] === undefined ||
+    process.argv[6] === undefined
   ) {
     throw new Error(
-      "Program Compiler requires a Program root, canonical config path, exact Node version, and output root",
+      "Program Compiler requires a Program root, canonical config path, exact Node version, input tree digest, and output root",
     )
   }
   const root = resolve(process.argv[2])
@@ -39,11 +40,11 @@ async function main(): Promise<void> {
     architecture: "x86_64",
     config,
     nodeVersion: process.argv[4],
-    outputRoot: process.argv[5],
+    inputTreeDigest: process.argv[5],
     root,
   })
   for (const [path, contents] of compiled.files) {
-    const target = resolve(process.argv[5], path)
+    const target = resolve(process.argv[6], path)
     await mkdir(dirname(target), { recursive: true })
     await writeFile(target, contents)
   }

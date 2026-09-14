@@ -121,56 +121,15 @@ func validateCompilerBuildTree(
 	if err != nil {
 		return fmt.Errorf("compiler build tree: %w", err)
 	}
-	generated := make(map[string]struct{}, len(result.Outputs)*2)
-	generatedDirectories := make(map[string]struct{}, len(result.Outputs)*2)
-	for _, output := range result.Outputs {
-		generated[output.ModulePath] = struct{}{}
-		generated[output.SourceMapPath] = struct{}{}
-		moduleDirectory := path.Dir(output.ModulePath)
-		generatedDirectories[moduleDirectory] = struct{}{}
-		generatedDirectories[path.Dir(moduleDirectory)] = struct{}{}
-	}
 	for _, entry := range tree.ordered {
-		if entry.Path == "helmr" ||
-			entry.Path == "helmr/compiler-result.json" ||
-			entry.Path == "helmr/config.json" {
-			continue
+		if strings.HasPrefix(entry.Path, "helmr/") && entry.Path != "helmr/compiler-result.json" && entry.Path != "helmr/config.json" {
+			return fmt.Errorf("compiler build tree contains unknown path %q", entry.Path)
 		}
-		if strings.HasPrefix(entry.Path, "helmr/") {
-			return fmt.Errorf(
-				"compiler build tree contains unknown path %q",
-				entry.Path,
-			)
-		}
-		if !hasReservedOutputSegment(entry.Path) {
-			continue
-		}
-		if _, ok := generated[entry.Path]; ok &&
-			entry.Kind == artifactEntryRegular {
-			continue
-		}
-		if _, ok := generatedDirectories[entry.Path]; ok &&
-			entry.Kind == artifactEntryDirectory {
-			continue
-		}
-		return fmt.Errorf(
-			"compiler build tree contains unknown path %q",
-			entry.Path,
-		)
 	}
 	if err := verifyProgramCompilerFiles(ctx, tree, result); err != nil {
 		return fmt.Errorf("compiler build tree: %w", err)
 	}
 	return nil
-}
-
-func hasReservedOutputSegment(name string) bool {
-	for component := range strings.SplitSeq(name, "/") {
-		if component == ".helmr" {
-			return true
-		}
-	}
-	return false
 }
 
 func validateBuildTreeLinks(tree *inspectedArtifact) error {

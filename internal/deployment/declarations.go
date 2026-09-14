@@ -14,11 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
-const DeclarationLocatorFormatVersion = 0
-
-const ProgramEntry = `import { runProgram } from "file:///opt/helmr/runtime/helmr/entry.mjs";
-await runProgram(new URL("./declarations.json", import.meta.url));
-`
+const DeclarationLocatorFormatVersion = 1
 
 type DeclarationLocator struct {
 	Declarations  []LocatedDeclaration `json:"declarations"`
@@ -29,7 +25,7 @@ type LocatedDeclaration struct {
 	DeclaredID string          `json:"declaredId"`
 	ExportName string          `json:"exportName"`
 	Kind       DeclarationKind `json:"kind"`
-	ModulePath string          `json:"modulePath"`
+	SourcePath string          `json:"sourcePath"`
 	Slot       DeclarationSlot `json:"slot"`
 }
 
@@ -67,7 +63,7 @@ func ParseDeclarationLocator(raw []byte) (DeclarationLocator, error) {
 	}
 	if !bytes.Equal(raw, complete) {
 		return DeclarationLocator{}, errors.New(
-			"declaration locator does not match the complete canonical v0 shape",
+			"declaration locator does not match the complete canonical v1 shape",
 		)
 	}
 	return cloneDeclarationLocator(locator), nil
@@ -129,8 +125,8 @@ func validateLocatedDeclaration(declaration LocatedDeclaration) error {
 	if err := validateDeclaration(locatedDeclarationProjection(declaration)); err != nil {
 		return err
 	}
-	if err := validateDeclarationModulePath(declaration.ModulePath); err != nil {
-		return fmt.Errorf("modulePath: %w", err)
+	if err := validateDeclarationSourcePath(declaration.SourcePath); err != nil {
+		return fmt.Errorf("sourcePath: %w", err)
 	}
 	if declaration.Slot != DeclarationSlotHandler {
 		return errors.New("slot must be handler")
@@ -147,40 +143,14 @@ func validateLocatedDeclaration(declaration LocatedDeclaration) error {
 	return nil
 }
 
-func validateDeclarationModulePath(value string) error {
-	const suffix = ".mjs"
+func validateDeclarationSourcePath(value string) error {
 	if err := validateArtifactPath(value, programArtifact); err != nil {
-		return errors.New(
-			"must identify <source-directory>/.helmr/modules/<64 lowercase hex>.mjs",
-		)
+		return err
 	}
-	components := strings.Split(value, "/")
-	if len(components) < 3 ||
-		components[len(components)-3] != ".helmr" ||
-		components[len(components)-2] != "modules" ||
-		!strings.HasSuffix(components[len(components)-1], suffix) {
-		return errors.New(
-			"must identify <source-directory>/.helmr/modules/<64 lowercase hex>.mjs",
-		)
-	}
-	if slices.Contains(components[:len(components)-3], ".helmr") {
-		return errors.New(
-			"must identify <source-directory>/.helmr/modules/<64 lowercase hex>.mjs",
-		)
-	}
-	name := strings.TrimSuffix(path.Base(value), suffix)
-	if len(name) != 64 {
-		return errors.New(
-			"must identify <source-directory>/.helmr/modules/<64 lowercase hex>.mjs",
-		)
-	}
-	for _, value := range name {
-		if !('0' <= value && value <= '9') &&
-			!('a' <= value && value <= 'f') {
-			return errors.New(
-				"must identify <source-directory>/.helmr/modules/<64 lowercase hex>.mjs",
-			)
-		}
+	if value == "helmr.config.ts" || strings.HasPrefix(value, "helmr/") || hasNodeModulesComponent(value) ||
+		!slices.Contains([]string{".js", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts", ".jsx"}, path.Ext(value)) ||
+		strings.HasSuffix(value, ".d.ts") || strings.HasSuffix(value, ".d.mts") || strings.HasSuffix(value, ".d.cts") {
+		return errors.New("must identify a project declaration source, outside node_modules and build-only config")
 	}
 	return nil
 }

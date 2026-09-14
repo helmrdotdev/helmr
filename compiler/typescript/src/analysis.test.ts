@@ -1,5 +1,4 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { createHash } from "node:crypto"
 import {
   mkdir,
   mkdtemp,
@@ -9,31 +8,8 @@ import {
 import { tmpdir } from "node:os"
 import { dirname, resolve } from "node:path"
 
-import { compileProgram } from "./bundle"
+import { analyzeProject } from "./test-process"
 import type { HelmrConfig } from "@helmr/sdk/internal"
-
-async function analyzeProject(options: {
-  readonly root: string
-  readonly architecture: "x86_64"
-  readonly config: HelmrConfig
-}) {
-  const compiled = await compileProgram({
-    ...options,
-    nodeVersion: "24.20.0",
-    outputRoot: await outputRoot(),
-    runtimeRoot: options.root,
-  })
-  return {
-    ...compiled.analysis,
-    modules: compiled.modules,
-  }
-}
-
-async function outputRoot(): Promise<string> {
-  const root = await mkdtemp(resolve(tmpdir(), "helmr-analysis-output-"))
-  testCleanup.push(root)
-  return root
-}
 
 describe("declaration discovery", () => {
   test("uses only explicit dirs without name-based default ignores", async () => {
@@ -76,7 +52,7 @@ describe("declaration discovery", () => {
     expect(result.declarationLocator.declarations.find(
       (item) => item.declaredId === "shared",
     )).toMatchObject({
-      modulePath: generatedModule("tasks/barrel.js"),
+      sourcePath: "tasks/barrel.js",
       exportName: "shared",
       slot: "handler",
     })
@@ -103,14 +79,6 @@ describe("declaration discovery", () => {
     await mkdir(resolve(reserved, "helmr"))
     await expect(analyzeProject({
       root: reserved,
-      architecture: "x86_64",
-      config: normalizedConfig({ dirs: ["./tasks"] }),
-    })).rejects.toThrow("reserved")
-
-    const nestedReserved = await project()
-    await mkdir(resolve(nestedReserved, "tasks/.helmr"))
-    await expect(analyzeProject({
-      root: nestedReserved,
       architecture: "x86_64",
       config: normalizedConfig({ dirs: ["./tasks"] }),
     })).rejects.toThrow("reserved")
@@ -196,7 +164,6 @@ function normalizedConfig(
   return {
     dirs: options.dirs.map((value) => value.replace(/^\.\//, "")).sort(),
     ignorePatterns: [...(options.ignorePatterns ?? [])].sort(),
-    compilePackages: [],
   }
 }
 
@@ -218,11 +185,4 @@ function task(id: string): string {
     "  run: () => null,",
     "})",
   ].join("\n")
-}
-
-function generatedModule(source: string): string {
-  const digest = createHash("sha256").update(source).digest("hex")
-  const directory = dirname(source)
-  const prefix = directory === "." ? "" : `${directory}/`
-  return `${prefix}.helmr/modules/${digest}.mjs`
 }

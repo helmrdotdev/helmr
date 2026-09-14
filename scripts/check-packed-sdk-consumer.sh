@@ -23,7 +23,7 @@ tar -xzf "${consumer}/${proto_archive}" \
   --strip-components=1 -C "${consumer}/node_modules/@helmr/proto"
 tar -xzf "${consumer}/${sdk_archive}" \
   --strip-components=1 -C "${consumer}/node_modules/@helmr/sdk"
-ln -s "${repo_root}/node_modules/@bufbuild/protobuf" \
+ln -s "${repo_root}/sdk/typescript/node_modules/@bufbuild/protobuf" \
   "${consumer}/node_modules/@bufbuild/protobuf"
 
 cat >"${consumer}/consumer.ts" <<'EOF'

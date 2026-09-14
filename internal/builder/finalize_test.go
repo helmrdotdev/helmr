@@ -4,8 +4,6 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -289,7 +287,7 @@ func testBundleInput(programPath string, programBytes []byte) BundleInput {
 			},
 			Locator: &deployment.ProgramLocator{
 				ExportName: "hello",
-				ModulePath: ".helmr/modules/" + strings.Repeat("d", 64) + ".mjs",
+				SourcePath: ".helmr/modules/" + strings.Repeat("d", 64) + ".mjs",
 				Slot:       deployment.DeclarationSlotHandler,
 			},
 		}},
@@ -325,17 +323,9 @@ func writeVerifiedProgramFixture(
 	if encoder == "" {
 		t.Skip("HELMR_SQUASHFS_ENCODER is not set")
 	}
-	configRaw := []byte(`{"compilePackages":[],"dirs":["tasks"],"ignorePatterns":[]}`)
+	configRaw := []byte(`{"dirs":["tasks"],"ignorePatterns":[]}`)
 	sourcePath := "tasks/build.ts"
 	sourceRaw := []byte("export const build = task({ id: \"build\" })\n")
-	moduleHash := sha256.Sum256([]byte(sourcePath))
-	modulePath := "tasks/.helmr/modules/" + hex.EncodeToString(moduleHash[:]) + ".mjs"
-	moduleRaw := []byte("export const build = {}\n")
-	sourceMapRaw := canonicalJSON(t, map[string]any{
-		"mappings": "AAAA", "names": []string{},
-		"sources": []string{"file:///opt/helmr/program/tasks/build.ts"},
-		"version": 3,
-	})
 	runtimeDigest := "sha256:" + strings.Repeat("f", 64)
 	index := deployment.ProgramIndex{
 		Architecture:       deployment.ArchitectureX8664,
@@ -350,7 +340,7 @@ func writeVerifiedProgramFixture(
 				},
 			},
 			Locator: &deployment.ProgramLocator{
-				ExportName: "build", ModulePath: modulePath,
+				ExportName: "build", SourcePath: sourcePath,
 				Slot: deployment.DeclarationSlotHandler,
 			},
 		}},
@@ -361,34 +351,45 @@ func writeVerifiedProgramFixture(
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifestRaw := canonicalJSON(t, deployment.ProgramManifest{
+	manifest := deployment.ProgramManifest{
 		FormatVersion: deployment.ProgramManifestFormatVersion,
 		Config: deployment.ProgramPathDigest{
 			Digest: sha256sum.DigestBytes(configRaw), Path: "helmr/config.json",
 		},
-		ExternalEdges:   []deployment.ProgramExternalEdge{},
-		CompilePackages: []deployment.ProgramCompilePackage{},
-		CompiledInputs:  []deployment.ProgramPathDigest{{Path: sourcePath, Digest: sha256sum.DigestBytes(sourceRaw)}},
-		Modules: []deployment.ProgramModule{{
-			ModuleDigest: sha256sum.DigestBytes(moduleRaw), ModulePath: modulePath,
-			SourceMapDigest: sha256sum.DigestBytes(sourceMapRaw),
-			SourceMapPath:   modulePath + ".map", SourcePath: sourcePath,
-		}},
 		ProgramIndexDigest: sha256sum.DigestBytes(indexRaw),
-	})
-	files := map[string][]byte{
-		"bun.lock":                    []byte("lockfileVersion = 1\n"),
-		"helmr.config.ts":             []byte("export default { dirs: [\"tasks\"] };\n"),
-		"helmr/config.json":           configRaw,
-		"helmr/declarations.json":     indexRaw,
-		"helmr/entry.mjs":             []byte(deployment.ProgramEntry),
-		"helmr/program-manifest.json": manifestRaw,
-		modulePath:                    moduleRaw,
-		modulePath + ".map":           sourceMapRaw,
-		"package.json":                []byte(`{"packageManager":"yarn@4.9.2"}`),
-		sourcePath:                    sourceRaw,
 	}
-	directories := []string{"helmr", "node_modules", "tasks", "tasks/.helmr", "tasks/.helmr/modules"}
+	files := map[string][]byte{
+		"bun.lock":                []byte("lockfileVersion = 1\n"),
+		"helmr.config.ts":         []byte("export default { dirs: [\"tasks\"] };\n"),
+		"helmr/config.json":       configRaw,
+		"helmr/declarations.json": indexRaw,
+		"package.json":            []byte(`{"packageManager":"yarn@4.9.2"}`),
+		sourcePath:                sourceRaw,
+	}
+	directories := []string{"helmr", "node_modules", "tasks"}
+	inputRoot := t.TempDir()
+	for _, name := range directories {
+		if name == "helmr" {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Join(inputRoot, name), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, body := range files {
+		if strings.HasPrefix(name, "helmr/") {
+			continue
+		}
+		if err := os.WriteFile(filepath.Join(inputRoot, name), body, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	inputDigest, err := deployment.ProgramInputTreeDigest(t.Context(), inputRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.InputTreeDigest = inputDigest
+	files["helmr/program-manifest.json"] = canonicalJSON(t, manifest)
 	var archive bytes.Buffer
 	writer := tar.NewWriter(&archive)
 	entries := append([]string(nil), directories...)

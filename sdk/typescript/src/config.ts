@@ -1,7 +1,5 @@
 import { compareUTF8, hasOnlyUnicodeScalarValues } from "./internal/utf8"
 
-const encoder = new TextEncoder()
-const encode = TextEncoder.prototype.encode.call.bind(TextEncoder.prototype.encode) as (encoder: TextEncoder, value: string) => Uint8Array
 const arrayIsArray = Array.isArray
 const arrayPrototype = Array.prototype
 const defineProperty = Object.defineProperty
@@ -35,15 +33,13 @@ const regexpTest = RegExp.prototype.test.call.bind(
 ) as (regexp: RegExp, value: string) => boolean
 
 export interface HelmrConfigInput {
-  readonly dirs: readonly string[]
+  readonly dirs?: readonly string[]
   readonly ignorePatterns?: readonly string[]
-  readonly compilePackages?: readonly string[]
 }
 
 export interface HelmrConfig {
   readonly dirs: readonly string[]
   readonly ignorePatterns: readonly string[]
-  readonly compilePackages: readonly string[]
 }
 
 export function defineConfig(input: HelmrConfigInput): HelmrConfig {
@@ -115,28 +111,6 @@ function validateDirectory(value: unknown): string {
     throw new Error("config dirs entries must be normalized root-relative paths")
   }
   return normalized
-}
-
-function validateCompilePackage(value: unknown): string {
-  if (typeof value !== "string" || !hasOnlyUnicodeScalarValues(value) ||
-    hasControl(value) || includes(value, "\\")) {
-    throw new Error("config compilePackages entries must be clean installed package roots")
-  }
-  const parts = split(value, "/")
-  let slot = -1
-  let invalidPart = false
-  for (let index = 0; index < parts.length; index++) {
-    const part = parts[index] as string
-    if (part === "node_modules") slot = index
-    if (part === "" || part === "." || part === ".." || part === ".helmr" || encode(encoder, part).length > 255) invalidPart = true
-  }
-  const end = slot + (startsWith(parts[slot + 1] ?? "", "@") ? 3 : 2)
-  if (slot < 0 || end !== parts.length || parts.length > 128 ||
-    value === "helmr" || startsWith(value, "helmr/") ||
-    encode(encoder, `/opt/helmr/program/${value}\0`).length > 4096 || invalidPart) {
-    throw new Error("config compilePackages entries must be clean installed package roots, e.g. node_modules/@scope/package")
-  }
-  return value
 }
 
 function validateIgnorePattern(value: unknown): string {
@@ -221,24 +195,24 @@ function normalizeConfig(value: object): HelmrConfig {
   }
   const descriptors = getOwnPropertyDescriptors(value)
   const keys = ownKeys(value)
-  let invalidKey = !hasOwn(descriptors, "dirs")
+  let invalidKey = false
   for (let index = 0; index < keys.length; index++) {
     const key = keys[index]
     if (
       typeof key !== "string" ||
-      (key !== "dirs" && key !== "ignorePatterns" && key !== "compilePackages")
+      (key !== "dirs" && key !== "ignorePatterns")
     ) {
       invalidKey = true
       break
     }
   }
   if (invalidKey) {
-    throw new Error("config requires dirs and optional ignorePatterns and compilePackages")
+    throw new Error("config accepts only dirs and ignorePatterns")
   }
   for (let index = 0; index < keys.length; index++) {
     const key = keys[index]
     if (typeof key !== "string") {
-      throw new Error("config requires dirs and optional ignorePatterns and compilePackages")
+      throw new Error("config accepts only dirs and ignorePatterns")
     }
     const descriptor = descriptors[key]
     if (
@@ -250,7 +224,7 @@ function normalizeConfig(value: object): HelmrConfig {
     }
   }
   const dirs = normalizeStringSet(
-    descriptors["dirs"]?.value,
+    hasOwn(descriptors, "dirs") ? descriptors["dirs"]?.value : ["tasks"],
     "config dirs",
     validateDirectory,
     true,
@@ -263,14 +237,7 @@ function normalizeConfig(value: object): HelmrConfig {
     validateIgnorePattern,
     false,
   )
-  const compilePackages = normalizeStringSet(
-    hasOwn(descriptors, "compilePackages") ? descriptors["compilePackages"]?.value : [],
-    "config compilePackages",
-    validateCompilePackage,
-    false,
-  )
   return freeze({
-    compilePackages: freeze(compilePackages),
     dirs: freeze(dirs),
     ignorePatterns: freeze(ignorePatterns),
   })

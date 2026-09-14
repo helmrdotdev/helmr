@@ -60,7 +60,7 @@ func TestS3PresignQuarantineBindsDescriptorAndOwner(t *testing.T) {
 	descriptor := cas.Descriptor{
 		Digest:    sha256sum.DigestBytes([]byte("bundle object")),
 		SizeBytes: int64(len("bundle object")),
-		MediaType: "application/vnd.helmr.deployment-program.v0+squashfs",
+		MediaType: "application/vnd.helmr.deployment-program.v1+squashfs",
 	}
 	presigner := &fakeS3Presigner{}
 	store := &Store{
@@ -98,7 +98,7 @@ func TestS3PresignQuarantineUsesSignedChecksumHeaders(t *testing.T) {
 	descriptor := cas.Descriptor{
 		Digest:    sha256sum.DigestBytes([]byte("bundle object")),
 		SizeBytes: int64(len("bundle object")),
-		MediaType: "application/vnd.helmr.deployment-program.v0+squashfs",
+		MediaType: "application/vnd.helmr.deployment-program.v1+squashfs",
 	}
 	client := awss3.New(awss3.Options{
 		Region:       "us-east-1",
@@ -151,7 +151,7 @@ func TestValidatePresignedQuarantineFailsClosed(t *testing.T) {
 	descriptor := cas.Descriptor{
 		Digest:    sha256sum.DigestBytes([]byte("bundle object")),
 		SizeBytes: int64(len("bundle object")),
-		MediaType: "application/vnd.helmr.deployment-program.v0+squashfs",
+		MediaType: "application/vnd.helmr.deployment-program.v1+squashfs",
 	}
 	for _, test := range []struct {
 		name   string
@@ -222,7 +222,7 @@ func TestValidatePresignedQuarantineRedactsInvalidURL(t *testing.T) {
 	descriptor := cas.Descriptor{
 		Digest:    sha256sum.DigestBytes([]byte("bundle object")),
 		SizeBytes: int64(len("bundle object")),
-		MediaType: "application/vnd.helmr.deployment-program.v0+squashfs",
+		MediaType: "application/vnd.helmr.deployment-program.v1+squashfs",
 	}
 	request := exactPresignedQuarantineRequest(t, descriptor)
 	const credentialMarker = "SECRET-PRESIGNED-CREDENTIAL"
@@ -314,7 +314,7 @@ func TestS3HasExactQuarantine(t *testing.T) {
 	descriptor := cas.Descriptor{
 		Digest:    sha256sum.DigestBytes([]byte("bundle object")),
 		SizeBytes: int64(len("bundle object")),
-		MediaType: "application/vnd.helmr.deployment-program.v0+squashfs",
+		MediaType: "application/vnd.helmr.deployment-program.v1+squashfs",
 	}
 	checksum, _ := descriptorChecksum(descriptor.Digest)
 	verified := &awss3.HeadObjectOutput{
@@ -384,7 +384,7 @@ func TestS3QuarantineFailsClosed(t *testing.T) {
 	descriptor := cas.Descriptor{
 		Digest:    sha256sum.DigestBytes([]byte("expected")),
 		SizeBytes: int64(len("expected")),
-		MediaType: "application/vnd.helmr.deployment-program.v0+squashfs",
+		MediaType: "application/vnd.helmr.deployment-program.v1+squashfs",
 	}
 	store := &Store{client: &fakeS3Client{}, presigner: &fakeS3Presigner{}, bucket: "bucket"}
 	if err := store.PutQuarantine(t.Context(), "../other", descriptor, bytes.NewReader([]byte("expected"))); err == nil {
@@ -512,7 +512,7 @@ func TestImmutableS3PublishReusesExactExistingObject(t *testing.T) {
 		putObjectErr: &smithy.GenericAPIError{Code: "PreconditionFailed", Message: "exists"},
 		headObject: &awss3.HeadObjectOutput{
 			ContentLength: aws.Int64(5),
-			ContentType:   aws.String("application/vnd.helmr.runtime.v0+squashfs"),
+			ContentType:   aws.String("application/vnd.helmr.runtime.v1+squashfs"),
 		},
 	}
 	store := &ImmutableStore{store: &Store{
@@ -563,7 +563,7 @@ func TestImmutableS3PublishRetriesConditionalConflict(t *testing.T) {
 		},
 		headObject: &awss3.HeadObjectOutput{
 			ContentLength: aws.Int64(5),
-			ContentType:   aws.String("application/vnd.helmr.runtime.v0+squashfs"),
+			ContentType:   aws.String("application/vnd.helmr.runtime.v1+squashfs"),
 		},
 	}
 	store := &ImmutableStore{store: &Store{
@@ -1258,6 +1258,6 @@ func sealedPublicationFile(t *testing.T, content []byte) (cas.Descriptor, *os.Fi
 	return cas.Descriptor{
 		Digest:    sha256sum.DigestBytes(content),
 		SizeBytes: int64(len(content)),
-		MediaType: "application/vnd.helmr.runtime.v0+squashfs",
+		MediaType: "application/vnd.helmr.runtime.v1+squashfs",
 	}, file
 }

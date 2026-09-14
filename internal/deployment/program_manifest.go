@@ -7,48 +7,24 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path"
-	"slices"
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
-const ProgramManifestFormatVersion = 0
+const ProgramManifestFormatVersion = 1
 
-// ProgramManifest binds the executable closure, static compile policy and actual
-// compiled bytes. Package-manager and build-tool provenance are not authority.
+// ProgramManifest binds every installed input and the source declaration index.
 type ProgramManifest struct {
-	FormatVersion      int                     `json:"formatVersion"`
-	Config             ProgramPathDigest       `json:"config"`
-	ExternalEdges      []ProgramExternalEdge   `json:"externalEdges"`
-	CompilePackages    []ProgramCompilePackage `json:"compilePackages"`
-	CompiledInputs     []ProgramPathDigest     `json:"compiledInputs"`
-	Modules            []ProgramModule         `json:"modules"`
-	ProgramIndexDigest string                  `json:"programIndexDigest"`
+	FormatVersion      int               `json:"formatVersion"`
+	Config             ProgramPathDigest `json:"config"`
+	InputTreeDigest    string            `json:"inputTreeDigest"`
+	ProgramIndexDigest string            `json:"programIndexDigest"`
 }
-
 type ProgramPathDigest struct {
 	Digest string `json:"digest"`
 	Path   string `json:"path"`
-}
-
-type ProgramModule struct {
-	ModuleDigest    string `json:"moduleDigest"`
-	ModulePath      string `json:"modulePath"`
-	SourceMapDigest string `json:"sourceMapDigest"`
-	SourceMapPath   string `json:"sourceMapPath"`
-	SourcePath      string `json:"sourcePath"`
-}
-
-type ProgramExternalEdge struct {
-	Importer     string `json:"importer"`
-	Kind         string `json:"kind"`
-	LogicalPath  string `json:"logicalPath"`
-	ResolvedPath string `json:"resolvedPath"`
-	RuntimePath  string `json:"runtimePath"`
-	Specifier    string `json:"specifier"`
 }
 
 func ParseProgramManifest(raw []byte) (ProgramManifest, error) {
@@ -85,7 +61,7 @@ func ParseProgramManifest(raw []byte) (ProgramManifest, error) {
 	}
 	if !bytes.Equal(raw, complete) {
 		return ProgramManifest{}, errors.New(
-			"program manifest does not match the complete canonical v0 shape",
+			"program manifest does not match the complete canonical v1 shape",
 		)
 	}
 	return manifest, nil
@@ -102,200 +78,73 @@ func canonicalProgramManifest(manifest ProgramManifest) ([]byte, error) {
 	return jsoncanon.Transform(raw)
 }
 
-func validateProgramManifest(manifest ProgramManifest) error {
-	if manifest.FormatVersion != ProgramManifestFormatVersion {
-		return errors.New("program manifest formatVersion is invalid")
-	}
-	if manifest.Config.Path != "helmr/config.json" ||
-		!sha256DigestPattern.MatchString(manifest.Config.Digest) {
-		return errors.New("program manifest config authority is invalid")
-	}
-	if !sha256DigestPattern.MatchString(manifest.ProgramIndexDigest) {
-		return errors.New("program manifest index digest is invalid")
-	}
-	if manifest.ExternalEdges == nil ||
-		manifest.Modules == nil {
-		return errors.New("program manifest collections must be arrays")
-	}
-	for index, edge := range manifest.ExternalEdges {
-		if err := validateProgramExternalEdge(edge); err != nil {
-			return fmt.Errorf("program manifest external edge %d: %w", index, err)
-		}
-		if index > 0 && compareProgramExternalEdge(
-			manifest.ExternalEdges[index-1],
-			edge,
-		) >= 0 {
-			return errors.New("program manifest external edges are not in canonical order")
-		}
-	}
-	if err := validateProgramCompilePackages(manifest.CompilePackages); err != nil {
-		return err
-	}
-	if err := validateCompiledInputs(manifest.CompiledInputs, manifest.CompilePackages); err != nil {
-		return err
-	}
-	if len(manifest.Modules) == 0 {
-		return errors.New("program manifest modules must not be empty")
-	}
-	for index, module := range manifest.Modules {
-		if err := validateProgramModule(module); err != nil {
-			return fmt.Errorf("program manifest module %d: %w", index, err)
-		}
-		if index > 0 && manifest.Modules[index-1].ModulePath >= module.ModulePath {
-			return errors.New("program manifest modules are not in canonical order")
-		}
+func validateProgramManifest(value ProgramManifest) error {
+	if value.FormatVersion != ProgramManifestFormatVersion || value.Config.Path != "helmr/config.json" ||
+		!sha256DigestPattern.MatchString(value.Config.Digest) || !sha256DigestPattern.MatchString(value.InputTreeDigest) || !sha256DigestPattern.MatchString(value.ProgramIndexDigest) {
+		return errors.New("program manifest v1 authority is invalid")
 	}
 	return nil
 }
-
-func validateProgramExternalEdge(edge ProgramExternalEdge) error {
-	switch path.Ext(edge.ResolvedPath) {
-	case ".ts", ".tsx", ".mts", ".cts":
-		return errors.New("external TypeScript under node_modules must be selected for compilation")
+func programManifestFromCompilerResult(value ProgramCompilerResult, indexDigest string) ProgramManifest {
+	return ProgramManifest{FormatVersion: ProgramManifestFormatVersion, Config: value.Config, InputTreeDigest: value.InputTreeDigest, ProgramIndexDigest: indexDigest}
+}
+func verifyProgramManifestFiles(ctx context.Context, artifact *inspectedArtifact, value ProgramManifest) error {
+	if err := verifyProgramPathDigest(ctx, artifact, value.Config); err != nil {
+		return err
 	}
-
-	if edge.Importer == "" || validateArtifactPath(edge.Importer, programArtifact) != nil {
-		return errors.New("importer is invalid")
+	raw, err := artifact.read(ctx, value.Config.Path, maxBuildConfigBytes)
+	if err != nil {
+		return err
 	}
-	if edge.Kind == "" {
-		return errors.New("kind is required")
+	if _, err := ParseBuildConfig(raw); err != nil {
+		return err
 	}
-	if edge.Specifier == "" {
-		return errors.New("specifier is required")
+	digest, err := artifactInputTreeDigest(ctx, artifact)
+	if err != nil {
+		return err
 	}
-	if validateArtifactPath(edge.LogicalPath, programArtifact) != nil ||
-		!hasNodeModulesComponent(edge.LogicalPath) {
-		return errors.New("logical path is invalid")
+	if digest != value.InputTreeDigest {
+		return errors.New("program input tree digest does not match authority")
 	}
-	if validateArtifactPath(edge.ResolvedPath, programArtifact) != nil ||
-		!hasNodeModulesComponent(edge.ResolvedPath) {
-		return errors.New("resolved path is invalid")
+	entry, canonical, err := resolveProgramArtifactPath(artifact, "package.json")
+	if err != nil {
+		return err
 	}
-	if !strings.HasPrefix(edge.RuntimePath, "/opt/helmr/program/") ||
-		validateArtifactPath(
-			strings.TrimPrefix(edge.RuntimePath, "/opt/helmr/program/"),
-			programArtifact,
-		) != nil ||
-		!hasNodeModulesComponent(edge.RuntimePath) {
-		return errors.New("runtime path is invalid")
+	if entry.Kind != artifactEntryRegular {
+		return errors.New("root package.json must be a contained regular object")
 	}
-	if strings.TrimPrefix(edge.RuntimePath, "/opt/helmr/program/") !=
-		edge.LogicalPath {
-		return errors.New("runtime path is invalid")
+	raw, err = artifact.read(ctx, canonical, maxProgramFileSizeBytes)
+	if err != nil {
+		return err
+	}
+	var object map[string]json.RawMessage
+	if json.Unmarshal(raw, &object) != nil || object == nil {
+		return errors.New("root package.json must contain a JSON object")
 	}
 	return nil
 }
-
-func validateProgramModule(module ProgramModule) error {
-	if err := validateDeclarationModulePath(module.ModulePath); err != nil {
-		return fmt.Errorf("modulePath: %w", err)
-	}
-	if module.ModulePath != generatedDeclarationModulePath(module.SourcePath) ||
-		module.SourceMapPath != module.ModulePath+".map" ||
-		!sha256DigestPattern.MatchString(module.ModuleDigest) ||
-		!sha256DigestPattern.MatchString(module.SourceMapDigest) ||
-		validateArtifactPath(module.SourcePath, programArtifact) != nil ||
-		hasNodeModulesComponent(module.SourcePath) ||
-		hasReservedOutputSegment(module.SourcePath) ||
-		strings.HasPrefix(module.SourcePath, "helmr/") {
-		return errors.New("shape is invalid")
-	}
-	return nil
-}
-
-func programManifestFromCompilerResult(
-	result ProgramCompilerResult,
-	indexDigest string,
-) ProgramManifest {
-	return ProgramManifest{
-		FormatVersion:      ProgramManifestFormatVersion,
-		Config:             result.Config,
-		ExternalEdges:      slices.Clone(result.ExternalEdges),
-		CompilePackages:    slices.Clone(result.CompilePackages),
-		CompiledInputs:     slices.Clone(result.Inputs),
-		Modules:            slices.Clone(result.Outputs),
-		ProgramIndexDigest: indexDigest,
-	}
-}
-
-func verifyProgramManifestFiles(
-	ctx context.Context,
-	artifact *inspectedArtifact,
-	manifest ProgramManifest,
-) error {
-	if err := verifyProgramCompilePackages(ctx, artifact, manifest.CompilePackages, manifest.Config); err != nil {
+func verifyDeclarationSource(artifact *inspectedArtifact, value string) error {
+	if err := validateDeclarationSourcePath(value); err != nil {
 		return err
 	}
-	if err := verifyProgramExternalEdges(artifact, manifest.ExternalEdges); err != nil {
+	entry, canonical, err := resolveProgramArtifactPath(artifact, value)
+	if err != nil {
 		return err
 	}
-	if err := verifyProgramPathDigest(ctx, artifact, manifest.Config); err != nil {
-		return err
+	if entry.Kind != artifactEntryRegular || canonical != value {
+		return errors.New("declaration source must be a canonical regular file")
 	}
-	inputSet := make(map[string]struct{}, len(manifest.CompiledInputs))
-	for _, input := range manifest.CompiledInputs {
-		if err := verifyProgramPathDigest(ctx, artifact, input); err != nil {
-			return err
-		}
-		inputSet[input.Path] = struct{}{}
-	}
-	for _, module := range manifest.Modules {
-		if _, err := artifact.require(module.SourcePath, artifactEntryRegular); err != nil {
-			return fmt.Errorf("program module source %q: %w", module.SourcePath, err)
-		}
-		if err := verifyProgramPathDigest(ctx, artifact, ProgramPathDigest{
-			Digest: module.ModuleDigest,
-			Path:   module.ModulePath,
-		}); err != nil {
-			return err
-		}
-		if err := verifyProgramPathDigest(ctx, artifact, ProgramPathDigest{
-			Digest: module.SourceMapDigest,
-			Path:   module.SourceMapPath,
-		}); err != nil {
-			return err
-		}
-		if err := verifyProgramSourceMap(
-			ctx,
-			artifact,
-			module.SourceMapPath,
-			manifest.CompilePackages,
-			inputSet,
-		); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func verifyProgramExternalEdges(
-	artifact *inspectedArtifact,
-	externalEdges []ProgramExternalEdge,
-) error {
-	for _, edge := range externalEdges {
-		if _, err := artifact.require(edge.Importer, artifactEntryRegular); err != nil {
-			return fmt.Errorf("program external edge %q importer: %w", edge.Specifier, err)
-		}
-		if _, err := artifact.require(edge.ResolvedPath, artifactEntryRegular); err != nil {
-			return fmt.Errorf("program external edge %q resolved path: %w", edge.Specifier, err)
-		}
-		resolved, resolvedPath, err := resolveProgramArtifactPath(
-			artifact,
-			edge.LogicalPath,
-		)
+	if _, exists := artifact.entries["helmr.config.ts"]; exists {
+		_, config, err := resolveProgramArtifactPath(artifact, "helmr.config.ts")
 		if err != nil {
-			return fmt.Errorf("program external edge %q logical path: %w", edge.Specifier, err)
+			return err
 		}
-		if resolved.Kind != artifactEntryRegular || resolvedPath != edge.ResolvedPath {
-			return fmt.Errorf(
-				"program external edge %q logical path does not resolve to declared file",
-				edge.Specifier,
-			)
+		if config == canonical {
+			return errors.New("root config is build-only")
 		}
 	}
 	return nil
 }
-
 func resolveProgramArtifactPath(
 	artifact *inspectedArtifact,
 	value string,
@@ -356,32 +205,6 @@ func resolveProgramArtifactPath(
 		}
 	}
 	return artifactEntry{}, "", fmt.Errorf("program path %q is empty", value)
-}
-
-func validateProgramManifestLocators(
-	modules []ProgramModule,
-	locator DeclarationLocator,
-) error {
-	moduleSet := make(map[string]struct{}, len(modules))
-	for _, module := range modules {
-		if _, exists := moduleSet[module.ModulePath]; exists {
-			return fmt.Errorf("program module %q is duplicated", module.ModulePath)
-		}
-		moduleSet[module.ModulePath] = struct{}{}
-	}
-	located := make(map[string]struct{}, len(locator.Declarations))
-	for _, declaration := range locator.Declarations {
-		located[declaration.ModulePath] = struct{}{}
-	}
-	if len(located) != len(moduleSet) {
-		return errors.New("program module set does not match declaration locators")
-	}
-	for module := range located {
-		if _, exists := moduleSet[module]; !exists {
-			return errors.New("program module set does not match declaration locators")
-		}
-	}
-	return nil
 }
 
 func programIndexDigest(raw []byte) string {

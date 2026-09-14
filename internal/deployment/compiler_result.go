@@ -8,41 +8,21 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
-	"path"
 	"slices"
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
-	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 type ProgramCompilerResult struct {
-	Compiler            ProgramCompilerContract    `json:"compiler"`
+	APIVersion          string                     `json:"apiVersion"`
+	Language            ModuleExecutionIdentity    `json:"language"`
+	NodeVersion         string                     `json:"nodeVersion"`
 	Config              ProgramPathDigest          `json:"config"`
+	InputTreeDigest     string                     `json:"inputTreeDigest"`
 	DiscoveryCandidates []string                   `json:"discoveryCandidates"`
-	Execution           ProgramCompilerExecution   `json:"execution"`
-	ExternalEdges       []ProgramExternalEdge      `json:"externalEdges"`
-	Inputs              []ProgramPathDigest        `json:"inputs"`
-	CompilePackages     []ProgramCompilePackage    `json:"compilePackages"`
-	Outputs             []ProgramModule            `json:"outputs"`
 	Selections          []ProgramCompilerSelection `json:"selections"`
-	TSConfigs           []ProgramPathDigest        `json:"tsconfigs"`
 }
-
-type ProgramCompilerContract struct {
-	APIVersion            string                 `json:"apiVersion"`
-	EsbuildVersion        string                 `json:"esbuildVersion"`
-	OptionsContractDigest string                 `json:"optionsContractDigest"`
-	Output                CompilerOutputContract `json:"output"`
-	Source                CompilerSourceContract `json:"source"`
-}
-
-type ProgramCompilerExecution struct {
-	NodeVersion   string `json:"nodeVersion"`
-	OptionsDigest string `json:"optionsDigest"`
-}
-
 type ProgramCompilerSelection struct {
 	DeclaredID string          `json:"declaredId"`
 	ExportName string          `json:"exportName"`
@@ -91,7 +71,7 @@ func ParseProgramCompilerResult(raw []byte) (ProgramCompilerResult, error) {
 	}
 	if !bytes.Equal(raw, complete) {
 		return ProgramCompilerResult{}, errors.New(
-			"program compiler result does not match the complete canonical v0 shape",
+			"program compiler result does not match the complete canonical v1 shape",
 		)
 	}
 	return result, nil
@@ -107,130 +87,72 @@ func canonicalProgramCompilerResult(
 	return jsoncanon.Transform(raw)
 }
 
-func validateProgramCompilerResult(manifest ProgramCompilerResult) error {
-	if manifest.Compiler.APIVersion != "helmr.compiler.v0" ||
-		manifest.Compiler.EsbuildVersion == "" ||
-		!sha256DigestPattern.MatchString(manifest.Compiler.OptionsContractDigest) {
-		return errors.New("program compiler result compiler contract is invalid")
+func validateProgramCompilerResult(result ProgramCompilerResult) error {
+	if result.APIVersion != "helmr.compiler.v1" || result.NodeVersion != "24.21.0" {
+		return errors.New("program compiler execution contract is invalid")
 	}
-	if manifest.Compiler.Output.Aggregate != "analysis-only" ||
-		manifest.Compiler.Output.FinalModules != "independent" ||
-		manifest.Compiler.Output.SharedChunks ||
-		manifest.Compiler.Output.SourceMaps != "external" ||
-		manifest.Compiler.Source.PackageDependencies != "external" ||
-		manifest.Compiler.Source.Semantics != "pinned-esbuild" ||
-		manifest.Compiler.Source.ProjectSources != "bundled" ||
-		manifest.Compiler.Source.CompilePackages != "explicit-installed-roots" ||
-		!slices.Equal(
-			manifest.Compiler.Source.DeclarationExtensions,
-			[]string{".cjs", ".cts", ".js", ".jsx", ".mjs", ".mts", ".ts", ".tsx"},
-		) {
-		return errors.New("program compiler result compiler contract is unsupported")
-	}
-	if _, _, _, ok := parseReleaseVersion(manifest.Execution.NodeVersion); !ok ||
-		!sha256DigestPattern.MatchString(manifest.Execution.OptionsDigest) {
-		return errors.New("program compiler result execution authority is invalid")
-	}
-	if manifest.Config.Path != "helmr/config.json" ||
-		!sha256DigestPattern.MatchString(manifest.Config.Digest) {
-		return errors.New("program compiler result config authority is invalid")
-	}
-	if manifest.DiscoveryCandidates == nil || manifest.ExternalEdges == nil ||
-		manifest.Inputs == nil ||
-		manifest.Outputs == nil || manifest.Selections == nil ||
-		manifest.TSConfigs == nil {
-		return errors.New("program compiler result collections must be arrays")
-	}
-	for index, candidate := range manifest.DiscoveryCandidates {
-		if validateArtifactPath(candidate, programArtifact) != nil ||
-			hasNodeModulesComponent(candidate) ||
-			hasReservedOutputSegment(candidate) ||
-			strings.HasPrefix(candidate, "helmr/") ||
-			(index > 0 && manifest.DiscoveryCandidates[index-1] >= candidate) {
-			return fmt.Errorf("program compiler result discovery candidate %d is invalid", index)
-		}
-	}
-	for index, edge := range manifest.ExternalEdges {
-		if err := validateProgramExternalEdge(edge); err != nil {
-			return fmt.Errorf("program compiler result external edge %d: %w", index, err)
-		}
-		if index > 0 && compareProgramExternalEdge(
-			manifest.ExternalEdges[index-1],
-			edge,
-		) >= 0 {
-			return errors.New("program compiler result external edges are not in canonical order")
-		}
-	}
-	if err := validateProgramCompilePackages(manifest.CompilePackages); err != nil {
+	if err := ValidateModuleExecutionIdentity(result.Language); err != nil {
 		return err
 	}
-	if err := validateCompiledInputs(manifest.Inputs, manifest.CompilePackages); err != nil {
-		return err
+	if result.Config.Path != "helmr/config.json" || !sha256DigestPattern.MatchString(result.Config.Digest) || !sha256DigestPattern.MatchString(result.InputTreeDigest) {
+		return errors.New("program compiler input authority is invalid")
 	}
-	for index, config := range manifest.TSConfigs {
-		if err := validateProgramPathDigest(config); err != nil {
-			return fmt.Errorf("program compiler result tsconfig %d: %w", index, err)
-		}
-		if index > 0 && manifest.TSConfigs[index-1].Path >= config.Path {
-			return errors.New("program compiler result tsconfigs are not in canonical order")
-		}
+	if result.DiscoveryCandidates == nil || result.Selections == nil {
+		return errors.New("program compiler collections must be arrays")
 	}
-	if len(manifest.Outputs) == 0 {
-		return errors.New("program compiler result outputs must not be empty")
-	}
-	for index, output := range manifest.Outputs {
-		if err := validateProgramModule(output); err != nil {
-			return fmt.Errorf("program compiler result output %d: %w", index, err)
+	for i, value := range result.DiscoveryCandidates {
+		if err := validateDeclarationSourcePath(value); err != nil {
+			return err
 		}
-		if _, found := slices.BinarySearch(
-			manifest.DiscoveryCandidates,
-			output.SourcePath,
-		); !found {
-			return fmt.Errorf(
-				"program compiler result output %d is not a discovery candidate",
-				index,
-			)
-		}
-		if index > 0 && manifest.Outputs[index-1].ModulePath >= output.ModulePath {
-			return errors.New("program compiler result outputs are not in canonical order")
+		if i > 0 && result.DiscoveryCandidates[i-1] >= value {
+			return errors.New("discovery candidates are not in canonical order")
 		}
 	}
-	for index, selection := range manifest.Selections {
-		if selection.DeclaredID == "" || selection.ExportName == "" ||
-			(selection.Kind != DeclarationKindTask &&
-				selection.Kind != DeclarationKindActor) ||
-			selection.Slot == "" ||
-			validateArtifactPath(selection.SourcePath, programArtifact) != nil {
-			return fmt.Errorf("program compiler result selection %d is invalid", index)
+	for i, value := range result.Selections {
+		if err := validateLocatedDeclaration(LocatedDeclaration{DeclaredID: value.DeclaredID, ExportName: value.ExportName, Kind: value.Kind, Slot: value.Slot, SourcePath: value.SourcePath}); err != nil {
+			return err
 		}
-		if _, found := slices.BinarySearch(
-			manifest.DiscoveryCandidates,
-			selection.SourcePath,
-		); !found {
-			return fmt.Errorf(
-				"program compiler result selection %d is not a discovery candidate",
-				index,
-			)
+		if _, found := slices.BinarySearch(result.DiscoveryCandidates, value.SourcePath); !found {
+			return errors.New("selection is not a discovery candidate")
 		}
-		if index > 0 && compareProgramCompilerSelection(
-			manifest.Selections[index-1],
-			selection,
-		) >= 0 {
-			return errors.New("program compiler result selections are not in canonical order")
+		if i > 0 && compareProgramCompilerSelection(result.Selections[i-1], value) >= 0 {
+			return errors.New("selections are not in canonical order")
 		}
 	}
 	return nil
 }
-
-func compareProgramExternalEdge(left, right ProgramExternalEdge) int {
-	return strings.Compare(
-		left.Importer+"\x00"+left.Specifier+"\x00"+left.Kind+"\x00"+
-			left.LogicalPath+"\x00"+left.ResolvedPath+"\x00"+left.RuntimePath,
-		right.Importer+"\x00"+right.Specifier+"\x00"+right.Kind+"\x00"+
-			right.LogicalPath+"\x00"+right.ResolvedPath+"\x00"+right.RuntimePath,
-	)
+func validateProgramCompilerAuthority(result ProgramCompilerResult, compiler CompilerInputs, nodeVersion string) error {
+	if err := ValidateCompilerInputs(compiler); err != nil {
+		return err
+	}
+	if result.APIVersion != compiler.APIVersion || result.Language != compiler.Language || result.NodeVersion != nodeVersion {
+		return errors.New("program compiler result does not match compiler/runtime authority")
+	}
+	return nil
 }
-
+func verifyProgramCompilerFiles(ctx context.Context, artifact *inspectedArtifact, result ProgramCompilerResult) error {
+	if err := verifyProgramManifestFiles(ctx, artifact, programManifestFromCompilerResult(result, "sha256:"+strings.Repeat("0", 64))); err != nil {
+		return err
+	}
+	for _, candidate := range result.DiscoveryCandidates {
+		if err := verifyDeclarationSource(artifact, candidate); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func validateProgramCompilerLocators(result ProgramCompilerResult, locator DeclarationLocator) error {
+	if len(result.Selections) != len(locator.Declarations) {
+		return errors.New("compiler selections do not match declaration locators")
+	}
+	for i, value := range result.Selections {
+		d := locator.Declarations[i]
+		if value.DeclaredID != d.DeclaredID || value.ExportName != d.ExportName || value.Kind != d.Kind || value.Slot != d.Slot || value.SourcePath != d.SourcePath {
+			return errors.New("compiler selections do not match declaration locators")
+		}
+	}
+	return nil
+}
 func compareProgramCompilerSelection(left, right ProgramCompilerSelection) int {
 	leftKind := declarationKindOrder(left.Kind)
 	rightKind := declarationKindOrder(right.Kind)
@@ -246,298 +168,6 @@ func compareProgramCompilerSelection(left, right ProgramCompilerSelection) int {
 		right.DeclaredID+"\x00"+right.SourcePath+"\x00"+
 			right.ExportName+"\x00"+string(right.Slot),
 	)
-}
-
-func validateProgramPathDigest(file ProgramPathDigest) error {
-	if !sha256DigestPattern.MatchString(file.Digest) {
-		return errors.New("digest is not a lowercase SHA-256 digest")
-	}
-	if err := validateArtifactPath(file.Path, programArtifact); err != nil {
-		return err
-	}
-	if file.Path == "helmr" || strings.HasPrefix(file.Path, "helmr/") {
-		return errors.New("path is not a compiler input")
-	}
-	if hasReservedOutputSegment(file.Path) {
-		return errors.New("path is reserved platform output")
-	}
-	return nil
-}
-
-func validateProgramCompilerAuthority(
-	manifest ProgramCompilerResult,
-	compiler CompilerInputs,
-	nodeVersion string,
-) error {
-	if manifest.Compiler.APIVersion != compiler.APIVersion ||
-		manifest.Compiler.EsbuildVersion != compiler.Esbuild.Version ||
-		manifest.Compiler.OptionsContractDigest != compiler.OptionsContractDigest ||
-		manifest.Compiler.Output != compiler.Output ||
-		!slices.Equal(
-			manifest.Compiler.Source.DeclarationExtensions,
-			compiler.Source.DeclarationExtensions,
-		) ||
-		manifest.Compiler.Source.PackageDependencies != compiler.Source.PackageDependencies ||
-		manifest.Compiler.Source.Semantics != compiler.Source.Semantics ||
-		manifest.Compiler.Source.ProjectSources != compiler.Source.ProjectSources ||
-		manifest.Compiler.Source.CompilePackages != compiler.Source.CompilePackages {
-		return errors.New("program compiler result compiler does not match toolchain authority")
-	}
-	if manifest.Execution.NodeVersion != nodeVersion {
-		return errors.New("program compiler result Node.js version does not match runtime authority")
-	}
-	expected, err := compilerOptionsDigest(compiler, nodeVersion)
-	if err != nil {
-		return err
-	}
-	if manifest.Execution.OptionsDigest != expected {
-		return errors.New("program compiler result options digest does not match compiler authority")
-	}
-	return nil
-}
-
-func compilerOptionsDigest(
-	compiler CompilerInputs,
-	nodeVersion string,
-) (string, error) {
-	input := struct {
-		APIVersion            string   `json:"apiVersion"`
-		Banner                string   `json:"banner"`
-		Bundle                bool     `json:"bundle"`
-		DeclarationExtensions []string `json:"declarationExtensions"`
-		EsbuildVersion        string   `json:"esbuildVersion"`
-		Format                string   `json:"format"`
-		FinalEntryGraph       string   `json:"finalEntryGraph"`
-		LegalComments         string   `json:"legalComments"`
-		Metafile              bool     `json:"metafile"`
-		Packages              string   `json:"packages"`
-		Platform              string   `json:"platform"`
-		PreserveSymlinks      bool     `json:"preserveSymlinks"`
-		SourceMap             string   `json:"sourceMap"`
-		SourceMapSources      string   `json:"sourceMapSources"`
-		SourcesContent        bool     `json:"sourcesContent"`
-		SourceSemantics       string   `json:"sourceSemantics"`
-		DependencyBoundary    string   `json:"dependencyBoundary"`
-		RootConfig            string   `json:"rootConfig"`
-		Splitting             bool     `json:"splitting"`
-		Target                string   `json:"target"`
-		TreeShaking           bool     `json:"treeShaking"`
-	}{
-		APIVersion:            compiler.APIVersion,
-		Banner:                `import { createRequire as __helmrCreateRequire } from "node:module"; const require = __helmrCreateRequire(import.meta.url);`,
-		Bundle:                true,
-		DeclarationExtensions: compiler.Source.DeclarationExtensions,
-		EsbuildVersion:        compiler.Esbuild.Version,
-		Format:                "esm",
-		FinalEntryGraph:       "multi-entry",
-		LegalComments:         "none",
-		Metafile:              true,
-		Packages:              "bundle",
-		Platform:              "node",
-		PreserveSymlinks:      false,
-		SourceMap:             "external",
-		SourceMapSources:      "absolute-program-urls",
-		SourcesContent:        false,
-		SourceSemantics:       "pinned-esbuild",
-		DependencyBoundary:    "explicit-installed-roots",
-		RootConfig:            "build-only",
-		Splitting:             false,
-		Target:                "node" + nodeVersion,
-		TreeShaking:           true,
-	}
-	encoded, err := json.Marshal(input)
-	if err != nil {
-		return "", err
-	}
-	raw, err := jsoncanon.Transform(encoded)
-	if err != nil {
-		return "", err
-	}
-	digest := sha256.Sum256(raw)
-	return sha256sum.FormatDigest(digest[:]), nil
-}
-
-func verifyProgramCompilerFiles(
-	ctx context.Context,
-	artifact *inspectedArtifact,
-	manifest ProgramCompilerResult,
-) error {
-	if err := verifyProgramCompilePackages(ctx, artifact, manifest.CompilePackages, manifest.Config); err != nil {
-		return err
-	}
-	if err := verifyProgramExternalEdges(artifact, manifest.ExternalEdges); err != nil {
-		return err
-	}
-	files := append(
-		append([]ProgramPathDigest(nil), manifest.Inputs...),
-		manifest.TSConfigs...,
-	)
-	files = append(files, manifest.Config)
-	for _, file := range files {
-		if err := verifyProgramPathDigest(ctx, artifact, file); err != nil {
-			return err
-		}
-	}
-	inputSet := make(map[string]struct{}, len(manifest.Inputs))
-	for _, input := range manifest.Inputs {
-		inputSet[input.Path] = struct{}{}
-	}
-	for _, output := range manifest.Outputs {
-		if err := verifyProgramPathDigest(ctx, artifact, ProgramPathDigest{
-			Digest: output.ModuleDigest,
-			Path:   output.ModulePath,
-		}); err != nil {
-			return err
-		}
-		if err := verifyProgramPathDigest(ctx, artifact, ProgramPathDigest{
-			Digest: output.SourceMapDigest,
-			Path:   output.SourceMapPath,
-		}); err != nil {
-			return err
-		}
-		if err := verifyProgramSourceMap(
-			ctx,
-			artifact,
-			output.SourceMapPath,
-			manifest.CompilePackages,
-			inputSet,
-		); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func validateProgramCompilerLocators(
-	manifest ProgramCompilerResult,
-	locator DeclarationLocator,
-) error {
-	outputs := make(map[string]struct{}, len(manifest.Outputs))
-	for _, output := range manifest.Outputs {
-		expected := generatedDeclarationModulePath(output.SourcePath)
-		if output.ModulePath != expected {
-			return fmt.Errorf(
-				"program compiler output %q does not match source path digest",
-				output.ModulePath,
-			)
-		}
-		if _, exists := outputs[output.ModulePath]; exists {
-			return fmt.Errorf("program compiler output %q is duplicated", output.ModulePath)
-		}
-		outputs[output.ModulePath] = struct{}{}
-	}
-	located := make(map[string]struct{}, len(locator.Declarations))
-	for _, declaration := range locator.Declarations {
-		located[declaration.ModulePath] = struct{}{}
-	}
-	if len(located) != len(outputs) {
-		return errors.New("program compiler output set does not match declaration locators")
-	}
-	for module := range located {
-		if _, exists := outputs[module]; !exists {
-			return errors.New("program compiler output set does not match declaration locators")
-		}
-	}
-	if len(manifest.Selections) != len(locator.Declarations) {
-		return errors.New("program compiler selections do not match declaration locators")
-	}
-	for index, selection := range manifest.Selections {
-		expectedModule := generatedDeclarationModulePath(selection.SourcePath)
-		declaration := locator.Declarations[index]
-		if selection.DeclaredID != declaration.DeclaredID ||
-			selection.ExportName != declaration.ExportName ||
-			selection.Kind != declaration.Kind ||
-			selection.Slot != declaration.Slot ||
-			expectedModule != declaration.ModulePath {
-			return errors.New(
-				"program compiler selections do not match declaration locators",
-			)
-		}
-	}
-	return nil
-}
-
-func generatedDeclarationModulePath(source string) string {
-	directory := path.Dir(source)
-	prefix := ""
-	if directory != "." {
-		prefix = directory + "/"
-	}
-	return prefix + ".helmr/modules/" +
-		fmt.Sprintf("%x", sha256.Sum256([]byte(source))) +
-		".mjs"
-}
-
-func verifyProgramSourceMap(
-	ctx context.Context,
-	artifact *inspectedArtifact,
-	sourceMapPath string,
-	selection []ProgramCompilePackage,
-	allowedSources map[string]struct{},
-) error {
-	raw, err := artifact.read(ctx, sourceMapPath, maxProgramFileSizeBytes)
-	if err != nil {
-		return err
-	}
-	canonical, err := jsoncanon.Transform(raw)
-	if err != nil || !bytes.Equal(raw, canonical) {
-		return fmt.Errorf("program source map %q is not canonical JSON", sourceMapPath)
-	}
-	var sourceMap struct {
-		Mappings string   `json:"mappings"`
-		Names    []string `json:"names"`
-		Sources  []string `json:"sources"`
-		Version  int      `json:"version"`
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&sourceMap); err != nil {
-		return fmt.Errorf("decode program source map %q: %w", sourceMapPath, err)
-	}
-	if err := ensureEOF(decoder, "program source map"); err != nil {
-		return err
-	}
-	if sourceMap.Version != 3 || sourceMap.Names == nil ||
-		sourceMap.Sources == nil || len(sourceMap.Sources) == 0 {
-		return fmt.Errorf("program source map %q has an invalid v3 shape", sourceMapPath)
-	}
-	const prefix = "/opt/helmr/program/"
-	for _, rawURL := range sourceMap.Sources {
-		parsed, err := url.Parse(rawURL)
-		if err != nil || parsed.Scheme != "file" || parsed.Host != "" ||
-			parsed.RawQuery != "" || parsed.Fragment != "" ||
-			!strings.HasPrefix(parsed.Path, prefix) {
-			return fmt.Errorf("program source map %q contains an invalid source URL", sourceMapPath)
-		}
-		source := strings.TrimPrefix(parsed.Path, prefix)
-		if err := validateArtifactPath(source, programArtifact); err != nil ||
-			(hasNodeModulesComponent(source) &&
-				!selectedPackageContains(selection, source)) ||
-			hasReservedOutputSegment(source) ||
-			strings.HasPrefix(source, "helmr/") {
-			return fmt.Errorf("program source map %q contains an invalid source path", sourceMapPath)
-		}
-		expected := (&url.URL{
-			Scheme: "file",
-			Path:   path.Join(prefix, source),
-		}).String()
-		if expected != rawURL {
-			return fmt.Errorf("program source map %q source URL is not canonical", sourceMapPath)
-		}
-		if allowedSources != nil {
-			if _, exists := allowedSources[source]; !exists {
-				return fmt.Errorf(
-					"program source map %q source %q is not a compiler input",
-					sourceMapPath,
-					source,
-				)
-			}
-		}
-		if _, err := artifact.require(source, artifactEntryRegular); err != nil {
-			return fmt.Errorf("program source map %q source: %w", sourceMapPath, err)
-		}
-	}
-	return nil
 }
 
 func verifyProgramPathDigest(

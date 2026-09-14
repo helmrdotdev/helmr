@@ -74,7 +74,7 @@ func seedDemoEnvironmentData(ctx context.Context, tx pgx.Tx) error {
 	if _, err := tx.Exec(ctx, `
 INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 VALUES
-    ($1::uuid, $2, 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
+    ($1::uuid, $2, 1, 'application/vnd.helmr.deployment-program.v1+squashfs'),
     ($1::uuid, $3, 1, 'application/octet-stream')
 `, demoSeedOrgID, programDigest, imageDigest); err != nil {
 		return err
@@ -83,7 +83,7 @@ VALUES
 INSERT INTO artifacts (
     id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type
 ) VALUES
-    ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, 'deployment_program', 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
+    ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, 'deployment_program', 1, 'application/vnd.helmr.deployment-program.v1+squashfs'),
     ($6::uuid, $2::uuid, $3::uuid, $4::uuid, $7, 'workspace_image', 1, 'application/octet-stream')
 `, demoSeedProgramArtifactID, demoSeedOrgID, demoSeedProjectID, demoSeedEnvironmentID,
 		programDigest, demoSeedImageArtifactID, imageDigest); err != nil {

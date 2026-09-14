@@ -103,6 +103,8 @@ func verifyRuntimeTopology(
 		"share",
 		"share/licenses",
 		"share/licenses/node",
+		"moduleexecution",
+		"share/licenses/typescript",
 	}
 	for _, required := range requiredDirectories {
 		if _, err := artifact.require(required, artifactEntryDirectory); err != nil {
@@ -110,11 +112,15 @@ func verifyRuntimeTopology(
 		}
 	}
 	requiredFiles := map[string]uint32{
-		runtimeNodePath:     0755,
-		runtimeEntryPath:    0644,
-		runtimeMetadataPath: 0644,
-		runtimeLibcPath:     0644,
-		runtimeLicensePath:  0644,
+		runtimeNodePath:                     0755,
+		runtimeEntryPath:                    0644,
+		runtimeMetadataPath:                 0644,
+		runtimeLibcPath:                     0644,
+		runtimeLicensePath:                  0644,
+		"helmr/module-preload.mjs":          0644,
+		"moduleexecution/loader.mjs":        0644,
+		"moduleexecution/typescript.cjs":    0644,
+		"share/licenses/typescript/LICENSE": 0644,
 	}
 	for required, mode := range requiredFiles {
 		entry, err := artifact.require(required, artifactEntryRegular)
@@ -147,6 +153,11 @@ func verifyRuntimeTopology(
 	if err != nil {
 		return RuntimeIndex{}, err
 	}
+	for name, digest := range map[string]string{"moduleexecution/loader.mjs": metadata.Language.AdapterDigest, "moduleexecution/typescript.cjs": metadata.Language.TypeScriptDigest} {
+		if err := verifyProgramPathDigest(ctx, artifact, ProgramPathDigest{Path: name, Digest: digest}); err != nil {
+			return RuntimeIndex{}, err
+		}
+	}
 	return RuntimeIndex{
 		Architecture:    metadata.Architecture,
 		RuntimeContract: metadata.RuntimeContract,
@@ -155,7 +166,7 @@ func verifyRuntimeTopology(
 
 func validateRuntimePath(entry artifactEntry, required map[string]uint32) error {
 	switch entry.Path {
-	case ".", "bin", "helmr", "lib", "share", "share/licenses", "share/licenses/node":
+	case ".", "bin", "helmr", "lib", "share", "share/licenses", "share/licenses/node", "moduleexecution", "share/licenses/typescript":
 		return nil
 	}
 	if _, exists := required[entry.Path]; exists {

@@ -174,7 +174,7 @@ helmr_dev_write_runtime_descriptor() {
     return 0
   fi
   local runtime_descriptor="${HELMR_DEV_DIR}/runtime.descriptor.json"
-  printf '%s' '{"architecture":"x86_64","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","formatVersion":0,"mediaType":"application/vnd.helmr.runtime.v0+squashfs","runtimeContract":"helmr.runtime.v0","sizeBytes":4096}' >"${runtime_descriptor}"
+  printf '%s' '{"architecture":"x86_64","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","formatVersion":1,"mediaType":"application/vnd.helmr.runtime.v1+squashfs","runtimeContract":"helmr.runtime.v1","sizeBytes":4096}' >"${runtime_descriptor}"
   export DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH="${runtime_descriptor}"
 }
 

@@ -152,16 +152,13 @@ Run the application's typecheck/tests and a full program compilation with the
 matching compiler. Declaration discovery alone does not exercise dependency
 packaging. A local compile does not prove an image build or a deployed runtime.
 
-The package manager owns archive installation and integrity. Installed packages
-are external by default, regardless of archive suffix or acquisition spelling.
-The packed SDK contains Node-ready JavaScript and needs no compile selector.
-Project-contained linked source compiles directly. For copied TypeScript source,
-set `helmr.config.ts` `compilePackages` to logical installed package roots
-such as `node_modules/my-source-package`. The compiler uses the resolved installed
-bytes, not inferred same-name source. Nested installed dependencies need their own
-selection. Review these path policies after install-layout or dependency changes:
-a path can silently resolve to a different instance. See the
-[configuration reference](../packages/web/src/content/docs/reference/configuration.md#installed-dependencies-and-source-compilation).
+The package manager owns archive installation and integrity. Helmr retains the
+installed tree and automatically transforms reached TypeScript/JSX, including
+copied and linked packages, without package selectors or guessed source identity.
+Node-ready JavaScript keeps native exports, cache and asset locations. Use a
+target-platform install for native addons. See the
+[configuration reference](../packages/web/src/content/docs/reference/configuration.md#installed-dependencies-and-source-execution)
+for resolution precedence, source containment and image-layout requirements.
 
 Keep `vendor/` in the captured project so the build can install these files.
 The archives also remain in the program source tree; account for their size.

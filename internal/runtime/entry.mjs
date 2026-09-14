@@ -1,28 +1,21 @@
 var __defProp = Object.defineProperty;
-var __returnValue = (v) => v;
-function __exportSetter(name, newValue) {
-  this[name] = __returnValue.bind(null, newValue);
-}
 var __export = (target, all) => {
   for (var name in all)
-    __defProp(target, name, {
-      get: all[name],
-      enumerable: true,
-      configurable: true,
-      set: __exportSetter.bind(all, name)
-    });
+    __defProp(target, name, { get: all[name], enumerable: true });
 };
+
 // node_modules/.bun/@bufbuild+protobuf@2.15.0/node_modules/@bufbuild/protobuf/dist/esm/is-message.js
 function isMessage(arg, schema) {
   const isMessage2 = arg !== null && typeof arg == "object" && "$typeName" in arg && typeof arg.$typeName == "string";
   if (!isMessage2) {
     return false;
   }
-  if (schema === undefined) {
+  if (schema === void 0) {
     return true;
   }
   return schema.typeName === arg.$typeName;
 }
+
 // node_modules/.bun/@bufbuild+protobuf@2.15.0/node_modules/@bufbuild/protobuf/dist/esm/descriptors.js
 var ScalarType;
 (function(ScalarType2) {
@@ -49,7 +42,7 @@ function varint64read() {
   let pos = this.pos;
   let lo = 0;
   let hi = 0;
-  for (let shift = 0;shift < 28; shift += 7) {
+  for (let shift = 0; shift < 28; shift += 7) {
     const b = buf[pos++];
     lo |= (b & 127) << shift;
     if ((b & 128) == 0) {
@@ -70,7 +63,7 @@ function varint64read() {
     this.varint64Hi = hi;
     return;
   }
-  for (let shift = 3;shift <= 31; shift += 7) {
+  for (let shift = 3; shift <= 31; shift += 7) {
     const b = buf[pos++];
     hi |= (b & 127) << shift;
     if ((b & 128) == 0) {
@@ -169,7 +162,7 @@ function varint32write(value, bytes) {
     }
     bytes.push(value);
   } else {
-    for (let i = 0;i < 9; i++) {
+    for (let i = 0; i < 9; i++) {
       bytes.push(value & 127 | 128);
       value = value >> 7;
     }
@@ -203,7 +196,7 @@ function varint32read() {
   }
   b = this.buf[this.pos++];
   result |= (b & 15) << 28;
-  for (let readBytes = 5;(b & 128) !== 0 && readBytes < 10; readBytes++)
+  for (let readBytes = 5; (b & 128) !== 0 && readBytes < 10; readBytes++)
     b = this.buf[this.pos++];
   if ((b & 128) !== 0)
     throw new Error("invalid varint");
@@ -338,9 +331,8 @@ function scalarZeroValue(type, longAsString) {
 }
 
 // node_modules/.bun/@bufbuild+protobuf@2.15.0/node_modules/@bufbuild/protobuf/dist/esm/reflect/unsafe.js
-var unsafeLocal = Symbol.for("reflect unsafe local");
 function unsafeIsSetExplicit(target, localName) {
-  return Object.prototype.hasOwnProperty.call(target, localName) && target[localName] !== undefined;
+  return Object.prototype.hasOwnProperty.call(target, localName) && target[localName] !== void 0;
 }
 
 // node_modules/.bun/@bufbuild+protobuf@2.15.0/node_modules/@bufbuild/protobuf/dist/esm/reflect/guard.js
@@ -349,9 +341,9 @@ function isObject(arg) {
 }
 
 // node_modules/.bun/@bufbuild+protobuf@2.15.0/node_modules/@bufbuild/protobuf/dist/esm/wkt/wrappers.js
-function isWrapperDesc(messageDesc) {
-  const f = messageDesc.fields[0];
-  return isWrapperTypeName(messageDesc.typeName) && f !== undefined && f.fieldKind == "scalar" && f.name == "value" && f.number == 1;
+function isWrapperDesc(messageDesc2) {
+  const f = messageDesc2.fields[0];
+  return isWrapperTypeName(messageDesc2.typeName) && f !== void 0 && f.fieldKind == "scalar" && f.name == "value" && f.number == 1;
 }
 var wrapperTypeNames = /* @__PURE__ */ new Set([
   "google.protobuf.DoubleValue",
@@ -378,10 +370,10 @@ function create(schema, init) {
   }
   return compiledCreate(schema)(init);
 }
-var compiledCreates = new WeakMap;
+var compiledCreates = /* @__PURE__ */ new WeakMap();
 function compiledCreate(desc) {
   let compiled = compiledCreates.get(desc);
-  if (compiled === undefined) {
+  if (compiled === void 0) {
     compiled = compileCreate(desc);
     compiledCreates.set(desc, compiled);
   }
@@ -396,34 +388,34 @@ function compileCreate(desc) {
   const { properties, prototype } = compileInitMessage(desc);
   return (init) => {
     let message;
-    if (prototype !== undefined) {
+    if (prototype !== void 0) {
       message = Object.create(prototype);
       message.$typeName = typeName;
     } else {
       message = { $typeName: typeName };
     }
-    for (let i = 0;i < properties.length; i++) {
+    for (let i = 0; i < properties.length; i++) {
       const property = properties[i];
       const name = property.name;
-      const initValue = init === null || init === undefined ? undefined : init[name];
+      const initValue = init === null || init === void 0 ? void 0 : init[name];
       switch (property.kind) {
         case INIT_SINGULAR:
           if (initValue != null) {
-            message[name] = property.convert !== undefined ? property.convert(initValue) : initValue;
-          } else if (property.constant !== undefined) {
+            message[name] = property.convert !== void 0 ? property.convert(initValue) : initValue;
+          } else if (property.constant !== void 0) {
             message[name] = property.constant;
           }
           break;
         case INIT_LIST:
-          message[name] = property.convert !== undefined && Array.isArray(initValue) ? initValue.map(property.convert) : initValue !== null && initValue !== undefined ? initValue : [];
+          message[name] = property.convert !== void 0 && Array.isArray(initValue) ? initValue.map(property.convert) : initValue !== null && initValue !== void 0 ? initValue : [];
           break;
         case INIT_MAP:
-          if (property.convert === undefined || !isObject(initValue)) {
-            message[name] = initValue !== null && initValue !== undefined ? initValue : {};
+          if (property.convert === void 0 || !isObject(initValue)) {
+            message[name] = initValue !== null && initValue !== void 0 ? initValue : {};
           } else {
             const converted = {};
             const keys = Object.keys(initValue);
-            for (let k = 0;k < keys.length; k++) {
+            for (let k = 0; k < keys.length; k++) {
               converted[keys[k]] = property.convert(initValue[keys[k]]);
             }
             message[name] = converted;
@@ -431,9 +423,9 @@ function compileCreate(desc) {
           break;
         case INIT_ONEOF: {
           const oneofValue = initValue;
-          if ((oneofValue === null || oneofValue === undefined ? undefined : oneofValue.case) != null) {
+          if ((oneofValue === null || oneofValue === void 0 ? void 0 : oneofValue.case) != null) {
             const convert = property.convert.get(oneofValue.case);
-            if (convert !== undefined) {
+            if (convert !== void 0) {
               message[name] = {
                 case: oneofValue.case,
                 value: convert(oneofValue.value)
@@ -441,7 +433,7 @@ function compileCreate(desc) {
               break;
             }
           }
-          message[name] = { case: undefined };
+          message[name] = { case: void 0 };
           break;
         }
       }
@@ -460,7 +452,7 @@ function compileInitMessage(desc) {
       properties.push({
         name,
         kind: INIT_ONEOF,
-        constant: undefined,
+        constant: void 0,
         convert: compileConvertOneof(member)
       });
       continue;
@@ -470,7 +462,7 @@ function compileInitMessage(desc) {
         properties.push({
           name,
           kind: INIT_SINGULAR,
-          constant: undefined,
+          constant: void 0,
           convert: compileConvertMessage(member)
         });
         break;
@@ -479,8 +471,8 @@ function compileInitMessage(desc) {
         properties.push({
           name,
           kind: INIT_LIST,
-          constant: undefined,
-          convert: member.listKind == "message" ? (_a = compileConvertMessage(member)) !== null && _a !== undefined ? _a : (value) => value : member.scalar == ScalarType.BYTES ? toU8Arr : undefined
+          constant: void 0,
+          convert: member.listKind == "message" ? (_a = compileConvertMessage(member)) !== null && _a !== void 0 ? _a : ((value) => value) : member.scalar == ScalarType.BYTES ? toU8Arr : void 0
         });
         break;
       }
@@ -488,8 +480,8 @@ function compileInitMessage(desc) {
         properties.push({
           name,
           kind: INIT_MAP,
-          constant: undefined,
-          convert: member.mapKind == "message" ? (_b = compileConvertMessage(member)) !== null && _b !== undefined ? _b : (value) => value : member.scalar == ScalarType.BYTES ? toU8Arr : undefined
+          constant: void 0,
+          convert: member.mapKind == "message" ? (_b = compileConvertMessage(member)) !== null && _b !== void 0 ? _b : ((value) => value) : member.scalar == ScalarType.BYTES ? toU8Arr : void 0
         });
         break;
       }
@@ -498,8 +490,8 @@ function compileInitMessage(desc) {
         properties.push({
           name,
           kind: INIT_SINGULAR,
-          constant: member.presence == IMPLICIT ? zeroValue : undefined,
-          convert: member.fieldKind == "scalar" && member.scalar == ScalarType.BYTES ? toU8Arr : undefined
+          constant: member.presence == IMPLICIT ? zeroValue : void 0,
+          convert: member.fieldKind == "scalar" && member.scalar == ScalarType.BYTES ? toU8Arr : void 0
         });
         if (usePrototype) {
           prototype[name] = zeroValue;
@@ -510,11 +502,11 @@ function compileInitMessage(desc) {
   }
   return {
     properties,
-    prototype: usePrototype ? prototype : undefined
+    prototype: usePrototype ? prototype : void 0
   };
 }
 function compileConvertOneof(oneof) {
-  const converters = new Map;
+  const converters = /* @__PURE__ */ new Map();
   for (const field of oneof.fields) {
     let convert;
     if (field.fieldKind == "message") {
@@ -522,24 +514,24 @@ function compileConvertOneof(oneof) {
     } else if (field.fieldKind == "scalar" && field.scalar == ScalarType.BYTES) {
       convert = toU8Arr;
     }
-    converters.set(field.localName, convert !== null && convert !== undefined ? convert : (value) => value);
+    converters.set(field.localName, convert !== null && convert !== void 0 ? convert : ((value) => value));
   }
   return converters;
 }
 function compileConvertMessage(field) {
   if (field.fieldKind == "message" && !field.oneof && isWrapperDesc(field.message)) {
-    return field.message.fields[0].scalar == ScalarType.BYTES ? toU8Arr : undefined;
+    return field.message.fields[0].scalar == ScalarType.BYTES ? toU8Arr : void 0;
   }
   if (field.message.typeName == "google.protobuf.Struct" && field.parent.typeName !== "google.protobuf.Value") {
-    return;
+    return void 0;
   }
-  const messageDesc = field.message;
+  const messageDesc2 = field.message;
   let compiled;
   return (value) => {
-    if (!isObject(value) || isMessage(value, messageDesc)) {
+    if (!isObject(value) || isMessage(value, messageDesc2)) {
       return value;
     }
-    compiled !== null && compiled !== undefined || (compiled = compiledCreate(messageDesc));
+    compiled !== null && compiled !== void 0 ? compiled : compiled = compiledCreate(messageDesc2);
     return compiled(value);
   };
 }
@@ -558,25 +550,26 @@ function needsPrototypeChain(desc) {
 }
 function createZeroValue(field) {
   const defaultValue = field.getDefaultValue();
-  if (defaultValue !== undefined) {
+  if (defaultValue !== void 0) {
     return field.fieldKind == "scalar" && field.longAsString ? defaultValue.toString() : defaultValue;
   }
   return field.fieldKind == "scalar" ? scalarZeroValue(field.scalar, field.longAsString) : field.enum.values[0].number;
 }
+
 // node_modules/.bun/@bufbuild+protobuf@2.15.0/node_modules/@bufbuild/protobuf/dist/esm/reflect/error.js
-class FieldError extends Error {
+var FieldError = class extends Error {
   constructor(fieldOrOneof, message, name = "FieldValueInvalidError") {
     super(message);
     this.name = name;
     this.field = () => fieldOrOneof;
   }
-}
+};
 
 // node_modules/.bun/@bufbuild+protobuf@2.15.0/node_modules/@bufbuild/protobuf/dist/esm/wire/text-encoding.js
 var te;
 function configureTextEncoding(textEncoding) {
   var _a;
-  te = Object.assign(Object.assign({}, textEncoding), { encodeUtf8Into: (_a = textEncoding.encodeUtf8Into) !== null && _a !== undefined ? _a : emulateEncodeInto(textEncoding.encodeUtf8.bind(textEncoding)) });
+  te = Object.assign(Object.assign({}, textEncoding), { encodeUtf8Into: (_a = textEncoding.encodeUtf8Into) !== null && _a !== void 0 ? _a : emulateEncodeInto(textEncoding.encodeUtf8.bind(textEncoding)) });
 }
 function getTextEncoding() {
   if (!te) {
@@ -584,12 +577,12 @@ function getTextEncoding() {
     if (!globals.TextEncoder || !globals.TextDecoder) {
       throw new Error("encoding API missing: install TextEncoder and TextDecoder on globalThis");
     }
-    const textEncoder = new globals.TextEncoder;
-    const textDecoder = new globals.TextDecoder;
+    const textEncoder2 = new globals.TextEncoder();
+    const textDecoder = new globals.TextDecoder();
     let textDecoderStrict;
     const config = {
       encodeUtf8(text) {
-        return textEncoder.encode(text);
+        return textEncoder2.encode(text);
       },
       decodeUtf8(bytes, strict) {
         if (strict) {
@@ -611,8 +604,8 @@ function getTextEncoding() {
         }
       }
     };
-    if (textEncoder.encodeInto) {
-      config.encodeUtf8Into = textEncoder.encodeInto.bind(textEncoder);
+    if (textEncoder2.encodeInto) {
+      config.encodeUtf8Into = textEncoder2.encodeInto.bind(textEncoder2);
     }
     const nativeStringIsWellFormed = String.prototype.isWellFormed;
     if (nativeStringIsWellFormed) {
@@ -642,13 +635,12 @@ var WireType;
   WireType2[WireType2["EndGroup"] = 4] = "EndGroup";
   WireType2[WireType2["Bit32"] = 5] = "Bit32";
 })(WireType || (WireType = {}));
-var FLOAT32_MAX = 340282346638528860000000000000000000000;
-var FLOAT32_MIN = -340282346638528860000000000000000000000;
+var FLOAT32_MAX = 34028234663852886e22;
+var FLOAT32_MIN = -34028234663852886e22;
 var UINT32_MAX = 4294967295;
 var INT32_MAX = 2147483647;
 var INT32_MIN = -2147483648;
-
-class BinaryWriter {
+var BinaryWriter = class {
   constructor(encodeUtf8) {
     this.stackPos = [];
     this.encodeUtf8Into = encodeUtf8 ? emulateEncodeInto(encodeUtf8) : getTextEncoding().encodeUtf8Into;
@@ -668,6 +660,10 @@ class BinaryWriter {
       this.buffer = newBuf;
     }
   }
+  /**
+   * The DataView over `buffer`, rebuilt only if the buffer has grown since it
+   * was last used.
+   */
   view() {
     const bytes = this.buffer;
     const view = this.viewCache;
@@ -677,21 +673,34 @@ class BinaryWriter {
     this.viewCache = newView;
     return newView;
   }
+  /**
+   * Return all bytes written and reset this writer.
+   */
   finish() {
     const result = this.buffer.slice(0, this.pos);
     this.pos = 0;
     this.stackPos = [];
     return result;
   }
+  /**
+   * Start a new fork for length-delimited data like a message
+   * or a packed repeated field.
+   *
+   * Must be joined later with `join()`.
+   */
   fork() {
     this.stackPos.push(this.pos);
     this.ensureCapacity(DEFAULT_LEN_PREFIX_SIZE);
     this.buffer[this.pos++] = 0;
     return this;
   }
+  /**
+   * Join the last fork. Write its length and bytes, then
+   * return to the previous state.
+   */
   join() {
     const forkPos = this.stackPos.pop();
-    if (forkPos === undefined)
+    if (forkPos === void 0)
       throw new Error("invalid state, fork stack empty");
     const len = this.pos - forkPos - DEFAULT_LEN_PREFIX_SIZE;
     const lenPrefixSize = varint32Size(len);
@@ -704,15 +713,28 @@ class BinaryWriter {
     this.pos += len;
     return this;
   }
+  /**
+   * Writes a tag (field number and wire type).
+   *
+   * Equivalent to `uint32( (fieldNo << 3 | type) >>> 0 )`.
+   *
+   * Generated code should compute the tag ahead of time and call `uint32()`.
+   */
   tag(fieldNo, type) {
     return this.uint32((fieldNo << 3 | type) >>> 0);
   }
+  /**
+   * Write a chunk of raw bytes.
+   */
   raw(chunk) {
     this.ensureCapacity(chunk.length);
     this.buffer.set(chunk, this.pos);
     this.pos += chunk.length;
     return this;
   }
+  /**
+   * Write a `uint32` value, an unsigned 32 bit varint.
+   */
   uint32(value) {
     assertUInt32(value);
     this.ensureCapacity(5);
@@ -727,28 +749,40 @@ class BinaryWriter {
     this.buffer[this.pos++] = value;
     return this;
   }
+  /**
+   * Write a `int32` value, a signed 32 bit varint.
+   */
   int32(value) {
     assertInt32(value);
     if (value >= 0) {
       return this.uint32(value);
     }
     this.ensureCapacity(10);
-    for (let i = 0;i < 9; i++) {
+    for (let i = 0; i < 9; i++) {
       this.buffer[this.pos++] = value & 127 | 128;
       value >>= 7;
     }
     this.buffer[this.pos++] = 1;
     return this;
   }
+  /**
+   * Write a `bool` value, a varint.
+   */
   bool(value) {
     this.ensureCapacity(1);
     this.buffer[this.pos++] = value ? 1 : 0;
     return this;
   }
+  /**
+   * Write a `bytes` value, length-delimited arbitrary data.
+   */
   bytes(value) {
     this.uint32(value.byteLength);
     return this.raw(value);
   }
+  /**
+   * Write a `string` value, length-delimited data converted to UTF-8 text.
+   */
   string(value) {
     if (typeof value !== "string") {
       value = String(value);
@@ -760,7 +794,7 @@ class BinaryWriter {
       let pos = this.pos;
       ascii[pos++] = len;
       let i = 0;
-      for (;i < len; i++) {
+      for (; i < len; i++) {
         const code = value.charCodeAt(i);
         if (code > 127)
           break;
@@ -784,6 +818,9 @@ class BinaryWriter {
     this.pos += written;
     return this;
   }
+  /**
+   * Write a `float` value, 32-bit floating point number.
+   */
   float(value) {
     assertFloat32(value);
     this.ensureCapacity(4);
@@ -791,12 +828,18 @@ class BinaryWriter {
     this.pos += 4;
     return this;
   }
+  /**
+   * Write a `double` value, a 64-bit floating point number.
+   */
   double(value) {
     this.ensureCapacity(8);
     this.view().setFloat64(this.pos, value, true);
     this.pos += 8;
     return this;
   }
+  /**
+   * Write a `fixed32` value, an unsigned, fixed-length 32-bit integer.
+   */
   fixed32(value) {
     assertUInt32(value);
     this.ensureCapacity(4);
@@ -804,6 +847,9 @@ class BinaryWriter {
     this.pos += 4;
     return this;
   }
+  /**
+   * Write a `sfixed32` value, a signed, fixed-length 32-bit integer.
+   */
   sfixed32(value) {
     assertInt32(value);
     this.ensureCapacity(4);
@@ -811,10 +857,16 @@ class BinaryWriter {
     this.pos += 4;
     return this;
   }
+  /**
+   * Write a `sint32` value, a signed, zigzag-encoded 32-bit varint.
+   */
   sint32(value) {
     assertInt32(value);
     return this.uint32((value << 1 ^ value >> 31) >>> 0);
   }
+  /**
+   * Write a `sfixed64` value, a signed, fixed-length 64-bit integer.
+   */
   sfixed64(value) {
     const tc = protoInt64.enc(value);
     this.ensureCapacity(8);
@@ -824,6 +876,9 @@ class BinaryWriter {
     this.pos += 8;
     return this;
   }
+  /**
+   * Write a `fixed64` value, an unsigned, fixed-length 64 bit integer.
+   */
   fixed64(value) {
     const tc = protoInt64.uEnc(value);
     this.ensureCapacity(8);
@@ -833,23 +888,39 @@ class BinaryWriter {
     this.pos += 8;
     return this;
   }
+  /**
+   * Write a `int64` value, a signed 64-bit varint.
+   */
   int64(value) {
     const tc = protoInt64.enc(value);
     return this.writeVarint64(tc.lo, tc.hi);
   }
+  /**
+   * Write a `sint64` value, a signed, zig-zag-encoded 64-bit varint.
+   */
   sint64(value) {
     const tc = protoInt64.enc(value), sign = tc.hi >> 31, lo = tc.lo << 1 ^ sign, hi = (tc.hi << 1 | tc.lo >>> 31) ^ sign;
     return this.writeVarint64(lo, hi);
   }
+  /**
+   * Write a `uint64` value, an unsigned 64-bit varint.
+   */
   uint64(value) {
     const tc = protoInt64.uEnc(value);
     return this.writeVarint64(tc.lo, tc.hi);
   }
+  /**
+   * Write a 64-bit varint directly into the buffer. Accepts the value as
+   * split low/high 32-bit words.
+   *
+   * Ported from varint64write() to avoid the intermediate number[] buffer.
+   * See https://github.com/protocolbuffers/protobuf/blob/8a71927d74a4ce34efe2d8769fda198f52d20d12/js/experimental/runtime/kernel/writer.js#L344
+   */
   writeVarint64(lo, hi) {
     this.ensureCapacity(10);
     const buf = this.buffer;
     let pos = this.pos;
-    for (let i = 0;i < 28; i = i + 7) {
+    for (let i = 0; i < 28; i = i + 7) {
       const shift = lo >>> i;
       const hasNext = !(shift >>> 7 == 0 && hi == 0);
       buf[pos++] = (hasNext ? shift | 128 : shift) & 255;
@@ -865,7 +936,7 @@ class BinaryWriter {
       this.pos = pos;
       return this;
     }
-    for (let i = 3;i < 31; i = i + 7) {
+    for (let i = 3; i < 31; i = i + 7) {
       const shift = hi >>> i;
       const hasNext = !(shift >>> 7 == 0);
       buf[pos++] = (hasNext ? shift | 128 : shift) & 255;
@@ -878,7 +949,7 @@ class BinaryWriter {
     this.pos = pos;
     return this;
   }
-}
+};
 var INITIAL_SIZE = 128;
 var DEFAULT_LEN_PREFIX_SIZE = 1;
 var EMPTY_BUFFER = new Uint8Array(0);
@@ -895,8 +966,7 @@ function varint32Size(value) {
     return 4;
   return 5;
 }
-
-class BinaryReader {
+var BinaryReader = class {
   constructor(buf, decodeUtf8 = getTextEncoding().decodeUtf8) {
     this.decodeUtf8 = decodeUtf8;
     this.varint64Lo = 0;
@@ -908,6 +978,10 @@ class BinaryReader {
     this.pos = 0;
     this.view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
   }
+  /**
+   * Reads a tag - field number and wire type. Tags are uint32 varints; values
+   * that do not fit in uint32 are rejected.
+   */
   tag() {
     const start = this.pos;
     const tag = this.uint32();
@@ -922,12 +996,22 @@ class BinaryReader {
     }
     return [fieldNo, wireType];
   }
+  /**
+   * Skip one element and return the skipped data.
+   *
+   * When skipping StartGroup, provide the tags field number to check for
+   * matching field number in the EndGroup tag. Recursion into nested groups
+   * is guarded by the `recursionLimit` argument: When the limit is reached,
+   * this method throws.
+   */
   skip(wireType, fieldNo, recursionLimit = 100) {
     let start = this.pos;
     switch (wireType) {
       case WireType.Varint:
-        while (this.buf[this.pos++] & 128) {}
+        while (this.buf[this.pos++] & 128) {
+        }
         break;
+      // @ts-ignore TS7029: Fallthrough case in switch -- ignore instead of expect-error for compiler settings without noFallthroughCasesInSwitch: true
       case WireType.Bit64:
         this.pos += 4;
       case WireType.Bit32:
@@ -941,10 +1025,10 @@ class BinaryReader {
         if (recursionLimit <= 0) {
           throw new Error("maximum recursion depth reached");
         }
-        for (;; ) {
+        for (; ; ) {
           const [fn, wt] = this.tag();
           if (wt === WireType.EndGroup) {
-            if (fieldNo !== undefined && fn !== fieldNo) {
+            if (fieldNo !== void 0 && fn !== fieldNo) {
               throw new Error("invalid end group tag");
             }
             break;
@@ -958,25 +1042,43 @@ class BinaryReader {
     this.assertBounds();
     return this.buf.subarray(start, this.pos);
   }
+  /**
+   * Throws error if position in byte array is out of range.
+   */
   assertBounds() {
     if (this.pos > this.len)
       throw new RangeError("premature EOF");
   }
+  /**
+   * Read a `int32` field, a signed 32 bit varint.
+   */
   int32() {
     return this.uint32() | 0;
   }
+  /**
+   * Read a `sint32` field, a signed, zigzag-encoded 32-bit varint.
+   */
   sint32() {
     let zze = this.uint32();
     return zze >>> 1 ^ -(zze & 1);
   }
+  /**
+   * Read a `int64` field, a signed 64-bit varint.
+   */
   int64() {
     this.varint64();
     return protoInt64.dec(this.varint64Lo, this.varint64Hi);
   }
+  /**
+   * Read a `uint64` field, an unsigned 64-bit varint.
+   */
   uint64() {
     this.varint64();
     return protoInt64.uDec(this.varint64Lo, this.varint64Hi);
   }
+  /**
+   * Read a `sint64` field, a signed, zig-zag-encoded 64-bit varint.
+   */
   sint64() {
     this.varint64();
     let lo = this.varint64Lo;
@@ -986,6 +1088,9 @@ class BinaryReader {
     hi = hi >>> 1 ^ s;
     return protoInt64.dec(lo, hi);
   }
+  /**
+   * Read a `bool` field, a variant.
+   */
   bool() {
     const b = this.buf[this.pos];
     if (b < 128) {
@@ -995,36 +1100,61 @@ class BinaryReader {
     this.varint64();
     return this.varint64Lo !== 0 || this.varint64Hi !== 0;
   }
+  /**
+   * Read a `fixed32` field, an unsigned, fixed-length 32-bit integer.
+   */
   fixed32() {
     return this.view.getUint32((this.pos += 4) - 4, true);
   }
+  /**
+   * Read a `sfixed32` field, a signed, fixed-length 32-bit integer.
+   */
   sfixed32() {
     return this.view.getInt32((this.pos += 4) - 4, true);
   }
+  /**
+   * Read a `fixed64` field, an unsigned, fixed-length 64 bit integer.
+   */
   fixed64() {
     return protoInt64.uDec(this.sfixed32(), this.sfixed32());
   }
+  /**
+   * Read a `fixed64` field, a signed, fixed-length 64-bit integer.
+   */
   sfixed64() {
     return protoInt64.dec(this.sfixed32(), this.sfixed32());
   }
+  /**
+   * Read a `float` field, 32-bit floating point number.
+   */
   float() {
     return this.view.getFloat32((this.pos += 4) - 4, true);
   }
+  /**
+   * Read a `double` field, a 64-bit floating point number.
+   */
   double() {
     return this.view.getFloat64((this.pos += 8) - 8, true);
   }
+  /**
+   * Read a `bytes` field, length-delimited arbitrary data.
+   */
   bytes() {
     let len = this.uint32(), start = this.pos;
     this.pos += len;
     this.assertBounds();
     return this.buf.subarray(start, start + len);
   }
+  /**
+   * Read a `string` field, length-delimited data converted to UTF-8 text. If
+   * `strict` is true, throw on invalid UTF-8 instead of substituting U+FFFD.
+   */
   string(strict) {
     const bytes = this.bytes();
     const len = bytes.length;
     if (len <= ASCII_MAX_LENGTH) {
       const codes = new Array(len);
-      for (let i = 0;i < len; i++) {
+      for (let i = 0; i < len; i++) {
         const byte = bytes[i];
         if (byte > 127) {
           return this.decodeUtf8(bytes, strict);
@@ -1035,7 +1165,7 @@ class BinaryReader {
     }
     return this.decodeUtf8(bytes, strict);
   }
-}
+};
 function assertInt32(arg) {
   if (typeof arg == "string") {
     arg = Number(arg);
@@ -1083,7 +1213,7 @@ function localMessageMapper(field) {
     return {
       toMessage: (local) => {
         const message = create(wrapperDesc);
-        if (local !== undefined) {
+        if (local !== void 0) {
           message[valueLocalName] = local;
         }
         return message;
@@ -1093,7 +1223,7 @@ function localMessageMapper(field) {
   }
   const childDesc = field.message;
   return {
-    toMessage: (local) => local === undefined ? create(childDesc) : local,
+    toMessage: (local) => local === void 0 ? create(childDesc) : local,
     toLocal: (message) => message
   };
 }
@@ -1126,7 +1256,7 @@ function wktValueToLocal(val) {
     case "listValue":
       return val.kind.value.values.map(wktValueToLocal);
     case "nullValue":
-    case undefined:
+    case void 0:
       return null;
     default:
       return val.kind.value;
@@ -1135,7 +1265,7 @@ function wktValueToLocal(val) {
 function wktValueToReflect(json) {
   const value = {
     $typeName: "google.protobuf.Value",
-    kind: { case: undefined }
+    kind: { case: void 0 }
   };
   switch (typeof json) {
     case "number":
@@ -1174,6 +1304,7 @@ function wktValueToReflect(json) {
   }
   return value;
 }
+
 // node_modules/.bun/@bufbuild+protobuf@2.15.0/node_modules/@bufbuild/protobuf/dist/esm/wire/base64-encoding.js
 var nativeSetFromBase64 = Uint8Array.prototype.setFromBase64;
 function base64Decode(base64Str) {
@@ -1190,7 +1321,8 @@ function base64Decode(base64Str) {
       if (result.read == len) {
         written = result.written;
       }
-    } catch (_a) {}
+    } catch (_a) {
+    }
   }
   if (written < 0) {
     written = setFromBase64(bytes, base64Str);
@@ -1200,18 +1332,20 @@ function base64Decode(base64Str) {
 function setFromBase64(bytes, base64Str) {
   const table = getDecodeTable();
   let bytePos = 0, groupPos = 0, b, p = 0;
-  for (let i = 0;i < base64Str.length; i++) {
+  for (let i = 0; i < base64Str.length; i++) {
     b = table[base64Str.charCodeAt(i)];
-    if (b === undefined) {
+    if (b === void 0) {
       switch (base64Str[i]) {
+        // @ts-ignore TS7029: Fallthrough case in switch -- ignore instead of expect-error for compiler settings without noFallthroughCasesInSwitch: true
         case "=":
           groupPos = 0;
-        case `
-`:
+        // reset state when padding found
+        case "\n":
         case "\r":
-        case "\t":
+        case "	":
         case " ":
           continue;
+        // skip white-space, and padding
         default:
           throw Error("invalid base64 string");
       }
@@ -1250,16 +1384,19 @@ function getEncodeTable(encoding) {
     encodeTableStd = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".split("");
     encodeTableUrl = encodeTableStd.slice(0, -2).concat("-", "_");
   }
-  return encoding == "url" ? encodeTableUrl : encodeTableStd;
+  return encoding == "url" ? (
+    // biome-ignore lint/style/noNonNullAssertion: TS fails to narrow down
+    encodeTableUrl
+  ) : encodeTableStd;
 }
 function getDecodeTable() {
   if (!decodeTable) {
     decodeTable = [];
     const encodeTable = getEncodeTable("std");
-    for (let i = 0;i < encodeTable.length; i++)
+    for (let i = 0; i < encodeTable.length; i++)
       decodeTable[encodeTable[i].charCodeAt(0)] = i;
-    decodeTable[45] = encodeTable.indexOf("+");
-    decodeTable[95] = encodeTable.indexOf("/");
+    decodeTable["-".charCodeAt(0)] = encodeTable.indexOf("+");
+    decodeTable["_".charCodeAt(0)] = encodeTable.indexOf("/");
   }
   return decodeTable;
 }
@@ -1268,7 +1405,7 @@ function getDecodeTable() {
 function protoCamelCase(snakeCase) {
   let capNext = false;
   const b = [];
-  for (let i = 0;i < snakeCase.length; i++) {
+  for (let i = 0; i < snakeCase.length; i++) {
     let c = snakeCase.charAt(i);
     switch (c) {
       case "_":
@@ -1298,7 +1435,8 @@ function protoCamelCase(snakeCase) {
   }
   return b.join("");
 }
-var reservedObjectProperties = new Set([
+var reservedObjectProperties = /* @__PURE__ */ new Set([
+  // names reserved by JavaScript
   "constructor",
   "toString",
   "toJSON",
@@ -1526,7 +1664,7 @@ function createFileRegistry(...args) {
     let recurseDeps = function(file) {
       const deps = [];
       for (const protoFileName of file.dependency) {
-        if (registry.getFile(protoFileName) != null) {
+        if (registry.getFile(protoFileName) != void 0) {
           continue;
         }
         if (seen.has(protoFileName)) {
@@ -1547,7 +1685,7 @@ function createFileRegistry(...args) {
     };
     const input = args[0];
     const resolve = args[1];
-    const seen = new Set;
+    const seen = /* @__PURE__ */ new Set();
     for (const file of [input, ...recurseDeps(input)].reverse()) {
       addFile(file, registry);
     }
@@ -1561,9 +1699,9 @@ function createFileRegistry(...args) {
   return registry;
 }
 function createBaseRegistry() {
-  const types = new Map;
-  const extendees = new Map;
-  const files = new Map;
+  const types = /* @__PURE__ */ new Map();
+  const extendees = /* @__PURE__ */ new Map();
+  const files = /* @__PURE__ */ new Map();
   return {
     kind: "registry",
     types,
@@ -1591,7 +1729,11 @@ function createBaseRegistry() {
       if (desc.kind == "extension") {
         let numberToExt = extendees.get(desc.extendee.typeName);
         if (!numberToExt) {
-          extendees.set(desc.extendee.typeName, numberToExt = new Map);
+          extendees.set(
+            desc.extendee.typeName,
+            // biome-ignore lint/suspicious/noAssignInExpressions: no
+            numberToExt = /* @__PURE__ */ new Map()
+          );
         }
         numberToExt.set(desc.number, desc);
       }
@@ -1605,23 +1747,23 @@ function createBaseRegistry() {
     },
     getMessage(typeName) {
       const t = types.get(typeName);
-      return (t === null || t === undefined ? undefined : t.kind) == "message" ? t : undefined;
+      return (t === null || t === void 0 ? void 0 : t.kind) == "message" ? t : void 0;
     },
     getEnum(typeName) {
       const t = types.get(typeName);
-      return (t === null || t === undefined ? undefined : t.kind) == "enum" ? t : undefined;
+      return (t === null || t === void 0 ? void 0 : t.kind) == "enum" ? t : void 0;
     },
     getExtension(typeName) {
       const t = types.get(typeName);
-      return (t === null || t === undefined ? undefined : t.kind) == "extension" ? t : undefined;
+      return (t === null || t === void 0 ? void 0 : t.kind) == "extension" ? t : void 0;
     },
     getExtensionFor(extendee, no) {
       var _a;
-      return (_a = extendees.get(extendee.typeName)) === null || _a === undefined ? undefined : _a.get(no);
+      return (_a = extendees.get(extendee.typeName)) === null || _a === void 0 ? void 0 : _a.get(no);
     },
     getService(typeName) {
       const t = types.get(typeName);
-      return (t === null || t === undefined ? undefined : t.kind) == "service" ? t : undefined;
+      return (t === null || t === void 0 ? void 0 : t.kind) == "service" ? t : void 0;
     }
   };
 }
@@ -1646,45 +1788,81 @@ var OPEN = 1;
 var VERIFY = 2;
 var maximumEdition = 1001;
 var featureDefaults = {
+  // EDITION_PROTO2
   998: {
     fieldPresence: 1,
+    // EXPLICIT,
     enumType: 2,
+    // CLOSED,
     repeatedFieldEncoding: 2,
+    // EXPANDED,
     utf8Validation: 3,
+    // NONE,
     messageEncoding: 1,
+    // LENGTH_PREFIXED,
     jsonFormat: 2,
+    // LEGACY_BEST_EFFORT,
     enforceNamingStyle: 2,
+    // STYLE_LEGACY,
     defaultSymbolVisibility: 1
+    // EXPORT_ALL,
   },
+  // EDITION_PROTO3
   999: {
     fieldPresence: 2,
+    // IMPLICIT,
     enumType: 1,
+    // OPEN,
     repeatedFieldEncoding: 1,
+    // PACKED,
     utf8Validation: 2,
+    // VERIFY,
     messageEncoding: 1,
+    // LENGTH_PREFIXED,
     jsonFormat: 1,
+    // ALLOW,
     enforceNamingStyle: 2,
+    // STYLE_LEGACY,
     defaultSymbolVisibility: 1
+    // EXPORT_ALL,
   },
-  1000: {
+  // EDITION_2023
+  1e3: {
     fieldPresence: 1,
+    // EXPLICIT,
     enumType: 1,
+    // OPEN,
     repeatedFieldEncoding: 1,
+    // PACKED,
     utf8Validation: 2,
+    // VERIFY,
     messageEncoding: 1,
+    // LENGTH_PREFIXED,
     jsonFormat: 1,
+    // ALLOW,
     enforceNamingStyle: 2,
+    // STYLE_LEGACY,
     defaultSymbolVisibility: 1
+    // EXPORT_ALL,
   },
+  // EDITION_2024
   1001: {
     fieldPresence: 1,
+    // EXPLICIT,
     enumType: 1,
+    // OPEN,
     repeatedFieldEncoding: 1,
+    // PACKED,
     utf8Validation: 2,
+    // VERIFY,
     messageEncoding: 1,
+    // LENGTH_PREFIXED,
     jsonFormat: 1,
+    // ALLOW,
     enforceNamingStyle: 1,
+    // STYLE2024,
     defaultSymbolVisibility: 2
+    // EXPORT_TOP_LEVEL,
   }
 };
 function addFile(proto, reg) {
@@ -1692,7 +1870,7 @@ function addFile(proto, reg) {
   const file = {
     kind: "file",
     proto,
-    deprecated: (_b = (_a = proto.options) === null || _a === undefined ? undefined : _a.deprecated) !== null && _b !== undefined ? _b : false,
+    deprecated: (_b = (_a = proto.options) === null || _a === void 0 ? void 0 : _a.deprecated) !== null && _b !== void 0 ? _b : false,
     edition: getFileEdition(proto),
     name: proto.name.replace(/\.proto$/, ""),
     dependencies: findFileDependencies(proto, reg),
@@ -1704,22 +1882,22 @@ function addFile(proto, reg) {
       return `file ${proto.name}`;
     }
   };
-  const mapEntriesStore = new Map;
+  const mapEntriesStore = /* @__PURE__ */ new Map();
   const mapEntries = {
     get(typeName) {
       return mapEntriesStore.get(typeName);
     },
     add(desc) {
       var _a2;
-      assert(((_a2 = desc.proto.options) === null || _a2 === undefined ? undefined : _a2.mapEntry) === true);
+      assert(((_a2 = desc.proto.options) === null || _a2 === void 0 ? void 0 : _a2.mapEntry) === true);
       mapEntriesStore.set(desc.typeName, desc);
     }
   };
   for (const enumProto of proto.enumType) {
-    addEnum(enumProto, file, undefined, reg);
+    addEnum(enumProto, file, void 0, reg);
   }
   for (const messageProto of proto.messageType) {
-    addMessage(messageProto, file, undefined, reg, mapEntries);
+    addMessage(messageProto, file, void 0, reg, mapEntries);
   }
   for (const serviceProto of proto.service) {
     addService(serviceProto, file, reg);
@@ -1757,13 +1935,13 @@ function addExtensions(desc, reg) {
 }
 function addFields(message, reg, mapEntries) {
   const allOneofs = message.proto.oneofDecl.map((proto) => newOneof(proto, message));
-  const oneofsSeen = new Set;
+  const oneofsSeen = /* @__PURE__ */ new Set();
   for (const proto of message.proto.field) {
     const oneof = findOneof(proto, allOneofs);
     const field = newField(proto, message, reg, oneof, mapEntries);
     message.fields.push(field);
     message.field[field.localName] = field;
-    if (oneof === undefined) {
+    if (oneof === void 0) {
       message.members.push(field);
     } else {
       oneof.fields.push(field);
@@ -1786,7 +1964,7 @@ function addEnum(proto, file, parent, reg) {
   const desc = {
     kind: "enum",
     proto,
-    deprecated: (_b = (_a = proto.options) === null || _a === undefined ? undefined : _a.deprecated) !== null && _b !== undefined ? _b : false,
+    deprecated: (_b = (_a = proto.options) === null || _a === void 0 ? void 0 : _a.deprecated) !== null && _b !== void 0 ? _b : false,
     file,
     parent,
     open: true,
@@ -1803,27 +1981,30 @@ function addEnum(proto, file, parent, reg) {
   reg.add(desc);
   for (const p of proto.value) {
     const name = p.name;
-    desc.values.push(desc.value[p.number] = {
-      kind: "enum_value",
-      proto: p,
-      deprecated: (_d = (_c = p.options) === null || _c === undefined ? undefined : _c.deprecated) !== null && _d !== undefined ? _d : false,
-      parent: desc,
-      name,
-      localName: safeObjectProperty(sharedPrefix == undefined ? name : name.substring(sharedPrefix.length)),
-      number: p.number,
-      toString() {
-        return `enum value ${desc.typeName}.${name}`;
+    desc.values.push(
+      // biome-ignore lint/suspicious/noAssignInExpressions: no
+      desc.value[p.number] = {
+        kind: "enum_value",
+        proto: p,
+        deprecated: (_d = (_c = p.options) === null || _c === void 0 ? void 0 : _c.deprecated) !== null && _d !== void 0 ? _d : false,
+        parent: desc,
+        name,
+        localName: safeObjectProperty(sharedPrefix == void 0 ? name : name.substring(sharedPrefix.length)),
+        number: p.number,
+        toString() {
+          return `enum value ${desc.typeName}.${name}`;
+        }
       }
-    });
+    );
   }
-  ((_e = parent === null || parent === undefined ? undefined : parent.nestedEnums) !== null && _e !== undefined ? _e : file.enums).push(desc);
+  ((_e = parent === null || parent === void 0 ? void 0 : parent.nestedEnums) !== null && _e !== void 0 ? _e : file.enums).push(desc);
 }
 function addMessage(proto, file, parent, reg, mapEntries) {
   var _a, _b, _c, _d;
   const desc = {
     kind: "message",
     proto,
-    deprecated: (_b = (_a = proto.options) === null || _a === undefined ? undefined : _a.deprecated) !== null && _b !== undefined ? _b : false,
+    deprecated: (_b = (_a = proto.options) === null || _a === void 0 ? void 0 : _a.deprecated) !== null && _b !== void 0 ? _b : false,
     file,
     parent,
     name: proto.name,
@@ -1839,10 +2020,10 @@ function addMessage(proto, file, parent, reg, mapEntries) {
       return `message ${this.typeName}`;
     }
   };
-  if (((_c = proto.options) === null || _c === undefined ? undefined : _c.mapEntry) === true) {
+  if (((_c = proto.options) === null || _c === void 0 ? void 0 : _c.mapEntry) === true) {
     mapEntries.add(desc);
   } else {
-    ((_d = parent === null || parent === undefined ? undefined : parent.nestedMessages) !== null && _d !== undefined ? _d : file.messages).push(desc);
+    ((_d = parent === null || parent === void 0 ? void 0 : parent.nestedMessages) !== null && _d !== void 0 ? _d : file.messages).push(desc);
     reg.add(desc);
   }
   for (const enumProto of proto.enumType) {
@@ -1857,10 +2038,10 @@ function addService(proto, file, reg) {
   const desc = {
     kind: "service",
     proto,
-    deprecated: (_b = (_a = proto.options) === null || _a === undefined ? undefined : _a.deprecated) !== null && _b !== undefined ? _b : false,
+    deprecated: (_b = (_a = proto.options) === null || _a === void 0 ? void 0 : _a.deprecated) !== null && _b !== void 0 ? _b : false,
     file,
     name: proto.name,
-    typeName: makeTypeName(proto, undefined, file),
+    typeName: makeTypeName(proto, void 0, file),
     methods: [],
     method: {},
     toString() {
@@ -1895,14 +2076,14 @@ function newMethod(proto, parent, reg) {
   return {
     kind: "rpc",
     proto,
-    deprecated: (_b = (_a = proto.options) === null || _a === undefined ? undefined : _a.deprecated) !== null && _b !== undefined ? _b : false,
+    deprecated: (_b = (_a = proto.options) === null || _a === void 0 ? void 0 : _a.deprecated) !== null && _b !== void 0 ? _b : false,
     parent,
     name,
     localName: safeObjectProperty(name.length ? safeObjectProperty(name[0].toLowerCase() + name.substring(1)) : name),
     methodKind,
     input,
     output,
-    idempotency: (_d = (_c = proto.options) === null || _c === undefined ? undefined : _c.idempotencyLevel) !== null && _d !== undefined ? _d : IDEMPOTENCY_UNKNOWN,
+    idempotency: (_d = (_c = proto.options) === null || _c === void 0 ? void 0 : _c.idempotencyLevel) !== null && _d !== void 0 ? _d : IDEMPOTENCY_UNKNOWN,
     toString() {
       return `rpc ${parent.typeName}.${name}`;
     }
@@ -1924,35 +2105,35 @@ function newOneof(proto, parent) {
 }
 function newField(proto, parentOrFile, reg, oneof, mapEntries) {
   var _a, _b, _c;
-  const isExtension = mapEntries === undefined;
+  const isExtension = mapEntries === void 0;
   const field = {
     kind: "field",
     proto,
-    deprecated: (_b = (_a = proto.options) === null || _a === undefined ? undefined : _a.deprecated) !== null && _b !== undefined ? _b : false,
+    deprecated: (_b = (_a = proto.options) === null || _a === void 0 ? void 0 : _a.deprecated) !== null && _b !== void 0 ? _b : false,
     name: proto.name,
     number: proto.number,
-    scalar: undefined,
-    message: undefined,
-    enum: undefined,
+    scalar: void 0,
+    message: void 0,
+    enum: void 0,
     presence: getFieldPresence(proto, oneof, isExtension, parentOrFile),
     utf8Validation: isUtf8Validated(proto, parentOrFile),
-    listKind: undefined,
-    mapKind: undefined,
-    mapKey: undefined,
-    delimitedEncoding: undefined,
-    packed: undefined,
+    listKind: void 0,
+    mapKind: void 0,
+    mapKey: void 0,
+    delimitedEncoding: void 0,
+    packed: void 0,
     longAsString: false,
-    getDefaultValue: undefined
+    getDefaultValue: void 0
   };
   let toStr;
   if (isExtension) {
     const file = parentOrFile.kind == "file" ? parentOrFile : parentOrFile.file;
-    const parent = parentOrFile.kind == "file" ? undefined : parentOrFile;
+    const parent = parentOrFile.kind == "file" ? void 0 : parentOrFile;
     const typeName = makeTypeName(proto, parent, file);
     field.kind = "extension";
     field.file = file;
     field.parent = parent;
-    field.oneof = undefined;
+    field.oneof = void 0;
     field.typeName = typeName;
     field.jsonName = `[${typeName}]`;
     toStr = () => `extension ${typeName}`;
@@ -1976,9 +2157,9 @@ function newField(proto, parentOrFile, reg, oneof, mapEntries) {
   });
   const label = proto.label;
   const type = proto.type;
-  const jstype = (_c = proto.options) === null || _c === undefined ? undefined : _c.jstype;
+  const jstype = (_c = proto.options) === null || _c === void 0 ? void 0 : _c.jstype;
   if (label === LABEL_REPEATED) {
-    const mapEntry = type == TYPE_MESSAGE ? mapEntries === null || mapEntries === undefined ? undefined : mapEntries.get(trimLeadingDot(proto.typeName)) : undefined;
+    const mapEntry = type == TYPE_MESSAGE ? mapEntries === null || mapEntries === void 0 ? void 0 : mapEntries.get(trimLeadingDot(proto.typeName)) : void 0;
     if (mapEntry) {
       field.fieldKind = "map";
       const { key, value } = findMapEntryFields(mapEntry);
@@ -2020,17 +2201,15 @@ function newField(proto, parentOrFile, reg, oneof, mapEntries) {
       field.message = reg.getMessage(trimLeadingDot(proto.typeName));
       assert(field.message, `invalid FieldDescriptorProto: type_name ${proto.typeName} not found`);
       field.delimitedEncoding = isDelimitedEncoding(proto, parentOrFile);
-      field.getDefaultValue = () => {
-        return;
-      };
+      field.getDefaultValue = () => void 0;
       break;
     case TYPE_ENUM: {
       const enumeration = reg.getEnum(trimLeadingDot(proto.typeName));
-      assert(enumeration !== undefined, `invalid FieldDescriptorProto: type_name ${proto.typeName} not found`);
+      assert(enumeration !== void 0, `invalid FieldDescriptorProto: type_name ${proto.typeName} not found`);
       field.fieldKind = "enum";
       field.enum = reg.getEnum(trimLeadingDot(proto.typeName));
       field.getDefaultValue = () => {
-        return unsafeIsSetExplicit(proto, "defaultValue") ? parseTextFormatEnumValue(enumeration, proto.defaultValue) : undefined;
+        return unsafeIsSetExplicit(proto, "defaultValue") ? parseTextFormatEnumValue(enumeration, proto.defaultValue) : void 0;
       };
       break;
     }
@@ -2039,7 +2218,7 @@ function newField(proto, parentOrFile, reg, oneof, mapEntries) {
       field.scalar = type;
       field.longAsString = jstype == JS_STRING;
       field.getDefaultValue = () => {
-        return unsafeIsSetExplicit(proto, "defaultValue") ? parseTextFormatScalarValue(type, proto.defaultValue) : undefined;
+        return unsafeIsSetExplicit(proto, "defaultValue") ? parseTextFormatScalarValue(type, proto.defaultValue) : void 0;
       };
       break;
     }
@@ -2078,14 +2257,14 @@ function findEnumSharedPrefix(enumName, values) {
   const prefix = camelToSnakeCase(enumName) + "_";
   for (const value of values) {
     if (!value.name.toLowerCase().startsWith(prefix)) {
-      return;
+      return void 0;
     }
     const shortName = value.name.substring(prefix.length);
     if (shortName.length == 0) {
-      return;
+      return void 0;
     }
     if (/^\d/.test(shortName)) {
-      return;
+      return void 0;
     }
   }
   return prefix;
@@ -2109,10 +2288,10 @@ function trimLeadingDot(typeName) {
 }
 function findOneof(proto, allOneofs) {
   if (!unsafeIsSetExplicit(proto, "oneofIndex")) {
-    return;
+    return void 0;
   }
   if (proto.proto3Optional) {
-    return;
+    return void 0;
   }
   const oneof = allOneofs[proto.oneofIndex];
   assert(oneof, `invalid FieldDescriptorProto: oneof #${proto.oneofIndex} for field #${proto.number} not found`);
@@ -2167,7 +2346,7 @@ function isEnumOpen(desc) {
   var _a;
   return OPEN == resolveFeature("enumType", {
     proto: desc.proto,
-    parent: (_a = desc.parent) !== null && _a !== undefined ? _a : desc.file
+    parent: (_a = desc.parent) !== null && _a !== void 0 ? _a : desc.file
   });
 }
 function isDelimitedEncoding(proto, parent) {
@@ -2187,7 +2366,7 @@ function isUtf8Validated(proto, parent) {
 }
 function resolveFeature(name, ref) {
   var _a, _b;
-  const featureSet = (_a = ref.proto.options) === null || _a === undefined ? undefined : _a.features;
+  const featureSet = (_a = ref.proto.options) === null || _a === void 0 ? void 0 : _a.features;
   if (featureSet) {
     const val = featureSet[name];
     if (val != 0) {
@@ -2196,7 +2375,7 @@ function resolveFeature(name, ref) {
   }
   if ("kind" in ref) {
     if (ref.kind == "message") {
-      return resolveFeature(name, (_b = ref.parent) !== null && _b !== undefined ? _b : ref.file);
+      return resolveFeature(name, (_b = ref.parent) !== null && _b !== void 0 ? _b : ref.file);
     }
     const editionDefaults = featureDefaults[ref.edition];
     if (!editionDefaults) {
@@ -2216,13 +2395,11 @@ function assert(condition, msg) {
 function boot(boot2) {
   const root = bootFileDescriptorProto(boot2);
   root.messageType.forEach(restoreJsonNames);
-  const reg = createFileRegistry(root, () => {
-    return;
-  });
+  const reg = createFileRegistry(root, () => void 0);
   return reg.getFile(root.name);
 }
 function bootFileDescriptorProto(init) {
-  const proto = Object.create({
+  const proto = /* @__PURE__ */ Object.create({
     syntax: "",
     edition: 0
   });
@@ -2230,24 +2407,24 @@ function bootFileDescriptorProto(init) {
 }
 function bootDescriptorProto(init) {
   var _a, _b, _c, _d, _e, _f, _g, _h;
-  const proto = Object.create({
+  const proto = /* @__PURE__ */ Object.create({
     visibility: 0
   });
   return Object.assign(proto, {
     $typeName: "google.protobuf.DescriptorProto",
     name: init.name,
-    field: (_b = (_a = init.field) === null || _a === undefined ? undefined : _a.map(bootFieldDescriptorProto)) !== null && _b !== undefined ? _b : [],
+    field: (_b = (_a = init.field) === null || _a === void 0 ? void 0 : _a.map(bootFieldDescriptorProto)) !== null && _b !== void 0 ? _b : [],
     extension: [],
-    nestedType: (_d = (_c = init.nestedType) === null || _c === undefined ? undefined : _c.map(bootDescriptorProto)) !== null && _d !== undefined ? _d : [],
-    enumType: (_f = (_e = init.enumType) === null || _e === undefined ? undefined : _e.map(bootEnumDescriptorProto)) !== null && _f !== undefined ? _f : [],
-    extensionRange: (_h = (_g = init.extensionRange) === null || _g === undefined ? undefined : _g.map((e) => Object.assign({ $typeName: "google.protobuf.DescriptorProto.ExtensionRange" }, e))) !== null && _h !== undefined ? _h : [],
+    nestedType: (_d = (_c = init.nestedType) === null || _c === void 0 ? void 0 : _c.map(bootDescriptorProto)) !== null && _d !== void 0 ? _d : [],
+    enumType: (_f = (_e = init.enumType) === null || _e === void 0 ? void 0 : _e.map(bootEnumDescriptorProto)) !== null && _f !== void 0 ? _f : [],
+    extensionRange: (_h = (_g = init.extensionRange) === null || _g === void 0 ? void 0 : _g.map((e) => Object.assign({ $typeName: "google.protobuf.DescriptorProto.ExtensionRange" }, e))) !== null && _h !== void 0 ? _h : [],
     oneofDecl: [],
     reservedRange: [],
     reservedName: []
   });
 }
 function bootFieldDescriptorProto(init) {
-  const proto = Object.create({
+  const proto = /* @__PURE__ */ Object.create({
     label: 1,
     typeName: "",
     extendee: "",
@@ -2256,11 +2433,11 @@ function bootFieldDescriptorProto(init) {
     jsonName: "",
     proto3Optional: false
   });
-  return Object.assign(proto, Object.assign(Object.assign({ $typeName: "google.protobuf.FieldDescriptorProto" }, init), { options: init.options ? bootFieldOptions(init.options) : undefined }));
+  return Object.assign(proto, Object.assign(Object.assign({ $typeName: "google.protobuf.FieldDescriptorProto" }, init), { options: init.options ? bootFieldOptions(init.options) : void 0 }));
 }
 function bootFieldOptions(init) {
   var _a, _b, _c;
-  const proto = Object.create({
+  const proto = /* @__PURE__ */ Object.create({
     ctype: 0,
     packed: false,
     jstype: 0,
@@ -2271,10 +2448,10 @@ function bootFieldOptions(init) {
     debugRedact: false,
     retention: 0
   });
-  return Object.assign(proto, Object.assign(Object.assign({ $typeName: "google.protobuf.FieldOptions" }, init), { targets: (_a = init.targets) !== null && _a !== undefined ? _a : [], editionDefaults: (_c = (_b = init.editionDefaults) === null || _b === undefined ? undefined : _b.map((e) => Object.assign({ $typeName: "google.protobuf.FieldOptions.EditionDefault" }, e))) !== null && _c !== undefined ? _c : [], uninterpretedOption: [] }));
+  return Object.assign(proto, Object.assign(Object.assign({ $typeName: "google.protobuf.FieldOptions" }, init), { targets: (_a = init.targets) !== null && _a !== void 0 ? _a : [], editionDefaults: (_c = (_b = init.editionDefaults) === null || _b === void 0 ? void 0 : _b.map((e) => Object.assign({ $typeName: "google.protobuf.FieldOptions.EditionDefault" }, e))) !== null && _c !== void 0 ? _c : [], uninterpretedOption: [] }));
 }
 function bootEnumDescriptorProto(init) {
-  const proto = Object.create({
+  const proto = /* @__PURE__ */ Object.create({
     visibility: 0
   });
   return Object.assign(proto, {
@@ -2287,12 +2464,12 @@ function bootEnumDescriptorProto(init) {
 }
 
 // node_modules/.bun/@bufbuild+protobuf@2.15.0/node_modules/@bufbuild/protobuf/dist/esm/codegenv2/message.js
-function messageDesc(file, path, ...paths) {
-  return paths.reduce((acc, cur) => acc.nestedMessages[cur], file.messages[path]);
+function messageDesc(file, path2, ...paths) {
+  return paths.reduce((acc, cur) => acc.nestedMessages[cur], file.messages[path2]);
 }
 
 // node_modules/.bun/@bufbuild+protobuf@2.15.0/node_modules/@bufbuild/protobuf/dist/esm/wkt/gen/google/protobuf/descriptor_pb.js
-var file_google_protobuf_descriptor = /* @__PURE__ */ boot({ name: "google/protobuf/descriptor.proto", package: "google.protobuf", messageType: [{ name: "FileDescriptorSet", field: [{ name: "file", number: 1, type: 11, label: 3, typeName: ".google.protobuf.FileDescriptorProto" }], extensionRange: [{ start: 536000000, end: 536000001 }] }, { name: "FileDescriptorProto", field: [{ name: "name", number: 1, type: 9, label: 1 }, { name: "package", number: 2, type: 9, label: 1 }, { name: "dependency", number: 3, type: 9, label: 3 }, { name: "public_dependency", number: 10, type: 5, label: 3 }, { name: "weak_dependency", number: 11, type: 5, label: 3 }, { name: "option_dependency", number: 15, type: 9, label: 3 }, { name: "message_type", number: 4, type: 11, label: 3, typeName: ".google.protobuf.DescriptorProto" }, { name: "enum_type", number: 5, type: 11, label: 3, typeName: ".google.protobuf.EnumDescriptorProto" }, { name: "service", number: 6, type: 11, label: 3, typeName: ".google.protobuf.ServiceDescriptorProto" }, { name: "extension", number: 7, type: 11, label: 3, typeName: ".google.protobuf.FieldDescriptorProto" }, { name: "options", number: 8, type: 11, label: 1, typeName: ".google.protobuf.FileOptions" }, { name: "source_code_info", number: 9, type: 11, label: 1, typeName: ".google.protobuf.SourceCodeInfo" }, { name: "syntax", number: 12, type: 9, label: 1 }, { name: "edition", number: 14, type: 14, label: 1, typeName: ".google.protobuf.Edition" }] }, { name: "DescriptorProto", field: [{ name: "name", number: 1, type: 9, label: 1 }, { name: "field", number: 2, type: 11, label: 3, typeName: ".google.protobuf.FieldDescriptorProto" }, { name: "extension", number: 6, type: 11, label: 3, typeName: ".google.protobuf.FieldDescriptorProto" }, { name: "nested_type", number: 3, type: 11, label: 3, typeName: ".google.protobuf.DescriptorProto" }, { name: "enum_type", number: 4, type: 11, label: 3, typeName: ".google.protobuf.EnumDescriptorProto" }, { name: "extension_range", number: 5, type: 11, label: 3, typeName: ".google.protobuf.DescriptorProto.ExtensionRange" }, { name: "oneof_decl", number: 8, type: 11, label: 3, typeName: ".google.protobuf.OneofDescriptorProto" }, { name: "options", number: 7, type: 11, label: 1, typeName: ".google.protobuf.MessageOptions" }, { name: "reserved_range", number: 9, type: 11, label: 3, typeName: ".google.protobuf.DescriptorProto.ReservedRange" }, { name: "reserved_name", number: 10, type: 9, label: 3 }, { name: "visibility", number: 11, type: 14, label: 1, typeName: ".google.protobuf.SymbolVisibility" }], nestedType: [{ name: "ExtensionRange", field: [{ name: "start", number: 1, type: 5, label: 1 }, { name: "end", number: 2, type: 5, label: 1 }, { name: "options", number: 3, type: 11, label: 1, typeName: ".google.protobuf.ExtensionRangeOptions" }] }, { name: "ReservedRange", field: [{ name: "start", number: 1, type: 5, label: 1 }, { name: "end", number: 2, type: 5, label: 1 }] }] }, { name: "ExtensionRangeOptions", field: [{ name: "uninterpreted_option", number: 999, type: 11, label: 3, typeName: ".google.protobuf.UninterpretedOption" }, { name: "declaration", number: 2, type: 11, label: 3, typeName: ".google.protobuf.ExtensionRangeOptions.Declaration", options: { retention: 2 } }, { name: "features", number: 50, type: 11, label: 1, typeName: ".google.protobuf.FeatureSet" }, { name: "verification", number: 3, type: 14, label: 1, typeName: ".google.protobuf.ExtensionRangeOptions.VerificationState", defaultValue: "UNVERIFIED", options: { retention: 2 } }], nestedType: [{ name: "Declaration", field: [{ name: "number", number: 1, type: 5, label: 1 }, { name: "full_name", number: 2, type: 9, label: 1 }, { name: "type", number: 3, type: 9, label: 1 }, { name: "reserved", number: 5, type: 8, label: 1 }, { name: "repeated", number: 6, type: 8, label: 1 }] }], enumType: [{ name: "VerificationState", value: [{ name: "DECLARATION", number: 0 }, { name: "UNVERIFIED", number: 1 }] }], extensionRange: [{ start: 1000, end: 536870912 }] }, { name: "FieldDescriptorProto", field: [{ name: "name", number: 1, type: 9, label: 1 }, { name: "number", number: 3, type: 5, label: 1 }, { name: "label", number: 4, type: 14, label: 1, typeName: ".google.protobuf.FieldDescriptorProto.Label" }, { name: "type", number: 5, type: 14, label: 1, typeName: ".google.protobuf.FieldDescriptorProto.Type" }, { name: "type_name", number: 6, type: 9, label: 1 }, { name: "extendee", number: 2, type: 9, label: 1 }, { name: "default_value", number: 7, type: 9, label: 1 }, { name: "oneof_index", number: 9, type: 5, label: 1 }, { name: "json_name", number: 10, type: 9, label: 1 }, { name: "options", number: 8, type: 11, label: 1, typeName: ".google.protobuf.FieldOptions" }, { name: "proto3_optional", number: 17, type: 8, label: 1 }], enumType: [{ name: "Type", value: [{ name: "TYPE_DOUBLE", number: 1 }, { name: "TYPE_FLOAT", number: 2 }, { name: "TYPE_INT64", number: 3 }, { name: "TYPE_UINT64", number: 4 }, { name: "TYPE_INT32", number: 5 }, { name: "TYPE_FIXED64", number: 6 }, { name: "TYPE_FIXED32", number: 7 }, { name: "TYPE_BOOL", number: 8 }, { name: "TYPE_STRING", number: 9 }, { name: "TYPE_GROUP", number: 10 }, { name: "TYPE_MESSAGE", number: 11 }, { name: "TYPE_BYTES", number: 12 }, { name: "TYPE_UINT32", number: 13 }, { name: "TYPE_ENUM", number: 14 }, { name: "TYPE_SFIXED32", number: 15 }, { name: "TYPE_SFIXED64", number: 16 }, { name: "TYPE_SINT32", number: 17 }, { name: "TYPE_SINT64", number: 18 }] }, { name: "Label", value: [{ name: "LABEL_OPTIONAL", number: 1 }, { name: "LABEL_REPEATED", number: 3 }, { name: "LABEL_REQUIRED", number: 2 }] }] }, { name: "OneofDescriptorProto", field: [{ name: "name", number: 1, type: 9, label: 1 }, { name: "options", number: 2, type: 11, label: 1, typeName: ".google.protobuf.OneofOptions" }] }, { name: "EnumDescriptorProto", field: [{ name: "name", number: 1, type: 9, label: 1 }, { name: "value", number: 2, type: 11, label: 3, typeName: ".google.protobuf.EnumValueDescriptorProto" }, { name: "options", number: 3, type: 11, label: 1, typeName: ".google.protobuf.EnumOptions" }, { name: "reserved_range", number: 4, type: 11, label: 3, typeName: ".google.protobuf.EnumDescriptorProto.EnumReservedRange" }, { name: "reserved_name", number: 5, type: 9, label: 3 }, { name: "visibility", number: 6, type: 14, label: 1, typeName: ".google.protobuf.SymbolVisibility" }], nestedType: [{ name: "EnumReservedRange", field: [{ name: "start", number: 1, type: 5, label: 1 }, { name: "end", number: 2, type: 5, label: 1 }] }] }, { name: "EnumValueDescriptorProto", field: [{ name: "name", number: 1, type: 9, label: 1 }, { name: "number", number: 2, type: 5, label: 1 }, { name: "options", number: 3, type: 11, label: 1, typeName: ".google.protobuf.EnumValueOptions" }] }, { name: "ServiceDescriptorProto", field: [{ name: "name", number: 1, type: 9, label: 1 }, { name: "method", number: 2, type: 11, label: 3, typeName: ".google.protobuf.MethodDescriptorProto" }, { name: "options", number: 3, type: 11, label: 1, typeName: ".google.protobuf.ServiceOptions" }] }, { name: "MethodDescriptorProto", field: [{ name: "name", number: 1, type: 9, label: 1 }, { name: "input_type", number: 2, type: 9, label: 1 }, { name: "output_type", number: 3, type: 9, label: 1 }, { name: "options", number: 4, type: 11, label: 1, typeName: ".google.protobuf.MethodOptions" }, { name: "client_streaming", number: 5, type: 8, label: 1, defaultValue: "false" }, { name: "server_streaming", number: 6, type: 8, label: 1, defaultValue: "false" }] }, { name: "FileOptions", field: [{ name: "java_package", number: 1, type: 9, label: 1 }, { name: "java_outer_classname", number: 8, type: 9, label: 1 }, { name: "java_multiple_files", number: 10, type: 8, label: 1, defaultValue: "false", options: {} }, { name: "java_generate_equals_and_hash", number: 20, type: 8, label: 1, options: { deprecated: true } }, { name: "java_string_check_utf8", number: 27, type: 8, label: 1, defaultValue: "false" }, { name: "optimize_for", number: 9, type: 14, label: 1, typeName: ".google.protobuf.FileOptions.OptimizeMode", defaultValue: "SPEED" }, { name: "go_package", number: 11, type: 9, label: 1 }, { name: "cc_generic_services", number: 16, type: 8, label: 1, defaultValue: "false" }, { name: "java_generic_services", number: 17, type: 8, label: 1, defaultValue: "false" }, { name: "py_generic_services", number: 18, type: 8, label: 1, defaultValue: "false" }, { name: "deprecated", number: 23, type: 8, label: 1, defaultValue: "false" }, { name: "cc_enable_arenas", number: 31, type: 8, label: 1, defaultValue: "true" }, { name: "objc_class_prefix", number: 36, type: 9, label: 1 }, { name: "csharp_namespace", number: 37, type: 9, label: 1 }, { name: "swift_prefix", number: 39, type: 9, label: 1 }, { name: "php_class_prefix", number: 40, type: 9, label: 1 }, { name: "php_namespace", number: 41, type: 9, label: 1 }, { name: "php_metadata_namespace", number: 44, type: 9, label: 1 }, { name: "ruby_package", number: 45, type: 9, label: 1 }, { name: "features", number: 50, type: 11, label: 1, typeName: ".google.protobuf.FeatureSet" }, { name: "uninterpreted_option", number: 999, type: 11, label: 3, typeName: ".google.protobuf.UninterpretedOption" }], enumType: [{ name: "OptimizeMode", value: [{ name: "SPEED", number: 1 }, { name: "CODE_SIZE", number: 2 }, { name: "LITE_RUNTIME", number: 3 }] }], extensionRange: [{ start: 1000, end: 536870912 }] }, { name: "MessageOptions", field: [{ name: "message_set_wire_format", number: 1, type: 8, label: 1, defaultValue: "false" }, { name: "no_standard_descriptor_accessor", number: 2, type: 8, label: 1, defaultValue: "false" }, { name: "deprecated", number: 3, type: 8, label: 1, defaultValue: "false" }, { name: "map_entry", number: 7, type: 8, label: 1 }, { name: "deprecated_legacy_json_field_conflicts", number: 11, type: 8, label: 1, options: { deprecated: true } }, { name: "features", number: 12, type: 11, label: 1, typeName: ".google.protobuf.FeatureSet" }, { name: "uninterpreted_option", number: 999, type: 11, label: 3, typeName: ".google.protobuf.UninterpretedOption" }], extensionRange: [{ start: 1000, end: 536870912 }] }, { name: "FieldOptions", field: [{ name: "ctype", number: 1, type: 14, label: 1, typeName: ".google.protobuf.FieldOptions.CType", defaultValue: "STRING" }, { name: "packed", number: 2, type: 8, label: 1 }, { name: "jstype", number: 6, type: 14, label: 1, typeName: ".google.protobuf.FieldOptions.JSType", defaultValue: "JS_NORMAL" }, { name: "lazy", number: 5, type: 8, label: 1, defaultValue: "false" }, { name: "unverified_lazy", number: 15, type: 8, label: 1, defaultValue: "false" }, { name: "deprecated", number: 3, type: 8, label: 1, defaultValue: "false" }, { name: "weak", number: 10, type: 8, label: 1, defaultValue: "false", options: { deprecated: true } }, { name: "debug_redact", number: 16, type: 8, label: 1, defaultValue: "false" }, { name: "retention", number: 17, type: 14, label: 1, typeName: ".google.protobuf.FieldOptions.OptionRetention" }, { name: "targets", number: 19, type: 14, label: 3, typeName: ".google.protobuf.FieldOptions.OptionTargetType" }, { name: "edition_defaults", number: 20, type: 11, label: 3, typeName: ".google.protobuf.FieldOptions.EditionDefault" }, { name: "features", number: 21, type: 11, label: 1, typeName: ".google.protobuf.FeatureSet" }, { name: "feature_support", number: 22, type: 11, label: 1, typeName: ".google.protobuf.FieldOptions.FeatureSupport" }, { name: "uninterpreted_option", number: 999, type: 11, label: 3, typeName: ".google.protobuf.UninterpretedOption" }], nestedType: [{ name: "EditionDefault", field: [{ name: "edition", number: 3, type: 14, label: 1, typeName: ".google.protobuf.Edition" }, { name: "value", number: 2, type: 9, label: 1 }] }, { name: "FeatureSupport", field: [{ name: "edition_introduced", number: 1, type: 14, label: 1, typeName: ".google.protobuf.Edition" }, { name: "edition_deprecated", number: 2, type: 14, label: 1, typeName: ".google.protobuf.Edition" }, { name: "deprecation_warning", number: 3, type: 9, label: 1 }, { name: "edition_removed", number: 4, type: 14, label: 1, typeName: ".google.protobuf.Edition" }, { name: "removal_error", number: 5, type: 9, label: 1 }] }], enumType: [{ name: "CType", value: [{ name: "STRING", number: 0 }, { name: "CORD", number: 1 }, { name: "STRING_PIECE", number: 2 }] }, { name: "JSType", value: [{ name: "JS_NORMAL", number: 0 }, { name: "JS_STRING", number: 1 }, { name: "JS_NUMBER", number: 2 }] }, { name: "OptionRetention", value: [{ name: "RETENTION_UNKNOWN", number: 0 }, { name: "RETENTION_RUNTIME", number: 1 }, { name: "RETENTION_SOURCE", number: 2 }] }, { name: "OptionTargetType", value: [{ name: "TARGET_TYPE_UNKNOWN", number: 0 }, { name: "TARGET_TYPE_FILE", number: 1 }, { name: "TARGET_TYPE_EXTENSION_RANGE", number: 2 }, { name: "TARGET_TYPE_MESSAGE", number: 3 }, { name: "TARGET_TYPE_FIELD", number: 4 }, { name: "TARGET_TYPE_ONEOF", number: 5 }, { name: "TARGET_TYPE_ENUM", number: 6 }, { name: "TARGET_TYPE_ENUM_ENTRY", number: 7 }, { name: "TARGET_TYPE_SERVICE", number: 8 }, { name: "TARGET_TYPE_METHOD", number: 9 }] }], extensionRange: [{ start: 1000, end: 536870912 }] }, { name: "OneofOptions", field: [{ name: "features", number: 1, type: 11, label: 1, typeName: ".google.protobuf.FeatureSet" }, { name: "uninterpreted_option", number: 999, type: 11, label: 3, typeName: ".google.protobuf.UninterpretedOption" }], extensionRange: [{ start: 1000, end: 536870912 }] }, { name: "EnumOptions", field: [{ name: "allow_alias", number: 2, type: 8, label: 1 }, { name: "deprecated", number: 3, type: 8, label: 1, defaultValue: "false" }, { name: "deprecated_legacy_json_field_conflicts", number: 6, type: 8, label: 1, options: { deprecated: true } }, { name: "features", number: 7, type: 11, label: 1, typeName: ".google.protobuf.FeatureSet" }, { name: "uninterpreted_option", number: 999, type: 11, label: 3, typeName: ".google.protobuf.UninterpretedOption" }], extensionRange: [{ start: 1000, end: 536870912 }] }, { name: "EnumValueOptions", field: [{ name: "deprecated", number: 1, type: 8, label: 1, defaultValue: "false" }, { name: "features", number: 2, type: 11, label: 1, typeName: ".google.protobuf.FeatureSet" }, { name: "debug_redact", number: 3, type: 8, label: 1, defaultValue: "false" }, { name: "feature_support", number: 4, type: 11, label: 1, typeName: ".google.protobuf.FieldOptions.FeatureSupport" }, { name: "uninterpreted_option", number: 999, type: 11, label: 3, typeName: ".google.protobuf.UninterpretedOption" }], extensionRange: [{ start: 1000, end: 536870912 }] }, { name: "ServiceOptions", field: [{ name: "features", number: 34, type: 11, label: 1, typeName: ".google.protobuf.FeatureSet" }, { name: "deprecated", number: 33, type: 8, label: 1, defaultValue: "false" }, { name: "uninterpreted_option", number: 999, type: 11, label: 3, typeName: ".google.protobuf.UninterpretedOption" }], extensionRange: [{ start: 1000, end: 536870912 }] }, { name: "MethodOptions", field: [{ name: "deprecated", number: 33, type: 8, label: 1, defaultValue: "false" }, { name: "idempotency_level", number: 34, type: 14, label: 1, typeName: ".google.protobuf.MethodOptions.IdempotencyLevel", defaultValue: "IDEMPOTENCY_UNKNOWN" }, { name: "features", number: 35, type: 11, label: 1, typeName: ".google.protobuf.FeatureSet" }, { name: "uninterpreted_option", number: 999, type: 11, label: 3, typeName: ".google.protobuf.UninterpretedOption" }], enumType: [{ name: "IdempotencyLevel", value: [{ name: "IDEMPOTENCY_UNKNOWN", number: 0 }, { name: "NO_SIDE_EFFECTS", number: 1 }, { name: "IDEMPOTENT", number: 2 }] }], extensionRange: [{ start: 1000, end: 536870912 }] }, { name: "UninterpretedOption", field: [{ name: "name", number: 2, type: 11, label: 3, typeName: ".google.protobuf.UninterpretedOption.NamePart" }, { name: "identifier_value", number: 3, type: 9, label: 1 }, { name: "positive_int_value", number: 4, type: 4, label: 1 }, { name: "negative_int_value", number: 5, type: 3, label: 1 }, { name: "double_value", number: 6, type: 1, label: 1 }, { name: "string_value", number: 7, type: 12, label: 1 }, { name: "aggregate_value", number: 8, type: 9, label: 1 }], nestedType: [{ name: "NamePart", field: [{ name: "name_part", number: 1, type: 9, label: 2 }, { name: "is_extension", number: 2, type: 8, label: 2 }] }] }, { name: "FeatureSet", field: [{ name: "field_presence", number: 1, type: 14, label: 1, typeName: ".google.protobuf.FeatureSet.FieldPresence", options: { retention: 1, targets: [4, 1], editionDefaults: [{ value: "EXPLICIT", edition: 900 }, { value: "IMPLICIT", edition: 999 }, { value: "EXPLICIT", edition: 1000 }] } }, { name: "enum_type", number: 2, type: 14, label: 1, typeName: ".google.protobuf.FeatureSet.EnumType", options: { retention: 1, targets: [6, 1], editionDefaults: [{ value: "CLOSED", edition: 900 }, { value: "OPEN", edition: 999 }] } }, { name: "repeated_field_encoding", number: 3, type: 14, label: 1, typeName: ".google.protobuf.FeatureSet.RepeatedFieldEncoding", options: { retention: 1, targets: [4, 1], editionDefaults: [{ value: "EXPANDED", edition: 900 }, { value: "PACKED", edition: 999 }] } }, { name: "utf8_validation", number: 4, type: 14, label: 1, typeName: ".google.protobuf.FeatureSet.Utf8Validation", options: { retention: 1, targets: [4, 1], editionDefaults: [{ value: "NONE", edition: 900 }, { value: "VERIFY", edition: 999 }] } }, { name: "message_encoding", number: 5, type: 14, label: 1, typeName: ".google.protobuf.FeatureSet.MessageEncoding", options: { retention: 1, targets: [4, 1], editionDefaults: [{ value: "LENGTH_PREFIXED", edition: 900 }] } }, { name: "json_format", number: 6, type: 14, label: 1, typeName: ".google.protobuf.FeatureSet.JsonFormat", options: { retention: 1, targets: [3, 6, 1], editionDefaults: [{ value: "LEGACY_BEST_EFFORT", edition: 900 }, { value: "ALLOW", edition: 999 }] } }, { name: "enforce_naming_style", number: 7, type: 14, label: 1, typeName: ".google.protobuf.FeatureSet.EnforceNamingStyle", options: { retention: 2, targets: [1, 2, 3, 4, 5, 6, 7, 8, 9], editionDefaults: [{ value: "STYLE_LEGACY", edition: 900 }, { value: "STYLE2024", edition: 1001 }] } }, { name: "default_symbol_visibility", number: 8, type: 14, label: 1, typeName: ".google.protobuf.FeatureSet.VisibilityFeature.DefaultSymbolVisibility", options: { retention: 2, targets: [1], editionDefaults: [{ value: "EXPORT_ALL", edition: 900 }, { value: "EXPORT_TOP_LEVEL", edition: 1001 }] } }], nestedType: [{ name: "VisibilityFeature", enumType: [{ name: "DefaultSymbolVisibility", value: [{ name: "DEFAULT_SYMBOL_VISIBILITY_UNKNOWN", number: 0 }, { name: "EXPORT_ALL", number: 1 }, { name: "EXPORT_TOP_LEVEL", number: 2 }, { name: "LOCAL_ALL", number: 3 }, { name: "STRICT", number: 4 }] }] }], enumType: [{ name: "FieldPresence", value: [{ name: "FIELD_PRESENCE_UNKNOWN", number: 0 }, { name: "EXPLICIT", number: 1 }, { name: "IMPLICIT", number: 2 }, { name: "LEGACY_REQUIRED", number: 3 }] }, { name: "EnumType", value: [{ name: "ENUM_TYPE_UNKNOWN", number: 0 }, { name: "OPEN", number: 1 }, { name: "CLOSED", number: 2 }] }, { name: "RepeatedFieldEncoding", value: [{ name: "REPEATED_FIELD_ENCODING_UNKNOWN", number: 0 }, { name: "PACKED", number: 1 }, { name: "EXPANDED", number: 2 }] }, { name: "Utf8Validation", value: [{ name: "UTF8_VALIDATION_UNKNOWN", number: 0 }, { name: "VERIFY", number: 2 }, { name: "NONE", number: 3 }] }, { name: "MessageEncoding", value: [{ name: "MESSAGE_ENCODING_UNKNOWN", number: 0 }, { name: "LENGTH_PREFIXED", number: 1 }, { name: "DELIMITED", number: 2 }] }, { name: "JsonFormat", value: [{ name: "JSON_FORMAT_UNKNOWN", number: 0 }, { name: "ALLOW", number: 1 }, { name: "LEGACY_BEST_EFFORT", number: 2 }] }, { name: "EnforceNamingStyle", value: [{ name: "ENFORCE_NAMING_STYLE_UNKNOWN", number: 0 }, { name: "STYLE2024", number: 1 }, { name: "STYLE_LEGACY", number: 2 }] }], extensionRange: [{ start: 1000, end: 9995 }, { start: 9995, end: 1e4 }, { start: 1e4, end: 10001 }] }, { name: "FeatureSetDefaults", field: [{ name: "defaults", number: 1, type: 11, label: 3, typeName: ".google.protobuf.FeatureSetDefaults.FeatureSetEditionDefault" }, { name: "minimum_edition", number: 4, type: 14, label: 1, typeName: ".google.protobuf.Edition" }, { name: "maximum_edition", number: 5, type: 14, label: 1, typeName: ".google.protobuf.Edition" }], nestedType: [{ name: "FeatureSetEditionDefault", field: [{ name: "edition", number: 3, type: 14, label: 1, typeName: ".google.protobuf.Edition" }, { name: "overridable_features", number: 4, type: 11, label: 1, typeName: ".google.protobuf.FeatureSet" }, { name: "fixed_features", number: 5, type: 11, label: 1, typeName: ".google.protobuf.FeatureSet" }] }] }, { name: "SourceCodeInfo", field: [{ name: "location", number: 1, type: 11, label: 3, typeName: ".google.protobuf.SourceCodeInfo.Location" }], nestedType: [{ name: "Location", field: [{ name: "path", number: 1, type: 5, label: 3, options: { packed: true } }, { name: "span", number: 2, type: 5, label: 3, options: { packed: true } }, { name: "leading_comments", number: 3, type: 9, label: 1 }, { name: "trailing_comments", number: 4, type: 9, label: 1 }, { name: "leading_detached_comments", number: 6, type: 9, label: 3 }] }], extensionRange: [{ start: 536000000, end: 536000001 }] }, { name: "GeneratedCodeInfo", field: [{ name: "annotation", number: 1, type: 11, label: 3, typeName: ".google.protobuf.GeneratedCodeInfo.Annotation" }], nestedType: [{ name: "Annotation", field: [{ name: "path", number: 1, type: 5, label: 3, options: { packed: true } }, { name: "source_file", number: 2, type: 9, label: 1 }, { name: "begin", number: 3, type: 5, label: 1 }, { name: "end", number: 4, type: 5, label: 1 }, { name: "semantic", number: 5, type: 14, label: 1, typeName: ".google.protobuf.GeneratedCodeInfo.Annotation.Semantic" }], enumType: [{ name: "Semantic", value: [{ name: "NONE", number: 0 }, { name: "SET", number: 1 }, { name: "ALIAS", number: 2 }] }] }] }], enumType: [{ name: "Edition", value: [{ name: "EDITION_UNKNOWN", number: 0 }, { name: "EDITION_LEGACY", number: 900 }, { name: "EDITION_PROTO2", number: 998 }, { name: "EDITION_PROTO3", number: 999 }, { name: "EDITION_2023", number: 1000 }, { name: "EDITION_2024", number: 1001 }, { name: "EDITION_UNSTABLE", number: 9999 }, { name: "EDITION_1_TEST_ONLY", number: 1 }, { name: "EDITION_2_TEST_ONLY", number: 2 }, { name: "EDITION_99997_TEST_ONLY", number: 99997 }, { name: "EDITION_99998_TEST_ONLY", number: 99998 }, { name: "EDITION_99999_TEST_ONLY", number: 99999 }, { name: "EDITION_MAX", number: 2147483647 }] }, { name: "SymbolVisibility", value: [{ name: "VISIBILITY_UNSET", number: 0 }, { name: "VISIBILITY_LOCAL", number: 1 }, { name: "VISIBILITY_EXPORT", number: 2 }] }] });
+var file_google_protobuf_descriptor = /* @__PURE__ */ boot({ "name": "google/protobuf/descriptor.proto", "package": "google.protobuf", "messageType": [{ "name": "FileDescriptorSet", "field": [{ "name": "file", "number": 1, "type": 11, "label": 3, "typeName": ".google.protobuf.FileDescriptorProto" }], "extensionRange": [{ "start": 536e6, "end": 536000001 }] }, { "name": "FileDescriptorProto", "field": [{ "name": "name", "number": 1, "type": 9, "label": 1 }, { "name": "package", "number": 2, "type": 9, "label": 1 }, { "name": "dependency", "number": 3, "type": 9, "label": 3 }, { "name": "public_dependency", "number": 10, "type": 5, "label": 3 }, { "name": "weak_dependency", "number": 11, "type": 5, "label": 3 }, { "name": "option_dependency", "number": 15, "type": 9, "label": 3 }, { "name": "message_type", "number": 4, "type": 11, "label": 3, "typeName": ".google.protobuf.DescriptorProto" }, { "name": "enum_type", "number": 5, "type": 11, "label": 3, "typeName": ".google.protobuf.EnumDescriptorProto" }, { "name": "service", "number": 6, "type": 11, "label": 3, "typeName": ".google.protobuf.ServiceDescriptorProto" }, { "name": "extension", "number": 7, "type": 11, "label": 3, "typeName": ".google.protobuf.FieldDescriptorProto" }, { "name": "options", "number": 8, "type": 11, "label": 1, "typeName": ".google.protobuf.FileOptions" }, { "name": "source_code_info", "number": 9, "type": 11, "label": 1, "typeName": ".google.protobuf.SourceCodeInfo" }, { "name": "syntax", "number": 12, "type": 9, "label": 1 }, { "name": "edition", "number": 14, "type": 14, "label": 1, "typeName": ".google.protobuf.Edition" }] }, { "name": "DescriptorProto", "field": [{ "name": "name", "number": 1, "type": 9, "label": 1 }, { "name": "field", "number": 2, "type": 11, "label": 3, "typeName": ".google.protobuf.FieldDescriptorProto" }, { "name": "extension", "number": 6, "type": 11, "label": 3, "typeName": ".google.protobuf.FieldDescriptorProto" }, { "name": "nested_type", "number": 3, "type": 11, "label": 3, "typeName": ".google.protobuf.DescriptorProto" }, { "name": "enum_type", "number": 4, "type": 11, "label": 3, "typeName": ".google.protobuf.EnumDescriptorProto" }, { "name": "extension_range", "number": 5, "type": 11, "label": 3, "typeName": ".google.protobuf.DescriptorProto.ExtensionRange" }, { "name": "oneof_decl", "number": 8, "type": 11, "label": 3, "typeName": ".google.protobuf.OneofDescriptorProto" }, { "name": "options", "number": 7, "type": 11, "label": 1, "typeName": ".google.protobuf.MessageOptions" }, { "name": "reserved_range", "number": 9, "type": 11, "label": 3, "typeName": ".google.protobuf.DescriptorProto.ReservedRange" }, { "name": "reserved_name", "number": 10, "type": 9, "label": 3 }, { "name": "visibility", "number": 11, "type": 14, "label": 1, "typeName": ".google.protobuf.SymbolVisibility" }], "nestedType": [{ "name": "ExtensionRange", "field": [{ "name": "start", "number": 1, "type": 5, "label": 1 }, { "name": "end", "number": 2, "type": 5, "label": 1 }, { "name": "options", "number": 3, "type": 11, "label": 1, "typeName": ".google.protobuf.ExtensionRangeOptions" }] }, { "name": "ReservedRange", "field": [{ "name": "start", "number": 1, "type": 5, "label": 1 }, { "name": "end", "number": 2, "type": 5, "label": 1 }] }] }, { "name": "ExtensionRangeOptions", "field": [{ "name": "uninterpreted_option", "number": 999, "type": 11, "label": 3, "typeName": ".google.protobuf.UninterpretedOption" }, { "name": "declaration", "number": 2, "type": 11, "label": 3, "typeName": ".google.protobuf.ExtensionRangeOptions.Declaration", "options": { "retention": 2 } }, { "name": "features", "number": 50, "type": 11, "label": 1, "typeName": ".google.protobuf.FeatureSet" }, { "name": "verification", "number": 3, "type": 14, "label": 1, "typeName": ".google.protobuf.ExtensionRangeOptions.VerificationState", "defaultValue": "UNVERIFIED", "options": { "retention": 2 } }], "nestedType": [{ "name": "Declaration", "field": [{ "name": "number", "number": 1, "type": 5, "label": 1 }, { "name": "full_name", "number": 2, "type": 9, "label": 1 }, { "name": "type", "number": 3, "type": 9, "label": 1 }, { "name": "reserved", "number": 5, "type": 8, "label": 1 }, { "name": "repeated", "number": 6, "type": 8, "label": 1 }] }], "enumType": [{ "name": "VerificationState", "value": [{ "name": "DECLARATION", "number": 0 }, { "name": "UNVERIFIED", "number": 1 }] }], "extensionRange": [{ "start": 1e3, "end": 536870912 }] }, { "name": "FieldDescriptorProto", "field": [{ "name": "name", "number": 1, "type": 9, "label": 1 }, { "name": "number", "number": 3, "type": 5, "label": 1 }, { "name": "label", "number": 4, "type": 14, "label": 1, "typeName": ".google.protobuf.FieldDescriptorProto.Label" }, { "name": "type", "number": 5, "type": 14, "label": 1, "typeName": ".google.protobuf.FieldDescriptorProto.Type" }, { "name": "type_name", "number": 6, "type": 9, "label": 1 }, { "name": "extendee", "number": 2, "type": 9, "label": 1 }, { "name": "default_value", "number": 7, "type": 9, "label": 1 }, { "name": "oneof_index", "number": 9, "type": 5, "label": 1 }, { "name": "json_name", "number": 10, "type": 9, "label": 1 }, { "name": "options", "number": 8, "type": 11, "label": 1, "typeName": ".google.protobuf.FieldOptions" }, { "name": "proto3_optional", "number": 17, "type": 8, "label": 1 }], "enumType": [{ "name": "Type", "value": [{ "name": "TYPE_DOUBLE", "number": 1 }, { "name": "TYPE_FLOAT", "number": 2 }, { "name": "TYPE_INT64", "number": 3 }, { "name": "TYPE_UINT64", "number": 4 }, { "name": "TYPE_INT32", "number": 5 }, { "name": "TYPE_FIXED64", "number": 6 }, { "name": "TYPE_FIXED32", "number": 7 }, { "name": "TYPE_BOOL", "number": 8 }, { "name": "TYPE_STRING", "number": 9 }, { "name": "TYPE_GROUP", "number": 10 }, { "name": "TYPE_MESSAGE", "number": 11 }, { "name": "TYPE_BYTES", "number": 12 }, { "name": "TYPE_UINT32", "number": 13 }, { "name": "TYPE_ENUM", "number": 14 }, { "name": "TYPE_SFIXED32", "number": 15 }, { "name": "TYPE_SFIXED64", "number": 16 }, { "name": "TYPE_SINT32", "number": 17 }, { "name": "TYPE_SINT64", "number": 18 }] }, { "name": "Label", "value": [{ "name": "LABEL_OPTIONAL", "number": 1 }, { "name": "LABEL_REPEATED", "number": 3 }, { "name": "LABEL_REQUIRED", "number": 2 }] }] }, { "name": "OneofDescriptorProto", "field": [{ "name": "name", "number": 1, "type": 9, "label": 1 }, { "name": "options", "number": 2, "type": 11, "label": 1, "typeName": ".google.protobuf.OneofOptions" }] }, { "name": "EnumDescriptorProto", "field": [{ "name": "name", "number": 1, "type": 9, "label": 1 }, { "name": "value", "number": 2, "type": 11, "label": 3, "typeName": ".google.protobuf.EnumValueDescriptorProto" }, { "name": "options", "number": 3, "type": 11, "label": 1, "typeName": ".google.protobuf.EnumOptions" }, { "name": "reserved_range", "number": 4, "type": 11, "label": 3, "typeName": ".google.protobuf.EnumDescriptorProto.EnumReservedRange" }, { "name": "reserved_name", "number": 5, "type": 9, "label": 3 }, { "name": "visibility", "number": 6, "type": 14, "label": 1, "typeName": ".google.protobuf.SymbolVisibility" }], "nestedType": [{ "name": "EnumReservedRange", "field": [{ "name": "start", "number": 1, "type": 5, "label": 1 }, { "name": "end", "number": 2, "type": 5, "label": 1 }] }] }, { "name": "EnumValueDescriptorProto", "field": [{ "name": "name", "number": 1, "type": 9, "label": 1 }, { "name": "number", "number": 2, "type": 5, "label": 1 }, { "name": "options", "number": 3, "type": 11, "label": 1, "typeName": ".google.protobuf.EnumValueOptions" }] }, { "name": "ServiceDescriptorProto", "field": [{ "name": "name", "number": 1, "type": 9, "label": 1 }, { "name": "method", "number": 2, "type": 11, "label": 3, "typeName": ".google.protobuf.MethodDescriptorProto" }, { "name": "options", "number": 3, "type": 11, "label": 1, "typeName": ".google.protobuf.ServiceOptions" }] }, { "name": "MethodDescriptorProto", "field": [{ "name": "name", "number": 1, "type": 9, "label": 1 }, { "name": "input_type", "number": 2, "type": 9, "label": 1 }, { "name": "output_type", "number": 3, "type": 9, "label": 1 }, { "name": "options", "number": 4, "type": 11, "label": 1, "typeName": ".google.protobuf.MethodOptions" }, { "name": "client_streaming", "number": 5, "type": 8, "label": 1, "defaultValue": "false" }, { "name": "server_streaming", "number": 6, "type": 8, "label": 1, "defaultValue": "false" }] }, { "name": "FileOptions", "field": [{ "name": "java_package", "number": 1, "type": 9, "label": 1 }, { "name": "java_outer_classname", "number": 8, "type": 9, "label": 1 }, { "name": "java_multiple_files", "number": 10, "type": 8, "label": 1, "defaultValue": "false", "options": {} }, { "name": "java_generate_equals_and_hash", "number": 20, "type": 8, "label": 1, "options": { "deprecated": true } }, { "name": "java_string_check_utf8", "number": 27, "type": 8, "label": 1, "defaultValue": "false" }, { "name": "optimize_for", "number": 9, "type": 14, "label": 1, "typeName": ".google.protobuf.FileOptions.OptimizeMode", "defaultValue": "SPEED" }, { "name": "go_package", "number": 11, "type": 9, "label": 1 }, { "name": "cc_generic_services", "number": 16, "type": 8, "label": 1, "defaultValue": "false" }, { "name": "java_generic_services", "number": 17, "type": 8, "label": 1, "defaultValue": "false" }, { "name": "py_generic_services", "number": 18, "type": 8, "label": 1, "defaultValue": "false" }, { "name": "deprecated", "number": 23, "type": 8, "label": 1, "defaultValue": "false" }, { "name": "cc_enable_arenas", "number": 31, "type": 8, "label": 1, "defaultValue": "true" }, { "name": "objc_class_prefix", "number": 36, "type": 9, "label": 1 }, { "name": "csharp_namespace", "number": 37, "type": 9, "label": 1 }, { "name": "swift_prefix", "number": 39, "type": 9, "label": 1 }, { "name": "php_class_prefix", "number": 40, "type": 9, "label": 1 }, { "name": "php_namespace", "number": 41, "type": 9, "label": 1 }, { "name": "php_metadata_namespace", "number": 44, "type": 9, "label": 1 }, { "name": "ruby_package", "number": 45, "type": 9, "label": 1 }, { "name": "features", "number": 50, "type": 11, "label": 1, "typeName": ".google.protobuf.FeatureSet" }, { "name": "uninterpreted_option", "number": 999, "type": 11, "label": 3, "typeName": ".google.protobuf.UninterpretedOption" }], "enumType": [{ "name": "OptimizeMode", "value": [{ "name": "SPEED", "number": 1 }, { "name": "CODE_SIZE", "number": 2 }, { "name": "LITE_RUNTIME", "number": 3 }] }], "extensionRange": [{ "start": 1e3, "end": 536870912 }] }, { "name": "MessageOptions", "field": [{ "name": "message_set_wire_format", "number": 1, "type": 8, "label": 1, "defaultValue": "false" }, { "name": "no_standard_descriptor_accessor", "number": 2, "type": 8, "label": 1, "defaultValue": "false" }, { "name": "deprecated", "number": 3, "type": 8, "label": 1, "defaultValue": "false" }, { "name": "map_entry", "number": 7, "type": 8, "label": 1 }, { "name": "deprecated_legacy_json_field_conflicts", "number": 11, "type": 8, "label": 1, "options": { "deprecated": true } }, { "name": "features", "number": 12, "type": 11, "label": 1, "typeName": ".google.protobuf.FeatureSet" }, { "name": "uninterpreted_option", "number": 999, "type": 11, "label": 3, "typeName": ".google.protobuf.UninterpretedOption" }], "extensionRange": [{ "start": 1e3, "end": 536870912 }] }, { "name": "FieldOptions", "field": [{ "name": "ctype", "number": 1, "type": 14, "label": 1, "typeName": ".google.protobuf.FieldOptions.CType", "defaultValue": "STRING" }, { "name": "packed", "number": 2, "type": 8, "label": 1 }, { "name": "jstype", "number": 6, "type": 14, "label": 1, "typeName": ".google.protobuf.FieldOptions.JSType", "defaultValue": "JS_NORMAL" }, { "name": "lazy", "number": 5, "type": 8, "label": 1, "defaultValue": "false" }, { "name": "unverified_lazy", "number": 15, "type": 8, "label": 1, "defaultValue": "false" }, { "name": "deprecated", "number": 3, "type": 8, "label": 1, "defaultValue": "false" }, { "name": "weak", "number": 10, "type": 8, "label": 1, "defaultValue": "false", "options": { "deprecated": true } }, { "name": "debug_redact", "number": 16, "type": 8, "label": 1, "defaultValue": "false" }, { "name": "retention", "number": 17, "type": 14, "label": 1, "typeName": ".google.protobuf.FieldOptions.OptionRetention" }, { "name": "targets", "number": 19, "type": 14, "label": 3, "typeName": ".google.protobuf.FieldOptions.OptionTargetType" }, { "name": "edition_defaults", "number": 20, "type": 11, "label": 3, "typeName": ".google.protobuf.FieldOptions.EditionDefault" }, { "name": "features", "number": 21, "type": 11, "label": 1, "typeName": ".google.protobuf.FeatureSet" }, { "name": "feature_support", "number": 22, "type": 11, "label": 1, "typeName": ".google.protobuf.FieldOptions.FeatureSupport" }, { "name": "uninterpreted_option", "number": 999, "type": 11, "label": 3, "typeName": ".google.protobuf.UninterpretedOption" }], "nestedType": [{ "name": "EditionDefault", "field": [{ "name": "edition", "number": 3, "type": 14, "label": 1, "typeName": ".google.protobuf.Edition" }, { "name": "value", "number": 2, "type": 9, "label": 1 }] }, { "name": "FeatureSupport", "field": [{ "name": "edition_introduced", "number": 1, "type": 14, "label": 1, "typeName": ".google.protobuf.Edition" }, { "name": "edition_deprecated", "number": 2, "type": 14, "label": 1, "typeName": ".google.protobuf.Edition" }, { "name": "deprecation_warning", "number": 3, "type": 9, "label": 1 }, { "name": "edition_removed", "number": 4, "type": 14, "label": 1, "typeName": ".google.protobuf.Edition" }, { "name": "removal_error", "number": 5, "type": 9, "label": 1 }] }], "enumType": [{ "name": "CType", "value": [{ "name": "STRING", "number": 0 }, { "name": "CORD", "number": 1 }, { "name": "STRING_PIECE", "number": 2 }] }, { "name": "JSType", "value": [{ "name": "JS_NORMAL", "number": 0 }, { "name": "JS_STRING", "number": 1 }, { "name": "JS_NUMBER", "number": 2 }] }, { "name": "OptionRetention", "value": [{ "name": "RETENTION_UNKNOWN", "number": 0 }, { "name": "RETENTION_RUNTIME", "number": 1 }, { "name": "RETENTION_SOURCE", "number": 2 }] }, { "name": "OptionTargetType", "value": [{ "name": "TARGET_TYPE_UNKNOWN", "number": 0 }, { "name": "TARGET_TYPE_FILE", "number": 1 }, { "name": "TARGET_TYPE_EXTENSION_RANGE", "number": 2 }, { "name": "TARGET_TYPE_MESSAGE", "number": 3 }, { "name": "TARGET_TYPE_FIELD", "number": 4 }, { "name": "TARGET_TYPE_ONEOF", "number": 5 }, { "name": "TARGET_TYPE_ENUM", "number": 6 }, { "name": "TARGET_TYPE_ENUM_ENTRY", "number": 7 }, { "name": "TARGET_TYPE_SERVICE", "number": 8 }, { "name": "TARGET_TYPE_METHOD", "number": 9 }] }], "extensionRange": [{ "start": 1e3, "end": 536870912 }] }, { "name": "OneofOptions", "field": [{ "name": "features", "number": 1, "type": 11, "label": 1, "typeName": ".google.protobuf.FeatureSet" }, { "name": "uninterpreted_option", "number": 999, "type": 11, "label": 3, "typeName": ".google.protobuf.UninterpretedOption" }], "extensionRange": [{ "start": 1e3, "end": 536870912 }] }, { "name": "EnumOptions", "field": [{ "name": "allow_alias", "number": 2, "type": 8, "label": 1 }, { "name": "deprecated", "number": 3, "type": 8, "label": 1, "defaultValue": "false" }, { "name": "deprecated_legacy_json_field_conflicts", "number": 6, "type": 8, "label": 1, "options": { "deprecated": true } }, { "name": "features", "number": 7, "type": 11, "label": 1, "typeName": ".google.protobuf.FeatureSet" }, { "name": "uninterpreted_option", "number": 999, "type": 11, "label": 3, "typeName": ".google.protobuf.UninterpretedOption" }], "extensionRange": [{ "start": 1e3, "end": 536870912 }] }, { "name": "EnumValueOptions", "field": [{ "name": "deprecated", "number": 1, "type": 8, "label": 1, "defaultValue": "false" }, { "name": "features", "number": 2, "type": 11, "label": 1, "typeName": ".google.protobuf.FeatureSet" }, { "name": "debug_redact", "number": 3, "type": 8, "label": 1, "defaultValue": "false" }, { "name": "feature_support", "number": 4, "type": 11, "label": 1, "typeName": ".google.protobuf.FieldOptions.FeatureSupport" }, { "name": "uninterpreted_option", "number": 999, "type": 11, "label": 3, "typeName": ".google.protobuf.UninterpretedOption" }], "extensionRange": [{ "start": 1e3, "end": 536870912 }] }, { "name": "ServiceOptions", "field": [{ "name": "features", "number": 34, "type": 11, "label": 1, "typeName": ".google.protobuf.FeatureSet" }, { "name": "deprecated", "number": 33, "type": 8, "label": 1, "defaultValue": "false" }, { "name": "uninterpreted_option", "number": 999, "type": 11, "label": 3, "typeName": ".google.protobuf.UninterpretedOption" }], "extensionRange": [{ "start": 1e3, "end": 536870912 }] }, { "name": "MethodOptions", "field": [{ "name": "deprecated", "number": 33, "type": 8, "label": 1, "defaultValue": "false" }, { "name": "idempotency_level", "number": 34, "type": 14, "label": 1, "typeName": ".google.protobuf.MethodOptions.IdempotencyLevel", "defaultValue": "IDEMPOTENCY_UNKNOWN" }, { "name": "features", "number": 35, "type": 11, "label": 1, "typeName": ".google.protobuf.FeatureSet" }, { "name": "uninterpreted_option", "number": 999, "type": 11, "label": 3, "typeName": ".google.protobuf.UninterpretedOption" }], "enumType": [{ "name": "IdempotencyLevel", "value": [{ "name": "IDEMPOTENCY_UNKNOWN", "number": 0 }, { "name": "NO_SIDE_EFFECTS", "number": 1 }, { "name": "IDEMPOTENT", "number": 2 }] }], "extensionRange": [{ "start": 1e3, "end": 536870912 }] }, { "name": "UninterpretedOption", "field": [{ "name": "name", "number": 2, "type": 11, "label": 3, "typeName": ".google.protobuf.UninterpretedOption.NamePart" }, { "name": "identifier_value", "number": 3, "type": 9, "label": 1 }, { "name": "positive_int_value", "number": 4, "type": 4, "label": 1 }, { "name": "negative_int_value", "number": 5, "type": 3, "label": 1 }, { "name": "double_value", "number": 6, "type": 1, "label": 1 }, { "name": "string_value", "number": 7, "type": 12, "label": 1 }, { "name": "aggregate_value", "number": 8, "type": 9, "label": 1 }], "nestedType": [{ "name": "NamePart", "field": [{ "name": "name_part", "number": 1, "type": 9, "label": 2 }, { "name": "is_extension", "number": 2, "type": 8, "label": 2 }] }] }, { "name": "FeatureSet", "field": [{ "name": "field_presence", "number": 1, "type": 14, "label": 1, "typeName": ".google.protobuf.FeatureSet.FieldPresence", "options": { "retention": 1, "targets": [4, 1], "editionDefaults": [{ "value": "EXPLICIT", "edition": 900 }, { "value": "IMPLICIT", "edition": 999 }, { "value": "EXPLICIT", "edition": 1e3 }] } }, { "name": "enum_type", "number": 2, "type": 14, "label": 1, "typeName": ".google.protobuf.FeatureSet.EnumType", "options": { "retention": 1, "targets": [6, 1], "editionDefaults": [{ "value": "CLOSED", "edition": 900 }, { "value": "OPEN", "edition": 999 }] } }, { "name": "repeated_field_encoding", "number": 3, "type": 14, "label": 1, "typeName": ".google.protobuf.FeatureSet.RepeatedFieldEncoding", "options": { "retention": 1, "targets": [4, 1], "editionDefaults": [{ "value": "EXPANDED", "edition": 900 }, { "value": "PACKED", "edition": 999 }] } }, { "name": "utf8_validation", "number": 4, "type": 14, "label": 1, "typeName": ".google.protobuf.FeatureSet.Utf8Validation", "options": { "retention": 1, "targets": [4, 1], "editionDefaults": [{ "value": "NONE", "edition": 900 }, { "value": "VERIFY", "edition": 999 }] } }, { "name": "message_encoding", "number": 5, "type": 14, "label": 1, "typeName": ".google.protobuf.FeatureSet.MessageEncoding", "options": { "retention": 1, "targets": [4, 1], "editionDefaults": [{ "value": "LENGTH_PREFIXED", "edition": 900 }] } }, { "name": "json_format", "number": 6, "type": 14, "label": 1, "typeName": ".google.protobuf.FeatureSet.JsonFormat", "options": { "retention": 1, "targets": [3, 6, 1], "editionDefaults": [{ "value": "LEGACY_BEST_EFFORT", "edition": 900 }, { "value": "ALLOW", "edition": 999 }] } }, { "name": "enforce_naming_style", "number": 7, "type": 14, "label": 1, "typeName": ".google.protobuf.FeatureSet.EnforceNamingStyle", "options": { "retention": 2, "targets": [1, 2, 3, 4, 5, 6, 7, 8, 9], "editionDefaults": [{ "value": "STYLE_LEGACY", "edition": 900 }, { "value": "STYLE2024", "edition": 1001 }] } }, { "name": "default_symbol_visibility", "number": 8, "type": 14, "label": 1, "typeName": ".google.protobuf.FeatureSet.VisibilityFeature.DefaultSymbolVisibility", "options": { "retention": 2, "targets": [1], "editionDefaults": [{ "value": "EXPORT_ALL", "edition": 900 }, { "value": "EXPORT_TOP_LEVEL", "edition": 1001 }] } }], "nestedType": [{ "name": "VisibilityFeature", "enumType": [{ "name": "DefaultSymbolVisibility", "value": [{ "name": "DEFAULT_SYMBOL_VISIBILITY_UNKNOWN", "number": 0 }, { "name": "EXPORT_ALL", "number": 1 }, { "name": "EXPORT_TOP_LEVEL", "number": 2 }, { "name": "LOCAL_ALL", "number": 3 }, { "name": "STRICT", "number": 4 }] }] }], "enumType": [{ "name": "FieldPresence", "value": [{ "name": "FIELD_PRESENCE_UNKNOWN", "number": 0 }, { "name": "EXPLICIT", "number": 1 }, { "name": "IMPLICIT", "number": 2 }, { "name": "LEGACY_REQUIRED", "number": 3 }] }, { "name": "EnumType", "value": [{ "name": "ENUM_TYPE_UNKNOWN", "number": 0 }, { "name": "OPEN", "number": 1 }, { "name": "CLOSED", "number": 2 }] }, { "name": "RepeatedFieldEncoding", "value": [{ "name": "REPEATED_FIELD_ENCODING_UNKNOWN", "number": 0 }, { "name": "PACKED", "number": 1 }, { "name": "EXPANDED", "number": 2 }] }, { "name": "Utf8Validation", "value": [{ "name": "UTF8_VALIDATION_UNKNOWN", "number": 0 }, { "name": "VERIFY", "number": 2 }, { "name": "NONE", "number": 3 }] }, { "name": "MessageEncoding", "value": [{ "name": "MESSAGE_ENCODING_UNKNOWN", "number": 0 }, { "name": "LENGTH_PREFIXED", "number": 1 }, { "name": "DELIMITED", "number": 2 }] }, { "name": "JsonFormat", "value": [{ "name": "JSON_FORMAT_UNKNOWN", "number": 0 }, { "name": "ALLOW", "number": 1 }, { "name": "LEGACY_BEST_EFFORT", "number": 2 }] }, { "name": "EnforceNamingStyle", "value": [{ "name": "ENFORCE_NAMING_STYLE_UNKNOWN", "number": 0 }, { "name": "STYLE2024", "number": 1 }, { "name": "STYLE_LEGACY", "number": 2 }] }], "extensionRange": [{ "start": 1e3, "end": 9995 }, { "start": 9995, "end": 1e4 }, { "start": 1e4, "end": 10001 }] }, { "name": "FeatureSetDefaults", "field": [{ "name": "defaults", "number": 1, "type": 11, "label": 3, "typeName": ".google.protobuf.FeatureSetDefaults.FeatureSetEditionDefault" }, { "name": "minimum_edition", "number": 4, "type": 14, "label": 1, "typeName": ".google.protobuf.Edition" }, { "name": "maximum_edition", "number": 5, "type": 14, "label": 1, "typeName": ".google.protobuf.Edition" }], "nestedType": [{ "name": "FeatureSetEditionDefault", "field": [{ "name": "edition", "number": 3, "type": 14, "label": 1, "typeName": ".google.protobuf.Edition" }, { "name": "overridable_features", "number": 4, "type": 11, "label": 1, "typeName": ".google.protobuf.FeatureSet" }, { "name": "fixed_features", "number": 5, "type": 11, "label": 1, "typeName": ".google.protobuf.FeatureSet" }] }] }, { "name": "SourceCodeInfo", "field": [{ "name": "location", "number": 1, "type": 11, "label": 3, "typeName": ".google.protobuf.SourceCodeInfo.Location" }], "nestedType": [{ "name": "Location", "field": [{ "name": "path", "number": 1, "type": 5, "label": 3, "options": { "packed": true } }, { "name": "span", "number": 2, "type": 5, "label": 3, "options": { "packed": true } }, { "name": "leading_comments", "number": 3, "type": 9, "label": 1 }, { "name": "trailing_comments", "number": 4, "type": 9, "label": 1 }, { "name": "leading_detached_comments", "number": 6, "type": 9, "label": 3 }] }], "extensionRange": [{ "start": 536e6, "end": 536000001 }] }, { "name": "GeneratedCodeInfo", "field": [{ "name": "annotation", "number": 1, "type": 11, "label": 3, "typeName": ".google.protobuf.GeneratedCodeInfo.Annotation" }], "nestedType": [{ "name": "Annotation", "field": [{ "name": "path", "number": 1, "type": 5, "label": 3, "options": { "packed": true } }, { "name": "source_file", "number": 2, "type": 9, "label": 1 }, { "name": "begin", "number": 3, "type": 5, "label": 1 }, { "name": "end", "number": 4, "type": 5, "label": 1 }, { "name": "semantic", "number": 5, "type": 14, "label": 1, "typeName": ".google.protobuf.GeneratedCodeInfo.Annotation.Semantic" }], "enumType": [{ "name": "Semantic", "value": [{ "name": "NONE", "number": 0 }, { "name": "SET", "number": 1 }, { "name": "ALIAS", "number": 2 }] }] }] }], "enumType": [{ "name": "Edition", "value": [{ "name": "EDITION_UNKNOWN", "number": 0 }, { "name": "EDITION_LEGACY", "number": 900 }, { "name": "EDITION_PROTO2", "number": 998 }, { "name": "EDITION_PROTO3", "number": 999 }, { "name": "EDITION_2023", "number": 1e3 }, { "name": "EDITION_2024", "number": 1001 }, { "name": "EDITION_UNSTABLE", "number": 9999 }, { "name": "EDITION_1_TEST_ONLY", "number": 1 }, { "name": "EDITION_2_TEST_ONLY", "number": 2 }, { "name": "EDITION_99997_TEST_ONLY", "number": 99997 }, { "name": "EDITION_99998_TEST_ONLY", "number": 99998 }, { "name": "EDITION_99999_TEST_ONLY", "number": 99999 }, { "name": "EDITION_MAX", "number": 2147483647 }] }, { "name": "SymbolVisibility", "value": [{ "name": "VISIBILITY_UNSET", "number": 0 }, { "name": "VISIBILITY_LOCAL", "number": 1 }, { "name": "VISIBILITY_EXPORT", "number": 2 }] }] });
 var FileDescriptorProtoSchema = /* @__PURE__ */ messageDesc(file_google_protobuf_descriptor, 1);
 var ExtensionRangeOptions_VerificationState;
 (function(ExtensionRangeOptions_VerificationState2) {
@@ -2432,7 +2609,7 @@ var Edition;
   Edition2[Edition2["EDITION_LEGACY"] = 900] = "EDITION_LEGACY";
   Edition2[Edition2["EDITION_PROTO2"] = 998] = "EDITION_PROTO2";
   Edition2[Edition2["EDITION_PROTO3"] = 999] = "EDITION_PROTO3";
-  Edition2[Edition2["EDITION_2023"] = 1000] = "EDITION_2023";
+  Edition2[Edition2["EDITION_2023"] = 1e3] = "EDITION_2023";
   Edition2[Edition2["EDITION_2024"] = 1001] = "EDITION_2024";
   Edition2[Edition2["EDITION_UNSTABLE"] = 9999] = "EDITION_UNSTABLE";
   Edition2[Edition2["EDITION_1_TEST_ONLY"] = 1] = "EDITION_1_TEST_ONLY";
@@ -2458,17 +2635,17 @@ function fromBinary(schema, bytes, options) {
   compiledReader(schema).read(message, new BinaryReader(bytes), makeReadContext(options), bytes.byteLength);
   return message;
 }
-var compiledReaders = new WeakMap;
+var compiledReaders = /* @__PURE__ */ new WeakMap();
 function compiledReader(desc) {
   let compiled = compiledReaders.get(desc);
-  if (compiled === undefined) {
+  if (compiled === void 0) {
     compiled = compileMessage(desc);
   }
   return compiled;
 }
 function compileMessage(desc) {
   const descString = String(desc);
-  const fieldReaders = new Map;
+  const fieldReaders = /* @__PURE__ */ new Map();
   const compiled = {
     read: compileMessageReader(descString, fieldReaders),
     readGroup: compileGroupReader(descString, fieldReaders)
@@ -2486,11 +2663,11 @@ function compileMessageReader(descString, fieldReaders) {
       throw new Error(`cannot decode ${descString} from binary: maximum recursion depth of ${ctx.recursionLimit} reached`);
     }
     const end = reader.pos + length;
-    const unknownFields = (_a = message.$unknown) !== null && _a !== undefined ? _a : [];
+    const unknownFields = (_a = message.$unknown) !== null && _a !== void 0 ? _a : [];
     while (reader.pos < end) {
       const [fieldNo, wireType] = reader.tag();
       const fieldReader = fieldReaders.get(fieldNo);
-      if (fieldReader === undefined) {
+      if (fieldReader === void 0) {
         const data = reader.skip(wireType, fieldNo, ctx.recursionLimit - ctx.depth);
         if (ctx.readUnknownFields) {
           unknownFields.push({ no: fieldNo, wireType, data });
@@ -2513,14 +2690,14 @@ function compileGroupReader(descString, fieldReaders) {
     }
     let recordFieldNo;
     let wireType;
-    const unknownFields = (_a = message.$unknown) !== null && _a !== undefined ? _a : [];
+    const unknownFields = (_a = message.$unknown) !== null && _a !== void 0 ? _a : [];
     while (reader.pos < reader.len) {
       [recordFieldNo, wireType] = reader.tag();
       if (wireType == WireType.EndGroup) {
         break;
       }
       const fieldReader = fieldReaders.get(recordFieldNo);
-      if (fieldReader === undefined) {
+      if (fieldReader === void 0) {
         const data = reader.skip(wireType, recordFieldNo, ctx.recursionLimit - ctx.depth);
         if (ctx.readUnknownFields) {
           unknownFields.push({ no: recordFieldNo, wireType, data });
@@ -2571,9 +2748,9 @@ function compileScalarFieldReader(field) {
 function compileEnumFieldReader(field) {
   var _a;
   const localName = field.localName;
-  const oneofLocalName = (_a = field.oneof) === null || _a === undefined ? undefined : _a.localName;
+  const oneofLocalName = (_a = field.oneof) === null || _a === void 0 ? void 0 : _a.localName;
   if (field.enum.open) {
-    if (oneofLocalName !== undefined) {
+    if (oneofLocalName !== void 0) {
       return (message, reader) => {
         message[oneofLocalName] = { case: localName, value: reader.int32() };
       };
@@ -2588,7 +2765,7 @@ function compileEnumFieldReader(field) {
     var _a2;
     const val = reader.int32();
     if (values.some((v) => v.number === val)) {
-      if (oneofLocalName !== undefined) {
+      if (oneofLocalName !== void 0) {
         message[oneofLocalName] = { case: localName, value: val };
       } else {
         message[localName] = val;
@@ -2596,7 +2773,7 @@ function compileEnumFieldReader(field) {
     } else if (ctx.readUnknownFields) {
       const bytes = [];
       varint32write(val, bytes);
-      const unknownFields = (_a2 = message.$unknown) !== null && _a2 !== undefined ? _a2 : [];
+      const unknownFields = (_a2 = message.$unknown) !== null && _a2 !== void 0 ? _a2 : [];
       unknownFields.push({
         no: fieldNo,
         wireType,
@@ -2614,7 +2791,7 @@ function compileMessageFieldReader(field) {
     const oneofLocalName = field.oneof.localName;
     return (message, reader, ctx) => {
       const oneof = message[oneofLocalName];
-      const child = toMessage(oneof.case === localName ? oneof.value : undefined);
+      const child = toMessage(oneof.case === localName ? oneof.value : void 0);
       readChild(child, reader, ctx);
       message[oneofLocalName] = { case: localName, value: toLocal(child) };
     };
@@ -2639,7 +2816,7 @@ function compileListFieldReader(field) {
     const { toMessage, toLocal } = localMessageMapper(field);
     const readChild = compileChildReader(field);
     return (message, reader, ctx) => {
-      const child = toMessage(undefined);
+      const child = toMessage(void 0);
       readChild(child, reader, ctx);
       message[localName].push(toLocal(child));
     };
@@ -2689,11 +2866,11 @@ function compileMapFieldReader(field) {
       const { toMessage, toLocal } = localMessageMapper(field);
       const readChild = compiledReader(field.message).read;
       readValue = (reader, ctx) => {
-        const child = toMessage(undefined);
+        const child = toMessage(void 0);
         readChild(child, reader, ctx, reader.uint32());
         return toLocal(child);
       };
-      valueDefault = () => toLocal(toMessage(undefined));
+      valueDefault = () => toLocal(toMessage(void 0));
       break;
     }
   }
@@ -2714,10 +2891,10 @@ function compileMapFieldReader(field) {
           break;
       }
     }
-    if (key === undefined) {
+    if (key === void 0) {
       key = keyZero;
     }
-    if (val === undefined) {
+    if (val === void 0) {
       val = valueDefault();
     }
     record[key] = val;
@@ -2778,8 +2955,8 @@ function fileDesc(b64, imports) {
   var _a;
   const root = fromBinary(FileDescriptorProtoSchema, base64Decode(b64));
   root.messageType.forEach(restoreJsonNames);
-  root.dependency = (_a = imports === null || imports === undefined ? undefined : imports.map((f) => f.proto.name)) !== null && _a !== undefined ? _a : [];
-  const reg = createFileRegistry(root, (protoFileName) => imports === null || imports === undefined ? undefined : imports.find((f) => f.proto.name === protoFileName));
+  root.dependency = (_a = imports === null || imports === void 0 ? void 0 : imports.map((f) => f.proto.name)) !== null && _a !== void 0 ? _a : [];
+  const reg = createFileRegistry(root, (protoFileName) => imports === null || imports === void 0 ? void 0 : imports.find((f) => f.proto.name === protoFileName));
   return reg.getFile(root.name);
 }
 
@@ -2793,14 +2970,14 @@ function makeWriteOptions(options) {
   return options ? Object.assign(Object.assign({}, writeDefaults), options) : writeDefaults;
 }
 function toBinary(schema, message, options) {
-  const writer = new BinaryWriter;
+  const writer = new BinaryWriter();
   compiledWriter(schema)(writer, makeWriteOptions(options), message);
   return writer.finish();
 }
-var compiledWriters = new WeakMap;
+var compiledWriters = /* @__PURE__ */ new WeakMap();
 function compiledWriter(desc) {
   let compiled = compiledWriters.get(desc);
-  if (compiled === undefined) {
+  if (compiled === void 0) {
     compiled = compileMessage2(desc);
   }
   return compiled;
@@ -2811,15 +2988,15 @@ function compileMessage2(desc) {
   const foreignField = sortedFields[0];
   const fieldWriters = [];
   const compiled = (writer, opts, message) => {
-    if (message.$typeName !== typeName && foreignField !== undefined) {
+    if (message.$typeName !== typeName && foreignField !== void 0) {
       throw new FieldError(foreignField, `cannot use ${foreignField} with message ${message.$typeName}`, "ForeignFieldError");
     }
-    for (let i = 0;i < fieldWriters.length; i++) {
+    for (let i = 0; i < fieldWriters.length; i++) {
       fieldWriters[i](writer, opts, message);
     }
     const unknown = message.$unknown;
-    if (unknown !== undefined && opts.writeUnknownFields) {
-      for (let i = 0;i < unknown.length; i++) {
+    if (unknown !== void 0 && opts.writeUnknownFields) {
+      for (let i = 0; i < unknown.length; i++) {
         const { no, wireType, data } = unknown[i];
         writer.tag(no, wireType).raw(data);
       }
@@ -2856,12 +3033,12 @@ function compileSingularField(field) {
     };
   }
   if (field.presence != IMPLICIT3) {
-    const requiredError = field.presence == LEGACY_REQUIRED2 ? `cannot encode ${field} to binary: required field not set` : undefined;
+    const requiredError = field.presence == LEGACY_REQUIRED2 ? `cannot encode ${field} to binary: required field not set` : void 0;
     return (writer, opts, message) => {
       const value = message[localName];
-      if (value !== undefined && Object.prototype.hasOwnProperty.call(message, localName)) {
+      if (value !== void 0 && Object.prototype.hasOwnProperty.call(message, localName)) {
         writeValue(writer, opts, value);
-      } else if (requiredError !== undefined) {
+      } else if (requiredError !== void 0) {
         throw new Error(requiredError);
       }
     };
@@ -2945,7 +3122,7 @@ function compileListField(field) {
       const writeChild = compileChildWriter(field);
       return (writer, opts, message) => {
         const items = message[localName];
-        for (let i = 0;i < items.length; i++) {
+        for (let i = 0; i < items.length; i++) {
           writeChild(writer, opts, toMessage(items[i]));
         }
       };
@@ -2961,7 +3138,7 @@ function compileListField(field) {
             return;
           }
           writer.tag(fieldNo, WireType.LengthDelimited).fork();
-          for (let i = 0;i < items.length; i++) {
+          for (let i = 0; i < items.length; i++) {
             writeScalar(writer, items[i]);
           }
           writer.join();
@@ -2970,7 +3147,7 @@ function compileListField(field) {
       const wireType = writeTypeOfScalar(scalarType);
       return (writer, opts, message) => {
         const items = message[localName];
-        for (let i = 0;i < items.length; i++) {
+        for (let i = 0; i < items.length; i++) {
           writer.tag(fieldNo, wireType);
           writeScalar(writer, items[i]);
         }
@@ -2988,7 +3165,7 @@ function compileMapField(field) {
     return (writer, opts, message) => {
       const record = message[localName];
       const keys = Object.keys(record);
-      for (let i = 0;i < keys.length; i++) {
+      for (let i = 0; i < keys.length; i++) {
         const key = keys[i];
         writer.tag(fieldNo, WireType.LengthDelimited).fork();
         writeKey(writer, key);
@@ -3005,7 +3182,7 @@ function compileMapField(field) {
   return (writer, opts, message) => {
     const record = message[localName];
     const keys = Object.keys(record);
-    for (let i = 0;i < keys.length; i++) {
+    for (let i = 0; i < keys.length; i++) {
       const key = keys[i];
       writer.tag(fieldNo, WireType.LengthDelimited).fork();
       writeKey(writer, key);
@@ -3136,70 +3313,71 @@ function writeTypeOfScalar(type) {
       return WireType.Varint;
   }
 }
+
 // proto/typescript/src/gen/program_pb.ts
-var exports_program_pb = {};
-__export(exports_program_pb, {
-  file_program: () => file_program,
-  WorkspaceSecretPlacementSchema: () => WorkspaceSecretPlacementSchema,
-  WorkspaceRetrieveRequestedSchema: () => WorkspaceRetrieveRequestedSchema,
-  WorkspaceExecRequestedSchema: () => WorkspaceExecRequestedSchema,
-  WorkspaceDeleteRequestedSchema: () => WorkspaceDeleteRequestedSchema,
-  WorkspaceCreateRequestedSchema: () => WorkspaceCreateRequestedSchema,
-  WorkspaceAddressSchema: () => WorkspaceAddressSchema,
-  TokenCreateRequestedSchema: () => TokenCreateRequestedSchema,
-  TaskSucceededSchema: () => TaskSucceededSchema,
-  TaskStartSchema: () => TaskStartSchema,
-  TaskPayloadInvalidSchema: () => TaskPayloadInvalidSchema,
-  TaskOutcomeSchema: () => TaskOutcomeSchema,
-  TaskFailedSchema: () => TaskFailedSchema,
-  TaskEntrypointSchema: () => TaskEntrypointSchema,
-  TaskChildInvokeRequestedSchema: () => TaskChildInvokeRequestedSchema,
-  StructuredLogRequestedSchema: () => StructuredLogRequestedSchema,
-  SessionStatusRequestedSchema: () => SessionStatusRequestedSchema,
-  SessionOutputPageRequestedSchema: () => SessionOutputPageRequestedSchema,
-  SessionInputSendRequestedSchema: () => SessionInputSendRequestedSchema,
-  SessionCloseRequestedSchema: () => SessionCloseRequestedSchema,
-  SecretFileBindingSchema: () => SecretFileBindingSchema,
-  SecretEnvBindingSchema: () => SecretEnvBindingSchema,
-  ScheduleCauseSchema: () => ScheduleCauseSchema,
-  RunWaitRequestedSchema: () => RunWaitRequestedSchema,
-  RunEventSchema: () => RunEventSchema,
-  RunCauseSchema: () => RunCauseSchema,
-  ResumeDecisionSchema: () => ResumeDecisionSchema,
-  ResumeConsumedSchema: () => ResumeConsumedSchema,
-  ResumeAttachSchema: () => ResumeAttachSchema,
-  ResumeAckSchema: () => ResumeAckSchema,
-  ProgramSupervisorCommandSchema: () => ProgramSupervisorCommandSchema,
-  ProgramStartSchema: () => ProgramStartSchema,
-  ProgramStartReleaseSchema: () => ProgramStartReleaseSchema,
-  ProgramSecretsCompleteSchema: () => ProgramSecretsCompleteSchema,
-  ProgramSecretSchema: () => ProgramSecretSchema,
-  ProgramRunRequestSchema: () => ProgramRunRequestSchema,
-  ProgramQuiescedSchema: () => ProgramQuiescedSchema,
-  ProgramProcessStartedSchema: () => ProgramProcessStartedSchema,
-  ProgramProcessStartFailedSchema: () => ProgramProcessStartFailedSchema,
-  NoPayloadSchema: () => NoPayloadSchema,
-  MetadataUpdatedSchema: () => MetadataUpdatedSchema,
-  ManualCauseSchema: () => ManualCauseSchema,
-  EntrypointReleaseSchema: () => EntrypointReleaseSchema,
-  EntrypointReadySchema: () => EntrypointReadySchema,
-  EntrypointIdentitySchema: () => EntrypointIdentitySchema,
-  ContinuationCauseSchema: () => ContinuationCauseSchema,
-  ChildCauseSchema: () => ChildCauseSchema,
-  CheckpointPauseRequestSchema: () => CheckpointPauseRequestSchema,
-  ApiCauseSchema: () => ApiCauseSchema,
-  ActorTurnCommitRequestedSchema: () => ActorTurnCommitRequestedSchema,
-  ActorTurnCommitPauseRequestSchema: () => ActorTurnCommitPauseRequestSchema,
-  ActorTurnCommitPauseReadySchema: () => ActorTurnCommitPauseReadySchema,
-  ActorTurnCommitAppliedSchema: () => ActorTurnCommitAppliedSchema,
-  ActorSucceededSchema: () => ActorSucceededSchema,
-  ActorStartSchema: () => ActorStartSchema,
-  ActorStartRequestedSchema: () => ActorStartRequestedSchema,
-  ActorStartCauseSchema: () => ActorStartCauseSchema,
-  ActorOutputAppendRequestedSchema: () => ActorOutputAppendRequestedSchema,
-  ActorOutcomeSchema: () => ActorOutcomeSchema,
+var program_pb_exports = {};
+__export(program_pb_exports, {
+  ActorEntrypointSchema: () => ActorEntrypointSchema,
   ActorFailedSchema: () => ActorFailedSchema,
-  ActorEntrypointSchema: () => ActorEntrypointSchema
+  ActorOutcomeSchema: () => ActorOutcomeSchema,
+  ActorOutputAppendRequestedSchema: () => ActorOutputAppendRequestedSchema,
+  ActorStartCauseSchema: () => ActorStartCauseSchema,
+  ActorStartRequestedSchema: () => ActorStartRequestedSchema,
+  ActorStartSchema: () => ActorStartSchema,
+  ActorSucceededSchema: () => ActorSucceededSchema,
+  ActorTurnCommitAppliedSchema: () => ActorTurnCommitAppliedSchema,
+  ActorTurnCommitPauseReadySchema: () => ActorTurnCommitPauseReadySchema,
+  ActorTurnCommitPauseRequestSchema: () => ActorTurnCommitPauseRequestSchema,
+  ActorTurnCommitRequestedSchema: () => ActorTurnCommitRequestedSchema,
+  ApiCauseSchema: () => ApiCauseSchema,
+  CheckpointPauseRequestSchema: () => CheckpointPauseRequestSchema,
+  ChildCauseSchema: () => ChildCauseSchema,
+  ContinuationCauseSchema: () => ContinuationCauseSchema,
+  EntrypointIdentitySchema: () => EntrypointIdentitySchema,
+  EntrypointReadySchema: () => EntrypointReadySchema,
+  EntrypointReleaseSchema: () => EntrypointReleaseSchema,
+  ManualCauseSchema: () => ManualCauseSchema,
+  MetadataUpdatedSchema: () => MetadataUpdatedSchema,
+  NoPayloadSchema: () => NoPayloadSchema,
+  ProgramProcessStartFailedSchema: () => ProgramProcessStartFailedSchema,
+  ProgramProcessStartedSchema: () => ProgramProcessStartedSchema,
+  ProgramQuiescedSchema: () => ProgramQuiescedSchema,
+  ProgramRunRequestSchema: () => ProgramRunRequestSchema,
+  ProgramSecretSchema: () => ProgramSecretSchema,
+  ProgramSecretsCompleteSchema: () => ProgramSecretsCompleteSchema,
+  ProgramStartReleaseSchema: () => ProgramStartReleaseSchema,
+  ProgramStartSchema: () => ProgramStartSchema,
+  ProgramSupervisorCommandSchema: () => ProgramSupervisorCommandSchema,
+  ResumeAckSchema: () => ResumeAckSchema,
+  ResumeAttachSchema: () => ResumeAttachSchema,
+  ResumeConsumedSchema: () => ResumeConsumedSchema,
+  ResumeDecisionSchema: () => ResumeDecisionSchema,
+  RunCauseSchema: () => RunCauseSchema,
+  RunEventSchema: () => RunEventSchema,
+  RunWaitRequestedSchema: () => RunWaitRequestedSchema,
+  ScheduleCauseSchema: () => ScheduleCauseSchema,
+  SecretEnvBindingSchema: () => SecretEnvBindingSchema,
+  SecretFileBindingSchema: () => SecretFileBindingSchema,
+  SessionCloseRequestedSchema: () => SessionCloseRequestedSchema,
+  SessionInputSendRequestedSchema: () => SessionInputSendRequestedSchema,
+  SessionOutputPageRequestedSchema: () => SessionOutputPageRequestedSchema,
+  SessionStatusRequestedSchema: () => SessionStatusRequestedSchema,
+  StructuredLogRequestedSchema: () => StructuredLogRequestedSchema,
+  TaskChildInvokeRequestedSchema: () => TaskChildInvokeRequestedSchema,
+  TaskEntrypointSchema: () => TaskEntrypointSchema,
+  TaskFailedSchema: () => TaskFailedSchema,
+  TaskOutcomeSchema: () => TaskOutcomeSchema,
+  TaskPayloadInvalidSchema: () => TaskPayloadInvalidSchema,
+  TaskStartSchema: () => TaskStartSchema,
+  TaskSucceededSchema: () => TaskSucceededSchema,
+  TokenCreateRequestedSchema: () => TokenCreateRequestedSchema,
+  WorkspaceAddressSchema: () => WorkspaceAddressSchema,
+  WorkspaceCreateRequestedSchema: () => WorkspaceCreateRequestedSchema,
+  WorkspaceDeleteRequestedSchema: () => WorkspaceDeleteRequestedSchema,
+  WorkspaceExecRequestedSchema: () => WorkspaceExecRequestedSchema,
+  WorkspaceRetrieveRequestedSchema: () => WorkspaceRetrieveRequestedSchema,
+  WorkspaceSecretPlacementSchema: () => WorkspaceSecretPlacementSchema,
+  file_program: () => file_program
 });
 var file_program = /* @__PURE__ */ fileDesc("Cg1wcm9ncmFtLnByb3RvEhBoZWxtci5wcm9ncmFtLnYwItcCCgxQcm9ncmFtU3RhcnQSHgoWZW50cnlwb2ludF9kZWNsYXJlZF9pZBgBIAEoCRIOCgZydW5faWQYAiABKAkSFgoOYXR0ZW1wdF9udW1iZXIYAyABKA0SKQoFY2F1c2UYBCABKAsyGi5oZWxtci5wcm9ncmFtLnYwLlJ1bkNhdXNlEhUKDWRlcGxveW1lbnRfaWQYBSABKAkSGgoSZGVwbG95bWVudF92ZXJzaW9uGAYgASgJEhQKDHdvcmtzcGFjZV9pZBgHIAEoCRIhChliYXNlX3dvcmtzcGFjZV92ZXJzaW9uX2lkGAggASgJEisKBHRhc2sYCSABKAsyGy5oZWxtci5wcm9ncmFtLnYwLlRhc2tTdGFydEgAEi0KBWFjdG9yGAogASgLMhwuaGVsbXIucHJvZ3JhbS52MC5BY3RvclN0YXJ0SABCDAoKZW50cnlwb2ludCJhCglUYXNrU3RhcnQSMQoKbm9fcGF5bG9hZBgBIAEoCzIbLmhlbG1yLnByb2dyYW0udjAuTm9QYXlsb2FkSAASFgoMcGF5bG9hZF9qc29uGAIgASgMSABCCQoHcGF5bG9hZCILCglOb1BheWxvYWQidgoKQWN0b3JTdGFydBISCgpzZXNzaW9uX2lkGAEgASgJEhAKA2tleRgCIAEoCUgAiAEBEhwKFHN0YXJ0X2lucHV0X3NlcXVlbmNlGAMgASgDEhwKFGlucHV0X2hpZ2hfd2F0ZXJtYXJrGAQgASgDQgYKBF9rZXkiyQIKCFJ1bkNhdXNlEikKA2FwaRgBIAEoCzIaLmhlbG1yLnByb2dyYW0udjAuQXBpQ2F1c2VIABIvCgZtYW51YWwYAiABKAsyHS5oZWxtci5wcm9ncmFtLnYwLk1hbnVhbENhdXNlSAASLQoFY2hpbGQYAyABKAsyHC5oZWxtci5wcm9ncmFtLnYwLkNoaWxkQ2F1c2VIABIzCghzY2hlZHVsZRgEIAEoCzIfLmhlbG1yLnByb2dyYW0udjAuU2NoZWR1bGVDYXVzZUgAEjgKC2FjdG9yX3N0YXJ0GAUgASgLMiEuaGVsbXIucHJvZ3JhbS52MC5BY3RvclN0YXJ0Q2F1c2VIABI7Cgxjb250aW51YXRpb24YBiABKAsyIy5oZWxtci5wcm9ncmFtLnYwLkNvbnRpbnVhdGlvbkNhdXNlSABCBgoEa2luZCIKCghBcGlDYXVzZSINCgtNYW51YWxDYXVzZSIjCgpDaGlsZENhdXNlEhUKDXBhcmVudF9ydW5faWQYASABKAkiogEKDVNjaGVkdWxlQ2F1c2USEwoLc2NoZWR1bGVfaWQYASABKAkSHAoUc2NoZWR1bGVkX2F0X3VuaXhfbXMYAiABKAMSKgodcHJldmlvdXNfc2NoZWR1bGVkX2F0X3VuaXhfbXMYAyABKANIAIgBARIQCgh0aW1lem9uZRgEIAEoCUIgCh5fcHJldmlvdXNfc2NoZWR1bGVkX2F0X3VuaXhfbXMiEQoPQWN0b3JTdGFydENhdXNlIhMKEUNvbnRpbnVhdGlvbkNhdXNlIrkCChFQcm9ncmFtUnVuUmVxdWVzdBIOCgZydW5faWQYASABKAkSFgoOYXR0ZW1wdF9udW1iZXIYAiABKA0SFAoMcnVuX2xlYXNlX2lkGAMgASgJEhsKE3Byb2dyYW1fc3RhcnRfZnJhbWUYBCABKAwSFAoMc2VjcmV0X2NvdW50GAUgASgNEh4KFnN0YXJ0X2RlYWRsaW5lX3VuaXhfbXMYBiABKAMSTAoNcHJvdGVjdGVkX2VudhgHIAMoCzI1LmhlbG1yLnByb2dyYW0udjAuUHJvZ3JhbVJ1blJlcXVlc3QuUHJvdGVjdGVkRW52RW50cnkSEAoIcHJveHlfY2EYCCABKAwaMwoRUHJvdGVjdGVkRW52RW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASJKCg1Qcm9ncmFtU2VjcmV0Eg0KA2VudhgBIAEoCUgAEg4KBGZpbGUYAiABKAlIABINCgV2YWx1ZRgDIAEoDEILCglwbGFjZW1lbnQibAoWUHJvZ3JhbVNlY3JldHNDb21wbGV0ZRIOCgZydW5faWQYASABKAkSFgoOYXR0ZW1wdF9udW1iZXIYAiABKA0SFAoMcnVuX2xlYXNlX2lkGAMgASgJEhQKDHNlY3JldF9jb3VudBgEIAEoDSKqAgoYUHJvZ3JhbVN1cGVydmlzb3JDb21tYW5kEjoKD3NlY3JldF9kZWxpdmVyeRgBIAEoCzIfLmhlbG1yLnByb2dyYW0udjAuUHJvZ3JhbVNlY3JldEgAEkQKEHNlY3JldHNfY29tcGxldGUYAiABKAsyKC5oZWxtci5wcm9ncmFtLnYwLlByb2dyYW1TZWNyZXRzQ29tcGxldGVIABI+Cg1zdGFydF9yZWxlYXNlGAMgASgLMiUuaGVsbXIucHJvZ3JhbS52MC5Qcm9ncmFtU3RhcnRSZWxlYXNlSAASQQoSZW50cnlwb2ludF9yZWxlYXNlGAQgASgLMiMuaGVsbXIucHJvZ3JhbS52MC5FbnRyeXBvaW50UmVsZWFzZUgAQgkKB2NvbW1hbmQiVQoVUHJvZ3JhbVByb2Nlc3NTdGFydGVkEg4KBnJ1bl9pZBgBIAEoCRIWCg5hdHRlbXB0X251bWJlchgCIAEoDRIUCgxydW5fbGVhc2VfaWQYAyABKAkifAoZUHJvZ3JhbVByb2Nlc3NTdGFydEZhaWxlZBIOCgZydW5faWQYASABKAkSFgoOYXR0ZW1wdF9udW1iZXIYAiABKA0SFAoMcnVuX2xlYXNlX2lkGAMgASgJEg0KBXBoYXNlGAQgASgJEhIKCmRpYWdub3N0aWMYBSABKAkiUwoTUHJvZ3JhbVN0YXJ0UmVsZWFzZRIOCgZydW5faWQYASABKAkSFgoOYXR0ZW1wdF9udW1iZXIYAiABKA0SFAoMcnVuX2xlYXNlX2lkGAMgASgJIpcBChJFbnRyeXBvaW50SWRlbnRpdHkSEwoLZGVjbGFyZWRfaWQYASABKAkSMAoEdGFzaxgCIAEoCzIgLmhlbG1yLnByb2dyYW0udjAuVGFza0VudHJ5cG9pbnRIABIyCgVhY3RvchgDIAEoCzIhLmhlbG1yLnByb2dyYW0udjAuQWN0b3JFbnRyeXBvaW50SABCBgoEa2luZCIQCg5UYXNrRW50cnlwb2ludCIRCg9BY3RvckVudHJ5cG9pbnQicwoPRW50cnlwb2ludFJlYWR5Eg4KBnJ1bl9pZBgBIAEoCRIWCg5hdHRlbXB0X251bWJlchgCIAEoDRI4CgplbnRyeXBvaW50GAMgASgLMiQuaGVsbXIucHJvZ3JhbS52MC5FbnRyeXBvaW50SWRlbnRpdHkidQoRRW50cnlwb2ludFJlbGVhc2USDgoGcnVuX2lkGAEgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAIgASgNEjgKCmVudHJ5cG9pbnQYAyABKAsyJC5oZWxtci5wcm9ncmFtLnYwLkVudHJ5cG9pbnRJZGVudGl0eSKfDgoIUnVuRXZlbnQSFgoMc3Rkb3V0X2NodW5rGAEgASgMSAASFgoMc3RkZXJyX2NodW5rGAIgASgMSAASQAoScnVuX3dhaXRfcmVxdWVzdGVkGAUgASgLMiIuaGVsbXIucHJvZ3JhbS52MC5SdW5XYWl0UmVxdWVzdGVkSAASPQoQbWV0YWRhdGFfdXBkYXRlZBgHIAEoCzIhLmhlbG1yLnByb2dyYW0udjAuTWV0YWRhdGFVcGRhdGVkSAASSAoWdG9rZW5fY3JlYXRlX3JlcXVlc3RlZBgIIAEoCzImLmhlbG1yLnByb2dyYW0udjAuVG9rZW5DcmVhdGVSZXF1ZXN0ZWRIABI7Cg9yZXN1bWVfY29uc3VtZWQYBiABKAsyIC5oZWxtci5wcm9ncmFtLnYwLlJlc3VtZUNvbnN1bWVkSAASSgoXcHJvZ3JhbV9wcm9jZXNzX3N0YXJ0ZWQYCyABKAsyJy5oZWxtci5wcm9ncmFtLnYwLlByb2dyYW1Qcm9jZXNzU3RhcnRlZEgAEj0KEGVudHJ5cG9pbnRfcmVhZHkYDCABKAsyIS5oZWxtci5wcm9ncmFtLnYwLkVudHJ5cG9pbnRSZWFkeUgAEjUKDHRhc2tfb3V0Y29tZRgNIAEoCzIdLmhlbG1yLnByb2dyYW0udjAuVGFza091dGNvbWVIABI9ChBwcm9ncmFtX3F1aWVzY2VkGA4gASgLMiEuaGVsbXIucHJvZ3JhbS52MC5Qcm9ncmFtUXVpZXNjZWRIABI3Cg1hY3Rvcl9vdXRjb21lGA8gASgLMh4uaGVsbXIucHJvZ3JhbS52MC5BY3Rvck91dGNvbWVIABJRChthY3Rvcl90dXJuX2NvbW1pdF9yZXF1ZXN0ZWQYECABKAsyKi5oZWxtci5wcm9ncmFtLnYwLkFjdG9yVHVybkNvbW1pdFJlcXVlc3RlZEgAElUKHWFjdG9yX291dHB1dF9hcHBlbmRfcmVxdWVzdGVkGBEgASgLMiwuaGVsbXIucHJvZ3JhbS52MC5BY3Rvck91dHB1dEFwcGVuZFJlcXVlc3RlZEgAElMKHHNlc3Npb25faW5wdXRfc2VuZF9yZXF1ZXN0ZWQYEiABKAsyKy5oZWxtci5wcm9ncmFtLnYwLlNlc3Npb25JbnB1dFNlbmRSZXF1ZXN0ZWRIABJMChhzdHJ1Y3R1cmVkX2xvZ19yZXF1ZXN0ZWQYEyABKAsyKC5oZWxtci5wcm9ncmFtLnYwLlN0cnVjdHVyZWRMb2dSZXF1ZXN0ZWRIABJRCht0YXNrX2NoaWxkX2ludm9rZV9yZXF1ZXN0ZWQYFCABKAsyKi5oZWxtci5wcm9ncmFtLnYwLlRhc2tDaGlsZEludm9rZVJlcXVlc3RlZEgAEkYKFWFjdG9yX3N0YXJ0X3JlcXVlc3RlZBgVIAEoCzIlLmhlbG1yLnByb2dyYW0udjAuQWN0b3JTdGFydFJlcXVlc3RlZEgAEkwKGHNlc3Npb25fc3RhdHVzX3JlcXVlc3RlZBgWIAEoCzIoLmhlbG1yLnByb2dyYW0udjAuU2Vzc2lvblN0YXR1c1JlcXVlc3RlZEgAEkoKF3Nlc3Npb25fY2xvc2VfcmVxdWVzdGVkGBcgASgLMicuaGVsbXIucHJvZ3JhbS52MC5TZXNzaW9uQ2xvc2VSZXF1ZXN0ZWRIABJVCh1zZXNzaW9uX291dHB1dF9wYWdlX3JlcXVlc3RlZBgYIAEoCzIsLmhlbG1yLnByb2dyYW0udjAuU2Vzc2lvbk91dHB1dFBhZ2VSZXF1ZXN0ZWRIABJQChp3b3Jrc3BhY2VfY3JlYXRlX3JlcXVlc3RlZBgZIAEoCzIqLmhlbG1yLnByb2dyYW0udjAuV29ya3NwYWNlQ3JlYXRlUmVxdWVzdGVkSAASVAocd29ya3NwYWNlX3JldHJpZXZlX3JlcXVlc3RlZBgaIAEoCzIsLmhlbG1yLnByb2dyYW0udjAuV29ya3NwYWNlUmV0cmlldmVSZXF1ZXN0ZWRIABJMChh3b3Jrc3BhY2VfZXhlY19yZXF1ZXN0ZWQYHiABKAsyKC5oZWxtci5wcm9ncmFtLnYwLldvcmtzcGFjZUV4ZWNSZXF1ZXN0ZWRIABJQChp3b3Jrc3BhY2VfZGVsZXRlX3JlcXVlc3RlZBgfIAEoCzIqLmhlbG1yLnByb2dyYW0udjAuV29ya3NwYWNlRGVsZXRlUmVxdWVzdGVkSAASUwoccHJvZ3JhbV9wcm9jZXNzX3N0YXJ0X2ZhaWxlZBggIAEoCzIrLmhlbG1yLnByb2dyYW0udjAuUHJvZ3JhbVByb2Nlc3NTdGFydEZhaWxlZEgAQgcKBWV2ZW50SgQIAxAESgQICRAKSgQIChALSgQIGxAcSgQIHBAdSgQIHRAeIr8BCgtUYXNrT3V0Y29tZRI0CglzdWNjZWVkZWQYASABKAsyHy5oZWxtci5wcm9ncmFtLnYwLlRhc2tTdWNjZWVkZWRIABIuCgZmYWlsZWQYAiABKAsyHC5oZWxtci5wcm9ncmFtLnYwLlRhc2tGYWlsZWRIABI/Cg9wYXlsb2FkX2ludmFsaWQYAyABKAsyJC5oZWxtci5wcm9ncmFtLnYwLlRhc2tQYXlsb2FkSW52YWxpZEgAQgkKB291dGNvbWUiJAoNVGFza1N1Y2NlZWRlZBITCgtvdXRwdXRfanNvbhgBIAEoCSJJCgpUYXNrRmFpbGVkEg8KB21lc3NhZ2UYASABKAkSGQoMZGV0YWlsc19qc29uGAIgASgJSACIAQFCDwoNX2RldGFpbHNfanNvbiJRChJUYXNrUGF5bG9hZEludmFsaWQSDwoHbWVzc2FnZRgBIAEoCRIZCgxkZXRhaWxzX2pzb24YAiABKAlIAIgBAUIPCg1fZGV0YWlsc19qc29uIsMBCgxBY3Rvck91dGNvbWUSJAoXdGVybWluYWxfaW5wdXRfc2VxdWVuY2UYASABKANIAYgBARI1CglzdWNjZWVkZWQYAiABKAsyIC5oZWxtci5wcm9ncmFtLnYwLkFjdG9yU3VjY2VlZGVkSAASLwoGZmFpbGVkGAMgASgLMh0uaGVsbXIucHJvZ3JhbS52MC5BY3RvckZhaWxlZEgAQgkKB291dGNvbWVCGgoYX3Rlcm1pbmFsX2lucHV0X3NlcXVlbmNlIhAKDkFjdG9yU3VjY2VlZGVkIkoKC0FjdG9yRmFpbGVkEg8KB21lc3NhZ2UYASABKAkSGQoMZGV0YWlsc19qc29uGAIgASgJSACIAQFCDwoNX2RldGFpbHNfanNvbiJRChhBY3RvclR1cm5Db21taXRSZXF1ZXN0ZWQSFgoOY29ycmVsYXRpb25faWQYASABKAkSHQoVdGFyZ2V0X2lucHV0X3NlcXVlbmNlGAIgASgDIqECChtBY3RvclR1cm5Db21taXRQYXVzZVJlcXVlc3QSFgoOY29ycmVsYXRpb25faWQYASABKAkSHQoVdGFyZ2V0X2lucHV0X3NlcXVlbmNlGAIgASgDEg4KBnJ1bl9pZBgDIAEoCRIWCg5hdHRlbXB0X251bWJlchgEIAEoDRIUCgxydW5fbGVhc2VfaWQYBSABKAkSHAoUZXhwZWN0ZWRfdHJlZV9kaWdlc3QYBiABKAkSIAoYZXhwZWN0ZWRfdHJlZV9zaXplX2J5dGVzGAcgASgDEiEKGWV4cGVjdGVkX3RyZWVfZW50cnlfY291bnQYCCABKA0SKgoiZXhwZWN0ZWRfYmFzZV93b3Jrc3BhY2VfdmVyc2lvbl9pZBgJIAEoCSLzAQoZQWN0b3JUdXJuQ29tbWl0UGF1c2VSZWFkeRIWCg5jb3JyZWxhdGlvbl9pZBgBIAEoCRIdChV0YXJnZXRfaW5wdXRfc2VxdWVuY2UYAiABKAMSDgoGcnVuX2lkGAMgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAQgASgNEhQKDHJ1bl9sZWFzZV9pZBgFIAEoCRITCgt0cmVlX2RpZ2VzdBgGIAEoCRIXCg90cmVlX3NpemVfYnl0ZXMYByABKAMSGAoQdHJlZV9lbnRyeV9jb3VudBgIIAEoDRIZChF3b3Jrc3BhY2VfY2hhbmdlZBgJIAEoCCLkAQoWQWN0b3JUdXJuQ29tbWl0QXBwbGllZBIWCg5jb3JyZWxhdGlvbl9pZBgBIAEoCRIdChV0YXJnZXRfaW5wdXRfc2VxdWVuY2UYAiABKAMSDgoGcnVuX2lkGAMgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAQgASgNEhQKDHJ1bl9sZWFzZV9pZBgFIAEoCRIqCiJwcmV2aW91c19iYXNlX3dvcmtzcGFjZV92ZXJzaW9uX2lkGAYgASgJEikKIWFwcGxpZWRfYmFzZV93b3Jrc3BhY2VfdmVyc2lvbl9pZBgHIAEoCSKPAQoaQWN0b3JPdXRwdXRBcHBlbmRSZXF1ZXN0ZWQSFgoOY29ycmVsYXRpb25faWQYASABKAkSEQoJZGF0YV9qc29uGAIgASgJEhQKDGNvbnRlbnRfdHlwZRgDIAEoCRIcCg9pZGVtcG90ZW5jeV9rZXkYBCABKAlIAIgBAUISChBfaWRlbXBvdGVuY3lfa2V5IowBChlTZXNzaW9uSW5wdXRTZW5kUmVxdWVzdGVkEhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEhIKCnNlc3Npb25faWQYAiABKAkSEQoJZGF0YV9qc29uGAMgASgJEhwKD2lkZW1wb3RlbmN5X2tleRgEIAEoCUgAiAEBQhIKEF9pZGVtcG90ZW5jeV9rZXki5gEKE0FjdG9yU3RhcnRSZXF1ZXN0ZWQSFgoOY29ycmVsYXRpb25faWQYASABKAkSEwoLZGVjbGFyZWRfaWQYAiABKAkSFAoMd29ya3NwYWNlX2lkGAMgASgJEhAKA2tleRgFIAEoCUgAiAEBEhcKCmlucHV0X2pzb24YBiABKAlIAYgBARIcCg9pZGVtcG90ZW5jeV9rZXkYByABKAlIAogBARIYChBydW5fb3B0aW9uc19qc29uGAggASgJQgYKBF9rZXlCDQoLX2lucHV0X2pzb25CEgoQX2lkZW1wb3RlbmN5X2tleSJEChZTZXNzaW9uU3RhdHVzUmVxdWVzdGVkEhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEhIKCnNlc3Npb25faWQYAiABKAkidQoVU2Vzc2lvbkNsb3NlUmVxdWVzdGVkEhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEhIKCnNlc3Npb25faWQYAiABKAkSHAoPaWRlbXBvdGVuY3lfa2V5GAMgASgJSACIAQFCEgoQX2lkZW1wb3RlbmN5X2tleSJ1ChpTZXNzaW9uT3V0cHV0UGFnZVJlcXVlc3RlZBIWCg5jb3JyZWxhdGlvbl9pZBgBIAEoCRISCgpzZXNzaW9uX2lkGAIgASgJEhIKBWFmdGVyGAMgASgDSACIAQESDQoFbGltaXQYBCABKA1CCAoGX2FmdGVyIigKEFdvcmtzcGFjZUFkZHJlc3MSFAoMd29ya3NwYWNlX2lkGAEgASgJIkcKEFNlY3JldEVudkJpbmRpbmcSDAoEbmFtZRgBIAEoCRIMCgRtb2RlGAIgASgJEhcKD2FsbG93ZWRfb3JpZ2lucxgDIAMoCSIhChFTZWNyZXRGaWxlQmluZGluZxIMCgRwYXRoGAEgASgJIp8BChhXb3Jrc3BhY2VTZWNyZXRQbGFjZW1lbnQSDgoGc2VjcmV0GAEgASgJEjEKA2VudhgCIAEoCzIiLmhlbG1yLnByb2dyYW0udjAuU2VjcmV0RW52QmluZGluZ0gAEjMKBGZpbGUYAyABKAsyIy5oZWxtci5wcm9ncmFtLnYwLlNlY3JldEZpbGVCaW5kaW5nSABCCwoJcGxhY2VtZW50ItABChhXb3Jrc3BhY2VDcmVhdGVSZXF1ZXN0ZWQSFgoOY29ycmVsYXRpb25faWQYASABKAkSEwoLZGVjbGFyZWRfaWQYAiABKAkSEAoDa2V5GAMgASgJSACIAQESOwoHc2VjcmV0cxgEIAMoCzIqLmhlbG1yLnByb2dyYW0udjAuV29ya3NwYWNlU2VjcmV0UGxhY2VtZW50EhwKD2lkZW1wb3RlbmN5X2tleRgFIAEoCUgBiAEBQgYKBF9rZXlCEgoQX2lkZW1wb3RlbmN5X2tleSJrChpXb3Jrc3BhY2VSZXRyaWV2ZVJlcXVlc3RlZBIWCg5jb3JyZWxhdGlvbl9pZBgBIAEoCRI1Cgl3b3Jrc3BhY2UYAiABKAsyIi5oZWxtci5wcm9ncmFtLnYwLldvcmtzcGFjZUFkZHJlc3MizgIKFldvcmtzcGFjZUV4ZWNSZXF1ZXN0ZWQSFgoOY29ycmVsYXRpb25faWQYASABKAkSNQoJd29ya3NwYWNlGAIgASgLMiIuaGVsbXIucHJvZ3JhbS52MC5Xb3Jrc3BhY2VBZGRyZXNzEg8KB2NvbW1hbmQYAyADKAkSEAoDY3dkGAQgASgJSACIAQESPgoDZW52GAUgAygLMjEuaGVsbXIucHJvZ3JhbS52MC5Xb3Jrc3BhY2VFeGVjUmVxdWVzdGVkLkVudkVudHJ5Eg0KBXN0ZGluGAYgASgMEhcKCnRpbWVvdXRfbXMYByABKARIAYgBARIXCg9pZGVtcG90ZW5jeV9rZXkYCCABKAkaKgoIRW52RW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4AUIGCgRfY3dkQg0KC190aW1lb3V0X21zIpsBChhXb3Jrc3BhY2VEZWxldGVSZXF1ZXN0ZWQSFgoOY29ycmVsYXRpb25faWQYASABKAkSNQoJd29ya3NwYWNlGAIgASgLMiIuaGVsbXIucHJvZ3JhbS52MC5Xb3Jrc3BhY2VBZGRyZXNzEhwKD2lkZW1wb3RlbmN5X2tleRgDIAEoCUgAiAEBQhIKEF9pZGVtcG90ZW5jeV9rZXkiTwoPUHJvZ3JhbVF1aWVzY2VkEg4KBnJ1bl9pZBgBIAEoCRIWCg5hdHRlbXB0X251bWJlchgCIAEoDRIUCgxydW5fbGVhc2VfaWQYAyABKAki5gIKEFJ1bldhaXRSZXF1ZXN0ZWQSFgoOY29ycmVsYXRpb25faWQYASABKAkSDAoEa2luZBgCIAEoCRITCgtwYXJhbXNfanNvbhgDIAEoCRIaCg1tZXRhZGF0YV9qc29uGAQgASgJSACIAQESFwoKdGltZW91dF9tcxgFIAEoBEgBiAEBEgwKBHRhZ3MYBiADKAkSEwoLcnVuX3dhaXRfaWQYByABKAkSGAoQcmVzdW1lX2F0dGFjaF9pZBgIIAEoCRIcCg9pZGxlX3RpbWVvdXRfbXMYCSABKARIAogBARItCiBhY3Rvcl9zcGVjdWxhdGl2ZV9pbnB1dF9zZXF1ZW5jZRgKIAEoA0gDiAEBQhAKDl9tZXRhZGF0YV9qc29uQg0KC190aW1lb3V0X21zQhIKEF9pZGxlX3RpbWVvdXRfbXNCIwohX2FjdG9yX3NwZWN1bGF0aXZlX2lucHV0X3NlcXVlbmNlIsQBChRUb2tlbkNyZWF0ZVJlcXVlc3RlZBIXCgp0aW1lb3V0X21zGAEgASgESACIAQESFgoOY29ycmVsYXRpb25faWQYAiABKAkSHAoPaWRlbXBvdGVuY3lfa2V5GAMgASgJSAGIAQESDAoEdGFncxgEIAMoCRIaCg1tZXRhZGF0YV9qc29uGAUgASgJSAKIAQFCDQoLX3RpbWVvdXRfbXNCEgoQX2lkZW1wb3RlbmN5X2tleUIQCg5fbWV0YWRhdGFfanNvbiL/AgoYVGFza0NoaWxkSW52b2tlUmVxdWVzdGVkEhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEhMKC2RlY2xhcmVkX2lkGAIgASgJEg4KBm1ldGhvZBgDIAEoCRIXCg9wYXlsb2FkX3ByZXNlbnQYBCABKAgSGQoMcGF5bG9hZF9qc29uGAUgASgJSACIAQESFgoOd29ya3NwYWNlX2pzb24YBiABKAkSFAoMb3B0aW9uc19qc29uGAcgASgJEhwKD2lkZW1wb3RlbmN5X2tleRgIIAEoCUgBiAEBEi0KIGFjdG9yX3NwZWN1bGF0aXZlX2lucHV0X3NlcXVlbmNlGAkgASgDSAKIAQESEwoLcnVuX3dhaXRfaWQYCiABKAkSGAoQcmVzdW1lX2F0dGFjaF9pZBgLIAEoCUIPCg1fcGF5bG9hZF9qc29uQhIKEF9pZGVtcG90ZW5jeV9rZXlCIwohX2FjdG9yX3NwZWN1bGF0aXZlX2lucHV0X3NlcXVlbmNlIvMBChZDaGVja3BvaW50UGF1c2VSZXF1ZXN0EhMKC3J1bl93YWl0X2lkGAEgASgJEhUKDWNoZWNrcG9pbnRfaWQYAiABKAkSGQoRY2FwdHVyZV93b3Jrc3BhY2UYAyABKAgSDgoGcnVuX2lkGAQgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAUgASgNEhQKDHJ1bl9sZWFzZV9pZBgGIAEoCRIYChByZXN1bWVfYXR0YWNoX2lkGAcgASgJEiIKGmNoZWNrcG9pbnRfcmVxdWVzdF92ZXJzaW9uGAggASgDEhYKDmNvcnJlbGF0aW9uX2lkGAkgASgJIsoBCgxSZXN1bWVBdHRhY2gSFQoNY2hlY2twb2ludF9pZBgBIAEoCRITCgtydW5fd2FpdF9pZBgCIAEoCRIUCgxydW5fbGVhc2VfaWQYAyABKAkSDgoGcnVuX2lkGAQgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAUgASgNEhgKEHJlc3VtZV9hdHRhY2hfaWQYBiABKAkSHgoWcmVzdW1lX3JlcXVlc3RfdmVyc2lvbhgHIAEoAxIWCg5jb3JyZWxhdGlvbl9pZBgIIAEoCSL2AQoOUmVzdW1lRGVjaXNpb24SEwoLcnVuX3dhaXRfaWQYASABKAkSDAoEa2luZBgCIAEoCRIRCglkYXRhX2pzb24YAyABKAkSHAoUcmVxdWlyZV9jb25zdW1lZF9hY2sYBCABKAgSFQoNY2hlY2twb2ludF9pZBgFIAEoCRIYChByZXN1bWVfYXR0YWNoX2lkGAYgASgJEh4KFnJlc3VtZV9yZXF1ZXN0X3ZlcnNpb24YByABKAMSFAoMcnVuX2xlYXNlX2lkGAggASgJEhYKDmNvcnJlbGF0aW9uX2lkGAkgASgJEhEKCW5vX3Jlc3VsdBgKIAEoCCKfAQoJUmVzdW1lQWNrEhMKC3J1bl93YWl0X2lkGAEgASgJEhUKDWNoZWNrcG9pbnRfaWQYAiABKAkSGAoQcmVzdW1lX2F0dGFjaF9pZBgDIAEoCRIeChZyZXN1bWVfcmVxdWVzdF92ZXJzaW9uGAQgASgDEhQKDHJ1bl9sZWFzZV9pZBgFIAEoCRIWCg5jb3JyZWxhdGlvbl9pZBgGIAEoCSKkAQoOUmVzdW1lQ29uc3VtZWQSEwoLcnVuX3dhaXRfaWQYASABKAkSFQoNY2hlY2twb2ludF9pZBgCIAEoCRIYChByZXN1bWVfYXR0YWNoX2lkGAMgASgJEh4KFnJlc3VtZV9yZXF1ZXN0X3ZlcnNpb24YBCABKAMSFAoMcnVuX2xlYXNlX2lkGAUgASgJEhYKDmNvcnJlbGF0aW9uX2lkGAYgASgJIsYBCg9NZXRhZGF0YVVwZGF0ZWQSEQoJb3BlcmF0aW9uGAEgASgJEhAKA2tleRgCIAEoCUgAiAEBEhcKCnZhbHVlX2pzb24YAyABKAlIAYgBARIXCgpwYXRjaF9qc29uGAQgASgJSAKIAQESEwoGYW1vdW50GAUgASgBSAOIAQESFgoOY29ycmVsYXRpb25faWQYBiABKAlCBgoEX2tleUINCgtfdmFsdWVfanNvbkINCgtfcGF0Y2hfanNvbkIJCgdfYW1vdW50ImkKFlN0cnVjdHVyZWRMb2dSZXF1ZXN0ZWQSFgoOY29ycmVsYXRpb25faWQYASABKAkSDQoFbGV2ZWwYAiABKAkSDwoHbWVzc2FnZRgDIAEoCRIXCg9hdHRyaWJ1dGVzX2pzb24YBCABKAlCQlpAZ2l0aHViLmNvbS9oZWxtcmRvdGRldi9oZWxtci9pbnRlcm5hbC9wcm90by9wcm9ncmFtL3YwO3Byb2dyYW12MGIGcHJvdG8z");
 var ProgramStartSchema = /* @__PURE__ */ messageDesc(file_program, 0);
@@ -3262,19 +3440,22 @@ var ResumeAckSchema = /* @__PURE__ */ messageDesc(file_program, 56);
 var ResumeConsumedSchema = /* @__PURE__ */ messageDesc(file_program, 57);
 var MetadataUpdatedSchema = /* @__PURE__ */ messageDesc(file_program, 58);
 var StructuredLogRequestedSchema = /* @__PURE__ */ messageDesc(file_program, 59);
+
 // sdk/typescript/src/internal/utf8.ts
-var encoder = new TextEncoder;
-var encode = TextEncoder.prototype.encode.call.bind(TextEncoder.prototype.encode);
-var charCodeAt = String.prototype.charCodeAt.call.bind(String.prototype.charCodeAt);
+var encoder = new TextEncoder();
+var encode = TextEncoder.prototype.encode.call.bind(
+  TextEncoder.prototype.encode
+);
+var charCodeAt = String.prototype.charCodeAt.call.bind(
+  String.prototype.charCodeAt
+);
 function hasOnlyUnicodeScalarValues(value) {
-  for (let index = 0;index < value.length; index++) {
+  for (let index = 0; index < value.length; index++) {
     const unit = charCodeAt(value, index);
     if (unit >= 55296 && unit <= 56319) {
-      if (index + 1 === value.length)
-        return false;
+      if (index + 1 === value.length) return false;
       const next = charCodeAt(value, index + 1);
-      if (next < 56320 || next > 57343)
-        return false;
+      if (next < 56320 || next > 57343) return false;
       index++;
     } else if (unit >= 56320 && unit <= 57343) {
       return false;
@@ -3289,21 +3470,34 @@ function assertUnicodeString(value) {
 }
 
 // sdk/typescript/src/config.ts
-var encoder2 = new TextEncoder;
-var encode2 = TextEncoder.prototype.encode.call.bind(TextEncoder.prototype.encode);
 var arrayPrototype = Array.prototype;
 var objectPrototype = Object.prototype;
-var startsWith = String.prototype.startsWith.call.bind(String.prototype.startsWith);
-var endsWith = String.prototype.endsWith.call.bind(String.prototype.endsWith);
-var includes = String.prototype.includes.call.bind(String.prototype.includes);
-var split = String.prototype.split.call.bind(String.prototype.split);
-var slice = String.prototype.slice.call.bind(String.prototype.slice);
-var charCodeAt2 = String.prototype.charCodeAt.call.bind(String.prototype.charCodeAt);
-var regexpTest = RegExp.prototype.test.call.bind(RegExp.prototype.test);
+var hasOwn = Object.hasOwn;
+var startsWith = String.prototype.startsWith.call.bind(
+  String.prototype.startsWith
+);
+var endsWith = String.prototype.endsWith.call.bind(
+  String.prototype.endsWith
+);
+var includes = String.prototype.includes.call.bind(
+  String.prototype.includes
+);
+var split = String.prototype.split.call.bind(
+  String.prototype.split
+);
+var slice = String.prototype.slice.call.bind(
+  String.prototype.slice
+);
+var charCodeAt2 = String.prototype.charCodeAt.call.bind(
+  String.prototype.charCodeAt
+);
+var regexpTest = RegExp.prototype.test.call.bind(
+  RegExp.prototype.test
+);
+
 // sdk/typescript/src/schema/payload.ts
-var payloadSchemaValidationErrorBrand = Symbol.for("helmr.sdk.PayloadSchemaValidationError");
 function assertPayloadSchema(value, label = "payload") {
-  if (value === undefined) {
+  if (value === void 0) {
     return;
   }
   assertStandardSchema(value, label);
@@ -3325,14 +3519,14 @@ function assertStandardSchema(value, label = "schema") {
 // sdk/typescript/src/schema/task.ts
 var TASK_ID_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$";
 var TASK_ID_MAX_LENGTH = 128;
-class TaskIdError extends Error {
+var TaskIdError = class extends Error {
   name = "TaskIdError";
   value;
   constructor(value) {
     super(`task id must match ${TASK_ID_PATTERN}: ${JSON.stringify(value)}`);
     this.value = value;
   }
-}
+};
 function validateTaskId(value) {
   if (!isValidTaskId(value)) {
     throw new TaskIdError(value);
@@ -3346,7 +3540,7 @@ function isValidTaskId(value) {
   if (!isAsciiAlnum(first)) {
     return false;
   }
-  for (let index = 1;index < value.length; index += 1) {
+  for (let index = 1; index < value.length; index += 1) {
     const code = value.charCodeAt(index);
     if (!(isAsciiAlnum(code) || code === 46 || code === 95 || code === 45)) {
       return false;
@@ -3359,10 +3553,10 @@ function isAsciiAlnum(code) {
 }
 
 // sdk/typescript/src/internal/runtime.ts
-var runtimeOperationsSymbol = Symbol.for("helmr.sdk.v0.runtime_operations");
+var runtimeOperationsSymbol = /* @__PURE__ */ Symbol.for("helmr.sdk.v0.runtime_operations");
 function installRuntimeOperations(operations) {
   const target = globalThis;
-  if (target[runtimeOperationsSymbol] !== undefined) {
+  if (target[runtimeOperationsSymbol] !== void 0) {
     throw new Error("Helmr runtime operations are already installed");
   }
   const installed = Object.freeze(operations);
@@ -3375,8 +3569,10 @@ function installRuntimeOperations(operations) {
 }
 function currentRuntimeOperations() {
   const operations = globalThis[runtimeOperationsSymbol];
-  if (operations === undefined) {
-    throw new Error("runtime operation is unavailable without the Helmr managed runtime");
+  if (operations === void 0) {
+    throw new Error(
+      "runtime operation is unavailable without the Helmr managed runtime"
+    );
   }
   return operations;
 }
@@ -3397,19 +3593,32 @@ function createRuntimeSessionRef(id) {
     id: sessionID,
     input: Object.freeze({
       send(input, request, options) {
-        return currentRuntimeOperations().actorInputSend(sessionID, input, request, options?.signal);
+        return currentRuntimeOperations().actorInputSend(
+          sessionID,
+          input,
+          request,
+          options?.signal
+        );
       }
     }),
     output: Object.freeze({
       list(query, options) {
-        return currentRuntimeOperations().sessionOutputPage(sessionID, query, options?.signal);
+        return currentRuntimeOperations().sessionOutputPage(
+          sessionID,
+          query,
+          options?.signal
+        );
       }
     }),
     retrieve(options = {}) {
       return currentRuntimeOperations().sessionRetrieve(sessionID, options.signal);
     },
     close(request, options) {
-      return currentRuntimeOperations().sessionClose(sessionID, request, options?.signal);
+      return currentRuntimeOperations().sessionClose(
+        sessionID,
+        request,
+        options?.signal
+      );
     }
   });
 }
@@ -3427,14 +3636,12 @@ function createRunHandle(id) {
 }
 
 // sdk/typescript/src/definitions.ts
-var privateDefinitionBrand = Symbol.for("helmr.sdk.v0.definition");
-var privateQueueBrand = Symbol.for("helmr.sdk.v0.queue");
+var privateDefinitionBrand = /* @__PURE__ */ Symbol.for("helmr.sdk.v0.definition");
 function inspectDefinition(value) {
   if (typeof value !== "object" && typeof value !== "function" || value === null) {
-    return;
+    return void 0;
   }
-  if (!Object.hasOwn(value, privateDefinitionBrand))
-    return;
+  if (!Object.hasOwn(value, privateDefinitionBrand)) return void 0;
   const definition = value[privateDefinitionBrand];
   if (!isInternalDefinition(definition)) {
     throw new Error("invalid private definition record");
@@ -3442,11 +3649,9 @@ function inspectDefinition(value) {
   return definition;
 }
 function isInternalDefinition(value) {
-  if (typeof value !== "object" || value === null)
-    return false;
+  if (typeof value !== "object" || value === null) return false;
   const definition = value;
-  if (typeof definition.id !== "string")
-    return false;
+  if (typeof definition.id !== "string") return false;
   validateTaskId(definition.id);
   switch (definition.kind) {
     case "task":
@@ -3454,7 +3659,10 @@ function isInternalDefinition(value) {
         return false;
       }
       if (definition.hasPayload) {
-        assertPayloadSchema(definition.payloadSchema, `task ${JSON.stringify(definition.id)} payload`);
+        assertPayloadSchema(
+          definition.payloadSchema,
+          `task ${JSON.stringify(definition.id)} payload`
+        );
       } else if (Object.hasOwn(definition, "payloadSchema")) {
         return false;
       }
@@ -3465,35 +3673,35 @@ function isInternalDefinition(value) {
       return false;
   }
 }
+
 // sdk/typescript/src/image.ts
-var imageBrand = Symbol.for("helmr.sdk.v0.image");
-var sourceFileBrand = Symbol.for("helmr.sdk.v0.source-file");
-var sourceDirectoryBrand = Symbol.for("helmr.sdk.v0.source-directory");
-class SourceFileValue {
+var sourceFileBrand = /* @__PURE__ */ Symbol.for("helmr.sdk.v0.source-file");
+var sourceDirectoryBrand = /* @__PURE__ */ Symbol.for("helmr.sdk.v0.source-directory");
+var SourceFileValue = class {
   path;
-  constructor(path) {
-    this.path = path;
+  constructor(path2) {
+    this.path = path2;
     Object.defineProperty(this, sourceFileBrand, { value: true });
     Object.freeze(this);
   }
-}
-
-class SourceDirectoryValue {
+};
+var SourceDirectoryValue = class {
   path;
-  constructor(path) {
-    this.path = path;
+  constructor(path2) {
+    this.path = path2;
     Object.defineProperty(this, sourceDirectoryBrand, { value: true });
     Object.freeze(this);
   }
-}
+};
 var source = Object.freeze({
-  file(path) {
-    return new SourceFileValue(path);
+  file(path2) {
+    return new SourceFileValue(path2);
   },
-  directory(path) {
-    return new SourceDirectoryValue(path);
+  directory(path2) {
+    return new SourceDirectoryValue(path2);
   }
 });
+
 // sdk/typescript/src/secret.ts
 var secretNamePattern = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 function validateSecretName(value) {
@@ -3508,16 +3716,14 @@ function canonicalSecretOrigin(value) {
     throw new Error("Secret origin must be an exact HTTPS origin");
   }
   const authority = value.replace(/^https:\/\//i, "").replace(/\/$/, "");
-  if (!/^[A-Za-z0-9.-]+(?::[0-9]+)?$/.test(authority))
-    throw new Error("Secret origin must contain only a DNS hostname and optional port");
+  if (!/^[A-Za-z0-9.-]+(?::[0-9]+)?$/.test(authority)) throw new Error("Secret origin must contain only a DNS hostname and optional port");
   const [rawHost, port] = authority.split(":");
   const host = rawHost.toLowerCase();
   if (host.length > 253 || host === "localhost" || host.endsWith(".localhost") || /^[0-9.]+$/.test(host) || host.split(".").some((label) => !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))) {
     throw new Error("Secret origin must use a DNS hostname without wildcards or IP addresses");
   }
-  if (port !== undefined && (!/^[1-9][0-9]*$/.test(port) || Number(port) > 65535))
-    throw new Error("Secret origin port is invalid");
-  return `https://${host}${port === undefined || port === "443" ? "" : `:${port}`}`;
+  if (port !== void 0 && (!/^[1-9][0-9]*$/.test(port) || Number(port) > 65535)) throw new Error("Secret origin port is invalid");
+  return `https://${host}${port === void 0 || port === "443" ? "" : `:${port}`}`;
 }
 
 // sdk/typescript/src/internal/timestamp.ts
@@ -3545,98 +3751,95 @@ function validDateTime(match) {
 }
 
 // sdk/typescript/src/workspace.ts
-var sandboxDefinitionBrand = Symbol.for("helmr.sdk.v0.sandbox");
-var workspaceAddressBrand = Symbol.for("helmr.sdk.v0.workspace-address");
+var workspaceAddressBrand = /* @__PURE__ */ Symbol.for("helmr.sdk.v0.workspace-address");
 var workspaces = Object.freeze({
   ref: createWorkspaceRef
 });
 function inspectWorkspaceAddress(value) {
   if (typeof value !== "object" || value === null || value[workspaceAddressBrand] !== true) {
-    return;
+    return void 0;
   }
   const address = value;
-  if (address.id === undefined) {
+  if (address.id === void 0) {
     throw new Error("private Workspace address is invalid");
   }
   return createWorkspaceAddress(address.id);
 }
 function workspaceRefID(value) {
   const address = inspectWorkspaceAddress(value);
-  if (address === undefined || typeof address.id !== "string") {
+  if (address === void 0 || typeof address.id !== "string") {
     throw new Error("Workspace requires a Workspace ref");
   }
   return address.id;
 }
 function encodeWorkspaceSecrets(inputs) {
-  if (inputs === undefined)
-    return Object.freeze([]);
-  if (!Array.isArray(inputs) || inputs.length > 64)
-    throw new Error("Workspace secrets must be an array of at most 64 bindings");
-  const envNames = new Set;
+  if (inputs === void 0) return Object.freeze([]);
+  if (!Array.isArray(inputs) || inputs.length > 64) throw new Error("Workspace secrets must be an array of at most 64 bindings");
+  const envNames = /* @__PURE__ */ new Set();
   const files = [];
   let originCount = 0;
   const result = inputs.map((input) => {
     const value = workspaceObject(input, "Workspace Secret");
     validateSecretName(value["secret"]);
-    const hasEnv = value["env"] !== undefined;
-    const hasFile = value["file"] !== undefined;
-    if (hasEnv === hasFile)
-      throw new Error("Workspace Secret requires exactly one of env or file");
+    const hasEnv = value["env"] !== void 0;
+    const hasFile = value["file"] !== void 0;
+    if (hasEnv === hasFile) throw new Error("Workspace Secret requires exactly one of env or file");
     exactBindingKeys(value, ["secret", "env", "file"]);
     if (hasEnv) {
       const env = workspaceObject(value["env"], "Workspace Secret env");
       const mode = env["mode"];
-      if (mode !== "raw" && mode !== "protected")
-        throw new Error("Workspace Secret env requires explicit raw or protected mode");
+      if (mode !== "raw" && mode !== "protected") throw new Error("Workspace Secret env requires explicit raw or protected mode");
       exactBindingKeys(env, ["name", "mode", "allowedOrigins"]);
-      if (mode === "raw" && env["allowedOrigins"] !== undefined)
-        throw new Error("Raw env cannot specify allowedOrigins");
+      if (mode === "raw" && env["allowedOrigins"] !== void 0) throw new Error("Raw env cannot specify allowedOrigins");
       const name = env["name"];
-      if (typeof name !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) || name.startsWith("HELMR_") || name.startsWith("LD_") || ["NODE_OPTIONS", "NODE_PATH", "NODE_ICU_DATA", "OPENSSL_CONF", "OPENSSL_MODULES", "OPENSSL_ENGINES", "GCONV_PATH", "LOCPATH"].includes(name) || ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "NODE_USE_ENV_PROXY", "NODE_USE_SYSTEM_CA"].includes(name.toUpperCase()))
-        throw new Error("Invalid or reserved Secret env name");
-      if (envNames.has(name))
-        throw new Error(`Duplicate Secret env target ${name}`);
+      if (typeof name !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) || name.startsWith("HELMR_") || name.startsWith("LD_") || ["NODE_OPTIONS", "NODE_PATH", "NODE_ICU_DATA", "OPENSSL_CONF", "OPENSSL_MODULES", "OPENSSL_ENGINES", "GCONV_PATH", "LOCPATH"].includes(name) || ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "NODE_USE_ENV_PROXY", "NODE_USE_SYSTEM_CA"].includes(name.toUpperCase())) throw new Error("Invalid or reserved Secret env name");
+      if (envNames.has(name)) throw new Error(`Duplicate Secret env target ${name}`);
       envNames.add(name);
-      if (mode === "raw")
-        return Object.freeze({ secret: input.secret, env: Object.freeze({ name, mode }) });
+      if (mode === "raw") return Object.freeze({ secret: input.secret, env: Object.freeze({ name, mode }) });
       const origins = env["allowedOrigins"];
-      if (!Array.isArray(origins) || origins.length === 0 || origins.length > 16)
-        throw new Error("Protected env requires 1 to 16 exact HTTPS origins");
+      if (!Array.isArray(origins) || origins.length === 0 || origins.length > 16) throw new Error("Protected env requires 1 to 16 exact HTTPS origins");
       const allowed_origins = Object.freeze([...new Set(origins.map(canonicalSecretOrigin))].sort());
       originCount += allowed_origins.length;
       return Object.freeze({ secret: input.secret, env: Object.freeze({ name, mode, allowed_origins }) });
     }
     const file = workspaceObject(value["file"], "Workspace Secret file");
     exactBindingKeys(file, ["path"]);
-    const path = file["path"];
-    if (typeof path !== "string" || path.length > 4096 || !path.startsWith("/") || path === "/" || path.includes("\x00") || path.split("/").slice(1).some((part) => part === "" || part === "." || part === "..") || ["/workspace", "/var/lib/helmr", "/dev", "/opt/helmr", "/proc", "/sys", "/.helmr-old-root", "/run/helmr"].some((root) => path === root || path.startsWith(root + "/")))
-      throw new Error("Invalid or reserved Secret file path");
-    files.push(path);
-    return Object.freeze({ secret: input.secret, file: Object.freeze({ path }) });
+    const path2 = file["path"];
+    if (typeof path2 !== "string" || path2.length > 4096 || !path2.startsWith("/") || path2 === "/" || path2.includes("\0") || path2.split("/").slice(1).some((part) => part === "" || part === "." || part === "..") || ["/workspace", "/var/lib/helmr", "/dev", "/opt/helmr", "/proc", "/sys", "/.helmr-old-root", "/run/helmr"].some((root) => path2 === root || path2.startsWith(root + "/"))) throw new Error("Invalid or reserved Secret file path");
+    files.push(path2);
+    return Object.freeze({ secret: input.secret, file: Object.freeze({ path: path2 }) });
   });
   files.sort();
-  if (files.some((path, index) => index > 0 && (path === files[index - 1] || path.startsWith(files[index - 1] + "/"))))
-    throw new Error("Conflicting Secret file paths");
-  if (originCount > 256)
-    throw new Error("Workspace Secret origins exceed 256");
+  if (files.some((path2, index) => index > 0 && (path2 === files[index - 1] || path2.startsWith(files[index - 1] + "/")))) throw new Error("Conflicting Secret file paths");
+  if (originCount > 256) throw new Error("Workspace Secret origins exceed 256");
   return Object.freeze(result);
 }
 function exactBindingKeys(value, allowed) {
   const unknown = Object.keys(value).find((key) => !allowed.includes(key));
-  if (unknown !== undefined)
-    throw new Error(`Workspace Secret has unknown member ${JSON.stringify(unknown)}`);
+  if (unknown !== void 0) throw new Error(`Workspace Secret has unknown member ${JSON.stringify(unknown)}`);
 }
 function createWorkspaceRef(id) {
   const workspaceID = resourceID(id, "Workspace ID");
   const operations = {
     retrieve(options) {
-      return currentRuntimeOperations().workspaceRetrieve(workspaceID, options?.signal);
+      return currentRuntimeOperations().workspaceRetrieve(
+        workspaceID,
+        options?.signal
+      );
     },
     exec(request, options) {
-      return currentRuntimeOperations().workspaceExec(workspaceID, request, options?.signal);
+      return currentRuntimeOperations().workspaceExec(
+        workspaceID,
+        request,
+        options?.signal
+      );
     },
     delete(request, options) {
-      return currentRuntimeOperations().workspaceDelete(workspaceID, request, options?.signal);
+      return currentRuntimeOperations().workspaceDelete(
+        workspaceID,
+        request,
+        options?.signal
+      );
     }
   };
   return brandWorkspaceAddress({ id: workspaceID, ...operations });
@@ -3655,7 +3858,7 @@ function freezeWorkspaceAddress(value) {
 function parseWorkspace(value) {
   const input = workspaceObject(value, "Workspace response");
   const key = input["key"];
-  if (key !== undefined && typeof key !== "string") {
+  if (key !== void 0 && typeof key !== "string") {
     throw new Error("Workspace response.key must be a string");
   }
   const sandboxId = input["sandbox_id"];
@@ -3673,11 +3876,11 @@ function parseWorkspace(value) {
   const owner = parseWorkspaceOwner(input["owner"], "Workspace response.owner");
   return Object.freeze({
     id: resourceID(input["id"], "Workspace response.id"),
-    ...key === undefined ? {} : { key },
+    ...key === void 0 ? {} : { key },
     sandboxId,
     deploymentId: resourceID(input["deployment_id"], "Workspace response.deployment_id"),
     status,
-    ...owner === undefined ? {} : { owner },
+    ...owner === void 0 ? {} : { owner },
     secrets: Object.freeze(input["secrets"].map(parseWorkspaceSecret)),
     lastActivityAt: workspaceTimestamp(input["last_activity_at"], "last_activity_at"),
     createdAt: workspaceTimestamp(input["created_at"], "created_at"),
@@ -3685,29 +3888,30 @@ function parseWorkspace(value) {
   });
 }
 function parseWorkspaceOwner(value, label) {
-  if (value === undefined)
-    return;
+  if (value === void 0) return void 0;
   const input = workspaceObject(value, label);
-  const hasSession = input["session_id"] !== undefined;
-  const hasRun = input["run_id"] !== undefined;
+  const hasSession = input["session_id"] !== void 0;
+  const hasRun = input["run_id"] !== void 0;
   if (hasSession === hasRun) {
     throw new Error(`${label} must name exactly one of session_id or run_id`);
   }
-  return Object.freeze(hasSession ? { sessionId: resourceID(input["session_id"], `${label}.session_id`) } : { runId: resourceID(input["run_id"], `${label}.run_id`) });
+  return Object.freeze(
+    hasSession ? { sessionId: resourceID(input["session_id"], `${label}.session_id`) } : { runId: resourceID(input["run_id"], `${label}.run_id`) }
+  );
 }
 function parseWorkspaceSecret(value) {
   const wire = workspaceObject(value, "Workspace Secret");
-  exactBindingKeys(wire, wire["env"] !== undefined ? ["secret", "env"] : ["secret", "file"]);
+  exactBindingKeys(wire, wire["env"] !== void 0 ? ["secret", "env"] : ["secret", "file"]);
   let binding;
-  if (wire["env"] !== undefined) {
+  if (wire["env"] !== void 0) {
     const env = workspaceObject(wire["env"], "Workspace Secret env");
     exactBindingKeys(env, ["name", "mode", "allowed_origins"]);
-    binding = { secret: wire["secret"], env: { name: env["name"], mode: env["mode"], ...env["allowed_origins"] === undefined ? {} : { allowedOrigins: env["allowed_origins"] } } };
+    binding = { secret: wire["secret"], env: { name: env["name"], mode: env["mode"], ...env["allowed_origins"] === void 0 ? {} : { allowedOrigins: env["allowed_origins"] } } };
   } else {
     binding = { secret: wire["secret"], file: wire["file"] };
   }
   const normalized = encodeWorkspaceSecrets([binding])[0];
-  return normalized.env !== undefined ? Object.freeze({ secret: normalized.secret, env: Object.freeze({ name: normalized.env.name, mode: normalized.env.mode, ...normalized.env.allowed_origins === undefined ? {} : { allowedOrigins: normalized.env.allowed_origins } }) }) : Object.freeze({ secret: normalized.secret, file: normalized.file });
+  return normalized.env !== void 0 ? Object.freeze({ secret: normalized.secret, env: Object.freeze({ name: normalized.env.name, mode: normalized.env.mode, ...normalized.env.allowed_origins === void 0 ? {} : { allowedOrigins: normalized.env.allowed_origins } }) }) : Object.freeze({ secret: normalized.secret, file: normalized.file });
 }
 function parseWorkspaceExecResult(value) {
   const response = workspaceObject(value, "Workspace exec response");
@@ -3717,14 +3921,23 @@ function parseWorkspaceExecResult(value) {
   }
   return Object.freeze({
     exitCode,
-    stdout: decodeWorkspaceBase64(response["stdout_base64"], "Workspace exec response.stdout_base64"),
-    stderr: decodeWorkspaceBase64(response["stderr_base64"], "Workspace exec response.stderr_base64")
+    stdout: decodeWorkspaceBase64(
+      response["stdout_base64"],
+      "Workspace exec response.stdout_base64"
+    ),
+    stderr: decodeWorkspaceBase64(
+      response["stderr_base64"],
+      "Workspace exec response.stderr_base64"
+    )
   });
 }
 function parseWorkspaceDeleteReceipt(value) {
   const response = workspaceObject(value, "Workspace delete response");
   return Object.freeze({
-    workspaceId: resourceID(response["workspace_id"], "Workspace delete response.workspace_id")
+    workspaceId: resourceID(
+      response["workspace_id"],
+      "Workspace delete response.workspace_id"
+    )
   });
 }
 function workspaceObject(value, label) {
@@ -3750,15 +3963,16 @@ function decodeWorkspaceBase64(value, label) {
     throw new Error(`${label} must be canonical padded base64`);
   }
   const output = new Uint8Array(binary.length);
-  for (let index = 0;index < binary.length; index++) {
+  for (let index = 0; index < binary.length; index++) {
     output[index] = binary.charCodeAt(index);
   }
   return output;
 }
+
 // sdk/typescript/src/internal/jsoncanon.ts
-var textEncoder = new TextEncoder;
+var textEncoder = new TextEncoder();
 function canonicalizeJsonValue(value) {
-  return textEncoder.encode(serialize(value, new Set));
+  return textEncoder.encode(serialize(value, /* @__PURE__ */ new Set()));
 }
 function serialize(value, ancestors) {
   if (value === null || typeof value === "boolean") {
@@ -3787,11 +4001,11 @@ function serialize(value, ancestors) {
       const items = value.map((item) => serialize(item, ancestors));
       return `[${items.join(",")}]`;
     }
-    const objectValue = value;
-    assertPlainObject(objectValue);
-    const entries = Object.keys(objectValue).sort().map((key) => {
+    const objectValue2 = value;
+    assertPlainObject(objectValue2);
+    const entries = Object.keys(objectValue2).sort().map((key) => {
       assertUnicodeString(key);
-      return `${JSON.stringify(key)}:${serialize(objectValue[key], ancestors)}`;
+      return `${JSON.stringify(key)}:${serialize(objectValue2[key], ancestors)}`;
     });
     return `{${entries.join(",")}}`;
   } finally {
@@ -3821,16 +4035,17 @@ function assertPlainObject(value) {
     }
   }
 }
+
 // sdk/typescript/src/internal/session.ts
 function parseSession(value) {
   const input = objectValue(value, "Session response");
   const status = sessionStatus(input["status"]);
-  const failure = input["failure"] === undefined ? undefined : parseSessionFailure(input["failure"]);
+  const failure = input["failure"] === void 0 ? void 0 : parseSessionFailure(input["failure"]);
   const terminalFailure = status === "cancelled" || status === "failed";
-  if (terminalFailure !== (failure !== undefined)) {
+  if (terminalFailure !== (failure !== void 0)) {
     throw new Error("Session response has an inconsistent failure projection");
   }
-  if (failure !== undefined && status === "cancelled" !== (failure.code === "cancelled")) {
+  if (failure !== void 0 && status === "cancelled" !== (failure.code === "cancelled")) {
     throw new Error("Session response failure code is inconsistent with status");
   }
   const actorId = requiredString(input, "actor_id", "Session response");
@@ -3840,12 +4055,12 @@ function parseSession(value) {
     actorId,
     deploymentId: resourceID(input["deployment_id"], "Session response.deployment_id"),
     workspaceId: resourceID(input["workspace_id"], "Session response.workspace_id"),
-    ...input["key"] === undefined ? {} : { key: requiredString(input, "key", "Session response") },
+    ...input["key"] === void 0 ? {} : { key: requiredString(input, "key", "Session response") },
     status,
     createdAt: timestampString(input["created_at"], "Session response.created_at"),
     updatedAt: timestampString(input["updated_at"], "Session response.updated_at"),
-    ...input["current_run_id"] === undefined ? {} : { currentRunId: resourceID(input["current_run_id"], "Session response.current_run_id") },
-    ...failure === undefined ? {} : { failure }
+    ...input["current_run_id"] === void 0 ? {} : { currentRunId: resourceID(input["current_run_id"], "Session response.current_run_id") },
+    ...failure === void 0 ? {} : { failure }
   });
 }
 function parseSessionInputRecord(value) {
@@ -3876,11 +4091,11 @@ function parseSessionFailure(value) {
   const input = objectValue(value, "Session failure");
   const code = requiredString(input, "code", "Session failure");
   const details = objectValue(input["details"], "Session failure.details");
-  const runId = details["run_id"] === undefined ? undefined : resourceID(details["run_id"], "Session failure.details.run_id");
+  const runId = details["run_id"] === void 0 ? void 0 : resourceID(details["run_id"], "Session failure.details.run_id");
   return Object.freeze({
     code,
     message: requiredString(input, "message", "Session failure"),
-    details: Object.freeze(runId === undefined ? {} : { runId })
+    details: Object.freeze(runId === void 0 ? {} : { runId })
   });
 }
 function sessionStatus(value, label = "Session response.status") {
@@ -3908,11 +4123,13 @@ function safeSequence(value, label) {
   }
   return value;
 }
+
 // sdk/typescript/src/internal/strings.ts
 var goSpaceEdges = /^[\u0009-\u000d\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|[\u0009-\u000d\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+$/gu;
 function trimGoSpace(value) {
   return value.replace(goSpaceEdges, "");
 }
+
 // runtime/typescript/src/program.ts
 import { createWriteStream, promises as fs } from "node:fs";
 import { randomUUIDv7 as newUUIDv7 } from "node:crypto";
@@ -3925,60 +4142,67 @@ var MAX_RUN_LOG_MESSAGE_BYTES = 4 * 1024;
 var MAX_RUN_LOG_ATTRIBUTES_BYTES = 16 * 1024;
 var MAX_TASK_ERROR_MESSAGE_BYTES = 1024;
 var MAX_ACTOR_INPUT_BYTES = 1 * 1024 * 1024;
-
-class FrameReader {
+var FrameReader = class {
   #iterator;
   #closePromise;
-  #chunk = new Uint8Array;
+  #chunk = new Uint8Array();
   #offset = 0;
   constructor(input) {
     this.#iterator = input[Symbol.asyncIterator]();
   }
   async read(maxBytes = MAX_PROGRAM_FRAME_BYTES) {
     const header = await this.#readExact(4);
-    const size = new DataView(header.buffer, header.byteOffset, header.byteLength).getUint32(0);
+    const size = new DataView(
+      header.buffer,
+      header.byteOffset,
+      header.byteLength
+    ).getUint32(0);
     if (size > maxBytes) {
       throw new Error(`runtime frame length ${size} exceeds max ${maxBytes}`);
     }
     return this.#readExact(size);
   }
   close() {
-    if (this.#closePromise !== undefined)
-      return this.#closePromise;
+    if (this.#closePromise !== void 0) return this.#closePromise;
     this.#closePromise = this.#closeIterator();
     return this.#closePromise;
   }
-  async#closeIterator() {
+  async #closeIterator() {
     const close = this.#iterator.return;
-    if (close !== undefined)
-      await close.call(this.#iterator);
+    if (close !== void 0) await close.call(this.#iterator);
   }
-  async#readExact(size) {
+  async #readExact(size) {
     const result = new Uint8Array(size);
     let written = 0;
     while (written < size) {
       if (this.#offset === this.#chunk.byteLength) {
         const next = await this.#iterator.next();
         if (next.done) {
-          throw new Error(`runtime frame ended after ${written} of ${size} bytes`);
+          throw new Error(
+            `runtime frame ended after ${written} of ${size} bytes`
+          );
         }
         this.#chunk = typeof next.value === "string" ? new TextEncoder().encode(next.value) : next.value;
         this.#offset = 0;
-        if (this.#chunk.byteLength === 0)
-          continue;
+        if (this.#chunk.byteLength === 0) continue;
       }
-      const count = Math.min(size - written, this.#chunk.byteLength - this.#offset);
-      result.set(this.#chunk.subarray(this.#offset, this.#offset + count), written);
+      const count = Math.min(
+        size - written,
+        this.#chunk.byteLength - this.#offset
+      );
+      result.set(
+        this.#chunk.subarray(this.#offset, this.#offset + count),
+        written
+      );
       this.#offset += count;
       written += count;
     }
     return result;
   }
-}
-
-class ResumeDecisionRouter {
+};
+var ResumeDecisionRouter = class {
   #reader;
-  #pending = new Map;
+  #pending = /* @__PURE__ */ new Map();
   #reading = false;
   constructor(reader) {
     this.#reader = reader;
@@ -3999,15 +4223,17 @@ class ResumeDecisionRouter {
     this.#pending.clear();
   }
   #pump() {
-    if (this.#reading)
-      return;
+    if (this.#reading) return;
     this.#reading = true;
-    (async () => {
+    void (async () => {
       try {
         while (this.#pending.size > 0) {
-          const decision = fromBinary(exports_program_pb.ResumeDecisionSchema, await this.#reader.read());
+          const decision = fromBinary(
+            program_pb_exports.ResumeDecisionSchema,
+            await this.#reader.read()
+          );
           const pending = this.#pending.get(decision.correlationId);
-          if (pending === undefined) {
+          if (pending === void 0) {
             throw new Error("resume decision did not match a pending runtime operation");
           }
           this.#pending.delete(decision.correlationId);
@@ -4015,38 +4241,33 @@ class ResumeDecisionRouter {
         }
       } catch (error) {
         const failure = error instanceof Error ? error : new Error(String(error));
-        for (const pending of this.#pending.values())
-          pending.reject(failure);
+        for (const pending of this.#pending.values()) pending.reject(failure);
         this.#pending.clear();
       } finally {
         this.#reading = false;
-        if (this.#pending.size > 0)
-          this.#pump();
+        if (this.#pending.size > 0) this.#pump();
       }
     })();
   }
-}
-
-class RuntimeProtocolError extends Error {
+};
+var RuntimeProtocolError = class extends Error {
   constructor(message, options) {
     super(message, options);
     this.name = "RuntimeProtocolError";
   }
-}
-
-class ActorCancellationError extends Error {
+};
+var ActorCancellationError = class extends Error {
   code;
   constructor(reasonCode) {
     super(`Actor execution was cancelled: ${reasonCode}`);
     this.name = "AbortError";
     this.code = reasonCode;
   }
-}
-
-class RunOperationState {
-  controller = new AbortController;
+};
+var RunOperationState = class {
+  controller = new AbortController();
   #active = 0;
-  #drainable = new Set;
+  #drainable = /* @__PURE__ */ new Set();
   #protocolFault;
   track(operation) {
     this.#active++;
@@ -4054,7 +4275,7 @@ class RunOperationState {
       try {
         return await operation();
       } catch (error) {
-        if (error instanceof RuntimeProtocolError && this.#protocolFault === undefined) {
+        if (error instanceof RuntimeProtocolError && this.#protocolFault === void 0) {
           this.#protocolFault = error;
         }
         throw error;
@@ -4062,15 +4283,17 @@ class RunOperationState {
         this.#active--;
       }
     })();
-    result.catch(() => {});
+    void result.catch(() => {
+    });
     return result;
   }
   trackDrainable(operation) {
     const result = this.track(operation);
     this.#drainable.add(result);
-    result.finally(() => {
+    void result.finally(() => {
       this.#drainable.delete(result);
-    }).catch(() => {});
+    }).catch(() => {
+    });
     return result;
   }
   async drainForCompletion() {
@@ -4080,13 +4303,11 @@ class RunOperationState {
   }
   cancel(reasonCode) {
     const error = new ActorCancellationError(reasonCode);
-    if (!this.controller.signal.aborted)
-      this.controller.abort(error);
+    if (!this.controller.signal.aborted) this.controller.abort(error);
     return this.controller.signal.reason;
   }
   assertCanComplete() {
-    if (this.#protocolFault !== undefined)
-      throw this.#protocolFault;
+    if (this.#protocolFault !== void 0) throw this.#protocolFault;
     if (this.controller.signal.aborted) {
       throw this.controller.signal.reason;
     }
@@ -4094,23 +4315,20 @@ class RunOperationState {
       throw new RuntimeProtocolError("Run handler returned with runtime operations still pending");
     }
   }
-}
-
-class ConsumingWaitGate {
+};
+var ConsumingWaitGate = class {
   #pending = false;
   acquire(error = () => new Error("only one consuming Wait may be pending")) {
-    if (this.#pending)
-      throw error();
+    if (this.#pending) throw error();
     this.#pending = true;
     let released = false;
     return () => {
-      if (released)
-        return;
+      if (released) return;
       released = true;
       this.#pending = false;
     };
   }
-}
+};
 async function requestRuntimeDecision(io, decisions, correlationId, event) {
   const pending = decisions.register(correlationId);
   try {
@@ -4131,7 +4349,9 @@ async function requestRuntimeDecision(io, decisions, correlationId, event) {
 }
 function requireWaitDecision(decision, correlationId, runWaitId, resumeAttachId, operation) {
   if (decision.correlationId !== correlationId || decision.runWaitId !== runWaitId || decision.resumeAttachId !== resumeAttachId || decision.kind !== "completed" && decision.kind !== "failed" && decision.kind !== "cancelled") {
-    throw new RuntimeProtocolError(`${operation} decision did not match the pending Wait`);
+    throw new RuntimeProtocolError(
+      `${operation} decision did not match the pending Wait`
+    );
   }
 }
 async function writeRuntimeProtocolEvent(io, event) {
@@ -4144,11 +4364,10 @@ async function writeRuntimeProtocolEvent(io, event) {
   }
 }
 async function acknowledgeResumeConsumed(io, decision) {
-  if (!decision.requireConsumedAck)
-    return;
+  if (!decision.requireConsumedAck) return;
   await writeRuntimeProtocolEvent(io, {
     case: "resumeConsumed",
-    value: create(exports_program_pb.ResumeConsumedSchema, {
+    value: create(program_pb_exports.ResumeConsumedSchema, {
       runWaitId: decision.runWaitId,
       checkpointId: decision.checkpointId,
       resumeAttachId: decision.resumeAttachId,
@@ -4162,43 +4381,51 @@ function parseRuntimeProtocolValue(label, parse) {
   try {
     return parse();
   } catch (error) {
-    if (error instanceof RuntimeProtocolError)
-      throw error;
+    if (error instanceof RuntimeProtocolError) throw error;
     throw new RuntimeProtocolError(`${label} was invalid`, { cause: error });
   }
 }
 async function runProgram(locatorURL, io = defaultProgramIO()) {
   const reader = new FrameReader(io.input);
-  const start = fromBinary(exports_program_pb.ProgramStartSchema, await reader.read());
+  const start = fromBinary(program_pb_exports.ProgramStartSchema, await reader.read());
   validateProgramStart(start);
   const index = await loadProgramIndex(locatorURL, io);
   const kind = start.entrypoint.case;
   if (kind !== "task" && kind !== "actor") {
     throw new Error("Program-start entrypoint is required");
   }
-  const located = index.declarations.filter((declaration2) => declaration2.kind === kind && declaration2.declaredId === start.entrypointDeclaredId && declaration2.locator !== undefined);
+  const located = index.declarations.filter(
+    (declaration2) => declaration2.kind === kind && declaration2.declaredId === start.entrypointDeclaredId && declaration2.locator !== void 0
+  );
   if (located.length !== 1) {
-    throw new Error(`Program declaration ${kind}:${JSON.stringify(start.entrypointDeclaredId)} was not found exactly once`);
+    throw new Error(
+      `Program declaration ${kind}:${JSON.stringify(start.entrypointDeclaredId)} was not found exactly once`
+    );
   }
   const declaration = located[0];
   const locator = declaration.locator;
-  const moduleURL = resolveModuleURL(locatorURL, locator.modulePath);
-  const imported = io.importModule === undefined ? await import(moduleURL.href) : await io.importModule(moduleURL);
+  const moduleURL = resolveModuleURL(locatorURL, locator.sourcePath);
+  const imported = io.importModule === void 0 ? await (await import("../moduleexecution/loader.mjs")).importSourceExports(moduleURL) : await io.importModule(moduleURL);
   const definition = inspectDefinition(imported[locator.exportName]);
-  if (definition === undefined || definition.kind !== declaration.kind || definition.id !== declaration.declaredId || definition.kind !== "task" && definition.kind !== "actor") {
-    throw new Error(`Program export ${JSON.stringify(locator.exportName)} does not match ${kind}:${JSON.stringify(start.entrypointDeclaredId)}`);
+  if (definition === void 0 || definition.kind !== declaration.kind || definition.id !== declaration.declaredId || definition.kind !== "task" && definition.kind !== "actor") {
+    throw new Error(
+      `Program export ${JSON.stringify(locator.exportName)} does not match ${kind}:${JSON.stringify(start.entrypointDeclaredId)}`
+    );
   }
   validateEntrypointContract(start, definition);
   const identity = entrypointIdentity(kind, start.entrypointDeclaredId);
   await writeRunEvent(io, {
     case: "entrypointReady",
-    value: create(exports_program_pb.EntrypointReadySchema, {
+    value: create(program_pb_exports.EntrypointReadySchema, {
       runId: start.runId,
       attemptNumber: start.attemptNumber,
       entrypoint: identity
     })
   });
-  const release = fromBinary(exports_program_pb.EntrypointReleaseSchema, await reader.read());
+  const release = fromBinary(
+    program_pb_exports.EntrypointReleaseSchema,
+    await reader.read()
+  );
   validateEntrypointRelease(release, start, kind);
   const decisions = new ResumeDecisionRouter(reader);
   if (definition.kind === "task") {
@@ -4209,16 +4436,18 @@ async function runProgram(locatorURL, io = defaultProgramIO()) {
   await reader.close();
 }
 async function loadProgramIndex(url, io) {
-  const raw = io.readLocator === undefined ? await fs.readFile(url, "utf8") : await io.readLocator(url);
+  const raw = io.readLocator === void 0 ? await fs.readFile(url, "utf8") : await io.readLocator(url);
   const value = JSON.parse(raw);
   if (typeof value !== "object" || value === null) {
     throw new Error("Program index must be an object");
   }
   const record = value;
-  if (record["architecture"] !== "x86_64" || record["runtimeContract"] !== "helmr.runtime.v0" || typeof record["configResultDigest"] !== "string" || !Array.isArray(record["queues"]) || !Array.isArray(record["declarations"]) || record["declarations"].length === 0) {
-    throw new Error("Program index has an invalid v0 shape");
+  if (record["architecture"] !== "x86_64" || record["runtimeContract"] !== "helmr.runtime.v1" || typeof record["configResultDigest"] !== "string" || !Array.isArray(record["queues"]) || !Array.isArray(record["declarations"]) || record["declarations"].length === 0) {
+    throw new Error("Program index has an invalid v1 shape");
   }
-  const declarations = record["declarations"].map((entry, index) => parseProgramIndexDeclaration(entry, index));
+  const declarations = record["declarations"].map(
+    (entry, index) => parseProgramIndexDeclaration(entry, index)
+  );
   return { declarations };
 }
 function parseProgramIndexDeclaration(value, index) {
@@ -4230,7 +4459,7 @@ function parseProgramIndexDeclaration(value, index) {
     throw new Error(`Program index declaration ${index} is invalid`);
   }
   if (record["kind"] === "sandbox") {
-    if (record["locator"] !== undefined) {
+    if (record["locator"] !== void 0) {
       throw new Error(`Program index Sandbox declaration ${index} has a locator`);
     }
     return {
@@ -4243,7 +4472,7 @@ function parseProgramIndexDeclaration(value, index) {
     throw new Error(`Program index declaration ${index} has no locator`);
   }
   const located = locator;
-  if (typeof located["exportName"] !== "string" || located["exportName"] === "" || typeof located["modulePath"] !== "string" || located["slot"] !== "handler") {
+  if (typeof located["exportName"] !== "string" || located["exportName"] === "" || typeof located["sourcePath"] !== "string" || located["slot"] !== "handler") {
     throw new Error(`Program index declaration ${index} locator is invalid`);
   }
   return {
@@ -4251,30 +4480,29 @@ function parseProgramIndexDeclaration(value, index) {
     declaredId: record["declaredId"],
     locator: {
       exportName: located["exportName"],
-      modulePath: validateModulePath(located["modulePath"]),
+      sourcePath: validateSourcePath(located["sourcePath"]),
       slot: "handler"
     }
   };
 }
-function validateModulePath(value) {
+function validateSourcePath(value) {
   const components = value.split("/");
-  const prefix = components.slice(0, -3);
-  if (components.length < 3 || components.at(-3) !== ".helmr" || components.at(-2) !== "modules" || !/^[0-9a-f]{64}\.mjs$/.test(components.at(-1) ?? "") || prefix.some((component) => component === "" || component === "." || component === ".." || component === ".helmr" || component.includes("\\") || /[\u0000-\u001f\u007f]/.test(component))) {
-    throw new Error("declaration modulePath is not a generated Program module");
+  if (components.some((part) => part === "" || part === "." || part === ".." || part === "node_modules" || part.includes("\\") || /[\u0000-\u001f\u007f-\u009f]/.test(part)) || components[0] === "helmr" || value === "helmr.config.ts" || !/\.(?:[cm]?js|jsx|[cm]?ts|tsx)$/.test(value) || /\.d\.[cm]?ts$/.test(value)) {
+    throw new Error("declaration sourcePath must identify a project source module");
   }
   return value;
 }
-function resolveModuleURL(locatorURL, modulePath) {
+function resolveModuleURL(locatorURL, sourcePath) {
   const root = path.dirname(path.dirname(fileURLToPath(locatorURL)));
-  const resolved = path.resolve(root, modulePath);
+  const resolved = path.resolve(root, sourcePath);
   const relative = path.relative(root, resolved);
   if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-    throw new Error("declaration modulePath escapes the Program root");
+    throw new Error("declaration sourcePath escapes the Program root");
   }
   return pathToFileURL(resolved);
 }
 function validateProgramStart(start) {
-  if (start.runId === "" || start.attemptNumber === 0 || start.entrypointDeclaredId === "" || start.deploymentId === "" || start.deploymentVersion === "" || start.workspaceId === "" || start.baseWorkspaceVersionId === "" || start.cause === undefined || start.cause.kind.case === undefined) {
+  if (start.runId === "" || start.attemptNumber === 0 || start.entrypointDeclaredId === "" || start.deploymentId === "" || start.deploymentVersion === "" || start.workspaceId === "" || start.baseWorkspaceVersionId === "" || start.cause === void 0 || start.cause.kind.case === void 0) {
     throw new Error("Program-start frame is missing required logical fields");
   }
 }
@@ -4285,20 +4513,22 @@ function validateEntrypointContract(start, definition) {
     }
     return;
   }
-  const payload = start.entrypoint.case === "task" ? start.entrypoint.value.payload.case : undefined;
+  const payload = start.entrypoint.case === "task" ? start.entrypoint.value.payload.case : void 0;
   if (definition.hasPayload && payload !== "payloadJson" || !definition.hasPayload && payload !== "noPayload") {
-    throw new Error(`Program-start payload presence does not match task ${JSON.stringify(definition.id)}`);
+    throw new Error(
+      `Program-start payload presence does not match task ${JSON.stringify(definition.id)}`
+    );
   }
 }
 function entrypointIdentity(kind, declaredId) {
-  return create(exports_program_pb.EntrypointIdentitySchema, {
+  return create(program_pb_exports.EntrypointIdentitySchema, {
     declaredId,
     kind: kind === "task" ? {
       case: "task",
-      value: create(exports_program_pb.TaskEntrypointSchema)
+      value: create(program_pb_exports.TaskEntrypointSchema)
     } : {
       case: "actor",
-      value: create(exports_program_pb.ActorEntrypointSchema)
+      value: create(program_pb_exports.ActorEntrypointSchema)
     }
   });
 }
@@ -4315,9 +4545,15 @@ async function runTask(start, definition, io, decisions) {
       if (start.entrypoint.case !== "task" || start.entrypoint.value.payload.case !== "payloadJson") {
         throw new Error("task payload is missing");
       }
-      payload = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(start.entrypoint.value.payload.value));
-      const parsed = await definition.payloadSchema["~standard"].validate(payload);
-      if ("issues" in parsed && parsed.issues !== undefined) {
+      payload = JSON.parse(
+        new TextDecoder("utf-8", { fatal: true }).decode(
+          start.entrypoint.value.payload.value
+        )
+      );
+      const parsed = await definition.payloadSchema["~standard"].validate(
+        payload
+      );
+      if ("issues" in parsed && parsed.issues !== void 0) {
         failureDetails = validationDetails(parsed.issues);
       } else {
         payload = parsed.value;
@@ -4327,14 +4563,27 @@ async function runTask(start, definition, io, decisions) {
         message: boundedUtf8(errorMessage(error), 2048)
       };
     }
-    if (failureDetails !== undefined) {
-      await writeTaskFailure(io, "payload_invalid", "task payload failed validation", failureDetails);
+    if (failureDetails !== void 0) {
+      await writeTaskFailure(
+        io,
+        "payload_invalid",
+        "task payload failed validation",
+        failureDetails
+      );
       return;
     }
   }
   const context = taskContext(start);
-  const runOperations = new RunOperationState;
-  const uninstallRuntime = installRuntimeOperations(programRuntimeOperations(start, io, decisions, new ConsumingWaitGate, runOperations));
+  const runOperations = new RunOperationState();
+  const uninstallRuntime = installRuntimeOperations(
+    programRuntimeOperations(
+      start,
+      io,
+      decisions,
+      new ConsumingWaitGate(),
+      runOperations
+    )
+  );
   let normalized;
   try {
     let output;
@@ -4347,11 +4596,12 @@ async function runTask(start, definition, io, decisions) {
     runOperations.assertCanComplete();
     normalized = canonicalizeJsonValue(output);
     if (normalized.byteLength > MAX_TASK_OUTPUT_BYTES) {
-      throw new Error(`task output exceeds ${MAX_TASK_OUTPUT_BYTES} bytes`);
+      throw new Error(
+        `task output exceeds ${MAX_TASK_OUTPUT_BYTES} bytes`
+      );
     }
   } catch (error) {
-    if (error instanceof RuntimeProtocolError)
-      throw error;
+    if (error instanceof RuntimeProtocolError) throw error;
     await runOperations.drainForCompletion();
     runOperations.assertCanComplete();
     await writeTaskFailure(io, "failed", errorMessage(error));
@@ -4361,10 +4611,10 @@ async function runTask(start, definition, io, decisions) {
   }
   await writeRunEvent(io, {
     case: "taskOutcome",
-    value: create(exports_program_pb.TaskOutcomeSchema, {
+    value: create(program_pb_exports.TaskOutcomeSchema, {
       outcome: {
         case: "succeeded",
-        value: create(exports_program_pb.TaskSucceededSchema, {
+        value: create(program_pb_exports.TaskSucceededSchema, {
           outputJson: new TextDecoder().decode(normalized)
         })
       }
@@ -4373,37 +4623,43 @@ async function runTask(start, definition, io, decisions) {
 }
 function programRuntimeOperations(start, io, decisions, waitGate, runOperations, actorCursor) {
   const performTaskStart = async (target, payload, options) => {
-    if (options.signal?.aborted)
-      throw abortSignalReason(options.signal);
-    const idempotencyKey = options.idempotencyKey === "" ? undefined : options.idempotencyKey;
-    if (idempotencyKey === undefined && process.env["NODE_ENV"] !== "production") {
-      process.emitWarning(`Task "${target.declaredId}" was started without an idempotencyKey; retrying the parent Run may create another child Run.`, { code: "HELMR_KEYLESS_CHILD_TASK_START" });
+    if (options.signal?.aborted) throw abortSignalReason(options.signal);
+    const idempotencyKey = options.idempotencyKey === "" ? void 0 : options.idempotencyKey;
+    if (idempotencyKey === void 0 && process.env["NODE_ENV"] !== "production") {
+      process.emitWarning(
+        `Task "${target.declaredId}" was started without an idempotencyKey; retrying the parent Run may create another child Run.`,
+        { code: "HELMR_KEYLESS_CHILD_TASK_START" }
+      );
     }
     const correlationId = newUUIDv7();
-    const payloadJson = target.payloadPresent ? new TextDecoder().decode(canonicalizeJsonValue(payload)) : undefined;
-    const workspaceJson = new TextDecoder().decode(canonicalizeJsonValue({ id: workspaceRefID(options.workspace) }));
+    const payloadJson = target.payloadPresent ? new TextDecoder().decode(canonicalizeJsonValue(payload)) : void 0;
+    const workspaceJson = new TextDecoder().decode(
+      canonicalizeJsonValue({ id: workspaceRefID(options.workspace) })
+    );
     const requestOptions = {
-      ...options.queue === undefined ? {} : { queue: options.queue },
-      ...options.concurrencyKey === undefined ? {} : { concurrency_key: options.concurrencyKey },
-      ...options.priority === undefined ? {} : { priority: options.priority },
-      ...options.ttl === undefined ? {} : { ttl: options.ttl },
-      ...options.retry === undefined ? {} : { retry: taskRetryRequest(options.retry) },
-      ...options.metadata === undefined ? {} : { metadata: options.metadata },
-      ...options.tags === undefined ? {} : { tags: [...options.tags] }
+      ...options.queue === void 0 ? {} : { queue: options.queue },
+      ...options.concurrencyKey === void 0 ? {} : { concurrency_key: options.concurrencyKey },
+      ...options.priority === void 0 ? {} : { priority: options.priority },
+      ...options.ttl === void 0 ? {} : { ttl: options.ttl },
+      ...options.retry === void 0 ? {} : { retry: taskRetryRequest(options.retry) },
+      ...options.metadata === void 0 ? {} : { metadata: options.metadata },
+      ...options.tags === void 0 ? {} : { tags: [...options.tags] }
     };
-    const optionsJson = new TextDecoder().decode(canonicalizeJsonValue(requestOptions));
+    const optionsJson = new TextDecoder().decode(
+      canonicalizeJsonValue(requestOptions)
+    );
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "taskChildInvokeRequested",
-        value: create(exports_program_pb.TaskChildInvokeRequestedSchema, {
+        value: create(program_pb_exports.TaskChildInvokeRequestedSchema, {
           correlationId,
           declaredId: target.declaredId,
           method: "start",
           payloadPresent: target.payloadPresent,
-          ...payloadJson === undefined ? {} : { payloadJson },
+          ...payloadJson === void 0 ? {} : { payloadJson },
           workspaceJson,
           optionsJson,
-          ...idempotencyKey === undefined ? {} : { idempotencyKey }
+          ...idempotencyKey === void 0 ? {} : { idempotencyKey }
         })
       });
       requireRuntimeOperationDecision(decision, correlationId, "Task child start");
@@ -4419,7 +4675,10 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
         if (keys.length !== 1 || keys[0] !== "run_id") {
           throw new Error("result fields are invalid");
         }
-        const id = resourceID(value["run_id"], "Task child start result.run_id");
+        const id = resourceID(
+          value["run_id"],
+          "Task child start result.run_id"
+        );
         return createRunHandle(id);
       });
     });
@@ -4435,43 +4694,68 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
         const correlationId = newUUIDv7();
         const runWaitId = newUUIDv7();
         const resumeAttachId = newUUIDv7();
-        const payloadJson = target.payloadPresent ? new TextDecoder().decode(canonicalizeJsonValue(payload)) : undefined;
-        const workspaceJson = new TextDecoder().decode(canonicalizeJsonValue({ id: workspaceRefID(options.workspace) }));
+        const payloadJson = target.payloadPresent ? new TextDecoder().decode(
+          canonicalizeJsonValue(payload)
+        ) : void 0;
+        const workspaceJson = new TextDecoder().decode(
+          canonicalizeJsonValue({ id: workspaceRefID(options.workspace) })
+        );
         const requestOptions = {
-          ...options.queue === undefined ? {} : { queue: options.queue },
-          ...options.concurrencyKey === undefined ? {} : { concurrency_key: options.concurrencyKey },
-          ...options.priority === undefined ? {} : { priority: options.priority },
-          ...options.ttl === undefined ? {} : { ttl: options.ttl },
-          ...options.retry === undefined ? {} : { retry: taskRetryRequest(options.retry) },
-          ...options.metadata === undefined ? {} : { metadata: options.metadata },
-          ...options.tags === undefined ? {} : { tags: [...options.tags] }
+          ...options.queue === void 0 ? {} : { queue: options.queue },
+          ...options.concurrencyKey === void 0 ? {} : { concurrency_key: options.concurrencyKey },
+          ...options.priority === void 0 ? {} : { priority: options.priority },
+          ...options.ttl === void 0 ? {} : { ttl: options.ttl },
+          ...options.retry === void 0 ? {} : { retry: taskRetryRequest(options.retry) },
+          ...options.metadata === void 0 ? {} : { metadata: options.metadata },
+          ...options.tags === void 0 ? {} : { tags: [...options.tags] }
         };
-        const decision = await requestRuntimeDecision(io, decisions, correlationId, {
-          case: "taskChildInvokeRequested",
-          value: create(exports_program_pb.TaskChildInvokeRequestedSchema, {
-            correlationId,
-            runWaitId,
-            resumeAttachId,
-            declaredId: target.declaredId,
-            method: "call",
-            payloadPresent: target.payloadPresent,
-            ...payloadJson === undefined ? {} : { payloadJson },
-            workspaceJson,
-            optionsJson: new TextDecoder().decode(canonicalizeJsonValue(requestOptions)),
-            idempotencyKey: options.idempotencyKey,
-            ...actorCursor === undefined ? {} : { actorSpeculativeInputSequence: actorCursor.value }
-          })
-        });
-        requireWaitDecision(decision, correlationId, runWaitId, resumeAttachId, "Task child call");
+        const decision = await requestRuntimeDecision(
+          io,
+          decisions,
+          correlationId,
+          {
+            case: "taskChildInvokeRequested",
+            value: create(program_pb_exports.TaskChildInvokeRequestedSchema, {
+              correlationId,
+              runWaitId,
+              resumeAttachId,
+              declaredId: target.declaredId,
+              method: "call",
+              payloadPresent: target.payloadPresent,
+              ...payloadJson === void 0 ? {} : { payloadJson },
+              workspaceJson,
+              optionsJson: new TextDecoder().decode(
+                canonicalizeJsonValue(requestOptions)
+              ),
+              idempotencyKey: options.idempotencyKey,
+              ...actorCursor === void 0 ? {} : { actorSpeculativeInputSequence: actorCursor.value }
+            })
+          }
+        );
+        requireWaitDecision(
+          decision,
+          correlationId,
+          runWaitId,
+          resumeAttachId,
+          "Task child call"
+        );
         await acknowledgeResumeConsumed(io, decision);
-        if (decision.kind === "cancelled" && actorCursor !== undefined) {
-          const failure = parseRuntimeProtocolValue("Actor child Task cancellation decision", () => resumeFailure(decision.dataJson));
+        if (decision.kind === "cancelled" && actorCursor !== void 0) {
+          const failure = parseRuntimeProtocolValue(
+            "Actor child Task cancellation decision",
+            () => resumeFailure(decision.dataJson)
+          );
           throw runOperations.cancel(failure.reasonCode);
         }
         if (decision.kind !== "completed") {
-          throw decision.kind === "failed" ? runtimeOperationFailure("Task child call", decision.dataJson) : new RuntimeProtocolError(`Task child call was cancelled: ${resumeFailure(decision.dataJson).reasonCode}`);
+          throw decision.kind === "failed" ? runtimeOperationFailure("Task child call", decision.dataJson) : new RuntimeProtocolError(
+            `Task child call was cancelled: ${resumeFailure(decision.dataJson).reasonCode}`
+          );
         }
-        return parseRuntimeProtocolValue("Task child call result", () => parseTaskResult(decision.dataJson));
+        return parseRuntimeProtocolValue(
+          "Task child call result",
+          () => parseTaskResult(decision.dataJson)
+        );
       } finally {
         releaseWait();
       }
@@ -4486,24 +4770,36 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
     try {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "runWaitRequested",
-        value: create(exports_program_pb.RunWaitRequestedSchema, {
+        value: create(program_pb_exports.RunWaitRequestedSchema, {
           correlationId,
           runWaitId,
           resumeAttachId,
           kind: "timer",
           paramsJson: new TextDecoder().decode(canonicalizeJsonValue(params)),
           timeoutMs: BigInt(timeoutMs),
-          ...actorCursor === undefined ? {} : { actorSpeculativeInputSequence: actorCursor.value }
+          ...actorCursor === void 0 ? {} : { actorSpeculativeInputSequence: actorCursor.value }
         })
       });
-      requireWaitDecision(decision, correlationId, runWaitId, resumeAttachId, "timer resume");
+      requireWaitDecision(
+        decision,
+        correlationId,
+        runWaitId,
+        resumeAttachId,
+        "timer resume"
+      );
       await acknowledgeResumeConsumed(io, decision);
-      if (decision.kind === "cancelled" && actorCursor !== undefined) {
-        const failure = parseRuntimeProtocolValue("Actor timer cancellation decision", () => resumeFailure(decision.dataJson));
+      if (decision.kind === "cancelled" && actorCursor !== void 0) {
+        const failure = parseRuntimeProtocolValue(
+          "Actor timer cancellation decision",
+          () => resumeFailure(decision.dataJson)
+        );
         throw runOperations.cancel(failure.reasonCode);
       }
       if (decision.kind !== "completed") {
-        const failure = parseRuntimeProtocolValue("timer Wait failure decision", () => resumeFailure(decision.dataJson));
+        const failure = parseRuntimeProtocolValue(
+          "timer Wait failure decision",
+          () => resumeFailure(decision.dataJson)
+        );
         throw new RuntimeProtocolError(`timer Wait ${decision.kind}: ${failure.reasonCode}`);
       }
     } finally {
@@ -4515,58 +4811,76 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
     if (signal?.aborted) {
       throw abortSignalReason(signal);
     }
-    const idempotencyKey = normalizeActorInputIdempotencyKey(request?.idempotencyKey);
+    const idempotencyKey = normalizeActorInputIdempotencyKey(
+      request?.idempotencyKey
+    );
     const normalized = canonicalizeJsonValue(input);
     if (normalized.byteLength > MAX_ACTOR_INPUT_BYTES) {
-      throw actorInputSendError("actor_input_too_large", `Actor input exceeds ${MAX_ACTOR_INPUT_BYTES} bytes`);
+      throw actorInputSendError(
+        "actor_input_too_large",
+        `Actor input exceeds ${MAX_ACTOR_INPUT_BYTES} bytes`
+      );
     }
     const correlationId = newUUIDv7();
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "sessionInputSendRequested",
-        value: create(exports_program_pb.SessionInputSendRequestedSchema, {
+        value: create(program_pb_exports.SessionInputSendRequestedSchema, {
           correlationId,
           sessionId,
           dataJson: new TextDecoder().decode(normalized),
-          ...idempotencyKey === undefined ? {} : { idempotencyKey }
+          ...idempotencyKey === void 0 ? {} : { idempotencyKey }
         })
       });
-      requireRuntimeOperationDecision(decision, correlationId, "Actor input send");
+      requireRuntimeOperationDecision(
+        decision,
+        correlationId,
+        "Actor input send"
+      );
       if (decision.kind === "failed") {
-        throw parseRuntimeProtocolValue("Actor input send failure", () => parseActorInputSendFailure(decision.dataJson));
+        throw parseRuntimeProtocolValue(
+          "Actor input send failure",
+          () => parseActorInputSendFailure(decision.dataJson)
+        );
       }
-      return parseRuntimeProtocolValue("Actor input send result", () => parseActorInputSendResult(decision.dataJson));
+      return parseRuntimeProtocolValue(
+        "Actor input send result",
+        () => parseActorInputSendResult(decision.dataJson)
+      );
     });
     return await abortableRuntimeOperation(operation, signal);
   };
   const performActorStart = async (declaredId, options) => {
-    if (options.signal?.aborted)
-      throw abortSignalReason(options.signal);
+    if (options.signal?.aborted) throw abortSignalReason(options.signal);
     const correlationId = newUUIDv7();
     const run = options.run;
     const runOptions = {
-      ...run?.queue === undefined ? {} : { queue: run.queue },
-      ...run?.concurrencyKey === undefined ? {} : { concurrency_key: run.concurrencyKey },
-      ...run?.priority === undefined ? {} : { priority: run.priority },
-      ...run?.ttl === undefined ? {} : { ttl: run.ttl },
-      ...run?.retry === undefined ? {} : { retry: taskRetryRequest(run.retry) },
-      ...run?.metadata === undefined ? {} : { metadata: run.metadata },
-      ...run?.tags === undefined ? {} : { tags: [...run.tags] }
+      ...run?.queue === void 0 ? {} : { queue: run.queue },
+      ...run?.concurrencyKey === void 0 ? {} : { concurrency_key: run.concurrencyKey },
+      ...run?.priority === void 0 ? {} : { priority: run.priority },
+      ...run?.ttl === void 0 ? {} : { ttl: run.ttl },
+      ...run?.retry === void 0 ? {} : { retry: taskRetryRequest(run.retry) },
+      ...run?.metadata === void 0 ? {} : { metadata: run.metadata },
+      ...run?.tags === void 0 ? {} : { tags: [...run.tags] }
     };
     const inputPresent = Object.hasOwn(options, "input");
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "actorStartRequested",
-        value: create(exports_program_pb.ActorStartRequestedSchema, {
+        value: create(program_pb_exports.ActorStartRequestedSchema, {
           correlationId,
           declaredId,
           workspaceId: workspaceRefID(options.workspace),
-          ...options.key === undefined ? {} : { key: options.key },
+          ...options.key === void 0 ? {} : { key: options.key },
           ...inputPresent ? {
-            inputJson: new TextDecoder().decode(canonicalizeJsonValue(options.input))
+            inputJson: new TextDecoder().decode(
+              canonicalizeJsonValue(options.input)
+            )
           } : {},
-          ...options.idempotencyKey === undefined ? {} : { idempotencyKey: options.idempotencyKey },
-          runOptionsJson: new TextDecoder().decode(canonicalizeJsonValue(runOptions))
+          ...options.idempotencyKey === void 0 ? {} : { idempotencyKey: options.idempotencyKey },
+          runOptionsJson: new TextDecoder().decode(
+            canonicalizeJsonValue(runOptions)
+          )
         })
       });
       requireRuntimeOperationDecision(decision, correlationId, "Actor start");
@@ -4576,21 +4890,26 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
       return parseRuntimeProtocolValue("Actor start result", () => {
         const value = parseObjectJSON(decision.dataJson, "Actor start result");
         requireExactKeys(value, ["run_id", "session_id"], "Actor start result");
-        const sessionId = resourceID(stringField(value, "session_id", "Actor start result"), "Actor start result.session_id");
-        const runId = resourceID(stringField(value, "run_id", "Actor start result"), "Actor start result.run_id");
+        const sessionId = resourceID(
+          stringField(value, "session_id", "Actor start result"),
+          "Actor start result.session_id"
+        );
+        const runId = resourceID(
+          stringField(value, "run_id", "Actor start result"),
+          "Actor start result.run_id"
+        );
         return Object.freeze({ sessionId, runId });
       });
     });
     return abortableRuntimeOperation(operation, options.signal);
   };
   const performSessionStatus = async (sessionId, signal) => {
-    if (signal?.aborted)
-      throw abortSignalReason(signal);
+    if (signal?.aborted) throw abortSignalReason(signal);
     const correlationId = newUUIDv7();
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "sessionStatusRequested",
-        value: create(exports_program_pb.SessionStatusRequestedSchema, {
+        value: create(program_pb_exports.SessionStatusRequestedSchema, {
           correlationId,
           sessionId
         })
@@ -4599,21 +4918,23 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
       if (decision.kind === "failed") {
         throw runtimeOperationFailure("Session retrieve", decision.dataJson);
       }
-      return parseRuntimeProtocolValue("Session retrieve result", () => parseRuntimeSession(decision.dataJson));
+      return parseRuntimeProtocolValue(
+        "Session retrieve result",
+        () => parseRuntimeSession(decision.dataJson)
+      );
     });
     return abortableRuntimeOperation(operation, signal);
   };
   const performSessionClose = async (sessionId, request, signal) => {
-    if (signal?.aborted)
-      throw abortSignalReason(signal);
+    if (signal?.aborted) throw abortSignalReason(signal);
     const correlationId = newUUIDv7();
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "sessionCloseRequested",
-        value: create(exports_program_pb.SessionCloseRequestedSchema, {
+        value: create(program_pb_exports.SessionCloseRequestedSchema, {
           correlationId,
           sessionId,
-          ...request?.idempotencyKey === undefined ? {} : { idempotencyKey: request.idempotencyKey }
+          ...request?.idempotencyKey === void 0 ? {} : { idempotencyKey: request.idempotencyKey }
         })
       });
       requireRuntimeOperationDecision(decision, correlationId, "Actor close");
@@ -4623,8 +4944,15 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
       return parseRuntimeProtocolValue("Actor close result", () => {
         const value = parseObjectJSON(decision.dataJson, "Actor close result");
         requireExactKeys(value, ["accepted_at", "session_id"], "Actor close result");
-        const sessionId2 = resourceID(stringField(value, "session_id", "Actor close result"), "Actor close result.session_id");
-        const acceptedAt = stringField(value, "accepted_at", "Actor close result");
+        const sessionId2 = resourceID(
+          stringField(value, "session_id", "Actor close result"),
+          "Actor close result.session_id"
+        );
+        const acceptedAt = stringField(
+          value,
+          "accepted_at",
+          "Actor close result"
+        );
         return Object.freeze({
           sessionId: sessionId2,
           acceptedAt: timestampString(acceptedAt, "Session close result.accepted_at")
@@ -4634,32 +4962,39 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
     return abortableRuntimeOperation(operation, signal);
   };
   const performSessionOutputPage = async (sessionId, query, signal) => {
-    if (signal?.aborted)
-      throw abortSignalReason(signal);
-    if (query?.after !== undefined && (!Number.isSafeInteger(query.after) || query.after < 0)) {
+    if (signal?.aborted) throw abortSignalReason(signal);
+    if (query?.after !== void 0 && (!Number.isSafeInteger(query.after) || query.after < 0)) {
       throw new Error("Session output after must be a non-negative safe integer");
     }
-    if (query?.limit !== undefined && (!Number.isInteger(query.limit) || query.limit < 1 || query.limit > 100)) {
+    if (query?.limit !== void 0 && (!Number.isInteger(query.limit) || query.limit < 1 || query.limit > 100)) {
       throw new Error("Session output limit must be an integer in [1,100]");
     }
     const correlationId = newUUIDv7();
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "sessionOutputPageRequested",
-        value: create(exports_program_pb.SessionOutputPageRequestedSchema, {
+        value: create(program_pb_exports.SessionOutputPageRequestedSchema, {
           correlationId,
           sessionId,
-          ...query?.after === undefined ? {} : { after: BigInt(query.after) },
+          ...query?.after === void 0 ? {} : { after: BigInt(query.after) },
           limit: query?.limit ?? 50
         })
       });
-      requireRuntimeOperationDecision(decision, correlationId, "Actor output page");
+      requireRuntimeOperationDecision(
+        decision,
+        correlationId,
+        "Actor output page"
+      );
       if (decision.kind === "failed") {
         throw runtimeOperationFailure("Actor output page", decision.dataJson);
       }
       return parseRuntimeProtocolValue("Actor output page result", () => {
         const value = parseObjectJSON(decision.dataJson, "Actor output page result");
-        requireExactKeys(value, ["has_more", "next_after", "records"], "Actor output page result");
+        requireExactKeys(
+          value,
+          ["has_more", "next_after", "records"],
+          "Actor output page result"
+        );
         const records = value["records"];
         if (!Array.isArray(records)) {
           throw new Error("Actor output page result.records must be an array");
@@ -4668,9 +5003,14 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
         if (typeof hasMore !== "boolean") {
           throw new Error("Actor output page result.has_more must be a boolean");
         }
-        const nextAfter = safeJSONSequence(value["next_after"], "Actor output page result.next_after");
+        const nextAfter = safeJSONSequence(
+          value["next_after"],
+          "Actor output page result.next_after"
+        );
         return Object.freeze({
-          records: Object.freeze(records.map((record) => parseSessionOutputRecord2(JSON.stringify(record)))),
+          records: Object.freeze(records.map(
+            (record) => parseSessionOutputRecord2(JSON.stringify(record))
+          )),
           nextAfter,
           hasMore
         });
@@ -4678,23 +5018,24 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
     });
     return abortableRuntimeOperation(operation, signal);
   };
-  const workspaceAddress = (workspaceId) => create(exports_program_pb.WorkspaceAddressSchema, { workspaceId });
+  const workspaceAddress = (workspaceId) => create(program_pb_exports.WorkspaceAddressSchema, { workspaceId });
   const performWorkspaceCreate = async (declaredId, request = {}, signal) => {
-    if (signal?.aborted)
-      throw abortSignalReason(signal);
+    if (signal?.aborted) throw abortSignalReason(signal);
     const correlationId = newUUIDv7();
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "workspaceCreateRequested",
-        value: create(exports_program_pb.WorkspaceCreateRequestedSchema, {
+        value: create(program_pb_exports.WorkspaceCreateRequestedSchema, {
           correlationId,
           declaredId,
-          ...request.key === undefined ? {} : { key: request.key },
-          secrets: encodeWorkspaceSecrets(request.secrets).map((secret) => create(exports_program_pb.WorkspaceSecretPlacementSchema, {
-            secret: secret.secret,
-            placement: secret.env !== undefined ? { case: "env", value: create(exports_program_pb.SecretEnvBindingSchema, { name: secret.env.name, mode: secret.env.mode, allowedOrigins: [...secret.env.allowed_origins ?? []] }) } : { case: "file", value: create(exports_program_pb.SecretFileBindingSchema, { path: secret.file.path }) }
-          })) ?? [],
-          ...request.idempotencyKey === undefined ? {} : { idempotencyKey: request.idempotencyKey }
+          ...request.key === void 0 ? {} : { key: request.key },
+          secrets: encodeWorkspaceSecrets(request.secrets).map(
+            (secret) => create(program_pb_exports.WorkspaceSecretPlacementSchema, {
+              secret: secret.secret,
+              placement: secret.env !== void 0 ? { case: "env", value: create(program_pb_exports.SecretEnvBindingSchema, { name: secret.env.name, mode: secret.env.mode, allowedOrigins: [...secret.env.allowed_origins ?? []] }) } : { case: "file", value: create(program_pb_exports.SecretFileBindingSchema, { path: secret.file.path }) }
+            })
+          ) ?? [],
+          ...request.idempotencyKey === void 0 ? {} : { idempotencyKey: request.idempotencyKey }
         })
       });
       requireRuntimeOperationDecision(decision, correlationId, "Workspace create");
@@ -4704,20 +5045,26 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
       return parseRuntimeProtocolValue("Workspace create result", () => {
         const value = parseObjectJSON(decision.dataJson, "Workspace create result");
         requireExactKeys(value, ["workspace_id"], "Workspace create result");
-        const workspaceId = resourceID(stringField(value, "workspace_id", "Workspace create result"), "Workspace create result.workspace_id");
+        const workspaceId = resourceID(
+          stringField(
+            value,
+            "workspace_id",
+            "Workspace create result"
+          ),
+          "Workspace create result.workspace_id"
+        );
         return Object.freeze({ workspaceId });
       });
     });
     return abortableRuntimeOperation(operation, signal);
   };
   const performWorkspaceRetrieve = async (workspaceId, signal) => {
-    if (signal?.aborted)
-      throw abortSignalReason(signal);
+    if (signal?.aborted) throw abortSignalReason(signal);
     const correlationId = newUUIDv7();
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "workspaceRetrieveRequested",
-        value: create(exports_program_pb.WorkspaceRetrieveRequestedSchema, {
+        value: create(program_pb_exports.WorkspaceRetrieveRequestedSchema, {
           correlationId,
           workspace: workspaceAddress(workspaceId)
         })
@@ -4726,29 +5073,31 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
       if (decision.kind === "failed") {
         throw runtimeOperationFailure("Workspace retrieve", decision.dataJson);
       }
-      return parseRuntimeProtocolValue("Workspace retrieve result", () => parseWorkspace(JSON.parse(decision.dataJson)));
+      return parseRuntimeProtocolValue(
+        "Workspace retrieve result",
+        () => parseWorkspace(JSON.parse(decision.dataJson))
+      );
     });
     return abortableRuntimeOperation(operation, signal);
   };
   const performWorkspaceExec = async (workspaceId, request, signal) => {
-    if (signal?.aborted)
-      throw abortSignalReason(signal);
-    const timeoutMs = request.timeout === undefined ? undefined : durationMilliseconds(request.timeout, "Workspace exec timeout");
-    if (timeoutMs !== undefined && timeoutMs > 900000) {
+    if (signal?.aborted) throw abortSignalReason(signal);
+    const timeoutMs = request.timeout === void 0 ? void 0 : durationMilliseconds(request.timeout, "Workspace exec timeout");
+    if (timeoutMs !== void 0 && timeoutMs > 15 * 60 * 1e3) {
       throw new Error("Workspace exec timeout must not exceed 15m");
     }
     const correlationId = newUUIDv7();
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "workspaceExecRequested",
-        value: create(exports_program_pb.WorkspaceExecRequestedSchema, {
+        value: create(program_pb_exports.WorkspaceExecRequestedSchema, {
           correlationId,
           workspace: workspaceAddress(workspaceId),
           command: [...request.command],
-          ...request.cwd === undefined ? {} : { cwd: request.cwd },
-          env: request.env === undefined ? {} : { ...request.env },
-          stdin: request.stdin === undefined ? new Uint8Array : new Uint8Array(request.stdin),
-          ...timeoutMs === undefined ? {} : { timeoutMs: BigInt(timeoutMs) },
+          ...request.cwd === void 0 ? {} : { cwd: request.cwd },
+          env: request.env === void 0 ? {} : { ...request.env },
+          stdin: request.stdin === void 0 ? new Uint8Array() : new Uint8Array(request.stdin),
+          ...timeoutMs === void 0 ? {} : { timeoutMs: BigInt(timeoutMs) },
           idempotencyKey: request.idempotencyKey
         })
       });
@@ -4756,52 +5105,60 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
       if (decision.kind === "failed") {
         throw runtimeOperationFailure("Workspace exec", decision.dataJson);
       }
-      return parseRuntimeProtocolValue("Workspace exec result", () => parseWorkspaceExecResult(JSON.parse(decision.dataJson)));
+      return parseRuntimeProtocolValue(
+        "Workspace exec result",
+        () => parseWorkspaceExecResult(JSON.parse(decision.dataJson))
+      );
     });
     return abortableRuntimeOperation(operation, signal);
   };
   const performWorkspaceDelete = async (workspaceId, request = {}, signal) => {
-    if (signal?.aborted)
-      throw abortSignalReason(signal);
+    if (signal?.aborted) throw abortSignalReason(signal);
     const correlationId = newUUIDv7();
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "workspaceDeleteRequested",
-        value: create(exports_program_pb.WorkspaceDeleteRequestedSchema, {
+        value: create(program_pb_exports.WorkspaceDeleteRequestedSchema, {
           correlationId,
           workspace: workspaceAddress(workspaceId),
-          ...request.idempotencyKey === undefined ? {} : { idempotencyKey: request.idempotencyKey }
+          ...request.idempotencyKey === void 0 ? {} : { idempotencyKey: request.idempotencyKey }
         })
       });
       requireRuntimeOperationDecision(decision, correlationId, "Workspace delete");
       if (decision.kind === "failed") {
         throw runtimeOperationFailure("Workspace delete", decision.dataJson);
       }
-      return parseRuntimeProtocolValue("Workspace delete result", () => parseWorkspaceDeleteReceipt(JSON.parse(decision.dataJson)));
+      return parseRuntimeProtocolValue(
+        "Workspace delete result",
+        () => parseWorkspaceDeleteReceipt(JSON.parse(decision.dataJson))
+      );
     });
     return abortableRuntimeOperation(operation, signal);
   };
   const performTokenCreate = async (request) => {
     const correlationId = newUUIDv7();
-    const timeoutMs = request.timeout === undefined ? undefined : durationMilliseconds(request.timeout, "Token timeout");
-    const metadataJson = request.metadata === undefined ? undefined : new TextDecoder().decode(canonicalizeJsonValue(request.metadata));
+    const timeoutMs = request.timeout === void 0 ? void 0 : durationMilliseconds(request.timeout, "Token timeout");
+    const metadataJson = request.metadata === void 0 ? void 0 : new TextDecoder().decode(canonicalizeJsonValue(request.metadata));
     const idempotencyKey = normalizeTokenIdempotencyKey(request.idempotencyKey);
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "tokenCreateRequested",
-        value: create(exports_program_pb.TokenCreateRequestedSchema, {
+        value: create(program_pb_exports.TokenCreateRequestedSchema, {
           correlationId,
-          ...timeoutMs === undefined ? {} : { timeoutMs: BigInt(timeoutMs) },
-          ...idempotencyKey === undefined ? {} : { idempotencyKey },
-          tags: request.tags === undefined ? [] : [...request.tags],
-          ...metadataJson === undefined ? {} : { metadataJson }
+          ...timeoutMs === void 0 ? {} : { timeoutMs: BigInt(timeoutMs) },
+          ...idempotencyKey === void 0 ? {} : { idempotencyKey },
+          tags: request.tags === void 0 ? [] : [...request.tags],
+          ...metadataJson === void 0 ? {} : { metadataJson }
         })
       });
       requireRuntimeOperationDecision(decision, correlationId, "Token create");
       if (decision.kind === "failed") {
         throw runtimeOperationFailure("Token create", decision.dataJson);
       }
-      return parseRuntimeProtocolValue("Token create result", () => parseTokenCreateResult(decision.dataJson));
+      return parseRuntimeProtocolValue(
+        "Token create result",
+        () => parseTokenCreateResult(decision.dataJson)
+      );
     });
     return await operation;
   };
@@ -4810,28 +5167,37 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
     const correlationId = newUUIDv7();
     const runWaitId = newUUIDv7();
     const resumeAttachId = newUUIDv7();
-    const timeoutMs = options.timeout === undefined ? undefined : durationMilliseconds(options.timeout, "Token Wait timeout");
-    const idleTimeoutMs = options.idleTimeout === undefined ? undefined : tokenWaitIdleTimeoutMilliseconds(options.idleTimeout);
+    const timeoutMs = options.timeout === void 0 ? void 0 : durationMilliseconds(options.timeout, "Token Wait timeout");
+    const idleTimeoutMs = options.idleTimeout === void 0 ? void 0 : tokenWaitIdleTimeoutMilliseconds(options.idleTimeout);
     try {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "runWaitRequested",
-        value: create(exports_program_pb.RunWaitRequestedSchema, {
+        value: create(program_pb_exports.RunWaitRequestedSchema, {
           correlationId,
           runWaitId,
           resumeAttachId,
           kind: "token",
           paramsJson: JSON.stringify({ token_id: tokenId }),
-          ...options.metadata === undefined ? {} : { metadataJson: new TextDecoder().decode(canonicalizeJsonValue(options.metadata)) },
-          ...timeoutMs === undefined ? {} : { timeoutMs: BigInt(timeoutMs) },
-          ...idleTimeoutMs === undefined ? {} : { idleTimeoutMs: BigInt(idleTimeoutMs) },
-          tags: options.tags === undefined ? [] : [...options.tags],
-          ...actorCursor === undefined ? {} : { actorSpeculativeInputSequence: actorCursor.value }
+          ...options.metadata === void 0 ? {} : { metadataJson: new TextDecoder().decode(canonicalizeJsonValue(options.metadata)) },
+          ...timeoutMs === void 0 ? {} : { timeoutMs: BigInt(timeoutMs) },
+          ...idleTimeoutMs === void 0 ? {} : { idleTimeoutMs: BigInt(idleTimeoutMs) },
+          tags: options.tags === void 0 ? [] : [...options.tags],
+          ...actorCursor === void 0 ? {} : { actorSpeculativeInputSequence: actorCursor.value }
         })
       });
-      requireWaitDecision(decision, correlationId, runWaitId, resumeAttachId, "Token resume");
+      requireWaitDecision(
+        decision,
+        correlationId,
+        runWaitId,
+        resumeAttachId,
+        "Token resume"
+      );
       await acknowledgeResumeConsumed(io, decision);
-      if (decision.kind === "cancelled" && actorCursor !== undefined) {
-        const failure = parseRuntimeProtocolValue("Actor Token cancellation decision", () => resumeFailure(decision.dataJson));
+      if (decision.kind === "cancelled" && actorCursor !== void 0) {
+        const failure = parseRuntimeProtocolValue(
+          "Actor Token cancellation decision",
+          () => resumeFailure(decision.dataJson)
+        );
         throw runOperations.cancel(failure.reasonCode);
       }
       if (decision.kind !== "completed") {
@@ -4840,7 +5206,10 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
         }
         throw tokenWaitFailure(decision.kind, decision.dataJson);
       }
-      return parseRuntimeProtocolValue("Token completion result", () => JSON.parse(decision.dataJson));
+      return parseRuntimeProtocolValue(
+        "Token completion result",
+        () => JSON.parse(decision.dataJson)
+      );
     } finally {
       releaseWait();
     }
@@ -4850,14 +5219,18 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "metadataUpdated",
-        value: create(exports_program_pb.MetadataUpdatedSchema, {
+        value: create(program_pb_exports.MetadataUpdatedSchema, {
           correlationId,
           operation: request.operation,
           ...request.operation === "set" ? {
             key: normalizeMetadataKey(request.key),
-            valueJson: new TextDecoder().decode(canonicalizeJsonValue(request.value))
+            valueJson: new TextDecoder().decode(
+              canonicalizeJsonValue(request.value)
+            )
           } : request.operation === "patch" ? {
-            patchJson: new TextDecoder().decode(canonicalizeMetadataPatch(request.values))
+            patchJson: new TextDecoder().decode(
+              canonicalizeMetadataPatch(request.values)
+            )
           } : {
             key: normalizeMetadataKey(request.key),
             amount: finiteMetadataIncrement(request.amount)
@@ -4879,14 +5252,16 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
       throw new Error("logger message must be a string");
     }
     if (Buffer.byteLength(message) > MAX_RUN_LOG_MESSAGE_BYTES) {
-      throw new Error(`logger message must be at most ${MAX_RUN_LOG_MESSAGE_BYTES} UTF-8 bytes`);
+      throw new Error(
+        `logger message must be at most ${MAX_RUN_LOG_MESSAGE_BYTES} UTF-8 bytes`
+      );
     }
     const attributesJson = canonicalizeLogAttributes(attributes);
     const correlationId = newUUIDv7();
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "structuredLogRequested",
-        value: create(exports_program_pb.StructuredLogRequestedSchema, {
+        value: create(program_pb_exports.StructuredLogRequestedSchema, {
           correlationId,
           level,
           message,
@@ -4911,9 +5286,11 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
         return Promise.reject(new Error("timers.waitUntil() requires a valid Date"));
       }
       const remainingMs = date.getTime() - Date.now();
-      if (remainingMs <= 0)
-        return Promise.resolve();
-      return wait({ date: date.toISOString() }, boundedTimerMilliseconds(Math.ceil(remainingMs)));
+      if (remainingMs <= 0) return Promise.resolve();
+      return wait(
+        { date: date.toISOString() },
+        boundedTimerMilliseconds(Math.ceil(remainingMs))
+      );
     },
     actorInputSend(target, input, request, signal) {
       return performActorInputSend(target, input, request, signal);
@@ -4975,8 +5352,7 @@ function canonicalizeMetadataPatch(values) {
   if (values === null || typeof values !== "object" || Array.isArray(values)) {
     throw new Error("metadata.patch() requires an object");
   }
-  for (const key of Object.keys(values))
-    normalizeMetadataKey(key);
+  for (const key of Object.keys(values)) normalizeMetadataKey(key);
   return canonicalizeJsonValue(values);
 }
 function finiteMetadataIncrement(value) {
@@ -4991,31 +5367,31 @@ function canonicalizeLogAttributes(attributes) {
   }
   const normalized = canonicalizeJsonValue(attributes);
   if (normalized.byteLength > MAX_RUN_LOG_ATTRIBUTES_BYTES) {
-    throw new Error(`logger attributes must be at most ${MAX_RUN_LOG_ATTRIBUTES_BYTES} canonical JSON bytes`);
+    throw new Error(
+      `logger attributes must be at most ${MAX_RUN_LOG_ATTRIBUTES_BYTES} canonical JSON bytes`
+    );
   }
   return normalized;
 }
 function normalizeTokenIdempotencyKey(value) {
-  if (value === undefined)
-    return;
+  if (value === void 0) return void 0;
   const normalized = trimGoSpace(value);
   if (Buffer.byteLength(normalized) > 512) {
     throw new Error("Token idempotency key must be at most 512 UTF-8 bytes");
   }
-  return normalized === "" ? undefined : normalized;
+  return normalized === "" ? void 0 : normalized;
 }
 function taskRetryRequest(retry) {
-  if (retry.enabled === false)
-    return { enabled: false };
+  if (retry.enabled === false) return { enabled: false };
   return {
-    ...retry.enabled === undefined ? {} : { enabled: retry.enabled },
+    ...retry.enabled === void 0 ? {} : { enabled: retry.enabled },
     max_attempts: retry.maxAttempts,
-    ...retry.backoff === undefined ? {} : {
+    ...retry.backoff === void 0 ? {} : {
       backoff: {
-        ...retry.backoff.minDelay === undefined ? {} : { min_delay: retry.backoff.minDelay },
-        ...retry.backoff.maxDelay === undefined ? {} : { max_delay: retry.backoff.maxDelay },
-        ...retry.backoff.factor === undefined ? {} : { factor: retry.backoff.factor },
-        ...retry.backoff.jitter === undefined ? {} : { jitter: retry.backoff.jitter }
+        ...retry.backoff.minDelay === void 0 ? {} : { min_delay: retry.backoff.minDelay },
+        ...retry.backoff.maxDelay === void 0 ? {} : { max_delay: retry.backoff.maxDelay },
+        ...retry.backoff.factor === void 0 ? {} : { factor: retry.backoff.factor },
+        ...retry.backoff.jitter === void 0 ? {} : { jitter: retry.backoff.jitter }
       }
     }
   };
@@ -5031,7 +5407,10 @@ function parseTokenCreateResult(dataJson) {
     throw new Error("Token create result.status must be pending");
   }
   return Object.freeze({
-    id: resourceID(stringField(value, "id", "Token create result"), "Token create result.id"),
+    id: resourceID(
+      stringField(value, "id", "Token create result"),
+      "Token create result.id"
+    ),
     callbackUrl: stringField(value, "callback_url", "Token create result"),
     publicAccessToken: stringField(value, "public_access_token", "Token create result"),
     timeoutAt: timestampString(value["timeout_at"], "Token create result.timeout_at"),
@@ -5059,7 +5438,11 @@ function parseTaskResult(dataJson) {
   const value = parseObjectJSON(dataJson, "Task child call result");
   const ok = value["ok"];
   if (ok === true) {
-    requireExactKeys(value, ["ok", "output", "run"], "Task child call success");
+    requireExactKeys(
+      value,
+      ["ok", "output", "run"],
+      "Task child call success"
+    );
     return Object.freeze({
       ok: true,
       output: jsonValueField(value, "output", "Task child call success"),
@@ -5069,12 +5452,28 @@ function parseTaskResult(dataJson) {
   if (ok !== false) {
     throw new Error("Task child call result.ok must be a boolean");
   }
-  requireExactKeys(value, ["failure", "ok", "run"], "Task child call failure");
+  requireExactKeys(
+    value,
+    ["failure", "ok", "run"],
+    "Task child call failure"
+  );
   const rawFailure = objectField(value, "failure", "Task child call failure");
-  requireExactKeys(rawFailure, ["code", "details", "message"], "Task child call failure.failure");
-  const details = objectField(rawFailure, "details", "Task child call failure.failure");
+  requireExactKeys(
+    rawFailure,
+    ["code", "details", "message"],
+    "Task child call failure.failure"
+  );
+  const details = objectField(
+    rawFailure,
+    "details",
+    "Task child call failure.failure"
+  );
   const failure = Object.freeze({
-    code: stringField(rawFailure, "code", "Task child call failure.failure"),
+    code: stringField(
+      rawFailure,
+      "code",
+      "Task child call failure.failure"
+    ),
     message: stringField(rawFailure, "message", "Task child call failure.failure"),
     details: Object.freeze({ ...details })
   });
@@ -5087,34 +5486,50 @@ function parseTaskResult(dataJson) {
 function parseTaskResultRun(value) {
   const run = objectField(value, "run", "Task child call result");
   requireExactKeys(run, ["id"], "Task child call result.run");
-  const id = resourceID(stringField(run, "id", "Task child call result.run"), "Task child call result.run.id");
+  const id = resourceID(
+    stringField(run, "id", "Task child call result.run"),
+    "Task child call result.run.id"
+  );
   return createRunHandle(id);
 }
 function tokenWaitFailure(kind, dataJson) {
-  const failure = parseRuntimeProtocolValue("Token Wait failure", () => resumeFailure(dataJson));
+  const failure = parseRuntimeProtocolValue(
+    "Token Wait failure",
+    () => resumeFailure(dataJson)
+  );
   const code = failure.reasonCode;
-  const error = new Error(code === "wait_timeout" ? "Token wait timed out" : code === "token_expired" ? "Token expired" : code === "token_cancelled" ? "Token was cancelled" : `Token Wait ${kind}: ${code}`);
+  const error = new Error(
+    code === "wait_timeout" ? "Token wait timed out" : code === "token_expired" ? "Token expired" : code === "token_cancelled" ? "Token was cancelled" : `Token Wait ${kind}: ${code}`
+  );
   error.name = code === "wait_timeout" ? "WaitTimeoutError" : "HelmrError";
   error.code = code;
   return error;
 }
 function normalizeActorInputIdempotencyKey(value) {
-  if (value === undefined)
-    return;
+  if (value === void 0) return void 0;
   const normalized = trimGoSpace(value);
   if (Buffer.byteLength(normalized) > 512) {
-    throw actorInputSendError("invalid_idempotency_key", "Actor input idempotency key must be at most 512 UTF-8 bytes");
+    throw actorInputSendError(
+      "invalid_idempotency_key",
+      "Actor input idempotency key must be at most 512 UTF-8 bytes"
+    );
   }
-  return normalized === "" ? undefined : normalized;
+  return normalized === "" ? void 0 : normalized;
 }
 function requireRuntimeOperationDecision(decision, correlationId, operation) {
   if (decision.correlationId !== correlationId || decision.kind !== "completed" && decision.kind !== "failed" || decision.runWaitId !== "" || decision.requireConsumedAck || decision.checkpointId !== "" || decision.resumeAttachId !== "" || decision.resumeRequestVersion !== 0n || decision.runLeaseId !== "" || decision.noResult) {
-    throw new RuntimeProtocolError(`${operation} decision did not match the pending operation`);
+    throw new RuntimeProtocolError(
+      `${operation} decision did not match the pending operation`
+    );
   }
 }
 function parseActorInputSendResult(dataJson) {
   const value = parseObjectJSON(dataJson, "Actor input send result");
-  requireExactKeys(value, ["created_at", "data", "id", "sequence", "source"], "Actor input send result");
+  requireExactKeys(
+    value,
+    ["created_at", "data", "id", "sequence", "source"],
+    "Actor input send result"
+  );
   const record = parseSessionInputRecord(value);
   if (record.sequence === 0) {
     throw new Error("Actor input send result.sequence must be positive");
@@ -5123,11 +5538,20 @@ function parseActorInputSendResult(dataJson) {
 }
 function parseActorInputSendFailure(dataJson) {
   const value = parseObjectJSON(dataJson, "Actor input send failure");
-  requireExactKeys(value, ["code", "message", "retryable"], "Actor input send failure");
+  requireExactKeys(
+    value,
+    ["code", "message", "retryable"],
+    "Actor input send failure"
+  );
   if (typeof value["code"] !== "string" || value["code"].trim() === "" || typeof value["message"] !== "string" || value["message"].trim() === "" || typeof value["retryable"] !== "boolean") {
-    throw new Error("Actor input send failure must contain code, message, and retryable");
+    throw new Error(
+      "Actor input send failure must contain code, message, and retryable"
+    );
   }
-  return actorInputSendError(value["code"], value["message"]);
+  return actorInputSendError(
+    value["code"],
+    value["message"]
+  );
 }
 function actorInputSendError(code, message) {
   const error = new Error(message);
@@ -5136,10 +5560,8 @@ function actorInputSendError(code, message) {
   return error;
 }
 async function abortableRuntimeOperation(operation, signal) {
-  if (signal === undefined)
-    return operation;
-  if (signal.aborted)
-    throw abortSignalReason(signal);
+  if (signal === void 0) return operation;
+  if (signal.aborted) throw abortSignalReason(signal);
   const aborted = Promise.withResolvers();
   const onAbort = () => aborted.reject(abortSignalReason(signal));
   signal.addEventListener("abort", onAbort, { once: true });
@@ -5150,18 +5572,24 @@ async function abortableRuntimeOperation(operation, signal) {
   }
 }
 function abortSignalReason(signal) {
-  return signal.reason === undefined ? new DOMException("The operation was aborted", "AbortError") : signal.reason;
+  return signal.reason === void 0 ? new DOMException("The operation was aborted", "AbortError") : signal.reason;
 }
 function resumeFailure(dataJson) {
   const value = parseObjectJSON(dataJson, "terminal Wait failure data");
   return {
-    reasonCode: stringField(value, "reason_code", "terminal Wait failure data")
+    reasonCode: stringField(
+      value,
+      "reason_code",
+      "terminal Wait failure data"
+    )
   };
 }
 function durationMilliseconds(duration, label = "timer duration") {
   const match = /^([1-9][0-9]*)(ms|s|m|h|d)$/.exec(duration);
   if (match === null) {
-    throw new Error(`${label} must be a positive integer followed by ms, s, m, h, or d`);
+    throw new Error(
+      `${label} must be a positive integer followed by ms, s, m, h, or d`
+    );
   }
   const amount = BigInt(match[1]);
   const unit = match[2];
@@ -5174,7 +5602,7 @@ function durationMilliseconds(duration, label = "timer duration") {
   return boundedTimerMilliseconds(Number(milliseconds));
 }
 function boundedTimerMilliseconds(milliseconds) {
-  const maxMilliseconds = 31536000000;
+  const maxMilliseconds = 365 * 24 * 60 * 60 * 1e3;
   if (!Number.isSafeInteger(milliseconds) || milliseconds < 1 || milliseconds > maxMilliseconds) {
     throw new Error("timer duration must be between 1ms and 365d");
   }
@@ -5182,7 +5610,7 @@ function boundedTimerMilliseconds(milliseconds) {
 }
 function tokenWaitIdleTimeoutMilliseconds(duration) {
   const milliseconds = durationMilliseconds(duration, "Token Wait idle timeout");
-  if (milliseconds > 3600000) {
+  if (milliseconds > 60 * 60 * 1e3) {
     throw new Error("Token Wait idle timeout must be between 1ms and 1h");
   }
   return milliseconds;
@@ -5192,11 +5620,16 @@ async function runActor(start, definition, io, decisions) {
     throw new Error("Actor Program-start entrypoint is required");
   }
   const cursor = { value: start.entrypoint.value.startInputSequence };
-  const waitGate = new ConsumingWaitGate;
-  const actorOperations = new RunOperationState;
-  const uninstallRuntime = installRuntimeOperations(programRuntimeOperations(start, io, decisions, waitGate, actorOperations, cursor));
+  const waitGate = new ConsumingWaitGate();
+  const actorOperations = new RunOperationState();
+  const uninstallRuntime = installRuntimeOperations(
+    programRuntimeOperations(start, io, decisions, waitGate, actorOperations, cursor)
+  );
   try {
-    await definition.handler(actorSelf(start, io, decisions, cursor, waitGate, actorOperations), actorContext(start, actorOperations.controller.signal));
+    await definition.handler(
+      actorSelf(start, io, decisions, cursor, waitGate, actorOperations),
+      actorContext(start, actorOperations.controller.signal)
+    );
     try {
       await actorOperations.drainForCompletion();
       actorOperations.assertCanComplete();
@@ -5210,18 +5643,22 @@ async function runActor(start, definition, io, decisions) {
     }
     await actorOperations.drainForCompletion();
     actorOperations.assertCanComplete();
-    await writeActorFailure(io, cursor.value, errorMessage(error));
+    await writeActorFailure(
+      io,
+      cursor.value,
+      errorMessage(error)
+    );
     return;
   } finally {
     uninstallRuntime();
   }
   await writeRunEvent(io, {
     case: "actorOutcome",
-    value: create(exports_program_pb.ActorOutcomeSchema, {
+    value: create(program_pb_exports.ActorOutcomeSchema, {
       terminalInputSequence: cursor.value,
       outcome: {
         case: "succeeded",
-        value: create(exports_program_pb.ActorSucceededSchema)
+        value: create(program_pb_exports.ActorSucceededSchema)
       }
     })
   });
@@ -5233,12 +5670,11 @@ function actorSelf(start, io, decisions, cursor, waitGate, actorOperations) {
   const actorStart = start.entrypoint.value;
   let committedBoundary = cursor.value;
   const commitPriorTurn = async () => {
-    if (cursor.value === committedBoundary)
-      return;
+    if (cursor.value === committedBoundary) return;
     const correlationId = newUUIDv7();
     const decision = await requestRuntimeDecision(io, decisions, correlationId, {
       case: "actorTurnCommitRequested",
-      value: create(exports_program_pb.ActorTurnCommitRequestedSchema, {
+      value: create(program_pb_exports.ActorTurnCommitRequestedSchema, {
         correlationId,
         targetInputSequence: cursor.value
       })
@@ -5252,11 +5688,11 @@ function actorSelf(start, io, decisions, cursor, waitGate, actorOperations) {
       const correlationId = newUUIDv7();
       const runWaitId = newUUIDv7();
       const resumeAttachId = newUUIDv7();
-      const timeoutMs = options?.timeout === undefined ? undefined : durationMilliseconds(options.timeout);
-      const idleTimeoutMs = options?.idleTimeout === undefined ? undefined : durationMilliseconds(options.idleTimeout);
+      const timeoutMs = options?.timeout === void 0 ? void 0 : durationMilliseconds(options.timeout);
+      const idleTimeoutMs = options?.idleTimeout === void 0 ? void 0 : durationMilliseconds(options.idleTimeout);
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "runWaitRequested",
-        value: create(exports_program_pb.RunWaitRequestedSchema, {
+        value: create(program_pb_exports.RunWaitRequestedSchema, {
           correlationId,
           runWaitId,
           resumeAttachId,
@@ -5265,17 +5701,26 @@ function actorSelf(start, io, decisions, cursor, waitGate, actorOperations) {
             session_id: actorStart.sessionId,
             after_input_sequence: safeActorSequence(cursor.value)
           }),
-          ...options?.metadata === undefined ? {} : { metadataJson: new TextDecoder().decode(canonicalizeJsonValue(options.metadata)) },
-          ...timeoutMs === undefined ? {} : { timeoutMs: BigInt(timeoutMs) },
-          ...idleTimeoutMs === undefined ? {} : { idleTimeoutMs: BigInt(idleTimeoutMs) },
-          tags: options?.tags === undefined ? [] : [...options.tags],
+          ...options?.metadata === void 0 ? {} : { metadataJson: new TextDecoder().decode(canonicalizeJsonValue(options.metadata)) },
+          ...timeoutMs === void 0 ? {} : { timeoutMs: BigInt(timeoutMs) },
+          ...idleTimeoutMs === void 0 ? {} : { idleTimeoutMs: BigInt(idleTimeoutMs) },
+          tags: options?.tags === void 0 ? [] : [...options.tags],
           actorSpeculativeInputSequence: cursor.value
         })
       });
-      requireWaitDecision(decision, correlationId, runWaitId, resumeAttachId, "Actor input resume");
+      requireWaitDecision(
+        decision,
+        correlationId,
+        runWaitId,
+        resumeAttachId,
+        "Actor input resume"
+      );
       await acknowledgeResumeConsumed(io, decision);
       if (decision.kind === "completed") {
-        const delivered = parseRuntimeProtocolValue("Actor input delivery", () => parseActorInputDelivery(decision.dataJson));
+        const delivered = parseRuntimeProtocolValue(
+          "Actor input delivery",
+          () => parseActorInputDelivery(decision.dataJson)
+        );
         if (BigInt(delivered.record.sequence) !== cursor.value + 1n) {
           throw new RuntimeProtocolError("Actor input delivery was not the next contiguous record");
         }
@@ -5283,7 +5728,10 @@ function actorSelf(start, io, decisions, cursor, waitGate, actorOperations) {
         return delivered;
       }
       if (decision.kind === "failed") {
-        const failure = parseRuntimeProtocolValue("Actor input Wait failure decision", () => resumeFailure(decision.dataJson));
+        const failure = parseRuntimeProtocolValue(
+          "Actor input Wait failure decision",
+          () => resumeFailure(decision.dataJson)
+        );
         if (failure.reasonCode !== "wait_timeout" && failure.reasonCode !== "session_closed") {
           throw new RuntimeProtocolError(`Actor input Wait failed: ${failure.reasonCode}`);
         }
@@ -5293,7 +5741,10 @@ function actorSelf(start, io, decisions, cursor, waitGate, actorOperations) {
         });
       }
       if (decision.kind === "cancelled") {
-        const failure = parseRuntimeProtocolValue("Actor input cancellation decision", () => resumeFailure(decision.dataJson));
+        const failure = parseRuntimeProtocolValue(
+          "Actor input cancellation decision",
+          () => resumeFailure(decision.dataJson)
+        );
         throw actorOperations.cancel(failure.reasonCode);
       }
       throw new RuntimeProtocolError(`Actor input Wait returned unsupported decision ${decision.kind}`);
@@ -5315,31 +5766,34 @@ function actorSelf(start, io, decisions, cursor, waitGate, actorOperations) {
     const correlationId = newUUIDv7();
     const decision = await requestRuntimeDecision(io, decisions, correlationId, {
       case: "actorOutputAppendRequested",
-      value: create(exports_program_pb.ActorOutputAppendRequestedSchema, {
+      value: create(program_pb_exports.ActorOutputAppendRequestedSchema, {
         correlationId,
         dataJson: new TextDecoder().decode(normalized),
         contentType: options?.contentType ?? "application/json",
-        ...options?.idempotencyKey === undefined ? {} : { idempotencyKey: options.idempotencyKey }
+        ...options?.idempotencyKey === void 0 ? {} : { idempotencyKey: options.idempotencyKey }
       })
     });
     requireRuntimeOperationDecision(decision, correlationId, "Actor output append");
     if (decision.kind === "failed") {
       throw runtimeOperationFailure("Actor output append", decision.dataJson);
     }
-    return parseRuntimeProtocolValue("Actor output append result", () => parseSessionOutputRecord2(decision.dataJson));
+    return parseRuntimeProtocolValue(
+      "Actor output append result",
+      () => parseSessionOutputRecord2(decision.dataJson)
+    );
   };
-  const append = (value, options) => actorOperations.track(() => performAppend(value, options));
+  const append = (value, options) => actorOperations.track(
+    () => performAppend(value, options)
+  );
   const performPipe = async (source2, options) => {
-    for await (const value of source2)
-      await performAppend(value, options);
+    for await (const value of source2) await performAppend(value, options);
   };
   const pipe = (source2, options) => actorOperations.track(() => performPipe(source2, options));
   const writer = (options) => {
     let closed = false;
     return Object.freeze({
       write(value) {
-        if (closed)
-          return Promise.reject(new Error("Actor output writer is closed"));
+        if (closed) return Promise.reject(new Error("Actor output writer is closed"));
         return append(value, options);
       },
       async close() {
@@ -5349,7 +5803,7 @@ function actorSelf(start, io, decisions, cursor, waitGate, actorOperations) {
   };
   return Object.freeze({
     id: actorStart.sessionId,
-    ...actorStart.key === undefined ? {} : { key: actorStart.key },
+    ...actorStart.key === void 0 ? {} : { key: actorStart.key },
     input: Object.freeze({ receive }),
     output: Object.freeze({
       append,
@@ -5363,8 +5817,7 @@ function actorReceive(result) {
     then: result.then.bind(result),
     async unwrap() {
       const resolved = await result;
-      if (resolved.ok)
-        return resolved.value;
+      if (resolved.ok) return resolved.value;
       throw resolved.error;
     }
   });
@@ -5395,7 +5848,10 @@ function parseActorInputDelivery(dataJson) {
     requireExactKeys(source2, ["run_id", "type"], "Actor input source");
     parsedSource = Object.freeze({
       type: "run",
-      runId: resourceID(stringField(source2, "run_id", "Actor input source"), "Actor input source.run_id")
+      runId: resourceID(
+        stringField(source2, "run_id", "Actor input source"),
+        "Actor input source.run_id"
+      )
     });
   } else {
     throw new Error("Actor input source type is invalid");
@@ -5405,7 +5861,10 @@ function parseActorInputDelivery(dataJson) {
     ok: true,
     value: jsonValueField(value, "value", "Actor input delivery"),
     record: Object.freeze({
-      id: resourceID(stringField(record, "id", "Actor input record"), "Actor input record.id"),
+      id: resourceID(
+        stringField(record, "id", "Actor input record"),
+        "Actor input record.id"
+      ),
       sequence,
       createdAt: timestampString(record["created_at"], "Session input record.created_at"),
       source: parsedSource
@@ -5414,19 +5873,43 @@ function parseActorInputDelivery(dataJson) {
 }
 function parseSessionOutputRecord2(dataJson) {
   const value = parseObjectJSON(dataJson, "Actor output append result");
-  requireExactKeys(value, ["content_type", "created_at", "data", "id", "provenance", "sequence"], "Actor output append result");
+  requireExactKeys(
+    value,
+    ["content_type", "created_at", "data", "id", "provenance", "sequence"],
+    "Actor output append result"
+  );
   const provenance = objectField(value, "provenance", "Actor output append result");
-  requireExactKeys(provenance, ["attempt_number", "deployment_id", "run_id"], "Actor output provenance");
+  requireExactKeys(
+    provenance,
+    ["attempt_number", "deployment_id", "run_id"],
+    "Actor output provenance"
+  );
   return Object.freeze({
-    id: resourceID(stringField(value, "id", "Actor output append result"), "Actor output append result.id"),
+    id: resourceID(
+      stringField(value, "id", "Actor output append result"),
+      "Actor output append result.id"
+    ),
     sequence: safeJSONSequence(value["sequence"], "Actor output sequence"),
     data: jsonValueField(value, "data", "Actor output append result"),
     contentType: stringField(value, "content_type", "Actor output append result"),
     createdAt: timestampString(value["created_at"], "Session output record.created_at"),
     provenance: Object.freeze({
-      runId: resourceID(stringField(provenance, "run_id", "Actor output provenance"), "Actor output provenance.run_id"),
-      attemptNumber: safeJSONSequence(provenance["attempt_number"], "Actor output attempt number"),
-      deploymentId: resourceID(stringField(provenance, "deployment_id", "Actor output provenance"), "Actor output provenance.deployment_id")
+      runId: resourceID(
+        stringField(provenance, "run_id", "Actor output provenance"),
+        "Actor output provenance.run_id"
+      ),
+      attemptNumber: safeJSONSequence(
+        provenance["attempt_number"],
+        "Actor output attempt number"
+      ),
+      deploymentId: resourceID(
+        stringField(
+          provenance,
+          "deployment_id",
+          "Actor output provenance"
+        ),
+        "Actor output provenance.deployment_id"
+      )
     })
   });
 }
@@ -5442,7 +5925,7 @@ function parseRuntimeSession(dataJson) {
     "workspace_id"
   ];
   const optional = ["current_run_id", "failure", "key"];
-  const allowed = new Set([...required, ...optional]);
+  const allowed = /* @__PURE__ */ new Set([...required, ...optional]);
   if (required.some((key) => !Object.hasOwn(value, key)) || Object.keys(value).some((key) => !allowed.has(key))) {
     throw new Error("Session retrieve result has unknown or missing fields");
   }
@@ -5521,11 +6004,11 @@ async function writeActorFailure(io, terminalInputSequence, message) {
   const normalizedMessage = canonicalFailureMessage(message, "actor failed");
   await writeRunEvent(io, {
     case: "actorOutcome",
-    value: create(exports_program_pb.ActorOutcomeSchema, {
+    value: create(program_pb_exports.ActorOutcomeSchema, {
       terminalInputSequence,
       outcome: {
         case: "failed",
-        value: create(exports_program_pb.ActorFailedSchema, {
+        value: create(program_pb_exports.ActorFailedSchema, {
           message: normalizedMessage
         })
       }
@@ -5568,9 +6051,13 @@ function runCause(cause) {
       return {
         type: "schedule",
         scheduleId: cause.kind.value.scheduleId,
-        scheduledAt: new Date(Number(cause.kind.value.scheduledAtUnixMs)).toISOString(),
-        ...cause.kind.value.previousScheduledAtUnixMs === undefined ? {} : {
-          lastScheduledAt: new Date(Number(cause.kind.value.previousScheduledAtUnixMs)).toISOString()
+        scheduledAt: new Date(
+          Number(cause.kind.value.scheduledAtUnixMs)
+        ).toISOString(),
+        ...cause.kind.value.previousScheduledAtUnixMs === void 0 ? {} : {
+          lastScheduledAt: new Date(
+            Number(cause.kind.value.previousScheduledAtUnixMs)
+          ).toISOString()
         },
         timezone: cause.kind.value.timezone
       };
@@ -5585,29 +6072,28 @@ function runCause(cause) {
 async function writeTaskFailure(io, kind, message, details) {
   const normalizedMessage = canonicalFailureMessage(message, "task failed");
   let detailsJson;
-  if (details !== undefined) {
+  if (details !== void 0) {
     detailsJson = new TextDecoder().decode(canonicalizeJsonValue(details));
     const errorBytes = canonicalizeJsonValue({
       message: normalizedMessage,
       details
     }).byteLength;
-    if (errorBytes > MAX_TASK_ERROR_BYTES)
-      detailsJson = undefined;
+    if (errorBytes > MAX_TASK_ERROR_BYTES) detailsJson = void 0;
   }
   await writeRunEvent(io, {
     case: "taskOutcome",
-    value: create(exports_program_pb.TaskOutcomeSchema, {
+    value: create(program_pb_exports.TaskOutcomeSchema, {
       outcome: kind === "failed" ? {
         case: "failed",
-        value: create(exports_program_pb.TaskFailedSchema, {
+        value: create(program_pb_exports.TaskFailedSchema, {
           message: normalizedMessage,
-          ...detailsJson === undefined ? {} : { detailsJson }
+          ...detailsJson === void 0 ? {} : { detailsJson }
         })
       } : {
         case: "payloadInvalid",
-        value: create(exports_program_pb.TaskPayloadInvalidSchema, {
+        value: create(program_pb_exports.TaskPayloadInvalidSchema, {
           message: normalizedMessage,
-          ...detailsJson === undefined ? {} : { detailsJson }
+          ...detailsJson === void 0 ? {} : { detailsJson }
         })
       }
     })
@@ -5617,24 +6103,29 @@ function validationDetails(issues) {
   return {
     issues: issues.slice(0, 5).map((issue) => ({
       message: boundedUtf8(issue.message, 1024),
-      ...issue.path === undefined ? {} : {
-        path: issue.path.slice(0, 16).map((part) => boundedUtf8(String(typeof part === "object" && part !== null && "key" in part ? part.key : part), 256))
+      ...issue.path === void 0 ? {} : {
+        path: issue.path.slice(0, 16).map(
+          (part) => boundedUtf8(
+            String(
+              typeof part === "object" && part !== null && "key" in part ? part.key : part
+            ),
+            256
+          )
+        )
       }
     })),
     truncated: issues.length > 5
   };
 }
 function boundedUtf8(value, maxBytes) {
-  if (Buffer.byteLength(value) <= maxBytes)
-    return value;
-  const suffix = "…";
+  if (Buffer.byteLength(value) <= maxBytes) return value;
+  const suffix = "\u2026";
   const suffixBytes = Buffer.byteLength(suffix);
   let result = "";
   let size = 0;
   for (const character of value) {
     const characterBytes = Buffer.byteLength(character);
-    if (size + characterBytes + suffixBytes > maxBytes)
-      break;
+    if (size + characterBytes + suffixBytes > maxBytes) break;
     result += character;
     size += characterBytes;
   }
@@ -5642,15 +6133,23 @@ function boundedUtf8(value, maxBytes) {
 }
 function canonicalFailureMessage(message, fallback) {
   const canonical = trimGoSpace(message);
-  return boundedUtf8(canonical === "" ? fallback : canonical, MAX_TASK_ERROR_MESSAGE_BYTES);
+  return boundedUtf8(
+    canonical === "" ? fallback : canonical,
+    MAX_TASK_ERROR_MESSAGE_BYTES
+  );
 }
 async function writeRunEvent(io, event) {
-  const body = toBinary(exports_program_pb.RunEventSchema, create(exports_program_pb.RunEventSchema, { event }));
+  const body = toBinary(
+    program_pb_exports.RunEventSchema,
+    create(program_pb_exports.RunEventSchema, { event })
+  );
   await io.write(frame(body));
 }
 function frame(body) {
   if (body.byteLength > MAX_PROGRAM_FRAME_BYTES) {
-    throw new Error(`runtime frame length ${body.byteLength} exceeds max ${MAX_PROGRAM_FRAME_BYTES}`);
+    throw new Error(
+      `runtime frame length ${body.byteLength} exceeds max ${MAX_PROGRAM_FRAME_BYTES}`
+    );
   }
   const result = new Uint8Array(4 + body.byteLength);
   new DataView(result.buffer).setUint32(0, body.byteLength);
@@ -5666,10 +6165,8 @@ function defaultProgramIO() {
     input: process.stdin,
     write: (value) => new Promise((resolve, reject) => {
       output.write(value, (error) => {
-        if (error === null || error === undefined)
-          resolve();
-        else
-          reject(error);
+        if (error === null || error === void 0) resolve();
+        else reject(error);
       });
     })
   };
@@ -5677,6 +6174,6 @@ function defaultProgramIO() {
 function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
 }
-export {
-  runProgram
-};
+
+// runtime/typescript/src/entry.ts
+await runProgram(new URL("file:///opt/helmr/program/helmr/declarations.json"));

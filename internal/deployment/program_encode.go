@@ -121,7 +121,6 @@ func EncodeProgram(
 	generated := map[string][]byte{
 		"helmr/program-manifest.json": manifestRaw,
 		"helmr/declarations.json":     indexRaw,
-		"helmr/entry.mjs":             []byte(ProgramEntry),
 	}
 	artifact, err := encodeProgramTree(
 		ctx,
@@ -270,13 +269,6 @@ func programTreeEntries(
 	if _, exists := tree.entries["helmr"]; !exists {
 		sources = append(sources, programTreeSource{entry: artifactEntry{
 			Path: "helmr",
-			Kind: artifactEntryDirectory,
-			Mode: 0755,
-		}})
-	}
-	if _, exists := tree.entries["node_modules"]; !exists {
-		sources = append(sources, programTreeSource{entry: artifactEntry{
-			Path: "node_modules",
 			Kind: artifactEntryDirectory,
 			Mode: 0755,
 		}})

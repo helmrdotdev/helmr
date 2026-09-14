@@ -17,7 +17,7 @@ func TestDeclarationLocatorCanonicalRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(parsed.Declarations) != 2 ||
-		parsed.Declarations[0].ModulePath != generatedTestModule("a") ||
+		parsed.Declarations[0].SourcePath != testSourcePath("a") ||
 		parsed.Declarations[1].ExportName != "対話" {
 		t.Fatalf("parsed locator = %#v", parsed)
 	}
@@ -46,15 +46,15 @@ func TestDeclarationLocatorRejectsOpenOrDivergentShapes(t *testing.T) {
 			return locator
 		},
 		"node_modules module": func(locator DeclarationLocator) DeclarationLocator {
-			locator.Declarations[0].ModulePath = "node_modules/task.js"
+			locator.Declarations[0].SourcePath = "node_modules/task.js"
 			return locator
 		},
 		"noncanonical platform module": func(locator DeclarationLocator) DeclarationLocator {
-			locator.Declarations[0].ModulePath = "helmr/task.js"
+			locator.Declarations[0].SourcePath = "helmr/task.js"
 			return locator
 		},
-		"uppercase digest": func(locator DeclarationLocator) DeclarationLocator {
-			locator.Declarations[0].ModulePath = generatedTestModule("A")
+		"build-only root config": func(locator DeclarationLocator) DeclarationLocator {
+			locator.Declarations[0].SourcePath = "helmr.config.ts"
 			return locator
 		},
 		"control export": func(locator DeclarationLocator) DeclarationLocator {
@@ -74,10 +74,10 @@ func TestDeclarationLocatorRejectsOpenOrDivergentShapes(t *testing.T) {
 func TestParseDeclarationLocatorRejectsUnknownAndNoncanonicalJSON(t *testing.T) {
 	for name, raw := range map[string][]byte{
 		"unknown": []byte(
-			`{"declarations":[{"declaredId":"build","exportName":"build","kind":"task","modulePath":"build.js","unknown":true}],"formatVersion":0}`,
+			`{"declarations":[{"declaredId":"build","exportName":"build","kind":"task","sourcePath":"build.js","unknown":true}],"formatVersion":0}`,
 		),
 		"noncanonical": []byte(
-			`{"formatVersion":0,"declarations":[{"declaredId":"build","exportName":"build","kind":"task","modulePath":"build.js"}]}`,
+			`{"formatVersion":0,"declarations":[{"declaredId":"build","exportName":"build","kind":"task","sourcePath":"build.js"}]}`,
 		),
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -95,14 +95,14 @@ func testDeclarationLocator() DeclarationLocator {
 			{
 				Kind:       DeclarationKindTask,
 				DeclaredID: "build",
-				ModulePath: generatedTestModule("a"),
+				SourcePath: testSourcePath("a"),
 				ExportName: "build",
 				Slot:       DeclarationSlotHandler,
 			},
 			{
 				Kind:       DeclarationKindActor,
 				DeclaredID: "chat",
-				ModulePath: generatedTestModule("b"),
+				SourcePath: testSourcePath("b"),
 				ExportName: "対話",
 				Slot:       DeclarationSlotHandler,
 			},
@@ -110,6 +110,6 @@ func testDeclarationLocator() DeclarationLocator {
 	}
 }
 
-func generatedTestModule(digit string) string {
-	return "tasks/.helmr/modules/" + strings.Repeat(digit, 64) + ".mjs"
+func testSourcePath(digit string) string {
+	return "tasks/" + strings.Repeat(digit, 3) + ".ts"
 }

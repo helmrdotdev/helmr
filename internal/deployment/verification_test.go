@@ -90,7 +90,7 @@ func TestParseVerificationResultRejectsOpenOrNoncanonicalShape(t *testing.T) {
 			mutate: func(root map[string]any) {
 				delete(root, "formatVersion")
 			},
-			wantErr: "complete canonical v0 shape",
+			wantErr: "formatVersion",
 		},
 		{
 			name: "duplicate file",
@@ -104,9 +104,9 @@ func TestParseVerificationResultRejectsOpenOrNoncanonicalShape(t *testing.T) {
 			name: "out of order file",
 			mutate: func(root map[string]any) {
 				files := root["files"].([]any)
-				files[1], files[2] = files[2], files[1]
+				files[0], files[1] = files[1], files[0]
 			},
-			wantErr: "files[1].path",
+			wantErr: "files[0].path",
 		},
 		{
 			name: "partial program result",
@@ -170,9 +170,9 @@ func TestVerificationResultVerifiesGeneratedFilesAgainstPlan(t *testing.T) {
 		{
 			name: "program entry mismatch",
 			change: func(result *VerificationResult) {
-				result.Succeeded.Files[2].Content = ProgramEntry + "\n"
+				result.Succeeded.Files = append(result.Succeeded.Files, VerificationFile{Path: "helmr/entry.mjs", Content: "obsolete"})
 			},
-			wantErr: "fixed v0 bytes",
+			wantErr: "one or two",
 		},
 	}
 	for _, test := range tests {
@@ -271,7 +271,6 @@ func testProgramVerificationResult(t *testing.T) VerificationResult {
 			Files: []VerificationFile{
 				{Path: VerificationBuildPlanPath, Content: string(planRaw)},
 				{Path: VerificationDeclarationsPath, Content: string(locatorRaw)},
-				{Path: VerificationProgramEntryPath, Content: ProgramEntry},
 			},
 		},
 	}
@@ -295,14 +294,14 @@ func testAnalysisDeclarationLocator() DeclarationLocator {
 			{
 				Kind:       DeclarationKindTask,
 				DeclaredID: "build",
-				ModulePath: generatedTestModule("a"),
+				SourcePath: testSourcePath("a"),
 				ExportName: "build",
 				Slot:       DeclarationSlotHandler,
 			},
 			{
 				Kind:       DeclarationKindActor,
 				DeclaredID: "chat",
-				ModulePath: generatedTestModule("b"),
+				SourcePath: testSourcePath("b"),
 				ExportName: "chat",
 				Slot:       DeclarationSlotHandler,
 			},

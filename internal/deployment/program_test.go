@@ -95,7 +95,7 @@ func TestProgramIndexRejectsInvalidAuthority(t *testing.T) {
 		{
 			name: "invalid runtime API",
 			change: func(index *ProgramIndex) {
-				index.RuntimeContract = "helmr.runtime.v1"
+				index.RuntimeContract = "helmr.runtime.v0"
 			},
 		},
 		{
@@ -107,7 +107,7 @@ func TestProgramIndexRejectsInvalidAuthority(t *testing.T) {
 		{
 			name: "invalid locator",
 			change: func(index *ProgramIndex) {
-				index.Declarations[0].Locator.ModulePath = "tasks/operator.ts"
+				index.Declarations[0].Locator.SourcePath = "../tasks/operator.ts"
 			},
 		},
 		{
@@ -115,7 +115,7 @@ func TestProgramIndexRejectsInvalidAuthority(t *testing.T) {
 			change: func(index *ProgramIndex) {
 				index.Declarations[1].Locator = &ProgramLocator{
 					ExportName: "repo",
-					ModulePath: ".helmr/modules/" + strings.Repeat("a", 64) + ".mjs",
+					SourcePath: ".helmr/modules/" + strings.Repeat("a", 64) + ".mjs",
 					Slot:       DeclarationSlotHandler,
 				}
 			},

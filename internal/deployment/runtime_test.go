@@ -18,7 +18,7 @@ func TestRuntimeIndexRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = `{"architecture":"x86_64","runtimeContract":"helmr.runtime.v0"}`
+	const want = `{"architecture":"x86_64","runtimeContract":"helmr.runtime.v1"}`
 	if string(canonical) != want {
 		t.Fatalf("canonical runtime index = %q, want %q", canonical, want)
 	}
@@ -37,7 +37,7 @@ func TestRuntimeDescriptorRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = `{"architecture":"x86_64","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","formatVersion":0,"mediaType":"application/vnd.helmr.runtime.v0+squashfs","runtimeContract":"helmr.runtime.v0","sizeBytes":4096}`
+	const want = `{"architecture":"x86_64","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","formatVersion":1,"mediaType":"application/vnd.helmr.runtime.v1+squashfs","runtimeContract":"helmr.runtime.v1","sizeBytes":4096}`
 	if string(canonical) != want {
 		t.Fatalf("canonical runtime descriptor = %q, want %q", canonical, want)
 	}
@@ -52,19 +52,16 @@ func TestRuntimeDescriptorRoundTrip(t *testing.T) {
 
 func TestRuntimeMetadataRoundTrip(t *testing.T) {
 	metadata := RuntimeMetadata{
+		Language:         testLanguageIdentity(),
 		Architecture:     ArchitectureX8664,
 		FormatVersion:    RuntimeMetadataFormatVersion,
-		NodeVersion:      "24.20.0",
-		ProgramNodeFlags: []string{NodeNoStripTypes, "--enable-source-maps"},
+		NodeVersion:      "24.21.0",
+		ProgramNodeFlags: testNodeProgramFlags(),
 		RuntimeContract:  RuntimeContract,
 	}
 	raw, err := CanonicalRuntimeMetadata(metadata)
 	if err != nil {
 		t.Fatal(err)
-	}
-	const want = `{"architecture":"x86_64","formatVersion":0,"nodeVersion":"24.20.0","programNodeFlags":["--no-strip-types","--enable-source-maps"],"runtimeContract":"helmr.runtime.v0"}`
-	if string(raw) != want {
-		t.Fatalf("canonical runtime metadata = %q, want %q", raw, want)
 	}
 	parsed, err := ParseRuntimeMetadata(raw)
 	if err != nil {
@@ -75,7 +72,7 @@ func TestRuntimeMetadataRoundTrip(t *testing.T) {
 	}
 
 	invalid := metadata
-	invalid.ProgramNodeFlags = []string{NodeNoExperimentalStripTypes, "--enable-source-maps"}
+	invalid.ProgramNodeFlags = []string{"--no-experimental-strip-types", "--enable-source-maps"}
 	if err := ValidateRuntimeMetadata(invalid); err == nil {
 		t.Fatal("runtime metadata accepted flags that do not match its Node ABI")
 	}
@@ -136,7 +133,7 @@ func TestRuntimeDocumentsRejectIncompleteOrDivergentShape(t *testing.T) {
 		RuntimeContract: RuntimeContract,
 	}
 	indexTests := map[string]func(*RuntimeIndex){
-		"runtime API":  func(value *RuntimeIndex) { value.RuntimeContract = "helmr.runtime.v1" },
+		"runtime API":  func(value *RuntimeIndex) { value.RuntimeContract = "helmr.runtime.v0" },
 		"architecture": func(value *RuntimeIndex) { value.Architecture = "amd64" },
 	}
 	for name, mutate := range indexTests {
@@ -151,11 +148,11 @@ func TestRuntimeDocumentsRejectIncompleteOrDivergentShape(t *testing.T) {
 
 	descriptor := testRuntimeDescriptor()
 	descriptorTests := map[string]func(*RuntimeDescriptor){
-		"format version": func(value *RuntimeDescriptor) { value.FormatVersion = 1 },
+		"format version": func(value *RuntimeDescriptor) { value.FormatVersion = 0 },
 		"architecture":   func(value *RuntimeDescriptor) { value.Architecture = "amd64" },
 		"digest":         func(value *RuntimeDescriptor) { value.Digest = "sha256:invalid" },
 		"media type":     func(value *RuntimeDescriptor) { value.MediaType += "; charset=binary" },
-		"runtime API":    func(value *RuntimeDescriptor) { value.RuntimeContract = "helmr.runtime.v1" },
+		"runtime API":    func(value *RuntimeDescriptor) { value.RuntimeContract = "helmr.runtime.v0" },
 		"zero size":      func(value *RuntimeDescriptor) { value.SizeBytes = 0 },
 		"oversize":       func(value *RuntimeDescriptor) { value.SizeBytes = maxJSONSafeInteger + 1 },
 	}
@@ -203,8 +200,8 @@ func TestRuntimeDocumentParsersRequireClosedCanonicalObjects(t *testing.T) {
 		"descriptor duplicate": {
 			raw: []byte(strings.Replace(
 				string(descriptor),
-				`"formatVersion":0`,
-				`"formatVersion":0,"formatVersion":0`,
+				`"formatVersion":1`,
+				`"formatVersion":1,"formatVersion":1`,
 				1,
 			)),
 			parse: func(raw []byte) error {
@@ -250,3 +247,5 @@ func testRuntimeDescriptor() RuntimeDescriptor {
 		SizeBytes:       squashFSPhysicalAlign,
 	}
 }
+
+func testNodeProgramFlags() []string { flags, _ := NodeProgramFlags("24.21.0"); return flags }

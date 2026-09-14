@@ -24,9 +24,8 @@ const (
 var configExtglob = regexp.MustCompile(`[?*+@!]\(`)
 
 type BuildConfig struct {
-	CompilePackages []string `json:"compilePackages"`
-	Dirs            []string `json:"dirs"`
-	IgnorePatterns  []string `json:"ignorePatterns"`
+	Dirs           []string `json:"dirs"`
+	IgnorePatterns []string `json:"ignorePatterns"`
 }
 
 func ReadBuildConfigFrame(reader io.Reader) (BuildConfig, error) {
@@ -76,7 +75,7 @@ func ParseBuildConfig(raw []byte) (BuildConfig, error) {
 	}
 	if !bytes.Equal(raw, complete) {
 		return BuildConfig{}, errors.New(
-			"config result does not match the complete canonical v0 shape",
+			"config result does not match the complete canonical v1 shape",
 		)
 	}
 	return cloneBuildConfig(config), nil
@@ -113,9 +112,6 @@ func BuildConfigDigest(config BuildConfig) (string, error) {
 }
 
 func ValidateBuildConfig(config BuildConfig) error {
-	if err := validateConfigStrings(config.CompilePackages, "compilePackages", false, validateConfigCompilePackage); err != nil {
-		return err
-	}
 
 	if err := validateConfigStrings(
 		config.Dirs,
@@ -158,13 +154,6 @@ func validateConfigStrings(
 		) >= 0 {
 			return fmt.Errorf("config result %s is not in canonical unique UTF-8 order", name)
 		}
-	}
-	return nil
-}
-
-func validateConfigCompilePackage(value string) error {
-	if !validCompileRoot(value) || installedPackageRoot(value) != value {
-		return errors.New("entry must be a clean project-relative installed package root")
 	}
 	return nil
 }
@@ -217,7 +206,6 @@ func validConfigText(value string) bool {
 }
 
 func cloneBuildConfig(config BuildConfig) BuildConfig {
-	config.CompilePackages = slices.Clone(config.CompilePackages)
 	config.Dirs = slices.Clone(config.Dirs)
 	config.IgnorePatterns = slices.Clone(config.IgnorePatterns)
 	return config

@@ -12,8 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
-	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/deployment"
@@ -23,7 +21,6 @@ const (
 	compilerDocumentLimit      = 16 << 20
 	compilerResultChannelLimit = 70 << 20
 	compilerOutputLimit        = 128 << 20
-	compilerFileLimit          = 8194
 )
 
 // ProgramInput is the manager-neutral boundary of the canonical builder. The
@@ -157,6 +154,21 @@ func BuildPreparedProgram(
 	if err != nil {
 		return ProgramResult{}, err
 	}
+	expectedRaw, err := readBoundedRegularFile(filepath.Join(input.PreparedDirectory, "compiler-output/helmr/compiler-result.json"), compilerDocumentLimit)
+	if err != nil {
+		return ProgramResult{}, err
+	}
+	expected, err := deployment.ParseProgramCompilerResult(expectedRaw)
+	if err != nil {
+		return ProgramResult{}, err
+	}
+	actual, err := deployment.ProgramInputTreeDigest(ctx, input.ProgramDirectory)
+	if err != nil {
+		return ProgramResult{}, err
+	}
+	if actual != expected.InputTreeDigest {
+		return ProgramResult{}, errors.New("prepared Program input tree changed before finalization")
+	}
 	if err := ingestCompilerOutput(input.ProgramDirectory, filepath.Join(input.PreparedDirectory, "compiler-output")); err != nil {
 		return ProgramResult{}, err
 	}
@@ -258,12 +270,19 @@ func compileInstalledProgram(
 	work string,
 	compilerOutput string,
 ) (deployment.BuildConfig, deployment.VerificationResult, error) {
-	flags := append([]string(nil), input.RuntimeMetadata.ProgramNodeFlags...)
+	inputDigest, err := deployment.ProgramInputTreeDigest(ctx, input.ProjectDirectory)
+	if err != nil {
+		return deployment.BuildConfig{}, deployment.VerificationResult{}, err
+	}
+	flags, err := deployment.NodeLanguageFlags(input.RuntimeMetadata.NodeVersion)
+	if err != nil {
+		return deployment.BuildConfig{}, deployment.VerificationResult{}, err
+	}
 	configFrame, err := runFinalizerCommand(ctx, finalizerCommand{
 		NodePath: input.NodePath, NodeLoader: input.NodeLoader,
 		NodeLibraryPath: input.NodeLibraryPath,
 		Arguments: append(append([]string{}, flags...), input.ConfigEvaluator,
-			input.ProjectDirectory, input.RuntimeMetadata.NodeVersion, work),
+			input.ProjectDirectory, input.RuntimeMetadata.NodeVersion),
 		Directory: input.ProjectDirectory, WorkDir: work,
 	})
 	if err != nil {
@@ -285,7 +304,7 @@ func compileInstalledProgram(
 		NodePath: input.NodePath, NodeLoader: input.NodeLoader,
 		NodeLibraryPath: input.NodeLibraryPath,
 		Arguments: append(append([]string{}, flags...), input.ProgramCompiler,
-			input.ProjectDirectory, configPath, input.RuntimeMetadata.NodeVersion, compilerOutput),
+			input.ProjectDirectory, configPath, input.RuntimeMetadata.NodeVersion, inputDigest, compilerOutput),
 		Directory: input.ProjectDirectory, WorkDir: work,
 	})
 	if err != nil {
@@ -298,6 +317,21 @@ func compileInstalledProgram(
 	if verification.Outcome != deployment.VerificationOutcomeSucceeded {
 		return deployment.BuildConfig{}, deployment.VerificationResult{}, fmt.Errorf(
 			"compile Helmr Program: %s", verification.Failed.Error.Message)
+	}
+	raw, err := readBoundedRegularFile(filepath.Join(compilerOutput, "helmr/compiler-result.json"), compilerDocumentLimit)
+	if err != nil {
+		return deployment.BuildConfig{}, deployment.VerificationResult{}, err
+	}
+	result, err := deployment.ParseProgramCompilerResult(raw)
+	if err != nil {
+		return deployment.BuildConfig{}, deployment.VerificationResult{}, err
+	}
+	after, err := deployment.ProgramInputTreeDigest(ctx, input.ProjectDirectory)
+	if err != nil {
+		return deployment.BuildConfig{}, deployment.VerificationResult{}, err
+	}
+	if after != inputDigest || result.InputTreeDigest != inputDigest || result.Language != input.Compiler.Language || result.NodeVersion != input.RuntimeMetadata.NodeVersion {
+		return deployment.BuildConfig{}, deployment.VerificationResult{}, errors.New("compiled Program input or language authority changed during preparation")
 	}
 	return config, verification, nil
 }
@@ -334,7 +368,7 @@ func validateProgramInput(input ProgramInput) error {
 	if err := deployment.ValidateRuntimeMetadata(input.RuntimeMetadata); err != nil {
 		return err
 	}
-	if input.Runtime.Architecture != input.RuntimeMetadata.Architecture ||
+	if input.Compiler.Language != input.RuntimeMetadata.Language || input.Runtime.Architecture != input.RuntimeMetadata.Architecture ||
 		input.Runtime.RuntimeContract != input.RuntimeMetadata.RuntimeContract {
 		return errors.New("runtime descriptor and metadata do not match")
 	}
@@ -380,7 +414,7 @@ func validatePreparedProgramInput(input PreparedProgramInput) error {
 	if err := deployment.ValidateRuntimeMetadata(input.RuntimeMetadata); err != nil {
 		return err
 	}
-	if input.Runtime.Architecture != input.RuntimeMetadata.Architecture ||
+	if input.Compiler.Language != input.RuntimeMetadata.Language || input.Runtime.Architecture != input.RuntimeMetadata.Architecture ||
 		input.Runtime.RuntimeContract != input.RuntimeMetadata.RuntimeContract {
 		return errors.New("runtime descriptor and metadata do not match")
 	}
@@ -535,17 +569,13 @@ func ingestCompilerOutput(project, output string) error {
 	if err != nil {
 		return fmt.Errorf("read compiler result: %w", err)
 	}
-	result, err := deployment.ParseProgramCompilerResult(resultRaw)
+	_, err = deployment.ParseProgramCompilerResult(resultRaw)
 	if err != nil {
 		return fmt.Errorf("parse compiler result: %w", err)
 	}
 	filesByPath := map[string]struct{}{
 		"helmr/config.json":          {},
 		"helmr/compiler-result.json": {},
-	}
-	for _, generated := range result.Outputs {
-		filesByPath[generated.ModulePath] = struct{}{}
-		filesByPath[generated.SourceMapPath] = struct{}{}
 	}
 	directories := map[string]struct{}{".": {}}
 	for name := range filesByPath {
@@ -583,9 +613,9 @@ func ingestCompilerOutput(project, output string) error {
 		}
 		files++
 		total += info.Size()
-		if files > compilerFileLimit || info.Size() <= 0 ||
+		if info.Size() <= 0 ||
 			info.Size() > compilerDocumentLimit || total > compilerOutputLimit {
-			return errors.New("compiler output exceeds the v0 bounds")
+			return errors.New("compiler output exceeds the document bounds")
 		}
 		return nil
 	}); err != nil {
@@ -606,77 +636,6 @@ func ingestCompilerOutput(project, output string) error {
 		return fmt.Errorf("ingest compiler metadata: %w", err)
 	}
 
-	generatedDirectories := make(map[string]struct{}, len(result.Outputs))
-	for _, generated := range result.Outputs {
-		directory, ok := generatedOutputDirectory(generated.ModulePath)
-		if !ok {
-			return fmt.Errorf("compiler output path %q has no reserved output directory", generated.ModulePath)
-		}
-		generatedDirectories[directory] = struct{}{}
-	}
-	orderedDirectories := make([]string, 0, len(generatedDirectories))
-	for directory := range generatedDirectories {
-		orderedDirectories = append(orderedDirectories, directory)
-	}
-	sort.Strings(orderedDirectories)
-	for _, directory := range orderedDirectories {
-		target := filepath.Join(project, filepath.FromSlash(directory))
-		if err := ensureSafeTargetParents(project, directory); err != nil {
-			return err
-		}
-		if _, err := os.Lstat(target); !errors.Is(err, os.ErrNotExist) {
-			if err == nil {
-				return fmt.Errorf("installed tree contains reserved path %q", directory)
-			}
-			return err
-		}
-		if err := os.MkdirAll(filepath.Join(target, "modules"), 0o755); err != nil {
-			return err
-		}
-	}
-	orderedFiles := make([]string, 0, len(filesByPath)-2)
-	for name := range filesByPath {
-		if !strings.HasPrefix(name, "helmr/") {
-			orderedFiles = append(orderedFiles, name)
-		}
-	}
-	sort.Strings(orderedFiles)
-	for _, name := range orderedFiles {
-		source := filepath.Join(output, filepath.FromSlash(name))
-		target := filepath.Join(project, filepath.FromSlash(name))
-		if err := copyCompilerFile(source, target); err != nil {
-			return fmt.Errorf("ingest compiler output %q: %w", name, err)
-		}
-	}
-	return nil
-}
-
-func generatedOutputDirectory(name string) (string, bool) {
-	const root = ".helmr/modules/"
-	if strings.HasPrefix(name, root) {
-		return ".helmr", true
-	}
-	const nested = "/.helmr/modules/"
-	index := strings.LastIndex(name, nested)
-	if index <= 0 {
-		return "", false
-	}
-	return name[:index] + "/.helmr", true
-}
-
-func ensureSafeTargetParents(root, relative string) error {
-	current := root
-	parts := strings.Split(filepath.ToSlash(relative), "/")
-	for _, part := range parts[:len(parts)-1] {
-		current = filepath.Join(current, part)
-		info, err := os.Lstat(current)
-		if err != nil {
-			return fmt.Errorf("inspect compiler output parent %q: %w", current, err)
-		}
-		if !info.IsDir() {
-			return fmt.Errorf("compiler output parent %q is not a directory", current)
-		}
-	}
 	return nil
 }
 

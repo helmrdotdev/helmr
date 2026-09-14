@@ -94,14 +94,14 @@ func New(t *testing.T) Fixture {
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 		VALUES
-			($1, $2, 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
+			($1, $2, 1, 'application/vnd.helmr.deployment-program.v1+squashfs'),
 			($1, $3, 1, 'application/octet-stream')
 	`, fixture.OrgID, programDigest, imageDigest)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO artifacts (
 			id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type
 		) VALUES
-			($1, $3, $4, $5, $6, 'deployment_program', 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
+			($1, $3, $4, $5, $6, 'deployment_program', 1, 'application/vnd.helmr.deployment-program.v1+squashfs'),
 			($2, $3, $4, $5, $7, 'workspace_image', 1, 'application/octet-stream')
 	`, programID, imageID, fixture.OrgID, fixture.ProjectID,
 		fixture.EnvironmentID, programDigest, imageDigest)

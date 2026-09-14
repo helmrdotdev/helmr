@@ -18,10 +18,7 @@ import { canonicalizeJsonValue, type JsonValue } from "@helmr/sdk/internal"
 import { compareUTF8, hasOnlyUnicodeScalarValues } from "./utf8"
 
 export const BUILD_PLAN_FORMAT_VERSION = 0 as const
-export const DECLARATION_LOCATOR_FORMAT_VERSION = 0 as const
-export const PROGRAM_ENTRYPOINT =
-  'import { runProgram } from "file:///opt/helmr/runtime/helmr/entry.mjs";\nawait runProgram(new URL("./declarations.json", import.meta.url));\n' as const
-
+export const DECLARATION_LOCATOR_FORMAT_VERSION = 1 as const
 export type NormalizedRetry =
   | Readonly<{ enabled: false }>
   | Readonly<{
@@ -144,17 +141,17 @@ export interface DeclarationLocatorEntry {
   readonly declaredId: string
   readonly exportName: string
   readonly kind: "task" | "actor"
-  readonly modulePath: string
+  readonly sourcePath: string
   readonly slot: "handler"
 }
 
 export interface DeclarationLocator {
   readonly declarations: readonly DeclarationLocatorEntry[]
-  readonly formatVersion: 0
+  readonly formatVersion: 1
 }
 
 export interface AnalysisExport {
-  readonly modulePath: string
+  readonly sourcePath: string
   readonly exportName: string
   readonly value: unknown
 }
@@ -170,7 +167,6 @@ export interface AnalysisResult {
   readonly declarationLocator: DeclarationLocator
   readonly declarationLocatorBytes: Uint8Array
   readonly programDeclarations: readonly ProgramDeclaration[]
-  readonly entrypointBytes: Uint8Array
 }
 
 export interface ProgramExportAnalysis {
@@ -180,7 +176,7 @@ export interface ProgramExportAnalysis {
 
 interface LocatedDefinition {
   readonly definition: InternalDefinition | InternalSandboxDefinition
-  readonly modulePath: string
+  readonly sourcePath: string
   readonly exportName: string
   readonly value: object
 }
@@ -219,7 +215,6 @@ export function analyze(options: AnalyzeOptions): AnalysisResult {
       declarationLocator as unknown as JsonValue,
     ),
     programDeclarations: programExports.programDeclarations,
-    entrypointBytes: new TextEncoder().encode(PROGRAM_ENTRYPOINT),
   }
 }
 
@@ -287,7 +282,7 @@ function discoverDefinitions(
     const definition =
       inspectDefinition(item.value) ?? inspectSandboxDefinition(item.value)
     if (definition === undefined) continue
-    validateModulePath(item.modulePath)
+    validateSourcePath(item.sourcePath)
     validateExportName(item.exportName)
     const key = `${definition.kind}\0${definition.id}`
     const existing = identities.get(key)
@@ -295,7 +290,7 @@ function discoverDefinitions(
       if (existing.value === item.value) {
         const candidate = {
           definition,
-          modulePath: item.modulePath,
+          sourcePath: item.sourcePath,
           exportName: item.exportName,
           value: item.value as object,
         }
@@ -305,12 +300,12 @@ function discoverDefinitions(
         continue
       }
       throw new Error(
-        `duplicate ${definition.kind} declaration ${JSON.stringify(definition.id)} at ${existing.located.modulePath}#${existing.located.exportName} and ${item.modulePath}#${item.exportName}`,
+        `duplicate ${definition.kind} declaration ${JSON.stringify(definition.id)} at ${existing.located.sourcePath}#${existing.located.exportName} and ${item.sourcePath}#${item.exportName}`,
       )
     }
     const located = {
       definition,
-      modulePath: item.modulePath,
+      sourcePath: item.sourcePath,
       exportName: item.exportName,
       value: item.value as object,
     }
@@ -693,7 +688,7 @@ function locatorEntry(item: LocatedDefinition): DeclarationLocatorEntry {
     declaredId: item.definition.id,
     exportName: item.exportName,
     kind: item.definition.kind,
-    modulePath: item.modulePath,
+    sourcePath: item.sourcePath,
     slot: "handler",
   }
 }
@@ -793,7 +788,7 @@ function safePositiveNumber(value: bigint, label: string): number {
   return Number(value)
 }
 
-function validateModulePath(path: string): void {
+function validateSourcePath(path: string): void {
   const suffixes = [
     ".cjs",
     ".cts",
@@ -817,13 +812,14 @@ function validateModulePath(path: string): void {
     ) ||
     components.includes("node_modules") ||
     components[0] === "helmr" ||
+    path === "helmr.config.ts" ||
     path.endsWith(".d.ts") ||
     path.endsWith(".d.mts") ||
     path.endsWith(".d.cts") ||
     !suffixes.some((suffix) => path.endsWith(suffix))
   ) {
     throw new Error(
-      `modulePath ${JSON.stringify(path)} is not an admitted first-party module path`,
+      `sourcePath ${JSON.stringify(path)} is not an admitted first-party module path`,
     )
   }
 }
@@ -860,7 +856,7 @@ function compareLocatorOccurrence(
   right: LocatedDefinition,
 ): number {
   return (
-    compareUTF8(left.modulePath, right.modulePath) ||
+    compareUTF8(left.sourcePath, right.sourcePath) ||
     compareUTF8(left.exportName, right.exportName)
   )
 }

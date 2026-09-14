@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	VerificationResultFormatVersion = 0
+	VerificationResultFormatVersion = 1
 
 	VerificationOutcomeSucceeded = VerificationOutcome("succeeded")
 	VerificationOutcomeFailed    = VerificationOutcome("failed")
@@ -23,7 +23,6 @@ const (
 
 	VerificationBuildPlanPath    = "helmr/build-plan.json"
 	VerificationDeclarationsPath = "helmr/analysis-locators.json"
-	VerificationProgramEntryPath = "helmr/entry.mjs"
 
 	maxVerificationResultBytes         = 70 << 20
 	maxVerificationFailureMessageBytes = 16 << 10
@@ -112,7 +111,7 @@ func ParseVerificationResult(raw []byte) (VerificationResult, error) {
 	}
 	if !bytes.Equal(raw, complete) {
 		return VerificationResult{}, errors.New(
-			"verification result does not match the complete canonical v0 shape",
+			"verification result does not match the complete canonical v1 shape",
 		)
 	}
 	return cloneVerificationResult(result), nil
@@ -260,8 +259,8 @@ func validateVerificationSucceeded(succeeded VerificationSucceeded) error {
 	if succeeded.Files == nil {
 		return errors.New("verification result files must be an array")
 	}
-	if len(succeeded.Files) != 1 && len(succeeded.Files) != 3 {
-		return errors.New("verification result files must contain exactly one or three entries")
+	if len(succeeded.Files) != 1 && len(succeeded.Files) != 2 {
+		return errors.New("verification result files must contain exactly one or two entries")
 	}
 	if succeeded.Files[0].Path != VerificationBuildPlanPath {
 		return fmt.Errorf(
@@ -286,7 +285,7 @@ func validateVerificationSucceeded(succeeded VerificationSucceeded) error {
 		}
 		return nil
 	}
-	if len(succeeded.Files) != 3 {
+	if len(succeeded.Files) != 2 {
 		return errors.New(
 			"program-backed verification result must contain all generated program files",
 		)
@@ -296,13 +295,6 @@ func validateVerificationSucceeded(succeeded VerificationSucceeded) error {
 			"verification result files[1].path = %q, want %q",
 			succeeded.Files[1].Path,
 			VerificationDeclarationsPath,
-		)
-	}
-	if succeeded.Files[2].Path != VerificationProgramEntryPath {
-		return fmt.Errorf(
-			"verification result files[2].path = %q, want %q",
-			succeeded.Files[2].Path,
-			VerificationProgramEntryPath,
 		)
 	}
 	locator, err := ParseDeclarationLocator([]byte(succeeded.Files[1].Content))
@@ -323,9 +315,6 @@ func validateVerificationSucceeded(succeeded VerificationSucceeded) error {
 				index,
 			)
 		}
-	}
-	if succeeded.Files[2].Content != ProgramEntry {
-		return errors.New("verification result program entry does not match fixed v0 bytes")
 	}
 	return validateVerifiedDeclarations(succeeded.Declarations, declarations)
 }

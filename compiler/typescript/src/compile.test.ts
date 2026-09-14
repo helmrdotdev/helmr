@@ -13,7 +13,6 @@ import {
   type PayloadSchema,
 } from "@helmr/sdk"
 import {
-  PROGRAM_ENTRYPOINT,
   analyze,
   normalizeWorkspaceResources,
 } from "./compile"
@@ -58,11 +57,11 @@ describe("declaration analysis", () => {
       .image(image("root").from("debian:bookworm"))
       .resources({ cpu: 0.125, memory: "1024MiB" })
     const exports = [
-      { modulePath: "src/machine.ts", exportName: "machine", value: machine },
-      { modulePath: "src/tasks.ts", exportName: "toString", value: noPayloadTask },
-      { modulePath: "src/actor.ts", exportName: "service", value: service },
-      { modulePath: "src/tasks.ts", exportName: "constructor", value: payloadTask },
-      { modulePath: "src/queues.ts", exportName: "jobs", value: jobs },
+      { sourcePath: "src/machine.ts", exportName: "machine", value: machine },
+      { sourcePath: "src/tasks.ts", exportName: "toString", value: noPayloadTask },
+      { sourcePath: "src/actor.ts", exportName: "service", value: service },
+      { sourcePath: "src/tasks.ts", exportName: "constructor", value: payloadTask },
+      { sourcePath: "src/queues.ts", exportName: "jobs", value: jobs },
     ] as const
 
     const result = analyze({ architecture: "x86_64", exports })
@@ -91,21 +90,21 @@ describe("declaration analysis", () => {
         declaredId: "constructor",
         exportName: "constructor",
         kind: "task",
-        modulePath: "src/tasks.ts",
+        sourcePath: "src/tasks.ts",
         slot: "handler",
       },
       {
         declaredId: "toString",
         exportName: "toString",
         kind: "task",
-        modulePath: "src/tasks.ts",
+        sourcePath: "src/tasks.ts",
         slot: "handler",
       },
       {
         declaredId: "service",
         exportName: "service",
         kind: "actor",
-        modulePath: "src/actor.ts",
+        sourcePath: "src/actor.ts",
         slot: "handler",
       },
     ])
@@ -119,9 +118,7 @@ describe("declaration analysis", () => {
       milliCpu: 125,
       memoryMiB: 1024,
     })
-    expect(new TextDecoder().decode(result.entrypointBytes)).toBe(
-      PROGRAM_ENTRYPOINT,
-    )
+
     expect(JSON.stringify(result.buildPlan)).not.toContain("registry")
   })
 
@@ -132,8 +129,8 @@ describe("declaration analysis", () => {
       analyze({
         architecture: "x86_64",
         exports: [
-          { modulePath: "src/task.ts", exportName: "sharedTask", value: sharedTask },
-          { modulePath: "src/actor.ts", exportName: "sharedActor", value: sharedActor },
+          { sourcePath: "src/task.ts", exportName: "sharedTask", value: sharedTask },
+          { sourcePath: "src/actor.ts", exportName: "sharedActor", value: sharedActor },
         ],
       }).buildPlan.definitions,
     ).toHaveLength(2)
@@ -146,8 +143,8 @@ describe("declaration analysis", () => {
       analyze({
         architecture: "x86_64",
         exports: [
-          { modulePath: "src/a.ts", exportName: "first", value: first },
-          { modulePath: "src/b.ts", exportName: "second", value: second },
+          { sourcePath: "src/a.ts", exportName: "first", value: first },
+          { sourcePath: "src/b.ts", exportName: "second", value: second },
         ],
       }),
     ).toThrow("duplicate task declaration")
@@ -159,9 +156,9 @@ describe("declaration analysis", () => {
       analyze({
         architecture: "x86_64",
         exports: [
-          { modulePath: "src/queue.ts", exportName: "shared", value: shared },
+          { sourcePath: "src/queue.ts", exportName: "shared", value: shared },
           {
-            modulePath: "src/task.ts",
+            sourcePath: "src/task.ts",
             exportName: "usesShared",
             value: task({
               id: "uses-shared",
@@ -179,10 +176,10 @@ describe("declaration analysis", () => {
       analyze({
         architecture: "x86_64",
         exports: [
-          { modulePath: "src/a.ts", exportName: "first", value: first },
-          { modulePath: "src/b.ts", exportName: "second", value: second },
+          { sourcePath: "src/a.ts", exportName: "first", value: first },
+          { sourcePath: "src/b.ts", exportName: "second", value: second },
           {
-            modulePath: "src/task.ts",
+            sourcePath: "src/task.ts",
             exportName: "task",
             value: task({ id: "task", queue: first, run: () => null }),
           },
@@ -201,12 +198,12 @@ describe("declaration analysis", () => {
       architecture: "x86_64",
       exports: [
         {
-          modulePath: "src/z-barrel.ts",
+          sourcePath: "src/z-barrel.ts",
           exportName: "shared",
           value: definition,
         },
         {
-          modulePath: "src/a-direct.ts",
+          sourcePath: "src/a-direct.ts",
           exportName: "renamed",
           value: definition,
         },
@@ -219,7 +216,7 @@ describe("declaration analysis", () => {
         declaredId: "shared",
         exportName: "renamed",
         kind: "task",
-        modulePath: "src/a-direct.ts",
+        sourcePath: "src/a-direct.ts",
         slot: "handler",
       },
     ])
@@ -232,10 +229,11 @@ describe("declaration analysis", () => {
   test("rejects invalid locator text before canonicalization", () => {
     const definition = task({ id: "located", run: () => null })
     for (const item of [
-      { modulePath: "src/\ud800.ts", exportName: "located" },
-      { modulePath: "src/located.ts", exportName: "\udc00" },
-      { modulePath: "node_modules/pkg/task.ts", exportName: "located" },
-      { modulePath: "src/task.d.ts", exportName: "located" },
+      { sourcePath: "src/\ud800.ts", exportName: "located" },
+      { sourcePath: "src/located.ts", exportName: "\udc00" },
+      { sourcePath: "node_modules/pkg/task.ts", exportName: "located" },
+      { sourcePath: "src/task.d.ts", exportName: "located" },
+      { sourcePath: "helmr.config.ts", exportName: "located" },
     ]) {
       expect(() =>
         analyze({
@@ -287,7 +285,7 @@ describe("declaration analysis", () => {
     const result = analyze({
       architecture: "x86_64",
       exports: [{
-        modulePath: "src/workspace.ts",
+        sourcePath: "src/workspace.ts",
         exportName: "machine",
         value: machine,
       }],
@@ -330,7 +328,7 @@ describe("declaration analysis", () => {
       analyze({
         architecture: "x86_64",
         exports: [{
-          modulePath: "src/workspace.ts",
+          sourcePath: "src/workspace.ts",
           exportName: "machine",
           value: sandbox({ id: "machine" })
             .image(forged as never)
@@ -357,12 +355,12 @@ describe("declaration analysis", () => {
       architecture: "x86_64",
       exports: [
         {
-          modulePath: "src/schedules.ts",
+          sourcePath: "src/schedules.ts",
           exportName: "nightly",
           value: scheduled,
         },
         {
-          modulePath: "src/schedules.ts",
+          sourcePath: "src/schedules.ts",
           exportName: "maintenance",
           value: maintenance,
         },
@@ -397,7 +395,7 @@ describe("declaration analysis", () => {
     expect(() => analyze({
       architecture: "x86_64",
       exports: [{
-        modulePath: "src/schedules.ts",
+        sourcePath: "src/schedules.ts",
         exportName: "nightly",
         value: scheduled,
       }],
@@ -421,12 +419,12 @@ describe("declaration analysis", () => {
       architecture: "x86_64",
       exports: [
         {
-          modulePath: "src/schedules.ts",
+          sourcePath: "src/schedules.ts",
           exportName: "nightly",
           value: scheduled,
         },
         {
-          modulePath: "src/sandbox.ts",
+          sourcePath: "src/sandbox.ts",
           exportName: "maintenance",
           value: exported,
         },
@@ -450,17 +448,17 @@ describe("declaration analysis", () => {
       architecture: "x86_64",
       exports: [
         {
-          modulePath: "src/schedules.ts",
+          sourcePath: "src/schedules.ts",
           exportName: "nightly",
           value: scheduled,
         },
         {
-          modulePath: "src/sandbox.ts",
+          sourcePath: "src/sandbox.ts",
           exportName: "maintenance",
           value: maintenance,
         },
         {
-          modulePath: "src/index.ts",
+          sourcePath: "src/index.ts",
           exportName: "workspace",
           value: maintenance,
         },
@@ -486,7 +484,7 @@ describe("declaration analysis", () => {
         analyze({
           architecture: "x86_64",
           exports: [{
-            modulePath: "src/task.ts",
+            sourcePath: "src/task.ts",
             exportName: "task",
             value: definition,
           }],
@@ -505,7 +503,7 @@ describe("declaration analysis", () => {
       analyze({
         architecture: "x86_64",
         exports: [{
-          modulePath: "src/task.ts",
+          sourcePath: "src/task.ts",
           exportName: "task",
           value: definition,
         }],
@@ -554,7 +552,7 @@ describe("declaration analysis", () => {
     const program = analyze({
       architecture: "x86_64",
       exports: [{
-        modulePath: "src/task.ts",
+        sourcePath: "src/task.ts",
         exportName: "build",
         value: task({ id: "build", run: () => null }),
       }],
@@ -563,7 +561,7 @@ describe("declaration analysis", () => {
       encodeVerificationResultFrame(successfulVerificationResult(program)),
     )
     expect(succeeded).toEqual({
-      formatVersion: 0,
+      formatVersion: 1,
       outcome: "succeeded",
       declarations: program.programDeclarations,
       files: [
@@ -575,10 +573,6 @@ describe("declaration analysis", () => {
           path: "helmr/analysis-locators.json",
           content: new TextDecoder().decode(program.declarationLocatorBytes),
         },
-        {
-          path: "helmr/entry.mjs",
-          content: PROGRAM_ENTRYPOINT,
-        },
       ],
     })
 
@@ -588,7 +582,7 @@ describe("declaration analysis", () => {
     const workspaceOnly = analyze({
       architecture: "x86_64",
       exports: [{
-        modulePath: "src/workspace.ts",
+        sourcePath: "src/workspace.ts",
         exportName: "machine",
         value: machine,
       }],
@@ -602,7 +596,7 @@ describe("declaration analysis", () => {
     expect(decodeAnalysisFrame(
       encodeVerificationResultFrame(failedVerificationResult("module import failed")),
     )).toEqual({
-      formatVersion: 0,
+      formatVersion: 1,
       outcome: "failed",
       error: {
         reason: "verification_failed",

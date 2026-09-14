@@ -18,9 +18,9 @@ import (
 const (
 	programVerificationVersion = 0
 
-	RuntimeContract                       = "helmr.runtime.v0"
-	ConfigEvaluatorContract               = "helmr.config-evaluator.v0"
-	ProgramArtifactMediaType              = "application/vnd.helmr.deployment-program.v0+squashfs"
+	RuntimeContract                       = "helmr.runtime.v1"
+	ConfigEvaluatorContract               = "helmr.config-evaluator.v1"
+	ProgramArtifactMediaType              = "application/vnd.helmr.deployment-program.v1+squashfs"
 	manifestDigestDomain                  = "helmr.deployment-definition-manifest.v0\x00"
 	maxJSONSafeInteger              int64 = 9007199254740991
 	maxProgramFileSizeBytes         int64 = 16777216
@@ -46,7 +46,7 @@ type ProgramDeclaration struct {
 
 type ProgramLocator struct {
 	ExportName string          `json:"exportName"`
-	ModulePath string          `json:"modulePath"`
+	SourcePath string          `json:"sourcePath"`
 	Slot       DeclarationSlot `json:"slot"`
 }
 

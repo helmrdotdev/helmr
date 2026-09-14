@@ -1967,12 +1967,12 @@ func testProgramDrives(source vm.ReadOnlyDriveSource) []vm.ReadOnlyDrive {
 	return []vm.ReadOnlyDrive{
 		{
 			ID: vm.ProgramRuntimeDrive, Digest: "sha256:" + strings.Repeat("1", 64),
-			SizeBytes: 4096, MediaType: "application/vnd.helmr.runtime.v0+squashfs",
+			SizeBytes: 4096, MediaType: "application/vnd.helmr.runtime.v1+squashfs",
 			Source: source,
 		},
 		{
 			ID: vm.ProgramDrive, Digest: "sha256:" + strings.Repeat("2", 64),
-			SizeBytes: 4096, MediaType: "application/vnd.helmr.deployment-program.v0+squashfs",
+			SizeBytes: 4096, MediaType: "application/vnd.helmr.deployment-program.v1+squashfs",
 			Source: source,
 		},
 	}

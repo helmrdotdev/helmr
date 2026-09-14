@@ -94,9 +94,10 @@ func TestRuntimeTopologyRejectsOpenOrDivergentLayout(t *testing.T) {
 		},
 		"metadata Node flags": func(artifact *memoryArtifact) {
 			invalid := RuntimeMetadata{
+				Language:     testLanguageIdentity(),
 				Architecture: ArchitectureX8664, FormatVersion: RuntimeMetadataFormatVersion,
-				NodeVersion:      "24.20.0",
-				ProgramNodeFlags: []string{NodeNoExperimentalStripTypes, "--enable-source-maps"},
+				NodeVersion:      "24.21.0",
+				ProgramNodeFlags: []string{"--no-experimental-strip-types", "--enable-source-maps"},
 				RuntimeContract:  RuntimeContract,
 			}
 			raw, err := json.Marshal(invalid)
@@ -178,7 +179,7 @@ func TestVerifiedRuntimeResultMatchesDescriptor(t *testing.T) {
 			value.Architecture = RuntimeArchitecture("aarch64")
 		},
 		"runtime API": func(value *RuntimeDescriptor) {
-			value.RuntimeContract = "helmr.runtime.v1"
+			value.RuntimeContract = "helmr.runtime.v0"
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -200,10 +201,11 @@ func TestVerifiedRuntimeResultMatchesDescriptor(t *testing.T) {
 func newRuntimeTopology(t *testing.T) (RuntimeDescriptor, *memoryArtifact) {
 	t.Helper()
 	metadata := RuntimeMetadata{
+		Language:         testLanguageIdentity(),
 		Architecture:     ArchitectureX8664,
 		FormatVersion:    RuntimeMetadataFormatVersion,
-		NodeVersion:      "24.20.0",
-		ProgramNodeFlags: []string{NodeNoStripTypes, "--enable-source-maps"},
+		NodeVersion:      "24.21.0",
+		ProgramNodeFlags: testNodeProgramFlags(),
 		RuntimeContract:  RuntimeContract,
 	}
 	metadataRaw, err := CanonicalRuntimeMetadata(metadata)
@@ -217,6 +219,12 @@ func newRuntimeTopology(t *testing.T) (RuntimeDescriptor, *memoryArtifact) {
 	artifact.addDirectory("share")
 	artifact.addDirectory("share/licenses")
 	artifact.addDirectory("share/licenses/node")
+	artifact.addDirectory("moduleexecution")
+	artifact.addDirectory("share/licenses/typescript")
+	artifact.addFile("helmr/module-preload.mjs", []byte("preload"), 0644)
+	artifact.addFile("moduleexecution/loader.mjs", []byte("adapter"), 0644)
+	artifact.addFile("moduleexecution/typescript.cjs", []byte("typescript"), 0644)
+	artifact.addFile("share/licenses/typescript/LICENSE", []byte("license"), 0644)
 	artifact.addFile(runtimeNodePath, []byte("node"), 0755)
 	artifact.addFile(runtimeEntryPath, []byte("entry"), 0644)
 	artifact.addFile(runtimeMetadataPath, metadataRaw, 0644)
