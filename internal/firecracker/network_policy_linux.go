@@ -696,9 +696,6 @@ func (c *Connector) installRoutedPolicy(ctx context.Context, binding *installedN
 			return err
 		}
 	}
-	if err != nil {
-		return err
-	}
 	script, err := renderNetworkPolicy(networkPolicyInput{
 		Tap: m.TapName, Peer: m.NamespaceVethName, Mark: packet.Mark(),
 		BlockedIPv4CIDRs: blocked,

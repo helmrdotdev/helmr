@@ -80,7 +80,12 @@ func newFixture(t *testing.T, handler func(http.ResponseWriter, *http.Request)) 
 
 func newFixtureAt(t *testing.T, port uint16, handler func(http.ResponseWriter, *http.Request)) *fixture {
 	t.Helper()
-	f := &fixture{value: "synthetic-first-token", available: true, upstreamProtocols: make(chan int, 256)}
+	return newFixtureProtocols(t, port, true, handler)
+}
+
+func newFixtureProtocols(t *testing.T, port uint16, h2 bool, handler func(http.ResponseWriter, *http.Request), configure ...func(*Config)) *fixture {
+	t.Helper()
+	f := &fixture{value: "synthetic-first-token", available: true, upstreamProtocols: make(chan int, 1024)}
 	origin := "https://api.github.com"
 	if port != 443 {
 		origin += ":" + strconv.Itoa(int(port))
@@ -107,10 +112,10 @@ func newFixtureAt(t *testing.T, port uint16, handler func(http.ResponseWriter, *
 		_, _ = io.WriteString(w, `{"login":"synthetic-user"}`)
 	}))
 	upstream.TLS = &tls.Config{Certificates: []tls.Certificate{upstreamCert}}
-	upstream.EnableHTTP2 = true
+	upstream.EnableHTTP2 = h2
 	upstream.StartTLS()
 	t.Cleanup(upstream.Close)
-	p, err := New(Config{AllowedDestination: func(netip.Addr) bool { return true }, Origins: []string{origin}, Certificate: func(context.Context, string) (tls.Certificate, error) { return cert, nil },
+	config := Config{AllowedDestination: func(netip.Addr) bool { return true }, Origins: []string{origin}, Certificate: func(context.Context, string) (tls.Certificate, error) { return cert, nil },
 		Resolve: func(_ context.Context, o string, selectors []string) (map[string][]byte, error) {
 			f.resolutions.Add(1)
 			f.mu.Lock()
@@ -124,7 +129,11 @@ func newFixtureAt(t *testing.T, port uint16, handler func(http.ResponseWriter, *
 			return (&net.Dialer{}).DialContext(ctx, "tcp4", upstream.Listener.Addr().String())
 		},
 		UpstreamTLS: &tls.Config{RootCAs: upstreamPool},
-	})
+	}
+	for _, change := range configure {
+		change(&config)
+	}
+	p, err := New(config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,10 +218,10 @@ func TestUnrelatedTLSDoesNotResolve(t *testing.T) {
 	}
 }
 
-func TestUncertainSendIsOneWireAttempt(t *testing.T) {
+func TestH1UncertainSendIsOneWireAttempt(t *testing.T) {
 	for _, idempotency := range []bool{false, true} {
 		t.Run(map[bool]string{false: "get", true: "idempotency-header"}[idempotency], func(t *testing.T) {
-			f := newFixture(t, func(w http.ResponseWriter, r *http.Request) {
+			f := newFixtureProtocols(t, 443, false, func(w http.ResponseWriter, r *http.Request) {
 				conn, _, err := w.(http.Hijacker).Hijack()
 				if err == nil {
 					_ = conn.Close()

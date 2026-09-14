@@ -24,6 +24,12 @@ const MarkerPrefix = "hlmr_protected_"
 const Port = 3128 // Namespace-local TPROXY target; never a guest proxy endpoint.
 const maxHeaderBytes = 64 << 10
 
+// These are per-runtime host allocation bounds for captured traffic only.
+// Kernel-forwarded ports and guest loopback do not consume admissions.
+// See resource_test.go for overload, release, cancellation and isolation.
+const maxCapturedConnections = 256
+const maxProtectedRequests = maxCapturedConnections
+
 var ErrTrustExpired = errors.New("workspace Secret transport has expired; create a new Workspace")
 var markerPattern = regexp.MustCompile(`hlmr_protected_[a-f0-9]{64}`)
 
@@ -38,16 +44,18 @@ type Config struct {
 }
 
 type Proxy struct {
-	config      Config
-	ctx         context.Context
-	cancel      context.CancelFunc
-	mu          sync.Mutex
-	closed      bool
-	listener    net.Listener
-	connections map[net.Conn]struct{}
-	workers     sync.WaitGroup
-	handlers    sync.WaitGroup
-	requests    chan struct{}
+	config         Config
+	ctx            context.Context
+	cancel         context.CancelFunc
+	mu             sync.Mutex
+	closed         bool
+	listener       net.Listener
+	connections    map[net.Conn]struct{}
+	workers        sync.WaitGroup
+	handlers       sync.WaitGroup
+	requests       chan struct{}
+	captured       chan struct{}
+	activeRequests chan struct{}
 }
 
 func New(config Config) (*Proxy, error) {
@@ -68,7 +76,7 @@ func New(config Config) (*Proxy, error) {
 		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Proxy{config: config, ctx: ctx, cancel: cancel, connections: make(map[net.Conn]struct{}), requests: make(chan struct{}, 64)}, nil
+	return &Proxy{config: config, ctx: ctx, cancel: cancel, connections: make(map[net.Conn]struct{}), requests: make(chan struct{}, 64), captured: make(chan struct{}, maxCapturedConnections), activeRequests: make(chan struct{}, maxProtectedRequests)}, nil
 }
 
 // Ports is the exact derived capture set. A shared port conveys no Secret authority.
@@ -115,10 +123,24 @@ func (p *Proxy) Serve(listener net.Listener) error {
 			conn.Close()
 			continue
 		}
+		// No user-space waiting room: do not allocate a worker or upstream for
+		// a socket beyond this runtime's capture envelope.
+		select {
+		case p.captured <- struct{}{}:
+		default:
+			p.mu.Unlock()
+			conn.Close()
+			continue
+		}
 		p.connections[conn] = struct{}{}
 		p.workers.Add(1)
 		p.mu.Unlock()
-		go func() { defer p.workers.Done(); defer p.release(conn); p.serveConn(conn) }()
+		go func() {
+			defer p.workers.Done()
+			defer func() { <-p.captured }()
+			defer p.release(conn)
+			p.serveConn(conn)
+		}()
 	}
 }
 
@@ -287,7 +309,7 @@ func stripHopHeaders(header http.Header) {
 	}
 }
 
-func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, expected string, destination netip.AddrPort) {
+func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, expected string, destination netip.AddrPort, dialRequest func(context.Context) (net.Conn, error)) {
 	p.mu.Lock()
 	if p.closed {
 		p.mu.Unlock()
@@ -296,6 +318,15 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, expected string,
 	p.handlers.Add(1)
 	p.mu.Unlock()
 	defer p.handlers.Done()
+	// Multiplexed H2 requests need their own bound, held through streaming.
+	// The smaller Resolve window below is released before any upstream IO.
+	select {
+	case p.activeRequests <- struct{}{}:
+		defer func() { <-p.activeRequests }()
+	default:
+		http.Error(w, "Protected HTTPS concurrent request limit reached", http.StatusServiceUnavailable)
+		return
+	}
 	if r.Method == http.MethodConnect || r.Header.Get("Upgrade") != "" || len(r.Trailer) != 0 {
 		http.Error(w, "Protected HTTPS does not support CONNECT, upgrades, or request trailers", http.StatusNotImplemented)
 		return
@@ -372,7 +403,8 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, expected string,
 	protocols.SetHTTP1(true)
 	protocols.SetHTTP2(true)
 	transport := &http.Transport{Proxy: nil, Protocols: protocols, TLSClientConfig: tlsConfig,
-		DialContext:       func(ctx context.Context, _, _ string) (net.Conn, error) { return p.dial(ctx, destination.String()) },
+		HTTP2:             &http.HTTP2Config{MaxReadFrameSize: 64 << 10, MaxReceiveBufferPerConnection: 256 << 10, MaxReceiveBufferPerStream: 64 << 10},
+		DialContext:       func(ctx context.Context, _, _ string) (net.Conn, error) { return dialRequest(ctx) },
 		DisableKeepAlives: true, TLSHandshakeTimeout: 10 * time.Second, MaxResponseHeaderBytes: maxHeaderBytes}
 	defer transport.CloseIdleConnections()
 	// Enable streaming uploads with simultaneous responses on HTTP/1 as well as H2.

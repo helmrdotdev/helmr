@@ -73,10 +73,31 @@ func (p *Proxy) serveConn(conn net.Conn) {
 		p.relay(replay, upstream, nil, upstreamReader, closedSignal(), upstreamReady)
 		return
 	}
-	// The speculative socket sent no application bytes. The HTTP transport opens
-	// a fresh pinned socket with normal certificate verification for this SNI.
-	_ = upstream.Close()
-	<-upstreamReady
+	// Hand the checked speculative socket to exactly one request transport.
+	// Its peek reader must finish before that transport reads the TLS response.
+	// This preserves immediate server-first traffic without an empty extra TCP
+	// connection for protected HTTPS. No credentials or TLS session are pooled.
+	var firstMu sync.Mutex
+	firstUpstream := upstream
+	dialRequest := func(ctx context.Context) (net.Conn, error) {
+		firstMu.Lock()
+		conn := firstUpstream
+		firstUpstream = nil
+		firstMu.Unlock()
+		if conn != nil {
+			select {
+			case <-upstreamReady:
+				if upstreamReader.Buffered() == 0 {
+					// The speculative peer closed while the guest was idle.
+					conn.Close()
+					return p.dial(ctx, destination.String())
+				}
+			default:
+			}
+			return &readerConn{Conn: conn, reader: upstreamReader, ready: upstreamReady}, nil
+		}
+		return p.dial(ctx, destination.String())
+	}
 	certificate, err := p.config.Certificate(p.ctx, host)
 	if err != nil {
 		return
@@ -86,7 +107,10 @@ func (p *Proxy) serveConn(conn net.Conn) {
 	protocols := new(http.Protocols)
 	protocols.SetHTTP1(true)
 	protocols.SetHTTP2(true)
-	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { p.forward(w, r, target, destination) }),
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { p.forward(w, r, target, destination, dialRequest) }),
+		// Bound pre-handler H2 streams/headers as well as DATA buffering. A
+		// runtime request admission alone cannot bound library-parsed streams.
+		HTTP2:     &http.HTTP2Config{MaxConcurrentStreams: 4, MaxReadFrameSize: 64 << 10, MaxReceiveBufferPerConnection: 256 << 10, MaxReceiveBufferPerStream: 64 << 10},
 		Protocols: protocols, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}},
 		ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: maxHeaderBytes, ErrorLog: discardLogger(),
 		BaseContext: func(net.Listener) context.Context { return p.ctx },
@@ -126,9 +150,15 @@ func (c *helloConn) Write(b []byte) (int, error) { return len(b), nil }
 type readerConn struct {
 	net.Conn
 	reader io.Reader
+	ready  <-chan struct{}
 }
 
-func (c *readerConn) Read(b []byte) (int, error) { return c.reader.Read(b) }
+func (c *readerConn) Read(b []byte) (int, error) {
+	if c.ready != nil {
+		<-c.ready
+	}
+	return c.reader.Read(b)
+}
 func (c *readerConn) CloseWrite() error {
 	if cw, ok := c.Conn.(interface{ CloseWrite() error }); ok {
 		return cw.CloseWrite()

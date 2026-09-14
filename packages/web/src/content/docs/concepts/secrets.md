@@ -124,6 +124,16 @@ have processed. The maintained HTTP/2 transport may retry an explicitly
 unprocessed request within the same authorized request context. Guest HTTP/2
 streams are independent; upstream connections are not pooled across requests.
 
+Each runtime admits up to 256 simultaneous TCP connections on protected-origin
+ports, including unrelated traffic sharing those ports, and up to 256 active
+protected HTTP requests. Excess captured connections close immediately; excess
+HTTP requests receive `503 Protected HTTPS concurrent request limit reached`.
+Streaming requests hold request capacity until they finish or are cancelled.
+Credential resolution runs up to 64 requests at a time; admitted requests waiting
+for resolution can be cancelled. HTTP/2 allows four active streams per connection;
+clients can queue or open another connection. Guest-local traffic and ports that
+are not captured do not consume these limits.
+
 Parking, restoring, and runtime fencing close captured connections and cancel
 in-flight streams. Clients must reconnect. No live connection or resolved Secret
 value is restored from a guest snapshot.

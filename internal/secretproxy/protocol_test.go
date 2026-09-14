@@ -12,6 +12,7 @@ import (
 	"net/netip"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -199,9 +200,8 @@ func TestOriginAuthorityAndUnsupportedModes(t *testing.T) {
 }
 
 func TestProtectedUpstreamCertificateMismatchFails(t *testing.T) {
-	f := newFixture(t, nil)
 	_, _, wrong := testCertificate(t, "other.example")
-	f.proxy.config.UpstreamTLS = &tls.Config{RootCAs: wrong}
+	f := newFixtureProtocols(t, 443, true, nil, func(c *Config) { c.UpstreamTLS = &tls.Config{RootCAs: wrong} })
 	if request(t, f, "https://api.github.com/", testMarker) != 502 || f.hits.Load() != 0 {
 		t.Fatal("unverified upstream received credential")
 	}
@@ -224,13 +224,14 @@ func TestRedirectCannotCarrySubstitutedHeader(t *testing.T) {
 }
 
 func TestCloseCancelsPendingResolve(t *testing.T) {
-	f := newFixture(t, nil)
 	entered := make(chan struct{})
-	f.proxy.config.Resolve = func(ctx context.Context, _ string, _ []string) (map[string][]byte, error) {
-		close(entered)
-		<-ctx.Done()
-		return nil, ctx.Err()
-	}
+	f := newFixtureProtocols(t, 443, true, nil, func(c *Config) {
+		c.Resolve = func(ctx context.Context, _ string, _ []string) (map[string][]byte, error) {
+			close(entered)
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+	})
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -301,7 +302,7 @@ func TestServerFirstAndTCPHalfClose(t *testing.T) {
 	}
 }
 
-func TestUnrelatedTLSHasNoWorkspaceConnectionCap(t *testing.T) {
+func TestUnrelatedTLSSupportsMoreThan64Streams(t *testing.T) {
 	f := newFixture(t, nil)
 	var connections []net.Conn
 	defer func() {
@@ -390,8 +391,7 @@ func TestNoSNIAndUnprotectedPortCannotSelectSecret(t *testing.T) {
 		}
 	})
 	t.Run("same hostname other port", func(t *testing.T) {
-		f := newFixtureAt(t, 8444, nil)
-		f.proxy.config.Origins = []string{"https://api.github.com"}
+		f := newFixtureProtocols(t, 8444, true, nil, func(c *Config) { c.Origins = []string{"https://api.github.com"} })
 		if request(t, f, "https://api.github.com:8444/", testMarker) != 200 || f.resolutions.Load() != 0 || f.authed.Load() != 0 {
 			t.Fatal("unprotected port acquired authority")
 		}
@@ -452,5 +452,104 @@ func TestFragmentedClientHelloPreservesUnrelatedTLS(t *testing.T) {
 	defer r.Body.Close()
 	if !bytes.Equal(r.TLS.PeerCertificates[0].Raw, f.upstreamCertificate) {
 		t.Fatal("fragmented TLS changed identity")
+	}
+}
+
+func TestH2UncertainStreamIsNotReplayed(t *testing.T) {
+	f := newFixtureProtocols(t, 443, true, func(w http.ResponseWriter, r *http.Request) { panic(http.ErrAbortHandler) })
+	if request(t, f, "https://api.github.com/uncertain", testMarker) != 502 || f.hits.Load() != 1 || f.resolutions.Load() != 1 {
+		t.Fatal("uncertain H2 stream was replayed")
+	}
+	if version := <-f.upstreamProtocols; version != 2 {
+		t.Fatal("uncertain-send fixture did not use H2")
+	}
+}
+
+func TestDisallowedOriginalDestinationNeverDialsOrResolves(t *testing.T) {
+	for _, ip := range []string{"127.0.0.1", "10.0.0.1", "169.254.169.254", "8.8.8.8"} {
+		t.Run(ip, func(t *testing.T) {
+			policy := &Dialer{Blocked: []netip.Prefix{netip.MustParsePrefix("8.8.8.8/32")}}
+			f := newFixtureProtocols(t, 443, true, nil, func(c *Config) {
+				c.AllowedDestination = policy.Allowed
+				c.DialContext = func(context.Context, string, string) (net.Conn, error) {
+					t.Error("blocked original destination dialed")
+					return nil, net.ErrClosed
+				}
+			})
+			client, host := net.Pipe()
+			defer client.Close()
+			defer host.Close()
+			f.proxy.serveConn(&destinationConn{Conn: host, destination: netip.AddrPortFrom(netip.MustParseAddr(ip), 443)})
+			if f.resolutions.Load() != 0 {
+				t.Fatal("blocked destination resolved")
+			}
+		})
+	}
+}
+
+func TestSpeculativeSocketHandedToOnlyOneRequest(t *testing.T) {
+	for _, h2 := range []bool{false, true} {
+		t.Run(map[bool]string{false: "h1", true: "h2"}[h2], func(t *testing.T) {
+			var dials atomic.Int32
+			f := newFixtureProtocols(t, 443, h2, nil, func(c *Config) {
+				dial := c.DialContext
+				c.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+					dials.Add(1)
+					return dial(ctx, network, address)
+				}
+			})
+			protocols := new(http.Protocols)
+			protocols.SetHTTP1(!h2)
+			protocols.SetHTTP2(h2)
+			f.client.Transport.(*http.Transport).Protocols = protocols
+			for range 2 {
+				if request(t, f, "https://api.github.com/", testMarker) != 200 {
+					t.Fatal("protected request failed")
+				}
+			}
+			if dials.Load() != 2 || f.resolutions.Load() != 2 {
+				t.Fatalf("socket was wasted or authenticated connection reused: dials=%d resolves=%d", dials.Load(), f.resolutions.Load())
+			}
+		})
+	}
+}
+
+func TestIdleSpeculativePeerCloseRedialsBeforeProtectedRequest(t *testing.T) {
+	peer := make(chan net.Conn, 1)
+	var dials atomic.Int32
+	f := newFixtureProtocols(t, 443, true, nil, func(c *Config) {
+		dial := c.DialContext
+		c.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+			if dials.Add(1) == 1 {
+				client, server := net.Pipe()
+				peer <- server
+				return client, nil
+			}
+			return dial(ctx, network, address)
+		}
+	})
+	conn, err := tls.Dial("tcp4", f.url.Host, &tls.Config{ServerName: "api.github.com", RootCAs: f.client.Transport.(*http.Transport).TLSClientConfig.RootCAs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(3 * time.Second))
+	(<-peer).Close()
+	// Model a guest remaining idle after its TLS handshake, allowing the
+	// independent upstream read pump to observe the peer's idle timeout.
+	time.Sleep(20 * time.Millisecond)
+	req, _ := http.NewRequest("GET", "https://api.github.com/", nil)
+	req.Header.Set("Authorization", "Bearer "+testMarker)
+	if err := req.Write(conn); err != nil {
+		t.Fatal(err)
+	}
+	response, err := http.ReadResponse(bufio.NewReader(conn), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	io.Copy(io.Discard, response.Body)
+	if response.StatusCode != 200 || dials.Load() != 2 || f.resolutions.Load() != 1 {
+		t.Fatalf("status=%d dials=%d resolves=%d", response.StatusCode, dials.Load(), f.resolutions.Load())
 	}
 }

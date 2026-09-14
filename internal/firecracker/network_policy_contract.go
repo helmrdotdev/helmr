@@ -98,8 +98,9 @@ func renderNetworkPolicy(input networkPolicyInput) (string, error) {
 		fmt.Fprintf(&script, "add rule inet %s capture iifname %s ip daddr %s tcp dport 53 return\n", networkPolicyTableName, tap, resolver)
 		fmt.Fprintf(&script, "add rule inet %s capture iifname %s ip daddr @blocked_ipv4 tcp dport @protected_ports counter name %s drop\n", networkPolicyTableName, tap, runNetworkDeniedCounterName)
 		fmt.Fprintf(&script, "add rule inet %s capture iifname %s meta mark %s ip saddr %s tcp dport @protected_ports tproxy ip to :3128 meta mark set %s accept\n", networkPolicyTableName, tap, mark, guestIPv4, routeMark)
-		// If TPROXY cannot associate a socket (for example stale non-SYN traffic
-		// after restore), never fall through to the ordinary forwarded TCP path.
+		// If TPROXY cannot associate a socket (for example a failed listener),
+		// never fall through to the ordinary forwarded TCP path. With a live
+		// replacement listener, stale ACKs reach TCP and receive a reset.
 		fmt.Fprintf(&script, "add rule inet %s capture iifname %s tcp dport @protected_ports counter name %s drop\n", networkPolicyTableName, tap, runNetworkDeniedCounterName)
 		fmt.Fprintf(&script, "add rule inet %s input iifname %s meta mark %s ip saddr %s tcp dport @protected_ports ct state new,established accept\n", networkPolicyTableName, tap, routeMark, guestIPv4)
 		fmt.Fprintf(&script, "add rule inet %s output oifname %s ip daddr %s meta l4proto tcp ct state established accept\n", networkPolicyTableName, tap, guestIPv4)

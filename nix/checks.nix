@@ -111,6 +111,9 @@ in
         touch "$out"
       '';
   squashfs-tools = helmrPackages.squashfsTools;
+  protected-egress = vendoredGoCheck "protected-egress-check" [ ] ''
+    go test ./internal/secretproxy
+  '';
   deployment-bundle-finalizer =
     vendoredGoCheck "deployment-bundle-finalizer-check" [ helmrPackages.squashfsTools ]
       ''
