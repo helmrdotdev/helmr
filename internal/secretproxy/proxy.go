@@ -213,19 +213,19 @@ func denyTransportError(w http.ResponseWriter, err error) {
 	}
 	deny(w)
 }
-func authority(value, scheme string) (string, string, error) {
+func authority(value, scheme string) (string, error) {
 	u, err := url.Parse(scheme + "://" + value)
 	if err != nil || u.User != nil || u.Host != value || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || strings.ContainsAny(value, "\\%?#@ \t\r\n") {
-		return "", "", errors.New("invalid destination authority")
+		return "", errors.New("invalid destination authority")
 	}
 	host := strings.ToLower(u.Hostname())
 	ip, ipErr := netip.ParseAddr(host)
 	if (ipErr == nil && !ip.Is4()) || (ipErr != nil && !origin.ValidHostname(host)) {
-		return "", "", errors.New("invalid destination hostname")
+		return "", errors.New("invalid destination hostname")
 	}
 	port := u.Port()
 	if strings.HasSuffix(value, ":") {
-		return "", "", errors.New("invalid destination port")
+		return "", errors.New("invalid destination port")
 	}
 	if port == "" {
 		if scheme == "https" {
@@ -236,13 +236,13 @@ func authority(value, scheme string) (string, string, error) {
 	}
 	n, err := strconv.Atoi(port)
 	if err != nil || n < 1 || n > 65535 || strconv.Itoa(n) != port {
-		return "", "", errors.New("invalid destination port")
+		return "", errors.New("invalid destination port")
 	}
 	canonical := scheme + "://" + host
 	if !(scheme == "https" && port == "443" || scheme == "http" && port == "80") {
 		canonical += ":" + port
 	}
-	return canonical, net.JoinHostPort(host, port), nil
+	return canonical, nil
 }
 
 func containsMarker(value string) bool { return strings.Contains(value, MarkerPrefix) }
@@ -335,13 +335,13 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, expected string,
 		deny(w)
 		return
 	}
-	target, _, err := authority(r.Host, "https")
+	target, err := authority(r.Host, "https")
 	if err != nil || target != expected {
 		http.Error(w, "Protected HTTPS authority does not match TLS destination", http.StatusMisdirectedRequest)
 		return
 	}
 	if r.URL.IsAbs() {
-		actual, _, err := authority(r.URL.Host, r.URL.Scheme)
+		actual, err := authority(r.URL.Host, r.URL.Scheme)
 		if err != nil || actual != target {
 			deny(w)
 			return

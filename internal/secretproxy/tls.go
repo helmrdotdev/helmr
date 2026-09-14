@@ -67,7 +67,7 @@ func (p *Proxy) serveConn(conn net.Conn) {
 	parser := tls.Server(observed, &tls.Config{GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) { host = hello.ServerName; return nil, stopped }})
 	_ = parser.HandshakeContext(p.ctx)
 	replay := &readerConn{Conn: conn, reader: io.MultiReader(bytes.NewReader(observed.record.Bytes()), clientReader)}
-	target, _, err := authority(net.JoinHostPort(host, strconv.Itoa(int(destination.Port()))), "https")
+	target, err := authority(net.JoinHostPort(host, strconv.Itoa(int(destination.Port()))), "https")
 	if err != nil || host == "" || !slices.Contains(p.config.Origins, target) {
 		// Including no SNI/ECH/unknown TLS: never infer Secret authority from an IP.
 		p.relay(replay, upstream, nil, upstreamReader, closedSignal(), upstreamReady)
