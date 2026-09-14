@@ -49,6 +49,6 @@ output "platform_store_kms_key_arn" {
 }
 
 output "platform_publisher_role_arn" {
-  description = "Create-only Platform Artifact publisher role ARN."
-  value       = aws_iam_role.platform_publisher.arn
+  description = "Create-only Platform Artifact publisher role ARN, or null when creation is disabled."
+  value       = var.create_platform_publisher ? aws_iam_role.platform_publisher[0].arn : null
 }

@@ -77,8 +77,8 @@ run "platform_store_publisher_and_immutability_are_bounded" {
 
   assert {
     condition = (
-      strcontains(aws_iam_role_policy.platform_publisher.policy, "${aws_s3_bucket.platform_store.arn}/objects/sha256/*") &&
-      !strcontains(aws_iam_role_policy.platform_publisher.policy, "/controlplane/")
+      strcontains(aws_iam_role_policy.platform_publisher[0].policy, "${aws_s3_bucket.platform_store.arn}/objects/sha256/*") &&
+      !strcontains(aws_iam_role_policy.platform_publisher[0].policy, "/controlplane/")
     )
     error_message = "Platform publisher must be bounded to immutable content-addressed objects."
   }

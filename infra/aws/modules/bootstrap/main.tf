@@ -131,6 +131,8 @@ resource "aws_s3_bucket_public_access_block" "platform_store" {
 }
 
 resource "aws_iam_role" "platform_publisher" {
+  count = var.create_platform_publisher ? 1 : 0
+
   name = "${local.name}-platform-publisher"
   tags = var.tags
 
@@ -147,8 +149,10 @@ resource "aws_iam_role" "platform_publisher" {
 }
 
 resource "aws_iam_role_policy" "platform_publisher" {
+  count = var.create_platform_publisher ? 1 : 0
+
   name = "${local.name}-platform-publisher"
-  role = aws_iam_role.platform_publisher.id
+  role = aws_iam_role.platform_publisher[0].id
 
   policy = jsonencode({
     Version = "2012-10-17"

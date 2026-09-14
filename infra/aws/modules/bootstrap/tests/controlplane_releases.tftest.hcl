@@ -57,14 +57,14 @@ run "release_publisher_cannot_delete_controlplane_images" {
 
   assert {
     condition = (
-      strcontains(aws_iam_role_policy.platform_publisher.policy, aws_ecr_repository.controlplane_releases.arn) &&
-      strcontains(aws_iam_role_policy.platform_publisher.policy, "ecr:PutImage") &&
-      strcontains(aws_iam_role_policy.platform_publisher.policy, "ecr:BatchGetImage") &&
-      strcontains(aws_iam_role_policy.platform_publisher.policy, "ecr:DescribeImages") &&
-      !strcontains(aws_iam_role_policy.platform_publisher.policy, "ecr:GetDownloadUrlForLayer") &&
-      !strcontains(aws_iam_role_policy.platform_publisher.policy, "ecr:BatchDeleteImage") &&
-      !strcontains(aws_iam_role_policy.platform_publisher.policy, "ecr:DeleteRepository") &&
-      !strcontains(aws_iam_role_policy.platform_publisher.policy, "ecr:SetRepositoryPolicy")
+      strcontains(aws_iam_role_policy.platform_publisher[0].policy, aws_ecr_repository.controlplane_releases.arn) &&
+      strcontains(aws_iam_role_policy.platform_publisher[0].policy, "ecr:PutImage") &&
+      strcontains(aws_iam_role_policy.platform_publisher[0].policy, "ecr:BatchGetImage") &&
+      strcontains(aws_iam_role_policy.platform_publisher[0].policy, "ecr:DescribeImages") &&
+      !strcontains(aws_iam_role_policy.platform_publisher[0].policy, "ecr:GetDownloadUrlForLayer") &&
+      !strcontains(aws_iam_role_policy.platform_publisher[0].policy, "ecr:BatchDeleteImage") &&
+      !strcontains(aws_iam_role_policy.platform_publisher[0].policy, "ecr:DeleteRepository") &&
+      !strcontains(aws_iam_role_policy.platform_publisher[0].policy, "ecr:SetRepositoryPolicy")
     )
     error_message = "release publisher authority must stop at publish and verification."
   }

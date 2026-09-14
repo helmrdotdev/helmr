@@ -10,19 +10,27 @@ variable "bucket_name_prefix" {
   nullable    = true
 }
 
+variable "create_platform_publisher" {
+  description = "Create the Platform Artifact publisher role and its inline policy."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
 variable "platform_publisher_principal_arns" {
   description = "AWS principal ARNs allowed to assume the create-only Platform Artifact publisher role."
   type        = list(string)
+  default     = []
 
   validation {
-    condition = (
+    condition = !var.create_platform_publisher || (
       length(var.platform_publisher_principal_arns) > 0 &&
       alltrue([
         for arn in var.platform_publisher_principal_arns :
         can(regex("^arn:[^:]+:iam::[0-9]{12}:(role|user)/.+$", arn))
       ])
     )
-    error_message = "platform_publisher_principal_arns must contain at least one IAM role or user ARN."
+    error_message = "platform_publisher_principal_arns must contain at least one valid IAM role or user ARN when create_platform_publisher is true."
   }
 }
 
