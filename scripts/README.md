@@ -122,7 +122,7 @@ not publish packages or create a release channel.
 In an isolated Helmr checkout, enter `nix develop`, then run:
 
 ```sh
-bun install --frozen-lockfile
+bun install --frozen-lockfile --ignore-scripts
 git rev-parse HEAD
 export PACKAGE_VERSION="0.1.0-dev.$(git rev-parse --short=12 HEAD)"
 bash scripts/build-npm-packages.sh
@@ -145,9 +145,9 @@ project's `vendor/` directory. Set both dependencies to their actual filenames:
 ```
 
 Replace `COMMIT` with the recorded revision suffix. The Bun override keeps the
-SDK's transitive proto dependency on the same local artifact. Run `bun install`
+SDK's transitive proto dependency on the same local artifact. Run `bun install --ignore-scripts`
 once to update the lockfile; retain the archives, lockfile and full source
-revision together. Subsequent checks use `bun install --frozen-lockfile`.
+revision together. Subsequent checks use `bun install --frozen-lockfile --ignore-scripts`.
 Run the application's typecheck/tests and a full program compilation with the
 matching compiler. Declaration discovery alone does not exercise dependency
 packaging. A local compile does not prove an image build or a deployed runtime.
