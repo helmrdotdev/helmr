@@ -24,7 +24,7 @@ func reservedSecretEnv(name string) bool {
 		return true
 	}
 	switch strings.ToUpper(name) {
-	case "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "NODE_USE_ENV_PROXY", "NODE_USE_SYSTEM_CA":
+	case "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "NODE_USE_SYSTEM_CA":
 		return true
 	}
 	return false
@@ -81,23 +81,11 @@ func stageProtectedEnv(imageRoot string, selectors map[string]string, ca []byte,
 	for name, selector := range selectors {
 		*env = setEnvValue(*env, name, selector)
 	}
-	// Replace proxy routing variables together; a user NO_PROXY must not silently
-	// bypass the transport for a supported client's protected request.
-	filtered := (*env)[:0]
-	for _, entry := range *env {
-		key, _, _ := strings.Cut(entry, "=")
-		switch strings.ToUpper(key) {
-		case "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY":
-			continue
-		}
-		filtered = append(filtered, entry)
-	}
-	*env = filtered
+	// Routing belongs to the VM boundary. Public CA trust is the only transport
+	// setup in the process environment; localhost and ordinary sockets stay local.
 	for name, value := range map[string]string{
-		"HTTP_PROXY": "http://192.168.127.1:3128", "HTTPS_PROXY": "http://192.168.127.1:3128",
-		"http_proxy": "http://192.168.127.1:3128", "https_proxy": "http://192.168.127.1:3128",
-		"NO_PROXY": "", "no_proxy": "", "SSL_CERT_FILE": guestSecretProxyRoot + "/bundle.pem",
-		"NODE_EXTRA_CA_CERTS": guestSecretProxyRoot + "/ca.pem", "NODE_USE_ENV_PROXY": "1",
+		"SSL_CERT_FILE":       guestSecretProxyRoot + "/bundle.pem",
+		"NODE_EXTRA_CA_CERTS": guestSecretProxyRoot + "/ca.pem",
 	} {
 		*env = setEnvValue(*env, name, value)
 	}

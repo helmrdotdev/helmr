@@ -131,7 +131,7 @@ func ReservedSecretEnv(name string) bool {
 		return true
 	}
 	switch strings.ToUpper(name) {
-	case "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "NODE_USE_ENV_PROXY", "NODE_USE_SYSTEM_CA":
+	case "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "NODE_USE_SYSTEM_CA":
 		return true
 	}
 	return false

@@ -18,7 +18,7 @@ const (
 )
 
 type networkPolicyInput struct {
-	SecretProxy      bool
+	ProtectedPorts   []uint16
 	Tap              string
 	Peer             string
 	Mark             uint32
@@ -77,9 +77,32 @@ func renderNetworkPolicy(input networkPolicyInput) (string, error) {
 	fmt.Fprintf(&script, "add chain inet %s forward { type filter hook forward priority 0; policy drop; }\n", networkPolicyTableName)
 	fmt.Fprintf(&script, "add chain inet %s egress\n", networkPolicyTableName)
 	fmt.Fprintf(&script, "add chain inet %s postrouting { type nat hook postrouting priority srcnat; policy accept; }\n", networkPolicyTableName)
-	if input.SecretProxy {
-		fmt.Fprintf(&script, "add rule inet %s input iifname %s meta mark %s ip saddr %s ip daddr %s tcp dport 3128 ct state new,established accept\n", networkPolicyTableName, tap, mark, guestIPv4, GuestGatewayIPv4V0)
-		fmt.Fprintf(&script, "add rule inet %s output oifname %s ip saddr %s ip daddr %s tcp sport 3128 ct state established accept\n", networkPolicyTableName, tap, GuestGatewayIPv4V0, guestIPv4)
+	if len(input.ProtectedPorts) > 0 {
+		ports := slices.Clone(input.ProtectedPorts)
+		slices.Sort(ports)
+		ports = slices.Compact(ports)
+		encoded := make([]string, len(ports))
+		for i, port := range ports {
+			if port == 0 {
+				return "", errors.New("protected origin port is zero")
+			}
+			encoded[i] = strconv.Itoa(int(port))
+		}
+		routeMark := strconv.FormatUint(uint64(secretRouteMark(input.Mark)), 10)
+		fmt.Fprintf(&script, "add set inet %s protected_ports { type inet_service; elements = { %s } }\n", networkPolicyTableName, strings.Join(encoded, ", "))
+		fmt.Fprintf(&script, "add chain inet %s capture { type filter hook prerouting priority mangle; policy accept; }\n", networkPolicyTableName)
+		fmt.Fprintf(&script, "add rule inet %s capture iifname %s meta mark != %s counter name %s drop\n", networkPolicyTableName, tap, mark, runNetworkDeniedCounterName)
+		fmt.Fprintf(&script, "add rule inet %s capture iifname %s meta nfproto ipv6 counter name %s drop\n", networkPolicyTableName, tap, runNetworkDeniedCounterName)
+		fmt.Fprintf(&script, "add rule inet %s capture iifname %s ip saddr != %s counter name %s drop\n", networkPolicyTableName, tap, guestIPv4, runNetworkDeniedCounterName)
+		fmt.Fprintf(&script, "add rule inet %s capture iifname %s ct state invalid counter name %s drop\n", networkPolicyTableName, tap, runNetworkDeniedCounterName)
+		fmt.Fprintf(&script, "add rule inet %s capture iifname %s ip daddr %s tcp dport 53 return\n", networkPolicyTableName, tap, resolver)
+		fmt.Fprintf(&script, "add rule inet %s capture iifname %s ip daddr @blocked_ipv4 tcp dport @protected_ports counter name %s drop\n", networkPolicyTableName, tap, runNetworkDeniedCounterName)
+		fmt.Fprintf(&script, "add rule inet %s capture iifname %s meta mark %s ip saddr %s tcp dport @protected_ports tproxy ip to :3128 meta mark set %s accept\n", networkPolicyTableName, tap, mark, guestIPv4, routeMark)
+		// If TPROXY cannot associate a socket (for example stale non-SYN traffic
+		// after restore), never fall through to the ordinary forwarded TCP path.
+		fmt.Fprintf(&script, "add rule inet %s capture iifname %s tcp dport @protected_ports counter name %s drop\n", networkPolicyTableName, tap, runNetworkDeniedCounterName)
+		fmt.Fprintf(&script, "add rule inet %s input iifname %s meta mark %s ip saddr %s tcp dport @protected_ports ct state new,established accept\n", networkPolicyTableName, tap, routeMark, guestIPv4)
+		fmt.Fprintf(&script, "add rule inet %s output oifname %s ip daddr %s meta l4proto tcp ct state established accept\n", networkPolicyTableName, tap, guestIPv4)
 	}
 	deniedCounter := runNetworkDeniedCounterName
 	fmt.Fprintf(&script, "add rule inet %s forward meta nfproto ipv6 counter name %s drop\n", networkPolicyTableName, deniedCounter)
@@ -187,3 +210,7 @@ func runNetworkPolicySet(name string, nftType string, cidrs []string) string {
 		strings.Join(cidrs, ", "),
 	)
 }
+
+// A mark can be overwritten only after the exact TAP/BPF/source checks. The
+// derived mark is always different, so failed local routing cannot pass forward.
+func secretRouteMark(ingress uint32) uint32 { return ingress ^ 0x80000000 }

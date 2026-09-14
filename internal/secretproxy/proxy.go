@@ -1,14 +1,13 @@
-// Package secretproxy owns the host-only HTTP credential substitution boundary.
+// Package secretproxy owns host-only, transparent HTTPS credential mediation.
 package secretproxy
 
 import (
-	"bufio"
 	"context"
 	"crypto/tls"
 	"errors"
-	"io"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"net/netip"
 	"net/url"
 	"regexp"
@@ -22,76 +21,123 @@ import (
 )
 
 const MarkerPrefix = "hlmr_protected_"
-const Port = 3128
-const PublicCAPath = "/run/helmr/secret-proxy/ca.pem"
+const Port = 3128 // Namespace-local TPROXY target; never a guest proxy endpoint.
 const maxHeaderBytes = 64 << 10
 
 var ErrTrustExpired = errors.New("workspace Secret transport has expired; create a new Workspace")
-
 var markerPattern = regexp.MustCompile(`hlmr_protected_[a-f0-9]{64}`)
 
 type Config struct {
-	Origins     []string
-	Certificate func(context.Context, string) (tls.Certificate, error)
-	Resolve     func(context.Context, string, []string) (map[string][]byte, error)
-	DialContext func(context.Context, string, string) (net.Conn, error)
-	// UpstreamTLS is constructed by the host; never from guest input.
+	Origins            []string
+	Certificate        func(context.Context, string) (tls.Certificate, error)
+	Resolve            func(context.Context, string, []string) (map[string][]byte, error)
+	AllowedDestination func(netip.Addr) bool
+	DialContext        func(context.Context, string, string) (net.Conn, error)
+	// UpstreamTLS is host-owned trust, never guest configuration.
 	UpstreamTLS *tls.Config
 }
 
 type Proxy struct {
 	config      Config
-	transport   *http.Transport
-	server      *http.Server
+	ctx         context.Context
+	cancel      context.CancelFunc
 	mu          sync.Mutex
 	closed      bool
+	listener    net.Listener
 	connections map[net.Conn]struct{}
-	slots       chan struct{}
+	workers     sync.WaitGroup
+	handlers    sync.WaitGroup
+	requests    chan struct{}
 }
 
 func New(config Config) (*Proxy, error) {
-	if config.DialContext == nil || config.Resolve == nil || config.Certificate == nil {
-		return nil, errors.New("proxy dependencies are required")
+	if config.DialContext == nil || config.AllowedDestination == nil || config.Resolve == nil || config.Certificate == nil {
+		return nil, errors.New("egress dependencies are required")
 	}
 	config.Origins = slices.Clone(config.Origins)
 	for _, value := range config.Origins {
 		canonical, err := origin.Canonical(value)
-		if err != nil || value != canonical {
-			return nil, errors.New("proxy origin is not canonical")
+		if err != nil || canonical != value {
+			return nil, errors.New("egress origin is not canonical")
 		}
 	}
-	protocols := new(http.Protocols)
-	protocols.SetHTTP1(true)
-	p := &Proxy{config: config, connections: make(map[net.Conn]struct{}), slots: make(chan struct{}, 64)}
-	p.transport = &http.Transport{Proxy: nil, DialContext: config.DialContext, TLSClientConfig: config.UpstreamTLS,
-		DisableKeepAlives: true, Protocols: protocols, TLSHandshakeTimeout: 10 * time.Second,
-		ResponseHeaderTimeout: 30 * time.Second, MaxResponseHeaderBytes: maxHeaderBytes}
-	p.server = p.newServer(http.HandlerFunc(p.serve))
-	return p, nil
-}
-
-func (p *Proxy) newServer(handler http.Handler) *http.Server {
-	return &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute,
-		MaxHeaderBytes: maxHeaderBytes, ErrorLog: discardLogger()}
-}
-
-func (p *Proxy) Serve(listener net.Listener) error {
-	err := p.server.Serve(listener)
-	if errors.Is(err, http.ErrServerClosed) {
-		return nil
+	if config.UpstreamTLS != nil {
+		config.UpstreamTLS = config.UpstreamTLS.Clone()
+		if config.UpstreamTLS.InsecureSkipVerify {
+			return nil, errors.New("upstream certificate verification is required")
+		}
 	}
-	return err
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Proxy{config: config, ctx: ctx, cancel: cancel, connections: make(map[net.Conn]struct{}), requests: make(chan struct{}, 64)}, nil
 }
 
+// Ports is the exact derived capture set. A shared port conveys no Secret authority.
+func (p *Proxy) Ports() []uint16 {
+	var ports []uint16
+	for _, o := range p.config.Origins {
+		u, _ := url.Parse(o)
+		port := u.Port()
+		if port == "" {
+			port = "443"
+		}
+		n, _ := strconv.Atoi(port)
+		ports = append(ports, uint16(n))
+	}
+	slices.Sort(ports)
+	return slices.Compact(ports)
+}
+
+// Serve requires a transparent listener: accepted LocalAddr is the kernel's
+// original destination. Ordinary test listeners must model that socket fact.
+func (p *Proxy) Serve(listener net.Listener) error {
+	p.mu.Lock()
+	if p.closed || p.listener != nil {
+		p.mu.Unlock()
+		listener.Close()
+		return net.ErrClosed
+	}
+	p.listener = listener
+	p.mu.Unlock()
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			p.mu.Lock()
+			closed := p.closed
+			p.mu.Unlock()
+			if closed {
+				return nil
+			}
+			return err
+		}
+		p.mu.Lock()
+		if p.closed {
+			p.mu.Unlock()
+			conn.Close()
+			continue
+		}
+		p.connections[conn] = struct{}{}
+		p.workers.Add(1)
+		p.mu.Unlock()
+		go func() { defer p.workers.Done(); defer p.release(conn); p.serveConn(conn) }()
+	}
+}
+
+// Close fences immediately, including requests still resolving credentials and
+// established H2 streams. Connections do not survive parking or restoration.
 func (p *Proxy) Close() error {
 	p.mu.Lock()
 	p.closed = true
+	p.cancel()
+	if p.listener != nil {
+		_ = p.listener.Close()
+	}
 	for conn := range p.connections {
 		_ = conn.Close()
 	}
 	p.mu.Unlock()
-	p.transport.CloseIdleConnections()
-	return p.server.Close()
+	p.workers.Wait()
+	p.handlers.Wait()
+	return nil
 }
 
 func (p *Proxy) own(conn net.Conn) bool {
@@ -104,18 +150,40 @@ func (p *Proxy) own(conn net.Conn) bool {
 	p.connections[conn] = struct{}{}
 	return true
 }
-
 func (p *Proxy) release(conn net.Conn) {
 	_ = conn.Close()
 	p.mu.Lock()
 	delete(p.connections, conn)
 	p.mu.Unlock()
 }
-
-func deny(w http.ResponseWriter) {
-	http.Error(w, "Secret proxy request unavailable", http.StatusBadGateway)
+func (p *Proxy) dial(ctx context.Context, address string) (net.Conn, error) {
+	conn, err := p.config.DialContext(ctx, "tcp4", address)
+	if err != nil {
+		return nil, err
+	}
+	if !p.own(conn) {
+		return nil, net.ErrClosed
+	}
+	return &ownedConn{Conn: conn, release: func() { p.release(conn) }}, nil
 }
 
+type ownedConn struct {
+	net.Conn
+	once    sync.Once
+	release func()
+}
+
+func (c *ownedConn) Close() error { c.once.Do(c.release); return nil }
+func (c *ownedConn) CloseWrite() error {
+	if tcp, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		return tcp.CloseWrite()
+	}
+	return nil
+}
+
+func deny(w http.ResponseWriter) {
+	http.Error(w, "Protected HTTPS request unavailable", http.StatusBadGateway)
+}
 func denyTransportError(w http.ResponseWriter, err error) {
 	if errors.Is(err, ErrTrustExpired) {
 		http.Error(w, ErrTrustExpired.Error(), http.StatusBadGateway)
@@ -123,26 +191,6 @@ func denyTransportError(w http.ResponseWriter, err error) {
 	}
 	deny(w)
 }
-
-func (p *Proxy) serve(w http.ResponseWriter, r *http.Request) {
-	select {
-	case p.slots <- struct{}{}:
-		defer func() { <-p.slots }()
-	default:
-		deny(w)
-		return
-	}
-	if r.Method == http.MethodConnect {
-		p.connect(w, r)
-		return
-	}
-	if r.URL.Scheme != "http" || r.URL.Host == "" {
-		deny(w)
-		return
-	}
-	p.forward(w, r, "")
-}
-
 func authority(value, scheme string) (string, string, error) {
 	u, err := url.Parse(scheme + "://" + value)
 	if err != nil || u.User != nil || u.Host != value || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || strings.ContainsAny(value, "\\%?#@ \t\r\n") {
@@ -173,95 +221,6 @@ func authority(value, scheme string) (string, string, error) {
 		canonical += ":" + port
 	}
 	return canonical, net.JoinHostPort(host, port), nil
-}
-
-func (p *Proxy) connect(w http.ResponseWriter, r *http.Request) {
-	target, address, err := authority(r.Host, "https")
-	if err != nil || r.ContentLength > 0 || len(r.TransferEncoding) != 0 || len(r.Trailer) != 0 {
-		deny(w)
-		return
-	}
-	if _, err := markers(r.Header); err != nil || containsMarker(r.Host) {
-		deny(w)
-		return
-	}
-	for _, values := range r.Header {
-		for _, value := range values {
-			if containsMarker(value) {
-				deny(w)
-				return
-			}
-		}
-	}
-	protected := slices.Contains(p.config.Origins, target)
-	var upstream net.Conn
-	var certificate tls.Certificate
-	if protected {
-		certificate, err = p.config.Certificate(r.Context(), strings.Split(address, ":")[0])
-	} else {
-		upstream, err = p.config.DialContext(r.Context(), "tcp4", address)
-	}
-	if err != nil {
-		denyTransportError(w, err)
-		return
-	}
-	if upstream != nil {
-		defer upstream.Close()
-	}
-	hijacker, ok := w.(http.Hijacker)
-	if !ok {
-		deny(w)
-		return
-	}
-	conn, buffer, err := hijacker.Hijack()
-	if err != nil {
-		return
-	}
-	if !p.own(conn) {
-		return
-	}
-	defer p.release(conn)
-	if _, err := buffer.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
-		return
-	}
-	if err := buffer.Flush(); err != nil {
-		return
-	}
-	client := &bufferedConn{Conn: conn, reader: buffer.Reader}
-	if !protected {
-		if !p.own(upstream) {
-			return
-		}
-		defer p.release(upstream)
-		done := make(chan struct{})
-		go func() { _, _ = io.Copy(upstream, client); _ = upstream.Close(); close(done) }()
-		_, _ = io.Copy(client, upstream)
-		_ = conn.Close()
-		_ = upstream.Close()
-		<-done
-		return
-	}
-	host, _, _ := net.SplitHostPort(address)
-	tlsConn := tls.Server(client, &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"},
-		GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-			if !strings.EqualFold(hello.ServerName, host) {
-				return nil, errors.New("TLS destination mismatch")
-			}
-			return &certificate, nil
-		}})
-	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
-	if err := tlsConn.HandshakeContext(r.Context()); err != nil {
-		return
-	}
-	_ = conn.SetDeadline(time.Time{})
-	listener := &singleListener{conn: tlsConn, done: make(chan struct{})}
-	server := p.newServer(http.HandlerFunc(func(w http.ResponseWriter, inner *http.Request) { p.forward(w, inner, target) }))
-	server.ConnState = func(_ net.Conn, state http.ConnState) {
-		if state == http.StateClosed {
-			_ = listener.Close()
-		}
-	}
-	_ = server.Serve(listener)
 }
 
 func containsMarker(value string) bool { return strings.Contains(value, MarkerPrefix) }
@@ -328,18 +287,26 @@ func stripHopHeaders(header http.Header) {
 	}
 }
 
-func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, expected string) {
-	if r.Method == http.MethodConnect || r.Header.Get("Upgrade") != "" || len(r.Trailer) != 0 || containsMarker(r.RequestURI) || containsMarker(r.Host) {
+func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, expected string, destination netip.AddrPort) {
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return
+	}
+	p.handlers.Add(1)
+	p.mu.Unlock()
+	defer p.handlers.Done()
+	if r.Method == http.MethodConnect || r.Header.Get("Upgrade") != "" || len(r.Trailer) != 0 {
+		http.Error(w, "Protected HTTPS does not support CONNECT, upgrades, or request trailers", http.StatusNotImplemented)
+		return
+	}
+	if containsMarker(r.RequestURI) || containsMarker(r.Host) {
 		deny(w)
 		return
 	}
-	scheme := "http"
-	if expected != "" {
-		scheme = "https"
-	}
-	target, _, err := authority(r.Host, scheme)
-	if err != nil || expected != "" && target != expected {
-		deny(w)
+	target, _, err := authority(r.Host, "https")
+	if err != nil || target != expected {
+		http.Error(w, "Protected HTTPS authority does not match TLS destination", http.StatusMisdirectedRequest)
 		return
 	}
 	if r.URL.IsAbs() {
@@ -350,17 +317,19 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, expected string)
 		}
 	}
 	selectors, err := markers(r.Header)
-	if err != nil {
+	if err != nil || !p.config.AllowedDestination(destination.Addr()) {
 		deny(w)
 		return
 	}
 	var values map[string][]byte
 	if len(selectors) > 0 {
-		if expected == "" || !slices.Contains(p.config.Origins, target) {
-			deny(w)
+		select {
+		case p.requests <- struct{}{}:
+		case <-r.Context().Done():
 			return
 		}
 		values, err = p.config.Resolve(r.Context(), target, selectors)
+		<-p.requests
 		defer func() {
 			for _, value := range values {
 				clear(value)
@@ -378,44 +347,51 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, expected string)
 			}
 		}
 	}
-	out := r.Clone(r.Context())
-	out.RequestURI = ""
-	out.URL.Scheme = scheme
-	out.URL.Host = r.Host
-	out.Header = r.Header.Clone()
-	for name, entries := range out.Header {
+	header := r.Header.Clone()
+	size := 0
+	for name, entries := range header {
 		for i, value := range entries {
 			entries[i] = markerPattern.ReplaceAllStringFunc(value, func(marker string) string { return string(values[marker]) })
-		}
-		out.Header[name] = entries
-	}
-	size := 0
-	for name, entries := range out.Header {
-		for _, value := range entries {
-			size += len(name) + len(value) + 4
+			size += len(name) + len(entries[i]) + 4
 		}
 	}
 	if size > maxHeaderBytes {
 		deny(w)
 		return
 	}
-	stripHopHeaders(out.Header)
-	response, err := p.transport.RoundTrip(out)
-	if err != nil {
-		deny(w)
-		return
+	stripHopHeaders(header)
+	// A fresh pinned transport bounds each request's credential and destination
+	// lifetime. No connection pooling or application-level retry is introduced.
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
+	if p.config.UpstreamTLS != nil {
+		tlsConfig = p.config.UpstreamTLS.Clone()
 	}
-	defer response.Body.Close()
-	stripHopHeaders(response.Header)
-	for name, entries := range response.Header {
-		for _, value := range entries {
-			w.Header().Add(name, value)
-		}
+	u, _ := url.Parse(expected)
+	tlsConfig.ServerName = u.Hostname()
+	protocols := new(http.Protocols)
+	protocols.SetHTTP1(true)
+	protocols.SetHTTP2(true)
+	transport := &http.Transport{Proxy: nil, Protocols: protocols, TLSClientConfig: tlsConfig,
+		DialContext:       func(ctx context.Context, _, _ string) (net.Conn, error) { return p.dial(ctx, destination.String()) },
+		DisableKeepAlives: true, TLSHandshakeTimeout: 10 * time.Second, MaxResponseHeaderBytes: maxHeaderBytes}
+	defer transport.CloseIdleConnections()
+	// Enable streaming uploads with simultaneous responses on HTTP/1 as well as H2.
+	_ = http.NewResponseController(w).EnableFullDuplex()
+	proxy := httputil.ReverseProxy{Transport: transport, FlushInterval: -1, ErrorLog: discardLogger(),
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.Out.URL.Scheme = "https"
+			pr.Out.URL.Host = u.Host
+			pr.Out.Host = u.Host
+			pr.Out.Header = header
+			pr.Out.Header.Del("Forwarded")
+			pr.Out.Header.Del("X-Forwarded-For")
+			pr.Out.Header.Del("X-Forwarded-Host")
+			pr.Out.Header.Del("X-Forwarded-Proto")
+		},
+		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) { deny(w) },
 	}
-	w.WriteHeader(response.StatusCode)
-	_, _ = io.Copy(w, response.Body)
+	proxy.ServeHTTP(w, r)
 }
-
 func validHeaderValue(value []byte) bool {
 	for _, c := range value {
 		if c == 127 || c < 32 && c != '\t' {
@@ -424,31 +400,3 @@ func validHeaderValue(value []byte) bool {
 	}
 	return true
 }
-
-type bufferedConn struct {
-	net.Conn
-	reader *bufio.Reader
-}
-
-func (c *bufferedConn) Read(b []byte) (int, error) { return c.reader.Read(b) }
-
-type singleListener struct {
-	conn     net.Conn
-	done     chan struct{}
-	once     sync.Once
-	accepted bool
-}
-
-func (l *singleListener) Accept() (net.Conn, error) {
-	if !l.accepted {
-		l.accepted = true
-		return l.conn, nil
-	}
-	<-l.done
-	return nil, net.ErrClosed
-}
-func (l *singleListener) Close() error {
-	l.once.Do(func() { close(l.done); _ = l.conn.Close() })
-	return nil
-}
-func (l *singleListener) Addr() net.Addr { return l.conn.LocalAddr() }

@@ -655,7 +655,7 @@ func (c *Connector) installRoutedPolicy(ctx context.Context, binding *installedN
 			var listener net.Listener
 			if err := withNetworkNamespace(binding.namespace, func() error {
 				var e error
-				listener, e = net.Listen("tcp4", net.JoinHostPort(GuestGatewayIPv4V0, strconv.Itoa(secretproxy.Port)))
+				listener, e = listenSecretEgress()
 				return e
 			}); err != nil {
 				if listener != nil {
@@ -691,13 +691,18 @@ func (c *Connector) installRoutedPolicy(ctx context.Context, binding *installedN
 		return fmt.Errorf("prepare TAP ingress binding: %w", err)
 	}
 	binding.packet = packet
+	if binding.secretProxy != nil {
+		if err := withNetworkNamespace(binding.namespace, func() error { return installSecretRoute(m.TapName, packet.Mark()) }); err != nil {
+			return err
+		}
+	}
 	if err != nil {
 		return err
 	}
 	script, err := renderNetworkPolicy(networkPolicyInput{
 		Tap: m.TapName, Peer: m.NamespaceVethName, Mark: packet.Mark(),
 		BlockedIPv4CIDRs: blocked,
-		SecretProxy:      binding.secretProxy != nil,
+		ProtectedPorts:   protectedPorts(binding.secretProxy),
 		ResolverIPv4:     c.cfg.NetworkResolverIPv4,
 		GuestIPv4:        guestIP, TranslationIPv4: netip.MustParsePrefix(m.TranslationIPv4CIDR).Addr().String(),
 	})
@@ -901,6 +906,11 @@ func (binding *installedNetworkBinding) verifyLocked(expectUp bool) error {
 	}
 	if err := verifyRoutedAddressesAndRoutes(nsHandle, rootVeth, nsVeth, tap, binding.manifest, expectUp); err != nil {
 		return err
+	}
+	if binding.secretProxy != nil {
+		if err := withNetworkNamespace(binding.namespace, func() error { return verifySecretRoute(binding.manifest.TapName, binding.manifest.PacketMark) }); err != nil {
+			return err
+		}
 	}
 	if err := withNetworkNamespace(binding.namespace, verifyRoutedNamespaceSysctls); err != nil {
 		return err

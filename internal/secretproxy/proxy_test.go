@@ -1,7 +1,6 @@
 package secretproxy
 
 import (
-	"bufio"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -18,9 +17,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
-	"os"
-	"os/exec"
-	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -39,6 +36,11 @@ func testCertificate(t *testing.T, hosts ...string) (tls.Certificate, []byte, *x
 	template := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "synthetic fixture"},
 		DNSNames: hosts, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
 		KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, IsCA: true, BasicConstraintsValid: true}
+	for _, host := range hosts {
+		if ip := net.ParseIP(host); ip != nil {
+			template.IPAddresses = append(template.IPAddresses, ip)
+		}
+	}
 	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
 	if err != nil {
 		t.Fatal(err)
@@ -58,25 +60,39 @@ func testCertificate(t *testing.T, hosts ...string) (tls.Certificate, []byte, *x
 }
 
 type fixture struct {
-	proxy       *Proxy
-	url         *url.URL
-	ca          []byte
-	client      *http.Client
-	mu          sync.Mutex
-	value       string
-	available   bool
-	resolutions atomic.Int32
-	hits        atomic.Int32
-	authed      atomic.Int32
+	proxy               *Proxy
+	upstreamCertificate []byte
+	upstreamProtocols   chan int
+	url                 *url.URL
+	ca                  []byte
+	client              *http.Client
+	mu                  sync.Mutex
+	value               string
+	available           bool
+	resolutions         atomic.Int32
+	hits                atomic.Int32
+	authed              atomic.Int32
 }
 
 func newFixture(t *testing.T, handler func(http.ResponseWriter, *http.Request)) *fixture {
+	return newFixtureAt(t, 443, handler)
+}
+
+func newFixtureAt(t *testing.T, port uint16, handler func(http.ResponseWriter, *http.Request)) *fixture {
 	t.Helper()
-	f := &fixture{value: "synthetic-first-token", available: true}
+	f := &fixture{value: "synthetic-first-token", available: true, upstreamProtocols: make(chan int, 256)}
+	origin := "https://api.github.com"
+	if port != 443 {
+		origin += ":" + strconv.Itoa(int(port))
+	}
 	cert, ca, pool := testCertificate(t, "api.github.com", "public.example")
 	f.ca = ca
+	upstreamCert, _, upstreamPool := testCertificate(t, "api.github.com", "public.example", "93.184.216.34")
+	f.upstreamCertificate = upstreamCert.Certificate[0]
+	pool.AddCert(func() *x509.Certificate { c, _ := x509.ParseCertificate(upstreamCert.Certificate[0]); return c }())
 	upstream := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.hits.Add(1)
+		f.upstreamProtocols <- r.ProtoMajor
 		f.mu.Lock()
 		value := f.value
 		f.mu.Unlock()
@@ -90,15 +106,16 @@ func newFixture(t *testing.T, handler func(http.ResponseWriter, *http.Request)) 
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"login":"synthetic-user"}`)
 	}))
-	upstream.TLS = &tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{"http/1.1"}}
+	upstream.TLS = &tls.Config{Certificates: []tls.Certificate{upstreamCert}}
+	upstream.EnableHTTP2 = true
 	upstream.StartTLS()
 	t.Cleanup(upstream.Close)
-	p, err := New(Config{Origins: []string{"https://api.github.com"}, Certificate: func(context.Context, string) (tls.Certificate, error) { return cert, nil },
+	p, err := New(Config{AllowedDestination: func(netip.Addr) bool { return true }, Origins: []string{origin}, Certificate: func(context.Context, string) (tls.Certificate, error) { return cert, nil },
 		Resolve: func(_ context.Context, o string, selectors []string) (map[string][]byte, error) {
 			f.resolutions.Add(1)
 			f.mu.Lock()
 			defer f.mu.Unlock()
-			if !f.available || o != "https://api.github.com" || len(selectors) != 1 || selectors[0] != testMarker {
+			if !f.available || o != origin || len(selectors) != 1 || selectors[0] != testMarker {
 				return nil, errors.New("unavailable")
 			}
 			return map[string][]byte{testMarker: []byte(f.value)}, nil
@@ -106,7 +123,7 @@ func newFixture(t *testing.T, handler func(http.ResponseWriter, *http.Request)) 
 		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, "tcp4", upstream.Listener.Addr().String())
 		},
-		UpstreamTLS: &tls.Config{RootCAs: pool},
+		UpstreamTLS: &tls.Config{RootCAs: upstreamPool},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -116,10 +133,14 @@ func newFixture(t *testing.T, handler func(http.ResponseWriter, *http.Request)) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	go func() { _ = p.Serve(listener) }()
+	go func() {
+		_ = p.Serve(&destinationListener{Listener: listener, destination: netip.AddrPortFrom(netip.MustParseAddr("93.184.216.34"), port)})
+	}()
 	t.Cleanup(func() { _ = p.Close() })
 	f.url, _ = url.Parse("http://" + listener.Addr().String())
-	f.client = &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(f.url), TLSClientConfig: &tls.Config{RootCAs: pool}, ForceAttemptHTTP2: false}, Timeout: 10 * time.Second}
+	f.client = &http.Client{Transport: &http.Transport{Proxy: nil, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "tcp4", f.url.Host)
+	}, TLSClientConfig: &tls.Config{RootCAs: pool}, ForceAttemptHTTP2: false}, Timeout: 10 * time.Second}
 	t.Cleanup(func() { f.client.CloseIdleConnections() })
 	return f
 }
@@ -181,7 +202,7 @@ func TestForgedAndMalformedMarkersFailBeforeUpstream(t *testing.T) {
 	}
 }
 
-func TestOrdinaryConnectDoesNotResolve(t *testing.T) {
+func TestUnrelatedTLSDoesNotResolve(t *testing.T) {
 	f := newFixture(t, nil)
 	if request(t, f, "https://public.example/discovery", "") != 200 || f.resolutions.Load() != 0 || f.hits.Load() != 1 {
 		t.Fatal("ordinary HTTPS failed")
@@ -227,45 +248,6 @@ func TestDialPolicyPreservesEffectiveDenyAndIPv4(t *testing.T) {
 	}
 }
 
-func TestNativeClients(t *testing.T) {
-	if os.Getenv("HELMR_TEST_NATIVE_SECRET_PROXY") != "1" {
-		t.Skip("set HELMR_TEST_NATIVE_SECRET_PROXY=1 for real gh/Node fixtures")
-	}
-	f := newFixture(t, nil)
-	dir := t.TempDir()
-	caPath := filepath.Join(dir, "ca.pem")
-	if err := os.WriteFile(caPath, f.ca, 0600); err != nil {
-		t.Fatal(err)
-	}
-	for _, tool := range []string{"gh", "node"} {
-		t.Run(tool, func(t *testing.T) {
-			binary, err := exec.LookPath(tool)
-			if err != nil {
-				t.Fatal(err)
-			}
-			args := []string{"api", "/user"}
-			if tool == "node" {
-				args = []string{"-e", `fetch('https://api.github.com/user',{headers:{Authorization:'Bearer '+process.env.GH_TOKEN}}).then(async r=>{if(!r.ok)throw Error('request failed');console.log(await r.text())}).catch(()=>process.exit(1))`}
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-			defer cancel()
-			cmd := exec.CommandContext(ctx, binary, args...)
-			cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "GH_CONFIG_DIR=" + filepath.Join(dir, "gh"), "GH_TOKEN=" + testMarker, "GH_PROMPT_DISABLED=1", "GH_NO_UPDATE_NOTIFIER=1", "HTTPS_PROXY=" + f.url.String(), "HTTP_PROXY=" + f.url.String(), "NO_PROXY=", "SSL_CERT_FILE=" + caPath, "NODE_EXTRA_CA_CERTS=" + caPath, "NODE_USE_ENV_PROXY=1"}
-			before := f.authed.Load()
-			output, err := cmd.CombinedOutput()
-			if err != nil {
-				t.Fatalf("%s: %v: %s", tool, err, output)
-			}
-			if !strings.Contains(string(output), "synthetic-user") || f.authed.Load() != before+1 {
-				t.Fatalf("%s did not traverse authenticated proxy: %s", tool, output)
-			}
-			if strings.Contains(string(output), f.value) {
-				t.Fatal("credential leaked")
-			}
-		})
-	}
-}
-
 func TestConnectionNominatedMarkerFailsClosed(t *testing.T) {
 	f := newFixture(t, nil)
 	request, _ := http.NewRequest("GET", "https://api.github.com/", nil)
@@ -281,87 +263,6 @@ func TestConnectionNominatedMarkerFailsClosed(t *testing.T) {
 	}
 }
 
-func TestCloseOwnsHijackedTunnel(t *testing.T) {
-	f := newFixture(t, nil)
-	conn, err := net.Dial("tcp4", f.url.Host)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	if _, err := io.WriteString(conn, "CONNECT public.example:443 HTTP/1.1\r\nHost: public.example:443\r\n\r\n"); err != nil {
-		t.Fatal(err)
-	}
-	reader := bufio.NewReader(conn)
-	response, err := http.ReadResponse(reader, &http.Request{Method: "CONNECT"})
-	if err != nil || response.StatusCode != 200 {
-		t.Fatal("tunnel did not open", err)
-	}
-	if err := f.proxy.Close(); err != nil {
-		t.Fatal(err)
-	}
-	conn.SetReadDeadline(time.Now().Add(time.Second))
-	if _, err := reader.ReadByte(); err == nil {
-		t.Fatal("hijacked guest socket stayed open")
-	} else if timeout, ok := err.(net.Error); ok && timeout.Timeout() {
-		t.Fatal("proxy close did not close hijacked socket")
-	}
-}
-
-func TestOrdinaryHTTPPassThroughSanitizesHopHeaders(t *testing.T) {
-	var hits atomic.Int32
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hits.Add(1)
-		if r.Header.Get("X-Hop") != "" || r.Header.Get("Proxy-Authorization") != "" {
-			t.Error("hop credentials forwarded")
-		}
-		conn, buffer, err := w.(http.Hijacker).Hijack()
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		defer conn.Close()
-		buffer.WriteString("HTTP/1.1 204 No Content\r\nConnection: X-Hop-Response\r\nX-Hop-Response: private-hop\r\n\r\n")
-		buffer.Flush()
-	}))
-	defer upstream.Close()
-	p, err := New(Config{Origins: nil, Certificate: func(context.Context, string) (tls.Certificate, error) {
-		t.Error("ordinary request asked for leaf")
-		return tls.Certificate{}, errors.New("unexpected")
-	}, Resolve: func(context.Context, string, []string) (map[string][]byte, error) {
-		t.Error("ordinary request resolved a Secret")
-		return nil, errors.New("unexpected")
-	}, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-		if address != "1.1.1.1:80" {
-			return nil, errors.New("fixture wrong target")
-		}
-		return (&net.Dialer{}).DialContext(ctx, "tcp4", upstream.Listener.Addr().String())
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer p.Close()
-	listener, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	go p.Serve(listener)
-	proxyURL, _ := url.Parse("http://" + listener.Addr().String())
-	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)}, Timeout: 5 * time.Second}
-	defer client.CloseIdleConnections()
-	request, _ := http.NewRequest("GET", "http://1.1.1.1/", nil)
-	request.Header.Set("Connection", "X-Hop")
-	request.Header.Set("X-Hop", "hop-value")
-	request.Header.Set("Proxy-Authorization", "proxy-only")
-	response, err := client.Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != 204 || response.Header.Get("X-Hop-Response") != "" || hits.Load() != 1 {
-		t.Fatalf("ordinary HTTP status=%d hop=%q hits=%d", response.StatusCode, response.Header.Get("X-Hop-Response"), hits.Load())
-	}
-}
-
 func TestExpiredTrustGivesSafeRecreationError(t *testing.T) {
 	response := httptest.NewRecorder()
 	denyTransportError(response, ErrTrustExpired)
@@ -374,3 +275,26 @@ func TestExpiredTrustGivesSafeRecreationError(t *testing.T) {
 		t.Fatal("transport disclosed arbitrary error")
 	}
 }
+
+// Models the kernel-owned original-destination socket fact in portable protocol
+// tests. Only the privileged namespace test proves actual TPROXY delivery.
+type destinationListener struct {
+	net.Listener
+	destination netip.AddrPort
+}
+
+func (l *destinationListener) Accept() (net.Conn, error) {
+	c, e := l.Listener.Accept()
+	if e != nil {
+		return nil, e
+	}
+	return &destinationConn{Conn: c, destination: l.destination}, nil
+}
+
+type destinationConn struct {
+	net.Conn
+	destination netip.AddrPort
+}
+
+func (c *destinationConn) LocalAddr() net.Addr { return net.TCPAddrFromAddrPort(c.destination) }
+func (c *destinationConn) CloseWrite() error   { return c.Conn.(*net.TCPConn).CloseWrite() }

@@ -118,22 +118,36 @@ func TestRunNetworkCounterContractRejectsMissingAndDuplicate(t *testing.T) {
 	}
 }
 
-func TestSecretProxyNetworkExceptionIsGuestSourceAndPortBound(t *testing.T) {
-	script, err := renderNetworkPolicy(networkPolicyInput{Tap: "tap0", Peer: "host0", Mark: 71, GuestIPv4: "192.168.127.2", TranslationIPv4: "100.96.0.2", BlockedIPv4CIDRs: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}, ResolverIPv4: "10.0.0.2", SecretProxy: true})
+func TestProtectedCapturePreservesIngressAndPortAuthority(t *testing.T) {
+	script, err := renderNetworkPolicy(networkPolicyInput{Tap: "tap0", Peer: "host0", Mark: 71, GuestIPv4: "192.168.127.2", TranslationIPv4: "100.96.0.2", BlockedIPv4CIDRs: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}, ResolverIPv4: "10.0.0.2", ProtectedPorts: []uint16{8443, 443, 8443}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, rule := range []string{
-		`input iifname "tap0" meta mark 71 ip saddr 192.168.127.2 ip daddr 192.168.127.1 tcp dport 3128 ct state new,established accept`,
-		`output oifname "tap0" ip saddr 192.168.127.1 ip daddr 192.168.127.2 tcp sport 3128 ct state established accept`,
-		`meta nfproto ipv6 counter name run_denied drop`,
-		`ip daddr @blocked_ipv4 counter name run_denied drop`,
+	for _, want := range []string{
+		"elements = { 443, 8443 }",
+		`capture iifname "tap0" meta mark != 71 counter name run_denied drop`,
+		`capture iifname "tap0" ip saddr != 192.168.127.2 counter name run_denied drop`,
+		`capture iifname "tap0" ip daddr 10.0.0.2 tcp dport 53 return`,
+		`ip daddr @blocked_ipv4 tcp dport @protected_ports counter name run_denied drop`,
+		`meta mark 71 ip saddr 192.168.127.2 tcp dport @protected_ports tproxy ip to :3128 meta mark set 2147483719 accept`,
+		`capture iifname "tap0" tcp dport @protected_ports counter name run_denied drop`,
+		`input iifname "tap0" meta mark 2147483719 ip saddr 192.168.127.2 tcp dport @protected_ports ct state new,established accept`,
+		`output oifname "tap0" ip daddr 192.168.127.2 meta l4proto tcp ct state established accept`,
+		`forward iifname "tap0" oifname "host0" meta mark != 71 counter name run_denied drop`,
 	} {
-		if !strings.Contains(script, rule) {
-			t.Fatalf("missing narrow policy %s", rule)
+		if !strings.Contains(script, want) {
+			t.Errorf("missing %s", want)
 		}
 	}
-	if strings.Contains(renderNetworkPolicyForTest(t), "3128") {
-		t.Fatal("ordinary Workspace opened proxy exception")
+	if strings.Contains(script, "tcp dport 3128") || strings.Contains(script, "tcp sport 3128") {
+		t.Fatal("explicit guest proxy exception remains")
+	}
+	if strings.Index(script, "tcp dport 53 return") > strings.Index(script, "tproxy ip") || strings.Index(script, "ip daddr @blocked_ipv4 tcp") > strings.Index(script, "tproxy ip") {
+		t.Fatal("capture precedes destination policy")
+	}
+	for _, mark := range []uint32{1, 71, 0x80000000, 0xffffffff} {
+		if mark == secretRouteMark(mark) {
+			t.Fatal("capture can forward with original authority mark")
+		}
 	}
 }
