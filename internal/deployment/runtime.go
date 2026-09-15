@@ -18,9 +18,9 @@ import (
 const NodeNoStripTypes = "--no-strip-types"
 
 const (
-	RuntimeDescriptorFormatVersion = 1
-	RuntimeMetadataFormatVersion   = 1
-	RuntimeArtifactMediaType       = "application/vnd.helmr.runtime.v1+squashfs"
+	RuntimeDescriptorFormatVersion = 0
+	RuntimeMetadataFormatVersion   = 0
+	RuntimeArtifactMediaType       = "application/vnd.helmr.runtime.v0+squashfs"
 	maxRuntimeDocumentBytes        = 4096
 	runtimeMountPath               = "/opt/helmr/runtime"
 )
@@ -61,7 +61,7 @@ func ParseRuntimeMetadata(raw []byte) (RuntimeMetadata, error) {
 		return RuntimeMetadata{}, err
 	}
 	if !bytes.Equal(raw, canonical) {
-		return RuntimeMetadata{}, errors.New("runtime metadata does not match the complete canonical v1 shape")
+		return RuntimeMetadata{}, errors.New("runtime metadata does not match the complete canonical v0 shape")
 	}
 	metadata.ProgramNodeFlags = append([]string(nil), metadata.ProgramNodeFlags...)
 	return metadata, nil
@@ -171,7 +171,7 @@ func ParseRuntimeIndex(raw []byte) (RuntimeIndex, error) {
 		return RuntimeIndex{}, err
 	}
 	if !bytes.Equal(raw, canonical) {
-		return RuntimeIndex{}, fmt.Errorf("runtime index does not match the complete canonical v1 shape")
+		return RuntimeIndex{}, fmt.Errorf("runtime index does not match the complete canonical v0 shape")
 	}
 	return index, nil
 }
@@ -211,7 +211,7 @@ func ParseRuntimeDescriptor(raw []byte) (RuntimeDescriptor, error) {
 	}
 	if !bytes.Equal(raw, canonical) {
 		return RuntimeDescriptor{}, fmt.Errorf(
-			"runtime descriptor does not match the complete canonical v1 shape",
+			"runtime descriptor does not match the complete canonical v0 shape",
 		)
 	}
 	return descriptor, nil

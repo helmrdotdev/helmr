@@ -90,7 +90,7 @@ func TestParseVerificationResultRejectsOpenOrNoncanonicalShape(t *testing.T) {
 			mutate: func(root map[string]any) {
 				delete(root, "formatVersion")
 			},
-			wantErr: "formatVersion",
+			wantErr: "complete canonical v0 shape",
 		},
 		{
 			name: "duplicate file",

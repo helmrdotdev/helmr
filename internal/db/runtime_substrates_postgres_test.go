@@ -240,12 +240,12 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 	`, environmentID, orgID, projectID, "authority-"+dbtest.ShortID(environmentID))
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
-		VALUES ($1, $2, 1, 'application/vnd.helmr.deployment-program.v1+squashfs'), ($1, $3, 1, 'application/octet-stream')
+		VALUES ($1, $2, 1, 'application/vnd.helmr.deployment-program.v0+squashfs'), ($1, $3, 1, 'application/octet-stream')
 	`, orgID, programDigest, imageDigest)
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
 		VALUES
-			($1, $3, $4, $5, $6, 'deployment_program', 1, 'application/vnd.helmr.deployment-program.v1+squashfs'),
+			($1, $3, $4, $5, $6, 'deployment_program', 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
 			($2, $3, $4, $5, $7, 'workspace_image', 1, 'application/octet-stream')
 	`, programArtifactID, imageArtifactID, orgID, projectID, environmentID, programDigest, imageDigest)
 	dbtest.MustExec(t, ctx, pool, `

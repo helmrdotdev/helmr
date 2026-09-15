@@ -116,7 +116,7 @@ func inputTreeDigest(ctx context.Context, entries []artifactEntry, open func(con
 	ordered := append([]artifactEntry(nil), entries...)
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Path < ordered[j].Path })
 	hash := sha256.New()
-	_, _ = io.WriteString(hash, "helmr.program-input-tree.v1\n")
+	_, _ = io.WriteString(hash, "helmr.program-input-tree.v0\n")
 	for _, entry := range ordered {
 		if err := ctx.Err(); err != nil {
 			return "", err

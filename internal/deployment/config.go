@@ -75,7 +75,7 @@ func ParseBuildConfig(raw []byte) (BuildConfig, error) {
 	}
 	if !bytes.Equal(raw, complete) {
 		return BuildConfig{}, errors.New(
-			"config result does not match the complete canonical v1 shape",
+			"config result does not match the complete canonical v0 shape",
 		)
 	}
 	return cloneBuildConfig(config), nil

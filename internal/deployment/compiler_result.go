@@ -71,7 +71,7 @@ func ParseProgramCompilerResult(raw []byte) (ProgramCompilerResult, error) {
 	}
 	if !bytes.Equal(raw, complete) {
 		return ProgramCompilerResult{}, errors.New(
-			"program compiler result does not match the complete canonical v1 shape",
+			"program compiler result does not match the complete canonical v0 shape",
 		)
 	}
 	return result, nil
@@ -88,7 +88,7 @@ func canonicalProgramCompilerResult(
 }
 
 func validateProgramCompilerResult(result ProgramCompilerResult) error {
-	if result.APIVersion != "helmr.compiler.v1" || result.NodeVersion != "24.21.0" {
+	if result.APIVersion != "helmr.compiler.v0" || result.NodeVersion != "24.21.0" {
 		return errors.New("program compiler execution contract is invalid")
 	}
 	if err := ValidateModuleExecutionIdentity(result.Language); err != nil {

@@ -179,7 +179,7 @@ func TestVerifiedRuntimeResultMatchesDescriptor(t *testing.T) {
 			value.Architecture = RuntimeArchitecture("aarch64")
 		},
 		"runtime API": func(value *RuntimeDescriptor) {
-			value.RuntimeContract = "helmr.runtime.v0"
+			value.RuntimeContract = "helmr.runtime.unsupported"
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

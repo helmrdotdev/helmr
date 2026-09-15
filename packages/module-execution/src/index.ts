@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 import ts from "typescript"
 import { SourceAuthority, diagnosticError, isContained } from "./authority"
 
-export const languageVersion = "helmr.module-execution.v1" as const
+export const languageVersion = "helmr.module-execution.v0" as const
 export const typescriptVersion = "6.0.3" as const
 export const sourceExtensions = [".js", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts", ".jsx"] as const
 const typed = (path: string) => /\.(?:[cm]?ts|tsx|jsx)$/.test(path)

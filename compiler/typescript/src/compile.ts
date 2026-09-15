@@ -18,7 +18,7 @@ import { canonicalizeJsonValue, type JsonValue } from "@helmr/sdk/internal"
 import { compareUTF8, hasOnlyUnicodeScalarValues } from "./utf8"
 
 export const BUILD_PLAN_FORMAT_VERSION = 0 as const
-export const DECLARATION_LOCATOR_FORMAT_VERSION = 1 as const
+export const DECLARATION_LOCATOR_FORMAT_VERSION = 0 as const
 export type NormalizedRetry =
   | Readonly<{ enabled: false }>
   | Readonly<{
@@ -147,7 +147,7 @@ export interface DeclarationLocatorEntry {
 
 export interface DeclarationLocator {
   readonly declarations: readonly DeclarationLocatorEntry[]
-  readonly formatVersion: 1
+  readonly formatVersion: 0
 }
 
 export interface AnalysisExport {

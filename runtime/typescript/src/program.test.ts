@@ -154,7 +154,7 @@ describe("runProgram", () => {
           }],
           formatVersion: 0,
           queues: [],
-          runtimeContract: "helmr.runtime.v1"
+          runtimeContract: "helmr.runtime.v0"
         }),
         importModule: async () => ({ definition }),
         write: async (frame) => { process.stdout.write(frame); }
@@ -2202,7 +2202,7 @@ function programIO(options: {
         ],
         formatVersion: 0,
         queues: [],
-        runtimeContract: "helmr.runtime.v1",
+        runtimeContract: "helmr.runtime.v0",
       }),
     importModule: async () => ({ definition: options.definition }),
     write: async (value) => {

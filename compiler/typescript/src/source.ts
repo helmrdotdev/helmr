@@ -8,7 +8,7 @@ import { discoverModules } from "./analysis"
 import { analyze, type AnalysisExport } from "./compile"
 import { compareUTF8 } from "./utf8"
 
-export const COMPILER_API_VERSION = "helmr.compiler.v1" as const
+export const COMPILER_API_VERSION = "helmr.compiler.v0" as const
 export function compilerContract() {
   return { apiVersion: COMPILER_API_VERSION, language: moduleExecutionIdentity() }
 }

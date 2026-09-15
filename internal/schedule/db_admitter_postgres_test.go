@@ -418,7 +418,7 @@ func seedScheduleArtifact(
 	mediaType := "application/octet-stream"
 	switch kind {
 	case "deployment_program":
-		mediaType = "application/vnd.helmr.deployment-program.v1+squashfs"
+		mediaType = "application/vnd.helmr.deployment-program.v0+squashfs"
 	}
 	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)

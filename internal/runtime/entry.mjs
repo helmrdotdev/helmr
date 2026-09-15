@@ -4442,8 +4442,8 @@ async function loadProgramIndex(url, io) {
     throw new Error("Program index must be an object");
   }
   const record = value;
-  if (record["architecture"] !== "x86_64" || record["runtimeContract"] !== "helmr.runtime.v1" || typeof record["configResultDigest"] !== "string" || !Array.isArray(record["queues"]) || !Array.isArray(record["declarations"]) || record["declarations"].length === 0) {
-    throw new Error("Program index has an invalid v1 shape");
+  if (record["architecture"] !== "x86_64" || record["runtimeContract"] !== "helmr.runtime.v0" || typeof record["configResultDigest"] !== "string" || !Array.isArray(record["queues"]) || !Array.isArray(record["declarations"]) || record["declarations"].length === 0) {
+    throw new Error("Program index has an invalid v0 shape");
   }
   const declarations = record["declarations"].map(
     (entry, index) => parseProgramIndexDeclaration(entry, index)

@@ -679,7 +679,7 @@ function hasOnlyUnicodeScalarValues2(value) {
 var executableExtension = /\.(?:cjs|cts|js|jsx|mjs|mts|ts|tsx)$/;
 var textDecoder = new TextDecoder("utf-8", { fatal: true });
 var maxVerificationFailureMessageBytes = 16 << 10;
-var VERIFICATION_RESULT_FORMAT_VERSION = 1;
+var VERIFICATION_RESULT_FORMAT_VERSION = 0;
 function successfulVerificationResult(analysis) {
   const files = [{
     path: "helmr/build-plan.json",
@@ -827,7 +827,7 @@ import { pathToFileURL } from "node:url";
 
 // compiler/typescript/src/compile.ts
 var BUILD_PLAN_FORMAT_VERSION = 0;
-var DECLARATION_LOCATOR_FORMAT_VERSION = 1;
+var DECLARATION_LOCATOR_FORMAT_VERSION = 0;
 function analyze(options) {
   const located = locateDefinitions(options);
   const queues = compileQueues(located, options.exports);
@@ -1348,7 +1348,7 @@ function compareLocatorOccurrence(left, right) {
 }
 
 // compiler/typescript/src/source.ts
-var COMPILER_API_VERSION = "helmr.compiler.v1";
+var COMPILER_API_VERSION = "helmr.compiler.v0";
 function compilerContract() {
   return { apiVersion: COMPILER_API_VERSION, language: moduleExecutionIdentity() };
 }

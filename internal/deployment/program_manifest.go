@@ -13,7 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
-const ProgramManifestFormatVersion = 1
+const ProgramManifestFormatVersion = 0
 
 // ProgramManifest binds every installed input and the source declaration index.
 type ProgramManifest struct {
@@ -61,7 +61,7 @@ func ParseProgramManifest(raw []byte) (ProgramManifest, error) {
 	}
 	if !bytes.Equal(raw, complete) {
 		return ProgramManifest{}, errors.New(
-			"program manifest does not match the complete canonical v1 shape",
+			"program manifest does not match the complete canonical v0 shape",
 		)
 	}
 	return manifest, nil
@@ -81,7 +81,7 @@ func canonicalProgramManifest(manifest ProgramManifest) ([]byte, error) {
 func validateProgramManifest(value ProgramManifest) error {
 	if value.FormatVersion != ProgramManifestFormatVersion || value.Config.Path != "helmr/config.json" ||
 		!sha256DigestPattern.MatchString(value.Config.Digest) || !sha256DigestPattern.MatchString(value.InputTreeDigest) || !sha256DigestPattern.MatchString(value.ProgramIndexDigest) {
-		return errors.New("program manifest v1 authority is invalid")
+		return errors.New("program manifest v0 authority is invalid")
 	}
 	return nil
 }

@@ -13,7 +13,7 @@ const executableExtension = /\.(?:cjs|cts|js|jsx|mjs|mts|ts|tsx)$/
 const textDecoder = new TextDecoder("utf-8", { fatal: true })
 const maxVerificationFailureMessageBytes = 16 << 10
 
-export const VERIFICATION_RESULT_FORMAT_VERSION = 1 as const
+export const VERIFICATION_RESULT_FORMAT_VERSION = 0 as const
 
 export type VerificationGeneratedFile = Readonly<{
   path:
@@ -24,13 +24,13 @@ export type VerificationGeneratedFile = Readonly<{
 
 export type VerificationResultFrame =
   | Readonly<{
-      formatVersion: 1
+      formatVersion: 0
       outcome: "succeeded"
       declarations: AnalysisResult["programDeclarations"]
       files: readonly VerificationGeneratedFile[]
     }>
   | Readonly<{
-      formatVersion: 1
+      formatVersion: 0
       outcome: "failed"
       error: Readonly<{
         reason: "verification_failed"

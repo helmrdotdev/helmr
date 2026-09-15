@@ -68,7 +68,7 @@ func TestDeploymentPlanFromProgramIndex(t *testing.T) {
 
 func TestDeploymentPlanFromProgramIndexRejectsInvalidIndex(t *testing.T) {
 	index := testProgramIndex(t)
-	index.RuntimeContract = "helmr.runtime.v0"
+	index.RuntimeContract = "helmr.runtime.unsupported"
 	if _, err := DeploymentPlanFromProgramIndex(index); err == nil {
 		t.Fatal("DeploymentPlanFromProgramIndex accepted an invalid index")
 	}

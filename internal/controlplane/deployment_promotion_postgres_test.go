@@ -907,16 +907,16 @@ func newDeploymentPromotionPostgresFixture(t *testing.T) deploymentPromotionPost
 		       ($1, $3, 1, 'application/vnd.helmr.deployment-bundle.v0+json'),
 		       ($1, $4, 1, 'application/vnd.helmr.deployment-bundle.v0+json'),
 		       ($1, $5, 1, 'application/vnd.helmr.deployment-bundle.v0+json'),
-		       ($1, $6, 1, 'application/vnd.helmr.deployment-program.v1+squashfs'),
+		       ($1, $6, 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
 		       ($1, $7, 1, 'application/octet-stream'),
-		       ($1, $8, 1, 'application/vnd.helmr.runtime.v1+squashfs')
+		       ($1, $8, 1, 'application/vnd.helmr.runtime.v0+squashfs')
 	`, fixture.orgID, digests[0], digests[1], digests[2], digests[3],
 		digests[4], digests[5], digests[6])
 	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
-		VALUES ($1, $4, $5, $6, $7, 'deployment_program', 1, 'application/vnd.helmr.deployment-program.v1+squashfs'),
+		VALUES ($1, $4, $5, $6, $7, 'deployment_program', 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
 		       ($2, $4, $5, $6, $8, 'workspace_image', 1, 'application/octet-stream'),
-		       ($3, $4, $5, $9, $7, 'deployment_program', 1, 'application/vnd.helmr.deployment-program.v1+squashfs')
+		       ($3, $4, $5, $9, $7, 'deployment_program', 1, 'application/vnd.helmr.deployment-program.v0+squashfs')
 	`, programID, imageID, otherProgramID, fixture.orgID, fixture.projectID,
 		fixture.environmentID, digests[4], digests[5], fixture.otherEnvID)
 	queueConfig := []byte(`{"formatVersion":0,"queues":[{"name":"default"}]}`)

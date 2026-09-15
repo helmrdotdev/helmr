@@ -103,6 +103,22 @@ jobs:
 
       - run: nix run .#${{ matrix.app }}
 
+      # Temporary PR309 experiment; remove with .experiment/source-cost before merge.
+      - name: Compare native source transform costs
+        if: matrix.app == 'ci-typescript' && github.event_name == 'pull_request' && github.event.pull_request.number == 309
+        run: nix develop --command .experiment/source-cost/run.sh "$RUNNER_TEMP/source-cost"
+
+      - name: Retain source-cost experiment evidence
+        if: always() && matrix.app == 'ci-typescript' && github.event_name == 'pull_request' && github.event.pull_request.number == 309
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: source-cost-native-linux
+          path: |
+            ${{ runner.temp }}/source-cost/results/
+            ${{ runner.temp }}/source-cost/*json
+            ${{ runner.temp }}/source-cost/product-base.txt
+          if-no-files-found: error
+
   postgres:
     name: postgres
     runs-on: ubuntu-24.04

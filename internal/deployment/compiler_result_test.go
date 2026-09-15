@@ -10,12 +10,12 @@ import (
 )
 
 func testLanguageIdentity() ModuleExecutionIdentity {
-	return ModuleExecutionIdentity{APIVersion: "helmr.module-execution.v1", AdapterDigest: testDigest("adapter"), TypeScriptDigest: testDigest("typescript"), TypeScriptVersion: "6.0.3"}
+	return ModuleExecutionIdentity{APIVersion: "helmr.module-execution.v0", AdapterDigest: testDigest("adapter"), TypeScriptDigest: testDigest("typescript"), TypeScriptVersion: "6.0.3"}
 }
 func testCompilerInputs() CompilerInputs {
-	return CompilerInputs{APIVersion: "helmr.compiler.v1", Language: testLanguageIdentity(),
+	return CompilerInputs{APIVersion: "helmr.compiler.v0", Language: testLanguageIdentity(),
 		ConfigEvaluator: CompilerEntrypoint{APIVersion: ConfigEvaluatorContract, Digest: testDigest("config evaluator"), Entrypoint: "/nix/helmr/config-evaluator.mjs"},
-		ProgramCompiler: CompilerEntrypoint{APIVersion: "helmr.compiler.v1", Digest: testDigest("program compiler"), Entrypoint: "/nix/helmr/program-compiler.mjs"}}
+		ProgramCompiler: CompilerEntrypoint{APIVersion: "helmr.compiler.v0", Digest: testDigest("program compiler"), Entrypoint: "/nix/helmr/program-compiler.mjs"}}
 }
 
 func TestProgramVerificationRoundTrip(t *testing.T) {
@@ -50,7 +50,7 @@ func TestProgramCompilerResultRoundTrip(t *testing.T) {
 
 func testProgramCompilerResult(t *testing.T) ProgramCompilerResult {
 	t.Helper()
-	return ProgramCompilerResult{APIVersion: "helmr.compiler.v1", Language: testLanguageIdentity(), NodeVersion: "24.21.0", Config: ProgramPathDigest{Path: "helmr/config.json", Digest: testDigest("config")}, InputTreeDigest: testDigest("input"), DiscoveryCandidates: []string{"tasks/build.ts"}, Selections: []ProgramCompilerSelection{{DeclaredID: "build", ExportName: "build", Kind: DeclarationKindTask, SourcePath: "tasks/build.ts", Slot: DeclarationSlotHandler}}}
+	return ProgramCompilerResult{APIVersion: "helmr.compiler.v0", Language: testLanguageIdentity(), NodeVersion: "24.21.0", Config: ProgramPathDigest{Path: "helmr/config.json", Digest: testDigest("config")}, InputTreeDigest: testDigest("input"), DiscoveryCandidates: []string{"tasks/build.ts"}, Selections: []ProgramCompilerSelection{{DeclaredID: "build", ExportName: "build", Kind: DeclarationKindTask, SourcePath: "tasks/build.ts", Slot: DeclarationSlotHandler}}}
 }
 
 func TestProgramCompilerSelectionsUseDeclarationOrder(t *testing.T) {
@@ -67,7 +67,7 @@ func TestCompilerAuthorityMismatchTuples(t *testing.T) {
 		func(v *ProgramCompilerResult) { v.Language.TypeScriptDigest = testDigest("changed") },
 		func(v *ProgramCompilerResult) { v.Language.TypeScriptVersion = "7.0.2" },
 		func(v *ProgramCompilerResult) { v.NodeVersion = "24.20.0" },
-		func(v *ProgramCompilerResult) { v.APIVersion = "helmr.compiler.v0" },
+		func(v *ProgramCompilerResult) { v.APIVersion = "helmr.compiler.unsupported" },
 	} {
 		v := testProgramCompilerResult(t)
 		mutate(&v)
@@ -77,7 +77,7 @@ func TestCompilerAuthorityMismatchTuples(t *testing.T) {
 	}
 }
 
-func TestNativeCompilerContractsRejectOpenMissingAndOldShapes(t *testing.T) {
+func TestNativeCompilerContractsRejectOpenMissingAndUnsupportedShapes(t *testing.T) {
 	result := testProgramCompilerResult(t)
 	resultRaw, err := canonicalProgramCompilerResult(result)
 	if err != nil {
@@ -111,7 +111,7 @@ func TestNativeCompilerContractsRejectOpenMissingAndOldShapes(t *testing.T) {
 				t.Fatalf("accepted missing %s in %s", key, item.raw)
 			}
 		}
-		for key, value := range map[string]json.RawMessage{"outputs": json.RawMessage(`[]`), "compilePackages": json.RawMessage(`[]`), "apiVersion": json.RawMessage(`"helmr.compiler.v0"`)} {
+		for key, value := range map[string]json.RawMessage{"outputs": json.RawMessage(`[]`), "compilePackages": json.RawMessage(`[]`), "apiVersion": json.RawMessage(`"helmr.compiler.unsupported"`)} {
 			candidate := maps.Clone(document)
 			candidate[key] = value
 			encoded, _ := json.Marshal(candidate)
@@ -120,7 +120,7 @@ func TestNativeCompilerContractsRejectOpenMissingAndOldShapes(t *testing.T) {
 				t.Fatal(err)
 			}
 			if item.parse(canonical) == nil {
-				t.Fatalf("accepted stale/open %s", key)
+				t.Fatalf("accepted unsupported/open %s", key)
 			}
 		}
 	}

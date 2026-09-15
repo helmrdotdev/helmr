@@ -14,7 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
-const DeclarationLocatorFormatVersion = 1
+const DeclarationLocatorFormatVersion = 0
 
 type DeclarationLocator struct {
 	Declarations  []LocatedDeclaration `json:"declarations"`
@@ -63,7 +63,7 @@ func ParseDeclarationLocator(raw []byte) (DeclarationLocator, error) {
 	}
 	if !bytes.Equal(raw, complete) {
 		return DeclarationLocator{}, errors.New(
-			"declaration locator does not match the complete canonical v1 shape",
+			"declaration locator does not match the complete canonical v0 shape",
 		)
 	}
 	return cloneDeclarationLocator(locator), nil

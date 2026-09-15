@@ -561,7 +561,7 @@ describe("declaration analysis", () => {
       encodeVerificationResultFrame(successfulVerificationResult(program)),
     )
     expect(succeeded).toEqual({
-      formatVersion: 1,
+      formatVersion: 0,
       outcome: "succeeded",
       declarations: program.programDeclarations,
       files: [
@@ -596,7 +596,7 @@ describe("declaration analysis", () => {
     expect(decodeAnalysisFrame(
       encodeVerificationResultFrame(failedVerificationResult("module import failed")),
     )).toEqual({
-      formatVersion: 1,
+      formatVersion: 0,
       outcome: "failed",
       error: {
         reason: "verification_failed",

@@ -153,7 +153,7 @@ function diagnosticError(diagnostics) {
 }
 
 // packages/module-execution/src/index.ts
-var languageVersion = "helmr.module-execution.v1";
+var languageVersion = "helmr.module-execution.v0";
 var typescriptVersion = "6.0.3";
 var sourceExtensions = [".js", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts", ".jsx"];
 var typed = (path) => /\.(?:[cm]?ts|tsx|jsx)$/.test(path);

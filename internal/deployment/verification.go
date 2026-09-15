@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	VerificationResultFormatVersion = 1
+	VerificationResultFormatVersion = 0
 
 	VerificationOutcomeSucceeded = VerificationOutcome("succeeded")
 	VerificationOutcomeFailed    = VerificationOutcome("failed")
@@ -111,7 +111,7 @@ func ParseVerificationResult(raw []byte) (VerificationResult, error) {
 	}
 	if !bytes.Equal(raw, complete) {
 		return VerificationResult{}, errors.New(
-			"verification result does not match the complete canonical v1 shape",
+			"verification result does not match the complete canonical v0 shape",
 		)
 	}
 	return cloneVerificationResult(result), nil

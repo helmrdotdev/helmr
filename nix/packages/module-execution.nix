@@ -12,7 +12,7 @@ let
 in
 stdenvNoCC.mkDerivation {
   pname = "helmr-module-execution";
-  version = "1";
+  version = "0";
   dontUnpack = true;
   nativeBuildInputs = [
     gnutar

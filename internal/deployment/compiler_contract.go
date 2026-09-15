@@ -24,9 +24,9 @@ type ModuleExecutionIdentity struct {
 }
 
 func ValidateModuleExecutionIdentity(value ModuleExecutionIdentity) error {
-	if value.APIVersion != "helmr.module-execution.v1" || value.TypeScriptVersion != "6.0.3" ||
+	if value.APIVersion != "helmr.module-execution.v0" || value.TypeScriptVersion != "6.0.3" ||
 		!sha256DigestPattern.MatchString(value.AdapterDigest) || !sha256DigestPattern.MatchString(value.TypeScriptDigest) {
-		return errors.New("module execution identity does not match the v1 contract")
+		return errors.New("module execution identity does not match the v0 contract")
 	}
 	return nil
 }
@@ -66,7 +66,7 @@ func ParseCompilerInputs(raw []byte) (CompilerInputs, error) {
 		return CompilerInputs{}, err
 	}
 	if !bytes.Equal(raw, complete) {
-		return CompilerInputs{}, errors.New("compiler inputs do not match the complete canonical v1 shape")
+		return CompilerInputs{}, errors.New("compiler inputs do not match the complete canonical v0 shape")
 	}
 	return inputs, nil
 }
@@ -90,10 +90,10 @@ func CanonicalCompilerInputs(inputs CompilerInputs) ([]byte, error) {
 }
 
 func ValidateCompilerInputs(input CompilerInputs) error {
-	if input.APIVersion != "helmr.compiler.v1" || input.ConfigEvaluator.APIVersion != ConfigEvaluatorContract ||
-		input.ConfigEvaluator.Entrypoint != "/nix/helmr/config-evaluator.mjs" || input.ProgramCompiler.APIVersion != "helmr.compiler.v1" ||
+	if input.APIVersion != "helmr.compiler.v0" || input.ConfigEvaluator.APIVersion != ConfigEvaluatorContract ||
+		input.ConfigEvaluator.Entrypoint != "/nix/helmr/config-evaluator.mjs" || input.ProgramCompiler.APIVersion != "helmr.compiler.v0" ||
 		input.ProgramCompiler.Entrypoint != "/nix/helmr/program-compiler.mjs" {
-		return errors.New("compiler inputs do not match the v1 contract")
+		return errors.New("compiler inputs do not match the v0 contract")
 	}
 	if err := ValidateModuleExecutionIdentity(input.Language); err != nil {
 		return err

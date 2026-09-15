@@ -28,7 +28,7 @@ func TestUploadDeploymentBundleObjectRejectsNonSuccess(t *testing.T) {
 			t.Fatalf("content length = %d", r.ContentLength)
 		}
 		for name, want := range map[string]string{
-			"Content-Type":                 "application/vnd.helmr.deployment-program.v1+squashfs",
+			"Content-Type":                 "application/vnd.helmr.deployment-program.v0+squashfs",
 			"If-None-Match":                "*",
 			"X-Amz-Checksum-Sha256":        "checksum",
 			"X-Amz-Sdk-Checksum-Algorithm": "SHA256",
@@ -53,7 +53,7 @@ func TestUploadDeploymentBundleObjectRejectsNonSuccess(t *testing.T) {
 		Method: http.MethodPut, URL: server.URL,
 		Headers: map[string]string{
 			"Content-Length":               "6",
-			"Content-Type":                 "application/vnd.helmr.deployment-program.v1+squashfs",
+			"Content-Type":                 "application/vnd.helmr.deployment-program.v0+squashfs",
 			"If-None-Match":                "*",
 			"X-Amz-Checksum-Sha256":        "checksum",
 			"X-Amz-Sdk-Checksum-Algorithm": "SHA256",

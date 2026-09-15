@@ -479,13 +479,13 @@ async function loadProgramIndex(
   const record = value as Record<string, unknown>
   if (
     record["architecture"] !== "x86_64" ||
-    record["runtimeContract"] !== "helmr.runtime.v1" ||
+    record["runtimeContract"] !== "helmr.runtime.v0" ||
     typeof record["configResultDigest"] !== "string" ||
     !Array.isArray(record["queues"]) ||
     !Array.isArray(record["declarations"]) ||
     record["declarations"].length === 0
   ) {
-    throw new Error("Program index has an invalid v1 shape")
+    throw new Error("Program index has an invalid v0 shape")
   }
   const declarations = record["declarations"].map((entry, index) =>
     parseProgramIndexDeclaration(entry, index)

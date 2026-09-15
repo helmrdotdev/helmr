@@ -18,7 +18,7 @@ func TestRuntimeIndexRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = `{"architecture":"x86_64","runtimeContract":"helmr.runtime.v1"}`
+	const want = `{"architecture":"x86_64","runtimeContract":"helmr.runtime.v0"}`
 	if string(canonical) != want {
 		t.Fatalf("canonical runtime index = %q, want %q", canonical, want)
 	}
@@ -37,7 +37,7 @@ func TestRuntimeDescriptorRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = `{"architecture":"x86_64","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","formatVersion":1,"mediaType":"application/vnd.helmr.runtime.v1+squashfs","runtimeContract":"helmr.runtime.v1","sizeBytes":4096}`
+	const want = `{"architecture":"x86_64","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","formatVersion":0,"mediaType":"application/vnd.helmr.runtime.v0+squashfs","runtimeContract":"helmr.runtime.v0","sizeBytes":4096}`
 	if string(canonical) != want {
 		t.Fatalf("canonical runtime descriptor = %q, want %q", canonical, want)
 	}
@@ -133,7 +133,7 @@ func TestRuntimeDocumentsRejectIncompleteOrDivergentShape(t *testing.T) {
 		RuntimeContract: RuntimeContract,
 	}
 	indexTests := map[string]func(*RuntimeIndex){
-		"runtime API":  func(value *RuntimeIndex) { value.RuntimeContract = "helmr.runtime.v0" },
+		"runtime API":  func(value *RuntimeIndex) { value.RuntimeContract = "helmr.runtime.unsupported" },
 		"architecture": func(value *RuntimeIndex) { value.Architecture = "amd64" },
 	}
 	for name, mutate := range indexTests {
@@ -148,11 +148,11 @@ func TestRuntimeDocumentsRejectIncompleteOrDivergentShape(t *testing.T) {
 
 	descriptor := testRuntimeDescriptor()
 	descriptorTests := map[string]func(*RuntimeDescriptor){
-		"format version": func(value *RuntimeDescriptor) { value.FormatVersion = 0 },
+		"format version": func(value *RuntimeDescriptor) { value.FormatVersion = 1 },
 		"architecture":   func(value *RuntimeDescriptor) { value.Architecture = "amd64" },
 		"digest":         func(value *RuntimeDescriptor) { value.Digest = "sha256:invalid" },
 		"media type":     func(value *RuntimeDescriptor) { value.MediaType += "; charset=binary" },
-		"runtime API":    func(value *RuntimeDescriptor) { value.RuntimeContract = "helmr.runtime.v0" },
+		"runtime API":    func(value *RuntimeDescriptor) { value.RuntimeContract = "helmr.runtime.unsupported" },
 		"zero size":      func(value *RuntimeDescriptor) { value.SizeBytes = 0 },
 		"oversize":       func(value *RuntimeDescriptor) { value.SizeBytes = maxJSONSafeInteger + 1 },
 	}
@@ -200,8 +200,8 @@ func TestRuntimeDocumentParsersRequireClosedCanonicalObjects(t *testing.T) {
 		"descriptor duplicate": {
 			raw: []byte(strings.Replace(
 				string(descriptor),
-				`"formatVersion":1`,
-				`"formatVersion":1,"formatVersion":1`,
+				`"formatVersion":0`,
+				`"formatVersion":0,"formatVersion":0`,
 				1,
 			)),
 			parse: func(raw []byte) error {
