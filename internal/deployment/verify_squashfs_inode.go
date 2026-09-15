@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+
+	"github.com/helmrdotdev/helmr/internal/safepath"
 )
 
 const (
@@ -645,8 +647,8 @@ func (decoder *squashFSInodeDecoder) read(
 		}
 		facts.LinkCount = order.Uint32(encoded[0:4])
 		targetSize := uint64(order.Uint32(encoded[4:8]))
-		if targetSize > maxSymlinkTargetBytes ||
-			decoder.retainedRawBytes > uint64(maxArtifactNameBytes)-targetSize {
+		if targetSize > safepath.TreeLinkBytes ||
+			decoder.retainedRawBytes > uint64(MaxArtifactNameBytes)-targetSize {
 			return squashFSInodeFacts{}, &artifactContentError{
 				cause: fmt.Errorf(
 					"SquashFS symbolic-link target exceeds retained-byte bounds",
@@ -654,7 +656,7 @@ func (decoder *squashFSInodeDecoder) read(
 			}
 		}
 		decoder.retainedRawBytes += targetSize
-		var target [maxSymlinkTargetBytes]byte
+		var target [safepath.TreeLinkBytes]byte
 		if err := cursor.readFull(target[:targetSize]); err != nil {
 			return squashFSInodeFacts{}, err
 		}
@@ -745,7 +747,7 @@ func (decoder *squashFSInodeDecoder) readRegularBlocks(
 			cause: fmt.Errorf("SquashFS block size is zero"),
 		}
 	}
-	if regular.Size > uint64(maxArtifactFileSize) ||
+	if regular.Size > uint64(MaxArtifactFileSize) ||
 		regular.Size > decoder.maxLogicalBytes ||
 		decoder.logicalBytes > decoder.maxLogicalBytes-regular.Size {
 		return &artifactContentError{

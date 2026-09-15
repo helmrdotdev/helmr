@@ -27,7 +27,7 @@ func TestReadSquashFSTreeEnumeratesRootReachableFacts(t *testing.T) {
 		decoder,
 		superblock,
 		[]uint32{11, 22},
-		uint64(maxProgramLogicalBytes),
+		uint64(MaxProgramLogicalBytes),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -65,7 +65,7 @@ func TestReadSquashFSTreeAcceptsBasicDirectoryTypeForExtendedInode(t *testing.T)
 		decoder,
 		superblock,
 		[]uint32{0, 0},
-		uint64(maxProgramLogicalBytes),
+		uint64(MaxProgramLogicalBytes),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -85,7 +85,7 @@ func TestReadSquashFSTreeAcceptsEmptyDirectoryWithoutDirectoryTable(t *testing.T
 		decoder,
 		superblock,
 		[]uint32{0, 0},
-		uint64(maxProgramLogicalBytes),
+		uint64(MaxProgramLogicalBytes),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -120,7 +120,7 @@ func TestReadSquashFSTreeSurfacesFragmentReferences(t *testing.T) {
 		decoder,
 		superblock,
 		[]uint32{0, 0},
-		uint64(maxProgramLogicalBytes),
+		uint64(MaxProgramLogicalBytes),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -162,7 +162,7 @@ func TestReadSquashFSTreeSurfacesOverlappingData(t *testing.T) {
 		decoder,
 		superblock,
 		[]uint32{0, 0},
-		uint64(maxProgramLogicalBytes),
+		uint64(MaxProgramLogicalBytes),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -259,7 +259,7 @@ func TestReadSquashFSTreeReadsDirectoryAcrossMetadataBlocks(t *testing.T) {
 		decoder,
 		superblock,
 		[]uint32{0, 0},
-		uint64(maxProgramLogicalBytes),
+		uint64(MaxProgramLogicalBytes),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -281,7 +281,7 @@ func TestReadSquashFSTreeRetainsKnownForbiddenRoot(t *testing.T) {
 		decoder,
 		superblock,
 		[]uint32{0, 0},
-		uint64(maxProgramLogicalBytes),
+		uint64(MaxProgramLogicalBytes),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -314,7 +314,7 @@ func TestReadSquashFSTreeRetainsRepeatedNonDirectoryReference(t *testing.T) {
 		decoder,
 		superblock,
 		[]uint32{0, 0},
-		uint64(maxProgramLogicalBytes),
+		uint64(MaxProgramLogicalBytes),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -335,7 +335,7 @@ func TestReadSquashFSTreeRejectsUnusedDecodedMetadata(t *testing.T) {
 		decoder,
 		superblock,
 		[]uint32{0, 0},
-		uint64(maxProgramLogicalBytes),
+		uint64(MaxProgramLogicalBytes),
 	)
 	var contentError *artifactContentError
 	if !errors.As(err, &contentError) {
@@ -485,7 +485,7 @@ func TestReadSquashFSTreeRejectsGraphAndDirectoryViolations(t *testing.T) {
 				decoder,
 				superblock,
 				[]uint32{0, 0},
-				uint64(maxProgramLogicalBytes),
+				uint64(MaxProgramLogicalBytes),
 			)
 			var contentError *artifactContentError
 			if !errors.As(err, &contentError) {
@@ -505,7 +505,7 @@ func TestReadSquashFSTreeHonorsCancellation(t *testing.T) {
 		decoder,
 		superblock,
 		[]uint32{0, 0},
-		uint64(maxProgramLogicalBytes),
+		uint64(MaxProgramLogicalBytes),
 	)
 	var infrastructureError *artifactInfrastructureError
 	if !errors.As(err, &infrastructureError) || !errors.Is(err, context.Canceled) {
@@ -532,7 +532,7 @@ func FuzzReadSquashFSTree(f *testing.F) {
 			decoder,
 			superblock,
 			[]uint32{0},
-			uint64(maxProgramLogicalBytes),
+			uint64(MaxProgramLogicalBytes),
 		)
 		if err == nil {
 			return

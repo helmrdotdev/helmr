@@ -54,7 +54,7 @@ func writeTreeArchive(
 	}
 	switch role {
 	case programArtifact:
-		state.logicalLimit = maxProgramLogicalBytes
+		state.logicalLimit = MaxProgramLogicalBytes
 	case buildTreeArtifact:
 		state.logicalLimit = maxBuildTreeLogicalBytes
 	case runtimeArtifact:
@@ -171,10 +171,10 @@ func (state *programArchiveState) accept(
 	}
 
 	entryNameBytes := int64(len(entry.Path) + len(entry.LinkTarget))
-	if state.nameBytes > maxArtifactNameBytes-entryNameBytes {
+	if state.nameBytes > MaxArtifactNameBytes-entryNameBytes {
 		return fmt.Errorf(
 			"program archive raw path and symbolic-link-target bytes exceed %d",
-			maxArtifactNameBytes,
+			MaxArtifactNameBytes,
 		)
 	}
 	if entry.Kind == artifactEntryRegular {
@@ -223,8 +223,8 @@ func validateTreeEntry(entry treeEntry, role artifactRole) error {
 		if entry.Mode != 0644 && entry.Mode != 0755 {
 			return fmt.Errorf("regular-file mode %#o is unsupported", entry.Mode)
 		}
-		if entry.SizeBytes > maxArtifactFileSize {
-			return fmt.Errorf("regular file exceeds %d bytes", maxArtifactFileSize)
+		if entry.SizeBytes > MaxArtifactFileSize {
+			return fmt.Errorf("regular file exceeds %d bytes", MaxArtifactFileSize)
 		}
 		if entry.LinkTarget != "" || entry.Content == nil {
 			return errors.New("regular-file content metadata is invalid")

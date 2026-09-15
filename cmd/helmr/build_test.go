@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/builder"
@@ -62,5 +65,58 @@ func TestBuildWorkspaceImagesBuildsUniqueRenderedInputOnce(t *testing.T) {
 	if requests[0].Output != filepath.Join(workspaceContext, "workspace-000.oci.tar") ||
 		requests[1].Output != filepath.Join(workspaceContext, "workspace-001.oci.tar") {
 		t.Fatalf("BuildKit requests = %+v", requests)
+	}
+}
+
+func TestBuildUsesIndependentPrivateContextAndCleansFailure(t *testing.T) {
+	originalRun, originalImage, originalTemp := runDockerBuildx, deploymentBundleBuilderImage, buildContextTempDir
+	t.Cleanup(func() {
+		runDockerBuildx = originalRun
+		deploymentBundleBuilderImage = originalImage
+		buildContextTempDir = originalTemp
+	})
+	deploymentBundleBuilderImage = "ghcr.io/helmrdotdev/helmr/bundle-builder@sha256:" + strings.Repeat("a", 64)
+	source, temp := t.TempDir(), t.TempDir()
+	buildContextTempDir = temp
+	if err := os.WriteFile(filepath.Join(source, "package.json"), []byte(`{"name":"fixture","private":true}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	leaf := strings.Repeat("x", 124)
+	if err := os.WriteFile(filepath.Join(source, leaf), []byte("before"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	stopped := errors.New("stop at installer boundary")
+	contextPath := ""
+	runDockerBuildx = func(_ context.Context, _ *cobra.Command, request dockerBuildxRequest) error {
+		contextPath = request.ContextDirectory
+		info, err := os.Stat(contextPath)
+		if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 {
+			t.Fatalf("private context: %v %v", info, err)
+		}
+		if contextPath == source {
+			t.Fatal("Buildx received live checkout")
+		}
+		if err := os.WriteFile(filepath.Join(source, leaf), []byte("after"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		body, err := os.ReadFile(filepath.Join(contextPath, leaf))
+		if err != nil || string(body) != "before" {
+			t.Fatalf("captured source: %q %v", body, err)
+		}
+		return stopped
+	}
+	err := buildDeploymentBundleAt(t.Context(), &cobra.Command{}, source, filepath.Join(t.TempDir(), "bundle"), "npm install", nil, false)
+	if !errors.Is(err, stopped) {
+		t.Fatalf("build: %v", err)
+	}
+	if contextPath == "" {
+		t.Fatal("installer was not reached")
+	}
+	if _, err := os.Lstat(contextPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("build failure retained context: %v", err)
+	}
+	children, err := os.ReadDir(temp)
+	if err != nil || len(children) != 0 {
+		t.Fatalf("build context cleanup: %v %v", children, err)
 	}
 }

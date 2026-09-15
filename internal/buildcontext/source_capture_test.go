@@ -1,4 +1,4 @@
-package archive
+package buildcontext
 
 import (
 	"context"
@@ -14,7 +14,7 @@ func TestSourceSnapshotRejectsEntryMutation(t *testing.T) {
 	writeTestFile(t, filePath, "before")
 	snapshot := collectTestSourceSnapshot(t, rootPath)
 	writeTestFile(t, filePath, "after!")
-	if err := snapshot.verify(); !errors.Is(err, errSourceChanged) {
+	if err := snapshot.verify(t.Context()); !errors.Is(err, errSourceChanged) {
 		t.Fatalf("verify mutation error = %v, want source changed", err)
 	}
 }
@@ -24,7 +24,7 @@ func TestSourceSnapshotRejectsMembershipMutation(t *testing.T) {
 	writeTestFile(t, filepath.Join(rootPath, "task.ts"), "task")
 	snapshot := collectTestSourceSnapshot(t, rootPath)
 	writeTestFile(t, filepath.Join(rootPath, "added.ts"), "added")
-	if err := snapshot.verify(); !errors.Is(err, errSourceChanged) {
+	if err := snapshot.verify(t.Context()); !errors.Is(err, errSourceChanged) {
 		t.Fatalf("verify membership error = %v, want source changed", err)
 	}
 }
@@ -42,7 +42,7 @@ func TestSourceSnapshotRejectsSymlinkMutation(t *testing.T) {
 	if err := os.Symlink("second", linkPath); err != nil {
 		t.Fatal(err)
 	}
-	if err := snapshot.verify(); !errors.Is(err, errSourceChanged) {
+	if err := snapshot.verify(t.Context()); !errors.Is(err, errSourceChanged) {
 		t.Fatalf("verify symlink error = %v, want source changed", err)
 	}
 }

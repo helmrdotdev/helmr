@@ -2,8 +2,11 @@ package deployment
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/safepath"
 )
 
 func TestBuildTreeAcceptsManagerNativeOutput(t *testing.T) {
@@ -58,13 +61,13 @@ func TestBuildTreeAcceptsConfinedDanglingAndNestedReservedNames(t *testing.T) {
 
 func TestBuildTreeRejectsLinkCyclePastBound(t *testing.T) {
 	tree := newMemoryArtifact()
-	for index := 0; index <= maxSymlinkHops; index++ {
+	for index := 0; index <= safepath.TreeLinkHops; index++ {
 		name := "link-" + strings.Repeat("x", index)
 		target := "link-" + strings.Repeat("x", index+1)
 		tree.addLink(name, target)
 	}
 	tree.addLink(
-		"link-"+strings.Repeat("x", maxSymlinkHops+1),
+		"link-"+strings.Repeat("x", safepath.TreeLinkHops+1),
 		"link-",
 	)
 	if _, err := inspectMemoryBuildTree(t, tree); err == nil {
@@ -91,4 +94,31 @@ func inspectMemoryBuildTree(
 		return nil, err
 	}
 	return inspected, nil
+}
+
+func TestBuildTreeAndProgramLinkHopBoundary(t *testing.T) {
+	for _, count := range []int{40, 41} {
+		tree := newMemoryArtifact()
+		tree.addFile("file", []byte("content"), 0644)
+		for i := 0; i < count; i++ {
+			target := "file"
+			if i+1 < count {
+				target = fmt.Sprintf("link-%02d", i+1)
+			}
+			tree.addLink(fmt.Sprintf("link-%02d", i), target)
+		}
+		_, err := inspectMemoryBuildTree(t, tree)
+		if (err == nil) != (count == 40) {
+			t.Fatalf("%d links: %v", count, err)
+		}
+		inspected, err := inspectArtifact(t.Context(), tree, programArtifact, MaxProgramLogicalBytes, squashFSPhysicalAlign)
+		if err != nil {
+			t.Fatal(err)
+		}
+		verifier := programVerifier{artifact: inspected}
+		err = verifier.verifyLinks()
+		if (err == nil) != (count == 40) {
+			t.Fatalf("Program %d links: %v", count, err)
+		}
+	}
 }

@@ -1,6 +1,6 @@
 //go:build darwin
 
-package archive
+package buildcontext
 
 import (
 	"os"

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"path"
 	"strings"
+
+	"github.com/helmrdotdev/helmr/internal/safepath"
 )
 
 // buildTreeSnapshotMediaType is an in-process snapshot discriminator. It is
@@ -154,7 +156,7 @@ func validateBuildTreeLink(
 		strings.Split(target, "/")...,
 	)
 	resolved := make([]string, 0, len(pending))
-	hops := 0
+	hops := 1 // Include the link whose target is being validated.
 	for len(pending) != 0 {
 		component := pending[0]
 		pending = pending[1:]
@@ -169,14 +171,17 @@ func validateBuildTreeLink(
 			continue
 		}
 		candidate := strings.Join(append(resolved, component), "/")
+		if err := safepath.ValidateTreePath(candidate, programMountPath, "/workspace/project", "/workspace/program"); err != nil {
+			return err
+		}
 		entry, exists := tree.entries[candidate]
 		if !exists {
 			return nil
 		}
 		if entry.Kind == artifactEntrySymlink {
 			hops++
-			if hops > maxSymlinkHops {
-				return fmt.Errorf("target exceeds %d symbolic-link hops", maxSymlinkHops)
+			if hops > safepath.TreeLinkHops {
+				return fmt.Errorf("target exceeds %d symbolic-link hops", safepath.TreeLinkHops)
 			}
 			pending = append(strings.Split(entry.LinkTarget, "/"), pending...)
 			continue

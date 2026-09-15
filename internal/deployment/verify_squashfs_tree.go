@@ -10,6 +10,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/helmrdotdev/helmr/internal/safepath"
 )
 
 type squashFSDirectoryEntryFacts struct {
@@ -125,9 +127,9 @@ func (reader *squashFSTreeReader) read() (squashFSTreeFacts, error) {
 			),
 		}
 	}
-	if reader.inode.retainedRawBytes > uint64(maxArtifactNameBytes)-1 {
+	if reader.inode.retainedRawBytes > uint64(MaxArtifactNameBytes)-1 {
 		return squashFSTreeFacts{}, &artifactContentError{
-			cause: fmt.Errorf("SquashFS retained raw bytes exceed %d", maxArtifactNameBytes),
+			cause: fmt.Errorf("SquashFS retained raw bytes exceed %d", MaxArtifactNameBytes),
 		}
 	}
 	reader.inode.retainedRawBytes++
@@ -535,11 +537,11 @@ func (reader *squashFSTreeReader) readDirectory(
 					),
 				}
 			}
-			if parentDepth >= maxArtifactDepth {
+			if parentDepth >= safepath.TreeDepth {
 				return nil, &artifactContentError{
 					cause: fmt.Errorf(
 						"SquashFS path depth exceeds %d",
-						maxArtifactDepth,
+						safepath.TreeDepth,
 					),
 				}
 			}
@@ -556,8 +558,8 @@ func (reader *squashFSTreeReader) readDirectory(
 					}
 				}
 			}
-			if childLength+1 > maxMountedArtifactPathBytes ||
-				reader.inode.retainedRawBytes > uint64(maxArtifactNameBytes)-childLength {
+			if childLength+1 > safepath.TreePathBytes ||
+				reader.inode.retainedRawBytes > uint64(MaxArtifactNameBytes)-childLength {
 				return nil, &artifactContentError{
 					cause: fmt.Errorf("SquashFS path exceeds retained-byte bounds"),
 				}
@@ -629,7 +631,7 @@ func (cursor *squashFSLimitedCursor) readFull(destination []byte) error {
 
 func validateSquashFSComponent(component string) error {
 	if component == "" || component == "." || component == ".." ||
-		len(component) > maxArtifactPathComponentBytes ||
+		len(component) > safepath.TreeComponentBytes ||
 		!utf8.ValidString(component) ||
 		strings.ContainsAny(component, `/\`) {
 		return &artifactContentError{

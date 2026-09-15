@@ -18,7 +18,6 @@ import (
 	"github.com/felixge/httpsnoop"
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -36,7 +35,7 @@ import (
 const (
 	readinessTimeout             = 2 * time.Second
 	apiRequestBodyLimit          = int64(128 << 20)
-	deploymentRequestBodyLimit   = archive.MaxSourceArtifactBytes + 2<<20
+	deploymentRequestBodyLimit   = int64(642 << 20)
 	workerLogRequestBodyLimit    = int64(256 << 10)
 	workerRunLogRequestBodyLimit = int64(len(`{"lease":{"id":"00000000-0000-7000-8000-000000000000","lease_sequence":9223372036854775807},"stream":"stdout","observed_seq":9223372036854775807,"content_base64":""}`) +
 		((telemetry.MaxRunLogContentBytes + 2) / 3 * 4))

@@ -23,19 +23,22 @@ import (
 const (
 	defaultMaxExtractedBytes   = int64(512 << 20)
 	defaultMaxExtractedEntries = 100000
-	MaxSourceArtifactBytes     = int64(640 << 20)
 )
 
 type TarOptions struct {
 	// ObserveEntry receives normalized metadata in emitted order and returns
-	// a sink for regular-file bytes. It applies to non-CanonicalSource archives.
+	// a sink for regular-file bytes. It applies to all archives.
 	// An observer or payload error aborts and removes the archive.
 	ObserveEntry      func(*tar.Header) (io.Writer, error)
-	CanonicalSource   bool
 	CanonicalMetadata bool
 	ExcludePatterns   []string
 	MaxBytes          int64
 	MaxEntries        int
+	// Logical regular-file bytes, retained path/link bytes, and physical stream
+	// bytes have separate bounds. MaxArchiveBytes includes PAX records and padding.
+	MaxNameBytes    int64
+	MaxArchiveBytes int64
+	MaxFileBytes    int64
 }
 
 type ExtractOptions struct {
@@ -71,26 +74,9 @@ func CreateTarWithOptionsContext(ctx context.Context, root, tempDir string, opti
 	if root == "" {
 		return Tar{}, func() {}, errors.New("archive root is required")
 	}
-	var excludeMatchers []*regexp.Regexp
-	if options.CanonicalSource {
-		if len(options.ExcludePatterns) != 0 {
-			return Tar{}, func() {}, errors.New("canonical source does not accept caller exclude patterns")
-		}
-		if err := validateCanonicalSourceTempDir(root, tempDir); err != nil {
-			return Tar{}, func() {}, err
-		}
-		if options.MaxBytes == 0 {
-			options.MaxBytes = defaultMaxExtractedBytes
-		}
-		if options.MaxEntries == 0 {
-			options.MaxEntries = defaultMaxExtractedEntries
-		}
-	} else {
-		var err error
-		excludeMatchers, err = compileExcludeMatchers(options.ExcludePatterns)
-		if err != nil {
-			return Tar{}, func() {}, err
-		}
+	excludeMatchers, err := compileExcludeMatchers(options.ExcludePatterns)
+	if err != nil {
+		return Tar{}, func() {}, err
 	}
 	if strings.TrimSpace(tempDir) != "" {
 		if err := os.MkdirAll(tempDir, 0o700); err != nil {
@@ -104,14 +90,13 @@ func CreateTarWithOptionsContext(ctx context.Context, root, tempDir string, opti
 	path := file.Name()
 	cleanup := func() { _ = os.Remove(path) }
 	hash := sha256.New()
-	writer := tar.NewWriter(io.MultiWriter(file, hash))
-	stats := tarStats{}
-	var appendErr error
-	if options.CanonicalSource {
-		appendErr = appendCanonicalSource(ctx, writer, root, options, &stats)
-	} else {
-		appendErr = appendTree(ctx, writer, root, excludeMatchers, options, &stats)
+	var output io.Writer = io.MultiWriter(file, hash)
+	if options.MaxArchiveBytes > 0 {
+		output = &boundedArchiveWriter{writer: output, remaining: options.MaxArchiveBytes}
 	}
+	writer := tar.NewWriter(output)
+	stats := tarStats{}
+	appendErr := appendTree(ctx, writer, root, excludeMatchers, options, &stats)
 	if appendErr != nil {
 		_ = writer.Close()
 		_ = file.Close()
@@ -142,10 +127,7 @@ func CreateTarWithOptionsContext(ctx context.Context, root, tempDir string, opti
 		cleanup()
 		return Tar{}, func() {}, fmt.Errorf("stat tar archive: %w", err)
 	}
-	if options.CanonicalSource && info.Size() > MaxSourceArtifactBytes {
-		cleanup()
-		return Tar{}, func() {}, errors.New("canonical source artifact exceeds 640 MiB")
-	}
+
 	if err := ctx.Err(); err != nil {
 		cleanup()
 		return Tar{}, func() {}, err
@@ -156,29 +138,6 @@ func CreateTarWithOptionsContext(ctx context.Context, root, tempDir string, opti
 		SizeBytes:  info.Size(),
 		EntryCount: stats.entries,
 	}, cleanup, nil
-}
-
-func validateCanonicalSourceTempDir(root, tempDir string) error {
-	if strings.TrimSpace(tempDir) == "" {
-		return nil
-	}
-	rootPath, err := filepath.Abs(root)
-	if err != nil {
-		return fmt.Errorf("resolve canonical source root: %w", err)
-	}
-	tempPath, err := filepath.Abs(tempDir)
-	if err != nil {
-		return fmt.Errorf("resolve canonical source temp dir: %w", err)
-	}
-	relative, err := filepath.Rel(rootPath, tempPath)
-	if err != nil {
-		return fmt.Errorf("compare canonical source temp dir: %w", err)
-	}
-	if relative == "." || relative != ".." &&
-		!strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return errors.New("canonical source temp dir must be outside the source root")
-	}
-	return nil
 }
 
 func ExtractTar(body io.Reader, destination string) error {
@@ -324,6 +283,7 @@ func hasSparseMetadata(header *tar.Header) bool {
 type tarStats struct {
 	entries int
 	bytes   int64
+	names   int64
 }
 
 func appendTree(
@@ -334,6 +294,11 @@ func appendTree(
 	options TarOptions,
 	stats *tarStats,
 ) error {
+	// Installed output has its own bounded discovery and representation rules.
+	// Workspace archiving keeps its existing selection and filesystem behavior.
+	if options.CanonicalMetadata {
+		return appendInstalledTree(ctx, writer, root, excludeMatchers, options, stats)
+	}
 	type pendingEntry struct {
 		pathname string
 		name     string
@@ -362,9 +327,6 @@ func appendTree(
 			return nil
 		}
 		sortKey := rel
-		if entry.IsDir() && options.CanonicalMetadata {
-			sortKey += "/"
-		}
 		entries = append(entries, pendingEntry{
 			pathname: pathname,
 			name:     rel,
@@ -406,7 +368,7 @@ func appendTree(
 		if err != nil {
 			return err
 		}
-		normalizeHeader(header, entry.name, options.CanonicalSource || options.CanonicalMetadata)
+		normalizeHeader(header, entry.name, false)
 		if err := writer.WriteHeader(header); err != nil {
 			return err
 		}
@@ -487,7 +449,7 @@ func normalizeHeader(header *tar.Header, name string, canonicalMetadata bool) {
 			header.Name = strings.TrimSuffix(header.Name, "/") + "/"
 			header.Mode = 0o755
 		}
-		header.Format = tar.FormatUSTAR
+		header.Format = tar.FormatPAX
 	}
 	header.ModTime = time.Unix(0, 0)
 	header.AccessTime = time.Time{}
@@ -636,4 +598,19 @@ func applyDirectoryModes(modes map[string]os.FileMode) error {
 
 func permissionBits(mode os.FileMode) os.FileMode {
 	return mode & os.ModePerm
+}
+
+// Enforce the physical limit at the writer, including writer.Close framing.
+type boundedArchiveWriter struct {
+	writer    io.Writer
+	remaining int64
+}
+
+func (writer *boundedArchiveWriter) Write(body []byte) (int, error) {
+	if int64(len(body)) > writer.remaining {
+		return 0, errors.New("tar archive exceeds encoded size limit")
+	}
+	n, err := writer.writer.Write(body)
+	writer.remaining -= int64(n)
+	return n, err
 }

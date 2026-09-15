@@ -11,7 +11,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/helmrdotdev/helmr/internal/archive"
+	"github.com/helmrdotdev/helmr/internal/buildcontext"
 	"github.com/helmrdotdev/helmr/internal/builder"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/spf13/cobra"
@@ -20,7 +20,7 @@ import (
 // deploymentBundleBuilderImage is injected by Product release automation only
 // after the canonical image has been published by digest.
 var deploymentBundleBuilderImage string
-var buildArchiveTempDir string
+var buildContextTempDir string
 
 var runDockerBuildx = executeDockerBuildx
 
@@ -117,16 +117,11 @@ func buildDeploymentBundleAt(
 		return err
 	}
 
-	tree, cleanupTree, err := archive.CreateTarWithOptionsContext(
-		ctx,
-		root,
-		buildArchiveTempDir,
-		archive.TarOptions{CanonicalSource: true},
-	)
+	captured, err := buildcontext.Capture(ctx, root, buildContextTempDir)
 	if err != nil {
 		return err
 	}
-	defer cleanupTree()
+	defer func() { returnErr = errors.Join(returnErr, captured.Close()) }()
 	parent := filepath.Dir(destination)
 	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return err
@@ -136,16 +131,7 @@ func buildDeploymentBundleAt(
 		return err
 	}
 	defer func() { returnErr = errors.Join(returnErr, os.RemoveAll(stage)) }()
-	contextDirectory := filepath.Join(stage, "context")
-	archiveFile, err := os.Open(tree.Path)
-	if err != nil {
-		return err
-	}
-	extractErr := archive.ExtractTar(archiveFile, contextDirectory)
-	closeErr := archiveFile.Close()
-	if err := errors.Join(extractErr, closeErr); err != nil {
-		return fmt.Errorf("materialize canonical build context: %w", err)
-	}
+	contextDirectory := captured.Path
 	install, err := builder.SelectInstallPlan(contextDirectory, installCommand)
 	if err != nil {
 		return err

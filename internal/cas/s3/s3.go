@@ -16,14 +16,13 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	awsv4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/config"
-	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
-	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"golang.org/x/sync/errgroup"
+	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
+	awsv4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 )
 
 const (
@@ -206,7 +205,7 @@ func (c *Store) PresignQuarantine(
 		ContentLength:     aws.Int64(expected.SizeBytes),
 		ContentType:       aws.String(expected.MediaType),
 		IfNoneMatch:       aws.String("*"),
-		Tagging:           aws.String(objectTagging(expected.MediaType)),
+		Tagging:           aws.String(objectTagging()),
 	}, func(options *awss3.PresignOptions) {
 		options.Expires = expires
 	})
@@ -269,9 +268,7 @@ func validatePresignedQuarantine(request *awsv4.PresignedHTTPRequest, expected c
 		"X-Amz-Checksum-Sha256":        checksum,
 		"X-Amz-Sdk-Checksum-Algorithm": string(types.ChecksumAlgorithmSha256),
 	}
-	if tagging := objectTagging(expected.MediaType); tagging != "" {
-		required["X-Amz-Tagging"] = tagging
-	}
+	required["X-Amz-Tagging"] = objectTagging()
 	for name, value := range required {
 		values := request.SignedHeader.Values(name)
 		if len(values) != 1 || values[0] != value {
@@ -337,7 +334,7 @@ func (c *Store) PromoteQuarantine(
 		ContentType:       aws.String(expected.MediaType),
 		IfNoneMatch:       aws.String("*"),
 		MetadataDirective: types.MetadataDirectiveReplace,
-		Tagging:           aws.String(objectTagging(expected.MediaType)),
+		Tagging:           aws.String(objectTagging()),
 		TaggingDirective:  types.TaggingDirectiveReplace,
 	})
 	if err != nil && conditionalWriteError(err) != conditionalWriteExists {
@@ -590,9 +587,7 @@ func (c *Store) putObject(ctx context.Context, key, mediaType, path string, size
 		ContentLength: aws.Int64(size),
 		ContentType:   aws.String(mediaType),
 	}
-	if tagging := objectTagging(mediaType); tagging != "" {
-		input.Tagging = aws.String(tagging)
-	}
+	input.Tagging = aws.String(objectTagging())
 	_, err = c.client.PutObject(ctx, input)
 	return err
 }
@@ -603,9 +598,7 @@ func (c *Store) putMultipartObject(ctx context.Context, key, mediaType, path str
 		Key:         aws.String(key),
 		ContentType: aws.String(mediaType),
 	}
-	if tagging := objectTagging(mediaType); tagging != "" {
-		createInput.Tagging = aws.String(tagging)
-	}
+	createInput.Tagging = aws.String(objectTagging())
 	created, err := c.client.CreateMultipartUpload(ctx, createInput)
 	if err != nil {
 		return err
@@ -763,10 +756,7 @@ func (c *Store) Delete(ctx context.Context, digest string) error {
 	return err
 }
 
-func objectTagging(mediaType string) string {
-	if strings.TrimSpace(mediaType) == archive.SourceMediaType {
-		return ""
-	}
+func objectTagging() string {
 	return url.QueryEscape(cas.ExpirableTagKey) + "=" + url.QueryEscape(cas.ExpirableTagValue)
 }
 
@@ -945,7 +935,7 @@ func (c *Store) putQuarantineDescriptor(
 		ContentLength:     aws.Int64(expected.SizeBytes),
 		ContentType:       aws.String(expected.MediaType),
 		IfNoneMatch:       aws.String("*"),
-		Tagging:           aws.String(objectTagging(expected.MediaType)),
+		Tagging:           aws.String(objectTagging()),
 	})
 	if conditionalWriteError(err) == conditionalWriteExists {
 		return errImmutableObjectExists

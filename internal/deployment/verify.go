@@ -7,31 +7,24 @@ import (
 	"io"
 	"math"
 	"path"
-	"strings"
-	"unicode"
-	"unicode/utf8"
 
+	"github.com/helmrdotdev/helmr/internal/safepath"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 const (
-	maxArtifactEntries                  = 200000
-	maxArtifactDepth                    = 128
-	maxArtifactFileSize           int64 = 1 << 30
-	maxArtifactNameBytes          int64 = 128 << 20
-	maxProgramLogicalBytes        int64 = 10 << 30
-	maxBuildTreeLogicalBytes            = maxProgramLogicalBytes
-	maxProgramPhysicalBytes       int64 = 13 << 30
-	maxBuildTreePhysicalBytes           = maxProgramPhysicalBytes
-	maxRuntimeLogicalBytes        int64 = 2 << 30
-	maxRuntimePhysicalBytes       int64 = 3 << 30
-	maxPackageJSONBytes           int64 = 256 << 20
-	maxLockfileBytes              int64 = 64 << 20
-	maxSymlinkTargetBytes               = 4095
-	maxSymlinkHops                      = 40
-	maxArtifactPathComponentBytes       = 255
-	maxMountedArtifactPathBytes         = 4096
-	programMountPath                    = "/opt/helmr/program"
+	maxArtifactEntries              = 200000
+	MaxArtifactFileSize       int64 = 1 << 30
+	MaxArtifactNameBytes      int64 = 128 << 20
+	MaxProgramLogicalBytes    int64 = 10 << 30
+	maxBuildTreeLogicalBytes        = MaxProgramLogicalBytes
+	maxProgramPhysicalBytes   int64 = 13 << 30
+	maxBuildTreePhysicalBytes       = maxProgramPhysicalBytes
+	maxRuntimeLogicalBytes    int64 = 2 << 30
+	maxRuntimePhysicalBytes   int64 = 3 << 30
+	maxPackageJSONBytes       int64 = 256 << 20
+	maxLockfileBytes          int64 = 64 << 20
+	programMountPath                = "/opt/helmr/program"
 )
 
 // MaxProgramTreeEntries bounds producer-side tree materialization before the
@@ -125,7 +118,7 @@ func verifyProgramArtifact(ctx context.Context, artifact artifactInput) (*verifi
 		ctx,
 		artifact.Reader,
 		programArtifact,
-		maxProgramLogicalBytes,
+		MaxProgramLogicalBytes,
 		artifact.SizeBytes,
 	)
 	if err != nil {
@@ -349,10 +342,10 @@ func chargeArtifactNameBytes(total int64, entry artifactEntry) (int64, error) {
 	}
 	for _, size := range []int{len(entry.Path), len(entry.LinkTarget)} {
 		bytes := int64(size)
-		if total > maxArtifactNameBytes-bytes {
+		if total > MaxArtifactNameBytes-bytes {
 			return 0, fmt.Errorf(
 				"aggregate raw path and symbolic-link-target bytes exceed %d",
-				maxArtifactNameBytes,
+				MaxArtifactNameBytes,
 			)
 		}
 		total += bytes
@@ -381,8 +374,8 @@ func validateArtifactEntry(entry artifactEntry, role artifactRole) error {
 		if entry.Mode != 0644 && entry.Mode != 0755 {
 			return fmt.Errorf("regular-file mode %#o is unsupported", entry.Mode)
 		}
-		if entry.SizeBytes > maxArtifactFileSize {
-			return fmt.Errorf("regular file exceeds %d bytes", maxArtifactFileSize)
+		if entry.SizeBytes > MaxArtifactFileSize {
+			return fmt.Errorf("regular file exceeds %d bytes", MaxArtifactFileSize)
 		}
 		if entry.LinkTarget != "" || entry.LinkCount != 1 {
 			return fmt.Errorf("regular-file link metadata is invalid")
@@ -415,54 +408,16 @@ func validateArtifactEntry(entry artifactEntry, role artifactRole) error {
 }
 
 func validateArtifactPath(value string, role artifactRole) error {
-	if value == "." {
-		return nil
-	}
-	if value == "" || !utf8.ValidString(value) || strings.HasPrefix(value, "/") ||
-		strings.Contains(value, "\\") {
-		return fmt.Errorf("path is not a confined relative POSIX path")
-	}
-	for _, character := range value {
-		if unicode.IsControl(character) {
-			return fmt.Errorf("path contains a control character")
-		}
-	}
-	components := strings.Split(value, "/")
-	if len(components) > maxArtifactDepth {
-		return fmt.Errorf("path depth exceeds %d", maxArtifactDepth)
-	}
-	for _, component := range components {
-		if component == "" || component == "." || component == ".." || len(component) > maxArtifactPathComponentBytes {
-			return fmt.Errorf("path is not normalized or exceeds a component bound")
-		}
-	}
 	mount := programMountPath
 	switch role {
 	case runtimeArtifact:
 		mount = runtimeMountPath
 	}
-	if len(mount)+1+len(value)+1 > maxMountedArtifactPathBytes {
-		return fmt.Errorf("mounted path exceeds %d bytes", maxMountedArtifactPathBytes)
-	}
-	return nil
+	return safepath.ValidateTreePath(value, mount)
 }
 
 func validateSymlinkTarget(target string) error {
-	if target == "" || len(target) > maxSymlinkTargetBytes || !utf8.ValidString(target) ||
-		strings.HasPrefix(target, "/") || strings.Contains(target, "\\") {
-		return fmt.Errorf("symbolic-link target is not an admitted relative POSIX path")
-	}
-	for _, character := range target {
-		if unicode.IsControl(character) {
-			return fmt.Errorf("symbolic-link target contains a control character")
-		}
-	}
-	for component := range strings.SplitSeq(target, "/") {
-		if component == "" || len(component) > maxArtifactPathComponentBytes {
-			return fmt.Errorf("symbolic-link target has an empty or oversized component")
-		}
-	}
-	return nil
+	return safepath.ValidateTreeLink(target)
 }
 
 func (artifact *inspectedArtifact) require(path string, kind artifactEntryKind) (artifactEntry, error) {

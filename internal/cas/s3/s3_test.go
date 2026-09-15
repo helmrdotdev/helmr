@@ -19,13 +19,12 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	awsv4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
-	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
-	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
+	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
+	awsv4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 )
 
 func TestValidateDisjointS3Stores(t *testing.T) {
@@ -126,7 +125,7 @@ func TestS3PresignQuarantineUsesSignedChecksumHeaders(t *testing.T) {
 		"If-None-Match":                "*",
 		"X-Amz-Checksum-Sha256":        checksum,
 		"X-Amz-Sdk-Checksum-Algorithm": string(types.ChecksumAlgorithmSha256),
-		"X-Amz-Tagging":                objectTagging(descriptor.MediaType),
+		"X-Amz-Tagging":                objectTagging(),
 	} {
 		if got := upload.Headers[name]; got != want {
 			t.Fatalf("header %s = %q, want %q", name, got, want)
@@ -248,7 +247,7 @@ func exactPresignedQuarantineRequest(t *testing.T, descriptor cas.Descriptor) *a
 		"If-None-Match":                []string{"*"},
 		"X-Amz-Checksum-Sha256":        []string{checksum},
 		"X-Amz-Sdk-Checksum-Algorithm": []string{string(types.ChecksumAlgorithmSha256)},
-		"X-Amz-Tagging":                []string{objectTagging(descriptor.MediaType)},
+		"X-Amz-Tagging":                []string{objectTagging()},
 	}
 	signed := make([]string, 0, len(headers))
 	for name := range headers {
@@ -398,12 +397,9 @@ func TestS3QuarantineFailsClosed(t *testing.T) {
 	}
 }
 
-func TestObjectTaggingKeepsDeploymentSourcesNonExpirable(t *testing.T) {
-	if got := objectTagging(archive.SourceMediaType); got != "" {
-		t.Fatalf("deployment source tagging = %q", got)
-	}
-	if got := objectTagging(cas.CheckpointVMStateMediaType); got != "helmr-expirable=true" {
-		t.Fatalf("checkpoint tagging = %q", got)
+func TestObjectTagging(t *testing.T) {
+	if got := objectTagging(); got != "helmr-expirable=true" {
+		t.Fatalf("object tagging = %q", got)
 	}
 }
 
