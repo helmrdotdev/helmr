@@ -65,6 +65,7 @@ let
     in
     require (cfg.boot.kernel.sysctl."net.ipv4.ip_forward" == 1) "IPv4 forwarding is not enabled"
     && require (lib.elem "kvm" cfg.boot.kernelModules) "kvm kernel module is not requested"
+    && require (lib.elem "nft_tproxy" cfg.boot.kernelModules) "nft TPROXY kernel module is not requested"
     && require (lib.elem "kvm" workerGroups) "firecracker users are not added to kvm"
     && require (
       cfg.environment.sessionVariables.MKFS_EXT4_PATH
@@ -110,6 +111,9 @@ in
         touch "$out"
       '';
   squashfs-tools = helmrPackages.squashfsTools;
+  protected-egress = vendoredGoCheck "protected-egress-check" [ ] ''
+    go test ./internal/secretproxy
+  '';
   deployment-bundle-finalizer =
     vendoredGoCheck "deployment-bundle-finalizer-check" [ helmrPackages.squashfsTools ]
       ''

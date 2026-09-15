@@ -41,6 +41,7 @@ func (c *Connector) preflight(ctx context.Context) error {
 	problems = append(problems, checkResolvedStateLayout(c.cfg))
 	problems = append(problems, checkHardLinkLayout(c.cfg))
 	problems = append(problems, c.datapath.VerifyKernel())
+	problems = append(problems, c.checkSecretEgressKernel(ctx))
 	if err := ctx.Err(); err != nil {
 		problems = append(problems, err)
 	}

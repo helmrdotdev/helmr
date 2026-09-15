@@ -9,11 +9,10 @@ import (
 )
 
 // Dialer preserves the connector's effective IPv4 deny set for host-originated IO.
-// Resolve and Dial are deliberately not public configuration escape hatches.
+// Numeric destinations are policy checked and never re-resolved.
 type Dialer struct {
-	Blocked  []netip.Prefix
-	resolver *net.Resolver
-	dialer   net.Dialer
+	Blocked []netip.Prefix
+	dialer  net.Dialer
 }
 
 var nonPublic = []netip.Prefix{
@@ -41,25 +40,13 @@ func (d *Dialer) Allowed(ip netip.Addr) bool {
 }
 
 func (d *Dialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	host, port, err := net.SplitHostPort(address)
-	if err != nil {
-		return nil, errors.New("invalid proxy destination")
-	}
-	resolver := d.resolver
-	if resolver == nil {
-		resolver = net.DefaultResolver
+	destination, err := netip.ParseAddrPort(address)
+	if err != nil || network != "tcp4" || destination.Port() == 0 || !d.Allowed(destination.Addr()) {
+		return nil, errors.New("egress destination is not an allowed numeric IPv4 endpoint")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	ips, err := resolver.LookupNetIP(ctx, "ip4", host)
-	if err != nil || len(ips) == 0 {
-		return nil, errors.New("proxy destination has no usable IPv4 address")
-	}
-	for _, ip := range ips {
-		if !d.Allowed(ip) {
-			return nil, errors.New("proxy destination is blocked")
-		}
-	}
-	// Pin the checked address. Never resolve the hostname a second time in Dial.
-	return d.dialer.DialContext(ctx, "tcp4", net.JoinHostPort(ips[0].String(), port))
+	// The guest already resolved its destination. No host DNS lookup can redirect
+	// this connection. TLS authenticates the service name at the pinned address.
+	return d.dialer.DialContext(ctx, "tcp4", destination.String())
 }

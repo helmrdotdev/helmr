@@ -12,7 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
+	"net/netip"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -95,9 +95,9 @@ func TestSecretProxyLiveAuthorityAndWireRotation(t *testing.T) {
 	defer upstream.Close()
 	roots := x509.NewCertPool()
 	roots.AddCert(upstream.Certificate())
-	proxy, err := secretproxy.New(secretproxy.Config{Origins: prep.Origins, Certificate: func(context.Context, string) (tls.Certificate, error) { return leaf, nil }, UpstreamTLS: &tls.Config{RootCAs: roots},
+	proxy, err := secretproxy.New(secretproxy.Config{AllowedDestination: func(netip.Addr) bool { return true }, Origins: prep.Origins, Certificate: func(context.Context, string) (tls.Certificate, error) { return leaf, nil }, UpstreamTLS: &tls.Config{RootCAs: roots},
 		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-			if address != "example.com:443" {
+			if address != "93.184.216.34:443" {
 				return nil, errors.New("unexpected fixture target")
 			}
 			return (&net.Dialer{}).DialContext(ctx, "tcp4", upstream.Listener.Addr().String())
@@ -116,11 +116,12 @@ func TestSecretProxyLiveAuthorityAndWireRotation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	go proxy.Serve(listener)
-	proxyURL, _ := url.Parse("http://" + listener.Addr().String())
+	go proxy.Serve(&secretDestinationListener{Listener: listener})
 	guestRoots := x509.NewCertPool()
 	guestRoots.AppendCertsFromPEM(guest.CA)
-	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL), TLSClientConfig: &tls.Config{RootCAs: guestRoots}}, Timeout: 5 * time.Second}
+	client := &http.Client{Transport: &http.Transport{Proxy: nil, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "tcp4", listener.Addr().String())
+	}, TLSClientConfig: &tls.Config{RootCAs: guestRoots}}, Timeout: 5 * time.Second}
 	defer client.CloseIdleConnections()
 	send := func(want int) {
 		t.Helper()
@@ -204,4 +205,22 @@ func TestSecretProxyLiveAuthorityAndWireRotation(t *testing.T) {
 	if hits.Load() != 2 {
 		t.Fatalf("unexpected upstream count %d", hits.Load())
 	}
+}
+
+// Portable protocol fixture supplies the socket fact that Linux TPROXY owns.
+// The privileged firecracker fixture separately proves original destination.
+type secretDestinationListener struct{ net.Listener }
+
+func (l *secretDestinationListener) Accept() (net.Conn, error) {
+	c, e := l.Listener.Accept()
+	if e != nil {
+		return nil, e
+	}
+	return &secretDestinationConn{c}, nil
+}
+
+type secretDestinationConn struct{ net.Conn }
+
+func (c *secretDestinationConn) LocalAddr() net.Addr {
+	return net.TCPAddrFromAddrPort(netip.MustParseAddrPort("93.184.216.34:443"))
 }

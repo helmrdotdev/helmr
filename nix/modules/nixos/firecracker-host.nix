@@ -103,7 +103,11 @@ in
           JAILER_CGROUP_VERSION = "2";
         };
 
-        boot.kernelModules = [ "kvm" ];
+        boot.kernelModules = [
+          "kvm"
+          "nft_tproxy"
+          "nf_tproxy_ipv4"
+        ];
         networking.firewall.checkReversePath = lib.mkDefault false;
         assertions = [
           {

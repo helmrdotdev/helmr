@@ -36,7 +36,7 @@ func TestStageProtectedEnvPublicTrustAndCollisions(t *testing.T) {
 	if err := stageProtectedEnv(root, map[string]string{"GH_TOKEN": selector}, ca, &env); err != nil {
 		t.Fatal(err)
 	}
-	for _, entry := range []string{"GH_TOKEN=" + selector, "LITERAL=value", "HTTPS_PROXY=http://192.168.127.1:3128", "NO_PROXY=", "NODE_USE_ENV_PROXY=1"} {
+	for _, entry := range []string{"GH_TOKEN=" + selector, "LITERAL=value", "https_proxy=http://untrusted.invalid", "NO_PROXY=*", "NODE_EXTRA_CA_CERTS=" + guestSecretProxyRoot + "/ca.pem"} {
 		found := false
 		for _, value := range env {
 			if value == entry {
@@ -45,6 +45,11 @@ func TestStageProtectedEnvPublicTrustAndCollisions(t *testing.T) {
 		}
 		if !found {
 			t.Fatalf("missing guest configuration %s", entry)
+		}
+	}
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "HTTP_PROXY=") || strings.HasPrefix(entry, "HTTPS_PROXY=") || strings.HasPrefix(entry, "NODE_USE_ENV_PROXY=") {
+			t.Fatal("Helmr injected process routing", entry)
 		}
 	}
 	stored, err := os.ReadFile(filepath.Join(root, "run/helmr/secret-proxy/ca.pem"))

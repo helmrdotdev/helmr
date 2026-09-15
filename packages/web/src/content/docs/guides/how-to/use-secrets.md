@@ -64,7 +64,7 @@ Workspace, that variable contains a placeholder. Helmr replaces it with the
 current Secret value only for the approved origin while execution is authorized.
 The token must have permission for the GitHub API operation you request.
 
-Clients must honor the configured proxy and CA trust settings and send the
+Clients must trust the Workspace public CA and CA trust settings and send the
 placeholder unchanged in the header. Do not encode it for Basic authentication
 or use it to sign requests. See [client requirements](/docs/concepts/secrets/#client-requirements)
 for supported protocols and limitations.
