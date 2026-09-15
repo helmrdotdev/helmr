@@ -39,7 +39,7 @@ func (c *Client) PrepareSecretTransport(ctx context.Context, runtimeID string, b
 	}
 	var mu sync.Mutex
 	dialer := &secretproxy.Dialer{Blocked: append([]netip.Prefix(nil), blocked...)}
-	return secretproxy.New(secretproxy.Config{Origins: prepared.Origins, DialContext: dialer.DialContext,
+	return secretproxy.New(secretproxy.Config{Origins: prepared.Origins, DialContext: dialer.DialContext, AllowedDestination: dialer.Allowed,
 		Certificate: func(ctx context.Context, host string) (tls.Certificate, error) {
 			mu.Lock()
 			defer mu.Unlock()

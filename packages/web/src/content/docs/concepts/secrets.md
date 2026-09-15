@@ -49,7 +49,7 @@ exactly one `env` or `file` target. Environment bindings require an explicit
 Do not define a bound environment variable in image ENV or execution env, even
 with an empty value. Execution requests reject these collisions; image ENV
 collisions fail at launch. Managed runtime paths, runtime variables such as
-`NODE_OPTIONS` and `LD_*`, and proxy/CA environment variables are reserved.
+`NODE_OPTIONS` and `LD_*`, and CA environment variables are reserved.
 
 ## Protected environment variables
 
@@ -86,19 +86,57 @@ forward credentials to a new origin after a redirect.
 
 ### Client requirements
 
-The client must honor Helmr's HTTP proxy and CA trust configuration. Helmr sets
-proxy environment variables, provides a CA bundle, and configures Node's extra CA
-and environment-proxy settings. Certificate-pinned clients and clients that
-ignore these settings cannot use protected env.
+Helmr routes traffic at the VM boundary. Programs use ordinary sockets without
+proxy environment variables or route configuration. Same-guest localhost HTTP,
+SSE, and WebSocket control traffic stays local. Only TCP ports named by the
+Workspace's protected origins enter the credential transport; all other ports
+retain ordinary network policy. On captured ports, unrelated TLS passes through
+without termination, preserving the upstream certificate and negotiated protocol.
 
-The placeholder must remain unchanged in the header. Basic authentication
-encoding, request signing, and other transformations are not supported. Helmr
-does not substitute values in request bodies, query strings, or files.
+Protected HTTPS requires visible TLS SNI and trust in the Workspace's public CA.
+Helmr provides a CA bundle through `SSL_CERT_FILE` and adds the CA for Node through
+`NODE_EXTRA_CA_CERTS`. Other certificate stores require explicit public-CA trust
+setup. Certificate pinning, mutual TLS, encrypted ClientHello (ECH), TLS without
+SNI, and HTTP/3/QUIC cannot use protected header substitution. Opaque traffic can
+remain permitted by network policy, but carries only the placeholder; Helmr
+cannot diagnose a protected origin hidden inside encryption. Never disable TLS
+verification to make a client work.
 
-Connections to protected origins use HTTP/1.1. HTTP/2-only clients, gRPC, and
-WebSocket upgrades are not supported on those origins. The proxy does not retry
-upstream requests automatically; handle retries according to the API's
-idempotency requirements.
+HTTP/1.1 and HTTP/2 request/response streaming are supported, including SSE and
+streaming uploads. Every credential-bearing request or HTTP/2 stream checks live
+Workspace authorization. Upstream TLS verifies the exact service hostname at the
+policy-checked original IPv4 address. A shared address or matching port does not
+grant Secret access; HTTP authority must match the selected HTTPS origin.
+
+The placeholder must remain unchanged in an HTTP header. Basic authentication
+encoding, local request signing, SSH authentication, and other transformations are
+not supported. Helmr does not substitute values in request bodies, query strings,
+or files. Protected CONNECT, WebSocket upgrades, and request trailers return an
+unsupported-mode error; these limits do not apply to guest-local services or
+unrelated end-to-end traffic. Non-HTTP ALPN on a protected origin fails TLS
+negotiation. Clients with unsupported trust or TLS modes receive a TLS error; the
+transport cannot distinguish every pinning failure from another client TLS error.
+
+Helmr does not follow upstream redirects. A guest client following a redirect
+sends its unchanged placeholder and the new request must satisfy network and
+Secret policy again. The transport does not replay a request the upstream may
+have processed. The maintained HTTP/2 transport may retry an explicitly
+unprocessed request within the same authorized request context. Guest HTTP/2
+streams are independent; upstream connections are not pooled across requests.
+
+Each runtime admits up to 256 simultaneous TCP connections on protected-origin
+ports, including unrelated traffic sharing those ports, and up to 256 active
+protected HTTP requests. Excess captured connections close immediately; excess
+HTTP requests receive `503 Protected HTTPS concurrent request limit reached`.
+Streaming requests hold request capacity until they finish or are cancelled.
+Credential resolution runs up to 64 requests at a time; admitted requests waiting
+for resolution can be cancelled. HTTP/2 allows four active streams per connection;
+clients can queue or open another connection. Guest-local traffic and ports that
+are not captured do not consume these limits.
+
+Parking, restoring, and runtime fencing close captured connections and cancel
+in-flight streams. Clients must reconnect. No live connection or resolved Secret
+value is restored from a guest snapshot.
 
 ## Delegation
 

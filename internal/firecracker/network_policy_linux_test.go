@@ -17,6 +17,7 @@ import (
 	"github.com/firecracker-microvm/firecracker-go-sdk"
 	"github.com/helmrdotdev/helmr/internal/firecracker/datapath"
 	"github.com/helmrdotdev/helmr/internal/runtimeid"
+	"github.com/helmrdotdev/helmr/internal/secretproxy"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/vishvananda/netlink"
 )
@@ -35,6 +36,8 @@ func TestRoutedNetworkLifecyclePrivileged(t *testing.T) {
 			NetworkTranslationPool: "198.19.0.0/30", NetworkResolverIPv4: "1.1.1.1",
 			NetworkCapacity: 2, IPPath: "ip", NFTPath: "nft",
 			JailerUID: 65534, JailerGID: 65534,
+			// This fixture has no protected bindings; production preparation returns nil.
+			PrepareSecretTransport: func(context.Context, string, []netip.Prefix) (*secretproxy.Proxy, error) { return nil, nil },
 		},
 		datapath: datapath.NewManager(),
 	}
