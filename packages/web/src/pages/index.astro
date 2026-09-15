@@ -599,52 +599,76 @@ const boltPixels = pixelsFromRows(pixelIcons.bolt);
       <div class="section-head">
         <h2 class="headline section-title">
           What you can build.
-          <span class="faint">Background agents that do the work — on your terms.</span>
+          <span class="faint">Your own Devin — with your agent, in your interface.</span>
         </h2>
         <p class="section-note">
-          The kind of background coding agent you get from Devin, Cursor or
-          Codex Cloud — except you pick the harness and the model, own every
-          step, and run it on infrastructure you control.
+          Devin, Cursor Cloud and Codex Cloud ship a background agent as a
+          finished product. Helmr gives you the same capability as
+          infrastructure: bring any agent, plug in any interface, and the rest —
+          isolated VMs, durable workspaces, waits for approval — is already
+          there.
         </p>
+      </div>
+      <div class="recipe">
+        <div class="recipe-row">
+          <span class="recipe-label">your agent</span>
+          <div class="recipe-chips">
+            {runtimeVariants.map((harness) => (
+              <a class="harness-chip" href="#runtime" data-harness={harness.key}>
+                {harness.icon ? (
+                  <img src={harness.icon} alt="" width="16" height="16" />
+                ) : (
+                  <svg class="harness-chip-pixel" viewBox="0 0 10 10" aria-hidden="true">
+                    {boltPixels.map((pixel) => (
+                      <rect x={pixel.x} y={pixel.y} width="1" height="1" />
+                    ))}
+                  </svg>
+                )}
+                <span>{harness.name}</span>
+              </a>
+            ))}
+          </div>
+        </div>
+        <div class="recipe-row">
+          <span class="recipe-label">+ your interface</span>
+          <div class="recipe-chips">
+            <a class="harness-chip" href="#primitives">Slack</a>
+            <a class="harness-chip" href="#primitives">GitHub</a>
+            <a class="harness-chip" href="#primitives">Linear</a>
+            <a class="harness-chip" href="#primitives">cron</a>
+            <a class="harness-chip" href="#primitives">your product</a>
+            <a class="harness-chip" href="#primitives">CLI</a>
+          </div>
+        </div>
+        <div class="recipe-row">
+          <span class="recipe-label">= running on Helmr</span>
+          <p class="recipe-result">
+            A background agent in an isolated microVM — with durable workspaces,
+            secrets, approvals and run history built in.
+          </p>
+        </div>
       </div>
       <div class="build-grid">
         <a class="build-card" href="#runtime">
           <span class="build-index">01</span>
-          <span class="build-title">Background coding agent</span>
-          <span class="build-desc">Assign it from Slack or an issue; get a tested PR back.</span>
+          <span class="build-title">A Devin that lives in Slack</span>
+          <span class="build-desc">Mention it in a thread. It clones the repo, does the work in its own VM, and replies with a PR — using whichever agent you picked.</span>
         </a>
-        <a class="build-card" href="https://github.com/helmrdotdev/helmr/tree/main/examples/github-pr-review" target="_blank" rel="noopener">
+        <a class="build-card" href="#runtime">
           <span class="build-index">02</span>
-          <span class="build-title">PR review bot</span>
-          <span class="build-desc">Clone, review, propose a patch, post it back.</span>
+          <span class="build-title">A bot on every PR and issue</span>
+          <span class="build-desc">Wakes on GitHub events: reviews, fixes, labels, answers. Posts back under its own identity.</span>
         </a>
-        <a class="build-card" href="https://github.com/helmrdotdev/helmr/tree/main/examples/slack-approval" target="_blank" rel="noopener">
+        <a class="build-card" href="#runtime">
           <span class="build-index">03</span>
-          <span class="build-title">Approval-gated writes</span>
-          <span class="build-desc">The VM freezes until someone clicks approve in Slack.</span>
+          <span class="build-title">An agent that starts at 3 a.m.</span>
+          <span class="build-desc">Runs on a schedule: nightly dependency bumps, audits, migrations across every repo. Results are waiting in the morning.</span>
         </a>
-        <a class="build-card" href="https://github.com/helmrdotdev/helmr/tree/main/examples/human-in-the-loop" target="_blank" rel="noopener">
+        <a class="build-card" href="#runtime">
           <span class="build-index">04</span>
-          <span class="build-title">Steerable long-running sessions</span>
-          <span class="build-desc">Send a correction mid-run; the session keeps going.</span>
+          <span class="build-title">An agentic workflow</span>
+          <span class="build-desc">Plan, run the agent, run the tests, wait a day for approval, ship. One function, durable across hours or days.</span>
         </a>
-      </div>
-      <div class="harness-strip">
-        <span class="harness-strip-label">Runs any harness —</span>
-        {runtimeVariants.map((harness) => (
-          <a class="harness-chip" href="#runtime" data-harness={harness.key}>
-            {harness.icon ? (
-              <img src={harness.icon} alt="" width="16" height="16" />
-            ) : (
-              <svg class="harness-chip-pixel" viewBox="0 0 10 10" aria-hidden="true">
-                {boltPixels.map((pixel) => (
-                  <rect x={pixel.x} y={pixel.y} width="1" height="1" />
-                ))}
-              </svg>
-            )}
-            <span>{harness.name}</span>
-          </a>
-        ))}
       </div>
     </section>
 
@@ -1290,25 +1314,51 @@ const boltPixels = pixelsFromRows(pixelIcons.bolt);
     font-size: 0.875rem;
     line-height: 1.6;
     color: var(--text-muted);
+    max-width: 24rem;
   }
 
   .build-card:hover .build-title {
     text-decoration: underline;
   }
 
-  .harness-strip {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 0.5rem;
+  .recipe {
     margin-top: 2.25rem;
+    border-top: 1px solid var(--editorial-rule);
+    border-bottom: 1px solid var(--editorial-rule);
   }
 
-  .harness-strip-label {
+  .recipe-row {
+    display: flex;
+    align-items: baseline;
+    gap: 1.5rem;
+    padding: 0.9rem 0;
+  }
+
+  .recipe-row + .recipe-row {
+    border-top: 1px solid var(--editorial-rule);
+  }
+
+  .recipe-label {
+    flex: 0 0 11rem;
     font-family: var(--font-mono);
     font-size: 0.68rem;
     letter-spacing: 0.02em;
     color: var(--text-subtle);
+  }
+
+  .recipe-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+
+  .recipe-result {
+    margin: 0;
+    min-width: 0;
+    font-size: 0.9rem;
+    line-height: 1.6;
+    color: var(--text);
   }
 
   .harness-chip {
@@ -1894,6 +1944,12 @@ const boltPixels = pixelsFromRows(pixelIcons.bolt);
 
     .build-grid {
       grid-template-columns: minmax(0, 1fr);
+    }
+
+    .recipe-row {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.6rem;
     }
   }
 </style>
