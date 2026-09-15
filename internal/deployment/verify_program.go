@@ -69,105 +69,41 @@ func (verifier *programVerifier) readDocuments() error {
 			"program manifest index digest does not match program index",
 		)
 	}
-	entryRaw, err := verifier.artifact.read(
-		verifier.ctx,
-		"helmr/entry.mjs",
-		maxProgramFileSizeBytes,
-	)
-	if err != nil {
-		return err
-	}
-	if string(entryRaw) != ProgramEntry {
-		return fmt.Errorf("helmr/entry.mjs does not match the fixed program entry")
-	}
+
 	return nil
 }
 
 func (verifier *programVerifier) verifyLayout() error {
-	generated := make(map[string]struct{}, len(verifier.manifest.Modules)*2)
-	generatedDirectories := make(map[string]struct{}, len(verifier.manifest.Modules)*2)
-	for _, output := range verifier.manifest.Modules {
-		generated[output.ModulePath] = struct{}{}
-		generated[output.SourceMapPath] = struct{}{}
-		moduleDirectory := path.Dir(output.ModulePath)
-		generatedDirectories[moduleDirectory] = struct{}{}
-		generatedDirectories[path.Dir(moduleDirectory)] = struct{}{}
-	}
-	for _, required := range []string{".", "helmr", "node_modules"} {
+	for _, required := range []string{".", "helmr"} {
 		if _, err := verifier.artifact.require(required, artifactEntryDirectory); err != nil {
-			return fmt.Errorf("program layout: %w", err)
+			return err
 		}
 	}
-	for _, required := range []string{
-		"helmr/program-manifest.json",
-		"helmr/config.json",
-		"helmr/declarations.json",
-		"helmr/entry.mjs",
-	} {
+	for _, required := range []string{"helmr/program-manifest.json", "helmr/config.json", "helmr/declarations.json"} {
 		if _, err := verifier.artifact.require(required, artifactEntryRegular); err != nil {
-			return fmt.Errorf("program layout: %w", err)
+			return err
 		}
+	}
+	if entry, exists := verifier.artifact.entries["node_modules"]; exists && entry.Kind != artifactEntryDirectory {
+		return fmt.Errorf("root node_modules must be a directory")
 	}
 	for _, entry := range verifier.artifact.ordered {
-		if strings.HasPrefix(entry.Path, "helmr/") {
-			switch entry.Path {
-			case "helmr/program-manifest.json", "helmr/config.json",
-				"helmr/declarations.json", "helmr/entry.mjs":
-			default:
-				return fmt.Errorf(
-					"program artifact contains unknown platform-owned path %q",
-					entry.Path,
-				)
-			}
-			continue
+		if strings.HasPrefix(entry.Path, "helmr/") && entry.Path != "helmr/program-manifest.json" && entry.Path != "helmr/config.json" && entry.Path != "helmr/declarations.json" {
+			return fmt.Errorf("unknown platform-owned path %q", entry.Path)
 		}
-		if !hasReservedOutputSegment(entry.Path) {
-			continue
-		}
-		if _, exists := generated[entry.Path]; exists &&
-			entry.Kind == artifactEntryRegular {
-			continue
-		}
-		if _, exists := generatedDirectories[entry.Path]; exists &&
-			entry.Kind == artifactEntryDirectory {
-			continue
-		}
-		return fmt.Errorf(
-			"program artifact contains orphan generated path %q",
-			entry.Path,
-		)
 	}
 	return nil
 }
-
 func (verifier *programVerifier) verifyDeclarations() error {
-	locator := DeclarationLocator{
-		FormatVersion: DeclarationLocatorFormatVersion,
-		Declarations:  make([]LocatedDeclaration, 0),
-	}
 	for _, declaration := range verifier.index.Declarations {
 		if declaration.Locator == nil {
 			continue
 		}
-		if _, err := verifier.artifact.require(
-			declaration.Locator.ModulePath,
-			artifactEntryRegular,
-		); err != nil {
-			return fmt.Errorf(
-				"declaration module %q: %w",
-				declaration.Locator.ModulePath,
-				err,
-			)
+		if err := verifyDeclarationSource(verifier.artifact, declaration.Locator.SourcePath); err != nil {
+			return err
 		}
-		locator.Declarations = append(locator.Declarations, LocatedDeclaration{
-			DeclaredID: declaration.DeclaredID,
-			ExportName: declaration.Locator.ExportName,
-			Kind:       DeclarationKind(declaration.Kind),
-			ModulePath: declaration.Locator.ModulePath,
-			Slot:       declaration.Locator.Slot,
-		})
 	}
-	return validateProgramManifestLocators(verifier.manifest.Modules, locator)
+	return nil
 }
 
 func (verifier *programVerifier) verifyLinks() error {

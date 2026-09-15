@@ -19,7 +19,6 @@ export type VerificationGeneratedFile = Readonly<{
   path:
     | "helmr/build-plan.json"
     | "helmr/analysis-locators.json"
-    | "helmr/entry.mjs"
   content: string
 }>
 
@@ -51,10 +50,6 @@ export function successfulVerificationResult(
       {
         path: "helmr/analysis-locators.json",
         content: decodeGeneratedFile(analysis.declarationLocatorBytes),
-      },
-      {
-        path: "helmr/entry.mjs",
-        content: decodeGeneratedFile(analysis.entrypointBytes),
       },
     )
   }
@@ -113,13 +108,15 @@ export async function discoverModules(
     if (hasComponent(relativeDirectory, "node_modules")) {
       throw new Error(`configured dir enters the dependency namespace: ${configured}`)
     }
-    if (hasComponent(relativeDirectory, ".helmr")) {
-      throw new Error(`configured dir enters reserved Platform output: ${configured}`)
-    }
     await requireUnlinkedDirectory(canonicalRoot, directory, configured)
     await appendCandidates(canonicalRoot, directory, candidates)
   }
+  const rootConfig = await realpath(resolve(canonicalRoot, "helmr.config.ts")).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return undefined
+    throw error
+  })
   const modules = [...candidates].filter((path) =>
+    resolve(canonicalRoot, path) !== rootConfig &&
     !config.ignorePatterns.some((pattern) => matchesIgnorePattern(pattern, path))
   )
   modules.sort(compareUTF8)
@@ -137,9 +134,6 @@ async function appendCandidates(
     const absolute = resolve(directory, entry.name)
     const path = projectPath(root, absolute)
     if (hasComponent(path, "node_modules")) continue
-    if (entry.name === ".helmr") {
-      throw new Error(`declaration tree contains reserved Platform output: ${path}`)
-    }
     const metadata = await lstat(absolute)
     if (metadata.isSymbolicLink()) continue
     if (metadata.isDirectory()) {

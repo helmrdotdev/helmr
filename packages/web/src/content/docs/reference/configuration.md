@@ -34,12 +34,92 @@ export default defineConfig({
 })
 ```
 
-`dirs` is required and must be non-empty. It selects declaration discovery
+`dirs` defaults to `["tasks"]` and must be non-empty when provided. It selects declaration discovery
 from the submitted project source. `ignorePatterns` affects discovery only.
 `.helmrignore` is the only source-selection file; `.gitignore` is not read.
 The root `.git` entry is always excluded. Retained root `node_modules` and
 `helmr` paths are rejected. Retained `.env` and `.env.*` basenames are rejected
 except names ending in `.example`, `.sample`, or `.template`.
+
+## Installed dependencies and source execution
+
+Helmr installs dependencies once for the target Linux platform and retains the
+whole installed tree. Config, declaration analysis, and Program execution use
+one platform-owned Node 24.21 language adapter. JavaScript keeps native Node
+resolution, package exports, module cache and file locations. Reached TypeScript
+and JSX files are transformed in memory using pinned TypeScript 6.0.3, including
+files under `node_modules`, mixed JavaScript-to-TypeScript packages, and dynamic
+loads. There is no package selection setting and no dependency reinstallation by
+name. Aliases, nested versions, hoisted packages and contained package symlinks
+use their actual installed instances.
+
+Sources retain their original URLs and extensions. ESM `import.meta.url`,
+`import.meta.resolve()`, adjacent assets, CommonJS filenames, `createRequire`,
+and computed loads use Node's native locations. Module identity follows Node:
+ESM URLs and CommonJS filenames have their usual cache behavior; different
+conditional export targets can still be separate instances. Native addons must
+match the target Linux architecture, libc and Node ABI. Installation must produce
+those target artifacts before the tree is frozen.
+
+Missing imports fail when reached. Unused optional dependencies are not eagerly
+resolved. The retained tree includes dormant files and assets; admission binds
+all of their bytes, executable modes, directory entries and symlink targets.
+Declaration indexes identify original source paths and exports, not generated
+customer bundles. Runtime compilation cannot load generated source from a mutable
+Workspace. Put Program control code in the captured project; arbitrary commands
+and tools inside a Workspace remain under the Workspace image's own execution
+rules.
+
+## Config and language semantics
+
+`helmr.config.ts` is evaluated once per preparation, then its ordinary data is
+validated and canonicalized before declaration analysis. Computed expressions,
+variable default exports, ESM and CommonJS projects are supported. The default
+must be an object: `{}` is valid; absent, `undefined`, `null`, functions, getters
+and unknown settings fail. Configuration does not control its own evaluator.
+
+The root config is build-only. Program imports of its canonical file, including
+aliases, symlinks, query URLs and dynamic imports, fail. Shared data and helpers
+belong in ordinary modules. Authoring scripts outside the managed compiler may
+still import the config.
+
+JavaScript and TypeScript/JSX importers use the nearest contained `tsconfig.json`
+and its contained `extends` chain for resolution in every phase. Linked sources
+use their canonical target ancestry; copied packages use their installed ancestry.
+An absent config means empty project
+options. Invalid JSONC, missing extended configs, cycles and escaping reads fail.
+This is isolated TypeScript transformation, not typechecking or a promise of all
+`tsc`, Bun or future TypeScript syntax. Project output settings are ignored;
+Node module format is authoritative. JSX preserve settings lower to classic JSX;
+configured automatic JSX, factories, decorators and class-field lowering apply.
+
+For all contained source importers, `paths` aliases match exact keys first, then the
+longest wildcard prefix/suffix; targets are attempted in order, with `baseUrl`
+for otherwise unmatched bare imports. Missing alias candidates fall back to
+native resolution. Builtins and package `#imports` stay native. JavaScript bytes
+are not transformed; these resolution rules also let JavaScript reach TypeScript
+helpers in a mixed source graph.
+
+Relative imports try Node first. A missing `.js`, `.mjs` or `.cjs` target can use
+`.ts`, `.mts` or `.cts` respectively. Extensionless fallback tries `.js`, `.mjs`,
+`.cjs`, `.ts`, `.tsx`, `.mts`, `.cts`, `.jsx`, then directory indexes in that order.
+Existing JavaScript wins collisions. Broken package exports, package configs and
+syntax errors are not treated as missing candidates. Explicit extensions avoid
+ambiguity.
+
+Alias targets are filesystem paths. ESM relative imports use URL encoding for
+literal `#`, `%` and `?` filename characters; query/fragment URLs retain separate
+module identities. Relative `require()` names treat those characters literally.
+
+Managed entry requires a contained regular object `package.json` at the project
+root, no ancestor `node_modules` entries, and disabled global/`NODE_PATH` lookup.
+An unsupported image layout fails explicitly; Helmr does not alter the image to
+mask it. Actual file source and TypeScript config reads must stay inside the
+Program. Deliberate path-directed image metadata lookups, user filesystem access,
+custom hooks and process effects remain native image authority. These module
+rules are not a tenant sandbox or a guarantee that arbitrary image-dependent
+code behaves identically during build and execution. Helmr does not inject
+`NODE_OPTIONS` into arbitrary Workspace tools.
 
 ## Runtime configuration
 

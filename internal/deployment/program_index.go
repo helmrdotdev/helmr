@@ -192,7 +192,7 @@ func validateProgramLocator(locator ProgramLocator) error {
 		DeclaredID: "locator",
 		ExportName: locator.ExportName,
 		Kind:       DeclarationKindTask,
-		ModulePath: locator.ModulePath,
+		SourcePath: locator.SourcePath,
 		Slot:       locator.Slot,
 	})
 }
@@ -209,11 +209,11 @@ func compareProgramIndexDeclarations(
 	}
 	leftModule, leftExport := "", ""
 	if left.Locator != nil {
-		leftModule, leftExport = left.Locator.ModulePath, left.Locator.ExportName
+		leftModule, leftExport = left.Locator.SourcePath, left.Locator.ExportName
 	}
 	rightModule, rightExport := "", ""
 	if right.Locator != nil {
-		rightModule, rightExport = right.Locator.ModulePath, right.Locator.ExportName
+		rightModule, rightExport = right.Locator.SourcePath, right.Locator.ExportName
 	}
 	if compared := bytes.Compare([]byte(leftModule), []byte(rightModule)); compared != 0 {
 		return compared
@@ -320,7 +320,7 @@ func buildProgramIndex(
 			declaration.Task = definition.Task
 			declaration.Locator = &ProgramLocator{
 				ExportName: located.ExportName,
-				ModulePath: located.ModulePath,
+				SourcePath: located.SourcePath,
 				Slot:       located.Slot,
 			}
 		case DefinitionKindActor:
@@ -334,7 +334,7 @@ func buildProgramIndex(
 			declaration.Actor = definition.Actor
 			declaration.Locator = &ProgramLocator{
 				ExportName: located.ExportName,
-				ModulePath: located.ModulePath,
+				SourcePath: located.SourcePath,
 				Slot:       located.Slot,
 			}
 		case DefinitionKindSandbox:

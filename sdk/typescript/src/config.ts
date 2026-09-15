@@ -33,7 +33,7 @@ const regexpTest = RegExp.prototype.test.call.bind(
 ) as (regexp: RegExp, value: string) => boolean
 
 export interface HelmrConfigInput {
-  readonly dirs: readonly string[]
+  readonly dirs?: readonly string[]
   readonly ignorePatterns?: readonly string[]
 }
 
@@ -195,7 +195,7 @@ function normalizeConfig(value: object): HelmrConfig {
   }
   const descriptors = getOwnPropertyDescriptors(value)
   const keys = ownKeys(value)
-  let invalidKey = !hasOwn(descriptors, "dirs")
+  let invalidKey = false
   for (let index = 0; index < keys.length; index++) {
     const key = keys[index]
     if (
@@ -207,12 +207,12 @@ function normalizeConfig(value: object): HelmrConfig {
     }
   }
   if (invalidKey) {
-    throw new Error("config requires exactly dirs and optional ignorePatterns")
+    throw new Error("config accepts only dirs and ignorePatterns")
   }
   for (let index = 0; index < keys.length; index++) {
     const key = keys[index]
     if (typeof key !== "string") {
-      throw new Error("config requires exactly dirs and optional ignorePatterns")
+      throw new Error("config accepts only dirs and ignorePatterns")
     }
     const descriptor = descriptors[key]
     if (
@@ -224,7 +224,7 @@ function normalizeConfig(value: object): HelmrConfig {
     }
   }
   const dirs = normalizeStringSet(
-    descriptors["dirs"]?.value,
+    hasOwn(descriptors, "dirs") ? descriptors["dirs"]?.value : ["tasks"],
     "config dirs",
     validateDirectory,
     true,

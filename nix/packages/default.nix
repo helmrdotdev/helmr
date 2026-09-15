@@ -25,8 +25,14 @@ let
       pkgsGo.go_1_27;
   squashfsTools = pkgs.callPackage ./squashfs-tools.nix { };
   timezoneData = pkgs.callPackage ./timezone-data.nix { };
-  runtimeReleaseUnchecked = pkgs.callPackage ./runtime-release.nix { inherit squashfsTools; };
-  compiler = pkgs.callPackage ./compiler.nix { nodejs_24 = pkgsNode.nodejs_24; };
+  moduleExecution = pkgs.callPackage ./module-execution.nix { };
+  runtimeReleaseUnchecked = pkgs.callPackage ./runtime-release.nix {
+    inherit squashfsTools moduleExecution;
+  };
+  compiler = pkgs.callPackage ./compiler.nix {
+    inherit moduleExecution;
+    nodejs_24 = pkgsNode.nodejs_24;
+  };
   bundleBuilder = pkgs.callPackage ./bundle-builder.nix {
     buildGoModule = buildGo127Module;
   };

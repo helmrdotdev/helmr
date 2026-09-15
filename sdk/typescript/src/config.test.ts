@@ -223,3 +223,8 @@ describe("ignore pattern matching", () => {
     expect(matchesIgnorePattern("tasks/?/a.ts", "tasks/🦀/a.ts")).toBe(true)
   })
 })
+
+test("empty config is valid; removed package selectors are unknown", () => {
+ expect(defineConfig({})).toEqual({dirs:["tasks"],ignorePatterns:[]})
+ expect(() => inspectConfig({compilePackages:[]})).toThrow()
+})

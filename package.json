@@ -33,14 +33,15 @@
     "@types/node": "^24.13.2",
     "bun-types": "^1.3.14",
     "typescript": "7.0.2",
-    "wrangler": "4.131.1"
+    "wrangler": "4.131.1",
+    "esbuild": "0.28.2"
   },
   "scripts": {
     "buf": "buf",
     "projects:typecheck": "scripts/ts-projects-typecheck.sh",
     "gen:proto": "bun run --cwd proto/typescript gen",
-    "test:ts": "bun test compiler/typescript/src sdk/typescript/src packages/console/src && bun run --cwd runtime/typescript test",
-    "typecheck": "bun run --cwd proto/typescript typecheck && bun run --cwd sdk/typescript typecheck && bun run --cwd compiler/typescript typecheck && bun run --cwd runtime/typescript typecheck && bun run --cwd packages/console typecheck && bun run --cwd packages/web typecheck && bun run projects:typecheck",
+    "test:ts": "scripts/build-compiler-entry.sh && scripts/build-npm-packages.sh && bun run --cwd packages/module-execution test && bun test compiler/typescript/src sdk/typescript/src packages/console/src && bun run --cwd runtime/typescript test",
+    "typecheck": "bun run --cwd packages/module-execution typecheck && bun run --cwd proto/typescript typecheck && bun run --cwd sdk/typescript typecheck && bun run --cwd compiler/typescript typecheck && bun run --cwd runtime/typescript typecheck && bun run --cwd packages/console typecheck && bun run --cwd packages/web typecheck && bun run projects:typecheck",
     "build:npm": "scripts/build-npm-packages.sh",
     "pack:npm": "scripts/pack-npm-packages.sh",
     "dev:web": "bun run --cwd packages/web dev",

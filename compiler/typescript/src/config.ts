@@ -2,7 +2,7 @@ import {
   inspectConfig,
   type HelmrConfig,
 } from "@helmr/sdk/internal"
-import { lstat } from "node:fs/promises"
+import { stat } from "node:fs/promises"
 import { pathToFileURL } from "node:url"
 
 export class MissingConfigError extends Error {
@@ -12,10 +12,10 @@ export class MissingConfigError extends Error {
   }
 }
 
-export async function loadConfig(path: string): Promise<HelmrConfig> {
+export async function loadConfig(path: string, importSourceExports: (url: URL) => Promise<Record<string, unknown>>): Promise<HelmrConfig> {
   let metadata
   try {
-    metadata = await lstat(path)
+    metadata = await stat(path)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       throw new MissingConfigError(path)
@@ -27,7 +27,7 @@ export async function loadConfig(path: string): Promise<HelmrConfig> {
   }
   let namespace: Record<string, unknown>
   try {
-    const value: unknown = await import(pathToFileURL(path).href)
+    const value: unknown = await importSourceExports(pathToFileURL(path))
     if (typeof value !== "object" || value === null) {
       throw new Error("config did not evaluate to a module namespace")
     }

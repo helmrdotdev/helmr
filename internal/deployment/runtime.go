@@ -15,10 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
-const (
-	NodeNoStripTypes             = "--no-strip-types"
-	NodeNoExperimentalStripTypes = "--no-experimental-strip-types"
-)
+const NodeNoStripTypes = "--no-strip-types"
 
 const (
 	RuntimeDescriptorFormatVersion = 0
@@ -43,11 +40,12 @@ type RuntimeDescriptor struct {
 }
 
 type RuntimeMetadata struct {
-	Architecture     RuntimeArchitecture `json:"architecture"`
-	FormatVersion    int                 `json:"formatVersion"`
-	NodeVersion      string              `json:"nodeVersion"`
-	ProgramNodeFlags []string            `json:"programNodeFlags"`
-	RuntimeContract  string              `json:"runtimeContract"`
+	Language         ModuleExecutionIdentity `json:"language"`
+	Architecture     RuntimeArchitecture     `json:"architecture"`
+	FormatVersion    int                     `json:"formatVersion"`
+	NodeVersion      string                  `json:"nodeVersion"`
+	ProgramNodeFlags []string                `json:"programNodeFlags"`
+	RuntimeContract  string                  `json:"runtimeContract"`
 }
 
 func ParseRuntimeMetadata(raw []byte) (RuntimeMetadata, error) {
@@ -77,6 +75,9 @@ func CanonicalRuntimeMetadata(metadata RuntimeMetadata) ([]byte, error) {
 }
 
 func ValidateRuntimeMetadata(metadata RuntimeMetadata) error {
+	if err := ValidateModuleExecutionIdentity(metadata.Language); err != nil {
+		return err
+	}
 	if metadata.FormatVersion != RuntimeMetadataFormatVersion {
 		return fmt.Errorf(
 			"runtime metadata formatVersion = %d, want %d",
@@ -104,18 +105,19 @@ func ValidateRuntimeMetadata(metadata RuntimeMetadata) error {
 	return nil
 }
 
+// NodeLanguageFlags is shared by managed config, analysis and runtime processes.
+func NodeLanguageFlags(version string) ([]string, error) {
+	if version != "24.21.0" {
+		return nil, fmt.Errorf("node version %q has no module execution contract", version)
+	}
+	return []string{NodeNoStripTypes, "--no-global-search-paths", "--enable-source-maps"}, nil
+}
 func NodeProgramFlags(version string) ([]string, error) {
-	major, minor, patch, ok := parseReleaseVersion(version)
-	if !ok {
-		return nil, fmt.Errorf("the Node.js version %q is not an exact release", version)
+	flags, err := NodeLanguageFlags(version)
+	if err != nil {
+		return nil, err
 	}
-	if major == 24 && compareReleaseVersion(major, minor, patch, "24.12.0") >= 0 {
-		return []string{NodeNoStripTypes, "--enable-source-maps"}, nil
-	}
-	if major == 22 || major == 24 {
-		return []string{NodeNoExperimentalStripTypes, "--enable-source-maps"}, nil
-	}
-	return nil, fmt.Errorf("the Node.js version %q has no program launch contract", version)
+	return append(flags, "--import=file:///opt/helmr/runtime/helmr/module-preload.mjs"), nil
 }
 
 func RuntimeArchitectureFromGo(value string) (RuntimeArchitecture, error) {

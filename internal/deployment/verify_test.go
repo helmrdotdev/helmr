@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
@@ -33,7 +32,7 @@ func TestProgramArtifactRejectsContractDivergence(t *testing.T) {
 			)
 		},
 		"program entry": func(program *testProgram) {
-			program.artifact.files["helmr/entry.mjs"] = []byte("process.exit(0)\n")
+			program.artifact.addFile("helmr/entry.mjs", []byte("process.exit(0)\n"), 0644)
 		},
 		"reserved receipt path": func(program *testProgram) {
 			program.artifact.addFile("helmr/receipt.json", []byte("{}"), 0o644)
@@ -44,16 +43,8 @@ func TestProgramArtifactRejectsContractDivergence(t *testing.T) {
 		"evaluated config": func(program *testProgram) {
 			program.artifact.files["helmr/config.json"] = []byte("{}")
 		},
-		"compiled module": func(program *testProgram) {
-			for name := range program.artifact.files {
-				if !strings.Contains(name, "/.helmr/modules/") ||
-					!strings.HasSuffix(name, ".mjs") {
-					continue
-				}
-				program.artifact.files[name] = []byte("export default null\n")
-				return
-			}
-			t.Fatal("compiled module fixture is absent")
+		"source bytes": func(program *testProgram) {
+			program.artifact.replaceFile("tasks/build.ts", []byte("export default null"))
 		},
 	}
 	for name, mutate := range tests {
@@ -73,6 +64,8 @@ func TestProgramArtifactDoesNotInterpretProducerMetadata(t *testing.T) {
 	program.artifact.files["package.json"] = []byte(
 		`{"packageManager":"yarn@4.9.2"}`,
 	)
+
+	program.refreshManifest(t)
 	if _, err := verifyProgramArtifact(context.Background(), program.descriptor); err != nil {
 		t.Fatalf("verifyProgramArtifact rejected producer metadata: %v", err)
 	}
@@ -85,6 +78,7 @@ func TestProgramArtifactAcceptsManagerNativeDependencyTree(t *testing.T) {
 	program.artifact.addDirectory("packages")
 	program.artifact.addDirectory("packages/local")
 	program.artifact.addDirectory("packages/local/node_modules")
+	program.refreshManifest(t)
 	if _, err := verifyProgramArtifact(context.Background(), program.descriptor); err != nil {
 		t.Fatal(err)
 	}
@@ -119,11 +113,6 @@ func TestProgramArtifactAcceptsLocalPackageInstallLayouts(t *testing.T) {
 					"../../packages/local",
 				)
 			}
-			program.manifest.LocalPackages = []ProgramLocalPackage{{
-				InstalledRoot: "node_modules/@example/local",
-				Name:          "@example/local",
-				SourceRoot:    "packages/local",
-			}}
 			program.refreshManifest(t)
 			if _, err := verifyProgramArtifact(
 				context.Background(),
@@ -147,14 +136,6 @@ func TestProgramArtifactBindsExternalDependencyResolution(t *testing.T) {
 			0644,
 		)
 		program.artifact.addLink("node_modules/registry-package", target)
-		program.manifest.ExternalEdges = []ProgramExternalEdge{{
-			Importer:     "tasks/build.ts",
-			Kind:         "import-statement",
-			LogicalPath:  "node_modules/registry-package/index.mjs",
-			ResolvedPath: "node_modules/.pnpm/registry-package/index.mjs",
-			RuntimePath:  "/opt/helmr/program/node_modules/registry-package/index.mjs",
-			Specifier:    "registry-package",
-		}}
 		program.refreshManifest(t)
 		return program
 	}
@@ -166,10 +147,7 @@ func TestProgramArtifactBindsExternalDependencyResolution(t *testing.T) {
 
 	tests := map[string]func(*testProgram){
 		"missing": func(program *testProgram) {
-			program.manifest.ExternalEdges[0].LogicalPath =
-				"node_modules/missing/index.mjs"
-			program.manifest.ExternalEdges[0].RuntimePath =
-				"/opt/helmr/program/node_modules/missing/index.mjs"
+			delete(program.artifact.files, "node_modules/.pnpm/registry-package/index.mjs")
 		},
 		"broken": func(program *testProgram) {
 			program.artifact.mutate("node_modules/registry-package", func(entry *artifactEntry) {
@@ -200,7 +178,6 @@ func TestProgramArtifactBindsExternalDependencyResolution(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			program := newExternalProgram(t, ".pnpm/registry-package")
 			mutate(program)
-			program.refreshManifest(t)
 			if _, err := verifyProgramArtifact(
 				context.Background(),
 				program.descriptor,
@@ -217,6 +194,7 @@ func TestProgramArtifactValidatesNamespaceLinks(t *testing.T) {
 	program.artifact.addDirectory("node_modules/tool")
 	program.artifact.addFile("node_modules/tool/index.js", []byte("export {}\n"), 0644)
 	program.artifact.addLink("node_modules/.bin/tool", "../tool/index.js")
+	program.refreshManifest(t)
 	if _, err := verifyProgramArtifact(context.Background(), program.descriptor); err != nil {
 		t.Fatal(err)
 	}
@@ -230,6 +208,7 @@ func TestProgramArtifactValidatesNamespaceLinks(t *testing.T) {
 	dangling := newTestProgram(t)
 	dangling.artifact.addFile("file", []byte("x"), 0644)
 	dangling.artifact.addLink("safe", "file/../..")
+	dangling.refreshManifest(t)
 	if _, err := verifyProgramArtifact(context.Background(), dangling.descriptor); err != nil {
 		t.Fatalf("verifyProgramArtifact rejected a confined ENOTDIR link: %v", err)
 	}
@@ -238,6 +217,7 @@ func TestProgramArtifactValidatesNamespaceLinks(t *testing.T) {
 func TestProgramArtifactAcceptsUnrelatedTypeScriptWithoutSidecars(t *testing.T) {
 	program := newTestProgram(t)
 	program.artifact.addFile("source.ts", []byte("export const value = 1\n"), 0644)
+	program.refreshManifest(t)
 	if _, err := verifyProgramArtifact(context.Background(), program.descriptor); err != nil {
 		t.Fatal(err)
 	}
@@ -260,14 +240,6 @@ func newTestProgram(t *testing.T) *testProgram {
 	)
 	sourcePath := "tasks/build.ts"
 	sourceRaw := []byte("export const build = task({ id: \"build\" })\n")
-	modulePath := generatedDeclarationModulePath(sourcePath)
-	moduleRaw := []byte("export const build = {}\n")
-	sourceMapRaw, err := jsoncanon.Transform([]byte(
-		`{"mappings":"AAAA","names":[],"sources":["file:///opt/helmr/program/tasks/build.ts"],"version":3}`,
-	))
-	if err != nil {
-		t.Fatal(err)
-	}
 	programRaw, err := CanonicalProgramIndex(ProgramIndex{
 		Architecture:       ArchitectureX8664,
 		ConfigResultDigest: testDigest(string(configRaw)),
@@ -284,7 +256,7 @@ func newTestProgram(t *testing.T) *testProgram {
 			},
 			Locator: &ProgramLocator{
 				ExportName: "build",
-				ModulePath: modulePath,
+				SourcePath: sourcePath,
 				Slot:       DeclarationSlotHandler,
 			},
 		}},
@@ -303,15 +275,7 @@ func newTestProgram(t *testing.T) *testProgram {
 			Digest: testDigest(string(configRaw)),
 			Path:   "helmr/config.json",
 		},
-		ExternalEdges: []ProgramExternalEdge{},
-		LocalPackages: []ProgramLocalPackage{},
-		Modules: []ProgramModule{{
-			ModuleDigest:    testDigest(string(moduleRaw)),
-			ModulePath:      modulePath,
-			SourceMapDigest: testDigest(string(sourceMapRaw)),
-			SourceMapPath:   modulePath + ".map",
-			SourcePath:      sourcePath,
-		}},
+		InputTreeDigest:    testDigest("pending"),
 		ProgramIndexDigest: testDigest(string(programRaw)),
 	}
 	manifestRaw, err := canonicalProgramManifest(manifest)
@@ -322,20 +286,15 @@ func newTestProgram(t *testing.T) *testProgram {
 	artifact.addDirectory("helmr")
 	artifact.addDirectory("node_modules")
 	artifact.addDirectory("tasks")
-	artifact.addDirectory("tasks/.helmr")
-	artifact.addDirectory("tasks/.helmr/modules")
 	artifact.addFile("helmr/program-manifest.json", manifestRaw, 0644)
 	artifact.addFile("helmr/config.json", configRaw, 0644)
 	artifact.addFile("helmr/declarations.json", programRaw, 0644)
-	artifact.addFile("helmr/entry.mjs", []byte(ProgramEntry), 0644)
-	artifact.addFile(modulePath, moduleRaw, 0644)
-	artifact.addFile(modulePath+".map", sourceMapRaw, 0644)
 	artifact.addFile(sourcePath, sourceRaw, 0644)
 	artifact.addFile("helmr.config.ts", configSourceRaw, 0644)
 	artifact.addFile("package.json", []byte(`{"packageManager":"bun@1.3.13"}`), 0644)
 	artifact.addFile("bun.lock", lockfile, 0644)
 
-	return &testProgram{
+	program := &testProgram{
 		descriptor: artifactInput{
 			Digest:    testDigest("Program Artifact"),
 			SizeBytes: squashFSPhysicalAlign,
@@ -345,10 +304,20 @@ func newTestProgram(t *testing.T) *testProgram {
 		artifact: artifact,
 		manifest: manifest,
 	}
+	program.refreshManifest(t)
+	return program
 }
 
 func (program *testProgram) refreshManifest(t *testing.T) {
 	t.Helper()
+	for name, body := range program.artifact.files {
+		program.artifact.mutate(name, func(entry *artifactEntry) { entry.SizeBytes = int64(len(body)) })
+	}
+	digest, err := inputTreeDigest(t.Context(), program.artifact.entries, program.artifact.Open)
+	if err != nil {
+		t.Fatal(err)
+	}
+	program.manifest.InputTreeDigest = digest
 	raw, err := canonicalProgramManifest(program.manifest)
 	if err != nil {
 		t.Fatal(err)
@@ -486,4 +455,9 @@ func (artifact *memoryArtifact) takeInode() uint64 {
 func testDigest(value string) string {
 	digest := sha256.Sum256([]byte(value))
 	return sha256sum.FormatDigest(digest[:])
+}
+
+func (artifact *memoryArtifact) replaceFile(path string, raw []byte) {
+	artifact.files[path] = raw
+	artifact.mutate(path, func(entry *artifactEntry) { entry.SizeBytes = int64(len(raw)) })
 }

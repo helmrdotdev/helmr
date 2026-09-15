@@ -3,7 +3,6 @@ package deployment
 import (
 	"encoding/json"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
@@ -76,13 +75,12 @@ func TestProgramManifestRejectsInvalidFinalAuthority(t *testing.T) {
 			value.ProgramIndexDigest = "invalid"
 		},
 		"module": func(value *ProgramManifest) {
-			value.Modules[0].ModuleDigest = "invalid"
+			value.InputTreeDigest = "invalid"
 		},
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
 			value := manifest
-			value.Modules = append([]ProgramModule(nil), manifest.Modules...)
 			mutate(&value)
 			if err := validateProgramManifest(value); err == nil {
 				t.Fatal("validateProgramManifest returned nil error")
@@ -91,48 +89,11 @@ func TestProgramManifestRejectsInvalidFinalAuthority(t *testing.T) {
 	}
 }
 
-func TestProgramManifestLocatorsAllowDeclarationsToShareOneModule(t *testing.T) {
-	modulePath := generatedDeclarationModulePath("tasks/mixed.ts")
-	modules := []ProgramModule{{ModulePath: modulePath}}
-	locator := DeclarationLocator{
-		FormatVersion: DeclarationLocatorFormatVersion,
-		Declarations: []LocatedDeclaration{
-			{Kind: DeclarationKindTask, DeclaredID: "task", ModulePath: modulePath},
-			{Kind: DeclarationKindActor, DeclaredID: "actor", ModulePath: modulePath},
-		},
-	}
-	if err := validateProgramManifestLocators(modules, locator); err != nil {
-		t.Fatal(err)
-	}
-	modules = append(modules, ProgramModule{ModulePath: modulePath})
-	if err := validateProgramManifestLocators(modules, locator); err == nil {
-		t.Fatal("duplicate Program module was accepted")
-	}
-}
-
 func testProgramManifest(t *testing.T) ProgramManifest {
 	t.Helper()
-	indexRaw, err := CanonicalProgramIndex(testProgramIndex(t))
+	raw, err := CanonicalProgramIndex(testProgramIndex(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	sourcePath := "tasks/build.ts"
-	modulePath := generatedDeclarationModulePath(sourcePath)
-	return ProgramManifest{
-		FormatVersion: ProgramManifestFormatVersion,
-		Config: ProgramPathDigest{
-			Digest: "sha256:" + strings.Repeat("4", 64),
-			Path:   "helmr/config.json",
-		},
-		ExternalEdges: []ProgramExternalEdge{},
-		LocalPackages: []ProgramLocalPackage{},
-		Modules: []ProgramModule{{
-			ModuleDigest:    "sha256:" + strings.Repeat("b", 64),
-			ModulePath:      modulePath,
-			SourceMapDigest: "sha256:" + strings.Repeat("c", 64),
-			SourceMapPath:   modulePath + ".map",
-			SourcePath:      sourcePath,
-		}},
-		ProgramIndexDigest: testDigest(string(indexRaw)),
-	}
+	return programManifestFromCompilerResult(testProgramCompilerResult(t), testDigest(string(raw)))
 }

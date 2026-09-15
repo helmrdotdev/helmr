@@ -120,10 +120,10 @@ describe("runProgram", () => {
     assert.equal(closeCount, 0)
   })
 
-  test("generated Runtime exits while its parent retains stdin", async () => {
+  test("Runtime input owner exits while its parent retains stdin", async () => {
     const start = taskStart("noPayload")
     const runtimeEntryURL = new URL(
-      "../../../internal/runtime/entry.mjs",
+      "./program.mjs",
       import.meta.url,
     ).href
     const childSource = `
@@ -147,7 +147,7 @@ describe("runProgram", () => {
             kind: "task",
             locator: {
               exportName: "definition",
-              modulePath: ".helmr/modules/${"1".repeat(64)}.mjs",
+              sourcePath: "tasks/main.ts",
               slot: "handler"
             },
             manifest: {}
@@ -2184,7 +2184,7 @@ function programIO(options: {
             kind: "task",
             locator: {
               exportName: "definition",
-              modulePath: `.helmr/modules/${"1".repeat(64)}.mjs`,
+              sourcePath: `tasks/main.ts`,
               slot: "handler",
             },
             manifest: {},
@@ -2194,7 +2194,7 @@ function programIO(options: {
             kind: "actor",
             locator: {
               exportName: "definition",
-              modulePath: `tasks/.helmr/modules/${"2".repeat(64)}.mjs`,
+              sourcePath: `tasks/other.ts`,
               slot: "handler",
             },
             manifest: {},

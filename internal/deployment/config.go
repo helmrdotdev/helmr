@@ -112,6 +112,7 @@ func BuildConfigDigest(config BuildConfig) (string, error) {
 }
 
 func ValidateBuildConfig(config BuildConfig) error {
+
 	if err := validateConfigStrings(
 		config.Dirs,
 		"dirs",

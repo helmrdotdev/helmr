@@ -35,7 +35,7 @@ import (
 const (
 	managedProgramSecretRoot       = "/var/lib/helmr/run-secrets"
 	managedProgramNode             = "/opt/helmr/runtime/bin/node"
-	managedProgramEntry            = "/opt/helmr/program/helmr/entry.mjs"
+	managedProgramEntry            = "/opt/helmr/runtime/helmr/entry.mjs"
 	managedRuntimeMetadata         = "/var/lib/helmr/program/runtime/helmr/runtime.json"
 	maxProgramSecretPlacements     = 64
 	maxProgramSecretPlaintextBytes = 128 << 20

@@ -28,3 +28,6 @@ override.tf.json
 .helmr-release-artifacts/
 playwright-report/
 test-results/
+
+# Local platform dependency; Nix packages the pinned TypeScript API separately.
+/internal/moduleexecution/typescript.cjs

@@ -1,21 +1,21 @@
 package deployment
 
 import (
+	"encoding/json"
+	"maps"
 	"reflect"
-	"strings"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
+func testLanguageIdentity() ModuleExecutionIdentity {
+	return ModuleExecutionIdentity{APIVersion: "helmr.module-execution.v0", AdapterDigest: testDigest("adapter"), TypeScriptDigest: testDigest("typescript"), TypeScriptVersion: "6.0.3"}
+}
 func testCompilerInputs() CompilerInputs {
-	return CompilerInputs{
-		APIVersion:            "helmr.compiler.v0",
-		ConfigEvaluator:       CompilerEntrypoint{APIVersion: ConfigEvaluatorContract, Digest: testDigest("config evaluator"), Entrypoint: "/nix/helmr/config-evaluator.mjs"},
-		Esbuild:               EsbuildInputs{APIPackageDigest: testDigest("esbuild api"), BinaryDigest: testDigest("esbuild binary"), BinaryPath: "/nix/helmr/esbuild", PackagePath: "/nix/node_modules/esbuild", Version: "0.28.2"},
-		OptionsContractDigest: testDigest("compiler options contract"),
-		Output:                CompilerOutputContract{Aggregate: "analysis-only", FinalModules: "independent", SourceMaps: "external"},
-		ProgramCompiler:       CompilerEntrypoint{APIVersion: "helmr.compiler.v0", Digest: testDigest("program compiler"), Entrypoint: "/nix/helmr/program-compiler.mjs"},
-		Source:                CompilerSourceContract{DeclarationExtensions: []string{".cjs", ".cts", ".js", ".jsx", ".mjs", ".mts", ".ts", ".tsx"}, PackageDependencies: "external", Semantics: "pinned-esbuild", WorkspaceDependencies: "bundled"},
-	}
+	return CompilerInputs{APIVersion: "helmr.compiler.v0", Language: testLanguageIdentity(),
+		ConfigEvaluator: CompilerEntrypoint{APIVersion: ConfigEvaluatorContract, Digest: testDigest("config evaluator"), Entrypoint: "/nix/helmr/config-evaluator.mjs"},
+		ProgramCompiler: CompilerEntrypoint{APIVersion: "helmr.compiler.v0", Digest: testDigest("program compiler"), Entrypoint: "/nix/helmr/program-compiler.mjs"}}
 }
 
 func TestProgramVerificationRoundTrip(t *testing.T) {
@@ -50,52 +50,7 @@ func TestProgramCompilerResultRoundTrip(t *testing.T) {
 
 func testProgramCompilerResult(t *testing.T) ProgramCompilerResult {
 	t.Helper()
-	compiler := testCompilerInputs()
-	optionsDigest, err := compilerOptionsDigest(compiler, "24.20.0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	sourcePath := "tasks/build.ts"
-	modulePath := generatedDeclarationModulePath(sourcePath)
-	return ProgramCompilerResult{
-		Compiler: ProgramCompilerContract{
-			APIVersion:            compiler.APIVersion,
-			EsbuildVersion:        compiler.Esbuild.Version,
-			OptionsContractDigest: compiler.OptionsContractDigest,
-			Output:                compiler.Output,
-			Source:                compiler.Source,
-		},
-		Config: ProgramPathDigest{
-			Digest: "sha256:" + strings.Repeat("4", 64),
-			Path:   "helmr/config.json",
-		},
-		DiscoveryCandidates: []string{sourcePath},
-		Execution: ProgramCompilerExecution{
-			NodeVersion:   "24.20.0",
-			OptionsDigest: optionsDigest,
-		},
-		ExternalEdges: []ProgramExternalEdge{},
-		Inputs: []ProgramPathDigest{{
-			Digest: "sha256:" + strings.Repeat("9", 64),
-			Path:   sourcePath,
-		}},
-		LocalPackages: []ProgramLocalPackage{},
-		Outputs: []ProgramModule{{
-			ModuleDigest:    "sha256:" + strings.Repeat("b", 64),
-			ModulePath:      modulePath,
-			SourceMapDigest: "sha256:" + strings.Repeat("c", 64),
-			SourceMapPath:   modulePath + ".map",
-			SourcePath:      sourcePath,
-		}},
-		Selections: []ProgramCompilerSelection{{
-			DeclaredID: "build",
-			ExportName: "build",
-			Kind:       DeclarationKindTask,
-			SourcePath: sourcePath,
-			Slot:       DeclarationSlotHandler,
-		}},
-		TSConfigs: []ProgramPathDigest{},
-	}
+	return ProgramCompilerResult{APIVersion: "helmr.compiler.v0", Language: testLanguageIdentity(), NodeVersion: "24.21.0", Config: ProgramPathDigest{Path: "helmr/config.json", Digest: testDigest("config")}, InputTreeDigest: testDigest("input"), DiscoveryCandidates: []string{"tasks/build.ts"}, Selections: []ProgramCompilerSelection{{DeclaredID: "build", ExportName: "build", Kind: DeclarationKindTask, SourcePath: "tasks/build.ts", Slot: DeclarationSlotHandler}}}
 }
 
 func TestProgramCompilerSelectionsUseDeclarationOrder(t *testing.T) {
@@ -103,5 +58,83 @@ func TestProgramCompilerSelectionsUseDeclarationOrder(t *testing.T) {
 	actor := ProgramCompilerSelection{Kind: DeclarationKindActor, DeclaredID: "a-actor"}
 	if compareProgramCompilerSelection(task, actor) >= 0 {
 		t.Fatal("task selection did not sort before actor selection")
+	}
+}
+
+func TestCompilerAuthorityMismatchTuples(t *testing.T) {
+	for _, mutate := range []func(*ProgramCompilerResult){
+		func(v *ProgramCompilerResult) { v.Language.AdapterDigest = testDigest("changed") },
+		func(v *ProgramCompilerResult) { v.Language.TypeScriptDigest = testDigest("changed") },
+		func(v *ProgramCompilerResult) { v.Language.TypeScriptVersion = "7.0.2" },
+		func(v *ProgramCompilerResult) { v.NodeVersion = "24.20.0" },
+		func(v *ProgramCompilerResult) { v.APIVersion = "helmr.compiler.unsupported" },
+	} {
+		v := testProgramCompilerResult(t)
+		mutate(&v)
+		if err := validateProgramCompilerAuthority(v, testCompilerInputs(), "24.21.0"); err == nil {
+			t.Fatal("accepted mismatched authority")
+		}
+	}
+}
+
+func TestNativeCompilerContractsRejectOpenMissingAndUnsupportedShapes(t *testing.T) {
+	result := testProgramCompilerResult(t)
+	resultRaw, err := canonicalProgramCompilerResult(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compilerRaw, err := CanonicalCompilerInputs(testCompilerInputs())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		raw   []byte
+		parse func([]byte) error
+	}{
+		{resultRaw, func(raw []byte) error { _, err := ParseProgramCompilerResult(raw); return err }},
+		{compilerRaw, func(raw []byte) error { _, err := ParseCompilerInputs(raw); return err }},
+	}
+	for _, item := range cases {
+		var document map[string]json.RawMessage
+		if err := json.Unmarshal(item.raw, &document); err != nil {
+			t.Fatal(err)
+		}
+		for key := range document {
+			candidate := maps.Clone(document)
+			delete(candidate, key)
+			encoded, _ := json.Marshal(candidate)
+			canonical, err := jsoncanon.Transform(encoded)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if item.parse(canonical) == nil {
+				t.Fatalf("accepted missing %s in %s", key, item.raw)
+			}
+		}
+		for key, value := range map[string]json.RawMessage{"outputs": json.RawMessage(`[]`), "compilePackages": json.RawMessage(`[]`), "apiVersion": json.RawMessage(`"helmr.compiler.unsupported"`)} {
+			candidate := maps.Clone(document)
+			candidate[key] = value
+			encoded, _ := json.Marshal(candidate)
+			canonical, err := jsoncanon.Transform(encoded)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if item.parse(canonical) == nil {
+				t.Fatalf("accepted unsupported/open %s", key)
+			}
+		}
+	}
+	for _, mutate := range []func(*ProgramCompilerResult){
+		func(r *ProgramCompilerResult) { r.DiscoveryCandidates = nil },
+		func(r *ProgramCompilerResult) { r.Selections = nil },
+		func(r *ProgramCompilerResult) { r.Selections[0].Slot = "other" },
+		func(r *ProgramCompilerResult) { r.Selections[0].SourcePath = "tasks/missing.ts" },
+		func(r *ProgramCompilerResult) { r.DiscoveryCandidates = []string{"tasks/build.ts", "tasks/build.ts"} },
+	} {
+		candidate := testProgramCompilerResult(t)
+		mutate(&candidate)
+		if err := validateProgramCompilerResult(candidate); err == nil {
+			t.Fatal("accepted malformed compiler evidence")
+		}
 	}
 }
