@@ -3,8 +3,8 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 import { pixelsFromRows } from "../lib/pixels";
 import { breadcrumbJsonLd, softwareJsonLd } from "../lib/seo";
 
-const runtimeCode = `import { image, sandbox, source, task, tokens } from "@helmr/sdk"
-import { Codex } from "@openai/codex-sdk"
+const runtimeFile = (imports: string, agent: string) => `import { image, sandbox, source, task, tokens } from "@helmr/sdk"
+${imports}
 import { z } from "zod"
 
 const base = image("repo-agent")
@@ -22,9 +22,7 @@ export const reviewPr = task({
   id: "review-pr",
   payload: z.object({ prNumber: z.number().int().positive() }),
   run: async (event, ctx) => {
-    const codex = new Codex()
-    const thread = codex.startThread({ workingDirectory: process.cwd() })
-    const turn = await thread.run("Review this PR and propose a patch.")
+${agent}
 
     const approval = await tokens.create({ timeout: "30m" })
     await sendSlackApproval({
@@ -37,9 +35,115 @@ export const reviewPr = task({
       tags: ["approval", "github-review"],
       metadata: { subject: "Post this review to GitHub?" }
     }).unwrap()
-    if (decision.approved) await postReview(event.prNumber, turn.finalResponse)
+    if (decision.approved) await postReview(event.prNumber, review)
   }
 })`;
+
+const harnesses = [
+  {
+    key: "claude",
+    name: "Claude Agent SDK",
+    meta: "@anthropic-ai/claude-agent-sdk",
+    icon: "/icons/claude.svg",
+    imports: 'import { query } from "@anthropic-ai/claude-agent-sdk"',
+    agent: `    let review = ""
+    for await (const message of query({
+      prompt: \`Review PR #\${event.prNumber} and propose a patch.\`,
+      options: {
+        cwd: "/workspace",
+        permissionMode: "bypassPermissions", // the microVM is the sandbox
+        allowDangerouslySkipPermissions: true
+      }
+    })) {
+      if (message.type === "result" && message.subtype === "success") review = message.result
+    }`,
+  },
+  {
+    key: "codex",
+    name: "Codex",
+    meta: "@openai/codex-sdk",
+    icon: "/icons/openai.svg",
+    imports: 'import { Codex } from "@openai/codex-sdk"',
+    agent: `    const codex = new Codex()
+    const thread = codex.startThread({
+      workingDirectory: "/workspace",
+      sandboxMode: "danger-full-access" // the microVM is the sandbox
+    })
+    const turn = await thread.run(\`Review PR #\${event.prNumber} and propose a patch.\`)
+    const review = turn.finalResponse`,
+  },
+  {
+    key: "cursor",
+    name: "Cursor",
+    meta: "@cursor/sdk",
+    icon: "/icons/cursor.svg",
+    imports: 'import { Agent } from "@cursor/sdk"',
+    agent: `    const result = await Agent.prompt(\`Review PR #\${event.prNumber} and propose a patch.\`, {
+      apiKey: process.env.CURSOR_API_KEY!, // protected env: the VM only holds a placeholder
+      model: { id: "composer-2.5" },
+      local: { cwd: "/workspace" }
+    })
+    const review = result.result ?? ""`,
+  },
+  {
+    key: "opencode",
+    name: "OpenCode",
+    meta: "@opencode-ai/sdk · opencode serve",
+    icon: "/icons/opencode.svg",
+    imports: 'import { createOpencode } from "@opencode-ai/sdk"',
+    agent: `    const { client } = await createOpencode()
+    const session = await client.session.create({ body: { title: \`pr-\${event.prNumber}\` } })
+    const result = await client.session.prompt({
+      path: { id: session.data.id },
+      body: {
+        model: { providerID: "openrouter", modelID: "z-ai/glm-4.6" },
+        parts: [{ type: "text", text: \`Review PR #\${event.prNumber} and propose a patch.\` }]
+      }
+    })
+    const review = result.data.parts
+      .filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join("")`,
+  },
+  {
+    key: "pi",
+    name: "Pi",
+    meta: "@earendil-works/pi-coding-agent",
+    icon: "/icons/pi.svg",
+    imports: 'import { createAgentSession, SessionManager } from "@earendil-works/pi-coding-agent"',
+    agent: `    const { session } = await createAgentSession({
+      cwd: "/workspace",
+      sessionManager: SessionManager.inMemory()
+    })
+    let review = ""
+    session.subscribe((e) => {
+      if (e.type === "message_update" && e.assistantMessageEvent.type === "text_delta") {
+        review += e.assistantMessageEvent.delta
+      }
+    })
+    await session.prompt(\`Review PR #\${event.prNumber} and propose a patch.\`)`,
+  },
+  {
+    key: "own",
+    name: "Your own harness",
+    meta: "ai · @ai-sdk/amazon-bedrock",
+    icon: null,
+    imports: `import { generateText, tool, stepCountIs } from "ai"
+import { bedrock } from "@ai-sdk/amazon-bedrock"`,
+    agent: `    const { text: review } = await generateText({
+      model: bedrock("anthropic.claude-sonnet-4-6"), // or Vertex, Ollama — any provider the AI SDK speaks
+      tools: {
+        sh: tool({
+          description: "Run a shell command in /workspace",
+          inputSchema: z.object({ cmd: z.string() }),
+          execute: ({ cmd }) => sh(cmd)
+        })
+      },
+      stopWhen: stepCountIs(40),
+      prompt: \`Review PR #\${event.prNumber} and propose a patch.\`
+    })`,
+  },
+] as const;
 
 const escapeHtml = (value: string) =>
   value
@@ -47,7 +151,7 @@ const escapeHtml = (value: string) =>
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
 
-const syntaxKeywords = ["import", "from", "export", "const", "new", "async", "await", "if", "as"] as const;
+const syntaxKeywords = ["import", "from", "export", "const", "new", "async", "await", "if", "as", "for", "of", "let", "return"] as const;
 const syntaxLiterals = ["true", "false", "null", "undefined"] as const;
 const syntaxReserved = new Set<string>([...syntaxKeywords, ...syntaxLiterals]);
 const syntaxReservedPattern = [...syntaxKeywords, ...syntaxLiterals].join("|");
@@ -83,10 +187,8 @@ const highlightTypeScript = (value: string) => {
   return html + escapeHtml(value.slice(cursor));
 };
 
-const runtimeLines = runtimeCode.split("\n");
-
-const runtimeLine = (anchor: string) => {
-  const matches = runtimeLines.flatMap((line, index) =>
+const runtimeLine = (lines: string[], anchor: string) => {
+  const matches = lines.flatMap((line, index) =>
     line === anchor ? [index + 1] : [],
   );
   if (matches.length !== 1) {
@@ -95,52 +197,12 @@ const runtimeLine = (anchor: string) => {
   return matches[0]!;
 };
 
-const runtimeRegion = (start: string, end: string) => {
-  const from = runtimeLine(start);
-  const to = runtimeLine(end);
+const runtimeRegion = (lines: string[], start: string, end: string) => {
+  const from = runtimeLine(lines, start);
+  const to = runtimeLine(lines, end);
   if (from > to) throw new Error(`Runtime code region is inverted: ${start}`);
   return { from, to };
 };
-
-const codeRegions = [
-  {
-    key: "image",
-    label: "image",
-    ...runtimeRegion('const base = image("repo-agent")', '  .run(["bun", "install"])'),
-    tone: "blue",
-    strong: "#5079e4",
-  },
-  {
-    key: "sandbox",
-    label: "sandbox",
-    ...runtimeRegion(
-      'export const repoSandbox = sandbox({ id: "repo-agent" })',
-      '  .resources({ cpu: 2, memory: "4GiB" })',
-    ),
-    tone: "green",
-    strong: "#5e8a70",
-  },
-  {
-    key: "task",
-    label: "task",
-    ...runtimeRegion(
-      "export const reviewPr = task({",
-      '    const turn = await thread.run("Review this PR and propose a patch.")',
-    ),
-    tone: "pink",
-    strong: "#a8618a",
-  },
-  {
-    key: "input",
-    label: "human input",
-    ...runtimeRegion(
-      '    const approval = await tokens.create({ timeout: "30m" })',
-      "    if (decision.approved) await postReview(event.prNumber, turn.finalResponse)",
-    ),
-    tone: "yellow",
-    strong: "#ad8226",
-  },
-] as const;
 
 const tints: Record<string, string> = {
   yellow: "#f5eeda",
@@ -149,10 +211,66 @@ const tints: Record<string, string> = {
   green: "#eaf0e6",
 };
 
-const codeLines = runtimeLines.map((line, index) => ({
-  html: highlightTypeScript(line) || "&nbsp;",
-  region: codeRegions.find((region) => index + 1 >= region.from && index + 1 <= region.to)?.key,
-}));
+const runtimeVariants = harnesses.map((harness) => {
+  const lines = runtimeFile(harness.imports, harness.agent).split("\n");
+  const approvalLine = runtimeLine(
+    lines,
+    '    const approval = await tokens.create({ timeout: "30m" })',
+  );
+  const regions = [
+    {
+      key: "image",
+      label: "image",
+      ...runtimeRegion(lines, 'const base = image("repo-agent")', '  .run(["bun", "install"])'),
+      tone: "blue",
+      strong: "#5079e4",
+    },
+    {
+      key: "sandbox",
+      label: "sandbox",
+      ...runtimeRegion(
+        lines,
+        'export const repoSandbox = sandbox({ id: "repo-agent" })',
+        '  .resources({ cpu: 2, memory: "4GiB" })',
+      ),
+      tone: "green",
+      strong: "#5e8a70",
+    },
+    {
+      key: "task",
+      label: "task",
+      from: runtimeLine(lines, "export const reviewPr = task({"),
+      to: approvalLine - 2,
+      tone: "pink",
+      strong: "#a8618a",
+    },
+    {
+      key: "input",
+      label: "human input",
+      from: approvalLine,
+      to: runtimeLine(
+        lines,
+        "    if (decision.approved) await postReview(event.prNumber, review)",
+      ),
+      tone: "yellow",
+      strong: "#ad8226",
+    },
+  ];
+  return {
+    ...harness,
+    codeLines: lines.map((line, index) => ({
+      html: highlightTypeScript(line) || "&nbsp;",
+      region: regions.find((region) => index + 1 >= region.from && index + 1 <= region.to)?.key,
+    })),
+    codeTags: regions.map((region) => ({
+      key: region.key,
+      label: region.label,
+      line: region.from,
+      tone: region.tone,
+      strong: region.strong,
+    })),
+  };
+});
 
 const highlightShell = (value: string) =>
   value
@@ -265,14 +383,6 @@ const pixelIcons = {
 
 const cloudPixels = pixelsFromRows(pixelIcons.cloud);
 const shieldPixels = pixelsFromRows(pixelIcons.shield);
-
-const codeTags = codeRegions.map((region) => ({
-  key: region.key,
-  label: region.label,
-  line: region.from,
-  tone: region.tone,
-  strong: region.strong,
-}));
 
 const taskFeatures = [
   {
@@ -435,6 +545,8 @@ const renderedActor = {
   definePixels: pixelsFromRows(pixelIcons.hourglass),
   sendPixels: pixelsFromRows(pixelIcons.steer),
 };
+
+const boltPixels = pixelsFromRows(pixelIcons.bolt);
 ---
 
 <BaseLayout
@@ -483,6 +595,59 @@ const renderedActor = {
       </div>
     </section>
 
+    <section id="build" class="build-section" aria-label="What you can build">
+      <div class="section-head">
+        <h2 class="headline section-title">
+          What you can build.
+          <span class="faint">Background agents that do the work — on your terms.</span>
+        </h2>
+        <p class="section-note">
+          The kind of background coding agent you get from Devin, Cursor or
+          Codex Cloud — except you pick the harness and the model, own every
+          step, and run it on infrastructure you control.
+        </p>
+      </div>
+      <div class="build-grid">
+        <a class="build-card" href="#runtime">
+          <span class="build-index">01</span>
+          <span class="build-title">Background coding agent</span>
+          <span class="build-desc">Assign it from Slack or an issue; get a tested PR back.</span>
+        </a>
+        <a class="build-card" href="https://github.com/helmrdotdev/helmr/tree/main/examples/github-pr-review" target="_blank" rel="noopener">
+          <span class="build-index">02</span>
+          <span class="build-title">PR review bot</span>
+          <span class="build-desc">Clone, review, propose a patch, post it back.</span>
+        </a>
+        <a class="build-card" href="https://github.com/helmrdotdev/helmr/tree/main/examples/slack-approval" target="_blank" rel="noopener">
+          <span class="build-index">03</span>
+          <span class="build-title">Approval-gated writes</span>
+          <span class="build-desc">The VM freezes until someone clicks approve in Slack.</span>
+        </a>
+        <a class="build-card" href="https://github.com/helmrdotdev/helmr/tree/main/examples/human-in-the-loop" target="_blank" rel="noopener">
+          <span class="build-index">04</span>
+          <span class="build-title">Steerable long-running sessions</span>
+          <span class="build-desc">Send a correction mid-run; the session keeps going.</span>
+        </a>
+      </div>
+      <div class="harness-strip">
+        <span class="harness-strip-label">Runs any harness —</span>
+        {runtimeVariants.map((harness) => (
+          <a class="harness-chip" href="#runtime" data-harness={harness.key}>
+            {harness.icon ? (
+              <img src={harness.icon} alt="" width="16" height="16" />
+            ) : (
+              <svg class="harness-chip-pixel" viewBox="0 0 10 10" aria-hidden="true">
+                {boltPixels.map((pixel) => (
+                  <rect x={pixel.x} y={pixel.y} width="1" height="1" />
+                ))}
+              </svg>
+            )}
+            <span>{harness.name}</span>
+          </a>
+        ))}
+      </div>
+    </section>
+
     <section id="runtime" class="code-section" aria-label="Runtime definition">
       <div class="section-head">
         <h2 class="headline section-title">
@@ -490,28 +655,61 @@ const renderedActor = {
           <span class="faint">Image, Sandbox, Task, human input.</span>
         </h2>
         <p class="section-note">
-          Codex here &mdash; or Claude Code, the AI SDK, any agent SDK that runs on
-          Node. Durable continuation uses Actor input or independently completable Tokens;
-          one-shot Task input remains an explicit start payload.
+          Switch the harness; the rest of the file does not move. Each one runs
+          inside the microVM, and protected secrets are swapped in at the network
+          boundary — the agent never reads the raw key.
         </p>
       </div>
-      <div class="code-frame panel panel-screen">
-        <div class="code-cap">
-          <span>review-pr.ts</span>
-          <span class="cap-meta">typescript</span>
-        </div>
-        <pre><code>{codeLines.map((line, i) => (
-          <span class="cl" data-region={line.region}><span class="ln">{String(i + 1).padStart(2, " ")}</span><span class="lc" set:html={line.html}></span></span>
-        ))}</code></pre>
-        <div class="code-tags" aria-hidden="true">
-          {codeTags.map((tag) => (
-            <span
-              class={`code-tag code-tag-${tag.key}`}
-              style={`--line: ${tag.line}; --tag-strong: ${tag.strong}; background: ${tints[tag.tone]}`}
-            >{tag.label}</span>
-          ))}
-        </div>
+      <div class="harness-tabs" role="tablist" aria-label="Agent harness" data-harness-tabs>
+        {runtimeVariants.map((harness, index) => (
+          <button
+            type="button"
+            class="harness-tab"
+            role="tab"
+            id={`runtime-tab-${harness.key}`}
+            aria-selected={index === 0 ? "true" : "false"}
+            aria-controls={`runtime-panel-${harness.key}`}
+            tabindex={index === 0 ? 0 : -1}
+            data-key={harness.key}
+          >
+            {harness.icon ? (
+              <img src={harness.icon} alt="" width="16" height="16" />
+            ) : (
+              <svg class="harness-tab-pixel" viewBox="0 0 10 10" aria-hidden="true">
+                {boltPixels.map((pixel) => (
+                  <rect x={pixel.x} y={pixel.y} width="1" height="1" />
+                ))}
+              </svg>
+            )}
+            <span class="harness-tab-name">{harness.name}</span>
+          </button>
+        ))}
       </div>
+      {runtimeVariants.map((harness, index) => (
+        <div
+          class="code-frame panel panel-screen"
+          role="tabpanel"
+          id={`runtime-panel-${harness.key}`}
+          aria-labelledby={`runtime-tab-${harness.key}`}
+          hidden={index !== 0}
+        >
+          <div class="code-cap">
+            <span>review-pr.ts</span>
+            <span class="cap-meta">{harness.meta}</span>
+          </div>
+          <pre><code>{harness.codeLines.map((line, i) => (
+            <span class="cl" data-region={line.region}><span class="ln">{String(i + 1).padStart(2, " ")}</span><span class="lc" set:html={line.html}></span></span>
+          ))}</code></pre>
+          <div class="code-tags" aria-hidden="true">
+            {harness.codeTags.map((tag) => (
+              <span
+                class={`code-tag code-tag-${tag.key}`}
+                style={`--line: ${tag.line}; --tag-strong: ${tag.strong}; background: ${tints[tag.tone]}`}
+              >{tag.label}</span>
+            ))}
+          </div>
+        </div>
+      ))}
       <nav class="proof-links" aria-label="Execution model sections">
         <a href="#primitives"><span>01</span> Task</a>
         <a href="#actor"><span>02</span> Actor</a>
@@ -710,6 +908,59 @@ const renderedActor = {
         copyInstallButton.removeAttribute("data-copied");
       }, 1600);
     });
+
+    const harnessTabList = document.querySelector("[data-harness-tabs]");
+    if (harnessTabList) {
+      const tabs = Array.from(
+        harnessTabList.querySelectorAll<HTMLElement>('[role="tab"]'),
+      );
+
+      const activateHarness = (key: string, focus = false) => {
+        const tab = tabs.find((item) => item.dataset.key === key);
+        if (!tab) return;
+        for (const item of tabs) {
+          const selected = item === tab;
+          item.setAttribute("aria-selected", selected ? "true" : "false");
+          item.tabIndex = selected ? 0 : -1;
+          const panelId = item.getAttribute("aria-controls");
+          const panel = panelId ? document.getElementById(panelId) : null;
+          if (panel) panel.hidden = !selected;
+        }
+        if (focus) tab.focus();
+      };
+
+      harnessTabList.addEventListener("click", (event) => {
+        const tab = (event.target as HTMLElement).closest<HTMLElement>('[role="tab"]');
+        if (tab?.dataset.key) activateHarness(tab.dataset.key);
+      });
+
+      harnessTabList.addEventListener("keydown", (event) => {
+        const current = document.activeElement as HTMLElement | null;
+        if (!current || !tabs.includes(current)) return;
+        const key = (event as KeyboardEvent).key;
+        const index = tabs.indexOf(current);
+        let next: number | null = null;
+        if (key === "ArrowDown" || key === "ArrowRight") {
+          next = (index + 1) % tabs.length;
+        } else if (key === "ArrowUp" || key === "ArrowLeft") {
+          next = (index - 1 + tabs.length) % tabs.length;
+        } else if (key === "Home") {
+          next = 0;
+        } else if (key === "End") {
+          next = tabs.length - 1;
+        }
+        if (next === null) return;
+        event.preventDefault();
+        activateHarness(tabs[next]!.dataset.key ?? "", true);
+      });
+
+      for (const chip of document.querySelectorAll<HTMLElement>(".harness-chip[data-harness]")) {
+        chip.addEventListener("click", () => {
+          const key = chip.getAttribute("data-harness");
+          if (key) activateHarness(key);
+        });
+      }
+    }
   </script>
 </BaseLayout>
 
@@ -983,10 +1234,162 @@ const renderedActor = {
     max-width: none;
   }
 
+  .build-section {
+    padding-top: 3.5rem;
+    padding-bottom: 5rem;
+  }
+
+  .build-section .section-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(18rem, 0.9fr);
+    align-items: end;
+    gap: 2rem;
+  }
+
+  .build-section .section-title {
+    max-width: none;
+  }
+
+  .build-section .section-title .faint {
+    white-space: normal;
+    text-wrap: balance;
+  }
+
+  .build-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 2rem;
+    margin-top: 2.5rem;
+  }
+
+  .build-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    min-width: 0;
+    padding: 1.25rem 0 1.5rem;
+    border-top: 1px solid var(--editorial-rule);
+    color: var(--text);
+    text-decoration: none;
+  }
+
+  .build-index {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    color: var(--text-subtle);
+  }
+
+  .build-title {
+    font-size: 1.05rem;
+    font-weight: 500;
+    color: var(--text);
+    letter-spacing: -0.01em;
+  }
+
+  .build-desc {
+    font-size: 0.875rem;
+    line-height: 1.6;
+    color: var(--text-muted);
+  }
+
+  .build-card:hover .build-title {
+    text-decoration: underline;
+  }
+
+  .harness-strip {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 2.25rem;
+  }
+
+  .harness-strip-label {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.02em;
+    color: var(--text-subtle);
+  }
+
+  .harness-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.35rem 0.65rem;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-btn);
+    color: var(--text);
+    font-size: 0.8rem;
+    font-weight: 500;
+    text-decoration: none;
+  }
+
+  .harness-chip:hover {
+    border-color: var(--ink);
+  }
+
+  .harness-chip img,
+  .harness-chip-pixel {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+  }
+
+  .harness-chip-pixel {
+    fill: var(--ink);
+    shape-rendering: crispEdges;
+  }
+
+  .harness-tabs {
+    display: flex;
+    margin-top: 2.5rem;
+    border-bottom: 1px solid var(--editorial-rule);
+    overflow-x: auto;
+  }
+
+  .harness-tab {
+    appearance: none;
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    margin-bottom: -1px;
+    padding: 0.7rem 1rem;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    background: none;
+    color: var(--text-muted);
+    font-family: var(--font-sans);
+    font-size: 0.875rem;
+    font-weight: 500;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .harness-tab:hover {
+    color: var(--text);
+  }
+
+  .harness-tab[aria-selected="true"] {
+    color: var(--text);
+    border-bottom-color: var(--ink);
+  }
+
+  .harness-tab img,
+  .harness-tab-pixel {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+  }
+
+  .harness-tab-pixel {
+    fill: var(--ink);
+    shape-rendering: crispEdges;
+  }
+
   .code-frame {
     --runtime-line-height: 1.4344rem;
     position: relative;
-    margin: 2.5rem 0 0;
+    margin: 1.5rem 0 0;
     overflow: visible;
   }
 
@@ -1144,6 +1547,7 @@ const renderedActor = {
   }
 
   .code-section,
+  .build-section,
   .features,
   .actor-section,
   .workspace-section {
@@ -1418,9 +1822,14 @@ const renderedActor = {
       height: 210px;
     }
 
-    .code-section .section-head {
+    .code-section .section-head,
+    .build-section .section-head {
       display: flex;
       align-items: flex-start;
+    }
+
+    .build-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
   }
@@ -1450,6 +1859,7 @@ const renderedActor = {
     }
 
     .code-section,
+    .build-section,
     .actor-section,
     .workspace-section {
       padding-bottom: 5rem;
@@ -1480,6 +1890,10 @@ const renderedActor = {
     .hero-title {
       font-size: clamp(2rem, 8vw, 2.75rem);
       letter-spacing: -0.04em;
+    }
+
+    .build-grid {
+      grid-template-columns: minmax(0, 1fr);
     }
   }
 </style>
