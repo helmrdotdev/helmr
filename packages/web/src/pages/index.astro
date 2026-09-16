@@ -1188,13 +1188,13 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
       const metaEl = document.querySelector("[data-code-meta]");
       const tags = Array.from(document.querySelectorAll<HTMLElement>("[data-tag-region]"));
 
-      const segment = (key: string, st = state): string[] => {
+      const segment = (key: string): string[] => {
         if (key === "blank") return ["&nbsp;"];
         const [scope, name] = key.split(".");
-        if (scope === "agent") return parts.agents[st.agent][name];
-        if (scope === "usecase") return parts.usecases[st.usecase][name];
+        if (scope === "agent") return parts.agents[state.agent][name];
+        if (scope === "usecase") return parts.usecases[state.usecase][name];
         if (scope === "interface") {
-          return parts.interfaces[st.interface][name];
+          return parts.interfaces[state.interface][name];
         }
         return parts.fixed[name];
       };
@@ -1212,7 +1212,6 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
         interface: "rgba(173, 130, 38, 0.22)",
         fixed: "rgba(31, 31, 36, 0.1)",
       };
-      let prevState = { ...state };
       let flashTimer: number | undefined;
 
       const renderCode = (changed?: Set<string>) => {
@@ -1261,10 +1260,9 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
             state[kind] = key;
             const changed = new Set<string>(
               recipe
-                .filter(([seg]: [string]) => segment(seg, prevState).join("\n") !== segment(seg).join("\n"))
+                .filter(([, region]: [string, string | null]) => region === kind)
                 .map(([seg]: [string]) => seg),
             );
-            prevState = { ...state };
             for (const item of buttons) {
               item.setAttribute("aria-pressed", item === button ? "true" : "false");
             }
