@@ -1,6 +1,13 @@
 import { build } from "esbuild"
 import { readFile, writeFile } from "node:fs/promises"
 
+import { nodeVersion } from "./node-version.mjs"
+
+const nodeTarget = `node${nodeVersion}`
+if (process.argv[2] === "--node-target") {
+  console.log(nodeTarget)
+  process.exit(0)
+}
 const group = process.argv[2]
 const check = process.argv.includes("--check")
 const entries = group === "compiler" ? [
@@ -13,7 +20,7 @@ const entries = group === "compiler" ? [
 if (entries === undefined) throw new Error("expected compiler or runtime entry group")
 for (const [entry, target] of entries) {
   const result = await build({
-    entryPoints: [entry!], bundle: true, platform: "node", format: "esm", target: "node24.21", write: false,
+    entryPoints: [entry!], bundle: true, platform: "node", format: "esm", target: nodeTarget, write: false,
     plugins: [{ name: "shared-language", setup(build) {
       build.onResolve({ filter: /^@helmr\/module-execution$/ }, () => ({ path: "../moduleexecution/loader.mjs", external: true }))
     } }],

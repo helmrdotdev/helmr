@@ -25,7 +25,17 @@ AWS/Firecracker validation. It uses only the v0 public contract:
 The old public materialize/connect/stop, async process, stream, and PTY
 diagnostics were removed with those surfaces.
 
-Run from the repository root:
+The client explicitly depends on the SDK/proto packages built by the sample
+setup script. Its imported workflow Task types use those same built SDK
+declarations. Install the root tools, prepare the samples, then typecheck:
+
+```sh
+bun install --frozen-lockfile --ignore-scripts
+dev/workflows/scripts/sync-local-sdk.sh
+bun run --cwd dev/client typecheck
+```
+
+Run the live smoke from the repository root:
 
 ```sh
 HELMR_API_URL=https://dev.helmr.dev \

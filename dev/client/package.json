@@ -5,5 +5,11 @@
   "scripts": {
     "smoke": "bun run src/smoke.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@helmr/sdk": "file:../../dist/npm/sdk/package"
+  },
+  "overrides": {
+    "@helmr/proto": "file:../../dist/npm/proto/package"
   }
 }

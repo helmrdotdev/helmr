@@ -1,8 +1,11 @@
+import { nodeVersion } from "./node-version.mjs"
+import { requireVersion } from "./check-node-toolchain.mjs"
 import { spawnSync } from "node:child_process"
 import { mkdtempSync, writeFileSync, readFileSync, openSync, closeSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
+requireVersion(process.versions.node, "sample compiler interpreter")
 const output = mkdtempSync(resolve(tmpdir(),"helmr-sample-analysis-"))
 try {
  for(const [name,dirs] of [["execution",["dev/workflows/tasks"]],["schedule",["dev/schedule-workflows/tasks"]]]) {
@@ -14,7 +17,7 @@ try {
   try {
    // This sample check exercises analysis only. Go's preparation/admission tests
    // own the installed input digest; the compiler simply carries that authority.
-   child=spawnSync(process.execPath,["--no-strip-types","--no-global-search-paths","--enable-source-maps","internal/compiler/program-compiler.mjs",process.cwd(),config,process.versions.node,`sha256:${"0".repeat(64)}`,resolve(output,name)],{stdio:["ignore","inherit","inherit",fd],env:{PATH:process.env.PATH}})
+   child=spawnSync(process.execPath,["--no-strip-types","--no-global-search-paths","--enable-source-maps","internal/compiler/program-compiler.mjs",process.cwd(),config,nodeVersion,`sha256:${"0".repeat(64)}`,resolve(output,name)],{stdio:["ignore","inherit","inherit",fd],env:{PATH:process.env.PATH}})
   }finally{closeSync(fd)}
   if(child.status!==0)throw new Error(`sample compiler exited ${child.status}`)
   const frame=readFileSync(framePath)

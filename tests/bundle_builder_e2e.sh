@@ -45,6 +45,46 @@ else
   builder_archive="$tmp/builder-image"
 fi
 docker load -i "$builder_archive" >/dev/null
+# Check the selected image's Node and the actual npm-family interpreters before
+# any project install. PATH alone does not override a Nix absolute shebang.
+docker run --rm --platform linux/amd64 --entrypoint node --workdir / \
+  --volume "$repo_root:/product:ro" helmr/bundle-builder:0 --input-type=module -e '
+    import { execFileSync } from "node:child_process"
+    import { requireVersion, managerInterpreter } from "/product/scripts/check-node-toolchain.mjs"
+    requireVersion(process.versions.node, "builder image Node")
+    for (const command of ["npm", "npx", "corepack"]) {
+      console.log(JSON.stringify(managerInterpreter(command)))
+      execFileSync(command, ["--version"], {stdio:"inherit"})
+    }
+  '
+# Observe the shipped manager processes, including the selector's cold npm path.
+# This probe is test-only and is never included in a Program.
+mkdir "$tmp/interpreters"
+cp "$repo_root/internal/version/node-release.json" "$tmp/interpreters/node-release.json"
+cat >"$tmp/interpreters/assert-node.cjs" <<'JS'
+const fs = require("node:fs")
+if (!process.versions.bun) {
+  require("node:assert/strict").equal(process.versions.node, require("./node-release.json").version)
+  fs.appendFileSync("/proof/processes.jsonl", JSON.stringify({node:process.versions.node,execPath:process.execPath,argv:process.argv,script:fs.realpathSync(process.argv[1])}) + "\n")
+}
+JS
+docker run --rm -i --platform linux/amd64 --entrypoint /bin/bash --workdir /tmp \
+  --volume "$tmp/interpreters:/proof" helmr/bundle-builder:0 -s <<'SH'
+    set -euo pipefail
+    export NODE_OPTIONS=--require=/proof/assert-node.cjs
+    export XDG_CACHE_HOME=/tmp/selector-cache
+    pnpm --version
+    yarn --version
+    bun-for-version 1.3.13 --version
+    unset NODE_OPTIONS
+    node <<'JS'
+      const fs = require("node:fs"), assert = require("node:assert/strict")
+      const rows = fs.readFileSync("/proof/processes.jsonl", "utf8").trim().split("\n").map(JSON.parse)
+      for (const manager of ["pnpm", "yarn"]) assert(rows.some(r => r.argv.some(a => a.includes(manager))), manager)
+      assert(rows.some(r => r.argv.includes("install") && r.script.endsWith("/npm-cli.js")), "selector npm install")
+      console.log(JSON.stringify(rows))
+JS
+SH
 printf '%s\n' '{"default":[{"type":"insecureAcceptAnything"}]}' >"$tmp/containers-policy.json"
 skopeo --policy "$tmp/containers-policy.json" copy \
   --dest-tls-verify=false \
@@ -81,9 +121,15 @@ go -C "$repo_root" build \
 
 project="$tmp/project"
 mkdir -p "$project/tasks"
+cp "$repo_root/internal/version/node-release.json" "$project/node-release.json"
 cat >"$project/prepare.sh" <<'SH'
 #!/bin/sh
 set -eu
+node -e '
+  const expected = JSON.parse(require("node:fs").readFileSync("node-release.json", "utf8")).version
+  require("node:assert/strict").equal(process.versions.node, expected)
+  console.log(JSON.stringify({surface:"install lifecycle", version:process.versions.node, execPath:process.execPath}))
+'
 mkdir -p node_modules/@helmr/sdk
 cat >node_modules/@helmr/sdk/package.json <<'JSON'
 {"name":"@helmr/sdk","type":"module"}

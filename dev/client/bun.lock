@@ -1,0 +1,22 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "helmr-dev-client",
+      "dependencies": {
+        "@helmr/sdk": "file:../../dist/npm/sdk/package",
+      },
+    },
+  },
+  "overrides": {
+    "@helmr/proto": "file:../../dist/npm/proto/package",
+  },
+  "packages": {
+    "@bufbuild/protobuf": ["@bufbuild/protobuf@2.15.0", "", {}, "sha512-DAheWUkVr/SJTWCc+lg9dhY0eN4SaWlf4+bG1KzHeXbnqt0AfB/NX0Z+VunGlM1ki1B4zVvye27MpKh/svySUA=="],
+
+    "@helmr/sdk": ["@helmr/sdk@file:../../dist/npm/sdk/package", { "dependencies": { "@bufbuild/protobuf": "^2.11.0", "@helmr/proto": "0.1.0" } }],
+
+    "@helmr/sdk/@helmr/proto": ["@helmr/proto@file:../../dist/npm/proto/package", {}],
+  }
+}

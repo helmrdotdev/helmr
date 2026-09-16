@@ -3,7 +3,8 @@
   moduleExecution,
   stdenv,
   stdenvNoCC,
-  fetchurl,
+  nodeVersion,
+  nodeRelease,
   glibc,
   coreutils,
   findutils,
@@ -16,14 +17,9 @@
 
 let
   architecture = "x86_64";
-  nodeVersion = "24.21.0";
   loader = "ld-linux-x86-64.so.2";
   glibcLib = lib.getLib glibc;
   compilerLib = lib.getLib stdenv.cc.cc;
-  nodeRelease = fetchurl {
-    url = "https://nodejs.org/dist/v${nodeVersion}/node-v${nodeVersion}-linux-x64.tar.xz";
-    hash = "sha256-/Y5Z1aURUQ9qKYr7VI8Yx9KxvkBNi0on2U++SfVsstY=";
-  };
 in
 assert lib.assertMsg stdenv.hostPlatform.isx86_64 "Runtime release supports only x86_64-linux";
 stdenvNoCC.mkDerivation {
