@@ -128,8 +128,15 @@ locals {
 }
 
 resource "aws_iam_role" "image_builder" {
-  name = "${local.name}-worker-image-builder"
-  tags = var.tags
+  lifecycle {
+    precondition {
+      condition     = var.permissions_boundary_arn == null || can(regex("^arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:policy/", var.permissions_boundary_arn))
+      error_message = "permissions boundary must belong to the caller account and partition."
+    }
+  }
+  permissions_boundary = var.permissions_boundary_arn
+  name                 = "${local.name}-worker-image-builder"
+  tags                 = var.tags
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"

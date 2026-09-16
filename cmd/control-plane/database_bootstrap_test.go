@@ -196,6 +196,30 @@ func TestBootstrapDatabasePostgres(t *testing.T) {
 	if resetProbeExists {
 		t.Fatal("database reset retained the previous application schema")
 	}
+	// A reset followed by migration must install today's schema, not merely a
+	// version-1 marker from an older initial schema.
+	for _, query := range []string{
+		"SELECT secret_ca_certificate, secret_ca_private_key_nonce, secret_ca_private_key_ciphertext, secret_ca_not_after FROM workspaces LIMIT 0",
+		"SELECT current_version_id, revocation_generation FROM secrets LIMIT 0",
+		"SELECT nonce, ciphertext FROM secret_versions LIMIT 0",
+	} {
+		rows, err := applicationPool.Query(ctx, query)
+		if err != nil {
+			t.Fatalf("current schema after reset: %v", err)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var version int
+	var dirty bool
+	if err := applicationPool.QueryRow(ctx, "SELECT version, dirty FROM schema_migrations").Scan(&version, &dirty); err != nil {
+		t.Fatal(err)
+	}
+	if version != 1 || dirty {
+		t.Fatalf("migration after reset: version=%d dirty=%t", version, dirty)
+	}
 	if _, err := applicationPool.Exec(ctx, "CREATE DATABASE forbidden"); err == nil {
 		t.Fatal("application role created a database")
 	}

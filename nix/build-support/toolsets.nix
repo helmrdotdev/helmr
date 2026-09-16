@@ -174,6 +174,7 @@ rec {
     ];
 
   infraTest = [
+    pkgs.python3
     pkgs.bash
     pkgs.coreutils
     pkgs.gnugrep

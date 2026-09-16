@@ -154,7 +154,8 @@ module "release_artifacts" {
 }
 
 module "controlplane" {
-  source = "../modules/controlplane"
+  enable_deployment_rollback = var.enable_deployment_rollback
+  source                     = "../modules/controlplane"
 
   name                                       = var.name
   vpc_id                                     = module.controlplane_network.vpc_id

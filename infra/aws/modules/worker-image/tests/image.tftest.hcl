@@ -1,4 +1,6 @@
 mock_provider "aws" {
+  mock_data "aws_caller_identity" { defaults = { account_id = "000000000000" } }
+  mock_data "aws_partition" { defaults = { partition = "aws" } }
   mock_data "aws_region" {
     defaults = {
       region = "us-east-1"
@@ -246,4 +248,24 @@ run "distribution_policy_does_not_change_image_definition" {
     )
     error_message = "Region and visibility policy must not be artifact or image-definition identity."
   }
+}
+
+run "caller_ceiling" {
+  command = plan
+  variables { permissions_boundary_arn = "arn:aws:iam::000000000000:policy/workload" }
+  assert {
+    condition     = aws_iam_role.image_builder.permissions_boundary == var.permissions_boundary_arn
+    error_message = "Image Builder must attach the caller ceiling."
+  }
+}
+run "foreign_ceiling" {
+  command = plan
+  variables { permissions_boundary_arn = "arn:aws:iam::999999999999:policy/workload" }
+  expect_failures = [aws_iam_role.image_builder]
+}
+
+run "malformed_ceiling" {
+  command = plan
+  variables { permissions_boundary_arn = "workload" }
+  expect_failures = [var.permissions_boundary_arn]
 }

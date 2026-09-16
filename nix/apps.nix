@@ -138,7 +138,7 @@ let
     ci-infra-test =
       app "ci-infra-test" "run AWS module tests with pinned OpenTofu" toolsets.infraTest
         ''
-          for module in bootstrap controlplane network release-artifacts worker worker-image; do
+          for module in release-storage release-publisher controlplane network release-artifacts worker worker-image; do
             (
               cd "infra/aws/modules/$module"
               if [ "$module" = worker-image ]; then
@@ -149,14 +149,25 @@ let
               tofu test
             )
           done
-          for stack in quickstart stacks/release-build standard; do
+          root_plans="$(mktemp -d)"
+          trap 'rm -rf "$root_plans"' EXIT
+          for stack in quickstart stacks/release-build stacks/worker-image standard; do
             (
               cd "infra/aws/$stack"
               tofu init -backend=false -input=false
               tofu fmt -check -recursive
-              tofu test
+              case "$stack" in
+                quickstart|standard|stacks/worker-image)
+                  if ! tofu test -json -verbose >"$root_plans/$(basename "$stack").jsonl"; then
+                    cat "$root_plans/$(basename "$stack").jsonl"
+                    exit 1
+                  fi
+                  ;;
+                *) tofu test ;;
+              esac
             )
           done
+          python3 tests/aws_root_composition_test.py "$root_plans/quickstart.jsonl" "$root_plans/standard.jsonl" "$root_plans/worker-image.jsonl"
         '';
     ci-postgres = app "ci-postgres" "run Postgres-backed CI tests" toolsets.ciPostgres ''
       exec ./scripts/ci-postgres.sh "$@"

@@ -21,9 +21,6 @@ override_resource {
 
 variables {
   name = "helmr-test"
-  platform_publisher_principal_arns = [
-    "arn:aws:iam::000000000000:role/helmr-installation-publisher"
-  ]
 }
 
 run "controlplane_release_repository_is_durable_and_immutable" {
@@ -48,24 +45,6 @@ run "controlplane_release_repository_is_durable_and_immutable" {
       output.controlplane_release_repository_arn == aws_ecr_repository.controlplane_releases.arn &&
       output.controlplane_release_kms_key_arn == aws_kms_key.controlplane_releases.arn
     )
-    error_message = "bootstrap must expose the exact durable Control Plane release repository and KMS authority."
-  }
-}
-
-run "release_publisher_cannot_delete_controlplane_images" {
-  command = apply
-
-  assert {
-    condition = (
-      strcontains(aws_iam_role_policy.platform_publisher.policy, aws_ecr_repository.controlplane_releases.arn) &&
-      strcontains(aws_iam_role_policy.platform_publisher.policy, "ecr:PutImage") &&
-      strcontains(aws_iam_role_policy.platform_publisher.policy, "ecr:BatchGetImage") &&
-      strcontains(aws_iam_role_policy.platform_publisher.policy, "ecr:DescribeImages") &&
-      !strcontains(aws_iam_role_policy.platform_publisher.policy, "ecr:GetDownloadUrlForLayer") &&
-      !strcontains(aws_iam_role_policy.platform_publisher.policy, "ecr:BatchDeleteImage") &&
-      !strcontains(aws_iam_role_policy.platform_publisher.policy, "ecr:DeleteRepository") &&
-      !strcontains(aws_iam_role_policy.platform_publisher.policy, "ecr:SetRepositoryPolicy")
-    )
-    error_message = "release publisher authority must stop at publish and verification."
+    error_message = "release storage must expose the exact durable Control Plane release repository and KMS authority."
   }
 }

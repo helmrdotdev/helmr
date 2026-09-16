@@ -194,7 +194,7 @@ locals {
     jsonencode(local.worker_permission_policy)
   ) : var.sealed_provider_definition.permission_policy_json
   worker_boundary_policy_json = var.sealed_provider_definition == null ? (
-    jsonencode(local.worker_boundary_policy)
+    local.use_external_boundary ? data.aws_iam_policy.external_boundary[0].policy : jsonencode(local.worker_boundary_policy)
   ) : var.sealed_provider_definition.boundary_policy_json
   worker_enable_ssm = var.sealed_provider_definition == null ? (
     var.enable_ssm
@@ -217,6 +217,20 @@ locals {
   worker_launch_lifecycle_default_result                 = var.sealed_provider_definition == null ? "ABANDON" : var.sealed_provider_definition.launch_lifecycle_default_result
   worker_termination_lifecycle_transition                = var.sealed_provider_definition == null ? "autoscaling:EC2_INSTANCE_TERMINATING" : var.sealed_provider_definition.termination_lifecycle_transition
   worker_termination_lifecycle_default_result            = var.sealed_provider_definition == null ? "CONTINUE" : var.sealed_provider_definition.termination_lifecycle_default_result
+  sealed_boundary_arn                                    = var.sealed_provider_definition == null ? null : var.sealed_provider_definition.boundary_policy_arn
+  use_external_boundary = var.sealed_provider_definition == null ? (
+    var.permissions_boundary_arn != null
+    ) : (
+    local.sealed_boundary_arn != null
+  )
+  effective_external_boundary_arn = local.use_external_boundary ? (
+    var.sealed_provider_definition == null ? var.permissions_boundary_arn : local.sealed_boundary_arn
+  ) : null
+}
+
+data "aws_iam_policy" "external_boundary" {
+  count = local.effective_external_boundary_arn == null ? 0 : 1
+  arn   = local.effective_external_boundary_arn
 }
 
 resource "aws_security_group" "worker" {
@@ -233,6 +247,7 @@ resource "aws_vpc_security_group_egress_rule" "worker" {
 }
 
 resource "aws_iam_policy" "worker_boundary" {
+  count  = local.use_external_boundary ? 0 : 1
   name   = "${local.name}-worker-boundary"
   policy = local.worker_boundary_policy_json
   tags   = var.tags
@@ -240,7 +255,7 @@ resource "aws_iam_policy" "worker_boundary" {
 
 resource "aws_iam_role" "worker" {
   name                 = "${local.name}-worker"
-  permissions_boundary = aws_iam_policy.worker_boundary.arn
+  permissions_boundary = local.use_external_boundary ? local.effective_external_boundary_arn : aws_iam_policy.worker_boundary[0].arn
   tags                 = var.tags
 
   assume_role_policy = jsonencode({
@@ -253,6 +268,33 @@ resource "aws_iam_role" "worker" {
       Action = "sts:AssumeRole"
     }]
   })
+  lifecycle {
+    precondition {
+      condition = (
+        !local.use_external_boundary ||
+        can(regex("^arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:policy/", local.effective_external_boundary_arn))
+      )
+      error_message = "external permissions boundary must identify a customer-managed IAM policy in the caller AWS account."
+    }
+
+    precondition {
+      condition = (
+        var.sealed_provider_definition == null ||
+        var.permissions_boundary_arn == null ||
+        var.permissions_boundary_arn == local.sealed_boundary_arn
+      )
+      error_message = "permissions_boundary_arn must match the sealed generation boundary or remain unset for retained pools."
+    }
+
+    precondition {
+      condition = (
+        var.sealed_provider_definition == null ||
+        !local.use_external_boundary ||
+        jsonencode(jsondecode(data.aws_iam_policy.external_boundary[0].policy)) == jsonencode(jsondecode(var.sealed_provider_definition.boundary_policy_json))
+      )
+      error_message = "externally owned permissions boundary policy drifted from the sealed generation authority."
+    }
+  }
 }
 
 resource "aws_iam_role_policy" "worker" {

@@ -103,8 +103,8 @@ run "worker_without_ssm_has_exact_permission_boundary" {
 
   assert {
     condition = (
-      aws_iam_role.worker.permissions_boundary == aws_iam_policy.worker_boundary.arn &&
-      jsondecode(aws_iam_policy.worker_boundary.policy) == jsondecode(aws_iam_role_policy.worker.policy)
+      aws_iam_role.worker.permissions_boundary == aws_iam_policy.worker_boundary[0].arn &&
+      jsondecode(aws_iam_policy.worker_boundary[0].policy) == jsondecode(aws_iam_role_policy.worker.policy)
     )
     error_message = "workers without SSM must retain a boundary exactly equal to their permissions"
   }
