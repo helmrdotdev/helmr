@@ -171,3 +171,11 @@ Named Run and Session streams are not part of the v0 contract. Stable
 interactive execution uses an Actor's fixed durable `input` and `output`
 channels. One-shot external approvals use Tokens. Direct Task Runs retain
 logs, events, and a terminal result.
+
+## SDK resolution
+
+Imports resolve the installed `@helmr/sdk` dependency, including its declarations;
+there is no alias to monorepo SDK source outside this project. For local repository
+checks, `dev/workflows/scripts/sync-local-sdk.sh` builds and installs the declared
+local packages for both samples before typechecking. Release consumers install
+the selected SDK/proto package bytes before building the unchanged sample config.

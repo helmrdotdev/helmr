@@ -195,3 +195,18 @@ EOF
 
 cp sdk/README.md "$sdk_pkg/README.md"
 cp LICENSE "$sdk_pkg/LICENSE"
+
+# Stamp the actual release source before packing; ordinary development builds may omit it.
+if [ -n "${RELEASE_SOURCE_COMMIT:-}" ]; then
+  : "${RELEASE_BUILD_ID:?}"
+  for package in "$proto_pkg/package.json" "$sdk_pkg/package.json"; do
+    node - "$package" "$RELEASE_SOURCE_COMMIT" "$RELEASE_BUILD_ID" <<'NODE'
+const fs = require('node:fs');
+const [file, sourceCommit, buildId] = process.argv.slice(2);
+if (!/^[0-9a-f]{40}$/.test(sourceCommit) || !/^[1-9][0-9]*$/.test(buildId)) throw Error('invalid release stamp');
+const metadata = JSON.parse(fs.readFileSync(file));
+metadata.helmr = {formatVersion: 0, sourceCommit, buildId};
+fs.writeFileSync(file, JSON.stringify(metadata, null, 2) + '\n');
+NODE
+  done
+fi

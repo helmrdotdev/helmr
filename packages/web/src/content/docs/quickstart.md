@@ -17,6 +17,13 @@ curl -fsSL https://helmr.dev/install | bash
 helmr login
 ```
 
+The installer selects a completed stable release for your OS and architecture.
+To install a specific published preview, pass its full release tag:
+
+```sh
+curl -fsSL https://helmr.dev/install | bash -s -- --version "$HELMR_RELEASE_TAG"
+```
+
 Nix users can instead install the pinned package:
 
 ```sh

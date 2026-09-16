@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"path"
 	"strings"
+
+	"github.com/helmrdotdev/helmr/internal/safepath"
 )
 
 type programVerifier struct {
@@ -123,7 +125,7 @@ func (verifier *programVerifier) verifyLink(link, target string) error {
 		strings.Split(target, "/")...,
 	)
 	resolved := make([]string, 0, len(pending))
-	hops := 0
+	hops := 1 // Include the link whose target is being validated.
 	for len(pending) != 0 {
 		component := pending[0]
 		pending = pending[1:]
@@ -138,14 +140,17 @@ func (verifier *programVerifier) verifyLink(link, target string) error {
 			continue
 		}
 		candidate := strings.Join(append(resolved, component), "/")
+		if err := safepath.ValidateTreePath(candidate, programMountPath); err != nil {
+			return err
+		}
 		entry, exists := verifier.artifact.entries[candidate]
 		if !exists {
 			return nil
 		}
 		if entry.Kind == artifactEntrySymlink {
 			hops++
-			if hops > maxSymlinkHops {
-				return fmt.Errorf("target exceeds %d symbolic-link hops", maxSymlinkHops)
+			if hops > safepath.TreeLinkHops {
+				return fmt.Errorf("target exceeds %d symbolic-link hops", safepath.TreeLinkHops)
 			}
 			pending = append(strings.Split(entry.LinkTarget, "/"), pending...)
 			continue

@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
+	productversion "github.com/helmrdotdev/helmr/internal/version"
 )
 
 const NodeNoStripTypes = "--no-strip-types"
@@ -107,7 +108,7 @@ func ValidateRuntimeMetadata(metadata RuntimeMetadata) error {
 
 // NodeLanguageFlags is shared by managed config, analysis and runtime processes.
 func NodeLanguageFlags(version string) ([]string, error) {
-	if version != "24.21.0" {
+	if version != productversion.Node() {
 		return nil, fmt.Errorf("node version %q has no module execution contract", version)
 	}
 	return []string{NodeNoStripTypes, "--no-global-search-paths", "--enable-source-maps"}, nil

@@ -5,7 +5,6 @@
   nixpkgs-unstable,
   nixpkgs-bun,
   nixpkgs-go,
-  nixpkgs-node,
 }:
 
 let
@@ -13,7 +12,30 @@ let
   inherit (pkgs) lib;
   pkgsUnstable = import nixpkgs-unstable { inherit system; };
   pkgsBun = import nixpkgs-bun { inherit system; };
-  pkgsNode = import nixpkgs-node { inherit system; };
+  runtimeDependencies = builtins.fromJSON (
+    builtins.readFile ../../internal/version/runtime-dependencies.json
+  );
+  nodeRelease = runtimeDependencies.node;
+  nodeArchive =
+    targetSystem:
+    let
+      platform =
+        {
+          aarch64-darwin = "darwin-arm64";
+          x86_64-darwin = "darwin-x64";
+          aarch64-linux = "linux-arm64";
+          x86_64-linux = "linux-x64";
+        }
+        .${targetSystem};
+    in
+    pkgs.fetchurl {
+      url = "https://nodejs.org/dist/v${nodeRelease.version}/node-v${nodeRelease.version}-${platform}.tar.xz";
+      sha256 = nodeRelease.sha256.${targetSystem};
+    };
+  nodejs = pkgs.callPackage ./nodejs.nix {
+    version = nodeRelease.version;
+    src = nodeArchive system;
+  };
   # The pinned package set no longer supports x86_64-darwin; retain its existing construction there.
   pkgsGo = if system == "x86_64-darwin" then null else import nixpkgs-go { inherit system; };
   goPackage =
@@ -25,13 +47,19 @@ let
       pkgsGo.go_1_27;
   squashfsTools = pkgs.callPackage ./squashfs-tools.nix { };
   timezoneData = pkgs.callPackage ./timezone-data.nix { };
-  moduleExecution = pkgs.callPackage ./module-execution.nix { };
+  moduleExecution = pkgs.callPackage ./module-execution.nix {
+    typescriptRelease = runtimeDependencies.typescript;
+  };
   runtimeReleaseUnchecked = pkgs.callPackage ./runtime-release.nix {
     inherit squashfsTools moduleExecution;
+    typescriptVersion = runtimeDependencies.typescript.version;
+    nodeVersion = nodeRelease.version;
+    nodeRelease = nodeArchive "x86_64-linux";
   };
   compiler = pkgs.callPackage ./compiler.nix {
     inherit moduleExecution;
-    nodejs_24 = pkgsNode.nodejs_24;
+    typescriptVersion = runtimeDependencies.typescript.version;
+    nodejs_24 = nodejs;
   };
   bundleBuilder = pkgs.callPackage ./bundle-builder.nix {
     buildGoModule = buildGo127Module;
@@ -45,9 +73,9 @@ let
       timezoneData
       ;
     bun = pkgsBun.bun;
-    nodejs_24 = pkgsNode.nodejs_24;
-    pnpm = pkgs.pnpm.override { nodejs = pkgsNode.nodejs_24; };
-    yarn = pkgs.yarn.override { nodejs = pkgsNode.nodejs_24; };
+    nodejs_24 = nodejs;
+    pnpm = pkgs.pnpm.override { inherit nodejs; };
+    yarn = pkgs.yarn.override { inherit nodejs; };
   };
   buildGo127Module =
     if pkgsGo == null then
@@ -84,13 +112,19 @@ let
   revision = self.shortRev or self.dirtyShortRev or "dirty";
   releaseVersion = builtins.getEnv "HELMR_PLATFORM_VERSION";
   platformVersion = if releaseVersion == "" then "0.0.0-dev+${revision}" else releaseVersion;
-  sourceCommit = self.rev or "0000000000000000000000000000000000000000";
+  selectedSource = builtins.getEnv "HELMR_SOURCE_COMMIT";
+  sourceCommit =
+    if selectedSource == "" then
+      self.rev or "0000000000000000000000000000000000000000"
+    else
+      assert builtins.match "[0-9a-f]{40}" selectedSource != null;
+      selectedSource;
   helmr = pkgs.callPackage ./helmr.nix {
     buildGoModule = buildGo127Module;
     version = platformVersion;
     inherit sourceCommit;
     bun = pkgsBun.bun;
-    nodejs_24 = pkgsNode.nodejs_24;
+    nodejs_24 = nodejs;
   };
   runtimeRelease =
     pkgs.runCommand "helmr-runtime-release-verified"
@@ -152,8 +186,8 @@ in
     helmr
     worker
     ;
-  nodejs = pkgsNode.nodejs_24;
-  protocGenEs = pkgsNode.protoc-gen-es;
+  inherit nodejs;
+  protocGenEs = pkgsUnstable.protoc-gen-es;
   inherit staticcheck;
   inherit unparam;
   inherit squashfsTools;

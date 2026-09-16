@@ -20,5 +20,11 @@ require_text 'if [ "$result" != "success" ]; then' \
   "ci complete does not reject failed dependencies"
 require_text 'exit 1' \
   "ci complete does not fail after a dependency failure"
+require_text 'needs: artifact-selection' \
+  "artifact build does not depend on source selection"
+require_text 'selection: ${{ needs.artifact-selection.outputs.selection }}' \
+  "artifact build does not use the selected exact source"
+require_text '"${{ needs.build-artifacts.result }}"' \
+  "ci complete does not check the artifact build result"
 
 printf 'ok - CI workflow policy\n'

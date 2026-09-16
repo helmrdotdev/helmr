@@ -63,12 +63,16 @@ require_text 'ExecStart=/usr/local/bin/worker' \
   "${root}/infra/aws/modules/worker-image/templates/build-worker-image.sh.tftpl" \
   "Worker AMI unit does not start the canonical binary"
 
-require_text 'CONTROLPLANE_IMAGE_REPOSITORY: ghcr.io/${{ github.repository }}/control-plane' \
-  "${root}/.github/workflows/release.yaml" "release workflow does not publish the nested Control Plane package"
-require_text 'BUILDER_IMAGE_REPOSITORY: ghcr.io/${{ github.repository }}/bundle-builder' \
-  "${root}/.github/workflows/release.yaml" "release workflow does not publish the nested bundle-builder package"
-reject_text 'ghcr.io/${{ github.repository_owner }}/helmr-controlplane' \
-  "${root}/.github/workflows/release.yaml" "removed Control Plane package publication path remains"
+# Repository destinations are now constructed by the unprivileged artifact builder.
+# tests/release/test_publication.py exercises the publisher using those descriptors.
+require_text 'ghcr.io/helmrdotdev/helmr/control-plane@$digest' \
+  "${root}/scripts/release/build.sh" "artifact builder does not select the nested Control Plane package"
+require_text 'ghcr.io/helmrdotdev/helmr/bundle-builder@$digest' \
+  "${root}/scripts/release/build.sh" "artifact builder does not select the nested bundle-builder package"
+for file in .github/workflows/release.yaml scripts/release/build.sh scripts/release/publish.py; do
+  reject_text 'ghcr.io/${{ github.repository_owner }}/helmr-controlplane' \
+    "${root}/${file}" "removed Control Plane package publication path remains"
+done
 
 require_text 'WorkerTokenIssuer         = "helmr-controlplane"' \
   "${root}/internal/auth/worker.go" "Worker JWT issuer changed"

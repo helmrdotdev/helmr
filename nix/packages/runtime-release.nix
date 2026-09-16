@@ -3,7 +3,9 @@
   moduleExecution,
   stdenv,
   stdenvNoCC,
-  fetchurl,
+  nodeVersion,
+  typescriptVersion,
+  nodeRelease,
   glibc,
   coreutils,
   findutils,
@@ -16,14 +18,9 @@
 
 let
   architecture = "x86_64";
-  nodeVersion = "24.21.0";
   loader = "ld-linux-x86-64.so.2";
   glibcLib = lib.getLib glibc;
   compilerLib = lib.getLib stdenv.cc.cc;
-  nodeRelease = fetchurl {
-    url = "https://nodejs.org/dist/v${nodeVersion}/node-v${nodeVersion}-linux-x64.tar.xz";
-    hash = "sha256-/Y5Z1aURUQ9qKYr7VI8Yx9KxvkBNi0on2U++SfVsstY=";
-  };
 in
 assert lib.assertMsg stdenv.hostPlatform.isx86_64 "Runtime release supports only x86_64-linux";
 stdenvNoCC.mkDerivation {
@@ -109,6 +106,7 @@ stdenvNoCC.mkDerivation {
     jq -cSj -n \
       --arg architecture "${architecture}" \
       --arg nodeVersion "${nodeVersion}" \
+      --arg typescriptVersion "${typescriptVersion}" \
       --arg adapterDigest "$adapter_digest" \
       --arg typescriptDigest "$typescript_digest" \
       --arg runtimeContract "helmr.runtime.v0" \
@@ -117,7 +115,7 @@ stdenvNoCC.mkDerivation {
         formatVersion:0,
         nodeVersion:$nodeVersion,
         programNodeFlags:["--no-strip-types","--no-global-search-paths","--enable-source-maps","--import=file:///opt/helmr/runtime/helmr/module-preload.mjs"],
-        language:{apiVersion:"helmr.module-execution.v0",adapterDigest:$adapterDigest,typescriptDigest:$typescriptDigest,typescriptVersion:"6.0.3"},
+        language:{apiVersion:"helmr.module-execution.v0",adapterDigest:$adapterDigest,typescriptDigest:$typescriptDigest,typescriptVersion:$typescriptVersion},
         runtimeContract:$runtimeContract
       }' >"$tree/helmr/runtime.json"
 

@@ -1,8 +1,7 @@
-package archive
+package buildcontext
 
 import (
 	"bufio"
-	"errors"
 	"fmt"
 	"strings"
 )
@@ -11,10 +10,6 @@ const maxSourceIgnoreBytes = 1 << 20
 
 type gitIgnore struct {
 	patterns []gitIgnorePattern
-}
-
-type SourceIgnore struct {
-	ignore *gitIgnore
 }
 
 type gitIgnorePattern struct {
@@ -40,22 +35,10 @@ func parseSourceIgnore(body []byte) (*gitIgnore, error) {
 	return ignore, nil
 }
 
-func ParseSourceIgnore(body []byte) (SourceIgnore, error) {
-	ignore, err := parseSourceIgnore(body)
-	if err != nil {
-		return SourceIgnore{}, err
-	}
-	return SourceIgnore{ignore: ignore}, nil
-}
-
-func (ignore SourceIgnore) Match(name string, isDir bool) bool {
-	if ignore.ignore == nil {
+func (ignore *gitIgnore) Match(name string, isDir bool) bool {
+	if ignore == nil {
 		return false
 	}
-	return ignore.ignore.Match(name, isDir)
-}
-
-func (ignore *gitIgnore) Match(name string, isDir bool) bool {
 	excluded := false
 	for _, pattern := range ignore.patterns {
 		target := name
@@ -325,5 +308,3 @@ func matchPOSIXClass(class string, value byte) (bool, bool) {
 		return false, false
 	}
 }
-
-var errSourceChanged = errors.New("source changed during capture")

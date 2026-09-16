@@ -7,7 +7,6 @@
     nixpkgs-clickhouse.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     nixpkgs-bun.url = "github:NixOS/nixpkgs/aff8a0b28396750446e5537a96461bc4facdb287";
     nixpkgs-go.url = "github:NixOS/nixpkgs/aff8a0b28396750446e5537a96461bc4facdb287";
-    nixpkgs-node.url = "github:NixOS/nixpkgs/aff8a0b28396750446e5537a96461bc4facdb287";
   };
 
   outputs =
@@ -18,7 +17,6 @@
       nixpkgs-clickhouse,
       nixpkgs-bun,
       nixpkgs-go,
-      nixpkgs-node,
     }:
     let
       systems = [
@@ -49,7 +47,6 @@
             nixpkgs-unstable
             nixpkgs-bun
             nixpkgs-go
-            nixpkgs-node
             ;
         }
       );

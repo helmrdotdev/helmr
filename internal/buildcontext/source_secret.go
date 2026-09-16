@@ -1,11 +1,11 @@
-package archive
+package buildcontext
 
 import (
 	"path"
 	"strings"
 )
 
-func IsSourceSecretPath(name string) bool {
+func isSourceSecretPath(name string) bool {
 	base := path.Base(strings.TrimSuffix(name, "/"))
 	if base == ".env" {
 		return true

@@ -82,16 +82,22 @@ canonical_path() {
 
 resolve_latest_release_tag() {
   local target="$1"
-  local releases_json
-
-  releases_json="$(curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=100")"
-  printf "%s\n" "$releases_json" | awk -v target="$target" '
+  local releases_json selected headers page=1
+  headers=$(mktemp "${TMPDIR:-/tmp}/helmr-releases.XXXXXX") || return 1
+  while :; do
+    releases_json=$(curl -fsSL -D "$headers" "https://api.github.com/repos/$REPO/releases?per_page=100&page=$page") || {
+      rm -f "$headers"
+      return 1
+    }
+    selected=$(printf "%s\n" "$releases_json" | awk -v target="$target" '
     /^  \{/ {
       tag = ""
       draft = 1
       prerelease = 1
       has_archive = 0
       has_checksums = 0
+      has_index = 0
+      has_signature = 0
       in_release = 1
     }
     in_release && /"tag_name"[[:space:]]*:/ {
@@ -105,20 +111,36 @@ resolve_latest_release_tag() {
       name = $0
       sub(/^[^:]*:[[:space:]]*"/, "", name)
       sub(/".*$/, "", name)
-      if (name == "helmr-" tag "-" target ".tar.gz") {
+      if (name == "helmr-" target ".tar.gz") {
         has_archive = 1
       } else if (name == "checksums.txt") {
         has_checksums = 1
+      } else if (name == "release-index.json") {
+        has_index = 1
+      } else if (name == "release-index.sigstore.json") {
+        has_signature = 1
       }
     }
     /^  \},?$/ {
-      if (tag ~ /^v/ && draft == 0 && prerelease == 0 && has_archive == 1 && has_checksums == 1) {
+      if (tag ~ /^v/ && draft == 0 && prerelease == 0 && has_archive == 1 && has_checksums == 1 && has_index == 1 && has_signature == 1) {
         print tag
         exit
       }
       in_release = 0
     }
-  '
+  ')
+    if [ -n "$selected" ]; then
+      rm -f "$headers"
+      printf '%s\n' "$selected"
+      return 0
+    fi
+    # Follow native pagination, retaining the fixed GitHub repository endpoint.
+    if ! grep -iq '^link:.*rel="next"' "$headers"; then
+      rm -f "$headers"
+      return 0
+    fi
+    page=$((page + 1))
+  done
 }
 
 requested_version="${VERSION:-}"
@@ -223,7 +245,8 @@ else
     esac
   fi
 
-  filename="$APP-$release_tag-$target.tar.gz"
+  [[ "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { print_message error "Invalid release version."; exit 1; }
+  filename="$APP-$target.tar.gz"
   specific_version="$release_tag"
   base_url="https://github.com/$REPO/releases/download/$release_tag"
   url="$base_url/$filename"
@@ -249,8 +272,24 @@ else
   curl -fL --progress-bar -o "$tmp_dir/$filename" "$url"
   curl -fsSL -o "$tmp_dir/checksums.txt" "$base_url/checksums.txt"
 
+  curl -fsSL -o "$tmp_dir/release-index.json" "$base_url/release-index.json"
+  # Product emits canonical single-line v0 JSON. No additional bootstrap runtime.
+  index=$(cat "$tmp_dir/release-index.json")
+  [[ "$index" == *'"schema":"helmr.release.v0"'* && "$index" == *"\"version\":\"$release_tag\""* ]] || {
+    print_message error "Release index identity differs."; exit 1;
+  }
+  index_checksums=$(printf '%s' "$index" | sed -nE 's/.*"checksums.txt":\{"digest":"sha256:([0-9a-f]{64})","sizeBytes":[0-9]+\}.*/\1/p')
+  [[ "$index_checksums" =~ ^[0-9a-f]{64}$ ]] || { print_message error "Release index omits checksums."; exit 1; }
+  if command -v sha256sum >/dev/null 2>&1; then
+    checksums_sha=$(sha256sum "$tmp_dir/checksums.txt" | awk '{print $1}')
+  else
+    need_command shasum
+    checksums_sha=$(shasum -a 256 "$tmp_dir/checksums.txt" | awk '{print $1}')
+  fi
+  [ "$checksums_sha" = "$index_checksums" ] || { print_message error "Indexed checksums differ."; exit 1; }
+
   expected_sha="$(awk -v file="$filename" '$2 == file { print $1 }' "$tmp_dir/checksums.txt")"
-  if [ -z "$expected_sha" ]; then
+  if [[ ! "$expected_sha" =~ ^[0-9a-f]{64}$ ]]; then
     print_message error "Checksum entry for $filename was not found."
     exit 1
   fi
@@ -269,6 +308,10 @@ else
     exit 1
   fi
 
+  [ "$(tar -tzf "$tmp_dir/$filename")" = helmr ] &&
+    [ "$(tar -tvzf "$tmp_dir/$filename" | cut -c1)" = - ] || {
+    print_message error "Archive must contain only the regular helmr binary."; exit 1;
+  }
   tar -xzf "$tmp_dir/$filename" -C "$tmp_dir"
   if [ ! -f "$tmp_dir/$APP" ]; then
     print_message error "Archive did not contain the expected $APP binary."

@@ -3,11 +3,12 @@
   fetchurl,
   gnutar,
   gzip,
+  typescriptRelease,
 }:
 let
   typescript = fetchurl {
-    url = "https://registry.npmjs.org/typescript/-/typescript-6.0.3.tgz";
-    hash = "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw==";
+    url = "https://registry.npmjs.org/typescript/-/typescript-${typescriptRelease.version}.tgz";
+    hash = typescriptRelease.integrity;
   };
 in
 stdenvNoCC.mkDerivation {

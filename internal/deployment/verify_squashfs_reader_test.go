@@ -30,7 +30,7 @@ func TestSquashFSArtifactReaderInspectsAndOpensExactImage(t *testing.T) {
 		context.Background(),
 		reader,
 		programArtifact,
-		maxProgramLogicalBytes,
+		MaxProgramLogicalBytes,
 		int64(len(image)),
 	)
 	if err != nil {
@@ -185,7 +185,7 @@ func TestSquashFSArtifactReaderLeavesHeaderPolicyToPureVerifier(t *testing.T) {
 				context.Background(),
 				reader,
 				programArtifact,
-				maxProgramLogicalBytes,
+				MaxProgramLogicalBytes,
 				int64(len(image)),
 			); err == nil {
 				t.Fatal("pure verifier accepted mutated header")
@@ -227,7 +227,7 @@ func TestSquashFSArtifactReaderSurfacesTailAndIDFacts(t *testing.T) {
 				context.Background(),
 				reader,
 				programArtifact,
-				maxProgramLogicalBytes,
+				MaxProgramLogicalBytes,
 				int64(len(image)),
 			); err == nil {
 				t.Fatal("pure verifier accepted invalid tail facts")
@@ -249,7 +249,7 @@ func TestSquashFSArtifactReaderSurfacesTailAndIDFacts(t *testing.T) {
 		context.Background(),
 		reader,
 		programArtifact,
-		maxProgramLogicalBytes,
+		MaxProgramLogicalBytes,
 		int64(len(image)),
 	); err == nil {
 		t.Fatal("pure verifier accepted a nonzero ID table")

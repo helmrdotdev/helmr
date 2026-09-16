@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	productversion "github.com/helmrdotdev/helmr/internal/version"
 )
 
 type ProgramCompilerResult struct {
@@ -88,7 +89,7 @@ func canonicalProgramCompilerResult(
 }
 
 func validateProgramCompilerResult(result ProgramCompilerResult) error {
-	if result.APIVersion != "helmr.compiler.v0" || result.NodeVersion != "24.21.0" {
+	if result.APIVersion != "helmr.compiler.v0" || result.NodeVersion != productversion.Node() {
 		return errors.New("program compiler execution contract is invalid")
 	}
 	if err := ValidateModuleExecutionIdentity(result.Language); err != nil {

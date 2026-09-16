@@ -173,7 +173,7 @@ func (reader *squashFSArtifactReader) readEntries(ctx context.Context) error {
 func artifactLogicalLimit(role artifactRole) (int64, error) {
 	switch role {
 	case programArtifact:
-		return maxProgramLogicalBytes, nil
+		return MaxProgramLogicalBytes, nil
 	case runtimeArtifact:
 		return maxRuntimeLogicalBytes, nil
 	case buildTreeArtifact:

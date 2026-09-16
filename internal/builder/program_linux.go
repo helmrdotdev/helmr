@@ -174,8 +174,11 @@ func BuildPreparedProgram(
 	}
 	treeArchive, cleanupArchive, err := archive.CreateTarWithOptionsContext(ctx, input.ProgramDirectory, input.WorkDirectory, archive.TarOptions{
 		CanonicalMetadata: true,
-		MaxBytes:          deployment.MaxBuildTreeStreamBytes,
-		MaxEntries:        deployment.MaxProgramTreeEntries,
+		MaxBytes:          deployment.MaxProgramLogicalBytes,
+		MaxArchiveBytes:   deployment.MaxBuildTreeStreamBytes,
+		MaxNameBytes:      deployment.MaxArtifactNameBytes,
+		MaxFileBytes:      deployment.MaxArtifactFileSize,
+		MaxEntries:        deployment.MaxProgramTreeEntries - 1, // SquashFS adds the root.
 	})
 	if err != nil {
 		return ProgramResult{}, fmt.Errorf("freeze installed Program tree: %w", err)

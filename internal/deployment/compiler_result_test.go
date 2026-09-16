@@ -7,10 +7,11 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	"github.com/helmrdotdev/helmr/internal/version"
 )
 
 func testLanguageIdentity() ModuleExecutionIdentity {
-	return ModuleExecutionIdentity{APIVersion: "helmr.module-execution.v0", AdapterDigest: testDigest("adapter"), TypeScriptDigest: testDigest("typescript"), TypeScriptVersion: "6.0.3"}
+	return ModuleExecutionIdentity{APIVersion: "helmr.module-execution.v0", AdapterDigest: testDigest("adapter"), TypeScriptDigest: testDigest("typescript"), TypeScriptVersion: version.RuntimeTypeScript()}
 }
 func testCompilerInputs() CompilerInputs {
 	return CompilerInputs{APIVersion: "helmr.compiler.v0", Language: testLanguageIdentity(),

@@ -41,3 +41,10 @@ vendor_sdk "${SCHEDULE_WORKFLOWS_DIR}/vendor"
   cd "${SCHEDULE_WORKFLOWS_DIR}"
   bun install --frozen-lockfile
 )
+
+# The client imports workflow Task types, so both use the built SDK declarations.
+# Install the existing build outputs directly; no source alias or extra vendor copy.
+(
+  cd "${ROOT}/dev/client"
+  bun install --frozen-lockfile
+)

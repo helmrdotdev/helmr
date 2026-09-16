@@ -1939,44 +1939,56 @@ func (q *Queries) GetTokenWaitRegistrationLocator(ctx context.Context, arg GetTo
 }
 
 const getTokenWaitRegistrationReplay = `-- name: GetTokenWaitRegistrationReplay :one
-SELECT run_waits.id AS wait_id,
-       runs.state_version AS run_state_version,
-       run_waits.condition_state,
-       run_waits.suspension_state,
-       run_waits.condition_result,
-       run_waits.condition_reason_code
-  FROM run_waits
-  JOIN runs
-    ON runs.environment_id = run_waits.environment_id
-   AND runs.id = run_waits.run_id
-  JOIN run_leases
-    ON run_leases.id = $1
-   AND run_leases.run_id = run_waits.run_id
-   AND run_leases.attempt_number = run_waits.attempt_number
-   AND run_leases.workspace_id = run_waits.workspace_id
- WHERE run_waits.id = $2
-   AND run_waits.token_id = $3
-   AND run_waits.kind = 'token'
-   AND run_waits.resume_attach_id = $4
-   AND run_waits.registration_request_fingerprint
-       = $5::text
-   AND (
-       run_waits.current_run_lease_id = $1
-       OR run_waits.prior_run_lease_id = $1
-   )
-   AND run_waits.metadata = $6::jsonb
-   AND run_waits.tags = $7::text[]
-   AND run_leases.lease_sequence = $8
-   AND run_leases.worker_group_id = $9
-   AND run_leases.worker_instance_id = $10
-   AND run_leases.worker_epoch = $11
-   AND run_waits.actor_speculative_input_sequence
-       IS NOT DISTINCT FROM $12
+WITH replay AS (
+    SELECT run_waits.id AS wait_id,
+           runs.state_version AS run_state_version,
+           run_waits.condition_state,
+           run_waits.suspension_state,
+           run_waits.condition_result,
+           run_waits.condition_reason_code
+      FROM run_waits
+      JOIN runs
+        ON runs.environment_id = run_waits.environment_id
+       AND runs.id = run_waits.run_id
+      JOIN run_leases
+        ON run_leases.id = $2
+       AND run_leases.run_id = run_waits.run_id
+       AND run_leases.attempt_number = run_waits.attempt_number
+       AND run_leases.workspace_id = run_waits.workspace_id
+     WHERE run_waits.id = $1
+       AND run_waits.token_id = $3
+       AND run_waits.kind = 'token'
+       AND run_waits.resume_attach_id = $4
+       AND run_waits.registration_request_fingerprint
+           = $5::text
+       AND (
+           run_waits.current_run_lease_id = $2
+           OR run_waits.prior_run_lease_id = $2
+       )
+       AND run_waits.metadata = $6::jsonb
+       AND run_waits.tags = $7::text[]
+       AND run_leases.lease_sequence = $8
+       AND run_leases.worker_group_id = $9
+       AND run_leases.worker_instance_id = $10
+       AND run_leases.worker_epoch = $11
+       AND run_waits.actor_speculative_input_sequence
+           IS NOT DISTINCT FROM $12
+)
+SELECT addressed.id AS wait_id,
+       (replay.wait_id IS NOT NULL)::boolean AS matches,
+       replay.run_state_version,
+       replay.condition_state,
+       replay.suspension_state,
+       replay.condition_result,
+       replay.condition_reason_code
+  FROM run_waits AS addressed
+  LEFT JOIN replay ON replay.wait_id = addressed.id
+ WHERE addressed.id = $1
 `
 
 type GetTokenWaitRegistrationReplayParams struct {
-	RunLeaseID                    pgtype.UUID `json:"run_lease_id"`
 	WaitID                        pgtype.UUID `json:"wait_id"`
+	RunLeaseID                    pgtype.UUID `json:"run_lease_id"`
 	TokenID                       pgtype.UUID `json:"token_id"`
 	ResumeAttachID                pgtype.UUID `json:"resume_attach_id"`
 	RequestFingerprint            string      `json:"request_fingerprint"`
@@ -1991,17 +2003,20 @@ type GetTokenWaitRegistrationReplayParams struct {
 
 type GetTokenWaitRegistrationReplayRow struct {
 	WaitID              pgtype.UUID `json:"wait_id"`
-	RunStateVersion     int64       `json:"run_state_version"`
-	ConditionState      string      `json:"condition_state"`
-	SuspensionState     string      `json:"suspension_state"`
+	Matches             bool        `json:"matches"`
+	RunStateVersion     pgtype.Int8 `json:"run_state_version"`
+	ConditionState      pgtype.Text `json:"condition_state"`
+	SuspensionState     pgtype.Text `json:"suspension_state"`
 	ConditionResult     []byte      `json:"condition_result"`
 	ConditionReasonCode pgtype.Text `json:"condition_reason_code"`
 }
 
+// Presence and exact identity must use one statement snapshot, including the
+// read-only replay before lineage locks.
 func (q *Queries) GetTokenWaitRegistrationReplay(ctx context.Context, arg GetTokenWaitRegistrationReplayParams) (GetTokenWaitRegistrationReplayRow, error) {
 	row := q.db.QueryRow(ctx, getTokenWaitRegistrationReplay,
-		arg.RunLeaseID,
 		arg.WaitID,
+		arg.RunLeaseID,
 		arg.TokenID,
 		arg.ResumeAttachID,
 		arg.RequestFingerprint,
@@ -2016,6 +2031,7 @@ func (q *Queries) GetTokenWaitRegistrationReplay(ctx context.Context, arg GetTok
 	var i GetTokenWaitRegistrationReplayRow
 	err := row.Scan(
 		&i.WaitID,
+		&i.Matches,
 		&i.RunStateVersion,
 		&i.ConditionState,
 		&i.SuspensionState,
@@ -4323,19 +4339,4 @@ func (q *Queries) ResolveParkedTokenWait(ctx context.Context, arg ResolveParkedT
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
-}
-
-const tokenWaitExists = `-- name: TokenWaitExists :one
-SELECT EXISTS (
-    SELECT 1
-      FROM run_waits
-     WHERE id = $1
-)
-`
-
-func (q *Queries) TokenWaitExists(ctx context.Context, waitID pgtype.UUID) (bool, error) {
-	row := q.db.QueryRow(ctx, tokenWaitExists, waitID)
-	var exists bool
-	err := row.Scan(&exists)
-	return exists, err
 }

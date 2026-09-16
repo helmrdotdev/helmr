@@ -6,6 +6,9 @@ import { dirname as dirname2, extname, join as join2, resolve as resolve2 } from
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts2 from "./typescript.cjs";
 
+// packages/module-execution/src/runtime-dependencies.ts
+var typescriptVersion = "6.0.3";
+
 // packages/module-execution/src/authority.ts
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
@@ -154,7 +157,6 @@ function diagnosticError(diagnostics) {
 
 // packages/module-execution/src/index.ts
 var languageVersion = "helmr.module-execution.v0";
-var typescriptVersion = "6.0.3";
 var sourceExtensions = [".js", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts", ".jsx"];
 var typed = (path) => /\.(?:[cm]?ts|tsx|jsx)$/.test(path);
 var absent = (error) => error instanceof Error && "code" in error && (error.code === "ERR_MODULE_NOT_FOUND" || error.code === "MODULE_NOT_FOUND" || error.code === "ERR_UNSUPPORTED_DIR_IMPORT");

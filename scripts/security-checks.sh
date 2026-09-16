@@ -30,10 +30,7 @@ check_id_token_permissions() {
 		}
 
 		function finalize_job(i, allowed) {
-			allowed = job_environment_release ||
-				(current_file == ".github/workflows/release.yaml" &&
-				 current_job == "platform-release-dev" &&
-				 !job_has_environment)
+			allowed = job_environment_release
 			if (current_job != "" && id_token_count > 0 && !allowed) {
 				for (i = 1; i <= id_token_count; i++) {
 					fail_at(id_token_file[i], id_token_line[i], id_token_grant[i] " in job \"" current_job "\" is outside the closed release identity allowlist")

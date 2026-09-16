@@ -41,13 +41,33 @@ The root `.git` entry is always excluded. Retained root `node_modules` and
 `helmr` paths are rejected. Retained `.env` and `.env.*` basenames are rejected
 except names ending in `.example`, `.sample`, or `.template`.
 
+`helmr build` copies the selected source into a private directory before starting
+BuildKit. Regular files have independent inodes; later checkout edits do not
+change the completed copy. Capture rejects changes it observes while reading and
+rechecking entries, but is not an atomic filesystem snapshot. Files retain their
+executable status, and captured timestamps are normalized.
+
+Source capture accepts UTF-8 paths with components up to 255 bytes and depth up
+to 128, subject to the actual host path limit and the Linux build and Program
+mount prefixes. Relative symlinks must remain confined, with at most 40 hops and
+4,095 bytes per target (or the lower host limit); dangling links are allowed. Filesystem name collisions or normalization that loses the original
+spelling fail explicitly. Source is limited to 512 MiB of regular-file content,
+100,000 selected entries, and a 128 MiB retained observation/name budget that also
+charges observed ignored children. Exclude unnecessary caches with `.helmrignore`
+when they exceed these limits.
+
+Installed dependencies use the same filesystem path ceiling with separate
+bounds: 10 GiB of regular-file content, 1 GiB per file, 200,000 entries including
+the root, and 128 MiB of path and link names. The intermediate PAX stream is
+limited to 11 GiB including metadata and padding.
+
 ## Installed dependencies and source execution
 
 Helmr installs dependencies once for the target Linux platform and retains the
 whole installed tree. Config, declaration analysis, and Program execution use
 one platform-owned Node 24.21 language adapter. JavaScript keeps native Node
 resolution, package exports, module cache and file locations. Reached TypeScript
-and JSX files are transformed in memory using pinned TypeScript 6.0.3, including
+and JSX files are transformed in memory using the Runtime-pinned TypeScript version, including
 files under `node_modules`, mixed JavaScript-to-TypeScript packages, and dynamic
 loads. There is no package selection setting and no dependency reinstallation by
 name. Aliases, nested versions, hoisted packages and contained package symlinks

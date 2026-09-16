@@ -7,13 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	"github.com/helmrdotdev/helmr/internal/safepath"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
@@ -24,33 +24,41 @@ func ProgramInputTreeDigest(ctx context.Context, root string) (string, error) {
 	if ctx == nil {
 		return "", errors.New("program input digest context is nil")
 	}
-	root, err := filepath.EvalSymlinks(root)
+	root, err := filepath.Abs(root)
 	if err != nil {
 		return "", err
 	}
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", err
+	}
+	confined, err := os.OpenRoot(root)
+	if err != nil {
+		return "", err
+	}
+	defer confined.Close()
 	entries := make([]artifactEntry, 0)
 	var total, nameBytes int64
-	err = filepath.WalkDir(root, func(name string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
+	var collect func(string) error
+	collect = func(relative string) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		relative, err := filepath.Rel(root, name)
-		if err != nil {
-			return err
+		if len(entries) >= MaxProgramTreeEntries {
+			return errors.New("installed input exceeds Program entry bounds")
 		}
-		relative = filepath.ToSlash(relative)
 		if relative == "helmr" {
 			return errors.New("installed input contains reserved root helmr path")
 		}
 		if relative != "." {
-			if err := validateArtifactPath(relative, programArtifact); err != nil {
+			if err := safepath.ValidateTreePath(relative, programMountPath, "/workspace/project", "/workspace/program"); err != nil {
 				return err
 			}
 		}
-		info, err := d.Info()
+		if err := safepath.ValidateHostTreePath(root, relative); err != nil {
+			return err
+		}
+		info, err := confined.Lstat(relative)
 		if err != nil {
 			return err
 		}
@@ -64,7 +72,7 @@ func ProgramInputTreeDigest(ctx context.Context, root string) (string, error) {
 			}
 			entry.SizeBytes = info.Size()
 			total += info.Size()
-			if info.Size() > maxArtifactFileSize || total > maxProgramLogicalBytes {
+			if info.Size() > MaxArtifactFileSize || total > MaxProgramLogicalBytes {
 				return fmt.Errorf("installed input %q exceeds Program file or tree size bounds", relative)
 			}
 		case info.IsDir():
@@ -73,7 +81,7 @@ func ProgramInputTreeDigest(ctx context.Context, root string) (string, error) {
 		case info.Mode()&os.ModeSymlink != 0:
 			entry.Kind = artifactEntrySymlink
 			entry.Mode = 0777
-			entry.LinkTarget, err = os.Readlink(name)
+			entry.LinkTarget, err = confined.Readlink(relative)
 			if err != nil {
 				return err
 			}
@@ -88,14 +96,40 @@ func ProgramInputTreeDigest(ctx context.Context, root string) (string, error) {
 			return err
 		}
 		entries = append(entries, entry)
-		if len(entries) > MaxProgramTreeEntries {
-			return errors.New("installed input exceeds Program entry bounds")
+		if !info.IsDir() {
+			return nil
 		}
-		return nil
-	})
-	if err != nil {
+		directory, err := confined.Open(relative)
+		if err != nil {
+			return err
+		}
+		defer directory.Close()
+		for {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			children, readErr := directory.ReadDir(128)
+			for _, child := range children {
+				childName := child.Name()
+				if relative != "." {
+					childName = relative + "/" + childName
+				}
+				if err := collect(childName); err != nil {
+					return err
+				}
+			}
+			if readErr == io.EOF {
+				return nil
+			}
+			if readErr != nil {
+				return readErr
+			}
+		}
+	}
+	if err := collect("."); err != nil {
 		return "", err
 	}
+
 	tree := &inspectedArtifact{ordered: entries, entries: make(map[string]artifactEntry, len(entries))}
 	for _, entry := range entries {
 		tree.entries[entry.Path] = entry
@@ -104,7 +138,7 @@ func ProgramInputTreeDigest(ctx context.Context, root string) (string, error) {
 		return "", err
 	}
 	return inputTreeDigest(ctx, entries, func(ctx context.Context, name string) (io.ReadCloser, error) {
-		return os.Open(filepath.Join(root, filepath.FromSlash(name)))
+		return confined.Open(name)
 	})
 }
 

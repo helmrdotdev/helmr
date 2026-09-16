@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	"github.com/helmrdotdev/helmr/internal/version"
 )
 
 type CompilerEntrypoint struct {
@@ -24,7 +25,7 @@ type ModuleExecutionIdentity struct {
 }
 
 func ValidateModuleExecutionIdentity(value ModuleExecutionIdentity) error {
-	if value.APIVersion != "helmr.module-execution.v0" || value.TypeScriptVersion != "6.0.3" ||
+	if value.APIVersion != "helmr.module-execution.v0" || value.TypeScriptVersion != version.RuntimeTypeScript() ||
 		!sha256DigestPattern.MatchString(value.AdapterDigest) || !sha256DigestPattern.MatchString(value.TypeScriptDigest) {
 		return errors.New("module execution identity does not match the v0 contract")
 	}

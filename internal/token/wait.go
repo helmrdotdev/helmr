@@ -362,11 +362,14 @@ func replayTokenWaitRegistration(
 		},
 	)
 	if err == nil {
+		if !replay.Matches {
+			return WaitRegistrationResult{}, false, tokenWaitAuthorityError("token wait registration replay does not match", nil)
+		}
 		result := WaitRegistrationResult{
 			WaitID:          pgvalue.MustUUIDValue(replay.WaitID),
-			RunStateVersion: replay.RunStateVersion,
-			ConditionState:  db.WaitState(replay.ConditionState),
-			SuspensionState: db.RunWaitState(replay.SuspensionState),
+			RunStateVersion: replay.RunStateVersion.Int64,
+			ConditionState:  db.WaitState(replay.ConditionState.String),
+			SuspensionState: db.RunWaitState(replay.SuspensionState.String),
 			Result:          json.RawMessage(replay.ConditionResult),
 		}
 		if replay.ConditionReasonCode.Valid {
@@ -376,13 +379,6 @@ func replayTokenWaitRegistration(
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return WaitRegistrationResult{}, false, tokenWaitAuthorityError("load token wait registration replay", err)
-	}
-	conflicting, err := q.TokenWaitExists(ctx, pgvalue.UUID(request.WaitID))
-	if err != nil {
-		return WaitRegistrationResult{}, false, tokenWaitAuthorityError("check token wait registration replay conflict", err)
-	}
-	if conflicting {
-		return WaitRegistrationResult{}, false, tokenWaitAuthorityError("token wait registration replay does not match", nil)
 	}
 	return WaitRegistrationResult{}, false, nil
 }

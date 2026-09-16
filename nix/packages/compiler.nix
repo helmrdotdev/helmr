@@ -5,6 +5,7 @@
   jq,
   nodejs_24,
   moduleExecution,
+  typescriptVersion,
 }:
 stdenvNoCC.mkDerivation {
   pname = "helmr-compiler";
@@ -25,7 +26,7 @@ stdenvNoCC.mkDerivation {
     install -m0644 ${../../internal/compiler/config-evaluator.mjs} "$tree/helmr/config-evaluator.mjs"
     install -m0644 ${../../internal/compiler/program-compiler.mjs} "$tree/helmr/program-compiler.mjs"
     node "$tree/helmr/program-compiler.mjs" --describe >"$TMPDIR/contract.json"
-    jq -e '.apiVersion == "helmr.compiler.v0" and .language.apiVersion == "helmr.module-execution.v0" and .language.typescriptVersion == "6.0.3"' "$TMPDIR/contract.json" >/dev/null
+    jq -e --arg typescriptVersion '${typescriptVersion}' '.apiVersion == "helmr.compiler.v0" and .language.apiVersion == "helmr.module-execution.v0" and .language.typescriptVersion == $typescriptVersion' "$TMPDIR/contract.json" >/dev/null
     config_digest="$(sha256sum "$tree/helmr/config-evaluator.mjs" | cut -d' ' -f1)"
     program_digest="$(sha256sum "$tree/helmr/program-compiler.mjs" | cut -d' ' -f1)"
     install -d "$out"

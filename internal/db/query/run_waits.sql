@@ -6,46 +6,53 @@ SELECT *
    AND id = sqlc.arg(id);
 
 -- name: GetTokenWaitRegistrationReplay :one
-SELECT run_waits.id AS wait_id,
-       runs.state_version AS run_state_version,
-       run_waits.condition_state,
-       run_waits.suspension_state,
-       run_waits.condition_result,
-       run_waits.condition_reason_code
-  FROM run_waits
-  JOIN runs
-    ON runs.environment_id = run_waits.environment_id
-   AND runs.id = run_waits.run_id
-  JOIN run_leases
-    ON run_leases.id = sqlc.arg(run_lease_id)
-   AND run_leases.run_id = run_waits.run_id
-   AND run_leases.attempt_number = run_waits.attempt_number
-   AND run_leases.workspace_id = run_waits.workspace_id
- WHERE run_waits.id = sqlc.arg(wait_id)
-   AND run_waits.token_id = sqlc.arg(token_id)
-   AND run_waits.kind = 'token'
-   AND run_waits.resume_attach_id = sqlc.arg(resume_attach_id)
-   AND run_waits.registration_request_fingerprint
-       = sqlc.arg(request_fingerprint)::text
-   AND (
-       run_waits.current_run_lease_id = sqlc.arg(run_lease_id)
-       OR run_waits.prior_run_lease_id = sqlc.arg(run_lease_id)
-   )
-   AND run_waits.metadata = sqlc.arg(metadata)::jsonb
-   AND run_waits.tags = sqlc.arg(tags)::text[]
-   AND run_leases.lease_sequence = sqlc.arg(lease_sequence)
-   AND run_leases.worker_group_id = sqlc.arg(worker_group_id)
-   AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)
-   AND run_leases.worker_epoch = sqlc.arg(worker_epoch)
-   AND run_waits.actor_speculative_input_sequence
-       IS NOT DISTINCT FROM sqlc.narg(actor_speculative_input_sequence);
-
--- name: TokenWaitExists :one
-SELECT EXISTS (
-    SELECT 1
+-- Presence and exact identity must use one statement snapshot, including the
+-- read-only replay before lineage locks.
+WITH replay AS (
+    SELECT run_waits.id AS wait_id,
+           runs.state_version AS run_state_version,
+           run_waits.condition_state,
+           run_waits.suspension_state,
+           run_waits.condition_result,
+           run_waits.condition_reason_code
       FROM run_waits
-     WHERE id = sqlc.arg(wait_id)
-);
+      JOIN runs
+        ON runs.environment_id = run_waits.environment_id
+       AND runs.id = run_waits.run_id
+      JOIN run_leases
+        ON run_leases.id = sqlc.arg(run_lease_id)
+       AND run_leases.run_id = run_waits.run_id
+       AND run_leases.attempt_number = run_waits.attempt_number
+       AND run_leases.workspace_id = run_waits.workspace_id
+     WHERE run_waits.id = sqlc.arg(wait_id)
+       AND run_waits.token_id = sqlc.arg(token_id)
+       AND run_waits.kind = 'token'
+       AND run_waits.resume_attach_id = sqlc.arg(resume_attach_id)
+       AND run_waits.registration_request_fingerprint
+           = sqlc.arg(request_fingerprint)::text
+       AND (
+           run_waits.current_run_lease_id = sqlc.arg(run_lease_id)
+           OR run_waits.prior_run_lease_id = sqlc.arg(run_lease_id)
+       )
+       AND run_waits.metadata = sqlc.arg(metadata)::jsonb
+       AND run_waits.tags = sqlc.arg(tags)::text[]
+       AND run_leases.lease_sequence = sqlc.arg(lease_sequence)
+       AND run_leases.worker_group_id = sqlc.arg(worker_group_id)
+       AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)
+       AND run_leases.worker_epoch = sqlc.arg(worker_epoch)
+       AND run_waits.actor_speculative_input_sequence
+           IS NOT DISTINCT FROM sqlc.narg(actor_speculative_input_sequence)
+)
+SELECT addressed.id AS wait_id,
+       (replay.wait_id IS NOT NULL)::boolean AS matches,
+       replay.run_state_version,
+       replay.condition_state,
+       replay.suspension_state,
+       replay.condition_result,
+       replay.condition_reason_code
+  FROM run_waits AS addressed
+  LEFT JOIN replay ON replay.wait_id = addressed.id
+ WHERE addressed.id = sqlc.arg(wait_id);
 
 -- name: GetTokenWaitRegistrationLocator :one
 SELECT runs.workspace_id,

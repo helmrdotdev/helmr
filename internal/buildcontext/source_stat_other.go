@@ -1,6 +1,6 @@
 //go:build !linux && !darwin
 
-package archive
+package buildcontext
 
 import (
 	"os"

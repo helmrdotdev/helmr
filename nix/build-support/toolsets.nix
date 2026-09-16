@@ -96,6 +96,7 @@ rec {
   ];
 
   ciPolicy = ciShell ++ [
+    pkgs.python3
     helmrPackages.bun
     pkgs.actionlint
     pkgs.zizmor
@@ -106,6 +107,7 @@ rec {
     pkgs.gnutar
     pkgs.gzip
     pkgs.jq
+    helmrPackages.nodejs
   ];
 
   ciGo = ciShell ++ [

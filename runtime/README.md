@@ -26,3 +26,20 @@ tools and run it with the Runtime's Node and `HELMR_NATIVE_RUNTIME_TEST=1`.
 It checks Task/Actor protocol execution, assets, native addon loading, worker/fork
 inheritance and process termination. Ordinary host tests skip this suite; passing
 it in a container does not qualify Firecracker checkpoint/resume.
+
+## External Runtime dependencies
+
+`internal/version/runtime-dependencies.json` owns the exact Node release and its
+four official archive hashes, plus the Runtime TypeScript npm version and archive
+integrity. Nix and Go read it directly. `scripts/build-module-execution-entry.sh`
+projects TypeScript into the private module-execution package manifest and source
+constant; its existing `--check` mode rejects stale projections, Bun lock version
+or integrity, and installed package version. After changing the authority, run the
+generator, refresh the native lock/install with `bun install --ignore-scripts` if requested, then
+run the generator again and its `--check` mode. Generated compiler/Runtime entry
+checks invoke this same generator.
+
+Root authoring TypeScript, website/example dependencies, Bun and Go keep their own
+ownership. The loader remains authored in `packages/module-execution`; Runtime v0
+metadata and compiler contracts still use digests computed from actual output
+bytes, not hashes substituted from this external-input manifest.

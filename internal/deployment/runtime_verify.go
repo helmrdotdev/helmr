@@ -10,6 +10,8 @@ import (
 	"os"
 	"path"
 	"strings"
+
+	"github.com/helmrdotdev/helmr/internal/safepath"
 )
 
 const (
@@ -403,7 +405,7 @@ func openRuntimeELF(
 	filePath string,
 	machine elf.Machine,
 ) (*elf.File, error) {
-	raw, err := artifact.read(ctx, filePath, maxArtifactFileSize)
+	raw, err := artifact.read(ctx, filePath, MaxArtifactFileSize)
 	if err != nil {
 		return nil, err
 	}
@@ -529,11 +531,11 @@ func runtimeELFInterpreter(file *elf.File) (string, bool, error) {
 		if count > 1 {
 			return "", false, fmt.Errorf("ELF declares multiple interpreters")
 		}
-		raw, err := io.ReadAll(io.LimitReader(program.Open(), maxMountedArtifactPathBytes+1))
+		raw, err := io.ReadAll(io.LimitReader(program.Open(), safepath.TreePathBytes+1))
 		if err != nil {
 			return "", false, fmt.Errorf("read ELF interpreter: %w", err)
 		}
-		if len(raw) == 0 || len(raw) > maxMountedArtifactPathBytes || raw[len(raw)-1] != 0 {
+		if len(raw) == 0 || len(raw) > safepath.TreePathBytes || raw[len(raw)-1] != 0 {
 			return "", false, fmt.Errorf("ELF interpreter is not a bounded NUL-terminated path")
 		}
 		value := string(raw[:len(raw)-1])
@@ -591,11 +593,11 @@ func resolveRuntimeLibrary(
 		}
 		if entry.Kind == artifactEntrySymlink {
 			hops++
-			if hops > maxSymlinkHops {
+			if hops > safepath.TreeLinkHops {
 				return artifactEntry{}, "", fmt.Errorf(
 					"runtime library path %q exceeds %d link hops",
 					value,
-					maxSymlinkHops,
+					safepath.TreeLinkHops,
 				)
 			}
 			if path.IsAbs(entry.LinkTarget) {

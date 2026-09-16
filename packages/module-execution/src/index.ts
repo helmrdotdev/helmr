@@ -5,10 +5,11 @@ import type { ResolveHookContext, ResolveHookSync, ResolveFnOutput } from "node:
 import { dirname, extname, join, resolve } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import ts from "typescript"
+import { typescriptVersion } from "./runtime-dependencies"
 import { SourceAuthority, diagnosticError, isContained } from "./authority"
 
 export const languageVersion = "helmr.module-execution.v0" as const
-export const typescriptVersion = "6.0.3" as const
+export { typescriptVersion } from "./runtime-dependencies"
 export const sourceExtensions = [".js", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts", ".jsx"] as const
 const typed = (path: string) => /\.(?:[cm]?ts|tsx|jsx)$/.test(path)
 const absent = (error: unknown) => error instanceof Error && "code" in error &&

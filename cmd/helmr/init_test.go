@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,6 +43,18 @@ func TestInitCommandCreatesStarterProject(t *testing.T) {
 	}
 	if string(config) != starterHelmrConfig {
 		t.Fatalf("config = %q", config)
+	}
+	var generated struct {
+		DevEngines struct {
+			Runtime struct{ Name, Version, OnFail string }
+		}
+	}
+	if err := json.Unmarshal(pkg, &generated); err != nil {
+		t.Fatal(err)
+	}
+	engine := generated.DevEngines.Runtime
+	if engine.Name != "node" || engine.Version != version.Node() || engine.OnFail != "error" {
+		t.Fatalf("generated Node requirement = %+v", engine)
 	}
 	if string(pkg) != starterPackageJSON() {
 		t.Fatalf("package = %q", pkg)

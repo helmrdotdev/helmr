@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	"github.com/helmrdotdev/helmr/internal/safepath"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
@@ -177,11 +178,11 @@ func resolveProgramArtifactPath(
 		}
 		if entry.Kind == artifactEntrySymlink {
 			hops++
-			if hops > maxSymlinkHops {
+			if hops > safepath.TreeLinkHops {
 				return artifactEntry{}, "", fmt.Errorf(
 					"program path %q exceeds %d symbolic-link hops",
 					value,
-					maxSymlinkHops,
+					safepath.TreeLinkHops,
 				)
 			}
 			state := candidate + "\x00" + strings.Join(pending, "\x00")
