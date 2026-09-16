@@ -15,23 +15,7 @@ import (
 
 func TestProgramEncoderUsesFixedProcessContract(t *testing.T) {
 	t.Parallel()
-	executable := writeEncoderFixture(t, `#!/bin/sh
-if [ "$1" = "-version" ]; then
-	printf 'mksquashfs version 4.6.1 (2023/03/25)\n'
-	exit 0
-fi
-if [ "$*" != "`+strings.Join(encoderArguments, " ")+`" ]; then
-	printf 'arguments: %s\n' "$*" >&2
-	exit 2
-fi
-if [ "$LC_ALL" != "C" ] || [ "$TZ" != "UTC" ] ||
-	[ -n "${HOME+x}" ] || [ -n "${SOURCE_DATE_EPOCH+x}" ]; then
-	printf 'unexpected environment: LC_ALL=%s TZ=%s HOME=%s SOURCE_DATE_EPOCH=%s\n' \
-		"$LC_ALL" "$TZ" "${HOME+x}" "${SOURCE_DATE_EPOCH+x}" >&2
-	exit 3
-fi
-printf 'encoded' >&3
-`)
+	executable := encoderFixture(t, "encoder-contract.sh")
 	destination := emptyEncoderDestination(t)
 	defer destination.Close()
 
@@ -68,9 +52,7 @@ func TestProgramEncoderRejectsInvalidExecutable(t *testing.T) {
 		t.Fatal("encodeSquashFS accepted a relative executable")
 	}
 
-	executable := writeEncoderFixture(t, `#!/bin/sh
-printf 'mksquashfs version 4.7.0\n'
-`)
+	executable := encoderFixture(t, "encoder-wrong-version.sh")
 	if err := encodeSquashFS(
 		context.Background(),
 		executable,
@@ -83,11 +65,7 @@ printf 'mksquashfs version 4.7.0\n'
 
 func TestProgramEncoderRejectsInvalidDestination(t *testing.T) {
 	t.Parallel()
-	executable := writeEncoderFixture(t, `#!/bin/sh
-if [ "$1" = "-version" ]; then
-	printf 'mksquashfs version 4.6.1 (2023/03/25)\n'
-fi
-`)
+	executable := encoderFixture(t, "encoder-version.sh")
 	tests := map[string]func(*testing.T) *os.File{
 		"nonempty": func(t *testing.T) *os.File {
 			file := emptyEncoderDestination(t)
@@ -222,10 +200,10 @@ func emptyEncoderDestination(t *testing.T) *os.File {
 	return file
 }
 
-func writeEncoderFixture(t *testing.T, source string) string {
+func encoderFixture(t *testing.T, name string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "mksquashfs")
-	if err := os.WriteFile(path, []byte(source), 0700); err != nil {
+	path, err := filepath.Abs(filepath.Join("testdata", name))
+	if err != nil {
 		t.Fatal(err)
 	}
 	return path

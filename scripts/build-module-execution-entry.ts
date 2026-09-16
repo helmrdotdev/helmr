@@ -22,10 +22,10 @@ const lock = Bun.JSONC.parse(await readFile("bun.lock", "utf8"))
 const locked = lock.packages[`${pkg.name}/typescript`]
 if (lock.workspaces["packages/module-execution"].dependencies.typescript !== typescript.version ||
     locked?.[0] !== `typescript@${typescript.version}` || locked?.[3] !== typescript.integrity) {
-  throw new Error("Runtime TypeScript lock projection is stale; run bun install")
+  throw new Error("Runtime TypeScript lock projection is stale; run bun install --ignore-scripts")
 }
 const installed = JSON.parse(await readFile("packages/module-execution/node_modules/typescript/package.json", "utf8"))
-if (installed.version !== typescript.version) throw new Error("Runtime TypeScript installation is stale; run bun install")
+if (installed.version !== typescript.version) throw new Error("Runtime TypeScript installation is stale; run bun install --frozen-lockfile --ignore-scripts")
 const target = resolve("internal/moduleexecution/loader.mjs")
 const result = await build({
   entryPoints: ["packages/module-execution/src/index.ts"],

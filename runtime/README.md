@@ -35,7 +35,7 @@ integrity. Nix and Go read it directly. `scripts/build-module-execution-entry.sh
 projects TypeScript into the private module-execution package manifest and source
 constant; its existing `--check` mode rejects stale projections, Bun lock version
 or integrity, and installed package version. After changing the authority, run the
-generator, refresh the native lock/install with `bun install` if requested, then
+generator, refresh the native lock/install with `bun install --ignore-scripts` if requested, then
 run the generator again and its `--check` mode. Generated compiler/Runtime entry
 checks invoke this same generator.
 
