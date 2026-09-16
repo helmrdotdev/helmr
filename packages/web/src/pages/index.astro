@@ -3,41 +3,75 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 import { pixelsFromRows } from "../lib/pixels";
 import { breadcrumbJsonLd, softwareJsonLd } from "../lib/seo";
 
-const runtimeFile = (imports: string, agent: string) => `import { image, sandbox, source, task, tokens } from "@helmr/sdk"
-${imports}
-import { z } from "zod"
-
-const base = image("repo-agent")
-  .from("node:24-bookworm-slim")
-  .workdir("/workspace")
-  .run(["sh", "-ceu", "apt-get update && apt-get install -y git ripgrep"])
-  .copy("/workspace/package.json", source.file("package.json"))
-  .run(["bun", "install"])
-
-export const repoSandbox = sandbox({ id: "repo-agent" })
-  .image(base)
-  .resources({ cpu: 2, memory: "4GiB" })
-
-export const reviewPr = task({
+const usecases = [
+  {
+    key: "review",
+    name: "PR reviewer",
+    icon: "merge",
+    id: "review-pr",
+    primitive: "task",
+    src: "event",
+    imports: 'import { image, sandbox, source, task, tokens } from "@helmr/sdk"',
+    head: `export const reviewPr = task({
   id: "review-pr",
   payload: z.object({ prNumber: z.number().int().positive() }),
   run: async (event, ctx) => {
-${agent}
-
-    const approval = await tokens.create({ timeout: "30m" })
-    await sendSlackApproval({
-      callbackUrl: approval.callbackUrl
-    })
-    // The microVM freezes here — filesystem, memory, process.
-    const decision = await approval.wait({
-      schema: z.object({ approved: z.boolean() }),
-      timeout: "30m",
-      tags: ["approval", "github-review"],
-      metadata: { subject: "Post this review to GitHub?" }
-    }).unwrap()
-    if (decision.approved) await postReview(event.prNumber, review)
-  }
-})`;
+    const brief = \`Review PR #\${event.prNumber} and propose a patch.\``,
+    meta: '      metadata: { subject: "Post this review to GitHub?" }',
+    action: "    if (decision.approved) await postReview(event.prNumber, output)",
+  },
+  {
+    key: "bugs",
+    name: "Bug hunter",
+    icon: "bug",
+    id: "bug-hunter",
+    primitive: "task",
+    src: "event",
+    imports: 'import { image, sandbox, source, task, tokens } from "@helmr/sdk"',
+    head: `export const huntBug = task({
+  id: "bug-hunter",
+  payload: z.object({ errorId: z.string() }),
+  run: async (event, ctx) => {
+    const brief = \`Reproduce error \${event.errorId} in /workspace, find the root cause and write a fix.\``,
+    meta: '      metadata: { subject: "Post the root cause and fix?" }',
+    action: "    if (decision.approved) await postReport(event.errorId, output)",
+  },
+  {
+    key: "mention",
+    name: "@-mention teammate",
+    icon: "mention",
+    id: "fix-issue",
+    primitive: "actor",
+    src: "input",
+    imports: 'import { actor, image, sandbox, source, tokens } from "@helmr/sdk"',
+    head: `export const fixIssue = actor({
+  id: "fix-issue",
+  async run(session) {
+    const input = await session.input.receive({ idleTimeout: "30m" }).unwrap()
+    const brief = \`Fix \${input.issue} in \${input.repo}. Run the tests, then open a PR.\``,
+    meta: '      metadata: { subject: "Open a PR for this fix?" }',
+    action: `    if (decision.approved) {
+      await openPr(input.repo, output)
+      await session.output.append({ type: "pr-opened" })
+    }`,
+  },
+  {
+    key: "fleet",
+    name: "3 a.m. fleet job",
+    icon: "moon",
+    id: "fleet-bump",
+    primitive: "schedules.task",
+    src: "event",
+    imports: 'import { image, sandbox, schedules, source, tokens } from "@helmr/sdk"',
+    head: `export const fleetBump = schedules.task({
+  id: "fleet-bump",
+  cron: { pattern: "0 3 * * *", timezone: "UTC" },
+  run: async (event, ctx) => {
+    const brief = \`Bump dependencies across every repo; run each test suite.\``,
+    meta: '      metadata: { subject: "Open PRs for all repos?" }',
+    action: "    if (decision.approved) await openFleetPrs(output)",
+  },
+] as const;
 
 const logos = {
   claude: "/logos/claude.svg",
@@ -59,16 +93,16 @@ const harnesses = [
     meta: "@anthropic-ai/claude-agent-sdk",
     icon: logos.claude,
     imports: 'import { query } from "@anthropic-ai/claude-agent-sdk"',
-    agent: `    let review = ""
+    agent: `    let output = ""
     for await (const message of query({
-      prompt: \`Review PR #\${event.prNumber} and propose a patch.\`,
+      prompt: brief,
       options: {
         cwd: "/workspace",
         permissionMode: "bypassPermissions", // the microVM is the sandbox
         allowDangerouslySkipPermissions: true
       }
     })) {
-      if (message.type === "result" && message.subtype === "success") review = message.result
+      if (message.type === "result" && message.subtype === "success") output = message.result
     }`,
   },
   {
@@ -82,8 +116,8 @@ const harnesses = [
       workingDirectory: "/workspace",
       sandboxMode: "danger-full-access" // the microVM is the sandbox
     })
-    const turn = await thread.run(\`Review PR #\${event.prNumber} and propose a patch.\`)
-    const review = turn.finalResponse`,
+    const turn = await thread.run(brief)
+    const output = turn.finalResponse`,
   },
   {
     key: "cursor",
@@ -91,12 +125,12 @@ const harnesses = [
     meta: "@cursor/sdk",
     icon: logos.cursor,
     imports: 'import { Agent } from "@cursor/sdk"',
-    agent: `    const result = await Agent.prompt(\`Review PR #\${event.prNumber} and propose a patch.\`, {
+    agent: `    const result = await Agent.prompt(brief, {
       apiKey: process.env.CURSOR_API_KEY!, // protected env: the VM only holds a placeholder
       model: { id: "composer-2.5" },
       local: { cwd: "/workspace" }
     })
-    const review = result.result ?? ""`,
+    const output = result.result ?? ""`,
   },
   {
     key: "opencode",
@@ -105,15 +139,15 @@ const harnesses = [
     icon: logos.opencode,
     imports: 'import { createOpencode } from "@opencode-ai/sdk"',
     agent: `    const { client } = await createOpencode()
-    const session = await client.session.create({ body: { title: \`pr-\${event.prNumber}\` } })
+    const session = await client.session.create({ body: { title: "run" } })
     const result = await client.session.prompt({
       path: { id: session.data.id },
       body: {
         model: { providerID: "openrouter", modelID: "z-ai/glm-4.6" },
-        parts: [{ type: "text", text: \`Review PR #\${event.prNumber} and propose a patch.\` }]
+        parts: [{ type: "text", text: brief }]
       }
     })
-    const review = result.data.parts
+    const output = result.data.parts
       .filter((part) => part.type === "text")
       .map((part) => part.text)
       .join("")`,
@@ -128,13 +162,13 @@ const harnesses = [
       cwd: "/workspace",
       sessionManager: SessionManager.inMemory()
     })
-    let review = ""
+    let output = ""
     session.subscribe((e) => {
       if (e.type === "message_update" && e.assistantMessageEvent.type === "text_delta") {
-        review += e.assistantMessageEvent.delta
+        output += e.assistantMessageEvent.delta
       }
     })
-    await session.prompt(\`Review PR #\${event.prNumber} and propose a patch.\`)`,
+    await session.prompt(brief)`,
   },
   {
     key: "own",
@@ -143,7 +177,7 @@ const harnesses = [
     icon: null,
     imports: `import { generateText, tool, stepCountIs } from "ai"
 import { bedrock } from "@ai-sdk/amazon-bedrock"`,
-    agent: `    const { text: review } = await generateText({
+    agent: `    const { text: output } = await generateText({
       model: bedrock("anthropic.claude-sonnet-4-6"), // or Vertex, Ollama — any provider the AI SDK speaks
       tools: {
         sh: tool({
@@ -153,7 +187,7 @@ import { bedrock } from "@ai-sdk/amazon-bedrock"`,
         })
       },
       stopWhen: stepCountIs(40),
-      prompt: \`Review PR #\${event.prNumber} and propose a patch.\`
+      prompt: brief
     })`,
   },
 ] as const;
@@ -200,90 +234,12 @@ const highlightTypeScript = (value: string) => {
   return html + escapeHtml(value.slice(cursor));
 };
 
-const runtimeLine = (lines: string[], anchor: string) => {
-  const matches = lines.flatMap((line, index) =>
-    line === anchor ? [index + 1] : [],
-  );
-  if (matches.length !== 1) {
-    throw new Error(`Runtime code anchor must match exactly once: ${anchor}`);
-  }
-  return matches[0]!;
-};
-
-const runtimeRegion = (lines: string[], start: string, end: string) => {
-  const from = runtimeLine(lines, start);
-  const to = runtimeLine(lines, end);
-  if (from > to) throw new Error(`Runtime code region is inverted: ${start}`);
-  return { from, to };
-};
-
 const tints: Record<string, string> = {
   yellow: "#f5eeda",
   blue: "#e7eef7",
   pink: "#f3e8ee",
   green: "#eaf0e6",
 };
-
-const runtimeVariants = harnesses.map((harness) => {
-  const lines = runtimeFile(harness.imports, harness.agent).split("\n");
-  const approvalLine = runtimeLine(
-    lines,
-    '    const approval = await tokens.create({ timeout: "30m" })',
-  );
-  const regions = [
-    {
-      key: "image",
-      label: "image",
-      ...runtimeRegion(lines, 'const base = image("repo-agent")', '  .run(["bun", "install"])'),
-      tone: "blue",
-      strong: "#5079e4",
-    },
-    {
-      key: "sandbox",
-      label: "sandbox",
-      ...runtimeRegion(
-        lines,
-        'export const repoSandbox = sandbox({ id: "repo-agent" })',
-        '  .resources({ cpu: 2, memory: "4GiB" })',
-      ),
-      tone: "green",
-      strong: "#5e8a70",
-    },
-    {
-      key: "task",
-      label: "task",
-      from: runtimeLine(lines, "export const reviewPr = task({"),
-      to: approvalLine - 2,
-      tone: "pink",
-      strong: "#a8618a",
-    },
-    {
-      key: "input",
-      label: "human input",
-      from: approvalLine,
-      to: runtimeLine(
-        lines,
-        "    if (decision.approved) await postReview(event.prNumber, review)",
-      ),
-      tone: "yellow",
-      strong: "#ad8226",
-    },
-  ];
-  return {
-    ...harness,
-    codeLines: lines.map((line, index) => ({
-      html: highlightTypeScript(line) || "&nbsp;",
-      region: regions.find((region) => index + 1 >= region.from && index + 1 <= region.to)?.key,
-    })),
-    codeTags: regions.map((region) => ({
-      key: region.key,
-      label: region.label,
-      line: region.from,
-      tone: region.tone,
-      strong: region.strong,
-    })),
-  };
-});
 
 const highlightShell = (value: string) =>
   value
@@ -633,53 +589,191 @@ const renderedActor = {
 
 const boltPixels = pixelsFromRows(pixelIcons.bolt);
 
-const buildCards = [
-  {
-    index: "01",
-    icon: "mention",
-    tone: "blue",
-    title: "A teammate you @-mention",
-    desc: "Ask it in a Slack thread or assign it an issue. It clones the repo in its own VM, does the work, runs the tests and opens the PR. Reply to redirect it.",
-  },
-  {
-    index: "02",
-    icon: "merge",
-    tone: "pink",
-    title: "A reviewer on every PR",
-    desc: "Woken by every pull request: reviews against your conventions, flags risky diffs, fixes the flaky test it just found.",
-  },
-  {
-    index: "03",
-    icon: "bug",
-    tone: "yellow",
-    title: "A bug hunter on call",
-    desc: "A new error or a red build triggers it. It reproduces the failure in a VM, finds the root cause, and posts the fix — or a report — to Slack.",
-  },
-  {
-    index: "04",
-    icon: "moon",
-    tone: "green",
-    title: "The 3 a.m. fleet job",
-    desc: "On a schedule: dependency bumps and migrations across every repo, compliance scans, the Monday metrics report.",
-  },
-] as const;
-
-const renderedBuildCards = buildCards.map((card) => ({
-  ...card,
-  pixels: pixelsFromRows(pixelIcons[card.icon]),
-}));
-
 const interfaces = [
-  { name: "Slack", icon: logos.slack },
-  { name: "Discord", icon: logos.discord },
-  { name: "Microsoft Teams", icon: logos.microsoftTeams },
-  { name: "GitHub", icon: logos.github },
-  { name: "Linear", icon: logos.linear },
-  { name: "your product", icon: null },
+  {
+    key: "slack",
+    name: "Slack",
+    icon: logos.slack,
+    code: `    await sendSlackApproval({
+      channel: $src.channel,
+      callbackUrl: approval.callbackUrl
+    })`,
+  },
+  {
+    key: "discord",
+    name: "Discord",
+    icon: logos.discord,
+    code: `    await sendDiscordApproval({
+      channelId: $src.channelId,
+      callbackUrl: approval.callbackUrl
+    })`,
+  },
+  {
+    key: "teams",
+    name: "Microsoft Teams",
+    icon: logos.microsoftTeams,
+    code: `    await sendTeamsCard({
+      conversationId: $src.conversationId,
+      callbackUrl: approval.callbackUrl
+    })`,
+  },
+  {
+    key: "github",
+    name: "GitHub",
+    icon: logos.github,
+    code: `    await commentOnPr({
+      prNumber: $src.prNumber,
+      body: approval.callbackUrl
+    })`,
+  },
+  {
+    key: "linear",
+    name: "Linear",
+    icon: logos.linear,
+    code: `    await commentOnIssue({
+      issueId: $src.issueId,
+      body: approval.callbackUrl
+    })`,
+  },
+  {
+    key: "product",
+    name: "your product",
+    icon: null,
+    code: `    await notify({
+      topic: "approval-requested",
+      callbackUrl: approval.callbackUrl
+    })`,
+  },
 ] as const;
 
 const windowPixels = pixelsFromRows(pixelIcons.window);
 const arrowRightPixels = pixelsFromRows(pixelIcons.arrowRight);
+
+const hlLines = (text: string) =>
+  text.split("\n").map((line) => highlightTypeScript(line) || "&nbsp;");
+
+const fixedCode = {
+  zimport: 'import { z } from "zod"',
+  image: `const base = image("repo-agent")
+  .from("node:24-bookworm-slim")
+  .workdir("/workspace")
+  .run(["sh", "-ceu", "apt-get update && apt-get install -y git ripgrep"])
+  .copy("/workspace/package.json", source.file("package.json"))
+  .run(["bun", "install"])`,
+  sandbox: `export const repoSandbox = sandbox({ id: "repo-agent" })
+  .image(base)
+  .resources({ cpu: 2, memory: "4GiB" })`,
+  approvalPre: '    const approval = await tokens.create({ timeout: "30m" })',
+  wait: `    // The microVM freezes here — filesystem, memory, process.
+    const decision = await approval.wait({
+      schema: z.object({ approved: z.boolean() }),
+      timeout: "30m",`,
+  unwrap: "    }).unwrap()",
+  close: `  }
+})`,
+} as const;
+
+const codeParts = {
+  fixed: Object.fromEntries(
+    Object.entries(fixedCode).map(([key, text]) => [key, hlLines(text)]),
+  ),
+  agents: Object.fromEntries(
+    harnesses.map((harness) => [
+      harness.key,
+      { imports: hlLines(harness.imports), body: hlLines(harness.agent), meta: harness.meta },
+    ]),
+  ),
+  interfaces: Object.fromEntries(
+    interfaces.map((iface) => [iface.key, { lines: hlLines(iface.code) }]),
+  ),
+  usecases: Object.fromEntries(
+    usecases.map((usecase) => [
+      usecase.key,
+      {
+        file: `${usecase.id}.ts`,
+        primitive: usecase.primitive,
+        src: usecase.src,
+        imports: hlLines(usecase.imports),
+        head: hlLines(usecase.head),
+        meta: hlLines(usecase.meta),
+        action: hlLines(usecase.action),
+      },
+    ]),
+  ),
+};
+
+const codeRecipe: ReadonlyArray<readonly [string, "usecase" | "agent" | "interface" | null]> = [
+  ["usecase.imports", "usecase"],
+  ["agent.imports", "agent"],
+  ["fixed.zimport", null],
+  ["blank", null],
+  ["fixed.image", null],
+  ["blank", null],
+  ["fixed.sandbox", null],
+  ["blank", null],
+  ["usecase.head", "usecase"],
+  ["blank", null],
+  ["agent.body", "agent"],
+  ["blank", null],
+  ["fixed.approvalPre", null],
+  ["interface.lines", "interface"],
+  ["fixed.wait", null],
+  ["usecase.meta", "usecase"],
+  ["fixed.unwrap", null],
+  ["usecase.action", "usecase"],
+  ["fixed.close", null],
+];
+
+const codePick = { usecase: "review", agent: "claude", interface: "slack" } as const;
+
+const codeSegment = (
+  key: string,
+  pick: { agent: string; interface: string; usecase: string },
+): string[] => {
+  if (key === "blank") return ["&nbsp;"];
+  const [scope, name] = key.split(".") as [string, string];
+  if (scope === "agent") {
+    const agent = codeParts.agents[pick.agent] as { imports: string[]; body: string[]; meta: string };
+    return agent[name as "imports" | "body"];
+  }
+  if (scope === "usecase") {
+    const usecase = codeParts.usecases[pick.usecase] as {
+      file: string;
+      primitive: string;
+      src: string;
+      imports: string[];
+      head: string[];
+      meta: string[];
+      action: string[];
+    };
+    return usecase[name as "imports" | "head" | "meta" | "action"];
+  }
+  if (scope === "interface") {
+    const usecase = codeParts.usecases[pick.usecase] as { src: string };
+    return codeParts.interfaces[pick.interface]!.lines.map((line) =>
+      line.replaceAll("$src", usecase.src),
+    );
+  }
+  return codeParts.fixed[name] as string[];
+};
+
+const initialCodeLines = codeRecipe.flatMap(([key, region]) =>
+  codeSegment(key, codePick).map((html) => ({ html, region })),
+);
+
+const codeTags = [
+  { region: "usecase", label: usecases.find((u) => u.key === codePick.usecase)!.primitive, tone: "pink", strong: "#a8618a" },
+  { region: "agent", label: "agent", tone: "blue", strong: "#5079e4" },
+  { region: "interface", label: "interface", tone: "yellow", strong: "#ad8226" },
+].map((tag) => ({
+  ...tag,
+  line: initialCodeLines.findIndex((line) => line.region === tag.region) + 1,
+}));
+
+const usecaseChips = usecases.map((usecase) => ({
+  ...usecase,
+  pixels: pixelsFromRows(pixelIcons[usecase.icon]),
+}));
 
 const wireRequests = {
   vm: `GET /repos/acme/app/pulls/482
@@ -741,31 +835,54 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
       </div>
     </section>
 
-    <section id="build" class="build-section" aria-label="What you can build">
+    <section id="runtime" class="build-section" aria-label="What you can build">
       <div class="section-head">
         <h2 class="headline section-title">
           What you can build.
-          <span class="faint">Your own Devin — with your agent, in your interface.</span>
+          <span class="faint">Pick a job, an agent, an interface — one file.</span>
         </h2>
         <p class="section-note">
           Devin, Cursor Cloud and Codex Cloud ship the agent as a finished
-          product. Helmr gives you the same thing as infrastructure — you choose
-          the agent and the interface, and it runs in your own isolated VMs.
+          product. Helmr gives you the same thing as infrastructure — pick each
+          part and the file below rewires itself.
         </p>
       </div>
       <div class="choices">
         <div class="choice">
           <div class="choice-copy">
-            <p class="choice-title">Any agent.</p>
-            <p class="choice-sub">Claude Code, Codex, an open harness on a cheap model, or the loop you wrote yourself.</p>
+            <p class="choice-title">A job.</p>
+            <p class="choice-sub">A one-shot task, a durable actor session, or a cron schedule.</p>
           </div>
-          <div class="choice-chips">
-            {runtimeVariants.map((harness, index) => (
+          <div class="choice-chips" data-pick="usecase">
+            {usecaseChips.map((usecase) => (
               <button
                 type="button"
                 class="harness-chip choice-chip"
-                data-agent={harness.key}
-                aria-pressed={index === 0 ? "true" : "false"}
+                data-key={usecase.key}
+                aria-pressed={usecase.key === codePick.usecase ? "true" : "false"}
+              >
+                <svg class="harness-chip-pixel" viewBox="0 0 10 10" aria-hidden="true">
+                  {usecase.pixels.map((pixel) => (
+                    <rect x={pixel.x} y={pixel.y} width="1" height="1" />
+                  ))}
+                </svg>
+                <span>{usecase.name}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+        <div class="choice">
+          <div class="choice-copy">
+            <p class="choice-title">An agent.</p>
+            <p class="choice-sub">Claude Code, Codex, an open harness on a cheap model, or the loop you wrote yourself.</p>
+          </div>
+          <div class="choice-chips" data-pick="agent">
+            {harnesses.map((harness) => (
+              <button
+                type="button"
+                class="harness-chip choice-chip"
+                data-key={harness.key}
+                aria-pressed={harness.key === codePick.agent ? "true" : "false"}
               >
                 {harness.icon ? (
                   <img src={harness.icon} alt="" width="16" height="16" />
@@ -783,12 +900,17 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
         </div>
         <div class="choice">
           <div class="choice-copy">
-            <p class="choice-title">Any interface.</p>
+            <p class="choice-title">An interface.</p>
             <p class="choice-sub">Wherever your team already works. Helmr is the runtime behind it, not the chat window in front.</p>
           </div>
-          <div class="choice-chips">
+          <div class="choice-chips" data-pick="interface">
             {interfaces.map((iface) => (
-              <span class="harness-chip choice-chip is-static">
+              <button
+                type="button"
+                class="harness-chip choice-chip"
+                data-key={iface.key}
+                aria-pressed={iface.key === codePick.interface ? "true" : "false"}
+              >
                 {iface.icon ? (
                   <img src={iface.icon} alt="" width="15" height="15" />
                 ) : (
@@ -799,91 +921,30 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
                   </svg>
                 )}
                 <span>{iface.name}</span>
-              </span>
+              </button>
             ))}
           </div>
         </div>
       </div>
-      <div class="build-grid">
-        {renderedBuildCards.map((card) => (
-          <a class="build-card" href="#runtime">
-            <span class="build-card-head">
-              <svg class="feature-icon" viewBox="0 0 10 10" aria-hidden="true" style={`background: ${tints[card.tone]}`}>
-                {card.pixels.map((pixel) => (
-                  <rect x={pixel.x} y={pixel.y} width="1" height="1" />
-                ))}
-              </svg>
-              <span class="build-index">{card.index}</span>
-            </span>
-            <span class="build-title">{card.title}</span>
-            <span class="build-desc">{card.desc}</span>
-          </a>
-        ))}
-      </div>
-    </section>
-
-    <section id="runtime" class="code-section" aria-label="Runtime definition">
-      <div class="section-head">
-        <h2 class="headline section-title">
-          One TypeScript file.
-          <span class="faint">Image, Sandbox, Task, human input.</span>
-        </h2>
-        <p class="section-note">
-          Switch the harness; the rest of the file does not move. Each one runs
-          inside the microVM, and protected secrets are swapped in at the network
-          boundary — the agent never reads the raw key.
-        </p>
-      </div>
-      <div class="harness-tabs" role="tablist" aria-label="Agent harness" data-harness-tabs>
-        {runtimeVariants.map((harness, index) => (
-          <button
-            type="button"
-            class="harness-tab"
-            role="tab"
-            id={`runtime-tab-${harness.key}`}
-            aria-selected={index === 0 ? "true" : "false"}
-            aria-controls={`runtime-panel-${harness.key}`}
-            tabindex={index === 0 ? 0 : -1}
-            data-key={harness.key}
-          >
-            {harness.icon ? (
-              <img src={harness.icon} alt="" width="16" height="16" />
-            ) : (
-              <svg class="harness-tab-pixel" viewBox="0 0 10 10" aria-hidden="true">
-                {boltPixels.map((pixel) => (
-                  <rect x={pixel.x} y={pixel.y} width="1" height="1" />
-                ))}
-              </svg>
-            )}
-            <span class="harness-tab-name">{harness.name}</span>
-          </button>
-        ))}
-      </div>
-      {runtimeVariants.map((harness, index) => (
-        <div
-          class="code-frame panel panel-screen"
-          role="tabpanel"
-          id={`runtime-panel-${harness.key}`}
-          aria-labelledby={`runtime-tab-${harness.key}`}
-          hidden={index !== 0}
-        >
-          <div class="code-cap">
-            <span>review-pr.ts</span>
-            <span class="cap-meta">{harness.meta}</span>
-          </div>
-          <pre><code>{harness.codeLines.map((line, i) => (
-            <span class="cl" data-region={line.region}><span class="ln">{String(i + 1).padStart(2, " ")}</span><span class="lc" set:html={line.html}></span></span>
-          ))}</code></pre>
-          <div class="code-tags" aria-hidden="true">
-            {harness.codeTags.map((tag) => (
-              <span
-                class={`code-tag code-tag-${tag.key}`}
-                style={`--line: ${tag.line}; --tag-strong: ${tag.strong}; background: ${tints[tag.tone]}`}
-              >{tag.label}</span>
-            ))}
-          </div>
+      <div class="code-frame panel panel-screen" data-code-frame>
+        <div class="code-cap">
+          <span data-code-file>{codeParts.usecases[codePick.usecase]!.file}</span>
+          <span class="cap-meta" data-code-meta>{harnesses.find((h) => h.key === codePick.agent)!.meta}</span>
         </div>
-      ))}
+        <pre><code data-code-body>{initialCodeLines.map((line, i) => (
+          <span class="cl" data-region={line.region}><span class="ln">{String(i + 1).padStart(2, " ")}</span><span class="lc" set:html={line.html}></span></span>
+        ))}</code></pre>
+        <div class="code-tags" aria-hidden="true">
+          {codeTags.map((tag) => (
+            <span
+              class={`code-tag code-tag-${tag.region}`}
+              data-tag-region={tag.region}
+              style={`--line: ${tag.line}; --tag-strong: ${tag.strong}; background: ${tints[tag.tone]}`}
+            >{tag.label}</span>
+          ))}
+        </div>
+      </div>
+      <script is:inline type="application/json" data-code-parts set:html={JSON.stringify({ parts: codeParts, recipe: codeRecipe, pick: codePick }).replaceAll("<", "\\u003c")} />
     </section>
 
     <section id="primitives" class="features" aria-label="Task patterns">
@@ -1125,64 +1186,75 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
       }, 1600);
     });
 
-    const harnessTabList = document.querySelector("[data-harness-tabs]");
-    let activateHarness = (_key: string, _focus = false) => {};
-    if (harnessTabList) {
-      const tabs = Array.from(
-        harnessTabList.querySelectorAll<HTMLElement>('[role="tab"]'),
-      );
+    const codePartsScript = document.querySelector("[data-code-parts]");
+    const codeBody = document.querySelector<HTMLElement>("[data-code-body]");
+    if (codePartsScript && codeBody) {
+      const { parts, recipe, pick } = JSON.parse(codePartsScript.textContent ?? "{}");
+      const state = { ...pick };
+      const fileEl = document.querySelector("[data-code-file]");
+      const metaEl = document.querySelector("[data-code-meta]");
+      const tags = Array.from(document.querySelectorAll<HTMLElement>("[data-tag-region]"));
 
-      activateHarness = (key: string, focus = false) => {
-        const tab = tabs.find((item) => item.dataset.key === key);
-        if (!tab) return;
-        for (const item of tabs) {
-          const selected = item === tab;
-          item.setAttribute("aria-selected", selected ? "true" : "false");
-          item.tabIndex = selected ? 0 : -1;
-          const panelId = item.getAttribute("aria-controls");
-          const panel = panelId ? document.getElementById(panelId) : null;
-          if (panel) panel.hidden = !selected;
+      const segment = (key: string): string[] => {
+        if (key === "blank") return ["&nbsp;"];
+        const [scope, name] = key.split(".");
+        if (scope === "agent") return parts.agents[state.agent][name];
+        if (scope === "usecase") return parts.usecases[state.usecase][name];
+        if (scope === "interface") {
+          return parts.interfaces[state.interface][name].map((line: string) =>
+            line.replaceAll("$src", parts.usecases[state.usecase].src),
+          );
         }
-        if (focus) tab.focus();
+        return parts.fixed[name];
       };
 
-      harnessTabList.addEventListener("click", (event) => {
-        const tab = (event.target as HTMLElement).closest<HTMLElement>('[role="tab"]');
-        if (tab?.dataset.key) activateHarness(tab.dataset.key);
-      });
+      const lineTemplate = codeBody.querySelector<HTMLElement>(".cl");
 
-      harnessTabList.addEventListener("keydown", (event) => {
-        const current = document.activeElement as HTMLElement | null;
-        if (!current || !tabs.includes(current)) return;
-        const key = (event as KeyboardEvent).key;
-        const index = tabs.indexOf(current);
-        let next: number | null = null;
-        if (key === "ArrowDown" || key === "ArrowRight") {
-          next = (index + 1) % tabs.length;
-        } else if (key === "ArrowUp" || key === "ArrowLeft") {
-          next = (index - 1 + tabs.length) % tabs.length;
-        } else if (key === "Home") {
-          next = 0;
-        } else if (key === "End") {
-          next = tabs.length - 1;
+      const renderCode = (flash?: string) => {
+        const lines: { html: string; region: string | null }[] = [];
+        for (const [key, region] of recipe) {
+          for (const html of segment(key)) lines.push({ html, region });
         }
-        if (next === null) return;
-        event.preventDefault();
-        activateHarness(tabs[next]!.dataset.key ?? "", true);
-      });
-
-    }
-
-    const buildSection = document.getElementById("build");
-    if (buildSection) {
-      const agentOptions = Array.from(buildSection.querySelectorAll<HTMLElement>("[data-agent]"));
-
-      agentOptions.forEach((option) => {
-        option.addEventListener("click", () => {
-          for (const item of agentOptions) {
-            item.setAttribute("aria-pressed", item === option ? "true" : "false");
+        const fragment = document.createDocumentFragment();
+        lines.forEach((line, i) => {
+          const cl = lineTemplate!.cloneNode(true) as HTMLElement;
+          if (line.region) cl.dataset.region = line.region;
+          else cl.removeAttribute("data-region");
+          if (flash && line.region === flash) cl.setAttribute("data-flash", "");
+          cl.querySelector(".ln")!.textContent = String(i + 1).padStart(2, " ");
+          cl.querySelector(".lc")!.innerHTML = line.html;
+          fragment.appendChild(cl);
+        });
+        codeBody.replaceChildren(fragment);
+        if (fileEl) fileEl.textContent = parts.usecases[state.usecase].file;
+        if (metaEl) metaEl.textContent = parts.agents[state.agent].meta;
+        for (const tag of tags) {
+          const index = lines.findIndex((line) => line.region === tag.dataset.tagRegion);
+          tag.style.setProperty("--line", String(index + 1));
+          if (tag.dataset.tagRegion === "usecase") {
+            tag.textContent = parts.usecases[state.usecase].primitive;
           }
-          activateHarness(option.dataset.agent ?? "");
+        }
+        if (flash) {
+          window.setTimeout(() => {
+            codeBody.querySelectorAll("[data-flash]").forEach((el) => el.removeAttribute("data-flash"));
+          }, 1400);
+        }
+      };
+
+      document.querySelectorAll<HTMLElement>("[data-pick]").forEach((group) => {
+        const kind = group.dataset.pick as "usecase" | "agent" | "interface";
+        const buttons = Array.from(group.querySelectorAll<HTMLElement>("button"));
+        buttons.forEach((button) => {
+          button.addEventListener("click", () => {
+            const key = button.dataset.key ?? "";
+            if (!key || state[kind] === key) return;
+            state[kind] = key;
+            for (const item of buttons) {
+              item.setAttribute("aria-pressed", item === button ? "true" : "false");
+            }
+            renderCode(kind);
+          });
         });
       });
     }
@@ -1443,25 +1515,9 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
     font-size: 0.75rem;
   }
 
-  .code-section {
-    padding-top: 3.5rem;
-    padding-bottom: 7rem;
-  }
-
-  .code-section .section-head {
-    display: grid;
-    grid-template-columns: minmax(0, 1.1fr) minmax(18rem, 0.9fr);
-    align-items: end;
-    gap: 2rem;
-  }
-
-  .code-section .section-title {
-    max-width: none;
-  }
-
   .build-section {
     padding-top: 3.5rem;
-    padding-bottom: 5rem;
+    padding-bottom: 7rem;
   }
 
   .build-section .section-head {
@@ -1486,52 +1542,6 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
 
   .security-section .section-title .faint {
     white-space: normal;
-  }
-
-  .build-grid {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 2.5rem 2rem;
-    margin-top: 3.5rem;
-  }
-
-  .build-card {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    min-width: 0;
-    color: var(--text);
-    text-decoration: none;
-  }
-
-  .build-card-head {
-    display: flex;
-    align-items: center;
-    gap: 0.7rem;
-  }
-
-  .build-index {
-    font-family: var(--font-mono);
-    font-size: 0.68rem;
-    color: var(--text-subtle);
-  }
-
-  .build-title {
-    font-size: 1.05rem;
-    font-weight: 500;
-    color: var(--text);
-    letter-spacing: -0.01em;
-  }
-
-  .build-desc {
-    font-size: 0.875rem;
-    line-height: 1.6;
-    color: var(--text-muted);
-    max-width: 24rem;
-  }
-
-  .build-card:hover .build-title {
-    text-decoration: underline;
   }
 
   .choices {
@@ -1581,10 +1591,6 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
   }
 
 
-  .harness-chip.is-static {
-    cursor: default;
-  }
-
   .harness-chip {
     appearance: none;
     display: inline-flex;
@@ -1626,51 +1632,6 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
     shape-rendering: crispEdges;
   }
 
-  .harness-tabs {
-    display: flex;
-    margin-top: 2.5rem;
-    border-bottom: 1px solid var(--editorial-rule);
-    overflow-x: auto;
-    overflow-y: hidden;
-  }
-
-  .harness-tab {
-    appearance: none;
-    display: flex;
-    align-items: center;
-    gap: 0.45rem;
-    padding: 0.7rem 1rem;
-    border: 0;
-    background: none;
-    color: var(--text-muted);
-    font-family: var(--font-sans);
-    font-size: 0.875rem;
-    font-weight: 500;
-    white-space: nowrap;
-    cursor: pointer;
-  }
-
-  .harness-tab:hover {
-    color: var(--text);
-  }
-
-  .harness-tab[aria-selected="true"] {
-    color: var(--text);
-    box-shadow: inset 0 -2px 0 var(--ink);
-  }
-
-  .harness-tab img,
-  .harness-tab-pixel {
-    width: 16px;
-    height: 16px;
-    flex: 0 0 auto;
-  }
-
-  .harness-tab-pixel {
-    fill: var(--ink);
-    shape-rendering: crispEdges;
-  }
-
   .code-frame {
     --runtime-line-height: 1.4344rem;
     position: relative;
@@ -1703,39 +1664,44 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
     background-size: 4px 1px;
   }
 
-  .cl[data-region="image"] .ln { box-shadow: inset -3px 0 0 #5079e4; }
-  .cl[data-region="sandbox"] .ln { box-shadow: inset -3px 0 0 #5e8a70; }
-  .cl[data-region="task"] .ln { box-shadow: inset -3px 0 0 #a8618a; }
-  .cl[data-region="input"] .ln { box-shadow: inset -3px 0 0 #ad8226; }
+  .cl[data-region="agent"] .ln { box-shadow: inset -3px 0 0 #5079e4; }
+  .cl[data-region="usecase"] .ln { box-shadow: inset -3px 0 0 #a8618a; }
+  .cl[data-region="interface"] .ln { box-shadow: inset -3px 0 0 #ad8226; }
 
-  .code-frame:has(.code-tag-image:hover) .cl[data-region="image"],
-  .code-frame:has(.cl[data-region="image"]:hover) .cl[data-region="image"] {
+  .cl[data-region="agent"] { --flash: rgba(80, 121, 228, 0.22); }
+  .cl[data-region="usecase"] { --flash: rgba(168, 97, 138, 0.2); }
+  .cl[data-region="interface"] { --flash: rgba(173, 130, 38, 0.22); }
+
+  .cl[data-flash] {
+    animation: line-flash 1.2s ease-out;
+  }
+
+  @keyframes line-flash {
+    0% { background: var(--flash); }
+    100% { background: transparent; }
+  }
+
+  .code-frame:has(.code-tag-agent:hover) .cl[data-region="agent"],
+  .code-frame:has(.cl[data-region="agent"]:hover) .cl[data-region="agent"] {
     background: rgba(80, 121, 228, 0.1);
   }
 
-  .code-frame:has(.code-tag-sandbox:hover) .cl[data-region="sandbox"],
-  .code-frame:has(.cl[data-region="sandbox"]:hover) .cl[data-region="sandbox"] {
-    background: rgba(94, 138, 112, 0.12);
-  }
-
-  .code-frame:has(.code-tag-task:hover) .cl[data-region="task"],
-  .code-frame:has(.cl[data-region="task"]:hover) .cl[data-region="task"] {
+  .code-frame:has(.code-tag-usecase:hover) .cl[data-region="usecase"],
+  .code-frame:has(.cl[data-region="usecase"]:hover) .cl[data-region="usecase"] {
     background: rgba(168, 97, 138, 0.1);
   }
 
-  .code-frame:has(.code-tag-input:hover) .cl[data-region="input"],
-  .code-frame:has(.cl[data-region="input"]:hover) .cl[data-region="input"] {
+  .code-frame:has(.code-tag-interface:hover) .cl[data-region="interface"],
+  .code-frame:has(.cl[data-region="interface"]:hover) .cl[data-region="interface"] {
     background: rgba(173, 130, 38, 0.12);
   }
 
-  .code-frame:has(.code-tag-image:hover) .code-tag-image,
-  .code-frame:has(.cl[data-region="image"]:hover) .code-tag-image,
-  .code-frame:has(.code-tag-sandbox:hover) .code-tag-sandbox,
-  .code-frame:has(.cl[data-region="sandbox"]:hover) .code-tag-sandbox,
-  .code-frame:has(.code-tag-task:hover) .code-tag-task,
-  .code-frame:has(.cl[data-region="task"]:hover) .code-tag-task,
-  .code-frame:has(.code-tag-input:hover) .code-tag-input,
-  .code-frame:has(.cl[data-region="input"]:hover) .code-tag-input {
+  .code-frame:has(.code-tag-agent:hover) .code-tag-agent,
+  .code-frame:has(.cl[data-region="agent"]:hover) .code-tag-agent,
+  .code-frame:has(.code-tag-usecase:hover) .code-tag-usecase,
+  .code-frame:has(.cl[data-region="usecase"]:hover) .code-tag-usecase,
+  .code-frame:has(.code-tag-interface:hover) .code-tag-interface,
+  .code-frame:has(.cl[data-region="interface"]:hover) .code-tag-interface {
     border-color: var(--tag-strong);
   }
 
@@ -1798,7 +1764,6 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
     padding-bottom: 5rem;
   }
 
-  .code-section,
   .build-section,
   .features,
   .actor-section,
@@ -2176,14 +2141,9 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
       height: 210px;
     }
 
-    .code-section .section-head,
     .build-section .section-head {
       display: flex;
       align-items: flex-start;
-    }
-
-    .build-grid {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
   }
@@ -2208,11 +2168,6 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
       grid-template-columns: minmax(0, 1fr);
     }
 
-    .code-section {
-      padding-top: 4rem;
-    }
-
-    .code-section,
     .build-section,
     .actor-section,
     .workspace-section,
@@ -2269,8 +2224,5 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
       letter-spacing: -0.04em;
     }
 
-    .build-grid {
-      grid-template-columns: minmax(0, 1fr);
-    }
   }
 </style>

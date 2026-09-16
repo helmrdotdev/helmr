@@ -239,6 +239,13 @@ html::-webkit-scrollbar-thumb:hover {
   color: var(--text-muted);
 }
 
+.code-cap > span {
+  white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .code-cap .cap-meta {
   color: var(--text-subtle);
 }
