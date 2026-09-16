@@ -779,17 +779,22 @@ const tagPicks = {
   ),
 };
 
+const regionStyle = {
+  usecase: { tone: "pink", strong: "#a8618a" },
+  agent: { tone: "blue", strong: "#5079e4" },
+  interface: { tone: "yellow", strong: "#ad8226" },
+} as const;
+
 const codeTags = (
   [
-    ["usecase", "usecase.head", "pink", "#a8618a"],
-    ["agent", "agent.body", "blue", "#5079e4"],
-    ["interface", "interface.lines", "yellow", "#ad8226"],
+    ["usecase", "usecase.head"],
+    ["agent", "agent.body"],
+    ["interface", "interface.lines"],
   ] as const
-).map(([region, seg, tone, strong]) => ({
+).map(([region, seg]) => ({
   region,
   seg,
-  tone,
-  strong,
+  ...regionStyle[region],
   ...tagPicks[region][codePick[region]]!,
   line: initialCodeLines.findIndex((line) => line.seg === seg) + 1,
 }));
@@ -878,7 +883,7 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
             <p class="choice-title">Any job.</p>
             <p class="choice-sub">A one-shot task, a durable actor session, or a cron schedule.</p>
           </div>
-          <div class="choice-chips" data-pick="usecase">
+          <div class="choice-chips" data-pick="usecase" style={`--chip-tint: ${tints[regionStyle.usecase.tone]}`}>
             {usecaseChips.map((usecase) => (
               <button
                 type="button"
@@ -901,7 +906,7 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
             <p class="choice-title">Any agent.</p>
             <p class="choice-sub">Claude Code, Codex, an open harness on a cheap model, or the loop you wrote yourself.</p>
           </div>
-          <div class="choice-chips" data-pick="agent">
+          <div class="choice-chips" data-pick="agent" style={`--chip-tint: ${tints[regionStyle.agent.tone]}`}>
             {harnesses.map((harness) => (
               <button
                 type="button"
@@ -928,7 +933,7 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
             <p class="choice-title">Any interface.</p>
             <p class="choice-sub">Wherever your team already works. Helmr is the runtime behind it, not the chat window in front.</p>
           </div>
-          <div class="choice-chips" data-pick="interface">
+          <div class="choice-chips" data-pick="interface" style={`--chip-tint: ${tints[regionStyle.interface.tone]}`}>
             {interfaces.map((iface) => (
               <button
                 type="button"
@@ -1656,6 +1661,10 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
     font-weight: 500;
     text-decoration: none;
     cursor: pointer;
+    transition:
+      background-color 0.12s ease-out,
+      border-color 0.12s ease-out,
+      color 0.12s ease-out;
   }
 
   button.harness-chip:not([aria-pressed="true"]):hover {
@@ -1664,9 +1673,8 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
   }
 
   .harness-chip[aria-pressed="true"] {
-    border-color: var(--ink);
-    box-shadow: inset 0 0 0 1px var(--ink);
-    background: var(--surface-raised);
+    border-color: rgba(31, 31, 36, 0.24);
+    background: var(--chip-tint, var(--surface-raised));
     color: var(--text);
   }
 
