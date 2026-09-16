@@ -67,7 +67,7 @@ Helmr installs dependencies once for the target Linux platform and retains the
 whole installed tree. Config, declaration analysis, and Program execution use
 one platform-owned Node 24.21 language adapter. JavaScript keeps native Node
 resolution, package exports, module cache and file locations. Reached TypeScript
-and JSX files are transformed in memory using pinned TypeScript 6.0.3, including
+and JSX files are transformed in memory using the Runtime-pinned TypeScript version, including
 files under `node_modules`, mixed JavaScript-to-TypeScript packages, and dynamic
 loads. There is no package selection setting and no dependency reinstallation by
 name. Aliases, nested versions, hoisted packages and contained package symlinks

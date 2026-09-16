@@ -4,6 +4,7 @@
   stdenv,
   stdenvNoCC,
   nodeVersion,
+  typescriptVersion,
   nodeRelease,
   glibc,
   coreutils,
@@ -105,6 +106,7 @@ stdenvNoCC.mkDerivation {
     jq -cSj -n \
       --arg architecture "${architecture}" \
       --arg nodeVersion "${nodeVersion}" \
+      --arg typescriptVersion "${typescriptVersion}" \
       --arg adapterDigest "$adapter_digest" \
       --arg typescriptDigest "$typescript_digest" \
       --arg runtimeContract "helmr.runtime.v0" \
@@ -113,7 +115,7 @@ stdenvNoCC.mkDerivation {
         formatVersion:0,
         nodeVersion:$nodeVersion,
         programNodeFlags:["--no-strip-types","--no-global-search-paths","--enable-source-maps","--import=file:///opt/helmr/runtime/helmr/module-preload.mjs"],
-        language:{apiVersion:"helmr.module-execution.v0",adapterDigest:$adapterDigest,typescriptDigest:$typescriptDigest,typescriptVersion:"6.0.3"},
+        language:{apiVersion:"helmr.module-execution.v0",adapterDigest:$adapterDigest,typescriptDigest:$typescriptDigest,typescriptVersion:$typescriptVersion},
         runtimeContract:$runtimeContract
       }' >"$tree/helmr/runtime.json"
 

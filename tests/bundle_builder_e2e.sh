@@ -60,11 +60,11 @@ docker run --rm --platform linux/amd64 --entrypoint node --workdir / \
 # Observe the shipped manager processes, including the selector's cold npm path.
 # This probe is test-only and is never included in a Program.
 mkdir "$tmp/interpreters"
-cp "$repo_root/internal/version/node-release.json" "$tmp/interpreters/node-release.json"
+cp "$repo_root/internal/version/runtime-dependencies.json" "$tmp/interpreters/runtime-dependencies.json"
 cat >"$tmp/interpreters/assert-node.cjs" <<'JS'
 const fs = require("node:fs")
 if (!process.versions.bun) {
-  require("node:assert/strict").equal(process.versions.node, require("./node-release.json").version)
+  require("node:assert/strict").equal(process.versions.node, require("./runtime-dependencies.json").node.version)
   fs.appendFileSync("/proof/processes.jsonl", JSON.stringify({node:process.versions.node,execPath:process.execPath,argv:process.argv,script:fs.realpathSync(process.argv[1])}) + "\n")
 }
 JS
@@ -121,12 +121,12 @@ go -C "$repo_root" build \
 
 project="$tmp/project"
 mkdir -p "$project/tasks"
-cp "$repo_root/internal/version/node-release.json" "$project/node-release.json"
+cp "$repo_root/internal/version/runtime-dependencies.json" "$project/runtime-dependencies.json"
 cat >"$project/prepare.sh" <<'SH'
 #!/bin/sh
 set -eu
 node -e '
-  const expected = JSON.parse(require("node:fs").readFileSync("node-release.json", "utf8")).version
+  const expected = JSON.parse(require("node:fs").readFileSync("runtime-dependencies.json", "utf8")).node.version
   require("node:assert/strict").equal(process.versions.node, expected)
   console.log(JSON.stringify({surface:"install lifecycle", version:process.versions.node, execPath:process.execPath}))
 '

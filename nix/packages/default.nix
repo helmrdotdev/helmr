@@ -12,7 +12,10 @@ let
   inherit (pkgs) lib;
   pkgsUnstable = import nixpkgs-unstable { inherit system; };
   pkgsBun = import nixpkgs-bun { inherit system; };
-  nodeRelease = builtins.fromJSON (builtins.readFile ../../internal/version/node-release.json);
+  runtimeDependencies = builtins.fromJSON (
+    builtins.readFile ../../internal/version/runtime-dependencies.json
+  );
+  nodeRelease = runtimeDependencies.node;
   nodeArchive =
     targetSystem:
     let
@@ -44,14 +47,18 @@ let
       pkgsGo.go_1_27;
   squashfsTools = pkgs.callPackage ./squashfs-tools.nix { };
   timezoneData = pkgs.callPackage ./timezone-data.nix { };
-  moduleExecution = pkgs.callPackage ./module-execution.nix { };
+  moduleExecution = pkgs.callPackage ./module-execution.nix {
+    typescriptRelease = runtimeDependencies.typescript;
+  };
   runtimeReleaseUnchecked = pkgs.callPackage ./runtime-release.nix {
     inherit squashfsTools moduleExecution;
+    typescriptVersion = runtimeDependencies.typescript.version;
     nodeVersion = nodeRelease.version;
     nodeRelease = nodeArchive "x86_64-linux";
   };
   compiler = pkgs.callPackage ./compiler.nix {
     inherit moduleExecution;
+    typescriptVersion = runtimeDependencies.typescript.version;
     nodejs_24 = nodejs;
   };
   bundleBuilder = pkgs.callPackage ./bundle-builder.nix {
