@@ -39,12 +39,25 @@ ${agent}
   }
 })`;
 
+const logos = {
+  claude: "/logos/claude.svg",
+  openai: "/logos/openai.svg",
+  cursor: "/logos/cursor.svg",
+  opencode: "/logos/opencode.svg",
+  pi: "/logos/pi.svg",
+  slack: "/logos/slack.svg",
+  discord: "/logos/discord.svg",
+  microsoftTeams: "/logos/microsoft-teams.svg",
+  github: "/logos/github.svg",
+  linear: "/logos/linear.svg",
+} as const;
+
 const harnesses = [
   {
     key: "claude",
     name: "Claude Agent SDK",
     meta: "@anthropic-ai/claude-agent-sdk",
-    icon: "/icons/claude.svg",
+    icon: logos.claude,
     imports: 'import { query } from "@anthropic-ai/claude-agent-sdk"',
     agent: `    let review = ""
     for await (const message of query({
@@ -62,7 +75,7 @@ const harnesses = [
     key: "codex",
     name: "Codex",
     meta: "@openai/codex-sdk",
-    icon: "/icons/openai.svg",
+    icon: logos.openai,
     imports: 'import { Codex } from "@openai/codex-sdk"',
     agent: `    const codex = new Codex()
     const thread = codex.startThread({
@@ -76,7 +89,7 @@ const harnesses = [
     key: "cursor",
     name: "Cursor",
     meta: "@cursor/sdk",
-    icon: "/icons/cursor.svg",
+    icon: logos.cursor,
     imports: 'import { Agent } from "@cursor/sdk"',
     agent: `    const result = await Agent.prompt(\`Review PR #\${event.prNumber} and propose a patch.\`, {
       apiKey: process.env.CURSOR_API_KEY!, // protected env: the VM only holds a placeholder
@@ -89,7 +102,7 @@ const harnesses = [
     key: "opencode",
     name: "OpenCode",
     meta: "@opencode-ai/sdk · opencode serve",
-    icon: "/icons/opencode.svg",
+    icon: logos.opencode,
     imports: 'import { createOpencode } from "@opencode-ai/sdk"',
     agent: `    const { client } = await createOpencode()
     const session = await client.session.create({ body: { title: \`pr-\${event.prNumber}\` } })
@@ -109,7 +122,7 @@ const harnesses = [
     key: "pi",
     name: "Pi",
     meta: "@earendil-works/pi-coding-agent",
-    icon: "/icons/pi.svg",
+    icon: logos.pi,
     imports: 'import { createAgentSession, SessionManager } from "@earendil-works/pi-coding-agent"',
     agent: `    const { session } = await createAgentSession({
       cwd: "/workspace",
@@ -427,6 +440,18 @@ const pixelIcons = {
     "..##......",
     "...####...",
   ],
+  window: [
+    "..........",
+    ".########.",
+    ".#......#.",
+    ".########.",
+    ".#......#.",
+    ".#......#.",
+    ".#......#.",
+    ".#......#.",
+    ".########.",
+    "..........",
+  ],
 } as const;
 
 const cloudPixels = pixelsFromRows(pixelIcons.cloud);
@@ -632,7 +657,16 @@ const renderedBuildCards = buildCards.map((card) => ({
   pixels: pixelsFromRows(pixelIcons[card.icon]),
 }));
 
-const interfaceOptions = ["Slack", "Discord", "Microsoft Teams", "GitHub", "Linear", "your product"] as const;
+const interfaces = [
+  { name: "Slack", icon: logos.slack },
+  { name: "Discord", icon: logos.discord },
+  { name: "Microsoft Teams", icon: logos.microsoftTeams },
+  { name: "GitHub", icon: logos.github },
+  { name: "Linear", icon: logos.linear },
+  { name: "your product", icon: null },
+] as const;
+
+const windowPixels = pixelsFromRows(pixelIcons.window);
 ---
 
 <BaseLayout
@@ -727,8 +761,19 @@ const interfaceOptions = ["Slack", "Discord", "Microsoft Teams", "GitHub", "Line
             <p class="choice-sub">Wherever your team already works. Helmr is the runtime behind it, not the chat window in front.</p>
           </div>
           <div class="choice-chips">
-            {interfaceOptions.map((iface) => (
-              <span class="harness-chip choice-chip is-static">{iface}</span>
+            {interfaces.map((iface) => (
+              <span class="harness-chip choice-chip is-static">
+                {iface.icon ? (
+                  <img src={iface.icon} alt="" width="15" height="15" />
+                ) : (
+                  <svg class="harness-chip-pixel" viewBox="0 0 10 10" aria-hidden="true">
+                    {windowPixels.map((pixel) => (
+                      <rect x={pixel.x} y={pixel.y} width="1" height="1" />
+                    ))}
+                  </svg>
+                )}
+                <span>{iface.name}</span>
+              </span>
             ))}
           </div>
         </div>
@@ -1453,6 +1498,7 @@ const interfaceOptions = ["Slack", "Discord", "Microsoft Teams", "GitHub", "Line
     width: 15px;
     height: 15px;
   }
+
 
   .harness-chip.is-static {
     cursor: default;
