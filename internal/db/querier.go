@@ -271,6 +271,8 @@ type Querier interface {
 	GetTokenForCallbackCompletion(ctx context.Context, arg GetTokenForCallbackCompletionParams) (Token, error)
 	GetTokenWaitLocator(ctx context.Context, arg GetTokenWaitLocatorParams) (GetTokenWaitLocatorRow, error)
 	GetTokenWaitRegistrationLocator(ctx context.Context, arg GetTokenWaitRegistrationLocatorParams) (GetTokenWaitRegistrationLocatorRow, error)
+	// Presence and exact identity must use one statement snapshot, including the
+	// read-only replay before lineage locks.
 	GetTokenWaitRegistrationReplay(ctx context.Context, arg GetTokenWaitRegistrationReplayParams) (GetTokenWaitRegistrationReplayRow, error)
 	GetUserOnboardingState(ctx context.Context, userID pgtype.UUID) (GetUserOnboardingStateRow, error)
 	GetWorkerGroup(ctx context.Context, id pgtype.UUID) (WorkerGroup, error)
@@ -538,7 +540,6 @@ type Querier interface {
 	TerminalizeRunAttempt(ctx context.Context, arg TerminalizeRunAttemptParams) (int64, error)
 	TerminalizeRunLease(ctx context.Context, arg TerminalizeRunLeaseParams) (int64, error)
 	TerminalizeRunSuspensions(ctx context.Context, arg TerminalizeRunSuspensionsParams) error
-	TokenWaitExists(ctx context.Context, waitID pgtype.UUID) (bool, error)
 	TouchActiveAPIKeyByTokenHash(ctx context.Context, tokenHash []byte) (TouchActiveAPIKeyByTokenHashRow, error)
 	TouchRunWorkspaceActivity(ctx context.Context, arg TouchRunWorkspaceActivityParams) (TouchRunWorkspaceActivityRow, error)
 	TransitionWorkerGroupState(ctx context.Context, arg TransitionWorkerGroupStateParams) (TransitionWorkerGroupStateRow, error)

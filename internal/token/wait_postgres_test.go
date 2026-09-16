@@ -1163,6 +1163,7 @@ func TestTokenWaitRegistrationReplaySurvivesParkedCompletion(t *testing.T) {
 	replayed, err := reconciler.RegisterWait(ctx, request)
 	if err != nil || replayed.WaitID != request.WaitID || replayed.ConditionState != db.WaitStateCancelled ||
 		replayed.SuspensionState != db.RunWaitStateResumePending ||
+		replayed.ReasonCode != "token_cancelled" ||
 		replayed.RunStateVersion != registered.RunStateVersion+1 {
 		t.Fatalf("parked registration replay = %+v, %v; first = %+v", replayed, err, registered)
 	}
@@ -1174,7 +1175,8 @@ func TestTokenWaitRegistrationReplaySurvivesParkedCompletion(t *testing.T) {
 	}
 	changed := request
 	changed.RequestFingerprint = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	if _, err := reconciler.RegisterWait(ctx, changed); !errors.Is(err, ErrWaitAuthority) {
+	if _, err := reconciler.RegisterWait(ctx, changed); !errors.Is(err, ErrWaitAuthority) ||
+		err.Error() != ErrWaitAuthority.Error()+": token wait registration replay does not match" {
 		t.Fatalf("changed registration replay error = %v", err)
 	}
 }
