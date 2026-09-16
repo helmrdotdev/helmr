@@ -84,7 +84,13 @@ let
   revision = self.shortRev or self.dirtyShortRev or "dirty";
   releaseVersion = builtins.getEnv "HELMR_PLATFORM_VERSION";
   platformVersion = if releaseVersion == "" then "0.0.0-dev+${revision}" else releaseVersion;
-  sourceCommit = self.rev or "0000000000000000000000000000000000000000";
+  selectedSource = builtins.getEnv "HELMR_SOURCE_COMMIT";
+  sourceCommit =
+    if selectedSource == "" then
+      self.rev or "0000000000000000000000000000000000000000"
+    else
+      assert builtins.match "[0-9a-f]{40}" selectedSource != null;
+      selectedSource;
   helmr = pkgs.callPackage ./helmr.nix {
     buildGoModule = buildGo127Module;
     version = platformVersion;

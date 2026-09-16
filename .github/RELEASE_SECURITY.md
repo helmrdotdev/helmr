@@ -1,39 +1,46 @@
 # Release security
 
-One `vX.Y.Z[-pre]` tag releases the complete Helmr Platform cohort:
+The reviewed `release.yaml` workflow publishes one common Product artifact set:
+Control Plane and bundle-builder OCI images, CLI binaries, SDK/proto packages,
+the Platform Runtime closure, and Worker host/runtime bundles. Managed AMIs,
+AWS preparation and deployment belong to Cloud. Publication does not update staging.
 
-- the Control Plane container image;
-- the execution Worker AMI;
-- the signed Platform release containing the immutable Runtime closure used by
-  verified Deployment bundles;
-- the digest-pinned local/CI bundle-builder image.
-- the `@helmr/proto` and `@helmr/sdk` npm packages.
+Successful native main-push CI admits automatic previews. Manual previews select
+an open same-repository PR to main by its current full head SHA, after successful
+native PR CI. Its `.github/workflows` Git tree must equal current main, including
+for behind PRs; native release create/update with differing workflows requires
+workflow-write authority unavailable to `GITHUB_TOKEN`. Admission rejects this
+before building, and publication rechecks the current PR head and main workflow
+tree before staging writes and finalization. No new credential or tag workaround
+is used. Normal merge-result checks remain; the trusted main workflow rebuilds
+and checks the exact selected source without publication credentials. Privileged
+jobs execute only reviewed workflow source and treat candidate output as data.
+The manual publication path is available only after this mechanism is on main.
+Human tags use the same constructors and retain single-attempt publication safety.
 
-The `release` Environment admits the tag only after every required AWS value is
-present. Public images and manifests are published first, a fresh
-environmentless job resolves both images anonymously by digest, and only then
-does the workflow create the GitHub Release and idempotently publish both npm
-packages. Development signing is environmentless and cannot publish.
+The release Environment gates signing and publication. The fixed v0 index binds
+source SHA/ref, workflow SHA/ref, build identity and every common asset digest.
+Preview Sigstore identity is the exact main `release.yaml` identity; human tags use
+the corresponding exact tag identity. Workflow commit is signed metadata, not a
+certificate suffix. A signed draft permits a fresh unprivileged consumer to install
+the actual SDK/proto and build a bundle with the downloaded CLI and canonical
+builder. Only then is the signed completion index published last. Public readback
+checks the exact signed bytes and asset hashes.
 
-The Platform release is built from one source commit by Nix. Its deterministic
-archive and Sigstore bundle bind the exact runtime bytes to the release
-workflow. The Control Plane publish command accepts only the canonical closed
-runtime manifest, validates its descriptor, and writes the object immutably to
-the Platform store. It has no package-manager, toolchain-selection, source
-build, or activation authority.
+Preview retries reuse frozen original bytes and reject same-version collisions.
+A failed human tag cohort requires a new tag. Completed signed main previews are
+reconciled by the serialized discovery updater with ancestry/relevance guards.
+The reserved GitHub preview release is the only discovery pointer. Artifacts have
+no automatic deletion initially; retirement and any public support window are
+separate decisions.
 
-The bundle-builder image owns dependency installation and project compilation.
-The CLI pins that image by registry digest, runs it through isolated BuildKit,
-and uploads only its content-addressed output closure. Build credentials are
-producer-local inputs and must not enter the bundle. The Control Plane verifies
-the closure, formats, sizes, architecture, and Runtime contract; it never
-executes dependency lifecycle scripts or rebuilds an artifact.
+The builder owns dependency installation and compilation. The CLI embeds its
+registry digest and uploads only verified content-addressed output. Build
+credentials remain producer-local. Control Plane verifies closure, formats, sizes,
+architecture and Runtime identity; it never rebuilds application artifacts.
+The existing immutable Platform-store, retained-object, state and IAM guards
+remain required. This source does not authorize operational settings changes.
 
-The Platform store is versioned, private, KMS-encrypted, and public-access
-blocked. Control Plane and Workers may read immutable runtime objects but have
-no delete authority. Referenced Deployment runtime digests are GC roots.
-
-Control Plane images and Worker AMIs are built directly from the same checked
-out source. Publication is immutable: a failed release is abandoned and the
-next attempt uses a new prerelease tag. Artifact retirement is a separate,
-approved operation and never runs during tag publication.
+See [common release operations and bootstrap gaps](../scripts/release/README.md)
+for the exact manual interface, runner measurements and npm/GitHub/GHCR settings
+that still require separate operational verification.

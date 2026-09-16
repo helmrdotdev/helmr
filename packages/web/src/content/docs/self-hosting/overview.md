@@ -30,19 +30,20 @@ Do not promote an evaluation stack in place. Build a production environment from
 
 1. Satisfy the [requirements](/docs/self-hosting/requirements/), including bootstrap outputs and external ClickHouse.
 2. Configure and apply either the evaluation or production AWS composition with `create_controlplane_service = false`.
-3. Check out the exact Product release tag, download its `platform-release.tar`, provenance, and Sigstore bundle, then publish the signed Runtime before enabling Control:
+3. Check out the exact Product release tag, download its signed v0 index, `platform-release.tar`, and provenance, then publish the signed Runtime before enabling Control:
 
    ```sh
-   gh release download "$HELMR_RELEASE_TAG" --pattern 'platform-release*' --dir dist/platform-release
+   gh release download "$HELMR_RELEASE_TAG" --pattern 'platform-release*' --pattern 'release-index*' --dir dist/platform-release
    scripts/publish-platform-release.sh \
      "$PLATFORM_STORE_URI" \
      "$HELMR_RELEASE_TAG" \
+     dist/platform-release/release-index.json \
+     dist/platform-release/release-index.sigstore.json \
      dist/platform-release/platform-release.tar \
-     dist/platform-release/platform-release-provenance.json \
-     dist/platform-release/platform-release.sigstore.json
+     dist/platform-release/platform-release-provenance.json
    ```
 
-   The publisher verifies the exact tag workflow identity, archive digest and size, checked-out source commit, canonical manifest, and every Runtime object before immutable publication.
+   The publisher verifies the signed index workflow identity (exact tag for stable, reviewed main for previews), indexed archive/provenance bytes, archive digest and size, checked-out source commit, canonical manifest, and every Runtime object before immutable publication.
 4. Configure [authentication](/docs/self-hosting/authentication/) and populate [secrets and data services](/docs/self-hosting/secrets-and-data/).
 5. Run the database bootstrap task, then migrations, before enabling services.
 6. Start and verify the [Control Plane](/docs/self-hosting/control-plane/).

@@ -75,6 +75,8 @@ cmp "${tmp}/bundle-a/worker-host-artifacts.json" "${tmp}/bundle-b/worker-host-ar
 cmp "${tmp}/bundle-a/worker-host-bundle.json" "${tmp}/bundle-b/worker-host-bundle.json"
 jq -e --arg source_commit "${source_commit}" '.sourceCommit == $source_commit' \
   "${tmp}/bundle-a/worker-host-bundle.json" >/dev/null
+grep -Fq -- "HELMR_SOURCE_COMMIT=${source_commit}" "${docker_args}"
+grep -Fq -- 'test "$("$host/bin/worker" --version)" = "$HELMR_PLATFORM_VERSION ($HELMR_SOURCE_COMMIT)"' "${docker_args}"
 grep -Fxq -- '--platform' "${docker_args}"
 grep -Fxq -- 'linux/amd64' "${docker_args}"
 grep -Fxq -- 'nixos/nix:2.31.2@sha256:c7cc6c8cb5d81bed19997247629604708fda95c99c43ac362daa05b6a68e8a24' "${docker_args}"

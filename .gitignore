@@ -1,6 +1,7 @@
 node_modules/
 dist/
 coverage/
+__pycache__/
 **/.astro/
 internal/console/out/
 images/*/out/

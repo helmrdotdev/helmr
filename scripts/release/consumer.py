@@ -1,0 +1,140 @@
+"""Install real packed SDK/proto through npm; run a downloaded CLI and real builder."""
+import base64
+import hashlib
+import http.server
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import threading
+import urllib.parse
+import urllib.request
+from contract import canonical, descriptor, digest, read, require
+
+
+def run(*args, **kwargs):
+    subprocess.run(list(map(str, args)), check=True, **kwargs)
+
+
+def consumer(directory, cli_archive, work, expected_builder=None):
+    directory, work = Path(directory), Path(work)
+    packages = {}
+    for file, name in (('sdk.tgz', '@helmr/sdk'), ('proto.tgz', '@helmr/proto')):
+        with tarfile.open(directory / file) as archive:
+            metadata = json.load(archive.extractfile('package/package.json'))
+        packages[name] = (metadata, directory / file)
+    version = packages['@helmr/sdk'][0]['version']
+    cli_archive = Path(cli_archive)
+    checksum_path = cli_archive.parent / 'checksums.txt'
+    # Local bootstrap fixture; published verification uses the actual signed build index.
+    install_index = (directory / 'release-build.json')
+    index_bytes = install_index.read_bytes() if install_index.exists() else canonical(dict(schema='helmr.release.v0', version='v' + version, assets={'checksums.txt': descriptor(checksum_path)}))
+    require(packages['@helmr/sdk'][0]['dependencies']['@helmr/proto'] == version, 'SDK sibling dependency differs')
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def do_GET(self):
+            path = urllib.parse.unquote(self.path).split('?', 1)[0].removeprefix('/')
+            if path == cli_archive.name:
+                raw = cli_archive.read_bytes()
+            elif path == 'checksums.txt':
+                raw = checksum_path.read_bytes()
+            elif path == 'release-index.json':
+                raw = index_bytes
+            elif path in ('sdk.tgz', 'proto.tgz'):
+                raw = (directory / path).read_bytes()
+            elif path in packages:
+                metadata, file = packages[path]
+                raw = json.dumps(dict(name=path, versions={version: dict(metadata, dist=dict(
+                    tarball=f'http://127.0.0.1:{server.server_port}/{file.name}',
+                    integrity='sha512-' + base64.b64encode(hashlib.sha512(file.read_bytes()).digest()).decode()))})).encode()
+            else:
+                # Ordinary external dependencies remain ordinary registry packages.
+                try:
+                    with urllib.request.urlopen('https://registry.npmjs.org/' + self.path.removeprefix('/'), timeout=60) as response:
+                        raw = response.read()
+                except Exception:
+                    self.send_error(502)
+                    return
+            self.send_response(200)
+            self.send_header('Content-Length', str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+    server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        work.mkdir()
+        shim = work / 'tools'
+        shim.mkdir()
+        real_curl = shutil.which('curl')
+        require(real_curl, 'curl is required by the shipped installer')
+        # Redirect only the release transport in this fixture, keeping the shipped
+        # installer unchanged and using its real download/checksum/extraction path.
+        prefix = f'https://github.com/helmrdotdev/helmr/releases/download/v{version}/'
+        (shim / 'curl').write_text(f'#!{sys.executable}\nimport os,sys\na=[x.replace({prefix!r}, {("http://127.0.0.1:" + str(server.server_port) + "/")!r}) for x in sys.argv[1:]]\nos.execv({real_curl!r}, [{real_curl!r}]+a)\n')
+        (shim / 'curl').chmod(0o755)
+        run('bash', Path(__file__).resolve().parents[2] / 'install', '--version', 'v' + version, '--no-modify-path',
+            env=dict(os.environ, PATH=str(shim) + os.pathsep + os.environ['PATH'], HELMR_INSTALL_DIR=str(work / 'bin')))
+        project = work / 'project'
+        project.mkdir()
+        (project / 'tasks').mkdir()
+        # Normal documented source selection: dependencies are installed in BuildKit.
+        # Keep the ordinary npm cache selected, including its long filenames.
+        (project / '.helmrignore').write_text('node_modules/\n')
+        (project / 'package.json').write_text(json.dumps(dict(name='release-consumer', private=True, type='module',
+            dependencies={'@helmr/sdk': version}, devDependencies={'typescript': '7.0.2'})))
+        registry = 'https://registry.npmjs.org' if os.environ.get('HELMR_PUBLIC_CONSUMER') == '1' else f'http://127.0.0.1:{server.server_port}'
+        env = dict(os.environ, npm_config_registry=registry, npm_config_cache=str(project / '.npm-cache'))
+        run('npm', 'install', '--ignore-scripts', '--no-audit', '--no-fund', cwd=project, env=env)
+        lock = read(project / 'package-lock.json')
+        for name, (_, file) in packages.items():
+            expected = 'sha512-' + base64.b64encode(hashlib.sha512(file.read_bytes()).digest()).decode()
+            require(lock['packages']['node_modules/' + name]['integrity'] == expected, 'installed package bytes differ from signed set')
+        installed = read(project / 'node_modules/@helmr/sdk/package.json')
+        require(installed['helmr'] == packages['@helmr/sdk'][0]['helmr'], 'installed SDK stamp differs')
+        require(read(project / 'node_modules/@helmr/proto/package.json')['version'] == version, 'installed proto differs')
+        (project / 'helmr.config.ts').write_text('import {defineConfig} from "@helmr/sdk"; export default defineConfig({dirs:["tasks"]});\n')
+        (project / 'tasks/hello.ts').write_text('import {task} from "@helmr/sdk"; export const hello=task({id:"preview-hello",run:()=>"preview-ok"});\n')
+        (project / 'consumer.ts').write_text('''import {HelmrClient, source} from "@helmr/sdk";
+const file = source.file("./package.json");
+if (!file) throw Error("source.file failed");
+let called = false;
+const client = new HelmrClient({url:"https://example.invalid",apiKey:"fixture",fetch:async (url, init)=>{
+ if(String(url)!=="https://example.invalid/v1/tasks/preview-hello/start" || init?.method!=="POST") throw Error("SDK wire contract");
+ called=true; return Response.json({run_id:"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"});
+}});
+await client.tasks.start("preview-hello", {payload:null,workspace:client.workspaces.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32")});
+if(!called) throw Error("SDK request missing");
+''')
+        run(project / 'node_modules/.bin/tsc', '--strict', '--skipLibCheck', 'false', '--target', 'ES2022', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', 'consumer.ts', cwd=project)
+        run('node', 'consumer.js', cwd=project)
+        identity = subprocess.check_output([str(work / 'bin/helmr'), '--version'], text=True).strip()
+        require(identity == 'v' + version + ' (' + installed['helmr']['sourceCommit'] + ')', 'CLI embedded source/version differs')
+        if expected_builder is None:
+            expected_builder = read(directory / 'bundle-builder.json')['image']
+        require(expected_builder.encode() in (work / 'bin/helmr').read_bytes(), 'CLI embedded builder reference differs')
+        # npm fetched exact package bytes normally. Its cache allows the same
+        # lockfile install inside BuildKit without exposing a host test server.
+        run(work / 'bin/helmr', 'build', project, '--output', work / 'bundle',
+            '--install-command', 'npm ci --offline --cache .npm-cache --ignore-scripts --no-audit --no-fund')
+        bundle = read(work / 'bundle/bundle.json')
+        require(bundle['contract'] == 'helmr.deployment-bundle.v0', 'wrong bundle contract')
+        require([(d['kind'], d['declaredId']) for d in bundle['plan']['definitions']] == [('task', 'preview-hello')], 'compiled fixture task differs')
+        runtime = read(directory / 'bundle-builder.json')['runtime']
+        require(bundle['runtime']['artifact']['digest'] == runtime['digest'], 'bundle did not use canonical Runtime')
+        print(json.dumps(dict(cli=digest(cli_archive), builder=expected_builder,
+            sdk=digest(directory / 'sdk.tgz'), proto=digest(directory / 'proto.tgz'),
+            identity=identity, bundle=digest(work / 'bundle/bundle.json'), runtime=runtime['digest']), sort_keys=True))
+        print('actual downloaded CLI + installed SDK/proto + canonical builder consumer passed')
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()

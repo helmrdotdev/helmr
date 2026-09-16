@@ -1,0 +1,158 @@
+name: common Product build
+on:
+  workflow_call:
+    inputs:
+      selection:
+        required: true
+        type: string
+      tools_commit:
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+jobs:
+  components:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [sdk, builder, platform, host, guest, controlplane]
+    env:
+      RELEASE_SELECTION: ${{ inputs.selection }}
+      RELEASE_SOURCE_COMMIT: ${{ fromJSON(inputs.selection).sourceCommit }}
+      RELEASE_SOURCE_REF: ${{ fromJSON(inputs.selection).sourceRef }}
+      RELEASE_TAG: ${{ fromJSON(inputs.selection).version }}
+      RELEASE_BUILD_ID: ${{ fromJSON(inputs.selection).build.runId }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ inputs.tools_commit }}
+          path: tools
+          persist-credentials: false
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ fromJSON(inputs.selection).sourceCommit }}
+          path: source
+          persist-credentials: false
+      - name: Restore original frozen bytes on preview retry
+        id: frozen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/scripts/release/main.py restore --part '${{ matrix.part }}' --directory "$RUNNER_TEMP/part"
+      - uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3
+        if: steps.frozen.outputs.restored != 'true'
+        with:
+          github_access_token: ''
+          extra_nix_config: |
+            max-jobs = 1
+            cores = 2
+      - name: Build exact source without publication authority
+        if: steps.frozen.outputs.restored != 'true'
+        working-directory: source
+        run: |
+          df -h
+          free -b
+          test "$(git rev-parse HEAD)" = "$RELEASE_SOURCE_COMMIT"
+          nix develop ../tools#images -c bash ../tools/scripts/release/build.sh '${{ matrix.part }}' "$RUNNER_TEMP/part"
+          df -h
+          du -sb "$RUNNER_TEMP/part"
+      - name: Freeze successful component
+        if: steps.frozen.outputs.restored != 'true'
+        run: python3 tools/scripts/release/main.py freeze --part '${{ matrix.part }}' --directory "$RUNNER_TEMP/part" --output "$RUNNER_TEMP/frozen"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: steps.frozen.outputs.restored != 'true'
+        with:
+          name: common-${{ github.run_id }}-${{ matrix.part }}
+          path: ${{ runner.temp }}/frozen/
+          retention-days: 7
+          compression-level: 0
+          if-no-files-found: error
+  cli:
+    needs: components
+    runs-on: ubuntu-24.04
+    env:
+      RELEASE_SELECTION: ${{ inputs.selection }}
+      RELEASE_SOURCE_COMMIT: ${{ fromJSON(inputs.selection).sourceCommit }}
+      RELEASE_SOURCE_REF: ${{ fromJSON(inputs.selection).sourceRef }}
+      RELEASE_TAG: ${{ fromJSON(inputs.selection).version }}
+      RELEASE_BUILD_ID: ${{ fromJSON(inputs.selection).build.runId }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ inputs.tools_commit }}
+          path: tools
+          persist-credentials: false
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ fromJSON(inputs.selection).sourceCommit }}
+          path: source
+          persist-credentials: false
+      - name: Restore builder and any frozen CLI
+        id: frozen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 tools/scripts/release/main.py restore --part builder --directory "$RUNNER_TEMP/builder"
+          python3 tools/scripts/release/main.py restore --part cli --directory "$RUNNER_TEMP/part"
+          image=$(jq -er .image "$RUNNER_TEMP/builder/bundle-builder.json")
+          [[ "$image" =~ ^ghcr\.io/helmrdotdev/helmr/bundle-builder@sha256:[0-9a-f]{64}$ ]]
+          printf 'BUNDLE_BUILDER_IMAGE=%s\n' "$image" >> "$GITHUB_ENV"
+      - uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3
+        with:
+          github_access_token: ''
+      - name: Construct CLI and revalidate exact source under trusted orchestration
+        working-directory: source
+        run: |
+          nix develop ../tools#images -c bash -euo pipefail <<'SH'
+          bun install --frozen-lockfile --ignore-scripts
+          bash scripts/build-runtime-entry.sh --check
+          go test ./cmd/helmr ./cmd/control-plane ./internal/builder ./internal/deployment
+          if [ ! -d "$RUNNER_TEMP/part" ]; then
+            bash ../tools/scripts/release/build.sh cli "$RUNNER_TEMP/part"
+          fi
+          SH
+      - name: Freeze successful CLI
+        if: steps.frozen.outputs.restored != 'true'
+        run: python3 tools/scripts/release/main.py freeze --part cli --directory "$RUNNER_TEMP/part" --output "$RUNNER_TEMP/frozen"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: steps.frozen.outputs.restored != 'true'
+        with:
+          name: common-${{ github.run_id }}-cli
+          path: ${{ runner.temp }}/frozen/
+          retention-days: 7
+          if-no-files-found: error
+  consumer:
+    needs: cli
+    runs-on: ubuntu-24.04
+    env:
+      RELEASE_SELECTION: ${{ inputs.selection }}
+      RELEASE_SOURCE_COMMIT: ${{ fromJSON(inputs.selection).sourceCommit }}
+      RELEASE_SOURCE_REF: ${{ fromJSON(inputs.selection).sourceRef }}
+      RELEASE_TAG: ${{ fromJSON(inputs.selection).version }}
+      RELEASE_BUILD_ID: ${{ fromJSON(inputs.selection).build.runId }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ inputs.tools_commit }}
+          path: tools
+          persist-credentials: false
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ fromJSON(inputs.selection).sourceCommit }}
+          path: source
+          persist-credentials: false
+      - name: Acquire exact built bytes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/scripts/release/main.py assemble --directory "$RUNNER_TEMP/assets"
+      - uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3
+        with:
+          github_access_token: ''
+      - name: Real downloaded CLI and installed SDK with canonical builder
+        working-directory: source
+        run: |
+          nix develop ../tools#images -c bash -euo pipefail <<'SH'
+          bun install --frozen-lockfile --ignore-scripts
+          RELEASE_SOURCE_ROOT="$PWD" bash ../tools/tests/release_consumer.sh "$RUNNER_TEMP/assets"
+          SH

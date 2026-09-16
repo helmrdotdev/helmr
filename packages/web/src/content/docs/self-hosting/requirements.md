@@ -36,13 +36,17 @@ The Platform Artifact values come from `infra/aws/modules/bootstrap` as a child 
 
 ## Release artifacts
 
-By default, `helmr_version` resolves:
+Stable and preview common releases publish a signed `release-index.json` with
+CLI, SDK, Control Plane/builder images, and Worker host/runtime bundles. Neither
+publishes managed AMIs or `aws-artifacts.json`.
 
-```text
-https://github.com/helmrdotdev/helmr/releases/download/<helmr_version>/aws-artifacts.json
-```
-
-The manifest must contain a digest-pinned Control Plane image and, when workers are enabled, an AMI for `aws_region`. Custom Control Plane images must also use `@sha256:<digest>`; custom worker overrides must be a valid AMI ID.
+For these releases, supply the AWS compositions' explicit `controlplane_image`
+(digest-pinned from the verified index's Control Plane descriptor) and
+`worker_ami_id` when workers are enabled. Prepare that AMI in your deployment
+from the selected host/runtime bundles. Selecting `helmr_version` alone cannot
+supply those AWS-specific inputs: the generic resolver's manifest default is
+not an output of the common release graph. An operator-owned AWS manifest is
+also an explicit preparation input; it is not a Product publication fallback.
 
 ## Worker prerequisites
 
