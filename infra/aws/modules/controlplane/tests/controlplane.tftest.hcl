@@ -198,3 +198,30 @@ run "capacity_api_credential_rejects_plaintext_environment" {
   }
   expect_failures = [terraform_data.bootstrap_preconditions]
 }
+
+run "caller_ceiling_and_roll_forward" {
+  command = plan
+  variables {
+    permissions_boundary_arn    = "arn:aws:iam::000000000000:policy/workload"
+    create_controlplane_service = true
+  }
+  assert {
+    condition     = alltrue([for role in [aws_iam_role.controlplane_execution, aws_iam_role.dispatcher_execution, aws_iam_role.database_bootstrap_execution, aws_iam_role.controlplane_task, aws_iam_role.dispatcher_task, aws_iam_role.migration_task] : role.permissions_boundary == var.permissions_boundary_arn])
+    error_message = "Every Product ECS role must use the caller ceiling."
+  }
+  assert {
+    condition     = alltrue([for service in [aws_ecs_service.controlplane[0], aws_ecs_service.dispatcher[0]] : service.deployment_circuit_breaker[0].enable && !service.deployment_circuit_breaker[0].rollback])
+    error_message = "A failed deployment must not restart predecessor code after migrations."
+  }
+}
+run "foreign_ceiling" {
+  command = plan
+  variables { permissions_boundary_arn = "arn:aws:iam::999999999999:policy/workload" }
+  expect_failures = [aws_iam_role.controlplane_execution]
+}
+
+run "malformed_ceiling" {
+  command = plan
+  variables { permissions_boundary_arn = "workload" }
+  expect_failures = [var.permissions_boundary_arn]
+}

@@ -77,3 +77,19 @@ Launch-template changes do not start an automatic instance refresh. Drain the
 exact logical worker instance to `termination_ready` before provider deletion,
 then explicitly start or coordinate the Auto Scaling instance refresh. Control Plane
 does not maintain an AMI allowlist.
+
+## Permissions boundary and retained authority
+
+`permissions_boundary_arn` optionally selects a caller-owned customer-managed IAM
+policy in this account and partition. The module reads that policy and attaches
+it without creating or modifying a managed policy. Its inline resource grants
+and optional SSM attachment remain unchanged. With a null input, the module
+creates its existing least-privilege boundary, including the SSM ceiling.
+
+Persist the emitted `sealed_provider_definition` with each retained generation.
+It includes the explicit nullable `boundary_policy_arn` (null for a generated
+boundary) and the exact policy document. A retained external ARN is authoritative;
+leave the input unset or supply that same ARN. A changed ARN or canonically
+changed external policy document fails planning. Do not substitute today's
+boundary for a retained generation or omit the nullable discriminator. The
+quickstart and standard roots round-trip this current sealed record.

@@ -647,8 +647,15 @@ resource "aws_ecs_cluster" "controlplane" {
 }
 
 resource "aws_iam_role" "controlplane_execution" {
-  name = "${local.name}-controlplane-execution"
-  tags = var.tags
+  lifecycle {
+    precondition {
+      condition     = var.permissions_boundary_arn == null || can(regex("^arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:policy/", var.permissions_boundary_arn))
+      error_message = "permissions boundary must belong to the caller account and partition."
+    }
+  }
+  permissions_boundary = var.permissions_boundary_arn
+  name                 = "${local.name}-controlplane-execution"
+  tags                 = var.tags
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -663,8 +670,9 @@ resource "aws_iam_role" "controlplane_execution" {
 }
 
 resource "aws_iam_role" "dispatcher_execution" {
-  name = "${local.name}-dispatcher-execution"
-  tags = var.tags
+  permissions_boundary = var.permissions_boundary_arn
+  name                 = "${local.name}-dispatcher-execution"
+  tags                 = var.tags
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -679,8 +687,9 @@ resource "aws_iam_role" "dispatcher_execution" {
 }
 
 resource "aws_iam_role" "database_bootstrap_execution" {
-  name = "${local.name}-database-bootstrap-execution"
-  tags = var.tags
+  permissions_boundary = var.permissions_boundary_arn
+  name                 = "${local.name}-database-bootstrap-execution"
+  tags                 = var.tags
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -852,8 +861,9 @@ resource "aws_iam_role_policy" "database_bootstrap_execution" {
 }
 
 resource "aws_iam_role" "controlplane_task" {
-  name = "${local.name}-controlplane-task"
-  tags = var.tags
+  permissions_boundary = var.permissions_boundary_arn
+  name                 = "${local.name}-controlplane-task"
+  tags                 = var.tags
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -925,8 +935,9 @@ resource "aws_iam_role_policy" "controlplane_task" {
 }
 
 resource "aws_iam_role" "dispatcher_task" {
-  name = "${local.name}-dispatcher-task"
-  tags = var.tags
+  permissions_boundary = var.permissions_boundary_arn
+  name                 = "${local.name}-dispatcher-task"
+  tags                 = var.tags
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -941,8 +952,9 @@ resource "aws_iam_role" "dispatcher_task" {
 }
 
 resource "aws_iam_role" "migration_task" {
-  name = "${local.name}-migration-task"
-  tags = var.tags
+  permissions_boundary = var.permissions_boundary_arn
+  name                 = "${local.name}-migration-task"
+  tags                 = var.tags
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -1160,7 +1172,7 @@ resource "aws_ecs_service" "controlplane" {
 
   deployment_circuit_breaker {
     enable   = true
-    rollback = true
+    rollback = false
   }
 
   depends_on = [
@@ -1197,7 +1209,7 @@ resource "aws_ecs_service" "dispatcher" {
 
   deployment_circuit_breaker {
     enable   = true
-    rollback = true
+    rollback = false
   }
 
 }

@@ -459,6 +459,7 @@ variable "retained_worker_generations" {
     sealed_provider_definition = object({
       user_data_base64                                = string
       permission_policy_json                          = string
+      boundary_policy_arn                             = string
       boundary_policy_json                            = string
       enable_ssm                                      = bool
       launch_template_version                         = string

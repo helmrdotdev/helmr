@@ -1,3 +1,13 @@
+variable "permissions_boundary_arn" {
+  description = "Optional caller-owned IAM ceiling; does not grant resource permissions."
+  type        = string
+  default     = null
+  validation {
+    condition     = var.permissions_boundary_arn == null || can(regex("^arn:aws[a-zA-Z-]*:iam::[0-9]{12}:policy/.+$", var.permissions_boundary_arn))
+    error_message = "permissions_boundary_arn must be null or a customer-managed IAM policy ARN."
+  }
+}
+
 variable "aws_region" {
   description = "AWS region."
   type        = string

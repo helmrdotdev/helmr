@@ -9,6 +9,7 @@ locals {
 module "worker_image" {
   source = "../../modules/worker-image"
 
+  permissions_boundary_arn             = var.permissions_boundary_arn
   name                                 = var.name
   host_artifacts_bundle_s3_uri         = var.host_artifacts_bundle_s3_uri
   host_artifacts_bundle_object_arn     = var.host_artifacts_bundle_object_arn

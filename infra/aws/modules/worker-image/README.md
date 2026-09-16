@@ -20,3 +20,8 @@ artifact provenance and are not AMI identity.
 The Product release publishes the exact Runtime object before deployment. A
 Worker retrieves that Control Plane-pinned object, validates it, and admits
 execution only after the real Firecracker qualification path succeeds.
+
+`permissions_boundary_arn` is an optional caller-owned IAM ceiling for the image
+builder role. It must be a customer-managed policy in the caller account and
+partition. The stack forwards it to the generic module; the module's resource
+grants remain independent and no managed policy is created for this input.

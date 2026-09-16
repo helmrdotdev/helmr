@@ -34,3 +34,21 @@ are public and should be consumed by immutable digest.
 Before enabling or updating Control Plane services, run the database migration task
 for the exact image. Keep `/healthz` for process health and use `/readyz` for
 traffic readiness after the schema is current.
+
+## IAM ceilings and roll-forward deployment
+
+The Control Plane, Worker and Worker-image modules accept one optional
+`permissions_boundary_arn` for a customer-managed policy in the caller's AWS
+account and partition. The caller owns that policy as an account ceiling; each
+module still owns its least-privilege role grants. Supplying a boundary does not
+replace or expand those grants. Control Plane attaches it to all six roles;
+Worker-image attaches it to the image-builder role, including through the
+standalone image stack. Invalid supplied authority never selects a default.
+Worker retains its generated ceiling when the input is null; see its
+[module contract](modules/worker/README.md).
+
+Control Plane and dispatcher ECS circuit breakers remain enabled with automatic
+rollback disabled. A failed deployment requires a roll-forward repair: migrations
+may make a predecessor image invalid. The normal service configuration declares
+this policy before restoring positive desired counts. An older release's
+availability is not authority to restart it against the current schema.

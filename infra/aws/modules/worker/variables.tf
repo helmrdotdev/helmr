@@ -1,3 +1,13 @@
+variable "permissions_boundary_arn" {
+  description = "Optional caller-owned IAM ceiling; does not grant resource permissions."
+  type        = string
+  default     = null
+  validation {
+    condition     = var.permissions_boundary_arn == null || can(regex("^arn:aws[a-zA-Z-]*:iam::[0-9]{12}:policy/.+$", var.permissions_boundary_arn))
+    error_message = "permissions_boundary_arn must be null or a customer-managed IAM policy ARN."
+  }
+}
+
 variable "name" {
   description = "Name prefix for worker resources."
   type        = string
@@ -55,6 +65,7 @@ variable "sealed_provider_definition" {
   type = object({
     user_data_base64                                = string
     permission_policy_json                          = string
+    boundary_policy_arn                             = string
     boundary_policy_json                            = string
     enable_ssm                                      = bool
     launch_template_version                         = string

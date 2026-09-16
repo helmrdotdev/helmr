@@ -89,7 +89,7 @@ run "baseline_execution_generation" {
   assert {
     condition = (
       local.worker_pool_name == "execution-${sha256(jsonencode(local.worker_generation_inputs))}" &&
-      local.worker_pool_name == "execution-4daf8e93449319ed64043da298d4de8ad4ec8edbc2cf6a9d3bde84b57c0cc698" &&
+      local.worker_pool_name == "execution-a2914b759b4ea142392b3546f974d84568c99bbb3d0abda18e7979a20269cb06" &&
       length(local.worker_pool_name) == 74 &&
       can(regex("^execution-[0-9a-f]{64}$", local.worker_pool_name)) &&
       length(output.worker_generation_definitions) == 1 &&
@@ -105,7 +105,7 @@ run "immutable_capacity_change_rotates_generation" {
   variables { worker_vm_scratch_disk_mib = 40960 }
 
   assert {
-    condition     = local.worker_pool_name == "execution-d8f83870eeae5a8398ecf86ec270e623ab728656ddc1d7c382a1d5f0d1f72ab4"
+    condition     = local.worker_pool_name == "execution-50271b4307a869062d1cb6bbec576190650a7590648721d0e3efc8d1d51e81a8"
     error_message = "an immutable execution-shape change must rotate the Pool generation"
   }
 }
@@ -120,10 +120,32 @@ run "scale_policy_does_not_rotate_generation" {
 
   assert {
     condition = (
-      local.worker_pool_name == "execution-4daf8e93449319ed64043da298d4de8ad4ec8edbc2cf6a9d3bde84b57c0cc698" &&
+      local.worker_pool_name == "execution-a2914b759b4ea142392b3546f974d84568c99bbb3d0abda18e7979a20269cb06" &&
       one(values(output.worker_generation_definitions)).min_size == 5 &&
       one(values(output.worker_generation_definitions)).max_size == 9
     )
     error_message = "mutable ASG size must not rotate the execution Pool generation"
+  }
+}
+
+run "export_current_sealed_generation" {
+  command = apply
+  variables {
+    enable_nat_gateway = true
+    create_worker      = true
+    worker_min_size    = 0
+  }
+}
+run "retain_current_sealed_generation" {
+  command = plan
+  variables {
+    enable_nat_gateway          = true
+    worker_vm_scratch_disk_mib  = 40960
+    create_worker               = true
+    retained_worker_generations = run.export_current_sealed_generation.worker_generation_definitions
+  }
+  assert {
+    condition     = alltrue([for key, generation in var.retained_worker_generations : jsonencode(output.worker_generation_definitions[key].sealed_provider_definition) == jsonencode(generation.sealed_provider_definition) && generation.sealed_provider_definition.boundary_policy_arn == null])
+    error_message = "A newly emitted self-hosted definition must round-trip with its explicit null boundary ARN."
   }
 }
