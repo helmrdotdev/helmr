@@ -1,4 +1,5 @@
 import { query, type Options as ClaudeOptions } from "@anthropic-ai/claude-agent-sdk"
+import { Agent } from "@cursor/sdk"
 import { image, source, task, sandbox, type JsonValue } from "@helmr/sdk"
 import { writeFile } from "node:fs/promises"
 import { runCodex as runCodexTurn, type CodexThreadOptions } from "../lib/agents/codex-app-server"
@@ -168,8 +169,6 @@ async function runCodex(model: string): Promise<string> {
 }
 
 async function runCursor(model: string): Promise<string> {
-  // Report optional native SDK setup failures through this smoke check, not module loading.
-  const { Agent } = await import("@cursor/sdk")
   const original = compactEnv(process.env)
   replaceProcessEnv({
     ...baseEnv(),
