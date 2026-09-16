@@ -3,43 +3,190 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 import { pixelsFromRows } from "../lib/pixels";
 import { breadcrumbJsonLd, softwareJsonLd } from "../lib/seo";
 
-const runtimeCode = `import { image, sandbox, source, task, tokens } from "@helmr/sdk"
-import { Codex } from "@openai/codex-sdk"
-import { z } from "zod"
-
-const base = image("repo-agent")
-  .from("node:24-bookworm-slim")
-  .workdir("/workspace")
-  .run(["sh", "-ceu", "apt-get update && apt-get install -y git ripgrep"])
-  .copy("/workspace/package.json", source.file("package.json"))
-  .run(["bun", "install"])
-
-export const repoSandbox = sandbox({ id: "repo-agent" })
-  .image(base)
-  .resources({ cpu: 2, memory: "4GiB" })
-
-export const reviewPr = task({
+const usecases = [
+  {
+    key: "review",
+    name: "PR reviewer",
+    icon: "merge",
+    id: "review-pr",
+    primitive: "task",
+    imports: 'import { image, sandbox, source, task, tokens } from "@helmr/sdk"',
+    head: `export const reviewPr = task({
   id: "review-pr",
   payload: z.object({ prNumber: z.number().int().positive() }),
   run: async (event, ctx) => {
-    const codex = new Codex()
-    const thread = codex.startThread({ workingDirectory: process.cwd() })
-    const turn = await thread.run("Review this PR and propose a patch.")
+    const brief = \`Review PR #\${event.prNumber} and propose a patch.\``,
+    meta: '      metadata: { subject: "Post this review to GitHub?" }',
+    action: "    if (decision.approved) await postReview(event.prNumber, output)",
+  },
+  {
+    key: "bugs",
+    name: "Bug hunter",
+    icon: "bug",
+    id: "bug-hunter",
+    primitive: "task",
+    imports: 'import { image, sandbox, source, task, tokens } from "@helmr/sdk"',
+    head: `export const huntBug = task({
+  id: "bug-hunter",
+  payload: z.object({ errorId: z.string() }),
+  run: async (event, ctx) => {
+    const brief = \`Reproduce error \${event.errorId} in /workspace, find the root cause and write a fix.\``,
+    meta: '      metadata: { subject: "Post the root cause and fix?" }',
+    action: "    if (decision.approved) await postReport(event.errorId, output)",
+  },
+  {
+    key: "mention",
+    name: "@-mention teammate",
+    icon: "mention",
+    id: "fix-issue",
+    primitive: "actor",
+    imports: 'import { actor, image, sandbox, source, tokens } from "@helmr/sdk"',
+    head: `export const fixIssue = actor({
+  id: "fix-issue",
+  async run(session) {
+    const event = await session.input.receive({ idleTimeout: "30m" }).unwrap()
+    const brief = \`Fix \${event.issue} in \${event.repo}. Run the tests, then open a PR.\``,
+    meta: '      metadata: { subject: "Open a PR for this fix?" }',
+    action: `    if (decision.approved) {
+      await openPr(event.repo, output)
+      await session.output.append({ type: "pr-opened" })
+    }`,
+  },
+  {
+    key: "fleet",
+    name: "3 a.m. fleet job",
+    icon: "moon",
+    id: "fleet-bump",
+    primitive: "schedules.task",
+    imports: 'import { image, sandbox, schedules, source, tokens } from "@helmr/sdk"',
+    head: `export const fleetBump = schedules.task({
+  id: "fleet-bump",
+  cron: { pattern: "0 3 * * *", timezone: "UTC" },
+  run: async (event, ctx) => {
+    const brief = \`Bump dependencies across every repo; run each test suite.\``,
+    meta: '      metadata: { subject: "Open PRs for all repos?" }',
+    action: "    if (decision.approved) await openFleetPrs(output)",
+  },
+] as const;
 
-    const approval = await tokens.create({ timeout: "30m" })
-    await sendSlackApproval({
-      callbackUrl: approval.callbackUrl
+const logos = {
+  claude: "/logos/claude.svg",
+  openai: "/logos/openai.svg",
+  cursor: "/logos/cursor.svg",
+  opencode: "/logos/opencode.svg",
+  pi: "/logos/pi.svg",
+  slack: "/logos/slack.svg",
+  discord: "/logos/discord.svg",
+  microsoftTeams: "/logos/microsoft-teams.svg",
+  github: "/logos/github.svg",
+  linear: "/logos/linear.svg",
+} as const;
+
+const harnesses = [
+  {
+    key: "claude",
+    name: "Claude Agent SDK",
+    meta: "@anthropic-ai/claude-agent-sdk",
+    icon: logos.claude,
+    imports: 'import { query } from "@anthropic-ai/claude-agent-sdk"',
+    agent: `    let output = ""
+    for await (const message of query({
+      prompt: brief,
+      options: {
+        cwd: "/workspace",
+        permissionMode: "bypassPermissions", // the microVM is the sandbox
+        allowDangerouslySkipPermissions: true
+      }
+    })) {
+      if (message.type === "result" && message.subtype === "success") output = message.result
+    }`,
+  },
+  {
+    key: "codex",
+    name: "Codex",
+    meta: "@openai/codex-sdk",
+    icon: logos.openai,
+    imports: 'import { Codex } from "@openai/codex-sdk"',
+    agent: `    const codex = new Codex()
+    const thread = codex.startThread({
+      workingDirectory: "/workspace",
+      sandboxMode: "danger-full-access" // the microVM is the sandbox
     })
-    // The microVM freezes here — filesystem, memory, process.
-    const decision = await approval.wait({
-      schema: z.object({ approved: z.boolean() }),
-      timeout: "30m",
-      tags: ["approval", "github-review"],
-      metadata: { subject: "Post this review to GitHub?" }
-    }).unwrap()
-    if (decision.approved) await postReview(event.prNumber, turn.finalResponse)
-  }
-})`;
+    const turn = await thread.run(brief)
+    const output = turn.finalResponse`,
+  },
+  {
+    key: "cursor",
+    name: "Cursor",
+    meta: "@cursor/sdk",
+    icon: logos.cursor,
+    imports: 'import { Agent } from "@cursor/sdk"',
+    agent: `    const result = await Agent.prompt(brief, {
+      apiKey: process.env.CURSOR_API_KEY!, // protected env: the VM only holds a placeholder
+      model: { id: "composer-2.5" },
+      local: { cwd: "/workspace" }
+    })
+    const output = result.result ?? ""`,
+  },
+  {
+    key: "opencode",
+    name: "OpenCode",
+    meta: "@opencode-ai/sdk · opencode serve",
+    icon: logos.opencode,
+    imports: 'import { createOpencode } from "@opencode-ai/sdk"',
+    agent: `    const { client } = await createOpencode()
+    const session = await client.session.create({ body: { title: "run" } })
+    const result = await client.session.prompt({
+      path: { id: session.data.id },
+      body: {
+        model: { providerID: "openrouter", modelID: "z-ai/glm-4.6" },
+        parts: [{ type: "text", text: brief }]
+      }
+    })
+    const output = result.data.parts
+      .filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join("")`,
+  },
+  {
+    key: "pi",
+    name: "Pi",
+    meta: "@earendil-works/pi-coding-agent",
+    icon: logos.pi,
+    imports: 'import { createAgentSession, SessionManager } from "@earendil-works/pi-coding-agent"',
+    agent: `    const { session } = await createAgentSession({
+      cwd: "/workspace",
+      sessionManager: SessionManager.inMemory()
+    })
+    let output = ""
+    session.subscribe((e) => {
+      if (e.type === "message_update" && e.assistantMessageEvent.type === "text_delta") {
+        output += e.assistantMessageEvent.delta
+      }
+    })
+    await session.prompt(brief)`,
+  },
+  {
+    key: "own",
+    name: "Your own harness",
+    meta: "ai · @ai-sdk/amazon-bedrock",
+    icon: null,
+    imports: `import { generateText, tool, stepCountIs } from "ai"
+import { bedrock } from "@ai-sdk/amazon-bedrock"`,
+    agent: `    const { text: output } = await generateText({
+      model: bedrock("anthropic.claude-sonnet-4-6"), // or Vertex, Ollama — any provider the AI SDK speaks
+      tools: {
+        sh: tool({
+          description: "Run a shell command in /workspace",
+          inputSchema: z.object({ cmd: z.string() }),
+          execute: ({ cmd }) => sh(cmd)
+        })
+      },
+      stopWhen: stepCountIs(40),
+      prompt: brief
+    })`,
+  },
+] as const;
 
 const escapeHtml = (value: string) =>
   value
@@ -47,7 +194,7 @@ const escapeHtml = (value: string) =>
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
 
-const syntaxKeywords = ["import", "from", "export", "const", "new", "async", "await", "if", "as"] as const;
+const syntaxKeywords = ["import", "from", "export", "const", "new", "async", "await", "if", "as", "for", "of", "let", "return"] as const;
 const syntaxLiterals = ["true", "false", "null", "undefined"] as const;
 const syntaxReserved = new Set<string>([...syntaxKeywords, ...syntaxLiterals]);
 const syntaxReservedPattern = [...syntaxKeywords, ...syntaxLiterals].join("|");
@@ -83,76 +230,12 @@ const highlightTypeScript = (value: string) => {
   return html + escapeHtml(value.slice(cursor));
 };
 
-const runtimeLines = runtimeCode.split("\n");
-
-const runtimeLine = (anchor: string) => {
-  const matches = runtimeLines.flatMap((line, index) =>
-    line === anchor ? [index + 1] : [],
-  );
-  if (matches.length !== 1) {
-    throw new Error(`Runtime code anchor must match exactly once: ${anchor}`);
-  }
-  return matches[0]!;
-};
-
-const runtimeRegion = (start: string, end: string) => {
-  const from = runtimeLine(start);
-  const to = runtimeLine(end);
-  if (from > to) throw new Error(`Runtime code region is inverted: ${start}`);
-  return { from, to };
-};
-
-const codeRegions = [
-  {
-    key: "image",
-    label: "image",
-    ...runtimeRegion('const base = image("repo-agent")', '  .run(["bun", "install"])'),
-    tone: "blue",
-    strong: "#5079e4",
-  },
-  {
-    key: "sandbox",
-    label: "sandbox",
-    ...runtimeRegion(
-      'export const repoSandbox = sandbox({ id: "repo-agent" })',
-      '  .resources({ cpu: 2, memory: "4GiB" })',
-    ),
-    tone: "green",
-    strong: "#5e8a70",
-  },
-  {
-    key: "task",
-    label: "task",
-    ...runtimeRegion(
-      "export const reviewPr = task({",
-      '    const turn = await thread.run("Review this PR and propose a patch.")',
-    ),
-    tone: "pink",
-    strong: "#a8618a",
-  },
-  {
-    key: "input",
-    label: "human input",
-    ...runtimeRegion(
-      '    const approval = await tokens.create({ timeout: "30m" })',
-      "    if (decision.approved) await postReview(event.prNumber, turn.finalResponse)",
-    ),
-    tone: "yellow",
-    strong: "#ad8226",
-  },
-] as const;
-
 const tints: Record<string, string> = {
   yellow: "#f5eeda",
   blue: "#e7eef7",
   pink: "#f3e8ee",
   green: "#eaf0e6",
 };
-
-const codeLines = runtimeLines.map((line, index) => ({
-  html: highlightTypeScript(line) || "&nbsp;",
-  region: codeRegions.find((region) => index + 1 >= region.from && index + 1 <= region.to)?.key,
-}));
 
 const highlightShell = (value: string) =>
   value
@@ -261,18 +344,82 @@ const pixelIcons = {
     ".########.",
     "..........",
   ],
+  mention: [
+    "..........",
+    "...####...",
+    "..#....#..",
+    ".#..##..#.",
+    ".#.#..#.#.",
+    ".#.#..#.#.",
+    ".#..###.#.",
+    "..#.......",
+    "...#####..",
+    "..........",
+  ],
+  merge: [
+    "..##..##..",
+    "..##..##..",
+    "..#....#..",
+    "..#....#..",
+    "..#...#...",
+    "..#..#....",
+    "..#.#.....",
+    "..##......",
+    "..##......",
+    "..........",
+  ],
+  bug: [
+    "..#....#..",
+    "...#..#...",
+    "..######..",
+    ".#.####.#.",
+    "#..####..#",
+    "#..####..#",
+    ".#.####.#.",
+    "..######..",
+    "...#..#...",
+    "..#....#..",
+  ],
+  moon: [
+    "...####...",
+    "..##......",
+    ".##.......",
+    ".##.......",
+    "##........",
+    "##........",
+    ".##.......",
+    ".##.......",
+    "..##......",
+    "...####...",
+  ],
+  arrowRight: [
+    "..........",
+    "..........",
+    ".....##...",
+    "......##..",
+    "##########",
+    "##########",
+    "......##..",
+    ".....##...",
+    "..........",
+    "..........",
+  ],
+  window: [
+    "..........",
+    ".########.",
+    ".#......#.",
+    ".########.",
+    ".#......#.",
+    ".#......#.",
+    ".#......#.",
+    ".#......#.",
+    ".########.",
+    "..........",
+  ],
 } as const;
 
 const cloudPixels = pixelsFromRows(pixelIcons.cloud);
 const shieldPixels = pixelsFromRows(pixelIcons.shield);
-
-const codeTags = codeRegions.map((region) => ({
-  key: region.key,
-  label: region.label,
-  line: region.from,
-  tone: region.tone,
-  strong: region.strong,
-}));
 
 const taskFeatures = [
   {
@@ -435,6 +582,240 @@ const renderedActor = {
   definePixels: pixelsFromRows(pixelIcons.hourglass),
   sendPixels: pixelsFromRows(pixelIcons.steer),
 };
+
+const boltPixels = pixelsFromRows(pixelIcons.bolt);
+
+const interfaces = [
+  {
+    key: "slack",
+    name: "Slack",
+    icon: logos.slack,
+    code: `    await sendSlackApproval({
+      channel: event.channel,
+      callbackUrl: approval.callbackUrl
+    })`,
+  },
+  {
+    key: "discord",
+    name: "Discord",
+    icon: logos.discord,
+    code: `    await sendDiscordApproval({
+      channelId: event.channelId,
+      callbackUrl: approval.callbackUrl
+    })`,
+  },
+  {
+    key: "teams",
+    name: "Microsoft Teams",
+    icon: logos.microsoftTeams,
+    code: `    await sendTeamsCard({
+      conversationId: event.conversationId,
+      callbackUrl: approval.callbackUrl
+    })`,
+  },
+  {
+    key: "github",
+    name: "GitHub",
+    icon: logos.github,
+    code: `    await commentOnPr({
+      prNumber: event.prNumber,
+      body: approval.callbackUrl
+    })`,
+  },
+  {
+    key: "linear",
+    name: "Linear",
+    icon: logos.linear,
+    code: `    await commentOnIssue({
+      issueId: event.issueId,
+      body: approval.callbackUrl
+    })`,
+  },
+  {
+    key: "product",
+    name: "Your product",
+    icon: null,
+    code: `    await notify({
+      topic: "approval-requested",
+      callbackUrl: approval.callbackUrl
+    })`,
+  },
+] as const;
+
+const windowPixels = pixelsFromRows(pixelIcons.window);
+const arrowRightPixels = pixelsFromRows(pixelIcons.arrowRight);
+
+const hlLines = (text: string) =>
+  text.split("\n").map((line) => highlightTypeScript(line) || "&nbsp;");
+
+const fixedCode = {
+  zimport: 'import { z } from "zod"',
+  image: `const base = image("repo-agent")
+  .from("node:24-bookworm-slim")
+  .workdir("/workspace")
+  .run(["sh", "-ceu", "apt-get update && apt-get install -y git ripgrep"])
+  .copy("/workspace/package.json", source.file("package.json"))
+  .run(["bun", "install"])`,
+  sandbox: `export const repoSandbox = sandbox({ id: "repo-agent" })
+  .image(base)
+  .resources({ cpu: 2, memory: "4GiB" })`,
+  approvalPre: '    const approval = await tokens.create({ timeout: "30m" })',
+  wait: `    // The microVM freezes here — filesystem, memory, process.
+    const decision = await approval.wait({
+      schema: z.object({ approved: z.boolean() }),
+      timeout: "30m",`,
+  unwrap: "    }).unwrap()",
+  close: `  }
+})`,
+} as const;
+
+const codeParts = {
+  fixed: Object.fromEntries(
+    Object.entries(fixedCode).map(([key, text]) => [key, hlLines(text)]),
+  ),
+  agents: Object.fromEntries(
+    harnesses.map((harness) => [
+      harness.key,
+      { imports: hlLines(harness.imports), body: hlLines(harness.agent), meta: harness.meta },
+    ]),
+  ),
+  interfaces: Object.fromEntries(
+    interfaces.map((iface) => [iface.key, { lines: hlLines(iface.code) }]),
+  ),
+  usecases: Object.fromEntries(
+    usecases.map((usecase) => [
+      usecase.key,
+      {
+        file: `${usecase.id}.ts`,
+        primitive: usecase.primitive,
+        imports: hlLines(usecase.imports),
+        head: hlLines(usecase.head),
+        meta: hlLines(usecase.meta),
+        action: hlLines(usecase.action),
+      },
+    ]),
+  ),
+};
+
+const codeRecipe: ReadonlyArray<readonly [string, "usecase" | "agent" | "interface" | null]> = [
+  ["usecase.imports", "usecase"],
+  ["agent.imports", "agent"],
+  ["fixed.zimport", null],
+  ["blank", null],
+  ["fixed.image", null],
+  ["blank", null],
+  ["fixed.sandbox", null],
+  ["blank", null],
+  ["usecase.head", "usecase"],
+  ["blank", null],
+  ["agent.body", "agent"],
+  ["blank", null],
+  ["fixed.approvalPre", null],
+  ["interface.lines", "interface"],
+  ["fixed.wait", null],
+  ["usecase.meta", "usecase"],
+  ["fixed.unwrap", null],
+  ["usecase.action", "usecase"],
+  ["fixed.close", null],
+];
+
+const codePick = { usecase: "review", agent: "claude", interface: "slack" } as const;
+
+const codeSegment = (
+  key: string,
+  pick: { agent: string; interface: string; usecase: string },
+): string[] => {
+  if (key === "blank") return ["&nbsp;"];
+  const [scope, name] = key.split(".") as [string, string];
+  if (scope === "agent") {
+    const agent = codeParts.agents[pick.agent] as { imports: string[]; body: string[]; meta: string };
+    return agent[name as "imports" | "body"];
+  }
+  if (scope === "usecase") {
+    const usecase = codeParts.usecases[pick.usecase] as {
+      file: string;
+      primitive: string;
+      imports: string[];
+      head: string[];
+      meta: string[];
+      action: string[];
+    };
+    return usecase[name as "imports" | "head" | "meta" | "action"];
+  }
+  if (scope === "interface") {
+    return codeParts.interfaces[pick.interface]!.lines;
+  }
+  return codeParts.fixed[name] as string[];
+};
+
+const initialCodeLines = codeRecipe.flatMap(([key, region]) =>
+  codeSegment(key, codePick).map((html) => ({ html, region, seg: key })),
+);
+
+const pixelIconSvg = (rows: readonly string[]) =>
+  `<svg class="code-tag-pixel" viewBox="0 0 10 10" aria-hidden="true">${pixelsFromRows(rows)
+    .map((pixel) => `<rect x="${pixel.x}" y="${pixel.y}" width="1" height="1" />`)
+    .join("")}</svg>`;
+const logoIconImg = (src: string) => `<img src="${src}" width="12" height="12" alt="" />`;
+
+const tagPicks = {
+  usecase: Object.fromEntries(
+    usecases.map((usecase) => [
+      usecase.key,
+      { label: usecase.primitive, icon: pixelIconSvg(pixelIcons[usecase.icon]) },
+    ]),
+  ),
+  agent: Object.fromEntries(
+    harnesses.map((harness) => [
+      harness.key,
+      { label: harness.name, icon: harness.icon ? logoIconImg(harness.icon) : pixelIconSvg(pixelIcons.bolt) },
+    ]),
+  ),
+  interface: Object.fromEntries(
+    interfaces.map((iface) => [
+      iface.key,
+      { label: iface.name, icon: iface.icon ? logoIconImg(iface.icon) : pixelIconSvg(pixelIcons.window) },
+    ]),
+  ),
+};
+
+const regionStyle = {
+  usecase: { tone: "pink", strong: "#a8618a" },
+  agent: { tone: "blue", strong: "#5079e4" },
+  interface: { tone: "yellow", strong: "#ad8226" },
+} as const;
+
+const codeTags = (
+  [
+    ["usecase", "usecase.head"],
+    ["agent", "agent.body"],
+    ["interface", "interface.lines"],
+  ] as const
+).map(([region, seg]) => ({
+  region,
+  seg,
+  ...regionStyle[region],
+  ...tagPicks[region][codePick[region]]!,
+  line: initialCodeLines.findIndex((line) => line.seg === seg) + 1,
+}));
+
+const usecaseChips = usecases.map((usecase) => ({
+  ...usecase,
+  pixels: pixelsFromRows(pixelIcons[usecase.icon]),
+}));
+
+const wireRequests = {
+  vm: `GET /repos/acme/app/pulls/482
+Host: api.github.com
+Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
+  allowed: `GET /repos/acme/app/pulls/482
+Host: api.github.com
+Authorization: Bearer <span class="tok-real">ghp_••••••••••••••••</span>`,
+  other: `POST /collect
+Host: telemetry.example
+Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
+};
+
 ---
 
 <BaseLayout
@@ -483,40 +864,121 @@ const renderedActor = {
       </div>
     </section>
 
-    <section id="runtime" class="code-section" aria-label="Runtime definition">
+    <section id="runtime" class="build-section" aria-label="Assemble the factory yourself">
       <div class="section-head">
         <h2 class="headline section-title">
-          One TypeScript file.
-          <span class="faint">Image, Sandbox, Task, human input.</span>
+          Assemble the factory yourself.
+          <span class="faint">Any agent, any interface, any job — one TypeScript file.</span>
         </h2>
         <p class="section-note">
-          Codex here &mdash; or Claude Code, the AI SDK, any agent SDK that runs on
-          Node. Durable continuation uses Actor input or independently completable Tokens;
-          one-shot Task input remains an explicit start payload.
+          Devin, Cursor Cloud and Codex Cloud ship the agent as a finished
+          product. Helmr ships it as infrastructure: every part is a TypeScript
+          value you pick, swap, or write yourself. Change a part below and the
+          file rewires itself.
         </p>
       </div>
-      <div class="code-frame panel panel-screen">
-        <div class="code-cap">
-          <span>review-pr.ts</span>
-          <span class="cap-meta">typescript</span>
+      <div class="choices">
+        <div class="choice">
+          <div class="choice-copy">
+            <p class="choice-title">Any job.</p>
+            <p class="choice-sub">A one-shot task, a durable actor session, or a cron schedule.</p>
+          </div>
+          <div class="choice-chips" data-pick="usecase" style={`--chip-tint: ${tints[regionStyle.usecase.tone]}`}>
+            {usecaseChips.map((usecase) => (
+              <button
+                type="button"
+                class="harness-chip choice-chip"
+                data-key={usecase.key}
+                aria-pressed={usecase.key === codePick.usecase ? "true" : "false"}
+              >
+                <svg class="harness-chip-pixel" viewBox="0 0 10 10" aria-hidden="true">
+                  {usecase.pixels.map((pixel) => (
+                    <rect x={pixel.x} y={pixel.y} width="1" height="1" />
+                  ))}
+                </svg>
+                <span>{usecase.name}</span>
+              </button>
+            ))}
+          </div>
         </div>
-        <pre><code>{codeLines.map((line, i) => (
+        <div class="choice">
+          <div class="choice-copy">
+            <p class="choice-title">Any agent.</p>
+            <p class="choice-sub">Claude Code, Codex, an open harness on a cheap model, or the loop you wrote yourself.</p>
+          </div>
+          <div class="choice-chips" data-pick="agent" style={`--chip-tint: ${tints[regionStyle.agent.tone]}`}>
+            {harnesses.map((harness) => (
+              <button
+                type="button"
+                class="harness-chip choice-chip"
+                data-key={harness.key}
+                aria-pressed={harness.key === codePick.agent ? "true" : "false"}
+              >
+                {harness.icon ? (
+                  <img src={harness.icon} alt="" width="16" height="16" />
+                ) : (
+                  <svg class="harness-chip-pixel" viewBox="0 0 10 10" aria-hidden="true">
+                    {boltPixels.map((pixel) => (
+                      <rect x={pixel.x} y={pixel.y} width="1" height="1" />
+                    ))}
+                  </svg>
+                )}
+                <span>{harness.name}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+        <div class="choice">
+          <div class="choice-copy">
+            <p class="choice-title">Any interface.</p>
+            <p class="choice-sub">Wherever your team already works. Helmr is the runtime behind it, not the chat window in front.</p>
+          </div>
+          <div class="choice-chips" data-pick="interface" style={`--chip-tint: ${tints[regionStyle.interface.tone]}`}>
+            {interfaces.map((iface) => (
+              <button
+                type="button"
+                class="harness-chip choice-chip"
+                data-key={iface.key}
+                aria-pressed={iface.key === codePick.interface ? "true" : "false"}
+              >
+                {iface.icon ? (
+                  <img src={iface.icon} alt="" width="15" height="15" />
+                ) : (
+                  <svg class="harness-chip-pixel" viewBox="0 0 10 10" aria-hidden="true">
+                    {windowPixels.map((pixel) => (
+                      <rect x={pixel.x} y={pixel.y} width="1" height="1" />
+                    ))}
+                  </svg>
+                )}
+                <span>{iface.name}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div class="code-frame panel panel-screen" data-code-frame>
+        <div class="code-cap">
+          <span data-code-file>{codeParts.usecases[codePick.usecase]!.file}</span>
+          <span class="cap-meta" data-code-meta>{harnesses.find((h) => h.key === codePick.agent)!.meta}</span>
+        </div>
+        <pre><code data-code-body>{initialCodeLines.map((line, i) => (
           <span class="cl" data-region={line.region}><span class="ln">{String(i + 1).padStart(2, " ")}</span><span class="lc" set:html={line.html}></span></span>
         ))}</code></pre>
         <div class="code-tags" aria-hidden="true">
           {codeTags.map((tag) => (
             <span
-              class={`code-tag code-tag-${tag.key}`}
+              class={`code-tag code-tag-${tag.region}`}
+              data-tag-region={tag.region}
+              data-tag-seg={tag.seg}
               style={`--line: ${tag.line}; --tag-strong: ${tag.strong}; background: ${tints[tag.tone]}`}
-            >{tag.label}</span>
+            >
+              <span class="code-tag-icon" set:html={tag.icon} />
+              <span class="code-tag-label">{tag.label}</span>
+            </span>
           ))}
         </div>
       </div>
-      <nav class="proof-links" aria-label="Execution model sections">
-        <a href="#primitives"><span>01</span> Task</a>
-        <a href="#actor"><span>02</span> Actor</a>
-        <a href="#workspace"><span>03</span> Workspace</a>
-      </nav>
+      <script is:inline type="application/json" data-code-parts set:html={JSON.stringify({ parts: codeParts, recipe: codeRecipe, pick: codePick, tagPicks }).replaceAll("<", "\\u003c")} />
     </section>
 
     <section id="primitives" class="features" aria-label="Task patterns">
@@ -627,6 +1089,53 @@ const renderedActor = {
       </div>
     </section>
 
+    <section id="security" class="security-section" aria-label="Security">
+      <div class="section-head">
+        <h2 class="headline section-title">
+          The agent never sees the key.{" "}
+          <span class="faint">Secrets are swapped in at the network boundary — outside the VM.</span>
+        </h2>
+      </div>
+      <div class="wire">
+        <div class="wire-panel panel panel-screen">
+          <div class="code-cap">
+            <span>inside the microVM</span>
+            <span class="cap-meta">GH_TOKEN</span>
+          </div>
+          <pre class="wire-req" set:html={wireRequests.vm}></pre>
+        </div>
+        <div class="wire-boundary">
+          <svg class="wire-mark" viewBox="0 0 10 10" aria-hidden="true" style={`background: ${tints.blue}`}>
+            {arrowRightPixels.map((pixel) => (
+              <rect x={pixel.x} y={pixel.y} width="1" height="1" />
+            ))}
+          </svg>
+        </div>
+        <div class="wire-out">
+          <div class="wire-panel panel panel-screen is-allowed">
+            <div class="code-cap">
+              <span>api.github.com</span>
+              <span class="cap-meta">allowed origin</span>
+            </div>
+            <pre class="wire-req" set:html={wireRequests.allowed}></pre>
+          </div>
+          <div class="wire-panel panel panel-screen is-other">
+            <div class="code-cap">
+              <span>anywhere else</span>
+              <span class="cap-meta">not allowed</span>
+            </div>
+            <pre class="wire-req" set:html={wireRequests.other}></pre>
+          </div>
+        </div>
+      </div>
+      <p class="wire-note">
+        Bind a secret as <code>protected</code> and the VM only ever holds a
+        placeholder. Helmr replaces it for the origins you allow, checks the run
+        is still authorized, and fails the request if the secret was revoked.
+        <a class="wire-docs" href="/docs/concepts/secrets">How protected secrets work →</a>
+      </p>
+    </section>
+
     <section class="homes" aria-label="Deployment options">
       <div class="section-head">
         <h2 class="headline section-title">
@@ -710,6 +1219,100 @@ const renderedActor = {
         copyInstallButton.removeAttribute("data-copied");
       }, 1600);
     });
+
+    const codePartsScript = document.querySelector("[data-code-parts]");
+    const codeBody = document.querySelector<HTMLElement>("[data-code-body]");
+    if (codePartsScript && codeBody) {
+      const { parts, recipe, pick, tagPicks } = JSON.parse(codePartsScript.textContent ?? "{}");
+      const state = { ...pick };
+      const fileEl = document.querySelector("[data-code-file]");
+      const metaEl = document.querySelector("[data-code-meta]");
+      const tags = Array.from(document.querySelectorAll<HTMLElement>("[data-tag-region]"));
+
+      const segment = (key: string): string[] => {
+        if (key === "blank") return ["&nbsp;"];
+        const [scope, name] = key.split(".");
+        if (scope === "agent") return parts.agents[state.agent][name];
+        if (scope === "usecase") return parts.usecases[state.usecase][name];
+        if (scope === "interface") {
+          return parts.interfaces[state.interface][name];
+        }
+        return parts.fixed[name];
+      };
+
+      const lineTemplate = (() => {
+        const template = codeBody.querySelector<HTMLElement>(".cl")!.cloneNode(true) as HTMLElement;
+        template.removeAttribute("data-region");
+        template.removeAttribute("data-flash");
+        template.style.removeProperty("--flash");
+        return template;
+      })();
+      const flashTints: Record<string, string> = {
+        usecase: "rgba(168, 97, 138, 0.2)",
+        agent: "rgba(80, 121, 228, 0.22)",
+        interface: "rgba(173, 130, 38, 0.22)",
+        fixed: "rgba(31, 31, 36, 0.1)",
+      };
+      let flashTimer: number | undefined;
+
+      const renderCode = (changed?: Set<string>) => {
+        const lines: { html: string; region: string | null; seg: string }[] = [];
+        for (const [key, region] of recipe) {
+          for (const html of segment(key)) lines.push({ html, region, seg: key });
+        }
+        const fragment = document.createDocumentFragment();
+        lines.forEach((line, i) => {
+          const cl = lineTemplate!.cloneNode(true) as HTMLElement;
+          if (line.region) cl.dataset.region = line.region;
+          else cl.removeAttribute("data-region");
+          if (changed?.has(line.seg)) {
+            cl.setAttribute("data-flash", "");
+            cl.style.setProperty("--flash", flashTints[line.seg.split(".")[0]!]!);
+          }
+          cl.querySelector(".ln")!.textContent = String(i + 1).padStart(2, " ");
+          cl.querySelector(".lc")!.innerHTML = line.html;
+          fragment.appendChild(cl);
+        });
+        codeBody.replaceChildren(fragment);
+        if (fileEl) fileEl.textContent = parts.usecases[state.usecase].file;
+        if (metaEl) metaEl.textContent = parts.agents[state.agent].meta;
+        for (const tag of tags) {
+          const index = lines.findIndex((line) => line.seg === tag.dataset.tagSeg);
+          tag.style.setProperty("--line", String(index + 1));
+          const region = tag.dataset.tagRegion!;
+          const picked = tagPicks[region][state[region as keyof typeof state]];
+          tag.querySelector(".code-tag-icon")!.innerHTML = picked.icon;
+          tag.querySelector(".code-tag-label")!.textContent = picked.label;
+        }
+        if (changed) {
+          window.clearTimeout(flashTimer);
+          flashTimer = window.setTimeout(() => {
+            codeBody.querySelectorAll("[data-flash]").forEach((el) => el.removeAttribute("data-flash"));
+          }, 1400);
+        }
+      };
+
+      document.querySelectorAll<HTMLElement>("[data-pick]").forEach((group) => {
+        const kind = group.dataset.pick as "usecase" | "agent" | "interface";
+        const buttons = Array.from(group.querySelectorAll<HTMLElement>("button"));
+        buttons.forEach((button) => {
+          button.addEventListener("click", () => {
+            const key = button.dataset.key ?? "";
+            if (!key || state[kind] === key) return;
+            state[kind] = key;
+            const changed = new Set<string>(
+              recipe
+                .filter(([, region]: [string, string | null]) => region === kind)
+                .map(([seg]: [string]) => seg),
+            );
+            for (const item of buttons) {
+              item.setAttribute("aria-pressed", item === button ? "true" : "false");
+            }
+            renderCode(changed);
+          });
+        });
+      });
+    }
   </script>
 </BaseLayout>
 
@@ -967,31 +1570,138 @@ const renderedActor = {
     font-size: 0.75rem;
   }
 
-  .code-section {
+  .build-section {
     padding-top: 3.5rem;
     padding-bottom: 7rem;
   }
 
-  .code-section .section-head {
+  .build-section .section-head {
     display: grid;
     grid-template-columns: minmax(0, 1.1fr) minmax(18rem, 0.9fr);
     align-items: end;
     gap: 2rem;
   }
 
-  .code-section .section-title {
+  .build-section .section-title {
     max-width: none;
+  }
+
+  .build-section .section-title .faint {
+    white-space: normal;
+    text-wrap: balance;
+  }
+
+  .security-section .section-title {
+    max-width: none;
+  }
+
+  .security-section .section-title .faint {
+    white-space: normal;
+  }
+
+  .choices {
+    display: flex;
+    flex-direction: column;
+    gap: 1.75rem;
+    margin-top: 2.5rem;
+  }
+
+  .choice {
+    display: grid;
+    grid-template-columns: minmax(0, 14rem) minmax(0, 1fr);
+    gap: 2rem;
+    align-items: start;
+  }
+
+  .choice-title {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 500;
+    color: var(--text);
+  }
+
+  .choice-sub {
+    margin: 0.35rem 0 0;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: var(--text-muted);
+    max-width: 20rem;
+  }
+
+  .choice-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 0.5rem;
+  }
+
+  .choice-chip {
+    font-size: 0.82rem;
+    padding: 0.32rem 0.6rem;
+  }
+
+  .choice-chip img,
+  .choice-chip .harness-chip-pixel {
+    width: 15px;
+    height: 15px;
+  }
+
+
+  .harness-chip {
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.35rem 0.65rem;
+    border: 1px solid var(--editorial-rule);
+    border-radius: var(--radius-btn);
+    background: #ffffff;
+    color: var(--text-muted);
+    font-family: var(--font-sans);
+    font-size: 0.8rem;
+    font-weight: 500;
+    text-decoration: none;
+    cursor: pointer;
+    transition:
+      background-color 0.12s ease-out,
+      border-color 0.12s ease-out,
+      color 0.12s ease-out;
+  }
+
+  button.harness-chip:not([aria-pressed="true"]):hover {
+    border-color: var(--border-strong);
+    color: var(--text);
+  }
+
+  .harness-chip[aria-pressed="true"] {
+    border-color: rgba(31, 31, 36, 0.24);
+    background: var(--chip-tint, var(--surface-raised));
+    color: var(--text);
+  }
+
+  .harness-chip img,
+  .harness-chip-pixel {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+  }
+
+  .harness-chip-pixel {
+    fill: var(--ink);
+    shape-rendering: crispEdges;
   }
 
   .code-frame {
     --runtime-line-height: 1.4344rem;
     position: relative;
-    margin: 2.5rem 0 0;
+    margin: 1.5rem 0 0;
     overflow: visible;
   }
 
   .code-tag {
     position: absolute;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.32rem;
     right: -0.9rem;
     top: calc(2.2rem + 1.3rem + (var(--line) - 1) * var(--runtime-line-height) + 0.015rem);
     z-index: 2;
@@ -1002,6 +1712,23 @@ const renderedActor = {
     color: var(--ink);
     white-space: nowrap;
     transition: border-color 0.12s ease-out;
+  }
+
+  .code-tag-icon {
+    display: inline-flex;
+    flex: 0 0 auto;
+  }
+
+  .code-tag-icon :global(img),
+  .code-tag-icon :global(svg) {
+    display: block;
+    width: 12px;
+    height: 12px;
+  }
+
+  .code-tag-icon :global(.code-tag-pixel) {
+    fill: var(--ink);
+    shape-rendering: crispEdges;
   }
 
   .code-tag::before {
@@ -1015,46 +1742,47 @@ const renderedActor = {
     background-size: 4px 1px;
   }
 
-  .cl[data-region="image"] .ln { box-shadow: inset -3px 0 0 #5079e4; }
-  .cl[data-region="sandbox"] .ln { box-shadow: inset -3px 0 0 #5e8a70; }
-  .cl[data-region="task"] .ln { box-shadow: inset -3px 0 0 #a8618a; }
-  .cl[data-region="input"] .ln { box-shadow: inset -3px 0 0 #ad8226; }
+  .cl[data-flash] {
+    animation: line-flash 1.2s ease-out;
+  }
 
-  .code-frame:has(.code-tag-image:hover) .cl[data-region="image"],
-  .code-frame:has(.cl[data-region="image"]:hover) .cl[data-region="image"] {
+  @keyframes line-flash {
+    0% { background: var(--flash); }
+    100% { background: transparent; }
+  }
+
+  .code-frame:has(.code-tag-agent:hover) .cl[data-region="agent"],
+  .code-frame:has(.cl[data-region="agent"]:hover) .cl[data-region="agent"],
+  .build-section:has([data-pick="agent"] :is(:hover, :focus-visible)) .cl[data-region="agent"] {
     background: rgba(80, 121, 228, 0.1);
   }
 
-  .code-frame:has(.code-tag-sandbox:hover) .cl[data-region="sandbox"],
-  .code-frame:has(.cl[data-region="sandbox"]:hover) .cl[data-region="sandbox"] {
-    background: rgba(94, 138, 112, 0.12);
-  }
-
-  .code-frame:has(.code-tag-task:hover) .cl[data-region="task"],
-  .code-frame:has(.cl[data-region="task"]:hover) .cl[data-region="task"] {
+  .code-frame:has(.code-tag-usecase:hover) .cl[data-region="usecase"],
+  .code-frame:has(.cl[data-region="usecase"]:hover) .cl[data-region="usecase"],
+  .build-section:has([data-pick="usecase"] :is(:hover, :focus-visible)) .cl[data-region="usecase"] {
     background: rgba(168, 97, 138, 0.1);
   }
 
-  .code-frame:has(.code-tag-input:hover) .cl[data-region="input"],
-  .code-frame:has(.cl[data-region="input"]:hover) .cl[data-region="input"] {
+  .code-frame:has(.code-tag-interface:hover) .cl[data-region="interface"],
+  .code-frame:has(.cl[data-region="interface"]:hover) .cl[data-region="interface"],
+  .build-section:has([data-pick="interface"] :is(:hover, :focus-visible)) .cl[data-region="interface"] {
     background: rgba(173, 130, 38, 0.12);
   }
 
-  .code-frame:has(.code-tag-image:hover) .code-tag-image,
-  .code-frame:has(.cl[data-region="image"]:hover) .code-tag-image,
-  .code-frame:has(.code-tag-sandbox:hover) .code-tag-sandbox,
-  .code-frame:has(.cl[data-region="sandbox"]:hover) .code-tag-sandbox,
-  .code-frame:has(.code-tag-task:hover) .code-tag-task,
-  .code-frame:has(.cl[data-region="task"]:hover) .code-tag-task,
-  .code-frame:has(.code-tag-input:hover) .code-tag-input,
-  .code-frame:has(.cl[data-region="input"]:hover) .code-tag-input {
+  .code-frame:has(.code-tag-agent:hover) .code-tag-agent,
+  .code-frame:has(.cl[data-region="agent"]:hover) .code-tag-agent,
+  .build-section:has([data-pick="agent"] :is(:hover, :focus-visible)) .code-tag-agent,
+  .code-frame:has(.code-tag-usecase:hover) .code-tag-usecase,
+  .code-frame:has(.cl[data-region="usecase"]:hover) .code-tag-usecase,
+  .build-section:has([data-pick="usecase"] :is(:hover, :focus-visible)) .code-tag-usecase,
+  .code-frame:has(.code-tag-interface:hover) .code-tag-interface,
+  .code-frame:has(.cl[data-region="interface"]:hover) .code-tag-interface,
+  .build-section:has([data-pick="interface"] :is(:hover, :focus-visible)) .code-tag-interface {
     border-color: var(--tag-strong);
   }
 
   @media (max-width: 1100px) {
     .code-tags { display: none; }
-
-    .cl[data-region] .ln { box-shadow: none; }
   }
 
   .code-frame pre {
@@ -1106,47 +1834,15 @@ const renderedActor = {
   :global(.code-frame .tok-punct) { color: #8d8a93; }
   :global(.code-frame .tok-comment) { color: #a09d96; }
 
-  .proof-links {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    margin-top: 2rem;
-    border-top: 1px solid var(--editorial-rule);
-    border-bottom: 1px solid var(--editorial-rule);
-  }
-
-  .proof-links a {
-    display: flex;
-    align-items: baseline;
-    gap: 0.75rem;
-    padding: 1.15rem 0;
-    color: var(--text);
-    font-size: 0.875rem;
-    font-weight: 500;
-    text-decoration: none;
-  }
-
-  .proof-links a + a {
-    padding-left: 1.25rem;
-    border-left: 1px solid var(--editorial-rule);
-  }
-
-  .proof-links span {
-    color: var(--text-subtle);
-    font-family: var(--font-mono);
-    font-size: 0.68rem;
-    font-weight: 400;
-  }
-
-  .proof-links a:hover { text-decoration: underline; }
-
   .features {
     padding-bottom: 5rem;
   }
 
-  .code-section,
+  .build-section,
   .features,
   .actor-section,
-  .workspace-section {
+  .workspace-section,
+  .security-section {
     scroll-margin-top: 4.5rem;
   }
 
@@ -1285,6 +1981,107 @@ const renderedActor = {
     padding-bottom: 7rem;
   }
 
+  .security-section {
+    padding-bottom: 7rem;
+  }
+
+  .wire {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 7rem minmax(0, 1fr);
+    column-gap: 0;
+    align-items: stretch;
+    margin-top: 2.5rem;
+  }
+
+  .wire-panel {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    margin-top: 0;
+  }
+
+  .wire-req {
+    flex: 1 1 auto;
+    margin: 0;
+    padding: 1.1rem 1.25rem;
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    line-height: 1.7;
+    white-space: pre;
+    overflow-x: auto;
+    color: var(--frame-text);
+  }
+
+  .wire-panel.is-other .wire-req {
+    color: var(--text-subtle);
+  }
+
+  .wire :global(.tok-placeholder) {
+    background: #f5eeda;
+    color: #7a5a12;
+    padding: 0 0.25em;
+  }
+
+  .wire :global(.tok-real) {
+    background: #eaf0e6;
+    color: #3f6b50;
+    padding: 0 0.25em;
+  }
+
+  .wire-boundary {
+    position: relative;
+  }
+
+  .wire-boundary::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background-image: linear-gradient(var(--ink) 2px, transparent 2px);
+    background-size: 1px 6px;
+  }
+
+  .wire-mark {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 24px;
+    height: 24px;
+    padding: 5px;
+    fill: var(--ink);
+    shape-rendering: crispEdges;
+  }
+
+  .wire-out {
+    display: grid;
+    min-width: 0;
+    row-gap: 1rem;
+    align-content: start;
+  }
+
+  .wire-note {
+    margin: 1.75rem 0 0;
+    max-width: 46rem;
+    font-size: 0.9375rem;
+    line-height: 1.6;
+    color: var(--text-muted);
+  }
+
+  .wire-docs {
+    display: block;
+    margin-top: 0.75rem;
+    font-size: 0.875rem;
+    color: var(--text);
+    text-decoration: none;
+  }
+
+  .wire-docs:hover {
+    text-decoration: underline;
+  }
+
   .workspace-feature {
     min-width: 0;
   }
@@ -1418,7 +2215,7 @@ const renderedActor = {
       height: 210px;
     }
 
-    .code-section .section-head {
+    .build-section .section-head {
       display: flex;
       align-items: flex-start;
     }
@@ -1445,13 +2242,10 @@ const renderedActor = {
       grid-template-columns: minmax(0, 1fr);
     }
 
-    .code-section {
-      padding-top: 4rem;
-    }
-
-    .code-section,
+    .build-section,
     .actor-section,
-    .workspace-section {
+    .workspace-section,
+    .security-section {
       padding-bottom: 5rem;
     }
 
@@ -1464,16 +2258,38 @@ const renderedActor = {
       gap: 2.25rem;
     }
 
-    .proof-links {
+    .wire {
       grid-template-columns: minmax(0, 1fr);
+      row-gap: 0;
     }
 
-    .proof-links a + a {
-      padding-left: 0;
-      border-top: 1px solid var(--editorial-rule);
-      border-left: 0;
+    .wire-boundary {
+      display: block;
+      height: 4.5rem;
     }
 
+    .wire-boundary::before {
+      top: 50%;
+      bottom: auto;
+      left: 0;
+      right: 0;
+      width: auto;
+      height: 1px;
+      background-image: linear-gradient(90deg, var(--ink) 2px, transparent 2px);
+      background-size: 6px 1px;
+    }
+
+    .wire-mark {
+      transform: translate(-50%, -50%) rotate(90deg);
+    }
+
+  }
+
+  @media (max-width: 700px) {
+    .choice {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0.9rem;
+    }
   }
 
   @media (max-width: 600px) {
@@ -1481,5 +2297,6 @@ const renderedActor = {
       font-size: clamp(2rem, 8vw, 2.75rem);
       letter-spacing: -0.04em;
     }
+
   }
 </style>
