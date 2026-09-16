@@ -1,9 +1,14 @@
 # Common Product releases (v0)
 
-`release.yaml` owns stable tags and previews. It builds and verifies common Product
-bytes, publishes OCI/npm assets, then completes one signed `release-index.json`.
+`release.yaml` owns stable tags and previews. It builds and verifies Product
+artifacts, publishes OCI/npm assets, then completes one signed `release-index.json`.
 It does not prepare managed AMIs or update staging. Cloud selects immutable bytes
 and owns capacity, ECR/S3 preparation, AMIs and deployment.
+
+Both `release.yaml` and `ci.yaml` use `build-artifacts.yaml` (displayed as
+**build release artifacts**); CI first runs `artifact-selection` (**select artifact
+source**). Frozen GitHub build artifacts are named
+`build-artifacts-<run-id>-<part>` for upload and retry restoration.
 
 ## Source selection and bootstrap
 
@@ -33,7 +38,7 @@ list contains no workflows. This restriction applies only to manual PR publicati
 established solution. Match main workflows, then select the new full PR head SHA.
 Normal PR CI keeps its
 merge-result checkout. Native CI run `head_sha` identifies the PR head; it does not
-mean every merge-result test used that checkout. `common-artifacts` additionally
+mean every merge-result test used that checkout. `build-artifacts` additionally
 builds the exact head. The main-owned manual graph repeats exact-source builds,
 selected Go checks, generated-runtime checks and the real consumer fixture under
 trusted orchestration. Candidate source has no publication credentials. Privileged
@@ -45,7 +50,7 @@ therefore stops publication at the next gate. GitHub remains authoritative if ma
 moves after a check; these read checks are not an atomic lock on main. Automatic
 main previews and formal tag admission keep their existing semantics.
 
-The mechanism PR's uncredentialed common build is the first integration gate.
+The mechanism PR's uncredentialed artifact build is the first integration gate.
 It needs neither published builder digests nor the separate infrastructure behavior
 prerequisite on main. The fixture derives the builder digest from actual OCI
 manifest bytes, transfers that image to a loopback registry, and uses the same CLI
@@ -104,7 +109,7 @@ actual AMI fingerprint provide reuse; stamped binaries/packages may rebuild.
 ## Validation and activation boundaries
 
 `nix develop .#images -c tests/release_workflow_test.sh` runs admission, frozen-byte,
-index-last, npm collision and discovery failure fixtures. The common workflow
+index-last, npm collision and discovery failure fixtures. The artifact build workflow
 builds actual SDK/proto, CLI targets, builder, CP/publisher, platform, host and guest
 assets. `tests/release_consumer.sh ASSETS` installs real packages through a loopback
 npm fixture, typechecks/executes SDK calls, downloads the CLI and builds a real
@@ -115,7 +120,7 @@ access. Local fixtures do not establish native Sigstore issuance or public acces
 Before activation, separately verify npm trusted-publisher authorization for
 main-executed `release.yaml` and Environment `release`, GitHub Environment branch
 rules (main plus human tags), GHCR visibility, native immutable releases, and
-retention settings. PR workflows retain merge checks plus an additional full common
+retention settings. PR workflows retain merge checks plus an additional full artifact
 build: runner time/disk demand increases. The graph records disk/memory/output
 sizes on `ubuntu-24.04`; native Linux hosted feasibility is an acceptance requirement,
 not an assumption. Cloud previously required a larger runner after ENOSPC; this
@@ -139,7 +144,7 @@ It is not another release state or signing protocol. The shell bootstrap verifie
 the checksum file against the canonical index and then the archive checksum, with
 only the existing shell/curl/tar/hash tools. Its bootstrap trust is HTTPS; it does
 not claim local Sigstore verification or install a new mandatory runtime. Privileged
-consumers still verify Sigstore explicitly. The real common consumer executes this
+consumers still verify Sigstore explicitly. The release consumer fixture executes this
 shipped installer using a loopback release transport before running the actual CLI.
 
 Self-host Runtime publication uses `publish-platform-release.sh STORE TAG INDEX

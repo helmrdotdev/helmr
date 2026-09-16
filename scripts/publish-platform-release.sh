@@ -35,5 +35,5 @@ source_commit="$(git -C "${ROOT}" rev-parse HEAD)"
 work="$(mktemp -d)"
 chmod 0700 "${work}"
 trap 'rm -rf "${work}"' EXIT
-python3 "${ROOT}/scripts/release/platform.py" "$index" "$sigstore_bundle" "$archive" "$provenance" "$release_tag" "$source_commit" "$work/input"
+python3 "${ROOT}/scripts/release/platform_materialize.py" "$index" "$sigstore_bundle" "$archive" "$provenance" "$release_tag" "$source_commit" "$work/input"
 "${ROOT}/scripts/publish-materialized-platform-release.sh" "${store_uri}" "$work/input"

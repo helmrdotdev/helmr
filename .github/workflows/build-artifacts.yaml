@@ -1,4 +1,4 @@
-name: common Product build
+name: build release artifacts
 on:
   workflow_call:
     inputs:
@@ -63,7 +63,7 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: steps.frozen.outputs.restored != 'true'
         with:
-          name: common-${{ github.run_id }}-${{ matrix.part }}
+          name: build-artifacts-${{ github.run_id }}-${{ matrix.part }}
           path: ${{ runner.temp }}/frozen/
           retention-days: 7
           compression-level: 0
@@ -118,7 +118,7 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: steps.frozen.outputs.restored != 'true'
         with:
-          name: common-${{ github.run_id }}-cli
+          name: build-artifacts-${{ github.run_id }}-cli
           path: ${{ runner.temp }}/frozen/
           retention-days: 7
           if-no-files-found: error

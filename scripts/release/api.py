@@ -19,10 +19,11 @@ class GitHub:
     def __init__(self):
         self.root = f'https://api.github.com/repos/{REPOSITORY}/'
 
-    def request(self, path, *, data=None, method=None, destination=None, missing=False):
+    def request(self, path, *, data=None, method=None, destination=None, missing=False, accept='application/vnd.github+json'):
         url = path if path.startswith('https://') else self.root + path
         require(url.startswith((self.root, f'https://uploads.github.com/repos/{REPOSITORY}/')), 'foreign GitHub API')
-        headers = {'Accept': 'application/octet-stream' if destination else 'application/vnd.github+json',
+        # Endpoint media negotiation is independent of saving the response to a file.
+        headers = {'Accept': accept,
                    'X-GitHub-Api-Version': '2022-11-28'}
         token = os.environ.get('GH_TOKEN', '')
         if token:

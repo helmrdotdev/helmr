@@ -31,7 +31,7 @@ def release_asset(api, release, name, destination, missing=False):
     if not assets and missing:
         return False
     require(len(assets) == 1, 'missing/duplicate release asset: ' + name)
-    api.request(f'releases/assets/{assets[0]["id"]}', destination=destination)
+    api.request(f'releases/assets/{assets[0]["id"]}', destination=destination, accept='application/octet-stream')
     return True
 
 

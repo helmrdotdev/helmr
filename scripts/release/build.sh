@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fixed common build leaves. Run only in unprivileged jobs.
+# Fixed release artifact build parts. Run only in unprivileged jobs.
 set -euo pipefail
 part=${1:?part} output=${2:?output}
 root=$(pwd)
@@ -63,5 +63,5 @@ case "$part" in
     bun install --frozen-lockfile --ignore-scripts
     scripts/build-cli-binaries.sh "$output"
     ;;
-  *) echo 'unknown common build part' >&2; exit 2 ;;
+  *) echo 'unknown artifact build part' >&2; exit 2 ;;
 esac

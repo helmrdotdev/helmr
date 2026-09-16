@@ -41,7 +41,7 @@ def freeze(part, directory, selection, output):
 
 def restore(api, part, selection, destination):
     run_id = selection['build']['runId']
-    name = f'common-{run_id}-{part}'
+    name = f'build-artifacts-{run_id}-{part}'
     items = [a for a in api.pages(f'actions/runs/{run_id}/artifacts', 'artifacts') if a['name'] == name]
     if not items:
         return False

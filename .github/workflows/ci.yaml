@@ -195,8 +195,8 @@ jobs:
 
       - run: nix run .#${{ matrix.app }}
 
-  common-selection:
-    name: exact head common selection
+  artifact-selection:
+    name: select artifact source
     runs-on: ubuntu-24.04
     outputs:
       selection: ${{ steps.selection.outputs.selection }}
@@ -226,15 +226,15 @@ jobs:
           with open(os.environ['GITHUB_OUTPUT'],'a') as output:
               output.write('selection='+json.dumps(selection,separators=(',',':'))+'\n')
           PYTHON
-  common-artifacts:
-    name: exact head common artifacts
-    needs: common-selection
+  build-artifacts:
+    name: build release artifacts
+    needs: artifact-selection
     permissions:
       contents: read
       actions: read
-    uses: ./.github/workflows/common-build.yaml
+    uses: ./.github/workflows/build-artifacts.yaml
     with:
-      selection: ${{ needs.common-selection.outputs.selection }}
+      selection: ${{ needs.artifact-selection.outputs.selection }}
       tools_commit: ${{ github.workflow_sha }}
 
   ci-complete:
@@ -247,7 +247,7 @@ jobs:
       - browser
       - bundle-builder
       - release-contracts
-      - common-artifacts
+      - build-artifacts
     if: always()
     steps:
       - name: Check required CI jobs
@@ -260,7 +260,7 @@ jobs:
             "${{ needs.browser.result }}" \
             "${{ needs.bundle-builder.result }}" \
             "${{ needs.release-contracts.result }}" \
-            "${{ needs.common-artifacts.result }}"
+            "${{ needs.build-artifacts.result }}"
           do
             if [ "$result" != "success" ]; then
               failed=1

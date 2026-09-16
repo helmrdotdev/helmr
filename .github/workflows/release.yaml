@@ -55,7 +55,7 @@ jobs:
   build:
     needs: admission
     if: needs.admission.outputs.skip != 'true' && needs.admission.outputs.complete != 'true'
-    uses: ./.github/workflows/common-build.yaml
+    uses: ./.github/workflows/build-artifacts.yaml
     with:
       selection: ${{ needs.admission.outputs.selection }}
       tools_commit: ${{ github.workflow_sha }}

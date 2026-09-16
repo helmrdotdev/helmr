@@ -19,12 +19,12 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awsv4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
-	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
-	awsv4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 )
 
 func TestValidateDisjointS3Stores(t *testing.T) {

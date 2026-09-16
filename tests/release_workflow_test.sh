@@ -9,6 +9,14 @@ require_text() { rg -F -- "$1" "$2" >/dev/null || { echo "$3" >&2; exit 1; }; }
 require_text "'!v*-preview.*'" "$workflow" 'generated preview tags must be excluded'
 require_text 'workflow_run:' "$workflow" 'automatic main preview trigger missing'
 require_text 'workflow_dispatch:' "$workflow" 'manual exact PR head trigger missing'
+for caller in "$workflow" "$repo_root/.github/workflows/ci.yaml"; do
+  require_text 'uses: ./.github/workflows/build-artifacts.yaml' "$caller" \
+    'CI and release must use the same artifact build workflow'
+done
+require_text 'name: build-artifacts-${{ github.run_id }}-${{ matrix.part }}' \
+  "$repo_root/.github/workflows/build-artifacts.yaml" 'component upload name differs from retry lookup'
+require_text 'name: build-artifacts-${{ github.run_id }}-cli' \
+  "$repo_root/.github/workflows/build-artifacts.yaml" 'CLI upload name differs from retry lookup'
 if rg 'aws-actions|worker-ami|platform-release-dev' "$workflow"; then exit 1; fi
 python3 -m unittest discover -s "$repo_root/tests/release" -v
 tmp=$(mktemp -d)

@@ -1,5 +1,6 @@
 """Real helper transitions with an in-memory native release surface; no service writes."""
 import copy
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -11,7 +12,7 @@ from unittest.mock import patch
 import zipfile
 import publish
 import transport
-from contract import canonical, digest, read, write
+from contract import canonical, descriptor, digest, read, verify_files, write
 from transport import freeze, restore
 from test_contract import assets, selection
 import test_contract
@@ -19,7 +20,7 @@ import test_contract
 class Releases:
     def __init__(self):
         self.releases=[];self.blobs={};self.writes=[];self.fail=None
-    def request(self,path,*,data=None,method=None,destination=None,missing=False):
+    def request(self,path,*,data=None,method=None,destination=None,missing=False,accept='application/vnd.github+json'):
         if path.startswith('releases/tags/'):
             return next((r for r in self.releases if r['tag_name']==path[14:]),None)
         if path=='releases' and data:
@@ -49,6 +50,44 @@ def fake_verify(path,signature,version):
     if Path(signature).read_text()!=digest(path):raise ValueError('bad fixture signature')
 
 class Publication(unittest.TestCase):
+    def test_nested_product_image_publication_and_legacy_destination_rejection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            index = assets(root)
+            manifest = b'fixture OCI manifest bytes'
+            image_digest = 'sha256:' + hashlib.sha256(manifest).hexdigest()
+            images = (('bundle-builder.json', 'bundle-builder', 'builder-image'),
+                      ('controlplane.json', 'control-plane', 'controlplane-image'))
+            for name, repository, _ in images:
+                record = read(root / name)
+                record['image'] = f'ghcr.io/helmrdotdev/helmr/{repository}@{image_digest}'
+                write(root / name, record)
+                index['assets'][name] = descriptor(root / name)
+            verify_files(index, root)
+            absent = subprocess.CompletedProcess([], 1, b'', b'manifest unknown')
+            with patch.object(publish.subprocess, 'run', return_value=absent) as inspect, \
+                    patch.object(publish, 'run') as copy_image, \
+                    patch.object(publish.subprocess, 'check_output', return_value=manifest) as readback:
+                publish.publish_images(root, index)
+                self.assertEqual(copy_image.call_count, 2)
+                for _, repository, image_dir in images:
+                    base = f'ghcr.io/helmrdotdev/helmr/{repository}'
+                    inspect.assert_any_call(['skopeo', 'inspect', '--raw', 'docker://' + base + ':' + index['version']], capture_output=True)
+                    copy_image.assert_any_call('skopeo', '--insecure-policy', 'copy', '--preserve-digests', 'dir:' + str(root / image_dir), 'docker://' + base + ':' + index['version'])
+                    readback.assert_any_call(['skopeo', 'inspect', '--raw', 'docker://' + base + '@' + image_digest])
+            for name, repository, _ in images:
+                with self.subTest(repository=repository):
+                    record = read(root / name)
+                    original = record['image']
+                    record['image'] = f'ghcr.io/helmrdotdev/helmr-{repository}@{image_digest}'
+                    write(root / name, record)
+                    index['assets'][name] = descriptor(root / name)
+                    with self.assertRaisesRegex(ValueError, 'Product image digest required'):
+                        verify_files(index, root)
+                    record['image'] = original
+                    write(root / name, record)
+                    index['assets'][name] = descriptor(root / name)
+
     def test_interrupted_preview_pair_reuses_original_attempt_and_rejects_changed_bytes(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);s=selection();assets(root);api=Releases();api.fail='release-build.sigstore.json'
@@ -99,7 +138,7 @@ class Publication(unittest.TestCase):
             z=root/'native.zip'
             with zipfile.ZipFile(z,'w') as archive:
                 for p in (root/'frozen').iterdir():archive.write(p,p.name)
-            item=dict(id=4,name='common-123-sdk',expired=False,workflow_run=dict(id=123),digest=digest(z))
+            item=dict(id=4,name='build-artifacts-123-sdk',expired=False,workflow_run=dict(id=123),digest=digest(z))
             class API:
                 def pages(self,*_):return [item]
                 def request(self,path,*,destination):shutil.copyfile(z,destination)
