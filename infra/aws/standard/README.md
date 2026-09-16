@@ -155,3 +155,12 @@ enforcing ASG min/max; `max_size` is the hard spend guardrail and equal min/max
 values provide fixed capacity. Explicit CPU, memory, disk, cache, and VM-slot
 capacities are required when workers are created. Demand observations may guide
 scale-out, but scale-in must use the exact claim-fenced drain contract.
+
+## Deployment recovery
+
+`enable_deployment_rollback` defaults to `true` for both ECS services. Automatic
+recovery can restore the preceding task definition only when its code remains
+compatible with current data; it does not restore the database or verify schema
+compatibility. Apply `enable_deployment_rollback=false` before an incompatible
+migration or reset and recover by rolling forward. Run migrations from the exact
+selected image before enabling or updating services.

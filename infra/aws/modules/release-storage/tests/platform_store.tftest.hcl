@@ -28,9 +28,6 @@ override_resource {
 
 variables {
   name = "helmr-test"
-  platform_publisher_principal_arns = [
-    "arn:aws:iam::000000000000:role/helmr-installation-publisher"
-  ]
 }
 
 run "platform_store_is_versioned_non_expiring_and_separate" {
@@ -54,7 +51,7 @@ run "platform_store_is_versioned_non_expiring_and_separate" {
       output.release_artifact_bucket_arn == aws_s3_bucket.release_artifacts.arn &&
       output.release_artifact_kms_key_arn == aws_kms_key.release_artifacts.arn
     )
-    error_message = "release artifacts must be durable, versioned, and exposed through exact bootstrap outputs."
+    error_message = "release artifacts must be durable, versioned, and exposed through exact release storage outputs."
   }
 
   assert {
@@ -68,20 +65,13 @@ run "platform_store_is_versioned_non_expiring_and_separate" {
       output.platform_store_bucket_arn == aws_s3_bucket.platform_store.arn &&
       output.platform_store_kms_key_arn == aws_kms_key.platform_store.arn
     )
-    error_message = "bootstrap outputs must expose the fixed /objects URI and its physical bucket/KMS authority."
+    error_message = "release storage outputs must expose the fixed /objects URI and its physical bucket/KMS authority."
   }
 }
 
-run "platform_store_publisher_and_immutability_are_bounded" {
+run "platform_store_immutability_is_bounded" {
   command = apply
 
-  assert {
-    condition = (
-      strcontains(aws_iam_role_policy.platform_publisher.policy, "${aws_s3_bucket.platform_store.arn}/objects/sha256/*") &&
-      !strcontains(aws_iam_role_policy.platform_publisher.policy, "/controlplane/")
-    )
-    error_message = "Platform publisher must be bounded to immutable content-addressed objects."
-  }
 
   assert {
     condition = (

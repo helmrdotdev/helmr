@@ -1172,7 +1172,7 @@ resource "aws_ecs_service" "controlplane" {
 
   deployment_circuit_breaker {
     enable   = true
-    rollback = false
+    rollback = var.enable_deployment_rollback
   }
 
   depends_on = [
@@ -1209,7 +1209,7 @@ resource "aws_ecs_service" "dispatcher" {
 
   deployment_circuit_breaker {
     enable   = true
-    rollback = false
+    rollback = var.enable_deployment_rollback
   }
 
 }

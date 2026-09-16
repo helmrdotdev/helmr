@@ -154,7 +154,8 @@ module "release_artifacts" {
 }
 
 module "controlplane" {
-  source = "../modules/controlplane"
+  enable_deployment_rollback = var.enable_deployment_rollback
+  source                     = "../modules/controlplane"
 
   name                                       = local.name
   bucket_name_prefix                         = var.bucket_name_prefix

@@ -1,3 +1,10 @@
+variable "enable_deployment_rollback" {
+  description = "Allow ECS to restore the previous task definition on deployment failure. Disable before migrations incompatible with predecessor code; this does not restore the database."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
 variable "permissions_boundary_arn" {
   description = "Optional caller-owned IAM ceiling; does not grant resource permissions."
   type        = string

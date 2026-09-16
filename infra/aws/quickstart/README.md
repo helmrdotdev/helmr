@@ -195,3 +195,12 @@ Use an ACM certificate in the same region as the ALB.
 For CloudFront, set `enable_cloudfront=true` and set `cloudfront_origin_domain_name` to a separate
 DNS name, such as `origin.helmr.example.com`, that resolves to the public ALB and is covered by
 `certificate_arn`. Do not reuse the CloudFront viewer hostname as the origin.
+
+## Deployment recovery
+
+`enable_deployment_rollback` defaults to `true` for both ECS services. Automatic
+recovery can restore the preceding task definition only when its code remains
+compatible with current data; it does not restore the database or verify schema
+compatibility. Apply `enable_deployment_rollback=false` before an incompatible
+migration or reset and recover by rolling forward. Run migrations from the exact
+selected image before enabling or updating services.

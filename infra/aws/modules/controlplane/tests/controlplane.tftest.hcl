@@ -204,6 +204,7 @@ run "caller_ceiling_and_roll_forward" {
   variables {
     permissions_boundary_arn    = "arn:aws:iam::000000000000:policy/workload"
     create_controlplane_service = true
+    enable_deployment_rollback  = false
   }
   assert {
     condition     = alltrue([for role in [aws_iam_role.controlplane_execution, aws_iam_role.dispatcher_execution, aws_iam_role.database_bootstrap_execution, aws_iam_role.controlplane_task, aws_iam_role.dispatcher_task, aws_iam_role.migration_task] : role.permissions_boundary == var.permissions_boundary_arn])
@@ -224,4 +225,13 @@ run "malformed_ceiling" {
   command = plan
   variables { permissions_boundary_arn = "workload" }
   expect_failures = [var.permissions_boundary_arn]
+}
+
+run "default_automatic_recovery" {
+  command = plan
+  variables { create_controlplane_service = true }
+  assert {
+    condition     = alltrue([for service in [aws_ecs_service.controlplane[0], aws_ecs_service.dispatcher[0]] : service.deployment_circuit_breaker[0].enable && service.deployment_circuit_breaker[0].rollback])
+    error_message = "Both services must enable automatic predecessor recovery by default."
+  }
 }

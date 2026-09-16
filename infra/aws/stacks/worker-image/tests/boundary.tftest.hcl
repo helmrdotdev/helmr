@@ -50,7 +50,7 @@ variables {
 run "caller_ceiling_composition" {
   command = plan
   variables {
-    name                     = "helmr-staging-image"
+    name                     = "helmr-test-image"
     permissions_boundary_arn = "arn:aws:iam::000000000000:policy/workload"
   }
 }

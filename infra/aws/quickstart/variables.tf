@@ -1,3 +1,10 @@
+variable "enable_deployment_rollback" {
+  description = "Allow ECS to restore the previous task definition on deployment failure. Disable before migrations incompatible with predecessor code; this does not restore the database."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
 variable "aws_region" {
   description = "AWS region for the quickstart deployment."
   type        = string

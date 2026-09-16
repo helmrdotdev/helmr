@@ -47,8 +47,3 @@ output "platform_store_kms_key_arn" {
   description = "KMS key ARN for the immutable Helmr release store."
   value       = aws_kms_key.platform_store.arn
 }
-
-output "platform_publisher_role_arn" {
-  description = "Create-only Platform Artifact publisher role ARN."
-  value       = aws_iam_role.platform_publisher.arn
-}

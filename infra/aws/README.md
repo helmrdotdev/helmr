@@ -5,7 +5,8 @@ tooling for Helmr.
 
 ## Layout
 
-- `modules/bootstrap` is the reusable deployment foundation child module.
+- `modules/release-storage` owns reusable release buckets, encryption keys and the Control Plane image repository.
+- `modules/release-publisher` owns a bounded publisher role for explicitly selected storage and trusted IAM principals.
 - `modules/network` creates a reusable VPC and subnet topology.
 - `modules/controlplane` creates the Product Control Plane data plane and accepts external
   deployment-owned secret ARNs.
@@ -35,7 +36,7 @@ Before enabling or updating Control Plane services, run the database migration t
 for the exact image. Keep `/healthz` for process health and use `/readyz` for
 traffic readiness after the schema is current.
 
-## IAM ceilings and roll-forward deployment
+## IAM ceilings and deployment recovery
 
 The Control Plane, Worker and Worker-image modules accept one optional
 `permissions_boundary_arn` for a customer-managed policy in the caller's AWS
@@ -47,8 +48,37 @@ standalone image stack. Invalid supplied authority never selects a default.
 Worker retains its generated ceiling when the input is null; see its
 [module contract](modules/worker/README.md).
 
-Control Plane and dispatcher ECS circuit breakers remain enabled with automatic
-rollback disabled. A failed deployment requires a roll-forward repair: migrations
-may make a predecessor image invalid. The normal service configuration declares
-this policy before restoring positive desired counts. An older release's
-availability is not authority to restart it against the current schema.
+Control Plane and dispatcher ECS circuit breakers remain enabled. The generic
+`enable_deployment_rollback` input defaults to `true` and is forwarded by quickstart
+and standard. This allows recovery to the preceding task definition when its code
+is compatible with the current data. Automatic rollback does not restore a database
+or establish schema compatibility. Operators must apply `false` before incompatible
+migrations or resets, then use roll-forward recovery. Run migrations from the exact
+selected image before enabling or updating services.
+
+## Operator-owned release foundation
+
+Compose storage and publication under your own root/backend. The quickstart and
+standard roots accept the resulting Platform store inputs; they do not create this
+foundation. For example, with this checkout at `./helmr` relative to your root:
+
+```hcl
+module "storage" {
+  source = "./helmr/infra/aws/modules/release-storage"
+  name   = "my-helmr"
+}
+
+module "publisher" {
+  source                              = "./helmr/infra/aws/modules/release-publisher"
+  name                                = "my-helmr"
+  principal_arns                      = [var.publisher_principal_arn]
+  platform_store_bucket_arn           = module.storage.platform_store_bucket_arn
+  platform_store_kms_key_arn          = module.storage.platform_store_kms_key_arn
+  controlplane_release_repository_arn = module.storage.controlplane_release_repository_arn
+}
+```
+
+The operator supplies an existing trusted IAM role/user ARN. Publication grants
+remain limited to the selected Platform objects/key and Control Plane repository;
+storage immutability is enforced by storage policy independently of that role.
+An operator with separately owned delivery IAM can consume storage alone.

@@ -6,7 +6,8 @@ repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 script="${repo_root}/scripts/aws-release-artifacts.sh"
 controlplane_build_script="${repo_root}/scripts/build-controlplane-image.sh"
 controlplane_build_contract="${repo_root}/images/controlplane-image-build.json"
-bootstrap_versions="${repo_root}/infra/aws/modules/bootstrap/versions.tf"
+storage_versions="${repo_root}/infra/aws/modules/release-storage/versions.tf"
+publisher_versions="${repo_root}/infra/aws/modules/release-publisher/versions.tf"
 release_build_main="${repo_root}/infra/aws/stacks/release-build/main.tf"
 release_build_outputs="${repo_root}/infra/aws/stacks/release-build/outputs.tf"
 release_build_versions="${repo_root}/infra/aws/stacks/release-build/versions.tf"
@@ -48,8 +49,8 @@ assert_contains "${controlplane_build_script}" 'path:/work#packages.x86_64-linux
   "Control Plane image timezone build uses a path input"
 assert_contains "${script}" 'Worker does not report the release cohort identity' \
   "Worker release reported identity"
-if grep -Fq 'backend "s3"' "${bootstrap_versions}"; then
-  fail "bootstrap child module must not declare a backend"
+if grep -Fq 'backend "s3"' "${storage_versions}" "${publisher_versions}"; then
+  fail "release storage/publisher child modules must not declare a backend"
 fi
 assert_contains "${release_build_versions}" 'backend "s3"' "release-build S3 backend"
 assert_contains "${release_build_versions}" 'helmr/stacks/release-build/terraform.tfstate' \

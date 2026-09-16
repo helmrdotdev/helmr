@@ -146,3 +146,20 @@ run "retain_current_sealed_generation" {
     error_message = "A newly emitted self-hosted definition must round-trip with its explicit null boundary ARN."
   }
 }
+
+# Compiled service values are checked by aws_root_composition_test.py.
+run "rollback_default" {
+  command = plan
+  variables {
+    create_controlplane_service = true
+    certificate_arn             = "arn:aws:acm:us-east-1:111122223333:certificate/00000000-0000-0000-0000-000000000001"
+  }
+}
+run "rollback_disabled" {
+  command = plan
+  variables {
+    create_controlplane_service = true
+    certificate_arn             = "arn:aws:acm:us-east-1:111122223333:certificate/00000000-0000-0000-0000-000000000001"
+    enable_deployment_rollback  = false
+  }
+}

@@ -32,7 +32,7 @@ Both `infra/aws/quickstart` and `infra/aws/standard` require:
 | `github_oauth_client_id` | Non-secret OAuth application client ID. |
 | `worker_network_blocked_ipv4_cidrs` | Deployment-owned deny set that must wholly cover the execution VPC prefix. |
 
-The Platform Artifact values come from `infra/aws/modules/bootstrap` as a child module under an operator-owned root and backend, or from an equivalent deployment. The example compositions do not create that foundation for you.
+The Platform Artifact values come from `infra/aws/modules/release-storage` as a child module under an operator-owned root and backend, or from an equivalent deployment. The example compositions do not create that foundation for you. Compose `infra/aws/modules/release-publisher` separately when you need a publisher role, passing the exact storage outputs and your trusted IAM principals.
 
 ## Release artifacts
 
