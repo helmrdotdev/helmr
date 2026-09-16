@@ -440,6 +440,18 @@ const pixelIcons = {
     "..##......",
     "...####...",
   ],
+  arrowRight: [
+    "..........",
+    ".....##...",
+    "......##..",
+    "##########",
+    "##########",
+    "......##..",
+    ".....##...",
+    "..........",
+    "..........",
+    "..........",
+  ],
   window: [
     "..........",
     ".########.",
@@ -667,6 +679,20 @@ const interfaces = [
 ] as const;
 
 const windowPixels = pixelsFromRows(pixelIcons.window);
+const arrowRightPixels = pixelsFromRows(pixelIcons.arrowRight);
+
+const wireRequests = {
+  vm: `GET /repos/acme/app/pulls/482
+Host: api.github.com
+Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
+  allowed: `GET /repos/acme/app/pulls/482
+Host: api.github.com
+Authorization: Bearer <span class="tok-real">ghp_••••••••••••••••</span>`,
+  other: `POST /collect
+Host: telemetry.example
+Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
+};
+
 ---
 
 <BaseLayout
@@ -966,6 +992,53 @@ const windowPixels = pixelsFromRows(pixelIcons.window);
           </div>
         ))}
       </div>
+    </section>
+
+    <section id="security" class="security-section" aria-label="Security">
+      <div class="section-head">
+        <h2 class="headline section-title">
+          The agent never sees the key.{" "}
+          <span class="faint">Secrets are swapped in at the network boundary — outside the VM.</span>
+        </h2>
+      </div>
+      <div class="wire">
+        <div class="wire-panel panel panel-screen">
+          <div class="code-cap">
+            <span>inside the microVM</span>
+            <span class="cap-meta">GH_TOKEN</span>
+          </div>
+          <pre class="wire-req" set:html={wireRequests.vm}></pre>
+        </div>
+        <div class="wire-boundary">
+          <svg class="wire-mark" viewBox="0 0 10 10" aria-hidden="true" style={`background: ${tints.blue}`}>
+            {arrowRightPixels.map((pixel) => (
+              <rect x={pixel.x} y={pixel.y} width="1" height="1" />
+            ))}
+          </svg>
+        </div>
+        <div class="wire-out">
+          <div class="wire-panel panel panel-screen is-allowed">
+            <div class="code-cap">
+              <span>api.github.com</span>
+              <span class="cap-meta">allowed origin</span>
+            </div>
+            <pre class="wire-req" set:html={wireRequests.allowed}></pre>
+          </div>
+          <div class="wire-panel panel panel-screen is-other">
+            <div class="code-cap">
+              <span>anywhere else</span>
+              <span class="cap-meta">not allowed</span>
+            </div>
+            <pre class="wire-req" set:html={wireRequests.other}></pre>
+          </div>
+        </div>
+      </div>
+      <p class="wire-note">
+        Bind a secret as <code>protected</code> and the VM only ever holds a
+        placeholder. Helmr replaces it for the origins you allow, checks the run
+        is still authorized, and fails the request if the secret was revoked.
+        <a class="wire-docs" href="/docs/concepts/secrets">How protected secrets work →</a>
+      </p>
     </section>
 
     <section class="homes" aria-label="Deployment options">
@@ -1407,6 +1480,14 @@ const windowPixels = pixelsFromRows(pixelIcons.window);
     text-wrap: balance;
   }
 
+  .security-section .section-title {
+    max-width: none;
+  }
+
+  .security-section .section-title .faint {
+    white-space: normal;
+  }
+
   .build-grid {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1721,7 +1802,8 @@ const windowPixels = pixelsFromRows(pixelIcons.window);
   .build-section,
   .features,
   .actor-section,
-  .workspace-section {
+  .workspace-section,
+  .security-section {
     scroll-margin-top: 4.5rem;
   }
 
@@ -1858,6 +1940,107 @@ const windowPixels = pixelsFromRows(pixelIcons.window);
 
   .workspace-section {
     padding-bottom: 7rem;
+  }
+
+  .security-section {
+    padding-bottom: 7rem;
+  }
+
+  .wire {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 7rem minmax(0, 1fr);
+    column-gap: 0;
+    align-items: stretch;
+    margin-top: 2.5rem;
+  }
+
+  .wire-panel {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    margin-top: 0;
+  }
+
+  .wire-req {
+    flex: 1 1 auto;
+    margin: 0;
+    padding: 1.1rem 1.25rem;
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    line-height: 1.7;
+    white-space: pre;
+    overflow-x: auto;
+    color: var(--frame-text);
+  }
+
+  .wire-panel.is-other .wire-req {
+    color: var(--text-subtle);
+  }
+
+  .wire :global(.tok-placeholder) {
+    background: #f5eeda;
+    color: #7a5a12;
+    padding: 0 0.25em;
+  }
+
+  .wire :global(.tok-real) {
+    background: #eaf0e6;
+    color: #3f6b50;
+    padding: 0 0.25em;
+  }
+
+  .wire-boundary {
+    position: relative;
+  }
+
+  .wire-boundary::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background-image: linear-gradient(var(--ink) 2px, transparent 2px);
+    background-size: 1px 6px;
+  }
+
+  .wire-mark {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 30px;
+    height: 30px;
+    padding: 6px;
+    fill: var(--ink);
+    shape-rendering: crispEdges;
+  }
+
+  .wire-out {
+    display: grid;
+    min-width: 0;
+    row-gap: 1rem;
+    align-content: start;
+  }
+
+  .wire-note {
+    margin: 1.75rem 0 0;
+    max-width: 46rem;
+    font-size: 0.9375rem;
+    line-height: 1.6;
+    color: var(--text-muted);
+  }
+
+  .wire-docs {
+    display: block;
+    margin-top: 0.75rem;
+    font-size: 0.875rem;
+    color: var(--text);
+    text-decoration: none;
+  }
+
+  .wire-docs:hover {
+    text-decoration: underline;
   }
 
   .workspace-feature {
@@ -2032,7 +2215,8 @@ const windowPixels = pixelsFromRows(pixelIcons.window);
     .code-section,
     .build-section,
     .actor-section,
-    .workspace-section {
+    .workspace-section,
+    .security-section {
       padding-bottom: 5rem;
     }
 
@@ -2043,6 +2227,31 @@ const windowPixels = pixelsFromRows(pixelIcons.window);
     .feature-grid {
       grid-template-columns: minmax(0, 1fr);
       gap: 2.25rem;
+    }
+
+    .wire {
+      grid-template-columns: minmax(0, 1fr);
+      row-gap: 0;
+    }
+
+    .wire-boundary {
+      display: block;
+      height: 4.5rem;
+    }
+
+    .wire-boundary::before {
+      top: 50%;
+      bottom: auto;
+      left: 0;
+      right: 0;
+      width: auto;
+      height: 1px;
+      background-image: linear-gradient(90deg, var(--ink) 2px, transparent 2px);
+      background-size: 6px 1px;
+    }
+
+    .wire-mark {
+      transform: translate(-50%, -50%) rotate(90deg);
     }
 
   }
