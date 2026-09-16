@@ -10,7 +10,6 @@ const usecases = [
     icon: "merge",
     id: "review-pr",
     primitive: "task",
-    src: "event",
     imports: 'import { image, sandbox, source, task, tokens } from "@helmr/sdk"',
     head: `export const reviewPr = task({
   id: "review-pr",
@@ -26,7 +25,6 @@ const usecases = [
     icon: "bug",
     id: "bug-hunter",
     primitive: "task",
-    src: "event",
     imports: 'import { image, sandbox, source, task, tokens } from "@helmr/sdk"',
     head: `export const huntBug = task({
   id: "bug-hunter",
@@ -42,16 +40,15 @@ const usecases = [
     icon: "mention",
     id: "fix-issue",
     primitive: "actor",
-    src: "input",
     imports: 'import { actor, image, sandbox, source, tokens } from "@helmr/sdk"',
     head: `export const fixIssue = actor({
   id: "fix-issue",
   async run(session) {
-    const input = await session.input.receive({ idleTimeout: "30m" }).unwrap()
-    const brief = \`Fix \${input.issue} in \${input.repo}. Run the tests, then open a PR.\``,
+    const event = await session.input.receive({ idleTimeout: "30m" }).unwrap()
+    const brief = \`Fix \${event.issue} in \${event.repo}. Run the tests, then open a PR.\``,
     meta: '      metadata: { subject: "Open a PR for this fix?" }',
     action: `    if (decision.approved) {
-      await openPr(input.repo, output)
+      await openPr(event.repo, output)
       await session.output.append({ type: "pr-opened" })
     }`,
   },
@@ -61,7 +58,6 @@ const usecases = [
     icon: "moon",
     id: "fleet-bump",
     primitive: "schedules.task",
-    src: "event",
     imports: 'import { image, sandbox, schedules, source, tokens } from "@helmr/sdk"',
     head: `export const fleetBump = schedules.task({
   id: "fleet-bump",
@@ -595,7 +591,7 @@ const interfaces = [
     name: "Slack",
     icon: logos.slack,
     code: `    await sendSlackApproval({
-      channel: $src.channel,
+      channel: event.channel,
       callbackUrl: approval.callbackUrl
     })`,
   },
@@ -604,7 +600,7 @@ const interfaces = [
     name: "Discord",
     icon: logos.discord,
     code: `    await sendDiscordApproval({
-      channelId: $src.channelId,
+      channelId: event.channelId,
       callbackUrl: approval.callbackUrl
     })`,
   },
@@ -613,7 +609,7 @@ const interfaces = [
     name: "Microsoft Teams",
     icon: logos.microsoftTeams,
     code: `    await sendTeamsCard({
-      conversationId: $src.conversationId,
+      conversationId: event.conversationId,
       callbackUrl: approval.callbackUrl
     })`,
   },
@@ -622,7 +618,7 @@ const interfaces = [
     name: "GitHub",
     icon: logos.github,
     code: `    await commentOnPr({
-      prNumber: $src.prNumber,
+      prNumber: event.prNumber,
       body: approval.callbackUrl
     })`,
   },
@@ -631,13 +627,13 @@ const interfaces = [
     name: "Linear",
     icon: logos.linear,
     code: `    await commentOnIssue({
-      issueId: $src.issueId,
+      issueId: event.issueId,
       body: approval.callbackUrl
     })`,
   },
   {
     key: "product",
-    name: "your product",
+    name: "Your product",
     icon: null,
     code: `    await notify({
       topic: "approval-requested",
@@ -692,7 +688,6 @@ const codeParts = {
       {
         file: `${usecase.id}.ts`,
         primitive: usecase.primitive,
-        src: usecase.src,
         imports: hlLines(usecase.imports),
         head: hlLines(usecase.head),
         meta: hlLines(usecase.meta),
@@ -740,7 +735,6 @@ const codeSegment = (
     const usecase = codeParts.usecases[pick.usecase] as {
       file: string;
       primitive: string;
-      src: string;
       imports: string[];
       head: string[];
       meta: string[];
@@ -749,25 +743,22 @@ const codeSegment = (
     return usecase[name as "imports" | "head" | "meta" | "action"];
   }
   if (scope === "interface") {
-    const usecase = codeParts.usecases[pick.usecase] as { src: string };
-    return codeParts.interfaces[pick.interface]!.lines.map((line) =>
-      line.replaceAll("$src", usecase.src),
-    );
+    return codeParts.interfaces[pick.interface]!.lines;
   }
   return codeParts.fixed[name] as string[];
 };
 
 const initialCodeLines = codeRecipe.flatMap(([key, region]) =>
-  codeSegment(key, codePick).map((html) => ({ html, region })),
+  codeSegment(key, codePick).map((html) => ({ html, region, seg: key })),
 );
 
 const codeTags = [
-  { region: "usecase", label: usecases.find((u) => u.key === codePick.usecase)!.primitive, tone: "pink", strong: "#a8618a" },
-  { region: "agent", label: "agent", tone: "blue", strong: "#5079e4" },
-  { region: "interface", label: "interface", tone: "yellow", strong: "#ad8226" },
+  { region: "usecase", seg: "usecase.head", label: usecases.find((u) => u.key === codePick.usecase)!.primitive, tone: "pink", strong: "#a8618a" },
+  { region: "agent", seg: "agent.body", label: "agent", tone: "blue", strong: "#5079e4" },
+  { region: "interface", seg: "interface.lines", label: "interface", tone: "yellow", strong: "#ad8226" },
 ].map((tag) => ({
   ...tag,
-  line: initialCodeLines.findIndex((line) => line.region === tag.region) + 1,
+  line: initialCodeLines.findIndex((line) => line.seg === tag.seg) + 1,
 }));
 
 const usecaseChips = usecases.map((usecase) => ({
@@ -939,6 +930,7 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
             <span
               class={`code-tag code-tag-${tag.region}`}
               data-tag-region={tag.region}
+              data-tag-seg={tag.seg}
               style={`--line: ${tag.line}; --tag-strong: ${tag.strong}; background: ${tints[tag.tone]}`}
             >{tag.label}</span>
           ))}
@@ -1195,32 +1187,47 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
       const metaEl = document.querySelector("[data-code-meta]");
       const tags = Array.from(document.querySelectorAll<HTMLElement>("[data-tag-region]"));
 
-      const segment = (key: string): string[] => {
+      const segment = (key: string, st = state): string[] => {
         if (key === "blank") return ["&nbsp;"];
         const [scope, name] = key.split(".");
-        if (scope === "agent") return parts.agents[state.agent][name];
-        if (scope === "usecase") return parts.usecases[state.usecase][name];
+        if (scope === "agent") return parts.agents[st.agent][name];
+        if (scope === "usecase") return parts.usecases[st.usecase][name];
         if (scope === "interface") {
-          return parts.interfaces[state.interface][name].map((line: string) =>
-            line.replaceAll("$src", parts.usecases[state.usecase].src),
-          );
+          return parts.interfaces[st.interface][name];
         }
         return parts.fixed[name];
       };
 
-      const lineTemplate = codeBody.querySelector<HTMLElement>(".cl");
+      const lineTemplate = (() => {
+        const template = codeBody.querySelector<HTMLElement>(".cl")!.cloneNode(true) as HTMLElement;
+        template.removeAttribute("data-region");
+        template.removeAttribute("data-flash");
+        template.style.removeProperty("--flash");
+        return template;
+      })();
+      const flashTints: Record<string, string> = {
+        usecase: "rgba(168, 97, 138, 0.2)",
+        agent: "rgba(80, 121, 228, 0.22)",
+        interface: "rgba(173, 130, 38, 0.22)",
+        fixed: "rgba(31, 31, 36, 0.1)",
+      };
+      let prevState = { ...state };
+      let flashTimer: number | undefined;
 
-      const renderCode = (flash?: string) => {
-        const lines: { html: string; region: string | null }[] = [];
+      const renderCode = (changed?: Set<string>) => {
+        const lines: { html: string; region: string | null; seg: string }[] = [];
         for (const [key, region] of recipe) {
-          for (const html of segment(key)) lines.push({ html, region });
+          for (const html of segment(key)) lines.push({ html, region, seg: key });
         }
         const fragment = document.createDocumentFragment();
         lines.forEach((line, i) => {
           const cl = lineTemplate!.cloneNode(true) as HTMLElement;
           if (line.region) cl.dataset.region = line.region;
           else cl.removeAttribute("data-region");
-          if (flash && line.region === flash) cl.setAttribute("data-flash", "");
+          if (changed?.has(line.seg)) {
+            cl.setAttribute("data-flash", "");
+            cl.style.setProperty("--flash", flashTints[line.seg.split(".")[0]!]!);
+          }
           cl.querySelector(".ln")!.textContent = String(i + 1).padStart(2, " ");
           cl.querySelector(".lc")!.innerHTML = line.html;
           fragment.appendChild(cl);
@@ -1229,14 +1236,15 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
         if (fileEl) fileEl.textContent = parts.usecases[state.usecase].file;
         if (metaEl) metaEl.textContent = parts.agents[state.agent].meta;
         for (const tag of tags) {
-          const index = lines.findIndex((line) => line.region === tag.dataset.tagRegion);
+          const index = lines.findIndex((line) => line.seg === tag.dataset.tagSeg);
           tag.style.setProperty("--line", String(index + 1));
           if (tag.dataset.tagRegion === "usecase") {
             tag.textContent = parts.usecases[state.usecase].primitive;
           }
         }
-        if (flash) {
-          window.setTimeout(() => {
+        if (changed) {
+          window.clearTimeout(flashTimer);
+          flashTimer = window.setTimeout(() => {
             codeBody.querySelectorAll("[data-flash]").forEach((el) => el.removeAttribute("data-flash"));
           }, 1400);
         }
@@ -1250,10 +1258,16 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
             const key = button.dataset.key ?? "";
             if (!key || state[kind] === key) return;
             state[kind] = key;
+            const changed = new Set<string>(
+              recipe
+                .filter(([seg]: [string]) => segment(seg, prevState).join("\n") !== segment(seg).join("\n"))
+                .map(([seg]: [string]) => seg),
+            );
+            prevState = { ...state };
             for (const item of buttons) {
               item.setAttribute("aria-pressed", item === button ? "true" : "false");
             }
-            renderCode(kind);
+            renderCode(changed);
           });
         });
       });
@@ -1664,14 +1678,6 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
     background-size: 4px 1px;
   }
 
-  .cl[data-region="agent"] .ln { box-shadow: inset -3px 0 0 #5079e4; }
-  .cl[data-region="usecase"] .ln { box-shadow: inset -3px 0 0 #a8618a; }
-  .cl[data-region="interface"] .ln { box-shadow: inset -3px 0 0 #ad8226; }
-
-  .cl[data-region="agent"] { --flash: rgba(80, 121, 228, 0.22); }
-  .cl[data-region="usecase"] { --flash: rgba(168, 97, 138, 0.2); }
-  .cl[data-region="interface"] { --flash: rgba(173, 130, 38, 0.22); }
-
   .cl[data-flash] {
     animation: line-flash 1.2s ease-out;
   }
@@ -1682,33 +1688,37 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
   }
 
   .code-frame:has(.code-tag-agent:hover) .cl[data-region="agent"],
-  .code-frame:has(.cl[data-region="agent"]:hover) .cl[data-region="agent"] {
+  .code-frame:has(.cl[data-region="agent"]:hover) .cl[data-region="agent"],
+  .build-section:has([data-pick="agent"] :is(:hover, :focus-visible)) .cl[data-region="agent"] {
     background: rgba(80, 121, 228, 0.1);
   }
 
   .code-frame:has(.code-tag-usecase:hover) .cl[data-region="usecase"],
-  .code-frame:has(.cl[data-region="usecase"]:hover) .cl[data-region="usecase"] {
+  .code-frame:has(.cl[data-region="usecase"]:hover) .cl[data-region="usecase"],
+  .build-section:has([data-pick="usecase"] :is(:hover, :focus-visible)) .cl[data-region="usecase"] {
     background: rgba(168, 97, 138, 0.1);
   }
 
   .code-frame:has(.code-tag-interface:hover) .cl[data-region="interface"],
-  .code-frame:has(.cl[data-region="interface"]:hover) .cl[data-region="interface"] {
+  .code-frame:has(.cl[data-region="interface"]:hover) .cl[data-region="interface"],
+  .build-section:has([data-pick="interface"] :is(:hover, :focus-visible)) .cl[data-region="interface"] {
     background: rgba(173, 130, 38, 0.12);
   }
 
   .code-frame:has(.code-tag-agent:hover) .code-tag-agent,
   .code-frame:has(.cl[data-region="agent"]:hover) .code-tag-agent,
+  .build-section:has([data-pick="agent"] :is(:hover, :focus-visible)) .code-tag-agent,
   .code-frame:has(.code-tag-usecase:hover) .code-tag-usecase,
   .code-frame:has(.cl[data-region="usecase"]:hover) .code-tag-usecase,
+  .build-section:has([data-pick="usecase"] :is(:hover, :focus-visible)) .code-tag-usecase,
   .code-frame:has(.code-tag-interface:hover) .code-tag-interface,
-  .code-frame:has(.cl[data-region="interface"]:hover) .code-tag-interface {
+  .code-frame:has(.cl[data-region="interface"]:hover) .code-tag-interface,
+  .build-section:has([data-pick="interface"] :is(:hover, :focus-visible)) .code-tag-interface {
     border-color: var(--tag-strong);
   }
 
   @media (max-width: 1100px) {
     .code-tags { display: none; }
-
-    .cl[data-region] .ln { box-shadow: none; }
   }
 
   .code-frame pre {
