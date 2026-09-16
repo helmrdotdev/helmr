@@ -752,13 +752,46 @@ const initialCodeLines = codeRecipe.flatMap(([key, region]) =>
   codeSegment(key, codePick).map((html) => ({ html, region, seg: key })),
 );
 
-const codeTags = [
-  { region: "usecase", seg: "usecase.head", label: usecases.find((u) => u.key === codePick.usecase)!.primitive, tone: "pink", strong: "#a8618a" },
-  { region: "agent", seg: "agent.body", label: "agent", tone: "blue", strong: "#5079e4" },
-  { region: "interface", seg: "interface.lines", label: "interface", tone: "yellow", strong: "#ad8226" },
-].map((tag) => ({
-  ...tag,
-  line: initialCodeLines.findIndex((line) => line.seg === tag.seg) + 1,
+const pixelIconSvg = (rows: readonly string[]) =>
+  `<svg class="code-tag-pixel" viewBox="0 0 10 10" aria-hidden="true">${pixelsFromRows(rows)
+    .map((pixel) => `<rect x="${pixel.x}" y="${pixel.y}" width="1" height="1" />`)
+    .join("")}</svg>`;
+const logoIconImg = (src: string) => `<img src="${src}" width="12" height="12" alt="" />`;
+
+const tagPicks = {
+  usecase: Object.fromEntries(
+    usecases.map((usecase) => [
+      usecase.key,
+      { label: usecase.primitive, icon: pixelIconSvg(pixelIcons[usecase.icon]) },
+    ]),
+  ),
+  agent: Object.fromEntries(
+    harnesses.map((harness) => [
+      harness.key,
+      { label: harness.name, icon: harness.icon ? logoIconImg(harness.icon) : pixelIconSvg(pixelIcons.bolt) },
+    ]),
+  ),
+  interface: Object.fromEntries(
+    interfaces.map((iface) => [
+      iface.key,
+      { label: iface.name, icon: iface.icon ? logoIconImg(iface.icon) : pixelIconSvg(pixelIcons.window) },
+    ]),
+  ),
+};
+
+const codeTags = (
+  [
+    ["usecase", "usecase.head", "pink", "#a8618a"],
+    ["agent", "agent.body", "blue", "#5079e4"],
+    ["interface", "interface.lines", "yellow", "#ad8226"],
+  ] as const
+).map(([region, seg, tone, strong]) => ({
+  region,
+  seg,
+  tone,
+  strong,
+  ...tagPicks[region][codePick[region]]!,
+  line: initialCodeLines.findIndex((line) => line.seg === seg) + 1,
 }));
 
 const usecaseChips = usecases.map((usecase) => ({
@@ -933,11 +966,14 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
               data-tag-region={tag.region}
               data-tag-seg={tag.seg}
               style={`--line: ${tag.line}; --tag-strong: ${tag.strong}; background: ${tints[tag.tone]}`}
-            >{tag.label}</span>
+            >
+              <span class="code-tag-icon" set:html={tag.icon} />
+              <span class="code-tag-label">{tag.label}</span>
+            </span>
           ))}
         </div>
       </div>
-      <script is:inline type="application/json" data-code-parts set:html={JSON.stringify({ parts: codeParts, recipe: codeRecipe, pick: codePick }).replaceAll("<", "\\u003c")} />
+      <script is:inline type="application/json" data-code-parts set:html={JSON.stringify({ parts: codeParts, recipe: codeRecipe, pick: codePick, tagPicks }).replaceAll("<", "\\u003c")} />
     </section>
 
     <section id="primitives" class="features" aria-label="Task patterns">
@@ -1182,7 +1218,7 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
     const codePartsScript = document.querySelector("[data-code-parts]");
     const codeBody = document.querySelector<HTMLElement>("[data-code-body]");
     if (codePartsScript && codeBody) {
-      const { parts, recipe, pick } = JSON.parse(codePartsScript.textContent ?? "{}");
+      const { parts, recipe, pick, tagPicks } = JSON.parse(codePartsScript.textContent ?? "{}");
       const state = { ...pick };
       const fileEl = document.querySelector("[data-code-file]");
       const metaEl = document.querySelector("[data-code-meta]");
@@ -1238,9 +1274,10 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
         for (const tag of tags) {
           const index = lines.findIndex((line) => line.seg === tag.dataset.tagSeg);
           tag.style.setProperty("--line", String(index + 1));
-          if (tag.dataset.tagRegion === "usecase") {
-            tag.textContent = parts.usecases[state.usecase].primitive;
-          }
+          const region = tag.dataset.tagRegion!;
+          const picked = tagPicks[region][state[region as keyof typeof state]];
+          tag.querySelector(".code-tag-icon")!.innerHTML = picked.icon;
+          tag.querySelector(".code-tag-label")!.textContent = picked.label;
         }
         if (changed) {
           window.clearTimeout(flashTimer);
@@ -1654,6 +1691,9 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
 
   .code-tag {
     position: absolute;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.32rem;
     right: -0.9rem;
     top: calc(2.2rem + 1.3rem + (var(--line) - 1) * var(--runtime-line-height) + 0.015rem);
     z-index: 2;
@@ -1664,6 +1704,23 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
     color: var(--ink);
     white-space: nowrap;
     transition: border-color 0.12s ease-out;
+  }
+
+  .code-tag-icon {
+    display: inline-flex;
+    flex: 0 0 auto;
+  }
+
+  .code-tag-icon :global(img),
+  .code-tag-icon :global(svg) {
+    display: block;
+    width: 12px;
+    height: 12px;
+  }
+
+  .code-tag-icon :global(.code-tag-pixel) {
+    fill: var(--ink);
+    shape-rendering: crispEdges;
   }
 
   .code-tag::before {
