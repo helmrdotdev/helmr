@@ -75,7 +75,7 @@ func TestBuildUsesIndependentPrivateContextAndCleansFailure(t *testing.T) {
 		deploymentBundleBuilderImage = originalImage
 		buildContextTempDir = originalTemp
 	})
-	deploymentBundleBuilderImage = "ghcr.io/helmrdotdev/helmr/bundle-builder@sha256:" + strings.Repeat("a", 64)
+	deploymentBundleBuilderImage = "ghcr.io/helmrdotdev/bundle-builder@sha256:" + strings.Repeat("a", 64)
 	source, temp := t.TempDir(), t.TempDir()
 	buildContextTempDir = temp
 	if err := os.WriteFile(filepath.Join(source, "package.json"), []byte(`{"name":"fixture","private":true}`), 0644); err != nil {

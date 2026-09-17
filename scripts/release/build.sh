@@ -3,6 +3,7 @@
 set -euo pipefail
 part=${1:?part} output=${2:?output}
 root=$(pwd)
+contract="$(cd "$(dirname "$0")" && pwd)/contract.py"
 : "${RELEASE_SOURCE_COMMIT:?}" "${RELEASE_SOURCE_REF:?}" "${RELEASE_TAG:?}" "${RELEASE_BUILD_ID:?}"
 [ "$(git rev-parse HEAD)" = "$RELEASE_SOURCE_COMMIT" ]
 [ -z "$(git status --porcelain)" ] || { echo 'release requires clean selected source' >&2; exit 1; }
@@ -28,7 +29,8 @@ case "$part" in
     digest="sha256:$(sha256sum "$output/builder-image/manifest.json" | cut -d' ' -f1)"
     runtime=$(nix build .#runtimeRelease --no-link --print-out-paths)
     compiler=$(nix build .#compiler --no-link --print-out-paths)
-    jq -cnS --arg image "ghcr.io/helmrdotdev/helmr/bundle-builder@$digest" --arg sourceCommit "$RELEASE_SOURCE_COMMIT" \
+    image=$(python3 "$contract" bundle-builder)
+    jq -cnS --arg image "$image@$digest" --arg sourceCommit "$RELEASE_SOURCE_COMMIT" \
       --argjson runtime "$(cat "$runtime/runtime.descriptor.json")" --argjson compiler "$(cat "$compiler/compiler.descriptor.json")" \
       '{formatVersion:0,image:$image,sourceCommit:$sourceCommit,runtime:$runtime,compiler:$compiler}' >"$output/bundle-builder.json"
     rm "$output/builder-docker"
@@ -48,10 +50,11 @@ case "$part" in
     ;;
   controlplane)
     export CONTROLPLANE_IMAGE_CONTEXT="$output/context"
-    HELMR_BUILD_VERSION=$RELEASE_TAG scripts/build-controlplane-image.sh helmr/controlplane:build
-    skopeo --insecure-policy copy docker-daemon:helmr/controlplane:build "dir:$output/controlplane-image"
+    HELMR_BUILD_VERSION=$RELEASE_TAG scripts/build-controlplane-image.sh control-plane:build
+    skopeo --insecure-policy copy docker-daemon:control-plane:build "dir:$output/controlplane-image"
     digest="sha256:$(sha256sum "$output/controlplane-image/manifest.json" | cut -d' ' -f1)"
-    jq -cnS --arg image "ghcr.io/helmrdotdev/helmr/control-plane@$digest" --arg sourceCommit "$RELEASE_SOURCE_COMMIT" \
+    image=$(python3 "$contract" control-plane)
+    jq -cnS --arg image "$image@$digest" --arg sourceCommit "$RELEASE_SOURCE_COMMIT" \
       --argjson runtime "$(cat "$output/context/runtime.descriptor.json")" \
       --argjson inputs "$(cat "$output/context/build-inputs.json")" \
       '{formatVersion:0,image:$image,sourceCommit:$sourceCommit,runtime:$runtime,buildInputs:$inputs}' >"$output/controlplane.json"

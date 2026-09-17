@@ -45,10 +45,11 @@ else
   builder_archive="$tmp/builder-image"
 fi
 docker load -i "$builder_archive" >/dev/null
+[ "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.source"}}' bundle-builder:0)" = 'https://github.com/helmrdotdev/helmr' ]
 # Check the selected image's Node and the actual npm-family interpreters before
 # any project install. PATH alone does not override a Nix absolute shebang.
 docker run --rm --platform linux/amd64 --entrypoint node --workdir / \
-  --volume "$repo_root:/product:ro" helmr/bundle-builder:0 --input-type=module -e '
+  --volume "$repo_root:/product:ro" bundle-builder:0 --input-type=module -e '
     import { execFileSync } from "node:child_process"
     import { requireVersion, managerInterpreter } from "/product/scripts/check-node-toolchain.mjs"
     requireVersion(process.versions.node, "builder image Node")
@@ -69,7 +70,7 @@ if (!process.versions.bun) {
 }
 JS
 docker run --rm -i --platform linux/amd64 --entrypoint /bin/bash --workdir /tmp \
-  --volume "$tmp/interpreters:/proof" helmr/bundle-builder:0 -s <<'SH'
+  --volume "$tmp/interpreters:/proof" bundle-builder:0 -s <<'SH'
     set -euo pipefail
     export NODE_OPTIONS=--require=/proof/assert-node.cjs
     export XDG_CACHE_HOME=/tmp/selector-cache
@@ -88,14 +89,14 @@ SH
 printf '%s\n' '{"default":[{"type":"insecureAcceptAnything"}]}' >"$tmp/containers-policy.json"
 skopeo --policy "$tmp/containers-policy.json" copy \
   --dest-tls-verify=false \
-  docker-daemon:helmr/bundle-builder:0 \
-  "docker://$registry_endpoint/helmr/bundle-builder:test" \
+  docker-daemon:bundle-builder:0 \
+  "docker://$registry_endpoint/bundle-builder:test" \
   >/dev/null
 builder_digest="$(
   skopeo --policy "$tmp/containers-policy.json" inspect \
     --tls-verify=false \
     --format '{{.Digest}}' \
-    "docker://$registry_endpoint/helmr/bundle-builder:test"
+    "docker://$registry_endpoint/bundle-builder:test"
 )"
 [[ "$builder_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
 cat >"$tmp/buildkitd.toml" <<EOF
@@ -111,7 +112,7 @@ docker buildx create \
   >/dev/null
 export BUILDX_BUILDER="$buildx_name"
 docker buildx inspect --bootstrap >/dev/null
-builder_image="$builder_registry_endpoint/helmr/bundle-builder@$builder_digest"
+builder_image="$builder_registry_endpoint/bundle-builder@$builder_digest"
 
 go -C "$repo_root" build \
   -trimpath \

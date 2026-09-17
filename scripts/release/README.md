@@ -120,6 +120,18 @@ incomplete cohorts remain subject to retained build-part availability. Human tag
 single-attempt rules are unchanged. Hosted partial-rerun output retention and the
 pinned upload's actual ZIP transfer still require operational proof.
 
+Product publishes exactly `ghcr.io/helmrdotdev/bundle-builder` and
+`ghcr.io/helmrdotdev/control-plane`, each selected by immutable manifest digest.
+The fixed OCI names in `contract.py` are separate from GitHub source/workflow/API
+repository identity (`helmrdotdev/helmr`). Producers read the same fixed map that
+validates descriptors and the CLI's builder input; nested or foreign names are
+rejected. Both actual image constructors set `org.opencontainers.image.source`
+to `https://github.com/helmrdotdev/helmr`. Labels change image bytes, so renamed
+images require a new cohort; existing frozen releases cannot be rewritten.
+Repository linkage and public package visibility are separate native GitHub
+settings. Anonymous OCI verification must succeed before release completion.
+Worker remains host/runtime bundles and AMIs; npm and Cloud ECR names are unchanged.
+
 Preview signature identity is exactly:
 `https://github.com/helmrdotdev/helmr/.github/workflows/release.yaml@refs/heads/main`.
 Human tags use `@refs/tags/<version>`. OCI copying uses `--insecure-policy`

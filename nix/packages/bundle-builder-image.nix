@@ -88,7 +88,7 @@ let
   '';
 in
 dockerTools.buildLayeredImage {
-  name = "helmr/bundle-builder";
+  name = "bundle-builder";
   tag = "0";
   created = "1970-01-01T00:00:01Z";
   maxLayers = 120;
@@ -111,6 +111,7 @@ dockerTools.buildLayeredImage {
   ];
 
   config = {
+    Labels."org.opencontainers.image.source" = "https://github.com/helmrdotdev/helmr";
     Cmd = [ "/usr/local/bin/bundle-builder" ];
     Env = [
       "HOME=/workspace/home"

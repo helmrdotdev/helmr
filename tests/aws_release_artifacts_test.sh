@@ -337,6 +337,7 @@ PATH="${controlplane_bin}:${PATH}" REAL_GIT="${real_git}" MOCK_RUNTIME_DESCRIPTO
   "${controlplane_build_script}" example.invalid/helmr/control-plane:test
 base_image="$(jq -r '.baseImage' "${controlplane_build_contract}")"
 assert_contains "${controlplane_context}/Dockerfile" "FROM ${base_image}" "digest-pinned Control Plane base"
+assert_contains "${controlplane_context}/Dockerfile" 'LABEL org.opencontainers.image.source="https://github.com/helmrdotdev/helmr"' "Control Plane source label"
 PATH="${controlplane_bin}:${PATH}" REAL_GIT="${real_git}" MOCK_RUNTIME_DESCRIPTOR_PATH="${controlplane_runtime_release}/runtime.descriptor.json" MOCK_TIMEZONE_DATA_PATH="${controlplane_timezone_data}" "${repo_root}/scripts/verify-controlplane-image-build.sh" \
   "${controlplane_context}/build-inputs.json" example.invalid/helmr/control-plane:test
 

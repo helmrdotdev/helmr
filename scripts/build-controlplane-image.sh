@@ -110,6 +110,7 @@ fi
 
 cat >"$context/Dockerfile" <<EOF
 FROM ${base_image}
+LABEL org.opencontainers.image.source="https://github.com/helmrdotdev/helmr"
 COPY control-plane /usr/local/bin/control-plane
 COPY dispatcher /usr/local/bin/dispatcher
 COPY runtime.descriptor.json /usr/local/share/helmr/runtime.descriptor.json

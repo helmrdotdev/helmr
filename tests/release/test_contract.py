@@ -41,7 +41,7 @@ def assets(root):
     for name in ASSETS:
         (root/name).write_bytes(b'bytes')
     for name, image in (('bundle-builder.json','bundle-builder'), ('controlplane.json','control-plane')):
-        write(root/name, dict(formatVersion=0, sourceCommit=SOURCE, image=f'ghcr.io/helmrdotdev/helmr/{image}@sha256:'+ '2'*64, runtime=runtime))
+        write(root/name, dict(formatVersion=0, sourceCommit=SOURCE, image=f'ghcr.io/helmrdotdev/{image}@sha256:'+ '2'*64, runtime=runtime))
     archive(root/'platform-release.tar', {'platform-release.json':dict(formatVersion=0,runtime=runtime)})
     write(root/'platform-release-provenance.json', dict(sourceCommit=SOURCE, sourceRef=s['sourceRef'],archive=descriptor(root/'platform-release.tar')))
     for name,bundle,manifest,key in (
@@ -56,6 +56,26 @@ def assets(root):
 
 
 class Contract(unittest.TestCase):
+    def test_fixed_oci_script_interface(self):
+        script = Path(__file__).resolve().parents[2] / 'scripts/release/contract.py'
+        for role in ('bundle-builder', 'control-plane'):
+            expected = 'ghcr.io/helmrdotdev/' + role
+            name = subprocess.check_output([sys.executable, str(script), role], text=True).strip()
+            self.assertEqual(name, expected)
+            reference = name + '@sha256:' + 'a' * 64
+            good = subprocess.run([sys.executable, str(script), role, '--verify', reference], capture_output=True)
+            self.assertEqual(good.returncode, 0, good.stderr)
+            self.assertEqual(good.stdout, b'')
+            for bad in (reference.replace('ghcr.io', 'ghcrXio'),
+                        reference.replace('helmrdotdev/', 'helmrdotdev/helmr/'),
+                        reference.replace('ghcr.io', 'registry.example'),
+                        name + ':latest', reference[:-1], reference + '0',
+                        reference.replace(role, 'control-plane' if role == 'bundle-builder' else 'bundle-builder')):
+                with self.subTest(role=role, reference=bad):
+                    result = subprocess.run([sys.executable, str(script), role, '--verify', bad], capture_output=True)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(b'Product image digest required', result.stderr)
+
     def test_constructed_versions(self):
         for fragment in ('01234567','12345678','00000000','abc12345'):
             version=preview_version('0.1.0',fragment+'a'*32,'123')

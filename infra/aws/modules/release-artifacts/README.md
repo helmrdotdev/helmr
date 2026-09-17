@@ -18,7 +18,7 @@ Expected manifest shape:
 ```json
 {
   "schema": "helmr.aws-release.v0",
-  "controlplaneImage": "ghcr.io/helmrdotdev/helmr/control-plane@sha256:...",
+  "controlplaneImage": "ghcr.io/helmrdotdev/control-plane@sha256:...",
   "platformRelease": {},
   "workerImage": {
     "amis": {
