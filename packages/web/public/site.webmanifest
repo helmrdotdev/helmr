@@ -1,7 +1,7 @@
 {
   "name": "Helmr",
   "short_name": "Helmr",
-  "description": "Self-hosted runtime for coding agents.",
+  "description": "Infrastructure and APIs for your own agent harness.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",

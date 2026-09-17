@@ -3,6 +3,8 @@ import BaseLayout from "./BaseLayout.astro";
 import {
   getAdjacentDocs,
   getDocLabel,
+  getDocLastmod,
+  getDocMarkdownUrl,
   getDocNavigation,
   getDocUrl,
   groupDocs,
@@ -30,10 +32,11 @@ const adjacent = currentDoc ? getAdjacentDocs(docs, currentDoc.id) : undefined;
 const currentNav = currentDoc ? getDocNavigation(currentDoc) : undefined;
 const pageTitle = currentDoc ? `${currentDoc.data.title} | Helmr Docs` : title;
 const pagePath = currentDoc ? getDocUrl(currentDoc) : "/docs";
+const modifiedTime = currentDoc ? getDocLastmod(currentDoc) : undefined;
 const toc = headings.filter((heading) => heading.depth === 2 || heading.depth === 3);
 const docsJsonLd: JsonLdNode[] = currentDoc
   ? [
-      docArticleJsonLd(currentDoc, pagePath),
+      docArticleJsonLd(currentDoc, pagePath, modifiedTime),
       breadcrumbJsonLd([
         { name: "Docs", path: "/docs" },
         { name: currentDoc.data.title, path: pagePath },
@@ -54,6 +57,8 @@ const docsJsonLd: JsonLdNode[] = currentDoc
   path={pagePath}
   type={currentDoc ? "article" : "website"}
   jsonLd={docsJsonLd}
+  modifiedTime={modifiedTime}
+  markdownPath={currentDoc ? getDocMarkdownUrl(currentDoc) : undefined}
   enableClientRouter
   minimalHeader
 >

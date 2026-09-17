@@ -37,7 +37,7 @@ never Secret values. The wire schema uses `allowed_origins` (SDK: `allowedOrigin
 helmr workspace create reviewer --secrets-file bindings.json --idempotency-key create-reviewer
 ```
 
-Bindings are fixed at Workspace creation. See [Secrets](/docs/concepts/secrets/)
+Bindings are fixed at Workspace creation. See [Secrets](/docs/concepts/secrets)
 for client support, upstream trust, rotation, and revocation limits. Console
 Workspaces → Create Workspace offers the same choices;
 Workspace detail shows modes and origins without values.

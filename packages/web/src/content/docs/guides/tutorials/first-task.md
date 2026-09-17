@@ -107,6 +107,6 @@ helmr workspace exec \
 This requires `workspace-exec:create`. Exec runs a command and may mutate the
 Workspace; it is not a read-only file inspection API.
 
-Next, see [Inspect a run](/docs/guides/how-to/inspect-a-run/) for logs and
-events, or [Durable agent](/docs/guides/tutorials/durable-agent/) for continuing
+Next, see [Inspect a run](/docs/guides/how-to/inspect-a-run) for logs and
+events, or [Durable agent](/docs/guides/tutorials/durable-agent) for continuing
 input and output.

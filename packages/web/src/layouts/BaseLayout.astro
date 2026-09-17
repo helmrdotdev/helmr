@@ -20,6 +20,8 @@ type Props = {
   type?: "website" | "article";
   noindex?: boolean;
   jsonLd?: JsonLdNode | JsonLdNode[];
+  modifiedTime?: string;
+  markdownPath?: string;
   enableClientRouter?: boolean;
   minimalHeader?: boolean;
 };
@@ -33,13 +35,15 @@ const {
   type = "website",
   noindex = false,
   jsonLd = [],
+  modifiedTime,
+  markdownPath,
   enableClientRouter = false,
   minimalHeader = false,
 } = Astro.props;
 
 const canonicalUrl = absoluteUrl(path, Astro.site?.toString() ?? SITE.url);
 const imageUrl = absoluteUrl(image, Astro.site?.toString() ?? SITE.url);
-const imageAlt = "Helmr — the code-first runtime for AI agents.";
+const imageAlt = `${SITE.defaultTitle}.`;
 const robots = noindex
   ? "noindex, nofollow"
   : "index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1";
@@ -73,6 +77,7 @@ const structuredData = serializeJsonLd(jsonLdGraph(graphNodes));
     <link rel="manifest" href="/site.webmanifest" />
     <link rel="sitemap" href="/sitemap.xml" />
     <link rel="alternate" type="text/plain" title="Helmr LLM guide" href="/llms.txt" />
+    {markdownPath && <link rel="alternate" type="text/markdown" title={`${title} (Markdown)`} href={markdownPath} />}
     <meta property="og:site_name" content={SITE.name} />
     <meta property="og:locale" content={SITE.locale} />
     <meta property="og:type" content={type} />
@@ -80,7 +85,10 @@ const structuredData = serializeJsonLd(jsonLdGraph(graphNodes));
     <meta property="og:description" content={description} />
     <meta property="og:url" content={canonicalUrl} />
     <meta property="og:image" content={imageUrl} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
     <meta property="og:image:alt" content={imageAlt} />
+    {modifiedTime && <meta property="article:modified_time" content={modifiedTime} />}
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content={socialTitle} />
     <meta name="twitter:description" content={description} />
@@ -148,7 +156,7 @@ const structuredData = serializeJsonLd(jsonLdGraph(graphNodes));
               Helmr
             </a>
             <p class="footer-tagline">
-              The code-first runtime for AI agents.<br />
+              Infrastructure and APIs for your own agent harness.<br />
               Run it on our cloud or in your own AWS account.
             </p>
           </div>

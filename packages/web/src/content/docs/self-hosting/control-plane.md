@@ -71,4 +71,4 @@ curl -fsS "$CONTROL_PLANE_URL/readyz"
 
 `/healthz` reports process liveness. `/readyz` is the traffic-readiness check after the database, Redis/Valkey, and schema are ready. Keep at least one dispatcher task when runs or schedules are used.
 
-After readiness passes, sign in and finish first-organization setup using the setup token. Then add [workers](/docs/self-hosting/workers/) for task execution.
+After readiness passes, sign in and finish first-organization setup using the setup token. Then add [workers](/docs/self-hosting/workers) for task execution.

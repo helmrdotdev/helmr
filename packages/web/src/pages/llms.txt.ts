@@ -1,5 +1,6 @@
 import type { APIRoute } from "astro";
-import { getDocs, getDocUrl, groupDocs } from "../lib/docs";
+import { getDocs, getDocMarkdownUrl, groupDocs } from "../lib/docs";
+import { harnesses, interfaces, positioning, usecases } from "../lib/messaging";
 import { SITE, absoluteUrl } from "../lib/seo";
 
 export const GET: APIRoute = async ({ site }) => {
@@ -13,7 +14,7 @@ export const GET: APIRoute = async ({ site }) => {
         .map((group) => {
           const heading = group.label ? `### ${group.label}\n` : "";
           const items = group.docs
-            .map((doc) => `- [${doc.data.title}](${absoluteUrl(getDocUrl(doc), base)}): ${doc.data.description}`)
+            .map((doc) => `- [${doc.data.title}](${absoluteUrl(getDocMarkdownUrl(doc), base)}): ${doc.data.description}`)
             .join("\n");
           return `${heading}${items}`;
         })
@@ -22,20 +23,27 @@ export const GET: APIRoute = async ({ site }) => {
     })
     .join("\n\n");
 
+  const primitives = [...new Set(usecases.map((usecase) => usecase.primitive))].join(", ");
+  const agents = harnesses.map((harness) => harness.name).join(", ");
+  const surfaces = interfaces.map((iface) => iface.name).join(", ");
+
   const body = `# Helmr
 
-> The code-first runtime for AI agents. Define Tasks and Actors in TypeScript, run them in isolated Linux microVMs, and carry work across durable Workspaces.
+> ${SITE.tagline}. ${SITE.defaultDescription}
 
 Official site: ${absoluteUrl("/", base)}
 Documentation: ${absoluteUrl("/docs", base)}
 Source code: ${SITE.githubUrl}
+License: Apache 2.0
 
 ## Product Context
-- The public website and documentation describe the runtime, developer workflows, public interfaces, and AWS self-hosting path.
-- Use current docs pages as the source of truth for setup, concepts, self-hosting, and reference material.
+- ${positioning}
+- Any job (${primitives}), any agent (${agents}), any interface (${surfaces}).
+- Runs on Helmr Cloud (coming soon) or self-hosted in your own AWS account.
+- Every docs page is also served as Markdown by appending .md to the page path.
 
 ## Core Pages
-- [Home](${absoluteUrl("/", base)}): Build your own coding agent runtime.
+- [Home](${absoluteUrl("/", base)}): ${SITE.tagline} — infrastructure and APIs for your own agent harness.
 - [Docs](${absoluteUrl("/docs", base)}): Documentation index for installing, operating, and extending Helmr.
 
 ${docLines}

@@ -19,7 +19,7 @@ const routeExists = async (pathname: string) => {
   const normalized = decodeURI(pathname).replace(/^\/+|\/+$/g, "");
   const candidates = normalized.length === 0
     ? [join(distRoot, "index.html")]
-    : [join(distRoot, normalized, "index.html"), join(distRoot, `${normalized}.html`)];
+    : [join(distRoot, normalized, "index.html"), join(distRoot, `${normalized}.html`), join(distRoot, normalized)];
   for (const candidate of candidates) {
     try {
       await access(candidate);
@@ -31,24 +31,30 @@ const routeExists = async (pathname: string) => {
   return false;
 };
 
+// Canonical form is a clean URL without a trailing slash, or a .md asset.
 const brokenDocsLinks: string[] = [];
+const nonCanonicalLinks: string[] = [];
+const nonCanonicalUrls: string[] = [];
 for (const file of htmlFiles) {
   const html = await readFile(join(distRoot, file), "utf8");
   for (const match of html.matchAll(/href="(\/docs(?:\/[^"#?]*)?)(?:[?#][^"]*)?"/g)) {
-    if (!(await routeExists(match[1]))) brokenDocsLinks.push(`${file}: ${match[1]}`);
+    const path = match[1];
+    if (path.endsWith("/")) nonCanonicalLinks.push(`${file}: ${path}`);
+    if (!(await routeExists(path))) brokenDocsLinks.push(`${file}: ${path}`);
+  }
+  for (const match of html.matchAll(/<link rel="canonical" href="([^"]+)"/g)) {
+    const pathname = new URL(match[1]).pathname;
+    if (pathname !== "/" && pathname.endsWith("/")) nonCanonicalUrls.push(`${file}: ${match[1]}`);
   }
 }
 if (brokenDocsLinks.length > 0) {
   throw new Error(`built pages contain unresolved docs links:\n${brokenDocsLinks.join("\n")}`);
 }
-
-const redirects = await readFile(join(distRoot, "_redirects"), "utf8");
-for (const line of redirects.split("\n")) {
-  const trimmed = line.trim();
-  if (trimmed.length === 0 || trimmed.startsWith("#")) continue;
-  const [, target, status] = trimmed.split(/\s+/);
-  if (status !== "301") throw new Error(`docs redirect is not permanent: ${trimmed}`);
-  if (!target || !(await routeExists(target))) throw new Error(`docs redirect target does not exist: ${trimmed}`);
+if (nonCanonicalLinks.length > 0) {
+  throw new Error(`built pages contain non-canonical docs links (must not end in "/"):\n${nonCanonicalLinks.join("\n")}`);
+}
+if (nonCanonicalUrls.length > 0) {
+  throw new Error(`built pages declare non-canonical URLs (must not end in "/"):\n${nonCanonicalUrls.join("\n")}`);
 }
 
 const sitemap = await readFile(join(distRoot, "sitemap.xml"), "utf8");

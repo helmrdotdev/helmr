@@ -7,7 +7,7 @@ description: Create a Secret, bind it to a Workspace, and rotate its value.
 
 This guide uses a GitHub token with `gh api`. The `reviewer` Sandbox must be
 included in the current Deployment and its image must contain `gh`. See
-[Build a custom image](/docs/guides/how-to/build-a-custom-image/) to install tools.
+[Build a custom image](/docs/guides/how-to/build-a-custom-image) to install tools.
 Use the same Project Environment for the Secret and Workspace.
 
 ## Create the Secret
@@ -27,7 +27,7 @@ ID for rotation or revocation.
 
 ## Bind it as a protected environment variable
 
-Set `HELMR_API_KEY` to an [environment API key](/docs/reference/rest-api/authentication/)
+Set `HELMR_API_KEY` to an [environment API key](/docs/reference/rest-api/authentication)
 for the same `agents` project and `development` environment. Bind the Secret by
 name when creating the Workspace:
 
@@ -66,7 +66,7 @@ The token must have permission for the GitHub API operation you request.
 
 Clients must trust the Workspace public CA and CA trust settings and send the
 placeholder unchanged in the header. Do not encode it for Basic authentication
-or use it to sign requests. See [client requirements](/docs/concepts/secrets/#client-requirements)
+or use it to sign requests. See [client requirements](/docs/concepts/secrets#client-requirements)
 for supported protocols and limitations.
 
 Bindings are fixed at Workspace creation. Later Task and Actor starts use the
@@ -74,7 +74,7 @@ Workspace reference rather than a new binding map. To change a binding or its
 allowed origins, create a new Workspace.
 
 You can also attach Secrets in Console under **Workspaces → Create Workspace**, or
-use the CLI's [`--secrets-file`](/docs/reference/cli/workspace/#secret-bindings-at-creation)
+use the CLI's [`--secrets-file`](/docs/reference/cli/workspace#secret-bindings-at-creation)
 option. JSON uses `allowed_origins` where the SDK uses `allowedOrigins`.
 
 ## Use raw values when required
@@ -110,7 +110,7 @@ helmr secret revoke SECRET_ID --yes \
 Rotation updates the value used by subsequent protected requests. Revocation
 blocks subsequent credential resolution; it does not cancel requests already
 authorized or erase raw copies previously delivered. See
-[rotation and revocation](/docs/concepts/secrets/#rotation-and-revocation).
+[rotation and revocation](/docs/concepts/secrets#rotation-and-revocation).
 
 Keep credentials out of payloads, metadata, tags, source archives, logs, and Actor
 output. Helmr does not automatically refresh OAuth tokens or write CLI credential

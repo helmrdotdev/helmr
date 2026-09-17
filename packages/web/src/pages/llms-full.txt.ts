@@ -21,11 +21,12 @@ ${body}`;
 
   const body = `# Helmr Full Documentation
 
-Build your own coding agent runtime. This file is generated from the public Helmr documentation corpus for AI assistants and search systems that prefer consolidated plain text.
+> ${SITE.tagline}. ${SITE.defaultDescription}
 
 Official site: ${absoluteUrl("/", base)}
 Documentation: ${absoluteUrl("/docs", base)}
 Source code: ${SITE.githubUrl}
+License: Apache 2.0
 
 ---
 

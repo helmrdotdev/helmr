@@ -58,4 +58,4 @@ Workers additionally need:
 - Explicit host, VM, cache, disk, and execution-slot capacity sized for the workload.
 - SSM access for maintenance unless you supply an alternative. The module does not open SSH by default.
 
-Review [workers](/docs/self-hosting/workers/) before creating capacity.
+Review [workers](/docs/self-hosting/workers) before creating capacity.

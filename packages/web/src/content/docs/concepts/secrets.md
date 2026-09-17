@@ -173,6 +173,6 @@ Workspace to continue using protected env. Certificate private keys are not
 delivered to the Workspace. This technical limit does not change the recommended
 lifecycle: retain a Workspace for the work that needs it, then delete it.
 
-See [Use secrets](/docs/guides/how-to/use-secrets/) for creation, binding, rotation,
+See [Use secrets](/docs/guides/how-to/use-secrets) for creation, binding, rotation,
 and revocation commands. Keep credentials out of payloads, metadata, tags, logs,
 source archives, image literals, and Actor/Token results.
