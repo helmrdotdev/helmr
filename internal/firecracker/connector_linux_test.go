@@ -1803,6 +1803,7 @@ func TestSessionEntryPointsRejectWorkloadRuntimeIdentityMismatch(t *testing.T) {
 	}
 	if _, err := connector.prepareSession(
 		context.Background(),
+		workloadLaunch,
 		runtimeInstanceID,
 		vm.OwnerRuntime,
 		binding,

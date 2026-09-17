@@ -19,14 +19,75 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/secretproxy"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workerclient"
 )
+
+func TestSecretPreparationRequiresActivatedWorker(t *testing.T) {
+	fixture := runtest.New(t)
+	work := fixture.AddRunLease(t, "starting", time.Now().Add(-time.Minute))
+	var runtimeID uuid.UUID
+	if err := fixture.Pool.QueryRow(t.Context(), `SELECT runtime_instance_id FROM run_leases WHERE id=$1`, work.LeaseID).Scan(&runtimeID); err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE runtime_instances SET reserved_run_id=$2,reserved_attempt_number=1,reserved_workspace_version_id=(SELECT head_version_id FROM workspaces WHERE id=workspace_id),reservation_expires_at=now()+interval '10 minutes' WHERE id=$1`, runtimeID, work.RunID)
+	keys, err := auth.NewKeys(bytes.Repeat([]byte{1}, auth.RootKeySize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const credential = "synthetic-startup-worker-secret"
+	hash, err := auth.HashToken(keys.WorkerInstance, credential)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serviceID := uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE worker_instances SET current_service_id=$2,state='registering' WHERE id=$1`, fixture.WorkerID, serviceID)
+	dbtest.MustExec(t, t.Context(), fixture.Pool, `INSERT INTO worker_instance_credentials (id,worker_group_id,worker_instance_id,key_prefix,secret_hash) VALUES ($1,$2,$3,'startup-test',$4)`, uuid.NewV7(), runtest.WorkerGroupID, fixture.WorkerID, hash)
+	q := db.New(fixture.Pool)
+	store, err := secret.New(q, fixture.Pool, bytes.Repeat([]byte{73}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{db: q, secretProxy: store, authKeys: keys,
+		workerTokenSigningKey: bytes.Repeat([]byte{2}, auth.RootKeySize), workerTokenTTL: time.Hour,
+		log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	router := chi.NewRouter()
+	server.mountWorkerRoutes(router)
+	httpServer := httptest.NewServer(router)
+	defer httpServer.Close()
+	client, err := workerclient.New(httpServer.URL, workerclient.WithAuth(fixture.WorkerID.String(), credential), workerclient.WithService(serviceID.String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Token exchange succeeds before qualification; it does not activate the worker.
+	if err := client.AuthenticateWorker(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	request := workerapi.SecretProxyRequest{RuntimeInstanceID: runtimeID.String()}
+	if _, err := client.PrepareSecretProxy(t.Context(), request); !httpclient.IsStatus(err, http.StatusUnauthorized) {
+		t.Fatalf("registering worker preparation = %v, want 401", err)
+	}
+	for _, state := range []string{"active", "draining"} {
+		dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE worker_instances SET state=$2,observed_at=now(),draining_at=CASE WHEN $2='draining' THEN now() ELSE NULL END WHERE id=$1`, fixture.WorkerID, state)
+		prepared, err := client.PrepareSecretProxy(t.Context(), request)
+		if err != nil || len(prepared.Origins) != 0 {
+			t.Fatalf("%s worker empty-origin preparation = %+v, %v", state, prepared, err)
+		}
+	}
+	// Even an authorized worker cannot prepare a synthetic, unreserved probe ID.
+	if _, err := client.PrepareSecretProxy(t.Context(), workerapi.SecretProxyRequest{RuntimeInstanceID: uuid.NewV7().String()}); !httpclient.IsStatus(err, http.StatusConflict) {
+		t.Fatalf("unreserved runtime preparation = %v, want conflict", err)
+	}
+}
 
 func TestSecretProxyLiveAuthorityAndWireRotation(t *testing.T) {
 	fixture := runtest.New(t)
