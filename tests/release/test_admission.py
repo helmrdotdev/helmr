@@ -154,7 +154,7 @@ class PRWorkflowAuthority(unittest.TestCase):
                 images.assert_not_called()
             with patch.object(publish, 'download_build') as download:
                 with self.assertRaisesRegex(ValueError, 'current Product main'):
-                    publish.finalize(self.api, s, directory)
+                    publish.finalize(self.api, s, directory, '1', 'sha256:' + '0' * 64)
                 download.assert_not_called()
         self.assertFalse(any(path.startswith('releases') for path in self.api.calls))
 

@@ -61,6 +61,12 @@ jobs:
       tools_commit: ${{ github.workflow_sha }}
   publish:
     needs: [admission, build]
+    outputs:
+      release_id: ${{ steps.stage.outputs.release_id }}
+      build_digest: ${{ steps.stage.outputs.build_digest }}
+      publisher_attempt: ${{ steps.stage.outputs.publisher_attempt }}
+      artifact_id: ${{ steps.readback.outputs.artifact-id }}
+      artifact_digest: ${{ steps.readback.outputs.artifact-digest }}
     runs-on: ubuntu-24.04
     environment: release
     permissions:
@@ -84,6 +90,7 @@ jobs:
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
       - name: Admit and publish frozen common bytes (no candidate execution)
+        id: stage
         env:
           GH_TOKEN: ${{ github.token }}
           GHCR_ACTOR: ${{ github.actor }}
@@ -93,10 +100,23 @@ jobs:
           export REGISTRY_AUTH_FILE="$RUNNER_TEMP/registry-auth.json"
           trap 'rm -f "$REGISTRY_AUTH_FILE"' EXIT
           printf '%s' "$GH_TOKEN" | skopeo login ghcr.io --username "$GHCR_ACTOR" --password-stdin
-          python3 scripts/release/main.py stage --directory "$RUNNER_TEMP/assets"
+          python3 scripts/release/main.py stage --directory "$RUNNER_TEMP/assets" --output "$RUNNER_TEMP/readback"
+          rm -rf "$RUNNER_TEMP/assets"
           SH
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        id: readback
+        with:
+          name: release-readback-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/readback/
+          retention-days: 7
+          compression-level: 0
+          overwrite: false
+          if-no-files-found: error
   verify:
     needs: [admission, publish]
+    permissions:
+      contents: read
+      actions: read
     runs-on: ubuntu-24.04
     env:
       RELEASE_SELECTION: ${{ needs.admission.outputs.selection }}
@@ -111,7 +131,14 @@ jobs:
       - name: Download and verify signed candidate bytes
         env:
           GH_TOKEN: ${{ github.token }}
-        run: nix develop .#images -c python3 scripts/release/main.py download --directory "$RUNNER_TEMP/assets"
+          ARTIFACT_ID: ${{ needs.publish.outputs.artifact_id }}
+          ARTIFACT_DIGEST: ${{ needs.publish.outputs.artifact_digest }}
+          PUBLISHER_ATTEMPT: ${{ needs.publish.outputs.publisher_attempt }}
+          BUILD_DIGEST: ${{ needs.publish.outputs.build_digest }}
+        run: |
+          nix develop .#images -c python3 scripts/release/main.py download --directory "$RUNNER_TEMP/assets" \
+            --artifact-id "$ARTIFACT_ID" --artifact-digest "$ARTIFACT_DIGEST" \
+            --publisher-attempt "$PUBLISHER_ATTEMPT" --build-digest "$BUILD_DIGEST"
       - name: Execute downloaded consumer without publication authority
         env:
           HELMR_PUBLIC_CONSUMER: '1'
@@ -129,7 +156,7 @@ jobs:
           consumer(root, root/'helmr-linux-amd64.tar.gz', root/'consumer')
           PY
   complete:
-    needs: [admission, verify]
+    needs: [admission, publish, verify]
     runs-on: ubuntu-24.04
     environment: release
     permissions:
@@ -148,7 +175,11 @@ jobs:
       - name: Publish complete index last and verify public readback
         env:
           GH_TOKEN: ${{ github.token }}
-        run: nix develop .#images -c python3 scripts/release/main.py finalize --directory "$RUNNER_TEMP/complete"
+          RELEASE_ID: ${{ needs.publish.outputs.release_id }}
+          BUILD_DIGEST: ${{ needs.publish.outputs.build_digest }}
+        run: |
+          nix develop .#images -c python3 scripts/release/main.py finalize --directory "$RUNNER_TEMP/complete" \
+            --release-id "$RELEASE_ID" --build-digest "$BUILD_DIGEST"
   discovery:
     needs: [admission, complete]
     if: >-

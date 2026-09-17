@@ -11,6 +11,10 @@ import threading
 import unittest
 from unittest.mock import patch
 import urllib.request
+import urllib.parse
+import publish
+import transport
+import test_publication
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts/release'))
@@ -38,6 +42,7 @@ class GitHubDownloads(unittest.TestCase):
         self.item = dict(id=4, name='build-artifacts-123-sdk', expired=False,
                          workflow_run=dict(id=123), digest=digest(self.archive))
         self.requests = []
+        self.releases = None
         self.redirect_asset = False
         self.location = 'https://fixture-download.invalid/artifact.zip'
         fixture = self
@@ -52,6 +57,35 @@ class GitHubDownloads(unittest.TestCase):
                 endpoint = self.path.split('?', 1)[0]
                 if endpoint == '/repos/helmrdotdev/helmr':
                     body = b'{"id":123}'
+                elif fixture.releases is not None and '/releases' in endpoint:
+                    surface = fixture.releases
+                    surface.writer = self.headers.get('Authorization') == 'Bearer local-fixture-token'
+                    path = endpoint.removeprefix('/repos/helmrdotdev/helmr/')
+                    try:
+                        if path == 'releases':
+                            page = int(urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)['page'][0])
+                            # Force production pagination past a full unrelated page.
+                            records = [dict(id=100+i, tag_name='other-'+str(i), draft=False) for i in range(100)] + list(surface.pages(path))
+                            body = json.dumps(records[(page-1)*100:page*100]).encode()
+                        elif path.endswith('/assets'):
+                            body = json.dumps(list(surface.pages(path))).encode()
+                        elif path.startswith('releases/assets/'):
+                            if self.headers.get('Accept') != 'application/octet-stream':
+                                status = 415
+                            else:
+                                key = surface.asset_keys[int(path.rsplit('/', 1)[1])]
+                                surface.request('releases/' + str(key[0]))
+                                # Exercise the authenticated asset redirect too.
+                                status, location = 302, 'https://fixture-download.invalid/release-asset/' + path.rsplit('/', 1)[1]
+                        else:
+                            body = json.dumps(surface.request(path)).encode()
+                    except ValueError:
+                        status = 404
+                elif endpoint.startswith('/release-asset/'):
+                    key = fixture.releases.asset_keys[int(endpoint.rsplit('/', 1)[1])]
+                    body = fixture.releases.blobs[key]
+                elif endpoint.endswith('/actions/artifacts/4'):
+                    body = json.dumps(fixture.item).encode()
                 elif endpoint.endswith('/actions/runs/123/artifacts'):
                     body = json.dumps(dict(artifacts=[fixture.item])).encode()
                 elif endpoint.endswith('/actions/artifacts/4/zip'):
@@ -102,6 +136,51 @@ class GitHubDownloads(unittest.TestCase):
         token.start()
         self.addCleanup(token.stop)
         self.api = GitHub()
+
+    def test_publisher_draft_readback_to_read_only_native_artifact(self):
+        built = self.root / 'cohort'
+        built.mkdir()
+        surface, release, index = test_publication.seed_draft(built)
+        self.releases = surface
+        with patch.object(publish, 'verify_signature', side_effect=test_publication.fake_verify):
+            # Even the writer cannot see drafts by tag; writer list/ID can.
+            self.assertIsNone(self.api.request('releases/tags/' + index['version'], missing=True))
+            selected = publish.find_release(self.api, index['version'])
+            self.assertEqual(selected['id'], release['id'])
+            self.assertTrue(any('releases?per_page=100&page=2' in path for path, _ in self.requests))
+            self.assertEqual(self.api.request('releases/1')['id'], 1)
+            readback = self.root / 'publisher-readback'
+            publish.download_build(self.api, selection(), readback, selected)
+            self.assertEqual({p.name for p in readback.iterdir()}, set(index['assets']) | {'release-build.json', 'release-build.sigstore.json'})
+            with zipfile.ZipFile(self.archive, 'w') as archive:
+                for path in readback.iterdir():
+                    archive.write(path, path.name)
+            self.item.update(name='release-readback-123-2', digest=digest(self.archive))
+            action_digest = digest(self.archive).removeprefix('sha256:')
+            build_digest = digest(readback / 'release-build.json')
+            with patch.dict(os.environ, GH_TOKEN='read-only-fixture-token'):
+                self.assertIsNone(self.api.request('releases/tags/' + index['version'], missing=True))
+                with self.assertRaisesRegex(ValueError, '404'):
+                    self.api.request('releases/1')
+                with self.assertRaisesRegex(ValueError, '404'):
+                    self.api.request('releases/assets/1', destination=self.root / 'forbidden', accept='application/octet-stream')
+                self.requests.clear()
+                retry = selection()
+                retry['build']['attempt'] = '3'
+                accepted = self.root / 'consumer-readback'
+                self.assertEqual(transport.download_readback(self.api, retry, accepted, '4', action_digest, '2', build_digest), index)
+                self.assertEqual([path for path, _ in self.requests], [
+                    '/repos/helmrdotdev/helmr/actions/artifacts/4',
+                    '/repos/helmrdotdev/helmr/actions/artifacts/4/zip', '/artifact.zip'])
+                self.assertEqual(self.requests[1][1]['Accept'], 'application/vnd.github+json')
+                self.assertEqual(self.requests[1][1]['Authorization'], 'Bearer read-only-fixture-token')
+                self.assertIsNone(self.requests[2][1]['Authorization'])
+                for path in readback.iterdir():
+                    self.assertEqual((accepted / path.name).read_bytes(), path.read_bytes())
+                # The following candidate step has no token environment.
+                with patch.dict(os.environ, GH_TOKEN=''):
+                    self.api.request('')
+                    self.assertIsNone(self.requests[-1][1]['Authorization'])
 
     def test_repository_root_relative_and_absolute(self):
         for path in ('', 'https://api.github.com/repos/helmrdotdev/helmr'):

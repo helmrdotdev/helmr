@@ -2,12 +2,13 @@
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import tempfile
 import urllib.error
 import urllib.request
-from contract import ASSETS, REPOSITORY, ISSUER, canonical, descriptor, digest, read, require, signer, validate, verify_files, write
+from contract import DIGEST, ASSETS, REPOSITORY, ISSUER, canonical, descriptor, digest, read, require, signer, validate, verify_files, write
 from admission import git, recheck_pr, relevant
 
 
@@ -57,12 +58,30 @@ def fetch_index(api, release, directory, completion='release-index'):
     return index
 
 
-def complete(api, selection, directory):
-    release = api.request('releases/tags/' + selection['version'], missing=True)
+def find_release(api, version):
+    # Tags only expose published releases. This lookup requires publisher access.
+    matches = [r for r in api.pages('releases') if r['tag_name'] == version]
+    require(len(matches) <= 1, 'duplicate release version')
+    return matches[0] if matches else None
+
+
+def bind_release(release, selection):
+    require(release['tag_name'] == selection['version'], 'release version differs')
+    # Metadata consistency, not proof of the target of an already-existing Git tag.
+    require(release['target_commitish'] == selection['sourceCommit'], 'release target differs')
+
+
+def complete(api, selection, directory, *, release=None, expected_build=None):
+    if release is None:
+        release = api.request('releases/tags/' + selection['version'], missing=True)
     if release is None or release['draft']:
         return None
     index = fetch_index(api, release, directory)
-    require(index['sourceCommit'] == selection['sourceCommit'] and index['build']['runId'] == selection['build']['runId'] and index['build']['workflowCommit'] == selection['build']['workflowCommit'], 'completed publication identity collision')
+    from transport import same_selection
+    same_selection({k: index[k] for k in selection}, selection)
+    if expected_build is not None:
+        require((Path(directory) / 'release-index.json').read_bytes() == expected_build,
+                'completed index differs from verified build bytes')
     # Public readback has no GitHub/npm/registry token. A successful signed draft
     # is insufficient if ordinary consumers cannot retrieve the final bytes.
     import shutil
@@ -121,10 +140,13 @@ def stage(api, selection, directory):
     index = dict(selection, schema='helmr.release.v0', assets={name: descriptor(directory / name) for name in sorted(ASSETS)})
     verify_files(index, directory)
     recheck_pr(api, selection)
-    release = api.request('releases/tags/' + index['version'], missing=True)
+    release = find_release(api, index['version'])
+    if release is not None:
+        require(index['build']['mode'] != 'tag', 'human tag release already exists')
     if release is None:
         release = api.request('releases', data=dict(tag_name=index['version'], target_commitish=index['sourceCommit'],
                     name=index['version'], draft=True, prerelease='-' in index['version'], make_latest='false'))
+    bind_release(release, selection)
     require(release['draft'], 'release is already complete; use completed-byte admission')
     # Frozen index bytes from an earlier publishing attempt are reused, not re-signed.
     old = directory / 'old-build.json'
@@ -136,7 +158,10 @@ def stage(api, selection, directory):
         same_selection({k: previous[k] for k in selection}, selection)
         require(previous['assets'] == index['assets'], 'retry built different bytes')
         index = previous
-    write(directory / 'release-build.json', index)
+    if old.exists():
+        (directory / 'release-build.json').write_bytes(old.read_bytes())
+    else:
+        write(directory / 'release-build.json', index)
     # Freeze original publication metadata before the first OCI/npm writes.
     upload_identical(api, release, directory / 'release-build.json')
     publish_images(directory, index)
@@ -149,12 +174,14 @@ def stage(api, selection, directory):
     if not (directory / 'release-build.sigstore.json').exists():
         sign(directory / 'release-build.json')
     upload_identical(api, release, directory / 'release-build.sigstore.json')
-    return index
+    return release
 
 
-def download_build(api, selection, directory):
-    release = api.request('releases/tags/' + selection['version'])
+def download_build(api, selection, directory, release, expected_digest=None):
+    bind_release(release, selection)
     index = fetch_index(api, release, directory, 'release-build')
+    if expected_digest is not None:
+        require(digest(Path(directory) / 'release-build.json') == expected_digest, 'signed build digest differs')
     from transport import same_selection
     same_selection({k: index[k] for k in selection}, selection)
     for name in ASSETS:
@@ -162,13 +189,25 @@ def download_build(api, selection, directory):
     return verify_files(index, directory)
 
 
-def finalize(api, selection, directory):
+def finalize(api, selection, directory, release_id, build_digest):
     recheck_pr(api, selection)
-    index = download_build(api, selection, directory)
-    release = api.request('releases/tags/' + index['version'])
+    require(re.fullmatch(r'[1-9][0-9]*', str(release_id)), 'release ID required')
+    require(re.fullmatch(DIGEST, build_digest or ''), 'build digest required')
+    release = find_release(api, selection['version'])
+    require(release is not None and str(release['id']) == str(release_id), 'selected release ID differs')
+    release = api.request(f'releases/{release_id}')
+    require(str(release['id']) == str(release_id), 'release ID differs')
+    index = download_build(api, selection, directory, release, build_digest)
+    build_bytes = (Path(directory) / 'release-build.json').read_bytes()
+    if not release['draft']:
+        # PATCH may have succeeded before public readback failed. Never write again.
+        with tempfile.TemporaryDirectory() as temporary:
+            require(complete(api, selection, Path(temporary) / 'public', release=release,
+                             expected_build=build_bytes) is not None, 'public completion readback failed')
+        return index
     # The successful consumer job is a dependency in the trusted workflow.
     path = Path(directory) / 'release-index.json'
-    write(path, index)
+    path.write_bytes(build_bytes)
     signature = Path(directory) / 'release-index.sigstore.json'
     old = Path(directory) / 'existing-index.sigstore.json'
     if release_asset(api, release, signature.name, old, missing=True):
@@ -178,7 +217,10 @@ def finalize(api, selection, directory):
         sign(path)
     upload_identical(api, release, signature)
     upload_identical(api, release, path)  # Completion asset last.
-    api.request(f'releases/{release["id"]}', method='PATCH', data=dict(draft=False, make_latest='false'))
+    release = api.request(f'releases/{release["id"]}', method='PATCH', data=dict(draft=False, make_latest='false'))
+    with tempfile.TemporaryDirectory() as temporary:
+        require(complete(api, selection, Path(temporary) / 'public', release=release,
+                         expected_build=build_bytes) is not None, 'public completion readback failed')
     return index
 
 
