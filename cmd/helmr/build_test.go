@@ -48,6 +48,7 @@ func TestBuildWorkspaceImagesBuildsUniqueRenderedInputOnce(t *testing.T) {
 			workspaceBuild("middle", "alpine:3.22"),
 			workspaceBuild("third", "docker.io/library/ubuntu:24.04"),
 		},
+		dockerBuildRunner{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -69,6 +70,7 @@ func TestBuildWorkspaceImagesBuildsUniqueRenderedInputOnce(t *testing.T) {
 }
 
 func TestBuildUsesIndependentPrivateContextAndCleansFailure(t *testing.T) {
+	fakeDocker(t, "running")
 	originalRun, originalImage, originalTemp := runDockerBuildx, deploymentBundleBuilderImage, buildContextTempDir
 	t.Cleanup(func() {
 		runDockerBuildx = originalRun

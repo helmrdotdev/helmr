@@ -5,11 +5,12 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 assets=${1:?built assets directory}
 work=$(mktemp -d)
 registry="helmr-release-consumer-$$"
-builder="helmr-release-consumer-$$"
+# shellcheck source=tests/buildx-fixture.sh
+source "$root/tests/buildx-fixture.sh"
 cleanup() {
   result=$?
-  docker buildx rm "$builder" >/dev/null 2>&1 || true
   docker rm -f "$registry" >/dev/null 2>&1 || true
+  cleanup_buildx_fixture
   if [ "$result" -eq 0 ]; then
     rm -rf "$work"
   else
@@ -17,6 +18,8 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
+start_buildx_fixture "$work"
+builder=$fixture_builder
 docker run --detach --rm --name "$registry" --publish 127.0.0.1::5000 \
   registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373 >/dev/null
 port=$(docker port "$registry" 5000/tcp | sed -n 's/^127\.0\.0\.1://p')
@@ -36,8 +39,7 @@ cat >"$work/buildkitd.toml" <<EOF
   insecure = true
 EOF
 docker buildx create --name "$builder" --driver docker-container --driver-opt network=host --buildkitd-config "$work/buildkitd.toml" >/dev/null
-export BUILDX_BUILDER=$builder
-docker buildx inspect --bootstrap >/dev/null
+docker buildx inspect --bootstrap "$builder" >/dev/null
 case "$(uname -s)/$(uname -m)" in
   Darwin/arm64) target=darwin/arm64 ;;
   Darwin/x86_64) target=darwin/amd64 ;;

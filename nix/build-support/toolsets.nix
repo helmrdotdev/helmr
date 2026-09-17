@@ -117,6 +117,7 @@ rec {
   ];
 
   ciGoConsole = ciGo ++ [
+    pkgs.python3 # Command-boundary Docker fixture in cmd/helmr tests.
     helmrPackages.bun
     helmrPackages.nodejs
   ];
@@ -149,6 +150,7 @@ rec {
   ];
 
   ciBundleBuilder = ciGo ++ [
+    pkgs.python3
     pkgs.nix
     pkgs.curl
     pkgs.docker_29

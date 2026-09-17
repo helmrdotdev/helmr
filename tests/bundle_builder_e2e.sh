@@ -4,10 +4,11 @@ set -euo pipefail
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 tmp=$(mktemp -d)
 registry_name="helmr-bundle-builder-registry-$$"
-buildx_name="helmr-bundle-builder-$$"
+# shellcheck source=tests/buildx-fixture.sh
+source "$repo_root/tests/buildx-fixture.sh"
 cleanup() {
-  docker buildx rm "$buildx_name" >/dev/null 2>&1 || true
   docker rm -f "$registry_name" >/dev/null 2>&1 || true
+  cleanup_buildx_fixture
   if [ "${KEEP_BUNDLE_E2E_TMP:-0}" = 1 ]; then
     printf 'bundle builder e2e artifacts: %s\n' "$tmp" >&2
   else
@@ -15,6 +16,8 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
+start_buildx_fixture "$tmp"
+buildx_name=$fixture_builder
 
 docker run --detach --rm \
   --name "$registry_name" \
@@ -110,8 +113,7 @@ docker buildx create \
   --driver-opt network=host \
   --buildkitd-config "$tmp/buildkitd.toml" \
   >/dev/null
-export BUILDX_BUILDER="$buildx_name"
-docker buildx inspect --bootstrap >/dev/null
+docker buildx inspect --bootstrap "$buildx_name" >/dev/null
 builder_image="$builder_registry_endpoint/bundle-builder@$builder_digest"
 
 go -C "$repo_root" build \

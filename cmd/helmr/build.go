@@ -25,6 +25,7 @@ var buildContextTempDir string
 var runDockerBuildx = executeDockerBuildx
 
 type dockerBuildxRequest struct {
+	Runner           dockerBuildRunner
 	Dockerfile       string
 	ContextDirectory string
 	Target           string
@@ -117,6 +118,11 @@ func buildDeploymentBundleAt(
 		return err
 	}
 
+	runner, err := prepareDockerBuildRunner(ctx)
+	if err != nil {
+		return fmt.Errorf("prepare local bundle builder: %w", err)
+	}
+
 	captured, err := buildcontext.Capture(ctx, root, buildContextTempDir)
 	if err != nil {
 		return err
@@ -154,6 +160,7 @@ func buildDeploymentBundleAt(
 	}
 	installedLayout := filepath.Join(stage, "installed-layout")
 	if err := runDockerBuildx(ctx, command, dockerBuildxRequest{
+		Runner:     runner,
 		Dockerfile: installedDockerfilePath, ContextDirectory: contextDirectory,
 		Target: "installed-tree", Output: installedLayout, OutputType: "oci",
 		OutputAttributes: map[string]string{"rewrite-timestamp": "true", "tar": "false"},
@@ -176,6 +183,7 @@ func buildDeploymentBundleAt(
 	}
 	analysisOutput := filepath.Join(stage, "analysis")
 	if err := runDockerBuildx(ctx, command, dockerBuildxRequest{
+		Runner:     runner,
 		Dockerfile: analysisDockerfilePath, ContextDirectory: emptyContext,
 		Target: "analysis", Output: analysisOutput, OutputType: "local",
 		BuildContexts: projectContexts,
@@ -209,6 +217,7 @@ func buildDeploymentBundleAt(
 		emptyContext,
 		projectContexts,
 		workspaceBuilds,
+		runner,
 	)
 	if err != nil {
 		return err
@@ -230,6 +239,7 @@ func buildDeploymentBundleAt(
 	}
 	buildOutput := filepath.Join(stage, "bundle")
 	if err := runDockerBuildx(ctx, command, dockerBuildxRequest{
+		Runner:     runner,
 		Dockerfile: finalDockerfilePath, ContextDirectory: emptyContext,
 		Target: "bundle", Output: buildOutput, OutputType: "local",
 		BuildContexts: map[string]string{
@@ -257,6 +267,7 @@ func buildWorkspaceImages(
 	emptyContext string,
 	projectContexts map[string]string,
 	workspaceBuilds []builder.WorkspaceBuild,
+	runner dockerBuildRunner,
 ) ([]map[string]string, error) {
 	workspaceInputs := make([]map[string]string, len(workspaceBuilds))
 	workspaceOutputs := make(map[struct {
@@ -281,6 +292,7 @@ func buildWorkspaceImages(
 			filename = fmt.Sprintf("workspace-%03d.oci.tar", index)
 			output := filepath.Join(workspaceContext, filename)
 			if err := runDockerBuildx(ctx, command, dockerBuildxRequest{
+				Runner:     runner,
 				Dockerfile: dockerfilePath, ContextDirectory: emptyContext,
 				Target: target, Output: output, OutputType: "oci",
 				OutputAttributes: map[string]string{"rewrite-timestamp": "true"},
@@ -303,10 +315,6 @@ func executeDockerBuildx(
 	command *cobra.Command,
 	request dockerBuildxRequest,
 ) error {
-	docker, err := exec.LookPath("docker")
-	if err != nil {
-		return errors.New("helmr build requires Docker Buildx")
-	}
 	var output strings.Builder
 	output.WriteString("type=" + request.OutputType + ",dest=" + request.Output)
 	attributeNames := make([]string, 0, len(request.OutputAttributes))
@@ -320,6 +328,7 @@ func executeDockerBuildx(
 	arguments := []string{
 		"buildx",
 		"build",
+		"--builder", request.Runner.name,
 		"--platform", "linux/amd64",
 		"--file", request.Dockerfile,
 		"--target", request.Target,
@@ -343,13 +352,13 @@ func executeDockerBuildx(
 		arguments = append(arguments, "--secret", "id="+id+",env="+id)
 	}
 	arguments = append(arguments, request.ContextDirectory)
-	process := exec.CommandContext(ctx, docker, arguments...)
-	process.Env = append(os.Environ(), "DOCKER_BUILDKIT=1")
+	process := exec.CommandContext(ctx, request.Runner.docker, append(append([]string{}, request.Runner.selector...), arguments...)...)
+	process.Env = request.Runner.environment
 	process.Stdin = command.InOrStdin()
 	process.Stdout = command.ErrOrStderr()
 	process.Stderr = command.ErrOrStderr()
 	if err := process.Run(); err != nil {
-		return fmt.Errorf("build deployment bundle with Docker Buildx: %w", err)
+		return fmt.Errorf("build deployment bundle with Docker Buildx: %w", errors.Join(err, ctx.Err()))
 	}
 	return nil
 }

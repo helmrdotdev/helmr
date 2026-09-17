@@ -176,3 +176,33 @@ secrets: [
 ```
 
 Secret names must match `/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/`.
+
+## Local bundle builder
+
+`helmr build` and source-based `helmr deploy` prepare a dedicated Docker Buildx
+`docker-container` builder. Docker with Buildx and a running selected daemon are
+required. `deploy --bundle` does not prepare a local builder. Helmr freezes the
+native Docker context/endpoint selection for the build, preserving its TLS and
+authentication settings. An explicit `DOCKER_CONTEXT` takes precedence over
+`DOCKER_HOST`; otherwise Docker's native selection applies. `BUILDX_BUILDER` does
+not select Helmr's builder, and Helmr never changes the global selected builder.
+
+The reserved name is `helmr-` followed by the first 24 lowercase hex characters
+of SHA-256 over `contextName + "\n" + endpointURI` (no final newline). It is shared
+across projects on that context/endpoint. Helmr requires exactly one
+`docker-container` node pointing to that endpoint before bootstrap, then verifies
+that it is running. An incompatible existing resource is an error; Helmr will
+not delete, append to, or reconfigure it.
+
+For deliberate custom BuildKit settings, pre-provision that reserved name using
+native `docker buildx create --name NAME --driver docker-container`, with the
+selected context as its positional endpoint (the resolved URI for `default`).
+Use Docker's `--buildkitd-config` and `--driver-opt` for required registry/network
+settings. Do not pass `--use`. The same identity checks apply; there is no arbitrary
+builder selector or driver fallback. Reconfigure through deliberate native
+removal/recreation when no Helmr builds are using the resource.
+
+The container and native cache remain after success, failure or cancellation for
+reuse. When no builds are active, use `docker buildx stop NAME` to stop it or
+`docker buildx rm NAME` to remove it and its cache, under the same Docker context
+and Buildx configuration. The next source build recreates an absent builder.
