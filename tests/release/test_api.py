@@ -50,7 +50,9 @@ class GitHubDownloads(unittest.TestCase):
                 fixture.requests.append((self.path, self.headers))
                 status, body, location = 200, b'', None
                 endpoint = self.path.split('?', 1)[0]
-                if endpoint.endswith('/actions/runs/123/artifacts'):
+                if endpoint == '/repos/helmrdotdev/helmr':
+                    body = b'{"id":123}'
+                elif endpoint.endswith('/actions/runs/123/artifacts'):
                     body = json.dumps(dict(artifacts=[fixture.item])).encode()
                 elif endpoint.endswith('/actions/artifacts/4/zip'):
                     if self.headers.get('Accept') != 'application/vnd.github+json':
@@ -101,6 +103,13 @@ class GitHubDownloads(unittest.TestCase):
         self.addCleanup(token.stop)
         self.api = GitHub()
 
+    def test_repository_root_relative_and_absolute(self):
+        for path in ('', 'https://api.github.com/repos/helmrdotdev/helmr'):
+            with self.subTest(path=path):
+                self.assertEqual(self.api.request(path), {'id': 123})
+                self.assertEqual(self.requests[-1][0], '/repos/helmrdotdev/helmr')
+                self.assertEqual(self.requests[-1][1]['Authorization'], 'Bearer local-fixture-token')
+
     def assert_headers_and_redirect(self, accept):
         initial, redirected = self.requests[-2:]
         self.assertEqual(initial[1]['Accept'], accept)
@@ -147,7 +156,9 @@ class GitHubDownloads(unittest.TestCase):
         self.assertFalse(destination.exists())
 
     def test_foreign_api_roots_rejected_before_request(self):
-        for url in ('https://api.github.com/repos/foreign/repo/actions/artifacts/4/zip',
+        for url in ('https://api.github.com/repos/helmrdotdev/helmr-other',
+                    'https://api.github.com/repos/helmrdotdev/helmr-other/releases',
+                    'https://api.github.com/repos/foreign/repo/actions/artifacts/4/zip',
                     'https://api.github.com.evil.invalid/repos/helmrdotdev/helmr/',
                     'https://uploads.github.com/repos/foreign/repo/releases/1/assets'):
             with self.subTest(url=url), self.assertRaisesRegex(ValueError, 'foreign GitHub API'):

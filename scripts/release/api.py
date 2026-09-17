@@ -17,11 +17,11 @@ class Redirect(urllib.request.HTTPRedirectHandler):
 
 class GitHub:
     def __init__(self):
-        self.root = f'https://api.github.com/repos/{REPOSITORY}/'
+        self.root = f'https://api.github.com/repos/{REPOSITORY}'
 
     def request(self, path, *, data=None, method=None, destination=None, missing=False, accept='application/vnd.github+json'):
-        url = path if path.startswith('https://') else self.root + path
-        require(url.startswith((self.root, f'https://uploads.github.com/repos/{REPOSITORY}/')), 'foreign GitHub API')
+        url = path if path.startswith('https://') else self.root + ('/' + path if path else '')
+        require(url == self.root or url.startswith((self.root + '/', f'https://uploads.github.com/repos/{REPOSITORY}/')), 'foreign GitHub API')
         # Endpoint media negotiation is independent of saving the response to a file.
         headers = {'Accept': accept,
                    'X-GitHub-Api-Version': '2022-11-28'}
