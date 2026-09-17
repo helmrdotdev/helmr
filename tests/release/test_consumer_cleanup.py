@@ -19,9 +19,10 @@ class ContextCleanup(unittest.TestCase):
                 result = subprocess.run(['bash', '-c', r'''
 set -eu
 source tests/buildx-fixture.sh
-# Metadata reads have no side effects; any cleanup mutation is a failure.
+# Record calls independently of cleanup's suppressed stdout/stderr.
 env() { printf 'original\n'; }
 docker() {
+  printf '%s\n' "$*" >> "$WORK/docker-calls"
   case "$1 $2" in
     'context inspect') printf 'unix:///fixture.sock\n' ;;
     'context create') printf '%s\n' "$FAILURE" >&2; return 17 ;;
@@ -33,6 +34,9 @@ start_buildx_fixture "$WORK"
 '''], cwd=ROOT, env=dict(os.environ, DOCKER_CONTEXT='original', FAILURE=message, WORK=directory), capture_output=True, text=True)
                 self.assertEqual(result.returncode, 17)
                 self.assertEqual(result.stderr, message + '\n')
+                calls = (Path(directory) / 'docker-calls').read_text().splitlines()
+                self.assertEqual([call.split()[:2] for call in calls],
+                                 [['context', 'inspect'], ['context', 'create']])
 
     def test_public_failed_create_preserves_context_and_error(self):
         for message in ('context already exists', 'daemon unavailable'):
