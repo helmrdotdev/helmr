@@ -65,10 +65,12 @@ require_text 'ExecStart=/usr/local/bin/worker' \
 
 # Repository destinations are now constructed by the unprivileged artifact builder.
 # tests/release/test_publication.py exercises the publisher using those descriptors.
-require_text 'ghcr.io/helmrdotdev/helmr/control-plane@$digest' \
-  "${root}/scripts/release/build.sh" "artifact builder does not select the nested Control Plane package"
-require_text 'ghcr.io/helmrdotdev/helmr/bundle-builder@$digest' \
-  "${root}/scripts/release/build.sh" "artifact builder does not select the nested bundle-builder package"
+require_text 'image=$(python3 "$contract" control-plane)' \
+  "${root}/scripts/release/build.sh" "artifact builder does not select the fixed Control Plane package"
+require_text 'image=$(python3 "$contract" bundle-builder)' \
+  "${root}/scripts/release/build.sh" "artifact builder does not select the fixed bundle-builder package"
+require_text 'python3 tools/scripts/release/contract.py bundle-builder --verify "$image"' \
+  "${root}/.github/workflows/build-artifacts.yaml" "CLI gate does not verify the fixed builder identity"
 for file in .github/workflows/release.yaml scripts/release/build.sh scripts/release/publish.py; do
   reject_text 'ghcr.io/${{ github.repository_owner }}/helmr-controlplane' \
     "${root}/${file}" "removed Control Plane package publication path remains"

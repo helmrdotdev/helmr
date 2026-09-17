@@ -6,6 +6,10 @@ import re
 import tarfile
 
 REPOSITORY = 'helmrdotdev/helmr'
+IMAGES = {
+    'bundle-builder': 'ghcr.io/helmrdotdev/bundle-builder',
+    'control-plane': 'ghcr.io/helmrdotdev/control-plane',
+}
 WORKFLOW = f'https://github.com/{REPOSITORY}/.github/workflows/release.yaml'
 ISSUER = 'https://token.actions.githubusercontent.com'
 SHA = r'[0-9a-f]{40}'
@@ -133,6 +137,10 @@ def cli_checksums(directory):
     return ''.join(f"{digest(directory / ('helmr-' + p + '.tar.gz'))[7:]}  helmr-{p}.tar.gz\n" for p in sorted(PLATFORMS)).encode()
 
 
+def verify_image(role, reference):
+    require(re.fullmatch(re.escape(IMAGES[role]) + '@' + DIGEST, reference), 'Product image digest required')
+
+
 def verify_files(index, directory, *, publishing=True):
     validate(index, publishing=publishing)
     directory = Path(directory)
@@ -143,7 +151,7 @@ def verify_files(index, directory, *, publishing=True):
     cp = read(directory / 'controlplane.json')
     for record, image in ((builder, 'bundle-builder'), (cp, 'control-plane')):
         require(record['formatVersion'] == 0 and record['sourceCommit'] == index['sourceCommit'], 'image source mismatch')
-        require(re.fullmatch(f'ghcr.io/{REPOSITORY}/{image}@' + DIGEST, record['image']), 'Product image digest required')
+        verify_image(image, record['image'])
     with tarfile.open(directory / 'platform-release.tar') as archive:
         members = [m for m in archive.getmembers() if m.name.removeprefix('./') == 'platform-release.json']
         require(len(members) == 1 and members[0].isfile(), 'unique platform descriptor required')
@@ -169,3 +177,15 @@ def verify_files(index, directory, *, publishing=True):
         if package == '@helmr/sdk':
             require(metadata['dependencies']['@helmr/proto'] == index['version'][1:], 'SDK must pin exact sibling version')
     return index
+
+
+if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser(description='Fixed Product OCI identity for artifact producers and gates')
+    parser.add_argument('role', choices=IMAGES)
+    parser.add_argument('--verify', metavar='REFERENCE')
+    args = parser.parse_args()
+    if args.verify is None:
+        print(IMAGES[args.role])
+    else:
+        verify_image(args.role, args.verify)

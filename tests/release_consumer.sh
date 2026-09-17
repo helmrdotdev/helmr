@@ -27,8 +27,8 @@ for _ in $(seq 1 50); do
   if curl --fail --silent "http://$endpoint/v2/" >/dev/null; then break; fi
   sleep 0.2
 done
-skopeo --insecure-policy copy --preserve-digests --dest-tls-verify=false "dir:$assets/builder-image" "docker://$endpoint/helmr/bundle-builder:test"
-digest=$(skopeo inspect --tls-verify=false --format '{{.Digest}}' "docker://$endpoint/helmr/bundle-builder:test")
+skopeo --insecure-policy copy --preserve-digests --dest-tls-verify=false "dir:$assets/builder-image" "docker://$endpoint/bundle-builder:test"
+digest=$(skopeo inspect --tls-verify=false --format '{{.Digest}}' "docker://$endpoint/bundle-builder:test")
 [ "$digest" = "$(jq -r '.image | split("@")[1]' "$assets/bundle-builder.json")" ] || { echo "local registry builder digest differs: $digest" >&2; exit 1; }
 cat >"$work/buildkitd.toml" <<EOF
 [registry."$builder_endpoint"]
@@ -44,9 +44,9 @@ case "$(uname -s)/$(uname -m)" in
   Linux/x86_64) target=linux/amd64 ;;
   *) echo 'unsupported native fixture CLI platform' >&2; exit 1 ;;
 esac
-BUNDLE_BUILDER_IMAGE="$builder_endpoint/helmr/bundle-builder@$digest" \
+BUNDLE_BUILDER_IMAGE="$builder_endpoint/bundle-builder@$digest" \
   "$root/scripts/build-cli-binaries.sh" "$work/cli"
-PYTHONPATH="$root/scripts/release" python3 - "$assets" "$work/cli/helmr-${target/\//-}.tar.gz" "$work/consumer" "$builder_endpoint/helmr/bundle-builder@$digest" <<'PY'
+PYTHONPATH="$root/scripts/release" python3 - "$assets" "$work/cli/helmr-${target/\//-}.tar.gz" "$work/consumer" "$builder_endpoint/bundle-builder@$digest" <<'PY'
 import sys
 from consumer import consumer
 consumer(*sys.argv[1:])

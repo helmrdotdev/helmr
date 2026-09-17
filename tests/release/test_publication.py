@@ -85,7 +85,7 @@ def fake_verify(path,signature,version):
     if Path(signature).read_text()!=digest(path):raise ValueError('bad fixture signature')
 
 class Publication(unittest.TestCase):
-    def test_nested_product_image_publication_and_legacy_destination_rejection(self):
+    def test_flat_product_image_publication_and_foreign_destination_rejection(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             index = assets(root)
@@ -95,7 +95,7 @@ class Publication(unittest.TestCase):
                       ('controlplane.json', 'control-plane', 'controlplane-image'))
             for name, repository, _ in images:
                 record = read(root / name)
-                record['image'] = f'ghcr.io/helmrdotdev/helmr/{repository}@{image_digest}'
+                record['image'] = f'ghcr.io/helmrdotdev/{repository}@{image_digest}'
                 write(root / name, record)
                 index['assets'][name] = descriptor(root / name)
             verify_files(index, root)
@@ -106,22 +106,31 @@ class Publication(unittest.TestCase):
                 publish.publish_images(root, index)
                 self.assertEqual(copy_image.call_count, 2)
                 for _, repository, image_dir in images:
-                    base = f'ghcr.io/helmrdotdev/helmr/{repository}'
+                    base = f'ghcr.io/helmrdotdev/{repository}'
                     inspect.assert_any_call(['skopeo', 'inspect', '--raw', 'docker://' + base + ':' + index['version']], capture_output=True)
                     copy_image.assert_any_call('skopeo', '--insecure-policy', 'copy', '--preserve-digests', 'dir:' + str(root / image_dir), 'docker://' + base + ':' + index['version'])
                     readback.assert_any_call(['skopeo', 'inspect', '--raw', 'docker://' + base + '@' + image_digest])
             for name, repository, _ in images:
-                with self.subTest(repository=repository):
-                    record = read(root / name)
-                    original = record['image']
-                    record['image'] = f'ghcr.io/helmrdotdev/helmr-{repository}@{image_digest}'
-                    write(root / name, record)
-                    index['assets'][name] = descriptor(root / name)
-                    with self.assertRaisesRegex(ValueError, 'Product image digest required'):
-                        verify_files(index, root)
-                    record['image'] = original
-                    write(root / name, record)
-                    index['assets'][name] = descriptor(root / name)
+                rejected = (
+                    f'ghcr.io/helmrdotdev/helmr/{repository}',
+                    f'ghcr.io/helmrdotdev/helmr-{repository}',
+                    f'foreign.io/helmrdotdev/{repository}',
+                    f'ghcrXio/helmrdotdev/{repository}',
+                    f'ghcr.io/helmrdotdev/{repository}-other',
+                    f'ghcr.io/foreign/{repository}',
+                )
+                for destination in rejected:
+                    with self.subTest(repository=repository, destination=destination):
+                        record = read(root / name)
+                        original = record['image']
+                        record['image'] = f'{destination}@{image_digest}'
+                        write(root / name, record)
+                        index['assets'][name] = descriptor(root / name)
+                        with self.assertRaisesRegex(ValueError, 'Product image digest required'):
+                            verify_files(index, root)
+                        record['image'] = original
+                        write(root / name, record)
+                        index['assets'][name] = descriptor(root / name)
 
     def test_interrupted_preview_pair_reuses_original_attempt_and_rejects_changed_bytes(self):
         with tempfile.TemporaryDirectory() as tmp:

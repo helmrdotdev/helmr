@@ -96,7 +96,7 @@ jobs:
           python3 tools/scripts/release/main.py restore --part builder --directory "$RUNNER_TEMP/builder"
           python3 tools/scripts/release/main.py restore --part cli --directory "$RUNNER_TEMP/part"
           image=$(jq -er .image "$RUNNER_TEMP/builder/bundle-builder.json")
-          [[ "$image" =~ ^ghcr\.io/helmrdotdev/helmr/bundle-builder@sha256:[0-9a-f]{64}$ ]]
+          python3 tools/scripts/release/contract.py bundle-builder --verify "$image"
           printf 'BUNDLE_BUILDER_IMAGE=%s\n' "$image" >> "$GITHUB_ENV"
       - uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3
         with:
