@@ -9,7 +9,7 @@ import tempfile
 from contract import ASSETS, descriptor, read, require, verify_files, write
 from api import GitHub
 from admission import admit, relevant
-from transport import assemble, freeze, restore
+from transport import assemble, freeze, restore, download_readback
 from publish import complete, discover, download_build, fetch_index, finalize, stage
 
 
@@ -24,6 +24,11 @@ def main():
     parser.add_argument('--part')
     parser.add_argument('--directory')
     parser.add_argument('--output')
+    parser.add_argument('--artifact-id')
+    parser.add_argument('--artifact-digest')
+    parser.add_argument('--publisher-attempt')
+    parser.add_argument('--build-digest')
+    parser.add_argument('--release-id')
     args = parser.parse_args()
     # Failed-job reruns may skip admission; enforce formal-tag safety here too.
     if os.environ.get('GITHUB_EVENT_NAME') == 'push' and os.environ.get('GITHUB_REF', '').startswith('refs/tags/v'):
@@ -58,13 +63,18 @@ def main():
         # requires the main/tag certificate identity. All common bytes are checked.
         verify_files(index, args.directory, publishing=False)
     elif args.command == 'stage':
-        stage(api, selection, args.directory)
+        require(args.output is not None, 'readback output directory required')
+        release = stage(api, selection, args.directory)
+        download_build(api, selection, args.output, release)
+        from contract import digest
+        output('release_id', release['id'])
+        output('build_digest', digest(Path(args.output) / 'release-build.json'))
+        output('publisher_attempt', os.environ['GITHUB_RUN_ATTEMPT'])
     elif args.command == 'download':
-        download_build(api, selection, args.directory)
+        download_readback(api, selection, args.directory, args.artifact_id, args.artifact_digest,
+                          args.publisher_attempt, args.build_digest)
     elif args.command == 'finalize':
-        finalize(api, selection, args.directory)
-        with tempfile.TemporaryDirectory() as temporary:
-            require(complete(api, selection, Path(temporary) / 'complete') is not None, 'public completion readback failed')
+        finalize(api, selection, args.directory, args.release_id, args.build_digest)
     elif args.command == 'discover':
         discover(api, Path.cwd())
 

@@ -1,10 +1,12 @@
 """Frozen build parts use native Actions artifacts, never a resume database."""
 from pathlib import Path
 import shutil
+import re
+import stat
 import tarfile
 import tempfile
 import zipfile
-from contract import canonical, descriptor, digest, read, require, safe_extract, write
+from contract import ASSETS, DIGEST, validate, verify_files, canonical, descriptor, digest, read, require, safe_extract, write
 
 PARTS = ('sdk', 'builder', 'platform', 'host', 'guest', 'controlplane', 'cli')
 FILES = {
@@ -81,3 +83,41 @@ def assemble(api, selection, destination):
                 shutil.move(path, destination / path.name)
             origins.append(part)
     return origins
+
+
+def download_readback(api, selection, destination, artifact_id, artifact_digest,
+                      publisher_attempt, build_digest):
+    """One flat signed cohort from the exact publisher-selected native artifact."""
+    require(re.fullmatch(r'[1-9][0-9]*', str(artifact_id)), 'artifact ID required')
+    require(re.fullmatch(r'[1-9][0-9]*', str(publisher_attempt)), 'publisher attempt required')
+    # upload-artifact outputs bare hex; REST metadata and Product use sha256:hex.
+    require(re.fullmatch(r'[0-9a-f]{64}', artifact_digest or ''), 'bare action artifact digest required')
+    expected_zip = 'sha256:' + artifact_digest
+    require(re.fullmatch(DIGEST, build_digest or ''), 'build digest required')
+    run_id = selection['build']['runId']
+    item = api.request(f'actions/artifacts/{artifact_id}')
+    require(str(item['id']) == str(artifact_id) and str(item['workflow_run']['id']) == str(run_id), 'foreign artifact ID/run')
+    require(item['name'] == f'release-readback-{run_id}-{publisher_attempt}' and not item['expired'], 'wrong or expired readback artifact')
+    require(item['digest'] == expected_zip, 'native artifact metadata digest differs')
+    destination = Path(destination)
+    require(not destination.exists(), 'readback requires a fresh directory')
+    with tempfile.TemporaryDirectory() as temporary:
+        archive = Path(temporary) / 'readback.zip'
+        api.request(f'actions/artifacts/{artifact_id}/zip', destination=archive)
+        require(digest(archive) == expected_zip, 'native artifact ZIP digest differs')
+        with zipfile.ZipFile(archive) as zipped:
+            expected = ASSETS | {'release-build.json', 'release-build.sigstore.json'}
+            require(sorted(zipped.namelist()) == sorted(expected), 'readback ZIP coverage differs')
+            require(all(not m.is_dir() and stat.S_IFMT(m.external_attr >> 16) in (0, stat.S_IFREG)
+                        for m in zipped.infolist()), 'readback ZIP contains non-regular member')
+            destination.mkdir(mode=0o700)
+            for name in sorted(expected):
+                with zipped.open(name) as source, (destination / name).open('xb') as target:
+                    shutil.copyfileobj(source, target)
+    from publish import verify_signature
+    path = destination / 'release-build.json'
+    require(digest(path) == build_digest, 'signed build digest differs')
+    verify_signature(path, destination / 'release-build.sigstore.json', selection['version'])
+    index = validate(read(path))
+    same_selection({k: index[k] for k in selection}, selection)
+    return verify_files(index, destination)

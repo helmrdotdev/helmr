@@ -77,11 +77,48 @@ exact bytes/digests. Human tag cohorts retain single-attempt protection, includi
 failed-job reruns; use a new human tag after any partial publication.
 
 The draft release contains the fixed assets and a signed pre-completion copy of
-the index (`release-build.json`). The fresh consumer verifies those bytes before
-execution. The publisher uploads `release-index.sigstore.json`, then
-`release-index.json` **last**, and publishes the draft only after verification.
-Retries reuse the frozen original JSON/signatures and never overwrite assets.
-An incomplete draft or missing completion index is not a usable release.
+the index (`release-build.json`). The privileged publisher locates the unique
+version through paginated native release listings, then downloads and verifies
+that draft's signed build and all fixed assets. GitHub's tag endpoint exposes
+published releases; it is not a draft lookup. Duplicate versions fail rather than
+selecting one. These checks do not lock out another authorized writer.
+
+The publisher uploads this fresh, flat readback directory as the immutable native
+Actions artifact `release-readback-<run-id>-<publisher-attempt>` (compression 0,
+7-day retention, no overwrite). Its outputs carry the release ID, raw signed-build
+digest, publisher attempt, artifact ID and artifact digest. The action digest is
+bare lowercase SHA-256 hex; the downloader validates it and adds `sha256:` once
+for comparison with native REST metadata and downloaded ZIP bytes. The build
+digest already uses Product's `sha256:<hex>` shape.
+
+The verifier has only Contents/Actions read permissions and no release environment
+or OIDC grant. It downloads the exact artifact ID, checks run/name/expiry/digests,
+requires precisely the fixed assets and build/signature as regular flat files,
+then verifies the signature, selection and every asset before execution. Its
+candidate execution step receives no GitHub token. There is no direct draft-read
+fallback and no extra release manifest. Missing outputs, expired handoffs or
+invalid bytes stop verification without invoking a rebuild. This does not change
+the separate missing-build-part behavior described above.
+
+After consumer success, the privileged finalizer re-reads the same unique release
+ID and checks the expected raw signed-build digest and all assets. It uploads
+`release-index.sigstore.json`, then `release-index.json` **last**, with index bytes
+identical to the verified build, and publishes the draft. Anonymous completed-byte
+readback must then pass. Retries reuse frozen original bytes/signatures and never
+overwrite assets. An incomplete draft or missing completion index is unusable.
+
+A verifier-only retry uses retained publisher outputs: build attempt 1, publisher
+attempt 2 and verifier attempt 3 can legitimately differ. Re-running publish uses
+the executing publisher attempt for a fresh handoff, while retaining the original
+signed build attempt. A completion-only retry needs the successful verify and
+publisher outputs, not an unexpired transfer. If publishing the draft succeeded
+but its response or public readback failed, completion first binds the release ID
+and build digest, requires signed completed-index bytes to equal those build bytes,
+and repeats public readback with **zero signing, uploads or PATCHes**. Full preview
+rerun admission can use public completed bytes without saved publisher outputs;
+incomplete cohorts remain subject to retained build-part availability. Human tag
+single-attempt rules are unchanged. Hosted partial-rerun output retention and the
+pinned upload's actual ZIP transfer still require operational proof.
 
 Preview signature identity is exactly:
 `https://github.com/helmrdotdev/helmr/.github/workflows/release.yaml@refs/heads/main`.
@@ -119,7 +156,8 @@ access. Local fixtures do not establish native Sigstore issuance or public acces
 
 Before activation, separately verify npm trusted-publisher authorization for
 main-executed `release.yaml` and Environment `release`, GitHub Environment branch
-rules (main plus human tags), GHCR visibility, native immutable releases, and
+rules (exact `main` branch plus existing `v*` tag pattern, retaining the required
+reviewer), GHCR visibility, native immutable releases, and
 retention settings. PR workflows retain merge checks plus an additional full artifact
 build: runner time/disk demand increases. The graph records disk/memory/output
 sizes on `ubuntu-24.04`; native Linux hosted feasibility is an acceptance requirement,

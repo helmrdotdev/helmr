@@ -18,29 +18,64 @@ from test_contract import assets, selection
 import test_contract
 
 class Releases:
+    """Draft visibility is publisher-only; tag lookup is published-only for all roles."""
     def __init__(self):
         self.releases=[];self.blobs={};self.writes=[];self.fail=None
+        self.writer=True;self.asset_keys={}
+    def visible(self, release):
+        return self.writer or not release['draft']
     def request(self,path,*,data=None,method=None,destination=None,missing=False,accept='application/vnd.github+json'):
         if path.startswith('releases/tags/'):
-            return next((r for r in self.releases if r['tag_name']==path[14:]),None)
-        if path=='releases' and data:
-            r=dict({'draft':False,**data},id=len(self.releases)+1,upload_url='upload/'+str(len(self.releases)+1));self.releases.append(r);return r
-        if path.startswith('upload/'):
-            rid=int(path.split('/')[1].split('?')[0]);name=data.name
-            self.writes.append(name)
-            if self.fail==name:self.fail=None;raise OSError('interrupted upload')
-            self.blobs[rid,name]=data.read_bytes();return {}
+            release=next((r for r in self.releases if r['tag_name']==path[14:] and not r['draft']),None)
+            if release is None and not missing:raise ValueError('GitHub request failed: HTTP 404')
+            return release
+        if data is not None:
+            if not self.writer:raise ValueError('GitHub request failed: HTTP 403')
+            if path=='releases':
+                r=dict({'draft':False,**data},id=len(self.releases)+1,upload_url='upload/'+str(len(self.releases)+1));self.releases.append(r);return r
+            if path.startswith('upload/'):
+                rid=int(path.split('/')[1].split('?')[0]);name=data.name
+                self.writes.append(name)
+                if self.fail==name:self.fail=None;raise OSError('interrupted upload')
+                self.blobs[rid,name]=data.read_bytes();return {}
+            if method=='PATCH':
+                self.writes.append('PATCH')
+                if self.fail=='pointer':self.fail=None;raise OSError('discovery unavailable')
+                r=next(r for r in self.releases if r['id']==int(path.split('/')[1]));r.update(data)
+                if self.fail=='response':self.fail=None;raise OSError('PATCH response lost')
+                return r
         if path.startswith('releases/assets/'):
-            key=json.loads(path.removeprefix('releases/assets/'))
-            Path(destination).write_bytes(self.blobs[tuple(key)]);return
-        if method=='PATCH':
-            if self.fail=='pointer':self.fail=None;raise OSError('discovery unavailable')
-            r=next(r for r in self.releases if r['id']==int(path.split('/')[1]));r.update(data);return r
+            key=self.asset_keys[int(path.removeprefix('releases/assets/'))]
+            self.request('releases/'+str(key[0]))
+            with Path(destination).open('xb') as out:out.write(self.blobs[key])
+            return
+        if path.startswith('releases/'):
+            release=next((r for r in self.releases if str(r['id'])==path.split('/')[1] and self.visible(r)),None)
+            if release is None:raise ValueError('GitHub request failed: HTTP 404')
+            return release
         raise AssertionError(path)
     def pages(self,path,*_):
-        if path=='releases':return iter(self.releases)
-        rid=int(path.split('/')[1])
-        return iter(dict(id=json.dumps([r,n]),name=n) for r,n in self.blobs if r==rid)
+        if path=='releases':return iter(r for r in self.releases if self.visible(r))
+        rid=int(path.split('/')[1]);self.request('releases/'+str(rid))
+        for key in self.blobs:
+            if key not in self.asset_keys.values():self.asset_keys[len(self.asset_keys)+1]=key
+        return iter(dict(id=identifier,name=key[1]) for identifier,key in self.asset_keys.items() if key[0]==rid)
+
+
+def seed_draft(root):
+    index=assets(root);api=Releases()
+    release=api.request('releases',data=dict(tag_name=index['version'],target_commitish=index['sourceCommit'],draft=True))
+    write(root/'release-build.json',index);fake_sign(root/'release-build.json')
+    for name in (*index['assets'],'release-build.json','release-build.sigstore.json'):
+        api.blobs[release['id'],name]=(root/name).read_bytes()
+    return api,release,index
+
+
+def public_download(api, url, **_):
+    version,name=url.rsplit('/',2)[-2:]
+    release=api.request('releases/tags/'+version)
+    response=io.BytesIO(api.blobs[release['id'],name]);response.url=url
+    return response
 
 
 def fake_sign(path):
@@ -93,32 +128,85 @@ class Publication(unittest.TestCase):
             root=Path(tmp);s=selection();assets(root);api=Releases();api.fail='release-build.sigstore.json'
             with patch.object(publish,'recheck_pr'),patch.object(publish,'publish_images'),patch.object(publish,'npm_publish'),patch.object(publish,'sign',side_effect=fake_sign),patch.object(publish,'verify_signature',side_effect=fake_verify):
                 with self.assertRaises(OSError):publish.stage(api,s,root)
+                # Preserve original raw bytes, including serialization, on retry.
+                api.blobs[1,'release-build.json']=json.dumps(json.loads(api.blobs[1,'release-build.json']),indent=2).encode()
                 frozen=api.blobs[1,'release-build.json']
                 retry=copy.deepcopy(s);retry['build']['attempt']='2'
                 # Fresh publishing job receives the original frozen components.
                 (root/'release-build.sigstore.json').unlink()
                 result=publish.stage(api,retry,root)
-                self.assertEqual(result['build']['attempt'],'1')
+                self.assertEqual(result['id'],1)
+                self.assertEqual(json.loads(api.blobs[1,'release-build.json'])['build']['attempt'],'1')
                 self.assertEqual(api.blobs[1,'release-build.json'],frozen)
                 (root/'helmr-linux-amd64.tar.gz').write_bytes(b'changed')
                 (root/'old-build.json').unlink()
+                (root/'release-build.sigstore.json').unlink()
                 (root/'checksums.txt').write_bytes(test_contract.cli_checksums(root))
                 with self.assertRaisesRegex(ValueError,'retry built different bytes'):publish.stage(api,retry,root)
 
     def test_final_index_last_and_interrupted_completion_retry(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root=Path(tmp);s=selection();index=assets(root);api=Releases()
-            r=api.request('releases',data=dict(tag_name=s['version'],draft=True))
-            api.blobs[1,'release-build.json']=canonical(index);api.blobs[1,'release-build.sigstore.json']='fixture'.encode()
-            def download(_api,_selection,directory):Path(directory).mkdir();return index
-            with patch.object(publish,'download_build',side_effect=download),patch.object(publish,'sign',side_effect=fake_sign),patch.object(publish,'verify_signature',side_effect=fake_verify):
+            root=Path(tmp);api,r,index=seed_draft(root);s=selection()
+            build_digest=digest(root/'release-build.json')
+            with patch.object(publish,'sign',side_effect=fake_sign) as sign,patch.object(publish,'verify_signature',side_effect=fake_verify),patch.object(publish.urllib.request,'urlopen',side_effect=lambda url,**kw:public_download(api,url,**kw)):
                 api.fail='release-index.json'
-                with self.assertRaises(OSError):publish.finalize(api,s,root/'first')
+                with self.assertRaises(OSError):publish.finalize(api,s,root/'first','1',build_digest)
                 self.assertTrue(r['draft']);self.assertNotIn((1,'release-index.json'),api.blobs)
                 signature=api.blobs[1,'release-index.sigstore.json']
-                publish.finalize(api,s,root/'second')
-                self.assertFalse(r['draft']);self.assertEqual(api.writes[-1],'release-index.json')
+                publish.finalize(api,s,root/'second','1',build_digest)
+                self.assertFalse(r['draft']);self.assertEqual(api.writes[-2:],['release-index.json','PATCH'])
                 self.assertEqual(api.blobs[1,'release-index.sigstore.json'],signature)
+                self.assertEqual(api.blobs[1,'release-index.json'],api.blobs[1,'release-build.json'])
+                self.assertEqual(sign.call_count,1)
+                writes=list(api.writes)
+                retry=copy.deepcopy(s);retry['build']['attempt']='3'
+                publish.finalize(api,retry,root/'third','1',build_digest)
+                self.assertEqual(api.writes,writes);self.assertEqual(sign.call_count,1)
+                # A full rerun admits public completed bytes without publisher outputs.
+                api.writer=False
+                self.assertEqual(publish.complete(api,retry,root/'admission'),index)
+
+    def test_published_retry_binds_id_raw_build_and_completed_bytes_before_any_write(self):
+        for failure in ('response','public-readback'):
+            with self.subTest(failure=failure),tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp);api,r,index=seed_draft(root);s=selection();build_digest=digest(root/'release-build.json')
+                with patch.object(publish,'sign',side_effect=fake_sign) as sign,patch.object(publish,'verify_signature',side_effect=fake_verify),patch.object(publish.urllib.request,'urlopen',side_effect=OSError('public unavailable')) as public:
+                    api.fail='response' if failure=='response' else None
+                    with self.assertRaises(OSError):publish.finalize(api,s,root/'first','1',build_digest)
+                    self.assertFalse(r['draft'])
+                    writes=list(api.writes);signed=sign.call_count
+                    public.side_effect=lambda url,**kw:public_download(api,url,**kw)
+                    publish.finalize(api,s,root/'retry','1',build_digest)
+                    self.assertEqual(api.writes,writes);self.assertEqual(sign.call_count,signed)
+                    for identifier,expected,message in [('2',build_digest,'release ID'),('1','sha256:'+'0'*64,'build digest')]:
+                        with self.assertRaisesRegex(ValueError,message):
+                            publish.finalize(api,s,root/('bad'+identifier+expected[-1]),identifier,expected)
+                    # Valid same-selection signed JSON, different raw bytes: no writes.
+                    changed=json.dumps(index,indent=2).encode()
+                    api.blobs[1,'release-index.json']=changed
+                    api.blobs[1,'release-index.sigstore.json']=('sha256:'+hashlib.sha256(changed).hexdigest()).encode()
+                    with self.assertRaisesRegex(ValueError,'completed index differs'):
+                        publish.finalize(api,s,root/'different-complete','1',build_digest)
+                    self.assertEqual(api.writes,writes);self.assertEqual(sign.call_count,signed)
+
+    def test_draft_visibility_duplicate_version_and_formal_tag_collision(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);api,r,_=seed_draft(root);s=selection()
+            self.assertIsNone(api.request('releases/tags/'+s['version'],missing=True))
+            self.assertEqual(publish.find_release(api,s['version']),r)
+            api.writer=False
+            self.assertEqual(list(api.pages('releases')),[])
+            with self.assertRaisesRegex(ValueError,'404'):api.request('releases/1')
+            self.assertIsNone(publish.complete(api,s,root/'admit'))
+            api.writer=True
+            api.releases.append(dict(r,id=2))
+            with patch.object(publish,'publish_images') as images,patch.object(publish,'npm_publish') as npm:
+                with self.assertRaisesRegex(ValueError,'duplicate release version'):publish.stage(api,s,root)
+                with self.assertRaisesRegex(ValueError,'duplicate release version'):publish.finalize(api,s,root/'final','1',digest(root/'release-build.json'))
+                images.assert_not_called();npm.assert_not_called()
+            api.releases.pop();s['build']['mode']='tag'
+            with patch.object(publish,'verify_files'),self.assertRaisesRegex(ValueError,'human tag release already exists'):
+                publish.stage(api,s,root)
 
     def test_npm_retry_compares_bytes_and_human_tag_never_resumes(self):
         with tempfile.TemporaryDirectory() as tmp:
