@@ -4,9 +4,10 @@ export const SITE = {
   name: "Helmr",
   url: "https://helmr.dev",
   githubUrl: "https://github.com/helmrdotdev/helmr",
-  defaultTitle: "Helmr — The code-first runtime for AI agents",
+  tagline: "Build your own software factory",
+  defaultTitle: "Helmr — Build your own software factory",
   defaultDescription:
-    "The code-first runtime for AI agents. Define agent workloads in TypeScript and run them in isolated Linux microVMs with durable workspaces, scoped secrets, human or external waitpoints, logs, and run history.",
+    "Infrastructure and APIs for your own agent harness. Define agent workloads in TypeScript and run them in isolated Linux microVMs with durable workspaces.",
   defaultImage: "/og/helmr.png",
   logoImage: "/web-app-manifest-512x512.png",
   locale: "en_US",
@@ -27,7 +28,7 @@ export const organizationJsonLd = (): JsonLdNode => ({
   url: SITE.url,
   logo: absoluteUrl(SITE.logoImage),
   sameAs: [SITE.githubUrl],
-  description: "The code-first runtime for AI agents.",
+  description: `${SITE.tagline}.`,
 });
 
 export const websiteJsonLd = (): JsonLdNode => ({
@@ -47,6 +48,7 @@ export const softwareJsonLd = (): JsonLdNode => ({
   operatingSystem: "macOS, Linux",
   url: SITE.url,
   codeRepository: SITE.githubUrl,
+  license: "https://www.apache.org/licenses/LICENSE-2.0",
   description: SITE.defaultDescription,
   publisher: { "@id": organizationId },
 });
@@ -72,7 +74,11 @@ export const docsCollectionJsonLd = (): JsonLdNode => ({
   inLanguage: "en",
 });
 
-export const docArticleJsonLd = (doc: DocEntry, path: string): JsonLdNode => {
+export const docArticleJsonLd = (
+  doc: DocEntry,
+  path: string,
+  dateModified?: string,
+): JsonLdNode => {
   const url = absoluteUrl(path);
   const navigation = getDocNavigation(doc);
 
@@ -86,6 +92,7 @@ export const docArticleJsonLd = (doc: DocEntry, path: string): JsonLdNode => {
       "@type": "WebPage",
       "@id": `${url}#webpage`,
     },
+    ...(dateModified ? { dateModified } : {}),
     isPartOf: { "@id": `${absoluteUrl("/docs")}#webpage` },
     author: { "@id": organizationId },
     publisher: { "@id": organizationId },

@@ -19,7 +19,7 @@ cd infra/aws/quickstart
 cp terraform.tfvars.example terraform.tfvars
 ```
 
-Fill every required value described in [requirements](/docs/self-hosting/requirements/). Keep secret values out of tfvars and state. For a direct HTTPS endpoint, configure:
+Fill every required value described in [requirements](/docs/self-hosting/requirements). Keep secret values out of tfvars and state. For a direct HTTPS endpoint, configure:
 
 ```hcl
 enable_cloudfront = false
@@ -50,8 +50,8 @@ The example intentionally has no backend block. Add and operate a remote-state b
 After the first apply:
 
 1. Record `controlplane_url`, `controlplane_load_balancer_dns_name`, `controlplane_cluster_name`, and `secret_arns`.
-2. Complete [authentication](/docs/self-hosting/authentication/) and [secrets and data](/docs/self-hosting/secrets-and-data/).
-3. Bootstrap the database, run migrations, and enable the [Control Plane](/docs/self-hosting/control-plane/).
-4. To test code execution, enable NAT and add one supported nested-virtualization worker as described in [workers](/docs/self-hosting/workers/).
+2. Complete [authentication](/docs/self-hosting/authentication) and [secrets and data](/docs/self-hosting/secrets-and-data).
+3. Bootstrap the database, run migrations, and enable the [Control Plane](/docs/self-hosting/control-plane).
+4. To test code execution, enable NAT and add one supported nested-virtualization worker as described in [workers](/docs/self-hosting/workers).
 
 Evaluation defaults are intentionally easy to destroy and provide limited recovery. Do not rely on them for customer data or convert the stack incrementally into production.

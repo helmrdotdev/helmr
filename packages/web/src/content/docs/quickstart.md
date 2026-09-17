@@ -90,8 +90,8 @@ helmr run logs RUN_ID --project PROJECT --env ENVIRONMENT
 helmr run events RUN_ID --project PROJECT --env ENVIRONMENT
 ```
 
-Continue with [Run your first Task](/docs/guides/tutorials/first-task/) for a
-typed payload and Workspace file example, or [Durable agent](/docs/guides/tutorials/durable-agent/)
+Continue with [Run your first Task](/docs/guides/tutorials/first-task) for a
+typed payload and Workspace file example, or [Durable agent](/docs/guides/tutorials/durable-agent)
 to add ongoing input and output with an Actor.
 
 ## Local development note

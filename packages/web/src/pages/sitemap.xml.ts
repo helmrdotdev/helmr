@@ -1,5 +1,5 @@
 import type { APIRoute } from "astro";
-import { getDocs, getDocUrl } from "../lib/docs";
+import { getDocs, getDocLastmod, getDocUrl, gitLastmod } from "../lib/docs";
 import { SITE, absoluteUrl } from "../lib/seo";
 
 const escapeXml = (value: string) =>
@@ -14,12 +14,13 @@ export const GET: APIRoute = async ({ site }) => {
   const base = site?.toString() ?? SITE.url;
   const docs = await getDocs();
   const routes = [
-    { path: "/", changefreq: "weekly", priority: "1.0" },
-    { path: "/docs", changefreq: "weekly", priority: "0.9" },
+    { path: "/", changefreq: "weekly", priority: "1.0", lastmod: gitLastmod("src/pages/index.astro") },
+    { path: "/docs", changefreq: "weekly", priority: "0.9", lastmod: gitLastmod("src/pages/docs/index.astro") },
     ...docs.map((doc) => ({
       path: getDocUrl(doc),
       changefreq: "weekly",
       priority: "0.7",
+      lastmod: getDocLastmod(doc),
     })),
   ];
 
@@ -27,7 +28,7 @@ export const GET: APIRoute = async ({ site }) => {
     .map(
       (route) => `  <url>
     <loc>${escapeXml(absoluteUrl(route.path, base))}</loc>
-    <changefreq>${route.changefreq}</changefreq>
+${route.lastmod ? `    <lastmod>${route.lastmod}</lastmod>\n` : ""}    <changefreq>${route.changefreq}</changefreq>
     <priority>${route.priority}</priority>
   </url>`,
     )

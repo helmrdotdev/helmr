@@ -1,3 +1,7 @@
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { getCollection, type CollectionEntry } from "astro:content";
 import { docsNav } from "./docs-nav";
 
@@ -15,7 +19,57 @@ export type ResolvedDocSection = {
 
 export const getDocUrl = (doc: DocEntry) => `/docs/${doc.id}`;
 
+export const getDocMarkdownUrl = (doc: DocEntry) => `/docs/${doc.id}.md`;
+
 export const getDocLabel = (doc: DocEntry) => doc.data.sidebarLabel ?? doc.data.title;
+
+// import.meta.url may resolve to a bundled path during build; find the
+// package root by its content directory instead.
+const moduleDir = dirname(fileURLToPath(import.meta.url));
+const webRoot = [
+  resolve(moduleDir, "../.."),
+  process.cwd(),
+  resolve(process.cwd(), "packages/web"),
+].find((dir) => existsSync(join(dir, "src/content/docs"))) ?? process.cwd();
+
+const repoRoot = (() => {
+  try {
+    return execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      cwd: webRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return undefined;
+  }
+})();
+
+const lastmodCache = new Map<string, string | undefined>();
+
+export const gitLastmod = (webRelativePath: string): string | undefined => {
+  if (lastmodCache.has(webRelativePath)) return lastmodCache.get(webRelativePath);
+  let result: string | undefined;
+  try {
+    const absolute = join(webRoot, webRelativePath);
+    if (repoRoot && existsSync(absolute)) {
+      const output = execFileSync(
+        "git",
+        ["log", "-1", "--format=%cI", "--", relative(repoRoot, absolute)],
+        { cwd: repoRoot, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+      ).trim();
+      if (output) result = output.slice(0, 10);
+    }
+  } catch {
+    result = undefined;
+  }
+  lastmodCache.set(webRelativePath, result);
+  return result;
+};
+
+export const getDocLastmod = (doc: DocEntry) =>
+  gitLastmod(
+    (doc as { filePath?: string }).filePath ?? `src/content/docs/${doc.id}.md`,
+  );
 
 const navIds: string[] = docsNav.flatMap((section) => section.groups.flatMap((group) => [...group.ids]));
 

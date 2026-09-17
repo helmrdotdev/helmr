@@ -33,4 +33,4 @@ Console/session management and public callbacks use `/api`, Admin uses
 `/admin/api/v1`, Capacity uses `/capacity/v1`, and the Worker protocol uses
 `/worker/v1`. None are aliases for the `/v1` Developer API. Self-hosted
 operators can integrate trusted scaling automation through the separate
-[Capacity deployment protocol](/docs/self-hosting/capacity-scaling/).
+[Capacity deployment protocol](/docs/self-hosting/capacity-scaling).

@@ -20,15 +20,15 @@ The AWS examples compose RDS PostgreSQL, ElastiCache Valkey/Redis, S3, KMS, Secr
 
 ## Choose a deployment path
 
-Use [AWS evaluation](/docs/self-hosting/aws-evaluation/) for a disposable evaluation or proof of concept. Its defaults deliberately trade resilience and retention for lower cost.
+Use [AWS evaluation](/docs/self-hosting/aws-evaluation) for a disposable evaluation or proof of concept. Its defaults deliberately trade resilience and retention for lower cost.
 
-Use [AWS production](/docs/self-hosting/aws-production/) as the starting baseline for a customer environment. It strengthens the defaults, but it is not a complete production operating model: remote state, ClickHouse provisioning and networking, credentials, capacity policy, monitoring, backup testing, drift management, and multi-region design remain yours.
+Use [AWS production](/docs/self-hosting/aws-production) as the starting baseline for a customer environment. It strengthens the defaults, but it is not a complete production operating model: remote state, ClickHouse provisioning and networking, credentials, capacity policy, monitoring, backup testing, drift management, and multi-region design remain yours.
 
 Do not promote an evaluation stack in place. Build a production environment from the production baseline and migrate deliberately.
 
 ## Deployment sequence
 
-1. Satisfy the [requirements](/docs/self-hosting/requirements/), including bootstrap outputs and external ClickHouse.
+1. Satisfy the [requirements](/docs/self-hosting/requirements), including bootstrap outputs and external ClickHouse.
 2. Configure and apply either the evaluation or production AWS composition with `create_controlplane_service = false`.
 3. Check out the exact Product release tag, download its signed v0 index, `platform-release.tar`, and provenance, then publish the signed Runtime before enabling Control:
 
@@ -44,11 +44,11 @@ Do not promote an evaluation stack in place. Build a production environment from
    ```
 
    The publisher verifies the signed index workflow identity (exact tag for stable, reviewed main for previews), indexed archive/provenance bytes, archive digest and size, checked-out source commit, canonical manifest, and every Runtime object before immutable publication.
-4. Configure [authentication](/docs/self-hosting/authentication/) and populate [secrets and data services](/docs/self-hosting/secrets-and-data/).
+4. Configure [authentication](/docs/self-hosting/authentication) and populate [secrets and data services](/docs/self-hosting/secrets-and-data).
 5. Run the database bootstrap task, then migrations, before enabling services.
-6. Start and verify the [Control Plane](/docs/self-hosting/control-plane/).
-7. Add [workers](/docs/self-hosting/workers/) when you need task execution.
-8. Adopt the checked-in [upgrade procedure](/docs/self-hosting/upgrades/) before changing releases.
+6. Start and verify the [Control Plane](/docs/self-hosting/control-plane).
+7. Add [workers](/docs/self-hosting/workers) when you need task execution.
+8. Adopt the checked-in [upgrade procedure](/docs/self-hosting/upgrades) before changing releases.
 
 The Control Plane can be brought up without workers. Workers are required only
 when verified Deployments execute.
