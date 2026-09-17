@@ -1,0 +1,40 @@
+#!/usr/bin/env python3
+import hashlib,json,os,pathlib,sys,time
+root=pathlib.Path(os.environ['HELMR_TEST_DOCKER']);scenario=os.environ['HELMR_TEST_SCENARIO'];args=sys.argv[1:]
+with (root/'calls').open('a') as log:log.write(' '.join(args)+' ambient='+os.environ.get('BUILDX_BUILDER','')+' context='+os.environ.get('DOCKER_CONTEXT','')+' host='+os.environ.get('DOCKER_HOST','')+'\n')
+ctx=os.environ.get('DOCKER_CONTEXT') or ('default' if os.environ.get('DOCKER_HOST') else 'desktop')
+endpoint=os.environ.get('DOCKER_HOST') if ctx=='default' else 'unix:///'+ctx+'.sock'
+if args[:1]==['--context']:ctx=args[1];endpoint='unix:///'+ctx+'.sock';args=args[2:]
+elif args[:1]==['--host']:ctx='default';endpoint=args[1];args=args[2:]
+name='helmr-'+hashlib.sha256((ctx+'\n'+endpoint).encode()).hexdigest()[:24]
+if args[:2]==['context','show']:print(ctx)
+elif args[:2]==['context','inspect']:
+    host=endpoint if args[2]==ctx else 'unix:///'+args[2]+'.sock'
+    print(json.dumps(dict(Host=host)))
+elif args[:2]==['buildx','ls']:
+    if scenario=='ls-error':sys.exit('daemon unavailable')
+    if scenario=='malformed':print('invalid json');sys.exit(0)
+    # Duplicate unrelated default rows are normal native output.
+    for _ in range(2):print(json.dumps(dict(Name='default',Driver='docker',Nodes=[])))
+    absent=scenario in ('absent','race','create-error','race-wrong','race-bootstrap','cancel-create') and not (root/'created').exists()
+    if not absent:
+        node=dict(Name=name+'0',Endpoint=ctx if ctx!='default' else endpoint,Status='running' if (root/'booted').exists() or scenario=='running' else 'stopped')
+        if scenario=='wrong-endpoint':node['Endpoint']='unix:///wrong.sock'
+        if scenario=='not-ready':node['Status']='stopped'
+        print(json.dumps(dict(Name=name,Driver='docker' if scenario in ('wrong-driver','race-wrong') else 'docker-container',Nodes=[node,node] if scenario=='multi-node' else [node])))
+elif args[:2]==['buildx','create']:
+    if scenario=='cancel-create':
+        (root/'blocked').touch()
+        while True:time.sleep(1)
+    if scenario=='create-error':sys.exit('create denied')
+    (root/'created').touch()
+    if scenario in ('race','race-wrong','race-bootstrap'):sys.exit('another invocation created builder')
+    print(name)
+elif args[:2]==['buildx','inspect']:
+    if scenario in ('bootstrap-error','race-bootstrap'):sys.exit('bootstrap unavailable')
+    (root/'booted').touch()
+elif args[:2]==['buildx','build']:
+    if scenario=='cancel-build':
+        (root/'blocked').touch()
+        while True:time.sleep(1)
+else:sys.exit('unexpected Docker command: '+repr(args))

@@ -20,8 +20,26 @@ def run(*args, **kwargs):
     subprocess.run(list(map(str, args)), check=True, **kwargs)
 
 
+def buildx_state(env):
+    raw = subprocess.check_output(['docker', 'buildx', 'ls', '--format', '{{json .}}'], env=env, text=True)
+    # ls repeats identical context rows on native Buildx. Compare semantic identity.
+    records = {}
+    for line in raw.splitlines():
+        item = json.loads(line)
+        value = dict(name=item['Name'], driver=item['Driver'], current=item['Current'],
+                     nodes=[{key: node.get(key) for key in ('Name', 'Endpoint', 'Status')} for node in item['Nodes']])
+        require(item['Name'] not in records or records[item['Name']] == value, 'conflicting native builder rows')
+        records[item['Name']] = value
+    return records
+
+
 def consumer(directory, cli_archive, work, expected_builder=None):
     directory, work = Path(directory), Path(work)
+    if expected_builder is None:
+        expected_builder = read(directory / 'bundle-builder.json')['image']
+    public = os.environ.get('HELMR_PUBLIC_CONSUMER') == '1'
+    build_env = dict(os.environ)
+    owned_context = owned_builder = None
     packages = {}
     for file, name in (('sdk.tgz', '@helmr/sdk'), ('proto.tgz', '@helmr/proto')):
         with tarfile.open(directory / file) as archive:
@@ -72,6 +90,23 @@ def consumer(directory, cli_archive, work, expected_builder=None):
     thread.start()
     try:
         work.mkdir()
+        if public:
+            require(not os.environ.get('BUILDX_BUILDER'), 'public first-use proof must not select an ambient builder')
+            context = os.environ.get('DOCKER_CONTEXT') or subprocess.check_output(['docker', 'context', 'show'], text=True).strip()
+            endpoint = subprocess.check_output(['docker', 'context', 'inspect', context, '--format', '{{.Endpoints.docker.Host}}'], text=True).strip()
+            require(endpoint.startswith('unix://'), 'public local-builder fixture requires a Unix-socket Docker daemon')
+            original_context = subprocess.check_output(['docker', 'context', 'show'], text=True).strip()
+            proposed_context = 'helmr-consumer-' + work.parent.name + '-' + str(os.getpid())
+            run('docker', 'context', 'create', proposed_context, '--docker', 'host=' + endpoint)
+            owned_context = proposed_context
+            build_env.update(DOCKER_CONTEXT=owned_context, BUILDX_CONFIG=str(work / 'buildx'))
+            build_env.pop('DOCKER_HOST', None)
+            owned_builder = 'helmr-' + hashlib.sha256((owned_context + '\n' + endpoint).encode()).hexdigest()[:24]
+            before = buildx_state(build_env)
+            selected = {k: v for k, v in before.items() if v['current']}
+            require(selected and all(v['driver'] == 'docker' for v in selected.values()), 'first use must start on Docker driver')
+            require(owned_builder not in before, 'first use must not have a Helmr builder')
+
         shim = work / 'tools'
         shim.mkdir()
         real_curl = shutil.which('curl')
@@ -102,7 +137,10 @@ def consumer(directory, cli_archive, work, expected_builder=None):
         require(installed['helmr'] == packages['@helmr/sdk'][0]['helmr'], 'installed SDK stamp differs')
         require(read(project / 'node_modules/@helmr/proto/package.json')['version'] == version, 'installed proto differs')
         (project / 'helmr.config.ts').write_text('import {defineConfig} from "@helmr/sdk"; export default defineConfig({dirs:["tasks"]});\n')
-        (project / 'tasks/hello.ts').write_text('import {task} from "@helmr/sdk"; export const hello=task({id:"preview-hello",run:()=>"preview-ok"});\n')
+        (project / 'tasks/hello.ts').write_text('import {task,sandbox,image} from "@helmr/sdk"; '
+            'export const hello=task({id:"preview-hello",run:()=>"preview-ok"});\n'
+            'export const machine=sandbox({id:"preview-machine"}).image(image("preview-base").from('
+            + json.dumps(expected_builder) + ')).resources({cpu:1,memory:"1GiB"});\n')
         (project / 'consumer.ts').write_text('''import {HelmrClient, source} from "@helmr/sdk";
 const file = source.file("./package.json");
 if (!file) throw Error("source.file failed");
@@ -118,23 +156,40 @@ if(!called) throw Error("SDK request missing");
         run('node', 'consumer.js', cwd=project)
         identity = subprocess.check_output([str(work / 'bin/helmr'), '--version'], text=True).strip()
         require(identity == 'v' + version + ' (' + installed['helmr']['sourceCommit'] + ')', 'CLI embedded source/version differs')
-        if expected_builder is None:
-            expected_builder = read(directory / 'bundle-builder.json')['image']
         require(expected_builder.encode() in (work / 'bin/helmr').read_bytes(), 'CLI embedded builder reference differs')
         # npm fetched exact package bytes normally. Its cache allows the same
         # lockfile install inside BuildKit without exposing a host test server.
         run(work / 'bin/helmr', 'build', project, '--output', work / 'bundle',
-            '--install-command', 'npm ci --offline --cache .npm-cache --ignore-scripts --no-audit --no-fund')
+            '--install-command', 'npm ci --offline --cache .npm-cache --ignore-scripts --no-audit --no-fund', env=build_env)
         bundle = read(work / 'bundle/bundle.json')
         require(bundle['contract'] == 'helmr.deployment-bundle.v0', 'wrong bundle contract')
-        require([(d['kind'], d['declaredId']) for d in bundle['plan']['definitions']] == [('task', 'preview-hello')], 'compiled fixture task differs')
+        require({(d['kind'], d['declaredId']) for d in bundle['plan']['definitions']} == {('task', 'preview-hello'), ('sandbox', 'preview-machine')}, 'compiled fixture definitions differ')
+        require(len(bundle['workspaceImages']) == 1 and bundle['workspaceImages'][0]['declaredId'] == 'preview-machine', 'workspace OCI stage missing')
         runtime = read(directory / 'bundle-builder.json')['runtime']
         require(bundle['runtime']['artifact']['digest'] == runtime['digest'], 'bundle did not use canonical Runtime')
+        if public:
+            after = buildx_state(build_env)
+            builder = after.get(owned_builder)
+            require(builder and builder['driver'] == 'docker-container' and len(builder['nodes']) == 1, 'CLI did not prepare its builder')
+            require(builder['nodes'][0]['Endpoint'] == owned_context and builder['nodes'][0]['Status'] == 'running', 'wrong builder endpoint/readiness')
+            require({k: v for k, v in after.items() if v['current']} == selected, 'CLI changed selected builder')
+            run(work / 'bin/helmr', 'build', project, '--output', work / 'bundle-reuse',
+                '--install-command', 'npm ci --offline --cache .npm-cache --ignore-scripts --no-audit --no-fund', env=build_env)
+            require(buildx_state(build_env)[owned_builder] == builder, 'second build replaced the prepared builder')
+            require(read(work / 'bundle-reuse/bundle.json') == bundle, 'reused builder changed the bundle')
+            require(subprocess.check_output(['docker', 'context', 'show'], text=True).strip() == original_context, 'global context changed')
+            evidence = dict(context=owned_context, endpoint=endpoint, before=before, after=after, reused=owned_builder)
+            (work / 'builder-preparation.json').write_text(json.dumps(evidence, sort_keys=True))
+            print(json.dumps(evidence, sort_keys=True))
         print(json.dumps(dict(cli=digest(cli_archive), builder=expected_builder,
             sdk=digest(directory / 'sdk.tgz'), proto=digest(directory / 'proto.tgz'),
             identity=identity, bundle=digest(work / 'bundle/bundle.json'), runtime=runtime['digest']), sort_keys=True))
         print('actual downloaded CLI + installed SDK/proto + canonical builder consumer passed')
     finally:
+        if owned_builder:
+            subprocess.run(['docker', 'buildx', 'rm', owned_builder], env=build_env, check=False)
+        if owned_context:
+            subprocess.run(['docker', '--context', 'default', 'context', 'rm', owned_context], check=False)
         server.shutdown()
         thread.join()
         server.server_close()
