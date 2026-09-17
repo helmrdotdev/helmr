@@ -73,8 +73,6 @@ type networkOwnerManifest struct {
 	PacketMark          uint32 `json:"packet_mark"`
 }
 
-type startupProbeNetworkKey struct{}
-
 type installedNetworkBinding struct {
 	secretProxy                *secretproxy.Proxy
 	connector                  *Connector
@@ -95,6 +93,7 @@ type installedNetworkBinding struct {
 }
 
 func (c *Connector) withNetworkBinding(
+	mode launchMode,
 	owner vm.Owner,
 	logical vm.WorkloadBinding,
 	installed **installedNetworkBinding,
@@ -103,7 +102,7 @@ func (c *Connector) withNetworkBinding(
 		machine.Handlers.FcInit = machine.Handlers.FcInit.Prepend(firecracker.Handler{
 			Name: "helmr.InstallNetworkBinding",
 			Fn: func(ctx context.Context, _ *firecracker.Machine) error {
-				binding, err := c.prepareNetworkBinding(ctx, owner, logical)
+				binding, err := c.prepareNetworkBinding(ctx, mode, owner, logical)
 				if err != nil {
 					return err
 				}
@@ -116,6 +115,7 @@ func (c *Connector) withNetworkBinding(
 
 func (c *Connector) prepareNetworkBinding(
 	ctx context.Context,
+	mode launchMode,
 	owner vm.Owner,
 	logical vm.WorkloadBinding,
 ) (_ *installedNetworkBinding, returnErr error) {
@@ -149,7 +149,7 @@ func (c *Connector) prepareNetworkBinding(
 	if err := c.createRoutedAttachment(ctx, binding); err != nil {
 		return nil, err
 	}
-	if err := c.installRoutedPolicy(ctx, binding); err != nil {
+	if err := c.installRoutedPolicy(ctx, mode, binding); err != nil {
 		return nil, err
 	}
 	if err := c.persistInstalledNetworkOwner(binding); err != nil {
@@ -621,8 +621,8 @@ func linkAsTuntap(handle *netlink.Handle, name string) (*netlink.Tuntap, error) 
 
 // Only the connector-owned qualification probe has no control-plane reservation.
 // Every real runtime must complete preparation, including Workspaces with no bindings.
-func (c *Connector) prepareSecretTransport(ctx context.Context, runtimeID string, blocked []netip.Prefix) (*secretproxy.Proxy, error) {
-	if ctx.Value(startupProbeNetworkKey{}) == true {
+func (c *Connector) prepareSecretTransport(ctx context.Context, mode launchMode, runtimeID string, blocked []netip.Prefix) (*secretproxy.Proxy, error) {
+	if mode == startupProbeLaunch {
 		return nil, nil
 	}
 	if c.cfg.PrepareSecretTransport == nil {
@@ -631,7 +631,7 @@ func (c *Connector) prepareSecretTransport(ctx context.Context, runtimeID string
 	return c.cfg.PrepareSecretTransport(ctx, runtimeID, blocked)
 }
 
-func (c *Connector) installRoutedPolicy(ctx context.Context, binding *installedNetworkBinding) error {
+func (c *Connector) installRoutedPolicy(ctx context.Context, mode launchMode, binding *installedNetworkBinding) error {
 	m := binding.manifest
 	guestIP := strings.Split(GuestNetworkCIDRV0, "/")[0]
 	hostIPv4, err := hostIPv4Prefixes(netip.MustParsePrefix(GuestNetworkCIDRV0).Masked())
@@ -646,7 +646,7 @@ func (c *Connector) installRoutedPolicy(ctx context.Context, binding *installedN
 	blocked = append(blocked, c.cfg.NetworkBlockedIPv4CIDRs...)
 	// Preparation precedes ResumeVM, but grants no credential-use authority.
 	{
-		proxy, prepareErr := c.prepareSecretTransport(ctx, m.OwnerID, blocked)
+		proxy, prepareErr := c.prepareSecretTransport(ctx, mode, m.OwnerID, blocked)
 		if prepareErr != nil {
 			return fmt.Errorf("prepare Workspace Secret transport: %w", prepareErr)
 		}

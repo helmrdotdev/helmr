@@ -109,7 +109,7 @@ func TestSecretProxyNamespaceSocketAndFailedRestoreRetirement(t *testing.T) {
 
 func TestSecretProxyPreparationRequiredExceptQualification(t *testing.T) {
 	c := &Connector{}
-	if _, err := c.prepareSecretTransport(t.Context(), "assigned-runtime", nil); err == nil {
+	if _, err := c.prepareSecretTransport(t.Context(), workloadLaunch, "assigned-runtime", nil); err == nil {
 		t.Fatal("missing real-runtime preparation accepted")
 	}
 	calls := 0
@@ -122,10 +122,10 @@ func TestSecretProxyPreparationRequiredExceptQualification(t *testing.T) {
 		}
 		return nil, expected
 	}
-	if _, err := c.prepareSecretTransport(context.WithValue(t.Context(), startupProbeNetworkKey{}, true), "synthetic-probe", blocked); err != nil || calls != 0 {
+	if _, err := c.prepareSecretTransport(t.Context(), startupProbeLaunch, "synthetic-probe", blocked); err != nil || calls != 0 {
 		t.Fatal("qualification reached control plane")
 	}
-	if _, err := c.prepareSecretTransport(t.Context(), "assigned-runtime", blocked); !errors.Is(err, expected) || calls != 1 {
+	if _, err := c.prepareSecretTransport(t.Context(), workloadLaunch, "assigned-runtime", blocked); !errors.Is(err, expected) || calls != 1 {
 		t.Fatal("real preparation failure did not stop network setup")
 	}
 }

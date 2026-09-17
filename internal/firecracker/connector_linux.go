@@ -58,6 +58,15 @@ type Connector struct {
 	hostRuntime *hostRuntimeEvidenceStore
 }
 
+// Launch purpose is connector-owned, independent of the SDK's VM lifetime
+// context. Only the local qualification probe has no Control Plane reservation.
+type launchMode uint8
+
+const (
+	workloadLaunch launchMode = iota
+	startupProbeLaunch
+)
+
 // QualifiedRuntime is the only Firecracker value that implements workload VM
 // interfaces. A raw Connector is a candidate host runtime until Qualify proves
 // the exact jailer, device, network, VMM, and Guest health path.
@@ -157,11 +166,7 @@ func (c *Connector) probeGuest(ctx context.Context) error {
 		return fmt.Errorf("resolve startup probe runtime identity: %w", err)
 	}
 	ownerID := uuid.NewV7().String()
-	// The local startup health probe is not a CP Runtime reservation and never
-	// receives Workspace credentials or protected transport. Workload paths cannot
-	// supply this private context key.
-	probeCtx = context.WithValue(probeCtx, startupProbeNetworkKey{}, true)
-	session, err := c.connect(probeCtx, vm.ConnectRequest{
+	session, err := c.connect(probeCtx, startupProbeLaunch, vm.ConnectRequest{
 		ID:        ownerID,
 		OwnerKind: vm.OwnerRuntime,
 		Binding: vm.WorkloadBinding{
@@ -183,7 +188,7 @@ func (c *Connector) probeGuest(ctx context.Context) error {
 	return nil
 }
 
-func (c *Connector) connect(ctx context.Context, request vm.ConnectRequest) (vm.Session, error) {
+func (c *Connector) connect(ctx context.Context, mode launchMode, request vm.ConnectRequest) (vm.Session, error) {
 	owner := vm.Owner{Kind: request.OwnerKind, ID: request.ID}
 	if err := request.Binding.Validate(owner); err != nil {
 		return nil, fmt.Errorf("the Firecracker workload binding: %w", err)
@@ -194,6 +199,7 @@ func (c *Connector) connect(ctx context.Context, request vm.ConnectRequest) (vm.
 	}
 	return child.start(
 		ctx,
+		mode,
 		request.ID,
 		request.OwnerKind,
 		request.Binding,
@@ -262,6 +268,7 @@ func (c *Connector) materialize(ctx context.Context, request vm.MaterializeReque
 	child.kernelArgs = runtimeKernelArgs(request.Topology, request.ReadOnlyDrives, c.cfg.NetworkResolverIPv4)
 	return child.start(
 		ctx,
+		workloadLaunch,
 		request.ID,
 		request.OwnerKind,
 		request.Binding,
@@ -713,7 +720,7 @@ func (c *Connector) restore(ctx context.Context, request vm.RestoreRequest) (vm.
 	child := *c
 	child.cfg = restoreCfg
 	child.kernelArgs = kernelArgs
-	session, err := child.start(ctx, request.RuntimeInstanceID, request.OwnerKind, request.Binding, rawMemory, request.VMState, rawScratch, &manifest.RuntimeState.Network, request.Topology, request.ReadOnlyDrives, recordPhase, true)
+	session, err := child.start(ctx, workloadLaunch, request.RuntimeInstanceID, request.OwnerKind, request.Binding, rawMemory, request.VMState, rawScratch, &manifest.RuntimeState.Network, request.Topology, request.ReadOnlyDrives, recordPhase, true)
 	if err != nil {
 		return nil, err
 	}
@@ -894,8 +901,8 @@ func removeFiles(paths []string) {
 	}
 }
 
-func (c *Connector) start(ctx context.Context, instanceID string, ownerKind vm.OwnerKind, binding vm.WorkloadBinding, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, topology vm.RuntimeTopology, readOnlyDrives []vm.ReadOnlyDrive, recordPhase func(vm.RuntimePhase), ownerPrepared bool) (vm.CheckpointableSession, error) {
-	session, err := c.prepareSession(ctx, instanceID, ownerKind, binding, snapshotMemoryPath, snapshotStatePath, scratchDiskRestorePath, restoreNetwork, topology, readOnlyDrives, recordPhase, ownerPrepared)
+func (c *Connector) start(ctx context.Context, mode launchMode, instanceID string, ownerKind vm.OwnerKind, binding vm.WorkloadBinding, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, topology vm.RuntimeTopology, readOnlyDrives []vm.ReadOnlyDrive, recordPhase func(vm.RuntimePhase), ownerPrepared bool) (vm.CheckpointableSession, error) {
+	session, err := c.prepareSession(ctx, mode, instanceID, ownerKind, binding, snapshotMemoryPath, snapshotStatePath, scratchDiskRestorePath, restoreNetwork, topology, readOnlyDrives, recordPhase, ownerPrepared)
 	if err != nil {
 		return nil, err
 	}
@@ -907,7 +914,7 @@ func (c *Connector) start(ctx context.Context, instanceID string, ownerKind vm.O
 	return session, nil
 }
 
-func (c *Connector) prepareSession(ctx context.Context, instanceID string, ownerKind vm.OwnerKind, binding vm.WorkloadBinding, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, topology vm.RuntimeTopology, readOnlyDrives []vm.ReadOnlyDrive, recordPhase func(vm.RuntimePhase), ownerPrepared bool) (_ *guestSession, retErr error) {
+func (c *Connector) prepareSession(ctx context.Context, mode launchMode, instanceID string, ownerKind vm.OwnerKind, binding vm.WorkloadBinding, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, topology vm.RuntimeTopology, readOnlyDrives []vm.ReadOnlyDrive, recordPhase func(vm.RuntimePhase), ownerPrepared bool) (_ *guestSession, retErr error) {
 	if err := validateCPUTemplateLaunch(c.cfg.CPUTemplateSelector); err != nil {
 		return nil, err
 	}
@@ -1073,7 +1080,7 @@ func (c *Connector) prepareSession(ctx context.Context, instanceID string, owner
 		}
 	}
 	opts = append(opts, c.withTapOwner())
-	opts = append(opts, c.withNetworkBinding(owner, binding, &networkBinding))
+	opts = append(opts, c.withNetworkBinding(mode, owner, binding, &networkBinding))
 	// firecracker-go-sdk binds this context to the jailer/firecracker process.
 	// Keep it separate from the startup request so prepared sessions can outlive
 	// a background warm command after boot succeeds.
@@ -1173,9 +1180,20 @@ func startMachineContext(ctx context.Context, machine *firecracker.Machine, mach
 	}()
 	select {
 	case err := <-result:
+		if ctx.Err() != nil {
+			machineCancel()
+			return ctx.Err()
+		}
+		if err != nil {
+			machineCancel()
+		}
 		return err
 	case <-ctx.Done():
 		machineCancel()
+		// Startup handlers may still publish network resources. Join them before
+		// the caller stops the VMM and cleans those resources. This wait is
+		// cooperative: SDK handlers and the allocation flock can delay return.
+		<-result
 		return ctx.Err()
 	}
 }
