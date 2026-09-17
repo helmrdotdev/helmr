@@ -1180,9 +1180,20 @@ func startMachineContext(ctx context.Context, machine *firecracker.Machine, mach
 	}()
 	select {
 	case err := <-result:
+		if ctx.Err() != nil {
+			machineCancel()
+			return ctx.Err()
+		}
+		if err != nil {
+			machineCancel()
+		}
 		return err
 	case <-ctx.Done():
 		machineCancel()
+		// Startup handlers may still publish network resources. Join them before
+		// the caller stops the VMM and cleans those resources. This wait is
+		// cooperative: SDK handlers and the allocation flock can delay return.
+		<-result
 		return ctx.Err()
 	}
 }
