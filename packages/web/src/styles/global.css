@@ -311,6 +311,10 @@ html::-webkit-scrollbar-thumb:hover {
   color: var(--text);
 }
 
+.site-nav .brand {
+  font-size: 1.1875rem;
+}
+
 .brand-mark {
   width: 1.2em;
   height: auto;
