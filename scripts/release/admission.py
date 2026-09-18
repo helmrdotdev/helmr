@@ -51,7 +51,11 @@ def ci_artifact_skipped(jobs):
     require(len(skip) <= 1, 'ambiguous artifact skip job')
     if not skip:
         return False
-    require(skip[0]['status'] == 'completed' and skip[0]['conclusion'] == 'success', 'artifact skip job unsuccessful')
+    marker = skip[0]
+    require(marker['status'] == 'completed', 'artifact skip job incomplete')
+    if marker['conclusion'] == 'skipped':
+        return False
+    require(marker['conclusion'] == 'success', 'artifact skip job unsuccessful')
     return True
 
 
