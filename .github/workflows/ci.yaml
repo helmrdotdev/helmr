@@ -200,35 +200,45 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       selection: ${{ steps.selection.outputs.selection }}
+      skip_artifacts: ${{ steps.selection.outputs.skip_artifacts }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: ${{ github.event_name == 'push' && '0' || '' }}
           persist-credentials: false
       - id: selection
         env:
           SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           python3 - <<'PYTHON'
           import json, os, subprocess, sys
           sys.path.insert(0, 'scripts/release')
+          from api import GitHub
+          from admission import artifact_build_needed
           from contract import preview_version
           source = os.environ['SOURCE_COMMIT']
           assert subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip() == source
           number = int(os.environ['PR_NUMBER']) if os.environ['PR_NUMBER'] else None
+          skip = False
+          if number is None and os.environ['GITHUB_EVENT_NAME'] == 'push':
+              skip = not artifact_build_needed(GitHub(), '.', source)
           core = json.load(open('sdk/typescript/package.json'))['version'].split('-')[0]
           selection = dict(version=preview_version(core, source, os.environ['GITHUB_RUN_ID']),
               sourceCommit=source, sourceRef=f'refs/pull/{number}/head' if number else 'refs/heads/main',
-              build=dict(runId=os.environ['GITHUB_RUN_ID'],attempt=os.environ['GITHUB_RUN_ATTEMPT'],
+              build=dict(runId=os.environ['GITHUB_RUN_ID'],
                   workflowCommit=os.environ['GITHUB_WORKFLOW_SHA'],workflowRef=os.environ['GITHUB_REF'],
                   ciRun=os.environ['GITHUB_RUN_ID'],pr=number,mode='pr' if number else 'main'))
           with open(os.environ['GITHUB_OUTPUT'],'a') as output:
               output.write('selection='+json.dumps(selection,separators=(',',':'))+'\n')
+              output.write('skip_artifacts='+('true' if skip else 'false')+'\n')
           PYTHON
   build-artifacts:
     name: build release artifacts
     needs: artifact-selection
+    if: needs.artifact-selection.outputs.skip_artifacts != 'true'
     permissions:
       contents: read
       actions: read
@@ -237,8 +247,16 @@ jobs:
       selection: ${{ needs.artifact-selection.outputs.selection }}
       tools_commit: ${{ github.workflow_sha }}
 
-  ci-complete:
-    name: ci complete
+  artifact-skip:
+    name: artifact build skipped
+    needs: artifact-selection
+    if: needs.artifact-selection.outputs.skip_artifacts == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo "documentation-only change; artifact build truthfully skipped"
+
+  source-ci-complete:
+    name: source-ci-complete
     runs-on: ubuntu-24.04
     needs:
       - nix-flake
@@ -247,10 +265,9 @@ jobs:
       - browser
       - bundle-builder
       - release-contracts
-      - build-artifacts
     if: always()
     steps:
-      - name: Check required CI jobs
+      - name: Check required source CI jobs
         run: |
           failed=0
           for result in \
@@ -259,7 +276,66 @@ jobs:
             "${{ needs.postgres.result }}" \
             "${{ needs.browser.result }}" \
             "${{ needs.bundle-builder.result }}" \
-            "${{ needs.release-contracts.result }}" \
+            "${{ needs.release-contracts.result }}"
+          do
+            if [ "$result" != "success" ]; then
+              failed=1
+            fi
+          done
+          if [ "$failed" -ne 0 ]; then
+            printf 'Source CI dependency results: nix-flake=%s repo=%s postgres=%s browser=%s bundle-builder=%s release-contracts=%s\n' \
+              "${{ needs.nix-flake.result }}" \
+              "${{ needs.repo.result }}" \
+              "${{ needs.postgres.result }}" \
+              "${{ needs.browser.result }}" \
+              "${{ needs.bundle-builder.result }}" \
+              "${{ needs.release-contracts.result }}" >&2
+            exit 1
+          fi
+
+  preview-ready:
+    name: preview-ready
+    runs-on: ubuntu-24.04
+    needs:
+      - source-ci-complete
+      - artifact-selection
+      - build-artifacts
+      - artifact-skip
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Check preview artifact readiness
+        run: |
+          if [ "${{ needs.source-ci-complete.result }}" != "success" ]; then
+            echo "source-ci-complete must succeed before preview-ready" >&2
+            exit 1
+          fi
+          if [ "${{ needs.artifact-selection.outputs.skip_artifacts }}" = "true" ]; then
+            if [ "${{ needs.artifact-skip.result }}" != "success" ]; then
+              echo "documentation-only skip must report success" >&2
+              exit 1
+            fi
+            echo "documentation-only change; preview-ready without artifact build"
+            exit 0
+          fi
+          if [ "${{ needs.build-artifacts.result }}" != "success" ]; then
+            echo "artifact build and consumer verification required for relevant main changes" >&2
+            exit 1
+          fi
+
+  ci-complete:
+    name: ci complete
+    runs-on: ubuntu-24.04
+    needs:
+      - source-ci-complete
+      - artifact-selection
+      - build-artifacts
+    if: always() && github.event_name == 'pull_request'
+    steps:
+      - name: Check required CI jobs
+        run: |
+          failed=0
+          for result in \
+            "${{ needs.source-ci-complete.result }}" \
             "${{ needs.build-artifacts.result }}"
           do
             if [ "$result" != "success" ]; then
@@ -267,12 +343,8 @@ jobs:
             fi
           done
           if [ "$failed" -ne 0 ]; then
-            printf 'CI dependency results: nix-flake=%s repo=%s postgres=%s browser=%s bundle-builder=%s release-contracts=%s\n' \
-              "${{ needs.nix-flake.result }}" \
-              "${{ needs.repo.result }}" \
-              "${{ needs.postgres.result }}" \
-              "${{ needs.browser.result }}" \
-              "${{ needs.bundle-builder.result }}" \
-              "${{ needs.release-contracts.result }}" >&2
+            printf 'CI dependency results: source-ci-complete=%s build-artifacts=%s\n' \
+              "${{ needs.source-ci-complete.result }}" \
+              "${{ needs.build-artifacts.result }}" >&2
             exit 1
           fi

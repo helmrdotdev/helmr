@@ -19,6 +19,16 @@ on:
         description: Open Product PR number
         required: true
         type: string
+concurrency:
+  group: >-
+    ${{
+      github.event_name == 'workflow_run' &&
+      format('release-producer-{0}', github.event.workflow_run.id) ||
+      format('release-{0}', github.run_id)
+    }}
+  cancel-in-progress: false
+  # actionlint 1.7.9 lacks queue: https://github.com/rhysd/actionlint/issues/687
+  queue: max
 permissions:
   contents: read
   actions: read
@@ -54,17 +64,101 @@ jobs:
         run: nix develop .#images -c python3 scripts/release/main.py admit
   build:
     needs: admission
-    if: needs.admission.outputs.skip != 'true' && needs.admission.outputs.complete != 'true'
+    if: >-
+      needs.admission.outputs.skip != 'true' &&
+      needs.admission.outputs.complete != 'true' &&
+      fromJSON(needs.admission.outputs.selection).build.mode != 'main'
     uses: ./.github/workflows/build-artifacts.yaml
     with:
       selection: ${{ needs.admission.outputs.selection }}
       tools_commit: ${{ github.workflow_sha }}
-  publish:
+  publish-preview:
     needs: [admission, build]
+    if: >-
+      always() &&
+      needs.admission.result == 'success' &&
+      needs.admission.outputs.skip != 'true' &&
+      needs.admission.outputs.complete != 'true' &&
+      (needs.build.result == 'success' || needs.build.result == 'skipped') &&
+      fromJSON(needs.admission.outputs.selection).build.mode != 'tag'
+    concurrency:
+      group: >-
+        ${{
+          fromJSON(needs.admission.outputs.selection).build.mode == 'main' &&
+          'release-preview-channel' ||
+          format('release-publish-{0}', github.run_id)
+        }}
+      cancel-in-progress: false
+      # actionlint 1.7.9 lacks queue: https://github.com/rhysd/actionlint/issues/687
+      queue: max
     outputs:
-      release_id: ${{ steps.stage.outputs.release_id }}
+      superseded: ${{ steps.precheck.outputs.superseded }}
       build_digest: ${{ steps.stage.outputs.build_digest }}
+      publisher_run: ${{ github.run_id }}
       publisher_attempt: ${{ steps.stage.outputs.publisher_attempt }}
+    runs-on: ubuntu-24.04
+    environment: preview
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+      packages: write
+      id-token: write # Preview S3 publisher OIDC and npm trusted publishing. security-check: allow-id-token
+    env:
+      RELEASE_SELECTION: ${{ needs.admission.outputs.selection }}
+      PREVIEW_BUCKET: ${{ vars.PREVIEW_BUCKET }}
+      PREVIEW_BASE_URL: ${{ vars.PREVIEW_BASE_URL }}
+      PREVIEW_PUBLISHER_ROLE_ARN: ${{ vars.PREVIEW_PUBLISHER_ROLE_ARN }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3
+        with:
+          github_access_token: ''
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Re-check main head after preview channel lock
+        id: precheck
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/release/main.py precheck
+      - name: Assume preview publisher role
+        if: steps.precheck.outputs.superseded != 'true'
+        run: nix develop .#images -c bash scripts/release/assume-preview-role.sh
+      - name: Publish preview cohort to fixed-origin object store
+        id: stage
+        if: steps.precheck.outputs.superseded != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GHCR_ACTOR: ${{ github.actor }}
+        run: |
+          python3 scripts/release/main.py assemble --directory "$RUNNER_TEMP/assets"
+          nix develop .#images -c bash -euo pipefail <<'SH'
+          export REGISTRY_AUTH_FILE="$RUNNER_TEMP/registry-auth.json"
+          trap 'rm -f "$REGISTRY_AUTH_FILE"' EXIT
+          printf '%s' "$GH_TOKEN" | skopeo login ghcr.io --username "$GHCR_ACTOR" --password-stdin
+          python3 scripts/release/main.py stage --directory "$RUNNER_TEMP/assets"
+          rm -rf "$RUNNER_TEMP/assets"
+          SH
+  publish-tag:
+    needs: [admission, build]
+    if: >-
+      always() &&
+      needs.admission.result == 'success' &&
+      needs.admission.outputs.skip != 'true' &&
+      needs.admission.outputs.complete != 'true' &&
+      (needs.build.result == 'success' || needs.build.result == 'skipped') &&
+      fromJSON(needs.admission.outputs.selection).build.mode == 'tag'
+    outputs:
+      release_id: ${{ steps.stage_tag.outputs.release_id }}
+      build_digest: ${{ steps.stage_tag.outputs.build_digest }}
+      publisher_run: ${{ github.run_id }}
+      publisher_attempt: ${{ steps.stage_tag.outputs.publisher_attempt }}
       artifact_id: ${{ steps.readback.outputs.artifact-id }}
       artifact_digest: ${{ steps.readback.outputs.artifact-digest }}
     runs-on: ubuntu-24.04
@@ -73,7 +167,7 @@ jobs:
       contents: write
       actions: read
       packages: write
-      id-token: write # Keyless component evidence and npm trusted publishing. security-check: allow-id-token
+      id-token: write # Formal tag npm trusted publishing. security-check: allow-id-token
     env:
       RELEASE_SELECTION: ${{ needs.admission.outputs.selection }}
     steps:
@@ -89,8 +183,8 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
-      - name: Admit and publish frozen common bytes (no candidate execution)
-        id: stage
+      - name: Publish formal tag cohort through GitHub releases
+        id: stage_tag
         env:
           GH_TOKEN: ${{ github.token }}
           GHCR_ACTOR: ${{ github.actor }}
@@ -113,7 +207,13 @@ jobs:
           overwrite: false
           if-no-files-found: error
   verify:
-    needs: [admission, publish]
+    needs: [admission, publish-preview, publish-tag]
+    if: >-
+      always() &&
+      (
+        (needs.publish-preview.result == 'success' && needs.publish-preview.outputs.superseded != 'true') ||
+        needs.publish-tag.result == 'success'
+      )
     permissions:
       contents: read
       actions: read
@@ -128,17 +228,24 @@ jobs:
       - uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3
         with:
           github_access_token: ''
-      - name: Download and verify signed candidate bytes
+      - name: Reconstruct preview cohort from public object store
+        if: fromJSON(needs.admission.outputs.selection).build.mode != 'tag'
+        env:
+          BUILD_DIGEST: ${{ needs.publish-preview.outputs.build_digest }}
+        run: python3 scripts/release/main.py verify --directory "$RUNNER_TEMP/assets" --build-digest "$BUILD_DIGEST"
+      - name: Download and verify signed formal tag bytes
+        if: fromJSON(needs.admission.outputs.selection).build.mode == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
-          ARTIFACT_ID: ${{ needs.publish.outputs.artifact_id }}
-          ARTIFACT_DIGEST: ${{ needs.publish.outputs.artifact_digest }}
-          PUBLISHER_ATTEMPT: ${{ needs.publish.outputs.publisher_attempt }}
-          BUILD_DIGEST: ${{ needs.publish.outputs.build_digest }}
+          ARTIFACT_ID: ${{ needs.publish-tag.outputs.artifact_id }}
+          ARTIFACT_DIGEST: ${{ needs.publish-tag.outputs.artifact_digest }}
+          PUBLISHER_RUN: ${{ needs.publish-tag.outputs.publisher_run }}
+          PUBLISHER_ATTEMPT: ${{ needs.publish-tag.outputs.publisher_attempt }}
+          BUILD_DIGEST: ${{ needs.publish-tag.outputs.build_digest }}
         run: |
           nix develop .#images -c python3 scripts/release/main.py download --directory "$RUNNER_TEMP/assets" \
             --artifact-id "$ARTIFACT_ID" --artifact-digest "$ARTIFACT_DIGEST" \
-            --publisher-attempt "$PUBLISHER_ATTEMPT" --build-digest "$BUILD_DIGEST"
+            --publisher-run "$PUBLISHER_RUN" --publisher-attempt "$PUBLISHER_ATTEMPT" --build-digest "$BUILD_DIGEST"
       - name: Execute downloaded consumer without publication authority
         env:
           HELMR_PUBLIC_CONSUMER: '1'
@@ -155,13 +262,56 @@ jobs:
               subprocess.run(['skopeo', 'inspect', 'docker://' + read(root/name)['image']], check=True)
           consumer(root, root/'helmr-linux-amd64.tar.gz', root/'consumer')
           PY
-  complete:
-    needs: [admission, publish, verify]
+  complete-preview:
+    needs: [admission, publish-preview, publish-tag, verify]
+    if: >-
+      always() &&
+      needs.verify.result == 'success' &&
+      needs.publish-preview.result == 'success' &&
+      needs.publish-preview.outputs.superseded != 'true' &&
+      fromJSON(needs.admission.outputs.selection).build.mode != 'tag'
+    outputs:
+      index_digest: ${{ steps.finalize.outputs.index_digest }}
+    runs-on: ubuntu-24.04
+    environment: preview
+    permissions:
+      contents: read
+      pull-requests: read
+      id-token: write # Complete preview index signing. security-check: allow-id-token
+    env:
+      RELEASE_SELECTION: ${{ needs.admission.outputs.selection }}
+      PREVIEW_BUCKET: ${{ vars.PREVIEW_BUCKET }}
+      PREVIEW_BASE_URL: ${{ vars.PREVIEW_BASE_URL }}
+      PREVIEW_PUBLISHER_ROLE_ARN: ${{ vars.PREVIEW_PUBLISHER_ROLE_ARN }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3
+        with:
+          github_access_token: ''
+      - name: Assume preview publisher role
+        run: nix develop .#images -c bash scripts/release/assume-preview-role.sh
+      - name: Complete preview index last and verify public readback
+        id: finalize
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_DIGEST: ${{ needs.publish-preview.outputs.build_digest }}
+        run: |
+          nix develop .#images -c python3 scripts/release/main.py finalize --directory "$RUNNER_TEMP/complete" --build-digest "$BUILD_DIGEST"
+  complete-tag:
+    needs: [admission, publish-preview, publish-tag, verify]
+    if: >-
+      always() &&
+      needs.verify.result == 'success' &&
+      needs.publish-tag.result == 'success' &&
+      fromJSON(needs.admission.outputs.selection).build.mode == 'tag'
     runs-on: ubuntu-24.04
     environment: release
     permissions:
       contents: write
-      id-token: write # Sign the complete index only after consumer success. security-check: allow-id-token
+      id-token: write # Formal tag completion. security-check: allow-id-token
     env:
       RELEASE_SELECTION: ${{ needs.admission.outputs.selection }}
     steps:
@@ -172,26 +322,37 @@ jobs:
       - uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3
         with:
           github_access_token: ''
-      - name: Publish complete index last and verify public readback
+      - name: Publish formal tag complete index last and verify public readback
+        id: finalize_tag
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_ID: ${{ needs.publish.outputs.release_id }}
-          BUILD_DIGEST: ${{ needs.publish.outputs.build_digest }}
+          RELEASE_ID: ${{ needs.publish-tag.outputs.release_id }}
+          BUILD_DIGEST: ${{ needs.publish-tag.outputs.build_digest }}
         run: |
           nix develop .#images -c python3 scripts/release/main.py finalize --directory "$RUNNER_TEMP/complete" \
             --release-id "$RELEASE_ID" --build-digest "$BUILD_DIGEST"
   discovery:
-    needs: [admission, complete]
+    needs: [admission, complete-preview, complete-tag]
     if: >-
       always() && needs.admission.result == 'success' &&
-      (needs.complete.result == 'success' || needs.admission.outputs.complete == 'true') &&
+      (needs.complete-preview.result == 'success' || needs.admission.outputs.complete == 'true') &&
       fromJSON(needs.admission.outputs.selection).build.mode == 'main'
-    runs-on: ubuntu-24.04
     concurrency:
-      group: product-preview-discovery
+      group: release-preview-discovery
       cancel-in-progress: false
+      # actionlint 1.7.9 lacks queue: https://github.com/rhysd/actionlint/issues/687
+      queue: max
+    runs-on: ubuntu-24.04
+    environment: preview
     permissions:
-      contents: write
+      contents: read
+      id-token: write # Preview channel pointer CAS. security-check: allow-id-token
+    env:
+      RELEASE_SELECTION: ${{ needs.admission.outputs.selection }}
+      INDEX_DIGEST: ${{ needs.complete-preview.outputs.index_digest }}
+      PREVIEW_BUCKET: ${{ vars.PREVIEW_BUCKET }}
+      PREVIEW_BASE_URL: ${{ vars.PREVIEW_BASE_URL }}
+      PREVIEW_PUBLISHER_ROLE_ARN: ${{ vars.PREVIEW_PUBLISHER_ROLE_ARN }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
@@ -201,7 +362,14 @@ jobs:
       - uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3
         with:
           github_access_token: ''
-      - name: Reconcile newest signed complete main preview
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: nix develop .#images -c python3 scripts/release/main.py discover
+      - name: Assume preview publisher role
+        run: nix develop .#images -c bash scripts/release/assume-preview-role.sh
+      - name: Update preview channel pointer without regression
+        run: |
+          nix develop .#images -c bash -euo pipefail <<'SH'
+          if [ -n "${INDEX_DIGEST:-}" ]; then
+            python3 scripts/release/main.py discover --index-digest "$INDEX_DIGEST"
+          else
+            python3 scripts/release/main.py discover
+          fi
+          SH

@@ -89,9 +89,14 @@ check_id_token_permissions() {
 				if (line ~ /^    ["\047]?environment["\047]?[[:space:]]*:[[:space:]]*["\047]?release["\047]?([[:space:]#]|$)/) {
 					job_environment_release = 1
 					in_environment_block = 0
+				} else if (line ~ /^    ["\047]?environment["\047]?[[:space:]]*:[[:space:]]*["\047]?preview["\047]?([[:space:]#]|$)/) {
+					job_environment_release = 1
+					in_environment_block = 0
 				} else if (line ~ /^    ["\047]?environment["\047]?[[:space:]]*:[[:space:]]*(#.*)?$/) {
 					in_environment_block = 1
 				} else if (in_environment_block && line ~ /^      ["\047]?name["\047]?[[:space:]]*:[[:space:]]*["\047]?release["\047]?([[:space:]#]|$)/) {
+					job_environment_release = 1
+				} else if (in_environment_block && line ~ /^      ["\047]?name["\047]?[[:space:]]*:[[:space:]]*["\047]?preview["\047]?([[:space:]#]|$)/) {
 					job_environment_release = 1
 				} else if (in_environment_block && line !~ /^      / && line !~ /^[[:space:]]*$/) {
 					in_environment_block = 0

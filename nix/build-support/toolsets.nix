@@ -59,8 +59,9 @@ rec {
     pkgs.nixfmt
   ];
 
-  image = [
+    image = [
     helmrPackages.apko
+    pkgs.awscli2
     pkgs.cosign
     pkgs.docker_29
     pkgs.e2fsprogs

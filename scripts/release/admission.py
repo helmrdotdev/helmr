@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
-from contract import REPOSITORY, SHA, SEMVER, preview_version, require
+from contract import REPOSITORY, SHA, SEMVER, preview_version, require, signer
 
 
 def git(root, *args):
@@ -18,32 +18,14 @@ def pr_head(pr, number, commit, repository_id):
     require(pr['head']['sha'] == commit, 'input is not current PR head')
 
 
-def workflow_tree(api, commit):
-    """Read immutable Git tree identities, without changed-files pagination/history."""
-    require(re.fullmatch(SHA, commit), 'workflow comparison source SHA invalid')
-    source = api.request(f'git/commits/{commit}')
-    require(source['sha'] == commit, 'workflow comparison commit differs')
-    tree = source['tree']['sha']
-    for name in ('.github', 'workflows'):
-        require(re.fullmatch(SHA, tree), 'workflow tree SHA invalid')
-        listing = api.request(f'git/trees/{tree}')
-        require(listing['sha'] == tree and not listing['truncated'], 'incomplete workflow tree metadata')
-        matches = [entry for entry in listing['tree'] if entry['path'] == name]
-        if not matches:
-            return None
-        require(len(matches) == 1 and matches[0]['type'] == 'tree' and matches[0]['mode'] == '040000', 'workflow path must be a directory')
-        tree = matches[0]['sha']
-    require(re.fullmatch(SHA, tree), 'workflow tree SHA invalid')
-    return tree
+def ci_jobs(api, run):
+    return list(api.pages(f'actions/runs/{run["id"]}/attempts/{run["run_attempt"]}/jobs', 'jobs'))
 
 
-def pr_workflows(api, commit):
-    main = api.request('git/ref/heads/main')
-    require(main['ref'] == 'refs/heads/main' and main['object']['type'] == 'commit', 'invalid Product main reference')
-    require(workflow_tree(api, commit) == workflow_tree(api, main['object']['sha']),
-            'PR preview publication requires .github/workflows identical to current Product main; '
-            'GITHUB_TOKEN lacks workflow-write authority for release create/update at differing workflows. '
-            'Update the PR to match main workflows and rerun with its full current head SHA.')
+def ci_job_success(jobs, name):
+    aggregate = [j for j in jobs if j['name'] == name]
+    require(len(aggregate) == 1 and aggregate[0]['status'] == 'completed' and aggregate[0]['conclusion'] == 'success',
+            'missing successful exact CI aggregate: ' + name)
 
 
 def ci_success(api, run, workflow_id, repository_id, commit, event, number=None):
@@ -54,10 +36,44 @@ def ci_success(api, run, workflow_id, repository_id, commit, event, number=None)
         require(run['head_branch'] == 'main', 'CI must be main push')
     else:
         require(any(p['number'] == number and p['head']['sha'] == commit for p in run['pull_requests']), 'CI PR/head association differs')
-    jobs = list(api.pages(f'actions/runs/{run["id"]}/attempts/{run["run_attempt"]}/jobs', 'jobs'))
-    aggregate = [j for j in jobs if j['name'] == 'ci complete']
-    require(len(aggregate) == 1 and aggregate[0]['status'] == 'completed' and aggregate[0]['conclusion'] == 'success', 'missing successful exact CI aggregate')
-    return run['id']
+    jobs = ci_jobs(api, run)
+    if event == 'push':
+        ci_job_success(jobs, 'source-ci-complete')
+        ci_job_success(jobs, 'preview-ready')
+    else:
+        ci_job_success(jobs, 'ci complete')
+    return run['id'], jobs
+
+
+def ci_artifact_skipped(jobs):
+    """True when the producer CI run reported a successful documentation-only artifact skip."""
+    skip = [j for j in jobs if j['name'] == 'artifact build skipped']
+    require(len(skip) <= 1, 'ambiguous artifact skip job')
+    if not skip:
+        return False
+    require(skip[0]['status'] == 'completed' and skip[0]['conclusion'] == 'success', 'artifact skip job unsuccessful')
+    return True
+
+
+def main_superseded(api, selection):
+    """Automatic main preview superseded when Product main moved past the admitted source."""
+    require(selection['build']['mode'] == 'main', 'superseded check is main-only')
+    main = api.request('git/ref/heads/main')
+    require(main['ref'] == 'refs/heads/main' and main['object']['type'] == 'commit', 'invalid Product main reference')
+    return selection['sourceCommit'] != main['object']['sha']
+
+
+def preview_pointer_source():
+    from preview_store import fetch_pointer
+    record = fetch_pointer()
+    return None if record is None else record['sourceCommit']
+
+
+def artifact_build_needed(api, root, head):
+    base = preview_pointer_source()
+    if base is None:
+        return True
+    return relevant(root, base, head)
 
 
 def admit(api, env, event, tools):
@@ -68,11 +84,13 @@ def admit(api, env, event, tools):
     require(workflow['path'] == '.github/workflows/ci.yaml', 'wrong CI workflow')
     name = env['GITHUB_EVENT_NAME']
     number = None
+    main_run = None
+    jobs = None
     if name == 'workflow_run':
         require(env['GITHUB_REF'] == 'refs/heads/main', 'workflow must run from main')
-        run = api.request(f'actions/runs/{event["workflow_run"]["id"]}')
-        commit = run['head_sha']
-        ci = ci_success(api, run, workflow['id'], repository['id'], commit, 'push')
+        main_run = api.request(f'actions/runs/{event["workflow_run"]["id"]}')
+        commit = main_run['head_sha']
+        ci, jobs = ci_success(api, main_run, workflow['id'], repository['id'], commit, 'push')
         source_ref, mode = 'refs/heads/main', 'main'
     elif name == 'workflow_dispatch':
         require(env['GITHUB_REF'] == 'refs/heads/main', 'manual workflow must execute main')
@@ -81,10 +99,9 @@ def admit(api, env, event, tools):
         require(re.fullmatch(r'[1-9][0-9]*', event['inputs']['pr']), 'PR number required')
         number = int(event['inputs']['pr'])
         pr_head(api.request(f'pulls/{number}'), number, commit, repository['id'])
-        pr_workflows(api, commit)
         runs = list(api.pages(f'actions/workflows/{workflow["id"]}/runs?event=pull_request&head_sha={commit}', 'workflow_runs'))
         require(runs, 'PR CI missing')
-        ci = ci_success(api, max(runs, key=lambda r: r['id']), workflow['id'], repository['id'], commit, 'pull_request', number)
+        ci, _ = ci_success(api, max(runs, key=lambda r: r['id']), workflow['id'], repository['id'], commit, 'pull_request', number)
         source_ref, mode = f'refs/pull/{number}/head', 'pr'
     else:
         require(name == 'push' and env['GITHUB_REF'].startswith('refs/tags/v'), 'unsupported release event')
@@ -95,24 +112,31 @@ def admit(api, env, event, tools):
         commit = env['GITHUB_SHA']
         runs = list(api.pages(f'actions/workflows/{workflow["id"]}/runs?event=push&head_sha={commit}', 'workflow_runs'))
         require(runs, 'tag source main CI missing')
-        ci = ci_success(api, max(runs, key=lambda r: r['id']), workflow['id'], repository['id'], commit, 'push')
+        ci, _ = ci_success(api, max(runs, key=lambda r: r['id']), workflow['id'], repository['id'], commit, 'push')
         source_ref, mode = env['GITHUB_REF'], 'tag'
     require(re.fullmatch(SHA, commit), 'source SHA invalid')
-    # Read selected source metadata as data; never evaluate its code here.
     subprocess.run(['git', '-C', str(tools), 'fetch', '--no-tags', 'origin', commit], check=True)
     core = json.loads(git(tools, 'show', f'{commit}:sdk/typescript/package.json'))['version'].split('-')[0]
-    version = env['GITHUB_REF'].removeprefix('refs/tags/') if mode == 'tag' else preview_version(core, commit, env['GITHUB_RUN_ID'])
-    return dict(version=version, sourceCommit=commit, sourceRef=source_ref,
-                build=dict(runId=env['GITHUB_RUN_ID'], attempt=env['GITHUB_RUN_ATTEMPT'],
-                           workflowCommit=env['GITHUB_WORKFLOW_SHA'], workflowRef=env['GITHUB_REF'],
-                           ciRun=str(ci), pr=number, mode=mode))
+    if mode == 'tag':
+        version = env['GITHUB_REF'].removeprefix('refs/tags/')
+    elif mode == 'main':
+        version = preview_version(core, commit, str(ci))
+    else:
+        version = preview_version(core, commit, env['GITHUB_RUN_ID'])
+    selection = dict(version=version, sourceCommit=commit, sourceRef=source_ref,
+                     build=dict(runId=env['GITHUB_RUN_ID'], workflowCommit=env['GITHUB_WORKFLOW_SHA'],
+                                workflowRef=env['GITHUB_REF'], ciRun=str(ci), pr=number, mode=mode))
+    if mode == 'main':
+        selection['build'].update(runId=str(ci), workflowCommit=commit,
+                                  workflowRef=signer(version).split('@', 1)[1], ciRun=str(ci))
+    skip = (name == 'workflow_run' and mode == 'main' and ci_artifact_skipped(jobs))
+    return selection, skip
 
 
 def recheck_pr(api, selection):
     if selection['build']['mode'] == 'pr':
         number = selection['build']['pr']
         pr_head(api.request(f'pulls/{number}'), number, selection['sourceCommit'], api.request('')['id'])
-        pr_workflows(api, selection['sourceCommit'])
 
 
 def docs_only(paths):

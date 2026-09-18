@@ -1,0 +1,5 @@
+# Pinned actionlint (1.7.9) lacks GitHub concurrency queue: max (rhysd/actionlint#687).
+paths:
+  .github/workflows/release.yaml:
+    ignore:
+      - 'unexpected key "queue" for "concurrency" section'

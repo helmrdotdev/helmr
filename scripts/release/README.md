@@ -7,19 +7,44 @@ and owns capacity, ECR/S3 preparation, AMIs and deployment.
 
 Both `release.yaml` and `ci.yaml` use `build-artifacts.yaml` (displayed as
 **build release artifacts**); CI first runs `artifact-selection` (**select artifact
-source**). Frozen GitHub build artifacts are named
+source**). On **main push**, CI builds once; successful automatic preview
+publication adopts that exact producer selection and frozen bytes without
+recompiling. The release publisher keeps its own run for readback artifacts
+(`release-readback-<publisher-run>-<publisher-attempt>`) while restore/assemble
+use the CI producer run. The signed index binds the original CI build run and
+fixed assets.
+Frozen GitHub build artifacts are named
 `build-artifacts-<run-id>-<part>` for upload and retry restoration.
 
 ## Source selection and bootstrap
 
-A successful **main push** through native `ci.yaml` and its final `ci complete`
-aggregate starts an automatic preview. Admission verifies native repository,
-workflow ID/path, event, SHA and job conclusion. Generated `v*-preview.*` tags
-are explicitly excluded from ordinary tag triggers. Root `README.md` and
+A successful **main push** through native `ci.yaml` starts an automatic preview
+after both aggregates succeed:
+
+- **source-ci-complete** — required source checks (Nix, repo, postgres, browser,
+  bundle-builder, release contracts). This aggregate does not bless skipped or
+  failed artifact jobs.
+- **preview-ready** — on main only, requires successful artifact build and
+  consumer verification when changes are relevant; documentation-only changes
+  that provably cannot reach artifacts skip the expensive build with a truthful
+  successful skip job instead.
+
+Admission verifies native repository, workflow ID/path, event, SHA, both main
+aggregates, and preview-ready artifact/consumer success for the exact producer
+commit when publication is relevant. Documentation-only main pushes skip publication
+when admission observes the producer CI run's successful **artifact build skipped**
+job; release admission does not re-derive that decision from the preview pointer.
+Generated `v*-preview.*` tags are
+explicitly excluded from ordinary tag triggers. Root `README.md` and
 `packages/web/src/content/docs/**` are the only documentation-only paths; SDK/proto
 READMEs, LICENSE, locks, workflows and unknown paths remain relevant. Comparisons
 include deletions/renames and the entire diff since the last selected complete
 source, so a relevant change followed by docs cannot disappear.
+
+Pull requests retain **ci complete**, which requires **source-ci-complete** and
+a successful artifact build for the exact PR head. Release publication for PRs
+and human tags still builds once under trusted orchestration when required; their
+source checks are not weakened to gain reuse.
 
 After the reviewed mechanism is on main, an operator can select an **unmerged** PR:
 
@@ -29,13 +54,7 @@ gh workflow run release.yaml --ref main -f pr=PR_NUMBER -f commit=FULL_CURRENT_H
 
 This command is an operational action requiring separate authorization. Admission
 requires an open same-repository PR to main whose current head equals the full SHA,
-successful native PR CI associated with that head, and an identical `.github/workflows`
-Git tree to current Product main. The tree comparison includes names, content and
-modes; it also rejects a behind PR with older workflows even when its changed-files
-list contains no workflows. This restriction applies only to manual PR publication:
-`GITHUB_TOKEN` lacks the workflow-write authority needed for native release create
-**and update** when workflow contents differ. Precreating a tag alone is not an
-established solution. Match main workflows, then select the new full PR head SHA.
+successful native PR CI associated with that head, and exact native source validation.
 Normal PR CI keeps its
 merge-result checkout. Native CI run `head_sha` identifies the PR head; it does not
 mean every merge-result test used that checkout. `build-artifacts` additionally
@@ -44,11 +63,10 @@ selected Go checks, generated-runtime checks and the real consumer fixture under
 trusted orchestration. Candidate source has no publication credentials. Privileged
 jobs check out only the admitted workflow commit and parse candidate outputs as
 data; they never execute candidate scripts or binaries. The current PR head is
-rechecked together with current main workflow equality before staging external
-writes and again before final publication. A main move that changes workflows
-therefore stops publication at the next gate. GitHub remains authoritative if main
-moves after a check; these read checks are not an atomic lock on main. Automatic
-main previews and formal tag admission keep their existing semantics.
+rechecked before staging external writes and again before final publication.
+GitHub remains authoritative if main moves after a check; these read checks are
+not an atomic lock on main. Automatic main previews and formal tag admission keep
+their existing semantics.
 
 The mechanism PR's uncredentialed artifact build is the first integration gate.
 It needs neither published builder digests nor the separate infrastructure behavior
@@ -61,20 +79,50 @@ staging-verified from an unmerged PR.
 ## Identity, publication and retry
 
 Preview versions are `v<core>-preview.g<short-sha>.b<GitHub-run-id>`; the `g` avoids
-invalid numeric prerelease identifiers such as `01234567`. The fixed v0 index binds
-the full source SHA/ref, separate workflow SHA/ref, original build run/attempt,
-CI run, and fixed assets. SDK and proto carry the same exact source/build stamp;
+invalid numeric prerelease identifiers such as `01234567`. Main previews key the
+version to the **CI producer run id**. The fixed v0 index binds the full source
+SHA/ref, producer workflow commit (the admitted push SHA), signer workflow ref,
+original build run, CI run, and fixed assets. SDK and proto carry the same exact source/build stamp;
 SDK depends on precisely its sibling proto version. CLI binaries embed the canonical
 builder digest. Existing platform and Worker descriptors remain authoritative.
 The Linux host constructor asserts the actual Worker's full source/version output,
 including path-flake builds where `self.rev` is unavailable.
 
-Every successful build part is frozen in a native Actions artifact named by build
-run and component. Preview retries may reuse those original bytes across publishing
-attempts. Missing original parts may build; expired/ambiguous original transfers
-fail and require a new run identity. Existing npm, OCI and GitHub assets must match
-exact bytes/digests. Human tag cohorts retain single-attempt protection, including
-failed-job reruns; use a new human tag after any partial publication.
+Every successful build part is frozen in a native Actions artifact named by the
+**producer CI build** run and component. Main preview publication restores those
+CI bytes directly; release retries may reuse them without rebuilding. Automatic main previews serialize release runs per CI producer
+(`cancel-in-progress: false`) so competing runs for the same producer cannot cancel in-flight publication.
+Automatic main previews and PR previews publish to the fixed-origin object store
+(`PREVIEW_BASE_URL`, default
+`https://helmr-previews-879980497511-us-east-1.s3.us-east-1.amazonaws.com`) under
+`previews/{version}/`, with `channels/preview.json` as the main discovery pointer.
+Writes use conditional `put-object` (`If-None-Match: *`); existing objects are
+verified byte-for-byte, never overwritten or deleted. Anonymous reads may return
+403 instead of 404 for missing keys; optional probes treat `(403)` and `(AccessDenied)` as unavailable,
+never as success. Publisher reads that require an existing object treat those codes as hard errors.
+A `(ConditionalRequestConflict)` / `(409)` on conditional put fails closed; re-run the whole release workflow.
+Stage uploads public assets only; `release-build.json` remains
+a local verifier input and is never written to the object store. The unprivileged
+verify job reconstructs the unsigned build index from public blobs; completion
+signs `release-index.json` last. Formal human tags retain the GitHub release
+draft/readback path.
+
+Producer, main preview-channel and discovery concurrency use GitHub's native `queue: max`
+(up to 100 pending per group; no single pending eviction). After obtaining the
+publish job's preview-channel lock, automatic main publication re-checks Product
+`main` HEAD and publishes **only when the admitted source is still current head**.
+Superseded candidates exit successfully before any artifact, npm or OCI write, and
+verify/complete stay skipped; re-running a superseded release run skips again.
+A publisher already holding the lock continues with its admitted bytes even if
+main moves before it finishes. While current `main` is red or its preview has not
+yet completed, older green commits do not publish and the last completed preview
+remains available. This head coalescing avoids moving npm `preview` backwards and
+does not silently substitute latest bytes for an obsolete CI run. Missing original
+parts may build on PR/tag paths; expired or
+ambiguous original transfers fail and require a new run identity. Existing npm,
+OCI and GitHub assets must match exact bytes/digests. Human tag cohorts retain
+single-attempt protection, including failed-job reruns; use a new human tag after
+any partial publication.
 
 The draft release contains the fixed assets and a signed pre-completion copy of
 the index (`release-build.json`). The privileged publisher locates the unique
@@ -84,9 +132,9 @@ published releases; it is not a draft lookup. Duplicate versions fail rather tha
 selecting one. These checks do not lock out another authorized writer.
 
 The publisher uploads this fresh, flat readback directory as the immutable native
-Actions artifact `release-readback-<run-id>-<publisher-attempt>` (compression 0,
-7-day retention, no overwrite). Its outputs carry the release ID, raw signed-build
-digest, publisher attempt, artifact ID and artifact digest. The action digest is
+Actions artifact `release-readback-<publisher-run>-<publisher-attempt>` (compression 0,
+7-day retention, no overwrite). Its outputs carry the release ID, publisher run,
+raw signed-build digest, publisher attempt, artifact ID and artifact digest. The action digest is
 bare lowercase SHA-256 hex; the downloader validates it and adds `sha256:` once
 for comparison with native REST metadata and downloaded ZIP bytes. The build
 digest already uses Product's `sha256:<hex>` shape.
@@ -107,10 +155,10 @@ identical to the verified build, and publishes the draft. Anonymous completed-by
 readback must then pass. Retries reuse frozen original bytes/signatures and never
 overwrite assets. An incomplete draft or missing completion index is unusable.
 
-A verifier-only retry uses retained publisher outputs: build attempt 1, publisher
-attempt 2 and verifier attempt 3 can legitimately differ. Re-running publish uses
-the executing publisher attempt for a fresh handoff, while retaining the original
-signed build attempt. A completion-only retry needs the successful verify and
+A verifier-only retry uses retained publisher outputs: publisher
+attempt 2 can differ from verifier attempt 3. Re-running publish uses
+the executing publisher attempt for a fresh handoff while retaining frozen
+build bytes. A completion-only retry needs the successful verify and
 publisher outputs, not an unexpired transfer. If publishing the draft succeeded
 but its response or public readback failed, completion first binds the release ID
 and build digest, requires signed completed-index bytes to equal those build bytes,
@@ -140,16 +188,18 @@ digests, not a separate containers/image signature policy installed on the host.
 provenance, not an extra suffix in the certificate identity. Cloud pins the SHA-256
 of the exact signed index bytes and verifies the native Sigstore issuer/identity.
 
-The reserved GitHub `preview` release's notes are the only discovery pointer:
-version, source SHA and exact signed index digest. The short updater is serialized.
-Pinned Actionlint 1.7.9 rejects GitHub's `queue: max`, so every updater reconciles
-**all completed signed main previews** from the existing release surface. This
-handles a late stale completion replacing a newer pending updater. Ancestry and
-relevance guards prevent regression; discovery failure can retry against already
-complete bytes without rebuilding/publishing. There is no second registry of state.
+The main preview pointer at `channels/preview.json` binds one completed cohort:
+version, source SHA and signed index digest. Discovery updates it with a conditional
+CAS from the snapshot validated in that decision; ancestry and relevance guards prevent
+regression. There is no GitHub release scan or second registry of preview history.
 
-`npm --tag unlisted` is upload machinery for preview/prerelease versions, not a
-supported consumption channel. Consumers install the exact index-selected version.
+`npm publish --tag` channels are explicit install pointers: main previews use
+`preview`, manual PR publication uses `pr-<number>` from selection identity (not
+inferred from the version string), formal prereleases use `next`, and stable human
+tags use `latest`. Tags move during staging one package at a time and are not
+atomic cohort readiness signals. The signed completed `release-index.json` and
+discovery pointer remain authoritative for which bytes are released.
+Same-byte npm retries compare tarball bytes and never replace an existing version.
 Published assets and their OCI/npm closure have no automatic deletion initially;
 a public support window is a later decision. Native Actions transfer retention is
 7 days and is not the release retention policy. Nix content reuse and Cloud's
@@ -187,15 +237,11 @@ not establish database rollback safety.
 The dependency-light `install` script (also served by `helmr.dev/install`) downloads
 `helmr-<os>-<arch>.tar.gz`, `checksums.txt`, and `release-index.json` from the selected
 release. Stable discovery requires the common CLI asset, checksum projection and
-completed index/signature inventory. Explicit preview tags use the same names.
-The CLI constructor derives the four-line SHA-256 checksum file; the signed index
-binds that file, and publisher validation requires it to equal the CLI asset hashes.
-It is not another release state or signing protocol. The shell bootstrap verifies
-the checksum file against the canonical index and then the archive checksum, with
-only the existing shell/curl/tar/hash tools. Its bootstrap trust is HTTPS; it does
-not claim local Sigstore verification or install a new mandatory runtime. Privileged
-consumers still verify Sigstore explicitly. The release consumer fixture executes this
-shipped installer using a loopback release transport before running the actual CLI.
+completed index/signature inventory through GitHub releases. Explicit preview versions
+(`-preview.` in the tag) fetch from the fixed preview origin only, with no redirects;
+the shell bootstrap verifies the completion index before any binary download. Its
+bootstrap trust is HTTPS plus index/checksum binding; it does not perform Sigstore
+verification or install a new mandatory runtime.
 
 Self-host Runtime publication uses `publish-platform-release.sh STORE TAG INDEX
 INDEX_SIGNATURE ARCHIVE PROVENANCE`. It verifies the signed v0 index with the exact

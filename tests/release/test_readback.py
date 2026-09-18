@@ -31,7 +31,8 @@ class Readback(unittest.TestCase):
                          workflow_run=dict(id=123), digest=digest(self.archive))
         # Real action output is bare hex; REST metadata and Product are prefixed.
         self.args = dict(artifact_id='9', artifact_digest=digest(self.archive)[7:],
-                         publisher_attempt='2', build_digest=digest(self.root / 'release-build.json'))
+                         publisher_run='123', publisher_attempt='2',
+                         build_digest=digest(self.root / 'release-build.json'))
         self.requests = []
         fixture = self
 
@@ -66,9 +67,7 @@ class Readback(unittest.TestCase):
                     archive.writestr(extra, b'not an asset')
 
     def accept(self, destination='accepted', **overrides):
-        # Verification attempt 3 consumes publisher attempt 2 and frozen build 1.
-        selected = selection()
-        selected['build']['attempt'] = '3'
+        selected = selection('tag')
         return transport.download_readback(self.actions, selected, self.root / destination,
                                            **dict(self.args, **overrides))
 
@@ -78,33 +77,34 @@ class Readback(unittest.TestCase):
 
     def test_distinct_attempts_digest_forms_and_real_output_bytes(self):
         self.assertEqual(self.accept(), self.index)
-        self.assertEqual(self.index['build']['attempt'], '1')
+        self.assertNotIn('attempt', self.index['build'])
         self.assertEqual(self.requests, ['actions/artifacts/9', 'actions/artifacts/9/zip'])
         for name, value in self.members.items():
             self.assertEqual((self.root / 'accepted' / name).read_bytes(), value)
 
     def test_stage_command_exports_readback_identity_and_actual_publisher_attempt(self):
+        from test_contract import assets
+        selected = selection('tag')
+        assets(self.root, selected)
+        api = test_publication.Releases()
         output = self.root / 'job-outputs'
         readback = self.root / 'command-readback'
-        # Simulate a fresh publish attempt receiving frozen component bytes.
-        (self.root / 'release-build.sigstore.json').unlink()
-        with patch.object(main, 'GitHub', return_value=self.api), \
+        with patch.object(main, 'GitHub', return_value=api), \
                 patch.object(publish, 'npm_publish'), patch.object(publish, 'publish_images'), \
-                patch.dict(os.environ, RELEASE_SELECTION=json.dumps(selection()),
-                           GITHUB_OUTPUT=str(output), GITHUB_RUN_ATTEMPT='2',
-                           GITHUB_EVENT_NAME='workflow_run'), \
+                patch.object(publish, 'sign', side_effect=test_publication.fake_sign), \
+                patch.dict(os.environ, RELEASE_SELECTION=json.dumps(selected),
+                           GITHUB_OUTPUT=str(output), GITHUB_RUN_ATTEMPT='1',
+                           GITHUB_EVENT_NAME='push', GITHUB_REF='refs/tags/v1.0.0'), \
                 patch('sys.argv', ['release', 'stage', '--directory', str(self.root), '--output', str(readback)]):
             main.main()
         self.assertEqual(dict(line.split('=', 1) for line in output.read_text().splitlines()),
                          dict(release_id='1', build_digest=digest(readback / 'release-build.json'),
-                              publisher_attempt='2'))
-        self.assertEqual(json.loads((readback / 'release-build.json').read_bytes())['build']['attempt'], '1')
-        self.assertEqual({p.name for p in readback.iterdir()}, set(self.members))
-        for name, value in self.members.items():
-            self.assertEqual((readback / name).read_bytes(), value)
+                              publisher_attempt='1'))
+        self.assertNotIn('attempt', json.loads((readback / 'release-build.json').read_bytes())['build'])
 
     def test_missing_or_malformed_outputs_fail_before_network(self):
-        for key, values in dict(artifact_id=[None, '', '0', 'other'], publisher_attempt=[None, '', '0'],
+        for key, values in dict(artifact_id=[None, '', '0', 'other'], publisher_run=[None, '', '0'],
+                                publisher_attempt=[None, '', '0'],
                                 artifact_digest=[None, '', 'A' * 64, '0' * 63, 'sha256:' + '0' * 64],
                                 build_digest=[None, '', '0' * 64]).items():
             for value in values:
@@ -175,17 +175,30 @@ class Readback(unittest.TestCase):
 class WorkflowBoundary(unittest.TestCase):
     def test_handoff_outputs_and_execution_authority(self):
         workflow = (Path(__file__).resolve().parents[2] / '.github/workflows/release.yaml').read_text()
-        publisher = workflow.split('\n  publish:\n', 1)[1].split('\n  verify:\n', 1)[0]
-        verifier = workflow.split('\n  verify:\n', 1)[1].split('\n  complete:\n', 1)[0]
-        finalizer = workflow.split('\n  complete:\n', 1)[1].split('\n  discovery:\n', 1)[0]
-        for name in ('release_id', 'build_digest', 'publisher_attempt'):
-            self.assertIn(name + ': ${{ steps.stage.outputs.' + name + ' }}', publisher)
+        publish_preview = workflow.split('\n  publish-preview:\n', 1)[1].split('\n  publish-tag:\n', 1)[0]
+        publish_tag = workflow.split('\n  publish-tag:\n', 1)[1].split('\n  verify:\n', 1)[0]
+        verifier = workflow.split('\n  verify:\n', 1)[1].split('\n  complete-preview:\n', 1)[0]
+        complete_preview = workflow.split('\n  complete-preview:\n', 1)[1].split('\n  complete-tag:\n', 1)[0]
+        complete_tag = workflow.split('\n  complete-tag:\n', 1)[1].split('\n  discovery:\n', 1)[0]
+        for name in ('build_digest', 'publisher_attempt'):
+            self.assertIn(name + ': ${{ steps.stage.outputs.' + name, publish_preview)
+        for name in ('build_digest', 'publisher_attempt'):
+            self.assertIn('steps.stage_tag.outputs.' + name, publish_tag)
+        self.assertIn('release_id: ${{ steps.stage_tag.outputs.release_id }}', publish_tag)
+        self.assertIn('publisher_run: ${{ github.run_id }}', publish_preview)
+        self.assertIn('publisher_run: ${{ github.run_id }}', publish_tag)
         for name in ('artifact-id', 'artifact-digest'):
-            self.assertIn('steps.readback.outputs.' + name, publisher)
-        self.assertIn('name: release-readback-${{ github.run_id }}-${{ github.run_attempt }}', publisher)
-        self.assertIn('overwrite: false', publisher)
-        self.assertIn('retention-days: 7', publisher)
-        self.assertIn('compression-level: 0', publisher)
+            self.assertIn('steps.readback.outputs.' + name, publish_tag)
+        self.assertIn('name: release-readback-${{ github.run_id }}-${{ github.run_attempt }}', publish_tag)
+        self.assertIn('overwrite: false', publish_tag)
+        self.assertIn('retention-days: 7', publish_tag)
+        self.assertIn('compression-level: 0', publish_tag)
+        self.assertIn('environment: preview', publish_preview)
+        self.assertNotIn('contents: write', publish_preview)
+        self.assertIn('contents: read', publish_preview)
+        self.assertIn('pull-requests: read', publish_preview)
+        self.assertIn('environment: release', publish_tag)
+        self.assertIn('contents: write', publish_tag)
         self.assertIn('contents: read', verifier)
         self.assertIn('actions: read', verifier)
         for forbidden in ('environment:', 'id-token:', 'contents: write', 'packages: write'):
@@ -193,8 +206,29 @@ class WorkflowBoundary(unittest.TestCase):
         download, execution = verifier.split('      - name: Execute downloaded consumer', 1)
         self.assertIn('GH_TOKEN: ${{ github.token }}', download)
         self.assertNotIn('GH_TOKEN', execution)
-        for name in ('artifact_id', 'artifact_digest', 'publisher_attempt', 'build_digest'):
-            self.assertIn('needs.publish.outputs.' + name, download)
-        self.assertIn('needs: [admission, publish, verify]', finalizer)
-        for name in ('release_id', 'build_digest'):
-            self.assertIn('needs.publish.outputs.' + name, finalizer)
+        for name in ('artifact_id', 'artifact_digest', 'publisher_run', 'publisher_attempt', 'build_digest'):
+            self.assertIn('needs.publish-tag.outputs.' + name, download)
+        self.assertIn('needs.publish-preview.outputs.build_digest', verifier)
+        self.assertIn('main.py verify', verifier)
+        self.assertIn('main.py download', verifier)
+        self.assertIn('needs: [admission, publish-preview, publish-tag, verify]', complete_preview)
+        self.assertIn('needs: [admission, publish-preview, publish-tag, verify]', complete_tag)
+        self.assertIn('GH_TOKEN: ${{ github.token }}', complete_preview)
+        self.assertIn('contents: read', complete_preview)
+        self.assertIn('pull-requests: read', complete_preview)
+        self.assertIn('Assume preview publisher role', complete_preview)
+        self.assertIn('main.py finalize', complete_preview)
+        complete_after_assume = complete_preview.split('- name: Assume preview publisher role', 1)[1]
+        complete_consumer = complete_after_assume.split('- name:', 1)[1]
+        self.assertIn('main.py finalize', complete_consumer)
+        self.assertNotIn('assume-preview-role.sh', complete_consumer)
+        discovery = workflow.split('\n  discovery:\n', 1)[1]
+        self.assertIn('contents: read', discovery)
+        self.assertIn('Assume preview publisher role', discovery)
+        discover_after_assume = discovery.split('- name: Assume preview publisher role', 1)[1]
+        discover_consumer = discover_after_assume.split('- name:', 1)[1] if '- name:' in discover_after_assume else discover_after_assume
+        self.assertIn('main.py discover', discover_consumer)
+        self.assertNotIn('assume-preview-role.sh', discover_consumer)
+        self.assertIn('needs.publish-preview.outputs.build_digest', complete_preview)
+        self.assertIn('needs.publish-tag.outputs.release_id', complete_tag)
+        self.assertIn('needs.publish-tag.outputs.build_digest', complete_tag)

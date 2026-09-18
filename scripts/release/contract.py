@@ -113,8 +113,8 @@ def validate(index, *, publishing=True):
     require(re.fullmatch(SHA, index['sourceCommit']), 'full source SHA required')
     require(re.fullmatch(r'refs/(heads/main|pull/[1-9][0-9]*/head|tags/v[^/]+)', index['sourceRef']), 'invalid selected source ref')
     b = index['build']
-    require(set(b) == {'runId', 'attempt', 'workflowCommit', 'workflowRef', 'ciRun', 'pr', 'mode'}, 'build identity fields differ')
-    require(all(re.fullmatch(r'[1-9][0-9]*', str(b[k])) for k in ('runId', 'attempt', 'ciRun')), 'native run/attempt required')
+    require(set(b) == {'runId', 'workflowCommit', 'workflowRef', 'ciRun', 'pr', 'mode'}, 'build identity fields differ')
+    require(all(re.fullmatch(r'[1-9][0-9]*', str(b[k])) for k in ('runId', 'ciRun')), 'native run identity required')
     require(re.fullmatch(SHA, b['workflowCommit']), 'workflow commit required')
     if publishing:
         require(b['workflowRef'] == signer(index['version']).split('@', 1)[1], 'workflow ref differs from signer policy')
