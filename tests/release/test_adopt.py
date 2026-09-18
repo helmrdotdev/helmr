@@ -31,13 +31,23 @@ def ci_run(run_id=100, attempt=1, head=SOURCE, event='push', branch='main', work
                 repository=dict(id=repo_id), workflow_id=workflow_id, pull_requests=[])
 
 
+def job(name, *, status='completed', conclusion='success'):
+    return dict(name=name, status=status, conclusion=conclusion)
+
+
 def job_entries(*names):
-    return [dict(name=name, status='completed', conclusion='success') for name in names]
+    return [job(name) for name in names]
+
+
+def native_ci_jobs(*extra):
+    return job_entries('source-ci-complete', 'preview-ready') + [
+        job('artifact build skipped', conclusion='skipped'),
+    ] + list(extra)
 
 
 class API:
     def __init__(self, *, jobs=None, run=None, artifacts=None, zips=None):
-        self.job_list = jobs or job_entries('source-ci-complete', 'preview-ready')
+        self.job_list = jobs or native_ci_jobs()
         self.run = run or ci_run()
         self.artifacts = artifacts or {}
         self.zips = zips or {}
@@ -178,7 +188,8 @@ class MainAdmit(unittest.TestCase):
             admission.ci_success(API(), ci_run(workflow_id=9), 2, 1, SOURCE, 'push')
 
     def test_admit_returns_skip_from_admitted_ci_jobs(self):
-        jobs = job_entries('source-ci-complete', 'preview-ready', 'artifact build skipped')
+        jobs = job_entries('source-ci-complete', 'preview-ready') + [
+            job('artifact build skipped', conclusion='success')]
         run = ci_run(run_id=555, attempt=2)
         env = dict(GITHUB_REPOSITORY='helmrdotdev/helmr', GITHUB_EVENT_NAME='workflow_run',
                    GITHUB_REF='refs/heads/main', GITHUB_RUN_ID='999', GITHUB_RUN_ATTEMPT='1',
@@ -189,6 +200,30 @@ class MainAdmit(unittest.TestCase):
              patch.object(admission, 'ci_success', return_value=(555, jobs)):
             selected, skip = admission.admit(API(run=run), env, event, Path('.'))
         self.assertTrue(skip)
+        self.assertEqual(selected['build']['runId'], '555')
+
+    def test_main_admit_continues_with_native_skipped_marker(self):
+        jobs = native_ci_jobs()
+        run = ci_run(run_id=555, attempt=2)
+        env = dict(GITHUB_REPOSITORY='helmrdotdev/helmr', GITHUB_EVENT_NAME='workflow_run',
+                   GITHUB_REF='refs/heads/main', GITHUB_RUN_ID='999', GITHUB_RUN_ATTEMPT='1',
+                   GITHUB_WORKFLOW_SHA=ADVANCED)
+        event = dict(repository=dict(id=1), workflow_run=dict(id=555))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(['git', '-C', str(root), 'init', '-q'], check=True)
+            subprocess.run(['git', '-C', str(root), 'config', 'user.email', 'x@y.invalid'], check=True)
+            subprocess.run(['git', '-C', str(root), 'config', 'user.name', 'fixture'], check=True)
+            (root / 'sdk/typescript').mkdir(parents=True)
+            (root / 'sdk/typescript/package.json').write_text('{"version":"0.1.0"}')
+            subprocess.run(['git', '-C', str(root), 'add', '-A'], check=True)
+            subprocess.run(['git', '-C', str(root), '-c', 'commit.gpgsign=false', 'commit', '-qm', 'fixture'], check=True)
+            head = subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True).strip()
+            run['head_sha'] = head
+            with patch.object(admission, 'git', return_value='{"version":"0.1.0"}'), \
+                 patch.object(admission.subprocess, 'run'):
+                selected, skip = admission.admit(API(jobs=jobs, run=run), env, event, root)
+        self.assertFalse(skip)
         self.assertEqual(selected['build']['runId'], '555')
 
 
@@ -262,6 +297,40 @@ class ArtifactSkip(RepositoryFixture, unittest.TestCase):
 
     def test_unknown_paths_remain_relevant(self):
         self.assertTrue(admission.relevant(self.root, self.a, self.c))
+
+
+class CiArtifactSkipped(unittest.TestCase):
+    def test_skipped_conclusion_continues_publication(self):
+        self.assertFalse(admission.ci_artifact_skipped([
+            job('artifact build skipped', conclusion='skipped'),
+        ]))
+
+    def test_success_conclusion_skips_publication(self):
+        self.assertTrue(admission.ci_artifact_skipped([
+            job('artifact build skipped', conclusion='success'),
+        ]))
+
+    def test_absent_marker_continues(self):
+        self.assertFalse(admission.ci_artifact_skipped([]))
+
+    def test_duplicate_marker_fails_closed(self):
+        with self.assertRaisesRegex(ValueError, 'ambiguous artifact skip job'):
+            admission.ci_artifact_skipped([
+                job('artifact build skipped', conclusion='success'),
+                job('artifact build skipped', conclusion='success'),
+            ])
+
+    def test_incomplete_marker_fails_closed(self):
+        with self.assertRaisesRegex(ValueError, 'artifact skip job incomplete'):
+            admission.ci_artifact_skipped([
+                job('artifact build skipped', status='in_progress', conclusion=None),
+            ])
+
+    def test_failed_marker_fails_closed(self):
+        with self.assertRaisesRegex(ValueError, 'artifact skip job unsuccessful'):
+            admission.ci_artifact_skipped([
+                job('artifact build skipped', conclusion='failure'),
+            ])
 
 
 class NpmChannels(unittest.TestCase):
