@@ -113,8 +113,24 @@ def consumer(directory, cli_archive, work, expected_builder=None):
         require(real_curl, 'curl is required by the shipped installer')
         # Redirect only the release transport in this fixture, keeping the shipped
         # installer unchanged and using its real download/checksum/extraction path.
-        prefix = f'https://github.com/helmrdotdev/helmr/releases/download/v{version}/'
-        (shim / 'curl').write_text(f'#!{sys.executable}\nimport os,sys\na=[x.replace({prefix!r}, {("http://127.0.0.1:" + str(server.server_port) + "/")!r}) for x in sys.argv[1:]]\nos.execv({real_curl!r}, [{real_curl!r}]+a)\n')
+        prefix = f'https://helmr-previews-879980497511-us-east-1.s3.us-east-1.amazonaws.com/previews/v{version}/'
+        github_prefix = f'https://github.com/helmrdotdev/helmr/releases/download/v{version}/'
+        local = f'http://127.0.0.1:{server.server_port}/'
+        (shim / 'curl').write_text(
+            f'#!{sys.executable}\nimport os,sys\n'
+            f'preview={prefix!r}\nlocal={local!r}\n'
+            f'github={github_prefix!r}\n'
+            'a=[]\nrewritten=False\n'
+            'for x in sys.argv[1:]:\n'
+            '  if x.startswith(preview) or x.startswith(github):\n'
+            '    a.append(x.replace(preview, local, 1).replace(github, local, 1)); rewritten=True\n'
+            '  else:\n'
+            '    a.append(x)\n'
+            'if rewritten:\n'
+            '  for i,x in enumerate(a):\n'
+            '    if x == "--proto" and i + 1 < len(a) and a[i + 1] == "=https":\n'
+            '      a[i + 1] = "=http,https"\n'
+            f'os.execv({real_curl!r}, [{real_curl!r}]+a)\n')
         (shim / 'curl').chmod(0o755)
         run('bash', Path(__file__).resolve().parents[2] / 'install', '--version', 'v' + version, '--no-modify-path',
             env=dict(os.environ, PATH=str(shim) + os.pathsep + os.environ['PATH'], HELMR_INSTALL_DIR=str(work / 'bin')))

@@ -13,10 +13,87 @@ for caller in "$workflow" "$repo_root/.github/workflows/ci.yaml"; do
   require_text 'uses: ./.github/workflows/build-artifacts.yaml' "$caller" \
     'CI and release must use the same artifact build workflow'
 done
+require_text 'publisher_run: ${{ github.run_id }}' "$workflow" \
+  'publish job must export publisher run for readback verification'
+require_text 'release-producer-' "$workflow" \
+  'same-producer release runs must serialize without cancellation'
+require_text 'queue: max' "$workflow" \
+  'preview-channel, producer and discovery groups must use native queue:max'
+require_text 'cancel-in-progress: false' "$workflow" \
+  'preview eviction-unsafe groups must not cancel in progress'
+require_text 'main.py precheck' "$workflow" \
+  'publish must re-check main head after preview channel lock'
+require_text 'python3 scripts/release/main.py precheck' "$workflow" \
+  'precheck must not require the images shell'
+require_text 'needs.publish-preview.outputs.superseded' "$workflow" \
+  'verify and complete-preview must skip superseded automatic main candidates'
+require_text 'needs.publish-preview.result == '\''success'\''' "$workflow" \
+  'verify and complete-preview must gate on successful preview publish'
+require_text 'needs.publish-tag.result == '\''success'\''' "$workflow" \
+  'verify and complete-tag must gate on successful tag publish'
+require_text 'environment: preview' "$workflow" \
+  'preview jobs must use literal preview environment'
+require_text 'environment: release' "$workflow" \
+  'formal tag jobs must use literal release environment'
+bash "$repo_root/tests/release/test_assume_preview_role.sh"
+python3 <<PY
+import re
+import sys
+from pathlib import Path
+
+text = Path("$workflow").read_text()
+jobs = ('publish-preview', 'complete-preview', 'discovery')
+consumers = ('main.py finalize', 'main.py discover', 'main.py stage')
+assume = 'assume-preview-role.sh'
+markers = [(m.group(1), m.start()) for m in re.finditer(r'^  ([a-z][a-z0-9_-]*):\n', text, re.M)]
+
+def block(name):
+    idx = next(i for i, (job, _) in enumerate(markers) if job == name)
+    start = markers[idx][1]
+    end = markers[idx + 1][1] if idx + 1 < len(markers) else len(text)
+    return text[start:end]
+
+for job in jobs:
+    body = block(job)
+    steps = re.split(r'\n      - name:', body)[1:]
+    assume_step = consumer_step = None
+    for index, step in enumerate(steps, start=1):
+        run = step.split('run:', 1)[-1] if 'run:' in step else ''
+        if assume in run:
+            if any(marker in run for marker in consumers):
+                sys.exit(f'{job}: assume helper must not run in the same step as preview consumer commands')
+            assume_step = index
+        if any(marker in run for marker in consumers):
+            consumer_step = index
+    if consumer_step is None:
+        sys.exit(f'{job}: missing preview consumer step')
+    if assume_step is None or assume_step >= consumer_step:
+        sys.exit(f'{job}: preview consumer step must follow a separate earlier assume step')
+print('ok - preview assume steps precede consumers')
+PY
+if [ "$(rg -c '^concurrency:' "$workflow" || true)" != 1 ]; then
+  printf 'release workflow must declare exactly one top-level producer concurrency\n' >&2
+  exit 1
+fi
+actionlint_config="$repo_root/.github/actionlint.yaml"
+require_text 'unexpected key "queue" for "concurrency" section' "$actionlint_config" \
+  'actionlint must ignore only the queue field false positive on release.yaml'
+require_text '.github/workflows/release.yaml:' "$actionlint_config" \
+  'actionlint ignore must be scoped to release.yaml only'
 require_text 'name: build-artifacts-${{ github.run_id }}-${{ matrix.part }}' \
   "$repo_root/.github/workflows/build-artifacts.yaml" 'component upload name differs from retry lookup'
 require_text 'name: build-artifacts-${{ github.run_id }}-cli' \
   "$repo_root/.github/workflows/build-artifacts.yaml" 'CLI upload name differs from retry lookup'
+require_text 'PREVIEW_PUBLISHER_ROLE_ARN' "$workflow" \
+  'preview publication must assume the dedicated publisher role'
+require_text 'main.py verify' "$workflow" \
+  'preview verification must reconstruct cohort bytes from public object store'
+require_text 'channels/preview.json' "$repo_root/scripts/release/preview_store.py" \
+  'preview pointer path must remain channels/preview.json'
+require_text 'assume-preview-role.sh' "$workflow" \
+  'preview jobs must share one OIDC assume-role script'
+require_text 'assume-role-with-web-identity' "$repo_root/scripts/release/assume-preview-role.sh" \
+  'preview publisher credentials must use native AWS CLI OIDC'
 if rg 'aws-actions|worker-ami|platform-release-dev' "$workflow"; then exit 1; fi
 python3 -m unittest discover -s "$repo_root/tests/release" -v
 tmp=$(mktemp -d)

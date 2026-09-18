@@ -248,7 +248,12 @@ else
   [[ "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { print_message error "Invalid release version."; exit 1; }
   filename="$APP-$target.tar.gz"
   specific_version="$release_tag"
-  base_url="https://github.com/$REPO/releases/download/$release_tag"
+  PREVIEW_ORIGIN='https://helmr-previews-879980497511-us-east-1.s3.us-east-1.amazonaws.com'
+  if [[ "$release_tag" == *"-preview."* ]]; then
+    base_url="$PREVIEW_ORIGIN/previews/$release_tag"
+  else
+    base_url="https://github.com/$REPO/releases/download/$release_tag"
+  fi
   url="$base_url/$filename"
 
   if installed_path="$(command -v "$APP" 2>/dev/null)"; then
@@ -269,24 +274,46 @@ else
   trap cleanup EXIT
 
   print_message info "${MUTED}Installing Helmr ${NC}$specific_version${MUTED} for ${NC}$target"
-  curl -fL --progress-bar -o "$tmp_dir/$filename" "$url"
-  curl -fsSL -o "$tmp_dir/checksums.txt" "$base_url/checksums.txt"
-
-  curl -fsSL -o "$tmp_dir/release-index.json" "$base_url/release-index.json"
-  # Product emits canonical single-line v0 JSON. No additional bootstrap runtime.
-  index=$(cat "$tmp_dir/release-index.json")
-  [[ "$index" == *'"schema":"helmr.release.v0"'* && "$index" == *"\"version\":\"$release_tag\""* ]] || {
-    print_message error "Release index identity differs."; exit 1;
+  preview_fetch() {
+    local url=$1 dest=$2 code
+    code=$(curl -sS --proto '=https' --max-redirs 0 -w '%{http_code}' -o "$dest" "$url" || true)
+    [ "$code" = "200" ] || { print_message error "Preview download failed: HTTP $code"; exit 1; }
   }
-  index_checksums=$(printf '%s' "$index" | sed -nE 's/.*"checksums.txt":\{"digest":"sha256:([0-9a-f]{64})","sizeBytes":[0-9]+\}.*/\1/p')
-  [[ "$index_checksums" =~ ^[0-9a-f]{64}$ ]] || { print_message error "Release index omits checksums."; exit 1; }
-  if command -v sha256sum >/dev/null 2>&1; then
-    checksums_sha=$(sha256sum "$tmp_dir/checksums.txt" | awk '{print $1}')
+  if [[ "$release_tag" == *"-preview."* ]]; then
+    preview_fetch "$base_url/checksums.txt" "$tmp_dir/checksums.txt"
+    preview_fetch "$base_url/release-index.json" "$tmp_dir/release-index.json"
+    index=$(cat "$tmp_dir/release-index.json")
+    [[ "$index" == *'"schema":"helmr.release.v0"'* && "$index" == *"\"version\":\"$release_tag\""* ]] || {
+      print_message error "Release index identity differs."; exit 1;
+    }
+    index_checksums=$(printf '%s' "$index" | sed -nE 's/.*"checksums.txt":\{"digest":"sha256:([0-9a-f]{64})","sizeBytes":[0-9]+\}.*/\1/p')
+    [[ "$index_checksums" =~ ^[0-9a-f]{64}$ ]] || { print_message error "Release index omits checksums."; exit 1; }
+    if command -v sha256sum >/dev/null 2>&1; then
+      checksums_sha=$(sha256sum "$tmp_dir/checksums.txt" | awk '{print $1}')
+    else
+      need_command shasum
+      checksums_sha=$(shasum -a 256 "$tmp_dir/checksums.txt" | awk '{print $1}')
+    fi
+    [ "$checksums_sha" = "$index_checksums" ] || { print_message error "Indexed checksums differ."; exit 1; }
+    preview_fetch "$url" "$tmp_dir/$filename"
   else
-    need_command shasum
-    checksums_sha=$(shasum -a 256 "$tmp_dir/checksums.txt" | awk '{print $1}')
+    curl -fL --progress-bar -o "$tmp_dir/$filename" "$url"
+    curl -fsSL -o "$tmp_dir/checksums.txt" "$base_url/checksums.txt"
+    curl -fsSL -o "$tmp_dir/release-index.json" "$base_url/release-index.json"
+    index=$(cat "$tmp_dir/release-index.json")
+    [[ "$index" == *'"schema":"helmr.release.v0"'* && "$index" == *"\"version\":\"$release_tag\""* ]] || {
+      print_message error "Release index identity differs."; exit 1;
+    }
+    index_checksums=$(printf '%s' "$index" | sed -nE 's/.*"checksums.txt":\{"digest":"sha256:([0-9a-f]{64})","sizeBytes":[0-9]+\}.*/\1/p')
+    [[ "$index_checksums" =~ ^[0-9a-f]{64}$ ]] || { print_message error "Release index omits checksums."; exit 1; }
+    if command -v sha256sum >/dev/null 2>&1; then
+      checksums_sha=$(sha256sum "$tmp_dir/checksums.txt" | awk '{print $1}')
+    else
+      need_command shasum
+      checksums_sha=$(shasum -a 256 "$tmp_dir/checksums.txt" | awk '{print $1}')
+    fi
+    [ "$checksums_sha" = "$index_checksums" ] || { print_message error "Indexed checksums differ."; exit 1; }
   fi
-  [ "$checksums_sha" = "$index_checksums" ] || { print_message error "Indexed checksums differ."; exit 1; }
 
   expected_sha="$(awk -v file="$filename" '$2 == file { print $1 }' "$tmp_dir/checksums.txt")"
   if [[ ! "$expected_sha" =~ ^[0-9a-f]{64}$ ]]; then

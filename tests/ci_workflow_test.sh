@@ -24,7 +24,19 @@ require_text 'needs: artifact-selection' \
   "artifact build does not depend on source selection"
 require_text 'selection: ${{ needs.artifact-selection.outputs.selection }}' \
   "artifact build does not use the selected exact source"
+require_text 'skip_artifacts' \
+  "artifact selection does not expose documentation-only skip"
+require_text 'fetch-depth: ${{ github.event_name == '\''push'\'' && '\''0'\'' || '\'''\'' }}' \
+  "artifact-selection must use full history only on main push"
+require_text 'name: source-ci-complete' \
+  "required source aggregate missing on main"
+require_text 'name: preview-ready' \
+  "preview readiness is not separated from source CI on main"
+require_text 'github.event_name == '\''pull_request'\''' \
+  "pull-request aggregate no longer scoped to PR events"
+require_text '"${{ needs.source-ci-complete.result }}"' \
+  "PR ci complete does not require source aggregate"
 require_text '"${{ needs.build-artifacts.result }}"' \
-  "ci complete does not check the artifact build result"
+  "PR ci complete does not require artifact build"
 
 printf 'ok - CI workflow policy\n'

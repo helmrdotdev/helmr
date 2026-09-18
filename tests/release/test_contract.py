@@ -11,16 +11,25 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts/release'))
 from contract import cli_checksums, ASSETS, canonical, descriptor, digest, preview_version, read, safe_extract, signer, validate, verify_files, write
+import admission
 from admission import ci_success, docs_only, pr_head, relevant
-from publish import newest_eligible
 from transport import freeze, same_selection
 
 SOURCE = '01234567' + 'a' * 32
 
 def selection(mode='main'):
-    return dict(version=preview_version('0.1.0', SOURCE, '123'), sourceCommit=SOURCE,
-                sourceRef='refs/heads/main' if mode == 'main' else 'refs/pull/7/head',
-                build=dict(runId='123', attempt='1', workflowCommit='b'*40, workflowRef='refs/heads/main', ciRun='100', pr=None if mode == 'main' else 7, mode=mode))
+    if mode == 'tag':
+        version, source_ref, pr = 'v1.0.0', 'refs/tags/v1.0.0', None
+    elif mode == 'pr':
+        version = preview_version('0.1.0', SOURCE, '123')
+        source_ref, pr = 'refs/pull/7/head', 7
+    else:
+        version = preview_version('0.1.0', SOURCE, '123')
+        source_ref, pr = 'refs/heads/main', None
+    return dict(version=version, sourceCommit=SOURCE, sourceRef=source_ref,
+                build=dict(runId='123', workflowCommit='b'*40,
+                           workflowRef=source_ref if mode == 'tag' else 'refs/heads/main',
+                           ciRun='100', pr=pr, mode=mode))
 
 
 def archive(path, files):
@@ -35,21 +44,21 @@ def archive(path, files):
             out.addfile(item, io.BytesIO(data))
 
 
-def assets(root):
-    s = selection()
+def assets(root, sel=None):
+    s = sel or selection()
     runtime = dict(formatVersion=0, digest='sha256:'+'1'*64)
     for name in ASSETS:
         (root/name).write_bytes(b'bytes')
     for name, image in (('bundle-builder.json','bundle-builder'), ('controlplane.json','control-plane')):
-        write(root/name, dict(formatVersion=0, sourceCommit=SOURCE, image=f'ghcr.io/helmrdotdev/{image}@sha256:'+ '2'*64, runtime=runtime))
+        write(root/name, dict(formatVersion=0, sourceCommit=s['sourceCommit'], image=f'ghcr.io/helmrdotdev/{image}@sha256:'+ '2'*64, runtime=runtime))
     archive(root/'platform-release.tar', {'platform-release.json':dict(formatVersion=0,runtime=runtime)})
-    write(root/'platform-release-provenance.json', dict(sourceCommit=SOURCE, sourceRef=s['sourceRef'],archive=descriptor(root/'platform-release.tar')))
+    write(root/'platform-release-provenance.json', dict(sourceCommit=s['sourceCommit'], sourceRef=s['sourceRef'],archive=descriptor(root/'platform-release.tar')))
     for name,bundle,manifest,key in (
         ('worker-host-bundle.json','worker-host-artifacts.tar','worker-host-artifacts.json','manifest'),
         ('worker-runtime-bundle.json','runtime-artifacts.tar','runtime-artifacts.json','runtimeArtifactsManifest')):
-        write(root/name, dict(sourceCommit=SOURCE,bundle=dict(path=bundle,digest=digest(root/bundle)), **{key:dict(path=manifest,digest=digest(root/manifest))}))
+        write(root/name, dict(sourceCommit=s['sourceCommit'],bundle=dict(path=bundle,digest=digest(root/bundle)), **{key:dict(path=manifest,digest=digest(root/manifest))}))
     for filename, package in (('sdk.tgz','@helmr/sdk'),('proto.tgz','@helmr/proto')):
-        metadata=dict(name=package,version=s['version'][1:],helmr=dict(formatVersion=0,sourceCommit=SOURCE,buildId='123'),dependencies={'@helmr/proto':s['version'][1:]})
+        metadata=dict(name=package,version=s['version'][1:],helmr=dict(formatVersion=0,sourceCommit=s['sourceCommit'],buildId=str(s['build']['runId'])),dependencies={'@helmr/proto':s['version'][1:]})
         archive(root/filename, {'package/package.json':metadata})
     (root/'checksums.txt').write_bytes(cli_checksums(root))
     return dict(s,schema='helmr.release.v0',assets={name:descriptor(root/name) for name in ASSETS})
@@ -133,11 +142,17 @@ class Contract(unittest.TestCase):
             path=Path(tmp)/'x';path.write_text('{"x":1,"x":2}')
             with self.assertRaises(ValueError):read(path)
 
-    def test_original_byte_retry_identity(self):
-        original=selection();retry=copy.deepcopy(original);retry['build']['attempt']='2'
+    def test_exact_selection_equality(self):
+        original=selection();retry=copy.deepcopy(original)
         same_selection(original,retry)
         retry['build']['workflowCommit']='c'*40
         with self.assertRaises(ValueError):same_selection(original,retry)
+
+    def test_index_with_build_attempt_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            index=assets(Path(tmp))
+            index['build']['attempt']='2'
+            with self.assertRaisesRegex(ValueError,'build identity fields differ'):validate(index)
 
     def test_current_pr_head(self):
         pr=dict(number=7,state='open',base=dict(ref='main',repo=dict(id=1)),head=dict(sha=SOURCE,repo=dict(id=1)))
@@ -151,12 +166,16 @@ class Contract(unittest.TestCase):
             with self.assertRaises(ValueError):pr_head(bad,7,SOURCE,1)
 
     def test_native_ci_producer_and_aggregate(self):
-        class API:
-            def pages(self,*_):return [dict(name='ci complete',status='completed',conclusion='success')]
         run=dict(id=10,run_attempt=1,repository=dict(id=1),workflow_id=2,path='.github/workflows/ci.yaml',event='push',head_sha=SOURCE,head_branch='main',status='completed',conclusion='success')
-        self.assertEqual(ci_success(API(),run,2,1,SOURCE,'push'),10)
+        class API:
+            def pages(self,*_):return [dict(name='source-ci-complete',status='completed',conclusion='success'),dict(name='preview-ready',status='completed',conclusion='success')]
+        self.assertEqual(admission.ci_success(API(),run,2,1,SOURCE,'push')[0],10)
+        class PR:
+            def pages(self,*_):return [dict(name='ci complete',status='completed',conclusion='success')]
+        pr=dict(run,event='pull_request',head_branch=None,pull_requests=[dict(number=7,head=dict(sha=SOURCE))])
+        self.assertEqual(admission.ci_success(PR(),pr,2,1,SOURCE,'pull_request',7)[0],10)
         for key,value in [('path','.github/workflows/release.yaml'),('workflow_id',3),('event','pull_request'),('head_branch','other'),('conclusion','failure'),('head_sha','c'*40)]:
-            with self.subTest(key=key),self.assertRaises(ValueError):ci_success(API(),dict(run,**{key:value}),2,1,SOURCE,'push')
+            with self.subTest(key=key),self.assertRaises(ValueError):admission.ci_success(API(),dict(run,**{key:value}),2,1,SOURCE,'push')
 
 
 class RepositoryFixture:
@@ -176,20 +195,6 @@ class RepositoryFixture:
 
 
 class Discovery(RepositoryFixture, unittest.TestCase):
-    def test_pending_replacement_and_stale_finish_reconciles_newest(self):
-        # updater occupied, B pending, late A replaces B. A reconciles both.
-        completed=[self.index(self.a,1),self.index(self.b,2)]
-        self.assertEqual(newest_eligible(completed,self.root,self.c)['sourceCommit'],self.b)
-        self.assertEqual(newest_eligible(list(reversed(completed)),self.root,self.c)['sourceCommit'],self.b)
-
-    def test_publication_complete_discovery_failure_retry(self):
-        completed=[self.index(self.b,2)]
-        first=newest_eligible(completed,self.root,self.c)
-        # No upload/rebuild changes on discovery-only retry.
-        self.assertEqual(first,newest_eligible(completed,self.root,self.c))
-        self.assertFalse(relevant(self.root,self.b,self.c))
-        self.assertTrue(relevant(self.root,self.a,self.c))
-
     def test_rename_and_delete_relevance(self):
         self.git('mv','README.md','shipped.md');self.git('-c','commit.gpgsign=false','commit','-qm','rename')
         self.assertTrue(relevant(self.root,self.c,self.git('rev-parse','HEAD')))

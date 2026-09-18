@@ -150,7 +150,7 @@ class GitHubDownloads(unittest.TestCase):
             self.assertTrue(any('releases?per_page=100&page=2' in path for path, _ in self.requests))
             self.assertEqual(self.api.request('releases/1')['id'], 1)
             readback = self.root / 'publisher-readback'
-            publish.download_build(self.api, selection(), readback, selected)
+            publish.download_build(self.api, selection('tag'), readback, selected)
             self.assertEqual({p.name for p in readback.iterdir()}, set(index['assets']) | {'release-build.json', 'release-build.sigstore.json'})
             with zipfile.ZipFile(self.archive, 'w') as archive:
                 for path in readback.iterdir():
@@ -165,10 +165,9 @@ class GitHubDownloads(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, '404'):
                     self.api.request('releases/assets/1', destination=self.root / 'forbidden', accept='application/octet-stream')
                 self.requests.clear()
-                retry = selection()
-                retry['build']['attempt'] = '3'
+                retry = selection('tag')
                 accepted = self.root / 'consumer-readback'
-                self.assertEqual(transport.download_readback(self.api, retry, accepted, '4', action_digest, '2', build_digest), index)
+                self.assertEqual(transport.download_readback(self.api, retry, accepted, '4', action_digest, '123', '2', build_digest), index)
                 self.assertEqual([path for path, _ in self.requests], [
                     '/repos/helmrdotdev/helmr/actions/artifacts/4',
                     '/repos/helmrdotdev/helmr/actions/artifacts/4/zip', '/artifact.zip'])

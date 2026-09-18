@@ -33,7 +33,7 @@ class Platform(unittest.TestCase):
                     item=tarfile.TarInfo('../escape' if case=='unsafe' else 'platform-release.json');item.size=2;t.addfile(item,io.BytesIO(b'{}'))
                 ref='refs/heads/main' if case=='preview' else 'refs/tags/'+version
                 provenance=root/'platform-release-provenance.json';provenance.write_bytes(canonical(dict(formatVersion=0,sourceCommit=source,sourceRef='refs/heads/foreign' if case=='ref' else ref,archive=descriptor(archive))))
-                index=dict(schema='helmr.release.v0',version=version,sourceCommit='b'*40 if case=='source' else source,sourceRef=ref,build=dict(runId='1',attempt='1',workflowCommit='c'*40,workflowRef='refs/heads/foreign' if case=='workflow' else signer.split('@')[1],ciRun='1',pr=None,mode='main' if case=='preview' else 'tag'),assets={n:dict(digest='sha256:'+'0'*64,sizeBytes=1) for n in ASSETS})
+                index=dict(schema='helmr.release.v0',version=version,sourceCommit='b'*40 if case=='source' else source,sourceRef=ref,build=dict(runId='1',workflowCommit='c'*40,workflowRef='refs/heads/foreign' if case=='workflow' else signer.split('@')[1],ciRun='1',pr=None,mode='main' if case=='preview' else 'tag'),assets={n:dict(digest='sha256:'+'0'*64,sizeBytes=1) for n in ASSETS})
                 for p in (archive,provenance):index['assets'][p.name]=descriptor(p)
                 indexpath=root/'release-index.json';indexpath.write_bytes(canonical(index));sig=root/'release-index.sigstore.json';sig.write_text('fixture only')
                 if case=='archive':archive.write_bytes(b'tamper')

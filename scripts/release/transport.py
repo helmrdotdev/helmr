@@ -21,9 +21,6 @@ FILES = {
 
 
 def same_selection(a, b):
-    # Publishing attempt changes; original source/workflow/build identity does not.
-    a, b = dict(a, build=dict(a['build'])), dict(b, build=dict(b['build']))
-    a['build'].pop('attempt'); b['build'].pop('attempt')
     require(a == b, 'frozen source/workflow/build identity differs')
 
 
@@ -86,18 +83,18 @@ def assemble(api, selection, destination):
 
 
 def download_readback(api, selection, destination, artifact_id, artifact_digest,
-                      publisher_attempt, build_digest):
+                      publisher_run, publisher_attempt, build_digest):
     """One flat signed cohort from the exact publisher-selected native artifact."""
     require(re.fullmatch(r'[1-9][0-9]*', str(artifact_id)), 'artifact ID required')
+    require(re.fullmatch(r'[1-9][0-9]*', str(publisher_run)), 'publisher run required')
     require(re.fullmatch(r'[1-9][0-9]*', str(publisher_attempt)), 'publisher attempt required')
     # upload-artifact outputs bare hex; REST metadata and Product use sha256:hex.
     require(re.fullmatch(r'[0-9a-f]{64}', artifact_digest or ''), 'bare action artifact digest required')
     expected_zip = 'sha256:' + artifact_digest
     require(re.fullmatch(DIGEST, build_digest or ''), 'build digest required')
-    run_id = selection['build']['runId']
     item = api.request(f'actions/artifacts/{artifact_id}')
-    require(str(item['id']) == str(artifact_id) and str(item['workflow_run']['id']) == str(run_id), 'foreign artifact ID/run')
-    require(item['name'] == f'release-readback-{run_id}-{publisher_attempt}' and not item['expired'], 'wrong or expired readback artifact')
+    require(str(item['id']) == str(artifact_id) and str(item['workflow_run']['id']) == str(publisher_run), 'foreign artifact ID/run')
+    require(item['name'] == f'release-readback-{publisher_run}-{publisher_attempt}' and not item['expired'], 'wrong or expired readback artifact')
     require(item['digest'] == expected_zip, 'native artifact metadata digest differs')
     destination = Path(destination)
     require(not destination.exists(), 'readback requires a fresh directory')

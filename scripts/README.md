@@ -30,8 +30,13 @@ from validation. Go race tests use `-count=1` to execute tests even when compile
 packages are cached. Browser failure screenshots and traces are retained as the
 `browser-failure` Actions artifact for seven days.
 
-All checks still run on every PR and main push. The required `ci complete` check
-rejects failure, cancellation, or a skipped dependency. Release builds use their
+All checks still run on every PR and main push. Pull requests require **ci
+complete**, which rejects failure, cancellation, or a skipped dependency in
+**source-ci-complete** or **build release artifacts**. Main push additionally
+reports **preview-ready** separately; publication requires both relevant source
+checks and successful artifact/consumer verification for the exact producer
+commit. Documentation-only main changes skip artifact generation with a truthful
+successful skip while **source-ci-complete** still runs. Release builds use their
 existing separate workflow and setup action. Version-cohort and boot-reproducibility
 checks run independently in the release-contract matrix; both must pass.
 

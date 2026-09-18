@@ -63,7 +63,9 @@ class Releases:
 
 
 def seed_draft(root):
-    index=assets(root);api=Releases()
+    selected = selection('tag')
+    index = assets(root, selected)
+    api = Releases()
     release=api.request('releases',data=dict(tag_name=index['version'],target_commitish=index['sourceCommit'],draft=True))
     write(root/'release-build.json',index);fake_sign(root/'release-build.json')
     for name in (*index['assets'],'release-build.json','release-build.sigstore.json'):
@@ -132,30 +134,9 @@ class Publication(unittest.TestCase):
                         write(root / name, record)
                         index['assets'][name] = descriptor(root / name)
 
-    def test_interrupted_preview_pair_reuses_original_attempt_and_rejects_changed_bytes(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root=Path(tmp);s=selection();assets(root);api=Releases();api.fail='release-build.sigstore.json'
-            with patch.object(publish,'recheck_pr'),patch.object(publish,'publish_images'),patch.object(publish,'npm_publish'),patch.object(publish,'sign',side_effect=fake_sign),patch.object(publish,'verify_signature',side_effect=fake_verify):
-                with self.assertRaises(OSError):publish.stage(api,s,root)
-                # Preserve original raw bytes, including serialization, on retry.
-                api.blobs[1,'release-build.json']=json.dumps(json.loads(api.blobs[1,'release-build.json']),indent=2).encode()
-                frozen=api.blobs[1,'release-build.json']
-                retry=copy.deepcopy(s);retry['build']['attempt']='2'
-                # Fresh publishing job receives the original frozen components.
-                (root/'release-build.sigstore.json').unlink()
-                result=publish.stage(api,retry,root)
-                self.assertEqual(result['id'],1)
-                self.assertEqual(json.loads(api.blobs[1,'release-build.json'])['build']['attempt'],'1')
-                self.assertEqual(api.blobs[1,'release-build.json'],frozen)
-                (root/'helmr-linux-amd64.tar.gz').write_bytes(b'changed')
-                (root/'old-build.json').unlink()
-                (root/'release-build.sigstore.json').unlink()
-                (root/'checksums.txt').write_bytes(test_contract.cli_checksums(root))
-                with self.assertRaisesRegex(ValueError,'retry built different bytes'):publish.stage(api,retry,root)
-
     def test_final_index_last_and_interrupted_completion_retry(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root=Path(tmp);api,r,index=seed_draft(root);s=selection()
+            root=Path(tmp);api,r,index=seed_draft(root);s=selection('tag')
             build_digest=digest(root/'release-build.json')
             with patch.object(publish,'sign',side_effect=fake_sign) as sign,patch.object(publish,'verify_signature',side_effect=fake_verify),patch.object(publish.urllib.request,'urlopen',side_effect=lambda url,**kw:public_download(api,url,**kw)):
                 api.fail='release-index.json'
@@ -168,7 +149,7 @@ class Publication(unittest.TestCase):
                 self.assertEqual(api.blobs[1,'release-index.json'],api.blobs[1,'release-build.json'])
                 self.assertEqual(sign.call_count,1)
                 writes=list(api.writes)
-                retry=copy.deepcopy(s);retry['build']['attempt']='3'
+                retry=copy.deepcopy(s)
                 publish.finalize(api,retry,root/'third','1',build_digest)
                 self.assertEqual(api.writes,writes);self.assertEqual(sign.call_count,1)
                 # A full rerun admits public completed bytes without publisher outputs.
@@ -178,7 +159,7 @@ class Publication(unittest.TestCase):
     def test_published_retry_binds_id_raw_build_and_completed_bytes_before_any_write(self):
         for failure in ('response','public-readback'):
             with self.subTest(failure=failure),tempfile.TemporaryDirectory() as tmp:
-                root=Path(tmp);api,r,index=seed_draft(root);s=selection();build_digest=digest(root/'release-build.json')
+                root=Path(tmp);api,r,index=seed_draft(root);s=selection('tag');build_digest=digest(root/'release-build.json')
                 with patch.object(publish,'sign',side_effect=fake_sign) as sign,patch.object(publish,'verify_signature',side_effect=fake_verify),patch.object(publish.urllib.request,'urlopen',side_effect=OSError('public unavailable')) as public:
                     api.fail='response' if failure=='response' else None
                     with self.assertRaises(OSError):publish.finalize(api,s,root/'first','1',build_digest)
@@ -200,7 +181,7 @@ class Publication(unittest.TestCase):
 
     def test_draft_visibility_duplicate_version_and_formal_tag_collision(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root=Path(tmp);api,r,_=seed_draft(root);s=selection()
+            root=Path(tmp);api,r,_=seed_draft(root);s=selection('tag')
             self.assertIsNone(api.request('releases/tags/'+s['version'],missing=True))
             self.assertEqual(publish.find_release(api,s['version']),r)
             api.writer=False
@@ -221,11 +202,16 @@ class Publication(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             p=Path(tmp)/'sdk.tgz';p.write_bytes(b'original')
             metadata=json.dumps(dict(dist=dict(tarball='https://registry.npmjs.org/sdk.tgz'))).encode()
-            for mode,remote,success in [('main',b'original',True),('pr',b'changed',False),('tag',b'original',False)]:
+            for selected,remote,success in (
+                (dict(build=dict(mode='main', pr=None), version='v0.1.0-preview.g01234567.b1'), b'original', True),
+                (dict(build=dict(mode='pr', pr=7), version='v0.1.0-preview.g01234567.b1'), b'changed', False),
+                (dict(build=dict(mode='tag', pr=None), version='v1.0.0'), b'original', False),
+            ):
                 with patch.object(publish.urllib.request,'urlopen',side_effect=[io.BytesIO(metadata),io.BytesIO(remote)]),patch.object(publish,'run') as command:
-                    if success:publish.npm_publish(p,'@helmr/sdk','0.1.0',mode)
+                    if success:
+                        publish.npm_publish(p,'@helmr/sdk','0.1.0-preview.g01234567.b1',selected)
                     else:
-                        with self.assertRaises(ValueError):publish.npm_publish(p,'@helmr/sdk','0.1.0',mode)
+                        with self.assertRaises(ValueError):publish.npm_publish(p,'@helmr/sdk','0.1.0-preview.g01234567.b1',selected)
                     command.assert_not_called()
 
     def test_native_artifact_retry_and_corruption(self):
@@ -239,7 +225,7 @@ class Publication(unittest.TestCase):
             class API:
                 def pages(self,*_):return [item]
                 def request(self,path,*,destination):shutil.copyfile(z,destination)
-            retry=selection();retry['build']['attempt']='2'
+            retry=copy.deepcopy(selection())
             self.assertTrue(restore(API(),'sdk',retry,root/'restored'))
             self.assertEqual((root/'restored/sdk.tgz').read_bytes(),b'sdk')
             extract = transport.safe_extract
@@ -250,26 +236,3 @@ class Publication(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,'frozen part bytes differ'):restore(API(),'sdk',retry,root/'damaged')
             item['digest']='sha256:'+'0'*64
             with self.assertRaisesRegex(ValueError,'ZIP digest'):restore(API(),'sdk',retry,root/'bad')
-
-class DiscoverySurface(test_contract.RepositoryFixture, unittest.TestCase):
-    def test_actual_serial_updater_reconciles_replaced_pending_and_failure_retry(self):
-        self.git('branch','-M','main');self.git('remote','add','origin',str(self.root))
-        api=Releases()
-        # Late A's updater replaces pending B. Invoking run is deliberately absent
-        # from discover's interface; it reads every completed signed release.
-        for source,run in [(self.b,2),(self.a,1)]:
-            index=self.index(source,run);index['version']='v0.1.0-preview.g'+source[:8]+'.b'+str(run)
-            r=api.request('releases',data=dict(tag_name=index['version'],draft=False))
-            api.blobs[r['id'],'release-index.json']=canonical(index)
-        def fetch(_api,release,directory):
-            Path(directory).mkdir();raw=api.blobs[release['id'],'release-index.json'];(Path(directory)/'release-index.json').write_bytes(raw);return json.loads(raw)
-        with patch.object(publish,'fetch_index',side_effect=fetch):
-            result=publish.discover(api,self.root);self.assertEqual(result['sourceCommit'],self.b)
-            pointer=api.request('releases/tags/preview');original=pointer['body']
-            api.fail='pointer'
-            with self.assertRaises(OSError):publish.discover(api,self.root)
-            self.assertEqual(pointer['body'],original)
-            self.assertEqual(publish.discover(api,self.root),result)
-            # Same version/tag but different signed bytes cannot match old pointer.
-            record=json.loads(pointer['body']);record['indexDigest']='sha256:'+'0'*64;pointer['body']=json.dumps(record)
-            with self.assertRaisesRegex(ValueError,'signed bytes'):publish.discover(api,self.root)

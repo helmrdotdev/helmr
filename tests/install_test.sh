@@ -277,6 +277,101 @@ PYCODE
   done
 }
 
+write_preview_fixture() {
+  local tmp="$1"
+  mkdir -p "$tmp/source"
+  write_helmr_binary "$tmp/source/helmr" "v0.1.0-preview.gabcdef01.b2 (0123456789abcdef0123456789abcdef01234567)"
+  tar -C "$tmp/source" -czf "$tmp/helmr-linux-amd64.tar.gz" helmr
+  PYTHONPATH="$repo_root/scripts/release" python3 - "$tmp" <<'PYCODE'
+import sys, shutil
+from pathlib import Path
+from contract import PLATFORMS, canonical, cli_checksums, descriptor
+root=Path(sys.argv[1])
+for p in PLATFORMS:
+    if p != 'linux-amd64':
+        shutil.copyfile(root/'helmr-linux-amd64.tar.gz', root/f'helmr-{p}.tar.gz')
+(root/'checksums.txt').write_bytes(cli_checksums(root))
+(root/'release-index.json').write_bytes(canonical(dict(
+    schema='helmr.release.v0', version='v0.1.0-preview.gabcdef01.b2',
+    assets={'checksums.txt': descriptor(root/'checksums.txt')})))
+PYCODE
+}
+
+write_preview_curl_stub() {
+  local tmp="$1"
+  local forbid="${2:-false}"
+  cat > "$tmp/stub-bin/curl" <<SH
+#!/usr/bin/env sh
+out=""
+url=""
+while [ "\$#" -gt 0 ]; do
+  case "\$1" in
+    -o) out="\$2"; shift 2 ;;
+    -w) shift 2 ;;
+    --proto|--max-redirs) shift 2 ;;
+    -*) shift ;;
+    *) url="\$1"; shift ;;
+  esac
+done
+code=200
+case "\$url" in
+  *"/release-index.json")
+    printf 'release-index\n' >>"$tmp/order"
+    cp "$tmp/release-index.json" "\$out"
+    ;;
+  *"/checksums.txt")
+    if [ "$forbid" = true ]; then code=403; : >"\$out"; else
+      printf 'checksums\n' >>"$tmp/order"
+      cp "$tmp/checksums.txt" "\$out"
+    fi
+    ;;
+  *"/helmr-linux-amd64.tar.gz")
+    printf 'archive\n' >>"$tmp/order"
+    cp "$tmp/helmr-linux-amd64.tar.gz" "\$out"
+    ;;
+  *)
+    printf 'unexpected url: %s\n' "\$url" >&2
+    exit 1
+    ;;
+esac
+printf '%s' "\$code"
+SH
+  chmod +x "$tmp/stub-bin/curl"
+}
+
+test_preview_install_validates_index_before_archive() {
+  local tmp
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' RETURN
+  mkdir -p "$tmp/stub-bin" "$tmp/home"
+  : >"$tmp/order"
+  write_preview_fixture "$tmp"
+  write_uname_stub "$tmp"
+  write_preview_curl_stub "$tmp" false
+  PATH="$tmp/stub-bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+    HELMR_INSTALL_DIR="$tmp/install" \
+    HOME="$tmp/home" \
+    SHELL=/bin/sh \
+    "$repo_root/install" --version v0.1.0-preview.gabcdef01.b2 --no-modify-path >/dev/null
+  assert_equal "$(printf 'checksums\nrelease-index\narchive')" "$(cat "$tmp/order")" "preview fetch order"
+  assert_file "$tmp/install/helmr"
+}
+
+test_preview_install_reports_http_status_without_set_e_trap() {
+  local tmp
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' RETURN
+  mkdir -p "$tmp/stub-bin" "$tmp/home"
+  write_preview_fixture "$tmp"
+  write_uname_stub "$tmp"
+  write_preview_curl_stub "$tmp" true
+  if PATH="$tmp/stub-bin:/usr/bin:/bin:/usr/sbin:/sbin" HELMR_INSTALL_DIR="$tmp/install" HOME="$tmp/home" SHELL=/bin/sh \
+    "$repo_root/install" --version v0.1.0-preview.gabcdef01.b2 --no-modify-path >"$tmp/out" 2>&1; then
+    fail 'preview HTTP 403 should fail install'
+  fi
+  grep -F 'Preview download failed: HTTP 403' "$tmp/out" >/dev/null || fail 'friendly preview HTTP error missing'
+}
+
 test_binary_install_copies_only_binary
 test_canonical_version_at_target_skips_install
 test_latest_release_skips_non_cli_release
@@ -284,4 +379,6 @@ test_same_version_elsewhere_on_path_does_not_skip_install
 test_path_snippet_quotes_install_dir_and_handles_spaced_home
 test_indexed_checksum_and_archive_tampering
 test_latest_release_pagination
+test_preview_install_validates_index_before_archive
+test_preview_install_reports_http_status_without_set_e_trap
 printf 'ok - installer tests\n'

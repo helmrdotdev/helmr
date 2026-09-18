@@ -10,6 +10,7 @@ import urllib.error
 import urllib.request
 from contract import DIGEST, ASSETS, REPOSITORY, ISSUER, canonical, descriptor, digest, read, require, signer, validate, verify_files, write
 from admission import git, recheck_pr, relevant
+from preview_store import preview_mode
 
 
 def run(*args, **kwargs):
@@ -72,6 +73,15 @@ def bind_release(release, selection):
 
 
 def complete(api, selection, directory, *, release=None, expected_build=None):
+    if preview_mode(selection):
+        from preview_store import complete as preview_complete
+        index = preview_complete(selection, directory)
+        if index is None:
+            return None
+        if expected_build is not None:
+            require((Path(directory) / 'release-index.json').read_bytes() == expected_build,
+                    'completed preview index differs from verified build bytes')
+        return index
     if release is None:
         release = api.request('releases/tags/' + selection['version'], missing=True)
     if release is None or release['draft']:
@@ -97,7 +107,20 @@ def complete(api, selection, directory, *, release=None, expected_build=None):
     return index
 
 
-def npm_publish(path, package, version, mode):
+def npm_channel(selection):
+    mode = selection['build']['mode']
+    if mode == 'main':
+        return 'preview'
+    if mode == 'pr':
+        number = selection['build']['pr']
+        require(type(number) is int and number > 0, 'PR number required for npm channel')
+        return f'pr-{number}'
+    if mode == 'tag':
+        return 'next' if '-' in selection['version'] else 'latest'
+    raise ValueError('invalid release mode')
+
+
+def npm_publish(path, package, version, selection):
     url = f'https://registry.npmjs.org/{package}/{version}'
     try:
         with urllib.request.urlopen(url, timeout=60) as response:
@@ -106,7 +129,7 @@ def npm_publish(path, package, version, mode):
         require(error.code == 404, f'npm lookup failed: HTTP {error.code}')
         metadata = None
     if metadata is not None:
-        require(mode != 'tag', 'human tag package already exists')
+        require(selection['build']['mode'] != 'tag', 'human tag package already exists')
         with tempfile.TemporaryDirectory() as temporary:
             remote = Path(temporary) / 'package.tgz'
             require(metadata['dist']['tarball'].startswith('https://registry.npmjs.org/'), 'foreign npm tarball')
@@ -115,8 +138,7 @@ def npm_publish(path, package, version, mode):
                 shutil.copyfileobj(source, target)
             require(descriptor(remote) == descriptor(path), 'existing npm version has different bytes')
         return
-    tag = 'unlisted' if mode != 'tag' or '-' in version else 'latest'
-    run('npm', 'publish', path, '--access', 'public', '--provenance', '--ignore-scripts', '--tag', tag)
+    run('npm', 'publish', path, '--access', 'public', '--provenance', '--ignore-scripts', '--tag', npm_channel(selection))
 
 
 def publish_images(directory, index):
@@ -166,7 +188,7 @@ def stage(api, selection, directory):
     upload_identical(api, release, directory / 'release-build.json')
     publish_images(directory, index)
     for package, filename in (('@helmr/proto', 'proto.tgz'), ('@helmr/sdk', 'sdk.tgz')):
-        npm_publish(directory / filename, package, index['version'][1:], index['build']['mode'])
+        npm_publish(directory / filename, package, index['version'][1:], selection)
     for name in sorted(ASSETS):
         upload_identical(api, release, directory / name)
     # This is pre-completion evidence. Freeze bytes before obtaining its signature;
@@ -190,6 +212,9 @@ def download_build(api, selection, directory, release, expected_digest=None):
 
 
 def finalize(api, selection, directory, release_id, build_digest):
+    if preview_mode(selection):
+        from preview_store import finalize as preview_finalize
+        return preview_finalize(api, selection, directory, build_digest)
     recheck_pr(api, selection)
     require(re.fullmatch(r'[1-9][0-9]*', str(release_id)), 'release ID required')
     require(re.fullmatch(DIGEST, build_digest or ''), 'build digest required')
@@ -224,49 +249,14 @@ def finalize(api, selection, directory, release_id, build_digest):
     return index
 
 
-def newest_eligible(indices, root, main):
-    best = None
-    for index in indices:
-        if index['build']['mode'] != 'main':
-            continue
-        source = index['sourceCommit']
-        if subprocess.run(['git', '-C', str(root), 'merge-base', '--is-ancestor', source, main], capture_output=True).returncode:
-            continue
-        if relevant(root, source, main):
-            continue
-        if best is None or subprocess.run(['git', '-C', str(root), 'merge-base', '--is-ancestor', best['sourceCommit'], source], capture_output=True).returncode == 0:
-            if best is None or source != best['sourceCommit'] or int(index['build']['runId']) > int(best['build']['runId']):
-                best = index
-    return best
-
-
-def discover(api, root):
-    # actionlint 1.7.9 rejects queue:max. Reconcile all completed releases so a
-    # stale arrival replacing a pending updater still discovers the newest set.
-    subprocess.run(['git', '-C', str(root), 'fetch', '--no-tags', 'origin', 'main'], check=True)
-    main = git(root, 'rev-parse', 'FETCH_HEAD')
-    indices, hashes = [], {}
-    with tempfile.TemporaryDirectory() as temporary:
-        for release in api.pages('releases'):
-            if release['draft'] or '-preview.' not in release['tag_name']:
-                continue
-            directory = Path(temporary) / str(release['id'])
-            index = fetch_index(api, release, directory)
-            indices.append(index)
-            hashes[index['version']] = digest(directory / 'release-index.json')
-        best = newest_eligible(indices, root, main)
-        if best is None:
-            return None
-        pointer = api.request('releases/tags/preview', missing=True)
-        if pointer:
-            recorded = json.loads(pointer['body'])
-            current = next((i for i in indices if i['version'] == recorded['version']), None)
-            require(current is not None and hashes[current['version']] == recorded['indexDigest'], 'discovery pointer does not bind signed bytes')
-            if git(root, 'rev-parse', current['sourceCommit']) != best['sourceCommit']:
-                require(subprocess.run(['git', '-C', str(root), 'merge-base', '--is-ancestor', current['sourceCommit'], best['sourceCommit']], capture_output=True).returncode == 0, 'discovery must not regress')
-        body = canonical(dict(version=best['version'], sourceCommit=best['sourceCommit'], indexDigest=hashes[best['version']])).decode()
-        if pointer:
-            api.request(f'releases/{pointer["id"]}', method='PATCH', data=dict(body=body))
-        else:
-            api.request('releases', data=dict(tag_name='preview', target_commitish=main, name='Preview', body=body, prerelease=True, make_latest='false'))
-        return best
+def discover(api, root, selection=None, index_digest=None):
+    if selection is not None and selection['build']['mode'] == 'main':
+        from preview_store import discover as preview_discover
+        if not index_digest:
+            with tempfile.TemporaryDirectory() as temporary:
+                completed = complete(api, selection, Path(temporary) / 'public')
+                if completed is None:
+                    return None
+                index_digest = digest(Path(temporary) / 'public' / 'release-index.json')
+        return preview_discover(api, root, selection, index_digest)
+    return None
