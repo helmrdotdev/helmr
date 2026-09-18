@@ -7,7 +7,9 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 var uuidNil uuid.UUID
@@ -18,7 +20,13 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		writeError(w, unauthorized(errors.New("session authentication is required")))
 		return
 	}
-	state, err := s.db.GetUserOnboardingState(r.Context(), pgvalue.UUID(actor.UserID))
+	orgID := pgtype.UUID{}
+	if actor.OrgID != uuidNil {
+		orgID = pgvalue.UUID(actor.OrgID)
+	}
+	state, err := s.db.GetUserOnboardingState(r.Context(), db.GetUserOnboardingStateParams{
+		UserID: pgvalue.UUID(actor.UserID), OrgID: orgID,
+	})
 	if err != nil {
 		if isNoRows(err) {
 			writeError(w, unauthorized(errors.New("authentication is required")))
@@ -32,21 +40,16 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		DisplayName:     state.DisplayName,
 		ProfileImageURL: state.ProfileImageURL.String,
 		PublicURL:       s.publicURL.String(),
-		Admin:           state.Admin,
+		Admin:           actor.Admin,
 		Permissions:     []string{},
-		ProjectRequired: state.OrgID.Valid && !state.HasProjects,
+		ProjectRequired: orgID.Valid && !state.HasProjects,
 	}
-	if state.OrgID.Valid {
-		orgID, err := pgvalue.UUIDValue(state.OrgID)
-		if err != nil {
-			writeError(w, errors.New("load current organization"))
-			return
-		}
-		response.OrgID = orgID.String()
+	if orgID.Valid {
+		response.OrgID = actor.OrgID.String()
 		response.OrgName = state.OrgName.String
 		response.OrgSlug = state.OrgSlug.String
-		response.Role = state.Role
-		response.Permissions = sessionPermissions(auth.Role(state.Role))
+		response.Role = string(actor.Role)
+		response.Permissions = sessionPermissions(actor.Role)
 	} else {
 		orgIDs, err := s.db.ListOrganizationIDs(r.Context(), 1)
 		if err != nil {

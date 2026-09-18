@@ -5,6 +5,8 @@ export type Me = {
   display_name: string | null;
   profile_image_url: string | null;
   org_id?: string | null;
+  org_name?: string;
+  public_url?: string;
   role?: string | null;
   permissions: string[];
   admin: boolean;
@@ -15,17 +17,20 @@ export type Me = {
 };
 
 export async function getMe(): Promise<Me> {
-  return request<Me>("/api/me");
+  return request<Me>("/api/me", { redirectOnUnauthorized: false });
 }
 
 export function hasPermission(me: Me | undefined, permission: string): boolean {
   return me?.permissions.includes(permission) ?? false;
 }
 
-export function onboardingRedirectPath(me: Me): string | null {
+export type AuthRequirement = "session" | "organization" | "project";
+
+export function onboardingRedirectPath(me: Me, requirement: AuthRequirement = "project"): string | null {
+  if (requirement === "session") return null;
   if (me.access_required) return "/access-required";
   if (me.organization_required) return "/organizations/new";
-  if (me.project_required) return "/projects/new";
+  if (requirement === "project" && me.project_required) return "/projects/new";
   return null;
 }
 
@@ -114,14 +119,18 @@ export async function getDeviceCodeStatus(userCode: string): Promise<DeviceCodeS
   );
 }
 
-export async function approveDeviceCode(userCode: string): Promise<DeviceCodeStatus> {
-  return postJson<{ user_code: string }, DeviceCodeStatus>("/api/auth/device/approve", {
+export type DeviceConsent = { user_id: string; org_id: string };
+
+export async function approveDeviceCode(userCode: string, consent: DeviceConsent): Promise<DeviceCodeStatus> {
+  return postJson<{ user_code: string } & DeviceConsent, DeviceCodeStatus>("/api/auth/device/approve", {
     user_code: userCode,
+    ...consent,
   });
 }
 
-export async function denyDeviceCode(userCode: string): Promise<DeviceCodeStatus> {
-  return postJson<{ user_code: string }, DeviceCodeStatus>("/api/auth/device/deny", {
+export async function denyDeviceCode(userCode: string, consent: DeviceConsent): Promise<DeviceCodeStatus> {
+  return postJson<{ user_code: string } & DeviceConsent, DeviceCodeStatus>("/api/auth/device/deny", {
     user_code: userCode,
+    ...consent,
   });
 }

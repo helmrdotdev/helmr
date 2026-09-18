@@ -1,4 +1,5 @@
-import { A, useNavigate } from "@solidjs/router";
+import { returnPath } from "../lib/continuation";
+import { A, useNavigate, useLocation } from "@solidjs/router";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createEffect, createMemo, createSignal, For, Show, type JSX } from "solid-js";
 import { ApiError } from "../lib/api";
@@ -28,6 +29,7 @@ function createErrorMessage(error: unknown): string {
 
 export function ProjectNew() {
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const [name, setName] = createSignal("");
   const [slug, setSlug] = createSignal("");
@@ -55,15 +57,6 @@ export function ProjectNew() {
     if (!selectedRegionID()) setSelectedRegionID(regionOptions()[0]?.id ?? "");
   });
 
-  createEffect(() => {
-    if (me.data?.access_required) {
-      navigate("/access-required", { replace: true });
-      return;
-    }
-    if (me.data?.organization_required) {
-      navigate("/organizations/new", { replace: true });
-    }
-  });
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
@@ -86,7 +79,7 @@ export function ProjectNew() {
       rememberProjectScope(project);
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
       await queryClient.invalidateQueries({ queryKey: ["me"] });
-      navigate("/", { replace: wasFirstProject });
+      navigate(returnPath(new URLSearchParams(location.search).get("next")), { replace: wasFirstProject });
     } catch (e) {
       setError(createErrorMessage(e));
     } finally {

@@ -27,3 +27,14 @@ test("denies everything for a viewer-like session and while unauthenticated", ()
   expect(hasPermission(undefined, "runs.read")).toBe(false);
   expect(hasPermission(base, "runs.read")).toBe(false);
 });
+
+test("account lookup leaves 401 routing to the authentication guard", async () => {
+  const { getMe } = await import("./auth");
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => Response.json({ error: { code: "unauthorized", message: "expired" } }, { status: 401 })) as typeof fetch;
+  try {
+    await expect(getMe()).rejects.toMatchObject({ status: 401 });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

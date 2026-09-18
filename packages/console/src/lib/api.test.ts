@@ -32,7 +32,7 @@ test("redirects unauthorized requests and rejects instead of hanging", async () 
 
   expect(error).toBeInstanceOf(ApiError);
   expect((error as ApiError).code).toBe("unauthorized");
-  expect(windowMock.location.href).toBe("/login");
+  expect(windowMock.location.href).toBe("/login?next=%2Fruns");
 });
 
 test("decodes the common api error envelope", async () => {

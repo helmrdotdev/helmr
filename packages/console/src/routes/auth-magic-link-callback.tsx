@@ -1,3 +1,4 @@
+import { returnPath } from "../lib/continuation";
 import { useNavigate, useSearchParams } from "@solidjs/router";
 import { createSignal, onMount, Show } from "solid-js";
 import { ApiError } from "../lib/api";
@@ -25,8 +26,8 @@ export function AuthMagicLinkCallback() {
     }
 
     try {
-      await finishMagicLink(token);
-      navigate("/", { replace: true });
+      const result = await finishMagicLink(token);
+      navigate(returnPath(result.redirect_after), { replace: true });
     } catch (e) {
       const kind = e instanceof ApiError ? e.code : null;
       setError(errorMessage(kind, e instanceof Error ? e.message : "Sign in failed."));
@@ -38,7 +39,8 @@ export function AuthMagicLinkCallback() {
       <Show when={error()} fallback={<AuthCopy>Signing you in...</AuthCopy>}>
         <AuthTitle>Sign in failed</AuthTitle>
         <p class={ui.error}>{error()}</p>
-        <a href="/login">Try again</a>
+        <AuthCopy>If you started from the CLI, run helmr login again in your terminal.</AuthCopy>
+        <a href="/login">Sign in to the console</a>
       </Show>
     </AuthScreen>
   );

@@ -6,6 +6,7 @@ import {
   approveDeviceCode,
   denyDeviceCode,
   getDeviceCodeStatus,
+  getMe,
   type DeviceCodeStatus,
 } from "../lib/auth";
 import { errorMessage } from "../lib/error";
@@ -44,6 +45,7 @@ function deviceErrorMessage(error: unknown, fallback: string): string {
 export function Device() {
   const [params] = useSearchParams();
   const queryClient = useQueryClient();
+  const me = createQuery(() => ({ queryKey: ["me"], queryFn: getMe, retry: false, staleTime: 60_000 }));
   const code = createMemo(() => normalizeCode(readParam(params["code"])));
   const [busy, setBusy] = createSignal<"approve" | "deny" | null>(null);
   const [actionError, setActionError] = createSignal<string | null>(null);
@@ -56,20 +58,30 @@ export function Device() {
   }));
 
   async function resolveDevice(approve: boolean) {
+    const requestCode = code();
+    const identity = me.data;
+    if (!identity?.org_id) return;
+    const consent = { user_id: identity.user_id, org_id: identity.org_id };
     setActionError(null);
     setBusy(approve ? "approve" : "deny");
     try {
-      const result = approve ? await approveDeviceCode(code()) : await denyDeviceCode(code());
-      queryClient.setQueryData(["device-code", code()], result);
+      const result = approve ? await approveDeviceCode(requestCode, consent) : await denyDeviceCode(requestCode, consent);
+      queryClient.setQueryData(["device-code", requestCode], result);
     } catch (error) {
+      if (code() !== requestCode) return;
       setActionError(deviceErrorMessage(error, "Could not update this device code."));
+      if (error instanceof ApiError && error.code === "device_identity_changed") {
+        await queryClient.invalidateQueries({ queryKey: ["me"] });
+      }
+      const refreshed = await status.refetch();
+      if (refreshed.data && refreshed.data.status !== "pending") setActionError(null);
     } finally {
       setBusy(null);
     }
   }
 
   const current = createMemo(() => status.data);
-  const canResolve = createMemo(() => current()?.status === "pending" && !busy());
+  const canResolve = createMemo(() => current()?.status === "pending" && !!me.data?.org_id && !me.isError && !busy());
 
   return (
     <AuthScreen>
@@ -89,10 +101,24 @@ export function Device() {
         <Match when={current()}>
           {(device) => (
             <>
-              <AuthCopy>Review the code shown in your terminal before approving.</AuthCopy>
+              <Show when={device().status === "pending"}>
+                <AuthCopy>Only approve if you started this login. Check that this code matches your terminal.</AuthCopy>
+                <p class={ui.authStatus}>Account: {me.data?.display_name || me.data?.user_id}</p>
+                <p class={ui.authStatus}>Organization: {me.data?.org_name || me.data?.org_id}</p>
+                <p class={ui.muted}>Server: {me.data?.public_url || window.location.origin}</p>
+              </Show>
               <div class={ui.authCode} aria-label="Device code">{code()}</div>
               <p class={ui.authStatus}>Status: {statusText(device().status)}</p>
-              <Show when={device().expires_at}>
+              <Show when={device().status === "approved"}>
+                <AuthCopy>Approved. Return to your terminal to finish signing in.</AuthCopy>
+              </Show>
+              <Show when={device().status === "consumed"}>
+                <AuthCopy>This request has already been used. Check your terminal for the login result.</AuthCopy>
+              </Show>
+              <Show when={device().status === "denied" || device().status === "expired"}>
+                <AuthCopy>Run helmr login again in your terminal to start a new request.</AuthCopy>
+              </Show>
+              <Show when={device().status === "pending" && device().expires_at}>
                 <p class={ui.muted}>Expires <RelativeTime value={device().expires_at} /></p>
               </Show>
               <Show when={device().status === "pending"}>

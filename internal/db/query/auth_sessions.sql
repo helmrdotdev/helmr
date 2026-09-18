@@ -30,7 +30,8 @@ SELECT
  WHERE auth_sessions.token_hash = sqlc.arg(token_hash)
    AND auth_sessions.revoked_at IS NULL
    AND auth_sessions.expires_at > now()
-   AND users.disabled_at IS NULL;
+   AND users.disabled_at IS NULL
+   AND (auth_sessions.org_id IS NULL OR selected_member.org_id IS NOT NULL);
 
 -- name: RefreshAuthSession :exec
 UPDATE auth_sessions

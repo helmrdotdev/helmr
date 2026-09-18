@@ -1,3 +1,5 @@
+import { useLocation } from "@solidjs/router";
+import { locationDestination } from "../lib/continuation";
 import { createSignal, Show } from "solid-js";
 import { ApiError } from "../lib/api";
 import { startGitHubLogin, startMagicLinkLogin } from "../lib/auth";
@@ -6,6 +8,7 @@ import { AuthCopy, AuthDivider, AuthScreen, AuthTitle } from "../ui/AuthScreen";
 import { ui } from "../ui/styles";
 
 export function Login() {
+  const location = useLocation();
   const [busy, setBusy] = createSignal(false);
   const [githubBusy, setGitHubBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
@@ -34,7 +37,7 @@ export function Login() {
     setError(null);
     setDebugURL(null);
     try {
-      const result = await startMagicLinkLogin({ email: trimmedEmail });
+      const result = await startMagicLinkLogin({ email: trimmedEmail, next: locationDestination(location) });
       setSentEmail(trimmedEmail);
       setDebugURL(result.debug_url ?? null);
     } catch (e) {
@@ -49,7 +52,7 @@ export function Login() {
     setGitHubBusy(true);
     setError(null);
     try {
-      const { redirect_url } = await startGitHubLogin();
+      const { redirect_url } = await startGitHubLogin(locationDestination(location));
       window.location.href = redirect_url;
     } catch (e) {
       const kind = e instanceof ApiError ? e.code : null;
