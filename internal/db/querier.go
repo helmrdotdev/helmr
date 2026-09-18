@@ -274,7 +274,7 @@ type Querier interface {
 	// Presence and exact identity must use one statement snapshot, including the
 	// read-only replay before lineage locks.
 	GetTokenWaitRegistrationReplay(ctx context.Context, arg GetTokenWaitRegistrationReplayParams) (GetTokenWaitRegistrationReplayRow, error)
-	GetUserOnboardingState(ctx context.Context, userID pgtype.UUID) (GetUserOnboardingStateRow, error)
+	GetUserOnboardingState(ctx context.Context, arg GetUserOnboardingStateParams) (GetUserOnboardingStateRow, error)
 	GetWorkerGroup(ctx context.Context, id pgtype.UUID) (WorkerGroup, error)
 	GetWorkerGroupByRegionName(ctx context.Context, arg GetWorkerGroupByRegionNameParams) (WorkerGroup, error)
 	GetWorkerGroupState(ctx context.Context, workerGroupID pgtype.UUID) (GetWorkerGroupStateRow, error)

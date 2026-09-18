@@ -116,15 +116,6 @@ func (s *Server) githubFinish(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(fmt.Errorf("invalid auth callback JSON: %w", err)))
 		return
 	}
-	clearAuthFlowCookie(w, r)
-	if request.Error != "" {
-		message := strings.TrimSpace(request.ErrorDescription)
-		if message == "" {
-			message = "authorization failed"
-		}
-		writeError(w, badRequest(errors.New(message)))
-		return
-	}
 	flow, err := s.decodeAuthFlow(r)
 	if err != nil {
 		writeError(w, badRequest(err))
@@ -132,6 +123,15 @@ func (s *Server) githubFinish(w http.ResponseWriter, r *http.Request) {
 	}
 	if request.State == "" || request.State != flow.State {
 		writeError(w, badRequest(errors.New("auth state mismatch")))
+		return
+	}
+	clearAuthFlowCookie(w, r)
+	if request.Error != "" {
+		message := strings.TrimSpace(request.ErrorDescription)
+		if message == "" {
+			message = "authorization failed"
+		}
+		writeError(w, badRequest(errors.New(message)))
 		return
 	}
 	if request.Code == "" {

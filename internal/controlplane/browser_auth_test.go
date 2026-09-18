@@ -3,6 +3,7 @@ package controlplane
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http/httptest"
 	"net/url"
 	"testing"
@@ -86,5 +87,65 @@ func TestBrowserAuthUsesInvitationDomainForInvitationValidation(t *testing.T) {
 	}
 	if !bytes.Equal(got, want) || !bytes.Equal(queries.invitationHash, want) {
 		t.Fatal("invitation was not validated with the invitation key")
+	}
+}
+
+type continuationAuthProvider struct{}
+
+func (continuationAuthProvider) RedirectURL(state, verifier string) string {
+	return "https://github.example.test/authorize?state=" + url.QueryEscape(state)
+}
+func (continuationAuthProvider) Resolve(context.Context, string, string) (authIdentity, error) {
+	return authIdentity{Provider: "github", Subject: "continuation", DisplayName: "Fixture user", Email: "fixture@example.test", EmailVerified: true}, nil
+}
+
+func TestBrowserAuthSupersededCallbackKeepsNewerFlow(t *testing.T) {
+	keys, err := auth.NewKeys(bytes.Repeat([]byte{1}, auth.RootKeySize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicURL, _ := url.Parse("https://helmr.example.test")
+	s := &Server{db: &browserAuthQuerier{}, authKeys: keys, publicURL: publicURL, authProvider: continuationAuthProvider{}}
+	flow := browserAuthFlow{Kind: browserAuthGitHubLogin, State: "newer-state", Verifier: "verifier", RedirectAfter: "/auth/device?code=NEW"}
+	encoded, err := s.encodeAuthFlow(flow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range []string{"older-state", "", "newer-state"} {
+		for _, denied := range []bool{false, true} {
+			body := map[string]string{"state": state}
+			if denied {
+				body["error"] = "access_denied"
+			}
+			raw, _ := json.Marshal(body)
+			r := httptest.NewRequest("POST", "https://helmr.example.test/api/auth/github/finish", bytes.NewReader(raw))
+			r.AddCookie(authFlowCookie(r, encoded, 600))
+			w := httptest.NewRecorder()
+			s.githubFinish(w, r)
+			if w.Code != 400 {
+				t.Fatalf("state=%q denied=%v status=%d", state, denied, w.Code)
+			}
+			cleared := false
+			for _, cookie := range w.Result().Cookies() {
+				if cookie.Name == authFlowCookieName(r) && cookie.MaxAge < 0 {
+					cleared = true
+				}
+			}
+			if cleared != (state == flow.State) {
+				t.Fatalf("state=%q denied=%v cleared=%v", state, denied, cleared)
+			}
+		}
+	}
+}
+
+func TestBrowserAuthReturnDestinationValidation(t *testing.T) {
+	for _, value := range []string{"https://evil.test", "//evil.test", "/\\evil.test", "/bad\npath", "/bad\x00path"} {
+		if got := validateRedirectAfter(value); got != "/" {
+			t.Fatalf("accepted %q: %q", value, got)
+		}
+	}
+	const destination = "/auth/device?code=ABCD-EFGH#confirm"
+	if got := validateRedirectAfter(destination); got != destination {
+		t.Fatalf("lost destination %q", got)
 	}
 }

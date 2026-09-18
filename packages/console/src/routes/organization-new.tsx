@@ -1,4 +1,5 @@
-import { useNavigate } from "@solidjs/router";
+import { locationDestination, withNext } from "../lib/continuation";
+import { useNavigate, useLocation } from "@solidjs/router";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createEffect, createMemo, createSignal, Show } from "solid-js";
 import { ApiError } from "../lib/api";
@@ -26,6 +27,7 @@ function createErrorMessage(error: unknown): string {
 
 export function OrganizationNew() {
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const [name, setName] = createSignal("");
   const [slug, setSlug] = createSignal("");
@@ -41,10 +43,9 @@ export function OrganizationNew() {
   }));
   const setupTokenRequired = createMemo(() => !!me.data?.setup_token_required);
 
+
   createEffect(() => {
-    if (me.data?.access_required) {
-      navigate("/access-required", { replace: true });
-    }
+    if (me.data?.access_required) navigate(withNext("/access-required", locationDestination(location)), { replace: true });
   });
 
   async function submit(event: SubmitEvent) {
@@ -66,7 +67,7 @@ export function OrganizationNew() {
       });
       await queryClient.invalidateQueries({ queryKey: ["me"] });
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
-      navigate("/projects/new", { replace: true });
+      navigate(locationDestination(location), { replace: true });
     } catch (e) {
       setError(createErrorMessage(e));
     } finally {

@@ -1,3 +1,5 @@
+import { locationDestination, withNext } from "./continuation";
+
 const ON_LOGIN_PATH = () => window.location.pathname === "/login";
 
 type RequestOptions = RequestInit & {
@@ -9,7 +11,7 @@ async function handleResponse<T>(
   { redirectOnUnauthorized }: { redirectOnUnauthorized: boolean },
 ): Promise<T> {
   if (response.status === 401 && redirectOnUnauthorized && !ON_LOGIN_PATH()) {
-    window.location.href = "/login";
+    window.location.href = withNext("/login", locationDestination(window.location));
     throw new ApiError("unauthorized", "Authentication is required.", response.status);
   }
   if (!response.ok) {

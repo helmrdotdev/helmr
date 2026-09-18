@@ -56,55 +56,41 @@ SELECT
     users.id AS user_id,
     users.display_name,
     users.profile_image_url,
-    users.admin,
-    first_member.org_id,
     organizations.name AS org_name,
     organizations.slug AS org_slug,
-    COALESCE(first_member.role::text, '')::text AS role,
     EXISTS (
-        SELECT 1
-          FROM projects
-         WHERE projects.org_id = first_member.org_id
+        SELECT 1 FROM projects
+         WHERE projects.org_id = $1
     ) AS has_projects
   FROM users
-  LEFT JOIN LATERAL (
-      SELECT org_members.org_id,
-             org_members.role
-        FROM org_members
-       WHERE org_members.user_id = users.id
-         AND org_members.disabled_at IS NULL
-       ORDER BY org_members.created_at ASC
-       LIMIT 1
-  ) AS first_member ON true
-  LEFT JOIN organizations ON organizations.id = first_member.org_id
- WHERE users.id = $1
+  LEFT JOIN organizations ON organizations.id = $1
+ WHERE users.id = $2
    AND users.disabled_at IS NULL
 `
+
+type GetUserOnboardingStateParams struct {
+	OrgID  pgtype.UUID `json:"org_id"`
+	UserID pgtype.UUID `json:"user_id"`
+}
 
 type GetUserOnboardingStateRow struct {
 	UserID          pgtype.UUID `json:"user_id"`
 	DisplayName     string      `json:"display_name"`
 	ProfileImageURL pgtype.Text `json:"profile_image_url"`
-	Admin           bool        `json:"admin"`
-	OrgID           pgtype.UUID `json:"org_id"`
 	OrgName         pgtype.Text `json:"org_name"`
 	OrgSlug         pgtype.Text `json:"org_slug"`
-	Role            string      `json:"role"`
 	HasProjects     bool        `json:"has_projects"`
 }
 
-func (q *Queries) GetUserOnboardingState(ctx context.Context, userID pgtype.UUID) (GetUserOnboardingStateRow, error) {
-	row := q.db.QueryRow(ctx, getUserOnboardingState, userID)
+func (q *Queries) GetUserOnboardingState(ctx context.Context, arg GetUserOnboardingStateParams) (GetUserOnboardingStateRow, error) {
+	row := q.db.QueryRow(ctx, getUserOnboardingState, arg.OrgID, arg.UserID)
 	var i GetUserOnboardingStateRow
 	err := row.Scan(
 		&i.UserID,
 		&i.DisplayName,
 		&i.ProfileImageURL,
-		&i.Admin,
-		&i.OrgID,
 		&i.OrgName,
 		&i.OrgSlug,
-		&i.Role,
 		&i.HasProjects,
 	)
 	return i, err

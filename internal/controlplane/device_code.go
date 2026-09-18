@@ -101,6 +101,10 @@ func (s *Server) resolveDeviceCode(w http.ResponseWriter, r *http.Request, appro
 		writeError(w, forbidden(errors.New("organization is required")))
 		return
 	}
+	if request.UserID != actor.UserID.String() || request.OrgID != actor.OrgID.String() {
+		writeError(w, conflict(codedError{code: "device_identity_changed", message: "Your signed-in account or organization changed. Review the current account before approving."}))
+		return
+	}
 	var device db.DeviceCode
 	if approve {
 		device, err = s.db.ApproveDeviceCode(r.Context(), db.ApproveDeviceCodeParams{

@@ -13,7 +13,7 @@ export function RequireAdmin(props: { children: JSX.Element }) {
   }));
 
   return (
-    <RequireAuth allowOnboarding>
+    <RequireAuth requirement="session">
       <Show when={!me.isPending} fallback={<AuthLoading>Loading...</AuthLoading>}>
         <Show
           when={me.data?.admin}

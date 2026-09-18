@@ -76,6 +76,8 @@ type DeviceStatusResponse struct {
 
 type DeviceAuthorizeRequest struct {
 	UserCode string `json:"user_code"`
+	UserID   string `json:"user_id"`
+	OrgID    string `json:"org_id"`
 }
 
 type DeviceTokenRequest struct {

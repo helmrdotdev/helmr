@@ -287,11 +287,11 @@ export function App() {
       <Route path="/" component={wrap(Overview)} />
       <Route path="/login" component={Login} />
       <Route path="/invite" component={Invite} />
-      <Route path="/auth/device" component={() => <RequireAuth><Device /></RequireAuth>} />
+      <Route path="/auth/device" component={() => <RequireAuth requirement="organization"><Device /></RequireAuth>} />
       <Route path="/auth/github/callback" component={AuthGitHubCallback} />
       <Route path="/auth/magic-link/callback" component={AuthMagicLinkCallback} />
-      <Route path="/access-required" component={() => <RequireAuth allowOnboarding><AccessRequired /></RequireAuth>} />
-      <Route path="/organizations/new" component={() => <RequireAuth allowOnboarding><OrganizationNew /></RequireAuth>} />
+      <Route path="/access-required" component={() => <RequireAuth requirement="session"><AccessRequired /></RequireAuth>} />
+      <Route path="/organizations/new" component={() => <RequireAuth requirement="session"><OrganizationNew /></RequireAuth>} />
 
       <Route path="/runs" component={wrap(Runs)} />
       <Route path="/runs/:run_id" component={wrap(RunDetail)} />
@@ -303,7 +303,7 @@ export function App() {
       <Route path="/workspaces/:workspace_id" component={wrap(WorkspaceDetail)} />
       <Route path="/deployments" component={wrap(Deployments)} />
       <Route path="/deployments/:deployment_id" component={wrap(DeploymentDetail)} />
-      <Route path="/projects/new" component={() => <RequireAuth allowOnboarding><ProjectNew /></RequireAuth>} />
+      <Route path="/projects/new" component={() => <RequireAuth requirement="organization"><ProjectNew /></RequireAuth>} />
 
       <Route path="/admin" component={() => <Navigate href="/admin/worker-groups" />} />
       <Route path="/admin/regions" component={wrapAdmin(AdminRegions)} />
