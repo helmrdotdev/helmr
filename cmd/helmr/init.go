@@ -158,7 +158,7 @@ const runtime = image("hello")
   .from("node:24-bookworm-slim")
   .workdir("/app")
   .run(["npm", "install", "-g", "bun@1.3.13"])
-  .copy("/app/package.json", source.file("package.json"))
+  .copy(source.file("package.json"), "/app/package.json")
   .run(["bun", "install"])
 
 export const helloSandbox = sandbox({ id: "hello" })

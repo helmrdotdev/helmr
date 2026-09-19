@@ -1,10 +1,10 @@
 import {
   canonicalizeJsonValue,
   matchesIgnorePattern,
-  type HelmrConfig,
   type JsonValue,
 } from "@helmr/sdk/internal"
 import type { AnalysisResult } from "./compile"
+import type { DiscoveryConfig } from "./config"
 import { lstat, readdir, realpath } from "node:fs/promises"
 import { relative, resolve, sep } from "node:path"
 import { compareUTF8 } from "./utf8"
@@ -94,7 +94,7 @@ export function encodeVerificationResultFrame(
 
 export async function discoverModules(
   root: string,
-  config: HelmrConfig,
+  config: DiscoveryConfig,
 ): Promise<string[]> {
   const canonicalRoot = await realpath(root)
   await rejectReservedRoot(canonicalRoot)

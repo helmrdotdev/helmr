@@ -72,8 +72,8 @@ const fixtureImage: ImageBuilder = image("packed-consumer-image")
 const sourceFile: SourceFile = source.file("./package.json")
 const sourceDirectory: SourceDirectory = source.directory("./src")
 const copiedImage = image("copied-source")
-  .copy("/app/package.json", sourceFile)
-  .copy("/app/src", sourceDirectory)
+  .copy(sourceFile, "/app/package.json")
+  .copy(sourceDirectory, "/app/src")
 const stagedSandbox: SandboxBuilder = sandbox({ id: "packed-consumer" })
 const resourceSandbox: SandboxResourceBuilder = stagedSandbox.image(
   image("packed-consumer").from("node:24-bookworm-slim"),

@@ -157,9 +157,13 @@ func TestSourceCaptureThroughInstalledProgram(t *testing.T) {
 	}
 	work := t.TempDir()
 	prepared := filepath.Join(work, "prepared")
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"dirs":["tasks"],"ignorePatterns":[]}`), 0o444); err != nil {
+		t.Fatal(err)
+	}
 	input := ProgramInput{ProjectDirectory: captured.Path, WorkDirectory: work,
-		NodePath: "/opt/helmr/runtime/bin/node", NodeLoader: "/opt/helmr/runtime/lib/ld-linux-x86-64.so.2", NodeLibraryPath: "/opt/helmr/runtime/lib",
-		ConfigEvaluator: "/nix/helmr/config-evaluator.mjs", ProgramCompiler: "/nix/helmr/program-compiler.mjs", SquashFSEncoder: "/usr/local/bin/mksquashfs",
+		NodePath:   "/opt/helmr/runtime/bin/node",
+		ConfigPath: configPath, ProgramCompiler: "/nix/helmr/program-compiler.mjs", SquashFSEncoder: "/opt/helmr/bin/mksquashfs",
 		Compiler: compiler, Runtime: runtimeDescriptor, RuntimeMetadata: metadata}
 	if _, err := PrepareProgram(t.Context(), input, prepared); err != nil {
 		t.Fatal(err)

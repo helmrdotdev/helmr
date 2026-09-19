@@ -29,7 +29,6 @@ func NormalizeSecretIDs(values []string) ([]string, error) {
 	result := make([]string, len(values))
 	seen := make(map[string]struct{}, len(values))
 	for index, value := range values {
-		value = strings.TrimSpace(value)
 		if !secretIDPattern.MatchString(value) {
 			return nil, fmt.Errorf("build secret name %q is invalid", value)
 		}
@@ -92,7 +91,7 @@ func selectedManager(project, selector string) (string, string, error) {
 			}
 			return manager, manager + "@" + version, nil
 		}
-		return "", "", errors.New("packageManager is not available in the canonical builder; use --install-command")
+		return "", "", errors.New("packageManager must select npm, pnpm, bun or yarn; set build.installCommand in helmr.config.ts for another installer")
 	}
 
 	families := make(map[string]struct{})
@@ -147,17 +146,26 @@ func isExactPackageManagerVersion(version string) bool {
 }
 
 func installArgv(project, manager, selector string) InstallPlan {
+	// pnpm and Yarn always run through the pinned Node's Corepack, which also
+	// resolves an exact selector. An exact Bun is an ordinary npm fetch.
 	executable := manager
 	arguments := []string{}
-	if selector != "" {
-		switch manager {
-		case "npm", "pnpm", "yarn":
+	switch manager {
+	case "npm":
+		if selector != "" {
 			executable = "corepack"
 			arguments = append(arguments, selector)
-		case "bun":
-			version := strings.TrimPrefix(bunPackageSelector(selector), "bun@")
-			executable = "/usr/local/bin/bun-for-version"
-			arguments = append(arguments, version)
+		}
+	case "pnpm", "yarn":
+		executable = "corepack"
+		if selector == "" {
+			selector = manager
+		}
+		arguments = append(arguments, selector)
+	case "bun":
+		if selector != "" {
+			executable = "npx"
+			arguments = append(arguments, "--yes", selector)
 		}
 	}
 	switch manager {
@@ -185,22 +193,6 @@ func installArgv(project, manager, selector string) InstallPlan {
 		}
 	}
 	return InstallPlan{Argv: append([]string{executable}, arguments...)}
-}
-
-func bunPackageSelector(selector string) string {
-	for _, algorithm := range []string{"+sha224.", "+sha256.", "+sha384.", "+sha512."} {
-		index := strings.LastIndex(selector, algorithm)
-		if index < 0 {
-			continue
-		}
-		digest := selector[index+len(algorithm):]
-		if digest != "" && strings.IndexFunc(digest, func(character rune) bool {
-			return character < '0' || character > '9' && character < 'a' || character > 'f'
-		}) == -1 {
-			return selector[:index]
-		}
-	}
-	return selector
 }
 
 func regularInstallFile(project, name string) bool {

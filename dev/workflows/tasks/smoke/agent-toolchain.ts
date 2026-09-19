@@ -14,7 +14,7 @@ const guideInputs = source.directory("guides")
 const base = image("helmr-agent-toolchain-smoke")
   .from("node:24-bookworm-slim")
   .workdir("/sandbox")
-  .copy("/opt/helmr-dev-workflows/guides", guideInputs)
+  .copy(guideInputs, "/opt/helmr-dev-workflows/guides")
   .run([
     "sh",
     "-ceu",

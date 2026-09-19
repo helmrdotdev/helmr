@@ -44,7 +44,11 @@ export async function loadConfig(path: string, importSourceExports: (url: URL) =
   }
 }
 
-export function inspectCanonicalConfig(value: unknown): HelmrConfig {
+// The deployed discovery config is exactly dirs and ignorePatterns; build
+// settings are producer-only and never reach the Program compiler.
+export type DiscoveryConfig = Pick<HelmrConfig, "dirs" | "ignorePatterns">
+
+export function inspectCanonicalConfig(value: unknown): DiscoveryConfig {
   if (
     typeof value !== "object" ||
     value === null ||
@@ -62,8 +66,9 @@ export function inspectCanonicalConfig(value: unknown): HelmrConfig {
   ) {
     throw new Error("canonical config does not match the build contract")
   }
-  return inspectConfig({
+  const config = inspectConfig({
     dirs: record["dirs"],
     ignorePatterns: record["ignorePatterns"],
   })
+  return { dirs: config.dirs, ignorePatterns: config.ignorePatterns }
 }

@@ -1,0 +1,14 @@
+{
+  "builderBase": {
+    "imageName": "buildpack-deps",
+    "imageDigest": "sha256:27afdce3431be65ba05e2d11beab7c2427379ff95712d8165bd016c159587474",
+    "finalImageTag": "bookworm",
+    "hash": "sha256-i9Iq5NkBVvpXaId+lnoCNxZMZzs6fyYIemmIsfqtEuY="
+  },
+  "runtimeLibraries": {
+    "imageName": "debian",
+    "imageDigest": "sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132",
+    "finalImageTag": "trixie-slim",
+    "hash": "sha256-Dqh9vCPa+MPIjU6zhhtHep8Mwggra+ddGStTu8McqSw="
+  }
+}

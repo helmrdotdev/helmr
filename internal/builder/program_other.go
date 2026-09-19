@@ -13,9 +13,7 @@ type ProgramInput struct {
 	ProjectDirectory string
 	WorkDirectory    string
 	NodePath         string
-	NodeLoader       string
-	NodeLibraryPath  string
-	ConfigEvaluator  string
+	ConfigPath       string
 	ProgramCompiler  string
 	SquashFSEncoder  string
 	Compiler         deployment.CompilerInputs

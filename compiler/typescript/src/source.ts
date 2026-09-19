@@ -1,4 +1,5 @@
-import { canonicalizeJsonValue, type HelmrConfig, type JsonValue, type RuntimeArchitecture } from "@helmr/sdk/internal"
+import { canonicalizeJsonValue, type JsonValue, type RuntimeArchitecture } from "@helmr/sdk/internal"
+import type { DiscoveryConfig } from "./config"
 import { installModuleExecution, moduleExecutionIdentity } from "@helmr/module-execution"
 import { createHash } from "node:crypto"
 import { realpath } from "node:fs/promises"
@@ -15,7 +16,7 @@ export function compilerContract() {
 
 export async function compileProgram(options: {
   architecture: RuntimeArchitecture
-  config: HelmrConfig
+  config: DiscoveryConfig
   nodeVersion: string
   inputTreeDigest: string
   root: string
@@ -24,7 +25,7 @@ export async function compileProgram(options: {
   if (!/^sha256:[0-9a-f]{64}$/.test(options.inputTreeDigest)) throw new Error("Program Compiler input tree digest is invalid")
   const root = await realpath(options.root)
   const language = moduleExecutionIdentity()
-  const execution = installModuleExecution({ root, phase: "program" })
+  const execution = installModuleExecution({ root })
   try {
     const modules = await discoverModules(root, options.config)
     if (modules.length === 0) throw new Error("configured dirs contain no declaration source modules")

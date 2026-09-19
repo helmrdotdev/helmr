@@ -413,7 +413,7 @@ const fixedCode = {
   .from("node:24-bookworm-slim")
   .workdir("/workspace")
   .run(["sh", "-ceu", "apt-get update && apt-get install -y git ripgrep"])
-  .copy("/workspace/package.json", source.file("package.json"))
+  .copy(source.file("package.json"), "/workspace/package.json")
   .run(["bun", "install"])`,
   sandbox: `export const repoSandbox = sandbox({ id: "repo-agent" })
   .image(base)

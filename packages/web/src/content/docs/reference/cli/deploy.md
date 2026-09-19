@@ -19,11 +19,13 @@ from `helmr build` and follows the same upload and verification path.
 | --- | --- |
 | `-p, --project`, `-e, --env` | Target scope for a saved CLI login. |
 | `--bundle PATH` | Deploy an existing verified bundle directory. |
-| `--install-command COMMAND` | Override dependency preparation inside the isolated builder. |
-| `--build-secret NAME` | Mount inherited `NAME` as `/run/secrets/NAME` during dependency installation; repeatable. |
 | `--skip-promotion` | Finalize without making the Deployment current. |
 | `--idempotency-key KEY` | Stable deployment-finalization key. |
 | `--json` | Emit progress as JSON lines. |
+
+The install command, build secrets and build environment are
+[build settings](/docs/reference/configuration#build-settings) in `helmr.config.ts`, which the command evaluates
+once on this machine (Node.js 22 or newer required).
 
 Human progress is written to stderr and the final version to stdout. The
 Control Plane never installs dependencies or rebuilds the uploaded artifacts.

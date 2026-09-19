@@ -34,7 +34,6 @@ func ValidateModuleExecutionIdentity(value ModuleExecutionIdentity) error {
 
 type CompilerInputs struct {
 	APIVersion      string                  `json:"apiVersion"`
-	ConfigEvaluator CompilerEntrypoint      `json:"configEvaluator"`
 	Language        ModuleExecutionIdentity `json:"language"`
 	ProgramCompiler CompilerEntrypoint      `json:"programCompiler"`
 }
@@ -91,15 +90,14 @@ func CanonicalCompilerInputs(inputs CompilerInputs) ([]byte, error) {
 }
 
 func ValidateCompilerInputs(input CompilerInputs) error {
-	if input.APIVersion != "helmr.compiler.v0" || input.ConfigEvaluator.APIVersion != ConfigEvaluatorContract ||
-		input.ConfigEvaluator.Entrypoint != "/nix/helmr/config-evaluator.mjs" || input.ProgramCompiler.APIVersion != "helmr.compiler.v0" ||
+	if input.APIVersion != "helmr.compiler.v0" || input.ProgramCompiler.APIVersion != "helmr.compiler.v0" ||
 		input.ProgramCompiler.Entrypoint != "/nix/helmr/program-compiler.mjs" {
 		return errors.New("compiler inputs do not match the v0 contract")
 	}
 	if err := ValidateModuleExecutionIdentity(input.Language); err != nil {
 		return err
 	}
-	for _, entry := range []CompilerEntrypoint{input.ConfigEvaluator, input.ProgramCompiler} {
+	for _, entry := range []CompilerEntrypoint{input.ProgramCompiler} {
 		if !sha256DigestPattern.MatchString(entry.Digest) {
 			return errors.New("compiler entrypoint digest is invalid")
 		}

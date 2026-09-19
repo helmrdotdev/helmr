@@ -22,10 +22,17 @@ lifecycle scripts run only inside the isolated builder, never in the Control
 Plane or execution Worker.
 
 Helmr respects the project's `packageManager` and lockfile when present. npm,
-pnpm, Bun, Yarn, and a custom `--install-command` are producer choices rather
+pnpm, Bun, Yarn, and a custom `build.installCommand` are producer choices rather
 than server acceptance criteria. A frozen lockfile is the recommended
 reproducible path, but the durable Deployment identity is the completed bundle
 and its artifact digests—not the package-manager name or version.
+
+The builder is a standard Debian environment with a native toolchain, so
+ordinary lifecycle scripts and native modules work unchanged. When dependencies
+need additional operating-system packages, prepare the build environment with
+[`build.builder`](/docs/reference/configuration#build-settings). The CLI evaluates
+`helmr.config.ts` on your machine first, so install the packages it imports
+there (Node.js 22 or newer).
 
 To separate build and deploy:
 

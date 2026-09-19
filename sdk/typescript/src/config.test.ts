@@ -13,7 +13,7 @@ describe("defineConfig", () => {
     })
     dirs.push("./actors")
     ignorePatterns.push("actors/generated/**")
-    expect(config).toEqual({
+    expect(config).toMatchObject({
       dirs: ["actors", "tasks"],
       ignorePatterns: ["**/*.test.js", "tasks/generated/**"],
     })
@@ -25,7 +25,7 @@ describe("defineConfig", () => {
 
   test("requires the explicit config shape", () => {
     expect(() => defineConfig({ dirs: [] })).toThrow()
-    expect(defineConfig({ dirs: ["tasks"] })).toEqual({
+    expect(defineConfig({ dirs: ["tasks"] })).toMatchObject({
       dirs: ["tasks"],
       ignorePatterns: [],
     })
@@ -181,7 +181,7 @@ describe("defineConfig", () => {
         textEncode as PropertyDescriptor,
       )
     }
-    expect(config).toEqual({
+    expect(config).toMatchObject({
       dirs: ["tasks/a", "tasks/z"],
       ignorePatterns: ["**/*.test.js", "tasks/z/**"],
     })
@@ -225,6 +225,6 @@ describe("ignore pattern matching", () => {
 })
 
 test("empty config is valid; removed package selectors are unknown", () => {
- expect(defineConfig({})).toEqual({dirs:["tasks"],ignorePatterns:[]})
+ expect(defineConfig({})).toMatchObject({dirs:["tasks"],ignorePatterns:[]})
  expect(() => inspectConfig({compilePackages:[]})).toThrow()
 })

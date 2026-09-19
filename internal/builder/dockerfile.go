@@ -23,15 +23,57 @@ func ValidateBuilderImage(builderImage string) error {
 	return nil
 }
 
+// BuilderContext is the BuildKit named context every graph resolves
+// helmr-builder through, so each stage starts from the exact pinned image.
+func BuilderContext(builderImage string) (string, error) {
+	if err := ValidateBuilderImage(builderImage); err != nil {
+		return "", err
+	}
+	return "docker-image://" + builderImage, nil
+}
+
+// canonicalToolMounts shadow the two trees that hold Helmr's compiler, Runtime
+// and builder with read-only views of the pinned image. A recipe runs as root
+// in the environment, so whatever it left at these paths is never executed.
+const canonicalToolMounts = "--mount=type=bind,from=" + BuilderContextName + ",source=/opt/helmr,target=/opt/helmr " +
+	"--mount=type=bind,from=" + BuilderContextName + ",source=/nix,target=/nix "
+
+// Named BuildKit contexts. helmr_environment is the one materialized build
+// environment: the pinned builder itself, or the OCI layout produced once from
+// the project's build.builder steps. helmr_config carries the resolved
+// discovery config, which the target reads instead of importing the config.
+const (
+	BuilderContextName     = "helmr-builder"
+	EnvironmentContextName = "helmr_environment"
+	ConfigContextName      = "helmr_config"
+)
+
+// managedContextLines put a stage back under Helmr's own user-independent
+// directories after the environment, whose preparation ran as root from /.
+var managedContextLines = []string{
+	"USER 0:0",
+	"ENV HOME=/workspace/home TMPDIR=/workspace/tmp XDG_CACHE_HOME=/workspace/home/cache",
+	"RUN [\"/bin/bash\",\"-euo\",\"pipefail\",\"-c\",\"install -d -o 65532 -g 65532 /workspace/home /workspace/output /workspace/project /workspace/tmp /workspace/work\"]",
+	"WORKDIR /workspace/project",
+}
+
 // InstalledDockerfile is the only graph that runs user dependency lifecycle
 // code. It exports only the resulting project tree as a producer-private OCI
 // image so every later graph consumes the exact same installed bytes.
-func InstalledDockerfile(builderImage string, install InstallPlan) ([]byte, error) {
-	lines, err := installedDockerfileLines(builderImage, install)
+func InstalledDockerfile(install InstallPlan) ([]byte, error) {
+	installInstruction, err := installRunInstruction(install)
 	if err != nil {
 		return nil, err
 	}
+	lines := []string{
+		"# syntax=" + dockerfileFrontend,
+		"FROM " + EnvironmentContextName + " AS installed",
+	}
+	lines = append(lines, managedContextLines...)
 	lines = append(lines,
+		"COPY --chown=65532:65532 . .",
+		"USER 65532:65532",
+		installInstruction,
 		"FROM scratch AS installed-tree",
 		"COPY --from=installed --chown=65532:65532 /workspace/project/ /workspace/project/",
 		"",
@@ -41,15 +83,12 @@ func InstalledDockerfile(builderImage string, install InstallPlan) ([]byte, erro
 
 // Dockerfile renders two networkless stages. The first is the last stage that
 // executes tenant modules and exports only a closed prepared result. The
-// second starts from a fresh builder image and performs static Program and
-// bundle assembly from that result plus the exact installed-tree context.
-func Dockerfile(builderImage string) ([]byte, error) {
-	lines, err := materializedDockerfileLines(builderImage)
-	if err != nil {
-		return nil, err
-	}
+// second starts from the pinned builder image, never from the project's build
+// environment, and performs static Program and bundle assembly from that
+// result plus the exact installed-tree context.
+func Dockerfile() ([]byte, error) {
 	prepare, err := dockerRunJSON([]string{
-		"/usr/local/bin/bundle-builder",
+		"/opt/helmr/bin/bundle-builder",
 		"--project", "/workspace/project",
 		"--work", "/workspace/work",
 		"--prepare-output", "/workspace/output/prepared",
@@ -57,17 +96,15 @@ func Dockerfile(builderImage string) ([]byte, error) {
 		"--runtime-metadata", "/opt/helmr/runtime/helmr/runtime.json",
 		"--compiler-descriptor", "/nix/helmr/compiler.descriptor.json",
 		"--node", "/opt/helmr/runtime/bin/node",
-		"--node-loader", "/opt/helmr/runtime/lib/ld-linux-x86-64.so.2",
-		"--node-library-path", "/opt/helmr/runtime/lib",
-		"--config-evaluator", "/nix/helmr/config-evaluator.mjs",
+		"--config", resolvedConfigPath,
 		"--program-compiler", "/nix/helmr/program-compiler.mjs",
-		"--encoder", "/usr/local/bin/mksquashfs",
+		"--encoder", "/opt/helmr/bin/mksquashfs",
 	})
 	if err != nil {
 		return nil, err
 	}
 	finalizer, err := dockerRunJSON([]string{
-		"/usr/local/bin/bundle-builder",
+		"/opt/helmr/bin/bundle-builder",
 		"--prepared", "/workspace/prepared",
 		"--program-project", "/workspace/program",
 		"--work", "/workspace/work",
@@ -77,15 +114,15 @@ func Dockerfile(builderImage string) ([]byte, error) {
 		"--runtime-descriptor", "/opt/helmr/release/runtime.descriptor.json",
 		"--runtime-metadata", "/opt/helmr/runtime/helmr/runtime.json",
 		"--compiler-descriptor", "/nix/helmr/compiler.descriptor.json",
-		"--encoder", "/usr/local/bin/mksquashfs",
+		"--encoder", "/opt/helmr/bin/mksquashfs",
 	})
 	if err != nil {
 		return nil, err
 	}
-	lines = append(lines,
+	lines := append(materializedDockerfileLines(),
 		"FROM materialized AS prepared",
-		"RUN --network=none "+prepare,
-		"FROM "+builderImage+" AS finalized",
+		"RUN --network=none "+canonicalToolMounts+prepare,
+		"FROM "+BuilderContextName+" AS finalized",
 		"USER 0:0",
 		"RUN [\"/bin/bash\",\"-euo\",\"pipefail\",\"-c\",\"install -d -o 65532 -g 65532 /workspace/images /workspace/output /workspace/program /workspace/tmp /workspace/work && install -d -o 65532 -g 65532 /workspace/prepared\"]",
 		"WORKDIR /workspace/program",
@@ -101,30 +138,24 @@ func Dockerfile(builderImage string) ([]byte, error) {
 	return []byte(strings.Join(lines, "\n")), nil
 }
 
-func AnalysisDockerfile(builderImage string) ([]byte, error) {
-	lines, err := materializedDockerfileLines(builderImage)
-	if err != nil {
-		return nil, err
-	}
+func AnalysisDockerfile() ([]byte, error) {
 	command, err := dockerRunJSON([]string{
-		"/usr/local/bin/bundle-builder", "--project", "/workspace/project",
+		"/opt/helmr/bin/bundle-builder", "--project", "/workspace/project",
 		"--work", "/workspace/work", "--analysis-output", "/workspace/output/build-plan.json",
 		"--runtime-descriptor", "/opt/helmr/release/runtime.descriptor.json",
 		"--runtime-metadata", "/opt/helmr/runtime/helmr/runtime.json",
 		"--compiler-descriptor", "/nix/helmr/compiler.descriptor.json",
 		"--node", "/opt/helmr/runtime/bin/node",
-		"--node-loader", "/opt/helmr/runtime/lib/ld-linux-x86-64.so.2",
-		"--node-library-path", "/opt/helmr/runtime/lib",
-		"--config-evaluator", "/nix/helmr/config-evaluator.mjs",
+		"--config", resolvedConfigPath,
 		"--program-compiler", "/nix/helmr/program-compiler.mjs",
-		"--encoder", "/usr/local/bin/mksquashfs",
+		"--encoder", "/opt/helmr/bin/mksquashfs",
 	})
 	if err != nil {
 		return nil, err
 	}
-	lines = append(lines,
+	lines := append(materializedDockerfileLines(),
 		"FROM materialized AS analyzed",
-		"RUN --network=none "+command,
+		"RUN --network=none "+canonicalToolMounts+command,
 		"FROM scratch AS analysis",
 		"COPY --from=analyzed /workspace/output/build-plan.json /build-plan.json",
 		"",
@@ -132,41 +163,28 @@ func AnalysisDockerfile(builderImage string) ([]byte, error) {
 	return []byte(strings.Join(lines, "\n")), nil
 }
 
-func materializedDockerfileLines(builderImage string) ([]string, error) {
-	if err := ValidateBuilderImage(builderImage); err != nil {
-		return nil, err
-	}
-	return []string{
+// resolvedConfigPath is outside the installed project tree and owned by root;
+// the CLI writes the file read-only. Declaration modules can read the
+// discovery config but it is not theirs.
+const resolvedConfigPath = "/workspace/config/config.json"
+
+// materializedDockerfileLines starts declaration evaluation from the same
+// materialized environment the install used, not from the install stage:
+// prepared libraries are present for native imports, install-time mutations
+// outside the project are not.
+func materializedDockerfileLines() []string {
+	lines := []string{
 		"# syntax=" + dockerfileFrontend,
 		"FROM helmr_installed AS installed-tree",
-		"FROM " + builderImage + " AS materialized",
-		"USER 0:0",
-		"RUN [\"/bin/bash\",\"-euo\",\"pipefail\",\"-c\",\"install -d -o 65532 -g 65532 /workspace/home /workspace/output /workspace/project /workspace/tmp /workspace/work\"]",
-		"WORKDIR /workspace/project",
+		"FROM " + EnvironmentContextName + " AS materialized",
+	}
+	lines = append(lines, managedContextLines...)
+	return append(lines,
 		"COPY --from=installed-tree --chown=0:0 /workspace/project/ /workspace/project/",
-		"RUN [\"/bin/bash\",\"-euo\",\"pipefail\",\"-c\",\"chown -R 0:0 /workspace/project && chmod -R a-w /workspace/project && ln -s /workspace/project /opt/helmr/program\"]",
+		"COPY --from="+ConfigContextName+" --chown=0:0 /config.json "+resolvedConfigPath,
+		"RUN [\"/bin/bash\",\"-euo\",\"pipefail\",\"-c\",\"chown -R 0:0 /workspace/project && chmod -R a-w /workspace/project\"]",
 		"USER 65532:65532",
-	}, nil
-}
-
-func installedDockerfileLines(builderImage string, install InstallPlan) ([]string, error) {
-	if err := ValidateBuilderImage(builderImage); err != nil {
-		return nil, err
-	}
-	installInstruction, err := installRunInstruction(install)
-	if err != nil {
-		return nil, err
-	}
-	return []string{
-		"# syntax=" + dockerfileFrontend,
-		"FROM " + builderImage + " AS installed",
-		"USER 0:0",
-		"RUN [\"/bin/bash\",\"-euo\",\"pipefail\",\"-c\",\"install -d -o 65532 -g 65532 /workspace/home /workspace/output /workspace/project /workspace/tmp /workspace/work\"]",
-		"WORKDIR /workspace/project",
-		"COPY --chown=65532:65532 . .",
-		"USER 65532:65532",
-		installInstruction,
-	}, nil
+	)
 }
 
 func installRunInstruction(plan InstallPlan) (string, error) {

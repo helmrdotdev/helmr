@@ -1,5 +1,7 @@
 import {
   actor,
+  builder as configBuilder,
+  defineConfig,
   image,
   queue,
   source,
@@ -136,8 +138,24 @@ export function assertGreenfieldTypes(): void {
   const sourceFile: SourceFile = source.file("./package.json")
   const sourceDirectory: SourceDirectory = source.directory("./src")
   image("source-copy")
-    .copy("/app/package.json", sourceFile)
-    .copy("/app/src", sourceDirectory)
+    .copy(sourceFile, "/app/package.json")
+    .copy(sourceDirectory, "/app/src")
+  // @ts-expect-error The source comes first and the destination second.
+  image("source-copy").copy("/app/package.json", sourceFile)
+  // @ts-expect-error A copy needs a destination.
+  image("source-copy").copy(sourceFile)
+  const prepared = configBuilder().copy("build/setup.sh", "/opt/setup.sh").run(["/bin/sh", "/opt/setup.sh"])
+  defineConfig({ dirs: ["src"], build: { builder: prepared, installCommand: "./prepare.sh", secrets: ["NPM_TOKEN"] } })
+  // @ts-expect-error A Workspace image is not a build environment.
+  defineConfig({ build: { builder: image("workspace").from("debian") } })
+  // @ts-expect-error The build environment is not a Workspace image.
+  sandbox({ id: "wrong-role" }).image(prepared)
+  // @ts-expect-error Builder sources are captured project paths, not installed-tree selectors.
+  configBuilder().copy(sourceFile, "/opt/setup.sh")
+  // @ts-expect-error The builder always starts from the Helmr builder image.
+  configBuilder().from("debian")
+  // @ts-expect-error builder() takes no base image or options.
+  configBuilder("debian:bookworm")
   // @ts-expect-error Source files must be created by source.file().
   const unbrandedSourceFile: SourceFile = { path: "./package.json" }
   // @ts-expect-error Source directories must be created by source.directory().

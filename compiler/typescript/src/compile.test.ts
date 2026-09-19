@@ -278,8 +278,8 @@ describe("declaration analysis", () => {
       .image(
         image("root")
           .from("debian:bookworm")
-          .copy("/app/package.json", source.file("package.json"))
-          .copy("/app/src", source.directory("src")),
+          .copy(source.file("package.json"), "/app/package.json")
+          .copy(source.directory("src"), "/app/src"),
       )
       .resources({ cpu: 1, memory: "1GiB" })
     const result = analyze({

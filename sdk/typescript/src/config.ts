@@ -1,3 +1,4 @@
+import { builder, isBuilder, type Builder } from "./builder"
 import { compareUTF8, hasOnlyUnicodeScalarValues } from "./internal/utf8"
 
 const arrayIsArray = Array.isArray
@@ -32,14 +33,33 @@ const regexpTest = RegExp.prototype.test.call.bind(
   RegExp.prototype.test,
 ) as (regexp: RegExp, value: string) => boolean
 
+export interface HelmrBuildInput {
+  // Preparation of the managed Linux build environment, before installation.
+  readonly builder?: Builder
+  // Replaces package-manager inference. Runs unprivileged through
+  // `/bin/bash -euo pipefail -c`, unlike builder.run() argv steps.
+  readonly installCommand?: string
+  // Names of invoking-environment variables mounted as /run/secrets/NAME
+  // during dependency installation only. Values never enter the config.
+  readonly secrets?: readonly string[]
+}
+
 export interface HelmrConfigInput {
   readonly dirs?: readonly string[]
   readonly ignorePatterns?: readonly string[]
+  readonly build?: HelmrBuildInput
+}
+
+export interface HelmrBuildConfig {
+  readonly builder: Builder
+  readonly installCommand: string | undefined
+  readonly secrets: readonly string[]
 }
 
 export interface HelmrConfig {
   readonly dirs: readonly string[]
   readonly ignorePatterns: readonly string[]
+  readonly build: HelmrBuildConfig
 }
 
 export function defineConfig(input: HelmrConfigInput): HelmrConfig {
@@ -200,19 +220,19 @@ function normalizeConfig(value: object): HelmrConfig {
     const key = keys[index]
     if (
       typeof key !== "string" ||
-      (key !== "dirs" && key !== "ignorePatterns")
+      (key !== "dirs" && key !== "ignorePatterns" && key !== "build")
     ) {
       invalidKey = true
       break
     }
   }
   if (invalidKey) {
-    throw new Error("config accepts only dirs and ignorePatterns")
+    throw new Error("config accepts only dirs, ignorePatterns and build")
   }
   for (let index = 0; index < keys.length; index++) {
     const key = keys[index]
     if (typeof key !== "string") {
-      throw new Error("config accepts only dirs and ignorePatterns")
+      throw new Error("config accepts only dirs, ignorePatterns and build")
     }
     const descriptor = descriptors[key]
     if (
@@ -240,6 +260,82 @@ function normalizeConfig(value: object): HelmrConfig {
   return freeze({
     dirs: freeze(dirs),
     ignorePatterns: freeze(ignorePatterns),
+    build: normalizeBuild(
+      hasOwn(descriptors, "build") ? descriptors["build"]?.value : undefined,
+    ),
+  })
+}
+
+// Accepts both authoring input and an already normalized build, so a config
+// normalized by one installed SDK copy can be inspected by another. The builder
+// is a branded value in either case; plain step data is never accepted here.
+function normalizeBuild(value: unknown): HelmrBuildConfig {
+  const secretNamePattern = /^[A-Z_][A-Z0-9_]{0,127}$/
+  const maxInstallCommandBytes = 16 << 10
+  if (value === undefined) {
+    return freeze({ builder: builder(), installCommand: undefined, secrets: freeze([]) })
+  }
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    arrayIsArray(value) ||
+    getPrototypeOf(value) !== objectPrototype
+  ) {
+    throw new Error("config build must be an ordinary object")
+  }
+  const descriptors = getOwnPropertyDescriptors(value)
+  const keys = ownKeys(value)
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index]
+    if (
+      typeof key !== "string" ||
+      (key !== "builder" && key !== "installCommand" && key !== "secrets")
+    ) {
+      throw new Error("config build accepts only builder, installCommand and secrets")
+    }
+    const descriptor = descriptors[key]
+    if (
+      descriptor === undefined ||
+      !descriptor.enumerable ||
+      !hasOwn(descriptor, "value")
+    ) {
+      throw new Error("config build properties must be enumerable data properties")
+    }
+  }
+  const builderValue = descriptors["builder"]?.value
+  if (builderValue !== undefined && !isBuilder(builderValue)) {
+    throw new Error(
+      "config build.builder must be created by builder(); image() describes a Workspace image, not the build environment",
+    )
+  }
+  const installCommand = descriptors["installCommand"]?.value
+  if (installCommand !== undefined) {
+    if (
+      typeof installCommand !== "string" ||
+      !regexpTest(/\S/, installCommand) ||
+      installCommand.length > maxInstallCommandBytes ||
+      includes(installCommand, "\0")
+    ) {
+      throw new Error("config build.installCommand must be a non-empty command string")
+    }
+  }
+  const secrets = hasOwn(descriptors, "secrets") && descriptors["secrets"]?.value !== undefined
+    ? normalizeStringSet(
+        descriptors["secrets"]?.value,
+        "config build.secrets",
+        (name) => {
+          if (typeof name !== "string" || !regexpTest(secretNamePattern, name)) {
+            throw new Error("config build.secrets entries must be environment variable names such as NPM_TOKEN")
+          }
+          return name
+        },
+        false,
+      )
+    : []
+  return freeze({
+    builder: builderValue === undefined ? builder() : builderValue,
+    installCommand,
+    secrets: freeze(secrets),
   })
 }
 

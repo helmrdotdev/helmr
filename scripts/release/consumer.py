@@ -152,7 +152,10 @@ def consumer(directory, cli_archive, work, expected_builder=None):
         installed = read(project / 'node_modules/@helmr/sdk/package.json')
         require(installed['helmr'] == packages['@helmr/sdk'][0]['helmr'], 'installed SDK stamp differs')
         require(read(project / 'node_modules/@helmr/proto/package.json')['version'] == version, 'installed proto differs')
-        (project / 'helmr.config.ts').write_text('import {defineConfig} from "@helmr/sdk"; export default defineConfig({dirs:["tasks"]});\n')
+        # npm fetched exact package bytes normally. Its cache allows the same
+        # lockfile install inside BuildKit without exposing a host test server.
+        (project / 'helmr.config.ts').write_text('import {defineConfig} from "@helmr/sdk"; export default defineConfig({dirs:["tasks"],'
+            'build:{installCommand:"npm ci --offline --cache .npm-cache --ignore-scripts --no-audit --no-fund"}});\n')
         (project / 'tasks/hello.ts').write_text('import {task,sandbox,image} from "@helmr/sdk"; '
             'export const hello=task({id:"preview-hello",run:()=>"preview-ok"});\n'
             'export const machine=sandbox({id:"preview-machine"}).image(image("preview-base").from('
@@ -173,10 +176,8 @@ if(!called) throw Error("SDK request missing");
         identity = subprocess.check_output([str(work / 'bin/helmr'), '--version'], text=True).strip()
         require(identity == 'v' + version + ' (' + installed['helmr']['sourceCommit'] + ')', 'CLI embedded source/version differs')
         require(expected_builder.encode() in (work / 'bin/helmr').read_bytes(), 'CLI embedded builder reference differs')
-        # npm fetched exact package bytes normally. Its cache allows the same
-        # lockfile install inside BuildKit without exposing a host test server.
-        run(work / 'bin/helmr', 'build', project, '--output', work / 'bundle',
-            '--install-command', 'npm ci --offline --cache .npm-cache --ignore-scripts --no-audit --no-fund', env=build_env)
+        # The config above is evaluated on this host with the installed signed SDK.
+        run(work / 'bin/helmr', 'build', project, '--output', work / 'bundle', env=build_env)
         bundle = read(work / 'bundle/bundle.json')
         require(bundle['contract'] == 'helmr.deployment-bundle.v0', 'wrong bundle contract')
         require({(d['kind'], d['declaredId']) for d in bundle['plan']['definitions']} == {('task', 'preview-hello'), ('sandbox', 'preview-machine')}, 'compiled fixture definitions differ')
@@ -189,8 +190,7 @@ if(!called) throw Error("SDK request missing");
             require(builder and builder['driver'] == 'docker-container' and len(builder['nodes']) == 1, 'CLI did not prepare its builder')
             require(builder['nodes'][0]['Endpoint'] == owned_context and builder['nodes'][0]['Status'] == 'running', 'wrong builder endpoint/readiness')
             require({k: v for k, v in after.items() if v['current']} == selected, 'CLI changed selected builder')
-            run(work / 'bin/helmr', 'build', project, '--output', work / 'bundle-reuse',
-                '--install-command', 'npm ci --offline --cache .npm-cache --ignore-scripts --no-audit --no-fund', env=build_env)
+            run(work / 'bin/helmr', 'build', project, '--output', work / 'bundle-reuse', env=build_env)
             require(buildx_state(build_env)[owned_builder] == builder, 'second build replaced the prepared builder')
             require(read(work / 'bundle-reuse/bundle.json') == bundle, 'reused builder changed the bundle')
             require(subprocess.check_output(['docker', 'context', 'show'], text=True).strip() == original_context, 'global context changed')

@@ -6,18 +6,18 @@ import { spawnSync } from "node:child_process"
 import { test } from "node:test"
 
 const adapter = new URL("../../../internal/moduleexecution/loader.mjs", import.meta.url).pathname
-function fixture(files: Record<string, string | object>, body: string, phase = "program", prefix = "helmr-module-execution-") {
+function fixture(files: Record<string, string | object>, body: string, prefix = "helmr-module-execution-") {
   const root = realpathSync(mkdtempSync(join(tmpdir(), prefix)))
   for (const [path, value] of Object.entries({ "package.json": { type: "module" }, ...files })) {
     mkdirSync(dirname(join(root, path)), { recursive: true })
     writeFileSync(join(root, path), typeof value === "string" ? value : JSON.stringify(value))
   }
   const runner = join(root, "runner.mjs")
-  writeFileSync(runner, `import {installModuleExecution} from ${JSON.stringify(adapter)};const execution=installModuleExecution({root:${JSON.stringify(root)},phase:${JSON.stringify(phase)}});\n${body}`)
+  writeFileSync(runner, `import {installModuleExecution} from ${JSON.stringify(adapter)};const execution=installModuleExecution({root:${JSON.stringify(root)}});\n${body}`)
   return { root, run: () => spawnSync(process.execPath, ["--no-strip-types", "--no-global-search-paths", "--enable-source-maps", runner], { encoding: "utf8", env: { PATH: process.env["PATH"] } }), close: () => rmSync(root, { recursive: true, force: true }) }
 }
-function check(files: Record<string, string | object>, body: string, expected: unknown, phase?: string) {
-  const f = fixture(files, body, phase)
+function check(files: Record<string, string | object>, body: string, expected: unknown) {
+  const f = fixture(files, body)
   try { const result = f.run(); assert.equal(result.status, 0, result.stderr); assert.deepEqual(JSON.parse(result.stdout), expected) } finally { f.close() }
 }
 
@@ -52,8 +52,8 @@ test("native conditions and multiple installed instances", () => {
 })
 
 test("genuine ESM values are not CJS-unwrapped; CJS uses known format", () => {
-  check({ "helmr.config.ts": 'export default {__esModule:true,default:{dirs:["wrong"]},dirs:["right"]}' }, 'console.log(JSON.stringify((await execution.importSourceExports(new URL("./helmr.config.ts",import.meta.url))).default))', { __esModule: true, default: { dirs: ["wrong"] }, dirs: ["right"] }, "config")
-  check({ "package.json": {}, "helmr.config.ts": 'globalThis.count=(globalThis.count??0)+1;const config={dirs:["tasks"]};export default config' }, 'const value=await execution.importSourceExports(new URL("./helmr.config.ts",import.meta.url));console.log(JSON.stringify([value.default,globalThis.count]))', [{ dirs: ["tasks"] }, 1], "config")
+  check({ "value.ts": 'export default {__esModule:true,default:{dirs:["wrong"]},dirs:["right"]}' }, 'console.log(JSON.stringify((await execution.importSourceExports(new URL("./value.ts",import.meta.url))).default))', { __esModule: true, default: { dirs: ["wrong"] }, dirs: ["right"] })
+  check({ "package.json": {}, "value.ts": 'globalThis.count=(globalThis.count??0)+1;const config={dirs:["tasks"]};export default config' }, 'const value=await execution.importSourceExports(new URL("./value.ts",import.meta.url));console.log(JSON.stringify([value.default,globalThis.count]))', [{ dirs: ["tasks"] }, 1])
 })
 
 test("root config aliases, symlinks and queries are build-only", () => {
@@ -99,7 +99,7 @@ test("dirty ancestor lookup locations and non-object root manifest reject entry"
   const parent = fixture({}, '')
   try {
     mkdirSync(join(parent.root,"node_modules"));mkdirSync(join(parent.root,"project"));writeFileSync(join(parent.root,"project/package.json"),'{}')
-    writeFileSync(join(parent.root,"runner.mjs"),`import{installModuleExecution}from${JSON.stringify(adapter)};installModuleExecution({root:${JSON.stringify(join(parent.root,"project"))},phase:"program"})`)
+    writeFileSync(join(parent.root,"runner.mjs"),`import{installModuleExecution}from${JSON.stringify(adapter)};installModuleExecution({root:${JSON.stringify(join(parent.root,"project"))}})`)
     assert.match(parent.run().stderr,/ancestor node_modules search location/)
   } finally { parent.close() }
 })
@@ -114,7 +114,7 @@ test("data modules do not inherit trusted bootstrap authority", () => {
   const platform=join(f.root,"../platform-"+f.root.split("/").pop());mkdirSync(join(platform,"helmr"),{recursive:true});writeFileSync(join(platform,"helmr/entry.mjs"),'export const value=42')
   try {
    writeFileSync(join(f.root,"main.ts"),`import ${JSON.stringify('data:text/javascript,'+encodeURIComponent('import '+JSON.stringify("file://"+join(platform,"helmr/entry.mjs"))))}`)
-   writeFileSync(join(f.root,"runner.mjs"),`import{installModuleExecution}from${JSON.stringify(adapter)};installModuleExecution({root:${JSON.stringify(f.root)},phase:"program",platformRoot:${JSON.stringify(platform)}});await import('./main.ts')`)
+   writeFileSync(join(f.root,"runner.mjs"),`import{installModuleExecution}from${JSON.stringify(adapter)};installModuleExecution({root:${JSON.stringify(f.root)},platformRoot:${JSON.stringify(platform)}});await import('./main.ts')`)
    assert.match(f.run().stderr,/must stay inside Program/)
   } finally {rmSync(platform,{recursive:true,force:true})}
  } finally {f.close()}
@@ -155,8 +155,8 @@ test("malformed config and export denials remain actionable failures", () => {
   }
 })
 
-test("JS callers share nearest aliases and TS relative/index fallback in both phases", () => {
-  for (const phase of ["config", "program"]) {
+test("JS callers share nearest aliases and TS relative/index fallback", () => {
+  {
     for (const commonjs of [false, true]) {
       const entry = commonjs ? "entry.cjs" : "entry.js"
       check({
@@ -175,7 +175,7 @@ test("JS callers share nearest aliases and TS relative/index fallback in both ph
         "node_modules/p/preferred.ts": 'throw new Error("existing JS was replaced")',
         "node_modules/fallback/package.json": { exports: "./index.cjs" },
         "node_modules/fallback/index.cjs": 'module.exports="native-package"',
-      }, 'console.log(JSON.stringify(await (await import("p")).default()))', ["nearest", "jsx", "index", "native-js", "native-package", "nearest"], phase)
+      }, 'console.log(JSON.stringify(await (await import("p")).default()))', ["nearest", "jsx", "index", "native-js", "native-package", "nearest"])
     }
   }
 })
@@ -222,7 +222,7 @@ test("JS resolution retains config, package, syntax and source-boundary errors",
 
 test("aliases preserve literal filename characters and nearest config in encoded roots", () => {
   for (const commonjs of [false, true]) {
-    for (const phase of ["config", "program"]) {
+    {
       const f = fixture({
         "package.json": { type: commonjs ? "commonjs" : "module" },
         "tsconfig.json": { compilerOptions: { paths: { "@value": ["./wrong.ts"] } } },
@@ -234,7 +234,7 @@ test("aliases preserve literal filename characters and nearest config in encoded
         "nested#%?/main.js": commonjs
           ? 'module.exports=[require("@value").default,require("@index").default]'
           : 'import value from"@value";import index from"@index";export default [value,index]',
-      }, 'const value=(await import("./nested%23%25%3F/main.js")).default;console.log(JSON.stringify([value,[...execution.configReads.keys()].map(p=>p.slice(execution.root.length+1))]))', phase, "helmr-module-#%?-")
+      }, 'const value=(await import("./nested%23%25%3F/main.js")).default;console.log(JSON.stringify([value,[...execution.configReads.keys()].map(p=>p.slice(execution.root.length+1))]))', "helmr-module-#%?-")
       try {
         const result = f.run()
         assert.equal(result.status, 0, result.stderr)
@@ -254,7 +254,7 @@ test("relative require preserves literal # percent and question-mark names", () 
     "dir#%?/index.ts": 'export default "index"',
     "native#%?.js": 'module.exports="native"',
     "native#%?.ts": 'throw Error("native success replaced")',
-  }, 'console.log(JSON.stringify((await import("./main.cjs")).default))', "program", "helmr-module-#%?-")
+  }, 'console.log(JSON.stringify((await import("./main.cjs")).default))', "helmr-module-#%?-")
   try {
     const result = f.run()
     assert.equal(result.status, 0, result.stderr)
@@ -277,7 +277,7 @@ test("encoded paths retain native errors and canonical build-only config guards"
     { files: { "main.cjs": 'require("./escape#%?/hidden")' }, expected: /must stay inside Program/, setup: root => symlinkSync("..", join(root, "escape#%?")) },
   ]
   for (const { files, expected, setup } of cases) {
-    const f = fixture(files, 'await import("./main.cjs")', "program", "helmr-module-#%?-")
+    const f = fixture(files, 'await import("./main.cjs")', "helmr-module-#%?-")
     try {
       setup?.(f.root)
       const result = f.run()

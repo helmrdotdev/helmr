@@ -23,19 +23,15 @@ stdenvNoCC.mkDerivation {
     install -d "$tree/helmr"
     cp -a ${moduleExecution}/moduleexecution "$tree/moduleexecution"
     cp -a ${moduleExecution}/share "$tree/share"
-    install -m0644 ${../../internal/compiler/config-evaluator.mjs} "$tree/helmr/config-evaluator.mjs"
     install -m0644 ${../../internal/compiler/program-compiler.mjs} "$tree/helmr/program-compiler.mjs"
     node "$tree/helmr/program-compiler.mjs" --describe >"$TMPDIR/contract.json"
     jq -e --arg typescriptVersion '${typescriptVersion}' '.apiVersion == "helmr.compiler.v0" and .language.apiVersion == "helmr.module-execution.v0" and .language.typescriptVersion == $typescriptVersion' "$TMPDIR/contract.json" >/dev/null
-    config_digest="$(sha256sum "$tree/helmr/config-evaluator.mjs" | cut -d' ' -f1)"
     program_digest="$(sha256sum "$tree/helmr/program-compiler.mjs" | cut -d' ' -f1)"
     install -d "$out"
     cp -a "$tree" "$out/tree"
     jq -cSj \
-      --arg configDigest "sha256:$config_digest" \
       --arg programDigest "sha256:$program_digest" \
       '{apiVersion:.apiVersion,language:.language,
-        configEvaluator:{apiVersion:"helmr.config-evaluator.v0",digest:$configDigest,entrypoint:"/nix/helmr/config-evaluator.mjs"},
         programCompiler:{apiVersion:.apiVersion,digest:$programDigest,entrypoint:"/nix/helmr/program-compiler.mjs"}
       }' "$TMPDIR/contract.json" >"$out/compiler.descriptor.json"
   '';

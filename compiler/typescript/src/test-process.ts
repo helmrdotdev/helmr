@@ -4,16 +4,15 @@ import { readFileSync,mkdtempSync,rmSync } from "node:fs"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
-import type { HelmrConfig } from "@helmr/sdk/internal"
+import type { DiscoveryConfig } from "./config"
 
 export const nodeVersion = spawnSync("node", ["-p", "process.versions.node"], { encoding: "utf8" }).stdout.trim()
-export function runEntry(name: string, args: string[]) {
-  const entry = new URL(`../../../internal/compiler/${name}.mjs`, import.meta.url)
+function run(entry: URL, nodeArguments: string[], args: string[]) {
   const scratch=mkdtempSync(resolve(tmpdir(),"helmr-frame-"))
   const resultPath=resolve(scratch,"frame")
   let frame:Buffer
   try {
-    const child = spawnSync("bash", ["-c", 'exec "$@" 3>"$HELMR_TEST_RESULT"', "helmr-test", "node", "--no-strip-types", "--no-global-search-paths", "--enable-source-maps", entry.pathname, ...args], {
+    const child = spawnSync("bash", ["-c", 'exec "$@" 3>"$HELMR_TEST_RESULT"', "helmr-test", "node", ...nodeArguments, entry.pathname, ...args], {
       stdio: ["ignore", "pipe", "pipe"], env: { PATH: process.env["PATH"], HELMR_TEST_RESULT:resultPath },
     })
     frame=readFileSync(resultPath)
@@ -23,7 +22,15 @@ export function runEntry(name: string, args: string[]) {
   if (body.readUInt32BE(0) !== body.length - 4) throw new Error("invalid compiler frame")
   return JSON.parse(body.subarray(4).toString())
 }
-export async function analyzeProject(options: {root: string; architecture: "x86_64"; config: HelmrConfig}) {
+// The managed Program compiler, as the target runs it.
+export function runEntry(name: string, args: string[]) {
+  return run(new URL(`../../../internal/compiler/${name}.mjs`, import.meta.url), ["--no-strip-types", "--no-global-search-paths", "--enable-source-maps"], args)
+}
+// The host config evaluator exactly as the CLI embeds and runs it: plain node, project root.
+export function runHostConfig(root: string) {
+  return run(new URL("../../../internal/hostconfig/config-evaluator.mjs", import.meta.url), [], [root])
+}
+export async function analyzeProject(options: {root: string; architecture: "x86_64"; config: DiscoveryConfig}) {
   const output = await mkdtemp(resolve(tmpdir(), "helmr-source-result-"))
   try {
     const configPath = resolve(output,"config.json")

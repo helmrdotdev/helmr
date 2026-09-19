@@ -9,7 +9,8 @@
   "dependencies": {
     "@helmr/sdk": "workspace:*",
     "yaml": "2.9.1",
-    "@helmr/module-execution": "workspace:*"
+    "@helmr/module-execution": "workspace:*",
+    "jiti": "2.7.0"
   },
   "devDependencies": {
     "@types/node": "^24.13.2",

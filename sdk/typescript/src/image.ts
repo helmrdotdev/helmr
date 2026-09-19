@@ -21,7 +21,7 @@ export interface ImageBuilder {
   readonly key: string
   from(ref: string): ImageBuilder
   run(argv: readonly string[]): ImageBuilder
-  copy(destination: string, source: SourceFile | SourceDirectory): ImageBuilder
+  copy(source: SourceFile | SourceDirectory, destination: string): ImageBuilder
   copyFrom(
     destination: string,
     source: ImageBuilder,
@@ -105,22 +105,27 @@ class Image implements ImageBuilder {
   }
 
   copy(
-    destination: string,
     source: SourceFile | SourceDirectory,
+    destination: string,
+    ...unexpected: readonly unknown[]
   ): ImageBuilder {
-    if (isSourceFile(source)) {
-      return new Image(this.key, [
-        ...this.steps,
-        { kind: "copy_source_file", destination, source },
-      ])
+    if (unexpected.length !== 0) {
+      throw new Error("image.copy() accepts only a source and a destination")
     }
-    if (isSourceDirectory(source)) {
-      return new Image(this.key, [
-        ...this.steps,
-        { kind: "copy_source_directory", destination, source },
-      ])
+    if (!isSourceFile(source) && !isSourceDirectory(source)) {
+      throw new Error(
+        "image.copy() requires source.file() or source.directory() as its first argument",
+      )
     }
-    throw new Error("image.copy() requires source.file() or source.directory()")
+    if (typeof destination !== "string") {
+      throw new Error("image.copy() requires a destination path as its second argument")
+    }
+    return new Image(this.key, [
+      ...this.steps,
+      isSourceFile(source)
+        ? { kind: "copy_source_file", destination, source }
+        : { kind: "copy_source_directory", destination, source },
+    ])
   }
 
   copyFrom(

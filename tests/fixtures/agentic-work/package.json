@@ -1,0 +1,10 @@
+{
+  "name": "agentic-work-fixture",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@helmr/sdk": "0.1.0-preview.g722c161b.b35326156279",
+    "playwright": "1.63.0",
+    "sharp": "0.35.4"
+  }
+}

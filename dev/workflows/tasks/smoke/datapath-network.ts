@@ -8,7 +8,7 @@ const probeSource = source.file("tasks/smoke/datapath-network-probe.py")
 
 const base = image("helmr-datapath-network")
   .from("node:24-bookworm-slim")
-  .copy("/opt/helmr/datapath-network-probe.py", probeSource)
+  .copy(probeSource, "/opt/helmr/datapath-network-probe.py")
   .run([
     "sh",
     "-ceu",

@@ -386,3 +386,14 @@ func validImageString(value string, maxBytes int) bool {
 func validImageArchitecture(value string) bool {
 	return value == "x86_64"
 }
+
+// ValidateRunArgv applies the exec-form RUN limits shared by every Helmr
+// image graph, including the build environment.
+func ValidateRunArgv(argv []string, label string) error {
+	return validateRun(Run{Argv: argv}, label)
+}
+
+// ValidateAbsolutePath accepts a clean absolute POSIX path inside an image.
+func ValidateAbsolutePath(value string, label string) error {
+	return validateImageAbsolutePath(value, label)
+}

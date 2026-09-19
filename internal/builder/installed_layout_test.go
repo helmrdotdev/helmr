@@ -11,10 +11,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
-func TestInstalledLayoutContextBindsOneLinuxAMD64Manifest(t *testing.T) {
+func TestLayoutContextBindsOneLinuxAMD64Manifest(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "layout with spaces")
 	digest := writeInstalledLayoutFixture(t, root, &oci.Platform{OS: "linux", Architecture: "amd64"})
-	context, err := InstalledLayoutContext(root)
+	context, err := LayoutContext(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -23,12 +23,12 @@ func TestInstalledLayoutContextBindsOneLinuxAMD64Manifest(t *testing.T) {
 	}
 }
 
-func TestInstalledLayoutContextRejectsWrongPlatformAndManifestBytes(t *testing.T) {
+func TestLayoutContextRejectsWrongPlatformAndManifestBytes(t *testing.T) {
 	t.Run("platform", func(t *testing.T) {
 		root := filepath.Join(t.TempDir(), "layout")
 		writeInstalledLayoutFixture(t, root, &oci.Platform{OS: "linux", Architecture: "arm64"})
-		if _, err := InstalledLayoutContext(root); err == nil {
-			t.Fatal("InstalledLayoutContext accepted an arm64 manifest")
+		if _, err := LayoutContext(root); err == nil {
+			t.Fatal("LayoutContext accepted an arm64 manifest")
 		}
 	})
 	t.Run("manifest digest", func(t *testing.T) {
@@ -38,8 +38,8 @@ func TestInstalledLayoutContextRejectsWrongPlatformAndManifestBytes(t *testing.T
 		if err := os.WriteFile(path, []byte("corrupt"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := InstalledLayoutContext(root); err == nil {
-			t.Fatal("InstalledLayoutContext accepted corrupt manifest bytes")
+		if _, err := LayoutContext(root); err == nil {
+			t.Fatal("LayoutContext accepted corrupt manifest bytes")
 		}
 	})
 }

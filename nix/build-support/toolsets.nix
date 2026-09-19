@@ -113,6 +113,7 @@ rec {
 
   ciGo = ciShell ++ [
     helmrPackages.goPackage
+    helmrPackages.nodejs # Host config evaluation in internal/hostconfig and cmd/helmr tests.
     pkgs.stdenv.cc
     pkgs.gnumake
   ];
@@ -151,6 +152,7 @@ rec {
   ];
 
   ciBundleBuilder = ciGo ++ [
+    helmrPackages.bun # Packs the current SDK that fixture configs import on the host.
     pkgs.python3
     pkgs.nix
     pkgs.curl

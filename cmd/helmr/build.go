@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/buildcontext"
 	"github.com/helmrdotdev/helmr/internal/builder"
 	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/hostconfig"
 	"github.com/spf13/cobra"
 )
 
@@ -38,8 +39,6 @@ type dockerBuildxRequest struct {
 
 func bundleBuildCommand() *cobra.Command {
 	var output string
-	var installCommand string
-	var secretIDs []string
 	command := &cobra.Command{
 		Use:   "build [path]",
 		Short: "Build a verified deployment bundle locally.",
@@ -49,14 +48,7 @@ func bundleBuildCommand() *cobra.Command {
 			if len(arguments) == 1 {
 				source = arguments[0]
 			}
-			return buildDeploymentBundle(
-				command.Context(),
-				command,
-				source,
-				output,
-				installCommand,
-				secretIDs,
-			)
+			return buildDeploymentBundleAt(command.Context(), command, source, output, true)
 		},
 	}
 	command.Flags().StringVarP(
@@ -66,25 +58,7 @@ func bundleBuildCommand() *cobra.Command {
 		".helmr/deployment-bundle",
 		"New deployment bundle directory.",
 	)
-	command.Flags().StringVar(
-		&installCommand,
-		"install-command",
-		"",
-		"Custom dependency installation/preparation command inside BuildKit.",
-	)
-	command.Flags().StringSliceVar(&secretIDs, "build-secret", nil, "Environment variable to mount as /run/secrets/NAME during dependency installation (repeatable).")
 	return command
-}
-
-func buildDeploymentBundle(
-	ctx context.Context,
-	command *cobra.Command,
-	source string,
-	output string,
-	installCommand string,
-	secretIDs []string,
-) error {
-	return buildDeploymentBundleAt(ctx, command, source, output, installCommand, secretIDs, true)
 }
 
 func buildDeploymentBundleAt(
@@ -92,11 +66,10 @@ func buildDeploymentBundleAt(
 	command *cobra.Command,
 	source string,
 	output string,
-	installCommand string,
-	secretIDs []string,
 	printOutput bool,
 ) (returnErr error) {
-	if err := builder.ValidateBuilderImage(deploymentBundleBuilderImage); err != nil {
+	builderContext, err := builder.BuilderContext(deploymentBundleBuilderImage)
+	if err != nil {
 		return errors.New("this Helmr release does not contain a canonical bundle builder image")
 	}
 	root, err := filepath.Abs(source)
@@ -138,11 +111,21 @@ func buildDeploymentBundleAt(
 	}
 	defer func() { returnErr = errors.Join(returnErr, os.RemoveAll(stage)) }()
 	contextDirectory := captured.Path
-	install, err := builder.SelectInstallPlan(contextDirectory, installCommand)
+	// The source is captured first; the config then runs once, on this host,
+	// against the live project so its ordinary imports resolve. Every target
+	// input below comes from the capture and the resolved document.
+	resolved, err := evaluateHostConfig(ctx, root, command.ErrOrStderr())
 	if err != nil {
 		return err
 	}
-	install.SecretIDs, err = builder.NormalizeSecretIDs(secretIDs)
+	if err := resolved.Resolve(contextDirectory); err != nil {
+		return err
+	}
+	install, err := builder.SelectInstallPlan(contextDirectory, resolved.Build.InstallCommand)
+	if err != nil {
+		return err
+	}
+	install.SecretIDs, err = builder.NormalizeSecretIDs(resolved.Build.Secrets)
 	if err != nil {
 		return err
 	}
@@ -150,12 +133,50 @@ func buildDeploymentBundleAt(
 	if err := os.Mkdir(emptyContext, 0o755); err != nil {
 		return err
 	}
-	installedDockerfile, err := builder.InstalledDockerfile(deploymentBundleBuilderImage, install)
+	configContext := filepath.Join(stage, "config")
+	if err := os.Mkdir(configContext, 0o755); err != nil {
+		return err
+	}
+	discovery, err := deployment.CanonicalBuildConfig(resolved.Discovery)
 	if err != nil {
 		return err
 	}
-	installedDockerfilePath := filepath.Join(stage, "Dockerfile.installed")
-	if err := os.WriteFile(installedDockerfilePath, installedDockerfile, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(configContext, "config.json"), discovery, 0o444); err != nil {
+		return err
+	}
+	// One environment for the whole build: the pinned builder, or the project's
+	// build.builder steps run once and exported, never repeated per graph.
+	environmentContext := builderContext
+	if steps := resolved.Build.Builder.Steps; len(steps) != 0 {
+		environmentDockerfile, err := builder.EnvironmentDockerfile(steps)
+		if err != nil {
+			return err
+		}
+		environmentDockerfilePath, err := writeGraph(stage, "Dockerfile.environment", environmentDockerfile)
+		if err != nil {
+			return err
+		}
+		environmentLayout := filepath.Join(stage, "environment-layout")
+		if err := runDockerBuildx(ctx, command, dockerBuildxRequest{
+			Runner:     runner,
+			Dockerfile: environmentDockerfilePath, ContextDirectory: contextDirectory,
+			Target: "environment", Output: environmentLayout, OutputType: "oci",
+			OutputAttributes: map[string]string{"rewrite-timestamp": "true", "tar": "false"},
+			BuildContexts:    map[string]string{builder.BuilderContextName: builderContext},
+		}); err != nil {
+			return fmt.Errorf("prepare build environment: %w", err)
+		}
+		environmentContext, err = builder.LayoutContext(environmentLayout)
+		if err != nil {
+			return fmt.Errorf("validate build environment: %w", err)
+		}
+	}
+	installedDockerfile, err := builder.InstalledDockerfile(install)
+	if err != nil {
+		return err
+	}
+	installedDockerfilePath, err := writeGraph(stage, "Dockerfile.installed", installedDockerfile)
+	if err != nil {
 		return err
 	}
 	installedLayout := filepath.Join(stage, "installed-layout")
@@ -164,21 +185,22 @@ func buildDeploymentBundleAt(
 		Dockerfile: installedDockerfilePath, ContextDirectory: contextDirectory,
 		Target: "installed-tree", Output: installedLayout, OutputType: "oci",
 		OutputAttributes: map[string]string{"rewrite-timestamp": "true", "tar": "false"},
+		BuildContexts:    map[string]string{builder.EnvironmentContextName: environmentContext},
 		SecretIDs:        install.SecretIDs,
 	}); err != nil {
 		return fmt.Errorf("install project dependencies: %w", err)
 	}
-	installedContext, err := builder.InstalledLayoutContext(installedLayout)
+	installedContext, err := builder.LayoutContext(installedLayout)
 	if err != nil {
 		return fmt.Errorf("validate installed project tree: %w", err)
 	}
 	projectContexts := map[string]string{"helmr_installed": installedContext}
-	analysisDockerfile, err := builder.AnalysisDockerfile(deploymentBundleBuilderImage)
+	analysisDockerfile, err := builder.AnalysisDockerfile()
 	if err != nil {
 		return err
 	}
-	analysisDockerfilePath := filepath.Join(stage, "Dockerfile.analysis")
-	if err := os.WriteFile(analysisDockerfilePath, analysisDockerfile, 0o600); err != nil {
+	analysisDockerfilePath, err := writeGraph(stage, "Dockerfile.analysis", analysisDockerfile)
+	if err != nil {
 		return err
 	}
 	analysisOutput := filepath.Join(stage, "analysis")
@@ -186,7 +208,12 @@ func buildDeploymentBundleAt(
 		Runner:     runner,
 		Dockerfile: analysisDockerfilePath, ContextDirectory: emptyContext,
 		Target: "analysis", Output: analysisOutput, OutputType: "local",
-		BuildContexts: projectContexts,
+		BuildContexts: map[string]string{
+			builder.BuilderContextName:     builderContext,
+			builder.EnvironmentContextName: environmentContext,
+			builder.ConfigContextName:      configContext,
+			"helmr_installed":              installedContext,
+		},
 	}); err != nil {
 		return err
 	}
@@ -229,12 +256,12 @@ func buildDeploymentBundleAt(
 	if err := os.WriteFile(filepath.Join(workspaceContext, "images.json"), workspaceRaw, 0o644); err != nil {
 		return err
 	}
-	finalDockerfile, err := builder.Dockerfile(deploymentBundleBuilderImage)
+	finalDockerfile, err := builder.Dockerfile()
 	if err != nil {
 		return err
 	}
-	finalDockerfilePath := filepath.Join(stage, "Dockerfile.final")
-	if err := os.WriteFile(finalDockerfilePath, finalDockerfile, 0o600); err != nil {
+	finalDockerfilePath, err := writeGraph(stage, "Dockerfile.final", finalDockerfile)
+	if err != nil {
 		return err
 	}
 	buildOutput := filepath.Join(stage, "bundle")
@@ -243,8 +270,11 @@ func buildDeploymentBundleAt(
 		Dockerfile: finalDockerfilePath, ContextDirectory: emptyContext,
 		Target: "bundle", Output: buildOutput, OutputType: "local",
 		BuildContexts: map[string]string{
-			"helmr_images":    workspaceContext,
-			"helmr_installed": installedContext,
+			builder.BuilderContextName:     builderContext,
+			builder.EnvironmentContextName: environmentContext,
+			builder.ConfigContextName:      configContext,
+			"helmr_images":                 workspaceContext,
+			"helmr_installed":              installedContext,
 		},
 	}); err != nil {
 		return err
@@ -257,6 +287,23 @@ func buildDeploymentBundleAt(
 		return err
 	}
 	return nil
+}
+
+// evaluateHostConfig is the single evaluation of helmr.config.ts per build.
+var evaluateHostConfig = hostconfig.Evaluate
+
+// writeGraph stores a generated Dockerfile with its own ignore file beside it:
+// BuildKit prefers <Dockerfile>.dockerignore over a .dockerignore inside the
+// context, so a project's Docker ignore rules cannot drop captured source.
+func writeGraph(stage, name string, dockerfile []byte) (string, error) {
+	path := filepath.Join(stage, name)
+	if err := os.WriteFile(path, dockerfile, 0o600); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(path+".dockerignore", []byte(builder.CapturedSourceIgnoreFile), 0o600); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 func buildWorkspaceImages(

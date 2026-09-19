@@ -221,6 +221,10 @@ func newRuntimeTopology(t *testing.T) (RuntimeDescriptor, *memoryArtifact) {
 	artifact.addDirectory("share/licenses/node")
 	artifact.addDirectory("moduleexecution")
 	artifact.addDirectory("share/licenses/typescript")
+	artifact.addDirectory("share/licenses/debian")
+	for _, name := range []string{"libc6", "libgcc-s1", "libstdc++6"} {
+		artifact.addFile("share/licenses/debian/"+name, []byte("copyright"), 0644)
+	}
 	artifact.addFile("helmr/module-preload.mjs", []byte("preload"), 0644)
 	artifact.addFile("moduleexecution/loader.mjs", []byte("adapter"), 0644)
 	artifact.addFile("moduleexecution/typescript.cjs", []byte("typescript"), 0644)

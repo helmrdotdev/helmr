@@ -1,3 +1,4 @@
+export { isBuilder, type Builder, type BuilderStep } from "./builder"
 export {
   inspectConfig,
   matchesIgnorePattern,
