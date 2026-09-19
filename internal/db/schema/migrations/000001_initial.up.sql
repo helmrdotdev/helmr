@@ -2921,10 +2921,3 @@ CREATE UNIQUE INDEX workspaces_environment_key_uidx ON workspaces(environment_id
 CREATE INDEX workspace_versions_workspace_created_idx ON workspace_versions(workspace_id, created_at DESC);
 CREATE INDEX public_access_tokens_expiry_active_idx ON public_access_tokens(expires_at, id)
     WHERE status = 'active';
-
-COMMENT ON COLUMN run_waits.token_registration_run_revision IS
-    'Run revision supplied while running, before token wait registration increments runs.revision; retained as registration identity.';
-COMMENT ON COLUMN run_waits.expected_run_revision IS
-    'Run revision after the latest coordinated wait transition; fences subsequent wait, checkpoint, and resume operations.';
-COMMENT ON COLUMN telemetry_outbox.snapshot_version IS
-    'Resource revision represented by an event snapshot; independent of outbox delivery attempts.';
