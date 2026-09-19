@@ -303,7 +303,9 @@ UPDATE run_waits
        base_workspace_version_id = $3,
        base_workspace_content_digest = $4,
        ownership_generation = 1,
-       parent_writer_generation = 2
+       parent_writer_generation = 2,
+       checkpoint_request_version = 1,
+       checkpoint_ack_version = 1
  WHERE id = $1`, innerWaitID, innerCheckpointID, nestedBaseWorkspaceVersionID, nestedBaseDigest)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE runs

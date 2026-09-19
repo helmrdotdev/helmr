@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -148,7 +149,13 @@ func (s *Server) workerCreateTokenRunWait(
 	if request.ActorSpeculativeInputSequence != nil {
 		actorCursor = pgtype.Int8{Int64: *request.ActorSpeculativeInputSequence, Valid: true}
 	}
+	turnID, generation, err := parseWorkerWaitTurn(request.TurnID, request.RunGeneration)
+	if err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
 	registered, err := reconciler.RegisterWait(r.Context(), token.WaitRegistration{
+		TurnID: turnID, RunGeneration: generation,
 		TokenID: tokenID, WaitID: waitID, ResumeAttachID: resumeAttachID,
 		RunLeaseID: parsed.leaseID, LeaseSequence: request.Lease.LeaseSequence,
 		WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: worker.WorkerInstanceID,
@@ -217,6 +224,15 @@ func (s *Server) workerPollRunWait(w http.ResponseWriter, r *http.Request) {
 		wait.WorkspaceID != locators.WorkspaceID ||
 		(wait.CurrentRunLeaseID != pgvalue.UUID(parsed.leaseID) && wait.PriorRunLeaseID != pgvalue.UUID(parsed.leaseID)) {
 		writeError(w, conflict(errors.New("worker run wait fence is stale")))
+		return
+	}
+	current, err := s.db.RunWaitTurnCurrent(r.Context(), wait.ID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if !current {
+		writeError(w, conflict(errors.New("Turn wait authority was revoked")))
 		return
 	}
 	response := workerapi.RunWaitPollResponse{RunID: pgvalue.UUIDString(locators.RunID), RunWaitID: waitID.String()}
@@ -396,6 +412,18 @@ func (s *Server) loadRunWaitRegistrationAuthority(
 }
 
 func validateRunWaitActorCursor(authority runLeaseClaimAuthority, wait db.RunWait) error {
+	if authority.run.EntrypointKind == "actor" {
+		if authority.actor.DispatchHoldID.Valid {
+			return session.ErrTurnStopped
+		}
+		if wait.TurnID.Valid && (authority.actor.ActiveTurnID != wait.TurnID || wait.TurnSessionID != authority.actor.ID || wait.TurnRunGeneration.Int64 != authority.actor.RunGeneration) {
+			return session.ErrTurnScope
+		}
+		if wait.Kind != db.WaitKindActorInput && authority.actor.ActiveTurnID.Valid != wait.TurnID.Valid {
+			return session.ErrTurnScope
+		}
+	}
+
 	switch authority.run.EntrypointKind {
 	case "task":
 		if authority.run.SessionID.Valid || wait.ActorSpeculativeInputSequence.Valid {
@@ -403,6 +431,13 @@ func validateRunWaitActorCursor(authority runLeaseClaimAuthority, wait db.RunWai
 		}
 	case "actor":
 		cursor := wait.ActorSpeculativeInputSequence
+		want := authority.actor.CommittedInputSequence
+		if wait.Kind != db.WaitKindActorInput && wait.TurnID.Valid {
+			want++
+		}
+		if cursor.Valid && cursor.Int64 != want {
+			return errStaleRunLeaseClaim
+		}
 		if !authority.run.SessionID.Valid || authority.run.SessionID != authority.actor.ID ||
 			!authority.actor.CurrentRunID.Valid || authority.actor.CurrentRunID != authority.run.ID ||
 			(authority.actor.Status != "open" && authority.actor.Status != "closing") ||
@@ -532,4 +567,47 @@ func decodeClosedJSON(raw json.RawMessage, destination any) error {
 		return errors.New("trailing JSON value")
 	}
 	return nil
+}
+
+func parseWorkerWaitTurn(id *string, generation *int64) (pgtype.UUID, pgtype.Int8, error) {
+	if id == nil && generation == nil {
+		return pgtype.UUID{}, pgtype.Int8{}, nil
+	}
+	if id == nil || generation == nil || *generation <= 0 {
+		return pgtype.UUID{}, pgtype.Int8{}, session.ErrTurnScope
+	}
+	parsed, err := parseCanonicalUUID("turn_id", *id)
+	if err != nil {
+		return pgtype.UUID{}, pgtype.Int8{}, err
+	}
+	return pgvalue.UUID(parsed), pgtype.Int8{Int64: *generation, Valid: true}, nil
+}
+func validateWorkerWaitTurn(ctx context.Context, q db.Querier, a runLeaseClaimAuthority, turnID pgtype.UUID, gen pgtype.Int8) error {
+	if a.run.EntrypointKind != "actor" {
+		if turnID.Valid {
+			return session.ErrTurnScope
+		}
+		return nil
+	}
+	if a.actor.DispatchHoldID.Valid {
+		return session.ErrTurnStopped
+	}
+	if a.actor.ActiveTurnID != turnID {
+		return session.ErrTurnScope
+	}
+	if !turnID.Valid {
+		return nil
+	}
+	_, err := session.ValidateTurnWork(ctx, q, session.TurnScope{EnvironmentID: pgvalue.MustUUIDValue(a.actor.EnvironmentID), SessionID: pgvalue.MustUUIDValue(a.actor.ID), RunID: pgvalue.MustUUIDValue(a.run.ID), TurnID: pgvalue.MustUUIDValue(turnID), AttemptNumber: a.attempt.Number, RunGeneration: gen.Int64})
+	return err
+}
+
+// Registration already validated the parsed binding under the Session lock;
+// the conditional write independently rejects a changed owner.
+func bindWorkerWaitTurn(ctx context.Context, q db.Querier, a runLeaseClaimAuthority, waitID, turnID pgtype.UUID, gen pgtype.Int8) error {
+	if !turnID.Valid {
+		return nil
+	}
+	_, err := q.BindRunWaitTurn(ctx, db.BindRunWaitTurnParams{SessionID: a.actor.ID, TurnID: turnID, RunGeneration: gen, WaitID: waitID})
+	return err
 }

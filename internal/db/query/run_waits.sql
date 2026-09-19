@@ -27,6 +27,9 @@ WITH replay AS (
      WHERE run_waits.id = sqlc.arg(wait_id)
        AND run_waits.token_id = sqlc.arg(token_id)
        AND run_waits.kind = 'token'
+       AND run_waits.turn_id IS NOT DISTINCT FROM sqlc.narg(turn_id)
+       AND run_waits.turn_run_generation IS NOT DISTINCT FROM sqlc.narg(turn_run_generation)
+       AND (runs.session_id IS NULL OR EXISTS (SELECT 1 FROM sessions s WHERE s.id=runs.session_id AND s.current_run_id=runs.id AND s.dispatch_hold_id IS NULL AND (run_waits.turn_id IS NULL AND s.active_turn_id IS NULL OR s.active_turn_id=run_waits.turn_id AND s.run_generation=run_waits.turn_run_generation)))
        AND run_waits.resume_attach_id = sqlc.arg(resume_attach_id)
        AND run_waits.registration_request_fingerprint
            = sqlc.arg(request_fingerprint)::text
@@ -67,10 +70,7 @@ SELECT runs.workspace_id,
    AND runs.id = sqlc.arg(run_id);
 
 -- name: LockTokenWaitActor :one
-SELECT status,
-       current_run_id,
-       committed_input_sequence,
-       next_input_sequence
+SELECT *
   FROM sessions
  WHERE id = sqlc.arg(session_id)
  FOR UPDATE;
@@ -358,11 +358,12 @@ resolved_wait AS (
 SELECT id FROM resolved_wait;
 
 -- name: ListTokenWaitCandidates :many
-SELECT id AS wait_id, run_id
+SELECT run_waits.id AS wait_id, run_waits.run_id
   FROM run_waits
- WHERE environment_id = sqlc.arg(environment_id)
+ WHERE run_waits.environment_id = sqlc.arg(environment_id)
    AND token_id = sqlc.arg(token_id)
    AND (condition_status = 'pending' OR suspension_status = 'checkpointing')
+   AND NOT EXISTS(SELECT 1 FROM runs r JOIN sessions s ON s.id=r.session_id WHERE r.id=run_waits.run_id AND (s.dispatch_hold_id IS NOT NULL OR s.current_run_id IS DISTINCT FROM r.id))
  ORDER BY token_id,
           CASE condition_status
               WHEN 'pending' THEN 0
@@ -370,17 +371,18 @@ SELECT id AS wait_id, run_id
               WHEN 'failed' THEN 2
               WHEN 'cancelled' THEN 3
           END,
-          id
+          run_waits.id
  LIMIT sqlc.arg(row_limit);
 
 -- name: ListTimedOutTokenWaitCandidates :many
-SELECT id AS wait_id, run_id, environment_id, token_id
+SELECT run_waits.id AS wait_id, run_waits.run_id, run_waits.environment_id, run_waits.token_id
   FROM run_waits
  WHERE kind = 'token'
    AND condition_status = 'pending'
    AND timeout_at IS NOT NULL
    AND timeout_at <= transaction_timestamp()
- ORDER BY timeout_at, id
+   AND NOT EXISTS(SELECT 1 FROM runs r JOIN sessions s ON s.id=r.session_id WHERE r.id=run_waits.run_id AND (s.dispatch_hold_id IS NOT NULL OR s.current_run_id IS DISTINCT FROM r.id))
+ ORDER BY timeout_at, run_waits.id
  LIMIT sqlc.arg(row_limit);
 
 -- name: GetChildCallRunWaitReplay :one
@@ -761,14 +763,14 @@ UPDATE run_waits
        checkpoint_request_version = checkpoint_request_version + 1,
        suspend_checkpoint_id = sqlc.arg(suspend_checkpoint_id),
        updated_at = now()
- WHERE run_id = sqlc.arg(run_id)
-   AND attempt_number = sqlc.arg(attempt_number)
-   AND id = sqlc.arg(id)
-   AND current_run_lease_id = sqlc.arg(current_run_lease_id)
-   AND suspension_status = 'hot'
-   AND condition_status = 'pending'
-   AND checkpoint_due_at IS NOT NULL
-   AND checkpoint_due_at <= transaction_timestamp()
+ WHERE run_waits.run_id = sqlc.arg(run_id)
+   AND run_waits.attempt_number = sqlc.arg(attempt_number)
+   AND run_waits.id = sqlc.arg(id)
+   AND run_waits.current_run_lease_id = sqlc.arg(current_run_lease_id)
+   AND run_waits.suspension_status = 'hot'
+   AND run_waits.condition_status = 'pending'
+   AND run_waits.checkpoint_due_at IS NOT NULL
+   AND run_waits.checkpoint_due_at <= transaction_timestamp()
 RETURNING *;
 
 -- name: BeginRunLeaseCheckpoint :one
@@ -790,17 +792,17 @@ UPDATE run_waits
        resume_ack_version = sqlc.arg(resume_request_version),
        suspension_terminal_at = transaction_timestamp(),
        updated_at = transaction_timestamp()
- WHERE id = sqlc.arg(id)
-   AND environment_id = sqlc.arg(environment_id)
-   AND run_id = sqlc.arg(run_id)
-   AND attempt_number = sqlc.arg(attempt_number)
-   AND workspace_id = sqlc.arg(workspace_id)
-   AND current_run_lease_id = sqlc.arg(current_run_lease_id)
-   AND suspension_status = 'resuming'
-   AND suspend_checkpoint_id = sqlc.arg(checkpoint_id)::uuid
-   AND resume_attach_id = sqlc.arg(resume_attach_id)
-   AND resume_request_version = sqlc.arg(resume_request_version)
-   AND resume_ack_version < resume_request_version
+ WHERE run_waits.id = sqlc.arg(id)
+   AND run_waits.environment_id = sqlc.arg(environment_id)
+   AND run_waits.run_id = sqlc.arg(run_id)
+   AND run_waits.attempt_number = sqlc.arg(attempt_number)
+   AND run_waits.workspace_id = sqlc.arg(workspace_id)
+   AND run_waits.current_run_lease_id = sqlc.arg(current_run_lease_id)
+   AND run_waits.suspension_status = 'resuming'
+   AND run_waits.suspend_checkpoint_id = sqlc.arg(checkpoint_id)::uuid
+   AND run_waits.resume_attach_id = sqlc.arg(resume_attach_id)
+   AND run_waits.resume_request_version = sqlc.arg(resume_request_version)
+   AND run_waits.resume_ack_version < resume_request_version
 RETURNING *;
 
 -- name: RegisterTimerRunWait :one
@@ -854,13 +856,14 @@ SELECT *
         OR prior_run_lease_id = sqlc.arg(run_lease_id));
 
 -- name: ListDueTimerRunWaits :many
-SELECT *
+SELECT run_waits.*
   FROM run_waits
  WHERE kind = 'timer'
    AND condition_status = 'pending'
    AND due_at <= transaction_timestamp()
    AND suspension_status IN ('hot', 'checkpointing', 'parked')
- ORDER BY due_at, id
+   AND NOT EXISTS(SELECT 1 FROM runs r JOIN sessions s ON s.id=r.session_id WHERE r.id=run_waits.run_id AND (s.dispatch_hold_id IS NOT NULL OR s.current_run_id IS DISTINCT FROM r.id))
+ ORDER BY due_at, run_waits.id
  LIMIT sqlc.arg(limit_count);
 
 -- name: RegisterActorInputRunWait :one
@@ -932,20 +935,6 @@ SELECT *
  LIMIT 1
  FOR UPDATE;
 
--- name: LocatePendingActorInputRunWait :one
-SELECT *
-  FROM run_waits
- WHERE environment_id = sqlc.arg(environment_id)
-   AND run_id = sqlc.arg(run_id)
-   AND attempt_number = sqlc.arg(attempt_number)
-   AND session_id = sqlc.arg(session_id)
-   AND kind = 'actor_input'
-   AND after_input_sequence = sqlc.arg(after_input_sequence)
-   AND condition_status = 'pending'
-   AND suspension_status IN ('hot', 'checkpointing', 'parked');
-
--- Preliminary EXISTS avoids locking a Run for an already-ineligible Wait.
--- Only the subsequently locked eligible_wait authorizes either write.
 -- name: CompleteHotRunWait :one
 WITH locked_run AS MATERIALIZED (
     SELECT runs.id AS run_id
@@ -963,13 +952,12 @@ WITH locked_run AS MATERIALIZED (
        AND w.attempt_number = sqlc.arg(attempt_number)
        AND w.current_run_lease_id = sqlc.arg(current_run_lease_id)
        AND (
-           (w.kind = 'timer' AND sqlc.narg(completed_actor_record_id)::uuid IS NULL)
+           (w.kind = 'timer' AND sqlc.narg(completed_turn_id)::uuid IS NULL)
            OR (w.kind = 'actor_input' AND EXISTS (
-               SELECT 1 FROM session_records AS record
-                WHERE record.id = sqlc.narg(completed_actor_record_id)
+               SELECT 1 FROM session_turns AS record
+                WHERE record.id = sqlc.narg(completed_turn_id)
                   AND record.session_id = w.session_id
                   AND record.environment_id = w.environment_id
-                  AND record.direction = 'input'
            ))
        ))
      FOR UPDATE OF runs
@@ -985,13 +973,12 @@ WITH locked_run AS MATERIALIZED (
        AND w.attempt_number = sqlc.arg(attempt_number)
        AND w.current_run_lease_id = sqlc.arg(current_run_lease_id)
        AND (
-           (w.kind = 'timer' AND sqlc.narg(completed_actor_record_id)::uuid IS NULL)
+           (w.kind = 'timer' AND sqlc.narg(completed_turn_id)::uuid IS NULL)
            OR (w.kind = 'actor_input' AND EXISTS (
-               SELECT 1 FROM session_records AS record
-                WHERE record.id = sqlc.narg(completed_actor_record_id)
+               SELECT 1 FROM session_turns AS record
+                WHERE record.id = sqlc.narg(completed_turn_id)
                   AND record.session_id = w.session_id
                   AND record.environment_id = w.environment_id
-                  AND record.direction = 'input'
            ))
        )
      FOR UPDATE OF w
@@ -1012,7 +999,7 @@ WITH locked_run AS MATERIALIZED (
 UPDATE run_waits
    SET condition_status = 'completed',
        condition_result = sqlc.arg(condition_result),
-       completed_actor_record_id = sqlc.narg(completed_actor_record_id),
+       completed_turn_id = sqlc.narg(completed_turn_id),
        condition_terminal_at = transaction_timestamp(),
        suspension_status = 'released',
        expected_run_revision = moved_run.revision,
@@ -1033,13 +1020,12 @@ WITH eligible_wait AS MATERIALIZED (
        AND w.expected_run_revision = sqlc.arg(expected_run_revision)
        AND w.current_run_lease_id = sqlc.arg(current_run_lease_id)
        AND (
-           (w.kind = 'timer' AND sqlc.narg(completed_actor_record_id)::uuid IS NULL)
+           (w.kind = 'timer' AND sqlc.narg(completed_turn_id)::uuid IS NULL)
            OR (w.kind = 'actor_input' AND EXISTS (
-               SELECT 1 FROM session_records AS record
-                WHERE record.id = sqlc.narg(completed_actor_record_id)
+               SELECT 1 FROM session_turns AS record
+                WHERE record.id = sqlc.narg(completed_turn_id)
                   AND record.session_id = w.session_id
                   AND record.environment_id = w.environment_id
-                  AND record.direction = 'input'
            ))
        )
      FOR UPDATE OF w
@@ -1047,7 +1033,7 @@ WITH eligible_wait AS MATERIALIZED (
 UPDATE run_waits
    SET condition_status = 'completed',
        condition_result = sqlc.arg(condition_result),
-       completed_actor_record_id = sqlc.narg(completed_actor_record_id),
+       completed_turn_id = sqlc.narg(completed_turn_id),
        condition_terminal_at = transaction_timestamp(),
        updated_at = transaction_timestamp()
   FROM eligible_wait
@@ -1073,13 +1059,12 @@ WITH locked_run AS MATERIALIZED (
        AND w.prior_run_lease_id = sqlc.arg(prior_run_lease_id)
        AND w.suspend_checkpoint_id = sqlc.arg(suspend_checkpoint_id)
        AND (
-           (w.kind = 'timer' AND sqlc.narg(completed_actor_record_id)::uuid IS NULL)
+           (w.kind = 'timer' AND sqlc.narg(completed_turn_id)::uuid IS NULL)
            OR (w.kind = 'actor_input' AND EXISTS (
-               SELECT 1 FROM session_records AS record
-                WHERE record.id = sqlc.narg(completed_actor_record_id)
+               SELECT 1 FROM session_turns AS record
+                WHERE record.id = sqlc.narg(completed_turn_id)
                   AND record.session_id = w.session_id
                   AND record.environment_id = w.environment_id
-                  AND record.direction = 'input'
            ))
        ))
      FOR UPDATE OF runs
@@ -1097,13 +1082,12 @@ WITH locked_run AS MATERIALIZED (
        AND w.prior_run_lease_id = sqlc.arg(prior_run_lease_id)
        AND w.suspend_checkpoint_id = sqlc.arg(suspend_checkpoint_id)
        AND (
-           (w.kind = 'timer' AND sqlc.narg(completed_actor_record_id)::uuid IS NULL)
+           (w.kind = 'timer' AND sqlc.narg(completed_turn_id)::uuid IS NULL)
            OR (w.kind = 'actor_input' AND EXISTS (
-               SELECT 1 FROM session_records AS record
-                WHERE record.id = sqlc.narg(completed_actor_record_id)
+               SELECT 1 FROM session_turns AS record
+                WHERE record.id = sqlc.narg(completed_turn_id)
                   AND record.session_id = w.session_id
                   AND record.environment_id = w.environment_id
-                  AND record.direction = 'input'
            ))
        )
      FOR UPDATE OF w
@@ -1124,7 +1108,7 @@ WITH locked_run AS MATERIALIZED (
 UPDATE run_waits
    SET condition_status = 'completed',
        condition_result = sqlc.arg(condition_result),
-       completed_actor_record_id = sqlc.narg(completed_actor_record_id),
+       completed_turn_id = sqlc.narg(completed_turn_id),
        condition_terminal_at = transaction_timestamp(),
        suspension_status = 'resume_pending',
        resume_request_version = run_waits.resume_request_version + 1,
@@ -1135,13 +1119,14 @@ UPDATE run_waits
 RETURNING run_waits.*;
 
 -- name: ListPendingActorInputWaitTimeouts :many
-SELECT *
+SELECT run_waits.*
   FROM run_waits
  WHERE kind = 'actor_input'
    AND condition_status = 'pending'
    AND timeout_at IS NOT NULL
    AND timeout_at <= transaction_timestamp()
- ORDER BY timeout_at, id
+   AND NOT EXISTS(SELECT 1 FROM runs r JOIN sessions s ON s.id=r.session_id WHERE r.id=run_waits.run_id AND (s.dispatch_hold_id IS NOT NULL OR s.current_run_id IS DISTINCT FROM r.id))
+ ORDER BY timeout_at, run_waits.id
  LIMIT sqlc.arg(limit_count);
 
 -- name: FailHotRunWait :one

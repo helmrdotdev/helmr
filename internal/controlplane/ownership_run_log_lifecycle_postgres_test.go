@@ -134,9 +134,11 @@ func TestRunLogAppendLifecycleOwnersPostgres(t *testing.T) {
 				}
 				input.ObservedSeq = 100
 				row, err := db.New(f.Pool).AppendRunLogChunk(ctx, input)
-				if owner == "checkpoint" {
+				// Checkpoint preparation and accepted stop leave the live worker
+				// able to report logs until execution finalization fences it.
+				if owner == "checkpoint" || owner == "cancel" {
 					if err != nil || !row.ReplayMatches {
-						t.Fatalf("committed checkpoint append: %+v %v", row, err)
+						t.Fatalf("append after %s acceptance: %+v %v", owner, row, err)
 					}
 					accepted++
 				} else if !errors.Is(err, pgx.ErrNoRows) {
@@ -196,7 +198,7 @@ func runLogLifecycleAction(t *testing.T, ctx context.Context, f *actorCheckpoint
 		return func() error {
 			response := httptest.NewRecorder()
 			f.server.cancelRunHTTP(response, request)
-			if response.Code != http.StatusOK {
+			if response.Code != http.StatusAccepted {
 				return fmt.Errorf("cancel: %d %s", response.Code, response.Body.String())
 			}
 			return nil

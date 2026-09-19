@@ -52,7 +52,6 @@ func TestSchemaFailurePayloadsRejectNullAndPreserveLifecycle(t *testing.T) {
 		{"run expired", `UPDATE runs SET status='expired', terminal_at=now(), failure=$2 WHERE id=$1`, "expired", work.runID},
 		{"run system failed", `UPDATE runs SET status='system_failed', terminal_at=now(), failure=$2 WHERE id=$1`, "system_failed", work.runID},
 		{"session failed", `UPDATE sessions SET status='failed', failed_at=now(), failure=$2 WHERE id=$1`, "run_failed", sessionID},
-		{"session cancelled", `UPDATE sessions SET status='cancelled', failure=$2 WHERE id=$1`, "cancelled", sessionID},
 		{"schedule errored", `UPDATE schedules SET status='errored', last_failure=$2 WHERE id=$1`, "invalid_schedule", scheduleID},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -164,18 +163,18 @@ func TestSchemaProvenanceAndExpiryRejectPartialTuples(t *testing.T) {
 	rejectSchemaRow(t, tx, "23514", `UPDATE idempotency_claims SET expires_at=NULL WHERE id=$1`, claimID)
 	rejectSchemaRow(t, tx, "23514", `UPDATE idempotency_claims SET expires_at=accepted_at+interval '29 days' WHERE id=$1`, claimID)
 	dbtest.MustExec(t, ctx, tx, `UPDATE idempotency_claims SET operation='task.child.invoke', expires_at=NULL WHERE id=$1`, claimID)
-	dbtest.MustExec(t, ctx, tx, `INSERT INTO session_records (id,environment_id,session_id,direction,sequence,data) VALUES ($1,$2,$3,'input',10,'{}')`, recordID, fixture.environmentID, sessionID)
-	rejectSchemaRow(t, tx, "23503", `UPDATE session_records SET source_run_id=$2 WHERE id=$1`, recordID, uuid.NewV7())
-	dbtest.MustExec(t, ctx, tx, `UPDATE session_records SET source_run_id=$2 WHERE id=$1`, recordID, work.runID)
+	dbtest.MustExec(t, ctx, tx, `INSERT INTO session_turns (id,environment_id,session_id,sequence,data) VALUES ($1,$2,$3,10,'{}')`, recordID, fixture.environmentID, sessionID)
+	rejectSchemaRow(t, tx, "23503", `UPDATE session_turns SET source_run_id=$2 WHERE id=$1`, recordID, uuid.NewV7())
+	dbtest.MustExec(t, ctx, tx, `UPDATE session_turns SET source_run_id=$2 WHERE id=$1`, recordID, work.runID)
 	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO run_waits (id,environment_id,run_id,workspace_id,kind,session_id,after_input_sequence,
-		 condition_status,condition_terminal_at,completed_actor_record_id,
+		 condition_status,condition_terminal_at,completed_turn_id,
 		 expected_run_revision,attempt_number,current_run_lease_id,resume_attach_id)
 		SELECT $1,environment_id,id,workspace_id,'actor_input',session_id,0,'completed',now(),$2,revision,1,$3,$4
 		FROM runs WHERE id=$5
 	`, waitID, recordID, work.leaseID, uuid.NewV7(), work.runID)
-	rejectSchemaRow(t, tx, "23514", `UPDATE run_waits SET completed_actor_record_id=NULL WHERE id=$1`, waitID)
-	rejectSchemaRow(t, tx, "23503", `UPDATE run_waits SET completed_actor_record_id=$2 WHERE id=$1`, waitID, uuid.NewV7())
+	rejectSchemaRow(t, tx, "23514", `UPDATE run_waits SET completed_turn_id=NULL WHERE id=$1`, waitID)
+	rejectSchemaRow(t, tx, "23503", `UPDATE run_waits SET completed_turn_id=$2 WHERE id=$1`, waitID, uuid.NewV7())
 	var outboxID int64
 	if err := tx.QueryRow(ctx, `INSERT INTO telemetry_outbox(org_id,project_id,environment_id,stream_kind,source_kind,source_id,run_id,run_lease_id,attempt_number,stream_name,content,size_bytes,observed_seq) VALUES ($1,$2,$3,'run_log','run',$4,$4,$5,1,'stdout','\x00',1,1) RETURNING id`, fixture.orgID, fixture.projectID, fixture.environmentID, work.runID, work.leaseID).Scan(&outboxID); err != nil {
 		t.Fatal(err)
@@ -341,9 +340,8 @@ func TestSchemaDiagnosticCodesAreStructural(t *testing.T) {
 			}
 		})
 	}
-	rejectSchemaRow(t, tx, "23514", `UPDATE sessions SET failure='{"code":"cancelled","message":"cancelled","details":{}}' WHERE id=$1`, sessionID)
-	rejectSchemaRow(t, tx, "23514", `UPDATE sessions SET status='cancelled',failed_at=NULL WHERE id=$1`, sessionID)
-	dbtest.MustExec(t, ctx, tx, `UPDATE sessions SET status='cancelled',failed_at=NULL,failure='{"code":"cancelled","message":"cancelled","details":{}}' WHERE id=$1`, sessionID)
+	rejectSchemaRow(t, tx, "23514", `UPDATE sessions SET status='open',failed_at=NULL WHERE id=$1`, sessionID)
+	dbtest.MustExec(t, ctx, tx, `UPDATE sessions SET status='open',failed_at=NULL,failure=NULL WHERE id=$1`, sessionID)
 	dbtest.MustExec(t, ctx, tx, `UPDATE sessions SET status='failed',failed_at=now(),failure='{"code":"future_diagnostic","message":"diagnosis","details":{}}' WHERE id=$1`, sessionID)
 	dbtest.MustExec(t, ctx, tx, `UPDATE schedules SET status='active' WHERE id=$1`, scheduleID)
 	if err := tx.Commit(ctx); err != nil {

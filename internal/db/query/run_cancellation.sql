@@ -312,34 +312,6 @@ RETURNING run_waits.id,
           run_waits.workspace_id,
           run_waits.resume_request_version;
 
--- name: DetachActorFromCancelledRun :execrows
-UPDATE sessions
-   SET current_run_id = NULL,
-       run_generation = run_generation + 1,
-       revision = revision + 1,
-       manual_run_cancelled = true,
-       updated_at = transaction_timestamp()
- WHERE id = sqlc.arg(session_id)
-   AND workspace_id = sqlc.arg(workspace_id)
-   AND current_run_id = sqlc.arg(run_id)
-   AND status IN ('open', 'closing');
-
--- name: FailActorForRunTermination :execrows
-UPDATE sessions
-   SET status = 'failed',
-       current_run_id = NULL,
-       run_generation = run_generation + 1,
-       revision = revision + 1,
-       manual_run_cancelled = false,
-       failure = sqlc.arg(failure)::jsonb,
-       failure_run_id = sqlc.arg(run_id),
-       failed_at = transaction_timestamp(),
-       updated_at = transaction_timestamp()
- WHERE id = sqlc.arg(session_id)
-   AND workspace_id = sqlc.arg(workspace_id)
-   AND current_run_id = sqlc.arg(run_id)
-   AND status IN ('open', 'closing');
-
 -- name: TerminalizeRunSuspensions :exec
 UPDATE run_waits
    SET condition_status = CASE
@@ -413,6 +385,10 @@ SELECT runs.id AS run_id,
        workspace_mounts.lost_at AS mount_lost_at,
        workspace_mounts.failed_at AS mount_failed_at,
        sessions.run_generation AS actor_run_generation,
+       sessions.dispatch_hold_id AS actor_dispatch_hold_id,
+       EXISTS (SELECT 1 FROM run_waits WHERE run_waits.run_id = runs.id
+                AND run_waits.current_run_lease_id = run_leases.id
+                AND run_waits.suspension_status = 'resuming') AS has_resume_wait,
        transaction_timestamp()::timestamptz AS observed_at
   FROM runs
   JOIN run_attempts
@@ -470,13 +446,52 @@ SELECT runs.id AS run_id,
             AND run_leases.finalization_kind IS NOT NULL
             AND run_leases.finalization_started_at IS NOT NULL
             AND run_leases.finalization_request_fingerprint IS NOT NULL))
+   AND (runs.entrypoint_kind = 'task'
+        OR EXISTS (SELECT 1 FROM sessions
+                    WHERE sessions.id = runs.session_id
+                      AND sessions.current_run_id = runs.id
+                      AND sessions.status IN ('open', 'closing')))
    AND NOT EXISTS (
-       SELECT 1
-         FROM run_waits
+       SELECT 1 FROM run_waits
         WHERE run_waits.run_id = runs.id
           AND run_waits.attempt_number = runs.current_attempt_number
           AND run_waits.current_run_lease_id = run_leases.id
           AND run_waits.suspension_status = 'resuming'
+          AND (runs.entrypoint_kind = 'task' OR EXISTS (
+              SELECT 1 FROM sessions
+              JOIN run_checkpoints ON run_checkpoints.id = run_waits.suspend_checkpoint_id
+               AND run_checkpoints.run_id = runs.id
+               AND run_checkpoints.attempt_number = runs.current_attempt_number
+               AND run_checkpoints.run_wait_id = run_waits.id
+               AND run_checkpoints.workspace_id = runs.workspace_id
+              JOIN workspace_versions ON workspace_versions.id = run_checkpoints.private_workspace_version_id
+               AND workspace_versions.workspace_id = run_checkpoints.workspace_id
+              JOIN run_leases AS source_run_leases ON source_run_leases.id = run_checkpoints.source_run_lease_id
+               AND source_run_leases.run_id = runs.id
+               AND source_run_leases.attempt_number = runs.current_attempt_number
+               AND source_run_leases.workspace_id = runs.workspace_id
+              WHERE sessions.id = runs.session_id AND sessions.current_run_id = runs.id
+                AND sessions.dispatch_hold_id IS NULL
+                AND run_checkpoints.status = 'ready'
+                AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > transaction_timestamp())
+                AND workspace_versions.status = 'private'
+                AND source_run_leases.status = 'checkpointed'
+                AND run_checkpoints.actor_speculative_input_sequence
+                    BETWEEN sessions.committed_input_sequence AND sessions.next_input_sequence - 1
+                AND (run_leases.status <> 'running' OR runs.active_started_at IS NULL
+                     OR runs.active_started_at
+                        + (GREATEST(runs.max_active_duration_ms - runs.active_elapsed_ms, 0)::text || ' milliseconds')::interval
+                        > LEAST(run_leases.expires_at,
+                            COALESCE(worker_instances.lost_at, 'infinity'::timestamptz),
+                            COALESCE(worker_instances.termination_ready_at, 'infinity'::timestamptz),
+                            CASE WHEN worker_instances.current_epoch IS DISTINCT FROM run_leases.worker_epoch
+                                 THEN COALESCE(worker_instances.epoch_started_at, worker_instances.updated_at)
+                                 ELSE 'infinity'::timestamptz END,
+                            CASE WHEN runtime_instances.observed_state IN ('lost', 'failed')
+                                 THEN runtime_instances.terminal_at ELSE 'infinity'::timestamptz END,
+                            COALESCE(workspace_mounts.lost_at, 'infinity'::timestamptz),
+                            COALESCE(workspace_mounts.failed_at, 'infinity'::timestamptz)))
+          ))
    );
 
 -- name: StopLostRunActiveInterval :one
@@ -624,17 +639,6 @@ UPDATE workspaces
  WHERE id = sqlc.arg(workspace_id)
    AND owner_run_id = sqlc.arg(run_id)
    AND owner_session_id IS NULL;
-
--- name: ReleaseActorWorkspace :exec
-UPDATE workspaces
-   SET owner_session_id = NULL,
-       ownership_generation = ownership_generation + 1,
-       revision = revision + 1,
-       last_activity_at = transaction_timestamp(),
-       updated_at = transaction_timestamp()
- WHERE id = sqlc.arg(workspace_id)
-   AND owner_session_id = sqlc.arg(session_id)
-   AND owner_run_id IS NULL;
 
 -- name: RecordRunTerminalEvent :exec
 INSERT INTO telemetry_outbox (

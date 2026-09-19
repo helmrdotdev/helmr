@@ -59,7 +59,7 @@ func projectSessionStatus(record sessionReadRecord) (sessionStatusProjection, er
 	if !record.createdAt.Valid || !record.updatedAt.Valid {
 		return sessionStatusProjection{}, errors.New("session timestamps are unavailable")
 	}
-	terminalFailure := status == api.SessionStatusFailed || status == api.SessionStatusCancelled
+	terminalFailure := status == api.SessionStatusFailed
 	if terminalFailure != (len(record.failure) > 0) {
 		return sessionStatusProjection{}, errors.New("session failure projection is inconsistent")
 	}
@@ -100,15 +100,10 @@ func projectSessionStatus(record sessionReadRecord) (sessionStatusProjection, er
 	return result, nil
 }
 
-// sessionStorageStatuses lists the stored Session statuses that project to the
-// given public statuses. Public open covers stored open and closing.
+// sessionStorageStatuses maps public statuses directly to their stored values.
 func sessionStorageStatuses(statuses []api.SessionStatus) []string {
-	storedStatuses := make([]string, 0, len(statuses)+1)
+	storedStatuses := make([]string, 0, len(statuses))
 	for _, status := range statuses {
-		if status == api.SessionStatusOpen {
-			storedStatuses = append(storedStatuses, "open", "closing")
-			continue
-		}
 		storedStatuses = append(storedStatuses, string(status))
 	}
 	return storedStatuses
@@ -116,12 +111,12 @@ func sessionStorageStatuses(statuses []api.SessionStatus) []string {
 
 func sessionStatus(status string) (api.SessionStatus, error) {
 	switch status {
-	case "open", "closing":
+	case "open":
 		return api.SessionStatusOpen, nil
 	case "closed":
 		return api.SessionStatusClosed, nil
-	case "cancelled":
-		return api.SessionStatusCancelled, nil
+	case "closing":
+		return api.SessionStatusClosing, nil
 	case "failed":
 		return api.SessionStatusFailed, nil
 	default:

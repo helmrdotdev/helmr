@@ -130,6 +130,15 @@ func (s *Server) acknowledgeRunResumeRelease(
 		}); err != nil {
 			return err
 		}
+		if authority.actor.ID.Valid || authority.runWait.TurnID.Valid {
+			current, err := work.q.RunWaitTurnCurrent(ctx, authority.runWait.ID)
+			if err != nil {
+				return err
+			}
+			if !current {
+				return errStaleRunLeaseClaim
+			}
+		}
 		wait := authority.runWait
 		if wait.ID != proof.runWaitID ||
 			wait.CurrentRunLeaseID != authority.runLease.ID ||

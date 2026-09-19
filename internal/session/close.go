@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
@@ -18,7 +19,11 @@ func ReconcileClose(
 	actor db.Session,
 	bindings []db.LockWorkspaceSecretsForAdmissionRow,
 ) (db.Session, bool, error) {
-	if actor.Status != "closing" || !actor.CloseSequence.Valid {
+	if actor.Status != "closing" || !actor.CloseSequence.Valid || actor.ActiveTurnID.Valid {
+		return actor, false, nil
+	}
+	if actor.DispatchHoldID.Valid && (actor.CurrentRunID.Valid || actor.CommittedInputSequence < actor.CloseSequence.Int64 ||
+		(actor.DispatchHoldReason.String != "recovered" && actor.DispatchHoldReason.String != "interrupted")) {
 		return actor, false, nil
 	}
 	if actor.CurrentRunID.Valid {
@@ -64,6 +69,17 @@ func ReconcileClose(
 	if !workspaceCanAdmit(workspace, activity) {
 		return actor, true, nil
 	}
+	if actor.DispatchHoldID.Valid {
+		// Closing a drained, settled hold does not resume customer code. Keep
+		// its physical exclusion check even if another writer appeared since repair.
+		excluded, err := store.SessionWriterExcluded(ctx, actor.WorkspaceID)
+		if err != nil {
+			return db.Session{}, false, err
+		}
+		if !excluded.Valid || !excluded.Bool {
+			return actor, true, nil
+		}
+	}
 	now, err := store.GetRunLeaseRenewalTime(ctx)
 	if err != nil || !now.Valid {
 		if err == nil {
@@ -84,6 +100,12 @@ func ReconcileClose(
 		}
 		return db.Session{}, false, fmt.Errorf("release actor close workspace owner: %w", err)
 	}
+	if actor.DispatchHoldID.Valid {
+		actor, err = store.ClearSessionDispatchHold(ctx, db.ClearSessionDispatchHoldParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID, DispatchHoldID: actor.DispatchHoldID})
+		if err != nil {
+			return db.Session{}, false, err
+		}
+	}
 	closed, err := store.CompleteIdleActorClose(ctx, db.CompleteIdleActorCloseParams{
 		ClosedAt:      now,
 		EnvironmentID: actor.EnvironmentID,
@@ -93,7 +115,8 @@ func ReconcileClose(
 	if err != nil {
 		return db.Session{}, false, fmt.Errorf("complete idle actor close: %w", err)
 	}
-	return closed, false, nil
+	_, err = appendLifecycleEvent(ctx, store, closed, pgtype.UUID{}, pgtype.UUID{}, "session.closed", []byte(`{}`), pgtype.UUID{})
+	return closed, false, err
 }
 
 func reconcileCurrentRunClose(

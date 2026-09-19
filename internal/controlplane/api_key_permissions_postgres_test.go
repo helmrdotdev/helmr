@@ -335,8 +335,8 @@ func (f apiKeyPermissionPostgresFixture) issueRecorder(t *testing.T, name string
 func allAPIKeyPermissionScopes() []api.APIKeyScope {
 	return []api.APIKeyScope{
 		api.APIKeyScopeRunsCreate, api.APIKeyScopeRunsRead, api.APIKeyScopeRunsManage,
-		api.APIKeyScopeSessionsRead, api.APIKeyScopeActorsStart, api.APIKeyScopeSessionsInputSend,
-		api.APIKeyScopeSessionsClose, api.APIKeyScopeTokensCreate, api.APIKeyScopeTokensRead,
+		api.APIKeyScopeSessionsRead, api.APIKeyScopeActorsStart, api.APIKeyScopeSessionsSend,
+		api.APIKeyScopeSessionsClose, api.APIKeyScopeSessionsInterrupt, api.APIKeyScopeSessionsResume, api.APIKeyScopeSessionsRecover, api.APIKeyScopeTokensCreate, api.APIKeyScopeTokensRead,
 		api.APIKeyScopeTokensComplete, api.APIKeyScopeTokensCancel, api.APIKeyScopeWorkspacesCreate,
 		api.APIKeyScopeWorkspacesRead, api.APIKeyScopeWorkspacesDelete,
 		api.APIKeyScopeWorkspaceExecCreate, api.APIKeyScopeSecretsWrite, api.APIKeyScopeTasksDeploy,

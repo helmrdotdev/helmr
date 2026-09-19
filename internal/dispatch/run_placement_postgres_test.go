@@ -907,8 +907,8 @@ UPDATE run_checkpoints
        invalidation_reason_code = 'test_invalid_restore'
  WHERE id = $1`, checkpointID)
 
-	if candidates := listRunPlacementCandidates(t, fixture, 1); len(candidates) != 1 {
-		t.Fatalf("raw placement candidates = %d, want 1", len(candidates))
+	if candidates := listRunPlacementCandidates(t, fixture, 1); len(candidates) != 0 {
+		t.Fatalf("invalid Actor reached bounded placement scan: %+v", candidates)
 	}
 	eligible, err := queries.ListQueuedRunEligibleScopes(fixture.ctx, db.ListQueuedRunEligibleScopesParams{
 		RowLimit: 10, ScanSeed: "invalid-actor-restore",
@@ -1882,8 +1882,8 @@ func TestActorCurrentRunCheckpointRestoreAndRecovery(t *testing.T) {
 		wantRunStatus   string
 	}{
 		{name: "recoverable checkpoint", wantRecovered: 1, wantActorState: "open", wantRunStatus: "queued"},
-		{name: "unavailable checkpoint", invalidate: true, wantActorState: "failed", wantActorReason: pgtype.Text{String: "platform_failure", Valid: true}, wantRunStatus: "system_failed"},
-		{name: "maximum active duration", maxDuration: true, wantActorState: "failed", wantActorReason: pgtype.Text{String: "run_expired", Valid: true}, wantRunStatus: "expired"},
+		{name: "unavailable checkpoint", invalidate: true, wantActorState: "open", wantRunStatus: "system_failed"},
+		{name: "maximum active duration", maxDuration: true, wantActorState: "open", wantRunStatus: "expired"},
 		{name: "speculative cursor outside Actor bounds", invalidCursor: true, wantActorState: "open", wantRunStatus: "queued"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1901,8 +1901,8 @@ func TestActorCurrentRunCheckpointRestoreAndRecovery(t *testing.T) {
 				dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_checkpoints SET actor_speculative_input_sequence = 2 WHERE id = $1`, checkpointID)
 				queued = listRunPlacementCandidates(t, fixture, 10)
-				if len(queued) != 1 || queued[0].RunID != pgvalue.UUID(fixture.runID) {
-					t.Fatalf("out-of-bounds Actor candidates = %+v", queued)
+				if len(queued) != 0 {
+					t.Fatalf("out-of-bounds Actor reached placement scan = %+v", queued)
 				}
 				if _, err := fixture.authority.PlaceReadyRun(fixture.ctx, candidate); !errors.Is(err, ErrCandidateChanged) {
 					t.Fatalf("Actor restore with out-of-bounds cursor error = %v, want ErrCandidateChanged", err)
@@ -1969,6 +1969,11 @@ UPDATE workspace_leases
 			if len(recovered) != tc.wantRecovered {
 				t.Fatalf("recovered %d Actor resumes, want %d", len(recovered), tc.wantRecovered)
 			}
+			if tc.invalidate || tc.maxDuration {
+				if n, err := fixture.authority.RecoverRunExecutionLeases(fixture.ctx, 10); err != nil || n != 1 {
+					t.Fatalf("Actor execution cleanup=%d %v", n, err)
+				}
+			}
 			var actorStatus string
 			var currentRunID, ownerActorID pgtype.UUID
 			var runGeneration, actorRevision, ownershipGeneration int64
@@ -1995,8 +2000,8 @@ SELECT sessions.status, sessions.current_run_id, sessions.run_generation, sessio
 				t.Fatalf("Actor state/reason = %s/%v, want %s/%v", actorStatus, actorReason, tc.wantActorState, tc.wantActorReason)
 			}
 			if tc.invalidate || tc.maxDuration {
-				if currentRunID.Valid || ownerActorID.Valid || runGeneration != 2 || actorRevision != 2 ||
-					ownershipGeneration != 2 || waitStatus != "failed" || runStatus != tc.wantRunStatus || terminalCursor.Valid {
+				if currentRunID != pgvalue.UUID(fixture.runID) || ownerActorID != pgvalue.UUID(actorID) || runGeneration != 1 || actorRevision != 2 ||
+					ownershipGeneration != 1 || waitStatus != "failed" || runStatus != tc.wantRunStatus || terminalCursor.Valid {
 					t.Fatalf("terminal Actor composition run=%s owner=%s generations=%d/%d workspace=%d wait=%s run=%s cursor=%v",
 						pgvalue.UUIDString(currentRunID), pgvalue.UUIDString(ownerActorID), runGeneration,
 						actorRevision, ownershipGeneration, waitStatus, runStatus, terminalCursor)
@@ -2296,7 +2301,7 @@ INSERT INTO run_checkpoints (
 		checkpointID, fixture.runID, waitID, grant.Lease.ID, sourceWorkspaceLeaseID,
 		fixture.workspaceID, baseWorkspaceVersionID, privateVersionID,
 		checkpointArtifacts.RuntimeConfig, checkpointArtifacts.VMState, checkpointArtifacts.Memory, checkpointArtifacts.ScratchDisk, speculativeSequence)
-	dbtest.MustExec(t, fixture.ctx, tx, `UPDATE run_waits SET suspend_checkpoint_id = $2, resume_request_version = 1 WHERE id = $1`, waitID, checkpointID)
+	dbtest.MustExec(t, fixture.ctx, tx, `UPDATE run_waits SET suspend_checkpoint_id = $2, checkpoint_request_version = 1, checkpoint_ack_version = 1, resume_request_version = 1, actor_speculative_input_sequence = (SELECT actor_speculative_input_sequence FROM run_checkpoints WHERE id=$2) WHERE id = $1`, waitID, checkpointID)
 	dbtest.MustExec(t, fixture.ctx, tx, `UPDATE runs SET current_run_lease_id = NULL, revision = 3 WHERE id = $1`, fixture.runID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE run_leases SET status = 'checkpointed', claimed_at = created_at, started_at = created_at,

@@ -294,8 +294,14 @@ func normalizeAPIKeyScope(scope api.APIKeyScope) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeSessionsRead, true
 	case string(api.APIKeyScopeActorsStart):
 		return api.APIKeyScopeActorsStart, true
-	case string(api.APIKeyScopeSessionsInputSend):
-		return api.APIKeyScopeSessionsInputSend, true
+	case string(api.APIKeyScopeSessionsSend):
+		return api.APIKeyScopeSessionsSend, true
+	case string(api.APIKeyScopeSessionsInterrupt):
+		return api.APIKeyScopeSessionsInterrupt, true
+	case string(api.APIKeyScopeSessionsResume):
+		return api.APIKeyScopeSessionsResume, true
+	case string(api.APIKeyScopeSessionsRecover):
+		return api.APIKeyScopeSessionsRecover, true
 	case string(api.APIKeyScopeSessionsClose):
 		return api.APIKeyScopeSessionsClose, true
 	case string(api.APIKeyScopeTokensCreate):
@@ -335,8 +341,14 @@ func apiKeyScopePermission(scope api.APIKeyScope) (auth.Permission, bool) {
 		return auth.PermissionSessionsRead, true
 	case api.APIKeyScopeActorsStart:
 		return auth.PermissionActorsStart, true
-	case api.APIKeyScopeSessionsInputSend:
-		return auth.PermissionSessionsInputSend, true
+	case api.APIKeyScopeSessionsSend:
+		return auth.PermissionSessionsSend, true
+	case api.APIKeyScopeSessionsInterrupt:
+		return auth.PermissionSessionsInterrupt, true
+	case api.APIKeyScopeSessionsResume:
+		return auth.PermissionSessionsResume, true
+	case api.APIKeyScopeSessionsRecover:
+		return auth.PermissionSessionsRecover, true
 	case api.APIKeyScopeSessionsClose:
 		return auth.PermissionSessionsClose, true
 	case api.APIKeyScopeTokensCreate:
@@ -376,8 +388,14 @@ func apiKeyPermissionScope(permission string) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeSessionsRead, true
 	case string(auth.PermissionActorsStart):
 		return api.APIKeyScopeActorsStart, true
-	case string(auth.PermissionSessionsInputSend):
-		return api.APIKeyScopeSessionsInputSend, true
+	case string(auth.PermissionSessionsSend):
+		return api.APIKeyScopeSessionsSend, true
+	case string(auth.PermissionSessionsInterrupt):
+		return api.APIKeyScopeSessionsInterrupt, true
+	case string(auth.PermissionSessionsResume):
+		return api.APIKeyScopeSessionsResume, true
+	case string(auth.PermissionSessionsRecover):
+		return api.APIKeyScopeSessionsRecover, true
 	case string(auth.PermissionSessionsClose):
 		return api.APIKeyScopeSessionsClose, true
 	case string(auth.PermissionTokensCreate):

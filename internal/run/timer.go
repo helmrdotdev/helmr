@@ -96,7 +96,7 @@ func (r *TimerWaitReconciler) reconcileOne(
 		if err != nil {
 			return false, err
 		}
-		if !actor.CurrentRunID.Valid || actor.CurrentRunID != locator.ID ||
+		if actor.DispatchHoldID.Valid || !actor.CurrentRunID.Valid || actor.CurrentRunID != locator.ID ||
 			(actor.Status != "open" && actor.Status != "closing") {
 			return false, tx.Commit(ctx)
 		}
@@ -149,6 +149,13 @@ func (r *TimerWaitReconciler) reconcileOne(
 	}
 	if err != nil {
 		return false, err
+	}
+	current, err := q.RunWaitTurnCurrent(ctx, wait.ID)
+	if err != nil {
+		return false, err
+	}
+	if !current {
+		return false, tx.Commit(ctx)
 	}
 	if !timerWaitAuthorityCurrent(run, workspace, attempt, wait) {
 		return false, tx.Commit(ctx)

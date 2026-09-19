@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -25,20 +26,21 @@ var (
 )
 
 type parsedWorkerActorOutputAppend struct {
-	turnID         uuid.UUID
-	generation     int64
-	lease          parsedRunLeaseFence
-	correlationID  uuid.UUID
-	data           json.RawMessage
-	idempotencyKey string
+	turnID            uuid.UUID
+	generation        int64
+	messageDeliveryID uuid.UUID
+	lease             parsedRunLeaseFence
+	correlationID     uuid.UUID
+	data              json.RawMessage
+	idempotencyKey    string
 }
 
-func (s *Server) workerAppendActorOutput(w http.ResponseWriter, r *http.Request) {
+func (s *Server) workerWriteTurnOutput(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
-	var request workerapi.AppendActorOutputRequest
+	var request workerapi.WriteTurnOutputRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
@@ -63,7 +65,7 @@ func (s *Server) workerAppendActorOutput(w http.ResponseWriter, r *http.Request)
 	record, err := s.appendActorOutput(r.Context(), worker, request, parsed)
 	if err != nil {
 		if failure, ok := actorOutputAppendFailure(err); ok {
-			writeJSON(w, http.StatusOK, workerapi.AppendActorOutputResponse{
+			writeJSON(w, http.StatusOK, workerapi.WriteOutputResponse{
 				CorrelationID: request.CorrelationID,
 				Failed:        &failure,
 			})
@@ -80,14 +82,14 @@ func (s *Server) workerAppendActorOutput(w http.ResponseWriter, r *http.Request)
 		writeError(w, errors.New("append actor output"))
 		return
 	}
-	writeJSON(w, http.StatusOK, workerapi.AppendActorOutputResponse{
+	writeJSON(w, http.StatusOK, workerapi.WriteOutputResponse{
 		CorrelationID: request.CorrelationID,
 		Completed:     &record,
 	})
 }
 
 func parseWorkerActorOutputAppend(
-	request workerapi.AppendActorOutputRequest,
+	request workerapi.WriteTurnOutputRequest,
 ) (parsedWorkerActorOutputAppend, error) {
 	lease, err := parseRunLeaseFence(request.Lease)
 	if err != nil {
@@ -104,6 +106,13 @@ func parseWorkerActorOutputAppend(
 	if request.RunGeneration <= 0 {
 		return parsedWorkerActorOutputAppend{}, errors.New("run_generation must be positive")
 	}
+	var delivery uuid.UUID
+	if request.MessageDeliveryID != nil {
+		delivery, err = parseCanonicalUUID("message_delivery_id", *request.MessageDeliveryID)
+		if err != nil {
+			return parsedWorkerActorOutputAppend{}, err
+		}
+	}
 	canonical, err := canonicalJSON(request.Data)
 	if err != nil {
 		return parsedWorkerActorOutputAppend{}, errors.New("data must be valid JSON")
@@ -115,20 +124,21 @@ func parseWorkerActorOutputAppend(
 	return parsedWorkerActorOutputAppend{
 		lease:  lease,
 		turnID: turnID, generation: request.RunGeneration,
-		correlationID:  correlationID,
-		data:           canonical,
-		idempotencyKey: idempotencyKey,
+		messageDeliveryID: delivery,
+		correlationID:     correlationID,
+		data:              canonical,
+		idempotencyKey:    idempotencyKey,
 	}, nil
 }
 
 func (s *Server) appendActorOutput(
 	ctx context.Context,
 	worker workerActor,
-	request workerapi.AppendActorOutputRequest,
+	request workerapi.WriteTurnOutputRequest,
 	parsed parsedWorkerActorOutputAppend,
-) (workerapi.SessionEvent, error) {
+) (api.SessionEvent, error) {
 	if len(parsed.data) > maxActorOutputBytes {
-		return workerapi.SessionEvent{}, errActorOutputTooLarge
+		return api.SessionEvent{}, errActorOutputTooLarge
 	}
 	locatorParams := db.GetLiveRunLeaseLocatorsParams{
 		ID:               pgvalue.UUID(parsed.lease.leaseID),
@@ -139,17 +149,17 @@ func (s *Server) appendActorOutput(
 	}
 	discovered, err := s.db.GetLiveRunLeaseLocators(ctx, locatorParams)
 	if err != nil || !discovered.SessionID.Valid {
-		return workerapi.SessionEvent{}, staleActorOutputAppend(err)
+		return api.SessionEvent{}, staleActorOutputAppend(err)
 	}
 	environmentID, err := pgvalue.UUIDValue(discovered.EnvironmentID)
 	if err != nil {
-		return workerapi.SessionEvent{}, errStaleActorOutputAppend
+		return api.SessionEvent{}, errStaleActorOutputAppend
 	}
 	actorID, err := pgvalue.UUIDValue(discovered.SessionID)
 	if err != nil {
-		return workerapi.SessionEvent{}, errStaleActorOutputAppend
+		return api.SessionEvent{}, errStaleActorOutputAppend
 	}
-	var response workerapi.SessionEvent
+	var response api.SessionEvent
 	var rejected error
 	err = s.inTx(ctx, func(work *txWork) error {
 		locators, err := work.q.GetLiveRunLeaseLocators(ctx, locatorParams)
@@ -198,23 +208,16 @@ func (s *Server) appendActorOutput(
 		}
 		receipt, err := session.AppendTurnOutput(ctx, work.q, session.TurnScope{
 			EnvironmentID: environmentID, SessionID: actorID, TurnID: parsed.turnID,
-			RunID: pgvalue.MustUUIDValue(authority.run.ID), AttemptNumber: authority.attempt.Number, RunGeneration: parsed.generation,
+			RunID: pgvalue.MustUUIDValue(authority.run.ID), AttemptNumber: authority.attempt.Number, RunGeneration: parsed.generation, MessageDeliveryID: parsed.messageDeliveryID,
 		}, key, parsed.data)
 		if err != nil {
 			return err
 		}
-		if receipt.Rejection != "" {
-			if receipt.Rejection == "turn_stopping" {
-				rejected = session.ErrTurnStopped
-			} else if receipt.Rejection == "turn_not_active" {
-				rejected = session.ErrTurnNotActive
-			} else {
-				rejected = session.ErrTurnScope
-			}
+		if receipt.Code != "" {
+			rejected = &session.OperationError{Code: receipt.Code}
 			return nil
 		}
-		event := receipt.Event
-		response = workerapi.SessionEvent{ID: pgvalue.UUIDString(event.ID), SessionID: pgvalue.UUIDString(event.SessionID), TurnID: pgvalue.UUIDString(event.TurnID), Sequence: event.Sequence, Kind: event.Kind, Data: event.Data, RunID: pgvalue.UUIDString(event.ProducerRunID), AttemptNumber: event.ProducerAttemptNumber, RunGeneration: event.RunGeneration, CreatedAt: event.CreatedAt.Time.UTC()}
+		response = projectWorkerSessionEvent(receipt.Event, authority.run.DeploymentID)
 		return nil
 	})
 	if err == nil {
@@ -232,7 +235,10 @@ func staleActorOutputAppend(err error) error {
 
 func actorOutputAppendFailure(err error) (workerapi.RuntimeOperationFailure, bool) {
 	var conflictError idempotency.ConflictError
+	var operation *session.OperationError
 	switch {
+	case errors.As(err, &operation):
+		return runtimeOperationFailure(operation.Code, operation.Error(), false), true
 	case errors.Is(err, session.ErrTurnStopped):
 		return workerapi.RuntimeOperationFailure{Code: "turn_stopping", Message: err.Error()}, true
 	case errors.Is(err, session.ErrTurnNotActive):
@@ -245,8 +251,6 @@ func actorOutputAppendFailure(err error) (workerapi.RuntimeOperationFailure, boo
 		}, true
 	case errors.Is(err, errActorOutputTooLarge):
 		return workerapi.RuntimeOperationFailure{Code: "actor_output_too_large", Message: err.Error()}, true
-	case errors.Is(err, errActorSequenceExhausted):
-		return workerapi.RuntimeOperationFailure{Code: "actor_sequence_exhausted", Message: err.Error()}, true
 	default:
 		return workerapi.RuntimeOperationFailure{}, false
 	}

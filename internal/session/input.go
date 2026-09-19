@@ -24,13 +24,18 @@ var ErrAuthority = errors.New("actor input durable authority is inconsistent")
 func CanStartContinuation(actor db.Session) bool {
 	return !actor.CurrentRunID.Valid &&
 		(actor.Status == "open" || actor.Status == "closing") &&
-		!actor.ManualRunCancelled && !actor.DispatchHoldID.Valid && !actor.ActiveTurnID.Valid
+		!actor.DispatchHoldID.Valid && !actor.ActiveTurnID.Valid && actor.CommittedInputSequence < actor.NextInputSequence-1
 }
 
-func CompleteWait(ctx context.Context, store db.Querier, wait db.RunWait, record db.SessionRecord) (db.RunWait, error) {
+func CompleteWait(ctx context.Context, store db.Querier, wait db.RunWait, record db.SessionTurn) (db.RunWait, error) {
 	var err error
 	record, err = ActivateTurn(ctx, store, TurnScope{EnvironmentID: pgvalue.MustUUIDValue(record.EnvironmentID), SessionID: pgvalue.MustUUIDValue(record.SessionID), TurnID: pgvalue.MustUUIDValue(record.ID), RunID: pgvalue.MustUUIDValue(wait.RunID), AttemptNumber: wait.AttemptNumber})
 	if err != nil {
+		return db.RunWait{}, err
+	}
+	// The receive wait starts outside a Turn; once it admits the queued input,
+	// bind its delivery/restore acknowledgment to that exact execution as well.
+	if _, err = store.BindRunWaitTurn(ctx, db.BindRunWaitTurnParams{SessionID: record.SessionID, TurnID: record.ID, RunGeneration: record.RunGeneration, WaitID: wait.ID}); err != nil {
 		return db.RunWait{}, err
 	}
 	result, err := RecordResolution(record)
@@ -52,7 +57,7 @@ func FailWait(ctx context.Context, store db.Querier, wait db.RunWait, reason str
 	return failed, err
 }
 
-func RecordResolution(record db.SessionRecord) (json.RawMessage, error) {
+func RecordResolution(record db.SessionTurn) (json.RawMessage, error) {
 	var value any
 	if err := json.Unmarshal(record.Data, &value); err != nil {
 		return nil, fmt.Errorf("actor input record data is invalid: %w", err)

@@ -72,8 +72,9 @@ func (g OwnedFinalization) RecoverExecutionLeaseLoss(
 	if err != nil || !ok {
 		return false, err
 	}
-	if authority.RunLeaseStatus == string(db.RunLeaseStatusAssigned) ||
-		authority.RunLeaseStatus == string(db.RunLeaseStatusStarting) {
+	if (authority.RunLeaseStatus == string(db.RunLeaseStatusAssigned) ||
+		authority.RunLeaseStatus == string(db.RunLeaseStatusStarting)) &&
+		!(target.actorID.Valid && (authority.ActorDispatchHoldID.Valid || authority.HasResumeWait)) {
 		cleared, err := recoverExecutionPrestartLease(ctx, q, authority, loss)
 		if err != nil {
 			return false, err
@@ -98,6 +99,8 @@ func (g OwnedFinalization) RecoverExecutionLeaseLoss(
 		}); err != nil {
 			return false, cancellationAuthority("stop lost Run active interval", err)
 		}
+	case db.RunLeaseStatusAssigned, db.RunLeaseStatusStarting:
+		// A held or unresumable Actor cannot retry a restored process.
 	case db.RunLeaseStatusFinalizing:
 		// Finalization starts only after the active interval is durably stopped.
 		// Preserve its immutable finalization receipt on the terminal Lease.
@@ -110,8 +113,16 @@ func (g OwnedFinalization) RecoverExecutionLeaseLoss(
 			loss,
 			"Run maximum active duration was exceeded",
 			db.RunStatusExpired,
-			"run_expired",
 		); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	// Once an Actor entrypoint has run, cold retry could duplicate native effects,
+	// including initialization and between-Turn work with no active Turn. Valid
+	// checkpoint continuations are handled by the resume lane before this point.
+	if target.actorID.Valid {
+		if err := g.failCurrentForLeaseLoss(ctx, loss, executionLeaseLossMessage(loss.reason), db.RunStatusSystemFailed); err != nil {
 			return false, err
 		}
 		return true, nil
@@ -121,7 +132,7 @@ func (g OwnedFinalization) RecoverExecutionLeaseLoss(
 		loss.reason = "retry_policy_invalid"
 		loss.state = db.RunLeaseStatusLost
 		if err := g.failCurrentForLeaseLoss(
-			ctx, loss, "Run retry policy was invalid", db.RunStatusSystemFailed, "platform_failure",
+			ctx, loss, "Run retry policy was invalid", db.RunStatusSystemFailed,
 		); err != nil {
 			return false, err
 		}
@@ -135,7 +146,7 @@ func (g OwnedFinalization) RecoverExecutionLeaseLoss(
 		loss.reason = "secret_retry_unavailable"
 		loss.state = db.RunLeaseStatusLost
 		if err := g.failCurrentForLeaseLoss(
-			ctx, loss, "Run retry Secret authority was unavailable", db.RunStatusSystemFailed, "platform_failure",
+			ctx, loss, "Run retry Secret authority was unavailable", db.RunStatusSystemFailed,
 		); err != nil {
 			return false, err
 		}
@@ -143,7 +154,7 @@ func (g OwnedFinalization) RecoverExecutionLeaseLoss(
 	}
 	if !shouldRetry {
 		if err := g.failCurrentForLeaseLoss(
-			ctx, loss, executionLeaseLossMessage(loss.reason), db.RunStatusSystemFailed, "platform_failure",
+			ctx, loss, executionLeaseLossMessage(loss.reason), db.RunStatusSystemFailed,
 		); err != nil {
 			return false, err
 		}
@@ -327,29 +338,6 @@ func (g OwnedFinalization) retryCurrentAfterLeaseLoss(
 		} else {
 			return cancellationAuthority("lost Task retry Run state is unsupported", nil)
 		}
-	case "actor":
-		if !authority.ActorRunGeneration.Valid || !authority.SessionID.Valid {
-			return cancellationAuthority("lost Actor retry authority is incomplete", nil)
-		}
-		if authority.RunStatus == string(db.RunStatusWaiting) {
-			if _, err := q.CreateActorCheckpointFailureRetryAttempt(ctx, db.CreateActorCheckpointFailureRetryAttemptParams{
-				Number: nextAttempt, ExpectedRunGeneration: authority.ActorRunGeneration.Int64,
-				RunID: authority.RunID, WorkspaceID: authority.WorkspaceID,
-				PreviousAttemptNumber: authority.CurrentAttemptNumber, RunLeaseID: authority.RunLeaseID,
-			}); err != nil {
-				return cancellationAuthority("create lost checkpointing Actor retry Attempt", err)
-			}
-		} else if authority.RunStatus == string(db.RunStatusRunning) {
-			if _, err := q.CreateActorRetryAttempt(ctx, db.CreateActorRetryAttemptParams{
-				Number: nextAttempt, ExpectedRunGeneration: authority.ActorRunGeneration.Int64,
-				RunID: authority.RunID, WorkspaceID: authority.WorkspaceID,
-				PreviousAttemptNumber: authority.CurrentAttemptNumber, RunLeaseID: authority.RunLeaseID,
-			}); err != nil {
-				return cancellationAuthority("create lost Actor retry Attempt", err)
-			}
-		} else {
-			return cancellationAuthority("lost Actor retry Run state is unsupported", nil)
-		}
 	default:
 		return cancellationAuthority("lost Run entrypoint kind is unsupported", nil)
 	}
@@ -360,39 +348,22 @@ func (g OwnedFinalization) retryCurrentAfterLeaseLoss(
 	}
 	lostAt := pgvalue.Timestamptz(loss.at)
 	retryTimestamp := pgvalue.Timestamptz(retryAt)
-	if authority.EntrypointKind == "task" {
-		if authority.RunStatus == string(db.RunStatusWaiting) {
-			if _, err := q.DelayCheckpointFailureRetry(ctx, db.DelayCheckpointFailureRetryParams{
-				NextAttemptNumber: nextAttempt, FailedAt: lostAt, RetryAt: retryTimestamp,
-				ID: authority.RunID, WorkspaceID: authority.WorkspaceID,
-				PreviousAttemptNumber: authority.CurrentAttemptNumber, RunLeaseID: authority.RunLeaseID,
-			}); err != nil {
-				return cancellationAuthority("delay lost checkpointing Task retry", err)
-			}
-		} else if _, err := q.DelayTaskRunRetry(ctx, db.DelayTaskRunRetryParams{
-			NextAttemptNumber: nextAttempt, CompletedAt: lostAt, RetryAt: retryTimestamp,
+	if authority.RunStatus == string(db.RunStatusWaiting) {
+		if _, err := q.DelayCheckpointFailureRetry(ctx, db.DelayCheckpointFailureRetryParams{
+			NextAttemptNumber: nextAttempt, FailedAt: lostAt, RetryAt: retryTimestamp,
 			ID: authority.RunID, WorkspaceID: authority.WorkspaceID,
 			PreviousAttemptNumber: authority.CurrentAttemptNumber, RunLeaseID: authority.RunLeaseID,
 		}); err != nil {
-			return cancellationAuthority("delay lost Task retry", err)
+			return cancellationAuthority("delay lost checkpointing Task retry", err)
 		}
-	} else {
-		if authority.RunStatus == string(db.RunStatusWaiting) {
-			if _, err := q.DelayActorCheckpointFailureRetry(ctx, db.DelayActorCheckpointFailureRetryParams{
-				NextAttemptNumber: nextAttempt, RetryAt: retryTimestamp, FailedAt: lostAt,
-				ID: authority.RunID, WorkspaceID: authority.WorkspaceID, SessionID: authority.SessionID,
-				PreviousAttemptNumber: authority.CurrentAttemptNumber, RunLeaseID: authority.RunLeaseID,
-			}); err != nil {
-				return cancellationAuthority("delay lost checkpointing Actor retry", err)
-			}
-		} else if _, err := q.DelayActorRunRetry(ctx, db.DelayActorRunRetryParams{
-			NextAttemptNumber: nextAttempt, RetryAt: retryTimestamp, CompletedAt: lostAt,
-			ID: authority.RunID, WorkspaceID: authority.WorkspaceID, SessionID: authority.SessionID,
-			PreviousAttemptNumber: authority.CurrentAttemptNumber, RunLeaseID: authority.RunLeaseID,
-		}); err != nil {
-			return cancellationAuthority("delay lost Actor retry", err)
-		}
+	} else if _, err := q.DelayTaskRunRetry(ctx, db.DelayTaskRunRetryParams{
+		NextAttemptNumber: nextAttempt, CompletedAt: lostAt, RetryAt: retryTimestamp,
+		ID: authority.RunID, WorkspaceID: authority.WorkspaceID,
+		PreviousAttemptNumber: authority.CurrentAttemptNumber, RunLeaseID: authority.RunLeaseID,
+	}); err != nil {
+		return cancellationAuthority("delay lost Task retry", err)
 	}
+
 	return nil
 }
 
@@ -464,7 +435,6 @@ func (g OwnedFinalization) failCurrentForLeaseLoss(
 	loss executionLeaseLoss,
 	message string,
 	status db.RunStatus,
-	actorFailureCode string,
 ) error {
 	if _, err := g.CancelDescendants(ctx); err != nil {
 		return err
@@ -478,7 +448,6 @@ func (g OwnedFinalization) failCurrentForLeaseLoss(
 		runStatus: status, runLeaseStatus: loss.state, attemptOutcome: "failed",
 		waitCondition: db.WaitStatusFailed, waitSuspension: db.RunWaitStatusFailed,
 		eventKind: "run.system_failed", eventMessage: message,
-		actorFailureCode: actorFailureCode,
 	}
 	if status == db.RunStatusExpired {
 		term.eventKind = "run.expired"

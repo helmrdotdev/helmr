@@ -66,6 +66,8 @@ type childTaskReceipt struct {
 }
 
 type childTaskInvokeInput struct {
+	turnID            pgtype.UUID
+	runGeneration     pgtype.Int8
 	Request           workerapi.InvokeChildTaskRequest
 	Parsed            parsedRunLeaseFence
 	Worker            workerActor
@@ -218,6 +220,12 @@ func (s *Server) invokeChildTask(
 	ctx context.Context,
 	input childTaskInvokeInput,
 ) (childTaskInvokeResult, error) {
+	var parseErr error
+	input.turnID, input.runGeneration, parseErr = parseWorkerWaitTurn(input.Request.TurnID, input.Request.RunGeneration)
+	if parseErr != nil {
+		return childTaskInvokeResult{}, parseErr
+	}
+
 	var result childTaskInvokeResult
 	err := s.inTx(ctx, func(work *txWork) error {
 		locators, err := loadChildTaskInvokeLocators(
@@ -365,6 +373,9 @@ func (s *Server) invokeChildTask(
 					result.taskStartResult, targetWorkspaceID,
 				)
 				if err != nil {
+					return err
+				}
+				if err := bindOrCheckChildWaitTurn(ctx, work.q, authority, input); err != nil {
 					return err
 				}
 				result.openedWait = &opened
@@ -688,7 +699,7 @@ func registerSameWorkspaceChildCall(
 			Valid: true,
 		}
 	}
-	registered, err := store.RegisterSameWorkspaceChildCall(
+	_, err = store.RegisterSameWorkspaceChildCall(
 		ctx,
 		db.RegisterSameWorkspaceChildCallParams{
 			ID:                             pgvalue.UUID(waitID),
@@ -709,7 +720,7 @@ func registerSameWorkspaceChildCall(
 	if err != nil {
 		return workerapi.CreateRunWaitResponse{}, staleChildTaskInvoke(err)
 	}
-	if err := validateRunWaitActorCursor(authority, registered); err != nil {
+	if err := bindOrCheckChildWaitTurn(ctx, store, authority, input); err != nil {
 		return workerapi.CreateRunWaitResponse{}, err
 	}
 	return response, nil
@@ -878,7 +889,7 @@ func registerDifferentWorkspaceChildCall(
 		if err != nil {
 			return workerapi.CreateRunWaitResponse{}, err
 		}
-		resolved, err := store.RegisterResolvedDifferentWorkspaceChildCall(
+		_, err = store.RegisterResolvedDifferentWorkspaceChildCall(
 			ctx,
 			db.RegisterResolvedDifferentWorkspaceChildCallParams{
 				ID: params.ID, EnvironmentID: params.EnvironmentID, RunID: params.RunID,
@@ -895,7 +906,7 @@ func registerDifferentWorkspaceChildCall(
 		if err != nil {
 			return workerapi.CreateRunWaitResponse{}, staleChildTaskInvoke(err)
 		}
-		if err := validateRunWaitActorCursor(authority, resolved); err != nil {
+		if err := bindOrCheckChildWaitTurn(ctx, store, authority, input); err != nil {
 			return workerapi.CreateRunWaitResponse{}, err
 		}
 		response.ResolutionKind = "completed"
@@ -907,11 +918,11 @@ func registerDifferentWorkspaceChildCall(
 		childRun.Status != db.RunStatusCancelRequested {
 		return workerapi.CreateRunWaitResponse{}, errChildTaskInvokeStale
 	}
-	registered, err := store.RegisterDifferentWorkspaceChildCall(ctx, params)
+	_, err = store.RegisterDifferentWorkspaceChildCall(ctx, params)
 	if err != nil {
 		return workerapi.CreateRunWaitResponse{}, staleChildTaskInvoke(err)
 	}
-	if err := validateRunWaitActorCursor(authority, registered); err != nil {
+	if err := bindOrCheckChildWaitTurn(ctx, store, authority, input); err != nil {
 		return workerapi.CreateRunWaitResponse{}, err
 	}
 	return response, nil
@@ -1038,7 +1049,7 @@ func completeChildTaskInvokeAuthority(
 		authority.attempt.TerminalAt.Valid || authority.runLease.FinalizationOperationID.Valid {
 		return staleAuthority(staleAuthorityChildTask, childTaskInvokePointExecutionState, errChildTaskInvokeStale)
 	}
-	return nil
+	return validateWorkerWaitTurn(ctx, q, *authority, input.turnID, input.runGeneration)
 }
 
 func childTaskInvokeScopeMatches(
@@ -1121,6 +1132,10 @@ func (s *Server) writeChildTaskInvokeError(
 	if writeStaleWorkerClaims(w, err) {
 		return
 	}
+	if failure, ok := actorOutputAppendFailure(err); ok {
+		writeJSON(w, http.StatusOK, workerapi.InvokeChildTaskResponse{CorrelationID: correlationID, Failed: &failure})
+		return
+	}
 	var idempotencyConflict idempotency.ConflictError
 	var failure workerapi.RuntimeOperationFailure
 	switch {
@@ -1167,4 +1182,23 @@ func (s *Server) writeChildTaskInvokeError(
 	writeJSON(w, http.StatusOK, workerapi.InvokeChildTaskResponse{
 		CorrelationID: correlationID, Failed: &failure,
 	})
+}
+
+func bindOrCheckChildWaitTurn(ctx context.Context, q db.Querier, a runLeaseClaimAuthority, input childTaskInvokeInput) error {
+	wait, err := q.GetRunWait(ctx, db.GetRunWaitParams{AttemptNumber: a.attempt.Number, RunID: a.run.ID, ID: pgvalue.UUID(input.RunWaitID)})
+	if err != nil {
+		return err
+	}
+	if wait.TurnID.Valid {
+		return validateRunWaitActorCursor(a, wait)
+	}
+	wait.TurnID = input.turnID
+	wait.TurnRunGeneration = input.runGeneration
+	if input.turnID.Valid {
+		wait.TurnSessionID = a.actor.ID
+	}
+	if err := validateRunWaitActorCursor(a, wait); err != nil {
+		return err
+	}
+	return bindWorkerWaitTurn(ctx, q, a, wait.ID, input.turnID, input.runGeneration)
 }

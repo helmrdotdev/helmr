@@ -36,7 +36,6 @@ UPDATE workspace_versions
           AND run_checkpoints.run_id = sqlc.arg(run_id)
           AND run_checkpoints.attempt_number = sqlc.arg(attempt_number)
           AND run_checkpoints.workspace_id = workspace_versions.workspace_id
-          AND run_checkpoints.private_workspace_version_id = workspace_versions.id
           AND run_checkpoints.actor_speculative_input_sequence IS NOT NULL
           AND run_checkpoints.status = 'invalid'
           AND run_checkpoints.invalidation_reason_code = 'actor_turn_committed'

@@ -47,7 +47,7 @@ func ExpireParentOwnedChild(
 	if len(lineage) > maxCancellationGraphSize {
 		return false, cancellationAuthority("queued child expiry lineage exceeds the transaction bound", nil)
 	}
-	if err := lockCancellationActors(ctx, tx, scope, lineage, []uuid.UUID{request.ChildRunID}); err != nil {
+	if err := lockCancellationActors(ctx, tx, scope, lineage); err != nil {
 		return false, err
 	}
 	locked := make(map[uuid.UUID]cancellationRun, len(lineage))

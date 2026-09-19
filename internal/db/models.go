@@ -598,6 +598,9 @@ type RunLease struct {
 }
 
 type RunWait struct {
+	TurnSessionID                  pgtype.UUID        `json:"turn_session_id"`
+	TurnID                         pgtype.UUID        `json:"turn_id"`
+	TurnRunGeneration              pgtype.Int8        `json:"turn_run_generation"`
 	ID                             pgtype.UUID        `json:"id"`
 	EnvironmentID                  pgtype.UUID        `json:"environment_id"`
 	RunID                          pgtype.UUID        `json:"run_id"`
@@ -618,7 +621,7 @@ type RunWait struct {
 	ConditionError                 []byte             `json:"condition_error"`
 	ConditionTerminalAt            pgtype.Timestamptz `json:"condition_terminal_at"`
 	ConditionReasonCode            pgtype.Text        `json:"condition_reason_code"`
-	CompletedActorRecordID         pgtype.UUID        `json:"completed_actor_record_id"`
+	CompletedTurnID                pgtype.UUID        `json:"completed_turn_id"`
 	SuspensionStatus               string             `json:"suspension_status"`
 	TokenRegistrationRunRevision   pgtype.Int8        `json:"token_registration_run_revision"`
 	RegistrationRequestFingerprint pgtype.Text        `json:"registration_request_fingerprint"`
@@ -797,41 +800,41 @@ type SecretVersion struct {
 }
 
 type Session struct {
-	ID                       pgtype.UUID        `json:"id"`
-	EnvironmentID            pgtype.UUID        `json:"environment_id"`
-	ActorDeclaredID          string             `json:"actor_declared_id"`
-	DeploymentDefinitionID   pgtype.UUID        `json:"deployment_definition_id"`
-	WorkspaceID              pgtype.UUID        `json:"workspace_id"`
-	Key                      pgtype.Text        `json:"key"`
-	CurrentRunID             pgtype.UUID        `json:"current_run_id"`
-	RunGeneration            int64              `json:"run_generation"`
-	Revision                 int64              `json:"revision"`
-	ManualRunCancelled       bool               `json:"manual_run_cancelled"`
-	ActiveTurnID             pgtype.UUID        `json:"active_turn_id"`
-	DispatchHoldID           pgtype.UUID        `json:"dispatch_hold_id"`
-	DispatchHoldReason       pgtype.Text        `json:"dispatch_hold_reason"`
-	NextEventSequence        int64              `json:"next_event_sequence"`
-	Failure                  []byte             `json:"failure"`
-	FailureRunID             pgtype.UUID        `json:"failure_run_id"`
-	NextInputSequence        int64              `json:"next_input_sequence"`
-	CommittedInputSequence   int64              `json:"committed_input_sequence"`
-	NextOutputSequence       int64              `json:"next_output_sequence"`
-	RunQueueName             string             `json:"run_queue_name"`
-	RunConcurrencyKey        pgtype.Text        `json:"run_concurrency_key"`
-	RunQueueConcurrencyLimit pgtype.Int8        `json:"run_queue_concurrency_limit"`
-	RunPriority              int32              `json:"run_priority"`
-	RunQueueTtlMs            pgtype.Int8        `json:"run_queue_ttl_ms"`
-	RunMaxActiveDurationMs   int64              `json:"run_max_active_duration_ms"`
-	RunRetryPolicy           []byte             `json:"run_retry_policy"`
-	RunMetadata              []byte             `json:"run_metadata"`
-	RunTags                  []string           `json:"run_tags"`
-	Status                   string             `json:"status"`
-	CloseSequence            pgtype.Int8        `json:"close_sequence"`
-	CreatedAt                pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
-	ClosedAt                 pgtype.Timestamptz `json:"closed_at"`
-	CancelledAt              pgtype.Timestamptz `json:"cancelled_at"`
-	FailedAt                 pgtype.Timestamptz `json:"failed_at"`
+	ID                        pgtype.UUID        `json:"id"`
+	EnvironmentID             pgtype.UUID        `json:"environment_id"`
+	ActorDeclaredID           string             `json:"actor_declared_id"`
+	DeploymentDefinitionID    pgtype.UUID        `json:"deployment_definition_id"`
+	WorkspaceID               pgtype.UUID        `json:"workspace_id"`
+	Key                       pgtype.Text        `json:"key"`
+	CurrentRunID              pgtype.UUID        `json:"current_run_id"`
+	RunGeneration             int64              `json:"run_generation"`
+	Revision                  int64              `json:"revision"`
+	ActiveTurnID              pgtype.UUID        `json:"active_turn_id"`
+	DispatchHoldID            pgtype.UUID        `json:"dispatch_hold_id"`
+	DispatchHoldRunID         pgtype.UUID        `json:"dispatch_hold_run_id"`
+	DispatchHoldAttemptNumber pgtype.Int4        `json:"dispatch_hold_attempt_number"`
+	DispatchHoldRunGeneration pgtype.Int8        `json:"dispatch_hold_run_generation"`
+	DispatchHoldReason        pgtype.Text        `json:"dispatch_hold_reason"`
+	NextEventSequence         int64              `json:"next_event_sequence"`
+	Failure                   []byte             `json:"failure"`
+	FailureRunID              pgtype.UUID        `json:"failure_run_id"`
+	NextInputSequence         int64              `json:"next_input_sequence"`
+	CommittedInputSequence    int64              `json:"committed_input_sequence"`
+	RunQueueName              string             `json:"run_queue_name"`
+	RunConcurrencyKey         pgtype.Text        `json:"run_concurrency_key"`
+	RunQueueConcurrencyLimit  pgtype.Int8        `json:"run_queue_concurrency_limit"`
+	RunPriority               int32              `json:"run_priority"`
+	RunQueueTtlMs             pgtype.Int8        `json:"run_queue_ttl_ms"`
+	RunMaxActiveDurationMs    int64              `json:"run_max_active_duration_ms"`
+	RunRetryPolicy            []byte             `json:"run_retry_policy"`
+	RunMetadata               []byte             `json:"run_metadata"`
+	RunTags                   []string           `json:"run_tags"`
+	Status                    string             `json:"status"`
+	CloseSequence             pgtype.Int8        `json:"close_sequence"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+	ClosedAt                  pgtype.Timestamptz `json:"closed_at"`
+	FailedAt                  pgtype.Timestamptz `json:"failed_at"`
 }
 
 type SessionEvent struct {
@@ -839,33 +842,50 @@ type SessionEvent struct {
 	EnvironmentID         pgtype.UUID        `json:"environment_id"`
 	SessionID             pgtype.UUID        `json:"session_id"`
 	TurnID                pgtype.UUID        `json:"turn_id"`
+	MessageID             pgtype.UUID        `json:"message_id"`
 	WorkspaceID           pgtype.UUID        `json:"workspace_id"`
 	Sequence              int64              `json:"sequence"`
 	Kind                  string             `json:"kind"`
 	Data                  []byte             `json:"data"`
 	ProducerRunID         pgtype.UUID        `json:"producer_run_id"`
-	ProducerAttemptNumber int32              `json:"producer_attempt_number"`
-	RunGeneration         int64              `json:"run_generation"`
+	ProducerAttemptNumber pgtype.Int4        `json:"producer_attempt_number"`
+	RunGeneration         pgtype.Int8        `json:"run_generation"`
 	WorkspaceVersionID    pgtype.UUID        `json:"workspace_version_id"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 }
 
-type SessionRecord struct {
+type SessionMessage struct {
+	ID                 pgtype.UUID        `json:"id"`
+	EnvironmentID      pgtype.UUID        `json:"environment_id"`
+	SessionID          pgtype.UUID        `json:"session_id"`
+	TurnID             pgtype.UUID        `json:"turn_id"`
+	RunID              pgtype.UUID        `json:"run_id"`
+	AttemptNumber      int32              `json:"attempt_number"`
+	RunGeneration      int64              `json:"run_generation"`
+	Data               []byte             `json:"data"`
+	AcceptedSequence   int64              `json:"accepted_sequence"`
+	Status             string             `json:"status"`
+	DeliveryID         pgtype.UUID        `json:"delivery_id"`
+	DeliveryRunLeaseID pgtype.UUID        `json:"delivery_run_lease_id"`
+	Outcome            []byte             `json:"outcome"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	HandlingAt         pgtype.Timestamptz `json:"handling_at"`
+	TerminalAt         pgtype.Timestamptz `json:"terminal_at"`
+}
+
+type SessionTurn struct {
 	ID                         pgtype.UUID        `json:"id"`
 	EnvironmentID              pgtype.UUID        `json:"environment_id"`
 	SessionID                  pgtype.UUID        `json:"session_id"`
-	Direction                  string             `json:"direction"`
 	Sequence                   int64              `json:"sequence"`
 	Data                       []byte             `json:"data"`
-	ContentType                string             `json:"content_type"`
 	SourceRunID                pgtype.UUID        `json:"source_run_id"`
-	ProducerRunID              pgtype.UUID        `json:"producer_run_id"`
-	ProducerAttemptNumber      pgtype.Int4        `json:"producer_attempt_number"`
-	ClaimID                    pgtype.UUID        `json:"claim_id"`
-	TurnStatus                 string             `json:"turn_status"`
+	Status                     string             `json:"status"`
 	RunGeneration              pgtype.Int8        `json:"run_generation"`
-	TurnRunID                  pgtype.UUID        `json:"turn_run_id"`
-	TurnAttemptNumber          pgtype.Int4        `json:"turn_attempt_number"`
+	RunID                      pgtype.UUID        `json:"run_id"`
+	AttemptNumber              pgtype.Int4        `json:"attempt_number"`
+	ReadyRunLeaseID            pgtype.UUID        `json:"ready_run_lease_id"`
+	SettlementStartedAt        pgtype.Timestamptz `json:"settlement_started_at"`
 	InterruptRequestedAt       pgtype.Timestamptz `json:"interrupt_requested_at"`
 	TerminalEventID            pgtype.UUID        `json:"terminal_event_id"`
 	TerminalRequestFingerprint pgtype.Text        `json:"terminal_request_fingerprint"`

@@ -1,18 +1,20 @@
 package dispatch
 
 import (
+	"strings"
 	"testing"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestTurnRecoveryCandidatesDoNotStarveTasks(t *testing.T) {
-	for _, mode := range []string{"fresh active", "fresh held", "resume held", "resume expired checkpoint", "resume invalid checkpoint", "resume discarded private version", "resume exhausted budget", "resume valid checkpoint"} {
+	for _, mode := range []string{"fresh active", "fresh held", "resume held", "resume expired checkpoint", "resume invalid checkpoint", "resume discarded private version", "resume exhausted budget", "resume invalid checkpoint null Turn", "resume valid checkpoint"} {
 		t.Run(mode, func(t *testing.T) {
 			actor := newRunPlacementFixtureWithSeed(t, "blocked-recovery-actor")
 			// Both Tasks share the database and recovery lane with the earlier Actor.
@@ -31,14 +33,21 @@ func TestTurnRecoveryCandidatesDoNotStarveTasks(t *testing.T) {
 				actorID, _, checkpointID = prepareActorSuspendedRestore(t, actor)
 				actorLeaseID = grantRecoveryRestore(t, actor)
 			}
-			turn := activateRecoveryTurn(t, actor, actorID, actorLeaseID)
+			var turn uuid.UUID
+			if !strings.Contains(mode, "null Turn") {
+				turn = activateRecoveryTurn(t, actor, actorID, actorLeaseID)
+			}
 			if mode == "fresh held" || mode == "resume held" {
 				tx, err := actor.pool.Begin(actor.ctx)
 				if err != nil {
 					t.Fatal(err)
 				}
 				defer tx.Rollback(actor.ctx)
-				receipt, err := session.InterruptTurn(actor.ctx, db.New(tx), actor.environmentID, actorID, turn, "stop")
+				graph, err := run.LockOwnedFinalization(actor.ctx, tx, run.OwnedFinalizationRequest{OrgID: actor.orgID, ProjectID: actor.projectID, EnvironmentID: actor.environmentID, RunID: actor.runID})
+				if err != nil {
+					t.Fatal(err)
+				}
+				receipt, err := session.InterruptTurn(actor.ctx, db.New(tx), actor.environmentID, actorID, turn, "stop", graph)
 				if err != nil || receipt.Status != "accepted" {
 					t.Fatalf("interrupt: %+v %v", receipt, err)
 				}
@@ -49,7 +58,7 @@ func TestTurnRecoveryCandidatesDoNotStarveTasks(t *testing.T) {
 			switch mode {
 			case "resume expired checkpoint":
 				dbtest.MustExec(t, actor.ctx, actor.pool, `UPDATE run_checkpoints SET expires_at=now()-interval '1 second' WHERE id=$1`, checkpointID)
-			case "resume invalid checkpoint":
+			case "resume invalid checkpoint", "resume invalid checkpoint null Turn":
 				dbtest.MustExec(t, actor.ctx, actor.pool, `UPDATE run_checkpoints SET status='invalid',ready_at=NULL,invalidated_at=now(),invalidation_reason_code='test_invalid' WHERE id=$1`, checkpointID)
 			case "resume discarded private version":
 				dbtest.MustExec(t, actor.ctx, actor.pool, `UPDATE workspace_versions SET status='discarded',discarded_at=now() WHERE id=(SELECT private_workspace_version_id FROM run_checkpoints WHERE id=$1)`, checkpointID)
@@ -103,22 +112,48 @@ func TestTurnRecoveryCandidatesDoNotStarveTasks(t *testing.T) {
 			}
 			if mode == "resume valid checkpoint" {
 				recoverOne(actor.runID)
+			} else {
+				// Uncertain Actors leave the live Lease lane after one bounded
+				// cleanup. They cannot repeatedly consume the Task's next pass.
+				if n, err := actor.authority.RecoverRunExecutionLeases(actor.ctx, 1); err != nil || n != 1 {
+					t.Fatalf("Actor cleanup: %d %v", n, err)
+				}
 			}
 			for _, task := range tasks {
 				recoverOne(task.runID)
 			}
-			var active uuid.UUID
-			var cursor int64
-			var leaseStatus, turnStatus string
-			if err := actor.pool.QueryRow(actor.ctx, `SELECT s.active_turn_id,s.committed_input_sequence,l.status,i.turn_status FROM sessions s JOIN run_leases l ON l.id=$2 JOIN session_records i ON i.id=s.active_turn_id WHERE s.id=$1`, actorID, actorLeaseID).Scan(&active, &cursor, &leaseStatus, &turnStatus); err != nil {
+			var active, heldRun, owner, currentRun, hold pgtype.UUID
+			var cursor, generation int64
+			var stopIntent bool
+			var leaseStatus, turnStatus, runStatus, sessionStatus, holdReason, physicalLease, desired string
+			if err := actor.pool.QueryRow(actor.ctx, `
+SELECT s.active_turn_id,s.committed_input_sequence,l.status,coalesce(i.status,''),s.dispatch_hold_run_id,
+ w.owner_session_id,s.current_run_id,s.dispatch_hold_id,s.run_generation,r.status,s.status,
+ coalesce(s.dispatch_hold_reason,''),wl.status,ri.desired_state,coalesce(i.interrupt_requested_at IS NOT NULL,false)
+FROM sessions s JOIN runs r ON r.id=$3 JOIN run_leases l ON l.id=$2
+LEFT JOIN session_turns i ON i.id=s.active_turn_id JOIN workspaces w ON w.id=s.workspace_id
+JOIN workspace_leases wl ON wl.owner_run_lease_id=l.id JOIN runtime_instances ri ON ri.id=l.runtime_instance_id
+WHERE s.id=$1`, actorID, actorLeaseID, actor.runID).Scan(&active, &cursor, &leaseStatus, &turnStatus, &heldRun, &owner, &currentRun, &hold, &generation, &runStatus, &sessionStatus, &holdReason, &physicalLease, &desired, &stopIntent); err != nil {
 				t.Fatal(err)
 			}
-			wantLease := "running"
-			if mode == "resume valid checkpoint" {
-				wantLease = "expired"
+			wantActive := pgvalue.UUID(turn)
+			if turn == uuid.Nil() {
+				wantActive = pgtype.UUID{}
 			}
-			if active != turn || cursor != 1 || turnStatus != "running" || leaseStatus != wantLease {
-				t.Fatalf("Actor authority changed: active=%s cursor=%d turn=%s lease=%s", active, cursor, turnStatus, leaseStatus)
+			if active != wantActive || cursor != 1 || (active.Valid && turnStatus != "running") || leaseStatus != "expired" ||
+				owner != pgvalue.UUID(actorID) || currentRun != pgvalue.UUID(actor.runID) || generation != 1 || sessionStatus != "open" {
+				t.Fatalf("Actor recovery lost authority: active=%v cursor=%d turn=%s lease=%s owner=%v current=%v generation=%d status=%s", active, cursor, turnStatus, leaseStatus, owner, currentRun, generation, sessionStatus)
+			}
+			if stopIntent != (mode == "fresh held" || mode == "resume held") {
+				t.Fatalf("loss changed Turn interrupt intent: %t", stopIntent)
+			}
+			if mode == "resume valid checkpoint" {
+				if hold.Valid || runStatus != "queued" {
+					t.Fatalf("valid checkpoint held: %v/%s", hold, runStatus)
+				}
+			} else if !hold.Valid || heldRun != currentRun || holdReason != "recovery_required" ||
+				(runStatus != "system_failed" && runStatus != "expired") || physicalLease != "fenced" || desired != "closed" {
+				t.Fatalf("uncertain Actor did not hold and fence: hold=%v bound=%v reason=%s run=%s workspace_lease=%s desired=%s", hold, heldRun, holdReason, runStatus, physicalLease, desired)
 			}
 			if fresh {
 				if n, err := actor.authority.RecoverRunExecutionLeases(actor.ctx, 1); err != nil || n != 0 {
@@ -137,7 +172,7 @@ func activateRecoveryTurn(t *testing.T, f runPlacementFixture, actorID uuid.UUID
 	dbtest.MustExec(t, f.ctx, f.pool, `UPDATE run_leases SET status='running',claimed_at=created_at,started_at=created_at WHERE id=$1`, lease)
 	dbtest.MustExec(t, f.ctx, f.pool, `UPDATE runs SET status='running',started_at=now(),active_started_at=now() WHERE id=$1`, f.runID)
 	dbtest.MustExec(t, f.ctx, f.pool, `UPDATE sessions SET next_input_sequence=3 WHERE id=$1`, actorID)
-	dbtest.MustExec(t, f.ctx, f.pool, `INSERT INTO session_records(id,environment_id,session_id,direction,sequence,data) VALUES($1,$2,$3,'input',2,'{}')`, turn, f.environmentID, actorID)
+	dbtest.MustExec(t, f.ctx, f.pool, `INSERT INTO session_turns(id,environment_id,session_id,sequence,data) VALUES($1,$2,$3,2,'{}')`, turn, f.environmentID, actorID)
 	tx, err := f.pool.Begin(f.ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -204,4 +239,56 @@ func addRecoveryTask(t *testing.T, source runPlacementFixture, runID uuid.UUID) 
 		t.Fatal(err)
 	}
 	return f
+}
+
+func TestActorPlacementCandidatesDoNotStarveTasks(t *testing.T) {
+	for _, mode := range []string{"fresh held", "resume held", "resume invalid", "resume out of bounds", "resume exhausted budget", "resume valid"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newRunPlacementFixtureWithSeed(t, "placement-actor")
+			task := addRecoveryTask(t, f, uuid.MustParse("ffffffff-ffff-7fff-bfff-ffffffffffff"))
+			var actor, checkpoint uuid.UUID
+			if mode == "fresh held" {
+				actor = convertFreshRunToActor(t, f)
+			} else {
+				actor, _, checkpoint = prepareActorSuspendedRestore(t, f)
+			}
+			if mode == "fresh held" || mode == "resume held" {
+				tx, err := f.pool.Begin(f.ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer tx.Rollback(f.ctx)
+				q := db.New(tx)
+				locked, err := q.LockSessionTurnAuthority(f.ctx, db.LockSessionTurnAuthorityParams{EnvironmentID: pgvalue.UUID(f.environmentID), ID: pgvalue.UUID(actor)})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := run.HoldSessionExecution(f.ctx, q, locked, 1, "recovery_required"); err != nil {
+					t.Fatal(err)
+				}
+				if err := tx.Commit(f.ctx); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mode == "resume invalid" {
+				dbtest.MustExec(t, f.ctx, f.pool, `UPDATE run_checkpoints SET status='invalid',ready_at=NULL,invalidated_at=now(),invalidation_reason_code='fixture_invalid' WHERE id=$1`, checkpoint)
+			}
+			if mode == "resume out of bounds" {
+				dbtest.MustExec(t, f.ctx, f.pool, `UPDATE run_checkpoints SET actor_speculative_input_sequence=2 WHERE id=$1`, checkpoint)
+			}
+			if mode == "resume exhausted budget" {
+				dbtest.MustExec(t, f.ctx, f.pool, `UPDATE runs SET active_elapsed_ms=max_active_duration_ms WHERE id=$1`, f.runID)
+			}
+			want := task.runID
+			if mode == "resume valid" {
+				want = f.runID
+			}
+			for range 2 {
+				candidates := listRunPlacementCandidates(t, f, 1)
+				if len(candidates) != 1 || candidates[0].RunID != pgvalue.UUID(want) {
+					t.Fatalf("placement limit-one mode=%s candidates=%+v want=%s", mode, candidates, want)
+				}
+			}
+		})
+	}
 }

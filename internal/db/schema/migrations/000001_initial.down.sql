@@ -1,5 +1,10 @@
 ALTER TABLE run_checkpoints DROP CONSTRAINT IF EXISTS run_checkpoints_run_wait_id_fkey;
 DROP TABLE IF EXISTS run_waits;
+DROP TABLE IF EXISTS session_events CASCADE;
+DROP TABLE IF EXISTS session_messages;
+DROP TABLE IF EXISTS session_turns CASCADE;
+ALTER TABLE sessions DROP CONSTRAINT IF EXISTS sessions_dispatch_hold_attempt_fk;
+ALTER TABLE sessions DROP CONSTRAINT IF EXISTS sessions_dispatch_hold_run_fk;
 DROP TABLE IF EXISTS control_outbox;
 DROP TABLE IF EXISTS public_access_tokens;
 DROP TABLE IF EXISTS tokens;
@@ -28,7 +33,6 @@ ALTER TABLE runs DROP CONSTRAINT IF EXISTS runs_current_run_lease_id_fkey;
 ALTER TABLE telemetry_outbox DROP CONSTRAINT IF EXISTS telemetry_outbox_run_lease_id_fkey;
 DROP TABLE IF EXISTS run_leases;
 ALTER TABLE runs DROP CONSTRAINT IF EXISTS runs_current_attempt_fk;
-DROP TABLE IF EXISTS session_records;
 DROP TABLE IF EXISTS run_attempts;
 DROP TABLE IF EXISTS telemetry_outbox;
 DROP TABLE IF EXISTS worker_instance_credentials;

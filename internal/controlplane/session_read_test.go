@@ -20,7 +20,7 @@ func TestParseSessionListQueryStatusFilter(t *testing.T) {
 	}) {
 		t.Fatalf("statuses = %v", query.statuses)
 	}
-	if !slices.Equal(sessionStorageStatuses(query.statuses), []string{"closed", "failed", "open", "closing"}) {
+	if !slices.Equal(sessionStorageStatuses(query.statuses), []string{"closed", "failed", "open"}) {
 		t.Fatalf("states = %v", sessionStorageStatuses(query.statuses))
 	}
 	unfiltered, err := parseSessionListQuery("", "project", "environment")
@@ -32,7 +32,7 @@ func TestParseSessionListQueryStatusFilter(t *testing.T) {
 	}
 	for _, rawQuery := range []string{
 		"status=",
-		"status=closing",
+
 		"status=running",
 		"status=open,",
 		"status=OPEN",
@@ -81,7 +81,7 @@ func TestSessionListCursorIsBoundToStatusFilter(t *testing.T) {
 	for name, rawQuery := range map[string]string{
 		"missing filter":   "cursor=" + raw,
 		"narrower filter":  "status=open&cursor=" + raw,
-		"different filter": "status=closed&status=cancelled&cursor=" + raw,
+		"different filter": "status=closed&status=closing&cursor=" + raw,
 	} {
 		if _, err := parseSessionListQuery(rawQuery, "project", "environment"); err == nil ||
 			!strings.Contains(err.Error(), "does not match the status filter") {

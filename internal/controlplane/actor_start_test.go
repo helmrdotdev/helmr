@@ -8,7 +8,7 @@ import (
 	"uuid"
 )
 
-func TestNormalizeActorStartCanonicalizesRunOptionsAndPreservesInputPresence(t *testing.T) {
+func TestNormalizeActorStartCanonicalizesRunOptions(t *testing.T) {
 	key := "thread:42"
 	ttl := maxQueuedRunTTLMS
 	workspaceID := uuid.NewV7()
@@ -16,7 +16,7 @@ func TestNormalizeActorStartCanonicalizesRunOptionsAndPreservesInputPresence(t *
 		OrgID: uuid.NewV7(), ProjectID: uuid.NewV7(),
 		EnvironmentID:   uuid.NewV7(),
 		ActorDeclaredID: "operator.v1", WorkspaceID: workspaceID,
-		Key: &key, InputPresent: true, Input: json.RawMessage(`null`),
+		Key:              &key,
 		ManagedQueueName: "default", ManagedQueuedTTLMS: &ttl,
 		ManagedRetryPolicy: json.RawMessage(`{"enabled":false}`),
 		ManagedRunMetadata: json.RawMessage(`{"b":2,"a":1}`),
@@ -32,9 +32,6 @@ func TestNormalizeActorStartCanonicalizesRunOptionsAndPreservesInputPresence(t *
 		normalized.ManagedRunTags[0] != "alpha" ||
 		normalized.ManagedRunTags[1] != "beta" {
 		t.Fatalf("managed Run tags = %#v", normalized.ManagedRunTags)
-	}
-	if !normalized.InputPresent || string(normalized.Input) != "null" {
-		t.Fatalf("input present=%v value=%s", normalized.InputPresent, normalized.Input)
 	}
 	if normalized.ManagedQueuedTTLMS == nil || *normalized.ManagedQueuedTTLMS != maxQueuedRunTTLMS {
 		t.Fatalf("queued TTL = %v", normalized.ManagedQueuedTTLMS)
@@ -106,10 +103,9 @@ func TestNormalizeActorStartUsesExactConcurrencyKeyBoundaryDomain(t *testing.T) 
 }
 
 func TestActorStartReceiptRoundTrip(t *testing.T) {
-	recordID := uuid.NewV7()
 	value := actorStartResult{
-		SessionID:       uuid.NewV7(),
-		InitialRecordID: &recordID, BootRunID: uuid.NewV7(),
+		SessionID: uuid.NewV7(),
+		BootRunID: uuid.NewV7(),
 	}
 	raw, err := json.Marshal(actorStartReceiptFromResult(value))
 	if err != nil {
@@ -120,7 +116,6 @@ func TestActorStartReceiptRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if decoded.SessionID != value.SessionID ||
-		decoded.InitialRecordID == nil || *decoded.InitialRecordID != recordID ||
 		decoded.BootRunID != value.BootRunID {
 		t.Fatalf("decoded = %+v", decoded)
 	}

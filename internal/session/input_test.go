@@ -17,10 +17,10 @@ func TestCanStartContinuationIncludesClosingBacklog(t *testing.T) {
 		actor db.Session
 		want  bool
 	}{
-		{name: "open", actor: db.Session{Status: "open"}, want: true},
-		{name: "closing", actor: db.Session{Status: "closing"}, want: true},
+		{name: "open", actor: db.Session{Status: "open", NextInputSequence: 2}, want: true},
+		{name: "closing", actor: db.Session{Status: "closing", NextInputSequence: 2}, want: true},
 		{name: "closed", actor: db.Session{Status: "closed"}},
-		{name: "manual cancellation", actor: db.Session{Status: "open", ManualRunCancelled: true}},
+		{name: "held", actor: db.Session{Status: "open", DispatchHoldID: pgvalue.UUID(uuid.NewV7())}},
 		{name: "current Run", actor: db.Session{Status: "open", CurrentRunID: pgtype.UUID{Valid: true}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -34,7 +34,7 @@ func TestCanStartContinuationIncludesClosingBacklog(t *testing.T) {
 func TestRecordResolutionProjectsExternalInput(t *testing.T) {
 	recordID := uuid.NewV7()
 	createdAt := time.Date(2026, 7, 23, 1, 2, 3, 456000000, time.UTC)
-	resolution, err := RecordResolution(db.SessionRecord{
+	resolution, err := RecordResolution(db.SessionTurn{
 		ID: pgvalue.UUID(recordID), Sequence: 7, Data: []byte(`{"nested":{"ok":true}}`),
 		CreatedAt: pgvalue.Timestamptz(createdAt),
 	})
@@ -59,7 +59,7 @@ func TestRecordResolutionProjectsExternalInput(t *testing.T) {
 
 func TestRecordResolutionProjectsRunSource(t *testing.T) {
 	runID := uuid.NewV7()
-	resolution, err := RecordResolution(db.SessionRecord{
+	resolution, err := RecordResolution(db.SessionTurn{
 		ID: pgvalue.UUID(uuid.NewV7()), Sequence: 1, Data: []byte(`null`),
 		SourceRunID: pgvalue.UUID(runID),
 		CreatedAt:   pgvalue.Timestamptz(time.Unix(1, 0).UTC()),
@@ -81,7 +81,7 @@ func TestRecordResolutionProjectsRunSource(t *testing.T) {
 }
 
 func TestRecordResolutionRejectsInvalidRecordJSON(t *testing.T) {
-	_, err := RecordResolution(db.SessionRecord{Data: []byte(`{"broken"`)})
+	_, err := RecordResolution(db.SessionTurn{Data: []byte(`{"broken"`)})
 	if err == nil {
 		t.Fatal("invalid durable record JSON was accepted")
 	}

@@ -26,13 +26,17 @@ func turnCommitRequest(t *testing.T, f *actorCheckpointFixture, scope session.Tu
 	if err := f.Pool.QueryRow(t.Context(), `SELECT base_workspace_version_id FROM workspace_leases WHERE owner_run_lease_id=$1`, f.claim.runLease.ID).Scan(&base); err != nil {
 		t.Fatal(err)
 	}
+	f.beginSettlement(t, scope)
 	return workerapi.CommitActorTurnRequest{Lease: f.fence(), CorrelationID: uuid.NewV7().String(), TurnID: scope.TurnID.String(), RunGeneration: scope.RunGeneration, Disposition: "completed", Result: json.RawMessage(`{"answer":42}`), TargetInputSequence: 1, BaseWorkspaceVersionID: base.String(), Tree: capture.Tree, Artifact: &capture.Artifact}
 }
 func interruptTurn(ctx context.Context, f *actorCheckpointFixture, scope session.TurnScope, key string) (session.InterruptReceipt, error) {
 	var receipt session.InterruptReceipt
 	err := f.server.inTx(ctx, func(w *txWork) error {
-		var err error
-		receipt, err = session.InterruptTurn(ctx, w.q, scope.EnvironmentID, scope.SessionID, scope.TurnID, key)
+		graph, err := lockSessionControlGraph(ctx, w, session.Target{EnvironmentID: scope.EnvironmentID, SessionID: scope.SessionID})
+		if err != nil {
+			return err
+		}
+		receipt, err = session.InterruptTurn(ctx, w.q, scope.EnvironmentID, scope.SessionID, scope.TurnID, key, graph)
 		return err
 	})
 	return receipt, err
@@ -42,7 +46,7 @@ func assertTurnStopped(t *testing.T, f *actorCheckpointFixture, scope session.Tu
 	var status, hold, runStatus string
 	var active, head uuid.UUID
 	var cursor, terminals int64
-	if err := f.Pool.QueryRow(t.Context(), `SELECT r.turn_status,s.dispatch_hold_reason,s.active_turn_id,s.committed_input_sequence,w.head_version_id,x.status,(SELECT count(*) FROM session_events e WHERE e.session_id=s.id AND e.kind IN ('turn.completed','turn.failed')) FROM sessions s JOIN session_records r ON r.id=$2 JOIN workspaces w ON w.id=s.workspace_id JOIN runs x ON x.id=s.current_run_id WHERE s.id=$1`, f.sessionID, scope.TurnID).Scan(&status, &hold, &active, &cursor, &head, &runStatus, &terminals); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT r.status,s.dispatch_hold_reason,s.active_turn_id,s.committed_input_sequence,w.head_version_id,x.status,(SELECT count(*) FROM session_events e WHERE e.session_id=s.id AND e.kind IN ('turn.completed','turn.failed')) FROM sessions s JOIN session_turns r ON r.id=$2 JOIN workspaces w ON w.id=s.workspace_id JOIN runs x ON x.id=s.current_run_id WHERE s.id=$1`, f.sessionID, scope.TurnID).Scan(&status, &hold, &active, &cursor, &head, &runStatus, &terminals); err != nil {
 		t.Fatal(err)
 	}
 	if status != "running" || hold != "interrupt_requested" || active != scope.TurnID || cursor != 0 || head != f.rootID || runStatus != "running" || terminals != 0 {
@@ -69,7 +73,7 @@ type turnSettlementQueries struct {
 	afterSettle func() error
 }
 
-func (q turnSettlementQueries) SettleSessionTurn(ctx context.Context, p db.SettleSessionTurnParams) (db.SessionRecord, error) {
+func (q turnSettlementQueries) SettleSessionTurn(ctx context.Context, p db.SettleSessionTurnParams) (db.SessionTurn, error) {
 	row, err := q.Querier.SettleSessionTurn(ctx, p)
 	if err == nil {
 		err = q.afterSettle()
@@ -92,7 +96,11 @@ func TestSessionTurnStopSettlementPostgres(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer tx.Rollback(context.Background())
-		receipt, err := session.InterruptTurn(t.Context(), db.New(tx), scope.EnvironmentID, scope.SessionID, scope.TurnID, "stop-1")
+		graph, err := lockSessionControlGraph(t.Context(), &txWork{q: db.New(tx), tx: tx}, session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		receipt, err := session.InterruptTurn(t.Context(), db.New(tx), scope.EnvironmentID, scope.SessionID, scope.TurnID, "stop-1", graph)
 		if err != nil || receipt.Status != "accepted" {
 			t.Fatalf("interrupt: %+v %v", receipt, err)
 		}
@@ -143,7 +151,7 @@ func TestSessionTurnStopSettlementPostgres(t *testing.T) {
 			t.Fatal(err)
 		}
 		receipt := <-stopped
-		if err := <-stopErr; err != nil || receipt.Status != "rejected" || receipt.Reason != "turn_not_active" {
+		if err := <-stopErr; err != nil || receipt.Status != "rejected" || receipt.Code != "turn_not_active" {
 			t.Fatalf("late stop: %+v %v", receipt, err)
 		}
 		replay, err := interruptTurn(t.Context(), f, scope, "late-stop")
@@ -154,7 +162,7 @@ func TestSessionTurnStopSettlementPostgres(t *testing.T) {
 		var cursor, terminal int
 		var hold bool
 		var head uuid.UUID
-		if err := f.Pool.QueryRow(t.Context(), `SELECT r.turn_status,s.committed_input_sequence,s.dispatch_hold_id IS NOT NULL,w.head_version_id,(SELECT count(*) FROM session_events WHERE turn_id=r.id AND kind='turn.completed') FROM sessions s JOIN session_records r ON r.id=$2 JOIN workspaces w ON w.id=s.workspace_id WHERE s.id=$1`, f.sessionID, scope.TurnID).Scan(&status, &cursor, &hold, &head, &terminal); err != nil {
+		if err := f.Pool.QueryRow(t.Context(), `SELECT r.status,s.committed_input_sequence,s.dispatch_hold_id IS NOT NULL,w.head_version_id,(SELECT count(*) FROM session_events WHERE turn_id=r.id AND kind='turn.completed') FROM sessions s JOIN session_turns r ON r.id=$2 JOIN workspaces w ON w.id=s.workspace_id WHERE s.id=$1`, f.sessionID, scope.TurnID).Scan(&status, &cursor, &hold, &head, &terminal); err != nil {
 			t.Fatal(err)
 		}
 		if status != "completed" || cursor != 1 || hold || head == f.rootID || terminal != 1 {
@@ -163,10 +171,10 @@ func TestSessionTurnStopSettlementPostgres(t *testing.T) {
 	})
 }
 
-func outputRequest(f *actorCheckpointFixture, scope session.TurnScope) workerapi.AppendActorOutputRequest {
-	return workerapi.AppendActorOutputRequest{Lease: f.fence(), CorrelationID: uuid.NewV7().String(), TurnID: scope.TurnID.String(), RunGeneration: scope.RunGeneration, Data: json.RawMessage(`{"type":"permission_granted","requestId":"native-1","actionBinding":"command-1"}`), IdempotencyKey: "permission-1"}
+func outputRequest(f *actorCheckpointFixture, scope session.TurnScope) workerapi.WriteTurnOutputRequest {
+	return workerapi.WriteTurnOutputRequest{Lease: f.fence(), CorrelationID: uuid.NewV7().String(), TurnID: scope.TurnID.String(), RunGeneration: scope.RunGeneration, Data: json.RawMessage(`{"type":"permission_granted","requestId":"native-1","actionBinding":"command-1"}`), IdempotencyKey: "permission-1"}
 }
-func outputHTTP(t *testing.T, f *actorCheckpointFixture, req workerapi.AppendActorOutputRequest, w http.ResponseWriter) {
+func outputHTTP(t *testing.T, f *actorCheckpointFixture, req workerapi.WriteTurnOutputRequest, w http.ResponseWriter) {
 	t.Helper()
 	raw, err := json.Marshal(req)
 	if err != nil {
@@ -174,16 +182,16 @@ func outputHTTP(t *testing.T, f *actorCheckpointFixture, req workerapi.AppendAct
 	}
 	r := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(raw))
 	r = r.WithContext(context.WithValue(t.Context(), workerContextKey{}, f.worker))
-	f.server.workerAppendActorOutput(w, r)
+	f.server.workerWriteTurnOutput(w, r)
 }
-func appendOutput(t *testing.T, f *actorCheckpointFixture, req workerapi.AppendActorOutputRequest) workerapi.AppendActorOutputResponse {
+func appendOutput(t *testing.T, f *actorCheckpointFixture, req workerapi.WriteTurnOutputRequest) workerapi.WriteOutputResponse {
 	t.Helper()
 	w := httptest.NewRecorder()
 	outputHTTP(t, f, req, w)
 	if w.Code != 200 {
 		t.Fatalf("output HTTP %d: %s", w.Code, w.Body.String())
 	}
-	var response workerapi.AppendActorOutputResponse
+	var response workerapi.WriteOutputResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +231,7 @@ func TestSessionTurnOutputAuthorityPostgres(t *testing.T) {
 		t.Fatalf("new output after stop: %+v", rejected)
 	}
 	var outputs, rejections int
-	if err := f.Pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM session_events WHERE session_id=$1 AND kind='output'),(SELECT count(*) FROM idempotency_claims WHERE receipt->>'rejection'='turn_stopping')`, f.sessionID).Scan(&outputs, &rejections); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM session_events WHERE session_id=$1 AND kind='output'),(SELECT count(*) FROM idempotency_claims WHERE receipt->>'code'='turn_stopping')`, f.sessionID).Scan(&outputs, &rejections); err != nil {
 		t.Fatal(err)
 	}
 	if outputs != 1 || rejections != 1 {
@@ -272,7 +280,7 @@ func TestSessionTurnDelayedOutputResponsePostgres(t *testing.T) {
 			close(release)
 			<-done
 			if !drop {
-				var r workerapi.AppendActorOutputResponse
+				var r workerapi.WriteOutputResponse
 				if err := json.Unmarshal(recorder.Body.Bytes(), &r); err != nil || r.Completed == nil {
 					t.Fatalf("delayed receipt: %+v %v", r, err)
 				}
@@ -305,7 +313,7 @@ func TestSessionTurnSettlementRollbackPostgres(t *testing.T) {
 	var status string
 	var cursor, events int
 	var head, active uuid.UUID
-	if err := f.Pool.QueryRow(t.Context(), `SELECT r.turn_status,s.committed_input_sequence,s.active_turn_id,w.head_version_id,(SELECT count(*) FROM session_events WHERE session_id=s.id) FROM sessions s JOIN session_records r ON r.id=$2 JOIN workspaces w ON w.id=s.workspace_id WHERE s.id=$1`, f.sessionID, scope.TurnID).Scan(&status, &cursor, &active, &head, &events); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT r.status,s.committed_input_sequence,s.active_turn_id,w.head_version_id,(SELECT count(*) FROM session_events WHERE session_id=s.id AND kind IN ('turn.completed','turn.failed')) FROM sessions s JOIN session_turns r ON r.id=$2 JOIN workspaces w ON w.id=s.workspace_id WHERE s.id=$1`, f.sessionID, scope.TurnID).Scan(&status, &cursor, &active, &head, &events); err != nil {
 		t.Fatal(err)
 	}
 	if status != "running" || cursor != 0 || active != scope.TurnID || head != f.rootID || events != 0 {
@@ -326,13 +334,13 @@ func TestSessionTurnSettlementRollbackPostgres(t *testing.T) {
 func TestSessionTurnIdentityAndRejectedReceiptPostgres(t *testing.T) {
 	f := newActorCheckpointFixture(t)
 	first := f.receiveTurn(t, 1)
-	queued, err := f.server.appendActorInput(t.Context(), appendActorInputRequest{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID, RecordID: uuid.NewV7(), Data: json.RawMessage(`{"sequence":2}`)})
+	queued, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, Mode: session.EnqueueOnly, Data: json.RawMessage(`{"sequence":2}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second := session.TurnScope{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID, TurnID: pgvalue.MustUUIDValue(queued.ID), RunID: f.runID, AttemptNumber: first.AttemptNumber, RunGeneration: first.RunGeneration}
+	second := session.TurnScope{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID, TurnID: queued.TurnID, RunID: f.runID, AttemptNumber: first.AttemptNumber, RunGeneration: first.RunGeneration}
 	receipt, err := interruptTurn(t.Context(), f, second, "queued-stop")
-	if err != nil || receipt.Status != "rejected" || receipt.Reason != "turn_not_active" {
+	if err != nil || receipt.Status != "rejected" || receipt.Code != "turn_not_active" {
 		t.Fatalf("queued stop: %+v %v", receipt, err)
 	}
 	req := outputRequest(f, first)
@@ -361,7 +369,7 @@ func TestSessionTurnHoldRejectsLegacyLifecyclePostgres(t *testing.T) {
 	if err != nil || receipt.Status != "accepted" {
 		t.Fatalf("stop: %+v %v", receipt, err)
 	}
-	if _, err := f.server.appendActorInput(t.Context(), appendActorInputRequest{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID, RecordID: uuid.NewV7(), Data: json.RawMessage(`{"sequence":2}`)}); err != nil {
+	if _, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, Mode: session.EnqueueOnly, Data: json.RawMessage(`{"sequence":2}`)}); err != nil {
 		t.Fatal(err)
 	}
 	f.close(t)
@@ -375,10 +383,18 @@ func TestSessionTurnHoldRejectsLegacyLifecyclePostgres(t *testing.T) {
 	}
 	// Recovery must not silently replace this execution or settle its input.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_instances SET status='lost', lost_at=transaction_timestamp() WHERE id=$1`, f.WorkerID)
-	if recovered, err := f.placement.RecoverRunExecutionLeases(t.Context(), 10); err != nil || recovered != 0 {
-		t.Fatalf("legacy recovery bypassed hold: count=%d err=%v", recovered, err)
+	if recovered, err := f.placement.RecoverRunExecutionLeases(t.Context(), 10); err != nil || recovered != 1 {
+		t.Fatalf("lost execution cleanup: count=%d err=%v", recovered, err)
 	}
-	assertTurnStopped(t, f, scope)
+	var active, head uuid.UUID
+	var status, reason, runStatus string
+	var cursor, terminals int
+	if err = f.Pool.QueryRow(t.Context(), `SELECT s.active_turn_id,s.dispatch_hold_reason,s.committed_input_sequence,t.status,w.head_version_id,r.status,(SELECT count(*) FROM session_events WHERE session_id=s.id AND kind IN ('turn.completed','turn.failed','turn.interrupted')) FROM sessions s JOIN session_turns t ON t.id=s.active_turn_id JOIN workspaces w ON w.id=s.workspace_id JOIN runs r ON r.id=s.current_run_id WHERE s.id=$1`, f.sessionID).Scan(&active, &reason, &cursor, &status, &head, &runStatus, &terminals); err != nil {
+		t.Fatal(err)
+	}
+	if active != scope.TurnID || reason != "recovery_required" || cursor != 0 || status != "running" || head != f.rootID || runStatus != "system_failed" || terminals != 0 {
+		t.Fatalf("loss settled active Turn: %s %s %d %s %s %s %d", active, reason, cursor, status, head, runStatus, terminals)
+	}
 }
 
 func TestSessionTurnCompletionResultPresencePostgres(t *testing.T) {
@@ -415,4 +431,9 @@ func TestSessionTurnCompletionResultPresencePostgres(t *testing.T) {
 			}
 		})
 	}
+}
+
+func (f *actorCheckpointFixture) beginSettlement(t *testing.T, scope session.TurnScope) {
+	t.Helper()
+	f.workerCall(t, f.server.workerBeginTurnSettlement, workerapi.TurnExecutionRequest{Lease: f.fence(), CorrelationID: uuid.NewV7().String(), TurnID: scope.TurnID.String(), RunGeneration: scope.RunGeneration}, nil)
 }

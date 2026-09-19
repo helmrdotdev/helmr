@@ -103,7 +103,7 @@ UPDATE run_waits
 			if test.actor {
 				actorID = fixture.convertToActor(t, ctx, leasedRun{runID: parent.runID, leaseID: parent.leaseID}, `{"enabled":false}`)
 				inputID = uuid.NewV7()
-				dbtest.MustExec(t, ctx, fixture.pool, `INSERT INTO session_records(id,environment_id,session_id,direction,sequence,data) VALUES($1,$2,$3,'input',2,'{}')`, inputID, fixture.environmentID, actorID)
+				dbtest.MustExec(t, ctx, fixture.pool, `INSERT INTO session_turns(id,environment_id,session_id,sequence,data) VALUES($1,$2,$3,2,'{}')`, inputID, fixture.environmentID, actorID)
 				admission, err := fixture.pool.Begin(ctx)
 				if err != nil {
 					t.Fatal(err)
@@ -186,7 +186,7 @@ SELECT condition_result, condition_status, suspension_status
 				var active uuid.UUID
 				var cursor int64
 				var status, turnStatus string
-				if err := fixture.pool.QueryRow(ctx, `SELECT s.active_turn_id,s.committed_input_sequence,s.status,r.turn_status FROM sessions s JOIN session_records r ON r.id=s.active_turn_id WHERE s.id=$1`, actorID).Scan(&active, &cursor, &status, &turnStatus); err != nil {
+				if err := fixture.pool.QueryRow(ctx, `SELECT s.active_turn_id,s.committed_input_sequence,s.status,r.status FROM sessions s JOIN session_turns r ON r.id=s.active_turn_id WHERE s.id=$1`, actorID).Scan(&active, &cursor, &status, &turnStatus); err != nil {
 					t.Fatal(err)
 				}
 				if active != inputID || cursor != 1 || status != "open" || turnStatus != "running" {

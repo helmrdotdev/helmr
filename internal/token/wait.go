@@ -29,6 +29,8 @@ type WaitBatch struct {
 }
 
 type WaitRegistration struct {
+	TurnID                        pgtype.UUID
+	RunGeneration                 pgtype.Int8
 	TokenID                       uuid.UUID
 	WaitID                        uuid.UUID
 	ResumeAttachID                uuid.UUID
@@ -107,13 +109,15 @@ func (r *WaitReconciler) RegisterWait(
 	// An exact existing registration is immutable and may outlive its run
 	// lease. This read-only replay does not linearize creation; the mutable
 	// path repeats it after locking the run lineage.
-	if replay, found, err := replayTokenWaitRegistration(ctx, q, request, metadata, tags); err != nil {
-		return WaitRegistrationResult{}, err
-	} else if found {
-		if err := tx.Commit(ctx); err != nil {
-			return WaitRegistrationResult{}, fmt.Errorf("commit token wait registration replay: %w", err)
+	if !request.TurnID.Valid {
+		if replay, found, err := replayTokenWaitRegistration(ctx, q, request, metadata, tags); err != nil {
+			return WaitRegistrationResult{}, err
+		} else if found {
+			if err := tx.Commit(ctx); err != nil {
+				return WaitRegistrationResult{}, fmt.Errorf("commit token wait registration replay: %w", err)
+			}
+			return replay, nil
 		}
-		return replay, nil
 	}
 	locators, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 		ID: pgvalue.UUID(request.RunLeaseID), LeaseSequence: request.LeaseSequence,
@@ -137,6 +141,7 @@ func (r *WaitReconciler) RegisterWait(
 		return WaitRegistrationResult{}, tokenWaitAuthorityError("load token wait registration locator", err)
 	}
 	var lockedActorCurrentRunID pgtype.UUID
+	var lockedActor db.Session
 	var lockedActorCommittedInputSequence, lockedActorNextInputSequence int64
 	if locator.OwnerSessionID.Valid {
 		actor, err := q.LockTokenWaitActor(ctx, locator.OwnerSessionID)
@@ -146,6 +151,7 @@ func (r *WaitReconciler) RegisterWait(
 		if actor.Status != "open" && actor.Status != "closing" {
 			return WaitRegistrationResult{}, tokenWaitAuthorityError("owning actor is not active", nil)
 		}
+		lockedActor = actor
 		lockedActorCurrentRunID = actor.CurrentRunID
 		lockedActorCommittedInputSequence = actor.CommittedInputSequence
 		lockedActorNextInputSequence = actor.NextInputSequence
@@ -194,6 +200,15 @@ func (r *WaitReconciler) RegisterWait(
 		run, attempt.EntrypointKind, attempt.SessionInputStartSequence,
 	); err != nil {
 		return WaitRegistrationResult{}, err
+	}
+	if run.entrypointKind == "actor" {
+		want := lockedActorCommittedInputSequence
+		if request.TurnID.Valid {
+			want++
+		}
+		if request.ActorSpeculativeInputSequence.Int64 != want {
+			return WaitRegistrationResult{}, tokenWaitAuthorityError("Token wait cursor does not identify its admitted Turn", nil)
+		}
 	}
 	workerGroup, err := q.LockRunLeaseClaimWorkerGroup(ctx, db.LockRunLeaseClaimWorkerGroupParams{
 		ID: pgvalue.UUID(request.WorkerGroupID), RegionID: locators.RegionID,
@@ -291,6 +306,21 @@ func (r *WaitReconciler) RegisterWait(
 	if err != nil {
 		return WaitRegistrationResult{}, tokenWaitAuthorityError("insert token wait", err)
 	}
+	if locators.SessionID.Valid {
+		if lockedActor.DispatchHoldID.Valid || lockedActor.ActiveTurnID != request.TurnID || lockedActor.RunGeneration != request.RunGeneration.Int64 && request.TurnID.Valid {
+			return WaitRegistrationResult{}, ErrWaitAuthority
+		}
+		if request.TurnID.Valid {
+			_, err = q.BindRunWaitTurn(ctx, db.BindRunWaitTurnParams{SessionID: lockedActor.ID, TurnID: request.TurnID, RunGeneration: request.RunGeneration, WaitID: registered.ID})
+			if err != nil {
+				return WaitRegistrationResult{}, tokenWaitAuthorityError("bind Token wait to active Turn", err)
+			}
+		} else if request.RunGeneration.Valid {
+			return WaitRegistrationResult{}, ErrWaitAuthority
+		}
+	} else if request.TurnID.Valid || request.RunGeneration.Valid {
+		return WaitRegistrationResult{}, ErrWaitAuthority
+	}
 	waitingRevision := registered.ExpectedRunRevision
 
 	condition, err := q.LockTokenWaitCondition(ctx, db.LockTokenWaitConditionParams{
@@ -347,7 +377,8 @@ func replayTokenWaitRegistration(
 	replay, err := q.GetTokenWaitRegistrationReplay(
 		ctx,
 		db.GetTokenWaitRegistrationReplayParams{
-			RunLeaseID:                    pgvalue.UUID(request.RunLeaseID),
+			RunLeaseID: pgvalue.UUID(request.RunLeaseID),
+			TurnID:     request.TurnID, TurnRunGeneration: request.RunGeneration,
 			WaitID:                        pgvalue.UUID(request.WaitID),
 			TokenID:                       pgvalue.UUID(request.TokenID),
 			ResumeAttachID:                pgvalue.UUID(request.ResumeAttachID),
@@ -517,7 +548,7 @@ func validateTokenWaitActorCursor(
 ) error {
 	switch run.entrypointKind {
 	case "task":
-		if run.actorID.Valid || ownerSessionID.Valid || cursor.Valid || attemptEntrypointKind != "task" ||
+		if run.actorID.Valid || cursor.Valid || attemptEntrypointKind != "task" ||
 			attemptSessionInputStartSequence.Valid {
 			return tokenWaitAuthorityError("task token wait carries actor authority", nil)
 		}
@@ -672,6 +703,13 @@ func (r *WaitReconciler) reconcileOne(
 	}
 	if err != nil {
 		return false, false, err
+	}
+	current, err := q.RunWaitTurnCurrent(ctx, pgvalue.UUID(waitID))
+	if err != nil {
+		return false, false, err
+	}
+	if !current {
+		return false, false, tx.Commit(ctx)
 	}
 	if err := validateLockedTokenWait(addressedRun, wait); err != nil {
 		return false, false, err

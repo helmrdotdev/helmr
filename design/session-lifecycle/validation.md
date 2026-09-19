@@ -27,7 +27,7 @@ receipt/event must not claim it has converged. Full native callback/process owne
 and forced physical exclusion remain package 3/5 qualification. Do not add a fake
 native state machine to turn this limit into a claimed success.
 
-## Remaining integration gates
+## Remaining integration gates after package 1
 
 - Public automatic send/enqueue/exact message routes, readiness/delivery, schema
   disposition, close/resume/recover and auth/scope behavior from the contract.
@@ -42,7 +42,7 @@ native state machine to turn this limit into a claimed success.
 - Remove old input/output surfaces and transitional storage names before the single
   integration release. No compatibility aliases, duplicate writes or backfill.
 
-## Implemented boundary
+## Package 1 implemented boundary
 
 The existing input row now owns Turn identity, execution binding and terminal-event
 reference; the Session row owns active Turn and dispatch hold. Real input delivery
@@ -57,7 +57,7 @@ writer checks. The full stop/recovery convergence path, final relation rename,
 Session-scoped output, remaining event kinds and public/runtime/SDK surfaces still
 belong to the remaining packages. This intermediate candidate is not deployable.
 
-## Results
+## Package 1 results
 
 Package 1's contract and transaction/transport slice is complete on base
 `2488a8a44f7f4c3ced610d7618e850c2fae7d267`. The final internal source tree is
@@ -103,7 +103,7 @@ and recovered-writer provenance. An earlier full run found a run-log checkpoint
 fixture opening its next receive without explicit settlement. It now settles via
 the owning `f.turn` operation and preserves both lock-order races.
 
-## Independent review and calibration
+## Package 1 independent review and calibration
 
 Two fresh read-only reviewers inspected the bounded candidate and rechecked affected
 corrections: `/root/turn_authority_diff_review` (correctness) and
@@ -129,3 +129,304 @@ live native callback identity, delayed native-start convergence, managed process
 stop, physical writer exclusion, public/runtime/SDK cutover, deployment or CI. The
 later packages and native-runtime acceptance listed above remain required before
 releasing the combined candidate.
+
+
+## Package 2 boundary
+
+Package 2 starts at `9451e4f72166a244571484037cb553df4599a39c` and replaces
+prerelease storage, durable operations and transport consumers in the same integration
+candidate. It does not add an old/new compatibility path. Public and worker admission
+share the durable Session owner; public identity never substitutes for worker
+execution authority.
+
+The initial schema uses `session_turns`, message delivery state and one event timeline.
+Send selects and persists one branch under the Session lock; enqueue and exact-message
+operations retain their distinct meanings. Stable operation receipts retain their
+selected target and business rejection across replay. Deployed schema and actual
+callback handling remain runtime obligations in package 3.
+
+Output uses explicit Session or Turn scope with immutable producer provenance.
+Settlement closes message admission, accounts for delivery, and commits the terminal
+event with the input frontier and proven Workspace head. Unknown delivery uses the
+same recovery hold and wait revocation as execution loss. Stop, lease loss and forced
+termination preserve accepted FIFO work and require repair instead of uncertain
+cold replay. Valid checkpoint continuation remains a separate path.
+
+The common Token stays independent of an Actor. Its consuming wait association is
+bound to the Turn, Run and generation. Session hold and exact execution currency
+fence the association; no second revoked-state column is required.
+A stopped association cannot consume a late result or resume a successor. Detached
+Tasks and other consumers retain their own authority.
+
+Public Session routes, API-key permissions and the Go client use the selected
+contract, including an exact null-Turn Actor Run-cancellation receipt and privileged
+recovery. HTTP decoding distinguishes omitted members from explicit JSON null,
+rejects unknown envelope fields and bounds canonical application data. Minimum CLI
+and workerclient adaptation is included so these affected Go packages use the new
+wire contract. Full CLI, console, SDK and guest/executor consumers remain later work.
+
+### Package 2 candidate and checks
+
+The combined candidate starts at `9451e4f72166a244571484037cb553df4599a39c`.
+Final review tree: `742c50ccb9e2f3ed6d133dc909cb7327bac43724`; internal source tree:
+`7800154c6e351a48e767a80098d87658b90c5b19`. The complete 156-path manifest and
+full/correction diffs are in `/tmp/session-package2-rollback-candidate-i8wz_bfy`;
+manifest SHA-256:
+`296a144933c9b2f0dc433d484c861584bb611e44854f1295127515f92483ab54`.
+The parent verified and serialized integration of the backend's 78-path and Run
+owner's 19-path frozen manifests, and verified all 156 integrated paths against the
+review manifest before this evidence update. Subsequent documentation edits only
+record evidence; the reviewed internal and CLI trees remain unchanged.
+
+Checks use pinned Nix, Go 1.27.1, sqlc 1.31.1 and PostgreSQL 18.4. Relevant database
+fixtures create disposable local databases with database/skip overrides cleared;
+no shared database was reset.
+
+| Evidence | Scope and outcome |
+| --- | --- |
+| Previous controlplane, Session, Token, DB and schema | 1,228 passed tests/subtests; six explicit opt-in scale skips; exit 0. `/tmp/session-package2-composition-check-43z14ddp/{check.log,counts.json,outcome}`. |
+| Final controlplane and DB | 1,170 passed tests/subtests; six explicit opt-in scale skips; exit 0. `/tmp/session-package2-rollback-check-ak6dv40a/{check.log,counts.json,outcome}`. |
+| Final Run and dispatch | 179 passed tests/subtests; one opt-in measurement skip; exit 0. `/tmp/session-rollback-run-dispatch-final.7rqezswu/{check.log,verification.json}`. |
+| Final focused handback and lineage proof | 61 passed tests/subtests, no skips; exit 0. `/tmp/session-owner-rollback-final.whtkrn/{test.log,outcome}`. |
+| Unchanged API, auth, client, worker API/client, CLI and idempotency | These packages passed in `/tmp/session-package2-combined.FjwsiU`; later corrections do not change their owned source. The combined command itself exited 1 for stale controlplane unit fixtures, subsequently corrected and covered by the final affected run above. |
+| SQL generation | Pinned `sqlc generate` left the integrated source unchanged. `/tmp/session-package2-rollback-generation-zeqp9zvw`. |
+
+The previous five-package run tested tree
+`750f64627cbea0de15f64c9046da97afeb6dbd9f`; the intervening `55cb9049` review tree
+only changed a dispatch test fixture. Later corrections change dispatch, checkpoint
+receipt queries and their owning regressions. The final full controlplane/DB run
+above requalifies the integrated correction. Session/Token/schema and public/client
+owned source and schema signatures are unchanged; their earlier evidence is reused
+alongside the final compilation and focused owner checks.
+For final Run/dispatch evidence reuse, the parent verified all 412 selected repository
+inputs, including Nix inputs and embedded resources, against the tested checkout.
+No input differs; `/tmp/session-rollback-evidence-reuse-eabs2xgj/comparison.json`
+records the comparison. The final source is formatted and `git diff --check` passes.
+
+The first Run/dispatch composition run failed one manually seeded nested checkpoint
+fixture that omitted its request/acknowledgement versions. The fixture now describes
+an acknowledged checkpoint; production validation was retained. The focused case
+and final full Run/dispatch run both pass. Earlier failed commands are retained as
+superseded evidence, not reported as overall passes.
+
+```sh
+nix develop .#default --command env \
+  -u HELMR_TEST_DATABASE_URL -u HELMR_SKIP_POSTGRES_TESTS \
+  go test ./internal/controlplane ./internal/session ./internal/token \
+  ./internal/db ./internal/db/schema -count=1 -timeout=600s -v
+
+nix develop .#default --command env \
+  -u HELMR_TEST_DATABASE_URL -u HELMR_SKIP_POSTGRES_TESTS \
+  go test ./internal/controlplane ./internal/db -count=1 -timeout=600s -v
+
+nix develop .#default --command env \
+  -u HELMR_TEST_DATABASE_URL -u HELMR_SKIP_POSTGRES_TESTS \
+  go test ./internal/run ./internal/dispatch -count=1 -timeout=600s -v
+```
+
+### Package 2 independent judgments and corrections
+
+Fresh correctness review used native Codex session
+`01a0b974-2a69-73e1-8ccd-20d3501e4760` (effective `gpt-6-astra`, high).
+Independent calibration used Claude session `2480a303-d792-44e0-b88e-9d28c3f9959a`
+(effective `claude-fable-5-1`, high). Both assignments are read-only and continue
+against affected corrections. Their initial combined review tree was
+`e41ed716e68dd66c05b4579249e88f93f423e8fd`; the corrected tree is recorded above.
+Initial findings are retained in `/tmp/session-package2-correctness-ng_hyxgh/final.md`
+and `/tmp/session-package2-calibration-2kmf7wn3/result.json`.
+
+| Finding | Parent disposition and owning proof |
+| --- | --- |
+| Failed Actor completion/checkpoint still retried or detached the Session | Fixed. Failed initialization, active execution, between-Turn checkpoint failure and no-progress return preserve FIFO/head behind a recovery hold, retire execution and permit exact repair. Clean drained return remains valid. Real failure/return/recovery cases use the existing worker transactions. Obsolete cold Actor retry queries and tests are deleted; Task retry is retained. |
+| Delivered close outbox entry suppressed a later wake | Fixed. Each durable close/recover/resume transition uses its operation identity for reconciliation. The real delivery worker proves a prior delivered close cannot suppress repair/resume. |
+| Drained recovered Session could not close | Fixed. A recovered/interrupted hold closes only with no current Run or active Turn, a drained cursor and physical writer exclusion. The hold clears after successful Workspace release. Queued work remains held until resume. |
+| Missing exact interrupt target returned 500 | Fixed. The domain returns typed `turn_not_found`, mapped to 404; the public PostgreSQL test exercises the missing target. |
+| Redundant wait-revocation state and duplicate hold writes | Simplified. Remove `turn_revoked_at`; exact Turn/Run/generation and the current Session hold fence wait use. Interrupt uses common hold provenance and fresh-acceptance graph retirement. Parsing/binding is performed once within the owning operation. |
+| Actor continuation eligibility/proof was incomplete | Fixed. Exhausted Actors are filtered before bounded placement; all managed Actor checkpoint kinds use the committed Session frontier and source proof. The same-Workspace child handoff still proves its private version, using the Actor parent's current committed base. |
+| Generic Task Token waiter inherited an Actor-only rejection | Fixed. A Task's nil-Turn wait retains Task lineage/Workspace authority even under an Actor-owned Workspace. Real parent commit, child handoff, placement, start and Token resolution prove isolation; a shared Token's unrelated waiter survives Actor stop. |
+| Message rejection code disagreed with selected contract | Fixed. Unstarted deliveries use `turn_stopping`; uncertain started deliveries enter execution-loss recovery. |
+| Adding cursor details made common errors non-comparable | Fixed. A scoped scalar cursor error preserves existing sentinel matching; existing Token expiry tests remain authoritative. |
+
+The parent retains separate unlocked eligibility and locked authority validation:
+the former prevents bounded-scan starvation, while the latter protects concurrent
+transitions. Placement uses durable elapsed time; loss lanes account for the exact
+physical-loss interval. Their temporal differences do not justify a SQL-function
+abstraction. Prelookup authorization and final resource scope protect different
+boundaries. The selected cursor-expiry envelope does not require a new trimming job.
+No generic transaction dispatcher, Actor Token service or compatibility path is added.
+
+The accepted `failed` Session status/event/diagnostic vocabulary stays in the
+contract and projection. Run failure now uses a recoverable hold, so no current
+package 2 path produces terminal Session failure. Remove the uncalled failure
+helper and unused reconciliation query setters, rather than retaining a dead
+failure writer. This does not change the selected public status vocabulary.
+
+The final calibration also requested one computed Actor terminal decision per
+completion, reuse of child-wait cursor validation and deletion of three redundant
+SQL Session guards. Their sole production owners already lock the Session and
+validate the same exact execution predicates; ordinary statement identity, status
+and CAS conditions remain. The unlocked scan eligibility checks remain separate.
+
+
+The next correctness recheck (`/tmp/session-package2-final-correctness-cs5r43gl`)
+confirmed the original four fixes but found three more reachable defects: consecutive
+private checkpoints were incorrectly required to directly descend from the committed
+head; a historical outside-Turn Token wait was checked against a later active Turn;
+and an accepted `no_progress` completion could not replay its fingerprint.
+The parent accepted all three and corrected them with real PostgreSQL regressions.
+One derived query follows exact acknowledged checkpoint/source-runtime provenance
+back to the committed head. It retains per-edge version/source/ownership proof and
+strictly decreasing writers; no persisted frontier or arbitrary ancestry acceptance
+is added. Latest eligibility and live wait binding stay distinct from historical
+released-wait provenance. Unchanged settlement uses the validated checkpoint or
+child return and preserves the committed-head CAS.
+
+The same source audit found normal child handback advances the writer generation,
+child failure/cancel returns the original private base, and pre-placement cancellation
+has no child writer at all. The existing producer operations create these distinct
+receipts. Narrow branches now validate the appropriate exact receipt, including
+proof that a null-child-writer path never admitted a child physical writer. The
+positive/negative PostgreSQL cases cover direct settlement and a subsequent Token
+wait; ancestor stop still retains its hold. No new Task failure policy is introduced.
+The calibration recheck (`/tmp/session-package2-final-calibration-h34lq4fq`) found
+the smaller cleanup items above; their focused corrections passed. The next review
+of the 7cdbf3b6 candidate is retained in
+`/tmp/session-package2-recheck-correctness-0w7gjaxy` and
+`/tmp/session-package2-recheck-calibration-d36z7x3f`.
+
+That correctness pass found two further reachable cases: an owned Task's generic
+Token wait does not have the child-handoff generation fields, and nested Task
+handback can legitimately use a terminal lease base different from the original
+Actor handoff. The existing producer transactions distinguish immutable Task origin
+from each admitted execution base. The correction retains exact checkpoint/source,
+Run/attempt, ownership, terminal outcome and handback receipts; successful output
+remains parented by its terminal source lease's actual base. Failure still returns
+the immutable original base. No generic Workspace ancestry walker or new persisted
+state is introduced. The three actual repro cases failed before the correction
+(`/tmp/session-owner-nested-repro.jJfFNg`) and passed afterward
+(`/tmp/session-owner-nested-correction.qzvLmp`). The corruption checks and affected
+package checks pass as recorded above. Final independent rechecks use
+`/tmp/session-package2-qualified-correctness-zycdlmxq` and
+`/tmp/session-package2-qualified-calibration-x1ngqajt`. Calibration found no
+actionable issue and accepted the bounded terminal-owner proof. Correctness confirmed
+normal and nested continuation fixes, then found two additional interruption paths:
+an owned Task restore lost before acknowledgement cannot redispatch, and cancellation
+of a parked owned Task leaves a checkpointed source lease that parent handback rejects.
+The lost-restore correction uses exact expired-restore receipts. Parked cancellation
+initially used invalidated previously-ready checkpoint receipts; the final rollback
+simplification below replaces that failure-source reconstruction. A resolved Token
+retains its condition outcome during cancellation; the final proof checks logical
+termination independently. The same existing owner also handles runtime-preparation
+exhaustion. Actual reproductions failed in
+`/tmp/session-owner-parked-repro.egIyNC`; corrected continuation and rejection
+cases passed in `/tmp/session-owner-parked-qualified.54JpBl` and the final focused
+suite. No status-only broadening or new durable state was added. Affected judgments are in
+`/tmp/session-package2-parked-correctness-fqcqa4un` and
+`/tmp/session-package2-parked-calibration-fj6qvzsx`. Calibration found no actionable
+issue. Its optional reason-consistency trim concerned the failure-source branch
+subsequently removed by the final simplification.
+Correctness confirmed both fixes and found one remaining nested-cancellation case:
+a cancelled child's own checkpoint writer can precede an admitted descendant's
+latest Workspace writer. Resumption must prove that latest owned descendant is
+excluded while retaining the direct child's checkpoint provenance. The same writers
+reproduced and corrected that handback admission boundary in a frozen dispatch
+slice, with actual Actor and Task parents, pre-cleanup rejection, regrant and later
+settlement (`/tmp/session-owner-descendant-qualified.x0QOvE`). A further parent
+source audit reproduced failed attempt 1 followed by cancellation of never-leased
+retry attempt 2 (`/tmp/session-owner-retry-cancel-repro.l0OyGR`). The last physical
+writer belongs to attempt 1 while logical termination belongs to attempt 2.
+
+Before adding another source-attempt exception, the parent requested a bounded
+independent design/calibration critique in `/tmp/session-rollback-proof-critique-zpxs_dgo`.
+It found rollback content provenance, physical exclusion and logical terminal state
+had been conflated, and judged their separation sound and smaller. The parent chose
+to consolidate failed/cancelled original-base handback: keep the parent's exact
+checkpoint/base proof, exact terminal child/current-attempt and handback outcome,
+and scoped owned-graph exclusion with separate current-writer attribution. Successful
+child output retains its full producer/current-attempt proof. Historical failed edges
+consume the acknowledged parent restore and retain its base/origin/writer ordering;
+they need not reconstruct discarded child contents or current physical state.
+This correction is implemented. The live helper includes the direct child and all
+owned same-Workspace descendants, and runs for every failed/cancelled handback with
+a recorded child writer. It independently proves current-writer membership and
+physical exclusion; exclusion alone cannot bypass the writer fence. Existing
+reclaim receipts accept an observed-failed runtime after actual reclamation, while
+live mounts, leases, processes and unexcluded or foreign writers still reject.
+No new persisted state or public API is added. Actual retry-gap Actor and Task
+parents, exhausted retries, reclaimed failed runtimes and subsequent Actor Token
+wait/settlement pass in `/tmp/session-owner-rollback-qualified.yuSkbN` and the final
+61-case focused run. Successful child output proof is unchanged.
+
+The critique's proposed case of a persisted rejected attempt-2 Run lease without
+its Workspace lease has no production writer in this candidate. The sole Run-lease
+insertion caller, `grantFreshRun`, inserts both leases, advances the Workspace fence
+and binds the parent child writer in one transaction. The parent classified that
+specific hypothetical as non-actionable rather than inventing an invalid fixture.
+The actual never-leased retry gap and reclaimed failed-runtime receipts are
+qualified above. A separate null-child-writer hypothesis was also non-actionable:
+the failure/reclaim writers clear runtime reservations, so reclaimed failed runtimes
+do not match the reserved-runtime exclusion predicate. The no-execution branch
+remains unchanged; no synthetic unreachable case justified another exception.
+
+The parent also accepted removal of source checks already discharged by the shared
+Actor lineage query and a redundant publication disjunction. Current resource
+comparison, resume binding, checkpoint identity and committed-head CAS remain.
+Historical wait/child outcome pairing is aligned with live admission. A proposed
+virtual-current-node mode is non-actionable: live admission and acknowledged
+historical provenance have different owners and state, and the bounded receipt
+correction does not require another query mode. No actionable finding is deferred.
+
+Final correctness review of tree `742c50cc` returned no actionable findings in
+`/tmp/session-package2-rollback-correctness-6d5ojsrp/final.md`. Separate calibration
+also returned no actionable correctness or simplification finding in
+`/tmp/session-package2-rollback-calibration-19bnfc50/result.json`. The parent keeps
+the optional redundant terminal/reclaim predicates in the writer-membership query:
+they express the local source receipt without adding state or an alternate path;
+the reviewer explicitly classified their deletion as optional, not required.
+Both reviewers inspected the exact manifest and affected correction. The final
+controlplane/DB command was still running when they wrote their judgments; the
+parent subsequently verified its terminal exit 0 and counts above on unchanged
+source. Neither reviewer claimed native-runtime validation. No performance claim
+is made for arbitrary-depth owned Run graphs; native/runtime and integrated
+qualification remain the later package boundaries below.
+
+Review scope notes: interrupt followed by a leased worker's failed completion is
+rejected while the hold is set. Finalizing leases cannot renew; existing lease-loss
+cleanup preserves the hold/FIFO and excludes the writer. Package 3 still supplies
+cooperative stop convergence. Exhausted paused Actors are excluded defensively from
+placement, but current checkpoint production cannot create them: closing the active
+interval checks the hard deadline before pausing, and lease recovery does not resume
+an execution that exhausted that deadline. The injected exhausted-placement fixture
+proves bounded-scan progress, not a new paused-Run expiry service.
+
+
+### Committed versions with private ancestors
+
+The parent checked the version-consumer boundary raised in calibration. Existing
+`recordTaskWorkspaceVersion` / `PublishTaskWorkspaceVersion` already publish a
+committed full snapshot whose parent is the live lease base, including a private
+restored base. `TestRestoredActorCompletionAdvancesFromPrivateLeaseBase` (in
+`actor_completion_restored_postgres_test.go`)
+asserts a committed new head with the restored private version as its parent.
+The schema permits this relation and protects the parent, artifact and source lease
+with `ON DELETE RESTRICT` references.
+
+`GetWorkspaceResetTargetAuthority` and `GetCheckpointWorkspaceBaseAuthority` load
+the selected version's own artifact. Their Go projections require valid artifact
+and tree identity, not a committed parent. Guest materialization and reset extract
+that complete tar artifact; they do not reconstruct a chain of parent snapshots.
+The only checked-in version-discard writer is scoped to a staged Workspace-exec
+capture; no general version/artifact/CAS row deletion query exists in this product
+candidate. This is source/DB evidence, not new native runtime or storage-retention
+qualification. No collector or alternate publication state was added.
+
+### Remaining release boundary
+
+This package qualifies durable DB/transport authority only and is not independently
+releasable. Package 3 must carry these fields and barriers through guest/proto,
+executor and TypeScript runtime/SDK, including multiple explicit Turns per Run.
+Package 4 completes CLI/console/examples and documentation consumers. Package 5
+qualifies the exact combined artifacts and real native callback/process stop,
+checkpoint/restore and physical exclusion. Those claims require their own evidence;
+passing database fixtures does not discharge them. No CI, merge, publication,
+shared-environment reset or deploy is claimed here.

@@ -712,20 +712,41 @@ func (c *Client) GetRun(ctx context.Context, id string, opts ...RunScopeOptions)
 	return response, nil
 }
 
-func (c *Client) CancelRun(ctx context.Context, id string, opts ...RunScopeOptions) (api.RunSnapshotResponse, error) {
+// RunCancellationResult contains exactly one response: an ordinary Task snapshot
+// or acceptance of stopping an Actor Run outside an active Turn.
+type RunCancellationResult struct {
+	Task  *api.RunSnapshotResponse
+	Actor *api.ActorRunCancellationReceipt
+}
+
+func (c *Client) CancelRun(ctx context.Context, id string, input api.CancelRunRequest, opts ...RunScopeOptions) (RunCancellationResult, error) {
 	path, err := c.runItemPath(id, "/cancel", opts...)
 	if err != nil {
-		return api.RunSnapshotResponse{}, err
+		return RunCancellationResult{}, err
 	}
-	req, err := c.newRequest(ctx, http.MethodPost, path, nil)
-	if err != nil {
-		return api.RunSnapshotResponse{}, err
+	input.IdempotencyKey = invocationKey(input.IdempotencyKey)
+	var raw json.RawMessage
+	if err := c.postJSON(ctx, path, input, &raw); err != nil {
+		return RunCancellationResult{}, err
 	}
-	var response api.RunSnapshotResponse
-	if err := c.doJSON(req, &response); err != nil {
-		return api.RunSnapshotResponse{}, err
+	var envelope struct {
+		Status string `json:"status"`
 	}
-	return response, nil
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return RunCancellationResult{}, err
+	}
+	if envelope.Status == "accepted" {
+		var receipt api.ActorRunCancellationReceipt
+		if err := json.Unmarshal(raw, &receipt); err != nil {
+			return RunCancellationResult{}, err
+		}
+		return RunCancellationResult{Actor: &receipt}, nil
+	}
+	var snapshot api.RunSnapshotResponse
+	if err := json.Unmarshal(raw, &snapshot); err != nil {
+		return RunCancellationResult{}, err
+	}
+	return RunCancellationResult{Task: &snapshot}, nil
 }
 
 type ListRunsOptions struct {

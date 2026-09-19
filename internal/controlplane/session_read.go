@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"slices"
@@ -46,21 +45,32 @@ type parsedSessionListQuery struct {
 }
 
 type sessionProjectionRow struct {
-	id           pgtype.UUID
-	actorID      string
-	deploymentID pgtype.UUID
-	workspaceID  pgtype.UUID
-	key          pgtype.Text
-	status       string
-	createdAt    pgtype.Timestamptz
-	updatedAt    pgtype.Timestamptz
-	currentRunID pgtype.UUID
-	failure      []byte
-	failureRunID pgtype.UUID
+	id                 pgtype.UUID
+	actorID            string
+	deploymentID       pgtype.UUID
+	workspaceID        pgtype.UUID
+	key                pgtype.Text
+	status             string
+	createdAt          pgtype.Timestamptz
+	updatedAt          pgtype.Timestamptz
+	activeTurnID       pgtype.UUID
+	dispatchHoldID     pgtype.UUID
+	dispatchHoldReason pgtype.Text
+	currentRunID       pgtype.UUID
+	failure            []byte
+	failureRunID       pgtype.UUID
 }
 
 func (s *Server) listSessionsHTTP(w http.ResponseWriter, r *http.Request) {
 	principal := actorFromContext(r.Context())
+	if err := authorizeSessionOperation(principal, auth.PermissionSessionsRead); err != nil {
+		writeError(w, err)
+		return
+	}
+	if s.db == nil {
+		writeError(w, unavailable(codedError{code: "unavailable", message: "Session storage is unavailable"}))
+		return
+	}
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_session_query", message: err.Error()}))
@@ -158,6 +168,14 @@ func (s *Server) getSessionHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	principal := actorFromContext(r.Context())
+	if err := authorizeSessionOperation(principal, auth.PermissionSessionsRead); err != nil {
+		writeError(w, err)
+		return
+	}
+	if s.db == nil {
+		writeError(w, unavailable(codedError{code: "unavailable", message: "Session storage is unavailable"}))
+		return
+	}
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_session_id", message: err.Error()}))
@@ -327,7 +345,18 @@ func projectSession(row sessionProjectionRow) (api.Session, error) {
 	if err := ids.Validate(workspaceID); err != nil {
 		return api.Session{}, errors.New("session Workspace ID is invalid")
 	}
+	dispatch := api.SessionDispatch{State: "ready"}
+	if row.dispatchHoldID.Valid {
+		holdID := pgvalue.UUIDString(row.dispatchHoldID)
+		dispatch = api.SessionDispatch{State: "held", HoldID: &holdID, Reason: &row.dispatchHoldReason.String}
+	}
+	var activeTurnID *string
+	if row.activeTurnID.Valid {
+		id := pgvalue.UUIDString(row.activeTurnID)
+		activeTurnID = &id
+	}
 	return api.Session{
+		ActiveTurnID: activeTurnID, Dispatch: dispatch,
 		ID: status.id, ActorID: row.actorID, DeploymentID: deploymentID, WorkspaceID: workspaceID,
 		Key: status.key, Status: status.status, CreatedAt: status.createdAt,
 		UpdatedAt: status.updatedAt, CurrentRunID: status.currentRunID, Failure: status.failure,
@@ -335,27 +364,18 @@ func projectSession(row sessionProjectionRow) (api.Session, error) {
 }
 
 func sessionProjectionFromGetRow(row db.GetSessionSnapshotRow) sessionProjectionRow {
-	return sessionProjectionRow{id: row.ID, actorID: row.ActorDeclaredID, deploymentID: row.DeploymentID, workspaceID: row.WorkspaceID, key: row.Key, status: row.Status, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt, currentRunID: row.CurrentRunID, failure: row.Failure, failureRunID: row.FailureRunID}
+	return sessionProjectionRow{id: row.ID, actorID: row.ActorDeclaredID, deploymentID: row.DeploymentID, workspaceID: row.WorkspaceID, key: row.Key, status: row.Status, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt, currentRunID: row.CurrentRunID, activeTurnID: row.ActiveTurnID, dispatchHoldID: row.DispatchHoldID, dispatchHoldReason: row.DispatchHoldReason, failure: row.Failure, failureRunID: row.FailureRunID}
 }
 
 func sessionProjectionFromKeyRow(row db.GetSessionSnapshotByKeyRow) sessionProjectionRow {
-	return sessionProjectionRow{id: row.ID, actorID: row.ActorDeclaredID, deploymentID: row.DeploymentID, workspaceID: row.WorkspaceID, key: row.Key, status: row.Status, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt, currentRunID: row.CurrentRunID, failure: row.Failure, failureRunID: row.FailureRunID}
+	return sessionProjectionRow{id: row.ID, actorID: row.ActorDeclaredID, deploymentID: row.DeploymentID, workspaceID: row.WorkspaceID, key: row.Key, status: row.Status, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt, currentRunID: row.CurrentRunID, activeTurnID: row.ActiveTurnID, dispatchHoldID: row.DispatchHoldID, dispatchHoldReason: row.DispatchHoldReason, failure: row.Failure, failureRunID: row.FailureRunID}
 }
 
 func sessionProjectionFromListRow(row db.ListSessionSnapshotsRow) sessionProjectionRow {
-	return sessionProjectionRow{id: row.ID, actorID: row.ActorDeclaredID, deploymentID: row.DeploymentID, workspaceID: row.WorkspaceID, key: row.Key, status: row.Status, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt, currentRunID: row.CurrentRunID, failure: row.Failure, failureRunID: row.FailureRunID}
+	return sessionProjectionRow{id: row.ID, actorID: row.ActorDeclaredID, deploymentID: row.DeploymentID, workspaceID: row.WorkspaceID, key: row.Key, status: row.Status, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt, currentRunID: row.CurrentRunID, activeTurnID: row.ActiveTurnID, dispatchHoldID: row.DispatchHoldID, dispatchHoldReason: row.DispatchHoldReason, failure: row.Failure, failureRunID: row.FailureRunID}
 }
 
 func (s *Server) writeSessionReadAuthorityError(w http.ResponseWriter, err error) {
 	s.log.Error("read Session failed", "error", err)
 	writeError(w, unavailable(codedError{code: "session_authority_unavailable", message: "Session authority is unavailable", retryable: true}))
-}
-
-func writeSessionReadAuthError(w http.ResponseWriter, log *slog.Logger, err error) {
-	if !errors.Is(err, auth.ErrUnauthenticated) {
-		log.Error("Session read authentication failed", "error", err)
-		writeError(w, unavailable(codedError{code: "session_authority_unavailable", message: "Session authentication is unavailable", retryable: true}))
-		return
-	}
-	writeError(w, unauthorized(codedError{code: "authentication_required", message: "authentication is required"}))
 }

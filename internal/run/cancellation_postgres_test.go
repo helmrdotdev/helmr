@@ -10,6 +10,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -330,48 +331,49 @@ UPDATE runs
 
 	exhaustRuntimePreparation(t, ctx, fixture, work.runID)
 
-	var runStatus db.RunStatus
-	var sessionStatus string
-	var failure []byte
+	var runStatus, sessionStatus, holdReason string
+	var currentRun, holdRun, owner pgtype.UUID
+	var active pgtype.UUID
 	if err := fixture.pool.QueryRow(ctx, `
-SELECT runs.status, sessions.status, sessions.failure
-  FROM runs
-  JOIN sessions ON sessions.id = $2
- WHERE runs.id = $1`, work.runID, sessionID).Scan(&runStatus, &sessionStatus, &failure); err != nil {
+SELECT r.status,s.status,s.dispatch_hold_reason,s.current_run_id,s.dispatch_hold_run_id,s.active_turn_id,w.owner_session_id
+FROM runs r JOIN sessions s ON s.id=$2 JOIN workspaces w ON w.id=s.workspace_id
+WHERE r.id=$1`, work.runID, sessionID).Scan(&runStatus, &sessionStatus, &holdReason, &currentRun, &holdRun, &active, &owner); err != nil {
 		t.Fatal(err)
 	}
-	var payload Failure
-	if err := json.Unmarshal(failure, &payload); err != nil {
-		t.Fatal(err)
-	}
-	if runStatus != db.RunStatusSystemFailed || sessionStatus != "failed" ||
-		payload.Code != "platform_failure" {
-		t.Fatalf("actor preparation exhaustion = run:%s session:%s failure:%+v", runStatus, sessionStatus, payload)
+	if runStatus != "system_failed" || sessionStatus != "open" || holdReason != "recovery_required" ||
+		currentRun != pgvalue.UUID(work.runID) || holdRun != currentRun || active.Valid || owner != pgvalue.UUID(sessionID) {
+		t.Fatalf("Actor preparation exhaustion lost recovery authority: %s/%s/%s current=%v hold=%v active=%v owner=%v", runStatus, sessionStatus, holdReason, currentRun, holdRun, active, owner)
 	}
 }
 
 func TestOwnedFinalizationExhaustsDifferentWorkspaceChildRuntimePreparation(t *testing.T) {
-	ctx := t.Context()
-	fixture := newPostgresFixture(t)
-	parent := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
-	child := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
-	claimID := uuid.NewV7()
-	waitID := uuid.NewV7()
-	dbtest.MustExec(t, ctx, fixture.pool, `
+	for _, actorParent := range []bool{false, true} {
+		name := "Task parent"
+		if actorParent {
+			name = "active Actor parent"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx := t.Context()
+			fixture := newPostgresFixture(t)
+			parent := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
+			child := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
+			claimID := uuid.NewV7()
+			waitID := uuid.NewV7()
+			dbtest.MustExec(t, ctx, fixture.pool, `
 INSERT INTO idempotency_claims (
     id, environment_id, operation, slot_hash,
     request_fingerprint, accepted_at
 ) VALUES ($1, $2, 'task.child.invoke', $3, $4, now())`,
-		claimID, fixture.environmentID,
-		dbtest.Hash("preparation-child-slot"), dbtest.Hash("preparation-child-request"))
-	dbtest.MustExec(t, ctx, fixture.pool, `
+				claimID, fixture.environmentID,
+				dbtest.Hash("preparation-child-slot"), dbtest.Hash("preparation-child-request"))
+			dbtest.MustExec(t, ctx, fixture.pool, `
 UPDATE runs
    SET cause_kind = 'child', parent_run_id = $1,
        parent_owns_lifecycle = true, claim_id = $2,
        current_run_lease_id = NULL
  WHERE id = $3`, parent.runID, claimID, child.runID)
-	dbtest.MustExec(t, ctx, fixture.pool, `UPDATE runs SET status = 'waiting' WHERE id = $1`, parent.runID)
-	dbtest.MustExec(t, ctx, fixture.pool, `
+			dbtest.MustExec(t, ctx, fixture.pool, `UPDATE runs SET status = 'waiting' WHERE id = $1`, parent.runID)
+			dbtest.MustExec(t, ctx, fixture.pool, `
 INSERT INTO run_waits (
     id, environment_id, run_id, workspace_id, kind,
     child_run_id, child_target_declared_id,
@@ -385,37 +387,55 @@ SELECT $1, runs.environment_id, runs.id, runs.workspace_id, 'child',
        $4
   FROM runs
  WHERE runs.id = $5`,
-		waitID, child.runID, claimID, uuid.NewV7(), parent.runID)
+				waitID, child.runID, claimID, uuid.NewV7(), parent.runID)
 
-	exhaustRuntimePreparation(t, ctx, fixture, child.runID)
+			var actorID, turnID uuid.UUID
+			if actorParent {
+				actorID = fixture.convertToActor(t, ctx, parent, `{"enabled":false}`)
+				turnID = activateCancellationTurn(t, fixture, parent, actorID)
+				dbtest.MustExec(t, ctx, fixture.pool, `UPDATE runs SET status='waiting' WHERE id=$1`, parent.runID)
+			}
+			exhaustRuntimePreparation(t, ctx, fixture, child.runID)
+			if actorParent {
+				var active, current, hold pgtype.UUID
+				var cursor int64
+				if err := fixture.pool.QueryRow(ctx, `SELECT active_turn_id,current_run_id,dispatch_hold_id,committed_input_sequence FROM sessions WHERE id=$1`, actorID).Scan(&active, &current, &hold, &cursor); err != nil {
+					t.Fatal(err)
+				}
+				if active != pgvalue.UUID(turnID) || current != pgvalue.UUID(parent.runID) || hold.Valid || cursor != 1 {
+					t.Fatalf("child-only failure changed Actor: %v %v %v %d", active, current, hold, cursor)
+				}
+			}
 
-	var childStatus, parentStatus db.RunStatus
-	var condition db.WaitStatus
-	var result []byte
-	if err := fixture.pool.QueryRow(ctx, `
+			var childStatus, parentStatus db.RunStatus
+			var condition db.WaitStatus
+			var result []byte
+			if err := fixture.pool.QueryRow(ctx, `
 SELECT child.status, parent.status, wait.condition_status, wait.condition_result
   FROM runs AS child
   JOIN runs AS parent ON parent.id = child.parent_run_id
   JOIN run_waits AS wait ON wait.id = $2
  WHERE child.id = $1`, child.runID, waitID).Scan(
-		&childStatus, &parentStatus, &condition, &result,
-	); err != nil {
-		t.Fatal(err)
-	}
-	var payload struct {
-		OK      bool    `json:"ok"`
-		Failure Failure `json:"failure"`
-	}
-	if err := json.Unmarshal(result, &payload); err != nil {
-		t.Fatal(err)
-	}
-	if childStatus != db.RunStatusSystemFailed || parentStatus != db.RunStatusRunning ||
-		condition != db.WaitStatusCompleted || payload.OK ||
-		payload.Failure.Code != "runtime_preparation_failed" {
-		t.Fatalf(
-			"different-workspace preparation exhaustion = child:%s parent:%s wait:%s result:%+v",
-			childStatus, parentStatus, condition, payload,
-		)
+				&childStatus, &parentStatus, &condition, &result,
+			); err != nil {
+				t.Fatal(err)
+			}
+			var payload struct {
+				OK      bool    `json:"ok"`
+				Failure Failure `json:"failure"`
+			}
+			if err := json.Unmarshal(result, &payload); err != nil {
+				t.Fatal(err)
+			}
+			if childStatus != db.RunStatusSystemFailed || parentStatus != db.RunStatusRunning ||
+				condition != db.WaitStatusCompleted || payload.OK ||
+				payload.Failure.Code != "runtime_preparation_failed" {
+				t.Fatalf(
+					"different-workspace preparation exhaustion = child:%s parent:%s wait:%s result:%+v",
+					childStatus, parentStatus, condition, payload,
+				)
+			}
+		})
 	}
 }
 
@@ -495,11 +515,16 @@ UPDATE runs
 }
 
 func TestCancelerResolvesDifferentWorkspaceChildWait(t *testing.T) {
-	for _, suspension := range []db.RunWaitStatus{
-		db.RunWaitStatusHot,
-		db.RunWaitStatusCheckpointing,
+	for _, test := range []struct {
+		name       string
+		suspension db.RunWaitStatus
+		actor      bool
+	}{
+		{"hot", db.RunWaitStatusHot, false}, {"checkpointing", db.RunWaitStatusCheckpointing, false},
+		{"Actor hot", db.RunWaitStatusHot, true}, {"Actor checkpointing", db.RunWaitStatusCheckpointing, true},
 	} {
-		t.Run(string(suspension), func(t *testing.T) {
+		suspension := test.suspension
+		t.Run(test.name, func(t *testing.T) {
 			ctx := t.Context()
 			fixture := newPostgresFixture(t)
 			parent := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
@@ -557,6 +582,12 @@ SELECT $1, runs.environment_id, runs.id, runs.workspace_id, 'child',
 				parent.runID,
 			)
 
+			var actorID, turnID uuid.UUID
+			if test.actor {
+				actorID = fixture.convertToActor(t, ctx, parent, `{"enabled":false}`)
+				turnID = activateCancellationTurn(t, fixture, parent, actorID)
+				dbtest.MustExec(t, ctx, fixture.pool, `UPDATE runs SET status='waiting' WHERE id=$1`, parent.runID)
+			}
 			canceler, err := NewCanceler(fixture.pool)
 			if err != nil {
 				t.Fatal(err)
@@ -612,6 +643,16 @@ SELECT runs.status,
 					condition,
 					resolvedSuspension,
 				)
+			}
+			if test.actor {
+				var active, current, hold pgtype.UUID
+				var cursor int64
+				if err := fixture.pool.QueryRow(ctx, `SELECT active_turn_id,current_run_id,dispatch_hold_id,committed_input_sequence FROM sessions WHERE id=$1`, actorID).Scan(&active, &current, &hold, &cursor); err != nil {
+					t.Fatal(err)
+				}
+				if active != pgvalue.UUID(turnID) || current != pgvalue.UUID(parent.runID) || hold.Valid || cursor != 1 {
+					t.Fatalf("child-only cancel changed Actor: %v %v %v %d", active, current, hold, cursor)
+				}
 			}
 			var payload struct {
 				OK      bool    `json:"ok"`

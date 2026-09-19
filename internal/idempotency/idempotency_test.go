@@ -72,11 +72,11 @@ func TestTransactionCreateReplayAndConflict(t *testing.T) {
 	transaction := &Transaction{store: store}
 	environmentID := uuid.New()
 	actorID := uuid.New()
-	first, err := NewActorInputSendRequest(
+	first, err := NewSessionOperationRequest(
 		environmentID,
 		actorID,
 		"message-1",
-		[]byte(`{"b":2,"a":1}`),
+		"session.send", json.RawMessage(`{"b":2,"a":1}`),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -98,11 +98,11 @@ func TestTransactionCreateReplayAndConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	equivalent, err := NewActorInputSendRequest(
+	equivalent, err := NewSessionOperationRequest(
 		environmentID,
 		actorID,
 		"message-1",
-		[]byte("{\n\"a\":1.0,\"b\":2}"),
+		"session.send", json.RawMessage("{\n\"a\":1.0,\"b\":2}"),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -116,11 +116,11 @@ func TestTransactionCreateReplayAndConflict(t *testing.T) {
 		t.Fatalf("replayed claim = %+v", replayed)
 	}
 
-	conflicting, err := NewActorInputSendRequest(
+	conflicting, err := NewSessionOperationRequest(
 		environmentID,
 		actorID,
 		"message-1",
-		[]byte(`{"a":1,"b":3}`),
+		"session.send", json.RawMessage(`{"a":1,"b":3}`),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -252,14 +252,14 @@ func TestSlotHashFramesEveryAuthorityField(t *testing.T) {
 	environmentID := uuid.New()
 	base := request{
 		environmentID: environmentID,
-		operation:     operationActorInputSend,
+		operation:     operation("session.send"),
 		scope:         []byte("ab"),
 		key:           "c",
 	}
 	first := idempotencySlotHash(base)
 	equivalent := request{
 		environmentID: environmentID,
-		operation:     operationActorInputSend,
+		operation:     operation("session.send"),
 		scope:         []byte("ab"),
 		key:           "c",
 	}
@@ -268,7 +268,7 @@ func TestSlotHashFramesEveryAuthorityField(t *testing.T) {
 	}
 	changes := []request{
 		{environmentID: uuid.New(), operation: base.operation, scope: base.scope, key: base.key},
-		{environmentID: environmentID, operation: operationActorClose, scope: base.scope, key: base.key},
+		{environmentID: environmentID, operation: operation("session.close"), scope: base.scope, key: base.key},
 		{environmentID: environmentID, operation: base.operation, scope: []byte("a"), key: "bc"},
 	}
 	for _, changed := range changes {

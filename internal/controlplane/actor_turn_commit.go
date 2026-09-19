@@ -175,8 +175,10 @@ func (s *Server) commitActorTurn(
 			return staleActorTurnCommit(err)
 		}
 		restoredBase := authority.workspaceLease.BaseWorkspaceVersionID != authority.workspace.HeadVersionID
+		var restoredCheckpoint db.RunCheckpoint
 		if restoredBase {
-			if err := validateRestoredActorBase(ctx, work.q, authority, base); err != nil {
+			restoredCheckpoint, err = validateRestoredActorBase(ctx, work.q, authority, base)
+			if err != nil {
 				return staleActorTurnCommit(err)
 			}
 		}
@@ -202,7 +204,7 @@ func (s *Server) commitActorTurn(
 					CommittedAt: committedAt, RestoreCheckpointID: authority.runtime.RestoreCheckpointID,
 					RunID: authority.run.ID, AttemptNumber: authority.attempt.Number,
 					WorkspaceID:               authority.workspace.ID,
-					PrivateWorkspaceVersionID: authority.workspaceLease.BaseWorkspaceVersionID,
+					PrivateWorkspaceVersionID: restoredCheckpoint.PrivateWorkspaceVersionID,
 					TargetInputSequence:       commit.targetInputSequence,
 				},
 			); err != nil {
@@ -223,7 +225,7 @@ func (s *Server) commitActorTurn(
 			if _, err := work.q.PublishRestoredActorCheckpointWorkspaceVersion(
 				ctx, db.PublishRestoredActorCheckpointWorkspaceVersionParams{
 					CommittedAt: committedAt, VersionID: authority.workspaceLease.BaseWorkspaceVersionID,
-					WorkspaceID: authority.workspace.ID, ExpectedParentVersionID: authority.workspace.HeadVersionID,
+					WorkspaceID: authority.workspace.ID, ExpectedParentVersionID: base.ParentVersionID,
 					OwnershipGeneration: authority.workspace.OwnershipGeneration,
 					WriterGeneration:    base.WriterGeneration,
 					RestoreCheckpointID: authority.runtime.RestoreCheckpointID,
@@ -316,7 +318,7 @@ func replayActorTurnCommit(
 	if err != nil {
 		return workerapi.CommitActorTurnResponse{}, false, staleActorTurnCommit(err)
 	}
-	if input.TurnStatus != commit.disposition || input.TerminalRequestFingerprint.String != commit.fingerprint || input.TurnRunID != authority.run.ID || input.TurnAttemptNumber.Int32 != authority.attempt.Number || input.RunGeneration.Int64 != commit.generation || !input.TerminalEventID.Valid {
+	if input.Status != commit.disposition || input.TerminalRequestFingerprint.String != commit.fingerprint || input.RunID != authority.run.ID || input.AttemptNumber.Int32 != authority.attempt.Number || input.RunGeneration.Int64 != commit.generation || !input.TerminalEventID.Valid {
 		return workerapi.CommitActorTurnResponse{}, false, nil
 	}
 	if authority.actor.CommittedInputSequence != commit.targetInputSequence ||
@@ -379,6 +381,10 @@ func projectActorTurnResponse(
 }
 
 func staleActorTurnCommit(err error) error {
+	var operation *session.OperationError
+	if errors.As(err, &operation) {
+		return errors.Join(errStaleActorTurnCommit, err)
+	}
 	if errors.Is(err, errStaleWorkerClaims) {
 		return err
 	}

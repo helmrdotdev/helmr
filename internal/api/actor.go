@@ -8,7 +8,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -55,7 +54,6 @@ type StartActorRunOptions struct {
 
 type StartActorRequest struct {
 	Key            *string               `json:"key,omitempty"`
-	Input          json.RawMessage       `json:"input,omitempty"`
 	IdempotencyKey string                `json:"idempotency_key,omitempty"`
 	Workspace      WorkspaceIDTarget     `json:"workspace"`
 	Run            *StartActorRunOptions `json:"run,omitempty"`
@@ -63,7 +61,6 @@ type StartActorRequest struct {
 
 type ActorStartOptions struct {
 	Key       *string
-	Input     json.RawMessage
 	Workspace WorkspaceIDTarget
 	Run       *StartActorRunOptions
 }
@@ -71,113 +68,6 @@ type ActorStartOptions struct {
 type StartActorResponse struct {
 	SessionID string `json:"session_id"`
 	RunID     string `json:"run_id"`
-}
-
-type SendSessionInputRequest struct {
-	Input          json.RawMessage `json:"input"`
-	IdempotencyKey string          `json:"idempotency_key,omitempty"`
-}
-
-type SessionInputSource struct {
-	Type  string `json:"type"`
-	RunID string `json:"run_id,omitempty"`
-}
-
-type SessionInput struct {
-	ID        string             `json:"id"`
-	Sequence  int64              `json:"sequence"`
-	Data      json.RawMessage    `json:"data"`
-	Source    SessionInputSource `json:"source"`
-	CreatedAt time.Time          `json:"created_at"`
-}
-
-type SessionInputPage struct {
-	Records   []SessionInput `json:"records"`
-	NextAfter int64          `json:"next_after"`
-	HasMore   bool           `json:"has_more"`
-}
-
-type CloseSessionRequest struct {
-	IdempotencyKey string `json:"idempotency_key,omitempty"`
-}
-
-type SessionCloseReceipt struct {
-	SessionID  string    `json:"session_id"`
-	AcceptedAt time.Time `json:"accepted_at"`
-}
-
-type SessionStatus string
-
-const (
-	SessionStatusOpen      SessionStatus = "open"
-	SessionStatusClosed    SessionStatus = "closed"
-	SessionStatusCancelled SessionStatus = "cancelled"
-	SessionStatusFailed    SessionStatus = "failed"
-)
-
-type SessionFailure struct {
-	Code    string                `json:"code"`
-	Message string                `json:"message"`
-	Details SessionFailureDetails `json:"details"`
-}
-
-type SessionFailureDetails struct {
-	RunID string `json:"run_id,omitempty"`
-}
-
-type Session struct {
-	ID           string          `json:"id"`
-	ActorID      string          `json:"actor_id"`
-	DeploymentID string          `json:"deployment_id"`
-	WorkspaceID  string          `json:"workspace_id"`
-	Key          *string         `json:"key,omitempty"`
-	Status       SessionStatus   `json:"status"`
-	CreatedAt    time.Time       `json:"created_at"`
-	UpdatedAt    time.Time       `json:"updated_at"`
-	CurrentRunID *string         `json:"current_run_id,omitempty"`
-	Failure      *SessionFailure `json:"failure,omitempty"`
-}
-
-type ListSessionsResponse struct {
-	Sessions   []Session `json:"sessions"`
-	NextCursor string    `json:"next_cursor,omitempty"`
-}
-
-type SessionOutputProvenance struct {
-	RunID         string `json:"run_id"`
-	AttemptNumber int32  `json:"attempt_number"`
-	DeploymentID  string `json:"deployment_id"`
-}
-
-type SessionOutput struct {
-	ID          string                  `json:"id"`
-	Sequence    int64                   `json:"sequence"`
-	Data        json.RawMessage         `json:"data"`
-	ContentType string                  `json:"content_type"`
-	CreatedAt   time.Time               `json:"created_at"`
-	Provenance  SessionOutputProvenance `json:"provenance"`
-}
-
-type SessionOutputPage struct {
-	Records   []SessionOutput `json:"records"`
-	NextAfter int64           `json:"next_after"`
-	HasMore   bool            `json:"has_more"`
-}
-
-func ValidateSessionStatus(status string) error {
-	switch SessionStatus(status) {
-	case SessionStatusOpen,
-		SessionStatusClosed,
-		SessionStatusCancelled,
-		SessionStatusFailed:
-		return nil
-	default:
-		return fmt.Errorf("invalid session status %q", status)
-	}
-}
-
-func ValidateCloseSessionRequest(request CloseSessionRequest) error {
-	return nil
 }
 
 func ValidateActorDeclaredID(id string) error {
@@ -219,43 +109,27 @@ func ValidateActorKey(key string) error {
 	return nil
 }
 
-func ValidateSendSessionInputRequest(request SendSessionInputRequest) error {
-	if len(request.Input) == 0 {
-		return errors.New("input is required")
-	}
-	if _, err := jsoncanon.Transform(request.Input); err != nil {
-		return fmt.Errorf("input must be unambiguous I-JSON: %w", err)
-	}
-	return nil
-}
-
 func ValidateStartActorRequest(request StartActorRequest) error {
 	if err := ValidateWorkspaceIDTarget(request.Workspace); err != nil {
 		return err
 	}
-	return validateActorStartOptions(request.Key, request.Input, request.Run)
+	return validateActorStartOptions(request.Key, request.Run)
 }
 
 func ValidateActorStartOptions(request ActorStartOptions) error {
 	if err := ValidateWorkspaceIDTarget(request.Workspace); err != nil {
 		return err
 	}
-	return validateActorStartOptions(request.Key, request.Input, request.Run)
+	return validateActorStartOptions(request.Key, request.Run)
 }
 
 func validateActorStartOptions(
 	key *string,
-	input json.RawMessage,
 	run *StartActorRunOptions,
 ) error {
 	if key != nil {
 		if err := ValidateActorKey(*key); err != nil {
 			return err
-		}
-	}
-	if len(input) > 0 {
-		if _, err := jsoncanon.Transform(input); err != nil {
-			return fmt.Errorf("input must be unambiguous I-JSON: %w", err)
 		}
 	}
 	if run == nil {

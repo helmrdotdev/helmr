@@ -12,10 +12,11 @@ const operationTurnInterrupt operation = "turn.interrupt"
 const operationTurnOutput operation = "turn.output.write"
 
 type TurnProducer struct {
-	TurnID        uuid.UUID `json:"turnId"`
-	RunID         uuid.UUID `json:"runId"`
-	AttemptNumber int32     `json:"attemptNumber"`
-	RunGeneration int64     `json:"runGeneration"`
+	MessageDeliveryID uuid.UUID `json:"message_delivery_id,omitempty"`
+	TurnID            uuid.UUID `json:"turnId"`
+	RunID             uuid.UUID `json:"runId"`
+	AttemptNumber     int32     `json:"attemptNumber"`
+	RunGeneration     int64     `json:"runGeneration"`
 }
 
 func NewTurnInterruptRequest(environmentID, sessionID, turnID uuid.UUID, key string) (Request, error) {
@@ -50,4 +51,15 @@ func newTurnRequest(environmentID, sessionID uuid.UUID, key string, op operation
 		return nil, err
 	}
 	return sealedRequest{value: request{environmentID: environmentID, operation: op, scope: sessionID[:], key: key, fingerprint: func() ([32]byte, error) { return operationFingerprint(op, canonical), nil }}}, nil
+}
+
+// Session operations share Session-before-claim lock order. The route is part of
+// the namespace, and the fingerprint fixes its payload and any exact target.
+func NewSessionOperationRequest(environmentID, sessionID uuid.UUID, key, name string, value any) (Request, error) {
+	switch name {
+	case "session.send", "session.enqueue", "turn.message", "session.close", "session.resume", "session.recover", "session.output.write", "session.run.cancel":
+		return newTurnRequest(environmentID, sessionID, key, operation(name), value)
+	default:
+		return nil, errors.New("unknown Session operation")
+	}
 }

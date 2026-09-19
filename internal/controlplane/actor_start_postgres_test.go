@@ -39,8 +39,6 @@ func TestActorStartPostgresCommitsReplaysAndRejectsConflicts(t *testing.T) {
 	fixture := newActorStartPostgresFixture(t, 2)
 	key := "thread:42"
 	request := fixture.request(0, &key, "start-1")
-	request.InputPresent = true
-	request.Input = json.RawMessage(`{"message":"hello"}`)
 	request.ManagedRunMetadata = json.RawMessage(`{"kind":"boot"}`)
 	request.ManagedRunTags = []string{"managed"}
 
@@ -48,10 +46,10 @@ func TestActorStartPostgresCommitsReplaysAndRejectsConflicts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.Replayed || created.InitialRecordID == nil {
+	if created.Replayed {
 		t.Fatalf("created = %+v", created)
 	}
-	assertActorStartTuple(t, fixture, created, 1)
+	assertActorStartTuple(t, fixture, created)
 
 	if _, err := fixture.pool.Exec(t.Context(), `
 		UPDATE sessions
@@ -65,8 +63,7 @@ func TestActorStartPostgresCommitsReplaysAndRejectsConflicts(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !replayed.Replayed || replayed.SessionID != created.SessionID ||
-		replayed.BootRunID != created.BootRunID ||
-		replayed.InitialRecordID == nil || *replayed.InitialRecordID != *created.InitialRecordID {
+		replayed.BootRunID != created.BootRunID {
 		t.Fatalf("replayed = %+v, created = %+v", replayed, created)
 	}
 	if _, err := fixture.pool.Exec(t.Context(), `
@@ -128,7 +125,7 @@ func TestActorStartPostgresCommitsReplaysAndRejectsConflicts(t *testing.T) {
 func TestActorStartHTTPPostgresCreatesAndReplaysIDs(t *testing.T) {
 	fixture := newActorStartPostgresFixture(t, 1)
 	body := fmt.Sprintf(
-		`{"workspace":{"id":%q},"input":null,"idempotency_key":"http-start-1","run":{"ttl":"30m","retry":{"max_attempts":3}}}`,
+		`{"workspace":{"id":%q},"idempotency_key":"http-start-1","run":{"ttl":"30m","retry":{"max_attempts":3}}}`,
 		fixture.workspaceRefs[0],
 	)
 	principal := auth.Actor{
@@ -192,42 +189,6 @@ func TestActorStartHTTPPostgresDeniesBeforeAdmission(t *testing.T) {
 	}
 }
 
-func TestActorStartHTTPPostgresAcceptsCanonicalInputBelowLimit(t *testing.T) {
-	fixture := newActorStartPostgresFixture(t, 1)
-	input := `[` + strings.Repeat(`0,`, 360_000) + `0]`
-	if len(input) >= maxActorInputBytes {
-		t.Fatalf("test input canonical size = %d", len(input))
-	}
-	body := fmt.Sprintf(
-		`{"workspace":{"id":%q},"input":%s}`,
-		fixture.workspaceRefs[0],
-		input,
-	)
-	principal := auth.Actor{
-		OrgID:         fixture.orgID,
-		Kind:          auth.ActorKindAPIKey,
-		Role:          auth.RoleDeveloper,
-		ProjectID:     fixture.projectID.String(),
-		EnvironmentID: fixture.environmentID.String(),
-		Permissions:   []auth.Permission{auth.PermissionActorsStart},
-	}
-	recorder := httptest.NewRecorder()
-	fixture.server.startActorHTTP(
-		recorder,
-		actorStartHTTPPostgresRequest(body, principal, "", "", "operator.v1"),
-	)
-	if recorder.Code != http.StatusCreated {
-		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
-	}
-	var sessions int
-	if err := fixture.pool.QueryRow(t.Context(), `SELECT count(*) FROM sessions`).Scan(&sessions); err != nil {
-		t.Fatal(err)
-	}
-	if sessions != 1 {
-		t.Fatalf("sessions = %d, want 1", sessions)
-	}
-}
-
 func TestActorStartHTTPSessionPostgresCreates(t *testing.T) {
 	fixture := newActorStartPostgresFixture(t, 1)
 	body := fmt.Sprintf(`{"workspace":{"id":%q}}`, fixture.workspaceRefs[0])
@@ -259,7 +220,7 @@ func TestActorStartHTTPSessionPostgresCreates(t *testing.T) {
 	}
 }
 
-func TestActorStartPostgresNoInputBootsAtZeroHighWatermark(t *testing.T) {
+func TestActorStartPostgresUsesSelectedQueueAndEmptyBoot(t *testing.T) {
 	fixture := newActorStartPostgresFixture(t, 1)
 	key := "no-input"
 	request := fixture.request(0, &key, "no-input-1")
@@ -268,10 +229,8 @@ func TestActorStartPostgresNoInputBootsAtZeroHighWatermark(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.InitialRecordID != nil {
-		t.Fatalf("initial record = %s, want absent", created.InitialRecordID)
-	}
-	assertActorStartTupleWithQueue(t, fixture, created, 0, "priority", nil)
+
+	assertActorStartTupleWithQueue(t, fixture, created, "priority", nil)
 }
 
 func TestActorStartPostgresKeylessRequestsRemainAtLeastOnce(t *testing.T) {
@@ -378,16 +337,15 @@ func actorStartHTTPPostgresRequest(
 	return request.WithContext(ctx)
 }
 
-func assertActorStartTuple(t *testing.T, fixture actorStartPostgresFixture, result actorStartResult, highWatermark int64) {
+func assertActorStartTuple(t *testing.T, fixture actorStartPostgresFixture, result actorStartResult) {
 	limit := int64(2)
-	assertActorStartTupleWithQueue(t, fixture, result, highWatermark, "default", &limit)
+	assertActorStartTupleWithQueue(t, fixture, result, "default", &limit)
 }
 
 func assertActorStartTupleWithQueue(
 	t *testing.T,
 	fixture actorStartPostgresFixture,
 	result actorStartResult,
-	highWatermark int64,
 	wantQueue string,
 	wantQueueLimit *int64,
 ) {
@@ -403,8 +361,7 @@ func assertActorStartTupleWithQueue(
 	var runCause string
 	var runStart, runHigh int64
 	var attemptStart int64
-	var recordSequence int64
-	var recordSource string
+	var turnCount int
 	var claimStatus string
 	var resolutionCount int
 	if err := fixture.pool.QueryRow(t.Context(), `
@@ -441,13 +398,10 @@ func assertActorStartTupleWithQueue(
 	`, result.BootRunID).Scan(&attemptStart); err != nil {
 		t.Fatal(err)
 	}
-	if result.InitialRecordID != nil {
-		if err := fixture.pool.QueryRow(t.Context(), `
-			SELECT sequence, CASE WHEN source_run_id IS NULL THEN 'external' ELSE 'run' END FROM session_records WHERE id = $1
-		`, *result.InitialRecordID).Scan(&recordSequence, &recordSource); err != nil {
-			t.Fatal(err)
-		}
+	if err := fixture.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_turns WHERE session_id=$1`, result.SessionID).Scan(&turnCount); err != nil {
+		t.Fatal(err)
 	}
+
 	if err := fixture.pool.QueryRow(t.Context(), `
 		SELECT status
 		  FROM idempotency_claims
@@ -460,24 +414,22 @@ func assertActorStartTupleWithQueue(
 	`, result.BootRunID).Scan(&resolutionCount); err != nil {
 		t.Fatal(err)
 	}
-	recordValid := (highWatermark == 0 && recordSequence == 0 && recordSource == "") ||
-		(highWatermark == 1 && recordSequence == 1 && recordSource == "external")
 	queueLimitValid := (wantQueueLimit == nil && actorQueueLimit == nil) ||
 		(wantQueueLimit != nil && actorQueueLimit != nil && *wantQueueLimit == *actorQueueLimit)
 	if actorCurrentRun != result.BootRunID || workspaceOwner != result.SessionID ||
 		runActor != result.SessionID || runCause != "actor_start" ||
-		runStart != 0 || runHigh != highWatermark || attemptStart != 0 ||
-		actorNextInput != highWatermark+1 || actorCommitted != 0 ||
+		runStart != 0 || runHigh != 0 || attemptStart != 0 ||
+		actorNextInput != 1 || actorCommitted != 0 ||
 		actorQueue != wantQueue || !queueLimitValid || actorMaxDuration != 300_000 ||
 		string(actorRetry) != `{"enabled": false}` ||
-		!recordValid ||
+		turnCount != 0 ||
 		claimStatus != "completed" || resolutionCount != 1 {
 		t.Fatalf(
-			"Actor start tuple actorRun=%s next=%d committed=%d queue=%s/%v max=%d retry=%s owner=%s runActor=%s cause=%s cursor=%d high=%d attempt=%d record=%d/%s claim=%s resolutions=%d",
+			"Actor start tuple actorRun=%s next=%d committed=%d queue=%s/%v max=%d retry=%s owner=%s runActor=%s cause=%s cursor=%d high=%d attempt=%d turns=%d claim=%s resolutions=%d",
 			actorCurrentRun, actorNextInput, actorCommitted,
 			actorQueue, actorQueueLimit, actorMaxDuration, actorRetry,
 			workspaceOwner, runActor, runCause,
-			runStart, runHigh, attemptStart, recordSequence, recordSource, claimStatus, resolutionCount,
+			runStart, runHigh, attemptStart, turnCount, claimStatus, resolutionCount,
 		)
 	}
 }

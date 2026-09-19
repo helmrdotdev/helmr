@@ -242,7 +242,7 @@ func (s *Server) workerMarkCheckpointFailed(w http.ResponseWriter, r *http.Reque
 		}
 		if authority.run.EntrypointKind == "actor" {
 			return failCheckpointActorAttempt(
-				r.Context(), work.q, ownedGraph, worker, authority, wait, parsed, secrets,
+				r.Context(), work.q, ownedGraph, worker, authority, wait, parsed,
 			)
 		}
 		return failCheckpointTaskAttempt(
@@ -396,7 +396,6 @@ func failCheckpointActorAttempt(
 	authority runLeaseClaimAuthority,
 	wait db.RunWait,
 	failed parsedCheckpointFailed,
-	secrets []secret.DeliveryEnvelope,
 ) error {
 	failedAt, err := store.GetTaskCompletionTime(ctx)
 	if err != nil || !failedAt.Valid {
@@ -415,17 +414,15 @@ func failCheckpointActorAttempt(
 		return staleRunLeaseClaim(err)
 	}
 
-	decision, err := decideActorCheckpointFailure(authority, failedAt.Time, activeElapsed)
-	if err != nil {
+	reason := "checkpoint_failed"
+	if activeElapsed >= authority.run.MaxActiveDurationMs {
+		reason = "max_active_duration_exceeded"
+	}
+	if _, err := run.HoldSessionExecution(ctx, store, authority.actor, authority.attempt.Number, "recovery_required"); err != nil {
 		return err
 	}
-	if !decision.retry {
-		if _, err := ownedGraph.CancelDescendants(ctx); err != nil {
-			return fmt.Errorf(
-				"cancel child tasks after exhausted actor checkpoint failure: %w",
-				err,
-			)
-		}
+	if _, err := ownedGraph.CancelDescendants(ctx); err != nil {
+		return fmt.Errorf("cancel child tasks after actor checkpoint failure: %w", err)
 	}
 
 	if _, err := store.InvalidateFailedRunCheckpoint(ctx, db.InvalidateFailedRunCheckpointParams{
@@ -447,7 +444,7 @@ func failCheckpointActorAttempt(
 	}
 	if _, err := store.CompleteActorAttempt(ctx, db.CompleteActorAttemptParams{
 		TerminalSessionInputSequence: pgtype.Int8{}, TerminalOutcome: pgvalue.Text("failed"),
-		ReasonCode: pgvalue.Text(decision.reason), Error: failed.errorPayload, CompletedAt: failedAt,
+		ReasonCode: pgvalue.Text(reason), Error: failed.errorPayload, CompletedAt: failedAt,
 		RunID: authority.run.ID, Number: authority.attempt.Number, WorkspaceID: authority.workspace.ID,
 	}); err != nil {
 		return staleRunLeaseClaim(err)
@@ -481,76 +478,7 @@ func failCheckpointActorAttempt(
 	}); err != nil {
 		return staleRunLeaseClaim(err)
 	}
-	if decision.retry {
-		return scheduleActorCheckpointFailureRetry(ctx, store, authority, secrets, failedAt, decision.retryAt)
-	}
-	return finishCheckpointFailedActor(
-		ctx, store, authority, failedAt, decision.reason,
-	)
-}
-
-type actorCheckpointFailureDecision struct {
-	reason  string
-	retry   bool
-	retryAt time.Time
-}
-
-func decideActorCheckpointFailure(
-	authority runLeaseClaimAuthority,
-	failedAt time.Time,
-	activeElapsed int64,
-) (actorCheckpointFailureDecision, error) {
-	decision := actorCheckpointFailureDecision{
-		reason: "checkpoint_failed",
-	}
-	if activeElapsed >= authority.run.MaxActiveDurationMs {
-		decision.reason = "max_active_duration_exceeded"
-		return decision, nil
-	}
-	policy, err := deployment.ParseRetryManifest(authority.run.RetryPolicy)
-	if err != nil {
-		return actorCheckpointFailureDecision{}, fmt.Errorf("parse pinned actor checkpoint retry policy: %w", err)
-	}
-	delay, allowed, err := taskRetryDelay(policy, authority.attempt.Number, nil)
-	if err != nil {
-		return actorCheckpointFailureDecision{}, err
-	}
-	decision.retry = allowed
-	if allowed {
-		decision.retryAt = failedAt.Add(delay)
-	}
-	return decision, nil
-}
-
-func scheduleActorCheckpointFailureRetry(
-	ctx context.Context,
-	store db.Querier,
-	authority runLeaseClaimAuthority,
-	secrets []secret.DeliveryEnvelope,
-	failedAt pgtype.Timestamptz,
-	retryAt time.Time,
-) error {
-	nextAttempt := authority.attempt.Number + 1
-	if _, err := store.CreateActorCheckpointFailureRetryAttempt(ctx, db.CreateActorCheckpointFailureRetryAttemptParams{
-		Number: nextAttempt, ExpectedRunGeneration: authority.actor.RunGeneration,
-		RunID: authority.run.ID, WorkspaceID: authority.workspace.ID,
-		PreviousAttemptNumber: authority.attempt.Number, RunLeaseID: authority.runLease.ID,
-	}); err != nil {
-		return staleRunLeaseClaim(err)
-	}
-	if err := createActorAttemptSecretResolutions(
-		ctx, store, authority.workspace.ID, authority.run.ID, nextAttempt, secrets,
-	); err != nil {
-		return err
-	}
-	if _, err := store.DelayActorCheckpointFailureRetry(ctx, db.DelayActorCheckpointFailureRetryParams{
-		NextAttemptNumber: nextAttempt, RetryAt: pgvalue.Timestamptz(retryAt), FailedAt: failedAt,
-		ID: authority.run.ID, WorkspaceID: authority.workspace.ID, SessionID: authority.actor.ID,
-		PreviousAttemptNumber: authority.attempt.Number, RunLeaseID: authority.runLease.ID,
-	}); err != nil {
-		return staleRunLeaseClaim(err)
-	}
-	return nil
+	return finishCheckpointFailedActor(ctx, store, authority, failedAt, reason)
 }
 
 func finishCheckpointFailedActor(
@@ -562,23 +490,11 @@ func finishCheckpointFailedActor(
 ) error {
 	status := db.RunStatusSystemFailed
 	eventKind := api.RunEventKindFailed
-	actorStatus := "failed"
-	failureCode := "platform_failure"
 	if reason == "max_active_duration_exceeded" {
 		status = db.RunStatusExpired
 		eventKind = api.RunEventKindExpired
-		failureCode = "run_expired"
 	}
-	failureRunID := authority.run.ID
 	runFailureValue, err := runFailure(reason, "Run failed during checkpoint recovery")
-	if err != nil {
-		return err
-	}
-	actorFailure, err := sessionFailure(
-		failureCode,
-		"Session failed during checkpoint recovery",
-		pgvalue.UUIDString(authority.run.ID),
-	)
 	if err != nil {
 		return err
 	}
@@ -586,24 +502,6 @@ func finishCheckpointFailedActor(
 		Status: status, Failure: runFailureValue, FailedAt: failedAt,
 		ID: authority.run.ID, WorkspaceID: authority.workspace.ID, SessionID: authority.actor.ID,
 		AttemptNumber: authority.attempt.Number, RunLeaseID: authority.runLease.ID,
-	}); err != nil {
-		return staleRunLeaseClaim(err)
-	}
-	actor, err := store.ReconcileActorTerminalRun(ctx, db.ReconcileActorTerminalRunParams{
-		Status: actorStatus, Failure: actorFailure,
-		FailureRunID: failureRunID, CompletedAt: failedAt,
-		EnvironmentID: authority.actor.EnvironmentID, ID: authority.actor.ID,
-		WorkspaceID: authority.workspace.ID, RunID: authority.run.ID,
-		ExpectedRunGeneration: authority.actor.RunGeneration,
-	})
-	if err != nil {
-		return staleRunLeaseClaim(err)
-	}
-	if _, err := store.ReleaseActorWorkspaceOwner(ctx, db.ReleaseActorWorkspaceOwnerParams{
-		CompletedAt: failedAt, ID: authority.workspace.ID,
-		EnvironmentID: authority.run.EnvironmentID,
-		SessionID:     actor.ID, OwnershipGeneration: authority.workspace.OwnershipGeneration,
-		WriterGeneration: authority.workspace.WriterGeneration,
 	}); err != nil {
 		return staleRunLeaseClaim(err)
 	}

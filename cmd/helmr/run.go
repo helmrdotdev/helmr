@@ -25,6 +25,7 @@ func runCancelCommand() *cobra.Command {
 	var projectID string
 	var environmentID string
 	var jsonOutput bool
+	var idempotencyKey string
 	cmd := &cobra.Command{
 		Use:   "cancel RUN",
 		Short: "Cancel a run.",
@@ -38,19 +39,32 @@ func runCancelCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			response, err := controlPlane.CancelRun(cmd.Context(), args[0], scope)
+			response, err := controlPlane.CancelRun(cmd.Context(), args[0], api.CancelRunRequest{IdempotencyKey: strings.TrimSpace(idempotencyKey)}, scope)
 			if err != nil {
 				return err
 			}
-			if jsonOutput {
-				return writeJSON(cmd.OutOrStdout(), response)
+			if response.Actor != nil {
+				receipt := response.Actor
+				if jsonOutput {
+					return writeJSON(cmd.OutOrStdout(), receipt)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "id: %s\n", receipt.ID)
+				fmt.Fprintf(cmd.OutOrStdout(), "run_id: %s\n", receipt.RunID)
+				fmt.Fprintf(cmd.OutOrStdout(), "session_id: %s\n", receipt.SessionID)
+				fmt.Fprintf(cmd.OutOrStdout(), "hold_id: %s\n", receipt.HoldID)
+				fmt.Fprintf(cmd.OutOrStdout(), "status: %s\n", receipt.Status)
+				return nil
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "run_id: %s\n", response.ID)
-			fmt.Fprintf(cmd.OutOrStdout(), "run_status: %s\n", response.Status)
+			if jsonOutput {
+				return writeJSON(cmd.OutOrStdout(), response.Task)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "run_id: %s\n", response.Task.ID)
+			fmt.Fprintf(cmd.OutOrStdout(), "run_status: %s\n", response.Task.Status)
 			return nil
 		},
 	}
 	addScopeFlags(cmd, &projectID, &environmentID)
+	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Idempotency key for this cancellation.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	return cmd
 }

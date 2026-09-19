@@ -182,17 +182,29 @@ func TestValidateRootRunWaitActorCursor(t *testing.T) {
 		attempt:   db.RunAttempt{SessionInputStartSequence: pgtype.Int8{Int64: 3, Valid: true}},
 		workspace: db.LockRunLeaseClaimWorkspaceRow{OwnerSessionID: actorID},
 	}
-	for _, cursor := range []int64{4, 5} {
-		if err := validateRunWaitActorCursor(authority, db.RunWait{
-			ActorSpeculativeInputSequence: pgtype.Int8{Int64: cursor, Valid: true},
-		}); err != nil {
-			t.Fatalf("cursor %d rejected: %v", cursor, err)
+	if err := validateRunWaitActorCursor(authority, db.RunWait{
+		Kind: db.WaitKindToken, ActorSpeculativeInputSequence: pgtype.Int8{Int64: 4, Valid: true},
+	}); err != nil {
+		t.Fatalf("committed cursor rejected outside a Turn: %v", err)
+	}
+	for _, cursor := range []pgtype.Int8{{}, {Int64: 3, Valid: true}, {Int64: 5, Valid: true}, {Int64: 6, Valid: true}} {
+		if err := validateRunWaitActorCursor(authority, db.RunWait{Kind: db.WaitKindToken, ActorSpeculativeInputSequence: cursor}); err == nil {
+			t.Fatalf("invalid unbound cursor %+v was accepted", cursor)
 		}
 	}
-	for _, cursor := range []pgtype.Int8{{}, {Int64: 3, Valid: true}, {Int64: 6, Valid: true}} {
-		if err := validateRunWaitActorCursor(authority, db.RunWait{ActorSpeculativeInputSequence: cursor}); err == nil {
-			t.Fatalf("invalid cursor %+v was accepted", cursor)
-		}
+	authority.actor.ActiveTurnID = pgvalue.UUID(uuid.NewV7())
+	authority.actor.RunGeneration = 9
+	bound := db.RunWait{
+		Kind: db.WaitKindToken, TurnID: authority.actor.ActiveTurnID,
+		TurnSessionID: actorID, TurnRunGeneration: pgtype.Int8{Int64: 9, Valid: true},
+		ActorSpeculativeInputSequence: pgtype.Int8{Int64: 5, Valid: true},
+	}
+	if err := validateRunWaitActorCursor(authority, bound); err != nil {
+		t.Fatalf("active Turn cursor rejected: %v", err)
+	}
+	bound.ActorSpeculativeInputSequence.Int64 = 4
+	if err := validateRunWaitActorCursor(authority, bound); err == nil {
+		t.Fatal("active Turn accepted previous committed cursor")
 	}
 
 	authority = runLeaseClaimAuthority{run: db.Run{EntrypointKind: "task"}}

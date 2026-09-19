@@ -489,9 +489,7 @@ func (s *Server) mountSessionRoutes(r chi.Router) {
 		r.Get("/projects/{projectID}/environments/{environmentID}/runs/{runID}", s.getRunSnapshotHTTP)
 		r.Get("/projects/{projectID}/environments/{environmentID}/runs/{runID}/logs", s.listRunLogsHTTP)
 		r.Get("/projects/{projectID}/environments/{environmentID}/runs/{runID}/events", s.listRunEventsHTTP)
-		r.Post("/projects/{projectID}/environments/{environmentID}/runs/{runID}/cancel", s.cancelRunHTTP)
-		r.With(limitSessionInputBody).
-			Post("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/inputs", s.sendSessionInput)
+		r.With(limitRequestBody(sessionControlBodyLimit)).Post("/projects/{projectID}/environments/{environmentID}/runs/{runID}/cancel", s.cancelRunHTTP)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
@@ -502,24 +500,19 @@ func (s *Server) mountSessionRoutes(r chi.Router) {
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
-			return s.requireSessionWithErrorWriter(next, writeSessionCloseAuthError)
-		})
-		r.With(limitSessionCloseBody).
-			Post("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/close", s.closeSessionHTTP)
-	})
-	r.Group(func(r chi.Router) {
-		r.Use(func(next http.Handler) http.Handler {
-			return s.requireSessionWithErrorWriter(next, writeSessionReadAuthError)
+			return s.requireSessionWithErrorWriter(next, writeSessionLifecycleAuthError)
 		})
 		r.Get("/projects/{projectID}/environments/{environmentID}/sessions", s.listSessionsHTTP)
 		r.Get("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}", s.getSessionHTTP)
-		r.Get("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/inputs", s.readSessionInputHTTP)
-	})
-	r.Group(func(r chi.Router) {
-		r.Use(func(next http.Handler) http.Handler {
-			return s.requireSessionWithErrorWriter(next, writeSessionOutputReadAuthError)
-		})
-		r.Get("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/outputs", s.readSessionOutputHTTP)
+		r.With(limitRequestBody(sessionDataBodyLimit)).Post("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/send", s.sendSessionHTTP)
+		r.With(limitRequestBody(sessionDataBodyLimit)).Post("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/enqueue", s.enqueueSessionHTTP)
+		r.With(limitRequestBody(sessionControlBodyLimit)).Post("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/close", s.closeSessionHTTP)
+		r.With(limitRequestBody(sessionControlBodyLimit)).Post("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/resume", s.resumeSessionHTTP)
+		r.With(limitRequestBody(sessionControlBodyLimit)).Post("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/recover", s.recoverSessionHTTP)
+		r.With(limitRequestBody(sessionDataBodyLimit)).Post("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/turns/{turnID}/messages", s.sendSessionMessageHTTP)
+		r.With(limitRequestBody(sessionControlBodyLimit)).Post("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/turns/{turnID}/interrupt", s.interruptSessionTurnHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/events", s.readSessionEventsHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/turns/{turnID}", s.getSessionTurnHTTP)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
@@ -561,7 +554,7 @@ func (s *Server) mountDeveloperRoutes(r chi.Router) {
 		r.Get("/runs/{runID}", s.getRunSnapshotHTTP)
 		r.Get("/runs/{runID}/logs", s.listRunLogsHTTP)
 		r.Get("/runs/{runID}/events", s.listRunEventsHTTP)
-		r.Post("/runs/{runID}/cancel", s.cancelRunHTTP)
+		r.With(limitRequestBody(sessionControlBodyLimit)).Post("/runs/{runID}/cancel", s.cancelRunHTTP)
 
 		r.Get("/secrets", s.listSecrets)
 		r.With(limitRequestBody(secretRequestBodyLimit)).Post("/secrets", s.createSecret)
@@ -574,7 +567,6 @@ func (s *Server) mountDeveloperRoutes(r chi.Router) {
 		r.Get("/workspaces/{workspaceID}/exec/{processID}", s.getWorkspaceExecHTTP)
 		r.Get("/workspaces/{workspaceID}", s.getWorkspaceHTTP)
 		r.Delete("/workspaces/{workspaceID}", s.deleteWorkspaceHTTP)
-		r.With(limitSessionInputBody).Post("/sessions/{sessionID}/inputs", s.sendSessionInput)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
@@ -584,23 +576,19 @@ func (s *Server) mountDeveloperRoutes(r chi.Router) {
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
-			return s.requireAPIKeyWithErrorWriter(next, writeSessionCloseAuthError)
-		})
-		r.With(limitSessionCloseBody).Post("/sessions/{sessionID}/close", s.closeSessionHTTP)
-	})
-	r.Group(func(r chi.Router) {
-		r.Use(func(next http.Handler) http.Handler {
-			return s.requireAPIKeyWithErrorWriter(next, writeSessionReadAuthError)
+			return s.requireAPIKeyWithErrorWriter(next, writeSessionLifecycleAuthError)
 		})
 		r.Get("/sessions", s.listSessionsHTTP)
 		r.Get("/sessions/{sessionID}", s.getSessionHTTP)
-		r.Get("/sessions/{sessionID}/inputs", s.readSessionInputHTTP)
-	})
-	r.Group(func(r chi.Router) {
-		r.Use(func(next http.Handler) http.Handler {
-			return s.requireAPIKeyWithErrorWriter(next, writeSessionOutputReadAuthError)
-		})
-		r.Get("/sessions/{sessionID}/outputs", s.readSessionOutputHTTP)
+		r.With(limitRequestBody(sessionDataBodyLimit)).Post("/sessions/{sessionID}/send", s.sendSessionHTTP)
+		r.With(limitRequestBody(sessionDataBodyLimit)).Post("/sessions/{sessionID}/enqueue", s.enqueueSessionHTTP)
+		r.With(limitRequestBody(sessionControlBodyLimit)).Post("/sessions/{sessionID}/close", s.closeSessionHTTP)
+		r.With(limitRequestBody(sessionControlBodyLimit)).Post("/sessions/{sessionID}/resume", s.resumeSessionHTTP)
+		r.With(limitRequestBody(sessionControlBodyLimit)).Post("/sessions/{sessionID}/recover", s.recoverSessionHTTP)
+		r.With(limitRequestBody(sessionDataBodyLimit)).Post("/sessions/{sessionID}/turns/{turnID}/messages", s.sendSessionMessageHTTP)
+		r.With(limitRequestBody(sessionControlBodyLimit)).Post("/sessions/{sessionID}/turns/{turnID}/interrupt", s.interruptSessionTurnHTTP)
+		r.Get("/sessions/{sessionID}/events", s.readSessionEventsHTTP)
+		r.Get("/sessions/{sessionID}/turns/{turnID}", s.getSessionTurnHTTP)
 	})
 }
 
@@ -647,12 +635,9 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/checkpoints/failed", s.workerMarkCheckpointFailed)
 				r.Post("/run/finalization/begin", s.workerBeginRunFinalization)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/sessions/turns/commit", s.workerCommitActorTurn)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/sessions/outputs/append", s.workerAppendActorOutput)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/sessions/inputs/send", s.workerSendActorInput)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/actors/start", s.workerStartActor)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/sessions/retrieve", s.workerGetSessionStatus)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/sessions/close", s.workerCloseSession)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/sessions/outputs/read-page", s.workerReadSessionOutputPage)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/workspaces/create", s.workerCreateWorkspace)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/workspaces/retrieve", s.workerRetrieveWorkspace)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/workspaces/exec", s.workerExecuteWorkspace)
@@ -661,6 +646,17 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/tasks/invoke", s.workerInvokeChildTask)
 				r.With(limitRequestBody(tokenRequestBodyLimit)).Post("/run/tokens/create", s.workerCreateToken)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/tasks/complete", s.workerCompleteTask)
+				r.With(limitRequestBody(sessionDataBodyLimit)).Post("/run/sessions/send", s.workerSendSession)
+				r.With(limitRequestBody(sessionDataBodyLimit)).Post("/run/sessions/enqueue", s.workerEnqueueSession)
+				r.With(limitRequestBody(sessionDataBodyLimit)).Post("/run/turns/messages/send", s.workerSendTurnMessage)
+				r.With(limitRequestBody(sessionControlBodyLimit)).Post("/run/sessions/events/read-page", s.workerReadSessionEvents)
+				r.With(limitRequestBody(sessionDataBodyLimit)).Post("/run/turns/output/write", s.workerWriteTurnOutput)
+				r.With(limitRequestBody(sessionDataBodyLimit)).Post("/run/sessions/output/write", s.workerWriteSessionOutput)
+				r.With(limitRequestBody(sessionControlBodyLimit)).Post("/run/turns/messages/ready", s.workerTurnMessagesReady)
+				r.With(limitRequestBody(sessionControlBodyLimit)).Post("/run/turns/messages/claim", s.workerClaimTurnMessage)
+				r.With(limitRequestBody(sessionDataBodyLimit)).Post("/run/turns/messages/complete", s.workerCompleteTurnMessage)
+				r.With(limitRequestBody(sessionControlBodyLimit)).Post("/run/turns/settlement/begin", s.workerBeginTurnSettlement)
+				r.With(limitRequestBody(sessionControlBodyLimit)).Post("/run/sessions/control", s.workerSessionControl)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/sessions/complete", s.workerCompleteActor)
 				r.With(limitRequestBody(workerRunLogRequestBodyLimit)).Post("/run/logs/append", s.workerAppendRunLogs)
 				r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/run/structured-logs/append", s.workerAppendStructuredLog)
@@ -775,13 +771,6 @@ func limitRequestBody(limit int64) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
-}
-
-func limitSessionInputBody(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, sessionInputBodyLimit)
-		next.ServeHTTP(w, r)
-	})
 }
 
 func (s *Server) userAuthConfigured() error {

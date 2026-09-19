@@ -12,7 +12,7 @@ import (
 
 func TestParseWorkerActorOutputAppendNormalizesPayload(t *testing.T) {
 	lease := validRunLeaseAssignment(uuid.NewV7())
-	request := workerapi.AppendActorOutputRequest{
+	request := workerapi.WriteTurnOutputRequest{
 		TurnID: uuid.NewV7().String(), RunGeneration: 1,
 		Lease: lease.Fence(), CorrelationID: uuid.NewV7().String(),
 		Data:           json.RawMessage(`{"b":2,"a":1}`),
@@ -52,7 +52,6 @@ func TestActorOutputAppendFailurePreservesSemanticCodes(t *testing.T) {
 	}{
 		{conflict, "idempotency_conflict"},
 		{errActorOutputTooLarge, "actor_output_too_large"},
-		{errActorSequenceExhausted, "actor_sequence_exhausted"},
 	}
 	for _, test := range tests {
 		failure, ok := actorOutputAppendFailure(test.err)

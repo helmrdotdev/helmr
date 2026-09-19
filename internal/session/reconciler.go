@@ -139,7 +139,7 @@ func (r *Reconciler) ReconcileInput(
 			return false, ErrAuthority
 		}
 	}
-	record, err := q.GetActorInputRecordByIDForUpdate(ctx, db.GetActorInputRecordByIDForUpdateParams{
+	record, err := q.GetSessionTurnByIDForUpdate(ctx, db.GetSessionTurnByIDForUpdateParams{
 		EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ID: pgvalue.UUID(recordID),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -210,7 +210,7 @@ func (r *Reconciler) ReconcileTimeouts(ctx context.Context, limit int32) (int, e
 			_ = tx.Rollback(context.Background())
 			return resolved, err
 		}
-		if !actor.CurrentRunID.Valid || actor.CurrentRunID != candidate.RunID {
+		if actor.DispatchHoldID.Valid || !actor.CurrentRunID.Valid || actor.CurrentRunID != candidate.RunID {
 			_ = tx.Rollback(context.Background())
 			continue
 		}

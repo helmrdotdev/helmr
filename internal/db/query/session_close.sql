@@ -12,13 +12,12 @@ UPDATE sessions
            WHEN status = 'open' THEN next_input_sequence - 1
            ELSE close_sequence
        END,
-       manual_run_cancelled = false,
        revision = revision + CASE
-           WHEN status = 'open' OR manual_run_cancelled THEN 1
+           WHEN status = 'open' THEN 1
            ELSE 0
        END,
        updated_at = CASE
-           WHEN status = 'open' OR manual_run_cancelled THEN transaction_timestamp()
+           WHEN status = 'open' THEN transaction_timestamp()
            ELSE updated_at
        END
  WHERE environment_id = sqlc.arg(environment_id)

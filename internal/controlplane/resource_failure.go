@@ -32,10 +32,3 @@ func runFailure(code, message string) (json.RawMessage, error) {
 		Code: code, Message: message, Details: json.RawMessage("{}"),
 	})
 }
-
-func sessionFailure(code, message, runID string) (json.RawMessage, error) {
-	return json.Marshal(api.SessionFailure{
-		Code: code, Message: message,
-		Details: api.SessionFailureDetails{RunID: runID},
-	})
-}

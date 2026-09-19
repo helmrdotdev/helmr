@@ -184,7 +184,7 @@ func lockRunStartAuthority(
 		if err != nil {
 			return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureRun, staleRunLeaseClaim(err))
 		}
-		if authority.actor.CurrentRunID != locators.RunID ||
+		if authority.actor.DispatchHoldID.Valid || authority.actor.CurrentRunID != locators.RunID ||
 			(authority.actor.Status != "open" && authority.actor.Status != "closing") {
 			return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureRun, errStaleRunLeaseClaim)
 		}

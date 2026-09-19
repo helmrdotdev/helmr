@@ -128,7 +128,7 @@ func (s *Server) workerCreateActorInputRunWait(
 			return errStaleRunLeaseClaim
 		}
 		cursor := pgtype.Int8{Int64: params.AfterInputSequence, Valid: true}
-		if err := validateRunWaitActorCursor(authority, db.RunWait{ActorSpeculativeInputSequence: cursor}); err != nil {
+		if err := validateRunWaitActorCursor(authority, db.RunWait{Kind: db.WaitKindActorInput, ActorSpeculativeInputSequence: cursor}); err != nil {
 			return err
 		}
 		replayParams := db.GetActorInputRunWaitRegistrationReplayParams{
@@ -141,6 +141,9 @@ func (s *Server) workerCreateActorInputRunWait(
 		}
 		registered, err = work.q.GetActorInputRunWaitRegistrationReplay(r.Context(), replayParams)
 		if err == nil {
+			if registered.CompletedTurnID.Valid && registered.CompletedTurnID != authority.actor.ActiveTurnID {
+				return session.ErrTurnScope
+			}
 			return nil
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
@@ -166,7 +169,7 @@ func (s *Server) workerCreateActorInputRunWait(
 		if err != nil {
 			return staleRunLeaseClaim(err)
 		}
-		record, err := work.q.GetActorInputRecordAtSequenceForUpdate(r.Context(), db.GetActorInputRecordAtSequenceForUpdateParams{
+		record, err := work.q.GetSessionTurnAtSequenceForUpdate(r.Context(), db.GetSessionTurnAtSequenceForUpdateParams{
 			EnvironmentID: authority.run.EnvironmentID, SessionID: authority.actor.ID,
 			Sequence: params.AfterInputSequence + 1,
 		})
@@ -187,7 +190,7 @@ func (s *Server) workerCreateActorInputRunWait(
 	if writeStaleWorkerClaims(w, err) {
 		return
 	}
-	if errors.Is(err, errStaleRunLeaseClaim) {
+	if errors.Is(err, errStaleRunLeaseClaim) || errors.Is(err, session.ErrTurnStopped) || errors.Is(err, session.ErrTurnScope) {
 		writeError(w, conflict(errors.New("worker actor input wait receipt is stale")))
 		return
 	}
@@ -224,7 +227,7 @@ func actorInputWaitIdleTimeout(raw json.RawMessage) (time.Duration, error) {
 func actorInputWaitDecision(wait db.RunWait) (string, json.RawMessage, error) {
 	switch wait.ConditionStatus {
 	case db.WaitStatusCompleted:
-		if !wait.CompletedActorRecordID.Valid || len(wait.ConditionResult) == 0 {
+		if !wait.CompletedTurnID.Valid || len(wait.ConditionResult) == 0 {
 			return "", nil, errors.New("completed actor input wait is missing its record")
 		}
 		return "completed", wait.ConditionResult, nil

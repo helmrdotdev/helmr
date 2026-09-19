@@ -54,8 +54,6 @@ type actorStartRequest struct {
 	ActorDeclaredID       string
 	WorkspaceID           uuid.UUID
 	Key                   *string
-	InputPresent          bool
-	Input                 json.RawMessage
 	IdempotencyKey        string
 	ManagedQueueName      string
 	ManagedConcurrencyKey *string
@@ -69,16 +67,14 @@ type actorStartRequest struct {
 }
 
 type actorStartResult struct {
-	SessionID       uuid.UUID
-	InitialRecordID *uuid.UUID
-	BootRunID       uuid.UUID
-	Replayed        bool
+	SessionID uuid.UUID
+	BootRunID uuid.UUID
+	Replayed  bool
 }
 
 type actorStartReceipt struct {
-	SessionID       string  `json:"actorId"`
-	InitialRecordID *string `json:"initialRecordId,omitempty"`
-	BootRunID       string  `json:"bootRunId"`
+	SessionID string `json:"actorId"`
+	BootRunID string `json:"bootRunId"`
 }
 
 type normalizedActorStart struct {
@@ -269,25 +265,12 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 			return fmt.Errorf("create actor: %w", err)
 		}
 
-		var initialRecordID *uuid.UUID
-		inputHighWatermark := int64(0)
-		if normalized.InputPresent {
-			recordID := uuid.NewV7()
-			if _, err := work.q.CreateActorStartInputRecord(ctx, db.CreateActorStartInputRecordParams{
-				ID: pgvalue.UUID(recordID), Data: normalized.Input, ClaimID: claimID,
-				EnvironmentID: pgvalue.UUID(normalized.EnvironmentID), SessionID: pgvalue.UUID(actorID),
-			}); err != nil {
-				return fmt.Errorf("create initial actor input: %w", err)
-			}
-			initialRecordID = &recordID
-			inputHighWatermark = 1
-		}
 		run, err := work.q.CreateActorStartRun(ctx, db.CreateActorStartRunParams{
 			EnvironmentID: pgvalue.UUID(normalized.EnvironmentID), SessionID: pgvalue.UUID(actorID),
 			WorkspaceID: authority.ID, ClaimID: claimID,
 			ID:                     pgvalue.UUID(runID),
 			BaseWorkspaceVersionID: authority.HeadVersionID,
-			InputHighWatermark:     pgtype.Int8{Int64: inputHighWatermark, Valid: true},
+			InputHighWatermark:     pgtype.Int8{Int64: 0, Valid: true},
 			RootSpanID:             rootSpanID,
 		})
 		if err != nil {
@@ -315,7 +298,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 			return fmt.Errorf("record actor boot run secret resolutions: %w", err)
 		}
 		result = actorStartResult{
-			SessionID: actorID, InitialRecordID: initialRecordID,
+			SessionID: actorID,
 			BootRunID: runID,
 		}
 		if claim != nil {
@@ -362,15 +345,6 @@ func normalizeActorStart(request actorStartRequest) (normalizedActorStart, error
 	if err != nil {
 		return normalizedActorStart{}, fmt.Errorf("%w: canonicalize workspace address", errActorStartInvalid)
 	}
-	if request.InputPresent {
-		input, err := canonicalJSON(request.Input)
-		if err != nil || len(input) > maxActorInputBytes {
-			return normalizedActorStart{}, fmt.Errorf("%w: initial input must be unambiguous JSON no larger than 1 MiB", errActorStartInvalid)
-		}
-		request.Input = input
-	} else {
-		request.Input = nil
-	}
 	request.ManagedRunMetadata, err = normalizeMetadata(request.ManagedRunMetadata, maxRunMetadataBytes, "managed run")
 	if err != nil {
 		return normalizedActorStart{}, fmt.Errorf("%w: %v", errActorStartInvalid, err)
@@ -411,7 +385,7 @@ func normalizeActorStart(request actorStartRequest) (normalizedActorStart, error
 		request.ManagedRetryPolicy = canonicalRetry
 	}
 	fingerprint := idempotency.ActorStartFingerprint{
-		Key: request.Key, InputPresent: request.InputPresent, Input: request.Input,
+		Key:              request.Key,
 		WorkspaceAddress: workspace,
 		ManagedQueueName: request.ManagedQueueName, ManagedConcurrencyKey: request.ManagedConcurrencyKey,
 		ManagedPriority: request.ManagedPriority, ManagedQueuedTTLMS: request.ManagedQueuedTTLMS,
@@ -487,10 +461,6 @@ func actorStartReceiptFromResult(result actorStartResult) actorStartReceipt {
 		SessionID: result.SessionID.String(),
 		BootRunID: result.BootRunID.String(),
 	}
-	if result.InitialRecordID != nil {
-		value := result.InitialRecordID.String()
-		receipt.InitialRecordID = &value
-	}
 	return receipt
 }
 
@@ -507,16 +477,8 @@ func actorStartResultFromReceipt(raw []byte) (actorStartResult, error) {
 	if err != nil {
 		return actorStartResult{}, errActorStartIdempotencyReceipt
 	}
-	var initialRecordID *uuid.UUID
-	if receipt.InitialRecordID != nil {
-		value, err := ids.Parse(*receipt.InitialRecordID)
-		if err != nil {
-			return actorStartResult{}, errActorStartIdempotencyReceipt
-		}
-		initialRecordID = &value
-	}
 	return actorStartResult{
-		SessionID:       actorID,
-		InitialRecordID: initialRecordID, BootRunID: runID,
+		SessionID: actorID,
+		BootRunID: runID,
 	}, nil
 }

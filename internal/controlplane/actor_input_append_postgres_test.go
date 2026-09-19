@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"uuid"
+	"github.com/helmrdotdev/helmr/internal/session"
 )
 
 func TestActorInputAppendPostgresRejectsOversizedCanonicalInputWithoutResidue(
@@ -19,13 +19,13 @@ func TestActorInputAppendPostgresRejectsOversizedCanonicalInputWithoutResidue(
 	if err != nil {
 		t.Fatal(err)
 	}
-	data := []byte(`"` + strings.Repeat("x", maxActorInputBytes) + `"`)
+	data := []byte(`"` + strings.Repeat("x", (1<<20)) + `"`)
 	canonical, err := canonicalJSON(data)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(canonical) <= maxActorInputBytes {
-		t.Fatalf("canonical input size = %d, want over %d", len(canonical), maxActorInputBytes)
+	if len(canonical) <= (1 << 20) {
+		t.Fatalf("canonical input size = %d, want over %d", len(canonical), (1 << 20))
 	}
 
 	type state struct {
@@ -38,10 +38,10 @@ func TestActorInputAppendPostgresRejectsOversizedCanonicalInputWithoutResidue(
 		var value state
 		if err := fixture.pool.QueryRow(t.Context(), `
 SELECT sessions.next_input_sequence,
-       (SELECT count(*) FROM session_records WHERE session_id = sessions.id),
+       (SELECT count(*) FROM session_turns WHERE session_id = sessions.id),
        (SELECT count(*) FROM idempotency_claims
          WHERE environment_id = sessions.environment_id
-           AND operation = 'session.input.send'),
+           AND operation = 'session.enqueue'),
        (SELECT count(*) FROM control_outbox
          WHERE topic = 'session.input.reconcile'
            AND payload->>'sessionId' = sessions.id::text)
@@ -59,30 +59,17 @@ SELECT sessions.next_input_sequence,
 		return value
 	}
 	before := readState()
-	recordID := uuid.NewV7()
-	_, err = fixture.server.appendActorInput(t.Context(), appendActorInputRequest{
-		EnvironmentID:  fixture.environmentID,
-		SessionID:      started.SessionID,
-		RecordID:       recordID,
+	_, err = fixture.server.applySessionAdmission(t.Context(), session.AdmissionRequest{
+		Target: session.Target{EnvironmentID: fixture.environmentID, SessionID: started.SessionID}, Mode: session.EnqueueOnly,
 		Data:           data,
 		IdempotencyKey: "oversized-input",
 	})
-	if !errors.Is(err, errActorInputTooLarge) {
+	var failure *session.OperationError
+	if !errors.As(err, &failure) || failure.Code != "invalid_request" {
 		t.Fatalf("append error = %v, want Actor input too large", err)
 	}
 	after := readState()
 	if after != before {
 		t.Fatalf("Actor input state changed: before=%+v after=%+v", before, after)
-	}
-	var recordCount int
-	if err := fixture.pool.QueryRow(
-		t.Context(),
-		`SELECT count(*) FROM session_records WHERE id = $1`,
-		recordID,
-	).Scan(&recordCount); err != nil {
-		t.Fatal(err)
-	}
-	if recordCount != 0 {
-		t.Fatalf("oversized Actor input record count = %d, want 0", recordCount)
 	}
 }

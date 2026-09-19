@@ -11,62 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const acceptSessionTurnInterrupt = `-- name: AcceptSessionTurnInterrupt :one
-WITH held AS (
-    UPDATE sessions SET dispatch_hold_id = $1, dispatch_hold_reason = 'interrupt_requested',
-           revision = revision + 1, updated_at = now()
-     WHERE sessions.environment_id = $2 AND sessions.id = $3
-       AND active_turn_id = $4 AND sessions.run_generation = $5
-       AND dispatch_hold_id IS NULL
-    RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, manual_run_cancelled, active_turn_id, dispatch_hold_id, dispatch_hold_reason, next_event_sequence, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
-)
-UPDATE session_records SET interrupt_requested_at = now()
- FROM held WHERE session_records.session_id = held.id AND session_records.id = held.active_turn_id
- AND session_records.turn_status = 'running' AND interrupt_requested_at IS NULL
-RETURNING session_records.id, session_records.environment_id, session_records.session_id, session_records.direction, session_records.sequence, session_records.data, session_records.content_type, session_records.source_run_id, session_records.producer_run_id, session_records.producer_attempt_number, session_records.claim_id, session_records.turn_status, session_records.run_generation, session_records.turn_run_id, session_records.turn_attempt_number, session_records.interrupt_requested_at, session_records.terminal_event_id, session_records.terminal_request_fingerprint, session_records.created_at
-`
-
-type AcceptSessionTurnInterruptParams struct {
-	HoldID        pgtype.UUID `json:"hold_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	SessionID     pgtype.UUID `json:"session_id"`
-	TurnID        pgtype.UUID `json:"turn_id"`
-	RunGeneration int64       `json:"run_generation"`
-}
-
-func (q *Queries) AcceptSessionTurnInterrupt(ctx context.Context, arg AcceptSessionTurnInterruptParams) (SessionRecord, error) {
-	row := q.db.QueryRow(ctx, acceptSessionTurnInterrupt,
-		arg.HoldID,
-		arg.EnvironmentID,
-		arg.SessionID,
-		arg.TurnID,
-		arg.RunGeneration,
-	)
-	var i SessionRecord
-	err := row.Scan(
-		&i.ID,
-		&i.EnvironmentID,
-		&i.SessionID,
-		&i.Direction,
-		&i.Sequence,
-		&i.Data,
-		&i.ContentType,
-		&i.SourceRunID,
-		&i.ProducerRunID,
-		&i.ProducerAttemptNumber,
-		&i.ClaimID,
-		&i.TurnStatus,
-		&i.RunGeneration,
-		&i.TurnRunID,
-		&i.TurnAttemptNumber,
-		&i.InterruptRequestedAt,
-		&i.TerminalEventID,
-		&i.TerminalRequestFingerprint,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const activateSessionTurn = `-- name: ActivateSessionTurn :one
 WITH activated AS (
     UPDATE sessions SET active_turn_id = $3,
@@ -77,13 +21,13 @@ WITH activated AS (
        AND committed_input_sequence + 1 = $6
        AND EXISTS (SELECT 1 FROM runs WHERE runs.id = sessions.current_run_id
                    AND current_attempt_number = $2 AND status IN ('running', 'waiting'))
-    RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, manual_run_cancelled, active_turn_id, dispatch_hold_id, dispatch_hold_reason, next_event_sequence, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
+    RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, next_event_sequence, failure, failure_run_id, next_input_sequence, committed_input_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, failed_at
 )
-UPDATE session_records SET turn_status = 'running', run_generation = activated.run_generation,
-       turn_run_id = $1, turn_attempt_number = $2
-  FROM activated WHERE session_records.session_id = activated.id
-   AND session_records.id = activated.active_turn_id AND session_records.turn_status = 'queued'
-RETURNING session_records.id, session_records.environment_id, session_records.session_id, session_records.direction, session_records.sequence, session_records.data, session_records.content_type, session_records.source_run_id, session_records.producer_run_id, session_records.producer_attempt_number, session_records.claim_id, session_records.turn_status, session_records.run_generation, session_records.turn_run_id, session_records.turn_attempt_number, session_records.interrupt_requested_at, session_records.terminal_event_id, session_records.terminal_request_fingerprint, session_records.created_at
+UPDATE session_turns SET status = 'running', run_generation = activated.run_generation,
+       run_id = $1, attempt_number = $2
+  FROM activated WHERE session_turns.session_id = activated.id
+   AND session_turns.id = activated.active_turn_id AND session_turns.status = 'queued'
+RETURNING session_turns.id, session_turns.environment_id, session_turns.session_id, session_turns.sequence, session_turns.data, session_turns.source_run_id, session_turns.status, session_turns.run_generation, session_turns.run_id, session_turns.attempt_number, session_turns.ready_run_lease_id, session_turns.settlement_started_at, session_turns.interrupt_requested_at, session_turns.terminal_event_id, session_turns.terminal_request_fingerprint, session_turns.created_at
 `
 
 type ActivateSessionTurnParams struct {
@@ -95,7 +39,7 @@ type ActivateSessionTurnParams struct {
 	InputSequence int64       `json:"input_sequence"`
 }
 
-func (q *Queries) ActivateSessionTurn(ctx context.Context, arg ActivateSessionTurnParams) (SessionRecord, error) {
+func (q *Queries) ActivateSessionTurn(ctx context.Context, arg ActivateSessionTurnParams) (SessionTurn, error) {
 	row := q.db.QueryRow(ctx, activateSessionTurn,
 		arg.RunID,
 		arg.AttemptNumber,
@@ -104,23 +48,20 @@ func (q *Queries) ActivateSessionTurn(ctx context.Context, arg ActivateSessionTu
 		arg.SessionID,
 		arg.InputSequence,
 	)
-	var i SessionRecord
+	var i SessionTurn
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
 		&i.SessionID,
-		&i.Direction,
 		&i.Sequence,
 		&i.Data,
-		&i.ContentType,
 		&i.SourceRunID,
-		&i.ProducerRunID,
-		&i.ProducerAttemptNumber,
-		&i.ClaimID,
-		&i.TurnStatus,
+		&i.Status,
 		&i.RunGeneration,
-		&i.TurnRunID,
-		&i.TurnAttemptNumber,
+		&i.RunID,
+		&i.AttemptNumber,
+		&i.ReadyRunLeaseID,
+		&i.SettlementStartedAt,
 		&i.InterruptRequestedAt,
 		&i.TerminalEventID,
 		&i.TerminalRequestFingerprint,
@@ -132,27 +73,28 @@ func (q *Queries) ActivateSessionTurn(ctx context.Context, arg ActivateSessionTu
 const appendSessionEvent = `-- name: AppendSessionEvent :one
 WITH allocated AS (
     UPDATE sessions SET next_event_sequence = next_event_sequence + 1
-     WHERE sessions.environment_id = $2 AND sessions.id = $10
+     WHERE sessions.environment_id = $2 AND sessions.id = $11
        AND next_event_sequence <= 9007199254740991
     RETURNING sessions.id, sessions.workspace_id, sessions.next_event_sequence - 1 AS sequence
 )
-INSERT INTO session_events (id, environment_id, session_id, workspace_id, turn_id, sequence, kind, data,
+INSERT INTO session_events (id, environment_id, session_id, workspace_id, turn_id, message_id, sequence, kind, data,
  producer_run_id, producer_attempt_number, run_generation, workspace_version_id)
-SELECT $1, $2, allocated.id, allocated.workspace_id, $3, allocated.sequence,
- $4, $5, $6, $7,
- $8, $9 FROM allocated
-RETURNING id, environment_id, session_id, turn_id, workspace_id, sequence, kind, data, producer_run_id, producer_attempt_number, run_generation, workspace_version_id, created_at
+SELECT $1, $2, allocated.id, allocated.workspace_id, $3, $4, allocated.sequence,
+ $5, $6, $7, $8,
+ $9, $10 FROM allocated
+RETURNING id, environment_id, session_id, turn_id, message_id, workspace_id, sequence, kind, data, producer_run_id, producer_attempt_number, run_generation, workspace_version_id, created_at
 `
 
 type AppendSessionEventParams struct {
 	ID                    pgtype.UUID `json:"id"`
 	EnvironmentID         pgtype.UUID `json:"environment_id"`
 	TurnID                pgtype.UUID `json:"turn_id"`
+	MessageID             pgtype.UUID `json:"message_id"`
 	Kind                  string      `json:"kind"`
 	Data                  []byte      `json:"data"`
 	ProducerRunID         pgtype.UUID `json:"producer_run_id"`
-	ProducerAttemptNumber int32       `json:"producer_attempt_number"`
-	RunGeneration         int64       `json:"run_generation"`
+	ProducerAttemptNumber pgtype.Int4 `json:"producer_attempt_number"`
+	RunGeneration         pgtype.Int8 `json:"run_generation"`
 	WorkspaceVersionID    pgtype.UUID `json:"workspace_version_id"`
 	SessionID             pgtype.UUID `json:"session_id"`
 }
@@ -162,6 +104,7 @@ func (q *Queries) AppendSessionEvent(ctx context.Context, arg AppendSessionEvent
 		arg.ID,
 		arg.EnvironmentID,
 		arg.TurnID,
+		arg.MessageID,
 		arg.Kind,
 		arg.Data,
 		arg.ProducerRunID,
@@ -176,6 +119,7 @@ func (q *Queries) AppendSessionEvent(ctx context.Context, arg AppendSessionEvent
 		&i.EnvironmentID,
 		&i.SessionID,
 		&i.TurnID,
+		&i.MessageID,
 		&i.WorkspaceID,
 		&i.Sequence,
 		&i.Kind,
@@ -190,7 +134,7 @@ func (q *Queries) AppendSessionEvent(ctx context.Context, arg AppendSessionEvent
 }
 
 const getSessionEvent = `-- name: GetSessionEvent :one
-SELECT id, environment_id, session_id, turn_id, workspace_id, sequence, kind, data, producer_run_id, producer_attempt_number, run_generation, workspace_version_id, created_at FROM session_events WHERE environment_id = $1 AND session_id = $2 AND id = $3
+SELECT id, environment_id, session_id, turn_id, message_id, workspace_id, sequence, kind, data, producer_run_id, producer_attempt_number, run_generation, workspace_version_id, created_at FROM session_events WHERE environment_id = $1 AND session_id = $2 AND id = $3
 `
 
 type GetSessionEventParams struct {
@@ -207,6 +151,7 @@ func (q *Queries) GetSessionEvent(ctx context.Context, arg GetSessionEventParams
 		&i.EnvironmentID,
 		&i.SessionID,
 		&i.TurnID,
+		&i.MessageID,
 		&i.WorkspaceID,
 		&i.Sequence,
 		&i.Kind,
@@ -221,7 +166,7 @@ func (q *Queries) GetSessionEvent(ctx context.Context, arg GetSessionEventParams
 }
 
 const lockSessionTurnAuthority = `-- name: LockSessionTurnAuthority :one
-SELECT id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, manual_run_cancelled, active_turn_id, dispatch_hold_id, dispatch_hold_reason, next_event_sequence, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at FROM sessions WHERE environment_id = $1 AND id = $2 FOR UPDATE
+SELECT id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, next_event_sequence, failure, failure_run_id, next_input_sequence, committed_input_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, failed_at FROM sessions WHERE environment_id = $1 AND id = $2 FOR UPDATE
 `
 
 type LockSessionTurnAuthorityParams struct {
@@ -242,16 +187,17 @@ func (q *Queries) LockSessionTurnAuthority(ctx context.Context, arg LockSessionT
 		&i.CurrentRunID,
 		&i.RunGeneration,
 		&i.Revision,
-		&i.ManualRunCancelled,
 		&i.ActiveTurnID,
 		&i.DispatchHoldID,
+		&i.DispatchHoldRunID,
+		&i.DispatchHoldAttemptNumber,
+		&i.DispatchHoldRunGeneration,
 		&i.DispatchHoldReason,
 		&i.NextEventSequence,
 		&i.Failure,
 		&i.FailureRunID,
 		&i.NextInputSequence,
 		&i.CommittedInputSequence,
-		&i.NextOutputSequence,
 		&i.RunQueueName,
 		&i.RunConcurrencyKey,
 		&i.RunQueueConcurrencyLimit,
@@ -266,15 +212,14 @@ func (q *Queries) LockSessionTurnAuthority(ctx context.Context, arg LockSessionT
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ClosedAt,
-		&i.CancelledAt,
 		&i.FailedAt,
 	)
 	return i, err
 }
 
 const lockSessionTurnInput = `-- name: LockSessionTurnInput :one
-SELECT id, environment_id, session_id, direction, sequence, data, content_type, source_run_id, producer_run_id, producer_attempt_number, claim_id, turn_status, run_generation, turn_run_id, turn_attempt_number, interrupt_requested_at, terminal_event_id, terminal_request_fingerprint, created_at FROM session_records
- WHERE environment_id = $1 AND session_id = $2 AND id = $3 AND direction = 'input'
+SELECT id, environment_id, session_id, sequence, data, source_run_id, status, run_generation, run_id, attempt_number, ready_run_lease_id, settlement_started_at, interrupt_requested_at, terminal_event_id, terminal_request_fingerprint, created_at FROM session_turns
+ WHERE environment_id = $1 AND session_id = $2 AND id = $3
  FOR UPDATE
 `
 
@@ -284,25 +229,59 @@ type LockSessionTurnInputParams struct {
 	ID            pgtype.UUID `json:"id"`
 }
 
-func (q *Queries) LockSessionTurnInput(ctx context.Context, arg LockSessionTurnInputParams) (SessionRecord, error) {
+func (q *Queries) LockSessionTurnInput(ctx context.Context, arg LockSessionTurnInputParams) (SessionTurn, error) {
 	row := q.db.QueryRow(ctx, lockSessionTurnInput, arg.EnvironmentID, arg.SessionID, arg.ID)
-	var i SessionRecord
+	var i SessionTurn
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
 		&i.SessionID,
-		&i.Direction,
 		&i.Sequence,
 		&i.Data,
-		&i.ContentType,
 		&i.SourceRunID,
-		&i.ProducerRunID,
-		&i.ProducerAttemptNumber,
-		&i.ClaimID,
-		&i.TurnStatus,
+		&i.Status,
 		&i.RunGeneration,
-		&i.TurnRunID,
-		&i.TurnAttemptNumber,
+		&i.RunID,
+		&i.AttemptNumber,
+		&i.ReadyRunLeaseID,
+		&i.SettlementStartedAt,
+		&i.InterruptRequestedAt,
+		&i.TerminalEventID,
+		&i.TerminalRequestFingerprint,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const requestSessionTurnInterrupt = `-- name: RequestSessionTurnInterrupt :one
+UPDATE session_turns SET interrupt_requested_at=now(),ready_run_lease_id=NULL
+WHERE session_turns.environment_id=$1 AND session_turns.session_id=$2 AND session_turns.id=$3
+ AND status='running' AND interrupt_requested_at IS NULL
+RETURNING id, environment_id, session_id, sequence, data, source_run_id, status, run_generation, run_id, attempt_number, ready_run_lease_id, settlement_started_at, interrupt_requested_at, terminal_event_id, terminal_request_fingerprint, created_at
+`
+
+type RequestSessionTurnInterruptParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	SessionID     pgtype.UUID `json:"session_id"`
+	TurnID        pgtype.UUID `json:"turn_id"`
+}
+
+func (q *Queries) RequestSessionTurnInterrupt(ctx context.Context, arg RequestSessionTurnInterruptParams) (SessionTurn, error) {
+	row := q.db.QueryRow(ctx, requestSessionTurnInterrupt, arg.EnvironmentID, arg.SessionID, arg.TurnID)
+	var i SessionTurn
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.SessionID,
+		&i.Sequence,
+		&i.Data,
+		&i.SourceRunID,
+		&i.Status,
+		&i.RunGeneration,
+		&i.RunID,
+		&i.AttemptNumber,
+		&i.ReadyRunLeaseID,
+		&i.SettlementStartedAt,
 		&i.InterruptRequestedAt,
 		&i.TerminalEventID,
 		&i.TerminalRequestFingerprint,
@@ -318,13 +297,13 @@ WITH advanced AS (
  WHERE sessions.environment_id = $6 AND sessions.id = $7
    AND active_turn_id = $4 AND sessions.run_generation = $8
    AND committed_input_sequence + 1 = $5 AND dispatch_hold_id IS NULL
- RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, manual_run_cancelled, active_turn_id, dispatch_hold_id, dispatch_hold_reason, next_event_sequence, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
+ RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, next_event_sequence, failure, failure_run_id, next_input_sequence, committed_input_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, failed_at
 )
-UPDATE session_records SET turn_status = $1, terminal_event_id = $2,
+UPDATE session_turns SET status = $1, ready_run_lease_id = NULL, terminal_event_id = $2,
  terminal_request_fingerprint = $3
- FROM advanced WHERE session_records.session_id = advanced.id AND session_records.id = $4
- AND session_records.turn_status = 'running' AND interrupt_requested_at IS NULL
-RETURNING session_records.id, session_records.environment_id, session_records.session_id, session_records.direction, session_records.sequence, session_records.data, session_records.content_type, session_records.source_run_id, session_records.producer_run_id, session_records.producer_attempt_number, session_records.claim_id, session_records.turn_status, session_records.run_generation, session_records.turn_run_id, session_records.turn_attempt_number, session_records.interrupt_requested_at, session_records.terminal_event_id, session_records.terminal_request_fingerprint, session_records.created_at
+ FROM advanced WHERE session_turns.session_id = advanced.id AND session_turns.id = $4
+ AND session_turns.status = 'running' AND interrupt_requested_at IS NULL
+RETURNING session_turns.id, session_turns.environment_id, session_turns.session_id, session_turns.sequence, session_turns.data, session_turns.source_run_id, session_turns.status, session_turns.run_generation, session_turns.run_id, session_turns.attempt_number, session_turns.ready_run_lease_id, session_turns.settlement_started_at, session_turns.interrupt_requested_at, session_turns.terminal_event_id, session_turns.terminal_request_fingerprint, session_turns.created_at
 `
 
 type SettleSessionTurnParams struct {
@@ -338,7 +317,7 @@ type SettleSessionTurnParams struct {
 	RunGeneration int64       `json:"run_generation"`
 }
 
-func (q *Queries) SettleSessionTurn(ctx context.Context, arg SettleSessionTurnParams) (SessionRecord, error) {
+func (q *Queries) SettleSessionTurn(ctx context.Context, arg SettleSessionTurnParams) (SessionTurn, error) {
 	row := q.db.QueryRow(ctx, settleSessionTurn,
 		arg.Status,
 		arg.EventID,
@@ -349,23 +328,20 @@ func (q *Queries) SettleSessionTurn(ctx context.Context, arg SettleSessionTurnPa
 		arg.SessionID,
 		arg.RunGeneration,
 	)
-	var i SessionRecord
+	var i SessionTurn
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
 		&i.SessionID,
-		&i.Direction,
 		&i.Sequence,
 		&i.Data,
-		&i.ContentType,
 		&i.SourceRunID,
-		&i.ProducerRunID,
-		&i.ProducerAttemptNumber,
-		&i.ClaimID,
-		&i.TurnStatus,
+		&i.Status,
 		&i.RunGeneration,
-		&i.TurnRunID,
-		&i.TurnAttemptNumber,
+		&i.RunID,
+		&i.AttemptNumber,
+		&i.ReadyRunLeaseID,
+		&i.SettlementStartedAt,
 		&i.InterruptRequestedAt,
 		&i.TerminalEventID,
 		&i.TerminalRequestFingerprint,
