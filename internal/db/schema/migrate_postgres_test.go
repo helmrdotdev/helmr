@@ -368,29 +368,42 @@ func assertNoBusinessDatabaseLogic(
 		t.Fatalf("application-owned PostgreSQL rules = %d, want 0", ruleCount)
 	}
 
-	var generatedColumnCount int
+	// Physical outbox byte accounting is the sole generated storage projection;
+	// application lifecycle state and metadata admission remain owned by Go.
+	var generatedColumns []string
 	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM information_schema.columns
-		 WHERE table_schema = 'public'
-		   AND is_generated = 'ALWAYS'
-	`).Scan(&generatedColumnCount); err != nil {
+		SELECT COALESCE(array_agg(c.relname || '.' || a.attname || ':' || a.attgenerated::text ORDER BY c.relname, a.attname), ARRAY[]::text[])
+		  FROM pg_attribute a
+		  JOIN pg_class c ON c.oid = a.attrelid
+		  JOIN pg_namespace n ON n.oid = c.relnamespace
+		 WHERE n.nspname = 'public' AND a.attgenerated <> '' AND NOT a.attisdropped
+	`).Scan(&generatedColumns); err != nil {
 		t.Fatal(err)
 	}
-	if generatedColumnCount != 0 {
-		t.Fatalf("application-owned generated columns = %d, want 0", generatedColumnCount)
+	if strings.Join(generatedColumns, ",") != "telemetry_outbox.ingest_size_bytes:s" {
+		t.Fatalf("unexpected generated storage columns: %v", generatedColumns)
 	}
 
-	migration, err := os.ReadFile(filepath.Join("migrations", "000001_initial.up.sql"))
+	// Deparsed CHECK definitions parenthesize column casts. Inspect admission
+	// constraints rather than banning serialization accounting in all SQL.
+	rows, err := pool.Query(ctx, `SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE connamespace='public'::regnamespace AND contype='c'`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	renderedJSONSizeConstraint := regexp.MustCompile(
-		`(?s)octet_length\([^)]*::text\)`,
-	)
-	if renderedJSONSizeConstraint.Match(migration) {
-		t.Fatal("baseline migration sizes JSON through PostgreSQL text rendering")
+	defer rows.Close()
+	for rows.Next() {
+		var definition string
+		if err := rows.Scan(&definition); err != nil {
+			t.Fatal(err)
+		}
+		if renderedJSONSizeConstraint.MatchString(definition) {
+			t.Fatalf("CHECK sizes metadata through PostgreSQL text rendering: %s", definition)
+		}
 	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+
 }
 
 func assertArtifactCreatorAuthority(
@@ -1117,5 +1130,27 @@ func assertWorkspaceExecSchema(
 	}
 	if !claimRequired {
 		t.Fatal("Workspace BasicExec claim_id is nullable")
+	}
+}
+
+// Covers PostgreSQL's direct column-cast deparse, e.g. octet_length((payload)::text).
+var renderedJSONSizeConstraint = regexp.MustCompile(`(?s)octet_length\(\(*[a-zA-Z_][a-zA-Z_0-9]*\)*::text\)`)
+
+func TestJSONSizeGuardMatchesPostgresDeparse(t *testing.T) {
+	database := dbtest.Open(t)
+	pool, err := pgxpool.New(t.Context(), database.DSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	if _, err := pool.Exec(t.Context(), `CREATE TABLE json_size_guard_probe(payload jsonb CHECK(octet_length(payload::text)<=100))`); err != nil {
+		t.Fatal(err)
+	}
+	var definition string
+	if err := pool.QueryRow(t.Context(), `SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid='json_size_guard_probe'::regclass AND contype='c'`).Scan(&definition); err != nil {
+		t.Fatal(err)
+	}
+	if !renderedJSONSizeConstraint.MatchString(definition) {
+		t.Fatalf("representation-dependent admission check was missed: %s", definition)
 	}
 }

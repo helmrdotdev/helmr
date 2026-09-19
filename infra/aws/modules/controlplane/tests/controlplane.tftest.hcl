@@ -71,22 +71,29 @@ override_resource {
 }
 
 variables {
-  name                              = "helmr-test"
-  vpc_id                            = "vpc-0123456789abcdef0"
-  private_subnet_ids                = ["subnet-0123456789abcdef0", "subnet-1123456789abcdef0"]
-  public_subnet_ids                 = ["subnet-2123456789abcdef0", "subnet-3123456789abcdef0"]
-  public_url                        = "http://controlplane.example.test"
-  allow_insecure_http               = true
-  bootstrap_worker_group_name       = "default"
-  bootstrap_region_id               = "helmr-us-east"
-  controlplane_image                = "example.invalid/helmr@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-  controlplane_image_repository_arn = "arn:aws:ecr:us-east-1:000000000000:repository/helmr-test/controlplane-releases"
-  platform_store_uri                = "s3://helmr-test-runtime/objects"
-  platform_store_bucket_arn         = "arn:aws:s3:::helmr-test-runtime"
-  platform_store_kms_key_arn        = "arn:aws:kms:us-east-1:000000000000:key/11111111-1111-1111-1111-111111111111"
-  clickhouse_url                    = "https://clickhouse.example.invalid"
-  github_oauth_client_id            = "test-client"
-  database_skip_final_snapshot      = true
+  name                                     = "helmr-test"
+  vpc_id                                   = "vpc-0123456789abcdef0"
+  private_subnet_ids                       = ["subnet-0123456789abcdef0", "subnet-1123456789abcdef0"]
+  public_subnet_ids                        = ["subnet-2123456789abcdef0", "subnet-3123456789abcdef0"]
+  public_url                               = "http://controlplane.example.test"
+  allow_insecure_http                      = true
+  bootstrap_worker_group_name              = "default"
+  bootstrap_region_id                      = "helmr-us-east"
+  controlplane_image                       = "example.invalid/helmr@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  controlplane_image_repository_arn        = "arn:aws:ecr:us-east-1:000000000000:repository/helmr-test/controlplane-releases"
+  platform_store_uri                       = "s3://helmr-test-runtime/objects"
+  platform_store_bucket_arn                = "arn:aws:s3:::helmr-test-runtime"
+  platform_store_kms_key_arn               = "arn:aws:kms:us-east-1:000000000000:key/11111111-1111-1111-1111-111111111111"
+  clickhouse_url                           = "https://clickhouse.example.invalid"
+  clickhouse_access_mode                   = "external"
+  clickhouse_reader_user                   = "telemetry_reader"
+  clickhouse_reader_password_secret_arn    = "arn:aws:secretsmanager:us-east-1:000000000000:secret:telemetry-reader"
+  clickhouse_ingester_user                 = "telemetry_ingester"
+  clickhouse_ingester_password_secret_arn  = "arn:aws:secretsmanager:us-east-1:000000000000:secret:telemetry-ingester"
+  clickhouse_migration_user                = "telemetry_migration"
+  clickhouse_migration_password_secret_arn = "arn:aws:secretsmanager:us-east-1:000000000000:secret:telemetry-migration"
+  github_oauth_client_id                   = "test-client"
+  database_skip_final_snapshot             = true
 }
 
 run "controlplane_uses_execution_only_runtime_authority" {
@@ -141,7 +148,7 @@ run "controlplane_uses_execution_only_runtime_authority" {
   assert {
     condition = (
       jsondecode(aws_ecs_task_definition.database_bootstrap.container_definitions)[0].command == ["database-bootstrap"] &&
-      toset([for item in jsondecode(aws_ecs_task_definition.migration.container_definitions)[0].environment : item.name]) == toset(["CLICKHOUSE_URL"])
+      toset([for item in jsondecode(aws_ecs_task_definition.migration.container_definitions)[0].environment : item.name]) == toset(["CLICKHOUSE_URL", "CLICKHOUSE_USER"])
     )
     error_message = "database bootstrap and migration must keep their narrow one-shot contracts"
   }
@@ -207,7 +214,7 @@ run "caller_ceiling_and_roll_forward" {
     enable_deployment_rollback  = false
   }
   assert {
-    condition     = alltrue([for role in [aws_iam_role.controlplane_execution, aws_iam_role.dispatcher_execution, aws_iam_role.database_bootstrap_execution, aws_iam_role.controlplane_task, aws_iam_role.dispatcher_task, aws_iam_role.migration_task] : role.permissions_boundary == var.permissions_boundary_arn])
+    condition     = alltrue([for role in [aws_iam_role.controlplane_execution, aws_iam_role.dispatcher_execution, aws_iam_role.database_bootstrap_execution, aws_iam_role.migration_execution, aws_iam_role.controlplane_task, aws_iam_role.dispatcher_task, aws_iam_role.migration_task] : role.permissions_boundary == var.permissions_boundary_arn])
     error_message = "Every Product ECS role must use the caller ceiling."
   }
   assert {
@@ -234,4 +241,84 @@ run "default_automatic_recovery" {
     condition     = alltrue([for service in [aws_ecs_service.controlplane[0], aws_ecs_service.dispatcher[0]] : service.deployment_circuit_breaker[0].enable && service.deployment_circuit_breaker[0].rollback])
     error_message = "Both services must enable automatic predecessor recovery by default."
   }
+}
+
+run "external_clickhouse_credentials_are_scoped_to_each_task" {
+  command = apply
+  assert {
+    condition = (
+      { for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[0].environment : item.name => item.value }.CLICKHOUSE_USER == var.clickhouse_reader_user &&
+      { for item in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].environment : item.name => item.value }.CLICKHOUSE_USER == var.clickhouse_ingester_user &&
+      { for item in jsondecode(aws_ecs_task_definition.migration.container_definitions)[0].environment : item.name => item.value }.CLICKHOUSE_USER == var.clickhouse_migration_user &&
+      length(aws_ecs_task_definition.clickhouse_bootstrap) == 0
+    )
+    error_message = "External mode must wire dedicated identities and omit the administrative bootstrap task."
+  }
+  assert {
+    condition = (
+      strcontains(aws_iam_role_policy.controlplane_execution.policy, var.clickhouse_reader_password_secret_arn) &&
+      !strcontains(aws_iam_role_policy.controlplane_execution.policy, var.clickhouse_ingester_password_secret_arn) &&
+      !strcontains(aws_iam_role_policy.controlplane_execution.policy, var.clickhouse_migration_password_secret_arn) &&
+      strcontains(aws_iam_role_policy.dispatcher_execution.policy, var.clickhouse_ingester_password_secret_arn) &&
+      !strcontains(aws_iam_role_policy.dispatcher_execution.policy, var.clickhouse_reader_password_secret_arn) &&
+      !strcontains(aws_iam_role_policy.dispatcher_execution.policy, var.clickhouse_migration_password_secret_arn) &&
+      strcontains(aws_iam_role_policy.migration_execution.policy, var.clickhouse_migration_password_secret_arn) &&
+      !strcontains(aws_iam_role_policy.migration_execution.policy, var.clickhouse_reader_password_secret_arn) &&
+      !strcontains(aws_iam_role_policy.migration_execution.policy, var.clickhouse_ingester_password_secret_arn) &&
+      aws_ecs_task_definition.migration.execution_role_arn == aws_iam_role.migration_execution.arn
+    )
+    error_message = "Execution roles must not retrieve another task's ClickHouse credential."
+  }
+}
+
+run "bootstrap_clickhouse_admin_is_confined_to_one_off_task" {
+  command = apply
+  variables {
+    clickhouse_access_mode                   = "bootstrap"
+    clickhouse_bootstrap_user                = "default"
+    clickhouse_bootstrap_password_secret_arn = "arn:aws:secretsmanager:us-east-1:000000000000:secret:telemetry-admin"
+  }
+  assert {
+    condition = (
+      jsondecode(aws_ecs_task_definition.clickhouse_bootstrap[0].container_definitions)[0].command == ["clickhouse-bootstrap"] &&
+      length(jsondecode(aws_ecs_task_definition.clickhouse_bootstrap[0].container_definitions)[0].secrets) == 4 &&
+      aws_ecs_task_definition.clickhouse_bootstrap[0].execution_role_arn == aws_iam_role.clickhouse_bootstrap_execution[0].arn &&
+      coalesce(aws_ecs_task_definition.clickhouse_bootstrap[0].task_role_arn, "none") == "none" &&
+      aws_iam_role.clickhouse_bootstrap_execution[0].permissions_boundary == var.permissions_boundary_arn
+    )
+    error_message = "Bootstrap must use the existing image as a separate one-off task with four credentials and no task role."
+  }
+  assert {
+    condition = (
+      strcontains(aws_iam_role_policy.clickhouse_bootstrap_execution[0].policy, var.clickhouse_bootstrap_password_secret_arn) &&
+      strcontains(aws_iam_role_policy.clickhouse_bootstrap_execution[0].policy, var.clickhouse_reader_password_secret_arn) &&
+      strcontains(aws_iam_role_policy.clickhouse_bootstrap_execution[0].policy, var.clickhouse_ingester_password_secret_arn) &&
+      strcontains(aws_iam_role_policy.clickhouse_bootstrap_execution[0].policy, var.clickhouse_migration_password_secret_arn) &&
+      !strcontains(aws_iam_role_policy.controlplane_execution.policy, var.clickhouse_bootstrap_password_secret_arn) &&
+      !strcontains(aws_iam_role_policy.dispatcher_execution.policy, var.clickhouse_bootstrap_password_secret_arn) &&
+      !strcontains(aws_iam_role_policy.migration_execution.policy, var.clickhouse_bootstrap_password_secret_arn)
+    )
+    error_message = "Only the account-bootstrap execution role may retrieve the administrator secret."
+  }
+}
+
+run "reject_shared_clickhouse_runtime_identity" {
+  command = plan
+  variables { clickhouse_reader_user = "telemetry_ingester" }
+  expect_failures = [terraform_data.clickhouse_access_preconditions]
+}
+run "reject_default_clickhouse_runtime_identity" {
+  command = plan
+  variables { clickhouse_reader_user = "default" }
+  expect_failures = [terraform_data.clickhouse_access_preconditions]
+}
+run "reject_shared_clickhouse_runtime_secret" {
+  command = plan
+  variables { clickhouse_reader_password_secret_arn = "arn:aws:secretsmanager:us-east-1:000000000000:secret:telemetry-ingester" }
+  expect_failures = [terraform_data.clickhouse_access_preconditions]
+}
+run "reject_bootstrap_without_admin" {
+  command = plan
+  variables { clickhouse_access_mode = "bootstrap" }
+  expect_failures = [terraform_data.clickhouse_access_preconditions]
 }

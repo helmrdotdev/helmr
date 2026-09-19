@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Assume the preview publisher OIDC role. Invoke from nix develop .#images -c bash scripts/release/assume-preview-role.sh
+# Assume the preview publisher OIDC role. Invoke from nix develop .#release -c bash scripts/release/assume-preview-role.sh
 set -euo pipefail
 : "${PREVIEW_PUBLISHER_ROLE_ARN:?}"
 : "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:?}"

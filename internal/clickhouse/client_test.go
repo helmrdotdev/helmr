@@ -96,6 +96,32 @@ type pingConn struct {
 
 func (c pingConn) Ping(ctx context.Context) error { return c.ping(ctx) }
 
+type selectConn struct {
+	driver.Conn
+	selectFn func(context.Context) error
+}
+
+func (c selectConn) Select(ctx context.Context, _ any, _ string, _ ...any) error {
+	return c.selectFn(ctx)
+}
+
+func TestSelectClampsLongDeadlineAndPreservesEarlierDeadline(t *testing.T) {
+	for _, timeout := range []time.Duration{time.Hour, time.Second} {
+		ctx, cancel := context.WithTimeout(t.Context(), timeout)
+		defer cancel()
+		client := &Client{conn: selectConn{selectFn: func(got context.Context) error {
+			deadline, ok := got.Deadline()
+			if !ok || time.Until(deadline) > min(timeout, defaultRequestTimeout) || time.Until(deadline) <= 0 {
+				t.Fatalf("read deadline: %s %v", deadline, ok)
+			}
+			return nil
+		}}}
+		if err := client.Select(ctx, nil, "SELECT 1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestOptionsFromConfigUsesHTTPTransportForCloudURL(t *testing.T) {
 	options, err := optionsFromConfig(Config{
 		URL:      " https://clickhouse.example.test:8443/custom ",

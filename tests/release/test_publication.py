@@ -226,7 +226,8 @@ class Publication(unittest.TestCase):
                 def pages(self,*_):return [item]
                 def request(self,path,*,destination):shutil.copyfile(z,destination)
             retry=copy.deepcopy(selection())
-            self.assertTrue(restore(API(),'sdk',retry,root/'restored'))
+            with patch.dict('os.environ', GITHUB_EVENT_NAME='pull_request', GITHUB_RUN_ATTEMPT='2'):
+                self.assertTrue(restore(API(),'sdk',retry,root/'restored'))
             self.assertEqual((root/'restored/sdk.tgz').read_bytes(),b'sdk')
             extract = transport.safe_extract
             def damaged_extract(archive, destination):

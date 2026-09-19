@@ -165,11 +165,26 @@ class Readback(unittest.TestCase):
                         candidate(['candidate-execution'])
                     candidate.assert_not_called()
 
-    def test_frozen_build_missing_part_semantics_remain(self):
+    def test_non_pr_frozen_build_missing_part_semantics_remain(self):
         class Empty:
             def pages(self, *_):
                 return []
-        self.assertFalse(transport.restore(Empty(), 'sdk', selection(), self.root / 'missing'))
+        for event in ('push', 'workflow_run', 'workflow_dispatch'):
+            with patch.dict('os.environ', GITHUB_EVENT_NAME=event, GITHUB_RUN_ATTEMPT='2'):
+                self.assertFalse(transport.restore(Empty(), 'sdk', selection(), self.root / 'missing'))
+
+    def test_missing_pr_part_on_retry_requires_new_identity(self):
+        class Empty:
+            def pages(self, *_):
+                return []
+        for part in transport.PARTS:
+            destination = self.root / part
+            with patch.dict('os.environ', GITHUB_EVENT_NAME='pull_request', GITHUB_RUN_ATTEMPT='1'):
+                self.assertFalse(transport.restore(Empty(), part, selection(), destination))
+            with patch.dict('os.environ', GITHUB_EVENT_NAME='pull_request', GITHUB_RUN_ATTEMPT='2'):
+                with self.assertRaisesRegex(ValueError, 'start a new workflow run'):
+                    transport.restore(Empty(), part, selection(), destination)
+            self.assertFalse(destination.exists())
 
 
 class WorkflowBoundary(unittest.TestCase):

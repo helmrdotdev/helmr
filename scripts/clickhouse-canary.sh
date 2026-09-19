@@ -36,9 +36,9 @@ idem="canary:${org_id}:${run_id}"
 
 curl "${curl_args[@]}" "${url}/" --data-binary @- <<SQL
 INSERT INTO helmr_telemetry.run_logs
-    (org_id, project_id, environment_id, run_id, attempt_number, stream_name, seq, observed_seq, content, size_bytes, idempotency_key, retention_class, redaction_class, source, observed_at)
+    (org_id, project_id, environment_id, run_id, run_lease_id, attempt_number, stream_name, seq, observed_seq, content, size_bytes, idempotency_key, retention_class, redaction_class, source, observed_at, accepted_at)
 VALUES
-    ('${org_id}', '${project_id}', '${environment_id}', '${run_id}', 1, 'stdout', 1, 1, 'ok', 2, '${idem}', 'hot', 'internal', 'canary', now64(3));
+    ('${org_id}', '${project_id}', '${environment_id}', '${run_id}', '${run_id}', 1, 'stdout', 1, 1, 'ok', 2, '${idem}', 'hot', 'internal', 'canary', now64(3), now64(3));
 SQL
 
 count="$(

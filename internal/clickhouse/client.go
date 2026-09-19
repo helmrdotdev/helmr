@@ -65,7 +65,8 @@ func (c *Client) Ping(ctx context.Context) error {
 }
 
 func (c *Client) Select(ctx context.Context, dest any, query string, args ...any) error {
-	ctx, cancel := c.contextWithTimeout(ctx)
+	// An upstream deadline must not expand the historical API's read budget.
+	ctx, cancel := context.WithTimeout(ctx, defaultRequestTimeout)
 	defer cancel()
 	return c.conn.Select(ctx, dest, query, args...)
 }
@@ -182,6 +183,7 @@ func optionsFromConfig(cfg Config) (*ch.Options, error) {
 	}
 	options := &ch.Options{
 		Protocol:        ch.HTTP,
+		Compression:     &ch.Compression{Method: ch.CompressionLZ4},
 		Addr:            []string{base.Host},
 		Auth:            ch.Auth{Username: user, Password: cfg.Password},
 		HttpUrlPath:     base.EscapedPath(),

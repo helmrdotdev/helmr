@@ -185,3 +185,8 @@ output "worker_generation_bindings" {
     }
   }
 }
+
+output "clickhouse_bootstrap_task_definition_arn" {
+  description = "One-off ClickHouse account bootstrap task, when bootstrap mode is selected."
+  value       = module.controlplane.clickhouse_bootstrap_task_definition_arn
+}

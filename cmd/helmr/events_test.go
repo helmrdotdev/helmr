@@ -295,9 +295,7 @@ func TestRunLogsWaitReadyRetriesTelemetryLag(t *testing.T) {
 
 func TestRunEventsWaitReadyStopsAtBound(t *testing.T) {
 	withFastRunTelemetryPoll(t)
-	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
 		writeRunTelemetryTestError(w, http.StatusServiceUnavailable, "telemetry_lagging")
 	}))
 	defer server.Close()
@@ -311,9 +309,8 @@ func TestRunEventsWaitReadyStopsAtBound(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "wait for run telemetry readiness: context deadline exceeded") {
 		t.Fatalf("err=%v", err)
 	}
-	if requests := requests.Load(); requests < 2 {
-		t.Fatalf("requests=%d, want retries", requests)
-	}
+	// Retry behavior is covered by TestRunEventsWaitReadyRetriesTelemetryLag.
+	// A 5ms readiness bound may expire during the first request on a busy runner.
 }
 
 func TestRunEventsWaitReadyRejectsNonLaggingErrorsImmediately(t *testing.T) {

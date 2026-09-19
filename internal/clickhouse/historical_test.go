@@ -1,9 +1,13 @@
 package clickhouse
 
 import (
+	"context"
+	"errors"
 	"reflect"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/telemetry"
 )
 
 func TestHistoricalRowsDeclareClickHouseTagsForSelectedColumns(t *testing.T) {
@@ -16,6 +20,30 @@ func TestHistoricalRowsDeclareClickHouseTagsForSelectedColumns(t *testing.T) {
 		"run_id", "run_lease_id", "attempt_number", "stream_name",
 		"seq", "observed_seq", "content", "size_bytes", "observed_at",
 	})
+}
+
+type partialHistoricalClient struct{}
+
+func (partialHistoricalClient) Select(_ context.Context, dest any, _ string, _ ...any) error {
+	switch rows := dest.(type) {
+	case *[]eventRow:
+		*rows = []eventRow{{Seq: 1}}
+	case *[]runLogRow:
+		*rows = []runLogRow{{Seq: 1}}
+	}
+	return errors.New("query limit exceeded after a partial block")
+}
+
+func TestHistoricalReadDiscardsPartialRowsOnFailure(t *testing.T) {
+	reader := NewReader(partialHistoricalClient{})
+	events, err := reader.ListEvents(t.Context(), telemetry.EventQuery{AfterSeq: 10, Limit: 200})
+	if !errors.Is(err, telemetry.ErrHistoricalUnavailable) || len(events.Events) != 0 || events.LastSeq != 0 {
+		t.Fatalf("partial event page escaped: %+v %v", events, err)
+	}
+	logs, err := reader.ListRunLogChunks(t.Context(), telemetry.RunLogChunkQuery{AfterSeq: 10, Limit: 200})
+	if !errors.Is(err, telemetry.ErrHistoricalUnavailable) || len(logs.Chunks) != 0 || logs.LastSeq != 0 {
+		t.Fatalf("partial log page escaped: %+v %v", logs, err)
+	}
 }
 
 func TestHistoricalRowsMapUUIDStrings(t *testing.T) {

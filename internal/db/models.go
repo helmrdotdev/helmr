@@ -918,6 +918,7 @@ type TelemetryOutbox struct {
 	Payload            []byte              `json:"payload"`
 	Content            []byte              `json:"content"`
 	SizeBytes          pgtype.Int8         `json:"size_bytes"`
+	IngestSizeBytes    int64               `json:"ingest_size_bytes"`
 	ObservedSeq        pgtype.Int8         `json:"observed_seq"`
 	RedactionClass     string              `json:"redaction_class"`
 	RetentionClass     string              `json:"retention_class"`
