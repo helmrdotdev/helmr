@@ -43,7 +43,7 @@ func (task *guestRunLeaseTask) handleActorOutputAppend(
 		if response.Completed.Sequence <= 0 ||
 			response.Completed.Sequence > maxJavaScriptSafeInteger ||
 			strings.TrimSpace(response.Completed.ID) == "" ||
-			strings.TrimSpace(response.Completed.ContentType) == "" ||
+			strings.TrimSpace(response.Completed.Kind) == "" ||
 			!json.Valid(response.Completed.Data) {
 			return errors.New("actor output append response is invalid")
 		}
@@ -83,14 +83,9 @@ func workerActorOutputAppendRequest(
 	if len(data) == 0 || !json.Valid(data) {
 		return workerapi.AppendActorOutputRequest{}, errors.New("actor output append data must be valid JSON")
 	}
-	contentType := strings.TrimSpace(requested.GetContentType())
-	if contentType == "" {
-		return workerapi.AppendActorOutputRequest{}, errors.New("actor output append content type is required")
-	}
 	return workerapi.AppendActorOutputRequest{
 		CorrelationID:  requested.GetCorrelationId(),
 		Data:           data,
-		ContentType:    contentType,
 		IdempotencyKey: requested.GetIdempotencyKey(),
 	}, nil
 }

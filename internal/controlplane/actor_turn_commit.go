@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"uuid"
@@ -9,6 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
@@ -18,6 +20,11 @@ import (
 var errStaleActorTurnCommit = errors.New("actor turn commit is stale")
 
 type parsedActorTurnCommit struct {
+	turnID                 uuid.UUID
+	generation             int64
+	disposition            string
+	result                 json.RawMessage
+	fingerprint            string
 	lease                  parsedRunLeaseFence
 	correlationID          uuid.UUID
 	targetInputSequence    int64
@@ -27,6 +34,41 @@ type parsedActorTurnCommit struct {
 }
 
 func parseActorTurnCommitRequest(request workerapi.CommitActorTurnRequest) (parsedActorTurnCommit, error) {
+	turnID, err := parseCanonicalUUID("turn_id", request.TurnID)
+	if err != nil {
+		return parsedActorTurnCommit{}, err
+	}
+	if request.RunGeneration <= 0 {
+		return parsedActorTurnCommit{}, errors.New("run_generation must be positive")
+	}
+	if request.Disposition != "completed" && request.Disposition != "failed" {
+		return parsedActorTurnCommit{}, errors.New("disposition must be completed or failed")
+	}
+	payload := request.Result
+	if request.Disposition == "failed" {
+		if len(request.Result) != 0 || len(request.Error) == 0 {
+			return parsedActorTurnCommit{}, errors.New("failed settlement requires error and forbids result")
+		}
+		payload = request.Error
+	} else if len(request.Error) != 0 {
+		return parsedActorTurnCommit{}, errors.New("completed settlement forbids error")
+	}
+	var result json.RawMessage
+	if len(payload) != 0 {
+		result, err = canonicalJSON(payload)
+		if err != nil {
+			return parsedActorTurnCommit{}, errors.New("settlement payload must be valid JSON")
+		}
+	}
+	if request.Disposition == "failed" {
+		request.Error = result
+	} else {
+		request.Result = result
+	}
+	fingerprint, err := terminalRequestFingerprint("worker.turn.settle.v1", request)
+	if err != nil {
+		return parsedActorTurnCommit{}, err
+	}
 	lease, err := parseRunLeaseFence(request.Lease)
 	if err != nil {
 		return parsedActorTurnCommit{}, err
@@ -55,6 +97,7 @@ func parseActorTurnCommitRequest(request workerapi.CommitActorTurnRequest) (pars
 		}
 	}
 	return parsedActorTurnCommit{
+		turnID: turnID, generation: request.RunGeneration, disposition: request.Disposition, result: result, fingerprint: fingerprint,
 		lease: lease, correlationID: correlationID, targetInputSequence: request.TargetInputSequence,
 		baseWorkspaceVersionID: baseWorkspaceVersionID, tree: tree, artifact: request.Artifact,
 	}, nil
@@ -112,6 +155,14 @@ func (s *Server) commitActorTurn(
 			if replayed {
 				return nil
 			}
+			return errStaleActorTurnCommit
+		}
+		scope := session.TurnScope{EnvironmentID: pgvalue.MustUUIDValue(authority.run.EnvironmentID), SessionID: pgvalue.MustUUIDValue(authority.actor.ID), TurnID: commit.turnID, RunID: pgvalue.MustUUIDValue(authority.run.ID), AttemptNumber: authority.attempt.Number, RunGeneration: commit.generation}
+		input, err := session.ValidateTurn(ctx, work.q, scope)
+		if err != nil {
+			return staleActorTurnCommit(err)
+		}
+		if input.Sequence != commit.targetInputSequence {
 			return errStaleActorTurnCommit
 		}
 		if authority.actor.CommittedInputSequence+1 != commit.targetInputSequence ||
@@ -215,17 +266,12 @@ func (s *Server) commitActorTurn(
 				return staleActorTurnCommit(err)
 			}
 		}
-		authority.actor, err = work.q.AdvanceActorTurnCursor(ctx, db.AdvanceActorTurnCursorParams{
-			TargetInputSequence: commit.targetInputSequence, CommittedAt: committedAt,
-			EnvironmentID: authority.run.EnvironmentID, SessionID: authority.actor.ID,
-			WorkspaceID: authority.workspace.ID, RunID: authority.run.ID,
-			ExpectedRunGeneration: authority.actor.RunGeneration,
-			ExpectedInputSequence: commit.targetInputSequence - 1,
-		})
+		event, err := session.SettleTurn(ctx, work.q, scope, commit.disposition, commit.result, versionID, commit.fingerprint)
 		if err != nil {
 			return staleActorTurnCommit(err)
 		}
 		response, err = projectActorTurnResponse(request, commit, versionID)
+		response.EventID = pgvalue.UUIDString(event.ID)
 		return err
 	})
 	return response, err
@@ -266,6 +312,13 @@ func replayActorTurnCommit(
 	commit parsedActorTurnCommit,
 	authority runLeaseClaimAuthority,
 ) (workerapi.CommitActorTurnResponse, bool, error) {
+	input, err := store.LockSessionTurnInput(ctx, db.LockSessionTurnInputParams{EnvironmentID: authority.run.EnvironmentID, SessionID: authority.actor.ID, ID: pgvalue.UUID(commit.turnID)})
+	if err != nil {
+		return workerapi.CommitActorTurnResponse{}, false, staleActorTurnCommit(err)
+	}
+	if input.TurnStatus != commit.disposition || input.TerminalRequestFingerprint.String != commit.fingerprint || input.TurnRunID != authority.run.ID || input.TurnAttemptNumber.Int32 != authority.attempt.Number || input.RunGeneration.Int64 != commit.generation || !input.TerminalEventID.Valid {
+		return workerapi.CommitActorTurnResponse{}, false, nil
+	}
 	if authority.actor.CommittedInputSequence != commit.targetInputSequence ||
 		authority.workspaceMount.MaterializedVersionID != authority.workspaceLease.BaseWorkspaceVersionID {
 		return workerapi.CommitActorTurnResponse{}, false, nil
@@ -293,6 +346,7 @@ func replayActorTurnCommit(
 		return workerapi.CommitActorTurnResponse{}, false, nil
 	}
 	response, err := projectActorTurnResponse(request, commit, authority.workspace.HeadVersionID)
+	response.EventID = pgvalue.UUIDString(input.TerminalEventID)
 	return response, err == nil, err
 }
 
@@ -329,7 +383,8 @@ func staleActorTurnCommit(err error) error {
 		return err
 	}
 	if err == nil || errors.Is(err, pgx.ErrNoRows) || errors.Is(err, errStaleRunLeaseClaim) ||
-		errors.Is(err, errStaleRunFinalization) || errors.Is(err, errStaleActorCompletion) {
+		errors.Is(err, errStaleRunFinalization) || errors.Is(err, errStaleActorCompletion) ||
+		errors.Is(err, session.ErrTurnStopped) || errors.Is(err, session.ErrTurnNotActive) || errors.Is(err, session.ErrTurnScope) {
 		return errStaleActorTurnCommit
 	}
 	return err

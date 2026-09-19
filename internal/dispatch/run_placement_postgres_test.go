@@ -2184,6 +2184,11 @@ SELECT runtime_instance_id
 
 func prepareActorSuspendedRestore(t *testing.T, fixture runPlacementFixture) (uuid.UUID, uuid.UUID, uuid.UUID) {
 	t.Helper()
+	return prepareSuspendedRestore(t, fixture, true)
+}
+
+func prepareSuspendedRestore(t *testing.T, fixture runPlacementFixture, actor bool) (uuid.UUID, uuid.UUID, uuid.UUID) {
+	t.Helper()
 	reserved, err := fixture.authority.PlaceReadyRun(fixture.ctx, fixture.candidate())
 	if err != nil {
 		t.Fatal(err)
@@ -2225,34 +2230,38 @@ DEFERRABLE INITIALLY DEFERRED`)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	dbtest.MustExec(t, fixture.ctx, tx, `SET CONSTRAINTS ALL DEFERRED`)
-	dbtest.MustExec(t, fixture.ctx, tx, `
+	var speculativeSequence any
+	if actor {
+		speculativeSequence = int64(1)
+		dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO deployment_definitions (
     id, environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest
 ) VALUES ($1, $2, $3, 'actor', 'test-actor', 0, '{}'::jsonb, decode(repeat('06', 32), 'hex'))`,
-		actorDefinitionID, fixture.environmentID, fixture.deploymentID)
-	dbtest.MustExec(t, fixture.ctx, tx, `
+			actorDefinitionID, fixture.environmentID, fixture.deploymentID)
+		dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO sessions (
     id, environment_id, actor_declared_id,
     deployment_definition_id, workspace_id, current_run_id,
     next_input_sequence, committed_input_sequence, run_queue_name,
     run_max_active_duration_ms
 ) VALUES ($1, $2, 'test-actor', $3, $4, $5, 2, 1, 'default', 300000)`,
-		actorID, fixture.environmentID, actorDefinitionID, fixture.workspaceID, fixture.runID)
-	dbtest.MustExec(t, fixture.ctx, tx, `
+			actorID, fixture.environmentID, actorDefinitionID, fixture.workspaceID, fixture.runID)
+		dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE runs
    SET deployment_definition_id = $2, entrypoint_kind = 'actor',
        entrypoint_declared_id = 'test-actor', session_id = $3,
        cause_kind = 'actor_start', session_input_start_sequence = 1,
        session_input_high_watermark = 1, payload = NULL
  WHERE id = $1`, fixture.runID, actorDefinitionID, actorID)
-	dbtest.MustExec(t, fixture.ctx, tx, `
+		dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE run_attempts
    SET entrypoint_kind = 'actor', session_input_start_sequence = 1,
        entrypoint_entered_at = transaction_timestamp()
  WHERE run_id = $1 AND number = 1`, fixture.runID)
-	dbtest.MustExec(t, fixture.ctx, tx, `
+		dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE workspaces SET owner_run_id = NULL, owner_session_id = $2 WHERE id = $1`, fixture.workspaceID, actorID)
-	dbtest.MustExec(t, fixture.ctx, tx, `INSERT INTO cas_objects (org_id, digest, size_bytes, media_type) VALUES ($1, $2, 1, $3)`,
+	}
+	dbtest.MustExec(t, fixture.ctx, tx, `INSERT INTO cas_objects (org_id, digest, size_bytes, media_type) VALUES ($1, $2, 1, $3) ON CONFLICT (org_id, digest) DO NOTHING`,
 		fixture.orgID, privateDigest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
@@ -2282,11 +2291,11 @@ INSERT INTO run_checkpoints (
     runtime_config_artifact_id, vm_state_artifact_id,
     memory_artifact_id, scratch_disk_artifact_id,
     status, restore_manifest, ready_request_fingerprint, ready_at
-) VALUES ($1, $2, 1, $3, $4, $5, $6, $7, $8, 1, $9, $10, $11, $12,
+) VALUES ($1, $2, 1, $3, $4, $5, $6, $7, $8, $13, $9, $10, $11, $12,
           'ready', '{"kind":"suspend"}'::jsonb, 'sha256:c6a8f322cea284f70d8d5bdfa780132e389aca57ace69073ac76e8daa12dacc8', now())`,
 		checkpointID, fixture.runID, waitID, grant.Lease.ID, sourceWorkspaceLeaseID,
 		fixture.workspaceID, baseWorkspaceVersionID, privateVersionID,
-		checkpointArtifacts.RuntimeConfig, checkpointArtifacts.VMState, checkpointArtifacts.Memory, checkpointArtifacts.ScratchDisk)
+		checkpointArtifacts.RuntimeConfig, checkpointArtifacts.VMState, checkpointArtifacts.Memory, checkpointArtifacts.ScratchDisk, speculativeSequence)
 	dbtest.MustExec(t, fixture.ctx, tx, `UPDATE run_waits SET suspend_checkpoint_id = $2, resume_request_version = 1 WHERE id = $1`, waitID, checkpointID)
 	dbtest.MustExec(t, fixture.ctx, tx, `UPDATE runs SET current_run_lease_id = NULL, revision = 3 WHERE id = $1`, fixture.runID)
 	dbtest.MustExec(t, fixture.ctx, tx, `

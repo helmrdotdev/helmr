@@ -844,6 +844,13 @@ SELECT runs.org_id,
             AND run_leases.finalization_kind IS NOT NULL
             AND run_leases.finalization_started_at IS NOT NULL
             AND run_leases.finalization_request_fingerprint IS NOT NULL))
+   -- An active or held Actor needs Turn recovery, not fresh execution recovery.
+   -- Exclude it before the bound so it cannot occupy every reconciler pass.
+   AND NOT EXISTS (
+       SELECT 1 FROM sessions
+        WHERE sessions.id = runs.session_id
+          AND (sessions.active_turn_id IS NOT NULL OR sessions.dispatch_hold_id IS NOT NULL)
+   )
    AND NOT EXISTS (
        SELECT 1
          FROM run_waits
@@ -946,6 +953,62 @@ WITH RECURSIVE candidates AS MATERIALIZED (
             OR worker_instances.current_epoch IS DISTINCT FROM run_leases.worker_epoch
             OR workspace_mounts.lost_at <= transaction_timestamp()
             OR workspace_mounts.failed_at <= transaction_timestamp())
+       -- This is an eligibility hint before the bounded scan. All execution,
+       -- Session and checkpoint authority is checked again under locks below.
+       -- An active Turn may continue only from its recoverable same-attempt
+       -- checkpoint; held or nonrecoverable Actors must not starve Task recovery.
+       AND (runs.entrypoint_kind = 'task'
+            OR EXISTS (
+                SELECT 1
+                  FROM sessions
+                 WHERE sessions.id = runs.session_id
+                   AND sessions.current_run_id = runs.id
+                   AND sessions.status IN ('open', 'closing')
+                   AND sessions.dispatch_hold_id IS NULL
+                   AND (sessions.active_turn_id IS NULL
+                        OR EXISTS (
+                            SELECT 1
+                              FROM run_checkpoints
+                              JOIN workspace_versions
+                                ON workspace_versions.id = run_checkpoints.private_workspace_version_id
+                               AND workspace_versions.workspace_id = run_checkpoints.workspace_id
+                              JOIN run_leases AS source_run_leases
+                                ON source_run_leases.id = run_checkpoints.source_run_lease_id
+                               AND source_run_leases.run_id = run_checkpoints.run_id
+                               AND source_run_leases.attempt_number = run_checkpoints.attempt_number
+                               AND source_run_leases.workspace_id = run_checkpoints.workspace_id
+                             WHERE run_checkpoints.id = run_waits.suspend_checkpoint_id
+                               AND run_checkpoints.run_id = runs.id
+                               AND run_checkpoints.attempt_number = runs.current_attempt_number
+                               AND run_checkpoints.run_wait_id = run_waits.id
+                               AND run_checkpoints.workspace_id = runs.workspace_id
+                               AND run_checkpoints.status = 'ready'
+                               AND (run_checkpoints.expires_at IS NULL
+                                    OR run_checkpoints.expires_at > transaction_timestamp())
+                               AND workspace_versions.status = 'private'
+                               AND source_run_leases.status = 'checkpointed'
+                               AND run_checkpoints.actor_speculative_input_sequence
+                                   BETWEEN sessions.committed_input_sequence
+                                       AND sessions.next_input_sequence - 1
+                               AND (run_leases.status <> 'running'
+                                    OR runs.active_started_at IS NULL
+                                    OR runs.active_started_at
+                                       + (GREATEST(runs.max_active_duration_ms - runs.active_elapsed_ms, 0)::text
+                                          || ' milliseconds')::interval
+                                       > LEAST(
+                                           run_leases.expires_at,
+                                           COALESCE(worker_instances.lost_at, 'infinity'::timestamptz),
+                                           COALESCE(worker_instances.termination_ready_at, 'infinity'::timestamptz),
+                                           CASE WHEN worker_instances.current_epoch IS DISTINCT FROM run_leases.worker_epoch
+                                                THEN COALESCE(worker_instances.epoch_started_at, worker_instances.updated_at)
+                                                ELSE 'infinity'::timestamptz END,
+                                           CASE WHEN runtime_instances.observed_state IN ('lost', 'failed')
+                                                THEN runtime_instances.terminal_at ELSE 'infinity'::timestamptz END,
+                                           COALESCE(workspace_mounts.lost_at, 'infinity'::timestamptz),
+                                           COALESCE(workspace_mounts.failed_at, 'infinity'::timestamptz)
+                                       ))
+                        ))
+            ))
      ORDER BY runs.id
      LIMIT sqlc.arg(limit_count)
 ), locked_actor_candidates AS MATERIALIZED (
@@ -958,6 +1021,7 @@ WITH RECURSIVE candidates AS MATERIALIZED (
         ON sessions.id = candidates.session_id
        AND sessions.current_run_id = candidates.run_id
        AND sessions.status IN ('open', 'closing')
+       AND sessions.dispatch_hold_id IS NULL
      WHERE candidates.entrypoint_kind = 'actor'
      ORDER BY sessions.id
      FOR UPDATE OF sessions SKIP LOCKED
@@ -1410,6 +1474,13 @@ WITH RECURSIVE candidates AS MATERIALIZED (
        AND run_leases.expires_at = locked_checkpoints.run_lease_expires_at
        AND run_leases.start_deadline_at = locked_checkpoints.start_deadline_at
        AND locked_checkpoints.authority_loss_at <= transaction_timestamp()
+       -- Same-attempt checkpoint continuation preserves an active Turn. Losing
+       -- that proof must enter Turn recovery, not this legacy terminal branch.
+       AND (locked_checkpoints.checkpoint_recoverable
+            OR locked_checkpoints.entrypoint_kind <> 'actor'
+            OR NOT EXISTS (SELECT 1 FROM sessions
+                            WHERE sessions.id = locked_checkpoints.session_id
+                              AND sessions.active_turn_id IS NOT NULL))
     RETURNING run_leases.id, locked_checkpoints.checkpoint_recoverable
 ), expired_workspace_leases AS (
     UPDATE workspace_leases
@@ -1625,6 +1696,7 @@ WITH RECURSIVE candidates AS MATERIALIZED (
        AND sessions.current_run_id = failed_runs.id
        AND sessions.run_generation = locked_checkpoints.actor_run_generation
        AND sessions.status IN ('open', 'closing')
+       AND sessions.active_turn_id IS NULL AND sessions.dispatch_hold_id IS NULL
        AND failed_waits.run_id = failed_runs.id
     RETURNING sessions.id, failed_runs.id AS run_id
 ), released_owners AS (

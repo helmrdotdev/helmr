@@ -15,12 +15,19 @@ import (
 )
 
 func TestParentOwnedQueuedChildExpiryResolvesEveryWaitStatus(t *testing.T) {
-	for _, suspension := range []db.RunWaitStatus{
-		db.RunWaitStatusHot,
-		db.RunWaitStatusCheckpointing,
-		db.RunWaitStatusParked,
+	for _, test := range []struct {
+		name       string
+		suspension db.RunWaitStatus
+		actor      bool
+	}{
+		{"hot", db.RunWaitStatusHot, false},
+		{"checkpointing", db.RunWaitStatusCheckpointing, false},
+		{"parked", db.RunWaitStatusParked, false},
+		{"active Actor hot", db.RunWaitStatusHot, true},
+		{"active Actor parked", db.RunWaitStatusParked, true},
 	} {
-		t.Run(string(suspension), func(t *testing.T) {
+		suspension := test.suspension
+		t.Run(test.name, func(t *testing.T) {
 			ctx := context.Background()
 			fixture := newPostgresFixture(t)
 			parent := newQueuedChildParent(t, ctx, fixture, suspension)
@@ -92,6 +99,36 @@ UPDATE run_waits
 				t.Fatal(err)
 			}
 
+			var actorID, inputID uuid.UUID
+			if test.actor {
+				actorID = fixture.convertToActor(t, ctx, leasedRun{runID: parent.runID, leaseID: parent.leaseID}, `{"enabled":false}`)
+				inputID = uuid.NewV7()
+				dbtest.MustExec(t, ctx, fixture.pool, `INSERT INTO session_records(id,environment_id,session_id,direction,sequence,data) VALUES($1,$2,$3,'input',2,'{}')`, inputID, fixture.environmentID, actorID)
+				admission, err := fixture.pool.Begin(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer admission.Rollback(context.Background())
+				if _, err := db.New(admission).ActivateSessionTurn(ctx, db.ActivateSessionTurnParams{EnvironmentID: pgvalue.UUID(fixture.environmentID), SessionID: pgvalue.UUID(actorID), TurnID: pgvalue.UUID(inputID), RunID: pgvalue.UUID(parent.runID), AttemptNumber: pgtype.Int4{Int32: 1, Valid: true}, InputSequence: 2}); err != nil {
+					t.Fatal(err)
+				}
+				if err := admission.Commit(ctx); err != nil {
+					t.Fatal(err)
+				}
+				// This owner is also used by child execution failure/recovery.
+				graphTx, err := fixture.pool.Begin(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer graphTx.Rollback(context.Background())
+				if _, err := LockOwnedFinalization(ctx, graphTx, OwnedFinalizationRequest{OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID, RunID: child.runID}); err != nil {
+					t.Fatal(err)
+				}
+				if err := graphTx.Rollback(ctx); err != nil {
+					t.Fatal(err)
+				}
+			}
+
 			worker, err := NewQueuedChildExpiryWorker(nil, fixture.pool)
 			if err != nil {
 				t.Fatal(err)
@@ -145,6 +182,18 @@ SELECT condition_result, condition_status, suspension_status
 			if waitStatus != db.WaitStatusCompleted {
 				t.Fatalf("condition state = %s", waitStatus)
 			}
+			if test.actor {
+				var active uuid.UUID
+				var cursor int64
+				var status, turnStatus string
+				if err := fixture.pool.QueryRow(ctx, `SELECT s.active_turn_id,s.committed_input_sequence,s.status,r.turn_status FROM sessions s JOIN session_records r ON r.id=s.active_turn_id WHERE s.id=$1`, actorID).Scan(&active, &cursor, &status, &turnStatus); err != nil {
+					t.Fatal(err)
+				}
+				if active != inputID || cursor != 1 || status != "open" || turnStatus != "running" {
+					t.Fatalf("child expiry changed parent Turn: %s %d %s %s", active, cursor, status, turnStatus)
+				}
+			}
+
 			switch suspension {
 			case db.RunWaitStatusHot:
 				if suspensionStatus != db.RunWaitStatusReleased {

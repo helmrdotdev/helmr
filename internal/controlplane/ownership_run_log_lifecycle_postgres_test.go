@@ -25,6 +25,9 @@ func TestRunLogAppendLifecycleOwnersPostgres(t *testing.T) {
 		for _, ordering := range []string{"append holds Run first", "overlapping statements"} {
 			t.Run(owner+"/"+ordering, func(t *testing.T) {
 				f := newActorCheckpointFixture(t)
+				if owner == "checkpoint" {
+					f.turn(t, 1, f.capture(t, "input1"), true)
+				}
 				// This is a deadlock bound, not a production latency budget.
 				ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 				defer cancel()

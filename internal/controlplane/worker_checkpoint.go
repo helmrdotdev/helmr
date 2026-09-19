@@ -590,7 +590,7 @@ func finishCheckpointFailedActor(
 		return staleRunLeaseClaim(err)
 	}
 	actor, err := store.ReconcileActorTerminalRun(ctx, db.ReconcileActorTerminalRunParams{
-		Status: actorStatus, CommittedInputSequence: pgtype.Int8{}, Failure: actorFailure,
+		Status: actorStatus, Failure: actorFailure,
 		FailureRunID: failureRunID, CompletedAt: failedAt,
 		EnvironmentID: authority.actor.EnvironmentID, ID: authority.actor.ID,
 		WorkspaceID: authority.workspace.ID, RunID: authority.run.ID,

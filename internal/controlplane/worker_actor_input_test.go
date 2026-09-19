@@ -7,6 +7,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/idempotency"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -65,14 +66,15 @@ func TestActorInputSendFailurePreservesSemanticCodes(t *testing.T) {
 }
 
 func TestAuthorizeActorInputSendSourceRequiresExactLiveFence(t *testing.T) {
-	_, store, worker, turnRequest, _ := newActorTurnCommitFixture(t)
-	request := workerapi.SendActorInputRequest{Lease: turnRequest.Lease}
+	f := newActorCheckpointFixture(t)
+	store, worker := f.server.db, f.worker
+	request := workerapi.SendActorInputRequest{Lease: f.fence()}
 	if err := authorizeActorInputSendSource(
 		t.Context(),
 		store,
 		worker,
 		request,
-		store.renewal.EnvironmentID,
+		pgvalue.UUID(f.EnvironmentID),
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +84,7 @@ func TestAuthorizeActorInputSendSourceRequiresExactLiveFence(t *testing.T) {
 		store,
 		worker,
 		request,
-		store.renewal.EnvironmentID,
+		pgvalue.UUID(f.EnvironmentID),
 	); !errors.Is(err, errStaleActorInputSend) {
 		t.Fatalf("altered fence error = %v", err)
 	}

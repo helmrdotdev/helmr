@@ -807,6 +807,10 @@ type Session struct {
 	RunGeneration            int64              `json:"run_generation"`
 	Revision                 int64              `json:"revision"`
 	ManualRunCancelled       bool               `json:"manual_run_cancelled"`
+	ActiveTurnID             pgtype.UUID        `json:"active_turn_id"`
+	DispatchHoldID           pgtype.UUID        `json:"dispatch_hold_id"`
+	DispatchHoldReason       pgtype.Text        `json:"dispatch_hold_reason"`
+	NextEventSequence        int64              `json:"next_event_sequence"`
 	Failure                  []byte             `json:"failure"`
 	FailureRunID             pgtype.UUID        `json:"failure_run_id"`
 	NextInputSequence        int64              `json:"next_input_sequence"`
@@ -830,19 +834,42 @@ type Session struct {
 	FailedAt                 pgtype.Timestamptz `json:"failed_at"`
 }
 
-type SessionRecord struct {
+type SessionEvent struct {
 	ID                    pgtype.UUID        `json:"id"`
 	EnvironmentID         pgtype.UUID        `json:"environment_id"`
 	SessionID             pgtype.UUID        `json:"session_id"`
-	Direction             string             `json:"direction"`
+	TurnID                pgtype.UUID        `json:"turn_id"`
+	WorkspaceID           pgtype.UUID        `json:"workspace_id"`
 	Sequence              int64              `json:"sequence"`
+	Kind                  string             `json:"kind"`
 	Data                  []byte             `json:"data"`
-	ContentType           string             `json:"content_type"`
-	SourceRunID           pgtype.UUID        `json:"source_run_id"`
 	ProducerRunID         pgtype.UUID        `json:"producer_run_id"`
-	ProducerAttemptNumber pgtype.Int4        `json:"producer_attempt_number"`
-	ClaimID               pgtype.UUID        `json:"claim_id"`
+	ProducerAttemptNumber int32              `json:"producer_attempt_number"`
+	RunGeneration         int64              `json:"run_generation"`
+	WorkspaceVersionID    pgtype.UUID        `json:"workspace_version_id"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+}
+
+type SessionRecord struct {
+	ID                         pgtype.UUID        `json:"id"`
+	EnvironmentID              pgtype.UUID        `json:"environment_id"`
+	SessionID                  pgtype.UUID        `json:"session_id"`
+	Direction                  string             `json:"direction"`
+	Sequence                   int64              `json:"sequence"`
+	Data                       []byte             `json:"data"`
+	ContentType                string             `json:"content_type"`
+	SourceRunID                pgtype.UUID        `json:"source_run_id"`
+	ProducerRunID              pgtype.UUID        `json:"producer_run_id"`
+	ProducerAttemptNumber      pgtype.Int4        `json:"producer_attempt_number"`
+	ClaimID                    pgtype.UUID        `json:"claim_id"`
+	TurnStatus                 string             `json:"turn_status"`
+	RunGeneration              pgtype.Int8        `json:"run_generation"`
+	TurnRunID                  pgtype.UUID        `json:"turn_run_id"`
+	TurnAttemptNumber          pgtype.Int4        `json:"turn_attempt_number"`
+	InterruptRequestedAt       pgtype.Timestamptz `json:"interrupt_requested_at"`
+	TerminalEventID            pgtype.UUID        `json:"terminal_event_id"`
+	TerminalRequestFingerprint pgtype.Text        `json:"terminal_request_fingerprint"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
 }
 
 type TelemetryOutbox struct {

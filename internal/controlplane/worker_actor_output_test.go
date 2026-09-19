@@ -13,8 +13,9 @@ import (
 func TestParseWorkerActorOutputAppendNormalizesPayload(t *testing.T) {
 	lease := validRunLeaseAssignment(uuid.NewV7())
 	request := workerapi.AppendActorOutputRequest{
+		TurnID: uuid.NewV7().String(), RunGeneration: 1,
 		Lease: lease.Fence(), CorrelationID: uuid.NewV7().String(),
-		Data: json.RawMessage(`{"b":2,"a":1}`), ContentType: " application/json ",
+		Data:           json.RawMessage(`{"b":2,"a":1}`),
 		IdempotencyKey: "output-1",
 	}
 	parsed, err := parseWorkerActorOutputAppend(request)
@@ -24,7 +25,6 @@ func TestParseWorkerActorOutputAppendNormalizesPayload(t *testing.T) {
 	if parsed.lease.leaseID.String() != lease.ID ||
 		parsed.correlationID.String() != request.CorrelationID ||
 		string(parsed.data) != `{"a":1,"b":2}` ||
-		parsed.contentType != "application/json" ||
 		parsed.idempotencyKey != "output-1" {
 		t.Fatalf("parsed = %+v", parsed)
 	}
@@ -33,11 +33,11 @@ func TestParseWorkerActorOutputAppendNormalizesPayload(t *testing.T) {
 		t.Fatal("invalid JSON was accepted")
 	}
 	request.Data = json.RawMessage(`null`)
-	request.ContentType = " "
+	request.RunGeneration = 0
 	if _, err := parseWorkerActorOutputAppend(request); err == nil {
-		t.Fatal("empty normalized content type was accepted")
+		t.Fatal("missing execution generation was accepted")
 	}
-	request.ContentType = "application/json"
+	request.RunGeneration = 1
 	request.IdempotencyKey = " output-1 "
 	if _, err := parseWorkerActorOutputAppend(request); err == nil {
 		t.Fatal("padded idempotency key was accepted")
@@ -53,8 +53,6 @@ func TestActorOutputAppendFailurePreservesSemanticCodes(t *testing.T) {
 		{conflict, "idempotency_conflict"},
 		{errActorOutputTooLarge, "actor_output_too_large"},
 		{errActorSequenceExhausted, "actor_sequence_exhausted"},
-		{errActorOutputUnavailable, "actor_not_open"},
-		{errActorOutputAppendConflict, "actor_output_conflict"},
 	}
 	for _, test := range tests {
 		failure, ok := actorOutputAppendFailure(test.err)

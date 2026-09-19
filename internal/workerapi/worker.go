@@ -353,6 +353,11 @@ type CompleteActorRequest struct {
 }
 
 type CommitActorTurnRequest struct {
+	TurnID                 string                `json:"turn_id"`
+	RunGeneration          int64                 `json:"run_generation"`
+	Disposition            string                `json:"disposition"`
+	Result                 json.RawMessage       `json:"result,omitempty"`
+	Error                  json.RawMessage       `json:"error,omitempty"`
 	Lease                  RunLeaseFence         `json:"lease"`
 	CorrelationID          string                `json:"correlation_id"`
 	TargetInputSequence    int64                 `json:"target_input_sequence"`
@@ -362,6 +367,7 @@ type CommitActorTurnRequest struct {
 }
 
 type CommitActorTurnResponse struct {
+	EventID                string                `json:"event_id"`
 	Lease                  RunLeaseFence         `json:"lease"`
 	CorrelationID          string                `json:"correlation_id"`
 	CommittedInputSequence int64                 `json:"committed_input_sequence"`
@@ -535,16 +541,17 @@ type InvokeChildTaskResponse struct {
 }
 
 type AppendActorOutputRequest struct {
+	TurnID         string          `json:"turn_id"`
+	RunGeneration  int64           `json:"run_generation"`
 	Lease          RunLeaseFence   `json:"lease"`
 	CorrelationID  string          `json:"correlation_id"`
 	Data           json.RawMessage `json:"data"`
-	ContentType    string          `json:"content_type"`
 	IdempotencyKey string          `json:"idempotency_key,omitempty"`
 }
 
 type AppendActorOutputResponse struct {
 	CorrelationID string                   `json:"correlation_id"`
-	Completed     *api.SessionOutput       `json:"completed,omitempty"`
+	Completed     *SessionEvent            `json:"completed,omitempty"`
 	Failed        *RuntimeOperationFailure `json:"failed,omitempty"`
 }
 
@@ -1060,4 +1067,18 @@ type CheckpointFailedRequest struct {
 	RunWaitID      string        `json:"run_wait_id"`
 	CheckpointID   string        `json:"checkpoint_id"`
 	Error          string        `json:"error"`
+}
+
+// SessionEvent is the worker receipt for the unified Session timeline.
+type SessionEvent struct {
+	ID            string          `json:"id"`
+	SessionID     string          `json:"session_id"`
+	TurnID        string          `json:"turn_id"`
+	Sequence      int64           `json:"sequence"`
+	Kind          string          `json:"kind"`
+	Data          json.RawMessage `json:"data"`
+	RunID         string          `json:"run_id"`
+	AttemptNumber int32           `json:"attempt_number"`
+	RunGeneration int64           `json:"run_generation"`
+	CreatedAt     time.Time       `json:"created_at"`
 }

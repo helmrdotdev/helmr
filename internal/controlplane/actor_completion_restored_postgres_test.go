@@ -63,7 +63,7 @@ SELECT runs.status,
 		t.Fatalf("Workspace frontier = head:%s mount:%s parent:%s; want new D mounted with parent C:%s",
 			headVersionID, mountVersionID, publishedParentID, fixture.privateVersionID)
 	}
-	if committedInput != 2 || terminalInput != 2 {
+	if committedInput != 1 || terminalInput != 1 {
 		t.Fatalf("Actor cursor = committed:%d terminal:%d", committedInput, terminalInput)
 	}
 }
@@ -457,7 +457,7 @@ UPDATE workspace_mounts SET materialized_version_id = $2 WHERE id = $1`, mountID
 	request := workerapi.CompleteActorRequest{
 		Lease: assignment.Fence(),
 		Outcome: workerapi.ActorOutcome{
-			TerminalInputSequence: 2,
+			TerminalInputSequence: 1,
 			Succeeded:             &workerapi.ActorSucceeded{},
 		},
 		Workspace: workerapi.TaskWorkspaceProof{
@@ -489,7 +489,7 @@ UPDATE workspace_mounts SET materialized_version_id = $2 WHERE id = $1`, mountID
 	finalizationFingerprint := request.Workspace.Captured.Receipt.RequestFingerprint
 	if rollback {
 		request.Outcome = workerapi.ActorOutcome{
-			TerminalInputSequence: 2,
+			TerminalInputSequence: 1,
 			Failed:                &workerapi.TaskFailure{Message: "actor failed"},
 		}
 		rolledBack := validTaskWorkspaceRollback(t, request.Workspace.Captured)

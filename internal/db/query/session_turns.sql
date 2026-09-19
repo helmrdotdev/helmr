@@ -57,19 +57,3 @@ UPDATE run_checkpoints
                                             AND sqlc.arg(target_input_sequence)::bigint
    AND status = 'ready'
 RETURNING run_checkpoints.*;
-
--- name: AdvanceActorTurnCursor :one
-UPDATE sessions
-   SET committed_input_sequence = sqlc.arg(target_input_sequence),
-       revision = revision + 1,
-       updated_at = sqlc.arg(committed_at)
- WHERE environment_id = sqlc.arg(environment_id)
-   AND id = sqlc.arg(session_id)
-   AND workspace_id = sqlc.arg(workspace_id)
-   AND current_run_id = sqlc.arg(run_id)
-   AND run_generation = sqlc.arg(expected_run_generation)
-   AND status IN ('open', 'closing')
-   AND committed_input_sequence = sqlc.arg(expected_input_sequence)
-   AND sqlc.arg(target_input_sequence) = sqlc.arg(expected_input_sequence) + 1
-   AND sqlc.arg(target_input_sequence) < next_input_sequence
-RETURNING *;

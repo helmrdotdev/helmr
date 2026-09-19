@@ -282,6 +282,7 @@ WITH created_run AS (
        AND sessions.run_generation = $8
        AND sessions.status IN ('open', 'closing')
        AND sessions.manual_run_cancelled = false
+       AND sessions.active_turn_id IS NULL AND sessions.dispatch_hold_id IS NULL
        AND sessions.committed_input_sequence < sessions.next_input_sequence - 1
        AND NOT EXISTS (
            SELECT 1
@@ -990,38 +991,36 @@ UPDATE sessions
        current_run_id = NULL,
        run_generation = run_generation + 1,
        revision = revision + 1,
-       committed_input_sequence = COALESCE($2, committed_input_sequence),
-       failure = $3,
-       failure_run_id = $4,
-       closed_at = CASE WHEN $1::text = 'closed' THEN $5 ELSE closed_at END,
-       failed_at = CASE WHEN $1::text = 'failed' THEN $5 ELSE failed_at END,
-       updated_at = $5
- WHERE environment_id = $6
-   AND id = $7
-   AND workspace_id = $8
-   AND current_run_id = $9
-   AND run_generation = $10
+       failure = $2,
+       failure_run_id = $3,
+       closed_at = CASE WHEN $1::text = 'closed' THEN $4 ELSE closed_at END,
+       failed_at = CASE WHEN $1::text = 'failed' THEN $4 ELSE failed_at END,
+       updated_at = $4
+ WHERE environment_id = $5
+   AND id = $6
+   AND workspace_id = $7
+   AND current_run_id = $8
+   AND run_generation = $9
    AND status IN ('open', 'closing')
-RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, manual_run_cancelled, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
+   AND active_turn_id IS NULL AND dispatch_hold_id IS NULL
+RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, manual_run_cancelled, active_turn_id, dispatch_hold_id, dispatch_hold_reason, next_event_sequence, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
 `
 
 type ReconcileActorTerminalRunParams struct {
-	Status                 string             `json:"status"`
-	CommittedInputSequence pgtype.Int8        `json:"committed_input_sequence"`
-	Failure                []byte             `json:"failure"`
-	FailureRunID           pgtype.UUID        `json:"failure_run_id"`
-	CompletedAt            pgtype.Timestamptz `json:"completed_at"`
-	EnvironmentID          pgtype.UUID        `json:"environment_id"`
-	ID                     pgtype.UUID        `json:"id"`
-	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
-	RunID                  pgtype.UUID        `json:"run_id"`
-	ExpectedRunGeneration  int64              `json:"expected_run_generation"`
+	Status                string             `json:"status"`
+	Failure               []byte             `json:"failure"`
+	FailureRunID          pgtype.UUID        `json:"failure_run_id"`
+	CompletedAt           pgtype.Timestamptz `json:"completed_at"`
+	EnvironmentID         pgtype.UUID        `json:"environment_id"`
+	ID                    pgtype.UUID        `json:"id"`
+	WorkspaceID           pgtype.UUID        `json:"workspace_id"`
+	RunID                 pgtype.UUID        `json:"run_id"`
+	ExpectedRunGeneration int64              `json:"expected_run_generation"`
 }
 
 func (q *Queries) ReconcileActorTerminalRun(ctx context.Context, arg ReconcileActorTerminalRunParams) (Session, error) {
 	row := q.db.QueryRow(ctx, reconcileActorTerminalRun,
 		arg.Status,
-		arg.CommittedInputSequence,
 		arg.Failure,
 		arg.FailureRunID,
 		arg.CompletedAt,
@@ -1043,6 +1042,10 @@ func (q *Queries) ReconcileActorTerminalRun(ctx context.Context, arg ReconcileAc
 		&i.RunGeneration,
 		&i.Revision,
 		&i.ManualRunCancelled,
+		&i.ActiveTurnID,
+		&i.DispatchHoldID,
+		&i.DispatchHoldReason,
+		&i.NextEventSequence,
 		&i.Failure,
 		&i.FailureRunID,
 		&i.NextInputSequence,

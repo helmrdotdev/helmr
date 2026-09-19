@@ -610,6 +610,12 @@ SELECT runs.current_run_lease_id, run_leases.status
 func prepareFreshRunLease(t *testing.T) (runPlacementFixture, pgtype.UUID, pgtype.UUID) {
 	t.Helper()
 	fixture := newRunPlacementFixture(t)
+	leaseID, runtimeID := prepareFreshRunLeaseForFixture(t, fixture)
+	return fixture, leaseID, runtimeID
+}
+
+func prepareFreshRunLeaseForFixture(t *testing.T, fixture runPlacementFixture) (pgtype.UUID, pgtype.UUID) {
+	t.Helper()
 	reserved, err := fixture.authority.PlaceReadyRun(fixture.ctx, fixture.candidate())
 	if err != nil {
 		t.Fatal(err)
@@ -633,7 +639,7 @@ UPDATE run_leases
        start_deadline_at = transaction_timestamp() - interval '9 minutes',
        expires_at = transaction_timestamp() + interval '5 minutes'
  WHERE id = $1`, granted.Lease.ID)
-	return fixture, granted.Lease.ID, reserved.RuntimeInstanceID
+	return granted.Lease.ID, reserved.RuntimeInstanceID
 }
 
 func convertFreshRunToActor(t *testing.T, fixture runPlacementFixture) uuid.UUID {

@@ -930,6 +930,11 @@ CREATE TABLE sessions (
     run_generation BIGINT NOT NULL DEFAULT 1 CHECK (run_generation > 0),
     revision BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0),
     manual_run_cancelled BOOLEAN NOT NULL DEFAULT false,
+    active_turn_id UUID,
+    dispatch_hold_id UUID,
+    dispatch_hold_reason TEXT CHECK (dispatch_hold_reason IN ('interrupt_requested', 'interrupted', 'recovery_required', 'recovered')),
+    next_event_sequence BIGINT NOT NULL DEFAULT 1 CHECK (next_event_sequence BETWEEN 1 AND 9007199254740992),
+    CHECK ((dispatch_hold_id IS NULL) = (dispatch_hold_reason IS NULL)),
     failure JSONB,
     failure_run_id UUID,
     next_input_sequence BIGINT NOT NULL DEFAULT 1 CHECK (next_input_sequence BETWEEN 1 AND 9007199254740992),
@@ -1312,7 +1317,19 @@ CREATE TABLE session_records (
     producer_run_id UUID,
     producer_attempt_number INTEGER,
     claim_id UUID,
+    turn_status TEXT NOT NULL DEFAULT 'queued' CHECK (turn_status IN ('queued', 'running', 'completed', 'failed', 'interrupted')),
+    run_generation BIGINT CHECK (run_generation > 0),
+    turn_run_id UUID,
+    turn_attempt_number INTEGER,
+    interrupt_requested_at TIMESTAMPTZ,
+    terminal_event_id UUID,
+    terminal_request_fingerprint TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK ((turn_status = 'queued') = (run_generation IS NULL)),
+    CHECK ((run_generation IS NULL) = (turn_run_id IS NULL)),
+    CHECK ((run_generation IS NULL) = (turn_attempt_number IS NULL)),
+    CHECK ((turn_status IN ('completed', 'failed', 'interrupted')) = (terminal_event_id IS NOT NULL)),
+    FOREIGN KEY (turn_run_id, turn_attempt_number) REFERENCES run_attempts(run_id, number),
     UNIQUE (session_id, direction, sequence),
     UNIQUE (session_id, id),
     FOREIGN KEY (environment_id, session_id)
@@ -1358,6 +1375,36 @@ CREATE INDEX session_records_input_sequence_idx
 CREATE INDEX session_records_output_sequence_idx
     ON session_records (session_id, sequence, id)
     WHERE direction = 'output';
+
+CREATE TABLE session_events (
+    id UUID PRIMARY KEY,
+    environment_id UUID NOT NULL,
+    session_id UUID NOT NULL,
+    turn_id UUID NOT NULL,
+    workspace_id UUID NOT NULL,
+    sequence BIGINT NOT NULL CHECK (sequence BETWEEN 1 AND 9007199254740991),
+    kind TEXT NOT NULL CHECK (kind IN ('output', 'turn.completed', 'turn.failed', 'turn.interrupt_requested')),
+    data JSONB NOT NULL,
+    producer_run_id UUID NOT NULL,
+    producer_attempt_number INTEGER NOT NULL,
+    run_generation BIGINT NOT NULL CHECK (run_generation > 0),
+    workspace_version_id UUID,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (session_id, sequence),
+    UNIQUE (session_id, id),
+    UNIQUE (session_id, turn_id, id),
+    CHECK ((kind IN ('turn.completed', 'turn.failed')) = (workspace_version_id IS NOT NULL)),
+    FOREIGN KEY (session_id, workspace_id) REFERENCES sessions(id, workspace_id),
+    FOREIGN KEY (environment_id, session_id) REFERENCES sessions(environment_id, id),
+    FOREIGN KEY (session_id, turn_id) REFERENCES session_records(session_id, id),
+    FOREIGN KEY (session_id, producer_run_id) REFERENCES runs(session_id, id),
+    FOREIGN KEY (producer_run_id, producer_attempt_number) REFERENCES run_attempts(run_id, number)
+);
+
+CREATE UNIQUE INDEX session_events_terminal_turn ON session_events(session_id, turn_id) WHERE kind IN ('turn.completed', 'turn.failed');
+
+ALTER TABLE sessions ADD FOREIGN KEY (id, active_turn_id) REFERENCES session_records(session_id, id);
+ALTER TABLE session_records ADD FOREIGN KEY (session_id, id, terminal_event_id) REFERENCES session_events(session_id, turn_id, id);
 
 ALTER TABLE runs
     ADD CONSTRAINT runs_current_attempt_fk
@@ -2921,3 +2968,5 @@ CREATE UNIQUE INDEX workspaces_environment_key_uidx ON workspaces(environment_id
 CREATE INDEX workspace_versions_workspace_created_idx ON workspace_versions(workspace_id, created_at DESC);
 CREATE INDEX public_access_tokens_expiry_active_idx ON public_access_tokens(expires_at, id)
     WHERE status = 'active';
+
+ALTER TABLE session_events ADD FOREIGN KEY (workspace_id, workspace_version_id) REFERENCES workspace_versions(workspace_id, id);

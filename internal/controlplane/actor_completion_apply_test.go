@@ -256,7 +256,7 @@ func validActorCompletionAuthority(
 	request := workerapi.CompleteActorRequest{
 		Lease: assignment.Fence(),
 		Outcome: workerapi.ActorOutcome{
-			TerminalInputSequence: 2,
+			TerminalInputSequence: authority.actor.CommittedInputSequence,
 			Succeeded:             &workerapi.ActorSucceeded{},
 		},
 		Workspace: workerapi.TaskWorkspaceProof{Captured: capture},

@@ -47,6 +47,7 @@ func (q ownershipAppendQueries) LocatePendingActorInputRunWait(ctx context.Conte
 func TestOwnershipAdmittedInputStaleLocatorKeepsClaimAndOutbox(t *testing.T) {
 	ctx := t.Context()
 	f := newActorCheckpointFixture(t)
+	f.turn(t, 1, f.capture(t, "input1"), true)
 	waitID := uuid.NewV7()
 	seq := int64(1)
 	params, _ := json.Marshal(workerActorInputWaitParams{SessionID: f.sessionID.String(), AfterInputSequence: seq})

@@ -22,8 +22,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	runauthority "github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -211,7 +211,8 @@ func (f *actorCheckpointFixture) turn(t *testing.T, sequence int64, capture work
 	if err := f.Pool.QueryRow(t.Context(), `SELECT base_workspace_version_id FROM workspace_leases WHERE owner_run_lease_id=$1`, f.claim.runLease.ID).Scan(&base); err != nil {
 		t.Fatal(err)
 	}
-	req := workerapi.CommitActorTurnRequest{Lease: f.fence(), CorrelationID: uuid.NewV7().String(), TargetInputSequence: sequence, BaseWorkspaceVersionID: base.String(), Tree: capture.Tree}
+	scope := f.receiveTurn(t, sequence)
+	req := workerapi.CommitActorTurnRequest{TurnID: scope.TurnID.String(), RunGeneration: scope.RunGeneration, Disposition: "completed", Result: json.RawMessage(`null`), Lease: f.fence(), CorrelationID: uuid.NewV7().String(), TargetInputSequence: sequence, BaseWorkspaceVersionID: base.String(), Tree: capture.Tree}
 	if changed {
 		req.Artifact = &capture.Artifact
 	}
@@ -342,7 +343,7 @@ func (f *actorCheckpointFixture) complete(t *testing.T, sequence int64, content 
 }
 
 func TestActorCheckpointFrontierPostgres(t *testing.T) {
-	for _, mode := range []string{"changed", "unchanged", "close", "cancel"} {
+	for _, mode := range []string{"changed", "unchanged", "close", "interrupt"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newActorCheckpointFixture(t)
 			first := f.capture(t, "input1")
@@ -367,29 +368,27 @@ func TestActorCheckpointFrontierPostgres(t *testing.T) {
 				}
 			}
 			f.placeAndStart(t)
-			if mode == "cancel" {
-				canceler, err := runauthority.NewCanceler(f.Pool)
-				if err != nil {
-					t.Fatal(err)
+			if mode == "interrupt" {
+				scope := f.receiveTurn(t, 2)
+				receipt, err := interruptTurn(t.Context(), f, scope, "restored-stop")
+				if err != nil || receipt.Status != "accepted" {
+					t.Fatalf("interrupt: %+v %v", receipt, err)
 				}
-				if _, err := canceler.Cancel(t.Context(), runauthority.CancellationRequest{OrgID: f.OrgID, ProjectID: f.ProjectID, EnvironmentID: f.EnvironmentID, RunID: f.runID}); err != nil {
-					t.Fatal(err)
-				}
-				req := workerapi.CommitActorTurnRequest{Lease: f.fence(), CorrelationID: uuid.NewV7().String(), TargetInputSequence: 2, BaseWorkspaceVersionID: checkpoint.WorkspaceVersionID, Tree: first.Tree}
+				req := workerapi.CommitActorTurnRequest{TurnID: scope.TurnID.String(), RunGeneration: scope.RunGeneration, Disposition: "completed", Result: json.RawMessage(`null`), Lease: f.fence(), CorrelationID: uuid.NewV7().String(), TargetInputSequence: 2, BaseWorkspaceVersionID: checkpoint.WorkspaceVersionID, Tree: first.Tree}
 				parsed, err := parseActorTurnCommitRequest(req)
 				if err != nil {
 					t.Fatal(err)
 				}
 				if _, err := f.server.commitActorTurn(t.Context(), f.worker, req, parsed); !errors.Is(err, errStaleActorTurnCommit) {
-					t.Fatalf("cancelled writer turn: %v", err)
+					t.Fatalf("interrupted writer turn: %v", err)
 				}
 				var status string
 				var retainedHead uuid.UUID
 				if err := f.Pool.QueryRow(t.Context(), `SELECT r.status,w.head_version_id FROM runs r JOIN workspaces w ON w.id=r.workspace_id WHERE r.id=$1`, f.runID).Scan(&status, &retainedHead); err != nil {
 					t.Fatal(err)
 				}
-				if status != "cancelled" || retainedHead != head {
-					t.Fatal("cancellation changed the committed frontier")
+				if status != "running" || retainedHead != head {
+					t.Fatal("interruption terminalized the Run or changed the committed frontier")
 				}
 				return
 			}
@@ -528,7 +527,7 @@ func (f *actorCheckpointFixture) expireRestore(t *testing.T) {
 	}
 	var status, waitStatus, leaseStatus string
 	var checkpoint uuid.UUID
-	if err := f.Pool.QueryRow(t.Context(), `SELECT r.status,w.suspension_status,w.suspend_checkpoint_id,l.status FROM runs r JOIN run_waits w ON w.run_id=r.id AND w.attempt_number=r.current_attempt_number JOIN run_leases l ON l.id=$2 WHERE r.id=$1`, f.runID, f.claim.runLease.ID).Scan(&status, &waitStatus, &checkpoint, &leaseStatus); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT r.status,w.suspension_status,w.suspend_checkpoint_id,l.status FROM runs r JOIN run_waits w ON w.run_id=r.id AND w.attempt_number=r.current_attempt_number JOIN run_leases l ON l.id=$2 WHERE r.id=$1 AND w.suspend_checkpoint_id=$3`, f.runID, f.claim.runLease.ID, f.claim.runtime.RestoreCheckpointID).Scan(&status, &waitStatus, &checkpoint, &leaseStatus); err != nil {
 		t.Fatal(err)
 	}
 	if status != "queued" || waitStatus != "resume_pending" || leaseStatus != "expired" || pgvalue.UUID(checkpoint) != f.claim.runtime.RestoreCheckpointID {
@@ -644,4 +643,26 @@ func TestActorCheckpointFrontierRejectsWrongRecoveredWriterPostgres(t *testing.T
 			}
 		})
 	}
+}
+
+func (f *actorCheckpointFixture) receiveTurn(t *testing.T, sequence int64) session.TurnScope {
+	t.Helper()
+	var input db.SessionRecord
+	input, err := f.server.db.GetActorInputRecordAtSequenceForUpdate(t.Context(), db.GetActorInputRecordAtSequenceForUpdateParams{EnvironmentID: pgvalue.UUID(f.EnvironmentID), SessionID: pgvalue.UUID(f.sessionID), Sequence: sequence})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if input.TurnStatus == "queued" {
+		after := sequence - 1
+		params, _ := json.Marshal(workerActorInputWaitParams{SessionID: f.sessionID.String(), AfterInputSequence: after})
+		f.workerCall(t, f.server.workerCreateRunWait, workerapi.CreateRunWaitRequest{CorrelationID: uuid.NewV7().String(), Lease: f.fence(), RunWaitID: uuid.NewV7().String(), ResumeAttachID: uuid.NewV7().String(), Kind: "actor_input", Params: params, ActorSpeculativeInputSequence: &after}, nil)
+		input, err = f.server.db.GetActorInputRecordAtSequenceForUpdate(t.Context(), db.GetActorInputRecordAtSequenceForUpdateParams{EnvironmentID: pgvalue.UUID(f.EnvironmentID), SessionID: pgvalue.UUID(f.sessionID), Sequence: sequence})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if input.TurnStatus != "running" || !input.RunGeneration.Valid {
+		t.Fatalf("input was not activated: %+v", input)
+	}
+	return session.TurnScope{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID, TurnID: pgvalue.MustUUIDValue(input.ID), RunID: f.runID, AttemptNumber: input.TurnAttemptNumber.Int32, RunGeneration: input.RunGeneration.Int64}
 }

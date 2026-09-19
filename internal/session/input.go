@@ -24,10 +24,15 @@ var ErrAuthority = errors.New("actor input durable authority is inconsistent")
 func CanStartContinuation(actor db.Session) bool {
 	return !actor.CurrentRunID.Valid &&
 		(actor.Status == "open" || actor.Status == "closing") &&
-		!actor.ManualRunCancelled
+		!actor.ManualRunCancelled && !actor.DispatchHoldID.Valid && !actor.ActiveTurnID.Valid
 }
 
 func CompleteWait(ctx context.Context, store db.Querier, wait db.RunWait, record db.SessionRecord) (db.RunWait, error) {
+	var err error
+	record, err = ActivateTurn(ctx, store, TurnScope{EnvironmentID: pgvalue.MustUUIDValue(record.EnvironmentID), SessionID: pgvalue.MustUUIDValue(record.SessionID), TurnID: pgvalue.MustUUIDValue(record.ID), RunID: pgvalue.MustUUIDValue(wait.RunID), AttemptNumber: wait.AttemptNumber})
+	if err != nil {
+		return db.RunWait{}, err
+	}
 	result, err := RecordResolution(record)
 	if err != nil {
 		return db.RunWait{}, err
@@ -58,7 +63,8 @@ func RecordResolution(record db.SessionRecord) (json.RawMessage, error) {
 		source["run_id"] = pgvalue.UUIDString(record.SourceRunID)
 	}
 	return json.Marshal(map[string]any{
-		"value": value,
+		"value":          value,
+		"run_generation": record.RunGeneration.Int64,
 		"record": map[string]any{
 			"id": pgvalue.UUIDString(record.ID), "sequence": record.Sequence,
 			"created_at": record.CreatedAt.Time.UTC().Format(time.RFC3339Nano), "source": source,

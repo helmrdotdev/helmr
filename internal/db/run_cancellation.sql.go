@@ -777,7 +777,7 @@ func (q *Queries) ListOwnedCancellationRuns(ctx context.Context, arg ListOwnedCa
 }
 
 const lockCancellationActors = `-- name: LockCancellationActors :many
-SELECT sessions.id
+SELECT sessions.id, runs.id AS run_id, sessions.active_turn_id, sessions.dispatch_hold_id
   FROM runs
   JOIN sessions
     ON sessions.id = runs.session_id
@@ -797,7 +797,14 @@ type LockCancellationActorsParams struct {
 	EnvironmentID pgtype.UUID   `json:"environment_id"`
 }
 
-func (q *Queries) LockCancellationActors(ctx context.Context, arg LockCancellationActorsParams) ([]pgtype.UUID, error) {
+type LockCancellationActorsRow struct {
+	ID             pgtype.UUID `json:"id"`
+	RunID          pgtype.UUID `json:"run_id"`
+	ActiveTurnID   pgtype.UUID `json:"active_turn_id"`
+	DispatchHoldID pgtype.UUID `json:"dispatch_hold_id"`
+}
+
+func (q *Queries) LockCancellationActors(ctx context.Context, arg LockCancellationActorsParams) ([]LockCancellationActorsRow, error) {
 	rows, err := q.db.Query(ctx, lockCancellationActors,
 		arg.RunIDs,
 		arg.OrgID,
@@ -808,13 +815,18 @@ func (q *Queries) LockCancellationActors(ctx context.Context, arg LockCancellati
 		return nil, err
 	}
 	defer rows.Close()
-	var items []pgtype.UUID
+	var items []LockCancellationActorsRow
 	for rows.Next() {
-		var id pgtype.UUID
-		if err := rows.Scan(&id); err != nil {
+		var i LockCancellationActorsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.RunID,
+			&i.ActiveTurnID,
+			&i.DispatchHoldID,
+		); err != nil {
 			return nil, err
 		}
-		items = append(items, id)
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

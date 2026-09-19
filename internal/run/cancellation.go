@@ -222,7 +222,7 @@ func lockOwnedFinalization(
 			nil,
 		)
 	}
-	if err := lockCancellationActors(ctx, tx, scope, lockOrder); err != nil {
+	if err := lockCancellationActors(ctx, tx, scope, lockOrder, descendantIDs); err != nil {
 		return OwnedFinalization{}, err
 	}
 	locked := make(map[uuid.UUID]cancellationRun, len(lockOrder))
@@ -504,7 +504,7 @@ func (c *Canceler) Cancel(
 			nil,
 		)
 	}
-	if err := lockCancellationActors(ctx, tx, request, lockOrder); err != nil {
+	if err := lockCancellationActors(ctx, tx, request, lockOrder, descendants); err != nil {
 		return CancellationResult{}, err
 	}
 	locked := make(map[uuid.UUID]cancellationRun, len(lockOrder))
@@ -663,8 +663,9 @@ func lockCancellationActors(
 	tx pgx.Tx,
 	request CancellationRequest,
 	lineage []uuid.UUID,
+	affectedRuns []uuid.UUID,
 ) error {
-	_, err := db.New(tx).LockCancellationActors(ctx, db.LockCancellationActorsParams{
+	actors, err := db.New(tx).LockCancellationActors(ctx, db.LockCancellationActorsParams{
 		RunIDs:        pgUUIDs(lineage),
 		OrgID:         pgvalue.UUID(request.OrgID),
 		ProjectID:     pgvalue.UUID(request.ProjectID),
@@ -672,6 +673,13 @@ func lockCancellationActors(
 	})
 	if err != nil {
 		return cancellationAuthority("lock run lineage actors", err)
+	}
+	for _, actor := range actors {
+		// Ancestors are locked for handback authority, but a Task ending does
+		// not terminate its Actor ancestor or settle that Actor's active Turn.
+		if slices.Contains(affectedRuns, uuid.UUID(actor.RunID.Bytes)) && (actor.ActiveTurnID.Valid || actor.DispatchHoldID.Valid) {
+			return cancellationAuthority("active Turn must use Session interruption and convergence", nil)
+		}
 	}
 	return nil
 }

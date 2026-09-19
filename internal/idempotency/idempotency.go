@@ -33,7 +33,6 @@ const (
 	operationRunMetadata        operation = "run.metadata"
 	operationActorStart         operation = "actor.start"
 	operationActorInputSend     operation = "session.input.send"
-	operationActorOutputAppend  operation = "session.output.append"
 	operationActorClose         operation = "session.close"
 	operationTaskStart          operation = "task.start"
 	operationTaskChildInvoke    operation = "task.child.invoke"
@@ -313,48 +312,6 @@ func NewActorInputSendRequest(environmentID uuid.UUID, actorID uuid.UUID, key st
 		key:           key,
 		fingerprint: func() ([sha256.Size]byte, error) {
 			return operationFingerprint(operationActorInputSend, input), nil
-		},
-	}}, nil
-}
-
-func NewActorOutputAppendRequest(
-	environmentID uuid.UUID,
-	actorID uuid.UUID,
-	key string,
-	dataJSON []byte,
-	contentType string,
-) (Request, error) {
-	if environmentID == uuid.Nil() {
-		return nil, errors.New("idempotency environment is required")
-	}
-	if actorID == uuid.Nil() {
-		return nil, errors.New("actor ID is required")
-	}
-	canonicalData, err := jsoncanon.Transform(dataJSON)
-	if err != nil {
-		return nil, fmt.Errorf("canonicalize actor output: %w", err)
-	}
-	fields, err := json.Marshal(struct {
-		Data        json.RawMessage `json:"data"`
-		ContentType string          `json:"contentType"`
-	}{
-		Data:        canonicalData,
-		ContentType: contentType,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("encode actor output fingerprint: %w", err)
-	}
-	canonical, err := jsoncanon.Transform(fields)
-	if err != nil {
-		return nil, fmt.Errorf("canonicalize actor output fingerprint: %w", err)
-	}
-	return sealedRequest{value: request{
-		environmentID: environmentID,
-		operation:     operationActorOutputAppend,
-		scope:         bytes.Clone(actorID[:]),
-		key:           key,
-		fingerprint: func() ([sha256.Size]byte, error) {
-			return operationFingerprint(operationActorOutputAppend, canonical), nil
 		},
 	}}, nil
 }
@@ -955,8 +912,8 @@ func (t *Transaction) Acquire(ctx context.Context, input Request) (Result, error
 
 func supportedOperation(value operation) bool {
 	switch value {
-	case operationDeploymentFinalize, operationSecretCreate, operationSecretRotate, operationSecretRevoke, operationRunMetadata,
-		operationActorStart, operationActorInputSend, operationActorOutputAppend, operationActorClose,
+	case operationTurnInterrupt, operationTurnOutput, operationDeploymentFinalize, operationSecretCreate, operationSecretRotate, operationSecretRevoke, operationRunMetadata,
+		operationActorStart, operationActorInputSend, operationActorClose,
 		operationTaskStart, operationTaskChildInvoke, operationTokenCreate, operationTokenComplete, operationTokenCancel,
 		operationWorkspaceCreate, operationWorkspaceExec, operationWorkspaceDelete:
 		return true

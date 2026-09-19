@@ -152,7 +152,7 @@ func (s *Server) workerCreateActorInputRunWait(
 			_ = existing
 			return errStaleRunLeaseClaim
 		}
-		if authority.run.Status != db.RunStatusRunning {
+		if authority.run.Status != db.RunStatusRunning || authority.actor.ActiveTurnID.Valid || authority.actor.DispatchHoldID.Valid || params.AfterInputSequence != authority.actor.CommittedInputSequence {
 			return errStaleRunLeaseClaim
 		}
 		registered, err = work.q.RegisterActorInputRunWait(r.Context(), db.RegisterActorInputRunWaitParams{

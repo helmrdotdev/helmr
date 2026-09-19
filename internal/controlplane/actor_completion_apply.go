@@ -169,7 +169,8 @@ func validateActorCompletionAuthority(
 	authority runLeaseClaimAuthority,
 ) error {
 	actor := authority.actor
-	if authority.run.EntrypointKind != "actor" || !authority.run.SessionID.Valid || authority.run.SessionID != actor.ID ||
+	if actor.ActiveTurnID.Valid || actor.DispatchHoldID.Valid ||
+		completion.terminalInputSequence != actor.CommittedInputSequence || authority.run.EntrypointKind != "actor" || !authority.run.SessionID.Valid || authority.run.SessionID != actor.ID ||
 		authority.run.ParentRunID.Valid || authority.run.ParentOwnsLifecycle.Valid ||
 		authority.runLease.Status != db.RunLeaseStatusFinalizing || !authority.attempt.EntrypointEnteredAt.Valid ||
 		authority.run.ActiveStartedAt.Valid || !authority.runLease.FinalizationOperationID.Valid ||
@@ -405,23 +406,20 @@ func terminalizeActorAttempt(ctx context.Context, store db.Querier, authority ru
 }
 
 type actorRunTerminalDecision struct {
-	runStatus    db.RunStatus
-	runReason    pgtype.Text
-	actorStatus  string
-	failureCode  pgtype.Text
-	commitCursor bool
+	runStatus   db.RunStatus
+	runReason   pgtype.Text
+	actorStatus string
+	failureCode pgtype.Text
 }
 
 func decideActorRunTerminal(authority runLeaseClaimAuthority, completion parsedActorCompletion) actorRunTerminalDecision {
 	decision := actorRunTerminalDecision{
-		runStatus:    db.RunStatusSucceeded,
-		actorStatus:  authority.actor.Status,
-		commitCursor: true,
+		runStatus:   db.RunStatusSucceeded,
+		actorStatus: authority.actor.Status,
 	}
 	if completion.kind == actorCompletionFailed {
 		decision.runStatus = db.RunStatusFailed
 		decision.runReason = pgvalue.Text("actor_failed")
-		decision.commitCursor = false
 		decision.actorStatus = "failed"
 		decision.failureCode = pgvalue.Text("run_failed")
 		return decision
@@ -485,7 +483,6 @@ func finishActorRun(ctx context.Context, store db.Querier, authority runLeaseCla
 			return err
 		}
 	}
-	commitCursor := pgtype.Int8{Int64: completion.terminalInputSequence, Valid: decision.commitCursor}
 	if _, err := store.FinishActorRun(ctx, db.FinishActorRunParams{
 		Status: decision.runStatus, Failure: failure, CompletedAt: completedAt,
 		ID: authority.run.ID, WorkspaceID: authority.workspace.ID, SessionID: authority.actor.ID,
@@ -494,7 +491,7 @@ func finishActorRun(ctx context.Context, store db.Querier, authority runLeaseCla
 		return staleActorCompletion(err)
 	}
 	actor, err := store.ReconcileActorTerminalRun(ctx, db.ReconcileActorTerminalRunParams{
-		Status: decision.actorStatus, CommittedInputSequence: commitCursor,
+		Status:  decision.actorStatus,
 		Failure: actorFailure, FailureRunID: failureRunID,
 		CompletedAt: completedAt, EnvironmentID: authority.actor.EnvironmentID, ID: authority.actor.ID,
 		WorkspaceID: authority.workspace.ID, RunID: authority.run.ID, ExpectedRunGeneration: authority.actor.RunGeneration,

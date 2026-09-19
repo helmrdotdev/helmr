@@ -69,6 +69,7 @@ UPDATE sessions
    AND workspace_id = sqlc.arg(workspace_id)
    AND status = 'closing'
    AND current_run_id IS NULL
+   AND active_turn_id IS NULL AND dispatch_hold_id IS NULL
    AND close_sequence IS NOT NULL
    AND committed_input_sequence >= close_sequence
 RETURNING *;

@@ -217,7 +217,6 @@ UPDATE sessions
        current_run_id = NULL,
        run_generation = run_generation + 1,
        revision = revision + 1,
-       committed_input_sequence = COALESCE(sqlc.narg(committed_input_sequence), committed_input_sequence),
        failure = sqlc.narg(failure),
        failure_run_id = sqlc.narg(failure_run_id),
        closed_at = CASE WHEN sqlc.arg(status)::text = 'closed' THEN sqlc.arg(completed_at) ELSE closed_at END,
@@ -229,6 +228,7 @@ UPDATE sessions
    AND current_run_id = sqlc.arg(run_id)
    AND run_generation = sqlc.arg(expected_run_generation)
    AND status IN ('open', 'closing')
+   AND active_turn_id IS NULL AND dispatch_hold_id IS NULL
 RETURNING *;
 
 -- name: ReleaseActorWorkspaceOwner :one
@@ -304,6 +304,7 @@ WITH created_run AS (
        AND sessions.run_generation = sqlc.arg(expected_run_generation)
        AND sessions.status IN ('open', 'closing')
        AND sessions.manual_run_cancelled = false
+       AND sessions.active_turn_id IS NULL AND sessions.dispatch_hold_id IS NULL
        AND sessions.committed_input_sequence < sessions.next_input_sequence - 1
        AND NOT EXISTS (
            SELECT 1

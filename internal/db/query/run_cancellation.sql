@@ -71,7 +71,7 @@ SELECT id, depth, cycle
  LIMIT sqlc.arg(limit_count);
 
 -- name: LockCancellationActors :many
-SELECT sessions.id
+SELECT sessions.id, runs.id AS run_id, sessions.active_turn_id, sessions.dispatch_hold_id
   FROM runs
   JOIN sessions
     ON sessions.id = runs.session_id

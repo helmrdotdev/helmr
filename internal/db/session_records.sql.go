@@ -21,13 +21,13 @@ WITH selected_claim AS MATERIALIZED (
        AND idempotency_claims.retired_at IS NULL
      FOR UPDATE
 ), existing_record AS MATERIALIZED (
-    SELECT session_records.id, session_records.environment_id, session_records.session_id, session_records.direction, session_records.sequence, session_records.data, session_records.content_type, session_records.source_run_id, session_records.producer_run_id, session_records.producer_attempt_number, session_records.claim_id, session_records.created_at
+    SELECT session_records.id, session_records.environment_id, session_records.session_id, session_records.direction, session_records.sequence, session_records.data, session_records.content_type, session_records.source_run_id, session_records.producer_run_id, session_records.producer_attempt_number, session_records.claim_id, session_records.turn_status, session_records.run_generation, session_records.turn_run_id, session_records.turn_attempt_number, session_records.interrupt_requested_at, session_records.terminal_event_id, session_records.terminal_request_fingerprint, session_records.created_at
       FROM session_records
       JOIN selected_claim ON selected_claim.id = session_records.claim_id
      WHERE session_records.session_id = $3
        AND session_records.direction = 'input'
 ), locked_actor AS MATERIALIZED (
-    SELECT sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.revision, sessions.manual_run_cancelled, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_output_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.status, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.cancelled_at, sessions.failed_at
+    SELECT sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.revision, sessions.manual_run_cancelled, sessions.active_turn_id, sessions.dispatch_hold_id, sessions.dispatch_hold_reason, sessions.next_event_sequence, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_output_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.status, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.cancelled_at, sessions.failed_at
       FROM sessions
      WHERE sessions.environment_id = $1
        AND sessions.id = $3
@@ -51,7 +51,7 @@ WITH selected_claim AS MATERIALIZED (
            updated_at = now()
       FROM locked_actor
      WHERE sessions.id = locked_actor.id
-    RETURNING sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.revision, sessions.manual_run_cancelled, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_output_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.status, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.cancelled_at, sessions.failed_at, sessions.next_input_sequence - 1 AS allocated_sequence
+    RETURNING sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.revision, sessions.manual_run_cancelled, sessions.active_turn_id, sessions.dispatch_hold_id, sessions.dispatch_hold_reason, sessions.next_event_sequence, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_output_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.status, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.cancelled_at, sessions.failed_at, sessions.next_input_sequence - 1 AS allocated_sequence
 ), inserted_record AS (
     INSERT INTO session_records (
         id,
@@ -74,12 +74,12 @@ WITH selected_claim AS MATERIALIZED (
            $7,
            $2
       FROM allocated
-    RETURNING session_records.id, session_records.environment_id, session_records.session_id, session_records.direction, session_records.sequence, session_records.data, session_records.content_type, session_records.source_run_id, session_records.producer_run_id, session_records.producer_attempt_number, session_records.claim_id, session_records.created_at
+    RETURNING session_records.id, session_records.environment_id, session_records.session_id, session_records.direction, session_records.sequence, session_records.data, session_records.content_type, session_records.source_run_id, session_records.producer_run_id, session_records.producer_attempt_number, session_records.claim_id, session_records.turn_status, session_records.run_generation, session_records.turn_run_id, session_records.turn_attempt_number, session_records.interrupt_requested_at, session_records.terminal_event_id, session_records.terminal_request_fingerprint, session_records.created_at
 )
-SELECT inserted_record.id, inserted_record.environment_id, inserted_record.session_id, inserted_record.direction, inserted_record.sequence, inserted_record.data, inserted_record.content_type, inserted_record.source_run_id, inserted_record.producer_run_id, inserted_record.producer_attempt_number, inserted_record.claim_id, inserted_record.created_at, false::boolean AS claim_fingerprint_mismatch, true::boolean AS appended
+SELECT inserted_record.id, inserted_record.environment_id, inserted_record.session_id, inserted_record.direction, inserted_record.sequence, inserted_record.data, inserted_record.content_type, inserted_record.source_run_id, inserted_record.producer_run_id, inserted_record.producer_attempt_number, inserted_record.claim_id, inserted_record.turn_status, inserted_record.run_generation, inserted_record.turn_run_id, inserted_record.turn_attempt_number, inserted_record.interrupt_requested_at, inserted_record.terminal_event_id, inserted_record.terminal_request_fingerprint, inserted_record.created_at, false::boolean AS claim_fingerprint_mismatch, true::boolean AS appended
   FROM inserted_record
 UNION ALL
-SELECT existing_record.id, existing_record.environment_id, existing_record.session_id, existing_record.direction, existing_record.sequence, existing_record.data, existing_record.content_type, existing_record.source_run_id, existing_record.producer_run_id, existing_record.producer_attempt_number, existing_record.claim_id, existing_record.created_at,
+SELECT existing_record.id, existing_record.environment_id, existing_record.session_id, existing_record.direction, existing_record.sequence, existing_record.data, existing_record.content_type, existing_record.source_run_id, existing_record.producer_run_id, existing_record.producer_attempt_number, existing_record.claim_id, existing_record.turn_status, existing_record.run_generation, existing_record.turn_run_id, existing_record.turn_attempt_number, existing_record.interrupt_requested_at, existing_record.terminal_event_id, existing_record.terminal_request_fingerprint, existing_record.created_at,
        (selected_claim.request_fingerprint <> $4)::boolean
            AS claim_fingerprint_mismatch,
        false::boolean AS appended
@@ -98,20 +98,27 @@ type AppendActorInputRecordParams struct {
 }
 
 type AppendActorInputRecordRow struct {
-	ID                       pgtype.UUID        `json:"id"`
-	EnvironmentID            pgtype.UUID        `json:"environment_id"`
-	SessionID                pgtype.UUID        `json:"session_id"`
-	Direction                string             `json:"direction"`
-	Sequence                 int64              `json:"sequence"`
-	Data                     []byte             `json:"data"`
-	ContentType              string             `json:"content_type"`
-	SourceRunID              pgtype.UUID        `json:"source_run_id"`
-	ProducerRunID            pgtype.UUID        `json:"producer_run_id"`
-	ProducerAttemptNumber    pgtype.Int4        `json:"producer_attempt_number"`
-	ClaimID                  pgtype.UUID        `json:"claim_id"`
-	CreatedAt                pgtype.Timestamptz `json:"created_at"`
-	ClaimFingerprintMismatch bool               `json:"claim_fingerprint_mismatch"`
-	Appended                 bool               `json:"appended"`
+	ID                         pgtype.UUID        `json:"id"`
+	EnvironmentID              pgtype.UUID        `json:"environment_id"`
+	SessionID                  pgtype.UUID        `json:"session_id"`
+	Direction                  string             `json:"direction"`
+	Sequence                   int64              `json:"sequence"`
+	Data                       []byte             `json:"data"`
+	ContentType                string             `json:"content_type"`
+	SourceRunID                pgtype.UUID        `json:"source_run_id"`
+	ProducerRunID              pgtype.UUID        `json:"producer_run_id"`
+	ProducerAttemptNumber      pgtype.Int4        `json:"producer_attempt_number"`
+	ClaimID                    pgtype.UUID        `json:"claim_id"`
+	TurnStatus                 string             `json:"turn_status"`
+	RunGeneration              pgtype.Int8        `json:"run_generation"`
+	TurnRunID                  pgtype.UUID        `json:"turn_run_id"`
+	TurnAttemptNumber          pgtype.Int4        `json:"turn_attempt_number"`
+	InterruptRequestedAt       pgtype.Timestamptz `json:"interrupt_requested_at"`
+	TerminalEventID            pgtype.UUID        `json:"terminal_event_id"`
+	TerminalRequestFingerprint pgtype.Text        `json:"terminal_request_fingerprint"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	ClaimFingerprintMismatch   bool               `json:"claim_fingerprint_mismatch"`
+	Appended                   bool               `json:"appended"`
 }
 
 func (q *Queries) AppendActorInputRecord(ctx context.Context, arg AppendActorInputRecordParams) (AppendActorInputRecordRow, error) {
@@ -137,153 +144,13 @@ func (q *Queries) AppendActorInputRecord(ctx context.Context, arg AppendActorInp
 		&i.ProducerRunID,
 		&i.ProducerAttemptNumber,
 		&i.ClaimID,
-		&i.CreatedAt,
-		&i.ClaimFingerprintMismatch,
-		&i.Appended,
-	)
-	return i, err
-}
-
-const appendActorOutputRecord = `-- name: AppendActorOutputRecord :one
-WITH selected_claim AS MATERIALIZED (
-    SELECT id, status, request_fingerprint
-      FROM idempotency_claims
-     WHERE idempotency_claims.environment_id = $1::uuid
-       AND idempotency_claims.id = $2
-       AND idempotency_claims.operation = 'session.output.append'
-       AND idempotency_claims.retired_at IS NULL
-     FOR UPDATE
-), existing_record AS MATERIALIZED (
-    SELECT session_records.id, session_records.environment_id, session_records.session_id, session_records.direction, session_records.sequence, session_records.data, session_records.content_type, session_records.source_run_id, session_records.producer_run_id, session_records.producer_attempt_number, session_records.claim_id, session_records.created_at
-      FROM session_records
-      JOIN selected_claim ON selected_claim.id = session_records.claim_id
-     WHERE session_records.session_id = $3
-       AND session_records.direction = 'output'
-), locked_actor AS MATERIALIZED (
-    SELECT sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.revision, sessions.manual_run_cancelled, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_output_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.status, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.cancelled_at, sessions.failed_at
-      FROM sessions
-      JOIN runs
-        ON runs.session_id = sessions.id
-       AND runs.id = $4
-       AND runs.workspace_id = sessions.workspace_id
-      JOIN run_attempts
-        ON run_attempts.run_id = runs.id
-       AND run_attempts.number = $5
-       AND run_attempts.workspace_id = sessions.workspace_id
-     WHERE sessions.environment_id = $1
-       AND sessions.id = $3
-       AND sessions.current_run_id = runs.id
-       AND sessions.status IN ('open', 'closing')
-       AND sessions.next_output_sequence <= 9007199254740991
-       AND NOT EXISTS (SELECT 1 FROM existing_record)
-       AND (
-           $2::uuid IS NULL
-           OR EXISTS (
-               SELECT 1
-                 FROM selected_claim
-                WHERE selected_claim.status = 'pending'
-                  AND request_fingerprint = $6
-           )
-       )
-     FOR UPDATE OF sessions
-), allocated AS (
-    UPDATE sessions
-       SET next_output_sequence = sessions.next_output_sequence + 1,
-           updated_at = now()
-      FROM locked_actor
-     WHERE sessions.id = locked_actor.id
-    RETURNING sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.revision, sessions.manual_run_cancelled, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_output_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.status, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.cancelled_at, sessions.failed_at, sessions.next_output_sequence - 1 AS allocated_sequence
-), inserted_record AS (
-    INSERT INTO session_records (
-        id,
-        environment_id,
-        session_id,
-        direction,
-        sequence,
-        data,
-        content_type,
-        producer_run_id,
-        producer_attempt_number,
-        claim_id
-    )
-    SELECT $7,
-           allocated.environment_id,
-           allocated.id,
-           'output',
-           allocated.allocated_sequence,
-           $8,
-           $9,
-           $4,
-           $5,
-           $2
-      FROM allocated
-    RETURNING session_records.id, session_records.environment_id, session_records.session_id, session_records.direction, session_records.sequence, session_records.data, session_records.content_type, session_records.source_run_id, session_records.producer_run_id, session_records.producer_attempt_number, session_records.claim_id, session_records.created_at
-)
-SELECT inserted_record.id, inserted_record.environment_id, inserted_record.session_id, inserted_record.direction, inserted_record.sequence, inserted_record.data, inserted_record.content_type, inserted_record.source_run_id, inserted_record.producer_run_id, inserted_record.producer_attempt_number, inserted_record.claim_id, inserted_record.created_at, false::boolean AS claim_fingerprint_mismatch, true::boolean AS appended
-  FROM inserted_record
-UNION ALL
-SELECT existing_record.id, existing_record.environment_id, existing_record.session_id, existing_record.direction, existing_record.sequence, existing_record.data, existing_record.content_type, existing_record.source_run_id, existing_record.producer_run_id, existing_record.producer_attempt_number, existing_record.claim_id, existing_record.created_at,
-       (selected_claim.request_fingerprint <> $6)::boolean
-           AS claim_fingerprint_mismatch,
-       false::boolean AS appended
-  FROM existing_record
-  JOIN selected_claim ON selected_claim.id = existing_record.claim_id
-`
-
-type AppendActorOutputRecordParams struct {
-	EnvironmentID              pgtype.UUID `json:"environment_id"`
-	ClaimID                    pgtype.UUID `json:"claim_id"`
-	SessionID                  pgtype.UUID `json:"session_id"`
-	ProducerRunID              pgtype.UUID `json:"producer_run_id"`
-	ProducerAttemptNumber      int32       `json:"producer_attempt_number"`
-	ExpectedRequestFingerprint []byte      `json:"expected_request_fingerprint"`
-	ID                         pgtype.UUID `json:"id"`
-	Data                       []byte      `json:"data"`
-	ContentType                string      `json:"content_type"`
-}
-
-type AppendActorOutputRecordRow struct {
-	ID                       pgtype.UUID        `json:"id"`
-	EnvironmentID            pgtype.UUID        `json:"environment_id"`
-	SessionID                pgtype.UUID        `json:"session_id"`
-	Direction                string             `json:"direction"`
-	Sequence                 int64              `json:"sequence"`
-	Data                     []byte             `json:"data"`
-	ContentType              string             `json:"content_type"`
-	SourceRunID              pgtype.UUID        `json:"source_run_id"`
-	ProducerRunID            pgtype.UUID        `json:"producer_run_id"`
-	ProducerAttemptNumber    pgtype.Int4        `json:"producer_attempt_number"`
-	ClaimID                  pgtype.UUID        `json:"claim_id"`
-	CreatedAt                pgtype.Timestamptz `json:"created_at"`
-	ClaimFingerprintMismatch bool               `json:"claim_fingerprint_mismatch"`
-	Appended                 bool               `json:"appended"`
-}
-
-func (q *Queries) AppendActorOutputRecord(ctx context.Context, arg AppendActorOutputRecordParams) (AppendActorOutputRecordRow, error) {
-	row := q.db.QueryRow(ctx, appendActorOutputRecord,
-		arg.EnvironmentID,
-		arg.ClaimID,
-		arg.SessionID,
-		arg.ProducerRunID,
-		arg.ProducerAttemptNumber,
-		arg.ExpectedRequestFingerprint,
-		arg.ID,
-		arg.Data,
-		arg.ContentType,
-	)
-	var i AppendActorOutputRecordRow
-	err := row.Scan(
-		&i.ID,
-		&i.EnvironmentID,
-		&i.SessionID,
-		&i.Direction,
-		&i.Sequence,
-		&i.Data,
-		&i.ContentType,
-		&i.SourceRunID,
-		&i.ProducerRunID,
-		&i.ProducerAttemptNumber,
-		&i.ClaimID,
+		&i.TurnStatus,
+		&i.RunGeneration,
+		&i.TurnRunID,
+		&i.TurnAttemptNumber,
+		&i.InterruptRequestedAt,
+		&i.TerminalEventID,
+		&i.TerminalRequestFingerprint,
 		&i.CreatedAt,
 		&i.ClaimFingerprintMismatch,
 		&i.Appended,
@@ -347,62 +214,6 @@ func (q *Queries) CompleteActorInputClaim(ctx context.Context, arg CompleteActor
 	return i, err
 }
 
-const completeActorOutputClaim = `-- name: CompleteActorOutputClaim :one
-UPDATE idempotency_claims
-   SET status = 'completed',
-       receipt = jsonb_build_object(
-	       'session_record_id', session_records.id::text,
-           'sequence', session_records.sequence
-       ),
-       completed_at = transaction_timestamp()
-  FROM session_records
- WHERE idempotency_claims.environment_id = $1::uuid
-   AND idempotency_claims.id = $2
-   AND idempotency_claims.operation = 'session.output.append'
-   AND idempotency_claims.request_fingerprint = $3
-   AND idempotency_claims.status = 'pending'
-   AND idempotency_claims.retired_at IS NULL
-   AND session_records.environment_id = idempotency_claims.environment_id
-   AND session_records.session_id = $4
-   AND session_records.id = $5
-   AND session_records.direction = 'output'
-   AND session_records.claim_id = idempotency_claims.id
-RETURNING idempotency_claims.id, idempotency_claims.environment_id, idempotency_claims.operation, idempotency_claims.slot_hash, idempotency_claims.request_fingerprint, idempotency_claims.status, idempotency_claims.receipt, idempotency_claims.accepted_at, idempotency_claims.expires_at, idempotency_claims.retired_at, idempotency_claims.completed_at
-`
-
-type CompleteActorOutputClaimParams struct {
-	EnvironmentID      pgtype.UUID `json:"environment_id"`
-	ClaimID            pgtype.UUID `json:"claim_id"`
-	RequestFingerprint []byte      `json:"request_fingerprint"`
-	SessionID          pgtype.UUID `json:"session_id"`
-	RecordID           pgtype.UUID `json:"record_id"`
-}
-
-func (q *Queries) CompleteActorOutputClaim(ctx context.Context, arg CompleteActorOutputClaimParams) (IdempotencyClaim, error) {
-	row := q.db.QueryRow(ctx, completeActorOutputClaim,
-		arg.EnvironmentID,
-		arg.ClaimID,
-		arg.RequestFingerprint,
-		arg.SessionID,
-		arg.RecordID,
-	)
-	var i IdempotencyClaim
-	err := row.Scan(
-		&i.ID,
-		&i.EnvironmentID,
-		&i.Operation,
-		&i.SlotHash,
-		&i.RequestFingerprint,
-		&i.Status,
-		&i.Receipt,
-		&i.AcceptedAt,
-		&i.ExpiresAt,
-		&i.RetiredAt,
-		&i.CompletedAt,
-	)
-	return i, err
-}
-
 const createActorInputReconcileOutbox = `-- name: CreateActorInputReconcileOutbox :exec
 INSERT INTO control_outbox (id, topic, payload, available_at)
 VALUES (
@@ -437,7 +248,7 @@ func (q *Queries) CreateActorInputReconcileOutbox(ctx context.Context, arg Creat
 
 const createActorStartInputRecord = `-- name: CreateActorStartInputRecord :one
 WITH locked_actor AS MATERIALIZED (
-    SELECT sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.revision, sessions.manual_run_cancelled, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_output_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.status, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.cancelled_at, sessions.failed_at
+    SELECT sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.revision, sessions.manual_run_cancelled, sessions.active_turn_id, sessions.dispatch_hold_id, sessions.dispatch_hold_reason, sessions.next_event_sequence, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_output_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.status, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.cancelled_at, sessions.failed_at
       FROM sessions
      WHERE sessions.environment_id = $4
        AND sessions.id = $5
@@ -463,7 +274,7 @@ WITH locked_actor AS MATERIALIZED (
            updated_at = now()
       FROM locked_actor
      WHERE sessions.id = locked_actor.id
-    RETURNING sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.revision, sessions.manual_run_cancelled, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_output_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.status, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.cancelled_at, sessions.failed_at
+    RETURNING sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.revision, sessions.manual_run_cancelled, sessions.active_turn_id, sessions.dispatch_hold_id, sessions.dispatch_hold_reason, sessions.next_event_sequence, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_output_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.status, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.cancelled_at, sessions.failed_at
 )
 INSERT INTO session_records (
     id,
@@ -484,7 +295,7 @@ SELECT $1,
        'application/json',
        $3
   FROM advanced
-RETURNING id, environment_id, session_id, direction, sequence, data, content_type, source_run_id, producer_run_id, producer_attempt_number, claim_id, created_at
+RETURNING id, environment_id, session_id, direction, sequence, data, content_type, source_run_id, producer_run_id, producer_attempt_number, claim_id, turn_status, run_generation, turn_run_id, turn_attempt_number, interrupt_requested_at, terminal_event_id, terminal_request_fingerprint, created_at
 `
 
 type CreateActorStartInputRecordParams struct {
@@ -516,6 +327,13 @@ func (q *Queries) CreateActorStartInputRecord(ctx context.Context, arg CreateAct
 		&i.ProducerRunID,
 		&i.ProducerAttemptNumber,
 		&i.ClaimID,
+		&i.TurnStatus,
+		&i.RunGeneration,
+		&i.TurnRunID,
+		&i.TurnAttemptNumber,
+		&i.InterruptRequestedAt,
+		&i.TerminalEventID,
+		&i.TerminalRequestFingerprint,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -596,7 +414,7 @@ func (q *Queries) GetActorInputCurrentRun(ctx context.Context, arg GetActorInput
 }
 
 const getActorInputRecordAtSequenceForUpdate = `-- name: GetActorInputRecordAtSequenceForUpdate :one
-SELECT id, environment_id, session_id, direction, sequence, data, content_type, source_run_id, producer_run_id, producer_attempt_number, claim_id, created_at
+SELECT id, environment_id, session_id, direction, sequence, data, content_type, source_run_id, producer_run_id, producer_attempt_number, claim_id, turn_status, run_generation, turn_run_id, turn_attempt_number, interrupt_requested_at, terminal_event_id, terminal_request_fingerprint, created_at
   FROM session_records
  WHERE environment_id = $1
    AND session_id = $2
@@ -626,13 +444,20 @@ func (q *Queries) GetActorInputRecordAtSequenceForUpdate(ctx context.Context, ar
 		&i.ProducerRunID,
 		&i.ProducerAttemptNumber,
 		&i.ClaimID,
+		&i.TurnStatus,
+		&i.RunGeneration,
+		&i.TurnRunID,
+		&i.TurnAttemptNumber,
+		&i.InterruptRequestedAt,
+		&i.TerminalEventID,
+		&i.TerminalRequestFingerprint,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const getActorInputRecordByIDForUpdate = `-- name: GetActorInputRecordByIDForUpdate :one
-SELECT id, environment_id, session_id, direction, sequence, data, content_type, source_run_id, producer_run_id, producer_attempt_number, claim_id, created_at
+SELECT id, environment_id, session_id, direction, sequence, data, content_type, source_run_id, producer_run_id, producer_attempt_number, claim_id, turn_status, run_generation, turn_run_id, turn_attempt_number, interrupt_requested_at, terminal_event_id, terminal_request_fingerprint, created_at
   FROM session_records
  WHERE environment_id = $1
    AND session_id = $2
@@ -662,48 +487,20 @@ func (q *Queries) GetActorInputRecordByIDForUpdate(ctx context.Context, arg GetA
 		&i.ProducerRunID,
 		&i.ProducerAttemptNumber,
 		&i.ClaimID,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
-const getActorOutputRecordByID = `-- name: GetActorOutputRecordByID :one
-SELECT id, environment_id, session_id, direction, sequence, data, content_type, source_run_id, producer_run_id, producer_attempt_number, claim_id, created_at
-  FROM session_records
- WHERE environment_id = $1
-   AND session_id = $2
-   AND id = $3
-   AND direction = 'output'
-`
-
-type GetActorOutputRecordByIDParams struct {
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	SessionID     pgtype.UUID `json:"session_id"`
-	ID            pgtype.UUID `json:"id"`
-}
-
-func (q *Queries) GetActorOutputRecordByID(ctx context.Context, arg GetActorOutputRecordByIDParams) (SessionRecord, error) {
-	row := q.db.QueryRow(ctx, getActorOutputRecordByID, arg.EnvironmentID, arg.SessionID, arg.ID)
-	var i SessionRecord
-	err := row.Scan(
-		&i.ID,
-		&i.EnvironmentID,
-		&i.SessionID,
-		&i.Direction,
-		&i.Sequence,
-		&i.Data,
-		&i.ContentType,
-		&i.SourceRunID,
-		&i.ProducerRunID,
-		&i.ProducerAttemptNumber,
-		&i.ClaimID,
+		&i.TurnStatus,
+		&i.RunGeneration,
+		&i.TurnRunID,
+		&i.TurnAttemptNumber,
+		&i.InterruptRequestedAt,
+		&i.TerminalEventID,
+		&i.TerminalRequestFingerprint,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const lockActorForInputReconcile = `-- name: LockActorForInputReconcile :one
-SELECT id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, manual_run_cancelled, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
+SELECT id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, manual_run_cancelled, active_turn_id, dispatch_hold_id, dispatch_hold_reason, next_event_sequence, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
   FROM sessions
  WHERE environment_id = $1
    AND id = $2
@@ -729,6 +526,10 @@ func (q *Queries) LockActorForInputReconcile(ctx context.Context, arg LockActorF
 		&i.RunGeneration,
 		&i.Revision,
 		&i.ManualRunCancelled,
+		&i.ActiveTurnID,
+		&i.DispatchHoldID,
+		&i.DispatchHoldReason,
+		&i.NextEventSequence,
 		&i.Failure,
 		&i.FailureRunID,
 		&i.NextInputSequence,

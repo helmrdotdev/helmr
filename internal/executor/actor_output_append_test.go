@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
@@ -50,9 +49,9 @@ func TestHandleActorOutputAppendWritesCorrelatedDecision(t *testing.T) {
 		testRunLeaseControlPlane: &testRunLeaseControlPlane{},
 		response: workerapi.AppendActorOutputResponse{
 			CorrelationID: correlationID,
-			Completed: &api.SessionOutput{
+			Completed: &workerapi.SessionEvent{
 				ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34", Sequence: 8,
-				Data: json.RawMessage(`{"status":"working"}`), ContentType: "application/json",
+				Data: json.RawMessage(`{"status":"working"}`), Kind: "output",
 			},
 		},
 	}
@@ -90,7 +89,6 @@ func TestHandleActorOutputAppendWritesCorrelatedDecision(t *testing.T) {
 	}
 	if controlPlane.request.Lease != lease.Fence() ||
 		string(controlPlane.request.Data) != `{"status":"working"}` ||
-		controlPlane.request.ContentType != "application/json" ||
 		controlPlane.request.IdempotencyKey != "output-1" {
 		t.Fatalf("request = %+v", controlPlane.request)
 	}
@@ -105,9 +103,9 @@ func TestHandleActorOutputAppendRetryKeepsStableFenceAcrossRenewal(t *testing.T)
 		testRunLeaseControlPlane: &testRunLeaseControlPlane{},
 		response: workerapi.AppendActorOutputResponse{
 			CorrelationID: correlationID,
-			Completed: &api.SessionOutput{
+			Completed: &workerapi.SessionEvent{
 				ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Sequence: 9,
-				Data: json.RawMessage(`{"status":"done"}`), ContentType: "application/json",
+				Data: json.RawMessage(`{"status":"done"}`), Kind: "output",
 			},
 		},
 		errors: []error{&httpclient.Error{
