@@ -44,6 +44,7 @@ let
           actionlint
           scripts/security-checks.sh
           bash -n scripts/dev-console-stack.sh
+          bash tests/buildkit_steps_test.sh
           bash tests/ci_workflow_test.sh
           bash tests/install_test.sh
           bash tests/release_manifest_test.sh
@@ -73,6 +74,7 @@ let
         ''
           bun install --frozen-lockfile --ignore-scripts
           scripts/build-compiler-entry.sh --check
+          scripts/build-hostconfig-entry.sh --check
           scripts/build-runtime-entry.sh --check
           make generate
           make fmt

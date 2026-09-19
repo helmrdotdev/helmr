@@ -2,6 +2,7 @@ export { actor } from "./actor"
 export { sessions } from "./session"
 export { HelmrClient } from "./client"
 export { image, source } from "./image"
+export { builder } from "./builder"
 export { logger } from "./logger"
 export { metadata } from "./metadata"
 export { defineConfig } from "./config"
@@ -91,9 +92,12 @@ export type {
 } from "./logger"
 
 export type {
+  HelmrBuildConfig,
+  HelmrBuildInput,
   HelmrConfig,
   HelmrConfigInput,
 } from "./config"
+export type { Builder, BuilderStep } from "./builder"
 
 export type {
   SessionClosedError,

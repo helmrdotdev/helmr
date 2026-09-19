@@ -12,4 +12,5 @@ bun run --cwd dev/schedule-workflows typecheck
 bun run --cwd dev/client typecheck
 scripts/check-packed-sdk-consumer.sh
 scripts/build-compiler-entry.sh
+scripts/build-hostconfig-entry.sh
 node scripts/check-dev-samples.mjs

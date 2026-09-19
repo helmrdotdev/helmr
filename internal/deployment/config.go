@@ -6,13 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"regexp"
 	"slices"
 	"strings"
 	"unicode/utf8"
 
-	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
@@ -26,21 +24,6 @@ var configExtglob = regexp.MustCompile(`[?*+@!]\(`)
 type BuildConfig struct {
 	Dirs           []string `json:"dirs"`
 	IgnorePatterns []string `json:"ignorePatterns"`
-}
-
-func ReadBuildConfigFrame(reader io.Reader) (BuildConfig, error) {
-	raw, err := frameio.ReadMessageFrameBounded(reader, maxBuildConfigBytes)
-	if err != nil {
-		return BuildConfig{}, fmt.Errorf("read config result frame: %w", err)
-	}
-	var trailing [1]byte
-	if _, err := io.ReadFull(reader, trailing[:]); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return BuildConfig{}, errors.New("config result channel contains trailing data")
-		}
-		return BuildConfig{}, fmt.Errorf("check config result channel trailing data: %w", err)
-	}
-	return ParseBuildConfig(raw)
 }
 
 func ParseBuildConfig(raw []byte) (BuildConfig, error) {

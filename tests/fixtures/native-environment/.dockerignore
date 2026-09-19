@@ -1,0 +1,6 @@
+# A project may have Docker ignore rules for its own images. They must not
+# reselect the source Helmr captured: all of these are needed by the build.
+environment
+native
+lifecycle-input.txt
+recipe-input.txt

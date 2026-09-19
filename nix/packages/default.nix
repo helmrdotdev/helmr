@@ -16,6 +16,18 @@ let
     builtins.readFile ../../internal/version/runtime-dependencies.json
   );
   nodeRelease = runtimeDependencies.node;
+  # Digest-pinned linux/amd64 Debian images: the builder's base and the source
+  # of the Runtime's C/C++ libraries.
+  debianImages = builtins.fromJSON (builtins.readFile ./debian-images.json);
+  debianImage =
+    pin:
+    pkgs.dockerTools.pullImage {
+      inherit (pin) imageName imageDigest hash;
+      finalImageName = pin.imageName;
+      inherit (pin) finalImageTag;
+      os = "linux";
+      arch = "amd64";
+    };
   nodeArchive =
     targetSystem:
     let
@@ -55,6 +67,7 @@ let
     typescriptVersion = runtimeDependencies.typescript.version;
     nodeVersion = nodeRelease.version;
     nodeRelease = nodeArchive "x86_64-linux";
+    debianRuntimeImage = debianImage debianImages.runtimeLibraries;
   };
   compiler = pkgs.callPackage ./compiler.nix {
     inherit moduleExecution;
@@ -70,12 +83,10 @@ let
       compiler
       runtimeRelease
       squashfsTools
-      timezoneData
       ;
-    bun = pkgsBun.bun;
-    nodejs_24 = nodejs;
-    pnpm = pkgs.pnpm.override { inherit nodejs; };
-    yarn = pkgs.yarn.override { inherit nodejs; };
+    baseImage = debianImage debianImages.builderBase;
+    nodeArchive = nodeArchive "x86_64-linux";
+    bunArchive = pkgsBun.bun.src;
   };
   buildGo127Module =
     if pkgsGo == null then

@@ -1,3 +1,57 @@
+// sdk/typescript/src/builder.ts
+var builderBrand = /* @__PURE__ */ Symbol.for("helmr.sdk.v0.builder");
+var BuilderValue = class _BuilderValue {
+  steps;
+  constructor(steps = []) {
+    this.steps = Object.freeze([...steps]);
+    Object.defineProperty(this, builderBrand, { value: true });
+    Object.freeze(this);
+  }
+  run(argv, ...unexpected) {
+    if (unexpected.length !== 0) {
+      throw new Error("builder.run() accepts only argv");
+    }
+    if (!Array.isArray(argv) || argv.some((argument) => typeof argument !== "string")) {
+      throw new Error("builder.run() requires an argv array of strings");
+    }
+    return new _BuilderValue([
+      ...this.steps,
+      Object.freeze({ kind: "run", argv: Object.freeze([...argv]) })
+    ]);
+  }
+  copy(source2, destination, ...unexpected) {
+    if (unexpected.length !== 0) {
+      throw new Error("builder.copy() accepts only a source and a destination");
+    }
+    if (typeof source2 !== "string") {
+      throw new Error(
+        "builder.copy() requires a project source path as its first argument; source.file() and source.directory() belong to image.copy()"
+      );
+    }
+    if (typeof destination !== "string") {
+      throw new Error("builder.copy() requires a destination path as its second argument");
+    }
+    if (/[*?\\]/.test(source2)) {
+      throw new Error(
+        "builder.copy() sources are literal project paths; '*', '?' and '\\' are not supported, copy the containing directory instead"
+      );
+    }
+    return new _BuilderValue([
+      ...this.steps,
+      Object.freeze({ kind: "copy", source: source2, destination })
+    ]);
+  }
+};
+function builder(...unexpected) {
+  if (unexpected.length !== 0) {
+    throw new Error("builder() takes no arguments; it always starts from the Helmr builder image");
+  }
+  return new BuilderValue();
+}
+function isBuilder(value) {
+  return typeof value === "object" && value !== null && value[builderBrand] === true;
+}
+
 // sdk/typescript/src/internal/utf8.ts
 var encoder = new TextEncoder();
 var encode = TextEncoder.prototype.encode.call.bind(
@@ -182,18 +236,18 @@ function normalizeConfig(value) {
   let invalidKey = false;
   for (let index = 0; index < keys.length; index++) {
     const key = keys[index];
-    if (typeof key !== "string" || key !== "dirs" && key !== "ignorePatterns") {
+    if (typeof key !== "string" || key !== "dirs" && key !== "ignorePatterns" && key !== "build") {
       invalidKey = true;
       break;
     }
   }
   if (invalidKey) {
-    throw new Error("config accepts only dirs and ignorePatterns");
+    throw new Error("config accepts only dirs, ignorePatterns and build");
   }
   for (let index = 0; index < keys.length; index++) {
     const key = keys[index];
     if (typeof key !== "string") {
-      throw new Error("config accepts only dirs and ignorePatterns");
+      throw new Error("config accepts only dirs, ignorePatterns and build");
     }
     const descriptor = descriptors[key];
     if (descriptor === void 0 || !descriptor.enumerable || !hasOwn(descriptor, "value")) {
@@ -214,7 +268,60 @@ function normalizeConfig(value) {
   );
   return freeze({
     dirs: freeze(dirs),
-    ignorePatterns: freeze(ignorePatterns)
+    ignorePatterns: freeze(ignorePatterns),
+    build: normalizeBuild(
+      hasOwn(descriptors, "build") ? descriptors["build"]?.value : void 0
+    )
+  });
+}
+function normalizeBuild(value) {
+  const secretNamePattern = /^[A-Z_][A-Z0-9_]{0,127}$/;
+  const maxInstallCommandBytes = 16 << 10;
+  if (value === void 0) {
+    return freeze({ builder: builder(), installCommand: void 0, secrets: freeze([]) });
+  }
+  if (typeof value !== "object" || value === null || arrayIsArray(value) || getPrototypeOf(value) !== objectPrototype) {
+    throw new Error("config build must be an ordinary object");
+  }
+  const descriptors = getOwnPropertyDescriptors(value);
+  const keys = ownKeys(value);
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index];
+    if (typeof key !== "string" || key !== "builder" && key !== "installCommand" && key !== "secrets") {
+      throw new Error("config build accepts only builder, installCommand and secrets");
+    }
+    const descriptor = descriptors[key];
+    if (descriptor === void 0 || !descriptor.enumerable || !hasOwn(descriptor, "value")) {
+      throw new Error("config build properties must be enumerable data properties");
+    }
+  }
+  const builderValue = descriptors["builder"]?.value;
+  if (builderValue !== void 0 && !isBuilder(builderValue)) {
+    throw new Error(
+      "config build.builder must be created by builder(); image() describes a Workspace image, not the build environment"
+    );
+  }
+  const installCommand = descriptors["installCommand"]?.value;
+  if (installCommand !== void 0) {
+    if (typeof installCommand !== "string" || !regexpTest(/\S/, installCommand) || installCommand.length > maxInstallCommandBytes || includes(installCommand, "\0")) {
+      throw new Error("config build.installCommand must be a non-empty command string");
+    }
+  }
+  const secrets = hasOwn(descriptors, "secrets") && descriptors["secrets"]?.value !== void 0 ? normalizeStringSet(
+    descriptors["secrets"]?.value,
+    "config build.secrets",
+    (name) => {
+      if (typeof name !== "string" || !regexpTest(secretNamePattern, name)) {
+        throw new Error("config build.secrets entries must be environment variable names such as NPM_TOKEN");
+      }
+      return name;
+    },
+    false
+  ) : [];
+  return freeze({
+    builder: builderValue === void 0 ? builder() : builderValue,
+    installCommand,
+    secrets: freeze(secrets)
   });
 }
 function normalizeStringSet(value, name, normalize, nonempty) {
@@ -1357,7 +1464,7 @@ async function compileProgram(options) {
   if (!/^sha256:[0-9a-f]{64}$/.test(options.inputTreeDigest)) throw new Error("Program Compiler input tree digest is invalid");
   const root = await realpath2(options.root);
   const language = moduleExecutionIdentity();
-  const execution = installModuleExecution({ root, phase: "program" });
+  const execution = installModuleExecution({ root });
   try {
     const modules = await discoverModules(root, options.config);
     if (modules.length === 0) throw new Error("configured dirs contain no declaration source modules");
@@ -1398,10 +1505,11 @@ function inspectCanonicalConfig(value) {
   if (keys.length !== 2 || keys[0] !== "dirs" || keys[1] !== "ignorePatterns") {
     throw new Error("canonical config does not match the build contract");
   }
-  return inspectConfig({
+  const config = inspectConfig({
     dirs: record["dirs"],
     ignorePatterns: record["ignorePatterns"]
   });
+  return { dirs: config.dirs, ignorePatterns: config.ignorePatterns };
 }
 
 // compiler/typescript/src/program-compiler.ts

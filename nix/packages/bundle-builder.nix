@@ -20,6 +20,9 @@ buildGoModule {
   vendorHash = "sha256-+C7J9qgT3Pdv3y0UkvblgxVdpJiuSMrlnch3No20po8=";
   subPackages = [ "cmd/internal/bundle-builder" ];
 
+  # Static: the builder runs unchanged inside user-prepared environments.
+  env.CGO_ENABLED = 0;
+
   ldflags = [
     "-s"
     "-w"

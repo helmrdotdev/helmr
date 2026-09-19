@@ -25,12 +25,17 @@ func TestSelectInstallPlanRespectsProducerChoiceWithoutVersionAdmission(t *testi
 		},
 		{
 			name: "bun", selector: "bun@7.0.0-beta.2", lockfile: "bun.lock",
-			want: []string{"/usr/local/bin/bun-for-version", "7.0.0-beta.2", "install", "--frozen-lockfile"},
+			want: []string{"npx", "--yes", "bun@7.0.0-beta.2", "install", "--frozen-lockfile"},
 		},
 		{
 			name: "yarn", selector: "yarn@8.0.0", lockfile: "yarn.lock",
 			want: []string{"corepack", "yarn@8.0.0", "install", "--immutable"},
 		},
+		{name: "npm lockfile", lockfile: "package-lock.json", want: []string{"npm", "ci", "--no-audit", "--no-fund"}},
+		{name: "pnpm lockfile", lockfile: "pnpm-lock.yaml", want: []string{"corepack", "pnpm", "install", "--frozen-lockfile"}},
+		{name: "yarn lockfile", lockfile: "yarn.lock", want: []string{"corepack", "yarn", "install", "--immutable"}},
+		{name: "bun lockfile", lockfile: "bun.lock", want: []string{"bun", "install", "--frozen-lockfile"}},
+		{name: "no lockfile", want: []string{"npm", "install", "--no-audit", "--no-fund"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -99,7 +104,7 @@ func TestNormalizeSecretIDsKeepsOnlyCanonicalNames(t *testing.T) {
 	if !reflect.DeepEqual(got, []string{"GITHUB_TOKEN", "NPM_TOKEN"}) {
 		t.Fatalf("secret IDs = %q", got)
 	}
-	for _, values := range [][]string{{"npm-token"}, {"TOKEN", "TOKEN"}, {""}} {
+	for _, values := range [][]string{{"npm-token"}, {"TOKEN", "TOKEN"}, {""}, {" NPM_TOKEN"}, {"NPM_TOKEN\n"}} {
 		if _, err := NormalizeSecretIDs(values); err == nil {
 			t.Fatalf("invalid secret IDs were accepted: %q", values)
 		}

@@ -15,7 +15,6 @@ func testLanguageIdentity() ModuleExecutionIdentity {
 }
 func testCompilerInputs() CompilerInputs {
 	return CompilerInputs{APIVersion: "helmr.compiler.v0", Language: testLanguageIdentity(),
-		ConfigEvaluator: CompilerEntrypoint{APIVersion: ConfigEvaluatorContract, Digest: testDigest("config evaluator"), Entrypoint: "/nix/helmr/config-evaluator.mjs"},
 		ProgramCompiler: CompilerEntrypoint{APIVersion: "helmr.compiler.v0", Digest: testDigest("program compiler"), Entrypoint: "/nix/helmr/program-compiler.mjs"}}
 }
 

@@ -2,7 +2,7 @@ import { test, expect } from "bun:test"
 import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, resolve } from "node:path"
-import { analyzeProject, nodeVersion, runEntry } from "./test-process"
+import { analyzeProject, runHostConfig } from "./test-process"
 
 const repository = new URL("../../../", import.meta.url).pathname
 async function fixture(files: Record<string, string | object>, sdk = false) {
@@ -22,12 +22,15 @@ test("config defaults are strict, computed ESM/CJS expressions execute once", as
   const f=await fixture({"package.json":{type},"helmr.config.ts":`import{writeFileSync}from'node:fs';writeFileSync(new URL('./evaluated',import.meta.url),'once',{flag:'wx'});const value={};export default value`})
   // CJS uses its native filename, not import.meta (which is ESM-only).
   if(type==="commonjs")await writeFile(resolve(f.root,"helmr.config.ts"),`import{writeFileSync}from'node:fs';writeFileSync(__dirname+'/evaluated','once',{flag:'wx'});const value={};export default value`)
-  try {expect(runEntry("config-evaluator",[f.root,nodeVersion])).toEqual({dirs:["tasks"],ignorePatterns:[]});expect(await readFile(resolve(f.root,"evaluated"),"utf8")).toBe("once")}finally{await f.close()}
+  try {expect(runHostConfig(f.root)).toEqual({discovery:{dirs:["tasks"],ignorePatterns:[]},build:{builder:{steps:[]},secrets:[]}});expect(await readFile(resolve(f.root,"evaluated"),"utf8")).toBe("once")}finally{await f.close()}
  }
- for(const body of ["export const other={}","export default undefined","export default null","export default 1","export default []"]){
+ for(const body of ["export const other={}","export default undefined","export default 1","export default []"]){
   const f=await fixture({"helmr.config.ts":body})
-  try{expect(()=>runEntry("config-evaluator",[f.root,nodeVersion])).toThrow("default-export a valid config object")}finally{await f.close()}
+  try{expect(()=>runHostConfig(f.root)).toThrow("default-export a valid config object")}finally{await f.close()}
  }
+ // The loader itself rejects a null module value before Helmr can inspect it.
+ const f=await fixture({"helmr.config.ts":"export default null"})
+ try{expect(()=>runHostConfig(f.root)).toThrow("failed to evaluate helmr.config.ts")}finally{await f.close()}
 })
 
 test("real packed SDK config/task/actor identity through a mixed JS-to-TS package",async()=>{
@@ -42,7 +45,7 @@ test("real packed SDK config/task/actor identity through a mixed JS-to-TS packag
   "tasks/task.ts":`import{task,actor}from'@helmr/sdk';import{value}from'mixed';import{createRequire}from'node:module';if(value!=='installed'||createRequire(import.meta.url)('mixed')!=='required')throw Error('wrong instance');export const build=task({id:'build',run:()=>value});export const worker=actor({id:'worker',run:async()=>{}})`,
  },true)
  try{
-  const config=runEntry("config-evaluator",[f.root,nodeVersion])
+  const config=runHostConfig(f.root).discovery
   const result=await analyzeProject({root:f.root,architecture:"x86_64",config})
   expect(result.programDeclarations.map((d:{kind:string})=>d.kind)).toEqual(["task","actor"])
   expect(result.declarationLocator.declarations.map((d:{sourcePath:string})=>d.sourcePath)).toEqual(["tasks/task.ts","tasks/task.ts"])

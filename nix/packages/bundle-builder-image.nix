@@ -1,124 +1,77 @@
 {
   lib,
   runCommand,
-  writeShellApplication,
   dockerTools,
-  bash,
-  cacert,
-  coreutils,
-  findutils,
-  gitMinimal,
-  nodejs_24,
-  pnpm,
-  yarn,
-  bun,
+  unzip,
+  baseImage,
+  nodeArchive,
+  bunArchive,
   bundleBuilder,
   compiler,
   runtimeRelease,
   squashfsTools,
-  timezoneData,
 }:
 
 let
-  bunForVersion = writeShellApplication {
-    name = "bun-for-version";
-    runtimeInputs = [ nodejs_24 ];
-    text = ''
-      if [ "$#" -lt 2 ]; then
-        printf 'usage: bun-for-version VERSION ARGS...\n' >&2
-        exit 2
-      fi
-      version="$1"
-      shift
-      case "$version" in
-        *[!0-9A-Za-z.-]* | "")
-          printf 'bun-for-version: invalid version\n' >&2
-          exit 2
-          ;;
-      esac
-      root="''${XDG_CACHE_HOME:?}/helmr-bun/$version"
-      binary="$root/node_modules/@oven/bun-linux-x64-baseline/bin/bun"
-      if [ ! -x "$binary" ]; then
-        mkdir -p "$root"
-        npm install \
-          --prefix "$root" \
-          --ignore-scripts \
-          --no-audit \
-          --no-fund \
-          --no-save \
-          "@oven/bun-linux-x64-baseline@$version"
-      fi
-      exec /opt/helmr/runtime/lib/ld-linux-x86-64.so.2 \
-        --library-path /opt/helmr/runtime/lib \
-        "$binary" "$@"
-    '';
-  };
-  root = runCommand "helmr-bundle-builder-root" { } ''
+  # Helmr's verified tools live only under /opt/helmr and /nix, the two trees
+  # the build graph mounts read-only from this pinned image.
+  platform = runCommand "helmr-bundle-builder-platform" { } ''
     mkdir -p \
-      "$out/bin" \
       "$out/nix/helmr" \
-      "$out/opt/helmr/release" \
-      "$out/usr/bin" \
-      "$out/usr/local/bin" \
-      "$out/usr/share"
+      "$out/opt/helmr/bin" \
+      "$out/opt/helmr/release"
 
     cp -a ${runtimeRelease}/tree "$out/opt/helmr/runtime"
+    cp ${runtimeRelease}/runtime.descriptor.json "$out/opt/helmr/release/runtime.descriptor.json"
     cp -a ${compiler}/tree/helmr/. "$out/nix/helmr/"
     cp -a ${compiler}/tree/moduleexecution "$out/nix/moduleexecution"
     cp -a ${compiler}/tree/share "$out/nix/share"
     chmod u+w "$out/nix/helmr"
     cp ${compiler}/compiler.descriptor.json "$out/nix/helmr/compiler.descriptor.json"
     chmod u-w "$out/nix/helmr"
-    cp ${runtimeRelease}/runtime.descriptor.json "$out/opt/helmr/release/runtime.descriptor.json"
 
-    ln -s ${bash}/bin/bash "$out/bin/bash"
-    ln -s bash "$out/bin/sh"
-    ln -s ${coreutils}/bin/env "$out/usr/bin/env"
-    ln -s ${bundleBuilder}/bin/bundle-builder "$out/usr/local/bin/bundle-builder"
-    ln -s ${squashfsTools}/bin/mksquashfs "$out/usr/local/bin/mksquashfs"
-    ln -s ${nodejs_24}/bin/npm "$out/usr/local/bin/npm"
-    ln -s ${nodejs_24}/bin/npx "$out/usr/local/bin/npx"
-    ln -s ${nodejs_24}/bin/corepack "$out/usr/local/bin/corepack"
-    ln -s ${pnpm}/bin/pnpm "$out/usr/local/bin/pnpm"
-    ln -s ${yarn}/bin/yarn "$out/usr/local/bin/yarn"
-    ln -s ${bun}/bin/bun "$out/usr/local/bin/bun"
-    ln -s ${bunForVersion}/bin/bun-for-version "$out/usr/local/bin/bun-for-version"
-    ln -s ${gitMinimal}/bin/git "$out/usr/local/bin/git"
-    ln -s ${timezoneData}/zoneinfo "$out/usr/share/zoneinfo"
+    ln -s ${bundleBuilder}/bin/bundle-builder "$out/opt/helmr/bin/bundle-builder"
+    ln -s ${squashfsTools}/bin/mksquashfs "$out/opt/helmr/bin/mksquashfs"
+    ln -s /workspace/project "$out/opt/helmr/program"
+  '';
+  # The user-facing toolchain is the unmodified official release, running on
+  # the Debian base like any other program there.
+  userTools = runCommand "helmr-bundle-builder-user-tools" { nativeBuildInputs = [ unzip ]; } ''
+    mkdir -p "$out/usr/local" "$TMPDIR/node" "$TMPDIR/bun"
+    tar -xJf ${nodeArchive} --strip-components=1 --directory "$TMPDIR/node"
+    for directory in bin include lib share; do
+      cp -a "$TMPDIR/node/$directory" "$out/usr/local/$directory"
+    done
+    unzip -q ${bunArchive} -d "$TMPDIR/bun"
+    install -m0755 "$TMPDIR"/bun/*/bun "$out/usr/local/bin/bun"
   '';
 in
 dockerTools.buildLayeredImage {
   name = "bundle-builder";
   tag = "0";
   created = "1970-01-01T00:00:01Z";
+  fromImage = baseImage;
   maxLayers = 120;
 
-  contents = [
-    root
-    bash
-    cacert
-    coreutils
-    findutils
-    gitMinimal
-    nodejs_24
-    pnpm
-    yarn
-    bun
-    bunForVersion
-    bundleBuilder
-    squashfsTools
-    timezoneData
-  ];
+  contents = [ platform ];
+
+  # Real files, not store links: /usr/local stays an ordinary writable prefix.
+  extraCommands = ''
+    mkdir -p usr/local
+    cp -a ${userTools}/usr/local/. usr/local/
+    chmod -R u+w usr/local
+  '';
 
   config = {
     Labels."org.opencontainers.image.source" = "https://github.com/helmrdotdev/helmr";
-    Cmd = [ "/usr/local/bin/bundle-builder" ];
+    Cmd = [ "/opt/helmr/bin/bundle-builder" ];
     Env = [
+      "COREPACK_DEFAULT_TO_LATEST=0"
+      "COREPACK_ENABLE_DOWNLOAD_PROMPT=0"
       "HOME=/workspace/home"
       "LANG=C.UTF-8"
       "LC_ALL=C.UTF-8"
-      "PATH=/usr/local/bin:/usr/bin:/bin"
-      "SSL_CERT_FILE=${cacert}/etc/ssl/certs/ca-bundle.crt"
+      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
       "TMPDIR=/workspace/tmp"
       "TZ=UTC"
       "XDG_CACHE_HOME=/workspace/home/cache"

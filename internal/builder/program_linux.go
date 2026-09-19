@@ -31,9 +31,7 @@ type ProgramInput struct {
 	ProjectDirectory string
 	WorkDirectory    string
 	NodePath         string
-	NodeLoader       string
-	NodeLibraryPath  string
-	ConfigEvaluator  string
+	ConfigPath       string
 	ProgramCompiler  string
 	SquashFSEncoder  string
 	Compiler         deployment.CompilerInputs
@@ -281,17 +279,9 @@ func compileInstalledProgram(
 	if err != nil {
 		return deployment.BuildConfig{}, deployment.VerificationResult{}, err
 	}
-	configFrame, err := runFinalizerCommand(ctx, finalizerCommand{
-		NodePath: input.NodePath, NodeLoader: input.NodeLoader,
-		NodeLibraryPath: input.NodeLibraryPath,
-		Arguments: append(append([]string{}, flags...), input.ConfigEvaluator,
-			input.ProjectDirectory, input.RuntimeMetadata.NodeVersion),
-		Directory: input.ProjectDirectory, WorkDir: work,
-	})
-	if err != nil {
-		return deployment.BuildConfig{}, deployment.VerificationResult{}, fmt.Errorf("evaluate Helmr config: %w", err)
-	}
-	config, err := deployment.ReadBuildConfigFrame(bytes.NewReader(configFrame))
+	// The config was evaluated once on the invoking host; this phase only reads
+	// its resolved discovery settings and never imports helmr.config.ts.
+	config, err := readResolvedConfig(input.ConfigPath)
 	if err != nil {
 		return deployment.BuildConfig{}, deployment.VerificationResult{}, err
 	}
@@ -304,8 +294,7 @@ func compileInstalledProgram(
 		return deployment.BuildConfig{}, deployment.VerificationResult{}, fmt.Errorf("write canonical Helmr config: %w", err)
 	}
 	verificationFrame, err := runFinalizerCommand(ctx, finalizerCommand{
-		NodePath: input.NodePath, NodeLoader: input.NodeLoader,
-		NodeLibraryPath: input.NodeLibraryPath,
+		NodePath: input.NodePath,
 		Arguments: append(append([]string{}, flags...), input.ProgramCompiler,
 			input.ProjectDirectory, configPath, input.RuntimeMetadata.NodeVersion, inputDigest, compilerOutput),
 		Directory: input.ProjectDirectory, WorkDir: work,
@@ -344,9 +333,7 @@ func validateProgramInput(input ProgramInput) error {
 		"project directory": input.ProjectDirectory,
 		"work directory":    input.WorkDirectory,
 		"Node executable":   input.NodePath,
-		"Node loader":       input.NodeLoader,
-		"Node library path": input.NodeLibraryPath,
-		"Config Evaluator":  input.ConfigEvaluator,
+		"resolved config":   input.ConfigPath,
 		"Program Compiler":  input.ProgramCompiler,
 		"SquashFS encoder":  input.SquashFSEncoder,
 	} {
@@ -483,13 +470,25 @@ func writeExclusiveFile(path string, body []byte) (returnErr error) {
 	return file.Sync()
 }
 
+// readResolvedConfig reads the bounded canonical discovery config the CLI
+// resolved on the host.
+func readResolvedConfig(path string) (deployment.BuildConfig, error) {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() < 1 || info.Size() > 1<<20 {
+		return deployment.BuildConfig{}, errors.New("resolved config is not a bounded regular file")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return deployment.BuildConfig{}, fmt.Errorf("read resolved config: %w", err)
+	}
+	return deployment.ParseBuildConfig(raw)
+}
+
 type finalizerCommand struct {
-	NodePath        string
-	NodeLoader      string
-	NodeLibraryPath string
-	Arguments       []string
-	Directory       string
-	WorkDir         string
+	NodePath  string
+	Arguments []string
+	Directory string
+	WorkDir   string
 }
 
 func runFinalizerCommand(
@@ -507,9 +506,7 @@ func runFinalizerCommand(
 		}
 		returnErr = errors.Join(returnErr, os.Remove(result.Name()))
 	}()
-	arguments := []string{"--library-path", input.NodeLibraryPath, input.NodePath}
-	arguments = append(arguments, input.Arguments...)
-	command := exec.CommandContext(ctx, input.NodeLoader, arguments...)
+	command := exec.CommandContext(ctx, input.NodePath, input.Arguments...)
 	command.Dir = input.Directory
 	command.ExtraFiles = []*os.File{result}
 	command.Env = []string{

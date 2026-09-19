@@ -17,7 +17,6 @@ const absent = (error: unknown) => error instanceof Error && "code" in error &&
 
 export interface ModuleExecutionOptions {
   root: string
-  phase: "config" | "program"
   // The verified platform installation; only the fixed bootstrap files below
   // can load outside Program, and only from a platform parent/Node entry.
   platformRoot?: string
@@ -37,7 +36,8 @@ export function installModuleExecution(options: ModuleExecutionOptions): ModuleE
   ])
   const source = (path: string) => {
     const canonical = authority.file(path)
-    if (options.phase === "program" && canonical === rootConfig) {
+    // helmr.config.ts is evaluated once on the build host; managed modules never import it.
+    if (canonical === rootConfig) {
       throw new Error(`helmr.config.ts is build-only and cannot be imported by Program modules: ${path}`)
     }
     return canonical

@@ -174,7 +174,7 @@ function installModuleExecution(options) {
   ]);
   const source = (path) => {
     const canonical = authority.file(path);
-    if (options.phase === "program" && canonical === rootConfig) {
+    if (canonical === rootConfig) {
       throw new Error(`helmr.config.ts is build-only and cannot be imported by Program modules: ${path}`);
     }
     return canonical;

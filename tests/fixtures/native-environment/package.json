@@ -1,0 +1,11 @@
+{
+  "name": "native-environment-fixture",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "postinstall": "node scripts/postinstall.mjs"
+  },
+  "dependencies": {
+    "opencode-ai": "1.18.30"
+  }
+}

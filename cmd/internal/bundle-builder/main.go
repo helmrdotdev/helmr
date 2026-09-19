@@ -37,9 +37,7 @@ func run(ctx context.Context, arguments []string) error {
 	runtimeMetadata := flags.String("runtime-metadata", "", "canonical Runtime metadata")
 	compilerDescriptor := flags.String("compiler-descriptor", "", "canonical compiler descriptor")
 	node := flags.String("node", "", "pinned Node executable")
-	nodeLoader := flags.String("node-loader", "", "pinned Runtime ELF loader")
-	nodeLibraryPath := flags.String("node-library-path", "", "pinned Runtime library directory")
-	configEvaluator := flags.String("config-evaluator", "", "pinned Config Evaluator")
+	configPath := flags.String("config", "", "discovery config resolved on the invoking host")
 	programCompiler := flags.String("program-compiler", "", "pinned Program Compiler")
 	encoder := flags.String("encoder", "", "pinned mksquashfs executable")
 	if err := flags.Parse(arguments); err != nil {
@@ -76,9 +74,7 @@ func run(ctx context.Context, arguments []string) error {
 		ProjectDirectory: cleanAbsolute(*project),
 		WorkDirectory:    cleanAbsolute(*work),
 		NodePath:         cleanAbsolute(*node),
-		NodeLoader:       cleanAbsolute(*nodeLoader),
-		NodeLibraryPath:  cleanAbsolute(*nodeLibraryPath),
-		ConfigEvaluator:  cleanAbsolute(*configEvaluator),
+		ConfigPath:       cleanAbsolute(*configPath),
 		ProgramCompiler:  cleanAbsolute(*programCompiler),
 		SquashFSEncoder:  cleanAbsolute(*encoder),
 		Compiler:         compiler,

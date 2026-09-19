@@ -107,6 +107,7 @@ func verifyRuntimeTopology(
 		"share/licenses/node",
 		"moduleexecution",
 		"share/licenses/typescript",
+		"share/licenses/debian",
 	}
 	for _, required := range requiredDirectories {
 		if _, err := artifact.require(required, artifactEntryDirectory); err != nil {
@@ -123,6 +124,9 @@ func verifyRuntimeTopology(
 		"moduleexecution/loader.mjs":        0644,
 		"moduleexecution/typescript.cjs":    0644,
 		"share/licenses/typescript/LICENSE": 0644,
+		"share/licenses/debian/libc6":       0644,
+		"share/licenses/debian/libgcc-s1":   0644,
+		"share/licenses/debian/libstdc++6":  0644,
 	}
 	for required, mode := range requiredFiles {
 		entry, err := artifact.require(required, artifactEntryRegular)
@@ -168,7 +172,7 @@ func verifyRuntimeTopology(
 
 func validateRuntimePath(entry artifactEntry, required map[string]uint32) error {
 	switch entry.Path {
-	case ".", "bin", "helmr", "lib", "share", "share/licenses", "share/licenses/node", "moduleexecution", "share/licenses/typescript":
+	case ".", "bin", "helmr", "lib", "share", "share/licenses", "share/licenses/node", "moduleexecution", "share/licenses/typescript", "share/licenses/debian":
 		return nil
 	}
 	if _, exists := required[entry.Path]; exists {

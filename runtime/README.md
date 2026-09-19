@@ -11,6 +11,16 @@ TypeScript/JSX transforms in process with original source URLs. The runtime read
 source/export locators from the admitted Program index. Its entry and preload
 belong to the Runtime artifact, not the customer Program.
 
+The Runtime carries its own C and C++ runtime so Node runs in any Workspace
+image, including musl ones: the loader, the glibc components and libstdc++ come
+from a digest-pinned Debian stable image (`nix/packages/debian-images.json`).
+Node depends on every glibc component directly, including those it does not
+use itself, so an addon or Workspace library that names one always receives the
+Runtime's copy rather than a mismatched one from the image. Every other shared
+library resolves as in an ordinary process: the object's RPATH, then the
+Workspace image's `ld.so.cache` and standard directories. The Workspace image
+owns those libraries; a missing or too-new one is the ordinary loader error.
+
 Arbitrary Workspace commands retain their image tools and environment. No ambient
 loader is injected into them. Public authoring APIs belong in `sdk/`; declaration
 analysis belongs in `compiler/`; this layer owns execution and protocol handling.

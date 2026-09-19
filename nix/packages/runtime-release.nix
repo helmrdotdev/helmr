@@ -3,10 +3,10 @@
   moduleExecution,
   stdenv,
   stdenvNoCC,
+  debianRuntimeImage,
   nodeVersion,
   typescriptVersion,
   nodeRelease,
-  glibc,
   coreutils,
   findutils,
   gnutar,
@@ -19,8 +19,31 @@
 let
   architecture = "x86_64";
   loader = "ld-linux-x86-64.so.2";
-  glibcLib = lib.getLib glibc;
-  compilerLib = lib.getLib stdenv.cc.cc;
+  # Every glibc component an addon or Workspace library can name must already
+  # be loaded from the Runtime, so Node depends on the ones it does not link itself.
+  nodeLibraries = [
+    "libdl.so.2"
+    "libstdc++.so.6"
+    "libm.so.6"
+    "libgcc_s.so.1"
+    "libpthread.so.0"
+    "libc.so.6"
+  ];
+  preloadedLibraries = [
+    "libmvec.so.1"
+    "librt.so.1"
+    "libutil.so.1"
+    "libanl.so.1"
+    "libresolv.so.2"
+  ];
+  # libc resolves these plugins itself through its Runtime RUNPATH.
+  nssLibraries = [
+    "libnss_compat.so.2"
+    "libnss_dns.so.2"
+    "libnss_files.so.2"
+    "libnss_hesiod.so.2"
+  ];
+  runtimeLibraries = nodeLibraries ++ preloadedLibraries ++ nssLibraries;
 in
 assert lib.assertMsg stdenv.hostPlatform.isx86_64 "Runtime release supports only x86_64-linux";
 stdenvNoCC.mkDerivation {
@@ -58,50 +81,58 @@ stdenvNoCC.mkDerivation {
     adapter_digest="sha256:$(sha256sum "$tree/moduleexecution/loader.mjs" | cut -d' ' -f1)"
     typescript_digest="sha256:$(sha256sum "$tree/moduleexecution/typescript.cjs" | cut -d' ' -f1)"
 
-    copy_library() {
-      name="$1"
-      shift
-      for directory in "$@"; do
-        candidate="$directory/$name"
-        if [ -e "$candidate" ]; then
-          cp -L "$candidate" "$tree/lib/$name"
-          chmod 0644 "$tree/lib/$name"
-          return
-        fi
-      done
-      echo "missing Runtime library $name" >&2
-      exit 1
-    }
-
-    copy_library ${loader} ${glibcLib}/lib
-    copy_library libc.so.6 ${glibcLib}/lib
-    copy_library libdl.so.2 ${glibcLib}/lib
-    copy_library libm.so.6 ${glibcLib}/lib
-    copy_library libpthread.so.0 ${glibcLib}/lib
-    copy_library libresolv.so.2 ${glibcLib}/lib
-    copy_library libgcc_s.so.1 ${compilerLib}/lib ${glibcLib}/lib
-    copy_library libstdc++.so.6 ${compilerLib}/lib
-    chmod 0755 "$tree/lib/${loader}"
-
-    patchelf \
-      --set-interpreter /opt/helmr/runtime/lib/${loader} \
-      --set-rpath /opt/helmr/runtime/lib \
-      "$tree/bin/node"
-
-    for library in \
-      libc.so.6 \
-      libdl.so.2 \
-      libm.so.6 \
-      libpthread.so.0 \
-      libresolv.so.2 \
-      libgcc_s.so.1 \
-      libstdc++.so.6; do
-      patchelf --set-rpath /opt/helmr/runtime/lib "$tree/lib/$library"
+    debian="$TMPDIR/debian"
+    mkdir -p "$TMPDIR/image" "$debian" "$tree/share/licenses/debian"
+    tar -xf ${debianRuntimeImage} --directory "$TMPDIR/image"
+    jq -r '.[0].Layers[]' "$TMPDIR/image/manifest.json" | while read -r layer; do
+      tar -xf "$TMPDIR/image/$layer" --directory "$debian" \
+        --no-same-owner --no-same-permissions --exclude='dev/*' \
+        --wildcards 'usr/lib/x86_64-linux-gnu/*' 'usr/share/doc/*'
     done
-    patchelf \
-      --set-interpreter /opt/helmr/runtime/lib/${loader} \
-      "$tree/lib/libc.so.6"
-    patchelf --remove-rpath "$tree/lib/${loader}"
+    debian_lib="$debian/usr/lib/x86_64-linux-gnu"
+    for name in ${loader} ${lib.concatStringsSep " " runtimeLibraries}; do
+      if [ ! -e "$debian_lib/$name" ]; then
+        echo "missing Debian Runtime library $name" >&2
+        exit 1
+      fi
+      cp -L "$debian_lib/$name" "$tree/lib/$name"
+      chmod 0644 "$tree/lib/$name"
+    done
+    chmod 0755 "$tree/lib/${loader}"
+    for package in libc6 libgcc-s1 libstdc++6; do
+      install -m0644 "$(realpath "$debian/usr/share/doc/$package/copyright")" \
+        "$tree/share/licenses/debian/$package"
+    done
+
+    # One edit per invocation; the resulting dynamic sections are asserted below.
+    for name in ${lib.concatStringsSep " " preloadedLibraries}; do
+      patchelf --add-needed "$name" "$tree/bin/node"
+    done
+    patchelf --set-interpreter /opt/helmr/runtime/lib/${loader} "$tree/bin/node"
+    patchelf --set-rpath /opt/helmr/runtime/lib "$tree/bin/node"
+    for name in ${lib.concatStringsSep " " runtimeLibraries}; do
+      patchelf --set-rpath /opt/helmr/runtime/lib "$tree/lib/$name"
+    done
+    patchelf --set-interpreter /opt/helmr/runtime/lib/${loader} "$tree/lib/libc.so.6"
+
+    # A wrong search path or dependency set would silently mix the Workspace
+    # image's C runtime into Node, so the exact dynamic sections are required.
+    require_dynamic() {
+      if [ "$2" != "$3" ]; then
+        echo "Runtime $1 = '$2', want '$3'" >&2
+        exit 1
+      fi
+    }
+    require_dynamic "Node interpreter" \
+      "$(patchelf --print-interpreter "$tree/bin/node")" /opt/helmr/runtime/lib/${loader}
+    require_dynamic "Node dependencies" \
+      "$(patchelf --print-needed "$tree/bin/node" | sort | tr '\n' ' ')" \
+      "$(printf '%s\n' ${lib.concatStringsSep " " ([ loader ] ++ nodeLibraries ++ preloadedLibraries)} | sort | tr '\n' ' ')"
+    for file in bin/node ${lib.concatMapStringsSep " " (name: "lib/${name}") runtimeLibraries}; do
+      require_dynamic "$file RUNPATH" "$(patchelf --print-rpath "$tree/$file")" /opt/helmr/runtime/lib
+    done
+    require_dynamic "loader RUNPATH" "$(patchelf --print-rpath "$tree/lib/${loader}")" ""
+    require_dynamic "loader dependencies" "$(patchelf --print-needed "$tree/lib/${loader}")" ""
 
     jq -cSj -n \
       --arg architecture "${architecture}" \
