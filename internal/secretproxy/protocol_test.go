@@ -75,8 +75,12 @@ func TestH2ConcurrentStreamsAndCancellation(t *testing.T) {
 	protocols := new(http.Protocols)
 	protocols.SetHTTP2(true)
 	transport.Protocols = protocols
+	// Stay within the server's advertised four-stream limit. The Go client can
+	// otherwise race its initial SETTINGS ACK with already allocated streams,
+	// producing invalid over-limit HEADERS rather than valid concurrent traffic.
+	const concurrentStreams = 4
 	var wg sync.WaitGroup
-	for i := 0; i < 12; i++ {
+	for i := 0; i < concurrentStreams; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -95,7 +99,7 @@ func TestH2ConcurrentStreamsAndCancellation(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	if f.resolutions.Load() != 12 {
+	if f.resolutions.Load() != concurrentStreams {
 		t.Fatal("missing per-stream authorization", f.resolutions.Load())
 	}
 	ctx, cancel := context.WithCancel(t.Context())

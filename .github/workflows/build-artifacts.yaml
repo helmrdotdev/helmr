@@ -65,7 +65,7 @@ jobs:
         with:
           name: build-artifacts-${{ github.run_id }}-${{ matrix.part }}
           path: ${{ runner.temp }}/frozen/
-          retention-days: 7
+          retention-days: ${{ github.event_name == 'pull_request' && 1 || 7 }}
           compression-level: 0
           if-no-files-found: error
   cli:
@@ -120,7 +120,7 @@ jobs:
         with:
           name: build-artifacts-${{ github.run_id }}-cli
           path: ${{ runner.temp }}/frozen/
-          retention-days: 7
+          retention-days: ${{ github.event_name == 'pull_request' && 1 || 7 }}
           if-no-files-found: error
   consumer:
     needs: cli

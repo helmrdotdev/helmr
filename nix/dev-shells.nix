@@ -58,6 +58,14 @@ in
     inherit shellHook;
   };
 
+  release = pkgs.mkShellNoCC {
+    packages = toolsets.release;
+  };
+
+  release-consumer = pkgs.mkShellNoCC {
+    packages = toolsets.releaseConsumer;
+  };
+
   infra = pkgs.mkShell {
     packages = toolsets.infra;
     inherit shellHook;

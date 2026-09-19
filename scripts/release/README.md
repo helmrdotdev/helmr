@@ -42,9 +42,54 @@ include deletions/renames and the entire diff since the last selected complete
 source, so a relevant change followed by docs cannot disappear.
 
 Pull requests retain **ci complete**, which requires **source-ci-complete** and
-a successful artifact build for the exact PR head. Release publication for PRs
-and human tags still builds once under trusted orchestration when required; their
-source checks are not weakened to gain reuse.
+all packaging work selected for the exact PR head. Ordinary application/Console
+changes retain source builds and tests without creating the full distribution.
+Release publication for PRs and human tags still builds the complete set once
+under trusted orchestration; a lightweight PR result never substitutes for it.
+
+### PR work selection
+
+`scripts/release/ci_policy.py` classifies the full PR merge-base-to-head diff.
+Source checks use GitHub's native merge result; selected distribution artifacts
+use the exact head. Renames include both names. Missing ancestry, empty diffs,
+unknown paths, shared dependencies, locks, build/release/CI wiring and
+CLI/SDK/proto/compiler/runtime/Worker changes select full work. Main keeps complete
+source validation and builds every artifact-relevant change, including ordinary
+application edits. Its documentation-only skip policy above is unchanged.
+
+| PR path group | Distribution set / builder E2E | Retained proof |
+| --- | --- | --- |
+| Root README and `packages/web/src/content/docs/**` | Skip / skip | All ordinary source checks, including website build |
+| `packages/console/src/**` (`.ts`, `.tsx`, `.css`) | Skip / skip | TypeScript tests, generated output, embedded-Console Go build/race/lint and browser tests |
+| `packages/web/src/**` (`.ts`, `.astro`, `.css`) and public SVG/PNG/ICO/webmanifest assets | Skip / skip | Website typecheck and real website build, plus all other source checks |
+| Control Plane `project.go`, `organization.go`, `member.go` and `project_*`, `organization_*`, `member_*` Go test files; `internal/email/**.go` | Skip / skip | Go build/race/lint, PostgreSQL, browser and source contracts |
+| Existing Console embedding Go files, Console Vite config/index, Control Plane image build/verify scripts | Full / skip | Complete package consumer plus source checks; these do not reach builder fixtures |
+| Every other or mixed path class | Full / full when any member requires it | Complete distribution/consumer, deep builder tests and source checks |
+
+A maintainer can add **`ci:full`** to request both expensive checks on any PR.
+Adding/removing labels and pushing a new revision recompute selection and all
+required checks; unrelated label events also run normal CI, rather than leaving a
+skipped or misleading required status. The label only requests computation and
+works on fork PRs without granting release credentials. Obsolete PR runs cancel;
+main runs do not.
+
+Both aggregates reject failed/cancelled/missing selected jobs, failed selection,
+invalid boolean outputs and unexpectedly skipped mandatory jobs. Only an explicit
+selection permits `skipped` for optional work. A distribution-only defect in an
+ordinary source edit can first be discovered on main, where complete build and
+consumer success are still required before publication. Use `ci:full` for earlier
+package-level proof when a change warrants it.
+
+Ordinary PRs upload no distribution set. When a selected full PR build needs
+frozen artifacts for its consumer/retry, those transfers last **one day**. Main,
+stable tags and manual PR preview builds retain the existing **seven-day** handoff
+window. Browser failure evidence keeps its separate retention. No new test
+artifact upload is introduced. On PR retries, present frozen parts can be restored,
+but **any missing part requires a new workflow run**, including a part that never
+finished building. Expired/deleted artifacts cannot reliably be distinguished from
+never-built parts by their absence. A new commit or label change starts a new run;
+GitHub's rerun button keeps the old run ID. Main/tag/manual preview retry behavior
+is unchanged. No missing PR part is silently recreated under its old identity.
 
 After the reviewed mechanism is on main, an operator can select an **unmerged** PR:
 
@@ -231,6 +276,39 @@ integration remain separate operational proof. Preserve the real deployed pin an
 retained-generation/state/IAM guards until the separately reviewed prerequisite
 and actual published selection are available. A rollback of artifacts alone does
 not establish database rollback safety.
+
+## Pinned release tools
+
+Artifact construction retains `nix develop .#images`. Fresh trusted admission,
+publication, completion and discovery jobs use `nix develop .#release`, a
+compiler-free shell shared across the release lifecycle. The main-head precheck
+still runs with runner Python before realizing that shell or assuming the preview
+role, so superseded publication exits before either operation.
+
+The release shell contains only Bash/coreutils, Python, curl, Git, AWS CLI,
+cosign, skopeo and the Product-pinned Node/npm. Python handles native GitHub APIs,
+archive transport and byte verification; Git handles source admission and discovery
+ancestry. AWS CLI and curl handle preview role assumption and conditional object
+writes. cosign is required in admission as well as publication/completion, since
+already-complete cohorts must pass signature verification. skopeo preserves and
+checks OCI digests; npm publishes the exact package tarballs with provenance.
+The existing Node archive pin supplies npm, replacing the separate setup-node
+runtime. No executable cache is added to these trusted jobs.
+
+The fresh unprivileged verifier uses `nix develop .#release-consumer`, sharing
+transport/signature/Node tools but adding the Docker client with Buildx and the installer's
+tar/gzip/awk/sed commands. It has no AWS CLI requirement. The downloaded CLI uses
+host Node for configuration and Docker for compilation inside the canonical
+builder, so this shell needs no Go, C compiler, Bun or SquashFS encoder. Formal
+tag signature verification, public OCI checks, real downloaded CLI/installed npm
+consumption, completion signing and final public readback retain their existing
+job and credential boundaries.
+
+`nix flake check` executes every required tool without a runner/stdenv PATH and
+checks that source compilers are absent from both toolsets. These checks do not
+replace a native Linux consumer run or normal main-preview publication. Compare
+the realized closure and setup duration with `images` on the same runner/cache
+condition; a smaller declared toolset alone is not a measured download/time saving.
 
 ## Concrete installer and self-host consumers
 

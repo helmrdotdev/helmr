@@ -2,6 +2,7 @@ name: ci
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   push:
     branches:
       - main
@@ -37,7 +38,7 @@ jobs:
           # GC target, not a hard archive-size limit.
           gc-max-store-size: 2G
 
-      - run: nix flake check --show-trace
+      - run: nix flake check --show-trace --print-build-logs
 
       - name: Retain current check dependencies for caching
         run: |
@@ -152,6 +153,8 @@ jobs:
 
   bundle-builder:
     name: bundle builder
+    needs: artifact-selection
+    if: needs.artifact-selection.outputs.run_bundle_builder == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -203,11 +206,12 @@ jobs:
     outputs:
       selection: ${{ steps.selection.outputs.selection }}
       skip_artifacts: ${{ steps.selection.outputs.skip_artifacts }}
+      run_bundle_builder: ${{ steps.selection.outputs.run_bundle_builder }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          fetch-depth: ${{ github.event_name == 'push' && '0' || '' }}
+          fetch-depth: 0
           persist-credentials: false
       - id: selection
         env:
@@ -220,12 +224,16 @@ jobs:
           sys.path.insert(0, 'scripts/release')
           from api import GitHub
           from admission import artifact_build_needed
+          from ci_policy import pr_checks
           from contract import preview_version
           source = os.environ['SOURCE_COMMIT']
           assert subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip() == source
           number = int(os.environ['PR_NUMBER']) if os.environ['PR_NUMBER'] else None
-          skip = False
-          if number is None and os.environ['GITHUB_EVENT_NAME'] == 'push':
+          skip, builder = False, True
+          if number is not None:
+              checks = pr_checks('.', json.load(open(os.environ['GITHUB_EVENT_PATH'])))
+              skip, builder = not checks['artifacts'], checks['bundle_builder']
+          elif os.environ['GITHUB_EVENT_NAME'] == 'push':
               skip = not artifact_build_needed(GitHub(), '.', source)
           core = json.load(open('sdk/typescript/package.json'))['version'].split('-')[0]
           selection = dict(version=preview_version(core, source, os.environ['GITHUB_RUN_ID']),
@@ -236,11 +244,12 @@ jobs:
           with open(os.environ['GITHUB_OUTPUT'],'a') as output:
               output.write('selection='+json.dumps(selection,separators=(',',':'))+'\n')
               output.write('skip_artifacts='+('true' if skip else 'false')+'\n')
+              output.write('run_bundle_builder='+('true' if builder else 'false')+'\n')
           PYTHON
   build-artifacts:
     name: build release artifacts
     needs: artifact-selection
-    if: needs.artifact-selection.outputs.skip_artifacts != 'true'
+    if: needs.artifact-selection.outputs.skip_artifacts == 'false'
     permissions:
       contents: read
       actions: read
@@ -252,7 +261,7 @@ jobs:
   artifact-skip:
     name: artifact build skipped
     needs: artifact-selection
-    if: needs.artifact-selection.outputs.skip_artifacts == 'true'
+    if: github.event_name == 'push' && needs.artifact-selection.outputs.skip_artifacts == 'true'
     runs-on: ubuntu-24.04
     steps:
       - run: echo "documentation-only change; artifact build truthfully skipped"
@@ -261,6 +270,7 @@ jobs:
     name: source-ci-complete
     runs-on: ubuntu-24.04
     needs:
+      - artifact-selection
       - nix-flake
       - repo
       - postgres
@@ -269,31 +279,13 @@ jobs:
       - release-contracts
     if: always()
     steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
       - name: Check required source CI jobs
-        run: |
-          failed=0
-          for result in \
-            "${{ needs.nix-flake.result }}" \
-            "${{ needs.repo.result }}" \
-            "${{ needs.postgres.result }}" \
-            "${{ needs.browser.result }}" \
-            "${{ needs.bundle-builder.result }}" \
-            "${{ needs.release-contracts.result }}"
-          do
-            if [ "$result" != "success" ]; then
-              failed=1
-            fi
-          done
-          if [ "$failed" -ne 0 ]; then
-            printf 'Source CI dependency results: nix-flake=%s repo=%s postgres=%s browser=%s bundle-builder=%s release-contracts=%s\n' \
-              "${{ needs.nix-flake.result }}" \
-              "${{ needs.repo.result }}" \
-              "${{ needs.postgres.result }}" \
-              "${{ needs.browser.result }}" \
-              "${{ needs.bundle-builder.result }}" \
-              "${{ needs.release-contracts.result }}" >&2
-            exit 1
-          fi
+        env:
+          CI_NEEDS: ${{ toJSON(needs) }}
+        run: python3 scripts/release/ci_policy.py source
 
   preview-ready:
     name: preview-ready
@@ -333,20 +325,10 @@ jobs:
       - build-artifacts
     if: always() && github.event_name == 'pull_request'
     steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
       - name: Check required CI jobs
-        run: |
-          failed=0
-          for result in \
-            "${{ needs.source-ci-complete.result }}" \
-            "${{ needs.build-artifacts.result }}"
-          do
-            if [ "$result" != "success" ]; then
-              failed=1
-            fi
-          done
-          if [ "$failed" -ne 0 ]; then
-            printf 'CI dependency results: source-ci-complete=%s build-artifacts=%s\n' \
-              "${{ needs.source-ci-complete.result }}" \
-              "${{ needs.build-artifacts.result }}" >&2
-            exit 1
-          fi
+        env:
+          CI_NEEDS: ${{ toJSON(needs) }}
+        run: python3 scripts/release/ci_policy.py pr

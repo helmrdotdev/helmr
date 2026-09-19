@@ -53,6 +53,29 @@ def block(name):
     end = markers[idx + 1][1] if idx + 1 < len(markers) else len(text)
     return text[start:end]
 
+for job in ('admission', 'publish-preview', 'publish-tag', 'complete-preview', 'complete-tag', 'discovery'):
+    body = block(job)
+    shells = re.findall(r'nix develop \.#([^ ]+) -c', body)
+    if not shells or set(shells) != {'release'}:
+        sys.exit(f'{job}: trusted release steps must use the pinned publication tools')
+    if 'consumer(root' in body or 'HELMR_PUBLIC_CONSUMER' in body:
+        sys.exit(f'{job}: candidate consumer must remain in the separate unprivileged job')
+    if 'actions/cache@' in body or 'setup-node@' in body:
+        sys.exit(f'{job}: release tools must come from the pinned Nix closure without executable caches')
+
+verify = block('verify')
+if set(re.findall(r'nix develop \.#([^ ]+) -c', verify)) != {'release-consumer'}:
+    sys.exit('verify: public download and candidate execution must use the separate consumer tools')
+if 'environment:' in verify or 'id-token:' in verify or 'write' in verify:
+    sys.exit('verify: candidate execution must not have publication authority')
+if 'HELMR_PUBLIC_CONSUMER' not in verify or 'consumer(root' not in verify:
+    sys.exit('verify: downloaded public consumer must execute')
+if 'nix develop .#images -c' in text:
+    sys.exit('release workflow must not realize the source build shell')
+build = Path("$repo_root/.github/workflows/build-artifacts.yaml").read_text()
+if not re.search(r'nix develop [^\n]+#images["\x27]? -c', build):
+    sys.exit('actual artifact construction must retain the full images shell')
+
 for job in jobs:
     body = block(job)
     steps = re.split(r'\n      - name:', body)[1:]

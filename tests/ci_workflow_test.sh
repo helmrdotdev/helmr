@@ -4,6 +4,7 @@ set -euo pipefail
 
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 workflow="$repo_root/.github/workflows/ci.yaml"
+cd "$repo_root"
 
 require_text() {
   if ! rg -F -- "$1" "$workflow" >/dev/null; then
@@ -16,27 +17,47 @@ require_text 'group: ${{ github.workflow }}-${{ github.event_name == '\''pull_re
   "main push runs do not have unique concurrency groups"
 require_text 'cancel-in-progress: ${{ github.event_name == '\''pull_request'\'' }}' \
   "concurrency cancellation is not limited to pull requests"
-require_text 'if [ "$result" != "success" ]; then' \
-  "ci complete does not reject failed dependencies"
-require_text 'exit 1' \
-  "ci complete does not fail after a dependency failure"
+require_text 'python3 scripts/release/ci_policy.py source' \
+  "source aggregate does not verify selected dependencies"
+require_text 'python3 scripts/release/ci_policy.py pr' \
+  "PR aggregate does not verify selected dependencies"
+require_text 'CI_NEEDS: ${{ toJSON(needs) }}' \
+  "aggregates must use actual native job results"
+require_text 'types: [opened, synchronize, reopened, labeled, unlabeled]' \
+  "full-check label changes must rerun current PR checks"
 require_text 'needs: artifact-selection' \
   "artifact build does not depend on source selection"
 require_text 'selection: ${{ needs.artifact-selection.outputs.selection }}' \
   "artifact build does not use the selected exact source"
 require_text 'skip_artifacts' \
   "artifact selection does not expose documentation-only skip"
-require_text 'fetch-depth: ${{ github.event_name == '\''push'\'' && '\''0'\'' || '\'''\'' }}' \
-  "artifact-selection must use full history only on main push"
+require_text 'fetch-depth: 0' \
+  "selection needs the complete main/PR comparison history"
+require_text 'run_bundle_builder' \
+  "builder selection output is missing"
 require_text 'name: source-ci-complete' \
   "required source aggregate missing on main"
 require_text 'name: preview-ready' \
   "preview readiness is not separated from source CI on main"
 require_text 'github.event_name == '\''pull_request'\''' \
   "pull-request aggregate no longer scoped to PR events"
-require_text '"${{ needs.source-ci-complete.result }}"' \
-  "PR ci complete does not require source aggregate"
-require_text '"${{ needs.build-artifacts.result }}"' \
-  "PR ci complete does not require artifact build"
+python3 - <<'PYTHON'
+from pathlib import Path
+
+root = Path.cwd()
+workflow = (root / '.github/workflows/ci.yaml').read_text()
+source = workflow.split('  source-ci-complete:', 1)[1].split('  preview-ready:', 1)[0]
+pr = workflow.split('  ci-complete:', 1)[1]
+assert '      - artifact-selection' in source and '      - artifact-selection' in pr
+assert '      - source-ci-complete' in pr and '      - build-artifacts' in pr
+assert "if: github.event_name == 'push' && needs.artifact-selection.outputs.skip_artifacts == 'true'" in workflow
+assert "if: needs.artifact-selection.outputs.skip_artifacts == 'false'" in workflow
+build = (root / '.github/workflows/build-artifacts.yaml').read_text()
+retention = "retention-days: ${{ github.event_name == 'pull_request' && 1 || 7 }}"
+assert build.count(retention) == 2, 'both frozen PR component and CLI uploads need short retention'
+release = (root / '.github/workflows/release.yaml').read_text()
+assert 'retention-days: 7' in release, 'release readback retry window must remain intact'
+assert 'if: always()' in source and 'if: always()' in pr
+PYTHON
 
 printf 'ok - CI workflow policy\n'
