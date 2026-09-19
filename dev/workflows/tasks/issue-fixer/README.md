@@ -183,6 +183,18 @@ It does not call a remote model or execute the denied command. Helmr handler
 delivery and repository checks are fixtures; this is not a deployed Session,
 queue/hold exercise, crash-durability proof or VM Workspace restore test.
 
+The direct pinned Claude SDK probe is also available:
+
+```sh
+nix develop --command bun dev/workflows/probes/claude-conversation.ts
+```
+
+It uses isolated native state and loopback Messages responses to verify
+AskUserQuestion, Bash approval denial without the marker being written, and
+restored answers/history after a fresh native process resumes the same ID.
+It waits for direct process exit before removing its state. This probe exercises
+the provider SDK directly, not the production Actor or Helmr runtime.
+
 A non-inference probe of pinned Codex 0.133.0 accepted thread/start but a new
 process immediately attempting thread/resume returned "no rollout found". An empty
 thread's ID is not proof of persisted history. The sample deliberately propagates

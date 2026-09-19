@@ -887,3 +887,35 @@ The host is Darwin arm64. Cloud's checked-in `helmr.rev` is
 VM validation manifest has been identified. No Cloud deployment was changed.
 Real Helmr FIFO/hold/Workspace restore, actual provider inference and Claude native
 interaction remain open. These probes do not close package 5.
+
+### Upstream integration and additional native evidence
+
+Product candidate `78ac9d881dbafe9a2b37da060e1c91bee10e610c` merges the
+reviewed native sample cut with upstream `64ad957a`. Independent review confirms
+that the three overlapping DB/model/migration files contain the upstream additions
+without dropping lifecycle changes; all other lifecycle code is unchanged.
+DB/schema, full controlplane, Session, telemetry and deployment tests pass in
+`/tmp/session-current-integration.log` (controlplane 224.956s).
+
+The paired Cloud validation checkout at `c5deca8f5e8797634028ab82f41c8bff91ab0a13`
+pins that exact Product and updates its path report from the removed
+completed_actor_record_id to completed_turn_id and the Turn binding fields.
+The real PostgreSQL report contract and full Cloud checks pass
+(`/tmp/session-cloud-final-checks.log`, exit 0). The initial old-Cloud checks failed
+on obsolete module/schema references; those failures were not product regressions.
+Fresh read-only review found no actionable integration or report-query findings.
+
+`dev/workflows/probes/claude-conversation.ts` additionally qualifies the actual
+pinned Claude SDK/native process using a loopback Messages fixture. Questions
+receive the selected answer, a native Bash permission callback is denied (and its
+marker file remains absent), and a fresh process with the same native ID sends
+the earlier input, assistant output, answered choice and denial back to the model
+fixture. Child processes exit before state cleanup. Only fixture authentication
+and the minimal required host environment reach the child.
+The probe's explicit TypeScript check and native run pass in
+`/tmp/session-claude-native-final.log`; fresh medium read-only review found no
+actionable findings. It does not exercise the production Claude Actor, its
+HumanRequests helper, managed delivery/hold/Workspace restore, actual inference
+or crash durability. Provider-native interaction is now tested; integrated Claude
+Actor qualification remains open. This follow-up adds only probes/documentation;
+AWS build/deployment source remains the clean candidate `78ac9d88`.
