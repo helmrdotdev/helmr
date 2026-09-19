@@ -31,6 +31,12 @@ type migrationClient interface {
 	Exec(context.Context, string, ...any) error
 }
 
+// WaitReady waits for a service to become available before provisioning access.
+// It shares migrations' bounded cold-start retry policy.
+func WaitReady(ctx context.Context, client interface{ Ping(context.Context) error }) error {
+	return waitReady(ctx, client, defaultReadinessPolicy)
+}
+
 type readinessPolicy struct {
 	overallTimeout time.Duration
 	attemptTimeout time.Duration
@@ -72,7 +78,7 @@ func up(ctx context.Context, client migrationClient, policy readinessPolicy) err
 	return nil
 }
 
-func waitReady(ctx context.Context, client migrationClient, policy readinessPolicy) error {
+func waitReady(ctx context.Context, client interface{ Ping(context.Context) error }, policy readinessPolicy) error {
 	if err := validateReadinessPolicy(policy); err != nil {
 		return err
 	}

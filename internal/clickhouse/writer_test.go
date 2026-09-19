@@ -47,12 +47,16 @@ func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
 		RetentionClass: "standard",
 		RedactionClass: "standard",
 		ObservedAt:     observedAt,
+		AcceptedAt:     observedAt.Add(-time.Hour),
 	}}); err != nil {
 		t.Fatal(err)
 	}
 	eventBatch := client.takeLast(t)
 	assertQueryContains(t, eventBatch.query, "INSERT INTO helmr_telemetry.events", "observed_at")
-	assertRowShape(t, eventBatch.rows, 1, 24)
+	assertRowShape(t, eventBatch.rows, 1, 25)
+	if got := eventBatch.rows[0][24]; got != observedAt.Add(-time.Hour) {
+		t.Fatalf("accepted_at = %v", got)
+	}
 	if got := eventBatch.rows[0][6]; got != uint64(7) {
 		t.Fatalf("event seq = %v, want 7", got)
 	}
@@ -70,19 +74,20 @@ func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
 		StreamName:     "stdout",
 		Seq:            8,
 		ObservedSeq:    9,
-		Content:        "aGVsbG8=",
+		Content:        []byte("hello"),
 		SizeBytes:      5,
 		IdempotencyKey: "log-key",
 		RetentionClass: "standard",
 		RedactionClass: "standard",
 		Source:         "worker",
 		ObservedAt:     observedAt,
+		AcceptedAt:     observedAt.Add(-time.Hour),
 	}}); err != nil {
 		t.Fatal(err)
 	}
 	runLogBatch := client.takeLast(t)
 	assertQueryContains(t, runLogBatch.query, "INSERT INTO helmr_telemetry.run_logs", "run_lease_id", "observed_at")
-	assertRowShape(t, runLogBatch.rows, 1, 16)
+	assertRowShape(t, runLogBatch.rows, 1, 17)
 	if got := runLogBatch.rows[0][4]; got != runLeaseID {
 		t.Fatalf("run log run_lease_id = %v, want %s", got, runLeaseID)
 	}
@@ -147,7 +152,7 @@ func TestClickHouseWriterKeepsValidRowsAfterRepeatedAppendFailures(t *testing.T)
 func TestClickHouseWriterRebuildsRunLogBatchAfterAppendFailure(t *testing.T) {
 	client := &fakeBatchClient{appendFailures: []int{0, -1}}
 	writer := NewWriter(client)
-	rows := []telemetry.RunLogRecord{{Content: "aGVsbG8=", SizeBytes: 5}, {Content: "d29ybGQ=", SizeBytes: 5}}
+	rows := []telemetry.RunLogRecord{{Content: []byte("hello"), SizeBytes: 5}, {Content: []byte("world"), SizeBytes: 5}}
 
 	result, err := writer.WriteRunLogs(context.Background(), rows)
 	if err != nil {

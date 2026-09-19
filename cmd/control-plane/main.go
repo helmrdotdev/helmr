@@ -54,6 +54,12 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "clickhouse-bootstrap":
+			if err := runClickHouseBootstrap(context.Background(), os.Args[2:]); err != nil {
+				log.Error("bootstrap ClickHouse accounts", "error", err)
+				os.Exit(1)
+			}
+			return
 		case "database-bootstrap":
 			if err := runDatabaseBootstrap(context.Background(), os.Args[2:]); err != nil {
 				log.Error("bootstrap database", "error", err)

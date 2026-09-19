@@ -204,3 +204,11 @@ compatible with current data; it does not restore the database or verify schema
 compatibility. Apply `enable_deployment_rollback=false` before an incompatible
 migration or reset and recover by rolling forward. Run migrations from the exact
 selected image before enabling or updating services.
+
+ClickHouse uses explicit reader, ingester and migration usernames and separate
+Secrets Manager passwords. In `clickhouse_access_mode = "external"`, provision
+these accounts separately before deployment. `bootstrap` mode also requires an
+administrator credential and exposes `clickhouse_bootstrap_task_definition_arn`;
+run that task successfully before migrations. The task uses the Control Plane
+network and its existing image. See [ClickHouse access](../clickhouse-access.md)
+for grants, bootstrap behavior and credential rotation.

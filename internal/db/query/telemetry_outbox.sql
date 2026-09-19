@@ -1,8 +1,7 @@
 -- name: ClaimEventIngestBatch :many
 WITH candidates AS (
     SELECT telemetry_outbox.id,
-           octet_length(telemetry_outbox.message)::bigint
-               + octet_length(telemetry_outbox.payload::text)::bigint AS size_bytes
+           telemetry_outbox.ingest_size_bytes AS size_bytes
       FROM telemetry_outbox
      WHERE telemetry_outbox.stream_kind = 'event'
        AND telemetry_outbox.written_at IS NULL
@@ -64,7 +63,7 @@ SELECT updated.id AS outbox_id,
 -- name: ClaimRunLogIngestBatch :many
 WITH candidates AS (
     SELECT telemetry_outbox.id,
-           telemetry_outbox.size_bytes
+           telemetry_outbox.ingest_size_bytes AS size_bytes
       FROM telemetry_outbox
      WHERE telemetry_outbox.stream_kind = 'run_log'
        AND telemetry_outbox.written_at IS NULL

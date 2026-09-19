@@ -24,6 +24,10 @@ nix run .#ci-browser
 
 Use the narrower `ci-*` Nix apps while iterating. Their runtime inputs are
 specific to each check; interactive shells retain the full development tools.
+`nix run .#ci-clickhouse` starts owned disposable servers with the pinned
+ClickHouse binary and runs uncached race tests for projections, binary log
+roundtrips, replay retention, and application access separation. It does not use
+Cloud credentials or a developer's running database.
 The boot reproducibility check requires a clean checkout. CI separates Nix app
 preparation from execution so step durations distinguish environment construction
 from validation. Go race tests use `-count=1` to execute tests even when compiled

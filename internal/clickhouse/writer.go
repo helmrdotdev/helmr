@@ -20,7 +20,7 @@ type batchClient interface {
 var eventColumns = []ch.ColumnNameAndType{
 	{Name: "org_id", Type: "UUID"}, {Name: "project_id", Type: "UUID"},
 	{Name: "environment_id", Type: "UUID"}, {Name: "subject_kind", Type: "LowCardinality(String)"},
-	{Name: "subject_id", Type: "UUID"}, {Name: "event_kind", Type: "String"},
+	{Name: "subject_id", Type: "UUID"}, {Name: "event_kind", Type: "LowCardinality(String)"},
 	{Name: "seq", Type: "UInt64"}, {Name: "run_id", Type: "Nullable(UUID)"},
 	{Name: "deployment_id", Type: "Nullable(UUID)"}, {Name: "run_lease_id", Type: "Nullable(UUID)"},
 	{Name: "attempt_number", Type: "Nullable(Int32)"}, {Name: "trace_id", Type: "String"},
@@ -30,17 +30,19 @@ var eventColumns = []ch.ColumnNameAndType{
 	{Name: "message", Type: "String"}, {Name: "body", Type: "String"},
 	{Name: "idempotency_key", Type: "String"}, {Name: "retention_class", Type: "LowCardinality(String)"},
 	{Name: "redaction_class", Type: "LowCardinality(String)"}, {Name: "observed_at", Type: "DateTime64(3, 'UTC')"},
+	{Name: "accepted_at", Type: "DateTime64(3, 'UTC')"},
 }
 
 var runLogColumns = []ch.ColumnNameAndType{
 	{Name: "org_id", Type: "UUID"}, {Name: "project_id", Type: "UUID"},
 	{Name: "environment_id", Type: "UUID"}, {Name: "run_id", Type: "UUID"},
-	{Name: "run_lease_id", Type: "Nullable(UUID)"}, {Name: "attempt_number", Type: "Int32"},
+	{Name: "run_lease_id", Type: "UUID"}, {Name: "attempt_number", Type: "Int32"},
 	{Name: "stream_name", Type: "LowCardinality(String)"}, {Name: "seq", Type: "UInt64"},
 	{Name: "observed_seq", Type: "UInt64"}, {Name: "content", Type: "String"},
-	{Name: "size_bytes", Type: "UInt64"}, {Name: "idempotency_key", Type: "String"},
+	{Name: "size_bytes", Type: "UInt32"}, {Name: "idempotency_key", Type: "String"},
 	{Name: "retention_class", Type: "LowCardinality(String)"}, {Name: "redaction_class", Type: "LowCardinality(String)"},
 	{Name: "source", Type: "LowCardinality(String)"}, {Name: "observed_at", Type: "DateTime64(3, 'UTC')"},
+	{Name: "accepted_at", Type: "DateTime64(3, 'UTC')"},
 }
 
 func NewWriter(client batchClient) *Writer {
@@ -57,11 +59,11 @@ func (w *Writer) WriteEvents(ctx context.Context, rows []telemetry.EventRecord) 
 		valid[idx] = idx
 	}
 	for len(valid) > 0 {
-		batch, err := w.client.PrepareBatch(ch.Context(ctx, ch.WithColumnNamesAndTypes(eventColumns)), `INSERT INTO helmr_telemetry.events (
+		batch, err := w.client.PrepareBatch(ch.Context(ctx, ch.WithSettings(ch.Settings{"async_insert": 0}), ch.WithColumnNamesAndTypes(eventColumns)), `INSERT INTO helmr_telemetry.events (
     org_id, project_id, environment_id, subject_kind, subject_id, event_kind, seq,
     run_id, deployment_id, run_lease_id, attempt_number, trace_id, span_id,
     parent_span_id, traceparent, category, severity, source, message, body, idempotency_key,
-    retention_class, redaction_class, observed_at
+    retention_class, redaction_class, observed_at, accepted_at
 )`)
 		if err != nil {
 			return rejected, err
@@ -94,6 +96,7 @@ func (w *Writer) WriteEvents(ctx context.Context, rows []telemetry.EventRecord) 
 				row.RetentionClass,
 				row.RedactionClass,
 				row.ObservedAt,
+				row.AcceptedAt,
 			); err != nil {
 				rejected = append(rejected, telemetry.RejectedRow{
 					Index: idx, Err: fmt.Errorf("append event row %d: %w", idx, err),
@@ -131,10 +134,10 @@ func (w *Writer) WriteRunLogs(ctx context.Context, rows []telemetry.RunLogRecord
 		valid[idx] = idx
 	}
 	for len(valid) > 0 {
-		batch, err := w.client.PrepareBatch(ch.Context(ctx, ch.WithColumnNamesAndTypes(runLogColumns)), `INSERT INTO helmr_telemetry.run_logs (
+		batch, err := w.client.PrepareBatch(ch.Context(ctx, ch.WithSettings(ch.Settings{"async_insert": 0}), ch.WithColumnNamesAndTypes(runLogColumns)), `INSERT INTO helmr_telemetry.run_logs (
     org_id, project_id, environment_id, run_id, run_lease_id,
     attempt_number, stream_name, seq, observed_seq, content, size_bytes, idempotency_key,
-    retention_class, redaction_class, source, observed_at
+    retention_class, redaction_class, source, observed_at, accepted_at
 )`)
 		if err != nil {
 			return rejected, err
@@ -159,6 +162,7 @@ func (w *Writer) WriteRunLogs(ctx context.Context, rows []telemetry.RunLogRecord
 				row.RedactionClass,
 				row.Source,
 				row.ObservedAt,
+				row.AcceptedAt,
 			); err != nil {
 				rejected = append(rejected, telemetry.RejectedRow{
 					Index: idx, Err: fmt.Errorf("append run log row %d: %w", idx, err),

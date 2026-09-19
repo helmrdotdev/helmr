@@ -31,6 +31,7 @@ type EventRecord struct {
 	RetentionClass string     `json:"retention_class"`
 	RedactionClass string     `json:"redaction_class"`
 	ObservedAt     time.Time  `json:"observed_at"`
+	AcceptedAt     time.Time  `json:"accepted_at"`
 }
 
 type RunLogRecord struct {
@@ -43,11 +44,12 @@ type RunLogRecord struct {
 	StreamName     string    `json:"stream_name"`
 	Seq            uint64    `json:"seq"`
 	ObservedSeq    uint64    `json:"observed_seq"`
-	Content        string    `json:"content"`
-	SizeBytes      uint64    `json:"size_bytes"`
+	Content        []byte    `json:"content"`
+	SizeBytes      uint32    `json:"size_bytes"`
 	IdempotencyKey string    `json:"idempotency_key"`
 	RetentionClass string    `json:"retention_class"`
 	RedactionClass string    `json:"redaction_class"`
 	Source         string    `json:"source"`
 	ObservedAt     time.Time `json:"observed_at"`
+	AcceptedAt     time.Time `json:"accepted_at"`
 }
