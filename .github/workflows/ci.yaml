@@ -171,7 +171,9 @@ jobs:
           'let flake = builtins.getFlake ("git+file://" + toString ./.);
           in builtins.dirOf (builtins.dirOf flake.apps.x86_64-linux.ci-bundle-builder.program)'
 
-      - run: nix run .#ci-bundle-builder
+      # Independent lanes share one canonical image/CLI/SDK preparation and
+      # registry in this runner; native invalidation keeps its own ordered cache.
+      - run: nix run .#ci-bundle-builder -- --parallel
 
   release-contracts:
     name: release contracts (${{ matrix.app }})

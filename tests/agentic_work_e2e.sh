@@ -12,10 +12,15 @@ bundle=${HELMR_AGENTIC_BUNDLE:?path to a bundle built from tests/fixtures/agenti
 tmp=$(mktemp -d)
 image="helmr-agentic-work-e2e-$$"
 cleanup() {
+  if [ -s "$tmp/container.cid" ]; then
+    docker rm -f "$(cat "$tmp/container.cid")" >/dev/null 2>&1 || true
+  fi
   docker image rm -f "$image" >/dev/null 2>&1 || true
   rm -rf "$tmp"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 if [ -n "${RUNTIME_RELEASE_DIR:-}" ]; then
   runtime_release="$RUNTIME_RELEASE_DIR"
@@ -33,7 +38,11 @@ mkdir "$tmp/context"
 cp "$runtime_release/runtime.squashfs" "$tmp/context/runtime.squashfs"
 cp "$program" "$tmp/context/program.squashfs"
 cp "$workspace" "$tmp/context/workspace.oci.tar"
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "$repo_root" test -c -o "$tmp/context/guestd.test" ./internal/guestd
+if [ -n "${HELMR_GUESTD_TEST_BINARY:-}" ]; then
+  cp "$HELMR_GUESTD_TEST_BINARY" "$tmp/context/guestd.test"
+else
+  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "$repo_root" test -c -o "$tmp/context/guestd.test" ./internal/guestd
+fi
 
 cat >"$tmp/context/Dockerfile" <<'DOCKERFILE'
 FROM debian:bookworm-slim
@@ -52,7 +61,7 @@ DOCKERFILE
 docker build --platform linux/amd64 --tag "$image" "$tmp/context" >"$tmp/build.log" 2>&1 ||
   { tail -n 60 "$tmp/build.log" >&2; exit 1; }
 # The unpacked Workspace root needs a real filesystem, not the container overlay.
-docker run --rm --platform linux/amd64 --privileged --tmpfs /tmp:exec,size=8g "$image" | tee "$tmp/run.log"
+docker run --rm --cidfile "$tmp/container.cid" --platform linux/amd64 --privileged --tmpfs /tmp:exec,size=8g "$image" | tee "$tmp/run.log"
 grep -E '^--- PASS: TestManagedNodeAgenticWork ' "$tmp/run.log" >/dev/null
 if grep -E '^\s*--- (SKIP|FAIL)' "$tmp/run.log"; then
   echo "agentic work test did not run every scenario" >&2

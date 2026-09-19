@@ -10,10 +10,15 @@ bundle=${HELMR_NATIVE_BUNDLE:?path to a bundle built from tests/fixtures/native-
 tmp=$(mktemp -d)
 image="helmr-guestd-native-e2e-$$"
 cleanup() {
+  if [ -s "$tmp/container.cid" ]; then
+    docker rm -f "$(cat "$tmp/container.cid")" >/dev/null 2>&1 || true
+  fi
   docker image rm -f "$image" >/dev/null 2>&1 || true
   rm -rf "$tmp"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 if [ -n "${RUNTIME_RELEASE_DIR:-}" ]; then
   runtime_release="$RUNTIME_RELEASE_DIR"
@@ -29,7 +34,11 @@ program_digest=$(jq -er '.program.artifact.digest | sub("^sha256:"; "")' "$bundl
 mkdir "$tmp/context"
 cp "$runtime_release/runtime.squashfs" "$tmp/context/runtime.squashfs"
 cp "$bundle/objects/sha256/$program_digest" "$tmp/context/program.squashfs"
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "$repo_root" test -c -o "$tmp/context/guestd.test" ./internal/guestd
+if [ -n "${HELMR_GUESTD_TEST_BINARY:-}" ]; then
+  cp "$HELMR_GUESTD_TEST_BINARY" "$tmp/context/guestd.test"
+else
+  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "$repo_root" test -c -o "$tmp/context/guestd.test" ./internal/guestd
+fi
 
 # Each Workspace root is an ordinary image. Only some install the library the
 # fixture's source-built addon links; none contains build tools.
@@ -65,7 +74,7 @@ DOCKERFILE
 
 docker build --platform linux/amd64 --tag "$image" "$tmp/context" >"$tmp/build.log" 2>&1 ||
   { tail -n 60 "$tmp/build.log" >&2; exit 1; }
-docker run --rm --platform linux/amd64 --privileged "$image" | tee "$tmp/run.log"
+docker run --rm --cidfile "$tmp/container.cid" --platform linux/amd64 --privileged "$image" | tee "$tmp/run.log"
 # A skipped test is not evidence.
 grep -E '^--- PASS: TestManagedNodeNativeLibraries ' "$tmp/run.log" >/dev/null
 if grep -E '^\s*--- SKIP' "$tmp/run.log"; then

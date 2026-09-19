@@ -45,6 +45,7 @@ let
           scripts/security-checks.sh
           bash -n scripts/dev-console-stack.sh
           bash tests/buildkit_steps_test.sh
+          python3 tests/bundle_builder_lanes_test.py
           bash tests/ci_workflow_test.sh
           bash tests/install_test.sh
           bash tests/release_manifest_test.sh
@@ -196,7 +197,7 @@ ciApps
   ci-bundle-builder =
     app "ci-bundle-builder" "run the canonical bundle builder end-to-end tests" toolsets.ciBundleBuilder
       ''
-        exec bash ./tests/bundle_builder_e2e.sh
+        exec bash ./tests/bundle_builder_e2e.sh "$@"
       '';
   ci-version-cohort =
     app "ci-version-cohort" "verify one version across the release cohort"

@@ -7,6 +7,9 @@ export default defineConfig({
   dirs: ["tasks"],
   build: {
     builder: builder()
+      // Package setup is independent of the recipe inputs below. Reuse this
+      // layer while still rerunning setup.sh and its stamp after an input edit.
+      .run(["/bin/sh", "-ec", "apt-get update && apt-get install -y --no-install-recommends jq && rm -rf /var/lib/apt/lists/*"])
       .copy("recipe-input.txt", "/etc/helmr-recipe-input")
       // Sources are literal paths even where Docker would read a pattern:
       // these must not select the sibling literal1/name1.txt.
