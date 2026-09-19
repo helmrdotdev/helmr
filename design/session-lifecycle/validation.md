@@ -847,3 +847,43 @@ The complete real-provider conversation, provider crash durability, VM/process-t
 exclusion and Workspace restore remain qualification gates from the parent plan.
 These local checks do not close those gates, authorize paid inference or establish
 real Slack delivery. No shared database reset, push, merge or deployment occurred.
+
+## Native process qualification follow-up (2026-09-20)
+
+On candidate `df3d8ec6`, the actual pinned Codex app-server 0.133.0 accepts a
+question tool but returns `request_user_input is unavailable in Default mode`
+without a client question callback. Experimental client initialization alone is
+insufficient. The sample now sets the native
+`features.default_mode_request_user_input` configuration on start/resume; a native
+probe verifies the resulting callback and answer. This is application-owned
+provider configuration, with no Helmr contract or compatibility change.
+
+`dev/workflows/probes/codex-conversation.test.ts` invokes the actual Actor with
+fixture Helmr handler/check boundaries and the real pinned subprocess, against a
+loopback Responses server. Three cases pass with 36 assertions:
+
+- Question publication and application reply become the expected native answer;
+  the answered choice and earlier user/assistant history reach the next model
+  request after a fresh native process resumes the same saved thread.
+- Aborting during a native question closes the native process, rejects a late
+  application reply and allows a fresh process to resume the same native identity
+  with the previous user input. This is local Actor cancellation, not physical
+  whole-Run stop/hold or power-loss durability.
+- A native escalated command approval reaches the application's human request
+  flow. Denial reaches the model as a rejected tool result; no approved command
+  execution or external side effect is claimed.
+
+Command: `nix develop --command bun test
+dev/workflows/probes/codex-conversation.test.ts`; result:
+`/tmp/session-codex-conversation-final.log`. Workflow typecheck also passes in
+`/tmp/session-codex-conversation.log`. The local model name uses fallback native
+metadata; no inference quality or production model configuration is tested.
+The probe removes its temporary provider state and closes its owned processes and
+loopback listener. Empty-thread resume still fails: starting a real native Turn,
+even with fixture model responses, is a materially different persistence boundary.
+
+The host is Darwin arm64. Cloud's checked-in `helmr.rev` is
+`e60e4efcb43c5f12ae797635ee9f6f92b97956c0`, not this candidate; no matching
+VM validation manifest has been identified. No Cloud deployment was changed.
+Real Helmr FIFO/hold/Workspace restore, actual provider inference and Claude native
+interaction remain open. These probes do not close package 5.

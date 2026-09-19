@@ -29,9 +29,9 @@ model. The samples do not create commits, push changes or open pull requests.
 
 Deploy these Actors using the existing workflow configuration. Start either Actor
 with the ordinary `actors.start`/CLI flow and retain the resulting Session ID.
-Each Helmr Turn creates a new native conversation; workspace files persist through
-Helmr's Session lifecycle. Provider conversation resume/checkpointing is deliberately
-not claimed by this sample.
+Each Helmr Turn starts a native process and resumes the Session's saved native
+conversation when present. The conversation files must survive in the Workspace;
+see the continuity requirements and qualification limits below.
 
 Mount `acceptSlackEvent` in your HTTP application, supplying the original body
 bytes, a 64 KiB body limit and a request-read timeout. Bind one configured Slack
@@ -139,6 +139,8 @@ Protocol references checked 2026-09-20:
 - [Codex app-server](https://learn.chatgpt.com/docs/app-server): the pinned binary's
   `app-server generate-ts` supplies the version-matched question/answer definitions.
   Question APIs are experimental. The sample initializes that capability explicitly.
+  It also enables `features.default_mode_request_user_input`; on pinned 0.133.0,
+  experimental client capability alone does not allow questions in Default mode.
 - [Claude approvals and questions](https://code.claude.com/docs/en/agent-sdk/user-input):
   callbacks only cover requests reaching the native permission prompt, not all tools.
   No bypass mode or Session-wide grants are requested by this sample.
@@ -166,6 +168,20 @@ The local Claude fixture invokes the Actor twice with separate Run heaps and che
 that the second query receives the persisted native ID. This proves application
 wiring only, not native model memory, provider crash durability or Workspace restore.
 Native end-to-end context continuation remains a runtime/provider qualification gate.
+
+Run the real pinned Codex process qualification separately from mocked native tests:
+
+```sh
+nix develop --command bun test dev/workflows/probes/codex-conversation.test.ts
+```
+
+This probe uses a loopback Responses fixture and the actual Actor/app-server code.
+It checks native questions and answers (including the answer after resume), denied
+command approval, interruption while a question is pending, stale reply rejection,
+and saved conversation identity/history after restarting the native process.
+It does not call a remote model or execute the denied command. Helmr handler
+delivery and repository checks are fixtures; this is not a deployed Session,
+queue/hold exercise, crash-durability proof or VM Workspace restore test.
 
 A non-inference probe of pinned Codex 0.133.0 accepted thread/start but a new
 process immediately attempting thread/resume returned "no rollout found". An empty

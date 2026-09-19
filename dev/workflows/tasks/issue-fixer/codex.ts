@@ -95,6 +95,8 @@ export const codexIssueFixer = actor({
         threadId = threadResult.parse(await server.request(saved.id ? "thread/resume" : "thread/start", {
           ...(saved.id ? { threadId: saved.id } : {}),
           cwd, sandbox: "workspace-write", approvalPolicy: "on-request",
+          // The pinned provider otherwise rejects questions in Default mode.
+          config: { "features.default_mode_request_user_input": true },
         })).thread.id
         await saved.remember(threadId)
         nativeTurnId = turnResult.parse(await server.request("turn/start", { threadId, input: [{ type: "text", text: `Fix this issue and explain the change: ${input.issue}`, text_elements: [] }] })).turn.id
