@@ -108,7 +108,7 @@ func (m WorkspaceMaterializer) RunWorkspaceMount(ctx context.Context, mount work
 	mounted, err := client.MarkWorkspaceMountMounted(renewal.ctx, workerapi.WorkspaceMountMountedRequest{
 		OrgID: mount.OrgID, WorkspaceMountID: mount.ID,
 	})
-	m.logWorkspaceMountPhase(mount, "workspace mount marked mounted", "duration_ms", time.Since(phaseStarted).Milliseconds(), "state", strings.TrimSpace(mounted.State), "error", errorString(err))
+	m.logWorkspaceMountPhase(mount, "workspace mount marked mounted", "duration_ms", time.Since(phaseStarted).Milliseconds(), "state", strings.TrimSpace(mounted.Status), "error", errorString(err))
 	if err != nil {
 		if renewalErr := renewal.stopAndWait(); renewalErr != nil {
 			err = renewalErr
@@ -116,7 +116,7 @@ func (m WorkspaceMaterializer) RunWorkspaceMount(ctx context.Context, mount work
 		_ = m.failWorkspaceMount(client, mount, err)
 		return fmt.Errorf("mark workspace mount mounted: %w", err)
 	}
-	switch strings.TrimSpace(mounted.State) {
+	switch strings.TrimSpace(mounted.Status) {
 	case "unmounting":
 		unregisterSession()
 		unregisterSession = func() {}
@@ -168,7 +168,7 @@ func (m WorkspaceMaterializer) serveWorkspaceMount(
 		case <-ctx.Done():
 			return stopAndReturn()
 		case update := <-renewUpdates:
-			switch strings.TrimSpace(update.State) {
+			switch strings.TrimSpace(update.Status) {
 			case "unmounting":
 				if err := m.stopControlledWorkspaceMount(renewal.ctx, session, mount, update, client); err != nil {
 					return err
@@ -258,10 +258,10 @@ func (m WorkspaceMaterializer) serveWorkspaceMount(
 			if err != nil {
 				return failAndReturn(fmt.Errorf("complete workspace exec: %w", err))
 			}
-			if strings.TrimSpace(update.State) != "unmounting" {
+			if strings.TrimSpace(update.Status) != "unmounting" {
 				return failAndReturn(fmt.Errorf(
 					"complete workspace exec returned mount state %q",
-					update.State,
+					update.Status,
 				))
 			}
 			if err := m.stopControlledWorkspaceMount(
@@ -313,7 +313,7 @@ func (m WorkspaceMaterializer) dispatchWorkspaceBasicExec(
 			errors.New("workspace mount guest channel token is required"),
 		)
 	}
-	if strings.TrimSpace(exec.BaseVersionID) == "" ||
+	if strings.TrimSpace(exec.BaseWorkspaceVersionID) == "" ||
 		strings.TrimSpace(exec.ProcessID) == "" ||
 		strings.TrimSpace(exec.RequestFingerprint) == "" ||
 		strings.TrimSpace(exec.WorkspaceLeaseID) == "" ||
@@ -338,7 +338,7 @@ func (m WorkspaceMaterializer) dispatchWorkspaceBasicExec(
 		)
 	}
 	request := &workspacev0.WorkspaceBasicExecRequest{
-		BaseWorkspaceVersionId: strings.TrimSpace(exec.BaseVersionID),
+		BaseWorkspaceVersionId: strings.TrimSpace(exec.BaseWorkspaceVersionID),
 		OwnershipGeneration:    exec.OwnershipGeneration,
 		WriterGeneration:       exec.WriterGeneration,
 		Envelope: &workspacev0.WorkspaceOperationEnvelope{
@@ -1057,7 +1057,7 @@ func (m WorkspaceMaterializer) registerWorkspaceMount(ctx context.Context, sessi
 		m.logWorkspaceMountPhase(mount, "workspace mount response read", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", err.Error())
 		return fmt.Errorf("read workspace materialize response: %w", err)
 	}
-	m.logWorkspaceMountPhase(mount, "workspace mount response read", "duration_ms", time.Since(phaseStarted).Milliseconds(), "state", strings.TrimSpace(response.State))
+	m.logWorkspaceMountPhase(mount, "workspace mount response read", "duration_ms", time.Since(phaseStarted).Milliseconds(), "state", strings.TrimSpace(response.Status))
 	for _, guestPhase := range response.GetPhases() {
 		if guestPhase == nil {
 			continue
@@ -1070,11 +1070,11 @@ func (m WorkspaceMaterializer) registerWorkspaceMount(ctx context.Context, sessi
 			"error", strings.TrimSpace(guestPhase.GetError()),
 		)
 	}
-	if response.State != "running" {
+	if response.Status != "running" {
 		if phaseError := workspaceMountPhaseError(response.GetPhases()); phaseError != "" {
-			return fmt.Errorf("workspace materialize returned state %q: %s", response.State, phaseError)
+			return fmt.Errorf("workspace materialize returned state %q: %s", response.Status, phaseError)
 		}
-		return fmt.Errorf("workspace materialize returned state %q", response.State)
+		return fmt.Errorf("workspace materialize returned state %q", response.Status)
 	}
 	if !proto.Equal(response.GetTarget(), request.GetTarget()) {
 		return errors.New("workspace materialize response target does not match the requested exact target")
@@ -1120,8 +1120,8 @@ func (m WorkspaceMaterializer) registerWorkspaceMountContext(ctx context.Context
 }
 
 func (m WorkspaceMaterializer) stopControlledWorkspaceMount(ctx context.Context, session vm.Session, mount workerapi.WorkspaceMount, update workerapi.WorkspaceMountResponse, client workerapi.WorkspaceMaterializerControlPlaneClient) error {
-	if strings.TrimSpace(update.State) != "unmounting" {
-		return fmt.Errorf("workspace mount stop requires unmounting state, got %q", update.State)
+	if strings.TrimSpace(update.Status) != "unmounting" {
+		return fmt.Errorf("workspace mount stop requires unmounting state, got %q", update.Status)
 	}
 	var capture bool
 	switch strings.TrimSpace(update.FinalizationKind) {
@@ -1260,8 +1260,8 @@ func (m WorkspaceMaterializer) stopWorkspaceGuest(ctx context.Context, session v
 	if capture && !finalize {
 		expectedState = "captured"
 	}
-	if strings.TrimSpace(response.State) != expectedState {
-		return workspaceMountCapture{}, fmt.Errorf("workspace stop returned state %q", response.State)
+	if strings.TrimSpace(response.Status) != expectedState {
+		return workspaceMountCapture{}, fmt.Errorf("workspace stop returned state %q", response.Status)
 	}
 	if !capture {
 		return workspaceMountCapture{}, nil

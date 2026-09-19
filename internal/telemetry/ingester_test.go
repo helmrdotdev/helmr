@@ -6,9 +6,11 @@ import (
 	"io"
 	"log/slog"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -238,6 +240,7 @@ type fakeIngestStore struct {
 	eventClaimCalls atomic.Int32
 	eventRows       []db.ClaimEventIngestBatchRow
 	runLogClaims    []db.ClaimRunLogIngestBatchParams
+	runLogRows      []db.ClaimRunLogIngestBatchRow
 }
 
 func (s *fakeIngestStore) ClaimEventIngestBatch(_ context.Context, params db.ClaimEventIngestBatchParams) ([]db.ClaimEventIngestBatchRow, error) {
@@ -250,7 +253,7 @@ func (s *fakeIngestStore) ClaimEventIngestBatch(_ context.Context, params db.Cla
 
 func (s *fakeIngestStore) ClaimRunLogIngestBatch(_ context.Context, params db.ClaimRunLogIngestBatchParams) ([]db.ClaimRunLogIngestBatchRow, error) {
 	s.runLogClaims = append(s.runLogClaims, params)
-	return nil, nil
+	return s.runLogRows, nil
 }
 
 func (s *fakeIngestStore) MarkTelemetryOutboxWritten(_ context.Context, params db.MarkTelemetryOutboxWrittenParams) (int64, error) {
@@ -287,4 +290,56 @@ func (s *fakeIngestStore) PruneTelemetryOutboxWritten(_ context.Context, params 
 
 func (*fakeIngestStore) GetTelemetryOutboxLifecycle(context.Context, pgtype.Interval) (db.GetTelemetryOutboxLifecycleRow, error) {
 	return db.GetTelemetryOutboxLifecycleRow{}, nil
+}
+
+func validRunLogRow() db.ClaimRunLogIngestBatchRow {
+	return db.ClaimRunLogIngestBatchRow{
+		OutboxID: 1, RetryCount: 2,
+		OrgID: pgvalue.UUID(uuid.NewV7()), ProjectID: pgvalue.UUID(uuid.NewV7()),
+		EnvironmentID: pgvalue.UUID(uuid.NewV7()), RunID: pgvalue.UUID(uuid.NewV7()),
+		RunLeaseID: pgvalue.UUID(uuid.NewV7()), AttemptNumber: pgtype.Int4{Int32: 3, Valid: true},
+		Content: []byte("hello"),
+	}
+}
+
+func TestRunLogRecordRequiresLeaseAndPositiveAttempt(t *testing.T) {
+	row := validRunLogRow()
+	record, err := runLogRecord(row)
+	if err != nil || record.RunLeaseID != pgvalue.MustUUIDValue(row.RunLeaseID) || record.AttemptNumber != 3 || record.Content != "aGVsbG8=" {
+		t.Fatalf("record = %+v, error = %v", record, err)
+	}
+	for _, tc := range []struct {
+		name    string
+		lease   pgtype.UUID
+		attempt pgtype.Int4
+		field   string
+	}{
+		{"missing lease", pgtype.UUID{}, row.AttemptNumber, "run_lease_id"},
+		{"missing attempt", row.RunLeaseID, pgtype.Int4{}, "attempt_number"},
+		{"zero attempt", row.RunLeaseID, pgtype.Int4{Valid: true}, "attempt_number"},
+		{"negative attempt", row.RunLeaseID, pgtype.Int4{Int32: -1, Valid: true}, "attempt_number"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			invalid := row
+			invalid.RunLeaseID, invalid.AttemptNumber = tc.lease, tc.attempt
+			if _, err := runLogRecord(invalid); err == nil || !strings.Contains(err.Error(), tc.field) {
+				t.Fatalf("error = %v, want %s contract error", err, tc.field)
+			}
+		})
+	}
+}
+
+func TestIngestRunLogsIsolatesInvalidProvenance(t *testing.T) {
+	invalid, valid := validRunLogRow(), validRunLogRow()
+	invalid.RunLeaseID.Valid = false
+	valid.OutboxID = 2
+	store := &fakeIngestStore{runLogRows: []db.ClaimRunLogIngestBatchRow{invalid, valid}}
+	writer := &fakeIngestWriter{}
+	count, err := testIngestor(store, writer).ingestRunLogs(t.Context())
+	if count != 2 || err == nil || !strings.Contains(err.Error(), "run_lease_id") {
+		t.Fatalf("count = %d, error = %v", count, err)
+	}
+	if !slices.Equal(store.failedIDs, []int64{1}) || !slices.Equal(store.writtenIDs, []int64{2}) || writer.runLogCalls != 1 {
+		t.Fatalf("failed = %v, written = %v, writes = %d", store.failedIDs, store.writtenIDs, writer.runLogCalls)
+	}
 }

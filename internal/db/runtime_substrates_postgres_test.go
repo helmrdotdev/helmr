@@ -177,7 +177,7 @@ func TestLockRuntimeSubstrateAuthorityFencesWorkerAndContract(t *testing.T) {
 
 	dbtest.MustExec(t, ctx, pool, `
 		UPDATE worker_instances
-		   SET state = 'draining', draining_at = now()
+		   SET status = 'draining', draining_at = now()
 		 WHERE id = $1
 	`, fixture.workerID)
 	if _, err := queries.LockRuntimeSubstrateAuthority(ctx, params); err != nil {
@@ -289,7 +289,7 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO workspace_versions (
-			id, environment_id, workspace_id, content_digest, state, ownership_generation, writer_generation, published_at
+			id, environment_id, workspace_id, content_digest, status, ownership_generation, writer_generation, published_at
 		) VALUES (
 			$1, $2, $3,
 			'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',
@@ -305,7 +305,7 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 	workerID := uuid.NewV7()
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO worker_instances (
-			id, resource_id, worker_group_id, worker_pool_id, state,
+			id, resource_id, worker_group_id, worker_pool_id, status,
 			current_epoch, current_service_id,
 			runtime_identity_id,
 			substrate_format, substrate_contract,

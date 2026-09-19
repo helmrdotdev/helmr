@@ -135,7 +135,7 @@ func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateReq
 			if err != nil {
 				return err
 			}
-			if acquired.Claim.State == "completed" {
+			if acquired.Claim.Status == "completed" {
 				replayed, err := workspaceCreateResultFromReceipt(acquired.Claim.Receipt)
 				if err != nil {
 					return err
@@ -149,7 +149,7 @@ func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateReq
 				result = replayed
 				return nil
 			}
-			if acquired.Claim.State != "pending" {
+			if acquired.Claim.Status != "pending" {
 				return errWorkspaceCreateReceipt
 			}
 			claim = &acquired.Claim
@@ -220,7 +220,7 @@ func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateReq
 		}
 		var createdWorkspaceID pgtype.UUID
 		var createdKey pgtype.Text
-		var createdState string
+		var createdStatus string
 		var createdLastActivityAt pgtype.Timestamptz
 		var createdAt pgtype.Timestamptz
 		var createdUpdatedAt pgtype.Timestamptz
@@ -242,7 +242,7 @@ func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateReq
 			err = createErr
 			createdWorkspaceID = created.ID
 			createdKey = created.Key
-			createdState = created.State
+			createdStatus = created.Status
 			createdLastActivityAt = created.LastActivityAt
 			createdAt = created.CreatedAt
 			createdUpdatedAt = created.UpdatedAt
@@ -261,7 +261,7 @@ func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateReq
 			err = createErr
 			createdWorkspaceID = created.ID
 			createdKey = created.Key
-			createdState = created.State
+			createdStatus = created.Status
 			createdLastActivityAt = created.LastActivityAt
 			createdAt = created.CreatedAt
 			createdUpdatedAt = created.UpdatedAt
@@ -315,7 +315,7 @@ func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateReq
 				return fmt.Errorf("create workspace secret placement: %w", err)
 			}
 		}
-		status, err := workspacePublicStatus(createdState)
+		status, err := workspacePublicStatus(createdStatus)
 		if err != nil {
 			return err
 		}

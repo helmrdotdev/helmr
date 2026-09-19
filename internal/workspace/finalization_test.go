@@ -35,7 +35,7 @@ func TestFinalizationFingerprintBindsResetTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	target.BaseVersionID = "version-2"
+	target.BaseWorkspaceVersionID = "version-2"
 	request.Target = target
 	second, err := FinalizationFingerprint(FinalizationResetKind, request)
 	if err != nil {

@@ -165,7 +165,7 @@ func TestWorkerRetriesSameScheduleInstantWhenWorkspaceSecretIsRevoked(t *testing
 	value, runtimeDigest := seedScheduleAdmission(t, pool)
 	dbtest.MustExec(t, t.Context(), pool, `
 		UPDATE secrets
-		   SET state = 'revoked',
+		   SET status = 'revoked',
 		       current_version_id = NULL,
 		       revocation_generation = revocation_generation + 1,
 		       revoked_at = now(),
@@ -203,7 +203,7 @@ func TestWorkerRetriesSameScheduleInstantWhenWorkspaceSecretIsRevoked(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if after.State != "active" || !after.RetryStep.Valid || !after.RetryAfter.Valid ||
+	if after.Status != "active" || !after.RetryStep.Valid || !after.RetryAfter.Valid ||
 		len(after.LastFailure) != 0 ||
 		after.ClaimedBy.Valid || after.ClaimExpiresAt.Valid {
 		t.Fatalf("retryable Schedule state = %+v", after)
@@ -215,8 +215,8 @@ func TestReconcileScheduleDoesNotReviveErroredAuthority(t *testing.T) {
 	value, _ := seedScheduleAdmission(t, pool)
 	dbtest.MustExec(t, t.Context(), pool, `
 		UPDATE schedules
-		   SET state = 'errored',
-		       state_version = state_version + 1,
+		   SET status = 'errored',
+		       revision = revision + 1,
 		       claimed_by = NULL,
 		       claim_expires_at = NULL,
 		       last_failure = '{"code":"invalid_definition","message":"Task authority is invalid","details":{}}'::jsonb
@@ -253,19 +253,19 @@ func TestReconcileScheduleDoesNotReviveErroredAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if after.State != "errored" ||
+	if after.Status != "errored" ||
 		after.Generation != before.Generation ||
-		after.StateVersion != before.StateVersion ||
+		after.Revision != before.Revision ||
 		string(after.LastFailure) != string(before.LastFailure) {
 		t.Fatalf(
-			"reconciled errored Schedule = state %q, generation %d, state version %d, failure %s; want %q, %d, %d, %s",
-			after.State,
+			"reconciled errored Schedule = state %q, generation %d, revision %d, failure %s; want %q, %d, %d, %s",
+			after.Status,
 			after.Generation,
-			after.StateVersion,
+			after.Revision,
 			after.LastFailure,
-			before.State,
+			before.Status,
 			before.Generation,
-			before.StateVersion,
+			before.Revision,
 			before.LastFailure,
 		)
 	}
@@ -375,7 +375,7 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 			id, environment_id,
 			task_declared_id, deployment_definition_id, deployment_id,
 			cron_pattern, timezone,
-			state, effective_from,
+			status, effective_from,
 			next_fire_at, claimed_by, claim_expires_at
 		)
 		VALUES (
@@ -484,24 +484,24 @@ func assertScheduleAdmissionCounts(
 	if runs == 0 {
 		return
 	}
-	var owned, minStateVersion, maxStateVersion, minOwnershipGeneration, maxOwnershipGeneration int64
+	var owned, minRevision, maxRevision, minOwnershipGeneration, maxOwnershipGeneration int64
 	if err := pool.QueryRow(t.Context(), `
 		SELECT count(*) FILTER (WHERE owner_run_id IS NOT NULL),
-		       min(state_version), max(state_version),
+		       min(revision), max(revision),
 		       min(ownership_generation), max(ownership_generation)
 		  FROM workspaces
 		 WHERE environment_id = $1
 	`, value.EnvironmentID).Scan(
-		&owned, &minStateVersion, &maxStateVersion,
+		&owned, &minRevision, &maxRevision,
 		&minOwnershipGeneration, &maxOwnershipGeneration,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if owned != int64(runs) || minStateVersion != 2 || maxStateVersion != 2 ||
+	if owned != int64(runs) || minRevision != 2 || maxRevision != 2 ||
 		minOwnershipGeneration != 1 || maxOwnershipGeneration != 1 {
 		t.Fatalf(
 			"reserved Workspaces owned/state/ownership = %d/%d-%d/%d-%d, want %d/2-2/1-1",
-			owned, minStateVersion, maxStateVersion,
+			owned, minRevision, maxRevision,
 			minOwnershipGeneration, maxOwnershipGeneration, runs,
 		)
 	}

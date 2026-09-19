@@ -11,9 +11,9 @@ import (
 )
 
 type ReadyRunCandidate struct {
-	OrgID                   pgtype.UUID
-	RunID                   pgtype.UUID
-	ExpectedRunStateVersion int64
+	OrgID               pgtype.UUID
+	RunID               pgtype.UUID
+	ExpectedRunRevision int64
 }
 
 type ReadyRunPlacement struct {
@@ -30,7 +30,7 @@ type runWorkspaceMount struct {
 	workerID          pgtype.UUID
 	epoch             int64
 	runtimeID         pgtype.UUID
-	state             db.WorkspaceMountState
+	state             db.WorkspaceMountStatus
 	fencingGeneration int64
 }
 
@@ -48,7 +48,7 @@ func (d *Authority) PlaceReadyRun(
 		WorkerEpoch:       mount.epoch,
 		RuntimeInstanceID: mount.runtimeID,
 	}
-	if mount.state != db.WorkspaceMountStateMounted {
+	if mount.state != db.WorkspaceMountStatusMounted {
 		return placement, nil
 	}
 	lease, err := d.grantFreshRun(ctx, candidate, mount)
@@ -80,7 +80,7 @@ SELECT EXISTS (
       FROM runs
      WHERE org_id = $1
        AND id = $2
-       AND state_version = $3
+       AND revision = $3
        AND status = 'queued'
        AND current_run_lease_id IS NULL
        AND (next_runtime_preparation_at IS NULL
@@ -90,7 +90,7 @@ SELECT EXISTS (
            OR queued_expires_at IS NULL
            OR queued_expires_at > transaction_timestamp()
        )
-)`, candidate.OrgID, candidate.RunID, candidate.ExpectedRunStateVersion).Scan(&exists); err != nil {
+)`, candidate.OrgID, candidate.RunID, candidate.ExpectedRunRevision).Scan(&exists); err != nil {
 		return false, fmt.Errorf("revalidate queued run: %w", err)
 	}
 	return exists, nil

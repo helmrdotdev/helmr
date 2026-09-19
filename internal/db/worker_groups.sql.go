@@ -13,10 +13,10 @@ import (
 
 const activateWorkerInstance = `-- name: ActivateWorkerInstance :one
 UPDATE worker_instances
-   SET state = CASE
-           WHEN worker_instances.state = 'draining'
-               OR worker_groups.state = 'draining'
-               OR worker_pools.state = 'draining'
+   SET status = CASE
+           WHEN worker_instances.status = 'draining'
+               OR worker_groups.status = 'draining'
+               OR worker_pools.status = 'draining'
            THEN 'draining'
            ELSE 'active'
        END,
@@ -35,9 +35,9 @@ UPDATE worker_instances
        cpu_environment_digest = $13,
        activated_at = COALESCE(worker_instances.activated_at, now()),
        draining_at = CASE
-           WHEN worker_instances.state = 'draining'
-               OR worker_groups.state = 'draining'
-               OR worker_pools.state = 'draining'
+           WHEN worker_instances.status = 'draining'
+               OR worker_groups.status = 'draining'
+               OR worker_pools.status = 'draining'
            THEN COALESCE(worker_instances.draining_at, now())
            ELSE worker_instances.draining_at
        END,
@@ -47,10 +47,10 @@ UPDATE worker_instances
    AND worker_instances.worker_group_id = $15
    AND worker_instances.current_epoch = $16
    AND worker_groups.id = worker_instances.worker_group_id
-   AND worker_groups.state IN ('active', 'paused', 'draining')
+   AND worker_groups.status IN ('active', 'paused', 'draining')
    AND worker_pools.id = worker_instances.worker_pool_id
    AND worker_pools.worker_group_id = worker_instances.worker_group_id
-   AND worker_pools.state IN ('active', 'draining')
+   AND worker_pools.status IN ('active', 'draining')
    AND NOT EXISTS (
        SELECT 1 FROM runtime_instances
         WHERE runtime_instances.worker_instance_id = worker_instances.id
@@ -58,9 +58,9 @@ UPDATE worker_instances
           AND runtime_instances.reclaimed_at IS NULL
    )
    AND (
-       worker_instances.state = 'registering'
+       worker_instances.status = 'registering'
        OR (
-           worker_instances.state = 'draining'
+           worker_instances.status = 'draining'
            AND worker_instances.runtime_identity_id IS NULL
            AND worker_instances.substrate_format = ''
            AND worker_instances.substrate_contract = ''
@@ -77,7 +77,7 @@ UPDATE worker_instances
            AND worker_instances.activated_at IS NULL
        )
        OR (
-           worker_instances.state IN ('active', 'draining')
+           worker_instances.status IN ('active', 'draining')
            AND worker_instances.runtime_identity_id = $1::text
            AND worker_instances.substrate_format = $2
            AND worker_instances.substrate_contract = $3
@@ -93,7 +93,7 @@ UPDATE worker_instances
            AND worker_instances.cpu_environment_digest = $13
        )
    )
-RETURNING worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.worker_pool_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_contract, worker_instances.epoch_cpu_millis, worker_instances.epoch_memory_bytes, worker_instances.epoch_guest_ephemeral_disk_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_runtime_starts, worker_instances.cpu_environment, worker_instances.cpu_environment_digest, worker_instances.observed_at, worker_instances.run_paused_reason, worker_instances.runtime_paused_reason, worker_instances.epoch_started_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.termination_ready_at, worker_instances.lost_at, worker_instances.created_at, worker_instances.updated_at
+RETURNING worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.worker_pool_id, worker_instances.status, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_contract, worker_instances.epoch_cpu_millis, worker_instances.epoch_memory_bytes, worker_instances.epoch_guest_ephemeral_disk_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_runtime_starts, worker_instances.cpu_environment, worker_instances.cpu_environment_digest, worker_instances.observed_at, worker_instances.run_paused_reason, worker_instances.runtime_paused_reason, worker_instances.epoch_started_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.termination_ready_at, worker_instances.lost_at, worker_instances.created_at, worker_instances.updated_at
 `
 
 type ActivateWorkerInstanceParams struct {
@@ -140,7 +140,7 @@ func (q *Queries) ActivateWorkerInstance(ctx context.Context, arg ActivateWorker
 		&i.ResourceID,
 		&i.WorkerGroupID,
 		&i.WorkerPoolID,
-		&i.State,
+		&i.Status,
 		&i.ClaimVersion,
 		&i.CurrentEpoch,
 		&i.CurrentServiceID,
@@ -183,14 +183,14 @@ WITH target AS (
              FROM runtime_instances
              JOIN run_leases
                ON run_leases.runtime_instance_id = runtime_instances.id
-              AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
+              AND run_leases.status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
             WHERE runtime_instances.worker_instance_id = worker_instances.id
               AND runtime_instances.worker_epoch < worker_instances.current_epoch
        )
 	       AND (
-	           worker_instances.state = 'registering'
+	           worker_instances.status = 'registering'
 	           OR (
-	               worker_instances.state = 'draining'
+	               worker_instances.status = 'draining'
 	               AND worker_instances.runtime_identity_id IS NULL
 	           )
        )
@@ -210,19 +210,19 @@ WITH target AS (
            SELECT 1
              FROM run_leases
             WHERE run_leases.runtime_instance_id = runtime_instances.id
-              AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
+              AND run_leases.status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
        )
      ORDER BY runtime_instances.id
        FOR UPDATE OF runtime_instances
 ), lost_mounts AS (
     UPDATE workspace_mounts
-       SET state = 'lost',
+       SET status = 'lost',
            lost_at = now(),
            terminal_at = now(),
            terminal_reason_code = 'worker_startup_reclaimed',
            updated_at = now()
      WHERE workspace_mounts.runtime_instance_id IN (SELECT id FROM reclaimable_runtimes)
-       AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
+       AND workspace_mounts.status IN ('mounting', 'mounted', 'unmounting')
     RETURNING workspace_mounts.id
 ), reclaimed_runtimes AS (
     UPDATE runtime_instances
@@ -249,7 +249,7 @@ UPDATE worker_instances
  WHERE worker_instances.id = target.id
    AND (SELECT count(*) FROM lost_mounts) >= 0
    AND (SELECT count(*) FROM reclaimed_runtimes) >= 0
-RETURNING worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.worker_pool_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_contract, worker_instances.epoch_cpu_millis, worker_instances.epoch_memory_bytes, worker_instances.epoch_guest_ephemeral_disk_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_runtime_starts, worker_instances.cpu_environment, worker_instances.cpu_environment_digest, worker_instances.observed_at, worker_instances.run_paused_reason, worker_instances.runtime_paused_reason, worker_instances.epoch_started_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.termination_ready_at, worker_instances.lost_at, worker_instances.created_at, worker_instances.updated_at
+RETURNING worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.worker_pool_id, worker_instances.status, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_contract, worker_instances.epoch_cpu_millis, worker_instances.epoch_memory_bytes, worker_instances.epoch_guest_ephemeral_disk_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_runtime_starts, worker_instances.cpu_environment, worker_instances.cpu_environment_digest, worker_instances.observed_at, worker_instances.run_paused_reason, worker_instances.runtime_paused_reason, worker_instances.epoch_started_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.termination_ready_at, worker_instances.lost_at, worker_instances.created_at, worker_instances.updated_at
 `
 
 type CompleteWorkerStartupRecoveryParams struct {
@@ -272,7 +272,7 @@ func (q *Queries) CompleteWorkerStartupRecovery(ctx context.Context, arg Complet
 		&i.ResourceID,
 		&i.WorkerGroupID,
 		&i.WorkerPoolID,
-		&i.State,
+		&i.Status,
 		&i.ClaimVersion,
 		&i.CurrentEpoch,
 		&i.CurrentServiceID,
@@ -308,23 +308,23 @@ WITH target AS MATERIALIZED (
     SELECT worker_instances.id
       FROM worker_instances
      WHERE worker_instances.id = $1
-       AND worker_instances.state IN ('registering', 'active', 'draining', 'lost')
+       AND worker_instances.status IN ('registering', 'active', 'draining', 'lost')
      FOR UPDATE
 ), transitioned AS (
     UPDATE worker_instances
-       SET state = 'lost',
+       SET status = 'lost',
            claim_version = worker_instances.claim_version
-               + CASE WHEN worker_instances.state = 'lost' THEN 0 ELSE 1 END,
+               + CASE WHEN worker_instances.status = 'lost' THEN 0 ELSE 1 END,
            lost_at = COALESCE(worker_instances.lost_at, now()),
            updated_at = CASE
-               WHEN worker_instances.state = 'lost' THEN worker_instances.updated_at
+               WHEN worker_instances.status = 'lost' THEN worker_instances.updated_at
                ELSE now()
            END
       FROM target
      WHERE worker_instances.id = target.id
     RETURNING worker_instances.id, worker_instances.resource_id,
               worker_instances.worker_group_id, worker_instances.worker_pool_id,
-              worker_instances.state, worker_instances.claim_version,
+              worker_instances.status, worker_instances.claim_version,
               worker_instances.current_epoch, worker_instances.draining_at,
               worker_instances.termination_ready_at, worker_instances.lost_at,
               worker_instances.created_at, worker_instances.updated_at
@@ -337,7 +337,7 @@ WITH target AS MATERIALIZED (
     RETURNING worker_instance_credentials.id
 ), lost_mounts AS (
     UPDATE workspace_mounts
-       SET state = 'lost',
+       SET status = 'lost',
            lost_at = COALESCE(workspace_mounts.lost_at, now()),
            terminal_at = COALESCE(workspace_mounts.terminal_at, now()),
            terminal_reason_code = COALESCE(
@@ -347,12 +347,12 @@ WITH target AS MATERIALIZED (
            updated_at = now()
       FROM transitioned
      WHERE workspace_mounts.worker_instance_id = transitioned.id
-       AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
+       AND workspace_mounts.status IN ('mounting', 'mounted', 'unmounting')
     RETURNING workspace_mounts.id
 )
 SELECT transitioned.id, transitioned.resource_id,
        transitioned.worker_group_id, transitioned.worker_pool_id,
-       transitioned.state, transitioned.claim_version,
+       transitioned.status, transitioned.claim_version,
        transitioned.current_epoch, transitioned.draining_at,
        transitioned.termination_ready_at, transitioned.lost_at,
        transitioned.created_at, transitioned.updated_at
@@ -366,7 +366,7 @@ type ConfirmWorkerInstanceProviderAbsentRow struct {
 	ResourceID         string             `json:"resource_id"`
 	WorkerGroupID      pgtype.UUID        `json:"worker_group_id"`
 	WorkerPoolID       pgtype.UUID        `json:"worker_pool_id"`
-	State              string             `json:"state"`
+	Status             string             `json:"status"`
 	ClaimVersion       int64              `json:"claim_version"`
 	CurrentEpoch       pgtype.Int8        `json:"current_epoch"`
 	DrainingAt         pgtype.Timestamptz `json:"draining_at"`
@@ -384,7 +384,7 @@ func (q *Queries) ConfirmWorkerInstanceProviderAbsent(ctx context.Context, worke
 		&i.ResourceID,
 		&i.WorkerGroupID,
 		&i.WorkerPoolID,
-		&i.State,
+		&i.Status,
 		&i.ClaimVersion,
 		&i.CurrentEpoch,
 		&i.DrainingAt,
@@ -397,14 +397,14 @@ func (q *Queries) ConfirmWorkerInstanceProviderAbsent(ctx context.Context, worke
 }
 
 const createPendingWorkerPool = `-- name: CreatePendingWorkerPool :one
-INSERT INTO worker_pools (id, worker_group_id, name, state, claim_version)
+INSERT INTO worker_pools (id, worker_group_id, name, status, claim_version)
 SELECT $1, worker_groups.id, $2,
        'pending', 1
   FROM worker_groups
  WHERE worker_groups.id = $3
    AND worker_groups.claim_version = $4
-   AND worker_groups.state IN ('active', 'paused')
-RETURNING worker_pools.id, worker_pools.worker_group_id, worker_pools.name, worker_pools.state, worker_pools.claim_version, worker_pools.runtime_identity_id, worker_pools.substrate_format, worker_pools.substrate_contract, worker_pools.capacity_cpu_millis, worker_pools.capacity_memory_bytes, worker_pools.capacity_guest_ephemeral_disk_bytes, worker_pools.per_vm_cpu_millis, worker_pools.per_vm_memory_bytes, worker_pools.per_vm_guest_ephemeral_disk_bytes, worker_pools.max_vm_slots, worker_pools.sealed_at, worker_pools.created_at, worker_pools.updated_at
+   AND worker_groups.status IN ('active', 'paused')
+RETURNING worker_pools.id, worker_pools.worker_group_id, worker_pools.name, worker_pools.status, worker_pools.claim_version, worker_pools.runtime_identity_id, worker_pools.substrate_format, worker_pools.substrate_contract, worker_pools.capacity_cpu_millis, worker_pools.capacity_memory_bytes, worker_pools.capacity_guest_ephemeral_disk_bytes, worker_pools.per_vm_cpu_millis, worker_pools.per_vm_memory_bytes, worker_pools.per_vm_guest_ephemeral_disk_bytes, worker_pools.max_vm_slots, worker_pools.sealed_at, worker_pools.created_at, worker_pools.updated_at
 `
 
 type CreatePendingWorkerPoolParams struct {
@@ -426,7 +426,7 @@ func (q *Queries) CreatePendingWorkerPool(ctx context.Context, arg CreatePending
 		&i.ID,
 		&i.WorkerGroupID,
 		&i.Name,
-		&i.State,
+		&i.Status,
 		&i.ClaimVersion,
 		&i.RuntimeIdentityID,
 		&i.SubstrateFormat,
@@ -451,11 +451,11 @@ WITH token AS (
     VALUES ($5, $6)
     RETURNING id
 )
-INSERT INTO worker_groups (id, token_id, region_id, name, description, state)
+INSERT INTO worker_groups (id, token_id, region_id, name, description, status)
 SELECT $1, token.id, $2, $3,
        $4, 'active'
   FROM token
-RETURNING id, token_id, region_id, name, description, state, claim_version, primary_pool_id, created_at, updated_at
+RETURNING id, token_id, region_id, name, description, status, claim_version, primary_pool_id, created_at, updated_at
 `
 
 type CreateWorkerGroupParams struct {
@@ -483,7 +483,7 @@ func (q *Queries) CreateWorkerGroup(ctx context.Context, arg CreateWorkerGroupPa
 		&i.RegionID,
 		&i.Name,
 		&i.Description,
-		&i.State,
+		&i.Status,
 		&i.ClaimVersion,
 		&i.PrimaryPoolID,
 		&i.CreatedAt,
@@ -493,7 +493,7 @@ func (q *Queries) CreateWorkerGroup(ctx context.Context, arg CreateWorkerGroupPa
 }
 
 const getCapacityWorkerInstance = `-- name: GetCapacityWorkerInstance :one
-SELECT id, resource_id, worker_group_id, worker_pool_id, state, claim_version, current_epoch,
+SELECT id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch,
        draining_at, termination_ready_at, lost_at,
        created_at, updated_at
   FROM worker_instances
@@ -505,7 +505,7 @@ type GetCapacityWorkerInstanceRow struct {
 	ResourceID         string             `json:"resource_id"`
 	WorkerGroupID      pgtype.UUID        `json:"worker_group_id"`
 	WorkerPoolID       pgtype.UUID        `json:"worker_pool_id"`
-	State              string             `json:"state"`
+	Status             string             `json:"status"`
 	ClaimVersion       int64              `json:"claim_version"`
 	CurrentEpoch       pgtype.Int8        `json:"current_epoch"`
 	DrainingAt         pgtype.Timestamptz `json:"draining_at"`
@@ -523,7 +523,7 @@ func (q *Queries) GetCapacityWorkerInstance(ctx context.Context, workerInstanceI
 		&i.ResourceID,
 		&i.WorkerGroupID,
 		&i.WorkerPoolID,
-		&i.State,
+		&i.Status,
 		&i.ClaimVersion,
 		&i.CurrentEpoch,
 		&i.DrainingAt,
@@ -536,7 +536,7 @@ func (q *Queries) GetCapacityWorkerInstance(ctx context.Context, workerInstanceI
 }
 
 const getWorkerGroup = `-- name: GetWorkerGroup :one
-SELECT id, token_id, region_id, name, description, state, claim_version, primary_pool_id, created_at, updated_at FROM worker_groups WHERE id = $1
+SELECT id, token_id, region_id, name, description, status, claim_version, primary_pool_id, created_at, updated_at FROM worker_groups WHERE id = $1
 `
 
 func (q *Queries) GetWorkerGroup(ctx context.Context, id pgtype.UUID) (WorkerGroup, error) {
@@ -548,7 +548,7 @@ func (q *Queries) GetWorkerGroup(ctx context.Context, id pgtype.UUID) (WorkerGro
 		&i.RegionID,
 		&i.Name,
 		&i.Description,
-		&i.State,
+		&i.Status,
 		&i.ClaimVersion,
 		&i.PrimaryPoolID,
 		&i.CreatedAt,
@@ -558,7 +558,7 @@ func (q *Queries) GetWorkerGroup(ctx context.Context, id pgtype.UUID) (WorkerGro
 }
 
 const getWorkerGroupByRegionName = `-- name: GetWorkerGroupByRegionName :one
-SELECT id, token_id, region_id, name, description, state, claim_version, primary_pool_id, created_at, updated_at
+SELECT id, token_id, region_id, name, description, status, claim_version, primary_pool_id, created_at, updated_at
   FROM worker_groups
  WHERE region_id = $1
    AND name = $2
@@ -578,7 +578,7 @@ func (q *Queries) GetWorkerGroupByRegionName(ctx context.Context, arg GetWorkerG
 		&i.RegionID,
 		&i.Name,
 		&i.Description,
-		&i.State,
+		&i.Status,
 		&i.ClaimVersion,
 		&i.PrimaryPoolID,
 		&i.CreatedAt,
@@ -587,22 +587,22 @@ func (q *Queries) GetWorkerGroupByRegionName(ctx context.Context, arg GetWorkerG
 	return i, err
 }
 
-const getWorkerGroupState = `-- name: GetWorkerGroupState :one
-SELECT id, state, claim_version
+const getWorkerGroupStatus = `-- name: GetWorkerGroupStatus :one
+SELECT id, status, claim_version
   FROM worker_groups
  WHERE id = $1
 `
 
-type GetWorkerGroupStateRow struct {
+type GetWorkerGroupStatusRow struct {
 	ID           pgtype.UUID `json:"id"`
-	State        string      `json:"state"`
+	Status       string      `json:"status"`
 	ClaimVersion int64       `json:"claim_version"`
 }
 
-func (q *Queries) GetWorkerGroupState(ctx context.Context, workerGroupID pgtype.UUID) (GetWorkerGroupStateRow, error) {
-	row := q.db.QueryRow(ctx, getWorkerGroupState, workerGroupID)
-	var i GetWorkerGroupStateRow
-	err := row.Scan(&i.ID, &i.State, &i.ClaimVersion)
+func (q *Queries) GetWorkerGroupStatus(ctx context.Context, workerGroupID pgtype.UUID) (GetWorkerGroupStatusRow, error) {
+	row := q.db.QueryRow(ctx, getWorkerGroupStatus, workerGroupID)
+	var i GetWorkerGroupStatusRow
+	err := row.Scan(&i.ID, &i.Status, &i.ClaimVersion)
 	return i, err
 }
 
@@ -627,39 +627,39 @@ func (q *Queries) GetWorkerInstancePoolID(ctx context.Context, arg GetWorkerInst
 	return worker_pool_id, err
 }
 
-const getWorkerInstanceStateByResource = `-- name: GetWorkerInstanceStateByResource :one
-SELECT id, resource_id, worker_group_id, worker_pool_id, state, claim_version, current_epoch
+const getWorkerInstanceStatusByResource = `-- name: GetWorkerInstanceStatusByResource :one
+SELECT id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch
   FROM worker_instances
  WHERE worker_group_id = $1
    AND resource_id = $2
- ORDER BY (state IN ('registering', 'active', 'draining')) DESC, created_at DESC
+ ORDER BY (status IN ('registering', 'active', 'draining')) DESC, created_at DESC
  LIMIT 1
 `
 
-type GetWorkerInstanceStateByResourceParams struct {
+type GetWorkerInstanceStatusByResourceParams struct {
 	WorkerGroupID pgtype.UUID `json:"worker_group_id"`
 	ResourceID    string      `json:"resource_id"`
 }
 
-type GetWorkerInstanceStateByResourceRow struct {
+type GetWorkerInstanceStatusByResourceRow struct {
 	ID            pgtype.UUID `json:"id"`
 	ResourceID    string      `json:"resource_id"`
 	WorkerGroupID pgtype.UUID `json:"worker_group_id"`
 	WorkerPoolID  pgtype.UUID `json:"worker_pool_id"`
-	State         string      `json:"state"`
+	Status        string      `json:"status"`
 	ClaimVersion  int64       `json:"claim_version"`
 	CurrentEpoch  pgtype.Int8 `json:"current_epoch"`
 }
 
-func (q *Queries) GetWorkerInstanceStateByResource(ctx context.Context, arg GetWorkerInstanceStateByResourceParams) (GetWorkerInstanceStateByResourceRow, error) {
-	row := q.db.QueryRow(ctx, getWorkerInstanceStateByResource, arg.WorkerGroupID, arg.ResourceID)
-	var i GetWorkerInstanceStateByResourceRow
+func (q *Queries) GetWorkerInstanceStatusByResource(ctx context.Context, arg GetWorkerInstanceStatusByResourceParams) (GetWorkerInstanceStatusByResourceRow, error) {
+	row := q.db.QueryRow(ctx, getWorkerInstanceStatusByResource, arg.WorkerGroupID, arg.ResourceID)
+	var i GetWorkerInstanceStatusByResourceRow
 	err := row.Scan(
 		&i.ID,
 		&i.ResourceID,
 		&i.WorkerGroupID,
 		&i.WorkerPoolID,
-		&i.State,
+		&i.Status,
 		&i.ClaimVersion,
 		&i.CurrentEpoch,
 	)
@@ -667,7 +667,7 @@ func (q *Queries) GetWorkerInstanceStateByResource(ctx context.Context, arg GetW
 }
 
 const getWorkerPoolByGroupName = `-- name: GetWorkerPoolByGroupName :one
-SELECT id, worker_group_id, name, state, claim_version, runtime_identity_id, substrate_format, substrate_contract, capacity_cpu_millis, capacity_memory_bytes, capacity_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, sealed_at, created_at, updated_at
+SELECT id, worker_group_id, name, status, claim_version, runtime_identity_id, substrate_format, substrate_contract, capacity_cpu_millis, capacity_memory_bytes, capacity_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, sealed_at, created_at, updated_at
   FROM worker_pools
  WHERE worker_group_id = $1
    AND name = $2
@@ -685,7 +685,7 @@ func (q *Queries) GetWorkerPoolByGroupName(ctx context.Context, arg GetWorkerPoo
 		&i.ID,
 		&i.WorkerGroupID,
 		&i.Name,
-		&i.State,
+		&i.Status,
 		&i.ClaimVersion,
 		&i.RuntimeIdentityID,
 		&i.SubstrateFormat,
@@ -709,7 +709,7 @@ INSERT INTO worker_pool_cpu_shapes (worker_pool_id, vcpu_count, cpu_config_diges
 SELECT worker_pools.id, $1, $2
   FROM worker_pools
  WHERE worker_pools.id = $3
-   AND worker_pools.state = 'pending'
+   AND worker_pools.status = 'pending'
 `
 
 type InsertWorkerPoolCPUShapeParams struct {
@@ -729,7 +729,7 @@ func (q *Queries) InsertWorkerPoolCPUShape(ctx context.Context, arg InsertWorker
 const listCapacityWorkerInstances = `-- name: ListCapacityWorkerInstances :many
 WITH current_instances AS (
     SELECT DISTINCT ON (worker_group_id, resource_id)
-           id, resource_id, worker_group_id, worker_pool_id, state, claim_version, current_epoch,
+           id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch,
            draining_at, termination_ready_at, lost_at,
            created_at, updated_at
      FROM worker_instances
@@ -748,21 +748,21 @@ WITH current_instances AS (
            OR resource_id = ANY($5::text[])
        )
      ORDER BY worker_group_id, resource_id,
-              (state IN ('registering', 'active', 'draining')) DESC,
+              (status IN ('registering', 'active', 'draining')) DESC,
               created_at DESC, id DESC
 )
-SELECT id, resource_id, worker_group_id, worker_pool_id, state, claim_version, current_epoch, draining_at, termination_ready_at, lost_at, created_at, updated_at
+SELECT id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch, draining_at, termination_ready_at, lost_at, created_at, updated_at
   FROM current_instances
  WHERE (
        cardinality($1::text[]) = 0
-       OR state = ANY($1::text[])
+       OR status = ANY($1::text[])
    )
  ORDER BY worker_group_id, resource_id
  LIMIT $2
 `
 
 type ListCapacityWorkerInstancesParams struct {
-	States                []string    `json:"states"`
+	Statuses              []string    `json:"statuses"`
 	RowLimit              int32       `json:"row_limit"`
 	WorkerGroupID         pgtype.UUID `json:"worker_group_id"`
 	HasUnreclaimedRuntime bool        `json:"has_unreclaimed_runtime"`
@@ -774,7 +774,7 @@ type ListCapacityWorkerInstancesRow struct {
 	ResourceID         string             `json:"resource_id"`
 	WorkerGroupID      pgtype.UUID        `json:"worker_group_id"`
 	WorkerPoolID       pgtype.UUID        `json:"worker_pool_id"`
-	State              string             `json:"state"`
+	Status             string             `json:"status"`
 	ClaimVersion       int64              `json:"claim_version"`
 	CurrentEpoch       pgtype.Int8        `json:"current_epoch"`
 	DrainingAt         pgtype.Timestamptz `json:"draining_at"`
@@ -786,7 +786,7 @@ type ListCapacityWorkerInstancesRow struct {
 
 func (q *Queries) ListCapacityWorkerInstances(ctx context.Context, arg ListCapacityWorkerInstancesParams) ([]ListCapacityWorkerInstancesRow, error) {
 	rows, err := q.db.Query(ctx, listCapacityWorkerInstances,
-		arg.States,
+		arg.Statuses,
 		arg.RowLimit,
 		arg.WorkerGroupID,
 		arg.HasUnreclaimedRuntime,
@@ -804,7 +804,7 @@ func (q *Queries) ListCapacityWorkerInstances(ctx context.Context, arg ListCapac
 			&i.ResourceID,
 			&i.WorkerGroupID,
 			&i.WorkerPoolID,
-			&i.State,
+			&i.Status,
 			&i.ClaimVersion,
 			&i.CurrentEpoch,
 			&i.DrainingAt,
@@ -852,19 +852,19 @@ SELECT worker_pools.id,
              FROM worker_instances
             WHERE worker_instances.worker_pool_id = worker_pools.id
               AND worker_instances.worker_group_id = worker_pools.worker_group_id
-              AND worker_instances.state = 'registering'
+              AND worker_instances.status = 'registering'
        ), 0)::bigint AS registering_workers,
        COALESCE((
            SELECT count(*)
              FROM worker_instances
             WHERE worker_instances.worker_pool_id = worker_pools.id
               AND worker_instances.worker_group_id = worker_pools.worker_group_id
-              AND worker_instances.state = 'active'
+              AND worker_instances.status = 'active'
        ), 0)::bigint AS active_workers
   FROM worker_pools
  WHERE worker_pools.worker_group_id = $1
    AND worker_pools.id = ANY($2::uuid[])
-   AND worker_pools.state = 'active'
+   AND worker_pools.status = 'active'
  ORDER BY worker_pools.id
 `
 
@@ -939,16 +939,16 @@ SELECT worker_groups.id AS worker_group_id,
   FROM worker_groups
   JOIN worker_instances
     ON worker_instances.worker_group_id = worker_groups.id
-   AND worker_instances.state = 'active'
+   AND worker_instances.status = 'active'
    AND worker_instances.current_epoch IS NOT NULL
   JOIN worker_pools
     ON worker_pools.id = worker_instances.worker_pool_id
    AND worker_pools.worker_group_id = worker_instances.worker_group_id
-   AND worker_pools.state = 'active'
+   AND worker_pools.status = 'active'
   JOIN runtime_identities
     ON runtime_identities.id = worker_instances.runtime_identity_id
  WHERE worker_groups.region_id = $1
-   AND worker_groups.state = 'active'
+   AND worker_groups.status = 'active'
    AND ($2::uuid IS NULL
         OR worker_instances.id > $2)
    AND worker_instances.observed_at >= transaction_timestamp()
@@ -1075,17 +1075,17 @@ WITH live_workers AS (
       FROM worker_groups
       JOIN worker_instances
         ON worker_instances.worker_group_id = worker_groups.id
-       AND worker_instances.state = 'active'
+       AND worker_instances.status = 'active'
        AND worker_instances.current_epoch IS NOT NULL
       JOIN worker_pools
         ON worker_pools.id = worker_instances.worker_pool_id
        AND worker_pools.worker_group_id = worker_instances.worker_group_id
-       AND worker_pools.state = 'active'
+       AND worker_pools.status = 'active'
       JOIN runtime_identities
         ON runtime_identities.id = worker_instances.runtime_identity_id
      WHERE ($1::uuid IS NULL OR worker_groups.id = $1)
        AND ($2::text = '' OR worker_groups.region_id = $2)
-       AND worker_groups.state = 'active'
+       AND worker_groups.status = 'active'
        AND worker_instances.observed_at >= transaction_timestamp()
            - $3::bigint * interval '1 second'
      ORDER BY worker_instances.id
@@ -1115,7 +1115,7 @@ WITH live_workers AS (
            COALESCE((SELECT count(*) FROM run_leases
                       WHERE run_leases.worker_instance_id = live_workers.worker_instance_id
                         AND run_leases.worker_epoch = live_workers.worker_epoch
-                        AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')), 0)::bigint AS run_consumers,
+                        AND run_leases.status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')), 0)::bigint AS run_consumers,
            COALESCE((SELECT count(*) FROM runtime_instances
                       WHERE runtime_instances.worker_instance_id = live_workers.worker_instance_id
                         AND runtime_instances.worker_epoch = live_workers.worker_epoch
@@ -1241,7 +1241,7 @@ func (q *Queries) ListWorkerCapacityBins(ctx context.Context, arg ListWorkerCapa
 }
 
 const listWorkerGroups = `-- name: ListWorkerGroups :many
-SELECT id, token_id, region_id, name, description, state, claim_version, primary_pool_id, created_at, updated_at
+SELECT id, token_id, region_id, name, description, status, claim_version, primary_pool_id, created_at, updated_at
   FROM worker_groups
  WHERE $1::text IS NULL OR region_id = $1
  ORDER BY region_id, name ASC
@@ -1268,7 +1268,7 @@ func (q *Queries) ListWorkerGroups(ctx context.Context, arg ListWorkerGroupsPara
 			&i.RegionID,
 			&i.Name,
 			&i.Description,
-			&i.State,
+			&i.Status,
 			&i.ClaimVersion,
 			&i.PrimaryPoolID,
 			&i.CreatedAt,
@@ -1312,7 +1312,7 @@ func (q *Queries) ListWorkerPoolCPUShapes(ctx context.Context, workerPoolID pgty
 }
 
 const listWorkerPools = `-- name: ListWorkerPools :many
-SELECT id, worker_group_id, name, state, claim_version, runtime_identity_id, substrate_format, substrate_contract, capacity_cpu_millis, capacity_memory_bytes, capacity_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, sealed_at, created_at, updated_at
+SELECT id, worker_group_id, name, status, claim_version, runtime_identity_id, substrate_format, substrate_contract, capacity_cpu_millis, capacity_memory_bytes, capacity_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, sealed_at, created_at, updated_at
   FROM worker_pools
  WHERE worker_group_id = $1
  ORDER BY name, id
@@ -1331,7 +1331,7 @@ func (q *Queries) ListWorkerPools(ctx context.Context, workerGroupID pgtype.UUID
 			&i.ID,
 			&i.WorkerGroupID,
 			&i.Name,
-			&i.State,
+			&i.Status,
 			&i.ClaimVersion,
 			&i.RuntimeIdentityID,
 			&i.SubstrateFormat,
@@ -1367,7 +1367,7 @@ func (q *Queries) LockWorkerGroupCreationRegion(ctx context.Context, lockKey int
 }
 
 const lockWorkerGroupForPoolMutation = `-- name: LockWorkerGroupForPoolMutation :one
-SELECT id, token_id, region_id, name, description, state, claim_version, primary_pool_id, created_at, updated_at
+SELECT id, token_id, region_id, name, description, status, claim_version, primary_pool_id, created_at, updated_at
   FROM worker_groups
  WHERE id = $1
  FOR UPDATE
@@ -1382,7 +1382,7 @@ func (q *Queries) LockWorkerGroupForPoolMutation(ctx context.Context, workerGrou
 		&i.RegionID,
 		&i.Name,
 		&i.Description,
-		&i.State,
+		&i.Status,
 		&i.ClaimVersion,
 		&i.PrimaryPoolID,
 		&i.CreatedAt,
@@ -1401,7 +1401,7 @@ func (q *Queries) LockWorkerGroupMutation(ctx context.Context, lockKey int64) er
 }
 
 const lockWorkerInstanceForActivation = `-- name: LockWorkerInstanceForActivation :one
-SELECT id, resource_id, worker_group_id, worker_pool_id, state, claim_version, current_epoch, current_service_id, runtime_identity_id, substrate_format, substrate_contract, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_runtime_starts, cpu_environment, cpu_environment_digest, observed_at, run_paused_reason, runtime_paused_reason, epoch_started_at, activated_at, draining_at, termination_ready_at, lost_at, created_at, updated_at
+SELECT id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch, current_service_id, runtime_identity_id, substrate_format, substrate_contract, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_runtime_starts, cpu_environment, cpu_environment_digest, observed_at, run_paused_reason, runtime_paused_reason, epoch_started_at, activated_at, draining_at, termination_ready_at, lost_at, created_at, updated_at
   FROM worker_instances
  WHERE id = $1
    AND worker_group_id = $2
@@ -1430,7 +1430,7 @@ func (q *Queries) LockWorkerInstanceForActivation(ctx context.Context, arg LockW
 		&i.ResourceID,
 		&i.WorkerGroupID,
 		&i.WorkerPoolID,
-		&i.State,
+		&i.Status,
 		&i.ClaimVersion,
 		&i.CurrentEpoch,
 		&i.CurrentServiceID,
@@ -1462,7 +1462,7 @@ func (q *Queries) LockWorkerInstanceForActivation(ctx context.Context, arg LockW
 }
 
 const lockWorkerPool = `-- name: LockWorkerPool :one
-SELECT id, worker_group_id, name, state, claim_version, runtime_identity_id, substrate_format, substrate_contract, capacity_cpu_millis, capacity_memory_bytes, capacity_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, sealed_at, created_at, updated_at
+SELECT id, worker_group_id, name, status, claim_version, runtime_identity_id, substrate_format, substrate_contract, capacity_cpu_millis, capacity_memory_bytes, capacity_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, sealed_at, created_at, updated_at
   FROM worker_pools
  WHERE worker_group_id = $1
    AND id = $2
@@ -1481,7 +1481,7 @@ func (q *Queries) LockWorkerPool(ctx context.Context, arg LockWorkerPoolParams) 
 		&i.ID,
 		&i.WorkerGroupID,
 		&i.Name,
-		&i.State,
+		&i.Status,
 		&i.ClaimVersion,
 		&i.RuntimeIdentityID,
 		&i.SubstrateFormat,
@@ -1503,14 +1503,14 @@ func (q *Queries) LockWorkerPool(ctx context.Context, arg LockWorkerPoolParams) 
 const markWorkerInstanceLost = `-- name: MarkWorkerInstanceLost :one
 WITH target AS (
     UPDATE worker_instances
-       SET state = 'lost', claim_version = worker_instances.claim_version + 1,
+       SET status = 'lost', claim_version = worker_instances.claim_version + 1,
            lost_at = COALESCE(worker_instances.lost_at, now()), updated_at = now()
      WHERE worker_instances.worker_group_id = $1
        AND worker_instances.resource_id = $2
        AND worker_instances.claim_version = $3
-       AND worker_instances.state IN ('registering', 'active', 'draining')
+       AND worker_instances.status IN ('registering', 'active', 'draining')
     RETURNING worker_instances.id, worker_instances.resource_id,
-              worker_instances.worker_group_id, worker_instances.state,
+              worker_instances.worker_group_id, worker_instances.status,
               worker_instances.claim_version, worker_instances.current_epoch
 ), revoked_credentials AS (
     UPDATE worker_instance_credentials
@@ -1521,12 +1521,12 @@ WITH target AS (
     RETURNING worker_instance_credentials.id
 ), lost_mounts AS (
     UPDATE workspace_mounts
-       SET state = 'lost', lost_at = now(), terminal_at = now(),
+       SET status = 'lost', lost_at = now(), terminal_at = now(),
            terminal_reason_code = 'external_instance_drift', updated_at = now()
       FROM target
      WHERE workspace_mounts.worker_instance_id = target.id
        AND workspace_mounts.worker_epoch = target.current_epoch
-       AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
+       AND workspace_mounts.status IN ('mounting', 'mounted', 'unmounting')
     RETURNING workspace_mounts.id
 ), lost_runtimes AS (
     UPDATE runtime_instances
@@ -1543,30 +1543,30 @@ WITH target AS (
        AND runtime_instances.observed_state IN ('allocated', 'ready')
     RETURNING runtime_instances.id
 ), completed AS (
-    SELECT target.id, target.resource_id, target.worker_group_id, target.state,
+    SELECT target.id, target.resource_id, target.worker_group_id, target.status,
            target.claim_version, target.current_epoch, true AS transition_applied
       FROM target
      WHERE (SELECT count(*) FROM revoked_credentials) >= 0
        AND (SELECT count(*) FROM lost_mounts) >= 0
        AND (SELECT count(*) FROM lost_runtimes) >= 0
 )
-SELECT id, resource_id, worker_group_id, state, claim_version, current_epoch, transition_applied FROM completed
+SELECT id, resource_id, worker_group_id, status, claim_version, current_epoch, transition_applied FROM completed
 UNION ALL
 SELECT worker_instances.id, worker_instances.resource_id,
-       worker_instances.worker_group_id, worker_instances.state,
+       worker_instances.worker_group_id, worker_instances.status,
        worker_instances.claim_version, worker_instances.current_epoch,
        false AS transition_applied
   FROM worker_instances
  WHERE worker_instances.worker_group_id = $1
    AND worker_instances.resource_id = $2
-   AND worker_instances.state = 'lost'
+   AND worker_instances.status = 'lost'
    AND worker_instances.claim_version = $3 + 1
    AND NOT EXISTS (
        SELECT 1
          FROM worker_instances AS current_worker
         WHERE current_worker.worker_group_id = worker_instances.worker_group_id
           AND current_worker.resource_id = worker_instances.resource_id
-          AND current_worker.state IN ('registering', 'active', 'draining')
+          AND current_worker.status IN ('registering', 'active', 'draining')
    )
    AND NOT EXISTS (SELECT 1 FROM completed)
 LIMIT 1
@@ -1582,7 +1582,7 @@ type MarkWorkerInstanceLostRow struct {
 	ID                pgtype.UUID `json:"id"`
 	ResourceID        string      `json:"resource_id"`
 	WorkerGroupID     pgtype.UUID `json:"worker_group_id"`
-	State             string      `json:"state"`
+	Status            string      `json:"status"`
 	ClaimVersion      int64       `json:"claim_version"`
 	CurrentEpoch      pgtype.Int8 `json:"current_epoch"`
 	TransitionApplied bool        `json:"transition_applied"`
@@ -1595,7 +1595,7 @@ func (q *Queries) MarkWorkerInstanceLost(ctx context.Context, arg MarkWorkerInst
 		&i.ID,
 		&i.ResourceID,
 		&i.WorkerGroupID,
-		&i.State,
+		&i.Status,
 		&i.ClaimVersion,
 		&i.CurrentEpoch,
 		&i.TransitionApplied,
@@ -1610,7 +1610,7 @@ WITH runtime_candidates AS MATERIALIZED (
                SELECT 1
                  FROM run_leases
                 WHERE run_leases.runtime_instance_id = runtime_instances.id
-                  AND run_leases.state IN (
+                  AND run_leases.status IN (
                       'assigned', 'starting', 'running', 'checkpointing', 'finalizing'
                   )
            ) AS reclaimable
@@ -1618,7 +1618,7 @@ WITH runtime_candidates AS MATERIALIZED (
       JOIN worker_instances
         ON worker_instances.id = runtime_instances.worker_instance_id
        AND worker_instances.id = $1
-       AND worker_instances.state = 'lost'
+       AND worker_instances.status = 'lost'
      WHERE runtime_instances.reclaimed_at IS NULL
      ORDER BY runtime_instances.id
      FOR UPDATE OF runtime_instances
@@ -1684,8 +1684,8 @@ UPDATE worker_instances
  WHERE worker_instances.id = $3
    AND worker_instances.worker_group_id = $4
    AND worker_instances.current_epoch = $5
-   AND worker_instances.state IN ('active', 'draining')
-RETURNING worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.worker_pool_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_contract, worker_instances.epoch_cpu_millis, worker_instances.epoch_memory_bytes, worker_instances.epoch_guest_ephemeral_disk_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_runtime_starts, worker_instances.cpu_environment, worker_instances.cpu_environment_digest, worker_instances.observed_at, worker_instances.run_paused_reason, worker_instances.runtime_paused_reason, worker_instances.epoch_started_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.termination_ready_at, worker_instances.lost_at, worker_instances.created_at, worker_instances.updated_at
+   AND worker_instances.status IN ('active', 'draining')
+RETURNING worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.worker_pool_id, worker_instances.status, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_contract, worker_instances.epoch_cpu_millis, worker_instances.epoch_memory_bytes, worker_instances.epoch_guest_ephemeral_disk_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_runtime_starts, worker_instances.cpu_environment, worker_instances.cpu_environment_digest, worker_instances.observed_at, worker_instances.run_paused_reason, worker_instances.runtime_paused_reason, worker_instances.epoch_started_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.termination_ready_at, worker_instances.lost_at, worker_instances.created_at, worker_instances.updated_at
 `
 
 type RecordWorkerObservationParams struct {
@@ -1710,7 +1710,7 @@ func (q *Queries) RecordWorkerObservation(ctx context.Context, arg RecordWorkerO
 		&i.ResourceID,
 		&i.WorkerGroupID,
 		&i.WorkerPoolID,
-		&i.State,
+		&i.Status,
 		&i.ClaimVersion,
 		&i.CurrentEpoch,
 		&i.CurrentServiceID,
@@ -1770,7 +1770,7 @@ SELECT supplier.id
    AND runtime_substrates.deployment_definition_id = source_runtime.deployment_definition_id
   JOIN worker_pools AS supplier
 	ON supplier.worker_group_id = source_lease.worker_group_id
-	AND supplier.state = 'active'
+	AND supplier.status = 'active'
 	AND supplier.runtime_identity_id = source_runtime.runtime_identity_id
    AND supplier.per_vm_cpu_millis >= source_lease.requested_cpu_millis
    AND supplier.per_vm_memory_bytes >= source_lease.requested_memory_bytes
@@ -1790,9 +1790,9 @@ SELECT supplier.id
    AND source_lease.worker_group_id = $3
    AND source_lease.worker_instance_id = $4
    AND source_lease.worker_epoch = $5
-   AND source_lease.state = 'checkpointing'
-	AND worker_groups.state IN ('active', 'paused', 'draining')
-	AND source_pool.state IN ('active', 'draining')
+   AND source_lease.status = 'checkpointing'
+	AND worker_groups.status IN ('active', 'paused', 'draining')
+	AND source_pool.status IN ('active', 'draining')
 	AND source_pool.runtime_identity_id = source_runtime.runtime_identity_id
    AND source_pool.per_vm_cpu_millis >= source_lease.requested_cpu_millis
    AND source_pool.per_vm_memory_bytes >= source_lease.requested_memory_bytes
@@ -1857,7 +1857,7 @@ func (q *Queries) RotateWorkerGroupToken(ctx context.Context, arg RotateWorkerGr
 
 const sealWorkerPool = `-- name: SealWorkerPool :one
 UPDATE worker_pools
-   SET state = 'active',
+   SET status = 'active',
        runtime_identity_id = $1,
        substrate_format = $2,
        substrate_contract = $3,
@@ -1871,8 +1871,8 @@ UPDATE worker_pools
        sealed_at = now(), updated_at = now()
  WHERE id = $11
    AND worker_group_id = $12
-   AND state = 'pending'
-RETURNING id, worker_group_id, name, state, claim_version, runtime_identity_id, substrate_format, substrate_contract, capacity_cpu_millis, capacity_memory_bytes, capacity_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, sealed_at, created_at, updated_at
+   AND status = 'pending'
+RETURNING id, worker_group_id, name, status, claim_version, runtime_identity_id, substrate_format, substrate_contract, capacity_cpu_millis, capacity_memory_bytes, capacity_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, sealed_at, created_at, updated_at
 `
 
 type SealWorkerPoolParams struct {
@@ -1910,7 +1910,7 @@ func (q *Queries) SealWorkerPool(ctx context.Context, arg SealWorkerPoolParams) 
 		&i.ID,
 		&i.WorkerGroupID,
 		&i.Name,
-		&i.State,
+		&i.Status,
 		&i.ClaimVersion,
 		&i.RuntimeIdentityID,
 		&i.SubstrateFormat,
@@ -1943,16 +1943,16 @@ WITH compatible_workers AS (
       FROM worker_groups
       JOIN worker_instances
         ON worker_instances.worker_group_id = worker_groups.id
-       AND worker_instances.state = 'active'
+       AND worker_instances.status = 'active'
        AND worker_instances.current_epoch IS NOT NULL
       JOIN worker_pools
         ON worker_pools.id = worker_instances.worker_pool_id
        AND worker_pools.worker_group_id = worker_instances.worker_group_id
-       AND worker_pools.state = 'active'
+       AND worker_pools.status = 'active'
       JOIN runtime_identities
         ON runtime_identities.id = worker_instances.runtime_identity_id
      WHERE worker_groups.region_id = $4
-       AND worker_groups.state = 'active'
+       AND worker_groups.status = 'active'
        AND worker_instances.observed_at >= transaction_timestamp()
            - $5::bigint * interval '1 second'
        AND worker_instances.run_paused_reason IS NULL
@@ -2027,7 +2027,7 @@ WITH compatible_workers AS (
                       FROM run_leases
                      WHERE run_leases.worker_instance_id = compatible_workers.worker_instance_id
                        AND run_leases.worker_epoch = compatible_workers.worker_epoch
-                       AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
+                       AND run_leases.status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
                 ), 0)::bigint AS run_consumers,
                 COALESCE((
                     SELECT count(*)
@@ -2117,7 +2117,7 @@ WITH selection AS (
       JOIN worker_pools
         ON worker_pools.worker_group_id = worker_groups.id
        AND worker_pools.id = $1
-       AND worker_pools.state = 'active'
+       AND worker_pools.status = 'active'
      WHERE worker_groups.id = $2
 )
 UPDATE worker_groups
@@ -2135,7 +2135,7 @@ UPDATE worker_groups
        END
   FROM selection
  WHERE worker_groups.id = selection.worker_group_id
-RETURNING worker_groups.id, worker_groups.token_id, worker_groups.region_id, worker_groups.name, worker_groups.description, worker_groups.state, worker_groups.claim_version, worker_groups.primary_pool_id, worker_groups.created_at, worker_groups.updated_at
+RETURNING worker_groups.id, worker_groups.token_id, worker_groups.region_id, worker_groups.name, worker_groups.description, worker_groups.status, worker_groups.claim_version, worker_groups.primary_pool_id, worker_groups.created_at, worker_groups.updated_at
 `
 
 type SetInitialWorkerGroupPrimaryPoolParams struct {
@@ -2152,7 +2152,7 @@ func (q *Queries) SetInitialWorkerGroupPrimaryPool(ctx context.Context, arg SetI
 		&i.RegionID,
 		&i.Name,
 		&i.Description,
-		&i.State,
+		&i.Status,
 		&i.ClaimVersion,
 		&i.PrimaryPoolID,
 		&i.CreatedAt,
@@ -2168,8 +2168,8 @@ UPDATE worker_groups
        updated_at = now()
  WHERE worker_groups.id = $2
    AND worker_groups.claim_version = $3
-   AND worker_groups.state IN ('active', 'paused')
-RETURNING worker_groups.id, worker_groups.token_id, worker_groups.region_id, worker_groups.name, worker_groups.description, worker_groups.state, worker_groups.claim_version, worker_groups.primary_pool_id, worker_groups.created_at, worker_groups.updated_at
+   AND worker_groups.status IN ('active', 'paused')
+RETURNING worker_groups.id, worker_groups.token_id, worker_groups.region_id, worker_groups.name, worker_groups.description, worker_groups.status, worker_groups.claim_version, worker_groups.primary_pool_id, worker_groups.created_at, worker_groups.updated_at
 `
 
 type SetWorkerGroupPrimaryPoolParams struct {
@@ -2187,7 +2187,7 @@ func (q *Queries) SetWorkerGroupPrimaryPool(ctx context.Context, arg SetWorkerGr
 		&i.RegionID,
 		&i.Name,
 		&i.Description,
-		&i.State,
+		&i.Status,
 		&i.ClaimVersion,
 		&i.PrimaryPoolID,
 		&i.CreatedAt,
@@ -2196,10 +2196,10 @@ func (q *Queries) SetWorkerGroupPrimaryPool(ctx context.Context, arg SetWorkerGr
 	return i, err
 }
 
-const transitionWorkerGroupState = `-- name: TransitionWorkerGroupState :one
+const transitionWorkerGroupStatus = `-- name: TransitionWorkerGroupStatus :one
 WITH transitioned AS (
     UPDATE worker_groups
-       SET state = $1,
+       SET status = $1,
            primary_pool_id = CASE
                WHEN $1::text = 'draining' THEN NULL
                ELSE worker_groups.primary_pool_id
@@ -2209,25 +2209,25 @@ WITH transitioned AS (
      WHERE worker_groups.id = $2
        AND worker_groups.claim_version = $3
        AND (
-           (worker_groups.state = 'active' AND $1::text IN ('paused', 'draining'))
-           OR (worker_groups.state = 'paused' AND $1::text IN ('active', 'draining'))
+           (worker_groups.status = 'active' AND $1::text IN ('paused', 'draining'))
+           OR (worker_groups.status = 'paused' AND $1::text IN ('active', 'draining'))
            OR (
-               worker_groups.state = 'draining'
+               worker_groups.status = 'draining'
                AND $1::text = 'disabled'
                AND NOT EXISTS (
                    SELECT 1 FROM worker_pools
                     WHERE worker_pools.worker_group_id = worker_groups.id
-                      AND worker_pools.state IN ('pending', 'active', 'draining')
+                      AND worker_pools.status IN ('pending', 'active', 'draining')
                )
                AND NOT EXISTS (
                    SELECT 1 FROM worker_instances
                     WHERE worker_instances.worker_group_id = worker_groups.id
-                      AND worker_instances.state IN ('registering', 'active', 'draining')
+                      AND worker_instances.status IN ('registering', 'active', 'draining')
                )
                AND NOT EXISTS (
                    SELECT 1 FROM run_leases
                     WHERE run_leases.worker_group_id = worker_groups.id
-                      AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
+                      AND run_leases.status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
                )
                AND NOT EXISTS (
                    SELECT 1 FROM runtime_instances
@@ -2237,54 +2237,54 @@ WITH transitioned AS (
                AND NOT EXISTS (
                    SELECT 1 FROM workspace_mounts
                     WHERE workspace_mounts.worker_group_id = worker_groups.id
-                      AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
+                      AND workspace_mounts.status IN ('mounting', 'mounted', 'unmounting')
                )
                AND NOT EXISTS (
                    SELECT 1 FROM workspace_leases
                     WHERE workspace_leases.worker_group_id = worker_groups.id
-                      AND workspace_leases.state IN ('active', 'releasing')
+                      AND workspace_leases.status IN ('active', 'releasing')
                )
                AND NOT EXISTS (
                    SELECT 1 FROM workspace_processes
                     WHERE workspace_processes.worker_group_id = worker_groups.id
-                      AND workspace_processes.state IN ('starting', 'running', 'exit_requested')
+                      AND workspace_processes.status IN ('starting', 'running', 'exit_requested')
                )
            )
        )
-    RETURNING worker_groups.id, worker_groups.state, worker_groups.claim_version
+    RETURNING worker_groups.id, worker_groups.status, worker_groups.claim_version
 )
-SELECT id, state, claim_version, true AS transition_applied
+SELECT id, status, claim_version, true AS transition_applied
   FROM transitioned
 UNION ALL
-SELECT worker_groups.id, worker_groups.state, worker_groups.claim_version,
+SELECT worker_groups.id, worker_groups.status, worker_groups.claim_version,
        false AS transition_applied
   FROM worker_groups
  WHERE worker_groups.id = $2
-   AND worker_groups.state = $1::text
+   AND worker_groups.status = $1::text
    AND worker_groups.claim_version = $3 + 1
    AND NOT EXISTS (SELECT 1 FROM transitioned)
 LIMIT 1
 `
 
-type TransitionWorkerGroupStateParams struct {
-	TargetState          string      `json:"target_state"`
+type TransitionWorkerGroupStatusParams struct {
+	TargetStatus         string      `json:"target_status"`
 	WorkerGroupID        pgtype.UUID `json:"worker_group_id"`
 	ExpectedClaimVersion int64       `json:"expected_claim_version"`
 }
 
-type TransitionWorkerGroupStateRow struct {
+type TransitionWorkerGroupStatusRow struct {
 	ID                pgtype.UUID `json:"id"`
-	State             string      `json:"state"`
+	Status            string      `json:"status"`
 	ClaimVersion      int64       `json:"claim_version"`
 	TransitionApplied bool        `json:"transition_applied"`
 }
 
-func (q *Queries) TransitionWorkerGroupState(ctx context.Context, arg TransitionWorkerGroupStateParams) (TransitionWorkerGroupStateRow, error) {
-	row := q.db.QueryRow(ctx, transitionWorkerGroupState, arg.TargetState, arg.WorkerGroupID, arg.ExpectedClaimVersion)
-	var i TransitionWorkerGroupStateRow
+func (q *Queries) TransitionWorkerGroupStatus(ctx context.Context, arg TransitionWorkerGroupStatusParams) (TransitionWorkerGroupStatusRow, error) {
+	row := q.db.QueryRow(ctx, transitionWorkerGroupStatus, arg.TargetStatus, arg.WorkerGroupID, arg.ExpectedClaimVersion)
+	var i TransitionWorkerGroupStatusRow
 	err := row.Scan(
 		&i.ID,
-		&i.State,
+		&i.Status,
 		&i.ClaimVersion,
 		&i.TransitionApplied,
 	)
@@ -2309,7 +2309,7 @@ WITH restore_profiles AS MATERIALIZED (
        AND source_lease.run_id = run_checkpoints.run_id
        AND source_lease.attempt_number = run_checkpoints.attempt_number
        AND source_lease.workspace_id = run_checkpoints.workspace_id
-       AND source_lease.state = 'checkpointed'
+       AND source_lease.status = 'checkpointed'
       JOIN runtime_instances AS source_runtime
         ON source_runtime.id = source_lease.runtime_instance_id
        AND source_runtime.worker_group_id = source_lease.worker_group_id
@@ -2319,7 +2319,7 @@ WITH restore_profiles AS MATERIALIZED (
        AND runtime_substrates.project_id = source_runtime.project_id
        AND runtime_substrates.environment_id = source_runtime.environment_id
        AND runtime_substrates.deployment_definition_id = source_runtime.deployment_definition_id
-     WHERE run_checkpoints.state = 'ready'
+     WHERE run_checkpoints.status = 'ready'
        AND (run_checkpoints.expires_at IS NULL
             OR run_checkpoints.expires_at > transaction_timestamp())
     UNION
@@ -2346,10 +2346,10 @@ WITH restore_profiles AS MATERIALIZED (
        AND runtime_substrates.project_id = source_runtime.project_id
        AND runtime_substrates.environment_id = source_runtime.environment_id
        AND runtime_substrates.deployment_definition_id = source_runtime.deployment_definition_id
-     WHERE source_lease.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
+     WHERE source_lease.status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
 )
 UPDATE worker_pools AS target
-       SET state = $1::text,
+       SET status = $1::text,
            claim_version = target.claim_version + 1,
            updated_at = now()
       FROM worker_groups
@@ -2357,12 +2357,12 @@ UPDATE worker_pools AS target
        AND target.worker_group_id = $3
        AND target.claim_version = $4
        AND worker_groups.id = target.worker_group_id
-       AND worker_groups.state IN ('active', 'paused', 'draining')
+       AND worker_groups.status IN ('active', 'paused', 'draining')
        AND worker_groups.primary_pool_id IS DISTINCT FROM target.id
        AND (
            (
                $1::text = 'draining'
-               AND target.state = 'active'
+               AND target.status = 'active'
                AND NOT EXISTS (
                    SELECT 1
                      FROM restore_profiles
@@ -2387,7 +2387,7 @@ UPDATE worker_pools AS target
                                     FROM worker_pools AS supplier
                                    WHERE supplier.worker_group_id = target.worker_group_id
                                      AND supplier.id <> target.id
-                                     AND supplier.state = 'active'
+                                     AND supplier.status = 'active'
                                      AND supplier.runtime_identity_id = restore_profiles.runtime_identity_id
                                      AND supplier.substrate_format = restore_profiles.substrate_format
                                      AND supplier.substrate_contract = restore_profiles.substrate_contract
@@ -2409,12 +2409,12 @@ UPDATE worker_pools AS target
                $1::text = 'disabled'
                AND (
                    (
-                       target.state = 'pending'
+                       target.status = 'pending'
                        AND NOT EXISTS (
                            SELECT 1 FROM worker_instances
                             WHERE worker_instances.worker_group_id = target.worker_group_id
                               AND worker_instances.worker_pool_id = target.id
-                              AND worker_instances.state IN ('registering', 'active', 'draining')
+                              AND worker_instances.status IN ('registering', 'active', 'draining')
                        )
                        AND NOT EXISTS (
                            SELECT 1
@@ -2432,36 +2432,36 @@ UPDATE worker_pools AS target
                                       SELECT 1 FROM run_leases
                                        WHERE run_leases.worker_group_id = worker_instances.worker_group_id
                                          AND run_leases.worker_instance_id = worker_instances.id
-                                         AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
+                                         AND run_leases.status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
                                   )
                                   OR EXISTS (
                                       SELECT 1 FROM workspace_mounts
                                        WHERE workspace_mounts.worker_group_id = worker_instances.worker_group_id
                                          AND workspace_mounts.worker_instance_id = worker_instances.id
-                                         AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
+                                         AND workspace_mounts.status IN ('mounting', 'mounted', 'unmounting')
                                   )
                                   OR EXISTS (
                                       SELECT 1 FROM workspace_leases
                                        WHERE workspace_leases.worker_group_id = worker_instances.worker_group_id
                                          AND workspace_leases.worker_instance_id = worker_instances.id
-                                         AND workspace_leases.state IN ('active', 'releasing')
+                                         AND workspace_leases.status IN ('active', 'releasing')
                                   )
                                   OR EXISTS (
                                       SELECT 1 FROM workspace_processes
                                        WHERE workspace_processes.worker_group_id = worker_instances.worker_group_id
                                          AND workspace_processes.worker_instance_id = worker_instances.id
-                                         AND workspace_processes.state IN ('starting', 'running', 'exit_requested')
+                                         AND workspace_processes.status IN ('starting', 'running', 'exit_requested')
                                   )
                               )
                        )
                    )
                    OR (
-                       target.state = 'draining'
+                       target.status = 'draining'
                        AND NOT EXISTS (
                            SELECT 1 FROM worker_instances
                             WHERE worker_instances.worker_group_id = target.worker_group_id
                               AND worker_instances.worker_pool_id = target.id
-                              AND worker_instances.state IN ('registering', 'active', 'draining')
+                              AND worker_instances.status IN ('registering', 'active', 'draining')
                        )
                        AND NOT EXISTS (
                            SELECT 1
@@ -2479,25 +2479,25 @@ UPDATE worker_pools AS target
                                       SELECT 1 FROM run_leases
                                        WHERE run_leases.worker_group_id = worker_instances.worker_group_id
                                          AND run_leases.worker_instance_id = worker_instances.id
-                                         AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
+                                         AND run_leases.status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
                                   )
                                   OR EXISTS (
                                       SELECT 1 FROM workspace_mounts
                                        WHERE workspace_mounts.worker_group_id = worker_instances.worker_group_id
                                          AND workspace_mounts.worker_instance_id = worker_instances.id
-                                         AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
+                                         AND workspace_mounts.status IN ('mounting', 'mounted', 'unmounting')
                                   )
                                   OR EXISTS (
                                       SELECT 1 FROM workspace_leases
                                        WHERE workspace_leases.worker_group_id = worker_instances.worker_group_id
                                          AND workspace_leases.worker_instance_id = worker_instances.id
-                                         AND workspace_leases.state IN ('active', 'releasing')
+                                         AND workspace_leases.status IN ('active', 'releasing')
                                   )
                                   OR EXISTS (
                                       SELECT 1 FROM workspace_processes
                                        WHERE workspace_processes.worker_group_id = worker_instances.worker_group_id
                                          AND workspace_processes.worker_instance_id = worker_instances.id
-                                         AND workspace_processes.state IN ('starting', 'running', 'exit_requested')
+                                         AND workspace_processes.status IN ('starting', 'running', 'exit_requested')
                                   )
                               )
                        )
@@ -2525,7 +2525,7 @@ UPDATE worker_pools AS target
                                             FROM worker_pools AS supplier
                                            WHERE supplier.worker_group_id = target.worker_group_id
                                              AND supplier.id <> target.id
-	                                             AND supplier.state = 'active'
+	                                             AND supplier.status = 'active'
                                              AND supplier.runtime_identity_id = restore_profiles.runtime_identity_id
                                              AND supplier.substrate_format = restore_profiles.substrate_format
                                              AND supplier.substrate_contract = restore_profiles.substrate_contract
@@ -2546,11 +2546,11 @@ UPDATE worker_pools AS target
                )
            )
        )
-RETURNING target.id, target.worker_group_id, target.name, target.state, target.claim_version, target.runtime_identity_id, target.substrate_format, target.substrate_contract, target.capacity_cpu_millis, target.capacity_memory_bytes, target.capacity_guest_ephemeral_disk_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_guest_ephemeral_disk_bytes, target.max_vm_slots, target.sealed_at, target.created_at, target.updated_at
+RETURNING target.id, target.worker_group_id, target.name, target.status, target.claim_version, target.runtime_identity_id, target.substrate_format, target.substrate_contract, target.capacity_cpu_millis, target.capacity_memory_bytes, target.capacity_guest_ephemeral_disk_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_guest_ephemeral_disk_bytes, target.max_vm_slots, target.sealed_at, target.created_at, target.updated_at
 `
 
 type TransitionWorkerPoolLifecycleParams struct {
-	TargetState              string      `json:"target_state"`
+	TargetStatus             string      `json:"target_status"`
 	WorkerPoolID             pgtype.UUID `json:"worker_pool_id"`
 	WorkerGroupID            pgtype.UUID `json:"worker_group_id"`
 	ExpectedPoolClaimVersion int64       `json:"expected_pool_claim_version"`
@@ -2558,7 +2558,7 @@ type TransitionWorkerPoolLifecycleParams struct {
 
 func (q *Queries) TransitionWorkerPoolLifecycle(ctx context.Context, arg TransitionWorkerPoolLifecycleParams) (WorkerPool, error) {
 	row := q.db.QueryRow(ctx, transitionWorkerPoolLifecycle,
-		arg.TargetState,
+		arg.TargetStatus,
 		arg.WorkerPoolID,
 		arg.WorkerGroupID,
 		arg.ExpectedPoolClaimVersion,
@@ -2568,7 +2568,7 @@ func (q *Queries) TransitionWorkerPoolLifecycle(ctx context.Context, arg Transit
 		&i.ID,
 		&i.WorkerGroupID,
 		&i.Name,
-		&i.State,
+		&i.Status,
 		&i.ClaimVersion,
 		&i.RuntimeIdentityID,
 		&i.SubstrateFormat,
@@ -2591,7 +2591,7 @@ const updateWorkerGroupDescription = `-- name: UpdateWorkerGroupDescription :one
 UPDATE worker_groups
    SET description = $1, updated_at = now()
  WHERE id = $2
-RETURNING id, token_id, region_id, name, description, state, claim_version, primary_pool_id, created_at, updated_at
+RETURNING id, token_id, region_id, name, description, status, claim_version, primary_pool_id, created_at, updated_at
 `
 
 type UpdateWorkerGroupDescriptionParams struct {
@@ -2608,7 +2608,7 @@ func (q *Queries) UpdateWorkerGroupDescription(ctx context.Context, arg UpdateWo
 		&i.RegionID,
 		&i.Name,
 		&i.Description,
-		&i.State,
+		&i.Status,
 		&i.ClaimVersion,
 		&i.PrimaryPoolID,
 		&i.CreatedAt,

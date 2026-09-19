@@ -33,7 +33,7 @@ func TestCommitActorTurnAdvancesOnlyTheNextInputCursor(t *testing.T) {
 		response.WorkspaceVersionID != request.BaseWorkspaceVersionID {
 		t.Fatalf("response = %+v", response)
 	}
-	if store.runLeaseClaimStore.authority.workspace.HeadVersionID != pgvalue.UUID(commit.baseVersionID) {
+	if store.runLeaseClaimStore.authority.workspace.HeadVersionID != pgvalue.UUID(commit.baseWorkspaceVersionID) {
 		t.Fatal("unchanged turn advanced the Workspace head")
 	}
 
@@ -72,9 +72,9 @@ func configureRestoredActorTurn(t *testing.T, store *actorTurnCommitStore) {
 	wait := pgvalue.UUID(uuid.NewV7())
 	store.resetTarget.WriterGeneration = a.workspace.WriterGeneration - 1
 	store.resetTarget.SourceWorkspaceLeaseID = source
-	store.readyCheckpoint = db.RunCheckpoint{ID: a.runtime.RestoreCheckpointID, RunID: a.run.ID, AttemptNumber: a.attempt.Number, RunWaitID: wait, WorkspaceID: a.workspace.ID, BaseWorkspaceVersionID: a.workspace.HeadVersionID, PrivateWorkspaceVersionID: a.workspaceLease.BaseVersionID, SourceWorkspaceLeaseID: source, SourceRunLeaseID: sourceRun, State: db.RunCheckpointStateReady}
-	store.runWait = db.RunWait{ID: wait, RunID: a.run.ID, AttemptNumber: a.attempt.Number, Kind: db.WaitKindTimer, WorkspaceID: a.workspace.ID, PriorRunLeaseID: sourceRun, SuspendCheckpointID: a.runtime.RestoreCheckpointID, SuspensionState: db.RunWaitStateReleased, CheckpointRequestVersion: 1, CheckpointAckVersion: 1, ResumeRequestVersion: 1, ResumeAckVersion: 1}
-	store.workspaceLeases = map[pgtype.UUID]db.WorkspaceLease{source: {ID: source, WorkspaceID: a.workspace.ID, BaseVersionID: a.workspace.HeadVersionID, State: db.WorkspaceLeaseStateReleased, OwnershipGeneration: a.workspace.OwnershipGeneration, WriterGeneration: store.resetTarget.WriterGeneration}}
+	store.readyCheckpoint = db.RunCheckpoint{ID: a.runtime.RestoreCheckpointID, RunID: a.run.ID, AttemptNumber: a.attempt.Number, RunWaitID: wait, WorkspaceID: a.workspace.ID, BaseWorkspaceVersionID: a.workspace.HeadVersionID, PrivateWorkspaceVersionID: a.workspaceLease.BaseWorkspaceVersionID, SourceWorkspaceLeaseID: source, SourceRunLeaseID: sourceRun, Status: db.RunCheckpointStatusReady}
+	store.runWait = db.RunWait{ID: wait, RunID: a.run.ID, AttemptNumber: a.attempt.Number, Kind: db.WaitKindTimer, WorkspaceID: a.workspace.ID, PriorRunLeaseID: sourceRun, SuspendCheckpointID: a.runtime.RestoreCheckpointID, SuspensionStatus: db.RunWaitStatusReleased, CheckpointRequestVersion: 1, CheckpointAckVersion: 1, ResumeRequestVersion: 1, ResumeAckVersion: 1}
+	store.workspaceLeases = map[pgtype.UUID]db.WorkspaceLease{source: {ID: source, WorkspaceID: a.workspace.ID, BaseWorkspaceVersionID: a.workspace.HeadVersionID, Status: db.WorkspaceLeaseStatusReleased, OwnershipGeneration: a.workspace.OwnershipGeneration, WriterGeneration: store.resetTarget.WriterGeneration}}
 }
 
 func TestCommitActorTurnPublishesUnchangedRestoredCheckpointBase(t *testing.T) {
@@ -84,7 +84,7 @@ func TestCommitActorTurnPublishesUnchangedRestoredCheckpointBase(t *testing.T) {
 	store.authority.runtime.RestoreCheckpointID = pgvalue.UUID(uuid.NewV7())
 	store.restoredCheckpointCursor = 2
 	store.authority.workspaceMount.MaterializedVersionID = restoredBase
-	store.authority.workspaceLease.BaseVersionID = restoredBase
+	store.authority.workspaceLease.BaseWorkspaceVersionID = restoredBase
 	store.resetTarget.VersionID = restoredBase
 	store.resetTarget.ParentVersionID = oldHead
 	store.resetTarget.OwnershipGeneration = store.authority.workspace.OwnershipGeneration
@@ -110,7 +110,7 @@ func TestCommitActorTurnPublishesUnchangedRestoredCheckpointBase(t *testing.T) {
 	}
 	if store.authority.workspace.HeadVersionID != restoredBase ||
 		store.authority.workspaceMount.MaterializedVersionID != restoredBase ||
-		store.authority.workspaceLease.BaseVersionID != restoredBase {
+		store.authority.workspaceLease.BaseWorkspaceVersionID != restoredBase {
 		t.Fatal("restored Actor turn did not converge the Workspace frontier")
 	}
 	if response.WorkspaceVersionID != pgvalue.UUIDString(restoredBase) || response.CommittedInputSequence != 2 {
@@ -125,7 +125,7 @@ func TestCommitActorTurnInvalidatesRestoredCheckpointBeforePublishingChangedTurn
 	store.authority.runtime.RestoreCheckpointID = pgvalue.UUID(uuid.NewV7())
 	store.restoredCheckpointCursor = 1
 	store.authority.workspaceMount.MaterializedVersionID = restoredBase
-	store.authority.workspaceLease.BaseVersionID = restoredBase
+	store.authority.workspaceLease.BaseWorkspaceVersionID = restoredBase
 	store.resetTarget.VersionID = restoredBase
 	store.resetTarget.ParentVersionID = oldHead
 	store.resetTarget.OwnershipGeneration = store.authority.workspace.OwnershipGeneration
@@ -239,7 +239,7 @@ func TestCommitActorTurnRollsBackChangedWorkspaceWhenCursorAdvanceFails(t *testi
 	}
 	if store.authority.workspace.HeadVersionID != originalHead ||
 		store.authority.workspaceMount.MaterializedVersionID != originalHead ||
-		store.authority.workspaceLease.BaseVersionID != originalHead {
+		store.authority.workspaceLease.BaseWorkspaceVersionID != originalHead {
 		t.Fatal("rolled-back turn changed the durable Workspace frontier")
 	}
 	if store.cursorWrites != 0 || store.versionWrites != 0 || store.headWrites != 0 || store.leaseFrontierWrites != 0 {
@@ -335,7 +335,7 @@ func (s *actorTurnCommitStore) AdvanceActorTurnWorkspaceLeaseFrontier(
 	params db.AdvanceActorTurnWorkspaceLeaseFrontierParams,
 ) (db.WorkspaceLease, error) {
 	s.leaseFrontierWrites++
-	s.authority.workspaceLease.BaseVersionID = params.NewVersionID
+	s.authority.workspaceLease.BaseWorkspaceVersionID = params.NewVersionID
 	return s.authority.workspaceLease, nil
 }
 
@@ -343,7 +343,7 @@ func (s *actorTurnCommitStore) PublishRestoredActorCheckpointWorkspaceVersion(
 	_ context.Context,
 	params db.PublishRestoredActorCheckpointWorkspaceVersionParams,
 ) (db.WorkspaceVersion, error) {
-	if params.VersionID != s.authority.workspaceLease.BaseVersionID ||
+	if params.VersionID != s.authority.workspaceLease.BaseWorkspaceVersionID ||
 		params.ExpectedParentVersionID != s.authority.workspace.HeadVersionID ||
 		params.WriterGeneration != s.resetTarget.WriterGeneration {
 		return db.WorkspaceVersion{}, errors.New("restored checkpoint publish fence mismatch")
@@ -357,14 +357,14 @@ func (s *actorTurnCommitStore) InvalidateRestoredActorCheckpoint(
 	params db.InvalidateRestoredActorCheckpointParams,
 ) (db.RunCheckpoint, error) {
 	if params.RestoreCheckpointID != s.authority.runtime.RestoreCheckpointID ||
-		params.PrivateWorkspaceVersionID != s.authority.workspaceLease.BaseVersionID ||
+		params.PrivateWorkspaceVersionID != s.authority.workspaceLease.BaseWorkspaceVersionID ||
 		params.TargetInputSequence != s.authority.actor.CommittedInputSequence+1 ||
 		(s.restoredCheckpointCursor != s.authority.actor.CommittedInputSequence &&
 			s.restoredCheckpointCursor != params.TargetInputSequence) {
 		return db.RunCheckpoint{}, errors.New("restored checkpoint invalidation fence mismatch")
 	}
 	s.restoredInvalidations++
-	return db.RunCheckpoint{ID: params.RestoreCheckpointID, State: db.RunCheckpointStateInvalid}, nil
+	return db.RunCheckpoint{ID: params.RestoreCheckpointID, Status: db.RunCheckpointStatusInvalid}, nil
 }
 
 type actorTurnCommitTransaction struct {
@@ -438,7 +438,7 @@ func newActorTurnCommitFixture(t *testing.T) (
 	authority.run.ActiveStartedAt = pgvalue.Timestamptz(now.Add(-time.Minute))
 	authority.run.MaxActiveDurationMs = 300_000
 	authority.attempt.EntrypointEnteredAt = pgvalue.Timestamptz(now.Add(-time.Minute))
-	authority.runLease.State = db.RunLeaseStateRunning
+	authority.runLease.Status = db.RunLeaseStatusRunning
 	authority.runLease.StartedAt = pgvalue.Timestamptz(now.Add(-time.Minute))
 	authority.runLease.StartDeadlineAt = pgvalue.Timestamptz(now.Add(time.Minute))
 	authority.runLease.ExpiresAt = pgvalue.Timestamptz(now.Add(5 * time.Minute))

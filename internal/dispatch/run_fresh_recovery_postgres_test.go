@@ -12,13 +12,13 @@ import (
 )
 
 func TestFreshRunLeaseRecoveryRequeuesPrestartAndUnblocksWorkerStartup(t *testing.T) {
-	for _, leaseState := range []string{"assigned", "starting"} {
-		t.Run(leaseState, func(t *testing.T) {
+	for _, leaseStatus := range []string{"assigned", "starting"} {
+		t.Run(leaseStatus, func(t *testing.T) {
 			fixture, leaseID, runtimeID := prepareFreshRunLease(t)
-			if leaseState == "starting" {
+			if leaseStatus == "starting" {
 				dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
-   SET state = 'starting', claimed_at = created_at
+   SET status = 'starting', claimed_at = created_at
  WHERE id = $1`, leaseID)
 			}
 			dbtest.MustExec(t, fixture.ctx, fixture.pool, `
@@ -29,7 +29,7 @@ UPDATE run_leases
 			newServiceID := uuid.NewV7()
 			dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE worker_instances
-   SET state = 'registering', current_epoch = 2, current_service_id = $2,
+   SET status = 'registering', current_epoch = 2, current_service_id = $2,
        epoch_started_at = transaction_timestamp(), activated_at = NULL,
        runtime_identity_id = NULL, substrate_format = '', substrate_contract = '',
        epoch_cpu_millis = 0, epoch_memory_bytes = 0,
@@ -60,13 +60,13 @@ UPDATE worker_instances
 				t.Fatalf("recovered = %d, want 1", recovered)
 			}
 
-			var runStatus, runLeaseState, workspaceLeaseState, runtimeDesiredState string
+			var runStatus, runLeaseStatus, workspaceLeaseStatus, runtimeDesiredState string
 			var currentRunLeaseID pgtype.UUID
 			var attemptTerminalAt pgtype.Timestamptz
 			var attemptNumber int32
 			if err := fixture.pool.QueryRow(fixture.ctx, `
 SELECT runs.status, runs.current_attempt_number, runs.current_run_lease_id,
-       run_attempts.terminal_at, run_leases.state, workspace_leases.state,
+       run_attempts.terminal_at, run_leases.status, workspace_leases.status,
        runtime_instances.desired_state
   FROM runs
   JOIN run_attempts ON run_attempts.run_id = runs.id
@@ -76,16 +76,16 @@ SELECT runs.status, runs.current_attempt_number, runs.current_run_lease_id,
   JOIN runtime_instances ON runtime_instances.id = $3
  WHERE runs.id = $1`, fixture.runID, leaseID, runtimeID).Scan(
 				&runStatus, &attemptNumber, &currentRunLeaseID, &attemptTerminalAt,
-				&runLeaseState, &workspaceLeaseState, &runtimeDesiredState,
+				&runLeaseStatus, &workspaceLeaseStatus, &runtimeDesiredState,
 			); err != nil {
 				t.Fatal(err)
 			}
 			if runStatus != "queued" || attemptNumber != 1 || currentRunLeaseID.Valid ||
-				attemptTerminalAt.Valid || runLeaseState != "lost" ||
-				workspaceLeaseState != "fenced" || runtimeDesiredState != "closed" {
+				attemptTerminalAt.Valid || runLeaseStatus != "lost" ||
+				workspaceLeaseStatus != "fenced" || runtimeDesiredState != "closed" {
 				t.Fatalf("recovery state run=%s attempt=%d current=%v attempt_terminal=%v lease=%s workspace_lease=%s runtime=%s",
 					runStatus, attemptNumber, currentRunLeaseID, attemptTerminalAt,
-					runLeaseState, workspaceLeaseState, runtimeDesiredState)
+					runLeaseStatus, workspaceLeaseStatus, runtimeDesiredState)
 			}
 			if _, err := db.New(fixture.pool).CompleteWorkerStartupRecovery(
 				fixture.ctx,
@@ -120,7 +120,7 @@ func TestFreshRunLeaseRecoveryChargesExactRuntimeFailureBudget(t *testing.T) {
 			fixture, leaseID, runtimeID := prepareFreshRunLease(t)
 			dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
-   SET state = 'starting', claimed_at = created_at,
+   SET status = 'starting', claimed_at = created_at,
        start_deadline_at = transaction_timestamp() + interval '5 minutes',
        expires_at = transaction_timestamp() + interval '10 minutes'
  WHERE id = $1`, leaseID)
@@ -140,7 +140,7 @@ UPDATE runtime_instances
 			if recovered != 1 {
 				t.Fatalf("recovered = %d, want 1", recovered)
 			}
-			var status, leaseState string
+			var status, leaseStatus string
 			var preparationCount int
 			var currentLease pgtype.UUID
 			var nextPreparation, runTerminal, attemptTerminal pgtype.Timestamptz
@@ -149,24 +149,24 @@ UPDATE runtime_instances
 SELECT runs.status, runs.runtime_preparation_count,
        runs.current_run_lease_id, runs.next_runtime_preparation_at,
        runs.terminal_at, run_attempts.terminal_at,
-       run_attempts.terminal_reason_code, run_leases.state
+       run_attempts.terminal_reason_code, run_leases.status
   FROM runs
   JOIN run_attempts ON run_attempts.run_id = runs.id
                    AND run_attempts.number = runs.current_attempt_number
   JOIN run_leases ON run_leases.id = $2
  WHERE runs.id = $1`, fixture.runID, leaseID).Scan(
 				&status, &preparationCount, &currentLease, &nextPreparation,
-				&runTerminal, &attemptTerminal, &attemptReason, &leaseState,
+				&runTerminal, &attemptTerminal, &attemptReason, &leaseStatus,
 			); err != nil {
 				t.Fatal(err)
 			}
 			if status != test.wantStatus || preparationCount != test.wantCount ||
-				currentLease.Valid || leaseState != "lost" ||
+				currentLease.Valid || leaseStatus != "lost" ||
 				runTerminal.Valid != test.wantTerminal ||
 				attemptTerminal.Valid != test.wantTerminal {
 				t.Fatalf("recovery status=%s count=%d current=%v next=%v run_terminal=%v attempt_terminal=%v reason=%v lease=%s",
 					status, preparationCount, currentLease, nextPreparation,
-					runTerminal, attemptTerminal, attemptReason, leaseState)
+					runTerminal, attemptTerminal, attemptReason, leaseStatus)
 			}
 			if test.wantTerminal {
 				if nextPreparation.Valid || !attemptReason.Valid ||
@@ -187,7 +187,7 @@ func TestFreshRunningLeaseLossAppliesPinnedRetryPolicy(t *testing.T) {
 			retryPolicy := `{"backoff":{"factor":1,"jitter":"none","maxMs":1,"minMs":1},"enabled":true,"maxAttempts":2}`
 			dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
-   SET state = 'running', claimed_at = created_at, started_at = created_at,
+   SET status = 'running', claimed_at = created_at, started_at = created_at,
        expires_at = transaction_timestamp() - interval '1 second'
  WHERE id = $1`, leaseID)
 			dbtest.MustExec(t, fixture.ctx, fixture.pool, `
@@ -195,7 +195,7 @@ UPDATE runs
    SET status = 'running', retry_policy = $2::jsonb,
        active_started_at = transaction_timestamp() - interval '10 seconds',
        started_at = COALESCE(started_at, transaction_timestamp() - interval '10 seconds'),
-       state_version = state_version + 1
+       revision = revision + 1
  WHERE id = $1`, fixture.runID, retryPolicy)
 			if entrypointEntered {
 				dbtest.MustExec(t, fixture.ctx, fixture.pool, `
@@ -210,14 +210,14 @@ UPDATE run_attempts SET entrypoint_entered_at = transaction_timestamp()
 			if recovered != 1 {
 				t.Fatalf("recovered = %d, want 1", recovered)
 			}
-			var status, leaseState, attemptOneOutcome string
+			var status, leaseStatus, attemptOneOutcome string
 			var currentAttempt int32
 			var currentLease pgtype.UUID
 			var retryAt, activeStarted pgtype.Timestamptz
 			var attempts int
 			if err := fixture.pool.QueryRow(fixture.ctx, `
 SELECT runs.status, runs.current_attempt_number, runs.current_run_lease_id,
-       runs.retry_at, runs.active_started_at, run_leases.state,
+       runs.retry_at, runs.active_started_at, run_leases.status,
        run_attempts.terminal_outcome,
        (SELECT count(*) FROM run_attempts WHERE run_id = runs.id)
   FROM runs
@@ -225,16 +225,16 @@ SELECT runs.status, runs.current_attempt_number, runs.current_run_lease_id,
   JOIN run_attempts ON run_attempts.run_id = runs.id AND run_attempts.number = 1
  WHERE runs.id = $1`, fixture.runID, leaseID).Scan(
 				&status, &currentAttempt, &currentLease, &retryAt, &activeStarted,
-				&leaseState, &attemptOneOutcome, &attempts,
+				&leaseStatus, &attemptOneOutcome, &attempts,
 			); err != nil {
 				t.Fatal(err)
 			}
 			if status != "retry_delayed" || currentAttempt != 2 || currentLease.Valid ||
-				!retryAt.Valid || activeStarted.Valid || leaseState != "expired" ||
+				!retryAt.Valid || activeStarted.Valid || leaseStatus != "expired" ||
 				attemptOneOutcome != "failed" || attempts != 2 {
 				t.Fatalf("retry state status=%s attempt=%d current=%v retry_at=%v active=%v lease=%s outcome=%s attempts=%d",
 					status, currentAttempt, currentLease, retryAt, activeStarted,
-					leaseState, attemptOneOutcome, attempts)
+					leaseStatus, attemptOneOutcome, attempts)
 			}
 		})
 	}
@@ -243,16 +243,16 @@ SELECT runs.status, runs.current_attempt_number, runs.current_run_lease_id,
 func TestCheckpointingLeaseLossInvalidatesSuspensionAndRetries(t *testing.T) {
 	fixture, leaseID, _ := prepareFreshRunLease(t)
 	waitID, checkpointID, resumeAttachID := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
-	var workspaceLeaseID, baseVersionID pgtype.UUID
+	var workspaceLeaseID, baseWorkspaceVersionID pgtype.UUID
 	if err := fixture.pool.QueryRow(fixture.ctx, `
-SELECT workspace_leases.id, workspace_leases.base_version_id
+SELECT workspace_leases.id, workspace_leases.base_workspace_version_id
   FROM workspace_leases
- WHERE workspace_leases.owner_run_lease_id = $1`, leaseID).Scan(&workspaceLeaseID, &baseVersionID); err != nil {
+ WHERE workspace_leases.owner_run_lease_id = $1`, leaseID).Scan(&workspaceLeaseID, &baseWorkspaceVersionID); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
-   SET state = 'checkpointing', claimed_at = created_at, started_at = created_at,
+   SET status = 'checkpointing', claimed_at = created_at, started_at = created_at,
        expires_at = transaction_timestamp() - interval '1 second'
  WHERE id = $1`, leaseID)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
@@ -261,23 +261,23 @@ UPDATE runs
        retry_policy = '{"backoff":{"factor":1,"jitter":"none","maxMs":1,"minMs":1},"enabled":true,"maxAttempts":2}'::jsonb,
        active_started_at = transaction_timestamp() - interval '10 seconds',
        started_at = COALESCE(started_at, transaction_timestamp() - interval '10 seconds'),
-       state_version = state_version + 1
+       revision = revision + 1
  WHERE id = $1`, fixture.runID)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 INSERT INTO run_waits (
     id, environment_id, run_id, workspace_id, kind, due_at,
-    expected_run_state_version, attempt_number, current_run_lease_id,
-    resume_attach_id, suspension_state
+    expected_run_revision, attempt_number, current_run_lease_id,
+    resume_attach_id, suspension_status
 ) VALUES ($1, $2, $3, $4, 'timer', transaction_timestamp() + interval '1 hour',
           2, 1, $5, $6, 'checkpointing')`,
 		waitID, fixture.environmentID, fixture.runID, fixture.workspaceID, leaseID, resumeAttachID)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 INSERT INTO run_checkpoints (
     id, run_id, attempt_number, run_wait_id, source_run_lease_id,
-    source_workspace_lease_id, workspace_id, base_workspace_version_id, state
+    source_workspace_lease_id, workspace_id, base_workspace_version_id, status
 ) VALUES ($1, $2, 1, $3, $4, $5, $6, $7, 'creating')`,
 		checkpointID, fixture.runID, waitID, leaseID, workspaceLeaseID,
-		fixture.workspaceID, baseVersionID)
+		fixture.workspaceID, baseWorkspaceVersionID)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_waits SET suspend_checkpoint_id = $2 WHERE id = $1`, waitID, checkpointID)
 
@@ -288,30 +288,30 @@ UPDATE run_waits SET suspend_checkpoint_id = $2 WHERE id = $1`, waitID, checkpoi
 	if recovered != 1 {
 		t.Fatalf("recovered = %d, want 1", recovered)
 	}
-	var runStatus, leaseState, waitCondition, waitSuspension, checkpointState string
+	var runStatus, leaseStatus, waitCondition, waitSuspension, checkpointStatus string
 	var currentAttempt int32
 	var currentLease pgtype.UUID
 	var activeStarted pgtype.Timestamptz
 	if err := fixture.pool.QueryRow(fixture.ctx, `
 SELECT runs.status, runs.current_attempt_number, runs.current_run_lease_id,
-       run_leases.state, run_waits.condition_state, run_waits.suspension_state,
-       run_checkpoints.state, runs.active_started_at
+       run_leases.status, run_waits.condition_status, run_waits.suspension_status,
+       run_checkpoints.status, runs.active_started_at
   FROM runs
   JOIN run_leases ON run_leases.id = $2
   JOIN run_waits ON run_waits.id = $3
   JOIN run_checkpoints ON run_checkpoints.id = $4
  WHERE runs.id = $1`, fixture.runID, leaseID, waitID, checkpointID).Scan(
-		&runStatus, &currentAttempt, &currentLease, &leaseState, &waitCondition,
-		&waitSuspension, &checkpointState, &activeStarted,
+		&runStatus, &currentAttempt, &currentLease, &leaseStatus, &waitCondition,
+		&waitSuspension, &checkpointStatus, &activeStarted,
 	); err != nil {
 		t.Fatal(err)
 	}
 	if runStatus != "retry_delayed" || currentAttempt != 2 || currentLease.Valid ||
-		leaseState != "expired" || waitCondition != "failed" || waitSuspension != "failed" ||
-		checkpointState != "invalid" || activeStarted.Valid {
+		leaseStatus != "expired" || waitCondition != "failed" || waitSuspension != "failed" ||
+		checkpointStatus != "invalid" || activeStarted.Valid {
 		t.Fatalf("checkpoint recovery run=%s attempt=%d current=%v lease=%s wait=%s/%s checkpoint=%s active=%v",
-			runStatus, currentAttempt, currentLease, leaseState, waitCondition,
-			waitSuspension, checkpointState, activeStarted)
+			runStatus, currentAttempt, currentLease, leaseStatus, waitCondition,
+			waitSuspension, checkpointStatus, activeStarted)
 	}
 	if replay, err := fixture.authority.RecoverRunExecutionLeases(fixture.ctx, 10); err != nil || replay != 0 {
 		t.Fatalf("checkpoint recovery replay = %d, %v; want 0, nil", replay, err)
@@ -323,7 +323,7 @@ func TestFinalizingLeaseLossPreservesReceiptAndRetries(t *testing.T) {
 	operationID := uuid.NewV7()
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
-   SET state = 'finalizing', claimed_at = created_at, started_at = created_at,
+   SET status = 'finalizing', claimed_at = created_at, started_at = created_at,
        expires_at = transaction_timestamp() - interval '1 second',
        finalization_operation_id = $2, finalization_kind = 'capture',
        finalization_started_at = transaction_timestamp() - interval '2 seconds',
@@ -335,7 +335,7 @@ UPDATE runs
        retry_policy = '{"backoff":{"factor":1,"jitter":"none","maxMs":1,"minMs":1},"enabled":true,"maxAttempts":2}'::jsonb,
        active_started_at = NULL,
        started_at = COALESCE(started_at, transaction_timestamp() - interval '10 seconds'),
-       state_version = state_version + 1
+       revision = revision + 1
  WHERE id = $1`, fixture.runID)
 
 	recovered, err := fixture.authority.RecoverRunExecutionLeases(fixture.ctx, 10)
@@ -345,28 +345,28 @@ UPDATE runs
 	if recovered != 1 {
 		t.Fatalf("recovered = %d, want 1", recovered)
 	}
-	var runStatus, leaseState, finalizationKind, fingerprint string
+	var runStatus, leaseStatus, finalizationKind, fingerprint string
 	var currentAttempt int32
 	var currentLease, retainedOperationID pgtype.UUID
 	var finalizationStarted pgtype.Timestamptz
 	if err := fixture.pool.QueryRow(fixture.ctx, `
 SELECT runs.status, runs.current_attempt_number, runs.current_run_lease_id,
-       run_leases.state, run_leases.finalization_operation_id,
+       run_leases.status, run_leases.finalization_operation_id,
        run_leases.finalization_kind, run_leases.finalization_started_at,
        run_leases.finalization_request_fingerprint
   FROM runs JOIN run_leases ON run_leases.id = $2
  WHERE runs.id = $1`, fixture.runID, leaseID).Scan(
-		&runStatus, &currentAttempt, &currentLease, &leaseState, &retainedOperationID,
+		&runStatus, &currentAttempt, &currentLease, &leaseStatus, &retainedOperationID,
 		&finalizationKind, &finalizationStarted, &fingerprint,
 	); err != nil {
 		t.Fatal(err)
 	}
 	if runStatus != "retry_delayed" || currentAttempt != 2 || currentLease.Valid ||
-		leaseState != "expired" || retainedOperationID != pgvalue.UUID(operationID) ||
+		leaseStatus != "expired" || retainedOperationID != pgvalue.UUID(operationID) ||
 		finalizationKind != "capture" || !finalizationStarted.Valid ||
 		fingerprint != "sha256:"+strings.Repeat("a", 64) {
 		t.Fatalf("finalizing recovery run=%s attempt=%d current=%v lease=%s operation=%v kind=%s started=%v fingerprint=%s",
-			runStatus, currentAttempt, currentLease, leaseState, retainedOperationID,
+			runStatus, currentAttempt, currentLease, leaseStatus, retainedOperationID,
 			finalizationKind, finalizationStarted, fingerprint)
 	}
 	if replay, err := fixture.authority.RecoverRunExecutionLeases(fixture.ctx, 10); err != nil || replay != 0 {
@@ -378,14 +378,14 @@ func TestFreshRunningLeaseLossWithoutRetryTerminalizesRun(t *testing.T) {
 	fixture, leaseID, _ := prepareFreshRunLease(t)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
-   SET state = 'running', claimed_at = created_at, started_at = created_at,
+   SET status = 'running', claimed_at = created_at, started_at = created_at,
        expires_at = transaction_timestamp() - interval '1 second'
  WHERE id = $1`, leaseID)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE runs
    SET status = 'running', active_started_at = transaction_timestamp() - interval '10 seconds',
        started_at = COALESCE(started_at, transaction_timestamp() - interval '10 seconds'),
-       state_version = state_version + 1
+       revision = revision + 1
  WHERE id = $1`, fixture.runID)
 
 	recovered, err := fixture.authority.RecoverRunExecutionLeases(fixture.ctx, 10)
@@ -395,24 +395,24 @@ UPDATE runs
 	if recovered != 1 {
 		t.Fatalf("recovered = %d, want 1", recovered)
 	}
-	var status, leaseState, attemptOutcome string
+	var status, leaseStatus, attemptOutcome string
 	var currentLease pgtype.UUID
 	var terminalAt pgtype.Timestamptz
 	if err := fixture.pool.QueryRow(fixture.ctx, `
 SELECT runs.status, runs.current_run_lease_id, runs.terminal_at,
-       run_leases.state, run_attempts.terminal_outcome
+       run_leases.status, run_attempts.terminal_outcome
   FROM runs
   JOIN run_leases ON run_leases.id = $2
   JOIN run_attempts ON run_attempts.run_id = runs.id AND run_attempts.number = 1
  WHERE runs.id = $1`, fixture.runID, leaseID).Scan(
-		&status, &currentLease, &terminalAt, &leaseState, &attemptOutcome,
+		&status, &currentLease, &terminalAt, &leaseStatus, &attemptOutcome,
 	); err != nil {
 		t.Fatal(err)
 	}
 	if status != "system_failed" || currentLease.Valid || !terminalAt.Valid ||
-		leaseState != "expired" || attemptOutcome != "failed" {
+		leaseStatus != "expired" || attemptOutcome != "failed" {
 		t.Fatalf("terminal state status=%s current=%v terminal=%v lease=%s attempt=%s",
-			status, currentLease, terminalAt, leaseState, attemptOutcome)
+			status, currentLease, terminalAt, leaseStatus, attemptOutcome)
 	}
 }
 
@@ -420,7 +420,7 @@ func TestFreshRunningLeaseHardDeadlineExpiresWithoutRetry(t *testing.T) {
 	fixture, leaseID, _ := prepareFreshRunLease(t)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
-   SET state = 'running', claimed_at = created_at, started_at = created_at,
+   SET status = 'running', claimed_at = created_at, started_at = created_at,
        start_deadline_at = transaction_timestamp() + interval '5 minutes',
        expires_at = transaction_timestamp() + interval '10 minutes'
  WHERE id = $1`, leaseID)
@@ -430,7 +430,7 @@ UPDATE runs
        retry_policy = '{"backoff":{"factor":1,"jitter":"none","maxMs":1,"minMs":1},"enabled":true,"maxAttempts":2}'::jsonb,
        active_started_at = transaction_timestamp() - interval '10 seconds',
        started_at = COALESCE(started_at, transaction_timestamp() - interval '10 seconds'),
-       state_version = state_version + 1
+       revision = revision + 1
  WHERE id = $1`, fixture.runID)
 
 	recovered, err := fixture.authority.RecoverRunExecutionLeases(fixture.ctx, 10)
@@ -460,7 +460,7 @@ func TestFreshActorRunningLeaseLossAppliesPinnedRetryPolicy(t *testing.T) {
 	actorID := convertFreshRunToActor(t, fixture)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
-   SET state = 'running', claimed_at = created_at, started_at = created_at,
+   SET status = 'running', claimed_at = created_at, started_at = created_at,
        expires_at = transaction_timestamp() - interval '1 second'
  WHERE id = $1`, leaseID)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
@@ -469,7 +469,7 @@ UPDATE runs
        retry_policy = '{"backoff":{"factor":1,"jitter":"none","maxMs":1,"minMs":1},"enabled":true,"maxAttempts":2}'::jsonb,
        active_started_at = transaction_timestamp() - interval '10 seconds',
        started_at = COALESCE(started_at, transaction_timestamp() - interval '10 seconds'),
-       state_version = state_version + 1
+       revision = revision + 1
  WHERE id = $1`, fixture.runID)
 
 	recovered, err := fixture.authority.RecoverRunExecutionLeases(fixture.ctx, 10)
@@ -479,24 +479,24 @@ UPDATE runs
 	if recovered != 1 {
 		t.Fatalf("recovered = %d, want 1", recovered)
 	}
-	var runStatus, sessionState string
+	var runStatus, sessionStatus string
 	var currentAttempt int32
 	var currentRunID pgtype.UUID
 	var attempts int
 	if err := fixture.pool.QueryRow(fixture.ctx, `
-SELECT runs.status, runs.current_attempt_number, sessions.state,
+SELECT runs.status, runs.current_attempt_number, sessions.status,
        sessions.current_run_id,
        (SELECT count(*) FROM run_attempts WHERE run_id = runs.id)
   FROM runs JOIN sessions ON sessions.id = $2
  WHERE runs.id = $1`, fixture.runID, actorID).Scan(
-		&runStatus, &currentAttempt, &sessionState, &currentRunID, &attempts,
+		&runStatus, &currentAttempt, &sessionStatus, &currentRunID, &attempts,
 	); err != nil {
 		t.Fatal(err)
 	}
 	if runStatus != "retry_delayed" || currentAttempt != 2 ||
-		sessionState != "open" || currentRunID != pgvalue.UUID(fixture.runID) || attempts != 2 {
+		sessionStatus != "open" || currentRunID != pgvalue.UUID(fixture.runID) || attempts != 2 {
 		t.Fatalf("Actor retry run=%s attempt=%d session=%s current=%v attempts=%d",
-			runStatus, currentAttempt, sessionState, currentRunID, attempts)
+			runStatus, currentAttempt, sessionStatus, currentRunID, attempts)
 	}
 }
 
@@ -531,13 +531,13 @@ INSERT INTO secret_resolutions (
 	}
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE secrets
-   SET state = 'revoked', revoked_at = transaction_timestamp(),
-	       current_version_id = NULL, state_version = state_version + 1,
+   SET status = 'revoked', revoked_at = transaction_timestamp(),
+	       current_version_id = NULL, revision = revision + 1,
 	       revocation_generation = revocation_generation + 1
  WHERE id = $1`, secretID)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
-   SET state = 'running', claimed_at = created_at, started_at = created_at,
+   SET status = 'running', claimed_at = created_at, started_at = created_at,
        expires_at = transaction_timestamp() - interval '1 second'
  WHERE id = $1`, leaseID)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
@@ -546,7 +546,7 @@ UPDATE runs
        retry_policy = '{"backoff":{"factor":1,"jitter":"none","maxMs":1,"minMs":1},"enabled":true,"maxAttempts":2}'::jsonb,
        active_started_at = transaction_timestamp() - interval '10 seconds',
        started_at = COALESCE(started_at, transaction_timestamp() - interval '10 seconds'),
-       state_version = state_version + 1
+       revision = revision + 1
  WHERE id = $1`, fixture.runID)
 
 	recovered, err := fixture.authority.RecoverRunExecutionLeases(fixture.ctx, 10)
@@ -595,15 +595,15 @@ UPDATE run_leases
 		t.Fatal("healthy Run lease was recovered from a stale candidate")
 	}
 	var currentLease pgtype.UUID
-	var leaseState string
+	var leaseStatus string
 	if err := fixture.pool.QueryRow(fixture.ctx, `
-SELECT runs.current_run_lease_id, run_leases.state
+SELECT runs.current_run_lease_id, run_leases.status
   FROM runs JOIN run_leases ON run_leases.id = $2
- WHERE runs.id = $1`, fixture.runID, leaseID).Scan(&currentLease, &leaseState); err != nil {
+ WHERE runs.id = $1`, fixture.runID, leaseID).Scan(&currentLease, &leaseStatus); err != nil {
 		t.Fatal(err)
 	}
-	if currentLease != leaseID || leaseState != "assigned" {
-		t.Fatalf("healthy lease changed: current=%v state=%s", currentLease, leaseState)
+	if currentLease != leaseID || leaseStatus != "assigned" {
+		t.Fatalf("healthy lease changed: current=%v state=%s", currentLease, leaseStatus)
 	}
 }
 

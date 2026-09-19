@@ -11,8 +11,8 @@ WITH same_workspace_child_authority AS MATERIALIZED (
         ON edge.child_run_id = child.id
        AND edge.workspace_id = child.workspace_id
        AND edge.kind = 'child'
-       AND edge.condition_state = 'pending'
-       AND edge.suspension_state = 'parked'
+       AND edge.condition_status = 'pending'
+       AND edge.suspension_status = 'parked'
        AND edge.base_workspace_version_id = child.base_workspace_version_id
        AND edge.ownership_generation IS NOT NULL
        AND edge.parent_writer_generation IS NOT NULL
@@ -30,7 +30,7 @@ WITH same_workspace_child_authority AS MATERIALIZED (
        AND checkpoint.run_wait_id = edge.id
        AND checkpoint.workspace_id = edge.workspace_id
        AND checkpoint.private_workspace_version_id = edge.base_workspace_version_id
-       AND checkpoint.state = 'ready'
+       AND checkpoint.status = 'ready'
        AND (checkpoint.expires_at IS NULL
             OR checkpoint.expires_at > transaction_timestamp())
       JOIN workspaces
@@ -48,7 +48,7 @@ WITH same_workspace_child_authority AS MATERIALIZED (
                 WHERE resume_edge.run_id = child.id
                   AND resume_edge.attempt_number = child.current_attempt_number
                   AND resume_edge.workspace_id = child.workspace_id
-                  AND resume_edge.suspension_state = 'resume_pending'
+                  AND resume_edge.suspension_status = 'resume_pending'
                   AND resume_edge.ownership_generation = edge.ownership_generation
                   AND resume_edge.parent_writer_generation = edge.child_writer_generation
                   AND resume_edge.child_writer_generation = workspaces.writer_generation
@@ -63,35 +63,35 @@ WITH same_workspace_child_authority AS MATERIALIZED (
               ON child_workspace_lease.owner_run_lease_id = child_lease.id
              AND child_workspace_lease.workspace_id = child_lease.workspace_id
              AND (
-                 child_workspace_lease.base_version_id = edge.base_workspace_version_id
+                 child_workspace_lease.base_workspace_version_id = edge.base_workspace_version_id
                  OR EXISTS (
                      SELECT 1
                        FROM run_waits AS prior_resume_edge
                       WHERE prior_resume_edge.run_id = child.id
                         AND prior_resume_edge.workspace_id = child.workspace_id
-                        AND prior_resume_edge.suspension_state = 'resume_pending'
+                        AND prior_resume_edge.suspension_status = 'resume_pending'
                         AND prior_resume_edge.ownership_generation = edge.ownership_generation
                         AND prior_resume_edge.resume_writer_generation IS NULL
                         AND prior_resume_edge.resume_workspace_version_id =
-                            child_workspace_lease.base_version_id
+                            child_workspace_lease.base_workspace_version_id
                  )
              )
              AND child_workspace_lease.ownership_generation = edge.ownership_generation
              AND child_workspace_lease.writer_generation = edge.child_writer_generation
-             AND child_workspace_lease.state IN ('released', 'fenced', 'expired')
+             AND child_workspace_lease.status IN ('released', 'fenced', 'expired')
            WHERE child_lease.run_id = child.id
              AND child_lease.workspace_id = child.workspace_id
              AND (
-                 child_lease.state IN ('failed', 'expired', 'lost', 'rejected')
+                 child_lease.status IN ('failed', 'expired', 'lost', 'rejected')
                  OR (
-                     child_lease.state = 'checkpointed'
+                     child_lease.status = 'checkpointed'
                      AND EXISTS (
                          SELECT 1
                           FROM run_waits AS resume_edge
                           WHERE resume_edge.run_id = child.id
                             AND resume_edge.attempt_number = child_lease.attempt_number
                             AND resume_edge.workspace_id = child.workspace_id
-                            AND resume_edge.suspension_state = 'resume_pending'
+                            AND resume_edge.suspension_status = 'resume_pending'
                             AND resume_edge.prior_run_lease_id = child_lease.id
                             AND resume_edge.ownership_generation = edge.ownership_generation
                             AND resume_edge.parent_writer_generation =
@@ -135,13 +135,13 @@ SELECT sqlc.arg(id), runtime_instances.org_id, runtime_instances.project_id,
                          AND workspace_versions.id = runtime_instances.reserved_workspace_version_id
                          AND (
                              (runtime_instances.restore_checkpoint_id IS NOT NULL
-                              AND workspace_versions.state = 'private')
+                              AND workspace_versions.status = 'private')
                              OR
                              (runtime_instances.restore_checkpoint_id IS NULL
-                              AND workspace_versions.state = 'committed')
+                              AND workspace_versions.status = 'committed')
                              OR
                              (runtime_instances.restore_checkpoint_id IS NULL
-                              AND workspace_versions.state = 'private'
+                              AND workspace_versions.status = 'private'
                               AND EXISTS (
                                   SELECT 1
                                     FROM same_workspace_child_authority
@@ -157,7 +157,7 @@ SELECT sqlc.arg(id), runtime_instances.org_id, runtime_instances.project_id,
    AND runtime_instances.observed_state = 'ready'
    AND runtime_instances.reclaimed_at IS NULL
    AND runtime_instances.reservation_expires_at > transaction_timestamp()
-ON CONFLICT (workspace_id) WHERE state IN ('mounting','mounted','unmounting')
+ON CONFLICT (workspace_id) WHERE status IN ('mounting','mounted','unmounting')
 DO UPDATE SET updated_at = workspace_mounts.updated_at
 WHERE workspace_mounts.runtime_instance_id = excluded.runtime_instance_id
   AND workspace_mounts.materialized_version_id = excluded.materialized_version_id
@@ -181,11 +181,11 @@ SELECT sqlc.arg(id), runtime_instances.org_id, runtime_instances.project_id,
   JOIN workspace_processes
     ON workspace_processes.id = runtime_instances.reserved_process_id
    AND workspace_processes.workspace_id = runtime_instances.workspace_id
-   AND workspace_processes.state = 'pending'
+   AND workspace_processes.status = 'pending'
   JOIN workspace_versions
     ON workspace_versions.workspace_id = runtime_instances.workspace_id
    AND workspace_versions.id = runtime_instances.reserved_workspace_version_id
-   AND workspace_versions.state = 'committed'
+   AND workspace_versions.status = 'committed'
  WHERE runtime_instances.org_id = sqlc.arg(org_id)
    AND runtime_instances.workspace_id = sqlc.arg(workspace_id)
    AND runtime_instances.id = sqlc.arg(runtime_instance_id)
@@ -194,7 +194,7 @@ SELECT sqlc.arg(id), runtime_instances.org_id, runtime_instances.project_id,
    AND runtime_instances.observed_state = 'ready'
    AND runtime_instances.reclaimed_at IS NULL
    AND runtime_instances.reservation_expires_at > transaction_timestamp()
-ON CONFLICT (workspace_id) WHERE state IN ('mounting','mounted','unmounting')
+ON CONFLICT (workspace_id) WHERE status IN ('mounting','mounted','unmounting')
 DO UPDATE SET updated_at = workspace_mounts.updated_at
 WHERE workspace_mounts.runtime_instance_id = excluded.runtime_instance_id
   AND workspace_mounts.materialized_version_id = excluded.materialized_version_id
@@ -206,7 +206,7 @@ SELECT * FROM workspace_mounts
  WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id)
    AND worker_instance_id = sqlc.arg(worker_instance_id)
    AND worker_epoch = sqlc.arg(worker_epoch)
-   AND state IN ('mounting','mounted','unmounting');
+   AND status IN ('mounting','mounted','unmounting');
 
 -- name: ClaimWorkspaceMount :one
 WITH candidate AS (
@@ -218,7 +218,7 @@ WITH candidate AS (
                             AND runtime_instances.worker_epoch = workspace_mounts.worker_epoch
      WHERE workspace_mounts.worker_instance_id = sqlc.arg(worker_instance_id)
        AND workspace_mounts.worker_epoch = sqlc.arg(worker_epoch)
-       AND workspace_mounts.state = 'mounting'
+       AND workspace_mounts.status = 'mounting'
        AND workspace_mounts.guest_channel_token_hash = ''
        AND workspace_mounts.guest_channel_token_expires_at IS NULL
        AND runtime_instances.observed_state = 'ready'
@@ -265,7 +265,7 @@ SELECT claimed.*, runtime_instances.runtime_identity_id AS runtime_id,
 	LEFT JOIN run_checkpoints AS restore_checkpoint
 	  ON restore_checkpoint.id = runtime_instances.restore_checkpoint_id
 	 AND restore_checkpoint.workspace_id = claimed.workspace_id
-	 AND restore_checkpoint.state = 'ready'
+	 AND restore_checkpoint.status = 'ready'
   JOIN deployment_definitions
     ON deployment_definitions.environment_id = runtime_instances.environment_id
    AND deployment_definitions.id = runtime_instances.deployment_definition_id
@@ -287,7 +287,7 @@ UPDATE workspace_mounts
  WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id)
    AND worker_instance_id = sqlc.arg(worker_instance_id)
    AND worker_epoch = sqlc.arg(worker_epoch) AND runtime_instance_id = sqlc.arg(runtime_instance_id)
-   AND state IN ('mounting','mounted','unmounting')
+   AND status IN ('mounting','mounted','unmounting')
 RETURNING *;
 
 -- name: LoseExpiredWorkspaceMountClaims :many
@@ -299,7 +299,7 @@ WITH candidates AS (
        AND runtime_instances.id = workspace_mounts.runtime_instance_id
        AND runtime_instances.worker_instance_id = workspace_mounts.worker_instance_id
        AND runtime_instances.worker_epoch = workspace_mounts.worker_epoch
-     WHERE workspace_mounts.state = 'mounting'
+     WHERE workspace_mounts.status = 'mounting'
        AND workspace_mounts.guest_channel_token_hash <> ''
        AND workspace_mounts.guest_channel_token_expires_at <= transaction_timestamp()
        AND runtime_instances.reclaimed_at IS NULL
@@ -309,7 +309,7 @@ WITH candidates AS (
      FOR UPDATE OF workspace_mounts, runtime_instances SKIP LOCKED
 ), lost_mounts AS (
     UPDATE workspace_mounts
-       SET state = 'lost',
+       SET status = 'lost',
            lost_at = transaction_timestamp(),
            terminal_at = transaction_timestamp(),
            terminal_reason_code = 'workspace_mount_claim_expired',
@@ -335,17 +335,17 @@ RETURNING lost_mounts.*;
 
 -- name: MarkWorkspaceMountMounted :one
 UPDATE workspace_mounts
-   SET state = 'mounted', mounted_at = COALESCE(mounted_at, now()), updated_at = now()
+   SET status = 'mounted', mounted_at = COALESCE(mounted_at, now()), updated_at = now()
  WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id)
    AND worker_instance_id = sqlc.arg(worker_instance_id) AND worker_epoch = sqlc.arg(worker_epoch)
    AND runtime_instance_id = sqlc.arg(runtime_instance_id)
-   AND fencing_generation = sqlc.arg(fencing_generation) AND state = 'mounting'
+   AND fencing_generation = sqlc.arg(fencing_generation) AND status = 'mounting'
 RETURNING *;
 
 -- name: RequestWorkspaceDeleteMountStop :one
 WITH mount AS (
     UPDATE workspace_mounts
-       SET state = 'unmounting',
+       SET status = 'unmounting',
            finalization_kind = 'discard',
            finalization_reason_code = 'workspace_deleted',
            finalization_error = NULL,
@@ -356,9 +356,9 @@ WITH mount AS (
        AND workspace_mounts.environment_id = sqlc.arg(environment_id)
        AND workspace_mounts.workspace_id = sqlc.arg(workspace_id)
        AND (
-           workspace_mounts.state IN ('mounting','mounted')
+           workspace_mounts.status IN ('mounting','mounted')
            OR (
-               workspace_mounts.state = 'unmounting'
+               workspace_mounts.status = 'unmounting'
                AND (
                    workspace_mounts.finalization_kind IS NULL
                    OR (
@@ -388,10 +388,10 @@ RETURNING mount.*;
 -- name: StopWorkspaceMount :one
 WITH stopped AS (
     UPDATE workspace_mounts
-       SET state = 'unmounted', unmounted_at = now(), terminal_at = now(),
+       SET status = 'unmounted', unmounted_at = now(), terminal_at = now(),
            terminal_reason_code = sqlc.arg(reason_code), terminal_error = NULL, updated_at = now()
      WHERE workspace_mounts.org_id = sqlc.arg(org_id)
-       AND workspace_mounts.id = sqlc.arg(id) AND workspace_mounts.state = 'unmounting'
+       AND workspace_mounts.id = sqlc.arg(id) AND workspace_mounts.status = 'unmounting'
        AND workspace_mounts.worker_instance_id = sqlc.arg(worker_instance_id)
        AND workspace_mounts.worker_epoch = sqlc.arg(worker_epoch)
        AND workspace_mounts.runtime_instance_id = sqlc.arg(runtime_instance_id)
@@ -433,22 +433,22 @@ WITH candidates AS (
         ON workspaces.environment_id = workspace_mounts.environment_id
        AND workspaces.id = workspace_mounts.workspace_id
      WHERE workspace_mounts.worker_instance_id = sqlc.arg(worker_instance_id)
-       AND workspace_mounts.worker_epoch = sqlc.arg(worker_epoch) AND workspace_mounts.state = 'mounted'
-       AND workspaces.state = 'active'
+       AND workspace_mounts.worker_epoch = sqlc.arg(worker_epoch) AND workspace_mounts.status = 'mounted'
+       AND workspaces.status = 'active'
        AND workspaces.desired_state = 'active'
        AND workspaces.dirty_state = 'clean'
        AND workspaces.head_version_id = workspace_mounts.materialized_version_id
        AND NOT EXISTS (SELECT 1 FROM workspace_leases
-                        WHERE workspace_mount_id = workspace_mounts.id AND state IN ('active','releasing'))
+                        WHERE workspace_mount_id = workspace_mounts.id AND status IN ('active','releasing'))
        AND NOT EXISTS (SELECT 1 FROM workspace_processes
                         WHERE workspace_id = workspace_mounts.workspace_id
-                          AND state IN ('pending','starting','running','exit_requested'))
+                          AND status IN ('pending','starting','running','exit_requested'))
      ORDER BY workspace_mounts.updated_at, workspace_mounts.id
      LIMIT sqlc.arg(limit_count)
      FOR UPDATE OF workspace_mounts SKIP LOCKED
 )
 UPDATE workspace_mounts
-   SET state = 'unmounting',
+   SET status = 'unmounting',
        finalization_kind = 'discard',
        finalization_reason_code = 'capacity_pressure',
        finalization_error = NULL,
@@ -474,7 +474,7 @@ WITH target AS (
        AND workspace_mounts.worker_epoch = sqlc.arg(worker_epoch)
        AND workspace_mounts.runtime_instance_id = sqlc.arg(runtime_instance_id)
        AND workspace_mounts.fencing_generation = sqlc.arg(fencing_generation)
-       AND workspace_mounts.state IN ('mounting','mounted','unmounting')
+       AND workspace_mounts.status IN ('mounting','mounted','unmounting')
      FOR UPDATE OF workspace_mounts, runtime_instances
 ), failed_runtime AS (
     UPDATE runtime_instances
@@ -493,7 +493,7 @@ WITH target AS (
     RETURNING runtime_instances.*
 )
 UPDATE workspace_mounts
-   SET state = 'failed', failed_at = now(), terminal_at = now(),
+   SET status = 'failed', failed_at = now(), terminal_at = now(),
        terminal_reason_code = sqlc.arg(reason_code), terminal_error = sqlc.narg(error),
        updated_at = now()
   FROM target, failed_runtime

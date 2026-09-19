@@ -48,7 +48,7 @@ func (s *runtimeReconcileTargetStore) ListRuntimeReconcileTargets(
 func TestWorkerRuntimeReconcileTargetRoundTripsActionWorkspaceAuthority(t *testing.T) {
 	runtimeID := pgvalue.UUID(uuid.NewV7())
 	workerID := uuid.NewV7()
-	baseVersionID := pgvalue.UUID(uuid.NewV7())
+	baseWorkspaceVersionID := pgvalue.UUID(uuid.NewV7())
 	tests := []struct {
 		name       string
 		desired    db.RuntimeDesiredState
@@ -65,7 +65,7 @@ func TestWorkerRuntimeReconcileTargetRoundTripsActionWorkspaceAuthority(t *testi
 			row := db.ListRuntimeReconcileTargetsRow{
 				ID: runtimeID, WorkerEpoch: 7,
 				DesiredState: test.desired, ObservedState: test.observed,
-				BaseWorkspaceVersionID:    baseVersionID,
+				BaseWorkspaceVersionID:    baseWorkspaceVersionID,
 				WorkspaceContentDigest:    pgvalue.Text(workspace.CanonicalEmptyTreeDigest),
 				WorkspaceLogicalSizeBytes: pgtype.Int8{Int64: 0, Valid: true},
 				WorkspaceEntryCount:       pgtype.Int4{Int32: 0, Valid: true},
@@ -161,7 +161,7 @@ func TestPopulateRuntimeRestoreSourceKeepsCapturedFrontierWithoutRequeryingBase(
 		checkpoint: db.GetReadyRunCheckpointRow{
 			RunCheckpoint: db.RunCheckpoint{
 				ID: checkpointID, RunID: runID, RunWaitID: waitID, AttemptNumber: 2,
-				State: db.RunCheckpointStateReady, BaseWorkspaceVersionID: sourceVersionID,
+				Status: db.RunCheckpointStatusReady, BaseWorkspaceVersionID: sourceVersionID,
 				RuntimeConfigArtifactID: pgvalue.UUID(uuid.New()), VMStateArtifactID: pgvalue.UUID(uuid.New()),
 				MemoryArtifactID: pgvalue.UUID(uuid.New()), ScratchDiskArtifactID: pgvalue.UUID(uuid.New()),
 				RestoreManifest: manifest,
@@ -290,17 +290,17 @@ func TestMarkRuntimeInstanceFailedFencesFatalWorkerEpoch(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	var workerState db.WorkerInstanceState
+	var workerStatus db.WorkerInstanceStatus
 	var count int32
 	if err := fixture.Pool.QueryRow(ctx, `
-SELECT worker_instances.state, runs.runtime_preparation_count
+SELECT worker_instances.status, runs.runtime_preparation_count
   FROM worker_instances
   JOIN runs ON runs.id = $2
- WHERE worker_instances.id = $1`, fixture.WorkerID, work.RunID).Scan(&workerState, &count); err != nil {
+ WHERE worker_instances.id = $1`, fixture.WorkerID, work.RunID).Scan(&workerStatus, &count); err != nil {
 		t.Fatal(err)
 	}
-	if workerState != db.WorkerInstanceStateDraining || count != 1 {
-		t.Fatalf("fatal runtime failure = Worker:%s count:%d", workerState, count)
+	if workerStatus != db.WorkerInstanceStatusDraining || count != 1 {
+		t.Fatalf("fatal runtime failure = Worker:%s count:%d", workerStatus, count)
 	}
 }
 
@@ -359,17 +359,17 @@ UPDATE runtime_instances
 			if (err != nil) != test.wantError {
 				t.Fatalf("fatal stale failure error = %v, want error %v", err, test.wantError)
 			}
-			var workerState db.WorkerInstanceState
+			var workerStatus db.WorkerInstanceStatus
 			var count int32
 			if err := fixture.Pool.QueryRow(t.Context(), `
-SELECT worker_instances.state, runs.runtime_preparation_count
+SELECT worker_instances.status, runs.runtime_preparation_count
   FROM worker_instances
   JOIN runs ON runs.id = $2
- WHERE worker_instances.id = $1`, fixture.WorkerID, work.RunID).Scan(&workerState, &count); err != nil {
+ WHERE worker_instances.id = $1`, fixture.WorkerID, work.RunID).Scan(&workerStatus, &count); err != nil {
 				t.Fatal(err)
 			}
-			if workerState != db.WorkerInstanceStateDraining || count != 0 {
-				t.Fatalf("fatal stale authority = Worker:%s count:%d", workerState, count)
+			if workerStatus != db.WorkerInstanceStatusDraining || count != 0 {
+				t.Fatalf("fatal stale authority = Worker:%s count:%d", workerStatus, count)
 			}
 		})
 	}
@@ -531,12 +531,12 @@ func TestMarkRuntimeInstanceFailedSerializesWithLeaseGrant(t *testing.T) {
 	fixture := runtest.New(t)
 	work := fixture.AddRunLease(t, "assigned", time.Now().Add(-time.Minute))
 	var runtimeID pgtype.UUID
-	var stateVersion int64
+	var revision int64
 	if err := fixture.Pool.QueryRow(ctx, `
-SELECT run_leases.runtime_instance_id, runs.state_version
+SELECT run_leases.runtime_instance_id, runs.revision
   FROM run_leases
   JOIN runs ON runs.id = run_leases.run_id
- WHERE run_leases.id = $1`, work.LeaseID).Scan(&runtimeID, &stateVersion); err != nil {
+ WHERE run_leases.id = $1`, work.LeaseID).Scan(&runtimeID, &revision); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, ctx, fixture.Pool, `
@@ -567,7 +567,7 @@ UPDATE runtime_instances
 		<-start
 		_, err := db.New(fixture.Pool).SetRunCurrentLease(ctx, db.SetRunCurrentLeaseParams{
 			RunLeaseID: pgvalue.UUID(work.LeaseID), ID: pgvalue.UUID(work.RunID),
-			OrgID: pgvalue.UUID(fixture.OrgID), ExpectedStateVersion: stateVersion,
+			OrgID: pgvalue.UUID(fixture.OrgID), ExpectedRevision: revision,
 			AttemptNumber: 1,
 		})
 		results <- err
@@ -603,10 +603,10 @@ func TestMarkRuntimeInstanceFailedSerializesWithFullPlacement(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	fixture, work, runtimeID := prepareReservedRuntimeFailure(t)
-	var stateVersion int64
+	var revision int64
 	if err := fixture.Pool.QueryRow(ctx,
-		`SELECT state_version FROM runs WHERE id = $1`, work.RunID,
-	).Scan(&stateVersion); err != nil {
+		`SELECT revision FROM runs WHERE id = $1`, work.RunID,
+	).Scan(&revision); err != nil {
 		t.Fatal(err)
 	}
 	fencingKey, err := workspace.NewFencingKey(bytes.Repeat([]byte{9}, workspace.FencingKeySize))
@@ -634,7 +634,7 @@ func TestMarkRuntimeInstanceFailedSerializesWithFullPlacement(t *testing.T) {
 		<-start
 		_, err := authority.PlaceReadyRun(ctx, dispatch.ReadyRunCandidate{
 			OrgID: pgvalue.UUID(fixture.OrgID), RunID: pgvalue.UUID(work.RunID),
-			ExpectedRunStateVersion: stateVersion,
+			ExpectedRunRevision: revision,
 		})
 		results <- err
 	}()

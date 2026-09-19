@@ -123,7 +123,7 @@ func TestRunLeaseClaimProjectionLoadsOnlyLockedWorkspaceLeaseBase(t *testing.T) 
 		store.resetTargetParams.ProjectID != authority.run.ProjectID ||
 		store.resetTargetParams.EnvironmentID != authority.run.EnvironmentID ||
 		store.resetTargetParams.WorkspaceID != authority.workspace.ID ||
-		store.resetTargetParams.VersionID != authority.workspaceLease.BaseVersionID {
+		store.resetTargetParams.VersionID != authority.workspaceLease.BaseWorkspaceVersionID {
 		t.Fatalf("reset target lookup = %+v", store.resetTargetParams)
 	}
 }
@@ -133,14 +133,14 @@ func TestRestoreRunLeaseClaimDoesNotOpenSecrets(t *testing.T) {
 	authority.mode = runLeaseClaimRestore
 	authority.attempt.EntrypointEnteredAt.Valid = true
 	authority.runWait = db.RunWait{
-		ID: pgvalue.UUID(uuid.New()), ConditionState: db.WaitStateCompleted,
+		ID: pgvalue.UUID(uuid.New()), ConditionStatus: db.WaitStatusCompleted,
 		ConditionTerminalAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
 		ResumeAttachID:      pgvalue.UUID(uuid.New()), ResumeRequestVersion: 2,
 	}
 	authority.checkpoint = db.RunCheckpoint{
 		ID: pgvalue.UUID(uuid.New()), RunID: authority.run.ID,
 		AttemptNumber:           authority.attempt.Number,
-		State:                   db.RunCheckpointStateReady,
+		Status:                  db.RunCheckpointStatusReady,
 		RuntimeConfigArtifactID: pgvalue.UUID(uuid.New()), VMStateArtifactID: pgvalue.UUID(uuid.New()),
 		MemoryArtifactID: pgvalue.UUID(uuid.New()), ScratchDiskArtifactID: pgvalue.UUID(uuid.New()),
 	}

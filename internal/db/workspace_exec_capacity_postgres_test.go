@@ -71,7 +71,7 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 	`, workspaceID, ids.environmentID, dbtest.DefaultRegionID, definitionID, versionID)
 	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO workspace_versions (
-			id, environment_id, workspace_id, content_digest, state,
+			id, environment_id, workspace_id, content_digest, status,
 			ownership_generation, writer_generation, published_at
 		) VALUES (
 			$1, $2, $3,
@@ -95,7 +95,7 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO workspace_processes (
 			id, org_id, project_id, environment_id, workspace_id,
-			base_version_id, restore_desired_state, request, claim_id,
+			base_workspace_version_id, restore_desired_state, request, claim_id,
 			created_by_subject_type, created_by_subject_id
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, 'active', '{}'::jsonb, $7, 'test', 'capacity'
@@ -151,13 +151,13 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 
 	dbtest.MustExec(t, ctx, pool, `
 		UPDATE workspace_processes
-		   SET state = 'failed', terminal_at = now(), terminal_reason_code = 'test'
+		   SET status = 'failed', terminal_at = now(), terminal_reason_code = 'test'
 		 WHERE id = $1
 	`, processID)
 	requireVisible(queries, false, "non-pending process")
 	dbtest.MustExec(t, ctx, pool, `
 		UPDATE workspace_processes
-		   SET state = 'pending', terminal_at = NULL, terminal_reason_code = NULL
+		   SET status = 'pending', terminal_at = NULL, terminal_reason_code = NULL
 		 WHERE id = $1
 	`, processID)
 
@@ -170,11 +170,11 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 	requireVisible(queries, false, "dirty Workspace")
 	dbtest.MustExec(t, ctx, pool, `UPDATE workspaces SET dirty_state = 'clean' WHERE id = $1`, workspaceID)
 	dbtest.MustExec(t, ctx, pool, `
-		UPDATE workspaces SET state = 'deleting', desired_state = 'deleted' WHERE id = $1
+		UPDATE workspaces SET status = 'deleting', desired_state = 'deleted' WHERE id = $1
 	`, workspaceID)
 	requireVisible(queries, false, "non-active Workspace")
 	dbtest.MustExec(t, ctx, pool, `
-		UPDATE workspaces SET state = 'active', desired_state = 'active' WHERE id = $1
+		UPDATE workspaces SET status = 'active', desired_state = 'active' WHERE id = $1
 	`, workspaceID)
 
 	for _, authority := range []struct {
@@ -214,7 +214,7 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 	workerID := uuid.NewV7()
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO worker_instances (
-			id, resource_id, worker_group_id, worker_pool_id, state,
+			id, resource_id, worker_group_id, worker_pool_id, status,
 			current_epoch, current_service_id, runtime_identity_id,
 			substrate_format, substrate_contract,
 			epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
@@ -265,7 +265,7 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 		INSERT INTO workspace_mounts (
 			id, org_id, worker_group_id, project_id, environment_id, region_id,
 			worker_instance_id, worker_epoch, workspace_id, materialized_version_id,
-			runtime_instance_id, state, mounted_at
+			runtime_instance_id, status, mounted_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, 1, $8, $9, $10, 'mounted', now()
 		)
@@ -282,9 +282,9 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 	`, leaseProcessClaimID, ids.environmentID)
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO workspace_processes (
-			id, org_id, project_id, environment_id, workspace_id, base_version_id,
+			id, org_id, project_id, environment_id, workspace_id, base_workspace_version_id,
 			restore_desired_state, region_id, worker_group_id, worker_instance_id,
-			worker_epoch, runtime_instance_id, workspace_mount_id, state, request,
+			worker_epoch, runtime_instance_id, workspace_mount_id, status, request,
 			claim_id, created_by_subject_type, created_by_subject_id,
 			terminal_at, terminal_reason_code
 		) VALUES (
@@ -299,7 +299,7 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 		INSERT INTO workspace_leases (
 			id, org_id, worker_group_id, project_id, environment_id, region_id,
 			worker_instance_id, worker_epoch, runtime_instance_id, workspace_id,
-			workspace_mount_id, state, owner_process_id, base_version_id,
+			workspace_mount_id, status, owner_process_id, base_workspace_version_id,
 			ownership_generation, writer_generation, mount_fencing_generation,
 			fencing_token_hash, expires_at
 		) VALUES (
@@ -322,11 +322,11 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 		 WHERE id = $1
 	`, runtimeID)
 	requireAccounted(queries, "releasing lease after Runtime reclamation", uuid.MustParse(dbtest.DefaultWorkerPoolID))
-	dbtest.MustExec(t, ctx, pool, `UPDATE workspace_leases SET state = 'active' WHERE id = $1`, leaseID)
+	dbtest.MustExec(t, ctx, pool, `UPDATE workspace_leases SET status = 'active' WHERE id = $1`, leaseID)
 	requireAccounted(queries, "active lease after Runtime reclamation", uuid.MustParse(dbtest.DefaultWorkerPoolID))
 	dbtest.MustExec(t, ctx, pool, `
 		UPDATE workspace_leases
-		   SET state = 'released', released_at = now(), terminal_at = now()
+		   SET status = 'released', released_at = now(), terminal_at = now()
 		 WHERE id = $1
 	`, leaseID)
 	if rows := list(queries, dbtest.DefaultRegionID); len(rows) != 1 || rows[0].ProcessID.Bytes != processID {

@@ -74,7 +74,7 @@ func newActorCheckpointFixture(t *testing.T) *actorCheckpointFixture {
 	defer tx.Rollback(context.Background())
 	dbtest.MustExec(t, t.Context(), tx, `SET CONSTRAINTS ALL DEFERRED`)
 	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO workspaces(id,environment_id,region_id,sandbox_declared_id,deployment_definition_id,head_version_id) VALUES($1,$2,$3,'test-workspace',$4,$5)`, f.workspaceID, b.EnvironmentID, runtest.Region, b.WorkspaceDefinitionID, f.rootID)
-	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO workspace_versions(id,environment_id,workspace_id,state,content_digest,size_bytes,entry_count,ownership_generation,writer_generation,published_at) VALUES($1,$2,$3,'committed',$4,0,0,0,0,now())`, f.rootID, b.EnvironmentID, f.workspaceID, workspace.CanonicalEmptyTreeDigest)
+	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO workspace_versions(id,environment_id,workspace_id,status,content_digest,size_bytes,entry_count,ownership_generation,writer_generation,published_at) VALUES($1,$2,$3,'committed',$4,0,0,0,0,now())`, f.rootID, b.EnvironmentID, f.workspaceID, workspace.CanonicalEmptyTreeDigest)
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -119,10 +119,10 @@ func (f *actorCheckpointFixture) placeAndClaim(t *testing.T) {
 	ctx := t.Context()
 	q := f.server.db
 	var version int64
-	if err := f.Pool.QueryRow(ctx, `SELECT state_version FROM runs WHERE id=$1`, f.runID).Scan(&version); err != nil {
+	if err := f.Pool.QueryRow(ctx, `SELECT revision FROM runs WHERE id=$1`, f.runID).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	candidate := dispatch.ReadyRunCandidate{OrgID: pgvalue.UUID(f.OrgID), RunID: pgvalue.UUID(f.runID), ExpectedRunStateVersion: version}
+	candidate := dispatch.ReadyRunCandidate{OrgID: pgvalue.UUID(f.OrgID), RunID: pgvalue.UUID(f.runID), ExpectedRunRevision: version}
 	reserved, err := f.placement.PlaceReadyRun(ctx, candidate)
 	if err != nil {
 		t.Fatalf("dispatch reserve: %v", err)
@@ -208,7 +208,7 @@ func (f *actorCheckpointFixture) capture(t *testing.T, value string) workerapi.C
 func (f *actorCheckpointFixture) turn(t *testing.T, sequence int64, capture workerapi.CheckpointWorkspaceCapture, changed bool) workerapi.CommitActorTurnResponse {
 	t.Helper()
 	var base uuid.UUID
-	if err := f.Pool.QueryRow(t.Context(), `SELECT base_version_id FROM workspace_leases WHERE owner_run_lease_id=$1`, f.claim.runLease.ID).Scan(&base); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT base_workspace_version_id FROM workspace_leases WHERE owner_run_lease_id=$1`, f.claim.runLease.ID).Scan(&base); err != nil {
 		t.Fatal(err)
 	}
 	req := workerapi.CommitActorTurnRequest{Lease: f.fence(), CorrelationID: uuid.NewV7().String(), TargetInputSequence: sequence, BaseWorkspaceVersionID: base.String(), Tree: capture.Tree}
@@ -229,7 +229,7 @@ func (f *actorCheckpointFixture) turn(t *testing.T, sequence int64, capture work
 	}
 	var head, leaseBase uuid.UUID
 	var committed int64
-	if err := f.Pool.QueryRow(t.Context(), `SELECT w.head_version_id,l.base_version_id,s.committed_input_sequence FROM workspaces w JOIN workspace_leases l ON l.workspace_id=w.id JOIN sessions s ON s.id=$3 WHERE w.id=$1 AND l.owner_run_lease_id=$2`, f.workspaceID, f.claim.runLease.ID, f.sessionID).Scan(&head, &leaseBase, &committed); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT w.head_version_id,l.base_workspace_version_id,s.committed_input_sequence FROM workspaces w JOIN workspace_leases l ON l.workspace_id=w.id JOIN sessions s ON s.id=$3 WHERE w.id=$1 AND l.owner_run_lease_id=$2`, f.workspaceID, f.claim.runLease.ID, f.sessionID).Scan(&head, &leaseBase, &committed); err != nil {
 		t.Fatal(err)
 	}
 	if head.String() != out.WorkspaceVersionID || leaseBase != head || committed != sequence {
@@ -306,7 +306,7 @@ func (f *actorCheckpointFixture) complete(t *testing.T, sequence int64, content 
 	t.Helper()
 	a := f.claim
 	var base uuid.UUID
-	if err := f.Pool.QueryRow(t.Context(), `SELECT base_version_id FROM workspace_leases WHERE owner_run_lease_id=$1`, a.runLease.ID).Scan(&base); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT base_workspace_version_id FROM workspace_leases WHERE owner_run_lease_id=$1`, a.runLease.ID).Scan(&base); err != nil {
 		t.Fatal(err)
 	}
 	assignment := workerapi.RunLeaseAssignment{ID: f.fence().ID, RunID: f.runID.String(), AttemptNumber: 1, LeaseSequence: f.fence().LeaseSequence, WorkerInstanceID: f.WorkerID.String(), WorkerEpoch: 1, RuntimeInstanceID: pgvalue.UUIDString(a.runtime.ID), RuntimeIdentityID: a.runtime.RuntimeIdentityID, WorkspaceID: f.workspaceID.String(), WorkspaceMountID: pgvalue.UUIDString(a.workspaceMount.ID), WorkspaceLeaseID: pgvalue.UUIDString(a.workspaceLease.ID), BaseWorkspaceVersionID: base.String(), OwnershipGeneration: a.workspace.OwnershipGeneration, WriterGeneration: a.workspace.WriterGeneration, MountFencingGeneration: a.workspaceMount.FencingGeneration, ExpiresAt: a.workspaceLease.ExpiresAt.Time}
@@ -333,7 +333,7 @@ func (f *actorCheckpointFixture) complete(t *testing.T, sequence int64, content 
 	}
 	var state, outcome, lease string
 	var committed int64
-	if err := f.Pool.QueryRow(t.Context(), `SELECT s.state,a.terminal_outcome,s.committed_input_sequence,w.state FROM sessions s JOIN run_attempts a ON a.run_id=$3 JOIN workspace_leases w ON w.owner_run_lease_id=$2 WHERE s.id=$1`, f.sessionID, a.runLease.ID, f.runID).Scan(&state, &outcome, &committed, &lease); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT s.status,a.terminal_outcome,s.committed_input_sequence,w.status FROM sessions s JOIN run_attempts a ON a.run_id=$3 JOIN workspace_leases w ON w.owner_run_lease_id=$2 WHERE s.id=$1`, f.sessionID, a.runLease.ID, f.runID).Scan(&state, &outcome, &committed, &lease); err != nil {
 		t.Fatal(err)
 	}
 	if state != "closed" || outcome != "succeeded" || committed != sequence || lease != "released" {
@@ -446,11 +446,11 @@ func TestActorCheckpointFrontierRejectsInvalidRestorePostgres(t *testing.T) {
 		{name: "wrong head", mutate: func(a *runLeaseClaimAuthority) { a.workspace.HeadVersionID = pgvalue.UUID(f.rootID) }},
 		{name: "wrong current generation", mutate: func(a *runLeaseClaimAuthority) { a.workspace.WriterGeneration++ }},
 		{name: "wrong private parent", sql: `UPDATE workspace_versions SET parent_version_id=$2 WHERE id=$1`, args: []any{uuid.MustParse(checkpoint.WorkspaceVersionID), f.rootID}},
-		{name: "private generation rewritten", constraint: "workspace_versions_workspace_id_source_workspace_lease_id__fkey", sql: `UPDATE workspace_versions SET writer_generation=2 WHERE id=$1`, args: []any{uuid.MustParse(checkpoint.WorkspaceVersionID)}},
-		{name: "wrong source lease", constraint: "run_checkpoints_workspace_id_source_run_lease_id_source_wo_fkey", sql: `UPDATE run_checkpoints SET source_workspace_lease_id=$2 WHERE id=$1`, args: []any{uuid.MustParse(checkpoint.CheckpointID), f.claim.workspaceLease.ID}},
+		{name: "private generation rewritten", constraint: "workspace_versions_source_writer_fence_fkey", sql: `UPDATE workspace_versions SET writer_generation=2 WHERE id=$1`, args: []any{uuid.MustParse(checkpoint.WorkspaceVersionID)}},
+		{name: "wrong source lease", constraint: "run_checkpoints_source_workspace_lease_fkey", sql: `UPDATE run_checkpoints SET source_workspace_lease_id=$2 WHERE id=$1`, args: []any{uuid.MustParse(checkpoint.CheckpointID), f.claim.workspaceLease.ID}},
 		{name: "wrong private artifact", sql: `UPDATE workspace_versions SET artifact_id=(SELECT program_artifact_id FROM deployments WHERE id=$2) WHERE id=$1`, args: []any{uuid.MustParse(checkpoint.WorkspaceVersionID), f.DeploymentID}},
-		{name: "source still running", constraint: "runtime_instances_check4", sql: `UPDATE runtime_instances SET observed_state='ready' WHERE id=(SELECT runtime_instance_id FROM run_leases WHERE id=(SELECT source_run_lease_id FROM run_checkpoints WHERE id=$1))`, args: []any{uuid.MustParse(checkpoint.CheckpointID)}},
-		{name: "checkpoint invalid", sql: `UPDATE run_checkpoints SET state='invalid',invalidated_at=now(),invalidation_reason_code='test' WHERE id=$1`, args: []any{uuid.MustParse(checkpoint.CheckpointID)}},
+		{name: "source still running", constraint: "runtime_instances_close_observation_check", sql: `UPDATE runtime_instances SET observed_state='ready' WHERE id=(SELECT runtime_instance_id FROM run_leases WHERE id=(SELECT source_run_lease_id FROM run_checkpoints WHERE id=$1))`, args: []any{uuid.MustParse(checkpoint.CheckpointID)}},
+		{name: "checkpoint invalid", sql: `UPDATE run_checkpoints SET status='invalid',invalidated_at=now(),invalidation_reason_code='test' WHERE id=$1`, args: []any{uuid.MustParse(checkpoint.CheckpointID)}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			tx, err := f.Pool.Begin(t.Context())
@@ -477,7 +477,7 @@ func TestActorCheckpointFrontierRejectsInvalidRestorePostgres(t *testing.T) {
 				test.mutate(&a)
 			}
 			q := db.New(tx)
-			base, err := getActorTurnVersion(t.Context(), q, a, a.workspaceLease.BaseVersionID)
+			base, err := getActorTurnVersion(t.Context(), q, a, a.workspaceLease.BaseWorkspaceVersionID)
 			if err == nil {
 				err = validateRestoredActorBase(t.Context(), q, a, base)
 			}
@@ -498,15 +498,15 @@ func TestActorCheckpointFrontierExpiredBeforePlacementPostgres(t *testing.T) {
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_checkpoints SET expires_at=transaction_timestamp()-interval '1 second' WHERE id=$1`, uuid.MustParse(cp.CheckpointID))
 	var state int64
-	if err := f.Pool.QueryRow(t.Context(), `SELECT state_version FROM runs WHERE id=$1`, f.runID).Scan(&state); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT revision FROM runs WHERE id=$1`, f.runID).Scan(&state); err != nil {
 		t.Fatal(err)
 	}
-	_, err := f.placement.PlaceReadyRun(t.Context(), dispatch.ReadyRunCandidate{OrgID: pgvalue.UUID(f.OrgID), RunID: pgvalue.UUID(f.runID), ExpectedRunStateVersion: state})
+	_, err := f.placement.PlaceReadyRun(t.Context(), dispatch.ReadyRunCandidate{OrgID: pgvalue.UUID(f.OrgID), RunID: pgvalue.UUID(f.runID), ExpectedRunRevision: state})
 	if !errors.Is(err, dispatch.ErrCandidateChanged) {
 		t.Fatalf("expired checkpoint placement: %v", err)
 	}
 	var leases int
-	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM workspace_leases WHERE workspace_id=$1 AND state='active'`, f.workspaceID).Scan(&leases); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM workspace_leases WHERE workspace_id=$1 AND status='active'`, f.workspaceID).Scan(&leases); err != nil {
 		t.Fatal(err)
 	}
 	if leases != 0 {
@@ -526,13 +526,13 @@ func (f *actorCheckpointFixture) expireRestore(t *testing.T) {
 	if err != nil || len(recovered) != 1 {
 		t.Fatalf("recover: %v %v", recovered, err)
 	}
-	var status, waitState, leaseState string
+	var status, waitStatus, leaseStatus string
 	var checkpoint uuid.UUID
-	if err := f.Pool.QueryRow(t.Context(), `SELECT r.status,w.suspension_state,w.suspend_checkpoint_id,l.state FROM runs r JOIN run_waits w ON w.run_id=r.id AND w.attempt_number=r.current_attempt_number JOIN run_leases l ON l.id=$2 WHERE r.id=$1`, f.runID, f.claim.runLease.ID).Scan(&status, &waitState, &checkpoint, &leaseState); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT r.status,w.suspension_status,w.suspend_checkpoint_id,l.status FROM runs r JOIN run_waits w ON w.run_id=r.id AND w.attempt_number=r.current_attempt_number JOIN run_leases l ON l.id=$2 WHERE r.id=$1`, f.runID, f.claim.runLease.ID).Scan(&status, &waitStatus, &checkpoint, &leaseStatus); err != nil {
 		t.Fatal(err)
 	}
-	if status != "queued" || waitState != "resume_pending" || leaseState != "expired" || pgvalue.UUID(checkpoint) != f.claim.runtime.RestoreCheckpointID {
-		t.Fatalf("unexpected recovered state: %s/%s/%s/%s", status, waitState, leaseState, checkpoint)
+	if status != "queued" || waitStatus != "resume_pending" || leaseStatus != "expired" || pgvalue.UUID(checkpoint) != f.claim.runtime.RestoreCheckpointID {
+		t.Fatalf("unexpected recovered state: %s/%s/%s/%s", status, waitStatus, leaseStatus, checkpoint)
 	}
 	f.workerCall(t, f.server.workerStopWorkspaceMount, workerapi.WorkspaceMountStopRequest{
 		OrgID: f.OrgID.String(), WorkspaceMountID: pgvalue.UUIDString(f.claim.workspaceMount.ID),
@@ -608,7 +608,7 @@ func TestActorCheckpointFrontierRejectsWrongRecoveredWriterPostgres(t *testing.T
 			case "checkpoint":
 				sql, args = `UPDATE runtime_instances SET restore_checkpoint_id=NULL WHERE id=$1`, []any{f.claim.runtime.ID}
 			case "private base":
-				sql, args = `UPDATE workspace_leases SET base_version_id=$2 WHERE id=$1`, []any{f.claim.workspaceLease.ID, f.rootID}
+				sql, args = `UPDATE workspace_leases SET base_workspace_version_id=$2 WHERE id=$1`, []any{f.claim.workspaceLease.ID, f.rootID}
 			case "generation":
 				sql, args = `UPDATE workspaces SET writer_generation=writer_generation+1 WHERE id=$1`, []any{f.workspaceID}
 			case "ownership":
@@ -620,7 +620,7 @@ func TestActorCheckpointFrontierRejectsWrongRecoveredWriterPostgres(t *testing.T
 			case "terminal reason":
 				sql, args = `UPDATE run_leases SET terminal_reason_code='max_active_duration_exceeded' WHERE id=$1`, []any{f.claim.runLease.ID}
 			case "terminal state":
-				sql, args = `UPDATE workspace_leases SET state='fenced' WHERE id=$1`, []any{f.claim.workspaceLease.ID}
+				sql, args = `UPDATE workspace_leases SET status='fenced' WHERE id=$1`, []any{f.claim.workspaceLease.ID}
 			}
 			_, err := f.Pool.Exec(t.Context(), sql, args...)
 			if name == "Run" || name == "attempt" {
@@ -635,10 +635,10 @@ func TestActorCheckpointFrontierRejectsWrongRecoveredWriterPostgres(t *testing.T
 				t.Fatal(err)
 			}
 			var state int64
-			if err := f.Pool.QueryRow(t.Context(), `SELECT state_version FROM runs WHERE id=$1`, f.runID).Scan(&state); err != nil {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT revision FROM runs WHERE id=$1`, f.runID).Scan(&state); err != nil {
 				t.Fatal(err)
 			}
-			_, err = f.placement.PlaceReadyRun(t.Context(), dispatch.ReadyRunCandidate{OrgID: pgvalue.UUID(f.OrgID), RunID: pgvalue.UUID(f.runID), ExpectedRunStateVersion: state})
+			_, err = f.placement.PlaceReadyRun(t.Context(), dispatch.ReadyRunCandidate{OrgID: pgvalue.UUID(f.OrgID), RunID: pgvalue.UUID(f.runID), ExpectedRunRevision: state})
 			if !errors.Is(err, dispatch.ErrCandidateChanged) {
 				t.Fatalf("wrong recovered %s admitted: %v", name, err)
 			}

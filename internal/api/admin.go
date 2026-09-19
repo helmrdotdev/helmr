@@ -26,7 +26,7 @@ type AdminWorkerGroup struct {
 	RegionID      string `json:"region_id"`
 	Name          string `json:"name"`
 	Description   string `json:"description"`
-	State         string `json:"state"`
+	Status        string `json:"status"`
 	ClaimVersion  int64  `json:"claim_version"`
 	PrimaryPoolID string `json:"primary_pool_id,omitempty"`
 }
@@ -62,7 +62,7 @@ type AdminWorkerPool struct {
 	ID            string `json:"id"`
 	WorkerGroupID string `json:"worker_group_id"`
 	Name          string `json:"name"`
-	State         string `json:"state"`
+	Status        string `json:"status"`
 	ClaimVersion  int64  `json:"claim_version"`
 	Primary       bool   `json:"primary"`
 }

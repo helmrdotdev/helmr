@@ -106,7 +106,7 @@ func TestAppendRunLogChunkRejectsSupersededAuthority(t *testing.T) {
 	ctx := context.Background()
 	fixture := newRunLeaseClaimFixture(t, ctx)
 	params := fixture.runningRunLogParams(t, ctx)
-	if _, err := fixture.pool.Exec(ctx, `UPDATE worker_groups SET state = 'draining' WHERE id = $1`, params.WorkerGroupID); err != nil {
+	if _, err := fixture.pool.Exec(ctx, `UPDATE worker_groups SET status = 'draining' WHERE id = $1`, params.WorkerGroupID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -119,7 +119,7 @@ func TestAppendRunLogChunkRejectsSupersededAuthority(t *testing.T) {
 
 	if _, err := fixture.pool.Exec(ctx, `
 		UPDATE run_leases
-		   SET state = 'completed', terminal_at = now(), terminal_reason_code = 'completed'
+		   SET status = 'completed', terminal_at = now(), terminal_reason_code = 'completed'
 		 WHERE id = $1
 	`, params.RunLeaseID); err != nil {
 		t.Fatal(err)
@@ -138,9 +138,9 @@ func TestAppendRunLogChunkRequiresCoherentRunAndLeaseState(t *testing.T) {
 		params := fixture.runningRunLogParams(t, ctx)
 		var runID, workspaceID pgtype.UUID
 		var attemptNumber int32
-		var leaseSequence, runStateVersion int64
+		var leaseSequence, runRevision int64
 		if err := fixture.pool.QueryRow(ctx, `
-			SELECT rl.run_id, rl.workspace_id, rl.attempt_number, rl.lease_sequence, r.state_version
+			SELECT rl.run_id, rl.workspace_id, rl.attempt_number, rl.lease_sequence, r.revision
 			  FROM run_leases rl
 			  JOIN runs r ON r.id = rl.run_id
 			 WHERE rl.id = $1
@@ -149,7 +149,7 @@ func TestAppendRunLogChunkRequiresCoherentRunAndLeaseState(t *testing.T) {
 			&workspaceID,
 			&attemptNumber,
 			&leaseSequence,
-			&runStateVersion,
+			&runRevision,
 		); err != nil {
 			t.Fatal(err)
 		}
@@ -166,7 +166,7 @@ func TestAppendRunLogChunkRequiresCoherentRunAndLeaseState(t *testing.T) {
 			Metadata:                       []byte(`{}`),
 			Tags:                           []string{},
 			RunID:                          runID,
-			ExpectedRunningStateVersion:    runStateVersion,
+			ExpectedRunningRevision:        runRevision,
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -210,14 +210,14 @@ func TestAppendRunLogChunkRequiresCoherentRunAndLeaseState(t *testing.T) {
 	})
 
 	tests := []struct {
-		name       string
-		runStatus  string
-		leaseState string
+		name        string
+		runStatus   string
+		leaseStatus string
 	}{
-		{name: "waiting Run with running lease", runStatus: "waiting", leaseState: "running"},
-		{name: "running Run with checkpointing lease", runStatus: "running", leaseState: "checkpointing"},
-		{name: "waiting Run with finalizing lease", runStatus: "waiting", leaseState: "finalizing"},
-		{name: "running Run with finalizing lease", runStatus: "running", leaseState: "finalizing"},
+		{name: "waiting Run with running lease", runStatus: "waiting", leaseStatus: "running"},
+		{name: "running Run with checkpointing lease", runStatus: "running", leaseStatus: "checkpointing"},
+		{name: "waiting Run with finalizing lease", runStatus: "waiting", leaseStatus: "finalizing"},
+		{name: "running Run with finalizing lease", runStatus: "running", leaseStatus: "finalizing"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -233,13 +233,13 @@ func TestAppendRunLogChunkRequiresCoherentRunAndLeaseState(t *testing.T) {
 			}
 			if _, err := fixture.pool.Exec(ctx, `
 				UPDATE run_leases
-				   SET state = $2,
+				   SET status = $2,
 				       finalization_operation_id = CASE WHEN $2 = 'finalizing' THEN $3::uuid ELSE NULL END,
 				       finalization_kind = CASE WHEN $2 = 'finalizing' THEN 'capture' ELSE NULL END,
 				       finalization_started_at = CASE WHEN $2 = 'finalizing' THEN now() ELSE NULL END,
-				       finalization_request_fingerprint = CASE WHEN $2 = 'finalizing' THEN 'fixture-finalization' ELSE NULL END
+				       finalization_request_fingerprint = CASE WHEN $2 = 'finalizing' THEN 'sha256:5199bc398e4c7cd105844a304c91893e87eb9c3bd9ad9d74ea66a6de3632b9b4' ELSE NULL END
 				 WHERE id = $1
-			`, params.RunLeaseID, test.leaseState, randomPGUUID()); err != nil {
+			`, params.RunLeaseID, test.leaseStatus, randomPGUUID()); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := fixture.queries.AppendRunLogChunk(ctx, params); !errors.Is(err, pgx.ErrNoRows) {
@@ -411,7 +411,7 @@ func (fixture runLeaseClaimFixture) runningRunLogParams(
 	if _, err := fixture.queries.MarkRunRunning(ctx, MarkRunRunningParams{
 		ID: workUUID(work.runID), OrgID: workUUID(fixture.orgID),
 		ProjectID: workUUID(fixture.projectID), EnvironmentID: workUUID(fixture.environmentID),
-		WorkspaceID: locators.WorkspaceID, ExpectedStateVersion: 1,
+		WorkspaceID: locators.WorkspaceID, ExpectedRevision: 1,
 		AttemptNumber: locators.AttemptNumber, RunLeaseID: workUUID(work.leaseID),
 	}); err != nil {
 		t.Fatal(err)

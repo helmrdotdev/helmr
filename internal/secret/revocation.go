@@ -18,10 +18,10 @@ type database interface {
 }
 
 type WorkspaceExecCandidate struct {
-	OrgID                pgtype.UUID
-	ProcessID            pgtype.UUID
-	WorkspaceID          pgtype.UUID
-	ExpectedStateVersion int64
+	OrgID            pgtype.UUID
+	ProcessID        pgtype.UUID
+	WorkspaceID      pgtype.UUID
+	ExpectedRevision int64
 }
 
 type WorkspaceExecRecoverer func(context.Context, WorkspaceExecCandidate) error
@@ -219,10 +219,10 @@ func (r *RevocationReconciler) fenceProcess(
 	authority, err := q.LockWorkspaceExecSecretRevocationAuthority(
 		ctx,
 		db.LockWorkspaceExecSecretRevocationAuthorityParams{
-			OrgID:                candidate.OrgID,
-			ProcessID:            candidate.ID,
-			WorkspaceID:          candidate.WorkspaceID,
-			ExpectedStateVersion: candidate.StateVersion,
+			OrgID:            candidate.OrgID,
+			ProcessID:        candidate.ID,
+			WorkspaceID:      candidate.WorkspaceID,
+			ExpectedRevision: candidate.Revision,
 		},
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -255,10 +255,10 @@ func (r *RevocationReconciler) recoverProcess(
 	err := r.execRecoverer(
 		ctx,
 		WorkspaceExecCandidate{
-			OrgID:                candidate.OrgID,
-			ProcessID:            candidate.ID,
-			WorkspaceID:          candidate.WorkspaceID,
-			ExpectedStateVersion: candidate.StateVersion,
+			OrgID:            candidate.OrgID,
+			ProcessID:        candidate.ID,
+			WorkspaceID:      candidate.WorkspaceID,
+			ExpectedRevision: candidate.Revision,
 		},
 	)
 	if err != nil {
@@ -286,7 +286,7 @@ func lockAndValidateRevocation(
 	}
 	for _, row := range rows {
 		if row.SecretID == pgvalue.UUID(secretID) {
-			return row.SecretState == "revoked" &&
+			return row.SecretStatus == "revoked" &&
 				row.RevocationGeneration == revocationGeneration, nil
 		}
 	}

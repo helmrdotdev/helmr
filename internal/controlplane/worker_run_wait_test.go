@@ -178,7 +178,7 @@ func TestValidateRootRunWaitActorCursor(t *testing.T) {
 	runID := pgvalue.UUID(uuid.NewV7())
 	authority := runLeaseClaimAuthority{
 		run:       db.Run{ID: runID, EntrypointKind: "actor", SessionID: actorID},
-		actor:     db.Session{ID: actorID, CurrentRunID: runID, State: "open", CommittedInputSequence: 4, NextInputSequence: 6},
+		actor:     db.Session{ID: actorID, CurrentRunID: runID, Status: "open", CommittedInputSequence: 4, NextInputSequence: 6},
 		attempt:   db.RunAttempt{SessionInputStartSequence: pgtype.Int8{Int64: 3, Valid: true}},
 		workspace: db.LockRunLeaseClaimWorkspaceRow{OwnerSessionID: actorID},
 	}

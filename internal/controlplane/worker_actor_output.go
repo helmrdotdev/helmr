@@ -180,7 +180,7 @@ func (s *Server) appendActorOutput(
 			if err != nil {
 				return err
 			}
-			if acquired.Claim.State != "pending" && acquired.Claim.State != "completed" {
+			if acquired.Claim.Status != "pending" && acquired.Claim.Status != "completed" {
 				return errActorOutputAppendConflict
 			}
 			acquiredClaim = acquired.Claim
@@ -218,16 +218,16 @@ func (s *Server) appendActorOutput(
 			authority.run.EntrypointKind != "actor" ||
 			authority.run.SessionID != authority.actor.ID ||
 			authority.actor.CurrentRunID != authority.run.ID ||
-			(authority.actor.State != "open" && authority.actor.State != "closing") ||
+			(authority.actor.Status != "open" && authority.actor.Status != "closing") ||
 			authority.run.Status != db.RunStatusRunning ||
-			authority.runLease.State != db.RunLeaseStateRunning ||
+			authority.runLease.Status != db.RunLeaseStatusRunning ||
 			!authority.run.ActiveStartedAt.Valid ||
 			!authority.attempt.EntrypointEnteredAt.Valid ||
 			authority.attempt.TerminalAt.Valid ||
 			authority.runLease.FinalizationOperationID.Valid {
 			return errStaleActorOutputAppend
 		}
-		if acquiredClaim.State == "completed" {
+		if acquiredClaim.Status == "completed" {
 			record, err := actorOutputRecordFromReceipt(ctx, work.q, authority, acquiredClaim)
 			if err != nil {
 				return errActorOutputAppendConflict

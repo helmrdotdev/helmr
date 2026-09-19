@@ -191,7 +191,7 @@ func (s *Server) workerExecuteWorkspace(w http.ResponseWriter, r *http.Request) 
 		writeError(w, errors.New("admit run-sourced workspace exec"))
 		return
 	}
-	if workspaceExecTerminal(admission.Process.State) {
+	if workspaceExecTerminal(admission.Process.Status) {
 		result, resultErr := workspaceExecResult(admission.Process)
 		if resultErr != nil {
 			if failure, ok := workerWorkspaceExecFailure(resultErr); ok {
@@ -268,7 +268,7 @@ func (s *Server) workerPollWorkspaceExec(w http.ResponseWriter, r *http.Request)
 		s.writeWorkerWorkspaceSourceError(w, "exec poll", request.Lease.ID, err)
 		return
 	}
-	if !workspaceExecTerminal(process.State) {
+	if !workspaceExecTerminal(process.Status) {
 		writeJSON(w, http.StatusOK, workerapi.ExecuteWorkspaceResponse{
 			CorrelationID: request.CorrelationID,
 			Pending:       &workerapi.WorkspaceExecPending{ProcessID: request.ProcessID},

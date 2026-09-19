@@ -18,9 +18,9 @@ WITH candidates AS (
     SELECT id
     FROM control_outbox
     WHERE (
-        (state = 'pending' AND available_at <= now())
+        (status = 'pending' AND available_at <= now())
         OR
-        (state = 'claimed' AND claim_expires_at <= now())
+        (status = 'claimed' AND claim_expires_at <= now())
       )
       AND control_outbox.topic = ANY(sqlc.arg(topics)::text[])
     ORDER BY available_at, id
@@ -28,7 +28,7 @@ WITH candidates AS (
     FOR UPDATE SKIP LOCKED
 )
 UPDATE control_outbox
-SET state = 'claimed',
+SET status = 'claimed',
     attempts = attempts + 1,
     claimed_by = sqlc.arg(claimed_by),
     claim_expires_at = sqlc.arg(claim_expires_at)
@@ -38,13 +38,13 @@ RETURNING control_outbox.*;
 
 -- name: DeliverControlOutbox :one
 UPDATE control_outbox
-SET state = 'delivered',
+SET status = 'delivered',
     claimed_by = NULL,
     claim_expires_at = NULL,
     last_error = NULL,
     delivered_at = now()
 WHERE id = sqlc.arg(id)
-  AND state = 'claimed'
+  AND status = 'claimed'
   AND claimed_by = sqlc.arg(claimed_by)
   AND attempts = sqlc.arg(claim_attempt)
   AND claim_expires_at > now()
@@ -52,13 +52,13 @@ RETURNING *;
 
 -- name: RetryControlOutbox :one
 UPDATE control_outbox
-SET state = 'pending',
+SET status = 'pending',
     claimed_by = NULL,
     claim_expires_at = NULL,
     available_at = sqlc.arg(available_at),
     last_error = sqlc.arg(last_error)
 WHERE id = sqlc.arg(id)
-  AND state = 'claimed'
+  AND status = 'claimed'
   AND claimed_by = sqlc.arg(claimed_by)
   AND attempts = sqlc.arg(claim_attempt)
   AND claim_expires_at > now()
@@ -66,12 +66,12 @@ RETURNING *;
 
 -- name: DeadLetterControlOutbox :one
 UPDATE control_outbox
-SET state = 'dead_lettered',
+SET status = 'dead_lettered',
     claimed_by = NULL,
     claim_expires_at = NULL,
     last_error = sqlc.arg(last_error)
 WHERE id = sqlc.arg(id)
-  AND state = 'claimed'
+  AND status = 'claimed'
   AND claimed_by = sqlc.arg(claimed_by)
   AND attempts = sqlc.arg(claim_attempt)
   AND claim_expires_at > now()
@@ -81,17 +81,17 @@ RETURNING *;
 WITH candidates AS MATERIALIZED (
     SELECT id
     FROM control_outbox
-    WHERE state = 'pending'
+    WHERE status = 'pending'
       AND NOT (topic = ANY(sqlc.arg(supported_topics)::text[]))
     ORDER BY created_at, id
     LIMIT sqlc.arg(row_limit)
 )
 UPDATE control_outbox
-SET state = 'dead_lettered',
+SET status = 'dead_lettered',
     last_error = 'unsupported control outbox topic'
 FROM candidates
 WHERE control_outbox.id = candidates.id
-  AND control_outbox.state = 'pending'
+  AND control_outbox.status = 'pending'
 RETURNING control_outbox.*;
 
 -- name: PruneDeliveredControlOutbox :execrows
@@ -99,7 +99,7 @@ DELETE FROM control_outbox
  WHERE id IN (
     SELECT id
       FROM control_outbox
-     WHERE state = 'delivered'
+     WHERE status = 'delivered'
        AND delivered_at < now() - sqlc.arg(retain_for)::interval
      ORDER BY delivered_at, id
      LIMIT sqlc.arg(row_limit)
@@ -109,7 +109,7 @@ DELETE FROM control_outbox
 WITH dead_letter_sample AS (
     SELECT 1
       FROM control_outbox
-     WHERE state = 'dead_lettered'
+     WHERE status = 'dead_lettered'
      ORDER BY created_at, id
      LIMIT (sqlc.arg(dead_letter_limit)::integer + 1)
 ),
@@ -120,7 +120,7 @@ dead_letter_counts AS (
 SELECT (
            SELECT available_at
              FROM control_outbox
-            WHERE state = 'pending'
+            WHERE status = 'pending'
               AND available_at <= now()
             ORDER BY available_at, id
             LIMIT 1

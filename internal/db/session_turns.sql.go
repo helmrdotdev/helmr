@@ -14,18 +14,18 @@ import (
 const advanceActorTurnCursor = `-- name: AdvanceActorTurnCursor :one
 UPDATE sessions
    SET committed_input_sequence = $1,
-       state_version = state_version + 1,
+       revision = revision + 1,
        updated_at = $2
  WHERE environment_id = $3
    AND id = $4
    AND workspace_id = $5
    AND current_run_id = $6
    AND run_generation = $7
-   AND state IN ('open', 'closing')
+   AND status IN ('open', 'closing')
    AND committed_input_sequence = $8
    AND $1 = $8 + 1
    AND $1 < next_input_sequence
-RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, state_version, manual_run_cancelled, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, state, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
+RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, manual_run_cancelled, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
 `
 
 type AdvanceActorTurnCursorParams struct {
@@ -60,7 +60,7 @@ func (q *Queries) AdvanceActorTurnCursor(ctx context.Context, arg AdvanceActorTu
 		&i.Key,
 		&i.CurrentRunID,
 		&i.RunGeneration,
-		&i.StateVersion,
+		&i.Revision,
 		&i.ManualRunCancelled,
 		&i.Failure,
 		&i.FailureRunID,
@@ -76,7 +76,7 @@ func (q *Queries) AdvanceActorTurnCursor(ctx context.Context, arg AdvanceActorTu
 		&i.RunRetryPolicy,
 		&i.RunMetadata,
 		&i.RunTags,
-		&i.State,
+		&i.Status,
 		&i.CloseSequence,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -89,7 +89,7 @@ func (q *Queries) AdvanceActorTurnCursor(ctx context.Context, arg AdvanceActorTu
 
 const advanceActorTurnWorkspaceLeaseFrontier = `-- name: AdvanceActorTurnWorkspaceLeaseFrontier :one
 UPDATE workspace_leases
-   SET base_version_id = $1,
+   SET base_workspace_version_id = $1,
        updated_at = $2
  WHERE id = $3
    AND org_id = $4
@@ -100,13 +100,13 @@ UPDATE workspace_leases
    AND runtime_instance_id = $9
    AND owner_run_lease_id = $10
    AND owner_process_id IS NULL
-   AND base_version_id = $11
+   AND base_workspace_version_id = $11
    AND ownership_generation = $12
    AND writer_generation = $13
    AND mount_fencing_generation = $14
-   AND state = 'active'
+   AND status = 'active'
    AND expires_at > $2
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, state, owner_run_lease_id, owner_process_id, base_version_id, ownership_generation, writer_generation, mount_fencing_generation, fencing_token_hash, acquired_at, renewed_at, expires_at, released_at, updated_at, terminal_at, terminal_reason_code, terminal_error
+RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, status, owner_run_lease_id, owner_process_id, base_workspace_version_id, ownership_generation, writer_generation, mount_fencing_generation, fencing_token_hash, acquired_at, renewed_at, expires_at, released_at, updated_at, terminal_at, terminal_reason_code, terminal_error
 `
 
 type AdvanceActorTurnWorkspaceLeaseFrontierParams struct {
@@ -156,10 +156,10 @@ func (q *Queries) AdvanceActorTurnWorkspaceLeaseFrontier(ctx context.Context, ar
 		&i.RuntimeInstanceID,
 		&i.WorkspaceID,
 		&i.WorkspaceMountID,
-		&i.State,
+		&i.Status,
 		&i.OwnerRunLeaseID,
 		&i.OwnerProcessID,
-		&i.BaseVersionID,
+		&i.BaseWorkspaceVersionID,
 		&i.OwnershipGeneration,
 		&i.WriterGeneration,
 		&i.MountFencingGeneration,
@@ -178,7 +178,7 @@ func (q *Queries) AdvanceActorTurnWorkspaceLeaseFrontier(ctx context.Context, ar
 
 const invalidateRestoredActorCheckpoint = `-- name: InvalidateRestoredActorCheckpoint :one
 UPDATE run_checkpoints
-   SET state = 'invalid',
+   SET status = 'invalid',
        invalidated_at = $1,
        invalidation_reason_code = 'actor_turn_committed'
  WHERE id = $2
@@ -188,8 +188,8 @@ UPDATE run_checkpoints
    AND private_workspace_version_id = $6
    AND actor_speculative_input_sequence BETWEEN $7::bigint - 1
                                             AND $7::bigint
-   AND state = 'ready'
-RETURNING run_checkpoints.id, run_checkpoints.run_id, run_checkpoints.attempt_number, run_checkpoints.run_wait_id, run_checkpoints.source_run_lease_id, run_checkpoints.source_workspace_lease_id, run_checkpoints.workspace_id, run_checkpoints.base_workspace_version_id, run_checkpoints.private_workspace_version_id, run_checkpoints.runtime_config_artifact_id, run_checkpoints.vm_state_artifact_id, run_checkpoints.memory_artifact_id, run_checkpoints.scratch_disk_artifact_id, run_checkpoints.actor_speculative_input_sequence, run_checkpoints.state, run_checkpoints.restore_manifest, run_checkpoints.ready_request_fingerprint, run_checkpoints.failed_request_fingerprint, run_checkpoints.expires_at, run_checkpoints.created_at, run_checkpoints.ready_at, run_checkpoints.invalidated_at, run_checkpoints.invalidation_reason_code
+   AND status = 'ready'
+RETURNING run_checkpoints.id, run_checkpoints.run_id, run_checkpoints.attempt_number, run_checkpoints.run_wait_id, run_checkpoints.source_run_lease_id, run_checkpoints.source_workspace_lease_id, run_checkpoints.workspace_id, run_checkpoints.base_workspace_version_id, run_checkpoints.private_workspace_version_id, run_checkpoints.runtime_config_artifact_id, run_checkpoints.vm_state_artifact_id, run_checkpoints.memory_artifact_id, run_checkpoints.scratch_disk_artifact_id, run_checkpoints.actor_speculative_input_sequence, run_checkpoints.status, run_checkpoints.restore_manifest, run_checkpoints.ready_request_fingerprint, run_checkpoints.failed_request_fingerprint, run_checkpoints.expires_at, run_checkpoints.created_at, run_checkpoints.ready_at, run_checkpoints.invalidated_at, run_checkpoints.invalidation_reason_code
 `
 
 type InvalidateRestoredActorCheckpointParams struct {
@@ -228,7 +228,7 @@ func (q *Queries) InvalidateRestoredActorCheckpoint(ctx context.Context, arg Inv
 		&i.MemoryArtifactID,
 		&i.ScratchDiskArtifactID,
 		&i.ActorSpeculativeInputSequence,
-		&i.State,
+		&i.Status,
 		&i.RestoreManifest,
 		&i.ReadyRequestFingerprint,
 		&i.FailedRequestFingerprint,
@@ -243,12 +243,12 @@ func (q *Queries) InvalidateRestoredActorCheckpoint(ctx context.Context, arg Inv
 
 const publishRestoredActorCheckpointWorkspaceVersion = `-- name: PublishRestoredActorCheckpointWorkspaceVersion :one
 UPDATE workspace_versions
-   SET state = 'committed',
+   SET status = 'committed',
        published_at = $1
  WHERE workspace_versions.id = $2
    AND workspace_versions.workspace_id = $3
    AND workspace_versions.parent_version_id = $4
-   AND workspace_versions.state = 'private'
+   AND workspace_versions.status = 'private'
    AND workspace_versions.ownership_generation = $5
    AND workspace_versions.writer_generation = $6
    AND EXISTS (
@@ -260,10 +260,10 @@ UPDATE workspace_versions
           AND run_checkpoints.workspace_id = workspace_versions.workspace_id
           AND run_checkpoints.private_workspace_version_id = workspace_versions.id
           AND run_checkpoints.actor_speculative_input_sequence IS NOT NULL
-          AND run_checkpoints.state = 'invalid'
+          AND run_checkpoints.status = 'invalid'
           AND run_checkpoints.invalidation_reason_code = 'actor_turn_committed'
    )
-RETURNING workspace_versions.id, workspace_versions.environment_id, workspace_versions.workspace_id, workspace_versions.parent_version_id, workspace_versions.artifact_id, workspace_versions.content_digest, workspace_versions.size_bytes, workspace_versions.entry_count, workspace_versions.state, workspace_versions.source_workspace_lease_id, workspace_versions.ownership_generation, workspace_versions.writer_generation, workspace_versions.created_at, workspace_versions.published_at, workspace_versions.discarded_at
+RETURNING workspace_versions.id, workspace_versions.environment_id, workspace_versions.workspace_id, workspace_versions.parent_version_id, workspace_versions.artifact_id, workspace_versions.content_digest, workspace_versions.size_bytes, workspace_versions.entry_count, workspace_versions.status, workspace_versions.source_workspace_lease_id, workspace_versions.ownership_generation, workspace_versions.writer_generation, workspace_versions.created_at, workspace_versions.published_at, workspace_versions.discarded_at
 `
 
 type PublishRestoredActorCheckpointWorkspaceVersionParams struct {
@@ -300,7 +300,7 @@ func (q *Queries) PublishRestoredActorCheckpointWorkspaceVersion(ctx context.Con
 		&i.ContentDigest,
 		&i.SizeBytes,
 		&i.EntryCount,
-		&i.State,
+		&i.Status,
 		&i.SourceWorkspaceLeaseID,
 		&i.OwnershipGeneration,
 		&i.WriterGeneration,

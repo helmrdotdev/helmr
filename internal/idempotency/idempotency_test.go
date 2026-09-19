@@ -309,7 +309,7 @@ func (s *claimMemory) CreateIdempotencyClaim(
 		Operation:          arg.Operation,
 		SlotHash:           bytes.Clone(arg.SlotHash),
 		RequestFingerprint: bytes.Clone(arg.RequestFingerprint),
-		State:              "pending",
+		Status:             "pending",
 	}
 	s.live = &claim
 	return claim, nil
@@ -353,11 +353,11 @@ func (s *claimMemory) finish(
 	if s.live == nil ||
 		s.live.EnvironmentID != environmentID ||
 		s.live.ID != id ||
-		s.live.State != "pending" ||
+		s.live.Status != "pending" ||
 		!bytes.Equal(s.live.RequestFingerprint, fingerprint) {
 		return db.IdempotencyClaim{}, pgx.ErrNoRows
 	}
-	s.live.State = state
+	s.live.Status = state
 	s.live.Receipt = bytes.Clone(receipt)
 	s.live.CompletedAt = pgtype.Timestamptz{Valid: true}
 	return *s.live, nil
@@ -370,7 +370,7 @@ func lockRow(claim db.IdempotencyClaim, expired bool) db.LockLiveIdempotencyClai
 		Operation:          claim.Operation,
 		SlotHash:           claim.SlotHash,
 		RequestFingerprint: claim.RequestFingerprint,
-		State:              claim.State,
+		Status:             claim.Status,
 		Receipt:            claim.Receipt,
 		AcceptedAt:         claim.AcceptedAt,
 		ExpiresAt:          claim.ExpiresAt,

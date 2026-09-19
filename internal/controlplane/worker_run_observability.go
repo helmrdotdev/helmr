@@ -91,10 +91,10 @@ func (s *Server) workerUpdateRunMetadata(w http.ResponseWriter, r *http.Request)
 			return err
 		}
 		if !acquired.New {
-			if acquired.Claim.State != "completed" {
+			if acquired.Claim.Status != "completed" {
 				return fmt.Errorf(
 					"run metadata mutation claim is %s",
-					acquired.Claim.State,
+					acquired.Claim.Status,
 				)
 			}
 			return nil
@@ -122,7 +122,7 @@ func (s *Server) workerUpdateRunMetadata(w http.ResponseWriter, r *http.Request)
 		if err != nil {
 			return err
 		}
-		stateVersion, err := work.q.UpdateRunMetadata(
+		revision, err := work.q.UpdateRunMetadata(
 			r.Context(),
 			db.UpdateRunMetadataParams{
 				Metadata: next, RunID: authority.run.ID,
@@ -155,13 +155,13 @@ func (s *Server) workerUpdateRunMetadata(w http.ResponseWriter, r *http.Request)
 				TraceID:       authority.runLease.TraceID, SpanID: authority.runLease.SpanID,
 				ParentSpanID: authority.runLease.ParentSpanID, Traceparent: authority.runLease.Traceparent,
 				Payload:         payload,
-				SnapshotVersion: pgtype.Int8{Int64: stateVersion, Valid: true},
+				SnapshotVersion: pgtype.Int8{Int64: revision, Valid: true},
 			},
 		); err != nil {
 			return err
 		}
 		receipt, err := json.Marshal(map[string]any{
-			"runId": runID.String(), "stateVersion": stateVersion,
+			"runId": runID.String(), "revision": revision,
 		})
 		if err != nil {
 			return err

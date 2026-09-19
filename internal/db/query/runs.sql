@@ -51,7 +51,7 @@ WITH selected_target AS MATERIALIZED (
       JOIN workspace_versions
         ON workspace_versions.workspace_id = workspaces.id
        AND workspace_versions.id = sqlc.arg(base_workspace_version_id)
-       AND workspace_versions.state = 'committed'
+       AND workspace_versions.status = 'committed'
      WHERE environments.id = sqlc.arg(environment_id)
        AND environments.org_id = sqlc.arg(org_id)
        AND environments.project_id = sqlc.arg(project_id)
@@ -64,7 +64,7 @@ WITH selected_target AS MATERIALIZED (
                 WHERE idempotency_claims.environment_id = environments.id
                   AND idempotency_claims.id = sqlc.narg(claim_id)
                   AND idempotency_claims.operation = 'task.start'
-                  AND idempotency_claims.state = 'pending'
+                  AND idempotency_claims.status = 'pending'
                   AND idempotency_claims.retired_at IS NULL
            )
        )
@@ -254,7 +254,7 @@ WITH selected_actor AS MATERIALIZED (
      WHERE sessions.environment_id = sqlc.arg(environment_id)
        AND sessions.id = sqlc.arg(session_id)
        AND sessions.workspace_id = sqlc.arg(workspace_id)
-       AND sessions.state = 'open'
+       AND sessions.status = 'open'
        AND sessions.current_run_id IS NULL
        AND (
            sqlc.narg(claim_id)::uuid IS NULL
@@ -264,7 +264,7 @@ WITH selected_actor AS MATERIALIZED (
                 WHERE idempotency_claims.environment_id = sessions.environment_id
                   AND idempotency_claims.id = sqlc.narg(claim_id)
                   AND idempotency_claims.operation = 'actor.start'
-                  AND idempotency_claims.state = 'pending'
+                  AND idempotency_claims.status = 'pending'
                   AND idempotency_claims.retired_at IS NULL
            )
        )
@@ -377,12 +377,12 @@ WITH selected_target AS MATERIALIZED (
       JOIN workspace_versions
         ON workspace_versions.workspace_id = workspaces.id
        AND workspace_versions.id = sqlc.arg(base_workspace_version_id)
-       AND workspace_versions.state = 'committed'
+       AND workspace_versions.status = 'committed'
       LEFT JOIN idempotency_claims
         ON idempotency_claims.environment_id = parent.environment_id
        AND idempotency_claims.id = sqlc.narg(claim_id)
        AND idempotency_claims.operation = 'task.child.invoke'
-       AND idempotency_claims.state = 'pending'
+       AND idempotency_claims.status = 'pending'
        AND idempotency_claims.retired_at IS NULL
      WHERE parent.environment_id = sqlc.arg(environment_id)
        AND parent.id = sqlc.arg(parent_run_id)
@@ -494,8 +494,8 @@ WITH selected_target AS MATERIALIZED (
        AND wait.child_run_id IS NULL
        AND wait.child_target_declared_id = sqlc.arg(entrypoint_declared_id)
        AND wait.child_claim_id = sqlc.arg(claim_id)
-       AND wait.condition_state = 'pending'
-       AND wait.suspension_state = 'checkpointing'
+       AND wait.condition_status = 'pending'
+       AND wait.suspension_status = 'checkpointing'
        AND wait.current_run_lease_id = sqlc.arg(parent_run_lease_id)
        AND wait.suspend_checkpoint_id = sqlc.arg(suspend_checkpoint_id)
       JOIN run_checkpoints AS checkpoint
@@ -504,13 +504,13 @@ WITH selected_target AS MATERIALIZED (
        AND checkpoint.workspace_id = parent.workspace_id
        AND checkpoint.run_wait_id = wait.id
        AND checkpoint.id = wait.suspend_checkpoint_id
-       AND checkpoint.state = 'ready'
+       AND checkpoint.status = 'ready'
        AND checkpoint.private_workspace_version_id =
            sqlc.arg(base_workspace_version_id)
       JOIN workspace_versions AS base
         ON base.workspace_id = parent.workspace_id
        AND base.id = checkpoint.private_workspace_version_id
-       AND base.state = 'private'
+       AND base.status = 'private'
       JOIN deployment_definitions AS definitions
         ON definitions.environment_id = parent.environment_id
        AND definitions.deployment_id = parent.deployment_id
@@ -520,7 +520,7 @@ WITH selected_target AS MATERIALIZED (
         ON claim.environment_id = parent.environment_id
        AND claim.id = wait.child_claim_id
        AND claim.operation = 'task.child.invoke'
-       AND claim.state = 'pending'
+       AND claim.status = 'pending'
        AND claim.retired_at IS NULL
      WHERE parent.environment_id = sqlc.arg(environment_id)
        AND parent.id = sqlc.arg(parent_run_id)
@@ -709,11 +709,11 @@ WITH close_runtimes AS (
     RETURNING id
 )
 UPDATE workspace_mounts
-   SET state = 'unmounting',
+   SET status = 'unmounting',
        stopped_at = coalesce(stopped_at, transaction_timestamp()),
        updated_at = transaction_timestamp()
  WHERE runtime_instance_id IN (SELECT id FROM close_runtimes)
-   AND state IN ('mounting', 'mounted');
+   AND status IN ('mounting', 'mounted');
 
 -- name: ExpireQueuedRunAttempt :execrows
 UPDATE run_attempts
@@ -729,12 +729,12 @@ UPDATE run_attempts
 UPDATE runs
    SET status = 'expired',
        failure = sqlc.arg(failure)::jsonb,
-       state_version = state_version + 1,
+       revision = revision + 1,
        retry_at = NULL,
        terminal_at = transaction_timestamp(),
        updated_at = transaction_timestamp()
  WHERE id = sqlc.arg(id)
-   AND state_version = sqlc.arg(expected_state_version)
+   AND revision = sqlc.arg(expected_revision)
    AND status = 'queued'
    AND current_run_lease_id IS NULL
    AND first_lease_at IS NULL
@@ -745,7 +745,7 @@ UPDATE runs
 UPDATE workspaces
    SET owner_run_id = NULL,
        ownership_generation = ownership_generation + 1,
-       state_version = state_version + 1,
+       revision = revision + 1,
        last_activity_at = transaction_timestamp(),
        updated_at = transaction_timestamp()
  WHERE workspaces.id = sqlc.arg(workspace_id)
@@ -755,7 +755,7 @@ UPDATE workspaces
        SELECT 1
          FROM workspace_leases
         WHERE workspace_leases.workspace_id = workspaces.id
-          AND workspace_leases.state IN ('active', 'releasing')
+          AND workspace_leases.status IN ('active', 'releasing')
    );
 
 -- name: CreateQueuedRunExpiryEvent :exec
@@ -768,7 +768,7 @@ SELECT runs.org_id, 'event', 'run', runs.id, runs.project_id, runs.environment_i
        runs.id, runs.current_attempt_number, runs.trace_id, runs.root_span_id, 'lifecycle', 'info',
        'control', 'run.expired', 'Run expired',
        jsonb_build_object('reasonCode', 'queued_ttl_expired'),
-       'internal', runs.state_version, transaction_timestamp()
+       'internal', runs.revision, transaction_timestamp()
   FROM runs
  WHERE runs.id = sqlc.arg(run_id);
 

@@ -62,18 +62,18 @@ SELECT owner_run_id
 	if ownerRunID != nil {
 		t.Fatalf("cancelled root retained Workspace ownership: %s", *ownerRunID)
 	}
-	var desiredState, mountState string
+	var desiredState, mountStatus string
 	if err := fixture.pool.QueryRow(ctx, `
-SELECT runtime_instances.desired_state, workspace_mounts.state
+SELECT runtime_instances.desired_state, workspace_mounts.status
   FROM run_leases
   JOIN runtime_instances ON runtime_instances.id = run_leases.runtime_instance_id
   JOIN workspace_mounts ON workspace_mounts.runtime_instance_id = runtime_instances.id
  WHERE run_leases.id = $1`, parent.leaseID,
-	).Scan(&desiredState, &mountState); err != nil {
+	).Scan(&desiredState, &mountStatus); err != nil {
 		t.Fatal(err)
 	}
-	if desiredState != "closed" || mountState != "unmounting" {
-		t.Fatalf("cleanup state = runtime:%s mount:%s", desiredState, mountState)
+	if desiredState != "closed" || mountStatus != "unmounting" {
+		t.Fatalf("cleanup state = runtime:%s mount:%s", desiredState, mountStatus)
 	}
 
 	replay, err := canceler.Cancel(ctx, CancellationRequest{
@@ -163,15 +163,15 @@ func TestOwnedFinalizationFailsSecretRevokedRun(t *testing.T) {
 	var runReason string
 	var runError []byte
 	var attemptOutcome, attemptReason string
-	var runLeaseState, workspaceLeaseState string
+	var runLeaseStatus, workspaceLeaseStatus string
 	if err := fixture.pool.QueryRow(ctx, `
 SELECT runs.status,
 	   runs.failure->>'code',
 	   runs.failure,
        run_attempts.terminal_outcome,
        run_attempts.terminal_reason_code,
-       run_leases.state,
-       workspace_leases.state
+       run_leases.status,
+       workspace_leases.status
   FROM runs
   JOIN run_attempts
     ON run_attempts.run_id = runs.id
@@ -190,22 +190,22 @@ SELECT runs.status,
 		&runError,
 		&attemptOutcome,
 		&attemptReason,
-		&runLeaseState,
-		&workspaceLeaseState,
+		&runLeaseStatus,
+		&workspaceLeaseStatus,
 	); err != nil {
 		t.Fatal(err)
 	}
 	if runStatus != db.RunStatusFailed || runReason != "secret_revoked" ||
 		attemptOutcome != "failed" || attemptReason != "secret_revoked" ||
-		runLeaseState != "rejected" || workspaceLeaseState != "fenced" {
+		runLeaseStatus != "rejected" || workspaceLeaseStatus != "fenced" {
 		t.Fatalf(
 			"Secret-revoked authority = run:%s/%s attempt:%s/%s leases:%s/%s",
 			runStatus,
 			runReason,
 			attemptOutcome,
 			attemptReason,
-			runLeaseState,
-			workspaceLeaseState,
+			runLeaseStatus,
+			workspaceLeaseStatus,
 		)
 	}
 	var failurePayload map[string]any
@@ -331,22 +331,22 @@ UPDATE runs
 	exhaustRuntimePreparation(t, ctx, fixture, work.runID)
 
 	var runStatus db.RunStatus
-	var sessionState string
+	var sessionStatus string
 	var failure []byte
 	if err := fixture.pool.QueryRow(ctx, `
-SELECT runs.status, sessions.state, sessions.failure
+SELECT runs.status, sessions.status, sessions.failure
   FROM runs
   JOIN sessions ON sessions.id = $2
- WHERE runs.id = $1`, work.runID, sessionID).Scan(&runStatus, &sessionState, &failure); err != nil {
+ WHERE runs.id = $1`, work.runID, sessionID).Scan(&runStatus, &sessionStatus, &failure); err != nil {
 		t.Fatal(err)
 	}
 	var payload Failure
 	if err := json.Unmarshal(failure, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if runStatus != db.RunStatusSystemFailed || sessionState != "failed" ||
+	if runStatus != db.RunStatusSystemFailed || sessionStatus != "failed" ||
 		payload.Code != "platform_failure" {
-		t.Fatalf("actor preparation exhaustion = run:%s session:%s failure:%+v", runStatus, sessionState, payload)
+		t.Fatalf("actor preparation exhaustion = run:%s session:%s failure:%+v", runStatus, sessionStatus, payload)
 	}
 }
 
@@ -375,13 +375,13 @@ UPDATE runs
 INSERT INTO run_waits (
     id, environment_id, run_id, workspace_id, kind,
     child_run_id, child_target_declared_id,
-    child_claim_id, child_request, suspension_state,
-    expected_run_state_version, attempt_number, current_run_lease_id,
+    child_claim_id, child_request, suspension_status,
+    expected_run_revision, attempt_number, current_run_lease_id,
     resume_attach_id
 )
 SELECT $1, runs.environment_id, runs.id, runs.workspace_id, 'child',
        $2, 'test-task', $3, '{}'::jsonb, 'hot',
-       runs.state_version, runs.current_attempt_number, runs.current_run_lease_id,
+       runs.revision, runs.current_attempt_number, runs.current_run_lease_id,
        $4
   FROM runs
  WHERE runs.id = $5`,
@@ -390,10 +390,10 @@ SELECT $1, runs.environment_id, runs.id, runs.workspace_id, 'child',
 	exhaustRuntimePreparation(t, ctx, fixture, child.runID)
 
 	var childStatus, parentStatus db.RunStatus
-	var condition db.WaitState
+	var condition db.WaitStatus
 	var result []byte
 	if err := fixture.pool.QueryRow(ctx, `
-SELECT child.status, parent.status, wait.condition_state, wait.condition_result
+SELECT child.status, parent.status, wait.condition_status, wait.condition_result
   FROM runs AS child
   JOIN runs AS parent ON parent.id = child.parent_run_id
   JOIN run_waits AS wait ON wait.id = $2
@@ -410,7 +410,7 @@ SELECT child.status, parent.status, wait.condition_state, wait.condition_result
 		t.Fatal(err)
 	}
 	if childStatus != db.RunStatusSystemFailed || parentStatus != db.RunStatusRunning ||
-		condition != db.WaitStateCompleted || payload.OK ||
+		condition != db.WaitStatusCompleted || payload.OK ||
 		payload.Failure.Code != "runtime_preparation_failed" {
 		t.Fatalf(
 			"different-workspace preparation exhaustion = child:%s parent:%s wait:%s result:%+v",
@@ -495,9 +495,9 @@ UPDATE runs
 }
 
 func TestCancelerResolvesDifferentWorkspaceChildWait(t *testing.T) {
-	for _, suspension := range []db.RunWaitState{
-		db.RunWaitStateHot,
-		db.RunWaitStateCheckpointing,
+	for _, suspension := range []db.RunWaitStatus{
+		db.RunWaitStatusHot,
+		db.RunWaitStatusCheckpointing,
 	} {
 		t.Run(string(suspension), func(t *testing.T) {
 			ctx := t.Context()
@@ -539,13 +539,13 @@ UPDATE runs
 INSERT INTO run_waits (
     id, environment_id, run_id, workspace_id, kind,
     child_run_id, child_target_declared_id,
-    child_claim_id, child_request, suspension_state,
-    expected_run_state_version, attempt_number, current_run_lease_id,
+    child_claim_id, child_request, suspension_status,
+    expected_run_revision, attempt_number, current_run_lease_id,
     resume_attach_id
 )
 SELECT $1, runs.environment_id, runs.id, runs.workspace_id, 'child',
        $2, 'test-task', $3, '{}'::jsonb, $4,
-       runs.state_version, runs.current_attempt_number, runs.current_run_lease_id,
+       runs.revision, runs.current_attempt_number, runs.current_run_lease_id,
        $5
   FROM runs
  WHERE runs.id = $6`,
@@ -575,13 +575,13 @@ SELECT $1, runs.environment_id, runs.id, runs.workspace_id, 'child',
 			}
 
 			var parentStatus db.RunStatus
-			var condition db.WaitState
-			var resolvedSuspension db.RunWaitState
+			var condition db.WaitStatus
+			var resolvedSuspension db.RunWaitStatus
 			var conditionResult []byte
 			if err := fixture.pool.QueryRow(ctx, `
 SELECT runs.status,
-       run_waits.condition_state,
-       run_waits.suspension_state,
+       run_waits.condition_status,
+       run_waits.suspension_status,
        run_waits.condition_result
   FROM runs
   JOIN run_waits ON run_waits.run_id = runs.id
@@ -598,13 +598,13 @@ SELECT runs.status,
 				t.Fatal(err)
 			}
 			expectedStatus := db.RunStatusWaiting
-			expectedSuspension := db.RunWaitStateCheckpointing
-			if suspension == db.RunWaitStateHot {
+			expectedSuspension := db.RunWaitStatusCheckpointing
+			if suspension == db.RunWaitStatusHot {
 				expectedStatus = db.RunStatusRunning
-				expectedSuspension = db.RunWaitStateReleased
+				expectedSuspension = db.RunWaitStatusReleased
 			}
 			if parentStatus != expectedStatus ||
-				condition != db.WaitStateCompleted ||
+				condition != db.WaitStatusCompleted ||
 				resolvedSuspension != expectedSuspension {
 				t.Fatalf(
 					"parent Wait = run:%s condition:%s suspension:%s",
@@ -643,13 +643,13 @@ func assertCancellationState(
 	wantWorkspaceLease string,
 ) {
 	t.Helper()
-	var runStatus, leaseState, workspaceLeaseState string
+	var runStatus, leaseStatus, workspaceLeaseStatus string
 	var attemptOutcome string
 	if err := fixture.pool.QueryRow(t.Context(), `
 SELECT runs.status,
        run_attempts.terminal_outcome,
-       run_leases.state,
-       workspace_leases.state
+       run_leases.status,
+       workspace_leases.status
   FROM runs
   JOIN run_attempts
     ON run_attempts.run_id = runs.id
@@ -657,14 +657,14 @@ SELECT runs.status,
   JOIN run_leases ON run_leases.id = $2
   JOIN workspace_leases ON workspace_leases.owner_run_lease_id = run_leases.id
  WHERE runs.id = $1`, work.runID, work.leaseID,
-	).Scan(&runStatus, &attemptOutcome, &leaseState, &workspaceLeaseState); err != nil {
+	).Scan(&runStatus, &attemptOutcome, &leaseStatus, &workspaceLeaseStatus); err != nil {
 		t.Fatal(err)
 	}
 	if runStatus != wantRun || attemptOutcome != "cancelled" ||
-		leaseState != wantLease || workspaceLeaseState != wantWorkspaceLease {
+		leaseStatus != wantLease || workspaceLeaseStatus != wantWorkspaceLease {
 		t.Fatalf(
 			"authority state = run:%s attempt:%s lease:%s workspace-lease:%s",
-			runStatus, attemptOutcome, leaseState, workspaceLeaseState,
+			runStatus, attemptOutcome, leaseStatus, workspaceLeaseStatus,
 		)
 	}
 }

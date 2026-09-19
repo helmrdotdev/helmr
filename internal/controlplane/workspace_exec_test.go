@@ -21,7 +21,7 @@ func TestPublicWorkspaceExecProcessProjectsOnlySafeStatesAndTerminalData(t *test
 	exitCode := int32(0)
 	resource, err := publicWorkspaceExecProcess(db.WorkspaceProcess{
 		ID:       processID,
-		State:    db.WorkspaceProcessStateExited,
+		Status:   db.WorkspaceProcessStatusExited,
 		ExitCode: pgtype.Int4{Int32: exitCode, Valid: true},
 		Stdout:   []byte("ok\n"),
 		Stderr:   []byte{},
@@ -39,7 +39,7 @@ func TestPublicWorkspaceExecProcessProjectsOnlySafeStatesAndTerminalData(t *test
 
 	failed, err := publicWorkspaceExecProcess(db.WorkspaceProcess{
 		ID:                 processID,
-		State:              db.WorkspaceProcessStateFailed,
+		Status:             db.WorkspaceProcessStatusFailed,
 		TerminalReasonCode: pgvalue.Text("database_password=secret"),
 	})
 	if err != nil {
@@ -50,7 +50,7 @@ func TestPublicWorkspaceExecProcessProjectsOnlySafeStatesAndTerminalData(t *test
 	}
 
 	pending, err := publicWorkspaceExecProcess(db.WorkspaceProcess{
-		ID: processID, State: db.WorkspaceProcessStateStarting,
+		ID: processID, Status: db.WorkspaceProcessStatusStarting,
 	})
 	if err != nil || pending.Status != api.WorkspaceExecProcessStatusPending ||
 		publicWorkspaceExecHTTPStatus(pending) != 202 {
@@ -224,7 +224,7 @@ func TestWorkspaceExecPublicationSecretsRequireCurrentResolution(t *testing.T) {
 	processID := pgvalue.UUID(uuid.NewV7())
 	valid := db.LockProcessSecretDeliveryRow{
 		Secret: db.Secret{
-			State:                "active",
+			Status:               "active",
 			RevocationGeneration: 3,
 		},
 		ResolutionID:                   pgvalue.UUID(uuid.NewV7()),
@@ -239,7 +239,7 @@ func TestWorkspaceExecPublicationSecretsRequireCurrentResolution(t *testing.T) {
 		t.Fatal("current Secret resolution was rejected")
 	}
 	revoked := valid
-	revoked.Secret.State = "revoked"
+	revoked.Secret.Status = "revoked"
 	if workspaceExecPublicationSecretsValid(
 		[]db.LockProcessSecretDeliveryRow{revoked},
 		processID,

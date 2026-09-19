@@ -226,7 +226,7 @@ export function Overview() {
                     when={attention().length > 0}
                     fallback={<StatePanel empty="Nothing is waiting on you." hint="Pending Tokens and waiting Actor Runs appear here." />}
                   >
-                    <DataTable columns={["Kind", "Item", "Tags", "State", "Time", { label: "Actions", srOnly: true }]} minWidth="min-w-180">
+                    <DataTable columns={["Kind", "Item", "Tags", "Status", "Time", { label: "Actions", srOnly: true }]} minWidth="min-w-180">
                       <For each={attention().slice(0, SECTION_ROWS)}>
                         {(row) => row.kind === "token" ? (
                           <tr>

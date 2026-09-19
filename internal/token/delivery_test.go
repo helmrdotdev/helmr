@@ -210,7 +210,7 @@ func tokenReconcileMessage(environmentID, tokenID uuid.UUID) db.ControlOutbox {
 		ID:             pgvalue.UUID(uuid.NewV7()),
 		Topic:          "token.reconcile",
 		Payload:        []byte(`{"environmentId":"` + environmentID.String() + `","tokenId":"` + tokenID.String() + `"}`),
-		State:          "claimed",
+		Status:         "claimed",
 		Attempts:       1,
 		ClaimedBy:      pgvalue.Text("worker"),
 		ClaimExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),

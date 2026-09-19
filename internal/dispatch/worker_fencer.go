@@ -67,7 +67,7 @@ type StaleWorkerFenceResult struct {
 	WorkerInstanceID pgtype.UUID
 	WorkerGroupID    pgtype.UUID
 	WorkerEpoch      pgtype.Int8
-	PreviousState    db.WorkerInstanceState
+	PreviousStatus   db.WorkerInstanceStatus
 	FreshnessAt      time.Time
 	Outcome          StaleWorkerFenceOutcome
 	Reason           string
@@ -282,7 +282,7 @@ func (f *StaleWorkerFencer) ReconcileOnce(ctx context.Context) (StaleWorkerFence
 					WorkerInstanceID: candidate.ID,
 					WorkerGroupID:    candidate.WorkerGroupID,
 					WorkerEpoch:      candidate.CurrentEpoch,
-					PreviousState:    candidate.State,
+					PreviousStatus:   candidate.Status,
 					FreshnessAt:      candidate.FreshnessAt.Time,
 					Reason:           candidate.Reason,
 				}
@@ -319,7 +319,7 @@ func (f *StaleWorkerFencer) ReconcileOnce(ctx context.Context) (StaleWorkerFence
 			"worker_instance_id", result.WorkerInstanceID,
 			"worker_group_id", pgvalue.UUIDString(result.WorkerGroupID),
 			"worker_epoch", result.WorkerEpoch.Int64,
-			"previous_state", result.PreviousState,
+			"previous_status", result.PreviousStatus,
 			"freshness_at", result.FreshnessAt,
 			"outcome", result.Outcome,
 			"reason", result.Reason,

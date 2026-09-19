@@ -67,7 +67,7 @@ func TestStaleWorkerFenceUsesStateAppropriateStrictBoundaries(t *testing.T) {
 	if got := byID[pgvalue.UUID(staleEpochID)].CurrentEpoch; !got.Valid || got.Int64 != 1 {
 		t.Fatalf("epoch-bearing registering candidate epoch = %+v, want 1", got)
 	}
-	if got := byID[pgvalue.UUID(activeStaleID)].State; got != db.WorkerInstanceStateActive {
+	if got := byID[pgvalue.UUID(activeStaleID)].Status; got != db.WorkerInstanceStatusActive {
 		t.Fatalf("active stale candidate state = %q, want active", got)
 	}
 	fenced, err := txQueries.RecheckAndFenceStaleWorkerInstance(ctx, db.RecheckAndFenceStaleWorkerInstanceParams{
@@ -80,8 +80,8 @@ func TestStaleWorkerFenceUsesStateAppropriateStrictBoundaries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fenced.State != db.WorkerInstanceStateLost {
-		t.Fatalf("pre-epoch registering fence state = %q, want lost", fenced.State)
+	if fenced.Status != db.WorkerInstanceStatusLost {
+		t.Fatalf("pre-epoch registering fence state = %q, want lost", fenced.Status)
 	}
 	fencedWithEpoch, err := txQueries.RecheckAndFenceStaleWorkerInstance(ctx, db.RecheckAndFenceStaleWorkerInstanceParams{
 		ID: pgvalue.UUID(staleEpochID), WorkerGroupID: dbtest.DefaultWorkerGroupID,
@@ -93,8 +93,8 @@ func TestStaleWorkerFenceUsesStateAppropriateStrictBoundaries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fencedWithEpoch.State != db.WorkerInstanceStateLost {
-		t.Fatalf("epoch-bearing registering fence state = %q, want lost", fencedWithEpoch.State)
+	if fencedWithEpoch.Status != db.WorkerInstanceStatusLost {
+		t.Fatalf("epoch-bearing registering fence state = %q, want lost", fencedWithEpoch.Status)
 	}
 	fencedActive, err := txQueries.RecheckAndFenceStaleWorkerInstance(ctx, db.RecheckAndFenceStaleWorkerInstanceParams{
 		ID: pgvalue.UUID(activeStaleID), WorkerGroupID: dbtest.DefaultWorkerGroupID,
@@ -106,38 +106,38 @@ func TestStaleWorkerFenceUsesStateAppropriateStrictBoundaries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fencedActive.State != db.WorkerInstanceStateLost {
-		t.Fatalf("active stale fence state = %q, want lost", fencedActive.State)
+	if fencedActive.Status != db.WorkerInstanceStatusLost {
+		t.Fatalf("active stale fence state = %q, want lost", fencedActive.Status)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
 
-	var exactState db.WorkerInstanceState
-	var freshUnderActiveCutoffState db.WorkerInstanceState
-	var staleState db.WorkerInstanceState
-	var staleEpochState db.WorkerInstanceState
-	var activeExactState db.WorkerInstanceState
-	var activeStaleState db.WorkerInstanceState
-	if err := pool.QueryRow(ctx, `SELECT state FROM worker_instances WHERE id = $1`, exactID).Scan(&exactState); err != nil {
+	var exactState db.WorkerInstanceStatus
+	var freshUnderActiveCutoffState db.WorkerInstanceStatus
+	var staleState db.WorkerInstanceStatus
+	var staleEpochState db.WorkerInstanceStatus
+	var activeExactState db.WorkerInstanceStatus
+	var activeStaleState db.WorkerInstanceStatus
+	if err := pool.QueryRow(ctx, `SELECT status FROM worker_instances WHERE id = $1`, exactID).Scan(&exactState); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT state FROM worker_instances WHERE id = $1`, freshUnderActiveCutoffID).Scan(&freshUnderActiveCutoffState); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT status FROM worker_instances WHERE id = $1`, freshUnderActiveCutoffID).Scan(&freshUnderActiveCutoffState); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT state FROM worker_instances WHERE id = $1`, staleID).Scan(&staleState); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT status FROM worker_instances WHERE id = $1`, staleID).Scan(&staleState); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT state FROM worker_instances WHERE id = $1`, staleEpochID).Scan(&staleEpochState); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT status FROM worker_instances WHERE id = $1`, staleEpochID).Scan(&staleEpochState); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT state FROM worker_instances WHERE id = $1`, activeExactID).Scan(&activeExactState); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT status FROM worker_instances WHERE id = $1`, activeExactID).Scan(&activeExactState); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT state FROM worker_instances WHERE id = $1`, activeStaleID).Scan(&activeStaleState); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT status FROM worker_instances WHERE id = $1`, activeStaleID).Scan(&activeStaleState); err != nil {
 		t.Fatal(err)
 	}
-	if exactState != db.WorkerInstanceStateRegistering || freshUnderActiveCutoffState != db.WorkerInstanceStateRegistering || staleState != db.WorkerInstanceStateLost || staleEpochState != db.WorkerInstanceStateLost || activeExactState != db.WorkerInstanceStateActive || activeStaleState != db.WorkerInstanceStateLost {
+	if exactState != db.WorkerInstanceStatusRegistering || freshUnderActiveCutoffState != db.WorkerInstanceStatusRegistering || staleState != db.WorkerInstanceStatusLost || staleEpochState != db.WorkerInstanceStatusLost || activeExactState != db.WorkerInstanceStatusActive || activeStaleState != db.WorkerInstanceStatusLost {
 		t.Fatalf("states exact=%q fresh_under_active_cutoff=%q stale=%q stale_epoch=%q active_exact=%q active_stale=%q", exactState, freshUnderActiveCutoffState, staleState, staleEpochState, activeExactState, activeStaleState)
 	}
 }
@@ -190,14 +190,14 @@ func TestUnobservedActiveWorkerFreshnessStartsAtActivation(t *testing.T) {
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	var exactState, staleState db.WorkerInstanceState
-	if err := pool.QueryRow(ctx, `SELECT state FROM worker_instances WHERE id = $1`, exactID).Scan(&exactState); err != nil {
+	var exactState, staleState db.WorkerInstanceStatus
+	if err := pool.QueryRow(ctx, `SELECT status FROM worker_instances WHERE id = $1`, exactID).Scan(&exactState); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT state FROM worker_instances WHERE id = $1`, staleID).Scan(&staleState); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT status FROM worker_instances WHERE id = $1`, staleID).Scan(&staleState); err != nil {
 		t.Fatal(err)
 	}
-	if exactState != db.WorkerInstanceStateActive || staleState != db.WorkerInstanceStateLost {
+	if exactState != db.WorkerInstanceStatusActive || staleState != db.WorkerInstanceStatusLost {
 		t.Fatalf("states exact=%q stale=%q, want active and lost", exactState, staleState)
 	}
 }
@@ -240,11 +240,11 @@ func TestFreshWorkerObservationWinsAgainstStaleFenceRecheck(t *testing.T) {
 	if err := observationTx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	var state db.WorkerInstanceState
-	if err := pool.QueryRow(ctx, `SELECT state FROM worker_instances WHERE id = $1`, workerID).Scan(&state); err != nil {
+	var state db.WorkerInstanceStatus
+	if err := pool.QueryRow(ctx, `SELECT status FROM worker_instances WHERE id = $1`, workerID).Scan(&state); err != nil {
 		t.Fatal(err)
 	}
-	if state != db.WorkerInstanceStateActive {
+	if state != db.WorkerInstanceStatusActive {
 		t.Fatalf("worker state = %q, want active", state)
 	}
 }
@@ -293,11 +293,11 @@ func TestStaleFenceWinsBeforeLateWorkerObservation(t *testing.T) {
 	if err := <-observationDone; !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("late observation error = %v, want pgx.ErrNoRows", err)
 	}
-	var state db.WorkerInstanceState
-	if err := pool.QueryRow(ctx, `SELECT state FROM worker_instances WHERE id = $1`, workerID).Scan(&state); err != nil {
+	var state db.WorkerInstanceStatus
+	if err := pool.QueryRow(ctx, `SELECT status FROM worker_instances WHERE id = $1`, workerID).Scan(&state); err != nil {
 		t.Fatal(err)
 	}
-	if state != db.WorkerInstanceStateLost {
+	if state != db.WorkerInstanceStatusLost {
 		t.Fatalf("worker state = %q, want lost", state)
 	}
 }
@@ -308,7 +308,7 @@ func TestWorkerObservationFollowsTheLiveEpochThroughDrain(t *testing.T) {
 	workerID := insertActiveWorkerWithObservation(t, ctx, pool, time.Now())
 	if _, err := pool.Exec(ctx, `
 		UPDATE worker_instances
-		   SET state = 'draining', draining_at = now()
+		   SET status = 'draining', draining_at = now()
 		 WHERE id = $1
 	`, workerID); err != nil {
 		t.Fatal(err)
@@ -321,7 +321,7 @@ func TestWorkerObservationFollowsTheLiveEpochThroughDrain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if observed.State != db.WorkerInstanceStateDraining || !observed.ObservedAt.Valid || observed.RunPausedReason.String != "startup_recovery_leak" {
+	if observed.Status != db.WorkerInstanceStatusDraining || !observed.ObservedAt.Valid || observed.RunPausedReason.String != "startup_recovery_leak" {
 		t.Fatalf("draining observation = %+v", observed)
 	}
 	staleEpoch := workerObservation(workerID)
@@ -331,7 +331,7 @@ func TestWorkerObservationFollowsTheLiveEpochThroughDrain(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `
 		UPDATE worker_instances
-		   SET state = 'termination_ready', termination_ready_at = now()
+		   SET status = 'termination_ready', termination_ready_at = now()
 		 WHERE id = $1
 	`, workerID); err != nil {
 		t.Fatal(err)
@@ -354,7 +354,7 @@ func insertRegisteringWorker(t *testing.T, ctx context.Context, pool *pgxpool.Po
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO worker_instances (
-			id, resource_id, worker_group_id, worker_pool_id, state, updated_at,
+			id, resource_id, worker_group_id, worker_pool_id, status, updated_at,
 			current_epoch, current_service_id, epoch_started_at
 		) VALUES ($1, $2, $3, $8, 'registering', $4, $5, $6, $7)
 	`, id, "registering-"+id.String(), dbtest.DefaultWorkerGroupID, updatedAt, epoch, serviceID, epochStartedAt,
@@ -370,7 +370,7 @@ func insertActiveWorkerWithObservation(t *testing.T, ctx context.Context, pool *
 	serviceID := uuid.NewV7()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO worker_instances (
-			id, resource_id, worker_group_id, worker_pool_id, state,
+			id, resource_id, worker_group_id, worker_pool_id, status,
 			current_epoch, current_service_id, runtime_identity_id,
 			substrate_format, substrate_contract,
 			epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,

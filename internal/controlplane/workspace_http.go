@@ -234,7 +234,7 @@ func (s *Server) workspaceSnapshot(
 		}
 		secrets = append(secrets, item)
 	}
-	status, err := workspacePublicStatus(record.State)
+	status, err := workspacePublicStatus(record.Status)
 	if err != nil {
 		return api.WorkspaceSnapshot{}, err
 	}
@@ -263,11 +263,11 @@ func (s *Server) workspaceSnapshot(
 
 func workspacePublicStatus(state string) (api.WorkspaceStatus, error) {
 	switch state {
-	case db.WorkspaceStateActive:
+	case db.WorkspaceStatusActive:
 		return api.WorkspaceStatusAvailable, nil
-	case db.WorkspaceStateRecoveryRequired:
+	case db.WorkspaceStatusRecoveryRequired:
 		return api.WorkspaceStatusRecoveryRequired, nil
-	case db.WorkspaceStateDeleting:
+	case db.WorkspaceStatusDeleting:
 		return api.WorkspaceStatusDeleting, nil
 	default:
 		return "", fmt.Errorf("workspace state %q has no public projection", state)

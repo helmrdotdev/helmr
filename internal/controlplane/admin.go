@@ -244,7 +244,7 @@ func (s *Server) adminDisableWorkerGroup(w http.ResponseWriter, r *http.Request)
 	s.adminTransitionWorkerGroup(w, r, workergroup.DisableGroup)
 }
 
-type groupTransition func(context.Context, workergroup.StateStore, uuid.UUID, int64) (workergroup.GroupStatus, error)
+type groupTransition func(context.Context, workergroup.StatusStore, uuid.UUID, int64) (workergroup.GroupStatus, error)
 
 func (s *Server) adminTransitionWorkerGroup(w http.ResponseWriter, r *http.Request, transition groupTransition) {
 	groupID, ok := adminGroupID(w, r)
@@ -262,17 +262,17 @@ func (s *Server) adminTransitionWorkerGroup(w http.ResponseWriter, r *http.Reque
 	}
 	var status workergroup.GroupStatus
 	err := s.inTx(r.Context(), func(work *txWork) error {
-		if err := work.q.LockWorkerGroupMutation(r.Context(), workergroup.StateMutationLockKey(groupID)); err != nil {
+		if err := work.q.LockWorkerGroupMutation(r.Context(), workergroup.StatusMutationLockKey(groupID)); err != nil {
 			return errors.New("lock worker group lifecycle")
 		}
-		if _, err := work.q.GetWorkerGroupState(r.Context(), pgvalue.UUID(groupID)); isNoRows(err) {
+		if _, err := work.q.GetWorkerGroupStatus(r.Context(), pgvalue.UUID(groupID)); isNoRows(err) {
 			return notFound(errors.New("worker group not found"))
 		} else if err != nil {
 			return errors.New("read worker group lifecycle")
 		}
 		var err error
 		status, err = transition(r.Context(), work.q, groupID, request.ExpectedClaimVersion)
-		if errors.Is(err, workergroup.ErrStateConflict) {
+		if errors.Is(err, workergroup.ErrStatusConflict) {
 			return conflict(errors.New("worker group state or claim version changed"))
 		}
 		return err
@@ -364,7 +364,7 @@ func (s *Server) adminCreateWorkerPool(w http.ResponseWriter, r *http.Request) {
 			return errors.New("lock worker group for pool creation")
 		}
 		if group.ClaimVersion != request.ExpectedGroupClaimVersion ||
-			(group.State != db.WorkerGroupStateActive && group.State != db.WorkerGroupStatePaused) {
+			(group.Status != db.WorkerGroupStatusActive && group.Status != db.WorkerGroupStatusPaused) {
 			return conflict(errors.New("worker group state or claim version changed"))
 		}
 		created, err = work.q.CreatePendingWorkerPool(r.Context(), db.CreatePendingWorkerPoolParams{
@@ -468,20 +468,20 @@ func (s *Server) adminTransitionWorkerPool(w http.ResponseWriter, r *http.Reques
 		if err != nil {
 			return errors.New("lock worker pool for lifecycle")
 		}
-		if pool.State == target && pool.ClaimVersion == request.ExpectedPoolClaimVersion+1 {
+		if pool.Status == target && pool.ClaimVersion == request.ExpectedPoolClaimVersion+1 {
 			return nil
 		}
 		if pool.ClaimVersion != request.ExpectedPoolClaimVersion {
 			return conflict(errors.New("worker pool state or claim version changed"))
 		}
-		if target == "draining" && pool.State != "active" {
+		if target == "draining" && pool.Status != "active" {
 			return conflict(errors.New("only an active worker pool can begin draining"))
 		}
-		if target == "disabled" && pool.State != "pending" && pool.State != "draining" {
+		if target == "disabled" && pool.Status != "pending" && pool.Status != "draining" {
 			return conflict(errors.New("only an unreferenced pending or drained worker pool can be disabled"))
 		}
 		transitioned, err := work.q.TransitionWorkerPoolLifecycle(r.Context(), db.TransitionWorkerPoolLifecycleParams{
-			TargetState: target, WorkerPoolID: pgvalue.UUID(poolID), WorkerGroupID: pgvalue.UUID(groupID),
+			TargetStatus: target, WorkerPoolID: pgvalue.UUID(poolID), WorkerGroupID: pgvalue.UUID(groupID),
 			ExpectedPoolClaimVersion: request.ExpectedPoolClaimVersion,
 		})
 		if isNoRows(err) {
@@ -509,7 +509,7 @@ func adminRegion(row db.Region) api.AdminRegion {
 func adminWorkerGroup(row db.WorkerGroup) api.AdminWorkerGroup {
 	return api.AdminWorkerGroup{
 		ID: pgvalue.UUIDString(row.ID), RegionID: row.RegionID, Name: row.Name, Description: row.Description,
-		State: row.State, ClaimVersion: row.ClaimVersion,
+		Status: row.Status, ClaimVersion: row.ClaimVersion,
 		PrimaryPoolID: adminOptionalUUID(row.PrimaryPoolID),
 	}
 }
@@ -517,7 +517,7 @@ func adminWorkerGroup(row db.WorkerGroup) api.AdminWorkerGroup {
 func adminWorkerPool(pool db.WorkerPool, group db.WorkerGroup) api.AdminWorkerPool {
 	return api.AdminWorkerPool{
 		ID: uuid.UUID(pool.ID.Bytes).String(), WorkerGroupID: pgvalue.UUIDString(pool.WorkerGroupID),
-		Name: pool.Name, State: pool.State, ClaimVersion: pool.ClaimVersion,
+		Name: pool.Name, Status: pool.Status, ClaimVersion: pool.ClaimVersion,
 		Primary: group.PrimaryPoolID.Valid && group.PrimaryPoolID.Bytes == pool.ID.Bytes,
 	}
 }

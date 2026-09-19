@@ -41,7 +41,7 @@ func LockAttemptRetryResolutions(
 	resolutions := make([]Resolution, 0, len(rows))
 	for _, row := range rows {
 		if row.PlacementKind == "" || row.PlacementTarget == "" ||
-			!row.SecretID.Valid || row.SecretState != "active" ||
+			!row.SecretID.Valid || row.SecretStatus != "active" ||
 			!row.CurrentVersionID.Valid || !row.ResolutionID.Valid ||
 			row.ResolutionRunID != runID ||
 			!row.ResolutionAttemptNumber.Valid ||

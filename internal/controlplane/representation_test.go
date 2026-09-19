@@ -71,7 +71,7 @@ func TestPublicLifecycleTokensUseCanonicalSnakeCase(t *testing.T) {
 	if status, err := schedulePublicStatus("active"); err != nil || status != api.ScheduleStatusActive {
 		t.Fatalf("schedule status = %q, err = %v", status, err)
 	}
-	if status, err := workspacePublicStatus(db.WorkspaceStateRecoveryRequired); err != nil || status != api.WorkspaceStatusRecoveryRequired {
+	if status, err := workspacePublicStatus(db.WorkspaceStatusRecoveryRequired); err != nil || status != api.WorkspaceStatusRecoveryRequired {
 		t.Fatalf("workspace status = %q, err = %v", status, err)
 	}
 }

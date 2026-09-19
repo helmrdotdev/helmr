@@ -423,7 +423,7 @@ func (p *PreparedRuntimePool) ReclaimFailedRuntimeTarget(ctx context.Context, cl
 	if err := p.releaseRuntimeAfterPhysicalCleanup(runtimeInstanceID, target.WorkerEpoch); err != nil {
 		return err
 	}
-	request := runtimeTargetStateRequest(target, errors.New("runtime physical cleanup reconciled"))
+	request := runtimeTargetStatusRequest(target, errors.New("runtime physical cleanup reconciled"))
 	request.CleanupProof = &workerapi.RuntimeCleanupProof{Method: workerapi.RuntimeCleanupHostReconciled, CompletedAt: time.Now().UTC()}
 	if _, err := client.MarkRuntimeInstanceFailed(ctx, request); err != nil {
 		return fmt.Errorf("persist failed runtime cleanup proof: %w", err)
@@ -484,7 +484,7 @@ func (p *PreparedRuntimePool) StopRuntimeTarget(ctx context.Context, client Prep
 		}
 		proofMethod = workerapi.RuntimeCleanupHostReconciled
 	}
-	request := runtimeTargetStateRequest(target, nil)
+	request := runtimeTargetStatusRequest(target, nil)
 	request.CleanupProof = &workerapi.RuntimeCleanupProof{Method: proofMethod, CompletedAt: time.Now().UTC()}
 	_, err := client.MarkRuntimeInstanceClosed(ctx, request)
 	if err != nil {
@@ -603,7 +603,7 @@ func (p *PreparedRuntimePool) transitionRuntimeTargetFailed(ctx context.Context,
 	if p.RuntimeInstances == nil {
 		return errors.New("prepared runtime instance client is required")
 	}
-	_, err := p.RuntimeInstances.MarkRuntimeInstanceFailed(ctx, runtimeTargetStateRequest(target, failure))
+	_, err := p.RuntimeInstances.MarkRuntimeInstanceFailed(ctx, runtimeTargetStatusRequest(target, failure))
 	return err
 }
 
@@ -772,7 +772,7 @@ func (p *PreparedRuntimePool) prepareAndStore(
 		session, materializeErr = connector.Materialize(ctx, vm.MaterializeRequest{
 			ID: runtimeInstanceID, OwnerKind: vm.OwnerRuntime, RootfsDigest: mount.RootfsDigest,
 			Binding:            runtimeTargetWorkloadBinding(target),
-			WorkspaceMountPath: mount.WorkspaceMountPath, BaseVersionID: mount.Target.BaseWorkspaceVersionID,
+			WorkspaceMountPath: mount.WorkspaceMountPath, BaseWorkspaceVersionID: mount.Target.BaseWorkspaceVersionID,
 			Resources: compute.ResourceVector{MilliCPU: mount.RequestedMilliCPU, MemoryMiB: mount.RequestedMemoryMiB,
 				DiskMiB: mount.RequestedDiskMiB, Slots: mount.RequestedExecutionSlots},
 			VMVCPUCount: target.Source.VMVCPUCount, CPUConfigDigest: target.Source.CPUConfigDigest,
@@ -851,7 +851,7 @@ func (p *PreparedRuntimePool) prepareAndStore(
 		}
 		return nil
 	}
-	readyRequest := runtimeTargetStateRequest(target, nil)
+	readyRequest := runtimeTargetStatusRequest(target, nil)
 	readyRequest.RuntimeSubstrateID = runtimeSubstrateIDValue
 	readyRequest.VMVCPUCount = target.Source.VMVCPUCount
 	readyRequest.CPUConfigDigest = target.Source.CPUConfigDigest
@@ -1402,7 +1402,7 @@ func (p *PreparedRuntimePool) prepareGuestRuntime(ctx context.Context, session v
 				if phaseError := workspaceMountPhaseError(response.GetPhases()); phaseError != "" {
 					return fmt.Errorf("prepared runtime rejected workspace image: %s: %w", phaseError, err)
 				}
-				return fmt.Errorf("prepared runtime returned state %q while writing workspace image: %w", response.GetState(), err)
+				return fmt.Errorf("prepared runtime returned state %q while writing workspace image: %w", response.GetStatus(), err)
 			}
 			return fmt.Errorf("write prepared runtime workspace image: %w", err)
 		}
@@ -1414,7 +1414,7 @@ func (p *PreparedRuntimePool) prepareGuestRuntime(ctx context.Context, session v
 	if err := readProtoFrameFromReaderContext(ctx, session, stream, &response); err != nil {
 		return fmt.Errorf("read prepared runtime response: %w", err)
 	}
-	p.logInfo("prepared runtime pool response read", "runtime_instance_id", key, "duration_ms", time.Since(started).Milliseconds(), "state", strings.TrimSpace(response.State))
+	p.logInfo("prepared runtime pool response read", "runtime_instance_id", key, "duration_ms", time.Since(started).Milliseconds(), "state", strings.TrimSpace(response.Status))
 	for _, guestPhase := range response.GetPhases() {
 		if guestPhase == nil {
 			continue
@@ -1428,11 +1428,11 @@ func (p *PreparedRuntimePool) prepareGuestRuntime(ctx context.Context, session v
 			"error", strings.TrimSpace(guestPhase.GetError()),
 		)
 	}
-	if response.State != "prepared" {
+	if response.Status != "prepared" {
 		if phaseError := workspaceMountPhaseError(response.GetPhases()); phaseError != "" {
-			return fmt.Errorf("prepared runtime returned state %q: %s", response.State, phaseError)
+			return fmt.Errorf("prepared runtime returned state %q: %s", response.Status, phaseError)
 		}
-		return fmt.Errorf("prepared runtime returned state %q", response.State)
+		return fmt.Errorf("prepared runtime returned state %q", response.Status)
 	}
 	if strings.TrimSpace(response.RuntimeInstanceId) != key {
 		return errors.New("prepared runtime instance id mismatch")
@@ -1521,7 +1521,7 @@ func (p *PreparedRuntimePool) closeSession(parent context.Context, session vm.Se
 	return session.Close(ctx)
 }
 
-func runtimeTargetStateRequest(target workerapi.RuntimeReconcileTarget, failure error) workerapi.RuntimeInstanceStateRequest {
+func runtimeTargetStatusRequest(target workerapi.RuntimeReconcileTarget, failure error) workerapi.RuntimeInstanceStateRequest {
 	request := workerapi.RuntimeInstanceStateRequest{
 		ID: target.ID, WorkerEpoch: target.WorkerEpoch, DesiredVersion: target.DesiredVersion,
 		ExpectedObservedVersion: target.ObservedVersion, ReasonCode: "desired_state_reconciled",
@@ -1551,7 +1551,7 @@ func (p *PreparedRuntimePool) markRuntimeTargetFailedWithProof(ctx context.Conte
 }
 
 func (p *PreparedRuntimePool) reportRuntimeTargetFailedWithProof(ctx context.Context, client PreparedRuntimeInstanceClient, target workerapi.RuntimeReconcileTarget, failure error, proofMethod string) error {
-	request := runtimeTargetStateRequest(target, failure)
+	request := runtimeTargetStatusRequest(target, failure)
 	if proofMethod != "" {
 		request.CleanupProof = &workerapi.RuntimeCleanupProof{Method: proofMethod, CompletedAt: time.Now().UTC()}
 	}

@@ -73,7 +73,7 @@ func (d *Authority) grantFreshRun(
 		return db.RunLease{}, err
 	}
 	if mount.id != expectedMount.id ||
-		mount.state != db.WorkspaceMountStateMounted ||
+		mount.state != db.WorkspaceMountStatusMounted ||
 		(authority.restoreMountGeneration.Valid &&
 			mount.fencingGeneration != authority.restoreMountGeneration.Int64) {
 		return db.RunLease{}, ErrCapacityUnavailable
@@ -188,7 +188,7 @@ SELECT transaction_timestamp(),
 			WorkerEpoch:               runtime.workerEpoch,
 			RuntimeInstanceID:         runtime.id,
 			WorkspaceID:               authority.workspaceID,
-			BaseWorkspaceVersionID:    authority.baseVersionID,
+			BaseWorkspaceVersionID:    authority.baseWorkspaceVersionID,
 			ExpectedFencingGeneration: mount.fencingGeneration,
 		},
 	); err != nil {
@@ -209,7 +209,7 @@ SELECT transaction_timestamp(),
 			WorkspaceID:            authority.workspaceID,
 			WorkspaceMountID:       mount.id,
 			OwnerRunLeaseID:        runLeaseID,
-			BaseVersionID:          authority.baseVersionID,
+			BaseWorkspaceVersionID: authority.baseWorkspaceVersionID,
 			OwnershipGeneration:    authority.ownershipGeneration,
 			WriterGeneration:       writerGeneration,
 			MountFencingGeneration: mountGeneration,
@@ -233,7 +233,7 @@ SELECT transaction_timestamp(),
 					Int32: authority.attemptNumber,
 					Valid: true,
 				},
-				BaseWorkspaceVersionID: authority.baseVersionID,
+				BaseWorkspaceVersionID: authority.baseWorkspaceVersionID,
 				RestoreCheckpointID:    runtime.restoreCheckpoint,
 			},
 		)
@@ -247,11 +247,11 @@ SELECT transaction_timestamp(),
 	grantedRun, err := q.SetRunCurrentLease(
 		ctx,
 		db.SetRunCurrentLeaseParams{
-			RunLeaseID:           runLeaseID,
-			ID:                   authority.runID,
-			OrgID:                authority.orgID,
-			ExpectedStateVersion: authority.stateVersion,
-			AttemptNumber:        authority.attemptNumber,
+			RunLeaseID:       runLeaseID,
+			ID:               authority.runID,
+			OrgID:            authority.orgID,
+			ExpectedRevision: authority.revision,
+			AttemptNumber:    authority.attemptNumber,
 		},
 	)
 	if err != nil {
@@ -274,8 +274,8 @@ UPDATE run_waits
           AND child.environment_id = run_waits.environment_id
           AND child.parent_owns_lifecycle IS TRUE
    )
-   AND condition_state = 'pending'
-	   AND suspension_state = 'parked'
+   AND condition_status = 'pending'
+	   AND suspension_status = 'parked'
 	   AND current_run_lease_id IS NULL
 	   AND prior_run_lease_id IS NOT NULL
 	   AND ownership_generation = $5
@@ -305,16 +305,16 @@ RETURNING id`,
 		}
 		err = tx.QueryRow(ctx, `
 UPDATE run_waits
-	   SET suspension_state = 'resuming',
+	   SET suspension_status = 'resuming',
 	       current_run_lease_id = $1,
-	       expected_run_state_version = $2,
+	       expected_run_revision = $2,
 	       resume_writer_generation = $3,
 	       updated_at = transaction_timestamp()
 	 WHERE id = $4
    AND run_id = $5
    AND attempt_number = $6
    AND workspace_id = $7
-   AND suspension_state = 'resume_pending'
+   AND suspension_status = 'resume_pending'
 	   AND current_run_lease_id IS NULL
 	   AND resume_request_version = $8
 	   AND suspend_checkpoint_id = $9
@@ -325,7 +325,7 @@ UPDATE run_waits
 	   AND resume_writer_generation IS NULL
 RETURNING id`,
 			runLeaseID,
-			grantedRun.StateVersion,
+			grantedRun.Revision,
 			resumeWriterGeneration,
 			authority.resumeRunWaitID,
 			authority.runID,
@@ -333,7 +333,7 @@ RETURNING id`,
 			authority.workspaceID,
 			authority.resumeRequestVersion,
 			authority.restoreCheckpointID,
-			pgtype.UUID{Bytes: authority.baseVersionID.Bytes, Valid: authority.sameWorkspaceResume},
+			pgtype.UUID{Bytes: authority.baseWorkspaceVersionID.Bytes, Valid: authority.sameWorkspaceResume},
 			authority.resumeOwnership,
 			authority.resumeParentWriter,
 			authority.resumeChildWriter,
@@ -365,7 +365,7 @@ SELECT count(*),
  WHERE active_runs.environment_id = $1
    AND active_runs.queue_name = $2
    AND active_runs.concurrency_key IS NOT DISTINCT FROM $3::text
-   AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')`,
+   AND run_leases.status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')`,
 		authority.environmentID,
 		authority.queueName,
 		authority.concurrencyKey,
@@ -396,7 +396,7 @@ SELECT coalesce(sum(run_leases.requested_execution_slots), 0) + $3
   LEFT JOIN run_leases
     ON run_leases.worker_instance_id = worker_instances.id
    AND run_leases.worker_epoch = worker_instances.current_epoch
-   AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
+   AND run_leases.status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
  WHERE worker_instances.id = $1
    AND worker_instances.current_epoch = $2
  GROUP BY worker_instances.max_vm_slots`,

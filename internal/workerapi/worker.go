@@ -151,7 +151,7 @@ type RuntimeInstance struct {
 	VMVCPUCount            int32      `json:"vm_vcpu_count"`
 	CPUConfigDigest        string     `json:"cpu_config_digest"`
 	DeploymentDefinitionID string     `json:"deployment_definition_id"`
-	State                  string     `json:"state"`
+	Status                 string     `json:"status"`
 	ReservedCPUMillis      int32      `json:"reserved_cpu_millis"`
 	ReservedMemoryMiB      int32      `json:"reserved_memory_mib"`
 	ReservedDiskMiB        int64      `json:"reserved_disk_mib"`
@@ -766,12 +766,12 @@ type RunLeaseAssignmentProvider interface {
 }
 
 type Workspace struct {
-	ID                string             `json:"id,omitempty"`
-	WorkspaceMountID  string             `json:"workspace_mount_id,omitempty"`
-	FencingGeneration int64              `json:"fencing_generation,omitempty"`
-	BaseVersionID     string             `json:"base_version_id,omitempty"`
-	MountPath         string             `json:"mount_path,omitempty"`
-	Artifact          *WorkspaceArtifact `json:"artifact,omitempty"`
+	ID                     string             `json:"id,omitempty"`
+	WorkspaceMountID       string             `json:"workspace_mount_id,omitempty"`
+	FencingGeneration      int64              `json:"fencing_generation,omitempty"`
+	BaseWorkspaceVersionID string             `json:"base_workspace_version_id,omitempty"`
+	MountPath              string             `json:"mount_path,omitempty"`
+	Artifact               *WorkspaceArtifact `json:"artifact,omitempty"`
 }
 
 type RuntimeSubstrate struct {

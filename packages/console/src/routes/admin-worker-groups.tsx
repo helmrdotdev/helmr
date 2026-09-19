@@ -129,21 +129,21 @@ export function AdminWorkerGroups() {
               </StatePanel>
             }
           >
-            <DataTable columns={["Worker Group", "ID", "Region", "State", "Version", { label: "Actions", srOnly: true }]} minWidth="min-w-220">
+            <DataTable columns={["Worker Group", "ID", "Region", "Status", "Version", { label: "Actions", srOnly: true }]} minWidth="min-w-220">
               <For each={groups.data?.worker_groups ?? []}>
                 {(group) => (
                   <tr>
                     <td><strong class="font-medium text-console-text">{group.name}</strong></td>
                     <td><IDText value={group.id} /></td>
                     <td><code>{group.region_id}</code></td>
-                    <td><StatusBadge resource="worker_group" status={group.state} /></td>
+                    <td><StatusBadge resource="worker_group" status={group.status} /></td>
                     <td>{group.claim_version}</td>
                     <td class={ui.actionsCell}><div class="flex items-center justify-end gap-1.5">
                       <button type="button" class={ui.secondaryButton} onClick={() => { setError(null); setEditing(group); }}>Edit</button>
-                      <Show when={group.state === "active"}><button type="button" class={ui.secondaryButton} disabled={submitting()} onClick={() => void transition(group, "pause")}>Pause</button></Show>
-                      <Show when={group.state === "paused"}><button type="button" class={ui.secondaryButton} disabled={submitting()} onClick={() => void transition(group, "activate")}>Activate</button></Show>
-                      <Show when={group.state === "active" || group.state === "paused"}><button type="button" class={ui.secondaryButton} disabled={submitting()} onClick={() => void transition(group, "drain")}>Drain</button></Show>
-                      <Show when={group.state === "draining"}><button type="button" class={ui.dangerOutlineButton} disabled={submitting()} onClick={() => void transition(group, "disable")}>Disable</button></Show>
+                      <Show when={group.status === "active"}><button type="button" class={ui.secondaryButton} disabled={submitting()} onClick={() => void transition(group, "pause")}>Pause</button></Show>
+                      <Show when={group.status === "paused"}><button type="button" class={ui.secondaryButton} disabled={submitting()} onClick={() => void transition(group, "activate")}>Activate</button></Show>
+                      <Show when={group.status === "active" || group.status === "paused"}><button type="button" class={ui.secondaryButton} disabled={submitting()} onClick={() => void transition(group, "drain")}>Drain</button></Show>
+                      <Show when={group.status === "draining"}><button type="button" class={ui.dangerOutlineButton} disabled={submitting()} onClick={() => void transition(group, "disable")}>Disable</button></Show>
                       <button type="button" class={ui.secondaryButton} disabled={submitting()} onClick={() => void rotateToken(group)}>Rotate token</button>
                     </div></td>
                   </tr>

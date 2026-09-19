@@ -65,14 +65,14 @@ func TestAdminWorkerPoolPostgresGroupDrainClearsPrimariesAtomically(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.State != db.WorkerGroupStateDraining || status.ClaimVersion != group.ClaimVersion+1 || !status.TransitionApplied {
+	if status.Status != db.WorkerGroupStatusDraining || status.ClaimVersion != group.ClaimVersion+1 || !status.TransitionApplied {
 		t.Fatalf("group drain status = %+v", status)
 	}
 	draining, err := fixture.q.GetWorkerGroup(t.Context(), group.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if draining.State != db.WorkerGroupStateDraining || draining.ClaimVersion != group.ClaimVersion+1 ||
+	if draining.Status != db.WorkerGroupStatusDraining || draining.ClaimVersion != group.ClaimVersion+1 ||
 		draining.PrimaryPoolID.Valid {
 		t.Fatalf("draining group = %+v", draining)
 	}
@@ -81,12 +81,12 @@ func TestAdminWorkerPoolPostgresGroupDrainClearsPrimariesAtomically(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replay.State != db.WorkerGroupStateDraining || replay.ClaimVersion != draining.ClaimVersion || replay.TransitionApplied {
+	if replay.Status != db.WorkerGroupStatusDraining || replay.ClaimVersion != draining.ClaimVersion || replay.TransitionApplied {
 		t.Fatalf("group drain replay = %+v", replay)
 	}
 
 	drained, err := fixture.q.TransitionWorkerPoolLifecycle(t.Context(), db.TransitionWorkerPoolLifecycleParams{
-		TargetState:              "draining",
+		TargetStatus:             "draining",
 		WorkerPoolID:             pool.ID,
 		WorkerGroupID:            group.ID,
 		ExpectedPoolClaimVersion: pool.ClaimVersion,
@@ -94,7 +94,7 @@ func TestAdminWorkerPoolPostgresGroupDrainClearsPrimariesAtomically(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if drained.State != "draining" || drained.ClaimVersion != pool.ClaimVersion+1 {
+	if drained.Status != "draining" || drained.ClaimVersion != pool.ClaimVersion+1 {
 		t.Fatalf("drained pool = %+v", drained)
 	}
 }
@@ -215,7 +215,7 @@ func TestAdminWorkerPoolPostgresDisablesUnreferencedPendingPool(t *testing.T) {
 		t.Fatal(err)
 	}
 	disabled, err := fixture.q.TransitionWorkerPoolLifecycle(t.Context(), db.TransitionWorkerPoolLifecycleParams{
-		TargetState:              "disabled",
+		TargetStatus:             "disabled",
 		WorkerPoolID:             pending.ID,
 		WorkerGroupID:            fixture.group.ID,
 		ExpectedPoolClaimVersion: pending.ClaimVersion,
@@ -223,7 +223,7 @@ func TestAdminWorkerPoolPostgresDisablesUnreferencedPendingPool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if disabled.State != "disabled" || disabled.ClaimVersion != pending.ClaimVersion+1 || disabled.SealedAt.Valid {
+	if disabled.Status != "disabled" || disabled.ClaimVersion != pending.ClaimVersion+1 || disabled.SealedAt.Valid {
 		t.Fatalf("disabled pending pool = %+v", disabled)
 	}
 }
@@ -246,11 +246,11 @@ func TestAdminWorkerPoolPostgresDisablesPendingPoolWithOnlyLostWorker(t *testing
 	workerID := pgvalue.NewUUIDv7()
 	dbtest.MustExec(t, t.Context(), fixture.pool, `
 INSERT INTO worker_instances (
-    id, resource_id, worker_group_id, worker_pool_id, state
+    id, resource_id, worker_group_id, worker_pool_id, status
 ) VALUES ($1, 'lost-before-activation', $2, $3, 'registering')`,
 		workerID, fixture.group.ID, pending.ID)
 	if _, err := fixture.q.TransitionWorkerPoolLifecycle(t.Context(), db.TransitionWorkerPoolLifecycleParams{
-		TargetState:              "disabled",
+		TargetStatus:             "disabled",
 		WorkerPoolID:             pending.ID,
 		WorkerGroupID:            fixture.group.ID,
 		ExpectedPoolClaimVersion: pending.ClaimVersion,
@@ -259,11 +259,11 @@ INSERT INTO worker_instances (
 	}
 	dbtest.MustExec(t, t.Context(), fixture.pool, `
 UPDATE worker_instances
-   SET state = 'lost', lost_at = now()
+   SET status = 'lost', lost_at = now()
  WHERE id = $1`, workerID)
 
 	disabled, err := fixture.q.TransitionWorkerPoolLifecycle(t.Context(), db.TransitionWorkerPoolLifecycleParams{
-		TargetState:              "disabled",
+		TargetStatus:             "disabled",
 		WorkerPoolID:             pending.ID,
 		WorkerGroupID:            fixture.group.ID,
 		ExpectedPoolClaimVersion: pending.ClaimVersion,
@@ -271,7 +271,7 @@ UPDATE worker_instances
 	if err != nil {
 		t.Fatal(err)
 	}
-	if disabled.State != "disabled" || disabled.ClaimVersion != pending.ClaimVersion+1 || disabled.SealedAt.Valid {
+	if disabled.Status != "disabled" || disabled.ClaimVersion != pending.ClaimVersion+1 || disabled.SealedAt.Valid {
 		t.Fatalf("disabled pending pool with lost worker = %+v", disabled)
 	}
 }
@@ -303,21 +303,21 @@ UPDATE runtime_instances
  WHERE id = $1`, checkpoint.runtimeID)
 	dbtest.MustExec(t, t.Context(), product.pool, `
 UPDATE run_leases
-   SET state = 'checkpointing',
+   SET status = 'checkpointing',
        checkpointed_at = NULL,
        terminal_at = NULL,
        terminal_reason_code = NULL
  WHERE id = $1`, checkpoint.runLeaseID)
 	dbtest.MustExec(t, t.Context(), product.pool, `
 UPDATE run_checkpoints
-   SET state = 'creating',
+   SET status = 'creating',
        private_workspace_version_id = NULL,
        ready_request_fingerprint = NULL,
        ready_at = NULL
  WHERE id = $1`, checkpoint.checkpointID)
 
 	if _, err := fixture.q.TransitionWorkerPoolLifecycle(t.Context(), db.TransitionWorkerPoolLifecycleParams{
-		TargetState:              "draining",
+		TargetStatus:             "draining",
 		WorkerPoolID:             target.ID,
 		WorkerGroupID:            fixture.group.ID,
 		ExpectedPoolClaimVersion: target.ClaimVersion,
@@ -390,7 +390,7 @@ SELECT id::text
 			return
 		}
 		_, err := queries.TransitionWorkerPoolLifecycle(t.Context(), db.TransitionWorkerPoolLifecycleParams{
-			TargetState:              "draining",
+			TargetStatus:             "draining",
 			WorkerPoolID:             target.ID,
 			WorkerGroupID:            fixture.group.ID,
 			ExpectedPoolClaimVersion: target.ClaimVersion,
@@ -401,22 +401,22 @@ SELECT id::text
 
 	if _, err := checkpointTx.Exec(t.Context(), `
 UPDATE run_checkpoints
-   SET state = 'ready',
+   SET status = 'ready',
        private_workspace_version_id = $2,
-       ready_request_fingerprint = 'checkpoint-ready',
+       ready_request_fingerprint = 'sha256:286c6742559234cdc43309cfe461b4dc21dd5089ab08cbcf1c001b33e83f6a65',
        ready_at = now()
  WHERE id = $1
-   AND state = 'creating'`, checkpoint.checkpointID, checkpoint.baseVersionID); err != nil {
+   AND status = 'creating'`, checkpoint.checkpointID, checkpoint.baseWorkspaceVersionID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := checkpointTx.Exec(t.Context(), `
 UPDATE run_leases
-   SET state = 'checkpointed',
+   SET status = 'checkpointed',
        checkpointed_at = now(),
        terminal_at = now(),
        terminal_reason_code = 'checkpointed'
  WHERE id = $1
-   AND state = 'checkpointing'`, checkpoint.runLeaseID); err != nil {
+   AND status = 'checkpointing'`, checkpoint.runLeaseID); err != nil {
 		t.Fatal(err)
 	}
 	if err := checkpointTx.Commit(t.Context()); err != nil {
@@ -429,19 +429,19 @@ UPDATE run_leases
 		t.Fatal(err)
 	}
 
-	var checkpointState, leaseState, poolState string
+	var checkpointStatus, leaseStatus, poolStatus string
 	if err := product.pool.QueryRow(t.Context(), `
-SELECT run_checkpoints.state, run_leases.state, worker_pools.state
+SELECT run_checkpoints.status, run_leases.status, worker_pools.status
   FROM run_checkpoints
   JOIN run_leases ON run_leases.id = run_checkpoints.source_run_lease_id
   JOIN worker_pools ON worker_pools.id = $2
  WHERE run_checkpoints.id = $1`, checkpoint.checkpointID, target.ID).Scan(
-		&checkpointState, &leaseState, &poolState,
+		&checkpointStatus, &leaseStatus, &poolStatus,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if checkpointState != "ready" || leaseState != "checkpointed" || poolState != "active" {
-		t.Fatalf("serialized lifecycle = checkpoint:%s lease:%s pool:%s", checkpointState, leaseState, poolState)
+	if checkpointStatus != "ready" || leaseStatus != "checkpointed" || poolStatus != "active" {
+		t.Fatalf("serialized lifecycle = checkpoint:%s lease:%s pool:%s", checkpointStatus, leaseStatus, poolStatus)
 	}
 }
 
@@ -469,7 +469,7 @@ func TestAdminWorkerPoolPostgresRestorableCheckpointRequiresAnotherCompatibleSup
 	_ = seedRestorableCheckpointForWorkerPool(t, product, fixture, target)
 
 	_, err := fixture.q.TransitionWorkerPoolLifecycle(t.Context(), db.TransitionWorkerPoolLifecycleParams{
-		TargetState:              "draining",
+		TargetStatus:             "draining",
 		WorkerPoolID:             target.ID,
 		WorkerGroupID:            fixture.group.ID,
 		ExpectedPoolClaimVersion: target.ClaimVersion,
@@ -493,7 +493,7 @@ func TestAdminWorkerPoolPostgresRestorableCheckpointRequiresAnotherCompatibleSup
 		t.Fatalf("active Pool capacity bins = %+v", bins)
 	}
 	drained, err := fixture.q.TransitionWorkerPoolLifecycle(t.Context(), db.TransitionWorkerPoolLifecycleParams{
-		TargetState:              "draining",
+		TargetStatus:             "draining",
 		WorkerPoolID:             target.ID,
 		WorkerGroupID:            fixture.group.ID,
 		ExpectedPoolClaimVersion: target.ClaimVersion,
@@ -501,7 +501,7 @@ func TestAdminWorkerPoolPostgresRestorableCheckpointRequiresAnotherCompatibleSup
 	if err != nil {
 		t.Fatal(err)
 	}
-	if drained.State != "draining" || drained.ClaimVersion != target.ClaimVersion+1 {
+	if drained.Status != "draining" || drained.ClaimVersion != target.ClaimVersion+1 {
 		t.Fatalf("drained pool with replacement = %+v", drained)
 	}
 	bins, err = fixture.q.ListWorkerCapacityBins(t.Context(), db.ListWorkerCapacityBinsParams{
@@ -518,7 +518,7 @@ func TestAdminWorkerPoolPostgresRestorableCheckpointRequiresAnotherCompatibleSup
 	}
 
 	_, err = fixture.q.TransitionWorkerPoolLifecycle(t.Context(), db.TransitionWorkerPoolLifecycleParams{
-		TargetState:              "disabled",
+		TargetStatus:             "disabled",
 		WorkerPoolID:             target.ID,
 		WorkerGroupID:            fixture.group.ID,
 		ExpectedPoolClaimVersion: drained.ClaimVersion,
@@ -528,7 +528,7 @@ func TestAdminWorkerPoolPostgresRestorableCheckpointRequiresAnotherCompatibleSup
 	}
 	finishLiveRuntimeForWorkerPool(t, product.pool, live)
 	disabled, err := fixture.q.TransitionWorkerPoolLifecycle(t.Context(), db.TransitionWorkerPoolLifecycleParams{
-		TargetState:              "disabled",
+		TargetStatus:             "disabled",
 		WorkerPoolID:             target.ID,
 		WorkerGroupID:            fixture.group.ID,
 		ExpectedPoolClaimVersion: drained.ClaimVersion,
@@ -536,7 +536,7 @@ func TestAdminWorkerPoolPostgresRestorableCheckpointRequiresAnotherCompatibleSup
 	if err != nil {
 		t.Fatal(err)
 	}
-	if disabled.State != "disabled" || disabled.ClaimVersion != drained.ClaimVersion+1 {
+	if disabled.Status != "disabled" || disabled.ClaimVersion != drained.ClaimVersion+1 {
 		t.Fatalf("disabled drained pool = %+v", disabled)
 	}
 }
@@ -669,7 +669,7 @@ SELECT id, deployment_definition_id
 	}
 	dbtest.MustExec(t, t.Context(), product.pool, `
 INSERT INTO worker_instances (
-    id, resource_id, worker_group_id, worker_pool_id, state,
+    id, resource_id, worker_group_id, worker_pool_id, status,
     current_epoch, current_service_id, runtime_identity_id, substrate_format, substrate_contract,
     epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
     per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes,
@@ -721,7 +721,7 @@ UPDATE runtime_instances
  WHERE id = $1`, live.runtimeID)
 	dbtest.MustExec(t, t.Context(), pool, `
 UPDATE worker_instances
-   SET state = 'termination_ready',
+   SET status = 'termination_ready',
        claim_version = claim_version + 1,
        draining_at = now(),
        termination_ready_at = now(),
@@ -730,11 +730,11 @@ UPDATE worker_instances
 }
 
 type adminPoolCheckpoint struct {
-	workerID      uuid.UUID
-	runtimeID     uuid.UUID
-	runLeaseID    uuid.UUID
-	checkpointID  uuid.UUID
-	baseVersionID uuid.UUID
+	workerID               uuid.UUID
+	runtimeID              uuid.UUID
+	runLeaseID             uuid.UUID
+	checkpointID           uuid.UUID
+	baseWorkspaceVersionID uuid.UUID
 }
 
 func seedRestorableCheckpointForWorkerPool(
@@ -744,7 +744,7 @@ func seedRestorableCheckpointForWorkerPool(
 	pool db.WorkerPool,
 ) adminPoolCheckpoint {
 	t.Helper()
-	var taskDefinitionID, sandboxDefinitionID, baseVersionID uuid.UUID
+	var taskDefinitionID, sandboxDefinitionID, baseWorkspaceVersionID uuid.UUID
 	if err := product.pool.QueryRow(t.Context(), `
 SELECT id
   FROM deployment_definitions
@@ -756,7 +756,7 @@ SELECT id
 	if err := product.pool.QueryRow(t.Context(), `
 SELECT deployment_definition_id, head_version_id
   FROM workspaces
- WHERE id = $1`, product.workspaceIDs[0]).Scan(&sandboxDefinitionID, &baseVersionID); err != nil {
+ WHERE id = $1`, product.workspaceIDs[0]).Scan(&sandboxDefinitionID, &baseWorkspaceVersionID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -772,7 +772,7 @@ SELECT deployment_definition_id, head_version_id
 
 	dbtest.MustExec(t, t.Context(), product.pool, `
 INSERT INTO worker_instances (
-    id, resource_id, worker_group_id, worker_pool_id, state, lost_at
+    id, resource_id, worker_group_id, worker_pool_id, status, lost_at
 ) VALUES ($1, $2, $3, $4, 'lost', now())`,
 		workerID, "retained-checkpoint-worker", fixture.group.ID, pool.ID)
 	dbtest.MustExec(t, t.Context(), product.pool, `
@@ -801,11 +801,11 @@ INSERT INTO runs (
     '{}'::jsonb, 'default', now(), now(), 300000,
     '{"enabled":false}'::jsonb, '1111111111111111'
 	)`, runID, product.orgID, product.projectID, product.environmentID,
-		product.deploymentID, taskDefinitionID, product.workspaceIDs[0], baseVersionID)
+		product.deploymentID, taskDefinitionID, product.workspaceIDs[0], baseWorkspaceVersionID)
 	dbtest.MustExec(t, t.Context(), tx, `
 INSERT INTO run_attempts (
     run_id, number, entrypoint_kind, workspace_id, base_workspace_version_id
-) VALUES ($1, 1, 'task', $2, $3)`, runID, product.workspaceIDs[0], baseVersionID)
+) VALUES ($1, 1, 'task', $2, $3)`, runID, product.workspaceIDs[0], baseWorkspaceVersionID)
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -836,7 +836,7 @@ INSERT INTO run_leases (
     worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id,
     requested_cpu_millis, requested_memory_bytes,
     requested_guest_ephemeral_disk_bytes, requested_execution_slots,
-    state, created_at, start_deadline_at, claimed_at, started_at,
+    status, created_at, start_deadline_at, claimed_at, started_at,
     expires_at, checkpointed_at, terminal_at, terminal_reason_code
 ) VALUES (
     $1, $2, $3, $4, $5, $6, 'us-east-1', 1, 1, $7, $8, 1, $9, $10,
@@ -851,17 +851,17 @@ INSERT INTO run_leases (
 INSERT INTO workspace_mounts (
     id, org_id, worker_group_id, project_id, environment_id, region_id,
     worker_instance_id, worker_epoch, workspace_id, materialized_version_id,
-    runtime_instance_id, state, unmounted_at, terminal_at, terminal_reason_code
+    runtime_instance_id, status, unmounted_at, terminal_at, terminal_reason_code
 ) VALUES (
     $1, $2, $3, $4, $5, 'us-east-1', $6, 1, $7, $8, $9,
     'unmounted', now(), now(), 'checkpointed'
 )`, mountID, product.orgID, fixture.group.ID, product.projectID,
-		product.environmentID, workerID, product.workspaceIDs[0], baseVersionID, runtimeID)
+		product.environmentID, workerID, product.workspaceIDs[0], baseWorkspaceVersionID, runtimeID)
 	dbtest.MustExec(t, t.Context(), product.pool, `
 INSERT INTO workspace_leases (
     id, org_id, worker_group_id, project_id, environment_id, region_id,
     worker_instance_id, worker_epoch, runtime_instance_id, workspace_id,
-    workspace_mount_id, state, owner_run_lease_id, base_version_id,
+    workspace_mount_id, status, owner_run_lease_id, base_workspace_version_id,
     ownership_generation, writer_generation, mount_fencing_generation,
     fencing_token_hash, expires_at, released_at, terminal_at
 ) VALUES (
@@ -870,12 +870,12 @@ INSERT INTO workspace_leases (
     now() + interval '2 minutes', now(), now()
 )`, workspaceLeaseID, product.orgID, fixture.group.ID, product.projectID,
 		product.environmentID, workerID, runtimeID, product.workspaceIDs[0], mountID,
-		runLeaseID, baseVersionID)
+		runLeaseID, baseWorkspaceVersionID)
 	dbtest.MustExec(t, t.Context(), product.pool, `
 INSERT INTO run_waits (
     id, environment_id, run_id, workspace_id, kind, due_at,
-    condition_state, condition_result, condition_terminal_at,
-    suspension_state, expected_run_state_version, attempt_number,
+    condition_status, condition_result, condition_terminal_at,
+    suspension_status, expected_run_revision, attempt_number,
     resume_attach_id, suspension_terminal_at
 ) VALUES (
     $1, $2, $3, $4, 'timer', now(), 'completed', '{}'::jsonb, now(),
@@ -889,17 +889,17 @@ INSERT INTO run_checkpoints (
     base_workspace_version_id, private_workspace_version_id,
     runtime_config_artifact_id, vm_state_artifact_id,
     memory_artifact_id, scratch_disk_artifact_id,
-    state, restore_manifest, ready_request_fingerprint, ready_at
+    status, restore_manifest, ready_request_fingerprint, ready_at
 ) VALUES (
     $1, $2, 1, $3, $4, $5, $6, $7, $7,
     $8, $9, $10, $11,
-    'ready', '{"kind":"suspend"}'::jsonb, 'checkpoint-ready', now()
+    'ready', '{"kind":"suspend"}'::jsonb, 'sha256:286c6742559234cdc43309cfe461b4dc21dd5089ab08cbcf1c001b33e83f6a65', now()
 )`, checkpointID, runID, waitID, runLeaseID, workspaceLeaseID,
-		product.workspaceIDs[0], baseVersionID,
+		product.workspaceIDs[0], baseWorkspaceVersionID,
 		checkpointArtifacts.RuntimeConfig, checkpointArtifacts.VMState, checkpointArtifacts.Memory, checkpointArtifacts.ScratchDisk)
 	return adminPoolCheckpoint{
 		workerID: workerID, runtimeID: runtimeID,
 		runLeaseID: runLeaseID, checkpointID: checkpointID,
-		baseVersionID: baseVersionID,
+		baseWorkspaceVersionID: baseWorkspaceVersionID,
 	}
 }

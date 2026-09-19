@@ -16,9 +16,9 @@ WITH candidates AS (
     SELECT id
     FROM control_outbox
     WHERE (
-        (state = 'pending' AND available_at <= now())
+        (status = 'pending' AND available_at <= now())
         OR
-        (state = 'claimed' AND claim_expires_at <= now())
+        (status = 'claimed' AND claim_expires_at <= now())
       )
       AND control_outbox.topic = ANY($3::text[])
     ORDER BY available_at, id
@@ -26,13 +26,13 @@ WITH candidates AS (
     FOR UPDATE SKIP LOCKED
 )
 UPDATE control_outbox
-SET state = 'claimed',
+SET status = 'claimed',
     attempts = attempts + 1,
     claimed_by = $1,
     claim_expires_at = $2
 FROM candidates
 WHERE control_outbox.id = candidates.id
-RETURNING control_outbox.id, control_outbox.topic, control_outbox.payload, control_outbox.state, control_outbox.attempts, control_outbox.available_at, control_outbox.claimed_by, control_outbox.claim_expires_at, control_outbox.last_error, control_outbox.created_at, control_outbox.delivered_at
+RETURNING control_outbox.id, control_outbox.topic, control_outbox.payload, control_outbox.status, control_outbox.attempts, control_outbox.available_at, control_outbox.claimed_by, control_outbox.claim_expires_at, control_outbox.last_error, control_outbox.created_at, control_outbox.delivered_at
 `
 
 type ClaimControlOutboxParams struct {
@@ -60,7 +60,7 @@ func (q *Queries) ClaimControlOutbox(ctx context.Context, arg ClaimControlOutbox
 			&i.ID,
 			&i.Topic,
 			&i.Payload,
-			&i.State,
+			&i.Status,
 			&i.Attempts,
 			&i.AvailableAt,
 			&i.ClaimedBy,
@@ -83,7 +83,7 @@ const controlOutboxLifecycle = `-- name: ControlOutboxLifecycle :one
 WITH dead_letter_sample AS (
     SELECT 1
       FROM control_outbox
-     WHERE state = 'dead_lettered'
+     WHERE status = 'dead_lettered'
      ORDER BY created_at, id
      LIMIT ($1::integer + 1)
 ),
@@ -94,7 +94,7 @@ dead_letter_counts AS (
 SELECT (
            SELECT available_at
              FROM control_outbox
-            WHERE state = 'pending'
+            WHERE status = 'pending'
               AND available_at <= now()
             ORDER BY available_at, id
             LIMIT 1
@@ -130,7 +130,7 @@ VALUES (
     $3,
     $4
 )
-RETURNING id, topic, payload, state, attempts, available_at, claimed_by, claim_expires_at, last_error, created_at, delivered_at
+RETURNING id, topic, payload, status, attempts, available_at, claimed_by, claim_expires_at, last_error, created_at, delivered_at
 `
 
 type CreateControlOutboxParams struct {
@@ -152,7 +152,7 @@ func (q *Queries) CreateControlOutbox(ctx context.Context, arg CreateControlOutb
 		&i.ID,
 		&i.Topic,
 		&i.Payload,
-		&i.State,
+		&i.Status,
 		&i.Attempts,
 		&i.AvailableAt,
 		&i.ClaimedBy,
@@ -166,16 +166,16 @@ func (q *Queries) CreateControlOutbox(ctx context.Context, arg CreateControlOutb
 
 const deadLetterControlOutbox = `-- name: DeadLetterControlOutbox :one
 UPDATE control_outbox
-SET state = 'dead_lettered',
+SET status = 'dead_lettered',
     claimed_by = NULL,
     claim_expires_at = NULL,
     last_error = $1
 WHERE id = $2
-  AND state = 'claimed'
+  AND status = 'claimed'
   AND claimed_by = $3
   AND attempts = $4
   AND claim_expires_at > now()
-RETURNING id, topic, payload, state, attempts, available_at, claimed_by, claim_expires_at, last_error, created_at, delivered_at
+RETURNING id, topic, payload, status, attempts, available_at, claimed_by, claim_expires_at, last_error, created_at, delivered_at
 `
 
 type DeadLetterControlOutboxParams struct {
@@ -197,7 +197,7 @@ func (q *Queries) DeadLetterControlOutbox(ctx context.Context, arg DeadLetterCon
 		&i.ID,
 		&i.Topic,
 		&i.Payload,
-		&i.State,
+		&i.Status,
 		&i.Attempts,
 		&i.AvailableAt,
 		&i.ClaimedBy,
@@ -213,18 +213,18 @@ const deadLetterUnsupportedControlOutbox = `-- name: DeadLetterUnsupportedContro
 WITH candidates AS MATERIALIZED (
     SELECT id
     FROM control_outbox
-    WHERE state = 'pending'
+    WHERE status = 'pending'
       AND NOT (topic = ANY($1::text[]))
     ORDER BY created_at, id
     LIMIT $2
 )
 UPDATE control_outbox
-SET state = 'dead_lettered',
+SET status = 'dead_lettered',
     last_error = 'unsupported control outbox topic'
 FROM candidates
 WHERE control_outbox.id = candidates.id
-  AND control_outbox.state = 'pending'
-RETURNING control_outbox.id, control_outbox.topic, control_outbox.payload, control_outbox.state, control_outbox.attempts, control_outbox.available_at, control_outbox.claimed_by, control_outbox.claim_expires_at, control_outbox.last_error, control_outbox.created_at, control_outbox.delivered_at
+  AND control_outbox.status = 'pending'
+RETURNING control_outbox.id, control_outbox.topic, control_outbox.payload, control_outbox.status, control_outbox.attempts, control_outbox.available_at, control_outbox.claimed_by, control_outbox.claim_expires_at, control_outbox.last_error, control_outbox.created_at, control_outbox.delivered_at
 `
 
 type DeadLetterUnsupportedControlOutboxParams struct {
@@ -245,7 +245,7 @@ func (q *Queries) DeadLetterUnsupportedControlOutbox(ctx context.Context, arg De
 			&i.ID,
 			&i.Topic,
 			&i.Payload,
-			&i.State,
+			&i.Status,
 			&i.Attempts,
 			&i.AvailableAt,
 			&i.ClaimedBy,
@@ -266,17 +266,17 @@ func (q *Queries) DeadLetterUnsupportedControlOutbox(ctx context.Context, arg De
 
 const deliverControlOutbox = `-- name: DeliverControlOutbox :one
 UPDATE control_outbox
-SET state = 'delivered',
+SET status = 'delivered',
     claimed_by = NULL,
     claim_expires_at = NULL,
     last_error = NULL,
     delivered_at = now()
 WHERE id = $1
-  AND state = 'claimed'
+  AND status = 'claimed'
   AND claimed_by = $2
   AND attempts = $3
   AND claim_expires_at > now()
-RETURNING id, topic, payload, state, attempts, available_at, claimed_by, claim_expires_at, last_error, created_at, delivered_at
+RETURNING id, topic, payload, status, attempts, available_at, claimed_by, claim_expires_at, last_error, created_at, delivered_at
 `
 
 type DeliverControlOutboxParams struct {
@@ -292,7 +292,7 @@ func (q *Queries) DeliverControlOutbox(ctx context.Context, arg DeliverControlOu
 		&i.ID,
 		&i.Topic,
 		&i.Payload,
-		&i.State,
+		&i.Status,
 		&i.Attempts,
 		&i.AvailableAt,
 		&i.ClaimedBy,
@@ -309,7 +309,7 @@ DELETE FROM control_outbox
  WHERE id IN (
     SELECT id
       FROM control_outbox
-     WHERE state = 'delivered'
+     WHERE status = 'delivered'
        AND delivered_at < now() - $1::interval
      ORDER BY delivered_at, id
      LIMIT $2
@@ -331,17 +331,17 @@ func (q *Queries) PruneDeliveredControlOutbox(ctx context.Context, arg PruneDeli
 
 const retryControlOutbox = `-- name: RetryControlOutbox :one
 UPDATE control_outbox
-SET state = 'pending',
+SET status = 'pending',
     claimed_by = NULL,
     claim_expires_at = NULL,
     available_at = $1,
     last_error = $2
 WHERE id = $3
-  AND state = 'claimed'
+  AND status = 'claimed'
   AND claimed_by = $4
   AND attempts = $5
   AND claim_expires_at > now()
-RETURNING id, topic, payload, state, attempts, available_at, claimed_by, claim_expires_at, last_error, created_at, delivered_at
+RETURNING id, topic, payload, status, attempts, available_at, claimed_by, claim_expires_at, last_error, created_at, delivered_at
 `
 
 type RetryControlOutboxParams struct {
@@ -365,7 +365,7 @@ func (q *Queries) RetryControlOutbox(ctx context.Context, arg RetryControlOutbox
 		&i.ID,
 		&i.Topic,
 		&i.Payload,
-		&i.State,
+		&i.Status,
 		&i.Attempts,
 		&i.AvailableAt,
 		&i.ClaimedBy,

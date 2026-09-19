@@ -104,10 +104,10 @@ func (s *Server) startRun(
 		}); err != nil {
 			return staleAuthority(staleAuthorityRunStart, runStartFailureArm, err)
 		}
-		switch authority.runLease.State {
-		case db.RunLeaseStateStarting:
+		switch authority.runLease.Status {
+		case db.RunLeaseStatusStarting:
 			if err := validateRunStartLifecycle(mode, authority.run, authority.attempt); err != nil {
-				return staleAuthority(staleAuthorityRunStart, runStartFailureLeaseState, errStaleRunLeaseClaim)
+				return staleAuthority(staleAuthorityRunStart, runStartFailureLeaseStatus, errStaleRunLeaseClaim)
 			}
 			authority.runLease, err = work.q.MarkRunLeaseRunning(ctx, db.MarkRunLeaseRunningParams{
 				ID: authority.runLease.ID, RunID: authority.run.ID, WorkspaceID: authority.workspace.ID,
@@ -121,7 +121,7 @@ func (s *Server) startRun(
 			authority.run, err = work.q.MarkRunRunning(ctx, db.MarkRunRunningParams{
 				ID: authority.run.ID, OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID,
 				EnvironmentID: authority.run.EnvironmentID, WorkspaceID: authority.workspace.ID,
-				ExpectedStateVersion: authority.run.StateVersion, AttemptNumber: authority.attempt.Number,
+				ExpectedRevision: authority.run.Revision, AttemptNumber: authority.attempt.Number,
 				RunLeaseID: authority.runLease.ID,
 			})
 			if err != nil {
@@ -137,12 +137,12 @@ func (s *Server) startRun(
 			if err != nil {
 				return staleAuthority(staleAuthorityRunStart, runStartFailureTouchWorkspace, staleRunLeaseClaim(err))
 			}
-		case db.RunLeaseStateRunning:
+		case db.RunLeaseStatusRunning:
 			if authority.run.Status != db.RunStatusRunning {
-				return staleAuthority(staleAuthorityRunStart, runStartFailureLeaseState, errStaleRunLeaseClaim)
+				return staleAuthority(staleAuthorityRunStart, runStartFailureLeaseStatus, errStaleRunLeaseClaim)
 			}
 		default:
-			return staleAuthority(staleAuthorityRunStart, runStartFailureLeaseState, errStaleRunLeaseClaim)
+			return staleAuthority(staleAuthorityRunStart, runStartFailureLeaseStatus, errStaleRunLeaseClaim)
 		}
 		return nil
 	})
@@ -185,7 +185,7 @@ func lockRunStartAuthority(
 			return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureRun, staleRunLeaseClaim(err))
 		}
 		if authority.actor.CurrentRunID != locators.RunID ||
-			(authority.actor.State != "open" && authority.actor.State != "closing") {
+			(authority.actor.Status != "open" && authority.actor.Status != "closing") {
 			return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureRun, errStaleRunLeaseClaim)
 		}
 	}
@@ -219,7 +219,7 @@ func lockRunStartAuthority(
 	if err != nil {
 		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureWorkspace, staleRunLeaseClaim(err))
 	}
-	if authority.workspace.State != db.WorkspaceStateActive ||
+	if authority.workspace.Status != db.WorkspaceStatusActive ||
 		authority.workspace.DesiredState != db.WorkspaceDesiredStateActive {
 		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureWorkspace, errStaleRunLeaseClaim)
 	}
@@ -268,14 +268,14 @@ func lockRunStartAuthority(
 	if err != nil {
 		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureRunLease, staleRunLeaseClaim(err))
 	}
-	if authority.workerGroup.State != db.WorkerGroupStateActive &&
-		authority.workerGroup.State != db.WorkerGroupStateDraining {
+	if authority.workerGroup.Status != db.WorkerGroupStatusActive &&
+		authority.workerGroup.Status != db.WorkerGroupStatusDraining {
 		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureWorkerGroup, errStaleRunLeaseClaim)
 	}
 	if err := validateClaimPhysicalAuthority(worker, authority); err != nil {
 		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailurePhysicalAuthority, err)
 	}
-	if locators.EnclosingWaitID.Valid && authority.runLease.State == db.RunLeaseStateStarting &&
+	if locators.EnclosingWaitID.Valid && authority.runLease.Status == db.RunLeaseStatusStarting &&
 		(authority.parentRun.Status != db.RunStatusWaiting ||
 			authority.parentRun.CurrentRunLeaseID.Valid ||
 			authority.run.ParentRunID != authority.parentRun.ID ||
@@ -315,7 +315,7 @@ func lockRunStartAuthority(
 			return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureEnclosingWait, staleRunLeaseClaim(err))
 		}
 		authority.enclosingWait = enclosingWait
-		if authority.runLease.State == db.RunLeaseStateStarting {
+		if authority.runLease.Status == db.RunLeaseStatusStarting {
 			if err := validateActiveEnclosingWait(
 				enclosingWait, authority.run, authority.workspace.WriterGeneration, authority,
 			); err != nil {
@@ -332,7 +332,7 @@ func lockRunStartAuthority(
 			return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureWait, staleRunLeaseClaim(err))
 		}
 	}
-	if authority.runLease.State == db.RunLeaseStateStarting && mode == runLeaseClaimRestore {
+	if authority.runLease.Status == db.RunLeaseStatusStarting && mode == runLeaseClaimRestore {
 		authority, err = lockRunStartCheckpointAuthority(ctx, q, mode, authority)
 		if err != nil {
 			return runLeaseClaimAuthority{}, err
@@ -409,13 +409,13 @@ func validateRunStartArm(requested runStartArm, authority runStartValidationAuth
 	if wait.SuspendCheckpointID != requested.checkpointID {
 		return errStaleRunLeaseClaim
 	}
-	if wait.ConditionState == db.WaitStatePending ||
+	if wait.ConditionStatus == db.WaitStatusPending ||
 		wait.CurrentRunLeaseID != authority.runLease.ID ||
-		(wait.SuspensionState != db.RunWaitStateResuming &&
-			!(authority.runLease.State == db.RunLeaseStateRunning && wait.SuspensionState == db.RunWaitStateReleased)) ||
+		(wait.SuspensionStatus != db.RunWaitStatusResuming &&
+			!(authority.runLease.Status == db.RunLeaseStatusRunning && wait.SuspensionStatus == db.RunWaitStatusReleased)) ||
 		wait.ResumeRequestVersion != requested.resumeRequestVersion ||
-		(wait.SuspensionState == db.RunWaitStateResuming && wait.ResumeAckVersion >= wait.ResumeRequestVersion) ||
-		(wait.SuspensionState == db.RunWaitStateReleased && wait.ResumeAckVersion != wait.ResumeRequestVersion) ||
+		(wait.SuspensionStatus == db.RunWaitStatusResuming && wait.ResumeAckVersion >= wait.ResumeRequestVersion) ||
+		(wait.SuspensionStatus == db.RunWaitStatusReleased && wait.ResumeAckVersion != wait.ResumeRequestVersion) ||
 		authority.runtime.RestoreCheckpointID != requested.checkpointID {
 		return errStaleRunLeaseClaim
 	}

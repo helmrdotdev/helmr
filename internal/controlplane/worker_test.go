@@ -306,7 +306,7 @@ func sealedWorkerPool(
 		ID:                              poolID,
 		WorkerGroupID:                   pgvalue.UUID(groupID),
 		Name:                            name,
-		State:                           "active",
+		Status:                          "active",
 		RuntimeIdentityID:               pgtype.Text{String: template.Runtime.ID, Valid: true},
 		SubstrateFormat:                 pgtype.Text{String: template.Substrate.Format, Valid: true},
 		SubstrateContract:               pgtype.Text{String: template.Substrate.Contract, Valid: true},
@@ -329,8 +329,8 @@ func sealedWorkerPool(
 }
 
 func TestWorkerRoleReadinessReportsMissingObservation(t *testing.T) {
-	readiness := workerRoleReadiness(db.GetWorkerInstanceStateRow{
-		State: db.WorkerInstanceStateActive,
+	readiness := workerRoleReadiness(db.GetWorkerInstanceStatusRow{
+		Status: db.WorkerInstanceStatusActive,
 	}, false, pgtype.Text{})
 	if readiness.Ready || readiness.PausedReason != "observation_missing" {
 		t.Fatalf("readiness = %+v, want observation_missing", readiness)

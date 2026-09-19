@@ -232,7 +232,7 @@ func TestWorkspaceCAGuestCreateIngress(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			f := newSnapshotFixture(t, 1, true)
 			dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE runs SET status='running',started_at=now(),active_started_at=now() WHERE id=$1", f.run.RunID)
-			dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE run_leases SET state='running',started_at=now() WHERE id=$1", f.run.LeaseID)
+			dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE run_leases SET status='running',started_at=now() WHERE id=$1", f.run.LeaseID)
 			dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE run_attempts SET entrypoint_entered_at=now() WHERE run_id=$1", f.run.RunID)
 			// Raw source authority permits the requested protected/raw subsets.
 			dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE workspace_secrets SET mode='raw',placeholder='',allowed_origins='{}' WHERE workspace_id=$1", f.workspace)

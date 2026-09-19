@@ -25,7 +25,7 @@ func TestWorkerDeleteWorkspaceReplaysAfterTombstone(t *testing.T) {
 	expiresAt := time.Now().Add(10 * time.Minute).UTC()
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 UPDATE run_leases
-   SET state = 'running', started_at = now(), expires_at = $2
+   SET status = 'running', started_at = now(), expires_at = $2
  WHERE id = $1`, work.LeaseID, expiresAt)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 UPDATE workspace_leases SET expires_at = $2
@@ -55,7 +55,7 @@ INSERT INTO workspaces (
 		fixture.WorkspaceDefinitionID, versionID)
 	dbtest.MustExec(t, t.Context(), tx, `
 INSERT INTO workspace_versions (
-    id, environment_id, workspace_id, content_digest, state,
+    id, environment_id, workspace_id, content_digest, status,
     ownership_generation, writer_generation, published_at
 ) VALUES ($1, $2, $3, $4, 'committed', 0, 0, now())`,
 		versionID, fixture.EnvironmentID, workspaceID, workspace.CanonicalEmptyTreeDigest)

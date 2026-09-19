@@ -64,7 +64,7 @@ func (s *runResumeReleaseStore) ReleaseRunResumeWait(
 ) (db.RunWait, error) {
 	s.calls = append(s.calls, "release_wait")
 	wait := s.authority.runWait
-	if wait.SuspensionState != db.RunWaitStateResuming ||
+	if wait.SuspensionStatus != db.RunWaitStatusResuming ||
 		wait.ResumeAckVersion >= wait.ResumeRequestVersion ||
 		wait.ID != params.ID || wait.CurrentRunLeaseID != params.CurrentRunLeaseID ||
 		resumeReleaseCheckpointID(wait) != params.CheckpointID ||
@@ -73,7 +73,7 @@ func (s *runResumeReleaseStore) ReleaseRunResumeWait(
 		return db.RunWait{}, pgx.ErrNoRows
 	}
 	s.releaseWrites++
-	wait.SuspensionState = db.RunWaitStateReleased
+	wait.SuspensionStatus = db.RunWaitStatusReleased
 	wait.ResumeAckVersion = params.ResumeRequestVersion
 	wait.SuspensionTerminalAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
 	s.authority.runWait = wait
@@ -109,7 +109,7 @@ func TestAcknowledgeRunResumeReleaseCommitsOnceAndReplaysWithoutWrite(t *testing
 		t.Fatalf("fence = %+v, want %+v", receipt, expected.Fence())
 	}
 	if store.releaseWrites != 1 ||
-		store.authority.runWait.SuspensionState != db.RunWaitStateReleased ||
+		store.authority.runWait.SuspensionStatus != db.RunWaitStatusReleased ||
 		store.authority.runWait.ResumeAckVersion != proof.resumeRequestVersion ||
 		!store.authority.runWait.SuspensionTerminalAt.Valid {
 		t.Fatalf("released wait = %+v, writes = %d", store.authority.runWait, store.releaseWrites)
@@ -152,7 +152,7 @@ func TestAcknowledgeRunResumeReleaseUsesSuspendCheckpointForDifferentWorkspaceCh
 
 func TestAcknowledgeRunResumeReleaseAllowsRunningLeaseWhileGroupDrains(t *testing.T) {
 	server, store, worker, expected, proof := validRunResumeReleaseFixture(t)
-	store.authority.workerGroup.State = db.WorkerGroupStateDraining
+	store.authority.workerGroup.Status = db.WorkerGroupStatusDraining
 	if _, err := server.acknowledgeRunResumeRelease(
 		context.Background(), worker, store.authority.runLease.ID, expected.Fence(), proof,
 	); err != nil {
@@ -167,7 +167,7 @@ func TestWorkerResumeReleaseRefreshesClaimsBeforeReleasingWait(t *testing.T) {
 			store.authority.workerGroup.ClaimVersion++
 		} else {
 			store.authority.worker.ClaimVersion++
-			store.authority.worker.State = db.WorkerInstanceStateDraining
+			store.authority.worker.Status = db.WorkerInstanceStatusDraining
 		}
 		request := workerapi.RunResumeReleaseRequest{
 			Lease:     expected.Fence(),
@@ -235,7 +235,7 @@ func validRunResumeReleaseFixture(
 	worker, claimLocators, authority := validCheckpointRestoreRunLeaseClaimFixture(false)
 	authority.run.Status = db.RunStatusRunning
 	authority.run.MaxActiveDurationMs = 60_000
-	authority.runLease.State = db.RunLeaseStateRunning
+	authority.runLease.Status = db.RunLeaseStatusRunning
 	authority.runLease.StartDeadlineAt = pgtype.Timestamptz{Time: time.Now().Add(-time.Minute), Valid: true}
 	authority.runLease.ExpiresAt = pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true}
 	authority.workspaceMount.RuntimeInstanceID = authority.runtime.ID

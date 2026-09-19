@@ -191,7 +191,7 @@ export function Secrets() {
 
       <Show when={!secrets.isPending} fallback={<StatePanel loading="Loading secrets..." />}>
         <Show when={(secrets.data?.secrets.length ?? 0) > 0} fallback={<StatePanel empty="No secrets found." />}>
-          <DataTable columns={["Name", "State", "Rotated", "Created", { label: "Actions", srOnly: true }]} minWidth="min-w-225">
+          <DataTable columns={["Name", "Status", "Rotated", "Created", { label: "Actions", srOnly: true }]} minWidth="min-w-225">
             <For each={secrets.data?.secrets ?? []}>
               {(secret) => (
                 <SecretRow

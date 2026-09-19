@@ -23,12 +23,12 @@ import (
 const workspaceBasicExecOutputLimit = 4 << 20
 
 type workspaceBasicExec struct {
-	envelope            *workspacev0.WorkspaceOperationEnvelope
-	baseVersionID       string
-	ownershipGeneration int64
-	writerGeneration    int64
-	done                chan struct{}
-	result              *workspacev0.WorkspaceBasicExecResult
+	envelope               *workspacev0.WorkspaceOperationEnvelope
+	baseWorkspaceVersionID string
+	ownershipGeneration    int64
+	writerGeneration       int64
+	done                   chan struct{}
+	result                 *workspacev0.WorkspaceBasicExecResult
 }
 
 type workspaceBasicExecSpec struct {
@@ -108,7 +108,7 @@ func (r *workspaceOperationRegistry) startWorkspaceBasicExec(ctx context.Context
 		fixed.OperationExpiresAtUnixNano = execution.envelope.GetOperationExpiresAtUnixNano()
 		if subtle.ConstantTimeCompare([]byte(envelope.GetFencingToken()), []byte(execution.envelope.GetFencingToken())) != 1 ||
 			!proto.Equal(fixed, execution.envelope) ||
-			request.GetBaseWorkspaceVersionId() != execution.baseVersionID ||
+			request.GetBaseWorkspaceVersionId() != execution.baseWorkspaceVersionID ||
 			request.GetOwnershipGeneration() != execution.ownershipGeneration ||
 			request.GetWriterGeneration() != execution.writerGeneration ||
 			entry.currentFencingGeneration() != envelope.GetFencingGeneration() {
@@ -132,7 +132,7 @@ func (r *workspaceOperationRegistry) startWorkspaceBasicExec(ctx context.Context
 	entry.authorityMu.Lock()
 	defer entry.authorityMu.Unlock()
 	if entry.authority == nil {
-		if finalizing || request.GetBaseWorkspaceVersionId() != entry.baseVersionID || envelope.GetFencingGeneration() < entry.currentFencingGeneration() {
+		if finalizing || request.GetBaseWorkspaceVersionId() != entry.baseWorkspaceVersionID || envelope.GetFencingGeneration() < entry.currentFencingGeneration() {
 			return nil, "workspace_exec_fenced", errors.New("workspace exec does not match the mounted frontier")
 		}
 	} else {
@@ -168,7 +168,7 @@ func (r *workspaceOperationRegistry) startWorkspaceBasicExec(ctx context.Context
 		return nil, "workspace_exec_fenced", err
 	}
 
-	entry.baseVersionID = request.GetBaseWorkspaceVersionId()
+	entry.baseWorkspaceVersionID = request.GetBaseWorkspaceVersionId()
 	entry.authority = nil
 	entry.previousExpiry = 0
 	entry.setFencingGeneration(envelope.GetFencingGeneration())
@@ -179,8 +179,8 @@ func (r *workspaceOperationRegistry) startWorkspaceBasicExec(ctx context.Context
 	entry.processAdmissions++
 	entry.processesMu.Unlock()
 	execution := &workspaceBasicExec{
-		envelope:      proto.Clone(envelope).(*workspacev0.WorkspaceOperationEnvelope),
-		baseVersionID: request.GetBaseWorkspaceVersionId(), ownershipGeneration: request.GetOwnershipGeneration(), writerGeneration: request.GetWriterGeneration(), done: make(chan struct{}),
+		envelope:               proto.Clone(envelope).(*workspacev0.WorkspaceOperationEnvelope),
+		baseWorkspaceVersionID: request.GetBaseWorkspaceVersionId(), ownershipGeneration: request.GetOwnershipGeneration(), writerGeneration: request.GetWriterGeneration(), done: make(chan struct{}),
 	}
 	entry.basicExec = execution
 	// Keep the image alive even if the transport disconnects during execution.

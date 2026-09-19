@@ -168,10 +168,10 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 			err := runDispatchAuthority.RecoverWorkspaceExec(
 				ctx,
 				dispatch.RecoverableWorkspaceExecCandidate{
-					OrgID:                candidate.OrgID,
-					ProcessID:            candidate.ProcessID,
-					WorkspaceID:          candidate.WorkspaceID,
-					ExpectedStateVersion: candidate.ExpectedStateVersion,
+					OrgID:            candidate.OrgID,
+					ProcessID:        candidate.ProcessID,
+					WorkspaceID:      candidate.WorkspaceID,
+					ExpectedRevision: candidate.ExpectedRevision,
 				},
 			)
 			if errors.Is(err, dispatch.ErrCandidateChanged) {

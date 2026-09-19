@@ -101,15 +101,15 @@ SELECT pg_advisory_xact_lock(
 -- name: SetActorCurrentRun :one
 UPDATE sessions
    SET current_run_id = sqlc.arg(run_id),
-       state_version = state_version + 1,
+       revision = revision + 1,
        updated_at = now()
  WHERE environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id)
    AND workspace_id = sqlc.arg(workspace_id)
-   AND state = 'open'
+   AND status = 'open'
    AND current_run_id IS NULL
    AND run_generation = 1
-   AND state_version = 1
+   AND revision = 1
 RETURNING *;
 
 -- name: GetActor :one
@@ -166,8 +166,8 @@ SELECT sessions.*,
    AND deployment_definitions.declared_id = sessions.actor_declared_id
  WHERE sessions.environment_id = sqlc.arg(environment_id)
    AND (
-       coalesce(cardinality(sqlc.arg(states)::text[]), 0) = 0
-       OR sessions.state = ANY(sqlc.arg(states)::text[])
+       coalesce(cardinality(sqlc.arg(statuses)::text[]), 0) = 0
+       OR sessions.status = ANY(sqlc.arg(statuses)::text[])
    )
    AND (
        sqlc.narg(after_created_at)::timestamptz IS NULL

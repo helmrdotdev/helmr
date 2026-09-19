@@ -65,7 +65,7 @@ func TestActorTurnCommitBarrierBlocksProcessesAndAdvancesAuthorityFrontier(t *te
 		release()
 		t.Fatalf("advance Actor turn Workspace frontier: %v", err)
 	}
-	if entry.baseVersionID != "version-2" || entry.authority.GetFence().GetBaseWorkspaceVersionId() != "version-2" {
+	if entry.baseWorkspaceVersionID != "version-2" || entry.authority.GetFence().GetBaseWorkspaceVersionId() != "version-2" {
 		release()
 		t.Fatal("Actor turn commit did not advance both Workspace frontiers")
 	}
@@ -147,7 +147,7 @@ func TestActorTurnCommitFrontierRejectsStaleBase(t *testing.T) {
 		!strings.Contains(err.Error(), "stale") {
 		t.Fatalf("stale frontier error = %v", err)
 	}
-	if entry.baseVersionID != "version-1" || entry.authority.GetFence().GetBaseWorkspaceVersionId() != "version-1" {
+	if entry.baseWorkspaceVersionID != "version-1" || entry.authority.GetFence().GetBaseWorkspaceVersionId() != "version-1" {
 		t.Fatal("stale Actor turn commit mutated Workspace frontier")
 	}
 }
@@ -171,7 +171,7 @@ func TestActorTurnCommitFrontierRejectsExpiredAuthority(t *testing.T) {
 		t.Fatalf("expired frontier error = %v", err)
 	}
 	claim := registry.programClaimLocked(entry, entry.authority)
-	if entry.baseVersionID != "version-1" || entry.authority.GetFence().GetBaseWorkspaceVersionId() != "version-1" ||
+	if entry.baseWorkspaceVersionID != "version-1" || entry.authority.GetFence().GetBaseWorkspaceVersionId() != "version-1" ||
 		claim == nil || claim.authority.GetFence().GetBaseWorkspaceVersionId() != "version-1" {
 		t.Fatal("expired Actor authority mutated a guest Workspace frontier")
 	}

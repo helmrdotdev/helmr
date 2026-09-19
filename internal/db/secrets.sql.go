@@ -175,7 +175,7 @@ WITH secret AS (
         $3,
         $4
     )
-    RETURNING id, environment_id, name, state, state_version, current_version_id, revocation_generation, created_at, updated_at, revoked_at
+    RETURNING id, environment_id, name, status, revision, current_version_id, revocation_generation, created_at, updated_at, revoked_at
 ),
 version AS (
     INSERT INTO secret_versions (
@@ -194,7 +194,7 @@ version AS (
     FROM secret
     RETURNING secret_id
 )
-SELECT secret.id, secret.environment_id, secret.name, secret.state, secret.state_version, secret.current_version_id, secret.revocation_generation, secret.created_at, secret.updated_at, secret.revoked_at
+SELECT secret.id, secret.environment_id, secret.name, secret.status, secret.revision, secret.current_version_id, secret.revocation_generation, secret.created_at, secret.updated_at, secret.revoked_at
 FROM secret
 JOIN version ON version.secret_id = secret.id
 `
@@ -212,8 +212,8 @@ type CreateSecretRow struct {
 	ID                   pgtype.UUID        `json:"id"`
 	EnvironmentID        pgtype.UUID        `json:"environment_id"`
 	Name                 string             `json:"name"`
-	State                string             `json:"state"`
-	StateVersion         int64              `json:"state_version"`
+	Status               string             `json:"status"`
+	Revision             int64              `json:"revision"`
 	CurrentVersionID     pgtype.UUID        `json:"current_version_id"`
 	RevocationGeneration int64              `json:"revocation_generation"`
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
@@ -235,8 +235,8 @@ func (q *Queries) CreateSecret(ctx context.Context, arg CreateSecretParams) (Cre
 		&i.ID,
 		&i.EnvironmentID,
 		&i.Name,
-		&i.State,
-		&i.StateVersion,
+		&i.Status,
+		&i.Revision,
 		&i.CurrentVersionID,
 		&i.RevocationGeneration,
 		&i.CreatedAt,
@@ -254,7 +254,7 @@ JOIN secret_versions
  AND secret_versions.id = secrets.current_version_id
 WHERE secrets.environment_id = $1
   AND secrets.id = $2
-  AND secrets.state = 'active'
+  AND secrets.status = 'active'
 `
 
 type GetCurrentSecretValueParams struct {
@@ -277,7 +277,7 @@ func (q *Queries) GetCurrentSecretValue(ctx context.Context, arg GetCurrentSecre
 }
 
 const getSecret = `-- name: GetSecret :one
-SELECT secrets.id, secrets.environment_id, secrets.name, secrets.state, secrets.state_version, secrets.current_version_id, secrets.revocation_generation, secrets.created_at, secrets.updated_at, secrets.revoked_at
+SELECT secrets.id, secrets.environment_id, secrets.name, secrets.status, secrets.revision, secrets.current_version_id, secrets.revocation_generation, secrets.created_at, secrets.updated_at, secrets.revoked_at
 FROM secrets
 WHERE environment_id = $1
   AND id = $2
@@ -295,8 +295,8 @@ func (q *Queries) GetSecret(ctx context.Context, arg GetSecretParams) (Secret, e
 		&i.ID,
 		&i.EnvironmentID,
 		&i.Name,
-		&i.State,
-		&i.StateVersion,
+		&i.Status,
+		&i.Revision,
 		&i.CurrentVersionID,
 		&i.RevocationGeneration,
 		&i.CreatedAt,
@@ -311,7 +311,7 @@ SELECT
     secrets.id,
     secrets.environment_id,
     secrets.name,
-    secrets.state,
+    secrets.status,
     secrets.created_at,
     CASE
         WHEN latest.version > 1 THEN latest.created_at
@@ -339,7 +339,7 @@ type GetSecretSnapshotRow struct {
 	ID            pgtype.UUID        `json:"id"`
 	EnvironmentID pgtype.UUID        `json:"environment_id"`
 	Name          string             `json:"name"`
-	State         string             `json:"state"`
+	Status        string             `json:"status"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 	RotatedAt     pgtype.Timestamptz `json:"rotated_at"`
 	RevokedAt     pgtype.Timestamptz `json:"revoked_at"`
@@ -352,7 +352,7 @@ func (q *Queries) GetSecretSnapshot(ctx context.Context, arg GetSecretSnapshotPa
 		&i.ID,
 		&i.EnvironmentID,
 		&i.Name,
-		&i.State,
+		&i.Status,
 		&i.CreatedAt,
 		&i.RotatedAt,
 		&i.RevokedAt,
@@ -365,7 +365,7 @@ SELECT
     secrets.id,
     secrets.environment_id,
     secrets.name,
-    secrets.state,
+    secrets.status,
     secrets.created_at,
     CASE
         WHEN latest.version > 1 THEN latest.created_at
@@ -393,7 +393,7 @@ type GetSecretSnapshotByNameRow struct {
 	ID            pgtype.UUID        `json:"id"`
 	EnvironmentID pgtype.UUID        `json:"environment_id"`
 	Name          string             `json:"name"`
-	State         string             `json:"state"`
+	Status        string             `json:"status"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 	RotatedAt     pgtype.Timestamptz `json:"rotated_at"`
 	RevokedAt     pgtype.Timestamptz `json:"revoked_at"`
@@ -406,7 +406,7 @@ func (q *Queries) GetSecretSnapshotByName(ctx context.Context, arg GetSecretSnap
 		&i.ID,
 		&i.EnvironmentID,
 		&i.Name,
-		&i.State,
+		&i.Status,
 		&i.CreatedAt,
 		&i.RotatedAt,
 		&i.RevokedAt,
@@ -447,7 +447,7 @@ const listSecretRevocationProcesses = `-- name: ListSecretRevocationProcesses :m
 SELECT DISTINCT workspace_processes.org_id,
        workspace_processes.workspace_id,
        workspace_processes.id,
-       workspace_processes.state_version,
+       workspace_processes.revision,
        workspace_processes.created_at
   FROM secret_resolutions
   JOIN workspace_processes
@@ -456,7 +456,7 @@ SELECT DISTINCT workspace_processes.org_id,
  WHERE secret_resolutions.secret_id = $1
    AND secret_resolutions.revocation_generation < $2
    AND workspace_processes.environment_id = $3
-   AND workspace_processes.state IN ('starting', 'running', 'exit_requested')
+   AND workspace_processes.status IN ('starting', 'running', 'exit_requested')
  ORDER BY workspace_processes.created_at, workspace_processes.id
  LIMIT $4
 `
@@ -469,11 +469,11 @@ type ListSecretRevocationProcessesParams struct {
 }
 
 type ListSecretRevocationProcessesRow struct {
-	OrgID        pgtype.UUID        `json:"org_id"`
-	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
-	ID           pgtype.UUID        `json:"id"`
-	StateVersion int64              `json:"state_version"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	OrgID       pgtype.UUID        `json:"org_id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	ID          pgtype.UUID        `json:"id"`
+	Revision    int64              `json:"revision"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
 func (q *Queries) ListSecretRevocationProcesses(ctx context.Context, arg ListSecretRevocationProcessesParams) ([]ListSecretRevocationProcessesRow, error) {
@@ -494,7 +494,7 @@ func (q *Queries) ListSecretRevocationProcesses(ctx context.Context, arg ListSec
 			&i.OrgID,
 			&i.WorkspaceID,
 			&i.ID,
-			&i.StateVersion,
+			&i.Revision,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -605,7 +605,7 @@ SELECT
     secrets.id,
     secrets.environment_id,
     secrets.name,
-    secrets.state,
+    secrets.status,
     secrets.created_at,
     CASE
         WHEN latest.version > 1 THEN latest.created_at
@@ -641,7 +641,7 @@ type ListSecretsRow struct {
 	ID            pgtype.UUID        `json:"id"`
 	EnvironmentID pgtype.UUID        `json:"environment_id"`
 	Name          string             `json:"name"`
-	State         string             `json:"state"`
+	Status        string             `json:"status"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 	RotatedAt     pgtype.Timestamptz `json:"rotated_at"`
 	RevokedAt     pgtype.Timestamptz `json:"revoked_at"`
@@ -665,7 +665,7 @@ func (q *Queries) ListSecrets(ctx context.Context, arg ListSecretsParams) ([]Lis
 			&i.ID,
 			&i.EnvironmentID,
 			&i.Name,
-			&i.State,
+			&i.Status,
 			&i.CreatedAt,
 			&i.RotatedAt,
 			&i.RevokedAt,
@@ -684,8 +684,8 @@ const listWorkspaceSecrets = `-- name: ListWorkspaceSecrets :many
 SELECT
     workspace_secrets.workspace_id, workspace_secrets.environment_id, workspace_secrets.placement_kind, workspace_secrets.placement_target, workspace_secrets.secret_id, workspace_secrets.mode, workspace_secrets.allowed_origins, workspace_secrets.placeholder, workspace_secrets.created_at,
     secrets.name AS secret_name,
-    secrets.state AS secret_state,
-    secrets.state_version AS secret_state_version,
+    secrets.status AS secret_status,
+    secrets.revision AS secret_revision,
     secrets.current_version_id,
     secrets.revocation_generation
 FROM workspace_secrets
@@ -705,8 +705,8 @@ type ListWorkspaceSecretsRow struct {
 	Placeholder          string             `json:"placeholder"`
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 	SecretName           string             `json:"secret_name"`
-	SecretState          string             `json:"secret_state"`
-	SecretStateVersion   int64              `json:"secret_state_version"`
+	SecretStatus         string             `json:"secret_status"`
+	SecretRevision       int64              `json:"secret_revision"`
 	CurrentVersionID     pgtype.UUID        `json:"current_version_id"`
 	RevocationGeneration int64              `json:"revocation_generation"`
 }
@@ -731,8 +731,8 @@ func (q *Queries) ListWorkspaceSecrets(ctx context.Context, workspaceID pgtype.U
 			&i.Placeholder,
 			&i.CreatedAt,
 			&i.SecretName,
-			&i.SecretState,
-			&i.SecretStateVersion,
+			&i.SecretStatus,
+			&i.SecretRevision,
 			&i.CurrentVersionID,
 			&i.RevocationGeneration,
 		); err != nil {
@@ -747,11 +747,11 @@ func (q *Queries) ListWorkspaceSecrets(ctx context.Context, workspaceID pgtype.U
 }
 
 const lockActiveSecretsByNameForWorkspaceCreate = `-- name: LockActiveSecretsByNameForWorkspaceCreate :many
-SELECT secrets.id, secrets.environment_id, secrets.name, secrets.state, secrets.state_version, secrets.current_version_id, secrets.revocation_generation, secrets.created_at, secrets.updated_at, secrets.revoked_at
+SELECT secrets.id, secrets.environment_id, secrets.name, secrets.status, secrets.revision, secrets.current_version_id, secrets.revocation_generation, secrets.created_at, secrets.updated_at, secrets.revoked_at
 FROM secrets
 WHERE environment_id = $1
   AND name = ANY($2::text[])
-  AND state = 'active'
+  AND status = 'active'
   AND current_version_id IS NOT NULL
 ORDER BY secrets.id
 FOR NO KEY UPDATE
@@ -775,8 +775,8 @@ func (q *Queries) LockActiveSecretsByNameForWorkspaceCreate(ctx context.Context,
 			&i.ID,
 			&i.EnvironmentID,
 			&i.Name,
-			&i.State,
-			&i.StateVersion,
+			&i.Status,
+			&i.Revision,
 			&i.CurrentVersionID,
 			&i.RevocationGeneration,
 			&i.CreatedAt,
@@ -796,7 +796,7 @@ func (q *Queries) LockActiveSecretsByNameForWorkspaceCreate(ctx context.Context,
 const lockAttemptSecretDelivery = `-- name: LockAttemptSecretDelivery :many
 SELECT
     workspace_secrets.workspace_id, workspace_secrets.environment_id, workspace_secrets.placement_kind, workspace_secrets.placement_target, workspace_secrets.secret_id, workspace_secrets.mode, workspace_secrets.allowed_origins, workspace_secrets.placeholder, workspace_secrets.created_at,
-    secrets.id, secrets.environment_id, secrets.name, secrets.state, secrets.state_version, secrets.current_version_id, secrets.revocation_generation, secrets.created_at, secrets.updated_at, secrets.revoked_at,
+    secrets.id, secrets.environment_id, secrets.name, secrets.status, secrets.revision, secrets.current_version_id, secrets.revocation_generation, secrets.created_at, secrets.updated_at, secrets.revoked_at,
     secret_resolutions.id AS resolution_id,
     secret_resolutions.run_id AS resolution_run_id,
     secret_resolutions.attempt_number AS resolution_attempt_number,
@@ -857,8 +857,8 @@ func (q *Queries) LockAttemptSecretDelivery(ctx context.Context, arg LockAttempt
 			&i.Secret.ID,
 			&i.Secret.EnvironmentID,
 			&i.Secret.Name,
-			&i.Secret.State,
-			&i.Secret.StateVersion,
+			&i.Secret.Status,
+			&i.Secret.Revision,
 			&i.Secret.CurrentVersionID,
 			&i.Secret.RevocationGeneration,
 			&i.Secret.CreatedAt,
@@ -885,7 +885,7 @@ SELECT
     workspace_secrets.placement_kind,
     workspace_secrets.placement_target,
     workspace_secrets.secret_id,
-    secrets.state AS secret_state,
+    secrets.status AS secret_status,
     secrets.current_version_id,
     secrets.revocation_generation,
     secret_resolutions.id AS resolution_id,
@@ -920,7 +920,7 @@ type LockAttemptSecretResolutionMetadataRow struct {
 	PlacementKind                  string      `json:"placement_kind"`
 	PlacementTarget                string      `json:"placement_target"`
 	SecretID                       pgtype.UUID `json:"secret_id"`
-	SecretState                    string      `json:"secret_state"`
+	SecretStatus                   string      `json:"secret_status"`
 	CurrentVersionID               pgtype.UUID `json:"current_version_id"`
 	RevocationGeneration           int64       `json:"revocation_generation"`
 	ResolutionID                   pgtype.UUID `json:"resolution_id"`
@@ -943,7 +943,7 @@ func (q *Queries) LockAttemptSecretResolutionMetadata(ctx context.Context, arg L
 			&i.PlacementKind,
 			&i.PlacementTarget,
 			&i.SecretID,
-			&i.SecretState,
+			&i.SecretStatus,
 			&i.CurrentVersionID,
 			&i.RevocationGeneration,
 			&i.ResolutionID,
@@ -965,7 +965,7 @@ func (q *Queries) LockAttemptSecretResolutionMetadata(ctx context.Context, arg L
 const lockProcessSecretDelivery = `-- name: LockProcessSecretDelivery :many
 SELECT
     workspace_secrets.workspace_id, workspace_secrets.environment_id, workspace_secrets.placement_kind, workspace_secrets.placement_target, workspace_secrets.secret_id, workspace_secrets.mode, workspace_secrets.allowed_origins, workspace_secrets.placeholder, workspace_secrets.created_at,
-    secrets.id, secrets.environment_id, secrets.name, secrets.state, secrets.state_version, secrets.current_version_id, secrets.revocation_generation, secrets.created_at, secrets.updated_at, secrets.revoked_at,
+    secrets.id, secrets.environment_id, secrets.name, secrets.status, secrets.revision, secrets.current_version_id, secrets.revocation_generation, secrets.created_at, secrets.updated_at, secrets.revoked_at,
     secret_resolutions.id AS resolution_id,
     secret_resolutions.process_id AS resolution_process_id,
     secret_resolutions.secret_version_id AS resolution_secret_version_id,
@@ -1022,8 +1022,8 @@ func (q *Queries) LockProcessSecretDelivery(ctx context.Context, arg LockProcess
 			&i.Secret.ID,
 			&i.Secret.EnvironmentID,
 			&i.Secret.Name,
-			&i.Secret.State,
-			&i.Secret.StateVersion,
+			&i.Secret.Status,
+			&i.Secret.Revision,
 			&i.Secret.CurrentVersionID,
 			&i.Secret.RevocationGeneration,
 			&i.Secret.CreatedAt,
@@ -1077,8 +1077,8 @@ func (q *Queries) LockSecretVersion(ctx context.Context, arg LockSecretVersionPa
 const lockWorkspaceSecretsForAdmission = `-- name: LockWorkspaceSecretsForAdmission :many
 SELECT
     workspace_secrets.workspace_id, workspace_secrets.environment_id, workspace_secrets.placement_kind, workspace_secrets.placement_target, workspace_secrets.secret_id, workspace_secrets.mode, workspace_secrets.allowed_origins, workspace_secrets.placeholder, workspace_secrets.created_at,
-    secrets.state AS secret_state,
-    secrets.state_version AS secret_state_version,
+    secrets.status AS secret_status,
+    secrets.revision AS secret_revision,
     secrets.current_version_id,
     secrets.revocation_generation
 FROM workspace_secrets
@@ -1098,8 +1098,8 @@ type LockWorkspaceSecretsForAdmissionRow struct {
 	AllowedOrigins       []string           `json:"allowed_origins"`
 	Placeholder          string             `json:"placeholder"`
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
-	SecretState          string             `json:"secret_state"`
-	SecretStateVersion   int64              `json:"secret_state_version"`
+	SecretStatus         string             `json:"secret_status"`
+	SecretRevision       int64              `json:"secret_revision"`
 	CurrentVersionID     pgtype.UUID        `json:"current_version_id"`
 	RevocationGeneration int64              `json:"revocation_generation"`
 }
@@ -1123,8 +1123,8 @@ func (q *Queries) LockWorkspaceSecretsForAdmission(ctx context.Context, workspac
 			&i.AllowedOrigins,
 			&i.Placeholder,
 			&i.CreatedAt,
-			&i.SecretState,
-			&i.SecretStateVersion,
+			&i.SecretStatus,
+			&i.SecretRevision,
 			&i.CurrentVersionID,
 			&i.RevocationGeneration,
 		); err != nil {
@@ -1140,34 +1140,34 @@ func (q *Queries) LockWorkspaceSecretsForAdmission(ctx context.Context, workspac
 
 const revokeSecret = `-- name: RevokeSecret :one
 UPDATE secrets
-SET state = 'revoked',
-    state_version = state_version + 1,
+SET status = 'revoked',
+    revision = revision + 1,
     current_version_id = NULL,
     revocation_generation = revocation_generation + 1,
     revoked_at = now(),
     updated_at = now()
 WHERE environment_id = $1
   AND id = $2
-  AND state = 'active'
-  AND state_version = $3
-RETURNING id, environment_id, name, state, state_version, current_version_id, revocation_generation, created_at, updated_at, revoked_at
+  AND status = 'active'
+  AND revision = $3
+RETURNING id, environment_id, name, status, revision, current_version_id, revocation_generation, created_at, updated_at, revoked_at
 `
 
 type RevokeSecretParams struct {
-	EnvironmentID        pgtype.UUID `json:"environment_id"`
-	ID                   pgtype.UUID `json:"id"`
-	ExpectedStateVersion int64       `json:"expected_state_version"`
+	EnvironmentID    pgtype.UUID `json:"environment_id"`
+	ID               pgtype.UUID `json:"id"`
+	ExpectedRevision int64       `json:"expected_revision"`
 }
 
 func (q *Queries) RevokeSecret(ctx context.Context, arg RevokeSecretParams) (Secret, error) {
-	row := q.db.QueryRow(ctx, revokeSecret, arg.EnvironmentID, arg.ID, arg.ExpectedStateVersion)
+	row := q.db.QueryRow(ctx, revokeSecret, arg.EnvironmentID, arg.ID, arg.ExpectedRevision)
 	var i Secret
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
 		&i.Name,
-		&i.State,
-		&i.StateVersion,
+		&i.Status,
+		&i.Revision,
 		&i.CurrentVersionID,
 		&i.RevocationGeneration,
 		&i.CreatedAt,
@@ -1179,12 +1179,12 @@ func (q *Queries) RevokeSecret(ctx context.Context, arg RevokeSecretParams) (Sec
 
 const rotateSecret = `-- name: RotateSecret :one
 WITH locked AS (
-    SELECT id, environment_id, name, state, state_version, current_version_id, revocation_generation, created_at, updated_at, revoked_at
+    SELECT id, environment_id, name, status, revision, current_version_id, revocation_generation, created_at, updated_at, revoked_at
     FROM secrets
     WHERE secrets.environment_id = $1
       AND secrets.id = $2
-      AND secrets.state = 'active'
-      AND secrets.state_version = $3
+      AND secrets.status = 'active'
+      AND secrets.revision = $3
       AND secrets.current_version_id = $4
     FOR UPDATE
 ),
@@ -1207,17 +1207,17 @@ version AS (
 )
 UPDATE secrets
 SET current_version_id = version.id,
-    state_version = state_version + 1,
+    revision = revision + 1,
     updated_at = now()
 FROM version
 WHERE secrets.id = version.secret_id
-RETURNING secrets.id, secrets.environment_id, secrets.name, secrets.state, secrets.state_version, secrets.current_version_id, secrets.revocation_generation, secrets.created_at, secrets.updated_at, secrets.revoked_at
+RETURNING secrets.id, secrets.environment_id, secrets.name, secrets.status, secrets.revision, secrets.current_version_id, secrets.revocation_generation, secrets.created_at, secrets.updated_at, secrets.revoked_at
 `
 
 type RotateSecretParams struct {
 	EnvironmentID            pgtype.UUID `json:"environment_id"`
 	SecretID                 pgtype.UUID `json:"secret_id"`
-	ExpectedStateVersion     int64       `json:"expected_state_version"`
+	ExpectedRevision         int64       `json:"expected_revision"`
 	ExpectedCurrentVersionID pgtype.UUID `json:"expected_current_version_id"`
 	VersionID                pgtype.UUID `json:"version_id"`
 	Version                  int64       `json:"version"`
@@ -1229,7 +1229,7 @@ func (q *Queries) RotateSecret(ctx context.Context, arg RotateSecretParams) (Sec
 	row := q.db.QueryRow(ctx, rotateSecret,
 		arg.EnvironmentID,
 		arg.SecretID,
-		arg.ExpectedStateVersion,
+		arg.ExpectedRevision,
 		arg.ExpectedCurrentVersionID,
 		arg.VersionID,
 		arg.Version,
@@ -1241,8 +1241,8 @@ func (q *Queries) RotateSecret(ctx context.Context, arg RotateSecretParams) (Sec
 		&i.ID,
 		&i.EnvironmentID,
 		&i.Name,
-		&i.State,
-		&i.StateVersion,
+		&i.Status,
+		&i.Revision,
 		&i.CurrentVersionID,
 		&i.RevocationGeneration,
 		&i.CreatedAt,

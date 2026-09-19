@@ -132,7 +132,7 @@ func TestHandleActorTurnCommitAdvancesAllLocalWorkspaceFrontiers(t *testing.T) {
 	task := &guestRunLeaseTask{
 		program: freshProgram{session: fakeGuestSession{stream: host}},
 		store:   store, controlPlane: controlPlane, resetTarget: target, lease: claim.Lease,
-		authority: authority, waitWorkspace: workerapi.Workspace{BaseVersionID: "version-1"},
+		authority: authority, waitWorkspace: workerapi.Workspace{BaseWorkspaceVersionID: "version-1"},
 		checkpointer: &runtimeCheckpointer{}, mounts: actorTurnRenewalMounts{},
 	}
 
@@ -249,11 +249,11 @@ func TestHandleActorTurnCommitAdvancesAllLocalWorkspaceFrontiers(t *testing.T) {
 	if err := <-guestResult; err != nil {
 		t.Fatal(err)
 	}
-	if task.lease.BaseWorkspaceVersionID != "version-2" || task.resetTarget.BaseVersionID != "version-2" ||
-		task.waitWorkspace.BaseVersionID != "version-2" || task.authority.GetFence().GetBaseWorkspaceVersionId() != "version-2" {
+	if task.lease.BaseWorkspaceVersionID != "version-2" || task.resetTarget.BaseWorkspaceVersionID != "version-2" ||
+		task.waitWorkspace.BaseWorkspaceVersionID != "version-2" || task.authority.GetFence().GetBaseWorkspaceVersionId() != "version-2" {
 		t.Fatalf("local Actor turn frontiers were not advanced: lease=%q reset=%q wait=%q authority=%q",
-			task.lease.BaseWorkspaceVersionID, task.resetTarget.BaseVersionID,
-			task.waitWorkspace.BaseVersionID, task.authority.GetFence().GetBaseWorkspaceVersionId())
+			task.lease.BaseWorkspaceVersionID, task.resetTarget.BaseWorkspaceVersionID,
+			task.waitWorkspace.BaseWorkspaceVersionID, task.authority.GetFence().GetBaseWorkspaceVersionId())
 	}
 	checkpointBase := task.checkpointer.(*runtimeCheckpointer).workspace
 	if task.waitWorkspace.Artifact == nil || task.waitWorkspace.Artifact.Digest != artifactDigest ||
@@ -289,7 +289,7 @@ func TestHandleActorTurnCommitRejectsMismatchedAppliedProofWithoutInstallingFron
 			testRunLeaseControlPlane: &testRunLeaseControlPlane{}, workspaceVersionID: "version-1",
 		},
 		resetTarget: target, lease: claim.Lease, authority: freshWorkspaceAuthority(&claim, "channel-1"),
-		waitWorkspace: workerapi.Workspace{BaseVersionID: "version-1"},
+		waitWorkspace: workerapi.Workspace{BaseWorkspaceVersionID: "version-1"},
 	}
 	guestResult := make(chan error, 1)
 	go func() {
@@ -363,7 +363,7 @@ func TestHandleActorTurnCommitStopsMissingAppliedProofAtLeaseExpiry(t *testing.T
 			testRunLeaseControlPlane: &testRunLeaseControlPlane{}, workspaceVersionID: "version-1",
 		},
 		resetTarget: target, lease: claim.Lease, authority: freshWorkspaceAuthority(&claim, "channel-1"),
-		waitWorkspace: workerapi.Workspace{BaseVersionID: "version-1"},
+		waitWorkspace: workerapi.Workspace{BaseWorkspaceVersionID: "version-1"},
 	}
 	guestResult := make(chan error, 1)
 	go func() {
@@ -431,7 +431,7 @@ func TestHandleActorTurnCommitStopsBlockedDecisionWriteAtLeaseExpiry(t *testing.
 			testRunLeaseControlPlane: &testRunLeaseControlPlane{}, workspaceVersionID: "version-1",
 		},
 		resetTarget: target, lease: claim.Lease, authority: freshWorkspaceAuthority(&claim, "channel-1"),
-		waitWorkspace: workerapi.Workspace{BaseVersionID: "version-1"},
+		waitWorkspace: workerapi.Workspace{BaseWorkspaceVersionID: "version-1"},
 	}
 	stopGuest := make(chan struct{})
 	guestResult := make(chan error, 1)

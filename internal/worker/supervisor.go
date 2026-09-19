@@ -66,18 +66,18 @@ type Config struct {
 	ObservationEvery   time.Duration
 	PollEvery          time.Duration
 	DrainTimeout       time.Duration
-	Observation        func(State, Snapshot, RecoveryEvidence) workerapi.Observation
+	Observation        func(Status, Snapshot, RecoveryEvidence) workerapi.Observation
 	AdmissionEvaluator AdmissionEvaluator
 	Log                *slog.Logger
 }
 
-type State string
+type Status string
 
 const (
-	StateStarting State = "starting"
-	StateActive   State = "active"
-	StateDraining State = "draining"
-	StateStopped  State = "stopped"
+	StateStarting Status = "starting"
+	StateActive   Status = "active"
+	StateDraining Status = "draining"
+	StateStopped  Status = "stopped"
 )
 
 type Snapshot struct {
@@ -304,7 +304,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 			// A returned draining response stores StateDraining before publishing
 			// drainRequested. If shutdown and that response become ready together,
 			// the durable latch wins over select's otherwise-random choice.
-			if s.state.Load().(State) != StateDraining {
+			if s.state.Load().(Status) != StateDraining {
 				return s.shutdownProcess(ctx, cancelActiveClaims, cancelDrainClaims, cancelActiveBackground, cancelDrainBackground, cancelObserve, cancelWork, &consumerWG, &backgroundWG, &observeWG)
 			}
 		case <-drainRequested:
@@ -537,7 +537,7 @@ func (s *Supervisor) consume(
 			return
 		case <-timer.C:
 		}
-		state := s.state.Load().(State)
+		state := s.state.Load().(Status)
 		if state != StateActive && !(spec.ContinueDuringDrain && state == StateDraining) {
 			timer.Reset(s.cfg.PollEvery)
 			continue
@@ -546,7 +546,7 @@ func (s *Supervisor) consume(
 		if !ok {
 			return
 		}
-		state = s.state.Load().(State)
+		state = s.state.Load().(Status)
 		if state != StateActive && !(spec.ContinueDuringDrain && state == StateDraining) {
 			releaseAdmission()
 			timer.Reset(s.cfg.PollEvery)
@@ -556,7 +556,7 @@ func (s *Supervisor) consume(
 		// Bound execution continuation still evaluates every hard host fence.
 		if s.cfg.AdmissionEvaluator != nil && !(spec.BypassAdmissionDuringDrain && state == StateDraining) {
 			decision := s.cfg.AdmissionEvaluator.Evaluate(claimCtx, AdmissionCheck{
-				Consumer: spec.Name, State: state, Snapshot: s.registry.snapshot(),
+				Consumer: spec.Name, Status: state, Snapshot: s.registry.snapshot(),
 				Recovery: evidence, DrainContinuation: spec.ContinueDuringDrain && state == StateDraining,
 			})
 			if !decision.Allowed {
@@ -630,7 +630,7 @@ func (s *Supervisor) observe(ctx context.Context, evidence RecoveryEvidence, sta
 			return
 		case <-ticker.C:
 		}
-		state := s.state.Load().(State)
+		state := s.state.Load().(Status)
 		if status, err := s.cfg.ControlPlane.ObserveWorker(ctx, s.observation(state, evidence)); err != nil && ctx.Err() == nil {
 			s.cfg.Log.Warn("worker observation failed", "error", err)
 		} else if err == nil {
@@ -644,7 +644,7 @@ func (s *Supervisor) AdmitRuntimeStart(ctx context.Context) error {
 		return nil
 	}
 	decision := s.cfg.AdmissionEvaluator.Evaluate(ctx, AdmissionCheck{
-		Consumer: "runtime", State: s.state.Load().(State), Snapshot: s.registry.snapshot(), Recovery: s.recovery,
+		Consumer: "runtime", Status: s.state.Load().(Status), Snapshot: s.registry.snapshot(), Recovery: s.recovery,
 	})
 	if !decision.Allowed {
 		return fmt.Errorf("runtime start admission paused: %s", decision.Reason)
@@ -652,7 +652,7 @@ func (s *Supervisor) AdmitRuntimeStart(ctx context.Context) error {
 	return nil
 }
 
-func (s *Supervisor) observation(state State, evidence RecoveryEvidence) workerapi.Observation {
+func (s *Supervisor) observation(state Status, evidence RecoveryEvidence) workerapi.Observation {
 	if s.cfg.Observation != nil {
 		return s.cfg.Observation(state, s.registry.snapshot(), evidence)
 	}

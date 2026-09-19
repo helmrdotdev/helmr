@@ -38,7 +38,7 @@ func TestWorkerDrainPublishesExactTerminalReceiptAndReplays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if draining.State != db.WorkerInstanceStateDraining || draining.ClaimVersion != 2 {
+	if draining.Status != db.WorkerInstanceStatusDraining || draining.ClaimVersion != 2 {
 		t.Fatalf("draining row = %+v", draining)
 	}
 
@@ -53,14 +53,14 @@ func TestWorkerDrainPublishesExactTerminalReceiptAndReplays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if completed.State != db.WorkerInstanceStateTerminationReady || completed.ClaimVersion != 3 || !completed.TerminationReadyAt.Valid {
+	if completed.Status != db.WorkerInstanceStatusTerminationReady || completed.ClaimVersion != 3 || !completed.TerminationReadyAt.Valid {
 		t.Fatalf("terminal receipt = %+v", completed)
 	}
 	replayed, err := q.CompleteWorkerDrain(ctx, params)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replayed.State != completed.State || replayed.ClaimVersion != completed.ClaimVersion || replayed.TerminationReadyAt != completed.TerminationReadyAt {
+	if replayed.Status != completed.Status || replayed.ClaimVersion != completed.ClaimVersion || replayed.TerminationReadyAt != completed.TerminationReadyAt {
 		t.Fatalf("replayed receipt = %+v, want %+v", replayed, completed)
 	}
 	params.ExpectedClaimVersion = completed.ClaimVersion
@@ -87,18 +87,18 @@ func TestWorkerDrainReplayPublishesOwnerlessCleanupUntilRuntimeClosed(t *testing
 	q := db.New(pool)
 	fixture := seedRuntimeSubstrateAuthority(t, ctx, pool)
 
-	var runtimeID, workspaceID, baseVersionID uuid.UUID
+	var runtimeID, workspaceID, baseWorkspaceVersionID uuid.UUID
 	if err := pool.QueryRow(ctx, `
 		SELECT runtime_instances.id, runtime_instances.workspace_id, workspaces.head_version_id
 		  FROM runtime_instances
 		  JOIN workspaces ON workspaces.id = runtime_instances.workspace_id
 		 WHERE runtime_instances.worker_instance_id = $1
-	`, fixture.workerID).Scan(&runtimeID, &workspaceID, &baseVersionID); err != nil {
+	`, fixture.workerID).Scan(&runtimeID, &workspaceID, &baseWorkspaceVersionID); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, ctx, pool, `
 		UPDATE worker_instances
-		   SET state = 'draining', claim_version = 2, draining_at = now()
+		   SET status = 'draining', claim_version = 2, draining_at = now()
 		 WHERE id = $1
 	`, fixture.workerID)
 	mountID := uuid.NewV7()
@@ -106,7 +106,7 @@ func TestWorkerDrainReplayPublishesOwnerlessCleanupUntilRuntimeClosed(t *testing
 		INSERT INTO workspace_mounts (
 			id, org_id, worker_group_id, project_id, environment_id, region_id,
 			worker_instance_id, worker_epoch, workspace_id, materialized_version_id,
-			runtime_instance_id, state, dirty_generation, mounted_at, stopped_at
+			runtime_instance_id, status, dirty_generation, mounted_at, stopped_at
 		)
 		SELECT $1, runtime_instances.org_id, runtime_instances.worker_group_id,
 		       runtime_instances.project_id, runtime_instances.environment_id,
@@ -115,7 +115,7 @@ func TestWorkerDrainReplayPublishesOwnerlessCleanupUntilRuntimeClosed(t *testing
 		       runtime_instances.id, 'unmounting', 7, now(), now()
 		  FROM runtime_instances
 		 WHERE runtime_instances.id = $3
-	`, mountID, baseVersionID, runtimeID)
+	`, mountID, baseWorkspaceVersionID, runtimeID)
 
 	params := db.DrainWorkerInstanceParams{
 		ID:                   pgvalue.UUID(fixture.workerID),
@@ -126,21 +126,21 @@ func TestWorkerDrainReplayPublishesOwnerlessCleanupUntilRuntimeClosed(t *testing
 	if _, err := q.DrainWorkerInstance(ctx, params); err != nil {
 		t.Fatal(err)
 	}
-	var mountState, finalizationKind, finalizationReason string
+	var mountStatus, finalizationKind, finalizationReason string
 	if err := pool.QueryRow(ctx, `
-		SELECT state, finalization_kind, finalization_reason_code
+		SELECT status, finalization_kind, finalization_reason_code
 		  FROM workspace_mounts
 		 WHERE id = $1
-	`, mountID).Scan(&mountState, &finalizationKind, &finalizationReason); err != nil {
+	`, mountID).Scan(&mountStatus, &finalizationKind, &finalizationReason); err != nil {
 		t.Fatal(err)
 	}
-	if mountState != "unmounting" || finalizationKind != "discard" || finalizationReason != "worker_draining" {
-		t.Fatalf("mount cleanup = (%q, %q, %q)", mountState, finalizationKind, finalizationReason)
+	if mountStatus != "unmounting" || finalizationKind != "discard" || finalizationReason != "worker_draining" {
+		t.Fatalf("mount cleanup = (%q, %q, %q)", mountStatus, finalizationKind, finalizationReason)
 	}
 
 	dbtest.MustExec(t, ctx, pool, `
 		UPDATE workspace_mounts
-		   SET state = 'unmounted', unmounted_at = now(), terminal_at = now(),
+		   SET status = 'unmounted', unmounted_at = now(), terminal_at = now(),
 		       terminal_reason_code = 'worker_unmounted', updated_at = now()
 		 WHERE id = $1
 	`, mountID)
@@ -180,13 +180,13 @@ func TestWorkerStartupRecoveryLosesMountBeforeReclaimingOldRuntime(t *testing.T)
 	if _, err := q.CompleteWorkerStartupRecovery(ctx, params); err != nil {
 		t.Fatal(err)
 	}
-	var mountState, mountReason, finalizationKind, finalizationReason string
+	var mountStatus, mountReason, finalizationKind, finalizationReason string
 	var mountLostAt, mountTerminalAt pgtype.Timestamptz
 	var runtimeState, runtimeReason string
 	var runtimeVersion int64
 	var runtimeTerminalAt, reclaimedAt pgtype.Timestamptz
 	if err := pool.QueryRow(ctx, `
-SELECT workspace_mounts.state, workspace_mounts.terminal_reason_code,
+SELECT workspace_mounts.status, workspace_mounts.terminal_reason_code,
        workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code,
        workspace_mounts.lost_at, workspace_mounts.terminal_at,
        runtime_instances.observed_state, runtime_instances.observed_version,
@@ -195,19 +195,19 @@ SELECT workspace_mounts.state, workspace_mounts.terminal_reason_code,
   FROM workspace_mounts
   JOIN runtime_instances ON runtime_instances.id = workspace_mounts.runtime_instance_id
  WHERE workspace_mounts.id = $1`, mountID).Scan(
-		&mountState, &mountReason, &finalizationKind, &finalizationReason,
+		&mountStatus, &mountReason, &finalizationKind, &finalizationReason,
 		&mountLostAt, &mountTerminalAt, &runtimeState, &runtimeVersion,
 		&runtimeReason, &runtimeTerminalAt, &reclaimedAt,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if mountState != "lost" || mountReason != "worker_startup_reclaimed" ||
+	if mountStatus != "lost" || mountReason != "worker_startup_reclaimed" ||
 		finalizationKind != "discard" || finalizationReason != "worker_draining" ||
 		!mountLostAt.Valid || !mountTerminalAt.Valid || runtimeState != "lost" ||
 		runtimeVersion != 1 || runtimeReason != "worker_startup_reclaimed" ||
 		!runtimeTerminalAt.Valid || !reclaimedAt.Valid {
 		t.Fatalf("startup recovery mount=%s/%s finalization=%s/%s lost=%v terminal=%v runtime=%s/%d/%s terminal=%v reclaimed=%v",
-			mountState, mountReason, finalizationKind, finalizationReason, mountLostAt,
+			mountStatus, mountReason, finalizationKind, finalizationReason, mountLostAt,
 			mountTerminalAt, runtimeState, runtimeVersion, runtimeReason,
 			runtimeTerminalAt, reclaimedAt)
 	}
@@ -309,17 +309,17 @@ func TestProviderAbsenceReclaimsRuntimeFromPriorWorkerEpoch(t *testing.T) {
 		t.Fatal(err)
 	}
 	var runtimeReclaimed pgtype.Timestamptz
-	var mountState string
+	var mountStatus string
 	if err := pool.QueryRow(ctx, `
-		SELECT runtime_instances.reclaimed_at, workspace_mounts.state
+		SELECT runtime_instances.reclaimed_at, workspace_mounts.status
 		  FROM runtime_instances
 		  JOIN workspace_mounts ON workspace_mounts.id = $2
 		 WHERE runtime_instances.id = $1
-	`, prepared.runtimeID, prepared.mountID).Scan(&runtimeReclaimed, &mountState); err != nil {
+	`, prepared.runtimeID, prepared.mountID).Scan(&runtimeReclaimed, &mountStatus); err != nil {
 		t.Fatal(err)
 	}
-	if !runtimeReclaimed.Valid || mountState != "lost" {
-		t.Fatalf("prior-epoch provider cleanup = reclaimed:%v mount:%q", runtimeReclaimed.Valid, mountState)
+	if !runtimeReclaimed.Valid || mountStatus != "lost" {
+		t.Fatalf("prior-epoch provider cleanup = reclaimed:%v mount:%q", runtimeReclaimed.Valid, mountStatus)
 	}
 }
 
@@ -392,21 +392,21 @@ func TestWorkerStartupRecoveryPreservesQuarantinedRuntimeAndMount(t *testing.T) 
 	if _, err := db.New(pool).CompleteWorkerStartupRecovery(ctx, prepared.params); err != nil {
 		t.Fatal(err)
 	}
-	var mountState, runtimeState string
+	var mountStatus, runtimeState string
 	var reclaimedAt pgtype.Timestamptz
 	if err := pool.QueryRow(ctx, `
-SELECT workspace_mounts.state, runtime_instances.observed_state,
+SELECT workspace_mounts.status, runtime_instances.observed_state,
        runtime_instances.reclaimed_at
   FROM workspace_mounts
   JOIN runtime_instances ON runtime_instances.id = workspace_mounts.runtime_instance_id
  WHERE workspace_mounts.id = $1`, prepared.mountID).Scan(
-		&mountState, &runtimeState, &reclaimedAt,
+		&mountStatus, &runtimeState, &reclaimedAt,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if mountState != "unmounting" || runtimeState != "allocated" || reclaimedAt.Valid {
+	if mountStatus != "unmounting" || runtimeState != "allocated" || reclaimedAt.Valid {
 		t.Fatalf("quarantined authority changed mount=%s runtime=%s reclaimed=%v",
-			mountState, runtimeState, reclaimedAt)
+			mountStatus, runtimeState, reclaimedAt)
 	}
 }
 
@@ -427,13 +427,13 @@ func prepareOldEpochStartupRecovery(
 ) oldEpochStartupRecovery {
 	t.Helper()
 	fixture := seedRuntimeSubstrateAuthority(t, ctx, pool)
-	var runtimeID, baseVersionID uuid.UUID
+	var runtimeID, baseWorkspaceVersionID uuid.UUID
 	if err := pool.QueryRow(ctx, `
 SELECT runtime_instances.id, workspaces.head_version_id
   FROM runtime_instances
   JOIN workspaces ON workspaces.id = runtime_instances.workspace_id
  WHERE runtime_instances.worker_instance_id = $1`, fixture.workerID).Scan(
-		&runtimeID, &baseVersionID,
+		&runtimeID, &baseWorkspaceVersionID,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -442,7 +442,7 @@ SELECT runtime_instances.id, workspaces.head_version_id
 INSERT INTO workspace_mounts (
     id, org_id, worker_group_id, project_id, environment_id, region_id,
     worker_instance_id, worker_epoch, workspace_id, materialized_version_id,
-    runtime_instance_id, state, dirty_generation, mounted_at, stopped_at,
+    runtime_instance_id, status, dirty_generation, mounted_at, stopped_at,
     finalization_kind, finalization_reason_code
 )
 SELECT $1, runtime_instances.org_id, runtime_instances.worker_group_id,
@@ -451,11 +451,11 @@ SELECT $1, runtime_instances.org_id, runtime_instances.worker_group_id,
        runtime_instances.worker_epoch, runtime_instances.workspace_id, $2,
        runtime_instances.id, 'unmounting', 7, now(), now(), 'discard', 'worker_draining'
   FROM runtime_instances
- WHERE runtime_instances.id = $3`, mountID, baseVersionID, runtimeID)
+ WHERE runtime_instances.id = $3`, mountID, baseWorkspaceVersionID, runtimeID)
 	newServiceID := uuid.NewV7()
 	dbtest.MustExec(t, ctx, pool, `
 UPDATE worker_instances
-   SET state = 'registering', current_epoch = 2, current_service_id = $2,
+   SET status = 'registering', current_epoch = 2, current_service_id = $2,
        epoch_started_at = transaction_timestamp(), activated_at = NULL,
        runtime_identity_id = NULL, substrate_format = '', substrate_contract = '',
        epoch_cpu_millis = 0, epoch_memory_bytes = 0,
@@ -501,14 +501,14 @@ func TestWorkerFencePublishesExactLostReceiptAndReplays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if lost.State != db.WorkerInstanceStateLost || lost.ClaimVersion != 2 || !lost.LostAt.Valid {
+	if lost.Status != db.WorkerInstanceStatusLost || lost.ClaimVersion != 2 || !lost.LostAt.Valid {
 		t.Fatalf("lost receipt = %+v", lost)
 	}
 	replayed, err := q.FenceWorkerInstance(ctx, params)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replayed.State != lost.State || replayed.ClaimVersion != lost.ClaimVersion || replayed.LostAt != lost.LostAt {
+	if replayed.Status != lost.Status || replayed.ClaimVersion != lost.ClaimVersion || replayed.LostAt != lost.LostAt {
 		t.Fatalf("replayed lost receipt = %+v, want %+v", replayed, lost)
 	}
 	params.ExpectedClaimVersion = lost.ClaimVersion

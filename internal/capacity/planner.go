@@ -165,7 +165,7 @@ func Plan(ctx context.Context, store Store, workerGroupID uuid.UUID, request Pla
 	}
 	response := PlanResponse{
 		WorkerGroupID: pgvalue.UUIDString(group.ID), WorkerGroupName: group.Name, RegionID: group.RegionID,
-		GroupStatus: WorkerGroupStatus(group.State),
+		GroupStatus: WorkerGroupStatus(group.Status),
 		Complete:    true, ComputedAt: now.UTC(), Pools: make([]PoolPlan, 0, len(rows)),
 		UnmatchedDemand: []Incompatibility{},
 	}
@@ -182,7 +182,7 @@ func Plan(ctx context.Context, store Store, workerGroupID uuid.UUID, request Pla
 	for index := range plans {
 		planByID[plans[index].id.Bytes] = &plans[index]
 	}
-	if group.State != string(WorkerGroupStatusActive) {
+	if group.Status != string(WorkerGroupStatusActive) {
 		for index := range plans {
 			response.Pools = append(response.Pools, plans[index].result)
 		}

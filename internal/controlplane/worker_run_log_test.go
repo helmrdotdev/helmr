@@ -71,7 +71,7 @@ func TestMountedWorkerRunLogRouteAcceptsExactMaximumAndRejectsOneByteOver(t *tes
 		replayMatches: true,
 		authorization: &db.AuthorizeWorkerInstanceCredentialRow{
 			WorkerGroupID: pgvalue.UUID(uuid.MustParse(lease.WorkerGroupID)), WorkerInstanceID: pgvalue.UUID(workerID),
-			ClaimVersion: 1, ResourceID: "test-resource", WorkerState: "active",
+			ClaimVersion: 1, ResourceID: "test-resource", WorkerStatus: "active",
 			EpochStartedAt: pgtype.Timestamptz{Time: now, Valid: true},
 		},
 	}

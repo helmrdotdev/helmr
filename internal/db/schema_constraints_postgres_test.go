@@ -37,7 +37,7 @@ func TestSchemaFailurePayloadsRejectNullAndPreserveLifecycle(t *testing.T) {
 	dbtest.MustExec(t, ctx, fixture.pool, `
 		INSERT INTO schedules (id, environment_id, task_declared_id,
 		 deployment_definition_id, deployment_id, cron_pattern, timezone,
-		 state, effective_from, next_fire_at)
+		 status, effective_from, next_fire_at)
 		SELECT $1, environment_id, declared_id, id, deployment_id,
 		 '* * * * *', 'UTC', 'active', now(), now()
 		FROM deployment_definitions WHERE id = $2
@@ -51,9 +51,9 @@ func TestSchemaFailurePayloadsRejectNullAndPreserveLifecycle(t *testing.T) {
 		{"run cancelled", `UPDATE runs SET status='cancelled', terminal_at=now(), failure=$2 WHERE id=$1`, "cancelled", work.runID},
 		{"run expired", `UPDATE runs SET status='expired', terminal_at=now(), failure=$2 WHERE id=$1`, "expired", work.runID},
 		{"run system failed", `UPDATE runs SET status='system_failed', terminal_at=now(), failure=$2 WHERE id=$1`, "system_failed", work.runID},
-		{"session failed", `UPDATE sessions SET state='failed', failed_at=now(), failure=$2 WHERE id=$1`, "run_failed", sessionID},
-		{"session cancelled", `UPDATE sessions SET state='cancelled', failure=$2 WHERE id=$1`, "cancelled", sessionID},
-		{"schedule errored", `UPDATE schedules SET state='errored', last_failure=$2 WHERE id=$1`, "invalid_schedule", scheduleID},
+		{"session failed", `UPDATE sessions SET status='failed', failed_at=now(), failure=$2 WHERE id=$1`, "run_failed", sessionID},
+		{"session cancelled", `UPDATE sessions SET status='cancelled', failure=$2 WHERE id=$1`, "cancelled", sessionID},
+		{"schedule errored", `UPDATE schedules SET status='errored', last_failure=$2 WHERE id=$1`, "invalid_schedule", scheduleID},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tx, err := fixture.pool.Begin(ctx)
@@ -85,10 +85,10 @@ func TestSchemaFailurePayloadsRejectNullAndPreserveLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	dbtest.MustExec(t, ctx, tx, `UPDATE schedules SET state='errored', last_failure='{"code":"invalid_schedule","message":"failed","details":{}}' WHERE id=$1`, scheduleID)
-	dbtest.MustExec(t, ctx, tx, `UPDATE schedules SET state='active' WHERE id=$1`, scheduleID)
+	dbtest.MustExec(t, ctx, tx, `UPDATE schedules SET status='errored', last_failure='{"code":"invalid_schedule","message":"failed","details":{}}' WHERE id=$1`, scheduleID)
+	dbtest.MustExec(t, ctx, tx, `UPDATE schedules SET status='active' WHERE id=$1`, scheduleID)
 	rejectSchemaRow(t, tx, "23514", `UPDATE schedules SET last_failure='{"code":null,"message":"failed","details":{}}' WHERE id=$1`, scheduleID)
-	dbtest.MustExec(t, ctx, tx, `UPDATE schedules SET state='archived', deployment_id=NULL, deployment_definition_id=NULL, next_fire_at=NULL WHERE id=$1`, scheduleID)
+	dbtest.MustExec(t, ctx, tx, `UPDATE schedules SET status='archived', deployment_id=NULL, deployment_definition_id=NULL, next_fire_at=NULL WHERE id=$1`, scheduleID)
 	dbtest.MustExec(t, ctx, tx, `UPDATE schedules SET last_failure=NULL WHERE id=$1`, scheduleID)
 }
 
@@ -108,7 +108,7 @@ func TestSchemaWorkspaceVersionArtifactAndFinalizationAuthority(t *testing.T) {
 	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO workspace_versions (id,environment_id,workspace_id,parent_version_id,
 		 artifact_id,content_digest,source_workspace_lease_id,ownership_generation,writer_generation)
-		SELECT $1,environment_id,workspace_id,base_version_id,$2,$3,id,ownership_generation,writer_generation
+		SELECT $1,environment_id,workspace_id,base_workspace_version_id,$2,$3,id,ownership_generation,writer_generation
 		FROM workspace_leases WHERE owner_run_lease_id=$4
 	`, versionID, artifactID, digest, work.leaseID)
 	for _, set := range []string{
@@ -135,18 +135,18 @@ func TestSchemaWorkspaceVersionArtifactAndFinalizationAuthority(t *testing.T) {
 	if err := tx.QueryRow(ctx, `SELECT workspace_mount_id FROM workspace_leases WHERE owner_run_lease_id=$1`, work.leaseID).Scan(&mountID); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, ctx, tx, `UPDATE workspace_mounts SET state='unmounting', finalization_kind='capture', finalization_reason_code='workspace_exec_completed', staged_version_id=$2 WHERE id=$1`, mountID, versionID)
+	dbtest.MustExec(t, ctx, tx, `UPDATE workspace_mounts SET status='unmounting', finalization_kind='capture', finalization_reason_code='workspace_exec_completed', staged_version_id=$2 WHERE id=$1`, mountID, versionID)
 	rejectSchemaRow(t, tx, "23514", `UPDATE workspace_mounts SET finalization_reason_code=NULL WHERE id=$1`, mountID)
 	rejectSchemaRow(t, tx, "23514", `UPDATE workspace_mounts SET finalization_kind=NULL WHERE id=$1`, mountID)
 	rejectSchemaRow(t, tx, "23514", `UPDATE workspace_mounts SET finalization_kind=NULL, finalization_reason_code=NULL WHERE id=$1`, mountID)
 	dbtest.MustExec(t, ctx, tx, `UPDATE workspace_mounts SET staged_version_id=NULL, finalization_kind='discard', finalization_reason_code='exec_failed' WHERE id=$1`, mountID)
 	rejectSchemaRow(t, tx, "23514", `UPDATE workspace_mounts SET finalization_kind=NULL, finalization_reason_code=NULL, finalization_error='{}' WHERE id=$1`, mountID)
-	dbtest.MustExec(t, ctx, tx, `UPDATE workspace_mounts SET state='unmounted', unmounted_at=now(), terminal_at=now(), terminal_reason_code='exec_failed' WHERE id=$1`, mountID)
+	dbtest.MustExec(t, ctx, tx, `UPDATE workspace_mounts SET status='unmounted', unmounted_at=now(), terminal_at=now(), terminal_reason_code='exec_failed' WHERE id=$1`, mountID)
 	dbtest.MustExec(t, ctx, tx, `SAVEPOINT private_version`)
-	dbtest.MustExec(t, ctx, tx, `UPDATE workspace_versions SET state='discarded', discarded_at=now() WHERE id=$1`, versionID)
+	dbtest.MustExec(t, ctx, tx, `UPDATE workspace_versions SET status='discarded', discarded_at=now() WHERE id=$1`, versionID)
 	// Restore the private row before checking its alternate publication path.
 	dbtest.MustExec(t, ctx, tx, `ROLLBACK TO SAVEPOINT private_version`)
-	dbtest.MustExec(t, ctx, tx, `UPDATE workspace_versions SET state='committed', discarded_at=NULL, published_at=now() WHERE id=$1`, versionID)
+	dbtest.MustExec(t, ctx, tx, `UPDATE workspace_versions SET status='committed', discarded_at=NULL, published_at=now() WHERE id=$1`, versionID)
 }
 
 func TestSchemaProvenanceAndExpiryRejectPartialTuples(t *testing.T) {
@@ -169,18 +169,20 @@ func TestSchemaProvenanceAndExpiryRejectPartialTuples(t *testing.T) {
 	dbtest.MustExec(t, ctx, tx, `UPDATE session_records SET source_run_id=$2 WHERE id=$1`, recordID, work.runID)
 	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO run_waits (id,environment_id,run_id,workspace_id,kind,session_id,after_input_sequence,
-		 condition_state,condition_terminal_at,completed_actor_record_id,
-		 expected_run_state_version,attempt_number,current_run_lease_id,resume_attach_id)
-		SELECT $1,environment_id,id,workspace_id,'actor_input',session_id,0,'completed',now(),$2,state_version,1,$3,$4
+		 condition_status,condition_terminal_at,completed_actor_record_id,
+		 expected_run_revision,attempt_number,current_run_lease_id,resume_attach_id)
+		SELECT $1,environment_id,id,workspace_id,'actor_input',session_id,0,'completed',now(),$2,revision,1,$3,$4
 		FROM runs WHERE id=$5
 	`, waitID, recordID, work.leaseID, uuid.NewV7(), work.runID)
 	rejectSchemaRow(t, tx, "23514", `UPDATE run_waits SET completed_actor_record_id=NULL WHERE id=$1`, waitID)
 	rejectSchemaRow(t, tx, "23503", `UPDATE run_waits SET completed_actor_record_id=$2 WHERE id=$1`, waitID, uuid.NewV7())
 	var outboxID int64
-	if err := tx.QueryRow(ctx, `INSERT INTO telemetry_outbox(org_id,project_id,environment_id,stream_kind,source_kind,source_id,run_id,stream_name,content,size_bytes,observed_seq) VALUES ($1,$2,$3,'run_log','run',$4,$4,'stdout','\x00',1,1) RETURNING id`, fixture.orgID, fixture.projectID, fixture.environmentID, work.runID).Scan(&outboxID); err != nil {
+	if err := tx.QueryRow(ctx, `INSERT INTO telemetry_outbox(org_id,project_id,environment_id,stream_kind,source_kind,source_id,run_id,run_lease_id,attempt_number,stream_name,content,size_bytes,observed_seq) VALUES ($1,$2,$3,'run_log','run',$4,$4,$5,1,'stdout','\x00',1,1) RETURNING id`, fixture.orgID, fixture.projectID, fixture.environmentID, work.runID, work.leaseID).Scan(&outboxID); err != nil {
 		t.Fatal(err)
 	}
-	rejectSchemaRow(t, tx, "23514", `UPDATE telemetry_outbox SET run_id=NULL WHERE id=$1`, outboxID)
+	for _, assignment := range []string{"run_id=NULL", "run_lease_id=NULL", "attempt_number=NULL", "attempt_number=0", "attempt_number=-1"} {
+		rejectSchemaRow(t, tx, "23514", "UPDATE telemetry_outbox SET "+assignment+" WHERE id=$1", outboxID)
+	}
 }
 
 func assertCheckpointArtifactBoundaries(t *testing.T, tx pgx.Tx, fixture runLeaseClaimFixture, work runLeaseWork, privateVersionID, otherEnvironment uuid.UUID) {
@@ -188,21 +190,21 @@ func assertCheckpointArtifactBoundaries(t *testing.T, tx pgx.Tx, fixture runLeas
 	ctx := t.Context()
 	waitID, checkpointID := uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, ctx, tx, `
-		INSERT INTO run_waits (id,environment_id,run_id,workspace_id,kind,due_at,expected_run_state_version,attempt_number,current_run_lease_id,resume_attach_id)
-		SELECT $1,environment_id,id,workspace_id,'timer',now()+interval '1 minute',state_version,1,$2,$3 FROM runs WHERE id=$4
+		INSERT INTO run_waits (id,environment_id,run_id,workspace_id,kind,due_at,expected_run_revision,attempt_number,current_run_lease_id,resume_attach_id)
+		SELECT $1,environment_id,id,workspace_id,'timer',now()+interval '1 minute',revision,1,$2,$3 FROM runs WHERE id=$4
 	`, waitID, work.leaseID, uuid.NewV7(), work.runID)
 	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO run_checkpoints (id,run_id,attempt_number,run_wait_id,source_run_lease_id,source_workspace_lease_id,workspace_id,base_workspace_version_id)
-		SELECT $1,$2,1,$3,$4,id,workspace_id,base_version_id FROM workspace_leases WHERE owner_run_lease_id=$4
+		SELECT $1,$2,1,$3,$4,id,workspace_id,base_workspace_version_id FROM workspace_leases WHERE owner_run_lease_id=$4
 	`, checkpointID, work.runID, waitID, work.leaseID)
 	artifacts := dbtest.InsertCheckpointArtifacts(t, ctx, tx, work.runID, "schema-checkpoint")
 	rejectSchemaRow(t, tx, "23514", `UPDATE run_checkpoints SET runtime_config_artifact_id=$2 WHERE id=$1`, checkpointID, artifacts.RuntimeConfig)
-	rejectSchemaRow(t, tx, "23514", `UPDATE run_checkpoints SET state='ready', private_workspace_version_id=$2, ready_at=now(), ready_request_fingerprint='ready', restore_manifest='{"version":0}' WHERE id=$1`, checkpointID, privateVersionID)
+	rejectSchemaRow(t, tx, "23514", `UPDATE run_checkpoints SET status='ready', private_workspace_version_id=$2, ready_at=now(), ready_request_fingerprint='sha256:b24d6d33736ecd5604a4b17bc9c6481039fac362bb7df044ef1c10a2bfd21db6', restore_manifest='{"version":0}' WHERE id=$1`, checkpointID, privateVersionID)
 	params := MarkRunCheckpointReadyParams{
 		ID: pgvalue.UUID(checkpointID), RunID: pgvalue.UUID(work.runID), AttemptNumber: 1,
 		PrivateWorkspaceVersionID: pgvalue.UUID(privateVersionID), RuntimeConfigArtifactID: pgvalue.UUID(artifacts.RuntimeConfig),
 		VMStateArtifactID: pgvalue.UUID(artifacts.VMState), MemoryArtifactID: pgvalue.UUID(artifacts.Memory), ScratchDiskArtifactID: pgvalue.UUID(artifacts.ScratchDisk),
-		RestoreManifest: []byte(`{"version":0}`), ReadyRequestFingerprint: pgvalue.Text("ready"),
+		RestoreManifest: []byte(`{"version":0}`), ReadyRequestFingerprint: pgvalue.Text("sha256:b24d6d33736ecd5604a4b17bc9c6481039fac362bb7df044ef1c10a2bfd21db6"),
 	}
 	queries := New(tx)
 	dbtest.MustExec(t, ctx, tx, `UPDATE run_checkpoints SET runtime_config_artifact_id=$2, vm_state_artifact_id=$3, memory_artifact_id=$4, scratch_disk_artifact_id=$5 WHERE id=$1`, checkpointID, artifacts.RuntimeConfig, artifacts.VMState, artifacts.Memory, artifacts.ScratchDisk)
@@ -230,9 +232,14 @@ func assertCheckpointArtifactBoundaries(t *testing.T, tx pgx.Tx, fixture runLeas
 	for _, column := range []string{"runtime_config_artifact_id", "vm_state_artifact_id", "memory_artifact_id", "scratch_disk_artifact_id"} {
 		rejectSchemaRow(t, tx, "23514", "UPDATE run_checkpoints SET "+column+"=NULL WHERE id=$1", checkpointID)
 	}
+	for _, value := range []string{"fingerprint", "sha256:abc", "sha256:" + strings.Repeat("A", 64)} {
+		rejectSchemaRow(t, tx, "23514", `UPDATE run_checkpoints SET ready_request_fingerprint=$2 WHERE id=$1`, checkpointID, value)
+		rejectSchemaRow(t, tx, "23514", `UPDATE run_checkpoints SET status='invalid',invalidated_at=now(),invalidation_reason_code='checkpoint_failed',failed_request_fingerprint=$2 WHERE id=$1`, checkpointID, value)
+	}
+	dbtest.MustExec(t, ctx, tx, `UPDATE run_checkpoints SET status='invalid',invalidated_at=now(),invalidation_reason_code='checkpoint_failed',failed_request_fingerprint=$2 WHERE id=$1`, checkpointID, dbtest.Digest("checkpoint-failure"))
 }
 
-func TestSchemaRemovedStatesAndLeaseCreationBounds(t *testing.T) {
+func TestSchemaLeaseCreationBoundsAndExpiry(t *testing.T) {
 	ctx := t.Context()
 	fixture := newRunLeaseClaimFixture(t, ctx)
 	work := fixture.addWork(t, ctx, "assigned", time.Now().Add(-time.Minute))
@@ -242,12 +249,11 @@ func TestSchemaRemovedStatesAndLeaseCreationBounds(t *testing.T) {
 	}
 	defer tx.Rollback(ctx)
 	rejectSchemaRow(t, tx, "23514", `UPDATE run_leases SET expires_at=created_at, start_deadline_at=created_at WHERE id=$1`, work.leaseID)
-	rejectSchemaRow(t, tx, "23514", `UPDATE run_leases SET state='starting', claimed_at=created_at-interval '1 microsecond' WHERE id=$1`, work.leaseID)
+	rejectSchemaRow(t, tx, "23514", `UPDATE run_leases SET status='starting', claimed_at=created_at-interval '1 microsecond' WHERE id=$1`, work.leaseID)
 	rejectSchemaRow(t, tx, "23514", `UPDATE run_leases SET renewed_at=created_at-interval '1 microsecond', previous_expires_at=expires_at, expires_at=expires_at+interval '1 minute' WHERE id=$1`, work.leaseID)
-	dbtest.MustExec(t, ctx, tx, `UPDATE run_leases SET state='starting', claimed_at=created_at WHERE id=$1`, work.leaseID)
-	dbtest.MustExec(t, ctx, tx, `UPDATE run_leases SET state='running', started_at=claimed_at WHERE id=$1`, work.leaseID)
-	rejectSchemaRow(t, tx, "23514", `UPDATE workspace_leases SET state='lost', terminal_at=now(), terminal_reason_code='worker_lost' WHERE owner_run_lease_id=$1`, work.leaseID)
-	dbtest.MustExec(t, ctx, tx, `UPDATE workspace_leases SET state='expired', terminal_at=now(), terminal_reason_code='worker_lost' WHERE owner_run_lease_id=$1`, work.leaseID)
+	dbtest.MustExec(t, ctx, tx, `UPDATE run_leases SET status='starting', claimed_at=created_at WHERE id=$1`, work.leaseID)
+	dbtest.MustExec(t, ctx, tx, `UPDATE run_leases SET status='running', started_at=claimed_at WHERE id=$1`, work.leaseID)
+	dbtest.MustExec(t, ctx, tx, `UPDATE workspace_leases SET status='expired', terminal_at=now(), terminal_reason_code='worker_lost' WHERE owner_run_lease_id=$1`, work.leaseID)
 	var preservedReason string
 	if err := tx.QueryRow(ctx, `SELECT terminal_reason_code FROM workspace_leases WHERE owner_run_lease_id=$1`, work.leaseID).Scan(&preservedReason); err != nil || preservedReason != "worker_lost" {
 		t.Fatalf("loss reason = %q, %v", preservedReason, err)
@@ -255,7 +261,6 @@ func TestSchemaRemovedStatesAndLeaseCreationBounds(t *testing.T) {
 	tokenID, accessID := uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, ctx, tx, `INSERT INTO tokens(id,org_id,project_id,environment_id,expires_at,callback_secret_fingerprint) VALUES ($1,$2,$3,$4,now()+interval '1 hour',$5)`, tokenID, fixture.orgID, fixture.projectID, fixture.environmentID, dbtest.Hash("callback"))
 	dbtest.MustExec(t, ctx, tx, `INSERT INTO public_access_tokens(id,token_id,token_hash,expires_at) VALUES ($1,$2,$3,now()+interval '1 hour')`, accessID, tokenID, dbtest.Hash("access"))
-	rejectSchemaRow(t, tx, "23514", `UPDATE public_access_tokens SET state='revoked' WHERE id=$1`, accessID)
 	queries := New(tx)
 	used, err := queries.MarkPublicAccessTokenUsed(ctx, pgvalue.UUID(accessID))
 	if err != nil || used.UsedCount != 1 {
@@ -263,7 +268,7 @@ func TestSchemaRemovedStatesAndLeaseCreationBounds(t *testing.T) {
 	}
 	dbtest.MustExec(t, ctx, tx, `UPDATE public_access_tokens SET created_at=now()-interval '2 hours', expires_at=now()-interval '1 hour' WHERE id=$1`, accessID)
 	expired, err := queries.ExpireDuePublicAccessTokens(ctx, 10)
-	if err != nil || len(expired) != 1 || expired[0].State != PublicAccessTokenStateExpired || !expired[0].ExpiredAt.Valid {
+	if err != nil || len(expired) != 1 || expired[0].Status != PublicAccessTokenStatusExpired || !expired[0].ExpiredAt.Valid {
 		t.Fatalf("expiry = %+v, %v", expired, err)
 	}
 }
@@ -282,7 +287,7 @@ func TestSchemaCurrentTerminalStatesRequireTheirEventTime(t *testing.T) {
 	}{
 		{"sessions", "closed", "closed_at", "failed_at", "", sessionID},
 		{"sessions", "failed", "failed_at", "closed_at", `, failure='{"code":"run_failed","message":"failed","details":{}}'`, sessionID},
-		{"tokens", "completed", "completed_at", "expired_at", "", tokenID},
+		{"tokens", "completed", "completed_at", "expired_at", `, completion_fingerprint=decode(repeat('ab',32),'hex'), result='null'::jsonb`, tokenID},
 		{"tokens", "expired", "expired_at", "cancelled_at", "", tokenID},
 		{"tokens", "cancelled", "cancelled_at", "completed_at", "", tokenID},
 		{"public_access_tokens", "expired", "expired_at", "last_used_at", "", accessID},
@@ -293,7 +298,7 @@ func TestSchemaCurrentTerminalStatesRequireTheirEventTime(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer tx.Rollback(ctx)
-			transition := "UPDATE " + tc.table + " SET state='" + tc.state + "'" + tc.extra
+			transition := "UPDATE " + tc.table + " SET status='" + tc.state + "'" + tc.extra
 			rejectSchemaRow(t, tx, "23514", transition+" WHERE id=$1", tc.id)
 			// A different event cannot supply the missing terminal fact.
 			rejectSchemaRow(t, tx, "23514", transition+", "+tc.other+"=now() WHERE id=$1", tc.id)
@@ -311,7 +316,7 @@ func TestSchemaDiagnosticCodesAreStructural(t *testing.T) {
 	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
 	sessionID := fixture.convertToActor(t, ctx, work, `{"enabled":false}`)
 	scheduleID := uuid.NewV7()
-	dbtest.MustExec(t, ctx, fixture.pool, `INSERT INTO schedules (id,environment_id,task_declared_id,deployment_definition_id,deployment_id,cron_pattern,timezone,state,effective_from,next_fire_at)
+	dbtest.MustExec(t, ctx, fixture.pool, `INSERT INTO schedules (id,environment_id,task_declared_id,deployment_definition_id,deployment_id,cron_pattern,timezone,status,effective_from,next_fire_at)
  SELECT $1,environment_id,declared_id,id,deployment_id,'* * * * *','UTC','active',now(),now() FROM deployment_definitions WHERE id=$2`, scheduleID, fixture.taskDefinitionID)
 	tx, err := fixture.pool.Begin(ctx)
 	if err != nil {
@@ -322,8 +327,8 @@ func TestSchemaDiagnosticCodesAreStructural(t *testing.T) {
 		name, statement string
 		id              uuid.UUID
 	}{
-		{"schedule", `UPDATE schedules SET state='errored',last_failure=$2 WHERE id=$1`, scheduleID},
-		{"session", `UPDATE sessions SET state='failed',failed_at=now(),failure=$2 WHERE id=$1`, sessionID},
+		{"schedule", `UPDATE schedules SET status='errored',last_failure=$2 WHERE id=$1`, scheduleID},
+		{"session", `UPDATE sessions SET status='failed',failed_at=now(),failure=$2 WHERE id=$1`, sessionID},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, code := range []string{"x", strings.Repeat("x", 128), "future_diagnostic"} {
@@ -337,10 +342,10 @@ func TestSchemaDiagnosticCodesAreStructural(t *testing.T) {
 		})
 	}
 	rejectSchemaRow(t, tx, "23514", `UPDATE sessions SET failure='{"code":"cancelled","message":"cancelled","details":{}}' WHERE id=$1`, sessionID)
-	rejectSchemaRow(t, tx, "23514", `UPDATE sessions SET state='cancelled',failed_at=NULL WHERE id=$1`, sessionID)
-	dbtest.MustExec(t, ctx, tx, `UPDATE sessions SET state='cancelled',failed_at=NULL,failure='{"code":"cancelled","message":"cancelled","details":{}}' WHERE id=$1`, sessionID)
-	dbtest.MustExec(t, ctx, tx, `UPDATE sessions SET state='failed',failed_at=now(),failure='{"code":"future_diagnostic","message":"diagnosis","details":{}}' WHERE id=$1`, sessionID)
-	dbtest.MustExec(t, ctx, tx, `UPDATE schedules SET state='active' WHERE id=$1`, scheduleID)
+	rejectSchemaRow(t, tx, "23514", `UPDATE sessions SET status='cancelled',failed_at=NULL WHERE id=$1`, sessionID)
+	dbtest.MustExec(t, ctx, tx, `UPDATE sessions SET status='cancelled',failed_at=NULL,failure='{"code":"cancelled","message":"cancelled","details":{}}' WHERE id=$1`, sessionID)
+	dbtest.MustExec(t, ctx, tx, `UPDATE sessions SET status='failed',failed_at=now(),failure='{"code":"future_diagnostic","message":"diagnosis","details":{}}' WHERE id=$1`, sessionID)
+	dbtest.MustExec(t, ctx, tx, `UPDATE schedules SET status='active' WHERE id=$1`, scheduleID)
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}

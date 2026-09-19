@@ -18,7 +18,7 @@ func ReconcileClose(
 	actor db.Session,
 	bindings []db.LockWorkspaceSecretsForAdmissionRow,
 ) (db.Session, bool, error) {
-	if actor.State != "closing" || !actor.CloseSequence.Valid {
+	if actor.Status != "closing" || !actor.CloseSequence.Valid {
 		return actor, false, nil
 	}
 	if actor.CurrentRunID.Valid {
@@ -160,7 +160,7 @@ func workspaceCanAdmit(
 	workspace db.LockActorCloseWorkspaceRow,
 	activity db.GetActorCloseWorkspaceActivityRow,
 ) bool {
-	return workspace.State == db.WorkspaceStateActive &&
+	return workspace.Status == db.WorkspaceStatusActive &&
 		workspace.DesiredState == db.WorkspaceDesiredStateActive &&
 		workspace.DirtyState == db.WorkspaceDirtyStateClean &&
 		workspace.HeadVersionID.Valid &&
@@ -176,7 +176,7 @@ func bindingsCanAdmit(
 	for _, binding := range bindings {
 		if binding.WorkspaceID != actor.WorkspaceID ||
 			binding.EnvironmentID != actor.EnvironmentID ||
-			binding.SecretState != "active" ||
+			binding.SecretStatus != "active" ||
 			!binding.CurrentVersionID.Valid {
 			return false
 		}

@@ -18,7 +18,7 @@ type dispatchLaneMeasurement struct {
 	Organizations           int     `json:"organizations"`
 	Scopes                  int     `json:"scopes"`
 	CandidateHeads          int     `json:"candidate_heads"`
-	Statements              int     `json:"statements"`
+	Statements              int     `json:"statusments"`
 	MinimumMillis           float64 `json:"minimum_millis"`
 	MedianMillis            float64 `json:"median_millis"`
 	P95Millis               float64 `json:"p95_millis"`
@@ -92,7 +92,7 @@ CREATE TEMP TABLE runs (
     concurrency_key TEXT,
     queue_score_at TIMESTAMPTZ NOT NULL,
     status TEXT NOT NULL,
-    state_version BIGINT NOT NULL,
+    revision BIGINT NOT NULL,
     current_run_lease_id UUID,
     first_lease_at TIMESTAMPTZ,
     queued_expires_at TIMESTAMPTZ,
@@ -108,7 +108,7 @@ CREATE INDEX runs_dispatch_fair_idx
         queue_score_at,
         id
     )
-    INCLUDE (state_version, first_lease_at, queued_expires_at)
+    INCLUDE (revision, first_lease_at, queued_expires_at)
     WHERE status = 'queued' AND current_run_lease_id IS NULL`); err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ WITH generated AS (
 )
 INSERT INTO runs (
     id, org_id, environment_id, queue_name, concurrency_key, queue_score_at,
-    status, state_version, current_run_lease_id, first_lease_at, queued_expires_at
+    status, revision, current_run_lease_id, first_lease_at, queued_expires_at
 )
 SELECT md5('run:' || row_number::text)::uuid,
        md5('organization:' || organization_number::text)::uuid,

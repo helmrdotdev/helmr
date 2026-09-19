@@ -43,7 +43,7 @@ func (r *Reconciler) ReconcileClose(
 	if err != nil {
 		return false, err
 	}
-	if locator.State != "closing" {
+	if locator.Status != "closing" {
 		return false, nil
 	}
 	tx, err := r.db.Begin(ctx)

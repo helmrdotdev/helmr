@@ -94,7 +94,7 @@ func (s *Server) workerCreateTimerRunWait(
 			return err
 		}
 		authority.actor = owner.actor
-		if authority.runLease.State != db.RunLeaseStateRunning {
+		if authority.runLease.Status != db.RunLeaseStatusRunning {
 			return errStaleRunLeaseClaim
 		}
 		if err := validateRunWaitActorCursor(authority, db.RunWait{
@@ -139,8 +139,8 @@ func (s *Server) workerCreateTimerRunWait(
 			CheckpointDueAt:                checkpointDueAt,
 			ResumeAttachID:                 pgvalue.UUID(resumeAttachID),
 			Metadata:                       metadata, Tags: tags,
-			RunID:                       authority.run.ID,
-			ExpectedRunningStateVersion: authority.run.StateVersion,
+			RunID:                   authority.run.ID,
+			ExpectedRunningRevision: authority.run.Revision,
 		})
 		if err != nil {
 			return staleRunLeaseClaim(err)
@@ -165,7 +165,7 @@ func (s *Server) workerCreateTimerRunWait(
 		RuntimeInstanceID: pgvalue.UUIDString(registrationLocators.RuntimeInstanceID),
 		RuntimeEpoch:      worker.WorkerEpoch,
 	}
-	if registered.SuspensionState == db.RunWaitStateReleased {
+	if registered.SuspensionStatus == db.RunWaitStatusReleased {
 		response.ResolutionKind, response.Resolution, err = timerWaitDecision(registered)
 		if err != nil {
 			writeError(w, conflict(err))
@@ -266,7 +266,7 @@ func parseTimerDuration(value string) (time.Duration, error) {
 }
 
 func timerWaitDecision(wait db.RunWait) (string, json.RawMessage, error) {
-	if wait.Kind != db.WaitKindTimer || wait.ConditionState != db.WaitStateCompleted {
+	if wait.Kind != db.WaitKindTimer || wait.ConditionStatus != db.WaitStatusCompleted {
 		return "", nil, errors.New("timer wait decision is not completed")
 	}
 	return "completed", json.RawMessage(`null`), nil

@@ -27,8 +27,8 @@ UPDATE workspace_mounts
    AND workspace_id = $11
    AND materialized_version_id = $12
    AND fencing_generation = $13
-   AND state = 'mounted'
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, guest_channel_token_hash, guest_channel_token_expires_at, state, request, dirty_generation, fencing_generation, finalization_kind, finalization_reason_code, finalization_error, staged_version_id, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
+   AND status = 'mounted'
+RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, guest_channel_token_hash, guest_channel_token_expires_at, status, request, dirty_generation, fencing_generation, finalization_kind, finalization_reason_code, finalization_error, staged_version_id, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
 `
 
 type AdvanceRunWorkspaceMountFenceParams struct {
@@ -78,7 +78,7 @@ func (q *Queries) AdvanceRunWorkspaceMountFence(ctx context.Context, arg Advance
 		&i.RuntimeInstanceID,
 		&i.GuestChannelTokenHash,
 		&i.GuestChannelTokenExpiresAt,
-		&i.State,
+		&i.Status,
 		&i.Request,
 		&i.DirtyGeneration,
 		&i.FencingGeneration,
@@ -115,9 +115,9 @@ UPDATE workspaces
    AND workspaces.id = $5
    AND workspaces.ownership_generation = $6
    AND workspaces.writer_generation = $7
-   AND workspaces.state = 'active'
+   AND workspaces.status = 'active'
    AND workspaces.desired_state = 'active'
-RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at
+RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.revision, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.status, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at
 `
 
 type AdvanceRunWorkspaceWriterParams struct {
@@ -137,13 +137,13 @@ type AdvanceRunWorkspaceWriterRow struct {
 	SandboxDeclaredID      pgtype.Text        `json:"sandbox_declared_id"`
 	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
 	Key                    pgtype.Text        `json:"key"`
-	StateVersion           int64              `json:"state_version"`
+	Revision               int64              `json:"revision"`
 	OwnerSessionID         pgtype.UUID        `json:"owner_session_id"`
 	OwnerRunID             pgtype.UUID        `json:"owner_run_id"`
 	OwnershipGeneration    int64              `json:"ownership_generation"`
 	WriterGeneration       int64              `json:"writer_generation"`
 	HeadVersionID          pgtype.UUID        `json:"head_version_id"`
-	State                  string             `json:"state"`
+	Status                 string             `json:"status"`
 	DesiredState           string             `json:"desired_state"`
 	DirtyState             string             `json:"dirty_state"`
 	LastActivityAt         pgtype.Timestamptz `json:"last_activity_at"`
@@ -170,13 +170,13 @@ func (q *Queries) AdvanceRunWorkspaceWriter(ctx context.Context, arg AdvanceRunW
 		&i.SandboxDeclaredID,
 		&i.DeploymentDefinitionID,
 		&i.Key,
-		&i.StateVersion,
+		&i.Revision,
 		&i.OwnerSessionID,
 		&i.OwnerRunID,
 		&i.OwnershipGeneration,
 		&i.WriterGeneration,
 		&i.HeadVersionID,
-		&i.State,
+		&i.Status,
 		&i.DesiredState,
 		&i.DirtyState,
 		&i.LastActivityAt,
@@ -234,18 +234,18 @@ WITH selected_shape AS MATERIALIZED (
       FROM worker_instances
       JOIN worker_groups
         ON worker_groups.id = worker_instances.worker_group_id
-       AND worker_groups.state = 'active'
+       AND worker_groups.status = 'active'
       JOIN worker_pools
 	    ON worker_pools.id = worker_instances.worker_pool_id
 	   AND worker_pools.worker_group_id = worker_instances.worker_group_id
-	   AND worker_pools.state = 'active'
+	   AND worker_pools.status = 'active'
       JOIN worker_pool_cpu_shapes
         ON worker_pool_cpu_shapes.worker_pool_id = worker_pools.id
        AND worker_pool_cpu_shapes.vcpu_count = (($1::bigint - 1) / 1000 + 1)::integer
      WHERE worker_instances.id = $2
        AND worker_instances.worker_group_id = $3
 	   AND worker_instances.current_epoch = $4
-	   AND worker_instances.state = 'active'
+	   AND worker_instances.status = 'active'
        AND (
            $5::uuid IS NOT NULL
            OR worker_groups.primary_pool_id = worker_pools.id
@@ -505,7 +505,7 @@ INSERT INTO run_leases (
     $23,
     $24
 )
-RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, state, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
 `
 
 type InsertAssignedRunLeaseParams struct {
@@ -586,7 +586,7 @@ func (q *Queries) InsertAssignedRunLease(ctx context.Context, arg InsertAssigned
 		&i.SpanID,
 		&i.ParentSpanID,
 		&i.Traceparent,
-		&i.State,
+		&i.Status,
 		&i.StartDeadlineAt,
 		&i.ClaimedAt,
 		&i.StartedAt,
@@ -622,7 +622,7 @@ INSERT INTO workspace_leases (
     workspace_id,
     workspace_mount_id,
     owner_run_lease_id,
-    base_version_id,
+    base_workspace_version_id,
     ownership_generation,
     writer_generation,
     mount_fencing_generation,
@@ -648,7 +648,7 @@ INSERT INTO workspace_leases (
     $17,
     $18
 )
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, state, owner_run_lease_id, owner_process_id, base_version_id, ownership_generation, writer_generation, mount_fencing_generation, fencing_token_hash, acquired_at, renewed_at, expires_at, released_at, updated_at, terminal_at, terminal_reason_code, terminal_error
+RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, status, owner_run_lease_id, owner_process_id, base_workspace_version_id, ownership_generation, writer_generation, mount_fencing_generation, fencing_token_hash, acquired_at, renewed_at, expires_at, released_at, updated_at, terminal_at, terminal_reason_code, terminal_error
 `
 
 type InsertRunWorkspaceLeaseParams struct {
@@ -664,7 +664,7 @@ type InsertRunWorkspaceLeaseParams struct {
 	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
 	WorkspaceMountID       pgtype.UUID        `json:"workspace_mount_id"`
 	OwnerRunLeaseID        pgtype.UUID        `json:"owner_run_lease_id"`
-	BaseVersionID          pgtype.UUID        `json:"base_version_id"`
+	BaseWorkspaceVersionID pgtype.UUID        `json:"base_workspace_version_id"`
 	OwnershipGeneration    int64              `json:"ownership_generation"`
 	WriterGeneration       int64              `json:"writer_generation"`
 	MountFencingGeneration int64              `json:"mount_fencing_generation"`
@@ -686,7 +686,7 @@ func (q *Queries) InsertRunWorkspaceLease(ctx context.Context, arg InsertRunWork
 		arg.WorkspaceID,
 		arg.WorkspaceMountID,
 		arg.OwnerRunLeaseID,
-		arg.BaseVersionID,
+		arg.BaseWorkspaceVersionID,
 		arg.OwnershipGeneration,
 		arg.WriterGeneration,
 		arg.MountFencingGeneration,
@@ -706,10 +706,10 @@ func (q *Queries) InsertRunWorkspaceLease(ctx context.Context, arg InsertRunWork
 		&i.RuntimeInstanceID,
 		&i.WorkspaceID,
 		&i.WorkspaceMountID,
-		&i.State,
+		&i.Status,
 		&i.OwnerRunLeaseID,
 		&i.OwnerProcessID,
-		&i.BaseVersionID,
+		&i.BaseWorkspaceVersionID,
 		&i.OwnershipGeneration,
 		&i.WriterGeneration,
 		&i.MountFencingGeneration,
@@ -732,26 +732,26 @@ UPDATE runs
        first_lease_at = coalesce(first_lease_at, transaction_timestamp()),
        runtime_preparation_count = 0,
        next_runtime_preparation_at = NULL,
-       state_version = state_version + 1,
+       revision = revision + 1,
        updated_at = transaction_timestamp()
  WHERE id = $2
    AND org_id = $3
-   AND state_version = $4
+   AND revision = $4
    AND status = 'queued'
    AND current_attempt_number = $5
    AND current_run_lease_id IS NULL
    AND (next_runtime_preparation_at IS NULL
         OR next_runtime_preparation_at <= transaction_timestamp())
    AND (first_lease_at IS NOT NULL OR queued_expires_at IS NULL OR queued_expires_at > transaction_timestamp())
-RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at
+RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at
 `
 
 type SetRunCurrentLeaseParams struct {
-	RunLeaseID           pgtype.UUID `json:"run_lease_id"`
-	ID                   pgtype.UUID `json:"id"`
-	OrgID                pgtype.UUID `json:"org_id"`
-	ExpectedStateVersion int64       `json:"expected_state_version"`
-	AttemptNumber        int32       `json:"attempt_number"`
+	RunLeaseID       pgtype.UUID `json:"run_lease_id"`
+	ID               pgtype.UUID `json:"id"`
+	OrgID            pgtype.UUID `json:"org_id"`
+	ExpectedRevision int64       `json:"expected_revision"`
+	AttemptNumber    int32       `json:"attempt_number"`
 }
 
 func (q *Queries) SetRunCurrentLease(ctx context.Context, arg SetRunCurrentLeaseParams) (Run, error) {
@@ -759,7 +759,7 @@ func (q *Queries) SetRunCurrentLease(ctx context.Context, arg SetRunCurrentLease
 		arg.RunLeaseID,
 		arg.ID,
 		arg.OrgID,
-		arg.ExpectedStateVersion,
+		arg.ExpectedRevision,
 		arg.AttemptNumber,
 	)
 	var i Run
@@ -789,7 +789,7 @@ func (q *Queries) SetRunCurrentLease(ctx context.Context, arg SetRunCurrentLease
 		&i.Output,
 		&i.Failure,
 		&i.Status,
-		&i.StateVersion,
+		&i.Revision,
 		&i.CurrentAttemptNumber,
 		&i.CurrentRunLeaseID,
 		&i.Metadata,

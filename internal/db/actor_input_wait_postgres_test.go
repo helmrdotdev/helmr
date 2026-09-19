@@ -30,7 +30,7 @@ func TestActorInputWaitAppendAndRegistrationOrdersConverge(t *testing.T) {
 			startTaskCompletionWork(t, ctx, fixture, work)
 
 			var runVersion int64
-			if err := fixture.pool.QueryRow(ctx, `SELECT state_version FROM runs WHERE id = $1`, work.runID).Scan(&runVersion); err != nil {
+			if err := fixture.pool.QueryRow(ctx, `SELECT revision FROM runs WHERE id = $1`, work.runID).Scan(&runVersion); err != nil {
 				t.Fatal(err)
 			}
 			waitID := uuid.NewV7()
@@ -45,7 +45,7 @@ func TestActorInputWaitAppendAndRegistrationOrdersConverge(t *testing.T) {
 					CurrentRunLeaseID:             pgvalue.UUID(work.leaseID),
 					CheckpointDueAt:               pgvalue.Timestamptz(time.Now().Add(30 * time.Second)),
 					ResumeAttachID:                pgvalue.UUID(uuid.NewV7()), Metadata: []byte(`{}`), Tags: []string{},
-					RunID: pgvalue.UUID(work.runID), ExpectedRunningStateVersion: runVersion,
+					RunID: pgvalue.UUID(work.runID), ExpectedRunningRevision: runVersion,
 				})
 				if err != nil {
 					t.Fatal(err)
@@ -84,7 +84,7 @@ func TestActorInputWaitAppendAndRegistrationOrdersConverge(t *testing.T) {
 			}
 			completed, err := fixture.queries.CompleteHotRunWait(ctx, CompleteHotRunWaitParams{
 				ConditionResult: []byte(`{"value":{"message":"ready"}}`), CompletedActorRecordID: record.ID,
-				ID: pending.ID, RunID: pending.RunID, ExpectedRunStateVersion: pending.ExpectedRunStateVersion,
+				ID: pending.ID, RunID: pending.RunID, ExpectedRunRevision: pending.ExpectedRunRevision,
 				CurrentRunLeaseID: pending.CurrentRunLeaseID, AttemptNumber: pending.AttemptNumber,
 			})
 			if err != nil {
@@ -94,7 +94,7 @@ func TestActorInputWaitAppendAndRegistrationOrdersConverge(t *testing.T) {
 			if err := fixture.pool.QueryRow(ctx, `SELECT status FROM runs WHERE id = $1`, work.runID).Scan(&status); err != nil {
 				t.Fatal(err)
 			}
-			if completed.ConditionState != WaitStateCompleted || completed.SuspensionState != RunWaitStateReleased ||
+			if completed.ConditionStatus != WaitStatusCompleted || completed.SuspensionStatus != RunWaitStatusReleased ||
 				completed.CompletedActorRecordID != record.ID ||
 				status != RunStatusRunning {
 				t.Fatalf("completion = %+v run=%s", completed, status)
@@ -163,7 +163,7 @@ func TestActorInputAppendConcurrentSequencesAndKeyedReplay(t *testing.T) {
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), ClaimID: pgvalue.UUID(claimID),
 		RequestFingerprint: fingerprint, SessionID: pgvalue.UUID(actorID), RecordID: first.ID,
 	})
-	if err != nil || claim.State != "completed" {
+	if err != nil || claim.Status != "completed" {
 		t.Fatalf("claim completion = %+v, %v", claim, err)
 	}
 	var receipt map[string]any
@@ -302,7 +302,7 @@ func TestActorInputSendSourceRequiresCurrentLeaseFence(t *testing.T) {
 
 	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE run_leases
-		   SET state = 'cancelled', terminal_at = now(),
+		   SET status = 'cancelled', terminal_at = now(),
 		       terminal_reason_code = 'test_stale_actor_input_source'
 		 WHERE id = $1
 	`, work.leaseID)
@@ -356,7 +356,7 @@ func TestActorInputSequenceSafeIntegerBoundaryPreservesCompletedReplay(t *testin
 		SessionID:          pgvalue.UUID(actorID),
 		RecordID:           first.ID,
 	})
-	if err != nil || claim.State != "completed" {
+	if err != nil || claim.Status != "completed" {
 		t.Fatalf("claim completion = %+v, %v", claim, err)
 	}
 
@@ -406,7 +406,7 @@ func TestActorInputWaitTimeoutReleasesHotRun(t *testing.T) {
 	actorID := fixture.convertToActor(t, ctx, work, `{"enabled":false}`)
 	startTaskCompletionWork(t, ctx, fixture, work)
 	var runVersion int64
-	if err := fixture.pool.QueryRow(ctx, `SELECT state_version FROM runs WHERE id = $1`, work.runID).Scan(&runVersion); err != nil {
+	if err := fixture.pool.QueryRow(ctx, `SELECT revision FROM runs WHERE id = $1`, work.runID).Scan(&runVersion); err != nil {
 		t.Fatal(err)
 	}
 	wait, err := fixture.queries.RegisterActorInputRunWait(ctx, RegisterActorInputRunWaitParams{
@@ -418,7 +418,7 @@ func TestActorInputWaitTimeoutReleasesHotRun(t *testing.T) {
 		ActorSpeculativeInputSequence: pgtype.Int8{Int64: 2, Valid: true}, CurrentRunLeaseID: pgvalue.UUID(work.leaseID),
 		CheckpointDueAt: pgvalue.Timestamptz(time.Now().Add(30 * time.Second)),
 		ResumeAttachID:  pgvalue.UUID(uuid.NewV7()), Metadata: []byte(`{}`), Tags: []string{},
-		RunID: pgvalue.UUID(work.runID), ExpectedRunningStateVersion: runVersion,
+		RunID: pgvalue.UUID(work.runID), ExpectedRunningRevision: runVersion,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -429,7 +429,7 @@ func TestActorInputWaitTimeoutReleasesHotRun(t *testing.T) {
 	}
 	failed, err := fixture.queries.FailHotRunWait(ctx, FailHotRunWaitParams{
 		ReasonCode: pgvalue.Text("wait_timeout"), ConditionError: []byte(`{"code":"wait_timeout","retryable":false}`),
-		ID: wait.ID, RunID: wait.RunID, ExpectedRunStateVersion: wait.ExpectedRunStateVersion,
+		ID: wait.ID, RunID: wait.RunID, ExpectedRunRevision: wait.ExpectedRunRevision,
 		CurrentRunLeaseID: wait.CurrentRunLeaseID, AttemptNumber: wait.AttemptNumber,
 	})
 	if err != nil {
@@ -439,7 +439,7 @@ func TestActorInputWaitTimeoutReleasesHotRun(t *testing.T) {
 	if err := fixture.pool.QueryRow(ctx, `SELECT status FROM runs WHERE id = $1`, work.runID).Scan(&status); err != nil {
 		t.Fatal(err)
 	}
-	if failed.ConditionState != WaitStateFailed || failed.SuspensionState != RunWaitStateReleased ||
+	if failed.ConditionStatus != WaitStatusFailed || failed.SuspensionStatus != RunWaitStatusReleased ||
 		pgvalue.TextValue(failed.ConditionReasonCode) != "wait_timeout" || status != RunStatusRunning {
 		t.Fatalf("timeout completion = %+v run=%s", failed, status)
 	}
@@ -456,12 +456,12 @@ func TestActorInputClosingContinuationCASCreatesOneRun(t *testing.T) {
 	}
 	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE workspace_leases
-		   SET state = 'released', released_at = now(), terminal_at = now()
+		   SET status = 'released', released_at = now(), terminal_at = now()
 		 WHERE owner_run_lease_id = $1
 	`, work.leaseID)
 	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE run_leases
-		   SET state = 'cancelled', terminal_at = now(), terminal_reason_code = 'test_idle'
+		   SET status = 'cancelled', terminal_at = now(), terminal_reason_code = 'test_idle'
 		 WHERE id = $1
 	`, work.leaseID)
 	dbtest.MustExec(t, ctx, fixture.pool, `
@@ -492,7 +492,7 @@ func TestActorInputClosingContinuationCASCreatesOneRun(t *testing.T) {
 	}
 	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE sessions
-		   SET state = 'closing', close_sequence = 3
+		   SET status = 'closing', close_sequence = 3
 		 WHERE id = $1
 	`, actorID)
 

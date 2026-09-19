@@ -43,11 +43,11 @@ func TestSameWorkspaceTaskCompletionRequestsDiscardBeforeSuccessOrRetry(t *testi
 				t.Fatal(err)
 			}
 
-			var runtimeDesired, mountState, workspaceLeaseState string
+			var runtimeDesired, mountStatus, workspaceLeaseStatus string
 			if err := fixture.pool.QueryRow(t.Context(), `
 SELECT runtime_instances.desired_state,
-       workspace_mounts.state,
-       workspace_leases.state
+       workspace_mounts.status,
+       workspace_leases.status
   FROM runtime_instances
   JOIN workspace_mounts
     ON workspace_mounts.id = $2
@@ -57,12 +57,12 @@ SELECT runtime_instances.desired_state,
    AND workspace_leases.workspace_mount_id = workspace_mounts.id
  WHERE runtime_instances.id = $1`,
 				fixture.runtimeID, fixture.mountID, fixture.workspaceLeaseID,
-			).Scan(&runtimeDesired, &mountState, &workspaceLeaseState); err != nil {
+			).Scan(&runtimeDesired, &mountStatus, &workspaceLeaseStatus); err != nil {
 				t.Fatal(err)
 			}
-			if runtimeDesired != "closed" || mountState != "unmounting" || workspaceLeaseState != "released" {
+			if runtimeDesired != "closed" || mountStatus != "unmounting" || workspaceLeaseStatus != "released" {
 				t.Fatalf("completion lifecycle = runtime:%s mount:%s lease:%s",
-					runtimeDesired, mountState, workspaceLeaseState)
+					runtimeDesired, mountStatus, workspaceLeaseStatus)
 			}
 
 			var runStatus string
@@ -78,7 +78,7 @@ SELECT status, current_attempt_number FROM runs WHERE id = $1`, fixture.childRun
 				}
 				var parentStatus, waitCondition, waitSuspension string
 				if err := fixture.pool.QueryRow(t.Context(), `
-SELECT parent.status, edge.condition_state, edge.suspension_state
+SELECT parent.status, edge.condition_status, edge.suspension_status
   FROM runs AS parent
   JOIN run_waits AS edge ON edge.run_id = parent.id
  WHERE parent.id = $1 AND edge.id = $2`, fixture.parentRunID, fixture.waitID,
@@ -153,7 +153,7 @@ func newSameWorkspaceCompletionPostgresFixture(
 	base := runtest.New(t)
 	work := base.AddRunLease(t, "starting", time.Now().Add(-time.Minute))
 	ctx := t.Context()
-	var workspaceID, baseVersionID, runtimeID, mountID, workspaceLeaseID uuid.UUID
+	var workspaceID, baseWorkspaceVersionID, runtimeID, mountID, workspaceLeaseID uuid.UUID
 	if err := base.Pool.QueryRow(ctx, `
 SELECT runs.workspace_id,
        runs.base_workspace_version_id,
@@ -164,7 +164,7 @@ SELECT runs.workspace_id,
   JOIN run_leases ON run_leases.id = $2 AND run_leases.run_id = runs.id
   JOIN workspace_leases ON workspace_leases.owner_run_lease_id = run_leases.id
  WHERE runs.id = $1`, work.RunID, work.LeaseID,
-	).Scan(&workspaceID, &baseVersionID, &runtimeID, &mountID, &workspaceLeaseID); err != nil {
+	).Scan(&workspaceID, &baseWorkspaceVersionID, &runtimeID, &mountID, &workspaceLeaseID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -200,7 +200,7 @@ INSERT INTO runs (
     deployment_definition_id, entrypoint_kind, entrypoint_declared_id,
     cause_kind, workspace_id, base_workspace_version_id, payload,
     queue_name, queue_origin_at, queue_score_at, max_active_duration_ms,
-    retry_policy, trace_id, root_span_id, status, state_version,
+    retry_policy, trace_id, root_span_id, status, revision,
     current_run_lease_id, first_lease_at
 )
 SELECT $1, org_id, project_id, environment_id, deployment_id,
@@ -215,7 +215,7 @@ INSERT INTO run_attempts (
     run_id, number, entrypoint_kind, workspace_id, base_workspace_version_id,
     entrypoint_entered_at
 ) VALUES ($1, 1, 'task', $2, $3, transaction_timestamp())`,
-		parentRunID, workspaceID, baseVersionID)
+		parentRunID, workspaceID, baseWorkspaceVersionID)
 	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO run_leases (
     id, org_id, project_id, environment_id, run_id, workspace_id, region_id,
@@ -223,7 +223,7 @@ INSERT INTO run_leases (
     worker_epoch, runtime_instance_id, runtime_identity_id,
     requested_cpu_millis, requested_memory_bytes,
     requested_guest_ephemeral_disk_bytes, requested_execution_slots,
-    trace_id, span_id, state, created_at, start_deadline_at,
+    trace_id, span_id, status, created_at, start_deadline_at,
     claimed_at, started_at, expires_at, checkpointed_at,
     terminal_at, terminal_reason_code
 )
@@ -242,14 +242,14 @@ UPDATE workspace_leases SET writer_generation = 2 WHERE id = $1`, workspaceLease
 INSERT INTO workspace_leases (
     id, org_id, worker_group_id, project_id, environment_id, region_id,
     worker_instance_id, worker_epoch, runtime_instance_id, workspace_id,
-    workspace_mount_id, state, owner_run_lease_id, base_version_id,
+    workspace_mount_id, status, owner_run_lease_id, base_workspace_version_id,
     ownership_generation, writer_generation, mount_fencing_generation,
     fencing_token_hash, acquired_at, renewed_at, expires_at,
     released_at, terminal_at
 )
 SELECT $1, org_id, worker_group_id, project_id, environment_id, region_id,
        worker_instance_id, worker_epoch, runtime_instance_id, workspace_id,
-       workspace_mount_id, 'released', $2, base_version_id,
+       workspace_mount_id, 'released', $2, base_workspace_version_id,
        1, 1, mount_fencing_generation, 'parent-fence', acquired_at, renewed_at,
        expires_at, transaction_timestamp(), transaction_timestamp()
   FROM workspace_leases WHERE id = $3`,
@@ -264,12 +264,12 @@ UPDATE runs
  WHERE id = $1`, work.RunID, parentRunID, claimID, retryPolicy)
 	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO run_waits (
-    id, environment_id, run_id, workspace_id, kind, condition_state,
+    id, environment_id, run_id, workspace_id, kind, condition_status,
     child_run_id, child_target_declared_id,
-	child_claim_id, child_request, expected_run_state_version,
+	child_claim_id, child_request, expected_run_revision,
 	attempt_number, prior_run_lease_id, checkpoint_request_version,
 	checkpoint_ack_version, resume_attach_id,
-	suspension_state
+	suspension_status
 ) VALUES (
 	$1, $2, $3, $4, 'child', 'pending', $5, 'test-task',
 	$6, '{"Method":"call"}'::jsonb, 3, 1, $7, 1, 1, $8,
@@ -282,13 +282,13 @@ INSERT INTO run_checkpoints (
     id, run_id, attempt_number, run_wait_id, source_run_lease_id,
     source_workspace_lease_id, workspace_id, base_workspace_version_id,
     private_workspace_version_id, runtime_config_artifact_id, vm_state_artifact_id,
-    memory_artifact_id, scratch_disk_artifact_id, state, restore_manifest,
+    memory_artifact_id, scratch_disk_artifact_id, status, restore_manifest,
     ready_request_fingerprint, ready_at
 ) VALUES (
     $1, $2, 1, $3, $4, $5, $6, $7, $7, $8, $9, $10, $11, 'ready',
-    '{"kind":"suspend"}'::jsonb, 'completion-test-ready', transaction_timestamp()
+    '{"kind":"suspend"}'::jsonb, 'sha256:6bcedf0a1072d7aaf80267ce8c527560a3918a01e58990057519bf1294dc6f9b', transaction_timestamp()
 )`, checkpointID, parentRunID, waitID, parentLeaseID,
-		parentWorkspaceLeaseID, workspaceID, baseVersionID,
+		parentWorkspaceLeaseID, workspaceID, baseWorkspaceVersionID,
 		checkpointArtifacts.RuntimeConfig, checkpointArtifacts.VMState, checkpointArtifacts.Memory, checkpointArtifacts.ScratchDisk)
 	dbtest.MustExec(t, ctx, tx, `
 UPDATE run_waits
@@ -298,7 +298,7 @@ UPDATE run_waits
        ownership_generation = 1,
        parent_writer_generation = 1,
        child_writer_generation = 2
- WHERE id = $1`, waitID, checkpointID, baseVersionID,
+ WHERE id = $1`, waitID, checkpointID, baseWorkspaceVersionID,
 		workspace.CanonicalEmptyTreeDigest)
 	dbtest.MustExec(t, ctx, tx, `
 UPDATE workspaces
@@ -311,11 +311,11 @@ UPDATE run_attempts
  WHERE run_id = $1 AND number = 1`, work.RunID)
 	dbtest.MustExec(t, ctx, tx, `
 UPDATE run_leases
-   SET state = 'finalizing', claimed_at = COALESCE(claimed_at, created_at),
+   SET status = 'finalizing', claimed_at = COALESCE(claimed_at, created_at),
        started_at = COALESCE(started_at, claimed_at, created_at), expires_at = $2,
        finalization_operation_id = $3, finalization_kind = $4,
        finalization_started_at = transaction_timestamp(),
-       finalization_request_fingerprint = 'completion-test-finalization'
+       finalization_request_fingerprint = 'sha256:8b0d6826f8d226df300af31f6dfde06263d999e8851e8f452624c3b5d0dd09a7'
  WHERE id = $1`, work.LeaseID, expiresAt, operationID,
 		map[bool]string{true: string(workerapi.RunFinalizationReset), false: string(workerapi.RunFinalizationCapture)}[retry])
 	dbtest.MustExec(t, ctx, tx, `
@@ -332,7 +332,7 @@ UPDATE workspace_leases
 		WorkerInstanceID: base.WorkerID.String(), WorkerEpoch: 1,
 		RuntimeInstanceID: runtimeID.String(), RuntimeIdentityID: base.RuntimeIdentityID,
 		WorkspaceID: workspaceID.String(), WorkspaceMountID: mountID.String(),
-		WorkspaceLeaseID: workspaceLeaseID.String(), BaseWorkspaceVersionID: baseVersionID.String(),
+		WorkspaceLeaseID: workspaceLeaseID.String(), BaseWorkspaceVersionID: baseWorkspaceVersionID.String(),
 		OwnershipGeneration: 1, WriterGeneration: 2, MountFencingGeneration: 2,
 		ExpiresAt: expiresAt,
 	}
@@ -377,7 +377,7 @@ UPDATE workspace_leases
 		request.Workspace.RolledBack.Receipt.OperationID = operationID.String()
 		request.Workspace.RolledBack.Receipt.RequestFingerprint = ""
 		target := workspace.ResetTarget{
-			Kind: workspace.ResetTargetEmpty, BaseVersionID: baseVersionID.String(),
+			Kind: workspace.ResetTargetEmpty, BaseWorkspaceVersionID: baseWorkspaceVersionID.String(),
 			Tree: workspace.TreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest},
 		}
 		fingerprint, err := workspace.FinalizationFingerprint(

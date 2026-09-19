@@ -25,7 +25,7 @@ func TestReleaseRestoredRunResumeWaitIsWaitOnlyAndFullyGuarded(t *testing.T) {
 		t.Fatalf("release query must contain exactly one run_waits update:\n%s", releaseQuery)
 	}
 	for _, guard := range []string{
-		"suspension_state = 'resuming'",
+		"suspension_status = 'resuming'",
 		"suspend_checkpoint_id = sqlc.arg(checkpoint_id)::uuid",
 		"resume_attach_id = sqlc.arg(resume_attach_id)",
 		"resume_request_version = sqlc.arg(resume_request_version)",

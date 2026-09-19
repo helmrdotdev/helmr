@@ -78,7 +78,7 @@ func TestBeginRunFinalizationFreezesAuthorityAndReplays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if store.finalizationWrites != 3 || store.authority.runLease.State != db.RunLeaseStateFinalizing ||
+	if store.finalizationWrites != 3 || store.authority.runLease.Status != db.RunLeaseStatusFinalizing ||
 		store.authority.run.ActiveStartedAt.Valid {
 		t.Fatalf("finalization state = %+v, writes = %d", store.authority, store.finalizationWrites)
 	}
@@ -164,7 +164,7 @@ func TestBeginRunFinalizationRejectsActiveDeadline(t *testing.T) {
 
 func TestBeginRunFinalizationRejectsCheckpointingLease(t *testing.T) {
 	server, store, worker, request, parsed := validRunFinalizationFixture(t)
-	store.authority.runLease.State = db.RunLeaseStateCheckpointing
+	store.authority.runLease.Status = db.RunLeaseStatusCheckpointing
 	assertRunFinalizationRejected(t, server, store, worker, request, parsed)
 }
 
@@ -195,7 +195,7 @@ func TestBeginRunFinalizationAcceptsActorOwner(t *testing.T) {
 	store.authority.attempt.EntrypointKind = "actor"
 	store.authority.actor = db.Session{
 		ID: actorID, CurrentRunID: store.authority.run.ID, WorkspaceID: store.authority.workspace.ID,
-		State: "open",
+		Status: "open",
 	}
 
 	if _, err := server.beginRunFinalization(context.Background(), worker, request, parsed); err != nil {
@@ -265,7 +265,7 @@ func TestLockLiveRunFinalizationAuthorityLocksLineageBeforePhysicalAuthority(t *
 	root.EntrypointKind = "actor"
 	root.SessionID = actorID
 	store.authority.actor = db.Session{
-		ID: actorID, CurrentRunID: rootID, WorkspaceID: workspaceID, State: "open",
+		ID: actorID, CurrentRunID: rootID, WorkspaceID: workspaceID, Status: "open",
 	}
 	store.finalizationLineage = []db.ListSameWorkspaceAncestorRunsRow{
 		{Run: root, Depth: 2},
@@ -404,13 +404,13 @@ func (s *runLeaseClaimStore) CloseRunActiveIntervalForFinalization(
 ) (db.Run, error) {
 	s.calls = append(s.calls, "close_active_interval")
 	if !s.authority.run.ActiveStartedAt.Valid ||
-		params.ExpectedStateVersion != s.authority.run.StateVersion {
+		params.ExpectedRevision != s.authority.run.Revision {
 		return db.Run{}, pgx.ErrNoRows
 	}
 	elapsed := params.FinalizationStartedAt.Time.Sub(s.authority.run.ActiveStartedAt.Time).Milliseconds()
 	s.authority.run.ActiveElapsedMs += elapsed
 	s.authority.run.ActiveStartedAt = pgtype.Timestamptz{}
-	s.authority.run.StateVersion++
+	s.authority.run.Revision++
 	s.finalizationWrites++
 	return s.authority.run, nil
 }
@@ -420,12 +420,12 @@ func (s *runLeaseClaimStore) BeginRunLeaseFinalization(
 	params db.BeginRunLeaseFinalizationParams,
 ) (db.RunLease, error) {
 	s.calls = append(s.calls, "begin_run_finalization")
-	if s.authority.runLease.State != db.RunLeaseStateRunning ||
+	if s.authority.runLease.Status != db.RunLeaseStatusRunning ||
 		!s.authority.runLease.ExpiresAt.Time.Equal(params.PreviousExpiresAt.Time) ||
 		!params.ExpiresAt.Time.After(params.PreviousExpiresAt.Time) {
 		return db.RunLease{}, pgx.ErrNoRows
 	}
-	s.authority.runLease.State = db.RunLeaseStateFinalizing
+	s.authority.runLease.Status = db.RunLeaseStatusFinalizing
 	s.authority.runLease.ExpiresAt = params.ExpiresAt
 	s.authority.runLease.FinalizationOperationID = params.FinalizationOperationID
 	s.authority.runLease.FinalizationKind = params.FinalizationKind

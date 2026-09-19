@@ -79,7 +79,7 @@ func TestTokenWaitRegistrationReplayConcurrentCommit(t *testing.T) {
 			tokenID := createTokenTerminalTestToken(t, ctx, fixture, time.Now().Add(time.Hour))
 			request := tokenWaitRegistrationRequest(t, ctx, fixture, work, tokenID, uuid.NewV7())
 			var initialVersion int64
-			if err := fixture.pool.QueryRow(ctx, "SELECT state_version FROM runs WHERE id=$1", work.runID).Scan(&initialVersion); err != nil {
+			if err := fixture.pool.QueryRow(ctx, "SELECT revision FROM runs WHERE id=$1", work.runID).Scan(&initialVersion); err != nil {
 				t.Fatal(err)
 			}
 			barrier := &replayReadBarrier{WaitDB: fixture.pool, read: make(chan error, 1), resume: make(chan struct{})}
@@ -122,7 +122,7 @@ func TestTokenWaitRegistrationReplayConcurrentCommit(t *testing.T) {
 			}
 			close(barrier.resume)
 			got := <-outcomes
-			if registered.WaitID != request.WaitID || registered.RunStateVersion != initialVersion+1 || registered.ConditionState != db.WaitStatePending || registered.SuspensionState != db.RunWaitStateHot {
+			if registered.WaitID != request.WaitID || registered.RunRevision != initialVersion+1 || registered.ConditionStatus != db.WaitStatusPending || registered.SuspensionStatus != db.RunWaitStatusHot {
 				t.Fatalf("initial registration = %+v, initial version %d", registered, initialVersion)
 			}
 			if changed {
@@ -134,11 +134,11 @@ func TestTokenWaitRegistrationReplayConcurrentCommit(t *testing.T) {
 			}
 			var count int
 			var version int64
-			if err := fixture.pool.QueryRow(ctx, `SELECT state_version, (SELECT count(*) FROM run_waits WHERE id=$2) FROM runs WHERE id=$1`, work.runID, request.WaitID).Scan(&version, &count); err != nil {
+			if err := fixture.pool.QueryRow(ctx, `SELECT revision, (SELECT count(*) FROM run_waits WHERE id=$2) FROM runs WHERE id=$1`, work.runID, request.WaitID).Scan(&version, &count); err != nil {
 				t.Fatal(err)
 			}
-			if count != 1 || version != registered.RunStateVersion {
-				t.Fatalf("durable wait count/version = %d/%d; want 1/%d", count, version, registered.RunStateVersion)
+			if count != 1 || version != registered.RunRevision {
+				t.Fatalf("durable wait count/version = %d/%d; want 1/%d", count, version, registered.RunRevision)
 			}
 			replayed, err := first.RegisterWait(ctx, request)
 			if err != nil || !reflect.DeepEqual(replayed, registered) {
@@ -180,9 +180,9 @@ func TestTokenWaitRegistrationReplayClassifiesConflicts(t *testing.T) {
 	}
 	row, err := query(request)
 	if err != nil || !row.Matches || row.WaitID != pgvalue.UUID(request.WaitID) ||
-		!row.RunStateVersion.Valid || row.RunStateVersion.Int64 != registered.RunStateVersion ||
-		!row.ConditionState.Valid || row.ConditionState.String != string(registered.ConditionState) ||
-		!row.SuspensionState.Valid || row.SuspensionState.String != string(registered.SuspensionState) {
+		!row.RunRevision.Valid || row.RunRevision.Int64 != registered.RunRevision ||
+		!row.ConditionStatus.Valid || row.ConditionStatus.String != string(registered.ConditionStatus) ||
+		!row.SuspensionStatus.Valid || row.SuspensionStatus.String != string(registered.SuspensionStatus) {
 		t.Fatalf("matched replay = %+v, %v; registered = %+v", row, err, registered)
 	}
 	for _, name := range []string{"metadata", "missing_lease", "wrong_lease", "zero_cursor", "non_token"} {
@@ -198,7 +198,7 @@ func TestTokenWaitRegistrationReplayClassifiesConflicts(t *testing.T) {
 			case "zero_cursor":
 				changed.ActorSpeculativeInputSequence = pgtype.Int8{Int64: 0, Valid: true}
 			case "non_token":
-				dbtest.MustExec(t, ctx, fixture.pool, `UPDATE run_waits SET kind='timer', token_id=NULL, token_registration_run_state_version=NULL, timeout_at=NULL, due_at=now() WHERE id=$1`, request.WaitID)
+				dbtest.MustExec(t, ctx, fixture.pool, `UPDATE run_waits SET kind='timer', token_id=NULL, token_registration_run_revision=NULL, timeout_at=NULL, due_at=now() WHERE id=$1`, request.WaitID)
 			}
 			const snapshot = `SELECT jsonb_build_object('wait', to_jsonb(w), 'run', to_jsonb(r)) FROM run_waits w JOIN runs r ON r.id=w.run_id WHERE w.id=$1`
 			var before, after []byte
@@ -210,7 +210,7 @@ func TestTokenWaitRegistrationReplayClassifiesConflicts(t *testing.T) {
 			if err != nil || row.Matches || row.WaitID != pgvalue.UUID(request.WaitID) {
 				t.Fatalf("conflict classification = %+v, %v; want addressed ID and Matches=false", row, err)
 			}
-			if row.RunStateVersion.Valid || row.ConditionState.Valid || row.SuspensionState.Valid {
+			if row.RunRevision.Valid || row.ConditionStatus.Valid || row.SuspensionStatus.Valid {
 				t.Fatalf("conflict unexpectedly has replay values: %+v", row)
 			}
 			if _, err := reconciler.RegisterWait(ctx, changed); !errors.Is(err, ErrWaitAuthority) || err.Error() != ErrWaitAuthority.Error()+": token wait registration replay does not match" {

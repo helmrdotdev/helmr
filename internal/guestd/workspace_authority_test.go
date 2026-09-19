@@ -455,12 +455,12 @@ func testWorkspaceFinalizationBeginRequest(
 
 func testWorkspaceAuthorityEntry() *workspaceMountEntry {
 	return &workspaceMountEntry{
-		workspaceMountID:  "mount-1",
-		workspaceID:       "workspace-1",
-		baseVersionID:     "version-1",
-		channelToken:      "channel-1",
-		fencingGeneration: 4,
-		runtimeInstanceID: "runtime-1",
+		workspaceMountID:       "mount-1",
+		workspaceID:            "workspace-1",
+		baseWorkspaceVersionID: "version-1",
+		channelToken:           "channel-1",
+		fencingGeneration:      4,
+		runtimeInstanceID:      "runtime-1",
 	}
 }
 

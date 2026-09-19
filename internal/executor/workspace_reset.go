@@ -39,7 +39,7 @@ func resetWorkspaceOnSession(ctx context.Context, session vm.Session, store cas.
 	}
 	envelope := request.GetEnvelope()
 	fence := envelope.GetAuthority().GetFence()
-	if target.BaseVersionID != fence.GetBaseWorkspaceVersionId() {
+	if target.BaseWorkspaceVersionID != fence.GetBaseWorkspaceVersionId() {
 		return WorkspaceReset{}, errors.New("workspace reset target does not match the admitted base version")
 	}
 	expectedFingerprint, err := workspace.FinalizationFingerprint(workspace.FinalizationResetKind, workspace.FinalizationRequest{

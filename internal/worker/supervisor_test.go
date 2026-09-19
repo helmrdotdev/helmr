@@ -244,7 +244,7 @@ func TestSupervisorRunsConcurrentWorkAndDrainsLocally(t *testing.T) {
 	}
 	cancel()
 	deadline := time.Now().Add(time.Second)
-	for s.state.Load().(State) != StateDraining {
+	for s.state.Load().(Status) != StateDraining {
 		if time.Now().After(deadline) {
 			t.Fatal("supervisor did not enter local draining state")
 		}
@@ -474,7 +474,7 @@ func TestSupervisorShutdownWaitsForClaimThatReturnsCommittedWork(t *testing.T) {
 	}
 	cancel()
 	deadline := time.Now().Add(time.Second)
-	for s.state.Load().(State) != StateDraining {
+	for s.state.Load().(Status) != StateDraining {
 		if time.Now().After(deadline) {
 			t.Fatal("supervisor did not enter draining state")
 		}
@@ -590,7 +590,7 @@ func TestServerDirectedDrainStopsExecutionAndCompletesAfterCleanup(t *testing.T)
 	}
 	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveExecutions: 1})
 	deadline := time.Now().Add(time.Second)
-	for s.state.Load().(State) != StateDraining {
+	for s.state.Load().(Status) != StateDraining {
 		if time.Now().After(deadline) {
 			t.Fatal("supervisor did not enter server-directed drain")
 		}
@@ -663,7 +663,7 @@ func TestServerDirectedDrainContinuesBoundRunWithHardAdmission(t *testing.T) {
 	go func() { done <- s.Run(t.Context()) }()
 	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveExecutions: 1})
 	deadline := time.Now().Add(time.Second)
-	for s.state.Load().(State) != StateDraining {
+	for s.state.Load().(Status) != StateDraining {
 		if time.Now().After(deadline) {
 			t.Fatal("supervisor did not enter draining state")
 		}
@@ -717,7 +717,7 @@ func TestServerDirectedDrainDoesNotBypassBoundRunAdmission(t *testing.T) {
 	go func() { done <- s.Run(t.Context()) }()
 	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveExecutions: 1})
 	deadline := time.Now().Add(time.Second)
-	for s.state.Load().(State) != StateDraining {
+	for s.state.Load().(Status) != StateDraining {
 		if time.Now().After(deadline) {
 			t.Fatal("supervisor did not enter draining state")
 		}
@@ -752,7 +752,7 @@ func TestDrainingObservationPreservesHardHealthInsteadOfLifecyclePause(t *testin
 		t.Fatal(err)
 	}
 	evaluator.Evaluate(context.Background(), AdmissionCheck{
-		Consumer: "run", State: StateDraining, DrainContinuation: true,
+		Consumer: "run", Status: StateDraining, DrainContinuation: true,
 	})
 	s := &Supervisor{cfg: Config{AdmissionEvaluator: evaluator}}
 	observation := s.observation(StateDraining, RecoveryEvidence{})
@@ -798,7 +798,7 @@ func TestDurableDrainLatchWinsWhenShutdownIsAlsoReady(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- s.Run(ctx) }()
 	deadline := time.Now().Add(time.Second)
-	for !controlPlane.activated.Load() || s.state.Load().(State) != StateActive {
+	for !controlPlane.activated.Load() || s.state.Load().(Status) != StateActive {
 		if time.Now().After(deadline) {
 			t.Fatal("supervisor did not reach active select")
 		}

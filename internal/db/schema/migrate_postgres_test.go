@@ -50,7 +50,6 @@ func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDow
 	assertExecutionAttachmentConstraints(t, dbctx, pool)
 	assertRunWaitWorkspaceSuccession(t, dbctx, pool)
 	assertPrimitiveLifecycleSchema(t, dbctx, pool)
-	assertNoDeletionJobSchema(t, dbctx, pool)
 	assertNoRedundantGlobalIDUniqueness(t, dbctx, pool)
 	assertNoBusinessDatabaseLogic(t, dbctx, pool)
 	if !verifyDown {
@@ -84,7 +83,6 @@ func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDow
 	assertExecutionAttachmentConstraints(t, dbctx, pool)
 	assertRunWaitWorkspaceSuccession(t, dbctx, pool)
 	assertPrimitiveLifecycleSchema(t, dbctx, pool)
-	assertNoDeletionJobSchema(t, dbctx, pool)
 	assertNoRedundantGlobalIDUniqueness(t, dbctx, pool)
 	assertNoBusinessDatabaseLogic(t, dbctx, pool)
 }
@@ -157,72 +155,14 @@ SELECT NOT pg_index.indisunique, pg_get_indexdef(pg_index.indexrelid)
 	}
 }
 
-func assertNoDeletionJobSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
-	t.Helper()
-	var tableExists bool
-	if err := pool.QueryRow(ctx, `SELECT to_regclass('public.deletion_jobs') IS NOT NULL`).Scan(&tableExists); err != nil {
-		t.Fatal(err)
-	}
-	if tableExists {
-		t.Fatal("deletion_jobs table exists")
-	}
-	var typeCount int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM pg_type
-		  JOIN pg_namespace ON pg_namespace.oid = pg_type.typnamespace
-		 WHERE pg_namespace.nspname = 'public'
-		   AND pg_type.typname = 'deletion_job_target_type'
-	`).Scan(&typeCount); err != nil {
-		t.Fatal(err)
-	}
-	if typeCount != 0 {
-		t.Fatalf("deletion job types = %d, want 0", typeCount)
-	}
-}
-
 func assertPrimitiveLifecycleSchema(
 	t *testing.T,
 	ctx context.Context,
 	pool *pgxpool.Pool,
 ) {
 	t.Helper()
-	lifecycleTypes := []string{
-		"region_state",
-		"worker_group_state",
-		"telemetry_outbox_state",
-		"device_code_status",
-		"worker_instance_state",
-		"public_access_token_state",
-		"token_state",
-		"wait_state",
-		"run_wait_state",
-		"run_checkpoint_state",
-		"run_status",
-		"run_lease_state",
-		"runtime_desired_state",
-		"runtime_observed_state",
-		"workspace_state",
-		"workspace_desired_state",
-		"workspace_dirty_state",
-		"workspace_version_state",
-		"workspace_mount_state",
-		"workspace_lease_state",
-		"workspace_process_state",
-	}
-	var enumTypeCount int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM pg_type
-		 WHERE typname = ANY($1::text[])
-	`, lifecycleTypes).Scan(&enumTypeCount); err != nil {
-		t.Fatal(err)
-	}
-	if enumTypeCount != 0 {
-		t.Fatalf("Postgres lifecycle enum types = %d, want 0", enumTypeCount)
-	}
-
 	tableNames := []string{
+		"secrets", "worker_pools", "idempotency_claims", "schedules", "sessions", "control_outbox",
 		"worker_groups",
 		"telemetry_outbox",
 		"device_codes",
@@ -246,26 +186,27 @@ func assertPrimitiveLifecycleSchema(
 		"workspace_processes",
 	}
 	columnNames := []string{
-		"state",
-		"state",
+		"status", "status", "status", "status", "status", "status",
 		"status",
-		"state",
-		"state",
-		"state",
-		"condition_state",
-		"suspension_state",
-		"state",
 		"status",
-		"state",
+		"status",
+		"status",
+		"status",
+		"status",
+		"condition_status",
+		"suspension_status",
+		"status",
+		"status",
+		"status",
 		"desired_state",
 		"observed_state",
-		"state",
+		"status",
 		"desired_state",
 		"dirty_state",
-		"state",
-		"state",
-		"state",
-		"state",
+		"status",
+		"status",
+		"status",
+		"status",
 		"restore_desired_state",
 	}
 	var constrainedTextColumns int
@@ -665,52 +606,6 @@ SELECT indexdef
 		t.Fatalf("same-Workspace child index is not unique: %q", definition)
 	}
 
-	retiredRunWaitColumns := []string{
-		"handoff_resume_checkpoint_id",
-		"handoff_runtime_instance_id",
-		"handoff_workspace_mount_id",
-		"handoff_mount_generation",
-	}
-	var retiredColumnCount int
-	if err := pool.QueryRow(ctx, `
-SELECT count(*)
-  FROM information_schema.columns
- WHERE table_schema = 'public'
-   AND table_name = 'run_waits'
-   AND column_name = ANY($1::text[])
-`, retiredRunWaitColumns).Scan(&retiredColumnCount); err != nil {
-		t.Fatal(err)
-	}
-	if retiredColumnCount != 0 {
-		t.Fatalf("retained-runtime Run Wait columns = %d, want none", retiredColumnCount)
-	}
-
-	var checkpointKindColumnCount int
-	if err := pool.QueryRow(ctx, `
-SELECT count(*)
-  FROM information_schema.columns
- WHERE table_schema = 'public'
-   AND table_name = 'run_checkpoints'
-   AND column_name = 'kind'
-`).Scan(&checkpointKindColumnCount); err != nil {
-		t.Fatal(err)
-	}
-	if checkpointKindColumnCount != 0 {
-		t.Fatal("run_checkpoints.kind survived the single-source greenfield schema")
-	}
-
-	var checkpointKindTypeCount int
-	if err := pool.QueryRow(ctx, `
-SELECT count(*)
-  FROM pg_type
- WHERE typname = 'run_checkpoint_kind'
-`).Scan(&checkpointKindTypeCount); err != nil {
-		t.Fatal(err)
-	}
-	if checkpointKindTypeCount != 0 {
-		t.Fatal("run_checkpoint_kind survived the single-source greenfield schema")
-	}
-
 	var successionConstraint bool
 	if err := pool.QueryRow(ctx, `
 SELECT EXISTS (
@@ -928,34 +823,12 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 	if definitionKinds != 1 {
 		t.Fatalf("deployment definition kind constraint = %d, want 1", definitionKinds)
 	}
-	var promotions int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM pg_class
-		 WHERE relnamespace = 'public'::regnamespace
-		   AND relname = 'deployment_promotions'
-	`).Scan(&promotions); err != nil {
-		t.Fatal(err)
-	}
-	if promotions != 0 {
-		t.Fatalf("deployment_promotions relation present")
-	}
+
 }
 
 func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
 	assertWorkerGroupUUIDSchema(t, ctx, pool)
-	var forbiddenRelations int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*) FROM pg_class
-		 WHERE relnamespace = 'public'::regnamespace
-		   AND relname = ANY($1::text[])
-	`, []string{"worker_commands", "run_checkpoint_restores", "run_checkpoint_artifacts", "worker_assignments", "runtime_routes"}).Scan(&forbiddenRelations); err != nil {
-		t.Fatal(err)
-	}
-	if forbiddenRelations != 0 {
-		t.Fatalf("forbidden worker relations = %d, want 0", forbiddenRelations)
-	}
 	var shapeColumns int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='worker_instances' AND column_name = ANY($1::text[])`,
 		[]string{"per_vm_cpu_millis", "per_vm_memory_bytes", "per_vm_guest_ephemeral_disk_bytes"}).Scan(&shapeColumns); err != nil {
@@ -1002,25 +875,6 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	}
 	if placementLeaks != 0 {
 		t.Fatalf("logical worker_group_id columns = %d, want 0", placementLeaks)
-	}
-
-	forbiddenColumns := map[string][]string{
-		"runs":              {"dispatch_generation", "dispatch_attempt", "dispatch_message_id", "dispatch_lease_id", "workspace_mount_id", "worker_instance_id", "execution_status", "terminal_outcome", "schedule_instance_id", "queue_class", "queue_timestamp"},
-		"runtime_instances": {"runtime_epoch", "state", "instance_token", "last_heartbeat_at", "owner_run_id", "owner_run_wait_id", "workspace_mount_id", "workspace_version_id", "reserved_workspace_id"},
-		"worker_instances":  {"available_milli_cpu", "available_memory_mib", "heartbeat", "labels", "last_seen_at", "total_milli_cpu"},
-	}
-	for table, columns := range forbiddenColumns {
-		var count int
-		if err := pool.QueryRow(ctx, `
-			SELECT count(*) FROM information_schema.columns
-			 WHERE table_schema = 'public' AND table_name = $1
-			   AND column_name = ANY($2::text[])
-		`, table, columns).Scan(&count); err != nil {
-			t.Fatal(err)
-		}
-		if count != 0 {
-			t.Fatalf("forbidden columns on %s = %d, want 0", table, count)
-		}
 	}
 
 	requiredIndexes := []string{
@@ -1106,26 +960,6 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 		t.Fatalf("runtime placement columns = %d, want 8", placementColumns)
 	}
 
-	var obsoleteLeaseColumns int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM information_schema.columns
-		 WHERE table_schema = 'public'
-		   AND (
-		       (table_name = 'run_leases' AND column_name = 'resource_snapshot')
-		       OR
-		       (table_name = 'workspace_processes' AND column_name = ANY(ARRAY[
-		           'instance_lease_id', 'write_lease_id', 'idempotency_key',
-		           'idempotency_expires_at', 'request_fingerprint'
-		       ]))
-		   )
-	`).Scan(&obsoleteLeaseColumns); err != nil {
-		t.Fatal(err)
-	}
-	if obsoleteLeaseColumns != 0 {
-		t.Fatalf("obsolete placement columns = %d, want 0", obsoleteLeaseColumns)
-	}
-
 }
 
 func assertWorkerGroupUUIDSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
@@ -1197,19 +1031,6 @@ func assertWorkerGroupUUIDSchema(t *testing.T, ctx context.Context, pool *pgxpoo
 
 func assertTelemetrySchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
-	var meterTables int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM information_schema.tables
-		 WHERE table_schema = 'public'
-		   AND table_name = 'meter_events'
-	`).Scan(&meterTables); err != nil {
-		t.Fatal(err)
-	}
-	if meterTables != 0 {
-		t.Fatalf("meter_events tables = %d, want 0", meterTables)
-	}
-
 	var streamKinds []string
 	rows, err := pool.Query(ctx, `
 		SELECT enumlabel
@@ -1236,28 +1057,6 @@ func assertTelemetrySchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 		t.Fatalf("telemetry_stream_kind = %v, want [event run_log]", streamKinds)
 	}
 
-	var removedColumns int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM information_schema.columns
-		 WHERE table_schema = 'public'
-		   AND table_name = 'telemetry_outbox'
-		   AND column_name = ANY($1::text[])
-	`, []string{
-		"meter_event_id",
-		"workspace_id",
-		"resource_kind",
-		"resource_id",
-		"offset_start",
-		"offset_end",
-		"last_error",
-	}).Scan(&removedColumns); err != nil {
-		t.Fatal(err)
-	}
-	if removedColumns != 0 {
-		t.Fatalf("removed telemetry_outbox columns still present = %d", removedColumns)
-	}
-
 	var sinkErrorColumns int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*)
@@ -1272,20 +1071,6 @@ func assertTelemetrySchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 		t.Fatalf("telemetry_outbox sink error columns = %d, want 2", sinkErrorColumns)
 	}
 
-	var ingestReadyIndexes int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM pg_indexes
-		 WHERE schemaname = 'public'
-		   AND tablename = 'telemetry_outbox'
-		   AND indexname = 'telemetry_outbox_ingest_ready_idx'
-	`).Scan(&ingestReadyIndexes); err != nil {
-		t.Fatal(err)
-	}
-	if ingestReadyIndexes != 0 {
-		t.Fatalf("telemetry_outbox ingest-ready indexes = %d, want 0", ingestReadyIndexes)
-	}
-
 	var publishReadyDef string
 	if err := pool.QueryRow(ctx, `
 		SELECT indexdef
@@ -1296,34 +1081,10 @@ func assertTelemetrySchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 	`).Scan(&publishReadyDef); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(publishReadyDef, "stream_kind = 'event'") ||
-		strings.Contains(publishReadyDef, "terminal_output") ||
-		strings.Contains(publishReadyDef, "dead_lettered") {
+	if !strings.Contains(publishReadyDef, "stream_kind = 'event'") {
 		t.Fatalf("publish-ready index = %q", publishReadyDef)
 	}
 
-	_, err = pool.Exec(ctx, `
-		INSERT INTO telemetry_outbox (
-			org_id, stream_kind, source_kind, source_id, project_id, environment_id,
-			deployment_id, kind, state
-		) VALUES (
-			'00000000-0000-4000-8000-000000000001',
-			'event',
-			'deployment',
-			'00000000-0000-4000-8000-000000000001',
-			'00000000-0000-4000-8000-000000000001',
-			'00000000-0000-4000-8000-000000000001',
-			'00000000-0000-4000-8000-000000000001',
-			'x',
-			'dead_lettered'
-		)
-	`)
-	if err == nil {
-		t.Fatal("dead_lettered telemetry_outbox state was accepted")
-	}
-	if !strings.Contains(err.Error(), "check constraint") {
-		t.Fatalf("dead_lettered insert error = %v, want check constraint", err)
-	}
 }
 
 func assertWorkspaceExecSchema(

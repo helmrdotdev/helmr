@@ -125,7 +125,7 @@ func (registry *workspaceOperationRegistry) advanceActorTurnWorkspaceFrontier(
 		entry.authority.GetFence().GetRunId() != request.GetRunId() ||
 		entry.authority.GetFence().GetAttemptNumber() != request.GetAttemptNumber() ||
 		entry.authority.GetFence().GetRunLeaseId() != request.GetRunLeaseId() ||
-		entry.baseVersionID != expected || entry.authority.GetFence().GetBaseWorkspaceVersionId() != expected {
+		entry.baseWorkspaceVersionID != expected || entry.authority.GetFence().GetBaseWorkspaceVersionId() != expected {
 		return errors.New("actor turn commit workspace frontier is stale")
 	}
 	claim := registry.programClaimLocked(entry, entry.authority)
@@ -133,7 +133,7 @@ func (registry *workspaceOperationRegistry) advanceActorTurnWorkspaceFrontier(
 		claim.authority.GetFence().GetBaseWorkspaceVersionId() != expected {
 		return errors.New("actor turn commit active Program frontier is stale")
 	}
-	entry.baseVersionID = next
+	entry.baseWorkspaceVersionID = next
 	entry.authority.Fence.BaseWorkspaceVersionId = next
 	claim.authority.Fence.BaseWorkspaceVersionId = next
 	entry.previousExpiry = 0

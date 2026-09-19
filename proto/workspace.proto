@@ -146,7 +146,7 @@ message WorkspaceMountPhase {
 }
 
 message MaterializeWorkspaceResponse {
-  string state = 1;
+  string status = 1;
   string guestd_channel_token_hash = 2;
   repeated WorkspaceMountPhase phases = 3;
   WorkspaceResetTarget target = 4;
@@ -170,19 +170,19 @@ message PrepareWorkspaceRuntimeRequest {
 }
 
 message PrepareWorkspaceRuntimeResponse {
-  string state = 1;
+  string status = 1;
   string runtime_instance_id = 2;
   repeated WorkspaceMountPhase phases = 3;
 }
 
 message HeartbeatWorkspaceRequest {
   WorkspaceOperationEnvelope envelope = 1;
-  string state = 2;
+  string status = 2;
   uint64 dirty_generation = 3;
 }
 
 message HeartbeatWorkspaceResponse {
-  string state = 1;
+  string status = 1;
   bool stop_requested = 2;
 }
 
@@ -200,7 +200,7 @@ message CaptureWorkspaceResponse {
 message EmptyWorkspaceResetTarget {}
 
 message WorkspaceResetTarget {
-  string base_version_id = 1;
+  string base_workspace_version_id = 1;
   WorkspaceTreeIdentity tree = 2;
   oneof source {
     EmptyWorkspaceResetTarget empty = 3;
@@ -226,7 +226,7 @@ message StopWorkspaceRequest {
 }
 
 message StopWorkspaceResponse {
-  string state = 1;
+  string status = 1;
   WorkspaceArtifact captured_artifact = 2;
   string error_json = 3;
   WorkspaceTreeIdentity captured_tree = 4;

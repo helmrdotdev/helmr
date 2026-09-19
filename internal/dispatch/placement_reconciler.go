@@ -373,10 +373,10 @@ func (r *PlacementReconciler) ReconcileWorkspaceExecs(ctx context.Context) error
 		err := r.workspaceExecAuthority.RecoverWorkspaceExec(
 			ctx,
 			RecoverableWorkspaceExecCandidate{
-				OrgID:                row.OrgID,
-				ProcessID:            row.ID,
-				WorkspaceID:          row.WorkspaceID,
-				ExpectedStateVersion: row.StateVersion,
+				OrgID:            row.OrgID,
+				ProcessID:        row.ID,
+				WorkspaceID:      row.WorkspaceID,
+				ExpectedRevision: row.Revision,
 			},
 		)
 		if errors.Is(err, ErrCandidateChanged) || errors.Is(err, pgx.ErrNoRows) {
@@ -396,9 +396,9 @@ func (r *PlacementReconciler) ReconcileWorkspaceExecs(ctx context.Context) error
 	expiredBefore := time.Now().UTC().Add(-defaultWorkspaceExecPendingTimeout)
 	for _, row := range rows {
 		candidate := ReadyWorkspaceExecCandidate{
-			OrgID:                row.OrgID,
-			ProcessID:            row.ID,
-			ExpectedStateVersion: row.StateVersion,
+			OrgID:            row.OrgID,
+			ProcessID:        row.ID,
+			ExpectedRevision: row.Revision,
 		}
 		if !row.CreatedAt.Time.After(expiredBefore) {
 			err := r.workspaceExecAuthority.FailPendingWorkspaceExec(
@@ -813,7 +813,7 @@ func (r *PlacementReconciler) placeRunCandidate(
 ) runPlacementResult {
 	candidate := ReadyRunCandidate{
 		OrgID: work.candidate.OrgID, RunID: work.candidate.RunID,
-		ExpectedRunStateVersion: work.candidate.StateVersion,
+		ExpectedRunRevision: work.candidate.Revision,
 	}
 	placement, err := r.runAuthority.PlaceReadyRun(ctx, candidate)
 	if err != nil {

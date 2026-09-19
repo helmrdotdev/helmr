@@ -13,7 +13,7 @@ import (
 
 const appendActorInputRecord = `-- name: AppendActorInputRecord :one
 WITH selected_claim AS MATERIALIZED (
-    SELECT id, state, request_fingerprint
+    SELECT id, status, request_fingerprint
       FROM idempotency_claims
      WHERE idempotency_claims.environment_id = $1::uuid
        AND idempotency_claims.id = $2
@@ -27,11 +27,11 @@ WITH selected_claim AS MATERIALIZED (
      WHERE session_records.session_id = $3
        AND session_records.direction = 'input'
 ), locked_actor AS MATERIALIZED (
-    SELECT sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.state_version, sessions.manual_run_cancelled, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_output_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.state, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.cancelled_at, sessions.failed_at
+    SELECT sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.revision, sessions.manual_run_cancelled, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_output_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.status, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.cancelled_at, sessions.failed_at
       FROM sessions
      WHERE sessions.environment_id = $1
        AND sessions.id = $3
-       AND sessions.state = 'open'
+       AND sessions.status = 'open'
        AND sessions.next_input_sequence <= 9007199254740991
        AND NOT EXISTS (SELECT 1 FROM existing_record)
        AND (
@@ -39,7 +39,7 @@ WITH selected_claim AS MATERIALIZED (
            OR EXISTS (
                SELECT 1
                  FROM selected_claim
-                WHERE selected_claim.state = 'pending'
+                WHERE selected_claim.status = 'pending'
                   AND request_fingerprint = $4
            )
        )
@@ -51,7 +51,7 @@ WITH selected_claim AS MATERIALIZED (
            updated_at = now()
       FROM locked_actor
      WHERE sessions.id = locked_actor.id
-    RETURNING sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.state_version, sessions.manual_run_cancelled, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_output_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.state, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.cancelled_at, sessions.failed_at, sessions.next_input_sequence - 1 AS allocated_sequence
+    RETURNING sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.revision, sessions.manual_run_cancelled, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_output_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.status, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.cancelled_at, sessions.failed_at, sessions.next_input_sequence - 1 AS allocated_sequence
 ), inserted_record AS (
     INSERT INTO session_records (
         id,
@@ -146,7 +146,7 @@ func (q *Queries) AppendActorInputRecord(ctx context.Context, arg AppendActorInp
 
 const appendActorOutputRecord = `-- name: AppendActorOutputRecord :one
 WITH selected_claim AS MATERIALIZED (
-    SELECT id, state, request_fingerprint
+    SELECT id, status, request_fingerprint
       FROM idempotency_claims
      WHERE idempotency_claims.environment_id = $1::uuid
        AND idempotency_claims.id = $2
@@ -160,7 +160,7 @@ WITH selected_claim AS MATERIALIZED (
      WHERE session_records.session_id = $3
        AND session_records.direction = 'output'
 ), locked_actor AS MATERIALIZED (
-    SELECT sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.state_version, sessions.manual_run_cancelled, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_output_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.state, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.cancelled_at, sessions.failed_at
+    SELECT sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.revision, sessions.manual_run_cancelled, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_output_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.status, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.cancelled_at, sessions.failed_at
       FROM sessions
       JOIN runs
         ON runs.session_id = sessions.id
@@ -173,7 +173,7 @@ WITH selected_claim AS MATERIALIZED (
      WHERE sessions.environment_id = $1
        AND sessions.id = $3
        AND sessions.current_run_id = runs.id
-       AND sessions.state IN ('open', 'closing')
+       AND sessions.status IN ('open', 'closing')
        AND sessions.next_output_sequence <= 9007199254740991
        AND NOT EXISTS (SELECT 1 FROM existing_record)
        AND (
@@ -181,7 +181,7 @@ WITH selected_claim AS MATERIALIZED (
            OR EXISTS (
                SELECT 1
                  FROM selected_claim
-                WHERE selected_claim.state = 'pending'
+                WHERE selected_claim.status = 'pending'
                   AND request_fingerprint = $6
            )
        )
@@ -192,7 +192,7 @@ WITH selected_claim AS MATERIALIZED (
            updated_at = now()
       FROM locked_actor
      WHERE sessions.id = locked_actor.id
-    RETURNING sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.state_version, sessions.manual_run_cancelled, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_output_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.state, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.cancelled_at, sessions.failed_at, sessions.next_output_sequence - 1 AS allocated_sequence
+    RETURNING sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.revision, sessions.manual_run_cancelled, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_output_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.status, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.cancelled_at, sessions.failed_at, sessions.next_output_sequence - 1 AS allocated_sequence
 ), inserted_record AS (
     INSERT INTO session_records (
         id,
@@ -293,7 +293,7 @@ func (q *Queries) AppendActorOutputRecord(ctx context.Context, arg AppendActorOu
 
 const completeActorInputClaim = `-- name: CompleteActorInputClaim :one
 UPDATE idempotency_claims
-   SET state = 'completed',
+   SET status = 'completed',
        receipt = jsonb_build_object(
 	       'session_record_id', session_records.id::text,
            'sequence', session_records.sequence
@@ -304,14 +304,14 @@ UPDATE idempotency_claims
    AND idempotency_claims.id = $2
    AND idempotency_claims.operation = 'session.input.send'
    AND idempotency_claims.request_fingerprint = $3
-   AND idempotency_claims.state = 'pending'
+   AND idempotency_claims.status = 'pending'
    AND idempotency_claims.retired_at IS NULL
    AND session_records.environment_id = idempotency_claims.environment_id
    AND session_records.session_id = $4
    AND session_records.id = $5
    AND session_records.direction = 'input'
    AND session_records.claim_id = idempotency_claims.id
-RETURNING idempotency_claims.id, idempotency_claims.environment_id, idempotency_claims.operation, idempotency_claims.slot_hash, idempotency_claims.request_fingerprint, idempotency_claims.state, idempotency_claims.receipt, idempotency_claims.accepted_at, idempotency_claims.expires_at, idempotency_claims.retired_at, idempotency_claims.completed_at
+RETURNING idempotency_claims.id, idempotency_claims.environment_id, idempotency_claims.operation, idempotency_claims.slot_hash, idempotency_claims.request_fingerprint, idempotency_claims.status, idempotency_claims.receipt, idempotency_claims.accepted_at, idempotency_claims.expires_at, idempotency_claims.retired_at, idempotency_claims.completed_at
 `
 
 type CompleteActorInputClaimParams struct {
@@ -337,7 +337,7 @@ func (q *Queries) CompleteActorInputClaim(ctx context.Context, arg CompleteActor
 		&i.Operation,
 		&i.SlotHash,
 		&i.RequestFingerprint,
-		&i.State,
+		&i.Status,
 		&i.Receipt,
 		&i.AcceptedAt,
 		&i.ExpiresAt,
@@ -349,7 +349,7 @@ func (q *Queries) CompleteActorInputClaim(ctx context.Context, arg CompleteActor
 
 const completeActorOutputClaim = `-- name: CompleteActorOutputClaim :one
 UPDATE idempotency_claims
-   SET state = 'completed',
+   SET status = 'completed',
        receipt = jsonb_build_object(
 	       'session_record_id', session_records.id::text,
            'sequence', session_records.sequence
@@ -360,14 +360,14 @@ UPDATE idempotency_claims
    AND idempotency_claims.id = $2
    AND idempotency_claims.operation = 'session.output.append'
    AND idempotency_claims.request_fingerprint = $3
-   AND idempotency_claims.state = 'pending'
+   AND idempotency_claims.status = 'pending'
    AND idempotency_claims.retired_at IS NULL
    AND session_records.environment_id = idempotency_claims.environment_id
    AND session_records.session_id = $4
    AND session_records.id = $5
    AND session_records.direction = 'output'
    AND session_records.claim_id = idempotency_claims.id
-RETURNING idempotency_claims.id, idempotency_claims.environment_id, idempotency_claims.operation, idempotency_claims.slot_hash, idempotency_claims.request_fingerprint, idempotency_claims.state, idempotency_claims.receipt, idempotency_claims.accepted_at, idempotency_claims.expires_at, idempotency_claims.retired_at, idempotency_claims.completed_at
+RETURNING idempotency_claims.id, idempotency_claims.environment_id, idempotency_claims.operation, idempotency_claims.slot_hash, idempotency_claims.request_fingerprint, idempotency_claims.status, idempotency_claims.receipt, idempotency_claims.accepted_at, idempotency_claims.expires_at, idempotency_claims.retired_at, idempotency_claims.completed_at
 `
 
 type CompleteActorOutputClaimParams struct {
@@ -393,7 +393,7 @@ func (q *Queries) CompleteActorOutputClaim(ctx context.Context, arg CompleteActo
 		&i.Operation,
 		&i.SlotHash,
 		&i.RequestFingerprint,
-		&i.State,
+		&i.Status,
 		&i.Receipt,
 		&i.AcceptedAt,
 		&i.ExpiresAt,
@@ -437,11 +437,11 @@ func (q *Queries) CreateActorInputReconcileOutbox(ctx context.Context, arg Creat
 
 const createActorStartInputRecord = `-- name: CreateActorStartInputRecord :one
 WITH locked_actor AS MATERIALIZED (
-    SELECT sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.state_version, sessions.manual_run_cancelled, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_output_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.state, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.cancelled_at, sessions.failed_at
+    SELECT sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.revision, sessions.manual_run_cancelled, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_output_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.status, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.cancelled_at, sessions.failed_at
       FROM sessions
      WHERE sessions.environment_id = $4
        AND sessions.id = $5
-       AND sessions.state = 'open'
+       AND sessions.status = 'open'
        AND sessions.next_input_sequence = 1
        AND sessions.committed_input_sequence = 0
        AND (
@@ -452,7 +452,7 @@ WITH locked_actor AS MATERIALIZED (
                 WHERE idempotency_claims.environment_id = sessions.environment_id
                   AND idempotency_claims.id = $3
                   AND idempotency_claims.operation = 'actor.start'
-                  AND idempotency_claims.state = 'pending'
+                  AND idempotency_claims.status = 'pending'
                   AND idempotency_claims.retired_at IS NULL
            )
        )
@@ -463,7 +463,7 @@ WITH locked_actor AS MATERIALIZED (
            updated_at = now()
       FROM locked_actor
      WHERE sessions.id = locked_actor.id
-    RETURNING sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.state_version, sessions.manual_run_cancelled, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_output_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.state, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.cancelled_at, sessions.failed_at
+    RETURNING sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.revision, sessions.manual_run_cancelled, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_output_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.status, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.cancelled_at, sessions.failed_at
 )
 INSERT INTO session_records (
     id,
@@ -522,7 +522,7 @@ func (q *Queries) CreateActorStartInputRecord(ctx context.Context, arg CreateAct
 }
 
 const getActorInputCurrentRun = `-- name: GetActorInputCurrentRun :one
-SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_definition_id, runs.entrypoint_kind, runs.entrypoint_declared_id, runs.session_id, runs.cause_kind, runs.schedule_id, runs.schedule_generation, runs.scheduled_at, runs.previous_scheduled_at, runs.schedule_timezone, runs.parent_run_id, runs.parent_owns_lifecycle, runs.workspace_id, runs.base_workspace_version_id, runs.session_input_start_sequence, runs.session_input_high_watermark, runs.payload, runs.output, runs.failure, runs.status, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.metadata, runs.tags, runs.queue_name, runs.concurrency_key, runs.queue_concurrency_limit, runs.priority, runs.queue_origin_at, runs.queue_score_at, runs.queued_expires_at, runs.max_active_duration_ms, runs.retry_policy, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.claim_id, runs.created_at, runs.updated_at, runs.first_lease_at, runs.started_at, runs.retry_at, runs.runtime_preparation_count, runs.next_runtime_preparation_at, runs.terminal_at
+SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_definition_id, runs.entrypoint_kind, runs.entrypoint_declared_id, runs.session_id, runs.cause_kind, runs.schedule_id, runs.schedule_generation, runs.scheduled_at, runs.previous_scheduled_at, runs.schedule_timezone, runs.parent_run_id, runs.parent_owns_lifecycle, runs.workspace_id, runs.base_workspace_version_id, runs.session_input_start_sequence, runs.session_input_high_watermark, runs.payload, runs.output, runs.failure, runs.status, runs.revision, runs.current_attempt_number, runs.current_run_lease_id, runs.metadata, runs.tags, runs.queue_name, runs.concurrency_key, runs.queue_concurrency_limit, runs.priority, runs.queue_origin_at, runs.queue_score_at, runs.queued_expires_at, runs.max_active_duration_ms, runs.retry_policy, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.claim_id, runs.created_at, runs.updated_at, runs.first_lease_at, runs.started_at, runs.retry_at, runs.runtime_preparation_count, runs.next_runtime_preparation_at, runs.terminal_at
   FROM runs
  WHERE runs.environment_id = $1
    AND runs.id = $2
@@ -564,7 +564,7 @@ func (q *Queries) GetActorInputCurrentRun(ctx context.Context, arg GetActorInput
 		&i.Output,
 		&i.Failure,
 		&i.Status,
-		&i.StateVersion,
+		&i.Revision,
 		&i.CurrentAttemptNumber,
 		&i.CurrentRunLeaseID,
 		&i.Metadata,
@@ -703,7 +703,7 @@ func (q *Queries) GetActorOutputRecordByID(ctx context.Context, arg GetActorOutp
 }
 
 const lockActorForInputReconcile = `-- name: LockActorForInputReconcile :one
-SELECT id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, state_version, manual_run_cancelled, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, state, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
+SELECT id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, manual_run_cancelled, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
   FROM sessions
  WHERE environment_id = $1
    AND id = $2
@@ -727,7 +727,7 @@ func (q *Queries) LockActorForInputReconcile(ctx context.Context, arg LockActorF
 		&i.Key,
 		&i.CurrentRunID,
 		&i.RunGeneration,
-		&i.StateVersion,
+		&i.Revision,
 		&i.ManualRunCancelled,
 		&i.Failure,
 		&i.FailureRunID,
@@ -743,7 +743,7 @@ func (q *Queries) LockActorForInputReconcile(ctx context.Context, arg LockActorF
 		&i.RunRetryPolicy,
 		&i.RunMetadata,
 		&i.RunTags,
-		&i.State,
+		&i.Status,
 		&i.CloseSequence,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -755,7 +755,7 @@ func (q *Queries) LockActorForInputReconcile(ctx context.Context, arg LockActorF
 }
 
 const lockActorInputCurrentRun = `-- name: LockActorInputCurrentRun :one
-SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_definition_id, runs.entrypoint_kind, runs.entrypoint_declared_id, runs.session_id, runs.cause_kind, runs.schedule_id, runs.schedule_generation, runs.scheduled_at, runs.previous_scheduled_at, runs.schedule_timezone, runs.parent_run_id, runs.parent_owns_lifecycle, runs.workspace_id, runs.base_workspace_version_id, runs.session_input_start_sequence, runs.session_input_high_watermark, runs.payload, runs.output, runs.failure, runs.status, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.metadata, runs.tags, runs.queue_name, runs.concurrency_key, runs.queue_concurrency_limit, runs.priority, runs.queue_origin_at, runs.queue_score_at, runs.queued_expires_at, runs.max_active_duration_ms, runs.retry_policy, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.claim_id, runs.created_at, runs.updated_at, runs.first_lease_at, runs.started_at, runs.retry_at, runs.runtime_preparation_count, runs.next_runtime_preparation_at, runs.terminal_at
+SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_definition_id, runs.entrypoint_kind, runs.entrypoint_declared_id, runs.session_id, runs.cause_kind, runs.schedule_id, runs.schedule_generation, runs.scheduled_at, runs.previous_scheduled_at, runs.schedule_timezone, runs.parent_run_id, runs.parent_owns_lifecycle, runs.workspace_id, runs.base_workspace_version_id, runs.session_input_start_sequence, runs.session_input_high_watermark, runs.payload, runs.output, runs.failure, runs.status, runs.revision, runs.current_attempt_number, runs.current_run_lease_id, runs.metadata, runs.tags, runs.queue_name, runs.concurrency_key, runs.queue_concurrency_limit, runs.priority, runs.queue_origin_at, runs.queue_score_at, runs.queued_expires_at, runs.max_active_duration_ms, runs.retry_policy, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.claim_id, runs.created_at, runs.updated_at, runs.first_lease_at, runs.started_at, runs.retry_at, runs.runtime_preparation_count, runs.next_runtime_preparation_at, runs.terminal_at
   FROM runs
  WHERE runs.environment_id = $1
    AND runs.id = $2
@@ -798,7 +798,7 @@ func (q *Queries) LockActorInputCurrentRun(ctx context.Context, arg LockActorInp
 		&i.Output,
 		&i.Failure,
 		&i.Status,
-		&i.StateVersion,
+		&i.Revision,
 		&i.CurrentAttemptNumber,
 		&i.CurrentRunLeaseID,
 		&i.Metadata,

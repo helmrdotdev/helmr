@@ -105,7 +105,7 @@ func TestAppendActorInputRollsBackProvisionalRunSourceWhenAuthorityIsStale(t *te
 		ID:                pgvalue.UUID(actorID),
 		EnvironmentID:     pgvalue.UUID(environmentID),
 		WorkspaceID:       pgvalue.UUID(uuid.NewV7()),
-		State:             "open",
+		Status:            "open",
 		NextInputSequence: 3,
 	}
 	server := &Server{db: store}
@@ -165,14 +165,14 @@ func TestAppendActorInputClassifiesLockedSequenceExhaustion(t *testing.T) {
 		ID:                pgvalue.UUID(actorID),
 		EnvironmentID:     pgvalue.UUID(environmentID),
 		WorkspaceID:       pgvalue.UUID(uuid.NewV7()),
-		State:             "open",
+		Status:            "open",
 		NextInputSequence: maxActorSequence,
 	}
 	store.locatorAfterAppend = db.Session{
 		ID:                pgvalue.UUID(actorID),
 		EnvironmentID:     pgvalue.UUID(environmentID),
 		WorkspaceID:       store.locator.WorkspaceID,
-		State:             "open",
+		Status:            "open",
 		NextInputSequence: maxActorSequence + 1,
 	}
 	store.appendErr = pgx.ErrNoRows
@@ -239,7 +239,7 @@ func completeActorInputClaim(
 		t.Fatal(err)
 	}
 	store.claim = acquired.Claim
-	store.claim.State = "completed"
+	store.claim.Status = "completed"
 	store.claim.Receipt = []byte(
 		`{"session_record_id":"` + recordID.String() + `","sequence":` +
 			fmt.Sprintf("%d", sequence) + `}`,
@@ -282,7 +282,7 @@ func (s *actorInputClaimStore) LockLiveIdempotencyClaim(
 		Operation:          s.claim.Operation,
 		SlotHash:           s.claim.SlotHash,
 		RequestFingerprint: s.claim.RequestFingerprint,
-		State:              s.claim.State,
+		Status:             s.claim.Status,
 		Receipt:            s.claim.Receipt,
 		AcceptedAt:         s.claim.AcceptedAt,
 		ExpiresAt:          s.claim.ExpiresAt,
@@ -302,7 +302,7 @@ func (s *actorInputClaimStore) CreateIdempotencyClaim(
 		Operation:          params.Operation,
 		SlotHash:           params.SlotHash,
 		RequestFingerprint: params.RequestFingerprint,
-		State:              "pending",
+		Status:             "pending",
 	}
 	return s.claim, nil
 }

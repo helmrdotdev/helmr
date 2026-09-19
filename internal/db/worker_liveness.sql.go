@@ -15,23 +15,23 @@ const listStaleWorkerFenceCandidates = `-- name: ListStaleWorkerFenceCandidates 
 SELECT workers.id,
        workers.worker_group_id,
        workers.current_epoch,
-       workers.state,
+       workers.status,
        COALESCE(workers.observed_at, workers.activated_at, workers.epoch_started_at, workers.updated_at) AS freshness_at,
        CASE
-           WHEN workers.state = 'registering' AND workers.observed_at IS NULL
+           WHEN workers.status = 'registering' AND workers.observed_at IS NULL
                THEN 'registering_observation_missing'
            ELSE 'worker_observation_stale'
        END::text AS reason
   FROM worker_instances AS workers
- WHERE workers.state IN ('registering', 'active', 'draining')
+ WHERE workers.status IN ('registering', 'active', 'draining')
    AND ($1::uuid IS NULL OR workers.worker_group_id = $1)
    AND (
-       (workers.state = 'registering'
+       (workers.status = 'registering'
         AND workers.observed_at IS NULL
         AND COALESCE(workers.epoch_started_at, workers.updated_at)
             < $2)
        OR
-       (workers.state IN ('active', 'draining')
+       (workers.status IN ('active', 'draining')
         AND COALESCE(workers.observed_at, workers.activated_at, workers.epoch_started_at, workers.updated_at)
             < transaction_timestamp()
                 - $3::bigint * interval '1 second')
@@ -53,7 +53,7 @@ type ListStaleWorkerFenceCandidatesRow struct {
 	ID            pgtype.UUID        `json:"id"`
 	WorkerGroupID pgtype.UUID        `json:"worker_group_id"`
 	CurrentEpoch  pgtype.Int8        `json:"current_epoch"`
-	State         string             `json:"state"`
+	Status        string             `json:"status"`
 	FreshnessAt   pgtype.Timestamptz `json:"freshness_at"`
 	Reason        string             `json:"reason"`
 }
@@ -76,7 +76,7 @@ func (q *Queries) ListStaleWorkerFenceCandidates(ctx context.Context, arg ListSt
 			&i.ID,
 			&i.WorkerGroupID,
 			&i.CurrentEpoch,
-			&i.State,
+			&i.Status,
 			&i.FreshnessAt,
 			&i.Reason,
 		); err != nil {
@@ -93,26 +93,26 @@ func (q *Queries) ListStaleWorkerFenceCandidates(ctx context.Context, arg ListSt
 const recheckAndFenceStaleWorkerInstance = `-- name: RecheckAndFenceStaleWorkerInstance :one
 WITH target AS (
     UPDATE worker_instances AS workers
-       SET state = 'lost',
+       SET status = 'lost',
            claim_version = workers.claim_version + 1,
            lost_at = COALESCE(workers.lost_at, now()),
            updated_at = now()
      WHERE workers.id = $1
        AND workers.worker_group_id = $2
        AND workers.current_epoch IS NOT DISTINCT FROM $3
-       AND workers.state IN ('registering', 'active', 'draining')
+       AND workers.status IN ('registering', 'active', 'draining')
        AND (
-           (workers.state = 'registering'
+           (workers.status = 'registering'
             AND workers.observed_at IS NULL
             AND COALESCE(workers.epoch_started_at, workers.updated_at)
                 < $4)
            OR
-           (workers.state IN ('active', 'draining')
+           (workers.status IN ('active', 'draining')
             AND COALESCE(workers.observed_at, workers.activated_at, workers.epoch_started_at, workers.updated_at)
                 < transaction_timestamp()
                     - $5::bigint * interval '1 second')
        )
-    RETURNING workers.id, workers.resource_id, workers.worker_group_id, workers.worker_pool_id, workers.state, workers.claim_version, workers.current_epoch, workers.current_service_id, workers.runtime_identity_id, workers.substrate_format, workers.substrate_contract, workers.epoch_cpu_millis, workers.epoch_memory_bytes, workers.epoch_guest_ephemeral_disk_bytes, workers.per_vm_cpu_millis, workers.per_vm_memory_bytes, workers.per_vm_guest_ephemeral_disk_bytes, workers.max_vm_slots, workers.max_runtime_starts, workers.cpu_environment, workers.cpu_environment_digest, workers.observed_at, workers.run_paused_reason, workers.runtime_paused_reason, workers.epoch_started_at, workers.activated_at, workers.draining_at, workers.termination_ready_at, workers.lost_at, workers.created_at, workers.updated_at
+    RETURNING workers.id, workers.resource_id, workers.worker_group_id, workers.worker_pool_id, workers.status, workers.claim_version, workers.current_epoch, workers.current_service_id, workers.runtime_identity_id, workers.substrate_format, workers.substrate_contract, workers.epoch_cpu_millis, workers.epoch_memory_bytes, workers.epoch_guest_ephemeral_disk_bytes, workers.per_vm_cpu_millis, workers.per_vm_memory_bytes, workers.per_vm_guest_ephemeral_disk_bytes, workers.max_vm_slots, workers.max_runtime_starts, workers.cpu_environment, workers.cpu_environment_digest, workers.observed_at, workers.run_paused_reason, workers.runtime_paused_reason, workers.epoch_started_at, workers.activated_at, workers.draining_at, workers.termination_ready_at, workers.lost_at, workers.created_at, workers.updated_at
 ), revoked_credentials AS (
     UPDATE worker_instance_credentials AS credentials
        SET revoked_at = COALESCE(credentials.revoked_at, now())
@@ -122,12 +122,12 @@ WITH target AS (
     RETURNING credentials.id
 ), lost_mounts AS (
     UPDATE workspace_mounts AS mounts
-       SET state = 'lost', lost_at = now(), terminal_at = now(),
+       SET status = 'lost', lost_at = now(), terminal_at = now(),
            terminal_reason_code = $6, updated_at = now()
       FROM target
      WHERE mounts.worker_instance_id = target.id
        AND mounts.worker_epoch = target.current_epoch
-       AND mounts.state IN ('mounting', 'mounted', 'unmounting')
+       AND mounts.status IN ('mounting', 'mounted', 'unmounting')
     RETURNING mounts.id
 ), lost_runtimes AS (
     UPDATE runtime_instances AS runtimes
@@ -144,7 +144,7 @@ WITH target AS (
        AND runtimes.observed_state IN ('allocated', 'ready')
     RETURNING runtimes.id
 )
-SELECT target.id, target.worker_group_id, target.current_epoch, target.state
+SELECT target.id, target.worker_group_id, target.current_epoch, target.status
   FROM target
  WHERE (SELECT count(*) FROM revoked_credentials) >= 0
    AND (SELECT count(*) FROM lost_mounts) >= 0
@@ -164,7 +164,7 @@ type RecheckAndFenceStaleWorkerInstanceRow struct {
 	ID            pgtype.UUID `json:"id"`
 	WorkerGroupID pgtype.UUID `json:"worker_group_id"`
 	CurrentEpoch  pgtype.Int8 `json:"current_epoch"`
-	State         string      `json:"state"`
+	Status        string      `json:"status"`
 }
 
 // Immediate fencing revokes credentials and terminalizes mount/runtime
@@ -184,7 +184,7 @@ func (q *Queries) RecheckAndFenceStaleWorkerInstance(ctx context.Context, arg Re
 		&i.ID,
 		&i.WorkerGroupID,
 		&i.CurrentEpoch,
-		&i.State,
+		&i.Status,
 	)
 	return i, err
 }

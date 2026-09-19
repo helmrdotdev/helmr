@@ -37,7 +37,7 @@ SELECT workspace_versions.id AS version_id,
    AND workspace_versions.environment_id = $3
    AND workspace_versions.workspace_id = $4
    AND workspace_versions.id = $5
-   AND workspace_versions.state IN ('committed', 'private')
+   AND workspace_versions.status IN ('committed', 'private')
    AND (workspace_versions.parent_version_id IS NULL OR artifacts.kind = 'workspace_version')
 `
 
@@ -118,7 +118,7 @@ SELECT workspace_versions.id AS version_id,
    AND workspace_versions.environment_id = $3
    AND workspace_versions.workspace_id = $4
    AND workspace_versions.id = $5
-   AND workspace_versions.state IN ('committed', 'private')
+   AND workspace_versions.status IN ('committed', 'private')
    AND (workspace_versions.parent_version_id IS NULL OR artifacts.kind = 'workspace_version')
 `
 

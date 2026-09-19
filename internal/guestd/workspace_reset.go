@@ -28,7 +28,7 @@ func handleWorkspaceResetConnection(ctx context.Context, conn io.ReadWriter, reg
 	if err != nil {
 		return writeWorkspaceResetFailure(conn, err)
 	}
-	if request.GetEnvelope() == nil || request.GetEnvelope().GetAuthority() == nil || request.GetEnvelope().GetAuthority().GetFence() == nil || target.BaseVersionID != request.GetEnvelope().GetAuthority().GetFence().GetBaseWorkspaceVersionId() {
+	if request.GetEnvelope() == nil || request.GetEnvelope().GetAuthority() == nil || request.GetEnvelope().GetAuthority().GetFence() == nil || target.BaseWorkspaceVersionID != request.GetEnvelope().GetAuthority().GetFence().GetBaseWorkspaceVersionId() {
 		return writeWorkspaceResetFailure(conn, errors.New("workspace reset target does not match the admitted base version"))
 	}
 	entry, release, err := acquireWorkspaceFinalization(ctx, registry, request.GetEnvelope(), workspace.FinalizationResetKind, target)

@@ -64,7 +64,7 @@ func (s *Server) deleteWorkspace(ctx context.Context, request workspaceDeleteReq
 			if err != nil {
 				return err
 			}
-			if acquired.Claim.State == "completed" {
+			if acquired.Claim.Status == "completed" {
 				replayed, err := workspaceDeleteResultFromReceipt(acquired.Claim.Receipt)
 				if err != nil {
 					return err
@@ -73,7 +73,7 @@ func (s *Server) deleteWorkspace(ctx context.Context, request workspaceDeleteReq
 				result = replayed
 				return nil
 			}
-			if acquired.Claim.State != "pending" {
+			if acquired.Claim.Status != "pending" {
 				return errWorkspaceDeleteReceipt
 			}
 			claim = &acquired.Claim
@@ -91,17 +91,17 @@ func (s *Server) deleteWorkspace(ctx context.Context, request workspaceDeleteReq
 			return fmt.Errorf("lock workspace for delete: %w", err)
 		}
 		workspaceID := pgvalue.MustUUIDValue(authority.ID)
-		if authority.State != db.WorkspaceStateDeleting &&
+		if authority.Status != db.WorkspaceStatusDeleting &&
 			(authority.OwnerSessionID.Valid || authority.OwnerRunID.Valid ||
 				authority.HasActiveLease || authority.HasActiveProcess) {
 			return errWorkspaceBusy
 		}
 
-		if authority.State != db.WorkspaceStateDeleting {
+		if authority.Status != db.WorkspaceStatusDeleting {
 			if _, err := work.q.MarkWorkspaceDeleting(ctx, db.MarkWorkspaceDeletingParams{
-				EnvironmentID:        pgvalue.UUID(request.EnvironmentID),
-				ID:                   authority.ID,
-				ExpectedStateVersion: authority.StateVersion,
+				EnvironmentID:    pgvalue.UUID(request.EnvironmentID),
+				ID:               authority.ID,
+				ExpectedRevision: authority.Revision,
 			}); errors.Is(err, pgx.ErrNoRows) {
 				return errWorkspaceBusy
 			} else if err != nil {

@@ -50,7 +50,7 @@ func authorizeWorkerRunSource(
 	}
 	if err != nil ||
 		authority.run.Status != db.RunStatusRunning ||
-		authority.runLease.State != db.RunLeaseStateRunning ||
+		authority.runLease.Status != db.RunLeaseStatusRunning ||
 		!authority.run.ActiveStartedAt.Valid ||
 		!authority.attempt.EntrypointEnteredAt.Valid ||
 		authority.attempt.TerminalAt.Valid ||

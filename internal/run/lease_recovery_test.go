@@ -11,7 +11,7 @@ import (
 func TestDecideExecutionLeaseLossUsesExactPhysicalReason(t *testing.T) {
 	now := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
 	base := db.GetRunExecutionLeaseLossAuthorityRow{
-		RunLeaseState:       string(db.RunLeaseStateRunning),
+		RunLeaseStatus:      string(db.RunLeaseStatusRunning),
 		ObservedAt:          timestamp(now),
 		RunLeaseExpiresAt:   timestamp(now.Add(time.Minute)),
 		StartDeadlineAt:     timestamp(now.Add(time.Minute)),
@@ -42,7 +42,7 @@ func TestDecideExecutionLeaseLossUsesExactPhysicalReason(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !found || loss.reason != tc.reason || loss.state != db.RunLeaseStateLost {
+			if !found || loss.reason != tc.reason || loss.state != db.RunLeaseStatusLost {
 				t.Fatalf("loss = %+v, found=%v; want %s/lost", loss, found, tc.reason)
 			}
 		})
@@ -52,7 +52,7 @@ func TestDecideExecutionLeaseLossUsesExactPhysicalReason(t *testing.T) {
 func TestDecideExecutionLeaseLossUsesEarliestAuthoritativeBoundary(t *testing.T) {
 	now := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
 	row := db.GetRunExecutionLeaseLossAuthorityRow{
-		RunLeaseState:        string(db.RunLeaseStateAssigned),
+		RunLeaseStatus:       string(db.RunLeaseStatusAssigned),
 		ObservedAt:           timestamp(now),
 		RunLeaseExpiresAt:    timestamp(now.Add(-2 * time.Second)),
 		StartDeadlineAt:      timestamp(now.Add(-3 * time.Second)),
@@ -65,7 +65,7 @@ func TestDecideExecutionLeaseLossUsesEarliestAuthoritativeBoundary(t *testing.T)
 		t.Fatal(err)
 	}
 	if !found || loss.reason != "lease_expired" ||
-		!loss.at.Equal(now.Add(-3*time.Second)) || loss.state != db.RunLeaseStateExpired {
+		!loss.at.Equal(now.Add(-3*time.Second)) || loss.state != db.RunLeaseStatusExpired {
 		t.Fatalf("loss = %+v, found=%v", loss, found)
 	}
 }
@@ -83,18 +83,18 @@ func TestDecideExecutionLeaseLossStateDeadlines(t *testing.T) {
 	}
 
 	checkpointing := base
-	checkpointing.RunLeaseState = string(db.RunLeaseStateCheckpointing)
+	checkpointing.RunLeaseStatus = string(db.RunLeaseStatusCheckpointing)
 	loss, found, err := decideExecutionLeaseLoss(checkpointing)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !found || loss.kind != "active_deadline" ||
-		loss.reason != "max_active_duration_exceeded" || loss.state != db.RunLeaseStateExpired {
+		loss.reason != "max_active_duration_exceeded" || loss.state != db.RunLeaseStatusExpired {
 		t.Fatalf("checkpointing loss = %+v, found=%v", loss, found)
 	}
 
 	finalizing := base
-	finalizing.RunLeaseState = string(db.RunLeaseStateFinalizing)
+	finalizing.RunLeaseStatus = string(db.RunLeaseStatusFinalizing)
 	finalizing.ActiveStartedAt = pgtype.Timestamptz{}
 	finalizing.WorkerLostAt = timestamp(now)
 	loss, found, err = decideExecutionLeaseLoss(finalizing)

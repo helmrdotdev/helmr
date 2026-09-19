@@ -16,19 +16,19 @@ func TestWorkerClaimsDoNotReplaceEpochOrStateFences(t *testing.T) {
 	for _, test := range []struct {
 		name  string
 		epoch pgtype.Int8
-		state db.WorkerInstanceState
+		state db.WorkerInstanceStatus
 		want  error
 	}{
-		{"active", pgtype.Int8{Int64: 1, Valid: true}, db.WorkerInstanceStateActive, errStaleWorkerClaims},
-		{"draining", pgtype.Int8{Int64: 1, Valid: true}, db.WorkerInstanceStateDraining, errStaleWorkerClaims},
-		{"new epoch", pgtype.Int8{Int64: 2, Valid: true}, db.WorkerInstanceStateActive, errStaleRunLeaseClaim},
-		{"missing epoch", pgtype.Int8{}, db.WorkerInstanceStateActive, errStaleRunLeaseClaim},
-		{"lost", pgtype.Int8{Int64: 1, Valid: true}, db.WorkerInstanceStateLost, errStaleRunLeaseClaim},
-		{"termination ready", pgtype.Int8{Int64: 1, Valid: true}, db.WorkerInstanceStateTerminationReady, errStaleRunLeaseClaim},
+		{"active", pgtype.Int8{Int64: 1, Valid: true}, db.WorkerInstanceStatusActive, errStaleWorkerClaims},
+		{"draining", pgtype.Int8{Int64: 1, Valid: true}, db.WorkerInstanceStatusDraining, errStaleWorkerClaims},
+		{"new epoch", pgtype.Int8{Int64: 2, Valid: true}, db.WorkerInstanceStatusActive, errStaleRunLeaseClaim},
+		{"missing epoch", pgtype.Int8{}, db.WorkerInstanceStatusActive, errStaleRunLeaseClaim},
+		{"lost", pgtype.Int8{Int64: 1, Valid: true}, db.WorkerInstanceStatusLost, errStaleRunLeaseClaim},
+		{"termination ready", pgtype.Int8{Int64: 1, Valid: true}, db.WorkerInstanceStatusTerminationReady, errStaleRunLeaseClaim},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			err := validateClaimWorker(workerActor{WorkerEpoch: 1, ClaimVersion: 1}, db.WorkerInstance{
-				CurrentEpoch: test.epoch, State: test.state, ClaimVersion: 2,
+				CurrentEpoch: test.epoch, Status: test.state, ClaimVersion: 2,
 			})
 			if !errors.Is(err, test.want) {
 				t.Fatalf("authority error = %v, want %v", err, test.want)
@@ -59,10 +59,10 @@ func TestWorkerClaimsSurviveFinalizationErrorTranslation(t *testing.T) {
 }
 
 func TestWorkerGroupClaimsDoNotReplaceStateFences(t *testing.T) {
-	for _, state := range []db.WorkerGroupState{db.WorkerGroupStatePaused, db.WorkerGroupStateDisabled} {
+	for _, state := range []db.WorkerGroupStatus{db.WorkerGroupStatusPaused, db.WorkerGroupStatusDisabled} {
 		t.Run(state, func(t *testing.T) {
 			worker, locators, authority := validRunLeaseClaimFixture()
-			authority.workerGroup.State = state
+			authority.workerGroup.Status = state
 			authority.workerGroup.ClaimVersion++
 			store := &runLeaseClaimStore{authority: authority}
 			_, err := claimFreshTaskRunLeaseInTx(t.Context(), store, worker, authority.runLease.ID, authority.runLease.LeaseSequence, locators)

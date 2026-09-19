@@ -124,7 +124,7 @@ func (s *Server) workerCreateActorInputRunWait(
 		}
 		authority.actor = owner.actor
 		if authority.run.ParentRunID.Valid || authority.run.EntrypointKind != "actor" ||
-			authority.run.SessionID != pgvalue.UUID(sessionID) || authority.runLease.State != db.RunLeaseStateRunning {
+			authority.run.SessionID != pgvalue.UUID(sessionID) || authority.runLease.Status != db.RunLeaseStatusRunning {
 			return errStaleRunLeaseClaim
 		}
 		cursor := pgtype.Int8{Int64: params.AfterInputSequence, Valid: true}
@@ -161,7 +161,7 @@ func (s *Server) workerCreateActorInputRunWait(
 			RegistrationRequestFingerprint: pgvalue.Text(fingerprint), AttemptNumber: authority.attempt.Number,
 			ActorSpeculativeInputSequence: cursor, CurrentRunLeaseID: authority.runLease.ID,
 			CheckpointDueAt: checkpointDueAt, ResumeAttachID: pgvalue.UUID(resumeAttachID), Metadata: metadata, Tags: tags,
-			RunID: authority.run.ID, ExpectedRunningStateVersion: authority.run.StateVersion,
+			RunID: authority.run.ID, ExpectedRunningRevision: authority.run.Revision,
 		})
 		if err != nil {
 			return staleRunLeaseClaim(err)
@@ -171,7 +171,7 @@ func (s *Server) workerCreateActorInputRunWait(
 			Sequence: params.AfterInputSequence + 1,
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
-			if authority.actor.State == "closing" && authority.actor.CloseSequence.Valid &&
+			if authority.actor.Status == "closing" && authority.actor.CloseSequence.Valid &&
 				params.AfterInputSequence >= authority.actor.CloseSequence.Int64 {
 				registered, err = session.FailWait(r.Context(), work.q, registered, "session_closed")
 				return err
@@ -200,7 +200,7 @@ func (s *Server) workerCreateActorInputRunWait(
 		RunID: pgvalue.UUIDString(registrationLocators.RunID), RunWaitID: waitID.String(), ResumeAttachID: resumeAttachID.String(),
 		RuntimeInstanceID: pgvalue.UUIDString(registrationLocators.RuntimeInstanceID), RuntimeEpoch: worker.WorkerEpoch,
 	}
-	if registered.SuspensionState == db.RunWaitStateReleased {
+	if registered.SuspensionStatus == db.RunWaitStatusReleased {
 		response.ResolutionKind, response.Resolution, err = actorInputWaitDecision(registered)
 		if err != nil {
 			writeError(w, conflict(err))
@@ -222,20 +222,20 @@ func actorInputWaitIdleTimeout(raw json.RawMessage) (time.Duration, error) {
 }
 
 func actorInputWaitDecision(wait db.RunWait) (string, json.RawMessage, error) {
-	switch wait.ConditionState {
-	case db.WaitStateCompleted:
+	switch wait.ConditionStatus {
+	case db.WaitStatusCompleted:
 		if !wait.CompletedActorRecordID.Valid || len(wait.ConditionResult) == 0 {
 			return "", nil, errors.New("completed actor input wait is missing its record")
 		}
 		return "completed", wait.ConditionResult, nil
-	case db.WaitStateFailed:
+	case db.WaitStatusFailed:
 		reason := pgvalue.TextValue(wait.ConditionReasonCode)
 		if reason != "wait_timeout" && reason != "session_closed" {
 			return "", nil, errors.New("actor input wait failure reason is invalid")
 		}
 		payload, _ := json.Marshal(map[string]string{"reason_code": reason})
 		return "failed", payload, nil
-	case db.WaitStateCancelled:
+	case db.WaitStatusCancelled:
 		payload, _ := json.Marshal(map[string]string{"reason_code": pgvalue.TextValue(wait.ConditionReasonCode)})
 		return "cancelled", payload, nil
 	default:

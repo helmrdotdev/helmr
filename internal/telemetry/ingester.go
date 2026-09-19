@@ -205,11 +205,17 @@ func (i *Ingestor) ingestRunLogs(ctx context.Context) (int, error) {
 	candidates := make([]runLogIngestCandidate, 0, len(rows))
 	var firstErr error
 	for _, row := range rows {
+		record, err := runLogRecord(row)
+		if err != nil {
+			failureErr := i.markFailed(ctx, []telemetryOutboxClaim{{outboxID: row.OutboxID, retryCount: row.RetryCount}}, err)
+			firstErr = errors.Join(firstErr, err, failureErr)
+			continue
+		}
 		candidates = append(candidates, runLogIngestCandidate{
 			outboxID:   row.OutboxID,
 			retryCount: row.RetryCount,
 			createdAt:  pgvalue.Time(row.CreatedAt),
-			record:     runLogRecord(row),
+			record:     record,
 		})
 	}
 	if len(candidates) > 0 {
@@ -433,14 +439,20 @@ func eventRecord(row db.ClaimEventIngestBatchRow) EventRecord {
 	}
 }
 
-func runLogRecord(row db.ClaimRunLogIngestBatchRow) RunLogRecord {
+func runLogRecord(row db.ClaimRunLogIngestBatchRow) (RunLogRecord, error) {
+	if !row.RunLeaseID.Valid {
+		return RunLogRecord{}, fmt.Errorf("run log outbox %d: run_lease_id is required", row.OutboxID)
+	}
+	if !row.AttemptNumber.Valid || row.AttemptNumber.Int32 <= 0 {
+		return RunLogRecord{}, fmt.Errorf("run log outbox %d: positive attempt_number is required", row.OutboxID)
+	}
 	return RunLogRecord{
 		OrgID:          pgvalue.MustUUIDValue(row.OrgID),
 		ProjectID:      pgvalue.MustUUIDValue(row.ProjectID),
 		EnvironmentID:  pgvalue.MustUUIDValue(row.EnvironmentID),
 		RunID:          pgvalue.MustUUIDValue(row.RunID),
 		RunLeaseID:     pgvalue.MustUUIDValue(row.RunLeaseID),
-		AttemptNumber:  int4Value(row.AttemptNumber),
+		AttemptNumber:  row.AttemptNumber.Int32,
 		StreamName:     string(row.Stream),
 		Seq:            uint64(row.Seq),
 		ObservedSeq:    uint64(pgvalue.Int8Value(row.ObservedSeq)),
@@ -451,7 +463,7 @@ func runLogRecord(row db.ClaimRunLogIngestBatchRow) RunLogRecord {
 		RedactionClass: "standard",
 		Source:         "worker",
 		ObservedAt:     observedAt(pgtype.Timestamptz{}, row.CreatedAt),
-	}
+	}, nil
 }
 
 func optionalUUID(value pgtype.UUID) *uuid.UUID {
@@ -467,13 +479,6 @@ func optionalInt32(value pgtype.Int4) *int32 {
 		return nil
 	}
 	return &value.Int32
-}
-
-func int4Value(value pgtype.Int4) int32 {
-	if !value.Valid {
-		return 0
-	}
-	return value.Int32
 }
 
 func observedAt(primary pgtype.Timestamptz, fallback pgtype.Timestamptz) time.Time {

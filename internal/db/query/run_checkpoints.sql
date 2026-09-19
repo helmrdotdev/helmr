@@ -10,7 +10,7 @@ INSERT INTO run_checkpoints (
     base_workspace_version_id,
     private_workspace_version_id,
     actor_speculative_input_sequence,
-    state,
+    status,
     restore_manifest,
     expires_at
 )
@@ -33,7 +33,7 @@ RETURNING run_checkpoints.*;
 
 -- name: MarkRunCheckpointReady :one
 UPDATE run_checkpoints
-   SET state = 'ready',
+   SET status = 'ready',
        private_workspace_version_id = sqlc.arg(private_workspace_version_id),
        runtime_config_artifact_id = sqlc.arg(runtime_config_artifact_id),
        vm_state_artifact_id = sqlc.arg(vm_state_artifact_id),
@@ -50,7 +50,7 @@ UPDATE run_checkpoints
  WHERE run_checkpoints.run_id = sqlc.arg(run_id)
    AND run_checkpoints.attempt_number = sqlc.arg(attempt_number)
    AND run_checkpoints.id = sqlc.arg(id)
-   AND run_checkpoints.state = 'creating'
+   AND run_checkpoints.status = 'creating'
    AND runs.id = run_checkpoints.run_id
    AND runtime_config_artifact.id = sqlc.arg(runtime_config_artifact_id)
    AND runtime_config_artifact.environment_id = runs.environment_id
@@ -76,7 +76,7 @@ SELECT *
    AND source_run_lease_id = sqlc.arg(source_run_lease_id)
    AND source_workspace_lease_id = sqlc.arg(source_workspace_lease_id)
    AND workspace_id = sqlc.arg(workspace_id)
-   AND state = 'creating'
+   AND status = 'creating'
  FOR UPDATE;
 
 -- name: GetCheckpointReadyReplay :one
@@ -84,7 +84,7 @@ SELECT run_id, attempt_number, run_wait_id, source_run_lease_id,
        workspace_id, private_workspace_version_id, ready_request_fingerprint
   FROM run_checkpoints
  WHERE id = sqlc.arg(id)
-   AND state = 'ready'
+   AND status = 'ready'
    AND ready_request_fingerprint IS NOT NULL;
 
 -- name: GetCheckpointFailedReplay :one
@@ -92,7 +92,7 @@ SELECT run_id, attempt_number, run_wait_id, source_run_lease_id,
        workspace_id, failed_request_fingerprint
   FROM run_checkpoints
  WHERE id = sqlc.arg(id)
-   AND state = 'invalid'
+   AND status = 'invalid'
    AND invalidation_reason_code = 'checkpoint_failed'
    AND failed_request_fingerprint IS NOT NULL;
 
@@ -110,7 +110,7 @@ SELECT *
 INSERT INTO workspace_versions (
     id, environment_id, workspace_id,
     parent_version_id, artifact_id, content_digest,
-    size_bytes, entry_count, state, source_workspace_lease_id,
+    size_bytes, entry_count, status, source_workspace_lease_id,
     ownership_generation, writer_generation
 )
 SELECT
@@ -128,7 +128,7 @@ RETURNING *;
 
 -- name: CheckpointRunLease :one
 UPDATE run_leases
-   SET state = 'checkpointed',
+   SET status = 'checkpointed',
        checkpointed_at = sqlc.arg(checkpointed_at),
        terminal_at = sqlc.arg(checkpointed_at),
        terminal_reason_code = 'checkpointed',
@@ -138,13 +138,13 @@ UPDATE run_leases
    AND workspace_id = sqlc.arg(workspace_id)
    AND attempt_number = sqlc.arg(attempt_number)
    AND lease_sequence = sqlc.arg(lease_sequence)
-   AND state = 'checkpointing'
+   AND status = 'checkpointing'
    AND expires_at > sqlc.arg(checkpointed_at)
 RETURNING *;
 
 -- name: ReleaseCheckpointWorkspaceLease :one
 UPDATE workspace_leases
-   SET state = 'released',
+   SET status = 'released',
        released_at = sqlc.arg(checkpointed_at),
        terminal_at = sqlc.arg(checkpointed_at),
        updated_at = sqlc.arg(checkpointed_at)
@@ -154,18 +154,18 @@ UPDATE workspace_leases
    AND runtime_instance_id = sqlc.arg(runtime_instance_id)
    AND owner_run_lease_id = sqlc.arg(owner_run_lease_id)
    AND owner_process_id IS NULL
-   AND base_version_id = sqlc.arg(base_version_id)
+   AND base_workspace_version_id = sqlc.arg(base_workspace_version_id)
    AND ownership_generation = sqlc.arg(ownership_generation)
    AND writer_generation = sqlc.arg(writer_generation)
    AND mount_fencing_generation = sqlc.arg(mount_fencing_generation)
-   AND state = 'active'
+   AND status = 'active'
    AND expires_at > sqlc.arg(checkpointed_at)
 RETURNING *;
 
 -- name: CloseCheckpointSourceRuntime :one
 WITH closed_mount AS (
     UPDATE workspace_mounts
-       SET state = 'unmounted',
+       SET status = 'unmounted',
            stopped_at = COALESCE(stopped_at, sqlc.arg(checkpointed_at)),
            unmounted_at = sqlc.arg(checkpointed_at),
            terminal_at = sqlc.arg(checkpointed_at),
@@ -177,7 +177,7 @@ WITH closed_mount AS (
        AND workspace_mounts.worker_instance_id = sqlc.arg(worker_instance_id)
        AND workspace_mounts.worker_epoch = sqlc.arg(worker_epoch)
        AND workspace_mounts.fencing_generation = sqlc.arg(mount_fencing_generation)
-       AND workspace_mounts.state = 'mounted'
+       AND workspace_mounts.status = 'mounted'
     RETURNING workspace_mounts.*
 ), closed_runtime AS (
     UPDATE runtime_instances
@@ -210,7 +210,7 @@ SELECT closed_mount.*
 WITH updated_run AS (
     UPDATE runs
        SET current_run_lease_id = NULL,
-           state_version = runs.state_version + 1,
+           revision = runs.revision + 1,
            updated_at = sqlc.arg(checkpointed_at)
      WHERE id = sqlc.arg(run_id)
        AND workspace_id = sqlc.arg(workspace_id)
@@ -218,12 +218,12 @@ WITH updated_run AS (
        AND current_run_lease_id = sqlc.arg(run_lease_id)
        AND status = 'waiting'
        AND active_started_at IS NULL
-       AND runs.state_version = sqlc.arg(expected_run_state_version)
-    RETURNING runs.state_version
+       AND runs.revision = sqlc.arg(expected_run_revision)
+    RETURNING runs.revision
 )
 UPDATE run_waits
-   SET suspension_state = 'parked',
-       expected_run_state_version = updated_run.state_version,
+   SET suspension_status = 'parked',
+       expected_run_revision = updated_run.revision,
        checkpoint_ack_version = sqlc.arg(checkpoint_request_version),
        prior_run_lease_id = current_run_lease_id,
        current_run_lease_id = NULL,
@@ -235,8 +235,8 @@ UPDATE run_waits
    AND run_waits.attempt_number = sqlc.arg(attempt_number)
    AND run_waits.current_run_lease_id = sqlc.arg(run_lease_id)
    AND run_waits.suspend_checkpoint_id = sqlc.arg(checkpoint_id)
-   AND run_waits.suspension_state = 'checkpointing'
-   AND run_waits.condition_state = 'pending'
+   AND run_waits.suspension_status = 'checkpointing'
+   AND run_waits.condition_status = 'pending'
    AND run_waits.checkpoint_request_version = sqlc.arg(checkpoint_request_version)
 RETURNING run_waits.*;
 
@@ -251,7 +251,7 @@ WITH locked_parent AS MATERIALIZED (
        AND runs.current_run_lease_id = sqlc.arg(parent_run_lease_id)
        AND runs.status = 'waiting'
        AND runs.active_started_at IS NULL
-       AND runs.state_version = sqlc.arg(expected_run_state_version)
+       AND runs.revision = sqlc.arg(expected_run_revision)
      FOR UPDATE OF runs
 ), locked_wait AS MATERIALIZED (
     SELECT run_waits.id, run_waits.run_id
@@ -268,9 +268,9 @@ WITH locked_parent AS MATERIALIZED (
        AND run_waits.current_run_lease_id = sqlc.arg(parent_run_lease_id)
        AND run_waits.suspend_checkpoint_id =
            sqlc.arg(suspend_checkpoint_id)
-       AND run_waits.suspension_state = 'checkpointing'
-       AND run_waits.condition_state = 'pending'
-       AND run_waits.expected_run_state_version = sqlc.arg(expected_run_state_version)
+       AND run_waits.suspension_status = 'checkpointing'
+       AND run_waits.condition_status = 'pending'
+       AND run_waits.expected_run_revision = sqlc.arg(expected_run_revision)
        AND run_waits.checkpoint_request_version =
            sqlc.arg(checkpoint_request_version)
      FOR UPDATE OF run_waits
@@ -291,7 +291,7 @@ WITH locked_parent AS MATERIALIZED (
 ), updated_run AS (
     UPDATE runs
        SET current_run_lease_id = NULL,
-           state_version = runs.state_version + 1,
+           revision = runs.revision + 1,
            updated_at = sqlc.arg(checkpointed_at)
       FROM selected_child
      WHERE runs.id = sqlc.arg(parent_run_id)
@@ -301,14 +301,14 @@ WITH locked_parent AS MATERIALIZED (
        AND runs.current_run_lease_id = sqlc.arg(parent_run_lease_id)
        AND runs.status = 'waiting'
        AND runs.active_started_at IS NULL
-       AND runs.state_version = sqlc.arg(expected_run_state_version)
+       AND runs.revision = sqlc.arg(expected_run_revision)
        AND runs.id = selected_child.parent_id
-    RETURNING runs.state_version
+    RETURNING runs.revision
 )
 UPDATE run_waits
    SET child_run_id = selected_child.id,
-       suspension_state = 'parked',
-       expected_run_state_version = updated_run.state_version,
+       suspension_status = 'parked',
+       expected_run_revision = updated_run.revision,
        checkpoint_ack_version = sqlc.arg(checkpoint_request_version),
        prior_run_lease_id = current_run_lease_id,
        current_run_lease_id = NULL,
@@ -327,7 +327,7 @@ WITH updated_run AS (
     UPDATE runs
        SET status = 'queued',
            current_run_lease_id = NULL,
-           state_version = state_version + 1,
+           revision = revision + 1,
            queue_origin_at = sqlc.arg(checkpointed_at),
            queue_score_at = sqlc.arg(checkpointed_at),
            updated_at = sqlc.arg(checkpointed_at)
@@ -337,12 +337,12 @@ WITH updated_run AS (
        AND current_run_lease_id = sqlc.arg(run_lease_id)
        AND status = 'waiting'
        AND active_started_at IS NULL
-       AND state_version = sqlc.arg(expected_run_state_version)
-    RETURNING state_version
+       AND revision = sqlc.arg(expected_run_revision)
+    RETURNING revision
 )
 UPDATE run_waits
-   SET suspension_state = 'resume_pending',
-       expected_run_state_version = updated_run.state_version,
+   SET suspension_status = 'resume_pending',
+       expected_run_revision = updated_run.revision,
        checkpoint_ack_version = sqlc.arg(checkpoint_request_version),
        prior_run_lease_id = current_run_lease_id,
        current_run_lease_id = NULL,
@@ -355,14 +355,14 @@ UPDATE run_waits
    AND run_waits.attempt_number = sqlc.arg(attempt_number)
    AND run_waits.current_run_lease_id = sqlc.arg(run_lease_id)
    AND run_waits.suspend_checkpoint_id = sqlc.arg(checkpoint_id)
-   AND run_waits.suspension_state = 'checkpointing'
-   AND run_waits.condition_state <> 'pending'
+   AND run_waits.suspension_status = 'checkpointing'
+   AND run_waits.condition_status <> 'pending'
    AND run_waits.checkpoint_request_version = sqlc.arg(checkpoint_request_version)
 RETURNING run_waits.*;
 
 -- name: InvalidateFailedRunCheckpoint :one
 UPDATE run_checkpoints
-   SET state = 'invalid',
+   SET status = 'invalid',
        invalidated_at = sqlc.arg(failed_at),
        invalidation_reason_code = 'checkpoint_failed',
        failed_request_fingerprint = sqlc.arg(failed_request_fingerprint)
@@ -372,12 +372,12 @@ UPDATE run_checkpoints
    AND run_wait_id = sqlc.arg(run_wait_id)
    AND source_run_lease_id = sqlc.arg(run_lease_id)
    AND workspace_id = sqlc.arg(workspace_id)
-   AND state = 'creating'
+   AND status = 'creating'
 RETURNING *;
 
 -- name: FailCheckpointRunLease :one
 UPDATE run_leases
-   SET state = 'failed',
+   SET status = 'failed',
        terminal_at = sqlc.arg(failed_at),
        terminal_reason_code = 'checkpoint_failed',
        terminal_error = sqlc.arg(error)::jsonb,
@@ -388,26 +388,26 @@ UPDATE run_leases
    AND workspace_id = sqlc.arg(workspace_id)
    AND attempt_number = sqlc.arg(attempt_number)
    AND lease_sequence = sqlc.arg(lease_sequence)
-   AND state = 'checkpointing'
+   AND status = 'checkpointing'
    AND terminal_request_fingerprint IS NULL
    AND expires_at > sqlc.arg(failed_at)
 RETURNING *;
 
 -- name: FailCheckpointRunWait :one
 UPDATE run_waits
-   SET condition_state = CASE
-           WHEN condition_state = 'pending' THEN 'cancelled'
-           ELSE condition_state
+   SET condition_status = CASE
+           WHEN condition_status = 'pending' THEN 'cancelled'
+           ELSE condition_status
        END,
        condition_terminal_at = CASE
-           WHEN condition_state = 'pending' THEN sqlc.arg(failed_at)
+           WHEN condition_status = 'pending' THEN sqlc.arg(failed_at)
            ELSE condition_terminal_at
        END,
        condition_reason_code = CASE
-           WHEN condition_state = 'pending' THEN 'run_checkpoint_failed'
+           WHEN condition_status = 'pending' THEN 'run_checkpoint_failed'
            ELSE condition_reason_code
        END,
-       suspension_state = 'failed',
+       suspension_status = 'failed',
        checkpoint_ack_version = sqlc.arg(checkpoint_request_version),
        prior_run_lease_id = current_run_lease_id,
        current_run_lease_id = NULL,
@@ -421,7 +421,7 @@ UPDATE run_waits
    AND attempt_number = sqlc.arg(attempt_number)
    AND current_run_lease_id = sqlc.arg(run_lease_id)
    AND suspend_checkpoint_id = sqlc.arg(checkpoint_id)
-   AND suspension_state = 'checkpointing'
+   AND suspension_status = 'checkpointing'
    AND checkpoint_request_version = sqlc.arg(checkpoint_request_version)
 RETURNING *;
 
@@ -446,7 +446,7 @@ WITH close_runtime AS (
     RETURNING id
 )
 UPDATE workspace_mounts
-   SET state = 'unmounting',
+   SET status = 'unmounting',
        stopped_at = COALESCE(stopped_at, sqlc.arg(failed_at)),
        updated_at = sqlc.arg(failed_at)
   FROM close_runtime
@@ -459,7 +459,7 @@ UPDATE workspace_mounts
    AND workspace_mounts.worker_instance_id = sqlc.arg(worker_instance_id)
    AND workspace_mounts.worker_epoch = sqlc.arg(worker_epoch)
    AND workspace_mounts.fencing_generation = sqlc.arg(mount_fencing_generation)
-   AND workspace_mounts.state = 'mounted'
+   AND workspace_mounts.status = 'mounted'
 RETURNING workspace_mounts.*;
 
 -- name: GetReadyRunCheckpoint :one
@@ -503,7 +503,7 @@ SELECT sqlc.embed(run_checkpoints),
  WHERE run_checkpoints.run_id = sqlc.arg(run_id)
    AND run_checkpoints.attempt_number = sqlc.arg(attempt_number)
    AND run_checkpoints.id = sqlc.arg(id)
-   AND run_checkpoints.state = 'ready';
+   AND run_checkpoints.status = 'ready';
 
 -- name: LockRestorableRunCheckpoint :one
 SELECT sqlc.embed(run_checkpoints),
@@ -543,7 +543,7 @@ SELECT sqlc.embed(run_checkpoints),
    AND run_checkpoints.attempt_number = sqlc.arg(attempt_number)
    AND run_checkpoints.run_wait_id = sqlc.arg(run_wait_id)
    AND run_checkpoints.workspace_id = sqlc.arg(workspace_id)
-   AND run_checkpoints.state = 'ready'
+   AND run_checkpoints.status = 'ready'
    AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > transaction_timestamp())
  FOR UPDATE OF run_checkpoints;
 

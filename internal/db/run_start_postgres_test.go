@@ -38,7 +38,7 @@ func TestFreshRunStartQueriesCommitAndReplay(t *testing.T) {
 	run, err := queries.MarkRunRunning(ctx, MarkRunRunningParams{
 		ID: workUUID(work.runID), OrgID: workUUID(fixture.orgID),
 		ProjectID: workUUID(fixture.projectID), EnvironmentID: workUUID(fixture.environmentID),
-		WorkspaceID: locators.WorkspaceID, ExpectedStateVersion: 1,
+		WorkspaceID: locators.WorkspaceID, ExpectedRevision: 1,
 		AttemptNumber: locators.AttemptNumber, RunLeaseID: workUUID(work.leaseID),
 	})
 	if err != nil {
@@ -56,8 +56,8 @@ func TestFreshRunStartQueriesCommitAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if lease.State != RunLeaseStateRunning || !lease.StartedAt.Valid {
-		t.Fatalf("lease = state %s started_at %v", lease.State, lease.StartedAt)
+	if lease.Status != RunLeaseStatusRunning || !lease.StartedAt.Valid {
+		t.Fatalf("lease = state %s started_at %v", lease.Status, lease.StartedAt)
 	}
 	if run.Status != RunStatusRunning || !run.StartedAt.Valid || !run.ActiveStartedAt.Valid {
 		t.Fatalf("run = status %s started_at %v active_started_at %v", run.Status, run.StartedAt, run.ActiveStartedAt)
@@ -166,7 +166,7 @@ func TestFreshRunStartQueriesRollbackTogether(t *testing.T) {
 	if _, err := queries.MarkRunRunning(ctx, MarkRunRunningParams{
 		ID: workUUID(work.runID), OrgID: workUUID(fixture.orgID),
 		ProjectID: workUUID(fixture.projectID), EnvironmentID: workUUID(fixture.environmentID),
-		WorkspaceID: locators.WorkspaceID, ExpectedStateVersion: 1,
+		WorkspaceID: locators.WorkspaceID, ExpectedRevision: 1,
 		AttemptNumber: locators.AttemptNumber, RunLeaseID: workUUID(work.leaseID),
 	}); err != nil {
 		t.Fatal(err)
@@ -182,17 +182,17 @@ func TestFreshRunStartQueriesRollbackTogether(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var leaseState RunLeaseState
+	var leaseStatus RunLeaseStatus
 	var runStatus RunStatus
 	var leaseStartedAt, runStartedAt, activeStartedAt *time.Time
 	if err := fixture.pool.QueryRow(ctx, `
-		SELECT run_leases.state, runs.status, run_leases.started_at,
+		SELECT run_leases.status, runs.status, run_leases.started_at,
 		       runs.started_at, runs.active_started_at
 		  FROM run_leases
 		  JOIN runs ON runs.id = run_leases.run_id
 		 WHERE run_leases.id = $1
 	`, work.leaseID).Scan(
-		&leaseState,
+		&leaseStatus,
 		&runStatus,
 		&leaseStartedAt,
 		&runStartedAt,
@@ -200,11 +200,11 @@ func TestFreshRunStartQueriesRollbackTogether(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if leaseState != RunLeaseStateStarting || runStatus != RunStatusQueued ||
+	if leaseStatus != RunLeaseStatusStarting || runStatus != RunStatusQueued ||
 		leaseStartedAt != nil || runStartedAt != nil || activeStartedAt != nil {
 		t.Fatalf(
 			"rollback left lease=%s run=%s lease_started=%v run_started=%v active_started=%v",
-			leaseState,
+			leaseStatus,
 			runStatus,
 			leaseStartedAt,
 			runStartedAt,
@@ -233,7 +233,7 @@ func TestRunEntrypointQueriesCommitOnceAndRejectExpiredLease(t *testing.T) {
 	if _, err := queries.MarkRunRunning(ctx, MarkRunRunningParams{
 		ID: workUUID(work.runID), OrgID: workUUID(fixture.orgID),
 		ProjectID: workUUID(fixture.projectID), EnvironmentID: workUUID(fixture.environmentID),
-		WorkspaceID: start.WorkspaceID, ExpectedStateVersion: 1,
+		WorkspaceID: start.WorkspaceID, ExpectedRevision: 1,
 		AttemptNumber: start.AttemptNumber, RunLeaseID: workUUID(work.leaseID),
 	}); err != nil {
 		t.Fatal(err)
@@ -281,8 +281,8 @@ func TestRunEntrypointQueriesCommitOnceAndRejectExpiredLease(t *testing.T) {
 	waitID := pgvalue.UUID(uuid.NewV7())
 	if _, err := fixture.pool.Exec(ctx, `
 		INSERT INTO run_waits (
-			id, environment_id, run_id, workspace_id, kind, condition_state,
-			due_at, suspension_state, expected_run_state_version, attempt_number,
+			id, environment_id, run_id, workspace_id, kind, condition_status,
+			due_at, suspension_status, expected_run_revision, attempt_number,
 			current_run_lease_id, resume_attach_id
 		) VALUES (
 			$1, $2, $3, $4, 'timer', 'pending',
@@ -374,12 +374,12 @@ func workUUID(value [16]byte) pgtype.UUID {
 }
 
 type freshRunStartState struct {
-	LeaseState            RunLeaseState
+	LeaseState            RunLeaseStatus
 	RunStatus             RunStatus
 	LeaseStartedAt        pgtype.Timestamptz
 	RunStartedAt          pgtype.Timestamptz
 	ActiveStartedAt       pgtype.Timestamptz
-	StateVersion          int64
+	Revision              int64
 	ActiveElapsedMs       int64
 	WorkspaceLastActivity pgtype.Timestamptz
 	EntrypointEnteredAt   pgtype.Timestamptz
@@ -393,12 +393,12 @@ func (fixture runLeaseClaimFixture) freshRunStartState(
 	t.Helper()
 	var state freshRunStartState
 	if err := fixture.pool.QueryRow(ctx, `
-		SELECT run_leases.state,
+		SELECT run_leases.status,
 		       runs.status,
 		       run_leases.started_at,
 		       runs.started_at,
 		       runs.active_started_at,
-		       runs.state_version,
+		       runs.revision,
 		       runs.active_elapsed_ms,
 		       workspaces.last_activity_at,
 		       run_attempts.entrypoint_entered_at
@@ -415,7 +415,7 @@ func (fixture runLeaseClaimFixture) freshRunStartState(
 		&state.LeaseStartedAt,
 		&state.RunStartedAt,
 		&state.ActiveStartedAt,
-		&state.StateVersion,
+		&state.Revision,
 		&state.ActiveElapsedMs,
 		&state.WorkspaceLastActivity,
 		&state.EntrypointEnteredAt,

@@ -184,7 +184,7 @@ func (s *Server) completeTask(
 			if err != nil {
 				return err
 			}
-		} else if authority.workspaceLease.BaseVersionID != authority.run.BaseWorkspaceVersionID {
+		} else if authority.workspaceLease.BaseWorkspaceVersionID != authority.run.BaseWorkspaceVersionID {
 			failurePoint = taskCompletionPointWorkspaceVersion
 			if err := updateTaskWorkspaceMountFrontier(
 				ctx,
@@ -211,7 +211,7 @@ func (s *Server) completeTask(
 			CompletedAt: completedAt,
 			ID:          authority.workspaceLease.ID, WorkspaceID: authority.workspace.ID,
 			WorkspaceMountID: authority.workspaceMount.ID, RuntimeInstanceID: authority.runtime.ID,
-			OwnerRunLeaseID: authority.runLease.ID, BaseVersionID: authority.workspaceLease.BaseVersionID,
+			OwnerRunLeaseID: authority.runLease.ID, BaseWorkspaceVersionID: authority.workspaceLease.BaseWorkspaceVersionID,
 			OwnershipGeneration:    authority.workspace.OwnershipGeneration,
 			WriterGeneration:       authority.workspace.WriterGeneration,
 			MountFencingGeneration: authority.workspaceMount.FencingGeneration,
@@ -312,7 +312,7 @@ func validateTaskCompletionAuthority(
 	authority runLeaseClaimAuthority,
 ) error {
 	if authority.run.EntrypointKind != "task" || authority.run.SessionID.Valid ||
-		authority.runLease.State != db.RunLeaseStateFinalizing ||
+		authority.runLease.Status != db.RunLeaseStatusFinalizing ||
 		!authority.attempt.EntrypointEnteredAt.Valid ||
 		authority.run.ActiveStartedAt.Valid ||
 		!authority.runLease.FinalizationOperationID.Valid ||
@@ -342,7 +342,7 @@ func validateTaskCompletionAuthority(
 			if authority.enclosingWait.RunID != authority.parentRun.ID ||
 				authority.enclosingWait.ChildRunID != authority.run.ID ||
 				authority.enclosingWait.Kind != db.WaitKindChild ||
-				authority.enclosingWait.ConditionState != db.WaitStatePending {
+				authority.enclosingWait.ConditionStatus != db.WaitStatusPending {
 				return staleAuthority(staleAuthorityTaskCompletion, taskCompletionPointParentAuthority, errStaleTaskCompletion)
 			}
 		} else if authority.parentRun.Status == db.RunStatusCancelRequested {
@@ -413,7 +413,7 @@ func validateTaskWorkspaceRollback(
 		return staleTaskCompletion(err)
 	}
 	if version.ID != authority.run.BaseWorkspaceVersionID ||
-		rollback.target.BaseVersionID != pgvalue.UUIDString(version.ID) ||
+		rollback.target.BaseWorkspaceVersionID != pgvalue.UUIDString(version.ID) ||
 		rollback.target.Tree.Digest != version.ContentDigest ||
 		rollback.target.Tree.SizeBytes != version.SizeBytes ||
 		rollback.target.Tree.EntryCount != int(version.EntryCount) {
@@ -461,7 +461,7 @@ func validateTaskCompletionDeadline(authority runLeaseClaimAuthority, completedA
 	if !completedAt.Before(authority.runLease.ExpiresAt.Time) ||
 		!completedAt.Before(authority.workspaceLease.ExpiresAt.Time) ||
 		!authority.runLease.ExpiresAt.Time.Equal(authority.workspaceLease.ExpiresAt.Time) ||
-		authority.runLease.State != db.RunLeaseStateFinalizing ||
+		authority.runLease.Status != db.RunLeaseStatusFinalizing ||
 		authority.run.ActiveStartedAt.Valid ||
 		!authority.runLease.FinalizationStartedAt.Valid ||
 		authority.runLease.FinalizationStartedAt.Time.After(completedAt) {
@@ -518,7 +518,7 @@ func recordTaskWorkspaceVersion(
 	version, err := store.PublishTaskWorkspaceVersion(ctx, db.PublishTaskWorkspaceVersionParams{
 		ID:            pgvalue.UUID(uuid.NewV7()),
 		EnvironmentID: authority.run.EnvironmentID, WorkspaceID: authority.workspace.ID,
-		ParentVersionID: authority.workspaceLease.BaseVersionID, ArtifactID: artifactRow.ID,
+		ParentVersionID: authority.workspaceLease.BaseWorkspaceVersionID, ArtifactID: artifactRow.ID,
 		ContentDigest: capture.tree.Digest, SizeBytes: capture.tree.SizeBytes, EntryCount: int32(capture.tree.EntryCount),
 		SourceWorkspaceLeaseID: authority.workspaceLease.ID,
 		OwnershipGeneration:    authority.workspace.OwnershipGeneration,
@@ -552,7 +552,7 @@ func updateTaskWorkspaceMountFrontier(
 		ID: authority.workspaceMount.ID, OrgID: authority.run.OrgID,
 		ProjectID: authority.run.ProjectID, EnvironmentID: authority.run.EnvironmentID,
 		WorkspaceID: authority.workspace.ID, RuntimeInstanceID: authority.runtime.ID,
-		BaseVersionID:          authority.workspaceLease.BaseVersionID,
+		BaseWorkspaceVersionID: authority.workspaceLease.BaseWorkspaceVersionID,
 		MountFencingGeneration: authority.workspaceMount.FencingGeneration,
 	}); err != nil {
 		return staleTaskCompletion(err)
@@ -571,13 +571,13 @@ func terminalizeTaskAttempt(
 	completion parsedTaskCompletion,
 	completedAt pgtype.Timestamptz,
 ) error {
-	leaseState := db.RunLeaseStateFailed
+	leaseStatus := db.RunLeaseStatusFailed
 	outcome := pgvalue.Text("failed")
 	reason := "task_failed"
 	var terminalError []byte
 	switch completion.kind {
 	case taskCompletionSucceeded:
-		leaseState = db.RunLeaseStateCompleted
+		leaseStatus = db.RunLeaseStatusCompleted
 		outcome = pgvalue.Text("succeeded")
 		reason = "completed"
 	case taskCompletionFailed:
@@ -589,7 +589,7 @@ func terminalizeTaskAttempt(
 		return errors.New("task completion outcome is unsupported")
 	}
 	if _, err := store.CompleteTaskRunLease(ctx, db.CompleteTaskRunLeaseParams{
-		State: leaseState, CompletedAt: completedAt, ReasonCode: pgvalue.Text(reason), Error: terminalError,
+		Status: leaseStatus, CompletedAt: completedAt, ReasonCode: pgvalue.Text(reason), Error: terminalError,
 		TerminalRequestFingerprint: pgvalue.Text(completion.fingerprint),
 		ID:                         authority.runLease.ID, RunID: authority.run.ID, WorkspaceID: authority.workspace.ID,
 		AttemptNumber: authority.attempt.Number, LeaseSequence: authority.runLease.LeaseSequence,
@@ -796,28 +796,28 @@ func finishSameWorkspaceChild(
 				ResumeWorkspaceVersionID: versionID,
 				RunWaitID:                wait.ID, EnvironmentID: wait.EnvironmentID,
 				ParentRunID: authority.parentRun.ID, WorkspaceID: authority.workspace.ID,
-				ParentAttemptNumber:        authority.parentAttempt.Number,
-				ChildRunID:                 authority.run.ID,
-				ExpectedParentStateVersion: wait.ExpectedRunStateVersion,
-				ParentRunLeaseID:           wait.PriorRunLeaseID,
-				SuspendCheckpointID:        wait.SuspendCheckpointID,
-				ChildWriterGeneration:      wait.ChildWriterGeneration,
+				ParentAttemptNumber:    authority.parentAttempt.Number,
+				ChildRunID:             authority.run.ID,
+				ExpectedParentRevision: wait.ExpectedRunRevision,
+				ParentRunLeaseID:       wait.PriorRunLeaseID,
+				SuspendCheckpointID:    wait.SuspendCheckpointID,
+				ChildWriterGeneration:  wait.ChildWriterGeneration,
 			},
 		)
 	} else {
 		_, err = store.CompleteSameWorkspaceChildFailure(
 			ctx,
 			db.CompleteSameWorkspaceChildFailureParams{
-				CompletedAt: completedAt, ConditionState: db.WaitStateFailed,
+				CompletedAt: completedAt, ConditionStatus: db.WaitStatusFailed,
 				ConditionError: terminalError, ReasonCode: reason,
 				RunWaitID: wait.ID, EnvironmentID: wait.EnvironmentID,
 				ParentRunID: authority.parentRun.ID, WorkspaceID: authority.workspace.ID,
-				ParentAttemptNumber:        authority.parentAttempt.Number,
-				ChildRunID:                 authority.run.ID,
-				ExpectedParentStateVersion: wait.ExpectedRunStateVersion,
-				ParentRunLeaseID:           wait.PriorRunLeaseID,
-				SuspendCheckpointID:        wait.SuspendCheckpointID,
-				ChildWriterGeneration:      wait.ChildWriterGeneration,
+				ParentAttemptNumber:    authority.parentAttempt.Number,
+				ChildRunID:             authority.run.ID,
+				ExpectedParentRevision: wait.ExpectedRunRevision,
+				ParentRunLeaseID:       wait.PriorRunLeaseID,
+				SuspendCheckpointID:    wait.SuspendCheckpointID,
+				ChildWriterGeneration:  wait.ChildWriterGeneration,
 			},
 		)
 	}
@@ -860,30 +860,30 @@ func resolveParentOwnedChildWait(
 	if err != nil {
 		return err
 	}
-	switch wait.SuspensionState {
-	case db.RunWaitStateHot:
+	switch wait.SuspensionStatus {
+	case db.RunWaitStatusHot:
 		_, err = store.CompleteHotChildRunWait(ctx, db.CompleteHotChildRunWaitParams{
 			RunID: wait.RunID, EnvironmentID: wait.EnvironmentID,
-			ExpectedRunStateVersion: wait.ExpectedRunStateVersion,
-			AttemptNumber:           wait.AttemptNumber, CurrentRunLeaseID: wait.CurrentRunLeaseID,
+			ExpectedRunRevision: wait.ExpectedRunRevision,
+			AttemptNumber:       wait.AttemptNumber, CurrentRunLeaseID: wait.CurrentRunLeaseID,
 			ConditionResult: result, ID: wait.ID, ChildRunID: child.ID,
 		})
-	case db.RunWaitStateCheckpointing:
+	case db.RunWaitStatusCheckpointing:
 		_, err = store.CompleteCheckpointingChildRunWait(
 			ctx,
 			db.CompleteCheckpointingChildRunWaitParams{
 				ConditionResult: result, ID: wait.ID, RunID: wait.RunID,
-				ChildRunID: child.ID, ExpectedRunStateVersion: wait.ExpectedRunStateVersion,
+				ChildRunID: child.ID, ExpectedRunRevision: wait.ExpectedRunRevision,
 				CurrentRunLeaseID: wait.CurrentRunLeaseID,
 			},
 		)
-	case db.RunWaitStateParked:
+	case db.RunWaitStatusParked:
 		_, err = store.CompleteParkedChildRunWait(
 			ctx,
 			db.CompleteParkedChildRunWaitParams{
 				RunID: wait.RunID, EnvironmentID: wait.EnvironmentID,
-				ExpectedRunStateVersion: wait.ExpectedRunStateVersion,
-				AttemptNumber:           wait.AttemptNumber, ConditionResult: result,
+				ExpectedRunRevision: wait.ExpectedRunRevision,
+				AttemptNumber:       wait.AttemptNumber, ConditionResult: result,
 				ID: wait.ID, ChildRunID: child.ID, PriorRunLeaseID: wait.PriorRunLeaseID,
 				SuspendCheckpointID: wait.SuspendCheckpointID,
 			},

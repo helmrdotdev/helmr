@@ -71,7 +71,7 @@ func TestWorkspaceBasicExecConsumesCommittedPredecessor(t *testing.T) {
 			if result := framedBasicExec(t, t.Context(), registry, req); result.GetOutcome() != "exited" {
 				t.Fatal(result)
 			}
-			if entry.authority != nil || entry.baseVersionID != req.GetBaseWorkspaceVersionId() || entry.currentFencingGeneration() != req.GetEnvelope().GetFencingGeneration() {
+			if entry.authority != nil || entry.baseWorkspaceVersionID != req.GetBaseWorkspaceVersionId() || entry.currentFencingGeneration() != req.GetEnvelope().GetFencingGeneration() {
 				t.Fatal("successor authority not installed")
 			}
 			if _, found, err := entry.readWorkspaceFinalizationJournal(); err != nil || found {
@@ -465,7 +465,7 @@ func TestWorkspaceStopRejectsNewOwnersUntilRetirement(t *testing.T) {
 					if err := frameio.ReadProtoFrame(&stream, &response); err != nil {
 						t.Fatal(err)
 					}
-					if response.GetState() != "captured" {
+					if response.GetStatus() != "captured" {
 						t.Fatal(&response)
 					}
 				}
@@ -477,7 +477,7 @@ func TestWorkspaceStopRejectsNewOwnersUntilRetirement(t *testing.T) {
 					next.Fence.WriterGeneration++
 					next.Fence.MountFencingGeneration++
 				} else {
-					exec.BaseWorkspaceVersionId = entry.baseVersionID
+					exec.BaseWorkspaceVersionId = entry.baseWorkspaceVersionID
 					exec.Envelope.FencingGeneration = entry.currentFencingGeneration()
 				}
 				if release, err := registry.admitProgram(entry, next, time.Now()); err == nil {

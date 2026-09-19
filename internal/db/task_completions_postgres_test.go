@@ -15,12 +15,12 @@ import (
 )
 
 type taskCompletionWork struct {
-	workspaceID       uuid.UUID
-	baseVersionID     uuid.UUID
-	physicalVersionID uuid.UUID
-	runtimeID         uuid.UUID
-	mountID           uuid.UUID
-	workspaceLeaseID  uuid.UUID
+	workspaceID            uuid.UUID
+	baseWorkspaceVersionID uuid.UUID
+	physicalVersionID      uuid.UUID
+	runtimeID              uuid.UUID
+	mountID                uuid.UUID
+	workspaceLeaseID       uuid.UUID
 }
 
 func TestTaskCompletionQueriesCommitReplayAndRollback(t *testing.T) {
@@ -29,7 +29,7 @@ func TestTaskCompletionQueriesCommitReplayAndRollback(t *testing.T) {
 	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
 	authority := startTaskCompletionWork(t, ctx, fixture, work)
 	beginTaskCompletionFinalization(t, ctx, fixture, work)
-	fingerprint := "sha256:fresh-task-completion"
+	fingerprint := dbtest.Digest("fresh-task-completion")
 
 	tx, err := fixture.pool.Begin(ctx)
 	if err != nil {
@@ -46,7 +46,7 @@ func TestTaskCompletionQueriesCommitReplayAndRollback(t *testing.T) {
 		ID:          pgvalue.UUID(authority.workspaceID), OrgID: pgvalue.UUID(fixture.orgID),
 		ProjectID: pgvalue.UUID(fixture.projectID), EnvironmentID: pgvalue.UUID(fixture.environmentID),
 		RunID: pgvalue.UUID(work.runID), OwnershipGeneration: 1, WriterGeneration: 1,
-		ExpectedHeadVersionID: pgvalue.UUID(authority.baseVersionID),
+		ExpectedHeadVersionID: pgvalue.UUID(authority.baseWorkspaceVersionID),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -75,12 +75,12 @@ func TestTaskCompletionQueriesCommitReplayAndRollback(t *testing.T) {
 		t.Fatalf("replay = %v, %v, want %q", replay, err, fingerprint)
 	}
 	var runStatus RunStatus
-	var leaseState RunLeaseState
+	var leaseStatus RunLeaseStatus
 	var attemptOutcome pgtype.Text
 	var ownerRunID pgtype.UUID
 	var eventCount int
 	if err := fixture.pool.QueryRow(ctx, `
-		SELECT runs.status, run_leases.state, run_attempts.terminal_outcome,
+		SELECT runs.status, run_leases.status, run_attempts.terminal_outcome,
 		       workspaces.owner_run_id,
 		       (SELECT count(*) FROM telemetry_outbox WHERE run_id = runs.id AND kind = 'run.completed')
 		  FROM runs
@@ -89,13 +89,13 @@ func TestTaskCompletionQueriesCommitReplayAndRollback(t *testing.T) {
 		  JOIN workspaces ON workspaces.id = runs.workspace_id
 		 WHERE runs.id = $2
 	`, work.leaseID, work.runID).Scan(
-		&runStatus, &leaseState, &attemptOutcome, &ownerRunID, &eventCount,
+		&runStatus, &leaseStatus, &attemptOutcome, &ownerRunID, &eventCount,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if runStatus != RunStatusSucceeded || leaseState != RunLeaseStateCompleted ||
+	if runStatus != RunStatusSucceeded || leaseStatus != RunLeaseStatusCompleted ||
 		!attemptOutcome.Valid || attemptOutcome.String != "succeeded" || ownerRunID.Valid || eventCount != 1 {
-		t.Fatalf("terminal state = run %s lease %s attempt %v owner %v events %d", runStatus, leaseState, attemptOutcome, ownerRunID, eventCount)
+		t.Fatalf("terminal state = run %s lease %s attempt %v owner %v events %d", runStatus, leaseStatus, attemptOutcome, ownerRunID, eventCount)
 	}
 
 	rollbackWork := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
@@ -110,12 +110,12 @@ func TestTaskCompletionQueriesCommitReplayAndRollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	completeTaskTerminalRows(t, ctx, queries, rollbackWork, rollbackAuthority, completedAt, "sha256:rollback", true)
+	completeTaskTerminalRows(t, ctx, queries, rollbackWork, rollbackAuthority, completedAt, dbtest.Digest("rollback"), true)
 	_, err = queries.ReleaseTaskWorkspaceLease(ctx, ReleaseTaskWorkspaceLeaseParams{
 		CompletedAt: completedAt, ID: pgvalue.UUID(rollbackAuthority.workspaceLeaseID),
 		WorkspaceID: pgvalue.UUID(rollbackAuthority.workspaceID), WorkspaceMountID: pgvalue.UUID(rollbackAuthority.mountID),
 		RuntimeInstanceID: pgvalue.UUID(rollbackAuthority.runtimeID), OwnerRunLeaseID: pgvalue.UUID(rollbackWork.leaseID),
-		BaseVersionID: pgvalue.UUID(rollbackAuthority.physicalVersionID), OwnershipGeneration: 1,
+		BaseWorkspaceVersionID: pgvalue.UUID(rollbackAuthority.physicalVersionID), OwnershipGeneration: 1,
 		WriterGeneration: 2, MountFencingGeneration: 2,
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -125,16 +125,16 @@ func TestTaskCompletionQueriesCommitReplayAndRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := fixture.pool.QueryRow(ctx, `
-		SELECT runs.status, run_leases.state, run_attempts.terminal_outcome
+		SELECT runs.status, run_leases.status, run_attempts.terminal_outcome
 		  FROM runs
 		  JOIN run_leases ON run_leases.id = $1
 		  JOIN run_attempts ON run_attempts.run_id = runs.id AND run_attempts.number = 1
 		 WHERE runs.id = $2
-	`, rollbackWork.leaseID, rollbackWork.runID).Scan(&runStatus, &leaseState, &attemptOutcome); err != nil {
+	`, rollbackWork.leaseID, rollbackWork.runID).Scan(&runStatus, &leaseStatus, &attemptOutcome); err != nil {
 		t.Fatal(err)
 	}
-	if runStatus != RunStatusRunning || leaseState != RunLeaseStateFinalizing || attemptOutcome.Valid {
-		t.Fatalf("rollback state = run %s lease %s attempt %v", runStatus, leaseState, attemptOutcome)
+	if runStatus != RunStatusRunning || leaseStatus != RunLeaseStatusFinalizing || attemptOutcome.Valid {
+		t.Fatalf("rollback state = run %s lease %s attempt %v", runStatus, leaseStatus, attemptOutcome)
 	}
 }
 
@@ -160,19 +160,19 @@ func TestRestoredTaskFailureRollsBackPhysicalFrontier(t *testing.T) {
 		INSERT INTO workspace_versions (
 			id, environment_id, workspace_id,
 			parent_version_id, artifact_id, content_digest,
-			size_bytes, entry_count, state, source_workspace_lease_id,
+			size_bytes, entry_count, status, source_workspace_lease_id,
 			ownership_generation, writer_generation, published_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6,
 			1, 1, 'committed', $7, 1, 1, now()
 		)
-	`, restoredVersionID, fixture.environmentID, authority.workspaceID, authority.baseVersionID,
+	`, restoredVersionID, fixture.environmentID, authority.workspaceID, authority.baseWorkspaceVersionID,
 		artifactID, digest, authority.workspaceLeaseID)
 	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE workspace_mounts SET materialized_version_id = $1 WHERE id = $2
 	`, restoredVersionID, authority.mountID)
 	dbtest.MustExec(t, ctx, fixture.pool, `
-		UPDATE workspace_leases SET base_version_id = $1 WHERE id = $2
+		UPDATE workspace_leases SET base_workspace_version_id = $1 WHERE id = $2
 	`, restoredVersionID, authority.workspaceLeaseID)
 	authority.physicalVersionID = restoredVersionID
 	beginTaskCompletionFinalization(t, ctx, fixture, work)
@@ -187,21 +187,21 @@ func TestRestoredTaskFailureRollsBackPhysicalFrontier(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := queries.UpdateTaskWorkspaceMountFrontier(ctx, UpdateTaskWorkspaceMountFrontierParams{
-		NewVersionID: pgvalue.UUID(authority.baseVersionID), CompletedAt: completedAt,
+		NewVersionID: pgvalue.UUID(authority.baseWorkspaceVersionID), CompletedAt: completedAt,
 		ID: pgvalue.UUID(authority.mountID), OrgID: pgvalue.UUID(fixture.orgID),
 		ProjectID: pgvalue.UUID(fixture.projectID), EnvironmentID: pgvalue.UUID(fixture.environmentID),
 		WorkspaceID: pgvalue.UUID(authority.workspaceID), RuntimeInstanceID: pgvalue.UUID(authority.runtimeID),
-		BaseVersionID: pgvalue.UUID(restoredVersionID), MountFencingGeneration: 2,
+		BaseWorkspaceVersionID: pgvalue.UUID(restoredVersionID), MountFencingGeneration: 2,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	completeTaskAttemptQueries(t, ctx, queries, work, authority, completedAt, "sha256:restored-failure", false)
+	completeTaskAttemptQueries(t, ctx, queries, work, authority, completedAt, dbtest.Digest("restored-failure"), false)
 	if _, err := queries.ReleaseTaskWorkspaceOwner(ctx, ReleaseTaskWorkspaceOwnerParams{
 		CompletedAt: completedAt,
 		ID:          pgvalue.UUID(authority.workspaceID), OrgID: pgvalue.UUID(fixture.orgID),
 		ProjectID: pgvalue.UUID(fixture.projectID), EnvironmentID: pgvalue.UUID(fixture.environmentID),
 		RunID: pgvalue.UUID(work.runID), OwnershipGeneration: 1, WriterGeneration: 1,
-		ExpectedHeadVersionID: pgvalue.UUID(authority.baseVersionID),
+		ExpectedHeadVersionID: pgvalue.UUID(authority.baseWorkspaceVersionID),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -226,8 +226,8 @@ func TestRestoredTaskFailureRollsBackPhysicalFrontier(t *testing.T) {
 	`, authority.mountID).Scan(&mountedVersionID, &headVersionID, &ownerRunID); err != nil {
 		t.Fatal(err)
 	}
-	if mountedVersionID != authority.baseVersionID || headVersionID != authority.baseVersionID || ownerRunID.Valid {
-		t.Fatalf("restored rollback = mount %s head %s owner %v, want base %s and no owner", mountedVersionID, headVersionID, ownerRunID, authority.baseVersionID)
+	if mountedVersionID != authority.baseWorkspaceVersionID || headVersionID != authority.baseWorkspaceVersionID || ownerRunID.Valid {
+		t.Fatalf("restored rollback = mount %s head %s owner %v, want base %s and no owner", mountedVersionID, headVersionID, ownerRunID, authority.baseWorkspaceVersionID)
 	}
 }
 
@@ -247,7 +247,7 @@ func TestReadyRunRetriesAdmitsOnceUnderConcurrency(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	completeTaskAttemptQueries(t, ctx, queries, work, authority, completedAt, "sha256:retry", false)
+	completeTaskAttemptQueries(t, ctx, queries, work, authority, completedAt, dbtest.Digest("retry"), false)
 	if _, err := queries.CreateTaskRetryAttempt(ctx, CreateTaskRetryAttemptParams{
 		Number: 2, RunID: pgvalue.UUID(work.runID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
 		PreviousAttemptNumber: 1, RunLeaseID: pgvalue.UUID(work.leaseID),
@@ -264,8 +264,8 @@ func TestReadyRunRetriesAdmitsOnceUnderConcurrency(t *testing.T) {
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	var delayedStateVersion int64
-	if err := fixture.pool.QueryRow(ctx, `SELECT state_version FROM runs WHERE id = $1`, work.runID).Scan(&delayedStateVersion); err != nil {
+	var delayedRevision int64
+	if err := fixture.pool.QueryRow(ctx, `SELECT revision FROM runs WHERE id = $1`, work.runID).Scan(&delayedRevision); err != nil {
 		t.Fatal(err)
 	}
 
@@ -302,17 +302,17 @@ func TestReadyRunRetriesAdmitsOnceUnderConcurrency(t *testing.T) {
 
 	var status RunStatus
 	var attemptNumber int32
-	var stateVersion int64
+	var revision int64
 	var retryAt pgtype.Timestamptz
 	if err := fixture.pool.QueryRow(ctx, `
-		SELECT runs.status, runs.current_attempt_number, runs.state_version, runs.retry_at
+		SELECT runs.status, runs.current_attempt_number, runs.revision, runs.retry_at
 		  FROM runs
 		 WHERE runs.id = $1
-	`, work.runID).Scan(&status, &attemptNumber, &stateVersion, &retryAt); err != nil {
+	`, work.runID).Scan(&status, &attemptNumber, &revision, &retryAt); err != nil {
 		t.Fatal(err)
 	}
-	if status != RunStatusQueued || attemptNumber != 2 || stateVersion != delayedStateVersion+1 || retryAt.Valid {
-		t.Fatalf("ready retry = status %s attempt %d version %d retry_at %v", status, attemptNumber, stateVersion, retryAt)
+	if status != RunStatusQueued || attemptNumber != 2 || revision != delayedRevision+1 || retryAt.Valid {
+		t.Fatalf("ready retry = status %s attempt %d version %d retry_at %v", status, attemptNumber, revision, retryAt)
 	}
 }
 
@@ -325,12 +325,12 @@ func startTaskCompletionWork(
 	t.Helper()
 	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE run_leases
-		   SET state = 'running', started_at = claimed_at
-		 WHERE id = $1 AND state = 'starting'
+		   SET status = 'running', started_at = claimed_at
+		 WHERE id = $1 AND status = 'starting'
 	`, work.leaseID)
 	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE runs
-		   SET status = 'running', state_version = state_version + 1,
+		   SET status = 'running', revision = revision + 1,
 		       started_at = (SELECT started_at FROM run_leases WHERE id = $1),
 		       active_started_at = (SELECT started_at FROM run_leases WHERE id = $1)
 		 WHERE id = $2 AND status = 'queued' AND current_run_lease_id = $1
@@ -344,13 +344,13 @@ func startTaskCompletionWork(
 	if err := fixture.pool.QueryRow(ctx, `
 		SELECT runs.workspace_id, runs.base_workspace_version_id,
 		       run_leases.runtime_instance_id, workspace_leases.workspace_mount_id,
-		       workspace_leases.id, workspace_leases.base_version_id
+		       workspace_leases.id, workspace_leases.base_workspace_version_id
 		  FROM runs
 		  JOIN run_leases ON run_leases.id = runs.current_run_lease_id
 		  JOIN workspace_leases ON workspace_leases.owner_run_lease_id = run_leases.id
 		 WHERE runs.id = $1
 	`, work.runID).Scan(
-		&authority.workspaceID, &authority.baseVersionID, &authority.runtimeID,
+		&authority.workspaceID, &authority.baseWorkspaceVersionID, &authority.runtimeID,
 		&authority.mountID, &authority.workspaceLeaseID, &authority.physicalVersionID,
 	); err != nil {
 		t.Fatal(err)
@@ -370,7 +370,7 @@ func beginTaskCompletionFinalization(
 		   SET active_elapsed_ms = active_elapsed_ms
 		           + floor(extract(epoch FROM (now() - active_started_at)) * 1000)::bigint,
 		       active_started_at = NULL,
-		       state_version = state_version + 1,
+		       revision = revision + 1,
 		       updated_at = now()
 		 WHERE id = $1
 		   AND current_run_lease_id = $2
@@ -379,13 +379,13 @@ func beginTaskCompletionFinalization(
 	`, work.runID, work.leaseID)
 	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE run_leases
-		   SET state = 'finalizing',
+		   SET status = 'finalizing',
 		       finalization_operation_id = $2,
 		       finalization_kind = 'reset',
 		       finalization_started_at = now(),
-		       finalization_request_fingerprint = 'test-finalization'
+		       finalization_request_fingerprint = 'sha256:6efa7ef866e15db96245ea5804c38662a1c3ef899643545704a867b61bdfc9eb'
 		 WHERE id = $1
-		   AND state = 'running'
+		   AND status = 'running'
 	`, work.leaseID, uuid.NewV7())
 }
 
@@ -405,7 +405,7 @@ func completeTaskAttemptQueries(
 		CompletedAt: completedAt, ID: pgvalue.UUID(authority.workspaceLeaseID),
 		WorkspaceID: pgvalue.UUID(authority.workspaceID), WorkspaceMountID: pgvalue.UUID(authority.mountID),
 		RuntimeInstanceID: pgvalue.UUID(authority.runtimeID), OwnerRunLeaseID: pgvalue.UUID(work.leaseID),
-		BaseVersionID: pgvalue.UUID(authority.physicalVersionID), OwnershipGeneration: 1,
+		BaseWorkspaceVersionID: pgvalue.UUID(authority.physicalVersionID), OwnershipGeneration: 1,
 		WriterGeneration: 1, MountFencingGeneration: 2,
 	}); err != nil {
 		t.Fatal(err)
@@ -423,19 +423,19 @@ func completeTaskTerminalRows(
 	succeeded bool,
 ) {
 	t.Helper()
-	leaseState := RunLeaseStateFailed
+	leaseStatus := RunLeaseStatusFailed
 	outcome := "failed"
 	reason := "task_failed"
 	var terminalError []byte
 	if succeeded {
-		leaseState = RunLeaseStateCompleted
+		leaseStatus = RunLeaseStatusCompleted
 		outcome = "succeeded"
 		reason = "completed"
 	} else {
 		terminalError = []byte(`{"message":"failed"}`)
 	}
 	if _, err := queries.CompleteTaskRunLease(ctx, CompleteTaskRunLeaseParams{
-		State: leaseState, CompletedAt: completedAt, ReasonCode: pgvalue.Text(reason),
+		Status: leaseStatus, CompletedAt: completedAt, ReasonCode: pgvalue.Text(reason),
 		Error: terminalError, TerminalRequestFingerprint: pgvalue.Text(fingerprint),
 		ID: pgvalue.UUID(work.leaseID), RunID: pgvalue.UUID(work.runID),
 		WorkspaceID: pgvalue.UUID(authority.workspaceID), AttemptNumber: 1, LeaseSequence: 1,

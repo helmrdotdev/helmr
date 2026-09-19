@@ -15,12 +15,12 @@ SELECT run_leases.terminal_request_fingerprint
    AND run_attempts.terminal_session_input_sequence IS NOT NULL
    AND run_attempts.terminal_at IS NOT NULL
    AND (
-       (run_leases.state = 'completed'
+       (run_leases.status = 'completed'
         AND run_leases.terminal_reason_code = 'completed'
         AND run_attempts.terminal_outcome = 'succeeded'
         AND run_attempts.terminal_reason_code = 'completed')
        OR
-       (run_leases.state = 'failed'
+       (run_leases.status = 'failed'
         AND run_leases.terminal_reason_code = 'actor_failed'
         AND run_attempts.terminal_outcome = 'failed'
         AND run_attempts.terminal_reason_code = 'actor_failed')
@@ -45,7 +45,7 @@ RETURNING *;
 -- name: AdvanceActorWorkspaceHead :one
 UPDATE workspaces
    SET head_version_id = sqlc.arg(new_head_version_id),
-       state_version = state_version + 1,
+       revision = revision + 1,
        last_activity_at = sqlc.arg(completed_at),
        updated_at = sqlc.arg(completed_at)
  WHERE workspaces.id = sqlc.arg(id)
@@ -61,10 +61,10 @@ UPDATE workspaces
    AND workspaces.ownership_generation = sqlc.arg(ownership_generation)
    AND workspaces.writer_generation = sqlc.arg(writer_generation)
    AND workspaces.head_version_id = sqlc.arg(expected_head_version_id)
-   AND workspaces.state = 'active'
+   AND workspaces.status = 'active'
    AND workspaces.desired_state = 'active'
    AND workspaces.dirty_state = 'clean'
-RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at;
+RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.revision, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.status, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at;
 
 -- name: CreateActorRetryAttempt :one
 INSERT INTO run_attempts (
@@ -83,7 +83,7 @@ SELECT runs.id,
    AND sessions.workspace_id = runs.workspace_id
    AND sessions.current_run_id = runs.id
    AND sessions.run_generation = sqlc.arg(expected_run_generation)
-   AND sessions.state IN ('open', 'closing')
+   AND sessions.status IN ('open', 'closing')
   JOIN workspaces
     ON workspaces.id = runs.workspace_id
    AND workspaces.owner_session_id = sessions.id
@@ -100,7 +100,7 @@ RETURNING *;
 -- name: DelayActorRunRetry :one
 UPDATE runs
    SET status = 'retry_delayed',
-       state_version = state_version + 1,
+       revision = revision + 1,
        current_attempt_number = sqlc.arg(next_attempt_number),
        current_run_lease_id = NULL,
        retry_at = sqlc.arg(retry_at),
@@ -132,7 +132,7 @@ SELECT runs.id,
    AND sessions.workspace_id = runs.workspace_id
    AND sessions.current_run_id = runs.id
    AND sessions.run_generation = sqlc.arg(expected_run_generation)
-   AND sessions.state IN ('open', 'closing')
+   AND sessions.status IN ('open', 'closing')
   JOIN workspaces
     ON workspaces.id = runs.workspace_id
    AND workspaces.owner_session_id = sessions.id
@@ -150,7 +150,7 @@ RETURNING *;
 -- name: DelayActorCheckpointFailureRetry :one
 UPDATE runs
    SET status = 'retry_delayed',
-       state_version = state_version + 1,
+       revision = revision + 1,
        current_attempt_number = sqlc.arg(next_attempt_number),
        current_run_lease_id = NULL,
        retry_at = sqlc.arg(retry_at),
@@ -173,7 +173,7 @@ UPDATE runs
            ELSE NULL
        END,
        failure = sqlc.narg(failure),
-       state_version = state_version + 1,
+       revision = revision + 1,
        current_run_lease_id = NULL,
        retry_at = NULL,
        terminal_at = sqlc.arg(failed_at),
@@ -196,7 +196,7 @@ UPDATE runs
            ELSE NULL
        END,
        failure = sqlc.narg(failure),
-       state_version = state_version + 1,
+       revision = revision + 1,
        current_run_lease_id = NULL,
        retry_at = NULL,
        terminal_at = sqlc.arg(completed_at),
@@ -213,29 +213,29 @@ RETURNING *;
 
 -- name: ReconcileActorTerminalRun :one
 UPDATE sessions
-   SET state = sqlc.arg(state),
+   SET status = sqlc.arg(status),
        current_run_id = NULL,
        run_generation = run_generation + 1,
-       state_version = state_version + 1,
+       revision = revision + 1,
        committed_input_sequence = COALESCE(sqlc.narg(committed_input_sequence), committed_input_sequence),
        failure = sqlc.narg(failure),
        failure_run_id = sqlc.narg(failure_run_id),
-       closed_at = CASE WHEN sqlc.arg(state)::text = 'closed' THEN sqlc.arg(completed_at) ELSE closed_at END,
-       failed_at = CASE WHEN sqlc.arg(state)::text = 'failed' THEN sqlc.arg(completed_at) ELSE failed_at END,
+       closed_at = CASE WHEN sqlc.arg(status)::text = 'closed' THEN sqlc.arg(completed_at) ELSE closed_at END,
+       failed_at = CASE WHEN sqlc.arg(status)::text = 'failed' THEN sqlc.arg(completed_at) ELSE failed_at END,
        updated_at = sqlc.arg(completed_at)
  WHERE environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id)
    AND workspace_id = sqlc.arg(workspace_id)
    AND current_run_id = sqlc.arg(run_id)
    AND run_generation = sqlc.arg(expected_run_generation)
-   AND state IN ('open', 'closing')
+   AND status IN ('open', 'closing')
 RETURNING *;
 
 -- name: ReleaseActorWorkspaceOwner :one
 UPDATE workspaces
    SET owner_session_id = NULL,
        ownership_generation = ownership_generation + 1,
-       state_version = state_version + 1,
+       revision = revision + 1,
        last_activity_at = sqlc.arg(completed_at),
        updated_at = sqlc.arg(completed_at)
  WHERE workspaces.id = sqlc.arg(id)
@@ -244,20 +244,20 @@ UPDATE workspaces
    AND workspaces.owner_run_id IS NULL
    AND workspaces.ownership_generation = sqlc.arg(ownership_generation)
    AND workspaces.writer_generation = sqlc.arg(writer_generation)
-   AND workspaces.state = 'active'
+   AND workspaces.status = 'active'
    AND workspaces.desired_state = 'active'
    AND workspaces.dirty_state = 'clean'
    AND NOT EXISTS (
        SELECT 1 FROM workspace_leases
         WHERE workspace_leases.workspace_id = workspaces.id
-          AND workspace_leases.state IN ('active', 'releasing')
+          AND workspace_leases.status IN ('active', 'releasing')
    )
    AND NOT EXISTS (
        SELECT 1 FROM workspace_processes
         WHERE workspace_processes.workspace_id = workspaces.id
-          AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
+          AND workspace_processes.status IN ('pending', 'starting', 'running', 'exit_requested')
    )
-RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at;
+RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.revision, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.status, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at;
 
 -- name: CreateActorContinuationRun :one
 WITH created_run AS (
@@ -302,20 +302,20 @@ WITH created_run AS (
        AND sessions.workspace_id = sqlc.arg(workspace_id)
        AND sessions.current_run_id IS NULL
        AND sessions.run_generation = sqlc.arg(expected_run_generation)
-       AND sessions.state IN ('open', 'closing')
+       AND sessions.status IN ('open', 'closing')
        AND sessions.manual_run_cancelled = false
        AND sessions.committed_input_sequence < sessions.next_input_sequence - 1
        AND NOT EXISTS (
            SELECT 1
              FROM workspace_leases
             WHERE workspace_leases.workspace_id = workspaces.id
-              AND workspace_leases.state IN ('active', 'releasing')
+              AND workspace_leases.status IN ('active', 'releasing')
        )
        AND NOT EXISTS (
            SELECT 1
              FROM workspace_processes
             WHERE workspace_processes.workspace_id = workspaces.id
-              AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
+              AND workspace_processes.status IN ('pending', 'starting', 'running', 'exit_requested')
        )
 	ON CONFLICT (session_id)
 	    WHERE session_id IS NOT NULL
@@ -334,7 +334,7 @@ WITH created_run AS (
 ), claimed_actor AS (
     UPDATE sessions
        SET current_run_id = created_run.id,
-           state_version = sessions.state_version + 1,
+           revision = sessions.revision + 1,
            updated_at = sqlc.arg(queue_origin_at)
       FROM created_run, created_attempt
      WHERE sessions.id = created_run.session_id

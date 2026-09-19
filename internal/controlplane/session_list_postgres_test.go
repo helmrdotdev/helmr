@@ -30,7 +30,7 @@ func TestSessionListPostgresFiltersByPublicStatus(t *testing.T) {
 	}
 	if _, err := fixture.pool.Exec(t.Context(), `
 		UPDATE sessions
-		   SET state = 'closing',
+		   SET status = 'closing',
 		       updated_at = now()
 		 WHERE id = $1
 	`, sessions[1]); err != nil {
@@ -39,7 +39,7 @@ func TestSessionListPostgresFiltersByPublicStatus(t *testing.T) {
 	failedAt := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
 	if _, err := fixture.pool.Exec(t.Context(), `
 		UPDATE sessions
-		   SET state = 'failed',
+		   SET status = 'failed',
 		       current_run_id = NULL,
 		       failure = jsonb_build_object(
 		           'code', 'run_failed',

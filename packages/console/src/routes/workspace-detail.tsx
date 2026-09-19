@@ -279,7 +279,7 @@ export function WorkspaceDetail() {
                   </div>
 
                   <DetailList title="Workspace details">
-                    <DetailItem label="State"><StatusBadge resource="workspace" status={current().status} /></DetailItem>
+                    <DetailItem label="Status"><StatusBadge resource="workspace" status={current().status} /></DetailItem>
                     <DetailItem label="Key">
                       <Show when={current().key} fallback={<span class="text-console-faint">—</span>}>{(key) => <code>{key()}</code>}</Show>
                     </DetailItem>

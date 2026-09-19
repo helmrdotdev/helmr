@@ -55,7 +55,7 @@ func TestActorStartPostgresCommitsReplaysAndRejectsConflicts(t *testing.T) {
 
 	if _, err := fixture.pool.Exec(t.Context(), `
 		UPDATE sessions
-		   SET state = 'closing'
+		   SET status = 'closing'
 		 WHERE id = $1
 	`, created.SessionID); err != nil {
 		t.Fatal(err)
@@ -405,7 +405,7 @@ func assertActorStartTupleWithQueue(
 	var attemptStart int64
 	var recordSequence int64
 	var recordSource string
-	var claimState string
+	var claimStatus string
 	var resolutionCount int
 	if err := fixture.pool.QueryRow(t.Context(), `
 		SELECT current_run_id, next_input_sequence, committed_input_sequence,
@@ -449,10 +449,10 @@ func assertActorStartTupleWithQueue(
 		}
 	}
 	if err := fixture.pool.QueryRow(t.Context(), `
-		SELECT state
+		SELECT status
 		  FROM idempotency_claims
 		 WHERE operation = 'actor.start'
-	`).Scan(&claimState); err != nil {
+	`).Scan(&claimStatus); err != nil {
 		t.Fatal(err)
 	}
 	if err := fixture.pool.QueryRow(t.Context(), `
@@ -471,13 +471,13 @@ func assertActorStartTupleWithQueue(
 		actorQueue != wantQueue || !queueLimitValid || actorMaxDuration != 300_000 ||
 		string(actorRetry) != `{"enabled": false}` ||
 		!recordValid ||
-		claimState != "completed" || resolutionCount != 1 {
+		claimStatus != "completed" || resolutionCount != 1 {
 		t.Fatalf(
 			"Actor start tuple actorRun=%s next=%d committed=%d queue=%s/%v max=%d retry=%s owner=%s runActor=%s cause=%s cursor=%d high=%d attempt=%d record=%d/%s claim=%s resolutions=%d",
 			actorCurrentRun, actorNextInput, actorCommitted,
 			actorQueue, actorQueueLimit, actorMaxDuration, actorRetry,
 			workspaceOwner, runActor, runCause,
-			runStart, runHigh, attemptStart, recordSequence, recordSource, claimState, resolutionCount,
+			runStart, runHigh, attemptStart, recordSequence, recordSource, claimStatus, resolutionCount,
 		)
 	}
 }
@@ -606,7 +606,7 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 			fixture.workspaceKeys[index])
 		dbtest.MustExec(t, t.Context(), tx, `
 			INSERT INTO workspace_versions (
-			    id, environment_id, workspace_id, state, content_digest, size_bytes, entry_count,
+			    id, environment_id, workspace_id, status, content_digest, size_bytes, entry_count,
 			    ownership_generation, writer_generation, published_at
 			) VALUES ($1, $2, $3, 'committed',
 			          'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',

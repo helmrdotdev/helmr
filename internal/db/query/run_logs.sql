@@ -10,7 +10,7 @@ current_run_lease AS (
            runs.project_id,
            runs.environment_id,
            runs.trace_id,
-           runs.state_version,
+           runs.revision,
            runs.id,
            run_leases.id AS run_lease_id,
            run_leases.span_id,
@@ -28,8 +28,8 @@ current_run_lease AS (
        AND runs.current_run_lease_id = run_leases.id
        AND runs.current_attempt_number = run_leases.attempt_number
        AND (
-            (runs.status = 'running' AND run_leases.state = 'running')
-         OR (runs.status = 'waiting' AND run_leases.state = 'checkpointing')
+            (runs.status = 'running' AND run_leases.status = 'running')
+         OR (runs.status = 'waiting' AND run_leases.status = 'checkpointing')
        )
        AND run_leases.expires_at > now()
      FOR NO KEY UPDATE OF runs
@@ -126,7 +126,7 @@ event_input AS (
            event_args.event_kind AS message,
            event_args.event_payload AS payload,
            'sensitive' AS redaction_class,
-           current_run_lease.state_version AS snapshot_version
+           current_run_lease.revision AS snapshot_version
       FROM selected_chunk
       JOIN current_run_lease ON current_run_lease.org_id = selected_chunk.org_id
                             AND current_run_lease.id = selected_chunk.run_id

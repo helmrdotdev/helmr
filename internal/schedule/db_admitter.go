@@ -237,7 +237,7 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 			RetryPolicy:            taskRun.RetryPolicy,
 			RootSpanID:             rootSpanID,
 		},
-		WorkspaceStateVersion: createdWorkspace.StateVersion,
+		WorkspaceRevision: createdWorkspace.Revision,
 	}); err != nil {
 		if errors.Is(err, run.ErrSecretUnavailable) {
 			return fmt.Errorf("schedule workspace secret is unavailable: %w", err)

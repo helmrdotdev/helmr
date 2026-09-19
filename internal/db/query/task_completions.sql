@@ -13,12 +13,12 @@ SELECT run_leases.terminal_request_fingerprint
    AND run_leases.terminal_at IS NOT NULL
    AND run_attempts.terminal_at IS NOT NULL
    AND (
-       (run_leases.state = 'completed'
+       (run_leases.status = 'completed'
         AND run_leases.terminal_reason_code = 'completed'
         AND run_attempts.terminal_outcome = 'succeeded'
         AND run_attempts.terminal_reason_code = 'completed')
        OR
-       (run_leases.state = 'failed'
+       (run_leases.status = 'failed'
         AND run_leases.terminal_reason_code IN ('task_failed', 'task_payload_invalid')
         AND run_attempts.terminal_outcome = 'failed'
         AND run_attempts.terminal_reason_code = run_leases.terminal_reason_code)
@@ -33,7 +33,7 @@ SELECT *
  WHERE environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
    AND id = sqlc.arg(id)
-   AND state IN ('committed', 'private');
+   AND status IN ('committed', 'private');
 
 -- name: PublishTaskWorkspaceVersion :one
 INSERT INTO workspace_versions (
@@ -45,7 +45,7 @@ INSERT INTO workspace_versions (
     content_digest,
     size_bytes,
     entry_count,
-    state,
+    status,
     source_workspace_lease_id,
     ownership_generation,
     writer_generation,
@@ -82,14 +82,14 @@ UPDATE workspace_mounts
    AND environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
    AND runtime_instance_id = sqlc.arg(runtime_instance_id)
-   AND materialized_version_id = sqlc.arg(base_version_id)
+   AND materialized_version_id = sqlc.arg(base_workspace_version_id)
    AND fencing_generation = sqlc.arg(mount_fencing_generation)
-   AND state = 'mounted'
+   AND status = 'mounted'
 RETURNING *;
 
 -- name: ReleaseTaskWorkspaceLease :one
 UPDATE workspace_leases
-   SET state = 'released',
+   SET status = 'released',
        released_at = sqlc.arg(completed_at),
        terminal_at = sqlc.arg(completed_at),
        updated_at = sqlc.arg(completed_at)
@@ -99,11 +99,11 @@ UPDATE workspace_leases
    AND runtime_instance_id = sqlc.arg(runtime_instance_id)
    AND owner_run_lease_id = sqlc.arg(owner_run_lease_id)
    AND owner_process_id IS NULL
-   AND base_version_id = sqlc.arg(base_version_id)
+   AND base_workspace_version_id = sqlc.arg(base_workspace_version_id)
    AND ownership_generation = sqlc.arg(ownership_generation)
    AND writer_generation = sqlc.arg(writer_generation)
    AND mount_fencing_generation = sqlc.arg(mount_fencing_generation)
-   AND state = 'active'
+   AND status = 'active'
    AND expires_at > sqlc.arg(completed_at)
 RETURNING *;
 
@@ -122,7 +122,7 @@ WITH authority AS MATERIALIZED (
        AND workspace_leases.ownership_generation = sqlc.arg(ownership_generation)
        AND workspace_leases.writer_generation = sqlc.arg(writer_generation)
        AND workspace_leases.mount_fencing_generation = sqlc.arg(mount_fencing_generation)
-       AND workspace_leases.state = 'released'
+       AND workspace_leases.status = 'released'
       JOIN runtime_instances
         ON runtime_instances.id = workspace_leases.runtime_instance_id
        AND runtime_instances.org_id = sqlc.arg(org_id)
@@ -148,8 +148,8 @@ WITH authority AS MATERIALIZED (
        AND workspace_mounts.worker_instance_id = runtime_instances.worker_instance_id
        AND workspace_mounts.worker_epoch = runtime_instances.worker_epoch
        AND workspace_mounts.fencing_generation = sqlc.arg(mount_fencing_generation)
-       AND (workspace_mounts.state = 'mounted'
-            OR (workspace_mounts.state = 'unmounting'
+       AND (workspace_mounts.status = 'mounted'
+            OR (workspace_mounts.status = 'unmounting'
                 AND workspace_mounts.finalization_kind = 'discard'
                 AND workspace_mounts.finalization_reason_code = 'same_workspace_child_attempt_finished'
                 AND workspace_mounts.finalization_error IS NULL))
@@ -161,7 +161,7 @@ WITH authority AS MATERIALIZED (
        AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)
        AND run_leases.worker_epoch = sqlc.arg(worker_epoch)
        AND run_leases.runtime_instance_id = runtime_instances.id
-       AND run_leases.state IN ('completed', 'failed')
+       AND run_leases.status IN ('completed', 'failed')
      FOR UPDATE OF runtime_instances, workspace_mounts
 ), closing_runtime AS (
     UPDATE runtime_instances
@@ -180,7 +180,7 @@ WITH authority AS MATERIALIZED (
     RETURNING runtime_instances.id
 )
 UPDATE workspace_mounts
-   SET state = 'unmounting',
+   SET status = 'unmounting',
        finalization_kind = 'discard',
        finalization_reason_code = 'same_workspace_child_attempt_finished',
        finalization_error = NULL,
@@ -189,8 +189,8 @@ UPDATE workspace_mounts
   FROM authority, closing_runtime
  WHERE workspace_mounts.id = authority.workspace_mount_id
    AND workspace_mounts.runtime_instance_id = closing_runtime.id
-   AND (workspace_mounts.state = 'mounted'
-        OR (workspace_mounts.state = 'unmounting'
+   AND (workspace_mounts.status = 'mounted'
+        OR (workspace_mounts.status = 'unmounting'
             AND workspace_mounts.finalization_kind = 'discard'
             AND workspace_mounts.finalization_reason_code = 'same_workspace_child_attempt_finished'
             AND workspace_mounts.finalization_error IS NULL))
@@ -198,7 +198,7 @@ RETURNING workspace_mounts.*;
 
 -- name: CompleteTaskRunLease :one
 UPDATE run_leases
-   SET state = sqlc.arg(state),
+   SET status = sqlc.arg(status),
        terminal_at = sqlc.arg(completed_at),
        terminal_reason_code = sqlc.arg(reason_code),
        terminal_error = sqlc.narg(error),
@@ -209,7 +209,7 @@ UPDATE run_leases
    AND workspace_id = sqlc.arg(workspace_id)
    AND attempt_number = sqlc.arg(attempt_number)
    AND lease_sequence = sqlc.arg(lease_sequence)
-   AND state = 'finalizing'
+   AND status = 'finalizing'
    AND finalization_operation_id IS NOT NULL
    AND finalization_kind IS NOT NULL
    AND finalization_started_at IS NOT NULL
@@ -237,7 +237,7 @@ UPDATE runs
    SET status = sqlc.arg(status),
        output = sqlc.narg(output),
        failure = sqlc.narg(failure),
-       state_version = state_version + 1,
+       revision = revision + 1,
        current_run_lease_id = NULL,
        retry_at = NULL,
        terminal_at = sqlc.arg(completed_at),
@@ -278,7 +278,7 @@ RETURNING *;
 -- name: DelayTaskRunRetry :one
 UPDATE runs
    SET status = 'retry_delayed',
-       state_version = state_version + 1,
+       revision = revision + 1,
        current_attempt_number = sqlc.arg(next_attempt_number),
        current_run_lease_id = NULL,
        retry_at = sqlc.arg(retry_at),
@@ -297,24 +297,24 @@ RETURNING *;
 WITH queued_parent AS (
     UPDATE runs
        SET status = 'queued',
-           state_version = state_version + 1,
+           revision = revision + 1,
            updated_at = sqlc.arg(completed_at)
      WHERE id = sqlc.arg(parent_run_id)
        AND environment_id = sqlc.arg(environment_id)
        AND workspace_id = sqlc.arg(workspace_id)
        AND status = 'waiting'
-       AND state_version = sqlc.arg(expected_parent_state_version)
+       AND revision = sqlc.arg(expected_parent_revision)
        AND current_attempt_number = sqlc.arg(parent_attempt_number)
        AND current_run_lease_id IS NULL
-    RETURNING state_version
+    RETURNING revision
 )
 UPDATE run_waits
-   SET condition_state = 'completed',
+   SET condition_status = 'completed',
        condition_result = sqlc.arg(condition_result),
        condition_terminal_at = sqlc.arg(completed_at),
-       suspension_state = 'resume_pending',
+       suspension_status = 'resume_pending',
        resume_request_version = resume_request_version + 1,
-       expected_run_state_version = queued_parent.state_version,
+       expected_run_revision = queued_parent.revision,
        resume_workspace_version_id = sqlc.arg(resume_workspace_version_id),
        updated_at = sqlc.arg(completed_at)
   FROM queued_parent
@@ -325,9 +325,9 @@ UPDATE run_waits
    AND run_waits.attempt_number = sqlc.arg(parent_attempt_number)
    AND run_waits.child_run_id = sqlc.arg(child_run_id)
    AND run_waits.kind = 'child'
-   AND run_waits.condition_state = 'pending'
-   AND run_waits.suspension_state = 'parked'
-   AND run_waits.expected_run_state_version = sqlc.arg(expected_parent_state_version)
+   AND run_waits.condition_status = 'pending'
+   AND run_waits.suspension_status = 'parked'
+   AND run_waits.expected_run_revision = sqlc.arg(expected_parent_revision)
    AND run_waits.current_run_lease_id IS NULL
    AND run_waits.prior_run_lease_id = sqlc.arg(parent_run_lease_id)
    AND run_waits.suspend_checkpoint_id = sqlc.arg(suspend_checkpoint_id)
@@ -338,25 +338,25 @@ RETURNING run_waits.*;
 WITH queued_parent AS (
     UPDATE runs
        SET status = 'queued',
-           state_version = state_version + 1,
+           revision = revision + 1,
            updated_at = sqlc.arg(completed_at)
      WHERE id = sqlc.arg(parent_run_id)
        AND environment_id = sqlc.arg(environment_id)
        AND workspace_id = sqlc.arg(workspace_id)
        AND status = 'waiting'
-       AND state_version = sqlc.arg(expected_parent_state_version)
+       AND revision = sqlc.arg(expected_parent_revision)
        AND current_attempt_number = sqlc.arg(parent_attempt_number)
        AND current_run_lease_id IS NULL
-    RETURNING state_version
+    RETURNING revision
 )
 UPDATE run_waits
-   SET condition_state = sqlc.arg(condition_state),
+   SET condition_status = sqlc.arg(condition_status),
        condition_error = sqlc.arg(condition_error),
        condition_terminal_at = sqlc.arg(completed_at),
        condition_reason_code = sqlc.arg(reason_code),
-       suspension_state = 'resume_pending',
+       suspension_status = 'resume_pending',
        resume_request_version = resume_request_version + 1,
-       expected_run_state_version = queued_parent.state_version,
+       expected_run_revision = queued_parent.revision,
        resume_workspace_version_id = base_workspace_version_id,
        updated_at = sqlc.arg(completed_at)
   FROM queued_parent
@@ -367,9 +367,9 @@ UPDATE run_waits
    AND run_waits.attempt_number = sqlc.arg(parent_attempt_number)
    AND run_waits.child_run_id = sqlc.arg(child_run_id)
    AND run_waits.kind = 'child'
-   AND run_waits.condition_state = 'pending'
-   AND run_waits.suspension_state = 'parked'
-   AND run_waits.expected_run_state_version = sqlc.arg(expected_parent_state_version)
+   AND run_waits.condition_status = 'pending'
+   AND run_waits.suspension_status = 'parked'
+   AND run_waits.expected_run_revision = sqlc.arg(expected_parent_revision)
    AND run_waits.current_run_lease_id IS NULL
    AND run_waits.prior_run_lease_id = sqlc.arg(parent_run_lease_id)
    AND run_waits.suspend_checkpoint_id = sqlc.arg(suspend_checkpoint_id)
@@ -403,7 +403,7 @@ RETURNING *;
 -- name: DelayCheckpointFailureRetry :one
 UPDATE runs
    SET status = 'retry_delayed',
-       state_version = state_version + 1,
+       revision = revision + 1,
        current_attempt_number = sqlc.arg(next_attempt_number),
        current_run_lease_id = NULL,
        retry_at = sqlc.arg(retry_at),
@@ -422,7 +422,7 @@ RETURNING *;
 UPDATE runs
    SET status = sqlc.arg(status),
        failure = sqlc.arg(failure)::jsonb,
-       state_version = state_version + 1,
+       revision = revision + 1,
        current_run_lease_id = NULL,
        retry_at = NULL,
        terminal_at = sqlc.arg(failed_at),
@@ -442,7 +442,7 @@ UPDATE workspaces
    SET head_version_id = COALESCE(sqlc.narg(new_head_version_id), workspaces.head_version_id),
        owner_run_id = NULL,
        ownership_generation = workspaces.ownership_generation + 1,
-       state_version = workspaces.state_version + 1,
+       revision = workspaces.revision + 1,
        last_activity_at = sqlc.arg(completed_at),
        updated_at = sqlc.arg(completed_at)
   FROM environments
@@ -456,22 +456,22 @@ UPDATE workspaces
    AND workspaces.ownership_generation = sqlc.arg(ownership_generation)
    AND workspaces.writer_generation = sqlc.arg(writer_generation)
    AND workspaces.head_version_id = sqlc.arg(expected_head_version_id)
-   AND workspaces.state = 'active'
+   AND workspaces.status = 'active'
    AND workspaces.desired_state = 'active'
    AND workspaces.dirty_state = 'clean'
    AND NOT EXISTS (
        SELECT 1
          FROM workspace_leases
         WHERE workspace_leases.workspace_id = workspaces.id
-          AND workspace_leases.state IN ('active', 'releasing')
+          AND workspace_leases.status IN ('active', 'releasing')
    )
    AND NOT EXISTS (
        SELECT 1
          FROM workspace_processes
         WHERE workspace_processes.workspace_id = workspaces.id
-          AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
+          AND workspace_processes.status IN ('pending', 'starting', 'running', 'exit_requested')
    )
-RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at;
+RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.revision, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.status, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at;
 
 -- name: ReadyRunRetries :many
 WITH candidates AS (
@@ -479,7 +479,7 @@ WITH candidates AS (
            runs.environment_id,
            runs.workspace_id,
            runs.current_attempt_number,
-           runs.state_version
+           runs.revision
       FROM runs
       JOIN run_attempts
         ON run_attempts.run_id = runs.id
@@ -496,7 +496,7 @@ WITH candidates AS (
               FROM run_leases
              WHERE run_leases.run_id = runs.id
                AND run_leases.attempt_number = runs.current_attempt_number
-               AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
+               AND run_leases.status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
        )
      ORDER BY runs.retry_at, runs.id
      LIMIT sqlc.arg(row_limit)
@@ -505,25 +505,25 @@ WITH candidates AS (
     UPDATE runs
        SET status = 'queued',
            retry_at = NULL,
-           state_version = runs.state_version + 1,
+           revision = runs.revision + 1,
            updated_at = now()
       FROM candidates
      WHERE runs.id = candidates.id
        AND runs.environment_id = candidates.environment_id
        AND runs.workspace_id = candidates.workspace_id
        AND runs.current_attempt_number = candidates.current_attempt_number
-       AND runs.state_version = candidates.state_version
+       AND runs.revision = candidates.revision
        AND runs.status = 'retry_delayed'
        AND runs.current_run_lease_id IS NULL
     RETURNING runs.id,
               runs.environment_id,
               runs.workspace_id,
               runs.current_attempt_number,
-              runs.state_version
+              runs.revision
 )
 SELECT readied.id,
        readied.environment_id,
        readied.workspace_id,
        readied.current_attempt_number,
-       readied.state_version
+       readied.revision
   FROM readied;

@@ -38,7 +38,7 @@ func testWorkspaceArtifactTarget(
 		t.Fatal(closeErr)
 	}
 	return &workspacev0.WorkspaceResetTarget{
-		BaseVersionId: versionID,
+		BaseWorkspaceVersionId: versionID,
 		Tree: &workspacev0.WorkspaceTreeIdentity{
 			Digest: tree.Digest, SizeBytes: tree.SizeBytes, EntryCount: uint32(tree.EntryCount),
 		},
@@ -51,9 +51,9 @@ func testWorkspaceArtifactTarget(
 
 func testEmptyWorkspaceTarget(versionID string) *workspacev0.WorkspaceResetTarget {
 	return &workspacev0.WorkspaceResetTarget{
-		BaseVersionId: versionID,
-		Tree:          &workspacev0.WorkspaceTreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest},
-		Source:        &workspacev0.WorkspaceResetTarget_Empty{Empty: &workspacev0.EmptyWorkspaceResetTarget{}},
+		BaseWorkspaceVersionId: versionID,
+		Tree:                   &workspacev0.WorkspaceTreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest},
+		Source:                 &workspacev0.WorkspaceResetTarget_Empty{Empty: &workspacev0.EmptyWorkspaceResetTarget{}},
 	}
 }
 
@@ -90,7 +90,7 @@ func TestRestoredWorkspaceMaterializesExactTargetBeforeRebindingAuthority(t *tes
 	entry := &workspaceMountEntry{
 		workspaceID: "workspace-1", workspaceMountID: "mount-b", channelToken: "channel-b",
 		runtimeInstanceID: "runtime-b", workspaceMount: "/workspace", workspaceRoot: liveRoot,
-		baseVersionID: "version-a", finalizationRoot: filepath.Join(tempRoot, "state"),
+		baseWorkspaceVersionID: "version-a", finalizationRoot: filepath.Join(tempRoot, "state"),
 		authorityState: workspaceAuthorityLive,
 	}
 	entry.setFencingGeneration(1)
@@ -133,7 +133,7 @@ func TestRestoredWorkspaceMaterializesExactTargetBeforeRebindingAuthority(t *tes
 		t.Fatalf("C path = %q, %v", content, err)
 	}
 	if registry.entries["mount-b"] != nil || registry.entries["mount-c"] != entry ||
-		entry.baseVersionID != "version-c" || entry.currentFencingGeneration() != 2 {
+		entry.baseWorkspaceVersionID != "version-c" || entry.currentFencingGeneration() != 2 {
 		t.Fatalf("rebinding state = %+v", entry)
 	}
 	if replay, err := registry.materializeRestoredWorkspaceMount(artifactFrame(), request, waits); err != nil ||
@@ -206,8 +206,8 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesPrimitiveOperation(t *
 	if err := frameio.ReadProtoFrame(materializeClient, &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.State != "running" || response.GuestdChannelTokenHash != sha256sum.HexBytes([]byte("channel-token")) {
-		t.Fatalf("response state=%q guestd_channel_token_hash=%q", response.State, response.GuestdChannelTokenHash)
+	if response.Status != "running" || response.GuestdChannelTokenHash != sha256sum.HexBytes([]byte("channel-token")) {
+		t.Fatalf("response state=%q guestd_channel_token_hash=%q", response.Status, response.GuestdChannelTokenHash)
 	}
 	if !workspaceMountPhaseNames(response.Phases, "guest_workspace_image_restore", "guest_workspace_artifact_restore", "guest_register") {
 		t.Fatalf("response phases = %+v", response.Phases)
@@ -274,8 +274,8 @@ func TestWorkspaceRuntimePrepareUsesWorkspaceImageAndRuntimeInstanceID(t *testin
 	if err := frameio.ReadProtoFrame(client, &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.GetState() != "prepared" || response.GetRuntimeInstanceId() != runtimeInstanceID {
-		t.Fatalf("response state=%q runtime_instance_id=%q", response.GetState(), response.GetRuntimeInstanceId())
+	if response.GetStatus() != "prepared" || response.GetRuntimeInstanceId() != runtimeInstanceID {
+		t.Fatalf("response state=%q runtime_instance_id=%q", response.GetStatus(), response.GetRuntimeInstanceId())
 	}
 	if !workspaceMountPhaseNames(response.GetPhases(), "guest_workspace_image_restore", "guest_runtime_user_resolve", "guest_workspace_root_resolve") {
 		t.Fatalf("response phases = %+v", response.GetPhases())
@@ -391,8 +391,8 @@ func TestWorkspaceMaterializeWithoutBaseArtifactInitializesEmptyRoot(t *testing.
 	if err := frameio.ReadProtoFrame(client, &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.GetState() != "running" {
-		t.Fatalf("response state = %q", response.GetState())
+	if response.GetStatus() != "running" {
+		t.Fatalf("response state = %q", response.GetStatus())
 	}
 	if !workspaceMountPhaseNames(response.GetPhases(), "guest_workspace_image_restore", "guest_workspace_empty_root_init", "guest_register") {
 		t.Fatalf("response phases = %+v", response.GetPhases())
@@ -441,8 +441,8 @@ func TestWorkspaceMaterializeReturnsFailureResponse(t *testing.T) {
 	if err := frameio.ReadProtoFrame(materializeClient, &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.State != "failed" {
-		t.Fatalf("response state = %q, want failed", response.State)
+	if response.Status != "failed" {
+		t.Fatalf("response state = %q, want failed", response.Status)
 	}
 	if response.Target != nil {
 		t.Fatalf("failed response target = %+v, want nil", response.Target)
@@ -490,7 +490,7 @@ func TestWorkspaceStopCaptureReportsTreeDerivedFromArtifact(t *testing.T) {
 	if err := frameio.ReadProtoFrame(client, &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.GetState() != "captured" || response.GetCapturedTree() == nil || response.GetCapturedArtifact() == nil {
+	if response.GetStatus() != "captured" || response.GetCapturedTree() == nil || response.GetCapturedArtifact() == nil {
 		t.Fatalf("capture response = %+v", &response)
 	}
 	header, bodyLen, err := wire.ReadStreamFrameHeader(client)

@@ -38,7 +38,7 @@ func (s *Server) reconcileWorkerGroupPrimarySelection(
 		if err != nil {
 			return errors.New("lock worker group for primary selection")
 		}
-		if group.State != db.WorkerGroupStateActive && group.State != db.WorkerGroupStatePaused {
+		if group.Status != db.WorkerGroupStatusActive && group.Status != db.WorkerGroupStatusPaused {
 			return conflict(errors.New("worker group is not active for primary selection"))
 		}
 		desired, err := command.desired(group)
@@ -58,7 +58,7 @@ func (s *Server) reconcileWorkerGroupPrimarySelection(
 		if err != nil {
 			return errors.New("lock worker pool for primary selection")
 		}
-		if pool.State != "active" || !pool.SealedAt.Valid {
+		if pool.Status != "active" || !pool.SealedAt.Valid {
 			return conflict(errors.New("selected worker pool is not active and sealed"))
 		}
 		result.pools[pgvalue.UUIDString(pool.ID)] = pool

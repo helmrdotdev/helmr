@@ -18,12 +18,12 @@ import (
 var errStaleActorTurnCommit = errors.New("actor turn commit is stale")
 
 type parsedActorTurnCommit struct {
-	lease               parsedRunLeaseFence
-	correlationID       uuid.UUID
-	targetInputSequence int64
-	baseVersionID       uuid.UUID
-	tree                workspace.TreeIdentity
-	artifact            *workerapi.WorkspaceArtifact
+	lease                  parsedRunLeaseFence
+	correlationID          uuid.UUID
+	targetInputSequence    int64
+	baseWorkspaceVersionID uuid.UUID
+	tree                   workspace.TreeIdentity
+	artifact               *workerapi.WorkspaceArtifact
 }
 
 func parseActorTurnCommitRequest(request workerapi.CommitActorTurnRequest) (parsedActorTurnCommit, error) {
@@ -35,7 +35,7 @@ func parseActorTurnCommitRequest(request workerapi.CommitActorTurnRequest) (pars
 	if err != nil {
 		return parsedActorTurnCommit{}, err
 	}
-	baseVersionID, err := parseCanonicalUUID("base_workspace_version_id", request.BaseWorkspaceVersionID)
+	baseWorkspaceVersionID, err := parseCanonicalUUID("base_workspace_version_id", request.BaseWorkspaceVersionID)
 	if err != nil {
 		return parsedActorTurnCommit{}, err
 	}
@@ -56,7 +56,7 @@ func parseActorTurnCommitRequest(request workerapi.CommitActorTurnRequest) (pars
 	}
 	return parsedActorTurnCommit{
 		lease: lease, correlationID: correlationID, targetInputSequence: request.TargetInputSequence,
-		baseVersionID: baseVersionID, tree: tree, artifact: request.Artifact,
+		baseWorkspaceVersionID: baseWorkspaceVersionID, tree: tree, artifact: request.Artifact,
 	}, nil
 }
 
@@ -116,14 +116,14 @@ func (s *Server) commitActorTurn(
 		}
 		if authority.actor.CommittedInputSequence+1 != commit.targetInputSequence ||
 			commit.targetInputSequence >= authority.actor.NextInputSequence ||
-			authority.workspaceLease.BaseVersionID != pgvalue.UUID(commit.baseVersionID) {
+			authority.workspaceLease.BaseWorkspaceVersionID != pgvalue.UUID(commit.baseWorkspaceVersionID) {
 			return errStaleActorTurnCommit
 		}
-		base, err := getActorTurnVersion(ctx, work.q, authority, authority.workspaceLease.BaseVersionID)
+		base, err := getActorTurnVersion(ctx, work.q, authority, authority.workspaceLease.BaseWorkspaceVersionID)
 		if err != nil {
 			return staleActorTurnCommit(err)
 		}
-		restoredBase := authority.workspaceLease.BaseVersionID != authority.workspace.HeadVersionID
+		restoredBase := authority.workspaceLease.BaseWorkspaceVersionID != authority.workspace.HeadVersionID
 		if restoredBase {
 			if err := validateRestoredActorBase(ctx, work.q, authority, base); err != nil {
 				return staleActorTurnCommit(err)
@@ -151,7 +151,7 @@ func (s *Server) commitActorTurn(
 					CommittedAt: committedAt, RestoreCheckpointID: authority.runtime.RestoreCheckpointID,
 					RunID: authority.run.ID, AttemptNumber: authority.attempt.Number,
 					WorkspaceID:               authority.workspace.ID,
-					PrivateWorkspaceVersionID: authority.workspaceLease.BaseVersionID,
+					PrivateWorkspaceVersionID: authority.workspaceLease.BaseWorkspaceVersionID,
 					TargetInputSequence:       commit.targetInputSequence,
 				},
 			); err != nil {
@@ -159,7 +159,7 @@ func (s *Server) commitActorTurn(
 			}
 		}
 
-		versionID := authority.workspaceLease.BaseVersionID
+		versionID := authority.workspaceLease.BaseWorkspaceVersionID
 		if changed {
 			versionID, err = recordTaskWorkspaceVersion(
 				ctx, work.q, worker, authority,
@@ -171,7 +171,7 @@ func (s *Server) commitActorTurn(
 		} else if restoredBase {
 			if _, err := work.q.PublishRestoredActorCheckpointWorkspaceVersion(
 				ctx, db.PublishRestoredActorCheckpointWorkspaceVersionParams{
-					CommittedAt: committedAt, VersionID: authority.workspaceLease.BaseVersionID,
+					CommittedAt: committedAt, VersionID: authority.workspaceLease.BaseWorkspaceVersionID,
 					WorkspaceID: authority.workspace.ID, ExpectedParentVersionID: authority.workspace.HeadVersionID,
 					OwnershipGeneration: authority.workspace.OwnershipGeneration,
 					WriterGeneration:    base.WriterGeneration,
@@ -205,7 +205,7 @@ func (s *Server) commitActorTurn(
 					OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID,
 					EnvironmentID: authority.run.EnvironmentID, WorkspaceID: authority.workspace.ID,
 					WorkspaceMountID: authority.workspaceMount.ID, RuntimeInstanceID: authority.runtime.ID,
-					OwnerRunLeaseID: authority.runLease.ID, ExpectedVersionID: pgvalue.UUID(commit.baseVersionID),
+					OwnerRunLeaseID: authority.runLease.ID, ExpectedVersionID: pgvalue.UUID(commit.baseWorkspaceVersionID),
 					OwnershipGeneration:    authority.workspace.OwnershipGeneration,
 					WriterGeneration:       authority.workspace.WriterGeneration,
 					MountFencingGeneration: authority.workspaceMount.FencingGeneration,
@@ -235,12 +235,12 @@ func validateActorTurnAuthority(ctx context.Context, store db.Querier, authority
 	actor := authority.actor
 	if authority.run.EntrypointKind != "actor" || !authority.run.SessionID.Valid ||
 		authority.run.SessionID != actor.ID || authority.run.ParentRunID.Valid ||
-		authority.run.ParentOwnsLifecycle.Valid || authority.runLease.State != db.RunLeaseStateRunning ||
+		authority.run.ParentOwnsLifecycle.Valid || authority.runLease.Status != db.RunLeaseStatusRunning ||
 		!authority.run.ActiveStartedAt.Valid || !authority.attempt.EntrypointEnteredAt.Valid ||
 		authority.attempt.TerminalAt.Valid || !authority.attempt.SessionInputStartSequence.Valid ||
 		!authority.run.SessionInputStartSequence.Valid || !authority.run.SessionInputHighWatermark.Valid ||
 		!actor.CurrentRunID.Valid || actor.CurrentRunID != authority.run.ID ||
-		(actor.State != "open" && actor.State != "closing") ||
+		(actor.Status != "open" && actor.Status != "closing") ||
 		authority.workspace.OwnerSessionID != actor.ID || authority.workspace.OwnerRunID.Valid ||
 		!authority.workspace.HeadVersionID.Valid || authority.workspace.DirtyState != db.WorkspaceDirtyStateClean ||
 		authority.runLease.FinalizationOperationID.Valid || authority.runLease.FinalizationKind.Valid ||
@@ -267,7 +267,7 @@ func replayActorTurnCommit(
 	authority runLeaseClaimAuthority,
 ) (workerapi.CommitActorTurnResponse, bool, error) {
 	if authority.actor.CommittedInputSequence != commit.targetInputSequence ||
-		authority.workspaceMount.MaterializedVersionID != authority.workspaceLease.BaseVersionID {
+		authority.workspaceMount.MaterializedVersionID != authority.workspaceLease.BaseWorkspaceVersionID {
 		return workerapi.CommitActorTurnResponse{}, false, nil
 	}
 	version, err := getActorTurnVersion(ctx, store, authority, authority.workspace.HeadVersionID)
@@ -279,10 +279,10 @@ func replayActorTurnCommit(
 		return workerapi.CommitActorTurnResponse{}, false, nil
 	}
 	if commit.artifact == nil {
-		if authority.workspace.HeadVersionID != pgvalue.UUID(commit.baseVersionID) {
+		if authority.workspace.HeadVersionID != pgvalue.UUID(commit.baseWorkspaceVersionID) {
 			return workerapi.CommitActorTurnResponse{}, false, nil
 		}
-	} else if version.ParentVersionID != pgvalue.UUID(commit.baseVersionID) ||
+	} else if version.ParentVersionID != pgvalue.UUID(commit.baseWorkspaceVersionID) ||
 		version.SourceWorkspaceLeaseID != authority.workspaceLease.ID ||
 		version.OwnershipGeneration != authority.workspace.OwnershipGeneration ||
 		version.WriterGeneration != authority.workspace.WriterGeneration ||

@@ -43,7 +43,7 @@ func TestValidateRunStartLifecycleSeparatesFirstStartFromResume(t *testing.T) {
 
 func TestStartRunCommitsCheckpointRestoreWithPriorEntrypointAndReplays(t *testing.T) {
 	worker, claimLocators, authority := validCheckpointRestoreRunLeaseClaimFixture(false)
-	authority.runLease.State = db.RunLeaseStateStarting
+	authority.runLease.Status = db.RunLeaseStatusStarting
 	enteredAt := pgvalue.Timestamptz(time.Now().Add(-time.Minute))
 	authority.attempt.EntrypointEnteredAt = enteredAt
 	store := &runLeaseClaimStore{
@@ -84,9 +84,9 @@ func TestStartRunCommitsCheckpointRestoreWithPriorEntrypointAndReplays(t *testin
 	if receipt != expected {
 		t.Fatalf("receipt = %+v, want %+v", receipt, expected)
 	}
-	if store.authority.runLease.State != db.RunLeaseStateRunning ||
+	if store.authority.runLease.Status != db.RunLeaseStatusRunning ||
 		store.authority.run.Status != db.RunStatusRunning {
-		t.Fatalf("start states = lease:%q run:%q", store.authority.runLease.State, store.authority.run.Status)
+		t.Fatalf("start states = lease:%q run:%q", store.authority.runLease.Status, store.authority.run.Status)
 	}
 	if store.authority.attempt.EntrypointEnteredAt != enteredAt {
 		t.Fatal("restore start changed the original Attempt entrypoint timestamp")
@@ -117,14 +117,14 @@ func TestValidateRunStartArmModesAndReplay(t *testing.T) {
 	runtimeID := id(7)
 	base := runStartValidationAuthority{
 		run:       db.Run{ID: runID, EntrypointKind: "task"},
-		runLease:  db.RunLease{ID: leaseID, State: db.RunLeaseStateStarting},
+		runLease:  db.RunLease{ID: leaseID, Status: db.RunLeaseStatusStarting},
 		runtime:   db.RuntimeInstance{ID: runtimeID, RestoreCheckpointID: checkpointID},
 		workspace: db.GetWorkspaceRow{OwnershipGeneration: 11, WriterGeneration: 13},
 		runWait: db.RunWait{
 			ID: checkpointID, SuspendCheckpointID: checkpointID, ResumeAttachID: attachID,
 			CheckpointRequestVersion: 1, CheckpointAckVersion: 1,
 			ResumeRequestVersion: 2, ResumeAckVersion: 1,
-			CurrentRunLeaseID: leaseID, SuspensionState: db.RunWaitStateResuming,
+			CurrentRunLeaseID: leaseID, SuspensionStatus: db.RunWaitStatusResuming,
 		},
 	}
 	base.runWait.ID = waitID
@@ -153,7 +153,7 @@ func TestValidateRunStartArmModesAndReplay(t *testing.T) {
 	t.Run("same Workspace parent restores suspend checkpoint", func(t *testing.T) {
 		authority := base
 		authority.runWait.Kind = db.WaitKindChild
-		authority.runWait.ConditionState = db.WaitStateCompleted
+		authority.runWait.ConditionStatus = db.WaitStatusCompleted
 		authority.runWait.ChildRunID = id(9)
 		if err := validateRunStartArm(restore, authority); err != nil {
 			t.Fatal(err)
@@ -161,8 +161,8 @@ func TestValidateRunStartArmModesAndReplay(t *testing.T) {
 	})
 	t.Run("restore released replay", func(t *testing.T) {
 		authority := base
-		authority.runLease.State = db.RunLeaseStateRunning
-		authority.runWait.SuspensionState = db.RunWaitStateReleased
+		authority.runLease.Status = db.RunLeaseStatusRunning
+		authority.runWait.SuspensionStatus = db.RunWaitStatusReleased
 		authority.runWait.ResumeAckVersion = authority.runWait.ResumeRequestVersion
 		if err := validateRunStartArm(restore, authority); err != nil {
 			t.Fatal(err)
@@ -170,7 +170,7 @@ func TestValidateRunStartArmModesAndReplay(t *testing.T) {
 	})
 	t.Run("restore release before commit", func(t *testing.T) {
 		authority := base
-		authority.runWait.SuspensionState = db.RunWaitStateReleased
+		authority.runWait.SuspensionStatus = db.RunWaitStatusReleased
 		authority.runWait.ResumeAckVersion = authority.runWait.ResumeRequestVersion
 		if err := validateRunStartArm(restore, authority); err == nil {
 			t.Fatal("released Wait accepted before Run start commit")

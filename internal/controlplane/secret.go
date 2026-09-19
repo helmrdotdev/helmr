@@ -145,7 +145,7 @@ func (s *Server) listSecrets(w http.ResponseWriter, r *http.Request) {
 		projected, err := secretResponse(
 			row.ID,
 			row.Name,
-			row.State,
+			row.Status,
 			row.CreatedAt,
 			row.RotatedAt,
 			row.RevokedAt,
@@ -478,7 +478,7 @@ func secretSnapshotResponse(record db.GetSecretSnapshotRow) (api.SecretResponse,
 	return secretResponse(
 		record.ID,
 		record.Name,
-		record.State,
+		record.Status,
 		record.CreatedAt,
 		record.RotatedAt,
 		record.RevokedAt,

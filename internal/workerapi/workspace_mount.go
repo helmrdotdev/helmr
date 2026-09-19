@@ -18,25 +18,25 @@ type WorkspaceStopRequest struct {
 
 type WorkspaceStopResponse struct {
 	WorkspaceID string                  `json:"workspace_id"`
-	State       string                  `json:"state"`
+	Status      string                  `json:"status"`
 	Mount       *WorkspaceMountResponse `json:"mount,omitempty"`
 }
 
 type WorkspaceMountResponse struct {
-	ID                   string     `json:"id"`
-	ProjectID            string     `json:"project_id"`
-	EnvironmentID        string     `json:"environment_id"`
-	WorkspaceID          string     `json:"workspace_id"`
-	BaseVersionID        string     `json:"base_version_id,omitempty"`
-	WorkerInstanceID     string     `json:"worker_instance_id,omitempty"`
-	State                string     `json:"state"`
-	FencingGeneration    int64      `json:"fencing_generation"`
-	DirtyGeneration      int64      `json:"dirty_generation"`
-	FinalizationKind     string     `json:"finalization_kind,omitempty"`
-	ReservationExpiresAt *time.Time `json:"reservation_expires_at,omitempty"`
-	LastHeartbeatAt      *time.Time `json:"last_heartbeat_at,omitempty"`
-	CreatedAt            time.Time  `json:"created_at"`
-	UpdatedAt            time.Time  `json:"updated_at"`
+	ID                     string     `json:"id"`
+	ProjectID              string     `json:"project_id"`
+	EnvironmentID          string     `json:"environment_id"`
+	WorkspaceID            string     `json:"workspace_id"`
+	BaseWorkspaceVersionID string     `json:"base_workspace_version_id,omitempty"`
+	WorkerInstanceID       string     `json:"worker_instance_id,omitempty"`
+	Status                 string     `json:"status"`
+	FencingGeneration      int64      `json:"fencing_generation"`
+	DirtyGeneration        int64      `json:"dirty_generation"`
+	FinalizationKind       string     `json:"finalization_kind,omitempty"`
+	ReservationExpiresAt   *time.Time `json:"reservation_expires_at,omitempty"`
+	LastHeartbeatAt        *time.Time `json:"last_heartbeat_at,omitempty"`
+	CreatedAt              time.Time  `json:"created_at"`
+	UpdatedAt              time.Time  `json:"updated_at"`
 }
 
 type WorkspaceMountClaimRequest struct {
@@ -61,7 +61,7 @@ type WorkspaceMount struct {
 	RuntimeEpoch            int64                `json:"runtime_epoch"`
 	GuestdChannelToken      string               `json:"guestd_channel_token"`
 	GuestdChannelTokenHash  string               `json:"guestd_channel_token_hash"`
-	State                   string               `json:"state"`
+	Status                  string               `json:"status"`
 	RuntimeIdentityID       string               `json:"runtime_identity_id"`
 	WorkspaceImage          CASObject            `json:"workspace_image"`
 	RootfsDigest            string               `json:"rootfs_digest"`

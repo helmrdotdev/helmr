@@ -76,7 +76,7 @@ func (s *Server) appendActorInput(ctx context.Context, request appendActorInputR
 			if err != nil {
 				return err
 			}
-			if acquired.Claim.State == "completed" {
+			if acquired.Claim.Status == "completed" {
 				replayed, err := actorInputRecordFromReceipt(ctx, work.q, request, acquired.Claim)
 				if err != nil {
 					return errActorInputAppendConflict
@@ -84,7 +84,7 @@ func (s *Server) appendActorInput(ctx context.Context, request appendActorInputR
 				result = replayed
 				return nil
 			}
-			if acquired.Claim.State != "pending" {
+			if acquired.Claim.Status != "pending" {
 				return errActorInputAppendConflict
 			}
 			claimID = acquired.Claim.ID
@@ -124,7 +124,7 @@ func (s *Server) appendActorInput(ctx context.Context, request appendActorInputR
 					ID:            pgvalue.UUID(request.SessionID),
 				})
 				if readErr == nil &&
-					current.State == "open" &&
+					current.Status == "open" &&
 					current.NextInputSequence > maxActorSequence {
 					return errActorSequenceExhausted
 				}
@@ -150,7 +150,7 @@ func (s *Server) appendActorInput(ctx context.Context, request appendActorInputR
 				claim, err := work.q.GetIdempotencyClaim(ctx, db.GetIdempotencyClaimParams{
 					EnvironmentID: result.EnvironmentID, ID: claimID,
 				})
-				if err != nil || claim.State != "completed" || !bytes.Equal(claim.RequestFingerprint, fingerprint) {
+				if err != nil || claim.Status != "completed" || !bytes.Equal(claim.RequestFingerprint, fingerprint) {
 					return errActorInputAppendConflict
 				}
 			} else if claimErr != nil {

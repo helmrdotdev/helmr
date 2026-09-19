@@ -92,7 +92,7 @@ func lockRunEntrypointAuthority(
 	if err != nil {
 		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
 	}
-	if authority.workspace.State != db.WorkspaceStateActive ||
+	if authority.workspace.Status != db.WorkspaceStatusActive ||
 		authority.workspace.DesiredState != db.WorkspaceDesiredStateActive {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
@@ -117,8 +117,8 @@ func lockRunEntrypointAuthority(
 	if err != nil {
 		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
 	}
-	if authority.workerGroup.State != db.WorkerGroupStateActive &&
-		authority.workerGroup.State != db.WorkerGroupStateDraining {
+	if authority.workerGroup.Status != db.WorkerGroupStatusActive &&
+		authority.workerGroup.Status != db.WorkerGroupStatusDraining {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 	if authority.workerGroup.ClaimVersion != worker.GroupClaimVersion {

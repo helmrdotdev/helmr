@@ -16,21 +16,21 @@ type WorkspaceExecClaimResponse struct {
 }
 
 type WorkspaceExec struct {
-	ProtectedEnv        *ProtectedEnv    `json:"protected_env,omitempty"`
-	BaseVersionID       string           `json:"base_version_id"`
-	ProcessID           string           `json:"process_id"`
-	WorkspaceID         string           `json:"workspace_id"`
-	WorkspaceMountID    string           `json:"workspace_mount_id"`
-	RequestFingerprint  string           `json:"request_fingerprint"`
-	Request             json.RawMessage  `json:"request"`
-	Stdin               []byte           `json:"stdin,omitempty"`
-	Secrets             []SecretDelivery `json:"secrets"`
-	WorkspaceLeaseID    string           `json:"workspace_lease_id"`
-	WriteCapability     string           `json:"write_capability"`
-	FencingGeneration   int64            `json:"fencing_generation"`
-	OwnershipGeneration int64            `json:"ownership_generation"`
-	WriterGeneration    int64            `json:"writer_generation"`
-	ExpiresAt           time.Time        `json:"expires_at"`
+	ProtectedEnv           *ProtectedEnv    `json:"protected_env,omitempty"`
+	BaseWorkspaceVersionID string           `json:"base_workspace_version_id"`
+	ProcessID              string           `json:"process_id"`
+	WorkspaceID            string           `json:"workspace_id"`
+	WorkspaceMountID       string           `json:"workspace_mount_id"`
+	RequestFingerprint     string           `json:"request_fingerprint"`
+	Request                json.RawMessage  `json:"request"`
+	Stdin                  []byte           `json:"stdin,omitempty"`
+	Secrets                []SecretDelivery `json:"secrets"`
+	WorkspaceLeaseID       string           `json:"workspace_lease_id"`
+	WriteCapability        string           `json:"write_capability"`
+	FencingGeneration      int64            `json:"fencing_generation"`
+	OwnershipGeneration    int64            `json:"ownership_generation"`
+	WriterGeneration       int64            `json:"writer_generation"`
+	ExpiresAt              time.Time        `json:"expires_at"`
 }
 
 type WorkspaceExecCompleteRequest struct {

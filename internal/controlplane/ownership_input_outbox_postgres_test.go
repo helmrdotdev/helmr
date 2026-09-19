@@ -53,7 +53,7 @@ func TestOwnershipAdmittedInputStaleLocatorKeepsClaimAndOutbox(t *testing.T) {
 	f.workerCall(t, f.server.workerCreateRunWait, workerapi.CreateRunWaitRequest{CorrelationID: uuid.NewV7().String(), Lease: f.fence(), RunWaitID: waitID.String(), ResumeAttachID: uuid.NewV7().String(), Kind: "actor_input", Params: params, ActorSpeculativeInputSequence: &seq}, nil)
 	dbtest.MustExec(t, ctx, f.Pool, "UPDATE run_waits SET checkpoint_due_at=now()-interval '1 second' WHERE id=$1", waitID)
 	var beforeVersion int64
-	if err := f.Pool.QueryRow(ctx, "SELECT state_version FROM runs WHERE id=$1", f.runID).Scan(&beforeVersion); err != nil {
+	if err := f.Pool.QueryRow(ctx, "SELECT revision FROM runs WHERE id=$1", f.runID).Scan(&beforeVersion); err != nil {
 		t.Fatal(err)
 	}
 	// Exercise the repository no-row boundary between locator and completion with
@@ -67,7 +67,7 @@ func TestOwnershipAdmittedInputStaleLocatorKeepsClaimAndOutbox(t *testing.T) {
 		defer tx.Rollback(ctx)
 		q := db.New(tx)
 		checkpointID := pgvalue.UUID(uuid.NewV7())
-		if _, err := q.CreateRunCheckpoint(ctx, db.CreateRunCheckpointParams{ID: checkpointID, RunID: w.RunID, AttemptNumber: w.AttemptNumber, RunWaitID: w.ID, SourceRunLeaseID: w.CurrentRunLeaseID, SourceWorkspaceLeaseID: f.claim.workspaceLease.ID, WorkspaceID: w.WorkspaceID, BaseWorkspaceVersionID: f.claim.workspaceLease.BaseVersionID, ActorSpeculativeInputSequence: w.ActorSpeculativeInputSequence, RestoreManifest: []byte("{}")}); err != nil {
+		if _, err := q.CreateRunCheckpoint(ctx, db.CreateRunCheckpointParams{ID: checkpointID, RunID: w.RunID, AttemptNumber: w.AttemptNumber, RunWaitID: w.ID, SourceRunLeaseID: w.CurrentRunLeaseID, SourceWorkspaceLeaseID: f.claim.workspaceLease.ID, WorkspaceID: w.WorkspaceID, BaseWorkspaceVersionID: f.claim.workspaceLease.BaseWorkspaceVersionID, ActorSpeculativeInputSequence: w.ActorSpeculativeInputSequence, RestoreManifest: []byte("{}")}); err != nil {
 			return err
 		}
 		if _, err := q.RequestRunWaitCheckpoint(ctx, db.RequestRunWaitCheckpointParams{ID: w.ID, RunID: w.RunID, AttemptNumber: w.AttemptNumber, CurrentRunLeaseID: w.CurrentRunLeaseID, SuspendCheckpointID: checkpointID}); err != nil {
@@ -91,15 +91,15 @@ func TestOwnershipAdmittedInputStaleLocatorKeepsClaimAndOutbox(t *testing.T) {
 	var version int64
 	var status db.RunStatus
 	var claims, records, outboxes int
-	if err := f.Pool.QueryRow(ctx, "SELECT state_version,status FROM runs WHERE id=$1", f.runID).Scan(&version, &status); err != nil {
+	if err := f.Pool.QueryRow(ctx, "SELECT revision,status FROM runs WHERE id=$1", f.runID).Scan(&version, &status); err != nil {
 		t.Fatal(err)
 	}
-	if version != beforeVersion || status != db.RunStatusWaiting || w.ConditionState != db.WaitStatePending || w.SuspensionState != db.RunWaitStateCheckpointing {
+	if version != beforeVersion || status != db.RunStatusWaiting || w.ConditionStatus != db.WaitStatusPending || w.SuspensionStatus != db.RunWaitStatusCheckpointing {
 		t.Fatalf("partial inline transition run=%s/%d wait=%+v", status, version, w)
 	}
 	if err := f.Pool.QueryRow(ctx, `SELECT
  (SELECT count(*) FROM session_records WHERE id=$1),
- (SELECT count(*) FROM idempotency_claims WHERE id=$2 AND state='completed'),
+ (SELECT count(*) FROM idempotency_claims WHERE id=$2 AND status='completed'),
  (SELECT count(*) FROM control_outbox WHERE topic='session.input.reconcile' AND payload->>'recordId'=$3)`, record.ID, record.ClaimID, recordID.String()).Scan(&records, &claims, &outboxes); err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestOwnershipAdmittedInputStaleLocatorKeepsClaimAndOutbox(t *testing.T) {
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		var state string
-		if err := f.Pool.QueryRow(ctx, "SELECT state FROM control_outbox WHERE topic='session.input.reconcile' AND payload->>'recordId'=$1", recordID.String()).Scan(&state); err != nil {
+		if err := f.Pool.QueryRow(ctx, "SELECT status FROM control_outbox WHERE topic='session.input.reconcile' AND payload->>'recordId'=$1", recordID.String()).Scan(&state); err != nil {
 			t.Fatal(err)
 		}
 		if state == "delivered" {
@@ -150,7 +150,7 @@ func TestOwnershipAdmittedInputStaleLocatorKeepsClaimAndOutbox(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if completed.ConditionState != db.WaitStateCompleted || completed.CompletedActorRecordID != record.ID {
+	if completed.ConditionStatus != db.WaitStatusCompleted || completed.CompletedActorRecordID != record.ID {
 		t.Fatalf("eventual completion=%+v", completed)
 	}
 	if _, err := reconciler.ReconcileInput(ctx, f.EnvironmentID, f.sessionID, recordID); err != nil {
@@ -160,7 +160,7 @@ func TestOwnershipAdmittedInputStaleLocatorKeepsClaimAndOutbox(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if repeated.UpdatedAt != completed.UpdatedAt || repeated.ExpectedRunStateVersion != completed.ExpectedRunStateVersion {
+	if repeated.UpdatedAt != completed.UpdatedAt || repeated.ExpectedRunRevision != completed.ExpectedRunRevision {
 		t.Fatal("repeated delivery changed completed Wait")
 	}
 }

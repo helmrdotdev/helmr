@@ -371,8 +371,8 @@ func (s *Server) markRuntimeInstanceFailed(
 		if err != nil {
 			return fmt.Errorf("lock runtime preparation Worker Group: %w", err)
 		}
-		if group.State != db.WorkerGroupStateActive && group.State != db.WorkerGroupStatePaused &&
-			group.State != db.WorkerGroupStateDraining {
+		if group.Status != db.WorkerGroupStatusActive && group.Status != db.WorkerGroupStatusPaused &&
+			group.Status != db.WorkerGroupStatusDraining {
 			return errors.New("runtime preparation Worker Group is inactive")
 		}
 		pool, err := queries.LockWorkerPool(ctx, db.LockWorkerPoolParams{
@@ -382,7 +382,7 @@ func (s *Server) markRuntimeInstanceFailed(
 		if err != nil {
 			return fmt.Errorf("lock runtime preparation Worker Pool: %w", err)
 		}
-		if pool.State != "active" && pool.State != "draining" {
+		if pool.Status != "active" && pool.Status != "draining" {
 			return errors.New("runtime preparation Worker Pool is inactive")
 		}
 		worker, err = queries.LockWorkerInstanceForActivation(
@@ -397,7 +397,7 @@ func (s *Server) markRuntimeInstanceFailed(
 		if err != nil {
 			return fmt.Errorf("lock runtime preparation Worker epoch: %w", err)
 		}
-		if worker.State != db.WorkerInstanceStateActive && worker.State != db.WorkerInstanceStateDraining {
+		if worker.Status != db.WorkerInstanceStatusActive && worker.Status != db.WorkerInstanceStatusDraining {
 			return errors.New("runtime preparation Worker epoch is inactive")
 		}
 		return nil
@@ -448,7 +448,7 @@ func (s *Server) markRuntimeInstanceFailed(
 			return db.RuntimeInstance{}, err
 		}
 	}
-	if workerFatal && worker.State == db.WorkerInstanceStateActive {
+	if workerFatal && worker.Status == db.WorkerInstanceStatusActive {
 		drained, err := queries.DrainWorkerInstance(ctx, db.DrainWorkerInstanceParams{
 			ID:                   params.WorkerInstanceID,
 			WorkerGroupID:        discovered.WorkerGroupID,
@@ -458,7 +458,7 @@ func (s *Server) markRuntimeInstanceFailed(
 		if err != nil {
 			return db.RuntimeInstance{}, fmt.Errorf("fence invalid Worker runtime epoch: %w", err)
 		}
-		if drained.State != db.WorkerInstanceStateDraining {
+		if drained.Status != db.WorkerInstanceStatusDraining {
 			return db.RuntimeInstance{}, errors.New("invalid Worker runtime epoch was not fenced")
 		}
 	}
@@ -495,8 +495,8 @@ func (s *Server) fenceInvalidWorkerEpoch(
 	if err != nil {
 		return fmt.Errorf("lock invalid Worker epoch Group: %w", err)
 	}
-	if group.State != db.WorkerGroupStateActive && group.State != db.WorkerGroupStatePaused &&
-		group.State != db.WorkerGroupStateDraining {
+	if group.Status != db.WorkerGroupStatusActive && group.Status != db.WorkerGroupStatusPaused &&
+		group.Status != db.WorkerGroupStatusDraining {
 		return errors.New("invalid Worker epoch Group is inactive")
 	}
 	pool, err := queries.LockWorkerPool(ctx, db.LockWorkerPoolParams{
@@ -506,7 +506,7 @@ func (s *Server) fenceInvalidWorkerEpoch(
 	if err != nil {
 		return fmt.Errorf("lock invalid Worker epoch Pool: %w", err)
 	}
-	if pool.State != "active" && pool.State != "draining" {
+	if pool.Status != "active" && pool.Status != "draining" {
 		return errors.New("invalid Worker epoch Pool is inactive")
 	}
 	worker, err := queries.LockWorkerInstanceForActivation(ctx, db.LockWorkerInstanceForActivationParams{
@@ -518,10 +518,10 @@ func (s *Server) fenceInvalidWorkerEpoch(
 	if err != nil {
 		return fmt.Errorf("lock invalid Worker epoch: %w", err)
 	}
-	if worker.State != db.WorkerInstanceStateActive && worker.State != db.WorkerInstanceStateDraining {
+	if worker.Status != db.WorkerInstanceStatusActive && worker.Status != db.WorkerInstanceStatusDraining {
 		return errors.New("invalid Worker epoch is inactive")
 	}
-	if worker.State == db.WorkerInstanceStateActive {
+	if worker.Status == db.WorkerInstanceStatusActive {
 		if _, err := queries.DrainWorkerInstance(ctx, db.DrainWorkerInstanceParams{
 			ID:                   workerInstanceID,
 			WorkerGroupID:        pgvalue.UUID(workerGroupID),
@@ -575,7 +575,7 @@ func runtimeInstanceResponse(row db.RuntimeInstance) workerapi.RuntimeInstance {
 		VMVCPUCount:            row.VMVCPUCount,
 		CPUConfigDigest:        row.CPUConfigDigest,
 		DeploymentDefinitionID: pgvalue.UUIDString(row.DeploymentDefinitionID),
-		State:                  string(row.ObservedState),
+		Status:                 string(row.ObservedState),
 		ReservedCPUMillis:      int32(row.ReservedCPUMillis),
 		ReservedMemoryMiB:      int32(row.ReservedMemoryBytes / 1048576),
 		ReservedDiskMiB:        row.ReservedGuestEphemeralDiskBytes / 1048576,

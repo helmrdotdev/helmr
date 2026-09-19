@@ -147,18 +147,18 @@ type RestoreRequest struct {
 }
 
 type MaterializeRequest struct {
-	ID                 string
-	OwnerKind          OwnerKind
-	Binding            WorkloadBinding
-	RootfsDigest       string
-	WorkspaceMountPath string
-	BaseVersionID      string
-	Resources          compute.ResourceVector
-	VMVCPUCount        int32
-	CPUConfigDigest    string
-	Topology           RuntimeTopology
-	ReadOnlyDrives     []ReadOnlyDrive
-	RecordPhase        func(RuntimePhase)
+	ID                     string
+	OwnerKind              OwnerKind
+	Binding                WorkloadBinding
+	RootfsDigest           string
+	WorkspaceMountPath     string
+	BaseWorkspaceVersionID string
+	Resources              compute.ResourceVector
+	VMVCPUCount            int32
+	CPUConfigDigest        string
+	Topology               RuntimeTopology
+	ReadOnlyDrives         []ReadOnlyDrive
+	RecordPhase            func(RuntimePhase)
 }
 
 // WorkloadBinding is the closed logical authority that a connector binds to

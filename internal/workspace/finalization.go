@@ -53,22 +53,22 @@ type ArtifactIdentity struct {
 }
 
 type ResetTarget struct {
-	Kind          string            `json:"kind"`
-	BaseVersionID string            `json:"base_version_id"`
-	Tree          TreeIdentity      `json:"tree"`
-	Artifact      *ArtifactIdentity `json:"artifact,omitempty"`
+	Kind                   string            `json:"kind"`
+	BaseWorkspaceVersionID string            `json:"base_workspace_version_id"`
+	Tree                   TreeIdentity      `json:"tree"`
+	Artifact               *ArtifactIdentity `json:"artifact,omitempty"`
 }
 
-func EmptyResetTarget(baseVersionID string, tree TreeIdentity) (ResetTarget, error) {
-	target := ResetTarget{Kind: ResetTargetEmpty, BaseVersionID: strings.TrimSpace(baseVersionID), Tree: tree}
+func EmptyResetTarget(baseWorkspaceVersionID string, tree TreeIdentity) (ResetTarget, error) {
+	target := ResetTarget{Kind: ResetTargetEmpty, BaseWorkspaceVersionID: strings.TrimSpace(baseWorkspaceVersionID), Tree: tree}
 	if err := ValidateResetTarget(target); err != nil {
 		return ResetTarget{}, err
 	}
 	return target, nil
 }
 
-func ArtifactResetTarget(baseVersionID string, tree TreeIdentity, artifact ArtifactIdentity) (ResetTarget, error) {
-	target := ResetTarget{Kind: ResetTargetArtifact, BaseVersionID: strings.TrimSpace(baseVersionID), Tree: tree, Artifact: &artifact}
+func ArtifactResetTarget(baseWorkspaceVersionID string, tree TreeIdentity, artifact ArtifactIdentity) (ResetTarget, error) {
+	target := ResetTarget{Kind: ResetTargetArtifact, BaseWorkspaceVersionID: strings.TrimSpace(baseWorkspaceVersionID), Tree: tree, Artifact: &artifact}
 	if err := ValidateResetTarget(target); err != nil {
 		return ResetTarget{}, err
 	}
@@ -76,7 +76,7 @@ func ArtifactResetTarget(baseVersionID string, tree TreeIdentity, artifact Artif
 }
 
 func ValidateResetTarget(target ResetTarget) error {
-	if strings.TrimSpace(target.BaseVersionID) == "" {
+	if strings.TrimSpace(target.BaseWorkspaceVersionID) == "" {
 		return errors.New("workspace reset base version ID is required")
 	}
 	if !sha256sum.ValidDigest(target.Tree.Digest) || target.Tree.SizeBytes < 0 || target.Tree.SizeBytes > MaxArtifactExtractedBytes || target.Tree.EntryCount < 0 || target.Tree.EntryCount > MaxArtifactEntries {
@@ -106,7 +106,7 @@ func ValidateTreeIdentity(tree TreeIdentity) error {
 }
 
 func ResetTargetsEqual(left, right ResetTarget) bool {
-	if left.Kind != right.Kind || left.BaseVersionID != right.BaseVersionID || left.Tree != right.Tree {
+	if left.Kind != right.Kind || left.BaseWorkspaceVersionID != right.BaseWorkspaceVersionID || left.Tree != right.Tree {
 		return false
 	}
 	if left.Artifact == nil || right.Artifact == nil {

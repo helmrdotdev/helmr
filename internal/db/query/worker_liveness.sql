@@ -2,23 +2,23 @@
 SELECT workers.id,
        workers.worker_group_id,
        workers.current_epoch,
-       workers.state,
+       workers.status,
        COALESCE(workers.observed_at, workers.activated_at, workers.epoch_started_at, workers.updated_at) AS freshness_at,
        CASE
-           WHEN workers.state = 'registering' AND workers.observed_at IS NULL
+           WHEN workers.status = 'registering' AND workers.observed_at IS NULL
                THEN 'registering_observation_missing'
            ELSE 'worker_observation_stale'
        END::text AS reason
   FROM worker_instances AS workers
- WHERE workers.state IN ('registering', 'active', 'draining')
+ WHERE workers.status IN ('registering', 'active', 'draining')
    AND (sqlc.narg(worker_group_id)::uuid IS NULL OR workers.worker_group_id = sqlc.narg(worker_group_id))
    AND (
-       (workers.state = 'registering'
+       (workers.status = 'registering'
         AND workers.observed_at IS NULL
         AND COALESCE(workers.epoch_started_at, workers.updated_at)
             < sqlc.arg(registration_stale_before))
        OR
-       (workers.state IN ('active', 'draining')
+       (workers.status IN ('active', 'draining')
         AND COALESCE(workers.observed_at, workers.activated_at, workers.epoch_started_at, workers.updated_at)
             < transaction_timestamp()
                 - sqlc.arg(observation_freshness_seconds)::bigint * interval '1 second')
@@ -31,21 +31,21 @@ SELECT workers.id,
 -- name: RecheckAndFenceStaleWorkerInstance :one
 WITH target AS (
     UPDATE worker_instances AS workers
-       SET state = 'lost',
+       SET status = 'lost',
            claim_version = workers.claim_version + 1,
            lost_at = COALESCE(workers.lost_at, now()),
            updated_at = now()
      WHERE workers.id = sqlc.arg(id)
        AND workers.worker_group_id = sqlc.arg(worker_group_id)
        AND workers.current_epoch IS NOT DISTINCT FROM sqlc.arg(expected_epoch)
-       AND workers.state IN ('registering', 'active', 'draining')
+       AND workers.status IN ('registering', 'active', 'draining')
        AND (
-           (workers.state = 'registering'
+           (workers.status = 'registering'
             AND workers.observed_at IS NULL
             AND COALESCE(workers.epoch_started_at, workers.updated_at)
                 < sqlc.arg(registration_stale_before))
            OR
-           (workers.state IN ('active', 'draining')
+           (workers.status IN ('active', 'draining')
             AND COALESCE(workers.observed_at, workers.activated_at, workers.epoch_started_at, workers.updated_at)
                 < transaction_timestamp()
                     - sqlc.arg(observation_freshness_seconds)::bigint * interval '1 second')
@@ -60,12 +60,12 @@ WITH target AS (
     RETURNING credentials.id
 ), lost_mounts AS (
     UPDATE workspace_mounts AS mounts
-       SET state = 'lost', lost_at = now(), terminal_at = now(),
+       SET status = 'lost', lost_at = now(), terminal_at = now(),
            terminal_reason_code = sqlc.arg(reason_code), updated_at = now()
       FROM target
      WHERE mounts.worker_instance_id = target.id
        AND mounts.worker_epoch = target.current_epoch
-       AND mounts.state IN ('mounting', 'mounted', 'unmounting')
+       AND mounts.status IN ('mounting', 'mounted', 'unmounting')
     RETURNING mounts.id
 ), lost_runtimes AS (
     UPDATE runtime_instances AS runtimes
@@ -85,7 +85,7 @@ WITH target AS (
 -- Immediate fencing revokes credentials and terminalizes mount/runtime
 -- observations. Run/build/workspace authority is recovered by its canonical
 -- expiry and recovery loops; this transition does not imply zero authority.
-SELECT target.id, target.worker_group_id, target.current_epoch, target.state
+SELECT target.id, target.worker_group_id, target.current_epoch, target.status
   FROM target
  WHERE (SELECT count(*) FROM revoked_credentials) >= 0
    AND (SELECT count(*) FROM lost_mounts) >= 0

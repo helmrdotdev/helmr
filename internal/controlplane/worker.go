@@ -376,7 +376,7 @@ func (s *Server) workerCompleteDrain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("complete worker drain"))
 		return
 	}
-	if completed.State != db.WorkerInstanceStateTerminationReady {
+	if completed.Status != db.WorkerInstanceStatusTerminationReady {
 		writeError(w, errors.New("complete worker drain returned a non-terminal worker state"))
 		return
 	}
@@ -447,7 +447,7 @@ func (s *Server) workerStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worker workerActor) {
-	state, err := s.db.GetWorkerInstanceState(r.Context(), db.GetWorkerInstanceStateParams{
+	state, err := s.db.GetWorkerInstanceStatus(r.Context(), db.GetWorkerInstanceStatusParams{
 		ID:                          pgvalue.UUID(worker.WorkerInstanceID),
 		WorkerGroupID:               pgvalue.UUID(worker.WorkerGroupID),
 		ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
@@ -465,7 +465,7 @@ func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worke
 		Run:     workerRoleReadiness(state, state.RunReady, state.RunPausedReason),
 		Runtime: workerRoleReadiness(state, state.RuntimeReady, state.RuntimePausedReason),
 	}
-	status, err := workerPublicStatus(state.State)
+	status, err := workerPublicStatus(state.Status)
 	if err != nil {
 		s.log.Error("project worker status", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
 		writeError(w, errors.New("project worker status"))
@@ -482,11 +482,11 @@ func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worke
 
 func workerPublicStatus(state string) (workerapi.Status, error) {
 	switch state {
-	case db.WorkerInstanceStateActive:
+	case db.WorkerInstanceStatusActive:
 		return workerapi.StatusActive, nil
-	case db.WorkerInstanceStateDraining:
+	case db.WorkerInstanceStatusDraining:
 		return workerapi.StatusDraining, nil
-	case db.WorkerInstanceStateTerminationReady:
+	case db.WorkerInstanceStatusTerminationReady:
 		return workerapi.StatusTerminationReady, nil
 	default:
 		return "", fmt.Errorf("worker instance state %q has no Worker projection", state)
@@ -494,7 +494,7 @@ func workerPublicStatus(state string) (workerapi.Status, error) {
 }
 
 func workerRoleReadiness(
-	state db.GetWorkerInstanceStateRow,
+	state db.GetWorkerInstanceStatusRow,
 	ready bool,
 	pausedReason pgtype.Text,
 ) *workerapi.RoleReadiness {
@@ -505,7 +505,7 @@ func workerRoleReadiness(
 	switch {
 	case pausedReason.Valid:
 		result.PausedReason = pausedReason.String
-	case state.State != string(db.WorkerInstanceStateActive):
+	case state.Status != string(db.WorkerInstanceStatusActive):
 		result.PausedReason = "worker_not_active"
 	case !state.ObservedAt.Valid:
 		result.PausedReason = "observation_missing"
@@ -567,7 +567,7 @@ func (s *Server) activateWorker(ctx context.Context, worker workerActor, capabil
 		if err != nil {
 			return err
 		}
-		if group.State != db.WorkerGroupStateActive && group.State != db.WorkerGroupStatePaused && group.State != db.WorkerGroupStateDraining {
+		if group.Status != db.WorkerGroupStatusActive && group.Status != db.WorkerGroupStatusPaused && group.Status != db.WorkerGroupStatusDraining {
 			return pgx.ErrNoRows
 		}
 		epoch := pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true}
@@ -593,9 +593,9 @@ func (s *Server) activateWorker(ctx context.Context, worker workerActor, capabil
 		if _, err := work.q.UpsertRuntimeIdentity(ctx, runtimeIdentityParams(capabilities.Runtime)); err != nil {
 			return err
 		}
-		switch pool.State {
+		switch pool.Status {
 		case "pending":
-			if group.State == db.WorkerGroupStateDraining {
+			if group.Status == db.WorkerGroupStatusDraining {
 				return pgx.ErrNoRows
 			}
 			for _, shape := range capabilities.CPUShapes {

@@ -36,7 +36,7 @@ func encodeProgramStart(
 	if err != nil {
 		return nil, err
 	}
-	baseVersionID, err := requiredClaimUUIDString("base workspace version ID", attempt.BaseWorkspaceVersionID)
+	baseWorkspaceVersionID, err := requiredClaimUUIDString("base workspace version ID", attempt.BaseWorkspaceVersionID)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +71,7 @@ func encodeProgramStart(
 		DeploymentId:           deploymentID,
 		DeploymentVersion:      deploymentVersion,
 		WorkspaceId:            workspaceID,
-		BaseWorkspaceVersionId: baseVersionID,
+		BaseWorkspaceVersionId: baseWorkspaceVersionID,
 	}
 
 	switch run.EntrypointKind {

@@ -57,7 +57,7 @@ func TestDecideActorRunTerminal(t *testing.T) {
 			name:       "successful progress remains open",
 			authority:  actorTerminalAuthority("open", 2, 4),
 			completion: parsedActorCompletion{kind: actorCompletionSucceeded, terminalInputSequence: 3},
-			want:       actorRunTerminalDecision{runStatus: db.RunStatusSucceeded, actorState: "open", commitCursor: true},
+			want:       actorRunTerminalDecision{runStatus: db.RunStatusSucceeded, actorStatus: "open", commitCursor: true},
 		},
 		{
 			name: "admission backlog without progress fails before close",
@@ -67,7 +67,7 @@ func TestDecideActorRunTerminal(t *testing.T) {
 				return a
 			}(),
 			completion: parsedActorCompletion{kind: actorCompletionSucceeded, terminalInputSequence: 2},
-			want:       actorRunTerminalDecision{runStatus: db.RunStatusSucceeded, actorState: "failed", failureCode: pgvalue.Text("no_progress"), commitCursor: true},
+			want:       actorRunTerminalDecision{runStatus: db.RunStatusSucceeded, actorStatus: "failed", failureCode: pgvalue.Text("no_progress"), commitCursor: true},
 		},
 		{
 			name: "closing at committed boundary closes",
@@ -77,13 +77,13 @@ func TestDecideActorRunTerminal(t *testing.T) {
 				return a
 			}(),
 			completion: parsedActorCompletion{kind: actorCompletionSucceeded, terminalInputSequence: 2},
-			want:       actorRunTerminalDecision{runStatus: db.RunStatusSucceeded, actorState: "closed", commitCursor: true},
+			want:       actorRunTerminalDecision{runStatus: db.RunStatusSucceeded, actorStatus: "closed", commitCursor: true},
 		},
 		{
 			name:       "runtime failure rolls cursor back",
 			authority:  actorTerminalAuthority("open", 2, 4),
 			completion: parsedActorCompletion{kind: actorCompletionFailed, terminalInputSequence: 3},
-			want:       actorRunTerminalDecision{runStatus: db.RunStatusFailed, runReason: pgvalue.Text("actor_failed"), actorState: "failed", failureCode: pgvalue.Text("run_failed")},
+			want:       actorRunTerminalDecision{runStatus: db.RunStatusFailed, runReason: pgvalue.Text("actor_failed"), actorStatus: "failed", failureCode: pgvalue.Text("run_failed")},
 		},
 	}
 	for _, test := range tests {
@@ -117,7 +117,7 @@ func TestActorCompletionRetryUsesPinnedPolicy(t *testing.T) {
 
 func actorTerminalAuthority(state string, start, highWatermark int64) runLeaseClaimAuthority {
 	return runLeaseClaimAuthority{
-		actor: db.Session{State: state},
+		actor: db.Session{Status: state},
 		run: db.Run{
 			SessionInputStartSequence: pgtype.Int8{Int64: start, Valid: true},
 			SessionInputHighWatermark: pgtype.Int8{Int64: highWatermark, Valid: true},
@@ -126,7 +126,7 @@ func actorTerminalAuthority(state string, start, highWatermark int64) runLeaseCl
 }
 
 func TestActorNeedsContinuationHonorsManualCancellation(t *testing.T) {
-	actor := db.Session{State: "open", CommittedInputSequence: 2, NextInputSequence: 5}
+	actor := db.Session{Status: "open", CommittedInputSequence: 2, NextInputSequence: 5}
 	if !actorNeedsContinuation(actor) {
 		t.Fatal("backlogged open Actor should need a continuation")
 	}

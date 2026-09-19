@@ -31,8 +31,8 @@ func TestWorkerRunLeaseClaimAuthorizesTransitionsAndReplays(t *testing.T) {
 	if first.Code != http.StatusOK {
 		t.Fatalf("first claim status = %d body=%s", first.Code, first.Body)
 	}
-	if store.authority.runLease.State != db.RunLeaseStateStarting {
-		t.Fatalf("lease state = %q, want starting", store.authority.runLease.State)
+	if store.authority.runLease.Status != db.RunLeaseStatusStarting {
+		t.Fatalf("lease state = %q, want starting", store.authority.runLease.Status)
 	}
 	if got := countCall(store.calls, "mark_starting"); got != 1 {
 		t.Fatalf("mark starting calls = %d, want 1: %v", got, store.calls)
@@ -42,7 +42,7 @@ func TestWorkerRunLeaseClaimAuthorizesTransitionsAndReplays(t *testing.T) {
 		t.Fatalf("Program projection did not occur after commit: %v", store.calls)
 	}
 
-	store.authority.worker.State = db.WorkerInstanceStateDraining
+	store.authority.worker.Status = db.WorkerInstanceStatusDraining
 	replay := runWorkerLeaseClaimRequest(handler, worker, requestBody)
 	if replay.Code != http.StatusOK {
 		t.Fatalf("replay status = %d body=%s", replay.Code, replay.Body)
@@ -64,8 +64,8 @@ func TestWorkerRunLeaseClaimRemainsReplayableAfterProjectionFailure(t *testing.T
 	if failed.Code != http.StatusInternalServerError {
 		t.Fatalf("failed projection status = %d body=%s", failed.Code, failed.Body)
 	}
-	if store.authority.runLease.State != db.RunLeaseStateStarting {
-		t.Fatalf("lease state after projection failure = %q, want starting", store.authority.runLease.State)
+	if store.authority.runLease.Status != db.RunLeaseStatusStarting {
+		t.Fatalf("lease state after projection failure = %q, want starting", store.authority.runLease.Status)
 	}
 	if got := countCall(store.calls, "mark_starting"); got != 1 {
 		t.Fatalf("mark starting calls = %d, want 1: %v", got, store.calls)

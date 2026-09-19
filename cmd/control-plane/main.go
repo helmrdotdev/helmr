@@ -67,13 +67,13 @@ func main() {
 			}
 			return
 		case "worker-group":
-			if err := runWorkerGroupStateCommand(context.Background(), os.Stdout, os.Args[2:]); err != nil {
+			if err := runWorkerGroupStatusCommand(context.Background(), os.Stdout, os.Args[2:]); err != nil {
 				log.Error("manage worker group state", "error", err)
 				os.Exit(1)
 			}
 			return
 		case "worker-instance":
-			if err := runWorkerInstanceStateCommand(context.Background(), os.Stdout, os.Args[2:]); err != nil {
+			if err := runWorkerInstanceStatusCommand(context.Background(), os.Stdout, os.Args[2:]); err != nil {
 				log.Error("manage worker instance state", "error", err)
 				os.Exit(1)
 			}

@@ -17,11 +17,11 @@ func TestCanStartContinuationIncludesClosingBacklog(t *testing.T) {
 		actor db.Session
 		want  bool
 	}{
-		{name: "open", actor: db.Session{State: "open"}, want: true},
-		{name: "closing", actor: db.Session{State: "closing"}, want: true},
-		{name: "closed", actor: db.Session{State: "closed"}},
-		{name: "manual cancellation", actor: db.Session{State: "open", ManualRunCancelled: true}},
-		{name: "current Run", actor: db.Session{State: "open", CurrentRunID: pgtype.UUID{Valid: true}}},
+		{name: "open", actor: db.Session{Status: "open"}, want: true},
+		{name: "closing", actor: db.Session{Status: "closing"}, want: true},
+		{name: "closed", actor: db.Session{Status: "closed"}},
+		{name: "manual cancellation", actor: db.Session{Status: "open", ManualRunCancelled: true}},
+		{name: "current Run", actor: db.Session{Status: "open", CurrentRunID: pgtype.UUID{Valid: true}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if got := CanStartContinuation(test.actor); got != test.want {

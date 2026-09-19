@@ -121,7 +121,7 @@ func (s *Server) beginRunFinalization(
 		if err != nil {
 			return err
 		}
-		if authority.runLease.State == db.RunLeaseStateFinalizing {
+		if authority.runLease.Status == db.RunLeaseStatusFinalizing {
 			if authority.run.ActiveStartedAt.Valid ||
 				!authority.runLease.FinalizationOperationID.Valid ||
 				authority.runLease.FinalizationOperationID != pgvalue.UUID(parsed.operationID) ||
@@ -137,7 +137,7 @@ func (s *Server) beginRunFinalization(
 			}
 			return nil
 		}
-		if authority.runLease.State != db.RunLeaseStateRunning ||
+		if authority.runLease.Status != db.RunLeaseStatusRunning ||
 			!authority.run.ActiveStartedAt.Valid ||
 			authority.runLease.FinalizationOperationID.Valid ||
 			authority.runLease.FinalizationKind.Valid ||
@@ -183,7 +183,7 @@ func (s *Server) beginRunFinalization(
 			FinalizationStartedAt: startedAt, ID: authority.run.ID, OrgID: authority.run.OrgID,
 			ProjectID: authority.run.ProjectID, EnvironmentID: authority.run.EnvironmentID,
 			WorkspaceID: authority.workspace.ID, AttemptNumber: authority.attempt.Number,
-			RunLeaseID: authority.runLease.ID, ExpectedStateVersion: authority.run.StateVersion,
+			RunLeaseID: authority.runLease.ID, ExpectedRevision: authority.run.Revision,
 		})
 		if err != nil {
 			return staleRunFinalization(err)
@@ -316,8 +316,8 @@ func lockLiveRunFinalizationAuthority(
 			}
 			if authority.actor.ID != root.SessionID ||
 				authority.actor.CurrentRunID != root.ID ||
-				(authority.actor.State != "open" &&
-					authority.actor.State != "closing") {
+				(authority.actor.Status != "open" &&
+					authority.actor.Status != "closing") {
 				return authority, errStaleRunFinalization
 			}
 		}
@@ -405,7 +405,7 @@ func validateRunFinalizationOwner(
 	case "actor":
 		if !locators.SessionID.Valid || authority.run.SessionID != locators.SessionID ||
 			authority.actor.ID != locators.SessionID || authority.actor.CurrentRunID != authority.run.ID ||
-			(authority.actor.State != "open" && authority.actor.State != "closing") ||
+			(authority.actor.Status != "open" && authority.actor.Status != "closing") ||
 			authority.run.ParentRunID.Valid || authority.run.ParentOwnsLifecycle.Valid {
 			return errStaleRunFinalization
 		}
@@ -493,8 +493,8 @@ func validateSameWorkspaceChildFinalization(authority runLeaseClaimAuthority) er
 		authority.parentAttempt.TerminalAt.Valid ||
 		!authority.parentAttempt.EntrypointEnteredAt.Valid ||
 		wait.Kind != db.WaitKindChild ||
-		wait.ConditionState != db.WaitStatePending ||
-		wait.SuspensionState != db.RunWaitStateParked ||
+		wait.ConditionStatus != db.WaitStatusPending ||
+		wait.SuspensionStatus != db.RunWaitStatusParked ||
 		wait.RunID != authority.parentRun.ID ||
 		wait.WorkspaceID != authority.workspace.ID ||
 		wait.ChildRunID != authority.run.ID ||

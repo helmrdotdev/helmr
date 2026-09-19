@@ -166,7 +166,7 @@ func validTaskWorkspaceRollback(
 	receipt := capture.Receipt
 	baseWorkspaceVersionID := receipt.Fence.BaseWorkspaceVersionID
 	target := workspace.ResetTarget{
-		Kind: workspace.ResetTargetEmpty, BaseVersionID: baseWorkspaceVersionID,
+		Kind: workspace.ResetTargetEmpty, BaseWorkspaceVersionID: baseWorkspaceVersionID,
 		Tree: workspace.TreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest},
 	}
 	rollback := &workerapi.TaskWorkspaceRollback{

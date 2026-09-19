@@ -12,31 +12,31 @@ import (
 func TestProjectSessionStatusCollapsesInternalStates(t *testing.T) {
 	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
 	actorID := uuid.NewV7()
-	for state, want := range map[string]api.SessionStatus{
+	for status, want := range map[string]api.SessionStatus{
 		"open":      api.SessionStatusOpen,
 		"closing":   api.SessionStatusOpen,
 		"closed":    api.SessionStatusClosed,
 		"cancelled": api.SessionStatusCancelled,
 	} {
 		record := sessionReadRecord{
-			id: pgvalue.UUID(actorID), state: state,
+			id: pgvalue.UUID(actorID), status: status,
 			createdAt: pgvalue.Timestamptz(now), updatedAt: pgvalue.Timestamptz(now),
 		}
-		if state == "cancelled" {
+		if status == "cancelled" {
 			record.failure = []byte(`{"code":"cancelled","message":"Session was cancelled","details":{}}`)
 		}
 		got, err := projectSessionStatus(record)
 		if err != nil {
-			t.Fatalf("%s: %v", state, err)
+			t.Fatalf("%s: %v", status, err)
 		}
 		if got.status != want {
-			t.Fatalf("%s: status = %q, want %q", state, got.status, want)
+			t.Fatalf("%s: status = %q, want %q", status, got.status, want)
 		}
 	}
 
 	runID := uuid.NewV7()
 	failed, err := projectSessionStatus(sessionReadRecord{
-		id: pgvalue.UUID(actorID), state: "failed",
+		id: pgvalue.UUID(actorID), status: "failed",
 		createdAt: pgvalue.Timestamptz(now), updatedAt: pgvalue.Timestamptz(now),
 		failure:      []byte(`{"code":"future_session_failure","message":"Session run failed","details":{"run_id":"` + runID.String() + `"}}`),
 		failureRunID: pgvalue.UUID(runID),

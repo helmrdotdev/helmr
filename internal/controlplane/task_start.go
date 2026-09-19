@@ -97,7 +97,7 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 			if err != nil {
 				return err
 			}
-			if acquired.Claim.State == "completed" {
+			if acquired.Claim.Status == "completed" {
 				replayed, err := taskStartResultFromReceipt(acquired.Claim.Receipt)
 				if err != nil {
 					return err
@@ -106,7 +106,7 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 				result = replayed
 				return nil
 			}
-			if acquired.Claim.State != "pending" {
+			if acquired.Claim.Status != "pending" {
 				return errTaskStartReceiptInvalid
 			}
 			claim = &acquired.Claim
@@ -160,7 +160,7 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 			return fmt.Errorf("lock task start workspace secrets: %w", err)
 		}
 		for _, binding := range bindings {
-			if binding.SecretState != "active" || !binding.CurrentVersionID.Valid {
+			if binding.SecretStatus != "active" || !binding.CurrentVersionID.Valid {
 				return errTaskSecretUnavailable
 			}
 		}
@@ -169,7 +169,7 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 		}
 		if workspace.OrgID != pgvalue.UUID(normalized.OrgID) ||
 			workspace.ProjectID != pgvalue.UUID(normalized.ProjectID) ||
-			workspace.State != db.WorkspaceStateActive ||
+			workspace.Status != db.WorkspaceStatusActive ||
 			(workspace.DesiredState != db.WorkspaceDesiredStateActive &&
 				workspace.DesiredState != db.WorkspaceDesiredStateStopped) ||
 			workspace.DirtyState != db.WorkspaceDirtyStateClean ||
@@ -226,7 +226,7 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 		}
 		if _, err := work.q.ReserveWorkspaceForRun(ctx, db.ReserveWorkspaceForRunParams{
 			RunID: run.ID, EnvironmentID: run.EnvironmentID, ID: workspace.ID,
-			ExpectedStateVersion:  workspace.StateVersion,
+			ExpectedRevision:      workspace.Revision,
 			ExpectedHeadVersionID: workspace.HeadVersionID,
 		}); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {

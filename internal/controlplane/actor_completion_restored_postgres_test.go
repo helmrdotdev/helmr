@@ -26,14 +26,14 @@ func TestRestoredActorCompletionAdvancesFromPrivateLeaseBase(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var runStatus, leaseState, attemptOutcome, workspaceLeaseState string
+	var runStatus, leaseStatus, attemptOutcome, workspaceLeaseStatus string
 	var headVersionID, mountVersionID, publishedParentID uuid.UUID
 	var committedInput, terminalInput int64
 	if err := fixture.pool.QueryRow(t.Context(), `
 SELECT runs.status,
-       run_leases.state,
+       run_leases.status,
        run_attempts.terminal_outcome,
-       workspace_leases.state,
+       workspace_leases.status,
        workspaces.head_version_id,
        workspace_mounts.materialized_version_id,
        published.parent_version_id,
@@ -48,15 +48,15 @@ SELECT runs.status,
   JOIN workspace_mounts ON workspace_mounts.id = workspace_leases.workspace_mount_id
   JOIN workspace_versions AS published ON published.id = workspaces.head_version_id
  WHERE runs.id = $1`, fixture.runID, fixture.leaseID).Scan(
-		&runStatus, &leaseState, &attemptOutcome, &workspaceLeaseState,
+		&runStatus, &leaseStatus, &attemptOutcome, &workspaceLeaseStatus,
 		&headVersionID, &mountVersionID, &publishedParentID,
 		&committedInput, &terminalInput,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if runStatus != "succeeded" || leaseState != "completed" || attemptOutcome != "succeeded" || workspaceLeaseState != "released" {
+	if runStatus != "succeeded" || leaseStatus != "completed" || attemptOutcome != "succeeded" || workspaceLeaseStatus != "released" {
 		t.Fatalf("terminal state = run:%s lease:%s attempt:%s workspace lease:%s",
-			runStatus, leaseState, attemptOutcome, workspaceLeaseState)
+			runStatus, leaseStatus, attemptOutcome, workspaceLeaseStatus)
 	}
 	if headVersionID == fixture.headVersionID || headVersionID == fixture.privateVersionID ||
 		mountVersionID != headVersionID || publishedParentID != fixture.privateVersionID {
@@ -78,15 +78,15 @@ func TestRestoredActorFailureRollsMountBackToDurableHead(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var runStatus, leaseState, attemptOutcome, workspaceLeaseState, actorState string
+	var runStatus, leaseStatus, attemptOutcome, workspaceLeaseStatus, actorStatus string
 	var headVersionID, mountVersionID uuid.UUID
 	var committedInput int64
 	if err := fixture.pool.QueryRow(t.Context(), `
 SELECT runs.status,
-       run_leases.state,
+       run_leases.status,
        run_attempts.terminal_outcome,
-       workspace_leases.state,
-       sessions.state,
+       workspace_leases.status,
+       sessions.status,
        workspaces.head_version_id,
        workspace_mounts.materialized_version_id,
        sessions.committed_input_sequence
@@ -98,15 +98,15 @@ SELECT runs.status,
   JOIN workspace_leases ON workspace_leases.owner_run_lease_id = run_leases.id
   JOIN workspace_mounts ON workspace_mounts.id = workspace_leases.workspace_mount_id
  WHERE runs.id = $1`, fixture.runID, fixture.leaseID).Scan(
-		&runStatus, &leaseState, &attemptOutcome, &workspaceLeaseState, &actorState,
+		&runStatus, &leaseStatus, &attemptOutcome, &workspaceLeaseStatus, &actorStatus,
 		&headVersionID, &mountVersionID, &committedInput,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if runStatus != "failed" || leaseState != "failed" || attemptOutcome != "failed" ||
-		workspaceLeaseState != "released" || actorState != "failed" {
+	if runStatus != "failed" || leaseStatus != "failed" || attemptOutcome != "failed" ||
+		workspaceLeaseStatus != "released" || actorStatus != "failed" {
 		t.Fatalf("terminal state = run:%s lease:%s attempt:%s workspace lease:%s Actor:%s",
-			runStatus, leaseState, attemptOutcome, workspaceLeaseState, actorState)
+			runStatus, leaseStatus, attemptOutcome, workspaceLeaseStatus, actorStatus)
 	}
 	if headVersionID != fixture.headVersionID || mountVersionID != fixture.headVersionID {
 		t.Fatalf("rollback frontier = head:%s mount:%s, want B:%s", headVersionID, mountVersionID, fixture.headVersionID)
@@ -217,7 +217,7 @@ SELECT $2, org_id, worker_group_id, project_id, environment_id, region_id,
 INSERT INTO workspace_mounts (
     id, org_id, worker_group_id, project_id, environment_id, region_id,
     worker_instance_id, worker_epoch, workspace_id, materialized_version_id,
-    runtime_instance_id, state, fencing_generation, mounted_at,
+    runtime_instance_id, status, fencing_generation, mounted_at,
     unmounted_at, terminal_at, terminal_reason_code
 )
 SELECT $2, org_id, worker_group_id, project_id, environment_id, region_id,
@@ -233,7 +233,7 @@ INSERT INTO run_leases (
     requested_cpu_millis, requested_memory_bytes,
     requested_guest_ephemeral_disk_bytes, requested_execution_slots,
     trace_id, span_id, parent_span_id, traceparent,
-    state, created_at, start_deadline_at, claimed_at, started_at, expires_at,
+    status, created_at, start_deadline_at, claimed_at, started_at, expires_at,
     checkpointed_at, terminal_at, terminal_reason_code
 )
 SELECT $2, org_id, project_id, environment_id, run_id, workspace_id, region_id,
@@ -251,7 +251,7 @@ SELECT $2, org_id, project_id, environment_id, run_id, workspace_id, region_id,
 INSERT INTO workspace_leases (
     id, org_id, worker_group_id, project_id, environment_id, region_id,
     worker_instance_id, worker_epoch, runtime_instance_id, workspace_id,
-    workspace_mount_id, state, owner_run_lease_id, base_version_id,
+    workspace_mount_id, status, owner_run_lease_id, base_workspace_version_id,
     ownership_generation, writer_generation, mount_fencing_generation,
     fencing_token_hash, acquired_at, renewed_at, expires_at,
     released_at, terminal_at
@@ -277,7 +277,7 @@ INSERT INTO artifacts (
 INSERT INTO workspace_versions (
     id, environment_id, workspace_id, parent_version_id,
     artifact_id, content_digest, size_bytes, entry_count,
-    state, source_workspace_lease_id, ownership_generation, writer_generation
+    status, source_workspace_lease_id, ownership_generation, writer_generation
 ) VALUES (
     $1, $2, $3, $4, $5, $6, 1, 1,
     'private', $7, $8, 1
@@ -322,7 +322,7 @@ INSERT INTO run_leases (
     worker_epoch, runtime_instance_id, runtime_identity_id,
     requested_cpu_millis, requested_memory_bytes,
     requested_guest_ephemeral_disk_bytes, requested_execution_slots,
-    state, created_at, start_deadline_at, claimed_at, started_at, expires_at,
+    status, created_at, start_deadline_at, claimed_at, started_at, expires_at,
     terminal_at, terminal_reason_code
 )
 SELECT $2, org_id, project_id, environment_id, $3, workspace_id, region_id,
@@ -337,7 +337,7 @@ SELECT $2, org_id, project_id, environment_id, $3, workspace_id, region_id,
 INSERT INTO workspace_leases (
     id, org_id, worker_group_id, project_id, environment_id, region_id,
     worker_instance_id, worker_epoch, runtime_instance_id, workspace_id,
-    workspace_mount_id, state, owner_run_lease_id, base_version_id,
+    workspace_mount_id, status, owner_run_lease_id, base_workspace_version_id,
     ownership_generation, writer_generation, mount_fencing_generation,
     fencing_token_hash, acquired_at, renewed_at, expires_at,
     released_at, terminal_at
@@ -363,7 +363,7 @@ INSERT INTO artifacts (
 INSERT INTO workspace_versions (
     id, environment_id, workspace_id, parent_version_id,
     artifact_id, content_digest, size_bytes, entry_count,
-    state, source_workspace_lease_id, ownership_generation, writer_generation
+    status, source_workspace_lease_id, ownership_generation, writer_generation
 ) VALUES (
     $1, $2, $3, $4, $5, $6, 1, 1,
     'private', $7, $8, $9
@@ -374,7 +374,7 @@ INSERT INTO run_waits (
     id, environment_id, run_id, workspace_id, kind,
     child_run_id, child_target_declared_id,
     child_claim_id, child_request,
-    condition_state, suspension_state, expected_run_state_version,
+    condition_status, suspension_status, expected_run_revision,
     attempt_number, prior_run_lease_id, resume_attach_id
 ) VALUES (
     $1, $2, $3, $4, 'child', $5, 'test-task', $6,
@@ -390,19 +390,19 @@ INSERT INTO run_checkpoints (
     private_workspace_version_id, actor_speculative_input_sequence,
     runtime_config_artifact_id, vm_state_artifact_id,
     memory_artifact_id, scratch_disk_artifact_id,
-    state, restore_manifest,
+    status, restore_manifest,
     ready_request_fingerprint, ready_at
 ) VALUES (
     $1, $2, 1, $3, $4, $5, $6, $7, $8,
-    2, $9, $10, $11, $12, 'ready', '{"kind":"suspend"}'::jsonb, 'restored-actor-ready', transaction_timestamp()
+    2, $9, $10, $11, $12, 'ready', '{"kind":"suspend"}'::jsonb, 'sha256:88d630ac2ad7eff567cd6479aa74c62d33da924ed99daaee49779cfaf02dbdd1', transaction_timestamp()
 )`, checkpointID, work.RunID, waitID, sourceLeaseID, sourceWorkspaceLeaseID,
 		workspaceID, headVersionID, checkpointVersionID,
 		checkpointArtifacts.RuntimeConfig, checkpointArtifacts.VMState, checkpointArtifacts.Memory, checkpointArtifacts.ScratchDisk)
 	dbtest.MustExec(t, ctx, tx, `
 UPDATE run_waits
-   SET condition_state = 'completed', condition_result = '{}'::jsonb,
+   SET condition_status = 'completed', condition_result = '{}'::jsonb,
        condition_terminal_at = transaction_timestamp(),
-       suspension_state = 'released', suspension_terminal_at = transaction_timestamp(),
+       suspension_status = 'released', suspension_terminal_at = transaction_timestamp(),
        suspend_checkpoint_id = $2,
        checkpoint_request_version = 1, checkpoint_ack_version = 1,
        resume_request_version = 1, resume_ack_version = 1,
@@ -425,18 +425,18 @@ UPDATE run_attempts
  WHERE run_id = $1 AND number = 1`, work.RunID)
 	dbtest.MustExec(t, ctx, tx, `
 UPDATE run_leases
-   SET state = 'finalizing',
+   SET status = 'finalizing',
        started_at = COALESCE(started_at, claimed_at, created_at),
        expires_at = $2,
        finalization_operation_id = $3,
        finalization_kind = $4,
        finalization_started_at = transaction_timestamp(),
-       finalization_request_fingerprint = 'pending'
+       finalization_request_fingerprint = 'sha256:62a2fed3d6e08c44835fce71f02210b1ddabfb066e39edf1e6c261988f824dd3'
  WHERE id = $1`, work.LeaseID, expiresAt, operationID,
 		map[bool]string{false: string(workerapi.RunFinalizationCapture), true: string(workerapi.RunFinalizationReset)}[rollback])
 	dbtest.MustExec(t, ctx, tx, `
 UPDATE workspace_leases
-   SET base_version_id = $2, expires_at = $3
+   SET base_workspace_version_id = $2, expires_at = $3
  WHERE id = $1`, workspaceLeaseID, privateVersionID, expiresAt)
 	dbtest.MustExec(t, ctx, tx, `
 UPDATE workspace_mounts SET materialized_version_id = $2 WHERE id = $1`, mountID, privateVersionID)
@@ -497,7 +497,7 @@ UPDATE workspace_mounts SET materialized_version_id = $2 WHERE id = $1`, mountID
 		rolledBack.Target.BaseWorkspaceVersionID = headVersionID.String()
 		rolledBack.Receipt.RequestFingerprint = ""
 		target := workspace.ResetTarget{
-			Kind: workspace.ResetTargetEmpty, BaseVersionID: headVersionID.String(),
+			Kind: workspace.ResetTargetEmpty, BaseWorkspaceVersionID: headVersionID.String(),
 			Tree: workspace.TreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest},
 		}
 		fingerprint, err := workspace.FinalizationFingerprint(

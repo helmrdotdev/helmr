@@ -43,25 +43,25 @@ SELECT *
 
 -- name: CompleteIdempotencyClaim :one
 UPDATE idempotency_claims
-   SET state = 'completed',
+   SET status = 'completed',
        receipt = sqlc.arg(receipt),
        completed_at = now()
  WHERE environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id)
    AND request_fingerprint = sqlc.arg(request_fingerprint)
-   AND state = 'pending'
+   AND status = 'pending'
    AND retired_at IS NULL
 RETURNING *;
 
 -- name: FailIdempotencyClaim :one
 UPDATE idempotency_claims
-   SET state = 'failed',
+   SET status = 'failed',
        receipt = sqlc.arg(receipt),
        completed_at = now()
  WHERE environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id)
    AND request_fingerprint = sqlc.arg(request_fingerprint)
-   AND state = 'pending'
+   AND status = 'pending'
    AND retired_at IS NULL
 RETURNING *;
 

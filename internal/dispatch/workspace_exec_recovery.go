@@ -13,10 +13,10 @@ import (
 )
 
 type RecoverableWorkspaceExecCandidate struct {
-	OrgID                pgtype.UUID
-	ProcessID            pgtype.UUID
-	WorkspaceID          pgtype.UUID
-	ExpectedStateVersion int64
+	OrgID            pgtype.UUID
+	ProcessID        pgtype.UUID
+	WorkspaceID      pgtype.UUID
+	ExpectedRevision int64
 }
 
 type workspaceExecRecoveryKind uint8
@@ -55,10 +55,10 @@ func (d *Authority) RecoverWorkspaceExec(
 	authority, err := q.LockWorkspaceExecRecoveryAuthority(
 		ctx,
 		db.LockWorkspaceExecRecoveryAuthorityParams{
-			OrgID:                candidate.OrgID,
-			ProcessID:            candidate.ProcessID,
-			WorkspaceID:          candidate.WorkspaceID,
-			ExpectedStateVersion: candidate.ExpectedStateVersion,
+			OrgID:            candidate.OrgID,
+			ProcessID:        candidate.ProcessID,
+			WorkspaceID:      candidate.WorkspaceID,
+			ExpectedRevision: candidate.ExpectedRevision,
 		},
 	)
 	if err != nil {
@@ -76,10 +76,10 @@ func (d *Authority) RecoverWorkspaceExec(
 	}
 
 	reasonCode := "workspace_exec_lease_expired"
-	if authority.WorkspaceMount.State == db.WorkspaceMountStateLost {
+	if authority.WorkspaceMount.Status == db.WorkspaceMountStatusLost {
 		reasonCode = "workspace_exec_worker_lost"
 	} else {
-		if authority.WorkspaceLease.State == db.WorkspaceLeaseStateFenced {
+		if authority.WorkspaceLease.Status == db.WorkspaceLeaseStatusFenced {
 			reasonCode = "workspace_exec_secret_revoked"
 		}
 		if _, err := q.LoseWorkspaceExecMount(
@@ -113,7 +113,7 @@ func (d *Authority) RecoverWorkspaceExec(
 			q,
 			authority,
 			claim,
-			db.WorkspaceProcessStateExited,
+			db.WorkspaceProcessStatusExited,
 			authority.WorkspaceMount.StagedVersionID,
 			authority.WorkspaceMount.FinalizationReasonCode,
 			authority.WorkspaceMount.FinalizationError,
@@ -126,7 +126,7 @@ func (d *Authority) RecoverWorkspaceExec(
 			q,
 			authority,
 			claim,
-			db.WorkspaceProcessStateFailed,
+			db.WorkspaceProcessStatusFailed,
 			pgtype.UUID{},
 			authority.WorkspaceMount.FinalizationReasonCode,
 			authority.WorkspaceMount.FinalizationError,
@@ -163,7 +163,7 @@ func classifyWorkspaceExecRecovery(
 	authority db.LockWorkspaceExecRecoveryAuthorityRow,
 	secretsValid bool,
 ) workspaceExecRecoveryKind {
-	if authority.WorkspaceProcess.State != db.WorkspaceProcessStateExitRequested ||
+	if authority.WorkspaceProcess.Status != db.WorkspaceProcessStatusExitRequested ||
 		!authority.WorkspaceMount.FinalizationKind.Valid ||
 		!authority.WorkspaceMount.FinalizationReasonCode.Valid ||
 		authority.WorkspaceMount.FinalizationReasonCode.String == "" {
@@ -205,7 +205,7 @@ func lockWorkspaceExecRecoverySecrets(
 		return false, errors.New("workspace secret placements exceed their bound")
 	}
 	for _, row := range rows {
-		if row.Secret.State != "active" ||
+		if row.Secret.Status != "active" ||
 			!row.ResolutionID.Valid ||
 			!row.ResolutionProcessID.Valid ||
 			row.ResolutionProcessID != candidate.ProcessID ||
@@ -224,7 +224,7 @@ func finalizeRecoveredWorkspaceExec(
 	q *db.Queries,
 	authority db.LockWorkspaceExecRecoveryAuthorityRow,
 	claim db.IdempotencyClaim,
-	finalState db.WorkspaceProcessState,
+	finalState db.WorkspaceProcessStatus,
 	versionID pgtype.UUID,
 	reasonCode pgtype.Text,
 	errorJSON []byte,
@@ -232,7 +232,7 @@ func finalizeRecoveredWorkspaceExec(
 	mount := authority.WorkspaceMount
 	process := authority.WorkspaceProcess
 	lease := authority.WorkspaceLease
-	if finalState == db.WorkspaceProcessStateExited {
+	if finalState == db.WorkspaceProcessStatusExited {
 		if _, err := q.CommitStagedWorkspaceExecVersion(
 			ctx,
 			db.CommitStagedWorkspaceExecVersionParams{
@@ -246,12 +246,12 @@ func finalizeRecoveredWorkspaceExec(
 	if _, err := q.FinalizeWorkspaceExecWorkspace(
 		ctx,
 		db.FinalizeWorkspaceExecWorkspaceParams{
-			VersionID:           versionID,
-			RestoreDesiredState: process.RestoreDesiredState,
-			WorkspaceID:         process.WorkspaceID,
-			BaseVersionID:       process.BaseVersionID,
-			OwnershipGeneration: lease.OwnershipGeneration,
-			WriterGeneration:    lease.WriterGeneration,
+			VersionID:              versionID,
+			RestoreDesiredState:    process.RestoreDesiredState,
+			WorkspaceID:            process.WorkspaceID,
+			BaseWorkspaceVersionID: process.BaseWorkspaceVersionID,
+			OwnershipGeneration:    lease.OwnershipGeneration,
+			WriterGeneration:       lease.WriterGeneration,
 		},
 	); err != nil {
 		return classifyWorkspaceExecRecoveryError(err)
@@ -259,7 +259,7 @@ func finalizeRecoveredWorkspaceExec(
 	finalized, err := q.FinalizeWorkspaceExecProcess(
 		ctx,
 		db.FinalizeWorkspaceExecProcessParams{
-			State:            finalState,
+			Status:           finalState,
 			ReasonCode:       reasonCode,
 			Error:            errorJSON,
 			ProcessID:        process.ID,
@@ -269,8 +269,8 @@ func finalizeRecoveredWorkspaceExec(
 	if err != nil {
 		return classifyWorkspaceExecRecoveryError(err)
 	}
-	switch lease.State {
-	case db.WorkspaceLeaseStateActive, db.WorkspaceLeaseStateReleasing:
+	switch lease.Status {
+	case db.WorkspaceLeaseStatusActive, db.WorkspaceLeaseStatusReleasing:
 		if _, err := q.ReleaseWorkspaceExecLease(
 			ctx,
 			db.ReleaseWorkspaceExecLeaseParams{
@@ -280,7 +280,7 @@ func finalizeRecoveredWorkspaceExec(
 		); err != nil {
 			return classifyWorkspaceExecRecoveryError(err)
 		}
-	case db.WorkspaceLeaseStateExpired, db.WorkspaceLeaseStateFenced:
+	case db.WorkspaceLeaseStatusExpired, db.WorkspaceLeaseStatusFenced:
 	default:
 		return ErrCandidateChanged
 	}
@@ -289,7 +289,7 @@ func finalizeRecoveredWorkspaceExec(
 		q,
 		claim,
 		finalized,
-		finalState == db.WorkspaceProcessStateExited,
+		finalState == db.WorkspaceProcessStatusExited,
 	)
 }
 
@@ -323,7 +323,7 @@ func failRevokedRecoveredWorkspaceExec(
 		q,
 		authority,
 		claim,
-		db.WorkspaceProcessStateFailed,
+		db.WorkspaceProcessStatusFailed,
 		pgtype.UUID{},
 		pgvalue.Text("workspace_exec_secret_revoked"),
 		errorJSON,
@@ -355,10 +355,10 @@ func failUncertainWorkspaceExec(
 	if _, err := q.MarkWorkspaceExecRecoveryRequired(
 		ctx,
 		db.MarkWorkspaceExecRecoveryRequiredParams{
-			WorkspaceID:         authority.WorkspaceProcess.WorkspaceID,
-			BaseVersionID:       authority.WorkspaceProcess.BaseVersionID,
-			OwnershipGeneration: authority.WorkspaceLease.OwnershipGeneration,
-			WriterGeneration:    authority.WorkspaceLease.WriterGeneration,
+			WorkspaceID:            authority.WorkspaceProcess.WorkspaceID,
+			BaseWorkspaceVersionID: authority.WorkspaceProcess.BaseWorkspaceVersionID,
+			OwnershipGeneration:    authority.WorkspaceLease.OwnershipGeneration,
+			WriterGeneration:       authority.WorkspaceLease.WriterGeneration,
 		},
 	); err != nil {
 		return classifyWorkspaceExecRecoveryError(err)
@@ -379,8 +379,8 @@ func failUncertainWorkspaceExec(
 	if err != nil {
 		return classifyWorkspaceExecRecoveryError(err)
 	}
-	switch authority.WorkspaceLease.State {
-	case db.WorkspaceLeaseStateActive, db.WorkspaceLeaseStateReleasing:
+	switch authority.WorkspaceLease.Status {
+	case db.WorkspaceLeaseStatusActive, db.WorkspaceLeaseStatusReleasing:
 		if _, err := q.ExpireWorkspaceExecLease(
 			ctx,
 			db.ExpireWorkspaceExecLeaseParams{
@@ -391,7 +391,7 @@ func failUncertainWorkspaceExec(
 		); err != nil {
 			return classifyWorkspaceExecRecoveryError(err)
 		}
-	case db.WorkspaceLeaseStateExpired, db.WorkspaceLeaseStateFenced:
+	case db.WorkspaceLeaseStatusExpired, db.WorkspaceLeaseStatusFenced:
 	default:
 		return ErrCandidateChanged
 	}

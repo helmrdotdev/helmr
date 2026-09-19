@@ -20,7 +20,7 @@ func TestConfirmWorkerInstanceProviderAbsentWaitsForLiveLeaseThenReclaims(t *tes
 	queries := New(fixture.Pool)
 	work := fixture.AddRunLease(t, "assigned", time.Now().UTC())
 
-	var runtimeID, mountID, baseVersionID uuid.UUID
+	var runtimeID, mountID, baseWorkspaceVersionID uuid.UUID
 	if err := fixture.Pool.QueryRow(ctx, `
 		SELECT run_leases.runtime_instance_id, workspace_mounts.id,
 		       runs.base_workspace_version_id
@@ -29,7 +29,7 @@ func TestConfirmWorkerInstanceProviderAbsentWaitsForLiveLeaseThenReclaims(t *tes
 		  JOIN workspace_mounts
 		    ON workspace_mounts.runtime_instance_id = run_leases.runtime_instance_id
 		 WHERE run_leases.id = $1
-	`, work.LeaseID).Scan(&runtimeID, &mountID, &baseVersionID); err != nil {
+	`, work.LeaseID).Scan(&runtimeID, &mountID, &baseWorkspaceVersionID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fixture.Pool.Exec(ctx, `
@@ -38,14 +38,14 @@ func TestConfirmWorkerInstanceProviderAbsentWaitsForLiveLeaseThenReclaims(t *tes
 		       reserved_workspace_version_id = $3,
 		       reservation_expires_at = now() + interval '5 minutes'
 		 WHERE id = $1
-	`, runtimeID, work.RunID, baseVersionID); err != nil {
+	`, runtimeID, work.RunID, baseWorkspaceVersionID); err != nil {
 		t.Fatal(err)
 	}
 	workSet, err := queries.ListCapacityWorkerInstances(ctx, ListCapacityWorkerInstancesParams{
 		WorkerGroupID:         pgvalue.UUID(runtest.WorkerGroupID),
 		HasUnreclaimedRuntime: true,
 		ResourceIds:           []string{},
-		States:                []string{},
+		Statuses:              []string{},
 		RowLimit:              10,
 	})
 	if err != nil {
@@ -67,23 +67,23 @@ func TestConfirmWorkerInstanceProviderAbsentWaitsForLiveLeaseThenReclaims(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.State != WorkerInstanceStateLost || first.ClaimVersion != 2 || !first.LostAt.Valid {
+	if first.Status != WorkerInstanceStatusLost || first.ClaimVersion != 2 || !first.LostAt.Valid {
 		t.Fatalf("first provider absence receipt = %+v", first)
 	}
-	var runtimeState, mountState string
+	var runtimeState, mountStatus string
 	var reclaimedAt pgtype.Timestamptz
 	var reservedRunID pgtype.UUID
 	if err := fixture.Pool.QueryRow(ctx, `
 		SELECT runtime_instances.observed_state, runtime_instances.reclaimed_at,
-		       workspace_mounts.state, runtime_instances.reserved_run_id
+		       workspace_mounts.status, runtime_instances.reserved_run_id
 		  FROM runtime_instances
 		  JOIN workspace_mounts ON workspace_mounts.id = $2
 		 WHERE runtime_instances.id = $1
-	`, runtimeID, mountID).Scan(&runtimeState, &reclaimedAt, &mountState, &reservedRunID); err != nil {
+	`, runtimeID, mountID).Scan(&runtimeState, &reclaimedAt, &mountStatus, &reservedRunID); err != nil {
 		t.Fatal(err)
 	}
-	if runtimeState != "lost" || reclaimedAt.Valid || mountState != "lost" || reservedRunID.Valid {
-		t.Fatalf("live-lease cleanup = runtime %q reclaimed=%v mount=%q reserved=%v", runtimeState, reclaimedAt.Valid, mountState, reservedRunID.Valid)
+	if runtimeState != "lost" || reclaimedAt.Valid || mountStatus != "lost" || reservedRunID.Valid {
+		t.Fatalf("live-lease cleanup = runtime %q reclaimed=%v mount=%q reserved=%v", runtimeState, reclaimedAt.Valid, mountStatus, reservedRunID.Valid)
 	}
 	var credentialRevoked bool
 	if err := fixture.Pool.QueryRow(ctx, `
@@ -126,7 +126,7 @@ func TestConfirmWorkerInstanceProviderAbsentWaitsForLiveLeaseThenReclaims(t *tes
 
 	if _, err := fixture.Pool.Exec(ctx, `
 		UPDATE run_leases
-		   SET state = 'lost', terminal_at = now(),
+		   SET status = 'lost', terminal_at = now(),
 		       terminal_reason_code = 'worker_lost', updated_at = now()
 		 WHERE id = $1
 	`, work.LeaseID); err != nil {
@@ -166,7 +166,7 @@ func TestConfirmWorkerInstanceProviderAbsentWaitsForLiveLeaseThenReclaims(t *tes
 		WorkerGroupID:         pgvalue.UUID(runtest.WorkerGroupID),
 		HasUnreclaimedRuntime: true,
 		ResourceIds:           []string{},
-		States:                []string{},
+		Statuses:              []string{},
 		RowLimit:              10,
 	})
 	if err != nil {
@@ -186,7 +186,7 @@ func TestConfirmWorkerInstanceProviderAbsentRejectsTerminalReadyAndUnknownWorker
 	fixture := runtest.New(t)
 	if _, err := fixture.Pool.Exec(ctx, `
 		UPDATE worker_instances
-		   SET state = 'termination_ready', draining_at = now(), termination_ready_at = now()
+		   SET status = 'termination_ready', draining_at = now(), termination_ready_at = now()
 		 WHERE id = $1
 	`, fixture.WorkerID); err != nil {
 		t.Fatal(err)
@@ -215,7 +215,7 @@ func TestConfirmWorkerInstanceProviderAbsentPreservesFailedRuntimeDiagnostics(t 
 	}
 	if _, err := fixture.Pool.Exec(ctx, `
 		UPDATE run_leases
-		   SET state = 'lost', terminal_at = now(), terminal_reason_code = 'worker_lost'
+		   SET status = 'lost', terminal_at = now(), terminal_reason_code = 'worker_lost'
 		 WHERE id = $1
 	`, work.LeaseID); err != nil {
 		t.Fatal(err)
@@ -262,7 +262,7 @@ func TestConfirmWorkerInstanceProviderAbsentPreservesLostRuntimeDiagnostics(t *t
 	}
 	if _, err := fixture.Pool.Exec(ctx, `
 		UPDATE run_leases
-		   SET state = 'lost', terminal_at = now(), terminal_reason_code = 'worker_lost'
+		   SET status = 'lost', terminal_at = now(), terminal_reason_code = 'worker_lost'
 		 WHERE id = $1
 	`, work.LeaseID); err != nil {
 		t.Fatal(err)
@@ -338,7 +338,7 @@ func TestConfirmWorkerInstanceProviderAbsentSeesLeaseGrantedBeforeWorkerLockRele
 			worker_epoch, runtime_instance_id, runtime_identity_id,
 			requested_cpu_millis, requested_memory_bytes,
 			requested_guest_ephemeral_disk_bytes, requested_execution_slots,
-			state, created_at, start_deadline_at, expires_at
+			status, created_at, start_deadline_at, expires_at
 		)
 		SELECT $1, runs.org_id, runs.project_id, runs.environment_id, runs.id,
 		       runs.workspace_id, $2, 1, 1, $3, runtime_instances.worker_instance_id,
@@ -394,7 +394,7 @@ func TestConfirmWorkerInstanceProviderAbsentSeesLeaseGrantedBeforeWorkerLockRele
 		if got.err != nil {
 			t.Fatal(got.err)
 		}
-		if got.row.State != WorkerInstanceStateLost {
+		if got.row.Status != WorkerInstanceStatusLost {
 			t.Fatalf("provider absence receipt = %+v", got.row)
 		}
 	case <-time.After(5 * time.Second):
@@ -411,7 +411,7 @@ func TestConfirmWorkerInstanceProviderAbsentSeesLeaseGrantedBeforeWorkerLockRele
 	}
 	if _, err := fixture.Pool.Exec(ctx, `
 		UPDATE run_leases
-		   SET state = 'lost', terminal_at = now(), terminal_reason_code = 'worker_lost'
+		   SET status = 'lost', terminal_at = now(), terminal_reason_code = 'worker_lost'
 		 WHERE id = $1
 	`, work.LeaseID); err != nil {
 		t.Fatal(err)

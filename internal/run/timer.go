@@ -97,7 +97,7 @@ func (r *TimerWaitReconciler) reconcileOne(
 			return false, err
 		}
 		if !actor.CurrentRunID.Valid || actor.CurrentRunID != locator.ID ||
-			(actor.State != "open" && actor.State != "closing") {
+			(actor.Status != "open" && actor.Status != "closing") {
 			return false, tx.Commit(ctx)
 		}
 	} else if locator.ParentRunID.Valid && locator.ParentOwnsLifecycle.Valid &&
@@ -178,20 +178,20 @@ func timerWaitAuthorityCurrent(
 	attempt db.RunAttempt,
 	wait db.RunWait,
 ) bool {
-	if workspace.State != db.WorkspaceStateActive ||
+	if workspace.Status != db.WorkspaceStatusActive ||
 		workspace.DesiredState != db.WorkspaceDesiredStateActive ||
 		attempt.TerminalAt.Valid || run.Status != db.RunStatusWaiting ||
 		run.CurrentAttemptNumber != wait.AttemptNumber ||
-		run.StateVersion != wait.ExpectedRunStateVersion ||
-		wait.Kind != db.WaitKindTimer || wait.ConditionState != db.WaitStatePending {
+		run.Revision != wait.ExpectedRunRevision ||
+		wait.Kind != db.WaitKindTimer || wait.ConditionStatus != db.WaitStatusPending {
 		return false
 	}
-	switch wait.SuspensionState {
-	case db.RunWaitStateHot, db.RunWaitStateCheckpointing:
+	switch wait.SuspensionStatus {
+	case db.RunWaitStatusHot, db.RunWaitStatusCheckpointing:
 		return run.CurrentRunLeaseID.Valid &&
 			run.CurrentRunLeaseID == wait.CurrentRunLeaseID &&
 			!wait.PriorRunLeaseID.Valid
-	case db.RunWaitStateParked:
+	case db.RunWaitStatusParked:
 		return !run.CurrentRunLeaseID.Valid &&
 			!wait.CurrentRunLeaseID.Valid &&
 			wait.PriorRunLeaseID.Valid &&

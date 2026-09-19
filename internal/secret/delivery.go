@@ -124,7 +124,7 @@ func LockProcessDelivery(
 			row.WorkspaceSecret.SecretID != row.Secret.ID ||
 			(row.WorkspaceSecret.PlacementKind != "env" && row.WorkspaceSecret.PlacementKind != "file") ||
 			row.WorkspaceSecret.PlacementTarget == "" ||
-			row.Secret.State != "active" ||
+			row.Secret.Status != "active" ||
 			!row.ResolutionID.Valid ||
 			row.ResolutionProcessID != processID ||
 			!row.ResolutionSecretVersionID.Valid ||
@@ -173,7 +173,7 @@ func validateDeliveryRow(
 		row.WorkspaceSecret.SecretID != row.Secret.ID ||
 		(row.WorkspaceSecret.PlacementKind != "env" && row.WorkspaceSecret.PlacementKind != "file") ||
 		row.WorkspaceSecret.PlacementTarget == "" ||
-		row.Secret.State != "active" ||
+		row.Secret.Status != "active" ||
 		!row.ResolutionID.Valid ||
 		row.ResolutionRunID != runID ||
 		!row.ResolutionAttemptNumber.Valid ||
@@ -199,7 +199,7 @@ func (s *Store) OpenDeliveries(environmentID uuid.UUID, envelopes []DeliveryEnve
 			return nil, ErrDeliveryUnavailable
 		}
 		if envelope.Secret.EnvironmentID != pgvalue.UUID(environmentID) ||
-			envelope.Secret.State != "active" ||
+			envelope.Secret.Status != "active" ||
 			envelope.Version.SecretID != envelope.Secret.ID ||
 			!envelope.Version.ID.Valid ||
 			(envelope.PlacementKind != "env" && envelope.PlacementKind != "file") ||

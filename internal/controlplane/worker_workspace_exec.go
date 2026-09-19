@@ -74,15 +74,15 @@ func (s *Server) workerClaimWorkspaceExec(w http.ResponseWriter, r *http.Request
 		if err != nil {
 			return err
 		}
-		if authority.WorkspaceProcess.State == db.WorkspaceProcessStateExitRequested {
+		if authority.WorkspaceProcess.Status == db.WorkspaceProcessStatusExitRequested {
 			return nil
 		}
-		if !authority.WorkspaceLease.BaseVersionID.Valid ||
-			authority.WorkspaceLease.BaseVersionID != authority.WorkspaceProcess.BaseVersionID ||
-			authority.WorkspaceLease.BaseVersionID != authority.WorkspaceMount.MaterializedVersionID {
+		if !authority.WorkspaceLease.BaseWorkspaceVersionID.Valid ||
+			authority.WorkspaceLease.BaseWorkspaceVersionID != authority.WorkspaceProcess.BaseWorkspaceVersionID ||
+			authority.WorkspaceLease.BaseWorkspaceVersionID != authority.WorkspaceMount.MaterializedVersionID {
 			return pgx.ErrNoRows
 		}
-		if authority.WorkspaceProcess.State == db.WorkspaceProcessStateStarting {
+		if authority.WorkspaceProcess.Status == db.WorkspaceProcessStatusStarting {
 			started, err := work.q.StartWorkspaceExec(r.Context(), db.StartWorkspaceExecParams{
 				ProcessID:        authority.WorkspaceProcess.ID,
 				WorkspaceMountID: authority.WorkspaceMount.ID,
@@ -116,7 +116,7 @@ func (s *Server) workerClaimWorkspaceExec(w http.ResponseWriter, r *http.Request
 	}
 	defer clearWorkspaceExecBytes(stdin)
 	if !authority.WorkspaceProcess.ID.Valid ||
-		authority.WorkspaceProcess.State == db.WorkspaceProcessStateExitRequested {
+		authority.WorkspaceProcess.Status == db.WorkspaceProcessStatusExitRequested {
 		writeJSON(w, http.StatusOK, workerapi.WorkspaceExecClaimResponse{})
 		return
 	}
@@ -144,21 +144,21 @@ func (s *Server) workerClaimWorkspaceExec(w http.ResponseWriter, r *http.Request
 	}
 	writeJSON(w, http.StatusOK, workerapi.WorkspaceExecClaimResponse{
 		Exec: &workerapi.WorkspaceExec{
-			BaseVersionID:       pgvalue.MustUUIDValue(authority.WorkspaceLease.BaseVersionID).String(),
-			ProcessID:           pgvalue.MustUUIDValue(authority.WorkspaceProcess.ID).String(),
-			WorkspaceID:         pgvalue.MustUUIDValue(authority.WorkspaceProcess.WorkspaceID).String(),
-			WorkspaceMountID:    pgvalue.MustUUIDValue(authority.WorkspaceMount.ID).String(),
-			RequestFingerprint:  hex.EncodeToString(authority.RequestFingerprint),
-			Request:             bytes.Clone(authority.WorkspaceProcess.Request),
-			Stdin:               stdin,
-			Secrets:             deliveries,
-			ProtectedEnv:        protected,
-			WorkspaceLeaseID:    pgvalue.MustUUIDValue(authority.WorkspaceLease.ID).String(),
-			WriteCapability:     capability,
-			FencingGeneration:   authority.WorkspaceLease.MountFencingGeneration,
-			OwnershipGeneration: authority.WorkspaceLease.OwnershipGeneration,
-			WriterGeneration:    authority.WorkspaceLease.WriterGeneration,
-			ExpiresAt:           authority.WorkspaceLease.ExpiresAt.Time,
+			BaseWorkspaceVersionID: pgvalue.MustUUIDValue(authority.WorkspaceLease.BaseWorkspaceVersionID).String(),
+			ProcessID:              pgvalue.MustUUIDValue(authority.WorkspaceProcess.ID).String(),
+			WorkspaceID:            pgvalue.MustUUIDValue(authority.WorkspaceProcess.WorkspaceID).String(),
+			WorkspaceMountID:       pgvalue.MustUUIDValue(authority.WorkspaceMount.ID).String(),
+			RequestFingerprint:     hex.EncodeToString(authority.RequestFingerprint),
+			Request:                bytes.Clone(authority.WorkspaceProcess.Request),
+			Stdin:                  stdin,
+			Secrets:                deliveries,
+			ProtectedEnv:           protected,
+			WorkspaceLeaseID:       pgvalue.MustUUIDValue(authority.WorkspaceLease.ID).String(),
+			WriteCapability:        capability,
+			FencingGeneration:      authority.WorkspaceLease.MountFencingGeneration,
+			OwnershipGeneration:    authority.WorkspaceLease.OwnershipGeneration,
+			WriterGeneration:       authority.WorkspaceLease.WriterGeneration,
+			ExpiresAt:              authority.WorkspaceLease.ExpiresAt.Time,
 		},
 	})
 }

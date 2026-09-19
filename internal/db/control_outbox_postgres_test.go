@@ -32,7 +32,7 @@ func TestControlOutboxClaimReclaimAndStaleFence(t *testing.T) {
 		RowLimit:       8,
 	})
 	if err != nil || len(first) != 1 || pgvalue.MustUUIDValue(first[0].ID) != id ||
-		first[0].Attempts != 1 || first[0].State != "claimed" {
+		first[0].Attempts != 1 || first[0].Status != "claimed" {
 		t.Fatalf("first claim = %+v, %v", first, err)
 	}
 
@@ -72,7 +72,7 @@ func TestControlOutboxClaimReclaimAndStaleFence(t *testing.T) {
 	delivered, err := queries.DeliverControlOutbox(ctx, db.DeliverControlOutboxParams{
 		ID: pgvalue.UUID(id), ClaimedBy: pgvalue.Text("worker-b"), ClaimAttempt: second[0].Attempts,
 	})
-	if err != nil || delivered.State != "delivered" {
+	if err != nil || delivered.Status != "delivered" {
 		t.Fatalf("fenced deliver = %+v, %v", delivered, err)
 	}
 }
@@ -160,12 +160,12 @@ func TestControlOutboxDeadLettersOnlyUnsupportedTopics(t *testing.T) {
 		},
 		RowLimit: 100,
 	})
-	if err != nil || len(rows) != 1 || pgvalue.MustUUIDValue(rows[0].ID) != unknownID || rows[0].State != "dead_lettered" {
+	if err != nil || len(rows) != 1 || pgvalue.MustUUIDValue(rows[0].ID) != unknownID || rows[0].Status != "dead_lettered" {
 		t.Fatalf("dead-letter unsupported = %+v, %v", rows, err)
 	}
 	assertControlOutboxPresent(t, ctx, pool, knownID)
 	var knownState string
-	if err := pool.QueryRow(ctx, `SELECT state FROM control_outbox WHERE id = $1`, knownID).Scan(&knownState); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT status FROM control_outbox WHERE id = $1`, knownID).Scan(&knownState); err != nil {
 		t.Fatal(err)
 	}
 	if knownState != "pending" {
@@ -188,7 +188,7 @@ func TestControlOutboxDeadLettersUnsupportedAfterSupportedPrefixSaturation(t *te
 
 	insertPendingAt := func(id uuid.UUID, topic string, createdAt time.Time) {
 		dbtest.MustExec(t, ctx, pool, `
-			INSERT INTO control_outbox (id, topic, payload, state, created_at)
+			INSERT INTO control_outbox (id, topic, payload, status, created_at)
 			VALUES ($1, $2, '{}'::jsonb, 'pending', $3)
 		`, id, topic, createdAt)
 	}
@@ -216,8 +216,8 @@ func TestControlOutboxDeadLettersUnsupportedAfterSupportedPrefixSaturation(t *te
 	}
 	deadLetteredIDs := make(map[uuid.UUID]bool, len(rows))
 	for _, row := range rows {
-		if row.State != "dead_lettered" {
-			t.Fatalf("dead-lettered row state = %q, want dead_lettered", row.State)
+		if row.Status != "dead_lettered" {
+			t.Fatalf("dead-lettered row state = %q, want dead_lettered", row.Status)
 		}
 		deadLetteredIDs[pgvalue.MustUUIDValue(row.ID)] = true
 	}
@@ -231,7 +231,7 @@ func TestControlOutboxDeadLettersUnsupportedAfterSupportedPrefixSaturation(t *te
 		SELECT count(*)::integer
 		  FROM control_outbox
 		 WHERE id = ANY($1::uuid[])
-		   AND state = 'pending'
+		   AND status = 'pending'
 	`, pgUUIDs(supportedIDs)).Scan(&pendingSupportedCount); err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +239,7 @@ func TestControlOutboxDeadLettersUnsupportedAfterSupportedPrefixSaturation(t *te
 		t.Fatalf("supported pending rows = %d, want %d", pendingSupportedCount, len(supportedIDs))
 	}
 	var newestUnsupportedState string
-	if err := pool.QueryRow(ctx, `SELECT state FROM control_outbox WHERE id = $1`, newestUnsupportedID).Scan(&newestUnsupportedState); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT status FROM control_outbox WHERE id = $1`, newestUnsupportedID).Scan(&newestUnsupportedState); err != nil {
 		t.Fatal(err)
 	}
 	if newestUnsupportedState != "pending" {
@@ -258,7 +258,7 @@ func TestControlOutboxLifecycleScaleBudget(t *testing.T) {
 	start := time.Now()
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO control_outbox (
-			id, topic, payload, state, available_at, last_error, created_at, delivered_at
+			id, topic, payload, status, available_at, last_error, created_at, delivered_at
 		)
 		SELECT (substr(md5(generated::text), 1, 8) || '-' ||
 		        substr(md5(generated::text), 9, 4) || '-' ||
@@ -290,7 +290,7 @@ func TestControlOutboxLifecycleScaleBudget(t *testing.T) {
 		EXPLAIN (ANALYZE, BUFFERS, WAL, FORMAT TEXT)
 		DELETE FROM control_outbox WHERE id IN (
 			SELECT id FROM control_outbox
-			 WHERE state = 'delivered'
+			 WHERE status = 'delivered'
 			   AND delivered_at < now() - interval '24 hours'
 			 ORDER BY delivered_at, id LIMIT 2500
 		)
@@ -310,15 +310,15 @@ func TestControlOutboxLifecycleScaleBudget(t *testing.T) {
 		EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT)
 		WITH candidates AS MATERIALIZED (
 			SELECT id FROM control_outbox
-			 WHERE state = 'pending'
+			 WHERE status = 'pending'
 			   AND NOT (topic = ANY($1::text[]))
 			 ORDER BY created_at, id LIMIT 2500
 		)
 		UPDATE control_outbox
-		   SET state = 'dead_lettered', last_error = 'unsupported control outbox topic'
+		   SET status = 'dead_lettered', last_error = 'unsupported control outbox topic'
 		  FROM candidates
 		 WHERE control_outbox.id = candidates.id
-		   AND control_outbox.state = 'pending'
+		   AND control_outbox.status = 'pending'
 	`, []string{"token.reconcile", "secret.revoked", "session.input.reconcile", "session.close.reconcile"})
 	if err := unsupportedTx.Rollback(ctx); err != nil {
 		t.Fatal(err)
@@ -332,14 +332,14 @@ func TestControlOutboxLifecycleScaleBudget(t *testing.T) {
 		EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT)
 		WITH dead_letter_sample AS (
 			SELECT 1 FROM control_outbox
-			 WHERE state = 'dead_lettered'
+			 WHERE status = 'dead_lettered'
 			 ORDER BY created_at, id LIMIT 1001
 		), dead_letter_counts AS (
 			SELECT count(*)::bigint AS rows FROM dead_letter_sample
 		)
 		SELECT (
 			SELECT available_at FROM control_outbox
-			 WHERE state = 'pending' AND available_at <= now()
+			 WHERE status = 'pending' AND available_at <= now()
 			 ORDER BY available_at, id LIMIT 1
 		), LEAST(rows, 1000), rows > 1000
 		FROM dead_letter_counts
@@ -352,13 +352,13 @@ func TestControlOutboxLifecycleScaleBudget(t *testing.T) {
 	dbtest.MustExec(t, ctx, pool, `
 		UPDATE control_outbox
 		   SET available_at = now() + interval '48 hours'
-		 WHERE state = 'pending'
+		 WHERE status = 'pending'
 	`)
 	dbtest.MustExec(t, ctx, pool, `ANALYZE control_outbox`)
 	futureOnlyPlan := controlOutboxExplain(t, ctx, pool, `
 		EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT)
 		SELECT available_at FROM control_outbox
-		 WHERE state = 'pending' AND available_at <= now()
+		 WHERE status = 'pending' AND available_at <= now()
 		 ORDER BY available_at, id LIMIT 1
 	`)
 	if !strings.Contains(futureOnlyPlan, "control_outbox_pending_available_idx") ||
@@ -457,25 +457,25 @@ func insertControlOutbox(
 	switch state {
 	case "pending":
 		dbtest.MustExec(t, ctx, pool, `
-			INSERT INTO control_outbox (id, topic, payload, state)
+			INSERT INTO control_outbox (id, topic, payload, status)
 			VALUES ($1, $2, '{}'::jsonb, 'pending')
 		`, id, topic)
 	case "claimed":
 		dbtest.MustExec(t, ctx, pool, `
 			INSERT INTO control_outbox (
-			    id, topic, payload, state, claimed_by, claim_expires_at, attempts
+			    id, topic, payload, status, claimed_by, claim_expires_at, attempts
 			) VALUES ($1, $2, '{}'::jsonb, 'claimed', 'worker-a', now() + interval '1 minute', 1)
 		`, id, topic)
 	case "delivered":
 		dbtest.MustExec(t, ctx, pool, `
 			INSERT INTO control_outbox (
-			    id, topic, payload, state, delivered_at, available_at, created_at
+			    id, topic, payload, status, delivered_at, available_at, created_at
 			) VALUES ($1, $2, '{}'::jsonb, 'delivered', $3, $3, $3)
 		`, id, topic, deliveredAt)
 	case "dead_lettered":
 		dbtest.MustExec(t, ctx, pool, `
 			INSERT INTO control_outbox (
-			    id, topic, payload, state, last_error
+			    id, topic, payload, status, last_error
 			) VALUES ($1, $2, '{}'::jsonb, 'dead_lettered', 'malformed payload')
 		`, id, topic)
 	default:

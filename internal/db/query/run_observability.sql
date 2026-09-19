@@ -1,13 +1,13 @@
 -- name: UpdateRunMetadata :one
 UPDATE runs
    SET metadata = sqlc.arg(metadata)::jsonb,
-       state_version = state_version + 1,
+       revision = revision + 1,
        updated_at = now()
  WHERE id = sqlc.arg(run_id)
    AND current_attempt_number = sqlc.arg(attempt_number)
    AND current_run_lease_id = sqlc.arg(run_lease_id)
    AND status = 'running'
-RETURNING state_version;
+RETURNING revision;
 
 -- name: GetRunMetadataClaimScope :one
 SELECT run_leases.environment_id,
