@@ -129,6 +129,33 @@ class Admission(Fixture, unittest.TestCase):
                     publish.finalize(self.api, s, directory, '1', 'sha256:' + '0' * 64)
                 download.assert_not_called()
 
+    def test_manual_preview_builds_even_when_pr_ci_omitted_packaging(self):
+        head = self.api.head
+        run = dict(id=10, run_attempt=2, repository=dict(id=1), workflow_id=2,
+                   path='.github/workflows/ci.yaml', event='pull_request', head_sha=head,
+                   status='completed', conclusion='success',
+                   pull_requests=[dict(number=7, head=dict(sha=head))])
+
+        def pages(path, key):
+            if key == 'workflow_runs':
+                return [run]
+            self.assertEqual(path, 'actions/runs/10/attempts/2/jobs')
+            return [dict(name='ci complete', status='completed', conclusion='success'),
+                    dict(name='build release artifacts / consumer', status='completed', conclusion='skipped')]
+
+        env = dict(GITHUB_REPOSITORY=REPOSITORY, GITHUB_EVENT_NAME='workflow_dispatch',
+                   GITHUB_REF='refs/heads/main', GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1',
+                   GITHUB_WORKFLOW_SHA=self.original)
+        event = dict(repository=dict(id=1), inputs=dict(pr='7', commit=head))
+        with patch.object(self.api, 'pages', side_effect=pages), \
+             patch.object(admission, 'git', return_value='{"version":"0.1.0"}'), \
+             patch.object(admission.subprocess, 'run'):
+            selected, skip = admission.admit(self.api, env, event, self.root)
+        self.assertFalse(skip)
+        self.assertEqual(selected['build']['mode'], 'pr')
+        self.assertEqual(selected['build']['ciRun'], '10')
+        self.assertEqual(selected['build']['runId'], '123')
+
     def test_main_and_stable_do_not_acquire_pr_restriction(self):
         for mode in ('main', 'tag'):
             s = selection()
