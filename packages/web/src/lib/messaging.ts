@@ -54,14 +54,27 @@ export const usecases = [
     imports: 'import { actor, image, sandbox, source, tokens } from "@helmr/sdk"',
     head: `export const fixIssue = actor({
   id: "fix-issue",
+  input: z.object({
+    issue: z.string(), repo: z.string(),
+    channel: z.string().optional(), channelId: z.string().optional(),
+    conversationId: z.string().optional(), prNumber: z.number().optional(),
+    issueId: z.string().optional()
+  }),
   async run(session) {
-    const event = await session.input.receive({ idleTimeout: "30m" }).unwrap()
+    const turn = await session.receive({ idleTimeout: "30m" })
+    if (turn === null) return
+    const event = turn.input
     const brief = \`Fix \${event.issue} in \${event.repo}. Run the tests, then open a PR.\``,
     meta: '      metadata: { subject: "Open a PR for this fix?" }',
     action: `    if (decision.approved) {
+      await turn.output.write({
+        type: "permission_admitted", requestId: approval.id,
+        actionBinding: { action: "open_pr", repo: event.repo, output }
+      })
       await openPr(event.repo, output)
-      await session.output.append({ type: "pr-opened" })
-    }`,
+      await turn.output.write({ type: "pr-opened" })
+    }
+    await turn.complete()`,
   },
   {
     key: "fleet",
@@ -110,8 +123,8 @@ export const harnesses = [
       workingDirectory: "/workspace",
       sandboxMode: "danger-full-access" // the microVM is the sandbox
     })
-    const turn = await thread.run(brief)
-    const output = turn.finalResponse`,
+    const nativeTurn = await thread.run(brief)
+    const output = nativeTurn.finalResponse`,
   },
   {
     key: "cursor",
@@ -133,9 +146,9 @@ export const harnesses = [
     icon: logos.opencode,
     imports: 'import { createOpencode } from "@opencode-ai/sdk"',
     agent: `    const { client } = await createOpencode()
-    const session = await client.session.create({ body: { title: "run" } })
+    const nativeSession = await client.session.create({ body: { title: "run" } })
     const result = await client.session.prompt({
-      path: { id: session.data.id },
+      path: { id: nativeSession.data.id },
       body: {
         model: { providerID: "openrouter", modelID: "z-ai/glm-4.6" },
         parts: [{ type: "text", text: brief }]
@@ -152,17 +165,17 @@ export const harnesses = [
     meta: "@earendil-works/pi-coding-agent",
     icon: logos.pi,
     imports: 'import { createAgentSession, SessionManager } from "@earendil-works/pi-coding-agent"',
-    agent: `    const { session } = await createAgentSession({
+    agent: `    const { session: nativeSession } = await createAgentSession({
       cwd: "/workspace",
       sessionManager: SessionManager.inMemory()
     })
     let output = ""
-    session.subscribe((e) => {
+    nativeSession.subscribe((e) => {
       if (e.type === "message_update" && e.assistantMessageEvent.type === "text_delta") {
         output += e.assistantMessageEvent.delta
       }
     })
-    await session.prompt(brief)`,
+    await nativeSession.prompt(brief)`,
   },
   {
     key: "own",

@@ -1,12 +1,9 @@
 ---
 title: Build an actor
-description: Define a stable Actor with durable Session input and output.
+description: Receive explicit Turns and publish durable output.
 ---
 
 # Build an actor
-
-Use `actor()` for work that accepts follow-up messages or publishes progressive
-application output:
 
 ```ts
 import { actor } from "@helmr/sdk"
@@ -15,40 +12,34 @@ export const reviewer = actor({
   id: "reviewer",
   idleTimeout: "90s",
   async run(session, ctx) {
-    const message = await session.input.receive()
-    if (!message.ok) return
-    await session.output.append(
-      {
-        type: "received",
-        input: message.value,
-        runId: ctx.run.id,
-      },
-      { idempotencyKey: `received:${message.record.id}` },
-    )
+    for (;;) {
+      const turn = await session.receive()
+      if (turn === null) return
+      await turn.output.write({ input: turn.input, runId: ctx.run.id }, {
+        idempotencyKey: `received:${turn.id}`,
+      })
+      await turn.complete()
+    }
   },
 })
 ```
 
-The handler receives an `ActorSession` and `ActorContext`. Session input is an
-ordered JSON log; output is a separately ordered log. The Actor's
-`idleTimeout` is the default for Session input receives. It can shorten how
-long an idle Run stays warm before Helmr checkpoints and suspends it; Helmr may
-suspend earlier, and suspension does not close the Session. A receive-level
-`idleTimeout` overrides the Actor default. The separate receive `timeout` is an
-application deadline. `maxDuration`, `ttl`, `retry`, and `queue` use the same
-Run-default contracts as Tasks.
+The custom `run` loop owns execution. A receive returns the next Turn or `null`
+when closing has drained. Output is durable application data; explicit completion
+marks the outcome. Put any tests or other post-processing before completion.
 
-Start the deployed Actor with a Workspace and optional stable key and initial
-input:
+Start with a Workspace, then enqueue the first work using the returned Session ID:
 
 ```sh
-helmr actor start reviewer \
-  --project agents --env development \
-  --workspace WORKSPACE_ID \
-  --key github:helmrdotdev/helmr:42 \
-  --input-json '{"type":"review","number":42}' \
-  --idempotency-key github:helmrdotdev/helmr:42:start --json
+helmr actor start reviewer --project agents --env development \
+  --workspace WORKSPACE_ID --key review:42 \
+  --idempotency-key review:42:start --json
+
+helmr actor enqueue SESSION_ID --project agents --env development \
+  --data-json '{"type":"review","number":42}' \
+  --idempotency-key review:42:first --json
 ```
 
-The returned Session ID is the durable interaction address. The returned Run
-ID identifies only the current boot execution.
+The Session ID addresses continuing interaction; the Run ID identifies execution.
+Use the returned Turn ID for an exact follow-up or interruption. The idle timeout
+controls managed suspension; receive `timeout` is a separate application deadline.

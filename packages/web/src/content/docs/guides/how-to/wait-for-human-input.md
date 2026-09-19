@@ -32,11 +32,21 @@ The create response is the public SDK result that includes `callbackUrl` and
 `publicAccessToken`. Treat both as credentials. Completion makes the Token
 `completed`; cancellation and expiry reject the wait with typed errors.
 
-For continuing questions, corrections, or commands, use an Actor and call
-`session.input.receive()`. External clients append with
-`client.sessions.ref(id).input.send(...)`. This preserves ordered history and
-allows more than one interaction, but grants a broader channel capability than
-a Token.
+For continuing questions, corrections or commands, receive work with
+`session.receive()` and register `await turn.onMessage(handler)` before publishing
+a question. External callers use `client.sessions.ref(id).turn(turnId).send(data)`
+for exact replies. Input `type`, request IDs and answer/approval payloads belong
+to your application; Helmr does not prescribe a question or permission schema.
 
-Both waits can park a Run durably. Set explicit timeouts and handle terminal
-conditions instead of assuming a human will always respond.
+The generic Token SDK is also available inside an Actor. Completing a Token does
+not complete the Turn or grant permission to perform a stopped action. For a live
+native approval, bind the answer to the exact request/action and await a fenced
+`turn.output.write({ type: "permission_admitted", requestId, actionBinding })`
+before returning allow, only while that callback is still live. A rejected or
+ambiguous write, historical receipt, or abort signal alone cannot authorize it.
+Helmr treats this output as opaque application data.
+
+Managed Token waits can park the Run. Native provider callbacks and arbitrary
+sockets are not automatically durable; use their native cancellation contracts.
+Set timeouts, reject late replies, and explicitly complete/fail the Turn only
+after the application work has settled.

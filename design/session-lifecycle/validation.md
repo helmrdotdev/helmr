@@ -661,3 +661,61 @@ checkpoint recovery, provider side effects, production authorization or every ro
 those runtime boundaries retain prior evidence and outstanding package 5 acceptance.
 First-party smoke/native fixtures, editable examples and remaining website docs
 still require package 4 work. No merge, push, deploy or publication occurred.
+
+## Package 4 — existing consumers, small examples and documentation (2026-09-20)
+
+Parent-owned slice at base `3a4583eb2344da7ab46255acbfb43edfd1718be0` migrates
+child-Task/Actor smoke code to separate start/enqueue, explicit Turn completion,
+exact Turn idempotency and shared event pagination filtered for application output.
+The single-Turn smoke Actor intentionally returns after settlement, retaining its
+existing separate continuation Run check. Management smoke passes cancellation
+transport options in the new third argument. SDK/runtime/API source is unchanged.
+
+`examples/hello-world/tasks/session.ts` adds finite output followed by deterministic
+validation and required typed result, plus external CI through generic Token
+creation/wait/completion. Completion transport failures remain outside business
+failure catches. README describes stop/Token-completion races, queued work, exact
+hold resume and the lack of automatic provider-socket durability. These examples
+are typechecked; their actual VM execution is not claimed.
+
+Packed SDK consumer now validates RecordWriter, typed Actor input/message/output/
+result and no-result completion from the actual npm archives, then runs Session
+enqueue/exact-message/event requests under Node against a bounded fake transport.
+Updated Actor concepts, how-to/tutorial/reference, wait guidance, homepage examples
+and stale diagnostic wording. Removed old first-party input/output API use; a sweep
+across dev/examples/scripts/web/tests/fixtures finds none of the removed methods.
+The homepage native provider snippets remain editable illustrations, not a newly
+qualified provider integration.
+
+Validation under pinned Nix:
+
+- Compiler entry and npm builds, local SDK sync/frozen installs, workflow typecheck
+  pass. The first client typecheck exposed the obsolete cancel options position;
+  corrected client and all example project typechecks pass in
+  `/tmp/session-consumers-qualified.log` before its superseded Astro failure.
+- `scripts/check-packed-sdk-consumer.sh` passes actual npm archive extraction,
+  TypeScript compilation and Node execution; `/tmp/session-packed-web-checks.log`.
+- `bun test tests/web-messaging.test.ts`: 144 selectable compositions parse.
+  Root `test:ts` includes this regression. This proves syntax only, not provider
+  SDK signatures or execution. `/tmp/session-web-qualified.log` also records
+  Astro check with zero errors and the successful 64-page build/link check.
+- Final comment-only readiness clarification rebuild passes all 64 pages and
+  link checks in `/tmp/session-web-final-build.log`. The initial trailing-slash
+  link and initial placement of the Bun test inside Astro src were corrected;
+  neither failed run is counted as final evidence.
+- Native in-app browser inspected the local built SDK reference at port 18430,
+  showing receive/explicit settlement, arbitrary messages, event cursor and exact
+  stop/resume/recovery contracts. The preview and temporary tab were stopped.
+- Fresh medium combined review `/root/session_consumers_review` found duplicate
+  provider/Actor variable names and stripped interface routing fields in composed
+  homepage examples. Native identifiers and explicit routing fields correct them;
+  the all-combination parser covers syntax collisions. Final review reports no
+  remaining actionable findings or unnecessary mechanisms.
+
+Remaining accepted work: editable Codex app-server and Claude live issue-fixer
+implementations and their source/protocol qualification, followed by actual native
+VM smoke/checkpoint/stop/recovery acceptance. Static smoke checks do not establish
+those boundaries. Generic CI/finite-output examples do not substitute for the
+required native human-interaction example. No new worktree was created; existing
+integration/HQ and retained frozen worktrees remain as recorded. No merge, push,
+publication, deployment or shared-environment reset occurred.

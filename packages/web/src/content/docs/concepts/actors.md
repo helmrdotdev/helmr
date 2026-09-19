@@ -1,13 +1,13 @@
 ---
 title: Actors
-description: Stable interactive workflows backed by Sessions and managed Runs.
+description: Stable Sessions, explicit Turns and managed execution Runs.
 ---
 
 # Actors
 
-An Actor is a deployed definition for continuing, stateful interaction. It has
-a stable Session and fixed ordered input and output logs. Execution is still
-performed by Runs, so a Session can span a boot Run and later continuation Runs.
+An Actor is a deployed definition for continuing interaction. A Session is its
+stable identity. Turns are FIFO units of work within the Session, and Runs provide
+the execution that serves them. One Run can process multiple Turns.
 
 ```ts
 import { actor } from "@helmr/sdk"
@@ -16,36 +16,31 @@ export const assistant = actor({
   id: "assistant",
   idleTimeout: "90s",
   async run(session, ctx) {
-    const received = await session.input.receive()
-    if (!received.ok) return
-    await session.output.append({
-      type: "acknowledged",
-      inputSequence: received.record.sequence,
-      runId: ctx.run.id,
-    })
+    for (;;) {
+      const turn = await session.receive()
+      if (turn === null) return
+      await turn.output.write({ type: "acknowledged", turnId: turn.id, runId: ctx.run.id })
+      await turn.complete()
+    }
   },
 })
 ```
 
-Actor start requires a Workspace and may include a stable key, initial input,
-an idempotency key, and managed Run options. It returns a Session reference and
-the initial Run handle. The optional initial input is the first ordinary input
-record, not a separate handler argument.
+Start with a Workspace and optional stable key, idempotency key and Run options.
+Then enqueue the first Turn separately. `session.receive()` consumes FIFO work;
+`turn.onMessage` handles interactions within that work. Interface routing, provider
+SDKs, native questions and approvals remain editable application code.
 
-Only the Actor handler consumes its input cursor. External callers append
-through the Session input API and independently page through output. Each input
-record has a sequence, source, and timestamp. Each output record also carries
-Run attempt and Deployment provenance.
+Input, output and lifecycle events share a retained sequence. An output stream
+ending does not complete a Turn: finish post-processing and explicitly call
+`turn.complete` or `turn.fail`. A failed Turn and a failed Session are distinct.
 
-Sessions have `open`, `closed`, `cancelled`, and `failed` states. Closing a
-Session prevents further interaction. An Actor's `idleTimeout` is the default
-for Session input receives: it can shorten how long an idle Run stays warm
-before Helmr checkpoints and suspends it, and Helmr may suspend earlier. It does
-not close or fail the Session. A receive-level `idleTimeout` overrides the Actor
-default, while `timeout` is the separate application deadline that can produce
-`wait_timeout`. Actor protocols should handle receive errors and use stable
-idempotency keys for upstream messages and derived output.
+Sessions are `open`, `closing`, `closed`, or `failed`. Closing drains accepted
+work. Interruption retains later Turns behind a hold until explicit resume; it
+does not replay the interrupted Turn. Uncertain execution requires reconciliation.
+An idle timeout can shorten the warm wait before checkpoint/suspension without
+closing the Session. Arbitrary provider sockets and promises are not managed waits.
 
-Use a Task for one terminal request and result. Use a Token for one externally
-completed value. Use an Actor when the outside system needs a continuing
-channel or the application needs progressive durable output.
+Use a Task for bounded work, a Token for one externally completed value, and an
+Actor for continuing interaction with explicit work and message lifetimes. See
+[Actors, Sessions and Turns](/docs/reference/sdk/actors-and-sessions) for the API.

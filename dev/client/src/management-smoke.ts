@@ -226,7 +226,7 @@ export async function runManagementSmoke(
       { signal: AbortSignal.timeout(30_000) },
     )
     await waitForRunStatus(client, cancellable.id, ["waiting", "running"])
-    await client.runs.cancel(cancellable.id, {
+    await client.runs.cancel(cancellable.id, {}, {
       signal: AbortSignal.timeout(30_000),
     })
     const cancelled = await waitForRunStatus(client, cancellable.id, ["cancelled"])

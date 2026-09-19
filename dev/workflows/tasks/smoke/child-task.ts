@@ -169,12 +169,9 @@ export const childTaskSmokeActor = actor({
   maxDuration: "10m",
   idleTimeout: "2m",
   run: async (self, ctx) => {
-    const received = await self.input.receive({ timeout: "2m" })
-    if (!received.ok) {
-      if (received.error.code === "session_closed") return
-      throw received.error
-    }
-    const input = actorInput.parse(received.value)
+    const turn = await self.receive({ timeout: "2m" })
+    if (turn === null) return
+    const input = actorInput.parse(turn.input)
     const output = await childTaskSmokeChild.call(
       { marker: input.marker, fail: false, holdSeconds: 0 },
       {
@@ -184,15 +181,16 @@ export const childTaskSmokeActor = actor({
         tags: ["smoke", "child-task", "actor-call"],
       },
     ).unwrap()
-    await self.output.append(
+    await turn.output.write(
       {
         kind: "child-task-call-completed",
         marker: output.marker,
         childRunId: output.childRunId,
         actorRunId: ctx.run.id,
-        inputRecordId: received.record.id,
+        inputRecordId: turn.id,
       },
-      { idempotencyKey: `input:${received.record.id}:actor-output` },
+      { idempotencyKey: `turn:${turn.id}:actor-output` },
     )
+    await turn.complete()
   },
 })
