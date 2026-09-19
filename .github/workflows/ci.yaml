@@ -38,7 +38,7 @@ jobs:
           # GC target, not a hard archive-size limit.
           gc-max-store-size: 2G
 
-      - run: nix flake check --show-trace
+      - run: nix flake check --show-trace --print-build-logs
 
       - name: Retain current check dependencies for caching
         run: |
