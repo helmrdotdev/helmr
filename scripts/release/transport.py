@@ -1,5 +1,6 @@
 """Frozen build parts use native Actions artifacts, never a resume database."""
 from pathlib import Path
+import os
 import shutil
 import re
 import stat
@@ -43,6 +44,12 @@ def restore(api, part, selection, destination):
     name = f'build-artifacts-{run_id}-{part}'
     items = [a for a in api.pages(f'actions/runs/{run_id}/artifacts', 'artifacts') if a['name'] == name]
     if not items:
+        # Expired artifacts disappear from the native listing. PR transfers are
+        # short-lived: a retry may restore present bytes, but must never recreate
+        # an absent part (even a previously failed one) under the same identity.
+        if os.environ.get('GITHUB_EVENT_NAME') == 'pull_request':
+            require(os.environ.get('GITHUB_RUN_ATTEMPT') == '1',
+                    'missing frozen PR artifact on retry; start a new workflow run')
         return False
     require(len(items) == 1 and not items[0]['expired'], 'ambiguous or expired frozen artifact; use a new build identity')
     item = items[0]
