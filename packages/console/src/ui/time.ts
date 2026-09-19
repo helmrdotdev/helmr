@@ -1,3 +1,4 @@
+// Temporary ordinary-source CI probe; this branch is not for merging.
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
