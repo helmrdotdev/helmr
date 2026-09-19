@@ -54,16 +54,15 @@ export const usecases = [
     imports: 'import { actor, image, sandbox, source, tokens } from "@helmr/sdk"',
     head: `export const fixIssue = actor({
   id: "fix-issue",
-  input: z.object({
+  async run(session) {
+    const turn = await session.receive({ idleTimeout: "30m" })
+    if (turn === null) return
+    const event = z.object({
     issue: z.string(), repo: z.string(),
     channel: z.string().optional(), channelId: z.string().optional(),
     conversationId: z.string().optional(), prNumber: z.number().optional(),
     issueId: z.string().optional()
-  }),
-  async run(session) {
-    const turn = await session.receive({ idleTimeout: "30m" })
-    if (turn === null) return
-    const event = turn.input
+  }).parse(turn.input)
     const brief = \`Fix \${event.issue} in \${event.repo}. Run the tests, then open a PR.\``,
     meta: '      metadata: { subject: "Open a PR for this fix?" }',
     action: `    if (decision.approved) {

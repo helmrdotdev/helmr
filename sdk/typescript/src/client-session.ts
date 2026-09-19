@@ -1,6 +1,5 @@
 import type {
   CursorPage,
-  JsonValue,
   SessionRef,
   TurnRef,
   Session,
@@ -43,11 +42,7 @@ export type SessionListQuery =
     }>
 
 /** Authenticated client references include privileged, server-authorized recovery. */
-export interface ClientSessionRef<
-  TInput = JsonValue,
-  TMessage = JsonValue,
-  TResult = JsonValue,
-> extends SessionRef<TInput, TMessage, TResult> {
+export interface ClientSessionRef extends SessionRef {
   recover(
     request: SessionRecoverRequest,
     options?: RequestOptions,

@@ -43,6 +43,8 @@ export async function acceptSlackEvent(raw: Buffer, headers: Headers, binding: S
   try {
     if (text.startsWith("fix ")) {
       await binding.session.enqueue({ issue: text.slice(4) }, request, transport)
+    } else if (text.startsWith("send ")) {
+      await binding.session.send({ issue: text.slice(5) }, request, transport)
     } else if (text.startsWith("reply ")) {
       const match = /^reply (\S+) ([\s\S]+)$/.exec(text)
       if (!match) return new Response("Invalid reply", { status: 400 })

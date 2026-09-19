@@ -101,17 +101,19 @@ func Admit(ctx context.Context, q db.Querier, request AdmissionRequest) (Admissi
 		receipt.Code = "turn_not_active"
 	} else if request.Mode == ExactMessage || request.Mode == SendMessageOrEnqueue && actor.ActiveTurnID.Valid {
 		receipt.TurnID = pgvalue.MustUUIDValue(actor.ActiveTurnID)
-		ready, err := q.SessionTurnMessageReady(ctx, db.SessionTurnMessageReadyParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ID: actor.ActiveTurnID})
+		accepts, err := q.SessionTurnAcceptsMessages(ctx, db.SessionTurnAcceptsMessagesParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ID: actor.ActiveTurnID})
 		if err != nil {
 			return receipt, err
 		}
-		if !ready {
-			receipt.Code = "turn_not_ready"
+		turn, err := q.GetSessionTurn(ctx, db.GetSessionTurnParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ID: actor.ActiveTurnID})
+		if err != nil {
+			return receipt, err
+		}
+		if turn.SettlementStartedAt.Valid {
+			receipt.Code = "turn_settling"
+		} else if !accepts {
+			receipt.Code = "turn_not_active"
 		} else {
-			turn, err := q.GetSessionTurn(ctx, db.GetSessionTurnParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ID: actor.ActiveTurnID})
-			if err != nil {
-				return receipt, err
-			}
 			messageID := uuid.NewV7()
 			// The locked event allocator gives message delivery its public order.
 			_, err = q.CreateSessionMessage(ctx, db.CreateSessionMessageParams{ID: pgvalue.UUID(messageID), EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, TurnID: turn.ID, RunID: turn.RunID, AttemptNumber: turn.AttemptNumber.Int32, RunGeneration: turn.RunGeneration.Int64, Data: data, AcceptedSequence: actor.NextEventSequence})

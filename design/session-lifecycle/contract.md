@@ -63,11 +63,11 @@ schema/protocol release. Shared database reset needs its own authorized operatio
 
 | Operation | Decision under Session authority | Observable outcome |
 | --- | --- | --- |
-| Receive | Check ready dispatch and no active input; activate the next FIFO input under current execution. | Turn handle after deployed input validation; known validation issues settle failed before customer work. Validation crash follows recovery. |
-| Automatic send | Require open+ready; bind active target or FIFO admission exactly once. | enqueued Turn or accepted message. Active unready/parked target rejects; never fallback. |
-| Enqueue | Require open; allocate input at FIFO tail even if held. | Queued Turn; no promise of execution or schema success. |
-| Exact send | Check exact active Turn, writable phase, live ready execution. Closing may allow valid existing interaction. | Accepted message; later handled/rejected/unknown event. |
-| Complete/fail | Fence new callback admission; reconcile admitted callbacks/output; validate result and physical Workspace proof; commit terminal event+cursor+head together. | completed or failed; no terminal success after accepted stop. |
+| Receive | Check ready dispatch and no active input; activate the next FIFO input under current execution. | Turn handle exposing application JSON; customer code owns validation and failure handling. |
+| Automatic send | Require open+ready; bind active target or FIFO admission exactly once. | enqueued Turn or accepted message. Active pre-handler/parked target accepts pending delivery; settling target rejects; never fallback. |
+| Enqueue | Require open; allocate input at FIFO tail even if held. | Queued Turn; no promise of execution or application validation success. |
+| Exact send | Check exact active Turn, writable phase and current logical execution. Closing may allow valid existing interaction. | Accepted message; later handled/rejected/unknown event. |
+| Complete/fail | Fence new callback admission; reconcile admitted callbacks/output; validate JSON and physical Workspace proof; commit terminal event+cursor+head together. | completed or failed; no terminal success after accepted stop. |
 | Interrupt | Require exact active Turn; atomically record intent and new hold, revoke new Turn work admission. | Acceptance plus hold. Later interrupted only after convergence/proof; otherwise recovery_required. |
 | Output | Require exact current producer and writable scope; append through the same locked authority. | Event receipt. Already retained output never implies work completion. |
 | Resume | Compare current hold; require settled input/no unresolved execution and safe Workspace boundary. | New ready dispatch, same FIFO. Stale hold/not settled rejects. |
@@ -151,7 +151,7 @@ Every message event's data requires `message_id`, equal to the admission receipt
 message ID, and the envelope requires its exact `turn_id`. `message.accepted` also
 contains `message` (the submitted application JSON). `message.handled` acknowledges
 handler completion; it does not assert provider consumption. `message.rejected`
-contains `code` (`schema_invalid`, `handler_rejected`, `turn_settling` or
+contains `code` (`handler_rejected`, `turn_settling` or
 `turn_stopping`) and optional application JSON `details`. `message.unknown` contains
 `code` (`handler_failed` or `execution_lost`) and optional diagnostic JSON `details`;
 it cannot be relabeled as rejection after an uncertain effect. Operation IDs,
@@ -194,11 +194,11 @@ non-null Turn requires failed/interrupted `disposition`, null forbids it.
 
 Errors use existing API error transport with stable codes: `session_not_found`,
 `turn_not_found` (404); `invalid_request`, `invalid_cursor` (400); `forbidden` (403);
-`session_not_open`, `session_held`, `turn_not_active`, `turn_not_ready`,
+`session_not_open`, `session_held`, `turn_not_active`, `turn_settling`,
 `turn_stopping`, `turn_unsettled`, `stale_execution`, `stale_hold`, `not_settled`,
 `idempotency_conflict`, `recovery_required` (409); `cursor_expired` (410).
-Runtime schema/handler rejection becomes a disposition event, not a synchronous
-promise that API schema validation happened. HTTP transport ambiguity stays unknown
+Application handler rejection becomes a disposition event. Payload schemas are
+not part of the Actor contract. HTTP transport ambiguity stays unknown
 until retry/read reconciliation; it is not a new business rejection code.
 
 Worker commands carry existing authenticated worker/lease fence plus operation UUID,
@@ -266,3 +266,15 @@ still run. Killing the local process prevents future local dispatch but does not
 an already accepted remote effect; unresolved remote effects keep recovery held.
 This is cooperative admission ordering, not credential enforcement over arbitrary
 customer code. No new public permission/Token primitive is added by this contract.
+
+## Admission before delivery readiness
+
+Admission checks the active running Turn and current Run/attempt/generation, open
+or closing Session (automatic send remains open-only), no hold, no interrupt and no
+settlement cutoff. It does not require a registered handler or a live ready lease.
+Delivery retains all physical/lease readiness checks. The Session-locked settlement
+barrier rejects unstarted messages with turn_settling, even if no handler was ever
+registered. New sends after the cutoff reject with turn_settling, without FIFO fallback.
+Parked messages remain pending until the original managed wait resumes; admission
+neither resolves its result nor reconstructs lost callback state. Stop/recovery
+rejects pending messages and reconciles started deliveries as before.

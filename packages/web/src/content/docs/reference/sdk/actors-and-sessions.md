@@ -5,10 +5,10 @@ description: Define Actor execution and operate explicit Turns within a durable 
 
 # Actors, Sessions and Turns
 
-`actor({ id, run, idleTimeout?, queue?, maxDuration?, ttl?, retry?, input?, message?, output?, result? })`
-defines execution. The optional input, message, output and result fields are
-Standard Schema v1 schemas. Their validated/transformed values determine the
-corresponding TypeScript types; without schemas, application payloads are JSON.
+`actor({ id, run, idleTimeout?, queue?, maxDuration?, ttl?, retry? })` defines
+execution. Inputs, messages, outputs and results are application-defined JSON.
+Validate with Zod or another library in your code where needed; Actor definitions
+do not contain schemas or automatically infer external client payload types.
 
 ```ts
 import { actor } from "@helmr/sdk"
@@ -48,8 +48,7 @@ of work, and the Session is their stable interaction address.
   operation completes the Turn. `session.output.write/pipe` publishes explicit
   Session-level output outside Turn ownership.
 - `await turn.complete(result?)` or `await turn.fail(error)` explicitly settles
-  the Turn after started output and admitted callbacks drain. A required result
-  schema makes the result argument required. No-result completion omits the result;
+  the Turn after started output and admitted callbacks drain. No-result completion omits the result;
   completing with `null` records JSON null. Returning from `run`, requesting the
   next Turn, or reaching stream EOF is not implicit completion.
 
@@ -98,3 +97,9 @@ recovery grant must supply an exact hold, Turn or explicit null, reconciled
 Workspace version and reconciliation reference. Recovery cannot declare uncertain
 work successful; it leaves a recovered hold for explicit resume. Runtime references
 have ordinary controls but no recovery privilege.
+
+Message acceptance does not wait for handler registration. During a managed Token
+or child wait, messages remain pending until the original wait resumes; they do
+not unblock that wait. Settlement rejects new sends with `turn_settling` and emits
+rejections for accepted messages whose handlers never started. Acceptance is not
+proof of application or provider handling. Held Sessions still require explicit resume.

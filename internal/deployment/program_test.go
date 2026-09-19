@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -225,38 +224,4 @@ func loadContractFixture(t *testing.T) contractFixture {
 		t.Fatal(err)
 	}
 	return fixture
-}
-
-func TestActorSchemasBindDeclarationSlots(t *testing.T) {
-	plan := testBuildPlan()
-	schemas := ActorSchemas{
-		Input: SchemaManifest{Kind: SchemaKindStandard}, Message: SchemaManifest{Kind: SchemaKindNone},
-		Output: SchemaManifest{Kind: SchemaKindNone}, Result: SchemaManifest{Kind: SchemaKindStandard},
-	}
-	plan.Definitions[1].Actor.Schemas = schemas
-	if err := ValidateBuildPlan(plan); err != nil {
-		t.Fatal(err)
-	}
-	declarations := buildPlanProgramDeclarations(plan)
-	want := []DeclarationSlot{DeclarationSlotHandler, DeclarationSlotInputSchema, DeclarationSlotResultSchema}
-	if !reflect.DeepEqual(declarations[1].Slots, want) {
-		t.Fatalf("slots = %v, want %v", declarations[1].Slots, want)
-	}
-	if err := validateDeclaration(declarations[1]); err != nil {
-		t.Fatal(err)
-	}
-	for _, slots := range [][]DeclarationSlot{
-		{DeclarationSlotHandler, DeclarationSlotResultSchema, DeclarationSlotInputSchema},
-		{DeclarationSlotHandler, DeclarationSlotInputSchema, DeclarationSlotInputSchema},
-		{DeclarationSlotInputSchema},
-		{DeclarationSlotHandler, DeclarationSlotPayloadSchema},
-	} {
-		if err := validateDeclaration(ProgramDeclaration{Kind: DeclarationKindActor, DeclaredID: "chat", Slots: slots}); err == nil {
-			t.Fatalf("invalid slots accepted: %v", slots)
-		}
-	}
-	plan.Definitions[1].Actor.Schemas.Result.Kind = ""
-	if err := ValidateBuildPlan(plan); err == nil {
-		t.Fatal("missing result schema metadata accepted")
-	}
 }

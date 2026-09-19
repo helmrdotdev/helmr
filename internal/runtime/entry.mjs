@@ -3762,9 +3762,6 @@ function isInternalDefinition(value) {
       }
       return true;
     case "actor":
-      for (const field of ["inputSchema", "messageSchema", "outputSchema", "resultSchema"]) {
-        if (definition[field] !== void 0) assertPayloadSchema(definition[field], `actor ${definition.id} ${field}`);
-      }
       return typeof definition.handler === "function";
     default:
       return false;
@@ -5949,20 +5946,8 @@ var ActorRuntime = class {
       };
       this.active = state;
       this.cursor.value = state.sequence;
-      const input = await validateActorValue(
-        this.definition.inputSchema,
-        data["value"]
-      );
       if (this.operations.controller.signal.aborted)
         throw this.operations.controller.signal.reason;
-      if (input.issues !== void 0) {
-        await this.settle(state, "failed", {
-          code: "schema_invalid",
-          details: input.issues
-        });
-        release();
-        return this.receive(options);
-      }
       const source2 = objectField(record, "source", "Turn source");
       let parsedSource;
       if (source2["type"] === "external") parsedSource = { type: "external" };
@@ -5975,7 +5960,7 @@ var ActorRuntime = class {
       return Object.freeze({
         id: state.scope.turnId,
         sequence,
-        input: input.value,
+        input: data["value"],
         source: Object.freeze(parsedSource),
         createdAt: timestampString(record["created_at"], "Turn created_at"),
         signal: state.controller.signal,
@@ -6102,21 +6087,9 @@ var ActorRuntime = class {
     const context = { turn, deliveryId, writes: /* @__PURE__ */ new Set() };
     let status = "handled", code = "", details;
     try {
-      const parsed = await validateActorValue(
-        this.definition.messageSchema,
-        data
-      );
-      if (parsed.issues !== void 0) {
-        status = "rejected";
-        code = "schema_invalid";
-        details = parsed.issues;
-      } else
-        await messageCallback.run(context, async () => {
-          await turn.handler({
-            id: messageId,
-            data: parsed.value
-          });
-        });
+      await messageCallback.run(context, async () => {
+        await turn.handler({ id: messageId, data });
+      });
       await drainPromises(context.writes);
       if (context.error !== void 0) throw context.error;
     } catch (error) {
@@ -6190,18 +6163,10 @@ var ActorRuntime = class {
     };
     const write = async (value, options, callback) => {
       await turn?.ready;
-      const parsed = await validateActorValue(
-        this.definition.outputSchema,
-        value
-      );
-      if (parsed.issues !== void 0)
-        throw new Error("Actor output failed schema validation", {
-          cause: parsed.issues
-        });
       const correlationId = newUUIDv7();
       const common = {
         correlationId,
-        dataJson: jsonText(parsed.value),
+        dataJson: jsonText(value),
         idempotencyKey: options?.idempotencyKey ?? newUUIDv7()
       };
       const response = await this.request(
@@ -6251,20 +6216,6 @@ var ActorRuntime = class {
     }
     turn.phase = "settling";
     const settling = (async () => {
-      let normalized = value;
-      if (disposition === "completed") {
-        const parsed = await validateActorValue(
-          this.definition.resultSchema,
-          present ? value : void 0
-        );
-        if (parsed.issues !== void 0)
-          throw new Error("Turn result failed schema validation", {
-            cause: parsed.issues
-          });
-        normalized = parsed.value;
-        if (this.definition.resultSchema !== void 0)
-          present = normalized !== void 0;
-      }
       await turn.ready;
       await turn.claim;
       await drainPromises(this.#mainWrites);
@@ -6300,7 +6251,7 @@ var ActorRuntime = class {
               execution: turn.scope,
               targetInputSequence: turn.sequence,
               disposition,
-              ...disposition === "completed" ? present ? { resultJson: jsonText(normalized) } : {} : { errorJson: jsonText(normalized) }
+              ...disposition === "completed" ? present ? { resultJson: jsonText(value) } : {} : { errorJson: jsonText(value) }
             })
           }
         );
@@ -6376,13 +6327,6 @@ function failureJSON(error) {
   } catch {
     return { message: boundedUtf8(String(error), MAX_TASK_ERROR_MESSAGE_BYTES) };
   }
-}
-async function validateActorValue(schema, value) {
-  if (schema === void 0) return { value };
-  const result = await schema["~standard"].validate(value);
-  if (result.issues !== void 0)
-    return { issues: validationDetails(result.issues) };
-  return { value: result.value };
 }
 async function runActor(start, definition, io, decisions) {
   const operations = new RunOperationState(), waitGate = new ConsumingWaitGate();

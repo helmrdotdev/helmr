@@ -78,7 +78,7 @@ func CompleteMessage(ctx context.Context, q db.Querier, scope TurnScope, leaseID
 			return db.SessionMessage{}, &OperationError{Code: "invalid_request"}
 		}
 	case "rejected":
-		if outcome.Code != "schema_invalid" && outcome.Code != "handler_rejected" {
+		if outcome.Code != "handler_rejected" {
 			return db.SessionMessage{}, &OperationError{Code: "invalid_request"}
 		}
 	case "unknown":

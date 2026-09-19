@@ -1081,6 +1081,32 @@ func (q *Queries) SessionRecoveryHeadCommitted(ctx context.Context, arg SessionR
 	return committed, err
 }
 
+const sessionTurnAcceptsMessages = `-- name: SessionTurnAcceptsMessages :one
+SELECT EXISTS (
+ SELECT 1 FROM session_turns t
+ JOIN sessions s ON s.id=t.session_id AND s.active_turn_id=t.id
+   AND s.current_run_id=t.run_id AND s.run_generation=t.run_generation
+ JOIN runs r ON r.id=t.run_id AND r.current_attempt_number=t.attempt_number
+ WHERE t.environment_id=$1 AND t.session_id=$2 AND t.id=$3
+   AND s.status IN ('open','closing') AND s.dispatch_hold_id IS NULL
+   AND t.status='running' AND t.interrupt_requested_at IS NULL AND t.settlement_started_at IS NULL
+   AND r.status IN ('running','waiting','queued')
+)::boolean AS accepts
+`
+
+type SessionTurnAcceptsMessagesParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	SessionID     pgtype.UUID `json:"session_id"`
+	ID            pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) SessionTurnAcceptsMessages(ctx context.Context, arg SessionTurnAcceptsMessagesParams) (bool, error) {
+	row := q.db.QueryRow(ctx, sessionTurnAcceptsMessages, arg.EnvironmentID, arg.SessionID, arg.ID)
+	var accepts bool
+	err := row.Scan(&accepts)
+	return accepts, err
+}
+
 const sessionTurnHasUnsettledWork = `-- name: SessionTurnHasUnsettledWork :one
 SELECT EXISTS(SELECT 1 FROM session_messages m WHERE m.session_id=$1 AND m.turn_id=$2 AND m.status IN ('accepted','handling','unknown'))
  OR EXISTS(SELECT 1 FROM run_waits WHERE run_waits.turn_session_id=$1 AND run_waits.turn_id=$2

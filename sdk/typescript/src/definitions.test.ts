@@ -176,33 +176,4 @@ describe("private definition inspection", () => {
     }
   })
 
-  test("retains deployed Actor schemas on the private definition", () => {
-    const schema = {
-      "~standard": {
-        version: 1 as const,
-        vendor: "test",
-        validate: (value: unknown) => ({ value }),
-      },
-    }
-    const definition = inspectDefinition(
-      actor({
-        id: "typed",
-        input: schema,
-        message: schema,
-        output: schema,
-        result: schema,
-        run() {},
-      }),
-    )
-    expect(definition).toMatchObject({
-      kind: "actor",
-      inputSchema: schema,
-      messageSchema: schema,
-      outputSchema: schema,
-      resultSchema: schema,
-    })
-    expect(() =>
-      actor({ id: "invalid", input: {} as never, run() {} }),
-    ).toThrow("Standard Schema")
-  })
 })

@@ -789,3 +789,61 @@ success with known unresolved work. Full native execution acceptance stays open;
 this is a locally validated sample slice, not completed package 5 qualification.
 No new worktree, paid inference, real outbound message, merge, push, publication,
 deployment or shared database reset occurred. Existing worktrees remain retained.
+
+## JSON-only Actor and admission reassessment (2026-09-20)
+
+The candidate based on `ee9f84a1c52611dfc73fe1b296d285c8988126a6` removes
+Actor schema authoring, inferred reference generics, compiler manifests/slots and
+runtime validators together. Task payload and Token wait validation remain. All
+Actor boundaries carry application JSON. Existing schema-preservation tests were
+removed; the sequential-handler test now exercises application-owned validation
+and MessageRejected rather than runtime schema interpretation.
+
+Admission now checks logical active-Turn authority separately from worker delivery
+readiness. It accepts pre-handler and parked messages, rejects settlement-first
+admission with turn_settling, and never changes their selected Turn. Reads advertise
+logical acceptance. Settlement and stop retain explicit unstarted-message rejection.
+No migration, compatibility API, new wake mechanism or provider adapter was added.
+
+Evidence for this delta:
+
+- SDK/compiler typechecks pass; 157 SDK/compiler tests pass under pinned Nix
+  (`/tmp/session-json-sdk.log`). Runtime typecheck and 60 tests pass
+  (`/tmp/session-json-runtime.log`). Host Node 23 could not run the project's newer
+  native APIs; those early host-runtime failures are superseded by pinned checks.
+- Deployment, Session and full controlplane package tests pass
+  (`/tmp/session-json-go-full.log`, controlplane 218.674s). The combined command
+  also mistakenly named `internal/runtime`, which has no Go source; that setup error
+  is not a runtime test or a package pass. TypeScript runtime proof is above.
+- Two additional real-Postgres tests pass (`/tmp/session-json-park.log`): acceptance
+  while physically parked does not resolve the original Token or create a lease;
+  after normal resume, the same message is delivered to the same Turn. A never-
+  registered handler's pending message is explicitly rejected at settlement.
+- Final affected controlplane race checks pass, 16.117s, with all example
+  typechecks (`/tmp/session-json-final-delta.log`). They include message settlement,
+  parked delivery, Token/stop ordering and Turn authority cases.
+- Workflow typecheck and 7 interaction/interface plus 3 native-boundary tests pass.
+  The latter include two separate Claude Actor handler invocations sharing only
+  Workspace state, with the second query receiving the native resume ID. The mock
+  provider proves wiring, not model history or native crash persistence.
+- Packed npm SDK consumer and all 144 website snippet compositions pass
+  (`/tmp/session-json-consumers.log`). Website typecheck and 64-page build/link
+  validation pass (`/tmp/session-json-web.log`). The initial `check` script name
+  was corrected to the package's `typecheck` script; it was not a source failure.
+- Fresh medium independent combined review and its final-delta follow-up report
+  no actionable correctness/simplicity findings. Admission received an independent
+  preimplementation boundary critique. Final affected race results passed after
+  the review; no implementation edits followed the reviewed source.
+
+Native persistence limit discovered during this slice: a non-inference probe of
+pinned Codex 0.133.0 accepted thread/start, but thread/resume in a new process failed
+with no rollout found (`/tmp/session-json-codex-probe.log`). No turn/start, model,
+login or real interface message was requested. The disposable state/processes were
+cleaned up. The sample must not claim an ID proves persisted history and propagates
+resume failure instead of silently creating another conversation. Review found no
+additional Helmr primitive justified by this provider boundary.
+
+The complete real-provider conversation, provider crash durability, VM/process-tree
+exclusion and Workspace restore remain qualification gates from the parent plan.
+These local checks do not close those gates, authorize paid inference or establish
+real Slack delivery. No shared database reset, push, merge or deployment occurred.

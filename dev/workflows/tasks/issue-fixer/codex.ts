@@ -1,8 +1,10 @@
 import { actor, MessageRejected, type JsonValue } from "@helmr/sdk"
 import { z } from "zod"
-import { CodexStdio, type NativeMessage } from "./codex-stdio"
+import { CodexStdio, spawnCodex, type NativeMessage } from "./codex-stdio"
 import { HumanRequests, replySchema } from "./human"
 import { checkRepository, issueSchema, repository } from "./checks"
+
+import { conversation } from "./conversation"
 
 const threadResult = z.object({ thread: z.object({ id: z.string() }) })
 const turnResult = z.object({ turn: z.object({ id: z.string(), status: z.string() }) })
@@ -10,12 +12,16 @@ const requestParams = z.object({ threadId: z.string(), turnId: z.string() }).pas
 const questionsSchema = z.array(z.object({ id: z.string(), isSecret: z.boolean() })).min(1)
 
 export const codexIssueFixer = actor({
-  id: "codex-issue-fixer", input: issueSchema, message: replySchema,
+  id: "codex-issue-fixer",
   async run(session) {
     const cwd = repository()
     for (;;) {
       const turn = await session.receive()
       if (!turn) return
+      const parsed = issueSchema.safeParse(turn.input)
+      if (!parsed.success) { await turn.fail(parsed.error); continue }
+      const input = parsed.data
+      const saved = await conversation(cwd, session.id, "codex")
       const lifetime = new AbortController()
       const human = new HumanRequests(value => turn.output.write(value), turn.signal)
       const requests = new Map<string, AbortController>()
@@ -37,7 +43,7 @@ export const codexIssueFixer = actor({
           const params = turnResult.extend({ threadId: z.string() }).parse(message.params)
           if (params.threadId === threadId) { accepting = false; lifetime.abort() }
         }
-      })
+      }, spawnCodex(saved.directory))
       const stop = () => {
         accepting = false
         lifetime.abort()
@@ -86,15 +92,22 @@ export const codexIssueFixer = actor({
       try {
         await server.request("initialize", { clientInfo: { name: "helmr-issue-fixer", version: "1.0.0" }, capabilities: { experimentalApi: true } })
         await server.send({ method: "initialized" })
-        threadId = threadResult.parse(await server.request("thread/start", { cwd, sandbox: "workspace-write", approvalPolicy: "on-request", ephemeral: true })).thread.id
-        await turn.onMessage(async ({ data }) => {
+        threadId = threadResult.parse(await server.request(saved.id ? "thread/resume" : "thread/start", {
+          ...(saved.id ? { threadId: saved.id } : {}),
+          cwd, sandbox: "workspace-write", approvalPolicy: "on-request",
+        })).thread.id
+        await saved.remember(threadId)
+        nativeTurnId = turnResult.parse(await server.request("turn/start", { threadId, input: [{ type: "text", text: `Fix this issue and explain the change: ${input.issue}`, text_elements: [] }] })).turn.id
+        accepting = !lifetime.signal.aborted
+        await turn.onMessage(async ({ data: raw }) => {
+          const parsed = z.union([issueSchema, replySchema]).safeParse(raw)
+          if (!parsed.success) throw new MessageRejected("Invalid interaction")
+          const data = parsed.data
           if (!accepting) throw new MessageRejected("Codex turn is not accepting messages")
-          if (data.type === "update_constraints") {
-            await server.request("turn/steer", { threadId, expectedTurnId: nativeTurnId, input: [{ type: "text", text: data.text, text_elements: [] }] })
+          if ("issue" in data || data.type === "update_constraints") {
+            await server.request("turn/steer", { threadId, expectedTurnId: nativeTurnId, input: [{ type: "text", text: "issue" in data ? data.issue : data.text, text_elements: [] }] })
           } else await human.reply(data)
         })
-        nativeTurnId = turnResult.parse(await server.request("turn/start", { threadId, input: [{ type: "text", text: `Fix this issue and explain the change: ${turn.input.issue}`, text_elements: [] }] })).turn.id
-        accepting = !lifetime.signal.aborted
         let completed = false
         for await (const message of server.messages) {
           if (message.id !== undefined) {

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import { spawn } from "node:child_process"
 import { actor, MessageRejected, type JsonValue } from "@helmr/sdk"
 import { query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk"
@@ -6,13 +7,21 @@ import { HumanRequests, replySchema } from "./human"
 import { Queue } from "./queue"
 import { checkRepository, issueSchema, repository } from "./checks"
 
+import { conversation } from "./conversation"
+
 export const claudeIssueFixer = actor({
-  id: "claude-issue-fixer", input: issueSchema, message: replySchema,
+  id: "claude-issue-fixer",
   async run(session) {
     const cwd = repository()
     for (;;) {
       const turn = await session.receive()
       if (!turn) return
+      const parsed = issueSchema.safeParse(turn.input)
+      if (!parsed.success) { await turn.fail(parsed.error); continue }
+      const input = parsed.data
+      const saved = await conversation(cwd, session.id, "claude")
+      const nativeSessionId = saved.id ?? randomUUID()
+      await saved.remember(nativeSessionId)
       const lifetime = new AbortController()
       const prompts = new Queue<SDKUserMessage>()
       const human = new HumanRequests(value => turn.output.write(value), turn.signal)
@@ -28,12 +37,15 @@ export const claudeIssueFixer = actor({
       const stop = () => lifetime.abort()
       turn.signal.addEventListener("abort", stop, { once: true })
       if (turn.signal.aborted) stop()
-      // A separate native query per Helmr Turn. Files remain in the Session workspace.
+      // A fresh process resumes the same native conversation from the Workspace.
       const native = query({
         prompt: prompts,
         options: {
           cwd, abortController: lifetime, permissionMode: "default", settingSources: [],
           includePartialMessages: true,
+          persistSession: true,
+          ...(saved.id ? { resume: saved.id } : { sessionId: nativeSessionId }),
+          env: { ...process.env, CLAUDE_CONFIG_DIR: saved.directory },
           spawnClaudeCodeProcess(options) {
             const child = spawn(options.command, options.args, {
               cwd: options.cwd, env: options.env, signal: options.signal,
@@ -64,16 +76,22 @@ export const claudeIssueFixer = actor({
         },
       })
       try {
-        await turn.onMessage(async ({ data }) => {
+        await turn.onMessage(async ({ data: raw }) => {
+          const parsed = z.union([issueSchema, replySchema]).safeParse(raw)
+          if (!parsed.success) throw new MessageRejected("Invalid interaction")
+          const data = parsed.data
           if (!accepting) throw new MessageRejected("Native processing has finished")
-          if (data.type === "update_constraints") {
+          if ("issue" in data || data.type === "update_constraints") {
             // Serialize native calls ourselves; do not assume one native result per
             // rapidly submitted input or describe this as Codex-style steering.
-            followups.push(data.text)
+            followups.push("issue" in data ? data.issue : data.text)
           } else await human.reply(data)
         })
-        prompts.push(prompt(`Fix this issue and explain the change: ${turn.input.issue}`))
+        prompts.push(prompt(`Fix this issue and explain the change: ${input.issue}`))
         for await (const message of native) {
+          if (message.type === "system" && message.subtype === "init") {
+            await saved.remember(message.session_id)
+          }
           await turn.output.write({ type: "provider_event", provider: "claude", event: JSON.parse(JSON.stringify(message)) as JsonValue })
           if (message.type === "result") {
             if (message.subtype !== "success" || message.is_error) throw new Error("Claude did not complete successfully")

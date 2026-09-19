@@ -18,6 +18,18 @@ LEFT JOIN runs r ON r.id=e.producer_run_id
 WHERE e.environment_id=sqlc.arg(environment_id) AND e.session_id=sqlc.arg(session_id) AND e.sequence > sqlc.arg(after_sequence)
 ORDER BY e.sequence LIMIT sqlc.arg(limit_count);
 
+-- name: SessionTurnAcceptsMessages :one
+SELECT EXISTS (
+ SELECT 1 FROM session_turns t
+ JOIN sessions s ON s.id=t.session_id AND s.active_turn_id=t.id
+   AND s.current_run_id=t.run_id AND s.run_generation=t.run_generation
+ JOIN runs r ON r.id=t.run_id AND r.current_attempt_number=t.attempt_number
+ WHERE t.environment_id=$1 AND t.session_id=$2 AND t.id=$3
+   AND s.status IN ('open','closing') AND s.dispatch_hold_id IS NULL
+   AND t.status='running' AND t.interrupt_requested_at IS NULL AND t.settlement_started_at IS NULL
+   AND r.status IN ('running','waiting','queued')
+)::boolean AS accepts;
+
 -- name: SessionTurnMessageReady :one
 SELECT EXISTS (
  SELECT 1 FROM session_turns t

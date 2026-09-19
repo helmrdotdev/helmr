@@ -22,17 +22,13 @@ ordinary customer TypeScript. No `onTurn`, `onRequest` or return-to-complete wra
 ```ts
 const fixer = actor({
   id: "issue-fixer",
-  input: issueSchema,
-  message: updateSchema,
-  output: progressSchema,
-  result: fixResultSchema,
   async run(session, ctx) {
     const agent = await createApplicationAgent(ctx);
     try {
       for (;;) {
         const turn = await session.receive();
         if (turn === null) return;
-        turn.onMessage(({ data }) => agent.handleUpdate(data));
+        await turn.onMessage(({ data }) => agent.handleUpdate(data));
         // The application helper owns native correlation, cancellation and SDK use.
         await turn.output.pipe(agent.execute(turn.input, turn.signal));
         const checks = await runChecks(turn.signal);
@@ -67,7 +63,7 @@ and queued inputs. Task Runs do not acquire mandatory Sessions or Turns.
 | Operation | Meaning |
 | --- | --- |
 | `actor.start(options)` | Returns `{session, run}`. Send/enqueue the first input separately. |
-| `session.send(data, {idempotencyKey?})` | Atomically messages a ready active Turn, or joins the ordinary FIFO tail when idle. Never falls back after target selection. |
+| `session.send(data, {idempotencyKey?})` | Atomically messages an active Turn before settlement, or joins the ordinary FIFO tail when idle. Never falls back after target selection. |
 | `session.enqueue(data, {idempotencyKey?})` | Always queues independent work, including while an open Session is held. |
 | `session.turn(id).send(data, {idempotencyKey?})` | Exact active-Turn message; never enqueues new work. |
 | `session.turn(id).interrupt({idempotencyKey?})` | Accepts exact active-Turn stop and holds dispatch; receipt is not quiescence. |
@@ -78,11 +74,19 @@ and queued inputs. Task Runs do not acquire mandatory Sessions or Turns.
 | `session.recover({...})` | Privileged repair after writer exclusion and external reconciliation; then explicit resume. |
 
 Envelope identity and dispositions are fixed. Payloads, including `type`, are free
-application JSON. `send` uses the intersection of input/message wire types. Deployed
-schemas are authoritative: API admission is not a promise that their refinements
-will pass. Optional Standard Schema input/message transforms run in the customer
-runtime before exposing the input/handler call; output/result validation precedes
-append/settlement. TS annotations alone do not validate REST callers.
+application JSON. No Actor schema declarations or receive-time schema options are
+provided. Customers can parse values with Zod or any library where they use them;
+that validation does not automatically type external references. A known invalid
+message can throw MessageRejected; an unexpected callback failure remains unknown.
+Task payload and Token wait Standard Schema support are unchanged.
+
+Input admission is independent from handler/worker readiness. Messages accepted
+before registration or during a managed wait stay bound to the active Turn and
+are delivered in order when that execution becomes ready. They do not resolve or
+wake a Token/child wait; delivery resumes after the original wait resolves. Do not
+make a consuming wait depend on its paused message handler. Holds reject send.
+Settlement first rejects new sends with turn_settling; admission first may yield a
+later message.rejected event if the callback never started. Neither case retargets.
 
 ## Output and results
 
@@ -94,8 +98,8 @@ Records are JSON; binary/large artifacts are referenced from retained storage.
 Write acknowledges durable output and returns event identity/cursor/provenance.
 Pipe awaits writes in order, applies backpressure and propagates errors. Neither
 completes work. Complete optionally stores one final value; absence and JSON null
-differ. A declared required result schema/type requires its argument. Result types
-come from explicit schemas/contracts, never inference from `run` return values.
+differ. Both output and result are application-defined JSON; their structure is
+not declared on the Actor or inferred from the run return value.
 
 One Session event cursor covers application output and runtime lifecycle. Application
 data cannot forge terminal events. A terminal event, input disposition/cursor and

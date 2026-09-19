@@ -2,8 +2,6 @@ import {
   type ActorConfig,
   type Actor,
   type ActorStartOptions,
-  type ActorSchemaInput,
-  type ActorSchemaOutput,
   type JsonValue,
   type Queue,
   type RunDefaults,
@@ -56,10 +54,6 @@ export type InternalActorDefinition = Readonly<{
   kind: "actor"
   id: string
   handler: (...args: readonly unknown[]) => unknown
-  inputSchema?: PayloadSchema
-  messageSchema?: PayloadSchema
-  outputSchema?: PayloadSchema
-  resultSchema?: PayloadSchema
   queue?: Queue | string
   maxDuration?: import("./contract").Duration
   ttl?: import("./contract").Duration
@@ -139,9 +133,6 @@ function isInternalDefinition(
       }
       return true
     case "actor":
-      for (const field of ["inputSchema", "messageSchema", "outputSchema", "resultSchema"] as const) {
-        if (definition[field] !== undefined) assertPayloadSchema(definition[field], `actor ${definition.id} ${field}`)
-      }
       return typeof definition.handler === "function"
     default:
       return false
@@ -204,37 +195,15 @@ export function task(
     | Task<string, never, JsonValue>
 }
 
-export function actor<
-  TInput extends PayloadSchema<any, any> | undefined = undefined,
-  TMessage extends PayloadSchema<any, any> | undefined = undefined,
-  TOutput extends PayloadSchema<any, any> | undefined = undefined,
-  TResult extends PayloadSchema<any, any> | undefined = undefined,
->(
-  config: ActorConfig<TInput, TMessage, TOutput, TResult>,
-): Actor<
-  ActorSchemaInput<TInput>,
-  ActorSchemaInput<TMessage>,
-  ActorSchemaOutput<TResult>
-> {
+export function actor(config: ActorConfig): Actor {
   validateDefinitionDefaults(config, `actor ${JSON.stringify(config.id)}`)
   if (typeof config.run !== "function") {
     throw new Error(`actor ${JSON.stringify(config.id)} run must be a function`)
-  }
-  for (const field of ["input", "message", "output", "result"] as const) {
-    if (config[field] !== undefined)
-      assertPayloadSchema(
-        config[field],
-        `actor ${JSON.stringify(config.id)} ${field}`,
-      )
   }
   const internal: InternalActorDefinition = Object.freeze({
     kind: "actor",
     id: config.id,
     handler: config.run as (...args: readonly unknown[]) => unknown,
-    ...(config.input === undefined ? {} : { inputSchema: config.input }),
-    ...(config.message === undefined ? {} : { messageSchema: config.message }),
-    ...(config.output === undefined ? {} : { outputSchema: config.output }),
-    ...(config.result === undefined ? {} : { resultSchema: config.result }),
     ...copyDefinitionDefaults(config),
     ...(config.idleTimeout === undefined
       ? {}
@@ -253,11 +222,7 @@ export function actor<
       })
     },
   }
-  return brandDefinition(value, internal) as Actor<
-    ActorSchemaInput<TInput>,
-    ActorSchemaInput<TMessage>,
-    ActorSchemaOutput<TResult>
-  >
+  return brandDefinition(value, internal) as Actor
 }
 
 export function createScheduledTask<

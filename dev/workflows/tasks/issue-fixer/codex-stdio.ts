@@ -6,6 +6,12 @@ import { Queue } from "./queue"
 export type NativeMessage = { id?: string | number; method: string; params?: unknown }
 
 // Small app-server wire transport. Provider policy stays in codex.ts.
+export function spawnCodex(home: string): ChildProcessWithoutNullStreams {
+  return spawn(process.execPath,
+    [createRequire(import.meta.url).resolve("@openai/codex/bin/codex.js"), "app-server", "--listen", "stdio://"],
+    { env: { ...process.env, CODEX_HOME: home } })
+}
+
 export class CodexStdio {
   readonly messages = new Queue<NativeMessage>()
   private readonly pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>()

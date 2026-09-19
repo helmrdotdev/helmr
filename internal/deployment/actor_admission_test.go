@@ -3,7 +3,7 @@ package deployment
 import "testing"
 
 func TestResolveActorRunAdmissionPinsDefinitionAndQueueAuthority(t *testing.T) {
-	manifest := []byte(`{"schemas":{"input":{"kind":"none"},"message":{"kind":"none"},"output":{"kind":"none"},"result":{"kind":"none"}},"idleTimeoutMs":30000,"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false},"ttlMs":60000}}`)
+	manifest := []byte(`{"idleTimeoutMs":30000,"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false},"ttlMs":60000}}`)
 	_, digest, err := CanonicalManifestAndDigest(manifest)
 	if err != nil {
 		t.Fatal(err)
@@ -29,7 +29,7 @@ func TestResolveActorRunAdmissionPinsDefinitionAndQueueAuthority(t *testing.T) {
 }
 
 func TestResolveActorRunAdmissionRejectsUndefinedQueueAndDigestMismatch(t *testing.T) {
-	manifest := []byte(`{"schemas":{"input":{"kind":"none"},"message":{"kind":"none"},"output":{"kind":"none"},"result":{"kind":"none"}},"idleTimeoutMs":30000,"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}`)
+	manifest := []byte(`{"idleTimeoutMs":30000,"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}`)
 	_, digest, err := CanonicalManifestAndDigest(manifest)
 	if err != nil {
 		t.Fatal(err)
@@ -49,7 +49,7 @@ func TestResolveActorRunAdmissionRejectsUndefinedQueueAndDigestMismatch(t *testi
 }
 
 func TestResolveActorRunAdmissionOverrideDoesNotMaskInvalidStoredDefault(t *testing.T) {
-	manifest := []byte(`{"schemas":{"input":{"kind":"none"},"message":{"kind":"none"},"output":{"kind":"none"},"result":{"kind":"none"}},"idleTimeoutMs":30000,"run":{"maxDurationMs":300000,"queue":"missing","retry":{"enabled":false}}}`)
+	manifest := []byte(`{"idleTimeoutMs":30000,"run":{"maxDurationMs":300000,"queue":"missing","retry":{"enabled":false}}}`)
 	_, digest, err := CanonicalManifestAndDigest(manifest)
 	if err != nil {
 		t.Fatal(err)

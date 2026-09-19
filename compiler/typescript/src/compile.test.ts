@@ -615,37 +615,3 @@ function decodeAnalysisFrame(frame: Uint8Array): unknown {
   expect(size).toBe(frame.byteLength - 4)
   return JSON.parse(new TextDecoder().decode(frame.subarray(4)))
 }
-
-test("Actor schema metadata binds the deployed validator slots", () => {
-  const service = actor({
-    id: "typed",
-    input: identitySchema,
-    result: identitySchema,
-    run() {},
-  })
-  const result = analyze({
-    architecture: "x86_64",
-    exports: [
-      { sourcePath: "src/actor.ts", exportName: "service", value: service },
-    ],
-  })
-  expect(result.buildPlan.definitions[0]).toMatchObject({
-    kind: "actor",
-    manifest: {
-      schemas: {
-        input: { kind: "standard_schema" },
-        message: { kind: "none" },
-        output: { kind: "none" },
-        result: { kind: "standard_schema" },
-      },
-    },
-  })
-  expect(result.programDeclarations).toEqual([
-    {
-      kind: "actor",
-      declaredId: "typed",
-      slots: ["handler", "inputSchema", "resultSchema"],
-    },
-  ])
-  expect(JSON.stringify(result.buildPlan)).not.toContain("validate")
-})

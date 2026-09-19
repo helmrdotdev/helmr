@@ -9,7 +9,6 @@ import {
   task,
   workspaces,
   type JsonValue,
-  type PayloadSchema,
   type Turn,
 } from "@helmr/sdk"
 import assert from "node:assert/strict"
@@ -254,13 +253,6 @@ function harness(
     },
   }
 }
-function schema(
-  validate: (
-    value: unknown,
-  ) => { value: unknown } | { issues: readonly { message: string }[] },
-): PayloadSchema {
-  return { "~standard": { version: 1, vendor: "runtime-test", validate } }
-}
 
 test("one Actor Run explicitly settles multiple Turns with distinct absent/null results", async () => {
   const seen: unknown[] = []
@@ -315,41 +307,6 @@ test("Actor return and output EOF leave an unresolved Turn unsettled", async () 
     assert.equal(last.value.outcome.case, "failed")
 })
 
-test("deployed schemas transform before exposure and publication; invalid input is failed", async () => {
-  const seen: unknown[] = []
-  const run = harness(
-    actor({
-      id: "worker",
-      input: schema((value) =>
-        typeof value === "string"
-          ? { value: value.toUpperCase() }
-          : { issues: [{ message: "string required" }] },
-      ),
-      output: schema((value) => ({ value: { transformed: value } })),
-      result: schema((value) => ({ value: { result: value } })),
-      async run(session) {
-        const turn = (await session.receive())!
-        seen.push(turn.input)
-        await turn.output.write("stream")
-        await turn.complete("done")
-      },
-    }),
-    [42, "valid"],
-  )
-  await run.outcome
-  assert.deepEqual(seen, ["VALID"])
-  const settled = run.events
-    .filter((x) => x.case === "turnSettleRequested")
-    .map((x) => x.value)
-  assert.equal(settled[0]!.disposition, "failed")
-  assert.match(settled[0]!.errorJson!, /schema_invalid/)
-  assert.deepEqual(JSON.parse(settled[1]!.resultJson!), { result: "done" })
-  const output = run.events.find((x) => x.case === "turnOutputWriteRequested")!
-  if (output.case === "turnOutputWriteRequested")
-    assert.deepEqual(JSON.parse(output.value.dataJson), {
-      transformed: "stream",
-    })
-})
 
 test("unawaited write and pipe are drained before the durable settlement barrier", async () => {
   const release = deferred(),
@@ -416,14 +373,11 @@ test("readiness precedes output and callbacks are sequential with known rejectio
   const run = harness(
     actor({
       id: "worker",
-      message: schema((value) =>
-        typeof value === "number"
-          ? { value: value * 2 }
-          : { issues: [{ message: "number required" }] },
-      ),
       async run(session) {
         const turn = (await session.receive())!
-        void turn.onMessage(async ({ data }) => {
+        void turn.onMessage(async ({ data: raw }) => {
+          if (typeof raw !== "number") throw new MessageRejected("number required")
+          const data = raw * 2
           order.push(data)
           await assert.rejects(turn.complete(), /callbacks cannot settle/)
           if (data === 2) throw new MessageRejected("already answered")
@@ -463,7 +417,7 @@ test("readiness precedes output and callbacks are sequential with known rejectio
     .filter((x) => x.case === "turnMessageCompleteRequested")
     .map((x) => [x.value.status, x.value.code])
   assert.deepEqual(dispositions, [
-    ["rejected", "schema_invalid"],
+    ["rejected", "handler_rejected"],
     ["rejected", "handler_rejected"],
     ["handled", ""],
   ])

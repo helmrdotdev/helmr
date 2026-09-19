@@ -102,7 +102,6 @@ const fixtureSandbox = resourceSandbox.resources({ cpu: 1, memory: "1GiB" })
 fixtureSandbox satisfies Sandbox
 const fixtureActor = actor({
   id: "packed-consumer-actor",
-  input: payloadSchema, message: payloadSchema, output: payloadSchema, result: payloadSchema,
   async run(session) {
     const turn = await session.receive()
     if (turn === null) return

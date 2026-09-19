@@ -62,16 +62,19 @@ func TestSessionMessageSettlementBarrierPostgres(t *testing.T) {
 	f := newActorCheckpointFixture(t)
 	scope := f.receiveTurn(t, 1)
 	request := session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, Mode: session.SendMessageOrEnqueue, Data: json.RawMessage(`null`), IdempotencyKey: "not-ready"}
-	_, err := f.server.applySessionAdmission(t.Context(), request)
-	var operation *session.OperationError
-	if !errors.As(err, &operation) || operation.Code != "turn_not_ready" {
-		t.Fatalf("unready send: %v", err)
+	first, err := f.server.applySessionAdmission(t.Context(), request)
+	if err != nil || first.Kind != "messaged" {
+		t.Fatalf("pre-handler admission: %+v %v", first, err)
+	}
+	view, err := session.GetTurn(t.Context(), f.server.db, request.Target, scope.TurnID)
+	if err != nil || !view.AcceptsMessages {
+		t.Fatalf("pre-handler read view: %+v %v", view, err)
 	}
 	readyMessages(t, f, scope)
-	if _, err = f.server.applySessionAdmission(t.Context(), request); !errors.As(err, &operation) || operation.Code != "turn_not_ready" {
-		t.Fatalf("rejected receipt changed after readiness: %v", err)
+	repeated, err := f.server.applySessionAdmission(t.Context(), request)
+	if err != nil || repeated.ID != first.ID || *repeated.MessageID != *first.MessageID {
+		t.Fatalf("accepted receipt changed after readiness: %+v %v", repeated, err)
 	}
-	first := admitMessage(t, f, "message-1")
 	second := admitMessage(t, f, "message-2")
 	queued, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: request.Target, Mode: session.EnqueueOnly, Data: json.RawMessage(`{"next":true}`)})
 	if err != nil {
@@ -85,6 +88,11 @@ func TestSessionMessageSettlementBarrierPostgres(t *testing.T) {
 		t.Fatalf("delivery order: %+v", delivered)
 	}
 	commit := turnCommitRequest(t, f, scope, f.capture(t, "message result")) // Begins settlement before the physical commit.
+	request.IdempotencyKey = "settling"
+	var operation *session.OperationError
+	if _, err = f.server.applySessionAdmission(t.Context(), request); !errors.As(err, &operation) || operation.Code != "turn_settling" {
+		t.Fatalf("admission after settlement cutoff: %v", err)
+	}
 	var secondStatus string
 	if err = f.Pool.QueryRow(t.Context(), `SELECT status FROM session_messages WHERE id=$1`, *second.MessageID).Scan(&secondStatus); err != nil || secondStatus != "rejected" {
 		t.Fatalf("queued callback at barrier: %s %v", secondStatus, err)
@@ -222,8 +230,20 @@ func TestSessionTokenWaitStopOrderingPostgres(t *testing.T) {
 		if bound != scope.TurnID || gen != scope.RunGeneration || ready {
 			t.Fatalf("wait binding: %s %d ready=%v", bound, gen, ready)
 		}
+		pending := admitMessage(t, f, "during-wait-input")
+		if pending.Kind != "messaged" || pending.TurnID != scope.TurnID {
+			t.Fatalf("wait admission: %+v", pending)
+		}
+		var readyAfter bool
+		if err := f.Pool.QueryRow(t.Context(), `SELECT ready_run_lease_id IS NOT NULL FROM session_turns WHERE id=$1`, scope.TurnID).Scan(&readyAfter); err != nil || readyAfter {
+			t.Fatalf("admission changed delivery readiness: %v %v", readyAfter, err)
+		}
 		if _, err := interruptTurn(t.Context(), f, scope, "during-wait"); err != nil {
 			t.Fatal(err)
+		}
+		var pendingStatus string
+		if err := f.Pool.QueryRow(t.Context(), `SELECT status FROM session_messages WHERE id=$1`, *pending.MessageID).Scan(&pendingStatus); err != nil || pendingStatus != "rejected" {
+			t.Fatalf("stopped pending input: %s %v", pendingStatus, err)
 		}
 		if _, err := f.server.db.CompleteToken(t.Context(), db.CompleteTokenParams{OrgID: pgvalue.UUID(f.OrgID), ProjectID: pgvalue.UUID(f.ProjectID), EnvironmentID: pgvalue.UUID(f.EnvironmentID), ID: pgvalue.UUID(registration.TokenID), CompletionFingerprint: make([]byte, 32), Result: []byte(`{"approved":true}`), ControlOutboxID: pgvalue.UUID(uuid.NewV7())}); err != nil {
 			t.Fatal(err)
@@ -540,4 +560,62 @@ func TestOwnedTaskTokenWaitDoesNotInheritActorTurnPostgres(t *testing.T) {
 	f.startClaim(t)
 	f.turn(t, 2, content, false)
 
+}
+
+func TestSessionMessagesSurviveParkUntilOriginalWaitResumesPostgres(t *testing.T) {
+	f := newActorCheckpointFixture(t)
+	capture := f.capture(t, "checkpoint head")
+	f.turn(t, 1, capture, true)
+	target := session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}
+	if _, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: target, Mode: session.EnqueueOnly, Data: json.RawMessage(`{"work":2}`)}); err != nil {
+		t.Fatal(err)
+	}
+	scope := f.receiveTurn(t, 2)
+	reconciler, registration := actorTokenWait(t, f, scope)
+	registration.ActorSpeculativeInputSequence = pgtype.Int8{Int64: 2, Valid: true}
+	if _, err := reconciler.RegisterWait(t.Context(), registration); err != nil {
+		t.Fatal(err)
+	}
+	f.suspendWait(t, registration.WaitID, capture)
+	pending := admitMessage(t, f, "parked-input")
+	if pending.Kind != "messaged" || pending.TurnID != scope.TurnID {
+		t.Fatalf("parked routing: %+v", pending)
+	}
+	var condition, status string
+	var lease pgtype.UUID
+	if err := f.Pool.QueryRow(t.Context(), `SELECT w.condition_status,r.status,r.current_run_lease_id FROM run_waits w JOIN runs r ON r.id=w.run_id WHERE w.id=$1`, registration.WaitID).Scan(&condition, &status, &lease); err != nil {
+		t.Fatal(err)
+	}
+	if condition != "pending" || status != "waiting" || lease.Valid {
+		t.Fatalf("message woke original wait: %s %s %v", condition, status, lease)
+	}
+	if _, err := f.server.db.CompleteToken(t.Context(), db.CompleteTokenParams{OrgID: pgvalue.UUID(f.OrgID), ProjectID: pgvalue.UUID(f.ProjectID), EnvironmentID: pgvalue.UUID(f.EnvironmentID), ID: pgvalue.UUID(registration.TokenID), CompletionFingerprint: make([]byte, 32), Result: []byte(`true`), ControlOutboxID: pgvalue.UUID(uuid.NewV7())}); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := reconciler.ReconcileBatch(t.Context(), f.EnvironmentID, registration.TokenID, 1); err != nil || result.Resolved != 1 {
+		t.Fatalf("resolve wait: %+v %v", result, err)
+	}
+	f.placeAndClaim(t)
+	f.startClaim(t)
+	readyMessages(t, f, scope)
+	delivery := claimMessage(t, f, scope)
+	if delivery.MessageID != pending.MessageID.String() || delivery.TurnID != scope.TurnID.String() {
+		t.Fatalf("resumed delivery changed target: %+v", delivery)
+	}
+	finishDelivery(t, f, scope, delivery, "handled", "")
+}
+
+func TestSessionMessageWithoutHandlerRejectedAtSettlementPostgres(t *testing.T) {
+	f := newActorCheckpointFixture(t)
+	scope := f.receiveTurn(t, 1)
+	accepted := admitMessage(t, f, "no-handler")
+	turnCommitRequest(t, f, scope, f.capture(t, "completed without a handler"))
+	var status string
+	var outcome []byte
+	if err := f.Pool.QueryRow(t.Context(), `SELECT status,outcome FROM session_messages WHERE id=$1`, *accepted.MessageID).Scan(&status, &outcome); err != nil {
+		t.Fatal(err)
+	}
+	if status != "rejected" || !bytes.Contains(outcome, []byte("turn_settling")) {
+		t.Fatalf("unhandled input lost: %s %s", status, outcome)
+	}
 }

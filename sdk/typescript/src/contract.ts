@@ -1,4 +1,4 @@
-import type { PayloadSchema, PayloadSchemaInput, PayloadSchemaOutput } from "./schema/payload"
+import type { PayloadSchema } from "./schema/payload"
 import type { RequestOptions } from "./request"
 import type { WorkspaceRef } from "./workspace"
 
@@ -300,73 +300,34 @@ export interface Message<TData = JsonValue> {
   readonly data: TData
 }
 
-export interface Turn<
-  TInput = JsonValue,
-  TMessage = JsonValue,
-  TOutput = JsonValue,
-  TResult = JsonValue | undefined,
-> {
+export interface Turn {
   readonly id: string
   readonly sequence: number
-  readonly input: TInput
+  readonly input: JsonValue
   readonly source: TurnSource
   readonly createdAt: string
   readonly signal: AbortSignal
-  readonly output: RecordWriter<TOutput>
+  readonly output: RecordWriter
   onMessage(
-    handler: (message: Message<TMessage>) => MaybePromise<void>,
+    handler: (message: Message) => MaybePromise<void>,
   ): Promise<void>
-  complete(
-    ...args: undefined extends TResult ? [result?: TResult] : [result: TResult]
-  ): Promise<void>
+  complete(result?: JsonValue): Promise<void>
   fail(error: unknown): Promise<void>
 }
 
-export interface ActorSession<
-  TInput = JsonValue,
-  TMessage = JsonValue,
-  TOutput = JsonValue,
-  TResult = JsonValue | undefined,
-> {
+export interface ActorSession {
   readonly id: string
   readonly key?: string
-  readonly output: RecordWriter<TOutput>
+  readonly output: RecordWriter
   receive(
     options?: ActorSessionReceiveOptions,
-  ): Promise<Turn<TInput, TMessage, TOutput, TResult> | null>
+  ): Promise<Turn | null>
 }
 
-type ActorSchema = PayloadSchema<any, any> | undefined
-export type ActorSchemaInput<TSchema, TFallback = JsonValue> =
-  TSchema extends PayloadSchema<any, any>
-    ? PayloadSchemaInput<TSchema>
-    : TFallback
-export type ActorSchemaOutput<TSchema, TFallback = JsonValue> =
-  TSchema extends PayloadSchema<any, any>
-    ? PayloadSchemaOutput<TSchema>
-    : TFallback
-
-export interface ActorConfig<
-  TInput extends ActorSchema = undefined,
-  TMessage extends ActorSchema = undefined,
-  TOutput extends ActorSchema = undefined,
-  TResult extends ActorSchema = undefined,
-> extends RunDefaults {
+export interface ActorConfig extends RunDefaults {
   readonly id: string
   readonly idleTimeout?: Duration
-  readonly input?: TInput
-  readonly message?: TMessage
-  readonly output?: TOutput
-  readonly result?: TResult
-  readonly run: (
-    session: ActorSession<
-      ActorSchemaOutput<TInput>,
-      ActorSchemaOutput<TMessage>,
-      ActorSchemaInput<TOutput>,
-      ActorSchemaInput<TResult, JsonValue | undefined>
-    >,
-    ctx: ActorContext,
-  ) => MaybePromise<void>
+  readonly run: (session: ActorSession, ctx: ActorContext) => MaybePromise<void>
 }
 
 export interface ActorStartOptions {
@@ -417,7 +378,7 @@ export type TurnStatus =
   | "completed"
   | "failed"
   | "interrupted"
-export interface TurnState<TResult = JsonValue> {
+export interface TurnState {
   readonly id: string
   readonly sessionId: string
   readonly sequence: number
@@ -429,7 +390,7 @@ export interface TurnState<TResult = JsonValue> {
   readonly acceptsMessages: boolean
   readonly terminalEventId?: string
   readonly workspaceVersionId?: string
-  readonly result?: TResult
+  readonly result?: JsonValue
   readonly error?: JsonValue
 }
 
@@ -535,44 +496,40 @@ export interface SessionEventPage {
   readonly retainedAfter: number
 }
 
-export interface TurnRef<TMessage = JsonValue, TResult = JsonValue> {
+export interface TurnRef {
   readonly id: string
   readonly sessionId: string
   send(
-    data: TMessage,
+    data: JsonValue,
     request?: SessionOperationOptions,
     options?: RequestOptions,
   ): Promise<MessageReceipt>
-  retrieve(options?: RequestOptions): Promise<TurnState<TResult>>
+  retrieve(options?: RequestOptions): Promise<TurnState>
   interrupt(
     request?: SessionOperationOptions,
     options?: RequestOptions,
   ): Promise<TurnInterruptReceipt>
 }
-export type SessionSendResult<TMessage = JsonValue, TResult = JsonValue> =
-  | Readonly<{ kind: "enqueued"; turn: TurnRef<TMessage, TResult> }>
+export type SessionSendResult =
+  | Readonly<{ kind: "enqueued"; turn: TurnRef }>
   | Readonly<{
       kind: "messaged"
-      turn: TurnRef<TMessage, TResult>
+      turn: TurnRef
       message: MessageReceipt
     }>
-export interface SessionRef<
-  TInput = JsonValue,
-  TMessage = JsonValue,
-  TResult = JsonValue,
-> {
+export interface SessionRef {
   readonly id: string
   send(
-    data: TInput & TMessage,
+    data: JsonValue,
     request?: SessionOperationOptions,
     options?: RequestOptions,
-  ): Promise<SessionSendResult<TMessage, TResult>>
+  ): Promise<SessionSendResult>
   enqueue(
-    input: TInput,
+    input: JsonValue,
     request?: SessionOperationOptions,
     options?: RequestOptions,
-  ): Promise<TurnRef<TMessage, TResult>>
-  turn(id: string): TurnRef<TMessage, TResult>
+  ): Promise<TurnRef>
+  turn(id: string): TurnRef
   readonly events: Readonly<{
     list(
       query?: SessionEventQuery,
@@ -591,22 +548,14 @@ export interface SessionRef<
 }
 
 declare const actorTypeBrand: unique symbol
-export interface ActorStartResult<
-  TInput = JsonValue,
-  TMessage = JsonValue,
-  TResult = JsonValue,
-> {
-  readonly session: SessionRef<TInput, TMessage, TResult>
+export interface ActorStartResult {
+  readonly session: SessionRef
   readonly run: RunHandle<null>
 }
-export interface Actor<
-  TInput = JsonValue,
-  TMessage = JsonValue,
-  TResult = JsonValue,
-> {
+export interface Actor {
   readonly [actorTypeBrand]: true
   readonly id: string
   start(
     options: ActorStartOptions,
-  ): Promise<ActorStartResult<TInput, TMessage, TResult>>
+  ): Promise<ActorStartResult>
 }

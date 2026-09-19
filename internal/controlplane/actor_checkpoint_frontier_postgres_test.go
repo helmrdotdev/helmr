@@ -62,7 +62,7 @@ func newActorCheckpointFixture(t *testing.T) *actorCheckpointFixture {
 	dbtest.MustExec(t, t.Context(), b.Pool, `UPDATE deployments SET queue_config=$2 WHERE id=$1`, b.DeploymentID, []byte(`{"formatVersion":0,"queues":[{"concurrencyLimit":2,"name":"default"},{"name":"priority"}]}`))
 	dbtest.MustExec(t, t.Context(), b.Pool, `UPDATE environments SET current_deployment_id=$2 WHERE id=$1`, b.EnvironmentID, b.DeploymentID)
 	dbtest.MustExec(t, t.Context(), b.Pool, `UPDATE deployment_definitions SET manifest=$2::jsonb WHERE id=$1`, b.WorkspaceDefinitionID, fmt.Sprintf(`{"image":{"artifactDigest":%q,"mediaType":"application/octet-stream"},"resources":{"milliCpu":1000,"memoryMiB":1024}}`, dbtest.Digest("image")))
-	manifest, digest, err := deployment.CanonicalManifestAndDigest([]byte(`{"schemas":{"input":{"kind":"none"},"message":{"kind":"none"},"output":{"kind":"none"},"result":{"kind":"none"}},"idleTimeoutMs":1,"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}`))
+	manifest, digest, err := deployment.CanonicalManifestAndDigest([]byte(`{"idleTimeoutMs":1,"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}`))
 	if err != nil {
 		t.Fatal(err)
 	}

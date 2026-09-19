@@ -62,7 +62,6 @@ export type BuildPlanDefinition =
       kind: "actor"
       declaredId: string
       manifest: Readonly<{
-        schemas: Readonly<Record<"input" | "message" | "output" | "result", Readonly<{ kind: "none" | "standard_schema" }>>>
         run: NormalizedRunManifest
         idleTimeoutMs: number
       }>
@@ -346,12 +345,6 @@ function compileDefinition(
         kind: "actor",
         declaredId: definition.id,
         manifest: {
-          schemas: {
-            input: { kind: definition.inputSchema === undefined ? "none" : "standard_schema" },
-            message: { kind: definition.messageSchema === undefined ? "none" : "standard_schema" },
-            output: { kind: definition.outputSchema === undefined ? "none" : "standard_schema" },
-            result: { kind: definition.resultSchema === undefined ? "none" : "standard_schema" },
-          },
           run: normalizeRun(definition, "actor", queues),
           idleTimeoutMs:
             definition.idleTimeout === undefined
@@ -714,7 +707,7 @@ function programDeclaration(definition: InternalDefinition): ProgramDeclaration 
       return {
         kind: "actor",
         declaredId: definition.id,
-        slots: ["handler", ...(["inputSchema", "messageSchema", "outputSchema", "resultSchema"] as const).filter(slot => definition[slot] !== undefined)],
+        slots: ["handler"],
       }
   }
 }

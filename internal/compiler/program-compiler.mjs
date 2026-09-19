@@ -648,9 +648,6 @@ function isInternalDefinition(value) {
       }
       return true;
     case "actor":
-      for (const field of ["inputSchema", "messageSchema", "outputSchema", "resultSchema"]) {
-        if (definition[field] !== void 0) assertPayloadSchema(definition[field], `actor ${definition.id} ${field}`);
-      }
       return typeof definition.handler === "function";
     default:
       return false;
@@ -1124,12 +1121,6 @@ function compileDefinition(definition, options, queues, sandboxExports) {
         kind: "actor",
         declaredId: definition.id,
         manifest: {
-          schemas: {
-            input: { kind: definition.inputSchema === void 0 ? "none" : "standard_schema" },
-            message: { kind: definition.messageSchema === void 0 ? "none" : "standard_schema" },
-            output: { kind: definition.outputSchema === void 0 ? "none" : "standard_schema" },
-            result: { kind: definition.resultSchema === void 0 ? "none" : "standard_schema" }
-          },
           run: normalizeRun(definition, "actor", queues),
           idleTimeoutMs: definition.idleTimeout === void 0 ? 3e4 : normalizeDuration(
             definition.idleTimeout,
@@ -1416,7 +1407,7 @@ function programDeclaration(definition) {
       return {
         kind: "actor",
         declaredId: definition.id,
-        slots: ["handler", ...["inputSchema", "messageSchema", "outputSchema", "resultSchema"].filter((slot) => definition[slot] !== void 0)]
+        slots: ["handler"]
       };
   }
 }

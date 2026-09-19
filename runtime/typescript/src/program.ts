@@ -2049,20 +2049,8 @@ class ActorRuntime {
       }
       this.active = state
       this.cursor.value = state.sequence
-      const input = await validateActorValue(
-        this.definition.inputSchema,
-        data["value"],
-      )
       if (this.operations.controller.signal.aborted)
         throw this.operations.controller.signal.reason
-      if (input.issues !== undefined) {
-        await this.settle(state, "failed", {
-          code: "schema_invalid",
-          details: input.issues,
-        })
-        release()
-        return this.receive(options)
-      }
       const source = objectField(record, "source", "Turn source")
       let parsedSource: TurnSource
       if (source["type"] === "external") parsedSource = { type: "external" }
@@ -2075,7 +2063,7 @@ class ActorRuntime {
       return Object.freeze({
         id: state.scope.turnId,
         sequence,
-        input: input.value as JsonValue,
+        input: data["value"] as JsonValue,
         source: Object.freeze(parsedSource),
         createdAt: timestampString(record["created_at"], "Turn created_at"),
         signal: state.controller.signal,
@@ -2229,21 +2217,9 @@ class ActorRuntime {
       code = "",
       details: JsonValue | undefined
     try {
-      const parsed = await validateActorValue(
-        this.definition.messageSchema,
-        data,
-      )
-      if (parsed.issues !== undefined) {
-        status = "rejected"
-        code = "schema_invalid"
-        details = parsed.issues
-      } else
-        await messageCallback.run(context, async () => {
-          await turn.handler!({
-            id: messageId,
-            data: parsed.value as JsonValue,
-          })
-        })
+      await messageCallback.run(context, async () => {
+        await turn.handler!({ id: messageId, data: data as JsonValue })
+      })
       await drainPromises(context.writes)
       if (context.error !== undefined) throw context.error
     } catch (error) {
@@ -2329,18 +2305,10 @@ class ActorRuntime {
       callback?: MessageCallback,
     ): Promise<OutputReceipt> => {
       await turn?.ready
-      const parsed = await validateActorValue(
-        this.definition.outputSchema,
-        value,
-      )
-      if (parsed.issues !== undefined)
-        throw new Error("Actor output failed schema validation", {
-          cause: parsed.issues,
-        })
       const correlationId = newUUIDv7()
       const common = {
         correlationId,
-        dataJson: jsonText(parsed.value),
+        dataJson: jsonText(value),
         idempotencyKey: options?.idempotencyKey ?? newUUIDv7(),
       }
       const response = await this.request(
@@ -2407,20 +2375,6 @@ class ActorRuntime {
     }
     turn.phase = "settling"
     const settling = (async () => {
-      let normalized = value
-      if (disposition === "completed") {
-        const parsed = await validateActorValue(
-          this.definition.resultSchema,
-          present ? value : undefined,
-        )
-        if (parsed.issues !== undefined)
-          throw new Error("Turn result failed schema validation", {
-            cause: parsed.issues,
-          })
-        normalized = parsed.value as JsonValue
-        if (this.definition.resultSchema !== undefined)
-          present = normalized !== undefined
-      }
       await turn.ready
       await turn.claim
       await drainPromises(this.#mainWrites)
@@ -2460,9 +2414,9 @@ class ActorRuntime {
               disposition,
               ...(disposition === "completed"
                 ? present
-                  ? { resultJson: jsonText(normalized) }
+                  ? { resultJson: jsonText(value) }
                   : {}
-                : { errorJson: jsonText(normalized) }),
+                : { errorJson: jsonText(value) }),
             }),
           },
         )
@@ -2558,17 +2512,6 @@ function failureJSON(error: unknown): JsonValue {
   } catch {
     return { message: boundedUtf8(String(error), MAX_TASK_ERROR_MESSAGE_BYTES) }
   }
-}
-
-async function validateActorValue(
-  schema: InternalActorDefinition["inputSchema"],
-  value: unknown,
-): Promise<{ value?: unknown; issues?: JsonValue }> {
-  if (schema === undefined) return { value }
-  const result = await schema["~standard"].validate(value)
-  if (result.issues !== undefined)
-    return { issues: validationDetails(result.issues) }
-  return { value: result.value }
 }
 
 async function runActor(

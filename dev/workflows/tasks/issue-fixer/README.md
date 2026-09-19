@@ -3,7 +3,8 @@
 These editable Actors use the prerelease Session/Turn SDK with the provider versions
 already pinned in `dev/workflows/package.json`: Codex app-server 0.133.0 and Claude
 Agent SDK 0.3.149. They are application examples, not a provider adapter package.
-No Helmr public SDK or lifecycle primitive changes are part of this sample.
+The Actors accept JSON and validate it locally with Zod. Input formats are not
+declared on the Actor.
 
 - `codex.ts`: a native thread/turn, exact `turn/steer`, command/file approvals and
   `item/tool/requestUserInput`. Unsupported interactive methods fail closed. Secret
@@ -47,8 +48,9 @@ operation history retention window without reconciliation.
 Commands after mentioning the bot:
 
 ```text
-fix The login form loses its error message
+send The login form loses its error message
 fix Add a regression test for password reset
+send Keep the current public API
 reply TURN_A {"type":"update_constraints","text":"Do not change the public API"}
 reply TURN_A {"type":"answer","requestId":"REQUEST_ID","answers":{"QUESTION_KEY":["Keep existing behavior"]}}
 reply TURN_A {"type":"approval","requestId":"REQUEST_ID","allow":true}
@@ -99,12 +101,13 @@ qualify arbitrary native sockets or callback Promises for checkpoint/restore.
 
 `session.enqueue(input)` and `session.turn(id).send(message)` express different
 intent here: new work versus interaction with an already identified operation.
-Automatic `session.send` is useful when an input has the same meaning both idle and
-active; its typed signature requires the intersection of input and message types.
-It is not appropriate for a delayed approval or for an issue that must become a new
-Turn. Replacing these with a mode flag would preserve the same distinctions while
-making target/type constraints less explicit. This sample alone does not justify
-removing or broadening automatic send.
+Automatic `session.send({issue})` uses the same conversational payload both idle and
+active. The Slack `send` command demonstrates it; `fix` deliberately queues a new
+Turn. Both native Actors accept issue payloads as follow-ups, alongside independently
+validated exact questions/approvals. Codex registers its handler only after the native
+Turn exists, so startup input can wait in Helmr without being prematurely rejected.
+A provider completion can still beat delivery; the application rejects that message
+rather than pretending it was consumed. Inspect the retained message disposition.
 
 The permission fence deserves separate scrutiny: `output.write` provides a fresh,
 Turn-scoped admission ordering point, not a permission interpretation. The record
@@ -141,3 +144,33 @@ Protocol references checked 2026-09-20:
   No bypass mode or Session-wide grants are requested by this sample.
 - [Slack signatures](https://docs.slack.dev/authentication/verifying-requests-from-slack/)
   and [event delivery](https://docs.slack.dev/apis/events-api/).
+
+## Conversation continuity
+
+`conversation.ts` stores each Session/provider's native conversation ID and provider
+home under `<repository>/.helmr/issue-fixer/<session>/<provider>`. Keep `.helmr/` out
+of commits and preserve it in the captured Workspace; do not delete it when checking
+out the next task. Codex uses this location as CODEX_HOME, starts a persisted thread
+and later calls thread/resume. Claude uses it as CLAUDE_CONFIG_DIR with persistence
+and later passes resume. Configure existing provider authentication through the
+application's environment; the samples do not copy credentials from host homes.
+These locations contain private transcripts and possibly provider state.
+
+Each Run can start fresh native processes while retaining conversation history.
+A missing/corrupt saved conversation must fail visibly, never silently start a new
+conversation. Only provider history/state persists: pending approval callbacks and
+permission grants are not reconstructed. An interruption still requires Helmr's
+physical convergence and exact current-hold resume before queued work proceeds.
+
+The local Claude fixture invokes the Actor twice with separate Run heaps and checks
+that the second query receives the persisted native ID. This proves application
+wiring only, not native model memory, provider crash durability or Workspace restore.
+Native end-to-end context continuation remains a runtime/provider qualification gate.
+
+A non-inference probe of pinned Codex 0.133.0 accepted thread/start but a new
+process immediately attempting thread/resume returned "no rollout found". An empty
+thread's ID is not proof of persisted history. The sample deliberately propagates
+that failure instead of silently opening a replacement conversation; applications
+must reconcile missing native history. Neither a Helmr output receipt nor Workspace
+capture can make a provider persist data that it has not written. The probe made no
+turn/start, model, login or outbound interface request.

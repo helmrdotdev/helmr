@@ -544,6 +544,7 @@ type Querier interface {
 	SelectRunWorkerCapacity(ctx context.Context, arg SelectRunWorkerCapacityParams) (SelectRunWorkerCapacityRow, error)
 	SessionOwnedExecutionsExcluded(ctx context.Context, parentRunID pgtype.UUID) (bool, error)
 	SessionRecoveryHeadCommitted(ctx context.Context, arg SessionRecoveryHeadCommittedParams) (bool, error)
+	SessionTurnAcceptsMessages(ctx context.Context, arg SessionTurnAcceptsMessagesParams) (bool, error)
 	SessionTurnHasUnsettledWork(ctx context.Context, arg SessionTurnHasUnsettledWorkParams) (pgtype.Bool, error)
 	SessionTurnMessageReady(ctx context.Context, arg SessionTurnMessageReadyParams) (bool, error)
 	SessionWriterExcluded(ctx context.Context, workspaceID pgtype.UUID) (pgtype.Bool, error)

@@ -51,7 +51,7 @@ func GetTurn(ctx context.Context, q db.Querier, target Target, turnID uuid.UUID)
 		return TurnView{}, err
 	}
 	view := TurnView{Turn: turn}
-	view.AcceptsMessages, err = q.SessionTurnMessageReady(ctx, db.SessionTurnMessageReadyParams{EnvironmentID: turn.EnvironmentID, SessionID: turn.SessionID, ID: turn.ID})
+	view.AcceptsMessages, err = q.SessionTurnAcceptsMessages(ctx, db.SessionTurnAcceptsMessagesParams{EnvironmentID: turn.EnvironmentID, SessionID: turn.SessionID, ID: turn.ID})
 	if err != nil {
 		return TurnView{}, err
 	}

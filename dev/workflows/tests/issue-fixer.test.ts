@@ -95,6 +95,7 @@ test("signed interface maps enqueue and exact replies without automatic retarget
   const calls: unknown[] = []
   const session = {
     enqueue: async (...args: unknown[]) => { calls.push(args.slice(0, 2)) },
+    send: async (...args: unknown[]) => { calls.push(["auto", ...args.slice(0, 2)]) },
     turn: (id: string) => ({ send: async (data: JsonValue, request: unknown) => { calls.push([id, data, request]); throw new Error("turn_not_active") } }),
   } as unknown as SessionRef
   const binding = { signingSecret: "test-secret", appId: "A1", teamId: "T1", channelId: "C1", users: ["U1"], session }
@@ -113,6 +114,9 @@ test("signed interface maps enqueue and exact replies without automatic retarget
   first.headers.set("x-slack-request-timestamp", "1")
   expect((await acceptSlackEvent(first.raw, first.headers, binding)).status).toBe(401)
   expect(calls).toHaveLength(4)
+  const ordinary = signedEvent("send revise the earlier approach")
+  expect((await acceptSlackEvent(ordinary.raw, ordinary.headers, binding)).status).toBe(200)
+  expect(calls[4]).toEqual(["auto", { issue: "revise the earlier approach" }, { idempotencyKey: "slack:Ev1" }])
 })
 
 
