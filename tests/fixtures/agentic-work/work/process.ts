@@ -42,6 +42,9 @@ async function boundedHang(limitMs: number) {
 
 export async function processWork() {
   const exchange = await run(process.execPath, [tool, "sum"], { input: JSON.stringify({ values: [4, 8, 15, 16, 23, 42] }) })
+  if (exchange.stdinError !== null) {
+    throw new Error(`the tool did not take its request: ${exchange.stdinError}; exited ${exchange.code}: ${exchange.stderr}`)
+  }
   const failure = await run(process.execPath, [tool, "fail"])
   return {
     exchange: { code: exchange.code, reply: JSON.parse(exchange.stdout), stderr: exchange.stderr },
