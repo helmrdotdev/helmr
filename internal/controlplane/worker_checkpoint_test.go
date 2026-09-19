@@ -120,7 +120,7 @@ func TestDecideActorCheckpointFailureStopsAtRunExpiry(t *testing.T) {
 			RetryPolicy:         []byte(`{"enabled":true,"maxAttempts":3,"backoff":{"minMs":1,"maxMs":1,"factor":1,"jitter":"none"}}`),
 		},
 		attempt: db.RunAttempt{Number: 1},
-		actor:   db.Session{State: "open"},
+		actor:   db.Session{Status: "open"},
 	}
 	decision, err := decideActorCheckpointFailure(authority, failedAt, 1)
 	if err != nil {

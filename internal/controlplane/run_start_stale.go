@@ -25,7 +25,7 @@ const (
 	runStartFailureSourceValidation     runStartFailurePoint = "source_validation"
 	runStartFailureRestoreBinding       runStartFailurePoint = "restore_binding"
 	runStartFailureArm                  runStartFailurePoint = "arm"
-	runStartFailureLeaseState           runStartFailurePoint = "lease_state"
+	runStartFailureLeaseStatus          runStartFailurePoint = "lease_state"
 	runStartFailureMarkLeaseRunning     runStartFailurePoint = "mark_lease_running"
 	runStartFailureMarkRunRunning       runStartFailurePoint = "mark_run_running"
 	runStartFailureTouchWorkspace       runStartFailurePoint = "touch_workspace"

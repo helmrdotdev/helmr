@@ -146,7 +146,7 @@ func newPostgresDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 	)
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO worker_pools (
-			id, worker_group_id, name, state,
+			id, worker_group_id, name, status,
 			runtime_identity_id, substrate_format, substrate_contract,
 			capacity_cpu_millis, capacity_memory_bytes,
 			capacity_guest_ephemeral_disk_bytes,

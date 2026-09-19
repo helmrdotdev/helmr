@@ -25,7 +25,7 @@ func TestOwnershipSurvivingScopePathsRejectAndRollback(t *testing.T) {
 	credential := uuid.NewV7()
 	dbtest.MustExec(t, ctx, tx, "INSERT INTO worker_instance_credentials(id,worker_group_id,worker_instance_id,key_prefix,secret_hash) VALUES ($1,$2,$3,'ownership-test',decode('abcd','hex'))", credential, runLeaseTestWorkerGroup, f.workerID)
 	checkpointID := uuid.NewV7()
-	dbtest.MustExec(t, ctx, tx, `INSERT INTO run_checkpoints(id,run_id,attempt_number,run_wait_id,source_run_lease_id,source_workspace_lease_id,workspace_id,base_workspace_version_id) SELECT $1,$2,1,$3,$4,id,workspace_id,base_version_id FROM workspace_leases WHERE owner_run_lease_id=$4`, checkpointID, work.runID, w.ID, work.leaseID)
+	dbtest.MustExec(t, ctx, tx, `INSERT INTO run_checkpoints(id,run_id,attempt_number,run_wait_id,source_run_lease_id,source_workspace_lease_id,workspace_id,base_workspace_version_id) SELECT $1,$2,1,$3,$4,id,workspace_id,base_workspace_version_id FROM workspace_leases WHERE owner_run_lease_id=$4`, checkpointID, work.runID, w.ID, work.leaseID)
 	for _, test := range []struct {
 		table, column string
 		id            any
@@ -68,9 +68,9 @@ func TestOwnershipTenantCopiesRejectBeforePlacement(t *testing.T) {
 	}
 	defer tx.Rollback(ctx)
 	substrateID, processID, claimID := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
-	dbtest.MustExec(t, ctx, tx, "INSERT INTO runtime_substrates(id,org_id,project_id,environment_id,deployment_definition_id,substrate_digest,substrate_format,substrate_contract,substrate_size_bytes) VALUES($1,$2,$3,$4,$5,'digest','format','contract',1)", substrateID, f.orgID, f.projectID, f.environmentID, f.workspaceDefinitionID)
+	dbtest.MustExec(t, ctx, tx, "INSERT INTO runtime_substrates(id,org_id,project_id,environment_id,deployment_definition_id,substrate_digest,substrate_format,substrate_contract,substrate_size_bytes) VALUES($1,$2,$3,$4,$5,'sha256:4593603573259d171bdacfcdce7b4787a67aee4d3e6727ddd1e51cf3d4c0d063','format','contract',1)", substrateID, f.orgID, f.projectID, f.environmentID, f.workspaceDefinitionID)
 	dbtest.MustExec(t, ctx, tx, "INSERT INTO idempotency_claims(id,environment_id,operation,slot_hash,request_fingerprint,accepted_at,expires_at) VALUES($1,$2,'workspace.exec',decode(repeat('fa',32),'hex'),decode(repeat('fb',32),'hex'),now(),now()+interval '30 days')", claimID, f.environmentID)
-	dbtest.MustExec(t, ctx, tx, "INSERT INTO workspace_processes(id,org_id,project_id,environment_id,workspace_id,base_version_id,restore_desired_state,request,claim_id) SELECT $1,org_id,project_id,environment_id,workspace_id,base_workspace_version_id,'active','{}',$2 FROM runs WHERE id=$3", processID, claimID, work.runID)
+	dbtest.MustExec(t, ctx, tx, "INSERT INTO workspace_processes(id,org_id,project_id,environment_id,workspace_id,base_workspace_version_id,restore_desired_state,request,claim_id) SELECT $1,org_id,project_id,environment_id,workspace_id,base_workspace_version_id,'active','{}',$2 FROM runs WHERE id=$3", processID, claimID, work.runID)
 	for _, table := range []string{"runtime_substrates", "workspace_processes"} {
 		id := substrateID
 		if table == "workspace_processes" {
@@ -84,7 +84,7 @@ func TestOwnershipTenantCopiesRejectBeforePlacement(t *testing.T) {
 	}
 	rejectSchemaRow(t, tx, "23514", "UPDATE workspace_processes SET worker_group_id=$2 WHERE id=$1", processID, runLeaseTestWorkerGroup)
 	// Placement uses the full mount path, including copied tenant and epoch facts.
-	dbtest.MustExec(t, ctx, tx, `UPDATE workspace_processes p SET state='starting',region_id=m.region_id,worker_group_id=m.worker_group_id,worker_instance_id=m.worker_instance_id,worker_epoch=m.worker_epoch,runtime_instance_id=m.runtime_instance_id,workspace_mount_id=m.id FROM workspace_mounts m JOIN run_leases l ON l.runtime_instance_id=m.runtime_instance_id WHERE p.id=$1 AND l.id=$2`, processID, work.leaseID)
+	dbtest.MustExec(t, ctx, tx, `UPDATE workspace_processes p SET status='starting',region_id=m.region_id,worker_group_id=m.worker_group_id,worker_instance_id=m.worker_instance_id,worker_epoch=m.worker_epoch,runtime_instance_id=m.runtime_instance_id,workspace_mount_id=m.id FROM workspace_mounts m JOIN run_leases l ON l.runtime_instance_id=m.runtime_instance_id WHERE p.id=$1 AND l.id=$2`, processID, work.leaseID)
 	for _, column := range []string{"worker_group_id", "worker_instance_id", "runtime_instance_id", "workspace_mount_id"} {
 		rejectSchemaRow(t, tx, "23503", "UPDATE workspace_processes SET "+column+"=$2 WHERE id=$1", processID, uuid.NewV7())
 	}

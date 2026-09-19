@@ -13,11 +13,11 @@ export type AdminWorkerGroup = {
   region_id: string;
   name: string;
   description: string;
-  state: "active" | "paused" | "draining" | "disabled";
+  status: "active" | "paused" | "draining" | "disabled";
   claim_version: number;
 };
 
-export type CreateAdminWorkerGroupInput = Omit<AdminWorkerGroup, "id" | "state" | "claim_version">;
+export type CreateAdminWorkerGroupInput = Omit<AdminWorkerGroup, "id" | "status" | "claim_version">;
 
 export async function listAdminRegions(): Promise<{ regions: AdminRegion[] }> {
   return request("/admin/api/v1/regions");
@@ -59,7 +59,7 @@ export async function updateAdminWorkerGroup(id: string, description: string): P
 export async function transitionAdminWorkerGroup(
   group: AdminWorkerGroup,
   action: "pause" | "activate" | "drain" | "disable",
-): Promise<{ id: string; state: AdminWorkerGroup["state"]; claim_version: number }> {
+): Promise<{ id: string; status: AdminWorkerGroup["status"]; claim_version: number }> {
   return postJson(`/admin/api/v1/worker-groups/${encodeURIComponent(group.id)}/${action}`, {
     expected_claim_version: group.claim_version,
   });

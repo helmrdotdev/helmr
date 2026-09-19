@@ -86,10 +86,10 @@ func TestReconcileWorkspaceExecsRecoversLostAuthorityBeforePlacement(t *testing.
 	reconciler := PlacementReconciler{
 		workspaceExecDiscovery: workspaceExecRecoveryDiscovery{
 			recoverable: []db.ListRecoverableWorkspaceExecCandidatesRow{{
-				OrgID: orgID, ID: processID, WorkspaceID: workspaceID, StateVersion: 3,
+				OrgID: orgID, ID: processID, WorkspaceID: workspaceID, Revision: 3,
 			}},
 			pending: []db.ListPendingWorkspaceExecCandidatesRow{{
-				OrgID: orgID, ID: processID, StateVersion: 4,
+				OrgID: orgID, ID: processID, Revision: 4,
 				CreatedAt: pgvalue.TimestamptzUTCZeroInvalid(
 					time.Now().Add(-time.Minute),
 				),
@@ -156,7 +156,7 @@ func TestReconcileWorkspaceExecsFailsExpiredPendingCandidate(t *testing.T) {
 	reconciler := PlacementReconciler{
 		workspaceExecDiscovery: workspaceExecRecoveryDiscovery{
 			pending: []db.ListPendingWorkspaceExecCandidatesRow{{
-				OrgID: orgID, ID: processID, StateVersion: 1,
+				OrgID: orgID, ID: processID, Revision: 1,
 				CreatedAt: pgvalue.TimestamptzUTCZeroInvalid(
 					time.Now().Add(-11 * time.Minute),
 				),
@@ -178,7 +178,7 @@ func TestClassifyWorkspaceExecRecovery(t *testing.T) {
 	stagedVersionID := pgvalue.UUID(uuid.NewV7())
 	tests := []struct {
 		name      string
-		process   db.WorkspaceProcessState
+		process   db.WorkspaceProcessStatus
 		kind      pgtype.Text
 		reason    pgtype.Text
 		errorJSON []byte
@@ -187,33 +187,33 @@ func TestClassifyWorkspaceExecRecovery(t *testing.T) {
 		want      workspaceExecRecoveryKind
 	}{
 		{
-			name: "staged capture", process: db.WorkspaceProcessStateExitRequested,
+			name: "staged capture", process: db.WorkspaceProcessStatusExitRequested,
 			kind: pgvalue.Text("capture"), reason: pgvalue.Text("workspace_exec_completed"),
 			staged: stagedVersionID, secrets: true, want: workspaceExecRecoveryCapture,
 		},
 		{
-			name: "revoked staged capture", process: db.WorkspaceProcessStateExitRequested,
+			name: "revoked staged capture", process: db.WorkspaceProcessStatusExitRequested,
 			kind: pgvalue.Text("capture"), reason: pgvalue.Text("workspace_exec_completed"),
 			staged: stagedVersionID, want: workspaceExecRecoveryRevoked,
 		},
 		{
-			name: "discard rollback", process: db.WorkspaceProcessStateExitRequested,
+			name: "discard rollback", process: db.WorkspaceProcessStatusExitRequested,
 			kind: pgvalue.Text("discard"), reason: pgvalue.Text("workspace_exec_timed_out"),
 			errorJSON: []byte(`{"code":"workspace_exec_timed_out"}`),
 			want:      workspaceExecRecoveryDiscard,
 		},
 		{
-			name: "capture before staging", process: db.WorkspaceProcessStateExitRequested,
+			name: "capture before staging", process: db.WorkspaceProcessStatusExitRequested,
 			kind: pgvalue.Text("capture"), reason: pgvalue.Text("workspace_exec_completed"),
 			want: workspaceExecRecoveryUncertain,
 		},
 		{
-			name: "discard with staged version", process: db.WorkspaceProcessStateExitRequested,
+			name: "discard with staged version", process: db.WorkspaceProcessStatusExitRequested,
 			kind: pgvalue.Text("discard"), reason: pgvalue.Text("workspace_exec_timed_out"),
 			staged: stagedVersionID, want: workspaceExecRecoveryUncertain,
 		},
 		{
-			name: "running without finalization", process: db.WorkspaceProcessStateRunning,
+			name: "running without finalization", process: db.WorkspaceProcessStatusRunning,
 			want: workspaceExecRecoveryUncertain,
 		},
 	}
@@ -221,7 +221,7 @@ func TestClassifyWorkspaceExecRecovery(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			got := classifyWorkspaceExecRecovery(
 				db.LockWorkspaceExecRecoveryAuthorityRow{
-					WorkspaceProcess: db.WorkspaceProcess{State: test.process},
+					WorkspaceProcess: db.WorkspaceProcess{Status: test.process},
 					WorkspaceMount: db.WorkspaceMount{
 						FinalizationKind:       test.kind,
 						FinalizationReasonCode: test.reason,

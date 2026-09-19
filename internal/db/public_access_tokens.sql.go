@@ -30,7 +30,7 @@ VALUES (
     COALESCE($6::jsonb, '{}'::jsonb),
     COALESCE($7::jsonb, '{}'::jsonb)
 )
-RETURNING id, token_id, token_hash, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, expired_at, max_uses, used_count
+RETURNING id, token_id, token_hash, status, metadata, created_by, created_at, updated_at, last_used_at, expires_at, expired_at, max_uses, used_count
 `
 
 type CreatePublicAccessTokenParams struct {
@@ -58,7 +58,7 @@ func (q *Queries) CreatePublicAccessToken(ctx context.Context, arg CreatePublicA
 		&i.ID,
 		&i.TokenID,
 		&i.TokenHash,
-		&i.State,
+		&i.Status,
 		&i.Metadata,
 		&i.CreatedBy,
 		&i.CreatedAt,
@@ -76,20 +76,20 @@ const expireDuePublicAccessTokens = `-- name: ExpireDuePublicAccessTokens :many
 WITH candidates AS MATERIALIZED (
     SELECT id
       FROM public_access_tokens
-     WHERE state = 'active'
+     WHERE status = 'active'
        AND expires_at <= transaction_timestamp()
      ORDER BY expires_at, id
      FOR UPDATE SKIP LOCKED
      LIMIT $1
 )
 UPDATE public_access_tokens
-   SET state = 'expired',
+   SET status = 'expired',
        expired_at = transaction_timestamp(),
        updated_at = transaction_timestamp()
   FROM candidates
  WHERE public_access_tokens.id = candidates.id
-   AND public_access_tokens.state = 'active'
-RETURNING public_access_tokens.id, public_access_tokens.token_id, public_access_tokens.token_hash, public_access_tokens.state, public_access_tokens.metadata, public_access_tokens.created_by, public_access_tokens.created_at, public_access_tokens.updated_at, public_access_tokens.last_used_at, public_access_tokens.expires_at, public_access_tokens.expired_at, public_access_tokens.max_uses, public_access_tokens.used_count
+   AND public_access_tokens.status = 'active'
+RETURNING public_access_tokens.id, public_access_tokens.token_id, public_access_tokens.token_hash, public_access_tokens.status, public_access_tokens.metadata, public_access_tokens.created_by, public_access_tokens.created_at, public_access_tokens.updated_at, public_access_tokens.last_used_at, public_access_tokens.expires_at, public_access_tokens.expired_at, public_access_tokens.max_uses, public_access_tokens.used_count
 `
 
 func (q *Queries) ExpireDuePublicAccessTokens(ctx context.Context, limitCount int32) ([]PublicAccessToken, error) {
@@ -105,7 +105,7 @@ func (q *Queries) ExpireDuePublicAccessTokens(ctx context.Context, limitCount in
 			&i.ID,
 			&i.TokenID,
 			&i.TokenHash,
-			&i.State,
+			&i.Status,
 			&i.Metadata,
 			&i.CreatedBy,
 			&i.CreatedAt,
@@ -127,7 +127,7 @@ func (q *Queries) ExpireDuePublicAccessTokens(ctx context.Context, limitCount in
 }
 
 const getPublicAccessTokenForToken = `-- name: GetPublicAccessTokenForToken :one
-SELECT public_access_tokens.id, public_access_tokens.token_id, public_access_tokens.token_hash, public_access_tokens.state, public_access_tokens.metadata, public_access_tokens.created_by, public_access_tokens.created_at, public_access_tokens.updated_at, public_access_tokens.last_used_at, public_access_tokens.expires_at, public_access_tokens.expired_at, public_access_tokens.max_uses, public_access_tokens.used_count
+SELECT public_access_tokens.id, public_access_tokens.token_id, public_access_tokens.token_hash, public_access_tokens.status, public_access_tokens.metadata, public_access_tokens.created_by, public_access_tokens.created_at, public_access_tokens.updated_at, public_access_tokens.last_used_at, public_access_tokens.expires_at, public_access_tokens.expired_at, public_access_tokens.max_uses, public_access_tokens.used_count
   FROM public_access_tokens
  WHERE public_access_tokens.token_id = $1
 `
@@ -139,7 +139,7 @@ func (q *Queries) GetPublicAccessTokenForToken(ctx context.Context, tokenID pgty
 		&i.ID,
 		&i.TokenID,
 		&i.TokenHash,
-		&i.State,
+		&i.Status,
 		&i.Metadata,
 		&i.CreatedBy,
 		&i.CreatedAt,
@@ -154,10 +154,10 @@ func (q *Queries) GetPublicAccessTokenForToken(ctx context.Context, tokenID pgty
 }
 
 const lockPublicAccessTokenByHash = `-- name: LockPublicAccessTokenByHash :one
-SELECT id, token_id, token_hash, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, expired_at, max_uses, used_count
+SELECT id, token_id, token_hash, status, metadata, created_by, created_at, updated_at, last_used_at, expires_at, expired_at, max_uses, used_count
   FROM public_access_tokens
  WHERE token_hash = $1
-   AND state = 'active'
+   AND status = 'active'
    AND expires_at > transaction_timestamp()
  FOR UPDATE
 `
@@ -169,7 +169,7 @@ func (q *Queries) LockPublicAccessTokenByHash(ctx context.Context, tokenHash []b
 		&i.ID,
 		&i.TokenID,
 		&i.TokenHash,
-		&i.State,
+		&i.Status,
 		&i.Metadata,
 		&i.CreatedBy,
 		&i.CreatedAt,
@@ -189,10 +189,10 @@ UPDATE public_access_tokens
        last_used_at = now(),
        updated_at = now()
  WHERE id = $1
-   AND state = 'active'
+   AND status = 'active'
    AND expires_at > now()
    AND (max_uses IS NULL OR used_count < max_uses)
-RETURNING id, token_id, token_hash, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, expired_at, max_uses, used_count
+RETURNING id, token_id, token_hash, status, metadata, created_by, created_at, updated_at, last_used_at, expires_at, expired_at, max_uses, used_count
 `
 
 func (q *Queries) MarkPublicAccessTokenUsed(ctx context.Context, id pgtype.UUID) (PublicAccessToken, error) {
@@ -202,7 +202,7 @@ func (q *Queries) MarkPublicAccessTokenUsed(ctx context.Context, id pgtype.UUID)
 		&i.ID,
 		&i.TokenID,
 		&i.TokenHash,
-		&i.State,
+		&i.Status,
 		&i.Metadata,
 		&i.CreatedBy,
 		&i.CreatedAt,

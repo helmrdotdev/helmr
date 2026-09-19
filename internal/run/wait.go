@@ -20,30 +20,30 @@ func Complete(
 ) (db.RunWait, error) {
 	var completed db.RunWait
 	var err error
-	switch wait.SuspensionState {
-	case db.RunWaitStateHot:
+	switch wait.SuspensionStatus {
+	case db.RunWaitStatusHot:
 		completed, err = store.CompleteHotRunWait(ctx, db.CompleteHotRunWaitParams{
 			ConditionResult: result, CompletedActorRecordID: completedActorRecordID,
 			ID: wait.ID, RunID: wait.RunID,
-			ExpectedRunStateVersion: wait.ExpectedRunStateVersion,
-			CurrentRunLeaseID:       wait.CurrentRunLeaseID,
-			AttemptNumber:           wait.AttemptNumber,
+			ExpectedRunRevision: wait.ExpectedRunRevision,
+			CurrentRunLeaseID:   wait.CurrentRunLeaseID,
+			AttemptNumber:       wait.AttemptNumber,
 		})
-	case db.RunWaitStateCheckpointing:
+	case db.RunWaitStatusCheckpointing:
 		completed, err = store.CompleteCheckpointingRunWait(ctx, db.CompleteCheckpointingRunWaitParams{
 			ConditionResult: result, CompletedActorRecordID: completedActorRecordID,
 			ID: wait.ID, RunID: wait.RunID,
-			ExpectedRunStateVersion: wait.ExpectedRunStateVersion,
-			CurrentRunLeaseID:       wait.CurrentRunLeaseID,
+			ExpectedRunRevision: wait.ExpectedRunRevision,
+			CurrentRunLeaseID:   wait.CurrentRunLeaseID,
 		})
-	case db.RunWaitStateParked:
+	case db.RunWaitStatusParked:
 		completed, err = store.CompleteParkedRunWait(ctx, db.CompleteParkedRunWaitParams{
 			ConditionResult: result, CompletedActorRecordID: completedActorRecordID,
 			ID: wait.ID, RunID: wait.RunID,
-			ExpectedRunStateVersion: wait.ExpectedRunStateVersion,
-			PriorRunLeaseID:         wait.PriorRunLeaseID,
-			SuspendCheckpointID:     wait.SuspendCheckpointID,
-			AttemptNumber:           wait.AttemptNumber,
+			ExpectedRunRevision: wait.ExpectedRunRevision,
+			PriorRunLeaseID:     wait.PriorRunLeaseID,
+			SuspendCheckpointID: wait.SuspendCheckpointID,
+			AttemptNumber:       wait.AttemptNumber,
 		})
 	default:
 		return db.RunWait{}, ErrWaitAuthority
@@ -66,30 +66,30 @@ func Fail(
 	}
 	reasonCode := pgvalue.Text(reason)
 	var failed db.RunWait
-	switch wait.SuspensionState {
-	case db.RunWaitStateHot:
+	switch wait.SuspensionStatus {
+	case db.RunWaitStatusHot:
 		failed, err = store.FailHotRunWait(ctx, db.FailHotRunWaitParams{
 			ReasonCode: reasonCode, ConditionError: errorJSON,
 			ID: wait.ID, RunID: wait.RunID,
-			ExpectedRunStateVersion: wait.ExpectedRunStateVersion,
-			CurrentRunLeaseID:       wait.CurrentRunLeaseID,
-			AttemptNumber:           wait.AttemptNumber,
+			ExpectedRunRevision: wait.ExpectedRunRevision,
+			CurrentRunLeaseID:   wait.CurrentRunLeaseID,
+			AttemptNumber:       wait.AttemptNumber,
 		})
-	case db.RunWaitStateCheckpointing:
+	case db.RunWaitStatusCheckpointing:
 		failed, err = store.FailCheckpointingRunWait(ctx, db.FailCheckpointingRunWaitParams{
 			ReasonCode: reasonCode, ConditionError: errorJSON,
 			ID: wait.ID, RunID: wait.RunID,
-			ExpectedRunStateVersion: wait.ExpectedRunStateVersion,
-			CurrentRunLeaseID:       wait.CurrentRunLeaseID,
+			ExpectedRunRevision: wait.ExpectedRunRevision,
+			CurrentRunLeaseID:   wait.CurrentRunLeaseID,
 		})
-	case db.RunWaitStateParked:
+	case db.RunWaitStatusParked:
 		failed, err = store.FailParkedRunWait(ctx, db.FailParkedRunWaitParams{
 			ReasonCode: reasonCode, ConditionError: errorJSON,
 			ID: wait.ID, RunID: wait.RunID,
-			ExpectedRunStateVersion: wait.ExpectedRunStateVersion,
-			PriorRunLeaseID:         wait.PriorRunLeaseID,
-			SuspendCheckpointID:     wait.SuspendCheckpointID,
-			AttemptNumber:           wait.AttemptNumber,
+			ExpectedRunRevision: wait.ExpectedRunRevision,
+			PriorRunLeaseID:     wait.PriorRunLeaseID,
+			SuspendCheckpointID: wait.SuspendCheckpointID,
+			AttemptNumber:       wait.AttemptNumber,
 		})
 	default:
 		return db.RunWait{}, ErrWaitAuthority

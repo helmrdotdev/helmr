@@ -70,7 +70,7 @@ func loadRunLeaseClaimProjection(
 		db.GetWorkspaceResetTargetAuthorityParams{
 			OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID,
 			EnvironmentID: authority.run.EnvironmentID, WorkspaceID: authority.workspace.ID,
-			VersionID: authority.workspaceLease.BaseVersionID,
+			VersionID: authority.workspaceLease.BaseWorkspaceVersionID,
 		},
 	)
 	if err != nil {

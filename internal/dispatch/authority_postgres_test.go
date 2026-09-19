@@ -17,7 +17,7 @@ func TestWorkerFenceCoordinatesAtWorkerGranularity(t *testing.T) {
 	serviceID := uuid.New()
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 INSERT INTO worker_instances (
-    id, resource_id, worker_group_id, worker_pool_id, state,
+    id, resource_id, worker_group_id, worker_pool_id, status,
     current_epoch, current_service_id,
     runtime_identity_id, substrate_format, substrate_contract,
     epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
@@ -26,7 +26,7 @@ INSERT INTO worker_instances (
     max_runtime_starts, cpu_environment, cpu_environment_digest,
     observed_at, epoch_started_at, activated_at
 )
-SELECT $2, $3, worker_group_id, worker_pool_id, state,
+SELECT $2, $3, worker_group_id, worker_pool_id, status,
        current_epoch, $4,
        runtime_identity_id, substrate_format, substrate_contract,
        epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
@@ -78,7 +78,7 @@ SELECT $2, $3, worker_group_id, worker_pool_id, state,
 	go func() {
 		_, err := fixture.pool.Exec(transitionCtx, `
 /* worker fence group transition */
-UPDATE worker_groups SET state = 'paused' WHERE id = $1`, fixture.groupID)
+UPDATE worker_groups SET status = 'paused' WHERE id = $1`, fixture.groupID)
 		transitioned <- err
 	}()
 	waitForBlockedQuery(t, fixture, "worker fence group transition", 1)
@@ -163,7 +163,7 @@ SELECT id FROM worker_groups WHERE id = $1 FOR UPDATE`, fixture.groupID); err !=
 	for _, row := range candidates {
 		candidate := ReadyRunCandidate{
 			OrgID: row.OrgID, RunID: row.RunID,
-			ExpectedRunStateVersion: row.StateVersion,
+			ExpectedRunRevision: row.Revision,
 		}
 		go func() {
 			_, err := fixture.authority.PlaceReadyRun(fixture.ctx, candidate)

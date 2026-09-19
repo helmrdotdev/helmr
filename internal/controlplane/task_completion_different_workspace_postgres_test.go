@@ -69,21 +69,21 @@ func testDifferentWorkspaceChildCompletion(t *testing.T, transition string) {
 	dbtest.MustExec(t, ctx, tx, `INSERT INTO idempotency_claims (id, environment_id, operation, slot_hash, request_fingerprint, accepted_at)
  VALUES ($1,$2,'task.child.invoke',decode(repeat('52',32),'hex'),decode(repeat('54',32),'hex'),transaction_timestamp())`, claimID, base.EnvironmentID)
 	dbtest.MustExec(t, ctx, tx, `UPDATE runs SET cause_kind='child', parent_run_id=$2, parent_owns_lifecycle=true, claim_id=$3,
- status='running', started_at=transaction_timestamp()-interval '1 second', active_started_at=transaction_timestamp()-interval '1 second', state_version=3 WHERE id=$1`, child.RunID, parent.RunID, claimID)
-	dbtest.MustExec(t, ctx, tx, `UPDATE run_leases SET state='running', started_at=transaction_timestamp()-interval '1 second' WHERE id=$1`, child.LeaseID)
+ status='running', started_at=transaction_timestamp()-interval '1 second', active_started_at=transaction_timestamp()-interval '1 second', revision=3 WHERE id=$1`, child.RunID, parent.RunID, claimID)
+	dbtest.MustExec(t, ctx, tx, `UPDATE run_leases SET status='running', started_at=transaction_timestamp()-interval '1 second' WHERE id=$1`, child.LeaseID)
 	dbtest.MustExec(t, ctx, tx, `UPDATE run_attempts SET entrypoint_entered_at=transaction_timestamp()-interval '1 second' WHERE run_id=$1`, child.RunID)
-	dbtest.MustExec(t, ctx, tx, `UPDATE runs SET status='waiting', current_run_lease_id=NULL, state_version=5 WHERE id=$1`, parent.RunID)
-	dbtest.MustExec(t, ctx, tx, `UPDATE run_leases SET state='checkpointed', started_at=claimed_at, checkpointed_at=transaction_timestamp(), terminal_at=transaction_timestamp(), terminal_reason_code='checkpointed' WHERE id=$1`, parent.LeaseID)
-	dbtest.MustExec(t, ctx, tx, `UPDATE workspace_leases SET state='released', released_at=transaction_timestamp(), terminal_at=transaction_timestamp() WHERE id=$1`, parentWorkspaceLease)
-	dbtest.MustExec(t, ctx, tx, `UPDATE workspace_mounts SET state='unmounted', unmounted_at=transaction_timestamp(), terminal_at=transaction_timestamp(), terminal_reason_code='checkpointed' WHERE workspace_id=$1`, parentWorkspace)
+	dbtest.MustExec(t, ctx, tx, `UPDATE runs SET status='waiting', current_run_lease_id=NULL, revision=5 WHERE id=$1`, parent.RunID)
+	dbtest.MustExec(t, ctx, tx, `UPDATE run_leases SET status='checkpointed', started_at=claimed_at, checkpointed_at=transaction_timestamp(), terminal_at=transaction_timestamp(), terminal_reason_code='checkpointed' WHERE id=$1`, parent.LeaseID)
+	dbtest.MustExec(t, ctx, tx, `UPDATE workspace_leases SET status='released', released_at=transaction_timestamp(), terminal_at=transaction_timestamp() WHERE id=$1`, parentWorkspaceLease)
+	dbtest.MustExec(t, ctx, tx, `UPDATE workspace_mounts SET status='unmounted', unmounted_at=transaction_timestamp(), terminal_at=transaction_timestamp(), terminal_reason_code='checkpointed' WHERE workspace_id=$1`, parentWorkspace)
 	dbtest.MustExec(t, ctx, tx, `UPDATE runtime_instances SET desired_state='closed', observed_state='closed', desired_version=2, observed_version=2, observed_desired_version=2, terminal_at=transaction_timestamp(), reclaimed_at=transaction_timestamp(), terminal_reason_code='desired_state_reconciled', reclaim_evidence='{}'::jsonb WHERE workspace_id=$1`, parentWorkspace)
-	dbtest.MustExec(t, ctx, tx, `INSERT INTO run_waits (id, environment_id, run_id, workspace_id, kind, condition_state, child_run_id,
- child_target_declared_id, child_claim_id, child_request, expected_run_state_version, attempt_number, prior_run_lease_id,
- checkpoint_request_version, checkpoint_ack_version, resume_attach_id, suspension_state)
+	dbtest.MustExec(t, ctx, tx, `INSERT INTO run_waits (id, environment_id, run_id, workspace_id, kind, condition_status, child_run_id,
+ child_target_declared_id, child_claim_id, child_request, expected_run_revision, attempt_number, prior_run_lease_id,
+ checkpoint_request_version, checkpoint_ack_version, resume_attach_id, suspension_status)
  VALUES ($1,$2,$3,$4,'child','pending',$5,'test-task',$6,'{"Method":"call"}'::jsonb,5,1,$7,1,1,$8,'parked')`, waitID, base.EnvironmentID, parent.RunID, parentWorkspace, child.RunID, claimID, parent.LeaseID, uuid.NewV7())
 	artifacts := dbtest.InsertCheckpointArtifacts(t, ctx, tx, parent.RunID, checkpointID.String())
-	dbtest.MustExec(t, ctx, tx, `INSERT INTO run_checkpoints (id,run_id,attempt_number,run_wait_id,source_run_lease_id,source_workspace_lease_id,workspace_id,base_workspace_version_id,private_workspace_version_id,runtime_config_artifact_id,vm_state_artifact_id,memory_artifact_id,scratch_disk_artifact_id,state,restore_manifest,ready_request_fingerprint,ready_at)
- VALUES ($1,$2,1,$3,$4,$5,$6,$7,$7,$8,$9,$10,$11,'ready','{"kind":"suspend"}'::jsonb,'test-ready',transaction_timestamp())`, checkpointID, parent.RunID, waitID, parent.LeaseID, parentWorkspaceLease, parentWorkspace, parentVersion, artifacts.RuntimeConfig, artifacts.VMState, artifacts.Memory, artifacts.ScratchDisk)
+	dbtest.MustExec(t, ctx, tx, `INSERT INTO run_checkpoints (id,run_id,attempt_number,run_wait_id,source_run_lease_id,source_workspace_lease_id,workspace_id,base_workspace_version_id,private_workspace_version_id,runtime_config_artifact_id,vm_state_artifact_id,memory_artifact_id,scratch_disk_artifact_id,status,restore_manifest,ready_request_fingerprint,ready_at)
+ VALUES ($1,$2,1,$3,$4,$5,$6,$7,$7,$8,$9,$10,$11,'ready','{"kind":"suspend"}'::jsonb,'sha256:c6a8f322cea284f70d8d5bdfa780132e389aca57ace69073ac76e8daa12dacc8',transaction_timestamp())`, checkpointID, parent.RunID, waitID, parent.LeaseID, parentWorkspaceLease, parentWorkspace, parentVersion, artifacts.RuntimeConfig, artifacts.VMState, artifacts.Memory, artifacts.ScratchDisk)
 	dbtest.MustExec(t, ctx, tx, `UPDATE run_waits SET suspend_checkpoint_id=$2 WHERE id=$1`, waitID, checkpointID)
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
@@ -156,7 +156,7 @@ func testDifferentWorkspaceChildCompletion(t *testing.T, transition string) {
 					t.Fatalf("invalid %s fence status=%d body=%s", test.name, response.Code, response.Body.String())
 				}
 				var status, condition string
-				if err := base.Pool.QueryRow(ctx, `SELECT r.status,w.condition_state FROM runs r JOIN run_waits w ON w.child_run_id=r.id WHERE r.id=$1`, child.RunID).Scan(&status, &condition); err != nil {
+				if err := base.Pool.QueryRow(ctx, `SELECT r.status,w.condition_status FROM runs r JOIN run_waits w ON w.child_run_id=r.id WHERE r.id=$1`, child.RunID).Scan(&status, &condition); err != nil {
 					t.Fatal(err)
 				}
 				if status != "running" || condition != "pending" {
@@ -237,12 +237,12 @@ func testDifferentWorkspaceChildCompletion(t *testing.T, transition string) {
 			if !httpclient.IsStatus(err, http.StatusUnauthorized) || tokenRequests != 2 || len(statuses) != 1 || statuses[0] != http.StatusUnauthorized {
 				t.Fatalf("revoked credential completion: err=%v token requests=%d statuses=%v", err, tokenRequests, statuses)
 			}
-			var status, condition, leaseState string
-			if err := base.Pool.QueryRow(ctx, `SELECT r.status,w.condition_state,l.state FROM runs r JOIN run_waits w ON w.child_run_id=r.id JOIN run_leases l ON l.id=r.current_run_lease_id WHERE r.id=$1`, child.RunID).Scan(&status, &condition, &leaseState); err != nil {
+			var status, condition, leaseStatus string
+			if err := base.Pool.QueryRow(ctx, `SELECT r.status,w.condition_status,l.status FROM runs r JOIN run_waits w ON w.child_run_id=r.id JOIN run_leases l ON l.id=r.current_run_lease_id WHERE r.id=$1`, child.RunID).Scan(&status, &condition, &leaseStatus); err != nil {
 				t.Fatal(err)
 			}
-			if status != "running" || condition != "pending" || leaseState != "finalizing" {
-				t.Fatalf("unauthorized completion mutated state: run=%s wait=%s lease=%s", status, condition, leaseState)
+			if status != "running" || condition != "pending" || leaseStatus != "finalizing" {
+				t.Fatalf("unauthorized completion mutated state: run=%s wait=%s lease=%s", status, condition, leaseStatus)
 			}
 			return
 		}
@@ -266,7 +266,7 @@ func testDifferentWorkspaceChildCompletion(t *testing.T, transition string) {
 		t.Fatalf("complete task at %s: %v", point, err)
 	}
 	var status, condition string
-	if err := base.Pool.QueryRow(ctx, `SELECT r.status,w.condition_state FROM runs r JOIN run_waits w ON w.child_run_id=r.id WHERE r.id=$1`, child.RunID).Scan(&status, &condition); err != nil {
+	if err := base.Pool.QueryRow(ctx, `SELECT r.status,w.condition_status FROM runs r JOIN run_waits w ON w.child_run_id=r.id WHERE r.id=$1`, child.RunID).Scan(&status, &condition); err != nil {
 		t.Fatal(err)
 	}
 	if status != "succeeded" || condition != "completed" {

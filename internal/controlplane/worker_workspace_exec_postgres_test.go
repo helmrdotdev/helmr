@@ -23,7 +23,7 @@ import (
 func TestWorkerClaimWorkspaceExecPostgresRequiresCurrentFrontier(t *testing.T) {
 	fixture := runtest.New(t)
 	work := fixture.AddRunLease(t, "starting", time.Now().Add(-time.Minute))
-	var workspaceID, baseVersionID, runtimeID, mountID, workspaceLeaseID uuid.UUID
+	var workspaceID, baseWorkspaceVersionID, runtimeID, mountID, workspaceLeaseID uuid.UUID
 	if err := fixture.Pool.QueryRow(t.Context(), `
 SELECT runs.workspace_id, runs.base_workspace_version_id,
        run_leases.runtime_instance_id, workspace_leases.workspace_mount_id,
@@ -32,7 +32,7 @@ SELECT runs.workspace_id, runs.base_workspace_version_id,
   JOIN run_leases ON run_leases.id = runs.current_run_lease_id
   JOIN workspace_leases ON workspace_leases.owner_run_lease_id = run_leases.id
  WHERE runs.id = $1`, work.RunID).Scan(
-		&workspaceID, &baseVersionID, &runtimeID, &mountID, &workspaceLeaseID,
+		&workspaceID, &baseWorkspaceVersionID, &runtimeID, &mountID, &workspaceLeaseID,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -48,9 +48,9 @@ INSERT INTO idempotency_claims (
 		claimID, fixture.EnvironmentID)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 INSERT INTO workspace_processes (
-    id, org_id, project_id, environment_id, workspace_id, base_version_id,
+    id, org_id, project_id, environment_id, workspace_id, base_workspace_version_id,
     restore_desired_state, region_id, worker_group_id, worker_instance_id,
-    worker_epoch, runtime_instance_id, workspace_mount_id, state, request,
+    worker_epoch, runtime_instance_id, workspace_mount_id, status, request,
     stdin, stdout, stderr, claim_id, created_by_subject_type,
     created_by_subject_id
 ) VALUES (
@@ -58,18 +58,18 @@ INSERT INTO workspace_processes (
     'running', '{"command":["true"]}'::jsonb, ''::bytea, ''::bytea, ''::bytea, $12,
     'api_key', $13
 )`, processID, fixture.OrgID, fixture.ProjectID, fixture.EnvironmentID,
-		workspaceID, baseVersionID, runtest.Region, runtest.WorkerGroup,
+		workspaceID, baseWorkspaceVersionID, runtest.Region, runtest.WorkerGroup,
 		fixture.WorkerID, runtimeID, mountID, claimID, creatorID.String())
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 UPDATE workspace_leases
    SET owner_run_lease_id = NULL, owner_process_id = $1
  WHERE id = $2`, processID, workspaceLeaseID)
 
-	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE workspace_mounts SET state='mounted',materialized_version_id=$2 WHERE id=$1`, mountID, baseVersionID)
+	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE workspace_mounts SET status='mounted',materialized_version_id=$2 WHERE id=$1`, mountID, baseWorkspaceVersionID)
 	substrateID := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
  INSERT INTO runtime_substrates(id,org_id,project_id,environment_id,deployment_definition_id,substrate_digest,substrate_format,substrate_contract,substrate_size_bytes)
- SELECT $2,org_id,project_id,environment_id,deployment_definition_id,'sha256:test-runtime-substrate','squashfs','builder-v0',1 FROM runtime_instances WHERE id=$1`, runtimeID, substrateID)
+ SELECT $2,org_id,project_id,environment_id,deployment_definition_id,'sha256:82a76312340ff2dc8b52b1e6ff24308d9d9f54c3cb94e5957660b94afc53bc2d','squashfs','builder-v0',1 FROM runtime_instances WHERE id=$1`, runtimeID, substrateID)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE runtime_instances SET runtime_substrate_id=$2 WHERE id=$1`, runtimeID, substrateID)
 	key, err := workspace.NewFencingKey(bytes.Repeat([]byte{42}, workspace.FencingKeySize))
 	if err != nil {
@@ -108,11 +108,11 @@ UPDATE workspace_leases
 		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 			t.Fatal(err)
 		}
-		if body.Exec == nil || body.Exec.BaseVersionID != want.String() || body.Exec.OwnershipGeneration != owner || body.Exec.WriterGeneration != writer || body.Exec.FencingGeneration != mount || body.Exec.WriteCapability != capability.Token {
+		if body.Exec == nil || body.Exec.BaseWorkspaceVersionID != want.String() || body.Exec.OwnershipGeneration != owner || body.Exec.WriterGeneration != writer || body.Exec.FencingGeneration != mount || body.Exec.WriteCapability != capability.Token {
 			t.Fatalf("claim = %+v", body.Exec)
 		}
 	}
-	assertClaim(baseVersionID)
+	assertClaim(baseWorkspaceVersionID)
 	// A promoted frontier differs from the original Run/mount target. All three
 	// locked owner rows must agree before CP projects it to the trusted Worker.
 	promoted := uuid.NewV7()
@@ -121,15 +121,15 @@ UPDATE workspace_leases
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES($1,$2,1,$3)`, fixture.OrgID, digest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `INSERT INTO artifacts(id,org_id,project_id,environment_id,digest,kind,size_bytes,media_type) VALUES($1,$2,$3,$4,$5,'workspace_version',1,$6)`, artifactID, fixture.OrgID, fixture.ProjectID, fixture.EnvironmentID, digest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
- INSERT INTO workspace_versions(id,environment_id,workspace_id,parent_version_id,artifact_id,state,content_digest,size_bytes,entry_count,source_workspace_lease_id,ownership_generation,writer_generation,published_at)
- VALUES($1,$2,$3,$4,$5,'committed',$6,1,1,$7,$8,$9,now())`, promoted, fixture.EnvironmentID, workspaceID, baseVersionID, artifactID, digest, workspaceLeaseID, owner, writer)
+ INSERT INTO workspace_versions(id,environment_id,workspace_id,parent_version_id,artifact_id,status,content_digest,size_bytes,entry_count,source_workspace_lease_id,ownership_generation,writer_generation,published_at)
+ VALUES($1,$2,$3,$4,$5,'committed',$6,1,1,$7,$8,$9,now())`, promoted, fixture.EnvironmentID, workspaceID, baseWorkspaceVersionID, artifactID, digest, workspaceLeaseID, owner, writer)
 
 	for _, test := range []struct {
 		name, sql string
 		id        uuid.UUID
 	}{
-		{"lease", `UPDATE workspace_leases SET base_version_id=$2 WHERE id=$1`, workspaceLeaseID},
-		{"process", `UPDATE workspace_processes SET base_version_id=$2 WHERE id=$1`, processID},
+		{"lease", `UPDATE workspace_leases SET base_workspace_version_id=$2 WHERE id=$1`, workspaceLeaseID},
+		{"process", `UPDATE workspace_processes SET base_workspace_version_id=$2 WHERE id=$1`, processID},
 		{"mount", `UPDATE workspace_mounts SET materialized_version_id=$2 WHERE id=$1`, mountID},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -138,17 +138,17 @@ UPDATE workspace_leases
 			if response.Code != http.StatusConflict {
 				t.Fatalf("mismatched frontier admitted: %d %s", response.Code, response.Body.String())
 			}
-			dbtest.MustExec(t, t.Context(), fixture.Pool, test.sql, test.id, baseVersionID)
+			dbtest.MustExec(t, t.Context(), fixture.Pool, test.sql, test.id, baseWorkspaceVersionID)
 		})
 	}
-	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE workspace_leases SET base_version_id=$2 WHERE id=$1`, workspaceLeaseID, promoted)
-	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE workspace_processes SET base_version_id=$2 WHERE id=$1`, processID, promoted)
+	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE workspace_leases SET base_workspace_version_id=$2 WHERE id=$1`, workspaceLeaseID, promoted)
+	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE workspace_processes SET base_workspace_version_id=$2 WHERE id=$1`, processID, promoted)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE workspace_mounts SET materialized_version_id=$2 WHERE id=$1`, mountID, promoted)
 	assertClaim(promoted)
 	// Completed work is not a new grant. Preserve the empty claim while capture
 	// promotion and stop are finishing, even once the mount frontier has advanced.
-	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE workspace_processes SET state='exit_requested' WHERE id=$1`, processID)
-	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE workspace_mounts SET materialized_version_id=$2 WHERE id=$1`, mountID, baseVersionID)
+	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE workspace_processes SET status='exit_requested' WHERE id=$1`, processID)
+	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE workspace_mounts SET materialized_version_id=$2 WHERE id=$1`, mountID, baseWorkspaceVersionID)
 	response := claim()
 	if response.Code != http.StatusOK {
 		t.Fatalf("finalizing claim: %d %s", response.Code, response.Body.String())

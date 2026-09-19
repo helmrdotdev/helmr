@@ -125,7 +125,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 			if err != nil {
 				return err
 			}
-			if acquired.Claim.State == "completed" {
+			if acquired.Claim.Status == "completed" {
 				replayed, err := actorStartResultFromReceipt(acquired.Claim.Receipt)
 				if err != nil {
 					return err
@@ -134,7 +134,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 				result = replayed
 				return nil
 			}
-			if acquired.Claim.State != "pending" {
+			if acquired.Claim.Status != "pending" {
 				return errActorStartIdempotencyReceipt
 			}
 			claim = &acquired.Claim
@@ -197,7 +197,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 		}
 		if authority.OrgID != pgvalue.UUID(normalized.OrgID) ||
 			authority.ProjectID != pgvalue.UUID(normalized.ProjectID) ||
-			authority.State != db.WorkspaceStateActive ||
+			authority.Status != db.WorkspaceStatusActive ||
 			(authority.DesiredState != db.WorkspaceDesiredStateActive &&
 				authority.DesiredState != db.WorkspaceDesiredStateStopped) ||
 			authority.DirtyState != db.WorkspaceDirtyStateClean ||
@@ -211,7 +211,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 			return fmt.Errorf("lock actor start workspace secrets: %w", err)
 		}
 		for _, binding := range bindings {
-			if binding.SecretState != "active" || !binding.CurrentVersionID.Valid {
+			if binding.SecretStatus != "active" || !binding.CurrentVersionID.Valid {
 				return errActorStartSecretUnavailable
 			}
 		}
@@ -260,7 +260,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 		if err != nil {
 			var postgresError *pgconn.PgError
 			if errors.As(err, &postgresError) &&
-				postgresError.ConstraintName == "actors_environment_declared_id_key_uidx" {
+				postgresError.ConstraintName == "sessions_environment_declared_id_key_uidx" {
 				return ActorKeyConflictError{Key: stringPtrValue(normalized.Key)}
 			}
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -301,7 +301,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 		}
 		if _, err := work.q.ReserveWorkspaceForActor(ctx, db.ReserveWorkspaceForActorParams{
 			SessionID: pgvalue.UUID(actorID), EnvironmentID: pgvalue.UUID(normalized.EnvironmentID),
-			ID: authority.ID, ExpectedStateVersion: authority.StateVersion,
+			ID: authority.ID, ExpectedRevision: authority.Revision,
 			ExpectedHeadVersionID: authority.HeadVersionID,
 		}); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {

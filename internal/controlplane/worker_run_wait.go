@@ -171,9 +171,9 @@ func (s *Server) workerCreateTokenRunWait(
 		ResumeAttachID: resumeAttachID.String(), RuntimeInstanceID: pgvalue.UUIDString(locators.RuntimeInstanceID),
 		RuntimeEpoch: worker.WorkerEpoch,
 	}
-	if registered.SuspensionState == db.RunWaitStateReleased {
+	if registered.SuspensionStatus == db.RunWaitStatusReleased {
 		response.ResolutionKind, response.Resolution, err = tokenWaitDecision(
-			registered.ConditionState, registered.Result, registered.ReasonCode,
+			registered.ConditionStatus, registered.Result, registered.ReasonCode,
 		)
 		if err != nil {
 			writeError(w, conflict(err))
@@ -220,8 +220,8 @@ func (s *Server) workerPollRunWait(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response := workerapi.RunWaitPollResponse{RunID: pgvalue.UUIDString(locators.RunID), RunWaitID: waitID.String()}
-	switch wait.SuspensionState {
-	case db.RunWaitStateReleased:
+	switch wait.SuspensionStatus {
+	case db.RunWaitStatusReleased:
 		response.Status = workerapi.RunWaitPollStatusResumeRequested
 		if wait.Kind == db.WaitKindActorInput {
 			response.ResumeKind, response.ResumePayload, err = actorInputWaitDecision(wait)
@@ -231,7 +231,7 @@ func (s *Server) workerPollRunWait(w http.ResponseWriter, r *http.Request) {
 			response.ResumeKind, response.ResumePayload, err = childRunWaitDecision(wait)
 		} else {
 			response.ResumeKind, response.ResumePayload, err = tokenWaitDecision(
-				wait.ConditionState, wait.ConditionResult, pgvalue.TextValue(wait.ConditionReasonCode),
+				wait.ConditionStatus, wait.ConditionResult, pgvalue.TextValue(wait.ConditionReasonCode),
 			)
 		}
 		if err != nil {
@@ -239,8 +239,8 @@ func (s *Server) workerPollRunWait(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		response.RequireAck = false
-	case db.RunWaitStateHot:
-		if wait.ConditionState != db.WaitStatePending {
+	case db.RunWaitStatusHot:
+		if wait.ConditionStatus != db.WaitStatusPending {
 			writeError(w, conflict(errors.New("terminal hot run wait was not released")))
 			return
 		}
@@ -258,7 +258,7 @@ func (s *Server) workerPollRunWait(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		if wait.SuspensionState == db.RunWaitStateHot {
+		if wait.SuspensionStatus == db.RunWaitStatusHot {
 			response.Status = workerapi.RunWaitPollStatusWaiting
 			break
 		}
@@ -270,7 +270,7 @@ func (s *Server) workerPollRunWait(w http.ResponseWriter, r *http.Request) {
 		response.RequestVersion = wait.CheckpointRequestVersion
 		response.CheckpointID = pgvalue.UUIDString(wait.SuspendCheckpointID)
 		response.CaptureWorkspace = true
-	case db.RunWaitStateCheckpointing:
+	case db.RunWaitStatusCheckpointing:
 		if !wait.SuspendCheckpointID.Valid || wait.CheckpointRequestVersion <= 0 {
 			writeError(w, errors.New("checkpointing run wait has incomplete authority"))
 			return
@@ -325,7 +325,7 @@ func (s *Server) requestWorkerRunWaitCheckpoint(
 		}
 		authority.actor = owner.actor
 		if authority.run.Status != db.RunStatusWaiting ||
-			authority.runLease.State != db.RunLeaseStateRunning {
+			authority.runLease.Status != db.RunLeaseStatusRunning {
 			return errStaleRunLeaseClaim
 		}
 		wait, err := work.q.LockRunLeaseClaimWait(ctx, db.LockRunLeaseClaimWaitParams{
@@ -339,14 +339,14 @@ func (s *Server) requestWorkerRunWaitCheckpoint(
 		if err := validateRunWaitActorCursor(authority, wait); err != nil {
 			return err
 		}
-		if wait.SuspensionState == db.RunWaitStateCheckpointing && wait.SuspendCheckpointID.Valid {
+		if wait.SuspensionStatus == db.RunWaitStatusCheckpointing && wait.SuspendCheckpointID.Valid {
 			updated = wait
 			return nil
 		}
 		if (wait.Kind != db.WaitKindToken && wait.Kind != db.WaitKindActorInput &&
 			wait.Kind != db.WaitKindChild) ||
-			wait.ConditionState != db.WaitStatePending ||
-			wait.SuspensionState != db.RunWaitStateHot || !wait.CheckpointDueAt.Valid {
+			wait.ConditionStatus != db.WaitStatusPending ||
+			wait.SuspensionStatus != db.RunWaitStatusHot || !wait.CheckpointDueAt.Valid {
 			return errStaleRunLeaseClaim
 		}
 		checkpointID := pgvalue.UUID(uuid.NewV7())
@@ -354,7 +354,7 @@ func (s *Server) requestWorkerRunWaitCheckpoint(
 			ID: checkpointID, RunID: authority.run.ID,
 			AttemptNumber: authority.attempt.Number, RunWaitID: wait.ID,
 			SourceRunLeaseID: authority.runLease.ID, SourceWorkspaceLeaseID: authority.workspaceLease.ID,
-			WorkspaceID: authority.workspace.ID, BaseWorkspaceVersionID: authority.workspaceLease.BaseVersionID,
+			WorkspaceID: authority.workspace.ID, BaseWorkspaceVersionID: authority.workspaceLease.BaseWorkspaceVersionID,
 			ActorSpeculativeInputSequence: wait.ActorSpeculativeInputSequence,
 			RestoreManifest:               []byte(`{}`),
 		}); err != nil {
@@ -405,7 +405,7 @@ func validateRunWaitActorCursor(authority runLeaseClaimAuthority, wait db.RunWai
 		cursor := wait.ActorSpeculativeInputSequence
 		if !authority.run.SessionID.Valid || authority.run.SessionID != authority.actor.ID ||
 			!authority.actor.CurrentRunID.Valid || authority.actor.CurrentRunID != authority.run.ID ||
-			(authority.actor.State != "open" && authority.actor.State != "closing") ||
+			(authority.actor.Status != "open" && authority.actor.Status != "closing") ||
 			!authority.attempt.SessionInputStartSequence.Valid || !cursor.Valid ||
 			authority.attempt.SessionInputStartSequence.Int64 > authority.actor.CommittedInputSequence ||
 			cursor.Int64 < authority.actor.CommittedInputSequence ||
@@ -421,7 +421,7 @@ func validateRunWaitActorCursor(authority runLeaseClaimAuthority, wait db.RunWai
 }
 
 func childRunWaitDecision(wait db.RunWait) (string, json.RawMessage, error) {
-	if wait.Kind != db.WaitKindChild || wait.ConditionState != db.WaitStateCompleted ||
+	if wait.Kind != db.WaitKindChild || wait.ConditionStatus != db.WaitStatusCompleted ||
 		wait.ConditionResult == nil || !json.Valid(wait.ConditionResult) {
 		return "", nil, errors.New("child run wait decision is invalid")
 	}
@@ -480,19 +480,19 @@ func runWaitDeadlines(request workerapi.CreateRunWaitRequest, defaultIdleTimeout
 	return timeoutAt, idleTimeout, pgvalue.Timestamptz(now.Add(checkpointDelay)), nil
 }
 
-func tokenWaitDecision(state db.WaitState, result json.RawMessage, reason string) (string, json.RawMessage, error) {
+func tokenWaitDecision(state db.WaitStatus, result json.RawMessage, reason string) (string, json.RawMessage, error) {
 	if len(result) == 0 {
 		result = json.RawMessage(`null`)
 	}
 	switch state {
-	case db.WaitStateCompleted:
+	case db.WaitStatusCompleted:
 		return "completed", result, nil
-	case db.WaitStateCancelled:
+	case db.WaitStatusCancelled:
 		if reason == "" {
 			reason = "token_cancelled"
 		}
 		return "cancelled", json.RawMessage(fmt.Sprintf(`{"reason_code":%q}`, reason)), nil
-	case db.WaitStateFailed:
+	case db.WaitStatusFailed:
 		if reason == "" {
 			return "", nil, errors.New("failed run wait decision has no reason")
 		}

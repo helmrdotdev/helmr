@@ -116,7 +116,7 @@ func (s *Server) acknowledgeRunResumeRelease(
 		if err != nil {
 			return err
 		}
-		if authority.run.Status != db.RunStatusRunning || authority.runLease.State != db.RunLeaseStateRunning {
+		if authority.run.Status != db.RunStatusRunning || authority.runLease.Status != db.RunLeaseStatusRunning {
 			return errStaleRunLeaseClaim
 		}
 		if err := validateRunStartArm(runStartArm{
@@ -141,7 +141,7 @@ func (s *Server) acknowledgeRunResumeRelease(
 			authority.runtime.RestoreCheckpointID != proof.checkpointID {
 			return errStaleRunLeaseClaim
 		}
-		if wait.SuspensionState == db.RunWaitStateReleased &&
+		if wait.SuspensionStatus == db.RunWaitStatusReleased &&
 			wait.ResumeAckVersion == proof.resumeRequestVersion {
 			return nil
 		}
@@ -152,7 +152,7 @@ func (s *Server) acknowledgeRunResumeRelease(
 		}); err != nil {
 			return staleRunLeaseClaim(err)
 		}
-		if wait.SuspensionState != db.RunWaitStateResuming ||
+		if wait.SuspensionStatus != db.RunWaitStatusResuming ||
 			wait.ResumeAckVersion >= proof.resumeRequestVersion {
 			return errStaleRunLeaseClaim
 		}

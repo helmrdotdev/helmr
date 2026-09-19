@@ -6,7 +6,7 @@ WITH candidates AS (
       FROM telemetry_outbox
      WHERE telemetry_outbox.stream_kind = 'event'
        AND telemetry_outbox.written_at IS NULL
-       AND telemetry_outbox.state IN ('pending', 'claimed', 'failed')
+       AND telemetry_outbox.status IN ('pending', 'claimed', 'failed')
        AND (telemetry_outbox.next_retry_at IS NULL OR telemetry_outbox.next_retry_at <= now())
      ORDER BY telemetry_outbox.id ASC
      LIMIT sqlc.arg(row_limit)
@@ -23,7 +23,7 @@ claimed AS (
 ),
 updated AS (
     UPDATE telemetry_outbox
-       SET state = 'claimed',
+       SET status = 'claimed',
            retry_count = telemetry_outbox.retry_count + 1,
            next_retry_at = now() + sqlc.arg(lease_duration)::interval,
            updated_at = now()
@@ -68,7 +68,7 @@ WITH candidates AS (
       FROM telemetry_outbox
      WHERE telemetry_outbox.stream_kind = 'run_log'
        AND telemetry_outbox.written_at IS NULL
-       AND telemetry_outbox.state IN ('pending', 'claimed', 'failed')
+       AND telemetry_outbox.status IN ('pending', 'claimed', 'failed')
        AND (telemetry_outbox.next_retry_at IS NULL OR telemetry_outbox.next_retry_at <= now())
      ORDER BY telemetry_outbox.id ASC
      LIMIT sqlc.arg(row_limit)
@@ -85,7 +85,7 @@ claimed AS (
 ),
 updated AS (
     UPDATE telemetry_outbox
-       SET state = 'claimed',
+       SET status = 'claimed',
            retry_count = telemetry_outbox.retry_count + 1,
            next_retry_at = now() + sqlc.arg(lease_duration)::interval,
            updated_at = now()
@@ -231,7 +231,7 @@ WITH completions AS (
         ON input_retries.position = input_ids.position
 )
 UPDATE telemetry_outbox
-   SET state = 'written',
+   SET status = 'written',
        written_at = now(),
        retry_count = 0,
        next_retry_at = NULL,
@@ -253,7 +253,7 @@ WITH failures AS (
         ON input_retries.position = input_ids.position
 )
 UPDATE telemetry_outbox
-   SET state = 'failed',
+   SET status = 'failed',
        next_retry_at = now() + sqlc.arg(retry_after)::interval,
        updated_at = now(),
        ingest_error = sqlc.arg(ingest_error)
@@ -285,14 +285,14 @@ SELECT LEAST(
               FROM telemetry_outbox
              WHERE stream_kind = 'event'
                AND written_at IS NULL
-               AND state IN ('pending', 'claimed', 'failed')
+               AND status IN ('pending', 'claimed', 'failed')
                AND (next_retry_at IS NULL OR next_retry_at <= now())
              ORDER BY id ASC LIMIT 1),
            (SELECT created_at
               FROM telemetry_outbox
              WHERE stream_kind = 'run_log'
                AND written_at IS NULL
-               AND state IN ('pending', 'claimed', 'failed')
+               AND status IN ('pending', 'claimed', 'failed')
                AND (next_retry_at IS NULL OR next_retry_at <= now())
              ORDER BY id ASC LIMIT 1)
        )::timestamptz AS oldest_retry_created_at,

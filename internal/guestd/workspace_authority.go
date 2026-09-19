@@ -223,7 +223,7 @@ func (entry *workspaceMountEntry) installWorkspaceRunAuthorityLocked(authority *
 	defer entry.authorityMu.Unlock()
 	mountGeneration := uint64(authority.GetFence().GetMountFencingGeneration())
 	if entry.authority == nil {
-		if authority.GetFence().GetBaseWorkspaceVersionId() != entry.baseVersionID {
+		if authority.GetFence().GetBaseWorkspaceVersionId() != entry.baseWorkspaceVersionID {
 			return errors.New("workspace run authority base version does not match the mounted frontier")
 		}
 		if mountGeneration < entry.currentFencingGeneration() {
@@ -257,7 +257,7 @@ func (entry *workspaceMountEntry) installWorkspaceRunAuthorityLocked(authority *
 		if err := entry.pruneWorkspaceFinalizationState(); err != nil {
 			return err
 		}
-		entry.baseVersionID = authority.GetFence().GetBaseWorkspaceVersionId()
+		entry.baseWorkspaceVersionID = authority.GetFence().GetBaseWorkspaceVersionId()
 		entry.processesMu.Lock()
 		entry.authorityState = workspaceAuthorityLive
 		entry.finalizationID = ""

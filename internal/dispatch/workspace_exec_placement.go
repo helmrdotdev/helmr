@@ -36,9 +36,9 @@ func (e workspaceExecPermanentError) Unwrap() error {
 }
 
 type ReadyWorkspaceExecCandidate struct {
-	OrgID                pgtype.UUID
-	ProcessID            pgtype.UUID
-	ExpectedStateVersion int64
+	OrgID            pgtype.UUID
+	ProcessID        pgtype.UUID
+	ExpectedRevision int64
 }
 
 type WorkspaceExecPlacement struct {
@@ -50,32 +50,32 @@ type WorkspaceExecPlacement struct {
 }
 
 type workspaceExecAuthority struct {
-	processID             pgtype.UUID
-	processStateVersion   int64
-	orgID                 pgtype.UUID
-	projectID             pgtype.UUID
-	environmentID         pgtype.UUID
-	workspaceID           pgtype.UUID
-	workspaceDefinitionID pgtype.UUID
-	baseVersionID         pgtype.UUID
-	regionID              string
-	ownershipGeneration   int64
-	writerGeneration      int64
-	resources             runResources
-	architecture          string
+	processID              pgtype.UUID
+	processRevision        int64
+	orgID                  pgtype.UUID
+	projectID              pgtype.UUID
+	environmentID          pgtype.UUID
+	workspaceID            pgtype.UUID
+	workspaceDefinitionID  pgtype.UUID
+	baseWorkspaceVersionID pgtype.UUID
+	regionID               string
+	ownershipGeneration    int64
+	writerGeneration       int64
+	resources              runResources
+	architecture           string
 }
 
 func (a workspaceExecAuthority) runAuthority() runPlacementAuthority {
 	return runPlacementAuthority{
-		orgID:                 a.orgID,
-		projectID:             a.projectID,
-		environmentID:         a.environmentID,
-		workspaceDefinitionID: a.workspaceDefinitionID,
-		workspaceID:           a.workspaceID,
-		baseVersionID:         a.baseVersionID,
-		regionID:              a.regionID,
-		resources:             a.resources,
-		architecture:          a.architecture,
+		orgID:                  a.orgID,
+		projectID:              a.projectID,
+		environmentID:          a.environmentID,
+		workspaceDefinitionID:  a.workspaceDefinitionID,
+		workspaceID:            a.workspaceID,
+		baseWorkspaceVersionID: a.baseWorkspaceVersionID,
+		regionID:               a.regionID,
+		resources:              a.resources,
+		architecture:           a.architecture,
 	}
 }
 
@@ -168,7 +168,7 @@ func (d *Authority) PlaceWorkspaceExec(
 			ctx,
 			db.ReserveReadyRuntimeForWorkspaceExecParams{
 				ProcessID:              candidate.ProcessID,
-				BaseWorkspaceVersionID: authority.baseVersionID,
+				BaseWorkspaceVersionID: authority.baseWorkspaceVersionID,
 				ReservationExpiresAt:   pgvalue.Timestamptz(time.Now().Add(run.ReservationTTL)),
 				ID:                     runtime.id,
 				WorkspaceID:            authority.workspaceID,
@@ -205,7 +205,7 @@ func (d *Authority) PlaceWorkspaceExec(
 				WorkspaceID:        authority.workspaceID,
 				RuntimeInstanceID:  runtime.id,
 				ProcessID:          authority.processID,
-				WorkspaceVersionID: authority.baseVersionID,
+				WorkspaceVersionID: authority.baseWorkspaceVersionID,
 			},
 		)
 		if err != nil {
@@ -230,7 +230,7 @@ func (d *Authority) PlaceWorkspaceExec(
 		WorkerEpoch:       mount.epoch,
 		RuntimeInstanceID: mount.runtimeID,
 	}
-	if mount.state != db.WorkspaceMountStateMounted {
+	if mount.state != db.WorkspaceMountStatusMounted {
 		if err := tx.Commit(ctx); err != nil {
 			return WorkspaceExecPlacement{}, fmt.Errorf("commit workspace exec placement observation: %w", err)
 		}
@@ -252,7 +252,7 @@ func lockWorkspaceExecSecrets(
 	candidate ReadyWorkspaceExecCandidate,
 ) error {
 	rows, err := tx.Query(ctx, `
-SELECT secrets.state = 'active'
+SELECT secrets.status = 'active'
        AND secret_resolutions.id IS NOT NULL
        AND secret_resolutions.revocation_generation = secrets.revocation_generation
   FROM workspace_processes
@@ -268,13 +268,13 @@ SELECT secrets.state = 'active'
    AND secret_resolutions.secret_id = workspace_secrets.secret_id
  WHERE workspace_processes.org_id = $1
    AND workspace_processes.id = $2
-   AND workspace_processes.state_version = $3
-   AND workspace_processes.state = 'pending'
+   AND workspace_processes.revision = $3
+   AND workspace_processes.status = 'pending'
  ORDER BY secrets.id, workspace_secrets.placement_kind, workspace_secrets.placement_target
  FOR UPDATE OF secrets`,
 		candidate.OrgID,
 		candidate.ProcessID,
-		candidate.ExpectedStateVersion,
+		candidate.ExpectedRevision,
 	)
 	if err != nil {
 		return err
@@ -305,12 +305,12 @@ func lockWorkspaceExecAuthority(
 	var manifest []byte
 	err := tx.QueryRow(ctx, `
 SELECT workspace_processes.id,
-       workspace_processes.state_version,
+       workspace_processes.revision,
        workspace_processes.org_id,
        workspace_processes.project_id,
        workspace_processes.environment_id,
        workspace_processes.workspace_id,
-       workspace_processes.base_version_id,
+       workspace_processes.base_workspace_version_id,
        workspaces.deployment_definition_id,
        workspaces.region_id,
        workspaces.ownership_generation,
@@ -332,36 +332,36 @@ SELECT workspace_processes.id,
    AND definitions.declared_id = workspaces.sandbox_declared_id
   JOIN workspace_versions
     ON workspace_versions.workspace_id = workspaces.id
-   AND workspace_versions.id = workspace_processes.base_version_id
-   AND workspace_versions.state = 'committed'
+   AND workspace_versions.id = workspace_processes.base_workspace_version_id
+   AND workspace_versions.status = 'committed'
  WHERE workspace_processes.org_id = $1
    AND workspace_processes.id = $2
-   AND workspace_processes.state_version = $3
-   AND workspace_processes.state = 'pending'
-   AND workspaces.state = 'active'
+   AND workspace_processes.revision = $3
+   AND workspace_processes.status = 'pending'
+   AND workspaces.status = 'active'
    AND workspaces.desired_state IN ('active', 'stopped')
    AND workspaces.dirty_state = 'clean'
-   AND workspaces.head_version_id = workspace_processes.base_version_id
+   AND workspaces.head_version_id = workspace_processes.base_workspace_version_id
    AND workspaces.owner_session_id IS NULL
    AND workspaces.owner_run_id IS NULL
    AND NOT EXISTS (
        SELECT 1
          FROM workspace_leases
         WHERE workspace_leases.workspace_id = workspaces.id
-          AND workspace_leases.state IN ('active', 'releasing')
+          AND workspace_leases.status IN ('active', 'releasing')
    )
  FOR UPDATE OF workspace_processes, workspaces`,
 		candidate.OrgID,
 		candidate.ProcessID,
-		candidate.ExpectedStateVersion,
+		candidate.ExpectedRevision,
 	).Scan(
 		&authority.processID,
-		&authority.processStateVersion,
+		&authority.processRevision,
 		&authority.orgID,
 		&authority.projectID,
 		&authority.environmentID,
 		&authority.workspaceID,
-		&authority.baseVersionID,
+		&authority.baseWorkspaceVersionID,
 		&authority.workspaceDefinitionID,
 		&authority.regionID,
 		&authority.ownershipGeneration,
@@ -434,7 +434,7 @@ func (d *Authority) createWorkspaceExecRuntime(
 			ReservedExecutionSlots:          authority.resources.executionSlots,
 			WorkspaceID:                     authority.workspaceID,
 			ProcessID:                       authority.processID,
-			BaseWorkspaceVersionID:          authority.baseVersionID,
+			BaseWorkspaceVersionID:          authority.baseWorkspaceVersionID,
 			ReservationExpiresAt:            pgvalue.Timestamptz(time.Now().Add(run.ReservationTTL)),
 		},
 	)
@@ -464,7 +464,7 @@ func validateWorkspaceExecRuntime(authority workspaceExecAuthority, runtime runR
 	}
 	if runtime.reservedProcessID.Valid &&
 		(runtime.reservedProcessID != authority.processID ||
-			runtime.reservedVersionID != authority.baseVersionID ||
+			runtime.reservedVersionID != authority.baseWorkspaceVersionID ||
 			!runtime.reservationActive) {
 		return errors.New("workspace runtime reservation does not match exec authority")
 	}
@@ -479,7 +479,7 @@ func getWorkspaceExecMount(
 ) (runWorkspaceMount, error) {
 	var mount runWorkspaceMount
 	err := tx.QueryRow(ctx, `
-SELECT id, worker_instance_id, worker_epoch, runtime_instance_id, state,
+SELECT id, worker_instance_id, worker_epoch, runtime_instance_id, status,
        fencing_generation
   FROM workspace_mounts
  WHERE org_id = $1
@@ -492,14 +492,14 @@ SELECT id, worker_instance_id, worker_epoch, runtime_instance_id, state,
    AND worker_instance_id = $8
    AND worker_epoch = $9
    AND runtime_instance_id = $10
-   AND state IN ('mounting', 'mounted', 'unmounting')
+   AND status IN ('mounting', 'mounted', 'unmounting')
  FOR UPDATE`,
 		authority.orgID,
 		authority.projectID,
 		authority.environmentID,
 		authority.regionID,
 		authority.workspaceID,
-		authority.baseVersionID,
+		authority.baseWorkspaceVersionID,
 		runtime.groupID,
 		runtime.workerID,
 		runtime.workerEpoch,
@@ -549,7 +549,7 @@ func (d *Authority) grantWorkspaceExec(
 		ProjectID:                   authority.projectID,
 		EnvironmentID:               authority.environmentID,
 		WorkspaceID:                 authority.workspaceID,
-		BaseWorkspaceVersionID:      authority.baseVersionID,
+		BaseWorkspaceVersionID:      authority.baseWorkspaceVersionID,
 		ExpectedOwnershipGeneration: authority.ownershipGeneration,
 		ExpectedWriterGeneration:    authority.writerGeneration,
 	}); err != nil {
@@ -567,7 +567,7 @@ func (d *Authority) grantWorkspaceExec(
 		WorkerEpoch:               runtime.workerEpoch,
 		RuntimeInstanceID:         runtime.id,
 		WorkspaceID:               authority.workspaceID,
-		BaseWorkspaceVersionID:    authority.baseVersionID,
+		BaseWorkspaceVersionID:    authority.baseWorkspaceVersionID,
 		ExpectedFencingGeneration: mount.fencingGeneration,
 	}); err != nil {
 		return fmt.Errorf("advance workspace exec mount fence: %w", err)
@@ -584,8 +584,8 @@ func (d *Authority) grantWorkspaceExec(
 		EnvironmentID:          authority.environmentID,
 		WorkspaceID:            authority.workspaceID,
 		ID:                     authority.processID,
-		BaseWorkspaceVersionID: authority.baseVersionID,
-		ExpectedStateVersion:   authority.processStateVersion,
+		BaseWorkspaceVersionID: authority.baseWorkspaceVersionID,
+		ExpectedRevision:       authority.processRevision,
 	}); err != nil {
 		return fmt.Errorf("bind workspace exec runtime: %w", err)
 	}
@@ -602,7 +602,7 @@ func (d *Authority) grantWorkspaceExec(
 		WorkspaceID:            authority.workspaceID,
 		WorkspaceMountID:       mount.id,
 		ProcessID:              authority.processID,
-		BaseWorkspaceVersionID: authority.baseVersionID,
+		BaseWorkspaceVersionID: authority.baseWorkspaceVersionID,
 		OwnershipGeneration:    ownershipGeneration,
 		WriterGeneration:       writerGeneration,
 		MountFencingGeneration: mountGeneration,
@@ -615,7 +615,7 @@ func (d *Authority) grantWorkspaceExec(
 		ID:                     runtime.id,
 		WorkspaceID:            authority.workspaceID,
 		ProcessID:              authority.processID,
-		BaseWorkspaceVersionID: authority.baseVersionID,
+		BaseWorkspaceVersionID: authority.baseWorkspaceVersionID,
 	})
 	if err != nil {
 		return fmt.Errorf("consume workspace exec reservation: %w", err)
@@ -705,11 +705,11 @@ func failPendingWorkspaceExec(
 	failed, err := q.FailPendingWorkspaceExecProcess(
 		ctx,
 		db.FailPendingWorkspaceExecProcessParams{
-			ReasonCode:           pgvalue.Text(reasonCode),
-			Error:                errorJSON,
-			OrgID:                candidate.OrgID,
-			ProcessID:            candidate.ProcessID,
-			ExpectedStateVersion: candidate.ExpectedStateVersion,
+			ReasonCode:       pgvalue.Text(reasonCode),
+			Error:            errorJSON,
+			OrgID:            candidate.OrgID,
+			ProcessID:        candidate.ProcessID,
+			ExpectedRevision: candidate.ExpectedRevision,
 		},
 	)
 	if err != nil {

@@ -16,7 +16,7 @@ WITH token AS (
     VALUES (sqlc.arg(token_id), sqlc.arg(token_hash))
     RETURNING id
 )
-INSERT INTO worker_groups (id, token_id, region_id, name, description, state)
+INSERT INTO worker_groups (id, token_id, region_id, name, description, status)
 SELECT sqlc.arg(id), token.id, sqlc.arg(region_id), sqlc.arg(name),
        sqlc.arg(description), 'active'
   FROM token
@@ -46,8 +46,8 @@ SELECT *
 -- name: GetWorkerGroup :one
 SELECT * FROM worker_groups WHERE id = sqlc.arg(id);
 
--- name: GetWorkerGroupState :one
-SELECT id, state, claim_version
+-- name: GetWorkerGroupStatus :one
+SELECT id, status, claim_version
   FROM worker_groups
  WHERE id = sqlc.arg(worker_group_id);
 
@@ -70,13 +70,13 @@ SELECT *
  ORDER BY name, id;
 
 -- name: CreatePendingWorkerPool :one
-INSERT INTO worker_pools (id, worker_group_id, name, state, claim_version)
+INSERT INTO worker_pools (id, worker_group_id, name, status, claim_version)
 SELECT sqlc.arg(worker_pool_id), worker_groups.id, sqlc.arg(name),
        'pending', 1
   FROM worker_groups
  WHERE worker_groups.id = sqlc.arg(worker_group_id)
    AND worker_groups.claim_version = sqlc.arg(expected_group_claim_version)
-   AND worker_groups.state IN ('active', 'paused')
+   AND worker_groups.status IN ('active', 'paused')
 RETURNING worker_pools.*;
 
 -- name: SetWorkerGroupPrimaryPool :one
@@ -86,7 +86,7 @@ UPDATE worker_groups
        updated_at = now()
  WHERE worker_groups.id = sqlc.arg(worker_group_id)
    AND worker_groups.claim_version = sqlc.arg(expected_group_claim_version)
-   AND worker_groups.state IN ('active', 'paused')
+   AND worker_groups.status IN ('active', 'paused')
 RETURNING worker_groups.*;
 
 -- name: TransitionWorkerPoolLifecycle :one
@@ -107,7 +107,7 @@ WITH restore_profiles AS MATERIALIZED (
        AND source_lease.run_id = run_checkpoints.run_id
        AND source_lease.attempt_number = run_checkpoints.attempt_number
        AND source_lease.workspace_id = run_checkpoints.workspace_id
-       AND source_lease.state = 'checkpointed'
+       AND source_lease.status = 'checkpointed'
       JOIN runtime_instances AS source_runtime
         ON source_runtime.id = source_lease.runtime_instance_id
        AND source_runtime.worker_group_id = source_lease.worker_group_id
@@ -117,7 +117,7 @@ WITH restore_profiles AS MATERIALIZED (
        AND runtime_substrates.project_id = source_runtime.project_id
        AND runtime_substrates.environment_id = source_runtime.environment_id
        AND runtime_substrates.deployment_definition_id = source_runtime.deployment_definition_id
-     WHERE run_checkpoints.state = 'ready'
+     WHERE run_checkpoints.status = 'ready'
        AND (run_checkpoints.expires_at IS NULL
             OR run_checkpoints.expires_at > transaction_timestamp())
     UNION
@@ -144,10 +144,10 @@ WITH restore_profiles AS MATERIALIZED (
        AND runtime_substrates.project_id = source_runtime.project_id
        AND runtime_substrates.environment_id = source_runtime.environment_id
        AND runtime_substrates.deployment_definition_id = source_runtime.deployment_definition_id
-     WHERE source_lease.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
+     WHERE source_lease.status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
 )
 UPDATE worker_pools AS target
-       SET state = sqlc.arg(target_state)::text,
+       SET status = sqlc.arg(target_status)::text,
            claim_version = target.claim_version + 1,
            updated_at = now()
       FROM worker_groups
@@ -155,12 +155,12 @@ UPDATE worker_pools AS target
        AND target.worker_group_id = sqlc.arg(worker_group_id)
        AND target.claim_version = sqlc.arg(expected_pool_claim_version)
        AND worker_groups.id = target.worker_group_id
-       AND worker_groups.state IN ('active', 'paused', 'draining')
+       AND worker_groups.status IN ('active', 'paused', 'draining')
        AND worker_groups.primary_pool_id IS DISTINCT FROM target.id
        AND (
            (
-               sqlc.arg(target_state)::text = 'draining'
-               AND target.state = 'active'
+               sqlc.arg(target_status)::text = 'draining'
+               AND target.status = 'active'
                AND NOT EXISTS (
                    SELECT 1
                      FROM restore_profiles
@@ -185,7 +185,7 @@ UPDATE worker_pools AS target
                                     FROM worker_pools AS supplier
                                    WHERE supplier.worker_group_id = target.worker_group_id
                                      AND supplier.id <> target.id
-                                     AND supplier.state = 'active'
+                                     AND supplier.status = 'active'
                                      AND supplier.runtime_identity_id = restore_profiles.runtime_identity_id
                                      AND supplier.substrate_format = restore_profiles.substrate_format
                                      AND supplier.substrate_contract = restore_profiles.substrate_contract
@@ -204,15 +204,15 @@ UPDATE worker_pools AS target
                )
            )
            OR (
-               sqlc.arg(target_state)::text = 'disabled'
+               sqlc.arg(target_status)::text = 'disabled'
                AND (
                    (
-                       target.state = 'pending'
+                       target.status = 'pending'
                        AND NOT EXISTS (
                            SELECT 1 FROM worker_instances
                             WHERE worker_instances.worker_group_id = target.worker_group_id
                               AND worker_instances.worker_pool_id = target.id
-                              AND worker_instances.state IN ('registering', 'active', 'draining')
+                              AND worker_instances.status IN ('registering', 'active', 'draining')
                        )
                        AND NOT EXISTS (
                            SELECT 1
@@ -230,36 +230,36 @@ UPDATE worker_pools AS target
                                       SELECT 1 FROM run_leases
                                        WHERE run_leases.worker_group_id = worker_instances.worker_group_id
                                          AND run_leases.worker_instance_id = worker_instances.id
-                                         AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
+                                         AND run_leases.status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
                                   )
                                   OR EXISTS (
                                       SELECT 1 FROM workspace_mounts
                                        WHERE workspace_mounts.worker_group_id = worker_instances.worker_group_id
                                          AND workspace_mounts.worker_instance_id = worker_instances.id
-                                         AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
+                                         AND workspace_mounts.status IN ('mounting', 'mounted', 'unmounting')
                                   )
                                   OR EXISTS (
                                       SELECT 1 FROM workspace_leases
                                        WHERE workspace_leases.worker_group_id = worker_instances.worker_group_id
                                          AND workspace_leases.worker_instance_id = worker_instances.id
-                                         AND workspace_leases.state IN ('active', 'releasing')
+                                         AND workspace_leases.status IN ('active', 'releasing')
                                   )
                                   OR EXISTS (
                                       SELECT 1 FROM workspace_processes
                                        WHERE workspace_processes.worker_group_id = worker_instances.worker_group_id
                                          AND workspace_processes.worker_instance_id = worker_instances.id
-                                         AND workspace_processes.state IN ('starting', 'running', 'exit_requested')
+                                         AND workspace_processes.status IN ('starting', 'running', 'exit_requested')
                                   )
                               )
                        )
                    )
                    OR (
-                       target.state = 'draining'
+                       target.status = 'draining'
                        AND NOT EXISTS (
                            SELECT 1 FROM worker_instances
                             WHERE worker_instances.worker_group_id = target.worker_group_id
                               AND worker_instances.worker_pool_id = target.id
-                              AND worker_instances.state IN ('registering', 'active', 'draining')
+                              AND worker_instances.status IN ('registering', 'active', 'draining')
                        )
                        AND NOT EXISTS (
                            SELECT 1
@@ -277,25 +277,25 @@ UPDATE worker_pools AS target
                                       SELECT 1 FROM run_leases
                                        WHERE run_leases.worker_group_id = worker_instances.worker_group_id
                                          AND run_leases.worker_instance_id = worker_instances.id
-                                         AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
+                                         AND run_leases.status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
                                   )
                                   OR EXISTS (
                                       SELECT 1 FROM workspace_mounts
                                        WHERE workspace_mounts.worker_group_id = worker_instances.worker_group_id
                                          AND workspace_mounts.worker_instance_id = worker_instances.id
-                                         AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
+                                         AND workspace_mounts.status IN ('mounting', 'mounted', 'unmounting')
                                   )
                                   OR EXISTS (
                                       SELECT 1 FROM workspace_leases
                                        WHERE workspace_leases.worker_group_id = worker_instances.worker_group_id
                                          AND workspace_leases.worker_instance_id = worker_instances.id
-                                         AND workspace_leases.state IN ('active', 'releasing')
+                                         AND workspace_leases.status IN ('active', 'releasing')
                                   )
                                   OR EXISTS (
                                       SELECT 1 FROM workspace_processes
                                        WHERE workspace_processes.worker_group_id = worker_instances.worker_group_id
                                          AND workspace_processes.worker_instance_id = worker_instances.id
-                                         AND workspace_processes.state IN ('starting', 'running', 'exit_requested')
+                                         AND workspace_processes.status IN ('starting', 'running', 'exit_requested')
                                   )
                               )
                        )
@@ -323,7 +323,7 @@ UPDATE worker_pools AS target
                                             FROM worker_pools AS supplier
                                            WHERE supplier.worker_group_id = target.worker_group_id
                                              AND supplier.id <> target.id
-	                                             AND supplier.state = 'active'
+	                                             AND supplier.status = 'active'
                                              AND supplier.runtime_identity_id = restore_profiles.runtime_identity_id
                                              AND supplier.substrate_format = restore_profiles.substrate_format
                                              AND supplier.substrate_contract = restore_profiles.substrate_contract
@@ -375,19 +375,19 @@ SELECT worker_pools.id,
              FROM worker_instances
             WHERE worker_instances.worker_pool_id = worker_pools.id
               AND worker_instances.worker_group_id = worker_pools.worker_group_id
-              AND worker_instances.state = 'registering'
+              AND worker_instances.status = 'registering'
        ), 0)::bigint AS registering_workers,
        COALESCE((
            SELECT count(*)
              FROM worker_instances
             WHERE worker_instances.worker_pool_id = worker_pools.id
               AND worker_instances.worker_group_id = worker_pools.worker_group_id
-              AND worker_instances.state = 'active'
+              AND worker_instances.status = 'active'
        ), 0)::bigint AS active_workers
   FROM worker_pools
  WHERE worker_pools.worker_group_id = sqlc.arg(worker_group_id)
    AND worker_pools.id = ANY(sqlc.arg(worker_pool_ids)::uuid[])
-   AND worker_pools.state = 'active'
+   AND worker_pools.status = 'active'
  ORDER BY worker_pools.id;
 
 -- name: LockWorkerPool :one
@@ -426,7 +426,7 @@ SELECT supplier.id
    AND runtime_substrates.deployment_definition_id = source_runtime.deployment_definition_id
   JOIN worker_pools AS supplier
 	ON supplier.worker_group_id = source_lease.worker_group_id
-	AND supplier.state = 'active'
+	AND supplier.status = 'active'
 	AND supplier.runtime_identity_id = source_runtime.runtime_identity_id
    AND supplier.per_vm_cpu_millis >= source_lease.requested_cpu_millis
    AND supplier.per_vm_memory_bytes >= source_lease.requested_memory_bytes
@@ -446,9 +446,9 @@ SELECT supplier.id
    AND source_lease.worker_group_id = sqlc.arg(worker_group_id)
    AND source_lease.worker_instance_id = sqlc.arg(worker_instance_id)
    AND source_lease.worker_epoch = sqlc.arg(worker_epoch)
-   AND source_lease.state = 'checkpointing'
-	AND worker_groups.state IN ('active', 'paused', 'draining')
-	AND source_pool.state IN ('active', 'draining')
+   AND source_lease.status = 'checkpointing'
+	AND worker_groups.status IN ('active', 'paused', 'draining')
+	AND source_pool.status IN ('active', 'draining')
 	AND source_pool.runtime_identity_id = source_runtime.runtime_identity_id
    AND source_pool.per_vm_cpu_millis >= source_lease.requested_cpu_millis
    AND source_pool.per_vm_memory_bytes >= source_lease.requested_memory_bytes
@@ -513,7 +513,7 @@ INSERT INTO worker_pool_cpu_shapes (worker_pool_id, vcpu_count, cpu_config_diges
 SELECT worker_pools.id, sqlc.arg(vcpu_count), sqlc.arg(cpu_config_digest)
   FROM worker_pools
  WHERE worker_pools.id = sqlc.arg(worker_pool_id)
-   AND worker_pools.state = 'pending';
+   AND worker_pools.status = 'pending';
 
 -- name: ListWorkerPoolCPUShapes :many
 SELECT *
@@ -523,7 +523,7 @@ SELECT *
 
 -- name: SealWorkerPool :one
 UPDATE worker_pools
-   SET state = 'active',
+   SET status = 'active',
        runtime_identity_id = sqlc.arg(runtime_identity_id),
        substrate_format = sqlc.arg(substrate_format),
        substrate_contract = sqlc.arg(substrate_contract),
@@ -537,7 +537,7 @@ UPDATE worker_pools
        sealed_at = now(), updated_at = now()
  WHERE id = sqlc.arg(worker_pool_id)
    AND worker_group_id = sqlc.arg(worker_group_id)
-   AND state = 'pending'
+   AND status = 'pending'
 RETURNING *;
 
 -- name: SetInitialWorkerGroupPrimaryPool :one
@@ -555,7 +555,7 @@ WITH selection AS (
       JOIN worker_pools
         ON worker_pools.worker_group_id = worker_groups.id
        AND worker_pools.id = sqlc.arg(worker_pool_id)
-       AND worker_pools.state = 'active'
+       AND worker_pools.status = 'active'
      WHERE worker_groups.id = sqlc.arg(worker_group_id)
 )
 UPDATE worker_groups
@@ -575,12 +575,12 @@ UPDATE worker_groups
  WHERE worker_groups.id = selection.worker_group_id
 RETURNING worker_groups.*;
 
--- name: TransitionWorkerGroupState :one
+-- name: TransitionWorkerGroupStatus :one
 WITH transitioned AS (
     UPDATE worker_groups
-       SET state = sqlc.arg(target_state),
+       SET status = sqlc.arg(target_status),
            primary_pool_id = CASE
-               WHEN sqlc.arg(target_state)::text = 'draining' THEN NULL
+               WHEN sqlc.arg(target_status)::text = 'draining' THEN NULL
                ELSE worker_groups.primary_pool_id
            END,
            claim_version = worker_groups.claim_version + 1,
@@ -588,25 +588,25 @@ WITH transitioned AS (
      WHERE worker_groups.id = sqlc.arg(worker_group_id)
        AND worker_groups.claim_version = sqlc.arg(expected_claim_version)
        AND (
-           (worker_groups.state = 'active' AND sqlc.arg(target_state)::text IN ('paused', 'draining'))
-           OR (worker_groups.state = 'paused' AND sqlc.arg(target_state)::text IN ('active', 'draining'))
+           (worker_groups.status = 'active' AND sqlc.arg(target_status)::text IN ('paused', 'draining'))
+           OR (worker_groups.status = 'paused' AND sqlc.arg(target_status)::text IN ('active', 'draining'))
            OR (
-               worker_groups.state = 'draining'
-               AND sqlc.arg(target_state)::text = 'disabled'
+               worker_groups.status = 'draining'
+               AND sqlc.arg(target_status)::text = 'disabled'
                AND NOT EXISTS (
                    SELECT 1 FROM worker_pools
                     WHERE worker_pools.worker_group_id = worker_groups.id
-                      AND worker_pools.state IN ('pending', 'active', 'draining')
+                      AND worker_pools.status IN ('pending', 'active', 'draining')
                )
                AND NOT EXISTS (
                    SELECT 1 FROM worker_instances
                     WHERE worker_instances.worker_group_id = worker_groups.id
-                      AND worker_instances.state IN ('registering', 'active', 'draining')
+                      AND worker_instances.status IN ('registering', 'active', 'draining')
                )
                AND NOT EXISTS (
                    SELECT 1 FROM run_leases
                     WHERE run_leases.worker_group_id = worker_groups.id
-                      AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
+                      AND run_leases.status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
                )
                AND NOT EXISTS (
                    SELECT 1 FROM runtime_instances
@@ -616,44 +616,44 @@ WITH transitioned AS (
                AND NOT EXISTS (
                    SELECT 1 FROM workspace_mounts
                     WHERE workspace_mounts.worker_group_id = worker_groups.id
-                      AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
+                      AND workspace_mounts.status IN ('mounting', 'mounted', 'unmounting')
                )
                AND NOT EXISTS (
                    SELECT 1 FROM workspace_leases
                     WHERE workspace_leases.worker_group_id = worker_groups.id
-                      AND workspace_leases.state IN ('active', 'releasing')
+                      AND workspace_leases.status IN ('active', 'releasing')
                )
                AND NOT EXISTS (
                    SELECT 1 FROM workspace_processes
                     WHERE workspace_processes.worker_group_id = worker_groups.id
-                      AND workspace_processes.state IN ('starting', 'running', 'exit_requested')
+                      AND workspace_processes.status IN ('starting', 'running', 'exit_requested')
                )
            )
        )
-    RETURNING worker_groups.id, worker_groups.state, worker_groups.claim_version
+    RETURNING worker_groups.id, worker_groups.status, worker_groups.claim_version
 )
-SELECT id, state, claim_version, true AS transition_applied
+SELECT id, status, claim_version, true AS transition_applied
   FROM transitioned
 UNION ALL
-SELECT worker_groups.id, worker_groups.state, worker_groups.claim_version,
+SELECT worker_groups.id, worker_groups.status, worker_groups.claim_version,
        false AS transition_applied
   FROM worker_groups
  WHERE worker_groups.id = sqlc.arg(worker_group_id)
-   AND worker_groups.state = sqlc.arg(target_state)::text
+   AND worker_groups.status = sqlc.arg(target_status)::text
    AND worker_groups.claim_version = sqlc.arg(expected_claim_version) + 1
    AND NOT EXISTS (SELECT 1 FROM transitioned)
 LIMIT 1;
 
--- name: GetWorkerInstanceStateByResource :one
-SELECT id, resource_id, worker_group_id, worker_pool_id, state, claim_version, current_epoch
+-- name: GetWorkerInstanceStatusByResource :one
+SELECT id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch
   FROM worker_instances
  WHERE worker_group_id = sqlc.arg(worker_group_id)
    AND resource_id = sqlc.arg(resource_id)
- ORDER BY (state IN ('registering', 'active', 'draining')) DESC, created_at DESC
+ ORDER BY (status IN ('registering', 'active', 'draining')) DESC, created_at DESC
  LIMIT 1;
 
 -- name: GetCapacityWorkerInstance :one
-SELECT id, resource_id, worker_group_id, worker_pool_id, state, claim_version, current_epoch,
+SELECT id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch,
        draining_at, termination_ready_at, lost_at,
        created_at, updated_at
   FROM worker_instances
@@ -662,7 +662,7 @@ SELECT id, resource_id, worker_group_id, worker_pool_id, state, claim_version, c
 -- name: ListCapacityWorkerInstances :many
 WITH current_instances AS (
     SELECT DISTINCT ON (worker_group_id, resource_id)
-           id, resource_id, worker_group_id, worker_pool_id, state, claim_version, current_epoch,
+           id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch,
            draining_at, termination_ready_at, lost_at,
            created_at, updated_at
      FROM worker_instances
@@ -681,14 +681,14 @@ WITH current_instances AS (
            OR resource_id = ANY(sqlc.arg(resource_ids)::text[])
        )
      ORDER BY worker_group_id, resource_id,
-              (state IN ('registering', 'active', 'draining')) DESC,
+              (status IN ('registering', 'active', 'draining')) DESC,
               created_at DESC, id DESC
 )
 SELECT *
   FROM current_instances
  WHERE (
-       cardinality(sqlc.arg(states)::text[]) = 0
-       OR state = ANY(sqlc.arg(states)::text[])
+       cardinality(sqlc.arg(statuses)::text[]) = 0
+       OR status = ANY(sqlc.arg(statuses)::text[])
    )
  ORDER BY worker_group_id, resource_id
  LIMIT sqlc.arg(row_limit);
@@ -718,17 +718,17 @@ WITH live_workers AS (
       FROM worker_groups
       JOIN worker_instances
         ON worker_instances.worker_group_id = worker_groups.id
-       AND worker_instances.state = 'active'
+       AND worker_instances.status = 'active'
        AND worker_instances.current_epoch IS NOT NULL
       JOIN worker_pools
         ON worker_pools.id = worker_instances.worker_pool_id
        AND worker_pools.worker_group_id = worker_instances.worker_group_id
-       AND worker_pools.state = 'active'
+       AND worker_pools.status = 'active'
       JOIN runtime_identities
         ON runtime_identities.id = worker_instances.runtime_identity_id
      WHERE (sqlc.narg(worker_group_id)::uuid IS NULL OR worker_groups.id = sqlc.narg(worker_group_id))
        AND (sqlc.arg(region_id)::text = '' OR worker_groups.region_id = sqlc.arg(region_id))
-       AND worker_groups.state = 'active'
+       AND worker_groups.status = 'active'
        AND worker_instances.observed_at >= transaction_timestamp()
            - sqlc.arg(observation_freshness_seconds)::bigint * interval '1 second'
      ORDER BY worker_instances.id
@@ -758,7 +758,7 @@ WITH live_workers AS (
            COALESCE((SELECT count(*) FROM run_leases
                       WHERE run_leases.worker_instance_id = live_workers.worker_instance_id
                         AND run_leases.worker_epoch = live_workers.worker_epoch
-                        AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')), 0)::bigint AS run_consumers,
+                        AND run_leases.status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')), 0)::bigint AS run_consumers,
            COALESCE((SELECT count(*) FROM runtime_instances
                       WHERE runtime_instances.worker_instance_id = live_workers.worker_instance_id
                         AND runtime_instances.worker_epoch = live_workers.worker_epoch
@@ -814,16 +814,16 @@ WITH compatible_workers AS (
       FROM worker_groups
       JOIN worker_instances
         ON worker_instances.worker_group_id = worker_groups.id
-       AND worker_instances.state = 'active'
+       AND worker_instances.status = 'active'
        AND worker_instances.current_epoch IS NOT NULL
       JOIN worker_pools
         ON worker_pools.id = worker_instances.worker_pool_id
        AND worker_pools.worker_group_id = worker_instances.worker_group_id
-       AND worker_pools.state = 'active'
+       AND worker_pools.status = 'active'
       JOIN runtime_identities
         ON runtime_identities.id = worker_instances.runtime_identity_id
      WHERE worker_groups.region_id = sqlc.arg(region_id)
-       AND worker_groups.state = 'active'
+       AND worker_groups.status = 'active'
        AND worker_instances.observed_at >= transaction_timestamp()
            - sqlc.arg(observation_freshness_seconds)::bigint * interval '1 second'
        AND worker_instances.run_paused_reason IS NULL
@@ -898,7 +898,7 @@ WITH compatible_workers AS (
                       FROM run_leases
                      WHERE run_leases.worker_instance_id = compatible_workers.worker_instance_id
                        AND run_leases.worker_epoch = compatible_workers.worker_epoch
-                       AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
+                       AND run_leases.status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
                 ), 0)::bigint AS run_consumers,
                 COALESCE((
                     SELECT count(*)
@@ -931,16 +931,16 @@ SELECT worker_groups.id AS worker_group_id,
   FROM worker_groups
   JOIN worker_instances
     ON worker_instances.worker_group_id = worker_groups.id
-   AND worker_instances.state = 'active'
+   AND worker_instances.status = 'active'
    AND worker_instances.current_epoch IS NOT NULL
   JOIN worker_pools
     ON worker_pools.id = worker_instances.worker_pool_id
    AND worker_pools.worker_group_id = worker_instances.worker_group_id
-   AND worker_pools.state = 'active'
+   AND worker_pools.status = 'active'
   JOIN runtime_identities
     ON runtime_identities.id = worker_instances.runtime_identity_id
  WHERE worker_groups.region_id = sqlc.arg(region_id)
-   AND worker_groups.state = 'active'
+   AND worker_groups.status = 'active'
    AND (sqlc.narg(after_worker_instance_id)::uuid IS NULL
         OR worker_instances.id > sqlc.narg(after_worker_instance_id))
    AND worker_instances.observed_at >= transaction_timestamp()
@@ -978,14 +978,14 @@ SELECT worker_groups.id AS worker_group_id,
 -- name: MarkWorkerInstanceLost :one
 WITH target AS (
     UPDATE worker_instances
-       SET state = 'lost', claim_version = worker_instances.claim_version + 1,
+       SET status = 'lost', claim_version = worker_instances.claim_version + 1,
            lost_at = COALESCE(worker_instances.lost_at, now()), updated_at = now()
      WHERE worker_instances.worker_group_id = sqlc.arg(worker_group_id)
        AND worker_instances.resource_id = sqlc.arg(resource_id)
        AND worker_instances.claim_version = sqlc.arg(expected_claim_version)
-       AND worker_instances.state IN ('registering', 'active', 'draining')
+       AND worker_instances.status IN ('registering', 'active', 'draining')
     RETURNING worker_instances.id, worker_instances.resource_id,
-              worker_instances.worker_group_id, worker_instances.state,
+              worker_instances.worker_group_id, worker_instances.status,
               worker_instances.claim_version, worker_instances.current_epoch
 ), revoked_credentials AS (
     UPDATE worker_instance_credentials
@@ -996,12 +996,12 @@ WITH target AS (
     RETURNING worker_instance_credentials.id
 ), lost_mounts AS (
     UPDATE workspace_mounts
-       SET state = 'lost', lost_at = now(), terminal_at = now(),
+       SET status = 'lost', lost_at = now(), terminal_at = now(),
            terminal_reason_code = 'external_instance_drift', updated_at = now()
       FROM target
      WHERE workspace_mounts.worker_instance_id = target.id
        AND workspace_mounts.worker_epoch = target.current_epoch
-       AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
+       AND workspace_mounts.status IN ('mounting', 'mounted', 'unmounting')
     RETURNING workspace_mounts.id
 ), lost_runtimes AS (
     UPDATE runtime_instances
@@ -1018,7 +1018,7 @@ WITH target AS (
        AND runtime_instances.observed_state IN ('allocated', 'ready')
     RETURNING runtime_instances.id
 ), completed AS (
-    SELECT target.id, target.resource_id, target.worker_group_id, target.state,
+    SELECT target.id, target.resource_id, target.worker_group_id, target.status,
            target.claim_version, target.current_epoch, true AS transition_applied
       FROM target
      WHERE (SELECT count(*) FROM revoked_credentials) >= 0
@@ -1028,20 +1028,20 @@ WITH target AS (
 SELECT * FROM completed
 UNION ALL
 SELECT worker_instances.id, worker_instances.resource_id,
-       worker_instances.worker_group_id, worker_instances.state,
+       worker_instances.worker_group_id, worker_instances.status,
        worker_instances.claim_version, worker_instances.current_epoch,
        false AS transition_applied
   FROM worker_instances
  WHERE worker_instances.worker_group_id = sqlc.arg(worker_group_id)
    AND worker_instances.resource_id = sqlc.arg(resource_id)
-   AND worker_instances.state = 'lost'
+   AND worker_instances.status = 'lost'
    AND worker_instances.claim_version = sqlc.arg(expected_claim_version) + 1
    AND NOT EXISTS (
        SELECT 1
          FROM worker_instances AS current_worker
         WHERE current_worker.worker_group_id = worker_instances.worker_group_id
           AND current_worker.resource_id = worker_instances.resource_id
-          AND current_worker.state IN ('registering', 'active', 'draining')
+          AND current_worker.status IN ('registering', 'active', 'draining')
    )
    AND NOT EXISTS (SELECT 1 FROM completed)
 LIMIT 1;
@@ -1051,23 +1051,23 @@ WITH target AS MATERIALIZED (
     SELECT worker_instances.id
       FROM worker_instances
      WHERE worker_instances.id = sqlc.arg(worker_instance_id)
-       AND worker_instances.state IN ('registering', 'active', 'draining', 'lost')
+       AND worker_instances.status IN ('registering', 'active', 'draining', 'lost')
      FOR UPDATE
 ), transitioned AS (
     UPDATE worker_instances
-       SET state = 'lost',
+       SET status = 'lost',
            claim_version = worker_instances.claim_version
-               + CASE WHEN worker_instances.state = 'lost' THEN 0 ELSE 1 END,
+               + CASE WHEN worker_instances.status = 'lost' THEN 0 ELSE 1 END,
            lost_at = COALESCE(worker_instances.lost_at, now()),
            updated_at = CASE
-               WHEN worker_instances.state = 'lost' THEN worker_instances.updated_at
+               WHEN worker_instances.status = 'lost' THEN worker_instances.updated_at
                ELSE now()
            END
       FROM target
      WHERE worker_instances.id = target.id
     RETURNING worker_instances.id, worker_instances.resource_id,
               worker_instances.worker_group_id, worker_instances.worker_pool_id,
-              worker_instances.state, worker_instances.claim_version,
+              worker_instances.status, worker_instances.claim_version,
               worker_instances.current_epoch, worker_instances.draining_at,
               worker_instances.termination_ready_at, worker_instances.lost_at,
               worker_instances.created_at, worker_instances.updated_at
@@ -1080,7 +1080,7 @@ WITH target AS MATERIALIZED (
     RETURNING worker_instance_credentials.id
 ), lost_mounts AS (
     UPDATE workspace_mounts
-       SET state = 'lost',
+       SET status = 'lost',
            lost_at = COALESCE(workspace_mounts.lost_at, now()),
            terminal_at = COALESCE(workspace_mounts.terminal_at, now()),
            terminal_reason_code = COALESCE(
@@ -1090,12 +1090,12 @@ WITH target AS MATERIALIZED (
            updated_at = now()
       FROM transitioned
      WHERE workspace_mounts.worker_instance_id = transitioned.id
-       AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
+       AND workspace_mounts.status IN ('mounting', 'mounted', 'unmounting')
     RETURNING workspace_mounts.id
 )
 SELECT transitioned.id, transitioned.resource_id,
        transitioned.worker_group_id, transitioned.worker_pool_id,
-       transitioned.state, transitioned.claim_version,
+       transitioned.status, transitioned.claim_version,
        transitioned.current_epoch, transitioned.draining_at,
        transitioned.termination_ready_at, transitioned.lost_at,
        transitioned.created_at, transitioned.updated_at
@@ -1110,7 +1110,7 @@ WITH runtime_candidates AS MATERIALIZED (
                SELECT 1
                  FROM run_leases
                 WHERE run_leases.runtime_instance_id = runtime_instances.id
-                  AND run_leases.state IN (
+                  AND run_leases.status IN (
                       'assigned', 'starting', 'running', 'checkpointing', 'finalizing'
                   )
            ) AS reclaimable
@@ -1118,7 +1118,7 @@ WITH runtime_candidates AS MATERIALIZED (
       JOIN worker_instances
         ON worker_instances.id = runtime_instances.worker_instance_id
        AND worker_instances.id = sqlc.arg(worker_instance_id)
-       AND worker_instances.state = 'lost'
+       AND worker_instances.status = 'lost'
      WHERE runtime_instances.reclaimed_at IS NULL
      ORDER BY runtime_instances.id
      FOR UPDATE OF runtime_instances
@@ -1169,10 +1169,10 @@ SELECT count(*) FROM reconciled_runtimes;
 
 -- name: ActivateWorkerInstance :one
 UPDATE worker_instances
-   SET state = CASE
-           WHEN worker_instances.state = 'draining'
-               OR worker_groups.state = 'draining'
-               OR worker_pools.state = 'draining'
+   SET status = CASE
+           WHEN worker_instances.status = 'draining'
+               OR worker_groups.status = 'draining'
+               OR worker_pools.status = 'draining'
            THEN 'draining'
            ELSE 'active'
        END,
@@ -1191,9 +1191,9 @@ UPDATE worker_instances
        cpu_environment_digest = sqlc.arg(cpu_environment_digest),
        activated_at = COALESCE(worker_instances.activated_at, now()),
        draining_at = CASE
-           WHEN worker_instances.state = 'draining'
-               OR worker_groups.state = 'draining'
-               OR worker_pools.state = 'draining'
+           WHEN worker_instances.status = 'draining'
+               OR worker_groups.status = 'draining'
+               OR worker_pools.status = 'draining'
            THEN COALESCE(worker_instances.draining_at, now())
            ELSE worker_instances.draining_at
        END,
@@ -1203,10 +1203,10 @@ UPDATE worker_instances
    AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
    AND worker_instances.current_epoch = sqlc.arg(worker_epoch)
    AND worker_groups.id = worker_instances.worker_group_id
-   AND worker_groups.state IN ('active', 'paused', 'draining')
+   AND worker_groups.status IN ('active', 'paused', 'draining')
    AND worker_pools.id = worker_instances.worker_pool_id
    AND worker_pools.worker_group_id = worker_instances.worker_group_id
-   AND worker_pools.state IN ('active', 'draining')
+   AND worker_pools.status IN ('active', 'draining')
    AND NOT EXISTS (
        SELECT 1 FROM runtime_instances
         WHERE runtime_instances.worker_instance_id = worker_instances.id
@@ -1214,9 +1214,9 @@ UPDATE worker_instances
           AND runtime_instances.reclaimed_at IS NULL
    )
    AND (
-       worker_instances.state = 'registering'
+       worker_instances.status = 'registering'
        OR (
-           worker_instances.state = 'draining'
+           worker_instances.status = 'draining'
            AND worker_instances.runtime_identity_id IS NULL
            AND worker_instances.substrate_format = ''
            AND worker_instances.substrate_contract = ''
@@ -1233,7 +1233,7 @@ UPDATE worker_instances
            AND worker_instances.activated_at IS NULL
        )
        OR (
-           worker_instances.state IN ('active', 'draining')
+           worker_instances.status IN ('active', 'draining')
            AND worker_instances.runtime_identity_id = sqlc.arg(runtime_identity_id)::text
            AND worker_instances.substrate_format = sqlc.arg(substrate_format)
            AND worker_instances.substrate_contract = sqlc.arg(substrate_contract)
@@ -1260,7 +1260,7 @@ UPDATE worker_instances
  WHERE worker_instances.id = sqlc.arg(worker_instance_id)
    AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
    AND worker_instances.current_epoch = sqlc.arg(worker_epoch)
-   AND worker_instances.state IN ('active', 'draining')
+   AND worker_instances.status IN ('active', 'draining')
 RETURNING worker_instances.*;
 
 -- name: CompleteWorkerStartupRecovery :one
@@ -1275,14 +1275,14 @@ WITH target AS (
              FROM runtime_instances
              JOIN run_leases
                ON run_leases.runtime_instance_id = runtime_instances.id
-              AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
+              AND run_leases.status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
             WHERE runtime_instances.worker_instance_id = worker_instances.id
               AND runtime_instances.worker_epoch < worker_instances.current_epoch
        )
 	       AND (
-	           worker_instances.state = 'registering'
+	           worker_instances.status = 'registering'
 	           OR (
-	               worker_instances.state = 'draining'
+	               worker_instances.status = 'draining'
 	               AND worker_instances.runtime_identity_id IS NULL
 	           )
        )
@@ -1302,19 +1302,19 @@ WITH target AS (
            SELECT 1
              FROM run_leases
             WHERE run_leases.runtime_instance_id = runtime_instances.id
-              AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
+              AND run_leases.status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
        )
      ORDER BY runtime_instances.id
        FOR UPDATE OF runtime_instances
 ), lost_mounts AS (
     UPDATE workspace_mounts
-       SET state = 'lost',
+       SET status = 'lost',
            lost_at = now(),
            terminal_at = now(),
            terminal_reason_code = 'worker_startup_reclaimed',
            updated_at = now()
      WHERE workspace_mounts.runtime_instance_id IN (SELECT id FROM reclaimable_runtimes)
-       AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
+       AND workspace_mounts.status IN ('mounting', 'mounted', 'unmounting')
     RETURNING workspace_mounts.id
 ), reclaimed_runtimes AS (
     UPDATE runtime_instances

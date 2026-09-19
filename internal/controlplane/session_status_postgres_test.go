@@ -25,7 +25,7 @@ func TestActorReadPostgresProjectsStableStatus(t *testing.T) {
 	failedAt := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
 	if _, err := fixture.pool.Exec(t.Context(), `
 		UPDATE sessions
-		   SET state = 'failed',
+		   SET status = 'failed',
 		       current_run_id = NULL,
 		       failure = jsonb_build_object(
 		           'code', 'run_failed',

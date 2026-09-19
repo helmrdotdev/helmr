@@ -15,10 +15,10 @@ WITH authority AS (
    AND l.environment_id = r.environment_id AND l.org_id = r.org_id AND l.project_id = r.project_id
    AND l.worker_group_id = r.worker_group_id AND l.worker_instance_id = r.worker_instance_id
    AND l.worker_epoch = r.worker_epoch AND l.region_id = r.region_id
-   AND l.state = 'active' AND l.expires_at > statement_timestamp()
+   AND l.status = 'active' AND l.expires_at > statement_timestamp()
    AND l.ownership_generation = w.ownership_generation AND l.writer_generation = w.writer_generation
-   AND m.state = 'mounted' AND m.fencing_generation = l.mount_fencing_generation
-   AND m.materialized_version_id = l.base_version_id
+   AND m.status = 'mounted' AND m.fencing_generation = l.mount_fencing_generation
+   AND m.materialized_version_id = l.base_workspace_version_id
    AND m.guest_channel_token_expires_at > statement_timestamp()
    AND r.observed_state = 'ready'
    AND (
@@ -29,16 +29,16 @@ WITH authority AS (
       AND owner.org_id = r.org_id AND owner.project_id = r.project_id AND owner.region_id = r.region_id
       AND owner.worker_instance_id = r.worker_instance_id AND owner.worker_group_id = r.worker_group_id
       AND owner.worker_epoch = r.worker_epoch AND owner.runtime_identity_id = r.runtime_identity_id
-      AND owner.state IN ('starting', 'running') AND owner.expires_at > statement_timestamp()
+      AND owner.status IN ('starting', 'running') AND owner.expires_at > statement_timestamp()
     ))
     OR (l.owner_run_lease_id IS NULL AND EXISTS (
      SELECT 1 FROM workspace_processes owner
      WHERE owner.id = l.owner_process_id AND owner.runtime_instance_id = r.id
-      AND owner.workspace_mount_id = m.id AND owner.base_version_id = l.base_version_id
+      AND owner.workspace_mount_id = m.id AND owner.base_workspace_version_id = l.base_workspace_version_id
       AND owner.workspace_id = r.workspace_id AND owner.environment_id = r.environment_id
       AND owner.org_id = r.org_id AND owner.project_id = r.project_id AND owner.region_id = r.region_id
       AND owner.worker_instance_id = r.worker_instance_id AND owner.worker_group_id = r.worker_group_id
-      AND owner.worker_epoch = r.worker_epoch AND owner.state IN ('starting', 'running')
+      AND owner.worker_epoch = r.worker_epoch AND owner.status IN ('starting', 'running')
     ))
    )
  ) AS live
@@ -51,17 +51,17 @@ WITH authority AS (
   AND worker.worker_group_id = sqlc.arg(worker_group_id)
   AND worker.current_epoch = r.worker_epoch AND worker.claim_version = sqlc.arg(claim_version)
   AND worker_group.claim_version = sqlc.arg(group_claim_version)
-  AND worker.state IN ('active', 'draining') AND worker_group.state IN ('active', 'draining')
+  AND worker.status IN ('active', 'draining') AND worker_group.status IN ('active', 'draining')
   AND worker.observed_at >= statement_timestamp() - interval '120 seconds'
   AND r.desired_state = 'ready' AND r.observed_state IN ('allocated', 'ready') AND r.reclaimed_at IS NULL
-  AND w.state = 'active' AND w.desired_state = 'active' AND w.deleted_at IS NULL
+  AND w.status = 'active' AND w.desired_state = 'active' AND w.deleted_at IS NULL
 )
 SELECT b.placeholder, a.environment_id, s.id AS secret_id,
  v.id AS version_id, v.version, v.nonce, v.ciphertext,
  a.certificate, a.not_after, a.authorized_at
 FROM authority a
 JOIN workspace_secrets b ON b.workspace_id = a.workspace_id AND b.environment_id = a.environment_id
-JOIN secrets s ON s.id = b.secret_id AND s.environment_id = a.environment_id AND s.state = 'active'
+JOIN secrets s ON s.id = b.secret_id AND s.environment_id = a.environment_id AND s.status = 'active'
 JOIN secret_versions v ON v.secret_id = s.id AND v.id = s.current_version_id
 WHERE a.live AND b.placement_kind = 'env' AND b.mode = 'protected'
  AND b.placeholder = ANY(sqlc.arg(placeholders)::text[])
@@ -86,10 +86,10 @@ WITH authority AS (
    AND l.environment_id = r.environment_id AND l.org_id = r.org_id AND l.project_id = r.project_id
    AND l.worker_group_id = r.worker_group_id AND l.worker_instance_id = r.worker_instance_id
    AND l.worker_epoch = r.worker_epoch AND l.region_id = r.region_id
-   AND l.state = 'active' AND l.expires_at > statement_timestamp()
+   AND l.status = 'active' AND l.expires_at > statement_timestamp()
    AND l.ownership_generation = w.ownership_generation AND l.writer_generation = w.writer_generation
-   AND m.state = 'mounted' AND m.fencing_generation = l.mount_fencing_generation
-   AND m.materialized_version_id = l.base_version_id
+   AND m.status = 'mounted' AND m.fencing_generation = l.mount_fencing_generation
+   AND m.materialized_version_id = l.base_workspace_version_id
    AND m.guest_channel_token_expires_at > statement_timestamp()
    AND r.observed_state = 'ready'
    AND (
@@ -100,16 +100,16 @@ WITH authority AS (
       AND owner.org_id = r.org_id AND owner.project_id = r.project_id AND owner.region_id = r.region_id
       AND owner.worker_instance_id = r.worker_instance_id AND owner.worker_group_id = r.worker_group_id
       AND owner.worker_epoch = r.worker_epoch AND owner.runtime_identity_id = r.runtime_identity_id
-      AND owner.state IN ('starting', 'running') AND owner.expires_at > statement_timestamp()
+      AND owner.status IN ('starting', 'running') AND owner.expires_at > statement_timestamp()
     ))
     OR (l.owner_run_lease_id IS NULL AND EXISTS (
      SELECT 1 FROM workspace_processes owner
      WHERE owner.id = l.owner_process_id AND owner.runtime_instance_id = r.id
-      AND owner.workspace_mount_id = m.id AND owner.base_version_id = l.base_version_id
+      AND owner.workspace_mount_id = m.id AND owner.base_workspace_version_id = l.base_workspace_version_id
       AND owner.workspace_id = r.workspace_id AND owner.environment_id = r.environment_id
       AND owner.org_id = r.org_id AND owner.project_id = r.project_id AND owner.region_id = r.region_id
       AND owner.worker_instance_id = r.worker_instance_id AND owner.worker_group_id = r.worker_group_id
-      AND owner.worker_epoch = r.worker_epoch AND owner.state IN ('starting', 'running')
+      AND owner.worker_epoch = r.worker_epoch AND owner.status IN ('starting', 'running')
     ))
    )
  ) AS live
@@ -122,10 +122,10 @@ WITH authority AS (
   AND worker.worker_group_id = sqlc.arg(worker_group_id)
   AND worker.current_epoch = r.worker_epoch AND worker.claim_version = sqlc.arg(claim_version)
   AND worker_group.claim_version = sqlc.arg(group_claim_version)
-  AND worker.state IN ('active', 'draining') AND worker_group.state IN ('active', 'draining')
+  AND worker.status IN ('active', 'draining') AND worker_group.status IN ('active', 'draining')
   AND worker.observed_at >= statement_timestamp() - interval '120 seconds'
   AND r.desired_state = 'ready' AND r.observed_state IN ('allocated', 'ready') AND r.reclaimed_at IS NULL
-  AND w.state = 'active' AND w.desired_state = 'active' AND w.deleted_at IS NULL
+  AND w.status = 'active' AND w.desired_state = 'active' AND w.deleted_at IS NULL
 )
 SELECT a.environment_id, a.workspace_id, a.certificate, a.not_after, a.private_key_nonce, a.private_key_ciphertext,
  ARRAY(SELECT DISTINCT unnest(b.allowed_origins) FROM workspace_secrets b

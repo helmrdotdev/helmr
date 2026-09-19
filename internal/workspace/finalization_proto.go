@@ -22,12 +22,12 @@ func ResetTargetFromProto(target *workspacev0.WorkspaceResetTarget) (ResetTarget
 		if source.Empty == nil {
 			return ResetTarget{}, errors.New("workspace reset empty target is required")
 		}
-		return EmptyResetTarget(target.GetBaseVersionId(), tree)
+		return EmptyResetTarget(target.GetBaseWorkspaceVersionId(), tree)
 	case *workspacev0.WorkspaceResetTarget_Artifact:
 		if source.Artifact == nil || source.Artifact.GetSizeBytes() > math.MaxInt64 {
 			return ResetTarget{}, errors.New("workspace reset artifact target is required")
 		}
-		return ArtifactResetTarget(target.GetBaseVersionId(), tree, ArtifactIdentity{
+		return ArtifactResetTarget(target.GetBaseWorkspaceVersionId(), tree, ArtifactIdentity{
 			Digest:     strings.TrimSpace(source.Artifact.GetDigest()),
 			MediaType:  source.Artifact.GetMediaType(),
 			Encoding:   source.Artifact.GetEncoding(),
@@ -41,7 +41,7 @@ func ResetTargetFromProto(target *workspacev0.WorkspaceResetTarget) (ResetTarget
 
 func ResetTargetProto(target ResetTarget) *workspacev0.WorkspaceResetTarget {
 	result := &workspacev0.WorkspaceResetTarget{
-		BaseVersionId: target.BaseVersionID,
+		BaseWorkspaceVersionId: target.BaseWorkspaceVersionID,
 		Tree: &workspacev0.WorkspaceTreeIdentity{
 			Digest:     target.Tree.Digest,
 			SizeBytes:  target.Tree.SizeBytes,

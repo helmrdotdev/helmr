@@ -39,7 +39,7 @@ SELECT *
 
 -- name: ListTokens :many
 SELECT tokens.id,
-       tokens.state,
+       tokens.status,
        tokens.expires_at,
        tokens.tags,
        tokens.completed_at,
@@ -50,8 +50,8 @@ SELECT tokens.id,
    AND tokens.project_id = sqlc.arg(project_id)
    AND tokens.environment_id = sqlc.arg(environment_id)
    AND (
-       sqlc.narg(state)::text IS NULL
-       OR tokens.state = sqlc.narg(state)::text
+       sqlc.narg(status)::text IS NULL
+       OR tokens.status = sqlc.narg(status)::text
    )
    AND (
        NOT sqlc.arg(has_after)::boolean
@@ -82,18 +82,18 @@ WITH target AS MATERIALIZED (
 ),
 expired AS (
     UPDATE tokens
-       SET state = 'expired',
+       SET status = 'expired',
            expired_at = transaction_timestamp(),
            updated_at = transaction_timestamp()
      FROM target
      WHERE tokens.id = target.id
-       AND target.state = 'pending'
+       AND target.status = 'pending'
        AND target.expires_at <= transaction_timestamp()
     RETURNING tokens.*
 ),
 completed AS (
     UPDATE tokens
-       SET state = 'completed',
+       SET status = 'completed',
            result = COALESCE(sqlc.arg(result)::jsonb, 'null'::jsonb),
            error = NULL,
            completion_fingerprint = sqlc.arg(completion_fingerprint),
@@ -101,7 +101,7 @@ completed AS (
            updated_at = transaction_timestamp()
      FROM target
      WHERE tokens.id = target.id
-       AND target.state = 'pending'
+       AND target.status = 'pending'
        AND target.expires_at > transaction_timestamp()
     RETURNING tokens.*
 ),
@@ -139,17 +139,17 @@ reconciliation_intent AS (
 )
 SELECT selected_token.*,
        (
-           selected_token.state = 'completed'
+           selected_token.status = 'completed'
            AND selected_token.completion_fingerprint = sqlc.arg(completion_fingerprint)::bytea
            AND NOT EXISTS (SELECT 1 FROM completed)
        )::boolean AS already_completed,
        (
-           selected_token.state = 'completed'
+           selected_token.status = 'completed'
            AND selected_token.completion_fingerprint <> sqlc.arg(completion_fingerprint)::bytea
            AND NOT EXISTS (SELECT 1 FROM completed)
        )::boolean AS completion_conflict,
-       (selected_token.state = 'expired')::boolean AS completion_expired,
-       (selected_token.state = 'cancelled')::boolean AS completion_cancelled,
+       (selected_token.status = 'expired')::boolean AS completion_expired,
+       (selected_token.status = 'cancelled')::boolean AS completion_cancelled,
        EXISTS (SELECT 1 FROM reconciliation_intent) AS reconciliation_enqueued
   FROM selected_token;
 
@@ -165,23 +165,23 @@ WITH target AS MATERIALIZED (
 ),
 expired AS (
     UPDATE tokens
-       SET state = 'expired',
+       SET status = 'expired',
            expired_at = transaction_timestamp(),
            updated_at = transaction_timestamp()
      FROM target
      WHERE tokens.id = target.id
-       AND target.state = 'pending'
+       AND target.status = 'pending'
        AND target.expires_at <= transaction_timestamp()
     RETURNING tokens.*
 ),
 cancelled AS (
     UPDATE tokens
-       SET state = 'cancelled',
+       SET status = 'cancelled',
            cancelled_at = transaction_timestamp(),
            updated_at = transaction_timestamp()
      FROM target
      WHERE tokens.id = target.id
-       AND target.state = 'pending'
+       AND target.status = 'pending'
        AND target.expires_at > transaction_timestamp()
     RETURNING tokens.*
 ),
@@ -219,11 +219,11 @@ reconciliation_intent AS (
 )
 SELECT selected_token.*,
        (
-           selected_token.state = 'cancelled'
+           selected_token.status = 'cancelled'
            AND NOT EXISTS (SELECT 1 FROM cancelled)
        )::boolean AS already_cancelled,
-       (selected_token.state = 'expired')::boolean AS cancellation_expired,
-       (selected_token.state = 'completed')::boolean AS cancellation_completed,
+       (selected_token.status = 'expired')::boolean AS cancellation_expired,
+       (selected_token.status = 'completed')::boolean AS cancellation_completed,
        EXISTS (SELECT 1 FROM reconciliation_intent) AS reconciliation_enqueued
   FROM selected_token;
 
@@ -236,7 +236,7 @@ WITH provided_control_outbox_ids AS MATERIALIZED (
 candidates AS MATERIALIZED (
     SELECT id
      FROM tokens
-     WHERE state = 'pending'
+     WHERE status = 'pending'
        AND expires_at <= transaction_timestamp()
      ORDER BY expires_at, id
      FOR UPDATE SKIP LOCKED
@@ -244,12 +244,12 @@ candidates AS MATERIALIZED (
 ),
 expired AS (
     UPDATE tokens
-       SET state = 'expired',
+       SET status = 'expired',
            expired_at = transaction_timestamp(),
            updated_at = transaction_timestamp()
      FROM candidates
      WHERE tokens.id = candidates.id
-       AND tokens.state = 'pending'
+       AND tokens.status = 'pending'
        AND cardinality(sqlc.arg(control_outbox_ids)::uuid[])
            >= (SELECT count(*) FROM candidates)
     RETURNING tokens.*

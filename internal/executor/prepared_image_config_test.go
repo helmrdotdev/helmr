@@ -134,7 +134,7 @@ func TestPrepareGuestRuntimeTransfersConfigOrImage(t *testing.T) {
 				path = "/does-not-exist"
 			}
 			var reply bytes.Buffer
-			if err := frameio.WriteProtoFrame(&reply, &workspacev0.PrepareWorkspaceRuntimeResponse{State: "prepared", RuntimeInstanceId: "runtime"}); err != nil {
+			if err := frameio.WriteProtoFrame(&reply, &workspacev0.PrepareWorkspaceRuntimeResponse{Status: "prepared", RuntimeInstanceId: "runtime"}); err != nil {
 				t.Fatal(err)
 			}
 			stream := &scriptedGuestStream{read: bytes.NewReader(reply.Bytes())}

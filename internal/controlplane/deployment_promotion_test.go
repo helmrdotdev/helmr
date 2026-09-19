@@ -158,7 +158,7 @@ func TestScheduleResponseProjectsTimedDeclaration(t *testing.T) {
 		Timezone:             "UTC",
 		CronSemanticsVersion: "robfig-cron-v3.0.1/standard-5-field",
 		Generation:           4,
-		State:                "errored",
+		Status:               "errored",
 		EffectiveFrom:        pgvalue.Timestamptz(now),
 		NextFireAt:           pgvalue.Timestamptz(now.Add(time.Hour)),
 		LastFailure:          []byte(`{"code":"future_schedule_failure","message":"diagnosis","details":{"custom":1}}`),

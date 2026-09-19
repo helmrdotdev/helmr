@@ -23,7 +23,7 @@ var ErrAuthority = errors.New("actor input durable authority is inconsistent")
 // committed; the SQL CAS remains the final authority for backlog and expiry.
 func CanStartContinuation(actor db.Session) bool {
 	return !actor.CurrentRunID.Valid &&
-		(actor.State == "open" || actor.State == "closing") &&
+		(actor.Status == "open" || actor.Status == "closing") &&
 		!actor.ManualRunCancelled
 }
 
@@ -98,7 +98,7 @@ func CreateContinuation(
 	resolutions := make([]secret.Resolution, len(bindings))
 	for index, binding := range bindings {
 		if binding.WorkspaceID != workspace.ID || binding.EnvironmentID != actor.EnvironmentID ||
-			binding.SecretState != "active" || !binding.CurrentVersionID.Valid {
+			binding.SecretStatus != "active" || !binding.CurrentVersionID.Valid {
 			return pgtype.UUID{}, ErrAuthority
 		}
 		resolutions[index] = secret.Resolution{

@@ -18,16 +18,16 @@ func TestWorkspaceResetTargetAuthorityProjectsPrivateVersionWithinExactWorkspace
 	ctx := t.Context()
 	fixture := newRunLeaseClaimFixture(t, ctx)
 	work := fixture.addWork(t, ctx, "starting", time.Now())
-	var workspaceID, workspaceLeaseID, baseVersionID uuid.UUID
+	var workspaceID, workspaceLeaseID, baseWorkspaceVersionID uuid.UUID
 	var ownershipGeneration, writerGeneration int64
 	if err := fixture.pool.QueryRow(ctx, `
-		SELECT runs.workspace_id, workspace_leases.id, workspace_leases.base_version_id,
+		SELECT runs.workspace_id, workspace_leases.id, workspace_leases.base_workspace_version_id,
 		       workspace_leases.ownership_generation, workspace_leases.writer_generation
 		  FROM runs
 		  JOIN workspace_leases ON workspace_leases.owner_run_lease_id = runs.current_run_lease_id
 		 WHERE runs.id = $1
 	`, work.runID).Scan(
-		&workspaceID, &workspaceLeaseID, &baseVersionID,
+		&workspaceID, &workspaceLeaseID, &baseWorkspaceVersionID,
 		&ownershipGeneration, &writerGeneration,
 	); err != nil {
 		t.Fatal(err)
@@ -51,11 +51,11 @@ func TestWorkspaceResetTargetAuthorityProjectsPrivateVersionWithinExactWorkspace
 		INSERT INTO workspace_versions (
 			id, environment_id, workspace_id, parent_version_id,
 			artifact_id, content_digest,
-			size_bytes, entry_count, state, source_workspace_lease_id,
+			size_bytes, entry_count, status, source_workspace_lease_id,
 			ownership_generation, writer_generation
 		) VALUES ($1, $2, $3, $4, $5, $6,
 		          1, 1, 'private', $7, $8, $9)
-	`, privateVersionID, fixture.environmentID, workspaceID, baseVersionID,
+	`, privateVersionID, fixture.environmentID, workspaceID, baseWorkspaceVersionID,
 		artifactID, digest, workspaceLeaseID, ownershipGeneration, writerGeneration)
 
 	row, err := fixture.queries.GetWorkspaceResetTargetAuthority(ctx, GetWorkspaceResetTargetAuthorityParams{

@@ -29,7 +29,7 @@ func TestActorCompletionAuthorityAcceptsOrdinaryAndRestoredWorkspaceBases(t *tes
 		if err := validateActorCompletionAuthority(t.Context(), store, completion, authority); err != nil {
 			t.Fatal(err)
 		}
-		if store.resetTargetParams.VersionID != authority.workspaceLease.BaseVersionID {
+		if store.resetTargetParams.VersionID != authority.workspaceLease.BaseWorkspaceVersionID {
 			t.Fatalf("restored base lookup = %+v", store.resetTargetParams)
 		}
 	})
@@ -145,7 +145,7 @@ func TestRestoredSameWorkspaceActorCompletionRejectsBrokenProducerReceipts(t *te
 		{
 			name: "child wait is not completed",
 			mutate: func(_ *runLeaseClaimAuthority, store *runLeaseClaimStore, _ pgtype.UUID, _ pgtype.UUID) {
-				store.runWait.ConditionState = db.WaitStateFailed
+				store.runWait.ConditionStatus = db.WaitStatusFailed
 			},
 		},
 		{
@@ -173,7 +173,7 @@ func validSameWorkspaceActorCompletionBase(
 ) (runLeaseClaimAuthority, *runLeaseClaimStore, pgtype.UUID, pgtype.UUID) {
 	t.Helper()
 	_, authority, store := validActorCompletionAuthority(t, true)
-	pID := authority.workspaceLease.BaseVersionID
+	pID := authority.workspaceLease.BaseWorkspaceVersionID
 	p := store.resetTargets[pID]
 	cID := pgvalue.UUID(uuid.NewV7())
 	childSourceID := pgvalue.UUID(uuid.NewV7())
@@ -185,16 +185,16 @@ func validSameWorkspaceActorCompletionBase(
 	store.resetTargets[cID] = c
 	store.workspaceLeases[childSourceID] = db.WorkspaceLease{
 		ID: childSourceID, WorkspaceID: authority.workspace.ID,
-		State: db.WorkspaceLeaseStateReleased, BaseVersionID: pID,
+		Status: db.WorkspaceLeaseStatusReleased, BaseWorkspaceVersionID: pID,
 		OwnershipGeneration: authority.workspace.OwnershipGeneration,
 		WriterGeneration:    c.WriterGeneration,
 	}
 	authority.workspace.WriterGeneration = c.WriterGeneration + 1
-	authority.workspaceLease.BaseVersionID = cID
+	authority.workspaceLease.BaseWorkspaceVersionID = cID
 	authority.workspaceLease.WriterGeneration = authority.workspace.WriterGeneration
 	authority.workspaceMount.MaterializedVersionID = cID
 	store.runWait.Kind = db.WaitKindChild
-	store.runWait.ConditionState = db.WaitStateCompleted
+	store.runWait.ConditionStatus = db.WaitStatusCompleted
 	store.runWait.BaseWorkspaceVersionID = pID
 	store.runWait.ResumeWorkspaceVersionID = cID
 	store.runWait.OwnershipGeneration = pgtype.Int8{Int64: authority.workspace.OwnershipGeneration, Valid: true}
@@ -213,7 +213,7 @@ func validActorCompletionAuthority(
 	if restored {
 		_, _, authority = validCheckpointRestoreRunLeaseClaimFixture(true)
 		restoredBase := pgvalue.UUID(uuid.NewV7())
-		authority.workspaceLease.BaseVersionID = restoredBase
+		authority.workspaceLease.BaseWorkspaceVersionID = restoredBase
 		authority.workspaceMount.MaterializedVersionID = restoredBase
 		authority.checkpoint.PrivateWorkspaceVersionID = restoredBase
 		authority.workspace.WriterGeneration = 6
@@ -226,7 +226,7 @@ func validActorCompletionAuthority(
 	authority.run.MaxActiveDurationMs = 300_000
 	authority.run.ActiveStartedAt = pgtype.Timestamptz{}
 	authority.attempt.EntrypointEnteredAt = pgvalue.Timestamptz(now.Add(-time.Minute))
-	authority.runLease.State = db.RunLeaseStateFinalizing
+	authority.runLease.Status = db.RunLeaseStatusFinalizing
 	authority.runLease.StartDeadlineAt = pgvalue.Timestamptz(now.Add(-time.Minute))
 	authority.runLease.ExpiresAt = pgvalue.Timestamptz(now.Add(30 * time.Minute))
 	authority.runLease.FinalizationKind = pgvalue.Text(string(workerapi.RunFinalizationCapture))
@@ -238,7 +238,7 @@ func validActorCompletionAuthority(
 	authority.workspaceLease.WorkspaceID = authority.workspace.ID
 	authority.workspaceLease.WorkspaceMountID = authority.workspaceMount.ID
 	authority.workspaceLease.RuntimeInstanceID = authority.runtime.ID
-	authority.workspaceMount.MaterializedVersionID = authority.workspaceLease.BaseVersionID
+	authority.workspaceMount.MaterializedVersionID = authority.workspaceLease.BaseWorkspaceVersionID
 
 	projection := runLeaseProjectionAuthority{
 		run: authority.run, attempt: authority.attempt, runtime: authority.runtime,
@@ -280,20 +280,20 @@ func validActorCompletionAuthority(
 		waitID := pgvalue.UUID(uuid.NewV7())
 		sourceRunLeaseID := pgvalue.UUID(uuid.NewV7())
 		store.resetTargets = map[pgtype.UUID]db.GetWorkspaceResetTargetAuthorityRow{
-			authority.workspaceLease.BaseVersionID: base,
+			authority.workspaceLease.BaseWorkspaceVersionID: base,
 		}
 		store.readyCheckpoint = db.RunCheckpoint{
 			ID: checkpointID, RunID: authority.run.ID, AttemptNumber: authority.attempt.Number,
 			RunWaitID: waitID, SourceRunLeaseID: sourceRunLeaseID,
 			SourceWorkspaceLeaseID: sourceLeaseID, WorkspaceID: authority.workspace.ID,
 			BaseWorkspaceVersionID:    authority.workspace.HeadVersionID,
-			PrivateWorkspaceVersionID: authority.workspaceLease.BaseVersionID,
-			State:                     db.RunCheckpointStateReady,
+			PrivateWorkspaceVersionID: authority.workspaceLease.BaseWorkspaceVersionID,
+			Status:                    db.RunCheckpointStatusReady,
 		}
 		store.runWait = db.RunWait{
 			ID: waitID, RunID: authority.run.ID, WorkspaceID: authority.workspace.ID,
-			Kind: db.WaitKindTimer, ConditionState: db.WaitStateCompleted,
-			SuspensionState: db.RunWaitStateReleased, AttemptNumber: authority.attempt.Number,
+			Kind: db.WaitKindTimer, ConditionStatus: db.WaitStatusCompleted,
+			SuspensionStatus: db.RunWaitStatusReleased, AttemptNumber: authority.attempt.Number,
 			PriorRunLeaseID: sourceRunLeaseID, SuspendCheckpointID: checkpointID,
 			CheckpointRequestVersion: 1, CheckpointAckVersion: 1,
 			ResumeRequestVersion: 1, ResumeAckVersion: 1,
@@ -301,10 +301,10 @@ func validActorCompletionAuthority(
 		store.workspaceLeases = map[pgtype.UUID]db.WorkspaceLease{
 			sourceLeaseID: {
 				ID: sourceLeaseID, WorkspaceID: authority.workspace.ID,
-				State:               db.WorkspaceLeaseStateReleased,
-				BaseVersionID:       authority.workspace.HeadVersionID,
-				OwnershipGeneration: authority.workspace.OwnershipGeneration,
-				WriterGeneration:    base.WriterGeneration,
+				Status:                 db.WorkspaceLeaseStatusReleased,
+				BaseWorkspaceVersionID: authority.workspace.HeadVersionID,
+				OwnershipGeneration:    authority.workspace.OwnershipGeneration,
+				WriterGeneration:       base.WriterGeneration,
 			},
 		}
 	}

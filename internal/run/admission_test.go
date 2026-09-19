@@ -23,7 +23,7 @@ func TestCreateTaskBuildsCompleteAdmissionTuple(t *testing.T) {
 			PlacementKind:        "env",
 			PlacementTarget:      "API_TOKEN",
 			SecretID:             secretID,
-			SecretState:          "active",
+			SecretStatus:         "active",
 			CurrentVersionID:     secretVersionID,
 			RevocationGeneration: 3,
 		}},
@@ -35,7 +35,7 @@ func TestCreateTaskBuildsCompleteAdmissionTuple(t *testing.T) {
 			WorkspaceID:            workspaceID,
 			BaseWorkspaceVersionID: versionID,
 		},
-		WorkspaceStateVersion: 7,
+		WorkspaceRevision: 7,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -50,7 +50,7 @@ func TestCreateTaskBuildsCompleteAdmissionTuple(t *testing.T) {
 	if resolution.RunID != runID || resolution.SecretVersionIds[0] != secretVersionID || resolution.RevocationGenerations[0] != 3 {
 		t.Fatalf("Secret resolution = %+v", resolution)
 	}
-	if store.reserve.ExpectedStateVersion != 7 || store.reserve.ExpectedHeadVersionID != versionID {
+	if store.reserve.ExpectedRevision != 7 || store.reserve.ExpectedHeadVersionID != versionID {
 		t.Fatalf("Workspace reservation = %+v", store.reserve)
 	}
 }

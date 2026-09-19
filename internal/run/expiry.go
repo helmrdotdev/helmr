@@ -103,7 +103,7 @@ func ExpireParentOwnedChild(
 		!wait.childRunID.Valid ||
 		uuid.UUID(wait.childRunID.Bytes) != child.id ||
 		wait.attemptNumber != parent.currentAttemptNumber ||
-		wait.expectedRunStateVersion != parent.stateVersion) {
+		wait.expectedRunRevision != parent.revision) {
 		return false, cancellationAuthority("queued child expiry wait does not match", nil)
 	}
 	if err := expireLockedParentOwnedChild(ctx, tx, child); err != nil {
@@ -157,9 +157,9 @@ func expireLockedParentOwnedChild(
 		return cancellationAuthority("expire queued child attempt", err)
 	}
 	rows, err = q.ExpireQueuedRun(ctx, db.ExpireQueuedRunParams{
-		Failure:              failure,
-		ID:                   childID,
-		ExpectedStateVersion: child.stateVersion,
+		Failure:          failure,
+		ID:               childID,
+		ExpectedRevision: child.revision,
 	})
 	if err != nil || rows != 1 {
 		return cancellationAuthority("expire queued child run", err)

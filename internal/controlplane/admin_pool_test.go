@@ -74,7 +74,7 @@ func (s *adminPoolStore) CreatePendingWorkerPool(_ context.Context, params db.Cr
 	if !created.ID.Valid {
 		created = db.WorkerPool{
 			ID: params.WorkerPoolID, WorkerGroupID: params.WorkerGroupID, Name: params.Name,
-			State: "pending", ClaimVersion: 1,
+			Status: "pending", ClaimVersion: 1,
 		}
 	}
 	return created, nil
@@ -144,7 +144,7 @@ func TestAdminWorkerPoolCreateLocksGroupAndCreatesPendingPool(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if body.Name != "run-next" || body.State != "pending" || body.ClaimVersion != 1 {
+	if body.Name != "run-next" || body.Status != "pending" || body.ClaimVersion != 1 {
 		t.Fatalf("created Worker Pool = %+v", body)
 	}
 }
@@ -215,11 +215,11 @@ func TestAdminWorkerPoolLifecycleLocksGroupBeforePool(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			group, pool := adminPoolFixture()
-			pool.State = test.state
+			pool.Status = test.state
 			pool.ClaimVersion = test.claim
 			store := newAdminPoolStore(group, pool)
 			store.transitioned = pool
-			store.transitioned.State = test.target
+			store.transitioned.Status = test.target
 			store.transitioned.ClaimVersion = test.transition
 
 			response := httptest.NewRecorder()
@@ -231,7 +231,7 @@ func TestAdminWorkerPoolLifecycleLocksGroupBeforePool(t *testing.T) {
 			if response.Code != http.StatusOK {
 				t.Fatalf("status = %d, want 200: %s", response.Code, response.Body.String())
 			}
-			if store.transitionCalls != 1 || store.transitionParams.TargetState != test.target ||
+			if store.transitionCalls != 1 || store.transitionParams.TargetStatus != test.target ||
 				store.transitionParams.ExpectedPoolClaimVersion != test.claim {
 				t.Fatalf("transition params = %+v, calls = %d", store.transitionParams, store.transitionCalls)
 			}
@@ -240,7 +240,7 @@ func TestAdminWorkerPoolLifecycleLocksGroupBeforePool(t *testing.T) {
 			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 				t.Fatal(err)
 			}
-			if body.State != test.target || body.ClaimVersion != test.transition {
+			if body.Status != test.target || body.ClaimVersion != test.transition {
 				t.Fatalf("transition response = %+v", body)
 			}
 		})
@@ -285,10 +285,10 @@ func adminPoolFixture() (db.WorkerGroup, db.WorkerPool) {
 	groupID := pgvalue.UUID(uuid.NewV7())
 	poolID := pgvalue.UUID(uuid.NewV7())
 	return db.WorkerGroup{
-		ID: groupID, RegionID: "default", Name: "default", State: db.WorkerGroupStateActive,
+		ID: groupID, RegionID: "default", Name: "default", Status: db.WorkerGroupStatusActive,
 		ClaimVersion: 4,
 	}, db.WorkerPool{
-		ID: poolID, WorkerGroupID: groupID, Name: "run-next", State: "active",
+		ID: poolID, WorkerGroupID: groupID, Name: "run-next", Status: "active",
 		ClaimVersion: 4,
 		SealedAt:     pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
 	}

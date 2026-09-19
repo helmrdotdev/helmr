@@ -51,7 +51,7 @@ func TestActorClosePostgresClosesIdleActorAndReplaysBoundedReceipt(t *testing.T)
 	var ownerSessionID *uuid.UUID
 	var ownershipGeneration int64
 	if err := fixture.pool.QueryRow(t.Context(), `
-		SELECT state, current_run_id, close_sequence, closed_at IS NOT NULL
+		SELECT status, current_run_id, close_sequence, closed_at IS NOT NULL
 		  FROM sessions
 		 WHERE id = $1
 	`, started.SessionID).Scan(&state, &currentRunID, &closeSequence, &closedAtValid); err != nil {
@@ -74,7 +74,7 @@ func TestActorClosePostgresClosesIdleActorAndReplaysBoundedReceipt(t *testing.T)
 	}
 
 	if _, err := fixture.pool.Exec(t.Context(), `
-		UPDATE sessions SET state_version = state_version + 1 WHERE id = $1
+		UPDATE sessions SET revision = revision + 1 WHERE id = $1
 	`, started.SessionID); err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestActorClosePostgresClosesIdleActorAndReplaysBoundedReceipt(t *testing.T)
 		SELECT receipt
 		  FROM idempotency_claims
 		 WHERE operation = 'session.close'
-		   AND state = 'completed'
+		   AND status = 'completed'
 	`).Scan(&receipt); err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +169,7 @@ func TestActorClosePostgresRejectsFailedActorWithoutClaimResidue(t *testing.T) {
 	settleActorBootRun(t, fixture, started, 0)
 	if _, err := fixture.pool.Exec(t.Context(), `
 		UPDATE sessions
-		   SET state = 'failed',
+		   SET status = 'failed',
 		       failure = jsonb_build_object(
 		           'code', 'run_failed',
 		           'message', 'Session run failed',
@@ -227,7 +227,7 @@ func TestActorClosePostgresReconcilesAfterWorkspaceAuthorityRecovers(t *testing.
 	var state string
 	var ownerSessionID uuid.UUID
 	if err := fixture.pool.QueryRow(t.Context(), `
-		SELECT sessions.state, workspaces.owner_session_id
+		SELECT sessions.status, workspaces.owner_session_id
 		  FROM sessions
 		  JOIN workspaces ON workspaces.id = sessions.workspace_id
 		 WHERE sessions.id = $1
@@ -259,7 +259,7 @@ func TestActorClosePostgresReconcilesAfterWorkspaceAuthorityRecovers(t *testing.
 	}
 	var ownerAfter *uuid.UUID
 	if err := fixture.pool.QueryRow(t.Context(), `
-		SELECT sessions.state, workspaces.owner_session_id
+		SELECT sessions.status, workspaces.owner_session_id
 		  FROM sessions
 		  JOIN workspaces ON workspaces.id = sessions.workspace_id
 		 WHERE sessions.id = $1
@@ -293,18 +293,18 @@ func TestActorCloseHTTPPostgresAuthorizesBeforeLookupAndCloses(t *testing.T) {
 		!strings.Contains(recorder.Body.String(), `"code":"permission_required"`) {
 		t.Fatalf("denied status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
-	var deniedState string
+	var deniedStatus string
 	var deniedClaims int
 	if err := fixture.pool.QueryRow(t.Context(), `
-		SELECT sessions.state,
+		SELECT sessions.status,
 		       (SELECT count(*) FROM idempotency_claims WHERE operation = 'session.close')
 		  FROM sessions
 		 WHERE sessions.id = $1
-	`, started.SessionID).Scan(&deniedState, &deniedClaims); err != nil {
+	`, started.SessionID).Scan(&deniedStatus, &deniedClaims); err != nil {
 		t.Fatal(err)
 	}
-	if deniedState != "open" || deniedClaims != 0 {
-		t.Fatalf("denied residue state=%s claims=%d", deniedState, deniedClaims)
+	if deniedStatus != "open" || deniedClaims != 0 {
+		t.Fatalf("denied residue state=%s claims=%d", deniedStatus, deniedClaims)
 	}
 	principal.Permissions = []auth.Permission{auth.PermissionSessionsClose}
 	recorder = httptest.NewRecorder()
@@ -410,7 +410,7 @@ func settleActorBootRun(
 		   SET current_run_id = NULL,
 		       committed_input_sequence = $2,
 		       run_generation = run_generation + 1,
-		       state_version = state_version + 1,
+		       revision = revision + 1,
 		       updated_at = now()
 		 WHERE id = $1
 	`, started.SessionID, committedInputSequence); err != nil {
@@ -432,7 +432,7 @@ func assertActorCloseContinuation(
 	var manualRunCancelled bool
 	var currentRunID uuid.UUID
 	if err := fixture.pool.QueryRow(t.Context(), `
-		SELECT state, close_sequence, manual_run_cancelled, current_run_id
+		SELECT status, close_sequence, manual_run_cancelled, current_run_id
 		  FROM sessions
 		 WHERE id = $1
 	`, actorID).Scan(&state, &closeSequence, &manualRunCancelled, &currentRunID); err != nil {

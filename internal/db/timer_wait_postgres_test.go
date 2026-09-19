@@ -20,7 +20,7 @@ func TestTimerWaitRegistrationAndHotCompletion(t *testing.T) {
 	var runVersion int64
 	if err := fixture.pool.QueryRow(
 		ctx,
-		`SELECT state_version FROM runs WHERE id = $1`,
+		`SELECT revision FROM runs WHERE id = $1`,
 		work.runID,
 	).Scan(&runVersion); err != nil {
 		t.Fatal(err)
@@ -37,21 +37,21 @@ func TestTimerWaitRegistrationAndHotCompletion(t *testing.T) {
 		CheckpointDueAt:                pgvalue.Timestamptz(time.Now().Add(time.Second)),
 		ResumeAttachID:                 pgvalue.UUID(uuid.NewV7()),
 		Metadata:                       []byte(`{}`), Tags: []string{},
-		RunID:                       pgvalue.UUID(work.runID),
-		ExpectedRunningStateVersion: runVersion,
+		RunID:                   pgvalue.UUID(work.runID),
+		ExpectedRunningRevision: runVersion,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if wait.Kind != WaitKindTimer || !wait.DueAt.Valid || wait.TimeoutAt.Valid ||
-		wait.ConditionState != WaitStatePending || wait.SuspensionState != RunWaitStateHot {
+		wait.ConditionStatus != WaitStatusPending || wait.SuspensionStatus != RunWaitStatusHot {
 		t.Fatalf("registered timer Wait = %+v", wait)
 	}
 	completed, err := fixture.queries.CompleteHotRunWait(ctx, CompleteHotRunWaitParams{
 		ID: wait.ID, RunID: wait.RunID,
-		ExpectedRunStateVersion: wait.ExpectedRunStateVersion,
-		CurrentRunLeaseID:       wait.CurrentRunLeaseID,
-		AttemptNumber:           wait.AttemptNumber,
+		ExpectedRunRevision: wait.ExpectedRunRevision,
+		CurrentRunLeaseID:   wait.CurrentRunLeaseID,
+		AttemptNumber:       wait.AttemptNumber,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -64,8 +64,8 @@ func TestTimerWaitRegistrationAndHotCompletion(t *testing.T) {
 	).Scan(&status); err != nil {
 		t.Fatal(err)
 	}
-	if completed.ConditionState != WaitStateCompleted ||
-		completed.SuspensionState != RunWaitStateReleased ||
+	if completed.ConditionStatus != WaitStatusCompleted ||
+		completed.SuspensionStatus != RunWaitStatusReleased ||
 		completed.CompletedActorRecordID.Valid ||
 		status != RunStatusRunning {
 		t.Fatalf("completed timer Wait = %+v run=%s", completed, status)

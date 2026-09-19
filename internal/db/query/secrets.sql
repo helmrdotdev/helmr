@@ -41,8 +41,8 @@ WITH locked AS (
     FROM secrets
     WHERE secrets.environment_id = sqlc.arg(environment_id)
       AND secrets.id = sqlc.arg(secret_id)
-      AND secrets.state = 'active'
-      AND secrets.state_version = sqlc.arg(expected_state_version)
+      AND secrets.status = 'active'
+      AND secrets.revision = sqlc.arg(expected_revision)
       AND secrets.current_version_id = sqlc.arg(expected_current_version_id)
     FOR UPDATE
 ),
@@ -65,7 +65,7 @@ version AS (
 )
 UPDATE secrets
 SET current_version_id = version.id,
-    state_version = state_version + 1,
+    revision = revision + 1,
     updated_at = now()
 FROM version
 WHERE secrets.id = version.secret_id
@@ -73,16 +73,16 @@ RETURNING secrets.*;
 
 -- name: RevokeSecret :one
 UPDATE secrets
-SET state = 'revoked',
-    state_version = state_version + 1,
+SET status = 'revoked',
+    revision = revision + 1,
     current_version_id = NULL,
     revocation_generation = revocation_generation + 1,
     revoked_at = now(),
     updated_at = now()
 WHERE environment_id = sqlc.arg(environment_id)
   AND id = sqlc.arg(id)
-  AND state = 'active'
-  AND state_version = sqlc.arg(expected_state_version)
+  AND status = 'active'
+  AND revision = sqlc.arg(expected_revision)
 RETURNING *;
 
 -- name: LockActiveSecretsByNameForWorkspaceCreate :many
@@ -90,7 +90,7 @@ SELECT secrets.*
 FROM secrets
 WHERE environment_id = sqlc.arg(environment_id)
   AND name = ANY(sqlc.arg(names)::text[])
-  AND state = 'active'
+  AND status = 'active'
   AND current_version_id IS NOT NULL
 ORDER BY secrets.id
 FOR NO KEY UPDATE;
@@ -100,7 +100,7 @@ SELECT
     secrets.id,
     secrets.environment_id,
     secrets.name,
-    secrets.state,
+    secrets.status,
     secrets.created_at,
     CASE
         WHEN latest.version > 1 THEN latest.created_at
@@ -123,7 +123,7 @@ SELECT
     secrets.id,
     secrets.environment_id,
     secrets.name,
-    secrets.state,
+    secrets.status,
     secrets.created_at,
     CASE
         WHEN latest.version > 1 THEN latest.created_at
@@ -172,14 +172,14 @@ JOIN secret_versions
  AND secret_versions.id = secrets.current_version_id
 WHERE secrets.environment_id = sqlc.arg(environment_id)
   AND secrets.id = sqlc.arg(secret_id)
-  AND secrets.state = 'active';
+  AND secrets.status = 'active';
 
 -- name: ListSecrets :many
 SELECT
     secrets.id,
     secrets.environment_id,
     secrets.name,
-    secrets.state,
+    secrets.status,
     secrets.created_at,
     CASE
         WHEN latest.version > 1 THEN latest.created_at
@@ -253,7 +253,7 @@ SELECT affected_runs.org_id,
 SELECT DISTINCT workspace_processes.org_id,
        workspace_processes.workspace_id,
        workspace_processes.id,
-       workspace_processes.state_version,
+       workspace_processes.revision,
        workspace_processes.created_at
   FROM secret_resolutions
   JOIN workspace_processes
@@ -262,7 +262,7 @@ SELECT DISTINCT workspace_processes.org_id,
  WHERE secret_resolutions.secret_id = sqlc.arg(secret_id)
    AND secret_resolutions.revocation_generation < sqlc.arg(revocation_generation)
    AND workspace_processes.environment_id = sqlc.arg(environment_id)
-   AND workspace_processes.state IN ('starting', 'running', 'exit_requested')
+   AND workspace_processes.status IN ('starting', 'running', 'exit_requested')
  ORDER BY workspace_processes.created_at, workspace_processes.id
  LIMIT sqlc.arg(row_limit);
 
@@ -270,8 +270,8 @@ SELECT DISTINCT workspace_processes.org_id,
 SELECT
     workspace_secrets.*,
     secrets.name AS secret_name,
-    secrets.state AS secret_state,
-    secrets.state_version AS secret_state_version,
+    secrets.status AS secret_status,
+    secrets.revision AS secret_revision,
     secrets.current_version_id,
     secrets.revocation_generation
 FROM workspace_secrets
@@ -282,8 +282,8 @@ ORDER BY workspace_secrets.placement_kind, workspace_secrets.placement_target;
 -- name: LockWorkspaceSecretsForAdmission :many
 SELECT
     workspace_secrets.*,
-    secrets.state AS secret_state,
-    secrets.state_version AS secret_state_version,
+    secrets.status AS secret_status,
+    secrets.revision AS secret_revision,
     secrets.current_version_id,
     secrets.revocation_generation
 FROM workspace_secrets
@@ -322,7 +322,7 @@ SELECT
     workspace_secrets.placement_kind,
     workspace_secrets.placement_target,
     workspace_secrets.secret_id,
-    secrets.state AS secret_state,
+    secrets.status AS secret_status,
     secrets.current_version_id,
     secrets.revocation_generation,
     secret_resolutions.id AS resolution_id,

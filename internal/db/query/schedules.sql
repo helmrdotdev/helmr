@@ -61,7 +61,7 @@ INSERT INTO schedules (
     cron_pattern,
     timezone,
     cron_semantics_version,
-    state,
+    status,
     effective_from,
     next_fire_at
 )
@@ -85,8 +85,8 @@ DO UPDATE
        timezone = excluded.timezone,
        cron_semantics_version = excluded.cron_semantics_version,
        generation = schedules.generation + 1,
-       state = excluded.state,
-       state_version = schedules.state_version + 1,
+       status = excluded.status,
+       revision = schedules.revision + 1,
        effective_from = excluded.effective_from,
        next_fire_at = excluded.next_fire_at,
        last_fire_at = NULL,
@@ -140,8 +140,8 @@ UPDATE schedules
    SET deployment_definition_id = NULL,
        deployment_id = NULL,
        generation = generation + 1,
-       state = 'archived',
-       state_version = state_version + 1,
+       status = 'archived',
+       revision = revision + 1,
        effective_from = sqlc.arg(effective_from),
        next_fire_at = NULL,
        claimed_by = NULL,
@@ -150,7 +150,7 @@ UPDATE schedules
        retry_after = NULL,
        updated_at = now()
  WHERE environment_id = sqlc.arg(environment_id)
-   AND state <> 'archived'
+   AND status <> 'archived'
    AND NOT (task_declared_id = ANY(sqlc.arg(task_declared_ids)::text[]))
 RETURNING id
 )
@@ -270,7 +270,7 @@ WITH selected_definition AS (
      WHERE schedules.environment_id = sqlc.arg(environment_id)
        AND schedules.id = sqlc.arg(schedule_id)
        AND schedules.generation = sqlc.arg(expected_generation)
-       AND schedules.state = 'active'
+       AND schedules.status = 'active'
 ), created_workspace AS (
     INSERT INTO workspaces (
         id,
@@ -289,13 +289,13 @@ WITH selected_definition AS (
            sqlc.arg(initial_version_id),
            NULL
       FROM selected_definition
-    RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at
+    RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.revision, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.status, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at
 ), created_version AS (
     INSERT INTO workspace_versions (
         id,
         environment_id,
         workspace_id,
-        state,
+        status,
         content_digest,
         size_bytes,
         entry_count,
@@ -324,7 +324,7 @@ SELECT created_workspace.*
 WITH candidates AS (
     SELECT id
       FROM schedules
-     WHERE state = 'active'
+     WHERE status = 'active'
        AND next_fire_at IS NOT NULL
        AND next_fire_at <= now()
        AND (retry_after IS NULL OR retry_after <= now())
@@ -350,7 +350,7 @@ SELECT sqlc.embed(schedules),
     ON environments.id = schedules.environment_id
  WHERE schedules.environment_id = sqlc.arg(environment_id)
    AND schedules.id = sqlc.arg(id)
-   AND schedules.state = 'active'
+   AND schedules.status = 'active'
    AND schedules.generation = sqlc.arg(expected_generation)
    AND schedules.next_fire_at = sqlc.arg(expected_scheduled_at)
    AND schedules.claimed_by = sqlc.arg(claimed_by)
@@ -373,11 +373,11 @@ UPDATE schedules
        claim_expires_at = NULL,
        retry_step = NULL,
        retry_after = NULL,
-       state_version = state_version + 1,
+       revision = revision + 1,
        updated_at = now()
  WHERE environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id)
-   AND state = 'active'
+   AND status = 'active'
    AND generation = sqlc.arg(expected_generation)
    AND next_fire_at = sqlc.arg(expected_scheduled_at)
    AND claimed_by = sqlc.arg(claimed_by)
@@ -393,7 +393,7 @@ UPDATE schedules
        updated_at = now()
  WHERE environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id)
-   AND state = 'active'
+   AND status = 'active'
    AND generation = sqlc.arg(expected_generation)
    AND next_fire_at = sqlc.arg(expected_scheduled_at)
    AND retry_step IS NOT DISTINCT FROM sqlc.narg(expected_retry_step)
@@ -403,8 +403,8 @@ RETURNING *;
 
 -- name: MarkScheduleAdmissionErrored :one
 UPDATE schedules
-   SET state = 'errored',
-       state_version = state_version + 1,
+   SET status = 'errored',
+       revision = revision + 1,
        retry_step = NULL,
        retry_after = NULL,
        last_failure = sqlc.arg(last_failure),
@@ -413,7 +413,7 @@ UPDATE schedules
        updated_at = now()
  WHERE environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id)
-   AND state = 'active'
+   AND status = 'active'
    AND generation = sqlc.arg(expected_generation)
    AND next_fire_at = sqlc.arg(expected_scheduled_at)
    AND claimed_by = sqlc.arg(claimed_by)

@@ -93,7 +93,7 @@ func TestRunPinnedWorkspaceCreateUsesSourceDeploymentAndFencesBeforeClaim(t *tes
 	}
 	if _, err := fixture.pool.Exec(t.Context(), `
 		UPDATE workspaces
-		   SET state = 'deleting', desired_state = 'deleted', updated_at = now() + interval '1 minute'
+		   SET status = 'deleting', desired_state = 'deleted', updated_at = now() + interval '1 minute'
 		 WHERE id = $1
 	`, created.WorkspaceID); err != nil {
 		t.Fatal(err)
@@ -236,22 +236,22 @@ func TestRunSourcedWorkspaceSelfExecAndDeleteAreBusyWithoutSideEffects(t *testin
 	`).Scan(&claimCount); err != nil {
 		t.Fatal(err)
 	}
-	var state db.WorkspaceState
+	var state db.WorkspaceStatus
 	if err := fixture.pool.QueryRow(t.Context(), `
-		SELECT state FROM workspaces WHERE id = $1
+		SELECT status FROM workspaces WHERE id = $1
 	`, pgvalue.MustUUIDValue(record.ID)).Scan(&state); err != nil {
 		t.Fatal(err)
 	}
-	if processCount != 0 || claimCount != claimsBefore || state != db.WorkspaceStateActive {
+	if processCount != 0 || claimCount != claimsBefore || state != db.WorkspaceStatusActive {
 		t.Fatalf("processes=%d claims=%d before=%d state=%s", processCount, claimCount, claimsBefore, state)
 	}
 }
 
 func TestWorkspaceDeletePublishesOwnerlessMountCleanupOnce(t *testing.T) {
-	for _, initialMountState := range []string{"mounted", "unmounting"} {
-		t.Run(initialMountState, func(t *testing.T) {
+	for _, initialMountStatus := range []string{"mounted", "unmounting"} {
+		t.Run(initialMountStatus, func(t *testing.T) {
 			t.Parallel()
-			testWorkspaceDeletePublishesOwnerlessMountCleanupOnce(t, initialMountState)
+			testWorkspaceDeletePublishesOwnerlessMountCleanupOnce(t, initialMountStatus)
 		})
 	}
 }
@@ -270,7 +270,7 @@ func testWorkspaceDeleteWithoutActiveMountSucceeds(t *testing.T, recoveryRequire
 	if recoveryRequired {
 		dbtest.MustExec(t, t.Context(), product.pool, `
 UPDATE workspaces
-   SET state = 'recovery_required', desired_state = 'stopped', dirty_state = 'dirty_state_lost'
+   SET status = 'recovery_required', desired_state = 'stopped', dirty_state = 'dirty_state_lost'
  WHERE id = $1`, workspaceID)
 	}
 	var originalKey, originalDeclaredID string
@@ -292,15 +292,15 @@ SELECT key, sandbox_declared_id FROM workspaces WHERE id = $1`, workspaceID).Sca
 	if deleted.Replayed || deleted.WorkspaceID != workspaceID {
 		t.Fatalf("delete result = %+v", deleted)
 	}
-	var state db.WorkspaceState
+	var state db.WorkspaceStatus
 	var desiredState, dirtyState string
 	if err := product.pool.QueryRow(t.Context(), `
-SELECT state, desired_state, dirty_state FROM workspaces WHERE id = $1`, workspaceID).Scan(
+SELECT status, desired_state, dirty_state FROM workspaces WHERE id = $1`, workspaceID).Scan(
 		&state, &desiredState, &dirtyState,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if state != db.WorkspaceStateDeleting || desiredState != "deleted" || dirtyState != "clean" {
+	if state != db.WorkspaceStatusDeleting || desiredState != "deleted" || dirtyState != "clean" {
 		t.Fatalf("workspace state = %s/%s/%s, want deleting/deleted/clean", state, desiredState, dirtyState)
 	}
 	finalized, err := product.server.db.FinalizeDeletingWorkspaces(t.Context(), 10)
@@ -311,8 +311,8 @@ SELECT state, desired_state, dirty_state FROM workspaces WHERE id = $1`, workspa
 		t.Fatalf("finalized workspaces = %+v, want %s", finalized, workspaceID)
 	}
 	var tombstone struct {
-		state                  db.WorkspaceState
-		stateVersion           int64
+		state                  db.WorkspaceStatus
+		revision               int64
 		deploymentDefinitionID uuid.UUID
 		key                    *string
 		sandboxDeclaredID      *string
@@ -320,16 +320,16 @@ SELECT state, desired_state, dirty_state FROM workspaces WHERE id = $1`, workspa
 		deletedAt              time.Time
 	}
 	if err := product.pool.QueryRow(t.Context(), `
-SELECT state, state_version, deployment_definition_id, key,
+SELECT status, revision, deployment_definition_id, key,
        sandbox_declared_id, head_version_id, deleted_at
   FROM workspaces WHERE id = $1`, workspaceID).Scan(
-		&tombstone.state, &tombstone.stateVersion, &tombstone.deploymentDefinitionID,
+		&tombstone.state, &tombstone.revision, &tombstone.deploymentDefinitionID,
 		&tombstone.key, &tombstone.sandboxDeclaredID, &tombstone.headVersionID,
 		&tombstone.deletedAt,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if tombstone.state != db.WorkspaceStateDeleted || tombstone.stateVersion != 3 ||
+	if tombstone.state != db.WorkspaceStatusDeleted || tombstone.revision != 3 ||
 		tombstone.deploymentDefinitionID == uuid.Nil() || tombstone.key != nil ||
 		tombstone.sandboxDeclaredID != nil || tombstone.headVersionID != nil ||
 		tombstone.deletedAt.IsZero() {
@@ -385,7 +385,7 @@ func TestWorkspaceDeleteFinalizationSkipsBlockedRowsAndIsConcurrent(t *testing.T
 	}
 	if _, err := product.pool.Exec(t.Context(), `
 UPDATE workspaces
-   SET state = 'deleting', desired_state = 'deleted', updated_at = now() - interval '1 hour'
+   SET status = 'deleting', desired_state = 'deleted', updated_at = now() - interval '1 hour'
  WHERE id = $1`, blockedWorkspaceID); err != nil {
 		t.Fatal(err)
 	}
@@ -443,17 +443,17 @@ UPDATE workspaces SET updated_at = now() - ($2::int * interval '10 minutes')
 	if len(seen) != 3 {
 		t.Fatalf("finalized workspaces = %v, want three eligible rows", seen)
 	}
-	var blockedState db.WorkspaceState
+	var blockedStatus db.WorkspaceStatus
 	if err := product.pool.QueryRow(t.Context(), `
-SELECT state FROM workspaces WHERE id = $1`, blockedWorkspaceID).Scan(&blockedState); err != nil {
+SELECT status FROM workspaces WHERE id = $1`, blockedWorkspaceID).Scan(&blockedStatus); err != nil {
 		t.Fatal(err)
 	}
-	if blockedState != db.WorkspaceStateDeleting {
-		t.Fatalf("blocked workspace state = %s, want deleting", blockedState)
+	if blockedStatus != db.WorkspaceStatusDeleting {
+		t.Fatalf("blocked workspace state = %s, want deleting", blockedStatus)
 	}
 }
 
-func testWorkspaceDeletePublishesOwnerlessMountCleanupOnce(t *testing.T, initialMountState string) {
+func testWorkspaceDeletePublishesOwnerlessMountCleanupOnce(t *testing.T, initialMountStatus string) {
 	product := newActorStartPostgresFixture(t, 1)
 	poolFixture := newAdminPoolPostgresFixture(t, product.pool, "us-east-1")
 	workerPool := poolFixture.addActivePool(t, "workspace-delete-cleanup")
@@ -481,7 +481,7 @@ INSERT INTO runtime_substrates (
 	}
 	if _, err := product.pool.Exec(t.Context(), `
 INSERT INTO worker_instances (
-    id, resource_id, worker_group_id, worker_pool_id, state,
+    id, resource_id, worker_group_id, worker_pool_id, status,
     current_epoch, current_service_id, runtime_identity_id,
     substrate_format, substrate_contract,
     epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
@@ -526,10 +526,10 @@ INSERT INTO runtime_instances (
 INSERT INTO workspace_mounts (
     id, org_id, worker_group_id, project_id, environment_id, region_id,
     worker_instance_id, worker_epoch, workspace_id, materialized_version_id,
-    runtime_instance_id, state, dirty_generation, mounted_at
+    runtime_instance_id, status, dirty_generation, mounted_at
 	) VALUES ($1, $2, $3, $4, $5, 'us-east-1', $6, 1, $7, $8, $9, $10, 7, now())`,
 		mountID, product.orgID, poolFixture.group.ID, product.projectID,
-		product.environmentID, workerID, workspaceID, headVersionID, runtimeID, initialMountState,
+		product.environmentID, workerID, workspaceID, headVersionID, runtimeID, initialMountStatus,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -549,13 +549,13 @@ INSERT INTO workspace_mounts (
 
 	assertCleanup := func() {
 		t.Helper()
-		var workspaceState db.WorkspaceState
-		var mountState, finalizationKind, finalizationReason string
+		var workspaceStatus db.WorkspaceStatus
+		var mountStatus, finalizationKind, finalizationReason string
 		var desiredState, desiredReason string
 		var desiredVersion int64
 		var stoppedAtValid bool
 		if err := product.pool.QueryRow(t.Context(), `
-SELECT workspaces.state, workspace_mounts.state,
+SELECT workspaces.status, workspace_mounts.status,
        workspace_mounts.finalization_kind,
        workspace_mounts.finalization_reason_code,
        workspace_mounts.stopped_at IS NOT NULL,
@@ -567,19 +567,19 @@ SELECT workspaces.state, workspace_mounts.state,
  WHERE workspaces.id = $1 AND workspace_mounts.id = $2`,
 			workspaceID, mountID,
 		).Scan(
-			&workspaceState, &mountState, &finalizationKind, &finalizationReason,
+			&workspaceStatus, &mountStatus, &finalizationKind, &finalizationReason,
 			&stoppedAtValid,
 			&desiredState, &desiredVersion, &desiredReason,
 		); err != nil {
 			t.Fatal(err)
 		}
-		if workspaceState != db.WorkspaceStateDeleting || mountState != "unmounting" ||
+		if workspaceStatus != db.WorkspaceStatusDeleting || mountStatus != "unmounting" ||
 			finalizationKind != "discard" || finalizationReason != "workspace_deleted" ||
 			!stoppedAtValid || desiredState != "closed" || desiredVersion != 2 ||
 			desiredReason != "workspace_deleted" {
 			t.Fatalf(
 				"workspace=%s mount=%s finalization=%s/%s stopped=%t runtime=%s version=%d reason=%s",
-				workspaceState, mountState, finalizationKind, finalizationReason, stoppedAtValid,
+				workspaceStatus, mountStatus, finalizationKind, finalizationReason, stoppedAtValid,
 				desiredState, desiredVersion, desiredReason,
 			)
 		}
@@ -657,7 +657,7 @@ SELECT workspace_mounts.finalization_kind,
 	assertFinalizedCount(0, "active mount")
 	if _, err := product.pool.Exec(t.Context(), `
 UPDATE workspace_mounts
-   SET state = 'unmounted', unmounted_at = now(), terminal_at = now(),
+   SET status = 'unmounted', unmounted_at = now(), terminal_at = now(),
        terminal_reason_code = 'test_unmounted'
  WHERE id = $1`, mountID); err != nil {
 		t.Fatal(err)
@@ -678,25 +678,25 @@ UPDATE runtime_instances
 		t.Fatal(err)
 	}
 	assertFinalizedCount(1, "lost runtime")
-	var workspaceState db.WorkspaceState
+	var workspaceStatus db.WorkspaceStatus
 	var retainedDefinitionID uuid.UUID
 	var retainedRuntimeCount int
 	if err := product.pool.QueryRow(t.Context(), `
-SELECT workspaces.state, workspaces.deployment_definition_id,
+SELECT workspaces.status, workspaces.deployment_definition_id,
        count(runtime_instances.id)
   FROM workspaces
   LEFT JOIN runtime_instances ON runtime_instances.workspace_id = workspaces.id
  WHERE workspaces.id = $1
  GROUP BY workspaces.id`, workspaceID).Scan(
-		&workspaceState, &retainedDefinitionID, &retainedRuntimeCount,
+		&workspaceStatus, &retainedDefinitionID, &retainedRuntimeCount,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if workspaceState != db.WorkspaceStateDeleted ||
+	if workspaceStatus != db.WorkspaceStatusDeleted ||
 		retainedDefinitionID != sandboxDefinitionID || retainedRuntimeCount != 1 {
 		t.Fatalf(
 			"workspace=%s definition=%s runtimes=%d",
-			workspaceState, retainedDefinitionID, retainedRuntimeCount,
+			workspaceStatus, retainedDefinitionID, retainedRuntimeCount,
 		)
 	}
 }

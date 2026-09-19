@@ -66,18 +66,18 @@ type Config struct {
 	ObservationEvery   time.Duration
 	PollEvery          time.Duration
 	DrainTimeout       time.Duration
-	Observation        func(State, Snapshot, RecoveryEvidence) workerapi.Observation
+	Observation        func(Status, Snapshot, RecoveryEvidence) workerapi.Observation
 	AdmissionEvaluator AdmissionEvaluator
 	Log                *slog.Logger
 }
 
-type State string
+type Status string
 
 const (
-	StateStarting State = "starting"
-	StateActive   State = "active"
-	StateDraining State = "draining"
-	StateStopped  State = "stopped"
+	StatusStarting Status = "starting"
+	StatusActive   Status = "active"
+	StatusDraining Status = "draining"
+	StatusStopped  Status = "stopped"
 )
 
 type Snapshot struct {
@@ -172,7 +172,7 @@ func New(cfg Config) (*Supervisor, error) {
 		}
 	}
 	s := &Supervisor{cfg: cfg, registry: newRegistry(), admission: admission}
-	s.state.Store(StateStarting)
+	s.state.Store(StatusStarting)
 	return s, nil
 }
 
@@ -220,9 +220,9 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	}
 	s.recovery = evidence
 	if status.Status == workerapi.StatusActive {
-		s.state.Store(StateActive)
+		s.state.Store(StatusActive)
 	} else {
-		s.state.Store(StateDraining)
+		s.state.Store(StatusDraining)
 	}
 	workCtx, cancelWork := context.WithCancel(context.Background())
 	defer cancelWork()
@@ -275,7 +275,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 			drainOnce.Do(func() {
 				// Publish draining before waking Run so new-work claim loops close
 				// while bound-work continuation sees the durable lifecycle state.
-				s.state.Store(StateDraining)
+				s.state.Store(StatusDraining)
 				drainRequested <- struct{}{}
 			})
 		}
@@ -298,13 +298,13 @@ func (s *Supervisor) Run(ctx context.Context) error {
 				!waitGroup(shutdownCtx, &observeWG) {
 				return fmt.Errorf("worker fatal execution did not stop all local work: %w", fatalErr)
 			}
-			s.state.Store(StateStopped)
+			s.state.Store(StatusStopped)
 			return fmt.Errorf("worker fatal execution: %w", fatalErr)
 		case <-ctx.Done():
-			// A returned draining response stores StateDraining before publishing
+			// A returned draining response stores StatusDraining before publishing
 			// drainRequested. If shutdown and that response become ready together,
 			// the durable latch wins over select's otherwise-random choice.
-			if s.state.Load().(State) != StateDraining {
+			if s.state.Load().(Status) != StatusDraining {
 				return s.shutdownProcess(ctx, cancelActiveClaims, cancelDrainClaims, cancelActiveBackground, cancelDrainBackground, cancelObserve, cancelWork, &consumerWG, &backgroundWG, &observeWG)
 			}
 		case <-drainRequested:
@@ -353,7 +353,7 @@ func (s *Supervisor) shutdownProcess(
 	cancelActiveClaims, cancelDrainClaims, cancelActiveBackground, cancelDrainBackground, cancelObserve, cancelWork context.CancelFunc,
 	consumerWG, backgroundWG, observeWG *sync.WaitGroup,
 ) error {
-	s.state.Store(StateDraining)
+	s.state.Store(StatusDraining)
 	cancelActiveClaims()
 	cancelDrainClaims()
 	cancelActiveBackground()
@@ -365,16 +365,16 @@ func (s *Supervisor) shutdownProcess(
 	defer cancel()
 	if !waitGroup(drainCtx, consumerWG) {
 		cancelWork()
-		s.state.Store(StateStopped)
+		s.state.Store(StatusStopped)
 		return fmt.Errorf("worker drain timed out: %w", ctx.Err())
 	}
 	cancelObserve()
 	cancelWork()
 	if !waitGroup(drainCtx, backgroundWG) || !waitGroup(drainCtx, observeWG) {
-		s.state.Store(StateStopped)
+		s.state.Store(StatusStopped)
 		return fmt.Errorf("worker shutdown timed out: %w", ctx.Err())
 	}
-	s.state.Store(StateStopped)
+	s.state.Store(StatusStopped)
 	return ctx.Err()
 }
 
@@ -385,7 +385,7 @@ func (s *Supervisor) completeServerDirectedDrain(
 	startupEvidence RecoveryEvidence,
 	fatalWork <-chan error,
 ) error {
-	s.state.Store(StateDraining)
+	s.state.Store(StatusDraining)
 	cancelActiveClaims()
 	cancelActiveBackground()
 	// Once the control plane has durably requested draining, process signals can stop
@@ -398,7 +398,7 @@ func (s *Supervisor) completeServerDirectedDrain(
 		cancelDrainBackground()
 		cancelObserve()
 		cancelWork()
-		s.state.Store(StateStopped)
+		s.state.Store(StatusStopped)
 		return err
 	}
 	checkFatalWork := func() error {
@@ -471,7 +471,7 @@ func (s *Supervisor) completeServerDirectedDrain(
 		}
 	}
 	cancelWork()
-	s.state.Store(StateStopped)
+	s.state.Store(StatusStopped)
 	return nil
 }
 
@@ -494,7 +494,7 @@ func (s *Supervisor) waitForDrainReady(ctx context.Context, evidence RecoveryEvi
 	defer ticker.Stop()
 	for {
 		if s.registry.empty() {
-			status, err := s.cfg.ControlPlane.ObserveWorker(ctx, s.observation(StateDraining, evidence))
+			status, err := s.cfg.ControlPlane.ObserveWorker(ctx, s.observation(StatusDraining, evidence))
 			if err == nil && status.Status == workerapi.StatusDraining && status.ActiveExecutions == 0 {
 				return nil
 			}
@@ -537,8 +537,8 @@ func (s *Supervisor) consume(
 			return
 		case <-timer.C:
 		}
-		state := s.state.Load().(State)
-		if state != StateActive && !(spec.ContinueDuringDrain && state == StateDraining) {
+		state := s.state.Load().(Status)
+		if state != StatusActive && !(spec.ContinueDuringDrain && state == StatusDraining) {
 			timer.Reset(s.cfg.PollEvery)
 			continue
 		}
@@ -546,18 +546,18 @@ func (s *Supervisor) consume(
 		if !ok {
 			return
 		}
-		state = s.state.Load().(State)
-		if state != StateActive && !(spec.ContinueDuringDrain && state == StateDraining) {
+		state = s.state.Load().(Status)
+		if state != StatusActive && !(spec.ContinueDuringDrain && state == StatusDraining) {
 			releaseAdmission()
 			timer.Reset(s.cfg.PollEvery)
 			continue
 		}
 		// Cleanup may bypass host admission after placement is durably closed.
 		// Bound execution continuation still evaluates every hard host fence.
-		if s.cfg.AdmissionEvaluator != nil && !(spec.BypassAdmissionDuringDrain && state == StateDraining) {
+		if s.cfg.AdmissionEvaluator != nil && !(spec.BypassAdmissionDuringDrain && state == StatusDraining) {
 			decision := s.cfg.AdmissionEvaluator.Evaluate(claimCtx, AdmissionCheck{
-				Consumer: spec.Name, State: state, Snapshot: s.registry.snapshot(),
-				Recovery: evidence, DrainContinuation: spec.ContinueDuringDrain && state == StateDraining,
+				Consumer: spec.Name, Status: state, Snapshot: s.registry.snapshot(),
+				Recovery: evidence, DrainContinuation: spec.ContinueDuringDrain && state == StatusDraining,
 			})
 			if !decision.Allowed {
 				releaseAdmission()
@@ -630,7 +630,7 @@ func (s *Supervisor) observe(ctx context.Context, evidence RecoveryEvidence, sta
 			return
 		case <-ticker.C:
 		}
-		state := s.state.Load().(State)
+		state := s.state.Load().(Status)
 		if status, err := s.cfg.ControlPlane.ObserveWorker(ctx, s.observation(state, evidence)); err != nil && ctx.Err() == nil {
 			s.cfg.Log.Warn("worker observation failed", "error", err)
 		} else if err == nil {
@@ -644,7 +644,7 @@ func (s *Supervisor) AdmitRuntimeStart(ctx context.Context) error {
 		return nil
 	}
 	decision := s.cfg.AdmissionEvaluator.Evaluate(ctx, AdmissionCheck{
-		Consumer: "runtime", State: s.state.Load().(State), Snapshot: s.registry.snapshot(), Recovery: s.recovery,
+		Consumer: "runtime", Status: s.state.Load().(Status), Snapshot: s.registry.snapshot(), Recovery: s.recovery,
 	})
 	if !decision.Allowed {
 		return fmt.Errorf("runtime start admission paused: %s", decision.Reason)
@@ -652,7 +652,7 @@ func (s *Supervisor) AdmitRuntimeStart(ctx context.Context) error {
 	return nil
 }
 
-func (s *Supervisor) observation(state State, evidence RecoveryEvidence) workerapi.Observation {
+func (s *Supervisor) observation(state Status, evidence RecoveryEvidence) workerapi.Observation {
 	if s.cfg.Observation != nil {
 		return s.cfg.Observation(state, s.registry.snapshot(), evidence)
 	}
@@ -667,7 +667,7 @@ func (s *Supervisor) observation(state State, evidence RecoveryEvidence) workera
 		observation.RuntimePausedReason = "startup_recovery_leak"
 		return observation
 	}
-	if state != StateActive && state != StateDraining {
+	if state != StatusActive && state != StatusDraining {
 		observation.RunPausedReason = string(state)
 		observation.RuntimePausedReason = string(state)
 	}

@@ -251,7 +251,7 @@ func (s *Server) admitWorkspaceExec(ctx context.Context, request workspaceExecRe
 			return fmt.Errorf("lock workspace exec secrets: %w", err)
 		}
 		for _, binding := range bindings {
-			if binding.SecretState != "active" || !binding.CurrentVersionID.Valid {
+			if binding.SecretStatus != "active" || !binding.CurrentVersionID.Valid {
 				return errWorkspaceSecretUnavailable
 			}
 			if binding.PlacementKind == "env" {
@@ -272,15 +272,15 @@ func (s *Server) admitWorkspaceExec(ctx context.Context, request workspaceExecRe
 		}
 		if authority.OrgID != pgvalue.UUID(request.OrgID) ||
 			authority.ProjectID != pgvalue.UUID(request.ProjectID) ||
-			authority.State != db.WorkspaceStateActive ||
+			authority.Status != db.WorkspaceStatusActive ||
 			(authority.DesiredState != db.WorkspaceDesiredStateActive &&
 				authority.DesiredState != db.WorkspaceDesiredStateStopped) ||
 			authority.DirtyState != db.WorkspaceDirtyStateClean ||
 			!authority.HeadVersionID.Valid {
-			switch authority.State {
-			case db.WorkspaceStateDeleting:
+			switch authority.Status {
+			case db.WorkspaceStatusDeleting:
 				return conflict(codedError{code: "workspace_deleting", message: "workspace is deleting"})
-			case db.WorkspaceStateRecoveryRequired:
+			case db.WorkspaceStatusRecoveryRequired:
 				return conflict(codedError{code: "workspace_recovery_required", message: "workspace requires recovery"})
 			default:
 				return errWorkspaceBusy
@@ -293,18 +293,18 @@ func (s *Server) admitWorkspaceExec(ctx context.Context, request workspaceExecRe
 
 		processID := pgvalue.UUID(uuid.NewV7())
 		process, err := work.q.CreateWorkspaceExec(ctx, db.CreateWorkspaceExecParams{
-			ID:                   processID,
-			OrgID:                authority.OrgID,
-			ProjectID:            authority.ProjectID,
-			EnvironmentID:        authority.EnvironmentID,
-			WorkspaceID:          authority.ID,
-			BaseVersionID:        authority.HeadVersionID,
-			RestoreDesiredState:  authority.DesiredState,
-			Request:              normalized.requestJSON,
-			Stdin:                normalized.stdin,
-			ClaimID:              acquired.Claim.ID,
-			CreatedBySubjectType: request.Creator.SubjectType,
-			CreatedBySubjectID:   request.Creator.SubjectID,
+			ID:                     processID,
+			OrgID:                  authority.OrgID,
+			ProjectID:              authority.ProjectID,
+			EnvironmentID:          authority.EnvironmentID,
+			WorkspaceID:            authority.ID,
+			BaseWorkspaceVersionID: authority.HeadVersionID,
+			RestoreDesiredState:    authority.DesiredState,
+			Request:                normalized.requestJSON,
+			Stdin:                  normalized.stdin,
+			ClaimID:                acquired.Claim.ID,
+			CreatedBySubjectType:   request.Creator.SubjectType,
+			CreatedBySubjectID:     request.Creator.SubjectID,
 		})
 		if err != nil {
 			return fmt.Errorf("create workspace exec: %w", err)
@@ -337,10 +337,10 @@ func workspaceExecCreatorFromActor(principal auth.Actor) workspaceExecCreator {
 	return creator
 }
 
-func workspaceExecTerminal(state db.WorkspaceProcessState) bool {
+func workspaceExecTerminal(state db.WorkspaceProcessStatus) bool {
 	switch state {
-	case db.WorkspaceProcessStateExited,
-		db.WorkspaceProcessStateFailed:
+	case db.WorkspaceProcessStatusExited,
+		db.WorkspaceProcessStatusFailed:
 		return true
 	default:
 		return false
@@ -349,12 +349,12 @@ func workspaceExecTerminal(state db.WorkspaceProcessState) bool {
 
 func publicWorkspaceExecProcess(process db.WorkspaceProcess) (api.WorkspaceExecProcess, error) {
 	resource := api.WorkspaceExecProcess{ProcessID: pgvalue.MustUUIDValue(process.ID).String()}
-	switch process.State {
-	case db.WorkspaceProcessStatePending, db.WorkspaceProcessStateStarting:
+	switch process.Status {
+	case db.WorkspaceProcessStatusPending, db.WorkspaceProcessStatusStarting:
 		resource.Status = api.WorkspaceExecProcessStatusPending
-	case db.WorkspaceProcessStateRunning, db.WorkspaceProcessStateExitRequested:
+	case db.WorkspaceProcessStatusRunning, db.WorkspaceProcessStatusExitRequested:
 		resource.Status = api.WorkspaceExecProcessStatusRunning
-	case db.WorkspaceProcessStateExited:
+	case db.WorkspaceProcessStatusExited:
 		if !process.ExitCode.Valid || process.Stdout == nil || process.Stderr == nil {
 			return api.WorkspaceExecProcess{}, errors.New("workspace exec terminal output is unavailable")
 		}
@@ -368,7 +368,7 @@ func publicWorkspaceExecProcess(process db.WorkspaceProcess) (api.WorkspaceExecP
 		resource.ExitCode = &exitCode
 		resource.StdoutBase64 = &stdout
 		resource.StderrBase64 = &stderr
-	case db.WorkspaceProcessStateFailed:
+	case db.WorkspaceProcessStatusFailed:
 		resource.Status = api.WorkspaceExecProcessStatusFailed
 		resource.Error = &api.WorkspaceExecProcessError{
 			TerminalReasonCode: publicWorkspaceExecTerminalReason(process.TerminalReasonCode.String),
@@ -391,10 +391,10 @@ func publicWorkspaceExecTerminalReason(code string) string {
 }
 
 func workspaceExecResult(process db.WorkspaceProcess) (api.ExecuteWorkspaceResult, error) {
-	if !workspaceExecTerminal(process.State) {
+	if !workspaceExecTerminal(process.Status) {
 		return api.ExecuteWorkspaceResult{}, errors.New("workspace exec is not terminal")
 	}
-	if process.State != db.WorkspaceProcessStateExited || !process.ExitCode.Valid {
+	if process.Status != db.WorkspaceProcessStatusExited || !process.ExitCode.Valid {
 		code := process.TerminalReasonCode.String
 		switch code {
 		case "workspace_exec_timed_out":

@@ -474,20 +474,20 @@ func TestWorkspaceMaterializerDispatchesBasicExec(t *testing.T) {
 	session := &workspaceMaterializerTestSession{operation: clientStream}
 	secretValue := []byte("secret-value")
 	exec := workerapi.WorkspaceExec{
-		BaseVersionID:       "version-2",
-		ProcessID:           "process-1",
-		WorkspaceID:         "workspace-1",
-		WorkspaceMountID:    "mount-1",
-		RequestFingerprint:  strings.Repeat("a", 64),
-		Request:             json.RawMessage(`{"command":["sh","-c","printf ok"],"cwd":"/workspace","env":{},"timeout_ms":1000}`),
-		Stdin:               []byte("input"),
-		Secrets:             []workerapi.SecretDelivery{{Env: &workerapi.SecretEnv{Name: "TOKEN"}, Value: secretValue}},
-		WorkspaceLeaseID:    "lease-1",
-		WriteCapability:     "capability-1",
-		FencingGeneration:   2,
-		OwnershipGeneration: 3,
-		WriterGeneration:    4,
-		ExpiresAt:           time.Now().Add(time.Minute),
+		BaseWorkspaceVersionID: "version-2",
+		ProcessID:              "process-1",
+		WorkspaceID:            "workspace-1",
+		WorkspaceMountID:       "mount-1",
+		RequestFingerprint:     strings.Repeat("a", 64),
+		Request:                json.RawMessage(`{"command":["sh","-c","printf ok"],"cwd":"/workspace","env":{},"timeout_ms":1000}`),
+		Stdin:                  []byte("input"),
+		Secrets:                []workerapi.SecretDelivery{{Env: &workerapi.SecretEnv{Name: "TOKEN"}, Value: secretValue}},
+		WorkspaceLeaseID:       "lease-1",
+		WriteCapability:        "capability-1",
+		FencingGeneration:      2,
+		OwnershipGeneration:    3,
+		WriterGeneration:       4,
+		ExpiresAt:              time.Now().Add(time.Minute),
 	}
 	guestDone := make(chan error, 1)
 	go func() {
@@ -506,7 +506,7 @@ func TestWorkspaceMaterializerDispatchesBasicExec(t *testing.T) {
 			guestDone <- err
 			return
 		}
-		if request.GetBaseWorkspaceVersionId() != exec.BaseVersionID || request.GetOwnershipGeneration() != exec.OwnershipGeneration || request.GetWriterGeneration() != exec.WriterGeneration ||
+		if request.GetBaseWorkspaceVersionId() != exec.BaseWorkspaceVersionID || request.GetOwnershipGeneration() != exec.OwnershipGeneration || request.GetWriterGeneration() != exec.WriterGeneration ||
 			request.GetEnvelope().GetChannelToken() != "channel-token" ||
 			request.GetEnvelope().GetFencingToken() != exec.WriteCapability ||
 			string(request.GetStdin()) != "input" ||
@@ -565,7 +565,7 @@ func TestWorkspaceMaterializerRejectsMismatchedBasicExecClaim(t *testing.T) {
 			GuestdChannelToken: "channel-token",
 		},
 		workerapi.WorkspaceExec{
-			BaseVersionID: "version-2", ProcessID: "process-1", WorkspaceMountID: "mount-2",
+			BaseWorkspaceVersionID: "version-2", ProcessID: "process-1", WorkspaceMountID: "mount-2",
 			WorkspaceID: "workspace-1", RequestFingerprint: strings.Repeat("a", 64),
 			WorkspaceLeaseID: "lease-1", WriteCapability: "capability-1",
 			FencingGeneration: 1, OwnershipGeneration: 1, WriterGeneration: 1,
@@ -672,7 +672,7 @@ func TestWorkspaceMaterializerStopWorkspaceGuestStoresCapturedArtifact(t *testin
 			return
 		}
 		if err := frameio.WriteProtoFrame(server, &workspacev0.StopWorkspaceResponse{
-			State: "captured",
+			Status: "captured",
 			CapturedTree: &workspacev0.WorkspaceTreeIdentity{
 				Digest: sha256sum.DigestBytes([]byte("captured tree")), SizeBytes: 18, EntryCount: 3,
 			},
@@ -735,7 +735,7 @@ func TestWorkspaceMaterializerStopWorkspaceGuestRejectsInvalidTreeReceipts(t *te
 				var request workspacev0.StopWorkspaceRequest
 				_ = frameio.ReadProtoFrame(server, &request)
 				_ = frameio.WriteProtoFrame(server, &workspacev0.StopWorkspaceResponse{
-					State: "captured", CapturedTree: test.tree,
+					Status: "captured", CapturedTree: test.tree,
 					CapturedArtifact: &workspacev0.WorkspaceArtifact{
 						Digest: digest, MediaType: workspace.ArtifactMediaType, Encoding: workspace.ArtifactEncoding,
 						SizeBytes: 1, EntryCount: 1,
@@ -787,14 +787,14 @@ func TestWorkspaceMaterializerExplicitDiscardIgnoresDirtyGeneration(t *testing.T
 			done <- fmt.Errorf("stop request = %+v", &request)
 			return
 		}
-		done <- frameio.WriteProtoFrame(serverConn, &workspacev0.StopWorkspaceResponse{State: "stopped"})
+		done <- frameio.WriteProtoFrame(serverConn, &workspacev0.StopWorkspaceResponse{Status: "stopped"})
 	}()
 	client := &workspaceMaterializerTestClient{}
 	session := &workspaceMaterializerTestSession{
 		streams: []io.ReadWriteCloser{clientConn},
 	}
 	err := (WorkspaceMaterializer{CAS: store}).stopControlledWorkspaceMount(context.Background(), session, workspaceMount, workerapi.WorkspaceMountResponse{
-		State:             "unmounting",
+		Status:            "unmounting",
 		FencingGeneration: 9,
 		DirtyGeneration:   7,
 		FinalizationKind:  "discard",
@@ -832,14 +832,14 @@ func TestWorkspaceMaterializerDoesNotReportStoppedWhenRuntimeCloseFails(t *testi
 			done <- err
 			return
 		}
-		done <- frameio.WriteProtoFrame(serverConn, &workspacev0.StopWorkspaceResponse{State: "stopped"})
+		done <- frameio.WriteProtoFrame(serverConn, &workspacev0.StopWorkspaceResponse{Status: "stopped"})
 	}()
 	client := &workspaceMaterializerTestClient{}
 	session := &workspaceMaterializerTestSession{
 		streams:  []io.ReadWriteCloser{clientConn},
 		closeErr: errors.New("runtime cleanup failed"),
 	}
-	err := (WorkspaceMaterializer{CAS: store}).stopControlledWorkspaceMount(context.Background(), session, workspaceMount, workerapi.WorkspaceMountResponse{State: "unmounting"}, client)
+	err := (WorkspaceMaterializer{CAS: store}).stopControlledWorkspaceMount(context.Background(), session, workspaceMount, workerapi.WorkspaceMountResponse{Status: "unmounting"}, client)
 	if err == nil {
 		t.Fatal("expected runtime close failure")
 	}
@@ -865,7 +865,7 @@ func TestWorkspaceMaterializerControlledCleanStopFailureFailsWorkspaceMount(t *t
 	client := &workspaceMaterializerTestClient{}
 	err := (WorkspaceMaterializer{CAS: store}).stopControlledWorkspaceMount(context.Background(), &workspaceMaterializerTestSession{
 		streams: []io.ReadWriteCloser{clientConn},
-	}, workspaceMount, workerapi.WorkspaceMountResponse{State: "unmounting", FencingGeneration: 9}, client)
+	}, workspaceMount, workerapi.WorkspaceMountResponse{Status: "unmounting", FencingGeneration: 9}, client)
 	if err == nil {
 		t.Fatal("expected stop failure")
 	}
@@ -914,7 +914,7 @@ func TestWorkspaceMaterializerControlledDirtyStopPromotesBeforeFinalize(t *testi
 			return
 		}
 		if err := frameio.WriteProtoFrame(captureServer, &workspacev0.StopWorkspaceResponse{
-			State: "captured",
+			Status: "captured",
 			CapturedTree: &workspacev0.WorkspaceTreeIdentity{
 				Digest: sha256sum.DigestBytes([]byte("dirty tree")), SizeBytes: 15, EntryCount: 2,
 			},
@@ -956,12 +956,12 @@ func TestWorkspaceMaterializerControlledDirtyStopPromotesBeforeFinalize(t *testi
 			done <- fmt.Errorf("final stop request = %+v", &request)
 			return
 		}
-		done <- frameio.WriteProtoFrame(finalServer, &workspacev0.StopWorkspaceResponse{State: "stopped"})
+		done <- frameio.WriteProtoFrame(finalServer, &workspacev0.StopWorkspaceResponse{Status: "stopped"})
 	}()
 	client := &workspaceMaterializerTestClient{}
 	err := (WorkspaceMaterializer{CAS: store}).stopControlledWorkspaceMount(context.Background(), &workspaceMaterializerTestSession{
 		streams: []io.ReadWriteCloser{captureClient, finalClient},
-	}, workspaceMount, workerapi.WorkspaceMountResponse{State: "unmounting", FencingGeneration: 9, DirtyGeneration: 3}, client)
+	}, workspaceMount, workerapi.WorkspaceMountResponse{Status: "unmounting", FencingGeneration: 9, DirtyGeneration: 3}, client)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1025,7 +1025,7 @@ func TestWorkspaceMaterializerControlledDirtyStopFinalizeFailureFailsWorkspaceMo
 			return
 		}
 		if err := frameio.WriteProtoFrame(captureServer, &workspacev0.StopWorkspaceResponse{
-			State: "captured",
+			Status: "captured",
 			CapturedTree: &workspacev0.WorkspaceTreeIdentity{
 				Digest: sha256sum.DigestBytes([]byte("dirty tree")), SizeBytes: 15, EntryCount: 2,
 			},
@@ -1056,7 +1056,7 @@ func TestWorkspaceMaterializerControlledDirtyStopFinalizeFailureFailsWorkspaceMo
 	client := &workspaceMaterializerTestClient{}
 	err := (WorkspaceMaterializer{CAS: store}).stopControlledWorkspaceMount(context.Background(), &workspaceMaterializerTestSession{
 		streams: []io.ReadWriteCloser{captureClient, finalClient},
-	}, workspaceMount, workerapi.WorkspaceMountResponse{State: "unmounting", FencingGeneration: 9, DirtyGeneration: 3}, client)
+	}, workspaceMount, workerapi.WorkspaceMountResponse{Status: "unmounting", FencingGeneration: 9, DirtyGeneration: 3}, client)
 	if err == nil {
 		t.Fatal("expected finalize failure")
 	}
@@ -1487,7 +1487,7 @@ func TestWorkspaceMaterializerValidatesSuccessReceiptsOnlyAfterRunningState(t *t
 			name: "failed with phase error",
 			response: func(*workspacev0.MaterializeWorkspaceRequest) *workspacev0.MaterializeWorkspaceResponse {
 				return &workspacev0.MaterializeWorkspaceResponse{
-					State: "failed",
+					Status: "failed",
 					Phases: []*workspacev0.WorkspaceMountPhase{{
 						Name:  "guest_workspace_target_verify",
 						Error: "workspace tree digest mismatch",
@@ -1500,21 +1500,21 @@ func TestWorkspaceMaterializerValidatesSuccessReceiptsOnlyAfterRunningState(t *t
 		{
 			name: "failed without phase error",
 			response: func(*workspacev0.MaterializeWorkspaceRequest) *workspacev0.MaterializeWorkspaceResponse {
-				return &workspacev0.MaterializeWorkspaceResponse{State: "failed"}
+				return &workspacev0.MaterializeWorkspaceResponse{Status: "failed"}
 			},
 			want: `workspace materialize returned state "failed"`,
 		},
 		{
 			name: "running without target",
 			response: func(*workspacev0.MaterializeWorkspaceRequest) *workspacev0.MaterializeWorkspaceResponse {
-				return &workspacev0.MaterializeWorkspaceResponse{State: "running", GuestdChannelTokenHash: workspaceMount.GuestdChannelTokenHash}
+				return &workspacev0.MaterializeWorkspaceResponse{Status: "running", GuestdChannelTokenHash: workspaceMount.GuestdChannelTokenHash}
 			},
 			want: "target does not match",
 		},
 		{
 			name: "running without channel receipt",
 			response: func(request *workspacev0.MaterializeWorkspaceRequest) *workspacev0.MaterializeWorkspaceResponse {
-				return &workspacev0.MaterializeWorkspaceResponse{State: "running", Target: request.Target}
+				return &workspacev0.MaterializeWorkspaceResponse{Status: "running", Target: request.Target}
 			},
 			want: "guest channel token hash mismatch",
 		},
@@ -1574,7 +1574,7 @@ func acknowledgePreparedWorkspaceMount(t *testing.T, stream io.ReadWriteCloser, 
 			t.Errorf("prepared runtime request use=%v runtime_instance_id=%q", request.UsePreparedRuntime, request.RuntimeInstanceId)
 		}
 		return &workspacev0.MaterializeWorkspaceResponse{
-			State:                  "running",
+			Status:                 "running",
 			GuestdChannelTokenHash: workspaceMount.GuestdChannelTokenHash,
 			Target:                 request.Target,
 		}
@@ -1685,7 +1685,7 @@ func (c *workspaceMaterializerTestClient) RenewWorkspaceMount(_ context.Context,
 		c.renewErrors = c.renewErrors[1:]
 		return workerapi.WorkspaceMountResponse{}, err
 	}
-	return workerapi.WorkspaceMountResponse{State: "mounting"}, nil
+	return workerapi.WorkspaceMountResponse{Status: "mounting"}, nil
 }
 
 func (c *workspaceMaterializerTestClient) MarkWorkspaceMountMounted(_ context.Context, request workerapi.WorkspaceMountMountedRequest) (workerapi.WorkspaceMountResponse, error) {
@@ -1693,7 +1693,7 @@ func (c *workspaceMaterializerTestClient) MarkWorkspaceMountMounted(_ context.Co
 	if c.onMounted != nil {
 		c.onMounted()
 	}
-	return workerapi.WorkspaceMountResponse{State: "mounted"}, nil
+	return workerapi.WorkspaceMountResponse{Status: "mounted"}, nil
 }
 
 func (c *workspaceMaterializerTestClient) CaptureWorkspaceMount(_ context.Context, request workerapi.WorkspaceMountCaptureRequest) (workerapi.WorkspaceMountCaptureResponse, error) {
@@ -1703,12 +1703,12 @@ func (c *workspaceMaterializerTestClient) CaptureWorkspaceMount(_ context.Contex
 
 func (c *workspaceMaterializerTestClient) StopWorkspaceMount(context.Context, workerapi.WorkspaceMountStopRequest) (workerapi.WorkspaceMountResponse, error) {
 	c.stops++
-	return workerapi.WorkspaceMountResponse{State: "unmounted"}, nil
+	return workerapi.WorkspaceMountResponse{Status: "unmounted"}, nil
 }
 
 func (c *workspaceMaterializerTestClient) FailWorkspaceMount(_ context.Context, request workerapi.WorkspaceMountFailRequest) (workerapi.WorkspaceMountResponse, error) {
 	c.failures = append(c.failures, request)
-	return workerapi.WorkspaceMountResponse{State: "failed"}, nil
+	return workerapi.WorkspaceMountResponse{Status: "failed"}, nil
 }
 
 func (c *workspaceMaterializerTestClient) ClaimWorkspaceExec(_ context.Context, request workerapi.WorkspaceExecClaimRequest) (workerapi.WorkspaceExecClaimResponse, error) {
@@ -1727,7 +1727,7 @@ func (c *workspaceMaterializerTestClient) CompleteWorkspaceExec(_ context.Contex
 		c.cancel()
 	}
 	return workerapi.WorkspaceMountResponse{
-		State:             "unmounting",
+		Status:            "unmounting",
 		FinalizationKind:  "capture",
 		FencingGeneration: request.FencingGeneration,
 	}, nil

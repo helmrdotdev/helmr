@@ -37,7 +37,7 @@ func TestMaterializeRestoredWorkspaceReplaysPreparedAndAppliedJournal(t *testing
 	}
 	entry := workspaceMountEntry{
 		workspaceRoot: liveRoot, finalizationRoot: finalizationRoot,
-		baseVersionID: "source-version",
+		baseWorkspaceVersionID: "source-version",
 	}
 	if err := entry.materializeRestoredWorkspace(
 		bytes.NewReader(nil), "workspace-1", "checkpoint-b", "source-version", target,
@@ -96,7 +96,7 @@ func TestMaterializeRestoredWorkspaceSupersedesPriorOperationAtCurrentFrontier(t
 				t.Fatal(err)
 			}
 			entry := workspaceMountEntry{
-				workspaceRoot: liveRoot, finalizationRoot: finalizationRoot, baseVersionID: "version-d",
+				workspaceRoot: liveRoot, finalizationRoot: finalizationRoot, baseWorkspaceVersionID: "version-d",
 			}
 			if err := entry.materializeRestoredWorkspace(
 				bytes.NewReader(nil), "workspace-1", "checkpoint-d", "version-d", target,
@@ -148,7 +148,7 @@ func TestMaterializeRestoredWorkspaceRejectsSupersessionFromAnotherFrontier(t *t
 		t.Fatal(err)
 	}
 	entry := workspaceMountEntry{
-		workspaceRoot: liveRoot, finalizationRoot: finalizationRoot, baseVersionID: "version-c",
+		workspaceRoot: liveRoot, finalizationRoot: finalizationRoot, baseWorkspaceVersionID: "version-c",
 	}
 	if err := entry.materializeRestoredWorkspace(
 		bytes.NewReader(nil), "workspace-1", "checkpoint-d", "version-d", target,

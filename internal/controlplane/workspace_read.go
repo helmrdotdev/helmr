@@ -62,7 +62,7 @@ func (s *Server) listWorkspacesHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		item, err := workspaceListItem(
-			record.ID, record.Key, record.SandboxID, record.DeploymentID, record.State,
+			record.ID, record.Key, record.SandboxID, record.DeploymentID, record.Status,
 			record.OwnerSessionID, record.OwnerRunID,
 			record.LastActivityAt, record.CreatedAt, record.UpdatedAt,
 		)
@@ -94,7 +94,7 @@ func (s *Server) listWorkspacesHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, row := range rows {
 		item, err := workspaceListItem(
-			row.ID, row.Key, row.SandboxID, row.DeploymentID, row.State,
+			row.ID, row.Key, row.SandboxID, row.DeploymentID, row.Status,
 			row.OwnerSessionID, row.OwnerRunID,
 			row.LastActivityAt, row.CreatedAt, row.UpdatedAt,
 		)

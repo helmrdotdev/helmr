@@ -109,7 +109,7 @@ func TestPromoteDeploymentPostgres(t *testing.T) {
 		dbtest.MustExec(t, t.Context(), fixture.pool, `
 			UPDATE schedules
 			   SET generation = 7,
-			       state_version = 9,
+			       revision = 9,
 			       last_fire_at = $1,
 			       claimed_by = 'worker-test',
 			       claim_expires_at = $2,
@@ -125,8 +125,8 @@ func TestPromoteDeploymentPostgres(t *testing.T) {
 		var unchanged bool
 		if err := fixture.pool.QueryRow(t.Context(), `
 			SELECT schedules.generation = 7
-			   AND schedules.state_version = 9
-			   AND schedules.state = 'active'
+			   AND schedules.revision = 9
+			   AND schedules.status = 'active'
 			   AND schedules.last_fire_at = $1
 			   AND schedules.claimed_by = 'worker-test'
 			   AND schedules.claim_expires_at = $2
@@ -150,8 +150,8 @@ func TestPromoteDeploymentPostgres(t *testing.T) {
 		fixture.setCurrent(t, fixture.scheduledID)
 		dbtest.MustExec(t, t.Context(), fixture.pool, `
 			UPDATE secrets
-			   SET state = 'revoked',
-			       state_version = state_version + 1,
+			   SET status = 'revoked',
+			       revision = revision + 1,
 			       current_version_id = NULL,
 			       revocation_generation = revocation_generation + 1,
 			       revoked_at = now(),
@@ -478,7 +478,7 @@ func TestPromoteDeploymentPostgresMaximumBulkBudget(t *testing.T) {
 		SELECT (SELECT count(*)
 		          FROM schedules
 		         WHERE environment_id = $1
-		           AND (deployment_id <> $2 OR generation <> 1 OR state_version <> 1 OR state <> 'active')),
+		           AND (deployment_id <> $2 OR generation <> 1 OR revision <> 1 OR status <> 'active')),
 		       (SELECT count(*)
 		          FROM schedule_secrets
 		          JOIN secrets ON secrets.environment_id = schedule_secrets.environment_id

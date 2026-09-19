@@ -80,7 +80,7 @@ func TestActorOutputAppendPostgresSequencesAndReplays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replayed.New || replayed.Claim.State != "completed" {
+	if replayed.New || replayed.Claim.Status != "completed" {
 		t.Fatalf("replayed claim = %+v", replayed)
 	}
 	stored, err := db.New(replay).GetActorOutputRecordByID(t.Context(), db.GetActorOutputRecordByIDParams{

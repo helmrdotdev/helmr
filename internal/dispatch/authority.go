@@ -79,7 +79,7 @@ func lockWorkerFence(ctx context.Context, tx pgx.Tx, fence workerFence) error {
 	err := tx.QueryRow(ctx, `
 SELECT id
   FROM worker_groups
- WHERE id = $1 AND region_id = $2 AND state = 'active'
+ WHERE id = $1 AND region_id = $2 AND status = 'active'
  FOR SHARE`, fence.GroupID, fence.RegionID).Scan(&groupID)
 	if err != nil {
 		return fmt.Errorf("lock eligible worker group: %w", err)
@@ -95,7 +95,7 @@ SELECT worker_pools.id
 	  ON worker_groups.id = worker_pools.worker_group_id
  WHERE worker_instances.id = $1
    AND worker_instances.worker_group_id = $2
-   AND worker_pools.state = 'active'
+   AND worker_pools.status = 'active'
 	AND (NOT $3::boolean OR worker_groups.primary_pool_id = worker_pools.id)
 	FOR SHARE OF worker_pools`, fence.WorkerInstanceID, fence.GroupID, fence.RequirePrimary).Scan(&poolID)
 	if err != nil {
@@ -116,8 +116,8 @@ SELECT worker_instances.id
  WHERE worker_instances.id = $1
    AND worker_instances.worker_group_id = $2
    AND worker_instances.current_epoch = $3
-   AND worker_instances.state = 'active'
-   AND worker_pools.state = 'active'
+   AND worker_instances.status = 'active'
+   AND worker_pools.status = 'active'
 	AND worker_instances.observed_at >= transaction_timestamp() - $5 * interval '1 second'
 	AND worker_instances.run_paused_reason IS NULL
 	AND runtime_identities.runtime_arch = $4

@@ -33,7 +33,7 @@ var (
 
 func TestStaleWorkerFencerFencesStaleActiveWorker(t *testing.T) {
 	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
-	candidate := staleWorkerCandidate(1, db.WorkerInstanceStateActive, now.Add(-time.Minute), "worker_observation_stale")
+	candidate := staleWorkerCandidate(1, db.WorkerInstanceStatusActive, now.Add(-time.Minute), "worker_observation_stale")
 	store := &fakeStaleWorkerFenceQueries{candidates: []db.ListStaleWorkerFenceCandidatesRow{candidate}}
 	fencer := newTestStaleWorkerFencer(t, store, now)
 
@@ -71,7 +71,7 @@ func TestStaleWorkerFencerExcludesFreshDisabledAndLostWorkers(t *testing.T) {
 
 func TestStaleWorkerFencerLateFreshObservationWinsRecheck(t *testing.T) {
 	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
-	candidate := staleWorkerCandidate(2, db.WorkerInstanceStateActive, now.Add(-time.Minute), "worker_observation_stale")
+	candidate := staleWorkerCandidate(2, db.WorkerInstanceStatusActive, now.Add(-time.Minute), "worker_observation_stale")
 	store := &fakeStaleWorkerFenceQueries{
 		candidates: []db.ListStaleWorkerFenceCandidatesRow{candidate},
 		recheck: func(context.Context, db.RecheckAndFenceStaleWorkerInstanceParams) (db.RecheckAndFenceStaleWorkerInstanceRow, error) {
@@ -94,7 +94,7 @@ func TestStaleWorkerFencerLateFreshObservationWinsRecheck(t *testing.T) {
 
 func TestStaleWorkerFencerOldEpochCannotFenceNewEpoch(t *testing.T) {
 	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
-	candidate := staleWorkerCandidate(3, db.WorkerInstanceStateDraining, now.Add(-time.Minute), "worker_observation_stale")
+	candidate := staleWorkerCandidate(3, db.WorkerInstanceStatusDraining, now.Add(-time.Minute), "worker_observation_stale")
 	store := &fakeStaleWorkerFenceQueries{
 		candidates: []db.ListStaleWorkerFenceCandidatesRow{candidate},
 		recheck: func(_ context.Context, params db.RecheckAndFenceStaleWorkerInstanceParams) (db.RecheckAndFenceStaleWorkerInstanceRow, error) {
@@ -117,7 +117,7 @@ func TestStaleWorkerFencerOldEpochCannotFenceNewEpoch(t *testing.T) {
 
 func TestStaleWorkerFencerHandlesRegisteringWorkerWithoutObservation(t *testing.T) {
 	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
-	candidate := staleWorkerCandidate(4, db.WorkerInstanceStateRegistering, now.Add(-time.Minute), "registering_observation_missing")
+	candidate := staleWorkerCandidate(4, db.WorkerInstanceStatusRegistering, now.Add(-time.Minute), "registering_observation_missing")
 	store := &fakeStaleWorkerFenceQueries{candidates: []db.ListStaleWorkerFenceCandidatesRow{candidate}}
 	fencer := newTestStaleWorkerFencer(t, store, now)
 
@@ -132,9 +132,9 @@ func TestStaleWorkerFencerHandlesRegisteringWorkerWithoutObservation(t *testing.
 
 func TestStaleWorkerFencerIsDeploymentModeAgnostic(t *testing.T) {
 	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
-	managed := staleWorkerCandidate(5, db.WorkerInstanceStateActive, now.Add(-time.Minute), "worker_observation_stale")
+	managed := staleWorkerCandidate(5, db.WorkerInstanceStatusActive, now.Add(-time.Minute), "worker_observation_stale")
 	managed.WorkerGroupID = staleWorkerManagedGroupID
-	selfHosted := staleWorkerCandidate(6, db.WorkerInstanceStateActive, now.Add(-time.Minute), "worker_observation_stale")
+	selfHosted := staleWorkerCandidate(6, db.WorkerInstanceStatusActive, now.Add(-time.Minute), "worker_observation_stale")
 	selfHosted.WorkerGroupID = staleWorkerSelfHostedGroupID
 	store := &fakeStaleWorkerFenceQueries{candidates: []db.ListStaleWorkerFenceCandidatesRow{managed, selfHosted}}
 	fencer := newTestStaleWorkerFencer(t, store, now)
@@ -153,9 +153,9 @@ func TestStaleWorkerFencerIsDeploymentModeAgnostic(t *testing.T) {
 
 func TestStaleWorkerFencerUsesWorkerGroupRegistrationCutoffs(t *testing.T) {
 	now := time.Date(2026, time.July, 14, 12, 0, 0, 0, time.UTC)
-	run := staleWorkerCandidate(7, db.WorkerInstanceStateActive, now.Add(-time.Minute), "worker_observation_stale")
+	run := staleWorkerCandidate(7, db.WorkerInstanceStatusActive, now.Add(-time.Minute), "worker_observation_stale")
 	run.WorkerGroupID = staleWorkerRunGroupID
-	build := staleWorkerCandidate(8, db.WorkerInstanceStateRegistering, now.Add(-time.Minute), "registering_observation_missing")
+	build := staleWorkerCandidate(8, db.WorkerInstanceStatusRegistering, now.Add(-time.Minute), "registering_observation_missing")
 	build.WorkerGroupID = staleWorkerBuildGroupID
 	store := &fakeStaleWorkerFenceQueries{candidates: []db.ListStaleWorkerFenceCandidatesRow{run, build}}
 	fencer, err := NewStaleWorkerFencer(
@@ -185,11 +185,11 @@ func TestStaleWorkerFencerScopesBatchLimitPerGroup(t *testing.T) {
 	now := time.Date(2026, time.July, 14, 12, 0, 0, 0, time.UTC)
 	candidates := make([]db.ListStaleWorkerFenceCandidatesRow, 0, 102)
 	for index := range 101 {
-		candidate := staleWorkerCandidate(byte(index+1), db.WorkerInstanceStateActive, now.Add(-time.Minute), "worker_observation_stale")
+		candidate := staleWorkerCandidate(byte(index+1), db.WorkerInstanceStatusActive, now.Add(-time.Minute), "worker_observation_stale")
 		candidate.WorkerGroupID = staleWorkerBuildGroupID
 		candidates = append(candidates, candidate)
 	}
-	run := staleWorkerCandidate(255, db.WorkerInstanceStateActive, now.Add(-time.Minute), "worker_observation_stale")
+	run := staleWorkerCandidate(255, db.WorkerInstanceStatusActive, now.Add(-time.Minute), "worker_observation_stale")
 	run.WorkerGroupID = staleWorkerRunGroupID
 	candidates = append(candidates, run)
 	store := &fakeStaleWorkerFenceQueries{candidates: candidates}
@@ -255,8 +255,8 @@ func TestStaleWorkerFencerPersistentFailureRetriesUntilCancellation(t *testing.T
 
 func TestStaleWorkerFenceFailureRollsBackReportedResults(t *testing.T) {
 	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
-	first := staleWorkerCandidate(7, db.WorkerInstanceStateActive, now.Add(-time.Minute), "worker_observation_stale")
-	second := staleWorkerCandidate(8, db.WorkerInstanceStateActive, now.Add(-time.Minute), "worker_observation_stale")
+	first := staleWorkerCandidate(7, db.WorkerInstanceStatusActive, now.Add(-time.Minute), "worker_observation_stale")
+	second := staleWorkerCandidate(8, db.WorkerInstanceStatusActive, now.Add(-time.Minute), "worker_observation_stale")
 	store := &fakeStaleWorkerFenceQueries{
 		candidates: []db.ListStaleWorkerFenceCandidatesRow{first, second},
 		recheck: func(_ context.Context, params db.RecheckAndFenceStaleWorkerInstanceParams) (db.RecheckAndFenceStaleWorkerInstanceRow, error) {
@@ -290,14 +290,14 @@ func newTestStaleWorkerFencer(t *testing.T, store *fakeStaleWorkerFenceQueries, 
 	return fencer
 }
 
-func staleWorkerCandidate(seed byte, state db.WorkerInstanceState, freshness time.Time, reason string) db.ListStaleWorkerFenceCandidatesRow {
+func staleWorkerCandidate(seed byte, state db.WorkerInstanceStatus, freshness time.Time, reason string) db.ListStaleWorkerFenceCandidatesRow {
 	var id [16]byte
 	id[15] = seed
 	return db.ListStaleWorkerFenceCandidatesRow{
 		ID:            pgtype.UUID{Bytes: id, Valid: true},
 		WorkerGroupID: staleWorkerRunGroupID,
 		CurrentEpoch:  pgtype.Int8{Int64: 7, Valid: true},
-		State:         state,
+		Status:        state,
 		FreshnessAt:   pgtype.Timestamptz{Time: freshness, Valid: true},
 		Reason:        reason,
 	}

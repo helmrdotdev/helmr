@@ -51,7 +51,7 @@ type sessionProjectionRow struct {
 	deploymentID pgtype.UUID
 	workspaceID  pgtype.UUID
 	key          pgtype.Text
-	state        string
+	status       string
 	createdAt    pgtype.Timestamptz
 	updatedAt    pgtype.Timestamptz
 	currentRunID pgtype.UUID
@@ -116,7 +116,7 @@ func (s *Server) listSessionsHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := s.db.ListSessionSnapshots(r.Context(), db.ListSessionSnapshotsParams{
 		OrgID: pgvalue.UUID(principal.OrgID), ProjectID: projectID, EnvironmentID: environmentID,
-		States:         sessionStatusStates(query.statuses),
+		Statuses:       sessionStorageStatuses(query.statuses),
 		AfterCreatedAt: afterCreatedAt, AfterID: afterID, LimitCount: query.limit + 1,
 	})
 	if err != nil {
@@ -312,7 +312,7 @@ func decodeSessionListCursor(raw string) (sessionListCursor, error) {
 
 func projectSession(row sessionProjectionRow) (api.Session, error) {
 	status, err := projectSessionStatus(sessionReadRecord{
-		id: row.id, key: row.key, state: row.state, createdAt: row.createdAt,
+		id: row.id, key: row.key, status: row.status, createdAt: row.createdAt,
 		updatedAt: row.updatedAt, currentRunID: row.currentRunID,
 		failure: row.failure, failureRunID: row.failureRunID,
 	})
@@ -335,15 +335,15 @@ func projectSession(row sessionProjectionRow) (api.Session, error) {
 }
 
 func sessionProjectionFromGetRow(row db.GetSessionSnapshotRow) sessionProjectionRow {
-	return sessionProjectionRow{id: row.ID, actorID: row.ActorDeclaredID, deploymentID: row.DeploymentID, workspaceID: row.WorkspaceID, key: row.Key, state: row.State, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt, currentRunID: row.CurrentRunID, failure: row.Failure, failureRunID: row.FailureRunID}
+	return sessionProjectionRow{id: row.ID, actorID: row.ActorDeclaredID, deploymentID: row.DeploymentID, workspaceID: row.WorkspaceID, key: row.Key, status: row.Status, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt, currentRunID: row.CurrentRunID, failure: row.Failure, failureRunID: row.FailureRunID}
 }
 
 func sessionProjectionFromKeyRow(row db.GetSessionSnapshotByKeyRow) sessionProjectionRow {
-	return sessionProjectionRow{id: row.ID, actorID: row.ActorDeclaredID, deploymentID: row.DeploymentID, workspaceID: row.WorkspaceID, key: row.Key, state: row.State, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt, currentRunID: row.CurrentRunID, failure: row.Failure, failureRunID: row.FailureRunID}
+	return sessionProjectionRow{id: row.ID, actorID: row.ActorDeclaredID, deploymentID: row.DeploymentID, workspaceID: row.WorkspaceID, key: row.Key, status: row.Status, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt, currentRunID: row.CurrentRunID, failure: row.Failure, failureRunID: row.FailureRunID}
 }
 
 func sessionProjectionFromListRow(row db.ListSessionSnapshotsRow) sessionProjectionRow {
-	return sessionProjectionRow{id: row.ID, actorID: row.ActorDeclaredID, deploymentID: row.DeploymentID, workspaceID: row.WorkspaceID, key: row.Key, state: row.State, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt, currentRunID: row.CurrentRunID, failure: row.Failure, failureRunID: row.FailureRunID}
+	return sessionProjectionRow{id: row.ID, actorID: row.ActorDeclaredID, deploymentID: row.DeploymentID, workspaceID: row.WorkspaceID, key: row.Key, status: row.Status, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt, currentRunID: row.CurrentRunID, failure: row.Failure, failureRunID: row.FailureRunID}
 }
 
 func (s *Server) writeSessionReadAuthorityError(w http.ResponseWriter, err error) {

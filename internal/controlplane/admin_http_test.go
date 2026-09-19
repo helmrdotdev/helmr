@@ -71,7 +71,7 @@ func (q *adminHTTPQuerier) CreateWorkerGroup(_ context.Context, params db.Create
 	q.createGroupParams = params
 	return db.WorkerGroup{
 		ID: params.ID, RegionID: params.RegionID, Name: params.Name, Description: params.Description,
-		State: db.WorkerGroupStateActive, ClaimVersion: 1,
+		Status: db.WorkerGroupStatusActive, ClaimVersion: 1,
 	}, nil
 }
 
@@ -88,18 +88,18 @@ func (q *adminHTTPQuerier) LockWorkerGroupMutation(context.Context, int64) error
 	return nil
 }
 
-func (q *adminHTTPQuerier) GetWorkerGroupState(context.Context, pgtype.UUID) (db.GetWorkerGroupStateRow, error) {
+func (q *adminHTTPQuerier) GetWorkerGroupStatus(context.Context, pgtype.UUID) (db.GetWorkerGroupStatusRow, error) {
 	if q.missing {
-		return db.GetWorkerGroupStateRow{}, pgx.ErrNoRows
+		return db.GetWorkerGroupStatusRow{}, pgx.ErrNoRows
 	}
-	return db.GetWorkerGroupStateRow{State: db.WorkerGroupStateActive, ClaimVersion: 1}, nil
+	return db.GetWorkerGroupStatusRow{Status: db.WorkerGroupStatusActive, ClaimVersion: 1}, nil
 }
 
-func (q *adminHTTPQuerier) TransitionWorkerGroupState(context.Context, db.TransitionWorkerGroupStateParams) (db.TransitionWorkerGroupStateRow, error) {
+func (q *adminHTTPQuerier) TransitionWorkerGroupStatus(context.Context, db.TransitionWorkerGroupStatusParams) (db.TransitionWorkerGroupStatusRow, error) {
 	if q.conflict {
-		return db.TransitionWorkerGroupStateRow{}, pgx.ErrNoRows
+		return db.TransitionWorkerGroupStatusRow{}, pgx.ErrNoRows
 	}
-	return db.TransitionWorkerGroupStateRow{}, nil
+	return db.TransitionWorkerGroupStatusRow{}, nil
 }
 
 type adminHTTPTransaction struct{}

@@ -258,14 +258,14 @@ func (s *Server) invokeChildTask(
 			if err != nil {
 				return err
 			}
-			if acquired.Claim.State == "completed" {
+			if acquired.Claim.Status == "completed" {
 				edgeClaim = &acquired.Claim
 				value, err := decodeChildTaskReceipt(acquired.Claim.Receipt)
 				if err != nil {
 					return err
 				}
 				replay = &value
-			} else if acquired.Claim.State == "pending" {
+			} else if acquired.Claim.Status == "pending" {
 				claim = &acquired.Claim
 				edgeClaim = &acquired.Claim
 			} else {
@@ -400,7 +400,7 @@ func (s *Server) invokeChildTask(
 			return errTaskPayloadPresenceInvalid
 		}
 		for _, binding := range bindings {
-			if binding.SecretState != "active" || !binding.CurrentVersionID.Valid {
+			if binding.SecretStatus != "active" || !binding.CurrentVersionID.Valid {
 				return errTaskSecretUnavailable
 			}
 		}
@@ -442,7 +442,7 @@ func (s *Server) invokeChildTask(
 			return fmt.Errorf("lock child task workspace authority: %w", err)
 		}
 		if workspace.OrgID != authority.run.OrgID || workspace.ProjectID != authority.run.ProjectID ||
-			workspace.State != db.WorkspaceStateActive ||
+			workspace.Status != db.WorkspaceStatusActive ||
 			(workspace.DesiredState != db.WorkspaceDesiredStateActive &&
 				workspace.DesiredState != db.WorkspaceDesiredStateStopped) ||
 			workspace.DirtyState != db.WorkspaceDirtyStateClean || !workspace.HeadVersionID.Valid ||
@@ -498,7 +498,7 @@ func (s *Server) invokeChildTask(
 		}
 		if _, err := work.q.ReserveWorkspaceForRun(ctx, db.ReserveWorkspaceForRunParams{
 			RunID: run.ID, EnvironmentID: run.EnvironmentID, ID: workspace.ID,
-			ExpectedStateVersion: workspace.StateVersion, ExpectedHeadVersionID: workspace.HeadVersionID,
+			ExpectedRevision: workspace.Revision, ExpectedHeadVersionID: workspace.HeadVersionID,
 		}); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return errTaskWorkspaceUnavailable
@@ -662,8 +662,8 @@ func registerSameWorkspaceChildCall(
 		if err := validateRunWaitActorCursor(authority, replayed); err != nil {
 			return workerapi.CreateRunWaitResponse{}, err
 		}
-		if replayed.SuspensionState == db.RunWaitStateReleased {
-			if replayed.ConditionState != db.WaitStateCompleted ||
+		if replayed.SuspensionStatus == db.RunWaitStatusReleased {
+			if replayed.ConditionStatus != db.WaitStatusCompleted ||
 				replayed.ConditionResult == nil {
 				return workerapi.CreateRunWaitResponse{}, errChildTaskInvokeStale
 			}
@@ -703,7 +703,7 @@ func registerSameWorkspaceChildCall(
 			RunID:                          authority.run.ID,
 			EnvironmentID:                  authority.run.EnvironmentID,
 			WorkspaceID:                    authority.run.WorkspaceID,
-			ExpectedRunningStateVersion:    authority.run.StateVersion,
+			ExpectedRunningRevision:        authority.run.Revision,
 		},
 	)
 	if err != nil {
@@ -761,8 +761,8 @@ func replayBoundSameWorkspaceChildCall(
 			err,
 		)
 	}
-	if replayed.SuspensionState != db.RunWaitStateReleased ||
-		replayed.ConditionState != db.WaitStateCompleted ||
+	if replayed.SuspensionStatus != db.RunWaitStatusReleased ||
+		replayed.ConditionStatus != db.WaitStatusCompleted ||
 		replayed.ConditionResult == nil ||
 		!replayed.ResumeWorkspaceVersionID.Valid {
 		return workerapi.CreateRunWaitResponse{}, errWorkspaceFrontierConflict
@@ -832,8 +832,8 @@ func registerDifferentWorkspaceChildCall(
 		if err := validateRunWaitActorCursor(authority, replayed); err != nil {
 			return workerapi.CreateRunWaitResponse{}, err
 		}
-		if replayed.SuspensionState == db.RunWaitStateReleased {
-			if replayed.ConditionState != db.WaitStateCompleted || replayed.ConditionResult == nil {
+		if replayed.SuspensionStatus == db.RunWaitStatusReleased {
+			if replayed.ConditionStatus != db.WaitStatusCompleted || replayed.ConditionResult == nil {
 				return workerapi.CreateRunWaitResponse{}, errChildTaskInvokeStale
 			}
 			response.ResolutionKind = "completed"
@@ -862,10 +862,10 @@ func registerDifferentWorkspaceChildCall(
 	}
 	params := db.RegisterDifferentWorkspaceChildCallParams{
 		RunID: authority.run.ID, EnvironmentID: authority.run.EnvironmentID,
-		ExpectedRunningStateVersion: authority.run.StateVersion,
-		AttemptNumber:               authority.attempt.Number,
-		CurrentRunLeaseID:           authority.runLease.ID,
-		ChildWorkspaceID:            pgvalue.UUID(childWorkspaceID), ID: pgvalue.UUID(waitID),
+		ExpectedRunningRevision: authority.run.Revision,
+		AttemptNumber:           authority.attempt.Number,
+		CurrentRunLeaseID:       authority.runLease.ID,
+		ChildWorkspaceID:        pgvalue.UUID(childWorkspaceID), ID: pgvalue.UUID(waitID),
 		ChildRunID: pgvalue.UUID(child.RunID), ChildTargetDeclaredID: pgvalue.Text(input.Normalized.TaskDeclaredID),
 		ChildClaimID: claim.ID, ChildRequest: childRequest,
 		RegistrationRequestFingerprint: pgvalue.Text(requestFingerprint),
@@ -886,7 +886,7 @@ func registerDifferentWorkspaceChildCall(
 				ChildClaimID: params.ChildClaimID, ChildRequest: params.ChildRequest,
 				ConditionResult:                resolution,
 				RegistrationRequestFingerprint: params.RegistrationRequestFingerprint,
-				ExpectedRunningStateVersion:    params.ExpectedRunningStateVersion,
+				ExpectedRunningRevision:        params.ExpectedRunningRevision,
 				AttemptNumber:                  params.AttemptNumber,
 				ActorSpeculativeInputSequence:  params.ActorSpeculativeInputSequence,
 				CurrentRunLeaseID:              params.CurrentRunLeaseID, ResumeAttachID: params.ResumeAttachID,
@@ -1010,7 +1010,7 @@ func completeChildTaskInvokeAuthority(
 	} else if authority.workspace.ID != locators.WorkspaceID ||
 		authority.workspace.EnvironmentID != locators.EnvironmentID ||
 		authority.workspace.RegionID != locators.RegionID ||
-		authority.workspace.State != db.WorkspaceStateActive ||
+		authority.workspace.Status != db.WorkspaceStatusActive ||
 		authority.workspace.DesiredState != db.WorkspaceDesiredStateActive {
 		return staleAuthority(staleAuthorityChildTask, childTaskInvokePointWorkspaceState, errChildTaskInvokeStale)
 	}
@@ -1033,7 +1033,7 @@ func completeChildTaskInvokeAuthority(
 	}
 	if (authority.run.Status != db.RunStatusRunning &&
 		(input.Request.Method != "call" || authority.run.Status != db.RunStatusWaiting)) ||
-		authority.runLease.State != db.RunLeaseStateRunning ||
+		authority.runLease.Status != db.RunLeaseStatusRunning ||
 		!authority.run.ActiveStartedAt.Valid || !authority.attempt.EntrypointEnteredAt.Valid ||
 		authority.attempt.TerminalAt.Valid || authority.runLease.FinalizationOperationID.Valid {
 		return staleAuthority(staleAuthorityChildTask, childTaskInvokePointExecutionState, errChildTaskInvokeStale)

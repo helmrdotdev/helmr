@@ -40,8 +40,8 @@ func TestClaimRunLeaseLocksSecretsBeforeExecutionAuthority(t *testing.T) {
 		envelopes[0].Version.ID != secretVersion.ID {
 		t.Fatalf("Secret envelopes = %+v", envelopes)
 	}
-	if claimed.runLease.State != db.RunLeaseStateStarting {
-		t.Fatalf("lease state = %q, want starting", claimed.runLease.State)
+	if claimed.runLease.Status != db.RunLeaseStatusStarting {
+		t.Fatalf("lease state = %q, want starting", claimed.runLease.Status)
 	}
 	if claimed.mode != runLeaseClaimFresh {
 		t.Fatalf("claim mode = %q, want fresh", claimed.mode)
@@ -85,8 +85,8 @@ func TestClaimRunLeaseRollsBackWhenSecretLocatorsChange(t *testing.T) {
 	}) {
 		t.Fatalf("claim order = %v", store.calls)
 	}
-	if store.authority.runLease.State != db.RunLeaseStateAssigned {
-		t.Fatalf("lease state = %q, want assigned", store.authority.runLease.State)
+	if store.authority.runLease.Status != db.RunLeaseStatusAssigned {
+		t.Fatalf("lease state = %q, want assigned", store.authority.runLease.Status)
 	}
 }
 
@@ -106,8 +106,8 @@ func TestClaimRunLeaseRoutesDifferentWorkspaceChildWaitToCheckpointRestore(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if claimed.mode != runLeaseClaimRestore || claimed.runLease.State != db.RunLeaseStateStarting {
-		t.Fatalf("claim = mode:%q state:%q, want restore/starting", claimed.mode, claimed.runLease.State)
+	if claimed.mode != runLeaseClaimRestore || claimed.runLease.Status != db.RunLeaseStatusStarting {
+		t.Fatalf("claim = mode:%q state:%q, want restore/starting", claimed.mode, claimed.runLease.Status)
 	}
 }
 
@@ -141,13 +141,13 @@ func TestClaimFreshTaskRunLeaseInTxLocksCanonicalOrderAndTransitionsOnce(t *test
 	if !slices.Equal(store.calls, wantOrder) {
 		t.Fatalf("lock order = %v, want %v", store.calls, wantOrder)
 	}
-	if claimed.runLease.State != db.RunLeaseStateStarting {
-		t.Fatalf("claim state = %s", claimed.runLease.State)
+	if claimed.runLease.Status != db.RunLeaseStatusStarting {
+		t.Fatalf("claim state = %s", claimed.runLease.Status)
 	}
 
 	store.calls = nil
 	store.authority.runLease = claimed.runLease
-	store.authority.workerGroup.State = db.WorkerGroupStateDraining
+	store.authority.workerGroup.Status = db.WorkerGroupStatusDraining
 	store.authority.workerRunReady = false
 	replayed, err := claimFreshTaskRunLeaseInTx(
 		context.Background(),
@@ -163,15 +163,15 @@ func TestClaimFreshTaskRunLeaseInTxLocksCanonicalOrderAndTransitionsOnce(t *test
 	if slices.Contains(store.calls, "mark_starting") {
 		t.Fatalf("replay rewrote claim: %v", store.calls)
 	}
-	if replayed.runLease.State != db.RunLeaseStateStarting {
-		t.Fatalf("replay state = %s", replayed.runLease.State)
+	if replayed.runLease.Status != db.RunLeaseStatusStarting {
+		t.Fatalf("replay state = %s", replayed.runLease.Status)
 	}
 }
 
 func TestClaimFreshTaskRunLeaseInTxContinuesAssignedWorkFromDrainingWorker(t *testing.T) {
 	worker, locators, authority := validRunLeaseClaimFixture()
-	authority.worker.State = db.WorkerInstanceStateDraining
-	authority.workerGroup.State = db.WorkerGroupStateDraining
+	authority.worker.Status = db.WorkerInstanceStatusDraining
+	authority.workerGroup.Status = db.WorkerGroupStatusDraining
 	store := &runLeaseClaimStore{authority: authority}
 
 	claimed, err := claimFreshTaskRunLeaseInTx(
@@ -185,8 +185,8 @@ func TestClaimFreshTaskRunLeaseInTxContinuesAssignedWorkFromDrainingWorker(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if claimed.runLease.State != db.RunLeaseStateStarting || !slices.Contains(store.calls, "mark_starting") {
-		t.Fatalf("draining claim = state:%s calls:%v", claimed.runLease.State, store.calls)
+	if claimed.runLease.Status != db.RunLeaseStatusStarting || !slices.Contains(store.calls, "mark_starting") {
+		t.Fatalf("draining claim = state:%s calls:%v", claimed.runLease.Status, store.calls)
 	}
 }
 
@@ -229,8 +229,8 @@ func TestClaimFreshTaskRunLeaseInTxAcceptsWorkerPerVMCeilingsAboveRequestedShape
 	if err != nil {
 		t.Fatal(err)
 	}
-	if claimed.runLease.State != db.RunLeaseStateStarting {
-		t.Fatalf("claim state = %s, want starting", claimed.runLease.State)
+	if claimed.runLease.Status != db.RunLeaseStatusStarting {
+		t.Fatalf("claim state = %s, want starting", claimed.runLease.Status)
 	}
 }
 
@@ -297,9 +297,9 @@ func TestClaimFreshTaskRunLeaseInTxRejectsRuntimeReservationShapeMismatch(t *tes
 
 func TestLockRunStartAuthorityContinuesStartingLeaseWhileDraining(t *testing.T) {
 	worker, claimLocators, authority := validRunLeaseClaimFixture()
-	authority.runLease.State = db.RunLeaseStateStarting
-	authority.workerGroup.State = db.WorkerGroupStateDraining
-	authority.worker.State = db.WorkerInstanceStateDraining
+	authority.runLease.Status = db.RunLeaseStatusStarting
+	authority.workerGroup.Status = db.WorkerGroupStatusDraining
+	authority.worker.Status = db.WorkerInstanceStatusDraining
 	store := &runLeaseClaimStore{authority: authority}
 	locators := db.GetRunLeaseStartLocatorsRow{
 		OrgID: claimLocators.OrgID, ProjectID: claimLocators.ProjectID,
@@ -315,8 +315,8 @@ func TestLockRunStartAuthorityContinuesStartingLeaseWhileDraining(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if locked.runLease.State != db.RunLeaseStateStarting {
-		t.Fatalf("locked lease state = %s", locked.runLease.State)
+	if locked.runLease.Status != db.RunLeaseStatusStarting {
+		t.Fatalf("locked lease state = %s", locked.runLease.Status)
 	}
 }
 
@@ -343,7 +343,7 @@ func TestClaimFreshTaskRunLeaseInTxRejectsMismatchedMountGeneration(t *testing.T
 
 func TestClaimFreshTaskRunLeaseInTxRejectsMismatchedAttemptBase(t *testing.T) {
 	worker, locators, authority := validRunLeaseClaimFixture()
-	authority.workspaceLease.BaseVersionID = pgvalue.UUID(uuid.New())
+	authority.workspaceLease.BaseWorkspaceVersionID = pgvalue.UUID(uuid.New())
 	store := &runLeaseClaimStore{authority: authority}
 
 	_, err := claimFreshTaskRunLeaseInTx(
@@ -367,7 +367,7 @@ func TestClaimFreshTaskRunLeaseInTxRejectsAttemptBaseThatDiffersFromRun(t *testi
 	otherVersionID := pgvalue.UUID(uuid.New())
 	authority.attempt.BaseWorkspaceVersionID = otherVersionID
 	authority.workspaceMount.MaterializedVersionID = otherVersionID
-	authority.workspaceLease.BaseVersionID = otherVersionID
+	authority.workspaceLease.BaseWorkspaceVersionID = otherVersionID
 	store := &runLeaseClaimStore{authority: authority}
 
 	_, err := claimFreshTaskRunLeaseInTx(
@@ -497,8 +497,8 @@ func TestClaimActorRunLeaseInTxLocksActorBeforeRun(t *testing.T) {
 	if !slices.Equal(store.calls, wantOrder) {
 		t.Fatalf("lock order = %v, want %v", store.calls, wantOrder)
 	}
-	if claimed.runLease.State != db.RunLeaseStateStarting {
-		t.Fatalf("claim state = %s", claimed.runLease.State)
+	if claimed.runLease.Status != db.RunLeaseStatusStarting {
+		t.Fatalf("claim state = %s", claimed.runLease.Status)
 	}
 }
 
@@ -535,7 +535,7 @@ func TestClaimActorRunLeaseInTxAcceptsRetryAttemptFrontier(t *testing.T) {
 	authority.workspace.HeadVersionID = retryVersionID
 	authority.runLease.AttemptNumber = 2
 	authority.workspaceMount.MaterializedVersionID = retryVersionID
-	authority.workspaceLease.BaseVersionID = retryVersionID
+	authority.workspaceLease.BaseWorkspaceVersionID = retryVersionID
 	store := &runLeaseClaimStore{authority: authority}
 
 	if _, err := claimActorRunLeaseInTx(
@@ -583,7 +583,7 @@ func TestClaimActorRunLeaseInTxRejectsRetryBaseThatIsNotWorkspaceHead(t *testing
 	authority.actor.CommittedInputSequence = 2
 	authority.runLease.AttemptNumber = 2
 	authority.workspaceMount.MaterializedVersionID = retryVersionID
-	authority.workspaceLease.BaseVersionID = retryVersionID
+	authority.workspaceLease.BaseWorkspaceVersionID = retryVersionID
 	store := &runLeaseClaimStore{authority: authority}
 
 	_, err := claimActorRunLeaseInTx(
@@ -632,24 +632,24 @@ func TestClaimCheckpointRestoreRunLeaseInTxUsesCheckpointBase(t *testing.T) {
 	if !slices.Equal(store.calls, wantOrder) {
 		t.Fatalf("lock order = %v, want %v", store.calls, wantOrder)
 	}
-	if claimed.workspaceLease.BaseVersionID == claimed.attempt.BaseWorkspaceVersionID {
+	if claimed.workspaceLease.BaseWorkspaceVersionID == claimed.attempt.BaseWorkspaceVersionID {
 		t.Fatal("restore reused Attempt base instead of Checkpoint private version")
 	}
-	if claimed.workspaceLease.BaseVersionID != claimed.checkpoint.PrivateWorkspaceVersionID {
+	if claimed.workspaceLease.BaseWorkspaceVersionID != claimed.checkpoint.PrivateWorkspaceVersionID {
 		t.Fatal("restore Workspace base does not match Checkpoint private version")
 	}
 }
 
 func TestValidateSameWorkspaceParentRestoreUsesSuspendCheckpointBAndTargetsChildResultC(t *testing.T) {
 	_, locators, authority := validCheckpointRestoreRunLeaseClaimFixture(false)
-	baseVersionID := authority.checkpoint.PrivateWorkspaceVersionID
+	baseWorkspaceVersionID := authority.checkpoint.PrivateWorkspaceVersionID
 	resultVersionID := pgvalue.UUID(uuid.New())
 	childRunID := pgvalue.UUID(uuid.New())
 
 	authority.runWait.Kind = db.WaitKindChild
 	authority.runWait.ChildRunID = childRunID
-	authority.runWait.ConditionState = db.WaitStateCompleted
-	authority.runWait.BaseWorkspaceVersionID = baseVersionID
+	authority.runWait.ConditionStatus = db.WaitStatusCompleted
+	authority.runWait.BaseWorkspaceVersionID = baseWorkspaceVersionID
 	authority.runWait.BaseWorkspaceContentDigest = pgvalue.Text(validDigest('7'))
 	authority.runWait.ResumeWorkspaceVersionID = resultVersionID
 	authority.runWait.OwnershipGeneration = pgtype.Int8{Int64: authority.workspace.OwnershipGeneration, Valid: true}
@@ -658,7 +658,7 @@ func TestValidateSameWorkspaceParentRestoreUsesSuspendCheckpointBAndTargetsChild
 	authority.runWait.ResumeWriterGeneration = pgtype.Int8{Int64: 6, Valid: true}
 	authority.workspace.WriterGeneration = 6
 	authority.workspaceLease.WriterGeneration = 6
-	authority.workspaceLease.BaseVersionID = resultVersionID
+	authority.workspaceLease.BaseWorkspaceVersionID = resultVersionID
 	locators.ResumeWorkspaceVersionID = resultVersionID
 
 	if err := validateCheckpointRestoreWait(locators, authority); err != nil {
@@ -667,11 +667,11 @@ func TestValidateSameWorkspaceParentRestoreUsesSuspendCheckpointBAndTargetsChild
 	if err := validateCheckpointRestore(authority); err != nil {
 		t.Fatalf("completed child restore authority rejected: %v", err)
 	}
-	if authority.checkpoint.PrivateWorkspaceVersionID != baseVersionID ||
-		authority.workspaceLease.BaseVersionID != resultVersionID {
+	if authority.checkpoint.PrivateWorkspaceVersionID != baseWorkspaceVersionID ||
+		authority.workspaceLease.BaseWorkspaceVersionID != resultVersionID {
 		t.Fatalf("restore did not keep source B and target C distinct: checkpoint=%s target=%s",
 			pgvalue.UUIDString(authority.checkpoint.PrivateWorkspaceVersionID),
-			pgvalue.UUIDString(authority.workspaceLease.BaseVersionID))
+			pgvalue.UUIDString(authority.workspaceLease.BaseWorkspaceVersionID))
 	}
 
 	authority.checkpoint.PrivateWorkspaceVersionID = resultVersionID
@@ -682,22 +682,22 @@ func TestValidateSameWorkspaceParentRestoreUsesSuspendCheckpointBAndTargetsChild
 
 func TestValidateSameWorkspaceParentRestoreFailureTargetsSuspendWorkspaceB(t *testing.T) {
 	_, locators, authority := validCheckpointRestoreRunLeaseClaimFixture(false)
-	baseVersionID := authority.checkpoint.PrivateWorkspaceVersionID
+	baseWorkspaceVersionID := authority.checkpoint.PrivateWorkspaceVersionID
 
 	authority.runWait.Kind = db.WaitKindChild
 	authority.runWait.ChildRunID = pgvalue.UUID(uuid.New())
-	authority.runWait.ConditionState = db.WaitStateFailed
-	authority.runWait.BaseWorkspaceVersionID = baseVersionID
+	authority.runWait.ConditionStatus = db.WaitStatusFailed
+	authority.runWait.BaseWorkspaceVersionID = baseWorkspaceVersionID
 	authority.runWait.BaseWorkspaceContentDigest = pgvalue.Text(validDigest('7'))
-	authority.runWait.ResumeWorkspaceVersionID = baseVersionID
+	authority.runWait.ResumeWorkspaceVersionID = baseWorkspaceVersionID
 	authority.runWait.OwnershipGeneration = pgtype.Int8{Int64: authority.workspace.OwnershipGeneration, Valid: true}
 	authority.runWait.ParentWriterGeneration = pgtype.Int8{Int64: 4, Valid: true}
 	authority.runWait.ChildWriterGeneration = pgtype.Int8{Int64: 5, Valid: true}
 	authority.runWait.ResumeWriterGeneration = pgtype.Int8{Int64: 6, Valid: true}
 	authority.workspace.WriterGeneration = 6
 	authority.workspaceLease.WriterGeneration = 6
-	authority.workspaceLease.BaseVersionID = baseVersionID
-	locators.ResumeWorkspaceVersionID = baseVersionID
+	authority.workspaceLease.BaseWorkspaceVersionID = baseWorkspaceVersionID
+	locators.ResumeWorkspaceVersionID = baseWorkspaceVersionID
 
 	if err := validateCheckpointRestoreWait(locators, authority); err != nil {
 		t.Fatalf("failed child restore wait rejected: %v", err)
@@ -1375,7 +1375,7 @@ func (s *runLeaseClaimStore) GetRunCheckpointSource(context.Context, db.GetRunCh
 func (s *runLeaseClaimStore) MarkRunLeaseStarting(context.Context, db.MarkRunLeaseStartingParams) (db.RunLease, error) {
 	s.calls = append(s.calls, "mark_starting")
 	lease := s.authority.runLease
-	lease.State = db.RunLeaseStateStarting
+	lease.Status = db.RunLeaseStatusStarting
 	lease.ClaimedAt = pgtype.Timestamptz{Valid: true}
 	s.authority.runLease = lease
 	return lease, nil
@@ -1385,7 +1385,7 @@ func (s *runLeaseClaimStore) MarkRunLeaseRunning(context.Context, db.MarkRunLeas
 	s.calls = append(s.calls, "mark_run_lease_running")
 	s.startLeaseWrites++
 	lease := s.authority.runLease
-	lease.State = db.RunLeaseStateRunning
+	lease.Status = db.RunLeaseStatusRunning
 	lease.StartedAt = pgtype.Timestamptz{Valid: true}
 	s.authority.runLease = lease
 	return lease, nil
@@ -1428,7 +1428,7 @@ func validRunLeaseClaimSecretFixture(
 	secretRow := db.Secret{
 		ID:                   secretID,
 		EnvironmentID:        locators.EnvironmentID,
-		State:                "active",
+		Status:               "active",
 		CurrentVersionID:     versionID,
 		RevocationGeneration: 2,
 	}
@@ -1515,7 +1515,7 @@ func validRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsRow, r
 			OwnershipGeneration:    4,
 			WriterGeneration:       5,
 			HeadVersionID:          versionID,
-			State:                  db.WorkspaceStateActive,
+			Status:                 db.WorkspaceStatusActive,
 			DesiredState:           db.WorkspaceDesiredStateActive,
 		},
 		attempt: db.RunAttempt{
@@ -1528,13 +1528,13 @@ func validRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsRow, r
 		workerGroup: db.WorkerGroup{
 			ID:           workerGroupDBID,
 			RegionID:     regionID,
-			State:        db.WorkerGroupStateActive,
+			Status:       db.WorkerGroupStatusActive,
 			ClaimVersion: 1,
 		},
 		worker: db.WorkerInstance{
 			ID:                           pgvalue.UUID(workerInstanceID),
 			WorkerGroupID:                workerGroupDBID,
-			State:                        db.WorkerInstanceStateActive,
+			Status:                       db.WorkerInstanceStatusActive,
 			ClaimVersion:                 3,
 			CurrentEpoch:                 pgtype.Int8{Int64: 7, Valid: true},
 			RuntimeIdentityID:            pgtype.Text{String: runtimeIDValue, Valid: true},
@@ -1572,19 +1572,19 @@ func validRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsRow, r
 			RequestedMemoryBytes:             2048,
 			RequestedGuestEphemeralDiskBytes: 4096,
 			RequestedExecutionSlots:          1,
-			State:                            db.RunLeaseStateAssigned,
+			Status:                           db.RunLeaseStatusAssigned,
 		},
 		workspaceMount: db.WorkspaceMount{
 			ID:                    mountID,
 			MaterializedVersionID: versionID,
-			State:                 db.WorkspaceMountStateMounted,
+			Status:                db.WorkspaceMountStatusMounted,
 			FencingGeneration:     6,
 		},
 		workspaceLease: db.WorkspaceLease{
 			ID:                     workspaceLeaseID,
-			State:                  db.WorkspaceLeaseStateActive,
+			Status:                 db.WorkspaceLeaseStatusActive,
 			OwnerRunLeaseID:        runLeaseID,
-			BaseVersionID:          versionID,
+			BaseWorkspaceVersionID: versionID,
 			OwnershipGeneration:    4,
 			WriterGeneration:       5,
 			MountFencingGeneration: 6,
@@ -1607,7 +1607,7 @@ func validActorRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsR
 		RunGeneration:          9,
 		NextInputSequence:      4,
 		CommittedInputSequence: 1,
-		State:                  "open",
+		Status:                 "open",
 	}
 	authority.run.EntrypointKind = "actor"
 	authority.run.EntrypointDeclaredID = "test-actor"
@@ -1643,15 +1643,15 @@ func validCheckpointRestoreRunLeaseClaimFixture(actor bool) (workerActor, db.Get
 	locators.ResumeRequestVersion = pgtype.Int8{Int64: 2, Valid: true}
 	locators.CheckpointPrivateWorkspaceVersionID = privateVersionID
 	authority.workspaceMount.MaterializedVersionID = privateVersionID
-	authority.workspaceLease.BaseVersionID = privateVersionID
+	authority.workspaceLease.BaseWorkspaceVersionID = privateVersionID
 	authority.attempt.EntrypointEnteredAt = pgtype.Timestamptz{Valid: true}
 	authority.runWait = db.RunWait{
 		ID:                       runWaitID,
 		EnvironmentID:            locators.EnvironmentID,
 		RunID:                    locators.RunID,
 		WorkspaceID:              locators.WorkspaceID,
-		ConditionState:           db.WaitStateCompleted,
-		SuspensionState:          db.RunWaitStateResuming,
+		ConditionStatus:          db.WaitStatusCompleted,
+		SuspensionStatus:         db.RunWaitStatusResuming,
 		AttemptNumber:            locators.AttemptNumber,
 		CurrentRunLeaseID:        authority.runLease.ID,
 		PriorRunLeaseID:          sourceRunLeaseID,
@@ -1672,7 +1672,7 @@ func validCheckpointRestoreRunLeaseClaimFixture(actor bool) (workerActor, db.Get
 		WorkspaceID:               locators.WorkspaceID,
 		BaseWorkspaceVersionID:    authority.attempt.BaseWorkspaceVersionID,
 		PrivateWorkspaceVersionID: privateVersionID,
-		State:                     db.RunCheckpointStateReady,
+		Status:                    db.RunCheckpointStatusReady,
 		RuntimeConfigArtifactID:   pgvalue.UUID(uuid.New()),
 		VMStateArtifactID:         pgvalue.UUID(uuid.New()),
 		MemoryArtifactID:          pgvalue.UUID(uuid.New()),
@@ -1688,14 +1688,14 @@ func validCheckpointRestoreRunLeaseClaimFixture(actor bool) (workerActor, db.Get
 	authority.sourceRunLease = authority.runLease
 	authority.sourceRunLease.ID = sourceRunLeaseID
 	authority.sourceRunLease.RuntimeInstanceID = authority.sourceRuntime.ID
-	authority.sourceRunLease.State = db.RunLeaseStateCheckpointed
+	authority.sourceRunLease.Status = db.RunLeaseStatusCheckpointed
 	authority.sourceWorkspaceLease = db.WorkspaceLease{
 		ID:                     sourceWorkspaceLeaseID,
 		WorkspaceID:            locators.WorkspaceID,
 		WorkspaceMountID:       pgvalue.UUID(uuid.New()),
-		State:                  db.WorkspaceLeaseStateFenced,
+		Status:                 db.WorkspaceLeaseStatusFenced,
 		OwnerRunLeaseID:        sourceRunLeaseID,
-		BaseVersionID:          authority.checkpoint.BaseWorkspaceVersionID,
+		BaseWorkspaceVersionID: authority.checkpoint.BaseWorkspaceVersionID,
 		OwnershipGeneration:    authority.workspace.OwnershipGeneration,
 		WriterGeneration:       authority.workspace.WriterGeneration - 1,
 		MountFencingGeneration: 1,
@@ -1766,8 +1766,8 @@ func validSameWorkspaceChildRunLeaseClaimFixture(actorParent bool) (workerActor,
 		RunID:                      parentRunID,
 		WorkspaceID:                locators.WorkspaceID,
 		Kind:                       db.WaitKindChild,
-		ConditionState:             db.WaitStatePending,
-		SuspensionState:            db.RunWaitStateParked,
+		ConditionStatus:            db.WaitStatusPending,
+		SuspensionStatus:           db.RunWaitStatusParked,
 		AttemptNumber:              1,
 		PriorRunLeaseID:            sourceRunLeaseID,
 		CheckpointRequestVersion:   1,
@@ -1792,19 +1792,19 @@ func validSameWorkspaceChildRunLeaseClaimFixture(actorParent bool) (workerActor,
 		WorkspaceID:               locators.WorkspaceID,
 		BaseWorkspaceVersionID:    authority.parentAttempt.BaseWorkspaceVersionID,
 		PrivateWorkspaceVersionID: authority.runWait.BaseWorkspaceVersionID,
-		State:                     db.RunCheckpointStateReady,
+		Status:                    db.RunCheckpointStatusReady,
 	}
 	authority.sourceRuntime = authority.runtime
 	authority.sourceRunLease = authority.runLease
 	authority.sourceRunLease.ID = sourceRunLeaseID
-	authority.sourceRunLease.State = db.RunLeaseStateCheckpointed
+	authority.sourceRunLease.Status = db.RunLeaseStatusCheckpointed
 	authority.sourceWorkspaceLease = db.WorkspaceLease{
 		ID:                     authority.checkpoint.SourceWorkspaceLeaseID,
 		WorkspaceID:            locators.WorkspaceID,
 		WorkspaceMountID:       authority.workspaceMount.ID,
-		State:                  db.WorkspaceLeaseStateFenced,
+		Status:                 db.WorkspaceLeaseStatusFenced,
 		OwnerRunLeaseID:        sourceRunLeaseID,
-		BaseVersionID:          authority.checkpoint.BaseWorkspaceVersionID,
+		BaseWorkspaceVersionID: authority.checkpoint.BaseWorkspaceVersionID,
 		OwnershipGeneration:    authority.workspace.OwnershipGeneration,
 		WriterGeneration:       4,
 		MountFencingGeneration: authority.workspaceMount.FencingGeneration,
@@ -1822,7 +1822,7 @@ func validSameWorkspaceChildRunLeaseClaimFixture(actorParent bool) (workerActor,
 			RunGeneration:          7,
 			NextInputSequence:      4,
 			CommittedInputSequence: 2,
-			State:                  "open",
+			Status:                 "open",
 		}
 		authority.parentRun.EntrypointKind = "actor"
 		authority.parentRun.EntrypointDeclaredID = "parent-actor"
@@ -1852,8 +1852,8 @@ func activeEnclosingWaitFixture(
 		RunID:                      parentRunID,
 		WorkspaceID:                authority.workspace.ID,
 		Kind:                       db.WaitKindChild,
-		ConditionState:             db.WaitStatePending,
-		SuspensionState:            db.RunWaitStateParked,
+		ConditionStatus:            db.WaitStatusPending,
+		SuspensionStatus:           db.RunWaitStatusParked,
 		AttemptNumber:              1,
 		PriorRunLeaseID:            pgvalue.UUID(uuid.New()),
 		CheckpointRequestVersion:   1,

@@ -307,8 +307,8 @@ func TestWorkspaceRunAuthorityAdvancesCapturedFrontier(t *testing.T) {
 		t.Fatal(err)
 	}
 	releaseProgram()
-	if entry.baseVersionID != "version-2" || entry.authorityState == workspaceAuthorityFinalizing {
-		t.Fatalf("advanced frontier = base %q state %d", entry.baseVersionID, entry.authorityState)
+	if entry.baseWorkspaceVersionID != "version-2" || entry.authorityState == workspaceAuthorityFinalizing {
+		t.Fatalf("advanced frontier = base %q state %d", entry.baseWorkspaceVersionID, entry.authorityState)
 	}
 	if !proto.Equal(entry.authority, next) {
 		t.Fatal("advanced Workspace authority was not installed")

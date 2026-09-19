@@ -88,7 +88,7 @@ WITH worker AS (
     SELECT worker_instances.id,
            worker_instances.worker_group_id,
            worker_instances.current_epoch,
-           worker_instances.state,
+           worker_instances.status,
            worker_instances.observed_at,
            worker_instances.runtime_paused_reason,
            worker_instances.max_runtime_starts
@@ -96,7 +96,7 @@ WITH worker AS (
      WHERE worker_instances.id = $3
        AND worker_instances.worker_group_id = $4
        AND worker_instances.current_epoch = $5::bigint
-       AND worker_instances.state IN ('active', 'draining')
+       AND worker_instances.status IN ('active', 'draining')
 )
 SELECT runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.vm_vcpu_count, runtime_instances.cpu_config_digest, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.ready_at, runtime_instances.terminal_at, runtime_instances.reclaimed_at, runtime_instances.reclaim_evidence, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.updated_at,
        artifacts.digest AS workspace_image_digest,
@@ -136,7 +136,7 @@ SELECT runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_
     ON reserved_workspace_versions.environment_id = runtime_instances.environment_id
    AND reserved_workspace_versions.workspace_id = runtime_instances.workspace_id
    AND reserved_workspace_versions.id = runtime_instances.reserved_workspace_version_id
-   AND reserved_workspace_versions.state IN ('committed', 'private')
+   AND reserved_workspace_versions.status IN ('committed', 'private')
   LEFT JOIN artifacts AS reserved_workspace_artifacts
     ON reserved_workspace_artifacts.environment_id = reserved_workspace_versions.environment_id
    AND reserved_workspace_artifacts.id = reserved_workspace_versions.artifact_id
@@ -152,7 +152,7 @@ SELECT runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_
        (runtime_instances.desired_state = 'ready'
        AND runtime_instances.observed_state = 'allocated'
        AND runtime_instances.observed_desired_version < runtime_instances.desired_version
-        AND worker.state = 'active'
+        AND worker.status = 'active'
         AND worker.observed_at >= transaction_timestamp()
             - $1::bigint * interval '1 second'
         AND worker.runtime_paused_reason IS NULL
@@ -167,7 +167,7 @@ SELECT runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_
             SELECT 1
               FROM run_leases
              WHERE run_leases.runtime_instance_id = runtime_instances.id
-               AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
+               AND run_leases.status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
         ))
    )
  ORDER BY runtime_instances.desired_at, runtime_instances.id
@@ -586,7 +586,7 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
         ON workspace_secrets.workspace_id = runtime_instances.workspace_id
       JOIN secrets
         ON secrets.id = workspace_secrets.secret_id
-       AND secrets.state = 'active'
+       AND secrets.status = 'active'
       JOIN secret_resolutions
         ON secret_resolutions.workspace_id = workspace_secrets.workspace_id
        AND secret_resolutions.run_id = runtime_instances.reserved_run_id
@@ -615,7 +615,7 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
         ON sessions.id = runs.session_id
        AND sessions.workspace_id = runtime_instances.workspace_id
        AND sessions.current_run_id = runs.id
-       AND sessions.state IN ('open', 'closing')
+       AND sessions.status IN ('open', 'closing')
      WHERE runtime_instances.id = $3
        AND runtime_instances.worker_instance_id = $4
        AND runtime_instances.worker_epoch = $5
@@ -689,8 +689,8 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
               AND owned_child.environment_id = edge.environment_id
               AND owned_child.parent_owns_lifecycle IS TRUE
        )
-       AND edge.condition_state = 'pending'
-       AND edge.suspension_state = 'parked'
+       AND edge.condition_status = 'pending'
+       AND edge.suspension_status = 'parked'
        AND edge.ownership_generation IS NOT NULL
        AND edge.parent_writer_generation IS NOT NULL
        AND edge.child_writer_generation IS NOT NULL
@@ -716,8 +716,8 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
        AND edge.kind = 'child'
        AND edge.run_id = child.next_parent_run_id
        AND edge.environment_id = child.environment_id
-       AND edge.condition_state = 'pending'
-       AND edge.suspension_state = 'parked'
+       AND edge.condition_status = 'pending'
+       AND edge.suspension_status = 'parked'
        AND edge.ownership_generation = child.ownership_generation
        AND edge.child_writer_generation = child.parent_writer_generation
        AND edge.resume_writer_generation IS NULL
@@ -764,7 +764,7 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
             OR (restore_run_authority.entrypoint_kind = 'actor'
                 AND workspaces.owner_session_id = restore_run_authority.session_id
                 AND workspaces.owner_run_id IS NULL))
-       AND workspaces.state = 'active'
+       AND workspaces.status = 'active'
        AND workspaces.desired_state = 'active'
        AND workspaces.dirty_state = 'clean'
      FOR UPDATE OF workspaces
@@ -796,7 +796,7 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
         ON worker_instances.id = runtime_instances.worker_instance_id
 	   AND worker_instances.worker_group_id = runtime_instances.worker_group_id
 	   AND worker_instances.current_epoch = runtime_instances.worker_epoch
-	   AND worker_instances.state IN ('active', 'draining')
+	   AND worker_instances.status IN ('active', 'draining')
       JOIN runtime_substrates
         ON runtime_substrates.id = $1
        AND runtime_substrates.org_id = runtime_instances.org_id
@@ -841,7 +841,7 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
         ON run_waits.run_id = runtime_instances.reserved_run_id
        AND run_waits.attempt_number = runtime_instances.reserved_attempt_number
        AND run_waits.workspace_id = runtime_instances.workspace_id
-       AND run_waits.suspension_state = 'resume_pending'
+       AND run_waits.suspension_status = 'resume_pending'
        AND run_waits.resume_writer_generation IS NULL
        AND (run_waits.resume_workspace_version_id IS NULL
             OR run_waits.resume_workspace_version_id = runtime_instances.reserved_workspace_version_id)
@@ -854,7 +854,7 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
        AND run_checkpoints.run_wait_id = run_waits.id
        AND run_checkpoints.workspace_id = runtime_instances.workspace_id
        AND run_checkpoints.private_workspace_version_id IS NOT NULL
-       AND run_checkpoints.state = 'ready'
+       AND run_checkpoints.status = 'ready'
        AND ((restore_attempt_authority.entrypoint_kind = 'task'
              AND run_checkpoints.actor_speculative_input_sequence IS NULL)
             OR (restore_attempt_authority.entrypoint_kind = 'actor'
@@ -867,7 +867,7 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
        AND source_lease.run_id = run_checkpoints.run_id
        AND source_lease.attempt_number = run_checkpoints.attempt_number
        AND source_lease.workspace_id = run_checkpoints.workspace_id
-       AND source_lease.state = 'checkpointed'
+       AND source_lease.status = 'checkpointed'
       JOIN runtime_instances AS source_runtime
         ON source_runtime.id = source_lease.runtime_instance_id
        AND source_runtime.runtime_identity_id = runtime_instances.runtime_identity_id
@@ -877,7 +877,7 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
       JOIN workspace_versions
         ON workspace_versions.workspace_id = runtime_instances.workspace_id
        AND workspace_versions.id = runtime_instances.reserved_workspace_version_id
-       AND workspace_versions.state = 'private'
+       AND workspace_versions.status = 'private'
      WHERE runtime_instances.id = $3
        AND runtime_instances.worker_instance_id = $4
        AND runtime_instances.worker_epoch = $5
@@ -998,7 +998,7 @@ UPDATE runtime_instances
        SELECT 1
          FROM run_leases
         WHERE run_leases.runtime_instance_id = runtime_instances.id
-          AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
+          AND run_leases.status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
    )
 RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.vm_vcpu_count, runtime_instances.cpu_config_digest, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.ready_at, runtime_instances.terminal_at, runtime_instances.reclaimed_at, runtime_instances.reclaim_evidence, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.updated_at
 `

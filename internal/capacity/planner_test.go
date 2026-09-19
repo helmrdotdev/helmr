@@ -684,7 +684,7 @@ func TestPlanAcceptsZeroAdditionalWorkerBudget(t *testing.T) {
 
 func plannerTestGroup(primaryRunPoolID pgtype.UUID) db.WorkerGroup {
 	return db.WorkerGroup{
-		ID: pgvalue.UUID(plannerTestGroupID), Name: "default", RegionID: "us-east-1", State: string(WorkerGroupStatusActive),
+		ID: pgvalue.UUID(plannerTestGroupID), Name: "default", RegionID: "us-east-1", Status: string(WorkerGroupStatusActive),
 		PrimaryPoolID: primaryRunPoolID,
 	}
 }

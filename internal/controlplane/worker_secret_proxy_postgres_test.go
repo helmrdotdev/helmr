@@ -50,7 +50,7 @@ func TestSecretPreparationRequiresActivatedWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	serviceID := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE worker_instances SET current_service_id=$2,state='registering' WHERE id=$1`, fixture.WorkerID, serviceID)
+	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE worker_instances SET current_service_id=$2,status='registering' WHERE id=$1`, fixture.WorkerID, serviceID)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `INSERT INTO worker_instance_credentials (id,worker_group_id,worker_instance_id,key_prefix,secret_hash) VALUES ($1,$2,$3,'startup-test',$4)`, uuid.NewV7(), runtest.WorkerGroupID, fixture.WorkerID, hash)
 	q := db.New(fixture.Pool)
 	store, err := secret.New(q, fixture.Pool, bytes.Repeat([]byte{73}, 32))
@@ -77,7 +77,7 @@ func TestSecretPreparationRequiresActivatedWorker(t *testing.T) {
 		t.Fatalf("registering worker preparation = %v, want 401", err)
 	}
 	for _, state := range []string{"active", "draining"} {
-		dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE worker_instances SET state=$2,observed_at=now(),draining_at=CASE WHEN $2='draining' THEN now() ELSE NULL END WHERE id=$1`, fixture.WorkerID, state)
+		dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE worker_instances SET status=$2,observed_at=now(),draining_at=CASE WHEN $2='draining' THEN now() ELSE NULL END WHERE id=$1`, fixture.WorkerID, state)
 		prepared, err := client.PrepareSecretProxy(t.Context(), request)
 		if err != nil || len(prepared.Origins) != 0 {
 			t.Fatalf("%s worker empty-origin preparation = %+v, %v", state, prepared, err)

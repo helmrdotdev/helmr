@@ -1790,11 +1790,11 @@ func TestProgramEventStreamWriteDeadline(t *testing.T) {
 func TestProgramAdmissionDoesNotClaimBeforeSecretSequence(t *testing.T) {
 	registry := newWorkspaceOperationRegistry()
 	registry.register("mount-1", &workspaceMountEntry{
-		workspaceID:       "workspace-1",
-		baseVersionID:     "version-1",
-		channelToken:      "channel-1",
-		fencingGeneration: 1,
-		runtimeInstanceID: "runtime-1",
+		workspaceID:            "workspace-1",
+		baseWorkspaceVersionID: "version-1",
+		channelToken:           "channel-1",
+		fencingGeneration:      1,
+		runtimeInstanceID:      "runtime-1",
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -1874,11 +1874,11 @@ func TestProgramAdmissionDoesNotClaimBeforeSecretSequence(t *testing.T) {
 func TestProgramAdmissionReportsPrepareFailureWithExactFence(t *testing.T) {
 	registry := newWorkspaceOperationRegistry()
 	registry.register("mount-1", &workspaceMountEntry{
-		workspaceID:       "workspace-1",
-		baseVersionID:     "version-1",
-		channelToken:      "channel-1",
-		fencingGeneration: 1,
-		runtimeInstanceID: "runtime-1",
+		workspaceID:            "workspace-1",
+		baseWorkspaceVersionID: "version-1",
+		channelToken:           "channel-1",
+		fencingGeneration:      1,
+		runtimeInstanceID:      "runtime-1",
 		// A missing runtime user deterministically fails newProgramProcess after
 		// the exact authority and Secret sequence have been admitted.
 		runtimeUser: nil,

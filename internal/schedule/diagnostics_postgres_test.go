@@ -105,7 +105,7 @@ func TestWorkerDiagnosticPersistence(t *testing.T) {
 				if err := json.Unmarshal(after.LastFailure, &failure); err != nil {
 					t.Fatal(err)
 				}
-				if after.State != "errored" || after.ClaimedBy.Valid || after.ClaimExpiresAt.Valid || after.RetryStep.Valid || after.RetryAfter.Valid || failure.Code != string(tc.code) || failure.Message != "future diagnosis" || failure.Details == nil {
+				if after.Status != "errored" || after.ClaimedBy.Valid || after.ClaimExpiresAt.Valid || after.RetryStep.Valid || after.RetryAfter.Valid || failure.Code != string(tc.code) || failure.Message != "future diagnosis" || failure.Details == nil {
 					t.Fatalf("permanent state=%+v failure=%+v", after, failure)
 				}
 			}

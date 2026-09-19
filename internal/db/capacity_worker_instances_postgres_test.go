@@ -20,7 +20,7 @@ func TestCapacityWorkerListingProjectsCurrentRowPerOpaqueLocator(t *testing.T) {
 
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO worker_instances (
-			id, resource_id, worker_group_id, worker_pool_id, state,
+			id, resource_id, worker_group_id, worker_pool_id, status,
 			current_epoch, current_service_id, epoch_started_at,
 			draining_at, termination_ready_at, created_at, updated_at
 		) VALUES ($1, $3, $4, $6, 'termination_ready',
@@ -35,20 +35,20 @@ func TestCapacityWorkerListingProjectsCurrentRowPerOpaqueLocator(t *testing.T) {
 	rows, err := queries.ListCapacityWorkerInstances(ctx, db.ListCapacityWorkerInstancesParams{
 		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ResourceIds:   []string{resourceID},
-		States:        []string{},
+		Statuses:      []string{},
 		RowLimit:      10,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 1 || rows[0].ID.Bytes != currentID || rows[0].State != string(db.WorkerInstanceStateRegistering) {
+	if len(rows) != 1 || rows[0].ID.Bytes != currentID || rows[0].Status != string(db.WorkerInstanceStatusRegistering) {
 		t.Fatalf("rows = %#v, want only current registering row", rows)
 	}
 
 	rows, err = queries.ListCapacityWorkerInstances(ctx, db.ListCapacityWorkerInstancesParams{
 		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ResourceIds:   []string{resourceID},
-		States:        []string{string(db.WorkerInstanceStateTerminationReady)},
+		Statuses:      []string{string(db.WorkerInstanceStatusTerminationReady)},
 		RowLimit:      10,
 	})
 	if err != nil {

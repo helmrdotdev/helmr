@@ -23,7 +23,7 @@ RETURNING *;
 SELECT *
   FROM public_access_tokens
  WHERE token_hash = sqlc.arg(token_hash)
-   AND state = 'active'
+   AND status = 'active'
    AND expires_at > transaction_timestamp()
  FOR UPDATE;
 
@@ -33,7 +33,7 @@ UPDATE public_access_tokens
        last_used_at = now(),
        updated_at = now()
  WHERE id = sqlc.arg(id)
-   AND state = 'active'
+   AND status = 'active'
    AND expires_at > now()
    AND (max_uses IS NULL OR used_count < max_uses)
 RETURNING *;
@@ -47,17 +47,17 @@ SELECT public_access_tokens.*
 WITH candidates AS MATERIALIZED (
     SELECT id
       FROM public_access_tokens
-     WHERE state = 'active'
+     WHERE status = 'active'
        AND expires_at <= transaction_timestamp()
      ORDER BY expires_at, id
      FOR UPDATE SKIP LOCKED
      LIMIT sqlc.arg(limit_count)
 )
 UPDATE public_access_tokens
-   SET state = 'expired',
+   SET status = 'expired',
        expired_at = transaction_timestamp(),
        updated_at = transaction_timestamp()
   FROM candidates
  WHERE public_access_tokens.id = candidates.id
-   AND public_access_tokens.state = 'active'
+   AND public_access_tokens.status = 'active'
 RETURNING public_access_tokens.*;

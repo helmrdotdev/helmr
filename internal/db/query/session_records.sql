@@ -4,7 +4,7 @@ WITH locked_actor AS MATERIALIZED (
       FROM sessions
      WHERE sessions.environment_id = sqlc.arg(environment_id)
        AND sessions.id = sqlc.arg(session_id)
-       AND sessions.state = 'open'
+       AND sessions.status = 'open'
        AND sessions.next_input_sequence = 1
        AND sessions.committed_input_sequence = 0
        AND (
@@ -15,7 +15,7 @@ WITH locked_actor AS MATERIALIZED (
                 WHERE idempotency_claims.environment_id = sessions.environment_id
                   AND idempotency_claims.id = sqlc.narg(claim_id)
                   AND idempotency_claims.operation = 'actor.start'
-                  AND idempotency_claims.state = 'pending'
+                  AND idempotency_claims.status = 'pending'
                   AND idempotency_claims.retired_at IS NULL
            )
        )
@@ -51,7 +51,7 @@ RETURNING *;
 
 -- name: AppendActorInputRecord :one
 WITH selected_claim AS MATERIALIZED (
-    SELECT id, state, request_fingerprint
+    SELECT id, status, request_fingerprint
       FROM idempotency_claims
      WHERE idempotency_claims.environment_id = sqlc.arg(environment_id)::uuid
        AND idempotency_claims.id = sqlc.narg(claim_id)
@@ -69,7 +69,7 @@ WITH selected_claim AS MATERIALIZED (
       FROM sessions
      WHERE sessions.environment_id = sqlc.arg(environment_id)
        AND sessions.id = sqlc.arg(session_id)
-       AND sessions.state = 'open'
+       AND sessions.status = 'open'
        AND sessions.next_input_sequence <= 9007199254740991
        AND NOT EXISTS (SELECT 1 FROM existing_record)
        AND (
@@ -77,7 +77,7 @@ WITH selected_claim AS MATERIALIZED (
            OR EXISTS (
                SELECT 1
                  FROM selected_claim
-                WHERE selected_claim.state = 'pending'
+                WHERE selected_claim.status = 'pending'
                   AND request_fingerprint = sqlc.narg(expected_request_fingerprint)
            )
        )
@@ -126,7 +126,7 @@ SELECT existing_record.*,
 
 -- name: CompleteActorInputClaim :one
 UPDATE idempotency_claims
-   SET state = 'completed',
+   SET status = 'completed',
        receipt = jsonb_build_object(
 	       'session_record_id', session_records.id::text,
            'sequence', session_records.sequence
@@ -137,7 +137,7 @@ UPDATE idempotency_claims
    AND idempotency_claims.id = sqlc.arg(claim_id)
    AND idempotency_claims.operation = 'session.input.send'
    AND idempotency_claims.request_fingerprint = sqlc.arg(request_fingerprint)
-   AND idempotency_claims.state = 'pending'
+   AND idempotency_claims.status = 'pending'
    AND idempotency_claims.retired_at IS NULL
    AND session_records.environment_id = idempotency_claims.environment_id
    AND session_records.session_id = sqlc.arg(session_id)
@@ -155,7 +155,7 @@ SELECT runs.*
 
 -- name: AppendActorOutputRecord :one
 WITH selected_claim AS MATERIALIZED (
-    SELECT id, state, request_fingerprint
+    SELECT id, status, request_fingerprint
       FROM idempotency_claims
      WHERE idempotency_claims.environment_id = sqlc.arg(environment_id)::uuid
        AND idempotency_claims.id = sqlc.narg(claim_id)
@@ -182,7 +182,7 @@ WITH selected_claim AS MATERIALIZED (
      WHERE sessions.environment_id = sqlc.arg(environment_id)
        AND sessions.id = sqlc.arg(session_id)
        AND sessions.current_run_id = runs.id
-       AND sessions.state IN ('open', 'closing')
+       AND sessions.status IN ('open', 'closing')
        AND sessions.next_output_sequence <= 9007199254740991
        AND NOT EXISTS (SELECT 1 FROM existing_record)
        AND (
@@ -190,7 +190,7 @@ WITH selected_claim AS MATERIALIZED (
            OR EXISTS (
                SELECT 1
                  FROM selected_claim
-                WHERE selected_claim.state = 'pending'
+                WHERE selected_claim.status = 'pending'
                   AND request_fingerprint = sqlc.narg(expected_request_fingerprint)
            )
        )
@@ -240,7 +240,7 @@ SELECT existing_record.*,
 
 -- name: CompleteActorOutputClaim :one
 UPDATE idempotency_claims
-   SET state = 'completed',
+   SET status = 'completed',
        receipt = jsonb_build_object(
 	       'session_record_id', session_records.id::text,
            'sequence', session_records.sequence
@@ -251,7 +251,7 @@ UPDATE idempotency_claims
    AND idempotency_claims.id = sqlc.arg(claim_id)
    AND idempotency_claims.operation = 'session.output.append'
    AND idempotency_claims.request_fingerprint = sqlc.arg(request_fingerprint)
-   AND idempotency_claims.state = 'pending'
+   AND idempotency_claims.status = 'pending'
    AND idempotency_claims.retired_at IS NULL
    AND session_records.environment_id = idempotency_claims.environment_id
    AND session_records.session_id = sqlc.arg(session_id)

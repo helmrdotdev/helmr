@@ -105,7 +105,7 @@ func TestTaskCompletionDeadlineUsesFrozenFinalizationExpiry(t *testing.T) {
 	authority := runLeaseClaimAuthority{
 		run: db.Run{},
 		runLease: db.RunLease{
-			State: db.RunLeaseStateFinalizing, ExpiresAt: pgvalue.Timestamptz(now.Add(time.Second)),
+			Status: db.RunLeaseStatusFinalizing, ExpiresAt: pgvalue.Timestamptz(now.Add(time.Second)),
 			FinalizationStartedAt: pgvalue.Timestamptz(now.Add(-time.Second)),
 		},
 		workspaceLease: db.WorkspaceLease{
@@ -137,7 +137,7 @@ func TestTaskCompletionRejectsRollbackOutsideRunBase(t *testing.T) {
 			EntrypointEnteredAt:    pgvalue.Timestamptz(time.Now()),
 			BaseWorkspaceVersionID: runBase,
 		},
-		runLease: db.RunLease{State: db.RunLeaseStateFinalizing},
+		runLease: db.RunLease{Status: db.RunLeaseStatusFinalizing},
 		workspace: db.LockRunLeaseClaimWorkspaceRow{
 			HeadVersionID: runBase,
 		},
@@ -165,7 +165,7 @@ func TestTaskCompletionRejectsRunningLease(t *testing.T) {
 		parsedTaskCompletion{},
 		runLeaseClaimAuthority{
 			run:      db.Run{EntrypointKind: "task"},
-			runLease: db.RunLease{State: db.RunLeaseStateRunning},
+			runLease: db.RunLease{Status: db.RunLeaseStatusRunning},
 		},
 	); !errors.Is(err, errStaleTaskCompletion) {
 		t.Fatalf("error = %v, want stale completion", err)
@@ -189,10 +189,10 @@ func TestTaskCompletionRejectsFinalizationKindMismatch(t *testing.T) {
 			BaseWorkspaceVersionID: baseID,
 		},
 		runLease: db.RunLease{
-			State: db.RunLeaseStateFinalizing, FinalizationOperationID: operationID,
+			Status: db.RunLeaseStatusFinalizing, FinalizationOperationID: operationID,
 			FinalizationKind:               pgvalue.Text(string(workerapi.RunFinalizationReset)),
 			FinalizationStartedAt:          pgvalue.Timestamptz(time.Now()),
-			FinalizationRequestFingerprint: pgvalue.Text("sha256:frozen"),
+			FinalizationRequestFingerprint: pgvalue.Text("sha256:a798aa14ee85550172dc7b9e352e89bb54a1bdd6c44282ec539f1d6cfd323b6e"),
 		},
 		workspace: db.LockRunLeaseClaimWorkspaceRow{HeadVersionID: baseID},
 	}
@@ -209,7 +209,7 @@ func TestTaskCompletionMountUpdateUsesLeaseFrontier(t *testing.T) {
 	newVersion := pgvalue.UUID(uuid.NewV7())
 	authority := runLeaseClaimAuthority{
 		run:            db.Run{BaseWorkspaceVersionID: runBase},
-		workspaceLease: db.WorkspaceLease{BaseVersionID: leaseBase},
+		workspaceLease: db.WorkspaceLease{BaseWorkspaceVersionID: leaseBase},
 	}
 	store := &taskWorkspaceMountFixture{}
 	if err := updateTaskWorkspaceMountFrontier(
@@ -221,7 +221,7 @@ func TestTaskCompletionMountUpdateUsesLeaseFrontier(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if store.params.BaseVersionID != leaseBase || store.params.NewVersionID != newVersion {
+	if store.params.BaseWorkspaceVersionID != leaseBase || store.params.NewVersionID != newVersion {
 		t.Fatalf("mount update = %+v", store.params)
 	}
 }
@@ -234,12 +234,12 @@ func TestTaskWorkspaceRollbackMatchesCanonicalRootVersion(t *testing.T) {
 		workspace: db.LockRunLeaseClaimWorkspaceRow{ID: workspaceID},
 	}
 	store := &taskWorkspaceRollbackFixture{version: db.WorkspaceVersion{
-		ID: baseID, WorkspaceID: workspaceID, ContentDigest: workspace.CanonicalEmptyTreeDigest, State: db.WorkspaceVersionStateCommitted,
+		ID: baseID, WorkspaceID: workspaceID, ContentDigest: workspace.CanonicalEmptyTreeDigest, Status: db.WorkspaceVersionStatusCommitted,
 	}}
 	rollback := parsedTaskWorkspaceRollback{
 		baseID: pgvalue.MustUUIDValue(baseID),
 		target: workspace.ResetTarget{
-			Kind: workspace.ResetTargetEmpty, BaseVersionID: pgvalue.UUIDString(baseID),
+			Kind: workspace.ResetTargetEmpty, BaseWorkspaceVersionID: pgvalue.UUIDString(baseID),
 			Tree: workspace.TreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest},
 		},
 	}
@@ -271,7 +271,7 @@ func TestTaskWorkspaceRollbackMatchesVersionArtifact(t *testing.T) {
 		version: db.WorkspaceVersion{
 			ID: baseID, WorkspaceID: workspaceID, ParentVersionID: parentID, ArtifactID: artifactID,
 			ContentDigest: tree.Digest, SizeBytes: tree.SizeBytes,
-			EntryCount: int32(tree.EntryCount), State: db.WorkspaceVersionStateCommitted,
+			EntryCount: int32(tree.EntryCount), Status: db.WorkspaceVersionStatusCommitted,
 			SourceWorkspaceLeaseID: sourceLeaseID,
 		},
 		artifact: db.Artifact{
@@ -282,7 +282,7 @@ func TestTaskWorkspaceRollbackMatchesVersionArtifact(t *testing.T) {
 	rollback := parsedTaskWorkspaceRollback{
 		baseID: pgvalue.MustUUIDValue(baseID),
 		target: workspace.ResetTarget{
-			Kind: workspace.ResetTargetArtifact, BaseVersionID: pgvalue.UUIDString(baseID),
+			Kind: workspace.ResetTargetArtifact, BaseWorkspaceVersionID: pgvalue.UUIDString(baseID),
 			Tree: tree, Artifact: &artifact,
 		},
 	}
@@ -305,7 +305,7 @@ func TestRecordTaskWorkspaceVersionSeparatesTreeAndArtifactIdentity(t *testing.T
 			ID: pgvalue.UUID(uuid.NewV7()), OwnershipGeneration: 1, WriterGeneration: 2,
 		},
 		workspaceLease: db.WorkspaceLease{
-			ID: pgvalue.UUID(uuid.NewV7()), BaseVersionID: pgvalue.UUID(uuid.NewV7()),
+			ID: pgvalue.UUID(uuid.NewV7()), BaseWorkspaceVersionID: pgvalue.UUID(uuid.NewV7()),
 		},
 		workspaceMount: db.WorkspaceMount{
 			ID: pgvalue.UUID(uuid.NewV7()), RuntimeInstanceID: pgvalue.UUID(uuid.NewV7()),

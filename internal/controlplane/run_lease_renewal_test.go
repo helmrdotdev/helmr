@@ -102,8 +102,8 @@ func TestRenewRunLeaseRejectsPriorWorkerEpoch(t *testing.T) {
 
 func TestRenewRunLeaseAllowsDrainingOwner(t *testing.T) {
 	server, store, worker, assignment := validRunLeaseRenewalFixture(t)
-	store.authority.workerGroup.State = db.WorkerGroupStateDraining
-	store.authority.worker.State = db.WorkerInstanceStateDraining
+	store.authority.workerGroup.Status = db.WorkerGroupStatusDraining
+	store.authority.worker.Status = db.WorkerInstanceStatusDraining
 
 	if _, err := server.renewRunLease(
 		context.Background(), worker, store.authority.runLease.ID, assignment.Fence(), assignment.ExpiresAt,
@@ -118,7 +118,7 @@ func TestRenewRunLeaseUsesRestoredPhysicalFrontier(t *testing.T) {
 	if restored == store.authority.attempt.BaseWorkspaceVersionID {
 		t.Fatal("restored frontier unexpectedly matches the Attempt base")
 	}
-	store.authority.workspaceLease.BaseVersionID = restored
+	store.authority.workspaceLease.BaseWorkspaceVersionID = restored
 	store.authority.workspaceMount.MaterializedVersionID = restored
 	assignment, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{
 		run: store.authority.run, attempt: store.authority.attempt, runtime: store.authority.runtime,
@@ -213,7 +213,7 @@ func validRunLeaseRenewalFixture(
 	authority.run.ActiveStartedAt = authority.run.StartedAt
 	authority.run.MaxActiveDurationMs = int64(time.Hour / time.Millisecond)
 	authority.run.ActiveElapsedMs = 0
-	authority.runLease.State = db.RunLeaseStateRunning
+	authority.runLease.Status = db.RunLeaseStatusRunning
 	authority.runLease.StartDeadlineAt = pgvalue.Timestamptz(now.Add(-30 * time.Second))
 	authority.runLease.StartedAt = authority.run.StartedAt
 	authority.runLease.ExpiresAt = pgvalue.Timestamptz(now.Add(time.Minute))

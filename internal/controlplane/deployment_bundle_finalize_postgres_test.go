@@ -93,7 +93,7 @@ func TestRegisterFinalizedDeploymentBundlePostgresConvergesConcurrentExactReques
 	for name, query := range map[string]string{
 		"deployment":        `SELECT count(*) FROM deployments WHERE environment_id = $1`,
 		"program artifact":  `SELECT count(*) FROM artifacts WHERE environment_id = $1`,
-		"idempotency claim": `SELECT count(*) FROM idempotency_claims WHERE environment_id = $1 AND state = 'completed'`,
+		"idempotency claim": `SELECT count(*) FROM idempotency_claims WHERE environment_id = $1 AND status = 'completed'`,
 	} {
 		var count int
 		if err := fixture.pool.QueryRow(t.Context(), query, fixture.environmentID).Scan(&count); err != nil {

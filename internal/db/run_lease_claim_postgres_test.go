@@ -75,19 +75,19 @@ func TestRunLeaseDiscoveryAndClaimFoundation(t *testing.T) {
 		pgvalue.MustUUIDValue(rows[1].ID) != assigned.leaseID {
 		t.Fatalf("discovery = %+v, want starting then assigned", rows)
 	}
-	var state RunLeaseState
+	var state RunLeaseStatus
 	var claimedAt pgtype.Timestamptz
 	if err := fixture.pool.QueryRow(ctx,
-		`SELECT state, claimed_at FROM run_leases WHERE id = $1`, assigned.leaseID,
+		`SELECT status, claimed_at FROM run_leases WHERE id = $1`, assigned.leaseID,
 	).Scan(&state, &claimedAt); err != nil {
 		t.Fatal(err)
 	}
-	if state != RunLeaseStateAssigned || claimedAt.Valid {
+	if state != RunLeaseStatusAssigned || claimedAt.Valid {
 		t.Fatalf("discovery mutated assigned lease to state=%s claimed_at=%v", state, claimedAt)
 	}
 	if _, err := fixture.pool.Exec(ctx, `
 UPDATE workspace_mounts
-   SET state = 'failed', failed_at = now(), terminal_at = now(),
+   SET status = 'failed', failed_at = now(), terminal_at = now(),
        terminal_reason_code = 'test_failure'
  WHERE id = (SELECT workspace_mount_id FROM workspace_leases
               WHERE owner_run_lease_id = $1)`, starting.leaseID); err != nil {
@@ -105,7 +105,7 @@ UPDATE workspace_mounts
 	}
 	if _, err := fixture.pool.Exec(ctx, `
 UPDATE workspace_mounts
-   SET state = 'mounted', failed_at = NULL, terminal_at = NULL,
+   SET status = 'mounted', failed_at = NULL, terminal_at = NULL,
        terminal_reason_code = NULL
  WHERE id = (SELECT workspace_mount_id FROM workspace_leases
               WHERE owner_run_lease_id = $1)`, starting.leaseID); err != nil {
@@ -301,8 +301,8 @@ UPDATE workspace_mounts
 	if err != nil {
 		t.Fatal(err)
 	}
-	if claimed.State != RunLeaseStateStarting || !claimed.ClaimedAt.Valid {
-		t.Fatalf("claimed lease = state:%s claimed_at:%v", claimed.State, claimed.ClaimedAt)
+	if claimed.Status != RunLeaseStatusStarting || !claimed.ClaimedAt.Valid {
+		t.Fatalf("claimed lease = state:%s claimed_at:%v", claimed.Status, claimed.ClaimedAt)
 	}
 	firstClaimedAt := claimed.ClaimedAt.Time
 	if _, err := fixture.queries.MarkRunLeaseStarting(ctx, MarkRunLeaseStartingParams{
@@ -328,13 +328,13 @@ UPDATE workspace_mounts
 	unclaimed := fixture.addWork(t, ctx, "assigned", time.Now())
 
 	if _, err := fixture.pool.Exec(ctx,
-		`UPDATE worker_instances SET state = 'draining', draining_at = now() WHERE id = $1`,
+		`UPDATE worker_instances SET status = 'draining', draining_at = now() WHERE id = $1`,
 		fixture.workerID,
 	); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fixture.pool.Exec(ctx,
-		`UPDATE worker_groups SET state = 'draining' WHERE id = $1`,
+		`UPDATE worker_groups SET status = 'draining' WHERE id = $1`,
 		runLeaseTestWorkerGroup,
 	); err != nil {
 		t.Fatal(err)
@@ -388,7 +388,7 @@ UPDATE workspace_mounts
 	}
 	if _, err := fixture.pool.Exec(ctx, `
 UPDATE run_leases
-   SET state = 'running', started_at = now(), updated_at = now()
+   SET status = 'running', started_at = now(), updated_at = now()
  WHERE id = $1`, pgvalue.UUID(assigned.leaseID)); err != nil {
 		t.Fatal(err)
 	}

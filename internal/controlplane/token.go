@@ -178,12 +178,12 @@ func (s *Server) createExternalToken(
 			if err != nil {
 				return err
 			}
-			if acquired.Claim.State == "completed" {
+			if acquired.Claim.Status == "completed" {
 				response, err = s.replayTokenCreate(ctx, work.q, acquired.Claim.Receipt)
 				replayed = true
 				return err
 			}
-			if acquired.Claim.State != "pending" {
+			if acquired.Claim.Status != "pending" {
 				return errTokenCreateReceipt
 			}
 			claim = &acquired.Claim
@@ -295,12 +295,12 @@ func (s *Server) createRuntimeToken(
 		if err != nil {
 			return err
 		}
-		if acquired.Claim.State == "completed" {
+		if acquired.Claim.Status == "completed" {
 			response, err = s.replayTokenCreate(ctx, work.q, acquired.Claim.Receipt)
 			replayed = true
 			return err
 		}
-		if acquired.Claim.State != "pending" {
+		if acquired.Claim.Status != "pending" {
 			return errTokenCreateReceipt
 		}
 
@@ -408,7 +408,7 @@ func lockTokenCreateAuthority(
 	}
 	if err != nil ||
 		authority.run.Status != db.RunStatusRunning ||
-		authority.runLease.State != db.RunLeaseStateRunning ||
+		authority.runLease.Status != db.RunLeaseStatusRunning ||
 		!authority.run.ActiveStartedAt.Valid ||
 		!authority.attempt.EntrypointEnteredAt.Valid ||
 		authority.attempt.TerminalAt.Valid ||
@@ -491,8 +491,8 @@ func (s *Server) listTokens(w http.ResponseWriter, r *http.Request) {
 	state := pgtype.Text{}
 	statusFilter := ""
 	if raw := strings.TrimSpace(query.Get("status")); raw != "" {
-		switch db.TokenState(raw) {
-		case db.TokenStatePending, db.TokenStateCompleted, db.TokenStateExpired, db.TokenStateCancelled:
+		switch db.TokenStatus(raw) {
+		case db.TokenStatusPending, db.TokenStatusCompleted, db.TokenStatusExpired, db.TokenStatusCancelled:
 			state = pgvalue.Text(raw)
 			statusFilter = raw
 		default:
@@ -515,7 +515,7 @@ func (s *Server) listTokens(w http.ResponseWriter, r *http.Request) {
 	}
 	params := db.ListTokensParams{
 		OrgID: pgvalue.UUID(actor.OrgID), ProjectID: projectID, EnvironmentID: environmentID,
-		State: state, LimitCount: limit + 1,
+		Status: state, LimitCount: limit + 1,
 	}
 	if cursor != nil {
 		params.HasAfter = true
@@ -524,7 +524,7 @@ func (s *Server) listTokens(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := s.db.ListTokens(r.Context(), db.ListTokensParams{
 		OrgID: params.OrgID, ProjectID: params.ProjectID, EnvironmentID: params.EnvironmentID,
-		State: params.State, HasAfter: params.HasAfter, AfterCreatedAt: params.AfterCreatedAt,
+		Status: params.Status, HasAfter: params.HasAfter, AfterCreatedAt: params.AfterCreatedAt,
 		AfterID: params.AfterID, LimitCount: params.LimitCount,
 	})
 	if err != nil {
@@ -824,7 +824,7 @@ func (s *Server) completeTokenRecord(
 			if err != nil {
 				return err
 			}
-			if acquired.Claim.State == "completed" {
+			if acquired.Claim.Status == "completed" {
 				replayed, err := tokenOperationReceiptFromJSON(acquired.Claim.Receipt)
 				if err != nil || replayed.TokenID != pgvalue.UUIDString(tokenRow.ID) ||
 					replayed.Outcome != "completed" {
@@ -833,7 +833,7 @@ func (s *Server) completeTokenRecord(
 				completed, err = work.q.GetTokenByID(ctx, tokenRow.ID)
 				return err
 			}
-			if acquired.Claim.State == "failed" {
+			if acquired.Claim.Status == "failed" {
 				replayed, err := tokenOperationReceiptFromJSON(acquired.Claim.Receipt)
 				if err != nil || replayed.TokenID != pgvalue.UUIDString(tokenRow.ID) ||
 					replayed.Outcome != "expired" {
@@ -841,7 +841,7 @@ func (s *Server) completeTokenRecord(
 				}
 				return gone(errTokenExpired)
 			}
-			if acquired.Claim.State != "pending" {
+			if acquired.Claim.Status != "pending" {
 				return errTokenOperationReceipt
 			}
 			claim = &acquired.Claim
@@ -931,7 +931,7 @@ func (s *Server) cancelTokenRecord(
 			if err != nil {
 				return err
 			}
-			if acquired.Claim.State == "completed" {
+			if acquired.Claim.Status == "completed" {
 				replayed, err := tokenOperationReceiptFromJSON(acquired.Claim.Receipt)
 				if err != nil || replayed.TokenID != pgvalue.UUIDString(tokenRow.ID) ||
 					replayed.Outcome != "cancelled" {
@@ -940,7 +940,7 @@ func (s *Server) cancelTokenRecord(
 				cancelled, err = work.q.GetTokenByID(ctx, tokenRow.ID)
 				return err
 			}
-			if acquired.Claim.State == "failed" {
+			if acquired.Claim.Status == "failed" {
 				replayed, err := tokenOperationReceiptFromJSON(acquired.Claim.Receipt)
 				if err != nil || replayed.TokenID != pgvalue.UUIDString(tokenRow.ID) ||
 					replayed.Outcome != "expired" {
@@ -948,7 +948,7 @@ func (s *Server) cancelTokenRecord(
 				}
 				return gone(errTokenExpired)
 			}
-			if acquired.Claim.State != "pending" {
+			if acquired.Claim.Status != "pending" {
 				return errTokenOperationReceipt
 			}
 			claim = &acquired.Claim
@@ -1052,7 +1052,7 @@ func (s *Server) authorizeToken(
 }
 
 func tokenResponse(row db.Token) (api.TokenResponse, error) {
-	status, err := tokenPublicStatus(row.State)
+	status, err := tokenPublicStatus(row.Status)
 	if err != nil {
 		return api.TokenResponse{}, err
 	}
@@ -1078,7 +1078,7 @@ func tokenResponse(row db.Token) (api.TokenResponse, error) {
 }
 
 func tokenListItem(row db.ListTokensRow) (api.TokenListItem, error) {
-	status, err := tokenPublicStatus(row.State)
+	status, err := tokenPublicStatus(row.Status)
 	if err != nil {
 		return api.TokenListItem{}, err
 	}
@@ -1097,15 +1097,15 @@ func tokenListItem(row db.ListTokensRow) (api.TokenListItem, error) {
 	return item, nil
 }
 
-func tokenPublicStatus(state db.TokenState) (api.TokenStatus, error) {
+func tokenPublicStatus(state db.TokenStatus) (api.TokenStatus, error) {
 	switch state {
-	case db.TokenStatePending:
+	case db.TokenStatusPending:
 		return api.TokenStatusPending, nil
-	case db.TokenStateCompleted:
+	case db.TokenStatusCompleted:
 		return api.TokenStatusCompleted, nil
-	case db.TokenStateExpired:
+	case db.TokenStatusExpired:
 		return api.TokenStatusExpired, nil
-	case db.TokenStateCancelled:
+	case db.TokenStatusCancelled:
 		return api.TokenStatusCancelled, nil
 	default:
 		return "", fmt.Errorf("token state %q has no public projection", state)
@@ -1117,7 +1117,7 @@ func (s *Server) tokenCreateResponse(
 	credentials auth.Credentials,
 ) (api.TokenResponse, error) {
 	creation := row
-	creation.State = db.TokenStatePending
+	creation.Status = db.TokenStatusPending
 	creation.Result = nil
 	creation.Error = nil
 	creation.CompletionFingerprint = nil
@@ -1139,7 +1139,7 @@ func (s *Server) tokenCreateResponse(
 func tokenFromCompleteRow(row db.CompleteTokenRow) db.Token {
 	return db.Token{
 		ID: row.ID, OrgID: row.OrgID, ProjectID: row.ProjectID,
-		EnvironmentID: row.EnvironmentID, State: row.State, ExpiresAt: row.ExpiresAt,
+		EnvironmentID: row.EnvironmentID, Status: row.Status, ExpiresAt: row.ExpiresAt,
 		CallbackSecretFingerprint: row.CallbackSecretFingerprint,
 		CompletionFingerprint:     row.CompletionFingerprint,
 		Result:                    row.Result, Error: row.Error, Metadata: row.Metadata, Tags: row.Tags,
@@ -1151,7 +1151,7 @@ func tokenFromCompleteRow(row db.CompleteTokenRow) db.Token {
 func tokenFromCancelRow(row db.CancelTokenRow) db.Token {
 	return db.Token{
 		ID: row.ID, OrgID: row.OrgID, ProjectID: row.ProjectID,
-		EnvironmentID: row.EnvironmentID, State: row.State, ExpiresAt: row.ExpiresAt,
+		EnvironmentID: row.EnvironmentID, Status: row.Status, ExpiresAt: row.ExpiresAt,
 		CallbackSecretFingerprint: row.CallbackSecretFingerprint,
 		CompletionFingerprint:     row.CompletionFingerprint,
 		Result:                    row.Result, Error: row.Error, Metadata: row.Metadata, Tags: row.Tags,

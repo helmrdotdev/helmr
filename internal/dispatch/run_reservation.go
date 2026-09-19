@@ -158,7 +158,7 @@ func (d *Authority) prepareRunWorkspace(
 				Int32: authority.attemptNumber,
 				Valid: true,
 			},
-			BaseWorkspaceVersionID: authority.baseVersionID,
+			BaseWorkspaceVersionID: authority.baseWorkspaceVersionID,
 			ReservationExpiresAt: pgtype.Timestamptz{
 				Time:  reservedAt.Add(run.ReservationTTL),
 				Valid: true,
@@ -236,7 +236,7 @@ func (d *Authority) useRunRuntime(
 			RuntimeInstanceID:  locked.id,
 			RunID:              authority.runID,
 			AttemptNumber:      locked.reservedAttempt,
-			WorkspaceVersionID: authority.baseVersionID,
+			WorkspaceVersionID: authority.baseWorkspaceVersionID,
 			FencingGeneration:  requestedRunMountGeneration(authority),
 		},
 	)
@@ -248,7 +248,7 @@ func (d *Authority) useRunRuntime(
 		workerID:          requested.WorkerInstanceID,
 		epoch:             requested.WorkerEpoch,
 		runtimeID:         requested.RuntimeInstanceID,
-		state:             requested.State,
+		state:             requested.Status,
 		fencingGeneration: requested.FencingGeneration,
 	}, nil
 }
@@ -422,7 +422,7 @@ func validateRunRuntime(
 		if runtime.reservedRunID != authority.runID ||
 			!runtime.reservedAttempt.Valid ||
 			runtime.reservedAttempt.Int32 != authority.attemptNumber ||
-			runtime.reservedVersionID != authority.baseVersionID ||
+			runtime.reservedVersionID != authority.baseWorkspaceVersionID ||
 			!runtime.reservationExpiresAt.Valid ||
 			!runtime.reservationActive {
 			return errors.New("workspace runtime reservation does not match run")
@@ -439,7 +439,7 @@ func getActiveRunMount(
 ) (runWorkspaceMount, error) {
 	var mount runWorkspaceMount
 	err := tx.QueryRow(ctx, `
-SELECT id, worker_instance_id, worker_epoch, runtime_instance_id, state,
+SELECT id, worker_instance_id, worker_epoch, runtime_instance_id, status,
        fencing_generation
   FROM workspace_mounts
  WHERE org_id = $1
@@ -452,14 +452,14 @@ SELECT id, worker_instance_id, worker_epoch, runtime_instance_id, state,
    AND worker_instance_id = $8
    AND worker_epoch = $9
    AND runtime_instance_id = $10
-   AND state IN ('mounting', 'mounted', 'unmounting')
+   AND status IN ('mounting', 'mounted', 'unmounting')
  FOR UPDATE`,
 		authority.orgID,
 		authority.projectID,
 		authority.environmentID,
 		authority.regionID,
 		authority.workspaceID,
-		authority.baseVersionID,
+		authority.baseWorkspaceVersionID,
 		runtime.groupID,
 		runtime.workerID,
 		runtime.workerEpoch,

@@ -328,7 +328,7 @@ func TestProtectedPreparationReusesPersistedRoot(t *testing.T) {
 }
 func TestProtectedSnapshotDoesNotJoinMountStopLockGraph(t *testing.T) {
 	f := newSnapshotFixture(t, 1, true)
-	dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE workspace_mounts SET state='unmounting' WHERE id=$1", f.mount)
+	dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE workspace_mounts SET status='unmounting' WHERE id=$1", f.mount)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	holder, err := f.fixture.Pool.Begin(ctx)
@@ -380,7 +380,7 @@ func TestProtectedSnapshotDoesNotJoinMountStopLockGraph(t *testing.T) {
 func TestProtectedGuestIngressCeilingsBeforeReplay(t *testing.T) {
 	f := newSnapshotFixture(t, 1, true)
 	dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE runs SET status='running',started_at=now(),active_started_at=now() WHERE id=$1", f.run.RunID)
-	dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE run_leases SET state='running',started_at=now() WHERE id=$1", f.run.LeaseID)
+	dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE run_leases SET status='running',started_at=now() WHERE id=$1", f.run.LeaseID)
 	dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE run_attempts SET entrypoint_entered_at=now() WHERE run_id=$1", f.run.RunID)
 	other := f.fixture.AddRunLease(t, "starting", time.Now().Add(-time.Minute))
 	var targetID uuid.UUID
@@ -512,7 +512,7 @@ func TestProtectedSnapshotCurrentProcessOwnerIgnoresLiveRunHistory(t *testing.T)
 		t.Fatal(err)
 	}
 	process := uuid.NewV7()
-	_, err = tx.Exec(t.Context(), `INSERT INTO workspace_processes(id,org_id,project_id,environment_id,workspace_id,base_version_id,restore_desired_state,region_id,worker_group_id,worker_instance_id,worker_epoch,runtime_instance_id,workspace_mount_id,state,request,claim_id,started_at)
+	_, err = tx.Exec(t.Context(), `INSERT INTO workspace_processes(id,org_id,project_id,environment_id,workspace_id,base_workspace_version_id,restore_desired_state,region_id,worker_group_id,worker_instance_id,worker_epoch,runtime_instance_id,workspace_mount_id,status,request,claim_id,started_at)
  SELECT $1,r.org_id,r.project_id,r.environment_id,r.workspace_id,m.materialized_version_id,'active',r.region_id,r.worker_group_id,r.worker_instance_id,r.worker_epoch,r.id,m.id,'running','{}'::jsonb,$2,now()
  FROM runtime_instances r JOIN workspace_mounts m ON m.runtime_instance_id=r.id WHERE r.id=$3`, process, acquired.Claim.ID, f.runtime)
 	if err != nil {
@@ -529,7 +529,7 @@ func TestProtectedSnapshotCurrentProcessOwnerIgnoresLiveRunHistory(t *testing.T)
 			t.Fatalf("current process rejected: %s", r.Body.String())
 		}
 	}
-	dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE workspace_processes SET state='exit_requested',stdout=''::bytea,stderr=''::bytea WHERE id=$1", process)
+	dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE workspace_processes SET status='exit_requested',stdout=''::bytea,stderr=''::bytea WHERE id=$1", process)
 	// The old Run lease is still starting/unexpired on this runtime; it is not
 	// the Workspace Lease's owner and must authorize neither renewal nor use.
 	for _, resolve := range []bool{true, false} {

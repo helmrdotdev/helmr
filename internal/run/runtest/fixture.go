@@ -144,7 +144,7 @@ func New(t *testing.T) Fixture {
 		dbtest.Digest("run-lease-initramfs"), dbtest.Digest("run-lease-rootfs"))
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO worker_pools (
-			id, worker_group_id, name, state,
+			id, worker_group_id, name, status,
 			runtime_identity_id, substrate_format, substrate_contract,
 			capacity_cpu_millis, capacity_memory_bytes, capacity_guest_ephemeral_disk_bytes,
 			per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes,
@@ -168,7 +168,7 @@ func New(t *testing.T) Fixture {
 	`, WorkerGroup, fixture.WorkerPoolID)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO worker_instances (
-			id, resource_id, worker_group_id, worker_pool_id, state,
+			id, resource_id, worker_group_id, worker_pool_id, status,
 			current_epoch, current_service_id,
 			runtime_identity_id,
 			substrate_format, substrate_contract,
@@ -223,7 +223,7 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, createdAt time.Ti
 	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO workspace_versions (
 			id, environment_id, workspace_id,
-			content_digest, state, ownership_generation, writer_generation, published_at
+			content_digest, status, ownership_generation, writer_generation, published_at
 		) VALUES (
 			$1, $2, $3,
 			'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',
@@ -273,7 +273,7 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, createdAt time.Ti
 		INSERT INTO workspace_mounts (
 			id, org_id, worker_group_id, project_id, environment_id, region_id,
 			worker_instance_id, worker_epoch, workspace_id, materialized_version_id,
-			runtime_instance_id, state, fencing_generation, mounted_at
+			runtime_instance_id, status, fencing_generation, mounted_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, 1, $8, $9, $10, 'mounted', 2, now()
 		)
@@ -291,7 +291,7 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, createdAt time.Ti
 			worker_epoch, runtime_instance_id,
 			runtime_identity_id, requested_cpu_millis,
 			requested_memory_bytes, requested_guest_ephemeral_disk_bytes,
-			requested_execution_slots, state, created_at, start_deadline_at,
+			requested_execution_slots, status, created_at, start_deadline_at,
 			claimed_at, expires_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, 1, 1, $8, $9, 1, $10,
@@ -307,7 +307,7 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, createdAt time.Ti
 		INSERT INTO workspace_leases (
 			id, org_id, worker_group_id, project_id, environment_id, region_id,
 			worker_instance_id, worker_epoch, runtime_instance_id, workspace_id,
-			workspace_mount_id, owner_run_lease_id, base_version_id,
+			workspace_mount_id, owner_run_lease_id, base_workspace_version_id,
 			ownership_generation, writer_generation, mount_fencing_generation,
 			fencing_token_hash, expires_at
 		) VALUES (

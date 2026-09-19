@@ -37,13 +37,13 @@ WITH selected_definition AS (
            sqlc.arg(initial_version_id),
            sqlc.narg(key)
       FROM selected_definition
-    RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at
+    RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.revision, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.status, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at
 ), created_version AS (
     INSERT INTO workspace_versions (
         id,
         environment_id,
         workspace_id,
-        state,
+        status,
         content_digest,
         size_bytes,
         entry_count,
@@ -102,13 +102,13 @@ SELECT workspaces.id,
        workspaces.sandbox_declared_id,
        workspaces.deployment_definition_id,
        workspaces.key,
-       workspaces.state_version,
+       workspaces.revision,
        workspaces.owner_session_id,
        workspaces.owner_run_id,
        workspaces.ownership_generation,
        workspaces.writer_generation,
        workspaces.head_version_id,
-       workspaces.state,
+       workspaces.status,
        workspaces.desired_state,
        workspaces.dirty_state,
        workspaces.last_activity_at,
@@ -128,7 +128,7 @@ SELECT workspaces.id,
        workspaces.key,
        deployment_definitions.declared_id AS sandbox_id,
        deployment_definitions.deployment_id,
-       workspaces.state,
+       workspaces.status,
        workspaces.owner_session_id,
        workspaces.owner_run_id,
        workspaces.last_activity_at,
@@ -151,7 +151,7 @@ SELECT workspaces.id,
        workspaces.key,
        deployment_definitions.declared_id AS sandbox_id,
        deployment_definitions.deployment_id,
-       workspaces.state,
+       workspaces.status,
        workspaces.owner_session_id,
        workspaces.owner_run_id,
        workspaces.last_activity_at,
@@ -206,13 +206,13 @@ SELECT workspaces.id,
        workspaces.sandbox_declared_id,
        workspaces.deployment_definition_id,
        workspaces.key,
-       workspaces.state_version,
+       workspaces.revision,
        workspaces.owner_session_id,
        workspaces.owner_run_id,
        workspaces.ownership_generation,
        workspaces.writer_generation,
        workspaces.head_version_id,
-       workspaces.state,
+       workspaces.status,
        workspaces.desired_state,
        workspaces.dirty_state,
        workspaces.last_activity_at,
@@ -225,13 +225,13 @@ SELECT workspaces.id,
            SELECT 1
              FROM workspace_leases
             WHERE workspace_leases.workspace_id = workspaces.id
-              AND workspace_leases.state IN ('active', 'releasing')
+              AND workspace_leases.status IN ('active', 'releasing')
        ) AS has_active_lease,
        EXISTS (
            SELECT 1
              FROM workspace_processes
             WHERE workspace_processes.workspace_id = workspaces.id
-              AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
+              AND workspace_processes.status IN ('pending', 'starting', 'running', 'exit_requested')
        ) AS has_active_process
   FROM workspaces
   JOIN environments
@@ -244,7 +244,7 @@ SELECT workspaces.id,
   JOIN workspace_versions AS head
     ON head.workspace_id = workspaces.id
    AND head.id = workspaces.head_version_id
-   AND head.state = 'committed'
+   AND head.status = 'committed'
  WHERE workspaces.environment_id = sqlc.arg(environment_id)
    AND workspaces.id = sqlc.arg(id)
  FOR UPDATE OF workspaces;
@@ -256,13 +256,13 @@ SELECT workspaces.id,
        workspaces.sandbox_declared_id,
        workspaces.deployment_definition_id,
        workspaces.key,
-       workspaces.state_version,
+       workspaces.revision,
        workspaces.owner_session_id,
        workspaces.owner_run_id,
        workspaces.ownership_generation,
        workspaces.writer_generation,
        workspaces.head_version_id,
-       workspaces.state,
+       workspaces.status,
        workspaces.desired_state,
        workspaces.dirty_state,
        workspaces.last_activity_at,
@@ -273,13 +273,13 @@ SELECT workspaces.id,
            SELECT 1
              FROM workspace_leases
             WHERE workspace_leases.workspace_id = workspaces.id
-              AND workspace_leases.state IN ('active', 'releasing')
+              AND workspace_leases.status IN ('active', 'releasing')
        ) AS has_active_lease,
        EXISTS (
            SELECT 1
              FROM workspace_processes
             WHERE workspace_processes.workspace_id = workspaces.id
-              AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
+              AND workspace_processes.status IN ('pending', 'starting', 'running', 'exit_requested')
        ) AS has_active_process
   FROM workspaces
   JOIN environments ON environments.id = workspaces.environment_id
@@ -287,30 +287,30 @@ SELECT workspaces.id,
    AND environments.project_id = sqlc.arg(project_id)
    AND workspaces.environment_id = sqlc.arg(environment_id)
    AND workspaces.id = sqlc.arg(id)
-   AND workspaces.state <> 'deleted'
+   AND workspaces.status <> 'deleted'
  FOR UPDATE OF workspaces;
 
 -- name: MarkWorkspaceDeleting :one
 UPDATE workspaces
-   SET state = 'deleting',
+   SET status = 'deleting',
        desired_state = 'deleted',
        -- Explicit deletion discards lost dirty state; it does not recover a version.
        dirty_state = CASE WHEN dirty_state = 'dirty_state_lost' THEN 'clean' ELSE dirty_state END,
-       state_version = state_version + 1,
+       revision = revision + 1,
        updated_at = now()
  WHERE environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id)
-   AND state_version = sqlc.arg(expected_state_version)
-   AND state IN ('active', 'recovery_required')
+   AND revision = sqlc.arg(expected_revision)
+   AND status IN ('active', 'recovery_required')
    AND owner_session_id IS NULL
    AND owner_run_id IS NULL
-RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at;
+RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.revision, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.status, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at;
 
 -- name: FinalizeDeletingWorkspaces :many
 WITH eligible AS (
     SELECT workspaces.id
       FROM workspaces
-     WHERE workspaces.state = 'deleting'
+     WHERE workspaces.status = 'deleting'
        AND workspaces.desired_state = 'deleted'
        AND workspaces.owner_session_id IS NULL
        AND workspaces.owner_run_id IS NULL
@@ -318,19 +318,19 @@ WITH eligible AS (
            SELECT 1
              FROM workspace_processes
             WHERE workspace_processes.workspace_id = workspaces.id
-              AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
+              AND workspace_processes.status IN ('pending', 'starting', 'running', 'exit_requested')
        )
        AND NOT EXISTS (
            SELECT 1
              FROM workspace_leases
             WHERE workspace_leases.workspace_id = workspaces.id
-              AND workspace_leases.state IN ('active', 'releasing')
+              AND workspace_leases.status IN ('active', 'releasing')
        )
        AND NOT EXISTS (
            SELECT 1
              FROM workspace_mounts
             WHERE workspace_mounts.workspace_id = workspaces.id
-              AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
+              AND workspace_mounts.status IN ('mounting', 'mounted', 'unmounting')
        )
        AND NOT EXISTS (
            SELECT 1
@@ -348,8 +348,8 @@ WITH eligible AS (
            sandbox_declared_id = NULL,
            head_version_id = NULL,
            dirty_state = 'clean',
-           state = 'deleted',
-           state_version = state_version + 1,
+           status = 'deleted',
+           revision = revision + 1,
            deleted_at = now(),
            updated_at = now()
       FROM eligible
@@ -359,7 +359,7 @@ WITH eligible AS (
 SELECT id FROM finalized;
 
 -- name: LockActorInputWorkspace :one
-SELECT id, environment_id, region_id, sandbox_declared_id, deployment_definition_id, key, state_version, owner_session_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
+SELECT id, environment_id, region_id, sandbox_declared_id, deployment_definition_id, key, revision, owner_session_id, owner_run_id, ownership_generation, writer_generation, head_version_id, status, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
   FROM workspaces
  WHERE environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id)
@@ -371,15 +371,15 @@ SELECT id, environment_id, region_id, sandbox_declared_id, deployment_definition
 UPDATE workspaces
    SET owner_run_id = sqlc.arg(run_id),
        ownership_generation = ownership_generation + 1,
-       state_version = state_version + 1,
+       revision = revision + 1,
        desired_state = 'active',
        last_activity_at = now(),
        updated_at = now()
  WHERE workspaces.environment_id = sqlc.arg(environment_id)
    AND workspaces.id = sqlc.arg(id)
-   AND workspaces.state_version = sqlc.arg(expected_state_version)
+   AND workspaces.revision = sqlc.arg(expected_revision)
    AND workspaces.head_version_id = sqlc.arg(expected_head_version_id)
-   AND workspaces.state = 'active'
+   AND workspaces.status = 'active'
    AND workspaces.desired_state IN ('active', 'stopped')
    AND workspaces.dirty_state = 'clean'
    AND workspaces.owner_session_id IS NULL
@@ -388,29 +388,29 @@ UPDATE workspaces
        SELECT 1
          FROM workspace_leases
         WHERE workspace_leases.workspace_id = workspaces.id
-          AND workspace_leases.state IN ('active', 'releasing')
+          AND workspace_leases.status IN ('active', 'releasing')
    )
    AND NOT EXISTS (
        SELECT 1
          FROM workspace_processes
         WHERE workspace_processes.workspace_id = workspaces.id
-          AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
+          AND workspace_processes.status IN ('pending', 'starting', 'running', 'exit_requested')
    )
-RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at;
+RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.revision, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.status, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at;
 
 -- name: ReserveWorkspaceForActor :one
 UPDATE workspaces
    SET owner_session_id = sqlc.arg(session_id),
        ownership_generation = ownership_generation + 1,
-       state_version = state_version + 1,
+       revision = revision + 1,
        desired_state = 'active',
        last_activity_at = now(),
        updated_at = now()
  WHERE workspaces.environment_id = sqlc.arg(environment_id)
    AND workspaces.id = sqlc.arg(id)
-   AND workspaces.state_version = sqlc.arg(expected_state_version)
+   AND workspaces.revision = sqlc.arg(expected_revision)
    AND workspaces.head_version_id = sqlc.arg(expected_head_version_id)
-   AND workspaces.state = 'active'
+   AND workspaces.status = 'active'
    AND workspaces.desired_state IN ('active', 'stopped')
    AND workspaces.dirty_state = 'clean'
    AND workspaces.owner_session_id IS NULL
@@ -419,17 +419,17 @@ UPDATE workspaces
        SELECT 1
          FROM workspace_leases
         WHERE workspace_leases.workspace_id = workspaces.id
-          AND workspace_leases.state IN ('active', 'releasing')
+          AND workspace_leases.status IN ('active', 'releasing')
    )
    AND NOT EXISTS (
        SELECT 1
          FROM workspace_processes
         WHERE workspace_processes.workspace_id = workspaces.id
-          AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
+          AND workspace_processes.status IN ('pending', 'starting', 'running', 'exit_requested')
    )
-RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at;
+RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.revision, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.status, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at;
 -- name: LockChildWorkspacePair :many
-SELECT id, environment_id, region_id, sandbox_declared_id, deployment_definition_id, key, state_version, owner_session_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
+SELECT id, environment_id, region_id, sandbox_declared_id, deployment_definition_id, key, revision, owner_session_id, owner_run_id, ownership_generation, writer_generation, head_version_id, status, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
   FROM workspaces
  WHERE environment_id = sqlc.arg(environment_id)
    AND id = ANY(sqlc.arg(workspace_ids)::uuid[])

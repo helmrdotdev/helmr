@@ -70,7 +70,7 @@ SELECT $1,
    AND actor_definition.id = $16
    AND actor_definition.kind = 'actor'
    AND actor_definition.declared_id = $17
-RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, state_version, manual_run_cancelled, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, state, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
+RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, manual_run_cancelled, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
 `
 
 type CreateActorParams struct {
@@ -123,7 +123,7 @@ func (q *Queries) CreateActor(ctx context.Context, arg CreateActorParams) (Sessi
 		&i.Key,
 		&i.CurrentRunID,
 		&i.RunGeneration,
-		&i.StateVersion,
+		&i.Revision,
 		&i.ManualRunCancelled,
 		&i.Failure,
 		&i.FailureRunID,
@@ -139,7 +139,7 @@ func (q *Queries) CreateActor(ctx context.Context, arg CreateActorParams) (Sessi
 		&i.RunRetryPolicy,
 		&i.RunMetadata,
 		&i.RunTags,
-		&i.State,
+		&i.Status,
 		&i.CloseSequence,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -151,7 +151,7 @@ func (q *Queries) CreateActor(ctx context.Context, arg CreateActorParams) (Sessi
 }
 
 const getActor = `-- name: GetActor :one
-SELECT id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, state_version, manual_run_cancelled, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, state, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
+SELECT id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, manual_run_cancelled, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
   FROM sessions
  WHERE environment_id = $1
    AND id = $2
@@ -174,7 +174,7 @@ func (q *Queries) GetActor(ctx context.Context, arg GetActorParams) (Session, er
 		&i.Key,
 		&i.CurrentRunID,
 		&i.RunGeneration,
-		&i.StateVersion,
+		&i.Revision,
 		&i.ManualRunCancelled,
 		&i.Failure,
 		&i.FailureRunID,
@@ -190,7 +190,7 @@ func (q *Queries) GetActor(ctx context.Context, arg GetActorParams) (Session, er
 		&i.RunRetryPolicy,
 		&i.RunMetadata,
 		&i.RunTags,
-		&i.State,
+		&i.Status,
 		&i.CloseSequence,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -202,7 +202,7 @@ func (q *Queries) GetActor(ctx context.Context, arg GetActorParams) (Session, er
 }
 
 const getActorByKey = `-- name: GetActorByKey :one
-SELECT id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, state_version, manual_run_cancelled, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, state, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
+SELECT id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, manual_run_cancelled, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
   FROM sessions
  WHERE environment_id = $1
    AND actor_declared_id = $2
@@ -227,7 +227,7 @@ func (q *Queries) GetActorByKey(ctx context.Context, arg GetActorByKeyParams) (S
 		&i.Key,
 		&i.CurrentRunID,
 		&i.RunGeneration,
-		&i.StateVersion,
+		&i.Revision,
 		&i.ManualRunCancelled,
 		&i.Failure,
 		&i.FailureRunID,
@@ -243,7 +243,7 @@ func (q *Queries) GetActorByKey(ctx context.Context, arg GetActorByKeyParams) (S
 		&i.RunRetryPolicy,
 		&i.RunMetadata,
 		&i.RunTags,
-		&i.State,
+		&i.Status,
 		&i.CloseSequence,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -255,7 +255,7 @@ func (q *Queries) GetActorByKey(ctx context.Context, arg GetActorByKeyParams) (S
 }
 
 const getSessionSnapshot = `-- name: GetSessionSnapshot :one
-SELECT sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.state_version, sessions.manual_run_cancelled, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_output_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.state, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.cancelled_at, sessions.failed_at,
+SELECT sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.revision, sessions.manual_run_cancelled, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_output_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.status, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.cancelled_at, sessions.failed_at,
        deployment_definitions.deployment_id
   FROM sessions
   JOIN environments
@@ -287,7 +287,7 @@ type GetSessionSnapshotRow struct {
 	Key                      pgtype.Text        `json:"key"`
 	CurrentRunID             pgtype.UUID        `json:"current_run_id"`
 	RunGeneration            int64              `json:"run_generation"`
-	StateVersion             int64              `json:"state_version"`
+	Revision                 int64              `json:"revision"`
 	ManualRunCancelled       bool               `json:"manual_run_cancelled"`
 	Failure                  []byte             `json:"failure"`
 	FailureRunID             pgtype.UUID        `json:"failure_run_id"`
@@ -303,7 +303,7 @@ type GetSessionSnapshotRow struct {
 	RunRetryPolicy           []byte             `json:"run_retry_policy"`
 	RunMetadata              []byte             `json:"run_metadata"`
 	RunTags                  []string           `json:"run_tags"`
-	State                    string             `json:"state"`
+	Status                   string             `json:"status"`
 	CloseSequence            pgtype.Int8        `json:"close_sequence"`
 	CreatedAt                pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
@@ -330,7 +330,7 @@ func (q *Queries) GetSessionSnapshot(ctx context.Context, arg GetSessionSnapshot
 		&i.Key,
 		&i.CurrentRunID,
 		&i.RunGeneration,
-		&i.StateVersion,
+		&i.Revision,
 		&i.ManualRunCancelled,
 		&i.Failure,
 		&i.FailureRunID,
@@ -346,7 +346,7 @@ func (q *Queries) GetSessionSnapshot(ctx context.Context, arg GetSessionSnapshot
 		&i.RunRetryPolicy,
 		&i.RunMetadata,
 		&i.RunTags,
-		&i.State,
+		&i.Status,
 		&i.CloseSequence,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -359,7 +359,7 @@ func (q *Queries) GetSessionSnapshot(ctx context.Context, arg GetSessionSnapshot
 }
 
 const getSessionSnapshotByKey = `-- name: GetSessionSnapshotByKey :one
-SELECT sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.state_version, sessions.manual_run_cancelled, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_output_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.state, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.cancelled_at, sessions.failed_at,
+SELECT sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.revision, sessions.manual_run_cancelled, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_output_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.status, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.cancelled_at, sessions.failed_at,
        deployment_definitions.deployment_id
   FROM sessions
   JOIN environments
@@ -393,7 +393,7 @@ type GetSessionSnapshotByKeyRow struct {
 	Key                      pgtype.Text        `json:"key"`
 	CurrentRunID             pgtype.UUID        `json:"current_run_id"`
 	RunGeneration            int64              `json:"run_generation"`
-	StateVersion             int64              `json:"state_version"`
+	Revision                 int64              `json:"revision"`
 	ManualRunCancelled       bool               `json:"manual_run_cancelled"`
 	Failure                  []byte             `json:"failure"`
 	FailureRunID             pgtype.UUID        `json:"failure_run_id"`
@@ -409,7 +409,7 @@ type GetSessionSnapshotByKeyRow struct {
 	RunRetryPolicy           []byte             `json:"run_retry_policy"`
 	RunMetadata              []byte             `json:"run_metadata"`
 	RunTags                  []string           `json:"run_tags"`
-	State                    string             `json:"state"`
+	Status                   string             `json:"status"`
 	CloseSequence            pgtype.Int8        `json:"close_sequence"`
 	CreatedAt                pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
@@ -437,7 +437,7 @@ func (q *Queries) GetSessionSnapshotByKey(ctx context.Context, arg GetSessionSna
 		&i.Key,
 		&i.CurrentRunID,
 		&i.RunGeneration,
-		&i.StateVersion,
+		&i.Revision,
 		&i.ManualRunCancelled,
 		&i.Failure,
 		&i.FailureRunID,
@@ -453,7 +453,7 @@ func (q *Queries) GetSessionSnapshotByKey(ctx context.Context, arg GetSessionSna
 		&i.RunRetryPolicy,
 		&i.RunMetadata,
 		&i.RunTags,
-		&i.State,
+		&i.Status,
 		&i.CloseSequence,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -466,7 +466,7 @@ func (q *Queries) GetSessionSnapshotByKey(ctx context.Context, arg GetSessionSna
 }
 
 const listSessionSnapshots = `-- name: ListSessionSnapshots :many
-SELECT sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.state_version, sessions.manual_run_cancelled, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_output_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.state, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.cancelled_at, sessions.failed_at,
+SELECT sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.revision, sessions.manual_run_cancelled, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_output_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.status, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.cancelled_at, sessions.failed_at,
        deployment_definitions.deployment_id
   FROM sessions
   JOIN environments
@@ -481,7 +481,7 @@ SELECT sessions.id, sessions.environment_id, sessions.actor_declared_id, session
  WHERE sessions.environment_id = $3
    AND (
        coalesce(cardinality($4::text[]), 0) = 0
-       OR sessions.state = ANY($4::text[])
+       OR sessions.status = ANY($4::text[])
    )
    AND (
        $5::timestamptz IS NULL
@@ -498,7 +498,7 @@ type ListSessionSnapshotsParams struct {
 	OrgID          pgtype.UUID        `json:"org_id"`
 	ProjectID      pgtype.UUID        `json:"project_id"`
 	EnvironmentID  pgtype.UUID        `json:"environment_id"`
-	States         []string           `json:"states"`
+	Statuses       []string           `json:"statuses"`
 	AfterCreatedAt pgtype.Timestamptz `json:"after_created_at"`
 	AfterID        pgtype.UUID        `json:"after_id"`
 	LimitCount     int32              `json:"limit_count"`
@@ -513,7 +513,7 @@ type ListSessionSnapshotsRow struct {
 	Key                      pgtype.Text        `json:"key"`
 	CurrentRunID             pgtype.UUID        `json:"current_run_id"`
 	RunGeneration            int64              `json:"run_generation"`
-	StateVersion             int64              `json:"state_version"`
+	Revision                 int64              `json:"revision"`
 	ManualRunCancelled       bool               `json:"manual_run_cancelled"`
 	Failure                  []byte             `json:"failure"`
 	FailureRunID             pgtype.UUID        `json:"failure_run_id"`
@@ -529,7 +529,7 @@ type ListSessionSnapshotsRow struct {
 	RunRetryPolicy           []byte             `json:"run_retry_policy"`
 	RunMetadata              []byte             `json:"run_metadata"`
 	RunTags                  []string           `json:"run_tags"`
-	State                    string             `json:"state"`
+	Status                   string             `json:"status"`
 	CloseSequence            pgtype.Int8        `json:"close_sequence"`
 	CreatedAt                pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
@@ -544,7 +544,7 @@ func (q *Queries) ListSessionSnapshots(ctx context.Context, arg ListSessionSnaps
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
-		arg.States,
+		arg.Statuses,
 		arg.AfterCreatedAt,
 		arg.AfterID,
 		arg.LimitCount,
@@ -565,7 +565,7 @@ func (q *Queries) ListSessionSnapshots(ctx context.Context, arg ListSessionSnaps
 			&i.Key,
 			&i.CurrentRunID,
 			&i.RunGeneration,
-			&i.StateVersion,
+			&i.Revision,
 			&i.ManualRunCancelled,
 			&i.Failure,
 			&i.FailureRunID,
@@ -581,7 +581,7 @@ func (q *Queries) ListSessionSnapshots(ctx context.Context, arg ListSessionSnaps
 			&i.RunRetryPolicy,
 			&i.RunMetadata,
 			&i.RunTags,
-			&i.State,
+			&i.Status,
 			&i.CloseSequence,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -690,16 +690,16 @@ func (q *Queries) LockActorStartKey(ctx context.Context, arg LockActorStartKeyPa
 const setActorCurrentRun = `-- name: SetActorCurrentRun :one
 UPDATE sessions
    SET current_run_id = $1,
-       state_version = state_version + 1,
+       revision = revision + 1,
        updated_at = now()
  WHERE environment_id = $2
    AND id = $3
    AND workspace_id = $4
-   AND state = 'open'
+   AND status = 'open'
    AND current_run_id IS NULL
    AND run_generation = 1
-   AND state_version = 1
-RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, state_version, manual_run_cancelled, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, state, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
+   AND revision = 1
+RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, manual_run_cancelled, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
 `
 
 type SetActorCurrentRunParams struct {
@@ -726,7 +726,7 @@ func (q *Queries) SetActorCurrentRun(ctx context.Context, arg SetActorCurrentRun
 		&i.Key,
 		&i.CurrentRunID,
 		&i.RunGeneration,
-		&i.StateVersion,
+		&i.Revision,
 		&i.ManualRunCancelled,
 		&i.Failure,
 		&i.FailureRunID,
@@ -742,7 +742,7 @@ func (q *Queries) SetActorCurrentRun(ctx context.Context, arg SetActorCurrentRun
 		&i.RunRetryPolicy,
 		&i.RunMetadata,
 		&i.RunTags,
-		&i.State,
+		&i.Status,
 		&i.CloseSequence,
 		&i.CreatedAt,
 		&i.UpdatedAt,

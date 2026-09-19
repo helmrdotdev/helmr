@@ -124,7 +124,7 @@ INSERT INTO deployment_definitions (
 	if _, err := tx.Exec(ctx, `
 INSERT INTO schedules (
     id, environment_id, task_declared_id,
-    cron_pattern, timezone, state, effective_from
+    cron_pattern, timezone, status, effective_from
 ) VALUES (
     $1::uuid, $2::uuid, 'demo-task',
     '0 9 * * 1-5', 'UTC', 'archived', now() - interval '1 day'
@@ -146,7 +146,7 @@ INSERT INTO workspaces (
 	}
 	if _, err := tx.Exec(ctx, `
 INSERT INTO workspace_versions (
-    id, environment_id, workspace_id, content_digest, state,
+    id, environment_id, workspace_id, content_digest, status,
     ownership_generation, writer_generation, published_at, size_bytes, entry_count
 ) VALUES
     ($1::uuid, $3::uuid, $4::uuid, $5, 'committed', 0, 0, now() - interval '2 hours', 0, 0),
@@ -160,7 +160,7 @@ INSERT INTO sessions (
     id, environment_id, actor_declared_id, deployment_definition_id, workspace_id,
     current_run_id, next_input_sequence, committed_input_sequence, next_output_sequence,
     run_queue_name, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags,
-    state
+    status
 ) VALUES
     (
         $1::uuid, $3::uuid, 'demo-actor', $4::uuid, $5::uuid,
@@ -181,7 +181,7 @@ INSERT INTO runs (
     id, org_id, project_id, environment_id, deployment_id, deployment_definition_id,
     entrypoint_kind, entrypoint_declared_id, cause_kind, session_id,
     session_input_start_sequence, session_input_high_watermark,
-    workspace_id, base_workspace_version_id, payload, status, state_version, current_attempt_number,
+    workspace_id, base_workspace_version_id, payload, status, revision, current_attempt_number,
     metadata, tags, queue_name, queue_origin_at, queue_score_at, max_active_duration_ms,
     retry_policy, trace_id, root_span_id, terminal_at, output, failure
 ) VALUES
@@ -247,7 +247,7 @@ INSERT INTO run_attempts (
 	}
 	if _, err := tx.Exec(ctx, `
 UPDATE sessions
-   SET state = 'failed',
+   SET status = 'failed',
        failure = jsonb_build_object(
            'code', 'actor_failed',
            'message', 'Synthetic demo session failure',
@@ -273,19 +273,19 @@ INSERT INTO session_records (
 	}
 	if _, err := tx.Exec(ctx, `
 INSERT INTO tokens (
-    id, org_id, project_id, environment_id, state, expires_at,
-    callback_secret_fingerprint, metadata, tags, result, completed_at
+    id, org_id, project_id, environment_id, status, expires_at,
+    callback_secret_fingerprint, metadata, tags, result, completed_at, completion_fingerprint
 ) VALUES
     (
         $1::uuid, $3::uuid, $4::uuid, $5::uuid, 'pending',
         now() + interval '10 years', decode(repeat('aa', 32), 'hex'),
-        $6::jsonb, ARRAY[$7::text, 'demo-approval'], NULL, NULL
+        $6::jsonb, ARRAY[$7::text, 'demo-approval'], NULL, NULL, NULL
     ),
     (
         $2::uuid, $3::uuid, $4::uuid, $5::uuid, 'completed',
         now() + interval '10 years', decode(repeat('bb', 32), 'hex'),
         $6::jsonb, ARRAY[$7::text, 'demo-completed'],
-        '{"approved":true}'::jsonb, now() - interval '1 hour'
+        '{"approved":true}'::jsonb, now() - interval '1 hour', decode(repeat('cc', 32), 'hex')
     )
 `, demoSeedTokenPendingID, demoSeedTokenCompletedID,
 		demoSeedOrgID, demoSeedProjectID, demoSeedEnvironmentID, demoSeedMarkerMetadata, demoSeedMarkerTag); err != nil {

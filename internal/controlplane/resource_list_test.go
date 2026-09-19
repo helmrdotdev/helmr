@@ -70,7 +70,7 @@ func TestWorkspaceListItemExcludesSecretPlacements(t *testing.T) {
 	now := pgvalue.Timestamptz(time.Date(2026, time.August, 6, 12, 0, 0, 0, time.UTC))
 	item, err := workspaceListItem(
 		pgvalue.UUID(uuid.NewV7()), pgvalue.Text("repository"), "repository-agent",
-		pgvalue.UUID(uuid.NewV7()), db.WorkspaceStateActive, pgtype.UUID{}, pgtype.UUID{}, now, now, now,
+		pgvalue.UUID(uuid.NewV7()), db.WorkspaceStatusActive, pgtype.UUID{}, pgtype.UUID{}, now, now, now,
 	)
 	if err != nil {
 		t.Fatal(err)

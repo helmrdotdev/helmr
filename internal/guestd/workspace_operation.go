@@ -52,27 +52,27 @@ const (
 )
 
 type workspaceMountEntry struct {
-	channelToken      string
-	workspaceID       string
-	workspaceMountID  string
-	baseVersionID     string
-	fencingMu         sync.RWMutex
-	fencingGeneration uint64
-	runtimeInstanceID string
-	imageRoot         string
-	imageConfig       ociRuntimeConfig
-	runtimeUser       *resolvedRuntimeUser
-	workspaceMount    string
-	workspaceRoot     string
-	cleanup           func()
-	processesMu       sync.Mutex
-	basicExec         *workspaceBasicExec
-	basicExecRun      func(*workspacev0.WorkspaceBasicExecRequest) *workspacev0.WorkspaceBasicExecResult
-	active            int
-	retired           bool
-	authorityMu       sync.Mutex
-	authority         *workspacev0.WorkspaceRunAuthority
-	previousExpiry    int64
+	channelToken           string
+	workspaceID            string
+	workspaceMountID       string
+	baseWorkspaceVersionID string
+	fencingMu              sync.RWMutex
+	fencingGeneration      uint64
+	runtimeInstanceID      string
+	imageRoot              string
+	imageConfig            ociRuntimeConfig
+	runtimeUser            *resolvedRuntimeUser
+	workspaceMount         string
+	workspaceRoot          string
+	cleanup                func()
+	processesMu            sync.Mutex
+	basicExec              *workspaceBasicExec
+	basicExecRun           func(*workspacev0.WorkspaceBasicExecRequest) *workspacev0.WorkspaceBasicExecResult
+	active                 int
+	retired                bool
+	authorityMu            sync.Mutex
+	authority              *workspacev0.WorkspaceRunAuthority
+	previousExpiry         int64
 	// stopping is terminal for new admissions, protected by turn/finalization locks.
 	stopping          bool
 	finalizationMu    sync.Mutex
@@ -559,7 +559,7 @@ func handleWorkspaceMaterializeConnection(_ context.Context, conn io.ReadWriter,
 		phases, err := registry.materializeRestoredWorkspaceMount(conn, &request, waits)
 		if err != nil {
 			phases = appendWorkspaceMountFailurePhase(phases, "guest_restore_rebind", totalStarted, err)
-			writeErr := frameio.WriteProtoFrame(conn, &workspacev0.MaterializeWorkspaceResponse{State: "failed", Phases: phases})
+			writeErr := frameio.WriteProtoFrame(conn, &workspacev0.MaterializeWorkspaceResponse{Status: "failed", Phases: phases})
 			if writeErr != nil {
 				return errors.Join(err, writeErr)
 			}
@@ -569,7 +569,7 @@ func handleWorkspaceMaterializeConnection(_ context.Context, conn io.ReadWriter,
 			"workspace_mount_id", workspaceMountID, "checkpoint_id", request.GetRestoredCheckpointId(),
 			"duration_ms", time.Since(totalStarted).Milliseconds())
 		return frameio.WriteProtoFrame(conn, &workspacev0.MaterializeWorkspaceResponse{
-			State: "running", GuestdChannelTokenHash: sha256sum.HexBytes([]byte(strings.TrimSpace(envelope.ChannelToken))),
+			Status: "running", GuestdChannelTokenHash: sha256sum.HexBytes([]byte(strings.TrimSpace(envelope.ChannelToken))),
 			Phases: phases, Target: proto.Clone(request.GetTarget()).(*workspacev0.WorkspaceResetTarget),
 		})
 	}
@@ -577,7 +577,7 @@ func handleWorkspaceMaterializeConnection(_ context.Context, conn io.ReadWriter,
 	if err != nil {
 		phases = appendWorkspaceMountFailurePhase(phases, "guest_materialize", totalStarted, err)
 		writeErr := frameio.WriteProtoFrame(conn, &workspacev0.MaterializeWorkspaceResponse{
-			State:  "failed",
+			Status: "failed",
 			Phases: phases,
 		})
 		if writeErr != nil {
@@ -593,7 +593,7 @@ func handleWorkspaceMaterializeConnection(_ context.Context, conn io.ReadWriter,
 	phases = append(phases, workspaceMountPhase("guest_register", registerStarted, 0, 0, nil))
 	logger.Info("workspace materialize registered", "workspace_id", workspaceID, "workspace_mount_id", workspaceMountID, "duration_ms", time.Since(totalStarted).Milliseconds())
 	return frameio.WriteProtoFrame(conn, &workspacev0.MaterializeWorkspaceResponse{
-		State:                  "running",
+		Status:                 "running",
 		GuestdChannelTokenHash: sha256sum.HexBytes([]byte(strings.TrimSpace(envelope.ChannelToken))),
 		Phases:                 phases,
 		Target:                 proto.Clone(request.GetTarget()).(*workspacev0.WorkspaceResetTarget),
@@ -653,7 +653,7 @@ func (r *workspaceOperationRegistry) materializeRestoredWorkspaceMount(
 	currentGeneration := entry.currentFencingGeneration()
 	if envelope.GetFencingGeneration() == currentGeneration && entry.workspaceMountID == newMountID &&
 		entry.channelToken == channelToken && entry.runtimeInstanceID == runtimeInstanceID &&
-		entry.baseVersionID == target.BaseVersionID && r.entries[newMountID] == entry {
+		entry.baseWorkspaceVersionID == target.BaseWorkspaceVersionID && r.entries[newMountID] == entry {
 		if err := entry.materializeRestoredWorkspace(reader, workspaceID, checkpointID, sourceVersionID, target); err != nil {
 			return nil, err
 		}
@@ -667,7 +667,7 @@ func (r *workspaceOperationRegistry) materializeRestoredWorkspaceMount(
 	if current := r.entries[newMountID]; current != nil && current != entry {
 		return nil, errors.New("restored workspace materialization target mount is already registered")
 	}
-	if entry.baseVersionID != sourceVersionID {
+	if entry.baseWorkspaceVersionID != sourceVersionID {
 		return nil, errors.New("restored workspace source version does not match the frozen mounted runtime")
 	}
 	if err := entry.materializeRestoredWorkspace(reader, workspaceID, checkpointID, sourceVersionID, target); err != nil {
@@ -685,7 +685,7 @@ func (r *workspaceOperationRegistry) materializeRestoredWorkspaceMount(
 	entry.workspaceMountID = newMountID
 	entry.channelToken = channelToken
 	entry.runtimeInstanceID = runtimeInstanceID
-	entry.baseVersionID = target.BaseVersionID
+	entry.baseWorkspaceVersionID = target.BaseWorkspaceVersionID
 	entry.setFencingGeneration(envelope.GetFencingGeneration())
 	r.entries[newMountID] = entry
 	return []*workspacev0.WorkspaceMountPhase{
@@ -713,7 +713,7 @@ func handleWorkspaceRuntimePrepareConnection(_ context.Context, conn io.ReadWrit
 	if err != nil {
 		phases = appendWorkspaceMountFailurePhase(phases, "guest_runtime_prepare", totalStarted, err)
 		writeErr := frameio.WriteProtoFrame(conn, &workspacev0.PrepareWorkspaceRuntimeResponse{
-			State:             "failed",
+			Status:            "failed",
 			RuntimeInstanceId: request.GetRuntimeInstanceId(),
 			Phases:            phases,
 		})
@@ -725,7 +725,7 @@ func handleWorkspaceRuntimePrepareConnection(_ context.Context, conn io.ReadWrit
 	registry.setPreparedRuntime(runtime)
 	logger.Info("workspace runtime prepared", "runtime_instance_id_hash", runtimeInstanceLogID(request.GetRuntimeInstanceId()))
 	return frameio.WriteProtoFrame(conn, &workspacev0.PrepareWorkspaceRuntimeResponse{
-		State:             "prepared",
+		Status:            "prepared",
 		RuntimeInstanceId: request.GetRuntimeInstanceId(),
 		Phases:            phases,
 	})
@@ -819,7 +819,7 @@ func restoreWorkspaceMount(conn io.Reader, request *workspacev0.MaterializeWorks
 	if err != nil {
 		return nil, phases, fmt.Errorf("workspace materialize target: %w", err)
 	}
-	entry.baseVersionID = target.BaseVersionID
+	entry.baseWorkspaceVersionID = target.BaseWorkspaceVersionID
 	artifact := request.GetTarget().GetArtifact()
 	if artifact != nil {
 		if strings.TrimSpace(artifact.GetDigest()) == "" {
@@ -1215,7 +1215,7 @@ func restorePreparedWorkspaceImage(conn io.Reader, request *workspacev0.PrepareW
 func handleWorkspaceStopConnection(ctx context.Context, conn io.ReadWriter, registry *workspaceOperationRegistry) error {
 	if err := handleWorkspaceStop(ctx, conn, registry); err != nil {
 		response := &workspacev0.StopWorkspaceResponse{
-			State:     "failed",
+			Status:    "failed",
 			ErrorJson: workspaceStopErrorJSON(err),
 		}
 		if writeErr := frameio.WriteProtoFrame(conn, response); writeErr != nil {
@@ -1272,7 +1272,7 @@ func handleWorkspaceStop(ctx context.Context, conn io.ReadWriter, registry *work
 	entry.processesMu.Lock()
 	entry.authorityState = workspaceAuthorityFinalizing
 	entry.processesMu.Unlock()
-	response := &workspacev0.StopWorkspaceResponse{State: "stopped"}
+	response := &workspacev0.StopWorkspaceResponse{Status: "stopped"}
 	var artifact workspace.WorkspaceArtifact
 	var cleanupArtifact func()
 	if request.GetCaptureBeforeStop() {
@@ -1297,7 +1297,7 @@ func handleWorkspaceStop(ctx context.Context, conn io.ReadWriter, registry *work
 			SizeBytes:  uint64(artifact.SizeBytes),
 			EntryCount: uint32(artifact.EntryCount),
 		}
-		response.State = "captured"
+		response.Status = "captured"
 	}
 	if err := frameio.WriteProtoFrame(conn, response); err != nil {
 		return fmt.Errorf("write workspace stop response: %w", err)

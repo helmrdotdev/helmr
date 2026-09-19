@@ -17,8 +17,8 @@ var (
 )
 
 type TaskRequest struct {
-	Run                   db.CreateAdmittedRootTaskRunParams
-	WorkspaceStateVersion int64
+	Run               db.CreateAdmittedRootTaskRunParams
+	WorkspaceRevision int64
 }
 
 type Store interface {
@@ -37,7 +37,7 @@ func CreateTask(ctx context.Context, store Store, request TaskRequest) (db.Creat
 		return db.CreateAdmittedRootTaskRunRow{}, fmt.Errorf("lock workspace secrets: %w", err)
 	}
 	for _, binding := range bindings {
-		if binding.SecretState != "active" || !binding.CurrentVersionID.Valid {
+		if binding.SecretStatus != "active" || !binding.CurrentVersionID.Valid {
 			return db.CreateAdmittedRootTaskRunRow{}, ErrSecretUnavailable
 		}
 	}
@@ -50,7 +50,7 @@ func CreateTask(ctx context.Context, store Store, request TaskRequest) (db.Creat
 		RunID:                 run.ID,
 		EnvironmentID:         request.Run.EnvironmentID,
 		ID:                    request.Run.WorkspaceID,
-		ExpectedStateVersion:  request.WorkspaceStateVersion,
+		ExpectedRevision:      request.WorkspaceRevision,
 		ExpectedHeadVersionID: request.Run.BaseWorkspaceVersionID,
 	}); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

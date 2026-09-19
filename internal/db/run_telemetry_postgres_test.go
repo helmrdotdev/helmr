@@ -47,7 +47,7 @@ func TestTelemetryOutboxGCScaleBudget(t *testing.T) {
 		INSERT INTO telemetry_outbox (
 			org_id, stream_kind, source_kind, source_id, project_id, environment_id,
 			run_id, run_lease_id, attempt_number, stream_name, content, size_bytes,
-			observed_seq, source, kind, message, state, written_at
+			observed_seq, source, kind, message, status, written_at
 		)
 		SELECT $1, 'run_log', 'run', replay_leases.run_id, $2, $3,
 		       replay_leases.run_id, replay_leases.run_lease_id, 1,
@@ -190,7 +190,7 @@ func TestTelemetryOutboxGCScaleBudget(t *testing.T) {
 	dbtest.MustExec(t, ctx, pool, `
 		UPDATE telemetry_outbox
 		   SET written_at = NULL,
-		       state = 'pending',
+		       status = 'pending',
 		       size_bytes = 192 * 1024,
 		       next_retry_at = NULL
 		 WHERE id IN (SELECT id FROM telemetry_outbox ORDER BY id ASC LIMIT 100000)
@@ -203,7 +203,7 @@ func TestTelemetryOutboxGCScaleBudget(t *testing.T) {
 			  FROM telemetry_outbox
 			 WHERE telemetry_outbox.stream_kind = 'run_log'
 			   AND telemetry_outbox.written_at IS NULL
-			   AND telemetry_outbox.state IN ('pending', 'claimed', 'failed')
+			   AND telemetry_outbox.status IN ('pending', 'claimed', 'failed')
 			   AND (telemetry_outbox.next_retry_at IS NULL OR telemetry_outbox.next_retry_at <= now())
 			 ORDER BY telemetry_outbox.id ASC
 			 LIMIT 250
@@ -220,7 +220,7 @@ func TestTelemetryOutboxGCScaleBudget(t *testing.T) {
 		),
 		updated AS (
 			UPDATE telemetry_outbox
-			   SET state = 'claimed',
+			   SET status = 'claimed',
 			       retry_count = telemetry_outbox.retry_count + 1,
 			       next_retry_at = now() + interval '30 seconds',
 			       updated_at = now()
@@ -255,7 +255,7 @@ func TestTelemetryOutboxGCScaleBudget(t *testing.T) {
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*), COALESCE(sum(size_bytes), 0)
 		  FROM telemetry_outbox
-		 WHERE state = 'claimed'
+		 WHERE status = 'claimed'
 	`).Scan(&claimedRows, &claimedBytes); err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +275,7 @@ func TestTelemetryOutboxGCScaleBudget(t *testing.T) {
 		       content = NULL,
 		       size_bytes = NULL,
 		       observed_seq = NULL,
-		       state = 'pending',
+		       status = 'pending',
 		       next_retry_at = NULL
 		 WHERE written_at IS NULL
 	`)
@@ -289,7 +289,7 @@ func TestTelemetryOutboxGCScaleBudget(t *testing.T) {
 			  FROM telemetry_outbox
 			 WHERE telemetry_outbox.stream_kind = 'event'
 			   AND telemetry_outbox.written_at IS NULL
-			   AND telemetry_outbox.state IN ('pending', 'claimed', 'failed')
+			   AND telemetry_outbox.status IN ('pending', 'claimed', 'failed')
 			   AND (telemetry_outbox.next_retry_at IS NULL OR telemetry_outbox.next_retry_at <= now())
 			 ORDER BY telemetry_outbox.id ASC
 			 LIMIT 250
@@ -306,7 +306,7 @@ func TestTelemetryOutboxGCScaleBudget(t *testing.T) {
 		),
 		updated AS (
 			UPDATE telemetry_outbox
-			   SET state = 'claimed',
+			   SET status = 'claimed',
 			       retry_count = telemetry_outbox.retry_count + 1,
 			       next_retry_at = now() + interval '30 seconds',
 			       updated_at = now()
@@ -339,7 +339,7 @@ func TestTelemetryOutboxGCScaleBudget(t *testing.T) {
 	}
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*) FROM telemetry_outbox
-		 WHERE stream_kind = 'event' AND state = 'claimed'
+		 WHERE stream_kind = 'event' AND status = 'claimed'
 	`).Scan(&claimedRows); err != nil {
 		t.Fatal(err)
 	}
@@ -351,12 +351,14 @@ func TestTelemetryOutboxGCScaleBudget(t *testing.T) {
 
 func TestRunLogClaimUsesLongestByteBoundedPrefix(t *testing.T) {
 	ctx := t.Context()
-	pool := newPostgresDB(t, ctx)
+	fixture := runtest.New(t)
+	pool := fixture.Pool
 	queries := db.New(pool)
-	orgID := uuid.NewV7()
-	projectID := uuid.NewV7()
-	environmentID := uuid.NewV7()
-	runID := uuid.NewV7()
+	orgID := fixture.OrgID
+	projectID := fixture.ProjectID
+	environmentID := fixture.EnvironmentID
+	work := newTelemetryRunLease(t, fixture)
+	runID := work.RunID
 	const (
 		maxContentBytes = int64(192 << 10)
 		maxBatchBytes   = int64(8 << 20)
@@ -365,14 +367,14 @@ func TestRunLogClaimUsesLongestByteBoundedPrefix(t *testing.T) {
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO telemetry_outbox (
 			org_id, stream_kind, source_kind, source_id, project_id, environment_id,
-			run_id, stream_name, content, size_bytes, observed_seq, source, kind, message
+			run_id, run_lease_id, attempt_number, stream_name, content, size_bytes, observed_seq, source, kind, message
 		)
 		SELECT $1, 'run_log', 'run', $2, $3, $4,
-		       $2, 'stdout', '\x00',
+		       $2, $6, 1, 'stdout', '\x00',
 		       CASE WHEN generated <= 43 THEN $5 ELSE 1 END,
 		       generated, 'worker', 'run.log', 'run.log'
 		  FROM generate_series(1, 44) AS generated
-	`, orgID, runID, projectID, environmentID, maxContentBytes)
+	`, orgID, runID, projectID, environmentID, maxContentBytes, work.LeaseID)
 
 	var orderedIDs []int64
 	rows, err := pool.Query(ctx, `
@@ -420,16 +422,17 @@ func TestRunLogClaimUsesLongestByteBoundedPrefix(t *testing.T) {
 		t.Fatalf("second claim = %+v, want remaining source-order rows", claimed)
 	}
 
-	smallRunID := uuid.NewV7()
+	smallWork := newTelemetryRunLease(t, fixture)
+	smallRunID := smallWork.RunID
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO telemetry_outbox (
 			org_id, stream_kind, source_kind, source_id, project_id, environment_id,
-			run_id, stream_name, content, size_bytes, observed_seq, source, kind, message
+			run_id, run_lease_id, attempt_number, stream_name, content, size_bytes, observed_seq, source, kind, message
 		)
 		SELECT $1, 'run_log', 'run', $2, $3, $4,
-		       $2, 'stdout', '\x00', 1, generated, 'worker', 'run.log', 'run.log'
+		       $2, $5, 1, 'stdout', '\x00', 1, generated, 'worker', 'run.log', 'run.log'
 		  FROM generate_series(1, 300) AS generated
-	`, orgID, smallRunID, projectID, environmentID)
+	`, orgID, smallRunID, projectID, environmentID, smallWork.LeaseID)
 	claimed, err = queries.ClaimRunLogIngestBatch(ctx, db.ClaimRunLogIngestBatchParams{
 		RowLimit: 250, MaxBatchBytes: maxBatchBytes, LeaseDuration: pgvalue.Interval(time.Minute),
 	})
@@ -532,8 +535,9 @@ func TestEventClaimUsesLongestByteBoundedPrefix(t *testing.T) {
 
 func TestTelemetryOutboxSinkErrorsStayIndependentAndGCGates(t *testing.T) {
 	ctx := context.Background()
-	pool := newPostgresDB(t, ctx)
-	ids := seedPostgres(t, ctx, pool)
+	fixture := runtest.New(t)
+	pool := fixture.Pool
+	ids := postgresIDs{orgID: fixture.OrgID, projectID: fixture.ProjectID, environmentID: fixture.EnvironmentID, deploymentID: fixture.DeploymentID}
 	queries := db.New(pool)
 
 	if _, err := queries.AppendDeploymentEvent(ctx, db.AppendDeploymentEventParams{
@@ -656,15 +660,17 @@ func TestTelemetryOutboxSinkErrorsStayIndependentAndGCGates(t *testing.T) {
 		 WHERE id = $1
 	`, eventID)
 
-	runID := uuid.NewV7()
+	work := newTelemetryRunLease(t, fixture)
+	runID := work.RunID
+	staleWork := newTelemetryRunLease(t, fixture)
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO telemetry_outbox (
 			org_id, stream_kind, source_kind, source_id, project_id, environment_id,
-			run_id, stream_name, content, size_bytes, observed_seq, source, kind, message
+			run_id, run_lease_id, attempt_number, stream_name, content, size_bytes, observed_seq, source, kind, message
 		) VALUES
-			($1, 'run_log', 'run', $2, $3, $4, $2, 'stdout', '\x00', 1, 1, 'worker', 'run.log', 'run.log'),
-			($1, 'run_log', 'run', $5, $3, $4, $5, 'stdout', '\x00', 1, 1, 'worker', 'run.log', 'run.log')
-	`, ids.orgID, runID, ids.projectID, ids.environmentID, uuid.NewV7())
+			($1, 'run_log', 'run', $2, $3, $4, $2, $6, 1, 'stdout', '\x00', 1, 1, 'worker', 'run.log', 'run.log'),
+			($1, 'run_log', 'run', $5, $3, $4, $5, $7, 1, 'stdout', '\x00', 1, 1, 'worker', 'run.log', 'run.log')
+	`, ids.orgID, runID, ids.projectID, ids.environmentID, staleWork.RunID, work.LeaseID, staleWork.LeaseID)
 	var runLogFreshID, runLogStaleID int64
 	if err := pool.QueryRow(ctx, `
 		SELECT min(id), max(id) FROM telemetry_outbox WHERE stream_kind = 'run_log'
@@ -675,13 +681,13 @@ func TestTelemetryOutboxSinkErrorsStayIndependentAndGCGates(t *testing.T) {
 	dbtest.MustExec(t, ctx, pool, `
 		UPDATE telemetry_outbox
 		   SET written_at = now() - interval '23 hours',
-		       state = 'written'
+		       status = 'written'
 		 WHERE id = $1
 	`, runLogFreshID)
 	dbtest.MustExec(t, ctx, pool, `
 		UPDATE telemetry_outbox
 		   SET written_at = now() - interval '25 hours',
-		       state = 'written'
+		       status = 'written'
 		 WHERE id = $1 OR id = $2
 	`, eventID, runLogStaleID)
 	lifecycle, err := queries.GetTelemetryOutboxLifecycle(ctx, pgvalue.Interval(24*time.Hour))
@@ -743,8 +749,9 @@ func TestTelemetryOutboxSinkErrorsStayIndependentAndGCGates(t *testing.T) {
 
 func TestTelemetryOutboxLeaseExpiryReclaimAndSourceOrder(t *testing.T) {
 	ctx := context.Background()
-	pool := newPostgresDB(t, ctx)
-	ids := seedPostgres(t, ctx, pool)
+	fixture := runtest.New(t)
+	pool := fixture.Pool
+	ids := postgresIDs{orgID: fixture.OrgID, projectID: fixture.ProjectID, environmentID: fixture.EnvironmentID, deploymentID: fixture.DeploymentID}
 	queries := db.New(pool)
 
 	if _, err := queries.AppendDeploymentEvent(ctx, db.AppendDeploymentEventParams{
@@ -826,16 +833,17 @@ func TestTelemetryOutboxLeaseExpiryReclaimAndSourceOrder(t *testing.T) {
 		t.Fatalf("ingest reclaim = %+v err=%v, want %d", ingestReclaimed, err, firstEventID)
 	}
 
-	runID := uuid.NewV7()
+	work := newTelemetryRunLease(t, fixture)
+	runID := work.RunID
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO telemetry_outbox (
 			org_id, stream_kind, source_kind, source_id, project_id, environment_id,
-			run_id, stream_name, content, size_bytes, observed_seq, source, kind, message
+			run_id, run_lease_id, attempt_number, stream_name, content, size_bytes, observed_seq, source, kind, message
 		) VALUES (
 			$1, 'run_log', 'run', $2, $3, $4,
-			$2, 'stdout', '\x00', 1, 1, 'worker', 'run.log', 'run.log'
+			$2, $5, 1, 'stdout', '\x00', 1, 1, 'worker', 'run.log', 'run.log'
 		)
-	`, ids.orgID, runID, ids.projectID, ids.environmentID)
+	`, ids.orgID, runID, ids.projectID, ids.environmentID, work.LeaseID)
 	var runLogID int64
 	if err := pool.QueryRow(ctx, `
 		SELECT id FROM telemetry_outbox WHERE stream_kind = 'run_log' AND run_id = $1
@@ -910,8 +918,9 @@ func TestTelemetryOutboxLeaseExpiryReclaimAndSourceOrder(t *testing.T) {
 
 func TestTelemetryOutboxIngestResultsFenceReclaimedGenerations(t *testing.T) {
 	ctx := t.Context()
-	pool := newPostgresDB(t, ctx)
-	ids := seedPostgres(t, ctx, pool)
+	fixture := runtest.New(t)
+	pool := fixture.Pool
+	ids := postgresIDs{orgID: fixture.OrgID, projectID: fixture.ProjectID, environmentID: fixture.EnvironmentID, deploymentID: fixture.DeploymentID}
 	queries := db.New(pool)
 
 	insertEvent := func(label string) int64 {
@@ -931,19 +940,20 @@ func TestTelemetryOutboxIngestResultsFenceReclaimedGenerations(t *testing.T) {
 	}
 	insertRunLog := func(label string) int64 {
 		t.Helper()
-		runID := uuid.NewV7()
+		work := newTelemetryRunLease(t, fixture)
+		runID := work.RunID
 		var id int64
 		if err := pool.QueryRow(ctx, `
 			INSERT INTO telemetry_outbox (
 				org_id, stream_kind, source_kind, source_id, project_id,
-				environment_id, run_id, stream_name, content, size_bytes,
+				environment_id, run_id, run_lease_id, attempt_number, stream_name, content, size_bytes,
 				observed_seq, source, kind, message
 			) VALUES (
-				$1, 'run_log', 'run', $2, $3, $4, $2, 'stdout', '\x00', 1,
+				$1, 'run_log', 'run', $2, $3, $4, $2, $6, 1, 'stdout', '\x00', 1,
 				1, 'worker', 'run.log', $5
 			)
 			RETURNING id
-		`, ids.orgID, runID, ids.projectID, ids.environmentID, label).Scan(&id); err != nil {
+		`, ids.orgID, runID, ids.projectID, ids.environmentID, label, work.LeaseID).Scan(&id); err != nil {
 			t.Fatal(err)
 		}
 		return id
@@ -994,7 +1004,7 @@ func TestTelemetryOutboxIngestResultsFenceReclaimedGenerations(t *testing.T) {
 		t.Helper()
 		var value ingestState
 		if err := pool.QueryRow(ctx, `
-			SELECT state, retry_count, COALESCE(next_retry_at::text, ''), ingest_error,
+			SELECT status, retry_count, COALESCE(next_retry_at::text, ''), ingest_error,
 			       written_at IS NOT NULL
 			  FROM telemetry_outbox WHERE id = $1
 		`, id).Scan(&value.state, &value.retryCount, &value.nextRetryAt, &value.ingestError, &value.written); err != nil {
@@ -1241,4 +1251,12 @@ func TestLiveTelemetryOutboxBatchCompletion(t *testing.T) {
 	}); err != nil || updated != 0 {
 		t.Fatalf("missing published updated = %d err = %v, want 0", updated, err)
 	}
+}
+
+func newTelemetryRunLease(t *testing.T, fixture runtest.Fixture) runtest.RunLease {
+	t.Helper()
+	work := fixture.AddRunLease(t, "starting", time.Now().Add(-time.Minute))
+	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE run_leases SET status='running', started_at=claimed_at WHERE id=$1`, work.LeaseID)
+	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE runs SET status='running', active_started_at=now(), current_attempt_number=1 WHERE id=$1`, work.RunID)
+	return work
 }

@@ -154,7 +154,7 @@ func ownershipVersionParams(t *testing.T, f runLeaseClaimFixture, work runLeaseW
 	t.Helper()
 	ctx := t.Context()
 	p := CreatePrivateCheckpointWorkspaceVersionParams{ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: pgvalue.UUID(f.environmentID), ArtifactID: pgvalue.UUID(uuid.NewV7()), ContentDigest: dbtest.Digest("ownership-version"), SizeBytes: 1, EntryCount: 1}
-	if err := f.pool.QueryRow(ctx, "SELECT workspace_id,base_version_id,id,ownership_generation,writer_generation FROM workspace_leases WHERE owner_run_lease_id=$1", work.leaseID).Scan(&p.WorkspaceID, &p.ParentVersionID, &p.SourceWorkspaceLeaseID, &p.OwnershipGeneration, &p.WriterGeneration); err != nil {
+	if err := f.pool.QueryRow(ctx, "SELECT workspace_id,base_workspace_version_id,id,ownership_generation,writer_generation FROM workspace_leases WHERE owner_run_lease_id=$1", work.leaseID).Scan(&p.WorkspaceID, &p.ParentVersionID, &p.SourceWorkspaceLeaseID, &p.OwnershipGeneration, &p.WriterGeneration); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, ctx, f.pool, "INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES ($1,$2,1,'application/octet-stream')", f.orgID, p.ContentDigest)
@@ -237,18 +237,18 @@ func TestOwnershipChildBindingRejectsDetachedAndWrongParentBeforeMutation(t *tes
 			}
 			var version int64
 			var childWorkspace pgtype.UUID
-			if err := f.pool.QueryRow(ctx, "SELECT state_version FROM runs WHERE id=$1", parent.runID).Scan(&version); err != nil {
+			if err := f.pool.QueryRow(ctx, "SELECT revision FROM runs WHERE id=$1", parent.runID).Scan(&version); err != nil {
 				t.Fatal(err)
 			}
 			if err := f.pool.QueryRow(ctx, "SELECT workspace_id FROM runs WHERE id=$1", child.runID).Scan(&childWorkspace); err != nil {
 				t.Fatal(err)
 			}
-			p := RegisterDifferentWorkspaceChildCallParams{ID: pgvalue.UUID(uuid.NewV7()), ChildRunID: pgvalue.UUID(child.runID), ChildTargetDeclaredID: pgvalue.Text("test-task"), ChildClaimID: pgvalue.UUID(claim), ChildRequest: []byte("{}"), RegistrationRequestFingerprint: pgvalue.Text(dbtest.Digest("child-binding")), AttemptNumber: 1, CurrentRunLeaseID: pgvalue.UUID(parent.leaseID), ResumeAttachID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: pgvalue.UUID(f.environmentID), RunID: pgvalue.UUID(parent.runID), ChildWorkspaceID: childWorkspace, ExpectedRunningStateVersion: version}
+			p := RegisterDifferentWorkspaceChildCallParams{ID: pgvalue.UUID(uuid.NewV7()), ChildRunID: pgvalue.UUID(child.runID), ChildTargetDeclaredID: pgvalue.Text("test-task"), ChildClaimID: pgvalue.UUID(claim), ChildRequest: []byte("{}"), RegistrationRequestFingerprint: pgvalue.Text(dbtest.Digest("child-binding")), AttemptNumber: 1, CurrentRunLeaseID: pgvalue.UUID(parent.leaseID), ResumeAttachID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: pgvalue.UUID(f.environmentID), RunID: pgvalue.UUID(parent.runID), ChildWorkspaceID: childWorkspace, ExpectedRunningRevision: version}
 			bind := func(q *Queries, p RegisterDifferentWorkspaceChildCallParams) (RunWait, error) {
 				if !resolved {
 					return q.RegisterDifferentWorkspaceChildCall(ctx, p)
 				}
-				return q.RegisterResolvedDifferentWorkspaceChildCall(ctx, RegisterResolvedDifferentWorkspaceChildCallParams{ID: p.ID, ChildRunID: p.ChildRunID, ChildTargetDeclaredID: p.ChildTargetDeclaredID, ChildClaimID: p.ChildClaimID, ChildRequest: p.ChildRequest, RegistrationRequestFingerprint: p.RegistrationRequestFingerprint, AttemptNumber: p.AttemptNumber, CurrentRunLeaseID: p.CurrentRunLeaseID, ResumeAttachID: p.ResumeAttachID, EnvironmentID: p.EnvironmentID, RunID: p.RunID, ExpectedRunningStateVersion: p.ExpectedRunningStateVersion, ConditionResult: []byte("{}")})
+				return q.RegisterResolvedDifferentWorkspaceChildCall(ctx, RegisterResolvedDifferentWorkspaceChildCallParams{ID: p.ID, ChildRunID: p.ChildRunID, ChildTargetDeclaredID: p.ChildTargetDeclaredID, ChildClaimID: p.ChildClaimID, ChildRequest: p.ChildRequest, RegistrationRequestFingerprint: p.RegistrationRequestFingerprint, AttemptNumber: p.AttemptNumber, CurrentRunLeaseID: p.CurrentRunLeaseID, ResumeAttachID: p.ResumeAttachID, EnvironmentID: p.EnvironmentID, RunID: p.RunID, ExpectedRunningRevision: p.ExpectedRunningRevision, ConditionResult: []byte("{}")})
 			}
 			snapshot := func() []byte {
 				var b []byte

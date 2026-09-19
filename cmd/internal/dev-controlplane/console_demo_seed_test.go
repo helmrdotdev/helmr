@@ -63,7 +63,7 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
 		    (SELECT count(*) FROM runs WHERE environment_id = $1),
 		    (SELECT count(*) FROM runs WHERE environment_id = $1 AND status = 'queued'),
 		    (SELECT count(*) FROM tokens WHERE environment_id = $1),
-		    (SELECT state FROM schedules WHERE id = $2)
+		    (SELECT status FROM schedules WHERE id = $2)
 	`, demoSeedEnvironmentID, demoSeedScheduleID).Scan(
 		&definitions, &schedules, &workspaces, &sessions, &runs, &queuedRuns, &tokens, &scheduleState,
 	); err != nil {
@@ -134,9 +134,9 @@ func TestDevSeedRestartPreservesEditsWithoutReseeding(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `
 		UPDATE tokens
-		   SET state = 'completed',
+		   SET status = 'completed',
 		       result = '{"approved":true}'::jsonb,
-		       completed_at = now()
+		       completed_at = now(), completion_fingerprint = decode(repeat('cc', 32), 'hex')
 		 WHERE id = $1
 	`, demoSeedTokenPendingID); err != nil {
 		t.Fatal(err)
@@ -166,7 +166,7 @@ func TestDevSeedRestartPreservesEditsWithoutReseeding(t *testing.T) {
 	`).Scan(&name, &color); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT state FROM tokens WHERE id = $1`, demoSeedTokenPendingID).Scan(&tokenState); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT status FROM tokens WHERE id = $1`, demoSeedTokenPendingID).Scan(&tokenState); err != nil {
 		t.Fatal(err)
 	}
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schedules WHERE id = $1`, demoSeedScheduleID).Scan(&scheduleCount); err != nil {

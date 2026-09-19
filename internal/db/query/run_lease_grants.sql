@@ -5,18 +5,18 @@ WITH selected_shape AS MATERIALIZED (
       FROM worker_instances
       JOIN worker_groups
         ON worker_groups.id = worker_instances.worker_group_id
-       AND worker_groups.state = 'active'
+       AND worker_groups.status = 'active'
       JOIN worker_pools
 	    ON worker_pools.id = worker_instances.worker_pool_id
 	   AND worker_pools.worker_group_id = worker_instances.worker_group_id
-	   AND worker_pools.state = 'active'
+	   AND worker_pools.status = 'active'
       JOIN worker_pool_cpu_shapes
         ON worker_pool_cpu_shapes.worker_pool_id = worker_pools.id
        AND worker_pool_cpu_shapes.vcpu_count = ((sqlc.arg(reserved_cpu_millis)::bigint - 1) / 1000 + 1)::integer
      WHERE worker_instances.id = sqlc.arg(worker_instance_id)
        AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
 	   AND worker_instances.current_epoch = sqlc.arg(worker_epoch)
-	   AND worker_instances.state = 'active'
+	   AND worker_instances.status = 'active'
        AND (
            sqlc.narg(restore_checkpoint_id)::uuid IS NOT NULL
            OR worker_groups.primary_pool_id = worker_pools.id
@@ -151,9 +151,9 @@ UPDATE workspaces
    AND workspaces.id = sqlc.arg(workspace_id)
    AND workspaces.ownership_generation = sqlc.arg(ownership_generation)
    AND workspaces.writer_generation = sqlc.arg(expected_writer_generation)
-   AND workspaces.state = 'active'
+   AND workspaces.status = 'active'
    AND workspaces.desired_state = 'active'
-RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at;
+RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.revision, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.status, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at;
 
 -- name: AdvanceRunWorkspaceMountFence :one
 UPDATE workspace_mounts
@@ -171,7 +171,7 @@ UPDATE workspace_mounts
    AND workspace_id = sqlc.arg(workspace_id)
    AND materialized_version_id = sqlc.arg(base_workspace_version_id)
    AND fencing_generation = sqlc.arg(expected_fencing_generation)
-   AND state = 'mounted'
+   AND status = 'mounted'
 RETURNING *;
 
 -- name: InsertRunWorkspaceLease :one
@@ -188,7 +188,7 @@ INSERT INTO workspace_leases (
     workspace_id,
     workspace_mount_id,
     owner_run_lease_id,
-    base_version_id,
+    base_workspace_version_id,
     ownership_generation,
     writer_generation,
     mount_fencing_generation,
@@ -207,7 +207,7 @@ INSERT INTO workspace_leases (
     sqlc.arg(workspace_id),
     sqlc.arg(workspace_mount_id),
     sqlc.arg(owner_run_lease_id),
-    sqlc.arg(base_version_id),
+    sqlc.arg(base_workspace_version_id),
     sqlc.arg(ownership_generation),
     sqlc.arg(writer_generation),
     sqlc.arg(mount_fencing_generation),
@@ -237,11 +237,11 @@ UPDATE runs
        first_lease_at = coalesce(first_lease_at, transaction_timestamp()),
        runtime_preparation_count = 0,
        next_runtime_preparation_at = NULL,
-       state_version = state_version + 1,
+       revision = revision + 1,
        updated_at = transaction_timestamp()
  WHERE id = sqlc.arg(id)
    AND org_id = sqlc.arg(org_id)
-   AND state_version = sqlc.arg(expected_state_version)
+   AND revision = sqlc.arg(expected_revision)
    AND status = 'queued'
    AND current_attempt_number = sqlc.arg(attempt_number)
    AND current_run_lease_id IS NULL

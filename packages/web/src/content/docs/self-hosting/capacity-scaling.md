@@ -6,7 +6,7 @@ description: Connect trusted provider-specific scaling automation to a self-host
 # Custom capacity scaling
 
 Build a provider-specific scaler against the Capacity deployment protocol at
-`/capacity/v1`. Helmr supplies desired-capacity and Worker lifecycle state.
+`/capacity/v1`. Helmr supplies desired-capacity and Worker lifecycle status.
 Your scaler owns provider policy and mutations, including creating and
 terminating hosts.
 

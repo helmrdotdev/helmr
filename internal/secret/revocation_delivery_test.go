@@ -261,7 +261,7 @@ func secretRevocationMessage(
 				`","revocationGeneration":` +
 				fmt.Sprintf("%d", generation) + `}`,
 		),
-		State:          "claimed",
+		Status:         "claimed",
 		Attempts:       1,
 		ClaimedBy:      pgvalue.Text("worker"),
 		ClaimExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),

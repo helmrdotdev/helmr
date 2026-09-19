@@ -139,8 +139,8 @@ func (s *Store) rotate(ctx context.Context, environmentID uuid.UUID, secretID uu
 		if err != nil {
 			return db.Secret{}, err
 		}
-		if record.State != "active" {
-			return db.Secret{}, UnavailableError{Err: fmt.Errorf("secret %q is %s", record.Name, record.State)}
+		if record.Status != "active" {
+			return db.Secret{}, UnavailableError{Err: fmt.Errorf("secret %q is %s", record.Name, record.Status)}
 		}
 		current, err := s.db.GetCurrentSecretValue(ctx, db.GetCurrentSecretValueParams{
 			EnvironmentID: pgvalue.UUID(environmentID),
@@ -162,7 +162,7 @@ func (s *Store) rotate(ctx context.Context, environmentID uuid.UUID, secretID uu
 			Ciphertext:               encrypted.ciphertext,
 			EnvironmentID:            pgvalue.UUID(environmentID),
 			SecretID:                 record.ID,
-			ExpectedStateVersion:     record.StateVersion,
+			ExpectedRevision:         record.Revision,
 			ExpectedCurrentVersionID: record.CurrentVersionID,
 		})
 		if err == nil {
@@ -350,10 +350,10 @@ func (s *Store) replayMutation(
 	claim db.IdempotencyClaim,
 	value []byte,
 ) (db.GetSecretSnapshotRow, error) {
-	if claim.State != "completed" {
+	if claim.Status != "completed" {
 		return db.GetSecretSnapshotRow{}, fmt.Errorf(
 			"secret mutation claim is %s",
-			claim.State,
+			claim.Status,
 		)
 	}
 	var receipt mutationReceipt
@@ -423,10 +423,10 @@ func (s *Store) Revoke(ctx context.Context, environmentID uuid.UUID, secretID uu
 	}
 	queries := claims.Queries()
 	if !acquired.New {
-		if acquired.Claim.State != "completed" {
+		if acquired.Claim.Status != "completed" {
 			return db.GetSecretSnapshotRow{}, fmt.Errorf(
 				"secret revoke claim is %s",
-				acquired.Claim.State,
+				acquired.Claim.Status,
 			)
 		}
 		snapshot, err := queries.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{
@@ -475,7 +475,7 @@ func (s *Store) Revoke(ctx context.Context, environmentID uuid.UUID, secretID uu
 	receipt, err := json.Marshal(map[string]any{
 		"revocationGeneration": record.RevocationGeneration,
 		"secretId":             secretID.String(),
-		"stateVersion":         record.StateVersion,
+		"revision":             record.Revision,
 	})
 	if err != nil {
 		return db.GetSecretSnapshotRow{}, fmt.Errorf("marshal secret revoke receipt: %w", err)
@@ -499,16 +499,16 @@ func (s *Store) revoke(ctx context.Context, environmentID uuid.UUID, secretID uu
 		if err != nil {
 			return db.Secret{}, false, err
 		}
-		if record.State == "revoked" {
+		if record.Status == "revoked" {
 			return record, false, nil
 		}
-		if record.State != "active" {
-			return db.Secret{}, false, UnavailableError{Err: fmt.Errorf("secret %q is %s", record.Name, record.State)}
+		if record.Status != "active" {
+			return db.Secret{}, false, UnavailableError{Err: fmt.Errorf("secret %q is %s", record.Name, record.Status)}
 		}
 		revoked, err := s.db.RevokeSecret(ctx, db.RevokeSecretParams{
-			EnvironmentID:        pgvalue.UUID(environmentID),
-			ID:                   record.ID,
-			ExpectedStateVersion: record.StateVersion,
+			EnvironmentID:    pgvalue.UUID(environmentID),
+			ID:               record.ID,
+			ExpectedRevision: record.Revision,
 		})
 		if err == nil {
 			return revoked, true, nil

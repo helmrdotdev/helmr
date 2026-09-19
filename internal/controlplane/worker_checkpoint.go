@@ -217,7 +217,7 @@ func (s *Server) workerMarkCheckpointFailed(w http.ResponseWriter, r *http.Reque
 			}
 		}
 		if authority.run.Status != db.RunStatusWaiting ||
-			authority.runLease.State != db.RunLeaseStateCheckpointing {
+			authority.runLease.Status != db.RunLeaseStatusCheckpointing {
 			return errStaleRunLeaseClaim
 		}
 		wait, err := work.q.LockRunLeaseClaimWait(r.Context(), db.LockRunLeaseClaimWaitParams{
@@ -225,7 +225,7 @@ func (s *Server) workerMarkCheckpointFailed(w http.ResponseWriter, r *http.Reque
 			AttemptNumber: authority.attempt.Number, WorkspaceID: authority.workspace.ID,
 			CurrentRunLeaseID: authority.runLease.ID,
 		})
-		if err != nil || wait.SuspensionState != db.RunWaitStateCheckpointing ||
+		if err != nil || wait.SuspensionStatus != db.RunWaitStatusCheckpointing ||
 			wait.CheckpointRequestVersion != parsed.requestVersion || wait.SuspendCheckpointID != pgvalue.UUID(parsed.checkpointID) {
 			return staleRunLeaseClaim(err)
 		}
@@ -365,7 +365,7 @@ func failCheckpointTaskAttempt(
 		CompletedAt: failedAt, ID: authority.workspaceLease.ID,
 		WorkspaceID: authority.workspace.ID, WorkspaceMountID: authority.workspaceMount.ID,
 		RuntimeInstanceID: authority.runtime.ID, OwnerRunLeaseID: authority.runLease.ID,
-		BaseVersionID:          authority.workspaceLease.BaseVersionID,
+		BaseWorkspaceVersionID: authority.workspaceLease.BaseWorkspaceVersionID,
 		OwnershipGeneration:    authority.workspace.OwnershipGeneration,
 		WriterGeneration:       authority.workspace.WriterGeneration,
 		MountFencingGeneration: authority.workspaceMount.FencingGeneration,
@@ -464,7 +464,7 @@ func failCheckpointActorAttempt(
 		CompletedAt: failedAt, ID: authority.workspaceLease.ID,
 		WorkspaceID: authority.workspace.ID, WorkspaceMountID: authority.workspaceMount.ID,
 		RuntimeInstanceID: authority.runtime.ID, OwnerRunLeaseID: authority.runLease.ID,
-		BaseVersionID:          authority.workspaceLease.BaseVersionID,
+		BaseWorkspaceVersionID: authority.workspaceLease.BaseWorkspaceVersionID,
 		OwnershipGeneration:    authority.workspace.OwnershipGeneration,
 		WriterGeneration:       authority.workspace.WriterGeneration,
 		MountFencingGeneration: authority.workspaceMount.FencingGeneration,
@@ -562,7 +562,7 @@ func finishCheckpointFailedActor(
 ) error {
 	status := db.RunStatusSystemFailed
 	eventKind := api.RunEventKindFailed
-	actorState := "failed"
+	actorStatus := "failed"
 	failureCode := "platform_failure"
 	if reason == "max_active_duration_exceeded" {
 		status = db.RunStatusExpired
@@ -590,7 +590,7 @@ func finishCheckpointFailedActor(
 		return staleRunLeaseClaim(err)
 	}
 	actor, err := store.ReconcileActorTerminalRun(ctx, db.ReconcileActorTerminalRunParams{
-		State: actorState, CommittedInputSequence: pgtype.Int8{}, Failure: actorFailure,
+		Status: actorStatus, CommittedInputSequence: pgtype.Int8{}, Failure: actorFailure,
 		FailureRunID: failureRunID, CompletedAt: failedAt,
 		EnvironmentID: authority.actor.EnvironmentID, ID: authority.actor.ID,
 		WorkspaceID: authority.workspace.ID, RunID: authority.run.ID,
@@ -979,7 +979,7 @@ func (s *Server) commitCheckpointReady(
 		if err != nil {
 			return staleRunLeaseClaim(err)
 		}
-		if sourcePool.State != "active" && sourcePool.State != "draining" {
+		if sourcePool.Status != "active" && sourcePool.Status != "draining" {
 			return errStaleRunLeaseClaim
 		}
 		authority.actor = owner.actor
@@ -988,7 +988,7 @@ func (s *Server) commitCheckpointReady(
 			return staleRunLeaseClaim(err)
 		}
 		if authority.run.Status != db.RunStatusWaiting ||
-			authority.runLease.State != db.RunLeaseStateCheckpointing {
+			authority.runLease.Status != db.RunLeaseStatusCheckpointing {
 			return errStaleRunLeaseClaim
 		}
 		wait, err := work.q.LockRunLeaseClaimWait(ctx, db.LockRunLeaseClaimWaitParams{
@@ -998,7 +998,7 @@ func (s *Server) commitCheckpointReady(
 		})
 		if err != nil || (wait.Kind != db.WaitKindToken && wait.Kind != db.WaitKindActorInput &&
 			wait.Kind != db.WaitKindChild) ||
-			wait.SuspensionState != db.RunWaitStateCheckpointing ||
+			wait.SuspensionStatus != db.RunWaitStatusCheckpointing ||
 			wait.CheckpointRequestVersion != request.RequestVersion || wait.SuspendCheckpointID != pgvalue.UUID(ready.checkpointID) {
 			return staleRunLeaseClaim(err)
 		}
@@ -1010,7 +1010,7 @@ func (s *Server) commitCheckpointReady(
 			RunWaitID: wait.ID, SourceRunLeaseID: authority.runLease.ID,
 			SourceWorkspaceLeaseID: authority.workspaceLease.ID, WorkspaceID: authority.workspace.ID,
 		})
-		if err != nil || checkpoint.BaseWorkspaceVersionID != authority.workspaceLease.BaseVersionID ||
+		if err != nil || checkpoint.BaseWorkspaceVersionID != authority.workspaceLease.BaseWorkspaceVersionID ||
 			checkpoint.ActorSpeculativeInputSequence != wait.ActorSpeculativeInputSequence {
 			return staleRunLeaseClaim(err)
 		}
@@ -1028,7 +1028,7 @@ func (s *Server) commitCheckpointReady(
 		baseAuthority, err := work.q.GetCheckpointWorkspaceBaseAuthority(ctx, db.GetCheckpointWorkspaceBaseAuthorityParams{
 			OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID,
 			EnvironmentID: authority.run.EnvironmentID, WorkspaceID: authority.workspace.ID,
-			VersionID: authority.workspaceLease.BaseVersionID,
+			VersionID: authority.workspaceLease.BaseWorkspaceVersionID,
 		})
 		if err != nil {
 			return staleRunLeaseClaim(err)
@@ -1098,7 +1098,7 @@ func (s *Server) commitCheckpointReady(
 		if _, err := work.q.ReleaseCheckpointWorkspaceLease(ctx, db.ReleaseCheckpointWorkspaceLeaseParams{
 			CheckpointedAt: checkpointedAt, ID: authority.workspaceLease.ID, WorkspaceID: authority.workspace.ID,
 			WorkspaceMountID: authority.workspaceMount.ID, RuntimeInstanceID: authority.runtime.ID,
-			OwnerRunLeaseID: authority.runLease.ID, BaseVersionID: authority.workspaceLease.BaseVersionID,
+			OwnerRunLeaseID: authority.runLease.ID, BaseWorkspaceVersionID: authority.workspaceLease.BaseWorkspaceVersionID,
 			OwnershipGeneration:    authority.workspaceLease.OwnershipGeneration,
 			WriterGeneration:       authority.workspaceLease.WriterGeneration,
 			MountFencingGeneration: authority.workspaceLease.MountFencingGeneration,
@@ -1118,7 +1118,7 @@ func (s *Server) commitCheckpointReady(
 			return staleRunLeaseClaim(err)
 		}
 		if wait.Kind == db.WaitKindChild && !wait.ChildRunID.Valid {
-			if wait.ConditionState != db.WaitStatePending {
+			if wait.ConditionStatus != db.WaitStatusPending {
 				return errStaleRunLeaseClaim
 			}
 			if err := s.commitSameWorkspaceChildCheckpointReady(
@@ -1134,11 +1134,11 @@ func (s *Server) commitCheckpointReady(
 			); err != nil {
 				return err
 			}
-		} else if wait.ConditionState == db.WaitStatePending {
+		} else if wait.ConditionStatus == db.WaitStatusPending {
 			if _, err := work.q.CommitPendingCheckpointReady(ctx, db.CommitPendingCheckpointReadyParams{
 				CheckpointedAt: checkpointedAt, RunID: authority.run.ID, WorkspaceID: authority.workspace.ID,
 				AttemptNumber: authority.attempt.Number, RunLeaseID: authority.runLease.ID,
-				ExpectedRunStateVersion: wait.ExpectedRunStateVersion, CheckpointRequestVersion: request.RequestVersion,
+				ExpectedRunRevision: wait.ExpectedRunRevision, CheckpointRequestVersion: request.RequestVersion,
 				RunWaitID: wait.ID, CheckpointID: pgvalue.UUID(ready.checkpointID),
 			}); err != nil {
 				return staleRunLeaseClaim(err)
@@ -1147,7 +1147,7 @@ func (s *Server) commitCheckpointReady(
 			_, err := work.q.CommitTerminalCheckpointReady(ctx, db.CommitTerminalCheckpointReadyParams{
 				CheckpointedAt: checkpointedAt, RunID: authority.run.ID, WorkspaceID: authority.workspace.ID,
 				AttemptNumber: authority.attempt.Number, RunLeaseID: authority.runLease.ID,
-				ExpectedRunStateVersion: wait.ExpectedRunStateVersion, CheckpointRequestVersion: request.RequestVersion,
+				ExpectedRunRevision: wait.ExpectedRunRevision, CheckpointRequestVersion: request.RequestVersion,
 				RunWaitID: wait.ID, CheckpointID: pgvalue.UUID(ready.checkpointID),
 			})
 			if err != nil {
@@ -1220,7 +1220,7 @@ func (s *Server) commitSameWorkspaceChildCheckpointReady(
 		return err
 	}
 	for _, binding := range bindings {
-		if binding.SecretState != "active" ||
+		if binding.SecretStatus != "active" ||
 			!binding.CurrentVersionID.Valid {
 			return errTaskSecretUnavailable
 		}
@@ -1234,7 +1234,7 @@ func (s *Server) commitSameWorkspaceChildCheckpointReady(
 	)
 	if err != nil ||
 		claim.Operation != "task.child.invoke" ||
-		claim.State != "pending" ||
+		claim.Status != "pending" ||
 		claim.RetiredAt.Valid {
 		return staleRunLeaseClaim(err)
 	}
@@ -1313,17 +1313,17 @@ func (s *Server) commitSameWorkspaceChildCheckpointReady(
 				Int64: authority.workspaceLease.WriterGeneration,
 				Valid: true,
 			},
-			CheckpointedAt:          checkpointedAt,
-			RunWaitID:               wait.ID,
-			EnvironmentID:           authority.run.EnvironmentID,
-			ParentRunID:             authority.run.ID,
-			WorkspaceID:             authority.workspace.ID,
-			ParentAttemptNumber:     authority.attempt.Number,
-			ChildClaimID:            wait.ChildClaimID,
-			ParentRunLeaseID:        authority.runLease.ID,
-			SuspendCheckpointID:     wait.SuspendCheckpointID,
-			ChildRunID:              child.ID,
-			ExpectedRunStateVersion: wait.ExpectedRunStateVersion,
+			CheckpointedAt:      checkpointedAt,
+			RunWaitID:           wait.ID,
+			EnvironmentID:       authority.run.EnvironmentID,
+			ParentRunID:         authority.run.ID,
+			WorkspaceID:         authority.workspace.ID,
+			ParentAttemptNumber: authority.attempt.Number,
+			ChildClaimID:        wait.ChildClaimID,
+			ParentRunLeaseID:    authority.runLease.ID,
+			SuspendCheckpointID: wait.SuspendCheckpointID,
+			ChildRunID:          child.ID,
+			ExpectedRunRevision: wait.ExpectedRunRevision,
 		},
 	); err != nil {
 		return staleRunLeaseClaim(err)
@@ -1426,7 +1426,7 @@ func recordCheckpointWorkspaceVersion(
 	version, err := store.CreatePrivateCheckpointWorkspaceVersion(ctx, db.CreatePrivateCheckpointWorkspaceVersionParams{
 		ID:            pgvalue.UUID(uuid.NewV7()),
 		EnvironmentID: authority.run.EnvironmentID,
-		WorkspaceID:   authority.workspace.ID, ParentVersionID: authority.workspaceLease.BaseVersionID,
+		WorkspaceID:   authority.workspace.ID, ParentVersionID: authority.workspaceLease.BaseWorkspaceVersionID,
 		ArtifactID: artifactRow.ID, ContentDigest: capture.tree.Digest,
 		SizeBytes: capture.tree.SizeBytes, EntryCount: int32(capture.tree.EntryCount),
 		SourceWorkspaceLeaseID: authority.workspaceLease.ID,

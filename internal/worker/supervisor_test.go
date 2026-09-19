@@ -76,7 +76,7 @@ func (c *testControlPlane) returnedStatus() workerapi.StatusResponse {
 	return workerapi.StatusResponse{Status: workerapi.StatusActive}
 }
 func (c *testControlPlane) ObserveWorker(_ context.Context, observation workerapi.Observation) (workerapi.StatusResponse, error) {
-	if observation.RunPausedReason == string(StateDraining) {
+	if observation.RunPausedReason == string(StatusDraining) {
 		return c.returnedStatus(), nil
 	}
 	if status, ok := c.observeStatus.Load().(workerapi.StatusResponse); ok {
@@ -244,7 +244,7 @@ func TestSupervisorRunsConcurrentWorkAndDrainsLocally(t *testing.T) {
 	}
 	cancel()
 	deadline := time.Now().Add(time.Second)
-	for s.state.Load().(State) != StateDraining {
+	for s.state.Load().(Status) != StatusDraining {
 		if time.Now().After(deadline) {
 			t.Fatal("supervisor did not enter local draining state")
 		}
@@ -474,7 +474,7 @@ func TestSupervisorShutdownWaitsForClaimThatReturnsCommittedWork(t *testing.T) {
 	}
 	cancel()
 	deadline := time.Now().Add(time.Second)
-	for s.state.Load().(State) != StateDraining {
+	for s.state.Load().(Status) != StatusDraining {
 		if time.Now().After(deadline) {
 			t.Fatal("supervisor did not enter draining state")
 		}
@@ -590,7 +590,7 @@ func TestServerDirectedDrainStopsExecutionAndCompletesAfterCleanup(t *testing.T)
 	}
 	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveExecutions: 1})
 	deadline := time.Now().Add(time.Second)
-	for s.state.Load().(State) != StateDraining {
+	for s.state.Load().(Status) != StatusDraining {
 		if time.Now().After(deadline) {
 			t.Fatal("supervisor did not enter server-directed drain")
 		}
@@ -663,7 +663,7 @@ func TestServerDirectedDrainContinuesBoundRunWithHardAdmission(t *testing.T) {
 	go func() { done <- s.Run(t.Context()) }()
 	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveExecutions: 1})
 	deadline := time.Now().Add(time.Second)
-	for s.state.Load().(State) != StateDraining {
+	for s.state.Load().(Status) != StatusDraining {
 		if time.Now().After(deadline) {
 			t.Fatal("supervisor did not enter draining state")
 		}
@@ -717,7 +717,7 @@ func TestServerDirectedDrainDoesNotBypassBoundRunAdmission(t *testing.T) {
 	go func() { done <- s.Run(t.Context()) }()
 	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveExecutions: 1})
 	deadline := time.Now().Add(time.Second)
-	for s.state.Load().(State) != StateDraining {
+	for s.state.Load().(Status) != StatusDraining {
 		if time.Now().After(deadline) {
 			t.Fatal("supervisor did not enter draining state")
 		}
@@ -752,10 +752,10 @@ func TestDrainingObservationPreservesHardHealthInsteadOfLifecyclePause(t *testin
 		t.Fatal(err)
 	}
 	evaluator.Evaluate(context.Background(), AdmissionCheck{
-		Consumer: "run", State: StateDraining, DrainContinuation: true,
+		Consumer: "run", Status: StatusDraining, DrainContinuation: true,
 	})
 	s := &Supervisor{cfg: Config{AdmissionEvaluator: evaluator}}
-	observation := s.observation(StateDraining, RecoveryEvidence{})
+	observation := s.observation(StatusDraining, RecoveryEvidence{})
 	if observation.RunPausedReason != "" || observation.RuntimePausedReason != "" {
 		t.Fatalf("draining observation reported lifecycle pause: %+v", observation)
 	}
@@ -798,7 +798,7 @@ func TestDurableDrainLatchWinsWhenShutdownIsAlsoReady(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- s.Run(ctx) }()
 	deadline := time.Now().Add(time.Second)
-	for !controlPlane.activated.Load() || s.state.Load().(State) != StateActive {
+	for !controlPlane.activated.Load() || s.state.Load().(Status) != StatusActive {
 		if time.Now().After(deadline) {
 			t.Fatal("supervisor did not reach active select")
 		}
@@ -807,7 +807,7 @@ func TestDurableDrainLatchWinsWhenShutdownIsAlsoReady(t *testing.T) {
 	// Model the observation callback's ordering: it stores the durable latch
 	// before publishing its wakeup. Cancellation is already ready when Run
 	// resumes its select branch.
-	s.state.Store(StateDraining)
+	s.state.Store(StatusDraining)
 	cancel()
 	if err := <-done; err != nil {
 		t.Fatalf("latched durable drain = %v", err)

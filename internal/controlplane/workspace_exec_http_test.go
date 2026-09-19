@@ -54,16 +54,16 @@ func TestGetWorkspaceExecHTTPProjectsEveryPublicState(t *testing.T) {
 		statusCode int
 		status     api.WorkspaceExecProcessStatus
 	}{
-		{name: "pending", process: db.WorkspaceProcess{ID: pgvalue.UUID(processID), State: db.WorkspaceProcessStatePending}, statusCode: http.StatusAccepted, status: api.WorkspaceExecProcessStatusPending},
-		{name: "starting", process: db.WorkspaceProcess{ID: pgvalue.UUID(processID), State: db.WorkspaceProcessStateStarting}, statusCode: http.StatusAccepted, status: api.WorkspaceExecProcessStatusPending},
-		{name: "running", process: db.WorkspaceProcess{ID: pgvalue.UUID(processID), State: db.WorkspaceProcessStateRunning}, statusCode: http.StatusAccepted, status: api.WorkspaceExecProcessStatusRunning},
-		{name: "exit requested", process: db.WorkspaceProcess{ID: pgvalue.UUID(processID), State: db.WorkspaceProcessStateExitRequested}, statusCode: http.StatusAccepted, status: api.WorkspaceExecProcessStatusRunning},
+		{name: "pending", process: db.WorkspaceProcess{ID: pgvalue.UUID(processID), Status: db.WorkspaceProcessStatusPending}, statusCode: http.StatusAccepted, status: api.WorkspaceExecProcessStatusPending},
+		{name: "starting", process: db.WorkspaceProcess{ID: pgvalue.UUID(processID), Status: db.WorkspaceProcessStatusStarting}, statusCode: http.StatusAccepted, status: api.WorkspaceExecProcessStatusPending},
+		{name: "running", process: db.WorkspaceProcess{ID: pgvalue.UUID(processID), Status: db.WorkspaceProcessStatusRunning}, statusCode: http.StatusAccepted, status: api.WorkspaceExecProcessStatusRunning},
+		{name: "exit requested", process: db.WorkspaceProcess{ID: pgvalue.UUID(processID), Status: db.WorkspaceProcessStatusExitRequested}, statusCode: http.StatusAccepted, status: api.WorkspaceExecProcessStatusRunning},
 		{name: "exited", process: db.WorkspaceProcess{
-			ID: pgvalue.UUID(processID), State: db.WorkspaceProcessStateExited,
+			ID: pgvalue.UUID(processID), Status: db.WorkspaceProcessStatusExited,
 			ExitCode: pgtype.Int4{Int32: 17, Valid: true}, Stdout: []byte("out"), Stderr: []byte("err"),
 		}, statusCode: http.StatusOK, status: api.WorkspaceExecProcessStatusExited},
 		{name: "failed", process: db.WorkspaceProcess{
-			ID: pgvalue.UUID(processID), State: db.WorkspaceProcessStateFailed,
+			ID: pgvalue.UUID(processID), Status: db.WorkspaceProcessStatusFailed,
 			TerminalReasonCode: pgvalue.Text("workspace_exec_placement_timed_out"),
 		}, statusCode: http.StatusOK, status: api.WorkspaceExecProcessStatusFailed},
 	}
@@ -151,7 +151,7 @@ func TestGetWorkspaceExecHTTPIsolatesEveryAuthorityCoordinate(t *testing.T) {
 			EnvironmentID: pgvalue.UUID(environmentID), WorkspaceID: pgvalue.UUID(workspaceID),
 			ID: pgvalue.UUID(processID),
 		},
-		value: db.WorkspaceProcess{ID: pgvalue.UUID(processID), State: db.WorkspaceProcessStatePending},
+		value: db.WorkspaceProcess{ID: pgvalue.UUID(processID), Status: db.WorkspaceProcessStatusPending},
 	}
 	server := &Server{db: store}
 

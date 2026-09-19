@@ -10,7 +10,7 @@ target_run AS (
            runs.current_attempt_number,
            runs.trace_id,
            runs.root_span_id,
-           runs.state_version
+           runs.revision
       FROM runs
      WHERE runs.org_id = sqlc.arg(org_id)
        AND runs.id = sqlc.arg(run_id)
@@ -40,7 +40,7 @@ appended AS (
            event_args.event_kind,
            event_args.event_payload,
            'internal',
-           target_run.state_version,
+           target_run.revision,
            now()
       FROM target_run
       CROSS JOIN event_args
@@ -50,7 +50,7 @@ appended AS (
               COALESCE(telemetry_outbox.attempt_number, 0)::integer AS current_attempt_number,
               telemetry_outbox.trace_id,
               COALESCE(telemetry_outbox.span_id, '')::text AS root_span_id,
-              COALESCE(telemetry_outbox.snapshot_version, 0)::bigint AS state_version,
+              COALESCE(telemetry_outbox.snapshot_version, 0)::bigint AS revision,
               telemetry_outbox.kind AS event_kind,
               telemetry_outbox.payload AS event_payload
 )

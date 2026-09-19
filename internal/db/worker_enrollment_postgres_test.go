@@ -61,13 +61,13 @@ func TestWorkerEnrollmentRejectsUnknownTokenAndDrainingGroup(t *testing.T) {
 	if _, err := q.EnrollWorkerInstance(ctx, unknown); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("unknown token error = %v", err)
 	}
-	if _, err := q.TransitionWorkerGroupState(ctx, db.TransitionWorkerGroupStateParams{
-		WorkerGroupID: dbtest.DefaultWorkerGroupID, TargetState: string(db.WorkerGroupStatePaused), ExpectedClaimVersion: 1,
+	if _, err := q.TransitionWorkerGroupStatus(ctx, db.TransitionWorkerGroupStatusParams{
+		WorkerGroupID: dbtest.DefaultWorkerGroupID, TargetStatus: string(db.WorkerGroupStatusPaused), ExpectedClaimVersion: 1,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := q.TransitionWorkerGroupState(ctx, db.TransitionWorkerGroupStateParams{
-		WorkerGroupID: dbtest.DefaultWorkerGroupID, TargetState: string(db.WorkerGroupStateDraining), ExpectedClaimVersion: 2,
+	if _, err := q.TransitionWorkerGroupStatus(ctx, db.TransitionWorkerGroupStatusParams{
+		WorkerGroupID: dbtest.DefaultWorkerGroupID, TargetStatus: string(db.WorkerGroupStatusDraining), ExpectedClaimVersion: 2,
 	}); err != nil {
 		t.Fatal(err)
 	}

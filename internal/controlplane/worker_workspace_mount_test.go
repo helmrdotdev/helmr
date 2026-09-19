@@ -66,7 +66,7 @@ func TestWorkerCaptureWorkspaceMountRejectsLegacyAndInvalidIdentityShapes(t *tes
 func TestWorkerCaptureWorkspaceMountPersistsTreeAndArtifactIdentities(t *testing.T) {
 	fixture := runtest.New(t)
 	work := fixture.AddRunLease(t, "starting", time.Now().Add(-time.Minute))
-	var workspaceID, baseVersionID, runtimeID, mountID, workspaceLeaseID uuid.UUID
+	var workspaceID, baseWorkspaceVersionID, runtimeID, mountID, workspaceLeaseID uuid.UUID
 	if err := fixture.Pool.QueryRow(t.Context(), `
 SELECT runs.workspace_id, runs.base_workspace_version_id,
        run_leases.runtime_instance_id, workspace_leases.workspace_mount_id,
@@ -75,7 +75,7 @@ SELECT runs.workspace_id, runs.base_workspace_version_id,
   JOIN run_leases ON run_leases.id = runs.current_run_lease_id
   JOIN workspace_leases ON workspace_leases.owner_run_lease_id = run_leases.id
  WHERE runs.id = $1`, work.RunID).Scan(
-		&workspaceID, &baseVersionID, &runtimeID, &mountID, &workspaceLeaseID,
+		&workspaceID, &baseWorkspaceVersionID, &runtimeID, &mountID, &workspaceLeaseID,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -91,9 +91,9 @@ INSERT INTO idempotency_claims (
 		claimID, fixture.EnvironmentID)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 INSERT INTO workspace_processes (
-    id, org_id, project_id, environment_id, workspace_id, base_version_id,
+    id, org_id, project_id, environment_id, workspace_id, base_workspace_version_id,
     restore_desired_state, region_id, worker_group_id, worker_instance_id,
-    worker_epoch, runtime_instance_id, workspace_mount_id, state, request,
+    worker_epoch, runtime_instance_id, workspace_mount_id, status, request,
     stdin, stdout, stderr, claim_id, created_by_subject_type,
     created_by_subject_id
 ) VALUES (
@@ -101,7 +101,7 @@ INSERT INTO workspace_processes (
     'exit_requested', '{}'::jsonb, ''::bytea, ''::bytea, ''::bytea, $12,
     'api_key', $13
 )`, processID, fixture.OrgID, fixture.ProjectID, fixture.EnvironmentID,
-		workspaceID, baseVersionID, runtest.Region, runtest.WorkerGroup,
+		workspaceID, baseWorkspaceVersionID, runtest.Region, runtest.WorkerGroup,
 		fixture.WorkerID, runtimeID, mountID, claimID, creatorID.String())
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 UPDATE workspace_leases
@@ -109,7 +109,7 @@ UPDATE workspace_leases
  WHERE id = $2`, processID, workspaceLeaseID)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 UPDATE workspace_mounts
-   SET state = 'unmounting', finalization_kind = 'capture',
+   SET status = 'unmounting', finalization_kind = 'capture',
        finalization_reason_code = 'workspace_exec_completed', stopped_at = now()
  WHERE id = $1`, mountID)
 
@@ -251,7 +251,7 @@ SELECT workspace_versions.parent_version_id, workspace_versions.content_digest, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	resetTarget, err := projectWorkspaceResetTarget(db.WorkspaceLease{BaseVersionID: pgvalue.UUID(versionID)}, authority)
+	resetTarget, err := projectWorkspaceResetTarget(db.WorkspaceLease{BaseWorkspaceVersionID: pgvalue.UUID(versionID)}, authority)
 	if err != nil {
 		t.Fatalf("captured version is not a valid reset target: %v", err)
 	}

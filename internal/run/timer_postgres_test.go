@@ -19,12 +19,12 @@ func TestTimerWaitReconcilerCompletesDueHotWait(t *testing.T) {
 
 	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE run_leases
-		   SET state = 'running', started_at = claimed_at
-		 WHERE id = $1 AND state = 'starting'
+		   SET status = 'running', started_at = claimed_at
+		 WHERE id = $1 AND status = 'starting'
 	`, work.leaseID)
 	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE runs
-		   SET status = 'running', state_version = state_version + 1,
+		   SET status = 'running', revision = revision + 1,
 		       started_at = (SELECT started_at FROM run_leases WHERE id = $1),
 		       active_started_at = (SELECT started_at FROM run_leases WHERE id = $1)
 		 WHERE id = $2 AND status = 'queued' AND current_run_lease_id = $1
@@ -37,7 +37,7 @@ func TestTimerWaitReconcilerCompletesDueHotWait(t *testing.T) {
 
 	var runningVersion int64
 	if err := fixture.pool.QueryRow(ctx, `
-		SELECT state_version FROM runs WHERE id = $1
+		SELECT revision FROM runs WHERE id = $1
 	`, work.runID).Scan(&runningVersion); err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestTimerWaitReconcilerCompletesDueHotWait(t *testing.T) {
 		Metadata:                       []byte(`{}`),
 		Tags:                           []string{},
 		RunID:                          pgvalue.UUID(work.runID),
-		ExpectedRunningStateVersion:    runningVersion,
+		ExpectedRunningRevision:        runningVersion,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -74,28 +74,28 @@ func TestTimerWaitReconcilerCompletesDueHotWait(t *testing.T) {
 
 	var runStatus db.RunStatus
 	var runVersion int64
-	var conditionState db.WaitState
-	var suspensionState db.RunWaitState
+	var conditionStatus db.WaitStatus
+	var suspensionStatus db.RunWaitStatus
 	var waitVersion int64
 	if err := fixture.pool.QueryRow(ctx, `
-		SELECT runs.status, runs.state_version,
-		       run_waits.condition_state, run_waits.suspension_state,
-		       run_waits.expected_run_state_version
+		SELECT runs.status, runs.revision,
+		       run_waits.condition_status, run_waits.suspension_status,
+		       run_waits.expected_run_revision
 		  FROM runs
 		  JOIN run_waits ON run_waits.run_id = runs.id
 		 WHERE runs.id = $1 AND run_waits.id = $2
 	`, work.runID, wait.ID).Scan(
-		&runStatus, &runVersion, &conditionState, &suspensionState, &waitVersion,
+		&runStatus, &runVersion, &conditionStatus, &suspensionStatus, &waitVersion,
 	); err != nil {
 		t.Fatal(err)
 	}
 	if runStatus != db.RunStatusRunning ||
-		conditionState != db.WaitStateCompleted ||
-		suspensionState != db.RunWaitStateReleased ||
+		conditionStatus != db.WaitStatusCompleted ||
+		suspensionStatus != db.RunWaitStatusReleased ||
 		runVersion != waitVersion {
 		t.Fatalf(
 			"reconciled timer = run status %s version %d, condition %s suspension %s wait version %d",
-			runStatus, runVersion, conditionState, suspensionState, waitVersion,
+			runStatus, runVersion, conditionStatus, suspensionStatus, waitVersion,
 		)
 	}
 

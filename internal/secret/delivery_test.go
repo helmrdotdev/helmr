@@ -24,7 +24,7 @@ func TestLockAttemptDeliveryReturnsExactRecordedVersion(t *testing.T) {
 	secret := db.Secret{
 		ID:                   secretID,
 		EnvironmentID:        environmentID,
-		State:                "active",
+		Status:               "active",
 		CurrentVersionID:     currentVersionID,
 		RevocationGeneration: 3,
 	}
@@ -62,7 +62,7 @@ func TestLockAttemptDeliveryRejectsIncompleteOrRevokedAuthority(t *testing.T) {
 	active := db.Secret{
 		ID:                   secretID,
 		EnvironmentID:        environmentID,
-		State:                "active",
+		Status:               "active",
 		CurrentVersionID:     versionID,
 		RevocationGeneration: 4,
 	}
@@ -74,7 +74,7 @@ func TestLockAttemptDeliveryRejectsIncompleteOrRevokedAuthority(t *testing.T) {
 		{name: "wrong Run", edit: func(row *db.LockAttemptSecretDeliveryRow) { row.ResolutionRunID = pgvalue.UUID(uuid.New()) }},
 		{name: "wrong Attempt", edit: func(row *db.LockAttemptSecretDeliveryRow) { row.ResolutionAttemptNumber.Int32++ }},
 		{name: "revocation generation changed", edit: func(row *db.LockAttemptSecretDeliveryRow) { row.Secret.RevocationGeneration++ }},
-		{name: "revoked", edit: func(row *db.LockAttemptSecretDeliveryRow) { row.Secret.State = "revoked" }},
+		{name: "revoked", edit: func(row *db.LockAttemptSecretDeliveryRow) { row.Secret.Status = "revoked" }},
 		{name: "wrong Workspace", edit: func(row *db.LockAttemptSecretDeliveryRow) { row.WorkspaceSecret.WorkspaceID = pgvalue.UUID(uuid.New()) }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -122,7 +122,7 @@ func TestLockAttemptDeliveryRejectsPlacementOverflow(t *testing.T) {
 		rows[index] = deliveryRow(runID, workspaceID, db.Secret{
 			ID:                   secretID,
 			EnvironmentID:        environmentID,
-			State:                "active",
+			Status:               "active",
 			CurrentVersionID:     versionID,
 			RevocationGeneration: 1,
 		}, versionID, 1, "env", "TOKEN")
@@ -150,7 +150,7 @@ func TestOpenDeliveriesUsesRecordedVersionAfterRotation(t *testing.T) {
 	secret := db.Secret{
 		ID:               pgvalue.UUID(secretID),
 		EnvironmentID:    pgvalue.UUID(environmentID),
-		State:            "active",
+		Status:           "active",
 		CurrentVersionID: pgvalue.UUID(currentVersionID),
 	}
 	version := db.SecretVersion{
@@ -201,7 +201,7 @@ func TestOpenDeliveriesRejectsAuthorityMismatch(t *testing.T) {
 		Secret: db.Secret{
 			ID:            pgvalue.UUID(secretID),
 			EnvironmentID: pgvalue.UUID(environmentID),
-			State:         "active",
+			Status:        "active",
 		},
 		Version: db.SecretVersion{
 			ID:       pgvalue.UUID(versionID),
@@ -213,7 +213,7 @@ func TestOpenDeliveriesRejectsAuthorityMismatch(t *testing.T) {
 		edit func(*DeliveryEnvelope)
 	}{
 		{name: "wrong environment", edit: func(value *DeliveryEnvelope) { value.Secret.EnvironmentID = pgvalue.UUID(uuid.New()) }},
-		{name: "revoked Secret", edit: func(value *DeliveryEnvelope) { value.Secret.State = "revoked" }},
+		{name: "revoked Secret", edit: func(value *DeliveryEnvelope) { value.Secret.Status = "revoked" }},
 		{name: "wrong Secret version owner", edit: func(value *DeliveryEnvelope) { value.Version.SecretID = pgvalue.UUID(uuid.New()) }},
 		{name: "invalid placement", edit: func(value *DeliveryEnvelope) { value.PlacementKind = "other" }},
 	} {

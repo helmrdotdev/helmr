@@ -117,7 +117,7 @@ func TestCapacityDrainUsesExactEpochAndClaimFence(t *testing.T) {
 	store := &capacityDrainStore{
 		instance: db.GetCapacityWorkerInstanceRow{
 			ID: workerID, ResourceID: "host-opaque-1", WorkerGroupID: controlplaneTestWorkerGroupDBID,
-			State: string(db.WorkerInstanceStateActive), ClaimVersion: 7,
+			Status: string(db.WorkerInstanceStatusActive), ClaimVersion: 7,
 			CurrentEpoch: pgtype.Int8{Int64: 4, Valid: true},
 			CreatedAt:    pgtype.Timestamptz{Time: now, Valid: true},
 			UpdatedAt:    pgtype.Timestamptz{Time: now, Valid: true},
@@ -126,7 +126,7 @@ func TestCapacityDrainUsesExactEpochAndClaimFence(t *testing.T) {
 	}
 	store.draining = db.DrainWorkerInstanceRow{
 		ID: workerID, ResourceID: "host-opaque-1", WorkerGroupID: controlplaneTestWorkerGroupDBID,
-		State: string(db.WorkerInstanceStateDraining), ClaimVersion: 8,
+		Status: string(db.WorkerInstanceStatusDraining), ClaimVersion: 8,
 		CurrentEpoch: pgtype.Int8{Int64: 4, Valid: true},
 		DrainingAt:   pgtype.Timestamptz{Time: now, Valid: true},
 		CreatedAt:    pgtype.Timestamptz{Time: now, Valid: true},
@@ -165,7 +165,7 @@ func TestCapacityDrainDefersForEligibleQueuedDemand(t *testing.T) {
 	workerID := pgvalue.NewUUIDv7()
 	store := &capacityDrainStore{
 		instance: db.GetCapacityWorkerInstanceRow{
-			ID: workerID, WorkerGroupID: controlplaneTestWorkerGroupDBID, State: string(db.WorkerInstanceStateActive),
+			ID: workerID, WorkerGroupID: controlplaneTestWorkerGroupDBID, Status: string(db.WorkerInstanceStatusActive),
 			ClaimVersion: 7, CurrentEpoch: pgtype.Int8{Int64: 4, Valid: true},
 		},
 		group:      db.WorkerGroup{ID: controlplaneTestWorkerGroupDBID, RegionID: "us-east-1"},
@@ -196,11 +196,11 @@ func TestCapacityDrainReplaySkipsQueuedDemandCheck(t *testing.T) {
 	workerID := pgvalue.NewUUIDv7()
 	store := &capacityDrainStore{
 		instance: db.GetCapacityWorkerInstanceRow{
-			ID: workerID, WorkerGroupID: controlplaneTestWorkerGroupDBID, State: string(db.WorkerInstanceStateDraining),
+			ID: workerID, WorkerGroupID: controlplaneTestWorkerGroupDBID, Status: string(db.WorkerInstanceStatusDraining),
 			ClaimVersion: 8, CurrentEpoch: pgtype.Int8{Int64: 4, Valid: true},
 		},
 		draining: db.DrainWorkerInstanceRow{
-			ID: workerID, WorkerGroupID: controlplaneTestWorkerGroupDBID, State: string(db.WorkerInstanceStateDraining),
+			ID: workerID, WorkerGroupID: controlplaneTestWorkerGroupDBID, Status: string(db.WorkerInstanceStatusDraining),
 			ClaimVersion: 8, CurrentEpoch: pgtype.Int8{Int64: 4, Valid: true},
 		},
 	}
@@ -227,7 +227,7 @@ func TestCapacityStaleDrainReturnsConflict(t *testing.T) {
 	store := &capacityDrainStore{
 		instance: db.GetCapacityWorkerInstanceRow{
 			ID: workerID, ResourceID: "host-opaque-1", WorkerGroupID: controlplaneTestWorkerGroupDBID,
-			State: string(db.WorkerInstanceStateActive), ClaimVersion: 7,
+			Status: string(db.WorkerInstanceStatusActive), ClaimVersion: 7,
 			CurrentEpoch: pgtype.Int8{Int64: 4, Valid: true},
 		},
 		drainErr: pgx.ErrNoRows,
@@ -259,13 +259,13 @@ func TestCapacityProviderAbsenceUsesExactWorkerIdentity(t *testing.T) {
 	store := &capacityDrainStore{
 		instance: db.GetCapacityWorkerInstanceRow{
 			ID: workerID, ResourceID: "i-provider-absent", WorkerGroupID: controlplaneTestWorkerGroupDBID,
-			WorkerPoolID: poolID, State: string(db.WorkerInstanceStateActive), ClaimVersion: 7,
+			WorkerPoolID: poolID, Status: string(db.WorkerInstanceStatusActive), ClaimVersion: 7,
 			CurrentEpoch: pgtype.Int8{Int64: 4, Valid: true},
 			CreatedAt:    pgtype.Timestamptz{Time: now, Valid: true}, UpdatedAt: pgtype.Timestamptz{Time: now, Valid: true},
 		},
 		providerAbsent: db.ConfirmWorkerInstanceProviderAbsentRow{
 			ID: workerID, ResourceID: "i-provider-absent", WorkerGroupID: controlplaneTestWorkerGroupDBID,
-			WorkerPoolID: poolID, State: string(db.WorkerInstanceStateLost), ClaimVersion: 8,
+			WorkerPoolID: poolID, Status: string(db.WorkerInstanceStatusLost), ClaimVersion: 8,
 			CurrentEpoch: pgtype.Int8{Int64: 4, Valid: true}, LostAt: pgtype.Timestamptz{Time: now, Valid: true},
 			CreatedAt: pgtype.Timestamptz{Time: now, Valid: true}, UpdatedAt: pgtype.Timestamptz{Time: now, Valid: true},
 		},
@@ -292,9 +292,9 @@ func TestCapacityResolveAndPlanHandlers(t *testing.T) {
 	poolID := pgvalue.NewUUIDv7()
 	template := capacityHTTPTemplate(t)
 	store := &capacityPlanStore{group: db.WorkerGroup{
-		ID: groupDBID, RegionID: "aws-us-east-1", Name: "default", State: "active",
+		ID: groupDBID, RegionID: "aws-us-east-1", Name: "default", Status: "active",
 	}, pool: db.WorkerPool{
-		ID: poolID, WorkerGroupID: groupDBID, Name: "run-current", State: "active",
+		ID: poolID, WorkerGroupID: groupDBID, Name: "run-current", Status: "active",
 	}, planPool: db.ListCapacityWorkerPoolsRow{
 		ID: poolID, WorkerGroupID: groupDBID, Name: "run-current",
 		RuntimeIdentityID:               pgtype.Text{String: template.Runtime.ID, Valid: true},
@@ -377,7 +377,7 @@ func TestCapacityWorkerInstanceListParamsAreBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !params.WorkerGroupID.Valid || pgvalue.UUIDString(params.WorkerGroupID) != controlplaneTestWorkerGroup || !params.HasUnreclaimedRuntime || params.RowLimit != 50 || strings.Join(params.ResourceIds, ",") != "host-1,host-2" || strings.Join(params.States, ",") != "active,draining" {
+	if !params.WorkerGroupID.Valid || pgvalue.UUIDString(params.WorkerGroupID) != controlplaneTestWorkerGroup || !params.HasUnreclaimedRuntime || params.RowLimit != 50 || strings.Join(params.ResourceIds, ",") != "host-1,host-2" || strings.Join(params.Statuses, ",") != "active,draining" {
 		t.Fatalf("params = %+v", params)
 	}
 	for _, raw := range []string{"/?unsupported=active", "/?worker_group_id=", "/?worker_group_id=%20", "/?worker_group_id=%20" + controlplaneTestWorkerGroup + "%20", "/?worker_group_id=run-workers", "/?status=unknown", "/?resource_id=", "/?resource_id=host-1&resource_id=host-1", "/?has_unreclaimed_runtime=false", "/?has_unreclaimed_runtime=true&has_unreclaimed_runtime=true", "/?limit=0", "/?limit=501"} {
@@ -395,7 +395,7 @@ func TestCapacityWorkerInstanceReadContract(t *testing.T) {
 	now := time.Now().UTC()
 	row := db.ListCapacityWorkerInstancesRow{
 		ID: workerID, ResourceID: "host-opaque-1", WorkerGroupID: groupDBID, WorkerPoolID: poolID,
-		State: string(db.WorkerInstanceStateActive), ClaimVersion: 7,
+		Status: string(db.WorkerInstanceStatusActive), ClaimVersion: 7,
 		CurrentEpoch: pgtype.Int8{Int64: 4, Valid: true},
 		CreatedAt:    pgtype.Timestamptz{Time: now, Valid: true},
 		UpdatedAt:    pgtype.Timestamptz{Time: now, Valid: true},
@@ -403,7 +403,7 @@ func TestCapacityWorkerInstanceReadContract(t *testing.T) {
 	store := &capacityDrainStore{
 		instance: db.GetCapacityWorkerInstanceRow{
 			ID: row.ID, ResourceID: row.ResourceID, WorkerGroupID: row.WorkerGroupID,
-			WorkerPoolID: row.WorkerPoolID, State: row.State, ClaimVersion: row.ClaimVersion, CurrentEpoch: row.CurrentEpoch,
+			WorkerPoolID: row.WorkerPoolID, Status: row.Status, ClaimVersion: row.ClaimVersion, CurrentEpoch: row.CurrentEpoch,
 			CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 		},
 		listed: []db.ListCapacityWorkerInstancesRow{row},
@@ -425,7 +425,7 @@ func TestCapacityWorkerInstanceReadContract(t *testing.T) {
 	}
 	listed := capacityJSONObject(t, instances[0])
 	assertCapacityJSONKeys(t, listed, "claim_version", "created_at", "current_epoch", "id", "resource_id", "status", "updated_at", "worker_group_id", "worker_pool_id")
-	if pgvalue.UUIDString(store.listParams.WorkerGroupID) != groupID || strings.Join(store.listParams.States, ",") != "active" || store.listParams.RowLimit != 1 {
+	if pgvalue.UUIDString(store.listParams.WorkerGroupID) != groupID || strings.Join(store.listParams.Statuses, ",") != "active" || store.listParams.RowLimit != 1 {
 		t.Fatalf("list params = %+v", store.listParams)
 	}
 	if listed["id"] != uuid.UUID(workerID.Bytes).String() || listed["resource_id"] != row.ResourceID ||

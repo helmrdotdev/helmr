@@ -800,7 +800,7 @@ func replayFinalizedDeployment(
 	projectID pgtype.UUID,
 	response *api.DeploymentResponse,
 ) error {
-	if claim.State != "completed" {
+	if claim.Status != "completed" {
 		return conflict(errors.New("deployment bundle finalization is in progress"))
 	}
 	var receipt deploymentFinalizeReceipt

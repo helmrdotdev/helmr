@@ -16,7 +16,7 @@ SELECT
     COALESCE(MAX(id), 0)::bigint AS observed_seq,
     COALESCE(
         MIN(id) FILTER (
-            WHERE state <> 'written' OR written_at IS NULL
+            WHERE status <> 'written' OR written_at IS NULL
         ),
         0
     )::bigint AS pending_seq

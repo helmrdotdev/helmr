@@ -47,12 +47,12 @@ type WaitRegistration struct {
 }
 
 type WaitRegistrationResult struct {
-	WaitID          uuid.UUID
-	RunStateVersion int64
-	ConditionState  db.WaitState
-	SuspensionState db.RunWaitState
-	Result          json.RawMessage
-	ReasonCode      string
+	WaitID           uuid.UUID
+	RunRevision      int64
+	ConditionStatus  db.WaitStatus
+	SuspensionStatus db.RunWaitStatus
+	Result           json.RawMessage
+	ReasonCode       string
 }
 
 type WaitReconciler struct {
@@ -143,7 +143,7 @@ func (r *WaitReconciler) RegisterWait(
 		if err != nil {
 			return WaitRegistrationResult{}, tokenWaitAuthorityError("lock owning actor", err)
 		}
-		if actor.State != "open" && actor.State != "closing" {
+		if actor.Status != "open" && actor.Status != "closing" {
 			return WaitRegistrationResult{}, tokenWaitAuthorityError("owning actor is not active", nil)
 		}
 		lockedActorCurrentRunID = actor.CurrentRunID
@@ -199,14 +199,14 @@ func (r *WaitReconciler) RegisterWait(
 		ID: pgvalue.UUID(request.WorkerGroupID), RegionID: locators.RegionID,
 	})
 	if err != nil ||
-		(workerGroup.State != db.WorkerGroupStateActive && workerGroup.State != db.WorkerGroupStateDraining) {
+		(workerGroup.Status != db.WorkerGroupStatusActive && workerGroup.Status != db.WorkerGroupStatusDraining) {
 		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock active worker group", err)
 	}
 	worker, err := q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{
 		ID: pgtype.UUID{Bytes: request.WorkerInstanceID, Valid: true}, WorkerGroupID: pgvalue.UUID(request.WorkerGroupID),
 	})
 	if err != nil ||
-		(worker.State != db.WorkerInstanceStateActive && worker.State != db.WorkerInstanceStateDraining) ||
+		(worker.Status != db.WorkerInstanceStatusActive && worker.Status != db.WorkerInstanceStatusDraining) ||
 		!worker.CurrentEpoch.Valid ||
 		worker.CurrentEpoch.Int64 != request.WorkerEpoch ||
 		!worker.RuntimeIdentityID.Valid {
@@ -224,7 +224,7 @@ func (r *WaitReconciler) RegisterWait(
 		runtime.ObservedDesiredVersion != runtime.DesiredVersion || runtime.TerminalAt.Valid {
 		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock ready runtime", err)
 	}
-	leaseState, err := q.LockTokenWaitRunLease(ctx, db.LockTokenWaitRunLeaseParams{
+	leaseStatus, err := q.LockTokenWaitRunLease(ctx, db.LockTokenWaitRunLeaseParams{
 		ID:                pgvalue.UUID(request.RunLeaseID),
 		RunID:             locators.RunID,
 		AttemptNumber:     attemptNumber,
@@ -237,7 +237,7 @@ func (r *WaitReconciler) RegisterWait(
 		RuntimeIdentityID: runtime.RuntimeIdentityID,
 		RegionID:          locators.RegionID,
 	})
-	if err != nil || db.RunLeaseState(leaseState) != db.RunLeaseStateRunning {
+	if err != nil || db.RunLeaseStatus(leaseStatus) != db.RunLeaseStatusRunning {
 		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock current unexpired run lease", err)
 	}
 	mount, err := q.LockRunLeaseClaimMount(ctx, db.LockRunLeaseClaimMountParams{
@@ -248,7 +248,7 @@ func (r *WaitReconciler) RegisterWait(
 		RuntimeInstanceID: locators.RuntimeInstanceID,
 		WorkspaceID:       locator.WorkspaceID,
 	})
-	if err != nil || mount.State != db.WorkspaceMountStateMounted {
+	if err != nil || mount.Status != db.WorkspaceMountStatusMounted {
 		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock mounted workspace", err)
 	}
 	workspaceLease, err := q.LockRunLeaseClaimWorkspaceLease(ctx, db.LockRunLeaseClaimWorkspaceLeaseParams{
@@ -277,7 +277,7 @@ func (r *WaitReconciler) RegisterWait(
 		TimeoutAt:                     request.TimeoutAt,
 		IdleTimeoutMs:                 request.IdleTimeoutMS,
 		TokenID:                       pgvalue.UUID(request.TokenID),
-		ExpectedRunningStateVersion:   run.stateVersion,
+		ExpectedRunningRevision:       run.revision,
 		RequestFingerprint:            request.RequestFingerprint,
 		AttemptNumber:                 attemptNumber,
 		ActorSpeculativeInputSequence: request.ActorSpeculativeInputSequence,
@@ -291,7 +291,7 @@ func (r *WaitReconciler) RegisterWait(
 	if err != nil {
 		return WaitRegistrationResult{}, tokenWaitAuthorityError("insert token wait", err)
 	}
-	waitingVersion := registered.ExpectedRunStateVersion
+	waitingRevision := registered.ExpectedRunRevision
 
 	condition, err := q.LockTokenWaitCondition(ctx, db.LockTokenWaitConditionParams{
 		EnvironmentID: locators.EnvironmentID,
@@ -300,32 +300,32 @@ func (r *WaitReconciler) RegisterWait(
 	if err != nil {
 		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock token registration condition", err)
 	}
-	tokenState := db.TokenState(condition.State)
+	tokenStatus := db.TokenStatus(condition.Status)
 
 	result := WaitRegistrationResult{
-		WaitID: request.WaitID, RunStateVersion: waitingVersion,
-		ConditionState: db.WaitStatePending, SuspensionState: db.RunWaitStateHot,
+		WaitID: request.WaitID, RunRevision: waitingRevision,
+		ConditionStatus: db.WaitStatusPending, SuspensionStatus: db.RunWaitStatusHot,
 	}
-	if tokenState != db.TokenStatePending {
-		resolution, err := tokenWaitTerminalResolution(tokenState, condition.Result)
+	if tokenStatus != db.TokenStatusPending {
+		resolution, err := tokenWaitTerminalResolution(tokenStatus, condition.Result)
 		if err != nil {
 			return WaitRegistrationResult{}, err
 		}
 		wait := tokenWaitLockedWait{
 			id: request.WaitID, runID: runID,
 			workspaceID: pgvalue.MustUUIDValue(locator.WorkspaceID), kind: db.WaitKindToken,
-			conditionState: db.WaitStatePending, suspensionState: db.RunWaitStateHot,
-			expectedRunStateVersion: waitingVersion, attemptNumber: attemptNumber,
+			conditionStatus: db.WaitStatusPending, suspensionStatus: db.RunWaitStatusHot,
+			expectedRunRevision: waitingRevision, attemptNumber: attemptNumber,
 			currentRunLeaseID: pgtype.UUID{Bytes: request.RunLeaseID, Valid: true},
 		}
-		run.stateVersion = waitingVersion
+		run.revision = waitingRevision
 		run.status = db.RunStatusWaiting
 		if err := reconcileHotTokenWait(ctx, q, run, wait, resolution); err != nil {
 			return WaitRegistrationResult{}, err
 		}
-		result.RunStateVersion = waitingVersion + 1
-		result.ConditionState = resolution.conditionState
-		result.SuspensionState = db.RunWaitStateReleased
+		result.RunRevision = waitingRevision + 1
+		result.ConditionStatus = resolution.conditionStatus
+		result.SuspensionStatus = db.RunWaitStatusReleased
 		result.Result = resolution.result
 		if resolution.reasonCode != nil {
 			result.ReasonCode = *resolution.reasonCode
@@ -366,11 +366,11 @@ func replayTokenWaitRegistration(
 			return WaitRegistrationResult{}, false, tokenWaitAuthorityError("token wait registration replay does not match", nil)
 		}
 		result := WaitRegistrationResult{
-			WaitID:          pgvalue.MustUUIDValue(replay.WaitID),
-			RunStateVersion: replay.RunStateVersion.Int64,
-			ConditionState:  db.WaitState(replay.ConditionState.String),
-			SuspensionState: db.RunWaitState(replay.SuspensionState.String),
-			Result:          json.RawMessage(replay.ConditionResult),
+			WaitID:           pgvalue.MustUUIDValue(replay.WaitID),
+			RunRevision:      replay.RunRevision.Int64,
+			ConditionStatus:  db.WaitStatus(replay.ConditionStatus.String),
+			SuspensionStatus: db.RunWaitStatus(replay.SuspensionStatus.String),
+			Result:           json.RawMessage(replay.ConditionResult),
 		}
 		if replay.ConditionReasonCode.Valid {
 			result.ReasonCode = replay.ConditionReasonCode.String
@@ -489,7 +489,7 @@ func validateAndLockTokenWaitWorkspace(
 	if err != nil {
 		return db.LockTokenWaitWorkspaceRow{}, tokenWaitAuthorityError("lock run workspace", err)
 	}
-	if db.WorkspaceState(workspace.State) != db.WorkspaceStateActive ||
+	if db.WorkspaceStatus(workspace.Status) != db.WorkspaceStatusActive ||
 		db.WorkspaceDesiredState(workspace.DesiredState) != db.WorkspaceDesiredStateActive ||
 		workspace.OwnerSessionID != locator.OwnerSessionID {
 		return db.LockTokenWaitWorkspaceRow{}, tokenWaitAuthorityError("workspace ownership changed", nil)
@@ -544,7 +544,7 @@ type tokenWaitLockedRun struct {
 	actorID           pgtype.UUID
 	entrypointKind    string
 	status            db.RunStatus
-	stateVersion      int64
+	revision          int64
 	currentAttempt    int32
 	currentRunLeaseID pgtype.UUID
 	activeStartedAt   pgtype.Timestamptz
@@ -553,26 +553,26 @@ type tokenWaitLockedRun struct {
 }
 
 type tokenWaitLockedWait struct {
-	id                      uuid.UUID
-	runID                   uuid.UUID
-	workspaceID             uuid.UUID
-	kind                    db.WaitKind
-	conditionState          db.WaitState
-	suspensionState         db.RunWaitState
-	expectedRunStateVersion int64
-	attemptNumber           int32
-	currentRunLeaseID       pgtype.UUID
-	priorRunLeaseID         pgtype.UUID
-	suspendCheckpointID     pgtype.UUID
-	timeoutAt               pgtype.Timestamptz
-	timedOut                bool
+	id                  uuid.UUID
+	runID               uuid.UUID
+	workspaceID         uuid.UUID
+	kind                db.WaitKind
+	conditionStatus     db.WaitStatus
+	suspensionStatus    db.RunWaitStatus
+	expectedRunRevision int64
+	attemptNumber       int32
+	currentRunLeaseID   pgtype.UUID
+	priorRunLeaseID     pgtype.UUID
+	suspendCheckpointID pgtype.UUID
+	timeoutAt           pgtype.Timestamptz
+	timedOut            bool
 }
 
 type tokenWaitResolution struct {
-	conditionState db.WaitState
-	result         json.RawMessage
-	reasonCode     *string
-	conditionError json.RawMessage
+	conditionStatus db.WaitStatus
+	result          json.RawMessage
+	reasonCode      *string
+	conditionError  json.RawMessage
 }
 
 func (r *WaitReconciler) reconcileOne(
@@ -615,7 +615,7 @@ func (r *WaitReconciler) reconcileOne(
 		if err != nil {
 			return false, false, tokenWaitAuthorityError("lock owning actor", err)
 		}
-		if actor.State != "open" && actor.State != "closing" {
+		if actor.Status != "open" && actor.Status != "closing" {
 			return false, false, tokenWaitAuthorityError("owning actor is not active", nil)
 		}
 		lockedActorCurrentRunID = actor.CurrentRunID
@@ -637,7 +637,7 @@ func (r *WaitReconciler) reconcileOne(
 	if err != nil {
 		return false, false, tokenWaitAuthorityError("lock run workspace", err)
 	}
-	if db.WorkspaceState(workspace.State) != db.WorkspaceStateActive ||
+	if db.WorkspaceStatus(workspace.Status) != db.WorkspaceStatusActive ||
 		db.WorkspaceDesiredState(workspace.DesiredState) != db.WorkspaceDesiredStateActive ||
 		workspace.OwnerSessionID != locator.OwnerSessionID {
 		return false, false, tokenWaitAuthorityError("workspace ownership changed", nil)
@@ -676,7 +676,7 @@ func (r *WaitReconciler) reconcileOne(
 	if err := validateLockedTokenWait(addressedRun, wait); err != nil {
 		return false, false, err
 	}
-	if wait.conditionState != db.WaitStatePending {
+	if wait.conditionStatus != db.WaitStatusPending {
 		if err := tx.Commit(ctx); err != nil {
 			return false, false, fmt.Errorf("commit deferred token wait reconciliation: %w", err)
 		}
@@ -693,9 +693,9 @@ func (r *WaitReconciler) reconcileOne(
 		}
 		reason := "wait_timeout"
 		resolution = tokenWaitResolution{
-			conditionState: db.WaitStateFailed,
-			reasonCode:     &reason,
-			conditionError: json.RawMessage(`{"code":"wait_timeout","retryable":false}`),
+			conditionStatus: db.WaitStatusFailed,
+			reasonCode:      &reason,
+			conditionError:  json.RawMessage(`{"code":"wait_timeout","retryable":false}`),
 		}
 	} else {
 		condition, err := q.LockTokenWaitCondition(ctx, db.LockTokenWaitConditionParams{
@@ -706,7 +706,7 @@ func (r *WaitReconciler) reconcileOne(
 			return false, false, tokenWaitAuthorityError("lock terminal token", err)
 		}
 		resolution, err = tokenWaitTerminalResolution(
-			db.TokenState(condition.State),
+			db.TokenStatus(condition.Status),
 			condition.Result,
 		)
 		if err != nil {
@@ -714,12 +714,12 @@ func (r *WaitReconciler) reconcileOne(
 		}
 	}
 
-	switch wait.suspensionState {
-	case db.RunWaitStateHot:
+	switch wait.suspensionStatus {
+	case db.RunWaitStatusHot:
 		err = reconcileHotTokenWait(ctx, q, addressedRun, wait, resolution)
-	case db.RunWaitStateCheckpointing:
+	case db.RunWaitStatusCheckpointing:
 		err = reconcileCheckpointingTokenWait(ctx, q, wait, resolution)
-	case db.RunWaitStateParked:
+	case db.RunWaitStatusParked:
 		err = reconcileParkedTokenWait(ctx, q, addressedRun, wait, resolution)
 	default:
 		err = tokenWaitAuthorityError("pending token wait has an ineligible suspension state", nil)
@@ -730,7 +730,7 @@ func (r *WaitReconciler) reconcileOne(
 	if err := tx.Commit(ctx); err != nil {
 		return false, false, fmt.Errorf("commit token wait reconciliation: %w", err)
 	}
-	return true, wait.suspensionState == db.RunWaitStateCheckpointing, nil
+	return true, wait.suspensionStatus == db.RunWaitStatusCheckpointing, nil
 }
 
 func lockTokenWaitLineage(
@@ -760,7 +760,7 @@ func lockTokenWaitLineage(
 			actorID:           locked.SessionID,
 			entrypointKind:    locked.EntrypointKind,
 			status:            db.RunStatus(locked.Status),
-			stateVersion:      locked.StateVersion,
+			revision:          locked.Revision,
 			currentAttempt:    locked.CurrentAttemptNumber,
 			currentRunLeaseID: locked.CurrentRunLeaseID,
 			activeStartedAt:   locked.ActiveStartedAt,
@@ -821,32 +821,32 @@ func lockCurrentTokenWait(
 		return tokenWaitLockedWait{}, err
 	}
 	return tokenWaitLockedWait{
-		id:                      pgvalue.MustUUIDValue(locked.ID),
-		runID:                   pgvalue.MustUUIDValue(locked.RunID),
-		workspaceID:             pgvalue.MustUUIDValue(locked.WorkspaceID),
-		kind:                    locked.Kind,
-		conditionState:          db.WaitState(locked.ConditionState),
-		suspensionState:         db.RunWaitState(locked.SuspensionState),
-		expectedRunStateVersion: locked.ExpectedRunStateVersion,
-		attemptNumber:           locked.AttemptNumber,
-		currentRunLeaseID:       locked.CurrentRunLeaseID,
-		priorRunLeaseID:         locked.PriorRunLeaseID,
-		suspendCheckpointID:     locked.SuspendCheckpointID,
-		timeoutAt:               locked.TimeoutAt,
-		timedOut:                locked.TimedOut,
+		id:                  pgvalue.MustUUIDValue(locked.ID),
+		runID:               pgvalue.MustUUIDValue(locked.RunID),
+		workspaceID:         pgvalue.MustUUIDValue(locked.WorkspaceID),
+		kind:                locked.Kind,
+		conditionStatus:     db.WaitStatus(locked.ConditionStatus),
+		suspensionStatus:    db.RunWaitStatus(locked.SuspensionStatus),
+		expectedRunRevision: locked.ExpectedRunRevision,
+		attemptNumber:       locked.AttemptNumber,
+		currentRunLeaseID:   locked.CurrentRunLeaseID,
+		priorRunLeaseID:     locked.PriorRunLeaseID,
+		suspendCheckpointID: locked.SuspendCheckpointID,
+		timeoutAt:           locked.TimeoutAt,
+		timedOut:            locked.TimedOut,
 	}, nil
 }
 
 func validateLockedTokenWait(run tokenWaitLockedRun, wait tokenWaitLockedWait) error {
 	if wait.kind != db.WaitKindToken ||
 		wait.runID != run.id || wait.workspaceID != run.workspaceID ||
-		wait.attemptNumber != run.currentAttempt || wait.expectedRunStateVersion != run.stateVersion ||
+		wait.attemptNumber != run.currentAttempt || wait.expectedRunRevision != run.revision ||
 		run.status != db.RunStatusWaiting {
 		return tokenWaitAuthorityError("run and token wait fences do not match", nil)
 	}
-	switch wait.suspensionState {
-	case db.RunWaitStateHot, db.RunWaitStateCheckpointing:
-		if wait.conditionState != db.WaitStatePending && wait.suspensionState != db.RunWaitStateCheckpointing {
+	switch wait.suspensionStatus {
+	case db.RunWaitStatusHot, db.RunWaitStatusCheckpointing:
+		if wait.conditionStatus != db.WaitStatusPending && wait.suspensionStatus != db.RunWaitStatusCheckpointing {
 			return tokenWaitAuthorityError("terminal token wait is not awaiting checkpoint readiness", nil)
 		}
 		if !run.currentRunLeaseID.Valid || !wait.currentRunLeaseID.Valid ||
@@ -854,8 +854,8 @@ func validateLockedTokenWait(run tokenWaitLockedRun, wait tokenWaitLockedWait) e
 			!run.activeStartedAt.Valid {
 			return tokenWaitAuthorityError("hot token wait lease fence does not match", nil)
 		}
-	case db.RunWaitStateParked:
-		if wait.conditionState != db.WaitStatePending {
+	case db.RunWaitStatusParked:
+		if wait.conditionStatus != db.WaitStatusPending {
 			return tokenWaitAuthorityError("parked token wait is already terminal", nil)
 		}
 		if run.currentRunLeaseID.Valid || wait.currentRunLeaseID.Valid ||
@@ -869,27 +869,27 @@ func validateLockedTokenWait(run tokenWaitLockedRun, wait tokenWaitLockedWait) e
 	return nil
 }
 
-func tokenWaitTerminalResolution(state db.TokenState, completionData []byte) (tokenWaitResolution, error) {
+func tokenWaitTerminalResolution(state db.TokenStatus, completionData []byte) (tokenWaitResolution, error) {
 	switch state {
-	case db.TokenStateCompleted:
+	case db.TokenStatusCompleted:
 		result := json.RawMessage(completionData)
 		if len(result) == 0 {
 			result = json.RawMessage(`null`)
 		}
-		return tokenWaitResolution{conditionState: db.WaitStateCompleted, result: result}, nil
-	case db.TokenStateCancelled:
+		return tokenWaitResolution{conditionStatus: db.WaitStatusCompleted, result: result}, nil
+	case db.TokenStatusCancelled:
 		reason := "token_cancelled"
 		return tokenWaitResolution{
-			conditionState: db.WaitStateCancelled,
-			reasonCode:     &reason,
-			conditionError: json.RawMessage(`{"code":"token_cancelled","retryable":false}`),
+			conditionStatus: db.WaitStatusCancelled,
+			reasonCode:      &reason,
+			conditionError:  json.RawMessage(`{"code":"token_cancelled","retryable":false}`),
 		}, nil
-	case db.TokenStateExpired:
+	case db.TokenStatusExpired:
 		reason := "token_expired"
 		return tokenWaitResolution{
-			conditionState: db.WaitStateFailed,
-			reasonCode:     &reason,
-			conditionError: json.RawMessage(`{"code":"token_expired","retryable":false}`),
+			conditionStatus: db.WaitStatusFailed,
+			reasonCode:      &reason,
+			conditionError:  json.RawMessage(`{"code":"token_expired","retryable":false}`),
 		}, nil
 	default:
 		return tokenWaitResolution{}, tokenWaitAuthorityError("token is not terminal", nil)
@@ -904,15 +904,15 @@ func reconcileHotTokenWait(
 	resolution tokenWaitResolution,
 ) error {
 	_, err := q.ResolveHotTokenWait(ctx, db.ResolveHotTokenWaitParams{
-		ConditionState:          string(resolution.conditionState),
-		ConditionResult:         resolution.result,
-		ReasonCode:              pgvalue.TextPtr(resolution.reasonCode),
-		ConditionError:          resolution.conditionError,
-		WaitID:                  pgvalue.UUID(wait.id),
-		RunID:                   pgvalue.UUID(run.id),
-		ExpectedRunStateVersion: run.stateVersion,
-		CurrentRunLeaseID:       run.currentRunLeaseID,
-		AttemptNumber:           run.currentAttempt,
+		ConditionStatus:     string(resolution.conditionStatus),
+		ConditionResult:     resolution.result,
+		ReasonCode:          pgvalue.TextPtr(resolution.reasonCode),
+		ConditionError:      resolution.conditionError,
+		WaitID:              pgvalue.UUID(wait.id),
+		RunID:               pgvalue.UUID(run.id),
+		ExpectedRunRevision: run.revision,
+		CurrentRunLeaseID:   run.currentRunLeaseID,
+		AttemptNumber:       run.currentAttempt,
 	})
 	if err != nil {
 		return tokenWaitAuthorityError("resolve hot token wait", err)
@@ -929,14 +929,14 @@ func reconcileCheckpointingTokenWait(
 	_, err := q.ResolveCheckpointingTokenWait(
 		ctx,
 		db.ResolveCheckpointingTokenWaitParams{
-			ConditionState:          string(resolution.conditionState),
-			ConditionResult:         resolution.result,
-			ReasonCode:              pgvalue.TextPtr(resolution.reasonCode),
-			ConditionError:          resolution.conditionError,
-			WaitID:                  pgvalue.UUID(wait.id),
-			RunID:                   pgvalue.UUID(wait.runID),
-			ExpectedRunStateVersion: wait.expectedRunStateVersion,
-			CurrentRunLeaseID:       wait.currentRunLeaseID,
+			ConditionStatus:     string(resolution.conditionStatus),
+			ConditionResult:     resolution.result,
+			ReasonCode:          pgvalue.TextPtr(resolution.reasonCode),
+			ConditionError:      resolution.conditionError,
+			WaitID:              pgvalue.UUID(wait.id),
+			RunID:               pgvalue.UUID(wait.runID),
+			ExpectedRunRevision: wait.expectedRunRevision,
+			CurrentRunLeaseID:   wait.currentRunLeaseID,
 		},
 	)
 	if err != nil {
@@ -953,16 +953,16 @@ func reconcileParkedTokenWait(
 	resolution tokenWaitResolution,
 ) error {
 	_, err := q.ResolveParkedTokenWait(ctx, db.ResolveParkedTokenWaitParams{
-		RunID:                   pgvalue.UUID(run.id),
-		ExpectedRunStateVersion: run.stateVersion,
-		AttemptNumber:           run.currentAttempt,
-		ConditionState:          string(resolution.conditionState),
-		ConditionResult:         resolution.result,
-		ReasonCode:              pgvalue.TextPtr(resolution.reasonCode),
-		ConditionError:          resolution.conditionError,
-		WaitID:                  pgvalue.UUID(wait.id),
-		PriorRunLeaseID:         wait.priorRunLeaseID,
-		SuspendCheckpointID:     wait.suspendCheckpointID,
+		RunID:               pgvalue.UUID(run.id),
+		ExpectedRunRevision: run.revision,
+		AttemptNumber:       run.currentAttempt,
+		ConditionStatus:     string(resolution.conditionStatus),
+		ConditionResult:     resolution.result,
+		ReasonCode:          pgvalue.TextPtr(resolution.reasonCode),
+		ConditionError:      resolution.conditionError,
+		WaitID:              pgvalue.UUID(wait.id),
+		PriorRunLeaseID:     wait.priorRunLeaseID,
+		SuspendCheckpointID: wait.suspendCheckpointID,
 	})
 	if err != nil {
 		return tokenWaitAuthorityError("resolve parked token wait", err)

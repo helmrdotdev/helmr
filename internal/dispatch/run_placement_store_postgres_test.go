@@ -24,7 +24,7 @@ CREATE TEMP TABLE runs (
     concurrency_key TEXT,
     queue_score_at TIMESTAMPTZ NOT NULL,
     status TEXT NOT NULL,
-    state_version BIGINT NOT NULL,
+    revision BIGINT NOT NULL,
     current_run_lease_id UUID,
     first_lease_at TIMESTAMPTZ,
     queued_expires_at TIMESTAMPTZ,
@@ -40,11 +40,11 @@ CREATE INDEX runs_dispatch_fair_idx
         queue_score_at,
         id
     )
-    INCLUDE (state_version, first_lease_at, queued_expires_at, next_runtime_preparation_at)
+    INCLUDE (revision, first_lease_at, queued_expires_at, next_runtime_preparation_at)
     WHERE status = 'queued' AND current_run_lease_id IS NULL;
 INSERT INTO runs (
     id, org_id, environment_id, queue_name, concurrency_key, queue_score_at,
-    status, state_version
+    status, revision
 )
 SELECT md5('run:' || organization_number::text || ':' || scope_number::text || ':' || run_number::text)::uuid,
        md5('organization:' || organization_number::text)::uuid,

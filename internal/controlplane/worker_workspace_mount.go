@@ -337,7 +337,7 @@ func (s *Server) finalizeWorkspaceExec(
 	process := authority.WorkspaceProcess
 	lease := authority.WorkspaceLease
 	var versionID pgtype.UUID
-	finalState := db.WorkspaceProcessStateFailed
+	finalState := db.WorkspaceProcessStatusFailed
 	reasonCode := mount.FinalizationReasonCode
 	errorJSON := mount.FinalizationError
 	if mount.FinalizationKind.String == "capture" {
@@ -355,7 +355,7 @@ func (s *Server) finalizeWorkspaceExec(
 				return err
 			}
 			versionID = mount.StagedVersionID
-			finalState = db.WorkspaceProcessStateExited
+			finalState = db.WorkspaceProcessStatusExited
 		} else {
 			affected, err := work.q.DiscardStagedWorkspaceExecVersion(
 				ctx,
@@ -382,12 +382,12 @@ func (s *Server) finalizeWorkspaceExec(
 	if _, err := work.q.FinalizeWorkspaceExecWorkspace(
 		ctx,
 		db.FinalizeWorkspaceExecWorkspaceParams{
-			VersionID:           versionID,
-			RestoreDesiredState: process.RestoreDesiredState,
-			WorkspaceID:         process.WorkspaceID,
-			BaseVersionID:       process.BaseVersionID,
-			OwnershipGeneration: lease.OwnershipGeneration,
-			WriterGeneration:    lease.WriterGeneration,
+			VersionID:              versionID,
+			RestoreDesiredState:    process.RestoreDesiredState,
+			WorkspaceID:            process.WorkspaceID,
+			BaseWorkspaceVersionID: process.BaseWorkspaceVersionID,
+			OwnershipGeneration:    lease.OwnershipGeneration,
+			WriterGeneration:       lease.WriterGeneration,
 		},
 	); err != nil {
 		return err
@@ -395,7 +395,7 @@ func (s *Server) finalizeWorkspaceExec(
 	finalized, err := work.q.FinalizeWorkspaceExecProcess(
 		ctx,
 		db.FinalizeWorkspaceExecProcessParams{
-			State:            finalState,
+			Status:           finalState,
 			ReasonCode:       reasonCode,
 			Error:            errorJSON,
 			ProcessID:        process.ID,
@@ -435,7 +435,7 @@ func (s *Server) finalizeWorkspaceExec(
 	if err != nil {
 		return err
 	}
-	if finalState == db.WorkspaceProcessStateExited {
+	if finalState == db.WorkspaceProcessStatusExited {
 		_, err = claims.Complete(ctx, claim, receipt)
 	} else {
 		_, err = claims.Fail(ctx, claim, receipt)
@@ -475,7 +475,7 @@ func workspaceExecPublicationSecretsValid(
 	processID pgtype.UUID,
 ) bool {
 	for _, row := range rows {
-		if row.Secret.State != "active" ||
+		if row.Secret.Status != "active" ||
 			!row.ResolutionID.Valid ||
 			!row.ResolutionProcessID.Valid ||
 			row.ResolutionProcessID != processID ||
@@ -599,10 +599,10 @@ func (s *Server) failWorkspaceExec(
 	if _, err := work.q.MarkWorkspaceExecRecoveryRequired(
 		ctx,
 		db.MarkWorkspaceExecRecoveryRequiredParams{
-			WorkspaceID:         process.WorkspaceID,
-			BaseVersionID:       process.BaseVersionID,
-			OwnershipGeneration: lease.OwnershipGeneration,
-			WriterGeneration:    lease.WriterGeneration,
+			WorkspaceID:            process.WorkspaceID,
+			BaseWorkspaceVersionID: process.BaseWorkspaceVersionID,
+			OwnershipGeneration:    lease.OwnershipGeneration,
+			WriterGeneration:       lease.WriterGeneration,
 		},
 	); err != nil {
 		return err
@@ -704,19 +704,19 @@ func guestChannelTokenHash(value string) string {
 
 func workspaceMountResponse(row db.WorkspaceMount) workerapi.WorkspaceMountResponse {
 	response := workerapi.WorkspaceMountResponse{
-		ID:                   pgvalue.MustUUIDValue(row.ID).String(),
-		ProjectID:            pgvalue.MustUUIDValue(row.ProjectID).String(),
-		EnvironmentID:        pgvalue.MustUUIDValue(row.EnvironmentID).String(),
-		WorkspaceID:          pgvalue.MustUUIDValue(row.WorkspaceID).String(),
-		BaseVersionID:        pgvalue.MustUUIDValue(row.MaterializedVersionID).String(),
-		WorkerInstanceID:     pgvalue.MustUUIDValue(row.WorkerInstanceID).String(),
-		State:                string(row.State),
-		FencingGeneration:    row.FencingGeneration,
-		DirtyGeneration:      row.DirtyGeneration,
-		FinalizationKind:     row.FinalizationKind.String,
-		ReservationExpiresAt: pgTime(row.GuestChannelTokenExpiresAt),
-		LastHeartbeatAt:      pgTime(row.UpdatedAt),
-		CreatedAt:            row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time,
+		ID:                     pgvalue.MustUUIDValue(row.ID).String(),
+		ProjectID:              pgvalue.MustUUIDValue(row.ProjectID).String(),
+		EnvironmentID:          pgvalue.MustUUIDValue(row.EnvironmentID).String(),
+		WorkspaceID:            pgvalue.MustUUIDValue(row.WorkspaceID).String(),
+		BaseWorkspaceVersionID: pgvalue.MustUUIDValue(row.MaterializedVersionID).String(),
+		WorkerInstanceID:       pgvalue.MustUUIDValue(row.WorkerInstanceID).String(),
+		Status:                 string(row.Status),
+		FencingGeneration:      row.FencingGeneration,
+		DirtyGeneration:        row.DirtyGeneration,
+		FinalizationKind:       row.FinalizationKind.String,
+		ReservationExpiresAt:   pgTime(row.GuestChannelTokenExpiresAt),
+		LastHeartbeatAt:        pgTime(row.UpdatedAt),
+		CreatedAt:              row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time,
 	}
 	return response
 }
@@ -759,7 +759,7 @@ func projectWorkerWorkspaceMount(row db.ClaimWorkspaceMountRow) *workerapi.Works
 		RestoreSourceVersionID: pgvalue.UUIDString(row.RestoreSourceVersionID),
 		RuntimeEpoch:           row.WorkerEpoch,
 		GuestdChannelTokenHash: row.GuestChannelTokenHash,
-		State:                  string(row.State), RuntimeIdentityID: row.RuntimeID,
+		Status:                 string(row.Status), RuntimeIdentityID: row.RuntimeID,
 		WorkspaceImage: workerapi.CASObject{
 			Digest: row.ImageArtifactDigest, SizeBytes: row.ImageArtifactSizeBytes,
 			MediaType: row.ImageArtifactMediaType,

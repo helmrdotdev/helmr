@@ -37,8 +37,8 @@ func (s *Server) renewRunLease(
 		if err != nil {
 			return err
 		}
-		if (authority.runLease.State != db.RunLeaseStateRunning &&
-			authority.runLease.State != db.RunLeaseStateCheckpointing) ||
+		if (authority.runLease.Status != db.RunLeaseStatusRunning &&
+			authority.runLease.Status != db.RunLeaseStatusCheckpointing) ||
 			!authority.run.ActiveStartedAt.Valid {
 			return errStaleRunLeaseClaim
 		}
@@ -129,7 +129,7 @@ func projectRunLeaseRenewal(
 ) (workerapi.RunLeaseRenewResponse, error) {
 	baseWorkspaceVersionID, err := requiredClaimUUIDString(
 		"base workspace version ID",
-		authority.workspaceLease.BaseVersionID,
+		authority.workspaceLease.BaseWorkspaceVersionID,
 	)
 	if err != nil {
 		return workerapi.RunLeaseRenewResponse{}, err
@@ -241,7 +241,7 @@ func lockRunLeaseWorkspace(
 	if err != nil {
 		return staleRunLeaseClaim(err)
 	}
-	if authority.workspace.State != db.WorkspaceStateActive ||
+	if authority.workspace.Status != db.WorkspaceStatusActive ||
 		authority.workspace.DesiredState != db.WorkspaceDesiredStateActive {
 		return errStaleRunLeaseClaim
 	}
@@ -283,8 +283,8 @@ func lockRunLeasePhysicalAuthority(
 	if err != nil {
 		return staleRunLeaseClaim(err)
 	}
-	if authority.workerGroup.State != db.WorkerGroupStateActive &&
-		authority.workerGroup.State != db.WorkerGroupStateDraining {
+	if authority.workerGroup.Status != db.WorkerGroupStatusActive &&
+		authority.workerGroup.Status != db.WorkerGroupStatusDraining {
 		return errStaleRunLeaseClaim
 	}
 	if authority.workerGroup.ClaimVersion != worker.GroupClaimVersion {

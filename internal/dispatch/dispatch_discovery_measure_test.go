@@ -96,7 +96,7 @@ UPDATE runs
 		"owner_run_id", "ownership_generation", "writer_generation", "head_version_id",
 	}, workspaces)
 	copyRows(t, fixture.ctx, tx, "workspace_versions", []string{
-		"id", "environment_id", "workspace_id", "content_digest", "state",
+		"id", "environment_id", "workspace_id", "content_digest", "status",
 		"ownership_generation", "writer_generation", "published_at",
 	}, versions)
 	copyRows(t, fixture.ctx, tx, "runs", []string{

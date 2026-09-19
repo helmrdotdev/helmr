@@ -67,8 +67,8 @@ func TestEnterRunEntrypointCommitsOnceAndReplaysTheSameFence(t *testing.T) {
 
 func TestEnterRunEntrypointContinuesRunningLeaseWhileDraining(t *testing.T) {
 	worker, locators, authority, assignment := validRunEntrypointFixture(t)
-	authority.workerGroup.State = db.WorkerGroupStateDraining
-	authority.worker.State = db.WorkerInstanceStateDraining
+	authority.workerGroup.Status = db.WorkerGroupStatusDraining
+	authority.worker.Status = db.WorkerInstanceStatusDraining
 	store := &runLeaseClaimStore{authority: authority, entrypoint: locators}
 	request := workerapi.RunEntrypointRequest{
 		Lease: assignment.Fence(), EntrypointKind: authority.run.EntrypointKind,
@@ -117,7 +117,7 @@ func TestEnterRunEntrypointRollsBackMismatchedFenceAndIdentity(t *testing.T) {
 func TestEnterRunEntrypointRejectsMountedBaseOutsideAttempt(t *testing.T) {
 	worker, locators, authority, assignment := validRunEntrypointFixture(t)
 	differentBase := pgvalue.UUID(uuid.New())
-	authority.workspaceLease.BaseVersionID = differentBase
+	authority.workspaceLease.BaseWorkspaceVersionID = differentBase
 	authority.workspaceMount.MaterializedVersionID = differentBase
 	store := &runLeaseClaimStore{authority: authority, entrypoint: locators}
 
@@ -177,7 +177,7 @@ func validRunEntrypointFixture(
 	authority.run.StartedAt = pgtype.Timestamptz{Time: now, Valid: true}
 	authority.run.ActiveStartedAt = pgtype.Timestamptz{Time: now, Valid: true}
 	authority.run.MaxActiveDurationMs = int64(time.Hour / time.Millisecond)
-	authority.runLease.State = db.RunLeaseStateRunning
+	authority.runLease.Status = db.RunLeaseStatusRunning
 	authority.runLease.StartedAt = pgtype.Timestamptz{Time: now, Valid: true}
 	authority.runLease.StartDeadlineAt = pgtype.Timestamptz{Time: now.Add(time.Minute), Valid: true}
 	authority.runLease.ExpiresAt = pgtype.Timestamptz{Time: now.Add(5 * time.Minute), Valid: true}

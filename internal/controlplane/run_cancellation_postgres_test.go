@@ -44,26 +44,26 @@ func TestCancelRunHTTPInstallsActorHoldAndInputClearsIt(t *testing.T) {
 		t.Fatalf("cancel snapshot = %+v", snapshot)
 	}
 
-	var actorState string
+	var actorStatus string
 	var currentRunID *uuid.UUID
 	var manualRunCancelled bool
 	var ownerSessionID uuid.UUID
 	if err := fixture.pool.QueryRow(t.Context(), `
-SELECT sessions.state,
+SELECT sessions.status,
        sessions.current_run_id,
        sessions.manual_run_cancelled,
        workspaces.owner_session_id
   FROM sessions
   JOIN workspaces ON workspaces.id = sessions.workspace_id
  WHERE sessions.id = $1`, started.SessionID,
-	).Scan(&actorState, &currentRunID, &manualRunCancelled, &ownerSessionID); err != nil {
+	).Scan(&actorStatus, &currentRunID, &manualRunCancelled, &ownerSessionID); err != nil {
 		t.Fatal(err)
 	}
-	if actorState != "open" || currentRunID != nil || !manualRunCancelled ||
+	if actorStatus != "open" || currentRunID != nil || !manualRunCancelled ||
 		ownerSessionID != started.SessionID {
 		t.Fatalf(
 			"Actor after Run cancellation = state:%s current:%v hold:%v owner:%s",
-			actorState, currentRunID, manualRunCancelled, ownerSessionID,
+			actorStatus, currentRunID, manualRunCancelled, ownerSessionID,
 		)
 	}
 

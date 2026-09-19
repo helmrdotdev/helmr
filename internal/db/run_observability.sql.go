@@ -148,13 +148,13 @@ func (q *Queries) GetRunMetadataClaimScope(ctx context.Context, arg GetRunMetada
 const updateRunMetadata = `-- name: UpdateRunMetadata :one
 UPDATE runs
    SET metadata = $1::jsonb,
-       state_version = state_version + 1,
+       revision = revision + 1,
        updated_at = now()
  WHERE id = $2
    AND current_attempt_number = $3
    AND current_run_lease_id = $4
    AND status = 'running'
-RETURNING state_version
+RETURNING revision
 `
 
 type UpdateRunMetadataParams struct {
@@ -171,7 +171,7 @@ func (q *Queries) UpdateRunMetadata(ctx context.Context, arg UpdateRunMetadataPa
 		arg.AttemptNumber,
 		arg.RunLeaseID,
 	)
-	var state_version int64
-	err := row.Scan(&state_version)
-	return state_version, err
+	var revision int64
+	err := row.Scan(&revision)
+	return revision, err
 }

@@ -30,7 +30,7 @@ func TestWaitWorkspaceForRunUsesCurrentClaimFrontier(t *testing.T) {
 	if got.ID != mount.WorkspaceID || got.WorkspaceMountID != mount.ID || got.MountPath != mount.WorkspaceMountPath {
 		t.Fatalf("wait Workspace physical identity = %+v", got)
 	}
-	if got.FencingGeneration != lease.MountFencingGeneration || got.BaseVersionID != target.BaseWorkspaceVersionID || got.Artifact != claimArtifact {
+	if got.FencingGeneration != lease.MountFencingGeneration || got.BaseWorkspaceVersionID != target.BaseWorkspaceVersionID || got.Artifact != claimArtifact {
 		t.Fatalf("wait Workspace logical frontier = %+v", got)
 	}
 }

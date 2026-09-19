@@ -126,7 +126,7 @@ UPDATE telemetry_outbox
        content = NULL,
        size_bytes = NULL,
        observed_seq = NULL,
-       state = 'pending',
+       status = 'pending',
        written_at = NULL,
        next_retry_at = NULL,
        published_at = NULL,
@@ -135,7 +135,7 @@ UPDATE telemetry_outbox
 `)
 	dbtest.MustExec(t, ctx, outer, `
 UPDATE telemetry_outbox
-   SET state = 'pending',
+   SET status = 'pending',
        written_at = NULL,
        next_retry_at = NULL
  WHERE stream_kind = 'run_log'
@@ -144,7 +144,7 @@ UPDATE telemetry_outbox
 `)
 	dbtest.MustExec(t, ctx, outer, `
 UPDATE telemetry_outbox
-   SET state = 'written',
+   SET status = 'written',
        written_at = now() - interval '25 hours'
  WHERE stream_kind = 'run_log'
    AND id % 100 >= 20

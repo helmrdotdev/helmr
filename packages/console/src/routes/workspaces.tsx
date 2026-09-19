@@ -81,7 +81,7 @@ export function Workspaces() {
           when={items().length > 0}
           fallback={<StatePanel empty="No Workspaces yet." hint="Runs and Sessions create Workspaces from their Sandbox, or create one here." />}
         >
-          <DataTable columns={["Workspace", "Key", "Sandbox", "State", "Last activity", "Created"]} minWidth="min-w-200">
+          <DataTable columns={["Workspace", "Key", "Sandbox", "Status", "Last activity", "Created"]} minWidth="min-w-200">
             <For each={items()}>
               {(workspace) => <WorkspaceRow workspace={workspace} />}
             </For>

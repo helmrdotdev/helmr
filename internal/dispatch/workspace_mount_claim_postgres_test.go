@@ -157,26 +157,26 @@ UPDATE workspace_mounts
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(lost) != 1 || lost[0].ID != mountID || lost[0].State != "lost" {
+	if len(lost) != 1 || lost[0].ID != mountID || lost[0].Status != "lost" {
 		t.Fatalf("lost claims = %+v, want mount %s", lost, pgvalue.UUIDString(mountID))
 	}
-	var mountState, mountReason, desiredState, desiredReason string
+	var mountStatus, mountReason, desiredState, desiredReason string
 	if err := fixture.pool.QueryRow(fixture.ctx, `
-SELECT workspace_mounts.state, workspace_mounts.terminal_reason_code,
+SELECT workspace_mounts.status, workspace_mounts.terminal_reason_code,
        runtime_instances.desired_state, runtime_instances.desired_reason
   FROM workspace_mounts
   JOIN runtime_instances ON runtime_instances.id = workspace_mounts.runtime_instance_id
  WHERE workspace_mounts.id = $1`, mountID).Scan(
-		&mountState,
+		&mountStatus,
 		&mountReason,
 		&desiredState,
 		&desiredReason,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if mountState != "lost" || mountReason != "workspace_mount_claim_expired" ||
+	if mountStatus != "lost" || mountReason != "workspace_mount_claim_expired" ||
 		desiredState != "closed" || desiredReason != "workspace_mount_claim_expired" {
-		t.Fatalf("recovery state = %s/%s runtime=%s/%s", mountState, mountReason, desiredState, desiredReason)
+		t.Fatalf("recovery state = %s/%s runtime=%s/%s", mountStatus, mountReason, desiredState, desiredReason)
 	}
 
 	markExpiredClaimRuntimeReclaimed(t, fixture, claimed.RuntimeInstanceID)
@@ -214,9 +214,9 @@ UPDATE workspace_mounts
 	fresh, err := fixture.authority.PlaceWorkspaceExec(
 		fixture.ctx,
 		ReadyWorkspaceExecCandidate{
-			OrgID:                pgvalue.UUID(fixture.orgID),
-			ProcessID:            pgvalue.UUID(processID),
-			ExpectedStateVersion: 1,
+			OrgID:            pgvalue.UUID(fixture.orgID),
+			ProcessID:        pgvalue.UUID(processID),
+			ExpectedRevision: 1,
 		},
 	)
 	if err != nil {
@@ -262,26 +262,26 @@ INSERT INTO idempotency_claims (
 	if _, err := db.New(fixture.pool).CreateWorkspaceExec(
 		fixture.ctx,
 		db.CreateWorkspaceExecParams{
-			ID:                   pgvalue.UUID(processID),
-			OrgID:                pgvalue.UUID(fixture.orgID),
-			ProjectID:            pgvalue.UUID(fixture.projectID),
-			EnvironmentID:        pgvalue.UUID(fixture.environmentID),
-			WorkspaceID:          pgvalue.UUID(fixture.workspaceID),
-			BaseVersionID:        workspaceHeadVersion(t, fixture),
-			RestoreDesiredState:  "active",
-			Request:              []byte(`{"command":["echo","ready"]}`),
-			Stdin:                []byte{},
-			ClaimID:              pgvalue.UUID(claimID),
-			CreatedBySubjectType: "user",
-			CreatedBySubjectID:   "test-user",
+			ID:                     pgvalue.UUID(processID),
+			OrgID:                  pgvalue.UUID(fixture.orgID),
+			ProjectID:              pgvalue.UUID(fixture.projectID),
+			EnvironmentID:          pgvalue.UUID(fixture.environmentID),
+			WorkspaceID:            pgvalue.UUID(fixture.workspaceID),
+			BaseWorkspaceVersionID: workspaceHeadVersion(t, fixture),
+			RestoreDesiredState:    "active",
+			Request:                []byte(`{"command":["echo","ready"]}`),
+			Stdin:                  []byte{},
+			ClaimID:                pgvalue.UUID(claimID),
+			CreatedBySubjectType:   "user",
+			CreatedBySubjectID:     "test-user",
 		},
 	); err != nil {
 		t.Fatal(err)
 	}
 	candidate := ReadyWorkspaceExecCandidate{
-		OrgID:                pgvalue.UUID(fixture.orgID),
-		ProcessID:            pgvalue.UUID(processID),
-		ExpectedStateVersion: 1,
+		OrgID:            pgvalue.UUID(fixture.orgID),
+		ProcessID:        pgvalue.UUID(processID),
+		ExpectedRevision: 1,
 	}
 	reserved, err := fixture.authority.PlaceWorkspaceExec(fixture.ctx, candidate)
 	if err != nil {

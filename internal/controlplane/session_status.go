@@ -17,7 +17,7 @@ import (
 type sessionReadRecord struct {
 	id           pgtype.UUID
 	key          pgtype.Text
-	state        string
+	status       string
 	createdAt    pgtype.Timestamptz
 	updatedAt    pgtype.Timestamptz
 	currentRunID pgtype.UUID
@@ -52,7 +52,7 @@ func projectSessionStatus(record sessionReadRecord) (sessionStatusProjection, er
 	if err := ids.Validate(id); err != nil {
 		return sessionStatusProjection{}, err
 	}
-	status, err := sessionStatus(record.state)
+	status, err := sessionStatus(record.status)
 	if err != nil {
 		return sessionStatusProjection{}, err
 	}
@@ -100,22 +100,22 @@ func projectSessionStatus(record sessionReadRecord) (sessionStatusProjection, er
 	return result, nil
 }
 
-// sessionStatusStates lists the stored Session states that project to the
+// sessionStorageStatuses lists the stored Session statuses that project to the
 // given public statuses. Public open covers stored open and closing.
-func sessionStatusStates(statuses []api.SessionStatus) []string {
-	states := make([]string, 0, len(statuses)+1)
+func sessionStorageStatuses(statuses []api.SessionStatus) []string {
+	storedStatuses := make([]string, 0, len(statuses)+1)
 	for _, status := range statuses {
 		if status == api.SessionStatusOpen {
-			states = append(states, "open", "closing")
+			storedStatuses = append(storedStatuses, "open", "closing")
 			continue
 		}
-		states = append(states, string(status))
+		storedStatuses = append(storedStatuses, string(status))
 	}
-	return states
+	return storedStatuses
 }
 
-func sessionStatus(state string) (api.SessionStatus, error) {
-	switch state {
+func sessionStatus(status string) (api.SessionStatus, error) {
+	switch status {
 	case "open", "closing":
 		return api.SessionStatusOpen, nil
 	case "closed":
@@ -125,6 +125,6 @@ func sessionStatus(state string) (api.SessionStatus, error) {
 	case "failed":
 		return api.SessionStatusFailed, nil
 	default:
-		return "", fmt.Errorf("session state %q has no public status", state)
+		return "", fmt.Errorf("session status %q has no public status", status)
 	}
 }

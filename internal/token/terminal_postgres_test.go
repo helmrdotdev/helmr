@@ -32,16 +32,16 @@ func TestTokenTerminalQueriesPublishExactlyOneReconciliationIntent(t *testing.T)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if completed.State != db.TokenStateCompleted || !completed.ReconciliationEnqueued ||
+		if completed.Status != db.TokenStatusCompleted || !completed.ReconciliationEnqueued ||
 			completed.AlreadyCompleted || completed.CompletionConflict || !completed.CompletedAt.Valid {
 			t.Fatalf("first completion = %+v", completed)
 		}
 		assertTokenReconciliationIntent(t, ctx, fixture, tokenID, 1)
-		var condition db.WaitState
-		if err := fixture.pool.QueryRow(ctx, `SELECT condition_state FROM run_waits WHERE id = $1`, waitID).Scan(&condition); err != nil {
+		var condition db.WaitStatus
+		if err := fixture.pool.QueryRow(ctx, `SELECT condition_status FROM run_waits WHERE id = $1`, waitID).Scan(&condition); err != nil {
 			t.Fatal(err)
 		}
-		if condition != db.WaitStatePending {
+		if condition != db.WaitStatusPending {
 			t.Fatalf("Token transaction changed Run Wait condition to %s", condition)
 		}
 
@@ -70,7 +70,7 @@ func TestTokenTerminalQueriesPublishExactlyOneReconciliationIntent(t *testing.T)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if cancelled.State != db.TokenStateCancelled || !cancelled.ReconciliationEnqueued || !cancelled.CancelledAt.Valid {
+		if cancelled.Status != db.TokenStatusCancelled || !cancelled.ReconciliationEnqueued || !cancelled.CancelledAt.Valid {
 			t.Fatalf("first cancellation = %+v", cancelled)
 		}
 		replay, err := fixture.queries.CancelToken(ctx, tokenCancellationParams(fixture, tokenID))
@@ -105,7 +105,7 @@ func TestTokenTerminalQueriesPublishExactlyOneReconciliationIntent(t *testing.T)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(expired) != 1 || pgvalue.MustUUIDValue(expired[0].ID) != tokenID || expired[0].State != db.TokenStateExpired || !expired[0].ExpiredAt.Valid {
+		if len(expired) != 1 || pgvalue.MustUUIDValue(expired[0].ID) != tokenID || expired[0].Status != db.TokenStatusExpired || !expired[0].ExpiredAt.Valid {
 			t.Fatalf("first expiry = %+v", expired)
 		}
 		expired, err = fixture.queries.ExpireDueTokens(ctx, db.ExpireDueTokensParams{
@@ -124,7 +124,7 @@ func TestTokenTerminalQueriesPublishExactlyOneReconciliationIntent(t *testing.T)
 		}
 		if len(expiredCredentials) != 1 ||
 			pgvalue.MustUUIDValue(expiredCredentials[0].ID) != publicAccessTokenID ||
-			expiredCredentials[0].State != db.PublicAccessTokenStateExpired || !expiredCredentials[0].ExpiredAt.Valid {
+			expiredCredentials[0].Status != db.PublicAccessTokenStatusExpired || !expiredCredentials[0].ExpiredAt.Valid {
 			t.Fatalf("first credential expiry = %+v", expiredCredentials)
 		}
 		expiredCredentials, err = fixture.queries.ExpireDuePublicAccessTokens(ctx, 100)
@@ -162,15 +162,15 @@ func TestTokenCompletionRollsBackWhenReconciliationIntentFails(t *testing.T) {
 	if _, err := fixture.queries.CompleteToken(ctx, tokenCompletionParams(fixture, tokenID, "sha256:rollback", `null`)); err == nil {
 		t.Fatal("completion succeeded despite injected outbox failure")
 	}
-	var state db.TokenState
+	var state db.TokenStatus
 	var completionFingerprint []byte
 	var completionTimeAbsent bool
 	if err := fixture.pool.QueryRow(ctx, `
-		SELECT state, completion_fingerprint, completed_at IS NULL FROM tokens WHERE id = $1
+		SELECT status, completion_fingerprint, completed_at IS NULL FROM tokens WHERE id = $1
 	`, tokenID).Scan(&state, &completionFingerprint, &completionTimeAbsent); err != nil {
 		t.Fatal(err)
 	}
-	if state != db.TokenStatePending || len(completionFingerprint) != 0 || !completionTimeAbsent {
+	if state != db.TokenStatusPending || len(completionFingerprint) != 0 || !completionTimeAbsent {
 		t.Fatalf("rolled back Token = state %s fingerprint %x", state, completionFingerprint)
 	}
 	assertTokenReconciliationIntent(t, ctx, fixture, tokenID, 0)

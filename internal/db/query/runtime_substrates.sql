@@ -21,7 +21,7 @@ SELECT deployments.org_id,
    AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
 	AND runtime_instances.reclaimed_at IS NULL
 	AND runtime_instances.observed_state IN ('allocated', 'ready')
-	AND worker_instances.state IN ('active', 'draining')
+	AND worker_instances.status IN ('active', 'draining')
    AND worker_instances.substrate_format = sqlc.arg(substrate_format)
    AND worker_instances.substrate_contract = sqlc.arg(substrate_contract)
  LIMIT 1

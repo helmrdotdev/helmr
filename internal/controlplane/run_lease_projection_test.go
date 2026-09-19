@@ -53,13 +53,13 @@ func TestProjectRunLeaseExecutionProjectsCheckpointRestoreOnly(t *testing.T) {
 	checkpointID := pgvalue.UUID(uuid.New())
 	attachID := pgvalue.UUID(uuid.New())
 	wait := db.RunWait{
-		ID: waitID, ConditionState: db.WaitStateCompleted,
+		ID: waitID, ConditionStatus: db.WaitStatusCompleted,
 		ConditionTerminalAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
 		ResumeAttachID:      attachID, ResumeRequestVersion: 2,
 	}
 	checkpoint := db.RunCheckpoint{
 		ID: checkpointID, RunID: run.ID, AttemptNumber: attempt.Number,
-		State: db.RunCheckpointStateReady, RuntimeConfigArtifactID: pgvalue.UUID(uuid.New()),
+		Status: db.RunCheckpointStatusReady, RuntimeConfigArtifactID: pgvalue.UUID(uuid.New()),
 		VMStateArtifactID: pgvalue.UUID(uuid.New()), MemoryArtifactID: pgvalue.UUID(uuid.New()),
 		ScratchDiskArtifactID: pgvalue.UUID(uuid.New()),
 		RestoreManifest:       testCheckpointManifest(t, checkpointID, run.ID, attempt.Number, waitID),
@@ -122,7 +122,7 @@ func TestProjectFreshRunLeaseIgnoresHistoricalRestoreProvenance(t *testing.T) {
 func TestProjectRunWaitDecisionDistinguishesAbsentAndJSONNull(t *testing.T) {
 	terminalAt := pgtype.Timestamptz{Time: time.Now(), Valid: true}
 	absent, err := projectRunWaitDecision(db.RunWait{
-		ConditionState: db.WaitStateCompleted, ConditionTerminalAt: terminalAt,
+		ConditionStatus: db.WaitStatusCompleted, ConditionTerminalAt: terminalAt,
 	})
 	if err != nil {
 		t.Fatalf("project absent result: %v", err)
@@ -134,7 +134,7 @@ func TestProjectRunWaitDecisionDistinguishesAbsentAndJSONNull(t *testing.T) {
 	}
 
 	present, err := projectRunWaitDecision(db.RunWait{
-		ConditionState:      db.WaitStateCompleted,
+		ConditionStatus:     db.WaitStatusCompleted,
 		ConditionResult:     []byte("null"),
 		ConditionTerminalAt: terminalAt,
 	})
@@ -168,7 +168,7 @@ func TestProjectRunWaitDecisionDistinguishesAbsentAndJSONNull(t *testing.T) {
 
 func TestProjectRunLeaseCheckpointRequiresCanonicalArtifactAuthority(t *testing.T) {
 	checkpoint := db.RunCheckpoint{
-		ID: pgvalue.UUID(uuid.New()), State: db.RunCheckpointStateReady,
+		ID: pgvalue.UUID(uuid.New()), Status: db.RunCheckpointStatusReady,
 		RuntimeConfigArtifactID: pgvalue.UUID(uuid.New()), VMStateArtifactID: pgvalue.UUID(uuid.New()),
 		MemoryArtifactID: pgvalue.UUID(uuid.New()), ScratchDiskArtifactID: pgvalue.UUID(uuid.New()),
 		RestoreManifest: []byte(`{"version":0}`),
@@ -209,7 +209,7 @@ func TestProjectRunLeaseAssignmentAndWorkspace(t *testing.T) {
 	if assignment.LeaseSequence != 2 ||
 		assignment.WorkspaceID != pgvalue.UUIDString(authority.workspace.ID) ||
 		assignment.WorkspaceLeaseID != pgvalue.UUIDString(authority.workspaceLease.ID) ||
-		assignment.BaseWorkspaceVersionID != pgvalue.UUIDString(authority.workspaceLease.BaseVersionID) ||
+		assignment.BaseWorkspaceVersionID != pgvalue.UUIDString(authority.workspaceLease.BaseWorkspaceVersionID) ||
 		assignment.OwnershipGeneration != authority.workspaceLease.OwnershipGeneration ||
 		assignment.WriterGeneration != authority.workspaceLease.WriterGeneration ||
 		assignment.MountFencingGeneration != authority.workspaceLease.MountFencingGeneration ||
@@ -244,7 +244,7 @@ func validWorkspaceResetTargetAuthority(
 	authority runLeaseProjectionAuthority,
 ) db.GetWorkspaceResetTargetAuthorityRow {
 	return db.GetWorkspaceResetTargetAuthorityRow{
-		VersionID:     authority.workspaceLease.BaseVersionID,
+		VersionID:     authority.workspaceLease.BaseWorkspaceVersionID,
 		ContentDigest: workspace.CanonicalEmptyTreeDigest,
 	}
 }
@@ -252,7 +252,7 @@ func validWorkspaceResetTargetAuthority(
 func TestProjectWorkspaceAttachmentProjectsArtifactResetTarget(t *testing.T) {
 	authority := validRunLeaseProjectionAuthority()
 	resetAuthority := db.GetWorkspaceResetTargetAuthorityRow{
-		VersionID:       authority.workspaceLease.BaseVersionID,
+		VersionID:       authority.workspaceLease.BaseWorkspaceVersionID,
 		ParentVersionID: pgvalue.UUID(uuid.New()), ArtifactID: pgvalue.UUID(uuid.New()),
 		ContentDigest:    validDigest('c'),
 		LogicalSizeBytes: 3, EntryCount: 1,
@@ -317,7 +317,7 @@ func validRunLeaseProjectionAuthority() runLeaseProjectionAuthority {
 		workspaceLease: db.WorkspaceLease{
 			ID: workspaceLeaseID, OwnerRunLeaseID: runLeaseID,
 			WorkspaceID: workspaceID, RuntimeInstanceID: runtimeID,
-			WorkspaceMountID: mountID, BaseVersionID: versionID,
+			WorkspaceMountID: mountID, BaseWorkspaceVersionID: versionID,
 			OwnershipGeneration: 5, WriterGeneration: 6, MountFencingGeneration: 7,
 		},
 	}

@@ -199,7 +199,7 @@ UPDATE runtime_instances
 	}
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE workspace_mounts
-   SET state = 'mounted',
+   SET status = 'mounted',
        mounted_at = transaction_timestamp()
  WHERE id = $1`,
 		mounting.WorkspaceMountID,
@@ -225,7 +225,7 @@ UPDATE runs
 
 	var currentLeaseID, reservedRunID, workspaceLeaseID pgtype.UUID
 	var firstLeaseAt pgtype.Timestamptz
-	var stateVersion, writerGeneration, mountGeneration int64
+	var revision, writerGeneration, mountGeneration int64
 	var runtimePreparationCount int32
 	var nextRuntimePreparationAt pgtype.Timestamptz
 	var ownerRunLeaseID pgtype.UUID
@@ -233,7 +233,7 @@ UPDATE runs
 	err = fixture.pool.QueryRow(fixture.ctx, `
 SELECT runs.current_run_lease_id,
        runs.first_lease_at,
-       runs.state_version,
+       runs.revision,
        runs.runtime_preparation_count,
        runs.next_runtime_preparation_at,
        runtime_instances.reserved_run_id,
@@ -253,7 +253,7 @@ SELECT runs.current_run_lease_id,
 	).Scan(
 		&currentLeaseID,
 		&firstLeaseAt,
-		&stateVersion,
+		&revision,
 		&runtimePreparationCount,
 		&nextRuntimePreparationAt,
 		&reservedRunID,
@@ -271,7 +271,7 @@ SELECT runs.current_run_lease_id,
 		!firstLeaseAt.Valid ||
 		runtimePreparationCount != 0 ||
 		nextRuntimePreparationAt.Valid ||
-		stateVersion != 2 ||
+		revision != 2 ||
 		reservedRunID.Valid ||
 		writerGeneration != 1 ||
 		mountGeneration != 2 {
@@ -280,7 +280,7 @@ SELECT runs.current_run_lease_id,
 			pgvalue.UUIDString(currentLeaseID),
 			pgvalue.UUIDString(ownerRunLeaseID),
 			firstLeaseAt.Valid,
-			stateVersion,
+			revision,
 			pgvalue.UUIDString(reservedRunID),
 			writerGeneration,
 			mountGeneration,
@@ -357,11 +357,11 @@ SELECT $1, environment_id, region_id, sandbox_declared_id,
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO workspace_versions (
     id, environment_id, workspace_id, content_digest,
-    size_bytes, entry_count, state,
+    size_bytes, entry_count, status,
     ownership_generation, writer_generation, published_at
 )
 SELECT $1, environment_id, $2, content_digest,
-       size_bytes, entry_count, state, 0, 0, transaction_timestamp()
+       size_bytes, entry_count, status, 0, 0, transaction_timestamp()
   FROM workspace_versions
  WHERE id = (SELECT head_version_id FROM workspaces WHERE id = $3)`,
 		secondVersionID, secondWorkspaceID, fixture.workspaceID)
@@ -390,7 +390,7 @@ INSERT INTO run_attempts (
 
 	secondCandidate := ReadyRunCandidate{
 		OrgID: pgvalue.UUID(fixture.orgID), RunID: pgvalue.UUID(secondRunID),
-		ExpectedRunStateVersion: 1,
+		ExpectedRunRevision: 1,
 	}
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE workspaces SET dirty_state = 'dirty' WHERE id = $1`, fixture.workspaceID)
@@ -398,7 +398,7 @@ UPDATE workspaces SET dirty_state = 'dirty' WHERE id = $1`, fixture.workspaceID)
 		t.Fatalf("dirty Workspace pressure error = %v, want ErrCapacityUnavailable", err)
 	}
 	var protectedState string
-	if err := fixture.pool.QueryRow(fixture.ctx, `SELECT state FROM workspace_mounts WHERE id = $1`,
+	if err := fixture.pool.QueryRow(fixture.ctx, `SELECT status FROM workspace_mounts WHERE id = $1`,
 		mounted.WorkspaceMountID).Scan(&protectedState); err != nil {
 		t.Fatal(err)
 	}
@@ -421,8 +421,8 @@ INSERT INTO idempotency_claims (
 )`, processClaimID, fixture.environmentID)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 INSERT INTO workspace_processes (
-    id, org_id, project_id, environment_id, workspace_id, base_version_id,
-    restore_desired_state, state, request, claim_id,
+    id, org_id, project_id, environment_id, workspace_id, base_workspace_version_id,
+    restore_desired_state, status, request, claim_id,
     created_by_subject_type, created_by_subject_id
 ) VALUES (
     $1, $2, $3, $4, $5,
@@ -433,7 +433,7 @@ INSERT INTO workspace_processes (
 	if _, err := fixture.authority.PlaceReadyRun(fixture.ctx, secondCandidate); !errors.Is(err, ErrCapacityUnavailable) {
 		t.Fatalf("live Process pressure error = %v, want ErrCapacityUnavailable", err)
 	}
-	if err := fixture.pool.QueryRow(fixture.ctx, `SELECT state FROM workspace_mounts WHERE id = $1`,
+	if err := fixture.pool.QueryRow(fixture.ctx, `SELECT status FROM workspace_mounts WHERE id = $1`,
 		mounted.WorkspaceMountID).Scan(&protectedState); err != nil {
 		t.Fatal(err)
 	}
@@ -444,7 +444,7 @@ INSERT INTO workspace_processes (
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `DELETE FROM idempotency_claims WHERE id = $1`, processClaimID)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 INSERT INTO worker_instances (
-    id, resource_id, worker_group_id, worker_pool_id, state,
+    id, resource_id, worker_group_id, worker_pool_id, status,
     current_epoch, current_service_id, runtime_identity_id,
     substrate_format, substrate_contract,
     epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
@@ -467,7 +467,7 @@ SELECT ('00000000-0000-8000-8000-' || lpad(value::text, 12, '0'))::uuid,
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 INSERT INTO workspaces (
     id, environment_id, region_id, deployment_definition_id,
-    state, desired_state, deleted_at
+    status, desired_state, deleted_at
 )
 SELECT ('20000000-0000-8000-8000-' || lpad(value::text, 12, '0'))::uuid,
        source.environment_id, source.region_id, source.deployment_definition_id,
@@ -504,7 +504,7 @@ SELECT ('10000000-0000-8000-8000-' || lpad(value::text, 12, '0'))::uuid,
 	var mountWorkerID, runtimeID pgtype.UUID
 	var workerEpoch, fencingGeneration int64
 	if err := fixture.pool.QueryRow(fixture.ctx, `
-SELECT state, finalization_kind, finalization_reason_code,
+SELECT status, finalization_kind, finalization_reason_code,
        worker_instance_id, worker_epoch, runtime_instance_id, fencing_generation
   FROM workspace_mounts
  WHERE id = $1`, mounted.WorkspaceMountID).Scan(
@@ -671,7 +671,7 @@ UPDATE runtime_instances
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-UPDATE workspace_mounts SET state = 'mounted', mounted_at = transaction_timestamp() WHERE id = $1`, mounting.WorkspaceMountID)
+UPDATE workspace_mounts SET status = 'mounted', mounted_at = transaction_timestamp() WHERE id = $1`, mounting.WorkspaceMountID)
 	granted, err := fixture.authority.PlaceReadyRun(fixture.ctx, fixture.candidate())
 	if err != nil {
 		t.Fatal(err)
@@ -901,7 +901,7 @@ func TestRunPlanningExcludesActorWithInvalidRestore(t *testing.T) {
 
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_checkpoints
-   SET state = 'invalid',
+   SET status = 'invalid',
        ready_at = NULL,
        invalidated_at = transaction_timestamp(),
        invalidation_reason_code = 'test_invalid_restore'
@@ -1046,7 +1046,7 @@ SELECT id
   FROM workspace_mounts
  WHERE workspace_id = $1
    AND runtime_instance_id = $2
-   AND state = 'mounting'`, fixture.workspaceID, runtimeID).Scan(&mountID); err != nil {
+   AND status = 'mounting'`, fixture.workspaceID, runtimeID).Scan(&mountID); err != nil {
 		t.Fatal(err)
 	}
 	markRunPlacementMountReady(t, fixture, mountID)
@@ -1257,15 +1257,15 @@ func TestPlaceReadyRunRestoresCompatibleCheckpointAndBindsWait(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var sourceWorkspaceLeaseID, baseVersionID pgtype.UUID
+	var sourceWorkspaceLeaseID, baseWorkspaceVersionID pgtype.UUID
 	var sourceMountGeneration int64
 	err = fixture.pool.QueryRow(fixture.ctx, `
-SELECT workspace_leases.id, workspace_leases.base_version_id,
+SELECT workspace_leases.id, workspace_leases.base_workspace_version_id,
        workspace_leases.mount_fencing_generation
   FROM workspace_leases
  WHERE owner_run_lease_id = $1`, granted.Lease.ID).Scan(
 		&sourceWorkspaceLeaseID,
-		&baseVersionID,
+		&baseWorkspaceVersionID,
 		&sourceMountGeneration,
 	)
 	if err != nil {
@@ -1299,21 +1299,21 @@ INSERT INTO artifacts (
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO workspace_versions (
     id, environment_id, workspace_id,
-    parent_version_id, content_digest, state, source_workspace_lease_id,
+    parent_version_id, content_digest, status, source_workspace_lease_id,
     ownership_generation, writer_generation, artifact_id,
     entry_count, size_bytes
 ) VALUES (
     $1, $2, $3, $4, $5, 'private', $6,
     1, 1, $7, 1, 1
 )`,
-		privateVersionID, fixture.environmentID, fixture.workspaceID, baseVersionID,
+		privateVersionID, fixture.environmentID, fixture.workspaceID, baseWorkspaceVersionID,
 		privateDigest, sourceWorkspaceLeaseID, privateArtifactID,
 	)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO run_waits (
-    id, environment_id, run_id, workspace_id, kind, due_at, condition_state,
-    condition_result, condition_terminal_at, suspension_state,
-    expected_run_state_version, attempt_number, prior_run_lease_id,
+    id, environment_id, run_id, workspace_id, kind, due_at, condition_status,
+    condition_result, condition_terminal_at, suspension_status,
+    expected_run_revision, attempt_number, prior_run_lease_id,
     resume_attach_id
 ) VALUES (
     $1, $2, $3, $4, 'timer', now() - interval '1 second', 'completed',
@@ -1328,37 +1328,37 @@ INSERT INTO run_checkpoints (
     id, run_id, attempt_number, run_wait_id, source_run_lease_id,
     source_workspace_lease_id, workspace_id, base_workspace_version_id,
     private_workspace_version_id, runtime_config_artifact_id, vm_state_artifact_id,
-    memory_artifact_id, scratch_disk_artifact_id, state, restore_manifest,
+    memory_artifact_id, scratch_disk_artifact_id, status, restore_manifest,
     ready_request_fingerprint, ready_at
 ) VALUES (
     $1, $2, 1, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-    'ready', '{"kind":"suspend"}'::jsonb, 'test-ready', now()
+    'ready', '{"kind":"suspend"}'::jsonb, 'sha256:c6a8f322cea284f70d8d5bdfa780132e389aca57ace69073ac76e8daa12dacc8', now()
 )`,
 		checkpointID, fixture.runID, runWaitID, granted.Lease.ID,
-		sourceWorkspaceLeaseID, fixture.workspaceID, baseVersionID, privateVersionID,
+		sourceWorkspaceLeaseID, fixture.workspaceID, baseWorkspaceVersionID, privateVersionID,
 		checkpointArtifacts.RuntimeConfig, checkpointArtifacts.VMState, checkpointArtifacts.Memory, checkpointArtifacts.ScratchDisk,
 	)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE run_waits
-   SET suspension_state = 'resume_pending', suspend_checkpoint_id = $2,
+   SET suspension_status = 'resume_pending', suspend_checkpoint_id = $2,
        resume_request_version = 1
  WHERE id = $1`, runWaitID, checkpointID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE runs
-   SET current_run_lease_id = NULL, state_version = 3, updated_at = now()
+   SET current_run_lease_id = NULL, revision = 3, updated_at = now()
  WHERE id = $1 AND current_run_lease_id = $2`, fixture.runID, granted.Lease.ID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE run_leases
-   SET state = 'checkpointed', claimed_at = created_at, started_at = created_at,
+   SET status = 'checkpointed', claimed_at = created_at, started_at = created_at,
        checkpointed_at = now(), terminal_at = now(), terminal_reason_code = 'checkpointed'
  WHERE id = $1`, granted.Lease.ID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE workspace_leases
-   SET state = 'released', released_at = now(), terminal_at = now()
+   SET status = 'released', released_at = now(), terminal_at = now()
  WHERE id = $1`, sourceWorkspaceLeaseID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE workspace_mounts
-   SET state = 'unmounted', unmounted_at = now(), terminal_at = now(),
+   SET status = 'unmounted', unmounted_at = now(), terminal_at = now(),
        terminal_reason_code = 'checkpointed'
  WHERE id = $1`, mounting.WorkspaceMountID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
@@ -1378,7 +1378,7 @@ UPDATE runtime_instances
 
 	restoreCandidate := ReadyRunCandidate{
 		OrgID: pgvalue.UUID(fixture.orgID), RunID: pgvalue.UUID(fixture.runID),
-		ExpectedRunStateVersion: 3,
+		ExpectedRunRevision: 3,
 	}
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE worker_instances SET substrate_contract = 'incompatible-contract' WHERE id = $1`, fixture.workerID)
@@ -1398,14 +1398,14 @@ UPDATE workspace_leases SET mount_fencing_generation = $2 WHERE id = $1`,
 UPDATE workspace_leases SET mount_fencing_generation = $2 WHERE id = $1`,
 		sourceWorkspaceLeaseID, sourceMountGeneration)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-UPDATE workspace_leases SET base_version_id = $2 WHERE id = $1`,
+UPDATE workspace_leases SET base_workspace_version_id = $2 WHERE id = $1`,
 		sourceWorkspaceLeaseID, privateVersionID)
 	if _, err := fixture.authority.PlaceReadyRun(fixture.ctx, restoreCandidate); !errors.Is(err, ErrCandidateChanged) {
 		t.Fatalf("restore placement with crossed source Lease base error = %v, want ErrCandidateChanged", err)
 	}
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-UPDATE workspace_leases SET base_version_id = $2 WHERE id = $1`,
-		sourceWorkspaceLeaseID, baseVersionID)
+UPDATE workspace_leases SET base_workspace_version_id = $2 WHERE id = $1`,
+		sourceWorkspaceLeaseID, baseWorkspaceVersionID)
 	restored, err := fixture.authority.PlaceReadyRun(fixture.ctx, restoreCandidate)
 	if err != nil {
 		t.Fatal(err)
@@ -1423,7 +1423,7 @@ SELECT restore_checkpoint_id, reserved_workspace_version_id
 	}
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_checkpoints
-   SET state = 'invalid', ready_at = NULL, invalidated_at = now(),
+   SET status = 'invalid', ready_at = NULL, invalidated_at = now(),
        invalidation_reason_code = 'test_invalidated'
  WHERE id = $1`, checkpointID)
 	if err := markRunPlacementRuntimeReadyQuery(t, fixture, restored.RuntimeInstanceID); !errors.Is(err, pgx.ErrNoRows) {
@@ -1431,7 +1431,7 @@ UPDATE run_checkpoints
 	}
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_checkpoints
-   SET state = 'ready', ready_at = now(), invalidated_at = NULL,
+   SET status = 'ready', ready_at = now(), invalidated_at = NULL,
        invalidation_reason_code = NULL
  WHERE id = $1`, checkpointID)
 	if err := markRunPlacementRuntimeReadyQuery(t, fixture, restored.RuntimeInstanceID); err != nil {
@@ -1475,14 +1475,14 @@ UPDATE workspace_mounts SET fencing_generation = $2 WHERE id = $1`,
 		t.Fatal(err)
 	}
 
-	var waitState string
-	var waitLeaseID, leaseBaseVersionID, restoredCheckpointID, clearedReservation pgtype.UUID
+	var waitStatus string
+	var waitLeaseID, leaseBaseWorkspaceVersionID, restoredCheckpointID, clearedReservation pgtype.UUID
 	var restoredSubstrateID, sourceSubstrateID pgtype.UUID
 	var restoredLeaseMountGeneration, restoredMountGeneration int64
 	err = fixture.pool.QueryRow(fixture.ctx, `
-SELECT run_waits.suspension_state,
+SELECT run_waits.suspension_status,
        run_waits.current_run_lease_id,
-       workspace_leases.base_version_id,
+       workspace_leases.base_workspace_version_id,
        runtime_instances.restore_checkpoint_id,
        runtime_instances.reserved_run_id,
        runtime_instances.runtime_substrate_id,
@@ -1495,19 +1495,19 @@ SELECT run_waits.suspension_state,
   JOIN runtime_instances AS source_runtime ON source_runtime.id = $3
   JOIN workspace_mounts ON workspace_mounts.id = workspace_leases.workspace_mount_id
  WHERE run_waits.id = $1`, runWaitID, restoreGrant.Lease.ID, reserved.RuntimeInstanceID).Scan(
-		&waitState, &waitLeaseID, &leaseBaseVersionID, &restoredCheckpointID, &clearedReservation,
+		&waitStatus, &waitLeaseID, &leaseBaseWorkspaceVersionID, &restoredCheckpointID, &clearedReservation,
 		&restoredSubstrateID, &sourceSubstrateID, &restoredLeaseMountGeneration,
 		&restoredMountGeneration,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if waitState != "resuming" || waitLeaseID != restoreGrant.Lease.ID ||
-		leaseBaseVersionID != pgvalue.UUID(privateVersionID) ||
+	if waitStatus != "resuming" || waitLeaseID != restoreGrant.Lease.ID ||
+		leaseBaseWorkspaceVersionID != pgvalue.UUID(privateVersionID) ||
 		restoredCheckpointID != pgvalue.UUID(checkpointID) || clearedReservation.Valid ||
 		!restoredSubstrateID.Valid || restoredSubstrateID != sourceSubstrateID {
 		t.Fatalf("restore grant wait=%s lease=%s base=%s checkpoint=%s reserved=%s",
-			waitState, pgvalue.UUIDString(waitLeaseID), pgvalue.UUIDString(leaseBaseVersionID),
+			waitStatus, pgvalue.UUIDString(waitLeaseID), pgvalue.UUIDString(leaseBaseWorkspaceVersionID),
 			pgvalue.UUIDString(restoredCheckpointID), pgvalue.UUIDString(clearedReservation))
 	}
 	if restoredLeaseMountGeneration != sourceMountGeneration+2 ||
@@ -1517,18 +1517,18 @@ SELECT run_waits.suspension_state,
 	}
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
-   SET state = 'running',
+   SET status = 'running',
        created_at = transaction_timestamp() - interval '20 seconds',
        start_deadline_at = transaction_timestamp() - interval '19 seconds',
        claimed_at = transaction_timestamp() - interval '18 seconds',
        started_at = transaction_timestamp() - interval '18 seconds'
- WHERE id = $1 AND state = 'assigned'`, restoreGrant.Lease.ID)
+ WHERE id = $1 AND status = 'assigned'`, restoreGrant.Lease.ID)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE runs
    SET status = 'running', started_at = transaction_timestamp(),
        max_active_duration_ms = 5000,
        active_started_at = transaction_timestamp() - interval '10 seconds',
-       state_version = state_version + 1
+       revision = revision + 1
  WHERE id = $1 AND status = 'queued'`, fixture.runID)
 
 	var originalQueueScore time.Time
@@ -1556,15 +1556,15 @@ UPDATE workspace_leases
 	var recoveredState string
 	var recoveredLeaseID pgtype.UUID
 	var recoveredVersion, recoveredRequestVersion, recoveredActiveElapsed int64
-	var recoveredLeaseState, recoveredWorkspaceLeaseState, desiredState string
+	var recoveredLeaseStatus, recoveredWorkspaceLeaseStatus, desiredState string
 	err = fixture.pool.QueryRow(fixture.ctx, `
-SELECT run_waits.suspension_state,
+SELECT run_waits.suspension_status,
        run_waits.current_run_lease_id,
-       runs.state_version,
+       runs.revision,
        run_waits.resume_request_version,
        runs.active_elapsed_ms,
-       run_leases.state,
-       workspace_leases.state,
+       run_leases.status,
+       workspace_leases.status,
        runtime_instances.desired_state
   FROM run_waits
   JOIN runs ON runs.id = run_waits.run_id
@@ -1573,18 +1573,18 @@ SELECT run_waits.suspension_state,
   JOIN runtime_instances ON runtime_instances.id = run_leases.runtime_instance_id
  WHERE run_waits.id = $1`, runWaitID, restoreGrant.Lease.ID).Scan(
 		&recoveredState, &recoveredLeaseID, &recoveredVersion, &recoveredRequestVersion,
-		&recoveredActiveElapsed, &recoveredLeaseState, &recoveredWorkspaceLeaseState, &desiredState,
+		&recoveredActiveElapsed, &recoveredLeaseStatus, &recoveredWorkspaceLeaseStatus, &desiredState,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if recoveredState != "resume_pending" || recoveredLeaseID.Valid || recoveredVersion != 6 ||
 		recoveredRequestVersion != 2 || recoveredActiveElapsed < 1900 || recoveredActiveElapsed > 3000 ||
-		recoveredLeaseState != "expired" ||
-		recoveredWorkspaceLeaseState != "expired" || desiredState != "closed" {
+		recoveredLeaseStatus != "expired" ||
+		recoveredWorkspaceLeaseStatus != "expired" || desiredState != "closed" {
 		t.Fatalf("recovery wait=%s lease=%s run_version=%d request_version=%d run_lease=%s workspace_lease=%s runtime=%s",
 			recoveredState, pgvalue.UUIDString(recoveredLeaseID), recoveredVersion,
-			recoveredRequestVersion, recoveredLeaseState, recoveredWorkspaceLeaseState, desiredState)
+			recoveredRequestVersion, recoveredLeaseStatus, recoveredWorkspaceLeaseStatus, desiredState)
 	}
 	var recoveredQueueScore time.Time
 	if err := fixture.pool.QueryRow(fixture.ctx, `SELECT queue_score_at FROM runs WHERE id = $1`, fixture.runID).Scan(&recoveredQueueScore); err != nil {
@@ -1598,9 +1598,9 @@ SELECT run_waits.suspension_state,
 	// blocked until recovery fences the Lease.
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE workspace_mounts
-   SET state = 'unmounted', unmounted_at = transaction_timestamp(),
+   SET status = 'unmounted', unmounted_at = transaction_timestamp(),
        terminal_at = transaction_timestamp(), terminal_reason_code = 'test_reclaimed'
- WHERE id = $1 AND state = 'unmounting'`, restoreMount.WorkspaceMountID)
+ WHERE id = $1 AND status = 'unmounting'`, restoreMount.WorkspaceMountID)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE runtime_instances
    SET observed_state = 'closed', observed_version = observed_version + 1,
@@ -1611,7 +1611,7 @@ UPDATE runtime_instances
  WHERE id = $1 AND desired_state = 'closed'`, restored.RuntimeInstanceID)
 	secondRestoreCandidate := ReadyRunCandidate{
 		OrgID: pgvalue.UUID(fixture.orgID), RunID: pgvalue.UUID(fixture.runID),
-		ExpectedRunStateVersion: 6,
+		ExpectedRunRevision: 6,
 	}
 	secondRestored, err := fixture.authority.PlaceReadyRun(fixture.ctx, secondRestoreCandidate)
 	if err != nil {
@@ -1671,16 +1671,16 @@ UPDATE workspace_leases
 	if len(renewedRecovery.rows) != 0 {
 		t.Fatalf("stale expiry selector recovered %d renewed Leases, want 0", len(renewedRecovery.rows))
 	}
-	var renewedLeaseState string
-	if err := fixture.pool.QueryRow(fixture.ctx, `SELECT state FROM run_leases WHERE id = $1`, secondRestoreGrant.Lease.ID).Scan(&renewedLeaseState); err != nil {
+	var renewedLeaseStatus string
+	if err := fixture.pool.QueryRow(fixture.ctx, `SELECT status FROM run_leases WHERE id = $1`, secondRestoreGrant.Lease.ID).Scan(&renewedLeaseStatus); err != nil {
 		t.Fatal(err)
 	}
-	if renewedLeaseState != "assigned" {
-		t.Fatalf("renewed Run Lease state = %s, want assigned", renewedLeaseState)
+	if renewedLeaseStatus != "assigned" {
+		t.Fatalf("renewed Run Lease state = %s, want assigned", renewedLeaseStatus)
 	}
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
-   SET state = 'running',
+   SET status = 'running',
        created_at = transaction_timestamp() - interval '20 seconds',
        start_deadline_at = transaction_timestamp() - interval '19 seconds',
        claimed_at = transaction_timestamp() - interval '18 seconds',
@@ -1691,7 +1691,7 @@ UPDATE runs
    SET status = 'running', max_active_duration_ms = 300000,
        started_at = COALESCE(started_at, transaction_timestamp() - interval '10 seconds'),
        active_started_at = transaction_timestamp() - interval '10 seconds',
-       state_version = state_version + 1
+       revision = revision + 1
  WHERE id = $1 AND status = 'queued'`, fixture.runID)
 	startupTx, err := fixture.pool.Begin(fixture.ctx)
 	if err != nil {
@@ -1700,7 +1700,7 @@ UPDATE runs
 	defer func() { _ = startupTx.Rollback(fixture.ctx) }()
 	if _, err := startupTx.Exec(fixture.ctx, `
 UPDATE worker_instances
-	   SET state = 'registering', current_epoch = 2,
+	   SET status = 'registering', current_epoch = 2,
 	       runtime_identity_id = NULL,
 	       substrate_format = '',
 	       substrate_contract = '',
@@ -1758,7 +1758,7 @@ UPDATE workspace_leases
 	)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE workspace_mounts
-   SET state = 'failed', failed_at = transaction_timestamp(),
+   SET status = 'failed', failed_at = transaction_timestamp(),
        terminal_at = transaction_timestamp(), terminal_reason_code = 'test_mount_failed'
  WHERE id = $1`, secondRestoreMount.WorkspaceMountID)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
@@ -1789,7 +1789,7 @@ SELECT desired_version, observed_version
 	}
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE worker_instances
-   SET state = 'lost', lost_at = transaction_timestamp()
+   SET status = 'lost', lost_at = transaction_timestamp()
  WHERE id = $1`, fixture.workerID)
 	recovered, err = db.New(fixture.pool).RecoverExpiredRunResumes(fixture.ctx, recoverExpiredRunResumesParams(10))
 	if err != nil {
@@ -1798,21 +1798,21 @@ UPDATE worker_instances
 	if len(recovered) != 1 || recovered[0].ID != pgvalue.UUID(runWaitID) || recovered[0].RunID != pgvalue.UUID(fixture.runID) {
 		t.Fatalf("worker-loss recovered resumes = %+v", recovered)
 	}
-	var lostRunState, lostWaitState, lostMountState string
-	var lostRunLeaseState, lostRunLeaseReason, lostWorkspaceLeaseState, lostWorkspaceLeaseReason string
+	var lostRunStatus, lostWaitStatus, lostMountStatus string
+	var lostRunLeaseStatus, lostRunLeaseReason, lostWorkspaceLeaseStatus, lostWorkspaceLeaseReason string
 	var lostAttemptOutcome pgtype.Text
 	var lostAttemptTerminalAt, lostRunTerminalAt pgtype.Timestamptz
 	var lostActiveElapsed, lostRunVersion, lostResumeRequestVersion int64
 	var lostWaitLeaseID pgtype.UUID
 	var ownerRunID pgtype.UUID
 	err = fixture.pool.QueryRow(fixture.ctx, `
-SELECT runs.status, run_waits.suspension_state, run_waits.current_run_lease_id,
-	       runs.state_version, run_waits.resume_request_version,
+SELECT runs.status, run_waits.suspension_status, run_waits.current_run_lease_id,
+	       runs.revision, run_waits.resume_request_version,
 	       run_attempts.terminal_outcome, run_attempts.terminal_at,
 	       runs.terminal_at, runs.active_elapsed_ms,
-       workspaces.owner_run_id, run_leases.state, run_leases.terminal_reason_code,
-       workspace_leases.state, workspace_leases.terminal_reason_code,
-       workspace_mounts.state
+       workspaces.owner_run_id, run_leases.status, run_leases.terminal_reason_code,
+       workspace_leases.status, workspace_leases.terminal_reason_code,
+       workspace_mounts.status
   FROM runs
   JOIN run_waits ON run_waits.run_id = runs.id
   JOIN run_attempts
@@ -1823,32 +1823,32 @@ SELECT runs.status, run_waits.suspension_state, run_waits.current_run_lease_id,
   JOIN workspace_leases ON workspace_leases.owner_run_lease_id = run_leases.id
   JOIN workspace_mounts ON workspace_mounts.id = workspace_leases.workspace_mount_id
  WHERE runs.id = $1`, fixture.runID, secondRestoreGrant.Lease.ID).Scan(
-		&lostRunState, &lostWaitState, &lostWaitLeaseID,
+		&lostRunStatus, &lostWaitStatus, &lostWaitLeaseID,
 		&lostRunVersion, &lostResumeRequestVersion,
 		&lostAttemptOutcome, &lostAttemptTerminalAt,
 		&lostRunTerminalAt, &lostActiveElapsed,
-		&ownerRunID, &lostRunLeaseState, &lostRunLeaseReason,
-		&lostWorkspaceLeaseState, &lostWorkspaceLeaseReason,
-		&lostMountState,
+		&ownerRunID, &lostRunLeaseStatus, &lostRunLeaseReason,
+		&lostWorkspaceLeaseStatus, &lostWorkspaceLeaseReason,
+		&lostMountStatus,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if lostRunState != "queued" || lostWaitState != "resume_pending" || lostWaitLeaseID.Valid ||
+	if lostRunStatus != "queued" || lostWaitStatus != "resume_pending" || lostWaitLeaseID.Valid ||
 		lostRunVersion != 9 || lostResumeRequestVersion != 3 ||
 		lostAttemptOutcome.Valid || lostAttemptTerminalAt.Valid ||
 		lostRunTerminalAt.Valid ||
 		lostActiveElapsed < 9000 || lostActiveElapsed > 15000 ||
 		ownerRunID != pgvalue.UUID(fixture.runID) ||
-		lostRunLeaseState != "expired" || lostRunLeaseReason != "lease_expired" ||
-		lostWorkspaceLeaseState != "expired" || lostWorkspaceLeaseReason != "lease_expired" ||
-		lostMountState != "failed" {
+		lostRunLeaseStatus != "expired" || lostRunLeaseReason != "lease_expired" ||
+		lostWorkspaceLeaseStatus != "expired" || lostWorkspaceLeaseReason != "lease_expired" ||
+		lostMountStatus != "failed" {
 		t.Fatalf("worker-loss recovery run=%s wait=%s wait_lease=%s run_version=%d request_version=%d attempt=%v attempt_at=%v run_at=%v active=%d owner=%s run_lease=%s/%s workspace_lease=%s/%s mount=%s",
-			lostRunState, lostWaitState, pgvalue.UUIDString(lostWaitLeaseID), lostRunVersion,
+			lostRunStatus, lostWaitStatus, pgvalue.UUIDString(lostWaitLeaseID), lostRunVersion,
 			lostResumeRequestVersion, lostAttemptOutcome, lostAttemptTerminalAt,
 			lostRunTerminalAt, lostActiveElapsed, pgvalue.UUIDString(ownerRunID),
-			lostRunLeaseState, lostRunLeaseReason, lostWorkspaceLeaseState,
-			lostWorkspaceLeaseReason, lostMountState)
+			lostRunLeaseStatus, lostRunLeaseReason, lostWorkspaceLeaseStatus,
+			lostWorkspaceLeaseReason, lostMountStatus)
 	}
 	var terminalEventCount int
 	if err := fixture.pool.QueryRow(fixture.ctx, `
@@ -1891,7 +1891,7 @@ func TestActorCurrentRunCheckpointRestoreAndRecovery(t *testing.T) {
 			actorID, waitID, checkpointID := prepareActorSuspendedRestore(t, fixture)
 			candidate := ReadyRunCandidate{
 				OrgID: pgvalue.UUID(fixture.orgID), RunID: pgvalue.UUID(fixture.runID),
-				ExpectedRunStateVersion: 3,
+				ExpectedRunRevision: 3,
 			}
 			queued := listRunPlacementCandidates(t, fixture, 10)
 			if len(queued) != 1 || queued[0].RunID != pgvalue.UUID(fixture.runID) {
@@ -1933,21 +1933,21 @@ UPDATE run_attempts
 			if tc.invalidate {
 				dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_checkpoints
-   SET state = 'invalid', ready_at = NULL, invalidated_at = transaction_timestamp(),
+   SET status = 'invalid', ready_at = NULL, invalidated_at = transaction_timestamp(),
        invalidation_reason_code = 'test_unavailable'
  WHERE id = $1`, checkpointID)
 			}
 			if tc.maxDuration {
 				dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
-   SET state = 'running', claimed_at = created_at, started_at = created_at
+   SET status = 'running', claimed_at = created_at, started_at = created_at
  WHERE id = $1`, grant.Lease.ID)
 				dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE runs
    SET status = 'running', max_active_duration_ms = 5000,
        active_started_at = transaction_timestamp() - interval '10 seconds',
        started_at = coalesce(started_at, transaction_timestamp() - interval '10 seconds'),
-       state_version = state_version + 1
+       revision = revision + 1
  WHERE id = $1`, fixture.runID)
 			}
 			dbtest.MustExec(t, fixture.ctx, fixture.pool, `
@@ -1969,41 +1969,41 @@ UPDATE workspace_leases
 			if len(recovered) != tc.wantRecovered {
 				t.Fatalf("recovered %d Actor resumes, want %d", len(recovered), tc.wantRecovered)
 			}
-			var actorState string
+			var actorStatus string
 			var currentRunID, ownerActorID pgtype.UUID
-			var runGeneration, actorStateVersion, ownershipGeneration int64
+			var runGeneration, actorRevision, ownershipGeneration int64
 			var actorReason pgtype.Text
-			var waitState, runStatus string
+			var waitStatus, runStatus string
 			var terminalCursor pgtype.Int8
 			err = fixture.pool.QueryRow(fixture.ctx, `
-SELECT sessions.state, sessions.current_run_id, sessions.run_generation, sessions.state_version,
+SELECT sessions.status, sessions.current_run_id, sessions.run_generation, sessions.revision,
 	   sessions.failure->>'code', workspaces.owner_session_id, workspaces.ownership_generation,
-       run_waits.suspension_state, runs.status, run_attempts.terminal_session_input_sequence
+       run_waits.suspension_status, runs.status, run_attempts.terminal_session_input_sequence
   FROM sessions
   JOIN workspaces ON workspaces.id = sessions.workspace_id
   JOIN runs ON runs.id = $2
   JOIN run_waits ON run_waits.id = $3
   JOIN run_attempts ON run_attempts.run_id = runs.id AND run_attempts.number = runs.current_attempt_number
  WHERE sessions.id = $1`, actorID, fixture.runID, waitID).Scan(
-				&actorState, &currentRunID, &runGeneration, &actorStateVersion,
-				&actorReason, &ownerActorID, &ownershipGeneration, &waitState, &runStatus, &terminalCursor,
+				&actorStatus, &currentRunID, &runGeneration, &actorRevision,
+				&actorReason, &ownerActorID, &ownershipGeneration, &waitStatus, &runStatus, &terminalCursor,
 			)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if actorState != tc.wantActorState || actorReason != tc.wantActorReason {
-				t.Fatalf("Actor state/reason = %s/%v, want %s/%v", actorState, actorReason, tc.wantActorState, tc.wantActorReason)
+			if actorStatus != tc.wantActorState || actorReason != tc.wantActorReason {
+				t.Fatalf("Actor state/reason = %s/%v, want %s/%v", actorStatus, actorReason, tc.wantActorState, tc.wantActorReason)
 			}
 			if tc.invalidate || tc.maxDuration {
-				if currentRunID.Valid || ownerActorID.Valid || runGeneration != 2 || actorStateVersion != 2 ||
-					ownershipGeneration != 2 || waitState != "failed" || runStatus != tc.wantRunStatus || terminalCursor.Valid {
+				if currentRunID.Valid || ownerActorID.Valid || runGeneration != 2 || actorRevision != 2 ||
+					ownershipGeneration != 2 || waitStatus != "failed" || runStatus != tc.wantRunStatus || terminalCursor.Valid {
 					t.Fatalf("terminal Actor composition run=%s owner=%s generations=%d/%d workspace=%d wait=%s run=%s cursor=%v",
 						pgvalue.UUIDString(currentRunID), pgvalue.UUIDString(ownerActorID), runGeneration,
-						actorStateVersion, ownershipGeneration, waitState, runStatus, terminalCursor)
+						actorRevision, ownershipGeneration, waitStatus, runStatus, terminalCursor)
 				}
 			} else if currentRunID != pgvalue.UUID(fixture.runID) || ownerActorID != pgvalue.UUID(actorID) ||
-				runGeneration != 1 || actorStateVersion != 1 || ownershipGeneration != 1 ||
-				waitState != "resume_pending" || runStatus != "queued" {
+				runGeneration != 1 || actorRevision != 1 || ownershipGeneration != 1 ||
+				waitStatus != "resume_pending" || runStatus != "queued" {
 				t.Fatalf("recoverable Actor changed durable identity/state")
 			}
 		})
@@ -2015,7 +2015,7 @@ func TestPlaceReadyActorContinuationReusesRestoredRuntimeAtCurrentFrontier(t *te
 	actorID, waitID, checkpointID := prepareActorSuspendedRestore(t, fixture)
 	restoreCandidate := ReadyRunCandidate{
 		OrgID: pgvalue.UUID(fixture.orgID), RunID: pgvalue.UUID(fixture.runID),
-		ExpectedRunStateVersion: 3,
+		ExpectedRunRevision: 3,
 	}
 	reserved, err := fixture.authority.PlaceReadyRun(fixture.ctx, restoreCandidate)
 	if err != nil {
@@ -2050,17 +2050,17 @@ SELECT workspace_leases.id, workspace_mounts.materialized_version_id
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE run_leases
-   SET state = 'completed', claimed_at = created_at, started_at = created_at,
+   SET status = 'completed', claimed_at = created_at, started_at = created_at,
        terminal_at = transaction_timestamp(), terminal_reason_code = 'completed'
  WHERE id = $1`, granted.Lease.ID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE workspace_leases
-   SET state = 'released', released_at = transaction_timestamp(),
+   SET status = 'released', released_at = transaction_timestamp(),
        terminal_at = transaction_timestamp()
  WHERE id = $1`, workspaceLeaseID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE run_waits
-   SET suspension_state = 'released', current_run_lease_id = NULL,
+   SET suspension_status = 'released', current_run_lease_id = NULL,
        resume_ack_version = resume_request_version,
        suspension_terminal_at = transaction_timestamp()
  WHERE id = $1`, waitID)
@@ -2077,7 +2077,7 @@ UPDATE runs
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO workspace_versions (
     id, environment_id, workspace_id, parent_version_id,
-    content_digest, size_bytes, entry_count, state,
+    content_digest, size_bytes, entry_count, status,
     source_workspace_lease_id, ownership_generation, writer_generation,
     artifact_id, published_at
 )
@@ -2121,7 +2121,7 @@ UPDATE sessions
 	}
 	placement, err := fixture.authority.PlaceReadyRun(fixture.ctx, ReadyRunCandidate{
 		OrgID: pgvalue.UUID(fixture.orgID), RunID: continuation.ID,
-		ExpectedRunStateVersion: continuation.StateVersion,
+		ExpectedRunRevision: continuation.Revision,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -2149,12 +2149,12 @@ SELECT id FROM workspace_leases WHERE owner_run_lease_id = $1`,
 	}
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
-   SET state = 'completed', claimed_at = created_at, started_at = created_at,
+   SET status = 'completed', claimed_at = created_at, started_at = created_at,
        terminal_at = transaction_timestamp(), terminal_reason_code = 'completed'
  WHERE id = $1`, placement.Lease.ID)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE workspace_leases
-   SET state = 'released', released_at = transaction_timestamp(),
+   SET status = 'released', released_at = transaction_timestamp(),
        terminal_at = transaction_timestamp()
  WHERE id = $1`, continuationWorkspaceLeaseID)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
@@ -2164,7 +2164,7 @@ UPDATE runs
  WHERE id = $1`, continuation.ID)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE sessions
-   SET state = 'closed', current_run_id = NULL, closed_at = transaction_timestamp()
+   SET status = 'closed', current_run_id = NULL, closed_at = transaction_timestamp()
  WHERE id = $1`, actorID)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE workspaces SET owner_session_id = NULL WHERE id = $1`, fixture.workspaceID)
@@ -2198,10 +2198,10 @@ func prepareActorSuspendedRestore(t *testing.T, fixture runPlacementFixture) (uu
 	if err != nil {
 		t.Fatal(err)
 	}
-	var sourceWorkspaceLeaseID, baseVersionID pgtype.UUID
+	var sourceWorkspaceLeaseID, baseWorkspaceVersionID pgtype.UUID
 	if err := fixture.pool.QueryRow(fixture.ctx, `
-SELECT id, base_version_id FROM workspace_leases WHERE owner_run_lease_id = $1`, grant.Lease.ID).Scan(
-		&sourceWorkspaceLeaseID, &baseVersionID,
+SELECT id, base_workspace_version_id FROM workspace_leases WHERE owner_run_lease_id = $1`, grant.Lease.ID).Scan(
+		&sourceWorkspaceLeaseID, &baseWorkspaceVersionID,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -2260,15 +2260,15 @@ VALUES ($1, $2, $3, $4, $5, 'workspace_version', 1, $6)`, privateArtifactID, fix
 		fixture.projectID, fixture.environmentID, privateDigest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO workspace_versions (
-    id, environment_id, workspace_id, parent_version_id, content_digest, state, source_workspace_lease_id, ownership_generation,
+    id, environment_id, workspace_id, parent_version_id, content_digest, status, source_workspace_lease_id, ownership_generation,
     writer_generation, artifact_id, entry_count, size_bytes
 ) VALUES ($1, $2, $3, $4, $5, 'private', $6, 1, 1, $7, 1, 1)`,
-		privateVersionID, fixture.environmentID, fixture.workspaceID, baseVersionID, privateDigest,
+		privateVersionID, fixture.environmentID, fixture.workspaceID, baseWorkspaceVersionID, privateDigest,
 		sourceWorkspaceLeaseID, privateArtifactID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO run_waits (
-    id, environment_id, run_id, workspace_id, kind, due_at, condition_state,
-    condition_result, condition_terminal_at, suspension_state, expected_run_state_version,
+    id, environment_id, run_id, workspace_id, kind, due_at, condition_status,
+    condition_result, condition_terminal_at, suspension_status, expected_run_revision,
     attempt_number, prior_run_lease_id, resume_attach_id
 ) VALUES ($1, $2, $3, $4, 'timer', now() - interval '1 second', 'completed', '{}'::jsonb,
 		  now(), 'resume_pending', 3, 1, $5, $6)`, waitID, fixture.environmentID, fixture.runID,
@@ -2281,19 +2281,19 @@ INSERT INTO run_checkpoints (
     private_workspace_version_id, actor_speculative_input_sequence,
     runtime_config_artifact_id, vm_state_artifact_id,
     memory_artifact_id, scratch_disk_artifact_id,
-    state, restore_manifest, ready_request_fingerprint, ready_at
+    status, restore_manifest, ready_request_fingerprint, ready_at
 ) VALUES ($1, $2, 1, $3, $4, $5, $6, $7, $8, 1, $9, $10, $11, $12,
-          'ready', '{"kind":"suspend"}'::jsonb, 'test-ready', now())`,
+          'ready', '{"kind":"suspend"}'::jsonb, 'sha256:c6a8f322cea284f70d8d5bdfa780132e389aca57ace69073ac76e8daa12dacc8', now())`,
 		checkpointID, fixture.runID, waitID, grant.Lease.ID, sourceWorkspaceLeaseID,
-		fixture.workspaceID, baseVersionID, privateVersionID,
+		fixture.workspaceID, baseWorkspaceVersionID, privateVersionID,
 		checkpointArtifacts.RuntimeConfig, checkpointArtifacts.VMState, checkpointArtifacts.Memory, checkpointArtifacts.ScratchDisk)
 	dbtest.MustExec(t, fixture.ctx, tx, `UPDATE run_waits SET suspend_checkpoint_id = $2, resume_request_version = 1 WHERE id = $1`, waitID, checkpointID)
-	dbtest.MustExec(t, fixture.ctx, tx, `UPDATE runs SET current_run_lease_id = NULL, state_version = 3 WHERE id = $1`, fixture.runID)
+	dbtest.MustExec(t, fixture.ctx, tx, `UPDATE runs SET current_run_lease_id = NULL, revision = 3 WHERE id = $1`, fixture.runID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
-UPDATE run_leases SET state = 'checkpointed', claimed_at = created_at, started_at = created_at,
+UPDATE run_leases SET status = 'checkpointed', claimed_at = created_at, started_at = created_at,
        checkpointed_at = now(), terminal_at = now(), terminal_reason_code = 'checkpointed' WHERE id = $1`, grant.Lease.ID)
-	dbtest.MustExec(t, fixture.ctx, tx, `UPDATE workspace_leases SET state = 'released', released_at = now(), terminal_at = now() WHERE id = $1`, sourceWorkspaceLeaseID)
-	dbtest.MustExec(t, fixture.ctx, tx, `UPDATE workspace_mounts SET state = 'unmounted', unmounted_at = now(), terminal_at = now(), terminal_reason_code = 'checkpointed' WHERE id = $1`, mount.WorkspaceMountID)
+	dbtest.MustExec(t, fixture.ctx, tx, `UPDATE workspace_leases SET status = 'released', released_at = now(), terminal_at = now() WHERE id = $1`, sourceWorkspaceLeaseID)
+	dbtest.MustExec(t, fixture.ctx, tx, `UPDATE workspace_mounts SET status = 'unmounted', unmounted_at = now(), terminal_at = now(), terminal_reason_code = 'checkpointed' WHERE id = $1`, mount.WorkspaceMountID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE runtime_instances SET desired_state = 'closed', desired_version = desired_version + 1,
        observed_state = 'closed', observed_desired_version = desired_version + 1,
@@ -2330,7 +2330,7 @@ inserted AS (
 		substrate_size_bytes
 	)
 	SELECT $2, org_id, project_id, environment_id, deployment_definition_id,
-		   'sha256:test-runtime-substrate', $3, $4, 1
+		   'sha256:82a76312340ff2dc8b52b1e6ff24308d9d9f54c3cb94e5957660b94afc53bc2d', $3, $4, 1
       FROM runtime
     ON CONFLICT ON CONSTRAINT runtime_substrates_input_key DO NOTHING
     RETURNING id
@@ -2374,7 +2374,7 @@ SELECT runtime_instances.desired_version,
 func markRunPlacementMountReady(t *testing.T, fixture runPlacementFixture, mountID pgtype.UUID) {
 	t.Helper()
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-UPDATE workspace_mounts SET state = 'mounted', mounted_at = transaction_timestamp() WHERE id = $1`, mountID)
+UPDATE workspace_mounts SET status = 'mounted', mounted_at = transaction_timestamp() WHERE id = $1`, mountID)
 }
 
 func TestPlaceReadyRunRejectsPerVMIncompatibleWorkspace(t *testing.T) {
@@ -2408,9 +2408,9 @@ UPDATE worker_instances
 
 func (fixture runPlacementFixture) candidate() ReadyRunCandidate {
 	return ReadyRunCandidate{
-		OrgID:                   pgvalue.UUID(fixture.orgID),
-		RunID:                   pgvalue.UUID(fixture.runID),
-		ExpectedRunStateVersion: 1,
+		OrgID:               pgvalue.UUID(fixture.orgID),
+		RunID:               pgvalue.UUID(fixture.runID),
+		ExpectedRunRevision: 1,
 	}
 }
 
@@ -2571,7 +2571,7 @@ SELECT $1, token.id, 'us-east-1', $4 FROM token`,
 	cpuEnvironment, cpuEnvironmentDigest := dispatchCPUEnvironment(t)
 	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO worker_instances (
-	id, resource_id, worker_group_id, worker_pool_id, state,
+	id, resource_id, worker_group_id, worker_pool_id, status,
 	current_epoch, current_service_id,
 	runtime_identity_id,
 	substrate_format, substrate_contract,
@@ -2631,7 +2631,7 @@ INSERT INTO workspaces (
 	)
 	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO workspace_versions (
-    id, environment_id, workspace_id, content_digest, state, ownership_generation, writer_generation, published_at
+    id, environment_id, workspace_id, content_digest, status, ownership_generation, writer_generation, published_at
 ) VALUES (
     $1, $2, $3,
     'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',

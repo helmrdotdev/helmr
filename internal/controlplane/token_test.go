@@ -24,15 +24,15 @@ func TestTokenCreateResponseRemainsOriginalPendingProjection(t *testing.T) {
 		CallbackSecret:    "callback-secret",
 		PublicAccessToken: "hlmr_pub_secret",
 	}
-	for _, state := range []db.TokenState{
-		db.TokenStateCompleted,
-		db.TokenStateCancelled,
-		db.TokenStateExpired,
+	for _, state := range []db.TokenStatus{
+		db.TokenStatusCompleted,
+		db.TokenStatusCancelled,
+		db.TokenStatusExpired,
 	} {
 		t.Run(string(state), func(t *testing.T) {
 			row := db.Token{
 				ID:        pgvalue.UUID(uuid.NewV7()),
-				State:     state,
+				Status:    state,
 				Result:    json.RawMessage(`{"approved":true}`),
 				Error:     json.RawMessage(`{"code":"terminal"}`),
 				Metadata:  json.RawMessage(`{"review":true}`),
@@ -147,7 +147,7 @@ func (s *expiredTokenOperationStore) CompleteToken(
 		ID:    s.token.ID,
 		OrgID: s.token.OrgID, ProjectID: s.token.ProjectID,
 		EnvironmentID:          s.token.EnvironmentID,
-		State:                  db.TokenStateExpired,
+		Status:                 db.TokenStatusExpired,
 		CompletionExpired:      true,
 		ReconciliationEnqueued: true,
 	}, nil
@@ -162,7 +162,7 @@ func (s *expiredTokenOperationStore) CancelToken(
 		ID:    s.token.ID,
 		OrgID: s.token.OrgID, ProjectID: s.token.ProjectID,
 		EnvironmentID:          s.token.EnvironmentID,
-		State:                  db.TokenStateExpired,
+		Status:                 db.TokenStatusExpired,
 		CancellationExpired:    true,
 		ReconciliationEnqueued: true,
 	}, nil

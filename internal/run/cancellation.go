@@ -53,29 +53,29 @@ type cancellationRun struct {
 	status                  db.RunStatus
 	currentAttemptNumber    int32
 	currentRunLeaseID       pgtype.UUID
-	stateVersion            int64
+	revision                int64
 	runtimePreparationCount int32
 	depth                   int
 }
 
 type cancellationWait struct {
-	id                      uuid.UUID
-	runID                   uuid.UUID
-	workspaceID             uuid.UUID
-	childRunID              pgtype.UUID
-	conditionState          db.WaitState
-	suspensionState         db.RunWaitState
-	expectedRunStateVersion int64
-	attemptNumber           int32
-	currentRunLeaseID       pgtype.UUID
-	priorRunLeaseID         pgtype.UUID
-	suspendCheckpointID     pgtype.UUID
-	baseWorkspaceVersionID  pgtype.UUID
-	childWriterGeneration   pgtype.Int8
+	id                     uuid.UUID
+	runID                  uuid.UUID
+	workspaceID            uuid.UUID
+	childRunID             pgtype.UUID
+	conditionStatus        db.WaitStatus
+	suspensionStatus       db.RunWaitStatus
+	expectedRunRevision    int64
+	attemptNumber          int32
+	currentRunLeaseID      pgtype.UUID
+	priorRunLeaseID        pgtype.UUID
+	suspendCheckpointID    pgtype.UUID
+	baseWorkspaceVersionID pgtype.UUID
+	childWriterGeneration  pgtype.Int8
 }
 
 type terminalChildWaitResolution struct {
-	conditionState           db.WaitState
+	conditionStatus          db.WaitStatus
 	result                   json.RawMessage
 	reasonCode               *string
 	conditionError           json.RawMessage
@@ -87,10 +87,10 @@ type termination struct {
 	errorCode         string
 	errorMessage      string
 	runStatus         db.RunStatus
-	runLeaseState     db.RunLeaseState
+	runLeaseStatus    db.RunLeaseStatus
 	attemptOutcome    string
-	waitCondition     db.WaitState
-	waitSuspension    db.RunWaitState
+	waitCondition     db.WaitStatus
+	waitSuspension    db.RunWaitStatus
 	eventKind         string
 	eventMessage      string
 	actorFailureCode  string
@@ -102,10 +102,10 @@ var cancelledTermination = termination{
 	errorCode:         "run_cancelled",
 	errorMessage:      "Run was cancelled",
 	runStatus:         db.RunStatusCancelled,
-	runLeaseState:     db.RunLeaseStateCancelled,
+	runLeaseStatus:    db.RunLeaseStatusCancelled,
 	attemptOutcome:    "cancelled",
-	waitCondition:     db.WaitStateCancelled,
-	waitSuspension:    db.RunWaitStateCancelled,
+	waitCondition:     db.WaitStatusCancelled,
+	waitSuspension:    db.RunWaitStatusCancelled,
 	eventKind:         "run.cancelled",
 	eventMessage:      "Run cancelled",
 	actorCancellation: true,
@@ -116,10 +116,10 @@ var secretRevokedTermination = termination{
 	errorCode:        "secret_revoked",
 	errorMessage:     "A Workspace Secret used by this Run was revoked",
 	runStatus:        db.RunStatusFailed,
-	runLeaseState:    db.RunLeaseStateFailed,
+	runLeaseStatus:   db.RunLeaseStatusFailed,
 	attemptOutcome:   "failed",
-	waitCondition:    db.WaitStateFailed,
-	waitSuspension:   db.RunWaitStateFailed,
+	waitCondition:    db.WaitStatusFailed,
+	waitSuspension:   db.RunWaitStatusFailed,
 	eventKind:        "run.failed",
 	eventMessage:     "Run failed",
 	actorFailureCode: "run_failed",
@@ -130,10 +130,10 @@ var runtimePreparationTermination = termination{
 	errorCode:        "runtime_preparation_failed",
 	errorMessage:     "Run runtime preparation failed",
 	runStatus:        db.RunStatusSystemFailed,
-	runLeaseState:    db.RunLeaseStateFailed,
+	runLeaseStatus:   db.RunLeaseStatusFailed,
 	attemptOutcome:   "failed",
-	waitCondition:    db.WaitStateFailed,
-	waitSuspension:   db.RunWaitStateFailed,
+	waitCondition:    db.WaitStatusFailed,
+	waitSuspension:   db.RunWaitStatusFailed,
 	eventKind:        "run.system_failed",
 	eventMessage:     "Run runtime preparation failed",
 	actorFailureCode: "platform_failure",
@@ -459,7 +459,7 @@ func (g OwnedFinalization) failCurrentForRuntimePreparation(ctx context.Context)
 		parent,
 		wait,
 		terminalChildWaitResolution{
-			conditionState:           db.WaitStateFailed,
+			conditionStatus:          db.WaitStatusFailed,
 			reasonCode:               &reasonCode,
 			conditionError:           json.RawMessage(`{"code":"runtime_preparation_failed","message":"Child Run runtime preparation failed","retryable":false}`),
 			resumeWorkspaceVersionID: wait.baseWorkspaceVersionID,
@@ -701,7 +701,7 @@ func lockCancellationRun(
 		status:                  row.Status,
 		currentAttemptNumber:    row.CurrentAttemptNumber,
 		currentRunLeaseID:       row.CurrentRunLeaseID,
-		stateVersion:            row.StateVersion,
+		revision:                row.Revision,
 		runtimePreparationCount: row.RuntimePreparationCount,
 	}, nil
 }
@@ -879,19 +879,19 @@ func lockCancellationWaits(
 	waitsByChild := make(map[uuid.UUID]cancellationWait)
 	for _, row := range rows {
 		wait := cancellationWait{
-			id:                      uuid.UUID(row.ID.Bytes),
-			runID:                   uuid.UUID(row.RunID.Bytes),
-			workspaceID:             uuid.UUID(row.WorkspaceID.Bytes),
-			childRunID:              row.ChildRunID,
-			conditionState:          row.ConditionState,
-			suspensionState:         row.SuspensionState,
-			expectedRunStateVersion: row.ExpectedRunStateVersion,
-			attemptNumber:           row.AttemptNumber,
-			currentRunLeaseID:       row.CurrentRunLeaseID,
-			priorRunLeaseID:         row.PriorRunLeaseID,
-			suspendCheckpointID:     row.SuspendCheckpointID,
-			baseWorkspaceVersionID:  row.BaseWorkspaceVersionID,
-			childWriterGeneration:   row.ChildWriterGeneration,
+			id:                     uuid.UUID(row.ID.Bytes),
+			runID:                  uuid.UUID(row.RunID.Bytes),
+			workspaceID:            uuid.UUID(row.WorkspaceID.Bytes),
+			childRunID:             row.ChildRunID,
+			conditionStatus:        row.ConditionStatus,
+			suspensionStatus:       row.SuspensionStatus,
+			expectedRunRevision:    row.ExpectedRunRevision,
+			attemptNumber:          row.AttemptNumber,
+			currentRunLeaseID:      row.CurrentRunLeaseID,
+			priorRunLeaseID:        row.PriorRunLeaseID,
+			suspendCheckpointID:    row.SuspendCheckpointID,
+			baseWorkspaceVersionID: row.BaseWorkspaceVersionID,
+			childWriterGeneration:  row.ChildWriterGeneration,
 		}
 		if wait.childRunID.Valid {
 			childID := uuid.UUID(wait.childRunID.Bytes)
@@ -1024,11 +1024,11 @@ func terminateLockedRun(
 	if err := queries.TerminalizeRunSuspensions(
 		ctx,
 		db.TerminalizeRunSuspensionsParams{
-			ConditionState:  termination.waitCondition,
-			ErrorPayload:    errorPayload,
-			ReasonCode:      termination.reasonCode,
-			SuspensionState: termination.waitSuspension,
-			RunID:           pgvalue.UUID(run.id),
+			ConditionStatus:  termination.waitCondition,
+			ErrorPayload:     errorPayload,
+			ReasonCode:       termination.reasonCode,
+			SuspensionStatus: termination.waitSuspension,
+			RunID:            pgvalue.UUID(run.id),
 		},
 	); err != nil {
 		return cancellationAuthority("terminalize run suspension", err)
@@ -1060,7 +1060,7 @@ func terminateLockedRun(
 		affected, err = queries.TerminalizeRunLease(
 			ctx,
 			db.TerminalizeRunLeaseParams{
-				State:        termination.runLeaseState,
+				Status:       termination.runLeaseStatus,
 				ReasonCode:   termination.reasonCode,
 				ErrorPayload: errorPayload,
 				ID:           run.currentRunLeaseID,
@@ -1097,10 +1097,10 @@ func terminateLockedRun(
 	affected, err = queries.TerminalizeRun(
 		ctx,
 		db.TerminalizeRunParams{
-			Status:               termination.runStatus,
-			Failure:              failure,
-			ID:                   pgvalue.UUID(run.id),
-			ExpectedStateVersion: run.stateVersion,
+			Status:           termination.runStatus,
+			Failure:          failure,
+			ID:               pgvalue.UUID(run.id),
+			ExpectedRevision: run.revision,
 		},
 	)
 	if err != nil || affected != 1 {
@@ -1149,10 +1149,10 @@ func resolveCancelledChildWait(
 	child cancellationRun,
 	wait cancellationWait,
 ) error {
-	if wait.conditionState != db.WaitStatePending ||
+	if wait.conditionStatus != db.WaitStatusPending ||
 		parent.status != db.RunStatusWaiting ||
 		parent.currentAttemptNumber != wait.attemptNumber ||
-		parent.stateVersion != wait.expectedRunStateVersion {
+		parent.revision != wait.expectedRunRevision {
 		return cancellationAuthority("cancelled child wait fence does not match", nil)
 	}
 	if parent.workspaceID != child.workspaceID {
@@ -1168,7 +1168,7 @@ func resolveCancelledChildWait(
 		parent,
 		wait,
 		terminalChildWaitResolution{
-			conditionState:           db.WaitStateCancelled,
+			conditionStatus:          db.WaitStatusCancelled,
 			reasonCode:               &reasonCode,
 			conditionError:           json.RawMessage(`{"code":"child_run_cancelled","message":"Child Run was cancelled","retryable":false}`),
 			resumeWorkspaceVersionID: wait.baseWorkspaceVersionID,
@@ -1207,8 +1207,8 @@ func resolveDifferentWorkspaceChildWait(
 		parent,
 		wait,
 		terminalChildWaitResolution{
-			conditionState: db.WaitStateCompleted,
-			result:         result,
+			conditionStatus: db.WaitStatusCompleted,
+			result:          result,
 		},
 	)
 }
@@ -1221,12 +1221,12 @@ func resolveTerminalChildWait(
 	resolution terminalChildWaitResolution,
 ) error {
 	if resolution.resumeWorkspaceVersionID.Valid &&
-		wait.suspensionState != db.RunWaitStateParked {
+		wait.suspensionStatus != db.RunWaitStatusParked {
 		return cancellationAuthority("terminal same-workspace child wait is not parked", nil)
 	}
 	queries := db.New(tx)
-	switch wait.suspensionState {
-	case db.RunWaitStateHot:
+	switch wait.suspensionStatus {
+	case db.RunWaitStatusHot:
 		if !wait.currentRunLeaseID.Valid ||
 			!parent.currentRunLeaseID.Valid ||
 			wait.currentRunLeaseID != parent.currentRunLeaseID {
@@ -1235,24 +1235,24 @@ func resolveTerminalChildWait(
 		if _, err := queries.ResolveHotTerminalChildWait(
 			ctx,
 			db.ResolveHotTerminalChildWaitParams{
-				ConditionState:          string(resolution.conditionState),
-				ConditionResult:         resolution.result,
-				ConditionError:          resolution.conditionError,
-				ReasonCode:              pgvalue.TextPtr(resolution.reasonCode),
-				WaitID:                  pgvalue.UUID(wait.id),
-				RunID:                   pgvalue.UUID(parent.id),
-				ExpectedRunStateVersion: parent.stateVersion,
-				AttemptNumber:           parent.currentAttemptNumber,
-				CurrentRunLeaseID:       parent.currentRunLeaseID,
+				ConditionStatus:     string(resolution.conditionStatus),
+				ConditionResult:     resolution.result,
+				ConditionError:      resolution.conditionError,
+				ReasonCode:          pgvalue.TextPtr(resolution.reasonCode),
+				WaitID:              pgvalue.UUID(wait.id),
+				RunID:               pgvalue.UUID(parent.id),
+				ExpectedRunRevision: parent.revision,
+				AttemptNumber:       parent.currentAttemptNumber,
+				CurrentRunLeaseID:   parent.currentRunLeaseID,
 			},
 		); err != nil {
 			return cancellationAuthority("resolve hot terminal child wait", err)
 		}
-	case db.RunWaitStateCheckpointing:
+	case db.RunWaitStatusCheckpointing:
 		if _, err := queries.ResolveCheckpointingTerminalChildWait(
 			ctx,
 			db.ResolveCheckpointingTerminalChildWaitParams{
-				ConditionState:  string(resolution.conditionState),
+				ConditionStatus: string(resolution.conditionStatus),
 				ConditionResult: resolution.result,
 				ConditionError:  resolution.conditionError,
 				ReasonCode:      pgvalue.TextPtr(resolution.reasonCode),
@@ -1262,7 +1262,7 @@ func resolveTerminalChildWait(
 		); err != nil {
 			return cancellationAuthority("resolve checkpointing terminal child wait", err)
 		}
-	case db.RunWaitStateParked:
+	case db.RunWaitStatusParked:
 		if !wait.priorRunLeaseID.Valid || !wait.suspendCheckpointID.Valid ||
 			parent.currentRunLeaseID.Valid {
 			return cancellationAuthority("parked terminal child wait fence does not match", nil)
@@ -1270,14 +1270,14 @@ func resolveTerminalChildWait(
 		_, err := queries.ResolveParkedTerminalChildWait(
 			ctx,
 			db.ResolveParkedTerminalChildWaitParams{
-				ConditionState:             string(resolution.conditionState),
+				ConditionStatus:            string(resolution.conditionStatus),
 				ConditionResult:            resolution.result,
 				ConditionError:             resolution.conditionError,
 				ReasonCode:                 pgvalue.TextPtr(resolution.reasonCode),
 				ResolvedWorkspaceVersionID: resolution.resumeWorkspaceVersionID,
 				WaitID:                     pgvalue.UUID(wait.id),
 				RunID:                      pgvalue.UUID(parent.id),
-				ExpectedRunStateVersion:    parent.stateVersion,
+				ExpectedRunRevision:        parent.revision,
 				AttemptNumber:              parent.currentAttemptNumber,
 			},
 		)

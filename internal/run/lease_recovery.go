@@ -29,7 +29,7 @@ type executionLeaseLoss struct {
 	at     time.Time
 	kind   string
 	reason string
-	state  db.RunLeaseState
+	state  db.RunLeaseStatus
 }
 
 // RecoverExecutionLeaseLoss applies the state-specific recovery transition after
@@ -72,8 +72,8 @@ func (g OwnedFinalization) RecoverExecutionLeaseLoss(
 	if err != nil || !ok {
 		return false, err
 	}
-	if authority.RunLeaseState == string(db.RunLeaseStateAssigned) ||
-		authority.RunLeaseState == string(db.RunLeaseStateStarting) {
+	if authority.RunLeaseStatus == string(db.RunLeaseStatusAssigned) ||
+		authority.RunLeaseStatus == string(db.RunLeaseStatusStarting) {
 		cleared, err := recoverExecutionPrestartLease(ctx, q, authority, loss)
 		if err != nil {
 			return false, err
@@ -88,17 +88,17 @@ func (g OwnedFinalization) RecoverExecutionLeaseLoss(
 		}
 		return true, nil
 	}
-	leaseState := db.RunLeaseState(authority.RunLeaseState)
-	switch leaseState {
-	case db.RunLeaseStateRunning, db.RunLeaseStateCheckpointing:
+	leaseStatus := db.RunLeaseStatus(authority.RunLeaseStatus)
+	switch leaseStatus {
+	case db.RunLeaseStatusRunning, db.RunLeaseStatusCheckpointing:
 		if _, err := q.StopLostRunActiveInterval(ctx, db.StopLostRunActiveIntervalParams{
 			LossAt: pgvalue.Timestamptz(loss.at), RunID: authority.RunID,
-			WorkspaceID: authority.WorkspaceID, ExpectedStateVersion: authority.StateVersion,
+			WorkspaceID: authority.WorkspaceID, ExpectedRevision: authority.Revision,
 			AttemptNumber: authority.CurrentAttemptNumber, RunLeaseID: authority.RunLeaseID,
 		}); err != nil {
 			return false, cancellationAuthority("stop lost Run active interval", err)
 		}
-	case db.RunLeaseStateFinalizing:
+	case db.RunLeaseStatusFinalizing:
 		// Finalization starts only after the active interval is durably stopped.
 		// Preserve its immutable finalization receipt on the terminal Lease.
 	default:
@@ -119,7 +119,7 @@ func (g OwnedFinalization) RecoverExecutionLeaseLoss(
 	policy, err := retry.Parse(authority.RetryPolicy)
 	if err != nil {
 		loss.reason = "retry_policy_invalid"
-		loss.state = db.RunLeaseStateLost
+		loss.state = db.RunLeaseStatusLost
 		if err := g.failCurrentForLeaseLoss(
 			ctx, loss, "Run retry policy was invalid", db.RunStatusSystemFailed, "platform_failure",
 		); err != nil {
@@ -133,7 +133,7 @@ func (g OwnedFinalization) RecoverExecutionLeaseLoss(
 	}
 	if shouldRetry && !request.RetrySecretsAvailable {
 		loss.reason = "secret_retry_unavailable"
-		loss.state = db.RunLeaseStateLost
+		loss.state = db.RunLeaseStatusLost
 		if err := g.failCurrentForLeaseLoss(
 			ctx, loss, "Run retry Secret authority was unavailable", db.RunStatusSystemFailed, "platform_failure",
 		); err != nil {
@@ -172,14 +172,14 @@ func decideExecutionLeaseLoss(
 		return executionLeaseLoss{}, false, errors.New("Run execution lease loss timestamps are incomplete")
 	}
 	candidates := make([]executionLeaseLoss, 0, 9)
-	add := func(at pgtype.Timestamptz, kind, reason string, state db.RunLeaseState) {
+	add := func(at pgtype.Timestamptz, kind, reason string, state db.RunLeaseStatus) {
 		if at.Valid {
 			candidates = append(candidates, executionLeaseLoss{at: at.Time, kind: kind, reason: reason, state: state})
 		}
 	}
-	add(authority.RunLeaseExpiresAt, "lease", "lease_expired", db.RunLeaseStateExpired)
-	switch db.RunLeaseState(authority.RunLeaseState) {
-	case db.RunLeaseStateRunning, db.RunLeaseStateCheckpointing:
+	add(authority.RunLeaseExpiresAt, "lease", "lease_expired", db.RunLeaseStatusExpired)
+	switch db.RunLeaseStatus(authority.RunLeaseStatus) {
+	case db.RunLeaseStatusRunning, db.RunLeaseStatusCheckpointing:
 		if !authority.ActiveStartedAt.Valid || authority.MaxActiveDurationMs < authority.ActiveElapsedMs {
 			return executionLeaseLoss{}, false, errors.New("active Run execution Lease budget is invalid")
 		}
@@ -188,29 +188,29 @@ func decideExecutionLeaseLoss(
 		)
 		candidates = append(candidates, executionLeaseLoss{
 			at: hardDeadline, kind: "active_deadline", reason: "max_active_duration_exceeded",
-			state: db.RunLeaseStateExpired,
+			state: db.RunLeaseStatusExpired,
 		})
-	case db.RunLeaseStateAssigned, db.RunLeaseStateStarting:
-		add(authority.StartDeadlineAt, "start_deadline", "lease_expired", db.RunLeaseStateExpired)
-	case db.RunLeaseStateFinalizing:
+	case db.RunLeaseStatusAssigned, db.RunLeaseStatusStarting:
+		add(authority.StartDeadlineAt, "start_deadline", "lease_expired", db.RunLeaseStatusExpired)
+	case db.RunLeaseStatusFinalizing:
 		// Finalizing has neither a start nor active deadline. Its renewable Lease
 		// expiry and physical authority are the only recovery boundaries.
 	default:
 		return executionLeaseLoss{}, false, nil
 	}
-	add(authority.WorkerLostAt, "physical_loss", "worker_lost", db.RunLeaseStateLost)
-	add(authority.WorkerTerminationReadyAt, "physical_loss", "worker_lost", db.RunLeaseStateLost)
+	add(authority.WorkerLostAt, "physical_loss", "worker_lost", db.RunLeaseStatusLost)
+	add(authority.WorkerTerminationReadyAt, "physical_loss", "worker_lost", db.RunLeaseStatusLost)
 	if authority.WorkerCurrentEpoch.Valid && authority.WorkerCurrentEpoch.Int64 != authority.WorkerEpoch {
 		epochAt := authority.WorkerEpochStartedAt
 		if !epochAt.Valid {
 			epochAt = authority.WorkerUpdatedAt
 		}
-		add(epochAt, "physical_loss", "worker_lost", db.RunLeaseStateLost)
+		add(epochAt, "physical_loss", "worker_lost", db.RunLeaseStatusLost)
 	}
-	add(authority.RuntimeLostAt, "physical_loss", "worker_lost", db.RunLeaseStateLost)
-	add(authority.MountLostAt, "physical_loss", "worker_lost", db.RunLeaseStateLost)
-	add(authority.RuntimeFailedAt, "physical_failure", "runtime_failed", db.RunLeaseStateLost)
-	add(authority.MountFailedAt, "physical_failure", "runtime_failed", db.RunLeaseStateLost)
+	add(authority.RuntimeLostAt, "physical_loss", "worker_lost", db.RunLeaseStatusLost)
+	add(authority.MountLostAt, "physical_loss", "worker_lost", db.RunLeaseStatusLost)
+	add(authority.RuntimeFailedAt, "physical_failure", "runtime_failed", db.RunLeaseStatusLost)
+	add(authority.MountFailedAt, "physical_failure", "runtime_failed", db.RunLeaseStatusLost)
 	if len(candidates) == 0 {
 		return executionLeaseLoss{}, false, nil
 	}
@@ -255,7 +255,7 @@ func recoverExecutionPrestartLease(
 	}
 	cleared, err := q.ClearFreshPrestartRunLease(ctx, db.ClearFreshPrestartRunLeaseParams{
 		RunID: authority.RunID, WorkspaceID: authority.WorkspaceID,
-		ExpectedStateVersion: authority.StateVersion, AttemptNumber: authority.CurrentAttemptNumber,
+		ExpectedRevision: authority.Revision, AttemptNumber: authority.CurrentAttemptNumber,
 		RunLeaseID: authority.RunLeaseID,
 	})
 	if err != nil {
@@ -272,7 +272,7 @@ func (g OwnedFinalization) recordClearedExecutionPrestart(cleared db.Run) error 
 	}
 	updated := g.descendants[0]
 	updated.currentRunLeaseID = cleared.CurrentRunLeaseID
-	updated.stateVersion = cleared.StateVersion
+	updated.revision = cleared.Revision
 	updated.status = cleared.Status
 	updated.runtimePreparationCount = cleared.RuntimePreparationCount
 	g.descendants[0] = updated
@@ -404,8 +404,8 @@ func terminalizeExecutionRetrySuspensions(
 	errorPayload json.RawMessage,
 ) error {
 	if err := q.TerminalizeRunSuspensions(ctx, db.TerminalizeRunSuspensionsParams{
-		ConditionState: "failed", ErrorPayload: errorPayload, ReasonCode: loss.reason,
-		SuspensionState: "failed", RunID: authority.RunID,
+		ConditionStatus: "failed", ErrorPayload: errorPayload, ReasonCode: loss.reason,
+		SuspensionStatus: "failed", RunID: authority.RunID,
 	}); err != nil {
 		return cancellationAuthority("terminalize lost checkpoint suspension", err)
 	}
@@ -450,7 +450,7 @@ func terminalizeExecutionLeaseFences(
 		return cancellationAuthority("terminalize lost Run Workspace lease", err)
 	}
 	affected, err = q.TerminalizeRunLease(ctx, db.TerminalizeRunLeaseParams{
-		State: string(loss.state), ReasonCode: loss.reason, ErrorPayload: errorPayload,
+		Status: string(loss.state), ReasonCode: loss.reason, ErrorPayload: errorPayload,
 		ID: authority.RunLeaseID, RunID: authority.RunID,
 	})
 	if err != nil || affected != 1 {
@@ -475,8 +475,8 @@ func (g OwnedFinalization) failCurrentForLeaseLoss(
 	}
 	term := termination{
 		reasonCode: loss.reason, errorCode: loss.reason, errorMessage: message,
-		runStatus: status, runLeaseState: loss.state, attemptOutcome: "failed",
-		waitCondition: db.WaitStateFailed, waitSuspension: db.RunWaitStateFailed,
+		runStatus: status, runLeaseStatus: loss.state, attemptOutcome: "failed",
+		waitCondition: db.WaitStatusFailed, waitSuspension: db.RunWaitStatusFailed,
 		eventKind: "run.system_failed", eventMessage: message,
 		actorFailureCode: actorFailureCode,
 	}
@@ -515,7 +515,7 @@ func (g OwnedFinalization) failCurrentForLeaseLoss(
 	}
 	reason := loss.reason
 	return resolveTerminalChildWait(ctx, g.tx, parent, wait, terminalChildWaitResolution{
-		conditionState: db.WaitStateFailed, reasonCode: &reason,
+		conditionStatus: db.WaitStatusFailed, reasonCode: &reason,
 		conditionError: errorPayload, resumeWorkspaceVersionID: wait.baseWorkspaceVersionID,
 	})
 }

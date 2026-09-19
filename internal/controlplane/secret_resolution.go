@@ -24,7 +24,7 @@ func activeSecretResolutions(
 ) ([]secret.Resolution, error) {
 	resolutions := make([]secret.Resolution, len(bindings))
 	for index, binding := range bindings {
-		if !binding.Secret.CurrentVersionID.Valid || binding.Secret.State != "active" {
+		if !binding.Secret.CurrentVersionID.Valid || binding.Secret.Status != "active" {
 			return nil, secret.ErrDeliveryUnavailable
 		}
 		resolutions[index] = secret.Resolution{

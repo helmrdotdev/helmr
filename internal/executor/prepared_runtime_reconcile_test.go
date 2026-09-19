@@ -88,7 +88,7 @@ func (unavailableRuntimeCAS) Delete(context.Context, string) error { return erro
 
 func TestRuntimeTargetFailureScrubsFatalWorkerDiagnostic(t *testing.T) {
 	const sentinel = "signed-url-secret-sentinel"
-	request := runtimeTargetStateRequest(
+	request := runtimeTargetStatusRequest(
 		workerapi.RuntimeReconcileTarget{ID: "runtime", WorkerEpoch: 1, DesiredVersion: 2},
 		fatalRuntimeInfrastructureError{secret: sentinel},
 	)

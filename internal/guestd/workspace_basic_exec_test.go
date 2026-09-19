@@ -188,7 +188,7 @@ func testWorkspaceBasicExecRequest(
 func testWorkspaceBasicExecRegistry(entry *workspaceMountEntry) *workspaceOperationRegistry {
 	entry.workspaceID = "workspace-1"
 	entry.channelToken = "channel-token"
-	entry.baseVersionID = "version-1"
+	entry.baseWorkspaceVersionID = "version-1"
 	entry.fencingGeneration = 1
 	registry := newWorkspaceOperationRegistry()
 	registry.register("mount-1", entry)

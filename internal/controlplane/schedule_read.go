@@ -234,7 +234,7 @@ func scheduleResponse(row db.Schedule) (api.ScheduleResponse, error) {
 	if ids.Validate(scheduleID) != nil {
 		return api.ScheduleResponse{}, errors.New("schedule identity is invalid")
 	}
-	status, err := schedulePublicStatus(row.State)
+	status, err := schedulePublicStatus(row.Status)
 	if err != nil {
 		return api.ScheduleResponse{}, err
 	}

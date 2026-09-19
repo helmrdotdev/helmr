@@ -163,7 +163,7 @@ func (s *Server) writeSessionInputAppendError(w http.ResponseWriter, r *http.Req
 			EnvironmentID: actor.EnvironmentID,
 			ID:            actor.ID,
 		})
-		if readErr == nil && current.State == "open" && current.NextInputSequence > maxActorSequence {
+		if readErr == nil && current.Status == "open" && current.NextInputSequence > maxActorSequence {
 			writeError(w, conflict(codedError{code: "session_sequence_exhausted", message: errActorSequenceExhausted.Error()}))
 			return
 		}

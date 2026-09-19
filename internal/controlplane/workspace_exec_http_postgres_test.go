@@ -41,8 +41,8 @@ func TestExecuteWorkspaceHTTPPostgresReturnsAdmissionAndTerminalReplay(t *testin
 
 	if _, err := fixture.pool.Exec(t.Context(), `
 		UPDATE workspace_processes
-		   SET state = 'failed',
-		       state_version = state_version + 1,
+		   SET status = 'failed',
+		       revision = revision + 1,
 		       terminal_at = now(),
 		       terminal_reason_code = 'workspace_exec_placement_timed_out',
 		       error = '{"code":"internal detail that must not be public"}'::jsonb,

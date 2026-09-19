@@ -1054,7 +1054,7 @@ func claimFromRow(row db.LockLiveIdempotencyClaimRow) db.IdempotencyClaim {
 		Operation:          row.Operation,
 		SlotHash:           row.SlotHash,
 		RequestFingerprint: row.RequestFingerprint,
-		State:              row.State,
+		Status:             row.Status,
 		Receipt:            row.Receipt,
 		AcceptedAt:         row.AcceptedAt,
 		ExpiresAt:          row.ExpiresAt,

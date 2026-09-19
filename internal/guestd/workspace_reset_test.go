@@ -256,9 +256,9 @@ func runWorkspaceReset(t *testing.T, registry *workspaceOperationRegistry, reque
 	return response
 }
 
-func mustEmptyResetTarget(t *testing.T, baseVersionID string) workspace.ResetTarget {
+func mustEmptyResetTarget(t *testing.T, baseWorkspaceVersionID string) workspace.ResetTarget {
 	t.Helper()
-	target, err := workspace.EmptyResetTarget(baseVersionID, workspace.TreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest})
+	target, err := workspace.EmptyResetTarget(baseWorkspaceVersionID, workspace.TreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest})
 	if err != nil {
 		t.Fatal(err)
 	}

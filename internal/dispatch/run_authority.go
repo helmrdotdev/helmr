@@ -26,7 +26,7 @@ type runPlacementAuthority struct {
 	deploymentID              pgtype.UUID
 	workspaceDefinitionID     pgtype.UUID
 	workspaceID               pgtype.UUID
-	baseVersionID             pgtype.UUID
+	baseWorkspaceVersionID    pgtype.UUID
 	restoreCheckpointID       pgtype.UUID
 	restoreCheckpointVersion  pgtype.UUID
 	resumeRunWaitID           pgtype.UUID
@@ -48,7 +48,7 @@ type runPlacementAuthority struct {
 	sameWorkspaceParentWriter pgtype.Int8
 	sameWorkspaceChildWriter  pgtype.Int8
 	attemptNumber             int32
-	stateVersion              int64
+	revision                  int64
 	regionID                  string
 	queueName                 string
 	concurrencyKey            pgtype.Text
@@ -81,10 +81,10 @@ SELECT environment_id, queue_name, concurrency_key
   FROM runs
  WHERE org_id = $1
    AND id = $2
-   AND state_version = $3`,
+   AND revision = $3`,
 		candidate.OrgID,
 		candidate.RunID,
-		candidate.ExpectedRunStateVersion,
+		candidate.ExpectedRunRevision,
 	).Scan(&environmentID, &queueName, &concurrencyKey)
 	if err != nil {
 		return pgtype.UUID{}, "", pgtype.Text{}, err
@@ -111,10 +111,10 @@ SELECT entrypoint_kind, session_id
   FROM runs
  WHERE org_id = $1
    AND id = $2
-   AND state_version = $3`,
+   AND revision = $3`,
 		candidate.OrgID,
 		candidate.RunID,
-		candidate.ExpectedRunStateVersion,
+		candidate.ExpectedRunRevision,
 	).Scan(&authority.entrypointKind, &authority.actorID); err != nil {
 		return runPlacementAuthority{}, err
 	}
@@ -140,7 +140,7 @@ SELECT run_generation, committed_input_sequence, next_input_sequence
   FROM sessions
  WHERE id = $1
    AND current_run_id = $2
-   AND state IN ('open', 'closing')
+   AND status IN ('open', 'closing')
  FOR UPDATE`, authority.ownerActorID, authority.ownerActorRunID).Scan(
 			&actorRunGeneration,
 			&actorCommittedInputSequence,
@@ -172,7 +172,7 @@ SELECT runs.id,
        runs.deployment_definition_id,
        runs.workspace_id,
        runs.current_attempt_number,
-       runs.state_version,
+       runs.revision,
        runs.queue_name,
        runs.concurrency_key,
        runs.queue_concurrency_limit,
@@ -214,13 +214,13 @@ SELECT runs.id,
           AND checkpoint.attempt_number = edge.attempt_number
           AND checkpoint.run_wait_id = edge.id
           AND checkpoint.workspace_id = edge.workspace_id
-          AND checkpoint.state = 'ready'
+          AND checkpoint.status = 'ready'
           AND (checkpoint.expires_at IS NULL
                OR checkpoint.expires_at > transaction_timestamp())
          JOIN workspace_versions AS base
            ON base.workspace_id = edge.workspace_id
           AND base.id = edge.base_workspace_version_id
-          AND base.state = 'private'
+          AND base.status = 'private'
          LEFT JOIN LATERAL (
 	              SELECT child_workspace_lease.id
 	                FROM run_leases AS child_lease
@@ -228,37 +228,37 @@ SELECT runs.id,
 	                  ON child_workspace_lease.owner_run_lease_id = child_lease.id
 	                 AND child_workspace_lease.workspace_id = child_lease.workspace_id
 				 AND (
-				     child_workspace_lease.base_version_id = edge.base_workspace_version_id
+				     child_workspace_lease.base_workspace_version_id = edge.base_workspace_version_id
 				     OR EXISTS (
 				         SELECT 1
 				           FROM run_waits AS resume_edge
 				          WHERE resume_edge.run_id = runs.id
 				            AND resume_edge.workspace_id = runs.workspace_id
-				            AND resume_edge.suspension_state = 'resume_pending'
+				            AND resume_edge.suspension_status = 'resume_pending'
 				            AND resume_edge.ownership_generation = edge.ownership_generation
 				            AND resume_edge.resume_writer_generation IS NULL
 				            AND resume_edge.resume_workspace_version_id =
-				                child_workspace_lease.base_version_id
+				                child_workspace_lease.base_workspace_version_id
 				     )
 				 )
                  AND child_workspace_lease.ownership_generation =
                      edge.ownership_generation
                  AND child_workspace_lease.writer_generation =
                      edge.child_writer_generation
-                 AND child_workspace_lease.state IN ('released', 'fenced', 'expired')
+                 AND child_workspace_lease.status IN ('released', 'fenced', 'expired')
                WHERE child_lease.run_id = runs.id
                  AND child_lease.workspace_id = runs.workspace_id
                  AND (
-                     child_lease.state IN ('failed', 'expired', 'lost', 'rejected')
+                     child_lease.status IN ('failed', 'expired', 'lost', 'rejected')
                      OR (
-                         child_lease.state = 'checkpointed'
+                         child_lease.status = 'checkpointed'
                          AND EXISTS (
                              SELECT 1
                               FROM run_waits AS resume_edge
                               WHERE resume_edge.run_id = runs.id
                                 AND resume_edge.attempt_number = child_lease.attempt_number
                                 AND resume_edge.workspace_id = runs.workspace_id
-                                AND resume_edge.suspension_state = 'resume_pending'
+                                AND resume_edge.suspension_status = 'resume_pending'
                                 AND resume_edge.prior_run_lease_id = child_lease.id
                                 AND resume_edge.ownership_generation = edge.ownership_generation
                                 AND resume_edge.parent_writer_generation =
@@ -276,8 +276,8 @@ SELECT runs.id,
           AND runs.environment_id = edge.environment_id
           AND runs.parent_owns_lifecycle IS TRUE
           AND edge.workspace_id = runs.workspace_id
-          AND edge.condition_state = 'pending'
-          AND edge.suspension_state = 'parked'
+          AND edge.condition_status = 'pending'
+          AND edge.suspension_status = 'parked'
           AND edge.base_workspace_version_id =
               runs.base_workspace_version_id
 	          AND edge.ownership_generation IS NOT NULL
@@ -297,7 +297,7 @@ SELECT runs.id,
 	              run_waits.child_writer_generation
 	         FROM run_waits
 	        WHERE run_waits.run_id = runs.id
-	          AND run_waits.suspension_state = 'resume_pending'
+	          AND run_waits.suspension_status = 'resume_pending'
 	  ) AS restore_wait ON true
 	  LEFT JOIN run_checkpoints AS restore_checkpoint
 	    ON restore_checkpoint.id = restore_wait.suspend_checkpoint_id
@@ -305,7 +305,7 @@ SELECT runs.id,
    AND restore_checkpoint.attempt_number = restore_wait.attempt_number
    AND restore_checkpoint.run_wait_id = restore_wait.id
    AND restore_checkpoint.workspace_id = restore_wait.workspace_id
-   AND restore_checkpoint.state = 'ready'
+   AND restore_checkpoint.status = 'ready'
    AND (restore_checkpoint.expires_at IS NULL
         OR restore_checkpoint.expires_at > transaction_timestamp())
 	  LEFT JOIN workspace_versions AS restore_version
@@ -314,10 +314,10 @@ SELECT runs.id,
 	       restore_wait.resume_workspace_version_id,
 	       restore_checkpoint.private_workspace_version_id
 	   )
-   AND restore_version.state = 'private'
+   AND restore_version.status = 'private'
  WHERE runs.org_id = $1
    AND runs.id = $2
-   AND runs.state_version = $3
+   AND runs.revision = $3
    AND runs.entrypoint_kind = $4
    AND (($4 = 'task' AND runs.session_id IS NULL
          AND runs.cause_kind IN ('api', 'manual', 'schedule', 'child'))
@@ -336,7 +336,7 @@ SELECT runs.id,
                SELECT 1
                  FROM run_waits
                 WHERE run_waits.run_id = runs.id
-                  AND run_waits.suspension_state IN (
+                  AND run_waits.suspension_status IN (
                       'hot', 'checkpointing', 'parked', 'resume_pending', 'resuming'
                   )
            ))
@@ -356,7 +356,7 @@ SELECT runs.id,
  FOR UPDATE OF runs`,
 		candidate.OrgID,
 		candidate.RunID,
-		candidate.ExpectedRunStateVersion,
+		candidate.ExpectedRunRevision,
 		authority.entrypointKind,
 		authority.actorID,
 		sameWorkspaceWaitID,
@@ -369,7 +369,7 @@ SELECT runs.id,
 		&entrypointDefinitionID,
 		&authority.workspaceID,
 		&authority.attemptNumber,
-		&authority.stateVersion,
+		&authority.revision,
 		&authority.queueName,
 		&authority.concurrencyKey,
 		&authority.queueLimit,
@@ -383,7 +383,7 @@ SELECT runs.id,
 		&authority.resumeRequestVersion,
 		&authority.restoreCheckpointID,
 		&authority.restoreCheckpointVersion,
-		&authority.baseVersionID,
+		&authority.baseWorkspaceVersionID,
 		&authority.resumeOwnership,
 		&authority.resumeParentWriter,
 		&authority.resumeChildWriter,
@@ -397,7 +397,7 @@ SELECT runs.id,
 	if authority.sameWorkspaceResume &&
 		(!authority.resumeParentWriter.Valid ||
 			!authority.resumeChildWriter.Valid ||
-			!authority.baseVersionID.Valid) {
+			!authority.baseWorkspaceVersionID.Valid) {
 		return runPlacementAuthority{}, fmt.Errorf("lock Run placement same-Workspace resume shape: %w", pgx.ErrNoRows)
 	}
 	var manifestVersion int32
@@ -435,7 +435,7 @@ SELECT workspaces.deployment_definition_id,
    AND workspace_environment.project_id = $2
    AND workspaces.environment_id = $3
    AND workspaces.id = $4
-   AND workspaces.state = 'active'
+   AND workspaces.status = 'active'
    AND workspaces.desired_state = 'active'
    AND workspaces.dirty_state = 'clean'
    AND %s
@@ -496,7 +496,7 @@ SELECT EXISTS (
        AND run_leases.run_id = $5
        AND run_leases.attempt_number = $6
        AND run_leases.workspace_id = $1
-       AND run_leases.state = 'expired'
+       AND run_leases.status = 'expired'
        AND run_leases.terminal_reason_code IN (
            'lease_expired',
            'worker_lost',
@@ -505,13 +505,13 @@ SELECT EXISTS (
      WHERE workspace_leases.workspace_id = $1
        AND workspace_leases.ownership_generation = $2
        AND workspace_leases.writer_generation = $3
-       AND workspace_leases.base_version_id = $4
-       AND workspace_leases.state = 'expired'
+       AND workspace_leases.base_workspace_version_id = $4
+       AND workspace_leases.status = 'expired'
 )`,
 				authority.workspaceID,
 				authority.ownershipGeneration,
 				authority.writerGeneration,
-				authority.baseVersionID,
+				authority.baseWorkspaceVersionID,
 				authority.runID,
 				authority.attemptNumber,
 			).Scan(&fenced)
@@ -521,7 +521,7 @@ SELECT EXISTS (
 		}
 	}
 
-	var attemptBaseVersionID pgtype.UUID
+	var attemptBaseWorkspaceVersionID pgtype.UUID
 	var attemptSessionInputStartSequence pgtype.Int8
 	err = tx.QueryRow(ctx, `
 SELECT run_attempts.base_workspace_version_id,
@@ -530,8 +530,8 @@ SELECT run_attempts.base_workspace_version_id,
   JOIN workspace_versions
     ON workspace_versions.workspace_id = run_attempts.workspace_id
    AND workspace_versions.id = run_attempts.base_workspace_version_id
-   AND (($5::boolean AND workspace_versions.state = 'private')
-        OR (NOT $5::boolean AND workspace_versions.state = 'committed'))
+   AND (($5::boolean AND workspace_versions.status = 'private')
+        OR (NOT $5::boolean AND workspace_versions.status = 'committed'))
  WHERE run_attempts.run_id = $1
    AND run_attempts.number = $2
    AND run_attempts.entrypoint_kind = $4
@@ -542,12 +542,12 @@ SELECT run_attempts.base_workspace_version_id,
 		authority.workspaceID,
 		authority.entrypointKind,
 		authority.sameWorkspaceChildWaitID.Valid,
-	).Scan(&attemptBaseVersionID, &attemptSessionInputStartSequence)
+	).Scan(&attemptBaseWorkspaceVersionID, &attemptSessionInputStartSequence)
 	if err != nil {
 		return runPlacementAuthority{}, fmt.Errorf("lock Run placement Attempt authority: %w", err)
 	}
-	if !authority.baseVersionID.Valid {
-		authority.baseVersionID = attemptBaseVersionID
+	if !authority.baseWorkspaceVersionID.Valid {
+		authority.baseWorkspaceVersionID = attemptBaseWorkspaceVersionID
 	}
 	if authority.entrypointKind == "actor" &&
 		(!actorStartInputSequence.Valid || !attemptSessionInputStartSequence.Valid ||
@@ -576,7 +576,7 @@ SELECT source_lease.worker_group_id,
    AND run_checkpoints.attempt_number = run_waits.attempt_number
    AND run_checkpoints.run_wait_id = run_waits.id
    AND run_checkpoints.workspace_id = run_waits.workspace_id
-	   AND run_checkpoints.state = 'ready'
+	   AND run_checkpoints.status = 'ready'
 	   AND run_checkpoints.base_workspace_version_id = CASE
            WHEN $11 = 'actor' AND run_waits.kind = 'actor_input' THEN $15::uuid
            ELSE $8::uuid END
@@ -589,19 +589,19 @@ SELECT source_lease.worker_group_id,
   JOIN workspace_versions
     ON workspace_versions.workspace_id = run_checkpoints.workspace_id
    AND workspace_versions.id = run_checkpoints.private_workspace_version_id
-   AND workspace_versions.state = 'private'
+   AND workspace_versions.status = 'private'
   JOIN run_leases AS source_lease
     ON source_lease.id = run_checkpoints.source_run_lease_id
    AND source_lease.run_id = run_checkpoints.run_id
    AND source_lease.attempt_number = run_checkpoints.attempt_number
    AND source_lease.workspace_id = run_checkpoints.workspace_id
-   AND source_lease.state = 'checkpointed'
+   AND source_lease.status = 'checkpointed'
 	  JOIN workspace_leases AS source_workspace_lease
     ON source_workspace_lease.id = run_checkpoints.source_workspace_lease_id
    AND source_workspace_lease.workspace_id = run_checkpoints.workspace_id
    AND source_workspace_lease.owner_run_lease_id = source_lease.id
-	   AND source_workspace_lease.base_version_id = run_checkpoints.base_workspace_version_id
-   AND source_workspace_lease.state IN ('released', 'fenced')
+	   AND source_workspace_lease.base_workspace_version_id = run_checkpoints.base_workspace_version_id
+   AND source_workspace_lease.status IN ('released', 'fenced')
    AND ($11 <> 'actor' OR run_waits.kind <> 'actor_input' OR (
        workspace_versions.parent_version_id = run_checkpoints.base_workspace_version_id
        AND workspace_versions.source_workspace_lease_id = source_workspace_lease.id
@@ -618,7 +618,7 @@ SELECT source_lease.worker_group_id,
                   AND restored_lease.run_id = run_checkpoints.run_id
                   AND restored_lease.attempt_number = run_checkpoints.attempt_number
                   AND restored_lease.workspace_id = run_checkpoints.workspace_id
-                  AND restored_lease.state = 'expired'
+                  AND restored_lease.status = 'expired'
                   AND restored_lease.terminal_reason_code IN ('lease_expired', 'worker_lost', 'runtime_failed')
                  JOIN runtime_instances AS restored_runtime
                    ON restored_runtime.id = restored_lease.runtime_instance_id
@@ -627,9 +627,9 @@ SELECT source_lease.worker_group_id,
                 WHERE restored_workspace_lease.workspace_id = run_checkpoints.workspace_id
                   AND restored_workspace_lease.ownership_generation = $16
                   AND restored_workspace_lease.writer_generation = $17
-                  AND restored_workspace_lease.base_version_id = run_checkpoints.private_workspace_version_id
+                  AND restored_workspace_lease.base_workspace_version_id = run_checkpoints.private_workspace_version_id
                   AND restored_workspace_lease.owner_process_id IS NULL
-                  AND restored_workspace_lease.state = 'expired'
+                  AND restored_workspace_lease.status = 'expired'
                   AND restored_workspace_lease.terminal_reason_code = restored_lease.terminal_reason_code
            )
        ))
@@ -657,7 +657,7 @@ SELECT source_lease.worker_group_id,
    AND run_waits.run_id = $2
    AND run_waits.attempt_number = $3
    AND run_waits.workspace_id = $4
-	   AND run_waits.suspension_state = 'resume_pending'
+	   AND run_waits.suspension_status = 'resume_pending'
 	   AND run_waits.resume_request_version = $6
 	   AND run_checkpoints.id = $7
 	   AND (run_waits.resume_workspace_version_id IS NULL
@@ -667,10 +667,10 @@ SELECT source_lease.worker_group_id,
 			authority.runID,
 			authority.attemptNumber,
 			authority.workspaceID,
-			authority.baseVersionID,
+			authority.baseWorkspaceVersionID,
 			authority.resumeRequestVersion,
 			authority.restoreCheckpointID,
-			attemptBaseVersionID,
+			attemptBaseWorkspaceVersionID,
 			authority.workspaceDefinitionID,
 			authority.deploymentID,
 			authority.entrypointKind,
@@ -766,8 +766,8 @@ WITH RECURSIVE ancestors AS (
               AND owned_child.environment_id = edge.environment_id
               AND owned_child.parent_owns_lifecycle IS TRUE
        )
-       AND edge.condition_state = 'pending'
-       AND edge.suspension_state = 'parked'
+       AND edge.condition_status = 'pending'
+       AND edge.suspension_status = 'parked'
        AND edge.ownership_generation IS NOT NULL
        AND edge.parent_writer_generation IS NOT NULL
     UNION
@@ -788,8 +788,8 @@ WITH RECURSIVE ancestors AS (
        AND edge.workspace_id = child.workspace_id
        AND edge.child_run_id = child.id
        AND edge.kind = 'child'
-       AND edge.condition_state = 'pending'
-       AND edge.suspension_state = 'parked'
+       AND edge.condition_status = 'pending'
+       AND edge.suspension_status = 'parked'
      WHERE child.parent_owns_lifecycle IS TRUE
 )
 SELECT session_id, id
@@ -849,8 +849,8 @@ WITH RECURSIVE ancestors AS (
               AND owned_child.environment_id = edge.environment_id
               AND owned_child.parent_owns_lifecycle IS TRUE
        )
-       AND edge.condition_state = 'pending'
-       AND edge.suspension_state = 'parked'
+       AND edge.condition_status = 'pending'
+       AND edge.suspension_status = 'parked'
        AND edge.ownership_generation IS NOT NULL
        AND edge.parent_writer_generation IS NOT NULL
     UNION ALL
@@ -873,8 +873,8 @@ WITH RECURSIVE ancestors AS (
        AND edge.workspace_id = child.workspace_id
        AND edge.child_run_id = child.id
        AND edge.kind = 'child'
-       AND edge.condition_state = 'pending'
-       AND edge.suspension_state = 'parked'
+       AND edge.condition_status = 'pending'
+       AND edge.suspension_status = 'parked'
      WHERE child.parent_owns_lifecycle IS TRUE
 )
 SELECT ancestors.wait_id,
@@ -937,7 +937,7 @@ func lockRunSecrets(
 	candidate ReadyRunCandidate,
 ) error {
 	secretRows, err := tx.Query(ctx, `
-SELECT secrets.state = 'active'
+SELECT secrets.status = 'active'
        AND secret_resolutions.id IS NOT NULL
        AND secret_resolutions.revocation_generation = secrets.revocation_generation
   FROM runs
@@ -952,14 +952,14 @@ SELECT secrets.state = 'active'
    AND secret_resolutions.secret_id = workspace_secrets.secret_id
  WHERE runs.org_id = $1
    AND runs.id = $2
-   AND runs.state_version = $3
+   AND runs.revision = $3
    AND runs.status = 'queued'
    AND runs.current_run_lease_id IS NULL
  ORDER BY secrets.id, workspace_secrets.placement_kind, workspace_secrets.placement_target
  FOR UPDATE OF secrets`,
 		candidate.OrgID,
 		candidate.RunID,
-		candidate.ExpectedRunStateVersion,
+		candidate.ExpectedRunRevision,
 	)
 	if err != nil {
 		return err

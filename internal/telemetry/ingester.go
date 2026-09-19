@@ -440,7 +440,7 @@ func runLogRecord(row db.ClaimRunLogIngestBatchRow) RunLogRecord {
 		EnvironmentID:  pgvalue.MustUUIDValue(row.EnvironmentID),
 		RunID:          pgvalue.MustUUIDValue(row.RunID),
 		RunLeaseID:     pgvalue.MustUUIDValue(row.RunLeaseID),
-		AttemptNumber:  int4Value(row.AttemptNumber),
+		AttemptNumber:  row.AttemptNumber.Int32,
 		StreamName:     string(row.Stream),
 		Seq:            uint64(row.Seq),
 		ObservedSeq:    uint64(pgvalue.Int8Value(row.ObservedSeq)),
@@ -467,13 +467,6 @@ func optionalInt32(value pgtype.Int4) *int32 {
 		return nil
 	}
 	return &value.Int32
-}
-
-func int4Value(value pgtype.Int4) int32 {
-	if !value.Valid {
-		return 0
-	}
-	return value.Int32
 }
 
 func observedAt(primary pgtype.Timestamptz, fallback pgtype.Timestamptz) time.Time {

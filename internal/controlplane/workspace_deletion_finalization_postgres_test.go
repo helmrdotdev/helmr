@@ -43,12 +43,12 @@ func (f workspaceDeletionPhysicalFixture) setDeleting(t *testing.T, clearOwner b
 	if clearOwner {
 		dbtest.MustExec(t, t.Context(), f.base.Pool, `
 UPDATE workspaces
-   SET state = 'deleting', desired_state = 'deleted', owner_run_id = NULL
+   SET status = 'deleting', desired_state = 'deleted', owner_run_id = NULL
  WHERE id = $1`, f.workspaceID)
 		return
 	}
 	dbtest.MustExec(t, t.Context(), f.base.Pool, `
-UPDATE workspaces SET state = 'deleting', desired_state = 'deleted'
+UPDATE workspaces SET status = 'deleting', desired_state = 'deleted'
  WHERE id = $1`, f.workspaceID)
 }
 
@@ -56,7 +56,7 @@ func (f workspaceDeletionPhysicalFixture) releaseLease(t *testing.T) {
 	t.Helper()
 	dbtest.MustExec(t, t.Context(), f.base.Pool, `
 UPDATE workspace_leases
-   SET state = 'released', released_at = now(), terminal_at = now()
+   SET status = 'released', released_at = now(), terminal_at = now()
  WHERE id = $1`, f.workspaceLeaseID)
 }
 
@@ -64,7 +64,7 @@ func (f workspaceDeletionPhysicalFixture) unmount(t *testing.T) {
 	t.Helper()
 	dbtest.MustExec(t, t.Context(), f.base.Pool, `
 UPDATE workspace_mounts
-   SET state = 'unmounted', unmounted_at = now(), terminal_at = now(),
+   SET status = 'unmounted', unmounted_at = now(), terminal_at = now(),
        terminal_reason_code = 'test_unmounted'
  WHERE id = $1`, f.mountID)
 }
@@ -130,7 +130,7 @@ func TestWorkspaceDeleteFinalizationAuthorityBlockers(t *testing.T) {
 			fixture := newWorkspaceDeletionPhysicalFixture(t)
 			if state == "releasing" {
 				dbtest.MustExec(t, t.Context(), fixture.base.Pool,
-					`UPDATE workspace_leases SET state = 'releasing' WHERE id = $1`, fixture.workspaceLeaseID)
+					`UPDATE workspace_leases SET status = 'releasing' WHERE id = $1`, fixture.workspaceLeaseID)
 			}
 			fixture.unmount(t)
 			fixture.loseRuntime(t)
@@ -151,7 +151,7 @@ func TestWorkspaceDeleteFinalizationAuthorityBlockers(t *testing.T) {
 			fixture.releaseLease(t)
 			fixture.loseRuntime(t)
 			dbtest.MustExec(t, t.Context(), fixture.base.Pool,
-				`UPDATE workspace_mounts SET state = $2 WHERE id = $1`, fixture.mountID, state)
+				`UPDATE workspace_mounts SET status = $2 WHERE id = $1`, fixture.mountID, state)
 			fixture.setDeleting(t, true)
 			if rows := fixture.finalize(t); len(rows) != 0 {
 				t.Fatalf("%s mount-blocked finalization = %v", state, rows)
@@ -205,7 +205,7 @@ INSERT INTO idempotency_claims (
           decode(repeat('62', 32), 'hex'), now(), now() + interval '30 days')`, claimID, fixture.base.EnvironmentID)
 		dbtest.MustExec(t, t.Context(), fixture.base.Pool, `
 INSERT INTO workspace_processes (
-    id, org_id, project_id, environment_id, workspace_id, base_version_id,
+    id, org_id, project_id, environment_id, workspace_id, base_workspace_version_id,
     restore_desired_state, request, claim_id, created_by_subject_type,
     created_by_subject_id
 ) VALUES ($1, $2, $3, $4, $5, $6, 'active', '{}'::jsonb, $7, 'test', 'test')`,
@@ -217,7 +217,7 @@ INSERT INTO workspace_processes (
 		for _, state := range []string{"starting", "running", "exit_requested"} {
 			dbtest.MustExec(t, t.Context(), fixture.base.Pool, `
 UPDATE workspace_processes
-   SET state = $2, region_id = $3, worker_group_id = $4,
+   SET status = $2, region_id = $3, worker_group_id = $4,
        worker_instance_id = $5, worker_epoch = 1, runtime_instance_id = $6,
        workspace_mount_id = $7,
        stdout = CASE WHEN $2 = 'exit_requested' THEN ''::bytea ELSE stdout END,
@@ -230,7 +230,7 @@ UPDATE workspace_processes
 		}
 		dbtest.MustExec(t, t.Context(), fixture.base.Pool, `
 UPDATE workspace_processes
-   SET state = 'failed', terminal_at = now(), terminal_reason_code = 'test_failed'
+   SET status = 'failed', terminal_at = now(), terminal_reason_code = 'test_failed'
  WHERE id = $1`, processID)
 		if rows := fixture.finalize(t); len(rows) != 1 || rows[0] != fixture.workspaceID {
 			t.Fatalf("process-terminal finalization = %v", rows)

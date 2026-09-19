@@ -213,7 +213,7 @@ func sessionInputReconcileMessage(environmentID, sessionID, recordID uuid.UUID) 
 		ID:      pgvalue.UUID(uuid.NewV7()),
 		Topic:   "session.input.reconcile",
 		Payload: []byte(`{"environmentId":"` + environmentID.String() + `","sessionId":"` + sessionID.String() + `","recordId":"` + recordID.String() + `"}`),
-		State:   "claimed", Attempts: 1, ClaimedBy: pgvalue.Text("worker"),
+		Status:  "claimed", Attempts: 1, ClaimedBy: pgvalue.Text("worker"),
 		ClaimExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 	}
 }
@@ -223,7 +223,7 @@ func sessionCloseReconcileMessage(environmentID, sessionID uuid.UUID) db.Control
 		ID:      pgvalue.UUID(uuid.NewV7()),
 		Topic:   "session.close.reconcile",
 		Payload: []byte(`{"environmentId":"` + environmentID.String() + `","sessionId":"` + sessionID.String() + `"}`),
-		State:   "claimed", Attempts: 1, ClaimedBy: pgvalue.Text("worker"),
+		Status:  "claimed", Attempts: 1, ClaimedBy: pgvalue.Text("worker"),
 		ClaimExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 	}
 }

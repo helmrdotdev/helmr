@@ -111,7 +111,7 @@ target_run AS (
            runs.current_attempt_number,
            runs.trace_id,
            runs.root_span_id,
-           runs.state_version
+           runs.revision
       FROM runs
      WHERE runs.org_id = $3
        AND runs.id = $4
@@ -141,7 +141,7 @@ appended AS (
            event_args.event_kind,
            event_args.event_payload,
            'internal',
-           target_run.state_version,
+           target_run.revision,
            now()
       FROM target_run
       CROSS JOIN event_args
@@ -151,11 +151,11 @@ appended AS (
               COALESCE(telemetry_outbox.attempt_number, 0)::integer AS current_attempt_number,
               telemetry_outbox.trace_id,
               COALESCE(telemetry_outbox.span_id, '')::text AS root_span_id,
-              COALESCE(telemetry_outbox.snapshot_version, 0)::bigint AS state_version,
+              COALESCE(telemetry_outbox.snapshot_version, 0)::bigint AS revision,
               telemetry_outbox.kind AS event_kind,
               telemetry_outbox.payload AS event_payload
 )
-SELECT id, project_id, environment_id, current_attempt_number, trace_id, root_span_id, state_version, event_kind, event_payload
+SELECT id, project_id, environment_id, current_attempt_number, trace_id, root_span_id, revision, event_kind, event_payload
   FROM appended
 `
 
@@ -173,7 +173,7 @@ type AppendRunEventRow struct {
 	CurrentAttemptNumber int32       `json:"current_attempt_number"`
 	TraceID              pgtype.Text `json:"trace_id"`
 	RootSpanID           string      `json:"root_span_id"`
-	StateVersion         int64       `json:"state_version"`
+	Revision             int64       `json:"revision"`
 	EventKind            string      `json:"event_kind"`
 	EventPayload         []byte      `json:"event_payload"`
 }
@@ -193,7 +193,7 @@ func (q *Queries) AppendRunEvent(ctx context.Context, arg AppendRunEventParams) 
 		&i.CurrentAttemptNumber,
 		&i.TraceID,
 		&i.RootSpanID,
-		&i.StateVersion,
+		&i.Revision,
 		&i.EventKind,
 		&i.EventPayload,
 	)

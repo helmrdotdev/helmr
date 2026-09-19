@@ -30,7 +30,7 @@ type workerActor struct {
 	ClaimVersion      int64
 	GroupClaimVersion int64
 	ResourceID        string
-	State             db.WorkerInstanceState
+	Status            db.WorkerInstanceStatus
 	EpochStartedAt    time.Time
 }
 
@@ -290,23 +290,23 @@ func (s *Server) sessionActorFromToken(r *http.Request, rawSession string) (auth
 }
 
 func (s *Server) requireWorker(next http.Handler) http.Handler {
-	return s.requireWorkerState(workerAuthActive, next)
+	return s.requireWorkerStatus(workerAuthActive, next)
 }
 
 func (s *Server) requireWorkerActivation(next http.Handler) http.Handler {
-	return s.requireWorkerState(workerAuthActivation, next)
+	return s.requireWorkerStatus(workerAuthActivation, next)
 }
 
 func (s *Server) requireRecoveringWorker(next http.Handler) http.Handler {
-	return s.requireWorkerState(workerAuthRecovering, next)
+	return s.requireWorkerStatus(workerAuthRecovering, next)
 }
 
 func (s *Server) requireWorkerDrainCompletion(next http.Handler) http.Handler {
-	return s.requireWorkerState(workerAuthDrainCompletion, next)
+	return s.requireWorkerStatus(workerAuthDrainCompletion, next)
 }
 
 func (s *Server) requireWorkerFence(next http.Handler) http.Handler {
-	return s.requireWorkerState(workerAuthFence, next)
+	return s.requireWorkerStatus(workerAuthFence, next)
 }
 
 type workerAuthState uint8
@@ -319,7 +319,7 @@ const (
 	workerAuthFence
 )
 
-func (s *Server) requireWorkerState(state workerAuthState, next http.Handler) http.Handler {
+func (s *Server) requireWorkerStatus(state workerAuthState, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.db == nil || len(s.workerTokenSigningKey) == 0 {
 			writeError(w, unavailable(errors.New("worker authentication is not configured")))
@@ -402,7 +402,7 @@ func (s *Server) requireWorkerState(state workerAuthState, next http.Handler) ht
 			GroupClaimVersion: payload.GroupClaimVersion,
 			ResourceID:        strings.TrimSpace(row.ResourceID),
 			WorkerEpoch:       payload.WorkerEpoch,
-			State:             row.WorkerState,
+			Status:            row.WorkerStatus,
 			EpochStartedAt:    pgvalue.Time(row.EpochStartedAt),
 		}
 		if pgvalue.MustUUIDValue(row.WorkerInstanceID) != workerInstanceID || worker.WorkerGroupID != workerGroupID || payload.ClaimVersion != worker.ClaimVersion {

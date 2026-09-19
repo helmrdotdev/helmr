@@ -55,21 +55,21 @@ func TestWorkerCheckpointFailedRejectsInvalidPinnedRetryPolicyPermanently(t *tes
 	waitID := uuid.NewV7()
 	checkpointID := uuid.NewV7()
 	resumeAttachID := uuid.NewV7()
-	var workspaceID, workspaceLeaseID, baseVersionID uuid.UUID
+	var workspaceID, workspaceLeaseID, baseWorkspaceVersionID uuid.UUID
 	if err := fixture.Pool.QueryRow(t.Context(), `
-SELECT runs.workspace_id, workspace_leases.id, workspace_leases.base_version_id
+SELECT runs.workspace_id, workspace_leases.id, workspace_leases.base_workspace_version_id
   FROM runs
   JOIN workspace_leases ON workspace_leases.owner_run_lease_id = runs.current_run_lease_id
- WHERE runs.id = $1`, work.RunID).Scan(&workspaceID, &workspaceLeaseID, &baseVersionID); err != nil {
+ WHERE runs.id = $1`, work.RunID).Scan(&workspaceID, &workspaceLeaseID, &baseWorkspaceVersionID); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 UPDATE run_leases
-   SET state = 'checkpointing', started_at = claimed_at
+   SET status = 'checkpointing', started_at = claimed_at
  WHERE id = $1`, work.LeaseID)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 UPDATE runs
-   SET status = 'waiting', state_version = 2,
+   SET status = 'waiting', revision = 2,
        started_at = transaction_timestamp() - interval '10 seconds',
        active_started_at = transaction_timestamp() - interval '10 seconds',
        retry_policy = '{"enabled":true}'::jsonb
@@ -77,8 +77,8 @@ UPDATE runs
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 INSERT INTO run_waits (
     id, environment_id, run_id, workspace_id, kind, due_at,
-    expected_run_state_version, attempt_number, current_run_lease_id,
-    checkpoint_request_version, resume_attach_id, suspension_state
+    expected_run_revision, attempt_number, current_run_lease_id,
+    checkpoint_request_version, resume_attach_id, suspension_status
 ) VALUES (
     $1, $2, $3, $4, 'timer', transaction_timestamp() + interval '1 hour',
     2, 1, $5, 1, $6, 'checkpointing'
@@ -86,9 +86,9 @@ INSERT INTO run_waits (
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 INSERT INTO run_checkpoints (
     id, run_id, attempt_number, run_wait_id, source_run_lease_id,
-    source_workspace_lease_id, workspace_id, base_workspace_version_id, state
+    source_workspace_lease_id, workspace_id, base_workspace_version_id, status
 ) VALUES ($1, $2, 1, $3, $4, $5, $6, $7, 'creating')`,
-		checkpointID, work.RunID, waitID, work.LeaseID, workspaceLeaseID, workspaceID, baseVersionID)
+		checkpointID, work.RunID, waitID, work.LeaseID, workspaceLeaseID, workspaceID, baseWorkspaceVersionID)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 UPDATE run_waits SET suspend_checkpoint_id = $2 WHERE id = $1`, waitID, checkpointID)
 

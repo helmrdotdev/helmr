@@ -15,25 +15,25 @@ import (
 
 func TestWorkspaceExecClaimRechecksStartingAdmissionButPreservesContinuation(t *testing.T) {
 	for _, test := range []struct {
-		name         string
-		processState db.WorkspaceProcessState
-		wantLock     bool
+		name          string
+		processStatus db.WorkspaceProcessStatus
+		wantLock      bool
 	}{
 		{
-			name:         "starting is rejected after group drain",
-			processState: db.WorkspaceProcessStateStarting,
-			wantLock:     false,
+			name:          "starting is rejected after group drain",
+			processStatus: db.WorkspaceProcessStatusStarting,
+			wantLock:      false,
 		},
 		{
-			name:         "running can continue after group drain",
-			processState: db.WorkspaceProcessStateRunning,
-			wantLock:     true,
+			name:          "running can continue after group drain",
+			processStatus: db.WorkspaceProcessStatusRunning,
+			wantLock:      true,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newRunPlacementFixture(t)
 			processID, mountID := placeWorkspaceExecForClaim(t, fixture)
-			if test.processState == db.WorkspaceProcessStateRunning {
+			if test.processStatus == db.WorkspaceProcessStatusRunning {
 				if _, err := db.New(fixture.pool).StartWorkspaceExec(
 					fixture.ctx,
 					db.StartWorkspaceExecParams{
@@ -46,7 +46,7 @@ func TestWorkspaceExecClaimRechecksStartingAdmissionButPreservesContinuation(t *
 			}
 			dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE worker_groups
-   SET state = 'draining'
+   SET status = 'draining'
  WHERE id = $1`,
 				fixture.groupID,
 			)
@@ -66,11 +66,11 @@ UPDATE worker_groups
 				if err != nil {
 					t.Fatal(err)
 				}
-				if authority.WorkspaceProcess.State != test.processState {
+				if authority.WorkspaceProcess.Status != test.processStatus {
 					t.Fatalf(
 						"process state = %q, want %q",
-						authority.WorkspaceProcess.State,
-						test.processState,
+						authority.WorkspaceProcess.Status,
+						test.processStatus,
 					)
 				}
 				return
@@ -109,26 +109,26 @@ INSERT INTO idempotency_claims (
 	if _, err := db.New(fixture.pool).CreateWorkspaceExec(
 		fixture.ctx,
 		db.CreateWorkspaceExecParams{
-			ID:                   pgvalue.UUID(processID),
-			OrgID:                pgvalue.UUID(fixture.orgID),
-			ProjectID:            pgvalue.UUID(fixture.projectID),
-			EnvironmentID:        pgvalue.UUID(fixture.environmentID),
-			WorkspaceID:          pgvalue.UUID(fixture.workspaceID),
-			BaseVersionID:        workspaceHeadVersion(t, fixture),
-			RestoreDesiredState:  "active",
-			Request:              []byte(`{"command":["echo","ready"]}`),
-			Stdin:                []byte{},
-			ClaimID:              pgvalue.UUID(claimID),
-			CreatedBySubjectType: "user",
-			CreatedBySubjectID:   "test-user",
+			ID:                     pgvalue.UUID(processID),
+			OrgID:                  pgvalue.UUID(fixture.orgID),
+			ProjectID:              pgvalue.UUID(fixture.projectID),
+			EnvironmentID:          pgvalue.UUID(fixture.environmentID),
+			WorkspaceID:            pgvalue.UUID(fixture.workspaceID),
+			BaseWorkspaceVersionID: workspaceHeadVersion(t, fixture),
+			RestoreDesiredState:    "active",
+			Request:                []byte(`{"command":["echo","ready"]}`),
+			Stdin:                  []byte{},
+			ClaimID:                pgvalue.UUID(claimID),
+			CreatedBySubjectType:   "user",
+			CreatedBySubjectID:     "test-user",
 		},
 	); err != nil {
 		t.Fatal(err)
 	}
 	candidate := ReadyWorkspaceExecCandidate{
-		OrgID:                pgvalue.UUID(fixture.orgID),
-		ProcessID:            pgvalue.UUID(processID),
-		ExpectedStateVersion: 1,
+		OrgID:            pgvalue.UUID(fixture.orgID),
+		ProcessID:        pgvalue.UUID(processID),
+		ExpectedRevision: 1,
 	}
 	reserved, err := fixture.authority.PlaceWorkspaceExec(fixture.ctx, candidate)
 	if err != nil {

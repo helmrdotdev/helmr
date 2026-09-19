@@ -65,7 +65,7 @@ func (s *Server) closeActor(
 			if err != nil {
 				return err
 			}
-			if acquired.Claim.State == "completed" {
+			if acquired.Claim.Status == "completed" {
 				replayed, err := actorCloseReceipt(acquired.Claim.Receipt)
 				if err != nil {
 					return err
@@ -76,7 +76,7 @@ func (s *Server) closeActor(
 				receipt = replayed
 				return nil
 			}
-			if acquired.Claim.State != "pending" {
+			if acquired.Claim.Status != "pending" {
 				return errActorCloseReceipt
 			}
 			claim = &acquired.Claim
@@ -103,7 +103,7 @@ func (s *Server) closeActor(
 			return errActorCloseAuthority
 		}
 
-		switch lockedActor.State {
+		switch lockedActor.Status {
 		case "open", "closing":
 			lockedActor, err = work.q.BeginActorClose(ctx, db.BeginActorCloseParams{
 				EnvironmentID: lockedActor.EnvironmentID,
@@ -120,7 +120,7 @@ func (s *Server) closeActor(
 			if err != nil {
 				return err
 			}
-			if deferred || lockedActor.State == "closing" {
+			if deferred || lockedActor.Status == "closing" {
 				if err := createActorCloseReconcileIntent(ctx, work.q, lockedActor); err != nil {
 					return err
 				}

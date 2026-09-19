@@ -1355,7 +1355,7 @@ func (x *WorkspaceMountPhase) GetError() string {
 
 type MaterializeWorkspaceResponse struct {
 	state                  protoimpl.MessageState `protogen:"open.v1"`
-	State                  string                 `protobuf:"bytes,1,opt,name=state,proto3" json:"state,omitempty"`
+	Status                 string                 `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
 	GuestdChannelTokenHash string                 `protobuf:"bytes,2,opt,name=guestd_channel_token_hash,json=guestdChannelTokenHash,proto3" json:"guestd_channel_token_hash,omitempty"`
 	Phases                 []*WorkspaceMountPhase `protobuf:"bytes,3,rep,name=phases,proto3" json:"phases,omitempty"`
 	Target                 *WorkspaceResetTarget  `protobuf:"bytes,4,opt,name=target,proto3" json:"target,omitempty"`
@@ -1393,9 +1393,9 @@ func (*MaterializeWorkspaceResponse) Descriptor() ([]byte, []int) {
 	return file_workspace_proto_rawDescGZIP(), []int{17}
 }
 
-func (x *MaterializeWorkspaceResponse) GetState() string {
+func (x *MaterializeWorkspaceResponse) GetStatus() string {
 	if x != nil {
-		return x.State
+		return x.Status
 	}
 	return ""
 }
@@ -1569,7 +1569,7 @@ func (x *PrepareWorkspaceRuntimeRequest) GetMountedImageConfig() *RuntimeImageCo
 
 type PrepareWorkspaceRuntimeResponse struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
-	State             string                 `protobuf:"bytes,1,opt,name=state,proto3" json:"state,omitempty"`
+	Status            string                 `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
 	RuntimeInstanceId string                 `protobuf:"bytes,2,opt,name=runtime_instance_id,json=runtimeInstanceId,proto3" json:"runtime_instance_id,omitempty"`
 	Phases            []*WorkspaceMountPhase `protobuf:"bytes,3,rep,name=phases,proto3" json:"phases,omitempty"`
 	unknownFields     protoimpl.UnknownFields
@@ -1606,9 +1606,9 @@ func (*PrepareWorkspaceRuntimeResponse) Descriptor() ([]byte, []int) {
 	return file_workspace_proto_rawDescGZIP(), []int{20}
 }
 
-func (x *PrepareWorkspaceRuntimeResponse) GetState() string {
+func (x *PrepareWorkspaceRuntimeResponse) GetStatus() string {
 	if x != nil {
-		return x.State
+		return x.Status
 	}
 	return ""
 }
@@ -1630,7 +1630,7 @@ func (x *PrepareWorkspaceRuntimeResponse) GetPhases() []*WorkspaceMountPhase {
 type HeartbeatWorkspaceRequest struct {
 	state           protoimpl.MessageState      `protogen:"open.v1"`
 	Envelope        *WorkspaceOperationEnvelope `protobuf:"bytes,1,opt,name=envelope,proto3" json:"envelope,omitempty"`
-	State           string                      `protobuf:"bytes,2,opt,name=state,proto3" json:"state,omitempty"`
+	Status          string                      `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
 	DirtyGeneration uint64                      `protobuf:"varint,3,opt,name=dirty_generation,json=dirtyGeneration,proto3" json:"dirty_generation,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
@@ -1673,9 +1673,9 @@ func (x *HeartbeatWorkspaceRequest) GetEnvelope() *WorkspaceOperationEnvelope {
 	return nil
 }
 
-func (x *HeartbeatWorkspaceRequest) GetState() string {
+func (x *HeartbeatWorkspaceRequest) GetStatus() string {
 	if x != nil {
-		return x.State
+		return x.Status
 	}
 	return ""
 }
@@ -1689,7 +1689,7 @@ func (x *HeartbeatWorkspaceRequest) GetDirtyGeneration() uint64 {
 
 type HeartbeatWorkspaceResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	State         string                 `protobuf:"bytes,1,opt,name=state,proto3" json:"state,omitempty"`
+	Status        string                 `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
 	StopRequested bool                   `protobuf:"varint,2,opt,name=stop_requested,json=stopRequested,proto3" json:"stop_requested,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1725,9 +1725,9 @@ func (*HeartbeatWorkspaceResponse) Descriptor() ([]byte, []int) {
 	return file_workspace_proto_rawDescGZIP(), []int{22}
 }
 
-func (x *HeartbeatWorkspaceResponse) GetState() string {
+func (x *HeartbeatWorkspaceResponse) GetStatus() string {
 	if x != nil {
-		return x.State
+		return x.Status
 	}
 	return ""
 }
@@ -1888,9 +1888,9 @@ func (*EmptyWorkspaceResetTarget) Descriptor() ([]byte, []int) {
 }
 
 type WorkspaceResetTarget struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	BaseVersionId string                 `protobuf:"bytes,1,opt,name=base_version_id,json=baseVersionId,proto3" json:"base_version_id,omitempty"`
-	Tree          *WorkspaceTreeIdentity `protobuf:"bytes,2,opt,name=tree,proto3" json:"tree,omitempty"`
+	state                  protoimpl.MessageState `protogen:"open.v1"`
+	BaseWorkspaceVersionId string                 `protobuf:"bytes,1,opt,name=base_workspace_version_id,json=baseWorkspaceVersionId,proto3" json:"base_workspace_version_id,omitempty"`
+	Tree                   *WorkspaceTreeIdentity `protobuf:"bytes,2,opt,name=tree,proto3" json:"tree,omitempty"`
 	// Types that are valid to be assigned to Source:
 	//
 	//	*WorkspaceResetTarget_Empty
@@ -1930,9 +1930,9 @@ func (*WorkspaceResetTarget) Descriptor() ([]byte, []int) {
 	return file_workspace_proto_rawDescGZIP(), []int{26}
 }
 
-func (x *WorkspaceResetTarget) GetBaseVersionId() string {
+func (x *WorkspaceResetTarget) GetBaseWorkspaceVersionId() string {
 	if x != nil {
-		return x.BaseVersionId
+		return x.BaseWorkspaceVersionId
 	}
 	return ""
 }
@@ -2159,7 +2159,7 @@ func (x *StopWorkspaceRequest) GetFinalizeStop() bool {
 
 type StopWorkspaceResponse struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
-	State            string                 `protobuf:"bytes,1,opt,name=state,proto3" json:"state,omitempty"`
+	Status           string                 `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
 	CapturedArtifact *WorkspaceArtifact     `protobuf:"bytes,2,opt,name=captured_artifact,json=capturedArtifact,proto3" json:"captured_artifact,omitempty"`
 	ErrorJson        string                 `protobuf:"bytes,3,opt,name=error_json,json=errorJson,proto3" json:"error_json,omitempty"`
 	CapturedTree     *WorkspaceTreeIdentity `protobuf:"bytes,4,opt,name=captured_tree,json=capturedTree,proto3" json:"captured_tree,omitempty"`
@@ -2197,9 +2197,9 @@ func (*StopWorkspaceResponse) Descriptor() ([]byte, []int) {
 	return file_workspace_proto_rawDescGZIP(), []int{30}
 }
 
-func (x *StopWorkspaceResponse) GetState() string {
+func (x *StopWorkspaceResponse) GetStatus() string {
 	if x != nil {
-		return x.State
+		return x.Status
 	}
 	return ""
 }
@@ -2600,9 +2600,9 @@ const file_workspace_proto_rawDesc = "" +
 	"size_bytes\x18\x03 \x01(\x04R\tsizeBytes\x12\x1f\n" +
 	"\ventry_count\x18\x04 \x01(\rR\n" +
 	"entryCount\x12\x14\n" +
-	"\x05error\x18\x05 \x01(\tR\x05error\"\xf2\x01\n" +
-	"\x1cMaterializeWorkspaceResponse\x12\x14\n" +
-	"\x05state\x18\x01 \x01(\tR\x05state\x129\n" +
+	"\x05error\x18\x05 \x01(\tR\x05error\"\xf4\x01\n" +
+	"\x1cMaterializeWorkspaceResponse\x12\x16\n" +
+	"\x06status\x18\x01 \x01(\tR\x06status\x129\n" +
 	"\x19guestd_channel_token_hash\x18\x02 \x01(\tR\x16guestdChannelTokenHash\x12?\n" +
 	"\x06phases\x18\x03 \x03(\v2'.helmr.workspace.v0.WorkspaceMountPhaseR\x06phases\x12@\n" +
 	"\x06target\x18\x04 \x01(\v2(.helmr.workspace.v0.WorkspaceResetTargetR\x06target\"\x8d\x01\n" +
@@ -2620,17 +2620,17 @@ const file_workspace_proto_rawDesc = "" +
 	"\n" +
 	"mount_path\x18\x02 \x01(\tR\tmountPath\x12N\n" +
 	"\x0fworkspace_image\x18\x03 \x01(\v2%.helmr.workspace.v0.WorkspaceArtifactR\x0eworkspaceImage\x12X\n" +
-	"\x14mounted_image_config\x18\x04 \x01(\v2&.helmr.workspace.v0.RuntimeImageConfigR\x12mountedImageConfig\"\xa8\x01\n" +
-	"\x1fPrepareWorkspaceRuntimeResponse\x12\x14\n" +
-	"\x05state\x18\x01 \x01(\tR\x05state\x12.\n" +
+	"\x14mounted_image_config\x18\x04 \x01(\v2&.helmr.workspace.v0.RuntimeImageConfigR\x12mountedImageConfig\"\xaa\x01\n" +
+	"\x1fPrepareWorkspaceRuntimeResponse\x12\x16\n" +
+	"\x06status\x18\x01 \x01(\tR\x06status\x12.\n" +
 	"\x13runtime_instance_id\x18\x02 \x01(\tR\x11runtimeInstanceId\x12?\n" +
-	"\x06phases\x18\x03 \x03(\v2'.helmr.workspace.v0.WorkspaceMountPhaseR\x06phases\"\xa8\x01\n" +
+	"\x06phases\x18\x03 \x03(\v2'.helmr.workspace.v0.WorkspaceMountPhaseR\x06phases\"\xaa\x01\n" +
 	"\x19HeartbeatWorkspaceRequest\x12J\n" +
-	"\benvelope\x18\x01 \x01(\v2..helmr.workspace.v0.WorkspaceOperationEnvelopeR\benvelope\x12\x14\n" +
-	"\x05state\x18\x02 \x01(\tR\x05state\x12)\n" +
-	"\x10dirty_generation\x18\x03 \x01(\x04R\x0fdirtyGeneration\"Y\n" +
-	"\x1aHeartbeatWorkspaceResponse\x12\x14\n" +
-	"\x05state\x18\x01 \x01(\tR\x05state\x12%\n" +
+	"\benvelope\x18\x01 \x01(\v2..helmr.workspace.v0.WorkspaceOperationEnvelopeR\benvelope\x12\x16\n" +
+	"\x06status\x18\x02 \x01(\tR\x06status\x12)\n" +
+	"\x10dirty_generation\x18\x03 \x01(\x04R\x0fdirtyGeneration\"[\n" +
+	"\x1aHeartbeatWorkspaceResponse\x12\x16\n" +
+	"\x06status\x18\x01 \x01(\tR\x06status\x12%\n" +
 	"\x0estop_requested\x18\x02 \x01(\bR\rstopRequested\"h\n" +
 	"\x17CaptureWorkspaceRequest\x12M\n" +
 	"\benvelope\x18\x01 \x01(\v21.helmr.workspace.v0.WorkspaceFinalizationEnvelopeR\benvelope\"\xfe\x01\n" +
@@ -2639,9 +2639,9 @@ const file_workspace_proto_rawDesc = "" +
 	"\x04tree\x18\x02 \x01(\v2).helmr.workspace.v0.WorkspaceTreeIdentityR\x04tree\x12A\n" +
 	"\bartifact\x18\x03 \x01(\v2%.helmr.workspace.v0.WorkspaceArtifactR\bartifact\x12\x14\n" +
 	"\x05error\x18\x04 \x01(\tR\x05error\"\x1b\n" +
-	"\x19EmptyWorkspaceResetTarget\"\x93\x02\n" +
-	"\x14WorkspaceResetTarget\x12&\n" +
-	"\x0fbase_version_id\x18\x01 \x01(\tR\rbaseVersionId\x12=\n" +
+	"\x19EmptyWorkspaceResetTarget\"\xa6\x02\n" +
+	"\x14WorkspaceResetTarget\x129\n" +
+	"\x19base_workspace_version_id\x18\x01 \x01(\tR\x16baseWorkspaceVersionId\x12=\n" +
 	"\x04tree\x18\x02 \x01(\v2).helmr.workspace.v0.WorkspaceTreeIdentityR\x04tree\x12E\n" +
 	"\x05empty\x18\x03 \x01(\v2-.helmr.workspace.v0.EmptyWorkspaceResetTargetH\x00R\x05empty\x12C\n" +
 	"\bartifact\x18\x04 \x01(\v2%.helmr.workspace.v0.WorkspaceArtifactH\x00R\bartifactB\b\n" +
@@ -2656,9 +2656,9 @@ const file_workspace_proto_rawDesc = "" +
 	"\x14StopWorkspaceRequest\x12J\n" +
 	"\benvelope\x18\x01 \x01(\v2..helmr.workspace.v0.WorkspaceOperationEnvelopeR\benvelope\x12.\n" +
 	"\x13capture_before_stop\x18\x02 \x01(\bR\x11captureBeforeStop\x12#\n" +
-	"\rfinalize_stop\x18\x03 \x01(\bR\ffinalizeStop\"\xf0\x01\n" +
-	"\x15StopWorkspaceResponse\x12\x14\n" +
-	"\x05state\x18\x01 \x01(\tR\x05state\x12R\n" +
+	"\rfinalize_stop\x18\x03 \x01(\bR\ffinalizeStop\"\xf2\x01\n" +
+	"\x15StopWorkspaceResponse\x12\x16\n" +
+	"\x06status\x18\x01 \x01(\tR\x06status\x12R\n" +
 	"\x11captured_artifact\x18\x02 \x01(\v2%.helmr.workspace.v0.WorkspaceArtifactR\x10capturedArtifact\x12\x1d\n" +
 	"\n" +
 	"error_json\x18\x03 \x01(\tR\terrorJson\x12N\n" +

@@ -38,7 +38,7 @@ func (task *guestRunLeaseTask) handleActorTurnCommit(
 	lease := task.lease
 	currentTarget := task.resetTarget
 	expected := currentTarget.Tree
-	expectedBase := currentTarget.BaseVersionID
+	expectedBase := currentTarget.BaseWorkspaceVersionID
 	task.mu.Unlock()
 	stopClose := context.AfterFunc(ctx, func() { _ = stream.Close() })
 	defer stopClose()
@@ -103,7 +103,7 @@ func (task *guestRunLeaseTask) handleActorTurnCommit(
 		if response.WorkspaceVersionID != expectedBase {
 			return errors.New("unchanged actor turn commit replaced the workspace version")
 		}
-		nextTarget.BaseVersionID = response.WorkspaceVersionID
+		nextTarget.BaseWorkspaceVersionID = response.WorkspaceVersionID
 	} else {
 		nextTarget, err = workspace.ArtifactResetTarget(
 			response.WorkspaceVersionID,
@@ -160,7 +160,7 @@ func (task *guestRunLeaseTask) handleActorTurnCommit(
 		return fmt.Errorf("actor turn commit applied proof exceeded lease authority: %w", err)
 	}
 	if task.finished || task.finalizingKind != "" || task.authority == nil || task.authority.GetFence() == nil ||
-		task.resetTarget.BaseVersionID != expectedBase || task.lease.BaseWorkspaceVersionID != expectedBase ||
+		task.resetTarget.BaseWorkspaceVersionID != expectedBase || task.lease.BaseWorkspaceVersionID != expectedBase ||
 		task.authority.GetFence().GetBaseWorkspaceVersionId() != expectedBase {
 		return errors.New("actor turn commit local Workspace frontier changed during transition")
 	}
@@ -168,7 +168,7 @@ func (task *guestRunLeaseTask) handleActorTurnCommit(
 	if checkpointer, ok := task.checkpointer.(*runtimeCheckpointer); ok {
 		checkpointer.workspace = checkpointBase
 	}
-	task.waitWorkspace.BaseVersionID = response.WorkspaceVersionID
+	task.waitWorkspace.BaseWorkspaceVersionID = response.WorkspaceVersionID
 	if artifact != nil {
 		task.waitWorkspace.Artifact = &workerapi.WorkspaceArtifact{
 			Digest: artifact.Digest, MediaType: artifact.MediaType, Encoding: artifact.Encoding,

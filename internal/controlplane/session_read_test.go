@@ -20,14 +20,14 @@ func TestParseSessionListQueryStatusFilter(t *testing.T) {
 	}) {
 		t.Fatalf("statuses = %v", query.statuses)
 	}
-	if !slices.Equal(sessionStatusStates(query.statuses), []string{"closed", "failed", "open", "closing"}) {
-		t.Fatalf("states = %v", sessionStatusStates(query.statuses))
+	if !slices.Equal(sessionStorageStatuses(query.statuses), []string{"closed", "failed", "open", "closing"}) {
+		t.Fatalf("states = %v", sessionStorageStatuses(query.statuses))
 	}
 	unfiltered, err := parseSessionListQuery("", "project", "environment")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(unfiltered.statuses) != 0 || len(sessionStatusStates(unfiltered.statuses)) != 0 {
+	if len(unfiltered.statuses) != 0 || len(sessionStorageStatuses(unfiltered.statuses)) != 0 {
 		t.Fatalf("unfiltered query = %+v", unfiltered)
 	}
 	for _, rawQuery := range []string{

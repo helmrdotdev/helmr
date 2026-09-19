@@ -208,12 +208,12 @@ func waitWorkspaceForRun(
 	target workerapi.WorkspaceResetTarget,
 ) workerapi.Workspace {
 	return workerapi.Workspace{
-		ID:                mount.WorkspaceID,
-		WorkspaceMountID:  mount.ID,
-		FencingGeneration: lease.MountFencingGeneration,
-		BaseVersionID:     target.BaseWorkspaceVersionID,
-		MountPath:         mount.WorkspaceMountPath,
-		Artifact:          target.Artifact,
+		ID:                     mount.WorkspaceID,
+		WorkspaceMountID:       mount.ID,
+		FencingGeneration:      lease.MountFencingGeneration,
+		BaseWorkspaceVersionID: target.BaseWorkspaceVersionID,
+		MountPath:              mount.WorkspaceMountPath,
+		Artifact:               target.Artifact,
 	}
 }
 
@@ -894,7 +894,7 @@ func workerWorkspaceFinalizationReceipt(
 
 func workerWorkspaceResetTarget(target workspace.ResetTarget) workerapi.WorkspaceResetTarget {
 	result := workerapi.WorkspaceResetTarget{
-		BaseWorkspaceVersionID: target.BaseVersionID,
+		BaseWorkspaceVersionID: target.BaseWorkspaceVersionID,
 		Tree: workerapi.WorkspaceTreeIdentity{
 			Digest: target.Tree.Digest, SizeBytes: target.Tree.SizeBytes,
 			EntryCount: int32(target.Tree.EntryCount),
