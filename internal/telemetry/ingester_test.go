@@ -110,7 +110,7 @@ func TestPartialIngestCompletionBacksOffBeforeReclaim(t *testing.T) {
 	ingester.batchBytes = MaxTelemetryBatchBytes
 	ingester.leaseDuration = time.Minute
 	ingester.retryAfter = time.Hour
-	ingester.idleEvery = time.Hour
+	ingester.pollEvery = time.Hour
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- ingester.runIngest(ctx) }()
@@ -140,7 +140,7 @@ func TestPartialIngestCompletionBacksOffBeforeReclaim(t *testing.T) {
 func TestRunCancellationStopsIngestAndGC(t *testing.T) {
 	store := &fakeIngestStore{}
 	ingester := testIngestor(store, &fakeIngestWriter{})
-	ingester.idleEvery = time.Hour
+	ingester.pollEvery = time.Hour
 	ingester.gcEvery = time.Hour
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -211,12 +211,16 @@ type fakeIngestWriter struct {
 	eventCalls  int
 	eventResult []RejectedRow
 	eventErr    error
+	eventHook   func(context.Context)
 	runLogCalls int
 	runLogErr   error
 }
 
-func (w *fakeIngestWriter) WriteEvents(context.Context, []EventRecord) ([]RejectedRow, error) {
+func (w *fakeIngestWriter) WriteEvents(ctx context.Context, _ []EventRecord) ([]RejectedRow, error) {
 	w.eventCalls++
+	if w.eventHook != nil {
+		w.eventHook(ctx)
+	}
 	return w.eventResult, w.eventErr
 }
 
@@ -233,16 +237,21 @@ type fakeIngestStore struct {
 	writtenIDs      []int64
 	writtenCounts   []int32
 	writtenResult   *int64
+	writtenErr      error
 	written         chan struct{}
 	pruned          chan db.PruneTelemetryOutboxWrittenParams
 	eventClaims     []db.ClaimEventIngestBatchParams
 	eventClaimCalls atomic.Int32
 	eventRows       []db.ClaimEventIngestBatchRow
+	claimHook       func(context.Context)
 	runLogClaims    []db.ClaimRunLogIngestBatchParams
 	runLogRows      []db.ClaimRunLogIngestBatchRow
 }
 
-func (s *fakeIngestStore) ClaimEventIngestBatch(_ context.Context, params db.ClaimEventIngestBatchParams) ([]db.ClaimEventIngestBatchRow, error) {
+func (s *fakeIngestStore) ClaimEventIngestBatch(ctx context.Context, params db.ClaimEventIngestBatchParams) ([]db.ClaimEventIngestBatchRow, error) {
+	if s.claimHook != nil {
+		s.claimHook(ctx)
+	}
 	s.eventClaims = append(s.eventClaims, params)
 	if s.eventClaimCalls.Add(1) == 1 {
 		return s.eventRows, nil
@@ -250,7 +259,10 @@ func (s *fakeIngestStore) ClaimEventIngestBatch(_ context.Context, params db.Cla
 	return nil, nil
 }
 
-func (s *fakeIngestStore) ClaimRunLogIngestBatch(_ context.Context, params db.ClaimRunLogIngestBatchParams) ([]db.ClaimRunLogIngestBatchRow, error) {
+func (s *fakeIngestStore) ClaimRunLogIngestBatch(ctx context.Context, params db.ClaimRunLogIngestBatchParams) ([]db.ClaimRunLogIngestBatchRow, error) {
+	if s.claimHook != nil {
+		s.claimHook(ctx)
+	}
 	s.runLogClaims = append(s.runLogClaims, params)
 	return s.runLogRows, nil
 }
@@ -259,6 +271,9 @@ func (s *fakeIngestStore) MarkTelemetryOutboxWritten(_ context.Context, params d
 	s.writtenCalls++
 	s.writtenIDs = append([]int64(nil), params.Ids...)
 	s.writtenCounts = append([]int32(nil), params.ExpectedRetryCounts...)
+	if s.writtenErr != nil {
+		return 0, s.writtenErr
+	}
 	if s.written != nil {
 		select {
 		case s.written <- struct{}{}:
@@ -297,14 +312,15 @@ func validRunLogRow() db.ClaimRunLogIngestBatchRow {
 		OrgID: pgvalue.UUID(uuid.NewV7()), ProjectID: pgvalue.UUID(uuid.NewV7()),
 		EnvironmentID: pgvalue.UUID(uuid.NewV7()), RunID: pgvalue.UUID(uuid.NewV7()),
 		RunLeaseID: pgvalue.UUID(uuid.NewV7()), AttemptNumber: pgtype.Int4{Int32: 3, Valid: true},
-		Content: []byte("hello"),
+		Content: []byte("hello"), SizeBytes: pgtype.Int8{Int64: 5, Valid: true},
+		CreatedAt: pgtype.Timestamptz{Time: time.Now().UTC().Truncate(time.Millisecond), Valid: true},
 	}
 }
 
 func TestRunLogRecordConvertsClaimedRow(t *testing.T) {
 	row := validRunLogRow()
 	record := runLogRecord(row)
-	if record.RunLeaseID != pgvalue.MustUUIDValue(row.RunLeaseID) || record.AttemptNumber != 3 || record.Content != "aGVsbG8=" {
+	if record.RunLeaseID != pgvalue.MustUUIDValue(row.RunLeaseID) || record.AttemptNumber != 3 || record.SizeBytes != 5 || !record.AcceptedAt.Equal(row.CreatedAt.Time) || string(record.Content) != "hello" {
 		t.Fatalf("record = %+v", record)
 	}
 }
@@ -320,5 +336,104 @@ func TestIngestRunLogsWritesClaimedBatch(t *testing.T) {
 	}
 	if len(store.failedIDs) != 0 || !slices.Equal(store.writtenIDs, []int64{1, 2}) || writer.runLogCalls != 1 {
 		t.Fatalf("failed = %v, written = %v, writes = %d", store.failedIDs, store.writtenIDs, writer.runLogCalls)
+	}
+}
+
+func TestEventRecordKeepsSubjectIdentityAndAcceptanceTime(t *testing.T) {
+	accepted := time.Now().UTC().Truncate(time.Millisecond)
+	for _, kind := range []string{"run", "deployment"} {
+		id := pgvalue.NewUUIDv7()
+		row := db.ClaimEventIngestBatchRow{OrgID: pgvalue.NewUUIDv7(), ProjectID: pgvalue.NewUUIDv7(), EnvironmentID: pgvalue.NewUUIDv7(), SubjectType: kind, SubjectID: id, CreatedAt: pgvalue.Timestamptz(accepted), OccurredAt: pgvalue.Timestamptz(accepted.Add(-time.Hour)), Payload: []byte(`{}`)}
+		if kind == "run" {
+			row.RunID = id
+		} else {
+			row.DeploymentID = id
+		}
+		record := eventRecord(row)
+		if !record.AcceptedAt.Equal(accepted) || !record.ObservedAt.Equal(accepted.Add(-time.Hour)) {
+			t.Fatalf("timestamps: %+v", record)
+		}
+		if kind == "run" {
+			if record.RunID == nil || *record.RunID != pgvalue.MustUUIDValue(id) || record.DeploymentID != nil {
+				t.Fatalf("run identity: %+v", record)
+			}
+		} else if record.DeploymentID == nil || *record.DeploymentID != pgvalue.MustUUIDValue(id) || record.RunID != nil || record.RunLeaseID != nil || record.AttemptNumber != nil {
+			t.Fatalf("deployment identity: %+v", record)
+		}
+		row.RetryCount++
+		if retry := eventRecord(row); !retry.AcceptedAt.Equal(record.AcceptedAt) {
+			t.Fatal("retry changed acceptance time")
+		}
+	}
+}
+
+func TestIngestAcknowledgmentFailurePreservesClaimFence(t *testing.T) {
+	errAck := errors.New("postgres acknowledgment failed")
+	row := validRunLogRow()
+	store := &fakeIngestStore{runLogRows: []db.ClaimRunLogIngestBatchRow{row}, writtenErr: errAck}
+	writer := &fakeIngestWriter{}
+	ingester := testIngestor(store, writer)
+	if _, err := ingester.ingestRunLogs(t.Context()); !errors.Is(err, errAck) {
+		t.Fatalf("error: %v", err)
+	}
+	if writer.runLogCalls != 1 || store.failureCalls != 0 || !slices.Equal(store.writtenCounts, []int32{row.RetryCount}) {
+		t.Fatal("ack failure must leave the original claim retryable")
+	}
+	store.writtenErr = nil
+	store.runLogRows[0].RetryCount++
+	if _, err := ingester.ingestRunLogs(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if writer.runLogCalls != 2 || !slices.Equal(store.writtenCounts, []int32{row.RetryCount + 1}) {
+		t.Fatal("retry did not acknowledge the new claim fence")
+	}
+}
+
+func TestIngestOperationBudgetPreservesLeaseHeadroomAndCallerDeadline(t *testing.T) {
+	for _, timeout := range []time.Duration{time.Hour, time.Second} {
+		ctx, cancel := context.WithTimeout(t.Context(), timeout)
+		defer cancel()
+		calls := 0
+		check := func(ctx context.Context) {
+			calls++
+			deadline, ok := ctx.Deadline()
+			if !ok || time.Until(deadline) <= 0 || time.Until(deadline) > min(timeout, defaultIngestOperationTimeout) {
+				t.Fatalf("claim or write deadline: %s %v", deadline, ok)
+			}
+		}
+		store := &fakeIngestStore{claimHook: check, eventRows: []db.ClaimEventIngestBatchRow{{OrgID: pgvalue.NewUUIDv7(), ProjectID: pgvalue.NewUUIDv7(), EnvironmentID: pgvalue.NewUUIDv7(), SubjectID: pgvalue.NewUUIDv7()}}}
+		i := testIngestor(store, &fakeIngestWriter{eventHook: check})
+		if _, err := i.ingestEvents(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := i.ingestRunLogs(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if calls != 3 {
+			t.Fatalf("budget checked %d times", calls)
+		}
+	}
+}
+
+func TestIngestCadenceWaitsAfterNonemptyCycleWithoutHoldingClaims(t *testing.T) {
+	started := make(chan time.Time, 3)
+	store := &fakeIngestStore{claimHook: func(context.Context) { started <- time.Now() }, eventRows: []db.ClaimEventIngestBatchRow{{OrgID: pgvalue.NewUUIDv7(), ProjectID: pgvalue.NewUUIDv7(), EnvironmentID: pgvalue.NewUUIDv7(), SubjectID: pgvalue.NewUUIDv7()}}}
+	i := testIngestor(store, &fakeIngestWriter{})
+	i.pollEvery = 60 * time.Millisecond
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- i.runIngest(ctx) }()
+	first := <-started
+	<-started // The log claim follows the event claim within the same cycle.
+	second := <-started
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancel: %v", err)
+	}
+	if second.Sub(first) < 50*time.Millisecond {
+		t.Fatalf("cycle restarted too soon: %s", second.Sub(first))
+	}
+	if store.writtenCalls != 1 {
+		t.Fatal("successful event was not acknowledged in its cycle")
 	}
 }

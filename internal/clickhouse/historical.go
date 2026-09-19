@@ -63,7 +63,7 @@ WHERE org_id = @org_id
     @all_levels
     OR (
       stream_name = 'structured'
-      AND JSONExtractString(base64Decode(content), 'level') IN @levels
+      AND level IN @levels
     )
   )
   AND seq > @after
@@ -151,22 +151,18 @@ type runLogRow struct {
 	StreamName    string    `ch:"stream_name"`
 	Seq           uint64    `ch:"seq"`
 	ObservedSeq   uint64    `ch:"observed_seq"`
-	Content       string    `ch:"content"`
-	SizeBytes     uint64    `ch:"size_bytes"`
+	Content       []byte    `ch:"content"`
+	SizeBytes     uint32    `ch:"size_bytes"`
 	ObservedAt    time.Time `ch:"observed_at"`
 }
 
 func (r runLogRow) chunk() api.RunLogChunk {
-	contentBase64 := r.Content
-	if _, err := base64.StdEncoding.DecodeString(r.Content); err != nil {
-		contentBase64 = base64.StdEncoding.EncodeToString([]byte(r.Content))
-	}
 	return api.RunLogChunk{
 		ID:            telemetry.Cursor(int64(r.Seq)),
 		RunID:         r.RunID,
 		AttemptNumber: r.AttemptNumber,
 		Stream:        r.StreamName,
-		ContentBase64: contentBase64,
+		ContentBase64: base64.StdEncoding.EncodeToString(r.Content),
 		Bytes:         int64(r.SizeBytes),
 		ObservedSeq:   int64(r.ObservedSeq),
 		At:            r.ObservedAt.UTC(),

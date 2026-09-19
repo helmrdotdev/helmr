@@ -7,10 +7,11 @@ import (
 )
 
 const (
-	MaxEventMessageBytes   = 4 << 10
-	MaxEventPayloadBytes   = 64 << 10
-	MaxRunLogContentBytes  = 192 << 10
-	MaxTelemetryBatchBytes = 8 << 20
+	MaxEventMessageBytes  = 4 << 10
+	MaxEventPayloadBytes  = 64 << 10
+	MaxRunLogContentBytes = 192 << 10
+	// MaxTelemetryBatchBytes bounds admitted payload, not Native wire or process size.
+	MaxTelemetryBatchBytes = 16 << 20
 )
 
 func ValidateEvent(message string, payload []byte) error {

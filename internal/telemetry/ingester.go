@@ -2,7 +2,6 @@ package telemetry
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,13 +16,14 @@ import (
 )
 
 const (
-	defaultIngestBatchSize     = int32(250)
-	defaultIngestLeaseDuration = 30 * time.Second
-	defaultIngestIdleEvery     = 250 * time.Millisecond
-	defaultIngestRetryAfter    = 2 * time.Second
-	defaultOutboxRetainFor     = 24 * time.Hour
-	defaultOutboxGCEvery       = time.Second
-	defaultOutboxGCBatchSize   = int32(2500)
+	defaultIngestBatchSize        = int32(10000)
+	defaultIngestLeaseDuration    = 30 * time.Second
+	defaultIngestPollEvery        = time.Second
+	defaultIngestOperationTimeout = 25 * time.Second
+	defaultIngestRetryAfter       = 2 * time.Second
+	defaultOutboxRetainFor        = 24 * time.Hour
+	defaultOutboxGCEvery          = time.Second
+	defaultOutboxGCBatchSize      = int32(2500)
 )
 
 type ingestStore interface {
@@ -42,7 +42,7 @@ type Ingestor struct {
 	batchSize     int32
 	batchBytes    int64
 	leaseDuration time.Duration
-	idleEvery     time.Duration
+	pollEvery     time.Duration
 	retryAfter    time.Duration
 	outboxRetain  time.Duration
 	gcEvery       time.Duration
@@ -66,7 +66,7 @@ func NewIngestor(log *slog.Logger, queries ingestStore, writer IngestWriter) (*I
 		batchSize:     defaultIngestBatchSize,
 		batchBytes:    MaxTelemetryBatchBytes,
 		leaseDuration: defaultIngestLeaseDuration,
-		idleEvery:     defaultIngestIdleEvery,
+		pollEvery:     defaultIngestPollEvery,
 		retryAfter:    defaultIngestRetryAfter,
 		outboxRetain:  defaultOutboxRetainFor,
 		gcEvery:       defaultOutboxGCEvery,
@@ -96,13 +96,14 @@ func (i *Ingestor) runIngest(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		cycleStarted := time.Now()
 		hadError := false
-		eventCount, err := i.ingestEvents(ctx)
+		_, err := i.ingestEvents(ctx)
 		if err != nil {
 			hadError = true
 			i.log.Warn("ingest event telemetry failed", "error", err)
 		}
-		logCount, err := i.ingestRunLogs(ctx)
+		_, err = i.ingestRunLogs(ctx)
 		if err != nil {
 			hadError = true
 			i.log.Warn("ingest run log telemetry failed", "error", err)
@@ -113,10 +114,11 @@ func (i *Ingestor) runIngest(ctx context.Context) error {
 			}
 			continue
 		}
-		if eventCount == 0 && logCount == 0 {
-			if err := sleep(ctx, i.idleEvery); err != nil {
-				return err
-			}
+		// Accumulate unleased rows in PostgreSQL between cycles. Large/slow
+		// cycles drain immediately; sparse traffic cannot create tiny parts in
+		// a tight loop. No claimed rows are held just to wait for a batch.
+		if err := sleep(ctx, time.Until(cycleStarted.Add(i.pollEvery))); err != nil {
+			return err
 		}
 	}
 }
@@ -157,6 +159,8 @@ func (i *Ingestor) runGC(ctx context.Context) {
 }
 
 func (i *Ingestor) ingestEvents(ctx context.Context) (int, error) {
+	ctx, cancel := context.WithTimeout(ctx, defaultIngestOperationTimeout)
+	defer cancel()
 	rows, err := i.db.ClaimEventIngestBatch(ctx, db.ClaimEventIngestBatchParams{
 		RowLimit:      i.batchSize,
 		MaxBatchBytes: i.batchBytes,
@@ -193,6 +197,8 @@ func (i *Ingestor) ingestEvents(ctx context.Context) (int, error) {
 }
 
 func (i *Ingestor) ingestRunLogs(ctx context.Context) (int, error) {
+	ctx, cancel := context.WithTimeout(ctx, defaultIngestOperationTimeout)
+	defer cancel()
 	rows, err := i.db.ClaimRunLogIngestBatch(ctx, db.ClaimRunLogIngestBatchParams{
 		RowLimit:      i.batchSize,
 		MaxBatchBytes: i.batchBytes,
@@ -415,6 +421,7 @@ func eventRecord(row db.ClaimEventIngestBatchRow) EventRecord {
 		EventKind:      row.Kind,
 		Seq:            uint64(row.Seq),
 		RunID:          optionalUUID(row.RunID),
+		DeploymentID:   optionalUUID(row.DeploymentID),
 		RunLeaseID:     optionalUUID(row.RunLeaseID),
 		AttemptNumber:  optionalInt32(row.AttemptNumber),
 		TraceID:        pgvalue.TextValue(row.TraceID),
@@ -430,6 +437,7 @@ func eventRecord(row db.ClaimEventIngestBatchRow) EventRecord {
 		RetentionClass: "standard",
 		RedactionClass: row.RedactionClass,
 		ObservedAt:     observedAt(row.OccurredAt, row.CreatedAt),
+		AcceptedAt:     pgvalue.Time(row.CreatedAt),
 	}
 }
 
@@ -444,13 +452,14 @@ func runLogRecord(row db.ClaimRunLogIngestBatchRow) RunLogRecord {
 		StreamName:     string(row.Stream),
 		Seq:            uint64(row.Seq),
 		ObservedSeq:    uint64(pgvalue.Int8Value(row.ObservedSeq)),
-		Content:        base64.StdEncoding.EncodeToString(row.Content),
-		SizeBytes:      uint64(pgvalue.Int8Value(row.SizeBytes)),
+		Content:        row.Content,
+		SizeBytes:      uint32(pgvalue.Int8Value(row.SizeBytes)),
 		IdempotencyKey: row.IdempotencyKey,
 		RetentionClass: "standard",
 		RedactionClass: "standard",
 		Source:         "worker",
 		ObservedAt:     observedAt(pgtype.Timestamptz{}, row.CreatedAt),
+		AcceptedAt:     pgvalue.Time(row.CreatedAt),
 	}
 }
 

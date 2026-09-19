@@ -2003,6 +2003,12 @@ CREATE TABLE telemetry_outbox (
     payload JSONB NOT NULL DEFAULT '{}'::jsonb,
     content BYTEA,
     size_bytes BIGINT CHECK (size_bytes IS NULL OR size_bytes >= 0),
+    ingest_size_bytes BIGINT GENERATED ALWAYS AS (
+        CASE WHEN stream_kind = 'event'
+            THEN octet_length(message)::bigint + octet_length(payload::text)::bigint
+            ELSE COALESCE(size_bytes, 0)
+        END
+    ) STORED NOT NULL,
     observed_seq BIGINT CHECK (observed_seq IS NULL OR observed_seq >= 0),
     redaction_class TEXT NOT NULL DEFAULT 'internal',
     retention_class TEXT NOT NULL DEFAULT 'standard',

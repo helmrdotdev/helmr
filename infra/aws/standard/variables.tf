@@ -131,24 +131,135 @@ variable "clickhouse_url" {
   }
 }
 
-variable "clickhouse_user" {
-  description = "Optional ClickHouse username for historical telemetry."
+variable "clickhouse_access_mode" {
+  description = "Use bootstrap to provision dedicated ClickHouse users, or external for users provisioned separately."
   type        = string
-  default     = null
-  nullable    = true
+  validation {
+    condition     = contains(["bootstrap", "external"], var.clickhouse_access_mode)
+    error_message = "clickhouse_access_mode must be bootstrap or external."
+  }
 }
 
-variable "clickhouse_password_secret_arn" {
-  description = "Secrets Manager ARN for CLICKHOUSE_PASSWORD when the ClickHouse endpoint requires a password."
+variable "clickhouse_reader_user" {
+  description = "Explicit ClickHouse reader username."
   type        = string
-  default     = null
-  nullable    = true
+  nullable    = false
+  validation {
+    condition     = can(regex("^[A-Za-z_][A-Za-z0-9_]{0,63}$", var.clickhouse_reader_user))
+    error_message = "clickhouse_reader_user must be a simple non-empty SQL identifier."
+  }
 }
 
-variable "clickhouse_password_kms_key_arns" {
-  description = "Optional customer-managed KMS key ARNs needed to decrypt clickhouse_password_secret_arn."
+variable "clickhouse_reader_password_secret_arn" {
+  description = "Secrets Manager ARN containing the ClickHouse reader password."
+  type        = string
+  nullable    = false
+  validation {
+    condition     = can(regex("^arn:aws[a-zA-Z-]*:secretsmanager:[^:]+:[0-9]{12}:secret:.+$", var.clickhouse_reader_password_secret_arn))
+    error_message = "clickhouse_reader_password_secret_arn must be a Secrets Manager secret ARN."
+  }
+}
+
+variable "clickhouse_reader_password_kms_key_arns" {
+  description = "Optional customer-managed KMS key ARNs for the ClickHouse reader secret."
   type        = list(string)
   default     = []
+  validation {
+    condition     = alltrue([for arn in var.clickhouse_reader_password_kms_key_arns : trimspace(arn) != ""])
+    error_message = "clickhouse_reader_password_kms_key_arns entries must be non-empty."
+  }
+}
+
+variable "clickhouse_ingester_user" {
+  description = "Explicit ClickHouse ingester username."
+  type        = string
+  nullable    = false
+  validation {
+    condition     = can(regex("^[A-Za-z_][A-Za-z0-9_]{0,63}$", var.clickhouse_ingester_user))
+    error_message = "clickhouse_ingester_user must be a simple non-empty SQL identifier."
+  }
+}
+
+variable "clickhouse_ingester_password_secret_arn" {
+  description = "Secrets Manager ARN containing the ClickHouse ingester password."
+  type        = string
+  nullable    = false
+  validation {
+    condition     = can(regex("^arn:aws[a-zA-Z-]*:secretsmanager:[^:]+:[0-9]{12}:secret:.+$", var.clickhouse_ingester_password_secret_arn))
+    error_message = "clickhouse_ingester_password_secret_arn must be a Secrets Manager secret ARN."
+  }
+}
+
+variable "clickhouse_ingester_password_kms_key_arns" {
+  description = "Optional customer-managed KMS key ARNs for the ClickHouse ingester secret."
+  type        = list(string)
+  default     = []
+  validation {
+    condition     = alltrue([for arn in var.clickhouse_ingester_password_kms_key_arns : trimspace(arn) != ""])
+    error_message = "clickhouse_ingester_password_kms_key_arns entries must be non-empty."
+  }
+}
+
+variable "clickhouse_migration_user" {
+  description = "Explicit ClickHouse migration username."
+  type        = string
+  nullable    = false
+  validation {
+    condition     = can(regex("^[A-Za-z_][A-Za-z0-9_]{0,63}$", var.clickhouse_migration_user))
+    error_message = "clickhouse_migration_user must be a simple non-empty SQL identifier."
+  }
+}
+
+variable "clickhouse_migration_password_secret_arn" {
+  description = "Secrets Manager ARN containing the ClickHouse migration password."
+  type        = string
+  nullable    = false
+  validation {
+    condition     = can(regex("^arn:aws[a-zA-Z-]*:secretsmanager:[^:]+:[0-9]{12}:secret:.+$", var.clickhouse_migration_password_secret_arn))
+    error_message = "clickhouse_migration_password_secret_arn must be a Secrets Manager secret ARN."
+  }
+}
+
+variable "clickhouse_migration_password_kms_key_arns" {
+  description = "Optional customer-managed KMS key ARNs for the ClickHouse migration secret."
+  type        = list(string)
+  default     = []
+  validation {
+    condition     = alltrue([for arn in var.clickhouse_migration_password_kms_key_arns : trimspace(arn) != ""])
+    error_message = "clickhouse_migration_password_kms_key_arns entries must be non-empty."
+  }
+}
+
+variable "clickhouse_bootstrap_user" {
+  description = "Explicit ClickHouse bootstrap username."
+  type        = string
+  default     = null
+  nullable    = true
+  validation {
+    condition     = var.clickhouse_bootstrap_user == null || can(regex("^[A-Za-z_][A-Za-z0-9_]{0,63}$", var.clickhouse_bootstrap_user))
+    error_message = "clickhouse_bootstrap_user must be a simple non-empty SQL identifier."
+  }
+}
+
+variable "clickhouse_bootstrap_password_secret_arn" {
+  description = "Secrets Manager ARN containing the ClickHouse bootstrap password."
+  type        = string
+  default     = null
+  nullable    = true
+  validation {
+    condition     = var.clickhouse_bootstrap_password_secret_arn == null || can(regex("^arn:aws[a-zA-Z-]*:secretsmanager:[^:]+:[0-9]{12}:secret:.+$", var.clickhouse_bootstrap_password_secret_arn))
+    error_message = "clickhouse_bootstrap_password_secret_arn must be a Secrets Manager secret ARN."
+  }
+}
+
+variable "clickhouse_bootstrap_password_kms_key_arns" {
+  description = "Optional customer-managed KMS key ARNs for the ClickHouse bootstrap secret."
+  type        = list(string)
+  default     = []
+  validation {
+    condition     = alltrue([for arn in var.clickhouse_bootstrap_password_kms_key_arns : trimspace(arn) != ""])
+    error_message = "clickhouse_bootstrap_password_kms_key_arns entries must be non-empty."
+  }
 }
 
 variable "additional_controlplane_security_group_ids" {

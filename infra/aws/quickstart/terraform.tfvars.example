@@ -20,11 +20,18 @@ controlplane_assign_public_ip = true
 github_oauth_client_id = "replace-with-github-oauth-client-id"
 
 clickhouse_url  = "https://replace-me.clickhouse.cloud:8443"
-clickhouse_user = "default"
-clickhouse_password_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:replace-me"
+clickhouse_access_mode = "external"
+clickhouse_reader_user = "helmr_telemetry_reader"
+clickhouse_reader_password_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:telemetry-reader"
+clickhouse_ingester_user = "helmr_telemetry_ingester"
+clickhouse_ingester_password_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:telemetry-ingester"
+clickhouse_migration_user = "helmr_telemetry_migration"
+clickhouse_migration_password_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:telemetry-migration"
 # When the ClickHouse password secret uses a customer-managed key outside this
 # stack, allow the control and dispatcher execution roles to decrypt it.
-# clickhouse_password_kms_key_arns = ["<clickhouse-password-kms-key-arn>"]
+# clickhouse_reader_password_kms_key_arns = ["<clickhouse-password-kms-key-arn>"]
+# clickhouse_ingester_password_kms_key_arns = ["<clickhouse-password-kms-key-arn>"]
+# clickhouse_migration_password_kms_key_arns = ["<clickhouse-password-kms-key-arn>"]
 # When using the ClickHouse Cloud PrivateLink module, attach its client security
 # group to control, dispatcher, and migration tasks.
 # additional_controlplane_security_group_ids = ["<clickhouse-client-security-group-id>"]

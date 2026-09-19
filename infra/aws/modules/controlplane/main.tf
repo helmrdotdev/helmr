@@ -8,28 +8,34 @@ locals {
   smtp_addr                     = var.smtp_addr == null ? "" : var.smtp_addr
   smtp_username                 = var.smtp_username == null ? "" : var.smtp_username
   clickhouse_url                = trimspace(var.clickhouse_url)
-  clickhouse_user               = var.clickhouse_user == null ? "" : var.clickhouse_user
   bootstrap_region_id           = trimspace(coalesce(var.bootstrap_region_id, data.aws_region.current.region))
   bootstrap_region_display_name = trimspace(coalesce(var.bootstrap_region_display_name, local.bootstrap_region_id))
   secret_kms_key_arns = distinct(concat(
     [aws_kms_key.helmr.arn],
-    var.clickhouse_password_kms_key_arns,
+    var.clickhouse_reader_password_kms_key_arns,
     var.capacity_token_kms_key_arn == null ? [] : [var.capacity_token_kms_key_arn]
   ))
   dispatcher_secret_kms_key_arns = distinct(concat(
     [aws_kms_key.helmr.arn],
-    var.clickhouse_password_kms_key_arns
+    var.clickhouse_ingester_password_kms_key_arns
   ))
   controlplane_security_group_ids = concat(
     [aws_security_group.controlplane.id],
     var.additional_controlplane_security_group_ids
   )
 
-  clickhouse_environment = merge({
-    CLICKHOUSE_URL = local.clickhouse_url
-    }, local.clickhouse_user == "" ? {} : {
-    CLICKHOUSE_USER = local.clickhouse_user
-  })
+  clickhouse_reader_environment = {
+    CLICKHOUSE_URL  = local.clickhouse_url
+    CLICKHOUSE_USER = var.clickhouse_reader_user
+  }
+  clickhouse_ingester_environment = {
+    CLICKHOUSE_URL  = local.clickhouse_url
+    CLICKHOUSE_USER = var.clickhouse_ingester_user
+  }
+  clickhouse_migration_environment = {
+    CLICKHOUSE_URL  = local.clickhouse_url
+    CLICKHOUSE_USER = var.clickhouse_migration_user
+  }
   bootstrap_environment = var.bootstrap_enabled ? {
     BOOTSTRAP_ENABLED             = "1"
     BOOTSTRAP_REGION_ID           = local.bootstrap_region_id
@@ -37,14 +43,33 @@ locals {
     BOOTSTRAP_WORKER_GROUP_NAME   = var.bootstrap_worker_group_name
   } : {}
 
-  telemetry_secrets = var.clickhouse_password_secret_arn == null ? {} : {
-    CLICKHOUSE_PASSWORD = var.clickhouse_password_secret_arn
+  clickhouse_reader_secrets   = { CLICKHOUSE_PASSWORD = var.clickhouse_reader_password_secret_arn }
+  clickhouse_ingester_secrets = { CLICKHOUSE_PASSWORD = var.clickhouse_ingester_password_secret_arn }
+  migration_secrets = {
+    DATABASE_URL        = aws_secretsmanager_secret.database_url.arn
+    CLICKHOUSE_PASSWORD = var.clickhouse_migration_password_secret_arn
   }
-  migration_secrets = merge({
-    DATABASE_URL = aws_secretsmanager_secret.database_url.arn
-  }, local.telemetry_secrets)
-
-  migration_environment = local.clickhouse_environment
+  migration_environment         = local.clickhouse_migration_environment
+  migration_secret_kms_key_arns = distinct(concat([aws_kms_key.helmr.arn], var.clickhouse_migration_password_kms_key_arns))
+  clickhouse_bootstrap_environment = {
+    CLICKHOUSE_URL            = local.clickhouse_url
+    CLICKHOUSE_BOOTSTRAP_USER = var.clickhouse_bootstrap_user
+    CLICKHOUSE_READER_USER    = var.clickhouse_reader_user
+    CLICKHOUSE_INGESTER_USER  = var.clickhouse_ingester_user
+    CLICKHOUSE_MIGRATION_USER = var.clickhouse_migration_user
+  }
+  clickhouse_bootstrap_secrets = {
+    CLICKHOUSE_BOOTSTRAP_PASSWORD = var.clickhouse_bootstrap_password_secret_arn
+    CLICKHOUSE_READER_PASSWORD    = var.clickhouse_reader_password_secret_arn
+    CLICKHOUSE_INGESTER_PASSWORD  = var.clickhouse_ingester_password_secret_arn
+    CLICKHOUSE_MIGRATION_PASSWORD = var.clickhouse_migration_password_secret_arn
+  }
+  clickhouse_bootstrap_kms_key_arns = distinct(concat(
+    var.clickhouse_bootstrap_password_kms_key_arns,
+    var.clickhouse_reader_password_kms_key_arns,
+    var.clickhouse_ingester_password_kms_key_arns,
+    var.clickhouse_migration_password_kms_key_arns,
+  ))
 
   database_bootstrap_environment = {
     DATABASE_ADMIN_HOST = aws_db_instance.postgres.address
@@ -93,7 +118,7 @@ locals {
     API_ORIGIN                         = coalesce(var.api_origin, local.controlplane_url)
     REDIS_URL                          = local.redis_url
     GITHUB_OAUTH_CLIENT_ID             = var.github_oauth_client_id
-  }, local.bootstrap_environment, local.clickhouse_environment, local.email_environment)
+  }, local.bootstrap_environment, local.clickhouse_reader_environment, local.email_environment)
 
   controlplane_secret_defaults = merge({
     DATABASE_URL               = aws_secretsmanager_secret.database_url.arn
@@ -113,7 +138,7 @@ locals {
     var.capacity_token_secret_arn == null ? {} : {
       CAPACITY_TOKEN = var.capacity_token_secret_arn
     },
-    local.telemetry_secrets,
+    local.clickhouse_reader_secrets,
     local.email_secrets
   )
 
@@ -145,14 +170,14 @@ locals {
   controlplane_environment           = merge(var.controlplane_environment, local.controlplane_environment_defaults)
   controlplane_secrets               = local.controlplane_secret_defaults
 
-  dispatcher_environment_defaults = local.clickhouse_environment
+  dispatcher_environment_defaults = local.clickhouse_ingester_environment
   dispatcher_environment          = merge(var.dispatcher_environment, local.dispatcher_environment_defaults)
 
   dispatcher_secrets = merge({
     ENCRYPTION_KEY        = aws_secretsmanager_secret.encryption_key.arn
     DATABASE_URL          = aws_secretsmanager_secret.database_url.arn
     WORKSPACE_FENCING_KEY = aws_secretsmanager_secret.workspace_fencing_key.arn
-    }, local.telemetry_secrets
+    }, local.clickhouse_ingester_secrets
   )
 
   redis_url = "rediss://${aws_elasticache_replication_group.event_stream.primary_endpoint_address}:${aws_elasticache_replication_group.event_stream.port}/0"
@@ -1067,7 +1092,7 @@ resource "aws_ecs_task_definition" "migration" {
   network_mode             = "awsvpc"
   cpu                      = "256"
   memory                   = "512"
-  execution_role_arn       = aws_iam_role.controlplane_execution.arn
+  execution_role_arn       = aws_iam_role.migration_execution.arn
   task_role_arn            = aws_iam_role.migration_task.arn
   tags                     = var.tags
 
@@ -1301,4 +1326,205 @@ resource "aws_secretsmanager_secret" "worker_enrollment" {
   kms_key_id              = aws_kms_key.helmr.arn
   recovery_window_in_days = var.secret_recovery_window_in_days
   tags                    = var.tags
+}
+resource "aws_iam_role" "migration_execution" {
+  permissions_boundary = var.permissions_boundary_arn
+  name                 = "${local.name}-migration-execution"
+  tags                 = var.tags
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "ecs-tasks.amazonaws.com"
+      }
+      Action = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role" "clickhouse_bootstrap_execution" {
+  count                = var.clickhouse_access_mode == "bootstrap" ? 1 : 0
+  permissions_boundary = var.permissions_boundary_arn
+  name                 = "${local.name}-clickhouse-bootstrap-execution"
+  tags                 = var.tags
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "ecs-tasks.amazonaws.com"
+      }
+      Action = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "migration_execution" {
+  name = "${local.name}-migration-execution"
+  role = aws_iam_role.migration_execution.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = concat([
+      {
+        Sid      = "WriteMigrationLogs"
+        Effect   = "Allow"
+        Action   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+        Resource = "${aws_cloudwatch_log_group.controlplane.arn}:*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:GetSecretValue"
+        ]
+        Resource = values(local.migration_secrets)
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt"
+        ]
+        Resource = local.migration_secret_kms_key_arns
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "secretsmanager.${data.aws_region.current.region}.amazonaws.com"
+          }
+        }
+      }
+      ], var.controlplane_image_repository_arn == null ? [] : [
+      {
+        Sid      = "AuthenticateControlPlaneReleaseRegistry"
+        Effect   = "Allow"
+        Action   = ["ecr:GetAuthorizationToken"]
+        Resource = "*"
+      },
+      {
+        Sid    = "PullControlPlaneReleaseImage"
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchGetImage",
+          "ecr:GetDownloadUrlForLayer"
+        ]
+        Resource = var.controlplane_image_repository_arn
+      }
+    ])
+  })
+}
+
+resource "aws_iam_role_policy" "clickhouse_bootstrap_execution" {
+  count = var.clickhouse_access_mode == "bootstrap" ? 1 : 0
+  name  = "${local.name}-clickhouse-bootstrap-execution"
+  role  = aws_iam_role.clickhouse_bootstrap_execution[0].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = concat([
+      {
+        Sid      = "WriteClickHouseBootstrapLogs"
+        Effect   = "Allow"
+        Action   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+        Resource = "${aws_cloudwatch_log_group.controlplane.arn}:*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:GetSecretValue"
+        ]
+        Resource = values(local.clickhouse_bootstrap_secrets)
+      }
+      ], length(local.clickhouse_bootstrap_kms_key_arns) == 0 ? [] : [
+      {
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt"
+        ]
+        Resource = local.clickhouse_bootstrap_kms_key_arns
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "secretsmanager.${data.aws_region.current.region}.amazonaws.com"
+          }
+        }
+      }
+      ], var.controlplane_image_repository_arn == null ? [] : [
+      {
+        Sid      = "AuthenticateControlPlaneReleaseRegistry"
+        Effect   = "Allow"
+        Action   = ["ecr:GetAuthorizationToken"]
+        Resource = "*"
+      },
+      {
+        Sid    = "PullControlPlaneReleaseImage"
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchGetImage",
+          "ecr:GetDownloadUrlForLayer"
+        ]
+        Resource = var.controlplane_image_repository_arn
+      }
+    ])
+  })
+}
+
+resource "aws_ecs_task_definition" "clickhouse_bootstrap" {
+  count                    = var.clickhouse_access_mode == "bootstrap" ? 1 : 0
+  family                   = "${local.name}-clickhouse-bootstrap"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = "256"
+  memory                   = "512"
+  execution_role_arn       = aws_iam_role.clickhouse_bootstrap_execution[0].arn
+  tags                     = var.tags
+
+  runtime_platform {
+    operating_system_family = "LINUX"
+    cpu_architecture        = var.controlplane_architecture
+  }
+
+  container_definitions = jsonencode([{
+    name       = "clickhouse-bootstrap"
+    image      = var.controlplane_image
+    essential  = true
+    entryPoint = var.controlplane_entrypoint
+    command    = ["clickhouse-bootstrap"]
+    environment = [
+      for key, value in local.clickhouse_bootstrap_environment : {
+        name  = key
+        value = value
+      }
+    ]
+    secrets = [
+      for key, value in local.clickhouse_bootstrap_secrets : {
+        name      = key
+        valueFrom = value
+      }
+    ]
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        awslogs-group         = aws_cloudwatch_log_group.controlplane.name
+        awslogs-region        = data.aws_region.current.region
+        awslogs-stream-prefix = "clickhouse-bootstrap"
+      }
+    }
+  }])
+}
+
+resource "terraform_data" "clickhouse_access_preconditions" {
+  lifecycle {
+    precondition {
+      condition     = length(distinct([var.clickhouse_reader_user, var.clickhouse_ingester_user, var.clickhouse_migration_user])) == 3 && !contains([var.clickhouse_reader_user, var.clickhouse_ingester_user, var.clickhouse_migration_user], "default")
+      error_message = "ClickHouse reader, ingester and migration users must be distinct and must not use default."
+    }
+    precondition {
+      condition     = length(distinct([var.clickhouse_reader_password_secret_arn, var.clickhouse_ingester_password_secret_arn, var.clickhouse_migration_password_secret_arn])) == 3
+      error_message = "ClickHouse application passwords must use three distinct Secrets Manager secrets."
+    }
+    precondition {
+      condition     = var.clickhouse_access_mode == "bootstrap" ? (var.clickhouse_bootstrap_user != null && var.clickhouse_bootstrap_password_secret_arn != null && !contains([var.clickhouse_reader_user, var.clickhouse_ingester_user, var.clickhouse_migration_user], var.clickhouse_bootstrap_user) && !contains([var.clickhouse_reader_password_secret_arn, var.clickhouse_ingester_password_secret_arn, var.clickhouse_migration_password_secret_arn], var.clickhouse_bootstrap_password_secret_arn)) : (var.clickhouse_bootstrap_user == null && var.clickhouse_bootstrap_password_secret_arn == null && length(var.clickhouse_bootstrap_password_kms_key_arns) == 0)
+      error_message = "Bootstrap mode requires a separate administrator credential; external mode must not provide bootstrap credentials."
+    }
+  }
 }

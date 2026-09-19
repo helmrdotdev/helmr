@@ -54,19 +54,26 @@ override_module {
 }
 
 variables {
-  aws_region                        = "us-east-1"
-  worker_group_name                 = "workers"
-  region_id                         = "us-east-1"
-  platform_store_uri                = "s3://helmr-test-platform/objects"
-  platform_store_bucket_arn         = "arn:aws:s3:::helmr-test-platform"
-  platform_store_kms_key_arn        = "arn:aws:kms:us-east-1:111122223333:key/11111111-1111-1111-1111-111111111111"
-  clickhouse_url                    = "https://clickhouse.example.test:8443"
-  helmr_version                     = "v0.0.0-test"
-  github_oauth_client_id            = "github-client"
-  worker_network_blocked_ipv4_cidrs = ["10.0.0.0/8", "10.81.0.0/16", "169.254.0.0/16"]
-  public_url                        = "https://helmr.example.test"
-  controlplane_image                = "111122223333.dkr.ecr.us-east-1.amazonaws.com/helmr@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-  worker_ami_id                     = "ami-00000000000000000"
+  aws_region                               = "us-east-1"
+  worker_group_name                        = "workers"
+  region_id                                = "us-east-1"
+  platform_store_uri                       = "s3://helmr-test-platform/objects"
+  platform_store_bucket_arn                = "arn:aws:s3:::helmr-test-platform"
+  platform_store_kms_key_arn               = "arn:aws:kms:us-east-1:111122223333:key/11111111-1111-1111-1111-111111111111"
+  clickhouse_url                           = "https://clickhouse.example.test:8443"
+  clickhouse_access_mode                   = "external"
+  clickhouse_reader_user                   = "telemetry_reader"
+  clickhouse_reader_password_secret_arn    = "arn:aws:secretsmanager:us-east-1:000000000000:secret:telemetry-reader"
+  clickhouse_ingester_user                 = "telemetry_ingester"
+  clickhouse_ingester_password_secret_arn  = "arn:aws:secretsmanager:us-east-1:000000000000:secret:telemetry-ingester"
+  clickhouse_migration_user                = "telemetry_migration"
+  clickhouse_migration_password_secret_arn = "arn:aws:secretsmanager:us-east-1:000000000000:secret:telemetry-migration"
+  helmr_version                            = "v0.0.0-test"
+  github_oauth_client_id                   = "github-client"
+  worker_network_blocked_ipv4_cidrs        = ["10.0.0.0/8", "10.81.0.0/16", "169.254.0.0/16"]
+  public_url                               = "https://helmr.example.test"
+  controlplane_image                       = "111122223333.dkr.ecr.us-east-1.amazonaws.com/helmr@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  worker_ami_id                            = "ami-00000000000000000"
 
   create_worker                       = false
   worker_instance_type                = "c8i.xlarge"

@@ -171,6 +171,17 @@ let
           done
           python3 tests/aws_root_composition_test.py "$root_plans/quickstart.jsonl" "$root_plans/standard.jsonl" "$root_plans/worker-image.jsonl"
         '';
+    ci-clickhouse =
+      let
+        pkgsClickHouse = import nixpkgs-clickhouse { inherit system; };
+      in
+      app "ci-clickhouse" "run real ClickHouse projection and access tests"
+        (toolsets.ciGo ++ [ pkgsClickHouse.clickhouse ])
+        ''
+          unset HELMR_TEST_CLICKHOUSE_URL HELMR_TEST_CLICKHOUSE_IDLE_ONLY HELMR_TEST_CLICKHOUSE_BATCH_KIND
+          export HELMR_TEST_CLICKHOUSE_BOOTSTRAP=1
+          exec go test -race -count=1 ./internal/clickhouse/... ./internal/telemetry
+        '';
     ci-postgres = app "ci-postgres" "run Postgres-backed CI tests" toolsets.ciPostgres ''
       exec ./scripts/ci-postgres.sh "$@"
     '';
@@ -192,6 +203,7 @@ ciApps
     ${ciApps.ci-linux-lint.program}
     ${ciApps.ci-infra-test.program}
     ${ciApps.ci-postgres.program}
+    ${ciApps.ci-clickhouse.program}
   '';
   ci-bundle-builder =
     app "ci-bundle-builder" "run the canonical bundle builder end-to-end tests" toolsets.ciBundleBuilder

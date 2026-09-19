@@ -151,3 +151,8 @@ output "worker_enrollment_secret_arn" {
   description = "Enrollment token secret shared by the initial Worker Group and its Workers."
   value       = var.bootstrap_enabled ? aws_secretsmanager_secret.worker_enrollment[0].arn : null
 }
+
+output "clickhouse_bootstrap_task_definition_arn" {
+  description = "Task definition for provisioning ClickHouse application users, present only in bootstrap mode."
+  value       = one(aws_ecs_task_definition.clickhouse_bootstrap[*].arn)
+}
