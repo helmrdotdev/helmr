@@ -719,3 +719,73 @@ those boundaries. Generic CI/finite-output examples do not substitute for the
 required native human-interaction example. No new worktree was created; existing
 integration/HQ and retained frozen worktrees remain as recorded. No merge, push,
 publication, deployment or shared-environment reset occurred.
+
+## Package 4 — editable native issue-fixer samples (2026-09-20)
+
+Parent-owned application slice at base
+`7229dc5b858b44fc775a7f86b9e907139e5e36a0` adds separate Codex app-server and
+Claude SDK Actors under `dev/workflows/tasks/issue-fixer`, plus an authenticated
+Slack interface under `dev/workflows/interfaces`. No SDK/runtime/REST primitive
+implementation changes. Each Actor installs message readiness, publishes exact
+native requests, uses a fresh scoped permission-admission write before allow,
+invalidates cancelled callbacks, streams output, waits for the direct native process
+to close and runs fixed repository checks before explicit settlement. Claude
+follow-ups are serialized after each native result; Codex uses exact native steer.
+
+Slack verifies raw-body signatures and a configured app/team/channel/user binding.
+New issues enqueue; replies and stops retain their original Turn. Intake uses the
+Slack event ID as the idempotency key and only ACKs successful admission. Finite
+Slack retries are not indefinite durable ingress. Retained output updates one
+preconfigured bot message before persisting its cursor; an uncertain response
+repeats the same update rather than posting another message. The README explains
+mounting, commands, current-hold resume, limited status projection and failure limits.
+
+Qualification:
+
+- Pinned Nix workflow typecheck and nine targeted tests pass in
+  `/tmp/session-issue-fixer-checks.log`. Run the two test files separately because
+  the native-boundary fixture mocks the provider module: `bun test
+  dev/workflows/tests/issue-fixer.test.ts` and `bun test
+  dev/workflows/tests/issue-fixer-native.test.ts`.
+- Tests cover out-of-order/duplicate/stale replies, wrong question keys, stop-first
+  rejection before local abort, ambiguous admission writes, native cancellation
+  during admission, signed interface authorization/immutable targeting/text decoding,
+  and cursor retention after uncertain Slack update. A real delayed subprocess
+  fixture exercises the actual Claude Actor handler: two rapid follow-ups, direct
+  exit before checks, then a failed check rather than completion. A Codex transport
+  fixture invalidates a request while notification projection is blocked.
+- Codex 0.133.0 generated TypeScript protocol in
+  `/tmp/helmr-issue-fixer-codex-protocol` confirms request/answer and startup schemas.
+  Actual pinned binary `initialize`/`initialized` handshake passes in
+  `/tmp/session-issue-fixer-codex-handshake.log`; no thread, model or login request
+  was sent. The old binary reports an incompatible host config field and falls
+  back to defaults; this startup evidence does not qualify model configuration.
+- Claude 0.3.149 declarations and current official docs establish callback input,
+  answer mapping, the process-spawn hook and non-awaitable `close()`. Sources and
+  exact installed versions are linked in the sample README.
+- An initial Bun assertion form attached two pending rejection matchers to the same
+  error and spun the test process. The owned processes were stopped; collecting
+  the rejection before asserting resolves it. Only the final successful log counts.
+- Fresh medium combined review `/root/issue_fixer_review` found three application
+  defects: non-awaited Claude exit, Codex invalidation blocked behind output, and
+  undecoded Slack text entities. All are corrected with boundary regressions;
+  correction review reports no remaining actionable findings or unjustified
+  abstractions. No provider adapter interface was added.
+
+The Founder explicitly requested unbiased primitive reassessment while building
+samples, including `session.send` versus `enqueue`, and a return for decision before
+implementing any proposed public primitive change. The review finds distinct FIFO
+admission and exact interaction necessary. Atomic automatic routing can serve a
+same-meaning conversational input but is not exercised by this issue fixer; neither
+its removal nor broadening follows from this sample. Native callbacks remain
+separate from durable Tokens. No additional permission primitive is established by
+the application corrections. These observations are not a permanent API freeze.
+
+Remaining proof: actual native model requests/responses and permission effects,
+Slack delivery/ACK latency, A/B queue/stop/late-reply/current-hold resume in the
+runtime, descendant exclusion, remote-effect reconciliation and checkpoint/restore.
+Direct child closure is not proof of those boundaries and cannot justify ordinary
+success with known unresolved work. Full native execution acceptance stays open;
+this is a locally validated sample slice, not completed package 5 qualification.
+No new worktree, paid inference, real outbound message, merge, push, publication,
+deployment or shared database reset occurred. Existing worktrees remain retained.
