@@ -598,3 +598,66 @@ first-party callers, examples and remaining website documentation still require
 package 4 work; native integrated qualification remains package 5. No new worktree
 was created; the existing integration and HQ plan checkouts remain active, and
 previous frozen writer worktrees remain retained under the HQ Handoff.
+
+## Package 4 — Console consumer slice (2026-09-20)
+
+Parent-owned candidate at CLI base `cdf34ca65ba9d9adf8fa2d62a44cb12ac02f9290`.
+Replaced separate input/output queries and timestamp interleaving with one retained
+event sequence. Added Turn inspection, result/error/readiness, Session send versus
+FIFO enqueue and exact Turn messages, exact interrupt/resume confirmations and
+operation receipts. Session closing continues polling; terminal Session observation
+performs a final dependent read of events, Turn and Run history. The last observed
+active Turn remains inspectable after its active pointer clears. Session/scope
+navigation remounts local mutation state; confirmation targets and retry keys stay
+bound to the originally selected Turn/hold. Recovery-required holds direct operators
+to explicit CLI reconciliation. No recovery override or SDK changes were added.
+
+Updated closing status and API-key lifecycle grant options. Replaced obsolete demo
+records with five ordered events and two completed/failed Turns, demonstrating that
+a failed Turn can coexist with an open Session. Demo seed uses the current event
+allocator and succeeds against a fresh isolated PostgreSQL database.
+
+Evidence:
+
+- `bun run --cwd packages/console typecheck` passes, including final correction.
+- `bun test packages/console/src`: 93 pass, zero fail; log
+  `/tmp/helmr-console-checks.log`.
+- Console production build passes. Final tested embedded bundle is
+  `index-BP7MJnIn.js`, stylesheet `index-BwHXMLXK.css`; stack build log
+  `/tmp/helmr-console-stack-final.log`.
+- `env -u HELMR_TEST_DATABASE_URL -u HELMR_SKIP_POSTGRES_TESTS go test
+  ./cmd/internal/dev-controlplane -run 'TestDemoEnvironmentSeed|TestDevSeedRestart'
+  -count=1` under pinned Nix with umask 022 passes (2.059s).
+- `HELMR_E2E_BASE_URL=http://127.0.0.1:18420 bun run test:browser
+  tests/browser/session-lifecycle.spec.ts tests/browser/console-demo.spec.ts`:
+  4 pass (2.7s), final log `/tmp/helmr-console-browser-final.log`. Two real demo
+  tests exercise local login, scope, seed and rendering. Two response-controlled
+  UI regressions exercise stale projections at terminal transition, interruption
+  receipt versus convergence, exact confirmed hold despite subsequent polling,
+  and retained idempotency on retry.
+- Native in-app browser at the same isolated local stack verified the five-event
+  order, failed Turn with open Session, rejection of a late exact-Turn reply,
+  and a real enqueue receipt followed by event sequence 6. Screenshot inspection
+  found no overlapping/overflowing controls at the browser's current desktop size.
+- Fresh combined review `/root/session_console_review` at medium found two P2s:
+  final projections could remain stale after terminal Session polling stopped;
+  a durable interrupt-request flag could show waiting copy after interruption
+  had converged. Both are fixed with focused browser regressions. Correction
+  review reports no remaining actionable findings or unnecessary mechanisms.
+
+Qualified SHA-256:
+
+- Session detail: `9e9a2ab893b1536a56ae55ef1ed8504025eb6b72600f65f93c2a8b0c7cb1eead`
+- Session API helpers: `3544eb1791876db174e23a4d5cbb2fe453a245eb40e74f2442f48e117f6d50f7`
+- Browser regression: `136b36c6ee25ebd2b189178c3669a1ecf3ed48dd83d3638e0097cc5ec13f6af9`
+- Demo seed: `68eeee18d4cc67f7e43d8fa7f9067f1e9dd1e5339ddf0dc68f307a95b6ca38df`
+
+The owned local environment `/tmp/helmr-console-lifecycle-20260920` used separate
+PostgreSQL/Redis/ClickHouse state and no shared DSN; its stack and temporary browser
+were stopped after verification. Keep its state/logs for reproduction. No worktrees
+were added or removed. Existing integration/HQ and frozen writer checkouts remain
+retained under the Handoff. UI fixtures do not prove physical interruption,
+checkpoint recovery, provider side effects, production authorization or every role;
+those runtime boundaries retain prior evidence and outstanding package 5 acceptance.
+First-party smoke/native fixtures, editable examples and remaining website docs
+still require package 4 work. No merge, push, deploy or publication occurred.

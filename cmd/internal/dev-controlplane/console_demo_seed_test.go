@@ -84,12 +84,12 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
 
 	var sessionRecords int
 	if err := pool.QueryRow(ctx, `
-		SELECT count(*) FROM session_records WHERE session_id = $1
+		SELECT count(*) FROM session_events WHERE session_id = $1
 	`, demoSeedSessionOpenID).Scan(&sessionRecords); err != nil {
 		t.Fatal(err)
 	}
-	if sessionRecords != 3 {
-		t.Fatalf("open session records = %d, want 3", sessionRecords)
+	if sessionRecords != 5 {
+		t.Fatalf("open session records = %d, want 5", sessionRecords)
 	}
 }
 

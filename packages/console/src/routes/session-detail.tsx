@@ -1,6 +1,6 @@
 import { useParams, useSearchParams } from "@solidjs/router";
 import { createInfiniteQuery, createQuery, useQueryClient } from "@tanstack/solid-query";
-import { createMemo, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, on, Show } from "solid-js";
 import { deploymentHref } from "../features/deployments/navigation";
 import { runHref } from "../features/runs/navigation";
 import { ApiError } from "../lib/api";
@@ -8,14 +8,9 @@ import { getMe, hasPermission } from "../lib/auth";
 import { listRuns } from "../lib/runs";
 import { useScope } from "../lib/scope";
 import {
-  closeSession,
-  getSession,
-  getSessionInput,
-  getSessionOutput,
-  interleaveSessionRecords,
-  sendSessionInput,
-  type ConversationEntry,
-  type SessionAddress,
+  closeSession, getSession, getSessionEvents, getSessionTurn,
+  sendSession, sendTurnMessage, interruptTurn, resumeSession,
+  type SessionEvent, type SessionAddress, type SessionReceipt,
 } from "../lib/sessions";
 import { ConfirmModal } from "../ui/ConfirmModal";
 import { DataTable } from "../ui/DataTable";
@@ -26,7 +21,7 @@ import { RelativeTime } from "../ui/RelativeTime";
 import { SectionHeader } from "../ui/SectionHeader";
 import { StatePanel } from "../ui/StatePanel";
 import { StatusBadge } from "../ui/StatusBadge";
-import { cx, ui } from "../ui/styles";
+import { ui } from "../ui/styles";
 
 const pageSize = 100;
 const pollInterval = 5_000;
@@ -37,57 +32,35 @@ function searchParamValue(value: string | string[] | undefined): string {
 
 function sessionErrorMessage(error: unknown, fallback = "Could not load this Session."): string {
   if (error instanceof ApiError && error.code === "forbidden") return "You do not have permission to do this.";
-  if (error instanceof ApiError) return error.message;
+  if (error instanceof ApiError) {
+    if (error.message === "turn_not_active") return "This Turn is no longer active. The message was not sent to another Turn.";
+    if (error.message === "hold_mismatch") return "The pause has changed. Review the current Session before resuming.";
+    return error.message;
+  }
   return fallback;
 }
 
-function ConversationRecord(props: { entry: ConversationEntry; projectID: string; environmentID: string }) {
-  const input = () => (props.entry.direction === "input" ? props.entry.record : undefined);
-  const output = () => (props.entry.direction === "output" ? props.entry.record : undefined);
-  return (
-    <li class="border-b border-console-border-soft px-3 py-2.5 last:border-b-0">
-      <div class="flex flex-wrap items-center gap-2 font-mono text-[10.5px] text-console-subtle">
-        <span
-          class={cx(
-            "inline-flex items-center gap-1 rounded-xs border px-1.5 font-medium leading-normal",
-            props.entry.direction === "input"
-              ? "border-[#9bb9e8] bg-[#eef4ff] text-console-info"
-              : "border-console-border bg-console-bg-panel text-console-muted",
-          )}
-        >
-          <span aria-hidden="true">{props.entry.direction === "input" ? "→" : "←"}</span>
-          {props.entry.direction === "input" ? "Input" : "Output"}
-        </span>
-        <span>#{props.entry.record.sequence}</span>
-        <Show when={input()}>
-          {(record) => (
-            <span class="inline-flex items-center gap-1">
-              · source {record().source.type}
-              <Show when={record().source.run_id}>
-                {(runID) => <IDText value={runID()} mode="link" href={runHref(runID(), props.projectID, props.environmentID)} />}
-              </Show>
-            </span>
-          )}
-        </Show>
-        <Show when={output()}>
-          {(record) => (
-            <span class="inline-flex items-center gap-1">
-              · run <IDText value={record().provenance.run_id} mode="link" href={runHref(record().provenance.run_id, props.projectID, props.environmentID)} />
-              · attempt {record().provenance.attempt_number}
-              · deployment <IDText value={record().provenance.deployment_id} mode="link" href={deploymentHref(record().provenance.deployment_id)} />
-            </span>
-          )}
-        </Show>
-        <span class="ml-auto"><RelativeTime value={props.entry.record.created_at} /></span>
-      </div>
-      <pre class="my-2 whitespace-pre-wrap break-words font-mono text-[12px] text-console-text">
-        {JSON.stringify(props.entry.record.data, null, 2)}
-      </pre>
-    </li>
-  );
+function ConversationRecord(props: { entry: SessionEvent; projectID: string; environmentID: string; onTurn: (id: string) => void }) {
+  return <li class="border-b border-console-border-soft px-3 py-2.5 last:border-b-0">
+    <div class="flex flex-wrap items-center gap-2 font-mono text-[10.5px] text-console-subtle">
+      <span>{props.entry.kind}</span><span>#{props.entry.sequence}</span>
+      <Show when={props.entry.turn_id}>{(id) => <button class="text-console-info underline" onClick={() => props.onTurn(id())}>Turn {id()}</button>}</Show>
+      <Show when={props.entry.provenance}>{(provenance) => <IDText value={provenance().run_id} mode="link" href={runHref(provenance().run_id, props.projectID, props.environmentID)} />}</Show>
+      <span class="ml-auto"><RelativeTime value={props.entry.created_at} /></span>
+    </div>
+    <pre class="my-2 whitespace-pre-wrap break-words font-mono text-[12px] text-console-text">{JSON.stringify(props.entry.data, null, 2)}</pre>
+  </li>;
 }
 
 export function SessionDetail() {
+  const params = useParams();
+  const [search] = useSearchParams();
+  const scope = useScope();
+  const identity = () => JSON.stringify([params["session_id"], searchParamValue(search["project_id"]) || scope.selectedProjectID(), searchParamValue(search["environment_id"]) || scope.selectedEnvironmentID()]);
+  return <Show when={identity()} keyed>{(_identity) => <SessionDetailContent />}</Show>;
+}
+
+function SessionDetailContent() {
   const params = useParams();
   const [searchParams] = useSearchParams();
   const scope = useScope();
@@ -110,26 +83,26 @@ export function SessionDetail() {
     queryFn: () => getSession(address()),
     enabled: enabled(),
     retry: false,
-    refetchInterval: (query) => (query.state.data?.status === "open" ? pollInterval : false),
+    refetchInterval: (query) => (["open", "closing"].includes(query.state.data?.status ?? "") ? pollInterval : false),
   }));
   const open = () => session.data?.status === "open";
-  const inputs = createInfiniteQuery(() => ({
-    queryKey: ["session-inputs", sessionID(), projectID(), environmentID()],
-    queryFn: ({ pageParam }) => getSessionInput(address(), { after: pageParam, limit: pageSize }),
-    initialPageParam: undefined as number | undefined,
-    getNextPageParam: (page) => (page.has_more ? page.next_after : undefined),
-    enabled: enabled(),
-    retry: false,
-    refetchInterval: open() ? pollInterval : false,
+  const polling = () => session.data?.status === "open" || session.data?.status === "closing";
+  const events = createInfiniteQuery(() => ({
+    queryKey: ["session-events", sessionID(), projectID(), environmentID()],
+    queryFn: ({ pageParam }) => getSessionEvents(address(), { after: pageParam, limit: pageSize }),
+    initialPageParam: 0,
+    getNextPageParam: (page) => page.has_more ? page.next_after : undefined,
+    enabled: enabled(), retry: false, refetchInterval: polling() ? pollInterval : false,
   }));
-  const outputs = createInfiniteQuery(() => ({
-    queryKey: ["session-outputs", sessionID(), projectID(), environmentID()],
-    queryFn: ({ pageParam }) => getSessionOutput(address(), { after: pageParam, limit: pageSize }),
-    initialPageParam: undefined as number | undefined,
-    getNextPageParam: (page) => (page.has_more ? page.next_after : undefined),
-    enabled: enabled(),
-    retry: false,
-    refetchInterval: open() ? pollInterval : false,
+  const [selectedTurn, setSelectedTurn] = createSignal<string>();
+  const [lastActiveTurn, setLastActiveTurn] = createSignal<string>();
+  createEffect(on(() => session.data?.active_turn_id, (id) => { if (id) setLastActiveTurn(id); }));
+  const turnID = () => selectedTurn() ?? session.data?.active_turn_id ?? lastActiveTurn();
+  const turn = createQuery(() => ({
+    queryKey: ["session-turn", sessionID(), projectID(), environmentID(), turnID()],
+    queryFn: () => getSessionTurn(address(), turnID()!),
+    enabled: enabled() && !!turnID(), retry: false,
+    refetchInterval: polling() ? pollInterval : false,
   }));
   const history = createInfiniteQuery(() => ({
     queryKey: ["runs", "session", sessionID(), projectID(), environmentID()],
@@ -144,35 +117,31 @@ export function SessionDetail() {
     getNextPageParam: (page) => page.next_cursor,
     enabled: enabled(),
     retry: false,
-    refetchInterval: open() ? pollInterval : false,
+    refetchInterval: polling() ? pollInterval : false,
   }));
 
-  // Polling replaces the page arrays but structural sharing keeps unchanged
-  // record objects, so reusing one entry wrapper per record keeps the rendered
-  // rows stable across refetches instead of rebuilding the list.
-  const entryCache = new WeakMap<object, ConversationEntry>();
-  const cached = (entry: ConversationEntry): ConversationEntry => {
-    const existing = entryCache.get(entry.record);
-    if (existing) return existing;
-    entryCache.set(entry.record, entry);
-    return entry;
-  };
-  const entries = createMemo(() => interleaveSessionRecords(
-    inputs.data?.pages.flatMap((page) => page.records) ?? [],
-    outputs.data?.pages.flatMap((page) => page.records) ?? [],
-  ).map(cached));
-  const hasMoreRecords = () => inputs.hasNextPage || outputs.hasNextPage;
-  const fetchingMoreRecords = () => inputs.isFetchingNextPage || outputs.isFetchingNextPage;
-  const loadMoreRecords = async () => {
-    await Promise.all([
-      inputs.hasNextPage ? inputs.fetchNextPage() : Promise.resolve(),
-      outputs.hasNextPage ? outputs.fetchNextPage() : Promise.resolve(),
-    ]);
-  };
+  // A terminal Session can arrive after the last independent event/Turn poll.
+  // Read those projections once more after observing the terminal commit.
+  createEffect(on(() => session.data?.status, (status, previous) => {
+    if (previous && (status === "closed" || status === "failed")) {
+      void events.refetch();
+      void history.refetch();
+      if (turnID()) void turn.refetch();
+    }
+  }));
+  const entries = createMemo(() => events.data?.pages.flatMap((page) => page.records) ?? []);
+  const hasMoreRecords = () => events.hasNextPage;
+  const fetchingMoreRecords = () => events.isFetchingNextPage;
+  const loadMoreRecords = () => events.fetchNextPage();
   const runs = createMemo(() => history.data?.pages.flatMap((page) => page.runs) ?? []);
-  const optionalRunHref = (runID: string | undefined) => (runID ? runHref(runID, projectID(), environmentID()) : undefined);
+  const optionalRunHref = (runID: string | null | undefined) => (runID ? runHref(runID, projectID(), environmentID()) : undefined);
 
   const [closing, setClosing] = createSignal(false);
+  const [receipt, setReceipt] = createSignal<SessionReceipt>();
+  const [mode, setMode] = createSignal<"send" | "enqueue" | "message">("send");
+  const [messageTarget, setMessageTarget] = createSignal<string>();
+  const [control, setControl] = createSignal<{ kind: "interrupt" | "resume"; target: string; key: string }>();
+  const refresh = () => Promise.all([session.refetch(), events.refetch(), ...(turnID() ? [turn.refetch()] : [])]);
   const [draft, setDraft] = createSignal("{}");
   const [sending, setSending] = createSignal(false);
   const [sendError, setSendError] = createSignal<string | null>(null);
@@ -196,10 +165,16 @@ export function SessionDetail() {
     setSendError(null);
     setSending(true);
     try {
-      await sendSessionInput(address(), { input: parsed, idempotency_key: key });
+      const input = { data: parsed, idempotency_key: key };
+      const target = messageTarget();
+      if (mode() === "message" && !target) throw new Error("Select an exact Turn before sending a message.");
+      const result = mode() === "message"
+        ? await sendTurnMessage(address(), target!, input)
+        : await sendSession(address(), input, mode() as "send" | "enqueue");
+      setReceipt(result);
       setDraft("{}");
       setDraftKey(null);
-      await Promise.all([session.refetch(), inputs.refetch()]);
+      await refresh();
     } catch (error) {
       setSendError(sessionErrorMessage(error, "Could not send this input."));
     } finally {
@@ -230,21 +205,35 @@ export function SessionDetail() {
             {(current) => (
               <div class="grid grid-cols-[minmax(0,1fr)_300px] items-start gap-3.5 max-[960px]:grid-cols-1">
                 <div class="flex min-w-0 flex-col gap-6">
-                  <Panel title="Conversation">
-                    <Show when={inputs.isError}>
-                      <StatePanel error={sessionErrorMessage(inputs.error, "Could not load the input log.")} />
+                  <Show when={receipt()}>{(value) => <Panel title="Operation receipt"><p class={ui.muted}>Accepted operations are not necessarily finished. Follow the Turn and timeline for the outcome.</p><pre class="whitespace-pre-wrap break-words">{JSON.stringify(value(), null, 2)}</pre></Panel>}</Show>
+                  <Panel title="Turn">
+                    <Show when={turnID()} fallback={<p class={ui.muted}>No active Turn. Select a Turn from the timeline to inspect its outcome.</p>}>
+                      <p class="break-all">{turnID()}</p>
+                      <Show when={selectedTurn()}><button class={ui.secondaryButton} onClick={() => setSelectedTurn(undefined)}>Follow active Turn</button></Show>
+                      <Show when={turn.isError}><StatePanel error={sessionErrorMessage(turn.error, "Could not load this Turn.")} /></Show>
+                      <Show when={turn.data}>{(value) => <>
+                        <p>Turn status: {value().status}</p>
+                        <p>Messages: {value().accepts_messages ? "Ready" : "Not accepting"}</p>
+                        <Show when={value().interrupt_requested && value().status === "running"}><p>Interruption requested; waiting for execution to stop.</p></Show>
+                        <Show when={value().result !== undefined}><pre class="whitespace-pre-wrap break-words">Result: {JSON.stringify(value().result, null, 2)}</pre></Show>
+                        <Show when={value().error !== undefined}><pre class="whitespace-pre-wrap break-words">Turn error: {JSON.stringify(value().error, null, 2)}</pre></Show>
+                        <Show when={can("sessions.interrupt") && value().id === session.data?.active_turn_id && !value().interrupt_requested}>
+                          <button class={ui.dangerOutlineButton} onClick={() => setControl({ kind: "interrupt", target: value().id, key: crypto.randomUUID() })}>Interrupt Turn</button>
+                        </Show>
+                      </>}</Show>
                     </Show>
-                    <Show when={outputs.isError}>
-                      <StatePanel error={sessionErrorMessage(outputs.error, "Could not load the output log.")} />
-                    </Show>
-                    <Show when={!inputs.isPending && !outputs.isPending} fallback={<StatePanel loading="Loading conversation..." />}>
+                  </Panel>
+                  <Panel title="Event timeline">
+                    <Show when={events.isError}><StatePanel error={sessionErrorMessage(events.error, "Could not load the event timeline.")} /></Show>
+                    <Show when={(events.data?.pages[0]?.retained_after ?? 0) > 0}><p class={ui.muted}>Earlier events are no longer retained. Showing events after #{events.data?.pages[0]?.retained_after}.</p></Show>
+                    <Show when={!events.isPending} fallback={<StatePanel loading="Loading timeline..." />}>
                       <Show
                         when={entries().length > 0}
-                        fallback={<StatePanel empty="No input or output yet." hint="Input sent to the Session and output produced by its Runs appear here in order." />}
+                        fallback={<StatePanel empty="No events yet." hint="Work, messages, output and lifecycle events share one durable sequence." />}
                       >
                         <ol class="m-0 list-none border border-console-border p-0">
                           <For each={entries()}>
-                            {(entry) => <ConversationRecord entry={entry} projectID={projectID()} environmentID={environmentID()} />}
+                            {(entry) => <ConversationRecord entry={entry} projectID={projectID()} environmentID={environmentID()} onTurn={(id) => { setSelectedTurn(id); }} />}
                           </For>
                         </ol>
                       </Show>
@@ -262,15 +251,23 @@ export function SessionDetail() {
                       </Show>
                     </Show>
 
-                    <Show when={can("sessions.input.send")}>
+                    <Show when={can("sessions.send")}>
                       <form class="mt-4 border-t border-console-border pt-4" onSubmit={submitInput}>
                         <label class={ui.field}>
-                          <span>Send input (JSON)</span>
+                          <span>Application data (JSON)</span>
+                          <select class={ui.input} aria-label="Send mode" value={mode()} disabled={sending()} onChange={(event) => {
+                            const next = event.currentTarget.value as "send" | "enqueue" | "message";
+                            setMode(next); setMessageTarget(next === "message" ? turnID() : undefined); setDraftKey(null);
+                          }}>
+                            <option value="send">Send to Session</option><option value="enqueue">Queue new Turn</option>
+                            <option value="message" disabled={!turnID()}>Message selected Turn</option>
+                          </select>
+                          <Show when={mode() === "message"}><span>Target Turn: {messageTarget()}</span></Show>
                           <textarea
                             class={`${ui.textarea} font-mono`}
                             rows={4}
                             value={draft()}
-                            disabled={!open() || sending()}
+                            disabled={sending() || (mode() === "message" ? !polling() || !messageTarget() : !open())}
                             onInput={(event) => {
                               setDraft(event.currentTarget.value);
                               setDraftKey(null);
@@ -283,10 +280,10 @@ export function SessionDetail() {
                         </Show>
                         <div class={ui.actionRow}>
                           <Show when={!open()}>
-                            <span class={ui.muted}>Only an open Session accepts input.</span>
+                            <span class={ui.muted}>New work requires an open Session. Existing Turn interaction may continue while closing.</span>
                           </Show>
-                          <button type="submit" class={ui.button} disabled={!open() || sending()}>
-                            {sending() ? "Sending..." : "Send input"}
+                          <button type="submit" class={ui.button} disabled={sending() || (mode() === "message" ? !polling() || !messageTarget() : !open())}>
+                            {sending() ? "Sending..." : mode() === "enqueue" ? "Queue Turn" : "Send"}
                           </button>
                         </div>
                       </form>
@@ -338,6 +335,14 @@ export function SessionDetail() {
                     </Show>
                   </DetailItem>
                   <DetailItem label="Status"><StatusBadge resource="session" status={current().status} /></DetailItem>
+                  <DetailItem label="Dispatch">{current().dispatch.state}</DetailItem>
+                  <Show when={current().dispatch.hold_id}>{(hold) => <>
+                    <DetailItem label="Waiting">{current().dispatch.reason === "recovery_required" ? "Recovery required" : current().dispatch.reason === "interrupt_requested" ? "Stopping" : "Paused"}</DetailItem>
+                    <DetailItem label="Hold"><code class="break-all">{hold()}</code></DetailItem>
+                    <Show when={current().dispatch.reason === "recovery_required"} fallback={
+                      <Show when={can("sessions.resume") && current().dispatch.reason !== "interrupt_requested"}><button class={ui.button} onClick={() => setControl({ kind: "resume", target: hold(), key: crypto.randomUUID() })}>Resume queued work</button></Show>
+                    }><p class={ui.muted}>An owner or admin must reconcile external effects and the Workspace version using actor recover before queued work can resume.</p></Show>
+                  </>}</Show>
                   <DetailItem label="Deployment">
                     <IDText value={current().deployment_id} mode="link" href={deploymentHref(current().deployment_id)} />
                   </DetailItem>
@@ -373,6 +378,22 @@ export function SessionDetail() {
         </Show>
       </Show>
 
+      <Show when={control()}>{(action) => <ConfirmModal
+        title={action().kind === "interrupt" ? "Interrupt Turn" : "Resume queued work"}
+        confirmLabel={action().kind === "interrupt" ? "Interrupt" : "Resume"}
+        onClose={() => setControl(undefined)}
+        errorMessage={(error) => sessionErrorMessage(error, "Operation failed.")}
+        onConfirm={async () => {
+          const exact = action();
+          setReceipt(exact.kind === "interrupt"
+            ? await interruptTurn(address(), exact.target, { idempotency_key: exact.key })
+            : await resumeSession(address(), { hold_id: exact.target, idempotency_key: exact.key }));
+          await refresh();
+        }}>
+        <p>{action().kind === "interrupt" ? "Stop this Turn and retain queued work. The receipt acknowledges the request, not completed interruption." : "Resume queued work after this pause. The interrupted Turn is not restarted."}</p>
+        <code class="break-all">{action().target}</code>
+      </ConfirmModal>}</Show>
+
       <Show when={closing()}>
         <ConfirmModal
           title="Close Session"
@@ -383,7 +404,7 @@ export function SessionDetail() {
           onConfirm={async () => {
             const key = closeKey() ?? crypto.randomUUID();
             setCloseKey(key);
-            await closeSession(address(), { idempotency_key: key });
+            setReceipt(await closeSession(address(), { idempotency_key: key }));
             setCloseKey(null);
             await Promise.all([
               queryClient.invalidateQueries({ queryKey: ["session", sessionID()] }),
@@ -392,7 +413,7 @@ export function SessionDetail() {
           }}
           errorMessage={(error) => sessionErrorMessage(error, "Could not close this Session.")}
         >
-          The Session stops accepting input and shows as closed once its current Run finishes. Session <IDText value={sessionID()} />.
+          The Session stops accepting new work and drains already queued Turns. Existing holds remain and require resolution. Closing does not interrupt the current Turn. Session <IDText value={sessionID()} />.
         </ConfirmModal>
       </Show>
     </section>

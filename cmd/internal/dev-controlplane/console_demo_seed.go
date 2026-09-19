@@ -158,18 +158,18 @@ INSERT INTO workspace_versions (
 	if _, err := tx.Exec(ctx, `
 INSERT INTO sessions (
     id, environment_id, actor_declared_id, deployment_definition_id, workspace_id,
-    current_run_id, next_input_sequence, committed_input_sequence, next_output_sequence,
+    current_run_id, next_input_sequence, committed_input_sequence, next_event_sequence,
     run_queue_name, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags,
     status
 ) VALUES
     (
         $1::uuid, $3::uuid, 'demo-actor', $4::uuid, $5::uuid,
-        NULL, 3, 2, 2, 'default', 300000, '{"enabled":false}'::jsonb,
+        NULL, 3, 2, 6, 'default', 300000, '{"enabled":false}'::jsonb,
         $6::jsonb, ARRAY[$7::text], 'open'
     ),
     (
         $2::uuid, $3::uuid, 'demo-actor', $4::uuid, $5::uuid,
-        NULL, 2, 1, 1, 'default', 300000, '{"enabled":false}'::jsonb,
+        NULL, 1, 0, 1, 'default', 300000, '{"enabled":false}'::jsonb,
         $6::jsonb, ARRAY[$7::text], 'open'
     )
 `, demoSeedSessionOpenID, demoSeedSessionFailedID, demoSeedEnvironmentID,
@@ -260,17 +260,35 @@ UPDATE sessions
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
-INSERT INTO session_records (
-    id, environment_id, session_id, direction, sequence, data,
-    source_run_id, producer_run_id, producer_attempt_number
-) VALUES
-    ($1::uuid, $4::uuid, $5::uuid, 'input', 1, '{"prompt":"Synthetic demo input"}'::jsonb, NULL, NULL, NULL),
-    ($2::uuid, $4::uuid, $5::uuid, 'input', 2, '{"prompt":"Follow-up demo input"}'::jsonb, NULL, NULL, NULL),
-    ($3::uuid, $4::uuid, $5::uuid, 'output', 1, '{"reply":"Synthetic demo output"}'::jsonb, NULL, $6::uuid, 1)
-`, demoSeedSessionInputRecordID, demoSeedSessionInputRecordID2, demoSeedSessionOutputRecordID,
-		demoSeedEnvironmentID, demoSeedSessionOpenID, demoSeedRunActorHistoryID); err != nil {
+INSERT INTO session_turns (id, environment_id, session_id, sequence, data)
+VALUES ($1::uuid, $3::uuid, $4::uuid, 1, '{"prompt":"Synthetic demo input"}'),
+       ($2::uuid, $3::uuid, $4::uuid, 2, '{"prompt":"Follow-up demo input"}')
+`, demoSeedSessionInputRecordID, demoSeedSessionInputRecordID2, demoSeedEnvironmentID, demoSeedSessionOpenID); err != nil {
 		return err
 	}
+	if _, err := tx.Exec(ctx, `
+INSERT INTO session_events (
+    id, environment_id, session_id, workspace_id, turn_id, sequence, kind, data, workspace_version_id
+) VALUES
+    ('00000000-0000-7000-8000-000000000731', $4::uuid, $5::uuid, $6::uuid, $1::uuid, 1, 'turn.enqueued', '{"input":{"prompt":"Synthetic demo input"}}', NULL),
+    ($3::uuid, $4::uuid, $5::uuid, $6::uuid, $1::uuid, 2, 'output', '{"reply":"Synthetic demo output"}', NULL),
+    ('00000000-0000-7000-8000-000000000724', $4::uuid, $5::uuid, $6::uuid, $1::uuid, 3, 'turn.completed', jsonb_build_object('workspace_version_id',$7::text), $7::uuid),
+    ('00000000-0000-7000-8000-000000000732', $4::uuid, $5::uuid, $6::uuid, $2::uuid, 4, 'turn.enqueued', '{"input":{"prompt":"Follow-up demo input"}}', NULL),
+    ('00000000-0000-7000-8000-000000000725', $4::uuid, $5::uuid, $6::uuid, $2::uuid, 5, 'turn.failed', jsonb_build_object('error', jsonb_build_object('message','Synthetic demo test failure'),'workspace_version_id',$7::text), $7::uuid)
+`, demoSeedSessionInputRecordID, demoSeedSessionInputRecordID2, demoSeedSessionOutputRecordID,
+		demoSeedEnvironmentID, demoSeedSessionOpenID, demoSeedWorkspaceActorID, demoSeedWorkspaceActorVersionID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE session_turns SET
+    status = CASE WHEN sequence = 1 THEN 'completed' ELSE 'failed' END,
+    run_generation = 1, run_id = $2::uuid, attempt_number = 1,
+    terminal_event_id = CASE WHEN sequence = 1 THEN '00000000-0000-7000-8000-000000000724'::uuid ELSE '00000000-0000-7000-8000-000000000725'::uuid END
+WHERE session_id = $1::uuid
+`, demoSeedSessionOpenID, demoSeedRunActorHistoryID); err != nil {
+		return err
+	}
+
 	if _, err := tx.Exec(ctx, `
 INSERT INTO tokens (
     id, org_id, project_id, environment_id, status, expires_at,

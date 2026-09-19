@@ -1,81 +1,30 @@
 import { postJson, request } from "./api";
 
-export type SessionStatus = "open" | "closed" | "cancelled" | "failed";
-
+export type SessionStatus = "open" | "closing" | "closed" | "failed";
 export type Session = {
-  id: string;
-  actor_id: string;
-  deployment_id: string;
-  workspace_id?: string;
-  key?: string;
-  status: SessionStatus;
-  created_at: string;
-  updated_at: string;
-  current_run_id?: string;
-  failure?: {
-    code: string;
-    message: string;
-    details: { run_id?: string };
-  };
+  id: string; actor_id: string; deployment_id: string; workspace_id?: string; key?: string;
+  status: SessionStatus; created_at: string; updated_at: string;
+  current_run_id: string | null; active_turn_id: string | null;
+  dispatch: { state: string; hold_id?: string; reason?: string };
+  failure?: { code: string; message: string; details: { run_id?: string } };
 };
-
-export type SessionInputRecord = {
-  id: string;
-  sequence: number;
-  data: unknown;
-  source: {
-    type: string;
-    run_id?: string;
-  };
-  created_at: string;
+export type SessionTurn = {
+  id: string; session_id: string; status: string; input: unknown;
+  accepts_messages: boolean; interrupt_requested: boolean;
+  result?: unknown; error?: unknown;
 };
-
-export type SessionInputPage = {
-  records: SessionInputRecord[];
-  next_after: number;
-  has_more: boolean;
+export type SessionEvent = {
+  id: string; session_id: string; turn_id: string | null; sequence: number;
+  kind: string; data: unknown; created_at: string;
+  provenance: { run_id: string; attempt_number: number; run_generation: number; deployment_id: string } | null;
 };
-
-export type SessionOutputRecord = {
-  id: string;
-  sequence: number;
-  data: unknown;
-  content_type: string;
-  created_at: string;
-  provenance: {
-    run_id: string;
-    attempt_number: number;
-    deployment_id: string;
-  };
+export type SessionEventPage = {
+  records: SessionEvent[]; next_after: number; has_more: boolean; retained_after: number;
 };
-
-export type SessionOutputPage = {
-  records: SessionOutputRecord[];
-  next_after: number;
-  has_more: boolean;
-};
-
 export type SessionRecordPageOptions = { after?: number | undefined; limit?: number | undefined };
-
-export type SessionCloseReceipt = {
-  session_id: string;
-  accepted_at: string;
-};
-
-export type SessionAddress = {
-  sessionID: string;
-  projectID: string;
-  environmentID: string;
-};
-
-export type ListSessionsResponse = {
-  sessions: Session[];
-  next_cursor?: string;
-};
-
-export type ConversationEntry =
-  | { direction: "input"; record: SessionInputRecord }
-  | { direction: "output"; record: SessionOutputRecord };
+export type SessionReceipt = { id: string; status?: string; kind?: string; session_id?: string; turn_id?: string | null; message_id?: string; hold_id?: string };
+export type SessionAddress = { sessionID: string; projectID: string; environmentID: string };
+export type ListSessionsResponse = { sessions: Session[]; next_cursor?: string };
 
 export async function listSessions(options: {
   projectID: string;
@@ -101,57 +50,26 @@ export async function getSession(address: SessionAddress): Promise<Session> {
   return request<Session>(sessionAPIPath(address));
 }
 
-export async function getSessionInput(
-  address: SessionAddress,
-  options: SessionRecordPageOptions = {},
-): Promise<SessionInputPage> {
-  return request<SessionInputPage>(`${sessionAPIPath(address)}/inputs${recordPageQuery(options)}`);
+export function getSessionEvents(address: SessionAddress, options: SessionRecordPageOptions = {}): Promise<SessionEventPage> {
+  return request(`${sessionAPIPath(address)}/events${recordPageQuery(options)}`);
 }
-
-export async function getSessionOutput(
-  address: SessionAddress,
-  options: SessionRecordPageOptions = {},
-): Promise<SessionOutputPage> {
-  return request<SessionOutputPage>(`${sessionAPIPath(address)}/outputs${recordPageQuery(options)}`);
+export function getSessionTurn(address: SessionAddress, turnID: string): Promise<SessionTurn> {
+  return request(`${sessionAPIPath(address)}/turns/${encodeURIComponent(turnID)}`);
 }
-
-export async function sendSessionInput(
-  address: SessionAddress,
-  input: { input: unknown; idempotency_key: string },
-): Promise<SessionInputRecord> {
-  return postJson<{ input: unknown; idempotency_key: string }, SessionInputRecord>(
-    `${sessionAPIPath(address)}/inputs`,
-    input,
-  );
+export function sendSession(address: SessionAddress, input: { data: unknown; idempotency_key: string }, mode: "send" | "enqueue"): Promise<SessionReceipt> {
+  return postJson(`${sessionAPIPath(address)}/${mode}`, input);
 }
-
-export async function closeSession(
-  address: SessionAddress,
-  input: { idempotency_key: string },
-): Promise<SessionCloseReceipt> {
-  return postJson<{ idempotency_key: string }, SessionCloseReceipt>(
-    `${sessionAPIPath(address)}/close`,
-    input,
-  );
+export function sendTurnMessage(address: SessionAddress, turnID: string, input: { data: unknown; idempotency_key: string }): Promise<SessionReceipt> {
+  return postJson(`${sessionAPIPath(address)}/turns/${encodeURIComponent(turnID)}/messages`, input);
 }
-
-// Inputs and outputs live in separate sequence spaces, so the conversation
-// view orders them by creation time; an input that shares an instant with an
-// output is shown first because the Actor reacts to it.
-export function interleaveSessionRecords(
-  inputs: readonly SessionInputRecord[],
-  outputs: readonly SessionOutputRecord[],
-): ConversationEntry[] {
-  const entries: ConversationEntry[] = [
-    ...inputs.map((record): ConversationEntry => ({ direction: "input", record })),
-    ...outputs.map((record): ConversationEntry => ({ direction: "output", record })),
-  ];
-  return entries.sort((a, b) => {
-    const byTime = Date.parse(a.record.created_at) - Date.parse(b.record.created_at);
-    if (byTime !== 0) return byTime;
-    if (a.direction !== b.direction) return a.direction === "input" ? -1 : 1;
-    return a.record.sequence - b.record.sequence;
-  });
+export function interruptTurn(address: SessionAddress, turnID: string, input: { idempotency_key: string }): Promise<SessionReceipt> {
+  return postJson(`${sessionAPIPath(address)}/turns/${encodeURIComponent(turnID)}/interrupt`, input);
+}
+export function resumeSession(address: SessionAddress, input: { hold_id: string; idempotency_key: string }): Promise<SessionReceipt> {
+  return postJson(`${sessionAPIPath(address)}/resume`, input);
+}
+export function closeSession(address: SessionAddress, input: { idempotency_key: string }): Promise<SessionReceipt> {
+  return postJson(`${sessionAPIPath(address)}/close`, input);
 }
 
 export function sessionConsolePath(
