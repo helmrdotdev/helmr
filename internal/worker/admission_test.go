@@ -32,7 +32,7 @@ func TestHardAdmissionFailClosedChecks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := AdmissionCheck{Consumer: "run", Status: StateActive}
+	base := AdmissionCheck{Consumer: "run", Status: StatusActive}
 	tests := []struct {
 		name   string
 		mutate func(*HostHealth, *AdmissionCheck)
@@ -87,7 +87,7 @@ func TestHardAdmissionFailsClosedWhenDatapathChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	check := AdmissionCheck{Consumer: "run", Status: StateActive}
+	check := AdmissionCheck{Consumer: "run", Status: StatusActive}
 	if decision := evaluator.Evaluate(context.Background(), check); !decision.Allowed {
 		t.Fatalf("healthy datapath decision = %+v", decision)
 	}
@@ -109,7 +109,7 @@ func TestHardAdmissionKeepsRuntimeSlotPressureInRuntimeDomain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	check := AdmissionCheck{Status: StateActive, Recovery: RecoveryEvidence{Quarantined: []string{"slot"}}}
+	check := AdmissionCheck{Status: StatusActive, Recovery: RecoveryEvidence{Quarantined: []string{"slot"}}}
 	check.Consumer = "run"
 	evaluator.Evaluate(context.Background(), check)
 	check.Consumer = "runtime"
@@ -131,7 +131,7 @@ func TestHardAdmissionAllowsRunInsideActiveWorkspaceSlot(t *testing.T) {
 		t.Fatal(err)
 	}
 	decision := evaluator.Evaluate(context.Background(), AdmissionCheck{
-		Consumer: "run", Status: StateActive,
+		Consumer: "run", Status: StatusActive,
 		Snapshot: Snapshot{Active: map[string]int{"workspace": 1}},
 	})
 	if !decision.Allowed {
@@ -149,12 +149,12 @@ func TestHardAdmissionAllowsOnlyExplicitDrainContinuation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if decision := evaluator.Evaluate(context.Background(), AdmissionCheck{
-		Consumer: "run", Status: StateDraining,
-	}); decision.Allowed || decision.Reason != AdmissionReason(StateDraining) {
+		Consumer: "run", Status: StatusDraining,
+	}); decision.Allowed || decision.Reason != AdmissionReason(StatusDraining) {
 		t.Fatalf("ordinary draining decision = %+v", decision)
 	}
 	if decision := evaluator.Evaluate(context.Background(), AdmissionCheck{
-		Consumer: "run", Status: StateDraining, DrainContinuation: true,
+		Consumer: "run", Status: StatusDraining, DrainContinuation: true,
 	}); !decision.Allowed {
 		t.Fatalf("bound drain continuation rejected: %+v", decision)
 	}

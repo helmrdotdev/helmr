@@ -108,7 +108,7 @@ func (a *HardAdmission) Evaluate(ctx context.Context, check AdmissionCheck) Admi
 		decision.Reason = AdmissionProbeFailed
 	case datapathErr != nil:
 		decision.Reason = AdmissionDatapathUnverified
-	case check.Status != StateActive && !(check.Status == StateDraining && check.DrainContinuation):
+	case check.Status != StatusActive && !(check.Status == StatusDraining && check.DrainContinuation):
 		decision.Reason = AdmissionReason(check.Status)
 	case health.AvailableDiskBytes < a.cfg.DiskFloorBytes:
 		decision.Reason = AdmissionDiskFloor

@@ -438,7 +438,7 @@ func TestRunConsumerSharedDiscoveryKeepsIdleAndErrorBackoffDuringDrain(t *testin
 				if err != nil {
 					t.Fatal(err)
 				}
-				s.state.Store(StateDraining)
+				s.state.Store(StatusDraining)
 				spec := ConsumerSpec{Name: "run", Consumer: consumer, ContinueDuringDrain: true}
 				for range 3 {
 					go s.consume(ctx, ctx, spec, RecoveryEvidence{}, make(chan error, 1))

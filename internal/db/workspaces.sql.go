@@ -918,7 +918,7 @@ const markWorkspaceDeleting = `-- name: MarkWorkspaceDeleting :one
 UPDATE workspaces
    SET status = 'deleting',
        desired_state = 'deleted',
-       -- Explicit deletion discards lost dirty status; it does not recover a version.
+       -- Explicit deletion discards lost dirty state; it does not recover a version.
        dirty_state = CASE WHEN dirty_state = 'dirty_state_lost' THEN 'clean' ELSE dirty_state END,
        revision = revision + 1,
        updated_at = now()

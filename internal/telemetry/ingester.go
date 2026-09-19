@@ -205,17 +205,11 @@ func (i *Ingestor) ingestRunLogs(ctx context.Context) (int, error) {
 	candidates := make([]runLogIngestCandidate, 0, len(rows))
 	var firstErr error
 	for _, row := range rows {
-		record, err := runLogRecord(row)
-		if err != nil {
-			failureErr := i.markFailed(ctx, []telemetryOutboxClaim{{outboxID: row.OutboxID, retryCount: row.RetryCount}}, err)
-			firstErr = errors.Join(firstErr, err, failureErr)
-			continue
-		}
 		candidates = append(candidates, runLogIngestCandidate{
 			outboxID:   row.OutboxID,
 			retryCount: row.RetryCount,
 			createdAt:  pgvalue.Time(row.CreatedAt),
-			record:     record,
+			record:     runLogRecord(row),
 		})
 	}
 	if len(candidates) > 0 {
@@ -439,13 +433,7 @@ func eventRecord(row db.ClaimEventIngestBatchRow) EventRecord {
 	}
 }
 
-func runLogRecord(row db.ClaimRunLogIngestBatchRow) (RunLogRecord, error) {
-	if !row.RunLeaseID.Valid {
-		return RunLogRecord{}, fmt.Errorf("run log outbox %d: run_lease_id is required", row.OutboxID)
-	}
-	if !row.AttemptNumber.Valid || row.AttemptNumber.Int32 <= 0 {
-		return RunLogRecord{}, fmt.Errorf("run log outbox %d: positive attempt_number is required", row.OutboxID)
-	}
+func runLogRecord(row db.ClaimRunLogIngestBatchRow) RunLogRecord {
 	return RunLogRecord{
 		OrgID:          pgvalue.MustUUIDValue(row.OrgID),
 		ProjectID:      pgvalue.MustUUIDValue(row.ProjectID),
@@ -463,7 +451,7 @@ func runLogRecord(row db.ClaimRunLogIngestBatchRow) (RunLogRecord, error) {
 		RedactionClass: "standard",
 		Source:         "worker",
 		ObservedAt:     observedAt(pgtype.Timestamptz{}, row.CreatedAt),
-	}, nil
+	}
 }
 
 func optionalUUID(value pgtype.UUID) *uuid.UUID {

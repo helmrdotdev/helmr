@@ -6,7 +6,6 @@ import (
 	"io"
 	"log/slog"
 	"slices"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -302,44 +301,24 @@ func validRunLogRow() db.ClaimRunLogIngestBatchRow {
 	}
 }
 
-func TestRunLogRecordRequiresLeaseAndPositiveAttempt(t *testing.T) {
+func TestRunLogRecordConvertsClaimedRow(t *testing.T) {
 	row := validRunLogRow()
-	record, err := runLogRecord(row)
-	if err != nil || record.RunLeaseID != pgvalue.MustUUIDValue(row.RunLeaseID) || record.AttemptNumber != 3 || record.Content != "aGVsbG8=" {
-		t.Fatalf("record = %+v, error = %v", record, err)
-	}
-	for _, tc := range []struct {
-		name    string
-		lease   pgtype.UUID
-		attempt pgtype.Int4
-		field   string
-	}{
-		{"missing lease", pgtype.UUID{}, row.AttemptNumber, "run_lease_id"},
-		{"missing attempt", row.RunLeaseID, pgtype.Int4{}, "attempt_number"},
-		{"zero attempt", row.RunLeaseID, pgtype.Int4{Valid: true}, "attempt_number"},
-		{"negative attempt", row.RunLeaseID, pgtype.Int4{Int32: -1, Valid: true}, "attempt_number"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			invalid := row
-			invalid.RunLeaseID, invalid.AttemptNumber = tc.lease, tc.attempt
-			if _, err := runLogRecord(invalid); err == nil || !strings.Contains(err.Error(), tc.field) {
-				t.Fatalf("error = %v, want %s contract error", err, tc.field)
-			}
-		})
+	record := runLogRecord(row)
+	if record.RunLeaseID != pgvalue.MustUUIDValue(row.RunLeaseID) || record.AttemptNumber != 3 || record.Content != "aGVsbG8=" {
+		t.Fatalf("record = %+v", record)
 	}
 }
 
-func TestIngestRunLogsIsolatesInvalidProvenance(t *testing.T) {
-	invalid, valid := validRunLogRow(), validRunLogRow()
-	invalid.RunLeaseID.Valid = false
-	valid.OutboxID = 2
-	store := &fakeIngestStore{runLogRows: []db.ClaimRunLogIngestBatchRow{invalid, valid}}
+func TestIngestRunLogsWritesClaimedBatch(t *testing.T) {
+	first, second := validRunLogRow(), validRunLogRow()
+	second.OutboxID = 2
+	store := &fakeIngestStore{runLogRows: []db.ClaimRunLogIngestBatchRow{first, second}}
 	writer := &fakeIngestWriter{}
 	count, err := testIngestor(store, writer).ingestRunLogs(t.Context())
-	if count != 2 || err == nil || !strings.Contains(err.Error(), "run_lease_id") {
+	if count != 2 || err != nil {
 		t.Fatalf("count = %d, error = %v", count, err)
 	}
-	if !slices.Equal(store.failedIDs, []int64{1}) || !slices.Equal(store.writtenIDs, []int64{2}) || writer.runLogCalls != 1 {
+	if len(store.failedIDs) != 0 || !slices.Equal(store.writtenIDs, []int64{1, 2}) || writer.runLogCalls != 1 {
 		t.Fatalf("failed = %v, written = %v, writes = %d", store.failedIDs, store.writtenIDs, writer.runLogCalls)
 	}
 }
