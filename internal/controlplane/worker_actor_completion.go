@@ -40,6 +40,10 @@ func (s *Server) workerCompleteActor(w http.ResponseWriter, r *http.Request) {
 		if writeStaleWorkerClaims(w, err) {
 			return
 		}
+		if errors.Is(err, errActorStopCleanupPending) {
+			writeError(w, unavailable(err))
+			return
+		}
 		if errors.Is(err, errStaleActorCompletion) {
 			writeError(w, conflict(errStaleActorCompletion))
 			return

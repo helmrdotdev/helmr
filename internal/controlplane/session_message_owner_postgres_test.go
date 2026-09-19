@@ -244,16 +244,20 @@ func TestSessionTokenWaitStopOrderingPostgres(t *testing.T) {
 		request = request.WithContext(context.WithValue(t.Context(), workerContextKey{}, f.worker))
 		response := httptest.NewRecorder()
 		f.server.workerPollRunWait(response, request)
-		if response.Code != http.StatusConflict {
-			t.Fatalf("revoked poll %d: %s", response.Code, response.Body.String())
+		if response.Code != http.StatusOK {
+			t.Fatalf("cancelled poll %d: %s", response.Code, response.Body.String())
+		}
+		var stopped workerapi.RunWaitPollResponse
+		if err = json.Unmarshal(response.Body.Bytes(), &stopped); err != nil || stopped.ResumeKind != "cancelled" || string(stopped.ResumePayload) != `{"reason_code":"session_stopped"}` {
+			t.Fatalf("stopped receipt: %+v %v", stopped, err)
 		}
 		var revoked bool
 		var condition string
 		if err = f.Pool.QueryRow(t.Context(), `SELECT s.dispatch_hold_id IS NOT NULL,w.condition_status FROM run_waits w JOIN runs r ON r.id=w.run_id JOIN sessions s ON s.id=r.session_id WHERE w.id=$1`, registration.WaitID).Scan(&revoked, &condition); err != nil {
 			t.Fatal(err)
 		}
-		if !revoked || condition != "pending" {
-			t.Fatalf("revocation changed Token condition: %v %s", revoked, condition)
+		if !revoked || condition != "failed" {
+			t.Fatalf("stop did not resolve consuming wait: %v %s", revoked, condition)
 		}
 	})
 }

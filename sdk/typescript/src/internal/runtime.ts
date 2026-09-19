@@ -1,10 +1,14 @@
 import type {
-  SessionCloseRequest,
+  SessionOperationOptions,
   SessionCloseReceipt,
-  SessionInputRecord,
-  SessionInputSendRequest,
-  SessionOutputQuery,
-  SessionOutputRecord,
+  SessionAdmissionReceipt,
+  SessionMessageReceipt,
+  SessionEventQuery,
+  SessionEventPage,
+  TurnState,
+  TurnInterruptReceipt,
+  SessionResumeRequest,
+  SessionResumeReceipt,
   ActorStartOptions,
   Session,
   Duration,
@@ -45,12 +49,6 @@ export interface RuntimeOperations {
   ) => Promise<TaskResult<JsonValue>>
   readonly waitFor: (duration: Duration) => Promise<void>
   readonly waitUntil: (date: Date) => Promise<void>
-  readonly actorInputSend: (
-    sessionId: string,
-    input: JsonValue,
-    request?: SessionInputSendRequest,
-    signal?: AbortSignal,
-  ) => Promise<SessionInputRecord>
   readonly actorStart: (
     declaredId: string,
     options: ActorStartOptions,
@@ -59,20 +57,51 @@ export interface RuntimeOperations {
     sessionId: string,
     signal?: AbortSignal,
   ) => Promise<Session>
+  readonly sessionSend: (
+    sessionId: string,
+    data: JsonValue,
+    request?: SessionOperationOptions,
+    signal?: AbortSignal,
+  ) => Promise<SessionAdmissionReceipt>
+  readonly sessionEnqueue: (
+    sessionId: string,
+    data: JsonValue,
+    request?: SessionOperationOptions,
+    signal?: AbortSignal,
+  ) => Promise<Extract<SessionAdmissionReceipt, { kind: "enqueued" }>>
+  readonly sessionTurnSend: (
+    sessionId: string,
+    turnId: string,
+    data: JsonValue,
+    request?: SessionOperationOptions,
+    signal?: AbortSignal,
+  ) => Promise<SessionMessageReceipt>
+  readonly sessionTurnRetrieve: (
+    sessionId: string,
+    turnId: string,
+    signal?: AbortSignal,
+  ) => Promise<TurnState>
+  readonly sessionTurnInterrupt: (
+    sessionId: string,
+    turnId: string,
+    request?: SessionOperationOptions,
+    signal?: AbortSignal,
+  ) => Promise<TurnInterruptReceipt>
+  readonly sessionEvents: (
+    sessionId: string,
+    query?: SessionEventQuery,
+    signal?: AbortSignal,
+  ) => Promise<SessionEventPage>
   readonly sessionClose: (
     sessionId: string,
-    request?: SessionCloseRequest,
+    request?: SessionOperationOptions,
     signal?: AbortSignal,
   ) => Promise<SessionCloseReceipt>
-  readonly sessionOutputPage: (
+  readonly sessionResume: (
     sessionId: string,
-    query?: SessionOutputQuery,
+    request: SessionResumeRequest,
     signal?: AbortSignal,
-  ) => Promise<Readonly<{
-    records: readonly SessionOutputRecord[]
-    nextAfter: number
-    hasMore: boolean
-  }>>
+  ) => Promise<SessionResumeReceipt>
   readonly workspaceCreate: (
     declaredId: string,
     request?: WorkspaceCreateRequest,

@@ -229,6 +229,7 @@ POST /worker/v1/run/sessions/control
 POST /worker/v1/run/sessions/enqueue
 POST /worker/v1/run/sessions/events/read-page
 POST /worker/v1/run/sessions/output/write
+POST /worker/v1/run/sessions/resume
 POST /worker/v1/run/sessions/retrieve
 POST /worker/v1/run/sessions/send
 POST /worker/v1/run/sessions/turns/commit
@@ -236,11 +237,13 @@ POST /worker/v1/run/structured-logs/append
 POST /worker/v1/run/tasks/complete
 POST /worker/v1/run/tasks/invoke
 POST /worker/v1/run/tokens/create
+POST /worker/v1/run/turns/interrupt
 POST /worker/v1/run/turns/messages/claim
 POST /worker/v1/run/turns/messages/complete
 POST /worker/v1/run/turns/messages/ready
 POST /worker/v1/run/turns/messages/send
 POST /worker/v1/run/turns/output/write
+POST /worker/v1/run/turns/retrieve
 POST /worker/v1/run/turns/settlement/begin
 POST /worker/v1/run/waits/create
 POST /worker/v1/run/waits/poll

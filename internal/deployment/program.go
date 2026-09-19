@@ -29,6 +29,10 @@ const (
 	DeclarationKindActor                  = DeclarationKind("actor")
 	DeclarationSlotHandler                = DeclarationSlot("handler")
 	DeclarationSlotPayloadSchema          = DeclarationSlot("payloadSchema")
+	DeclarationSlotInputSchema            = DeclarationSlot("inputSchema")
+	DeclarationSlotMessageSchema          = DeclarationSlot("messageSchema")
+	DeclarationSlotOutputSchema           = DeclarationSlot("outputSchema")
+	DeclarationSlotResultSchema           = DeclarationSlot("resultSchema")
 )
 
 var sha256DigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
@@ -411,7 +415,7 @@ func buildPlanProgramDeclarations(plan BuildPlan) []ProgramDeclaration {
 		case DefinitionKindActor:
 			declarations = append(declarations, ProgramDeclaration{
 				Kind: DeclarationKindActor, DeclaredID: definition.DeclaredID,
-				Slots: []DeclarationSlot{DeclarationSlotHandler},
+				Slots: actorDeclarationSlots(definition.Actor.Schemas),
 			})
 		}
 	}
@@ -453,8 +457,17 @@ func validateDeclaration(declaration ProgramDeclaration) error {
 			return fmt.Errorf("task slots must be [handler] or [handler,payloadSchema]")
 		}
 	case DeclarationKindActor:
-		if !slices.Equal(declaration.Slots, []DeclarationSlot{DeclarationSlotHandler}) {
-			return fmt.Errorf("actor slots must be [handler]")
+		allowed := []DeclarationSlot{DeclarationSlotHandler, DeclarationSlotInputSchema, DeclarationSlotMessageSchema, DeclarationSlotOutputSchema, DeclarationSlotResultSchema}
+		if len(declaration.Slots) == 0 || declaration.Slots[0] != DeclarationSlotHandler {
+			return fmt.Errorf("actor slots must start with handler")
+		}
+		previous := -1
+		for _, slot := range declaration.Slots {
+			index := slices.Index(allowed, slot)
+			if index <= previous {
+				return fmt.Errorf("actor schema slots must be unique and ordered inputSchema,messageSchema,outputSchema,resultSchema")
+			}
+			previous = index
 		}
 	default:
 		return fmt.Errorf("unknown kind %q", declaration.Kind)
@@ -502,4 +515,19 @@ func ensureEOF(decoder *json.Decoder, label string) error {
 		return fmt.Errorf("decode %s trailing data: %w", label, err)
 	}
 	return nil
+}
+
+func actorDeclarationSlots(schemas ActorSchemas) []DeclarationSlot {
+	slots := []DeclarationSlot{DeclarationSlotHandler}
+	for _, field := range []struct {
+		schema SchemaManifest
+		slot   DeclarationSlot
+	}{
+		{schemas.Input, DeclarationSlotInputSchema}, {schemas.Message, DeclarationSlotMessageSchema}, {schemas.Output, DeclarationSlotOutputSchema}, {schemas.Result, DeclarationSlotResultSchema},
+	} {
+		if field.schema.Kind == SchemaKindStandard {
+			slots = append(slots, field.slot)
+		}
+	}
+	return slots
 }

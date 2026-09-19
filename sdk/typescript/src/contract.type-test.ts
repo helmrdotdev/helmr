@@ -19,7 +19,6 @@ import {
   type PayloadSchema,
   type ActorInfo,
   type ActorContext,
-  type ActorSessionReceive,
   type SandboxInfo,
   type TaskContext,
   type TaskConfig,
@@ -29,7 +28,7 @@ import {
   type TaskInput,
   type TaskOutput,
   type ClientSessionRef,
-  type SessionInputPage,
+  type SessionEventPage,
   type SessionRef,
   type TokenCreateResult,
   type TokenCancelRequest,
@@ -44,7 +43,7 @@ import {
   type SecretCreateRequest,
   type SecretRevokeRequest,
   type SecretRotateRequest,
-  type SessionOutputWriter,
+  type RecordWriter,
   type SourceDirectory,
   type SourceFile,
   type WorkspaceRef,
@@ -99,11 +98,10 @@ export function assertGreenfieldTypes(): void {
   void unbrandedImage
 
   const writeValues = async (
-    writer: SessionOutputWriter,
+    writer: RecordWriter,
     values: readonly JsonValue[],
   ): Promise<void> => {
     for (const value of values) await writer.write(value)
-    await writer.close()
   }
   void writeValues
 
@@ -255,9 +253,8 @@ export function assertGreenfieldTypes(): void {
   ) satisfies ClientSessionRef
   client.sessions.ref(
     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-  ).input.list({ after: 0, limit: 10 }) satisfies Promise<SessionInputPage>
-  // @ts-expect-error only the REST client reads the durable Session input log.
-  sessions.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33").input.list()
+  ).events.list({ after: 0, limit: 10 }) satisfies Promise<SessionEventPage>
+  sessions.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33").events.list()
   tokens.create().then((token) => {
     token satisfies TokenCreateResult & TokenRef
   })
@@ -419,19 +416,14 @@ export function assertGreenfieldTypes(): void {
       const actorID: string = ctx.actor.id
       void sessionID
       void actorID
-      const input = await session.input.receive()
-      session.input.receive() satisfies ActorSessionReceive
-      if (input.ok) await session.output.append(input.value)
-      // @ts-expect-error only a Session ref input has send().
-      session.input.send(null)
-      // @ts-expect-error only a Session ref retrieves the durable Session resource.
-      session.retrieve()
-      // @ts-expect-error only a Session ref closes the durable Session resource.
-      session.close()
-      // @ts-expect-error Actor output is authored rather than remotely listed.
-      session.output.list()
-      // @ts-expect-error Actor output has no definition-level schema.
-      session.output.schema
+      const turn = await session.receive()
+      if (turn !== null) {
+        await turn.onMessage(({ data }) => { data satisfies JsonValue })
+        await turn.output.write(turn.input)
+        await turn.complete()
+        await turn.complete(null)
+      }
+      session.output satisfies RecordWriter
       // @ts-expect-error Session addressing is not copied into Actor definition identity.
       ctx.actor.key
       // @ts-expect-error Actor definition identity is not copied onto the Session.
@@ -457,3 +449,53 @@ export function assertGreenfieldTypes(): void {
     })
   })
 }
+
+// Actor contracts distinguish the serialized input from the parsed runtime value.
+const transformedInput: PayloadSchema<{value:string}, {value:number}> = { "~standard": { version:1, vendor:"test", validate:()=>({value:{value:1}}) } }
+const messageSchema: PayloadSchema<{note:string}, {note:string}> = { "~standard": { version:1, vendor:"test", validate:()=>({value:{note:"ok"}}) } }
+const resultSchema: PayloadSchema<{summary:string}> = { "~standard": { version:1, vendor:"test", validate:()=>({value:{summary:"ok"}}) } }
+const typedActor = actor({
+ id:"typed-actor", input:transformedInput, message:messageSchema, result:resultSchema,
+ async run(session) {
+  const turn=await session.receive()
+  if (turn===null) return
+  turn.input.value satisfies number
+  await turn.onMessage(({data})=>{data.note satisfies string})
+  // @ts-expect-error Required result schema requires an explicit result.
+  await turn.complete()
+  // @ts-expect-error Result follows its schema, never the run return value.
+  await turn.complete({summary:1})
+  await turn.complete({summary:"done"})
+ }
+})
+async function typedActorReferences(workspace: WorkspaceRef) {
+ const {session}=await typedActor.start({workspace})
+ await session.enqueue({value:"1"})
+ // @ts-expect-error Admission uses serialized input rather than transformed value.
+ await session.enqueue({value:1})
+ const receipt=await session.send({value:"1",note:"continue"})
+ // @ts-expect-error Automatic send must satisfy both possible routes.
+ await session.send({value:"1"})
+ await receipt.turn.send({note:"change"})
+ const state=await receipt.turn.retrieve()
+ state.result?.summary satisfies string | undefined
+}
+void typedActorReferences
+
+const outputTransform: PayloadSchema<{chunk:string}, string> = { "~standard": { version:1,vendor:"test",validate:()=>({value:"chunk"}) } }
+const resultTransform: PayloadSchema<number,string> = { "~standard": {version:1,vendor:"test",validate:()=>({value:"result"})} }
+const transformedActor=actor({id:"transformed-output",output:outputTransform,result:resultTransform,async run(session){
+ const turn=await session.receive()
+ if(turn===null)return
+ await turn.output.write({chunk:"value"})
+ // @ts-expect-error The writer accepts schema input rather than parsed output.
+ await turn.output.write("value")
+ await turn.complete(1)
+}})
+async function transformedResultReference(workspace:WorkspaceRef){
+ const {session}=await transformedActor.start({workspace})
+ const turn=await session.enqueue(null)
+ const state=await turn.retrieve()
+ state.result satisfies string | undefined
+}
+void transformedResultReference

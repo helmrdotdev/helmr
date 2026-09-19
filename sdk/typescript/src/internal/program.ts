@@ -9,5 +9,5 @@ export type ProgramDeclaration =
   | Readonly<{
       kind: "actor"
       declaredId: string
-      slots: readonly ["handler"]
+      slots: readonly ["handler", ...("inputSchema" | "messageSchema" | "outputSchema" | "resultSchema")[]]
     }>

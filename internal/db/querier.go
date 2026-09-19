@@ -85,6 +85,7 @@ type Querier interface {
 	CompleteParkedRunWait(ctx context.Context, arg CompleteParkedRunWaitParams) (RunWait, error)
 	CompleteSameWorkspaceChildFailure(ctx context.Context, arg CompleteSameWorkspaceChildFailureParams) (RunWait, error)
 	CompleteSameWorkspaceChildSuccess(ctx context.Context, arg CompleteSameWorkspaceChildSuccessParams) (RunWait, error)
+	CompleteSessionInterruption(ctx context.Context, arg CompleteSessionInterruptionParams) (Session, error)
 	CompleteSessionRecovery(ctx context.Context, arg CompleteSessionRecoveryParams) (Session, error)
 	CompleteTaskAttempt(ctx context.Context, arg CompleteTaskAttemptParams) (RunAttempt, error)
 	CompleteTaskRunLease(ctx context.Context, arg CompleteTaskRunLeaseParams) (RunLease, error)
@@ -424,6 +425,8 @@ type Querier interface {
 	LockTokenWaitRunLease(ctx context.Context, arg LockTokenWaitRunLeaseParams) (string, error)
 	LockTokenWaitRunLineage(ctx context.Context, arg LockTokenWaitRunLineageParams) ([]LockTokenWaitRunLineageRow, error)
 	LockTokenWaitWorkspace(ctx context.Context, arg LockTokenWaitWorkspaceParams) (LockTokenWaitWorkspaceRow, error)
+	LockWorkerControlActors(ctx context.Context, arg LockWorkerControlActorsParams) ([]LockWorkerControlActorsRow, error)
+	LockWorkerControlSecrets(ctx context.Context, workspaceIds []pgtype.UUID) ([]LockWorkerControlSecretsRow, error)
 	LockWorkerDrainCompletion(ctx context.Context, arg LockWorkerDrainCompletionParams) (LockWorkerDrainCompletionRow, error)
 	LockWorkerGroupCreationRegion(ctx context.Context, lockKey int64) error
 	LockWorkerGroupForPoolMutation(ctx context.Context, workerGroupID pgtype.UUID) (WorkerGroup, error)
@@ -467,6 +470,8 @@ type Querier interface {
 	PruneTelemetryOutboxWritten(ctx context.Context, arg PruneTelemetryOutboxWrittenParams) (int64, error)
 	PublishRestoredActorCheckpointWorkspaceVersion(ctx context.Context, arg PublishRestoredActorCheckpointWorkspaceVersionParams) (WorkspaceVersion, error)
 	PublishTaskWorkspaceVersion(ctx context.Context, arg PublishTaskWorkspaceVersionParams) (WorkspaceVersion, error)
+	ReadWorkerControlSecrets(ctx context.Context, workspaceIds []pgtype.UUID) ([]ReadWorkerControlSecretsRow, error)
+	ReadWorkerSessionControl(ctx context.Context, arg ReadWorkerSessionControlParams) (ReadWorkerSessionControlRow, error)
 	ReadyRunRetries(ctx context.Context, rowLimit int32) ([]ReadyRunRetriesRow, error)
 	// Immediate fencing revokes credentials and terminalizes mount/runtime
 	// observations. Run/build/workspace authority is recovered by its canonical
@@ -530,12 +535,14 @@ type Querier interface {
 	RotateSecret(ctx context.Context, arg RotateSecretParams) (Secret, error)
 	RotateWorkerGroupToken(ctx context.Context, arg RotateWorkerGroupTokenParams) (WorkerGroupToken, error)
 	RunFinalizationScopeIsClear(ctx context.Context, arg RunFinalizationScopeIsClearParams) (pgtype.Bool, error)
+	RunWaitSessionStopped(ctx context.Context, id pgtype.UUID) (bool, error)
 	RunWaitTurnCurrent(ctx context.Context, id pgtype.UUID) (bool, error)
 	// Called under the parent Run/Workspace authority locks; terminal child state
 	// prevents a later lease admission. NULL writer alone is not an exclusion proof.
 	SameWorkspaceChildHasNoExecution(ctx context.Context, arg SameWorkspaceChildHasNoExecutionParams) (bool, error)
 	SealWorkerPool(ctx context.Context, arg SealWorkerPoolParams) (WorkerPool, error)
 	SelectRunWorkerCapacity(ctx context.Context, arg SelectRunWorkerCapacityParams) (SelectRunWorkerCapacityRow, error)
+	SessionOwnedExecutionsExcluded(ctx context.Context, parentRunID pgtype.UUID) (bool, error)
 	SessionRecoveryHeadCommitted(ctx context.Context, arg SessionRecoveryHeadCommittedParams) (bool, error)
 	SessionTurnHasUnsettledWork(ctx context.Context, arg SessionTurnHasUnsettledWorkParams) (pgtype.Bool, error)
 	SessionTurnMessageReady(ctx context.Context, arg SessionTurnMessageReadyParams) (bool, error)
@@ -546,7 +553,7 @@ type Querier interface {
 	SetSessionTurnMessageReady(ctx context.Context, arg SetSessionTurnMessageReadyParams) (SessionTurn, error)
 	SetWorkerGroupPrimaryPool(ctx context.Context, arg SetWorkerGroupPrimaryPoolParams) (WorkerGroup, error)
 	SetWorkspaceExecResult(ctx context.Context, arg SetWorkspaceExecResultParams) (WorkspaceProcess, error)
-	SettleRecoveredSessionTurn(ctx context.Context, arg SettleRecoveredSessionTurnParams) (SessionTurn, error)
+	SettleHeldSessionTurn(ctx context.Context, arg SettleHeldSessionTurnParams) (SessionTurn, error)
 	SettleSessionTurn(ctx context.Context, arg SettleSessionTurnParams) (SessionTurn, error)
 	StageWorkspaceExecCapture(ctx context.Context, arg StageWorkspaceExecCaptureParams) (StageWorkspaceExecCaptureRow, error)
 	StartWorkspaceExec(ctx context.Context, arg StartWorkspaceExecParams) (WorkspaceProcess, error)

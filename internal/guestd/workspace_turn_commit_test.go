@@ -12,7 +12,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func TestActorTurnCommitBarrierBlocksProcessesAndAdvancesAuthorityFrontier(t *testing.T) {
+func TestTurnSettleBarrierBlocksProcessesAndAdvancesAuthorityFrontier(t *testing.T) {
 	entry := testWorkspaceAuthorityEntry()
 	entry.authority = testWorkspaceRunAuthority(time.Now().Add(time.Minute))
 	registry := newWorkspaceOperationRegistry()
@@ -25,12 +25,12 @@ func TestActorTurnCommitBarrierBlocksProcessesAndAdvancesAuthorityFrontier(t *te
 	run := &programv0.ProgramRunRequest{
 		RunId: "run-1", AttemptNumber: 2, RunLeaseId: "run-lease-1",
 	}
-	pause := &programv0.ActorTurnCommitPauseRequest{
+	pause := &programv0.TurnSettlePauseRequest{
 		RunId: "run-1", AttemptNumber: 2, RunLeaseId: "run-lease-1",
 		ExpectedBaseWorkspaceVersionId: "version-1",
 	}
 
-	release, expiresAt, err := entry.acquireActorTurnCommit(run, pause)
+	release, expiresAt, err := entry.acquireTurnSettle(run, pause)
 	if err != nil {
 		t.Fatalf("acquire Actor turn commit: %v", err)
 	}
@@ -113,13 +113,13 @@ func TestActorTurnAuthorityContextTracksRenewedExpiry(t *testing.T) {
 	}
 }
 
-func TestActorTurnCommitBarrierRejectsActiveWorkspaceExec(t *testing.T) {
+func TestTurnSettleBarrierRejectsActiveWorkspaceExec(t *testing.T) {
 	entry := testWorkspaceAuthorityEntry()
 	entry.authority = testWorkspaceRunAuthority(time.Now().Add(time.Minute))
 	entry.processAdmissions = 1
-	_, _, err := entry.acquireActorTurnCommit(
+	_, _, err := entry.acquireTurnSettle(
 		&programv0.ProgramRunRequest{RunId: "run-1", AttemptNumber: 2, RunLeaseId: "run-lease-1"},
-		&programv0.ActorTurnCommitPauseRequest{RunId: "run-1", AttemptNumber: 2, RunLeaseId: "run-lease-1"},
+		&programv0.TurnSettlePauseRequest{RunId: "run-1", AttemptNumber: 2, RunLeaseId: "run-lease-1"},
 	)
 	if err == nil || !strings.Contains(err.Error(), "no active exec") {
 		t.Fatalf("active process barrier error = %v", err)
@@ -129,11 +129,11 @@ func TestActorTurnCommitBarrierRejectsActiveWorkspaceExec(t *testing.T) {
 	}
 }
 
-func TestActorTurnCommitFrontierRejectsStaleBase(t *testing.T) {
+func TestTurnSettleFrontierRejectsStaleBase(t *testing.T) {
 	entry := testWorkspaceAuthorityEntry()
 	entry.authority = testWorkspaceRunAuthority(time.Now().Add(time.Minute))
 	entry.turnCommitBlocked = true
-	pause := &programv0.ActorTurnCommitPauseRequest{
+	pause := &programv0.TurnSettlePauseRequest{
 		RunId: "run-1", AttemptNumber: 2, RunLeaseId: "run-lease-1",
 	}
 	registry := newWorkspaceOperationRegistry()
@@ -152,7 +152,7 @@ func TestActorTurnCommitFrontierRejectsStaleBase(t *testing.T) {
 	}
 }
 
-func TestActorTurnCommitFrontierRejectsExpiredAuthority(t *testing.T) {
+func TestTurnSettleFrontierRejectsExpiredAuthority(t *testing.T) {
 	entry := testWorkspaceAuthorityEntry()
 	entry.authority = testWorkspaceRunAuthority(time.Now().Add(-time.Second))
 	entry.turnCommitBlocked = true
@@ -163,7 +163,7 @@ func TestActorTurnCommitFrontierRejectsExpiredAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer releaseProgram()
-	pause := &programv0.ActorTurnCommitPauseRequest{
+	pause := &programv0.TurnSettlePauseRequest{
 		RunId: "run-1", AttemptNumber: 2, RunLeaseId: "run-lease-1",
 	}
 	if err := registry.advanceActorTurnWorkspaceFrontier(entry, pause, "version-1", "version-2"); err == nil ||
@@ -177,7 +177,7 @@ func TestActorTurnCommitFrontierRejectsExpiredAuthority(t *testing.T) {
 	}
 }
 
-func TestActorTurnCommitBlocksWorkspaceFinalizationUntilReleased(t *testing.T) {
+func TestTurnSettleBlocksWorkspaceFinalizationUntilReleased(t *testing.T) {
 	entry := testWorkspaceAuthorityEntry()
 	entry.authority = testWorkspaceRunAuthority(time.Now().Add(time.Minute))
 	entry.finalizationRoot = t.TempDir()
@@ -189,8 +189,8 @@ func TestActorTurnCommitBlocksWorkspaceFinalizationUntilReleased(t *testing.T) {
 	}
 	defer releaseProgram()
 	run := &programv0.ProgramRunRequest{RunId: "run-1", AttemptNumber: 2, RunLeaseId: "run-lease-1"}
-	pause := &programv0.ActorTurnCommitPauseRequest{RunId: "run-1", AttemptNumber: 2, RunLeaseId: "run-lease-1"}
-	releaseTurn, _, err := entry.acquireActorTurnCommit(run, pause)
+	pause := &programv0.TurnSettlePauseRequest{RunId: "run-1", AttemptNumber: 2, RunLeaseId: "run-lease-1"}
+	releaseTurn, _, err := entry.acquireTurnSettle(run, pause)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +216,7 @@ func TestActorTurnCommitBlocksWorkspaceFinalizationUntilReleased(t *testing.T) {
 	}
 }
 
-func TestActorTurnCommitBlocksMountRetirementUntilReleased(t *testing.T) {
+func TestTurnSettleBlocksMountRetirementUntilReleased(t *testing.T) {
 	entry := testWorkspaceAuthorityEntry()
 	entry.authority = testWorkspaceRunAuthority(time.Now().Add(time.Minute))
 	registry := newWorkspaceOperationRegistry()
@@ -226,9 +226,9 @@ func TestActorTurnCommitBlocksMountRetirementUntilReleased(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer releaseProgram()
-	releaseTurn, _, err := entry.acquireActorTurnCommit(
+	releaseTurn, _, err := entry.acquireTurnSettle(
 		&programv0.ProgramRunRequest{RunId: "run-1", AttemptNumber: 2, RunLeaseId: "run-lease-1"},
-		&programv0.ActorTurnCommitPauseRequest{RunId: "run-1", AttemptNumber: 2, RunLeaseId: "run-lease-1"},
+		&programv0.TurnSettlePauseRequest{RunId: "run-1", AttemptNumber: 2, RunLeaseId: "run-lease-1"},
 	)
 	if err != nil {
 		t.Fatal(err)

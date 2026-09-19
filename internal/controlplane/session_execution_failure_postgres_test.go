@@ -80,7 +80,7 @@ func TestSessionFailedCompletionRequiresRecoveryPostgres(t *testing.T) {
 			capture := validTaskWorkspaceCapture(t, assignment)
 			capture.Receipt.OperationID = operation
 			rollback := validTaskWorkspaceRollback(t, capture)
-			req := workerapi.CompleteActorRequest{Lease: f.fence(), Outcome: workerapi.ActorOutcome{TerminalInputSequence: 0, Failed: &workerapi.TaskFailure{Message: "initialization failed after side effect"}}, Workspace: workerapi.TaskWorkspaceProof{RolledBack: rollback}}
+			req := workerapi.CompleteActorRequest{Lease: f.fence(), Outcome: workerapi.ActorOutcome{RunGeneration: f.claim.actor.RunGeneration, Failed: &workerapi.TaskFailure{Message: "initialization failed after side effect"}}, Workspace: workerapi.TaskWorkspaceProof{RolledBack: rollback}}
 			parsed, err := parseActorCompletionRequest(req)
 			if err != nil {
 				t.Fatal(err)
@@ -170,10 +170,8 @@ func TestSessionSuccessfulReturnPreservesPendingWorkPostgres(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			f := newActorCheckpointFixture(t)
-			sequence := int64(0)
 			if !pending {
 				f.turn(t, 1, f.capture(t, "committed"), true)
-				sequence = 1
 			}
 			var head uuid.UUID
 			if err := f.Pool.QueryRow(t.Context(), `SELECT head_version_id FROM workspaces WHERE id=$1`, f.workspaceID).Scan(&head); err != nil {
@@ -190,7 +188,7 @@ func TestSessionSuccessfulReturnPreservesPendingWorkPostgres(t *testing.T) {
 			capture.Artifact = content.Artifact
 			capture.Receipt.OperationID = operation
 			setCaptureFingerprint(t, capture)
-			req := workerapi.CompleteActorRequest{Lease: f.fence(), Outcome: workerapi.ActorOutcome{TerminalInputSequence: sequence, Succeeded: &workerapi.ActorSucceeded{}}, Workspace: workerapi.TaskWorkspaceProof{Captured: capture}}
+			req := workerapi.CompleteActorRequest{Lease: f.fence(), Outcome: workerapi.ActorOutcome{RunGeneration: f.claim.actor.RunGeneration, Succeeded: &workerapi.ActorSucceeded{}}, Workspace: workerapi.TaskWorkspaceProof{Captured: capture}}
 			parsed, err := parseActorCompletionRequest(req)
 			if err != nil {
 				t.Fatal(err)

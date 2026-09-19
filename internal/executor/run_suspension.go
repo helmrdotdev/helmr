@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -194,6 +195,7 @@ func (w ControlPlaneRunWaits) handleCheckpointDecision(ctx context.Context, requ
 		return err
 	}
 	checkpointRequest := CheckpointRequest{
+		Execution: request.Execution, TurnID: request.TurnID,
 		RunID:            lease.RunID,
 		RunWaitID:        intent.RunWaitID,
 		CorrelationID:    request.CorrelationID,
@@ -278,6 +280,7 @@ func (w ControlPlaneRunWaits) AddRunWait(ctx context.Context, request WaitReques
 		TimeoutMS:                     request.TimeoutMS,
 		IdleTimeoutMS:                 request.IdleTimeoutMS,
 		ActorSpeculativeInputSequence: request.ActorSpeculativeInputSequence,
+		TurnID:                        request.TurnID, RunGeneration: executionGeneration(request.Execution),
 	})
 }
 
@@ -323,3 +326,11 @@ func durationMilliseconds(value time.Duration) int64 {
 }
 
 var _ WaitHandler = ControlPlaneRunWaits{}
+
+func executionGeneration(execution *programv0.SessionExecution) *int64 {
+	if execution == nil {
+		return nil
+	}
+	generation := execution.GetRunGeneration()
+	return &generation
+}

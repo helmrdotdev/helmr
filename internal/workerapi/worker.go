@@ -418,6 +418,40 @@ type SessionStatusResponse struct {
 	Failed        *RuntimeOperationFailure `json:"failed,omitempty"`
 }
 
+type TurnReferenceRequest struct {
+	SessionReferenceRequest
+	TurnID string `json:"turn_id"`
+}
+
+type SessionTurnResponse struct {
+	CorrelationID string                   `json:"correlation_id"`
+	Completed     *api.SessionTurn         `json:"completed,omitempty"`
+	Failed        *RuntimeOperationFailure `json:"failed,omitempty"`
+}
+
+type InterruptSessionTurnRequest struct {
+	TurnReferenceRequest
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+}
+
+type InterruptSessionTurnResponse struct {
+	CorrelationID string                    `json:"correlation_id"`
+	Completed     *api.TurnInterruptReceipt `json:"completed,omitempty"`
+	Failed        *RuntimeOperationFailure  `json:"failed,omitempty"`
+}
+
+type ResumeSessionRequest struct {
+	SessionReferenceRequest
+	HoldID         string `json:"hold_id"`
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+}
+
+type ResumeSessionResponse struct {
+	CorrelationID string                    `json:"correlation_id"`
+	Completed     *api.SessionResumeReceipt `json:"completed,omitempty"`
+	Failed        *RuntimeOperationFailure  `json:"failed,omitempty"`
+}
+
 type CloseSessionRequest struct {
 	SessionReferenceRequest
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
@@ -564,12 +598,20 @@ type RuntimeOperationFailure struct {
 }
 
 type ActorOutcome struct {
-	TerminalInputSequence int64           `json:"terminal_input_sequence"`
-	Succeeded             *ActorSucceeded `json:"succeeded,omitempty"`
-	Failed                *TaskFailure    `json:"failed,omitempty"`
+	RunGeneration int64             `json:"run_generation"`
+	Succeeded     *ActorSucceeded   `json:"succeeded,omitempty"`
+	Failed        *TaskFailure      `json:"failed,omitempty"`
+	Interrupted   *ActorInterrupted `json:"interrupted,omitempty"`
 }
 
 type ActorSucceeded struct{}
+
+// Interrupted records cooperative application convergence. The worker must still
+// supply the existing guest quiescence and captured Workspace finalization proof.
+type ActorInterrupted struct {
+	HoldID string  `json:"hold_id"`
+	TurnID *string `json:"turn_id"`
+}
 
 type TaskOutcome struct {
 	Succeeded      *TaskSucceeded `json:"succeeded,omitempty"`
@@ -712,6 +754,9 @@ type RunLeaseFresh struct {
 }
 
 type RunLeaseRestore struct {
+	SessionID            string                       `json:"session_id,omitempty"`
+	RunGeneration        int64                        `json:"run_generation,omitempty"`
+	TurnID               *string                      `json:"turn_id,omitempty"`
 	RunWaitID            string                       `json:"run_wait_id"`
 	CheckpointID         string                       `json:"checkpoint_id"`
 	ResumeAttachID       string                       `json:"resume_attach_id"`

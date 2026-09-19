@@ -297,6 +297,81 @@ func (q *Queries) ClearSessionDispatchHold(ctx context.Context, arg ClearSession
 	return i, err
 }
 
+const completeSessionInterruption = `-- name: CompleteSessionInterruption :one
+UPDATE sessions SET active_turn_id=NULL,current_run_id=NULL,
+ dispatch_hold_id=$1,dispatch_hold_reason='interrupted',
+ committed_input_sequence=coalesce($2,committed_input_sequence),
+ revision=revision+1,updated_at=now()
+WHERE environment_id=$3 AND id=$4
+ AND current_run_id=$5 AND run_generation=$6
+ AND dispatch_hold_id=$7 AND dispatch_hold_reason='interrupt_requested'
+ AND active_turn_id IS NOT DISTINCT FROM $8
+RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, next_event_sequence, failure, failure_run_id, next_input_sequence, committed_input_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, failed_at
+`
+
+type CompleteSessionInterruptionParams struct {
+	NewHoldID     pgtype.UUID `json:"new_hold_id"`
+	InputSequence pgtype.Int8 `json:"input_sequence"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	SessionID     pgtype.UUID `json:"session_id"`
+	RunID         pgtype.UUID `json:"run_id"`
+	RunGeneration int64       `json:"run_generation"`
+	HoldID        pgtype.UUID `json:"hold_id"`
+	TurnID        pgtype.UUID `json:"turn_id"`
+}
+
+func (q *Queries) CompleteSessionInterruption(ctx context.Context, arg CompleteSessionInterruptionParams) (Session, error) {
+	row := q.db.QueryRow(ctx, completeSessionInterruption,
+		arg.NewHoldID,
+		arg.InputSequence,
+		arg.EnvironmentID,
+		arg.SessionID,
+		arg.RunID,
+		arg.RunGeneration,
+		arg.HoldID,
+		arg.TurnID,
+	)
+	var i Session
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.ActorDeclaredID,
+		&i.DeploymentDefinitionID,
+		&i.WorkspaceID,
+		&i.Key,
+		&i.CurrentRunID,
+		&i.RunGeneration,
+		&i.Revision,
+		&i.ActiveTurnID,
+		&i.DispatchHoldID,
+		&i.DispatchHoldRunID,
+		&i.DispatchHoldAttemptNumber,
+		&i.DispatchHoldRunGeneration,
+		&i.DispatchHoldReason,
+		&i.NextEventSequence,
+		&i.Failure,
+		&i.FailureRunID,
+		&i.NextInputSequence,
+		&i.CommittedInputSequence,
+		&i.RunQueueName,
+		&i.RunConcurrencyKey,
+		&i.RunQueueConcurrencyLimit,
+		&i.RunPriority,
+		&i.RunQueueTtlMs,
+		&i.RunMaxActiveDurationMs,
+		&i.RunRetryPolicy,
+		&i.RunMetadata,
+		&i.RunTags,
+		&i.Status,
+		&i.CloseSequence,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ClosedAt,
+		&i.FailedAt,
+	)
+	return i, err
+}
+
 const completeSessionRecovery = `-- name: CompleteSessionRecovery :one
 UPDATE sessions SET active_turn_id=NULL,current_run_id=NULL,dispatch_hold_id=$1,
  dispatch_hold_reason='recovered',revision=revision+1,updated_at=now(),
@@ -871,6 +946,76 @@ func (q *Queries) LockWorkerSessionOperationActors(ctx context.Context, arg Lock
 	return items, nil
 }
 
+const readWorkerSessionControl = `-- name: ReadWorkerSessionControl :one
+SELECT s.dispatch_hold_id, s.dispatch_hold_reason, s.active_turn_id
+FROM run_leases l
+JOIN runs r ON r.id=l.run_id AND r.current_run_lease_id=l.id
+ AND r.current_attempt_number=l.attempt_number AND r.workspace_id=l.workspace_id
+JOIN sessions s ON s.id=r.session_id AND s.current_run_id=r.id
+JOIN run_attempts a ON a.run_id=r.id AND a.number=l.attempt_number
+JOIN worker_instances wi ON wi.id=l.worker_instance_id AND wi.worker_group_id=l.worker_group_id AND wi.current_epoch=l.worker_epoch
+JOIN worker_groups wg ON wg.id=l.worker_group_id
+JOIN workspace_leases wl ON wl.owner_run_lease_id=l.id AND wl.workspace_id=l.workspace_id
+JOIN runtime_instances rt ON rt.id=l.runtime_instance_id AND rt.runtime_identity_id=l.runtime_identity_id
+WHERE l.id=$1 AND l.lease_sequence=$2
+ AND l.worker_group_id=$3 AND l.worker_instance_id=$4 AND l.worker_epoch=$5
+ AND l.status IN ('running','checkpointing') AND l.expires_at>statement_timestamp()
+ AND l.finalization_operation_id IS NULL AND r.status IN ('running','waiting')
+ AND a.entrypoint_entered_at IS NOT NULL AND a.terminal_at IS NULL
+ AND s.run_generation=$6 AND s.status IN ('open','closing')
+ AND wi.status IN ('active','draining') AND wg.status IN ('active','draining')
+ AND wl.status='active' AND wl.expires_at>statement_timestamp()
+ AND rt.observed_state='ready' AND rt.reclaimed_at IS NULL
+`
+
+type ReadWorkerSessionControlParams struct {
+	RunLeaseID       pgtype.UUID `json:"run_lease_id"`
+	LeaseSequence    int64       `json:"lease_sequence"`
+	WorkerGroupID    pgtype.UUID `json:"worker_group_id"`
+	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch      int64       `json:"worker_epoch"`
+	RunGeneration    int64       `json:"run_generation"`
+}
+
+type ReadWorkerSessionControlRow struct {
+	DispatchHoldID     pgtype.UUID `json:"dispatch_hold_id"`
+	DispatchHoldReason pgtype.Text `json:"dispatch_hold_reason"`
+	ActiveTurnID       pgtype.UUID `json:"active_turn_id"`
+}
+
+func (q *Queries) ReadWorkerSessionControl(ctx context.Context, arg ReadWorkerSessionControlParams) (ReadWorkerSessionControlRow, error) {
+	row := q.db.QueryRow(ctx, readWorkerSessionControl,
+		arg.RunLeaseID,
+		arg.LeaseSequence,
+		arg.WorkerGroupID,
+		arg.WorkerInstanceID,
+		arg.WorkerEpoch,
+		arg.RunGeneration,
+	)
+	var i ReadWorkerSessionControlRow
+	err := row.Scan(&i.DispatchHoldID, &i.DispatchHoldReason, &i.ActiveTurnID)
+	return i, err
+}
+
+const runWaitSessionStopped = `-- name: RunWaitSessionStopped :one
+SELECT EXISTS (
+ SELECT 1 FROM run_waits w JOIN runs r ON r.id=w.run_id
+ JOIN sessions s ON s.id=r.session_id
+ WHERE w.id=$1 AND s.current_run_id=r.id
+ AND s.dispatch_hold_reason='interrupt_requested' AND s.dispatch_hold_run_id=r.id
+ AND s.dispatch_hold_attempt_number=w.attempt_number AND s.dispatch_hold_run_generation=s.run_generation
+ AND r.current_attempt_number=w.attempt_number
+ AND (w.turn_id IS NULL OR (s.active_turn_id=w.turn_id AND w.turn_session_id=s.id AND w.turn_run_generation=s.run_generation))
+) AS stopped
+`
+
+func (q *Queries) RunWaitSessionStopped(ctx context.Context, id pgtype.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, runWaitSessionStopped, id)
+	var stopped bool
+	err := row.Scan(&stopped)
+	return stopped, err
+}
+
 const runWaitTurnCurrent = `-- name: RunWaitTurnCurrent :one
 SELECT ((r.session_id IS NULL OR EXISTS(SELECT 1 FROM sessions a WHERE a.id=r.session_id AND a.current_run_id=r.id AND a.dispatch_hold_id IS NULL)) AND
  (w.turn_id IS NULL OR EXISTS(SELECT 1 FROM sessions s JOIN session_turns t ON t.id=s.active_turn_id
@@ -885,6 +1030,37 @@ func (q *Queries) RunWaitTurnCurrent(ctx context.Context, id pgtype.UUID) (bool,
 	var current bool
 	err := row.Scan(&current)
 	return current, err
+}
+
+const sessionOwnedExecutionsExcluded = `-- name: SessionOwnedExecutionsExcluded :one
+WITH RECURSIVE owned(id) AS (
+ SELECT c.id FROM runs c WHERE c.parent_run_id=$1 AND c.parent_owns_lifecycle
+ UNION
+ SELECT c.id FROM owned p JOIN runs c ON c.parent_run_id=p.id WHERE c.parent_owns_lifecycle
+), runtimes(id) AS (
+ -- A terminal worker finalization receipt already proves this program quiesced.
+ -- Its Workspace runtime may remain warm; only unproved execution needs reclaim.
+ SELECT l.runtime_instance_id FROM run_leases l JOIN owned o ON o.id=l.run_id
+ WHERE NOT (l.status IN ('completed','failed') AND l.terminal_request_fingerprint IS NOT NULL
+   AND l.finalization_operation_id IS NOT NULL AND l.terminal_at IS NOT NULL)
+ UNION
+ SELECT rt.id FROM runtime_instances rt JOIN owned o ON o.id=rt.reserved_run_id
+)
+SELECT (NOT EXISTS(SELECT 1 FROM runs r JOIN owned o ON o.id=r.id
+ WHERE r.current_run_lease_id IS NOT NULL OR r.status NOT IN ('succeeded','failed','cancelled','expired','system_failed'))
+ AND NOT EXISTS(SELECT 1 FROM runtime_instances rt JOIN runtimes ON runtimes.id=rt.id
+ WHERE rt.reclaimed_at IS NULL)
+ AND NOT EXISTS(SELECT 1 FROM workspace_leases wl JOIN run_leases l ON l.id=wl.owner_run_lease_id JOIN owned o ON o.id=l.run_id
+ WHERE wl.status IN ('active','releasing'))
+ AND NOT EXISTS(SELECT 1 FROM workspace_mounts m JOIN runtimes rt ON rt.id=m.runtime_instance_id
+ WHERE m.status IN ('mounting','mounted','unmounting')))::boolean AS excluded
+`
+
+func (q *Queries) SessionOwnedExecutionsExcluded(ctx context.Context, parentRunID pgtype.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, sessionOwnedExecutionsExcluded, parentRunID)
+	var excluded bool
+	err := row.Scan(&excluded)
+	return excluded, err
 }
 
 const sessionRecoveryHeadCommitted = `-- name: SessionRecoveryHeadCommitted :one
@@ -1012,14 +1188,14 @@ func (q *Queries) SetSessionTurnMessageReady(ctx context.Context, arg SetSession
 	return i, err
 }
 
-const settleRecoveredSessionTurn = `-- name: SettleRecoveredSessionTurn :one
+const settleHeldSessionTurn = `-- name: SettleHeldSessionTurn :one
 UPDATE session_turns SET status=$1,ready_run_lease_id=NULL,
  terminal_event_id=$2,terminal_request_fingerprint=$3
 WHERE environment_id=$4 AND session_id=$5 AND id=$6
  AND status='running' RETURNING id, environment_id, session_id, sequence, data, source_run_id, status, run_generation, run_id, attempt_number, ready_run_lease_id, settlement_started_at, interrupt_requested_at, terminal_event_id, terminal_request_fingerprint, created_at
 `
 
-type SettleRecoveredSessionTurnParams struct {
+type SettleHeldSessionTurnParams struct {
 	Status        string      `json:"status"`
 	EventID       pgtype.UUID `json:"event_id"`
 	Fingerprint   pgtype.Text `json:"fingerprint"`
@@ -1028,8 +1204,8 @@ type SettleRecoveredSessionTurnParams struct {
 	TurnID        pgtype.UUID `json:"turn_id"`
 }
 
-func (q *Queries) SettleRecoveredSessionTurn(ctx context.Context, arg SettleRecoveredSessionTurnParams) (SessionTurn, error) {
-	row := q.db.QueryRow(ctx, settleRecoveredSessionTurn,
+func (q *Queries) SettleHeldSessionTurn(ctx context.Context, arg SettleHeldSessionTurnParams) (SessionTurn, error) {
+	row := q.db.QueryRow(ctx, settleHeldSessionTurn,
 		arg.Status,
 		arg.EventID,
 		arg.Fingerprint,

@@ -3,7 +3,6 @@ package executor
 import (
 	"bufio"
 	"context"
-	"errors"
 	"net"
 	"testing"
 	"time"
@@ -17,17 +16,17 @@ import (
 
 type actorInputSendControlPlane struct {
 	*testRunLeaseControlPlane
-	request      workerapi.SendActorInputRequest
-	requests     []workerapi.SendActorInputRequest
-	response     workerapi.SendActorInputResponse
+	request      workerapi.SubmitSessionDataRequest
+	requests     []workerapi.SubmitSessionDataRequest
+	response     workerapi.SubmitSessionDataResponse
 	errors       []error
 	firstAttempt chan struct{}
 }
 
-func (controlPlane *actorInputSendControlPlane) SendRunActorInput(
+func (controlPlane *actorInputSendControlPlane) SendRunSession(
 	_ context.Context,
-	request workerapi.SendActorInputRequest,
-) (workerapi.SendActorInputResponse, error) {
+	request workerapi.SubmitSessionDataRequest,
+) (workerapi.SubmitSessionDataResponse, error) {
 	controlPlane.request = request
 	controlPlane.requests = append(controlPlane.requests, request)
 	if len(controlPlane.errors) != 0 {
@@ -37,32 +36,27 @@ func (controlPlane *actorInputSendControlPlane) SendRunActorInput(
 			close(controlPlane.firstAttempt)
 			controlPlane.firstAttempt = nil
 		}
-		return workerapi.SendActorInputResponse{}, err
+		return workerapi.SubmitSessionDataResponse{}, err
 	}
 	return controlPlane.response, nil
 }
 
-func (controlPlane *actorInputSendControlPlane) AppendActorOutput(
-	context.Context,
-	workerapi.AppendActorOutputRequest,
-) (workerapi.AppendActorOutputResponse, error) {
-	return workerapi.AppendActorOutputResponse{}, errors.New("unexpected actor output append")
+func (c *actorInputSendControlPlane) EnqueueRunSession(ctx context.Context, r workerapi.SubmitSessionDataRequest) (workerapi.SubmitSessionDataResponse, error) {
+	return c.SendRunSession(ctx, r)
+}
+func (c *actorInputSendControlPlane) SendRunTurnMessage(ctx context.Context, r workerapi.SubmitSessionDataRequest) (workerapi.SubmitSessionDataResponse, error) {
+	return c.SendRunSession(ctx, r)
 }
 
-func TestHandleActorInputSendWritesCorrelatedDecision(t *testing.T) {
+func TestHandleSessionSubmitWritesCorrelatedDecision(t *testing.T) {
 	lease := testFreshProgramClaim(t).Lease
 	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
 	correlationID := "019c10d5-a6f7-7af1-8f5f-000000000111"
-	createdAt := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
 	controlPlane := &actorInputSendControlPlane{
 		testRunLeaseControlPlane: &testRunLeaseControlPlane{},
-		response: workerapi.SendActorInputResponse{
+		response: workerapi.SubmitSessionDataResponse{
 			CorrelationID: correlationID,
-			Completed: &api.SessionInput{
-				ID: "019c10d5-a6f7-7af1-8f5f-000000000112", Sequence: 7,
-				Data: []byte(`{"hello":"world"}`), Source: api.SessionInputSource{Type: "external"},
-				CreatedAt: createdAt,
-			},
+			Completed:     &api.SessionAdmissionReceipt{ID: "019c10d5-a6f7-7af1-8f5f-000000000112", TurnID: "019c10d5-a6f7-7af1-8f5f-000000000112", Kind: "turn"},
 		},
 	}
 	guest, host := net.Pipe()
@@ -75,7 +69,7 @@ func TestHandleActorInputSendWritesCorrelatedDecision(t *testing.T) {
 	}
 	result := make(chan error, 1)
 	go func() {
-		result <- task.handleActorInputSend(t.Context(), &programv0.SessionInputSendRequested{
+		result <- task.handleSessionSubmit(t.Context(), &programv0.SessionSubmitRequested{Mode: "send",
 			CorrelationId:  correlationID,
 			SessionId:      "019c10d5-a6f7-7af1-8f5f-000000000111",
 			DataJson:       `{"hello":"world"}`,
@@ -96,7 +90,7 @@ func TestHandleActorInputSendWritesCorrelatedDecision(t *testing.T) {
 	}
 	if decision.GetCorrelationId() != correlationID ||
 		decision.GetKind() != "completed" ||
-		decision.GetDataJson() != `{"id":"019c10d5-a6f7-7af1-8f5f-000000000112","sequence":7,"data":{"hello":"world"},"source":{"type":"external"},"created_at":"2030-01-02T03:04:05Z"}` {
+		decision.GetDataJson() != `{"id":"019c10d5-a6f7-7af1-8f5f-000000000112","kind":"turn","turn_id":"019c10d5-a6f7-7af1-8f5f-000000000112"}` {
 		t.Fatalf("decision = %+v", decision)
 	}
 	if controlPlane.request.Lease != lease.Fence() ||
@@ -106,16 +100,16 @@ func TestHandleActorInputSendWritesCorrelatedDecision(t *testing.T) {
 	}
 }
 
-func TestHandleActorInputSendRetryKeepsStableFenceAcrossRenewal(t *testing.T) {
+func TestHandleSessionSubmitRetryKeepsStableFenceAcrossRenewal(t *testing.T) {
 	lease := testFreshProgramClaim(t).Lease
 	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
 	correlationID := "019c10d5-a6f7-7af1-8f5f-000000000113"
 	firstAttempt := make(chan struct{})
 	controlPlane := &actorInputSendControlPlane{
 		testRunLeaseControlPlane: &testRunLeaseControlPlane{},
-		response: workerapi.SendActorInputResponse{
+		response: workerapi.SubmitSessionDataResponse{
 			CorrelationID: correlationID,
-			Completed:     &api.SessionInput{Sequence: 8},
+			Completed:     &api.SessionAdmissionReceipt{ID: "019c10d5-a6f7-7af1-8f5f-000000000112", TurnID: "019c10d5-a6f7-7af1-8f5f-000000000112", Kind: "turn"},
 		},
 		errors: []error{&httpclient.Error{
 			StatusCode: 503,
@@ -135,7 +129,7 @@ func TestHandleActorInputSendRetryKeepsStableFenceAcrossRenewal(t *testing.T) {
 	go renewRunSourceReceiptAfterAttempt(task, firstAttempt)
 	result := make(chan error, 1)
 	go func() {
-		result <- task.handleActorInputSend(t.Context(), &programv0.SessionInputSendRequested{
+		result <- task.handleSessionSubmit(t.Context(), &programv0.SessionSubmitRequested{Mode: "send",
 			CorrelationId: correlationID,
 			SessionId:     "019c10d5-a6f7-7af1-8f5f-000000000111",
 			DataJson:      `{"hello":"again"}`,

@@ -10,13 +10,13 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func TestParseActorCompletionRequestBindsCursorAndWorkspaceProof(t *testing.T) {
+func TestParseActorCompletionRequestBindsGenerationAndWorkspaceProof(t *testing.T) {
 	taskRequest := validTaskCompletionRequest(t)
 	request := workerapi.CompleteActorRequest{
 		Lease: taskRequest.Lease,
 		Outcome: workerapi.ActorOutcome{
-			TerminalInputSequence: 0,
-			Succeeded:             &workerapi.ActorSucceeded{},
+			RunGeneration: 1,
+			Succeeded:     &workerapi.ActorSucceeded{},
 		},
 		Workspace: taskRequest.Workspace,
 	}
@@ -24,7 +24,7 @@ func TestParseActorCompletionRequestBindsCursorAndWorkspaceProof(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.kind != actorCompletionSucceeded || parsed.terminalInputSequence != 0 || parsed.capture == nil || parsed.rollback != nil || parsed.fingerprint == "" {
+	if parsed.kind != actorCompletionSucceeded || parsed.capture == nil || parsed.rollback != nil || parsed.fingerprint == "" {
 		t.Fatalf("parsed Actor completion = %#v", parsed)
 	}
 }
@@ -34,8 +34,8 @@ func TestParseActorCompletionRejectsNoncanonicalFailureMessage(t *testing.T) {
 	request := workerapi.CompleteActorRequest{
 		Lease: taskRequest.Lease,
 		Outcome: workerapi.ActorOutcome{
-			TerminalInputSequence: 0,
-			Failed:                &workerapi.TaskFailure{Message: " failed "},
+			RunGeneration: 1,
+			Failed:        &workerapi.TaskFailure{Message: " failed "},
 		},
 		Workspace: workerapi.TaskWorkspaceProof{
 			RolledBack: validTaskWorkspaceRollback(t, taskRequest.Workspace.Captured),
@@ -54,9 +54,13 @@ func TestDecideActorRunTerminal(t *testing.T) {
 		want       actorRunTerminalDecision
 	}{
 		{
-			name:       "successful progress remains open",
-			authority:  actorTerminalAuthority("open", 2, 4),
-			completion: parsedActorCompletion{kind: actorCompletionSucceeded, terminalInputSequence: 3},
+			name: "successful progress remains open",
+			authority: func() runLeaseClaimAuthority {
+				a := actorTerminalAuthority("open", 2, 4)
+				a.actor.CommittedInputSequence = 3
+				return a
+			}(),
+			completion: parsedActorCompletion{kind: actorCompletionSucceeded},
 			want:       actorRunTerminalDecision{runStatus: db.RunStatusSucceeded, actorStatus: "open"},
 		},
 		{
@@ -66,7 +70,7 @@ func TestDecideActorRunTerminal(t *testing.T) {
 				a.actor.CloseSequence = pgtype.Int8{Int64: 2, Valid: true}
 				return a
 			}(),
-			completion: parsedActorCompletion{kind: actorCompletionSucceeded, terminalInputSequence: 2},
+			completion: parsedActorCompletion{kind: actorCompletionSucceeded},
 			want:       actorRunTerminalDecision{runStatus: db.RunStatusFailed, actorStatus: "closing", runReason: pgvalue.Text("no_progress")},
 		},
 		{
@@ -76,13 +80,13 @@ func TestDecideActorRunTerminal(t *testing.T) {
 				a.actor.CloseSequence = pgtype.Int8{Int64: 2, Valid: true}
 				return a
 			}(),
-			completion: parsedActorCompletion{kind: actorCompletionSucceeded, terminalInputSequence: 2},
+			completion: parsedActorCompletion{kind: actorCompletionSucceeded},
 			want:       actorRunTerminalDecision{runStatus: db.RunStatusSucceeded, actorStatus: "closed"},
 		},
 		{
 			name:       "runtime failure rolls cursor back",
 			authority:  actorTerminalAuthority("open", 2, 4),
-			completion: parsedActorCompletion{kind: actorCompletionFailed, terminalInputSequence: 3},
+			completion: parsedActorCompletion{kind: actorCompletionFailed},
 			want:       actorRunTerminalDecision{runStatus: db.RunStatusFailed, runReason: pgvalue.Text("actor_failed"), actorStatus: "open"},
 		},
 	}

@@ -1,4 +1,4 @@
-import type { PayloadSchema } from "./schema/payload"
+import type { PayloadSchema, PayloadSchemaInput, PayloadSchemaOutput } from "./schema/payload"
 import type { RequestOptions } from "./request"
 import type { WorkspaceRef } from "./workspace"
 
@@ -258,46 +258,12 @@ export type TaskConfig<
   | TaskConfigWithPayload<TIdentifier, TInput, TPayload, TOutput>
   | TaskConfigWithoutPayload<TIdentifier, TOutput>
 
-export type SessionInputSource =
+export type TurnSource =
   | Readonly<{ type: "external" }>
   | Readonly<{ type: "run"; runId: string }>
 
 export interface WaitTimeoutError extends HelmrError {
   readonly code: "wait_timeout"
-}
-
-export interface SessionClosedError extends HelmrError {
-  readonly code: "session_closed"
-}
-
-export interface SessionInputMetadata {
-  readonly id: string
-  readonly sequence: number
-  readonly createdAt: string
-  readonly source: SessionInputSource
-}
-
-export interface SessionInputRecord extends SessionInputMetadata {
-  readonly data: JsonValue
-}
-
-export type ActorSessionInputResult =
-  | Readonly<{
-      ok: true
-      value: JsonValue
-      record: SessionInputMetadata
-    }>
-  | Readonly<{
-      ok: false
-      error: WaitTimeoutError | SessionClosedError
-    }>
-
-export interface ActorSessionReceive extends PromiseLike<ActorSessionInputResult> {
-  unwrap(): Promise<JsonValue>
-}
-
-export interface SessionInputSendRequest {
-  readonly idempotencyKey?: string
 }
 
 export interface ActorSessionReceiveOptions {
@@ -307,105 +273,128 @@ export interface ActorSessionReceiveOptions {
   readonly tags?: readonly string[]
 }
 
-export interface ActorSessionInput {
-  receive(options?: ActorSessionReceiveOptions): ActorSessionReceive
-}
-
-export interface SessionOutputRecord {
-  readonly id: string
-  readonly sequence: number
-  readonly data: unknown
-  readonly contentType: string
-  readonly createdAt: string
-  readonly provenance: Readonly<{
-    runId: string
-    attemptNumber: number
-    deploymentId: string
-  }>
-}
-
-export interface ActorSessionOutputAppendOptions {
-  readonly contentType?: string
+export interface SessionOperationOptions {
   readonly idempotencyKey?: string
 }
 
-export interface ActorSessionOutputSequenceOptions {
-  readonly contentType?: string
+export interface OutputReceipt {
+  readonly id: string
+  readonly sequence: number
+  readonly sessionId: string
+  readonly turnId: string | null
+  readonly runId: string
+  readonly attemptNumber: number
+  readonly runGeneration: number
 }
 
-export interface SessionOutputQuery {
-  readonly after?: number
-  readonly limit?: number
+export interface RecordWriter<TValue = JsonValue> {
+  write(
+    value: TValue,
+    options?: SessionOperationOptions,
+  ): Promise<OutputReceipt>
+  pipe(source: AsyncIterable<TValue> | Iterable<TValue>): Promise<void>
 }
 
-export interface SessionInputQuery {
-  readonly after?: number
-  readonly limit?: number
+export interface Message<TData = JsonValue> {
+  readonly id: string
+  readonly data: TData
 }
 
-export interface SessionOutputWriter {
-  write(value: Serializable): Promise<SessionOutputRecord>
-  close(): Promise<void>
-}
-
-export interface ActorSessionOutput {
-  append(
-    value: Serializable,
-    options?: ActorSessionOutputAppendOptions,
-  ): Promise<SessionOutputRecord>
-  pipe(
-    source: AsyncIterable<Serializable> | Iterable<Serializable>,
-    options?: ActorSessionOutputSequenceOptions,
+export interface Turn<
+  TInput = JsonValue,
+  TMessage = JsonValue,
+  TOutput = JsonValue,
+  TResult = JsonValue | undefined,
+> {
+  readonly id: string
+  readonly sequence: number
+  readonly input: TInput
+  readonly source: TurnSource
+  readonly createdAt: string
+  readonly signal: AbortSignal
+  readonly output: RecordWriter<TOutput>
+  onMessage(
+    handler: (message: Message<TMessage>) => MaybePromise<void>,
   ): Promise<void>
-  writer(options?: ActorSessionOutputSequenceOptions): SessionOutputWriter
+  complete(
+    ...args: undefined extends TResult ? [result?: TResult] : [result: TResult]
+  ): Promise<void>
+  fail(error: unknown): Promise<void>
 }
 
-export interface SessionOutputPage {
-  readonly records: readonly SessionOutputRecord[]
-  readonly nextAfter: number
-  readonly hasMore: boolean
-}
-
-export interface SessionInputPage {
-  readonly records: readonly SessionInputRecord[]
-  readonly nextAfter: number
-  readonly hasMore: boolean
-}
-
-export interface ActorSession {
+export interface ActorSession<
+  TInput = JsonValue,
+  TMessage = JsonValue,
+  TOutput = JsonValue,
+  TResult = JsonValue | undefined,
+> {
   readonly id: string
   readonly key?: string
-  readonly input: ActorSessionInput
-  readonly output: ActorSessionOutput
+  readonly output: RecordWriter<TOutput>
+  receive(
+    options?: ActorSessionReceiveOptions,
+  ): Promise<Turn<TInput, TMessage, TOutput, TResult> | null>
 }
 
-export interface ActorConfig extends RunDefaults {
+type ActorSchema = PayloadSchema<any, any> | undefined
+export type ActorSchemaInput<TSchema, TFallback = JsonValue> =
+  TSchema extends PayloadSchema<any, any>
+    ? PayloadSchemaInput<TSchema>
+    : TFallback
+export type ActorSchemaOutput<TSchema, TFallback = JsonValue> =
+  TSchema extends PayloadSchema<any, any>
+    ? PayloadSchemaOutput<TSchema>
+    : TFallback
+
+export interface ActorConfig<
+  TInput extends ActorSchema = undefined,
+  TMessage extends ActorSchema = undefined,
+  TOutput extends ActorSchema = undefined,
+  TResult extends ActorSchema = undefined,
+> extends RunDefaults {
   readonly id: string
   readonly idleTimeout?: Duration
+  readonly input?: TInput
+  readonly message?: TMessage
+  readonly output?: TOutput
+  readonly result?: TResult
   readonly run: (
-    session: ActorSession,
+    session: ActorSession<
+      ActorSchemaOutput<TInput>,
+      ActorSchemaOutput<TMessage>,
+      ActorSchemaInput<TOutput>,
+      ActorSchemaInput<TResult, JsonValue | undefined>
+    >,
     ctx: ActorContext,
   ) => MaybePromise<void>
 }
 
 export interface ActorStartOptions {
   readonly key?: string
-  readonly input?: JsonValue
   readonly idempotencyKey?: string
   readonly workspace: WorkspaceRef
   readonly run?: RunOptions
   readonly signal?: AbortSignal
 }
 
-export type SessionStatus = "open" | "closed" | "cancelled" | "failed"
-
+export type SessionStatus = "open" | "closing" | "closed" | "failed"
 export type SessionFailureCode = string
-
 export interface SessionFailure {
   readonly code: SessionFailureCode
   readonly message: string
   readonly details: Readonly<{ runId?: string }>
 }
+export type SessionDispatch =
+  | Readonly<{ state: "ready" }>
+  | Readonly<{
+      state: "held"
+      holdId: string
+      reason:
+        | "interrupt_requested"
+        | "interrupted"
+        | "recovery_required"
+        | "recovered"
+    }>
 
 export interface Session {
   readonly id: string
@@ -416,50 +405,208 @@ export interface Session {
   readonly status: SessionStatus
   readonly createdAt: string
   readonly updatedAt: string
-  readonly currentRunId?: string
+  readonly currentRunId: string | null
+  readonly activeTurnId: string | null
+  readonly dispatch: SessionDispatch
   readonly failure?: SessionFailure
 }
 
-export interface SessionCloseRequest {
-  readonly idempotencyKey?: string
+export type TurnStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "interrupted"
+export interface TurnState<TResult = JsonValue> {
+  readonly id: string
+  readonly sessionId: string
+  readonly sequence: number
+  readonly input: JsonValue
+  readonly source: TurnSource
+  readonly status: TurnStatus
+  readonly createdAt: string
+  readonly interruptRequested: boolean
+  readonly acceptsMessages: boolean
+  readonly terminalEventId?: string
+  readonly workspaceVersionId?: string
+  readonly result?: TResult
+  readonly error?: JsonValue
 }
 
 export interface SessionCloseReceipt {
+  readonly id: string
   readonly sessionId: string
-  readonly acceptedAt: string
+  readonly status: "accepted"
+}
+export interface TurnInterruptReceipt {
+  readonly id: string
+  readonly sessionId: string
+  readonly turnId: string
+  readonly holdId: string
+  readonly status: "accepted"
+}
+export interface SessionResumeReceipt {
+  readonly id: string
+  readonly sessionId: string
+  readonly holdId: string
+  readonly status: "accepted"
+}
+export interface SessionRecoveryReceipt {
+  readonly id: string
+  readonly sessionId: string
+  readonly turnId: string | null
+  readonly holdId: string
+  readonly status: "accepted"
+}
+export interface SessionResumeRequest extends SessionOperationOptions {
+  readonly holdId: string
+}
+export type SessionRecoverRequest = SessionOperationOptions &
+  Readonly<{
+    holdId: string
+    workspaceVersionId: string
+    reconciliationRef: string
+  }> &
+  (
+    | Readonly<{ turnId: string; disposition: "failed" | "interrupted" }>
+    | Readonly<{ turnId: null; disposition?: never }>
+  )
+
+export type SessionAdmissionReceipt =
+  | Readonly<{ id: string; kind: "enqueued"; turnId: string }>
+  | Readonly<{
+      id: string
+      kind: "messaged"
+      turnId: string
+      messageId: string
+    }>
+export interface SessionMessageReceipt {
+  readonly id: string
+  readonly turnId: string
+  readonly messageId: string
+  readonly status: "accepted"
+}
+export interface MessageReceipt {
+  readonly id: string
+  readonly status: "accepted"
 }
 
-export interface SessionRef {
+export type SessionEventKind =
+  | "output"
+  | "turn.enqueued"
+  | "turn.started"
+  | "turn.interrupt_requested"
+  | "turn.completed"
+  | "turn.failed"
+  | "turn.interrupted"
+  | "message.accepted"
+  | "message.handled"
+  | "message.rejected"
+  | "message.unknown"
+  | "session.closing"
+  | "session.closed"
+  | "session.failed"
+  | "session.held"
+  | "session.resumed"
+  | "session.recovered"
+export interface SessionEvent {
   readonly id: string
-  readonly input: Readonly<{
-    send(
-      input: JsonValue,
-      request?: SessionInputSendRequest,
-      options?: RequestOptions,
-    ): Promise<SessionInputRecord>
-  }>
-  readonly output: Readonly<{
+  readonly sessionId: string
+  readonly turnId: string | null
+  readonly sequence: number
+  readonly createdAt: string
+  readonly kind: SessionEventKind
+  readonly data: JsonValue
+  readonly provenance: Readonly<{
+    runId: string
+    attemptNumber: number
+    runGeneration: number
+    deploymentId: string
+  }> | null
+}
+export interface SessionEventQuery {
+  readonly after?: number
+  readonly limit?: number
+}
+export interface SessionEventPage {
+  readonly records: readonly SessionEvent[]
+  readonly nextAfter: number
+  readonly hasMore: boolean
+  readonly retainedAfter: number
+}
+
+export interface TurnRef<TMessage = JsonValue, TResult = JsonValue> {
+  readonly id: string
+  readonly sessionId: string
+  send(
+    data: TMessage,
+    request?: SessionOperationOptions,
+    options?: RequestOptions,
+  ): Promise<MessageReceipt>
+  retrieve(options?: RequestOptions): Promise<TurnState<TResult>>
+  interrupt(
+    request?: SessionOperationOptions,
+    options?: RequestOptions,
+  ): Promise<TurnInterruptReceipt>
+}
+export type SessionSendResult<TMessage = JsonValue, TResult = JsonValue> =
+  | Readonly<{ kind: "enqueued"; turn: TurnRef<TMessage, TResult> }>
+  | Readonly<{
+      kind: "messaged"
+      turn: TurnRef<TMessage, TResult>
+      message: MessageReceipt
+    }>
+export interface SessionRef<
+  TInput = JsonValue,
+  TMessage = JsonValue,
+  TResult = JsonValue,
+> {
+  readonly id: string
+  send(
+    data: TInput & TMessage,
+    request?: SessionOperationOptions,
+    options?: RequestOptions,
+  ): Promise<SessionSendResult<TMessage, TResult>>
+  enqueue(
+    input: TInput,
+    request?: SessionOperationOptions,
+    options?: RequestOptions,
+  ): Promise<TurnRef<TMessage, TResult>>
+  turn(id: string): TurnRef<TMessage, TResult>
+  readonly events: Readonly<{
     list(
-      query?: SessionOutputQuery,
+      query?: SessionEventQuery,
       options?: RequestOptions,
-    ): Promise<SessionOutputPage>
+    ): Promise<SessionEventPage>
   }>
   retrieve(options?: RequestOptions): Promise<Session>
   close(
-    request?: SessionCloseRequest,
+    request?: SessionOperationOptions,
     options?: RequestOptions,
   ): Promise<SessionCloseReceipt>
+  resume(
+    request: SessionResumeRequest,
+    options?: RequestOptions,
+  ): Promise<SessionResumeReceipt>
 }
 
 declare const actorTypeBrand: unique symbol
-
-export interface ActorStartResult {
-  readonly session: SessionRef
+export interface ActorStartResult<
+  TInput = JsonValue,
+  TMessage = JsonValue,
+  TResult = JsonValue,
+> {
+  readonly session: SessionRef<TInput, TMessage, TResult>
   readonly run: RunHandle<null>
 }
-
-export interface Actor {
+export interface Actor<
+  TInput = JsonValue,
+  TMessage = JsonValue,
+  TResult = JsonValue,
+> {
   readonly [actorTypeBrand]: true
   readonly id: string
-  start(options: ActorStartOptions): Promise<ActorStartResult>
+  start(
+    options: ActorStartOptions,
+  ): Promise<ActorStartResult<TInput, TMessage, TResult>>
 }

@@ -430,3 +430,125 @@ qualifies the exact combined artifacts and real native callback/process stop,
 checkpoint/restore and physical exclusion. Those claims require their own evidence;
 passing database fixtures does not discharge them. No CI, merge, publication,
 shared-environment reset or deploy is claimed here.
+
+
+## Package 3: execution and TypeScript contract
+
+Candidate base: `a48b8a4fd6951931d7b0e700ca39a0f163fbdaf2`.
+The parent integrates frozen SDK/compiler, runtime, and protocol/executor/guestd
+slices, plus control-plane completion and worker control support. Package 3 is qualified at the source, framed-protocol and isolated PostgreSQL
+boundaries below. Whole-plan integration and native execution acceptance remain
+packages 4 and 5.
+
+The public Actor contract is the custom `run(session, ctx)` loop with explicit
+`session.receive()`, `turn.complete(result?)` / `turn.fail(error)`, sequential
+message handlers, typed schema transforms, and tracked output barriers. Run exit
+never settles a Turn implicitly. Actor outcome carries Run generation and an
+exact interruption hold/nullable Turn; its obsolete terminal input cursor is
+removed. The control plane uses the committed Session frontier.
+
+Cooperative interruption retains a leased parent's capture authority, releases
+only hot consuming waits, cancels owned children, and reuses the existing
+quiesced-program capture/finalization proof. Mid-checkpoint uncertainty and
+unacknowledged callbacks remain recovery cases. A proved child finalization
+already establishes program quiescence; unproved descendant execution requires
+observed physical cleanup. Exact pending cleanup receives a retryable response
+within the existing finalization deadline. Stop reads are advisory single-query
+observations without shared Worker supply locks. Privileged recovery remains
+available only to the authenticated client.
+
+### Evidence and integration corrections
+
+- SDK/compiler frozen 29 paths: `/tmp/session-sdk-verified.Fa5iMD/manifest.json`.
+  Both typechecks, 159 tests, packed SDK declaration metadata and compiler
+  generation passed. Initial full deployment failure came from the dev-shell
+  restrictive umask changing a fixture's requested `0644` to `0600`; the full
+  package passes with `umask 022`, without a product or fixture change.
+- Runtime final correction: `/tmp/session-runtime-settle-stop-freeze-ehg1wmyn/manifest.json`.
+  Typecheck, 61 protocol/runtime tests, actual bundle generation and regeneration
+  check pass. This includes pending receive stop-only binding and a null-Turn
+  stop racing an in-flight final settlement response. No input or successful
+  settlement is synthesized from a stop notice.
+- Execution final correction: `/tmp/session-execution-completed-freeze-wdcw1xs8/owned-manifest.json`.
+  Executor, guestd, wire and worker race suite: 514 passing tests, five explicit
+  platform/fixture skips. Linux worker/guest cross-build passes (compile only).
+  The `completed` discriminator now crosses a generated protobuf frame and the
+  physical pause/capture/ready/applied handshake in a regression test.
+- Combined Go run `/tmp/session-package3-combined.jsonl` initially exposed only
+  an outdated route inventory and a child-call fixture that assumed the child
+  existed before same-Workspace checkpoint handoff. Both were corrected.
+  The subsequent full controlplane/secret/session run
+  `/tmp/session-package3-final-cp.jsonl` has 944 passes and four opt-in skips;
+  remaining packages passed in the combined run. Later changes receive scoped
+  requalification below, rather than being attributed to an older binary.
+- Integrated TypeScript preparation requires `bun install --frozen-lockfile`,
+  `scripts/build-compiler-entry.sh` and `scripts/build-npm-packages.sh` before the
+  packed SDK/compiler tests. Failed attempts lacking those local build outputs
+  are retained in `/tmp/session-package3-typescript-integrated*.log`; they are
+  superseded by `/tmp/session-package3-typescript-qualified.log`.
+- Parent stopped completion, Token isolation, hot child-call cancellation,
+  between-Turn cancellation, wrong hold/generation/Turn and unresolved callback
+  cases pass. Read-only stop observation is tested while a different transaction
+  owns the Worker Group lock. Completed different-Workspace child proof is reused
+  without waiting for warm Runtime reclamation. Relevant logs:
+  `/tmp/session-package3-stop-read-regression.log` and
+  `/tmp/session-package3-proved-child.log`.
+
+### Independent judgments
+
+Fresh native Codex `/root/package3_sdk_runtime_review` runs at the Founder's
+requested medium effort. P1 corrected the executor's obsolete `succeeded`
+settlement discriminator. P2 identified reciprocal controls from owned Tasks in
+different Workspaces; its source-Actor ancestry ordering correction is fixed and independently
+reviewed. An old-order overlay reproduces PostgreSQL `40P01`; the corrected
+owned-child reciprocal and child-to-parent finalization cases pass. The final
+native Codex affected pass reports no remaining actionable findings.
+
+Fable session `4c0fcb18-93ce-467a-bc0f-c197a8ae6660` supplied bounded plan critique,
+then independent diff/calibration at medium effort. Raw results are in
+`/tmp/session-package3-control-critique-grf7rb3s` and
+`/tmp/session-package3-calibration`. C1 requires deferring in-graph child source
+locking to the existing graph hook. C2 is fixed by lock-free stop observation,
+retaining timely independent stop delivery. C3 is fixed by pending settlement
+reconciliation. C4 prompted reuse of already-proved child finalization, with an
+actual completed-child database regression. S1/S2 simplify binding comparison
+and reuse locked Secret delivery under held Workspace locks, whose foreign key
+prevents a late binding insert; S3's private two-call-site control flag is
+retained to avoid a new orchestration abstraction. The unleased-only recovery
+wrapper and explicit prelocked Resume seam remain necessary.
+
+Native Linux cgroup/VM cleanup, external provider effects and actual VM checkpoint
+restore are not proved by macOS framed/DB tests. Their package 5 acceptance remains
+outstanding, as do package 4 CLI/Console/example consumers. No merge, publication,
+deployment or shared-environment reset was performed.
+
+Final affected Go race requalification:
+`/tmp/session-package3-final-delta.jsonl` — 48 passes, no failures or skips;
+controlplane 31.402s and secret 1.596s. Final integrated runtime typecheck,
+61 tests and bundle check pass in `/tmp/session-package3-runtime-final.log`.
+The final controls correction is bound by
+`/tmp/session-worker-controls-correction-manifest.json`; its removal of the
+standalone delivery export/query is included in regenerated sqlc output.
+
+Final parent disposition: native Codex correctness and Fable diff/calibration
+both report no remaining actionable findings. Final calibration raw result:
+`/tmp/session-package3-calibration-final/result.json`. All technical source hashes
+match that review snapshot; only this validation record was revised afterwards.
+The optional narrower read projection is non-actionable: retaining the current
+shared binding row shape introduces no state or alternate path. Failed Task
+finalization also retains its operation ID: `CompleteTaskRunLease` requires an
+existing finalization operation and sets only terminal fields, never clearing the
+proof. The exported delivery validation helper is removed. No actionable finding
+is deferred; package 5's native execution requirements remain explicitly unproved.
+
+All four package 3 writer worktrees and branches are retained for corrections and
+package 4/5 combined-candidate integration. Prior package 1/2 and design checkouts
+remain retained under the HQ Handoff. No source has been merged or published.
+
+Qualified implementation subtrees (unchanged by the validation record):
+
+- `internal`: `ddc8d1e82bf49edd00d7d6b2b0ab7f788f1f3f6c`
+- `sdk`: `bf393881e459f63671be154ce6caf18f7c311b29`
+- `runtime`: `d00e51448d6f90515f24dfa405a33b1f7d9b64a6`
+- `compiler`: `4c98e533a237cd549af957152ff2274c84fcaba8`
+- `proto`: `55955fef26e7d07ddc8d5edb28b9bf8f313a6eb3`

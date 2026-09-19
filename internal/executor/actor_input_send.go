@@ -4,93 +4,78 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"strings"
-
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
-	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 const maxJavaScriptSafeInteger = int64(9007199254740991)
 
-func (task *guestRunLeaseTask) handleActorInputSend(
-	ctx context.Context,
-	requested *programv0.SessionInputSendRequested,
-) error {
-	request, err := workerActorInputSendRequest(requested)
+type SessionSubmitControlPlane interface {
+	SendRunSession(context.Context, workerapi.SubmitSessionDataRequest) (workerapi.SubmitSessionDataResponse, error)
+	EnqueueRunSession(context.Context, workerapi.SubmitSessionDataRequest) (workerapi.SubmitSessionDataResponse, error)
+	SendRunTurnMessage(context.Context, workerapi.SubmitSessionDataRequest) (workerapi.SubmitSessionDataResponse, error)
+}
+
+func (task *guestRunLeaseTask) handleSessionSubmit(ctx context.Context, requested *programv0.SessionSubmitRequested) error {
+	request, err := workerSessionSubmitRequest(requested)
 	if err != nil {
 		return err
 	}
-	var response workerapi.SendActorInputResponse
-	if err := task.callRunSourceRuntime(ctx, func(
-		callCtx context.Context,
-		lease workerapi.RunLeaseAssignment,
-	) error {
+	cp, ok := task.controlPlane.(SessionSubmitControlPlane)
+	if !ok {
+		return errors.New("Session submission control plane is required")
+	}
+	var response workerapi.SubmitSessionDataResponse
+	err = task.callRunSourceRuntime(ctx, func(callCtx context.Context, lease workerapi.RunLeaseAssignment) error {
 		request.Lease = lease.Fence()
-		var requestErr error
-		response, requestErr = task.controlPlane.SendRunActorInput(callCtx, request)
-		return requestErr
-	}); err != nil {
-		return fmt.Errorf("send actor input: %w", err)
-	}
-	if response.CorrelationID != request.CorrelationID ||
-		(response.Completed == nil) == (response.Failed == nil) {
-		return errors.New("actor input send response did not match the request")
-	}
-	var kind string
-	var data []byte
-	if response.Completed != nil {
-		if response.Completed.Sequence <= 0 || response.Completed.Sequence > maxJavaScriptSafeInteger {
-			return errors.New("actor input send response sequence is invalid")
+		var e error
+		switch requested.GetMode() {
+		case "send":
+			response, e = cp.SendRunSession(callCtx, request)
+		case "enqueue":
+			response, e = cp.EnqueueRunSession(callCtx, request)
+		case "message":
+			response, e = cp.SendRunTurnMessage(callCtx, request)
 		}
-		kind = "completed"
-		data, err = json.Marshal(response.Completed)
-	} else {
-		if strings.TrimSpace(response.Failed.Code) == "" ||
-			strings.TrimSpace(response.Failed.Message) == "" {
-			return errors.New("actor input send failure is invalid")
-		}
-		kind = "failed"
-		data, err = json.Marshal(response.Failed)
-	}
+		return e
+	})
 	if err != nil {
-		return fmt.Errorf("encode actor input send decision: %w", err)
+		return err
 	}
-	if err := wire.WriteResumeDecision(task.program.session.Stream(), &programv0.ResumeDecision{
-		CorrelationId: request.CorrelationID,
-		Kind:          kind,
-		DataJson:      string(data),
-	}); err != nil {
-		return fmt.Errorf("write actor input send decision: %w", err)
+	if response.CorrelationID != request.CorrelationID || (response.Completed == nil) == (response.Failed == nil) {
+		return errors.New("Session admission receipt mismatch")
 	}
-	return nil
+	if r := response.Completed; r != nil {
+		if ids.Validate(r.ID) != nil || ids.Validate(r.TurnID) != nil || (r.Kind != "turn" && r.Kind != "message") {
+			return errors.New("Session admission receipt is invalid")
+		}
+	}
+	return task.writeRuntimeResult(request.CorrelationID, response.Completed, response.Failed)
 }
-
-func workerActorInputSendRequest(
-	requested *programv0.SessionInputSendRequested,
-) (workerapi.SendActorInputRequest, error) {
-	if requested == nil {
-		return workerapi.SendActorInputRequest{}, errors.New("actor input send request is required")
+func workerSessionSubmitRequest(requested *programv0.SessionSubmitRequested) (workerapi.SubmitSessionDataRequest, error) {
+	if requested == nil || ids.Validate(requested.GetCorrelationId()) != nil {
+		return workerapi.SubmitSessionDataRequest{}, errors.New("Session submission correlation is invalid")
 	}
-	if err := ids.Validate(requested.GetCorrelationId()); err != nil {
-		return workerapi.SendActorInputRequest{}, errors.New("actor input send correlation ID is invalid")
+	r := workerapi.SubmitSessionDataRequest{CorrelationID: requested.GetCorrelationId(), SessionID: requested.GetSessionId(), TurnID: requested.TurnId, Data: json.RawMessage(requested.GetDataJson()), IdempotencyKey: requested.GetIdempotencyKey()}
+	if err := api.ValidateSessionID(r.SessionID); err != nil {
+		return r, err
 	}
-	request := workerapi.SendActorInputRequest{
-		CorrelationID:  requested.GetCorrelationId(),
-		SessionID:      requested.GetSessionId(),
-		Input:          json.RawMessage(requested.GetDataJson()),
-		IdempotencyKey: requested.GetIdempotencyKey(),
+	if err := api.ValidateSessionDataRequest(api.SessionDataRequest{Data: r.Data, IdempotencyKey: r.IdempotencyKey}); err != nil {
+		return r, err
 	}
-	if err := api.ValidateSessionID(request.SessionID); err != nil {
-		return workerapi.SendActorInputRequest{}, err
+	switch requested.GetMode() {
+	case "send", "enqueue":
+		if r.TurnID != nil {
+			return r, errors.New("Session submission cannot name a Turn")
+		}
+	case "message":
+		if r.TurnID == nil || ids.Validate(*r.TurnID) != nil {
+			return r, errors.New("exact message requires Turn identity")
+		}
+	default:
+		return r, errors.New("Session submission mode is invalid")
 	}
-	if err := api.ValidateSendSessionInputRequest(api.SendSessionInputRequest{
-		Input: request.Input, IdempotencyKey: request.IdempotencyKey,
-	}); err != nil {
-		return workerapi.SendActorInputRequest{}, err
-	}
-	return request, nil
+	return r, nil
 }

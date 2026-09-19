@@ -173,7 +173,7 @@ func InterruptTurn(ctx context.Context, q db.Querier, environmentID, sessionID, 
 	if err := rejectQueuedMessages(ctx, q, actor, input.ID, "turn_stopping"); err != nil {
 		return InterruptReceipt{}, err
 	}
-	if _, err = graph.RetireHeldActorIfUnleased(ctx, holdID); err != nil {
+	if _, err = graph.RequestHeldActorStop(ctx, holdID); err != nil {
 		return InterruptReceipt{}, err
 	}
 	receipt = InterruptReceipt{ID: pgvalue.MustUUIDValue(claim.Claim.ID), Status: "accepted", SessionID: sessionID, TurnID: turnID, RunID: scope.RunID, HoldID: holdID, EventID: pgvalue.MustUUIDValue(event.ID)}

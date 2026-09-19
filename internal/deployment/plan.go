@@ -63,9 +63,17 @@ type TaskManifest struct {
 	Schedule *ScheduleManifest `json:"schedule,omitempty"`
 }
 
+type ActorSchemas struct {
+	Input   SchemaManifest `json:"input"`
+	Message SchemaManifest `json:"message"`
+	Output  SchemaManifest `json:"output"`
+	Result  SchemaManifest `json:"result"`
+}
+
 type ActorManifest struct {
-	Run           RunManifest `json:"run"`
-	IdleTimeoutMs int64       `json:"idleTimeoutMs"`
+	Schemas       ActorSchemas `json:"schemas"`
+	Run           RunManifest  `json:"run"`
+	IdleTimeoutMs int64        `json:"idleTimeoutMs"`
 }
 
 type SandboxInputManifest struct {
@@ -414,6 +422,9 @@ func validateDefinitionInput(input DefinitionInput, queues map[string]struct{}) 
 		if input.Actor == nil {
 			return errors.New("actor definition requires an actor manifest")
 		}
+		if err := validateActorSchemas(input.Actor.Schemas); err != nil {
+			return err
+		}
 		if err := validateRunManifest(input.Actor.Run, queues); err != nil {
 			return fmt.Errorf("actor run: %w", err)
 		}
@@ -558,4 +569,18 @@ func definitionKindOrder(kind DefinitionKind) int {
 	default:
 		return 3
 	}
+}
+
+func validateActorSchemas(schemas ActorSchemas) error {
+	for _, field := range []struct {
+		name   string
+		schema SchemaManifest
+	}{
+		{"input", schemas.Input}, {"message", schemas.Message}, {"output", schemas.Output}, {"result", schemas.Result},
+	} {
+		if field.schema.Kind != SchemaKindNone && field.schema.Kind != SchemaKindStandard {
+			return fmt.Errorf("actor schemas.%s.kind must be none or standard_schema", field.name)
+		}
+	}
+	return nil
 }

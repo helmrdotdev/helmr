@@ -42,12 +42,14 @@ test("real packed SDK config/task/actor identity through a mixed JS-to-TS packag
   "node_modules/mixed/value.ts":'import{readFileSync}from"node:fs";export const value:string=readFileSync(new URL("./asset",import.meta.url),"utf8")',
   "node_modules/mixed/asset":"installed",
   "node_modules/mixed/cjs.cts":'module.exports="required"',
-  "tasks/task.ts":`import{task,actor}from'@helmr/sdk';import{value}from'mixed';import{createRequire}from'node:module';if(value!=='installed'||createRequire(import.meta.url)('mixed')!=='required')throw Error('wrong instance');export const build=task({id:'build',run:()=>value});export const worker=actor({id:'worker',run:async()=>{}})`,
+  "tasks/task.ts":`import{task,actor}from'@helmr/sdk';import{value}from'mixed';import{createRequire}from'node:module';if(value!=='installed'||createRequire(import.meta.url)('mixed')!=='required')throw Error('wrong instance');export const build=task({id:'build',run:()=>value});const schema={'~standard':{version:1,vendor:'fixture',validate:(value)=>({value})}};export const worker=actor({id:'worker',input:schema,result:schema,run:async()=>{}})`,
  },true)
  try{
   const config=runHostConfig(f.root).discovery
   const result=await analyzeProject({root:f.root,architecture:"x86_64",config})
   expect(result.programDeclarations.map((d:{kind:string})=>d.kind)).toEqual(["task","actor"])
+  expect(result.programDeclarations[1].slots).toEqual(["handler","inputSchema","resultSchema"])
+  expect(result.buildPlan.definitions[1].manifest.schemas).toEqual({input:{kind:"standard_schema"},message:{kind:"none"},output:{kind:"none"},result:{kind:"standard_schema"}})
   expect(result.declarationLocator.declarations.map((d:{sourcePath:string})=>d.sourcePath)).toEqual(["tasks/task.ts","tasks/task.ts"])
   expect(Object.keys(result.result).sort()).toEqual(["apiVersion","config","discoveryCandidates","inputTreeDigest","language","nodeVersion","selections"])
  }finally{await f.close()}

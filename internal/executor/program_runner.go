@@ -211,6 +211,7 @@ func parseWaitRequest(
 		return WaitRequest{}, err
 	}
 	return WaitRequest{
+		Execution: wait.GetExecution(), TurnID: wait.TurnId,
 		Lease:                         leases.CurrentWorkerRunLease(),
 		CorrelationID:                 correlationID,
 		RunWaitID:                     runWaitID,

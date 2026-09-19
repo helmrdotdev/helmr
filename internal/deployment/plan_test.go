@@ -511,6 +511,7 @@ func testBuildPlan() BuildPlan {
 				Kind:       DefinitionKindActor,
 				DeclaredID: "chat",
 				Actor: &ActorManifest{
+					Schemas: ActorSchemas{Input: SchemaManifest{Kind: SchemaKindNone}, Message: SchemaManifest{Kind: SchemaKindNone}, Output: SchemaManifest{Kind: SchemaKindNone}, Result: SchemaManifest{Kind: SchemaKindNone}},
 					Run: RunManifest{
 						Queue:         "actor/chat",
 						MaxDurationMs: 900000,

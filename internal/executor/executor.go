@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )
@@ -32,6 +33,8 @@ type RunWaitAppender interface {
 }
 
 type WaitRequest struct {
+	Execution                     *programv0.SessionExecution
+	TurnID                        *string
 	Leases                        workerapi.RunLeaseProvider
 	Lease                         workerapi.RunLease
 	LeaseAssignment               workerapi.RunLeaseAssignment
@@ -62,6 +65,8 @@ type Checkpointer interface {
 }
 
 type CheckpointRequest struct {
+	Execution                *programv0.SessionExecution
+	TurnID                   *string
 	RunID                    string
 	AttemptNumber            int32
 	RunLeaseID               string

@@ -1,7 +1,7 @@
 package guestd
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -51,6 +51,7 @@ const (
 )
 
 type programProcess struct {
+	execution     *programv0.SessionExecution
 	cmd           *exec.Cmd
 	stdin         io.WriteCloser
 	stdout        io.ReadCloser
@@ -86,8 +87,9 @@ type programConnection interface {
 }
 
 type programHostControl struct {
+	stop       *programv0.SessionStop
 	pause      *programv0.CheckpointPauseRequest
-	turnCommit *programv0.ActorTurnCommitPauseRequest
+	turnCommit *programv0.TurnSettlePauseRequest
 	decision   *programv0.ResumeDecision
 	err        error
 }
@@ -902,6 +904,19 @@ func superviseProgram(
 		startRelease.GetRunLeaseId() != request.GetRunLeaseId() {
 		return errors.New("program-start release does not match execution fence")
 	}
+	var programStart programv0.ProgramStart
+	if err := frameio.ReadProtoFrame(bytes.NewReader(request.GetProgramStartFrame()), &programStart); err != nil {
+		return err
+	}
+	if programStart.GetRunId() != request.GetRunId() || programStart.GetAttemptNumber() != request.GetAttemptNumber() {
+		return errors.New("program start execution mismatch")
+	}
+	if actor := programStart.GetActor(); actor != nil {
+		if actor.GetRunGeneration() <= 0 || actor.GetSessionId() == "" {
+			return errors.New("Actor start scope is incomplete")
+		}
+		process.execution = &programv0.SessionExecution{SessionId: actor.GetSessionId(), RunId: programStart.GetRunId(), AttemptNumber: programStart.GetAttemptNumber(), RunGeneration: actor.GetRunGeneration()}
+	}
 	if _, err := process.stdin.Write(request.GetProgramStartFrame()); err != nil {
 		return fmt.Errorf("write program-start frame: %w", err)
 	}
@@ -1006,8 +1021,9 @@ func relayProgram(
 	controlClosed := false
 	outcomeSeen := false
 	quiesced := false
+	var stopped *programv0.SessionStop
 	var pendingWait *programWaitIdentity
-	var pendingTurnCommit *programv0.ActorTurnCommitRequested
+	var pendingTurnCommit *programv0.TurnSettleRequested
 	var pendingPause *programv0.CheckpointPauseRequest
 	pendingRuntimeOperations := make(map[string]string)
 	for !processExited || !controlClosed {
@@ -1044,17 +1060,19 @@ func relayProgram(
 				if err := stream.write(event); err != nil {
 					return err
 				}
+				waitIdentity.execution = waitRequested.GetExecution()
+				waitIdentity.turnID = waitRequested.TurnId
 				pendingWait = waitIdentity
 				continue
 			}
-			if turnCommit := event.GetActorTurnCommitRequested(); turnCommit != nil {
+			if turnCommit := event.GetTurnSettleRequested(); turnCommit != nil {
 				if outcomeSeen || entrypoint.GetActor() == nil {
 					return errors.New("program emitted an actor turn commit outside live actor execution")
 				}
 				if pendingWait != nil || pendingTurnCommit != nil {
 					return errors.New("program emitted a concurrent actor turn commit")
 				}
-				if strings.TrimSpace(turnCommit.GetCorrelationId()) == "" || turnCommit.GetTargetInputSequence() <= 0 {
+				if strings.TrimSpace(turnCommit.GetCorrelationId()) == "" || turnCommit.GetTargetInputSequence() <= 0 || turnCommit.GetExecution() == nil || !proto.Equal(turnCommit.GetExecution().GetSession(), process.execution) || turnCommit.GetExecution().GetTurnId() == "" {
 					return errors.New("actor turn commit identity is incomplete")
 				}
 				if err := stream.write(event); err != nil {
@@ -1105,6 +1123,8 @@ func relayProgram(
 					if err := stream.write(event); err != nil {
 						return err
 					}
+					waitIdentity.execution = child.GetExecution()
+					waitIdentity.turnID = child.TurnId
 					pendingWait = waitIdentity
 				default:
 					return errors.New("child task request method is invalid")
@@ -1130,7 +1150,7 @@ func relayProgram(
 				pendingRuntimeOperations[correlationID] = label
 				continue
 			}
-			if send := event.GetSessionInputSendRequested(); send != nil {
+			if send := event.GetSessionSubmitRequested(); send != nil {
 				if outcomeSeen {
 					return errors.New("program emitted a session input send after outcome")
 				}
@@ -1221,6 +1241,13 @@ func relayProgram(
 				}
 			case *programv0.EntrypointIdentity_Actor:
 				outcomeErr = validateActorOutcome(event.GetActorOutcome())
+				interrupted := event.GetActorOutcome().GetInterrupted()
+				if (stopped != nil) != (interrupted != nil) || (interrupted != nil && (interrupted.GetHoldId() != stopped.GetHoldId() || !sameOptionalString(interrupted.TurnId, stopped.TurnId))) {
+					outcomeErr = errors.New("Actor outcome does not match accepted stop")
+				}
+				if event.GetActorOutcome().GetRunGeneration() != process.execution.GetRunGeneration() {
+					outcomeErr = errors.New("Actor outcome generation mismatch")
+				}
 				if event.GetTaskOutcome() != nil {
 					outcomeErr = errors.New("actor program emitted a task outcome")
 				}
@@ -1254,6 +1281,17 @@ func relayProgram(
 					continue
 				}
 				return fmt.Errorf("read program host control: %w", control.err)
+			}
+			if control.stop != nil {
+				if stopped != nil && !proto.Equal(stopped, control.stop) {
+					return errors.New("Session stop hold changed during convergence")
+				}
+				if err := forwardSessionStop(process, control.stop); err != nil {
+					return err
+				}
+				stopped = control.stop
+				hostControls = readProgramHostControl(conn)
+				continue
 			}
 			if control.decision != nil {
 				correlationID := control.decision.GetCorrelationId()
@@ -1290,7 +1328,7 @@ func relayProgram(
 				if control.turnCommit == nil {
 					return errors.New("program host sent non-commit control during actor turn commit")
 				}
-				if err := pauseActorTurnCommit(ctx, conn, request, pendingTurnCommit, control.turnCommit, process, stream, outputs, mounts, workspaceEntry); err != nil {
+				if err := pauseTurnSettle(ctx, conn, request, pendingTurnCommit, control.turnCommit, process, stream, outputs, mounts, workspaceEntry); err != nil {
 					return err
 				}
 				pendingTurnCommit = nil
@@ -1434,6 +1472,8 @@ func programProcessStartDiagnostic(phase string) string {
 }
 
 type programWaitIdentity struct {
+	execution      *programv0.SessionExecution
+	turnID         *string
 	kind           programWaitKind
 	correlationID  string
 	runWaitID      string
@@ -1532,10 +1572,26 @@ func runtimeResourceOperationIdentity(event *programv0.RunEvent) (string, string
 		return strings.TrimSpace(value.SessionStatusRequested.GetCorrelationId()), "session status read", true
 	case *programv0.RunEvent_SessionCloseRequested:
 		return strings.TrimSpace(value.SessionCloseRequested.GetCorrelationId()), "session close", true
-	case *programv0.RunEvent_SessionOutputPageRequested:
-		return strings.TrimSpace(value.SessionOutputPageRequested.GetCorrelationId()), "session output page read", true
-	case *programv0.RunEvent_ActorOutputAppendRequested:
-		return strings.TrimSpace(value.ActorOutputAppendRequested.GetCorrelationId()), "actor output append", true
+	case *programv0.RunEvent_SessionEventsRequested:
+		return strings.TrimSpace(value.SessionEventsRequested.GetCorrelationId()), "session output page read", true
+	case *programv0.RunEvent_TurnOutputWriteRequested:
+		return strings.TrimSpace(value.TurnOutputWriteRequested.GetCorrelationId()), "actor output append", true
+	case *programv0.RunEvent_TurnReadyRequested:
+		return strings.TrimSpace(value.TurnReadyRequested.GetCorrelationId()), "Turn readiness", true
+	case *programv0.RunEvent_TurnSettlementBeginRequested:
+		return strings.TrimSpace(value.TurnSettlementBeginRequested.GetCorrelationId()), "Turn settlement begin", true
+	case *programv0.RunEvent_TurnMessageClaimRequested:
+		return strings.TrimSpace(value.TurnMessageClaimRequested.GetCorrelationId()), "Turn message claim", true
+	case *programv0.RunEvent_TurnMessageCompleteRequested:
+		return strings.TrimSpace(value.TurnMessageCompleteRequested.GetCorrelationId()), "Turn message completion", true
+	case *programv0.RunEvent_SessionOutputWriteRequested:
+		return strings.TrimSpace(value.SessionOutputWriteRequested.GetCorrelationId()), "Session output", true
+	case *programv0.RunEvent_SessionTurnRetrieveRequested:
+		return strings.TrimSpace(value.SessionTurnRetrieveRequested.GetCorrelationId()), "Turn retrieval", true
+	case *programv0.RunEvent_SessionTurnInterruptRequested:
+		return strings.TrimSpace(value.SessionTurnInterruptRequested.GetCorrelationId()), "Turn interruption", true
+	case *programv0.RunEvent_SessionResumeRequested:
+		return strings.TrimSpace(value.SessionResumeRequested.GetCorrelationId()), "Session resume", true
 	case *programv0.RunEvent_WorkspaceCreateRequested:
 		return strings.TrimSpace(value.WorkspaceCreateRequested.GetCorrelationId()), "workspace create", true
 	case *programv0.RunEvent_WorkspaceRetrieveRequested:
@@ -1552,34 +1608,24 @@ func runtimeResourceOperationIdentity(event *programv0.RunEvent) (string, string
 func readProgramHostControl(conn programConnection) <-chan programHostControl {
 	result := make(chan programHostControl, 1)
 	go func() {
-		reader := bufio.NewReader(conn)
-		prefix, err := reader.Peek(4)
+		header, bodyLen, err := wire.ReadStreamFrameHeader(conn)
 		if err != nil {
 			result <- programHostControl{err: err}
 			return
 		}
-		if !frameio.IsStreamFramePrefix(prefix) {
-			_, err := frameio.ReadMessageFrame(reader)
-			if err == nil {
-				err = errors.New("unexpected program protobuf control frame")
-			}
-			result <- programHostControl{err: err}
-			return
-		}
-		header, bodyLen, err := wire.ReadStreamFrameHeader(reader)
-		if err != nil {
-			result <- programHostControl{err: err}
-			return
-		}
+		reader := conn
 		switch header.Type {
+		case wire.StreamTypeSessionStop:
+			stop, err := wire.ReadSessionStop(header, reader, bodyLen)
+			result <- programHostControl{stop: stop, err: err}
 		case wire.StreamTypeCheckpointPauseRequest:
 			pause, err := wire.ReadCheckpointPauseRequest(header, reader, bodyLen)
 			result <- programHostControl{pause: pause, err: err}
 		case wire.StreamTypeResumeDecision:
 			decision, err := wire.ReadResumeDecision(header, reader, bodyLen)
 			result <- programHostControl{decision: decision, err: err}
-		case wire.StreamTypeActorTurnCommitPause:
-			request, err := wire.ReadActorTurnCommitPauseRequest(header, reader, bodyLen)
+		case wire.StreamTypeTurnSettlePause:
+			request, err := wire.ReadTurnSettlePauseRequest(header, reader, bodyLen)
 			result <- programHostControl{turnCommit: request, err: err}
 		default:
 			result <- programHostControl{err: fmt.Errorf("unsupported program host control %q", header.Type)}
@@ -1666,7 +1712,8 @@ func pauseAndResumeProgram(
 			}
 			continue
 		}
-		if candidateDecision.GetRunWaitId() != pause.GetRunWaitId() ||
+		if !proto.Equal(candidateAttach.GetExecution(), pause.GetExecution()) || !sameOptionalString(candidateAttach.TurnId, pause.TurnId) ||
+			candidateDecision.GetRunWaitId() != pause.GetRunWaitId() ||
 			candidateDecision.GetCorrelationId() != pause.GetCorrelationId() ||
 			candidateDecision.GetCheckpointId() != pause.GetCheckpointId() ||
 			candidateDecision.GetResumeAttachId() != pause.GetResumeAttachId() ||
@@ -1735,6 +1782,7 @@ func promoteProgramResumeLease(
 	consumed *programv0.ResumeConsumed,
 ) error {
 	if run == nil || pause == nil || attach == nil || consumed == nil ||
+		!proto.Equal(attach.GetExecution(), pause.GetExecution()) || !sameOptionalString(attach.TurnId, pause.TurnId) ||
 		attach.GetRunId() != run.GetRunId() ||
 		attach.GetAttemptNumber() != run.GetAttemptNumber() ||
 		strings.TrimSpace(attach.GetRunLeaseId()) == "" ||
@@ -1750,12 +1798,12 @@ func promoteProgramResumeLease(
 	return nil
 }
 
-func pauseActorTurnCommit(
+func pauseTurnSettle(
 	ctx context.Context,
 	conn programConnection,
 	run *programv0.ProgramRunRequest,
-	requested *programv0.ActorTurnCommitRequested,
-	pause *programv0.ActorTurnCommitPauseRequest,
+	requested *programv0.TurnSettleRequested,
+	pause *programv0.TurnSettlePauseRequest,
 	process *programProcess,
 	stream *programEventStream,
 	outputs *programOutputCoordinator,
@@ -1763,6 +1811,7 @@ func pauseActorTurnCommit(
 	entry *workspaceMountEntry,
 ) error {
 	if requested == nil || pause == nil ||
+		!proto.Equal(pause.GetExecution(), requested.GetExecution()) ||
 		pause.GetCorrelationId() != requested.GetCorrelationId() ||
 		pause.GetTargetInputSequence() != requested.GetTargetInputSequence() {
 		return errors.New("actor turn commit pause does not match the program request")
@@ -1777,7 +1826,7 @@ func pauseActorTurnCommit(
 	if strings.TrimSpace(pause.GetExpectedBaseWorkspaceVersionId()) == "" {
 		return errors.New("actor turn commit expected workspace version is required")
 	}
-	releaseBarrier, _, err := entry.acquireActorTurnCommit(run, pause)
+	releaseBarrier, _, err := entry.acquireTurnSettle(run, pause)
 	if err != nil {
 		return err
 	}
@@ -1824,13 +1873,14 @@ func pauseActorTurnCommit(
 			return fmt.Errorf("write actor turn workspace capture: %w", err)
 		}
 	}
-	ready := &programv0.ActorTurnCommitPauseReady{
+	ready := &programv0.TurnSettlePauseReady{
+		Execution:     pause.GetExecution(),
 		CorrelationId: pause.GetCorrelationId(), TargetInputSequence: pause.GetTargetInputSequence(),
 		RunId: pause.GetRunId(), AttemptNumber: pause.GetAttemptNumber(), RunLeaseId: pause.GetRunLeaseId(),
 		TreeDigest: tree.Digest, TreeSizeBytes: tree.SizeBytes,
 		TreeEntryCount: uint32(tree.EntryCount), WorkspaceChanged: changed,
 	}
-	if err := stream.writeActorTurnCommitPauseReady(ready); err != nil {
+	if err := stream.writeTurnSettlePauseReady(ready); err != nil {
 		return fmt.Errorf("write actor turn commit pause proof: %w", err)
 	}
 	decision, err := readResumeDecision(turnCtx, conn)
@@ -1843,6 +1893,7 @@ func pauseActorTurnCommit(
 	}
 	var committed struct {
 		WorkspaceVersionID string `json:"workspace_version_id"`
+		EventID            string `json:"event_id"`
 	}
 	decoder := json.NewDecoder(strings.NewReader(decision.GetDataJson()))
 	decoder.DisallowUnknownFields()
@@ -1852,7 +1903,7 @@ func pauseActorTurnCommit(
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return errors.New("actor turn commit decision has trailing JSON")
 	}
-	if strings.TrimSpace(committed.WorkspaceVersionID) == "" {
+	if strings.TrimSpace(committed.WorkspaceVersionID) == "" || strings.TrimSpace(committed.EventID) == "" {
 		return errors.New("actor turn commit decision workspace version is required")
 	}
 	if err := mounts.advanceActorTurnWorkspaceFrontier(
@@ -1862,13 +1913,14 @@ func pauseActorTurnCommit(
 	); err != nil {
 		return err
 	}
-	applied := &programv0.ActorTurnCommitApplied{
+	applied := &programv0.TurnSettleApplied{
+		Execution:     pause.GetExecution(),
 		CorrelationId: pause.GetCorrelationId(), TargetInputSequence: pause.GetTargetInputSequence(),
 		RunId: pause.GetRunId(), AttemptNumber: pause.GetAttemptNumber(), RunLeaseId: pause.GetRunLeaseId(),
 		PreviousBaseWorkspaceVersionId: pause.GetExpectedBaseWorkspaceVersionId(),
 		AppliedBaseWorkspaceVersionId:  committed.WorkspaceVersionID,
 	}
-	if err := stream.writeActorTurnCommitApplied(applied); err != nil {
+	if err := stream.writeTurnSettleApplied(applied); err != nil {
 		return fmt.Errorf("write actor turn commit applied proof: %w", err)
 	}
 	if err := process.cgroup.thaw(turnCtx); err != nil {
@@ -1974,6 +2026,7 @@ func (stream *programEventStream) writeResumeAck(ack *programv0.ResumeAck) error
 
 func validateProgramCheckpointPause(run *programv0.ProgramRunRequest, wait *programWaitIdentity, pause *programv0.CheckpointPauseRequest) error {
 	if run == nil || wait == nil || pause == nil ||
+		!proto.Equal(pause.GetExecution(), wait.execution) || !sameOptionalString(pause.TurnId, wait.turnID) ||
 		pause.GetRunId() != run.GetRunId() ||
 		pause.GetAttemptNumber() != run.GetAttemptNumber() ||
 		pause.GetRunLeaseId() != run.GetRunLeaseId() ||
@@ -2033,13 +2086,17 @@ func validateActorOutcome(outcome *programv0.ActorOutcome) error {
 	if outcome == nil {
 		return errors.New("actor outcome is required")
 	}
-	if outcome.TerminalInputSequence == nil || outcome.GetTerminalInputSequence() < 0 {
-		return errors.New("actor terminal input sequence is negative")
+	if outcome.GetRunGeneration() <= 0 {
+		return errors.New("actor run generation is invalid")
 	}
 	switch value := outcome.GetOutcome().(type) {
 	case *programv0.ActorOutcome_Succeeded:
 		if value.Succeeded == nil {
 			return errors.New("actor succeeded outcome is empty")
+		}
+	case *programv0.ActorOutcome_Interrupted:
+		if value.Interrupted == nil || strings.TrimSpace(value.Interrupted.GetHoldId()) == "" || (value.Interrupted.TurnId != nil && value.Interrupted.GetTurnId() == "") {
+			return errors.New("actor interrupted scope is invalid")
 		}
 	case *programv0.ActorOutcome_Failed:
 		if value.Failed == nil {
@@ -2492,19 +2549,19 @@ func (stream *programEventStream) writeCheckpointPauseReady(runWaitID string, ch
 	})
 }
 
-func (stream *programEventStream) writeActorTurnCommitPauseReady(ready *programv0.ActorTurnCommitPauseReady) error {
+func (stream *programEventStream) writeTurnSettlePauseReady(ready *programv0.TurnSettlePauseReady) error {
 	stream.mu.Lock()
 	defer stream.mu.Unlock()
 	return stream.writeLocked(func(conn programConnection) error {
-		return wire.WriteActorTurnCommitPauseReady(conn, ready)
+		return wire.WriteTurnSettlePauseReady(conn, ready)
 	})
 }
 
-func (stream *programEventStream) writeActorTurnCommitApplied(applied *programv0.ActorTurnCommitApplied) error {
+func (stream *programEventStream) writeTurnSettleApplied(applied *programv0.TurnSettleApplied) error {
 	stream.mu.Lock()
 	defer stream.mu.Unlock()
 	return stream.writeLocked(func(conn programConnection) error {
-		return wire.WriteActorTurnCommitApplied(conn, applied)
+		return wire.WriteTurnSettleApplied(conn, applied)
 	})
 }
 
@@ -2700,4 +2757,33 @@ func (pump *programOutputPump) drain(buffer []byte) error {
 func (pump *programOutputPump) write(body []byte) error {
 	chunk := append([]byte(nil), body...)
 	return pump.stream.write(pump.event(chunk))
+}
+
+func sameOptionalString(left, right *string) bool {
+	return (left == nil && right == nil) || (left != nil && right != nil && *left == *right)
+}
+func forwardSessionStop(process *programProcess, stop *programv0.SessionStop) error {
+	if stop == nil || process.execution == nil || !proto.Equal(stop.GetExecution(), process.execution) || stop.GetHoldId() == "" || stop.GetReason() == "" || (stop.TurnId != nil && stop.GetTurnId() == "") {
+		return errors.New("Session stop does not match current execution")
+	}
+	payload := struct {
+		Execution struct {
+			SessionID     string `json:"session_id"`
+			RunID         string `json:"run_id"`
+			AttemptNumber uint32 `json:"attempt_number"`
+			RunGeneration int64  `json:"run_generation"`
+		} `json:"execution"`
+		TurnID *string `json:"turn_id"`
+		HoldID string  `json:"hold_id"`
+		Reason string  `json:"reason"`
+	}{TurnID: stop.TurnId, HoldID: stop.GetHoldId(), Reason: stop.GetReason()}
+	payload.Execution.SessionID = stop.GetExecution().GetSessionId()
+	payload.Execution.RunID = stop.GetExecution().GetRunId()
+	payload.Execution.AttemptNumber = stop.GetExecution().GetAttemptNumber()
+	payload.Execution.RunGeneration = stop.GetExecution().GetRunGeneration()
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return frameio.WriteProtoFrame(process.stdin, &programv0.ResumeDecision{Kind: "session_stop", DataJson: string(data)})
 }

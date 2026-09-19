@@ -3,6 +3,7 @@ import type {
   ActorStartOptions,
   CursorPage,
 } from "./contract"
+import { sessionOperationOptions } from "./session"
 import { resourceID } from "./internal/id"
 import { createRunHandle } from "./internal/run-handle"
 import type { RequestOptions } from "./request"
@@ -142,10 +143,7 @@ function parseActorListItem(value: unknown): ActorListItem {
 function actorStartBody(request: ActorStartRequest): Record<string, unknown> {
   return {
     ...(request.key === undefined ? {} : { key: request.key }),
-    ...(request.input === undefined ? {} : { input: request.input }),
-    ...(request.idempotencyKey === undefined
-      ? {}
-      : { idempotency_key: request.idempotencyKey }),
+    idempotency_key: sessionOperationOptions(request).idempotencyKey,
     workspace: { id: workspaceRefID(request.workspace) },
     ...(request.run === undefined ? {} : { run: runOptionsBody(request.run) }),
   }

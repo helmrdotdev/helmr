@@ -473,7 +473,7 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 		"sha256:" + fmt.Sprintf("%064x", 4),
 	}
 	actorManifest := []byte(
-		`{"idleTimeoutMs":30000,"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}`,
+		`{"schemas":{"input":{"kind":"none"},"message":{"kind":"none"},"output":{"kind":"none"},"result":{"kind":"none"}},"idleTimeoutMs":30000,"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}`,
 	)
 	taskManifest := []byte(
 		`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}`,

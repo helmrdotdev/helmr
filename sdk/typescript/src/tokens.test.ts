@@ -3,14 +3,6 @@ import { describe, expect, test } from "bun:test"
 import { installRuntimeOperations } from "./internal"
 import { tokens } from "./index"
 
-const unusedSessionInputSend = async () => ({
-  id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34",
-  sequence: 1,
-  data: null,
-  source: { type: "external" as const },
-  createdAt: "2026-07-24T11:50:00Z",
-})
-
 describe("tokens", () => {
   test("creates a runtime handle and validates its completion", async () => {
     const calls: unknown[] = []
@@ -18,7 +10,6 @@ describe("tokens", () => {
     const uninstall = installRuntimeOperations({
       waitFor: async () => {},
       waitUntil: async () => {},
-      actorInputSend: unusedSessionInputSend,
       tokenCreate: async (options) => {
         calls.push({ operation: "create", options })
         return {
@@ -117,7 +108,6 @@ describe("tokens", () => {
     const uninstall = installRuntimeOperations({
       waitFor: async () => {},
       waitUntil: async () => {},
-      actorInputSend: unusedSessionInputSend,
       tokenCreate: async () => {
         throw new Error("unexpected Token create")
       },
@@ -146,7 +136,6 @@ describe("tokens", () => {
     const uninstall = installRuntimeOperations({
       waitFor: async () => {},
       waitUntil: async () => {},
-      actorInputSend: unusedSessionInputSend,
       tokenCreate: async () => {
         throw new Error("unexpected Token create")
       },

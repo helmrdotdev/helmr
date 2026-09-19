@@ -146,7 +146,7 @@ func (task *guestRunLeaseTask) handleWorkspaceRuntime(
 	if err != nil {
 		return fmt.Errorf("encode workspace runtime decision: %w", err)
 	}
-	return wire.WriteResumeDecision(task.program.session.Stream(), &programv0.ResumeDecision{
+	return wire.WriteResumeDecision(task.programStream(), &programv0.ResumeDecision{
 		CorrelationId: correlationID,
 		Kind:          kind,
 		DataJson:      string(data),

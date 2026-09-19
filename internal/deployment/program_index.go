@@ -154,6 +154,9 @@ func validateProgramIndexDeclaration(
 		if declaration.Actor == nil || declaration.Locator == nil {
 			return errors.New("actor requires manifest and locator")
 		}
+		if err := validateActorSchemas(declaration.Actor.Schemas); err != nil {
+			return err
+		}
 		if err := validateRunManifest(declaration.Actor.Run, queues); err != nil {
 			return fmt.Errorf("actor run: %w", err)
 		}
@@ -395,7 +398,7 @@ func programIndexExecutionDeclarations(index ProgramIndex) []ProgramDeclaration 
 			declarations = append(declarations, ProgramDeclaration{
 				Kind:       DeclarationKindActor,
 				DeclaredID: declaration.DeclaredID,
-				Slots:      []DeclarationSlot{DeclarationSlotHandler},
+				Slots:      actorDeclarationSlots(declaration.Actor.Schemas),
 			})
 		}
 	}

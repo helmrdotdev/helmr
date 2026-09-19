@@ -272,6 +272,13 @@ func testDifferentWorkspaceChildCompletion(t *testing.T, transition string) {
 	if status != "succeeded" || condition != "completed" {
 		t.Fatalf("child status=%s parent wait=%s", status, condition)
 	}
+	// A completed child carries the quiesced worker finalization receipt even
+	// while its separate Workspace keeps its Runtime warm. Parent stop must not
+	// require reclaiming that already-proved execution a second time.
+	excluded, err := server.db.SessionOwnedExecutionsExcluded(ctx, pgvalue.UUID(parent.RunID))
+	if err != nil || !excluded {
+		t.Fatalf("completed child blocks parent interruption: %v %v", excluded, err)
+	}
 }
 
 // The CAS read occurs after middleware authentication and before the completion transaction.

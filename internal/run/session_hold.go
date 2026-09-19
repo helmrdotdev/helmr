@@ -76,12 +76,8 @@ func acceptActorRunCancellation(ctx context.Context, tx pgx.Tx, request Cancella
 		if err != nil {
 			return receipt, err
 		}
-		if !run.CurrentRunLeaseID.Valid {
-			// No worker can consume the stop; use the graph acquired before
-			// admission to retire this exact execution in the same transaction.
-			if _, err = graph.RetireHeldActorIfUnleased(ctx, pgvalue.MustUUIDValue(actor.DispatchHoldID)); err != nil {
-				return receipt, err
-			}
+		if _, err = graph.RequestHeldActorStop(ctx, pgvalue.MustUUIDValue(actor.DispatchHoldID)); err != nil {
+			return receipt, err
 		}
 		receipt.HoldID = pgvalue.MustUUIDValue(actor.DispatchHoldID)
 	}
@@ -111,13 +107,12 @@ func HoldSessionExecution(ctx context.Context, q db.Querier, actor db.Session, a
 	return actor, err
 }
 
-// RetireHeldActorIfUnleased retires a stopped or unrecoverable parked Actor that
-// has no worker Lease to consume its stop. The caller acquires this owned graph
-// before Session admission/recovery, then supplies that operation's exact hold.
-// Session/Turn/head remain bound until the recovery owner verifies physical
-// exclusion and commits reconciliation. An active Lease remains with its worker
-// or the execution-loss owner.
-func (g OwnedFinalization) RetireHeldActorIfUnleased(ctx context.Context, holdID uuid.UUID) (bool, error) {
+// RequestHeldActorStop cancels owned descendants and consuming wait associations
+// without revoking a live parent's capture authority. With no parent Lease it also
+// retires the parked Run. Neither action claims physical or external convergence.
+// The caller acquires the owned graph before Session admission/recovery and passes
+// the exact hold. Session/Turn/head stay bound for finalization or explicit repair.
+func (g OwnedFinalization) RequestHeldActorStop(ctx context.Context, holdID uuid.UUID) (bool, error) {
 	if g.tx == nil || len(g.descendants) == 0 || g.descendants[0].id != g.currentRun || holdID == uuid.Nil() {
 		return false, cancellationAuthority("held Actor retirement graph is invalid", nil)
 	}
@@ -135,14 +130,48 @@ func (g OwnedFinalization) RetireHeldActorIfUnleased(ctx context.Context, holdID
 		!actor.DispatchHoldRunGeneration.Valid || actor.DispatchHoldRunGeneration.Int64 != actor.RunGeneration {
 		return false, cancellationAuthority("held Actor retirement address is stale", nil)
 	}
-	if target.currentRunLeaseID.Valid || runStatusTerminal(target.status) {
+	if runStatusTerminal(target.status) {
 		return false, nil
 	}
 	if _, err := g.CancelDescendants(ctx); err != nil {
 		return false, err
 	}
+	if target.currentRunLeaseID.Valid {
+		q := db.New(g.tx)
+		waits, err := q.LockCancellationWaits(ctx, db.LockCancellationWaitsParams{RunIDs: []pgtype.UUID{pgvalue.UUID(target.id)}})
+		if err != nil {
+			return false, err
+		}
+		for _, wait := range waits {
+			// Mid-checkpoint/resume execution cannot establish a cooperative
+			// capture. Leave it fenced for the existing forced-loss path.
+			if wait.SuspensionStatus != db.RunWaitStatusHot || wait.ConditionStatus != db.WaitStatusPending {
+				continue
+			}
+			if _, err := q.FailHotRunWait(ctx, db.FailHotRunWaitParams{
+				ID: wait.ID, RunID: wait.RunID, AttemptNumber: wait.AttemptNumber,
+				CurrentRunLeaseID: wait.CurrentRunLeaseID, ExpectedRunRevision: wait.ExpectedRunRevision,
+				ReasonCode:     pgvalue.Text("session_stopped"),
+				ConditionError: []byte(`{"code":"session_stopped","retryable":false}`),
+			}); err != nil {
+				return false, err
+			}
+		}
+		return false, nil
+	}
 	if err := cancelLockedRun(ctx, g.tx, target); err != nil {
 		return false, err
 	}
 	return true, nil
+}
+
+// RetireHeldActorIfUnleased leaves a live execution untouched during privileged recovery.
+func (g OwnedFinalization) RetireHeldActorIfUnleased(ctx context.Context, holdID uuid.UUID) (bool, error) {
+	if len(g.descendants) == 0 {
+		return false, cancellationAuthority("held Actor graph is invalid", nil)
+	}
+	if g.descendants[0].currentRunLeaseID.Valid {
+		return false, nil
+	}
+	return g.RequestHeldActorStop(ctx, holdID)
 }

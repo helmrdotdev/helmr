@@ -12,6 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -21,6 +22,7 @@ import (
 )
 
 var errStaleActorCompletion = errors.New("actor completion receipt is stale")
+var errActorStopCleanupPending = errors.New("owned execution cleanup is pending")
 
 type actorCompletionReplayStore interface {
 	GetActorCompletionReplay(context.Context, db.GetActorCompletionReplayParams) (pgtype.Text, error)
@@ -58,24 +60,37 @@ func (s *Server) completeActor(ctx context.Context, worker workerActor, request 
 		if !ok {
 			return errors.New("actor completion transaction does not expose PostgreSQL authority")
 		}
-		ownedGraph, err := run.LockOwnedFinalization(ctx, tx, run.OwnedFinalizationRequest{
+		var authority runLeaseClaimAuthority
+		ownedGraph, err := run.LockOwnedFinalizationWithRuntimeFence(ctx, tx, run.OwnedFinalizationRequest{
 			OrgID: pgvalue.MustUUIDValue(locators.OrgID), ProjectID: pgvalue.MustUUIDValue(locators.ProjectID),
 			EnvironmentID: pgvalue.MustUUIDValue(locators.EnvironmentID), RunID: pgvalue.MustUUIDValue(locators.RunID),
+		}, func() error {
+			owner, err := lockRunFinalizationOwner(ctx, work.q, locators)
+			if err != nil || !owner.actor.ID.Valid {
+				return staleActorCompletion(err)
+			}
+			authority, err = lockLiveRunLeaseAuthority(ctx, work.q, worker, pgvalue.UUID(completion.lease.leaseID), request.Lease.LeaseSequence, locators)
+			if err != nil {
+				return staleActorCompletion(err)
+			}
+			authority.actor = owner.actor
+			return nil
 		})
 		if err != nil {
 			return staleActorCompletion(err)
 		}
-		owner, err := lockRunFinalizationOwner(ctx, work.q, locators)
-		if err != nil || !owner.actor.ID.Valid {
-			return staleActorCompletion(err)
-		}
-		authority, err := lockLiveRunLeaseAuthority(ctx, work.q, worker, pgvalue.UUID(completion.lease.leaseID), request.Lease.LeaseSequence, locators)
-		if err != nil {
-			return staleActorCompletion(err)
-		}
-		authority.actor = owner.actor
+
 		if err := validateActorCompletionAuthority(ctx, work.q, completion, authority); err != nil {
 			return err
+		}
+		if completion.kind == actorCompletionInterrupted {
+			excluded, err := work.q.SessionOwnedExecutionsExcluded(ctx, authority.run.ID)
+			if err != nil {
+				return err
+			}
+			if !excluded {
+				return errActorStopCleanupPending
+			}
 		}
 		if completion.rollback != nil {
 			rollbackAuthority := authority
@@ -123,6 +138,11 @@ func (s *Server) completeActor(ctx context.Context, worker workerActor, request 
 				return err
 			}
 		}
+		if completion.kind == actorCompletionInterrupted {
+			if err := session.CompleteInterruption(ctx, work.q, authority.actor, versionID, completion.fingerprint); err != nil {
+				return err
+			}
+		}
 		if err := terminalizeActorAttempt(ctx, work.q, authority, completion, decision, completedAt); err != nil {
 			return err
 		}
@@ -135,7 +155,7 @@ func (s *Server) completeActor(ctx context.Context, worker workerActor, request 
 		}); err != nil {
 			return staleActorCompletion(err)
 		}
-		if failed {
+		if failed || completion.kind == actorCompletionInterrupted {
 			if err := work.q.CloseRunRuntimes(ctx, db.CloseRunRuntimesParams{RunID: authority.run.ID, RunLeaseID: authority.runLease.ID, ReasonCode: decision.runReason.String}); err != nil {
 				return err
 			}
@@ -187,8 +207,32 @@ func validateActorCompletionAuthority(
 	authority runLeaseClaimAuthority,
 ) error {
 	actor := authority.actor
-	if (actor.ActiveTurnID.Valid && completion.kind != actorCompletionFailed) || actor.DispatchHoldID.Valid ||
-		completion.terminalInputSequence != actor.CommittedInputSequence || authority.run.EntrypointKind != "actor" || !authority.run.SessionID.Valid || authority.run.SessionID != actor.ID ||
+	if completion.runGeneration <= 0 || completion.runGeneration != actor.RunGeneration {
+		return errStaleActorCompletion
+	}
+	if completion.kind == actorCompletionInterrupted {
+		var turnID pgtype.UUID
+		if completion.turnID != nil {
+			turnID = pgvalue.UUID(*completion.turnID)
+		}
+		if actor.DispatchHoldID != pgvalue.UUID(completion.holdID) || actor.DispatchHoldReason.String != "interrupt_requested" ||
+			actor.DispatchHoldRunID != authority.run.ID || !actor.DispatchHoldAttemptNumber.Valid || actor.DispatchHoldAttemptNumber.Int32 != authority.attempt.Number ||
+			!actor.DispatchHoldRunGeneration.Valid || actor.DispatchHoldRunGeneration.Int64 != completion.runGeneration || actor.ActiveTurnID != turnID || completion.capture == nil {
+			return errStaleActorCompletion
+		}
+		if turnID.Valid {
+			unsettled, err := store.SessionTurnHasUnsettledWork(ctx, db.SessionTurnHasUnsettledWorkParams{SessionID: actor.ID, TurnID: turnID})
+			if err != nil {
+				return err
+			}
+			if !unsettled.Valid || unsettled.Bool {
+				return errStaleActorCompletion
+			}
+		}
+	} else if (actor.ActiveTurnID.Valid && completion.kind != actorCompletionFailed) || actor.DispatchHoldID.Valid {
+		return errStaleActorCompletion
+	}
+	if authority.run.EntrypointKind != "actor" || !authority.run.SessionID.Valid || authority.run.SessionID != actor.ID ||
 		authority.run.ParentRunID.Valid || authority.run.ParentOwnsLifecycle.Valid ||
 		authority.runLease.Status != db.RunLeaseStatusFinalizing || !authority.attempt.EntrypointEnteredAt.Valid ||
 		authority.run.ActiveStartedAt.Valid || !authority.runLease.FinalizationOperationID.Valid ||
@@ -208,7 +252,7 @@ func validateActorCompletionAuthority(
 			return err
 		}
 	}
-	cursor := completion.terminalInputSequence
+	cursor := actor.CommittedInputSequence
 	if cursor < authority.attempt.SessionInputStartSequence.Int64 || cursor < actor.CommittedInputSequence || cursor >= actor.NextInputSequence {
 		return errStaleActorCompletion
 	}
@@ -433,6 +477,10 @@ func terminalizeActorAttempt(ctx context.Context, store db.Querier, authority ru
 		leaseStatus = db.RunLeaseStatusCompleted
 		outcome = pgvalue.Text("succeeded")
 		reason = "completed"
+	} else if decision.runStatus == db.RunStatusCancelled {
+		leaseStatus = db.RunLeaseStatusCancelled
+		outcome = pgvalue.Text("cancelled")
+		reason = "session_interrupted"
 	} else {
 		reason = decision.runReason.String
 		terminalError = completion.errorObject
@@ -446,7 +494,7 @@ func terminalizeActorAttempt(ctx context.Context, store db.Querier, authority ru
 		return staleActorCompletion(err)
 	}
 	if _, err := store.CompleteActorAttempt(ctx, db.CompleteActorAttemptParams{
-		TerminalSessionInputSequence: pgtype.Int8{Int64: completion.terminalInputSequence, Valid: true}, TerminalOutcome: outcome,
+		TerminalSessionInputSequence: pgtype.Int8{Int64: authority.actor.CommittedInputSequence, Valid: true}, TerminalOutcome: outcome,
 		ReasonCode: pgvalue.Text(reason), Error: terminalError, CompletedAt: completedAt,
 		RunID: authority.run.ID, Number: authority.attempt.Number, WorkspaceID: authority.workspace.ID,
 	}); err != nil {
@@ -466,19 +514,24 @@ func decideActorRunTerminal(authority runLeaseClaimAuthority, completion parsedA
 		runStatus:   db.RunStatusSucceeded,
 		actorStatus: authority.actor.Status,
 	}
+	if completion.kind == actorCompletionInterrupted {
+		decision.runStatus = db.RunStatusCancelled
+		decision.runReason = pgvalue.Text("session_interrupted")
+		return decision
+	}
 	if completion.kind == actorCompletionFailed {
 		decision.runStatus = db.RunStatusFailed
 		decision.runReason = pgvalue.Text("actor_failed")
 		return decision
 	}
 	if authority.actor.NextInputSequence-1 > authority.actor.CommittedInputSequence &&
-		completion.terminalInputSequence <= authority.run.SessionInputStartSequence.Int64 {
+		authority.actor.CommittedInputSequence <= authority.run.SessionInputStartSequence.Int64 {
 		decision.runStatus = db.RunStatusFailed
 		decision.runReason = pgvalue.Text("no_progress")
 		return decision
 	}
 	if authority.actor.Status == "closing" && authority.actor.CloseSequence.Valid &&
-		completion.terminalInputSequence >= authority.actor.CloseSequence.Int64 {
+		authority.actor.CommittedInputSequence >= authority.actor.CloseSequence.Int64 {
 		decision.actorStatus = "closed"
 		return decision
 	}
@@ -487,6 +540,13 @@ func decideActorRunTerminal(authority runLeaseClaimAuthority, completion parsedA
 
 func finishActorRun(ctx context.Context, store db.Querier, authority runLeaseClaimAuthority, secrets []secret.DeliveryEnvelope, completion parsedActorCompletion, decision actorRunTerminalDecision, completedAt pgtype.Timestamptz) error {
 	var failure []byte
+	if decision.runStatus == db.RunStatusCancelled {
+		var err error
+		failure, err = runFailure("session_interrupted", "Session execution was interrupted")
+		if err != nil {
+			return err
+		}
+	}
 	if decision.runStatus == db.RunStatusFailed {
 		var err error
 		if completion.kind == actorCompletionFailed {
@@ -505,7 +565,7 @@ func finishActorRun(ctx context.Context, store db.Querier, authority runLeaseCla
 	}); err != nil {
 		return staleActorCompletion(err)
 	}
-	if decision.runStatus != db.RunStatusFailed {
+	if decision.runStatus == db.RunStatusSucceeded {
 		actor, err := store.ReconcileActorTerminalRun(ctx, db.ReconcileActorTerminalRunParams{
 			Status:      decision.actorStatus,
 			CompletedAt: completedAt, EnvironmentID: authority.actor.EnvironmentID, ID: authority.actor.ID,
@@ -537,6 +597,8 @@ func finishActorRun(ctx context.Context, store db.Querier, authority runLeaseCla
 	eventKind := api.RunEventKindCompleted
 	if decision.runStatus == db.RunStatusFailed {
 		eventKind = api.RunEventKindFailed
+	} else if decision.runStatus == db.RunStatusCancelled {
+		eventKind = api.RunEventKindCancelled
 	}
 	payload, err := json.Marshal(struct {
 		Reason string `json:"reason,omitempty"`

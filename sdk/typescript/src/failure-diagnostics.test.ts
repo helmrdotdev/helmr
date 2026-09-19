@@ -16,6 +16,7 @@ for (const kind of ["schedule", "session"] as const) {
       } : {
         id, actor_id: "actor", deployment_id: runId, workspace_id: runId,
         status: status ?? "failed", failure,
+ current_run_id:null,active_turn_id:null,dispatch:{state:"ready"},
         created_at: timestamp, updated_at: timestamp,
       }
       const client = new HelmrClient({
@@ -49,13 +50,11 @@ for (const kind of ["schedule", "session"] as const) {
       })
     }
     if (kind === "session") {
-      test("keeps reserved cancellation and run identity validation", async () => {
-        const failure = { code: "cancelled", message: "cancelled", details: {} }
-        expect(await read(failure, "cancelled")).toEqual(failure)
-        await expect(read(failure, "failed")).rejects.toThrow("inconsistent")
-        await expect(read({ ...failure, code: "future_diagnostic" }, "cancelled")).rejects.toThrow("inconsistent")
-        await expect(read({ ...failure, code: "future_diagnostic" }, "open")).rejects.toThrow("inconsistent")
-        await expect(read({ ...failure, code: "future_diagnostic", details: { run_id: "invalid" } })).rejects.toThrow()
+      test("preserves failure projections and validates Run identity", async () => {
+        const failure = { code:"future_diagnostic",message:"failed",details:{} }
+        expect(await read(failure, "failed")).toEqual(failure)
+        await expect(read(failure, "open")).rejects.toThrow("inconsistent")
+        await expect(read({ ...failure, details: { run_id: "invalid" } })).rejects.toThrow()
       })
     }
   })

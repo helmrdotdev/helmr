@@ -13,6 +13,7 @@ import type {
   RunOptions,
   TaskWait,
 } from "./contract"
+import { sessionOperationOptions } from "./session"
 import { runtimeOperationsInstalled } from "./internal/runtime"
 import { abortableDelay } from "./internal/abort"
 import { resourceID } from "./internal/id"
@@ -207,6 +208,18 @@ export interface RunEventRecord {
   readonly at: string
 }
 
+export interface ActorRunCancellationReceipt {
+  readonly id: string
+  readonly runId: string
+  readonly sessionId: string
+  readonly holdId: string
+  readonly status: "accepted"
+}
+export interface RunCancelRequest {
+  readonly idempotencyKey?: string
+}
+export type RunCancellation = Run<JsonValue> | ActorRunCancellationReceipt
+
 export interface ClientRunsApi {
   retrieve<TOutput extends JsonValue>(
     run: RunHandle<TOutput>,
@@ -222,8 +235,9 @@ export interface ClientRunsApi {
   ): Promise<CursorPage<RunListItem>>
   cancel(
     runId: string,
+    request?: RunCancelRequest,
     options?: RequestOptions,
-  ): Promise<Run<JsonValue>>
+  ): Promise<RunCancellation>
   wait<TOutput extends JsonValue>(
     run: RunHandle<TOutput>,
     options?: RequestOptions,
@@ -369,10 +383,7 @@ class ClientRuns implements ClientRunsApi {
     run: RunHandle<TOutput>,
     options?: RequestOptions,
   ): Promise<Run<TOutput>>
-  retrieve(
-    runId: string,
-    options?: RequestOptions,
-  ): Promise<Run<JsonValue>>
+  retrieve(runId: string, options?: RequestOptions): Promise<Run<JsonValue>>
   async retrieve<TOutput extends JsonValue>(
     run: string | RunHandle<TOutput>,
     options: RequestOptions = {},
@@ -392,17 +403,19 @@ class ClientRuns implements ClientRunsApi {
     options: RequestOptions = {},
   ): Promise<CursorPage<RunListItem>> {
     const query = new URLSearchParams()
-    const statuses = queryInput.status === undefined
-      ? []
-      : Array.isArray(queryInput.status)
-      ? queryInput.status
-      : [queryInput.status]
+    const statuses =
+      queryInput.status === undefined
+        ? []
+        : Array.isArray(queryInput.status)
+          ? queryInput.status
+          : [queryInput.status]
     for (const status of statuses) query.append("status", runStatus(status))
-    const kinds = queryInput.kind === undefined
-      ? []
-      : Array.isArray(queryInput.kind)
-      ? queryInput.kind
-      : [queryInput.kind]
+    const kinds =
+      queryInput.kind === undefined
+        ? []
+        : Array.isArray(queryInput.kind)
+          ? queryInput.kind
+          : [queryInput.kind]
     for (const kind of kinds) {
       if (kind !== "task" && kind !== "actor") {
         throw new Error("Run list kind is invalid")
@@ -410,14 +423,22 @@ class ClientRuns implements ClientRunsApi {
       query.append("kind", kind)
     }
     if (queryInput.sessionId !== undefined) {
-      query.set("session_id", resourceID(queryInput.sessionId, "Run list Session ID"))
+      query.set(
+        "session_id",
+        resourceID(queryInput.sessionId, "Run list Session ID"),
+      )
     }
     if (queryInput.cursor !== undefined) {
-      if (queryInput.cursor.length === 0) throw new Error("Run cursor is required")
+      if (queryInput.cursor.length === 0)
+        throw new Error("Run cursor is required")
       query.set("cursor", queryInput.cursor)
     }
     if (queryInput.limit !== undefined) {
-      if (!Number.isInteger(queryInput.limit) || queryInput.limit < 1 || queryInput.limit > 100) {
+      if (
+        !Number.isInteger(queryInput.limit) ||
+        queryInput.limit < 1 ||
+        queryInput.limit > 100
+      ) {
         throw new Error("Run limit must be an integer in [1,100]")
       }
       query.set("limit", String(queryInput.limit))
@@ -444,15 +465,32 @@ class ClientRuns implements ClientRunsApi {
 
   async cancel(
     runId: string,
+    request: RunCancelRequest = {},
     options: RequestOptions = {},
-  ): Promise<Run<JsonValue>> {
-    return parseRun(
-      await this.#transport.request(
-        "POST",
-        `/v1/runs/${encodeURIComponent(resourceID(runId, "Run ID"))}/cancel`,
-        options.signal === undefined ? {} : { signal: options.signal },
-      ),
+  ): Promise<RunCancellation> {
+    const response = await this.#transport.request(
+      "POST",
+      `/v1/runs/${encodeURIComponent(resourceID(runId, "Run ID"))}/cancel`,
+      {
+        body: {
+          idempotency_key: sessionOperationOptions(request).idempotencyKey,
+        },
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+      },
     )
+    const value = objectValue(response, "Run cancellation")
+    if (value["status"] === "accepted")
+      return Object.freeze({
+        id: resourceID(value["id"], "Run cancellation.id"),
+        runId: resourceID(value["run_id"], "Run cancellation.run_id"),
+        sessionId: resourceID(
+          value["session_id"],
+          "Run cancellation.session_id",
+        ),
+        holdId: resourceID(value["hold_id"], "Run cancellation.hold_id"),
+        status: "accepted",
+      })
+    return parseRun(response)
   }
 
   async logs(
@@ -517,10 +555,7 @@ class ClientRuns implements ClientRunsApi {
     run: RunHandle<TOutput>,
     options?: RequestOptions,
   ): TaskWait<TOutput>
-  wait(
-    runId: string,
-    options?: RequestOptions,
-  ): TaskWait<JsonValue>
+  wait(runId: string, options?: RequestOptions): TaskWait<JsonValue>
   wait<TOutput extends JsonValue>(
     run: string | RunHandle<TOutput>,
     options: RequestOptions = {},
@@ -534,8 +569,12 @@ class ClientRuns implements ClientRunsApi {
     const result = this.#waitForTerminal<TOutput>(id, options)
     return Object.freeze({
       then<TResult1 = TaskResult<TOutput>, TResult2 = never>(
-        onfulfilled?: ((value: TaskResult<TOutput>) => TResult1 | PromiseLike<TResult1>) | null,
-        onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+        onfulfilled?:
+          | ((value: TaskResult<TOutput>) => TResult1 | PromiseLike<TResult1>)
+          | null,
+        onrejected?:
+          | ((reason: unknown) => TResult2 | PromiseLike<TResult2>)
+          | null,
       ): PromiseLike<TResult1 | TResult2> {
         return result.then(onfulfilled, onrejected)
       },
@@ -554,24 +593,27 @@ class ClientRuns implements ClientRunsApi {
     let delayMilliseconds = 250
     while (true) {
       options.signal?.throwIfAborted()
-      const run = await this.retrieve(
-        createRunHandle<TOutput>(runId),
-        options,
-      )
+      const run = await this.retrieve(createRunHandle<TOutput>(runId), options)
       if (run.status === "succeeded") {
         if (run.output === undefined) {
           throw new Error("Succeeded Run response must include output")
         }
         return Object.freeze({
-          ok: true, output: run.output, run: createRunHandle<TOutput>(run.id),
+          ok: true,
+          output: run.output,
+          run: createRunHandle<TOutput>(run.id),
         })
       }
       if (runStatusIsTerminal(run.status)) {
         if (run.failure === undefined) {
-          throw new Error("Non-success terminal Run response must include failure")
+          throw new Error(
+            "Non-success terminal Run response must include failure",
+          )
         }
         return Object.freeze({
-          ok: false, failure: run.failure, run: createRunHandle<TOutput>(run.id),
+          ok: false,
+          failure: run.failure,
+          run: createRunHandle<TOutput>(run.id),
         })
       }
       await abortableDelay(delayMilliseconds, options.signal)

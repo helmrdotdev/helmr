@@ -2,8 +2,11 @@ import {
   type ActorConfig,
   type Actor,
   type ActorStartOptions,
+  type ActorSchemaInput,
+  type ActorSchemaOutput,
   type JsonValue,
   type Queue,
+  type RunDefaults,
   type QueueConfig,
   type Task,
   type TaskCallOptions,
@@ -23,7 +26,7 @@ import {
 } from "./schema/task"
 import { currentRuntimeOperations } from "./internal/runtime"
 import { runFailureError } from "./internal/run-failure"
-import { createRuntimeSessionRef } from "./session"
+import { createRuntimeSessionRef, sessionOperationOptions } from "./session"
 import { createRunHandle } from "./internal/run-handle"
 
 const privateDefinitionBrand = Symbol.for("helmr.sdk.v0.definition")
@@ -52,7 +55,11 @@ export type InternalTaskDefinition = Readonly<{
 export type InternalActorDefinition = Readonly<{
   kind: "actor"
   id: string
-  handler: ActorConfig["run"]
+  handler: (...args: readonly unknown[]) => unknown
+  inputSchema?: PayloadSchema
+  messageSchema?: PayloadSchema
+  outputSchema?: PayloadSchema
+  resultSchema?: PayloadSchema
   queue?: Queue | string
   maxDuration?: import("./contract").Duration
   ttl?: import("./contract").Duration
@@ -132,6 +139,9 @@ function isInternalDefinition(
       }
       return true
     case "actor":
+      for (const field of ["inputSchema", "messageSchema", "outputSchema", "resultSchema"] as const) {
+        if (definition[field] !== undefined) assertPayloadSchema(definition[field], `actor ${definition.id} ${field}`)
+      }
       return typeof definition.handler === "function"
     default:
       return false
@@ -194,15 +204,37 @@ export function task(
     | Task<string, never, JsonValue>
 }
 
-export function actor(config: ActorConfig): Actor {
+export function actor<
+  TInput extends PayloadSchema<any, any> | undefined = undefined,
+  TMessage extends PayloadSchema<any, any> | undefined = undefined,
+  TOutput extends PayloadSchema<any, any> | undefined = undefined,
+  TResult extends PayloadSchema<any, any> | undefined = undefined,
+>(
+  config: ActorConfig<TInput, TMessage, TOutput, TResult>,
+): Actor<
+  ActorSchemaInput<TInput>,
+  ActorSchemaInput<TMessage>,
+  ActorSchemaOutput<TResult>
+> {
   validateDefinitionDefaults(config, `actor ${JSON.stringify(config.id)}`)
   if (typeof config.run !== "function") {
     throw new Error(`actor ${JSON.stringify(config.id)} run must be a function`)
   }
+  for (const field of ["input", "message", "output", "result"] as const) {
+    if (config[field] !== undefined)
+      assertPayloadSchema(
+        config[field],
+        `actor ${JSON.stringify(config.id)} ${field}`,
+      )
+  }
   const internal: InternalActorDefinition = Object.freeze({
     kind: "actor",
     id: config.id,
-    handler: config.run,
+    handler: config.run as (...args: readonly unknown[]) => unknown,
+    ...(config.input === undefined ? {} : { inputSchema: config.input }),
+    ...(config.message === undefined ? {} : { messageSchema: config.message }),
+    ...(config.output === undefined ? {} : { outputSchema: config.output }),
+    ...(config.result === undefined ? {} : { resultSchema: config.result }),
     ...copyDefinitionDefaults(config),
     ...(config.idleTimeout === undefined
       ? {}
@@ -211,17 +243,21 @@ export function actor(config: ActorConfig): Actor {
   const value = {
     id: internal.id,
     async start(options: ActorStartOptions) {
-      const started = await currentRuntimeOperations().actorStart(
-        internal.id,
-        options,
-      )
+      const started = await currentRuntimeOperations().actorStart(internal.id, {
+        ...options,
+        ...sessionOperationOptions(options),
+      })
       return Object.freeze({
         session: createRuntimeSessionRef(started.sessionId),
         run: createRunHandle<null>(started.runId),
       })
     },
   }
-  return brandDefinition(value, internal) as Actor
+  return brandDefinition(value, internal) as Actor<
+    ActorSchemaInput<TInput>,
+    ActorSchemaInput<TMessage>,
+    ActorSchemaOutput<TResult>
+  >
 }
 
 export function createScheduledTask<
@@ -335,7 +371,7 @@ function brandDefinition<T extends object>(
 }
 
 function validateDefinitionDefaults(
-  config: ActorConfig | TaskConfigWithPayload<string, JsonValue, unknown, JsonValue> | TaskConfigWithoutPayload<string, JsonValue>,
+  config: RunDefaults & { id: string; run: unknown },
   label: string,
 ): void {
   validateTaskId(config.id)
@@ -356,7 +392,7 @@ function validateDefinitionDefaults(
 }
 
 function copyDefinitionDefaults(
-  config: ActorConfig | TaskConfigWithPayload<string, JsonValue, unknown, JsonValue> | TaskConfigWithoutPayload<string, JsonValue>,
+  config: RunDefaults,
 ): Pick<
   InternalActorDefinition,
   "queue" | "maxDuration" | "ttl" | "retry"

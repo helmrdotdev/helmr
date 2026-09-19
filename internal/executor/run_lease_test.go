@@ -121,8 +121,8 @@ func TestExecutorCompletesSuccessfulActorRunLease(t *testing.T) {
 		renewed: lease,
 		result: RunLeaseTaskResult{
 			ActorOutcome: &workerapi.ActorOutcome{
-				TerminalInputSequence: 4,
-				Succeeded:             &workerapi.ActorSucceeded{},
+				RunGeneration: 4,
+				Succeeded:     &workerapi.ActorSucceeded{},
 			},
 			ProgramQuiesced: workerapi.RunQuiescenceProof{RunID: lease.RunID, AttemptNumber: lease.AttemptNumber, RunLeaseID: lease.ID},
 		},
@@ -140,7 +140,7 @@ func TestExecutorCompletesSuccessfulActorRunLease(t *testing.T) {
 	if !slices.Equal(trace.calls, []string{"claim", "start", "wait", "renew", "begin", "guest-begin", "capture", "complete-actor"}) {
 		t.Fatalf("calls = %v", trace.calls)
 	}
-	if controlPlane.completedActor.Outcome.Succeeded == nil || controlPlane.completedActor.Outcome.TerminalInputSequence != 4 || controlPlane.completedActor.Workspace.Captured == nil {
+	if controlPlane.completedActor.Outcome.Succeeded == nil || controlPlane.completedActor.Outcome.RunGeneration != 4 || controlPlane.completedActor.Workspace.Captured == nil {
 		t.Fatalf("Actor completion = %+v", controlPlane.completedActor)
 	}
 }
@@ -692,20 +692,6 @@ func (controlPlane *testRunLeaseControlPlane) CommitActorTurn(
 	workerapi.CommitActorTurnRequest,
 ) (workerapi.CommitActorTurnResponse, error) {
 	return workerapi.CommitActorTurnResponse{}, errors.New("unexpected actor turn commit")
-}
-
-func (controlPlane *testRunLeaseControlPlane) SendRunActorInput(
-	context.Context,
-	workerapi.SendActorInputRequest,
-) (workerapi.SendActorInputResponse, error) {
-	return workerapi.SendActorInputResponse{}, errors.New("unexpected actor input send")
-}
-
-func (controlPlane *testRunLeaseControlPlane) AppendActorOutput(
-	context.Context,
-	workerapi.AppendActorOutputRequest,
-) (workerapi.AppendActorOutputResponse, error) {
-	return workerapi.AppendActorOutputResponse{}, errors.New("unexpected actor output append")
 }
 
 func (controlPlane *testRunLeaseControlPlane) CreateRuntimeToken(

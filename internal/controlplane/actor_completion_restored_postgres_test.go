@@ -460,11 +460,15 @@ UPDATE workspace_mounts SET materialized_version_id = $2 WHERE id = $1`, mountID
 		OwnershipGeneration: ownershipGeneration, WriterGeneration: 3,
 		MountFencingGeneration: mountGeneration, ExpiresAt: expiresAt,
 	}
+	var runGeneration int64
+	if err := base.Pool.QueryRow(ctx, `SELECT run_generation FROM sessions WHERE current_run_id=$1`, work.RunID).Scan(&runGeneration); err != nil {
+		t.Fatal(err)
+	}
 	request := workerapi.CompleteActorRequest{
 		Lease: assignment.Fence(),
 		Outcome: workerapi.ActorOutcome{
-			TerminalInputSequence: 1,
-			Succeeded:             &workerapi.ActorSucceeded{},
+			RunGeneration: runGeneration,
+			Succeeded:     &workerapi.ActorSucceeded{},
 		},
 		Workspace: workerapi.TaskWorkspaceProof{
 			Captured: validTaskWorkspaceCapture(t, assignment),
@@ -495,8 +499,8 @@ UPDATE workspace_mounts SET materialized_version_id = $2 WHERE id = $1`, mountID
 	finalizationFingerprint := request.Workspace.Captured.Receipt.RequestFingerprint
 	if rollback {
 		request.Outcome = workerapi.ActorOutcome{
-			TerminalInputSequence: 1,
-			Failed:                &workerapi.TaskFailure{Message: "actor failed"},
+			RunGeneration: runGeneration,
+			Failed:        &workerapi.TaskFailure{Message: "actor failed"},
 		}
 		rolledBack := validTaskWorkspaceRollback(t, request.Workspace.Captured)
 		rolledBack.Receipt.OperationID = operationID.String()

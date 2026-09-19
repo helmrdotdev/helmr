@@ -59,11 +59,17 @@ func Resume(ctx context.Context, q db.Querier, request ResumeRequest) (ControlRe
 	if err != nil {
 		return ControlReceipt{}, err
 	}
+	return ResumeWithLockedSecrets(ctx, q, request, locator.WorkspaceID, bindings)
+}
+
+// ResumeWithLockedSecrets consumes the target's complete admission bindings,
+// locked before Session authority by a cross-Session caller.
+func ResumeWithLockedSecrets(ctx context.Context, q db.Querier, request ResumeRequest, workspaceID pgtype.UUID, bindings []db.LockWorkspaceSecretsForAdmissionRow) (ControlReceipt, error) {
 	actor, err := lockSession(ctx, q, request.Target)
 	if err != nil {
 		return ControlReceipt{}, err
 	}
-	if actor.WorkspaceID != locator.WorkspaceID {
+	if actor.WorkspaceID != workspaceID {
 		return ControlReceipt{}, ErrAuthority
 	}
 	claim, err := claimOperation(ctx, q, request.ControlRequest, "session.resume", struct {
@@ -228,7 +234,7 @@ func Recover(ctx context.Context, q db.Querier, request RecoverRequest, graph ru
 		if err != nil {
 			return receipt, err
 		}
-		if _, err = q.SettleRecoveredSessionTurn(ctx, db.SettleRecoveredSessionTurnParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, TurnID: turn.ID, Status: want, EventID: event.ID, Fingerprint: pgvalue.Text(hex.EncodeToString(claim.RequestFingerprint))}); err != nil {
+		if _, err = q.SettleHeldSessionTurn(ctx, db.SettleHeldSessionTurnParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, TurnID: turn.ID, Status: want, EventID: event.ID, Fingerprint: pgvalue.Text(hex.EncodeToString(claim.RequestFingerprint))}); err != nil {
 			return receipt, err
 		}
 		sequence = pgtype.Int8{Int64: turn.Sequence, Valid: true}
@@ -249,4 +255,37 @@ func Recover(ctx context.Context, q db.Querier, request RecoverRequest, graph ru
 	}
 	receipt.HoldID = &newHold
 	return receipt, finishOperation(ctx, q, claim, receipt)
+}
+
+// CompleteInterruption publishes the held Turn only after the caller verifies the
+// exact live finalization receipt and captures the quiesced execution's Workspace.
+// The caller holds the Session and owned Run graph locks in the same transaction.
+func CompleteInterruption(ctx context.Context, q db.Querier, actor db.Session, versionID pgtype.UUID, fingerprint string) error {
+	var sequence pgtype.Int8
+	if actor.ActiveTurnID.Valid {
+		turn, err := q.LockSessionTurnInput(ctx, db.LockSessionTurnInputParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ID: actor.ActiveTurnID})
+		if err != nil {
+			return err
+		}
+		if turn.Status != "running" || turn.Sequence != actor.CommittedInputSequence+1 || !turn.InterruptRequestedAt.Valid {
+			return &OperationError{Code: "stale_execution"}
+		}
+		body, _ := json.Marshal(map[string]any{"workspace_version_id": pgvalue.UUIDString(versionID), "hold_id": pgvalue.UUIDString(actor.DispatchHoldID)})
+		event, err := appendLifecycleEvent(ctx, q, actor, turn.ID, pgtype.UUID{}, "turn.interrupted", body, versionID)
+		if err != nil {
+			return err
+		}
+		if _, err = q.SettleHeldSessionTurn(ctx, db.SettleHeldSessionTurnParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, TurnID: turn.ID, Status: "interrupted", EventID: event.ID, Fingerprint: pgvalue.Text(fingerprint)}); err != nil {
+			return err
+		}
+		sequence = pgtype.Int8{Int64: turn.Sequence, Valid: true}
+	}
+	previousHold := actor.DispatchHoldID
+	held, err := q.CompleteSessionInterruption(ctx, db.CompleteSessionInterruptionParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, RunID: actor.CurrentRunID, RunGeneration: actor.RunGeneration, HoldID: actor.DispatchHoldID, TurnID: actor.ActiveTurnID, InputSequence: sequence, NewHoldID: pgvalue.UUID(uuid.NewV7())})
+	if err != nil {
+		return err
+	}
+	body, _ := json.Marshal(map[string]any{"hold_id": pgvalue.UUIDString(held.DispatchHoldID), "previous_hold_id": pgvalue.UUIDString(previousHold), "reason": "interrupted", "workspace_version_id": pgvalue.UUIDString(versionID)})
+	_, err = appendLifecycleEvent(ctx, q, held, pgtype.UUID{}, pgtype.UUID{}, "session.held", body, versionID)
+	return err
 }

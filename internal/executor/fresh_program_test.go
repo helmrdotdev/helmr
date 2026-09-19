@@ -468,11 +468,11 @@ func TestAwaitTaskCompletionRequiresFinalMatchingQuiescenceProof(t *testing.T) {
 	}
 }
 
-func TestFreshProgramDispatchesActorInputSendForTaskAndActor(t *testing.T) {
+func TestFreshProgramDispatchesSessionSubmitForTaskAndActor(t *testing.T) {
 	lease := workerapi.RunLeaseAssignment{
 		ID: "lease-1", RunID: "run-1", AttemptNumber: 2,
 	}
-	send := &programv0.SessionInputSendRequested{
+	send := &programv0.SessionSubmitRequested{
 		CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000111",
 		SessionId:     "019c10d5-a6f7-7af1-8f5f-000000000112",
 		DataJson:      `{"message":"hello"}`,
@@ -481,7 +481,7 @@ func TestFreshProgramDispatchesActorInputSendForTaskAndActor(t *testing.T) {
 		name       string
 		entrypoint *programv0.EntrypointIdentity
 		outcome    *programv0.RunEvent
-		await      func(*freshProgram, freshProgramEventSink, func(context.Context, *programv0.SessionInputSendRequested) error) error
+		await      func(*freshProgram, freshProgramEventSink, func(context.Context, *programv0.SessionSubmitRequested) error) error
 	}{
 		{
 			name: "Task",
@@ -489,7 +489,7 @@ func TestFreshProgramDispatchesActorInputSendForTaskAndActor(t *testing.T) {
 				Kind: &programv0.EntrypointIdentity_Task{Task: &programv0.TaskEntrypoint{}},
 			},
 			outcome: testTaskSucceededEvent(`null`),
-			await: func(program *freshProgram, events freshProgramEventSink, callback func(context.Context, *programv0.SessionInputSendRequested) error) error {
+			await: func(program *freshProgram, events freshProgramEventSink, callback func(context.Context, *programv0.SessionSubmitRequested) error) error {
 				_, _, err := program.awaitTaskCompletion(t.Context(), events, nil, callback, nil, nil)
 				return err
 			},
@@ -502,14 +502,14 @@ func TestFreshProgramDispatchesActorInputSendForTaskAndActor(t *testing.T) {
 			outcome: &programv0.RunEvent{
 				Event: &programv0.RunEvent_ActorOutcome{
 					ActorOutcome: &programv0.ActorOutcome{
-						TerminalInputSequence: new(int64(0)),
+						RunGeneration: 1,
 						Outcome: &programv0.ActorOutcome_Succeeded{
 							Succeeded: &programv0.ActorSucceeded{},
 						},
 					},
 				},
 			},
-			await: func(program *freshProgram, events freshProgramEventSink, callback func(context.Context, *programv0.SessionInputSendRequested) error) error {
+			await: func(program *freshProgram, events freshProgramEventSink, callback func(context.Context, *programv0.SessionSubmitRequested) error) error {
 				_, _, err := program.awaitActorCompletion(t.Context(), events, nil, nil, callback, nil, nil, nil)
 				return err
 			},
@@ -521,23 +521,24 @@ func TestFreshProgramDispatchesActorInputSendForTaskAndActor(t *testing.T) {
 			go func() {
 				defer guest.Close()
 				_ = frameio.WriteProtoFrame(guest, &programv0.RunEvent{
-					Event: &programv0.RunEvent_SessionInputSendRequested{
-						SessionInputSendRequested: send,
+					Event: &programv0.RunEvent_SessionSubmitRequested{
+						SessionSubmitRequested: send,
 					},
 				})
 				_ = frameio.WriteProtoFrame(guest, test.outcome)
 				_ = frameio.WriteProtoFrame(guest, testProgramQuiescedEvent(lease))
 			}()
 			program := &freshProgram{
+				execution:  &programv0.SessionExecution{RunGeneration: 1},
 				session:    fakeGuestSession{stream: host},
 				lease:      lease,
 				entrypoint: test.entrypoint,
 			}
-			var observed *programv0.SessionInputSendRequested
+			var observed *programv0.SessionSubmitRequested
 			err := test.await(
 				program,
 				&testFreshProgramEventSink{},
-				func(_ context.Context, requested *programv0.SessionInputSendRequested) error {
+				func(_ context.Context, requested *programv0.SessionSubmitRequested) error {
 					observed = requested
 					return nil
 				},
@@ -554,27 +555,26 @@ func TestFreshProgramDispatchesActorInputSendForTaskAndActor(t *testing.T) {
 	}
 }
 
-func TestFreshProgramDispatchesActorOutputAppend(t *testing.T) {
+func TestFreshProgramDispatchesTurnOutput(t *testing.T) {
 	lease := workerapi.RunLeaseAssignment{
 		ID: "lease-1", RunID: "run-1", AttemptNumber: 2,
 	}
-	requested := &programv0.ActorOutputAppendRequested{
+	requested := &programv0.TurnOutputWriteRequested{
 		CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000112",
 		DataJson:      `{"status":"working"}`,
-		ContentType:   "application/json",
 	}
 	guest, host := net.Pipe()
 	go func() {
 		defer guest.Close()
 		_ = frameio.WriteProtoFrame(guest, &programv0.RunEvent{
-			Event: &programv0.RunEvent_ActorOutputAppendRequested{
-				ActorOutputAppendRequested: requested,
+			Event: &programv0.RunEvent_TurnOutputWriteRequested{
+				TurnOutputWriteRequested: requested,
 			},
 		})
 		_ = frameio.WriteProtoFrame(guest, &programv0.RunEvent{
 			Event: &programv0.RunEvent_ActorOutcome{
 				ActorOutcome: &programv0.ActorOutcome{
-					TerminalInputSequence: new(int64(0)),
+					RunGeneration: 1,
 					Outcome: &programv0.ActorOutcome_Succeeded{
 						Succeeded: &programv0.ActorSucceeded{},
 					},
@@ -584,20 +584,21 @@ func TestFreshProgramDispatchesActorOutputAppend(t *testing.T) {
 		_ = frameio.WriteProtoFrame(guest, testProgramQuiescedEvent(lease))
 	}()
 	program := &freshProgram{
-		session: fakeGuestSession{stream: host},
-		lease:   lease,
+		execution: &programv0.SessionExecution{RunGeneration: 1},
+		session:   fakeGuestSession{stream: host},
+		lease:     lease,
 		entrypoint: &programv0.EntrypointIdentity{
 			Kind: &programv0.EntrypointIdentity_Actor{Actor: &programv0.ActorEntrypoint{}},
 		},
 	}
-	var observed *programv0.ActorOutputAppendRequested
+	var observed *programv0.TurnOutputWriteRequested
 	_, _, err := program.awaitActorCompletion(
 		t.Context(),
 		&testFreshProgramEventSink{},
 		nil,
 		nil,
 		nil,
-		func(_ context.Context, value *programv0.ActorOutputAppendRequested) error {
+		func(_ context.Context, value *programv0.TurnOutputWriteRequested) error {
 			observed = value
 			return nil
 		},
@@ -608,8 +609,7 @@ func TestFreshProgramDispatchesActorOutputAppend(t *testing.T) {
 		t.Fatal(err)
 	}
 	if observed.GetCorrelationId() != requested.GetCorrelationId() ||
-		observed.GetDataJson() != requested.GetDataJson() ||
-		observed.GetContentType() != requested.GetContentType() {
+		observed.GetDataJson() != requested.GetDataJson() {
 		t.Fatalf("Actor output append = %+v", observed)
 	}
 }

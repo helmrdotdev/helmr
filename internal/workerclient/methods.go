@@ -627,3 +627,27 @@ func (c *Client) ReadSessionControl(ctx context.Context, request workerapi.Sessi
 	}
 	return response, nil
 }
+
+func (c *Client) GetRunSessionTurn(ctx context.Context, request workerapi.TurnReferenceRequest) (workerapi.SessionTurnResponse, error) {
+	var response workerapi.SessionTurnResponse
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/turns/retrieve", request, &response); err != nil {
+		return workerapi.SessionTurnResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) InterruptRunSessionTurn(ctx context.Context, request workerapi.InterruptSessionTurnRequest) (workerapi.InterruptSessionTurnResponse, error) {
+	var response workerapi.InterruptSessionTurnResponse
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/turns/interrupt", request, &response); err != nil {
+		return workerapi.InterruptSessionTurnResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) ResumeRunSession(ctx context.Context, request workerapi.ResumeSessionRequest) (workerapi.ResumeSessionResponse, error) {
+	var response workerapi.ResumeSessionResponse
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/sessions/resume", request, &response); err != nil {
+		return workerapi.ResumeSessionResponse{}, err
+	}
+	return response, nil
+}

@@ -226,6 +226,19 @@ func (s *Server) workerPollRunWait(w http.ResponseWriter, r *http.Request) {
 		writeError(w, conflict(errors.New("worker run wait fence is stale")))
 		return
 	}
+	stopped, err := s.db.RunWaitSessionStopped(r.Context(), wait.ID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if stopped && wait.SuspensionStatus == db.RunWaitStatusReleased {
+		writeJSON(w, http.StatusOK, workerapi.RunWaitPollResponse{
+			RunID: pgvalue.UUIDString(locators.RunID), RunWaitID: waitID.String(),
+			Status: workerapi.RunWaitPollStatusResumeRequested, ResumeKind: "cancelled",
+			ResumePayload: []byte(`{"reason_code":"session_stopped"}`), RequireAck: false,
+		})
+		return
+	}
 	current, err := s.db.RunWaitTurnCurrent(r.Context(), wait.ID)
 	if err != nil {
 		writeError(w, err)

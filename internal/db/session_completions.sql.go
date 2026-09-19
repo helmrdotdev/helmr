@@ -621,6 +621,9 @@ SELECT run_leases.terminal_request_fingerprint
         AND run_attempts.terminal_outcome = 'succeeded'
         AND run_attempts.terminal_reason_code = 'completed')
        OR
+       (run_leases.status = 'cancelled' AND run_leases.terminal_reason_code = 'session_interrupted'
+        AND run_attempts.terminal_outcome = 'cancelled' AND run_attempts.terminal_reason_code = 'session_interrupted')
+       OR
        (run_leases.status = 'failed'
         AND run_leases.terminal_reason_code IN ('actor_failed', 'no_progress')
         AND run_attempts.terminal_outcome = 'failed'

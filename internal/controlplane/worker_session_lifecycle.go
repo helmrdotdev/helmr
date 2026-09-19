@@ -66,6 +66,9 @@ func projectWorkerSessionEvent(event db.SessionEvent, deploymentID pgtype.UUID) 
 	return result
 }
 func (s *Server) writeWorkerSessionCommand(w http.ResponseWriter, correlation string, err error) {
+	if errors.Is(err, errStaleWorkerRunSource) {
+		err = &session.OperationError{Code: "stale_execution"}
+	}
 	response := workerapi.TurnCommandResponse{CorrelationID: correlation, Accepted: err == nil}
 	if err != nil {
 		if failure, ok := actorOutputAppendFailure(err); ok {
@@ -199,29 +202,34 @@ func (s *Server) workerSessionControl(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	response := workerapi.SessionControlResponse{CorrelationID: request.CorrelationID}
-	err := s.inTx(r.Context(), func(work *txWork) error {
-		a, err := lockWorkerSessionExecution(r.Context(), work.q, workerFromContext(r.Context()), request.Lease)
-		if err != nil {
-			return err
-		}
-		if request.RunGeneration != a.actor.RunGeneration {
-			return session.ErrTurnScope
-		}
-		if a.actor.DispatchHoldID.Valid {
-			id, reason := pgvalue.UUIDString(a.actor.DispatchHoldID), a.actor.DispatchHoldReason.String
-			response.HoldID = &id
-			response.Reason = &reason
-		}
-		if a.actor.ActiveTurnID.Valid {
-			id := pgvalue.UUIDString(a.actor.ActiveTurnID)
-			response.TurnID = &id
-		}
-		return nil
+	parsed, err := parseRunLeaseFence(request.Lease)
+	if err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
+	worker := workerFromContext(r.Context())
+	// This is an advisory observation. Finalization separately locks and proves
+	// the exact hold; polling must not contend with shared worker placement locks.
+	state, err := s.db.ReadWorkerSessionControl(r.Context(), db.ReadWorkerSessionControlParams{
+		RunLeaseID: pgvalue.UUID(parsed.leaseID), LeaseSequence: request.Lease.LeaseSequence,
+		WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch, RunGeneration: request.RunGeneration,
 	})
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			err = session.ErrTurnScope
+		}
 		s.writeWorkerSessionCommand(w, request.CorrelationID, err)
 		return
+	}
+	response := workerapi.SessionControlResponse{CorrelationID: request.CorrelationID}
+	if state.DispatchHoldID.Valid {
+		id, reason := pgvalue.UUIDString(state.DispatchHoldID), state.DispatchHoldReason.String
+		response.HoldID = &id
+		response.Reason = &reason
+	}
+	if state.ActiveTurnID.Valid {
+		id := pgvalue.UUIDString(state.ActiveTurnID)
+		response.TurnID = &id
 	}
 	writeJSON(w, http.StatusOK, response)
 }

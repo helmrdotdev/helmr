@@ -22,10 +22,18 @@ func (task *guestRunLeaseTask) handleChildTaskInvoke(
 	ctx context.Context,
 	requested *programv0.TaskChildInvokeRequested,
 ) error {
+	if requested == nil {
+		return errors.New("child request is required")
+	}
+	if err := task.validateWaitScope(requested.GetExecution(), requested.TurnId); err != nil {
+		return err
+	}
 	request, err := workerChildTaskInvokeRequest(requested)
 	if err != nil {
 		return err
 	}
+	request.TurnID = requested.TurnId
+	request.RunGeneration = executionGeneration(requested.GetExecution())
 	controlPlane, ok := task.controlPlane.(childTaskInvokeControlPlane)
 	if !ok {
 		return errors.New("run lease task child task invocation control plane is required")
@@ -64,6 +72,7 @@ func (task *guestRunLeaseTask) handleChildTaskInvoke(
 			return errors.New("run lease task wait control plane is required")
 		}
 		runtimeWait := WaitRequest{
+			Execution: requested.GetExecution(), TurnID: requested.TurnId,
 			Leases:                        task,
 			CorrelationID:                 request.CorrelationID,
 			RunWaitID:                     request.RunWaitID,
@@ -72,14 +81,17 @@ func (task *guestRunLeaseTask) handleChildTaskInvoke(
 			ActorSpeculativeInputSequence: request.ActorSpeculativeInputSequence,
 			Workspace:                     task.waitWorkspace,
 			Checkpointer:                  task.checkpointer,
-			Resume: func(_ context.Context, decision WaitResumeDecision) error {
+			Resume: func(resumeCtx context.Context, decision WaitResumeDecision) error {
+				if err := task.beforeWaitResume(resumeCtx, decision); err != nil {
+					return err
+				}
 				if strings.TrimSpace(decision.Kind) == "" {
 					return errors.New("program resume kind is required")
 				}
 				if len(decision.Data) == 0 {
 					decision.Data = json.RawMessage(`null`)
 				}
-				return wire.WriteResumeDecision(task.program.session.Stream(), &programv0.ResumeDecision{
+				return wire.WriteResumeDecision(task.programStream(), &programv0.ResumeDecision{
 					RunWaitId:      response.OpenedWait.RunWaitID,
 					CorrelationId:  request.CorrelationID,
 					ResumeAttachId: response.OpenedWait.ResumeAttachID,
@@ -88,7 +100,9 @@ func (task *guestRunLeaseTask) handleChildTaskInvoke(
 				})
 			},
 		}
-		return task.waits.ContinueRunWait(ctx, runtimeWait, *response.OpenedWait)
+		return task.runHotWait(ctx, runtimeWait, func(waitCtx context.Context, request WaitRequest) error {
+			return task.waits.ContinueRunWait(waitCtx, request, *response.OpenedWait)
+		})
 	}
 	if request.Method == "call" && response.Completed != nil {
 		return errors.New("completed child task call response requires an opened Wait")
@@ -106,7 +120,7 @@ func (task *guestRunLeaseTask) handleChildTaskInvoke(
 	if err != nil {
 		return fmt.Errorf("encode child task invocation decision: %w", err)
 	}
-	if err := wire.WriteResumeDecision(task.program.session.Stream(), &programv0.ResumeDecision{
+	if err := wire.WriteResumeDecision(task.programStream(), &programv0.ResumeDecision{
 		CorrelationId:  request.CorrelationID,
 		RunWaitId:      request.RunWaitID,
 		ResumeAttachId: request.ResumeAttachID,

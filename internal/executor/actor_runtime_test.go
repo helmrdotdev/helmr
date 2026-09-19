@@ -26,7 +26,7 @@ type actorRuntimeContractControlPlane struct {
 	firstAttempt  chan struct{}
 	statusRequest workerapi.SessionReferenceRequest
 	closeRequest  workerapi.CloseSessionRequest
-	outputRequest workerapi.ReadSessionOutputPageRequest
+	outputRequest workerapi.ReadSessionEventsRequest
 }
 
 func (controlPlane *actorRuntimeContractControlPlane) StartRunActor(
@@ -69,43 +69,15 @@ func (controlPlane *actorRuntimeContractControlPlane) CloseRunSession(
 	}, nil
 }
 
-func (controlPlane *actorRuntimeContractControlPlane) ReadRunSessionOutputPage(
+func (controlPlane *actorRuntimeContractControlPlane) ReadRunSessionEvents(
 	_ context.Context,
-	request workerapi.ReadSessionOutputPageRequest,
-) (workerapi.ReadSessionOutputPageResponse, error) {
+	request workerapi.ReadSessionEventsRequest,
+) (workerapi.ReadSessionEventsResponse, error) {
 	controlPlane.outputRequest = request
-	return workerapi.ReadSessionOutputPageResponse{
+	return workerapi.ReadSessionEventsResponse{
 		CorrelationID: request.CorrelationID,
-		Completed:     &api.SessionOutputPage{},
+		Completed:     &api.SessionEventPage{},
 	}, nil
-}
-
-func TestWorkerActorStartRequestPreservesInputPresence(t *testing.T) {
-	base := func() *programv0.ActorStartRequested {
-		return &programv0.ActorStartRequested{
-			CorrelationId:  "019c0225-f0c9-7f66-8a23-7782ca0a8461",
-			DeclaredId:     "mailbox",
-			WorkspaceId:    "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
-			RunOptionsJson: `{}`,
-		}
-	}
-	omitted, err := workerActorStartRequest(base())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if omitted.InputPresent || len(omitted.Input) != 0 {
-		t.Fatalf("omitted input = present %v, %q", omitted.InputPresent, omitted.Input)
-	}
-	null := base()
-	value := "null"
-	null.InputJson = &value
-	present, err := workerActorStartRequest(null)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !present.InputPresent || string(present.Input) != "null" {
-		t.Fatalf("null input = present %v, %q", present.InputPresent, present.Input)
-	}
 }
 
 func TestWorkerSessionReferencesRequireCanonicalCorrelationAndID(t *testing.T) {
@@ -209,8 +181,8 @@ func TestActorRuntimeVerticalContract(t *testing.T) {
 					CorrelationId: correlationID, SessionId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
 				},
 			}},
-			{Event: &programv0.RunEvent_SessionOutputPageRequested{
-				SessionOutputPageRequested: &programv0.SessionOutputPageRequested{
+			{Event: &programv0.RunEvent_SessionEventsRequested{
+				SessionEventsRequested: &programv0.SessionEventsRequested{
 					CorrelationId: correlationID, SessionId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
 					Limit: 25,
 				},

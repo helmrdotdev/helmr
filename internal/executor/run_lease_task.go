@@ -36,8 +36,6 @@ type RunLeaseControlPlane interface {
 	CompleteTask(context.Context, workerapi.CompleteTaskRequest) error
 	CompleteActor(context.Context, workerapi.CompleteActorRequest) error
 	CommitActorTurn(context.Context, workerapi.CommitActorTurnRequest) (workerapi.CommitActorTurnResponse, error)
-	SendRunActorInput(context.Context, workerapi.SendActorInputRequest) (workerapi.SendActorInputResponse, error)
-	AppendActorOutput(context.Context, workerapi.AppendActorOutputRequest) (workerapi.AppendActorOutputResponse, error)
 	CreateRuntimeToken(context.Context, workerapi.CreateTokenRequest) (api.TokenResponse, error)
 	AppendRunLog(context.Context, workerapi.RunLeaseAssignment, workerapi.LogStream, uint64, []byte) error
 }
@@ -46,7 +44,7 @@ type ActorRuntimeControlPlane interface {
 	StartRunActor(context.Context, workerapi.StartActorRequest) (workerapi.StartActorResponse, error)
 	GetRunSessionStatus(context.Context, workerapi.SessionReferenceRequest) (workerapi.SessionStatusResponse, error)
 	CloseRunSession(context.Context, workerapi.CloseSessionRequest) (workerapi.CloseSessionResponse, error)
-	ReadRunSessionOutputPage(context.Context, workerapi.ReadSessionOutputPageRequest) (workerapi.ReadSessionOutputPageResponse, error)
+	ReadRunSessionEvents(context.Context, workerapi.ReadSessionEventsRequest) (workerapi.ReadSessionEventsResponse, error)
 }
 
 type WorkspaceRuntimeControlPlane interface {
@@ -78,6 +76,9 @@ type RunLeaseTask interface {
 }
 
 func (task *guestRunLeaseTask) Close() {
+	if task.program.protocol != nil {
+		_ = task.program.protocol.Close()
+	}
 	task.mu.Lock()
 	task.clearCapabilities()
 	task.mu.Unlock()
@@ -88,6 +89,8 @@ type RunLeaseTaskRunner interface {
 }
 
 type guestRunLeaseTask struct {
+	stopMu        sync.Mutex
+	stopDeadline  time.Time
 	program       freshProgram
 	mounts        WorkspaceMountSessionRegistry
 	store         cas.Store
@@ -183,6 +186,7 @@ func (r ProgramRunner) StartRunLeaseTask(
 			claim.Workspace.ResetTarget,
 		),
 	}
+	task.program.protocol = newProgramProtocol(program.session.Stream())
 	if waitClient, ok := controlPlane.(RunWaitClient); ok {
 		task.waits = &ControlPlaneRunWaits{Client: waitClient}
 	}
@@ -192,7 +196,8 @@ func (r ProgramRunner) StartRunLeaseTask(
 			cas:        r.CAS,
 			encryptor:  r.CheckpointEncryptor,
 			tempDir:    r.tempDir(),
-			stream:     program.session.Stream(),
+			stream:     task.programStream(),
+			protocol:   task.program.protocol,
 			workspace:  checkpointBase,
 			runEvent:   task.processCheckpointRunEvent,
 			freezeGate: &task.renewalGate,
@@ -286,6 +291,9 @@ func (task *guestRunLeaseTask) handleWait(ctx context.Context, wait *programv0.R
 	if task.waits == nil {
 		return errors.New("run lease task wait control plane is required")
 	}
+	if err := task.validateWaitScope(wait.GetExecution(), wait.TurnId); err != nil {
+		return err
+	}
 	runtimeWait, err := parseWaitRequest(task, wait)
 	if err != nil {
 		return err
@@ -294,13 +302,16 @@ func (task *guestRunLeaseTask) handleWait(ctx context.Context, wait *programv0.R
 	runtimeWait.Workspace = task.waitWorkspace
 	runtimeWait.Checkpointer = task.checkpointer
 	runtimeWait.Resume = func(resumeCtx context.Context, decision WaitResumeDecision) error {
+		if err := task.beforeWaitResume(resumeCtx, decision); err != nil {
+			return err
+		}
 		if strings.TrimSpace(decision.Kind) == "" {
 			return errors.New("program resume kind is required")
 		}
 		if len(decision.Data) == 0 {
 			decision.Data = json.RawMessage(`null`)
 		}
-		if err := wire.WriteResumeDecision(task.program.session.Stream(), &programv0.ResumeDecision{
+		if err := wire.WriteResumeDecision(task.programStream(), &programv0.ResumeDecision{
 			RunWaitId:      wait.GetRunWaitId(),
 			CorrelationId:  wait.GetCorrelationId(),
 			ResumeAttachId: wait.GetResumeAttachId(),
@@ -311,7 +322,7 @@ func (task *guestRunLeaseTask) handleWait(ctx context.Context, wait *programv0.R
 		}
 		return nil
 	}
-	return task.waits.Wait(ctx, runtimeWait)
+	return task.runHotWait(ctx, runtimeWait, task.waits.Wait)
 }
 
 func (task *guestRunLeaseTask) processCheckpointRunEvent(ctx context.Context, event *programv0.RunEvent) error {
@@ -329,7 +340,7 @@ func (task *guestRunLeaseTask) processCheckpointRunEvent(ctx context.Context, ev
 			ctx,
 			taskControlEvents{task: task},
 			workerapi.RunLeaseAssignment{},
-			task.program.session.Stream(),
+			task.programStream(),
 			value.MetadataUpdated,
 		)
 	case *programv0.RunEvent_StructuredLogRequested:
@@ -337,17 +348,34 @@ func (task *guestRunLeaseTask) processCheckpointRunEvent(ctx context.Context, ev
 			ctx,
 			taskControlEvents{task: task},
 			workerapi.RunLeaseAssignment{},
-			task.program.session.Stream(),
+			task.programStream(),
 			task.program.observedEventSeq,
 			value.StructuredLogRequested,
 		)
 	case *programv0.RunEvent_TaskChildInvokeRequested:
+		if value.TaskChildInvokeRequested.GetMethod() != "start" {
+			return errors.New("concurrent consuming child wait")
+		}
 		return task.handleChildTaskInvoke(ctx, value.TaskChildInvokeRequested)
-	case *programv0.RunEvent_ActorStartRequested,
+	case *programv0.RunEvent_TurnOutputWriteRequested:
+		return task.handleTurnOutput(ctx, value.TurnOutputWriteRequested)
+	case *programv0.RunEvent_SessionSubmitRequested:
+		return task.handleSessionSubmit(ctx, value.SessionSubmitRequested)
+	case *programv0.RunEvent_TokenCreateRequested:
+		return task.handleTokenCreate(ctx, value.TokenCreateRequested)
+	case *programv0.RunEvent_TurnReadyRequested,
+		*programv0.RunEvent_TurnSettlementBeginRequested,
+		*programv0.RunEvent_TurnMessageClaimRequested,
+		*programv0.RunEvent_TurnMessageCompleteRequested,
+		*programv0.RunEvent_SessionOutputWriteRequested,
+		*programv0.RunEvent_SessionTurnRetrieveRequested,
+		*programv0.RunEvent_SessionTurnInterruptRequested,
+		*programv0.RunEvent_SessionResumeRequested,
+		*programv0.RunEvent_ActorStartRequested,
 		*programv0.RunEvent_SessionStatusRequested,
 		*programv0.RunEvent_SessionCloseRequested,
-		*programv0.RunEvent_SessionOutputPageRequested:
-		return task.handleActorRuntime(ctx, event)
+		*programv0.RunEvent_SessionEventsRequested:
+		return task.handleResourceRuntime(ctx, event)
 	case *programv0.RunEvent_WorkspaceCreateRequested,
 		*programv0.RunEvent_WorkspaceRetrieveRequested,
 		*programv0.RunEvent_WorkspaceExecRequested,
@@ -359,14 +387,27 @@ func (task *guestRunLeaseTask) processCheckpointRunEvent(ctx context.Context, ev
 }
 
 func (task *guestRunLeaseTask) Wait(ctx context.Context) (RunLeaseTaskResult, error) {
+	if task.program.protocol != nil {
+		defer task.program.protocol.Close()
+	}
+	stopCtx, cancelStop := context.WithCancel(ctx)
+	defer cancelStop()
+	if task.program.execution != nil {
+		go func() {
+			if err := task.pollSessionStop(stopCtx); err != nil && stopCtx.Err() == nil {
+				_ = task.programStream().Close()
+			}
+		}()
+	}
+
 	if task.program.entrypoint != nil && task.program.entrypoint.GetActor() != nil {
 		outcome, quiesced, err := task.program.awaitActorCompletion(
 			ctx,
 			taskControlEvents{task: task},
 			task.handleWait,
-			task.handleActorTurnCommit,
-			task.handleActorInputSend,
-			task.handleActorOutputAppend,
+			task.handleTurnSettle,
+			task.handleSessionSubmit,
+			task.handleTurnOutput,
 			task.handleTokenCreate,
 			task.handleChildTaskInvoke,
 			task.handleResourceRuntime,
@@ -387,7 +428,7 @@ func (task *guestRunLeaseTask) Wait(ctx context.Context) (RunLeaseTaskResult, er
 		ctx,
 		taskControlEvents{task: task},
 		task.handleWait,
-		task.handleActorInputSend,
+		task.handleSessionSubmit,
 		task.handleTokenCreate,
 		task.handleChildTaskInvoke,
 		task.handleResourceRuntime,
@@ -413,10 +454,12 @@ func workerActorOutcome(outcome *programv0.ActorOutcome) (workerapi.ActorOutcome
 	if err := validateFreshActorOutcome(outcome); err != nil {
 		return workerapi.ActorOutcome{}, err
 	}
-	converted := workerapi.ActorOutcome{TerminalInputSequence: outcome.GetTerminalInputSequence()}
+	converted := workerapi.ActorOutcome{RunGeneration: outcome.GetRunGeneration()}
 	switch value := outcome.GetOutcome().(type) {
 	case *programv0.ActorOutcome_Succeeded:
 		converted.Succeeded = &workerapi.ActorSucceeded{}
+	case *programv0.ActorOutcome_Interrupted:
+		converted.Interrupted = &workerapi.ActorInterrupted{HoldID: value.Interrupted.GetHoldId(), TurnID: value.Interrupted.TurnId}
 	case *programv0.ActorOutcome_Failed:
 		failure := canonicalTaskFailure(value.Failed.GetMessage(), value.Failed.DetailsJson)
 		converted.Failed = &failure
