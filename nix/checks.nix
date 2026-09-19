@@ -7,6 +7,32 @@
 let
   pkgs = import nixpkgs { inherit system; };
   inherit (pkgs) lib;
+  toolsets = import ./build-support/toolsets.nix {
+    inherit pkgs helmrPackages;
+  };
+
+  releaseToolsCheck =
+    name: tools: commands:
+    pkgs.runCommandNoCC name { } ''
+      # Check the declared tools without stdenv or runner PATH masking omissions.
+      export PATH=${lib.makeBinPath tools}
+      bash --version
+      python3 --version
+      curl --version
+      cosign version
+      skopeo --version
+      node --version
+      npm --version
+      sha256sum --version
+      ${commands}
+      for tool in go cc bun apko mksquashfs; do
+        if command -v "$tool"; then
+          echo "release tools unexpectedly include $tool" >&2
+          exit 1
+        fi
+      done
+      touch "$out"
+    '';
 
   vendoredGoCheck =
     name: nativeBuildInputs: command:
@@ -83,6 +109,32 @@ let
     '';
 in
 {
+  release-tools = releaseToolsCheck "release-tools-check" toolsets.release ''
+    git --version
+    aws --version
+    if command -v docker; then
+      echo "trusted publication tools must not include the candidate Docker executor" >&2
+      exit 1
+    fi
+  '';
+  release-consumer-tools =
+    releaseToolsCheck "release-consumer-tools-check" toolsets.releaseConsumer
+      ''
+        docker --version
+        docker buildx version
+        if command -v dockerd; then
+          echo "candidate consumer needs the Docker client, not a second daemon" >&2
+          exit 1
+        fi
+        tar --version
+        gzip --version
+        awk --version
+        sed --version
+        if command -v aws; then
+          echo "candidate consumer tools must not include the preview publisher client" >&2
+          exit 1
+        fi
+      '';
   helmr-package = helmrPackages.helmr;
   helmr-smoke = pkgs.runCommand "helmr-smoke" { } ''
     export HOME="$TMPDIR/home"
