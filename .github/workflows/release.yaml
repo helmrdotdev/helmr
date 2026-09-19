@@ -61,7 +61,7 @@ jobs:
         id: admit
         env:
           GH_TOKEN: ${{ github.token }}
-        run: nix develop .#images -c python3 scripts/release/main.py admit
+        run: nix develop .#release -c python3 scripts/release/main.py admit
   build:
     needs: admission
     if: >-
@@ -117,11 +117,6 @@ jobs:
       - uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3
         with:
           github_access_token: ''
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
-        with:
-          node-version: 24
-          registry-url: https://registry.npmjs.org
-          package-manager-cache: false
       - name: Re-check main head after preview channel lock
         id: precheck
         env:
@@ -129,7 +124,7 @@ jobs:
         run: python3 scripts/release/main.py precheck
       - name: Assume preview publisher role
         if: steps.precheck.outputs.superseded != 'true'
-        run: nix develop .#images -c bash scripts/release/assume-preview-role.sh
+        run: nix develop .#release -c bash scripts/release/assume-preview-role.sh
       - name: Publish preview cohort to fixed-origin object store
         id: stage
         if: steps.precheck.outputs.superseded != 'true'
@@ -137,8 +132,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GHCR_ACTOR: ${{ github.actor }}
         run: |
+          nix develop .#release -c bash -euo pipefail <<'SH'
           python3 scripts/release/main.py assemble --directory "$RUNNER_TEMP/assets"
-          nix develop .#images -c bash -euo pipefail <<'SH'
           export REGISTRY_AUTH_FILE="$RUNNER_TEMP/registry-auth.json"
           trap 'rm -f "$REGISTRY_AUTH_FILE"' EXIT
           printf '%s' "$GH_TOKEN" | skopeo login ghcr.io --username "$GHCR_ACTOR" --password-stdin
@@ -178,19 +173,14 @@ jobs:
       - uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3
         with:
           github_access_token: ''
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
-        with:
-          node-version: 24
-          registry-url: https://registry.npmjs.org
-          package-manager-cache: false
       - name: Publish formal tag cohort through GitHub releases
         id: stage_tag
         env:
           GH_TOKEN: ${{ github.token }}
           GHCR_ACTOR: ${{ github.actor }}
         run: |
+          nix develop .#release -c bash -euo pipefail <<'SH'
           python3 scripts/release/main.py assemble --directory "$RUNNER_TEMP/assets"
-          nix develop .#images -c bash -euo pipefail <<'SH'
           export REGISTRY_AUTH_FILE="$RUNNER_TEMP/registry-auth.json"
           trap 'rm -f "$REGISTRY_AUTH_FILE"' EXIT
           printf '%s' "$GH_TOKEN" | skopeo login ghcr.io --username "$GHCR_ACTOR" --password-stdin
@@ -232,7 +222,7 @@ jobs:
         if: fromJSON(needs.admission.outputs.selection).build.mode != 'tag'
         env:
           BUILD_DIGEST: ${{ needs.publish-preview.outputs.build_digest }}
-        run: python3 scripts/release/main.py verify --directory "$RUNNER_TEMP/assets" --build-digest "$BUILD_DIGEST"
+        run: nix develop .#release-consumer -c python3 scripts/release/main.py verify --directory "$RUNNER_TEMP/assets" --build-digest "$BUILD_DIGEST"
       - name: Download and verify signed formal tag bytes
         if: fromJSON(needs.admission.outputs.selection).build.mode == 'tag'
         env:
@@ -243,14 +233,14 @@ jobs:
           PUBLISHER_ATTEMPT: ${{ needs.publish-tag.outputs.publisher_attempt }}
           BUILD_DIGEST: ${{ needs.publish-tag.outputs.build_digest }}
         run: |
-          nix develop .#images -c python3 scripts/release/main.py download --directory "$RUNNER_TEMP/assets" \
+          nix develop .#release-consumer -c python3 scripts/release/main.py download --directory "$RUNNER_TEMP/assets" \
             --artifact-id "$ARTIFACT_ID" --artifact-digest "$ARTIFACT_DIGEST" \
             --publisher-run "$PUBLISHER_RUN" --publisher-attempt "$PUBLISHER_ATTEMPT" --build-digest "$BUILD_DIGEST"
       - name: Execute downloaded consumer without publication authority
         env:
           HELMR_PUBLIC_CONSUMER: '1'
         run: |
-          nix develop .#images -c python3 - "$RUNNER_TEMP/assets" <<'PY'
+          nix develop .#release-consumer -c python3 - "$RUNNER_TEMP/assets" <<'PY'
           import sys
           from pathlib import Path
           sys.path.insert(0, 'scripts/release')
@@ -292,14 +282,14 @@ jobs:
         with:
           github_access_token: ''
       - name: Assume preview publisher role
-        run: nix develop .#images -c bash scripts/release/assume-preview-role.sh
+        run: nix develop .#release -c bash scripts/release/assume-preview-role.sh
       - name: Complete preview index last and verify public readback
         id: finalize
         env:
           GH_TOKEN: ${{ github.token }}
           BUILD_DIGEST: ${{ needs.publish-preview.outputs.build_digest }}
         run: |
-          nix develop .#images -c python3 scripts/release/main.py finalize --directory "$RUNNER_TEMP/complete" --build-digest "$BUILD_DIGEST"
+          nix develop .#release -c python3 scripts/release/main.py finalize --directory "$RUNNER_TEMP/complete" --build-digest "$BUILD_DIGEST"
   complete-tag:
     needs: [admission, publish-preview, publish-tag, verify]
     if: >-
@@ -329,7 +319,7 @@ jobs:
           RELEASE_ID: ${{ needs.publish-tag.outputs.release_id }}
           BUILD_DIGEST: ${{ needs.publish-tag.outputs.build_digest }}
         run: |
-          nix develop .#images -c python3 scripts/release/main.py finalize --directory "$RUNNER_TEMP/complete" \
+          nix develop .#release -c python3 scripts/release/main.py finalize --directory "$RUNNER_TEMP/complete" \
             --release-id "$RELEASE_ID" --build-digest "$BUILD_DIGEST"
   discovery:
     needs: [admission, complete-preview, complete-tag]
@@ -363,10 +353,10 @@ jobs:
         with:
           github_access_token: ''
       - name: Assume preview publisher role
-        run: nix develop .#images -c bash scripts/release/assume-preview-role.sh
+        run: nix develop .#release -c bash scripts/release/assume-preview-role.sh
       - name: Update preview channel pointer without regression
         run: |
-          nix develop .#images -c bash -euo pipefail <<'SH'
+          nix develop .#release -c bash -euo pipefail <<'SH'
           if [ -n "${INDEX_DIGEST:-}" ]; then
             python3 scripts/release/main.py discover --index-digest "$INDEX_DIGEST"
           else

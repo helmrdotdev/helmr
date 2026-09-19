@@ -59,7 +59,7 @@ rec {
     pkgs.nixfmt
   ];
 
-    image = [
+  image = [
     helmrPackages.apko
     pkgs.awscli2
     pkgs.cosign
@@ -94,6 +94,34 @@ rec {
     pkgs.gnugrep
     pkgs.gnused
     pkgs.git
+  ];
+
+  # Shared release transport and verification tools; no source build toolchain.
+  releaseCommon = [
+    pkgs.bash
+    pkgs.coreutils
+    pkgs.python3
+    pkgs.curl
+    pkgs.cosign
+    pkgs.skopeo
+    helmrPackages.nodejs # Includes the pinned npm used for trusted publishing.
+  ];
+
+  # Admission/completion use cosign too: already-complete cohorts are verified.
+  release = releaseCommon ++ [
+    pkgs.gitMinimal # Exact source admission and discovery ancestry.
+    pkgs.awscli2 # Preview OIDC role assumption and conditional object writes.
+  ];
+
+  # Candidate execution belongs only in the fresh, unprivileged verifier.
+  # The installer uses tar/gzip/awk/sed; the downloaded CLI uses Node and Buildx.
+  # Compilation and SquashFS encoding run inside the canonical builder image.
+  releaseConsumer = releaseCommon ++ [
+    (pkgs.docker_29.override { clientOnly = true; })
+    pkgs.gnutar
+    pkgs.gzip
+    pkgs.gawk
+    pkgs.gnused
   ];
 
   ciPolicy = ciShell ++ [

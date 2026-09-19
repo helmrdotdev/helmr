@@ -232,6 +232,39 @@ retained-generation/state/IAM guards until the separately reviewed prerequisite
 and actual published selection are available. A rollback of artifacts alone does
 not establish database rollback safety.
 
+## Pinned release tools
+
+Artifact construction retains `nix develop .#images`. Fresh trusted admission,
+publication, completion and discovery jobs use `nix develop .#release`, a
+compiler-free shell shared across the release lifecycle. The main-head precheck
+still runs with runner Python before realizing that shell or assuming the preview
+role, so superseded publication exits before either operation.
+
+The release shell contains only Bash/coreutils, Python, curl, Git, AWS CLI,
+cosign, skopeo and the Product-pinned Node/npm. Python handles native GitHub APIs,
+archive transport and byte verification; Git handles source admission and discovery
+ancestry. AWS CLI and curl handle preview role assumption and conditional object
+writes. cosign is required in admission as well as publication/completion, since
+already-complete cohorts must pass signature verification. skopeo preserves and
+checks OCI digests; npm publishes the exact package tarballs with provenance.
+The existing Node archive pin supplies npm, replacing the separate setup-node
+runtime. No executable cache is added to these trusted jobs.
+
+The fresh unprivileged verifier uses `nix develop .#release-consumer`, sharing
+transport/signature/Node tools but adding the Docker client with Buildx and the installer's
+tar/gzip/awk/sed commands. It has no AWS CLI requirement. The downloaded CLI uses
+host Node for configuration and Docker for compilation inside the canonical
+builder, so this shell needs no Go, C compiler, Bun or SquashFS encoder. Formal
+tag signature verification, public OCI checks, real downloaded CLI/installed npm
+consumption, completion signing and final public readback retain their existing
+job and credential boundaries.
+
+`nix flake check` executes every required tool without a runner/stdenv PATH and
+checks that source compilers are absent from both toolsets. These checks do not
+replace a native Linux consumer run or normal main-preview publication. Compare
+the realized closure and setup duration with `images` on the same runner/cache
+condition; a smaller declared toolset alone is not a measured download/time saving.
+
 ## Concrete installer and self-host consumers
 
 The dependency-light `install` script (also served by `helmr.dev/install`) downloads
