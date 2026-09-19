@@ -19,7 +19,11 @@ func actorCommand() *cobra.Command {
 	cmd.AddCommand(
 		actorStartCommand(),
 		actorGetCommand(),
-		actorSendCommand(),
+		actorSendCommand(false),
+		actorSendCommand(true),
+		actorResumeCommand(),
+		actorRecoverCommand(),
+		actorTurnCommand(),
 		actorEventsCommand(),
 		actorCloseCommand(),
 	)
@@ -172,7 +176,11 @@ func actorGetCommand() *cobra.Command {
 	return cmd
 }
 
-func actorSendCommand() *cobra.Command {
+func actorSendCommand(enqueue bool) *cobra.Command {
+	operation, description := "send", "Send data to active work or enqueue a new Turn."
+	if enqueue {
+		operation, description = "enqueue", "Enqueue a new Turn, including while another Turn is active."
+	}
 	var projectID string
 	var environmentID string
 	var dataFile string
@@ -180,8 +188,8 @@ func actorSendCommand() *cobra.Command {
 	var idempotencyKey string
 	var jsonOutput bool
 	cmd := &cobra.Command{
-		Use:   "send SESSION_ID",
-		Short: "Send data to active work or enqueue a new Turn.",
+		Use:   operation + " SESSION_ID",
+		Short: description,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			input, err := parseOptionalJSON(dataFile, dataJSON, "--data")
@@ -195,7 +203,11 @@ func actorSendCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			response, err := controlPlane.SendSession(cmd.Context(), args[0], api.SessionDataRequest{
+			send := controlPlane.SendSession
+			if enqueue {
+				send = controlPlane.EnqueueSession
+			}
+			response, err := send(cmd.Context(), args[0], api.SessionDataRequest{
 				Data: input, IdempotencyKey: strings.TrimSpace(idempotencyKey),
 			}, scope)
 			if err != nil {

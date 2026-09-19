@@ -552,3 +552,49 @@ Qualified implementation subtrees (unchanged by the validation record):
 - `runtime`: `d00e51448d6f90515f24dfa405a33b1f7d9b64a6`
 - `compiler`: `4c98e533a237cd549af957152ff2274c84fcaba8`
 - `proto`: `55955fef26e7d07ddc8d5edb28b9bf8f313a6eb3`
+
+## Package 4 — CLI consumer slice (2026-09-20)
+
+Parent-owned candidate based on `cf4e273735a7fb5f443383273e4be0a1c4a6efbf`
+in the existing integration checkout. The Founder reviewed the CLI proposal and
+approved ordinary `resume SESSION_ID` selecting the current hold once, then
+submitting that exact ID. Optional `--hold` binds an explicitly observed hold;
+stale selection never retargets. Recovery continues to require explicit hold,
+Turn or outside-Turn identity, Workspace version and reconciliation reference.
+SDK, API and runtime contracts are unchanged.
+
+Added CLI enqueue, exact Turn get/send/interrupt, resume and recovery; updated the
+Actor CLI reference. Receipts retain server status (including stopping), Turn
+outcomes are separate from Session outcomes, and out-of-Turn recovery preserves
+an explicit null Turn ID. Full CLI package tests pass under:
+
+```sh
+nix develop .#default --command sh -c 'umask 022; go test ./cmd/helmr -count=1'
+```
+
+Result: pass, 6.333s. HTTP fixtures check exact targeting, application JSON,
+recovery requirements, receipts, failed Turn outcomes, observed-hold resume,
+stale-hold rejection without a second read/mutation, and refusal to automatically
+resume recovery-required or unheld Sessions. Actual `go run ./cmd/helmr actor
+resume --help` and `actor recover --help` also pass. `git diff --check` passes.
+The initial new JSON-output test expected pretty-print whitespace; its assertion
+was corrected to the existing compact JSON output without product changes.
+
+Fresh combined correctness/simplicity review by `/root/session_cli_review` at
+medium found one P2 documentation issue: close drains accepted FIFO work rather
+than interrupting it. Corrected the reference to describe draining and retained
+holds. No code or unnecessary-mechanism findings were identified.
+
+Reviewed source SHA-256:
+
+- `cmd/helmr/actor.go`: `3f69e968dec94673479d639dcb183840be127ac6c5e2502d31b829bbfe501f69`
+- `cmd/helmr/actor_controls.go`: `468be25676879e48745c3ad0c53a74639fdd2a22862edc8a6c2e17788f6a1b4a`
+- `cmd/helmr/actor_controls_test.go`: `7f845a4cb244f63fdd3b5663cb44e37261a3194ed78b9fe70205acf55f94fd0f`
+- Corrected CLI reference: `4734c28816aaadf81912764338c31013912c08f2bfd35e47facdd25c9d05993b`
+
+These are CLI fixture and native help checks, not deployed authorization,
+real runtime convergence, browser acceptance or VM evidence. Console, remaining
+first-party callers, examples and remaining website documentation still require
+package 4 work; native integrated qualification remains package 5. No new worktree
+was created; the existing integration and HQ plan checkouts remain active, and
+previous frozen writer worktrees remain retained under the HQ Handoff.
