@@ -3,96 +3,77 @@ package controlplane
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"uuid"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/db"
 )
 
-func TestCancelRunHTTPInstallsActorHoldAndInputClearsIt(t *testing.T) {
-	fixture := newActorStartPostgresFixture(t, 1)
-	started, err := fixture.server.startActor(t.Context(), fixture.request(0, nil, "actor-cancel"))
+func TestCancelRunHTTPAcceptsExactActorStopAndReplaysReceipt(t *testing.T) {
+	f := newActorStartPostgresFixture(t, 1)
+	started, err := f.server.startActor(t.Context(), f.request(0, nil, "actor-cancel"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal := auth.Actor{
-		OrgID: fixture.orgID, Kind: auth.ActorKindAPIKey, Role: auth.RoleOwner,
-		ProjectID: fixture.projectID.String(), EnvironmentID: fixture.environmentID.String(),
-		Permissions: []auth.Permission{auth.PermissionRunsManage, auth.PermissionRunsRead},
+	principal := auth.Actor{OrgID: f.orgID, Kind: auth.ActorKindAPIKey, Role: auth.RoleDeveloper, ProjectID: f.projectID.String(), EnvironmentID: f.environmentID.String(), Permissions: []auth.Permission{auth.PermissionRunsManage}}
+	cancel := func() *httptest.ResponseRecorder {
+		request := runCancellationRequest(t, started.BootRunID.String(), principal)
+		request.Body = io.NopCloser(strings.NewReader(`{"idempotency_key":"stop-init"}`))
+		w := httptest.NewRecorder()
+		f.server.cancelRunHTTP(w, request)
+		return w
 	}
+	w := cancel()
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("cancel=%d %s", w.Code, w.Body.String())
+	}
+	var receipt api.ActorRunCancellationReceipt
+	if err := json.Unmarshal(w.Body.Bytes(), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	if receipt.Status != "accepted" || receipt.RunID != started.BootRunID.String() || receipt.SessionID != started.SessionID.String() || receipt.ID == "" || receipt.HoldID == "" {
+		t.Fatalf("receipt=%+v", receipt)
+	}
+	var hold uuid.UUID
+	var current *uuid.UUID
+	var status string
+	if err := f.pool.QueryRow(t.Context(), `SELECT dispatch_hold_id,current_run_id,status FROM sessions WHERE id=$1`, started.SessionID).Scan(&hold, &current, &status); err != nil {
+		t.Fatal(err)
+	}
+	if hold.String() != receipt.HoldID || status != "open" {
+		t.Fatalf("Session hold=%v current=%v status=%s", hold, current, status)
+	}
+	replay := cancel()
+	if replay.Code != http.StatusAccepted || replay.Body.String() != w.Body.String() {
+		t.Fatalf("replay=%d %s", replay.Code, replay.Body.String())
+	}
+}
 
-	recorder := httptest.NewRecorder()
-	fixture.server.cancelRunHTTP(
-		recorder,
-		runCancellationRequest(t, started.BootRunID.String(), principal),
-	)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("cancel status=%d body=%s", recorder.Code, recorder.Body.String())
+func TestCancelRunHTTPRejectsActiveTurnWithoutMutatingItsAuthority(t *testing.T) {
+	f := newActorCheckpointFixture(t)
+	scope := f.receiveTurn(t, 1)
+	principal := auth.Actor{OrgID: f.OrgID, Kind: auth.ActorKindAPIKey, Role: auth.RoleDeveloper, ProjectID: f.ProjectID.String(), EnvironmentID: f.EnvironmentID.String(), Permissions: []auth.Permission{auth.PermissionRunsManage}}
+	request := runCancellationRequest(t, f.runID.String(), principal)
+	request.Body = io.NopCloser(strings.NewReader(`{"idempotency_key":"stale-run-only-cancel"}`))
+	w := httptest.NewRecorder()
+	f.server.cancelRunHTTP(w, request)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("active cancel=%d %s", w.Code, w.Body.String())
 	}
-	var snapshot api.RunSnapshotResponse
-	if err := json.Unmarshal(recorder.Body.Bytes(), &snapshot); err != nil {
+	var active uuid.UUID
+	var hold *uuid.UUID
+	var interrupted bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT s.active_turn_id,s.dispatch_hold_id,t.interrupt_requested_at IS NOT NULL FROM sessions s JOIN session_turns t ON t.id=s.active_turn_id WHERE s.id=$1`, f.sessionID).Scan(&active, &hold, &interrupted); err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.ID != started.BootRunID.String() || snapshot.Status != "cancelled" ||
-		snapshot.Failure == nil || snapshot.Failure.Code != "run_cancelled" ||
-		snapshot.CurrentAttemptNumber != 1 {
-		t.Fatalf("cancel snapshot = %+v", snapshot)
-	}
-
-	var actorStatus string
-	var currentRunID *uuid.UUID
-	var manualRunCancelled bool
-	var ownerSessionID uuid.UUID
-	if err := fixture.pool.QueryRow(t.Context(), `
-SELECT sessions.status,
-       sessions.current_run_id,
-       sessions.manual_run_cancelled,
-       workspaces.owner_session_id
-  FROM sessions
-  JOIN workspaces ON workspaces.id = sessions.workspace_id
- WHERE sessions.id = $1`, started.SessionID,
-	).Scan(&actorStatus, &currentRunID, &manualRunCancelled, &ownerSessionID); err != nil {
-		t.Fatal(err)
-	}
-	if actorStatus != "open" || currentRunID != nil || !manualRunCancelled ||
-		ownerSessionID != started.SessionID {
-		t.Fatalf(
-			"Actor after Run cancellation = state:%s current:%v hold:%v owner:%s",
-			actorStatus, currentRunID, manualRunCancelled, ownerSessionID,
-		)
-	}
-
-	if _, err := fixture.server.appendActorInput(t.Context(), appendActorInputRequest{
-		EnvironmentID: fixture.environmentID,
-		SessionID:     started.SessionID,
-		RecordID:      uuid.NewV7(),
-		Data:          json.RawMessage(`{"message":"continue"}`),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := fixture.pool.QueryRow(t.Context(), `
-SELECT current_run_id, manual_run_cancelled
-  FROM sessions
- WHERE id = $1`, started.SessionID,
-	).Scan(&currentRunID, &manualRunCancelled); err != nil {
-		t.Fatal(err)
-	}
-	if currentRunID == nil || *currentRunID == started.BootRunID || manualRunCancelled {
-		t.Fatalf("Actor successor = current:%v hold:%v", currentRunID, manualRunCancelled)
-	}
-	var successorStatus db.RunStatus
-	if err := fixture.pool.QueryRow(t.Context(),
-		`SELECT status FROM runs WHERE id = $1`, *currentRunID,
-	).Scan(&successorStatus); err != nil {
-		t.Fatal(err)
-	}
-	if successorStatus != db.RunStatusQueued {
-		t.Fatalf("Actor successor status = %s", successorStatus)
+	if active != scope.TurnID || hold != nil || interrupted {
+		t.Fatalf("active=%s hold=%v interrupted=%v", active, hold, interrupted)
 	}
 }
 

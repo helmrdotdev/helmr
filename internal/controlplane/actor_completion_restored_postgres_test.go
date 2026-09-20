@@ -63,7 +63,7 @@ SELECT runs.status,
 		t.Fatalf("Workspace frontier = head:%s mount:%s parent:%s; want new D mounted with parent C:%s",
 			headVersionID, mountVersionID, publishedParentID, fixture.privateVersionID)
 	}
-	if committedInput != 2 || terminalInput != 2 {
+	if committedInput != 1 || terminalInput != 1 {
 		t.Fatalf("Actor cursor = committed:%d terminal:%d", committedInput, terminalInput)
 	}
 }
@@ -78,7 +78,7 @@ func TestRestoredActorFailureRollsMountBackToDurableHead(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var runStatus, leaseStatus, attemptOutcome, workspaceLeaseStatus, actorStatus string
+	var runStatus, leaseStatus, attemptOutcome, workspaceLeaseStatus, actorStatus, holdReason string
 	var headVersionID, mountVersionID uuid.UUID
 	var committedInput int64
 	if err := fixture.pool.QueryRow(t.Context(), `
@@ -89,7 +89,8 @@ SELECT runs.status,
        sessions.status,
        workspaces.head_version_id,
        workspace_mounts.materialized_version_id,
-       sessions.committed_input_sequence
+       sessions.committed_input_sequence,
+       sessions.dispatch_hold_reason
   FROM runs
   JOIN run_leases ON run_leases.id = $2
   JOIN run_attempts ON run_attempts.run_id = runs.id AND run_attempts.number = 1
@@ -99,12 +100,12 @@ SELECT runs.status,
   JOIN workspace_mounts ON workspace_mounts.id = workspace_leases.workspace_mount_id
  WHERE runs.id = $1`, fixture.runID, fixture.leaseID).Scan(
 		&runStatus, &leaseStatus, &attemptOutcome, &workspaceLeaseStatus, &actorStatus,
-		&headVersionID, &mountVersionID, &committedInput,
+		&headVersionID, &mountVersionID, &committedInput, &holdReason,
 	); err != nil {
 		t.Fatal(err)
 	}
 	if runStatus != "failed" || leaseStatus != "failed" || attemptOutcome != "failed" ||
-		workspaceLeaseStatus != "released" || actorStatus != "failed" {
+		workspaceLeaseStatus != "released" || actorStatus != "open" || holdReason != "recovery_required" {
 		t.Fatalf("terminal state = run:%s lease:%s attempt:%s workspace lease:%s Actor:%s",
 			runStatus, leaseStatus, attemptOutcome, workspaceLeaseStatus, actorStatus)
 	}
@@ -133,6 +134,11 @@ func newRestoredActorCompletionPostgresFixture(t *testing.T, rollback bool) rest
 	work := base.AddRunLease(t, "starting", time.Now().Add(-time.Minute))
 	ctx := t.Context()
 	base.ConvertToActor(t, ctx, work, `{"enabled":false}`)
+	if !rollback {
+		// The successful return is drained; backlog without progress is a held failure.
+		dbtest.MustExec(t, ctx, base.Pool, `UPDATE sessions SET next_input_sequence=2 WHERE current_run_id=$1`, work.RunID)
+		dbtest.MustExec(t, ctx, base.Pool, `UPDATE runs SET session_input_high_watermark=1 WHERE id=$1`, work.RunID)
+	}
 
 	var workspaceID, headVersionID, runtimeID, mountID, workspaceLeaseID uuid.UUID
 	var ownershipGeneration, writerGeneration, mountGeneration int64
@@ -375,11 +381,11 @@ INSERT INTO run_waits (
     child_run_id, child_target_declared_id,
     child_claim_id, child_request,
     condition_status, suspension_status, expected_run_revision,
-    attempt_number, prior_run_lease_id, resume_attach_id
+    attempt_number, prior_run_lease_id, resume_attach_id, actor_speculative_input_sequence
 ) VALUES (
     $1, $2, $3, $4, 'child', $5, 'test-task', $6,
     '{"Method":"call"}'::jsonb,
-    'pending', 'parked', 1, 1, $7, $8
+    'pending', 'parked', 1, 1, $7, $8, 1
 )`, waitID, base.EnvironmentID, work.RunID, workspaceID, childRunID, childClaimID,
 		sourceLeaseID, uuid.NewV7())
 	checkpointArtifacts := dbtest.InsertCheckpointArtifacts(t, ctx, tx, work.RunID, checkpointID.String())
@@ -394,7 +400,7 @@ INSERT INTO run_checkpoints (
     ready_request_fingerprint, ready_at
 ) VALUES (
     $1, $2, 1, $3, $4, $5, $6, $7, $8,
-    2, $9, $10, $11, $12, 'ready', '{"kind":"suspend"}'::jsonb, 'sha256:88d630ac2ad7eff567cd6479aa74c62d33da924ed99daaee49779cfaf02dbdd1', transaction_timestamp()
+    1, $9, $10, $11, $12, 'ready', '{"kind":"suspend"}'::jsonb, 'sha256:88d630ac2ad7eff567cd6479aa74c62d33da924ed99daaee49779cfaf02dbdd1', transaction_timestamp()
 )`, checkpointID, work.RunID, waitID, sourceLeaseID, sourceWorkspaceLeaseID,
 		workspaceID, headVersionID, checkpointVersionID,
 		checkpointArtifacts.RuntimeConfig, checkpointArtifacts.VMState, checkpointArtifacts.Memory, checkpointArtifacts.ScratchDisk)
@@ -454,11 +460,15 @@ UPDATE workspace_mounts SET materialized_version_id = $2 WHERE id = $1`, mountID
 		OwnershipGeneration: ownershipGeneration, WriterGeneration: 3,
 		MountFencingGeneration: mountGeneration, ExpiresAt: expiresAt,
 	}
+	var runGeneration int64
+	if err := base.Pool.QueryRow(ctx, `SELECT run_generation FROM sessions WHERE current_run_id=$1`, work.RunID).Scan(&runGeneration); err != nil {
+		t.Fatal(err)
+	}
 	request := workerapi.CompleteActorRequest{
 		Lease: assignment.Fence(),
 		Outcome: workerapi.ActorOutcome{
-			TerminalInputSequence: 2,
-			Succeeded:             &workerapi.ActorSucceeded{},
+			RunGeneration: runGeneration,
+			Succeeded:     &workerapi.ActorSucceeded{},
 		},
 		Workspace: workerapi.TaskWorkspaceProof{
 			Captured: validTaskWorkspaceCapture(t, assignment),
@@ -489,8 +499,8 @@ UPDATE workspace_mounts SET materialized_version_id = $2 WHERE id = $1`, mountID
 	finalizationFingerprint := request.Workspace.Captured.Receipt.RequestFingerprint
 	if rollback {
 		request.Outcome = workerapi.ActorOutcome{
-			TerminalInputSequence: 2,
-			Failed:                &workerapi.TaskFailure{Message: "actor failed"},
+			RunGeneration: runGeneration,
+			Failed:        &workerapi.TaskFailure{Message: "actor failed"},
 		}
 		rolledBack := validTaskWorkspaceRollback(t, request.Workspace.Captured)
 		rolledBack.Receipt.OperationID = operationID.String()

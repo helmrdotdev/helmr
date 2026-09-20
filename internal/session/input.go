@@ -24,15 +24,25 @@ var ErrAuthority = errors.New("actor input durable authority is inconsistent")
 func CanStartContinuation(actor db.Session) bool {
 	return !actor.CurrentRunID.Valid &&
 		(actor.Status == "open" || actor.Status == "closing") &&
-		!actor.ManualRunCancelled
+		!actor.DispatchHoldID.Valid && !actor.ActiveTurnID.Valid && actor.CommittedInputSequence < actor.NextInputSequence-1
 }
 
-func CompleteWait(ctx context.Context, store db.Querier, wait db.RunWait, record db.SessionRecord) (db.RunWait, error) {
-	result, err := RecordResolution(record)
+func CompleteWait(ctx context.Context, store db.Querier, wait db.RunWait, turn db.SessionTurn) (db.RunWait, error) {
+	var err error
+	turn, err = ActivateTurn(ctx, store, TurnScope{EnvironmentID: pgvalue.MustUUIDValue(turn.EnvironmentID), SessionID: pgvalue.MustUUIDValue(turn.SessionID), TurnID: pgvalue.MustUUIDValue(turn.ID), RunID: pgvalue.MustUUIDValue(wait.RunID), AttemptNumber: wait.AttemptNumber})
 	if err != nil {
 		return db.RunWait{}, err
 	}
-	completed, err := run.Complete(ctx, store, wait, result, record.ID)
+	// The receive wait starts outside a Turn; once it admits the queued input,
+	// bind its delivery/restore acknowledgment to that exact execution as well.
+	if _, err = store.BindRunWaitTurn(ctx, db.BindRunWaitTurnParams{SessionID: turn.SessionID, TurnID: turn.ID, RunGeneration: turn.RunGeneration, WaitID: wait.ID}); err != nil {
+		return db.RunWait{}, err
+	}
+	result, err := TurnResolution(turn)
+	if err != nil {
+		return db.RunWait{}, err
+	}
+	completed, err := run.Complete(ctx, store, wait, result, turn.ID)
 	if errors.Is(err, run.ErrWaitAuthority) {
 		return db.RunWait{}, ErrAuthority
 	}
@@ -47,21 +57,22 @@ func FailWait(ctx context.Context, store db.Querier, wait db.RunWait, reason str
 	return failed, err
 }
 
-func RecordResolution(record db.SessionRecord) (json.RawMessage, error) {
+func TurnResolution(turn db.SessionTurn) (json.RawMessage, error) {
 	var value any
-	if err := json.Unmarshal(record.Data, &value); err != nil {
-		return nil, fmt.Errorf("actor input record data is invalid: %w", err)
+	if err := json.Unmarshal(turn.Data, &value); err != nil {
+		return nil, fmt.Errorf("turn input data is invalid: %w", err)
 	}
 	source := map[string]any{"type": "external"}
-	if record.SourceRunID.Valid {
+	if turn.SourceRunID.Valid {
 		source["type"] = "run"
-		source["run_id"] = pgvalue.UUIDString(record.SourceRunID)
+		source["run_id"] = pgvalue.UUIDString(turn.SourceRunID)
 	}
 	return json.Marshal(map[string]any{
-		"value": value,
-		"record": map[string]any{
-			"id": pgvalue.UUIDString(record.ID), "sequence": record.Sequence,
-			"created_at": record.CreatedAt.Time.UTC().Format(time.RFC3339Nano), "source": source,
+		"value":          value,
+		"run_generation": turn.RunGeneration.Int64,
+		"turn": map[string]any{
+			"id": pgvalue.UUIDString(turn.ID), "sequence": turn.Sequence,
+			"created_at": turn.CreatedAt.Time.UTC().Format(time.RFC3339Nano), "source": source,
 		},
 	})
 }

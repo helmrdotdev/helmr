@@ -11,7 +11,15 @@ import {
   parseWorkspaceExecResult,
   parseWorkspace,
   parseSession,
-  parseSessionInputRecord,
+  parseSessionAdmissionReceipt,
+  parseSessionMessageReceipt,
+  parseSessionCloseReceipt,
+  parseSessionResumeReceipt,
+  parseSessionEventPage,
+  parseTurnState,
+  parseTurnInterruptReceipt,
+  parseOutputReceipt,
+  MessageRejected,
   workspaceRefID,
   resourceID,
   timestampString,
@@ -22,17 +30,13 @@ import {
 } from "@helmr/sdk/internal"
 import type {
   ActorContext,
-  ActorSession,
-  ActorSessionOutputAppendOptions,
-  ActorSessionOutputSequenceOptions,
+  Turn,
+  TurnSource,
+  Message,
+  RecordWriter,
+  OutputReceipt,
+  SessionOperationOptions,
   ActorSessionReceiveOptions,
-  SessionCloseRequest,
-  ActorSessionInputResult,
-  SessionInputRecord,
-  SessionInputSendRequest,
-  SessionCloseReceipt,
-  SessionOutputRecord,
-  ActorSessionReceive,
   ActorStartOptions,
   Session,
   Duration,
@@ -42,7 +46,6 @@ import type {
   RunCause,
   RunLogLevel,
   RetryPolicy,
-  Serializable,
   TaskCallOptions,
   TaskContext,
   TaskResult,
@@ -58,6 +61,8 @@ import type {
 } from "@helmr/sdk"
 import { createWriteStream, promises as fs } from "node:fs"
 import { randomUUIDv7 as newUUIDv7 } from "node:crypto"
+import { AsyncLocalStorage } from "node:async_hooks"
+import { Readable } from "node:stream"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 
@@ -98,12 +103,14 @@ interface ProgramIndex {
 
 class FrameReader {
   readonly #iterator: AsyncIterator<InputChunk>
+  readonly #stream: Readable | undefined
   #closePromise: Promise<void> | undefined
   #chunk: Uint8Array<ArrayBufferLike> = new Uint8Array()
   #offset = 0
 
   constructor(input: AsyncIterable<InputChunk>) {
     this.#iterator = input[Symbol.asyncIterator]()
+    this.#stream = input instanceof Readable ? input : undefined
   }
 
   async read(maxBytes = MAX_PROGRAM_FRAME_BYTES): Promise<Uint8Array> {
@@ -126,6 +133,9 @@ class FrameReader {
   }
 
   async #closeIterator(): Promise<void> {
+    // Node queues iterator.return() behind a pending next(). Stop the owned
+    // stream first so the independent control reader can finish.
+    this.#stream?.destroy()
     const close = this.#iterator.return
     if (close !== undefined) await close.call(this.#iterator)
   }
@@ -170,6 +180,8 @@ class ResumeDecisionRouter {
     readonly reject: (error: Error) => void
   }>()
   #reading = false
+  #control: ((decision: programProto.ResumeDecision) => void) | undefined
+  #controlFailure: ((error: RuntimeProtocolError) => void) | undefined
 
   constructor(reader: FrameReader) {
     this.#reader = reader
@@ -194,16 +206,37 @@ class ResumeDecisionRouter {
     this.#pending.clear()
   }
 
+  listenForControl(
+    control: (decision: programProto.ResumeDecision) => void,
+    failed: (error: RuntimeProtocolError) => void,
+  ): void {
+    this.#control = control
+    this.#controlFailure = failed
+    this.#pump()
+  }
+
+  stopControl(): void {
+    this.#control = undefined
+    this.#controlFailure = undefined
+  }
+
   #pump(): void {
     if (this.#reading) return
     this.#reading = true
     void (async () => {
       try {
-        while (this.#pending.size > 0) {
+        while (this.#pending.size > 0 || this.#control !== undefined) {
           const decision = fromBinary(
             programProto.ResumeDecisionSchema,
             await this.#reader.read(),
           )
+          if (decision.kind === "session_stop") {
+            if (this.#control === undefined) {
+              throw new RuntimeProtocolError("Session stop has no Actor execution owner")
+            }
+            this.#control(decision)
+            continue
+          }
           const pending = this.#pending.get(decision.correlationId)
           if (pending === undefined) {
             throw new Error("resume decision did not match a pending runtime operation")
@@ -215,6 +248,8 @@ class ResumeDecisionRouter {
         const failure = error instanceof Error ? error : new Error(String(error))
         for (const pending of this.#pending.values()) pending.reject(failure)
         this.#pending.clear()
+        this.#controlFailure?.(new RuntimeProtocolError("Actor control transport failed", { cause: failure }))
+        this.stopControl()
       } finally {
         this.#reading = false
         if (this.#pending.size > 0) this.#pump()
@@ -245,8 +280,16 @@ class RunOperationState {
   #active = 0
   readonly #drainable = new Set<Promise<unknown>>()
   #protocolFault: RuntimeProtocolError | undefined
+  admission: (() => void) | undefined
 
   track<T>(operation: () => Promise<T>): Promise<T> {
+    try {
+      this.admission?.()
+    } catch (error) {
+      const rejected = Promise.reject<T>(error)
+      void rejected.catch(() => {})
+      return rejected
+    }
     this.#active++
     const result = (async () => {
       try {
@@ -294,10 +337,17 @@ class RunOperationState {
       throw new RuntimeProtocolError("Run handler returned with runtime operations still pending")
     }
   }
+
+  assertDrained(): void {
+    if (this.#protocolFault !== undefined) throw this.#protocolFault
+    if (this.#active !== 0) throw new RuntimeProtocolError("Run has runtime operations still pending")
+  }
 }
 
 class ConsumingWaitGate {
   #pending = false
+
+  get pending(): boolean { return this.#pending }
 
   acquire(error: () => Error = () => new Error("only one consuming Wait may be pending")): () => void {
     if (this.#pending) throw error()
@@ -596,6 +646,7 @@ function validateEntrypointContract(
     if (
       start.entrypoint.case !== "actor" ||
       start.entrypoint.value.startInputSequence < 0n ||
+      start.entrypoint.value.runGeneration <= 0n ||
       start.entrypoint.value.inputHighWatermark <
         start.entrypoint.value.startInputSequence
     ) {
@@ -747,7 +798,7 @@ function programRuntimeOperations(
   decisions: ResumeDecisionRouter,
   waitGate: ConsumingWaitGate,
   runOperations: RunOperationState,
-  actorCursor?: { readonly value: bigint },
+  actor?: ActorRuntime,
 ): RuntimeOperations {
   const performTaskStart = async (
     target: Readonly<{ declaredId: string; payloadPresent: boolean }>,
@@ -796,6 +847,7 @@ function programRuntimeOperations(
           correlationId,
           declaredId: target.declaredId,
           method: "start",
+          ...(actor === undefined ? {} : { actorSpeculativeInputSequence: actor.cursor.value, execution: actor.execution, ...(actor.active === undefined ? {} : { turnId: actor.active.scope.turnId }) }),
           payloadPresent: target.payloadPresent,
           ...(payloadJson === undefined ? {} : { payloadJson }),
           workspaceJson,
@@ -883,9 +935,9 @@ function programRuntimeOperations(
                 canonicalizeJsonValue(requestOptions),
               ),
               idempotencyKey: options.idempotencyKey,
-              ...(actorCursor === undefined
+              ...(actor === undefined
                 ? {}
-                : { actorSpeculativeInputSequence: actorCursor.value }),
+                : { actorSpeculativeInputSequence: actor.cursor.value, execution: actor.execution, ...(actor.active === undefined ? {} : { turnId: actor.active.scope.turnId }) }),
             }),
           },
         )
@@ -896,14 +948,10 @@ function programRuntimeOperations(
           resumeAttachId,
           "Task child call",
         )
-        await acknowledgeResumeConsumed(io, decision)
-        if (decision.kind === "cancelled" && actorCursor !== undefined) {
-          const failure = parseRuntimeProtocolValue(
-            "Actor child Task cancellation decision",
-            () => resumeFailure(decision.dataJson),
-          )
-          throw runOperations.cancel(failure.reasonCode)
-        }
+        if (runOperations.controller.signal.aborted) throw runOperations.controller.signal.reason
+      await acknowledgeResumeConsumed(io, decision)
+      if (runOperations.controller.signal.aborted) throw runOperations.controller.signal.reason
+
         if (decision.kind !== "completed") {
           throw decision.kind === "failed"
             ? runtimeOperationFailure("Task child call", decision.dataJson)
@@ -918,7 +966,7 @@ function programRuntimeOperations(
           () => parseTaskResult(decision.dataJson),
         )
       } finally {
-        releaseWait()
+        try { await actor?.resumeMessageReady() } finally { releaseWait() }
       }
     })
     return abortableRuntimeOperation(operation, options.signal)
@@ -941,9 +989,9 @@ function programRuntimeOperations(
           kind: "timer",
           paramsJson: new TextDecoder().decode(canonicalizeJsonValue(params)),
           timeoutMs: BigInt(timeoutMs),
-          ...(actorCursor === undefined
+          ...(actor === undefined
             ? {}
-            : { actorSpeculativeInputSequence: actorCursor.value }),
+            : { actorSpeculativeInputSequence: actor.cursor.value, execution: actor.execution, ...(actor.active === undefined ? {} : { turnId: actor.active.scope.turnId }) }),
         }),
       })
       requireWaitDecision(
@@ -953,14 +1001,10 @@ function programRuntimeOperations(
         resumeAttachId,
         "timer resume",
       )
+      if (runOperations.controller.signal.aborted) throw runOperations.controller.signal.reason
       await acknowledgeResumeConsumed(io, decision)
-      if (decision.kind === "cancelled" && actorCursor !== undefined) {
-        const failure = parseRuntimeProtocolValue(
-          "Actor timer cancellation decision",
-          () => resumeFailure(decision.dataJson),
-        )
-        throw runOperations.cancel(failure.reasonCode)
-      }
+      if (runOperations.controller.signal.aborted) throw runOperations.controller.signal.reason
+
       if (decision.kind !== "completed") {
         const failure = parseRuntimeProtocolValue(
           "timer Wait failure decision",
@@ -969,61 +1013,11 @@ function programRuntimeOperations(
         throw new RuntimeProtocolError(`timer Wait ${decision.kind}: ${failure.reasonCode}`)
       }
     } finally {
-      releaseWait()
+      try { await actor?.resumeMessageReady() } finally { releaseWait() }
     }
   }
   const wait = (params: JsonValue, timeoutMs: number): Promise<void> =>
     runOperations.track(() => performWait(params, timeoutMs))
-  const performActorInputSend = async (
-    sessionId: string,
-    input: JsonValue,
-    request?: SessionInputSendRequest,
-    signal?: AbortSignal,
-  ): Promise<SessionInputRecord> => {
-    if (signal?.aborted) {
-      throw abortSignalReason(signal)
-    }
-    const idempotencyKey = normalizeActorInputIdempotencyKey(
-      request?.idempotencyKey,
-    )
-    const normalized = canonicalizeJsonValue(input)
-    if (normalized.byteLength > MAX_ACTOR_INPUT_BYTES) {
-      throw actorInputSendError(
-        "actor_input_too_large",
-        `Actor input exceeds ${MAX_ACTOR_INPUT_BYTES} bytes`,
-      )
-    }
-    const correlationId = newUUIDv7()
-    const operation = runOperations.trackDrainable(async () => {
-      const decision = await requestRuntimeDecision(io, decisions, correlationId, {
-        case: "sessionInputSendRequested",
-        value: create(programProto.SessionInputSendRequestedSchema, {
-          correlationId,
-          sessionId,
-          dataJson: new TextDecoder().decode(normalized),
-          ...(idempotencyKey === undefined
-            ? {}
-            : { idempotencyKey }),
-        }),
-      })
-      requireRuntimeOperationDecision(
-        decision,
-        correlationId,
-        "Actor input send",
-      )
-      if (decision.kind === "failed") {
-        throw parseRuntimeProtocolValue(
-          "Actor input send failure",
-          () => parseActorInputSendFailure(decision.dataJson),
-        )
-      }
-      return parseRuntimeProtocolValue(
-        "Actor input send result",
-        () => parseActorInputSendResult(decision.dataJson),
-      )
-    })
-    return await abortableRuntimeOperation(operation, signal)
-  }
   const performActorStart = async (
     declaredId: string,
     options: ActorStartOptions,
@@ -1044,7 +1038,6 @@ function programRuntimeOperations(
       ...(run?.metadata === undefined ? {} : { metadata: run.metadata }),
       ...(run?.tags === undefined ? {} : { tags: [...run.tags] }),
     } satisfies JsonValue
-    const inputPresent = Object.hasOwn(options, "input")
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "actorStartRequested",
@@ -1053,13 +1046,6 @@ function programRuntimeOperations(
           declaredId,
           workspaceId: workspaceRefID(options.workspace),
           ...(options.key === undefined ? {} : { key: options.key }),
-          ...(inputPresent
-            ? {
-                inputJson: new TextDecoder().decode(
-                  canonicalizeJsonValue(options.input as JsonValue),
-                ),
-              }
-            : {}),
           ...(options.idempotencyKey === undefined
             ? {}
             : { idempotencyKey: options.idempotencyKey }),
@@ -1107,121 +1093,32 @@ function programRuntimeOperations(
       }
       return parseRuntimeProtocolValue(
         "Session retrieve result",
-        () => parseRuntimeSession(decision.dataJson),
+        () => parseSession(JSON.parse(decision.dataJson)),
       )
     })
     return abortableRuntimeOperation(operation, signal)
   }
-  const performSessionClose = async (
-    sessionId: string,
-    request?: SessionCloseRequest,
+  const sessionOperation = async <T>(
+    event: (correlationId: string) => programProto.RunEvent["event"],
+    parse: (value: unknown) => T,
     signal?: AbortSignal,
-  ): Promise<SessionCloseReceipt> => {
+  ): Promise<T> => {
     if (signal?.aborted) throw abortSignalReason(signal)
     const correlationId = newUUIDv7()
-    const operation = runOperations.trackDrainable(async () => {
-      const decision = await requestRuntimeDecision(io, decisions, correlationId, {
-        case: "sessionCloseRequested",
-        value: create(programProto.SessionCloseRequestedSchema, {
-          correlationId,
-          sessionId,
-          ...(request?.idempotencyKey === undefined
-            ? {}
-            : { idempotencyKey: request.idempotencyKey }),
-        }),
-      })
-      requireRuntimeOperationDecision(decision, correlationId, "Actor close")
-      if (decision.kind === "failed") {
-        throw runtimeOperationFailure("Actor close", decision.dataJson)
-      }
-      return parseRuntimeProtocolValue("Actor close result", () => {
-        const value = parseObjectJSON(decision.dataJson, "Actor close result")
-        requireExactKeys(value, ["accepted_at", "session_id"], "Actor close result")
-        const sessionId = resourceID(
-          stringField(value, "session_id", "Actor close result"),
-          "Actor close result.session_id",
-        )
-        const acceptedAt = stringField(
-          value,
-          "accepted_at",
-          "Actor close result",
-        )
-        return Object.freeze({
-          sessionId,
-          acceptedAt: timestampString(acceptedAt, "Session close result.accepted_at"),
-        })
-      })
+    const pending = runOperations.trackDrainable(async () => {
+      const decision = await requestRuntimeDecision(io, decisions, correlationId, event(correlationId))
+      requireRuntimeOperationDecision(decision, correlationId, "Session operation")
+      if (decision.kind === "failed") throw runtimeOperationFailure("Session operation", decision.dataJson)
+      return parseRuntimeProtocolValue("Session operation", () => parse(JSON.parse(decision.dataJson)))
     })
-    return abortableRuntimeOperation(operation, signal)
+    return abortableRuntimeOperation(pending, signal)
   }
-  const performSessionOutputPage = async (
-    sessionId: string,
-    query?: Readonly<{ after?: number; limit?: number }>,
-    signal?: AbortSignal,
-  ) => {
-    if (signal?.aborted) throw abortSignalReason(signal)
-    if (
-      query?.after !== undefined &&
-      (!Number.isSafeInteger(query.after) || query.after < 0)
-    ) {
-      throw new Error("Session output after must be a non-negative safe integer")
-    }
-    if (
-      query?.limit !== undefined &&
-      (!Number.isInteger(query.limit) || query.limit < 1 || query.limit > 100)
-    ) {
-      throw new Error("Session output limit must be an integer in [1,100]")
-    }
-    const correlationId = newUUIDv7()
-    const operation = runOperations.trackDrainable(async () => {
-      const decision = await requestRuntimeDecision(io, decisions, correlationId, {
-        case: "sessionOutputPageRequested",
-        value: create(programProto.SessionOutputPageRequestedSchema, {
-          correlationId,
-          sessionId,
-          ...(query?.after === undefined
-            ? {}
-            : { after: BigInt(query.after) }),
-          limit: query?.limit ?? 50,
-        }),
-      })
-      requireRuntimeOperationDecision(
-        decision,
-        correlationId,
-        "Actor output page",
-      )
-      if (decision.kind === "failed") {
-        throw runtimeOperationFailure("Actor output page", decision.dataJson)
-      }
-      return parseRuntimeProtocolValue("Actor output page result", () => {
-        const value = parseObjectJSON(decision.dataJson, "Actor output page result")
-        requireExactKeys(
-          value,
-          ["has_more", "next_after", "records"],
-          "Actor output page result",
-        )
-        const records = value["records"]
-        if (!Array.isArray(records)) {
-          throw new Error("Actor output page result.records must be an array")
-        }
-        const hasMore = value["has_more"]
-        if (typeof hasMore !== "boolean") {
-          throw new Error("Actor output page result.has_more must be a boolean")
-        }
-        const nextAfter = safeJSONSequence(
-          value["next_after"],
-          "Actor output page result.next_after",
-        )
-        return Object.freeze({
-          records: Object.freeze(records.map((record) =>
-            parseSessionOutputRecord(JSON.stringify(record))
-          )),
-          nextAfter,
-          hasMore,
-        })
-      })
-    })
-    return abortableRuntimeOperation(operation, signal)
+  const submitSession = (mode: "send" | "enqueue" | "message", sessionId: string, data: JsonValue, turnId: string | undefined, request?: SessionOperationOptions, signal?: AbortSignal) => {
+    const dataJson = jsonText(data)
+    if (Buffer.byteLength(dataJson) > MAX_ACTOR_INPUT_BYTES) return Promise.reject(new Error("Session data exceeds maximum size"))
+    return sessionOperation(correlationId => ({ case: "sessionSubmitRequested", value: create(programProto.SessionSubmitRequestedSchema, {
+      correlationId, sessionId, mode, dataJson, ...(turnId === undefined ? {} : { turnId }), idempotencyKey: request?.idempotencyKey ?? newUUIDv7(),
+    }) }), (value): import("@helmr/sdk").SessionMessageReceipt | import("@helmr/sdk").SessionAdmissionReceipt => mode === "message" ? parseSessionMessageReceipt(value) : parseSessionAdmissionReceipt(value), signal)
   }
   const workspaceAddress = (workspaceId: string) =>
     create(programProto.WorkspaceAddressSchema, { workspaceId })
@@ -1428,9 +1325,9 @@ function programRuntimeOperations(
           ...(timeoutMs === undefined ? {} : { timeoutMs: BigInt(timeoutMs) }),
           ...(idleTimeoutMs === undefined ? {} : { idleTimeoutMs: BigInt(idleTimeoutMs) }),
           tags: options.tags === undefined ? [] : [...options.tags],
-          ...(actorCursor === undefined
+          ...(actor === undefined
             ? {}
-            : { actorSpeculativeInputSequence: actorCursor.value }),
+            : { actorSpeculativeInputSequence: actor.cursor.value, execution: actor.execution, ...(actor.active === undefined ? {} : { turnId: actor.active.scope.turnId }) }),
         }),
       })
       requireWaitDecision(
@@ -1440,14 +1337,10 @@ function programRuntimeOperations(
         resumeAttachId,
         "Token resume",
       )
+      if (runOperations.controller.signal.aborted) throw runOperations.controller.signal.reason
       await acknowledgeResumeConsumed(io, decision)
-      if (decision.kind === "cancelled" && actorCursor !== undefined) {
-        const failure = parseRuntimeProtocolValue(
-          "Actor Token cancellation decision",
-          () => resumeFailure(decision.dataJson),
-        )
-        throw runOperations.cancel(failure.reasonCode)
-      }
+      if (runOperations.controller.signal.aborted) throw runOperations.controller.signal.reason
+
       if (decision.kind !== "completed") {
         if (decision.kind !== "failed" && decision.kind !== "cancelled") {
           throw new RuntimeProtocolError("Token resume decision kind was invalid")
@@ -1459,7 +1352,7 @@ function programRuntimeOperations(
         () => JSON.parse(decision.dataJson) as JsonValue,
       )
     } finally {
-      releaseWait()
+      try { await actor?.resumeMessageReady() } finally { releaseWait() }
     }
   }
   const performMetadataMutation = async (
@@ -1558,20 +1451,33 @@ function programRuntimeOperations(
         boundedTimerMilliseconds(Math.ceil(remainingMs)),
       )
     },
-    actorInputSend(target, input, request, signal) {
-      return performActorInputSend(target, input, request, signal)
+    actorStart: performActorStart,
+    sessionRetrieve: performSessionStatus,
+    async sessionSend(sessionId, data, request, signal) {
+      return await submitSession("send", sessionId, data, undefined, request, signal) as import("@helmr/sdk").SessionAdmissionReceipt
     },
-    actorStart(declaredId, options) {
-      return performActorStart(declaredId, options)
+    async sessionEnqueue(sessionId, data, request, signal) {
+      const result = await submitSession("enqueue", sessionId, data, undefined, request, signal)
+      if (!("kind" in result) || result.kind !== "enqueued") throw new RuntimeProtocolError("Enqueue returned a message receipt")
+      return result
     },
-    sessionRetrieve(sessionId, signal) {
-      return performSessionStatus(sessionId, signal)
+    async sessionTurnSend(sessionId, turnId, data, request, signal) {
+      return await submitSession("message", sessionId, data, turnId, request, signal) as import("@helmr/sdk").SessionMessageReceipt
+    },
+    sessionTurnRetrieve(sessionId, turnId, signal) {
+      return sessionOperation(correlationId => ({ case: "sessionTurnRetrieveRequested", value: create(programProto.SessionTurnRetrieveRequestedSchema, { correlationId, sessionId, turnId }) }), parseTurnState, signal)
+    },
+    sessionTurnInterrupt(sessionId, turnId, request, signal) {
+      return sessionOperation(correlationId => ({ case: "sessionTurnInterruptRequested", value: create(programProto.SessionTurnInterruptRequestedSchema, { correlationId, sessionId, turnId, idempotencyKey: request?.idempotencyKey ?? newUUIDv7() }) }), parseTurnInterruptReceipt, signal)
+    },
+    sessionEvents(sessionId, query, signal) {
+      return sessionOperation(correlationId => ({ case: "sessionEventsRequested", value: create(programProto.SessionEventsRequestedSchema, { correlationId, sessionId, after: BigInt(query?.after ?? 0), limit: query?.limit ?? 100 }) }), parseSessionEventPage, signal)
     },
     sessionClose(sessionId, request, signal) {
-      return performSessionClose(sessionId, request, signal)
+      return sessionOperation(correlationId => ({ case: "sessionCloseRequested", value: create(programProto.SessionCloseRequestedSchema, { correlationId, sessionId, idempotencyKey: request?.idempotencyKey ?? newUUIDv7() }) }), parseSessionCloseReceipt, signal)
     },
-    sessionOutputPage(sessionId, query, signal) {
-      return performSessionOutputPage(sessionId, query, signal)
+    sessionResume(sessionId, request, signal) {
+      return sessionOperation(correlationId => ({ case: "sessionResumeRequested", value: create(programProto.SessionResumeRequestedSchema, { correlationId, sessionId, holdId: request.holdId, idempotencyKey: request.idempotencyKey ?? newUUIDv7() }) }), parseSessionResumeReceipt, signal)
     },
     workspaceCreate(declaredId, request, signal) {
       return performWorkspaceCreate(declaredId, request, signal)
@@ -1807,20 +1713,6 @@ function tokenWaitFailure(kind: "failed" | "cancelled", dataJson: string): Error
   return error
 }
 
-function normalizeActorInputIdempotencyKey(
-  value: string | undefined,
-): string | undefined {
-  if (value === undefined) return undefined
-  const normalized = trimGoSpace(value)
-  if (Buffer.byteLength(normalized) > 512) {
-    throw actorInputSendError(
-      "invalid_idempotency_key",
-      "Actor input idempotency key must be at most 512 UTF-8 bytes",
-    )
-  }
-  return normalized === "" ? undefined : normalized
-}
-
 function requireRuntimeOperationDecision(
   decision: programProto.ResumeDecision,
   correlationId: string,
@@ -1841,56 +1733,6 @@ function requireRuntimeOperationDecision(
       `${operation} decision did not match the pending operation`,
     )
   }
-}
-
-function parseActorInputSendResult(
-  dataJson: string,
-): SessionInputRecord {
-  const value = parseObjectJSON(dataJson, "Actor input send result")
-  requireExactKeys(
-    value,
-    ["created_at", "data", "id", "sequence", "source"],
-    "Actor input send result",
-  )
-  const record = parseSessionInputRecord(value)
-  if (record.sequence === 0) {
-    throw new Error("Actor input send result.sequence must be positive")
-  }
-  return record
-}
-
-function parseActorInputSendFailure(dataJson: string): Error {
-  const value = parseObjectJSON(dataJson, "Actor input send failure")
-  requireExactKeys(
-    value,
-    ["code", "message", "retryable"],
-    "Actor input send failure",
-  )
-  if (
-    typeof value["code"] !== "string" ||
-    value["code"].trim() === "" ||
-    typeof value["message"] !== "string" ||
-    value["message"].trim() === "" ||
-    typeof value["retryable"] !== "boolean"
-  ) {
-    throw new Error(
-      "Actor input send failure must contain code, message, and retryable",
-    )
-  }
-  return actorInputSendError(
-    value["code"],
-    value["message"],
-  )
-}
-
-function actorInputSendError(
-  code: string,
-  message: string,
-): Error {
-  const error = new Error(message) as Error & { code: string }
-  error.name = "HelmrError"
-  error.code = code
-  return error
 }
 
 async function abortableRuntimeOperation<T>(
@@ -1968,381 +1810,796 @@ function tokenWaitIdleTimeoutMilliseconds(duration: Duration): number {
   return milliseconds
 }
 
+interface TurnRuntime {
+  readonly scope: programProto.TurnExecution
+  readonly sequence: bigint
+  readonly controller: AbortController
+  phase: "running" | "settling" | "settled"
+  ready?: Promise<void> | undefined
+  claim?: Promise<void> | undefined
+  callback?: Promise<void> | undefined
+  handler?: (message: Message) => unknown
+}
+
+interface MessageCallback {
+  readonly turn: TurnRuntime
+  readonly deliveryId: string
+  readonly writes: Set<Promise<unknown>>
+  error?: unknown
+}
+
+const messageCallback = new AsyncLocalStorage<MessageCallback>()
+
+class ActorRuntime {
+  readonly execution: programProto.SessionExecution
+  readonly cursor: { value: bigint }
+  readonly #mainWrites = new Set<Promise<unknown>>()
+  #outputError: unknown
+  #uncertain: unknown
+  #settlement: Promise<void> | undefined
+  #receiveCorrelation: string | undefined
+  #pendingSettlementTurn: TurnRuntime | undefined
+  active: TurnRuntime | undefined
+  stop: { holdId: string; turnId?: string } | undefined
+
+  readonly start: programProto.ProgramStart
+  readonly definition: InternalActorDefinition
+  readonly io: ProgramIO
+  readonly decisions: ResumeDecisionRouter
+  readonly waitGate: ConsumingWaitGate
+  readonly operations: RunOperationState
+
+  constructor(
+    start: programProto.ProgramStart,
+    definition: InternalActorDefinition,
+    io: ProgramIO,
+    decisions: ResumeDecisionRouter,
+    waitGate: ConsumingWaitGate,
+    operations: RunOperationState,
+  ) {
+    this.start = start
+    this.definition = definition
+    this.io = io
+    this.decisions = decisions
+    this.waitGate = waitGate
+    this.operations = operations
+    if (start.entrypoint.case !== "actor")
+      throw new Error("Actor start required")
+    this.cursor = { value: start.entrypoint.value.startInputSequence }
+    this.execution = create(programProto.SessionExecutionSchema, {
+      sessionId: start.entrypoint.value.sessionId,
+      runId: start.runId,
+      attemptNumber: start.attemptNumber,
+      runGeneration: start.entrypoint.value.runGeneration,
+    })
+  }
+
+  assertAdmission(): void {
+    if (this.#uncertain !== undefined) throw this.#uncertain
+    const callback = messageCallback.getStore()
+    if (
+      callback !== undefined &&
+      (callback.turn !== this.active || callback.turn.phase === "settled")
+    )
+      throw new Error("Message callback no longer owns its Turn")
+    if (this.operations.controller.signal.aborted)
+      throw this.operations.controller.signal.reason
+    if (
+      this.active?.phase === "settling" &&
+      messageCallback.getStore()?.turn !== this.active
+    ) {
+      throw new Error("Turn settlement has started")
+    }
+  }
+
+  control(decision: programProto.ResumeDecision): void {
+    const value = parseRuntimeProtocolValue("Session stop", () =>
+      parseObjectJSON(decision.dataJson, "Session stop"),
+    )
+    const execution = objectField(value, "execution", "Session stop")
+    if (
+      execution["session_id"] !== this.execution.sessionId ||
+      execution["run_id"] !== this.execution.runId ||
+      execution["attempt_number"] !== this.execution.attemptNumber ||
+      execution["run_generation"] !== Number(this.execution.runGeneration)
+    ) {
+      throw new RuntimeProtocolError(
+        "Session stop does not match current execution",
+      )
+    }
+    const turnId = value["turn_id"]
+    const pendingReceive =
+      this.active === undefined && this.#receiveCorrelation !== undefined
+    const pendingSettlement =
+      turnId === null &&
+      this.active !== undefined &&
+      this.#pendingSettlementTurn === this.active
+    if (
+      turnId !== (this.active?.scope.turnId ?? null) &&
+      !(pendingReceive && typeof turnId === "string") &&
+      !pendingSettlement
+    ) {
+      throw new RuntimeProtocolError("Session stop does not match current Turn")
+    }
+    const holdId = resourceID(value["hold_id"], "Session stop.hold_id")
+    if (
+      this.stop !== undefined &&
+      (this.stop.holdId !== holdId || (this.stop.turnId ?? null) !== turnId)
+    )
+      throw new RuntimeProtocolError("Session stop binding changed")
+    this.stop = {
+      holdId,
+      ...(turnId === null
+        ? {}
+        : { turnId: resourceID(turnId, "Session stop.turn_id") }),
+    }
+    const error = this.operations.cancel(
+      stringField(value, "reason", "Session stop"),
+    )
+    this.active?.controller.abort(error)
+  }
+
+  uncertain(error: unknown): void {
+    this.#uncertain ??= error
+    this.operations.controller.abort(error)
+    this.active?.controller.abort(error)
+  }
+
+  async request(
+    event: programProto.RunEvent["event"],
+    correlationId: string,
+    label: string,
+  ): Promise<programProto.ResumeDecision> {
+    const decision = await requestRuntimeDecision(
+      this.io,
+      this.decisions,
+      correlationId,
+      event,
+    )
+    requireRuntimeOperationDecision(decision, correlationId, label)
+    if (decision.kind === "failed")
+      throw runtimeOperationFailure(label, decision.dataJson)
+    return decision
+  }
+
+  async receive(options?: ActorSessionReceiveOptions): Promise<Turn | null> {
+    this.assertAdmission()
+    if (this.active !== undefined)
+      throw new Error("Current Turn must be explicitly settled before receive")
+    const release = this.waitGate.acquire()
+    const correlationId = newUUIDv7()
+    try {
+      const runWaitId = newUUIDv7(),
+        resumeAttachId = newUUIDv7()
+      this.#receiveCorrelation = correlationId
+      const decision = await this.operations.track(() =>
+        requestRuntimeDecision(this.io, this.decisions, correlationId, {
+          case: "runWaitRequested",
+          value: create(programProto.RunWaitRequestedSchema, {
+            correlationId,
+            runWaitId,
+            resumeAttachId,
+            kind: "actor_input",
+            execution: this.execution,
+            paramsJson: JSON.stringify({
+              session_id: this.execution.sessionId,
+              after_input_sequence: Number(this.cursor.value),
+            }),
+            actorSpeculativeInputSequence: this.cursor.value,
+            ...(options?.timeout === undefined
+              ? {}
+              : { timeoutMs: BigInt(durationMilliseconds(options.timeout)) }),
+            ...(options?.idleTimeout === undefined
+              ? {}
+              : {
+                  idleTimeoutMs: BigInt(
+                    durationMilliseconds(options.idleTimeout),
+                  ),
+                }),
+            ...(options?.metadata === undefined
+              ? {}
+              : { metadataJson: jsonText(options.metadata) }),
+            tags: options?.tags === undefined ? [] : [...options.tags],
+          }),
+        }),
+      )
+      requireWaitDecision(
+        decision,
+        correlationId,
+        runWaitId,
+        resumeAttachId,
+        "Session receive",
+      )
+      if (this.operations.controller.signal.aborted)
+        throw this.operations.controller.signal.reason
+      await acknowledgeResumeConsumed(this.io, decision)
+      if (this.operations.controller.signal.aborted)
+        throw this.operations.controller.signal.reason
+      if (decision.kind !== "completed") {
+        const failure = resumeFailure(decision.dataJson)
+        if (failure.reasonCode === "session_closed") return null
+        if (decision.kind === "cancelled")
+          throw new Error(`Session receive cancelled: ${failure.reasonCode}`)
+        throw Object.assign(
+          new Error(`Session receive failed: ${failure.reasonCode}`),
+          { code: failure.reasonCode },
+        )
+      }
+      const data = parseRuntimeProtocolValue("Turn delivery", () =>
+        parseObjectJSON(decision.dataJson, "Turn delivery"),
+      )
+      const turn = objectField(data, "turn", "Turn delivery")
+      const sequence = safeJSONSequence(turn["sequence"], "Turn sequence")
+      if (
+        BigInt(sequence) !== this.cursor.value + 1n ||
+        data["run_generation"] !== Number(this.execution.runGeneration)
+      ) {
+        throw new RuntimeProtocolError(
+          "Turn delivery does not match execution frontier",
+        )
+      }
+      const state: TurnRuntime = {
+        scope: create(programProto.TurnExecutionSchema, {
+          session: this.execution,
+          turnId: resourceID(turn["id"], "Turn id"),
+        }),
+        sequence: BigInt(sequence),
+        controller: new AbortController(),
+        phase: "running",
+      }
+      this.active = state
+      this.cursor.value = state.sequence
+      if (this.operations.controller.signal.aborted)
+        throw this.operations.controller.signal.reason
+      const source = objectField(turn, "source", "Turn source")
+      let parsedSource: TurnSource
+      if (source["type"] === "external") parsedSource = { type: "external" }
+      else if (source["type"] === "run")
+        parsedSource = {
+          type: "run",
+          runId: resourceID(source["run_id"], "Turn source Run"),
+        }
+      else throw new RuntimeProtocolError("Invalid Turn source")
+      return Object.freeze({
+        id: state.scope.turnId,
+        sequence,
+        input: data["value"] as JsonValue,
+        source: Object.freeze(parsedSource),
+        createdAt: timestampString(turn["created_at"], "Turn created_at"),
+        signal: state.controller.signal,
+        output: this.writer(state),
+        onMessage: (handler: (message: Message) => unknown) =>
+          this.onMessage(state, handler),
+        complete: (...result: [JsonValue?]) =>
+          this.settle(
+            state,
+            "completed",
+            result[0],
+            result.length !== 0 && result[0] !== undefined,
+          ),
+        fail: (error: unknown) =>
+          this.settle(state, "failed", failureJSON(error)),
+      })
+    } catch (error) {
+      if (error instanceof RuntimeProtocolError) this.uncertain(error)
+      throw error
+    } finally {
+      if (this.#receiveCorrelation === correlationId)
+        this.#receiveCorrelation = undefined
+      release()
+    }
+  }
+
+  onMessage(
+    turn: TurnRuntime,
+    handler: (message: Message) => unknown,
+  ): Promise<void> {
+    this.assertTurn(turn)
+    if (turn.handler !== undefined)
+      return Promise.reject(
+        new Error("Turn message handler is already installed"),
+      )
+    if (typeof handler !== "function")
+      return Promise.reject(
+        new Error("Turn message handler must be a function"),
+      )
+    turn.handler = handler
+    const correlationId = newUUIDv7()
+    turn.ready = this.operations.trackDrainable(async () => {
+      await this.request(
+        {
+          case: "turnReadyRequested",
+          value: create(programProto.TurnReadyRequestedSchema, {
+            correlationId,
+            execution: turn.scope,
+          }),
+        },
+        correlationId,
+        "Turn readiness",
+      )
+      void this.messageLoop(turn).catch((error) => {
+        if (!this.stoppedRejection(error)) this.uncertain(error)
+      })
+    })
+    return turn.ready
+  }
+
+  async resumeMessageReady(): Promise<void> {
+    const turn = this.active
+    if (
+      turn?.handler === undefined ||
+      turn.phase !== "running" ||
+      this.operations.controller.signal.aborted
+    )
+      return
+    const correlationId = newUUIDv7()
+    turn.ready = this.operations.trackDrainable(async () => {
+      await this.request(
+        {
+          case: "turnReadyRequested",
+          value: create(programProto.TurnReadyRequestedSchema, {
+            correlationId,
+            execution: turn.scope,
+          }),
+        },
+        correlationId,
+        "Turn readiness after wait",
+      )
+    })
+    await turn.ready
+  }
+
+  async messageLoop(turn: TurnRuntime): Promise<void> {
+    while (
+      turn.phase === "running" &&
+      !this.operations.controller.signal.aborted
+    ) {
+      if (this.waitGate.pending) {
+        await new Promise((resolve) => setTimeout(resolve, 25))
+        continue
+      }
+      const correlationId = newUUIDv7(),
+        deliveryId = newUUIDv7()
+      turn.claim = (async () => {
+        const response = await this.request(
+          {
+            case: "turnMessageClaimRequested",
+            value: create(programProto.TurnMessageClaimRequestedSchema, {
+              correlationId,
+              execution: turn.scope,
+              deliveryId,
+            }),
+          },
+          correlationId,
+          "Turn message claim",
+        )
+        const body = parseRuntimeProtocolValue("Turn message delivery", () =>
+          parseObjectJSON(response.dataJson, "Turn message delivery"),
+        )
+        if (body["delivery"] === null) return
+        const delivery = objectField(body, "delivery", "Turn message delivery")
+        if (
+          delivery["turn_id"] !== turn.scope.turnId ||
+          delivery["delivery_id"] !== deliveryId
+        )
+          throw new RuntimeProtocolError(
+            "Message delivery does not match requested Turn",
+          )
+        turn.callback = this.handleMessage(
+          turn,
+          deliveryId,
+          resourceID(delivery["message_id"], "Message id"),
+          delivery["data"],
+        )
+      })()
+      try {
+        await turn.claim
+      } catch (error) {
+        if ((error as { code?: string }).code !== "turn_not_ready") throw error
+      }
+      turn.claim = undefined
+      if (turn.callback !== undefined) {
+        await turn.callback
+        turn.callback = undefined
+      } else if (turn.phase === "running")
+        await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+  }
+
+  async handleMessage(
+    turn: TurnRuntime,
+    deliveryId: string,
+    messageId: string,
+    data: unknown,
+  ): Promise<void> {
+    const context: MessageCallback = { turn, deliveryId, writes: new Set() }
+    let status = "handled",
+      code = "",
+      details: JsonValue | undefined
+    try {
+      await messageCallback.run(context, async () => {
+        await turn.handler!({ id: messageId, data: data as JsonValue })
+      })
+      await drainPromises(context.writes)
+      if (context.error !== undefined) throw context.error
+    } catch (error) {
+      await drainPromises(context.writes)
+      if (error instanceof MessageRejected && context.error === undefined) {
+        status = "rejected"
+        code = "handler_rejected"
+        details = error.details
+      } else {
+        status = "unknown"
+        code = "handler_failed"
+        details = failureJSON(error)
+        this.#uncertain ??= new RuntimeProtocolError(
+          "Message handler outcome is unknown",
+          { cause: error },
+        )
+      }
+    }
+    const correlationId = newUUIDv7()
+    await this.request(
+      {
+        case: "turnMessageCompleteRequested",
+        value: create(programProto.TurnMessageCompleteRequestedSchema, {
+          correlationId,
+          execution: turn.scope,
+          messageId,
+          deliveryId,
+          status,
+          code,
+          ...(details === undefined ? {} : { detailsJson: jsonText(details) }),
+        }),
+      },
+      correlationId,
+      "Turn message completion",
+    )
+    if (this.#uncertain !== undefined) this.uncertain(this.#uncertain)
+  }
+
+  assertTurn(turn: TurnRuntime): void {
+    this.assertAdmission()
+    if (this.active !== turn || turn.phase !== "running")
+      throw new Error("Turn is not writable")
+  }
+
+  writer(turn?: TurnRuntime): RecordWriter {
+    const track = <T>(
+      operation: (callback?: MessageCallback) => Promise<T>,
+    ): Promise<T> => {
+      const callback = messageCallback.getStore()
+      try {
+        this.assertAdmission()
+        if (
+          turn !== undefined &&
+          (this.active !== turn ||
+            (turn.phase !== "running" &&
+              !(turn.phase === "settling" && callback?.turn === turn)))
+        )
+          throw new Error("Turn is not writable")
+      } catch (error) {
+        const rejected = Promise.reject<T>(error)
+        void rejected.catch(() => {})
+        return rejected
+      }
+      const writes = callback?.writes ?? this.#mainWrites
+      const pending = this.operations.trackDrainable(async () => {
+        try {
+          return await operation(callback)
+        } catch (error) {
+          const failure =
+            error ?? new Error("Actor output failed", { cause: error })
+          if (callback !== undefined) callback.error ??= failure
+          else this.#outputError ??= failure
+          throw failure
+        }
+      })
+      writes.add(pending)
+      void pending.finally(() => writes.delete(pending)).catch(() => {})
+      return pending
+    }
+    const write = async (
+      value: JsonValue,
+      options?: SessionOperationOptions,
+      callback?: MessageCallback,
+    ): Promise<OutputReceipt> => {
+      await turn?.ready
+      const correlationId = newUUIDv7()
+      const common = {
+        correlationId,
+        dataJson: jsonText(value),
+        idempotencyKey: options?.idempotencyKey ?? newUUIDv7(),
+      }
+      const response = await this.request(
+        turn === undefined
+          ? {
+              case: "sessionOutputWriteRequested",
+              value: create(programProto.SessionOutputWriteRequestedSchema, {
+                ...common,
+                execution: this.execution,
+              }),
+            }
+          : {
+              case: "turnOutputWriteRequested",
+              value: create(programProto.TurnOutputWriteRequestedSchema, {
+                ...common,
+                execution: turn.scope,
+                ...(callback === undefined
+                  ? {}
+                  : { messageDeliveryId: callback.deliveryId }),
+              }),
+            },
+        correlationId,
+        "Output write",
+      )
+      const receipt = parseRuntimeProtocolValue("Output receipt", () =>
+        parseOutputReceipt(JSON.parse(response.dataJson)),
+      )
+      if (
+        receipt.sessionId !== this.execution.sessionId ||
+        receipt.turnId !== (turn?.scope.turnId ?? null) ||
+        receipt.runId !== this.execution.runId ||
+        receipt.attemptNumber !== this.execution.attemptNumber ||
+        receipt.runGeneration !== Number(this.execution.runGeneration)
+      ) {
+        throw new RuntimeProtocolError(
+          "Output receipt does not match its producer",
+        )
+      }
+      return receipt
+    }
+    return Object.freeze({
+      write: (value: JsonValue, options?: SessionOperationOptions) =>
+        track((callback) => write(value, options, callback)),
+      pipe: (source: AsyncIterable<JsonValue> | Iterable<JsonValue>) =>
+        track(async (callback) => {
+          for await (const value of source)
+            await write(value, undefined, callback)
+        }),
+    })
+  }
+
+  settle(
+    turn: TurnRuntime,
+    disposition: "completed" | "failed",
+    value?: JsonValue,
+    present = true,
+  ): Promise<void> {
+    if (messageCallback.getStore() !== undefined)
+      return Promise.reject(new Error("Message callbacks cannot settle a Turn"))
+    try {
+      this.assertTurn(turn)
+    } catch (error) {
+      return Promise.reject(error)
+    }
+    turn.phase = "settling"
+    const settling = (async () => {
+      await turn.ready
+      await turn.claim
+      await drainPromises(this.#mainWrites)
+      this.assertOutputSafe()
+      const beginId = newUUIDv7()
+      await this.request(
+        {
+          case: "turnSettlementBeginRequested",
+          value: create(programProto.TurnSettlementBeginRequestedSchema, {
+            correlationId: beginId,
+            execution: turn.scope,
+          }),
+        },
+        beginId,
+        "Turn settlement barrier",
+      )
+      await turn.callback
+      this.assertOutputSafe()
+      if (this.operations.controller.signal.aborted)
+        throw this.operations.controller.signal.reason
+      this.operations.assertDrained()
+      const correlationId = newUUIDv7()
+      // A stop may observe the committed DB state before its reply reaches this
+      // heap. Retain the Turn until that exact settlement is acknowledged.
+      this.#pendingSettlementTurn = turn
+      try {
+        const response = await requestRuntimeDecision(
+          this.io,
+          this.decisions,
+          correlationId,
+          {
+            case: "turnSettleRequested",
+            value: create(programProto.TurnSettleRequestedSchema, {
+              correlationId,
+              execution: turn.scope,
+              targetInputSequence: turn.sequence,
+              disposition,
+              ...(disposition === "completed"
+                ? present
+                  ? { resultJson: jsonText(value) }
+                  : {}
+                : { errorJson: jsonText(value) }),
+            }),
+          },
+        )
+        if (
+          this.stop !== undefined &&
+          this.stop.turnId === undefined &&
+          response.kind !== "committed"
+        )
+          throw new RuntimeProtocolError(
+            "Null-Turn stop was not confirmed by settlement",
+          )
+        if (response.kind === "failed")
+          throw runtimeOperationFailure("Turn settlement", response.dataJson)
+        if (
+          response.correlationId !== correlationId ||
+          response.kind !== "committed"
+        )
+          throw new RuntimeProtocolError("Turn settlement was not acknowledged")
+        if (this.stop?.turnId !== undefined)
+          throw new RuntimeProtocolError(
+            "Turn settlement committed after a Turn stop",
+          )
+        turn.phase = "settled"
+        this.active = undefined
+      } finally {
+        this.#pendingSettlementTurn = undefined
+      }
+    })()
+    this.#settlement = settling
+    void settling.catch((error) => {
+      if (!this.stoppedRejection(error)) this.#uncertain ??= error
+    })
+    return settling
+  }
+
+  assertOutputSafe(): void {
+    if (this.#uncertain !== undefined) throw this.#uncertain
+    if (this.#outputError !== undefined) {
+      const code = (this.#outputError as { code?: string }).code
+      if (
+        this.stop === undefined ||
+        (code !== "turn_stopping" && code !== "session_held")
+      )
+        throw this.#outputError
+    }
+  }
+
+  stoppedRejection(error: unknown): boolean {
+    if (this.stop === undefined) return false
+    if (error === this.operations.controller.signal.reason) return true
+    const code = (error as { code?: string } | null)?.code
+    return (
+      code === "turn_stopping" ||
+      code === "session_held" ||
+      code === "session_stopped"
+    )
+  }
+
+  async drain(): Promise<void> {
+    try {
+      await this.#settlement
+    } catch (error) {
+      if (!this.stoppedRejection(error)) throw error
+    }
+    if (this.active !== undefined) this.active.phase = "settling"
+    try {
+      await this.active?.ready
+      await this.active?.claim
+    } catch (error) {
+      if (!this.stoppedRejection(error)) throw error
+    }
+    await this.active?.callback
+    await drainPromises(this.#mainWrites)
+    await this.operations.drainForCompletion()
+    this.assertOutputSafe()
+    this.operations.assertDrained()
+  }
+}
+
+async function drainPromises(pending: Set<Promise<unknown>>): Promise<void> {
+  while (pending.size !== 0) await Promise.allSettled([...pending])
+}
+
+function jsonText(value: unknown): string {
+  return new TextDecoder().decode(canonicalizeJsonValue(value as JsonValue))
+}
+
+function failureJSON(error: unknown): JsonValue {
+  if (error instanceof Error)
+    return { message: boundedUtf8(error.message, MAX_TASK_ERROR_MESSAGE_BYTES) }
+  try {
+    return JSON.parse(jsonText(error)) as JsonValue
+  } catch {
+    return { message: boundedUtf8(String(error), MAX_TASK_ERROR_MESSAGE_BYTES) }
+  }
+}
+
 async function runActor(
   start: programProto.ProgramStart,
   definition: InternalActorDefinition,
   io: ProgramIO,
   decisions: ResumeDecisionRouter,
 ): Promise<void> {
-  if (start.entrypoint.case !== "actor") {
-    throw new Error("Actor Program-start entrypoint is required")
-  }
-  const cursor = { value: start.entrypoint.value.startInputSequence }
-  const waitGate = new ConsumingWaitGate()
-  const actorOperations = new RunOperationState()
-  const uninstallRuntime = installRuntimeOperations(
-    programRuntimeOperations(start, io, decisions, waitGate, actorOperations, cursor),
+  const operations = new RunOperationState(),
+    waitGate = new ConsumingWaitGate()
+  const actor = new ActorRuntime(
+    start,
+    definition,
+    io,
+    decisions,
+    waitGate,
+    operations,
   )
+  operations.admission = () => actor.assertAdmission()
+  const uninstall = installRuntimeOperations(
+    programRuntimeOperations(start, io, decisions, waitGate, operations, actor),
+  )
+  decisions.listenForControl(
+    (decision) => actor.control(decision),
+    (error) => actor.uncertain(error),
+  )
+  let failure: unknown
+  let failed = false
   try {
     await definition.handler(
-      actorSelf(start, io, decisions, cursor, waitGate, actorOperations),
-      actorContext(start, actorOperations.controller.signal),
-    )
-    try {
-      await actorOperations.drainForCompletion()
-      actorOperations.assertCanComplete()
-    } catch (error) {
-      decisions.abandonPending()
-      throw error
-    }
-  } catch (error) {
-    if (error instanceof RuntimeProtocolError || error instanceof ActorCancellationError) {
-      throw error
-    }
-    await actorOperations.drainForCompletion()
-    actorOperations.assertCanComplete()
-    await writeActorFailure(
-      io,
-      cursor.value,
-      errorMessage(error),
-    )
-    return
-  } finally {
-    uninstallRuntime()
-  }
-  await writeRunEvent(io, {
-    case: "actorOutcome",
-    value: create(programProto.ActorOutcomeSchema, {
-      terminalInputSequence: cursor.value,
-      outcome: {
-        case: "succeeded",
-        value: create(programProto.ActorSucceededSchema),
-      },
-    }),
-  })
-}
-
-function actorSelf(
-  start: programProto.ProgramStart,
-  io: ProgramIO,
-  decisions: ResumeDecisionRouter,
-  cursor: { value: bigint },
-  waitGate: ConsumingWaitGate,
-  actorOperations: RunOperationState,
-): ActorSession {
-  if (start.entrypoint.case !== "actor") {
-    throw new Error("Actor Program-start entrypoint is required")
-  }
-  const actorStart = start.entrypoint.value
-  let committedBoundary = cursor.value
-
-  const commitPriorTurn = async (): Promise<void> => {
-    if (cursor.value === committedBoundary) return
-    const correlationId = newUUIDv7()
-    const decision = await requestRuntimeDecision(io, decisions, correlationId, {
-      case: "actorTurnCommitRequested",
-      value: create(programProto.ActorTurnCommitRequestedSchema, {
-        correlationId,
-        targetInputSequence: cursor.value,
+      Object.freeze({
+        id: actor.execution.sessionId,
+        ...(start.entrypoint.case === "actor" &&
+        start.entrypoint.value.key !== undefined
+          ? { key: start.entrypoint.value.key }
+          : {}),
+        receive: (options?: ActorSessionReceiveOptions) =>
+          actor.receive(options),
+        output: actor.writer(),
       }),
-    })
-    requireActorDecision(decision, correlationId, "committed", "Actor turn commit")
-    committedBoundary = cursor.value
+      actorContext(start, operations.controller.signal),
+    )
+  } catch (error) {
+    failed = true
+    failure = error
   }
-
-  const performReceive = async (
-    options: ActorSessionReceiveOptions | undefined,
-    releaseWait: () => void,
-  ): Promise<ActorSessionInputResult> => {
-    try {
-      await commitPriorTurn()
-      const correlationId = newUUIDv7()
-      const runWaitId = newUUIDv7()
-      const resumeAttachId = newUUIDv7()
-      const timeoutMs = options?.timeout === undefined
-        ? undefined
-        : durationMilliseconds(options.timeout)
-      const idleTimeoutMs = options?.idleTimeout === undefined
-        ? undefined
-        : durationMilliseconds(options.idleTimeout)
-      const decision = await requestRuntimeDecision(io, decisions, correlationId, {
-        case: "runWaitRequested",
-        value: create(programProto.RunWaitRequestedSchema, {
-          correlationId,
-          runWaitId,
-          resumeAttachId,
-          kind: "actor_input",
-          paramsJson: JSON.stringify({
-            session_id: actorStart.sessionId,
-            after_input_sequence: safeActorSequence(cursor.value),
-          }),
-          ...(options?.metadata === undefined
-            ? {}
-            : { metadataJson: new TextDecoder().decode(canonicalizeJsonValue(options.metadata)) }),
-          ...(timeoutMs === undefined ? {} : { timeoutMs: BigInt(timeoutMs) }),
-          ...(idleTimeoutMs === undefined ? {} : { idleTimeoutMs: BigInt(idleTimeoutMs) }),
-          tags: options?.tags === undefined ? [] : [...options.tags],
-          actorSpeculativeInputSequence: cursor.value,
+  try {
+    await actor.drain()
+    if (
+      actor.stop !== undefined &&
+      (!failed || actor.stoppedRejection(failure))
+    ) {
+      await writeRunEvent(io, {
+        case: "actorOutcome",
+        value: create(programProto.ActorOutcomeSchema, {
+          runGeneration: actor.execution.runGeneration,
+          outcome: {
+            case: "interrupted",
+            value: create(programProto.ActorInterruptedSchema, actor.stop),
+          },
         }),
       })
-      requireWaitDecision(
-        decision,
-        correlationId,
-        runWaitId,
-        resumeAttachId,
-        "Actor input resume",
-      )
-      await acknowledgeResumeConsumed(io, decision)
-      if (decision.kind === "completed") {
-        const delivered = parseRuntimeProtocolValue(
-          "Actor input delivery",
-          () => parseActorInputDelivery(decision.dataJson),
-        )
-        if (BigInt(delivered.record.sequence) !== cursor.value + 1n) {
-          throw new RuntimeProtocolError("Actor input delivery was not the next contiguous record")
-        }
-        cursor.value = BigInt(delivered.record.sequence)
-        return delivered
-      }
-      if (decision.kind === "failed") {
-        const failure = parseRuntimeProtocolValue(
-          "Actor input Wait failure decision",
-          () => resumeFailure(decision.dataJson),
-        )
-        if (failure.reasonCode !== "wait_timeout" && failure.reasonCode !== "session_closed") {
-          throw new RuntimeProtocolError(`Actor input Wait failed: ${failure.reasonCode}`)
-        }
-        return Object.freeze({
-          ok: false,
-          error: actorChannelError(failure.reasonCode),
-        })
-      }
-      if (decision.kind === "cancelled") {
-        const failure = parseRuntimeProtocolValue(
-          "Actor input cancellation decision",
-          () => resumeFailure(decision.dataJson),
-        )
-        throw actorOperations.cancel(failure.reasonCode)
-      }
-      throw new RuntimeProtocolError(`Actor input Wait returned unsupported decision ${decision.kind}`)
-    } finally {
-      releaseWait()
-    }
-  }
-
-  const receive = (options?: ActorSessionReceiveOptions): ActorSessionReceive => {
-    let releaseWait: () => void
-    try {
-      releaseWait = waitGate.acquire(concurrentSessionReceiveError)
-    } catch (error) {
-      return actorReceive(Promise.reject(concurrentSessionReceiveError()))
-    }
-    return actorReceive(actorOperations.track(() => performReceive(options, releaseWait)))
-  }
-
-  const performAppend = async (
-    value: Serializable,
-    options?: ActorSessionOutputAppendOptions,
-  ): Promise<SessionOutputRecord> => {
-    const normalized = canonicalizeJsonValue(value as JsonValue)
-    const correlationId = newUUIDv7()
-    const decision = await requestRuntimeDecision(io, decisions, correlationId, {
-      case: "actorOutputAppendRequested",
-      value: create(programProto.ActorOutputAppendRequestedSchema, {
-        correlationId,
-        dataJson: new TextDecoder().decode(normalized),
-        contentType: options?.contentType ?? "application/json",
-        ...(options?.idempotencyKey === undefined
-          ? {}
-          : { idempotencyKey: options.idempotencyKey }),
-      }),
-    })
-    requireRuntimeOperationDecision(decision, correlationId, "Actor output append")
-    if (decision.kind === "failed") {
-      throw runtimeOperationFailure("Actor output append", decision.dataJson)
-    }
-    return parseRuntimeProtocolValue(
-      "Actor output append result",
-      () => parseSessionOutputRecord(decision.dataJson),
-    )
-  }
-
-  const append = (
-    value: Serializable,
-    options?: ActorSessionOutputAppendOptions,
-  ): Promise<SessionOutputRecord> => actorOperations.track(
-    () => performAppend(value, options),
-  )
-
-  const performPipe = async (
-    source: AsyncIterable<Serializable> | Iterable<Serializable>,
-    options?: ActorSessionOutputSequenceOptions,
-  ): Promise<void> => {
-    for await (const value of source) await performAppend(value, options)
-  }
-
-  const pipe = (
-    source: AsyncIterable<Serializable> | Iterable<Serializable>,
-    options?: ActorSessionOutputSequenceOptions,
-  ): Promise<void> => actorOperations.track(() => performPipe(source, options))
-
-  const writer = (options?: ActorSessionOutputSequenceOptions) => {
-    let closed = false
-    return Object.freeze({
-      write(value: Serializable): Promise<SessionOutputRecord> {
-        if (closed) return Promise.reject(new Error("Actor output writer is closed"))
-        return append(value, options)
-      },
-      async close(): Promise<void> { closed = true },
-    })
-  }
-
-  return Object.freeze({
-    id: actorStart.sessionId,
-    ...(actorStart.key === undefined ? {} : { key: actorStart.key }),
-    input: Object.freeze({ receive }),
-    output: Object.freeze({
-      append,
-      pipe,
-      writer,
-    }),
-  })
-}
-
-function actorReceive(result: Promise<ActorSessionInputResult>): ActorSessionReceive {
-  return Object.freeze({
-    then: result.then.bind(result),
-    async unwrap(): Promise<JsonValue> {
-      const resolved = await result
-      if (resolved.ok) return resolved.value
-      throw resolved.error
-    },
-  }) as ActorSessionReceive
-}
-
-function requireActorDecision(
-  decision: programProto.ResumeDecision,
-  correlationId: string,
-  kind: string,
-  operation: string,
-): void {
-  if (decision.correlationId !== correlationId || decision.kind !== kind) {
-    throw new RuntimeProtocolError(`${operation} decision did not match the pending operation`)
-  }
-}
-
-function safeActorSequence(value: bigint): number {
-  if (value < 0n || value > BigInt(Number.MAX_SAFE_INTEGER)) {
-    throw new Error("Actor input sequence exceeds the JavaScript safe-integer range")
-  }
-  return Number(value)
-}
-
-function parseActorInputDelivery(dataJson: string): Extract<ActorSessionInputResult, { ok: true }> {
-  const value = parseObjectJSON(dataJson, "Actor input delivery")
-  requireExactKeys(value, ["record", "value"], "Actor input delivery")
-  const record = objectField(value, "record", "Actor input delivery")
-  requireExactKeys(record, ["created_at", "id", "sequence", "source"], "Actor input record")
-  const source = objectField(record, "source", "Actor input record")
-  const sourceType = stringField(source, "type", "Actor input source")
-  let parsedSource: { readonly type: "external" } | {
-    readonly type: "run"
-    readonly runId: string
-  }
-  if (sourceType === "external") {
-    requireExactKeys(source, ["type"], "Actor input source")
-    parsedSource = Object.freeze({ type: "external" })
-  } else if (sourceType === "run") {
-    requireExactKeys(source, ["run_id", "type"], "Actor input source")
-    parsedSource = Object.freeze({
-      type: "run",
-      runId: resourceID(
-        stringField(source, "run_id", "Actor input source"),
-        "Actor input source.run_id",
-      ),
-    })
-  } else {
-    throw new Error("Actor input source type is invalid")
-  }
-  const sequence = safeJSONSequence(record["sequence"], "Actor input record.sequence")
-  return Object.freeze({
-    ok: true,
-    value: jsonValueField(value, "value", "Actor input delivery"),
-    record: Object.freeze({
-      id: resourceID(
-        stringField(record, "id", "Actor input record"),
-        "Actor input record.id",
-      ),
-      sequence,
-      createdAt: timestampString(record["created_at"], "Session input record.created_at"),
-      source: parsedSource,
-    }),
-  })
-}
-
-function parseSessionOutputRecord(dataJson: string): SessionOutputRecord {
-  const value = parseObjectJSON(dataJson, "Actor output append result")
-  requireExactKeys(
-    value,
-    ["content_type", "created_at", "data", "id", "provenance", "sequence"],
-    "Actor output append result",
-  )
-  const provenance = objectField(value, "provenance", "Actor output append result")
-  requireExactKeys(
-    provenance,
-    ["attempt_number", "deployment_id", "run_id"],
-    "Actor output provenance",
-  )
-  return Object.freeze({
-    id: resourceID(
-      stringField(value, "id", "Actor output append result"),
-      "Actor output append result.id",
-    ),
-    sequence: safeJSONSequence(value["sequence"], "Actor output sequence"),
-    data: jsonValueField(value, "data", "Actor output append result"),
-    contentType: stringField(value, "content_type", "Actor output append result"),
-    createdAt: timestampString(value["created_at"], "Session output record.created_at"),
-    provenance: Object.freeze({
-      runId: resourceID(
-        stringField(provenance, "run_id", "Actor output provenance"),
-        "Actor output provenance.run_id",
-      ),
-      attemptNumber: safeJSONSequence(
-        provenance["attempt_number"],
-        "Actor output attempt number",
-      ),
-      deploymentId: resourceID(
-        stringField(
-          provenance,
-          "deployment_id",
-          "Actor output provenance",
+    } else if (failed || actor.active !== undefined) {
+      if (failure instanceof RuntimeProtocolError) throw failure
+      await writeActorFailure(
+        io,
+        actor.execution.runGeneration,
+        errorMessage(
+          failure ?? new Error("Run returned with an unsettled Turn"),
         ),
-        "Actor output provenance.deployment_id",
-      ),
-    }),
-  })
-}
-
-function parseRuntimeSession(dataJson: string): Session {
-  const value = parseObjectJSON(dataJson, "Session retrieve result")
-  const required = [
-    "actor_id",
-    "created_at",
-    "deployment_id",
-    "id",
-    "status",
-    "updated_at",
-    "workspace_id",
-  ]
-  const optional = ["current_run_id", "failure", "key"]
-  const allowed = new Set([...required, ...optional])
-  if (
-    required.some((key) => !Object.hasOwn(value, key)) ||
-    Object.keys(value).some((key) => !allowed.has(key))
-  ) {
-    throw new Error("Session retrieve result has unknown or missing fields")
+      )
+    } else {
+      operations.assertCanComplete()
+      await writeRunEvent(io, {
+        case: "actorOutcome",
+        value: create(programProto.ActorOutcomeSchema, {
+          runGeneration: actor.execution.runGeneration,
+          outcome: {
+            case: "succeeded",
+            value: create(programProto.ActorSucceededSchema),
+          },
+        }),
+      })
+    }
+  } finally {
+    decisions.stopControl()
+    uninstall()
   }
-  return parseSession(value)
 }
 
 function parseObjectJSON(value: string, label: string): Record<string, unknown> {
@@ -2414,23 +2671,6 @@ function safeJSONSequence(value: unknown, label: string): number {
   return value as number
 }
 
-function actorChannelError(
-  code: "wait_timeout" | "session_closed",
-): Extract<ActorSessionInputResult, { ok: false }>["error"] {
-  const error = new Error(code === "wait_timeout" ? "Actor input receive timed out" : "Actor is closed") as Error & {
-    code: "wait_timeout" | "session_closed"
-  }
-  error.name = code === "wait_timeout" ? "WaitTimeoutError" : "SessionClosedError"
-  error.code = code
-  return error as Extract<ActorSessionInputResult, { ok: false }>["error"]
-}
-
-function concurrentSessionReceiveError(): Error {
-  const error = new Error("only one Actor input receive may be unresolved")
-  error.name = "ConcurrentSessionReceiveError"
-  return error
-}
-
 function actorContext(
   start: programProto.ProgramStart,
   signal: AbortSignal,
@@ -2448,14 +2688,14 @@ function actorContext(
 
 async function writeActorFailure(
   io: ProgramIO,
-  terminalInputSequence: bigint,
+  runGeneration: bigint,
   message: string,
 ): Promise<void> {
   const normalizedMessage = canonicalFailureMessage(message, "actor failed")
   await writeRunEvent(io, {
     case: "actorOutcome",
     value: create(programProto.ActorOutcomeSchema, {
-      terminalInputSequence,
+      runGeneration,
       outcome: {
         case: "failed",
         value: create(programProto.ActorFailedSchema, {

@@ -66,15 +66,15 @@ func TestTimerWaitRegistrationAndHotCompletion(t *testing.T) {
 	}
 	if completed.ConditionStatus != WaitStatusCompleted ||
 		completed.SuspensionStatus != RunWaitStatusReleased ||
-		completed.CompletedActorRecordID.Valid ||
+		completed.CompletedTurnID.Valid ||
 		status != RunStatusRunning {
 		t.Fatalf("completed timer Wait = %+v run=%s", completed, status)
 	}
 	if _, err := fixture.pool.Exec(ctx, `
 		UPDATE run_waits
-		   SET completed_actor_record_id = $2
+		   SET completed_turn_id = $2
 		 WHERE id = $1
 	`, wait.ID, uuid.NewV7()); err == nil {
-		t.Fatal("timer Wait accepted a completed Actor record")
+		t.Fatal("timer Wait accepted a completed Turn")
 	}
 }

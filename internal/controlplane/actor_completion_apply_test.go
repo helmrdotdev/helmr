@@ -41,14 +41,6 @@ func TestActorCompletionAuthorityRejectsInvalidRestoredWorkspaceBase(t *testing.
 		mutate func(*runLeaseClaimAuthority, *runLeaseClaimStore)
 	}{
 		{
-			name: "wrong parent",
-			mutate: func(_ *runLeaseClaimAuthority, store *runLeaseClaimStore) {
-				target := store.resetTargets[store.readyCheckpoint.PrivateWorkspaceVersionID]
-				target.ParentVersionID = pgvalue.UUID(uuid.NewV7())
-				store.resetTargets[store.readyCheckpoint.PrivateWorkspaceVersionID] = target
-			},
-		},
-		{
 			name: "wrong ownership generation",
 			mutate: func(_ *runLeaseClaimAuthority, store *runLeaseClaimStore) {
 				target := store.resetTargets[store.readyCheckpoint.PrivateWorkspaceVersionID]
@@ -159,7 +151,7 @@ func TestRestoredSameWorkspaceActorCompletionRejectsBrokenProducerReceipts(t *te
 		t.Run(test.name, func(t *testing.T) {
 			authority, store, pID, cID := validSameWorkspaceActorCompletionBase(t)
 			test.mutate(&authority, store, pID, cID)
-			if err := validateRestoredActorBase(
+			if _, err := validateRestoredActorBase(
 				t.Context(), store, authority, store.resetTargets[cID],
 			); !errors.Is(err, errStaleActorCompletion) {
 				t.Fatalf("error = %v, want stale Actor completion", err)
@@ -256,8 +248,8 @@ func validActorCompletionAuthority(
 	request := workerapi.CompleteActorRequest{
 		Lease: assignment.Fence(),
 		Outcome: workerapi.ActorOutcome{
-			TerminalInputSequence: 2,
-			Succeeded:             &workerapi.ActorSucceeded{},
+			RunGeneration: authority.actor.RunGeneration,
+			Succeeded:     &workerapi.ActorSucceeded{},
 		},
 		Workspace: workerapi.TaskWorkspaceProof{Captured: capture},
 	}
@@ -286,9 +278,10 @@ func validActorCompletionAuthority(
 			ID: checkpointID, RunID: authority.run.ID, AttemptNumber: authority.attempt.Number,
 			RunWaitID: waitID, SourceRunLeaseID: sourceRunLeaseID,
 			SourceWorkspaceLeaseID: sourceLeaseID, WorkspaceID: authority.workspace.ID,
-			BaseWorkspaceVersionID:    authority.workspace.HeadVersionID,
-			PrivateWorkspaceVersionID: authority.workspaceLease.BaseWorkspaceVersionID,
-			Status:                    db.RunCheckpointStatusReady,
+			BaseWorkspaceVersionID:        authority.workspace.HeadVersionID,
+			PrivateWorkspaceVersionID:     authority.workspaceLease.BaseWorkspaceVersionID,
+			Status:                        db.RunCheckpointStatusReady,
+			ActorSpeculativeInputSequence: pgtype.Int8{Int64: authority.actor.CommittedInputSequence, Valid: true},
 		}
 		store.runWait = db.RunWait{
 			ID: waitID, RunID: authority.run.ID, WorkspaceID: authority.workspace.ID,
@@ -297,16 +290,20 @@ func validActorCompletionAuthority(
 			PriorRunLeaseID: sourceRunLeaseID, SuspendCheckpointID: checkpointID,
 			CheckpointRequestVersion: 1, CheckpointAckVersion: 1,
 			ResumeRequestVersion: 1, ResumeAckVersion: 1,
+			ActorSpeculativeInputSequence: store.readyCheckpoint.ActorSpeculativeInputSequence,
 		}
 		store.workspaceLeases = map[pgtype.UUID]db.WorkspaceLease{
 			sourceLeaseID: {
 				ID: sourceLeaseID, WorkspaceID: authority.workspace.ID,
+				OwnerRunLeaseID:        sourceRunLeaseID,
 				Status:                 db.WorkspaceLeaseStatusReleased,
 				BaseWorkspaceVersionID: authority.workspace.HeadVersionID,
 				OwnershipGeneration:    authority.workspace.OwnershipGeneration,
 				WriterGeneration:       base.WriterGeneration,
 			},
 		}
+		store.authority.sourceRunLease.ID = sourceRunLeaseID
+		store.authority.sourceWorkspaceLease = store.workspaceLeases[sourceLeaseID]
 	}
 	return completion, authority, store
 }

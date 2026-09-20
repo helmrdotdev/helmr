@@ -90,16 +90,35 @@ func TestGranularWorkspacePermissionsDoNotEscalate(t *testing.T) {
 	}
 }
 
-func TestActorInputPermissionIsWritableButNotReadableRoleAuthority(t *testing.T) {
-	if !RoleAllows(RoleDeveloper, PermissionSessionsInputSend) {
-		t.Fatal("developer should be allowed to send Actor input")
+func TestSessionSendPermissionRequiresWritableRole(t *testing.T) {
+	for _, permission := range []Permission{PermissionSessionsSend, PermissionSessionsInterrupt, PermissionSessionsResume, PermissionSessionsClose} {
+		if !RoleAllows(RoleDeveloper, permission) || RoleAllows(RoleViewer, permission) {
+			t.Fatalf("Session mutation %s must require a writable role", permission)
+		}
+		if normalized, ok := ParseAPIKeyGrant(string(permission)); !ok || normalized != permission {
+			t.Fatalf("Session mutation grant = %v", normalized)
+		}
 	}
-	if RoleAllows(RoleViewer, PermissionSessionsInputSend) {
-		t.Fatal("viewer should not be allowed to send Actor input")
+}
+
+func TestSessionRecoveryRequiresPrivilegedRoleAndExplicitScopedKeyGrant(t *testing.T) {
+	scope := Scope{ProjectID: "project", EnvironmentID: "environment"}
+	for _, role := range []Role{RoleOwner, RoleAdmin, RoleDeveloper, RoleViewer} {
+		key := Actor{Kind: ActorKindAPIKey, Role: role, ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID}
+		if key.HasPermission(PermissionSessionsRecover, scope) {
+			t.Fatalf("%s key recovered without an explicit grant", role)
+		}
+		key.Permissions = []Permission{PermissionSessionsRecover}
+		want := role == RoleOwner || role == RoleAdmin
+		if got := key.HasPermission(PermissionSessionsRecover, scope); got != want {
+			t.Fatalf("recovery role %s = %v, want %v", role, got, want)
+		}
+		if key.HasPermission(PermissionSessionsRecover, Scope{ProjectID: scope.ProjectID, EnvironmentID: "foreign"}) {
+			t.Fatalf("%s key recovered in another environment", role)
+		}
 	}
-	normalized, ok := ParseAPIKeyGrant(string(PermissionSessionsInputSend))
-	if !ok || normalized != PermissionSessionsInputSend {
-		t.Fatalf("normalized Actor input permission = %v", normalized)
+	if permission, ok := ParseAPIKeyGrant(string(PermissionSessionsRecover)); !ok || permission != PermissionSessionsRecover {
+		t.Fatal("recovery must be an explicit grant")
 	}
 }
 

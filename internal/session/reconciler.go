@@ -86,7 +86,7 @@ func (r *Reconciler) ReconcileInput(
 	ctx context.Context,
 	environmentID uuid.UUID,
 	actorID uuid.UUID,
-	recordID uuid.UUID,
+	turnID uuid.UUID,
 ) (deferred bool, returnErr error) {
 	locator, err := db.New(r.db).GetActor(ctx, db.GetActorParams{
 		EnvironmentID: pgvalue.UUID(environmentID), ID: pgvalue.UUID(actorID),
@@ -139,22 +139,22 @@ func (r *Reconciler) ReconcileInput(
 			return false, ErrAuthority
 		}
 	}
-	record, err := q.GetActorInputRecordByIDForUpdate(ctx, db.GetActorInputRecordByIDForUpdateParams{
-		EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ID: pgvalue.UUID(recordID),
+	turn, err := q.GetSessionTurnByIDForUpdate(ctx, db.GetSessionTurnByIDForUpdateParams{
+		EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ID: pgvalue.UUID(turnID),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, tx.Commit(ctx)
 	}
-	if err != nil || !record.ID.Valid || uuid.UUID(record.ID.Bytes) != recordID {
+	if err != nil || !turn.ID.Valid || uuid.UUID(turn.ID.Bytes) != turnID {
 		return false, ErrAuthority
 	}
 	wait, err := q.GetPendingActorInputRunWait(ctx, db.GetPendingActorInputRunWaitParams{
 		EnvironmentID: actor.EnvironmentID, SessionID: actor.ID,
 		RunID: currentRun.ID, AttemptNumber: currentRun.CurrentAttemptNumber,
-		AfterInputSequence: pgtype.Int8{Int64: record.Sequence - 1, Valid: true},
+		AfterInputSequence: pgtype.Int8{Int64: turn.Sequence - 1, Valid: true},
 	})
 	if err == nil {
-		if _, err := CompleteWait(ctx, q, wait, record); err != nil {
+		if _, err := CompleteWait(ctx, q, wait, turn); err != nil {
 			return false, err
 		}
 	} else if !errors.Is(err, pgx.ErrNoRows) {
@@ -210,7 +210,7 @@ func (r *Reconciler) ReconcileTimeouts(ctx context.Context, limit int32) (int, e
 			_ = tx.Rollback(context.Background())
 			return resolved, err
 		}
-		if !actor.CurrentRunID.Valid || actor.CurrentRunID != candidate.RunID {
+		if actor.DispatchHoldID.Valid || !actor.CurrentRunID.Valid || actor.CurrentRunID != candidate.RunID {
 			_ = tx.Rollback(context.Background())
 			continue
 		}

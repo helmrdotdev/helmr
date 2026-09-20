@@ -11,82 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const advanceActorTurnCursor = `-- name: AdvanceActorTurnCursor :one
-UPDATE sessions
-   SET committed_input_sequence = $1,
-       revision = revision + 1,
-       updated_at = $2
- WHERE environment_id = $3
-   AND id = $4
-   AND workspace_id = $5
-   AND current_run_id = $6
-   AND run_generation = $7
-   AND status IN ('open', 'closing')
-   AND committed_input_sequence = $8
-   AND $1 = $8 + 1
-   AND $1 < next_input_sequence
-RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, manual_run_cancelled, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
-`
-
-type AdvanceActorTurnCursorParams struct {
-	TargetInputSequence   int64              `json:"target_input_sequence"`
-	CommittedAt           pgtype.Timestamptz `json:"committed_at"`
-	EnvironmentID         pgtype.UUID        `json:"environment_id"`
-	SessionID             pgtype.UUID        `json:"session_id"`
-	WorkspaceID           pgtype.UUID        `json:"workspace_id"`
-	RunID                 pgtype.UUID        `json:"run_id"`
-	ExpectedRunGeneration int64              `json:"expected_run_generation"`
-	ExpectedInputSequence int64              `json:"expected_input_sequence"`
-}
-
-func (q *Queries) AdvanceActorTurnCursor(ctx context.Context, arg AdvanceActorTurnCursorParams) (Session, error) {
-	row := q.db.QueryRow(ctx, advanceActorTurnCursor,
-		arg.TargetInputSequence,
-		arg.CommittedAt,
-		arg.EnvironmentID,
-		arg.SessionID,
-		arg.WorkspaceID,
-		arg.RunID,
-		arg.ExpectedRunGeneration,
-		arg.ExpectedInputSequence,
-	)
-	var i Session
-	err := row.Scan(
-		&i.ID,
-		&i.EnvironmentID,
-		&i.ActorDeclaredID,
-		&i.DeploymentDefinitionID,
-		&i.WorkspaceID,
-		&i.Key,
-		&i.CurrentRunID,
-		&i.RunGeneration,
-		&i.Revision,
-		&i.ManualRunCancelled,
-		&i.Failure,
-		&i.FailureRunID,
-		&i.NextInputSequence,
-		&i.CommittedInputSequence,
-		&i.NextOutputSequence,
-		&i.RunQueueName,
-		&i.RunConcurrencyKey,
-		&i.RunQueueConcurrencyLimit,
-		&i.RunPriority,
-		&i.RunQueueTtlMs,
-		&i.RunMaxActiveDurationMs,
-		&i.RunRetryPolicy,
-		&i.RunMetadata,
-		&i.RunTags,
-		&i.Status,
-		&i.CloseSequence,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.ClosedAt,
-		&i.CancelledAt,
-		&i.FailedAt,
-	)
-	return i, err
-}
-
 const advanceActorTurnWorkspaceLeaseFrontier = `-- name: AdvanceActorTurnWorkspaceLeaseFrontier :one
 UPDATE workspace_leases
    SET base_workspace_version_id = $1,
@@ -258,7 +182,6 @@ UPDATE workspace_versions
           AND run_checkpoints.run_id = $8
           AND run_checkpoints.attempt_number = $9
           AND run_checkpoints.workspace_id = workspace_versions.workspace_id
-          AND run_checkpoints.private_workspace_version_id = workspace_versions.id
           AND run_checkpoints.actor_speculative_input_sequence IS NOT NULL
           AND run_checkpoints.status = 'invalid'
           AND run_checkpoints.invalidation_reason_code = 'actor_turn_committed'

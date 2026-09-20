@@ -32,9 +32,6 @@ const (
 	operationSecretRevoke       operation = "secret.revoke"
 	operationRunMetadata        operation = "run.metadata"
 	operationActorStart         operation = "actor.start"
-	operationActorInputSend     operation = "session.input.send"
-	operationActorOutputAppend  operation = "session.output.append"
-	operationActorClose         operation = "session.close"
 	operationTaskStart          operation = "task.start"
 	operationTaskChildInvoke    operation = "task.child.invoke"
 	operationTokenCreate        operation = "token.create"
@@ -77,8 +74,6 @@ type Result struct {
 
 type ActorStartFingerprint struct {
 	Key                   *string
-	InputPresent          bool
-	Input                 json.RawMessage
 	WorkspaceAddress      json.RawMessage
 	ManagedQueueName      string
 	ManagedConcurrencyKey *string
@@ -294,89 +289,6 @@ func NewRunMetadataRequest(
 	}}, nil
 }
 
-func NewActorInputSendRequest(environmentID uuid.UUID, actorID uuid.UUID, key string, inputJSON []byte) (Request, error) {
-	if environmentID == uuid.Nil() {
-		return nil, errors.New("idempotency environment is required")
-	}
-	if actorID == uuid.Nil() {
-		return nil, errors.New("actor ID is required")
-	}
-	canonicalInput, err := jsoncanon.Transform(inputJSON)
-	if err != nil {
-		return nil, fmt.Errorf("canonicalize actor input: %w", err)
-	}
-	input := bytes.Clone(canonicalInput)
-	return sealedRequest{value: request{
-		environmentID: environmentID,
-		operation:     operationActorInputSend,
-		scope:         bytes.Clone(actorID[:]),
-		key:           key,
-		fingerprint: func() ([sha256.Size]byte, error) {
-			return operationFingerprint(operationActorInputSend, input), nil
-		},
-	}}, nil
-}
-
-func NewActorOutputAppendRequest(
-	environmentID uuid.UUID,
-	actorID uuid.UUID,
-	key string,
-	dataJSON []byte,
-	contentType string,
-) (Request, error) {
-	if environmentID == uuid.Nil() {
-		return nil, errors.New("idempotency environment is required")
-	}
-	if actorID == uuid.Nil() {
-		return nil, errors.New("actor ID is required")
-	}
-	canonicalData, err := jsoncanon.Transform(dataJSON)
-	if err != nil {
-		return nil, fmt.Errorf("canonicalize actor output: %w", err)
-	}
-	fields, err := json.Marshal(struct {
-		Data        json.RawMessage `json:"data"`
-		ContentType string          `json:"contentType"`
-	}{
-		Data:        canonicalData,
-		ContentType: contentType,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("encode actor output fingerprint: %w", err)
-	}
-	canonical, err := jsoncanon.Transform(fields)
-	if err != nil {
-		return nil, fmt.Errorf("canonicalize actor output fingerprint: %w", err)
-	}
-	return sealedRequest{value: request{
-		environmentID: environmentID,
-		operation:     operationActorOutputAppend,
-		scope:         bytes.Clone(actorID[:]),
-		key:           key,
-		fingerprint: func() ([sha256.Size]byte, error) {
-			return operationFingerprint(operationActorOutputAppend, canonical), nil
-		},
-	}}, nil
-}
-
-func NewActorCloseRequest(environmentID uuid.UUID, actorID uuid.UUID, key string) (Request, error) {
-	if environmentID == uuid.Nil() {
-		return nil, errors.New("idempotency environment is required")
-	}
-	if actorID == uuid.Nil() {
-		return nil, errors.New("actor ID is required")
-	}
-	return sealedRequest{value: request{
-		environmentID: environmentID,
-		operation:     operationActorClose,
-		scope:         bytes.Clone(actorID[:]),
-		key:           key,
-		fingerprint: func() ([sha256.Size]byte, error) {
-			return operationFingerprint(operationActorClose, nil), nil
-		},
-	}}, nil
-}
-
 func NewRuntimeTokenCreateRequest(
 	environmentID uuid.UUID,
 	runID uuid.UUID,
@@ -510,18 +422,9 @@ func NewActorStartRequest(
 			return nil, fmt.Errorf("canonicalize managed run retry policy: %w", err)
 		}
 	}
-	var initialInput json.RawMessage
-	if input.InputPresent {
-		initialInput, err = jsoncanon.Transform(input.Input)
-		if err != nil {
-			return nil, fmt.Errorf("canonicalize initial actor input: %w", err)
-		}
-	}
 	fields, err := json.Marshal(struct {
 		ActorDeclaredID       string          `json:"actorDeclaredId"`
 		Key                   *string         `json:"key"`
-		InputPresent          bool            `json:"inputPresent"`
-		Input                 json.RawMessage `json:"input"`
 		WorkspaceAddress      json.RawMessage `json:"workspaceAddress"`
 		ManagedQueueName      string          `json:"managedQueueName"`
 		ManagedConcurrencyKey *string         `json:"managedConcurrencyKey"`
@@ -532,7 +435,6 @@ func NewActorStartRequest(
 		ManagedRunTags        []string        `json:"managedRunTags"`
 	}{
 		ActorDeclaredID: actorDeclaredID, Key: input.Key,
-		InputPresent: input.InputPresent, Input: initialInput,
 		WorkspaceAddress: workspace,
 		ManagedQueueName: input.ManagedQueueName, ManagedConcurrencyKey: input.ManagedConcurrencyKey,
 		ManagedPriority: input.ManagedPriority, ManagedQueuedTTLMS: input.ManagedQueuedTTLMS,
@@ -955,8 +857,8 @@ func (t *Transaction) Acquire(ctx context.Context, input Request) (Result, error
 
 func supportedOperation(value operation) bool {
 	switch value {
-	case operationDeploymentFinalize, operationSecretCreate, operationSecretRotate, operationSecretRevoke, operationRunMetadata,
-		operationActorStart, operationActorInputSend, operationActorOutputAppend, operationActorClose,
+	case operationTurnInterrupt, operationTurnOutput, operationDeploymentFinalize, operationSecretCreate, operationSecretRotate, operationSecretRevoke, operationRunMetadata,
+		operationActorStart, "session.send", "session.enqueue", "turn.message", "session.close", "session.resume", "session.recover", "session.output.write", "session.run.cancel",
 		operationTaskStart, operationTaskChildInvoke, operationTokenCreate, operationTokenComplete, operationTokenCancel,
 		operationWorkspaceCreate, operationWorkspaceExec, operationWorkspaceDelete:
 		return true

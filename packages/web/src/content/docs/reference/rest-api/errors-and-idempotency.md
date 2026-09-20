@@ -27,10 +27,10 @@ Resource diagnostics are separate from this HTTP error envelope. Schedule
 `last_failure.code` and Session `failure.code` are diagnostic strings, not closed
 lists. You can handle a known code specifically; keep a general fallback for new
 codes and display `message` without parsing it. They do not replace resource status,
-authorization, or retry rules. A cancelled Session retains the `cancelled` code.
+authorization, or retry rules.
 
 Write request bodies use `idempotency_key` where the endpoint supports stable
-retries, including Task/Actor starts, Session input/close, Workspace creation,
+retries, including Task/Actor starts, Session admission, messages and lifecycle operations, Workspace creation,
 exec/deletion, Secret changes, Token changes, and Deployment creation. SDK
 request objects use `idempotencyKey`.
 

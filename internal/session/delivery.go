@@ -121,7 +121,7 @@ func (w *DeliveryWorker) process(ctx context.Context, message db.ControlOutbox) 
 	if err != nil {
 		return w.deadLetter(ctx, message, err)
 	}
-	deferred, err := w.reconcile(ctx, payload.environmentID, payload.sessionID, payload.recordID)
+	deferred, err := w.reconcile(ctx, payload.environmentID, payload.sessionID, payload.turnID)
 	if err != nil {
 		return w.retry(ctx, message, err, outbox.RetryAfter(message.Attempts))
 	}
@@ -196,10 +196,10 @@ func (w *DeliveryWorker) deadLetter(ctx context.Context, message db.ControlOutbo
 type sessionInputReconcilePayload struct {
 	EnvironmentID string `json:"environmentId"`
 	SessionID     string `json:"sessionId"`
-	RecordID      string `json:"recordId"`
+	TurnID        string `json:"turnId"`
 	environmentID uuid.UUID
 	sessionID     uuid.UUID
-	recordID      uuid.UUID
+	turnID        uuid.UUID
 }
 
 type sessionCloseReconcilePayload struct {
@@ -230,8 +230,8 @@ func decodeSessionInputReconcilePayload(raw []byte) (sessionInputReconcilePayloa
 	if value.sessionID, err = ids.Parse(value.SessionID); err != nil {
 		return sessionInputReconcilePayload{}, errors.New("session input reconciliation sessionId is invalid")
 	}
-	if value.recordID, err = ids.Parse(value.RecordID); err != nil {
-		return sessionInputReconcilePayload{}, errors.New("session input reconciliation recordId is invalid")
+	if value.turnID, err = ids.Parse(value.TurnID); err != nil {
+		return sessionInputReconcilePayload{}, errors.New("session input reconciliation turnId is invalid")
 	}
 	return value, nil
 }

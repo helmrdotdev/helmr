@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -11,18 +12,21 @@ import (
 type actorCompletionKind string
 
 const (
-	actorCompletionSucceeded actorCompletionKind = "succeeded"
-	actorCompletionFailed    actorCompletionKind = "failed"
+	actorCompletionSucceeded   actorCompletionKind = "succeeded"
+	actorCompletionFailed      actorCompletionKind = "failed"
+	actorCompletionInterrupted actorCompletionKind = "interrupted"
 )
 
 type parsedActorCompletion struct {
-	lease                 parsedRunLeaseFence
-	kind                  actorCompletionKind
-	terminalInputSequence int64
-	errorObject           json.RawMessage
-	capture               *parsedTaskWorkspaceCapture
-	rollback              *parsedTaskWorkspaceRollback
-	fingerprint           string
+	lease         parsedRunLeaseFence
+	kind          actorCompletionKind
+	runGeneration int64
+	holdID        uuid.UUID
+	turnID        *uuid.UUID
+	errorObject   json.RawMessage
+	capture       *parsedTaskWorkspaceCapture
+	rollback      *parsedTaskWorkspaceRollback
+	fingerprint   string
 }
 
 func parseActorCompletionRequest(request workerapi.CompleteActorRequest) (parsedActorCompletion, error) {
@@ -30,12 +34,14 @@ func parseActorCompletionRequest(request workerapi.CompleteActorRequest) (parsed
 	if err != nil {
 		return parsedActorCompletion{}, err
 	}
-	if request.Outcome.TerminalInputSequence < 0 {
-		return parsedActorCompletion{}, errors.New("outcome.terminal_input_sequence must be non-negative")
+
+	if request.Outcome.RunGeneration <= 0 {
+		return parsedActorCompletion{}, errors.New("outcome.run_generation must be positive")
 	}
 	normalized := request
 	parsed := parsedActorCompletion{
-		lease: lease, terminalInputSequence: request.Outcome.TerminalInputSequence,
+		lease:         lease,
+		runGeneration: request.Outcome.RunGeneration,
 	}
 	variants := 0
 	if request.Outcome.Succeeded != nil {
@@ -49,6 +55,21 @@ func parseActorCompletionRequest(request workerapi.CompleteActorRequest) (parsed
 		parsed.errorObject, normalized.Outcome.Failed, err = normalizeTaskFailure("outcome.failed", request.Outcome.Failed)
 		if err != nil {
 			return parsedActorCompletion{}, err
+		}
+	}
+	if stopped := request.Outcome.Interrupted; stopped != nil {
+		variants++
+		parsed.kind = actorCompletionInterrupted
+		parsed.holdID, err = parseCanonicalUUID("outcome.interrupted.hold_id", stopped.HoldID)
+		if err != nil {
+			return parsedActorCompletion{}, err
+		}
+		if stopped.TurnID != nil {
+			id, err := parseCanonicalUUID("outcome.interrupted.turn_id", *stopped.TurnID)
+			if err != nil {
+				return parsedActorCompletion{}, err
+			}
+			parsed.turnID = &id
 		}
 	}
 	if variants != 1 {
@@ -77,8 +98,8 @@ func parseActorCompletionRequest(request workerapi.CompleteActorRequest) (parsed
 	if proofs != 1 {
 		return parsedActorCompletion{}, errors.New("workspace must contain exactly one proof")
 	}
-	if parsed.kind == actorCompletionSucceeded && parsed.capture == nil {
-		return parsedActorCompletion{}, errors.New("a successful actor requires a captured workspace")
+	if (parsed.kind == actorCompletionSucceeded || parsed.kind == actorCompletionInterrupted) && parsed.capture == nil {
+		return parsedActorCompletion{}, errors.New("a successful or cooperatively interrupted actor requires a captured workspace")
 	}
 	if parsed.kind == actorCompletionFailed && parsed.rollback == nil {
 		return parsedActorCompletion{}, errors.New("a failed actor requires a workspace rollback")

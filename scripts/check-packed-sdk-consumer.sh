@@ -44,7 +44,7 @@ import {
   type SandboxBuilder,
   type SandboxResourceBuilder,
   type SecretCreateRequest,
-  type SessionOutputWriter,
+  type RecordWriter,
   type SourceDirectory,
   type SourceFile,
   type StandardSchemaV1,
@@ -79,8 +79,8 @@ const resourceSandbox: SandboxResourceBuilder = stagedSandbox.image(
   image("packed-consumer").from("node:24-bookworm-slim"),
 )
 
-function outputHelper(writer: SessionOutputWriter): Promise<void> {
-  return writer.close()
+function outputHelper(writer: RecordWriter): Promise<void> {
+  return writer.pipe([{ type: "progress" }])
 }
 
 const secretRequest: SecretCreateRequest = { name: "TOKEN", value: "secret" }
@@ -100,7 +100,21 @@ const fixture = task(taskConfig)
 
 const fixtureSandbox = resourceSandbox.resources({ cpu: 1, memory: "1GiB" })
 fixtureSandbox satisfies Sandbox
-const fixtureActor: Actor = actor({ id: "packed-consumer-actor", run() {} })
+const fixtureActor = actor({
+  id: "packed-consumer-actor",
+  async run(session) {
+    const turn = await session.receive()
+    if (turn === null) return
+    await turn.onMessage(async ({ data }) => { await turn.output.write(data) })
+    await turn.output.pipe([turn.input])
+    await turn.complete(turn.input)
+  },
+})
+const untypedActor: Actor = actor({ id: "untyped", async run(session) {
+  const turn = await session.receive()
+  if (turn) await turn.complete()
+} })
+void untypedActor
 function actorStartResultHelper(value: ActorStartResult): string {
   return value.session.id + value.run.id
 }
@@ -151,6 +165,37 @@ if (
 ) {
   throw new Error("packed definition builders returned an invalid contract")
 }
+
+const sessionID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"
+const turnID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34"
+const sessionClient = new HelmrClient({
+  url: "https://example.invalid", apiKey: "packed-consumer",
+  fetch: async (input: URL | RequestInfo, init?: RequestInit) => {
+    const path = new URL(String(input)).pathname
+    if (path === `/v1/sessions/${sessionID}/enqueue`) {
+      const body = JSON.parse(String(init?.body))
+      if (body.data.issue !== "APP-42" || body.idempotency_key !== "queue-1") throw new Error("invalid enqueue envelope")
+      return Response.json({ id: sessionID, kind: "enqueued", turn_id: turnID })
+    }
+    if (path === `/v1/sessions/${sessionID}/turns/${turnID}/messages`) {
+      const body = JSON.parse(String(init?.body))
+      if (body.data.type !== "answer") throw new Error("invalid exact message envelope")
+      return Response.json({ id: sessionID, turn_id: turnID, message_id: turnID, status: "accepted" })
+    }
+    if (path === `/v1/sessions/${sessionID}/events`) {
+      return Response.json({ records: [], next_after: 0, has_more: false, retained_after: 0 })
+    }
+    throw new Error(`unexpected packed Session request: ${path}`)
+  },
+})
+const session = sessionClient.sessions.ref(sessionID)
+const queued = await session.enqueue({ issue: "APP-42" }, { idempotencyKey: "queue-1" })
+if (queued.id !== turnID) throw new Error("enqueue did not return the exact Turn reference")
+const message = await queued.send({ type: "answer", value: true })
+if (message.status !== "accepted") throw new Error("message receipt was not parsed")
+const page = await session.events.list({ after: 0, limit: 10 })
+if (page.nextAfter !== 0 || page.hasMore) throw new Error("event cursor was not parsed")
+
 EOF
 
 cat >"${consumer}/package.json" <<'EOF'

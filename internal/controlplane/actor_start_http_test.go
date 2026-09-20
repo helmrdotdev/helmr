@@ -34,14 +34,14 @@ func TestDecodeStartActorRequestIsClosedAndPresenceAware(t *testing.T) {
 	request := httptest.NewRequest(
 		http.MethodPost,
 		"/",
-		strings.NewReader(`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"input":null}`),
+		strings.NewReader(`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}}`),
 	)
 	decoded, err := decodeStartActorRequest(request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(decoded.Input) == 0 || string(decoded.Input) != "null" {
-		t.Fatalf("input = %s", decoded.Input)
+	if decoded.Workspace.ID == "" {
+		t.Fatal("workspace ID was lost")
 	}
 
 	for _, body := range []string{
@@ -106,7 +106,6 @@ func TestWriteActorStartErrorUsesStableCodes(t *testing.T) {
 		{err: errActorStartWorkspaceNotFound, status: http.StatusNotFound, code: "workspace_not_found"},
 		{err: errActorStartWorkspaceConflict, status: http.StatusConflict, code: "workspace_unavailable"},
 		{err: errActorStartSecretUnavailable, status: http.StatusConflict, code: "secret_unavailable"},
-		{err: errActorInputTooLarge, status: http.StatusRequestEntityTooLarge, code: "actor_input_too_large"},
 		{
 			err:    errors.Join(errActorStartInvalid, errors.New("bad duration")),
 			status: http.StatusBadRequest,
@@ -235,21 +234,5 @@ func TestActorStartBodyLimitReturnsStableCode(t *testing.T) {
 			!strings.Contains(recorder.Body.String(), `"code":"actor_start_request_too_large"`) {
 			t.Fatalf("chunked=%t status=%d body=%s", chunked, recorder.Code, recorder.Body.String())
 		}
-	}
-}
-
-func TestActorStartRejectsOversizeCanonicalInput(t *testing.T) {
-	workspaceID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"
-	body := `{"workspace":{"id":"` + workspaceID + `"},"input":"` +
-		strings.Repeat("a", maxActorInputBytes) + `"}`
-	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	route := chi.NewRouteContext()
-	route.URLParams.Add("actorDeclaredID", "operator.v1")
-	request = request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, route))
-	recorder := httptest.NewRecorder()
-	(&Server{}).startActorHTTP(recorder, request)
-	if recorder.Code != http.StatusRequestEntityTooLarge ||
-		!strings.Contains(recorder.Body.String(), `"code":"actor_input_too_large"`) {
-		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }

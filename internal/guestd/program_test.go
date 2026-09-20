@@ -533,8 +533,8 @@ func TestRelayProgramRoutesActorInputSendDecisionWithoutConsumingWaitAuthority(t
 	}()
 	correlationID := "00000000-0000-0000-0000-000000000111"
 	if err := frameio.WriteProtoFrame(controlWriter, &programv0.RunEvent{
-		Event: &programv0.RunEvent_SessionInputSendRequested{
-			SessionInputSendRequested: &programv0.SessionInputSendRequested{
+		Event: &programv0.RunEvent_SessionSubmitRequested{
+			SessionSubmitRequested: &programv0.SessionSubmitRequested{
 				CorrelationId: correlationID,
 				SessionId:     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
 				DataJson:      `{"message":"hello"}`,
@@ -547,7 +547,7 @@ func TestRelayProgramRoutesActorInputSendDecisionWithoutConsumingWaitAuthority(t
 	if err := frameio.ReadProtoFrame(host, &event); err != nil {
 		t.Fatal(err)
 	}
-	if event.GetSessionInputSendRequested().GetCorrelationId() != correlationID {
+	if event.GetSessionSubmitRequested().GetCorrelationId() != correlationID {
 		t.Fatalf("Session input send event = %#v", event.GetEvent())
 	}
 	decision := &programv0.ResumeDecision{
@@ -604,7 +604,7 @@ func TestRelayProgramRoutesActorInputSendDecisionWithoutConsumingWaitAuthority(t
 	}
 }
 
-func TestRelayProgramRoutesActorOutputAppendDecision(t *testing.T) {
+func TestRelayProgramDeliversStopWithOutputPendingAndRequiresConvergence(t *testing.T) {
 	blockedProcessInput, releaseProcess, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -626,7 +626,8 @@ func TestRelayProgramRoutesActorOutputAppendDecision(t *testing.T) {
 	}
 	defer programDecisionReader.Close()
 	defer programDecisionWriter.Close()
-	process := &programProcess{
+	execution := &programv0.SessionExecution{SessionId: "session", RunId: "run", AttemptNumber: 1, RunGeneration: 1}
+	process := &programProcess{execution: execution,
 		cmd:      cmd,
 		stdin:    programDecisionWriter,
 		control:  controlReader,
@@ -660,11 +661,10 @@ func TestRelayProgramRoutesActorOutputAppendDecision(t *testing.T) {
 	}()
 	correlationID := "00000000-0000-0000-0000-000000000112"
 	if err := frameio.WriteProtoFrame(controlWriter, &programv0.RunEvent{
-		Event: &programv0.RunEvent_ActorOutputAppendRequested{
-			ActorOutputAppendRequested: &programv0.ActorOutputAppendRequested{
+		Event: &programv0.RunEvent_TurnOutputWriteRequested{
+			TurnOutputWriteRequested: &programv0.TurnOutputWriteRequested{
 				CorrelationId: correlationID,
 				DataJson:      `{"message":"hello"}`,
-				ContentType:   "application/json",
 			},
 		},
 	}); err != nil {
@@ -674,8 +674,19 @@ func TestRelayProgramRoutesActorOutputAppendDecision(t *testing.T) {
 	if err := frameio.ReadProtoFrame(host, &event); err != nil {
 		t.Fatal(err)
 	}
-	if event.GetActorOutputAppendRequested().GetCorrelationId() != correlationID {
+	if event.GetTurnOutputWriteRequested().GetCorrelationId() != correlationID {
 		t.Fatalf("Actor output append event = %#v", event.GetEvent())
+	}
+	stop := &programv0.SessionStop{Execution: execution, HoldId: "hold", Reason: "interrupt_requested"}
+	if err := wire.WriteSessionStop(host, stop); err != nil {
+		t.Fatal(err)
+	}
+	var stopDecision programv0.ResumeDecision
+	if err := frameio.ReadProtoFrame(programDecisionReader, &stopDecision); err != nil {
+		t.Fatal(err)
+	}
+	if stopDecision.GetKind() != "session_stop" {
+		t.Fatalf("stop was not independently delivered: %v", &stopDecision)
 	}
 	decision := &programv0.ResumeDecision{
 		CorrelationId: correlationID,
@@ -689,14 +700,11 @@ func TestRelayProgramRoutesActorOutputAppendDecision(t *testing.T) {
 	if err := frameio.ReadProtoFrame(programDecisionReader, &staged); err != nil {
 		t.Fatal(err)
 	}
-	zero := int64(0)
 	if err := frameio.WriteProtoFrame(controlWriter, &programv0.RunEvent{
 		Event: &programv0.RunEvent_ActorOutcome{
 			ActorOutcome: &programv0.ActorOutcome{
-				TerminalInputSequence: &zero,
-				Outcome: &programv0.ActorOutcome_Succeeded{
-					Succeeded: &programv0.ActorSucceeded{},
-				},
+				RunGeneration: 1,
+				Outcome:       &programv0.ActorOutcome_Interrupted{Interrupted: &programv0.ActorInterrupted{HoldId: "hold"}},
 			},
 		},
 	}); err != nil {
@@ -1732,23 +1740,21 @@ func TestValidateTaskOutcomeRejectsMalformedClosedShapes(t *testing.T) {
 	}
 }
 
-func TestValidateActorOutcomeRequiresCursorAndClosedVariant(t *testing.T) {
-	zero := int64(0)
-	negative := int64(-1)
+func TestValidateActorOutcomeRequiresGenerationAndClosedVariant(t *testing.T) {
 	for _, outcome := range []*programv0.ActorOutcome{
 		nil,
 		{Outcome: &programv0.ActorOutcome_Succeeded{Succeeded: &programv0.ActorSucceeded{}}},
-		{TerminalInputSequence: &negative, Outcome: &programv0.ActorOutcome_Succeeded{Succeeded: &programv0.ActorSucceeded{}}},
-		{TerminalInputSequence: &zero},
-		{TerminalInputSequence: &zero, Outcome: &programv0.ActorOutcome_Failed{Failed: &programv0.ActorFailed{}}},
+		{RunGeneration: -1, Outcome: &programv0.ActorOutcome_Succeeded{Succeeded: &programv0.ActorSucceeded{}}},
+		{RunGeneration: 1},
+		{RunGeneration: 1, Outcome: &programv0.ActorOutcome_Failed{Failed: &programv0.ActorFailed{}}},
 	} {
 		if err := validateActorOutcome(outcome); err == nil {
 			t.Fatalf("validateActorOutcome(%v) error = nil", outcome)
 		}
 	}
 	if err := validateActorOutcome(&programv0.ActorOutcome{
-		TerminalInputSequence: &zero,
-		Outcome:               &programv0.ActorOutcome_Succeeded{Succeeded: &programv0.ActorSucceeded{}},
+		RunGeneration: 1,
+		Outcome:       &programv0.ActorOutcome_Succeeded{Succeeded: &programv0.ActorSucceeded{}},
 	}); err != nil {
 		t.Fatal(err)
 	}

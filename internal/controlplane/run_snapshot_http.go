@@ -18,6 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
@@ -111,6 +112,11 @@ func (s *Server) cancelRunHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, notFound(codedError{code: "run_not_found", message: "run not found"}))
 		return
 	}
+	var body api.CancelRunRequest
+	if err := decodeSessionCommand(r, &body); err != nil {
+		writeSessionRequestError(w, err)
+		return
+	}
 	projectUUID, projectErr := pgvalue.UUIDValue(projectID)
 	environmentUUID, environmentErr := pgvalue.UUIDValue(environmentID)
 	if projectErr != nil || environmentErr != nil || s.tx == nil {
@@ -122,9 +128,9 @@ func (s *Server) cancelRunHTTP(w http.ResponseWriter, r *http.Request) {
 		s.writeRunCancellationAuthorityError(w)
 		return
 	}
-	_, err = canceler.Cancel(r.Context(), run.CancellationRequest{
+	result, err := canceler.Cancel(r.Context(), run.CancellationRequest{
 		OrgID: scope.OrgID, ProjectID: projectUUID, EnvironmentID: environmentUUID,
-		RunID: runID,
+		RunID: runID, IdempotencyKey: body.IdempotencyKey,
 	})
 	if errors.Is(err, run.ErrCancellationNotFound) {
 		writeError(w, notFound(codedError{code: "run_not_found", message: "run not found"}))
@@ -136,8 +142,22 @@ func (s *Server) cancelRunHTTP(w http.ResponseWriter, r *http.Request) {
 		}))
 		return
 	}
+	var rejection *run.CancellationRejectionError
+	var collision idempotency.ConflictError
+	if errors.As(err, &rejection) {
+		writeError(w, conflict(codedError{code: rejection.Code, message: rejection.Code}))
+		return
+	}
+	if errors.As(err, &collision) {
+		writeError(w, conflict(codedError{code: "idempotency_conflict", message: "idempotency key conflicts with an earlier operation"}))
+		return
+	}
 	if err != nil {
 		s.writeRunCancellationAuthorityError(w)
+		return
+	}
+	if receipt := result.Actor; receipt != nil {
+		writeJSON(w, http.StatusAccepted, api.ActorRunCancellationReceipt{ID: receipt.ID.String(), RunID: receipt.RunID.String(), SessionID: receipt.SessionID.String(), HoldID: receipt.HoldID.String(), Status: receipt.Status})
 		return
 	}
 	row, err := s.db.GetRunSnapshot(r.Context(), db.GetRunSnapshotParams{

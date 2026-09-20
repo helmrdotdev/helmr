@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/frameio"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
@@ -16,6 +17,8 @@ import (
 )
 
 type resumedProgramAdmission struct {
+	execution            *programv0.SessionExecution
+	turnID               *string
 	runWaitID            string
 	checkpointID         string
 	resumeAttachID       string
@@ -93,6 +96,7 @@ func (r ProgramRunner) startResumedProgram(
 	var entrypoint *programv0.EntrypointIdentity
 	if err := runWithFreshAdmissionRenewal(ctx, state, func(operationCtx context.Context) error {
 		attach := &programv0.ResumeAttach{
+			Execution: resume.execution, TurnId: resume.turnID,
 			RunId: claim.Lease.RunID, AttemptNumber: uint32(claim.Lease.AttemptNumber),
 			RunLeaseId: claim.Lease.ID, RunWaitId: resume.runWaitID, CheckpointId: resume.checkpointID,
 			ResumeAttachId: resume.resumeAttachID, ResumeRequestVersion: resume.resumeRequestVersion,
@@ -150,7 +154,7 @@ func (r ProgramRunner) startResumedProgram(
 	keepSession = true
 	return freshProgram{
 		session: opened.Session, mount: opened.Mount, lease: lease, authority: currentAuthority,
-		entrypoint: entrypoint,
+		entrypoint: entrypoint, execution: resume.execution,
 	}, nil
 }
 
@@ -195,6 +199,18 @@ func validateResumedProgramClaim(
 				ResumeAttachID:       restore.ResumeAttachID,
 				ResumeRequestVersion: restore.ResumeRequestVersion,
 			}},
+		}
+		if admission.entrypointKind == "actor" {
+			admission.execution = &programv0.SessionExecution{SessionId: restore.SessionID, RunId: lease.RunID, AttemptNumber: uint32(lease.AttemptNumber), RunGeneration: restore.RunGeneration}
+			admission.turnID = restore.TurnID
+			if restore.TurnID != nil && ids.Validate(*restore.TurnID) != nil {
+				return resumedProgramAdmission{}, errors.New("actor restore Turn identity is invalid")
+			}
+			if err := validateSessionExecution(admission.execution, lease); err != nil {
+				return resumedProgramAdmission{}, err
+			}
+		} else if restore.SessionID != "" || restore.RunGeneration != 0 || restore.TurnID != nil {
+			return resumedProgramAdmission{}, errors.New("task restore has Actor execution scope")
 		}
 		if admission.runWaitID == "" ||
 			admission.checkpointID == "" ||

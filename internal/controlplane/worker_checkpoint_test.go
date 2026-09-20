@@ -112,33 +112,6 @@ func TestTokenWaitDecisionIncludesCancellationReason(t *testing.T) {
 	}
 }
 
-func TestDecideActorCheckpointFailureStopsAtRunExpiry(t *testing.T) {
-	failedAt := time.Date(2026, time.July, 23, 12, 0, 0, 0, time.UTC)
-	authority := runLeaseClaimAuthority{
-		run: db.Run{
-			MaxActiveDurationMs: 300_000,
-			RetryPolicy:         []byte(`{"enabled":true,"maxAttempts":3,"backoff":{"minMs":1,"maxMs":1,"factor":1,"jitter":"none"}}`),
-		},
-		attempt: db.RunAttempt{Number: 1},
-		actor:   db.Session{Status: "open"},
-	}
-	decision, err := decideActorCheckpointFailure(authority, failedAt, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !decision.retry || decision.reason != "checkpoint_failed" {
-		t.Fatalf("retry decision = %+v", decision)
-	}
-
-	decision, err = decideActorCheckpointFailure(authority, failedAt, authority.run.MaxActiveDurationMs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if decision.retry || decision.reason != "max_active_duration_exceeded" {
-		t.Fatalf("Run duration decision = %+v", decision)
-	}
-}
-
 func validCheckpointReadyRequest() workerapi.CheckpointReadyRequest {
 	runID := uuid.NewV7().String()
 	waitID := uuid.NewV7().String()

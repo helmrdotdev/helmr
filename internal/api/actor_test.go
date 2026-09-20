@@ -36,35 +36,25 @@ func TestValidateActorKeyRejectsMutationProneValues(t *testing.T) {
 	}
 }
 
-func TestValidateSendSessionInputRequestAcceptsJSONNull(t *testing.T) {
-	if err := ValidateSendSessionInputRequest(SendSessionInputRequest{
-		Input: json.RawMessage(`null`),
+func TestValidateSessionDataRequestAcceptsJSONNull(t *testing.T) {
+	if err := ValidateSessionDataRequest(SessionDataRequest{
+		Data: json.RawMessage(`null`),
 	}); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestValidateSendSessionInputRequestRejectsAmbiguousIJSON(t *testing.T) {
+func TestValidateSessionDataRequestRejectsAmbiguousIJSON(t *testing.T) {
 	for _, input := range []json.RawMessage{
 		json.RawMessage(`{"value":1,"value":2}`),
 		json.RawMessage(`"\ud800"`),
 		json.RawMessage(`1e999`),
 	} {
-		if err := ValidateSendSessionInputRequest(SendSessionInputRequest{
-			Input: input,
+		if err := ValidateSessionDataRequest(SessionDataRequest{
+			Data: input,
 		}); err == nil {
-			t.Fatalf("ValidateSendSessionInputRequest(input=%s) succeeded", input)
+			t.Fatalf("ValidateSessionDataRequest(input=%s) succeeded", input)
 		}
-	}
-}
-
-func TestValidateStartActorRequestPreservesOptionalNullInput(t *testing.T) {
-	workspaceID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"
-	if err := ValidateStartActorRequest(StartActorRequest{
-		Workspace: WorkspaceIDTarget{ID: workspaceID},
-		Input:     json.RawMessage(`null`),
-	}); err != nil {
-		t.Fatal(err)
 	}
 }
 
@@ -150,24 +140,18 @@ func TestValidateStartActorRequestRejectsInvalidWorkspaceAndRetry(t *testing.T) 
 	}
 }
 
-func TestValidateCloseSessionRequestAcceptsPathAddressedCommand(t *testing.T) {
-	if err := ValidateCloseSessionRequest(CloseSessionRequest{IdempotencyKey: "close-1"}); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestValidateActorReadContractUsesClosedEnumsAndReferences(t *testing.T) {
 	for _, status := range []SessionStatus{
 		SessionStatusOpen,
 		SessionStatusClosed,
-		SessionStatusCancelled,
+		SessionStatusClosing,
 		SessionStatusFailed,
 	} {
 		if err := ValidateSessionStatus(string(status)); err != nil {
 			t.Fatalf("ValidateSessionStatus(%q): %v", status, err)
 		}
 	}
-	for _, status := range []string{"", "OPEN", "closing", "unknown"} {
+	for _, status := range []string{"", "OPEN", "unknown"} {
 		if err := ValidateSessionStatus(status); err == nil {
 			t.Fatalf("ValidateSessionStatus(%q) succeeded", status)
 		}

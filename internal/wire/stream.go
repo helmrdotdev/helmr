@@ -11,13 +11,14 @@ import (
 type StreamType string
 
 const (
+	StreamTypeSessionStop                StreamType = "session-stop"
 	StreamTypeRunImage                   StreamType = "run-image"
 	StreamTypeWorkspaceArtifact          StreamType = "workspace-artifact"
 	StreamTypeCheckpointPauseRequest     StreamType = "checkpoint-pause-request"
 	StreamTypeCheckpointPauseReady       StreamType = "checkpoint-pause-ready"
-	StreamTypeActorTurnCommitPause       StreamType = "actor-turn-commit-pause"
-	StreamTypeActorTurnCommitReady       StreamType = "actor-turn-commit-ready"
-	StreamTypeActorTurnCommitApplied     StreamType = "actor-turn-commit-applied"
+	StreamTypeTurnSettlePause            StreamType = "turn-settle-pause"
+	StreamTypeTurnSettleReady            StreamType = "turn-settle-ready"
+	StreamTypeTurnSettleApplied          StreamType = "turn-settle-applied"
 	StreamTypeResumeDecision             StreamType = "resume-decision"
 	StreamTypeWorkspaceMaterialize       StreamType = "workspace-materialize"
 	StreamTypeWorkspaceRuntimePrepare    StreamType = "workspace-runtime-prepare"

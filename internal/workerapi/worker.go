@@ -353,6 +353,11 @@ type CompleteActorRequest struct {
 }
 
 type CommitActorTurnRequest struct {
+	TurnID                 string                `json:"turn_id"`
+	RunGeneration          int64                 `json:"run_generation"`
+	Disposition            string                `json:"disposition"`
+	Result                 json.RawMessage       `json:"result,omitempty"`
+	Error                  json.RawMessage       `json:"error,omitempty"`
 	Lease                  RunLeaseFence         `json:"lease"`
 	CorrelationID          string                `json:"correlation_id"`
 	TargetInputSequence    int64                 `json:"target_input_sequence"`
@@ -362,6 +367,7 @@ type CommitActorTurnRequest struct {
 }
 
 type CommitActorTurnResponse struct {
+	EventID                string                `json:"event_id"`
 	Lease                  RunLeaseFence         `json:"lease"`
 	CorrelationID          string                `json:"correlation_id"`
 	CommittedInputSequence int64                 `json:"committed_input_sequence"`
@@ -369,18 +375,19 @@ type CommitActorTurnResponse struct {
 	Tree                   WorkspaceTreeIdentity `json:"tree"`
 }
 
-type SendActorInputRequest struct {
+type SubmitSessionDataRequest struct {
 	Lease          RunLeaseFence   `json:"lease"`
 	CorrelationID  string          `json:"correlation_id"`
 	SessionID      string          `json:"session_id"`
-	Input          json.RawMessage `json:"input"`
+	Data           json.RawMessage `json:"data"`
+	TurnID         *string         `json:"turn_id,omitempty"`
 	IdempotencyKey string          `json:"idempotency_key,omitempty"`
 }
 
-type SendActorInputResponse struct {
-	CorrelationID string                   `json:"correlation_id"`
-	Completed     *api.SessionInput        `json:"completed,omitempty"`
-	Failed        *RuntimeOperationFailure `json:"failed,omitempty"`
+type SubmitSessionDataResponse struct {
+	CorrelationID string                       `json:"correlation_id"`
+	Completed     *api.SessionAdmissionReceipt `json:"completed,omitempty"`
+	Failed        *RuntimeOperationFailure     `json:"failed,omitempty"`
 }
 
 type StartActorRequest struct {
@@ -388,8 +395,6 @@ type StartActorRequest struct {
 	CorrelationID   string                    `json:"correlation_id"`
 	ActorDeclaredID string                    `json:"actor_declared_id"`
 	Key             *string                   `json:"key,omitempty"`
-	InputPresent    bool                      `json:"input_present"`
-	Input           json.RawMessage           `json:"input,omitempty"`
 	IdempotencyKey  string                    `json:"idempotency_key,omitempty"`
 	Workspace       api.WorkspaceIDTarget     `json:"workspace"`
 	Run             *api.StartActorRunOptions `json:"run,omitempty"`
@@ -413,6 +418,40 @@ type SessionStatusResponse struct {
 	Failed        *RuntimeOperationFailure `json:"failed,omitempty"`
 }
 
+type TurnReferenceRequest struct {
+	SessionReferenceRequest
+	TurnID string `json:"turn_id"`
+}
+
+type SessionTurnResponse struct {
+	CorrelationID string                   `json:"correlation_id"`
+	Completed     *api.SessionTurn         `json:"completed,omitempty"`
+	Failed        *RuntimeOperationFailure `json:"failed,omitempty"`
+}
+
+type InterruptSessionTurnRequest struct {
+	TurnReferenceRequest
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+}
+
+type InterruptSessionTurnResponse struct {
+	CorrelationID string                    `json:"correlation_id"`
+	Completed     *api.TurnInterruptReceipt `json:"completed,omitempty"`
+	Failed        *RuntimeOperationFailure  `json:"failed,omitempty"`
+}
+
+type ResumeSessionRequest struct {
+	SessionReferenceRequest
+	HoldID         string `json:"hold_id"`
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+}
+
+type ResumeSessionResponse struct {
+	CorrelationID string                    `json:"correlation_id"`
+	Completed     *api.SessionResumeReceipt `json:"completed,omitempty"`
+	Failed        *RuntimeOperationFailure  `json:"failed,omitempty"`
+}
+
 type CloseSessionRequest struct {
 	SessionReferenceRequest
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
@@ -424,15 +463,15 @@ type CloseSessionResponse struct {
 	Failed        *RuntimeOperationFailure `json:"failed,omitempty"`
 }
 
-type ReadSessionOutputPageRequest struct {
+type ReadSessionEventsRequest struct {
 	SessionReferenceRequest
 	After *int64 `json:"after,omitempty"`
 	Limit int32  `json:"limit"`
 }
 
-type ReadSessionOutputPageResponse struct {
+type ReadSessionEventsResponse struct {
 	CorrelationID string                   `json:"correlation_id"`
-	Completed     *api.SessionOutputPage   `json:"completed,omitempty"`
+	Completed     *api.SessionEventPage    `json:"completed,omitempty"`
 	Failed        *RuntimeOperationFailure `json:"failed,omitempty"`
 }
 
@@ -509,6 +548,8 @@ type DeleteWorkspaceResponse struct {
 }
 
 type InvokeChildTaskRequest struct {
+	TurnID                        *string         `json:"turn_id"`
+	RunGeneration                 *int64          `json:"run_generation"`
 	Lease                         RunLeaseFence   `json:"lease"`
 	CorrelationID                 string          `json:"correlation_id"`
 	RunWaitID                     string          `json:"run_wait_id,omitempty"`
@@ -534,17 +575,19 @@ type InvokeChildTaskResponse struct {
 	Failed        *RuntimeOperationFailure `json:"failed,omitempty"`
 }
 
-type AppendActorOutputRequest struct {
-	Lease          RunLeaseFence   `json:"lease"`
-	CorrelationID  string          `json:"correlation_id"`
-	Data           json.RawMessage `json:"data"`
-	ContentType    string          `json:"content_type"`
-	IdempotencyKey string          `json:"idempotency_key,omitempty"`
+type WriteTurnOutputRequest struct {
+	MessageDeliveryID *string         `json:"message_delivery_id,omitempty"`
+	TurnID            string          `json:"turn_id"`
+	RunGeneration     int64           `json:"run_generation"`
+	Lease             RunLeaseFence   `json:"lease"`
+	CorrelationID     string          `json:"correlation_id"`
+	Data              json.RawMessage `json:"data"`
+	IdempotencyKey    string          `json:"idempotency_key,omitempty"`
 }
 
-type AppendActorOutputResponse struct {
+type WriteOutputResponse struct {
 	CorrelationID string                   `json:"correlation_id"`
-	Completed     *api.SessionOutput       `json:"completed,omitempty"`
+	Completed     *api.SessionEvent        `json:"completed,omitempty"`
 	Failed        *RuntimeOperationFailure `json:"failed,omitempty"`
 }
 
@@ -555,12 +598,20 @@ type RuntimeOperationFailure struct {
 }
 
 type ActorOutcome struct {
-	TerminalInputSequence int64           `json:"terminal_input_sequence"`
-	Succeeded             *ActorSucceeded `json:"succeeded,omitempty"`
-	Failed                *TaskFailure    `json:"failed,omitempty"`
+	RunGeneration int64             `json:"run_generation"`
+	Succeeded     *ActorSucceeded   `json:"succeeded,omitempty"`
+	Failed        *TaskFailure      `json:"failed,omitempty"`
+	Interrupted   *ActorInterrupted `json:"interrupted,omitempty"`
 }
 
 type ActorSucceeded struct{}
+
+// Interrupted records cooperative application convergence. The worker must still
+// supply the existing guest quiescence and captured Workspace finalization proof.
+type ActorInterrupted struct {
+	HoldID string  `json:"hold_id"`
+	TurnID *string `json:"turn_id"`
+}
 
 type TaskOutcome struct {
 	Succeeded      *TaskSucceeded `json:"succeeded,omitempty"`
@@ -703,6 +754,9 @@ type RunLeaseFresh struct {
 }
 
 type RunLeaseRestore struct {
+	SessionID            string                       `json:"session_id,omitempty"`
+	RunGeneration        int64                        `json:"run_generation,omitempty"`
+	TurnID               *string                      `json:"turn_id,omitempty"`
 	RunWaitID            string                       `json:"run_wait_id"`
 	CheckpointID         string                       `json:"checkpoint_id"`
 	ResumeAttachID       string                       `json:"resume_attach_id"`
@@ -879,6 +933,8 @@ const (
 )
 
 type CreateRunWaitRequest struct {
+	TurnID                        *string         `json:"turn_id"`
+	RunGeneration                 *int64          `json:"run_generation"`
 	Lease                         RunLeaseFence   `json:"lease"`
 	CorrelationID                 string          `json:"correlation_id"`
 	RunWaitID                     string          `json:"run_wait_id"`
@@ -1060,4 +1116,70 @@ type CheckpointFailedRequest struct {
 	RunWaitID      string        `json:"run_wait_id"`
 	CheckpointID   string        `json:"checkpoint_id"`
 	Error          string        `json:"error"`
+}
+
+// Session output is scoped to the current Actor execution outside a Turn.
+
+// Session output and Turn output have distinct commands; an omitted Turn ID can
+// never silently convert an old Turn writer into a Session writer.
+type WriteSessionOutputRequest struct {
+	Lease          RunLeaseFence   `json:"lease"`
+	CorrelationID  string          `json:"correlation_id"`
+	RunGeneration  int64           `json:"run_generation"`
+	Data           json.RawMessage `json:"data"`
+	IdempotencyKey string          `json:"idempotency_key,omitempty"`
+}
+
+type TurnExecutionRequest struct {
+	Lease         RunLeaseFence `json:"lease"`
+	CorrelationID string        `json:"correlation_id"`
+	TurnID        string        `json:"turn_id"`
+	RunGeneration int64         `json:"run_generation"`
+}
+
+type ClaimTurnMessageRequest struct {
+	TurnExecutionRequest
+	DeliveryID string `json:"delivery_id"`
+}
+
+type TurnMessageDelivery struct {
+	MessageID  string          `json:"message_id"`
+	TurnID     string          `json:"turn_id"`
+	DeliveryID string          `json:"delivery_id"`
+	Sequence   int64           `json:"sequence"`
+	Data       json.RawMessage `json:"data"`
+}
+
+type ClaimTurnMessageResponse struct {
+	CorrelationID string                   `json:"correlation_id"`
+	Delivery      *TurnMessageDelivery     `json:"delivery"`
+	Failed        *RuntimeOperationFailure `json:"failed,omitempty"`
+}
+
+type CompleteTurnMessageRequest struct {
+	TurnExecutionRequest
+	MessageID  string          `json:"message_id"`
+	DeliveryID string          `json:"delivery_id"`
+	Status     string          `json:"status"`
+	Code       string          `json:"code,omitempty"`
+	Details    json.RawMessage `json:"details,omitempty"`
+}
+
+type TurnCommandResponse struct {
+	CorrelationID string                   `json:"correlation_id"`
+	Accepted      bool                     `json:"accepted"`
+	Failed        *RuntimeOperationFailure `json:"failed,omitempty"`
+}
+
+type SessionControlRequest struct {
+	Lease         RunLeaseFence `json:"lease"`
+	CorrelationID string        `json:"correlation_id"`
+	RunGeneration int64         `json:"run_generation"`
+}
+
+type SessionControlResponse struct {
+	CorrelationID string  `json:"correlation_id"`
+	HoldID        *string `json:"hold_id"`
+	TurnID        *string `json:"turn_id"`
+	Reason        *string `json:"reason"`
 }

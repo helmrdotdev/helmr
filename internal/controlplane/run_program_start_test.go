@@ -71,6 +71,8 @@ func TestEncodeProgramStartActorAndScheduleCause(t *testing.T) {
 	key := "repository-17"
 	actor := db.Session{
 		ID:                     actorID,
+		CurrentRunID:           run.ID,
+		RunGeneration:          3,
 		ActorDeclaredID:        "reviewer",
 		DeploymentDefinitionID: run.DeploymentDefinitionID,
 		WorkspaceID:            run.WorkspaceID,
@@ -86,6 +88,7 @@ func TestEncodeProgramStartActorAndScheduleCause(t *testing.T) {
 	}
 	if message.GetActor().GetSessionId() != pgvalue.UUIDString(actorID) ||
 		message.GetActor().GetKey() != key ||
+		message.GetActor().GetRunGeneration() != 3 ||
 		message.GetActor().GetStartInputSequence() != 5 ||
 		message.GetActor().GetInputHighWatermark() != 7 ||
 		message.GetCause().GetContinuation() == nil {

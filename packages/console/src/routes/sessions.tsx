@@ -20,7 +20,7 @@ const FILTERS: SelectOption<SessionFilter>[] = [
   { value: "all", label: "All sessions" },
   { value: "open", label: "Open" },
   { value: "closed", label: "Closed" },
-  { value: "cancelled", label: "Cancelled" },
+  { value: "closing", label: "Closing" },
   { value: "failed", label: "Failed" },
 ];
 

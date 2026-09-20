@@ -18,8 +18,11 @@ const (
 	PermissionRunsManage          Permission = "runs.manage"
 	PermissionSessionsRead        Permission = "sessions.read"
 	PermissionActorsStart         Permission = "actors.start"
-	PermissionSessionsInputSend   Permission = "sessions.input.send"
+	PermissionSessionsSend        Permission = "sessions.send"
 	PermissionSessionsClose       Permission = "sessions.close"
+	PermissionSessionsInterrupt   Permission = "sessions.interrupt"
+	PermissionSessionsResume      Permission = "sessions.resume"
+	PermissionSessionsRecover     Permission = "sessions.recover"
 	PermissionTokensCreate        Permission = "tokens.create"
 	PermissionTokensRead          Permission = "tokens.read"
 	PermissionTokensComplete      Permission = "tokens.complete"
@@ -45,8 +48,11 @@ func AllPermissions() []Permission {
 		PermissionRunsManage,
 		PermissionSessionsRead,
 		PermissionActorsStart,
-		PermissionSessionsInputSend,
+		PermissionSessionsSend,
 		PermissionSessionsClose,
+		PermissionSessionsInterrupt,
+		PermissionSessionsResume,
+		PermissionSessionsRecover,
 		PermissionTokensCreate,
 		PermissionTokensRead,
 		PermissionTokensComplete,
@@ -95,8 +101,10 @@ func RoleAllows(role Role, permission Permission) bool {
 			PermissionRunsManage,
 			PermissionSessionsRead,
 			PermissionActorsStart,
-			PermissionSessionsInputSend,
+			PermissionSessionsSend,
 			PermissionSessionsClose,
+			PermissionSessionsInterrupt,
+			PermissionSessionsResume,
 			PermissionTokensCreate,
 			PermissionTokensRead,
 			PermissionTokensComplete,
@@ -133,8 +141,11 @@ func ParseAPIKeyGrant(value string) (Permission, bool) {
 		PermissionRunsManage,
 		PermissionSessionsRead,
 		PermissionActorsStart,
-		PermissionSessionsInputSend,
+		PermissionSessionsSend,
 		PermissionSessionsClose,
+		PermissionSessionsInterrupt,
+		PermissionSessionsResume,
+		PermissionSessionsRecover,
 		PermissionTokensCreate,
 		PermissionTokensRead,
 		PermissionTokensComplete,

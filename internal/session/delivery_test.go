@@ -17,13 +17,13 @@ import (
 func TestSessionInputDeliveryReconcilesIntent(t *testing.T) {
 	environmentID := uuid.NewV7()
 	sessionID := uuid.NewV7()
-	recordID := uuid.NewV7()
-	message := sessionInputReconcileMessage(environmentID, sessionID, recordID)
+	turnID := uuid.NewV7()
+	message := sessionInputReconcileMessage(environmentID, sessionID, turnID)
 	store := &sessionDeliveryStore{messages: []db.ControlOutbox{message}}
-	var gotEnvironmentID, gotSessionID, gotRecordID uuid.UUID
+	var gotEnvironmentID, gotSessionID, gotTurnID uuid.UUID
 	worker, err := NewDeliveryWorker(nil, store,
-		func(_ context.Context, environmentID, sessionID, recordID uuid.UUID) (bool, error) {
-			gotEnvironmentID, gotSessionID, gotRecordID = environmentID, sessionID, recordID
+		func(_ context.Context, environmentID, sessionID, turnID uuid.UUID) (bool, error) {
+			gotEnvironmentID, gotSessionID, gotTurnID = environmentID, sessionID, turnID
 			return false, nil
 		},
 		func(context.Context, uuid.UUID, uuid.UUID) (bool, error) { return false, nil },
@@ -39,8 +39,8 @@ func TestSessionInputDeliveryReconcilesIntent(t *testing.T) {
 		store.claim.Topics[1] != "session.close.reconcile" {
 		t.Fatalf("claim = %+v", store.claim)
 	}
-	if gotEnvironmentID != environmentID || gotSessionID != sessionID || gotRecordID != recordID {
-		t.Fatalf("reconcile IDs = %s/%s/%s", gotEnvironmentID, gotSessionID, gotRecordID)
+	if gotEnvironmentID != environmentID || gotSessionID != sessionID || gotTurnID != turnID {
+		t.Fatalf("reconcile IDs = %s/%s/%s", gotEnvironmentID, gotSessionID, gotTurnID)
 	}
 	if store.delivered != message.Attempts || store.retried || store.deadLettered {
 		t.Fatalf("delivery state = delivered %d retried %v dead-lettered %v", store.delivered, store.retried, store.deadLettered)
@@ -127,7 +127,7 @@ func TestSessionInputDeliveryRetriesDeferredClose(t *testing.T) {
 
 func TestSessionInputDeliveryDeadLettersInvalidIntent(t *testing.T) {
 	message := sessionInputReconcileMessage(uuid.NewV7(), uuid.NewV7(), uuid.NewV7())
-	message.Payload = []byte(`{"environmentId":"invalid","sessionId":"invalid","recordId":"invalid","extra":true}`)
+	message.Payload = []byte(`{"environmentId":"invalid","sessionId":"invalid","turnId":"invalid","extra":true}`)
 	store := &sessionDeliveryStore{messages: []db.ControlOutbox{message}}
 	var logs bytes.Buffer
 	worker, err := NewDeliveryWorker(
@@ -185,7 +185,7 @@ func TestSessionInputDeliveryDeadLettersUnsupportedTopic(t *testing.T) {
 
 func TestSessionInputDeliveryDoesNotWarnWhenDeadLetterClaimIsLost(t *testing.T) {
 	message := sessionInputReconcileMessage(uuid.NewV7(), uuid.NewV7(), uuid.NewV7())
-	message.Payload = []byte(`{"environmentId":"invalid","sessionId":"invalid","recordId":"invalid"}`)
+	message.Payload = []byte(`{"environmentId":"invalid","sessionId":"invalid","turnId":"invalid"}`)
 	store := &sessionDeliveryStore{messages: []db.ControlOutbox{message}, deadLetterErr: pgx.ErrNoRows}
 	var logs bytes.Buffer
 	worker, err := NewDeliveryWorker(
@@ -208,11 +208,11 @@ func TestSessionInputDeliveryDoesNotWarnWhenDeadLetterClaimIsLost(t *testing.T) 
 	}
 }
 
-func sessionInputReconcileMessage(environmentID, sessionID, recordID uuid.UUID) db.ControlOutbox {
+func sessionInputReconcileMessage(environmentID, sessionID, turnID uuid.UUID) db.ControlOutbox {
 	return db.ControlOutbox{
 		ID:      pgvalue.UUID(uuid.NewV7()),
 		Topic:   "session.input.reconcile",
-		Payload: []byte(`{"environmentId":"` + environmentID.String() + `","sessionId":"` + sessionID.String() + `","recordId":"` + recordID.String() + `"}`),
+		Payload: []byte(`{"environmentId":"` + environmentID.String() + `","sessionId":"` + sessionID.String() + `","turnId":"` + turnID.String() + `"}`),
 		Status:  "claimed", Attempts: 1, ClaimedBy: pgvalue.Text("worker"),
 		ClaimExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
 	}

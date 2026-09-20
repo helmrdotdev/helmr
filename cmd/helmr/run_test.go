@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -130,8 +131,12 @@ func TestRunCancelCommandCancelsRun(t *testing.T) {
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/cancel" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
-		if r.ContentLength > 0 {
-			t.Fatalf("cancel request body length = %d", r.ContentLength)
+		var request api.CancelRunRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if request.IdempotencyKey == "" {
+			t.Fatal("missing operation identity")
 		}
 		_ = json.NewEncoder(w).Encode(api.RunSnapshotResponse{
 			ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", Status: "cancelled",
@@ -156,5 +161,63 @@ func TestRunCancelCommandCancelsRun(t *testing.T) {
 	}, "\n")
 	if out.String() != expected {
 		t.Fatalf("output = %q, want %q", out.String(), expected)
+	}
+}
+
+func TestRunCancelActorReceipt(t *testing.T) {
+	for _, jsonOutput := range []bool{false, true} {
+		t.Run(fmt.Sprint(jsonOutput), func(t *testing.T) {
+			receipt := api.ActorRunCancellationReceipt{ID: "operation-1", RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", SessionID: testSessionID, HoldID: "hold-1", Status: "accepted"}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost || r.URL.Path != "/v1/runs/"+receipt.RunID+"/cancel" {
+					t.Errorf("request = %s %s", r.Method, r.URL.Path)
+				}
+				var request api.CancelRunRequest
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Error(err)
+				}
+				if request.IdempotencyKey != "cancel:1" {
+					t.Errorf("key = %q", request.IdempotencyKey)
+				}
+				w.WriteHeader(http.StatusAccepted)
+				_ = json.NewEncoder(w).Encode(receipt)
+			}))
+			defer server.Close()
+			t.Setenv(helmrAPIURLEnv, server.URL)
+			t.Setenv(helmrAPIKeyEnv, "test-key")
+			var out bytes.Buffer
+			cmd := newRootCommand()
+			cmd.SetOut(&out)
+			cmd.SetErr(&bytes.Buffer{})
+			args := []string{"run", "cancel", receipt.RunID, "--idempotency-key", "cancel:1"}
+			if jsonOutput {
+				args = append(args, "--json")
+			}
+			cmd.SetArgs(args)
+			if err := cmd.Execute(); err != nil {
+				t.Fatal(err)
+			}
+			if jsonOutput {
+				var got api.ActorRunCancellationReceipt
+				if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+					t.Fatal(err)
+				}
+				if got != receipt {
+					t.Fatalf("receipt = %+v", got)
+				}
+				var shape map[string]any
+				if err := json.Unmarshal(out.Bytes(), &shape); err != nil {
+					t.Fatal(err)
+				}
+				if len(shape) != 5 {
+					t.Fatalf("receipt shape = %v", shape)
+				}
+			} else {
+				want := "id: operation-1\nrun_id: " + receipt.RunID + "\nsession_id: " + testSessionID + "\nhold_id: hold-1\nstatus: accepted\n"
+				if out.String() != want {
+					t.Fatalf("output = %q, want %q", out.String(), want)
+				}
+			}
+		})
 	}
 }

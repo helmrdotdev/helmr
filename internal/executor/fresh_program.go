@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -67,6 +68,8 @@ type freshProgramEventSink interface {
 }
 
 type freshProgram struct {
+	protocol         *programProtocol
+	execution        *programv0.SessionExecution
 	session          vm.Session
 	mount            workerapi.WorkspaceMount
 	lease            workerapi.RunLeaseAssignment
@@ -207,7 +210,7 @@ func (program *freshProgram) awaitTaskCompletion(
 	ctx context.Context,
 	events freshProgramEventSink,
 	wait func(context.Context, *programv0.RunWaitRequested) error,
-	sendActorInput func(context.Context, *programv0.SessionInputSendRequested) error,
+	sendActorInput func(context.Context, *programv0.SessionSubmitRequested) error,
 	createToken func(context.Context, *programv0.TokenCreateRequested) error,
 	invokeChildTask func(context.Context, *programv0.TaskChildInvokeRequested) error,
 	resourceRuntime ...func(context.Context, *programv0.RunEvent) error,
@@ -225,12 +228,7 @@ func (program *freshProgram) awaitTaskCompletion(
 	var outcome *programv0.TaskOutcome
 	for {
 		var event programv0.RunEvent
-		err := readProtoFrameBoundedContext(
-			ctx,
-			program.session,
-			maxFreshOutcomeFrameBytes,
-			&event,
-		)
+		err := program.readEvent(ctx, &event)
 		if err != nil {
 			return nil, nil, fmt.Errorf("read task completion event: %w", err)
 		}
@@ -264,7 +262,7 @@ func (program *freshProgram) awaitTaskCompletion(
 				ctx,
 				events,
 				program.lease,
-				program.session.Stream(),
+				program.controlStream(),
 				value.MetadataUpdated,
 			); err != nil {
 				return nil, nil, fmt.Errorf("update task run metadata: %w", err)
@@ -277,7 +275,7 @@ func (program *freshProgram) awaitTaskCompletion(
 				ctx,
 				events,
 				program.lease,
-				program.session.Stream(),
+				program.controlStream(),
 				program.observedEventSeq,
 				value.StructuredLogRequested,
 			); err != nil {
@@ -301,14 +299,14 @@ func (program *freshProgram) awaitTaskCompletion(
 			if err := wait(ctx, value.RunWaitRequested); err != nil {
 				return nil, nil, err
 			}
-		case *programv0.RunEvent_SessionInputSendRequested:
+		case *programv0.RunEvent_SessionSubmitRequested:
 			if outcome != nil {
 				return nil, nil, errors.New("program emitted an actor input send after task outcome")
 			}
 			if sendActorInput == nil {
 				return nil, nil, errors.New("fresh program actor input send support is required")
 			}
-			if err := sendActorInput(ctx, value.SessionInputSendRequested); err != nil {
+			if err := sendActorInput(ctx, value.SessionSubmitRequested); err != nil {
 				return nil, nil, err
 			}
 		case *programv0.RunEvent_TokenCreateRequested:
@@ -331,10 +329,18 @@ func (program *freshProgram) awaitTaskCompletion(
 			if err := invokeChildTask(ctx, value.TaskChildInvokeRequested); err != nil {
 				return nil, nil, err
 			}
-		case *programv0.RunEvent_ActorStartRequested,
+		case *programv0.RunEvent_TurnReadyRequested,
+			*programv0.RunEvent_TurnSettlementBeginRequested,
+			*programv0.RunEvent_TurnMessageClaimRequested,
+			*programv0.RunEvent_TurnMessageCompleteRequested,
+			*programv0.RunEvent_SessionOutputWriteRequested,
+			*programv0.RunEvent_SessionTurnRetrieveRequested,
+			*programv0.RunEvent_SessionTurnInterruptRequested,
+			*programv0.RunEvent_SessionResumeRequested,
+			*programv0.RunEvent_ActorStartRequested,
 			*programv0.RunEvent_SessionStatusRequested,
 			*programv0.RunEvent_SessionCloseRequested,
-			*programv0.RunEvent_SessionOutputPageRequested,
+			*programv0.RunEvent_SessionEventsRequested,
 			*programv0.RunEvent_WorkspaceCreateRequested,
 			*programv0.RunEvent_WorkspaceRetrieveRequested,
 			*programv0.RunEvent_WorkspaceExecRequested,
@@ -370,9 +376,9 @@ func (program *freshProgram) awaitActorCompletion(
 	ctx context.Context,
 	events freshProgramEventSink,
 	wait func(context.Context, *programv0.RunWaitRequested) error,
-	turnCommit func(context.Context, *programv0.ActorTurnCommitRequested) error,
-	sendActorInput func(context.Context, *programv0.SessionInputSendRequested) error,
-	appendActorOutput func(context.Context, *programv0.ActorOutputAppendRequested) error,
+	turnCommit func(context.Context, *programv0.TurnSettleRequested) error,
+	sendActorInput func(context.Context, *programv0.SessionSubmitRequested) error,
+	appendActorOutput func(context.Context, *programv0.TurnOutputWriteRequested) error,
 	createToken func(context.Context, *programv0.TokenCreateRequested) error,
 	invokeChildTask func(context.Context, *programv0.TaskChildInvokeRequested) error,
 	resourceRuntime ...func(context.Context, *programv0.RunEvent) error,
@@ -390,7 +396,7 @@ func (program *freshProgram) awaitActorCompletion(
 	var outcome *programv0.ActorOutcome
 	for {
 		var event programv0.RunEvent
-		if err := readProtoFrameBoundedContext(ctx, program.session, maxFreshOutcomeFrameBytes, &event); err != nil {
+		if err := program.readEvent(ctx, &event); err != nil {
 			return nil, nil, fmt.Errorf("read actor completion event: %w", err)
 		}
 		program.observedEventSeq++
@@ -411,7 +417,7 @@ func (program *freshProgram) awaitActorCompletion(
 				ctx,
 				events,
 				program.lease,
-				program.session.Stream(),
+				program.controlStream(),
 				value.MetadataUpdated,
 			); err != nil {
 				return nil, nil, fmt.Errorf("update actor run metadata: %w", err)
@@ -424,13 +430,16 @@ func (program *freshProgram) awaitActorCompletion(
 				ctx,
 				events,
 				program.lease,
-				program.session.Stream(),
+				program.controlStream(),
 				program.observedEventSeq,
 				value.StructuredLogRequested,
 			); err != nil {
 				return nil, nil, fmt.Errorf("append actor structured log: %w", err)
 			}
 		case *programv0.RunEvent_ActorOutcome:
+			if program.execution == nil || value.ActorOutcome.GetRunGeneration() != program.execution.GetRunGeneration() {
+				return nil, nil, errors.New("actor outcome generation mismatch")
+			}
 			if outcome != nil {
 				return nil, nil, errors.New("program emitted more than one actor outcome")
 			}
@@ -448,34 +457,34 @@ func (program *freshProgram) awaitActorCompletion(
 			if err := wait(ctx, value.RunWaitRequested); err != nil {
 				return nil, nil, err
 			}
-		case *programv0.RunEvent_ActorTurnCommitRequested:
+		case *programv0.RunEvent_TurnSettleRequested:
 			if outcome != nil {
 				return nil, nil, errors.New("program emitted a turn commit after actor outcome")
 			}
 			if turnCommit == nil {
 				return nil, nil, errors.New("fresh actor turn commit support is required")
 			}
-			if err := turnCommit(ctx, value.ActorTurnCommitRequested); err != nil {
+			if err := turnCommit(ctx, value.TurnSettleRequested); err != nil {
 				return nil, nil, err
 			}
-		case *programv0.RunEvent_SessionInputSendRequested:
+		case *programv0.RunEvent_SessionSubmitRequested:
 			if outcome != nil {
 				return nil, nil, errors.New("program emitted an actor input send after actor outcome")
 			}
 			if sendActorInput == nil {
 				return nil, nil, errors.New("fresh program actor input send support is required")
 			}
-			if err := sendActorInput(ctx, value.SessionInputSendRequested); err != nil {
+			if err := sendActorInput(ctx, value.SessionSubmitRequested); err != nil {
 				return nil, nil, err
 			}
-		case *programv0.RunEvent_ActorOutputAppendRequested:
+		case *programv0.RunEvent_TurnOutputWriteRequested:
 			if outcome != nil {
 				return nil, nil, errors.New("program emitted an actor output append after actor outcome")
 			}
 			if appendActorOutput == nil {
 				return nil, nil, errors.New("fresh program actor output append support is required")
 			}
-			if err := appendActorOutput(ctx, value.ActorOutputAppendRequested); err != nil {
+			if err := appendActorOutput(ctx, value.TurnOutputWriteRequested); err != nil {
 				return nil, nil, err
 			}
 		case *programv0.RunEvent_TokenCreateRequested:
@@ -498,10 +507,18 @@ func (program *freshProgram) awaitActorCompletion(
 			if err := invokeChildTask(ctx, value.TaskChildInvokeRequested); err != nil {
 				return nil, nil, err
 			}
-		case *programv0.RunEvent_ActorStartRequested,
+		case *programv0.RunEvent_TurnReadyRequested,
+			*programv0.RunEvent_TurnSettlementBeginRequested,
+			*programv0.RunEvent_TurnMessageClaimRequested,
+			*programv0.RunEvent_TurnMessageCompleteRequested,
+			*programv0.RunEvent_SessionOutputWriteRequested,
+			*programv0.RunEvent_SessionTurnRetrieveRequested,
+			*programv0.RunEvent_SessionTurnInterruptRequested,
+			*programv0.RunEvent_SessionResumeRequested,
+			*programv0.RunEvent_ActorStartRequested,
 			*programv0.RunEvent_SessionStatusRequested,
 			*programv0.RunEvent_SessionCloseRequested,
-			*programv0.RunEvent_SessionOutputPageRequested,
+			*programv0.RunEvent_SessionEventsRequested,
 			*programv0.RunEvent_WorkspaceCreateRequested,
 			*programv0.RunEvent_WorkspaceRetrieveRequested,
 			*programv0.RunEvent_WorkspaceExecRequested,
@@ -534,13 +551,17 @@ func validateFreshActorOutcome(outcome *programv0.ActorOutcome) error {
 	if outcome == nil {
 		return errors.New("actor outcome is required")
 	}
-	if outcome.TerminalInputSequence == nil || outcome.GetTerminalInputSequence() < 0 {
-		return errors.New("actor terminal input sequence is negative")
+	if outcome.GetRunGeneration() <= 0 {
+		return errors.New("actor run generation is invalid")
 	}
 	switch value := outcome.GetOutcome().(type) {
 	case *programv0.ActorOutcome_Succeeded:
 		if value.Succeeded == nil {
 			return errors.New("actor succeeded outcome is empty")
+		}
+	case *programv0.ActorOutcome_Interrupted:
+		if value.Interrupted == nil || strings.TrimSpace(value.Interrupted.GetHoldId()) == "" || (value.Interrupted.TurnId != nil && value.Interrupted.GetTurnId() == "") {
+			return errors.New("actor interrupted scope is invalid")
 		}
 	case *programv0.ActorOutcome_Failed:
 		if value.Failed == nil {
@@ -656,6 +677,17 @@ func (r ProgramRunner) startNewProgram(
 	admission, err := validateNewProgramClaim(claim)
 	if err != nil {
 		return freshProgram{}, err
+	}
+	var start programv0.ProgramStart
+	if err := frameio.ReadProtoFrame(bytes.NewReader(admission.programStart), &start); err != nil {
+		return freshProgram{}, fmt.Errorf("read program start scope: %w", err)
+	}
+	var execution *programv0.SessionExecution
+	if actor := start.GetActor(); actor != nil {
+		execution = &programv0.SessionExecution{SessionId: actor.GetSessionId(), RunId: start.GetRunId(), AttemptNumber: start.GetAttemptNumber(), RunGeneration: actor.GetRunGeneration()}
+		if err := validateSessionExecution(execution, claim.Lease); err != nil {
+			return freshProgram{}, err
+		}
 	}
 	admissionCtx, cancelAdmission := context.WithDeadline(
 		ctx,
@@ -923,6 +955,7 @@ func (r ProgramRunner) startNewProgram(
 	retainAuthority = true
 	return freshProgram{
 		session:          opened.Session,
+		execution:        execution,
 		mount:            opened.Mount,
 		lease:            state.lease,
 		authority:        state.authority,

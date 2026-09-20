@@ -291,6 +291,7 @@ type ActorStart struct {
 	Key                *string                `protobuf:"bytes,2,opt,name=key,proto3,oneof" json:"key,omitempty"`
 	StartInputSequence int64                  `protobuf:"varint,3,opt,name=start_input_sequence,json=startInputSequence,proto3" json:"start_input_sequence,omitempty"`
 	InputHighWatermark int64                  `protobuf:"varint,4,opt,name=input_high_watermark,json=inputHighWatermark,proto3" json:"input_high_watermark,omitempty"`
+	RunGeneration      int64                  `protobuf:"varint,5,opt,name=run_generation,json=runGeneration,proto3" json:"run_generation,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -349,6 +350,13 @@ func (x *ActorStart) GetStartInputSequence() int64 {
 func (x *ActorStart) GetInputHighWatermark() int64 {
 	if x != nil {
 		return x.InputHighWatermark
+	}
+	return 0
+}
+
+func (x *ActorStart) GetRunGeneration() int64 {
+	if x != nil {
+		return x.RunGeneration
 	}
 	return 0
 }
@@ -1620,20 +1628,28 @@ type RunEvent struct {
 	//	*RunEvent_TaskOutcome
 	//	*RunEvent_ProgramQuiesced
 	//	*RunEvent_ActorOutcome
-	//	*RunEvent_ActorTurnCommitRequested
-	//	*RunEvent_ActorOutputAppendRequested
-	//	*RunEvent_SessionInputSendRequested
+	//	*RunEvent_TurnSettleRequested
+	//	*RunEvent_TurnOutputWriteRequested
+	//	*RunEvent_SessionSubmitRequested
 	//	*RunEvent_StructuredLogRequested
 	//	*RunEvent_TaskChildInvokeRequested
 	//	*RunEvent_ActorStartRequested
 	//	*RunEvent_SessionStatusRequested
 	//	*RunEvent_SessionCloseRequested
-	//	*RunEvent_SessionOutputPageRequested
+	//	*RunEvent_SessionEventsRequested
 	//	*RunEvent_WorkspaceCreateRequested
 	//	*RunEvent_WorkspaceRetrieveRequested
 	//	*RunEvent_WorkspaceExecRequested
 	//	*RunEvent_WorkspaceDeleteRequested
 	//	*RunEvent_ProgramProcessStartFailed
+	//	*RunEvent_SessionOutputWriteRequested
+	//	*RunEvent_TurnReadyRequested
+	//	*RunEvent_TurnMessageClaimRequested
+	//	*RunEvent_TurnMessageCompleteRequested
+	//	*RunEvent_TurnSettlementBeginRequested
+	//	*RunEvent_SessionTurnRetrieveRequested
+	//	*RunEvent_SessionTurnInterruptRequested
+	//	*RunEvent_SessionResumeRequested
 	Event         isRunEvent_Event `protobuf_oneof:"event"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1775,28 +1791,28 @@ func (x *RunEvent) GetActorOutcome() *ActorOutcome {
 	return nil
 }
 
-func (x *RunEvent) GetActorTurnCommitRequested() *ActorTurnCommitRequested {
+func (x *RunEvent) GetTurnSettleRequested() *TurnSettleRequested {
 	if x != nil {
-		if x, ok := x.Event.(*RunEvent_ActorTurnCommitRequested); ok {
-			return x.ActorTurnCommitRequested
+		if x, ok := x.Event.(*RunEvent_TurnSettleRequested); ok {
+			return x.TurnSettleRequested
 		}
 	}
 	return nil
 }
 
-func (x *RunEvent) GetActorOutputAppendRequested() *ActorOutputAppendRequested {
+func (x *RunEvent) GetTurnOutputWriteRequested() *TurnOutputWriteRequested {
 	if x != nil {
-		if x, ok := x.Event.(*RunEvent_ActorOutputAppendRequested); ok {
-			return x.ActorOutputAppendRequested
+		if x, ok := x.Event.(*RunEvent_TurnOutputWriteRequested); ok {
+			return x.TurnOutputWriteRequested
 		}
 	}
 	return nil
 }
 
-func (x *RunEvent) GetSessionInputSendRequested() *SessionInputSendRequested {
+func (x *RunEvent) GetSessionSubmitRequested() *SessionSubmitRequested {
 	if x != nil {
-		if x, ok := x.Event.(*RunEvent_SessionInputSendRequested); ok {
-			return x.SessionInputSendRequested
+		if x, ok := x.Event.(*RunEvent_SessionSubmitRequested); ok {
+			return x.SessionSubmitRequested
 		}
 	}
 	return nil
@@ -1847,10 +1863,10 @@ func (x *RunEvent) GetSessionCloseRequested() *SessionCloseRequested {
 	return nil
 }
 
-func (x *RunEvent) GetSessionOutputPageRequested() *SessionOutputPageRequested {
+func (x *RunEvent) GetSessionEventsRequested() *SessionEventsRequested {
 	if x != nil {
-		if x, ok := x.Event.(*RunEvent_SessionOutputPageRequested); ok {
-			return x.SessionOutputPageRequested
+		if x, ok := x.Event.(*RunEvent_SessionEventsRequested); ok {
+			return x.SessionEventsRequested
 		}
 	}
 	return nil
@@ -1896,6 +1912,78 @@ func (x *RunEvent) GetProgramProcessStartFailed() *ProgramProcessStartFailed {
 	if x != nil {
 		if x, ok := x.Event.(*RunEvent_ProgramProcessStartFailed); ok {
 			return x.ProgramProcessStartFailed
+		}
+	}
+	return nil
+}
+
+func (x *RunEvent) GetSessionOutputWriteRequested() *SessionOutputWriteRequested {
+	if x != nil {
+		if x, ok := x.Event.(*RunEvent_SessionOutputWriteRequested); ok {
+			return x.SessionOutputWriteRequested
+		}
+	}
+	return nil
+}
+
+func (x *RunEvent) GetTurnReadyRequested() *TurnReadyRequested {
+	if x != nil {
+		if x, ok := x.Event.(*RunEvent_TurnReadyRequested); ok {
+			return x.TurnReadyRequested
+		}
+	}
+	return nil
+}
+
+func (x *RunEvent) GetTurnMessageClaimRequested() *TurnMessageClaimRequested {
+	if x != nil {
+		if x, ok := x.Event.(*RunEvent_TurnMessageClaimRequested); ok {
+			return x.TurnMessageClaimRequested
+		}
+	}
+	return nil
+}
+
+func (x *RunEvent) GetTurnMessageCompleteRequested() *TurnMessageCompleteRequested {
+	if x != nil {
+		if x, ok := x.Event.(*RunEvent_TurnMessageCompleteRequested); ok {
+			return x.TurnMessageCompleteRequested
+		}
+	}
+	return nil
+}
+
+func (x *RunEvent) GetTurnSettlementBeginRequested() *TurnSettlementBeginRequested {
+	if x != nil {
+		if x, ok := x.Event.(*RunEvent_TurnSettlementBeginRequested); ok {
+			return x.TurnSettlementBeginRequested
+		}
+	}
+	return nil
+}
+
+func (x *RunEvent) GetSessionTurnRetrieveRequested() *SessionTurnRetrieveRequested {
+	if x != nil {
+		if x, ok := x.Event.(*RunEvent_SessionTurnRetrieveRequested); ok {
+			return x.SessionTurnRetrieveRequested
+		}
+	}
+	return nil
+}
+
+func (x *RunEvent) GetSessionTurnInterruptRequested() *SessionTurnInterruptRequested {
+	if x != nil {
+		if x, ok := x.Event.(*RunEvent_SessionTurnInterruptRequested); ok {
+			return x.SessionTurnInterruptRequested
+		}
+	}
+	return nil
+}
+
+func (x *RunEvent) GetSessionResumeRequested() *SessionResumeRequested {
+	if x != nil {
+		if x, ok := x.Event.(*RunEvent_SessionResumeRequested); ok {
+			return x.SessionResumeRequested
 		}
 	}
 	return nil
@@ -1949,16 +2037,16 @@ type RunEvent_ActorOutcome struct {
 	ActorOutcome *ActorOutcome `protobuf:"bytes,15,opt,name=actor_outcome,json=actorOutcome,proto3,oneof"`
 }
 
-type RunEvent_ActorTurnCommitRequested struct {
-	ActorTurnCommitRequested *ActorTurnCommitRequested `protobuf:"bytes,16,opt,name=actor_turn_commit_requested,json=actorTurnCommitRequested,proto3,oneof"`
+type RunEvent_TurnSettleRequested struct {
+	TurnSettleRequested *TurnSettleRequested `protobuf:"bytes,16,opt,name=turn_settle_requested,json=turnSettleRequested,proto3,oneof"`
 }
 
-type RunEvent_ActorOutputAppendRequested struct {
-	ActorOutputAppendRequested *ActorOutputAppendRequested `protobuf:"bytes,17,opt,name=actor_output_append_requested,json=actorOutputAppendRequested,proto3,oneof"`
+type RunEvent_TurnOutputWriteRequested struct {
+	TurnOutputWriteRequested *TurnOutputWriteRequested `protobuf:"bytes,17,opt,name=turn_output_write_requested,json=turnOutputWriteRequested,proto3,oneof"`
 }
 
-type RunEvent_SessionInputSendRequested struct {
-	SessionInputSendRequested *SessionInputSendRequested `protobuf:"bytes,18,opt,name=session_input_send_requested,json=sessionInputSendRequested,proto3,oneof"`
+type RunEvent_SessionSubmitRequested struct {
+	SessionSubmitRequested *SessionSubmitRequested `protobuf:"bytes,18,opt,name=session_submit_requested,json=sessionSubmitRequested,proto3,oneof"`
 }
 
 type RunEvent_StructuredLogRequested struct {
@@ -1981,8 +2069,8 @@ type RunEvent_SessionCloseRequested struct {
 	SessionCloseRequested *SessionCloseRequested `protobuf:"bytes,23,opt,name=session_close_requested,json=sessionCloseRequested,proto3,oneof"`
 }
 
-type RunEvent_SessionOutputPageRequested struct {
-	SessionOutputPageRequested *SessionOutputPageRequested `protobuf:"bytes,24,opt,name=session_output_page_requested,json=sessionOutputPageRequested,proto3,oneof"`
+type RunEvent_SessionEventsRequested struct {
+	SessionEventsRequested *SessionEventsRequested `protobuf:"bytes,24,opt,name=session_events_requested,json=sessionEventsRequested,proto3,oneof"`
 }
 
 type RunEvent_WorkspaceCreateRequested struct {
@@ -2003,6 +2091,38 @@ type RunEvent_WorkspaceDeleteRequested struct {
 
 type RunEvent_ProgramProcessStartFailed struct {
 	ProgramProcessStartFailed *ProgramProcessStartFailed `protobuf:"bytes,32,opt,name=program_process_start_failed,json=programProcessStartFailed,proto3,oneof"`
+}
+
+type RunEvent_SessionOutputWriteRequested struct {
+	SessionOutputWriteRequested *SessionOutputWriteRequested `protobuf:"bytes,33,opt,name=session_output_write_requested,json=sessionOutputWriteRequested,proto3,oneof"`
+}
+
+type RunEvent_TurnReadyRequested struct {
+	TurnReadyRequested *TurnReadyRequested `protobuf:"bytes,34,opt,name=turn_ready_requested,json=turnReadyRequested,proto3,oneof"`
+}
+
+type RunEvent_TurnMessageClaimRequested struct {
+	TurnMessageClaimRequested *TurnMessageClaimRequested `protobuf:"bytes,35,opt,name=turn_message_claim_requested,json=turnMessageClaimRequested,proto3,oneof"`
+}
+
+type RunEvent_TurnMessageCompleteRequested struct {
+	TurnMessageCompleteRequested *TurnMessageCompleteRequested `protobuf:"bytes,36,opt,name=turn_message_complete_requested,json=turnMessageCompleteRequested,proto3,oneof"`
+}
+
+type RunEvent_TurnSettlementBeginRequested struct {
+	TurnSettlementBeginRequested *TurnSettlementBeginRequested `protobuf:"bytes,37,opt,name=turn_settlement_begin_requested,json=turnSettlementBeginRequested,proto3,oneof"`
+}
+
+type RunEvent_SessionTurnRetrieveRequested struct {
+	SessionTurnRetrieveRequested *SessionTurnRetrieveRequested `protobuf:"bytes,38,opt,name=session_turn_retrieve_requested,json=sessionTurnRetrieveRequested,proto3,oneof"`
+}
+
+type RunEvent_SessionTurnInterruptRequested struct {
+	SessionTurnInterruptRequested *SessionTurnInterruptRequested `protobuf:"bytes,39,opt,name=session_turn_interrupt_requested,json=sessionTurnInterruptRequested,proto3,oneof"`
+}
+
+type RunEvent_SessionResumeRequested struct {
+	SessionResumeRequested *SessionResumeRequested `protobuf:"bytes,40,opt,name=session_resume_requested,json=sessionResumeRequested,proto3,oneof"`
 }
 
 func (*RunEvent_StdoutChunk) isRunEvent_Event() {}
@@ -2027,11 +2147,11 @@ func (*RunEvent_ProgramQuiesced) isRunEvent_Event() {}
 
 func (*RunEvent_ActorOutcome) isRunEvent_Event() {}
 
-func (*RunEvent_ActorTurnCommitRequested) isRunEvent_Event() {}
+func (*RunEvent_TurnSettleRequested) isRunEvent_Event() {}
 
-func (*RunEvent_ActorOutputAppendRequested) isRunEvent_Event() {}
+func (*RunEvent_TurnOutputWriteRequested) isRunEvent_Event() {}
 
-func (*RunEvent_SessionInputSendRequested) isRunEvent_Event() {}
+func (*RunEvent_SessionSubmitRequested) isRunEvent_Event() {}
 
 func (*RunEvent_StructuredLogRequested) isRunEvent_Event() {}
 
@@ -2043,7 +2163,7 @@ func (*RunEvent_SessionStatusRequested) isRunEvent_Event() {}
 
 func (*RunEvent_SessionCloseRequested) isRunEvent_Event() {}
 
-func (*RunEvent_SessionOutputPageRequested) isRunEvent_Event() {}
+func (*RunEvent_SessionEventsRequested) isRunEvent_Event() {}
 
 func (*RunEvent_WorkspaceCreateRequested) isRunEvent_Event() {}
 
@@ -2054,6 +2174,22 @@ func (*RunEvent_WorkspaceExecRequested) isRunEvent_Event() {}
 func (*RunEvent_WorkspaceDeleteRequested) isRunEvent_Event() {}
 
 func (*RunEvent_ProgramProcessStartFailed) isRunEvent_Event() {}
+
+func (*RunEvent_SessionOutputWriteRequested) isRunEvent_Event() {}
+
+func (*RunEvent_TurnReadyRequested) isRunEvent_Event() {}
+
+func (*RunEvent_TurnMessageClaimRequested) isRunEvent_Event() {}
+
+func (*RunEvent_TurnMessageCompleteRequested) isRunEvent_Event() {}
+
+func (*RunEvent_TurnSettlementBeginRequested) isRunEvent_Event() {}
+
+func (*RunEvent_SessionTurnRetrieveRequested) isRunEvent_Event() {}
+
+func (*RunEvent_SessionTurnInterruptRequested) isRunEvent_Event() {}
+
+func (*RunEvent_SessionResumeRequested) isRunEvent_Event() {}
 
 type TaskOutcome struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -2302,12 +2438,13 @@ func (x *TaskPayloadInvalid) GetDetailsJson() string {
 }
 
 type ActorOutcome struct {
-	state                 protoimpl.MessageState `protogen:"open.v1"`
-	TerminalInputSequence *int64                 `protobuf:"varint,1,opt,name=terminal_input_sequence,json=terminalInputSequence,proto3,oneof" json:"terminal_input_sequence,omitempty"`
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RunGeneration int64                  `protobuf:"varint,1,opt,name=run_generation,json=runGeneration,proto3" json:"run_generation,omitempty"`
 	// Types that are valid to be assigned to Outcome:
 	//
 	//	*ActorOutcome_Succeeded
 	//	*ActorOutcome_Failed
+	//	*ActorOutcome_Interrupted
 	Outcome       isActorOutcome_Outcome `protobuf_oneof:"outcome"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2343,9 +2480,9 @@ func (*ActorOutcome) Descriptor() ([]byte, []int) {
 	return file_program_proto_rawDescGZIP(), []int{28}
 }
 
-func (x *ActorOutcome) GetTerminalInputSequence() int64 {
-	if x != nil && x.TerminalInputSequence != nil {
-		return *x.TerminalInputSequence
+func (x *ActorOutcome) GetRunGeneration() int64 {
+	if x != nil {
+		return x.RunGeneration
 	}
 	return 0
 }
@@ -2375,6 +2512,15 @@ func (x *ActorOutcome) GetFailed() *ActorFailed {
 	return nil
 }
 
+func (x *ActorOutcome) GetInterrupted() *ActorInterrupted {
+	if x != nil {
+		if x, ok := x.Outcome.(*ActorOutcome_Interrupted); ok {
+			return x.Interrupted
+		}
+	}
+	return nil
+}
+
 type isActorOutcome_Outcome interface {
 	isActorOutcome_Outcome()
 }
@@ -2387,9 +2533,15 @@ type ActorOutcome_Failed struct {
 	Failed *ActorFailed `protobuf:"bytes,3,opt,name=failed,proto3,oneof"`
 }
 
+type ActorOutcome_Interrupted struct {
+	Interrupted *ActorInterrupted `protobuf:"bytes,4,opt,name=interrupted,proto3,oneof"`
+}
+
 func (*ActorOutcome_Succeeded) isActorOutcome_Outcome() {}
 
 func (*ActorOutcome_Failed) isActorOutcome_Outcome() {}
+
+func (*ActorOutcome_Interrupted) isActorOutcome_Outcome() {}
 
 type ActorSucceeded struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -2479,28 +2631,30 @@ func (x *ActorFailed) GetDetailsJson() string {
 	return ""
 }
 
-type ActorTurnCommitRequested struct {
-	state               protoimpl.MessageState `protogen:"open.v1"`
-	CorrelationId       string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
-	TargetInputSequence int64                  `protobuf:"varint,2,opt,name=target_input_sequence,json=targetInputSequence,proto3" json:"target_input_sequence,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+type SessionExecution struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	RunId         string                 `protobuf:"bytes,2,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	AttemptNumber uint32                 `protobuf:"varint,3,opt,name=attempt_number,json=attemptNumber,proto3" json:"attempt_number,omitempty"`
+	RunGeneration int64                  `protobuf:"varint,4,opt,name=run_generation,json=runGeneration,proto3" json:"run_generation,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ActorTurnCommitRequested) Reset() {
-	*x = ActorTurnCommitRequested{}
+func (x *SessionExecution) Reset() {
+	*x = SessionExecution{}
 	mi := &file_program_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ActorTurnCommitRequested) String() string {
+func (x *SessionExecution) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ActorTurnCommitRequested) ProtoMessage() {}
+func (*SessionExecution) ProtoMessage() {}
 
-func (x *ActorTurnCommitRequested) ProtoReflect() protoreflect.Message {
+func (x *SessionExecution) ProtoReflect() protoreflect.Message {
 	mi := &file_program_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -2512,26 +2666,348 @@ func (x *ActorTurnCommitRequested) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ActorTurnCommitRequested.ProtoReflect.Descriptor instead.
-func (*ActorTurnCommitRequested) Descriptor() ([]byte, []int) {
+// Deprecated: Use SessionExecution.ProtoReflect.Descriptor instead.
+func (*SessionExecution) Descriptor() ([]byte, []int) {
 	return file_program_proto_rawDescGZIP(), []int{31}
 }
 
-func (x *ActorTurnCommitRequested) GetCorrelationId() string {
+func (x *SessionExecution) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *SessionExecution) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *SessionExecution) GetAttemptNumber() uint32 {
+	if x != nil {
+		return x.AttemptNumber
+	}
+	return 0
+}
+
+func (x *SessionExecution) GetRunGeneration() int64 {
+	if x != nil {
+		return x.RunGeneration
+	}
+	return 0
+}
+
+type TurnExecution struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Session       *SessionExecution      `protobuf:"bytes,1,opt,name=session,proto3" json:"session,omitempty"`
+	TurnId        string                 `protobuf:"bytes,2,opt,name=turn_id,json=turnId,proto3" json:"turn_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TurnExecution) Reset() {
+	*x = TurnExecution{}
+	mi := &file_program_proto_msgTypes[32]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TurnExecution) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TurnExecution) ProtoMessage() {}
+
+func (x *TurnExecution) ProtoReflect() protoreflect.Message {
+	mi := &file_program_proto_msgTypes[32]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TurnExecution.ProtoReflect.Descriptor instead.
+func (*TurnExecution) Descriptor() ([]byte, []int) {
+	return file_program_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *TurnExecution) GetSession() *SessionExecution {
+	if x != nil {
+		return x.Session
+	}
+	return nil
+}
+
+func (x *TurnExecution) GetTurnId() string {
+	if x != nil {
+		return x.TurnId
+	}
+	return ""
+}
+
+type ActorInterrupted struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	HoldId        string                 `protobuf:"bytes,1,opt,name=hold_id,json=holdId,proto3" json:"hold_id,omitempty"`
+	TurnId        *string                `protobuf:"bytes,2,opt,name=turn_id,json=turnId,proto3,oneof" json:"turn_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ActorInterrupted) Reset() {
+	*x = ActorInterrupted{}
+	mi := &file_program_proto_msgTypes[33]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ActorInterrupted) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ActorInterrupted) ProtoMessage() {}
+
+func (x *ActorInterrupted) ProtoReflect() protoreflect.Message {
+	mi := &file_program_proto_msgTypes[33]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ActorInterrupted.ProtoReflect.Descriptor instead.
+func (*ActorInterrupted) Descriptor() ([]byte, []int) {
+	return file_program_proto_rawDescGZIP(), []int{33}
+}
+
+func (x *ActorInterrupted) GetHoldId() string {
+	if x != nil {
+		return x.HoldId
+	}
+	return ""
+}
+
+func (x *ActorInterrupted) GetTurnId() string {
+	if x != nil && x.TurnId != nil {
+		return *x.TurnId
+	}
+	return ""
+}
+
+type SessionStop struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Execution     *SessionExecution      `protobuf:"bytes,1,opt,name=execution,proto3" json:"execution,omitempty"`
+	TurnId        *string                `protobuf:"bytes,2,opt,name=turn_id,json=turnId,proto3,oneof" json:"turn_id,omitempty"`
+	HoldId        string                 `protobuf:"bytes,3,opt,name=hold_id,json=holdId,proto3" json:"hold_id,omitempty"`
+	Reason        string                 `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SessionStop) Reset() {
+	*x = SessionStop{}
+	mi := &file_program_proto_msgTypes[34]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SessionStop) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SessionStop) ProtoMessage() {}
+
+func (x *SessionStop) ProtoReflect() protoreflect.Message {
+	mi := &file_program_proto_msgTypes[34]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SessionStop.ProtoReflect.Descriptor instead.
+func (*SessionStop) Descriptor() ([]byte, []int) {
+	return file_program_proto_rawDescGZIP(), []int{34}
+}
+
+func (x *SessionStop) GetExecution() *SessionExecution {
+	if x != nil {
+		return x.Execution
+	}
+	return nil
+}
+
+func (x *SessionStop) GetTurnId() string {
+	if x != nil && x.TurnId != nil {
+		return *x.TurnId
+	}
+	return ""
+}
+
+func (x *SessionStop) GetHoldId() string {
+	if x != nil {
+		return x.HoldId
+	}
+	return ""
+}
+
+func (x *SessionStop) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+type TurnSettlementBeginRequested struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	CorrelationId string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
+	Execution     *TurnExecution         `protobuf:"bytes,2,opt,name=execution,proto3" json:"execution,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TurnSettlementBeginRequested) Reset() {
+	*x = TurnSettlementBeginRequested{}
+	mi := &file_program_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TurnSettlementBeginRequested) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TurnSettlementBeginRequested) ProtoMessage() {}
+
+func (x *TurnSettlementBeginRequested) ProtoReflect() protoreflect.Message {
+	mi := &file_program_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TurnSettlementBeginRequested.ProtoReflect.Descriptor instead.
+func (*TurnSettlementBeginRequested) Descriptor() ([]byte, []int) {
+	return file_program_proto_rawDescGZIP(), []int{35}
+}
+
+func (x *TurnSettlementBeginRequested) GetCorrelationId() string {
 	if x != nil {
 		return x.CorrelationId
 	}
 	return ""
 }
 
-func (x *ActorTurnCommitRequested) GetTargetInputSequence() int64 {
+func (x *TurnSettlementBeginRequested) GetExecution() *TurnExecution {
+	if x != nil {
+		return x.Execution
+	}
+	return nil
+}
+
+type TurnSettleRequested struct {
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	CorrelationId       string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
+	TargetInputSequence int64                  `protobuf:"varint,2,opt,name=target_input_sequence,json=targetInputSequence,proto3" json:"target_input_sequence,omitempty"`
+	Execution           *TurnExecution         `protobuf:"bytes,3,opt,name=execution,proto3" json:"execution,omitempty"`
+	Disposition         string                 `protobuf:"bytes,4,opt,name=disposition,proto3" json:"disposition,omitempty"`
+	ResultJson          *string                `protobuf:"bytes,5,opt,name=result_json,json=resultJson,proto3,oneof" json:"result_json,omitempty"`
+	ErrorJson           *string                `protobuf:"bytes,6,opt,name=error_json,json=errorJson,proto3,oneof" json:"error_json,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *TurnSettleRequested) Reset() {
+	*x = TurnSettleRequested{}
+	mi := &file_program_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TurnSettleRequested) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TurnSettleRequested) ProtoMessage() {}
+
+func (x *TurnSettleRequested) ProtoReflect() protoreflect.Message {
+	mi := &file_program_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TurnSettleRequested.ProtoReflect.Descriptor instead.
+func (*TurnSettleRequested) Descriptor() ([]byte, []int) {
+	return file_program_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *TurnSettleRequested) GetCorrelationId() string {
+	if x != nil {
+		return x.CorrelationId
+	}
+	return ""
+}
+
+func (x *TurnSettleRequested) GetTargetInputSequence() int64 {
 	if x != nil {
 		return x.TargetInputSequence
 	}
 	return 0
 }
 
-type ActorTurnCommitPauseRequest struct {
+func (x *TurnSettleRequested) GetExecution() *TurnExecution {
+	if x != nil {
+		return x.Execution
+	}
+	return nil
+}
+
+func (x *TurnSettleRequested) GetDisposition() string {
+	if x != nil {
+		return x.Disposition
+	}
+	return ""
+}
+
+func (x *TurnSettleRequested) GetResultJson() string {
+	if x != nil && x.ResultJson != nil {
+		return *x.ResultJson
+	}
+	return ""
+}
+
+func (x *TurnSettleRequested) GetErrorJson() string {
+	if x != nil && x.ErrorJson != nil {
+		return *x.ErrorJson
+	}
+	return ""
+}
+
+type TurnSettlePauseRequest struct {
 	state                          protoimpl.MessageState `protogen:"open.v1"`
 	CorrelationId                  string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
 	TargetInputSequence            int64                  `protobuf:"varint,2,opt,name=target_input_sequence,json=targetInputSequence,proto3" json:"target_input_sequence,omitempty"`
@@ -2542,25 +3018,26 @@ type ActorTurnCommitPauseRequest struct {
 	ExpectedTreeSizeBytes          int64                  `protobuf:"varint,7,opt,name=expected_tree_size_bytes,json=expectedTreeSizeBytes,proto3" json:"expected_tree_size_bytes,omitempty"`
 	ExpectedTreeEntryCount         uint32                 `protobuf:"varint,8,opt,name=expected_tree_entry_count,json=expectedTreeEntryCount,proto3" json:"expected_tree_entry_count,omitempty"`
 	ExpectedBaseWorkspaceVersionId string                 `protobuf:"bytes,9,opt,name=expected_base_workspace_version_id,json=expectedBaseWorkspaceVersionId,proto3" json:"expected_base_workspace_version_id,omitempty"`
+	Execution                      *TurnExecution         `protobuf:"bytes,10,opt,name=execution,proto3" json:"execution,omitempty"`
 	unknownFields                  protoimpl.UnknownFields
 	sizeCache                      protoimpl.SizeCache
 }
 
-func (x *ActorTurnCommitPauseRequest) Reset() {
-	*x = ActorTurnCommitPauseRequest{}
-	mi := &file_program_proto_msgTypes[32]
+func (x *TurnSettlePauseRequest) Reset() {
+	*x = TurnSettlePauseRequest{}
+	mi := &file_program_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ActorTurnCommitPauseRequest) String() string {
+func (x *TurnSettlePauseRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ActorTurnCommitPauseRequest) ProtoMessage() {}
+func (*TurnSettlePauseRequest) ProtoMessage() {}
 
-func (x *ActorTurnCommitPauseRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[32]
+func (x *TurnSettlePauseRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_program_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2571,75 +3048,82 @@ func (x *ActorTurnCommitPauseRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ActorTurnCommitPauseRequest.ProtoReflect.Descriptor instead.
-func (*ActorTurnCommitPauseRequest) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{32}
+// Deprecated: Use TurnSettlePauseRequest.ProtoReflect.Descriptor instead.
+func (*TurnSettlePauseRequest) Descriptor() ([]byte, []int) {
+	return file_program_proto_rawDescGZIP(), []int{37}
 }
 
-func (x *ActorTurnCommitPauseRequest) GetCorrelationId() string {
+func (x *TurnSettlePauseRequest) GetCorrelationId() string {
 	if x != nil {
 		return x.CorrelationId
 	}
 	return ""
 }
 
-func (x *ActorTurnCommitPauseRequest) GetTargetInputSequence() int64 {
+func (x *TurnSettlePauseRequest) GetTargetInputSequence() int64 {
 	if x != nil {
 		return x.TargetInputSequence
 	}
 	return 0
 }
 
-func (x *ActorTurnCommitPauseRequest) GetRunId() string {
+func (x *TurnSettlePauseRequest) GetRunId() string {
 	if x != nil {
 		return x.RunId
 	}
 	return ""
 }
 
-func (x *ActorTurnCommitPauseRequest) GetAttemptNumber() uint32 {
+func (x *TurnSettlePauseRequest) GetAttemptNumber() uint32 {
 	if x != nil {
 		return x.AttemptNumber
 	}
 	return 0
 }
 
-func (x *ActorTurnCommitPauseRequest) GetRunLeaseId() string {
+func (x *TurnSettlePauseRequest) GetRunLeaseId() string {
 	if x != nil {
 		return x.RunLeaseId
 	}
 	return ""
 }
 
-func (x *ActorTurnCommitPauseRequest) GetExpectedTreeDigest() string {
+func (x *TurnSettlePauseRequest) GetExpectedTreeDigest() string {
 	if x != nil {
 		return x.ExpectedTreeDigest
 	}
 	return ""
 }
 
-func (x *ActorTurnCommitPauseRequest) GetExpectedTreeSizeBytes() int64 {
+func (x *TurnSettlePauseRequest) GetExpectedTreeSizeBytes() int64 {
 	if x != nil {
 		return x.ExpectedTreeSizeBytes
 	}
 	return 0
 }
 
-func (x *ActorTurnCommitPauseRequest) GetExpectedTreeEntryCount() uint32 {
+func (x *TurnSettlePauseRequest) GetExpectedTreeEntryCount() uint32 {
 	if x != nil {
 		return x.ExpectedTreeEntryCount
 	}
 	return 0
 }
 
-func (x *ActorTurnCommitPauseRequest) GetExpectedBaseWorkspaceVersionId() string {
+func (x *TurnSettlePauseRequest) GetExpectedBaseWorkspaceVersionId() string {
 	if x != nil {
 		return x.ExpectedBaseWorkspaceVersionId
 	}
 	return ""
 }
 
-type ActorTurnCommitPauseReady struct {
+func (x *TurnSettlePauseRequest) GetExecution() *TurnExecution {
+	if x != nil {
+		return x.Execution
+	}
+	return nil
+}
+
+type TurnSettlePauseReady struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
 	CorrelationId       string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
 	TargetInputSequence int64                  `protobuf:"varint,2,opt,name=target_input_sequence,json=targetInputSequence,proto3" json:"target_input_sequence,omitempty"`
@@ -2650,25 +3134,26 @@ type ActorTurnCommitPauseReady struct {
 	TreeSizeBytes       int64                  `protobuf:"varint,7,opt,name=tree_size_bytes,json=treeSizeBytes,proto3" json:"tree_size_bytes,omitempty"`
 	TreeEntryCount      uint32                 `protobuf:"varint,8,opt,name=tree_entry_count,json=treeEntryCount,proto3" json:"tree_entry_count,omitempty"`
 	WorkspaceChanged    bool                   `protobuf:"varint,9,opt,name=workspace_changed,json=workspaceChanged,proto3" json:"workspace_changed,omitempty"`
+	Execution           *TurnExecution         `protobuf:"bytes,10,opt,name=execution,proto3" json:"execution,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
 
-func (x *ActorTurnCommitPauseReady) Reset() {
-	*x = ActorTurnCommitPauseReady{}
-	mi := &file_program_proto_msgTypes[33]
+func (x *TurnSettlePauseReady) Reset() {
+	*x = TurnSettlePauseReady{}
+	mi := &file_program_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ActorTurnCommitPauseReady) String() string {
+func (x *TurnSettlePauseReady) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ActorTurnCommitPauseReady) ProtoMessage() {}
+func (*TurnSettlePauseReady) ProtoMessage() {}
 
-func (x *ActorTurnCommitPauseReady) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[33]
+func (x *TurnSettlePauseReady) ProtoReflect() protoreflect.Message {
+	mi := &file_program_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2679,75 +3164,82 @@ func (x *ActorTurnCommitPauseReady) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ActorTurnCommitPauseReady.ProtoReflect.Descriptor instead.
-func (*ActorTurnCommitPauseReady) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{33}
+// Deprecated: Use TurnSettlePauseReady.ProtoReflect.Descriptor instead.
+func (*TurnSettlePauseReady) Descriptor() ([]byte, []int) {
+	return file_program_proto_rawDescGZIP(), []int{38}
 }
 
-func (x *ActorTurnCommitPauseReady) GetCorrelationId() string {
+func (x *TurnSettlePauseReady) GetCorrelationId() string {
 	if x != nil {
 		return x.CorrelationId
 	}
 	return ""
 }
 
-func (x *ActorTurnCommitPauseReady) GetTargetInputSequence() int64 {
+func (x *TurnSettlePauseReady) GetTargetInputSequence() int64 {
 	if x != nil {
 		return x.TargetInputSequence
 	}
 	return 0
 }
 
-func (x *ActorTurnCommitPauseReady) GetRunId() string {
+func (x *TurnSettlePauseReady) GetRunId() string {
 	if x != nil {
 		return x.RunId
 	}
 	return ""
 }
 
-func (x *ActorTurnCommitPauseReady) GetAttemptNumber() uint32 {
+func (x *TurnSettlePauseReady) GetAttemptNumber() uint32 {
 	if x != nil {
 		return x.AttemptNumber
 	}
 	return 0
 }
 
-func (x *ActorTurnCommitPauseReady) GetRunLeaseId() string {
+func (x *TurnSettlePauseReady) GetRunLeaseId() string {
 	if x != nil {
 		return x.RunLeaseId
 	}
 	return ""
 }
 
-func (x *ActorTurnCommitPauseReady) GetTreeDigest() string {
+func (x *TurnSettlePauseReady) GetTreeDigest() string {
 	if x != nil {
 		return x.TreeDigest
 	}
 	return ""
 }
 
-func (x *ActorTurnCommitPauseReady) GetTreeSizeBytes() int64 {
+func (x *TurnSettlePauseReady) GetTreeSizeBytes() int64 {
 	if x != nil {
 		return x.TreeSizeBytes
 	}
 	return 0
 }
 
-func (x *ActorTurnCommitPauseReady) GetTreeEntryCount() uint32 {
+func (x *TurnSettlePauseReady) GetTreeEntryCount() uint32 {
 	if x != nil {
 		return x.TreeEntryCount
 	}
 	return 0
 }
 
-func (x *ActorTurnCommitPauseReady) GetWorkspaceChanged() bool {
+func (x *TurnSettlePauseReady) GetWorkspaceChanged() bool {
 	if x != nil {
 		return x.WorkspaceChanged
 	}
 	return false
 }
 
-type ActorTurnCommitApplied struct {
+func (x *TurnSettlePauseReady) GetExecution() *TurnExecution {
+	if x != nil {
+		return x.Execution
+	}
+	return nil
+}
+
+type TurnSettleApplied struct {
 	state                          protoimpl.MessageState `protogen:"open.v1"`
 	CorrelationId                  string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
 	TargetInputSequence            int64                  `protobuf:"varint,2,opt,name=target_input_sequence,json=targetInputSequence,proto3" json:"target_input_sequence,omitempty"`
@@ -2756,25 +3248,26 @@ type ActorTurnCommitApplied struct {
 	RunLeaseId                     string                 `protobuf:"bytes,5,opt,name=run_lease_id,json=runLeaseId,proto3" json:"run_lease_id,omitempty"`
 	PreviousBaseWorkspaceVersionId string                 `protobuf:"bytes,6,opt,name=previous_base_workspace_version_id,json=previousBaseWorkspaceVersionId,proto3" json:"previous_base_workspace_version_id,omitempty"`
 	AppliedBaseWorkspaceVersionId  string                 `protobuf:"bytes,7,opt,name=applied_base_workspace_version_id,json=appliedBaseWorkspaceVersionId,proto3" json:"applied_base_workspace_version_id,omitempty"`
+	Execution                      *TurnExecution         `protobuf:"bytes,8,opt,name=execution,proto3" json:"execution,omitempty"`
 	unknownFields                  protoimpl.UnknownFields
 	sizeCache                      protoimpl.SizeCache
 }
 
-func (x *ActorTurnCommitApplied) Reset() {
-	*x = ActorTurnCommitApplied{}
-	mi := &file_program_proto_msgTypes[34]
+func (x *TurnSettleApplied) Reset() {
+	*x = TurnSettleApplied{}
+	mi := &file_program_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ActorTurnCommitApplied) String() string {
+func (x *TurnSettleApplied) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ActorTurnCommitApplied) ProtoMessage() {}
+func (*TurnSettleApplied) ProtoMessage() {}
 
-func (x *ActorTurnCommitApplied) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[34]
+func (x *TurnSettleApplied) ProtoReflect() protoreflect.Message {
+	mi := &file_program_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2785,85 +3278,90 @@ func (x *ActorTurnCommitApplied) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ActorTurnCommitApplied.ProtoReflect.Descriptor instead.
-func (*ActorTurnCommitApplied) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{34}
+// Deprecated: Use TurnSettleApplied.ProtoReflect.Descriptor instead.
+func (*TurnSettleApplied) Descriptor() ([]byte, []int) {
+	return file_program_proto_rawDescGZIP(), []int{39}
 }
 
-func (x *ActorTurnCommitApplied) GetCorrelationId() string {
+func (x *TurnSettleApplied) GetCorrelationId() string {
 	if x != nil {
 		return x.CorrelationId
 	}
 	return ""
 }
 
-func (x *ActorTurnCommitApplied) GetTargetInputSequence() int64 {
+func (x *TurnSettleApplied) GetTargetInputSequence() int64 {
 	if x != nil {
 		return x.TargetInputSequence
 	}
 	return 0
 }
 
-func (x *ActorTurnCommitApplied) GetRunId() string {
+func (x *TurnSettleApplied) GetRunId() string {
 	if x != nil {
 		return x.RunId
 	}
 	return ""
 }
 
-func (x *ActorTurnCommitApplied) GetAttemptNumber() uint32 {
+func (x *TurnSettleApplied) GetAttemptNumber() uint32 {
 	if x != nil {
 		return x.AttemptNumber
 	}
 	return 0
 }
 
-func (x *ActorTurnCommitApplied) GetRunLeaseId() string {
+func (x *TurnSettleApplied) GetRunLeaseId() string {
 	if x != nil {
 		return x.RunLeaseId
 	}
 	return ""
 }
 
-func (x *ActorTurnCommitApplied) GetPreviousBaseWorkspaceVersionId() string {
+func (x *TurnSettleApplied) GetPreviousBaseWorkspaceVersionId() string {
 	if x != nil {
 		return x.PreviousBaseWorkspaceVersionId
 	}
 	return ""
 }
 
-func (x *ActorTurnCommitApplied) GetAppliedBaseWorkspaceVersionId() string {
+func (x *TurnSettleApplied) GetAppliedBaseWorkspaceVersionId() string {
 	if x != nil {
 		return x.AppliedBaseWorkspaceVersionId
 	}
 	return ""
 }
 
-type ActorOutputAppendRequested struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	CorrelationId  string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
-	DataJson       string                 `protobuf:"bytes,2,opt,name=data_json,json=dataJson,proto3" json:"data_json,omitempty"`
-	ContentType    string                 `protobuf:"bytes,3,opt,name=content_type,json=contentType,proto3" json:"content_type,omitempty"`
-	IdempotencyKey *string                `protobuf:"bytes,4,opt,name=idempotency_key,json=idempotencyKey,proto3,oneof" json:"idempotency_key,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+func (x *TurnSettleApplied) GetExecution() *TurnExecution {
+	if x != nil {
+		return x.Execution
+	}
+	return nil
 }
 
-func (x *ActorOutputAppendRequested) Reset() {
-	*x = ActorOutputAppendRequested{}
-	mi := &file_program_proto_msgTypes[35]
+type TurnReadyRequested struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	CorrelationId string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
+	Execution     *TurnExecution         `protobuf:"bytes,2,opt,name=execution,proto3" json:"execution,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TurnReadyRequested) Reset() {
+	*x = TurnReadyRequested{}
+	mi := &file_program_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ActorOutputAppendRequested) String() string {
+func (x *TurnReadyRequested) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ActorOutputAppendRequested) ProtoMessage() {}
+func (*TurnReadyRequested) ProtoMessage() {}
 
-func (x *ActorOutputAppendRequested) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[35]
+func (x *TurnReadyRequested) ProtoReflect() protoreflect.Message {
+	mi := &file_program_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2874,64 +3372,278 @@ func (x *ActorOutputAppendRequested) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ActorOutputAppendRequested.ProtoReflect.Descriptor instead.
-func (*ActorOutputAppendRequested) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{35}
+// Deprecated: Use TurnReadyRequested.ProtoReflect.Descriptor instead.
+func (*TurnReadyRequested) Descriptor() ([]byte, []int) {
+	return file_program_proto_rawDescGZIP(), []int{40}
 }
 
-func (x *ActorOutputAppendRequested) GetCorrelationId() string {
+func (x *TurnReadyRequested) GetCorrelationId() string {
 	if x != nil {
 		return x.CorrelationId
 	}
 	return ""
 }
 
-func (x *ActorOutputAppendRequested) GetDataJson() string {
+func (x *TurnReadyRequested) GetExecution() *TurnExecution {
+	if x != nil {
+		return x.Execution
+	}
+	return nil
+}
+
+type TurnMessageClaimRequested struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	CorrelationId string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
+	Execution     *TurnExecution         `protobuf:"bytes,2,opt,name=execution,proto3" json:"execution,omitempty"`
+	DeliveryId    string                 `protobuf:"bytes,3,opt,name=delivery_id,json=deliveryId,proto3" json:"delivery_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TurnMessageClaimRequested) Reset() {
+	*x = TurnMessageClaimRequested{}
+	mi := &file_program_proto_msgTypes[41]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TurnMessageClaimRequested) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TurnMessageClaimRequested) ProtoMessage() {}
+
+func (x *TurnMessageClaimRequested) ProtoReflect() protoreflect.Message {
+	mi := &file_program_proto_msgTypes[41]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TurnMessageClaimRequested.ProtoReflect.Descriptor instead.
+func (*TurnMessageClaimRequested) Descriptor() ([]byte, []int) {
+	return file_program_proto_rawDescGZIP(), []int{41}
+}
+
+func (x *TurnMessageClaimRequested) GetCorrelationId() string {
+	if x != nil {
+		return x.CorrelationId
+	}
+	return ""
+}
+
+func (x *TurnMessageClaimRequested) GetExecution() *TurnExecution {
+	if x != nil {
+		return x.Execution
+	}
+	return nil
+}
+
+func (x *TurnMessageClaimRequested) GetDeliveryId() string {
+	if x != nil {
+		return x.DeliveryId
+	}
+	return ""
+}
+
+type TurnMessageCompleteRequested struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	CorrelationId string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
+	Execution     *TurnExecution         `protobuf:"bytes,2,opt,name=execution,proto3" json:"execution,omitempty"`
+	MessageId     string                 `protobuf:"bytes,3,opt,name=message_id,json=messageId,proto3" json:"message_id,omitempty"`
+	DeliveryId    string                 `protobuf:"bytes,4,opt,name=delivery_id,json=deliveryId,proto3" json:"delivery_id,omitempty"`
+	Status        string                 `protobuf:"bytes,5,opt,name=status,proto3" json:"status,omitempty"`
+	Code          string                 `protobuf:"bytes,6,opt,name=code,proto3" json:"code,omitempty"`
+	DetailsJson   *string                `protobuf:"bytes,7,opt,name=details_json,json=detailsJson,proto3,oneof" json:"details_json,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TurnMessageCompleteRequested) Reset() {
+	*x = TurnMessageCompleteRequested{}
+	mi := &file_program_proto_msgTypes[42]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TurnMessageCompleteRequested) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TurnMessageCompleteRequested) ProtoMessage() {}
+
+func (x *TurnMessageCompleteRequested) ProtoReflect() protoreflect.Message {
+	mi := &file_program_proto_msgTypes[42]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TurnMessageCompleteRequested.ProtoReflect.Descriptor instead.
+func (*TurnMessageCompleteRequested) Descriptor() ([]byte, []int) {
+	return file_program_proto_rawDescGZIP(), []int{42}
+}
+
+func (x *TurnMessageCompleteRequested) GetCorrelationId() string {
+	if x != nil {
+		return x.CorrelationId
+	}
+	return ""
+}
+
+func (x *TurnMessageCompleteRequested) GetExecution() *TurnExecution {
+	if x != nil {
+		return x.Execution
+	}
+	return nil
+}
+
+func (x *TurnMessageCompleteRequested) GetMessageId() string {
+	if x != nil {
+		return x.MessageId
+	}
+	return ""
+}
+
+func (x *TurnMessageCompleteRequested) GetDeliveryId() string {
+	if x != nil {
+		return x.DeliveryId
+	}
+	return ""
+}
+
+func (x *TurnMessageCompleteRequested) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *TurnMessageCompleteRequested) GetCode() string {
+	if x != nil {
+		return x.Code
+	}
+	return ""
+}
+
+func (x *TurnMessageCompleteRequested) GetDetailsJson() string {
+	if x != nil && x.DetailsJson != nil {
+		return *x.DetailsJson
+	}
+	return ""
+}
+
+type TurnOutputWriteRequested struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	CorrelationId     string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
+	Execution         *TurnExecution         `protobuf:"bytes,2,opt,name=execution,proto3" json:"execution,omitempty"`
+	DataJson          string                 `protobuf:"bytes,3,opt,name=data_json,json=dataJson,proto3" json:"data_json,omitempty"`
+	IdempotencyKey    *string                `protobuf:"bytes,4,opt,name=idempotency_key,json=idempotencyKey,proto3,oneof" json:"idempotency_key,omitempty"`
+	MessageDeliveryId *string                `protobuf:"bytes,5,opt,name=message_delivery_id,json=messageDeliveryId,proto3,oneof" json:"message_delivery_id,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *TurnOutputWriteRequested) Reset() {
+	*x = TurnOutputWriteRequested{}
+	mi := &file_program_proto_msgTypes[43]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TurnOutputWriteRequested) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TurnOutputWriteRequested) ProtoMessage() {}
+
+func (x *TurnOutputWriteRequested) ProtoReflect() protoreflect.Message {
+	mi := &file_program_proto_msgTypes[43]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TurnOutputWriteRequested.ProtoReflect.Descriptor instead.
+func (*TurnOutputWriteRequested) Descriptor() ([]byte, []int) {
+	return file_program_proto_rawDescGZIP(), []int{43}
+}
+
+func (x *TurnOutputWriteRequested) GetCorrelationId() string {
+	if x != nil {
+		return x.CorrelationId
+	}
+	return ""
+}
+
+func (x *TurnOutputWriteRequested) GetExecution() *TurnExecution {
+	if x != nil {
+		return x.Execution
+	}
+	return nil
+}
+
+func (x *TurnOutputWriteRequested) GetDataJson() string {
 	if x != nil {
 		return x.DataJson
 	}
 	return ""
 }
 
-func (x *ActorOutputAppendRequested) GetContentType() string {
-	if x != nil {
-		return x.ContentType
-	}
-	return ""
-}
-
-func (x *ActorOutputAppendRequested) GetIdempotencyKey() string {
+func (x *TurnOutputWriteRequested) GetIdempotencyKey() string {
 	if x != nil && x.IdempotencyKey != nil {
 		return *x.IdempotencyKey
 	}
 	return ""
 }
 
-type SessionInputSendRequested struct {
+func (x *TurnOutputWriteRequested) GetMessageDeliveryId() string {
+	if x != nil && x.MessageDeliveryId != nil {
+		return *x.MessageDeliveryId
+	}
+	return ""
+}
+
+type SessionOutputWriteRequested struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	CorrelationId  string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
-	SessionId      string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Execution      *SessionExecution      `protobuf:"bytes,2,opt,name=execution,proto3" json:"execution,omitempty"`
 	DataJson       string                 `protobuf:"bytes,3,opt,name=data_json,json=dataJson,proto3" json:"data_json,omitempty"`
 	IdempotencyKey *string                `protobuf:"bytes,4,opt,name=idempotency_key,json=idempotencyKey,proto3,oneof" json:"idempotency_key,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
 
-func (x *SessionInputSendRequested) Reset() {
-	*x = SessionInputSendRequested{}
-	mi := &file_program_proto_msgTypes[36]
+func (x *SessionOutputWriteRequested) Reset() {
+	*x = SessionOutputWriteRequested{}
+	mi := &file_program_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SessionInputSendRequested) String() string {
+func (x *SessionOutputWriteRequested) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SessionInputSendRequested) ProtoMessage() {}
+func (*SessionOutputWriteRequested) ProtoMessage() {}
 
-func (x *SessionInputSendRequested) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[36]
+func (x *SessionOutputWriteRequested) ProtoReflect() protoreflect.Message {
+	mi := &file_program_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2942,33 +3654,313 @@ func (x *SessionInputSendRequested) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SessionInputSendRequested.ProtoReflect.Descriptor instead.
-func (*SessionInputSendRequested) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{36}
+// Deprecated: Use SessionOutputWriteRequested.ProtoReflect.Descriptor instead.
+func (*SessionOutputWriteRequested) Descriptor() ([]byte, []int) {
+	return file_program_proto_rawDescGZIP(), []int{44}
 }
 
-func (x *SessionInputSendRequested) GetCorrelationId() string {
+func (x *SessionOutputWriteRequested) GetCorrelationId() string {
 	if x != nil {
 		return x.CorrelationId
 	}
 	return ""
 }
 
-func (x *SessionInputSendRequested) GetSessionId() string {
+func (x *SessionOutputWriteRequested) GetExecution() *SessionExecution {
 	if x != nil {
-		return x.SessionId
+		return x.Execution
 	}
-	return ""
+	return nil
 }
 
-func (x *SessionInputSendRequested) GetDataJson() string {
+func (x *SessionOutputWriteRequested) GetDataJson() string {
 	if x != nil {
 		return x.DataJson
 	}
 	return ""
 }
 
-func (x *SessionInputSendRequested) GetIdempotencyKey() string {
+func (x *SessionOutputWriteRequested) GetIdempotencyKey() string {
+	if x != nil && x.IdempotencyKey != nil {
+		return *x.IdempotencyKey
+	}
+	return ""
+}
+
+type SessionSubmitRequested struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	CorrelationId  string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
+	SessionId      string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Mode           string                 `protobuf:"bytes,3,opt,name=mode,proto3" json:"mode,omitempty"`
+	TurnId         *string                `protobuf:"bytes,4,opt,name=turn_id,json=turnId,proto3,oneof" json:"turn_id,omitempty"`
+	DataJson       string                 `protobuf:"bytes,5,opt,name=data_json,json=dataJson,proto3" json:"data_json,omitempty"`
+	IdempotencyKey *string                `protobuf:"bytes,6,opt,name=idempotency_key,json=idempotencyKey,proto3,oneof" json:"idempotency_key,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *SessionSubmitRequested) Reset() {
+	*x = SessionSubmitRequested{}
+	mi := &file_program_proto_msgTypes[45]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SessionSubmitRequested) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SessionSubmitRequested) ProtoMessage() {}
+
+func (x *SessionSubmitRequested) ProtoReflect() protoreflect.Message {
+	mi := &file_program_proto_msgTypes[45]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SessionSubmitRequested.ProtoReflect.Descriptor instead.
+func (*SessionSubmitRequested) Descriptor() ([]byte, []int) {
+	return file_program_proto_rawDescGZIP(), []int{45}
+}
+
+func (x *SessionSubmitRequested) GetCorrelationId() string {
+	if x != nil {
+		return x.CorrelationId
+	}
+	return ""
+}
+
+func (x *SessionSubmitRequested) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *SessionSubmitRequested) GetMode() string {
+	if x != nil {
+		return x.Mode
+	}
+	return ""
+}
+
+func (x *SessionSubmitRequested) GetTurnId() string {
+	if x != nil && x.TurnId != nil {
+		return *x.TurnId
+	}
+	return ""
+}
+
+func (x *SessionSubmitRequested) GetDataJson() string {
+	if x != nil {
+		return x.DataJson
+	}
+	return ""
+}
+
+func (x *SessionSubmitRequested) GetIdempotencyKey() string {
+	if x != nil && x.IdempotencyKey != nil {
+		return *x.IdempotencyKey
+	}
+	return ""
+}
+
+type SessionTurnRetrieveRequested struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	CorrelationId string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
+	SessionId     string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	TurnId        string                 `protobuf:"bytes,3,opt,name=turn_id,json=turnId,proto3" json:"turn_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SessionTurnRetrieveRequested) Reset() {
+	*x = SessionTurnRetrieveRequested{}
+	mi := &file_program_proto_msgTypes[46]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SessionTurnRetrieveRequested) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SessionTurnRetrieveRequested) ProtoMessage() {}
+
+func (x *SessionTurnRetrieveRequested) ProtoReflect() protoreflect.Message {
+	mi := &file_program_proto_msgTypes[46]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SessionTurnRetrieveRequested.ProtoReflect.Descriptor instead.
+func (*SessionTurnRetrieveRequested) Descriptor() ([]byte, []int) {
+	return file_program_proto_rawDescGZIP(), []int{46}
+}
+
+func (x *SessionTurnRetrieveRequested) GetCorrelationId() string {
+	if x != nil {
+		return x.CorrelationId
+	}
+	return ""
+}
+
+func (x *SessionTurnRetrieveRequested) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *SessionTurnRetrieveRequested) GetTurnId() string {
+	if x != nil {
+		return x.TurnId
+	}
+	return ""
+}
+
+type SessionTurnInterruptRequested struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	CorrelationId  string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
+	SessionId      string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	TurnId         string                 `protobuf:"bytes,3,opt,name=turn_id,json=turnId,proto3" json:"turn_id,omitempty"`
+	IdempotencyKey *string                `protobuf:"bytes,4,opt,name=idempotency_key,json=idempotencyKey,proto3,oneof" json:"idempotency_key,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *SessionTurnInterruptRequested) Reset() {
+	*x = SessionTurnInterruptRequested{}
+	mi := &file_program_proto_msgTypes[47]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SessionTurnInterruptRequested) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SessionTurnInterruptRequested) ProtoMessage() {}
+
+func (x *SessionTurnInterruptRequested) ProtoReflect() protoreflect.Message {
+	mi := &file_program_proto_msgTypes[47]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SessionTurnInterruptRequested.ProtoReflect.Descriptor instead.
+func (*SessionTurnInterruptRequested) Descriptor() ([]byte, []int) {
+	return file_program_proto_rawDescGZIP(), []int{47}
+}
+
+func (x *SessionTurnInterruptRequested) GetCorrelationId() string {
+	if x != nil {
+		return x.CorrelationId
+	}
+	return ""
+}
+
+func (x *SessionTurnInterruptRequested) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *SessionTurnInterruptRequested) GetTurnId() string {
+	if x != nil {
+		return x.TurnId
+	}
+	return ""
+}
+
+func (x *SessionTurnInterruptRequested) GetIdempotencyKey() string {
+	if x != nil && x.IdempotencyKey != nil {
+		return *x.IdempotencyKey
+	}
+	return ""
+}
+
+type SessionResumeRequested struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	CorrelationId  string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
+	SessionId      string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	HoldId         string                 `protobuf:"bytes,3,opt,name=hold_id,json=holdId,proto3" json:"hold_id,omitempty"`
+	IdempotencyKey *string                `protobuf:"bytes,4,opt,name=idempotency_key,json=idempotencyKey,proto3,oneof" json:"idempotency_key,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *SessionResumeRequested) Reset() {
+	*x = SessionResumeRequested{}
+	mi := &file_program_proto_msgTypes[48]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SessionResumeRequested) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SessionResumeRequested) ProtoMessage() {}
+
+func (x *SessionResumeRequested) ProtoReflect() protoreflect.Message {
+	mi := &file_program_proto_msgTypes[48]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SessionResumeRequested.ProtoReflect.Descriptor instead.
+func (*SessionResumeRequested) Descriptor() ([]byte, []int) {
+	return file_program_proto_rawDescGZIP(), []int{48}
+}
+
+func (x *SessionResumeRequested) GetCorrelationId() string {
+	if x != nil {
+		return x.CorrelationId
+	}
+	return ""
+}
+
+func (x *SessionResumeRequested) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *SessionResumeRequested) GetHoldId() string {
+	if x != nil {
+		return x.HoldId
+	}
+	return ""
+}
+
+func (x *SessionResumeRequested) GetIdempotencyKey() string {
 	if x != nil && x.IdempotencyKey != nil {
 		return *x.IdempotencyKey
 	}
@@ -2981,7 +3973,6 @@ type ActorStartRequested struct {
 	DeclaredId     string                 `protobuf:"bytes,2,opt,name=declared_id,json=declaredId,proto3" json:"declared_id,omitempty"`
 	WorkspaceId    string                 `protobuf:"bytes,3,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
 	Key            *string                `protobuf:"bytes,5,opt,name=key,proto3,oneof" json:"key,omitempty"`
-	InputJson      *string                `protobuf:"bytes,6,opt,name=input_json,json=inputJson,proto3,oneof" json:"input_json,omitempty"`
 	IdempotencyKey *string                `protobuf:"bytes,7,opt,name=idempotency_key,json=idempotencyKey,proto3,oneof" json:"idempotency_key,omitempty"`
 	RunOptionsJson string                 `protobuf:"bytes,8,opt,name=run_options_json,json=runOptionsJson,proto3" json:"run_options_json,omitempty"`
 	unknownFields  protoimpl.UnknownFields
@@ -2990,7 +3981,7 @@ type ActorStartRequested struct {
 
 func (x *ActorStartRequested) Reset() {
 	*x = ActorStartRequested{}
-	mi := &file_program_proto_msgTypes[37]
+	mi := &file_program_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3002,7 +3993,7 @@ func (x *ActorStartRequested) String() string {
 func (*ActorStartRequested) ProtoMessage() {}
 
 func (x *ActorStartRequested) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[37]
+	mi := &file_program_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3015,7 +4006,7 @@ func (x *ActorStartRequested) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ActorStartRequested.ProtoReflect.Descriptor instead.
 func (*ActorStartRequested) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{37}
+	return file_program_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *ActorStartRequested) GetCorrelationId() string {
@@ -3046,13 +4037,6 @@ func (x *ActorStartRequested) GetKey() string {
 	return ""
 }
 
-func (x *ActorStartRequested) GetInputJson() string {
-	if x != nil && x.InputJson != nil {
-		return *x.InputJson
-	}
-	return ""
-}
-
 func (x *ActorStartRequested) GetIdempotencyKey() string {
 	if x != nil && x.IdempotencyKey != nil {
 		return *x.IdempotencyKey
@@ -3077,7 +4061,7 @@ type SessionStatusRequested struct {
 
 func (x *SessionStatusRequested) Reset() {
 	*x = SessionStatusRequested{}
-	mi := &file_program_proto_msgTypes[38]
+	mi := &file_program_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3089,7 +4073,7 @@ func (x *SessionStatusRequested) String() string {
 func (*SessionStatusRequested) ProtoMessage() {}
 
 func (x *SessionStatusRequested) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[38]
+	mi := &file_program_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3102,7 +4086,7 @@ func (x *SessionStatusRequested) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionStatusRequested.ProtoReflect.Descriptor instead.
 func (*SessionStatusRequested) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{38}
+	return file_program_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *SessionStatusRequested) GetCorrelationId() string {
@@ -3130,7 +4114,7 @@ type SessionCloseRequested struct {
 
 func (x *SessionCloseRequested) Reset() {
 	*x = SessionCloseRequested{}
-	mi := &file_program_proto_msgTypes[39]
+	mi := &file_program_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3142,7 +4126,7 @@ func (x *SessionCloseRequested) String() string {
 func (*SessionCloseRequested) ProtoMessage() {}
 
 func (x *SessionCloseRequested) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[39]
+	mi := &file_program_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3155,7 +4139,7 @@ func (x *SessionCloseRequested) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionCloseRequested.ProtoReflect.Descriptor instead.
 func (*SessionCloseRequested) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{39}
+	return file_program_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *SessionCloseRequested) GetCorrelationId() string {
@@ -3179,7 +4163,7 @@ func (x *SessionCloseRequested) GetIdempotencyKey() string {
 	return ""
 }
 
-type SessionOutputPageRequested struct {
+type SessionEventsRequested struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	CorrelationId string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
 	SessionId     string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -3189,21 +4173,21 @@ type SessionOutputPageRequested struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *SessionOutputPageRequested) Reset() {
-	*x = SessionOutputPageRequested{}
-	mi := &file_program_proto_msgTypes[40]
+func (x *SessionEventsRequested) Reset() {
+	*x = SessionEventsRequested{}
+	mi := &file_program_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SessionOutputPageRequested) String() string {
+func (x *SessionEventsRequested) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SessionOutputPageRequested) ProtoMessage() {}
+func (*SessionEventsRequested) ProtoMessage() {}
 
-func (x *SessionOutputPageRequested) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[40]
+func (x *SessionEventsRequested) ProtoReflect() protoreflect.Message {
+	mi := &file_program_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3214,33 +4198,33 @@ func (x *SessionOutputPageRequested) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SessionOutputPageRequested.ProtoReflect.Descriptor instead.
-func (*SessionOutputPageRequested) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{40}
+// Deprecated: Use SessionEventsRequested.ProtoReflect.Descriptor instead.
+func (*SessionEventsRequested) Descriptor() ([]byte, []int) {
+	return file_program_proto_rawDescGZIP(), []int{52}
 }
 
-func (x *SessionOutputPageRequested) GetCorrelationId() string {
+func (x *SessionEventsRequested) GetCorrelationId() string {
 	if x != nil {
 		return x.CorrelationId
 	}
 	return ""
 }
 
-func (x *SessionOutputPageRequested) GetSessionId() string {
+func (x *SessionEventsRequested) GetSessionId() string {
 	if x != nil {
 		return x.SessionId
 	}
 	return ""
 }
 
-func (x *SessionOutputPageRequested) GetAfter() int64 {
+func (x *SessionEventsRequested) GetAfter() int64 {
 	if x != nil && x.After != nil {
 		return *x.After
 	}
 	return 0
 }
 
-func (x *SessionOutputPageRequested) GetLimit() uint32 {
+func (x *SessionEventsRequested) GetLimit() uint32 {
 	if x != nil {
 		return x.Limit
 	}
@@ -3256,7 +4240,7 @@ type WorkspaceAddress struct {
 
 func (x *WorkspaceAddress) Reset() {
 	*x = WorkspaceAddress{}
-	mi := &file_program_proto_msgTypes[41]
+	mi := &file_program_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3268,7 +4252,7 @@ func (x *WorkspaceAddress) String() string {
 func (*WorkspaceAddress) ProtoMessage() {}
 
 func (x *WorkspaceAddress) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[41]
+	mi := &file_program_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3281,7 +4265,7 @@ func (x *WorkspaceAddress) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkspaceAddress.ProtoReflect.Descriptor instead.
 func (*WorkspaceAddress) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{41}
+	return file_program_proto_rawDescGZIP(), []int{53}
 }
 
 func (x *WorkspaceAddress) GetWorkspaceId() string {
@@ -3302,7 +4286,7 @@ type SecretEnvBinding struct {
 
 func (x *SecretEnvBinding) Reset() {
 	*x = SecretEnvBinding{}
-	mi := &file_program_proto_msgTypes[42]
+	mi := &file_program_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3314,7 +4298,7 @@ func (x *SecretEnvBinding) String() string {
 func (*SecretEnvBinding) ProtoMessage() {}
 
 func (x *SecretEnvBinding) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[42]
+	mi := &file_program_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3327,7 +4311,7 @@ func (x *SecretEnvBinding) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SecretEnvBinding.ProtoReflect.Descriptor instead.
 func (*SecretEnvBinding) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{42}
+	return file_program_proto_rawDescGZIP(), []int{54}
 }
 
 func (x *SecretEnvBinding) GetName() string {
@@ -3360,7 +4344,7 @@ type SecretFileBinding struct {
 
 func (x *SecretFileBinding) Reset() {
 	*x = SecretFileBinding{}
-	mi := &file_program_proto_msgTypes[43]
+	mi := &file_program_proto_msgTypes[55]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3372,7 +4356,7 @@ func (x *SecretFileBinding) String() string {
 func (*SecretFileBinding) ProtoMessage() {}
 
 func (x *SecretFileBinding) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[43]
+	mi := &file_program_proto_msgTypes[55]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3385,7 +4369,7 @@ func (x *SecretFileBinding) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SecretFileBinding.ProtoReflect.Descriptor instead.
 func (*SecretFileBinding) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{43}
+	return file_program_proto_rawDescGZIP(), []int{55}
 }
 
 func (x *SecretFileBinding) GetPath() string {
@@ -3409,7 +4393,7 @@ type WorkspaceSecretPlacement struct {
 
 func (x *WorkspaceSecretPlacement) Reset() {
 	*x = WorkspaceSecretPlacement{}
-	mi := &file_program_proto_msgTypes[44]
+	mi := &file_program_proto_msgTypes[56]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3421,7 +4405,7 @@ func (x *WorkspaceSecretPlacement) String() string {
 func (*WorkspaceSecretPlacement) ProtoMessage() {}
 
 func (x *WorkspaceSecretPlacement) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[44]
+	mi := &file_program_proto_msgTypes[56]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3434,7 +4418,7 @@ func (x *WorkspaceSecretPlacement) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkspaceSecretPlacement.ProtoReflect.Descriptor instead.
 func (*WorkspaceSecretPlacement) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{44}
+	return file_program_proto_rawDescGZIP(), []int{56}
 }
 
 func (x *WorkspaceSecretPlacement) GetSecret() string {
@@ -3498,7 +4482,7 @@ type WorkspaceCreateRequested struct {
 
 func (x *WorkspaceCreateRequested) Reset() {
 	*x = WorkspaceCreateRequested{}
-	mi := &file_program_proto_msgTypes[45]
+	mi := &file_program_proto_msgTypes[57]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3510,7 +4494,7 @@ func (x *WorkspaceCreateRequested) String() string {
 func (*WorkspaceCreateRequested) ProtoMessage() {}
 
 func (x *WorkspaceCreateRequested) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[45]
+	mi := &file_program_proto_msgTypes[57]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3523,7 +4507,7 @@ func (x *WorkspaceCreateRequested) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkspaceCreateRequested.ProtoReflect.Descriptor instead.
 func (*WorkspaceCreateRequested) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{45}
+	return file_program_proto_rawDescGZIP(), []int{57}
 }
 
 func (x *WorkspaceCreateRequested) GetCorrelationId() string {
@@ -3571,7 +4555,7 @@ type WorkspaceRetrieveRequested struct {
 
 func (x *WorkspaceRetrieveRequested) Reset() {
 	*x = WorkspaceRetrieveRequested{}
-	mi := &file_program_proto_msgTypes[46]
+	mi := &file_program_proto_msgTypes[58]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3583,7 +4567,7 @@ func (x *WorkspaceRetrieveRequested) String() string {
 func (*WorkspaceRetrieveRequested) ProtoMessage() {}
 
 func (x *WorkspaceRetrieveRequested) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[46]
+	mi := &file_program_proto_msgTypes[58]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3596,7 +4580,7 @@ func (x *WorkspaceRetrieveRequested) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkspaceRetrieveRequested.ProtoReflect.Descriptor instead.
 func (*WorkspaceRetrieveRequested) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{46}
+	return file_program_proto_rawDescGZIP(), []int{58}
 }
 
 func (x *WorkspaceRetrieveRequested) GetCorrelationId() string {
@@ -3629,7 +4613,7 @@ type WorkspaceExecRequested struct {
 
 func (x *WorkspaceExecRequested) Reset() {
 	*x = WorkspaceExecRequested{}
-	mi := &file_program_proto_msgTypes[47]
+	mi := &file_program_proto_msgTypes[59]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3641,7 +4625,7 @@ func (x *WorkspaceExecRequested) String() string {
 func (*WorkspaceExecRequested) ProtoMessage() {}
 
 func (x *WorkspaceExecRequested) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[47]
+	mi := &file_program_proto_msgTypes[59]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3654,7 +4638,7 @@ func (x *WorkspaceExecRequested) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkspaceExecRequested.ProtoReflect.Descriptor instead.
 func (*WorkspaceExecRequested) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{47}
+	return file_program_proto_rawDescGZIP(), []int{59}
 }
 
 func (x *WorkspaceExecRequested) GetCorrelationId() string {
@@ -3724,7 +4708,7 @@ type WorkspaceDeleteRequested struct {
 
 func (x *WorkspaceDeleteRequested) Reset() {
 	*x = WorkspaceDeleteRequested{}
-	mi := &file_program_proto_msgTypes[48]
+	mi := &file_program_proto_msgTypes[60]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3736,7 +4720,7 @@ func (x *WorkspaceDeleteRequested) String() string {
 func (*WorkspaceDeleteRequested) ProtoMessage() {}
 
 func (x *WorkspaceDeleteRequested) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[48]
+	mi := &file_program_proto_msgTypes[60]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3749,7 +4733,7 @@ func (x *WorkspaceDeleteRequested) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkspaceDeleteRequested.ProtoReflect.Descriptor instead.
 func (*WorkspaceDeleteRequested) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{48}
+	return file_program_proto_rawDescGZIP(), []int{60}
 }
 
 func (x *WorkspaceDeleteRequested) GetCorrelationId() string {
@@ -3784,7 +4768,7 @@ type ProgramQuiesced struct {
 
 func (x *ProgramQuiesced) Reset() {
 	*x = ProgramQuiesced{}
-	mi := &file_program_proto_msgTypes[49]
+	mi := &file_program_proto_msgTypes[61]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3796,7 +4780,7 @@ func (x *ProgramQuiesced) String() string {
 func (*ProgramQuiesced) ProtoMessage() {}
 
 func (x *ProgramQuiesced) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[49]
+	mi := &file_program_proto_msgTypes[61]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3809,7 +4793,7 @@ func (x *ProgramQuiesced) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProgramQuiesced.ProtoReflect.Descriptor instead.
 func (*ProgramQuiesced) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{49}
+	return file_program_proto_rawDescGZIP(), []int{61}
 }
 
 func (x *ProgramQuiesced) GetRunId() string {
@@ -3845,13 +4829,15 @@ type RunWaitRequested struct {
 	ResumeAttachId                string                 `protobuf:"bytes,8,opt,name=resume_attach_id,json=resumeAttachId,proto3" json:"resume_attach_id,omitempty"`
 	IdleTimeoutMs                 *uint64                `protobuf:"varint,9,opt,name=idle_timeout_ms,json=idleTimeoutMs,proto3,oneof" json:"idle_timeout_ms,omitempty"`
 	ActorSpeculativeInputSequence *int64                 `protobuf:"varint,10,opt,name=actor_speculative_input_sequence,json=actorSpeculativeInputSequence,proto3,oneof" json:"actor_speculative_input_sequence,omitempty"`
+	Execution                     *SessionExecution      `protobuf:"bytes,11,opt,name=execution,proto3" json:"execution,omitempty"`
+	TurnId                        *string                `protobuf:"bytes,12,opt,name=turn_id,json=turnId,proto3,oneof" json:"turn_id,omitempty"`
 	unknownFields                 protoimpl.UnknownFields
 	sizeCache                     protoimpl.SizeCache
 }
 
 func (x *RunWaitRequested) Reset() {
 	*x = RunWaitRequested{}
-	mi := &file_program_proto_msgTypes[50]
+	mi := &file_program_proto_msgTypes[62]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3863,7 +4849,7 @@ func (x *RunWaitRequested) String() string {
 func (*RunWaitRequested) ProtoMessage() {}
 
 func (x *RunWaitRequested) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[50]
+	mi := &file_program_proto_msgTypes[62]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3876,7 +4862,7 @@ func (x *RunWaitRequested) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunWaitRequested.ProtoReflect.Descriptor instead.
 func (*RunWaitRequested) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{50}
+	return file_program_proto_rawDescGZIP(), []int{62}
 }
 
 func (x *RunWaitRequested) GetCorrelationId() string {
@@ -3949,6 +4935,20 @@ func (x *RunWaitRequested) GetActorSpeculativeInputSequence() int64 {
 	return 0
 }
 
+func (x *RunWaitRequested) GetExecution() *SessionExecution {
+	if x != nil {
+		return x.Execution
+	}
+	return nil
+}
+
+func (x *RunWaitRequested) GetTurnId() string {
+	if x != nil && x.TurnId != nil {
+		return *x.TurnId
+	}
+	return ""
+}
+
 type TokenCreateRequested struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	TimeoutMs      *uint64                `protobuf:"varint,1,opt,name=timeout_ms,json=timeoutMs,proto3,oneof" json:"timeout_ms,omitempty"`
@@ -3962,7 +4962,7 @@ type TokenCreateRequested struct {
 
 func (x *TokenCreateRequested) Reset() {
 	*x = TokenCreateRequested{}
-	mi := &file_program_proto_msgTypes[51]
+	mi := &file_program_proto_msgTypes[63]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3974,7 +4974,7 @@ func (x *TokenCreateRequested) String() string {
 func (*TokenCreateRequested) ProtoMessage() {}
 
 func (x *TokenCreateRequested) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[51]
+	mi := &file_program_proto_msgTypes[63]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3987,7 +4987,7 @@ func (x *TokenCreateRequested) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TokenCreateRequested.ProtoReflect.Descriptor instead.
 func (*TokenCreateRequested) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{51}
+	return file_program_proto_rawDescGZIP(), []int{63}
 }
 
 func (x *TokenCreateRequested) GetTimeoutMs() uint64 {
@@ -4038,13 +5038,15 @@ type TaskChildInvokeRequested struct {
 	ActorSpeculativeInputSequence *int64                 `protobuf:"varint,9,opt,name=actor_speculative_input_sequence,json=actorSpeculativeInputSequence,proto3,oneof" json:"actor_speculative_input_sequence,omitempty"`
 	RunWaitId                     string                 `protobuf:"bytes,10,opt,name=run_wait_id,json=runWaitId,proto3" json:"run_wait_id,omitempty"`
 	ResumeAttachId                string                 `protobuf:"bytes,11,opt,name=resume_attach_id,json=resumeAttachId,proto3" json:"resume_attach_id,omitempty"`
+	Execution                     *SessionExecution      `protobuf:"bytes,12,opt,name=execution,proto3" json:"execution,omitempty"`
+	TurnId                        *string                `protobuf:"bytes,13,opt,name=turn_id,json=turnId,proto3,oneof" json:"turn_id,omitempty"`
 	unknownFields                 protoimpl.UnknownFields
 	sizeCache                     protoimpl.SizeCache
 }
 
 func (x *TaskChildInvokeRequested) Reset() {
 	*x = TaskChildInvokeRequested{}
-	mi := &file_program_proto_msgTypes[52]
+	mi := &file_program_proto_msgTypes[64]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4056,7 +5058,7 @@ func (x *TaskChildInvokeRequested) String() string {
 func (*TaskChildInvokeRequested) ProtoMessage() {}
 
 func (x *TaskChildInvokeRequested) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[52]
+	mi := &file_program_proto_msgTypes[64]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4069,7 +5071,7 @@ func (x *TaskChildInvokeRequested) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskChildInvokeRequested.ProtoReflect.Descriptor instead.
 func (*TaskChildInvokeRequested) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{52}
+	return file_program_proto_rawDescGZIP(), []int{64}
 }
 
 func (x *TaskChildInvokeRequested) GetCorrelationId() string {
@@ -4149,6 +5151,20 @@ func (x *TaskChildInvokeRequested) GetResumeAttachId() string {
 	return ""
 }
 
+func (x *TaskChildInvokeRequested) GetExecution() *SessionExecution {
+	if x != nil {
+		return x.Execution
+	}
+	return nil
+}
+
+func (x *TaskChildInvokeRequested) GetTurnId() string {
+	if x != nil && x.TurnId != nil {
+		return *x.TurnId
+	}
+	return ""
+}
+
 type CheckpointPauseRequest struct {
 	state                    protoimpl.MessageState `protogen:"open.v1"`
 	RunWaitId                string                 `protobuf:"bytes,1,opt,name=run_wait_id,json=runWaitId,proto3" json:"run_wait_id,omitempty"`
@@ -4160,13 +5176,15 @@ type CheckpointPauseRequest struct {
 	ResumeAttachId           string                 `protobuf:"bytes,7,opt,name=resume_attach_id,json=resumeAttachId,proto3" json:"resume_attach_id,omitempty"`
 	CheckpointRequestVersion int64                  `protobuf:"varint,8,opt,name=checkpoint_request_version,json=checkpointRequestVersion,proto3" json:"checkpoint_request_version,omitempty"`
 	CorrelationId            string                 `protobuf:"bytes,9,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
+	Execution                *SessionExecution      `protobuf:"bytes,10,opt,name=execution,proto3" json:"execution,omitempty"`
+	TurnId                   *string                `protobuf:"bytes,11,opt,name=turn_id,json=turnId,proto3,oneof" json:"turn_id,omitempty"`
 	unknownFields            protoimpl.UnknownFields
 	sizeCache                protoimpl.SizeCache
 }
 
 func (x *CheckpointPauseRequest) Reset() {
 	*x = CheckpointPauseRequest{}
-	mi := &file_program_proto_msgTypes[53]
+	mi := &file_program_proto_msgTypes[65]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4178,7 +5196,7 @@ func (x *CheckpointPauseRequest) String() string {
 func (*CheckpointPauseRequest) ProtoMessage() {}
 
 func (x *CheckpointPauseRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[53]
+	mi := &file_program_proto_msgTypes[65]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4191,7 +5209,7 @@ func (x *CheckpointPauseRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckpointPauseRequest.ProtoReflect.Descriptor instead.
 func (*CheckpointPauseRequest) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{53}
+	return file_program_proto_rawDescGZIP(), []int{65}
 }
 
 func (x *CheckpointPauseRequest) GetRunWaitId() string {
@@ -4257,6 +5275,20 @@ func (x *CheckpointPauseRequest) GetCorrelationId() string {
 	return ""
 }
 
+func (x *CheckpointPauseRequest) GetExecution() *SessionExecution {
+	if x != nil {
+		return x.Execution
+	}
+	return nil
+}
+
+func (x *CheckpointPauseRequest) GetTurnId() string {
+	if x != nil && x.TurnId != nil {
+		return *x.TurnId
+	}
+	return ""
+}
+
 type ResumeAttach struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
 	CheckpointId         string                 `protobuf:"bytes,1,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"`
@@ -4267,13 +5299,15 @@ type ResumeAttach struct {
 	ResumeAttachId       string                 `protobuf:"bytes,6,opt,name=resume_attach_id,json=resumeAttachId,proto3" json:"resume_attach_id,omitempty"`
 	ResumeRequestVersion int64                  `protobuf:"varint,7,opt,name=resume_request_version,json=resumeRequestVersion,proto3" json:"resume_request_version,omitempty"`
 	CorrelationId        string                 `protobuf:"bytes,8,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
+	Execution            *SessionExecution      `protobuf:"bytes,9,opt,name=execution,proto3" json:"execution,omitempty"`
+	TurnId               *string                `protobuf:"bytes,10,opt,name=turn_id,json=turnId,proto3,oneof" json:"turn_id,omitempty"`
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
 
 func (x *ResumeAttach) Reset() {
 	*x = ResumeAttach{}
-	mi := &file_program_proto_msgTypes[54]
+	mi := &file_program_proto_msgTypes[66]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4285,7 +5319,7 @@ func (x *ResumeAttach) String() string {
 func (*ResumeAttach) ProtoMessage() {}
 
 func (x *ResumeAttach) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[54]
+	mi := &file_program_proto_msgTypes[66]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4298,7 +5332,7 @@ func (x *ResumeAttach) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeAttach.ProtoReflect.Descriptor instead.
 func (*ResumeAttach) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{54}
+	return file_program_proto_rawDescGZIP(), []int{66}
 }
 
 func (x *ResumeAttach) GetCheckpointId() string {
@@ -4357,6 +5391,20 @@ func (x *ResumeAttach) GetCorrelationId() string {
 	return ""
 }
 
+func (x *ResumeAttach) GetExecution() *SessionExecution {
+	if x != nil {
+		return x.Execution
+	}
+	return nil
+}
+
+func (x *ResumeAttach) GetTurnId() string {
+	if x != nil && x.TurnId != nil {
+		return *x.TurnId
+	}
+	return ""
+}
+
 type ResumeDecision struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
 	RunWaitId            string                 `protobuf:"bytes,1,opt,name=run_wait_id,json=runWaitId,proto3" json:"run_wait_id,omitempty"`
@@ -4375,7 +5423,7 @@ type ResumeDecision struct {
 
 func (x *ResumeDecision) Reset() {
 	*x = ResumeDecision{}
-	mi := &file_program_proto_msgTypes[55]
+	mi := &file_program_proto_msgTypes[67]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4387,7 +5435,7 @@ func (x *ResumeDecision) String() string {
 func (*ResumeDecision) ProtoMessage() {}
 
 func (x *ResumeDecision) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[55]
+	mi := &file_program_proto_msgTypes[67]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4400,7 +5448,7 @@ func (x *ResumeDecision) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeDecision.ProtoReflect.Descriptor instead.
 func (*ResumeDecision) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{55}
+	return file_program_proto_rawDescGZIP(), []int{67}
 }
 
 func (x *ResumeDecision) GetRunWaitId() string {
@@ -4487,7 +5535,7 @@ type ResumeAck struct {
 
 func (x *ResumeAck) Reset() {
 	*x = ResumeAck{}
-	mi := &file_program_proto_msgTypes[56]
+	mi := &file_program_proto_msgTypes[68]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4499,7 +5547,7 @@ func (x *ResumeAck) String() string {
 func (*ResumeAck) ProtoMessage() {}
 
 func (x *ResumeAck) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[56]
+	mi := &file_program_proto_msgTypes[68]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4512,7 +5560,7 @@ func (x *ResumeAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeAck.ProtoReflect.Descriptor instead.
 func (*ResumeAck) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{56}
+	return file_program_proto_rawDescGZIP(), []int{68}
 }
 
 func (x *ResumeAck) GetRunWaitId() string {
@@ -4571,7 +5619,7 @@ type ResumeConsumed struct {
 
 func (x *ResumeConsumed) Reset() {
 	*x = ResumeConsumed{}
-	mi := &file_program_proto_msgTypes[57]
+	mi := &file_program_proto_msgTypes[69]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4583,7 +5631,7 @@ func (x *ResumeConsumed) String() string {
 func (*ResumeConsumed) ProtoMessage() {}
 
 func (x *ResumeConsumed) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[57]
+	mi := &file_program_proto_msgTypes[69]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4596,7 +5644,7 @@ func (x *ResumeConsumed) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeConsumed.ProtoReflect.Descriptor instead.
 func (*ResumeConsumed) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{57}
+	return file_program_proto_rawDescGZIP(), []int{69}
 }
 
 func (x *ResumeConsumed) GetRunWaitId() string {
@@ -4655,7 +5703,7 @@ type MetadataUpdated struct {
 
 func (x *MetadataUpdated) Reset() {
 	*x = MetadataUpdated{}
-	mi := &file_program_proto_msgTypes[58]
+	mi := &file_program_proto_msgTypes[70]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4667,7 +5715,7 @@ func (x *MetadataUpdated) String() string {
 func (*MetadataUpdated) ProtoMessage() {}
 
 func (x *MetadataUpdated) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[58]
+	mi := &file_program_proto_msgTypes[70]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4680,7 +5728,7 @@ func (x *MetadataUpdated) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MetadataUpdated.ProtoReflect.Descriptor instead.
 func (*MetadataUpdated) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{58}
+	return file_program_proto_rawDescGZIP(), []int{70}
 }
 
 func (x *MetadataUpdated) GetOperation() string {
@@ -4737,7 +5785,7 @@ type StructuredLogRequested struct {
 
 func (x *StructuredLogRequested) Reset() {
 	*x = StructuredLogRequested{}
-	mi := &file_program_proto_msgTypes[59]
+	mi := &file_program_proto_msgTypes[71]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4749,7 +5797,7 @@ func (x *StructuredLogRequested) String() string {
 func (*StructuredLogRequested) ProtoMessage() {}
 
 func (x *StructuredLogRequested) ProtoReflect() protoreflect.Message {
-	mi := &file_program_proto_msgTypes[59]
+	mi := &file_program_proto_msgTypes[71]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4762,7 +5810,7 @@ func (x *StructuredLogRequested) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StructuredLogRequested.ProtoReflect.Descriptor instead.
 func (*StructuredLogRequested) Descriptor() ([]byte, []int) {
-	return file_program_proto_rawDescGZIP(), []int{59}
+	return file_program_proto_rawDescGZIP(), []int{71}
 }
 
 func (x *StructuredLogRequested) GetCorrelationId() string {
@@ -4817,14 +5865,15 @@ const file_program_proto_rawDesc = "" +
 	"no_payload\x18\x01 \x01(\v2\x1b.helmr.program.v0.NoPayloadH\x00R\tnoPayload\x12#\n" +
 	"\fpayload_json\x18\x02 \x01(\fH\x00R\vpayloadJsonB\t\n" +
 	"\apayload\"\v\n" +
-	"\tNoPayload\"\xae\x01\n" +
+	"\tNoPayload\"\xd5\x01\n" +
 	"\n" +
 	"ActorStart\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x15\n" +
 	"\x03key\x18\x02 \x01(\tH\x00R\x03key\x88\x01\x01\x120\n" +
 	"\x14start_input_sequence\x18\x03 \x01(\x03R\x12startInputSequence\x120\n" +
-	"\x14input_high_watermark\x18\x04 \x01(\x03R\x12inputHighWatermarkB\x06\n" +
+	"\x14input_high_watermark\x18\x04 \x01(\x03R\x12inputHighWatermark\x12%\n" +
+	"\x0erun_generation\x18\x05 \x01(\x03R\rrunGenerationB\x06\n" +
 	"\x04_key\"\x81\x03\n" +
 	"\bRunCause\x12.\n" +
 	"\x03api\x18\x01 \x01(\v2\x1a.helmr.program.v0.ApiCauseH\x00R\x03api\x127\n" +
@@ -4918,7 +5967,7 @@ const file_program_proto_rawDesc = "" +
 	"\x0eattempt_number\x18\x02 \x01(\rR\rattemptNumber\x12D\n" +
 	"\n" +
 	"entrypoint\x18\x03 \x01(\v2$.helmr.program.v0.EntrypointIdentityR\n" +
-	"entrypoint\"\xbc\x12\n" +
+	"entrypoint\"\x9c\x19\n" +
 	"\bRunEvent\x12#\n" +
 	"\fstdout_chunk\x18\x01 \x01(\fH\x00R\vstdoutChunk\x12#\n" +
 	"\fstderr_chunk\x18\x02 \x01(\fH\x00R\vstderrChunk\x12R\n" +
@@ -4930,21 +5979,29 @@ const file_program_proto_rawDesc = "" +
 	"\x10entrypoint_ready\x18\f \x01(\v2!.helmr.program.v0.EntrypointReadyH\x00R\x0fentrypointReady\x12B\n" +
 	"\ftask_outcome\x18\r \x01(\v2\x1d.helmr.program.v0.TaskOutcomeH\x00R\vtaskOutcome\x12N\n" +
 	"\x10program_quiesced\x18\x0e \x01(\v2!.helmr.program.v0.ProgramQuiescedH\x00R\x0fprogramQuiesced\x12E\n" +
-	"\ractor_outcome\x18\x0f \x01(\v2\x1e.helmr.program.v0.ActorOutcomeH\x00R\factorOutcome\x12k\n" +
-	"\x1bactor_turn_commit_requested\x18\x10 \x01(\v2*.helmr.program.v0.ActorTurnCommitRequestedH\x00R\x18actorTurnCommitRequested\x12q\n" +
-	"\x1dactor_output_append_requested\x18\x11 \x01(\v2,.helmr.program.v0.ActorOutputAppendRequestedH\x00R\x1aactorOutputAppendRequested\x12n\n" +
-	"\x1csession_input_send_requested\x18\x12 \x01(\v2+.helmr.program.v0.SessionInputSendRequestedH\x00R\x19sessionInputSendRequested\x12d\n" +
+	"\ractor_outcome\x18\x0f \x01(\v2\x1e.helmr.program.v0.ActorOutcomeH\x00R\factorOutcome\x12[\n" +
+	"\x15turn_settle_requested\x18\x10 \x01(\v2%.helmr.program.v0.TurnSettleRequestedH\x00R\x13turnSettleRequested\x12k\n" +
+	"\x1bturn_output_write_requested\x18\x11 \x01(\v2*.helmr.program.v0.TurnOutputWriteRequestedH\x00R\x18turnOutputWriteRequested\x12d\n" +
+	"\x18session_submit_requested\x18\x12 \x01(\v2(.helmr.program.v0.SessionSubmitRequestedH\x00R\x16sessionSubmitRequested\x12d\n" +
 	"\x18structured_log_requested\x18\x13 \x01(\v2(.helmr.program.v0.StructuredLogRequestedH\x00R\x16structuredLogRequested\x12k\n" +
 	"\x1btask_child_invoke_requested\x18\x14 \x01(\v2*.helmr.program.v0.TaskChildInvokeRequestedH\x00R\x18taskChildInvokeRequested\x12[\n" +
 	"\x15actor_start_requested\x18\x15 \x01(\v2%.helmr.program.v0.ActorStartRequestedH\x00R\x13actorStartRequested\x12d\n" +
 	"\x18session_status_requested\x18\x16 \x01(\v2(.helmr.program.v0.SessionStatusRequestedH\x00R\x16sessionStatusRequested\x12a\n" +
-	"\x17session_close_requested\x18\x17 \x01(\v2'.helmr.program.v0.SessionCloseRequestedH\x00R\x15sessionCloseRequested\x12q\n" +
-	"\x1dsession_output_page_requested\x18\x18 \x01(\v2,.helmr.program.v0.SessionOutputPageRequestedH\x00R\x1asessionOutputPageRequested\x12j\n" +
+	"\x17session_close_requested\x18\x17 \x01(\v2'.helmr.program.v0.SessionCloseRequestedH\x00R\x15sessionCloseRequested\x12d\n" +
+	"\x18session_events_requested\x18\x18 \x01(\v2(.helmr.program.v0.SessionEventsRequestedH\x00R\x16sessionEventsRequested\x12j\n" +
 	"\x1aworkspace_create_requested\x18\x19 \x01(\v2*.helmr.program.v0.WorkspaceCreateRequestedH\x00R\x18workspaceCreateRequested\x12p\n" +
 	"\x1cworkspace_retrieve_requested\x18\x1a \x01(\v2,.helmr.program.v0.WorkspaceRetrieveRequestedH\x00R\x1aworkspaceRetrieveRequested\x12d\n" +
 	"\x18workspace_exec_requested\x18\x1e \x01(\v2(.helmr.program.v0.WorkspaceExecRequestedH\x00R\x16workspaceExecRequested\x12j\n" +
 	"\x1aworkspace_delete_requested\x18\x1f \x01(\v2*.helmr.program.v0.WorkspaceDeleteRequestedH\x00R\x18workspaceDeleteRequested\x12n\n" +
-	"\x1cprogram_process_start_failed\x18  \x01(\v2+.helmr.program.v0.ProgramProcessStartFailedH\x00R\x19programProcessStartFailedB\a\n" +
+	"\x1cprogram_process_start_failed\x18  \x01(\v2+.helmr.program.v0.ProgramProcessStartFailedH\x00R\x19programProcessStartFailed\x12t\n" +
+	"\x1esession_output_write_requested\x18! \x01(\v2-.helmr.program.v0.SessionOutputWriteRequestedH\x00R\x1bsessionOutputWriteRequested\x12X\n" +
+	"\x14turn_ready_requested\x18\" \x01(\v2$.helmr.program.v0.TurnReadyRequestedH\x00R\x12turnReadyRequested\x12n\n" +
+	"\x1cturn_message_claim_requested\x18# \x01(\v2+.helmr.program.v0.TurnMessageClaimRequestedH\x00R\x19turnMessageClaimRequested\x12w\n" +
+	"\x1fturn_message_complete_requested\x18$ \x01(\v2..helmr.program.v0.TurnMessageCompleteRequestedH\x00R\x1cturnMessageCompleteRequested\x12w\n" +
+	"\x1fturn_settlement_begin_requested\x18% \x01(\v2..helmr.program.v0.TurnSettlementBeginRequestedH\x00R\x1cturnSettlementBeginRequested\x12w\n" +
+	"\x1fsession_turn_retrieve_requested\x18& \x01(\v2..helmr.program.v0.SessionTurnRetrieveRequestedH\x00R\x1csessionTurnRetrieveRequested\x12z\n" +
+	" session_turn_interrupt_requested\x18' \x01(\v2/.helmr.program.v0.SessionTurnInterruptRequestedH\x00R\x1dsessionTurnInterruptRequested\x12d\n" +
+	"\x18session_resume_requested\x18( \x01(\v2(.helmr.program.v0.SessionResumeRequestedH\x00R\x16sessionResumeRequestedB\a\n" +
 	"\x05eventJ\x04\b\x03\x10\x04J\x04\b\t\x10\n" +
 	"J\x04\b\n" +
 	"\x10\vJ\x04\b\x1b\x10\x1cJ\x04\b\x1c\x10\x1dJ\x04\b\x1d\x10\x1e\"\xe2\x01\n" +
@@ -4964,22 +6021,54 @@ const file_program_proto_rawDesc = "" +
 	"\x12TaskPayloadInvalid\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\x12&\n" +
 	"\fdetails_json\x18\x02 \x01(\tH\x00R\vdetailsJson\x88\x01\x01B\x0f\n" +
-	"\r_details_json\"\xed\x01\n" +
-	"\fActorOutcome\x12;\n" +
-	"\x17terminal_input_sequence\x18\x01 \x01(\x03H\x01R\x15terminalInputSequence\x88\x01\x01\x12@\n" +
+	"\r_details_json\"\x83\x02\n" +
+	"\fActorOutcome\x12%\n" +
+	"\x0erun_generation\x18\x01 \x01(\x03R\rrunGeneration\x12@\n" +
 	"\tsucceeded\x18\x02 \x01(\v2 .helmr.program.v0.ActorSucceededH\x00R\tsucceeded\x127\n" +
-	"\x06failed\x18\x03 \x01(\v2\x1d.helmr.program.v0.ActorFailedH\x00R\x06failedB\t\n" +
-	"\aoutcomeB\x1a\n" +
-	"\x18_terminal_input_sequence\"\x10\n" +
+	"\x06failed\x18\x03 \x01(\v2\x1d.helmr.program.v0.ActorFailedH\x00R\x06failed\x12F\n" +
+	"\vinterrupted\x18\x04 \x01(\v2\".helmr.program.v0.ActorInterruptedH\x00R\vinterruptedB\t\n" +
+	"\aoutcome\"\x10\n" +
 	"\x0eActorSucceeded\"`\n" +
 	"\vActorFailed\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\x12&\n" +
 	"\fdetails_json\x18\x02 \x01(\tH\x00R\vdetailsJson\x88\x01\x01B\x0f\n" +
-	"\r_details_json\"u\n" +
-	"\x18ActorTurnCommitRequested\x12%\n" +
+	"\r_details_json\"\x96\x01\n" +
+	"\x10SessionExecution\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x15\n" +
+	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12%\n" +
+	"\x0eattempt_number\x18\x03 \x01(\rR\rattemptNumber\x12%\n" +
+	"\x0erun_generation\x18\x04 \x01(\x03R\rrunGeneration\"f\n" +
+	"\rTurnExecution\x12<\n" +
+	"\asession\x18\x01 \x01(\v2\".helmr.program.v0.SessionExecutionR\asession\x12\x17\n" +
+	"\aturn_id\x18\x02 \x01(\tR\x06turnId\"U\n" +
+	"\x10ActorInterrupted\x12\x17\n" +
+	"\ahold_id\x18\x01 \x01(\tR\x06holdId\x12\x1c\n" +
+	"\aturn_id\x18\x02 \x01(\tH\x00R\x06turnId\x88\x01\x01B\n" +
+	"\n" +
+	"\b_turn_id\"\xaa\x01\n" +
+	"\vSessionStop\x12@\n" +
+	"\texecution\x18\x01 \x01(\v2\".helmr.program.v0.SessionExecutionR\texecution\x12\x1c\n" +
+	"\aturn_id\x18\x02 \x01(\tH\x00R\x06turnId\x88\x01\x01\x12\x17\n" +
+	"\ahold_id\x18\x03 \x01(\tR\x06holdId\x12\x16\n" +
+	"\x06reason\x18\x04 \x01(\tR\x06reasonB\n" +
+	"\n" +
+	"\b_turn_id\"\x84\x01\n" +
+	"\x1cTurnSettlementBeginRequested\x12%\n" +
+	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12=\n" +
+	"\texecution\x18\x02 \x01(\v2\x1f.helmr.program.v0.TurnExecutionR\texecution\"\xba\x02\n" +
+	"\x13TurnSettleRequested\x12%\n" +
 	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x122\n" +
-	"\x15target_input_sequence\x18\x02 \x01(\x03R\x13targetInputSequence\"\xca\x03\n" +
-	"\x1bActorTurnCommitPauseRequest\x12%\n" +
+	"\x15target_input_sequence\x18\x02 \x01(\x03R\x13targetInputSequence\x12=\n" +
+	"\texecution\x18\x03 \x01(\v2\x1f.helmr.program.v0.TurnExecutionR\texecution\x12 \n" +
+	"\vdisposition\x18\x04 \x01(\tR\vdisposition\x12$\n" +
+	"\vresult_json\x18\x05 \x01(\tH\x00R\n" +
+	"resultJson\x88\x01\x01\x12\"\n" +
+	"\n" +
+	"error_json\x18\x06 \x01(\tH\x01R\terrorJson\x88\x01\x01B\x0e\n" +
+	"\f_result_jsonB\r\n" +
+	"\v_error_json\"\x84\x04\n" +
+	"\x16TurnSettlePauseRequest\x12%\n" +
 	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x122\n" +
 	"\x15target_input_sequence\x18\x02 \x01(\x03R\x13targetInputSequence\x12\x15\n" +
 	"\x06run_id\x18\x03 \x01(\tR\x05runId\x12%\n" +
@@ -4989,8 +6078,10 @@ const file_program_proto_rawDesc = "" +
 	"\x14expected_tree_digest\x18\x06 \x01(\tR\x12expectedTreeDigest\x127\n" +
 	"\x18expected_tree_size_bytes\x18\a \x01(\x03R\x15expectedTreeSizeBytes\x129\n" +
 	"\x19expected_tree_entry_count\x18\b \x01(\rR\x16expectedTreeEntryCount\x12J\n" +
-	"\"expected_base_workspace_version_id\x18\t \x01(\tR\x1eexpectedBaseWorkspaceVersionId\"\xf6\x02\n" +
-	"\x19ActorTurnCommitPauseReady\x12%\n" +
+	"\"expected_base_workspace_version_id\x18\t \x01(\tR\x1eexpectedBaseWorkspaceVersionId\x12=\n" +
+	"\texecution\x18\n" +
+	" \x01(\v2\x1f.helmr.program.v0.TurnExecutionR\texecution\"\xb0\x03\n" +
+	"\x14TurnSettlePauseReady\x12%\n" +
 	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x122\n" +
 	"\x15target_input_sequence\x18\x02 \x01(\x03R\x13targetInputSequence\x12\x15\n" +
 	"\x06run_id\x18\x03 \x01(\tR\x05runId\x12%\n" +
@@ -5001,8 +6092,10 @@ const file_program_proto_rawDesc = "" +
 	"treeDigest\x12&\n" +
 	"\x0ftree_size_bytes\x18\a \x01(\x03R\rtreeSizeBytes\x12(\n" +
 	"\x10tree_entry_count\x18\b \x01(\rR\x0etreeEntryCount\x12+\n" +
-	"\x11workspace_changed\x18\t \x01(\bR\x10workspaceChanged\"\xe9\x02\n" +
-	"\x16ActorTurnCommitApplied\x12%\n" +
+	"\x11workspace_changed\x18\t \x01(\bR\x10workspaceChanged\x12=\n" +
+	"\texecution\x18\n" +
+	" \x01(\v2\x1f.helmr.program.v0.TurnExecutionR\texecution\"\xa3\x03\n" +
+	"\x11TurnSettleApplied\x12%\n" +
 	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x122\n" +
 	"\x15target_input_sequence\x18\x02 \x01(\x03R\x13targetInputSequence\x12\x15\n" +
 	"\x06run_id\x18\x03 \x01(\tR\x05runId\x12%\n" +
@@ -5010,32 +6103,80 @@ const file_program_proto_rawDesc = "" +
 	"\frun_lease_id\x18\x05 \x01(\tR\n" +
 	"runLeaseId\x12J\n" +
 	"\"previous_base_workspace_version_id\x18\x06 \x01(\tR\x1epreviousBaseWorkspaceVersionId\x12H\n" +
-	"!applied_base_workspace_version_id\x18\a \x01(\tR\x1dappliedBaseWorkspaceVersionId\"\xc5\x01\n" +
-	"\x1aActorOutputAppendRequested\x12%\n" +
-	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x1b\n" +
-	"\tdata_json\x18\x02 \x01(\tR\bdataJson\x12!\n" +
-	"\fcontent_type\x18\x03 \x01(\tR\vcontentType\x12,\n" +
-	"\x0fidempotency_key\x18\x04 \x01(\tH\x00R\x0eidempotencyKey\x88\x01\x01B\x12\n" +
-	"\x10_idempotency_key\"\xc0\x01\n" +
-	"\x19SessionInputSendRequested\x12%\n" +
-	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x1d\n" +
+	"!applied_base_workspace_version_id\x18\a \x01(\tR\x1dappliedBaseWorkspaceVersionId\x12=\n" +
+	"\texecution\x18\b \x01(\v2\x1f.helmr.program.v0.TurnExecutionR\texecution\"z\n" +
+	"\x12TurnReadyRequested\x12%\n" +
+	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12=\n" +
+	"\texecution\x18\x02 \x01(\v2\x1f.helmr.program.v0.TurnExecutionR\texecution\"\xa2\x01\n" +
+	"\x19TurnMessageClaimRequested\x12%\n" +
+	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12=\n" +
+	"\texecution\x18\x02 \x01(\v2\x1f.helmr.program.v0.TurnExecutionR\texecution\x12\x1f\n" +
+	"\vdelivery_id\x18\x03 \x01(\tR\n" +
+	"deliveryId\"\xa9\x02\n" +
+	"\x1cTurnMessageCompleteRequested\x12%\n" +
+	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12=\n" +
+	"\texecution\x18\x02 \x01(\v2\x1f.helmr.program.v0.TurnExecutionR\texecution\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x02 \x01(\tR\tsessionId\x12\x1b\n" +
+	"message_id\x18\x03 \x01(\tR\tmessageId\x12\x1f\n" +
+	"\vdelivery_id\x18\x04 \x01(\tR\n" +
+	"deliveryId\x12\x16\n" +
+	"\x06status\x18\x05 \x01(\tR\x06status\x12\x12\n" +
+	"\x04code\x18\x06 \x01(\tR\x04code\x12&\n" +
+	"\fdetails_json\x18\a \x01(\tH\x00R\vdetailsJson\x88\x01\x01B\x0f\n" +
+	"\r_details_json\"\xac\x02\n" +
+	"\x18TurnOutputWriteRequested\x12%\n" +
+	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12=\n" +
+	"\texecution\x18\x02 \x01(\v2\x1f.helmr.program.v0.TurnExecutionR\texecution\x12\x1b\n" +
+	"\tdata_json\x18\x03 \x01(\tR\bdataJson\x12,\n" +
+	"\x0fidempotency_key\x18\x04 \x01(\tH\x00R\x0eidempotencyKey\x88\x01\x01\x123\n" +
+	"\x13message_delivery_id\x18\x05 \x01(\tH\x01R\x11messageDeliveryId\x88\x01\x01B\x12\n" +
+	"\x10_idempotency_keyB\x16\n" +
+	"\x14_message_delivery_id\"\xe5\x01\n" +
+	"\x1bSessionOutputWriteRequested\x12%\n" +
+	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12@\n" +
+	"\texecution\x18\x02 \x01(\v2\".helmr.program.v0.SessionExecutionR\texecution\x12\x1b\n" +
 	"\tdata_json\x18\x03 \x01(\tR\bdataJson\x12,\n" +
 	"\x0fidempotency_key\x18\x04 \x01(\tH\x00R\x0eidempotencyKey\x88\x01\x01B\x12\n" +
-	"\x10_idempotency_key\"\xbe\x02\n" +
+	"\x10_idempotency_key\"\xfb\x01\n" +
+	"\x16SessionSubmitRequested\x12%\n" +
+	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\x12\x12\n" +
+	"\x04mode\x18\x03 \x01(\tR\x04mode\x12\x1c\n" +
+	"\aturn_id\x18\x04 \x01(\tH\x00R\x06turnId\x88\x01\x01\x12\x1b\n" +
+	"\tdata_json\x18\x05 \x01(\tR\bdataJson\x12,\n" +
+	"\x0fidempotency_key\x18\x06 \x01(\tH\x01R\x0eidempotencyKey\x88\x01\x01B\n" +
+	"\n" +
+	"\b_turn_idB\x12\n" +
+	"\x10_idempotency_key\"}\n" +
+	"\x1cSessionTurnRetrieveRequested\x12%\n" +
+	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\x12\x17\n" +
+	"\aturn_id\x18\x03 \x01(\tR\x06turnId\"\xc0\x01\n" +
+	"\x1dSessionTurnInterruptRequested\x12%\n" +
+	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\x12\x17\n" +
+	"\aturn_id\x18\x03 \x01(\tR\x06turnId\x12,\n" +
+	"\x0fidempotency_key\x18\x04 \x01(\tH\x00R\x0eidempotencyKey\x88\x01\x01B\x12\n" +
+	"\x10_idempotency_key\"\xb9\x01\n" +
+	"\x16SessionResumeRequested\x12%\n" +
+	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\x12\x17\n" +
+	"\ahold_id\x18\x03 \x01(\tR\x06holdId\x12,\n" +
+	"\x0fidempotency_key\x18\x04 \x01(\tH\x00R\x0eidempotencyKey\x88\x01\x01B\x12\n" +
+	"\x10_idempotency_key\"\x8b\x02\n" +
 	"\x13ActorStartRequested\x12%\n" +
 	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x1f\n" +
 	"\vdeclared_id\x18\x02 \x01(\tR\n" +
 	"declaredId\x12!\n" +
 	"\fworkspace_id\x18\x03 \x01(\tR\vworkspaceId\x12\x15\n" +
-	"\x03key\x18\x05 \x01(\tH\x00R\x03key\x88\x01\x01\x12\"\n" +
-	"\n" +
-	"input_json\x18\x06 \x01(\tH\x01R\tinputJson\x88\x01\x01\x12,\n" +
-	"\x0fidempotency_key\x18\a \x01(\tH\x02R\x0eidempotencyKey\x88\x01\x01\x12(\n" +
+	"\x03key\x18\x05 \x01(\tH\x00R\x03key\x88\x01\x01\x12,\n" +
+	"\x0fidempotency_key\x18\a \x01(\tH\x01R\x0eidempotencyKey\x88\x01\x01\x12(\n" +
 	"\x10run_options_json\x18\b \x01(\tR\x0erunOptionsJsonB\x06\n" +
-	"\x04_keyB\r\n" +
-	"\v_input_jsonB\x12\n" +
+	"\x04_keyB\x12\n" +
 	"\x10_idempotency_key\"^\n" +
 	"\x16SessionStatusRequested\x12%\n" +
 	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x1d\n" +
@@ -5046,8 +6187,8 @@ const file_program_proto_rawDesc = "" +
 	"\n" +
 	"session_id\x18\x02 \x01(\tR\tsessionId\x12,\n" +
 	"\x0fidempotency_key\x18\x03 \x01(\tH\x00R\x0eidempotencyKey\x88\x01\x01B\x12\n" +
-	"\x10_idempotency_key\"\x9d\x01\n" +
-	"\x1aSessionOutputPageRequested\x12%\n" +
+	"\x10_idempotency_key\"\x99\x01\n" +
+	"\x16SessionEventsRequested\x12%\n" +
 	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x02 \x01(\tR\tsessionId\x12\x19\n" +
@@ -5103,7 +6244,7 @@ const file_program_proto_rawDesc = "" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12%\n" +
 	"\x0eattempt_number\x18\x02 \x01(\rR\rattemptNumber\x12 \n" +
 	"\frun_lease_id\x18\x03 \x01(\tR\n" +
-	"runLeaseId\"\xef\x03\n" +
+	"runLeaseId\"\xdb\x04\n" +
 	"\x10RunWaitRequested\x12%\n" +
 	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x1f\n" +
@@ -5117,11 +6258,15 @@ const file_program_proto_rawDesc = "" +
 	"\x10resume_attach_id\x18\b \x01(\tR\x0eresumeAttachId\x12+\n" +
 	"\x0fidle_timeout_ms\x18\t \x01(\x04H\x02R\ridleTimeoutMs\x88\x01\x01\x12L\n" +
 	" actor_speculative_input_sequence\x18\n" +
-	" \x01(\x03H\x03R\x1dactorSpeculativeInputSequence\x88\x01\x01B\x10\n" +
+	" \x01(\x03H\x03R\x1dactorSpeculativeInputSequence\x88\x01\x01\x12@\n" +
+	"\texecution\x18\v \x01(\v2\".helmr.program.v0.SessionExecutionR\texecution\x12\x1c\n" +
+	"\aturn_id\x18\f \x01(\tH\x04R\x06turnId\x88\x01\x01B\x10\n" +
 	"\x0e_metadata_jsonB\r\n" +
 	"\v_timeout_msB\x12\n" +
 	"\x10_idle_timeout_msB#\n" +
-	"!_actor_speculative_input_sequence\"\x82\x02\n" +
+	"!_actor_speculative_input_sequenceB\n" +
+	"\n" +
+	"\b_turn_id\"\x82\x02\n" +
 	"\x14TokenCreateRequested\x12\"\n" +
 	"\n" +
 	"timeout_ms\x18\x01 \x01(\x04H\x00R\ttimeoutMs\x88\x01\x01\x12%\n" +
@@ -5131,7 +6276,7 @@ const file_program_proto_rawDesc = "" +
 	"\rmetadata_json\x18\x05 \x01(\tH\x02R\fmetadataJson\x88\x01\x01B\r\n" +
 	"\v_timeout_msB\x12\n" +
 	"\x10_idempotency_keyB\x10\n" +
-	"\x0e_metadata_json\"\xa5\x04\n" +
+	"\x0e_metadata_json\"\x91\x05\n" +
 	"\x18TaskChildInvokeRequested\x12%\n" +
 	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x1f\n" +
 	"\vdeclared_id\x18\x02 \x01(\tR\n" +
@@ -5145,10 +6290,14 @@ const file_program_proto_rawDesc = "" +
 	" actor_speculative_input_sequence\x18\t \x01(\x03H\x02R\x1dactorSpeculativeInputSequence\x88\x01\x01\x12\x1e\n" +
 	"\vrun_wait_id\x18\n" +
 	" \x01(\tR\trunWaitId\x12(\n" +
-	"\x10resume_attach_id\x18\v \x01(\tR\x0eresumeAttachIdB\x0f\n" +
+	"\x10resume_attach_id\x18\v \x01(\tR\x0eresumeAttachId\x12@\n" +
+	"\texecution\x18\f \x01(\v2\".helmr.program.v0.SessionExecutionR\texecution\x12\x1c\n" +
+	"\aturn_id\x18\r \x01(\tH\x03R\x06turnId\x88\x01\x01B\x0f\n" +
 	"\r_payload_jsonB\x12\n" +
 	"\x10_idempotency_keyB#\n" +
-	"!_actor_speculative_input_sequence\"\xf9\x02\n" +
+	"!_actor_speculative_input_sequenceB\n" +
+	"\n" +
+	"\b_turn_id\"\xe5\x03\n" +
 	"\x16CheckpointPauseRequest\x12\x1e\n" +
 	"\vrun_wait_id\x18\x01 \x01(\tR\trunWaitId\x12#\n" +
 	"\rcheckpoint_id\x18\x02 \x01(\tR\fcheckpointId\x12+\n" +
@@ -5159,7 +6308,12 @@ const file_program_proto_rawDesc = "" +
 	"runLeaseId\x12(\n" +
 	"\x10resume_attach_id\x18\a \x01(\tR\x0eresumeAttachId\x12<\n" +
 	"\x1acheckpoint_request_version\x18\b \x01(\x03R\x18checkpointRequestVersion\x12%\n" +
-	"\x0ecorrelation_id\x18\t \x01(\tR\rcorrelationId\"\xba\x02\n" +
+	"\x0ecorrelation_id\x18\t \x01(\tR\rcorrelationId\x12@\n" +
+	"\texecution\x18\n" +
+	" \x01(\v2\".helmr.program.v0.SessionExecutionR\texecution\x12\x1c\n" +
+	"\aturn_id\x18\v \x01(\tH\x00R\x06turnId\x88\x01\x01B\n" +
+	"\n" +
+	"\b_turn_id\"\xa6\x03\n" +
 	"\fResumeAttach\x12#\n" +
 	"\rcheckpoint_id\x18\x01 \x01(\tR\fcheckpointId\x12\x1e\n" +
 	"\vrun_wait_id\x18\x02 \x01(\tR\trunWaitId\x12 \n" +
@@ -5169,7 +6323,12 @@ const file_program_proto_rawDesc = "" +
 	"\x0eattempt_number\x18\x05 \x01(\rR\rattemptNumber\x12(\n" +
 	"\x10resume_attach_id\x18\x06 \x01(\tR\x0eresumeAttachId\x124\n" +
 	"\x16resume_request_version\x18\a \x01(\x03R\x14resumeRequestVersion\x12%\n" +
-	"\x0ecorrelation_id\x18\b \x01(\tR\rcorrelationId\"\xfe\x02\n" +
+	"\x0ecorrelation_id\x18\b \x01(\tR\rcorrelationId\x12@\n" +
+	"\texecution\x18\t \x01(\v2\".helmr.program.v0.SessionExecutionR\texecution\x12\x1c\n" +
+	"\aturn_id\x18\n" +
+	" \x01(\tH\x00R\x06turnId\x88\x01\x01B\n" +
+	"\n" +
+	"\b_turn_id\"\xfe\x02\n" +
 	"\x0eResumeDecision\x12\x1e\n" +
 	"\vrun_wait_id\x18\x01 \x01(\tR\trunWaitId\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x1b\n" +
@@ -5230,70 +6389,82 @@ func file_program_proto_rawDescGZIP() []byte {
 	return file_program_proto_rawDescData
 }
 
-var file_program_proto_msgTypes = make([]protoimpl.MessageInfo, 62)
+var file_program_proto_msgTypes = make([]protoimpl.MessageInfo, 74)
 var file_program_proto_goTypes = []any{
-	(*ProgramStart)(nil),                // 0: helmr.program.v0.ProgramStart
-	(*TaskStart)(nil),                   // 1: helmr.program.v0.TaskStart
-	(*NoPayload)(nil),                   // 2: helmr.program.v0.NoPayload
-	(*ActorStart)(nil),                  // 3: helmr.program.v0.ActorStart
-	(*RunCause)(nil),                    // 4: helmr.program.v0.RunCause
-	(*ApiCause)(nil),                    // 5: helmr.program.v0.ApiCause
-	(*ManualCause)(nil),                 // 6: helmr.program.v0.ManualCause
-	(*ChildCause)(nil),                  // 7: helmr.program.v0.ChildCause
-	(*ScheduleCause)(nil),               // 8: helmr.program.v0.ScheduleCause
-	(*ActorStartCause)(nil),             // 9: helmr.program.v0.ActorStartCause
-	(*ContinuationCause)(nil),           // 10: helmr.program.v0.ContinuationCause
-	(*ProgramRunRequest)(nil),           // 11: helmr.program.v0.ProgramRunRequest
-	(*ProgramSecret)(nil),               // 12: helmr.program.v0.ProgramSecret
-	(*ProgramSecretsComplete)(nil),      // 13: helmr.program.v0.ProgramSecretsComplete
-	(*ProgramSupervisorCommand)(nil),    // 14: helmr.program.v0.ProgramSupervisorCommand
-	(*ProgramProcessStarted)(nil),       // 15: helmr.program.v0.ProgramProcessStarted
-	(*ProgramProcessStartFailed)(nil),   // 16: helmr.program.v0.ProgramProcessStartFailed
-	(*ProgramStartRelease)(nil),         // 17: helmr.program.v0.ProgramStartRelease
-	(*EntrypointIdentity)(nil),          // 18: helmr.program.v0.EntrypointIdentity
-	(*TaskEntrypoint)(nil),              // 19: helmr.program.v0.TaskEntrypoint
-	(*ActorEntrypoint)(nil),             // 20: helmr.program.v0.ActorEntrypoint
-	(*EntrypointReady)(nil),             // 21: helmr.program.v0.EntrypointReady
-	(*EntrypointRelease)(nil),           // 22: helmr.program.v0.EntrypointRelease
-	(*RunEvent)(nil),                    // 23: helmr.program.v0.RunEvent
-	(*TaskOutcome)(nil),                 // 24: helmr.program.v0.TaskOutcome
-	(*TaskSucceeded)(nil),               // 25: helmr.program.v0.TaskSucceeded
-	(*TaskFailed)(nil),                  // 26: helmr.program.v0.TaskFailed
-	(*TaskPayloadInvalid)(nil),          // 27: helmr.program.v0.TaskPayloadInvalid
-	(*ActorOutcome)(nil),                // 28: helmr.program.v0.ActorOutcome
-	(*ActorSucceeded)(nil),              // 29: helmr.program.v0.ActorSucceeded
-	(*ActorFailed)(nil),                 // 30: helmr.program.v0.ActorFailed
-	(*ActorTurnCommitRequested)(nil),    // 31: helmr.program.v0.ActorTurnCommitRequested
-	(*ActorTurnCommitPauseRequest)(nil), // 32: helmr.program.v0.ActorTurnCommitPauseRequest
-	(*ActorTurnCommitPauseReady)(nil),   // 33: helmr.program.v0.ActorTurnCommitPauseReady
-	(*ActorTurnCommitApplied)(nil),      // 34: helmr.program.v0.ActorTurnCommitApplied
-	(*ActorOutputAppendRequested)(nil),  // 35: helmr.program.v0.ActorOutputAppendRequested
-	(*SessionInputSendRequested)(nil),   // 36: helmr.program.v0.SessionInputSendRequested
-	(*ActorStartRequested)(nil),         // 37: helmr.program.v0.ActorStartRequested
-	(*SessionStatusRequested)(nil),      // 38: helmr.program.v0.SessionStatusRequested
-	(*SessionCloseRequested)(nil),       // 39: helmr.program.v0.SessionCloseRequested
-	(*SessionOutputPageRequested)(nil),  // 40: helmr.program.v0.SessionOutputPageRequested
-	(*WorkspaceAddress)(nil),            // 41: helmr.program.v0.WorkspaceAddress
-	(*SecretEnvBinding)(nil),            // 42: helmr.program.v0.SecretEnvBinding
-	(*SecretFileBinding)(nil),           // 43: helmr.program.v0.SecretFileBinding
-	(*WorkspaceSecretPlacement)(nil),    // 44: helmr.program.v0.WorkspaceSecretPlacement
-	(*WorkspaceCreateRequested)(nil),    // 45: helmr.program.v0.WorkspaceCreateRequested
-	(*WorkspaceRetrieveRequested)(nil),  // 46: helmr.program.v0.WorkspaceRetrieveRequested
-	(*WorkspaceExecRequested)(nil),      // 47: helmr.program.v0.WorkspaceExecRequested
-	(*WorkspaceDeleteRequested)(nil),    // 48: helmr.program.v0.WorkspaceDeleteRequested
-	(*ProgramQuiesced)(nil),             // 49: helmr.program.v0.ProgramQuiesced
-	(*RunWaitRequested)(nil),            // 50: helmr.program.v0.RunWaitRequested
-	(*TokenCreateRequested)(nil),        // 51: helmr.program.v0.TokenCreateRequested
-	(*TaskChildInvokeRequested)(nil),    // 52: helmr.program.v0.TaskChildInvokeRequested
-	(*CheckpointPauseRequest)(nil),      // 53: helmr.program.v0.CheckpointPauseRequest
-	(*ResumeAttach)(nil),                // 54: helmr.program.v0.ResumeAttach
-	(*ResumeDecision)(nil),              // 55: helmr.program.v0.ResumeDecision
-	(*ResumeAck)(nil),                   // 56: helmr.program.v0.ResumeAck
-	(*ResumeConsumed)(nil),              // 57: helmr.program.v0.ResumeConsumed
-	(*MetadataUpdated)(nil),             // 58: helmr.program.v0.MetadataUpdated
-	(*StructuredLogRequested)(nil),      // 59: helmr.program.v0.StructuredLogRequested
-	nil,                                 // 60: helmr.program.v0.ProgramRunRequest.ProtectedEnvEntry
-	nil,                                 // 61: helmr.program.v0.WorkspaceExecRequested.EnvEntry
+	(*ProgramStart)(nil),                  // 0: helmr.program.v0.ProgramStart
+	(*TaskStart)(nil),                     // 1: helmr.program.v0.TaskStart
+	(*NoPayload)(nil),                     // 2: helmr.program.v0.NoPayload
+	(*ActorStart)(nil),                    // 3: helmr.program.v0.ActorStart
+	(*RunCause)(nil),                      // 4: helmr.program.v0.RunCause
+	(*ApiCause)(nil),                      // 5: helmr.program.v0.ApiCause
+	(*ManualCause)(nil),                   // 6: helmr.program.v0.ManualCause
+	(*ChildCause)(nil),                    // 7: helmr.program.v0.ChildCause
+	(*ScheduleCause)(nil),                 // 8: helmr.program.v0.ScheduleCause
+	(*ActorStartCause)(nil),               // 9: helmr.program.v0.ActorStartCause
+	(*ContinuationCause)(nil),             // 10: helmr.program.v0.ContinuationCause
+	(*ProgramRunRequest)(nil),             // 11: helmr.program.v0.ProgramRunRequest
+	(*ProgramSecret)(nil),                 // 12: helmr.program.v0.ProgramSecret
+	(*ProgramSecretsComplete)(nil),        // 13: helmr.program.v0.ProgramSecretsComplete
+	(*ProgramSupervisorCommand)(nil),      // 14: helmr.program.v0.ProgramSupervisorCommand
+	(*ProgramProcessStarted)(nil),         // 15: helmr.program.v0.ProgramProcessStarted
+	(*ProgramProcessStartFailed)(nil),     // 16: helmr.program.v0.ProgramProcessStartFailed
+	(*ProgramStartRelease)(nil),           // 17: helmr.program.v0.ProgramStartRelease
+	(*EntrypointIdentity)(nil),            // 18: helmr.program.v0.EntrypointIdentity
+	(*TaskEntrypoint)(nil),                // 19: helmr.program.v0.TaskEntrypoint
+	(*ActorEntrypoint)(nil),               // 20: helmr.program.v0.ActorEntrypoint
+	(*EntrypointReady)(nil),               // 21: helmr.program.v0.EntrypointReady
+	(*EntrypointRelease)(nil),             // 22: helmr.program.v0.EntrypointRelease
+	(*RunEvent)(nil),                      // 23: helmr.program.v0.RunEvent
+	(*TaskOutcome)(nil),                   // 24: helmr.program.v0.TaskOutcome
+	(*TaskSucceeded)(nil),                 // 25: helmr.program.v0.TaskSucceeded
+	(*TaskFailed)(nil),                    // 26: helmr.program.v0.TaskFailed
+	(*TaskPayloadInvalid)(nil),            // 27: helmr.program.v0.TaskPayloadInvalid
+	(*ActorOutcome)(nil),                  // 28: helmr.program.v0.ActorOutcome
+	(*ActorSucceeded)(nil),                // 29: helmr.program.v0.ActorSucceeded
+	(*ActorFailed)(nil),                   // 30: helmr.program.v0.ActorFailed
+	(*SessionExecution)(nil),              // 31: helmr.program.v0.SessionExecution
+	(*TurnExecution)(nil),                 // 32: helmr.program.v0.TurnExecution
+	(*ActorInterrupted)(nil),              // 33: helmr.program.v0.ActorInterrupted
+	(*SessionStop)(nil),                   // 34: helmr.program.v0.SessionStop
+	(*TurnSettlementBeginRequested)(nil),  // 35: helmr.program.v0.TurnSettlementBeginRequested
+	(*TurnSettleRequested)(nil),           // 36: helmr.program.v0.TurnSettleRequested
+	(*TurnSettlePauseRequest)(nil),        // 37: helmr.program.v0.TurnSettlePauseRequest
+	(*TurnSettlePauseReady)(nil),          // 38: helmr.program.v0.TurnSettlePauseReady
+	(*TurnSettleApplied)(nil),             // 39: helmr.program.v0.TurnSettleApplied
+	(*TurnReadyRequested)(nil),            // 40: helmr.program.v0.TurnReadyRequested
+	(*TurnMessageClaimRequested)(nil),     // 41: helmr.program.v0.TurnMessageClaimRequested
+	(*TurnMessageCompleteRequested)(nil),  // 42: helmr.program.v0.TurnMessageCompleteRequested
+	(*TurnOutputWriteRequested)(nil),      // 43: helmr.program.v0.TurnOutputWriteRequested
+	(*SessionOutputWriteRequested)(nil),   // 44: helmr.program.v0.SessionOutputWriteRequested
+	(*SessionSubmitRequested)(nil),        // 45: helmr.program.v0.SessionSubmitRequested
+	(*SessionTurnRetrieveRequested)(nil),  // 46: helmr.program.v0.SessionTurnRetrieveRequested
+	(*SessionTurnInterruptRequested)(nil), // 47: helmr.program.v0.SessionTurnInterruptRequested
+	(*SessionResumeRequested)(nil),        // 48: helmr.program.v0.SessionResumeRequested
+	(*ActorStartRequested)(nil),           // 49: helmr.program.v0.ActorStartRequested
+	(*SessionStatusRequested)(nil),        // 50: helmr.program.v0.SessionStatusRequested
+	(*SessionCloseRequested)(nil),         // 51: helmr.program.v0.SessionCloseRequested
+	(*SessionEventsRequested)(nil),        // 52: helmr.program.v0.SessionEventsRequested
+	(*WorkspaceAddress)(nil),              // 53: helmr.program.v0.WorkspaceAddress
+	(*SecretEnvBinding)(nil),              // 54: helmr.program.v0.SecretEnvBinding
+	(*SecretFileBinding)(nil),             // 55: helmr.program.v0.SecretFileBinding
+	(*WorkspaceSecretPlacement)(nil),      // 56: helmr.program.v0.WorkspaceSecretPlacement
+	(*WorkspaceCreateRequested)(nil),      // 57: helmr.program.v0.WorkspaceCreateRequested
+	(*WorkspaceRetrieveRequested)(nil),    // 58: helmr.program.v0.WorkspaceRetrieveRequested
+	(*WorkspaceExecRequested)(nil),        // 59: helmr.program.v0.WorkspaceExecRequested
+	(*WorkspaceDeleteRequested)(nil),      // 60: helmr.program.v0.WorkspaceDeleteRequested
+	(*ProgramQuiesced)(nil),               // 61: helmr.program.v0.ProgramQuiesced
+	(*RunWaitRequested)(nil),              // 62: helmr.program.v0.RunWaitRequested
+	(*TokenCreateRequested)(nil),          // 63: helmr.program.v0.TokenCreateRequested
+	(*TaskChildInvokeRequested)(nil),      // 64: helmr.program.v0.TaskChildInvokeRequested
+	(*CheckpointPauseRequest)(nil),        // 65: helmr.program.v0.CheckpointPauseRequest
+	(*ResumeAttach)(nil),                  // 66: helmr.program.v0.ResumeAttach
+	(*ResumeDecision)(nil),                // 67: helmr.program.v0.ResumeDecision
+	(*ResumeAck)(nil),                     // 68: helmr.program.v0.ResumeAck
+	(*ResumeConsumed)(nil),                // 69: helmr.program.v0.ResumeConsumed
+	(*MetadataUpdated)(nil),               // 70: helmr.program.v0.MetadataUpdated
+	(*StructuredLogRequested)(nil),        // 71: helmr.program.v0.StructuredLogRequested
+	nil,                                   // 72: helmr.program.v0.ProgramRunRequest.ProtectedEnvEntry
+	nil,                                   // 73: helmr.program.v0.WorkspaceExecRequested.EnvEntry
 }
 var file_program_proto_depIdxs = []int32{
 	4,  // 0: helmr.program.v0.ProgramStart.cause:type_name -> helmr.program.v0.RunCause
@@ -5306,7 +6477,7 @@ var file_program_proto_depIdxs = []int32{
 	8,  // 7: helmr.program.v0.RunCause.schedule:type_name -> helmr.program.v0.ScheduleCause
 	9,  // 8: helmr.program.v0.RunCause.actor_start:type_name -> helmr.program.v0.ActorStartCause
 	10, // 9: helmr.program.v0.RunCause.continuation:type_name -> helmr.program.v0.ContinuationCause
-	60, // 10: helmr.program.v0.ProgramRunRequest.protected_env:type_name -> helmr.program.v0.ProgramRunRequest.ProtectedEnvEntry
+	72, // 10: helmr.program.v0.ProgramRunRequest.protected_env:type_name -> helmr.program.v0.ProgramRunRequest.ProtectedEnvEntry
 	12, // 11: helmr.program.v0.ProgramSupervisorCommand.secret_delivery:type_name -> helmr.program.v0.ProgramSecret
 	13, // 12: helmr.program.v0.ProgramSupervisorCommand.secrets_complete:type_name -> helmr.program.v0.ProgramSecretsComplete
 	17, // 13: helmr.program.v0.ProgramSupervisorCommand.start_release:type_name -> helmr.program.v0.ProgramStartRelease
@@ -5315,46 +6486,71 @@ var file_program_proto_depIdxs = []int32{
 	20, // 16: helmr.program.v0.EntrypointIdentity.actor:type_name -> helmr.program.v0.ActorEntrypoint
 	18, // 17: helmr.program.v0.EntrypointReady.entrypoint:type_name -> helmr.program.v0.EntrypointIdentity
 	18, // 18: helmr.program.v0.EntrypointRelease.entrypoint:type_name -> helmr.program.v0.EntrypointIdentity
-	50, // 19: helmr.program.v0.RunEvent.run_wait_requested:type_name -> helmr.program.v0.RunWaitRequested
-	58, // 20: helmr.program.v0.RunEvent.metadata_updated:type_name -> helmr.program.v0.MetadataUpdated
-	51, // 21: helmr.program.v0.RunEvent.token_create_requested:type_name -> helmr.program.v0.TokenCreateRequested
-	57, // 22: helmr.program.v0.RunEvent.resume_consumed:type_name -> helmr.program.v0.ResumeConsumed
+	62, // 19: helmr.program.v0.RunEvent.run_wait_requested:type_name -> helmr.program.v0.RunWaitRequested
+	70, // 20: helmr.program.v0.RunEvent.metadata_updated:type_name -> helmr.program.v0.MetadataUpdated
+	63, // 21: helmr.program.v0.RunEvent.token_create_requested:type_name -> helmr.program.v0.TokenCreateRequested
+	69, // 22: helmr.program.v0.RunEvent.resume_consumed:type_name -> helmr.program.v0.ResumeConsumed
 	15, // 23: helmr.program.v0.RunEvent.program_process_started:type_name -> helmr.program.v0.ProgramProcessStarted
 	21, // 24: helmr.program.v0.RunEvent.entrypoint_ready:type_name -> helmr.program.v0.EntrypointReady
 	24, // 25: helmr.program.v0.RunEvent.task_outcome:type_name -> helmr.program.v0.TaskOutcome
-	49, // 26: helmr.program.v0.RunEvent.program_quiesced:type_name -> helmr.program.v0.ProgramQuiesced
+	61, // 26: helmr.program.v0.RunEvent.program_quiesced:type_name -> helmr.program.v0.ProgramQuiesced
 	28, // 27: helmr.program.v0.RunEvent.actor_outcome:type_name -> helmr.program.v0.ActorOutcome
-	31, // 28: helmr.program.v0.RunEvent.actor_turn_commit_requested:type_name -> helmr.program.v0.ActorTurnCommitRequested
-	35, // 29: helmr.program.v0.RunEvent.actor_output_append_requested:type_name -> helmr.program.v0.ActorOutputAppendRequested
-	36, // 30: helmr.program.v0.RunEvent.session_input_send_requested:type_name -> helmr.program.v0.SessionInputSendRequested
-	59, // 31: helmr.program.v0.RunEvent.structured_log_requested:type_name -> helmr.program.v0.StructuredLogRequested
-	52, // 32: helmr.program.v0.RunEvent.task_child_invoke_requested:type_name -> helmr.program.v0.TaskChildInvokeRequested
-	37, // 33: helmr.program.v0.RunEvent.actor_start_requested:type_name -> helmr.program.v0.ActorStartRequested
-	38, // 34: helmr.program.v0.RunEvent.session_status_requested:type_name -> helmr.program.v0.SessionStatusRequested
-	39, // 35: helmr.program.v0.RunEvent.session_close_requested:type_name -> helmr.program.v0.SessionCloseRequested
-	40, // 36: helmr.program.v0.RunEvent.session_output_page_requested:type_name -> helmr.program.v0.SessionOutputPageRequested
-	45, // 37: helmr.program.v0.RunEvent.workspace_create_requested:type_name -> helmr.program.v0.WorkspaceCreateRequested
-	46, // 38: helmr.program.v0.RunEvent.workspace_retrieve_requested:type_name -> helmr.program.v0.WorkspaceRetrieveRequested
-	47, // 39: helmr.program.v0.RunEvent.workspace_exec_requested:type_name -> helmr.program.v0.WorkspaceExecRequested
-	48, // 40: helmr.program.v0.RunEvent.workspace_delete_requested:type_name -> helmr.program.v0.WorkspaceDeleteRequested
+	36, // 28: helmr.program.v0.RunEvent.turn_settle_requested:type_name -> helmr.program.v0.TurnSettleRequested
+	43, // 29: helmr.program.v0.RunEvent.turn_output_write_requested:type_name -> helmr.program.v0.TurnOutputWriteRequested
+	45, // 30: helmr.program.v0.RunEvent.session_submit_requested:type_name -> helmr.program.v0.SessionSubmitRequested
+	71, // 31: helmr.program.v0.RunEvent.structured_log_requested:type_name -> helmr.program.v0.StructuredLogRequested
+	64, // 32: helmr.program.v0.RunEvent.task_child_invoke_requested:type_name -> helmr.program.v0.TaskChildInvokeRequested
+	49, // 33: helmr.program.v0.RunEvent.actor_start_requested:type_name -> helmr.program.v0.ActorStartRequested
+	50, // 34: helmr.program.v0.RunEvent.session_status_requested:type_name -> helmr.program.v0.SessionStatusRequested
+	51, // 35: helmr.program.v0.RunEvent.session_close_requested:type_name -> helmr.program.v0.SessionCloseRequested
+	52, // 36: helmr.program.v0.RunEvent.session_events_requested:type_name -> helmr.program.v0.SessionEventsRequested
+	57, // 37: helmr.program.v0.RunEvent.workspace_create_requested:type_name -> helmr.program.v0.WorkspaceCreateRequested
+	58, // 38: helmr.program.v0.RunEvent.workspace_retrieve_requested:type_name -> helmr.program.v0.WorkspaceRetrieveRequested
+	59, // 39: helmr.program.v0.RunEvent.workspace_exec_requested:type_name -> helmr.program.v0.WorkspaceExecRequested
+	60, // 40: helmr.program.v0.RunEvent.workspace_delete_requested:type_name -> helmr.program.v0.WorkspaceDeleteRequested
 	16, // 41: helmr.program.v0.RunEvent.program_process_start_failed:type_name -> helmr.program.v0.ProgramProcessStartFailed
-	25, // 42: helmr.program.v0.TaskOutcome.succeeded:type_name -> helmr.program.v0.TaskSucceeded
-	26, // 43: helmr.program.v0.TaskOutcome.failed:type_name -> helmr.program.v0.TaskFailed
-	27, // 44: helmr.program.v0.TaskOutcome.payload_invalid:type_name -> helmr.program.v0.TaskPayloadInvalid
-	29, // 45: helmr.program.v0.ActorOutcome.succeeded:type_name -> helmr.program.v0.ActorSucceeded
-	30, // 46: helmr.program.v0.ActorOutcome.failed:type_name -> helmr.program.v0.ActorFailed
-	42, // 47: helmr.program.v0.WorkspaceSecretPlacement.env:type_name -> helmr.program.v0.SecretEnvBinding
-	43, // 48: helmr.program.v0.WorkspaceSecretPlacement.file:type_name -> helmr.program.v0.SecretFileBinding
-	44, // 49: helmr.program.v0.WorkspaceCreateRequested.secrets:type_name -> helmr.program.v0.WorkspaceSecretPlacement
-	41, // 50: helmr.program.v0.WorkspaceRetrieveRequested.workspace:type_name -> helmr.program.v0.WorkspaceAddress
-	41, // 51: helmr.program.v0.WorkspaceExecRequested.workspace:type_name -> helmr.program.v0.WorkspaceAddress
-	61, // 52: helmr.program.v0.WorkspaceExecRequested.env:type_name -> helmr.program.v0.WorkspaceExecRequested.EnvEntry
-	41, // 53: helmr.program.v0.WorkspaceDeleteRequested.workspace:type_name -> helmr.program.v0.WorkspaceAddress
-	54, // [54:54] is the sub-list for method output_type
-	54, // [54:54] is the sub-list for method input_type
-	54, // [54:54] is the sub-list for extension type_name
-	54, // [54:54] is the sub-list for extension extendee
-	0,  // [0:54] is the sub-list for field type_name
+	44, // 42: helmr.program.v0.RunEvent.session_output_write_requested:type_name -> helmr.program.v0.SessionOutputWriteRequested
+	40, // 43: helmr.program.v0.RunEvent.turn_ready_requested:type_name -> helmr.program.v0.TurnReadyRequested
+	41, // 44: helmr.program.v0.RunEvent.turn_message_claim_requested:type_name -> helmr.program.v0.TurnMessageClaimRequested
+	42, // 45: helmr.program.v0.RunEvent.turn_message_complete_requested:type_name -> helmr.program.v0.TurnMessageCompleteRequested
+	35, // 46: helmr.program.v0.RunEvent.turn_settlement_begin_requested:type_name -> helmr.program.v0.TurnSettlementBeginRequested
+	46, // 47: helmr.program.v0.RunEvent.session_turn_retrieve_requested:type_name -> helmr.program.v0.SessionTurnRetrieveRequested
+	47, // 48: helmr.program.v0.RunEvent.session_turn_interrupt_requested:type_name -> helmr.program.v0.SessionTurnInterruptRequested
+	48, // 49: helmr.program.v0.RunEvent.session_resume_requested:type_name -> helmr.program.v0.SessionResumeRequested
+	25, // 50: helmr.program.v0.TaskOutcome.succeeded:type_name -> helmr.program.v0.TaskSucceeded
+	26, // 51: helmr.program.v0.TaskOutcome.failed:type_name -> helmr.program.v0.TaskFailed
+	27, // 52: helmr.program.v0.TaskOutcome.payload_invalid:type_name -> helmr.program.v0.TaskPayloadInvalid
+	29, // 53: helmr.program.v0.ActorOutcome.succeeded:type_name -> helmr.program.v0.ActorSucceeded
+	30, // 54: helmr.program.v0.ActorOutcome.failed:type_name -> helmr.program.v0.ActorFailed
+	33, // 55: helmr.program.v0.ActorOutcome.interrupted:type_name -> helmr.program.v0.ActorInterrupted
+	31, // 56: helmr.program.v0.TurnExecution.session:type_name -> helmr.program.v0.SessionExecution
+	31, // 57: helmr.program.v0.SessionStop.execution:type_name -> helmr.program.v0.SessionExecution
+	32, // 58: helmr.program.v0.TurnSettlementBeginRequested.execution:type_name -> helmr.program.v0.TurnExecution
+	32, // 59: helmr.program.v0.TurnSettleRequested.execution:type_name -> helmr.program.v0.TurnExecution
+	32, // 60: helmr.program.v0.TurnSettlePauseRequest.execution:type_name -> helmr.program.v0.TurnExecution
+	32, // 61: helmr.program.v0.TurnSettlePauseReady.execution:type_name -> helmr.program.v0.TurnExecution
+	32, // 62: helmr.program.v0.TurnSettleApplied.execution:type_name -> helmr.program.v0.TurnExecution
+	32, // 63: helmr.program.v0.TurnReadyRequested.execution:type_name -> helmr.program.v0.TurnExecution
+	32, // 64: helmr.program.v0.TurnMessageClaimRequested.execution:type_name -> helmr.program.v0.TurnExecution
+	32, // 65: helmr.program.v0.TurnMessageCompleteRequested.execution:type_name -> helmr.program.v0.TurnExecution
+	32, // 66: helmr.program.v0.TurnOutputWriteRequested.execution:type_name -> helmr.program.v0.TurnExecution
+	31, // 67: helmr.program.v0.SessionOutputWriteRequested.execution:type_name -> helmr.program.v0.SessionExecution
+	54, // 68: helmr.program.v0.WorkspaceSecretPlacement.env:type_name -> helmr.program.v0.SecretEnvBinding
+	55, // 69: helmr.program.v0.WorkspaceSecretPlacement.file:type_name -> helmr.program.v0.SecretFileBinding
+	56, // 70: helmr.program.v0.WorkspaceCreateRequested.secrets:type_name -> helmr.program.v0.WorkspaceSecretPlacement
+	53, // 71: helmr.program.v0.WorkspaceRetrieveRequested.workspace:type_name -> helmr.program.v0.WorkspaceAddress
+	53, // 72: helmr.program.v0.WorkspaceExecRequested.workspace:type_name -> helmr.program.v0.WorkspaceAddress
+	73, // 73: helmr.program.v0.WorkspaceExecRequested.env:type_name -> helmr.program.v0.WorkspaceExecRequested.EnvEntry
+	53, // 74: helmr.program.v0.WorkspaceDeleteRequested.workspace:type_name -> helmr.program.v0.WorkspaceAddress
+	31, // 75: helmr.program.v0.RunWaitRequested.execution:type_name -> helmr.program.v0.SessionExecution
+	31, // 76: helmr.program.v0.TaskChildInvokeRequested.execution:type_name -> helmr.program.v0.SessionExecution
+	31, // 77: helmr.program.v0.CheckpointPauseRequest.execution:type_name -> helmr.program.v0.SessionExecution
+	31, // 78: helmr.program.v0.ResumeAttach.execution:type_name -> helmr.program.v0.SessionExecution
+	79, // [79:79] is the sub-list for method output_type
+	79, // [79:79] is the sub-list for method input_type
+	79, // [79:79] is the sub-list for extension type_name
+	79, // [79:79] is the sub-list for extension extendee
+	0,  // [0:79] is the sub-list for field type_name
 }
 
 func init() { file_program_proto_init() }
@@ -5406,20 +6602,28 @@ func file_program_proto_init() {
 		(*RunEvent_TaskOutcome)(nil),
 		(*RunEvent_ProgramQuiesced)(nil),
 		(*RunEvent_ActorOutcome)(nil),
-		(*RunEvent_ActorTurnCommitRequested)(nil),
-		(*RunEvent_ActorOutputAppendRequested)(nil),
-		(*RunEvent_SessionInputSendRequested)(nil),
+		(*RunEvent_TurnSettleRequested)(nil),
+		(*RunEvent_TurnOutputWriteRequested)(nil),
+		(*RunEvent_SessionSubmitRequested)(nil),
 		(*RunEvent_StructuredLogRequested)(nil),
 		(*RunEvent_TaskChildInvokeRequested)(nil),
 		(*RunEvent_ActorStartRequested)(nil),
 		(*RunEvent_SessionStatusRequested)(nil),
 		(*RunEvent_SessionCloseRequested)(nil),
-		(*RunEvent_SessionOutputPageRequested)(nil),
+		(*RunEvent_SessionEventsRequested)(nil),
 		(*RunEvent_WorkspaceCreateRequested)(nil),
 		(*RunEvent_WorkspaceRetrieveRequested)(nil),
 		(*RunEvent_WorkspaceExecRequested)(nil),
 		(*RunEvent_WorkspaceDeleteRequested)(nil),
 		(*RunEvent_ProgramProcessStartFailed)(nil),
+		(*RunEvent_SessionOutputWriteRequested)(nil),
+		(*RunEvent_TurnReadyRequested)(nil),
+		(*RunEvent_TurnMessageClaimRequested)(nil),
+		(*RunEvent_TurnMessageCompleteRequested)(nil),
+		(*RunEvent_TurnSettlementBeginRequested)(nil),
+		(*RunEvent_SessionTurnRetrieveRequested)(nil),
+		(*RunEvent_SessionTurnInterruptRequested)(nil),
+		(*RunEvent_SessionResumeRequested)(nil),
 	}
 	file_program_proto_msgTypes[24].OneofWrappers = []any{
 		(*TaskOutcome_Succeeded)(nil),
@@ -5431,31 +6635,41 @@ func file_program_proto_init() {
 	file_program_proto_msgTypes[28].OneofWrappers = []any{
 		(*ActorOutcome_Succeeded)(nil),
 		(*ActorOutcome_Failed)(nil),
+		(*ActorOutcome_Interrupted)(nil),
 	}
 	file_program_proto_msgTypes[30].OneofWrappers = []any{}
-	file_program_proto_msgTypes[35].OneofWrappers = []any{}
+	file_program_proto_msgTypes[33].OneofWrappers = []any{}
+	file_program_proto_msgTypes[34].OneofWrappers = []any{}
 	file_program_proto_msgTypes[36].OneofWrappers = []any{}
-	file_program_proto_msgTypes[37].OneofWrappers = []any{}
-	file_program_proto_msgTypes[39].OneofWrappers = []any{}
-	file_program_proto_msgTypes[40].OneofWrappers = []any{}
-	file_program_proto_msgTypes[44].OneofWrappers = []any{
-		(*WorkspaceSecretPlacement_Env)(nil),
-		(*WorkspaceSecretPlacement_File)(nil),
-	}
+	file_program_proto_msgTypes[42].OneofWrappers = []any{}
+	file_program_proto_msgTypes[43].OneofWrappers = []any{}
+	file_program_proto_msgTypes[44].OneofWrappers = []any{}
 	file_program_proto_msgTypes[45].OneofWrappers = []any{}
 	file_program_proto_msgTypes[47].OneofWrappers = []any{}
 	file_program_proto_msgTypes[48].OneofWrappers = []any{}
-	file_program_proto_msgTypes[50].OneofWrappers = []any{}
+	file_program_proto_msgTypes[49].OneofWrappers = []any{}
 	file_program_proto_msgTypes[51].OneofWrappers = []any{}
 	file_program_proto_msgTypes[52].OneofWrappers = []any{}
-	file_program_proto_msgTypes[58].OneofWrappers = []any{}
+	file_program_proto_msgTypes[56].OneofWrappers = []any{
+		(*WorkspaceSecretPlacement_Env)(nil),
+		(*WorkspaceSecretPlacement_File)(nil),
+	}
+	file_program_proto_msgTypes[57].OneofWrappers = []any{}
+	file_program_proto_msgTypes[59].OneofWrappers = []any{}
+	file_program_proto_msgTypes[60].OneofWrappers = []any{}
+	file_program_proto_msgTypes[62].OneofWrappers = []any{}
+	file_program_proto_msgTypes[63].OneofWrappers = []any{}
+	file_program_proto_msgTypes[64].OneofWrappers = []any{}
+	file_program_proto_msgTypes[65].OneofWrappers = []any{}
+	file_program_proto_msgTypes[66].OneofWrappers = []any{}
+	file_program_proto_msgTypes[70].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_program_proto_rawDesc), len(file_program_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   62,
+			NumMessages:   74,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

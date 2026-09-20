@@ -146,6 +146,7 @@ func requireCheckpointArtifact(artifact workerapi.CheckpointArtifact, field stri
 }
 
 type runtimeCheckpointer struct {
+	protocol   *programProtocol
 	session    vm.CheckpointableSession
 	cas        cas.Store
 	encryptor  *checkpoint.Encryptor
@@ -225,6 +226,7 @@ func (c runtimeCheckpointer) suspendGuestForCheckpoint(ctx context.Context, requ
 		return nil, err
 	}
 	if err := wire.WriteCheckpointPauseRequest(c.stream, &programv0.CheckpointPauseRequest{
+		Execution: request.Execution, TurnId: request.TurnID,
 		RunId:                    request.RunID,
 		AttemptNumber:            uint32(request.AttemptNumber),
 		RunLeaseId:               request.RunLeaseID,
@@ -237,7 +239,15 @@ func (c runtimeCheckpointer) suspendGuestForCheckpoint(ctx context.Context, requ
 	}); err != nil {
 		return nil, fmt.Errorf("write checkpoint suspend: %w", err)
 	}
+	if c.protocol != nil {
+		if err := c.protocol.takePhysical(ctx, c.runEvent); err != nil {
+			return nil, err
+		}
+	}
 	reader := bufio.NewReader(c.stream)
+	if c.protocol != nil {
+		reader = c.protocol.reader
+	}
 	pauseCtx, cancelPause := context.WithTimeout(ctx, checkpointSuspendTimeout)
 	workspaceArtifact, err := c.readPauseReadyContext(pauseCtx, reader, request)
 	cancelPause()

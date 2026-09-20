@@ -502,46 +502,103 @@ function resourceID(value, label) {
 }
 
 // sdk/typescript/src/session.ts
+function sessionOperationOptions(request = {}) {
+  return { idempotencyKey: request.idempotencyKey ?? crypto.randomUUID() };
+}
 function createRuntimeSessionRef(id) {
-  const sessionID = resourceID(id, "Session ID");
-  return Object.freeze({
-    id: sessionID,
-    input: Object.freeze({
-      send(input, request, options) {
-        return currentRuntimeOperations().actorInputSend(
-          sessionID,
-          input,
-          request,
+  const sessionId = resourceID(id, "Session ID");
+  const turn = (id2) => {
+    const turnId = resourceID(id2, "Turn ID");
+    return Object.freeze({
+      id: turnId,
+      sessionId,
+      async send(data, request, options) {
+        const receipt = await currentRuntimeOperations().sessionTurnSend(
+          sessionId,
+          turnId,
+          data,
+          sessionOperationOptions(request),
+          options?.signal
+        );
+        return Object.freeze({ id: receipt.messageId, status: receipt.status });
+      },
+      retrieve(options) {
+        return currentRuntimeOperations().sessionTurnRetrieve(
+          sessionId,
+          turnId,
+          options?.signal
+        );
+      },
+      interrupt(request, options) {
+        return currentRuntimeOperations().sessionTurnInterrupt(
+          sessionId,
+          turnId,
+          sessionOperationOptions(request),
           options?.signal
         );
       }
-    }),
-    output: Object.freeze({
+    });
+  };
+  return Object.freeze({
+    id: sessionId,
+    turn,
+    async send(data, request, options) {
+      const receipt = await currentRuntimeOperations().sessionSend(
+        sessionId,
+        data,
+        sessionOperationOptions(request),
+        options?.signal
+      );
+      return receipt.kind === "enqueued" ? Object.freeze({ kind: receipt.kind, turn: turn(receipt.turnId) }) : Object.freeze({
+        kind: receipt.kind,
+        turn: turn(receipt.turnId),
+        message: Object.freeze({
+          id: receipt.messageId,
+          status: "accepted"
+        })
+      });
+    },
+    async enqueue(data, request, options) {
+      const receipt = await currentRuntimeOperations().sessionEnqueue(
+        sessionId,
+        data,
+        sessionOperationOptions(request),
+        options?.signal
+      );
+      return turn(receipt.turnId);
+    },
+    events: Object.freeze({
       list(query, options) {
-        return currentRuntimeOperations().sessionOutputPage(
-          sessionID,
+        return currentRuntimeOperations().sessionEvents(
+          sessionId,
           query,
           options?.signal
         );
       }
     }),
-    retrieve(options = {}) {
-      return currentRuntimeOperations().sessionRetrieve(sessionID, options.signal);
+    retrieve(options) {
+      return currentRuntimeOperations().sessionRetrieve(
+        sessionId,
+        options?.signal
+      );
     },
     close(request, options) {
       return currentRuntimeOperations().sessionClose(
-        sessionID,
-        request,
+        sessionId,
+        sessionOperationOptions(request),
+        options?.signal
+      );
+    },
+    resume(request, options) {
+      return currentRuntimeOperations().sessionResume(
+        sessionId,
+        { ...request, ...sessionOperationOptions(request) },
         options?.signal
       );
     }
   });
 }
-var sessions = Object.freeze({
-  ref(id) {
-    return createRuntimeSessionRef(id);
-  }
-});
+var sessions = Object.freeze({ ref: createRuntimeSessionRef });
 
 // sdk/typescript/src/definitions.ts
 var privateDefinitionBrand = /* @__PURE__ */ Symbol.for("helmr.sdk.v0.definition");

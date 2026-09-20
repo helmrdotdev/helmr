@@ -365,30 +365,35 @@ const actorFeature = {
   define: `export const reviewer = actor({
   id: "reviewer",
   async run(session) {
-    const input = await session.input
-      .receive({ idleTimeout: "30m" })
-      .unwrap()
-
-    await session.output.append({
-      type: "progress",
-      message: "Reviewing",
-      input
-    })
+    for (;;) {
+      const turn = await session.receive()
+      if (turn === null) return
+      await turn.onMessage(async ({ data }) => {
+        await applyCorrection(data)
+      })
+      await turn.output.pipe(review(turn.input, {
+        signal: turn.signal
+      }))
+      await runTests()
+      await turn.complete()
+    }
   }
 })`,
   send: `// From your product or webhook:
 const session = client.sessions.ref(sessionId)
+const turn = await session.enqueue({ issue: "APP-42" })
 
-await session.input.send({
-  type: "steer",
+// When this exact Turn is ready for messages:
+await turn.send({
+  type: "update_constraints",
   instruction: "Please also update the tests."
 }, { idempotencyKey: "slack:thread-1:message-7" })
 
-const { records } = await session.output.list()
-
-for (const record of records) {
-  render(record.sequence, record.data)
+const page = await session.events.list({ after: 0 })
+for (const event of page.records) {
+  render(event.sequence, event.kind, event.data)
 }`,
+
 };
 
 const renderedActor = {

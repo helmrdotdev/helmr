@@ -929,12 +929,17 @@ CREATE TABLE sessions (
     current_run_id UUID,
     run_generation BIGINT NOT NULL DEFAULT 1 CHECK (run_generation > 0),
     revision BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0),
-    manual_run_cancelled BOOLEAN NOT NULL DEFAULT false,
+    active_turn_id UUID,
+    dispatch_hold_id UUID,
+    dispatch_hold_run_id UUID,
+    dispatch_hold_attempt_number INTEGER,
+    dispatch_hold_run_generation BIGINT,
+    dispatch_hold_reason TEXT CHECK (dispatch_hold_reason IN ('interrupt_requested', 'interrupted', 'recovery_required', 'recovered')),
     failure JSONB,
     failure_run_id UUID,
     next_input_sequence BIGINT NOT NULL DEFAULT 1 CHECK (next_input_sequence BETWEEN 1 AND 9007199254740992),
     committed_input_sequence BIGINT NOT NULL DEFAULT 0 CHECK (committed_input_sequence BETWEEN 0 AND 9007199254740991),
-    next_output_sequence BIGINT NOT NULL DEFAULT 1 CHECK (next_output_sequence BETWEEN 1 AND 9007199254740992),
+    next_event_sequence BIGINT NOT NULL DEFAULT 1 CHECK (next_event_sequence BETWEEN 1 AND 9007199254740992),
     run_queue_name TEXT NOT NULL CHECK (btrim(run_queue_name) <> '' AND octet_length(run_queue_name) <= 256),
     run_concurrency_key TEXT CHECK (
         run_concurrency_key IS NULL
@@ -956,14 +961,17 @@ CREATE TABLE sessions (
     run_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     run_tags TEXT[] NOT NULL DEFAULT '{}'::text[],
     status TEXT NOT NULL DEFAULT 'open' CHECK (
-        status IN ('open', 'closing', 'closed', 'cancelled', 'failed')
+        status IN ('open', 'closing', 'closed', 'failed')
     ),
     close_sequence BIGINT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     closed_at TIMESTAMPTZ,
-    cancelled_at TIMESTAMPTZ,
     failed_at TIMESTAMPTZ,
+    CHECK ((dispatch_hold_id IS NULL) = (dispatch_hold_reason IS NULL)),
+    CHECK ((dispatch_hold_id IS NULL) = (dispatch_hold_run_id IS NULL)),
+    CHECK ((dispatch_hold_id IS NULL) = (dispatch_hold_attempt_number IS NULL)),
+    CHECK ((dispatch_hold_id IS NULL) = (dispatch_hold_run_generation IS NULL)),
     CONSTRAINT sessions_closed_time_check CHECK (status <> 'closed' OR closed_at IS NOT NULL),
     CONSTRAINT sessions_failed_time_check CHECK (status <> 'failed' OR failed_at IS NOT NULL),
     UNIQUE (environment_id, id),
@@ -990,24 +998,19 @@ CREATE TABLE sessions (
     CONSTRAINT sessions_run_metadata_object
         CHECK (jsonb_typeof(run_metadata) = 'object'),
     CONSTRAINT sessions_failure_lifecycle_check CHECK (
-        (status IN ('failed', 'cancelled')
+        (status = 'failed'
          AND failure IS NOT NULL
          AND jsonb_typeof(failure) = 'object'
          AND failure ?& ARRAY['code', 'message', 'details']
          AND failure - ARRAY['code', 'message', 'details'] = '{}'::jsonb
          AND jsonb_typeof(failure->'code') = 'string'
-         AND (
-             (status = 'failed'
-              AND failure->>'code' ~ '^[a-z][a-z0-9_]{0,127}$'
-              AND failure->>'code' <> 'cancelled')
-             OR (status = 'cancelled' AND failure->>'code' = 'cancelled')
-         )
+         AND failure->>'code' ~ '^[a-z][a-z0-9_]{0,127}$'
          AND jsonb_typeof(failure->'message') = 'string'
          AND failure->>'message' = btrim(failure->>'message')
          AND octet_length(failure->>'message') BETWEEN 1 AND 1024
          AND jsonb_typeof(failure->'details') = 'object')
         OR
-        (status NOT IN ('failed', 'cancelled')
+        (status <> 'failed'
          AND failure IS NULL
          AND failure_run_id IS NULL)
     )
@@ -1298,66 +1301,106 @@ CREATE TABLE run_attempts (
     )
 );
 
-CREATE TABLE session_records (
+CREATE TABLE session_turns (
     id UUID PRIMARY KEY,
     environment_id UUID NOT NULL,
     session_id UUID NOT NULL,
-    direction TEXT NOT NULL CHECK (direction IN ('input', 'output')),
     sequence BIGINT NOT NULL CHECK (sequence BETWEEN 1 AND 9007199254740991),
     data JSONB NOT NULL,
-    content_type TEXT NOT NULL DEFAULT 'application/json' CHECK (
-        btrim(content_type) <> '' AND octet_length(content_type) <= 255
-    ),
     source_run_id UUID,
-    producer_run_id UUID,
-    producer_attempt_number INTEGER,
-    claim_id UUID,
+    status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'running', 'completed', 'failed', 'interrupted')),
+    run_generation BIGINT CHECK (run_generation > 0),
+    run_id UUID,
+    attempt_number INTEGER,
+    ready_run_lease_id UUID,
+    settlement_started_at TIMESTAMPTZ,
+    interrupt_requested_at TIMESTAMPTZ,
+    terminal_event_id UUID,
+    terminal_request_fingerprint TEXT CHECK (terminal_request_fingerprint IS NULL OR terminal_request_fingerprint ~ '^sha256:[0-9a-f]{64}$'),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (session_id, direction, sequence),
+    CHECK ((status = 'queued') = (run_generation IS NULL)),
+    CHECK ((run_generation IS NULL) = (run_id IS NULL)),
+    CHECK ((run_generation IS NULL) = (attempt_number IS NULL)),
+    CHECK ((status IN ('completed', 'failed', 'interrupted')) = (terminal_event_id IS NOT NULL)),
+    CHECK (ready_run_lease_id IS NULL OR status = 'running'),
+    UNIQUE (session_id, sequence),
     UNIQUE (session_id, id),
-    FOREIGN KEY (environment_id, session_id)
-        REFERENCES sessions(environment_id, id)
-        ON DELETE RESTRICT,
-    FOREIGN KEY (environment_id, source_run_id)
-        REFERENCES runs(environment_id, id)
-        ON DELETE RESTRICT,
-    FOREIGN KEY (producer_run_id, producer_attempt_number)
-        REFERENCES run_attempts(run_id, number)
-        ON DELETE RESTRICT,
-    FOREIGN KEY (session_id, producer_run_id)
-        REFERENCES runs(session_id, id)
-        ON DELETE RESTRICT,
-    FOREIGN KEY (environment_id, claim_id)
-        REFERENCES idempotency_claims(environment_id, id)
-        ON DELETE RESTRICT,
-    CONSTRAINT session_records_direction_provenance_check CHECK (
-        (direction = 'input'
-         AND producer_run_id IS NULL
-         AND producer_attempt_number IS NULL
-         AND content_type = 'application/json')
-        OR
-        (direction = 'output'
-         AND source_run_id IS NULL
-         AND producer_run_id IS NOT NULL
-         AND producer_attempt_number IS NOT NULL)
-    )
+    UNIQUE (session_id, id, run_id, attempt_number, run_generation),
+    FOREIGN KEY (environment_id, session_id) REFERENCES sessions(environment_id, id),
+    FOREIGN KEY (environment_id, source_run_id) REFERENCES runs(environment_id, id),
+    FOREIGN KEY (session_id, run_id) REFERENCES runs(session_id, id),
+    FOREIGN KEY (run_id, attempt_number) REFERENCES run_attempts(run_id, number)
 );
 
-CREATE UNIQUE INDEX session_records_claim_uidx
-    ON session_records (session_id, direction, claim_id)
-    WHERE claim_id IS NOT NULL;
+CREATE TABLE session_messages (
+    id UUID PRIMARY KEY,
+    environment_id UUID NOT NULL,
+    session_id UUID NOT NULL,
+    turn_id UUID NOT NULL,
+    run_id UUID NOT NULL,
+    attempt_number INTEGER NOT NULL,
+    run_generation BIGINT NOT NULL,
+    data JSONB NOT NULL,
+    accepted_sequence BIGINT NOT NULL CHECK (accepted_sequence BETWEEN 1 AND 9007199254740991),
+    status TEXT NOT NULL DEFAULT 'accepted' CHECK (status IN ('accepted', 'handling', 'handled', 'rejected', 'unknown')),
+    delivery_id UUID,
+    delivery_run_lease_id UUID,
+    outcome JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    handling_at TIMESTAMPTZ,
+    terminal_at TIMESTAMPTZ,
+    UNIQUE (session_id, turn_id, id),
+    UNIQUE (session_id, accepted_sequence),
+    UNIQUE (delivery_id),
+    FOREIGN KEY (environment_id, session_id) REFERENCES sessions(environment_id, id),
+    FOREIGN KEY (session_id, turn_id, run_id, attempt_number, run_generation)
+        REFERENCES session_turns(session_id, id, run_id, attempt_number, run_generation),
+    CHECK ((delivery_id IS NULL) = (delivery_run_lease_id IS NULL)),
+    CHECK ((delivery_id IS NULL) = (handling_at IS NULL)),
+    CHECK (status <> 'handling' OR delivery_id IS NOT NULL),
+    CHECK ((status IN ('handled', 'rejected', 'unknown')) = (terminal_at IS NOT NULL)),
+    CHECK ((status IN ('handled', 'rejected', 'unknown')) = (outcome IS NOT NULL))
+);
+CREATE UNIQUE INDEX session_messages_one_handler ON session_messages(session_id, turn_id) WHERE status='handling';
+CREATE INDEX session_messages_pending_turn_idx
+    ON session_messages(session_id, turn_id, accepted_sequence)
+    WHERE status IN ('accepted', 'handling', 'unknown');
 
-CREATE INDEX session_records_claim_idx
-    ON session_records (claim_id)
-    WHERE claim_id IS NOT NULL;
-
-CREATE INDEX session_records_input_sequence_idx
-    ON session_records (session_id, sequence, id)
-    WHERE direction = 'input';
-
-CREATE INDEX session_records_output_sequence_idx
-    ON session_records (session_id, sequence, id)
-    WHERE direction = 'output';
+CREATE TABLE session_events (
+    id UUID PRIMARY KEY,
+    environment_id UUID NOT NULL,
+    session_id UUID NOT NULL,
+    turn_id UUID,
+    message_id UUID,
+    workspace_id UUID NOT NULL,
+    sequence BIGINT NOT NULL CHECK (sequence BETWEEN 1 AND 9007199254740991),
+    kind TEXT NOT NULL CHECK (kind IN ('output', 'turn.enqueued', 'turn.started',
+      'turn.interrupt_requested', 'turn.completed', 'turn.failed', 'turn.interrupted',
+      'message.accepted', 'message.handled', 'message.rejected', 'message.unknown',
+      'session.closing', 'session.closed', 'session.failed', 'session.held', 'session.resumed', 'session.recovered')),
+    data JSONB NOT NULL,
+    producer_run_id UUID,
+    producer_attempt_number INTEGER,
+    run_generation BIGINT CHECK (run_generation > 0),
+    workspace_version_id UUID,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (session_id, sequence),
+    UNIQUE (session_id, turn_id, id),
+    CHECK ((producer_run_id IS NULL) = (producer_attempt_number IS NULL)),
+    CHECK ((producer_run_id IS NULL) = (run_generation IS NULL)),
+    CHECK ((kind LIKE 'turn.%' OR kind LIKE 'message.%') IS NOT TRUE OR turn_id IS NOT NULL),
+    CHECK ((kind LIKE 'message.%') = (message_id IS NOT NULL)),
+    CHECK (kind NOT IN ('turn.completed','turn.failed','turn.interrupted','session.recovered') OR workspace_version_id IS NOT NULL),
+    FOREIGN KEY (session_id, workspace_id) REFERENCES sessions(id, workspace_id),
+    FOREIGN KEY (environment_id, session_id) REFERENCES sessions(environment_id, id),
+    FOREIGN KEY (session_id, turn_id) REFERENCES session_turns(session_id, id),
+    FOREIGN KEY (session_id, turn_id, message_id) REFERENCES session_messages(session_id, turn_id, id),
+    FOREIGN KEY (session_id, producer_run_id) REFERENCES runs(session_id, id),
+    FOREIGN KEY (producer_run_id, producer_attempt_number) REFERENCES run_attempts(run_id, number)
+);
+CREATE UNIQUE INDEX session_events_terminal_turn ON session_events(session_id, turn_id) WHERE kind IN ('turn.completed', 'turn.failed', 'turn.interrupted');
+ALTER TABLE sessions ADD FOREIGN KEY (id, active_turn_id) REFERENCES session_turns(session_id, id);
+ALTER TABLE session_turns ADD FOREIGN KEY (session_id, id, terminal_event_id) REFERENCES session_events(session_id, turn_id, id);
 
 ALTER TABLE runs
     ADD CONSTRAINT runs_current_attempt_fk
@@ -2378,6 +2421,9 @@ CREATE TABLE run_waits (
     environment_id UUID NOT NULL,
     run_id UUID NOT NULL,
     workspace_id UUID NOT NULL,
+    turn_session_id UUID,
+    turn_id UUID,
+    turn_run_generation BIGINT,
     kind wait_kind NOT NULL,
     condition_status TEXT NOT NULL DEFAULT 'pending'
         CHECK (condition_status IN ('pending', 'completed', 'failed', 'cancelled')),
@@ -2395,7 +2441,7 @@ CREATE TABLE run_waits (
     condition_error JSONB,
     condition_terminal_at TIMESTAMPTZ,
     condition_reason_code TEXT,
-    completed_actor_record_id UUID,
+    completed_turn_id UUID,
     suspension_status TEXT NOT NULL DEFAULT 'hot'
         CHECK (suspension_status IN (
             'hot',
@@ -2442,6 +2488,10 @@ CREATE TABLE run_waits (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (run_id, attempt_number, workspace_id, id),
+    CHECK ((turn_id IS NULL) = (turn_session_id IS NULL)),
+    CHECK ((turn_id IS NULL) = (turn_run_generation IS NULL)),
+    FOREIGN KEY (turn_session_id, turn_id, run_id, attempt_number, turn_run_generation)
+        REFERENCES session_turns(session_id, id, run_id, attempt_number, run_generation),
     FOREIGN KEY (environment_id, run_id)
         REFERENCES runs(environment_id, id)
         ON DELETE RESTRICT,
@@ -2468,9 +2518,9 @@ CREATE TABLE run_waits (
         ON DELETE RESTRICT,
     FOREIGN KEY (
         session_id,
-        completed_actor_record_id
+        completed_turn_id
     )
-        REFERENCES session_records(session_id, id)
+        REFERENCES session_turns(session_id, id)
         ON DELETE RESTRICT,
     FOREIGN KEY (workspace_id, base_workspace_version_id)
         REFERENCES workspace_versions(workspace_id, id)
@@ -2482,14 +2532,14 @@ CREATE TABLE run_waits (
     CHECK (cardinality(tags) <= 32),
     CHECK (condition_error IS NULL OR jsonb_typeof(condition_error) = 'object'),
     CHECK (suspension_error IS NULL OR jsonb_typeof(suspension_error) = 'object'),
-    CONSTRAINT run_waits_actor_record_condition_check CHECK (
-        (completed_actor_record_id IS NULL
+    CONSTRAINT run_waits_completed_turn_condition_check CHECK (
+        (completed_turn_id IS NULL
          AND (kind <> 'actor_input' OR condition_status <> 'completed'))
         OR
         (kind = 'actor_input'
          AND condition_status = 'completed'
          AND session_id IS NOT NULL
-         AND completed_actor_record_id IS NOT NULL)
+         AND completed_turn_id IS NOT NULL)
     ),
     CONSTRAINT run_waits_kind_shape_check CHECK (
         (kind = 'timer'
@@ -2544,7 +2594,7 @@ CREATE TABLE run_waits (
          AND condition_error IS NULL
          AND condition_terminal_at IS NULL
          AND condition_reason_code IS NULL
-         AND completed_actor_record_id IS NULL)
+         AND completed_turn_id IS NULL)
         OR
         (condition_status = 'completed'
          AND condition_error IS NULL
@@ -2657,6 +2707,10 @@ CREATE INDEX run_waits_checkpoint_due_idx
     ON run_waits (checkpoint_due_at, id)
     WHERE suspension_status = 'hot' AND checkpoint_due_at IS NOT NULL;
 
+CREATE INDEX run_waits_turn_idx
+    ON run_waits(turn_session_id, turn_id)
+    WHERE turn_id IS NOT NULL;
+
 CREATE INDEX run_waits_history_idx
     ON run_waits (run_id, created_at, id);
 
@@ -2676,9 +2730,9 @@ CREATE INDEX run_waits_token_condition_idx
     ON run_waits (token_id, condition_status, id)
     WHERE token_id IS NOT NULL;
 
-CREATE UNIQUE INDEX run_waits_completed_actor_record_active_uidx
-    ON run_waits (completed_actor_record_id)
-    WHERE completed_actor_record_id IS NOT NULL
+CREATE UNIQUE INDEX run_waits_completed_turn_active_uidx
+    ON run_waits (completed_turn_id)
+    WHERE completed_turn_id IS NOT NULL
       AND suspension_status IN ('hot', 'checkpointing', 'parked', 'resume_pending', 'resuming');
 
 CREATE UNIQUE INDEX run_waits_same_workspace_child_active_uidx
@@ -2927,3 +2981,10 @@ CREATE UNIQUE INDEX workspaces_environment_key_uidx ON workspaces(environment_id
 CREATE INDEX workspace_versions_workspace_created_idx ON workspace_versions(workspace_id, created_at DESC);
 CREATE INDEX public_access_tokens_expiry_active_idx ON public_access_tokens(expires_at, id)
     WHERE status = 'active';
+
+ALTER TABLE session_events ADD FOREIGN KEY (workspace_id, workspace_version_id) REFERENCES workspace_versions(workspace_id, id);
+
+ALTER TABLE sessions ADD CONSTRAINT sessions_dispatch_hold_attempt_fk FOREIGN KEY (dispatch_hold_run_id, dispatch_hold_attempt_number) REFERENCES run_attempts(run_id, number);
+ALTER TABLE sessions ADD CONSTRAINT sessions_dispatch_hold_run_fk FOREIGN KEY (id, dispatch_hold_run_id) REFERENCES runs(session_id, id);
+ALTER TABLE session_turns ADD FOREIGN KEY (ready_run_lease_id) REFERENCES run_leases(id);
+ALTER TABLE session_messages ADD FOREIGN KEY (delivery_run_lease_id) REFERENCES run_leases(id);

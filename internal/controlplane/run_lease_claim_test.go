@@ -761,7 +761,13 @@ func TestClaimCheckpointRestoreRejectsDifferentRuntimeProvenance(t *testing.T) {
 
 func TestClaimCheckpointRestoreRunLeaseInTxLocksActorBeforeRun(t *testing.T) {
 	worker, locators, authority := validCheckpointRestoreRunLeaseClaimFixture(true)
-	store := &runLeaseClaimStore{authority: authority}
+	store := &runLeaseClaimStore{authority: authority, resetTarget: db.GetWorkspaceResetTargetAuthorityRow{
+		VersionID:              authority.checkpoint.PrivateWorkspaceVersionID,
+		ParentVersionID:        authority.workspace.HeadVersionID,
+		SourceWorkspaceLeaseID: authority.sourceWorkspaceLease.ID,
+		OwnershipGeneration:    authority.workspace.OwnershipGeneration,
+		WriterGeneration:       authority.sourceWorkspaceLease.WriterGeneration,
+	}}
 
 	if _, err := claimCheckpointRestoreRunLeaseInTx(
 		context.Background(),
@@ -845,7 +851,14 @@ func TestClaimCheckpointRestoreRunLeaseInTxAcceptsCommittedActorTurns(t *testing
 	worker, locators, authority := validCheckpointRestoreRunLeaseClaimFixture(true)
 	authority.actor.CommittedInputSequence = 2
 	authority.checkpoint.ActorSpeculativeInputSequence = pgtype.Int8{Int64: 2, Valid: true}
-	store := &runLeaseClaimStore{authority: authority}
+	authority.runWait.ActorSpeculativeInputSequence = authority.checkpoint.ActorSpeculativeInputSequence
+	store := &runLeaseClaimStore{authority: authority, resetTarget: db.GetWorkspaceResetTargetAuthorityRow{
+		VersionID:              authority.checkpoint.PrivateWorkspaceVersionID,
+		ParentVersionID:        authority.workspace.HeadVersionID,
+		SourceWorkspaceLeaseID: authority.sourceWorkspaceLease.ID,
+		OwnershipGeneration:    authority.workspace.OwnershipGeneration,
+		WriterGeneration:       authority.sourceWorkspaceLease.WriterGeneration,
+	}}
 
 	if _, err := claimCheckpointRestoreRunLeaseInTx(
 		context.Background(),
@@ -1681,10 +1694,16 @@ func validCheckpointRestoreRunLeaseClaimFixture(actor bool) (workerActor, db.Get
 	authority.checkpointArtifacts = validCheckpointArtifactAuthority()
 	authority.runtime.RestoreCheckpointID = checkpointID
 	if actor {
-		authority.checkpoint.ActorSpeculativeInputSequence = pgtype.Int8{Int64: 2, Valid: true}
+		authority.checkpoint.ActorSpeculativeInputSequence = pgtype.Int8{Int64: authority.actor.CommittedInputSequence, Valid: true}
+		authority.runWait.ActorSpeculativeInputSequence = authority.checkpoint.ActorSpeculativeInputSequence
+		authority.runWait.Kind = db.WaitKindToken
 	}
 	authority.sourceRuntime = authority.runtime
 	authority.sourceRuntime.ID = pgvalue.UUID(uuid.New())
+	if actor {
+		authority.sourceRuntime.DesiredState = db.RuntimeDesiredStateClosed
+		authority.sourceRuntime.ObservedState = db.RuntimeObservedStateClosed
+	}
 	authority.sourceRunLease = authority.runLease
 	authority.sourceRunLease.ID = sourceRunLeaseID
 	authority.sourceRunLease.RuntimeInstanceID = authority.sourceRuntime.ID
@@ -1868,4 +1887,8 @@ func activeEnclosingWaitFixture(
 		ParentWriterGeneration:     pgtype.Int8{Int64: parentWriterGeneration, Valid: true},
 		ChildWriterGeneration:      pgtype.Int8{Int64: childWriterGeneration, Valid: true},
 	}
+}
+
+func (s *runLeaseClaimStore) ActorCheckpointLineageIsValid(context.Context, db.ActorCheckpointLineageIsValidParams) (bool, error) {
+	return true, nil
 }

@@ -28,7 +28,7 @@ type actorTurnCommitControlPlane struct {
 	workspaceVersionID string
 }
 
-type blockingActorTurnCommitControlPlane struct {
+type blockingTurnSettleControlPlane struct {
 	*testRunLeaseControlPlane
 	started       chan struct{}
 	release       chan struct{}
@@ -37,7 +37,7 @@ type blockingActorTurnCommitControlPlane struct {
 	projectedBase string
 }
 
-func (controlPlane *blockingActorTurnCommitControlPlane) CommitActorTurn(
+func (controlPlane *blockingTurnSettleControlPlane) CommitActorTurn(
 	ctx context.Context,
 	request workerapi.CommitActorTurnRequest,
 ) (workerapi.CommitActorTurnResponse, error) {
@@ -51,14 +51,14 @@ func (controlPlane *blockingActorTurnCommitControlPlane) CommitActorTurn(
 	case <-ctx.Done():
 		return workerapi.CommitActorTurnResponse{}, ctx.Err()
 	}
-	return workerapi.CommitActorTurnResponse{
+	return workerapi.CommitActorTurnResponse{EventID: "settlement-event",
 		Lease: request.Lease, CorrelationID: request.CorrelationID,
 		CommittedInputSequence: request.TargetInputSequence, WorkspaceVersionID: "version-2",
 		Tree: request.Tree,
 	}, nil
 }
 
-func (controlPlane *blockingActorTurnCommitControlPlane) RenewRunLease(
+func (controlPlane *blockingTurnSettleControlPlane) RenewRunLease(
 	_ context.Context,
 	previous workerapi.RunLeaseAssignment,
 ) (workerapi.RunLeaseRenewResponse, error) {
@@ -97,14 +97,14 @@ func (controlPlane *actorTurnCommitControlPlane) CommitActorTurn(
 	if workspaceVersionID == "" {
 		workspaceVersionID = "version-2"
 	}
-	return workerapi.CommitActorTurnResponse{
+	return workerapi.CommitActorTurnResponse{EventID: "settlement-event",
 		Lease: request.Lease, CorrelationID: request.CorrelationID,
 		CommittedInputSequence: request.TargetInputSequence, WorkspaceVersionID: workspaceVersionID,
 		Tree: request.Tree,
 	}, nil
 }
 
-func TestHandleActorTurnCommitAdvancesAllLocalWorkspaceFrontiers(t *testing.T) {
+func TestRuntimeCompletedSettlementFrameAdvancesAllLocalWorkspaceFrontiers(t *testing.T) {
 	claim := testFreshProgramClaim(t)
 	claim.Lease.WorkerGroupID = "workers"
 	claim.Lease.RequestedCPUMillis = 1
@@ -130,7 +130,7 @@ func TestHandleActorTurnCommitAdvancesAllLocalWorkspaceFrontiers(t *testing.T) {
 	defer guest.Close()
 	authority := freshWorkspaceAuthority(&claim, "channel-1")
 	task := &guestRunLeaseTask{
-		program: freshProgram{session: fakeGuestSession{stream: host}},
+		program: freshProgram{session: fakeGuestSession{stream: host}, execution: testTurnExecution(claim.Lease).Session},
 		store:   store, controlPlane: controlPlane, resetTarget: target, lease: claim.Lease,
 		authority: authority, waitWorkspace: workerapi.Workspace{BaseWorkspaceVersionID: "version-1"},
 		checkpointer: &runtimeCheckpointer{}, mounts: actorTurnRenewalMounts{},
@@ -140,19 +140,26 @@ func TestHandleActorTurnCommitAdvancesAllLocalWorkspaceFrontiers(t *testing.T) {
 	artifactDigest := sha256sum.DigestBytes(artifactBody)
 	tree := workspace.TreeIdentity{Digest: sha256sum.DigestBytes([]byte("logical tree")), SizeBytes: 12, EntryCount: 1}
 	captureStarted := make(chan struct{})
+	task.program.protocol = newProgramProtocol(host)
+	defer task.program.protocol.Close()
+	runtimeRequest := &programv0.TurnSettleRequested{Execution: testTurnExecution(claim.Lease), Disposition: "completed", ResultJson: new("null"), CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000099", TargetInputSequence: 1}
 	captureGate := make(chan struct{})
 	decisionSeen := make(chan struct{})
 	applyGate := make(chan struct{})
 	guestResult := make(chan error, 1)
 	go func() {
 		defer guest.Close()
+		if err := frameio.WriteProtoFrame(guest, &programv0.RunEvent{Event: &programv0.RunEvent_TurnSettleRequested{TurnSettleRequested: runtimeRequest}}); err != nil {
+			guestResult <- err
+			return
+		}
 		reader := bufio.NewReader(guest)
 		header, bodyLen, err := wire.ReadStreamFrameHeader(reader)
 		if err != nil {
 			guestResult <- err
 			return
 		}
-		pause, err := wire.ReadActorTurnCommitPauseRequest(header, reader, bodyLen)
+		pause, err := wire.ReadTurnSettlePauseRequest(header, reader, bodyLen)
 		if err != nil {
 			guestResult <- err
 			return
@@ -175,7 +182,7 @@ func TestHandleActorTurnCommitAdvancesAllLocalWorkspaceFrontiers(t *testing.T) {
 			guestResult <- err
 			return
 		}
-		if err := wire.WriteActorTurnCommitPauseReady(guest, &programv0.ActorTurnCommitPauseReady{
+		if err := wire.WriteTurnSettlePauseReady(guest, &programv0.TurnSettlePauseReady{Execution: pause.Execution,
 			CorrelationId: pause.GetCorrelationId(), TargetInputSequence: pause.GetTargetInputSequence(),
 			RunId: pause.GetRunId(), AttemptNumber: pause.GetAttemptNumber(), RunLeaseId: pause.GetRunLeaseId(),
 			TreeDigest: tree.Digest, TreeSizeBytes: tree.SizeBytes,
@@ -204,7 +211,7 @@ func TestHandleActorTurnCommitAdvancesAllLocalWorkspaceFrontiers(t *testing.T) {
 		}
 		close(decisionSeen)
 		<-applyGate
-		if err := wire.WriteActorTurnCommitApplied(guest, &programv0.ActorTurnCommitApplied{
+		if err := wire.WriteTurnSettleApplied(guest, &programv0.TurnSettleApplied{Execution: pause.Execution,
 			CorrelationId: pause.GetCorrelationId(), TargetInputSequence: pause.GetTargetInputSequence(),
 			RunId: pause.GetRunId(), AttemptNumber: pause.GetAttemptNumber(), RunLeaseId: pause.GetRunLeaseId(),
 			PreviousBaseWorkspaceVersionId: pause.GetExpectedBaseWorkspaceVersionId(),
@@ -220,9 +227,12 @@ func TestHandleActorTurnCommitAdvancesAllLocalWorkspaceFrontiers(t *testing.T) {
 	defer cancel()
 	hostResult := make(chan error, 1)
 	go func() {
-		hostResult <- task.handleActorTurnCommit(ctx, &programv0.ActorTurnCommitRequested{
-			CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000099", TargetInputSequence: 1,
-		})
+		var event programv0.RunEvent
+		if err := task.program.readEvent(ctx, &event); err != nil {
+			hostResult <- err
+			return
+		}
+		hostResult <- task.handleTurnSettle(ctx, event.GetTurnSettleRequested())
 	}()
 	<-captureStarted
 	if _, err := task.RenewRunLease(ctx); err != nil {
@@ -249,6 +259,9 @@ func TestHandleActorTurnCommitAdvancesAllLocalWorkspaceFrontiers(t *testing.T) {
 	if err := <-guestResult; err != nil {
 		t.Fatal(err)
 	}
+	if controlPlane.request.Disposition != "completed" || string(controlPlane.request.Result) != "null" || len(controlPlane.request.Error) != 0 {
+		t.Fatalf("runtime settlement changed at CP boundary: %+v", controlPlane.request)
+	}
 	if task.lease.BaseWorkspaceVersionID != "version-2" || task.resetTarget.BaseWorkspaceVersionID != "version-2" ||
 		task.waitWorkspace.BaseWorkspaceVersionID != "version-2" || task.authority.GetFence().GetBaseWorkspaceVersionId() != "version-2" {
 		t.Fatalf("local Actor turn frontiers were not advanced: lease=%q reset=%q wait=%q authority=%q",
@@ -270,7 +283,7 @@ func TestHandleActorTurnCommitAdvancesAllLocalWorkspaceFrontiers(t *testing.T) {
 	}
 }
 
-func TestHandleActorTurnCommitRejectsMismatchedAppliedProofWithoutInstallingFrontier(t *testing.T) {
+func TestHandleTurnSettleRejectsMismatchedAppliedProofWithoutInstallingFrontier(t *testing.T) {
 	claim := testFreshProgramClaim(t)
 	target, err := workspace.EmptyResetTarget("version-1", workspace.TreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest})
 	if err != nil {
@@ -284,7 +297,7 @@ func TestHandleActorTurnCommitRejectsMismatchedAppliedProofWithoutInstallingFron
 	defer host.Close()
 	defer guest.Close()
 	task := &guestRunLeaseTask{
-		program: freshProgram{session: fakeGuestSession{stream: host}}, store: store,
+		program: freshProgram{session: fakeGuestSession{stream: host}, execution: testTurnExecution(claim.Lease).Session}, store: store,
 		controlPlane: &actorTurnCommitControlPlane{
 			testRunLeaseControlPlane: &testRunLeaseControlPlane{}, workspaceVersionID: "version-1",
 		},
@@ -300,12 +313,12 @@ func TestHandleActorTurnCommitRejectsMismatchedAppliedProofWithoutInstallingFron
 			guestResult <- err
 			return
 		}
-		pause, err := wire.ReadActorTurnCommitPauseRequest(header, reader, bodyLen)
+		pause, err := wire.ReadTurnSettlePauseRequest(header, reader, bodyLen)
 		if err != nil {
 			guestResult <- err
 			return
 		}
-		if err := wire.WriteActorTurnCommitPauseReady(guest, &programv0.ActorTurnCommitPauseReady{
+		if err := wire.WriteTurnSettlePauseReady(guest, &programv0.TurnSettlePauseReady{Execution: pause.Execution,
 			CorrelationId: pause.GetCorrelationId(), TargetInputSequence: pause.GetTargetInputSequence(),
 			RunId: pause.GetRunId(), AttemptNumber: pause.GetAttemptNumber(), RunLeaseId: pause.GetRunLeaseId(),
 			TreeDigest: target.Tree.Digest, TreeSizeBytes: target.Tree.SizeBytes,
@@ -319,7 +332,7 @@ func TestHandleActorTurnCommitRejectsMismatchedAppliedProofWithoutInstallingFron
 			guestResult <- err
 			return
 		}
-		if err := wire.WriteActorTurnCommitApplied(guest, &programv0.ActorTurnCommitApplied{
+		if err := wire.WriteTurnSettleApplied(guest, &programv0.TurnSettleApplied{Execution: pause.Execution,
 			CorrelationId: pause.GetCorrelationId(), TargetInputSequence: pause.GetTargetInputSequence(),
 			RunId: pause.GetRunId(), AttemptNumber: pause.GetAttemptNumber(), RunLeaseId: pause.GetRunLeaseId(),
 			PreviousBaseWorkspaceVersionId: pause.GetExpectedBaseWorkspaceVersionId(),
@@ -330,7 +343,7 @@ func TestHandleActorTurnCommitRejectsMismatchedAppliedProofWithoutInstallingFron
 		}
 		guestResult <- nil
 	}()
-	err = task.handleActorTurnCommit(t.Context(), &programv0.ActorTurnCommitRequested{
+	err = task.handleTurnSettle(t.Context(), &programv0.TurnSettleRequested{Execution: testTurnExecution(claim.Lease), Disposition: "completed",
 		CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000100", TargetInputSequence: 1,
 	})
 	if err == nil || !strings.Contains(err.Error(), "applied proof") {
@@ -344,7 +357,7 @@ func TestHandleActorTurnCommitRejectsMismatchedAppliedProofWithoutInstallingFron
 	}
 }
 
-func TestHandleActorTurnCommitStopsMissingAppliedProofAtLeaseExpiry(t *testing.T) {
+func TestHandleTurnSettleStopsMissingAppliedProofAtLeaseExpiry(t *testing.T) {
 	claim := testFreshProgramClaim(t)
 	claim.Lease.ExpiresAt = time.Now().Add(180 * time.Millisecond)
 	target, err := workspace.EmptyResetTarget("version-1", workspace.TreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest})
@@ -358,7 +371,7 @@ func TestHandleActorTurnCommitStopsMissingAppliedProofAtLeaseExpiry(t *testing.T
 	host, guest := net.Pipe()
 	defer guest.Close()
 	task := &guestRunLeaseTask{
-		program: freshProgram{session: fakeGuestSession{stream: host}}, store: store,
+		program: freshProgram{session: fakeGuestSession{stream: host}, execution: testTurnExecution(claim.Lease).Session}, store: store,
 		controlPlane: &actorTurnCommitControlPlane{
 			testRunLeaseControlPlane: &testRunLeaseControlPlane{}, workspaceVersionID: "version-1",
 		},
@@ -374,12 +387,12 @@ func TestHandleActorTurnCommitStopsMissingAppliedProofAtLeaseExpiry(t *testing.T
 			guestResult <- err
 			return
 		}
-		pause, err := wire.ReadActorTurnCommitPauseRequest(header, reader, bodyLen)
+		pause, err := wire.ReadTurnSettlePauseRequest(header, reader, bodyLen)
 		if err != nil {
 			guestResult <- err
 			return
 		}
-		if err := wire.WriteActorTurnCommitPauseReady(guest, &programv0.ActorTurnCommitPauseReady{
+		if err := wire.WriteTurnSettlePauseReady(guest, &programv0.TurnSettlePauseReady{Execution: pause.Execution,
 			CorrelationId: pause.GetCorrelationId(), TargetInputSequence: pause.GetTargetInputSequence(),
 			RunId: pause.GetRunId(), AttemptNumber: pause.GetAttemptNumber(), RunLeaseId: pause.GetRunLeaseId(),
 			TreeDigest: target.Tree.Digest, TreeSizeBytes: target.Tree.SizeBytes,
@@ -398,7 +411,7 @@ func TestHandleActorTurnCommitStopsMissingAppliedProofAtLeaseExpiry(t *testing.T
 		guestResult <- err
 	}()
 	started := time.Now()
-	err = task.handleActorTurnCommit(t.Context(), &programv0.ActorTurnCommitRequested{
+	err = task.handleTurnSettle(t.Context(), &programv0.TurnSettleRequested{Execution: testTurnExecution(claim.Lease), Disposition: "completed",
 		CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000103", TargetInputSequence: 1,
 	})
 	if err == nil || !strings.Contains(err.Error(), "applied header") {
@@ -412,7 +425,7 @@ func TestHandleActorTurnCommitStopsMissingAppliedProofAtLeaseExpiry(t *testing.T
 	}
 }
 
-func TestHandleActorTurnCommitStopsBlockedDecisionWriteAtLeaseExpiry(t *testing.T) {
+func TestHandleTurnSettleStopsBlockedDecisionWriteAtLeaseExpiry(t *testing.T) {
 	claim := testFreshProgramClaim(t)
 	claim.Lease.ExpiresAt = time.Now().Add(180 * time.Millisecond)
 	target, err := workspace.EmptyResetTarget("version-1", workspace.TreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest})
@@ -426,7 +439,7 @@ func TestHandleActorTurnCommitStopsBlockedDecisionWriteAtLeaseExpiry(t *testing.
 	host, guest := net.Pipe()
 	defer guest.Close()
 	task := &guestRunLeaseTask{
-		program: freshProgram{session: fakeGuestSession{stream: host}}, store: store,
+		program: freshProgram{session: fakeGuestSession{stream: host}, execution: testTurnExecution(claim.Lease).Session}, store: store,
 		controlPlane: &actorTurnCommitControlPlane{
 			testRunLeaseControlPlane: &testRunLeaseControlPlane{}, workspaceVersionID: "version-1",
 		},
@@ -439,10 +452,10 @@ func TestHandleActorTurnCommitStopsBlockedDecisionWriteAtLeaseExpiry(t *testing.
 		reader := bufio.NewReader(guest)
 		header, bodyLen, err := wire.ReadStreamFrameHeader(reader)
 		if err == nil {
-			var pause *programv0.ActorTurnCommitPauseRequest
-			pause, err = wire.ReadActorTurnCommitPauseRequest(header, reader, bodyLen)
+			var pause *programv0.TurnSettlePauseRequest
+			pause, err = wire.ReadTurnSettlePauseRequest(header, reader, bodyLen)
 			if err == nil {
-				err = wire.WriteActorTurnCommitPauseReady(guest, &programv0.ActorTurnCommitPauseReady{
+				err = wire.WriteTurnSettlePauseReady(guest, &programv0.TurnSettlePauseReady{Execution: pause.Execution,
 					CorrelationId: pause.GetCorrelationId(), TargetInputSequence: pause.GetTargetInputSequence(),
 					RunId: pause.GetRunId(), AttemptNumber: pause.GetAttemptNumber(), RunLeaseId: pause.GetRunLeaseId(),
 					TreeDigest: target.Tree.Digest, TreeSizeBytes: target.Tree.SizeBytes,
@@ -456,7 +469,7 @@ func TestHandleActorTurnCommitStopsBlockedDecisionWriteAtLeaseExpiry(t *testing.
 		guestResult <- err
 	}()
 	started := time.Now()
-	err = task.handleActorTurnCommit(t.Context(), &programv0.ActorTurnCommitRequested{
+	err = task.handleTurnSettle(t.Context(), &programv0.TurnSettleRequested{Execution: testTurnExecution(claim.Lease), Disposition: "completed",
 		CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000104", TargetInputSequence: 1,
 	})
 	close(stopGuest)
@@ -474,7 +487,7 @@ func TestHandleActorTurnCommitStopsBlockedDecisionWriteAtLeaseExpiry(t *testing.
 func TestCommitActorTurnKeepsRenewingWhileControlPlaneCommitIsPending(t *testing.T) {
 	claim := testFreshProgramClaim(t)
 	claim.Lease.ExpiresAt = time.Now().Add(120 * time.Millisecond)
-	controlPlane := &blockingActorTurnCommitControlPlane{
+	controlPlane := &blockingTurnSettleControlPlane{
 		testRunLeaseControlPlane: &testRunLeaseControlPlane{},
 		started:                  make(chan struct{}),
 		release:                  make(chan struct{}),
@@ -524,7 +537,7 @@ func TestCommitActorTurnKeepsRenewingWhileControlPlaneCommitIsPending(t *testing
 func TestCommitActorTurnAcceptsOnlyTheReplayedPendingFrontier(t *testing.T) {
 	claim := testFreshProgramClaim(t)
 	claim.Lease.ExpiresAt = time.Now().Add(120 * time.Millisecond)
-	controlPlane := &blockingActorTurnCommitControlPlane{
+	controlPlane := &blockingTurnSettleControlPlane{
 		testRunLeaseControlPlane: &testRunLeaseControlPlane{},
 		started:                  make(chan struct{}),
 		release:                  make(chan struct{}),

@@ -643,7 +643,6 @@ func assertIdempotencyClaimCollectionIndexes(t *testing.T, ctx context.Context, 
 		"idempotency_claims_live_expiry_idx",
 		"idempotency_claims_retired_idx",
 		"runs_claim_idx",
-		"session_records_claim_idx",
 		"run_waits_child_claim_idx",
 	}
 	var count int
@@ -877,7 +876,7 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	if !exactFit || overShape {
 		t.Fatalf("fixed guest exact/over shape fence = %t/%t", exactFit, overShape)
 	}
-	logicalTables := []string{"idempotency_claims", "schedules", "workspaces", "sessions", "session_records", "runs", "run_attempts", "run_waits", "run_checkpoints", "telemetry_outbox"}
+	logicalTables := []string{"idempotency_claims", "schedules", "workspaces", "sessions", "session_turns", "session_messages", "session_events", "runs", "run_attempts", "run_waits", "run_checkpoints", "telemetry_outbox"}
 	var placementLeaks int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*) FROM information_schema.columns

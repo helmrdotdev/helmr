@@ -98,6 +98,18 @@ func projectRunLeaseExecution(
 			Artifacts:            checkpoint.Artifacts,
 			Decision:             decision,
 		}
+		if authority.run.EntrypointKind == "actor" {
+			actor := authority.actor
+			if actor == nil || actor.ID != authority.run.SessionID || actor.CurrentRunID != authority.run.ID || actor.RunGeneration <= 0 || actor.DispatchHoldID.Valid {
+				return workerapi.RunLeaseExecution{}, errors.New("restored Actor Session authority is inconsistent")
+			}
+			restore.SessionID = pgvalue.UUIDString(actor.ID)
+			restore.RunGeneration = actor.RunGeneration
+			if actor.ActiveTurnID.Valid {
+				id := pgvalue.UUIDString(actor.ActiveTurnID)
+				restore.TurnID = &id
+			}
+		}
 		return workerapi.RunLeaseExecution{
 			Restore: &restore,
 		}, nil

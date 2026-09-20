@@ -1,26 +1,27 @@
 import type {
   CursorPage,
-  JsonValue,
-  SessionCloseRequest,
-  SessionCloseReceipt,
-  SessionInputPage,
-  SessionInputQuery,
-  SessionInputRecord,
-  SessionInputSendRequest,
-  SessionOutputPage,
-  SessionOutputQuery,
   SessionRef,
-  SessionStatus,
+  TurnRef,
   Session,
+  SessionStatus,
+  SessionRecoverRequest,
+  SessionRecoveryReceipt,
 } from "./contract"
 import { resourceID } from "./internal/id"
+import { canonicalizeJsonValue } from "./internal/jsoncanon"
 import {
   parseSession,
-  parseSessionInputRecord,
-  parseSessionOutputRecord,
+  parseTurnState,
+  parseSessionAdmissionReceipt,
+  parseSessionMessageReceipt,
+  parseSessionCloseReceipt,
+  parseTurnInterruptReceipt,
+  parseSessionResumeReceipt,
+  parseSessionRecoveryReceipt,
+  parseSessionEventPage,
   sessionStatus,
 } from "./internal/session"
-import { timestampString } from "./internal/timestamp"
+import { sessionOperationOptions } from "./session"
 import type { RequestOptions } from "./request"
 import { validateTaskId } from "./schema/task"
 
@@ -40,19 +41,13 @@ export type SessionListQuery =
       limit?: never
     }>
 
-/**
- * A Session ref addressed through the REST client. It extends the shared
- * SessionRef with the durable input log, which only the REST surface reads.
- */
+/** Authenticated client references include privileged, server-authorized recovery. */
 export interface ClientSessionRef extends SessionRef {
-  readonly input: SessionRef["input"] & Readonly<{
-    list(
-      query?: SessionInputQuery,
-      options?: RequestOptions,
-    ): Promise<SessionInputPage>
-  }>
+  recover(
+    request: SessionRecoverRequest,
+    options?: RequestOptions,
+  ): Promise<SessionRecoveryReceipt>
 }
-
 export interface ClientSessionsApi {
   retrieve(id: string, options?: RequestOptions): Promise<Session>
   list(
@@ -61,7 +56,6 @@ export interface ClientSessionsApi {
   ): Promise<CursorPage<Session>>
   ref(id: string): ClientSessionRef
 }
-
 interface SessionTransport {
   request(
     method: "GET" | "POST",
@@ -69,180 +63,235 @@ interface SessionTransport {
     options?: Readonly<{ body?: unknown; signal?: AbortSignal }>,
   ): Promise<unknown>
 }
-
 export function createClientSessions(
   transport: SessionTransport,
 ): ClientSessionsApi {
   return Object.freeze({
-    async retrieve(
-      id: string,
-      options: RequestOptions = {},
-    ): Promise<Session> {
-      const sessionID = resourceID(id, "Session ID")
-      return parseSession(await transport.request(
-        "GET",
-        `/v1/sessions/${encodeURIComponent(sessionID)}`,
-        options.signal === undefined ? {} : { signal: options.signal },
-      ))
+    retrieve(id, options) {
+      return createSessionRef(id, transport).retrieve(options)
     },
-    async list(
-      queryInput: SessionListQuery = {},
-      options: RequestOptions = {},
-    ): Promise<CursorPage<Session>> {
-      const query = sessionListQuery(queryInput)
+    async list(queryInput = {}, options = {}) {
       const response = objectValue(
-        await transport.request("GET", `/v1/sessions${query}`, {
-          ...(options.signal === undefined ? {} : { signal: options.signal }),
-        }),
+        await transport.request(
+          "GET",
+          `/v1/sessions${sessionListQuery(queryInput)}`,
+          options.signal === undefined ? {} : { signal: options.signal },
+        ),
         "Session list response",
       )
-      if (!Array.isArray(response["sessions"])) {
+      if (!Array.isArray(response["sessions"]))
         throw new Error("Session list response.sessions must be an array")
-      }
       const nextCursor = response["next_cursor"]
-      if (nextCursor !== undefined && typeof nextCursor !== "string") {
+      if (nextCursor !== undefined && typeof nextCursor !== "string")
         throw new Error("Session list response.next_cursor must be a string")
-      }
       return Object.freeze({
         items: Object.freeze(response["sessions"].map(parseSession)),
         ...(nextCursor === undefined ? {} : { nextCursor }),
       })
     },
-    ref(id: string): ClientSessionRef {
-      return createSessionRef(resourceID(id, "Session ID"), transport)
+    ref(id) {
+      return createSessionRef(id, transport)
     },
-  })
+  } satisfies ClientSessionsApi)
 }
-
 export function createSessionRef(
   id: string,
   transport: SessionTransport,
 ): ClientSessionRef {
-  const sessionID = resourceID(id, "Session ID")
-  const basePath = `/v1/sessions/${encodeURIComponent(sessionID)}`
-  const readRecordPage = async <TRecord>(
-    direction: "inputs" | "outputs",
-    label: string,
-    parseRecord: (value: unknown) => TRecord,
-    queryInput: Readonly<{ after?: number; limit?: number }>,
-    options: RequestOptions,
-  ): Promise<Readonly<{
-    records: readonly TRecord[]
-    nextAfter: number
-    hasMore: boolean
-  }>> => {
-    const query = new URLSearchParams()
-    if (queryInput.after !== undefined) {
-      query.set("after", safeSequence(queryInput.after, `${label} after`).toString())
-    }
-    if (queryInput.limit !== undefined) {
-      if (!Number.isInteger(queryInput.limit) || queryInput.limit < 1 || queryInput.limit > 100) {
-        throw new Error(`${label} limit must be an integer in [1,100]`)
-      }
-      query.set("limit", queryInput.limit.toString())
-    }
-    const suffix = query.size === 0 ? "" : `?${query.toString()}`
-    const response = objectValue(
-      await transport.request(
-        "GET",
-        `${basePath}/${direction}${suffix}`,
-        options.signal === undefined ? {} : { signal: options.signal },
-      ),
-      `${label} response`,
-    )
-    if (!Array.isArray(response["records"])) {
-      throw new Error(`${label} response.records must be an array`)
-    }
-    return Object.freeze({
-      records: Object.freeze(response["records"].map(parseRecord)),
-      nextAfter: safeSequence(response["next_after"], `${label} next_after`),
-      hasMore: requiredBoolean(response, "has_more", `${label} response`),
+  const sessionId = resourceID(id, "Session ID"),
+    basePath = `/v1/sessions/${encodeURIComponent(sessionId)}`
+  const post = (suffix: string, body: unknown, options?: RequestOptions) =>
+    transport.request("POST", basePath + suffix, {
+      body,
+      ...(options?.signal === undefined ? {} : { signal: options.signal }),
     })
-  }
-  const output: SessionRef["output"] = Object.freeze({
-    async list(
-      query: SessionOutputQuery = {},
-      options: RequestOptions = {},
-    ): Promise<SessionOutputPage> {
-      return readRecordPage("outputs", "Session output", parseSessionOutputRecord, query, options)
-    },
-  })
-  return Object.freeze({
-    id: sessionID,
-    input: Object.freeze({
-      async list(
-        query: SessionInputQuery = {},
-        options: RequestOptions = {},
-      ): Promise<SessionInputPage> {
-        return readRecordPage("inputs", "Session input", parseSessionInputRecord, query, options)
-      },
-      async send(
-        input: JsonValue,
-        request: SessionInputSendRequest = {},
-        options: RequestOptions = {},
-      ): Promise<SessionInputRecord> {
-        return parseSessionInputRecord(await transport.request(
-          "POST",
-          `${basePath}/inputs`,
-          {
-            body: {
-              input,
-              ...(request.idempotencyKey === undefined
-                ? {}
-                : { idempotency_key: request.idempotencyKey }),
+  const get = (suffix: string, options?: RequestOptions) =>
+    transport.request(
+      "GET",
+      basePath + suffix,
+      options?.signal === undefined ? {} : { signal: options.signal },
+    )
+  const turn = (id: string): TurnRef => {
+    const turnId = resourceID(id, "Turn ID"),
+      path = `/turns/${encodeURIComponent(turnId)}`
+    return Object.freeze({
+      id: turnId,
+      sessionId,
+      async send(data, request, options) {
+        canonicalizeJsonValue(data)
+        const receipt = parseSessionMessageReceipt(
+          await post(
+            path + "/messages",
+            {
+              data,
+              idempotency_key: sessionOperationOptions(request).idempotencyKey,
             },
-            ...(options.signal === undefined ? {} : { signal: options.signal }),
+            options,
+          ),
+        )
+        return Object.freeze({ id: receipt.messageId, status: receipt.status })
+      },
+      async retrieve(options) {
+        return parseTurnState(await get(path, options))
+      },
+      async interrupt(request, options) {
+        return parseTurnInterruptReceipt(
+          await post(
+            path + "/interrupt",
+            {
+              idempotency_key: sessionOperationOptions(request).idempotencyKey,
+            },
+            options,
+          ),
+        )
+      },
+    } satisfies TurnRef)
+  }
+  return Object.freeze({
+    id: sessionId,
+    turn,
+    async send(data, request, options) {
+      canonicalizeJsonValue(data)
+      const receipt = parseSessionAdmissionReceipt(
+        await post(
+          "/send",
+          {
+            data,
+            idempotency_key: sessionOperationOptions(request).idempotencyKey,
           },
-        ))
+          options,
+        ),
+      )
+      return receipt.kind === "enqueued"
+        ? Object.freeze({ kind: receipt.kind, turn: turn(receipt.turnId) })
+        : Object.freeze({
+            kind: receipt.kind,
+            turn: turn(receipt.turnId),
+            message: Object.freeze({
+              id: receipt.messageId,
+              status: "accepted" as const,
+            }),
+          })
+    },
+    async enqueue(data, request, options) {
+      canonicalizeJsonValue(data)
+      const receipt = parseSessionAdmissionReceipt(
+        await post(
+          "/enqueue",
+          {
+            data,
+            idempotency_key: sessionOperationOptions(request).idempotencyKey,
+          },
+          options,
+        ),
+      )
+      if (receipt.kind !== "enqueued")
+        throw new Error("Session enqueue response must admit a Turn")
+      return turn(receipt.turnId)
+    },
+    events: Object.freeze({
+      async list(query = {}, options) {
+        const after = query.after ?? 0,
+          limit = query.limit ?? 100
+        if (!Number.isSafeInteger(after) || after < 0)
+          throw new Error(
+            "Session events after must be a non-negative safe integer",
+          )
+        if (!Number.isInteger(limit) || limit < 1 || limit > 1000)
+          throw new Error("Session events limit must be an integer in [1,1000]")
+        return parseSessionEventPage(
+          await get(`/events?after=${after}&limit=${limit}`, options),
+        )
       },
     }),
-    output,
-    async retrieve(options: RequestOptions = {}): Promise<Session> {
-      return parseSession(await transport.request(
-        "GET",
-        basePath,
-        options.signal === undefined ? {} : { signal: options.signal },
-      ))
+    async retrieve(options) {
+      return parseSession(await get("", options))
     },
-    async close(
-      request: SessionCloseRequest = {},
-      options: RequestOptions = {},
-    ): Promise<SessionCloseReceipt> {
-      const response = objectValue(await transport.request(
-        "POST",
-        `${basePath}/close`,
-        {
-          body: request.idempotencyKey === undefined
-            ? {}
-            : { idempotency_key: request.idempotencyKey },
-          ...(options.signal === undefined ? {} : { signal: options.signal }),
-        },
-      ), "Session close response")
-      return Object.freeze({
-        sessionId: resourceID(response["session_id"], "Session close response.session_id"),
-        acceptedAt: timestampString(response["accepted_at"], "Session close response.accepted_at"),
-      })
+    async close(request, options) {
+      return parseSessionCloseReceipt(
+        await post(
+          "/close",
+          { idempotency_key: sessionOperationOptions(request).idempotencyKey },
+          options,
+        ),
+      )
     },
-  })
+    async resume(request, options) {
+      return parseSessionResumeReceipt(
+        await post(
+          "/resume",
+          {
+            hold_id: resourceID(request.holdId, "holdId"),
+            idempotency_key: sessionOperationOptions(request).idempotencyKey,
+          },
+          options,
+        ),
+      )
+    },
+    async recover(request, options) {
+      if (request.turnId !== null) resourceID(request.turnId, "turnId")
+      if (
+        request.turnId === null
+          ? request.disposition !== undefined
+          : request.disposition !== "failed" &&
+            request.disposition !== "interrupted"
+      )
+        throw new Error(
+          "Recovery disposition must match the nullable Turn target",
+        )
+      if (
+        typeof request.reconciliationRef !== "string" ||
+        request.reconciliationRef.trim() === ""
+      )
+        throw new Error("reconciliationRef is required")
+      return parseSessionRecoveryReceipt(
+        await post(
+          "/recover",
+          {
+            hold_id: resourceID(request.holdId, "holdId"),
+            turn_id: request.turnId,
+            workspace_version_id: resourceID(
+              request.workspaceVersionId,
+              "workspaceVersionId",
+            ),
+            reconciliation_ref: request.reconciliationRef,
+            ...(request.disposition === undefined
+              ? {}
+              : { disposition: request.disposition }),
+            idempotency_key: sessionOperationOptions(request).idempotencyKey,
+          },
+          options,
+        ),
+      )
+    },
+  } satisfies ClientSessionRef)
 }
 
 function sessionListQuery(queryInput: SessionListQuery): string {
   const exact = queryInput.actorId !== undefined || queryInput.key !== undefined
-  if (exact && (queryInput.actorId === undefined || queryInput.key === undefined)) {
+  if (
+    exact &&
+    (queryInput.actorId === undefined || queryInput.key === undefined)
+  ) {
     throw new Error("Session exact key lookup requires actorId and key")
   }
   if (
     exact &&
-    (queryInput.status !== undefined || queryInput.cursor !== undefined || queryInput.limit !== undefined)
+    (queryInput.status !== undefined ||
+      queryInput.cursor !== undefined ||
+      queryInput.limit !== undefined)
   ) {
-    throw new Error("Session exact key lookup does not accept status, cursor or limit")
+    throw new Error(
+      "Session exact key lookup does not accept status, cursor or limit",
+    )
   }
   const query = new URLSearchParams()
-  const statuses = queryInput.status === undefined
-    ? []
-    : Array.isArray(queryInput.status)
-    ? queryInput.status
-    : [queryInput.status]
+  const statuses =
+    queryInput.status === undefined
+      ? []
+      : Array.isArray(queryInput.status)
+        ? queryInput.status
+        : [queryInput.status]
   for (const status of statuses) {
     query.append("status", sessionStatus(status, "Session list status"))
   }
@@ -255,11 +304,16 @@ function sessionListQuery(queryInput: SessionListQuery): string {
     query.set("key", queryInput.key)
   }
   if (queryInput.cursor !== undefined) {
-    if (queryInput.cursor.length === 0) throw new Error("Session cursor is required")
+    if (queryInput.cursor.length === 0)
+      throw new Error("Session cursor is required")
     query.set("cursor", queryInput.cursor)
   }
   if (queryInput.limit !== undefined) {
-    if (!Number.isInteger(queryInput.limit) || queryInput.limit < 1 || queryInput.limit > 100) {
+    if (
+      !Number.isInteger(queryInput.limit) ||
+      queryInput.limit < 1 ||
+      queryInput.limit > 100
+    ) {
       throw new Error("Session limit must be an integer in [1,100]")
     }
     query.set("limit", queryInput.limit.toString())
@@ -272,17 +326,4 @@ function objectValue(value: unknown, label: string): Record<string, unknown> {
     throw new Error(`${label} must be an object`)
   }
   return value as Record<string, unknown>
-}
-
-function requiredBoolean(value: Record<string, unknown>, field: string, label: string): boolean {
-  const result = value[field]
-  if (typeof result !== "boolean") throw new Error(`${label}.${field} must be a boolean`)
-  return result
-}
-
-function safeSequence(value: unknown, label: string): number {
-  if (!Number.isSafeInteger(value) || (value as number) < 0) {
-    throw new Error(`${label} must be a non-negative safe integer`)
-  }
-  return value as number
 }

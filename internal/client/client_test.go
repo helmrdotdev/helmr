@@ -17,6 +17,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
+	"github.com/helmrdotdev/helmr/internal/ids"
 )
 
 func TestUploadDeploymentBundleObjectRejectsNonSuccess(t *testing.T) {
@@ -535,36 +536,46 @@ func TestStartTaskUsesEnvironmentScopedRoute(t *testing.T) {
 }
 
 func TestRunOperations(t *testing.T) {
-	paths := []string{}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		paths = append(paths, r.Method+" "+r.URL.Path)
-		switch r.URL.Path {
-		case "/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/cancel":
-			if r.ContentLength > 0 {
-				t.Fatalf("cancel request body length = %d", r.ContentLength)
+	for _, scoped := range []bool{false, true} {
+		for _, actor := range []bool{false, true} {
+			name := "task"
+			if actor {
+				name = "actor"
 			}
-			_ = json.NewEncoder(w).Encode(api.RunSnapshotResponse{
-				ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", Status: "cancelled",
+			t.Run(name+scopeName(scoped), func(t *testing.T) {
+				scope, prefix := sessionRouteScope(scoped)
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Method != http.MethodPost || r.URL.Path != prefix+"/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/cancel" {
+						t.Errorf("request = %s %s", r.Method, r.URL.Path)
+					}
+					var request api.CancelRunRequest
+					if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+						t.Error(err)
+					}
+					if ids.Validate(request.IdempotencyKey) != nil {
+						t.Errorf("idempotency key = %q", request.IdempotencyKey)
+					}
+					if actor {
+						_ = json.NewEncoder(w).Encode(api.ActorRunCancellationReceipt{ID: "cancel-1", RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", SessionID: testSessionID, HoldID: testHoldID, Status: "accepted"})
+					} else {
+						_ = json.NewEncoder(w).Encode(api.RunSnapshotResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", Status: "cancelled"})
+					}
+				}))
+				defer server.Close()
+				c := sessionTestClient(t, server, scoped)
+				result, err := c.CancelRun(context.Background(), "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", api.CancelRunRequest{}, RunScopeOptions(scope))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if actor {
+					if result.Task != nil || result.Actor == nil || result.Actor.ID != "cancel-1" || result.Actor.RunID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" || result.Actor.SessionID != testSessionID || result.Actor.HoldID != testHoldID || result.Actor.Status != "accepted" {
+						t.Fatalf("result = %+v", result)
+					}
+				} else if result.Actor != nil || result.Task == nil || result.Task.ID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" || result.Task.Status != "cancelled" {
+					t.Fatalf("result = %+v", result)
+				}
 			})
-		default:
-			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
-	}))
-	defer server.Close()
-
-	client, err := New(server.URL, WithHTTPClient(server.Client()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	cancelled, err := client.CancelRun(context.Background(), "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cancelled.ID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" || cancelled.Status != "cancelled" {
-		t.Fatalf("cancelled = %+v", cancelled)
-	}
-	if got := strings.Join(paths, ","); got != "POST /v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/cancel" {
-		t.Fatalf("paths = %s", got)
 	}
 }
 

@@ -9,9 +9,9 @@ import (
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 )
 
-func (entry *workspaceMountEntry) acquireActorTurnCommit(
+func (entry *workspaceMountEntry) acquireTurnSettle(
 	run *programv0.ProgramRunRequest,
-	request *programv0.ActorTurnCommitPauseRequest,
+	request *programv0.TurnSettlePauseRequest,
 ) (func(), time.Time, error) {
 	if entry == nil || run == nil || request == nil {
 		return func() {}, time.Time{}, errors.New("actor turn commit authority is required")
@@ -103,7 +103,7 @@ func actorTurnAuthorityContext(parent context.Context, entry *workspaceMountEntr
 
 func (registry *workspaceOperationRegistry) advanceActorTurnWorkspaceFrontier(
 	entry *workspaceMountEntry,
-	request *programv0.ActorTurnCommitPauseRequest,
+	request *programv0.TurnSettlePauseRequest,
 	expected string,
 	next string,
 ) error {

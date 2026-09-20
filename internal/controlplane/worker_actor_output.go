@@ -1,51 +1,46 @@
 package controlplane
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
-	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const maxActorOutputBytes = 1 << 20
-const maxActorOutputContentTypeBytes = 255
 
 var (
-	errStaleActorOutputAppend    = errors.New("actor output append source authority is stale")
-	errActorOutputAppendConflict = errors.New("actor output append conflicts with durable authority")
-	errActorOutputTooLarge       = errors.New("actor output exceeds the maximum size")
-	errActorOutputUnavailable    = errors.New("actor output append is unavailable")
+	errStaleActorOutputAppend = errors.New("actor output append source authority is stale")
+	errActorOutputTooLarge    = errors.New("actor output exceeds the maximum size")
 )
 
 type parsedWorkerActorOutputAppend struct {
-	lease          parsedRunLeaseFence
-	correlationID  uuid.UUID
-	data           json.RawMessage
-	contentType    string
-	idempotencyKey string
+	turnID            uuid.UUID
+	generation        int64
+	messageDeliveryID uuid.UUID
+	lease             parsedRunLeaseFence
+	correlationID     uuid.UUID
+	data              json.RawMessage
+	idempotencyKey    string
 }
 
-func (s *Server) workerAppendActorOutput(w http.ResponseWriter, r *http.Request) {
+func (s *Server) workerWriteTurnOutput(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
-	var request workerapi.AppendActorOutputRequest
+	var request workerapi.WriteTurnOutputRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
@@ -70,7 +65,7 @@ func (s *Server) workerAppendActorOutput(w http.ResponseWriter, r *http.Request)
 	record, err := s.appendActorOutput(r.Context(), worker, request, parsed)
 	if err != nil {
 		if failure, ok := actorOutputAppendFailure(err); ok {
-			writeJSON(w, http.StatusOK, workerapi.AppendActorOutputResponse{
+			writeJSON(w, http.StatusOK, workerapi.WriteOutputResponse{
 				CorrelationID: request.CorrelationID,
 				Failed:        &failure,
 			})
@@ -87,14 +82,14 @@ func (s *Server) workerAppendActorOutput(w http.ResponseWriter, r *http.Request)
 		writeError(w, errors.New("append actor output"))
 		return
 	}
-	writeJSON(w, http.StatusOK, workerapi.AppendActorOutputResponse{
+	writeJSON(w, http.StatusOK, workerapi.WriteOutputResponse{
 		CorrelationID: request.CorrelationID,
 		Completed:     &record,
 	})
 }
 
 func parseWorkerActorOutputAppend(
-	request workerapi.AppendActorOutputRequest,
+	request workerapi.WriteTurnOutputRequest,
 ) (parsedWorkerActorOutputAppend, error) {
 	lease, err := parseRunLeaseFence(request.Lease)
 	if err != nil {
@@ -104,38 +99,46 @@ func parseWorkerActorOutputAppend(
 	if err != nil {
 		return parsedWorkerActorOutputAppend{}, err
 	}
+	turnID, err := parseCanonicalUUID("turn_id", request.TurnID)
+	if err != nil {
+		return parsedWorkerActorOutputAppend{}, err
+	}
+	if request.RunGeneration <= 0 {
+		return parsedWorkerActorOutputAppend{}, errors.New("run_generation must be positive")
+	}
+	var delivery uuid.UUID
+	if request.MessageDeliveryID != nil {
+		delivery, err = parseCanonicalUUID("message_delivery_id", *request.MessageDeliveryID)
+		if err != nil {
+			return parsedWorkerActorOutputAppend{}, err
+		}
+	}
 	canonical, err := canonicalJSON(request.Data)
 	if err != nil {
 		return parsedWorkerActorOutputAppend{}, errors.New("data must be valid JSON")
-	}
-	contentType := strings.TrimSpace(request.ContentType)
-	if contentType == "" || len(contentType) > maxActorOutputContentTypeBytes {
-		return parsedWorkerActorOutputAppend{}, fmt.Errorf(
-			"content_type must be between 1 and %d bytes",
-			maxActorOutputContentTypeBytes,
-		)
 	}
 	idempotencyKey, err := normalizeIdempotencyKey(request.IdempotencyKey)
 	if err != nil {
 		return parsedWorkerActorOutputAppend{}, err
 	}
 	return parsedWorkerActorOutputAppend{
-		lease:          lease,
-		correlationID:  correlationID,
-		data:           canonical,
-		contentType:    contentType,
-		idempotencyKey: idempotencyKey,
+		lease:  lease,
+		turnID: turnID, generation: request.RunGeneration,
+		messageDeliveryID: delivery,
+		correlationID:     correlationID,
+		data:              canonical,
+		idempotencyKey:    idempotencyKey,
 	}, nil
 }
 
 func (s *Server) appendActorOutput(
 	ctx context.Context,
 	worker workerActor,
-	request workerapi.AppendActorOutputRequest,
+	request workerapi.WriteTurnOutputRequest,
 	parsed parsedWorkerActorOutputAppend,
-) (api.SessionOutput, error) {
+) (api.SessionEvent, error) {
 	if len(parsed.data) > maxActorOutputBytes {
-		return api.SessionOutput{}, errActorOutputTooLarge
+		return api.SessionEvent{}, errActorOutputTooLarge
 	}
 	locatorParams := db.GetLiveRunLeaseLocatorsParams{
 		ID:               pgvalue.UUID(parsed.lease.leaseID),
@@ -146,47 +149,19 @@ func (s *Server) appendActorOutput(
 	}
 	discovered, err := s.db.GetLiveRunLeaseLocators(ctx, locatorParams)
 	if err != nil || !discovered.SessionID.Valid {
-		return api.SessionOutput{}, staleActorOutputAppend(err)
+		return api.SessionEvent{}, staleActorOutputAppend(err)
 	}
 	environmentID, err := pgvalue.UUIDValue(discovered.EnvironmentID)
 	if err != nil {
-		return api.SessionOutput{}, errStaleActorOutputAppend
+		return api.SessionEvent{}, errStaleActorOutputAppend
 	}
 	actorID, err := pgvalue.UUIDValue(discovered.SessionID)
 	if err != nil {
-		return api.SessionOutput{}, errStaleActorOutputAppend
+		return api.SessionEvent{}, errStaleActorOutputAppend
 	}
-	var response api.SessionOutput
+	var response api.SessionEvent
+	var rejected error
 	err = s.inTx(ctx, func(work *txWork) error {
-		claimID := pgtype.UUID{}
-		fingerprint := []byte(nil)
-		var acquiredClaim db.IdempotencyClaim
-		if parsed.idempotencyKey != "" {
-			claims, err := idempotency.TransactionForQueries(work.q)
-			if err != nil {
-				return err
-			}
-			claimRequest, err := idempotency.NewActorOutputAppendRequest(
-				environmentID,
-				actorID,
-				parsed.idempotencyKey,
-				parsed.data,
-				parsed.contentType,
-			)
-			if err != nil {
-				return errActorOutputAppendConflict
-			}
-			acquired, err := claims.Acquire(ctx, claimRequest)
-			if err != nil {
-				return err
-			}
-			if acquired.Claim.Status != "pending" && acquired.Claim.Status != "completed" {
-				return errActorOutputAppendConflict
-			}
-			acquiredClaim = acquired.Claim
-			claimID = acquired.Claim.ID
-			fingerprint = bytes.Clone(acquired.Claim.RequestFingerprint)
-		}
 		locators, err := work.q.GetLiveRunLeaseLocators(ctx, locatorParams)
 		if err != nil ||
 			locators.EnvironmentID != discovered.EnvironmentID ||
@@ -227,139 +202,28 @@ func (s *Server) appendActorOutput(
 			authority.runLease.FinalizationOperationID.Valid {
 			return errStaleActorOutputAppend
 		}
-		if acquiredClaim.Status == "completed" {
-			record, err := actorOutputRecordFromReceipt(ctx, work.q, authority, acquiredClaim)
-			if err != nil {
-				return errActorOutputAppendConflict
-			}
-			response, err = projectAppendedActorOutput(ctx, work.q, record)
-			return err
+		key := parsed.idempotencyKey
+		if key == "" {
+			key = parsed.correlationID.String()
 		}
-		if authority.actor.NextOutputSequence > maxSessionRecordSequence {
-			return errActorSequenceExhausted
-		}
-
-		row, err := work.q.AppendActorOutputRecord(ctx, db.AppendActorOutputRecordParams{
-			EnvironmentID:              authority.run.EnvironmentID,
-			ClaimID:                    claimID,
-			SessionID:                  authority.actor.ID,
-			ProducerRunID:              authority.run.ID,
-			ProducerAttemptNumber:      authority.attempt.Number,
-			ExpectedRequestFingerprint: fingerprint,
-			ID:                         pgvalue.UUID(uuid.NewV7()),
-			Data:                       parsed.data,
-			ContentType:                parsed.contentType,
-		})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return errActorOutputUnavailable
-		}
+		receipt, err := session.AppendTurnOutput(ctx, work.q, session.TurnScope{
+			EnvironmentID: environmentID, SessionID: actorID, TurnID: parsed.turnID,
+			RunID: pgvalue.MustUUIDValue(authority.run.ID), AttemptNumber: authority.attempt.Number, RunGeneration: parsed.generation, MessageDeliveryID: parsed.messageDeliveryID,
+		}, key, parsed.data)
 		if err != nil {
 			return err
 		}
-		if row.ClaimFingerprintMismatch {
-			return errActorOutputAppendConflict
+		if receipt.Code != "" {
+			rejected = &session.OperationError{Code: receipt.Code}
+			return nil
 		}
-		record := actorOutputRecordFromAppend(row)
-		if claimID.Valid {
-			if _, err := work.q.CompleteActorOutputClaim(ctx, db.CompleteActorOutputClaimParams{
-				EnvironmentID:      record.EnvironmentID,
-				ClaimID:            claimID,
-				RequestFingerprint: fingerprint,
-				SessionID:          record.SessionID,
-				RecordID:           record.ID,
-			}); err != nil {
-				return fmt.Errorf("complete actor output idempotency claim: %w", err)
-			}
-		}
-		response, err = projectAppendedActorOutput(ctx, work.q, record)
-		return err
+		response = projectWorkerSessionEvent(receipt.Event, authority.run.DeploymentID)
+		return nil
 	})
+	if err == nil {
+		err = rejected
+	}
 	return response, err
-}
-
-func actorOutputRecordFromReceipt(
-	ctx context.Context,
-	q db.Querier,
-	authority runLeaseClaimAuthority,
-	claim db.IdempotencyClaim,
-) (db.SessionRecord, error) {
-	var receipt actorRecordClaimReceipt
-	if err := json.Unmarshal(claim.Receipt, &receipt); err != nil {
-		return db.SessionRecord{}, err
-	}
-	recordID, err := ids.Parse(receipt.SessionRecordID)
-	if err != nil || recordID == uuid.Nil() || receipt.Sequence <= 0 || receipt.Sequence > maxSessionRecordSequence {
-		return db.SessionRecord{}, errActorOutputAppendConflict
-	}
-	record, err := q.GetActorOutputRecordByID(ctx, db.GetActorOutputRecordByIDParams{
-		EnvironmentID: authority.run.EnvironmentID,
-		SessionID:     authority.actor.ID,
-		ID:            pgvalue.UUID(recordID),
-	})
-	if err != nil ||
-		record.Sequence != receipt.Sequence ||
-		!record.ProducerRunID.Valid ||
-		!record.ProducerAttemptNumber.Valid {
-		return db.SessionRecord{}, errActorOutputAppendConflict
-	}
-	return record, nil
-}
-
-func actorOutputRecordFromAppend(row db.AppendActorOutputRecordRow) db.SessionRecord {
-	return db.SessionRecord{
-		ID: row.ID, EnvironmentID: row.EnvironmentID, SessionID: row.SessionID,
-		Direction: row.Direction, Sequence: row.Sequence, Data: row.Data, ContentType: row.ContentType,
-		SourceRunID:   row.SourceRunID,
-		ProducerRunID: row.ProducerRunID, ProducerAttemptNumber: row.ProducerAttemptNumber,
-		ClaimID: row.ClaimID, CreatedAt: row.CreatedAt,
-	}
-}
-
-func projectAppendedActorOutput(
-	ctx context.Context,
-	q db.Querier,
-	record db.SessionRecord,
-) (api.SessionOutput, error) {
-	recordUUID, err := pgvalue.UUIDValue(record.ID)
-	if err != nil {
-		return api.SessionOutput{}, errActorOutputAppendConflict
-	}
-	if ids.Validate(recordUUID.String()) != nil {
-		return api.SessionOutput{}, errActorOutputAppendConflict
-	}
-	if record.Direction != "output" ||
-		!record.ProducerAttemptNumber.Valid ||
-		record.ProducerAttemptNumber.Int32 < 1 ||
-		record.Sequence <= 0 ||
-		record.Sequence > maxSessionRecordSequence ||
-		!json.Valid(record.Data) ||
-		record.ContentType == "" ||
-		!record.CreatedAt.Valid {
-		return api.SessionOutput{}, errActorOutputAppendConflict
-	}
-	run, err := q.GetRun(ctx, db.GetRunParams{
-		EnvironmentID: record.EnvironmentID,
-		ID:            record.ProducerRunID,
-	})
-	if err != nil || run.SessionID != record.SessionID {
-		return api.SessionOutput{}, errActorOutputAppendConflict
-	}
-	runID := pgvalue.UUIDString(run.ID)
-	deploymentID := pgvalue.UUIDString(run.DeploymentID)
-	if ids.Validate(runID) != nil {
-		return api.SessionOutput{}, errActorOutputAppendConflict
-	}
-	if ids.Validate(deploymentID) != nil {
-		return api.SessionOutput{}, errActorOutputAppendConflict
-	}
-	return api.SessionOutput{
-		ID: recordUUID.String(), Sequence: record.Sequence, Data: append(json.RawMessage(nil), record.Data...),
-		ContentType: record.ContentType, CreatedAt: record.CreatedAt.Time.UTC(),
-		Provenance: api.SessionOutputProvenance{
-			RunID: runID, AttemptNumber: record.ProducerAttemptNumber.Int32,
-			DeploymentID: deploymentID,
-		},
-	}, nil
 }
 
 func staleActorOutputAppend(err error) error {
@@ -371,19 +235,22 @@ func staleActorOutputAppend(err error) error {
 
 func actorOutputAppendFailure(err error) (workerapi.RuntimeOperationFailure, bool) {
 	var conflictError idempotency.ConflictError
+	var operation *session.OperationError
 	switch {
+	case errors.As(err, &operation):
+		return runtimeOperationFailure(operation.Code, operation.Error(), false), true
+	case errors.Is(err, session.ErrTurnStopped):
+		return workerapi.RuntimeOperationFailure{Code: "turn_stopping", Message: err.Error()}, true
+	case errors.Is(err, session.ErrTurnNotActive):
+		return workerapi.RuntimeOperationFailure{Code: "turn_not_active", Message: err.Error()}, true
+	case errors.Is(err, session.ErrTurnScope):
+		return workerapi.RuntimeOperationFailure{Code: "stale_execution", Message: err.Error()}, true
 	case errors.As(err, &conflictError):
 		return workerapi.RuntimeOperationFailure{
 			Code: "idempotency_conflict", Message: "idempotency key conflicts with an earlier Actor output",
 		}, true
 	case errors.Is(err, errActorOutputTooLarge):
 		return workerapi.RuntimeOperationFailure{Code: "actor_output_too_large", Message: err.Error()}, true
-	case errors.Is(err, errActorSequenceExhausted):
-		return workerapi.RuntimeOperationFailure{Code: "actor_sequence_exhausted", Message: err.Error()}, true
-	case errors.Is(err, errActorOutputUnavailable):
-		return workerapi.RuntimeOperationFailure{Code: "actor_not_open", Message: "Actor does not accept output"}, true
-	case errors.Is(err, errActorOutputAppendConflict):
-		return workerapi.RuntimeOperationFailure{Code: "actor_output_conflict", Message: err.Error()}, true
 	default:
 		return workerapi.RuntimeOperationFailure{}, false
 	}

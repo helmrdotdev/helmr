@@ -39,7 +39,7 @@ func (task *guestRunLeaseTask) handleTokenCreate(
 			if marshalErr != nil {
 				return fmt.Errorf("encode token create failure: %w", marshalErr)
 			}
-			if writeErr := wire.WriteResumeDecision(task.program.session.Stream(), &programv0.ResumeDecision{
+			if writeErr := wire.WriteResumeDecision(task.programStream(), &programv0.ResumeDecision{
 				CorrelationId: request.CorrelationID,
 				Kind:          "failed",
 				DataJson:      string(data),
@@ -54,7 +54,7 @@ func (task *guestRunLeaseTask) handleTokenCreate(
 	if err != nil {
 		return fmt.Errorf("encode token create decision: %w", err)
 	}
-	if err := wire.WriteResumeDecision(task.program.session.Stream(), &programv0.ResumeDecision{
+	if err := wire.WriteResumeDecision(task.programStream(), &programv0.ResumeDecision{
 		CorrelationId: request.CorrelationID,
 		Kind:          "completed",
 		DataJson:      string(data),

@@ -77,10 +77,13 @@ const API_KEY_SCOPE_OPTIONS: {
     description: "Allow automation to start declared Actors.",
   },
   {
-    value: "sessions-input:send",
-    label: "Send session input",
-    description: "Allow automation to append durable input to Sessions.",
+    value: "sessions:send",
+    label: "Send session work and messages",
+    description: "Allow automation to enqueue Turns and send Session or exact Turn messages.",
   },
+  { value: "sessions:interrupt", label: "Interrupt turns", description: "Request interruption of an exact Turn while retaining queued work." },
+  { value: "sessions:resume", label: "Resume sessions", description: "Resume queued work after an exact hold converges." },
+  { value: "sessions:recover", label: "Recover sessions", description: "Reconcile uncertain execution. Requires an owner or admin role." },
   {
     value: "sessions:close",
     label: "Close sessions",

@@ -158,10 +158,10 @@ func (c *Client) CompleteWorkspaceExec(ctx context.Context, request workerapi.Wo
 	return response, nil
 }
 
-func (c *Client) AppendActorOutput(ctx context.Context, request workerapi.AppendActorOutputRequest) (workerapi.AppendActorOutputResponse, error) {
-	var response workerapi.AppendActorOutputResponse
-	if err := c.postWorkerJSON(ctx, "/worker/v1/run/sessions/outputs/append", request, &response); err != nil {
-		return workerapi.AppendActorOutputResponse{}, err
+func (c *Client) WriteTurnOutput(ctx context.Context, request workerapi.WriteTurnOutputRequest) (workerapi.WriteOutputResponse, error) {
+	var response workerapi.WriteOutputResponse
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/turns/output/write", request, &response); err != nil {
+		return workerapi.WriteOutputResponse{}, err
 	}
 	return response, nil
 }
@@ -353,13 +353,13 @@ func (c *Client) CommitActorTurn(
 	return response, nil
 }
 
-func (c *Client) SendRunActorInput(
+func (c *Client) SendRunSession(
 	ctx context.Context,
-	request workerapi.SendActorInputRequest,
-) (workerapi.SendActorInputResponse, error) {
-	var response workerapi.SendActorInputResponse
-	if err := c.postWorkerJSON(ctx, "/worker/v1/run/sessions/inputs/send", request, &response); err != nil {
-		return workerapi.SendActorInputResponse{}, err
+	request workerapi.SubmitSessionDataRequest,
+) (workerapi.SubmitSessionDataResponse, error) {
+	var response workerapi.SubmitSessionDataResponse
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/sessions/send", request, &response); err != nil {
+		return workerapi.SubmitSessionDataResponse{}, err
 	}
 	return response, nil
 }
@@ -397,13 +397,13 @@ func (c *Client) CloseRunSession(
 	return response, nil
 }
 
-func (c *Client) ReadRunSessionOutputPage(
+func (c *Client) ReadRunSessionEvents(
 	ctx context.Context,
-	request workerapi.ReadSessionOutputPageRequest,
-) (workerapi.ReadSessionOutputPageResponse, error) {
-	var response workerapi.ReadSessionOutputPageResponse
-	if err := c.postWorkerJSON(ctx, "/worker/v1/run/sessions/outputs/read-page", request, &response); err != nil {
-		return workerapi.ReadSessionOutputPageResponse{}, err
+	request workerapi.ReadSessionEventsRequest,
+) (workerapi.ReadSessionEventsResponse, error) {
+	var response workerapi.ReadSessionEventsResponse
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/sessions/events/read-page", request, &response); err != nil {
+		return workerapi.ReadSessionEventsResponse{}, err
 	}
 	return response, nil
 }
@@ -560,6 +560,94 @@ func (c *Client) MarkCheckpointFailed(ctx context.Context, request workerapi.Che
 	var response workerapi.CheckpointResponse
 	if err := c.postWorkerJSON(ctx, "/worker/v1/run/checkpoints/failed", request, &response); err != nil {
 		return workerapi.CheckpointResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) EnqueueRunSession(ctx context.Context, request workerapi.SubmitSessionDataRequest) (workerapi.SubmitSessionDataResponse, error) {
+	var response workerapi.SubmitSessionDataResponse
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/sessions/enqueue", request, &response); err != nil {
+		return workerapi.SubmitSessionDataResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) SendRunTurnMessage(ctx context.Context, request workerapi.SubmitSessionDataRequest) (workerapi.SubmitSessionDataResponse, error) {
+	var response workerapi.SubmitSessionDataResponse
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/turns/messages/send", request, &response); err != nil {
+		return workerapi.SubmitSessionDataResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) WriteSessionOutput(ctx context.Context, request workerapi.WriteSessionOutputRequest) (workerapi.WriteOutputResponse, error) {
+	var response workerapi.WriteOutputResponse
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/sessions/output/write", request, &response); err != nil {
+		return workerapi.WriteOutputResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) TurnMessagesReady(ctx context.Context, request workerapi.TurnExecutionRequest) (workerapi.TurnCommandResponse, error) {
+	var response workerapi.TurnCommandResponse
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/turns/messages/ready", request, &response); err != nil {
+		return workerapi.TurnCommandResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) ClaimTurnMessage(ctx context.Context, request workerapi.ClaimTurnMessageRequest) (workerapi.ClaimTurnMessageResponse, error) {
+	var response workerapi.ClaimTurnMessageResponse
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/turns/messages/claim", request, &response); err != nil {
+		return workerapi.ClaimTurnMessageResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) CompleteTurnMessage(ctx context.Context, request workerapi.CompleteTurnMessageRequest) (workerapi.TurnCommandResponse, error) {
+	var response workerapi.TurnCommandResponse
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/turns/messages/complete", request, &response); err != nil {
+		return workerapi.TurnCommandResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) BeginTurnSettlement(ctx context.Context, request workerapi.TurnExecutionRequest) (workerapi.TurnCommandResponse, error) {
+	var response workerapi.TurnCommandResponse
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/turns/settlement/begin", request, &response); err != nil {
+		return workerapi.TurnCommandResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) ReadSessionControl(ctx context.Context, request workerapi.SessionControlRequest) (workerapi.SessionControlResponse, error) {
+	var response workerapi.SessionControlResponse
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/sessions/control", request, &response); err != nil {
+		return workerapi.SessionControlResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) GetRunSessionTurn(ctx context.Context, request workerapi.TurnReferenceRequest) (workerapi.SessionTurnResponse, error) {
+	var response workerapi.SessionTurnResponse
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/turns/retrieve", request, &response); err != nil {
+		return workerapi.SessionTurnResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) InterruptRunSessionTurn(ctx context.Context, request workerapi.InterruptSessionTurnRequest) (workerapi.InterruptSessionTurnResponse, error) {
+	var response workerapi.InterruptSessionTurnResponse
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/turns/interrupt", request, &response); err != nil {
+		return workerapi.InterruptSessionTurnResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) ResumeRunSession(ctx context.Context, request workerapi.ResumeSessionRequest) (workerapi.ResumeSessionResponse, error) {
+	var response workerapi.ResumeSessionResponse
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/sessions/resume", request, &response); err != nil {
+		return workerapi.ResumeSessionResponse{}, err
 	}
 	return response, nil
 }

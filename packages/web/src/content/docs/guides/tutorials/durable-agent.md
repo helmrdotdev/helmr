@@ -20,20 +20,12 @@ export const assistant = actor({
   id: "assistant",
   idleTimeout: "90s",
   async run(session, ctx) {
-    await session.output.append({
-      type: "ready",
-      runId: ctx.run.id,
-      workspaceId: ctx.workspace.id,
-    })
-
-    while (!ctx.signal.aborted) {
-      const message = await session.input.receive()
-      if (!message.ok) return
-      await session.output.append({
-        type: "reply",
-        inputSequence: message.record.sequence,
-        text: `received: ${JSON.stringify(message.value)}`,
-      })
+    await session.output.write({ type: "ready", runId: ctx.run.id })
+    for (;;) {
+      const turn = await session.receive()
+      if (turn === null) return
+      await turn.output.write({ type: "reply", received: turn.input })
+      await turn.complete()
     }
   },
 })
@@ -60,7 +52,6 @@ helmr actor start assistant \
   --project demo --env development \
   --workspace "$WORKSPACE_ID" \
   --key user:ada \
-  --input-json '{"type":"message","text":"hello"}' \
   --idempotency-key tutorial:assistant:start \
   --json
 ```
@@ -71,17 +62,18 @@ ID for all later interaction.
 ## Continue the Session
 
 ```sh
-helmr actor input send SESSION_ID \
+helmr actor enqueue SESSION_ID \
   --project demo --env development \
-  --input-json '{"type":"message","text":"summarize our work"}' \
+  --data-json '{"type":"message","text":"summarize our work"}' \
   --idempotency-key tutorial:assistant:message:2
 
-helmr actor output read SESSION_ID \
+helmr actor events SESSION_ID \
   --project demo --env development \
   --after 0 --jsonl
 ```
 
-Output reads are finite pages. Pass the last durable sequence back through
+Event reads are finite pages; output and lifecycle events share one sequence.
+A page ending does not complete a Turn. Pass the last durable sequence back through
 `--after` to read only newer records. Input idempotency keys should come from a
 stable upstream event ID so delivery retries do not duplicate application
 commands.

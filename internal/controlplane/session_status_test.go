@@ -9,22 +9,19 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
-func TestProjectSessionStatusCollapsesInternalStates(t *testing.T) {
+func TestProjectSessionStatusPreservesLifecycleAndFailure(t *testing.T) {
 	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
 	actorID := uuid.NewV7()
 	for status, want := range map[string]api.SessionStatus{
-		"open":      api.SessionStatusOpen,
-		"closing":   api.SessionStatusOpen,
-		"closed":    api.SessionStatusClosed,
-		"cancelled": api.SessionStatusCancelled,
+		"open":    api.SessionStatusOpen,
+		"closing": api.SessionStatusClosing,
+		"closed":  api.SessionStatusClosed,
 	} {
 		record := sessionReadRecord{
 			id: pgvalue.UUID(actorID), status: status,
 			createdAt: pgvalue.Timestamptz(now), updatedAt: pgvalue.Timestamptz(now),
 		}
-		if status == "cancelled" {
-			record.failure = []byte(`{"code":"cancelled","message":"Session was cancelled","details":{}}`)
-		}
+
 		got, err := projectSessionStatus(record)
 		if err != nil {
 			t.Fatalf("%s: %v", status, err)

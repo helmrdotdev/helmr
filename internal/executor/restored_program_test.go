@@ -561,13 +561,7 @@ func (*restoredProgramControlPlane) CompleteActor(context.Context, workerapi.Com
 func (*restoredProgramControlPlane) CommitActorTurn(context.Context, workerapi.CommitActorTurnRequest) (workerapi.CommitActorTurnResponse, error) {
 	return workerapi.CommitActorTurnResponse{}, errors.New("unexpected actor turn commit")
 }
-func (*restoredProgramControlPlane) SendRunActorInput(context.Context, workerapi.SendActorInputRequest) (workerapi.SendActorInputResponse, error) {
-	return workerapi.SendActorInputResponse{}, errors.New("unexpected actor input send")
-}
 
-func (*restoredProgramControlPlane) AppendActorOutput(context.Context, workerapi.AppendActorOutputRequest) (workerapi.AppendActorOutputResponse, error) {
-	return workerapi.AppendActorOutputResponse{}, errors.New("unexpected actor output append")
-}
 func (*restoredProgramControlPlane) CreateRuntimeToken(context.Context, workerapi.CreateTokenRequest) (api.TokenResponse, error) {
 	return api.TokenResponse{}, errors.New("unexpected token create")
 }

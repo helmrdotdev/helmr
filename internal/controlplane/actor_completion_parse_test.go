@@ -2,7 +2,7 @@ package controlplane
 
 import (
 	"testing"
-	"time"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -10,13 +10,13 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func TestParseActorCompletionRequestBindsCursorAndWorkspaceProof(t *testing.T) {
+func TestParseActorCompletionRequestBindsGenerationAndWorkspaceProof(t *testing.T) {
 	taskRequest := validTaskCompletionRequest(t)
 	request := workerapi.CompleteActorRequest{
 		Lease: taskRequest.Lease,
 		Outcome: workerapi.ActorOutcome{
-			TerminalInputSequence: 0,
-			Succeeded:             &workerapi.ActorSucceeded{},
+			RunGeneration: 1,
+			Succeeded:     &workerapi.ActorSucceeded{},
 		},
 		Workspace: taskRequest.Workspace,
 	}
@@ -24,7 +24,7 @@ func TestParseActorCompletionRequestBindsCursorAndWorkspaceProof(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.kind != actorCompletionSucceeded || parsed.terminalInputSequence != 0 || parsed.capture == nil || parsed.rollback != nil || parsed.fingerprint == "" {
+	if parsed.kind != actorCompletionSucceeded || parsed.capture == nil || parsed.rollback != nil || parsed.fingerprint == "" {
 		t.Fatalf("parsed Actor completion = %#v", parsed)
 	}
 }
@@ -34,8 +34,8 @@ func TestParseActorCompletionRejectsNoncanonicalFailureMessage(t *testing.T) {
 	request := workerapi.CompleteActorRequest{
 		Lease: taskRequest.Lease,
 		Outcome: workerapi.ActorOutcome{
-			TerminalInputSequence: 0,
-			Failed:                &workerapi.TaskFailure{Message: " failed "},
+			RunGeneration: 1,
+			Failed:        &workerapi.TaskFailure{Message: " failed "},
 		},
 		Workspace: workerapi.TaskWorkspaceProof{
 			RolledBack: validTaskWorkspaceRollback(t, taskRequest.Workspace.Captured),
@@ -54,10 +54,14 @@ func TestDecideActorRunTerminal(t *testing.T) {
 		want       actorRunTerminalDecision
 	}{
 		{
-			name:       "successful progress remains open",
-			authority:  actorTerminalAuthority("open", 2, 4),
-			completion: parsedActorCompletion{kind: actorCompletionSucceeded, terminalInputSequence: 3},
-			want:       actorRunTerminalDecision{runStatus: db.RunStatusSucceeded, actorStatus: "open", commitCursor: true},
+			name: "successful progress remains open",
+			authority: func() runLeaseClaimAuthority {
+				a := actorTerminalAuthority("open", 2, 4)
+				a.actor.CommittedInputSequence = 3
+				return a
+			}(),
+			completion: parsedActorCompletion{kind: actorCompletionSucceeded},
+			want:       actorRunTerminalDecision{runStatus: db.RunStatusSucceeded, actorStatus: "open"},
 		},
 		{
 			name: "admission backlog without progress fails before close",
@@ -66,8 +70,8 @@ func TestDecideActorRunTerminal(t *testing.T) {
 				a.actor.CloseSequence = pgtype.Int8{Int64: 2, Valid: true}
 				return a
 			}(),
-			completion: parsedActorCompletion{kind: actorCompletionSucceeded, terminalInputSequence: 2},
-			want:       actorRunTerminalDecision{runStatus: db.RunStatusSucceeded, actorStatus: "failed", failureCode: pgvalue.Text("no_progress"), commitCursor: true},
+			completion: parsedActorCompletion{kind: actorCompletionSucceeded},
+			want:       actorRunTerminalDecision{runStatus: db.RunStatusFailed, actorStatus: "closing", runReason: pgvalue.Text("no_progress")},
 		},
 		{
 			name: "closing at committed boundary closes",
@@ -76,14 +80,14 @@ func TestDecideActorRunTerminal(t *testing.T) {
 				a.actor.CloseSequence = pgtype.Int8{Int64: 2, Valid: true}
 				return a
 			}(),
-			completion: parsedActorCompletion{kind: actorCompletionSucceeded, terminalInputSequence: 2},
-			want:       actorRunTerminalDecision{runStatus: db.RunStatusSucceeded, actorStatus: "closed", commitCursor: true},
+			completion: parsedActorCompletion{kind: actorCompletionSucceeded},
+			want:       actorRunTerminalDecision{runStatus: db.RunStatusSucceeded, actorStatus: "closed"},
 		},
 		{
 			name:       "runtime failure rolls cursor back",
 			authority:  actorTerminalAuthority("open", 2, 4),
-			completion: parsedActorCompletion{kind: actorCompletionFailed, terminalInputSequence: 3},
-			want:       actorRunTerminalDecision{runStatus: db.RunStatusFailed, runReason: pgvalue.Text("actor_failed"), actorStatus: "failed", failureCode: pgvalue.Text("run_failed")},
+			completion: parsedActorCompletion{kind: actorCompletionFailed},
+			want:       actorRunTerminalDecision{runStatus: db.RunStatusFailed, runReason: pgvalue.Text("actor_failed"), actorStatus: "open"},
 		},
 	}
 	for _, test := range tests {
@@ -96,28 +100,9 @@ func TestDecideActorRunTerminal(t *testing.T) {
 	}
 }
 
-func TestActorCompletionRetryUsesPinnedPolicy(t *testing.T) {
-	now := time.Date(2026, time.July, 22, 1, 2, 3, 0, time.UTC)
-	run := db.Run{
-		RetryPolicy: []byte(`{"enabled":true,"maxAttempts":3,"backoff":{"minMs":1,"maxMs":1,"factor":1,"jitter":"none"}}`),
-	}
-	retryAt, retry, err := actorCompletionRetryAt(
-		run,
-		db.RunAttempt{Number: 1},
-		parsedActorCompletion{kind: actorCompletionFailed},
-		now,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !retry || !retryAt.Equal(now.Add(time.Millisecond)) {
-		t.Fatalf("closing Actor retry = %s, %t", retryAt, retry)
-	}
-}
-
 func actorTerminalAuthority(state string, start, highWatermark int64) runLeaseClaimAuthority {
 	return runLeaseClaimAuthority{
-		actor: db.Session{Status: state},
+		actor: db.Session{Status: state, CommittedInputSequence: start, NextInputSequence: highWatermark + 1},
 		run: db.Run{
 			SessionInputStartSequence: pgtype.Int8{Int64: start, Valid: true},
 			SessionInputHighWatermark: pgtype.Int8{Int64: highWatermark, Valid: true},
@@ -130,7 +115,7 @@ func TestActorNeedsContinuationHonorsManualCancellation(t *testing.T) {
 	if !actorNeedsContinuation(actor) {
 		t.Fatal("backlogged open Actor should need a continuation")
 	}
-	actor.ManualRunCancelled = true
+	actor.DispatchHoldID = pgvalue.UUID(uuid.NewV7())
 	if actorNeedsContinuation(actor) {
 		t.Fatal("manual Run cancellation hold admitted a continuation")
 	}

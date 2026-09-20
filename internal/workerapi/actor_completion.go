@@ -19,17 +19,18 @@ func (value *CompleteActorRequest) UnmarshalJSON(raw []byte) error {
 func (value *ActorOutcome) UnmarshalJSON(raw []byte) error {
 	*value = ActorOutcome{}
 	var envelope struct {
-		TerminalInputSequence *int64          `json:"terminal_input_sequence"`
-		Succeeded             json.RawMessage `json:"succeeded"`
-		Failed                json.RawMessage `json:"failed"`
+		RunGeneration *int64          `json:"run_generation"`
+		Interrupted   json.RawMessage `json:"interrupted"`
+		Succeeded     json.RawMessage `json:"succeeded"`
+		Failed        json.RawMessage `json:"failed"`
 	}
 	if err := decodeClosedTaskCompletionJSON(raw, &envelope); err != nil {
 		return fmt.Errorf("decode actor outcome: %w", err)
 	}
-	if envelope.TerminalInputSequence == nil || *envelope.TerminalInputSequence < 0 {
-		return errors.New("actor terminal_input_sequence must be a non-negative integer")
+	if envelope.RunGeneration == nil || *envelope.RunGeneration <= 0 {
+		return errors.New("actor run_generation must be a positive integer")
 	}
-	value.TerminalInputSequence = *envelope.TerminalInputSequence
+	value.RunGeneration = *envelope.RunGeneration
 	variants := 0
 	if len(envelope.Succeeded) != 0 {
 		variants++
@@ -52,6 +53,17 @@ func (value *ActorOutcome) UnmarshalJSON(raw []byte) error {
 			return fmt.Errorf("decode actor failed outcome: %w", err)
 		}
 		value.Failed = &failed
+	}
+	if len(envelope.Interrupted) != 0 {
+		variants++
+		if isJSONNull(envelope.Interrupted) {
+			return errors.New("actor outcome interrupted variant must not be null")
+		}
+		var interrupted ActorInterrupted
+		if err := decodeClosedTaskCompletionJSON(envelope.Interrupted, &interrupted); err != nil {
+			return fmt.Errorf("decode actor interrupted outcome: %w", err)
+		}
+		value.Interrupted = &interrupted
 	}
 	if variants != 1 {
 		return errors.New("actor outcome must contain exactly one variant")

@@ -164,6 +164,8 @@ func programStartActor(
 		actor.DeploymentDefinitionID != run.DeploymentDefinitionID ||
 		actor.WorkspaceID != run.WorkspaceID ||
 		actor.ActorDeclaredID != run.EntrypointDeclaredID ||
+		actor.CurrentRunID != run.ID || actor.RunGeneration <= 0 ||
+		actor.DispatchHoldID.Valid ||
 		run.Payload != nil ||
 		!attempt.SessionInputStartSequence.Valid ||
 		!run.SessionInputStartSequence.Valid ||
@@ -180,6 +182,7 @@ func programStartActor(
 	}
 	start := &programv0.ActorStart{
 		SessionId:          sessionID,
+		RunGeneration:      actor.RunGeneration,
 		StartInputSequence: attempt.SessionInputStartSequence.Int64,
 		InputHighWatermark: run.SessionInputHighWatermark.Int64,
 	}

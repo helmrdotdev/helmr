@@ -329,17 +329,17 @@ async function runChildTaskSmoke(): Promise<ChildTaskEvidence> {
       "child-task-smoke-actor",
       {
         key: `child-call:${config.marker}`,
-        input: {
-          marker: `${config.marker}-actor-call`,
-          childWorkspaceId: targetWorkspace.id,
-        },
         workspace: actorWorkspace,
         idempotencyKey: `child-actor:start:${config.marker}`,
       },
     )
     actorRef = actor.session
+    const firstTurn = await actor.session.enqueue({
+      marker: `${config.marker}-actor-call`, childWorkspaceId: targetWorkspace.id,
+    }, { idempotencyKey: `child-actor:first:${config.marker}` })
     const actorRun = await waitForTerminalRun(actor.run.id)
     assertEqual(actorRun.status, "succeeded", "Actor child call Run did not succeed")
+    assertEqual((await firstTurn.retrieve()).status, "completed", "Actor returned before explicit Turn completion")
     const actorOutput = await waitForActorOutput(actor.session)
     assert(
       actorOutput.data !== null &&
@@ -364,20 +364,20 @@ async function runChildTaskSmoke(): Promise<ChildTaskEvidence> {
       marker: `${config.marker}-actor-continuation`,
       childWorkspaceId: targetWorkspace.id,
     }
-    const sent = await actorByKey.input.send(
+    const sent = await actorByKey.enqueue(
       replayedInput,
       { idempotencyKey: `child-actor:input:${config.marker}` },
       { signal: AbortSignal.timeout(30_000) },
     )
-    const replayedSend = await actorByID.input.send(
+    const replayedSend = await actorByID.enqueue(
       replayedInput,
       { idempotencyKey: `child-actor:input:${config.marker}` },
       { signal: AbortSignal.timeout(30_000) },
     )
     assertEqual(
-      replayedSend.sequence,
-      sent.sequence,
-      "Actor input idempotency replay changed the sequence",
+      replayedSend.id,
+      sent.id,
+      "Actor input idempotency replay changed the Turn ID",
     )
     const actorOutputs = await waitForActorOutputs(actorByID, 2)
     const continuationOutput = actorOutputs.find((record) =>
@@ -390,6 +390,7 @@ async function runChildTaskSmoke(): Promise<ChildTaskEvidence> {
       continuationOutput !== undefined,
       "Actor output omitted the continuation marker",
     )
+    assert(continuationOutput.provenance !== null, "Actor output is missing Run provenance")
     const actorContinuationRunId = continuationOutput.provenance.runId
     assert(
       actorContinuationRunId !== actor.run.id,
@@ -413,11 +414,11 @@ async function runChildTaskSmoke(): Promise<ChildTaskEvidence> {
     const streamedOutputs = []
     let after = 0
     for (;;) {
-      const page = await actorByID.output.list(
+      const page = await actorByID.events.list(
         { after, limit: 1 },
         { signal: AbortSignal.timeout(30_000) },
       )
-      streamedOutputs.push(...page.records)
+      streamedOutputs.push(...page.records.filter((event) => event.kind === "output"))
       if (!page.hasMore) break
       after = page.nextAfter
     }
@@ -428,9 +429,9 @@ async function runChildTaskSmoke(): Promise<ChildTaskEvidence> {
     )
 
     await closeSmokeActor(actorByID)
-    const retainedOutputs = await actorByID.output.list({ after: 0, limit: 10 })
+    const retainedOutputs = await actorByID.events.list({ after: 0, limit: 100 })
     assertEqual(
-      retainedOutputs.records.length,
+      retainedOutputs.records.filter((event) => event.kind === "output").length,
       actorOutputs.length,
       "Actor close discarded durable output",
     )
@@ -492,8 +493,9 @@ async function waitForActorOutput(
 ) {
   const deadline = Date.now() + 5 * 60_000
   for (;;) {
-    const page = await ref.output.list({ after: 0, limit: 10 })
-    if (page.records[0] !== undefined) return page.records[0]
+    const page = await ref.events.list({ after: 0, limit: 100 })
+    const output = page.records.find((event) => event.kind === "output")
+    if (output !== undefined) return output
     if (Date.now() >= deadline) {
       throw new Error(`timed out waiting for Actor output ${ref.id}`)
     }
@@ -507,8 +509,9 @@ async function waitForActorOutputs(
 ) {
   const deadline = Date.now() + 5 * 60_000
   for (;;) {
-    const page = await ref.output.list({ after: 0, limit: 10 })
-    if (page.records.length >= count) return page.records
+    const page = await ref.events.list({ after: 0, limit: 100 })
+    const outputs = page.records.filter((event) => event.kind === "output")
+    if (outputs.length >= count) return outputs
     if (Date.now() >= deadline) {
       throw new Error(`timed out waiting for ${count} Actor outputs ${ref.id}`)
     }
@@ -529,7 +532,7 @@ async function waitForActorClosed(ref: SessionRef): Promise<Session> {
   for (;;) {
     const status = await client.sessions.retrieve(ref.id)
     if (status.status === "closed") return status
-    if (status.status === "cancelled" || status.status === "failed") {
+    if (status.status === "failed") {
       return status
     }
     if (Date.now() >= deadline) {

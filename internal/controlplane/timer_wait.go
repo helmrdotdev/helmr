@@ -12,6 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -97,7 +98,14 @@ func (s *Server) workerCreateTimerRunWait(
 		if authority.runLease.Status != db.RunLeaseStatusRunning {
 			return errStaleRunLeaseClaim
 		}
-		if err := validateRunWaitActorCursor(authority, db.RunWait{
+		turnID, generation, err := parseWorkerWaitTurn(request.TurnID, request.RunGeneration)
+		if err != nil {
+			return err
+		}
+		if err := validateWorkerWaitTurn(r.Context(), work.q, authority, turnID, generation); err != nil {
+			return err
+		}
+		if err := validateRunWaitActorCursor(authority, db.RunWait{TurnID: turnID, TurnRunGeneration: generation, TurnSessionID: authority.actor.ID,
 			ActorSpeculativeInputSequence: actorCursor,
 		}); err != nil {
 			return err
@@ -115,7 +123,7 @@ func (s *Server) workerCreateTimerRunWait(
 			},
 		)
 		if err == nil {
-			return nil
+			return validateRunWaitActorCursor(authority, registered)
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return err
@@ -145,12 +153,12 @@ func (s *Server) workerCreateTimerRunWait(
 		if err != nil {
 			return staleRunLeaseClaim(err)
 		}
-		return nil
+		return bindWorkerWaitTurn(r.Context(), work.q, authority, registered.ID, turnID, generation)
 	})
 	if writeStaleWorkerClaims(w, err) {
 		return
 	}
-	if errors.Is(err, errStaleRunLeaseClaim) {
+	if errors.Is(err, errStaleRunLeaseClaim) || errors.Is(err, session.ErrTurnStopped) || errors.Is(err, session.ErrTurnScope) {
 		writeError(w, conflict(errors.New("worker timer wait receipt is stale")))
 		return
 	}

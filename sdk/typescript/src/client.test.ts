@@ -345,147 +345,6 @@ describe("HelmrClient Workspaces", () => {
 })
 
 describe("HelmrClient Actors", () => {
-  test("starts an Actor and addresses the resulting Session by UUID", async () => {
-    const requests: Array<{ url: string; init?: RequestInit }> = []
-    const responses: unknown[] = [
-      {
-        session_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-        run_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
-      },
-      {
-        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
-        sequence: 1,
-        data: { type: "continue" },
-        source: { type: "external" },
-        created_at: "2026-07-24T11:50:01Z",
-      },
-      {
-        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-        actor_id: "operator",
-        deployment_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
-        workspace_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
-        key: "thread:1",
-        status: "open",
-        current_run_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
-        created_at: "2026-07-24T11:50:00Z",
-        updated_at: "2026-07-24T11:50:01Z",
-      },
-      {
-        records: [{
-          id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34",
-          sequence: 1,
-          data: { stage: "started" },
-          content_type: "application/json",
-          created_at: "2026-07-24T11:50:02Z",
-          provenance: {
-            run_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
-            attempt_number: 1,
-            deployment_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
-          },
-        }],
-        next_after: 1,
-        has_more: false,
-      },
-      {
-        session_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-        accepted_at: "2026-07-24T11:50:03Z",
-      },
-    ]
-    const client = new HelmrClient({
-      url: "https://api.example.test",
-      apiKey: "api-key",
-      fetch: (async (input: URL | RequestInfo, init?: RequestInit) => {
-        requests.push({ url: String(input), init })
-        return Response.json(responses.shift(), { status: 200 })
-      }) as typeof fetch,
-    })
-    const operator = actor({ id: "operator", run: async () => {} })
-    const workspace = workspaces.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32")
-    const signal = new AbortController().signal
-
-    const started = await client.actors.start(
-      "operator",
-      {
-        key: "thread:1",
-        input: { type: "start" },
-        workspace,
-        idempotencyKey: "actor-1",
-        run: {
-          concurrencyKey: "thread:1",
-          retry: { maxAttempts: 2 },
-          metadata: { source: "backend" },
-          tags: ["agent"],
-        },
-      },
-      { signal },
-    )
-    expect(started.run.id).toBe("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31")
-    expect(JSON.parse(String(requests[0]!.init?.body))).toEqual({
-      key: "thread:1",
-      input: { type: "start" },
-      workspace: { id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32" },
-      idempotency_key: "actor-1",
-      run: {
-        concurrency_key: "thread:1",
-        retry: { max_attempts: 2 },
-        metadata: { source: "backend" },
-        tags: ["agent"],
-      },
-    })
-    expect(requests[0]!.init?.signal).toBe(signal)
-
-    const sent = await started.session.input.send(
-      { type: "continue" },
-      { idempotencyKey: "input-1" },
-      { signal },
-    )
-    expect(sent).toEqual({
-      id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
-      sequence: 1,
-      data: { type: "continue" },
-      source: { type: "external" },
-      createdAt: "2026-07-24T11:50:01Z",
-    })
-    expect(JSON.parse(String(requests[1]!.init?.body))).toEqual({
-      input: { type: "continue" },
-      idempotency_key: "input-1",
-    })
-
-    const status = await started.session.retrieve({ signal })
-    expect(status).toMatchObject({
-      id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-      workspaceId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
-      key: "thread:1",
-      status: "open",
-      currentRunId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
-    })
-    expect(requests[2]!.url).toContain(
-      "/v1/sessions/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-    )
-
-    const output = await started.session.output.list(
-      { after: 0, limit: 10 },
-      { signal },
-    )
-    expect(output).toEqual(expect.objectContaining({
-      nextAfter: 1,
-      hasMore: false,
-      records: [expect.objectContaining({
-      id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34",
-      sequence: 1,
-      data: { stage: "started" },
-      })],
-    }))
-    expect(requests[3]!.url).toContain(
-      "/v1/sessions/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33/outputs?after=0&limit=10",
-    )
-
-    await started.session.close({ idempotencyKey: "close-1" }, { signal })
-    expect(JSON.parse(String(requests[4]!.init?.body))).toEqual({
-      idempotency_key: "close-1",
-    })
-  })
-
   test("uses JSON null as the successful Actor Run completion value", async () => {
     const runId = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"
     const client = new HelmrClient({
@@ -527,48 +386,6 @@ describe("HelmrClient Actors", () => {
     await expect(client.runs.wait(started.run).unwrap()).resolves.toBeNull()
   })
 
-  test("requires data on every Session output record", async () => {
-    const client = new HelmrClient({
-      url: "https://api.example.test",
-      apiKey: "api-key",
-      fetch: (async () => Response.json({
-        records: [{
-          id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34",
-          sequence: 1,
-          content_type: "application/json",
-          created_at: "2026-07-24T11:50:02Z",
-          provenance: {
-            run_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
-            attempt_number: 1,
-            deployment_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
-          },
-        }],
-        next_after: 1,
-        has_more: false,
-      })) as typeof fetch,
-    })
-
-    await expect(client.sessions.ref(
-      "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-    ).output.list()).rejects.toThrow("Session output record.data is required")
-  })
-
-  test("requires a complete Session input record", async () => {
-    const client = new HelmrClient({
-      url: "https://api.example.test",
-      apiKey: "api-key",
-      fetch: (async () => Response.json({
-        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
-        sequence: 1,
-        source: { type: "external" },
-        created_at: "2026-07-24T11:50:01Z",
-      })) as typeof fetch,
-    })
-
-    await expect(client.sessions.ref(
-      "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-    ).input.send(null)).rejects.toThrow("Session input response.data is required")
-  })
 })
 
 describe("HelmrClient Tokens", () => {
@@ -992,7 +809,7 @@ describe("HelmrClient Sessions", () => {
 
     await expect(client.sessions.retrieve(
       "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-    )).rejects.toThrow("Session response.workspace_id")
+    )).rejects.toThrow("Session.workspace_id")
   })
 
   test("lists Sessions by public status with bound pagination", async () => {
@@ -1018,8 +835,8 @@ describe("HelmrClient Sessions", () => {
       "https://api.example.test/v1/sessions?status=closed",
     ])
     await expect(client.sessions.list({
-      // @ts-expect-error stored Session states are not public statuses.
-      status: "closing",
+      // @ts-expect-error unknown Session statuses are rejected.
+      status: "unknown",
     })).rejects.toThrow("Session list status is invalid")
     await expect(client.sessions.list({
       actorId: "operator",
@@ -1028,71 +845,6 @@ describe("HelmrClient Sessions", () => {
       status: "open",
     })).rejects.toThrow("does not accept status, cursor or limit")
     expect(requests).toHaveLength(2)
-  })
-
-  test("reads the durable Session input log in sequence order", async () => {
-    const requests: string[] = []
-    const client = new HelmrClient({
-      url: "https://api.example.test",
-      apiKey: "api-key",
-      fetch: (async (input: URL | RequestInfo) => {
-        requests.push(String(input))
-        return Response.json({
-          records: [
-            {
-              id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
-              sequence: 2,
-              data: { type: "continue" },
-              source: { type: "external" },
-              created_at: "2026-07-24T11:50:01Z",
-            },
-            {
-              id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
-              sequence: 3,
-              data: null,
-              source: { type: "run", run_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" },
-              created_at: "2026-07-24T11:50:02Z",
-            },
-          ],
-          next_after: 3,
-          has_more: true,
-        })
-      }) as typeof fetch,
-    })
-    const session = client.sessions.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33")
-
-    const page = await session.input.list({ after: 1, limit: 2 })
-    expect(page).toEqual({
-      records: [
-        {
-          id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
-          sequence: 2,
-          data: { type: "continue" },
-          source: { type: "external" },
-          createdAt: "2026-07-24T11:50:01Z",
-        },
-        {
-          id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
-          sequence: 3,
-          data: null,
-          source: { type: "run", runId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" },
-          createdAt: "2026-07-24T11:50:02Z",
-        },
-      ],
-      nextAfter: 3,
-      hasMore: true,
-    })
-    await session.input.list()
-    expect(requests).toEqual([
-      "https://api.example.test/v1/sessions/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33/inputs?after=1&limit=2",
-      "https://api.example.test/v1/sessions/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33/inputs",
-    ])
-    await expect(session.input.list({ limit: 0 })).rejects.toThrow(
-      "Session input limit must be an integer in [1,100]",
-    )
-    await expect(session.input.list({ after: -1 })).rejects.toThrow(
-      "Session input after must be a non-negative safe integer",
-    )
   })
 
   test("requires failure for an unsuccessful Session", async () => {
@@ -1116,31 +868,6 @@ describe("HelmrClient Sessions", () => {
     )
   })
 
-  test("validates Session failure code against its status", async () => {
-    const sessionId = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"
-    const client = new HelmrClient({
-      url: "https://api.example.test",
-      apiKey: "api-key",
-      fetch: (async () => Response.json({
-        id: sessionId,
-        actor_id: "operator",
-        deployment_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
-        workspace_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
-        status: "failed",
-        failure: {
-          code: "cancelled",
-          message: "Session was cancelled",
-          details: {},
-        },
-        created_at: "2026-07-24T11:50:00Z",
-        updated_at: "2026-07-24T11:50:01Z",
-      })) as typeof fetch,
-    })
-
-    await expect(client.sessions.retrieve(sessionId)).rejects.toThrow(
-      "failure code is inconsistent",
-    )
-  })
 })
 
 describe("HelmrClient Runs", () => {
@@ -1372,7 +1099,7 @@ describe("HelmrClient Runs", () => {
       `https://api.example.test/v1/runs/${runID}/cancel`,
     )
     expect(requests[0]!.init?.method).toBe("POST")
-    expect(requests[0]!.init?.body).toBeUndefined()
+    expect(JSON.parse(String(requests[0]!.init?.body)).idempotency_key).toEqual(expect.any(String))
   })
 
   test("wait unwraps success and throws a recorded Run failure", async () => {
@@ -1500,13 +1227,6 @@ describe("HelmrClient Runs", () => {
     const uninstall = installRuntimeOperations({
       waitFor: async () => {},
       waitUntil: async () => {},
-      actorInputSend: async () => ({
-        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34",
-        sequence: 1,
-        data: null,
-        source: { type: "external" },
-        createdAt: "2026-07-24T11:50:00Z",
-      }),
       tokenCreate: async () => ({
         id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
         status: "pending",

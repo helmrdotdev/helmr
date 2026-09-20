@@ -58,7 +58,7 @@ func TestOwnershipHotWaitRejectsBeforeAnyMutation(t *testing.T) {
 		{"wrong version", func(p *CompleteHotRunWaitParams) { p.ExpectedRunRevision++ }},
 		{"wrong attempt", func(p *CompleteHotRunWaitParams) { p.AttemptNumber++ }},
 		{"wrong lease", func(p *CompleteHotRunWaitParams) { p.CurrentRunLeaseID = pgvalue.UUID(uuid.NewV7()) }},
-		{"record on timer", func(p *CompleteHotRunWaitParams) { p.CompletedActorRecordID = pgvalue.UUID(uuid.NewV7()) }},
+		{"record on timer", func(p *CompleteHotRunWaitParams) { p.CompletedTurnID = pgvalue.UUID(uuid.NewV7()) }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			before := ownershipRunWaitSnapshot(t, f, w)
@@ -192,21 +192,21 @@ func TestOwnershipActorInputStoredRoleGatesAllSuspensions(t *testing.T) {
 				dbtest.MustExec(t, ctx, f.pool, "UPDATE runs SET current_run_lease_id=NULL WHERE id=$1", w.RunID)
 			}
 			inputID, outputID := uuid.NewV7(), uuid.NewV7()
-			dbtest.MustExec(t, ctx, f.pool, "INSERT INTO session_records(id,environment_id,session_id,direction,sequence,data) VALUES ($1,$2,$3,'input',10,'{}')", inputID, f.environmentID, sessionID)
-			dbtest.MustExec(t, ctx, f.pool, "INSERT INTO session_records(id,environment_id,session_id,direction,sequence,data,producer_run_id,producer_attempt_number) VALUES ($1,$2,$3,'output',10,'{}',$4,1)", outputID, f.environmentID, sessionID, work.runID)
+			dbtest.MustExec(t, ctx, f.pool, "INSERT INTO session_turns(id,environment_id,session_id,sequence,data) VALUES ($1,$2,$3,10,'{}')", inputID, f.environmentID, sessionID)
+			dbtest.MustExec(t, ctx, f.pool, "INSERT INTO session_events(id,environment_id,session_id,workspace_id,sequence,kind,data,producer_run_id,producer_attempt_number,run_generation) SELECT $1,$2,$3,workspace_id,10,'output','{}',$4,1,1 FROM sessions WHERE id=$3", outputID, f.environmentID, sessionID, work.runID)
 			other := f.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
 			otherSession := uuid.NewV7()
 			dbtest.MustExec(t, ctx, f.pool, "INSERT INTO sessions(id,environment_id,actor_declared_id,deployment_definition_id,workspace_id,run_queue_name,run_max_active_duration_ms,run_retry_policy) SELECT $1,s.environment_id,s.actor_declared_id,s.deployment_definition_id,r.workspace_id,s.run_queue_name,s.run_max_active_duration_ms,s.run_retry_policy FROM sessions s CROSS JOIN runs r WHERE s.id=$2 AND r.id=$3", otherSession, sessionID, other.runID)
 			otherInput := uuid.NewV7()
-			dbtest.MustExec(t, ctx, f.pool, "INSERT INTO session_records(id,environment_id,session_id,direction,sequence,data) VALUES ($1,$2,$3,'input',10,'{}')", otherInput, f.environmentID, otherSession)
+			dbtest.MustExec(t, ctx, f.pool, "INSERT INTO session_turns(id,environment_id,session_id,sequence,data) VALUES ($1,$2,$3,10,'{}')", otherInput, f.environmentID, otherSession)
 			complete := func(q *Queries, id pgtype.UUID) (RunWait, error) {
 				switch state {
 				case "hot":
-					return q.CompleteHotRunWait(ctx, CompleteHotRunWaitParams{ID: w.ID, RunID: w.RunID, ExpectedRunRevision: w.ExpectedRunRevision, CurrentRunLeaseID: w.CurrentRunLeaseID, AttemptNumber: 1, CompletedActorRecordID: id})
+					return q.CompleteHotRunWait(ctx, CompleteHotRunWaitParams{ID: w.ID, RunID: w.RunID, ExpectedRunRevision: w.ExpectedRunRevision, CurrentRunLeaseID: w.CurrentRunLeaseID, AttemptNumber: 1, CompletedTurnID: id})
 				case "checkpointing":
-					return q.CompleteCheckpointingRunWait(ctx, CompleteCheckpointingRunWaitParams{ID: w.ID, RunID: w.RunID, ExpectedRunRevision: w.ExpectedRunRevision, CurrentRunLeaseID: w.CurrentRunLeaseID, CompletedActorRecordID: id})
+					return q.CompleteCheckpointingRunWait(ctx, CompleteCheckpointingRunWaitParams{ID: w.ID, RunID: w.RunID, ExpectedRunRevision: w.ExpectedRunRevision, CurrentRunLeaseID: w.CurrentRunLeaseID, CompletedTurnID: id})
 				default:
-					return q.CompleteParkedRunWait(ctx, CompleteParkedRunWaitParams{ID: w.ID, RunID: w.RunID, ExpectedRunRevision: w.ExpectedRunRevision, PriorRunLeaseID: w.CurrentRunLeaseID, AttemptNumber: 1, SuspendCheckpointID: pgvalue.UUID(checkpointID), CompletedActorRecordID: id})
+					return q.CompleteParkedRunWait(ctx, CompleteParkedRunWaitParams{ID: w.ID, RunID: w.RunID, ExpectedRunRevision: w.ExpectedRunRevision, PriorRunLeaseID: w.CurrentRunLeaseID, AttemptNumber: 1, SuspendCheckpointID: pgvalue.UUID(checkpointID), CompletedTurnID: id})
 				}
 			}
 			for _, test := range []struct {
@@ -237,7 +237,7 @@ func TestOwnershipActorInputStoredRoleGatesAllSuspensions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got.CompletedActorRecordID != pgvalue.UUID(inputID) || got.ConditionStatus != WaitStatusCompleted {
+			if got.CompletedTurnID != pgvalue.UUID(inputID) || got.ConditionStatus != WaitStatusCompleted {
 				t.Fatalf("completion=%+v", got)
 			}
 		})

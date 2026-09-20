@@ -34,6 +34,7 @@ message ActorStart {
   optional string key = 2;
   int64 start_input_sequence = 3;
   int64 input_high_watermark = 4;
+  int64 run_generation = 5;
 }
 
 message RunCause {
@@ -160,20 +161,28 @@ message RunEvent {
     TaskOutcome task_outcome = 13;
     ProgramQuiesced program_quiesced = 14;
     ActorOutcome actor_outcome = 15;
-    ActorTurnCommitRequested actor_turn_commit_requested = 16;
-    ActorOutputAppendRequested actor_output_append_requested = 17;
-    SessionInputSendRequested session_input_send_requested = 18;
+    TurnSettleRequested turn_settle_requested = 16;
+    TurnOutputWriteRequested turn_output_write_requested = 17;
+    SessionSubmitRequested session_submit_requested = 18;
     StructuredLogRequested structured_log_requested = 19;
     TaskChildInvokeRequested task_child_invoke_requested = 20;
     ActorStartRequested actor_start_requested = 21;
     SessionStatusRequested session_status_requested = 22;
     SessionCloseRequested session_close_requested = 23;
-    SessionOutputPageRequested session_output_page_requested = 24;
+    SessionEventsRequested session_events_requested = 24;
     WorkspaceCreateRequested workspace_create_requested = 25;
     WorkspaceRetrieveRequested workspace_retrieve_requested = 26;
     WorkspaceExecRequested workspace_exec_requested = 30;
     WorkspaceDeleteRequested workspace_delete_requested = 31;
     ProgramProcessStartFailed program_process_start_failed = 32;
+    SessionOutputWriteRequested session_output_write_requested = 33;
+    TurnReadyRequested turn_ready_requested = 34;
+    TurnMessageClaimRequested turn_message_claim_requested = 35;
+    TurnMessageCompleteRequested turn_message_complete_requested = 36;
+    TurnSettlementBeginRequested turn_settlement_begin_requested = 37;
+    SessionTurnRetrieveRequested session_turn_retrieve_requested = 38;
+    SessionTurnInterruptRequested session_turn_interrupt_requested = 39;
+    SessionResumeRequested session_resume_requested = 40;
   }
 }
 
@@ -200,10 +209,11 @@ message TaskPayloadInvalid {
 }
 
 message ActorOutcome {
-  optional int64 terminal_input_sequence = 1;
+  int64 run_generation = 1;
   oneof outcome {
     ActorSucceeded succeeded = 2;
     ActorFailed failed = 3;
+    ActorInterrupted interrupted = 4;
   }
 }
 
@@ -214,12 +224,45 @@ message ActorFailed {
   optional string details_json = 2;
 }
 
-message ActorTurnCommitRequested {
-  string correlation_id = 1;
-  int64 target_input_sequence = 2;
+message SessionExecution {
+  string session_id = 1;
+  string run_id = 2;
+  uint32 attempt_number = 3;
+  int64 run_generation = 4;
 }
 
-message ActorTurnCommitPauseRequest {
+message TurnExecution {
+  SessionExecution session = 1;
+  string turn_id = 2;
+}
+
+message ActorInterrupted {
+  string hold_id = 1;
+  optional string turn_id = 2;
+}
+
+message SessionStop {
+  SessionExecution execution = 1;
+  optional string turn_id = 2;
+  string hold_id = 3;
+  string reason = 4;
+}
+
+message TurnSettlementBeginRequested {
+  string correlation_id = 1;
+  TurnExecution execution = 2;
+}
+
+message TurnSettleRequested {
+  string correlation_id = 1;
+  int64 target_input_sequence = 2;
+  TurnExecution execution = 3;
+  string disposition = 4;
+  optional string result_json = 5;
+  optional string error_json = 6;
+}
+
+message TurnSettlePauseRequest {
   string correlation_id = 1;
   int64 target_input_sequence = 2;
   string run_id = 3;
@@ -229,9 +272,10 @@ message ActorTurnCommitPauseRequest {
   int64 expected_tree_size_bytes = 7;
   uint32 expected_tree_entry_count = 8;
   string expected_base_workspace_version_id = 9;
+  TurnExecution execution = 10;
 }
 
-message ActorTurnCommitPauseReady {
+message TurnSettlePauseReady {
   string correlation_id = 1;
   int64 target_input_sequence = 2;
   string run_id = 3;
@@ -241,9 +285,10 @@ message ActorTurnCommitPauseReady {
   int64 tree_size_bytes = 7;
   uint32 tree_entry_count = 8;
   bool workspace_changed = 9;
+  TurnExecution execution = 10;
 }
 
-message ActorTurnCommitApplied {
+message TurnSettleApplied {
   string correlation_id = 1;
   int64 target_input_sequence = 2;
   string run_id = 3;
@@ -251,19 +296,71 @@ message ActorTurnCommitApplied {
   string run_lease_id = 5;
   string previous_base_workspace_version_id = 6;
   string applied_base_workspace_version_id = 7;
+  TurnExecution execution = 8;
 }
 
-message ActorOutputAppendRequested {
+message TurnReadyRequested {
   string correlation_id = 1;
-  string data_json = 2;
-  string content_type = 3;
+  TurnExecution execution = 2;
+}
+
+message TurnMessageClaimRequested {
+  string correlation_id = 1;
+  TurnExecution execution = 2;
+  string delivery_id = 3;
+}
+
+message TurnMessageCompleteRequested {
+  string correlation_id = 1;
+  TurnExecution execution = 2;
+  string message_id = 3;
+  string delivery_id = 4;
+  string status = 5;
+  string code = 6;
+  optional string details_json = 7;
+}
+
+message TurnOutputWriteRequested {
+  string correlation_id = 1;
+  TurnExecution execution = 2;
+  string data_json = 3;
+  optional string idempotency_key = 4;
+  optional string message_delivery_id = 5;
+}
+
+message SessionOutputWriteRequested {
+  string correlation_id = 1;
+  SessionExecution execution = 2;
+  string data_json = 3;
   optional string idempotency_key = 4;
 }
 
-message SessionInputSendRequested {
+message SessionSubmitRequested {
   string correlation_id = 1;
   string session_id = 2;
-  string data_json = 3;
+  string mode = 3;
+  optional string turn_id = 4;
+  string data_json = 5;
+  optional string idempotency_key = 6;
+}
+
+message SessionTurnRetrieveRequested {
+  string correlation_id = 1;
+  string session_id = 2;
+  string turn_id = 3;
+}
+
+message SessionTurnInterruptRequested {
+  string correlation_id = 1;
+  string session_id = 2;
+  string turn_id = 3;
+  optional string idempotency_key = 4;
+}
+
+message SessionResumeRequested {
+  string correlation_id = 1;
+  string session_id = 2;
+  string hold_id = 3;
   optional string idempotency_key = 4;
 }
 
@@ -272,7 +369,6 @@ message ActorStartRequested {
   string declared_id = 2;
   string workspace_id = 3;
   optional string key = 5;
-  optional string input_json = 6;
   optional string idempotency_key = 7;
   string run_options_json = 8;
 }
@@ -288,7 +384,7 @@ message SessionCloseRequested {
   optional string idempotency_key = 3;
 }
 
-message SessionOutputPageRequested {
+message SessionEventsRequested {
   string correlation_id = 1;
   string session_id = 2;
   optional int64 after = 3;
@@ -360,6 +456,8 @@ message RunWaitRequested {
   string resume_attach_id = 8;
   optional uint64 idle_timeout_ms = 9;
   optional int64 actor_speculative_input_sequence = 10;
+  SessionExecution execution = 11;
+  optional string turn_id = 12;
 }
 
 message TokenCreateRequested {
@@ -382,6 +480,8 @@ message TaskChildInvokeRequested {
   optional int64 actor_speculative_input_sequence = 9;
   string run_wait_id = 10;
   string resume_attach_id = 11;
+  SessionExecution execution = 12;
+  optional string turn_id = 13;
 }
 
 message CheckpointPauseRequest {
@@ -394,6 +494,8 @@ message CheckpointPauseRequest {
   string resume_attach_id = 7;
   int64 checkpoint_request_version = 8;
   string correlation_id = 9;
+  SessionExecution execution = 10;
+  optional string turn_id = 11;
 }
 
 message ResumeAttach {
@@ -405,6 +507,8 @@ message ResumeAttach {
   string resume_attach_id = 6;
   int64 resume_request_version = 7;
   string correlation_id = 8;
+  SessionExecution execution = 9;
+  optional string turn_id = 10;
 }
 
 message ResumeDecision {

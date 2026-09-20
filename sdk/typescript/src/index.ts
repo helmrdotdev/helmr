@@ -1,5 +1,5 @@
 export { actor } from "./actor"
-export { sessions } from "./session"
+export { sessions, MessageRejected } from "./session"
 export { HelmrClient } from "./client"
 export { image, source } from "./image"
 export { builder } from "./builder"
@@ -63,6 +63,9 @@ export type {
 } from "./client-secret"
 
 export type {
+  ActorRunCancellationReceipt,
+  RunCancelRequest,
+  RunCancellation,
   RunEntrypointKind,
   RunListQuery,
   RunLogQuery,
@@ -100,38 +103,44 @@ export type {
 export type { Builder, BuilderStep } from "./builder"
 
 export type {
-  SessionClosedError,
   APIError,
+  ActorContext,
   ActorConfig,
   Actor,
-  ActorContext,
   ActorSession,
-  ActorSessionInput,
-  ActorSessionOutput,
-  ActorSessionOutputAppendOptions,
-  ActorSessionOutputSequenceOptions,
-  ActorSessionInputResult,
   ActorSessionReceiveOptions,
-  ActorSessionReceive,
-  SessionInputMetadata,
-  SessionInputPage,
-  SessionInputQuery,
-  SessionInputRecord,
-  SessionInputSendRequest,
-  SessionInputSource,
+  Turn,
+  TurnRef,
+  TurnState,
+  TurnSource,
+  TurnStatus,
+  Message,
+  MessageReceipt,
+  RecordWriter,
+  OutputReceipt,
+  Session,
+  SessionRef,
+  SessionStatus,
+  SessionDispatch,
   SessionFailure,
   SessionFailureCode,
-  SessionStatus,
-  SessionCloseRequest,
+  SessionOperationOptions,
+  SessionAdmissionReceipt,
+  SessionMessageReceipt,
+  SessionSendResult,
+  SessionEventKind,
+  SessionEvent,
+  SessionEventPage,
+  SessionEventQuery,
   SessionCloseReceipt,
-  SessionOutputRecord,
-  SessionOutputPage,
-  SessionOutputQuery,
-  SessionOutputWriter,
-  SessionRef,
+  TurnInterruptReceipt,
+  SessionResumeRequest,
+  SessionResumeReceipt,
+  SessionRecoverRequest,
+  SessionRecoveryReceipt,
   ActorStartOptions,
   ActorStartResult,
-  Session,
+  WaitTimeoutError,
   CursorPage,
   Duration,
   HelmrError,
@@ -160,7 +169,6 @@ export type {
   TaskResult,
   TaskStartOptions,
   TaskWait,
-  WaitTimeoutError,
 } from "./contract"
 
 export type {

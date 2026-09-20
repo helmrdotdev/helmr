@@ -381,44 +381,6 @@ func (q *Queries) DiscoverWorkerRunLeaseWork(ctx context.Context, arg DiscoverWo
 	return items, nil
 }
 
-const getActorInputSendSource = `-- name: GetActorInputSendSource :one
-SELECT environment_id, run_id
-  FROM run_leases
- WHERE id = $1
-   AND lease_sequence = $2
-   AND worker_group_id = $3
-   AND worker_instance_id = $4
-   AND worker_epoch = $5
-   AND status IN ('running', 'checkpointing', 'finalizing')
-   AND expires_at > transaction_timestamp()
-`
-
-type GetActorInputSendSourceParams struct {
-	ID               pgtype.UUID `json:"id"`
-	LeaseSequence    int64       `json:"lease_sequence"`
-	WorkerGroupID    pgtype.UUID `json:"worker_group_id"`
-	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
-	WorkerEpoch      int64       `json:"worker_epoch"`
-}
-
-type GetActorInputSendSourceRow struct {
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	RunID         pgtype.UUID `json:"run_id"`
-}
-
-func (q *Queries) GetActorInputSendSource(ctx context.Context, arg GetActorInputSendSourceParams) (GetActorInputSendSourceRow, error) {
-	row := q.db.QueryRow(ctx, getActorInputSendSource,
-		arg.ID,
-		arg.LeaseSequence,
-		arg.WorkerGroupID,
-		arg.WorkerInstanceID,
-		arg.WorkerEpoch,
-	)
-	var i GetActorInputSendSourceRow
-	err := row.Scan(&i.EnvironmentID, &i.RunID)
-	return i, err
-}
-
 const getLiveRunLeaseLocators = `-- name: GetLiveRunLeaseLocators :one
 SELECT run_leases.org_id,
        run_leases.project_id,
@@ -1118,13 +1080,55 @@ SELECT runs.org_id,
             AND run_leases.finalization_kind IS NOT NULL
             AND run_leases.finalization_started_at IS NOT NULL
             AND run_leases.finalization_request_fingerprint IS NOT NULL))
+   -- Recover uncertain Actors once through Session hold and physical cleanup.
+   -- Proven continuations remain in the resume lane; they must not consume
+   -- this bounded scan only to be rejected later.
+   AND (runs.entrypoint_kind = 'task'
+        OR EXISTS (SELECT 1 FROM sessions
+                    WHERE sessions.id = runs.session_id
+                      AND sessions.current_run_id = runs.id
+                      AND sessions.status IN ('open', 'closing')))
    AND NOT EXISTS (
-       SELECT 1
-         FROM run_waits
+       SELECT 1 FROM run_waits
         WHERE run_waits.run_id = runs.id
           AND run_waits.attempt_number = runs.current_attempt_number
           AND run_waits.current_run_lease_id = run_leases.id
           AND run_waits.suspension_status = 'resuming'
+          AND (runs.entrypoint_kind = 'task' OR EXISTS (
+              SELECT 1 FROM sessions
+              JOIN run_checkpoints ON run_checkpoints.id = run_waits.suspend_checkpoint_id
+               AND run_checkpoints.run_id = runs.id
+               AND run_checkpoints.attempt_number = runs.current_attempt_number
+               AND run_checkpoints.run_wait_id = run_waits.id
+               AND run_checkpoints.workspace_id = runs.workspace_id
+              JOIN workspace_versions ON workspace_versions.id = run_checkpoints.private_workspace_version_id
+               AND workspace_versions.workspace_id = run_checkpoints.workspace_id
+              JOIN run_leases AS source_run_leases ON source_run_leases.id = run_checkpoints.source_run_lease_id
+               AND source_run_leases.run_id = runs.id
+               AND source_run_leases.attempt_number = runs.current_attempt_number
+               AND source_run_leases.workspace_id = runs.workspace_id
+              WHERE sessions.id = runs.session_id AND sessions.current_run_id = runs.id
+                AND sessions.dispatch_hold_id IS NULL
+                AND run_checkpoints.status = 'ready'
+                AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > transaction_timestamp())
+                AND workspace_versions.status = 'private'
+                AND source_run_leases.status = 'checkpointed'
+                AND run_checkpoints.actor_speculative_input_sequence
+                    BETWEEN sessions.committed_input_sequence AND sessions.next_input_sequence - 1
+                AND (run_leases.status <> 'running' OR runs.active_started_at IS NULL
+                     OR runs.active_started_at
+                        + (GREATEST(runs.max_active_duration_ms - runs.active_elapsed_ms, 0)::text || ' milliseconds')::interval
+                        > LEAST(run_leases.expires_at,
+                            COALESCE(worker_instances.lost_at, 'infinity'::timestamptz),
+                            COALESCE(worker_instances.termination_ready_at, 'infinity'::timestamptz),
+                            CASE WHEN worker_instances.current_epoch IS DISTINCT FROM run_leases.worker_epoch
+                                 THEN COALESCE(worker_instances.epoch_started_at, worker_instances.updated_at)
+                                 ELSE 'infinity'::timestamptz END,
+                            CASE WHEN runtime_instances.observed_state IN ('lost', 'failed')
+                                 THEN runtime_instances.terminal_at ELSE 'infinity'::timestamptz END,
+                            COALESCE(workspace_mounts.lost_at, 'infinity'::timestamptz),
+                            COALESCE(workspace_mounts.failed_at, 'infinity'::timestamptz)))
+          ))
    )
    AND (run_leases.expires_at <= transaction_timestamp()
         OR (run_leases.status IN ('assigned', 'starting')
@@ -1491,7 +1495,7 @@ func (q *Queries) LockRunFinalizationParentRun(ctx context.Context, arg LockRunF
 }
 
 const lockRunLeaseClaimActor = `-- name: LockRunLeaseClaimActor :one
-SELECT id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, manual_run_cancelled, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
+SELECT id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, failed_at
   FROM sessions
  WHERE id = $1
    AND workspace_id = $2
@@ -1516,12 +1520,17 @@ func (q *Queries) LockRunLeaseClaimActor(ctx context.Context, arg LockRunLeaseCl
 		&i.CurrentRunID,
 		&i.RunGeneration,
 		&i.Revision,
-		&i.ManualRunCancelled,
+		&i.ActiveTurnID,
+		&i.DispatchHoldID,
+		&i.DispatchHoldRunID,
+		&i.DispatchHoldAttemptNumber,
+		&i.DispatchHoldRunGeneration,
+		&i.DispatchHoldReason,
 		&i.Failure,
 		&i.FailureRunID,
 		&i.NextInputSequence,
 		&i.CommittedInputSequence,
-		&i.NextOutputSequence,
+		&i.NextEventSequence,
 		&i.RunQueueName,
 		&i.RunConcurrencyKey,
 		&i.RunQueueConcurrencyLimit,
@@ -1536,7 +1545,6 @@ func (q *Queries) LockRunLeaseClaimActor(ctx context.Context, arg LockRunLeaseCl
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ClosedAt,
-		&i.CancelledAt,
 		&i.FailedAt,
 	)
 	return i, err
@@ -1967,7 +1975,7 @@ func (q *Queries) LockRunLeaseClaimRuntime(ctx context.Context, arg LockRunLease
 }
 
 const lockRunLeaseClaimWait = `-- name: LockRunLeaseClaimWait :one
-SELECT id, environment_id, run_id, workspace_id, kind, condition_status, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_target_declared_id, child_claim_id, child_request, session_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_actor_record_id, suspension_status, token_registration_run_revision, registration_request_fingerprint, expected_run_revision, attempt_number, actor_speculative_input_sequence, current_run_lease_id, prior_run_lease_id, checkpoint_request_version, checkpoint_ack_version, checkpoint_due_at, suspend_checkpoint_id, resume_attach_id, resume_request_version, resume_ack_version, base_workspace_version_id, base_workspace_content_digest, resume_workspace_version_id, ownership_generation, parent_writer_generation, child_writer_generation, resume_writer_generation, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at
+SELECT id, environment_id, run_id, workspace_id, turn_session_id, turn_id, turn_run_generation, kind, condition_status, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_target_declared_id, child_claim_id, child_request, session_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_turn_id, suspension_status, token_registration_run_revision, registration_request_fingerprint, expected_run_revision, attempt_number, actor_speculative_input_sequence, current_run_lease_id, prior_run_lease_id, checkpoint_request_version, checkpoint_ack_version, checkpoint_due_at, suspend_checkpoint_id, resume_attach_id, resume_request_version, resume_ack_version, base_workspace_version_id, base_workspace_content_digest, resume_workspace_version_id, ownership_generation, parent_writer_generation, child_writer_generation, resume_writer_generation, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at
   FROM run_waits
  WHERE id = $1
    AND environment_id = $2
@@ -2002,6 +2010,9 @@ func (q *Queries) LockRunLeaseClaimWait(ctx context.Context, arg LockRunLeaseCla
 		&i.EnvironmentID,
 		&i.RunID,
 		&i.WorkspaceID,
+		&i.TurnSessionID,
+		&i.TurnID,
+		&i.TurnRunGeneration,
 		&i.Kind,
 		&i.ConditionStatus,
 		&i.DueAt,
@@ -2018,7 +2029,7 @@ func (q *Queries) LockRunLeaseClaimWait(ctx context.Context, arg LockRunLeaseCla
 		&i.ConditionError,
 		&i.ConditionTerminalAt,
 		&i.ConditionReasonCode,
-		&i.CompletedActorRecordID,
+		&i.CompletedTurnID,
 		&i.SuspensionStatus,
 		&i.TokenRegistrationRunRevision,
 		&i.RegistrationRequestFingerprint,
@@ -2385,7 +2396,7 @@ func (q *Queries) LockRunStartLease(ctx context.Context, arg LockRunStartLeasePa
 }
 
 const lockRunStartWait = `-- name: LockRunStartWait :one
-SELECT id, environment_id, run_id, workspace_id, kind, condition_status, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_target_declared_id, child_claim_id, child_request, session_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_actor_record_id, suspension_status, token_registration_run_revision, registration_request_fingerprint, expected_run_revision, attempt_number, actor_speculative_input_sequence, current_run_lease_id, prior_run_lease_id, checkpoint_request_version, checkpoint_ack_version, checkpoint_due_at, suspend_checkpoint_id, resume_attach_id, resume_request_version, resume_ack_version, base_workspace_version_id, base_workspace_content_digest, resume_workspace_version_id, ownership_generation, parent_writer_generation, child_writer_generation, resume_writer_generation, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at
+SELECT id, environment_id, run_id, workspace_id, turn_session_id, turn_id, turn_run_generation, kind, condition_status, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_target_declared_id, child_claim_id, child_request, session_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_turn_id, suspension_status, token_registration_run_revision, registration_request_fingerprint, expected_run_revision, attempt_number, actor_speculative_input_sequence, current_run_lease_id, prior_run_lease_id, checkpoint_request_version, checkpoint_ack_version, checkpoint_due_at, suspend_checkpoint_id, resume_attach_id, resume_request_version, resume_ack_version, base_workspace_version_id, base_workspace_content_digest, resume_workspace_version_id, ownership_generation, parent_writer_generation, child_writer_generation, resume_writer_generation, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at
   FROM run_waits
  WHERE id = $1
    AND environment_id = $2
@@ -2414,6 +2425,9 @@ func (q *Queries) LockRunStartWait(ctx context.Context, arg LockRunStartWaitPara
 		&i.EnvironmentID,
 		&i.RunID,
 		&i.WorkspaceID,
+		&i.TurnSessionID,
+		&i.TurnID,
+		&i.TurnRunGeneration,
 		&i.Kind,
 		&i.ConditionStatus,
 		&i.DueAt,
@@ -2430,7 +2444,7 @@ func (q *Queries) LockRunStartWait(ctx context.Context, arg LockRunStartWaitPara
 		&i.ConditionError,
 		&i.ConditionTerminalAt,
 		&i.ConditionReasonCode,
-		&i.CompletedActorRecordID,
+		&i.CompletedTurnID,
 		&i.SuspensionStatus,
 		&i.TokenRegistrationRunRevision,
 		&i.RegistrationRequestFingerprint,
@@ -2832,6 +2846,61 @@ WITH RECURSIVE candidates AS MATERIALIZED (
             OR worker_instances.current_epoch IS DISTINCT FROM run_leases.worker_epoch
             OR workspace_mounts.lost_at <= transaction_timestamp()
             OR workspace_mounts.failed_at <= transaction_timestamp())
+       -- This is an eligibility hint before the bounded scan. All execution,
+       -- Session and checkpoint authority is checked again under locks below.
+       -- An active Turn may continue only from its recoverable same-attempt
+       -- checkpoint; held or nonrecoverable Actors must not starve Task recovery.
+       AND (runs.entrypoint_kind = 'task'
+            OR EXISTS (
+                SELECT 1
+                  FROM sessions
+                 WHERE sessions.id = runs.session_id
+                   AND sessions.current_run_id = runs.id
+                   AND sessions.status IN ('open', 'closing')
+                   AND sessions.dispatch_hold_id IS NULL
+                   AND EXISTS (
+                            SELECT 1
+                              FROM run_checkpoints
+                              JOIN workspace_versions
+                                ON workspace_versions.id = run_checkpoints.private_workspace_version_id
+                               AND workspace_versions.workspace_id = run_checkpoints.workspace_id
+                              JOIN run_leases AS source_run_leases
+                                ON source_run_leases.id = run_checkpoints.source_run_lease_id
+                               AND source_run_leases.run_id = run_checkpoints.run_id
+                               AND source_run_leases.attempt_number = run_checkpoints.attempt_number
+                               AND source_run_leases.workspace_id = run_checkpoints.workspace_id
+                             WHERE run_checkpoints.id = run_waits.suspend_checkpoint_id
+                               AND run_checkpoints.run_id = runs.id
+                               AND run_checkpoints.attempt_number = runs.current_attempt_number
+                               AND run_checkpoints.run_wait_id = run_waits.id
+                               AND run_checkpoints.workspace_id = runs.workspace_id
+                               AND run_checkpoints.status = 'ready'
+                               AND (run_checkpoints.expires_at IS NULL
+                                    OR run_checkpoints.expires_at > transaction_timestamp())
+                               AND workspace_versions.status = 'private'
+                               AND source_run_leases.status = 'checkpointed'
+                               AND run_checkpoints.actor_speculative_input_sequence
+                                   BETWEEN sessions.committed_input_sequence
+                                       AND sessions.next_input_sequence - 1
+                               AND (run_leases.status <> 'running'
+                                    OR runs.active_started_at IS NULL
+                                    OR runs.active_started_at
+                                       + (GREATEST(runs.max_active_duration_ms - runs.active_elapsed_ms, 0)::text
+                                          || ' milliseconds')::interval
+                                       > LEAST(
+                                           run_leases.expires_at,
+                                           COALESCE(worker_instances.lost_at, 'infinity'::timestamptz),
+                                           COALESCE(worker_instances.termination_ready_at, 'infinity'::timestamptz),
+                                           CASE WHEN worker_instances.current_epoch IS DISTINCT FROM run_leases.worker_epoch
+                                                THEN COALESCE(worker_instances.epoch_started_at, worker_instances.updated_at)
+                                                ELSE 'infinity'::timestamptz END,
+                                           CASE WHEN runtime_instances.observed_state IN ('lost', 'failed')
+                                                THEN runtime_instances.terminal_at ELSE 'infinity'::timestamptz END,
+                                           COALESCE(workspace_mounts.lost_at, 'infinity'::timestamptz),
+                                           COALESCE(workspace_mounts.failed_at, 'infinity'::timestamptz)
+                                       ))
+                        )
+            ))
      ORDER BY runs.id
      LIMIT $1
 ), locked_actor_candidates AS MATERIALIZED (
@@ -2844,6 +2913,7 @@ WITH RECURSIVE candidates AS MATERIALIZED (
         ON sessions.id = candidates.session_id
        AND sessions.current_run_id = candidates.run_id
        AND sessions.status IN ('open', 'closing')
+       AND sessions.dispatch_hold_id IS NULL
      WHERE candidates.entrypoint_kind = 'actor'
      ORDER BY sessions.id
      FOR UPDATE OF sessions SKIP LOCKED
@@ -3296,6 +3366,10 @@ WITH RECURSIVE candidates AS MATERIALIZED (
        AND run_leases.expires_at = locked_checkpoints.run_lease_expires_at
        AND run_leases.start_deadline_at = locked_checkpoints.start_deadline_at
        AND locked_checkpoints.authority_loss_at <= transaction_timestamp()
+       -- An Actor without continuation proof is held and fenced by the
+       -- execution-loss owner; this SQL branch may terminalize only Tasks.
+       AND (locked_checkpoints.checkpoint_recoverable
+            OR locked_checkpoints.entrypoint_kind = 'task')
     RETURNING run_leases.id, locked_checkpoints.checkpoint_recoverable
 ), expired_workspace_leases AS (
     UPDATE workspace_leases
@@ -3484,63 +3558,20 @@ WITH RECURSIVE candidates AS MATERIALIZED (
        AND run_waits.child_writer_generation = locked_checkpoints.enclosing_child_writer_generation
        AND failed_waits.run_id = failed_runs.id
     RETURNING run_waits.id, failed_runs.id AS run_id
-), failed_sessions AS (
-    UPDATE sessions
-       SET status = 'failed',
-           current_run_id = NULL,
-           run_generation = sessions.run_generation + 1,
-	       revision = sessions.revision + 1,
-	       manual_run_cancelled = false,
-	       failure = jsonb_build_object(
-	           'code', CASE
-	               WHEN locked_checkpoints.active_budget_exhausted THEN 'run_expired'
-	               ELSE 'platform_failure'
-	           END,
-	           'message', CASE
-	               WHEN locked_checkpoints.active_budget_exhausted THEN 'Session run expired'
-	               ELSE 'Session run failed'
-	           END,
-	           'details', jsonb_build_object('run_id', failed_runs.id::text)
-	       ),
-           failure_run_id = failed_runs.id,
-           failed_at = transaction_timestamp(),
-           updated_at = transaction_timestamp()
-      FROM locked_checkpoints, failed_runs, failed_waits
-     WHERE locked_checkpoints.entrypoint_kind = 'actor'
-       AND sessions.id = locked_checkpoints.session_id
-       AND sessions.current_run_id = failed_runs.id
-       AND sessions.run_generation = locked_checkpoints.actor_run_generation
-       AND sessions.status IN ('open', 'closing')
-       AND failed_waits.run_id = failed_runs.id
-    RETURNING sessions.id, failed_runs.id AS run_id
 ), released_owners AS (
     UPDATE workspaces
-       SET owner_run_id = CASE
-               WHEN locked_checkpoints.entrypoint_kind = 'task' THEN NULL
-               ELSE workspaces.owner_run_id
-           END,
-           owner_session_id = CASE
-               WHEN locked_checkpoints.entrypoint_kind = 'actor' THEN NULL
-               ELSE workspaces.owner_session_id
-           END,
+       SET owner_run_id = NULL,
            ownership_generation = workspaces.ownership_generation + 1,
            revision = workspaces.revision + 1,
            last_activity_at = transaction_timestamp(),
            updated_at = transaction_timestamp()
       FROM locked_checkpoints
       JOIN failed_waits ON failed_waits.run_id = locked_checkpoints.run_id
-      LEFT JOIN failed_sessions
-        ON failed_sessions.run_id = locked_checkpoints.run_id
-       AND failed_sessions.id = locked_checkpoints.session_id
      WHERE workspaces.id = locked_checkpoints.workspace_id
        AND NOT locked_checkpoints.nested_same_workspace
-       AND ((locked_checkpoints.entrypoint_kind = 'task'
-             AND workspaces.owner_run_id = failed_waits.run_id
-             AND workspaces.owner_session_id IS NULL)
-            OR (locked_checkpoints.entrypoint_kind = 'actor'
-                AND failed_sessions.id IS NOT NULL
-                AND workspaces.owner_session_id = failed_sessions.id
-                AND workspaces.owner_run_id IS NULL))
+       AND locked_checkpoints.entrypoint_kind = 'task'
+       AND workspaces.owner_run_id = failed_waits.run_id
+       AND workspaces.owner_session_id IS NULL
        AND workspaces.ownership_generation = locked_checkpoints.ownership_generation
        AND workspaces.writer_generation = locked_checkpoints.writer_generation
     RETURNING workspaces.id

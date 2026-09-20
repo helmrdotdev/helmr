@@ -1,9 +1,9 @@
+import "./session-runtime.test"
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf"
 import type { GenMessage } from "@bufbuild/protobuf/codegenv2"
 import { programProto } from "@helmr/proto"
 import { spawn } from "node:child_process"
 import {
-  actor,
   image,
   logger,
   metadata,
@@ -11,7 +11,6 @@ import {
   timers,
   tokens,
   sandbox,
-  sessions,
   workspaces,
 } from "@helmr/sdk"
 import assert from "node:assert/strict"
@@ -52,15 +51,11 @@ describe("runProgram", () => {
     ])
   })
 
-  test("releases input after handled Task and Actor failures", async () => {
+  test("releases input after handled Task failures", async () => {
     const cases = [
       {
         definition: task({ id: "deploy", run() { throw new Error("task failed") } }),
         start: taskStart("noPayload"),
-      },
-      {
-        definition: actor({ id: "worker", run() { throw new Error("actor failed") } }),
-        start: actorStart(0n, 0n),
       },
     ] as const
 
@@ -211,672 +206,6 @@ describe("runProgram", () => {
     ), ["entrypointReady", "taskOutcome"])
   })
 
-  test("reports an Actor return with its terminal cursor", async () => {
-    let actorID = ""
-    let sessionID = ""
-    const definition = actor({
-      id: "worker",
-      run(session, ctx) {
-        actorID = ctx.actor.id
-        sessionID = session.id
-      },
-    })
-    const start = actorStart(0n, 0n)
-    const output: Uint8Array[] = []
-    await runProgram(locatorURL, programIO({
-      input: frames(
-        frameMessage(programProto.ProgramStartSchema, start),
-        frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start)),
-      ),
-      definition,
-      output,
-    }))
-    assert.equal(actorID, "worker")
-    assert.equal(sessionID, "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33")
-    const outcome = readEvent(output[1]!).event
-    assert.equal(outcome.case, "actorOutcome")
-    if (outcome.case === "actorOutcome") {
-      assert.equal(outcome.value.terminalInputSequence, 0n)
-      assert.equal(outcome.value.outcome.case, "succeeded")
-    }
-  })
-
-  test("reports an Actor throw as a bounded failure with its cursor", async () => {
-    const definition = actor({ id: "worker", run() { throw new Error("\u0085boom\u0085") } })
-    const start = actorStart(4n, 7n)
-    const output: Uint8Array[] = []
-    await runProgram(locatorURL, programIO({
-      input: frames(
-        frameMessage(programProto.ProgramStartSchema, start),
-        frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start)),
-      ),
-      definition,
-      output,
-    }))
-    const outcome = readEvent(output[1]!).event
-    assert.equal(outcome.case, "actorOutcome")
-    if (outcome.case === "actorOutcome") {
-      assert.equal(outcome.value.terminalInputSequence, 4n)
-      assert.equal(outcome.value.outcome.case, "failed")
-      if (outcome.value.outcome.case === "failed") {
-        assert.equal(outcome.value.outcome.value.message, "boom")
-      }
-    }
-  })
-
-  test("commits the prior Actor turn before delivering the next input", async () => {
-    const received: unknown[] = []
-    const definition = actor({
-      id: "worker",
-      async run(self) {
-        received.push(await self.input.receive({ timeout: "1ms", idleTimeout: "1501ms" }).unwrap())
-        received.push(await self.input.receive().unwrap())
-      },
-    })
-    const start = actorStart(0n, 2n)
-    const output: Uint8Array[] = []
-    const events = [Promise.withResolvers<void>(), Promise.withResolvers<void>(), Promise.withResolvers<void>()]
-    async function* input(): AsyncIterable<Uint8Array> {
-      yield frameMessage(programProto.ProgramStartSchema, start)
-      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
-
-      await events[0]!.promise
-      const first = readEvent(output[1]!).event
-      assert.equal(first.case, "runWaitRequested")
-      if (first.case !== "runWaitRequested") return
-      assert.equal(first.value.kind, "actor_input")
-      assert.equal(JSON.parse(first.value.paramsJson).after_input_sequence, 0)
-      assert.equal(first.value.actorSpeculativeInputSequence, 0n)
-      assert.equal(first.value.timeoutMs, 1n)
-      assert.equal(first.value.idleTimeoutMs, 1501n)
-      yield actorDecision(first.value.correlationId, "completed", actorInput(1, "one"), first.value)
-
-      await events[1]!.promise
-      const commit = readEvent(output[2]!).event
-      assert.equal(commit.case, "actorTurnCommitRequested")
-      if (commit.case !== "actorTurnCommitRequested") return
-      assert.equal(commit.value.targetInputSequence, 1n)
-      yield actorDecision(commit.value.correlationId, "committed", "null")
-
-      await events[2]!.promise
-      const second = readEvent(output[3]!).event
-      assert.equal(second.case, "runWaitRequested")
-      if (second.case !== "runWaitRequested") return
-      assert.equal(JSON.parse(second.value.paramsJson).after_input_sequence, 1)
-      assert.equal(second.value.actorSpeculativeInputSequence, 1n)
-      yield actorDecision(second.value.correlationId, "completed", actorInput(2, "two"), second.value)
-    }
-    await runProgram(locatorURL, programIO({
-      input: input(),
-      definition,
-      output,
-      onWrite: () => {
-        if (output.length >= 2 && output.length <= 4) {
-          events[output.length - 2]!.resolve()
-        }
-      },
-    }))
-    assert.deepEqual(received, ["one", "two"])
-    const outcome = readEvent(output[4]!).event
-    assert.equal(outcome.case, "actorOutcome")
-    if (outcome.case === "actorOutcome") {
-      assert.equal(outcome.value.terminalInputSequence, 2n)
-      assert.equal(outcome.value.outcome.case, "succeeded")
-    }
-  })
-
-  test("rejects an overlapping Actor receive before emitting a second Wait", async () => {
-    let overlapError = ""
-    const definition = actor({
-      id: "worker",
-      async run(self) {
-        const first = self.input.receive()
-        try {
-          await self.input.receive()
-        } catch (error) {
-          overlapError = error instanceof Error ? error.name : String(error)
-        }
-        await first
-      },
-    })
-    const start = actorStart(0n, 1n)
-    const output: Uint8Array[] = []
-    const waitWritten = Promise.withResolvers<void>()
-    async function* input(): AsyncIterable<Uint8Array> {
-      yield frameMessage(programProto.ProgramStartSchema, start)
-      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
-      await waitWritten.promise
-      const wait = readEvent(output[1]!).event
-      if (wait.case !== "runWaitRequested") return
-      yield actorDecision(wait.value.correlationId, "completed", actorInput(1, "one"), wait.value)
-    }
-    await runProgram(locatorURL, programIO({
-      input: input(),
-      definition,
-      output,
-      onWrite: () => { if (output.length === 2) waitWritten.resolve() },
-    }))
-    assert.equal(overlapError, "ConcurrentSessionReceiveError")
-    assert.deepEqual(output.map((frame) => readEvent(frame).event.case), [
-      "entrypointReady",
-      "runWaitRequested",
-      "actorOutcome",
-    ])
-  })
-
-  test("shares the consuming Wait guard between Actor input and timers", async () => {
-    let timerError = ""
-    const definition = actor({
-      id: "worker",
-      async run(self) {
-        const receive = self.input.receive()
-        try {
-          await timers.waitFor("1m")
-        } catch (error) {
-          timerError = error instanceof Error ? error.message : String(error)
-        }
-        await receive
-      },
-    })
-    const start = actorStart(0n, 1n)
-    const output: Uint8Array[] = []
-    const waitWritten = Promise.withResolvers<void>()
-    async function* input(): AsyncIterable<Uint8Array> {
-      yield frameMessage(programProto.ProgramStartSchema, start)
-      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
-      await waitWritten.promise
-      const wait = readEvent(output[1]!).event
-      if (wait.case !== "runWaitRequested") return
-      yield actorDecision(wait.value.correlationId, "completed", actorInput(1, "one"), wait.value)
-    }
-    await runProgram(locatorURL, programIO({
-      input: input(),
-      definition,
-      output,
-      onWrite: () => { if (output.length === 2) waitWritten.resolve() },
-    }))
-    assert.equal(timerError, "only one consuming Wait may be pending")
-    assert.deepEqual(output.map((frame) => readEvent(frame).event.case), [
-      "entrypointReady",
-      "runWaitRequested",
-      "actorOutcome",
-    ])
-  })
-
-  test("aborts Actor context when a timer Wait is cancelled", async () => {
-    let signalAborted = false
-    const definition = actor({
-      id: "worker",
-      async run(_self, ctx) {
-        try {
-          await timers.waitFor("1m")
-        } catch {
-          signalAborted = ctx.signal.aborted
-        }
-      },
-    })
-    const start = actorStart(0n, 0n)
-    const output: Uint8Array[] = []
-    const waitWritten = Promise.withResolvers<void>()
-    async function* input(): AsyncIterable<Uint8Array> {
-      yield frameMessage(programProto.ProgramStartSchema, start)
-      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
-      await waitWritten.promise
-      const wait = readEvent(output[1]!).event
-      if (wait.case !== "runWaitRequested") return
-      yield actorDecision(
-        wait.value.correlationId,
-        "cancelled",
-        JSON.stringify({ reason_code: "run_cancelled" }),
-        wait.value,
-      )
-    }
-    await assert.rejects(runProgram(locatorURL, programIO({
-      input: input(),
-      definition,
-      output,
-      onWrite: () => { if (output.length === 2) waitWritten.resolve() },
-    })), { message: /run_cancelled/ })
-    assert.equal(signalAborted, true)
-    assert.equal(output.length, 2)
-  })
-
-  test("treats a non-contiguous Actor input record as a runtime protocol fault", async () => {
-    const definition = actor({
-      id: "worker",
-      async run(self) { await self.input.receive() },
-    })
-    const start = actorStart(0n, 2n)
-    const output: Uint8Array[] = []
-    const waitWritten = Promise.withResolvers<void>()
-    async function* input(): AsyncIterable<Uint8Array> {
-      yield frameMessage(programProto.ProgramStartSchema, start)
-      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
-      await waitWritten.promise
-      const wait = readEvent(output[1]!).event
-      if (wait.case !== "runWaitRequested") return
-      yield actorDecision(wait.value.correlationId, "completed", actorInput(2, "skipped"), wait.value)
-    }
-    await assert.rejects(runProgram(locatorURL, programIO({
-      input: input(),
-      definition,
-      output,
-      onWrite: () => { if (output.length === 2) waitWritten.resolve() },
-    })), { message: /next contiguous record/ })
-    assert.deepEqual(output.map((frame) => readEvent(frame).event.case), [
-      "entrypointReady",
-      "runWaitRequested",
-    ])
-  })
-
-  test("latches an Actor protocol fault even when user code catches it", async () => {
-    let caught = false
-    const definition = actor({
-      id: "worker",
-      async run(self) {
-        try {
-          await self.input.receive()
-        } catch {
-          caught = true
-        }
-      },
-    })
-    const start = actorStart(0n, 2n)
-    const output: Uint8Array[] = []
-    const waitWritten = Promise.withResolvers<void>()
-    async function* input(): AsyncIterable<Uint8Array> {
-      yield frameMessage(programProto.ProgramStartSchema, start)
-      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
-      await waitWritten.promise
-      const wait = readEvent(output[1]!).event
-      if (wait.case !== "runWaitRequested") return
-      yield actorDecision(wait.value.correlationId, "completed", actorInput(2, "skipped"), wait.value)
-    }
-    await assert.rejects(runProgram(locatorURL, programIO({
-      input: input(),
-      definition,
-      output,
-      onWrite: () => { if (output.length === 2) waitWritten.resolve() },
-    })), { message: /next contiguous record/ })
-    assert.equal(caught, true)
-    assert.equal(output.length, 2)
-  })
-
-  test("aborts Actor context when an input Wait is cancelled", async () => {
-    let caughtName = ""
-    let signalAborted = false
-    let signalReason = ""
-    const definition = actor({
-      id: "worker",
-      async run(self, ctx) {
-        try {
-          await self.input.receive()
-        } catch (error) {
-          caughtName = error instanceof Error ? error.name : String(error)
-          signalAborted = ctx.signal.aborted
-          signalReason = ctx.signal.reason instanceof Error
-            ? ctx.signal.reason.message
-            : String(ctx.signal.reason)
-        }
-      },
-    })
-    const start = actorStart(0n, 1n)
-    const output: Uint8Array[] = []
-    const waitWritten = Promise.withResolvers<void>()
-    async function* input(): AsyncIterable<Uint8Array> {
-      yield frameMessage(programProto.ProgramStartSchema, start)
-      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
-      await waitWritten.promise
-      const wait = readEvent(output[1]!).event
-      if (wait.case !== "runWaitRequested") return
-      yield actorDecision(
-        wait.value.correlationId,
-        "cancelled",
-        JSON.stringify({ reason_code: "run_cancelled" }),
-        wait.value,
-      )
-    }
-    await assert.rejects(runProgram(locatorURL, programIO({
-      input: input(),
-      definition,
-      output,
-      onWrite: () => { if (output.length === 2) waitWritten.resolve() },
-    })), { message: /run_cancelled/ })
-    assert.equal(caughtName, "AbortError")
-    assert.equal(signalAborted, true)
-    assert.ok(signalReason.includes("run_cancelled"))
-    assert.equal(output.length, 2)
-  })
-
-  test("rejects malformed Actor channel records as runtime protocol faults", async () => {
-    const malformed = [
-      JSON.stringify({
-        record: {
-          id: "record-1",
-          sequence: 1,
-          created_at: "2026-07-22T00:00:00Z",
-          source: { type: "external" },
-        },
-      }),
-      JSON.stringify({
-        id: "output-1",
-        sequence: 1,
-        content_type: "application/json",
-        created_at: "2026-07-22T00:00:00Z",
-        provenance: {
-          run_id: "run-1",
-          attempt_number: 1,
-          deployment_id: "deployment-1",
-        },
-      }),
-      JSON.stringify({
-        id: "60af6067-a253-47b5-915c-2b889fb132c7",
-        sequence: 1,
-        data: "value",
-        content_type: "application/json",
-        created_at: "2026-07-22T00:00:00Z",
-        provenance: {
-          run_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc52",
-          attempt_number: 1,
-          deployment_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc53",
-        },
-      }),
-    ]
-    for (const [index, dataJson] of malformed.entries()) {
-      const definition = actor({
-        id: "worker",
-        async run(self) {
-          if (index === 0) await self.input.receive()
-          else await self.output.append("value")
-        },
-      })
-      const start = actorStart(0n, 1n)
-      const output: Uint8Array[] = []
-      const requestWritten = Promise.withResolvers<void>()
-      async function* input(): AsyncIterable<Uint8Array> {
-        yield frameMessage(programProto.ProgramStartSchema, start)
-        yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
-        await requestWritten.promise
-        const request = readEvent(output[1]!).event
-        const correlationId = request.case === "runWaitRequested"
-          ? request.value.correlationId
-          : request.case === "actorOutputAppendRequested"
-          ? request.value.correlationId
-          : ""
-        yield actorDecision(
-          correlationId,
-          "completed",
-          dataJson,
-          request.case === "runWaitRequested" ? request.value : undefined,
-        )
-      }
-      await assert.rejects(runProgram(locatorURL, programIO({
-        input: input(),
-        definition,
-        output,
-        onWrite: () => { if (output.length === 2) requestWritten.resolve() },
-      })), { message: /was invalid/ })
-      assert.equal(output.length, 2)
-    }
-  })
-
-  test("does not translate an Actor channel write failure into an Actor outcome", async () => {
-    const definition = actor({
-      id: "worker",
-      async run(self) { await self.input.receive() },
-    })
-    const start = actorStart(0n, 1n)
-    const output: Uint8Array[] = []
-    await assert.rejects(runProgram(locatorURL, programIO({
-      input: frames(
-        frameMessage(programProto.ProgramStartSchema, start),
-        frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start)),
-      ),
-      definition,
-      output,
-      failWriteAt: 2,
-    })), { message: /failed to write runtime operation request/ })
-    assert.deepEqual(output.map((frame) => readEvent(frame).event.case), [
-      "entrypointReady",
-    ])
-  })
-
-  test("rejects Actor success while a channel operation is still pending", async () => {
-    const definition = actor({
-      id: "worker",
-      run(self) { void self.output.append("unawaited") },
-    })
-    const start = actorStart(0n, 0n)
-    const output: Uint8Array[] = []
-    await assert.rejects(runProgram(locatorURL, programIO({
-      input: frames(
-        frameMessage(programProto.ProgramStartSchema, start),
-        frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start)),
-      ),
-      definition,
-      output,
-    })), { message: /runtime operations still pending/ })
-    assert.deepEqual(output.map((frame) => readEvent(frame).event.case), [
-      "entrypointReady",
-      "actorOutputAppendRequested",
-    ])
-  })
-
-  test("tracks output pipe before it emits its first append", async () => {
-    const sourceGate = Promise.withResolvers<void>()
-    const definition = actor({
-      id: "worker",
-      run(self) {
-        void self.output.pipe((async function* () {
-          await sourceGate.promise
-          yield "late"
-        })())
-      },
-    })
-    const start = actorStart(0n, 0n)
-    const output: Uint8Array[] = []
-    await assert.rejects(runProgram(locatorURL, programIO({
-      input: frames(
-        frameMessage(programProto.ProgramStartSchema, start),
-        frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start)),
-      ),
-      definition,
-      output,
-    })), { message: /runtime operations still pending/ })
-    assert.deepEqual(output.map((frame) => readEvent(frame).event.case), [
-      "entrypointReady",
-    ])
-  })
-
-  test("appends Actor output through the runtime-bound producer channel", async () => {
-    let appended: unknown
-    const definition = actor({
-      id: "worker",
-      async run(self) {
-        appended = await self.output.append(
-          { event: "ready" },
-          { contentType: "application/vnd.helmr.test+json", idempotencyKey: "output-1" },
-        )
-      },
-    })
-    const start = actorStart(0n, 0n)
-    const output: Uint8Array[] = []
-    const appendWritten = Promise.withResolvers<void>()
-    async function* input(): AsyncIterable<Uint8Array> {
-      yield frameMessage(programProto.ProgramStartSchema, start)
-      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
-      await appendWritten.promise
-      const event = readEvent(output[1]!).event
-      assert.equal(event.case, "actorOutputAppendRequested")
-      if (event.case !== "actorOutputAppendRequested") return
-      assert.deepEqual(JSON.parse(event.value.dataJson), { event: "ready" })
-      assert.equal(event.value.contentType, "application/vnd.helmr.test+json")
-      assert.equal(event.value.idempotencyKey, "output-1")
-      yield actorDecision(event.value.correlationId, "completed", JSON.stringify({
-        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc51",
-        sequence: 1,
-        data: { event: "ready" },
-        content_type: event.value.contentType,
-        created_at: "2026-07-22T00:00:00Z",
-        provenance: {
-          run_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc52",
-          attempt_number: 1,
-          deployment_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc53",
-        },
-      }))
-    }
-    await runProgram(locatorURL, programIO({
-      input: input(),
-      definition,
-      output,
-      onWrite: () => { if (output.length === 2) appendWritten.resolve() },
-    }))
-    assert.deepEqual(appended, {
-      id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc51",
-      sequence: 1,
-      data: { event: "ready" },
-      contentType: "application/vnd.helmr.test+json",
-      createdAt: "2026-07-22T00:00:00Z",
-      provenance: {
-        runId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc52",
-        attemptNumber: 1,
-        deploymentId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc53",
-      },
-    })
-  })
-
-  test("exposes Actor output semantic failures to user code", async () => {
-    let failure: unknown
-    const definition = actor({
-      id: "worker",
-      async run(self) {
-        try {
-          await self.output.append("value", { idempotencyKey: "output-1" })
-        } catch (error) {
-          failure = error
-        }
-      },
-    })
-    const start = actorStart(0n, 0n)
-    const output: Uint8Array[] = []
-    const appendWritten = Promise.withResolvers<void>()
-    async function* input(): AsyncIterable<Uint8Array> {
-      yield frameMessage(programProto.ProgramStartSchema, start)
-      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
-      await appendWritten.promise
-      const event = readEvent(output[1]!).event
-      assert.equal(event.case, "actorOutputAppendRequested")
-      if (event.case !== "actorOutputAppendRequested") return
-      yield actorDecision(event.value.correlationId, "failed", JSON.stringify({
-        code: "idempotency_conflict",
-        message: "output key conflicts with an earlier append",
-        retryable: false,
-      }))
-    }
-    await runProgram(locatorURL, programIO({
-      input: input(),
-      definition,
-      output,
-      onWrite: () => { if (output.length === 2) appendWritten.resolve() },
-    }))
-    assert.ok(failure instanceof Error)
-    assert.equal(failure.name, "HelmrError")
-    assert.ok("code" in failure)
-    assert.equal(failure.code, "idempotency_conflict")
-    assert.equal(failure.message, "output key conflicts with an earlier append")
-    assert.equal(Object.hasOwn(failure as object, "retryable"), false)
-  })
-
-  test("sends Actor input from a Task with concurrent correlation-safe decisions", async () => {
-    let sent: unknown
-    const definition = task({
-      id: "deploy",
-      async run() {
-        sent = await Promise.all([
-          sessions.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33").input.send(
-            { z: 1, a: 2 },
-            { idempotencyKey: "\u0085first\u0085" },
-          ),
-          sessions.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33").input.send(null),
-        ])
-        return null
-      },
-    })
-    const start = taskStart("noPayload")
-    const output: Uint8Array[] = []
-    const sendsWritten = Promise.withResolvers<void>()
-    async function* input(): AsyncIterable<Uint8Array> {
-      yield frameMessage(programProto.ProgramStartSchema, start)
-      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
-      await sendsWritten.promise
-      const first = readEvent(output[1]!).event
-      const second = readEvent(output[2]!).event
-      assert.equal(first.case, "sessionInputSendRequested")
-      assert.equal(second.case, "sessionInputSendRequested")
-      if (first.case !== "sessionInputSendRequested" ||
-          second.case !== "sessionInputSendRequested") return
-      assert.equal(first.value.sessionId, "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33")
-      assert.equal(first.value.dataJson, '{"a":2,"z":1}')
-      assert.equal(first.value.idempotencyKey, "first")
-      assert.equal(second.value.sessionId, "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33")
-      assert.equal(second.value.dataJson, "null")
-      yield actorDecision(second.value.correlationId, "completed", JSON.stringify({
-        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
-        sequence: 2,
-        data: null,
-        source: {
-          type: "run",
-          run_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
-        },
-        created_at: "2026-07-26T00:00:01Z",
-      }))
-      yield actorDecision(first.value.correlationId, "completed", JSON.stringify({
-        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34",
-        sequence: 1,
-        data: { a: 2, z: 1 },
-        source: {
-          type: "run",
-          run_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
-        },
-        created_at: "2026-07-26T00:00:00Z",
-      }))
-    }
-    await runProgram(locatorURL, programIO({
-      input: input(),
-      definition,
-      output,
-      onWrite: () => { if (output.length === 3) sendsWritten.resolve() },
-    }))
-    assert.deepEqual(sent, [
-      {
-        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34",
-        sequence: 1,
-        data: { a: 2, z: 1 },
-        source: {
-          type: "run",
-          runId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
-        },
-        createdAt: "2026-07-26T00:00:00Z",
-      },
-      {
-        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
-        sequence: 2,
-        data: null,
-        source: {
-          type: "run",
-          runId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
-        },
-        createdAt: "2026-07-26T00:00:01Z",
-      },
-    ])
-    assert.deepEqual(output.map((frame) => readEvent(frame).event.case), [
-      "entrypointReady",
-      "sessionInputSendRequested",
-      "sessionInputSendRequested",
-      "taskOutcome",
-    ])
-  })
-
   test("starts a detached child Task through the runtime protocol", async () => {
     const child = task({
       id: "resize-image",
@@ -946,7 +275,7 @@ describe("runProgram", () => {
         tags: ["image"],
       })
       assert.equal(event.value.idempotencyKey, "resize:image-1")
-      yield actorDecision(
+      yield runtimeDecision(
         event.value.correlationId,
         "completed",
         '{"run_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"}',
@@ -973,58 +302,6 @@ describe("runProgram", () => {
         assert.equal(outcome.value.outcome.value.outputJson, '{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"}')
       }
     }
-  })
-
-  test("preserves omitted Actor start input separately from JSON null", async () => {
-    const mailbox = actor({ id: "mailbox", run() {} })
-    const observed: Array<string | undefined> = []
-    const definition = task({
-      id: "deploy",
-      async run() {
-        await mailbox.start({
-          workspace: workspaces.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"),
-        })
-        await mailbox.start({
-          workspace: workspaces.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"),
-          input: null,
-        })
-        return null
-      },
-    })
-    const start = taskStart("noPayload")
-    const output: Uint8Array[] = []
-    const requestWritten = [Promise.withResolvers<void>(), Promise.withResolvers<void>()]
-    async function* input(): AsyncIterable<Uint8Array> {
-      yield frameMessage(programProto.ProgramStartSchema, start)
-      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
-      for (let index = 0; index < 2; index++) {
-        await requestWritten[index]!.promise
-        const event = readEvent(output[index + 1]!).event
-        if (event.case !== "actorStartRequested") return
-        observed.push(event.value.inputJson)
-        yield actorDecision(
-          event.value.correlationId,
-          "completed",
-          '{"run_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31","session_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"}',
-        )
-      }
-    }
-    await runProgram(locatorURL, programIO({
-      input: input(),
-      definition,
-      output,
-      onWrite: () => {
-        if (output.length === 2) requestWritten[0]!.resolve()
-        if (output.length === 3) requestWritten[1]!.resolve()
-      },
-    }))
-    assert.deepEqual(observed, [undefined, "null"])
-    assert.deepEqual(output.map((frame) => readEvent(frame).event.case), [
-      "entrypointReady",
-      "actorStartRequested",
-      "actorStartRequested",
-      "taskOutcome",
-    ])
   })
 
   test("bridges every Workspace runtime operation through typed events", async () => {
@@ -1083,7 +360,7 @@ describe("runProgram", () => {
         const correlationId = "correlationId" in event.value
           ? event.value.correlationId as string
           : ""
-        yield actorDecision(correlationId, "completed", responses[index]!)
+        yield runtimeDecision(correlationId, "completed", responses[index]!)
       }
     }
     await runProgram(locatorURL, programIO({
@@ -1125,8 +402,8 @@ describe("runProgram", () => {
     })
     let result: unknown
     let overlappingWaitError = ""
-    const definition = actor({
-      id: "worker",
+    const definition = task({
+      id: "deploy",
       async run() {
         const called = child.call(
           { imageId: "image-1" },
@@ -1142,9 +419,10 @@ describe("runProgram", () => {
             error instanceof Error ? error.message : String(error)
         }
         result = await called
+        return null
       },
     })
-    const start = actorStart(4n, 4n)
+    const start = taskStart("noPayload")
     const output: Uint8Array[] = []
     const requested = Promise.withResolvers<void>()
     async function* input(): AsyncIterable<Uint8Array> {
@@ -1155,9 +433,9 @@ describe("runProgram", () => {
       assert.equal(event.case, "taskChildInvokeRequested")
       if (event.case !== "taskChildInvokeRequested") return
       assert.equal(event.value.method, "call")
-      assert.equal(event.value.actorSpeculativeInputSequence, 4n)
+      assert.equal(event.value.actorSpeculativeInputSequence, undefined)
       assert.equal(event.value.idempotencyKey, "resize:image-1")
-      yield actorDecision(
+      yield runtimeDecision(
         event.value.correlationId,
         "completed",
         JSON.stringify({
@@ -1185,7 +463,7 @@ describe("runProgram", () => {
     assert.deepEqual(output.map((frame) => readEvent(frame).event.case), [
       "entrypointReady",
       "taskChildInvokeRequested",
-      "actorOutcome",
+      "taskOutcome",
     ])
   })
 
@@ -1217,7 +495,7 @@ describe("runProgram", () => {
       if (event.case !== "taskChildInvokeRequested") return
       assert.equal(event.value.method, "call")
       assert.equal(event.value.actorSpeculativeInputSequence, undefined)
-      yield actorDecision(
+      yield runtimeDecision(
         event.value.correlationId,
         "completed",
         JSON.stringify({
@@ -1284,7 +562,7 @@ describe("runProgram", () => {
       assert.equal(createEvent.value.idempotencyKey, "approval-1")
       assert.equal(createEvent.value.metadataJson, '{"approval":true}')
       assert.deepEqual(createEvent.value.tags, ["review"])
-      yield actorDecision(
+      yield runtimeDecision(
         createEvent.value.correlationId,
         "completed",
         JSON.stringify({
@@ -1311,7 +589,7 @@ describe("runProgram", () => {
       assert.deepEqual(JSON.parse(waitEvent.value.paramsJson), {
         token_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
       })
-      yield actorDecision(
+      yield runtimeDecision(
         waitEvent.value.correlationId,
         "completed",
         '{"approved":true}',
@@ -1357,7 +635,7 @@ describe("runProgram", () => {
       await createWritten.promise
       const createEvent = readEvent(output[1]!).event
       if (createEvent.case !== "tokenCreateRequested") return
-      yield actorDecision(createEvent.value.correlationId, "completed", JSON.stringify({
+      yield runtimeDecision(createEvent.value.correlationId, "completed", JSON.stringify({
         id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
         status: "pending",
         callback_url: "https://api.example.test/callback",
@@ -1371,7 +649,7 @@ describe("runProgram", () => {
       await waitWritten.promise
       const waitEvent = readEvent(output[2]!).event
       if (waitEvent.case !== "runWaitRequested") return
-      yield actorDecision(
+      yield runtimeDecision(
         waitEvent.value.correlationId,
         "failed",
         JSON.stringify({ reason_code: "token_expired" }),
@@ -1421,7 +699,7 @@ describe("runProgram", () => {
         key: "phase",
         valueJson: '"running"',
       })
-      yield actorDecision(set.value.correlationId, "completed", "{}")
+      yield runtimeDecision(set.value.correlationId, "completed", "{}")
 
       await writes[1]!.promise
       const increment = readEvent(output[2]!).event
@@ -1432,7 +710,7 @@ describe("runProgram", () => {
         key: "steps",
         amount: 2,
       })
-      yield actorDecision(increment.value.correlationId, "completed", "{}")
+      yield runtimeDecision(increment.value.correlationId, "completed", "{}")
 
       await writes[2]!.promise
       const log = readEvent(output[3]!).event
@@ -1446,7 +724,7 @@ describe("runProgram", () => {
         retryable: false,
         step: 2,
       })
-      yield actorDecision(log.value.correlationId, "completed", "{}")
+      yield runtimeDecision(log.value.correlationId, "completed", "{}")
     }
     await runProgram(locatorURL, programIO({
       input: input(),
@@ -1493,148 +771,6 @@ describe("runProgram", () => {
       ])
     })
   }
-
-  test("rejects an oversized Actor input idempotency key before emission", async () => {
-    let failure: unknown
-    const definition = task({
-      id: "deploy",
-      async run() {
-        try {
-          await sessions.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33").input.send(null, {
-            idempotencyKey: "a".repeat(513),
-          })
-        } catch (error) {
-          failure = error
-        }
-        return null
-      },
-    })
-    const start = taskStart("noPayload")
-    const output: Uint8Array[] = []
-    await runProgram(locatorURL, programIO({
-      input: frames(
-        frameMessage(programProto.ProgramStartSchema, start),
-        frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start)),
-      ),
-      definition,
-      output,
-    }))
-    assert.ok(failure instanceof Error)
-    assert.equal(failure.name, "HelmrError")
-    assert.ok("code" in failure)
-    assert.equal(failure.code, "invalid_idempotency_key")
-    assert.equal(Object.hasOwn(failure as object, "retryable"), false)
-    assert.deepEqual(output.map((frame) => readEvent(frame).event.case), [
-      "entrypointReady",
-      "taskOutcome",
-    ])
-  })
-
-  test("surfaces an Actor input send semantic failure to Actor user code", async () => {
-    let failure: unknown
-    const definition = actor({
-      id: "worker",
-      async run() {
-        try {
-          await sessions.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34").input.send({ hello: "world" })
-        } catch (error) {
-          failure = error
-        }
-      },
-    })
-    const start = actorStart(0n, 0n)
-    const output: Uint8Array[] = []
-    const sendWritten = Promise.withResolvers<void>()
-    async function* input(): AsyncIterable<Uint8Array> {
-      yield frameMessage(programProto.ProgramStartSchema, start)
-      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
-      await sendWritten.promise
-      const send = readEvent(output[1]!).event
-      if (send.case !== "sessionInputSendRequested") return
-      yield actorDecision(send.value.correlationId, "failed", JSON.stringify({
-        code: "actor_not_open",
-        message: "Actor does not accept new input",
-        retryable: false,
-      }))
-    }
-    await runProgram(locatorURL, programIO({
-      input: input(),
-      definition,
-      output,
-      onWrite: () => { if (output.length === 2) sendWritten.resolve() },
-    }))
-    assert.ok(failure instanceof Error)
-    assert.equal(failure.name, "HelmrError")
-    assert.ok("code" in failure)
-    assert.equal(failure.code, "actor_not_open")
-    assert.equal(failure.message, "Actor does not accept new input")
-    assert.equal(Object.hasOwn(failure as object, "retryable"), false)
-    assert.equal(readEvent(output[2]!).event.case, "actorOutcome")
-  })
-
-  test("does not emit a pre-aborted send and drains a post-emission abort", async () => {
-    const preAborted = new AbortController()
-    preAborted.abort(new DOMException("pre-aborted", "AbortError"))
-    const postEmission = new AbortController()
-    const failures: unknown[] = []
-    const definition = task({
-      id: "deploy",
-      async run() {
-        for (const signal of [preAborted.signal, postEmission.signal]) {
-          try {
-            await sessions.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33").input.send(
-              null,
-              {},
-              { signal },
-            )
-          } catch (error) {
-            failures.push(error)
-          }
-        }
-        return null
-      },
-    })
-    const start = taskStart("noPayload")
-    const output: Uint8Array[] = []
-    const sendWritten = Promise.withResolvers<void>()
-    async function* input(): AsyncIterable<Uint8Array> {
-      yield frameMessage(programProto.ProgramStartSchema, start)
-      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
-      await sendWritten.promise
-      const send = readEvent(output[1]!).event
-      if (send.case !== "sessionInputSendRequested") return
-      yield actorDecision(send.value.correlationId, "completed", JSON.stringify({
-        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34",
-        sequence: 3,
-        data: null,
-        source: {
-          type: "run",
-          run_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
-        },
-        created_at: "2026-07-26T00:00:00Z",
-      }))
-    }
-    await runProgram(locatorURL, programIO({
-      input: input(),
-      definition,
-      output,
-      onWrite: () => {
-        if (output.length === 2) {
-          postEmission.abort(new DOMException("post-emission", "AbortError"))
-          sendWritten.resolve()
-        }
-      },
-    }))
-    assert.equal(failures.length, 2)
-    assert.deepEqual(failures.map((failure) =>
-      failure instanceof Error ? failure.message : String(failure)
-    ), ["pre-aborted", "post-emission"])
-    assert.deepEqual(output.map((frame) => readEvent(frame).event.case), [
-      "entrypointReady",
-      "sessionInputSendRequested",
-      "taskOutcome",
-    ])
-  })
 
   test("waits for the exact entrypoint release before invoking a payload-free task", async () => {
     let invoked = false
@@ -1861,7 +997,7 @@ describe("runProgram", () => {
         await waitWritten.promise
         const event = readEvent(output[1]!).event
         if (event.case !== "runWaitRequested") return
-        yield actorDecision(
+        yield runtimeDecision(
           event.value.correlationId,
           "failed",
           dataJson,
@@ -2251,29 +1387,6 @@ function taskStart(
   })
 }
 
-function actorStart(start: bigint, highWatermark: bigint): programProto.ProgramStart {
-  return create(programProto.ProgramStartSchema, {
-    entrypointDeclaredId: "worker",
-    runId: "run-1",
-    attemptNumber: 1,
-    cause: create(programProto.RunCauseSchema, {
-      kind: { case: "actorStart", value: create(programProto.ActorStartCauseSchema) },
-    }),
-    deploymentId: "deployment-1",
-    deploymentVersion: "v1",
-    workspaceId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30",
-    baseWorkspaceVersionId: "version-1",
-    entrypoint: {
-      case: "actor",
-      value: create(programProto.ActorStartSchema, {
-        sessionId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-        startInputSequence: start,
-        inputHighWatermark: highWatermark,
-      }),
-    },
-  })
-}
-
 function releaseFor(start: programProto.ProgramStart): programProto.EntrypointRelease {
   return create(programProto.EntrypointReleaseSchema, {
     runId: start.runId,
@@ -2306,40 +1419,6 @@ function frameMessage<T extends { $typeName: string }>(
   message: T,
 ): Uint8Array {
   return frame(toBinary(schema, message))
-}
-
-function actorDecision(
-  correlationId: string,
-  kind: string,
-  dataJson: string,
-  wait?: { runWaitId: string; resumeAttachId: string },
-): Uint8Array {
-  return frameMessage(programProto.ResumeDecisionSchema, create(
-    programProto.ResumeDecisionSchema,
-    {
-      correlationId,
-      kind,
-      dataJson,
-      ...(wait === undefined
-        ? {}
-        : {
-          runWaitId: wait.runWaitId,
-          resumeAttachId: wait.resumeAttachId,
-        }),
-    },
-  ))
-}
-
-function actorInput(sequence: number, value: unknown): string {
-  return JSON.stringify({
-    value,
-    record: {
-      id: `019c10d5-a6f7-7af1-8f5f-bb97bcc0d${sequence.toString(16).padStart(3, "0")}`,
-      sequence,
-      created_at: "2026-07-22T00:00:00Z",
-      source: { type: "external" },
-    },
-  })
 }
 
 function frame(body: Uint8Array): Uint8Array {
@@ -2417,4 +1496,26 @@ async function* gatedFrames(
   yield first
   await gate
   yield second
+}
+
+function runtimeDecision(
+  correlationId: string,
+  kind: string,
+  dataJson: string,
+  wait?: { runWaitId: string; resumeAttachId: string },
+): Uint8Array {
+  return frameMessage(programProto.ResumeDecisionSchema, create(
+    programProto.ResumeDecisionSchema,
+    {
+      correlationId,
+      kind,
+      dataJson,
+      ...(wait === undefined
+        ? {}
+        : {
+          runWaitId: wait.runWaitId,
+          resumeAttachId: wait.resumeAttachId,
+        }),
+    },
+  ))
 }

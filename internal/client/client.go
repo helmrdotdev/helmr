@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 )
@@ -95,3 +96,12 @@ func (c *Client) newRequest(ctx context.Context, method string, path string, bod
 }
 
 func (c *Client) doJSON(req *http.Request, out any) error { return c.transport.DoJSON(req, out) }
+
+// invocationKey is resolved before request encoding, so replaying its body keeps
+// one durable identity while a separate invocation receives a new identity.
+func invocationKey(key string) string {
+	if key == "" {
+		return uuid.NewV7().String()
+	}
+	return key
+}

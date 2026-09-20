@@ -455,7 +455,7 @@ SELECT runs.status, runs.current_attempt_number, run_attempts.terminal_reason_co
 	}
 }
 
-func TestFreshActorRunningLeaseLossAppliesPinnedRetryPolicy(t *testing.T) {
+func TestFreshActorRunningLeaseLossRequiresRecoveryDespiteRetryPolicy(t *testing.T) {
 	fixture, leaseID, _ := prepareFreshRunLease(t)
 	actorID := convertFreshRunToActor(t, fixture)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
@@ -493,8 +493,8 @@ SELECT runs.status, runs.current_attempt_number, sessions.status,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if runStatus != "retry_delayed" || currentAttempt != 2 ||
-		sessionStatus != "open" || currentRunID != pgvalue.UUID(fixture.runID) || attempts != 2 {
+	if runStatus != "system_failed" || currentAttempt != 1 ||
+		sessionStatus != "open" || currentRunID != pgvalue.UUID(fixture.runID) || attempts != 1 {
 		t.Fatalf("Actor retry run=%s attempt=%d session=%s current=%v attempts=%d",
 			runStatus, currentAttempt, sessionStatus, currentRunID, attempts)
 	}
@@ -610,6 +610,12 @@ SELECT runs.current_run_lease_id, run_leases.status
 func prepareFreshRunLease(t *testing.T) (runPlacementFixture, pgtype.UUID, pgtype.UUID) {
 	t.Helper()
 	fixture := newRunPlacementFixture(t)
+	leaseID, runtimeID := prepareFreshRunLeaseForFixture(t, fixture)
+	return fixture, leaseID, runtimeID
+}
+
+func prepareFreshRunLeaseForFixture(t *testing.T, fixture runPlacementFixture) (pgtype.UUID, pgtype.UUID) {
+	t.Helper()
 	reserved, err := fixture.authority.PlaceReadyRun(fixture.ctx, fixture.candidate())
 	if err != nil {
 		t.Fatal(err)
@@ -633,7 +639,7 @@ UPDATE run_leases
        start_deadline_at = transaction_timestamp() - interval '9 minutes',
        expires_at = transaction_timestamp() + interval '5 minutes'
  WHERE id = $1`, granted.Lease.ID)
-	return fixture, granted.Lease.ID, reserved.RuntimeInstanceID
+	return granted.Lease.ID, reserved.RuntimeInstanceID
 }
 
 func convertFreshRunToActor(t *testing.T, fixture runPlacementFixture) uuid.UUID {
@@ -680,4 +686,31 @@ UPDATE workspaces SET owner_run_id = NULL, owner_session_id = $2 WHERE id = $1`,
 		t.Fatal(err)
 	}
 	return actorID
+}
+
+func TestFreshActorPrestartLossRetainsSafeLaunchRetry(t *testing.T) {
+	for _, state := range []string{"assigned", "starting"} {
+		t.Run(state, func(t *testing.T) {
+			f, lease, _ := prepareFreshRunLease(t)
+			actor := convertFreshRunToActor(t, f)
+			if state == "starting" {
+				dbtest.MustExec(t, f.ctx, f.pool, `UPDATE run_leases SET status='starting',claimed_at=created_at WHERE id=$1`, lease)
+			}
+			expireRecoveryLease(t, f, lease)
+			n, err := f.authority.RecoverRunExecutionLeases(f.ctx, 1)
+			if err != nil || n != 1 {
+				t.Fatalf("prestart recovery=%d %v", n, err)
+			}
+			var status string
+			var current, hold, sessionRun pgtype.UUID
+			var attempt int32
+			var terminal pgtype.Timestamptz
+			if err := f.pool.QueryRow(f.ctx, `SELECT r.status,r.current_run_lease_id,r.current_attempt_number,s.dispatch_hold_id,s.current_run_id,a.terminal_at FROM runs r JOIN sessions s ON s.id=$2 JOIN run_attempts a ON a.run_id=r.id AND a.number=r.current_attempt_number WHERE r.id=$1`, f.runID, actor).Scan(&status, &current, &attempt, &hold, &sessionRun, &terminal); err != nil {
+				t.Fatal(err)
+			}
+			if status != "queued" || current.Valid || attempt != 1 || hold.Valid || sessionRun != pgvalue.UUID(f.runID) || terminal.Valid {
+				t.Fatalf("safe prestart retry changed: %s %v %d hold=%v current=%v terminal=%v", status, current, attempt, hold, sessionRun, terminal)
+			}
+		})
+	}
 }

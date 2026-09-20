@@ -5,14 +5,16 @@ import (
 	"testing"
 )
 
-func TestWorkerActorOutcomeRequiresPresentCursorAndOneVariant(t *testing.T) {
+func TestWorkerActorOutcomeRequiresPositiveGenerationAndOneVariant(t *testing.T) {
 	for _, raw := range []string{
 		`{"succeeded":{}}`,
-		`{"terminal_input_sequence":0}`,
-		`{"terminal_input_sequence":0,"succeeded":{},"failed":{"message":"x"}}`,
-		`{"terminal_input_sequence":-1,"succeeded":{}}`,
-		`{"terminal_input_sequence":0,"succeeded":null}`,
-		`{"terminal_input_sequence":0,"succeeded":{},"extra":true}`,
+		`{"run_generation":1}`,
+		`{"run_generation":1,"succeeded":{},"failed":{"message":"x"}}`,
+		`{"run_generation":-1,"succeeded":{}}`,
+		`{"run_generation":0,"succeeded":{}}`,
+		`{"run_generation":1,"interrupted":null}`,
+		`{"run_generation":1,"succeeded":null}`,
+		`{"run_generation":1,"succeeded":{},"extra":true}`,
 	} {
 		var outcome ActorOutcome
 		if err := json.Unmarshal([]byte(raw), &outcome); err == nil {
@@ -21,12 +23,32 @@ func TestWorkerActorOutcomeRequiresPresentCursorAndOneVariant(t *testing.T) {
 	}
 }
 
-func TestWorkerActorOutcomeAcceptsZeroCursor(t *testing.T) {
+func TestWorkerActorOutcomeAcceptsGeneration(t *testing.T) {
 	var outcome ActorOutcome
-	if err := json.Unmarshal([]byte(`{"terminal_input_sequence":0,"succeeded":{}}`), &outcome); err != nil {
+	if err := json.Unmarshal([]byte(`{"run_generation":1,"succeeded":{}}`), &outcome); err != nil {
 		t.Fatal(err)
 	}
-	if outcome.TerminalInputSequence != 0 || outcome.Succeeded == nil || outcome.Failed != nil {
+	if outcome.RunGeneration != 1 || outcome.Succeeded == nil || outcome.Failed != nil {
 		t.Fatalf("outcome = %#v", outcome)
+	}
+}
+
+func TestWorkerActorInterruptedOutcomeRoundTrip(t *testing.T) {
+	for _, turn := range []string{`null`, `"01900000-0000-7000-8000-000000000003"`} {
+		raw := `{"run_generation":3,"interrupted":{"hold_id":"01900000-0000-7000-8000-000000000002","turn_id":` + turn + `}}`
+		var outcome ActorOutcome
+		if err := json.Unmarshal([]byte(raw), &outcome); err != nil {
+			t.Fatal(err)
+		}
+		if outcome.RunGeneration != 3 || outcome.Interrupted == nil || outcome.Succeeded != nil || outcome.Failed != nil {
+			t.Fatalf("outcome: %+v", outcome)
+		}
+		encoded, err := json.Marshal(outcome)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(encoded) != raw {
+			t.Fatalf("round trip: %s", encoded)
+		}
 	}
 }

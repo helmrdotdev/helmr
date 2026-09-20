@@ -33,9 +33,10 @@ func TestAuthorizeWorkerRunSourceRequiresWorkerAndLiveFence(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, store, worker, turnRequest, _ := newActorTurnCommitFixture(t)
+			f := newActorCheckpointFixture(t)
+			store, worker := f.server.db, f.worker
 			fixture := runLeaseClaimAuthorityFixture{
-				fence: turnRequest.Lease,
+				fence: f.fence(),
 			}
 			test.mutate(&worker, &fixture)
 			_, err := authorizeWorkerRunSource(

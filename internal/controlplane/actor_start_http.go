@@ -21,8 +21,7 @@ import (
 )
 
 const actorStartBodyLimit = int64(
-	maxActorInputBytes +
-		maxRunMetadataBytes +
+	maxRunMetadataBytes +
 		64<<10,
 )
 
@@ -61,13 +60,7 @@ func (s *Server) startActorHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(codedError{code: "invalid_actor_start", message: err.Error()}))
 		return
 	}
-	if len(request.Input) > maxActorInputBytes {
-		writeError(w, tooLarge(codedError{
-			code:    "actor_input_too_large",
-			message: "actor initial input exceeds the size limit",
-		}))
-		return
-	}
+
 	idempotencyKey, err := normalizeIdempotencyKey(request.IdempotencyKey)
 	if err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_idempotency_key", message: err.Error()}))
@@ -398,7 +391,7 @@ func actorStartRequestFromAPI(
 		actorDeclaredID,
 		idempotencyKey,
 		api.ActorStartOptions{
-			Key: request.Key, Input: request.Input,
+			Key:       request.Key,
 			Workspace: request.Workspace, Run: request.Run,
 		},
 	)
@@ -449,8 +442,6 @@ func actorStartRequestFromScope(
 		ActorDeclaredID:       actorDeclaredID,
 		WorkspaceID:           workspaceID,
 		Key:                   request.Key,
-		InputPresent:          len(request.Input) > 0,
-		Input:                 request.Input,
 		IdempotencyKey:        idempotencyKey,
 		ManagedQueueName:      run.Queue,
 		ManagedConcurrencyKey: run.ConcurrencyKey,
@@ -490,11 +481,6 @@ func (s *Server) writeActorStartError(w http.ResponseWriter, err error) {
 		writeError(w, conflict(codedError{
 			code:    "secret_unavailable",
 			message: errActorStartSecretUnavailable.Error(),
-		}))
-	case errors.Is(err, errActorInputTooLarge):
-		writeError(w, tooLarge(codedError{
-			code:    "actor_input_too_large",
-			message: errActorInputTooLarge.Error(),
 		}))
 	case errors.Is(err, errActorStartInvalid):
 		writeError(w, badRequest(codedError{code: "invalid_actor_start", message: err.Error()}))

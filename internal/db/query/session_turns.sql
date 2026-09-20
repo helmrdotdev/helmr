@@ -36,7 +36,6 @@ UPDATE workspace_versions
           AND run_checkpoints.run_id = sqlc.arg(run_id)
           AND run_checkpoints.attempt_number = sqlc.arg(attempt_number)
           AND run_checkpoints.workspace_id = workspace_versions.workspace_id
-          AND run_checkpoints.private_workspace_version_id = workspace_versions.id
           AND run_checkpoints.actor_speculative_input_sequence IS NOT NULL
           AND run_checkpoints.status = 'invalid'
           AND run_checkpoints.invalidation_reason_code = 'actor_turn_committed'
@@ -57,19 +56,3 @@ UPDATE run_checkpoints
                                             AND sqlc.arg(target_input_sequence)::bigint
    AND status = 'ready'
 RETURNING run_checkpoints.*;
-
--- name: AdvanceActorTurnCursor :one
-UPDATE sessions
-   SET committed_input_sequence = sqlc.arg(target_input_sequence),
-       revision = revision + 1,
-       updated_at = sqlc.arg(committed_at)
- WHERE environment_id = sqlc.arg(environment_id)
-   AND id = sqlc.arg(session_id)
-   AND workspace_id = sqlc.arg(workspace_id)
-   AND current_run_id = sqlc.arg(run_id)
-   AND run_generation = sqlc.arg(expected_run_generation)
-   AND status IN ('open', 'closing')
-   AND committed_input_sequence = sqlc.arg(expected_input_sequence)
-   AND sqlc.arg(target_input_sequence) = sqlc.arg(expected_input_sequence) + 1
-   AND sqlc.arg(target_input_sequence) < next_input_sequence
-RETURNING *;

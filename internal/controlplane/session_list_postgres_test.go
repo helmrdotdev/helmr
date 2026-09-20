@@ -65,9 +65,13 @@ func TestSessionListPostgresFiltersByPublicStatus(t *testing.T) {
 		t.Fatalf("unfiltered Sessions = %+v", all)
 	}
 	open := listSessionsPostgresHTTP(t, fixture, principal, "/v1/sessions?status=open")
-	if sessionListIDs(open) != sessions[1]+","+sessions[0] ||
-		open.Sessions[0].Status != api.SessionStatusOpen || open.Sessions[1].Status != api.SessionStatusOpen {
+	if sessionListIDs(open) != sessions[0] ||
+		open.Sessions[0].Status != api.SessionStatusOpen {
 		t.Fatalf("open Sessions = %+v", open)
+	}
+	closing := listSessionsPostgresHTTP(t, fixture, principal, "/v1/sessions?status=closing")
+	if sessionListIDs(closing) != sessions[1] || closing.Sessions[0].Status != api.SessionStatusClosing {
+		t.Fatalf("closing Sessions = %+v", closing)
 	}
 	failed := listSessionsPostgresHTTP(t, fixture, principal, "/v1/sessions?status=failed")
 	if sessionListIDs(failed) != sessions[2] || failed.Sessions[0].Status != api.SessionStatusFailed ||
@@ -75,21 +79,21 @@ func TestSessionListPostgresFiltersByPublicStatus(t *testing.T) {
 		t.Fatalf("failed Sessions = %+v", failed)
 	}
 	if closed := listSessionsPostgresHTTP(
-		t, fixture, principal, "/v1/sessions?status=closed&status=cancelled",
+		t, fixture, principal, "/v1/sessions?status=closed",
 	); len(closed.Sessions) != 0 || closed.NextCursor != "" {
 		t.Fatalf("closed Sessions = %+v", closed)
 	}
 	both := listSessionsPostgresHTTP(t, fixture, principal, "/v1/sessions?status=open&status=failed")
-	if sessionListIDs(both) != sessions[2]+","+sessions[1]+","+sessions[0] {
+	if sessionListIDs(both) != sessions[2]+","+sessions[0] {
 		t.Fatalf("open and failed Sessions = %+v", both)
 	}
 
-	page := listSessionsPostgresHTTP(t, fixture, principal, "/v1/sessions?status=open&limit=1")
+	page := listSessionsPostgresHTTP(t, fixture, principal, "/v1/sessions?status=open&status=closing&limit=1")
 	if sessionListIDs(page) != sessions[1] || page.NextCursor == "" {
 		t.Fatalf("first page = %+v", page)
 	}
 	next := listSessionsPostgresHTTP(
-		t, fixture, principal, "/v1/sessions?status=open&limit=1&cursor="+page.NextCursor,
+		t, fixture, principal, "/v1/sessions?status=open&status=closing&limit=1&cursor="+page.NextCursor,
 	)
 	if sessionListIDs(next) != sessions[0] || next.NextCursor != "" {
 		t.Fatalf("next page = %+v", next)
@@ -97,7 +101,6 @@ func TestSessionListPostgresFiltersByPublicStatus(t *testing.T) {
 	for _, target := range []string{
 		"/v1/sessions?status=failed&limit=1&cursor=" + page.NextCursor,
 		"/v1/sessions?limit=1&cursor=" + page.NextCursor,
-		"/v1/sessions?status=closing",
 		"/v1/sessions?actor_id=operator.v1&key=" + url.QueryEscape(keys[1]) + "&status=open",
 	} {
 		recorder := httptest.NewRecorder()
@@ -111,7 +114,7 @@ func TestSessionListPostgresFiltersByPublicStatus(t *testing.T) {
 	exact := listSessionsPostgresHTTP(
 		t, fixture, principal, "/v1/sessions?actor_id=operator.v1&key="+url.QueryEscape(keys[1]),
 	)
-	if sessionListIDs(exact) != sessions[1] || exact.Sessions[0].Status != api.SessionStatusOpen ||
+	if sessionListIDs(exact) != sessions[1] || exact.Sessions[0].Status != api.SessionStatusClosing ||
 		exact.Sessions[0].WorkspaceID != fixture.workspaceIDs[1].String() || exact.NextCursor != "" {
 		t.Fatalf("exact lookup = %+v", exact)
 	}

@@ -3,7 +3,6 @@ package token
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -334,49 +333,18 @@ func TestTokenWaitSchemaRejectsCrossEnvironmentReference(t *testing.T) {
 }
 
 func TestFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T) {
-	testFailedCreatingCheckpointFailsAttemptAndClosesSource(t, checkpointFailureTestMode{})
+	testFailedCreatingCheckpointFailsAttemptAndClosesSource(t, false)
 }
 
 func TestFailedCreatingCheckpointSchedulesPinnedTaskRetry(t *testing.T) {
-	testFailedCreatingCheckpointFailsAttemptAndClosesSource(t, checkpointFailureTestMode{retry: true})
+	testFailedCreatingCheckpointFailsAttemptAndClosesSource(t, true)
 }
 
-func TestFailedCreatingActorCheckpointSchedulesPinnedRetry(t *testing.T) {
-	testFailedCreatingCheckpointFailsAttemptAndClosesSource(t, checkpointFailureTestMode{actor: true, retry: true})
-}
-
-func TestFailedCreatingActorCheckpointExhaustionFailsActor(t *testing.T) {
-	testFailedCreatingCheckpointFailsAttemptAndClosesSource(t, checkpointFailureTestMode{actor: true})
-}
-
-func TestFailedCreatingActorCheckpointMaxDurationExpiresRun(t *testing.T) {
-	testFailedCreatingCheckpointFailsAttemptAndClosesSource(t, checkpointFailureTestMode{actor: true, maxDuration: true})
-}
-
-type checkpointFailureTestMode struct {
-	retry       bool
-	actor       bool
-	maxDuration bool
-}
-
-func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode checkpointFailureTestMode) {
+func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, retry bool) {
 	t.Helper()
 	ctx := context.Background()
 	fixture := newRunLeaseClaimFixture(t, ctx)
 	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
-	var actorID uuid.UUID
-	if mode.actor {
-		retryPolicy := `{"enabled":false}`
-		if mode.retry {
-			retryPolicy = `{"enabled":true,"maxAttempts":3,"backoff":{"minMs":1,"maxMs":1,"factor":1,"jitter":"none"}}`
-		}
-		actorID = fixture.base.ConvertToActor(
-			t,
-			ctx,
-			runtest.RunLease{LeaseID: work.leaseID, RunID: work.runID},
-			retryPolicy,
-		)
-	}
 	authority := startTaskCompletionWork(t, ctx, fixture, work)
 	tokenID := createTokenTerminalTestToken(t, ctx, fixture, time.Now().Add(time.Hour))
 	reconciler, err := NewWaitReconciler(fixture.pool)
@@ -384,9 +352,6 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 		t.Fatal(err)
 	}
 	registration := tokenWaitRegistrationRequest(t, ctx, fixture, work, tokenID, uuid.NewV7())
-	if mode.actor {
-		registration.ActorSpeculativeInputSequence = pgtype.Int8{Int64: 2, Valid: true}
-	}
 	registered, err := reconciler.RegisterWait(ctx, registration)
 	if err != nil {
 		t.Fatal(err)
@@ -454,23 +419,12 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if mode.actor {
-		if _, err := fixture.queries.CompleteActorAttempt(ctx, db.CompleteActorAttemptParams{
-			TerminalSessionInputSequence: pgtype.Int8{}, TerminalOutcome: pgvalue.Text("failed"),
-			ReasonCode: pgvalue.Text("checkpoint_failed"), Error: failureError,
-			CompletedAt: failedAt, RunID: pgvalue.UUID(work.runID), Number: int32(1),
-			WorkspaceID: pgvalue.UUID(authority.workspaceID),
-		}); err != nil {
-			t.Fatal(err)
-		}
-	} else {
-		if _, err := fixture.queries.CompleteTaskAttempt(ctx, db.CompleteTaskAttemptParams{
-			TerminalOutcome: pgvalue.Text("failed"), ReasonCode: pgvalue.Text("checkpoint_failed"), Error: failureError,
-			CompletedAt: failedAt, RunID: pgvalue.UUID(work.runID), Number: int32(1),
-			WorkspaceID: pgvalue.UUID(authority.workspaceID),
-		}); err != nil {
-			t.Fatal(err)
-		}
+	if _, err := fixture.queries.CompleteTaskAttempt(ctx, db.CompleteTaskAttemptParams{
+		TerminalOutcome: pgvalue.Text("failed"), ReasonCode: pgvalue.Text("checkpoint_failed"), Error: failureError,
+		CompletedAt: failedAt, RunID: pgvalue.UUID(work.runID), Number: int32(1),
+		WorkspaceID: pgvalue.UUID(authority.workspaceID),
+	}); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := fixture.queries.FailCheckpointRunWait(ctx, db.FailCheckpointRunWaitParams{
 		CheckpointRequestVersion: wait.CheckpointRequestVersion, FailedAt: failedAt, Error: failureError,
@@ -498,92 +452,37 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if mode.retry {
-		if mode.actor {
-			if _, err := fixture.queries.CreateActorCheckpointFailureRetryAttempt(ctx, db.CreateActorCheckpointFailureRetryAttemptParams{
-				Number: int32(1) + 1, ExpectedRunGeneration: 1,
-				RunID: pgvalue.UUID(work.runID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
-				PreviousAttemptNumber: int32(1), RunLeaseID: pgvalue.UUID(work.leaseID),
-			}); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := fixture.queries.DelayActorCheckpointFailureRetry(ctx, db.DelayActorCheckpointFailureRetryParams{
-				NextAttemptNumber: int32(1) + 1,
-				RetryAt:           pgvalue.Timestamptz(failedAt.Time.Add(time.Second)), FailedAt: failedAt,
-				ID: pgvalue.UUID(work.runID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
-				SessionID: pgvalue.UUID(actorID), PreviousAttemptNumber: int32(1),
-				RunLeaseID: pgvalue.UUID(work.leaseID),
-			}); err != nil {
-				t.Fatal(err)
-			}
-		} else {
-			if _, err := fixture.queries.CreateCheckpointFailureRetryAttempt(ctx, db.CreateCheckpointFailureRetryAttemptParams{
-				Number: int32(1) + 1, RunID: pgvalue.UUID(work.runID),
-				WorkspaceID: pgvalue.UUID(authority.workspaceID), PreviousAttemptNumber: int32(1),
-				RunLeaseID: pgvalue.UUID(work.leaseID),
-			}); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := fixture.queries.DelayCheckpointFailureRetry(ctx, db.DelayCheckpointFailureRetryParams{
-				NextAttemptNumber: int32(1) + 1,
-				RetryAt:           pgvalue.Timestamptz(failedAt.Time.Add(time.Second)), FailedAt: failedAt,
-				ID: pgvalue.UUID(work.runID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
-				PreviousAttemptNumber: int32(1), RunLeaseID: pgvalue.UUID(work.leaseID),
-			}); err != nil {
-				t.Fatal(err)
-			}
+	if retry {
+		if _, err := fixture.queries.CreateCheckpointFailureRetryAttempt(ctx, db.CreateCheckpointFailureRetryAttemptParams{
+			Number: int32(1) + 1, RunID: pgvalue.UUID(work.runID),
+			WorkspaceID: pgvalue.UUID(authority.workspaceID), PreviousAttemptNumber: int32(1),
+			RunLeaseID: pgvalue.UUID(work.leaseID),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fixture.queries.DelayCheckpointFailureRetry(ctx, db.DelayCheckpointFailureRetryParams{
+			NextAttemptNumber: int32(1) + 1,
+			RetryAt:           pgvalue.Timestamptz(failedAt.Time.Add(time.Second)), FailedAt: failedAt,
+			ID: pgvalue.UUID(work.runID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
+			PreviousAttemptNumber: int32(1), RunLeaseID: pgvalue.UUID(work.leaseID),
+		}); err != nil {
+			t.Fatal(err)
 		}
 	} else {
-		if mode.actor {
-			runStatus := db.RunStatusSystemFailed
-			reason := "checkpoint_failed"
-			actorStatus := "failed"
-			failureCode := pgvalue.Text("platform_failure")
-			failureRunID := pgvalue.UUID(work.runID)
-			if mode.maxDuration {
-				runStatus = db.RunStatusExpired
-				reason = "max_active_duration_exceeded"
-				failureCode = pgvalue.Text("run_expired")
-			}
-			if _, err := fixture.queries.FinishCheckpointFailedActorRun(ctx, db.FinishCheckpointFailedActorRunParams{
-				Status: runStatus, Failure: fmt.Appendf(nil, `{"code":%q,"message":"Checkpoint failed","details":{}}`, reason), FailedAt: failedAt,
-				ID: pgvalue.UUID(work.runID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
-				SessionID: pgvalue.UUID(actorID), AttemptNumber: int32(1),
-				RunLeaseID: pgvalue.UUID(work.leaseID),
-			}); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := fixture.queries.ReconcileActorTerminalRun(ctx, db.ReconcileActorTerminalRunParams{
-				Status: actorStatus, Failure: fmt.Appendf(nil, `{"code":%q,"message":"Session run failed","details":{"run_id":%q}}`, failureCode.String, work.runID.String()), FailureRunID: failureRunID, CompletedAt: failedAt,
-				EnvironmentID: pgvalue.UUID(fixture.environmentID), ID: pgvalue.UUID(actorID),
-				WorkspaceID: pgvalue.UUID(authority.workspaceID), RunID: pgvalue.UUID(work.runID),
-				ExpectedRunGeneration: 1,
-			}); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := fixture.queries.ReleaseActorWorkspaceOwner(ctx, db.ReleaseActorWorkspaceOwnerParams{
-				CompletedAt: failedAt, ID: pgvalue.UUID(authority.workspaceID),
-				EnvironmentID: pgvalue.UUID(fixture.environmentID),
-				SessionID:     pgvalue.UUID(actorID), OwnershipGeneration: 1, WriterGeneration: 1,
-			}); err != nil {
-				t.Fatal(err)
-			}
-		} else {
-			if _, err := fixture.queries.ReleaseTaskWorkspaceOwner(ctx, db.ReleaseTaskWorkspaceOwnerParams{
-				CompletedAt: failedAt, ID: pgvalue.UUID(authority.workspaceID), OrgID: pgvalue.UUID(fixture.orgID),
-				ProjectID: pgvalue.UUID(fixture.projectID), EnvironmentID: pgvalue.UUID(fixture.environmentID),
-				RunID: pgvalue.UUID(work.runID), OwnershipGeneration: 1, WriterGeneration: 1,
-				ExpectedHeadVersionID: pgvalue.UUID(authority.baseWorkspaceVersionID),
-			}); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := fixture.queries.FinishCheckpointFailedTaskRun(ctx, db.FinishCheckpointFailedTaskRunParams{
-				Status: db.RunStatusSystemFailed, Failure: []byte(`{"code":"checkpoint_failed","message":"Checkpoint failed","details":{}}`),
-				FailedAt: failedAt, ID: pgvalue.UUID(work.runID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
-				AttemptNumber: int32(1), RunLeaseID: pgvalue.UUID(work.leaseID),
-			}); err != nil {
-				t.Fatal(err)
-			}
+		if _, err := fixture.queries.ReleaseTaskWorkspaceOwner(ctx, db.ReleaseTaskWorkspaceOwnerParams{
+			CompletedAt: failedAt, ID: pgvalue.UUID(authority.workspaceID), OrgID: pgvalue.UUID(fixture.orgID),
+			ProjectID: pgvalue.UUID(fixture.projectID), EnvironmentID: pgvalue.UUID(fixture.environmentID),
+			RunID: pgvalue.UUID(work.runID), OwnershipGeneration: 1, WriterGeneration: 1,
+			ExpectedHeadVersionID: pgvalue.UUID(authority.baseWorkspaceVersionID),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fixture.queries.FinishCheckpointFailedTaskRun(ctx, db.FinishCheckpointFailedTaskRunParams{
+			Status: db.RunStatusSystemFailed, Failure: []byte(`{"code":"checkpoint_failed","message":"Checkpoint failed","details":{}}`),
+			FailedAt: failedAt, ID: pgvalue.UUID(work.runID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
+			AttemptNumber: int32(1), RunLeaseID: pgvalue.UUID(work.leaseID),
+		}); err != nil {
+			t.Fatal(err)
 		}
 	}
 	replay, err := fixture.queries.GetCheckpointFailedReplay(ctx, pgvalue.UUID(checkpointID))
@@ -633,68 +532,21 @@ SELECT runs.status, run_leases.status, run_waits.condition_status, run_waits.sus
 		t.Fatal(err)
 	}
 	expectedStatus := db.RunStatusSystemFailed
-	if mode.retry {
+	if retry {
 		expectedStatus = db.RunStatusRetryDelayed
-	} else if mode.maxDuration {
-		expectedStatus = db.RunStatusExpired
 	}
 	if runStatus != expectedStatus || leaseStatus != db.RunLeaseStatusFailed || condition != db.WaitStatusCancelled ||
 		suspension != db.RunWaitStatusFailed || checkpointStatus != db.RunCheckpointStatusInvalid ||
 		!attemptOutcome.Valid || attemptOutcome.String != "failed" || workspaceLeaseStatus != db.WorkspaceLeaseStatusReleased ||
 		runtimeDesired != db.RuntimeDesiredStateClosed || mountStatus != db.WorkspaceMountStatusUnmounting ||
 		currentLeaseID.Valid || activeStartedAt.Valid ||
-		(mode.retry && (currentAttemptNumber != 2 || !retryAt.Valid || nextAttemptCount != 1)) ||
-		(!mode.retry && (currentAttemptNumber != 1 || retryAt.Valid || nextAttemptCount != 0)) ||
-		(!mode.actor && mode.retry && !ownerRunID.Valid) || (!mode.actor && !mode.retry && ownerRunID.Valid) {
-		t.Fatalf("failed checkpoint state = mode=%+v run=%s lease=%s condition=%s suspension=%s checkpoint=%s attempt=%v workspace_lease=%s runtime=%s mount=%s owner=%v current_lease=%v active=%v current_attempt=%d retry_at=%v next_attempts=%d",
-			mode,
+		(retry && (currentAttemptNumber != 2 || !retryAt.Valid || nextAttemptCount != 1)) ||
+		(!retry && (currentAttemptNumber != 1 || retryAt.Valid || nextAttemptCount != 0)) ||
+		(retry && !ownerRunID.Valid) || (!retry && ownerRunID.Valid) {
+		t.Fatalf("failed checkpoint state = retry=%t run=%s lease=%s condition=%s suspension=%s checkpoint=%s attempt=%v workspace_lease=%s runtime=%s mount=%s owner=%v current_lease=%v active=%v current_attempt=%d retry_at=%v next_attempts=%d",
+			retry,
 			runStatus, leaseStatus, condition, suspension, checkpointStatus, attemptOutcome, workspaceLeaseStatus,
 			runtimeDesired, mountStatus, ownerRunID, currentLeaseID, activeStartedAt, currentAttemptNumber, retryAt, nextAttemptCount)
-	}
-	if mode.actor {
-		var actorStatus string
-		var actorCurrentRunID, failureRunID, ownerSessionID pgtype.UUID
-		var failureCode pgtype.Text
-		var runGeneration int64
-		var nextStart, nextHigh pgtype.Int8
-		var nextBase, workspaceHead pgtype.UUID
-		if err := fixture.pool.QueryRow(ctx, `
-SELECT sessions.status, sessions.current_run_id, sessions.run_generation,
-	   sessions.failure->>'code', sessions.failure_run_id, workspaces.owner_session_id,
-       next_attempt.session_input_start_sequence, runs.session_input_high_watermark,
-       next_attempt.base_workspace_version_id, workspaces.head_version_id
-  FROM sessions
-  JOIN workspaces ON workspaces.id = sessions.workspace_id
-  JOIN runs ON runs.id = $2 AND runs.session_id = sessions.id
-  LEFT JOIN run_attempts AS next_attempt
-    ON next_attempt.run_id = $2 AND next_attempt.number = 2
- WHERE sessions.id = $1`, actorID, work.runID).Scan(
-			&actorStatus, &actorCurrentRunID, &runGeneration, &failureCode, &failureRunID, &ownerSessionID,
-			&nextStart, &nextHigh, &nextBase, &workspaceHead,
-		); err != nil {
-			t.Fatal(err)
-		}
-		if mode.retry {
-			if actorStatus != "open" || actorCurrentRunID != pgvalue.UUID(work.runID) || runGeneration != 1 ||
-				failureCode.Valid || failureRunID.Valid || ownerSessionID != pgvalue.UUID(actorID) ||
-				!nextStart.Valid || nextStart.Int64 != 1 || !nextHigh.Valid || nextHigh.Int64 != 2 || nextBase != workspaceHead {
-				t.Fatalf("Actor retry state = state=%s current=%v generation=%d failure=%v/%v owner=%v next=%v/%v base=%v head=%v",
-					actorStatus, actorCurrentRunID, runGeneration, failureCode, failureRunID, ownerSessionID,
-					nextStart, nextHigh, nextBase, workspaceHead)
-			}
-		} else {
-			wantState := "failed"
-			wantFailure := "platform_failure"
-			if mode.maxDuration {
-				wantFailure = "run_expired"
-			}
-			if actorStatus != wantState || actorCurrentRunID.Valid || runGeneration != 2 || ownerSessionID.Valid ||
-				failureCode.String != wantFailure || failureCode.Valid != (wantFailure != "") ||
-				failureRunID.Valid != (wantFailure != "") {
-				t.Fatalf("terminal Actor state = state=%s current=%v generation=%d failure=%v/%v owner=%v",
-					actorStatus, actorCurrentRunID, runGeneration, failureCode, failureRunID, ownerSessionID)
-			}
-		}
 	}
 }
 

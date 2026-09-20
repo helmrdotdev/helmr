@@ -2,226 +2,116 @@ package controlplane
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
-	"net/http"
-	"strings"
-	"uuid"
-
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"net/http"
 )
 
-var errStaleActorInputSend = errors.New("actor input send source authority is stale")
-
-type parsedWorkerActorInputSend struct {
-	lease           parsedRunLeaseFence
-	correlationID   uuid.UUID
-	idempotencyKey  string
-	targetSessionID uuid.UUID
-}
-
-func (s *Server) workerSendActorInput(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("run storage is not configured")))
-		return
+// Lock both source and addressed Session in UUID order before physical Run
+// authority. Reciprocal Actor sends must not invert Session -> Run lock order.
+func authorizeWorkerSessionOperation(ctx context.Context, q db.Querier, worker workerActor, lease workerapi.RunLeaseFence, targetID pgtype.UUID) (workerRunSourceAuthority, error) {
+	parsed, err := parseRunLeaseFence(lease)
+	if err != nil {
+		return workerRunSourceAuthority{}, err
 	}
-	var request workerapi.SendActorInputRequest
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
-		if errors.Is(err, io.EOF) {
-			err = errors.New("request body is required")
+	loc, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch})
+	if err != nil {
+		return workerRunSourceAuthority{}, staleWorkerRunSource(err)
+	}
+	if _, err = secret.LockAttemptDelivery(ctx, q, loc.RunID, loc.AttemptNumber, loc.WorkspaceID); err != nil {
+		return workerRunSourceAuthority{}, err
+	}
+	actors, err := q.LockWorkerSessionOperationActors(ctx, db.LockWorkerSessionOperationActorsParams{EnvironmentID: loc.EnvironmentID, TargetSessionID: targetID, SourceWorkspaceID: loc.WorkspaceID})
+	if err != nil {
+		return workerRunSourceAuthority{}, err
+	}
+	for _, actor := range actors {
+		if actor.WorkspaceID != loc.WorkspaceID {
+			continue
 		}
-		writeError(w, badRequest(fmt.Errorf("invalid actor input send JSON: %w", err)))
+		if actor.DispatchHoldID.Valid {
+			return workerRunSourceAuthority{}, &session.OperationError{Code: "session_held"}
+		}
+		if actor.ActiveTurnID.Valid {
+			turn, err := q.GetSessionTurn(ctx, db.GetSessionTurnParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ID: actor.ActiveTurnID})
+			if err != nil {
+				return workerRunSourceAuthority{}, err
+			}
+			if turn.SettlementStartedAt.Valid {
+				return workerRunSourceAuthority{}, &session.OperationError{Code: "turn_unsettled"}
+			}
+		}
+	}
+	return authorizeWorkerRunSource(ctx, q, worker, lease)
+}
+func (s *Server) workerSendSession(w http.ResponseWriter, r *http.Request) {
+	s.workerAdmitSession(w, r, session.SendMessageOrEnqueue)
+}
+func (s *Server) workerEnqueueSession(w http.ResponseWriter, r *http.Request) {
+	s.workerAdmitSession(w, r, session.EnqueueOnly)
+}
+func (s *Server) workerSendTurnMessage(w http.ResponseWriter, r *http.Request) {
+	s.workerAdmitSession(w, r, session.ExactMessage)
+}
+func (s *Server) workerAdmitSession(w http.ResponseWriter, r *http.Request, mode session.AdmissionMode) {
+	var request workerapi.SubmitSessionDataRequest
+	if err := decodeWorkerActorRequest(r, &request, "Session submission"); err != nil {
+		writeError(w, badRequest(err))
 		return
 	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		writeError(w, badRequest(errors.New("invalid actor input send JSON: trailing value")))
-		return
-	}
-	parsed, err := parseWorkerActorInputSend(request)
+	targetID, err := ids.Parse(request.SessionID)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	worker := workerFromContext(r.Context())
-
-	source, err := s.db.GetActorInputSendSource(r.Context(), actorInputSendSourceParams(request, parsed, worker))
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, conflict(errStaleActorInputSend))
+	if err = api.ValidateSessionDataRequest(api.SessionDataRequest{Data: request.Data, IdempotencyKey: request.IdempotencyKey}); err != nil {
+		writeError(w, badRequest(err))
 		return
 	}
-	if err != nil {
-		s.log.Error("load Actor input send source", "run_lease_id", request.Lease.ID, "error", err)
-		writeError(w, errors.New("load actor input send source"))
-		return
-	}
-	target, err := s.db.GetActor(r.Context(), db.GetActorParams{
-		EnvironmentID: source.EnvironmentID, ID: pgvalue.UUID(parsed.targetSessionID),
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		if err := s.inTx(r.Context(), func(work *txWork) error {
-			return authorizeActorInputSendSource(
-				r.Context(), work.q, worker, request, source.EnvironmentID,
-			)
-		}); err != nil {
-			if writeStaleWorkerClaims(w, err) {
-				return
-			}
-			if errors.Is(err, errStaleActorInputSend) {
-				writeError(w, conflict(errStaleActorInputSend))
-				return
-			}
-			s.log.Error("authorize unresolved Actor input send", "run_lease_id", request.Lease.ID, "error", err)
-			writeError(w, errors.New("authorize actor input send"))
+	command := session.AdmissionRequest{Mode: mode, Data: request.Data, IdempotencyKey: request.IdempotencyKey}
+	if mode == session.ExactMessage {
+		if request.TurnID == nil {
+			writeError(w, badRequest(errors.New("turn_id is required")))
 			return
 		}
-		writeJSON(w, http.StatusOK, failedActorInputSend(
-			request.CorrelationID, "actor_not_found", "Actor was not found", false,
-		))
-		return
-	}
-	if err != nil {
-		s.log.Error("resolve Actor input send target", "run_lease_id", request.Lease.ID, "error", err)
-		writeError(w, errors.New("resolve actor input send target"))
-		return
-	}
-	record, err := s.appendActorInput(r.Context(), appendActorInputRequest{
-		EnvironmentID:  pgvalue.MustUUIDValue(source.EnvironmentID),
-		SessionID:      pgvalue.MustUUIDValue(target.ID),
-		RecordID:       uuid.NewV7(),
-		Data:           request.Input,
-		SourceRunID:    pgvalue.MustUUIDValue(source.RunID),
-		IdempotencyKey: parsed.idempotencyKey,
-		Authorize: func(ctx context.Context, q db.Querier) error {
-			return authorizeActorInputSendSource(ctx, q, worker, request, source.EnvironmentID)
-		},
-	})
-	if err != nil {
-		if failure, ok := actorInputSendFailure(err); ok {
-			writeJSON(w, http.StatusOK, failedActorInputSend(
-				request.CorrelationID, failure.Code, failure.Message, failure.Retryable,
-			))
-			return
-		}
-		if writeStaleWorkerClaims(w, err) {
-			return
-		}
-		if errors.Is(err, errStaleActorInputSend) {
-			writeError(w, conflict(errStaleActorInputSend))
-			return
-		}
-		s.log.Error("append run-sourced Actor input", "run_lease_id", request.Lease.ID, "error", err)
-		writeError(w, errors.New("append run-sourced actor input"))
-		return
-	}
-	completed, err := projectSessionInput(record)
-	if err != nil {
-		writeError(w, errors.New("project run-sourced session input"))
-		return
-	}
-	writeJSON(w, http.StatusOK, workerapi.SendActorInputResponse{
-		CorrelationID: request.CorrelationID,
-		Completed:     &completed,
-	})
-}
-
-func parseWorkerActorInputSend(request workerapi.SendActorInputRequest) (parsedWorkerActorInputSend, error) {
-	lease, err := parseRunLeaseFence(request.Lease)
-	if err != nil {
-		return parsedWorkerActorInputSend{}, err
-	}
-	correlationID, err := parseCanonicalUUID("correlation_id", request.CorrelationID)
-	if err != nil {
-		return parsedWorkerActorInputSend{}, err
-	}
-	targetSessionID, err := ids.Parse(request.SessionID)
-	if err != nil {
-		return parsedWorkerActorInputSend{}, err
-	}
-	if err := api.ValidateSendSessionInputRequest(api.SendSessionInputRequest{
-		Input: request.Input, IdempotencyKey: request.IdempotencyKey,
-	}); err != nil {
-		return parsedWorkerActorInputSend{}, err
-	}
-	idempotencyKey, err := normalizeIdempotencyKey(request.IdempotencyKey)
-	if err != nil {
-		return parsedWorkerActorInputSend{}, err
-	}
-	return parsedWorkerActorInputSend{
-		lease: lease, correlationID: correlationID, idempotencyKey: idempotencyKey,
-		targetSessionID: targetSessionID,
-	}, nil
-}
-
-func actorInputSendSourceParams(
-	request workerapi.SendActorInputRequest,
-	parsed parsedWorkerActorInputSend,
-	worker workerActor,
-) db.GetActorInputSendSourceParams {
-	return db.GetActorInputSendSourceParams{
-		ID: pgvalue.UUID(parsed.lease.leaseID), LeaseSequence: request.Lease.LeaseSequence,
-		WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-		WorkerEpoch: worker.WorkerEpoch}
-}
-
-func authorizeActorInputSendSource(
-	ctx context.Context,
-	q db.Querier,
-	worker workerActor,
-	request workerapi.SendActorInputRequest,
-	environmentID pgtype.UUID,
-) error {
-	authority, err := authorizeWorkerRunSource(ctx, q, worker, request.Lease)
-	if err != nil || authority.EnvironmentID != environmentID {
+		command.TurnID, err = ids.Parse(*request.TurnID)
 		if err != nil {
-			return fmt.Errorf("%w: %w", errStaleActorInputSend, err)
+			writeError(w, badRequest(err))
+			return
 		}
-		return errStaleActorInputSend
+	} else if request.TurnID != nil {
+		writeError(w, badRequest(errors.New("turn_id is not accepted on Session admission")))
+		return
 	}
-	return nil
-}
-
-func actorInputSendFailure(err error) (workerapi.RuntimeOperationFailure, bool) {
-	var conflictError idempotency.ConflictError
-	switch {
-	case errors.As(err, &conflictError):
-		return workerapi.RuntimeOperationFailure{
-			Code: "idempotency_conflict", Message: "idempotency key conflicts with an earlier Actor input",
-		}, true
-	case errors.Is(err, errActorInputTooLarge):
-		return workerapi.RuntimeOperationFailure{Code: "actor_input_too_large", Message: err.Error()}, true
-	case errors.Is(err, errActorSequenceExhausted):
-		return workerapi.RuntimeOperationFailure{Code: "actor_sequence_exhausted", Message: err.Error()}, true
-	case errors.Is(err, errActorInputUnavailable):
-		return workerapi.RuntimeOperationFailure{Code: "actor_not_open", Message: "Actor does not accept new input"}, true
-	case errors.Is(err, errActorInputAppendConflict):
-		return workerapi.RuntimeOperationFailure{Code: "actor_input_conflict", Message: err.Error()}, true
-	default:
-		return workerapi.RuntimeOperationFailure{}, false
+	var receipt session.AdmissionReceipt
+	err = s.inTx(r.Context(), func(work *txWork) error {
+		source, err := authorizeWorkerSessionOperation(r.Context(), work.q, workerFromContext(r.Context()), request.Lease, pgvalue.UUID(targetID))
+		if err != nil {
+			return err
+		}
+		command.Target = session.Target{EnvironmentID: pgvalue.MustUUIDValue(source.EnvironmentID), SessionID: targetID}
+		command.SourceRunID = pgvalue.MustUUIDValue(source.RunID)
+		receipt, err = session.Admit(r.Context(), work.q, command)
+		return err
+	})
+	if err == nil && receipt.Code != "" {
+		err = &session.OperationError{Code: receipt.Code}
 	}
-}
-
-func failedActorInputSend(
-	correlationID string,
-	code string,
-	message string,
-	retryable bool,
-) workerapi.SendActorInputResponse {
-	return workerapi.SendActorInputResponse{
-		CorrelationID: correlationID,
-		Failed: &workerapi.RuntimeOperationFailure{
-			Code: strings.TrimSpace(code), Message: strings.TrimSpace(message), Retryable: retryable,
-		},
+	if err != nil {
+		s.writeWorkerSessionCommand(w, request.CorrelationID, err)
+		return
 	}
+	response := api.SessionAdmissionReceipt{ID: receipt.ID.String(), Kind: receipt.Kind, TurnID: receipt.TurnID.String()}
+	if receipt.MessageID != nil {
+		id := receipt.MessageID.String()
+		response.MessageID = &id
+	}
+	writeJSON(w, http.StatusOK, workerapi.SubmitSessionDataResponse{CorrelationID: request.CorrelationID, Completed: &response})
 }

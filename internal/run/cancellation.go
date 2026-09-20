@@ -27,13 +27,15 @@ type CancellationDB interface {
 }
 
 type CancellationRequest struct {
-	OrgID         uuid.UUID
-	ProjectID     uuid.UUID
-	EnvironmentID uuid.UUID
-	RunID         uuid.UUID
+	IdempotencyKey string
+	OrgID          uuid.UUID
+	ProjectID      uuid.UUID
+	EnvironmentID  uuid.UUID
+	RunID          uuid.UUID
 }
 
 type CancellationResult struct {
+	Actor         *ActorCancellationReceipt
 	RunID         uuid.UUID
 	Changed       bool
 	CancelledRuns int
@@ -83,60 +85,55 @@ type terminalChildWaitResolution struct {
 }
 
 type termination struct {
-	reasonCode        string
-	errorCode         string
-	errorMessage      string
-	runStatus         db.RunStatus
-	runLeaseStatus    db.RunLeaseStatus
-	attemptOutcome    string
-	waitCondition     db.WaitStatus
-	waitSuspension    db.RunWaitStatus
-	eventKind         string
-	eventMessage      string
-	actorFailureCode  string
-	actorCancellation bool
+	reasonCode     string
+	errorCode      string
+	errorMessage   string
+	runStatus      db.RunStatus
+	runLeaseStatus db.RunLeaseStatus
+	attemptOutcome string
+	waitCondition  db.WaitStatus
+	waitSuspension db.RunWaitStatus
+	eventKind      string
+	eventMessage   string
 }
 
 var cancelledTermination = termination{
-	reasonCode:        "run_cancelled",
-	errorCode:         "run_cancelled",
-	errorMessage:      "Run was cancelled",
-	runStatus:         db.RunStatusCancelled,
-	runLeaseStatus:    db.RunLeaseStatusCancelled,
-	attemptOutcome:    "cancelled",
-	waitCondition:     db.WaitStatusCancelled,
-	waitSuspension:    db.RunWaitStatusCancelled,
-	eventKind:         "run.cancelled",
-	eventMessage:      "Run cancelled",
-	actorCancellation: true,
+	reasonCode:     "run_cancelled",
+	errorCode:      "run_cancelled",
+	errorMessage:   "Run was cancelled",
+	runStatus:      db.RunStatusCancelled,
+	runLeaseStatus: db.RunLeaseStatusCancelled,
+	attemptOutcome: "cancelled",
+	waitCondition:  db.WaitStatusCancelled,
+	waitSuspension: db.RunWaitStatusCancelled,
+	eventKind:      "run.cancelled",
+	eventMessage:   "Run cancelled",
 }
 
 var secretRevokedTermination = termination{
-	reasonCode:       "secret_revoked",
-	errorCode:        "secret_revoked",
-	errorMessage:     "A Workspace Secret used by this Run was revoked",
-	runStatus:        db.RunStatusFailed,
-	runLeaseStatus:   db.RunLeaseStatusFailed,
-	attemptOutcome:   "failed",
-	waitCondition:    db.WaitStatusFailed,
-	waitSuspension:   db.RunWaitStatusFailed,
-	eventKind:        "run.failed",
-	eventMessage:     "Run failed",
-	actorFailureCode: "run_failed",
+	reasonCode:     "secret_revoked",
+	errorCode:      "secret_revoked",
+	errorMessage:   "A Workspace Secret used by this Run was revoked",
+	runStatus:      db.RunStatusFailed,
+	runLeaseStatus: db.RunLeaseStatusFailed,
+	attemptOutcome: "failed",
+	waitCondition:  db.WaitStatusFailed,
+	waitSuspension: db.RunWaitStatusFailed,
+	eventKind:      "run.failed",
+	eventMessage:   "Run failed",
 }
 
 var runtimePreparationTermination = termination{
-	reasonCode:       "runtime_preparation_failed",
-	errorCode:        "runtime_preparation_failed",
-	errorMessage:     "Run runtime preparation failed",
-	runStatus:        db.RunStatusSystemFailed,
-	runLeaseStatus:   db.RunLeaseStatusFailed,
-	attemptOutcome:   "failed",
-	waitCondition:    db.WaitStatusFailed,
-	waitSuspension:   db.RunWaitStatusFailed,
-	eventKind:        "run.system_failed",
-	eventMessage:     "Run runtime preparation failed",
-	actorFailureCode: "platform_failure",
+	reasonCode:     "runtime_preparation_failed",
+	errorCode:      "runtime_preparation_failed",
+	errorMessage:   "Run runtime preparation failed",
+	runStatus:      db.RunStatusSystemFailed,
+	runLeaseStatus: db.RunLeaseStatusFailed,
+	attemptOutcome: "failed",
+	waitCondition:  db.WaitStatusFailed,
+	waitSuspension: db.RunWaitStatusFailed,
+	eventKind:      "run.system_failed",
+	eventMessage:   "Run runtime preparation failed",
 }
 
 func NewCanceler(database CancellationDB) (*Canceler, error) {
@@ -488,6 +485,33 @@ func (c *Canceler) Cancel(
 	}
 	if err != nil {
 		return CancellationResult{}, cancellationAuthority("resolve target run", err)
+	}
+	targetRun, err := db.New(tx).GetRun(ctx, db.GetRunParams{EnvironmentID: pgvalue.UUID(request.EnvironmentID), ID: pgvalue.UUID(targetID)})
+	if err != nil {
+		return CancellationResult{}, err
+	}
+	if targetRun.SessionID.Valid {
+		// Acquire the owned graph before Session admission/claim mutation. A
+		// no-worker stop can then retire it without expanding the lock set.
+		graph, err := LockOwnedFinalization(ctx, tx, OwnedFinalizationRequest{
+			OrgID: request.OrgID, ProjectID: request.ProjectID,
+			EnvironmentID: request.EnvironmentID, RunID: targetID,
+		})
+		if err != nil {
+			return CancellationResult{}, err
+		}
+		receipt, err := acceptActorRunCancellation(ctx, tx, request, targetRun, graph)
+		if err != nil {
+			return CancellationResult{}, err
+		}
+		if err = tx.Commit(ctx); err != nil {
+			return CancellationResult{}, err
+		}
+		result := CancellationResult{RunID: targetID, Actor: &receipt, Changed: receipt.Status == "accepted"}
+		if receipt.Code != "" {
+			return result, &CancellationRejectionError{Code: receipt.Code}
+		}
+		return result, nil
 	}
 	lineage, err := cancellationLineage(ctx, tx, targetID)
 	if err != nil {
@@ -988,37 +1012,20 @@ func terminateLockedRun(
 	}
 	queries := db.New(tx)
 	if run.actorID.Valid {
-		var affected int64
-		if termination.actorCancellation {
-			affected, err = queries.DetachActorFromCancelledRun(
-				ctx,
-				db.DetachActorFromCancelledRunParams{
-					SessionID:   run.actorID,
-					WorkspaceID: pgvalue.UUID(run.workspaceID),
-					RunID:       pgvalue.UUID(run.id),
-				},
-			)
-		} else {
-			sessionFailure, marshalErr := MarshalFailure(
-				termination.actorFailureCode,
-				"Session failed because its Run terminated",
-				map[string]any{"run_id": run.id.String()},
-			)
-			if marshalErr != nil {
-				return marshalErr
-			}
-			affected, err = queries.FailActorForRunTermination(
-				ctx,
-				db.FailActorForRunTerminationParams{
-					Failure:     sessionFailure,
-					RunID:       pgvalue.UUID(run.id),
-					SessionID:   run.actorID,
-					WorkspaceID: pgvalue.UUID(run.workspaceID),
-				},
-			)
+		actor, err := queries.LockSessionTurnAuthority(ctx, db.LockSessionTurnAuthorityParams{EnvironmentID: pgvalue.UUID(run.environmentID), ID: run.actorID})
+		if err != nil {
+			return err
 		}
-		if err != nil || affected != 1 {
-			return cancellationAuthority("terminalize owning actor", err)
+		if actor.CurrentRunID != pgvalue.UUID(run.id) {
+			return cancellationAuthority("stale Actor termination", nil)
+		}
+		// Explicit cancellation already has a durable stop hold. Keep its
+		// receipt address while retiring the execution; loss/failure establishes
+		// a new recovery hold because the reason and execution certainty changed.
+		if termination.runStatus != db.RunStatusCancelled || !actor.DispatchHoldID.Valid {
+			if _, err := HoldSessionExecution(ctx, queries, actor, run.currentAttemptNumber, "recovery_required"); err != nil {
+				return err
+			}
 		}
 	}
 	if err := queries.TerminalizeRunSuspensions(
@@ -1116,17 +1123,8 @@ func terminateLockedRun(
 		); err != nil {
 			return cancellationAuthority("release terminal task workspace", err)
 		}
-	} else if !termination.actorCancellation {
-		if err := queries.ReleaseActorWorkspace(
-			ctx,
-			db.ReleaseActorWorkspaceParams{
-				WorkspaceID: pgvalue.UUID(run.workspaceID),
-				SessionID:   run.actorID,
-			},
-		); err != nil {
-			return cancellationAuthority("release terminal actor workspace", err)
-		}
 	}
+
 	if err := queries.RecordRunTerminalEvent(
 		ctx,
 		db.RecordRunTerminalEventParams{

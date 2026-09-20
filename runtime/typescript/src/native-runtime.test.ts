@@ -23,7 +23,7 @@ for (const kind of ["task", "actor"] as const) {
       cause: { kind: kind === "task" ? { case: "api", value: {} } : { case: "actorStart", value: {} } },
       deploymentId: "deployment-1", deploymentVersion: "v1",
       workspaceId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30", baseWorkspaceVersionId: "version-1",
-      entrypoint: kind === "task" ? { case: "task", value: { payload: { case: "noPayload", value: {} } } } : { case: "actor", value: { sessionId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33", startInputSequence: 0n, inputHighWatermark: 0n } },
+      entrypoint: kind === "task" ? { case: "task", value: { payload: { case: "noPayload", value: {} } } } : { case: "actor", value: { sessionId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33", startInputSequence: 0n, inputHighWatermark: 0n, runGeneration: 1n } },
     })
     const release = create(p.EntrypointReleaseSchema, { runId: start.runId, attemptNumber: start.attemptNumber, entrypoint: { declaredId, kind: kind === "task" ? { case: "task", value: {} } : { case: "actor", value: {} } } })
     const child = spawn(process.execPath, [...flags, "/opt/helmr/runtime/helmr/entry.mjs"], { stdio: ["pipe", "pipe", "pipe", "pipe"], env: { PATH: process.env["PATH"] } })
@@ -31,7 +31,7 @@ for (const kind of ["task", "actor"] as const) {
     const output: Buffer[] = [], errors: Buffer[] = []
     control.on("data", chunk => output.push(Buffer.from(chunk)))
     child.stderr.on("data", chunk => errors.push(Buffer.from(chunk)))
-    child.stdin.end(Buffer.concat([frame(toBinary(p.ProgramStartSchema, start)), frame(toBinary(p.EntrypointReleaseSchema, release))]))
+    child.stdin.write(Buffer.concat([frame(toBinary(p.ProgramStartSchema, start)), frame(toBinary(p.EntrypointReleaseSchema, release))]))
     const [code, signal] = await once(child, "close")
     assert.equal(code, 0, Buffer.concat(errors).toString()); assert.equal(signal, null)
     const data = Buffer.concat(output), events = []

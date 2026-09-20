@@ -299,7 +299,7 @@ func (e Executor) renewRunLease(
 
 func runFinalizationKind(result RunLeaseTaskResult) workerapi.RunFinalizationKind {
 	if result.ActorOutcome != nil {
-		if result.ActorOutcome.Succeeded != nil {
+		if result.ActorOutcome.Succeeded != nil || result.ActorOutcome.Interrupted != nil {
 			return workerapi.RunFinalizationCapture
 		}
 		return workerapi.RunFinalizationReset

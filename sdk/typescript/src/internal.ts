@@ -47,9 +47,12 @@ export { resourceID } from "./internal/id"
 export { createRunHandle, runHandleID } from "./internal/run-handle"
 export {
   parseSession,
-  parseSessionInputRecord,
-  parseSessionOutputRecord,
+  parseTurnState, parseTurnSource, parseSessionAdmissionReceipt, parseSessionMessageReceipt,
+  parseSessionCloseReceipt, parseTurnInterruptReceipt, parseSessionResumeReceipt,
+  parseSessionRecoveryReceipt, parseSessionEvent, parseSessionEventPage, parseOutputReceipt,
 } from "./internal/session"
 export { trimGoSpace } from "./internal/strings"
 export { timestampString } from "./internal/timestamp"
 export { validateQueueName } from "./schema/task"
+
+export { MessageRejected, createRuntimeSessionRef, sessionOperationOptions } from "./session"

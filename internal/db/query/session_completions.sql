@@ -20,10 +20,13 @@ SELECT run_leases.terminal_request_fingerprint
         AND run_attempts.terminal_outcome = 'succeeded'
         AND run_attempts.terminal_reason_code = 'completed')
        OR
+       (run_leases.status = 'cancelled' AND run_leases.terminal_reason_code = 'session_interrupted'
+        AND run_attempts.terminal_outcome = 'cancelled' AND run_attempts.terminal_reason_code = 'session_interrupted')
+       OR
        (run_leases.status = 'failed'
-        AND run_leases.terminal_reason_code = 'actor_failed'
+        AND run_leases.terminal_reason_code IN ('actor_failed', 'no_progress')
         AND run_attempts.terminal_outcome = 'failed'
-        AND run_attempts.terminal_reason_code = 'actor_failed')
+        AND run_attempts.terminal_reason_code = run_leases.terminal_reason_code)
    );
 
 -- name: CompleteActorAttempt :one
@@ -65,105 +68,6 @@ UPDATE workspaces
    AND workspaces.desired_state = 'active'
    AND workspaces.dirty_state = 'clean'
 RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.revision, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.status, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at;
-
--- name: CreateActorRetryAttempt :one
-INSERT INTO run_attempts (
-    run_id, number, entrypoint_kind, workspace_id,
-    session_input_start_sequence, base_workspace_version_id
-)
-SELECT runs.id,
-       sqlc.arg(number),
-       'actor',
-       runs.workspace_id,
-       sessions.committed_input_sequence,
-       workspaces.head_version_id
-  FROM runs
-  JOIN sessions
-    ON sessions.id = runs.session_id
-   AND sessions.workspace_id = runs.workspace_id
-   AND sessions.current_run_id = runs.id
-   AND sessions.run_generation = sqlc.arg(expected_run_generation)
-   AND sessions.status IN ('open', 'closing')
-  JOIN workspaces
-    ON workspaces.id = runs.workspace_id
-   AND workspaces.owner_session_id = sessions.id
-   AND workspaces.owner_run_id IS NULL
-   AND workspaces.head_version_id IS NOT NULL
- WHERE runs.id = sqlc.arg(run_id)
-   AND runs.workspace_id = sqlc.arg(workspace_id)
-   AND runs.entrypoint_kind = 'actor'
-   AND runs.current_attempt_number = sqlc.arg(previous_attempt_number)
-   AND runs.current_run_lease_id = sqlc.arg(run_lease_id)
-   AND runs.status = 'running'
-RETURNING *;
-
--- name: DelayActorRunRetry :one
-UPDATE runs
-   SET status = 'retry_delayed',
-       revision = revision + 1,
-       current_attempt_number = sqlc.arg(next_attempt_number),
-       current_run_lease_id = NULL,
-       retry_at = sqlc.arg(retry_at),
-       updated_at = sqlc.arg(completed_at)
- WHERE id = sqlc.arg(id)
-   AND workspace_id = sqlc.arg(workspace_id)
-   AND entrypoint_kind = 'actor'
-   AND session_id = sqlc.arg(session_id)
-   AND status = 'running'
-   AND current_attempt_number = sqlc.arg(previous_attempt_number)
-   AND current_run_lease_id = sqlc.arg(run_lease_id)
-   AND active_started_at IS NULL
-RETURNING *;
-
--- name: CreateActorCheckpointFailureRetryAttempt :one
-INSERT INTO run_attempts (
-    run_id, number, entrypoint_kind, workspace_id,
-    session_input_start_sequence, base_workspace_version_id
-)
-SELECT runs.id,
-       sqlc.arg(number),
-       'actor',
-       runs.workspace_id,
-       sessions.committed_input_sequence,
-       workspaces.head_version_id
-  FROM runs
-  JOIN sessions
-    ON sessions.id = runs.session_id
-   AND sessions.workspace_id = runs.workspace_id
-   AND sessions.current_run_id = runs.id
-   AND sessions.run_generation = sqlc.arg(expected_run_generation)
-   AND sessions.status IN ('open', 'closing')
-  JOIN workspaces
-    ON workspaces.id = runs.workspace_id
-   AND workspaces.owner_session_id = sessions.id
-   AND workspaces.owner_run_id IS NULL
-   AND workspaces.head_version_id IS NOT NULL
- WHERE runs.id = sqlc.arg(run_id)
-   AND runs.workspace_id = sqlc.arg(workspace_id)
-   AND runs.entrypoint_kind = 'actor'
-   AND runs.current_attempt_number = sqlc.arg(previous_attempt_number)
-   AND runs.current_run_lease_id = sqlc.arg(run_lease_id)
-   AND runs.status = 'waiting'
-   AND runs.active_started_at IS NULL
-RETURNING *;
-
--- name: DelayActorCheckpointFailureRetry :one
-UPDATE runs
-   SET status = 'retry_delayed',
-       revision = revision + 1,
-       current_attempt_number = sqlc.arg(next_attempt_number),
-       current_run_lease_id = NULL,
-       retry_at = sqlc.arg(retry_at),
-       updated_at = sqlc.arg(failed_at)
- WHERE id = sqlc.arg(id)
-   AND workspace_id = sqlc.arg(workspace_id)
-   AND entrypoint_kind = 'actor'
-   AND session_id = sqlc.arg(session_id)
-   AND status = 'waiting'
-   AND current_attempt_number = sqlc.arg(previous_attempt_number)
-   AND current_run_lease_id = sqlc.arg(run_lease_id)
-   AND active_started_at IS NULL
-RETURNING *;
 
 -- name: FinishCheckpointFailedActorRun :one
 UPDATE runs
@@ -217,11 +121,7 @@ UPDATE sessions
        current_run_id = NULL,
        run_generation = run_generation + 1,
        revision = revision + 1,
-       committed_input_sequence = COALESCE(sqlc.narg(committed_input_sequence), committed_input_sequence),
-       failure = sqlc.narg(failure),
-       failure_run_id = sqlc.narg(failure_run_id),
        closed_at = CASE WHEN sqlc.arg(status)::text = 'closed' THEN sqlc.arg(completed_at) ELSE closed_at END,
-       failed_at = CASE WHEN sqlc.arg(status)::text = 'failed' THEN sqlc.arg(completed_at) ELSE failed_at END,
        updated_at = sqlc.arg(completed_at)
  WHERE environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id)
@@ -229,6 +129,7 @@ UPDATE sessions
    AND current_run_id = sqlc.arg(run_id)
    AND run_generation = sqlc.arg(expected_run_generation)
    AND status IN ('open', 'closing')
+   AND active_turn_id IS NULL AND dispatch_hold_id IS NULL
 RETURNING *;
 
 -- name: ReleaseActorWorkspaceOwner :one
@@ -303,8 +204,8 @@ WITH created_run AS (
        AND sessions.current_run_id IS NULL
        AND sessions.run_generation = sqlc.arg(expected_run_generation)
        AND sessions.status IN ('open', 'closing')
-       AND sessions.manual_run_cancelled = false
-       AND sessions.committed_input_sequence < sessions.next_input_sequence - 1
+       AND sessions.active_turn_id IS NULL AND sessions.dispatch_hold_id IS NULL
+       AND (sessions.status = 'open' OR sessions.committed_input_sequence < sessions.close_sequence)
        AND NOT EXISTS (
            SELECT 1
              FROM workspace_leases
