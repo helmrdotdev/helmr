@@ -1,6 +1,6 @@
 // Run separately: real production Actor + pinned SDK/native child processes.
 // Model, Helmr delivery and repository checks are fixtures; this is not VM proof.
-import { createServer } from "node:http"
+import { claudeModel } from "./native-model"
 import { mkdtemp, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -22,29 +22,7 @@ for (const interrupted of [false, true]) test(`Claude Actor ${interrupted ? "int
   checks = 0
   const originalEnv = { ...process.env }
   const requests: any[] = []
-  const http = createServer(async (req, res) => {
-    const chunks: Buffer[] = []
-    for await (const chunk of req) chunks.push(Buffer.from(chunk))
-    const body = JSON.parse(Buffer.concat(chunks).toString() || "{}")
-    if (!req.url?.startsWith("/v1/messages")) { res.writeHead(404); res.end(); return }
-    if (req.url.includes("count_tokens")) { res.setHeader("content-type", "application/json"); res.end(JSON.stringify({ input_tokens: 1 })); return }
-    requests.push(body)
-    const tool = requests.length === 1
-      ? { id: "toolu_question", name: "AskUserQuestion", input: { questions: [{ question: "Which option?", header: "Choice", multiSelect: false, options: [{ label: "A", description: "First" }, { label: "B", description: "Second" }] }] } }
-      : requests.length === 2 && !interrupted
-      ? { id: "toolu_command", name: "Bash", input: { command: "printf fixture > denied-command-marker", description: "Write a disposable test marker" } }
-      : undefined
-    res.writeHead(200, { "content-type": "text/event-stream" })
-    for (const event of [
-      { type: "message_start", message: { id: `msg_${requests.length}`, type: "message", role: "assistant", content: [], model: body.model, stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 0 } } },
-      { type: "content_block_start", index: 0, content_block: tool ? { type: "tool_use", id: tool.id, name: tool.name, input: {} } : { type: "text", text: "" } },
-      { type: "content_block_delta", index: 0, delta: tool ? { type: "input_json_delta", partial_json: JSON.stringify(tool.input) } : { type: "text_delta", text: "native fixture response" } },
-      { type: "content_block_stop", index: 0 },
-      { type: "message_delta", delta: { stop_reason: tool ? "tool_use" : "end_turn", stop_sequence: null }, usage: { output_tokens: 3 } },
-      { type: "message_stop" },
-    ]) res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
-    res.end()
-  })
+  const http = claudeModel(requests, interrupted)
   const cancel = new AbortController()
   const timer = setTimeout(() => cancel.abort(new Error("Native probe timed out")), 60000)
   try {

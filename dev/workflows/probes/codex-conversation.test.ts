@@ -1,6 +1,6 @@
 // Run separately: uses the real pinned app-server with a loopback model fixture.
 // The Helmr handler boundary and repository check are fixtures, not a deployed VM.
-import { createServer } from "node:http"
+import { codexModel } from "./native-model"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -21,24 +21,7 @@ for (const scenario of ["answer", "interrupt", "approval"]) test(`native ${scena
   const approval = scenario === "approval"
   directory = await mkdtemp(join(tmpdir(), "helmr-codex-conversation-"))
   const requests: any[] = []
-  const http = createServer(async (req, res) => {
-    const chunks: Buffer[] = []
-    for await (const chunk of req) chunks.push(Buffer.from(chunk))
-    requests.push(JSON.parse(Buffer.concat(chunks).toString()))
-    const item = requests.length === 1 && approval
-      ? { type: "function_call", id: "fc_command", call_id: "call_command", name: "exec_command", arguments: JSON.stringify({ cmd: "printf native-approval-fixture", sandbox_permissions: "require_escalated", justification: "Local approval fixture" }) }
-      : requests.length === 1
-      ? { type: "function_call", id: "fc_question", call_id: "call_question", name: "request_user_input", arguments: JSON.stringify({ questions: [{ id: "choice", header: "Choice", question: "Which option?", options: [{ label: "A", description: "First" }, { label: "B", description: "Second" }] }] }) }
-      : { id: `msg_${requests.length}`, type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: "fixture response", annotations: [] }] }
-    res.writeHead(200, { "content-type": "text/event-stream" })
-    for (const event of [
-      { type: "response.created", response: { id: `resp_${requests.length}` } },
-      { type: "response.output_item.added", output_index: 0, item },
-      { type: "response.output_item.done", output_index: 0, item },
-      { type: "response.completed", response: { id: `resp_${requests.length}`, status: "completed", output: [item], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } } },
-    ]) res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
-    res.end()
-  })
+  const http = codexModel(requests, approval)
   const cancel = new AbortController()
   const timeout = setTimeout(() => cancel.abort(new Error("Native probe timed out")), 25000)
   try {

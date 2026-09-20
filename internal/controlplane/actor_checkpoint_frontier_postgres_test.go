@@ -42,6 +42,10 @@ type actorCheckpointFixture struct {
 }
 
 func newActorCheckpointFixture(t *testing.T) *actorCheckpointFixture {
+	return newActorCheckpointFixtureWithInput(t, json.RawMessage(`{"sequence":1}`))
+}
+
+func newActorCheckpointFixtureWithInput(t *testing.T, input json.RawMessage) *actorCheckpointFixture {
 	t.Helper()
 	b := runtest.New(t)
 	dbtest.MustExec(t, t.Context(), b.Pool, `UPDATE worker_pools SET capacity_guest_ephemeral_disk_bytes=274877906944, per_vm_guest_ephemeral_disk_bytes=34359738368 WHERE id=$1`, b.WorkerPoolID)
@@ -84,8 +88,10 @@ func newActorCheckpointFixture(t *testing.T) *actorCheckpointFixture {
 	}
 	f.sessionID = started.SessionID
 	f.runID = started.BootRunID
-	if _, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, Mode: session.EnqueueOnly, Data: json.RawMessage(`{"sequence":1}`)}); err != nil {
-		t.Fatal(err)
+	if input != nil {
+		if _, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, Mode: session.EnqueueOnly, Data: input}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	f.placeAndStart(t)
 	return f

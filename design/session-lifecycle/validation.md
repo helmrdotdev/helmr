@@ -964,3 +964,67 @@ also removed, with independent state/provider checks. Shared content-addressed
 build artifacts remain. HQ's current lifecycle-plan Handoff owns exact cleanup
 receipts and the decision needed before another environment attempt. VM delivery,
 hold/resume, physical stop and restored native history remain unproved.
+
+## Local native runtime and Control Plane integration (2026-09-20)
+
+On base `bdc2a72c`, `TestSessionNativeLocalPostgres` connects the actual Node
+TypeScript `runProgram`, production Codex/Claude Actors and native processes to
+real PostgreSQL-backed Control Plane handlers. External input uses the public
+TypeScript HTTP client; the interface consumes persisted Session events. No
+production runtime, SDK or sample API changed. Shared loopback model fixtures
+were extracted from the existing native probes.
+
+Both provider scenarios pass (`/tmp/session-native-local-final.log`, Go 4.981s):
+
+- `send` while idle creates the first Turn. A message submitted after durable
+  activation but before runtime delivery/`onMessage` registration is accepted and
+  later explicitly rejected by application validation.
+- A native question is published through durable output, answered through public
+  `send`, delivered by the actual runtime and acknowledged in Postgres. The saved
+  native conversation contains the selected answer after a fresh provider process.
+- `enqueue` while the question is pending creates a distinct queued Turn. Both
+  Turns finish in FIFO order with the same saved native conversation identity.
+- Repeating the already answered question with a new message identity is rejected
+  by the application. Native command approval is denied; the marker file is absent
+  and denial appears in the next provider request. Each provider leaves exactly two
+  handled messages and two rejected messages, with no unknown message or failed Turn.
+- The sample executes its actual `npm test -- --runInBand` repository check against
+  a disposable deterministic test repository before each explicit settlement.
+  A late exact-Turn reply rejects after completion.
+
+Run from the Product root, after installing the root and `dev/workflows` pinned
+workspace dependencies:
+
+```sh
+nix develop --command env HELMR_NATIVE_SESSION_TEST=1 go test ./internal/controlplane -run '^TestSessionNativeLocalPostgres$' -count=1 -v
+nix develop --command sh -c 'cd runtime/typescript && bunx tsc --ignoreConfig --noEmit --target esnext --module esnext --moduleResolution bundler --skipLibCheck --types node probes/session-native-local.test.ts src/node-crypto.d.ts'
+```
+
+The native qualification is explicit opt-in; enabled runs fail when required
+local tools are missing or Postgres skipping was requested. The Go fixture starts
+an isolated database and loopback server and builds a temporary Node probe; native
+children receive fixture credentials and an isolated home. Node is required by the
+production runtime's `randomUUIDv7`; the initial Bun execution was rejected rather
+than patched with a production fallback. An initial test bridge incorrectly attached
+an artifact to an unchanged Workspace tree; the real commit validator rejected it.
+The fixture now follows the existing changed/unchanged capture contract.
+
+The Worker transport, authentication, placement and Workspace capture are fixtures.
+The captured tree contains fixture marker bytes, not the native conversation files.
+Native history persists on the local filesystem between fresh provider processes
+within one Helmr Run. This proves neither Worker/executor transport nor restoration
+of that history across a replaced Helmr Run or VM. Integrated interruption/hold is
+not covered by these two scenarios; existing native cancellation and Postgres
+stop/hold tests cover their respective boundaries separately. Actual provider
+inference, physical whole-Run stop and VM restoration remain unproved. No AWS,
+paid inference, external interface delivery, main merge or publication occurred.
+
+The affected runtime/probe typechecks pass in
+`/tmp/session-native-local-types-final.log`. Existing native probes pass again:
+Claude 2 tests / 54 assertions and Codex 3 tests / 36 assertions
+(`/tmp/session-native-regression.log`). Focused checkpoint-frontier,
+cooperative/between-Turn interruption, changed-hold rejection, HTTP FIFO/exact hold,
+and stop-versus-settlement Postgres tests pass in 26.856s
+(`/tmp/session-local-lifecycle-regression.log`). Fresh medium read-only combined
+review found no actionable correctness or simplicity findings. No SDK redesign
+proposal arose from this local evidence.
