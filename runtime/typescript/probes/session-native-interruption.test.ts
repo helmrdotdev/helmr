@@ -125,7 +125,7 @@ qualification("interrupt, exact hold and native history across Helmr Runs", asyn
     const continued = runNativeProgram(bridge!, resumed, definition, nextInput, {
       async received(result) {
         if (result.resolution_kind !== "completed") return
-        assert.equal(result.resolution.record.id, second!.id)
+        assert.equal(result.resolution.turn.id, second!.id)
         assert.equal(acceptedStale, false)
         await second!.send(pendingReply)
         acceptedStale = true

@@ -142,7 +142,7 @@ func Admit(ctx context.Context, q db.Querier, request AdmissionRequest) (Admissi
 		if _, err := appendLifecycleEvent(ctx, q, actor, turn.ID, pgtype.UUID{}, "turn.enqueued", body, pgtype.UUID{}); err != nil {
 			return receipt, err
 		}
-		if err := q.CreateActorInputReconcileOutbox(ctx, db.CreateActorInputReconcileOutboxParams{ID: turn.ID, SessionID: actor.ID, EnvironmentID: actor.EnvironmentID, RecordID: turn.ID}); err != nil {
+		if err := q.CreateActorInputReconcileOutbox(ctx, db.CreateActorInputReconcileOutboxParams{ID: turn.ID, SessionID: actor.ID, EnvironmentID: actor.EnvironmentID, TurnID: turn.ID}); err != nil {
 			return receipt, err
 		}
 		receipt.Kind, receipt.TurnID = "enqueued", turnID

@@ -2,7 +2,6 @@ package session
 
 import (
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"strings"
 	"uuid"
@@ -10,6 +9,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -234,7 +234,7 @@ func Recover(ctx context.Context, q db.Querier, request RecoverRequest, graph ru
 		if err != nil {
 			return receipt, err
 		}
-		if _, err = q.SettleHeldSessionTurn(ctx, db.SettleHeldSessionTurnParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, TurnID: turn.ID, Status: want, EventID: event.ID, Fingerprint: pgvalue.Text(hex.EncodeToString(claim.RequestFingerprint))}); err != nil {
+		if _, err = q.SettleHeldSessionTurn(ctx, db.SettleHeldSessionTurnParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, TurnID: turn.ID, Status: want, EventID: event.ID, Fingerprint: pgvalue.Text(sha256sum.FormatDigest(claim.RequestFingerprint))}); err != nil {
 			return receipt, err
 		}
 		sequence = pgtype.Int8{Int64: turn.Sequence, Valid: true}

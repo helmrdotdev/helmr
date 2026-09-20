@@ -186,7 +186,7 @@ function harness(
           reply({
             value: inputs[sequence - 1],
             run_generation: 7,
-            record: {
+            turn: {
               id: sequence === 1 ? ids.turn : ids.message,
               sequence,
               created_at: "2026-09-19T00:00:00Z",
@@ -783,7 +783,7 @@ test("wrong-generation delivery stays a protocol fault even when application cat
         reply({
           value: "work",
           run_generation: 8,
-          record: {
+          turn: {
             id: ids.turn,
             sequence: 1,
             created_at: "2026-09-19T00:00:00Z",

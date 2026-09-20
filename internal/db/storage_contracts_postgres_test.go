@@ -145,3 +145,31 @@ func TestCreationSelectsDefinitionKindAndDeclaredID(t *testing.T) {
 	}
 	dbtest.MustExec(t, ctx, tx, `SET CONSTRAINTS ALL IMMEDIATE`)
 }
+
+func TestSchemaTurnFingerprintAndMessageEventSubject(t *testing.T) {
+	ctx := t.Context()
+	f := newRunLeaseClaimFixture(t, ctx)
+	work := f.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
+	sessionID := f.convertToActor(t, ctx, work, `{"enabled":false}`)
+	tx, err := f.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	turnID, otherTurnID, messageID := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
+	for i, id := range []uuid.UUID{turnID, otherTurnID} {
+		dbtest.MustExec(t, ctx, tx, `INSERT INTO session_turns(id,environment_id,session_id,sequence,data,status,run_id,attempt_number,run_generation)
+   VALUES($1,$2,$3,$4,'null','running',$5,1,1)`, id, f.environmentID, sessionID, i+1, work.runID)
+	}
+	for _, invalid := range []string{"", strings.Repeat("a", 64), "sha256:abc", "sha256:" + strings.Repeat("A", 64)} {
+		rejectSchemaRow(t, tx, "23514", `UPDATE session_turns SET terminal_request_fingerprint=$2 WHERE id=$1`, turnID, invalid)
+	}
+	dbtest.MustExec(t, ctx, tx, `UPDATE session_turns SET terminal_request_fingerprint=$2 WHERE id=$1`, turnID, dbtest.Digest("settlement"))
+	dbtest.MustExec(t, ctx, tx, `INSERT INTO session_messages(id,environment_id,session_id,turn_id,run_id,attempt_number,run_generation,data,accepted_sequence)
+  VALUES($1,$2,$3,$4,$5,1,1,'null',1)`, messageID, f.environmentID, sessionID, turnID, work.runID)
+	const eventSQL = `INSERT INTO session_events(id,environment_id,session_id,workspace_id,turn_id,message_id,sequence,kind,data)
+  SELECT $1,environment_id,id,workspace_id,$3,$4,1,'message.accepted','{}' FROM sessions WHERE id=$2`
+	// Each subject exists within this Session, but only the message's own Turn is valid.
+	rejectSchemaRow(t, tx, "23503", eventSQL, uuid.NewV7(), sessionID, otherTurnID, messageID)
+	dbtest.MustExec(t, ctx, tx, eventSQL, uuid.NewV7(), sessionID, turnID, messageID)
+}

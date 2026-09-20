@@ -92,7 +92,7 @@ func TestTransactionCreateReplayAndConflict(t *testing.T) {
 	completed, err := transaction.Complete(
 		t.Context(),
 		created.Claim,
-		[]byte(`{"recordId":"record-1"}`),
+		[]byte(`{"turnId":"turn-1"}`),
 	)
 	if err != nil {
 		t.Fatal(err)

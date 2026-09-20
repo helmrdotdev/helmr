@@ -31,11 +31,11 @@ func TestCanStartContinuationIncludesClosingBacklog(t *testing.T) {
 	}
 }
 
-func TestRecordResolutionProjectsExternalInput(t *testing.T) {
-	recordID := uuid.NewV7()
+func TestTurnResolutionProjectsExternalInput(t *testing.T) {
+	turnID := uuid.NewV7()
 	createdAt := time.Date(2026, 7, 23, 1, 2, 3, 456000000, time.UTC)
-	resolution, err := RecordResolution(db.SessionTurn{
-		ID: pgvalue.UUID(recordID), Sequence: 7, Data: []byte(`{"nested":{"ok":true}}`),
+	resolution, err := TurnResolution(db.SessionTurn{
+		ID: pgvalue.UUID(turnID), Sequence: 7, Data: []byte(`{"nested":{"ok":true}}`),
 		CreatedAt: pgvalue.Timestamptz(createdAt),
 	})
 	if err != nil {
@@ -45,11 +45,11 @@ func TestRecordResolutionProjectsExternalInput(t *testing.T) {
 	if err := json.Unmarshal(resolution, &got); err != nil {
 		t.Fatal(err)
 	}
-	record := got["record"].(map[string]any)
-	source := record["source"].(map[string]any)
+	turn := got["turn"].(map[string]any)
+	source := turn["source"].(map[string]any)
 	if got["value"].(map[string]any)["nested"].(map[string]any)["ok"] != true ||
-		record["id"] != recordID.String() || record["sequence"] != float64(7) ||
-		record["created_at"] != createdAt.Format(time.RFC3339Nano) || source["type"] != "external" {
+		turn["id"] != turnID.String() || turn["sequence"] != float64(7) ||
+		turn["created_at"] != createdAt.Format(time.RFC3339Nano) || source["type"] != "external" {
 		t.Fatalf("resolution = %s", resolution)
 	}
 	if _, exists := source["run_id"]; exists {
@@ -57,9 +57,9 @@ func TestRecordResolutionProjectsExternalInput(t *testing.T) {
 	}
 }
 
-func TestRecordResolutionProjectsRunSource(t *testing.T) {
+func TestTurnResolutionProjectsRunSource(t *testing.T) {
 	runID := uuid.NewV7()
-	resolution, err := RecordResolution(db.SessionTurn{
+	resolution, err := TurnResolution(db.SessionTurn{
 		ID: pgvalue.UUID(uuid.NewV7()), Sequence: 1, Data: []byte(`null`),
 		SourceRunID: pgvalue.UUID(runID),
 		CreatedAt:   pgvalue.Timestamptz(time.Unix(1, 0).UTC()),
@@ -68,21 +68,21 @@ func TestRecordResolutionProjectsRunSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	var got struct {
-		Record struct {
+		Turn struct {
 			Source map[string]string `json:"source"`
-		} `json:"record"`
+		} `json:"turn"`
 	}
 	if err := json.Unmarshal(resolution, &got); err != nil {
 		t.Fatal(err)
 	}
-	if got.Record.Source["type"] != "run" || got.Record.Source["run_id"] != runID.String() {
-		t.Fatalf("source = %+v", got.Record.Source)
+	if got.Turn.Source["type"] != "run" || got.Turn.Source["run_id"] != runID.String() {
+		t.Fatalf("source = %+v", got.Turn.Source)
 	}
 }
 
-func TestRecordResolutionRejectsInvalidRecordJSON(t *testing.T) {
-	_, err := RecordResolution(db.SessionTurn{Data: []byte(`{"broken"`)})
+func TestTurnResolutionRejectsInvalidTurnJSON(t *testing.T) {
+	_, err := TurnResolution(db.SessionTurn{Data: []byte(`{"broken"`)})
 	if err == nil {
-		t.Fatal("invalid durable record JSON was accepted")
+		t.Fatal("invalid durable turn JSON was accepted")
 	}
 }

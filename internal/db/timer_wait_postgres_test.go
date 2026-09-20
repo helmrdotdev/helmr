@@ -75,6 +75,6 @@ func TestTimerWaitRegistrationAndHotCompletion(t *testing.T) {
 		   SET completed_turn_id = $2
 		 WHERE id = $1
 	`, wait.ID, uuid.NewV7()); err == nil {
-		t.Fatal("timer Wait accepted a completed Actor record")
+		t.Fatal("timer Wait accepted a completed Turn")
 	}
 }

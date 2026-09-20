@@ -1316,7 +1316,7 @@ CREATE TABLE session_turns (
     settlement_started_at TIMESTAMPTZ,
     interrupt_requested_at TIMESTAMPTZ,
     terminal_event_id UUID,
-    terminal_request_fingerprint TEXT,
+    terminal_request_fingerprint TEXT CHECK (terminal_request_fingerprint IS NULL OR terminal_request_fingerprint ~ '^sha256:[0-9a-f]{64}$'),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CHECK ((status = 'queued') = (run_generation IS NULL)),
     CHECK ((run_generation IS NULL) = (run_id IS NULL)),
@@ -1349,7 +1349,7 @@ CREATE TABLE session_messages (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     handling_at TIMESTAMPTZ,
     terminal_at TIMESTAMPTZ,
-    UNIQUE (session_id, id),
+    UNIQUE (session_id, turn_id, id),
     UNIQUE (session_id, accepted_sequence),
     UNIQUE (delivery_id),
     FOREIGN KEY (environment_id, session_id) REFERENCES sessions(environment_id, id),
@@ -1362,6 +1362,9 @@ CREATE TABLE session_messages (
     CHECK ((status IN ('handled', 'rejected', 'unknown')) = (outcome IS NOT NULL))
 );
 CREATE UNIQUE INDEX session_messages_one_handler ON session_messages(session_id, turn_id) WHERE status='handling';
+CREATE INDEX session_messages_pending_turn_idx
+    ON session_messages(session_id, turn_id, accepted_sequence)
+    WHERE status IN ('accepted', 'handling', 'unknown');
 
 CREATE TABLE session_events (
     id UUID PRIMARY KEY,
@@ -1391,7 +1394,7 @@ CREATE TABLE session_events (
     FOREIGN KEY (session_id, workspace_id) REFERENCES sessions(id, workspace_id),
     FOREIGN KEY (environment_id, session_id) REFERENCES sessions(environment_id, id),
     FOREIGN KEY (session_id, turn_id) REFERENCES session_turns(session_id, id),
-    FOREIGN KEY (session_id, message_id) REFERENCES session_messages(session_id, id),
+    FOREIGN KEY (session_id, turn_id, message_id) REFERENCES session_messages(session_id, turn_id, id),
     FOREIGN KEY (session_id, producer_run_id) REFERENCES runs(session_id, id),
     FOREIGN KEY (producer_run_id, producer_attempt_number) REFERENCES run_attempts(run_id, number)
 );
@@ -2525,7 +2528,7 @@ CREATE TABLE run_waits (
     CHECK (cardinality(tags) <= 32),
     CHECK (condition_error IS NULL OR jsonb_typeof(condition_error) = 'object'),
     CHECK (suspension_error IS NULL OR jsonb_typeof(suspension_error) = 'object'),
-    CONSTRAINT run_waits_actor_record_condition_check CHECK (
+    CONSTRAINT run_waits_completed_turn_condition_check CHECK (
         (completed_turn_id IS NULL
          AND (kind <> 'actor_input' OR condition_status <> 'completed'))
         OR
@@ -2700,6 +2703,10 @@ CREATE INDEX run_waits_checkpoint_due_idx
     ON run_waits (checkpoint_due_at, id)
     WHERE suspension_status = 'hot' AND checkpoint_due_at IS NOT NULL;
 
+CREATE INDEX run_waits_turn_idx
+    ON run_waits(turn_session_id, turn_id)
+    WHERE turn_id IS NOT NULL;
+
 CREATE INDEX run_waits_history_idx
     ON run_waits (run_id, created_at, id);
 
@@ -2719,7 +2726,7 @@ CREATE INDEX run_waits_token_condition_idx
     ON run_waits (token_id, condition_status, id)
     WHERE token_id IS NOT NULL;
 
-CREATE UNIQUE INDEX run_waits_completed_actor_record_active_uidx
+CREATE UNIQUE INDEX run_waits_completed_turn_active_uidx
     ON run_waits (completed_turn_id)
     WHERE completed_turn_id IS NOT NULL
       AND suspension_status IN ('hot', 'checkpointing', 'parked', 'resume_pending', 'resuming');

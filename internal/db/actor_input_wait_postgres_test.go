@@ -32,7 +32,7 @@ func TestActorInputWaitAppendAndRegistrationOrdersConverge(t *testing.T) {
 				t.Fatal(err)
 			}
 			waitID := uuid.NewV7()
-			recordID := uuid.NewV7()
+			turnID := uuid.NewV7()
 			register := func() RunWait {
 				wait, err := fixture.queries.RegisterActorInputRunWait(ctx, RegisterActorInputRunWaitParams{
 					ID: pgvalue.UUID(waitID), EnvironmentID: pgvalue.UUID(fixture.environmentID),
@@ -53,7 +53,7 @@ func TestActorInputWaitAppendAndRegistrationOrdersConverge(t *testing.T) {
 			appendRecord := func() SessionTurn {
 				record, err := fixture.queries.EnqueueSessionTurn(ctx, EnqueueSessionTurnParams{
 					EnvironmentID: pgvalue.UUID(fixture.environmentID), SessionID: pgvalue.UUID(actorID),
-					ID: pgvalue.UUID(recordID), Data: []byte(`{"message":"ready"}`)})
+					ID: pgvalue.UUID(turnID), Data: []byte(`{"message":"ready"}`)})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -160,7 +160,7 @@ func TestSessionTurnEnqueueRollbackLeavesNoResidue(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := q.CreateActorInputReconcileOutbox(ctx, CreateActorInputReconcileOutboxParams{
-		ID: pgvalue.UUID(outboxID), EnvironmentID: pgvalue.UUID(f.environmentID), SessionID: pgvalue.UUID(sessionID), RecordID: turn.ID,
+		ID: pgvalue.UUID(outboxID), EnvironmentID: pgvalue.UUID(f.environmentID), SessionID: pgvalue.UUID(sessionID), TurnID: turn.ID,
 	}); err != nil {
 		t.Fatal(err)
 	}

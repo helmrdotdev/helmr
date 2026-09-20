@@ -21,7 +21,7 @@ export type SessionEvent = {
 export type SessionEventPage = {
   records: SessionEvent[]; next_after: number; has_more: boolean; retained_after: number;
 };
-export type SessionRecordPageOptions = { after?: number | undefined; limit?: number | undefined };
+export type SessionEventPageOptions = { after?: number | undefined; limit?: number | undefined };
 export type SessionReceipt = { id: string; status?: string; kind?: string; session_id?: string; turn_id?: string | null; message_id?: string; hold_id?: string };
 export type SessionAddress = { sessionID: string; projectID: string; environmentID: string };
 export type ListSessionsResponse = { sessions: Session[]; next_cursor?: string };
@@ -50,8 +50,8 @@ export async function getSession(address: SessionAddress): Promise<Session> {
   return request<Session>(sessionAPIPath(address));
 }
 
-export function getSessionEvents(address: SessionAddress, options: SessionRecordPageOptions = {}): Promise<SessionEventPage> {
-  return request(`${sessionAPIPath(address)}/events${recordPageQuery(options)}`);
+export function getSessionEvents(address: SessionAddress, options: SessionEventPageOptions = {}): Promise<SessionEventPage> {
+  return request(`${sessionAPIPath(address)}/events${eventPageQuery(options)}`);
 }
 export function getSessionTurn(address: SessionAddress, turnID: string): Promise<SessionTurn> {
   return request(`${sessionAPIPath(address)}/turns/${encodeURIComponent(turnID)}`);
@@ -93,7 +93,7 @@ export function runSessionConsolePath(
   return sessionConsolePath(run.session_id, projectID, environmentID);
 }
 
-function recordPageQuery(options: SessionRecordPageOptions): string {
+function eventPageQuery(options: SessionEventPageOptions): string {
   const params = new URLSearchParams();
   if (options.after !== undefined) params.set("after", String(options.after));
   if (options.limit !== undefined) params.set("limit", String(options.limit));

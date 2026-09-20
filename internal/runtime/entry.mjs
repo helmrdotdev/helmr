@@ -5928,8 +5928,8 @@ var ActorRuntime = class {
         "Turn delivery",
         () => parseObjectJSON(decision.dataJson, "Turn delivery")
       );
-      const record = objectField(data, "record", "Turn delivery");
-      const sequence = safeJSONSequence(record["sequence"], "Turn sequence");
+      const turn = objectField(data, "turn", "Turn delivery");
+      const sequence = safeJSONSequence(turn["sequence"], "Turn sequence");
       if (BigInt(sequence) !== this.cursor.value + 1n || data["run_generation"] !== Number(this.execution.runGeneration)) {
         throw new RuntimeProtocolError(
           "Turn delivery does not match execution frontier"
@@ -5938,7 +5938,7 @@ var ActorRuntime = class {
       const state = {
         scope: create(program_pb_exports.TurnExecutionSchema, {
           session: this.execution,
-          turnId: resourceID(record["id"], "Turn id")
+          turnId: resourceID(turn["id"], "Turn id")
         }),
         sequence: BigInt(sequence),
         controller: new AbortController(),
@@ -5948,7 +5948,7 @@ var ActorRuntime = class {
       this.cursor.value = state.sequence;
       if (this.operations.controller.signal.aborted)
         throw this.operations.controller.signal.reason;
-      const source2 = objectField(record, "source", "Turn source");
+      const source2 = objectField(turn, "source", "Turn source");
       let parsedSource;
       if (source2["type"] === "external") parsedSource = { type: "external" };
       else if (source2["type"] === "run")
@@ -5962,7 +5962,7 @@ var ActorRuntime = class {
         sequence,
         input: data["value"],
         source: Object.freeze(parsedSource),
-        createdAt: timestampString(record["created_at"], "Turn created_at"),
+        createdAt: timestampString(turn["created_at"], "Turn created_at"),
         signal: state.controller.signal,
         output: this.writer(state),
         onMessage: (handler) => this.onMessage(state, handler),

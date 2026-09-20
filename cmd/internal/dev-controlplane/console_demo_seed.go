@@ -36,9 +36,9 @@ const (
 	demoSeedRunActorHistoryID  = "00000000-0000-7000-8000-000000000713"
 	demoSeedRunActorFailedID   = "00000000-0000-7000-8000-000000000714"
 
-	demoSeedSessionInputRecordID  = "00000000-0000-7000-8000-000000000721"
-	demoSeedSessionInputRecordID2 = "00000000-0000-7000-8000-000000000722"
-	demoSeedSessionOutputRecordID = "00000000-0000-7000-8000-000000000723"
+	demoSeedSessionTurnID        = "00000000-0000-7000-8000-000000000721"
+	demoSeedSessionTurnID2       = "00000000-0000-7000-8000-000000000722"
+	demoSeedSessionOutputEventID = "00000000-0000-7000-8000-000000000723"
 
 	demoSeedTokenPendingID   = "00000000-0000-7000-8000-000000000801"
 	demoSeedTokenCompletedID = "00000000-0000-7000-8000-000000000802"
@@ -263,7 +263,7 @@ UPDATE sessions
 INSERT INTO session_turns (id, environment_id, session_id, sequence, data)
 VALUES ($1::uuid, $3::uuid, $4::uuid, 1, '{"prompt":"Synthetic demo input"}'),
        ($2::uuid, $3::uuid, $4::uuid, 2, '{"prompt":"Follow-up demo input"}')
-`, demoSeedSessionInputRecordID, demoSeedSessionInputRecordID2, demoSeedEnvironmentID, demoSeedSessionOpenID); err != nil {
+`, demoSeedSessionTurnID, demoSeedSessionTurnID2, demoSeedEnvironmentID, demoSeedSessionOpenID); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
@@ -275,7 +275,7 @@ INSERT INTO session_events (
     ('00000000-0000-7000-8000-000000000724', $4::uuid, $5::uuid, $6::uuid, $1::uuid, 3, 'turn.completed', jsonb_build_object('workspace_version_id',$7::text), $7::uuid),
     ('00000000-0000-7000-8000-000000000732', $4::uuid, $5::uuid, $6::uuid, $2::uuid, 4, 'turn.enqueued', '{"input":{"prompt":"Follow-up demo input"}}', NULL),
     ('00000000-0000-7000-8000-000000000725', $4::uuid, $5::uuid, $6::uuid, $2::uuid, 5, 'turn.failed', jsonb_build_object('error', jsonb_build_object('message','Synthetic demo test failure'),'workspace_version_id',$7::text), $7::uuid)
-`, demoSeedSessionInputRecordID, demoSeedSessionInputRecordID2, demoSeedSessionOutputRecordID,
+`, demoSeedSessionTurnID, demoSeedSessionTurnID2, demoSeedSessionOutputEventID,
 		demoSeedEnvironmentID, demoSeedSessionOpenID, demoSeedWorkspaceActorID, demoSeedWorkspaceActorVersionID); err != nil {
 		return err
 	}

@@ -158,21 +158,21 @@ func TestSchemaProvenanceAndExpiryRejectPartialTuples(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	claimID, recordID, waitID := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
+	claimID, turnID, waitID := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, ctx, tx, `INSERT INTO idempotency_claims (id,environment_id,operation,slot_hash,request_fingerprint,accepted_at,expires_at) VALUES ($1,$2,'run.create',$3,$4,now(),now()+interval '30 days')`, claimID, fixture.environmentID, dbtest.Hash("slot"), dbtest.Hash("request"))
 	rejectSchemaRow(t, tx, "23514", `UPDATE idempotency_claims SET expires_at=NULL WHERE id=$1`, claimID)
 	rejectSchemaRow(t, tx, "23514", `UPDATE idempotency_claims SET expires_at=accepted_at+interval '29 days' WHERE id=$1`, claimID)
 	dbtest.MustExec(t, ctx, tx, `UPDATE idempotency_claims SET operation='task.child.invoke', expires_at=NULL WHERE id=$1`, claimID)
-	dbtest.MustExec(t, ctx, tx, `INSERT INTO session_turns (id,environment_id,session_id,sequence,data) VALUES ($1,$2,$3,10,'{}')`, recordID, fixture.environmentID, sessionID)
-	rejectSchemaRow(t, tx, "23503", `UPDATE session_turns SET source_run_id=$2 WHERE id=$1`, recordID, uuid.NewV7())
-	dbtest.MustExec(t, ctx, tx, `UPDATE session_turns SET source_run_id=$2 WHERE id=$1`, recordID, work.runID)
+	dbtest.MustExec(t, ctx, tx, `INSERT INTO session_turns (id,environment_id,session_id,sequence,data) VALUES ($1,$2,$3,10,'{}')`, turnID, fixture.environmentID, sessionID)
+	rejectSchemaRow(t, tx, "23503", `UPDATE session_turns SET source_run_id=$2 WHERE id=$1`, turnID, uuid.NewV7())
+	dbtest.MustExec(t, ctx, tx, `UPDATE session_turns SET source_run_id=$2 WHERE id=$1`, turnID, work.runID)
 	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO run_waits (id,environment_id,run_id,workspace_id,kind,session_id,after_input_sequence,
 		 condition_status,condition_terminal_at,completed_turn_id,
 		 expected_run_revision,attempt_number,current_run_lease_id,resume_attach_id)
 		SELECT $1,environment_id,id,workspace_id,'actor_input',session_id,0,'completed',now(),$2,revision,1,$3,$4
 		FROM runs WHERE id=$5
-	`, waitID, recordID, work.leaseID, uuid.NewV7(), work.runID)
+	`, waitID, turnID, work.leaseID, uuid.NewV7(), work.runID)
 	rejectSchemaRow(t, tx, "23514", `UPDATE run_waits SET completed_turn_id=NULL WHERE id=$1`, waitID)
 	rejectSchemaRow(t, tx, "23503", `UPDATE run_waits SET completed_turn_id=$2 WHERE id=$1`, waitID, uuid.NewV7())
 	var outboxID int64

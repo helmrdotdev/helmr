@@ -2028,8 +2028,8 @@ class ActorRuntime {
       const data = parseRuntimeProtocolValue("Turn delivery", () =>
         parseObjectJSON(decision.dataJson, "Turn delivery"),
       )
-      const record = objectField(data, "record", "Turn delivery")
-      const sequence = safeJSONSequence(record["sequence"], "Turn sequence")
+      const turn = objectField(data, "turn", "Turn delivery")
+      const sequence = safeJSONSequence(turn["sequence"], "Turn sequence")
       if (
         BigInt(sequence) !== this.cursor.value + 1n ||
         data["run_generation"] !== Number(this.execution.runGeneration)
@@ -2041,7 +2041,7 @@ class ActorRuntime {
       const state: TurnRuntime = {
         scope: create(programProto.TurnExecutionSchema, {
           session: this.execution,
-          turnId: resourceID(record["id"], "Turn id"),
+          turnId: resourceID(turn["id"], "Turn id"),
         }),
         sequence: BigInt(sequence),
         controller: new AbortController(),
@@ -2051,7 +2051,7 @@ class ActorRuntime {
       this.cursor.value = state.sequence
       if (this.operations.controller.signal.aborted)
         throw this.operations.controller.signal.reason
-      const source = objectField(record, "source", "Turn source")
+      const source = objectField(turn, "source", "Turn source")
       let parsedSource: TurnSource
       if (source["type"] === "external") parsedSource = { type: "external" }
       else if (source["type"] === "run")
@@ -2065,7 +2065,7 @@ class ActorRuntime {
         sequence,
         input: data["value"] as JsonValue,
         source: Object.freeze(parsedSource),
-        createdAt: timestampString(record["created_at"], "Turn created_at"),
+        createdAt: timestampString(turn["created_at"], "Turn created_at"),
         signal: state.controller.signal,
         output: this.writer(state),
         onMessage: (handler: (message: Message) => unknown) =>

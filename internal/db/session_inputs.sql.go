@@ -19,7 +19,7 @@ VALUES (
     jsonb_build_object(
         'environmentId', $2::uuid::text,
         'sessionId', $3::uuid::text,
-        'recordId', $4::uuid::text
+        'turnId', $4::uuid::text
     ),
     transaction_timestamp()
 )
@@ -30,7 +30,7 @@ type CreateActorInputReconcileOutboxParams struct {
 	ID            pgtype.UUID `json:"id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	SessionID     pgtype.UUID `json:"session_id"`
-	RecordID      pgtype.UUID `json:"record_id"`
+	TurnID        pgtype.UUID `json:"turn_id"`
 }
 
 func (q *Queries) CreateActorInputReconcileOutbox(ctx context.Context, arg CreateActorInputReconcileOutboxParams) error {
@@ -38,7 +38,7 @@ func (q *Queries) CreateActorInputReconcileOutbox(ctx context.Context, arg Creat
 		arg.ID,
 		arg.EnvironmentID,
 		arg.SessionID,
-		arg.RecordID,
+		arg.TurnID,
 	)
 	return err
 }

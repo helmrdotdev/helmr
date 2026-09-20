@@ -33,7 +33,7 @@ func TestOwnershipQueuedTurnRetainsReceiptAndOutboxAcrossCheckpoint(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	recordID := receipt.TurnID
+	turnID := receipt.TurnID
 	parsed, err := parseRunLeaseFence(f.fence())
 	if err != nil {
 		t.Fatal(err)
@@ -58,7 +58,7 @@ func TestOwnershipQueuedTurnRetainsReceiptAndOutboxAcrossCheckpoint(t *testing.T
 	if err := f.Pool.QueryRow(ctx, `SELECT
  (SELECT count(*) FROM session_turns WHERE id=$1),
  (SELECT count(*) FROM idempotency_claims WHERE id=$2 AND status='completed'),
- (SELECT count(*) FROM control_outbox WHERE topic='session.input.reconcile' AND payload->>'recordId'=$3)`, recordID, receipt.ID, recordID.String()).Scan(&records, &claims, &outboxes); err != nil {
+ (SELECT count(*) FROM control_outbox WHERE topic='session.input.reconcile' AND payload->>'turnId'=$3)`, turnID, receipt.ID, turnID.String()).Scan(&records, &claims, &outboxes); err != nil {
 		t.Fatal(err)
 	}
 	if records != 1 || claims != 1 || outboxes != 1 {
@@ -71,7 +71,7 @@ func TestOwnershipQueuedTurnRetainsReceiptAndOutboxAcrossCheckpoint(t *testing.T
 	var delivered atomic.Int32
 	worker, err := session.NewDeliveryWorker(nil, q, func(ctx context.Context, e, s, r uuid.UUID) (bool, error) {
 		deferred, err := reconciler.ReconcileInput(ctx, e, s, r)
-		if r == recordID && err == nil {
+		if r == turnID && err == nil {
 			delivered.Add(1)
 		}
 		return deferred, err
@@ -86,7 +86,7 @@ func TestOwnershipQueuedTurnRetainsReceiptAndOutboxAcrossCheckpoint(t *testing.T
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		var state string
-		if err := f.Pool.QueryRow(ctx, "SELECT status FROM control_outbox WHERE topic='session.input.reconcile' AND payload->>'recordId'=$1", recordID.String()).Scan(&state); err != nil {
+		if err := f.Pool.QueryRow(ctx, "SELECT status FROM control_outbox WHERE topic='session.input.reconcile' AND payload->>'turnId'=$1", turnID.String()).Scan(&state); err != nil {
 			t.Fatal(err)
 		}
 		if state == "delivered" {
@@ -108,10 +108,10 @@ func TestOwnershipQueuedTurnRetainsReceiptAndOutboxAcrossCheckpoint(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if completed.ConditionStatus != db.WaitStatusCompleted || completed.CompletedTurnID != pgvalue.UUID(recordID) {
+	if completed.ConditionStatus != db.WaitStatusCompleted || completed.CompletedTurnID != pgvalue.UUID(turnID) {
 		t.Fatalf("eventual completion=%+v", completed)
 	}
-	if _, err := reconciler.ReconcileInput(ctx, f.EnvironmentID, f.sessionID, recordID); err != nil {
+	if _, err := reconciler.ReconcileInput(ctx, f.EnvironmentID, f.sessionID, turnID); err != nil {
 		t.Fatal(err)
 	}
 	repeated, err := q.GetRunWait(ctx, db.GetRunWaitParams{ID: w.ID, RunID: w.RunID, AttemptNumber: 1})

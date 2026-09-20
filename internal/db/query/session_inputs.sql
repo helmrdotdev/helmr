@@ -22,7 +22,7 @@ VALUES (
     jsonb_build_object(
         'environmentId', sqlc.arg(environment_id)::uuid::text,
         'sessionId', sqlc.arg(session_id)::uuid::text,
-        'recordId', sqlc.arg(record_id)::uuid::text
+        'turnId', sqlc.arg(turn_id)::uuid::text
     ),
     transaction_timestamp()
 )
