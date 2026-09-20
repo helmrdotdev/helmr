@@ -183,6 +183,7 @@ message RunEvent {
     SessionTurnRetrieveRequested session_turn_retrieve_requested = 38;
     SessionTurnInterruptRequested session_turn_interrupt_requested = 39;
     SessionResumeRequested session_resume_requested = 40;
+    SessionCancelRequested session_cancel_requested = 41;
   }
 }
 
@@ -379,6 +380,12 @@ message SessionStatusRequested {
 }
 
 message SessionCloseRequested {
+  string correlation_id = 1;
+  string session_id = 2;
+  optional string idempotency_key = 3;
+}
+
+message SessionCancelRequested {
   string correlation_id = 1;
   string session_id = 2;
   optional string idempotency_key = 3;

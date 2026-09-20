@@ -89,3 +89,15 @@ Use `--outside-turn` instead of `--turn` and omit `--disposition` for execution
 outside a Turn. Turn dispositions are `failed` or `interrupted`; recovery cannot
 mark uncertain work successful. The CLI never selects a Workspace version or
 creates a reconciliation record on the operator's behalf.
+
+## Cancel a Session
+
+```sh
+helmr actor cancel SESSION_ID --project PROJECT --env ENV --idempotency-key stop-review
+helmr actor get SESSION_ID --project PROJECT --env ENV
+```
+
+`cancel` discards queued Turns with a `cancelled` outcome and stops active work.
+The response acknowledges acceptance. Wait for Session status `closed` before
+Workspace deletion; a hold requiring recovery remains visible until reconciled.
+Unlike `close`, cancellation does not drain queued work or start new customer code.

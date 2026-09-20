@@ -831,6 +831,7 @@ type Session struct {
 	RunTags                   []string           `json:"run_tags"`
 	Status                    string             `json:"status"`
 	CloseSequence             pgtype.Int8        `json:"close_sequence"`
+	CancelRequestedAt         pgtype.Timestamptz `json:"cancel_requested_at"`
 	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
 	ClosedAt                  pgtype.Timestamptz `json:"closed_at"`

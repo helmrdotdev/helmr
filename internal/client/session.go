@@ -199,6 +199,19 @@ func (c *Client) CloseSession(ctx context.Context, sessionID string, input api.C
 	return response, nil
 }
 
+func (c *Client) CancelSession(ctx context.Context, sessionID string, input api.CancelSessionRequest, opts EnvironmentScopeOptions) (api.SessionCancelReceipt, error) {
+	path, err := c.sessionPath(sessionID, "/cancel", opts)
+	if err != nil {
+		return api.SessionCancelReceipt{}, err
+	}
+	input.IdempotencyKey = invocationKey(input.IdempotencyKey)
+	var response api.SessionCancelReceipt
+	if err := c.postJSON(ctx, path, input, &response); err != nil {
+		return api.SessionCancelReceipt{}, err
+	}
+	return response, nil
+}
+
 func (c *Client) InterruptSessionTurn(ctx context.Context, sessionID string, turnID string, input api.InterruptTurnRequest, opts EnvironmentScopeOptions) (api.TurnInterruptReceipt, error) {
 	if err := ids.Validate(turnID); err != nil {
 		return api.TurnInterruptReceipt{}, err

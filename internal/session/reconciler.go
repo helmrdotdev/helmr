@@ -116,6 +116,11 @@ func (r *Reconciler) ReconcileInput(
 	if err != nil || actor.WorkspaceID != locator.WorkspaceID {
 		return false, ErrAuthority
 	}
+	// Cancellation terminalizes queued input atomically under this same owner.
+	// Its prior delivery records no longer need execution or Workspace authority.
+	if actor.CancelRequestedAt.Valid {
+		return false, tx.Commit(ctx)
+	}
 	var currentRun db.Run
 	if actor.CurrentRunID.Valid {
 		currentRun, err = q.LockActorInputCurrentRun(ctx, db.LockActorInputCurrentRunParams{

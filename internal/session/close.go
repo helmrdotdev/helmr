@@ -19,6 +19,14 @@ func ReconcileClose(
 	actor db.Session,
 	bindings []db.LockWorkspaceSecretsForAdmissionRow,
 ) (db.Session, bool, error) {
+	if actor.CancelRequestedAt.Valid && actor.Status == "closing" {
+		var waiting bool
+		var err error
+		actor, waiting, err = reconcileCancellation(ctx, store, actor)
+		if err != nil || waiting {
+			return actor, waiting, err
+		}
+	}
 	if actor.Status != "closing" || !actor.CloseSequence.Valid || actor.ActiveTurnID.Valid {
 		return actor, false, nil
 	}
@@ -115,7 +123,7 @@ func ReconcileClose(
 	if err != nil {
 		return db.Session{}, false, fmt.Errorf("complete idle actor close: %w", err)
 	}
-	_, err = appendLifecycleEvent(ctx, store, closed, pgtype.UUID{}, pgtype.UUID{}, "session.closed", []byte(`{}`), pgtype.UUID{})
+	_, err = appendLifecycleEvent(ctx, store, closed, pgtype.UUID{}, pgtype.UUID{}, "session.closed", closeEventData(closed), pgtype.UUID{})
 	return closed, false, err
 }
 
@@ -205,4 +213,57 @@ func bindingsCanAdmit(
 		}
 	}
 	return true
+}
+
+func closeEventData(actor db.Session) []byte {
+	if actor.CancelRequestedAt.Valid {
+		return []byte(`{"reason":"cancelled"}`)
+	}
+	return []byte(`{}`)
+}
+
+// Cancellation never runs code to consume the cancelled suffix. Keep the
+// durable reconciler alive while the existing stop/capture path is pending.
+func reconcileCancellation(ctx context.Context, q db.Querier, actor db.Session) (db.Session, bool, error) {
+	if actor.ActiveTurnID.Valid {
+		return actor, true, nil
+	}
+	if actor.CurrentRunID.Valid {
+		current, err := q.LockActorInputCurrentRun(ctx, db.LockActorInputCurrentRunParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, RunID: actor.CurrentRunID})
+		if err != nil {
+			return actor, false, err
+		}
+		attempt, err := q.LockRunLeaseClaimAttempt(ctx, db.LockRunLeaseClaimAttemptParams{RunID: current.ID, Number: current.CurrentAttemptNumber, WorkspaceID: actor.WorkspaceID})
+		if err != nil {
+			return actor, false, err
+		}
+		// Only a never-entered execution can settle without a captured completion
+		// or explicit recovery. Terminal Run state alone does not prove either.
+		if !attempt.TerminalAt.Valid || attempt.EntrypointEnteredAt.Valid || actor.DispatchHoldReason.String != "interrupt_requested" {
+			return actor, true, nil
+		}
+		workspace, err := q.LockActorCloseWorkspace(ctx, db.LockActorCloseWorkspaceParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, WorkspaceID: actor.WorkspaceID})
+		if err != nil {
+			return actor, false, err
+		}
+		excluded, err := q.SessionWriterExcluded(ctx, actor.WorkspaceID)
+		if err != nil {
+			return actor, false, err
+		}
+		if !excluded.Valid || !excluded.Bool || workspace.DirtyState != db.WorkspaceDirtyStateClean || !workspace.HeadVersionID.Valid {
+			return actor, true, nil
+		}
+		if err = CompleteInterruption(ctx, q, actor, workspace.HeadVersionID, ""); err != nil {
+			return actor, false, err
+		}
+		actor, err = q.GetActor(ctx, db.GetActorParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
+		if err != nil {
+			return actor, false, err
+		}
+	}
+	if actor.DispatchHoldID.Valid && actor.DispatchHoldReason.String != "interrupted" && actor.DispatchHoldReason.String != "recovered" {
+		return actor, true, nil
+	}
+	actor, err := q.AdvanceCancelledSessionInputs(ctx, db.AdvanceCancelledSessionInputsParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
+	return actor, false, err
 }

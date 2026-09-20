@@ -85,3 +85,25 @@ VALUES (
     transaction_timestamp()
 )
 ON CONFLICT (id) DO NOTHING;
+
+-- name: BeginSessionCancellation :one
+UPDATE sessions SET status='closing',close_sequence=coalesce(close_sequence,next_input_sequence-1),
+ cancel_requested_at=coalesce(cancel_requested_at,now()),revision=revision+1,updated_at=now()
+WHERE environment_id=$1 AND id=$2 AND status IN ('open','closing') RETURNING *;
+
+-- name: LockQueuedSessionTurns :many
+SELECT * FROM session_turns WHERE environment_id=$1 AND session_id=$2 AND status='queued'
+ORDER BY sequence FOR UPDATE;
+
+-- name: CancelQueuedSessionTurn :one
+UPDATE session_turns SET status='cancelled',terminal_event_id=sqlc.arg(event_id)
+WHERE environment_id=sqlc.arg(environment_id) AND session_id=sqlc.arg(session_id)
+ AND id=sqlc.arg(turn_id) AND status='queued' RETURNING *;
+
+-- name: AdvanceCancelledSessionInputs :one
+UPDATE sessions s SET committed_input_sequence=close_sequence,revision=revision+1,updated_at=now()
+WHERE s.environment_id=$1 AND s.id=$2 AND s.cancel_requested_at IS NOT NULL
+ AND s.active_turn_id IS NULL AND s.current_run_id IS NULL
+ AND NOT EXISTS (SELECT 1 FROM session_turns t WHERE t.session_id=s.id
+   AND t.sequence>s.committed_input_sequence AND t.sequence<=s.close_sequence AND t.status<>'cancelled')
+RETURNING *;

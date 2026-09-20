@@ -397,6 +397,17 @@ func (c *Client) CloseRunSession(
 	return response, nil
 }
 
+func (c *Client) CancelRunSession(
+	ctx context.Context,
+	request workerapi.CancelSessionRequest,
+) (workerapi.CancelSessionResponse, error) {
+	var response workerapi.CancelSessionResponse
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/sessions/cancel", request, &response); err != nil {
+		return workerapi.CancelSessionResponse{}, err
+	}
+	return response, nil
+}
+
 func (c *Client) ReadRunSessionEvents(
 	ctx context.Context,
 	request workerapi.ReadSessionEventsRequest,

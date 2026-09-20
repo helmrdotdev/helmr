@@ -91,7 +91,9 @@ func Admit(ctx context.Context, q db.Querier, request AdmissionRequest) (Admissi
 		return receipt, err
 	}
 	receipt.ID = pgvalue.MustUUIDValue(claim.ID)
-	if actor.NextEventSequence > 9007199254740991 {
+	if actor.CancelRequestedAt.Valid {
+		receipt.Code = "session_not_open"
+	} else if actor.NextEventSequence > 9007199254740991 {
 		receipt.Code = "invalid_request"
 	} else if request.Mode != ExactMessage && actor.Status != "open" {
 		receipt.Code = "session_not_open"

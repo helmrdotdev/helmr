@@ -463,6 +463,17 @@ type CloseSessionResponse struct {
 	Failed        *RuntimeOperationFailure `json:"failed,omitempty"`
 }
 
+type CancelSessionRequest struct {
+	SessionReferenceRequest
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+}
+
+type CancelSessionResponse struct {
+	CorrelationID string                    `json:"correlation_id"`
+	Completed     *api.SessionCancelReceipt `json:"completed,omitempty"`
+	Failed        *RuntimeOperationFailure  `json:"failed,omitempty"`
+}
+
 type ReadSessionEventsRequest struct {
 	SessionReferenceRequest
 	After *int64 `json:"after,omitempty"`

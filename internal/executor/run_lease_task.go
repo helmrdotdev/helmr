@@ -44,6 +44,7 @@ type ActorRuntimeControlPlane interface {
 	StartRunActor(context.Context, workerapi.StartActorRequest) (workerapi.StartActorResponse, error)
 	GetRunSessionStatus(context.Context, workerapi.SessionReferenceRequest) (workerapi.SessionStatusResponse, error)
 	CloseRunSession(context.Context, workerapi.CloseSessionRequest) (workerapi.CloseSessionResponse, error)
+	CancelRunSession(context.Context, workerapi.CancelSessionRequest) (workerapi.CancelSessionResponse, error)
 	ReadRunSessionEvents(context.Context, workerapi.ReadSessionEventsRequest) (workerapi.ReadSessionEventsResponse, error)
 }
 

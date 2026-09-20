@@ -57,6 +57,7 @@ const (
 	APIKeyScopeSessionsResume      APIKeyScope = "sessions:resume"
 	APIKeyScopeSessionsRecover     APIKeyScope = "sessions:recover"
 	APIKeyScopeSessionsClose       APIKeyScope = "sessions:close"
+	APIKeyScopeSessionsCancel      APIKeyScope = "sessions:cancel"
 	APIKeyScopeTokensCreate        APIKeyScope = "tokens:create"
 	APIKeyScopeTokensRead          APIKeyScope = "tokens:read"
 	APIKeyScopeTokensComplete      APIKeyScope = "tokens:complete"

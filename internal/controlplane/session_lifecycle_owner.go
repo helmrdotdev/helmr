@@ -70,6 +70,22 @@ func (s *Server) applySessionRecovery(ctx context.Context, request session.Recov
 	return receipt, err
 }
 
+func (s *Server) applySessionCancel(ctx context.Context, request session.ControlRequest) (session.ControlReceipt, error) {
+	var receipt session.ControlReceipt
+	err := s.inTx(ctx, func(work *txWork) error {
+		graph, err := lockSessionControlGraph(ctx, work, request.Target)
+		if err != nil {
+			return err
+		}
+		receipt, err = session.Cancel(ctx, work.q, request, graph)
+		return err
+	})
+	if err == nil && receipt.Code != "" {
+		err = &session.OperationError{Code: receipt.Code}
+	}
+	return receipt, err
+}
+
 func (s *Server) applySessionInterrupt(ctx context.Context, request session.InterruptRequest) (session.ControlReceipt, error) {
 	var receipt session.InterruptReceipt
 	err := s.inTx(ctx, func(work *txWork) error {
@@ -100,6 +116,13 @@ func lockSessionControlGraph(ctx context.Context, work *txWork, target session.T
 		return run.OwnedFinalization{}, err
 	}
 	if !actor.CurrentRunID.Valid {
+		locked, err := work.q.LockSessionTurnAuthority(ctx, db.LockSessionTurnAuthorityParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
+		if err != nil {
+			return run.OwnedFinalization{}, err
+		}
+		if locked.CurrentRunID.Valid || locked.RunGeneration != actor.RunGeneration {
+			return run.OwnedFinalization{}, session.ErrAuthority
+		}
 		return run.OwnedFinalization{}, nil
 	}
 	current, err := work.q.GetRun(ctx, db.GetRunParams{EnvironmentID: actor.EnvironmentID, ID: actor.CurrentRunID})

@@ -9,6 +9,7 @@ import type {
   SessionAdmissionReceipt,
   SessionMessageReceipt,
   SessionCloseReceipt,
+  SessionCancelReceipt,
   TurnInterruptReceipt,
   SessionResumeReceipt,
   SessionRecoveryReceipt,
@@ -40,6 +41,7 @@ export function parseSession(value: unknown): Session {
       ? {}
       : { key: requiredString(v["key"], "Session.key") }),
     status,
+    ...(v["cancel_requested_at"] === undefined ? {} : {cancelRequestedAt: timestampString(v["cancel_requested_at"], "Session.cancel_requested_at")}),
     createdAt: timestampString(v["created_at"], "Session.created_at"),
     updatedAt: timestampString(v["updated_at"], "Session.updated_at"),
     currentRunId: nullableID(v["current_run_id"], "Session.current_run_id"),
@@ -83,7 +85,7 @@ export function parseTurnSource(value: unknown): TurnSource {
 export function parseTurnState(value: unknown): TurnState {
   const v = objectValue(value, "Turn")
   if (
-    !["queued", "running", "completed", "failed", "interrupted"].includes(
+    !["queued", "running", "completed", "failed", "interrupted", "cancelled"].includes(
       v["status"] as string,
     )
   )
@@ -164,6 +166,16 @@ export function parseSessionCloseReceipt(value: unknown): SessionCloseReceipt {
     status: v["status"],
   })
 }
+export function parseSessionCancelReceipt(value: unknown): SessionCancelReceipt {
+  const v = objectValue(value, "Cancel receipt")
+  if (v["status"] !== "accepted")
+    throw new Error("Cancel receipt.status is invalid")
+  return Object.freeze({
+    id: resourceID(v["id"], "Cancel receipt.id"),
+    sessionId: resourceID(v["session_id"], "Cancel receipt.session_id"),
+    status: v["status"],
+  })
+}
 export function parseTurnInterruptReceipt(
   value: unknown,
 ): TurnInterruptReceipt {
@@ -237,6 +249,8 @@ const eventKinds: readonly SessionEventKind[] = [
   "message.unknown",
   "session.closing",
   "session.closed",
+  "session.cancel_requested",
+  "turn.cancelled",
   "session.failed",
   "session.held",
   "session.resumed",

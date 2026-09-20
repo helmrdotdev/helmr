@@ -35,6 +35,9 @@ type SessionMessageReceipt struct {
 type CloseSessionRequest struct {
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
 }
+type CancelSessionRequest struct {
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+}
 type InterruptTurnRequest struct {
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
 }
@@ -53,6 +56,11 @@ type RecoverSessionRequest struct {
 }
 
 type SessionCloseReceipt struct {
+	ID        string `json:"id"`
+	SessionID string `json:"session_id"`
+	Status    string `json:"status"`
+}
+type SessionCancelReceipt struct {
 	ID        string `json:"id"`
 	SessionID string `json:"session_id"`
 	Status    string `json:"status"`
@@ -116,18 +124,19 @@ type SessionDispatch struct {
 	Reason *string `json:"reason,omitempty"`
 }
 type Session struct {
-	ID           string          `json:"id"`
-	ActorID      string          `json:"actor_id"`
-	DeploymentID string          `json:"deployment_id"`
-	WorkspaceID  string          `json:"workspace_id"`
-	Key          *string         `json:"key,omitempty"`
-	Status       SessionStatus   `json:"status"`
-	CreatedAt    time.Time       `json:"created_at"`
-	UpdatedAt    time.Time       `json:"updated_at"`
-	CurrentRunID *string         `json:"current_run_id"`
-	ActiveTurnID *string         `json:"active_turn_id"`
-	Dispatch     SessionDispatch `json:"dispatch"`
-	Failure      *SessionFailure `json:"failure,omitempty"`
+	CancelRequestedAt *time.Time      `json:"cancel_requested_at,omitempty"`
+	ID                string          `json:"id"`
+	ActorID           string          `json:"actor_id"`
+	DeploymentID      string          `json:"deployment_id"`
+	WorkspaceID       string          `json:"workspace_id"`
+	Key               *string         `json:"key,omitempty"`
+	Status            SessionStatus   `json:"status"`
+	CreatedAt         time.Time       `json:"created_at"`
+	UpdatedAt         time.Time       `json:"updated_at"`
+	CurrentRunID      *string         `json:"current_run_id"`
+	ActiveTurnID      *string         `json:"active_turn_id"`
+	Dispatch          SessionDispatch `json:"dispatch"`
+	Failure           *SessionFailure `json:"failure,omitempty"`
 }
 type ListSessionsResponse struct {
 	Sessions   []Session `json:"sessions"`

@@ -858,7 +858,7 @@ func (t *Transaction) Acquire(ctx context.Context, input Request) (Result, error
 func supportedOperation(value operation) bool {
 	switch value {
 	case operationTurnInterrupt, operationTurnOutput, operationDeploymentFinalize, operationSecretCreate, operationSecretRotate, operationSecretRevoke, operationRunMetadata,
-		operationActorStart, "session.send", "session.enqueue", "turn.message", "session.close", "session.resume", "session.recover", "session.output.write", "session.run.cancel",
+		operationActorStart, "session.send", "session.enqueue", "turn.message", "session.close", "session.cancel", "session.resume", "session.recover", "session.output.write", "session.run.cancel",
 		operationTaskStart, operationTaskChildInvoke, operationTokenCreate, operationTokenComplete, operationTokenCancel,
 		operationWorkspaceCreate, operationWorkspaceExec, operationWorkspaceDelete:
 		return true

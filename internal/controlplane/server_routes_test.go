@@ -158,6 +158,7 @@ POST /api/projects/{projectID}/environments/{environmentID}/sandboxes/{sandboxID
 POST /api/projects/{projectID}/environments/{environmentID}/secrets
 POST /api/projects/{projectID}/environments/{environmentID}/secrets/{secretID}/revoke
 POST /api/projects/{projectID}/environments/{environmentID}/secrets/{secretID}/rotate
+POST /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/cancel
 POST /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/close
 POST /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/enqueue
 POST /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/recover
@@ -184,6 +185,7 @@ POST /v1/sandboxes/{sandboxID}/workspaces
 POST /v1/secrets
 POST /v1/secrets/{secretID}/revoke
 POST /v1/secrets/{secretID}/rotate
+POST /v1/sessions/{sessionID}/cancel
 POST /v1/sessions/{sessionID}/close
 POST /v1/sessions/{sessionID}/enqueue
 POST /v1/sessions/{sessionID}/recover
@@ -223,6 +225,7 @@ POST /worker/v1/run/runtime-instances/reconcile
 POST /worker/v1/run/runtime-substrates/register
 POST /worker/v1/run/secret-proxy/prepare
 POST /worker/v1/run/secret-proxy/resolve
+POST /worker/v1/run/sessions/cancel
 POST /worker/v1/run/sessions/close
 POST /worker/v1/run/sessions/complete
 POST /worker/v1/run/sessions/control

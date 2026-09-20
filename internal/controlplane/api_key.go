@@ -304,6 +304,8 @@ func normalizeAPIKeyScope(scope api.APIKeyScope) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeSessionsRecover, true
 	case string(api.APIKeyScopeSessionsClose):
 		return api.APIKeyScopeSessionsClose, true
+	case string(api.APIKeyScopeSessionsCancel):
+		return api.APIKeyScopeSessionsCancel, true
 	case string(api.APIKeyScopeTokensCreate):
 		return api.APIKeyScopeTokensCreate, true
 	case string(api.APIKeyScopeTokensRead):
@@ -351,6 +353,8 @@ func apiKeyScopePermission(scope api.APIKeyScope) (auth.Permission, bool) {
 		return auth.PermissionSessionsRecover, true
 	case api.APIKeyScopeSessionsClose:
 		return auth.PermissionSessionsClose, true
+	case api.APIKeyScopeSessionsCancel:
+		return auth.PermissionSessionsCancel, true
 	case api.APIKeyScopeTokensCreate:
 		return auth.PermissionTokensCreate, true
 	case api.APIKeyScopeTokensRead:
@@ -398,6 +402,8 @@ func apiKeyPermissionScope(permission string) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeSessionsRecover, true
 	case string(auth.PermissionSessionsClose):
 		return api.APIKeyScopeSessionsClose, true
+	case string(auth.PermissionSessionsCancel):
+		return api.APIKeyScopeSessionsCancel, true
 	case string(auth.PermissionTokensCreate):
 		return api.APIKeyScopeTokensCreate, true
 	case string(auth.PermissionTokensRead):

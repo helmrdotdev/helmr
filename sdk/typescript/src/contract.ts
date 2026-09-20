@@ -358,6 +358,7 @@ export type SessionDispatch =
     }>
 
 export interface Session {
+  readonly cancelRequestedAt?: string
   readonly id: string
   readonly actorId: string
   readonly deploymentId: string
@@ -378,6 +379,7 @@ export type TurnStatus =
   | "completed"
   | "failed"
   | "interrupted"
+  | "cancelled"
 export interface TurnState {
   readonly id: string
   readonly sessionId: string
@@ -395,6 +397,11 @@ export interface TurnState {
 }
 
 export interface SessionCloseReceipt {
+  readonly id: string
+  readonly sessionId: string
+  readonly status: "accepted"
+}
+export interface SessionCancelReceipt {
   readonly id: string
   readonly sessionId: string
   readonly status: "accepted"
@@ -466,6 +473,8 @@ export type SessionEventKind =
   | "message.unknown"
   | "session.closing"
   | "session.closed"
+  | "session.cancel_requested"
+  | "turn.cancelled"
   | "session.failed"
   | "session.held"
   | "session.resumed"
@@ -541,6 +550,10 @@ export interface SessionRef {
     request?: SessionOperationOptions,
     options?: RequestOptions,
   ): Promise<SessionCloseReceipt>
+  cancel(
+    request?: SessionOperationOptions,
+    options?: RequestOptions,
+  ): Promise<SessionCancelReceipt>
   resume(
     request: SessionResumeRequest,
     options?: RequestOptions,

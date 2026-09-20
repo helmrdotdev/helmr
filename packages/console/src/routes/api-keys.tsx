@@ -87,7 +87,12 @@ const API_KEY_SCOPE_OPTIONS: {
   {
     value: "sessions:close",
     label: "Close sessions",
-    description: "Allow automation to close Sessions.",
+    description: "Drain accepted work and close Sessions.",
+  },
+  {
+    value: "sessions:cancel",
+    label: "Cancel sessions",
+    description: "Cancel queued Turns, stop active execution, and close Sessions.",
   },
   {
     value: "secrets:write",

@@ -14,7 +14,7 @@ import {
   parseTurnState,
   parseSessionAdmissionReceipt,
   parseSessionMessageReceipt,
-  parseSessionCloseReceipt,
+  parseSessionCloseReceipt, parseSessionCancelReceipt,
   parseTurnInterruptReceipt,
   parseSessionResumeReceipt,
   parseSessionRecoveryReceipt,
@@ -211,6 +211,15 @@ export function createSessionRef(
       return parseSessionCloseReceipt(
         await post(
           "/close",
+          { idempotency_key: sessionOperationOptions(request).idempotencyKey },
+          options,
+        ),
+      )
+    },
+    async cancel(request, options) {
+      return parseSessionCancelReceipt(
+        await post(
+          "/cancel",
           { idempotency_key: sessionOperationOptions(request).idempotencyKey },
           options,
         ),

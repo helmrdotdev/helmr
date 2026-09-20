@@ -224,6 +224,7 @@ describe("Session lifecycle client", () => {
       { ...receipt, turn_id: turnId, hold_id: holdId },
       { ...receipt, hold_id: holdId },
       receipt,
+      receipt,
       { ...receipt, turn_id: null, hold_id: holdId },
     ])
     const ref = client.sessions.ref(sessionId)
@@ -232,6 +233,7 @@ describe("Session lifecycle client", () => {
     ).toMatchObject({ turnId, holdId, status: "accepted" })
     await ref.resume({ holdId, idempotencyKey: "resume-1" })
     await ref.close({ idempotencyKey: "close-1" })
+    await ref.cancel({ idempotencyKey: "cancel-1" })
     expect(
       await ref.recover({
         holdId,
@@ -245,6 +247,7 @@ describe("Session lifecycle client", () => {
       { idempotency_key: "stop-1" },
       { hold_id: holdId, idempotency_key: "resume-1" },
       { idempotency_key: "close-1" },
+      { idempotency_key: "cancel-1" },
       {
         hold_id: holdId,
         turn_id: null,

@@ -25,7 +25,7 @@ SELECT EXISTS (
    AND s.current_run_id=t.run_id AND s.run_generation=t.run_generation
  JOIN runs r ON r.id=t.run_id AND r.current_attempt_number=t.attempt_number
  WHERE t.environment_id=$1 AND t.session_id=$2 AND t.id=$3
-   AND s.status IN ('open','closing') AND s.dispatch_hold_id IS NULL
+   AND s.status IN ('open','closing') AND s.cancel_requested_at IS NULL AND s.dispatch_hold_id IS NULL
    AND t.status='running' AND t.interrupt_requested_at IS NULL AND t.settlement_started_at IS NULL
    AND r.status IN ('running','waiting','queued')
 )::boolean AS accepts;
@@ -39,7 +39,7 @@ SELECT EXISTS (
  JOIN worker_instances w ON w.id=l.worker_instance_id AND w.current_epoch=l.worker_epoch
  JOIN runtime_instances ri ON ri.id=l.runtime_instance_id
  WHERE t.environment_id=$1 AND t.session_id=$2 AND t.id=$3
-   AND s.status IN ('open','closing') AND s.dispatch_hold_id IS NULL
+   AND s.status IN ('open','closing') AND s.cancel_requested_at IS NULL AND s.dispatch_hold_id IS NULL
    AND t.status='running' AND t.interrupt_requested_at IS NULL AND t.settlement_started_at IS NULL
    AND r.status='running' AND l.status='running' AND l.expires_at > now()
    AND w.lost_at IS NULL AND w.termination_ready_at IS NULL

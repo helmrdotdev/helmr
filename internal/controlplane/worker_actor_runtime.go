@@ -203,6 +203,36 @@ func (s *Server) workerCloseSession(w http.ResponseWriter, r *http.Request) {
 	response := api.SessionCloseReceipt{ID: receipt.ID.String(), SessionID: receipt.SessionID.String(), Status: receipt.Status}
 	writeJSON(w, http.StatusOK, workerapi.CloseSessionResponse{CorrelationID: request.CorrelationID, Completed: &response})
 }
+func (s *Server) workerCancelSession(w http.ResponseWriter, r *http.Request) {
+	var request workerapi.CancelSessionRequest
+	if err := decodeWorkerActorRequest(r, &request, "Session cancel"); err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
+	targetID, err := parseWorkerSessionReference(request.SessionReferenceRequest)
+	if err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
+	var receipt session.ControlReceipt
+	err = s.inTx(r.Context(), func(work *txWork) error {
+		source, graph, _, err := lockWorkerSessionControl(r.Context(), work, workerFromContext(r.Context()), request.Lease, targetID, true)
+		if err != nil {
+			return err
+		}
+		receipt, err = session.Cancel(r.Context(), work.q, session.ControlRequest{Target: session.Target{EnvironmentID: pgvalue.MustUUIDValue(source.EnvironmentID), SessionID: pgvalue.MustUUIDValue(targetID)}, IdempotencyKey: request.IdempotencyKey}, graph)
+		return err
+	})
+	if err == nil && receipt.Code != "" {
+		err = &session.OperationError{Code: receipt.Code}
+	}
+	if err != nil {
+		s.writeWorkerSessionCommand(w, request.CorrelationID, err)
+		return
+	}
+	response := api.SessionCancelReceipt{ID: receipt.ID.String(), SessionID: receipt.SessionID.String(), Status: receipt.Status}
+	writeJSON(w, http.StatusOK, workerapi.CancelSessionResponse{CorrelationID: request.CorrelationID, Completed: &response})
+}
 func (s *Server) workerReadSessionEvents(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.ReadSessionEventsRequest
 	if err := decodeWorkerActorRequest(r, &request, "Session events"); err != nil {

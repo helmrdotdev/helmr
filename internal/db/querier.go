@@ -21,6 +21,7 @@ type Querier interface {
 	ActorCheckpointLineageIsValid(ctx context.Context, arg ActorCheckpointLineageIsValidParams) (bool, error)
 	AdvanceActorTurnWorkspaceLeaseFrontier(ctx context.Context, arg AdvanceActorTurnWorkspaceLeaseFrontierParams) (WorkspaceLease, error)
 	AdvanceActorWorkspaceHead(ctx context.Context, arg AdvanceActorWorkspaceHeadParams) (AdvanceActorWorkspaceHeadRow, error)
+	AdvanceCancelledSessionInputs(ctx context.Context, arg AdvanceCancelledSessionInputsParams) (Session, error)
 	AdvanceRunWorkspaceMountFence(ctx context.Context, arg AdvanceRunWorkspaceMountFenceParams) (WorkspaceMount, error)
 	AdvanceRunWorkspaceWriter(ctx context.Context, arg AdvanceRunWorkspaceWriterParams) (AdvanceRunWorkspaceWriterRow, error)
 	AdvanceScheduleCursor(ctx context.Context, arg AdvanceScheduleCursorParams) (Schedule, error)
@@ -42,9 +43,11 @@ type Querier interface {
 	BeginRunLeaseCheckpoint(ctx context.Context, arg BeginRunLeaseCheckpointParams) (RunLease, error)
 	BeginRunLeaseFinalization(ctx context.Context, arg BeginRunLeaseFinalizationParams) (RunLease, error)
 	BeginRunWorkspaceLeaseFinalization(ctx context.Context, arg BeginRunWorkspaceLeaseFinalizationParams) (WorkspaceLease, error)
+	BeginSessionCancellation(ctx context.Context, arg BeginSessionCancellationParams) (Session, error)
 	BeginSessionTurnSettlement(ctx context.Context, arg BeginSessionTurnSettlementParams) (SessionTurn, error)
 	BindRunWaitTurn(ctx context.Context, arg BindRunWaitTurnParams) (BindRunWaitTurnRow, error)
 	BindWorkspaceExecRuntime(ctx context.Context, arg BindWorkspaceExecRuntimeParams) (WorkspaceProcess, error)
+	CancelQueuedSessionTurn(ctx context.Context, arg CancelQueuedSessionTurnParams) (SessionTurn, error)
 	CancelToken(ctx context.Context, arg CancelTokenParams) (CancelTokenRow, error)
 	// One primary command snapshot is the authorization point. No later mutable
 	// lookup may supply material for these captured envelopes.
@@ -392,6 +395,7 @@ type Querier interface {
 	LockProcessSecretDelivery(ctx context.Context, arg LockProcessSecretDeliveryParams) ([]LockProcessSecretDeliveryRow, error)
 	LockPublicAccessTokenByHash(ctx context.Context, tokenHash []byte) (PublicAccessToken, error)
 	LockQueuedRunExpiry(ctx context.Context, id pgtype.UUID) (LockQueuedRunExpiryRow, error)
+	LockQueuedSessionTurns(ctx context.Context, arg LockQueuedSessionTurnsParams) ([]SessionTurn, error)
 	LockReadyRunCheckpoint(ctx context.Context, arg LockReadyRunCheckpointParams) (RunCheckpoint, error)
 	LockRestorableRunCheckpoint(ctx context.Context, arg LockRestorableRunCheckpointParams) (LockRestorableRunCheckpointRow, error)
 	LockRunEntrypointLease(ctx context.Context, arg LockRunEntrypointLeaseParams) (RunLease, error)
