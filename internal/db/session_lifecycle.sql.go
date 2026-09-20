@@ -56,12 +56,12 @@ WITH bound AS (
        AND s.current_run_id=run_waits.run_id AND s.run_generation=$3
        AND s.dispatch_hold_id IS NULL AND t.status='running' AND t.attempt_number=run_waits.attempt_number
        AND t.settlement_started_at IS NULL AND t.interrupt_requested_at IS NULL)
- RETURNING run_waits.turn_session_id, run_waits.turn_id, run_waits.turn_run_generation, run_waits.id, run_waits.environment_id, run_waits.run_id, run_waits.workspace_id, run_waits.kind, run_waits.condition_status, run_waits.due_at, run_waits.timeout_at, run_waits.idle_timeout_ms, run_waits.token_id, run_waits.child_run_id, run_waits.child_target_declared_id, run_waits.child_claim_id, run_waits.child_request, run_waits.session_id, run_waits.after_input_sequence, run_waits.condition_result, run_waits.condition_error, run_waits.condition_terminal_at, run_waits.condition_reason_code, run_waits.completed_turn_id, run_waits.suspension_status, run_waits.token_registration_run_revision, run_waits.registration_request_fingerprint, run_waits.expected_run_revision, run_waits.attempt_number, run_waits.actor_speculative_input_sequence, run_waits.current_run_lease_id, run_waits.prior_run_lease_id, run_waits.checkpoint_request_version, run_waits.checkpoint_ack_version, run_waits.checkpoint_due_at, run_waits.suspend_checkpoint_id, run_waits.resume_attach_id, run_waits.resume_request_version, run_waits.resume_ack_version, run_waits.base_workspace_version_id, run_waits.base_workspace_content_digest, run_waits.resume_workspace_version_id, run_waits.ownership_generation, run_waits.parent_writer_generation, run_waits.child_writer_generation, run_waits.resume_writer_generation, run_waits.metadata, run_waits.tags, run_waits.suspension_terminal_at, run_waits.suspension_reason_code, run_waits.suspension_error, run_waits.created_at, run_waits.updated_at
+ RETURNING run_waits.id, run_waits.environment_id, run_waits.run_id, run_waits.workspace_id, run_waits.turn_session_id, run_waits.turn_id, run_waits.turn_run_generation, run_waits.kind, run_waits.condition_status, run_waits.due_at, run_waits.timeout_at, run_waits.idle_timeout_ms, run_waits.token_id, run_waits.child_run_id, run_waits.child_target_declared_id, run_waits.child_claim_id, run_waits.child_request, run_waits.session_id, run_waits.after_input_sequence, run_waits.condition_result, run_waits.condition_error, run_waits.condition_terminal_at, run_waits.condition_reason_code, run_waits.completed_turn_id, run_waits.suspension_status, run_waits.token_registration_run_revision, run_waits.registration_request_fingerprint, run_waits.expected_run_revision, run_waits.attempt_number, run_waits.actor_speculative_input_sequence, run_waits.current_run_lease_id, run_waits.prior_run_lease_id, run_waits.checkpoint_request_version, run_waits.checkpoint_ack_version, run_waits.checkpoint_due_at, run_waits.suspend_checkpoint_id, run_waits.resume_attach_id, run_waits.resume_request_version, run_waits.resume_ack_version, run_waits.base_workspace_version_id, run_waits.base_workspace_content_digest, run_waits.resume_workspace_version_id, run_waits.ownership_generation, run_waits.parent_writer_generation, run_waits.child_writer_generation, run_waits.resume_writer_generation, run_waits.metadata, run_waits.tags, run_waits.suspension_terminal_at, run_waits.suspension_reason_code, run_waits.suspension_error, run_waits.created_at, run_waits.updated_at
 ), unreadied AS (
  UPDATE session_turns SET ready_run_lease_id=NULL FROM bound
  WHERE session_turns.id=bound.turn_id RETURNING session_turns.id
 )
-SELECT bound.turn_session_id, bound.turn_id, bound.turn_run_generation, bound.id, bound.environment_id, bound.run_id, bound.workspace_id, bound.kind, bound.condition_status, bound.due_at, bound.timeout_at, bound.idle_timeout_ms, bound.token_id, bound.child_run_id, bound.child_target_declared_id, bound.child_claim_id, bound.child_request, bound.session_id, bound.after_input_sequence, bound.condition_result, bound.condition_error, bound.condition_terminal_at, bound.condition_reason_code, bound.completed_turn_id, bound.suspension_status, bound.token_registration_run_revision, bound.registration_request_fingerprint, bound.expected_run_revision, bound.attempt_number, bound.actor_speculative_input_sequence, bound.current_run_lease_id, bound.prior_run_lease_id, bound.checkpoint_request_version, bound.checkpoint_ack_version, bound.checkpoint_due_at, bound.suspend_checkpoint_id, bound.resume_attach_id, bound.resume_request_version, bound.resume_ack_version, bound.base_workspace_version_id, bound.base_workspace_content_digest, bound.resume_workspace_version_id, bound.ownership_generation, bound.parent_writer_generation, bound.child_writer_generation, bound.resume_writer_generation, bound.metadata, bound.tags, bound.suspension_terminal_at, bound.suspension_reason_code, bound.suspension_error, bound.created_at, bound.updated_at FROM bound JOIN unreadied ON unreadied.id=bound.turn_id
+SELECT bound.id, bound.environment_id, bound.run_id, bound.workspace_id, bound.turn_session_id, bound.turn_id, bound.turn_run_generation, bound.kind, bound.condition_status, bound.due_at, bound.timeout_at, bound.idle_timeout_ms, bound.token_id, bound.child_run_id, bound.child_target_declared_id, bound.child_claim_id, bound.child_request, bound.session_id, bound.after_input_sequence, bound.condition_result, bound.condition_error, bound.condition_terminal_at, bound.condition_reason_code, bound.completed_turn_id, bound.suspension_status, bound.token_registration_run_revision, bound.registration_request_fingerprint, bound.expected_run_revision, bound.attempt_number, bound.actor_speculative_input_sequence, bound.current_run_lease_id, bound.prior_run_lease_id, bound.checkpoint_request_version, bound.checkpoint_ack_version, bound.checkpoint_due_at, bound.suspend_checkpoint_id, bound.resume_attach_id, bound.resume_request_version, bound.resume_ack_version, bound.base_workspace_version_id, bound.base_workspace_content_digest, bound.resume_workspace_version_id, bound.ownership_generation, bound.parent_writer_generation, bound.child_writer_generation, bound.resume_writer_generation, bound.metadata, bound.tags, bound.suspension_terminal_at, bound.suspension_reason_code, bound.suspension_error, bound.created_at, bound.updated_at FROM bound JOIN unreadied ON unreadied.id=bound.turn_id
 `
 
 type BindRunWaitTurnParams struct {
@@ -72,13 +72,13 @@ type BindRunWaitTurnParams struct {
 }
 
 type BindRunWaitTurnRow struct {
-	TurnSessionID                  pgtype.UUID        `json:"turn_session_id"`
-	TurnID                         pgtype.UUID        `json:"turn_id"`
-	TurnRunGeneration              pgtype.Int8        `json:"turn_run_generation"`
 	ID                             pgtype.UUID        `json:"id"`
 	EnvironmentID                  pgtype.UUID        `json:"environment_id"`
 	RunID                          pgtype.UUID        `json:"run_id"`
 	WorkspaceID                    pgtype.UUID        `json:"workspace_id"`
+	TurnSessionID                  pgtype.UUID        `json:"turn_session_id"`
+	TurnID                         pgtype.UUID        `json:"turn_id"`
+	TurnRunGeneration              pgtype.Int8        `json:"turn_run_generation"`
 	Kind                           WaitKind           `json:"kind"`
 	ConditionStatus                string             `json:"condition_status"`
 	DueAt                          pgtype.Timestamptz `json:"due_at"`
@@ -136,13 +136,13 @@ func (q *Queries) BindRunWaitTurn(ctx context.Context, arg BindRunWaitTurnParams
 	)
 	var i BindRunWaitTurnRow
 	err := row.Scan(
-		&i.TurnSessionID,
-		&i.TurnID,
-		&i.TurnRunGeneration,
 		&i.ID,
 		&i.EnvironmentID,
 		&i.RunID,
 		&i.WorkspaceID,
+		&i.TurnSessionID,
+		&i.TurnID,
+		&i.TurnRunGeneration,
 		&i.Kind,
 		&i.ConditionStatus,
 		&i.DueAt,
@@ -245,7 +245,7 @@ const clearSessionDispatchHold = `-- name: ClearSessionDispatchHold :one
 UPDATE sessions SET dispatch_hold_id=NULL,dispatch_hold_reason=NULL,dispatch_hold_run_id=NULL,
  dispatch_hold_attempt_number=NULL,dispatch_hold_run_generation=NULL,revision=revision+1,updated_at=now()
 WHERE environment_id=$1 AND id=$2 AND dispatch_hold_id=$3 AND active_turn_id IS NULL
- AND current_run_id IS NULL AND dispatch_hold_reason IN ('interrupted','recovered') RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, next_event_sequence, failure, failure_run_id, next_input_sequence, committed_input_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, failed_at
+ AND current_run_id IS NULL AND dispatch_hold_reason IN ('interrupted','recovered') RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, failed_at
 `
 
 type ClearSessionDispatchHoldParams struct {
@@ -273,11 +273,11 @@ func (q *Queries) ClearSessionDispatchHold(ctx context.Context, arg ClearSession
 		&i.DispatchHoldAttemptNumber,
 		&i.DispatchHoldRunGeneration,
 		&i.DispatchHoldReason,
-		&i.NextEventSequence,
 		&i.Failure,
 		&i.FailureRunID,
 		&i.NextInputSequence,
 		&i.CommittedInputSequence,
+		&i.NextEventSequence,
 		&i.RunQueueName,
 		&i.RunConcurrencyKey,
 		&i.RunQueueConcurrencyLimit,
@@ -306,7 +306,7 @@ WHERE environment_id=$3 AND id=$4
  AND current_run_id=$5 AND run_generation=$6
  AND dispatch_hold_id=$7 AND dispatch_hold_reason='interrupt_requested'
  AND active_turn_id IS NOT DISTINCT FROM $8
-RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, next_event_sequence, failure, failure_run_id, next_input_sequence, committed_input_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, failed_at
+RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, failed_at
 `
 
 type CompleteSessionInterruptionParams struct {
@@ -348,11 +348,11 @@ func (q *Queries) CompleteSessionInterruption(ctx context.Context, arg CompleteS
 		&i.DispatchHoldAttemptNumber,
 		&i.DispatchHoldRunGeneration,
 		&i.DispatchHoldReason,
-		&i.NextEventSequence,
 		&i.Failure,
 		&i.FailureRunID,
 		&i.NextInputSequence,
 		&i.CommittedInputSequence,
+		&i.NextEventSequence,
 		&i.RunQueueName,
 		&i.RunConcurrencyKey,
 		&i.RunQueueConcurrencyLimit,
@@ -378,7 +378,7 @@ UPDATE sessions SET active_turn_id=NULL,current_run_id=NULL,dispatch_hold_id=$1,
  committed_input_sequence=coalesce($2,committed_input_sequence)
 WHERE sessions.environment_id=$3 AND sessions.id=$4
  AND dispatch_hold_id=$5 AND active_turn_id IS NOT DISTINCT FROM $6
-RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, next_event_sequence, failure, failure_run_id, next_input_sequence, committed_input_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, failed_at
+RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, failed_at
 `
 
 type CompleteSessionRecoveryParams struct {
@@ -416,11 +416,11 @@ func (q *Queries) CompleteSessionRecovery(ctx context.Context, arg CompleteSessi
 		&i.DispatchHoldAttemptNumber,
 		&i.DispatchHoldRunGeneration,
 		&i.DispatchHoldReason,
-		&i.NextEventSequence,
 		&i.Failure,
 		&i.FailureRunID,
 		&i.NextInputSequence,
 		&i.CommittedInputSequence,
+		&i.NextEventSequence,
 		&i.RunQueueName,
 		&i.RunConcurrencyKey,
 		&i.RunQueueConcurrencyLimit,
@@ -496,7 +496,7 @@ WITH allocated AS (
  UPDATE sessions SET next_input_sequence=next_input_sequence+1,revision=revision+1,updated_at=now()
  WHERE sessions.environment_id=$4 AND sessions.id=$5
    AND status='open' AND next_input_sequence <= 9007199254740991
- RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, next_event_sequence, failure, failure_run_id, next_input_sequence, committed_input_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, failed_at,next_input_sequence-1 AS sequence
+ RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, failed_at,next_input_sequence-1 AS sequence
 )
 INSERT INTO session_turns(id,environment_id,session_id,sequence,data,source_run_id)
 SELECT $1,allocated.environment_id,allocated.id,allocated.sequence,$2,$3
@@ -660,7 +660,7 @@ UPDATE sessions SET dispatch_hold_id=$1,dispatch_hold_reason=$2,
  dispatch_hold_run_id=$3,dispatch_hold_attempt_number=$4,
  dispatch_hold_run_generation=run_generation,revision=revision+1,updated_at=now()
 WHERE sessions.environment_id=$5 AND sessions.id=$6
- AND current_run_id=$3 AND status IN ('open','closing') RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, next_event_sequence, failure, failure_run_id, next_input_sequence, committed_input_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, failed_at
+ AND current_run_id=$3 AND status IN ('open','closing') RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, failed_at
 `
 
 type HoldSessionExecutionParams struct {
@@ -698,11 +698,11 @@ func (q *Queries) HoldSessionExecution(ctx context.Context, arg HoldSessionExecu
 		&i.DispatchHoldAttemptNumber,
 		&i.DispatchHoldRunGeneration,
 		&i.DispatchHoldReason,
-		&i.NextEventSequence,
 		&i.Failure,
 		&i.FailureRunID,
 		&i.NextInputSequence,
 		&i.CommittedInputSequence,
+		&i.NextEventSequence,
 		&i.RunQueueName,
 		&i.RunConcurrencyKey,
 		&i.RunQueueConcurrencyLimit,
@@ -878,7 +878,7 @@ func (q *Queries) LockSessionMessage(ctx context.Context, arg LockSessionMessage
 }
 
 const lockWorkerSessionOperationActors = `-- name: LockWorkerSessionOperationActors :many
-SELECT s.id, s.environment_id, s.actor_declared_id, s.deployment_definition_id, s.workspace_id, s.key, s.current_run_id, s.run_generation, s.revision, s.active_turn_id, s.dispatch_hold_id, s.dispatch_hold_run_id, s.dispatch_hold_attempt_number, s.dispatch_hold_run_generation, s.dispatch_hold_reason, s.next_event_sequence, s.failure, s.failure_run_id, s.next_input_sequence, s.committed_input_sequence, s.run_queue_name, s.run_concurrency_key, s.run_queue_concurrency_limit, s.run_priority, s.run_queue_ttl_ms, s.run_max_active_duration_ms, s.run_retry_policy, s.run_metadata, s.run_tags, s.status, s.close_sequence, s.created_at, s.updated_at, s.closed_at, s.failed_at FROM sessions s
+SELECT s.id, s.environment_id, s.actor_declared_id, s.deployment_definition_id, s.workspace_id, s.key, s.current_run_id, s.run_generation, s.revision, s.active_turn_id, s.dispatch_hold_id, s.dispatch_hold_run_id, s.dispatch_hold_attempt_number, s.dispatch_hold_run_generation, s.dispatch_hold_reason, s.failure, s.failure_run_id, s.next_input_sequence, s.committed_input_sequence, s.next_event_sequence, s.run_queue_name, s.run_concurrency_key, s.run_queue_concurrency_limit, s.run_priority, s.run_queue_ttl_ms, s.run_max_active_duration_ms, s.run_retry_policy, s.run_metadata, s.run_tags, s.status, s.close_sequence, s.created_at, s.updated_at, s.closed_at, s.failed_at FROM sessions s
 WHERE s.environment_id=$1
  AND (s.id=$2 OR s.id=(SELECT w.owner_session_id FROM workspaces w WHERE w.id=$3))
 ORDER BY s.id FOR UPDATE OF s
@@ -915,11 +915,11 @@ func (q *Queries) LockWorkerSessionOperationActors(ctx context.Context, arg Lock
 			&i.DispatchHoldAttemptNumber,
 			&i.DispatchHoldRunGeneration,
 			&i.DispatchHoldReason,
-			&i.NextEventSequence,
 			&i.Failure,
 			&i.FailureRunID,
 			&i.NextInputSequence,
 			&i.CommittedInputSequence,
+			&i.NextEventSequence,
 			&i.RunQueueName,
 			&i.RunConcurrencyKey,
 			&i.RunQueueConcurrencyLimit,

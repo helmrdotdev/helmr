@@ -935,15 +935,11 @@ CREATE TABLE sessions (
     dispatch_hold_attempt_number INTEGER,
     dispatch_hold_run_generation BIGINT,
     dispatch_hold_reason TEXT CHECK (dispatch_hold_reason IN ('interrupt_requested', 'interrupted', 'recovery_required', 'recovered')),
-    next_event_sequence BIGINT NOT NULL DEFAULT 1 CHECK (next_event_sequence BETWEEN 1 AND 9007199254740992),
-    CHECK ((dispatch_hold_id IS NULL) = (dispatch_hold_reason IS NULL)),
-    CHECK ((dispatch_hold_id IS NULL) = (dispatch_hold_run_id IS NULL)),
-    CHECK ((dispatch_hold_id IS NULL) = (dispatch_hold_attempt_number IS NULL)),
-    CHECK ((dispatch_hold_id IS NULL) = (dispatch_hold_run_generation IS NULL)),
     failure JSONB,
     failure_run_id UUID,
     next_input_sequence BIGINT NOT NULL DEFAULT 1 CHECK (next_input_sequence BETWEEN 1 AND 9007199254740992),
     committed_input_sequence BIGINT NOT NULL DEFAULT 0 CHECK (committed_input_sequence BETWEEN 0 AND 9007199254740991),
+    next_event_sequence BIGINT NOT NULL DEFAULT 1 CHECK (next_event_sequence BETWEEN 1 AND 9007199254740992),
     run_queue_name TEXT NOT NULL CHECK (btrim(run_queue_name) <> '' AND octet_length(run_queue_name) <= 256),
     run_concurrency_key TEXT CHECK (
         run_concurrency_key IS NULL
@@ -972,6 +968,10 @@ CREATE TABLE sessions (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     closed_at TIMESTAMPTZ,
     failed_at TIMESTAMPTZ,
+    CHECK ((dispatch_hold_id IS NULL) = (dispatch_hold_reason IS NULL)),
+    CHECK ((dispatch_hold_id IS NULL) = (dispatch_hold_run_id IS NULL)),
+    CHECK ((dispatch_hold_id IS NULL) = (dispatch_hold_attempt_number IS NULL)),
+    CHECK ((dispatch_hold_id IS NULL) = (dispatch_hold_run_generation IS NULL)),
     CONSTRAINT sessions_closed_time_check CHECK (status <> 'closed' OR closed_at IS NOT NULL),
     CONSTRAINT sessions_failed_time_check CHECK (status <> 'failed' OR failed_at IS NOT NULL),
     UNIQUE (environment_id, id),
@@ -2417,13 +2417,13 @@ CREATE UNIQUE INDEX run_checkpoints_creating_uidx
     WHERE status = 'creating';
 
 CREATE TABLE run_waits (
-    turn_session_id UUID,
-    turn_id UUID,
-    turn_run_generation BIGINT,
     id UUID PRIMARY KEY,
     environment_id UUID NOT NULL,
     run_id UUID NOT NULL,
     workspace_id UUID NOT NULL,
+    turn_session_id UUID,
+    turn_id UUID,
+    turn_run_generation BIGINT,
     kind wait_kind NOT NULL,
     condition_status TEXT NOT NULL DEFAULT 'pending'
         CHECK (condition_status IN ('pending', 'completed', 'failed', 'cancelled')),
@@ -2488,6 +2488,10 @@ CREATE TABLE run_waits (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (run_id, attempt_number, workspace_id, id),
+    CHECK ((turn_id IS NULL) = (turn_session_id IS NULL)),
+    CHECK ((turn_id IS NULL) = (turn_run_generation IS NULL)),
+    FOREIGN KEY (turn_session_id, turn_id, run_id, attempt_number, turn_run_generation)
+        REFERENCES session_turns(session_id, id, run_id, attempt_number, run_generation),
     FOREIGN KEY (environment_id, run_id)
         REFERENCES runs(environment_id, id)
         ON DELETE RESTRICT,
@@ -2984,7 +2988,3 @@ ALTER TABLE sessions ADD CONSTRAINT sessions_dispatch_hold_attempt_fk FOREIGN KE
 ALTER TABLE sessions ADD CONSTRAINT sessions_dispatch_hold_run_fk FOREIGN KEY (id, dispatch_hold_run_id) REFERENCES runs(session_id, id);
 ALTER TABLE session_turns ADD FOREIGN KEY (ready_run_lease_id) REFERENCES run_leases(id);
 ALTER TABLE session_messages ADD FOREIGN KEY (delivery_run_lease_id) REFERENCES run_leases(id);
-ALTER TABLE run_waits ADD CHECK ((turn_id IS NULL) = (turn_session_id IS NULL));
-ALTER TABLE run_waits ADD CHECK ((turn_id IS NULL) = (turn_run_generation IS NULL));
-ALTER TABLE run_waits ADD FOREIGN KEY (turn_session_id, turn_id, run_id, attempt_number, turn_run_generation)
-    REFERENCES session_turns(session_id, id, run_id, attempt_number, run_generation);

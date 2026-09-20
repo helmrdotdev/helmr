@@ -413,7 +413,7 @@ UPDATE run_waits
    AND run_waits.suspension_status = 'checkpointing'
    AND run_waits.condition_status = 'pending'
    AND run_waits.checkpoint_request_version = $1
-RETURNING run_waits.turn_session_id, run_waits.turn_id, run_waits.turn_run_generation, run_waits.id, run_waits.environment_id, run_waits.run_id, run_waits.workspace_id, run_waits.kind, run_waits.condition_status, run_waits.due_at, run_waits.timeout_at, run_waits.idle_timeout_ms, run_waits.token_id, run_waits.child_run_id, run_waits.child_target_declared_id, run_waits.child_claim_id, run_waits.child_request, run_waits.session_id, run_waits.after_input_sequence, run_waits.condition_result, run_waits.condition_error, run_waits.condition_terminal_at, run_waits.condition_reason_code, run_waits.completed_turn_id, run_waits.suspension_status, run_waits.token_registration_run_revision, run_waits.registration_request_fingerprint, run_waits.expected_run_revision, run_waits.attempt_number, run_waits.actor_speculative_input_sequence, run_waits.current_run_lease_id, run_waits.prior_run_lease_id, run_waits.checkpoint_request_version, run_waits.checkpoint_ack_version, run_waits.checkpoint_due_at, run_waits.suspend_checkpoint_id, run_waits.resume_attach_id, run_waits.resume_request_version, run_waits.resume_ack_version, run_waits.base_workspace_version_id, run_waits.base_workspace_content_digest, run_waits.resume_workspace_version_id, run_waits.ownership_generation, run_waits.parent_writer_generation, run_waits.child_writer_generation, run_waits.resume_writer_generation, run_waits.metadata, run_waits.tags, run_waits.suspension_terminal_at, run_waits.suspension_reason_code, run_waits.suspension_error, run_waits.created_at, run_waits.updated_at
+RETURNING run_waits.id, run_waits.environment_id, run_waits.run_id, run_waits.workspace_id, run_waits.turn_session_id, run_waits.turn_id, run_waits.turn_run_generation, run_waits.kind, run_waits.condition_status, run_waits.due_at, run_waits.timeout_at, run_waits.idle_timeout_ms, run_waits.token_id, run_waits.child_run_id, run_waits.child_target_declared_id, run_waits.child_claim_id, run_waits.child_request, run_waits.session_id, run_waits.after_input_sequence, run_waits.condition_result, run_waits.condition_error, run_waits.condition_terminal_at, run_waits.condition_reason_code, run_waits.completed_turn_id, run_waits.suspension_status, run_waits.token_registration_run_revision, run_waits.registration_request_fingerprint, run_waits.expected_run_revision, run_waits.attempt_number, run_waits.actor_speculative_input_sequence, run_waits.current_run_lease_id, run_waits.prior_run_lease_id, run_waits.checkpoint_request_version, run_waits.checkpoint_ack_version, run_waits.checkpoint_due_at, run_waits.suspend_checkpoint_id, run_waits.resume_attach_id, run_waits.resume_request_version, run_waits.resume_ack_version, run_waits.base_workspace_version_id, run_waits.base_workspace_content_digest, run_waits.resume_workspace_version_id, run_waits.ownership_generation, run_waits.parent_writer_generation, run_waits.child_writer_generation, run_waits.resume_writer_generation, run_waits.metadata, run_waits.tags, run_waits.suspension_terminal_at, run_waits.suspension_reason_code, run_waits.suspension_error, run_waits.created_at, run_waits.updated_at
 `
 
 type CommitPendingCheckpointReadyParams struct {
@@ -442,13 +442,13 @@ func (q *Queries) CommitPendingCheckpointReady(ctx context.Context, arg CommitPe
 	)
 	var i RunWait
 	err := row.Scan(
-		&i.TurnSessionID,
-		&i.TurnID,
-		&i.TurnRunGeneration,
 		&i.ID,
 		&i.EnvironmentID,
 		&i.RunID,
 		&i.WorkspaceID,
+		&i.TurnSessionID,
+		&i.TurnID,
+		&i.TurnRunGeneration,
 		&i.Kind,
 		&i.ConditionStatus,
 		&i.DueAt,
@@ -579,7 +579,7 @@ UPDATE run_waits
        updated_at = $6
   FROM updated_run, selected_child
  WHERE run_waits.id = selected_child.wait_id
-RETURNING run_waits.turn_session_id, run_waits.turn_id, run_waits.turn_run_generation, run_waits.id, run_waits.environment_id, run_waits.run_id, run_waits.workspace_id, run_waits.kind, run_waits.condition_status, run_waits.due_at, run_waits.timeout_at, run_waits.idle_timeout_ms, run_waits.token_id, run_waits.child_run_id, run_waits.child_target_declared_id, run_waits.child_claim_id, run_waits.child_request, run_waits.session_id, run_waits.after_input_sequence, run_waits.condition_result, run_waits.condition_error, run_waits.condition_terminal_at, run_waits.condition_reason_code, run_waits.completed_turn_id, run_waits.suspension_status, run_waits.token_registration_run_revision, run_waits.registration_request_fingerprint, run_waits.expected_run_revision, run_waits.attempt_number, run_waits.actor_speculative_input_sequence, run_waits.current_run_lease_id, run_waits.prior_run_lease_id, run_waits.checkpoint_request_version, run_waits.checkpoint_ack_version, run_waits.checkpoint_due_at, run_waits.suspend_checkpoint_id, run_waits.resume_attach_id, run_waits.resume_request_version, run_waits.resume_ack_version, run_waits.base_workspace_version_id, run_waits.base_workspace_content_digest, run_waits.resume_workspace_version_id, run_waits.ownership_generation, run_waits.parent_writer_generation, run_waits.child_writer_generation, run_waits.resume_writer_generation, run_waits.metadata, run_waits.tags, run_waits.suspension_terminal_at, run_waits.suspension_reason_code, run_waits.suspension_error, run_waits.created_at, run_waits.updated_at
+RETURNING run_waits.id, run_waits.environment_id, run_waits.run_id, run_waits.workspace_id, run_waits.turn_session_id, run_waits.turn_id, run_waits.turn_run_generation, run_waits.kind, run_waits.condition_status, run_waits.due_at, run_waits.timeout_at, run_waits.idle_timeout_ms, run_waits.token_id, run_waits.child_run_id, run_waits.child_target_declared_id, run_waits.child_claim_id, run_waits.child_request, run_waits.session_id, run_waits.after_input_sequence, run_waits.condition_result, run_waits.condition_error, run_waits.condition_terminal_at, run_waits.condition_reason_code, run_waits.completed_turn_id, run_waits.suspension_status, run_waits.token_registration_run_revision, run_waits.registration_request_fingerprint, run_waits.expected_run_revision, run_waits.attempt_number, run_waits.actor_speculative_input_sequence, run_waits.current_run_lease_id, run_waits.prior_run_lease_id, run_waits.checkpoint_request_version, run_waits.checkpoint_ack_version, run_waits.checkpoint_due_at, run_waits.suspend_checkpoint_id, run_waits.resume_attach_id, run_waits.resume_request_version, run_waits.resume_ack_version, run_waits.base_workspace_version_id, run_waits.base_workspace_content_digest, run_waits.resume_workspace_version_id, run_waits.ownership_generation, run_waits.parent_writer_generation, run_waits.child_writer_generation, run_waits.resume_writer_generation, run_waits.metadata, run_waits.tags, run_waits.suspension_terminal_at, run_waits.suspension_reason_code, run_waits.suspension_error, run_waits.created_at, run_waits.updated_at
 `
 
 type CommitSameWorkspaceChildCheckpointReadyParams struct {
@@ -622,13 +622,13 @@ func (q *Queries) CommitSameWorkspaceChildCheckpointReady(ctx context.Context, a
 	)
 	var i RunWait
 	err := row.Scan(
-		&i.TurnSessionID,
-		&i.TurnID,
-		&i.TurnRunGeneration,
 		&i.ID,
 		&i.EnvironmentID,
 		&i.RunID,
 		&i.WorkspaceID,
+		&i.TurnSessionID,
+		&i.TurnID,
+		&i.TurnRunGeneration,
 		&i.Kind,
 		&i.ConditionStatus,
 		&i.DueAt,
@@ -715,7 +715,7 @@ UPDATE run_waits
    AND run_waits.suspension_status = 'checkpointing'
    AND run_waits.condition_status <> 'pending'
    AND run_waits.checkpoint_request_version = $1
-RETURNING run_waits.turn_session_id, run_waits.turn_id, run_waits.turn_run_generation, run_waits.id, run_waits.environment_id, run_waits.run_id, run_waits.workspace_id, run_waits.kind, run_waits.condition_status, run_waits.due_at, run_waits.timeout_at, run_waits.idle_timeout_ms, run_waits.token_id, run_waits.child_run_id, run_waits.child_target_declared_id, run_waits.child_claim_id, run_waits.child_request, run_waits.session_id, run_waits.after_input_sequence, run_waits.condition_result, run_waits.condition_error, run_waits.condition_terminal_at, run_waits.condition_reason_code, run_waits.completed_turn_id, run_waits.suspension_status, run_waits.token_registration_run_revision, run_waits.registration_request_fingerprint, run_waits.expected_run_revision, run_waits.attempt_number, run_waits.actor_speculative_input_sequence, run_waits.current_run_lease_id, run_waits.prior_run_lease_id, run_waits.checkpoint_request_version, run_waits.checkpoint_ack_version, run_waits.checkpoint_due_at, run_waits.suspend_checkpoint_id, run_waits.resume_attach_id, run_waits.resume_request_version, run_waits.resume_ack_version, run_waits.base_workspace_version_id, run_waits.base_workspace_content_digest, run_waits.resume_workspace_version_id, run_waits.ownership_generation, run_waits.parent_writer_generation, run_waits.child_writer_generation, run_waits.resume_writer_generation, run_waits.metadata, run_waits.tags, run_waits.suspension_terminal_at, run_waits.suspension_reason_code, run_waits.suspension_error, run_waits.created_at, run_waits.updated_at
+RETURNING run_waits.id, run_waits.environment_id, run_waits.run_id, run_waits.workspace_id, run_waits.turn_session_id, run_waits.turn_id, run_waits.turn_run_generation, run_waits.kind, run_waits.condition_status, run_waits.due_at, run_waits.timeout_at, run_waits.idle_timeout_ms, run_waits.token_id, run_waits.child_run_id, run_waits.child_target_declared_id, run_waits.child_claim_id, run_waits.child_request, run_waits.session_id, run_waits.after_input_sequence, run_waits.condition_result, run_waits.condition_error, run_waits.condition_terminal_at, run_waits.condition_reason_code, run_waits.completed_turn_id, run_waits.suspension_status, run_waits.token_registration_run_revision, run_waits.registration_request_fingerprint, run_waits.expected_run_revision, run_waits.attempt_number, run_waits.actor_speculative_input_sequence, run_waits.current_run_lease_id, run_waits.prior_run_lease_id, run_waits.checkpoint_request_version, run_waits.checkpoint_ack_version, run_waits.checkpoint_due_at, run_waits.suspend_checkpoint_id, run_waits.resume_attach_id, run_waits.resume_request_version, run_waits.resume_ack_version, run_waits.base_workspace_version_id, run_waits.base_workspace_content_digest, run_waits.resume_workspace_version_id, run_waits.ownership_generation, run_waits.parent_writer_generation, run_waits.child_writer_generation, run_waits.resume_writer_generation, run_waits.metadata, run_waits.tags, run_waits.suspension_terminal_at, run_waits.suspension_reason_code, run_waits.suspension_error, run_waits.created_at, run_waits.updated_at
 `
 
 type CommitTerminalCheckpointReadyParams struct {
@@ -744,13 +744,13 @@ func (q *Queries) CommitTerminalCheckpointReady(ctx context.Context, arg CommitT
 	)
 	var i RunWait
 	err := row.Scan(
-		&i.TurnSessionID,
-		&i.TurnID,
-		&i.TurnRunGeneration,
 		&i.ID,
 		&i.EnvironmentID,
 		&i.RunID,
 		&i.WorkspaceID,
+		&i.TurnSessionID,
+		&i.TurnID,
+		&i.TurnRunGeneration,
 		&i.Kind,
 		&i.ConditionStatus,
 		&i.DueAt,
@@ -1081,7 +1081,7 @@ UPDATE run_waits
    AND suspend_checkpoint_id = $9
    AND suspension_status = 'checkpointing'
    AND checkpoint_request_version = $2
-RETURNING turn_session_id, turn_id, turn_run_generation, id, environment_id, run_id, workspace_id, kind, condition_status, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_target_declared_id, child_claim_id, child_request, session_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_turn_id, suspension_status, token_registration_run_revision, registration_request_fingerprint, expected_run_revision, attempt_number, actor_speculative_input_sequence, current_run_lease_id, prior_run_lease_id, checkpoint_request_version, checkpoint_ack_version, checkpoint_due_at, suspend_checkpoint_id, resume_attach_id, resume_request_version, resume_ack_version, base_workspace_version_id, base_workspace_content_digest, resume_workspace_version_id, ownership_generation, parent_writer_generation, child_writer_generation, resume_writer_generation, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at
+RETURNING id, environment_id, run_id, workspace_id, turn_session_id, turn_id, turn_run_generation, kind, condition_status, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_target_declared_id, child_claim_id, child_request, session_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_turn_id, suspension_status, token_registration_run_revision, registration_request_fingerprint, expected_run_revision, attempt_number, actor_speculative_input_sequence, current_run_lease_id, prior_run_lease_id, checkpoint_request_version, checkpoint_ack_version, checkpoint_due_at, suspend_checkpoint_id, resume_attach_id, resume_request_version, resume_ack_version, base_workspace_version_id, base_workspace_content_digest, resume_workspace_version_id, ownership_generation, parent_writer_generation, child_writer_generation, resume_writer_generation, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at
 `
 
 type FailCheckpointRunWaitParams struct {
@@ -1110,13 +1110,13 @@ func (q *Queries) FailCheckpointRunWait(ctx context.Context, arg FailCheckpointR
 	)
 	var i RunWait
 	err := row.Scan(
-		&i.TurnSessionID,
-		&i.TurnID,
-		&i.TurnRunGeneration,
 		&i.ID,
 		&i.EnvironmentID,
 		&i.RunID,
 		&i.WorkspaceID,
+		&i.TurnSessionID,
+		&i.TurnID,
+		&i.TurnRunGeneration,
 		&i.Kind,
 		&i.ConditionStatus,
 		&i.DueAt,

@@ -598,13 +598,13 @@ type RunLease struct {
 }
 
 type RunWait struct {
-	TurnSessionID                  pgtype.UUID        `json:"turn_session_id"`
-	TurnID                         pgtype.UUID        `json:"turn_id"`
-	TurnRunGeneration              pgtype.Int8        `json:"turn_run_generation"`
 	ID                             pgtype.UUID        `json:"id"`
 	EnvironmentID                  pgtype.UUID        `json:"environment_id"`
 	RunID                          pgtype.UUID        `json:"run_id"`
 	WorkspaceID                    pgtype.UUID        `json:"workspace_id"`
+	TurnSessionID                  pgtype.UUID        `json:"turn_session_id"`
+	TurnID                         pgtype.UUID        `json:"turn_id"`
+	TurnRunGeneration              pgtype.Int8        `json:"turn_run_generation"`
 	Kind                           WaitKind           `json:"kind"`
 	ConditionStatus                string             `json:"condition_status"`
 	DueAt                          pgtype.Timestamptz `json:"due_at"`
@@ -815,11 +815,11 @@ type Session struct {
 	DispatchHoldAttemptNumber pgtype.Int4        `json:"dispatch_hold_attempt_number"`
 	DispatchHoldRunGeneration pgtype.Int8        `json:"dispatch_hold_run_generation"`
 	DispatchHoldReason        pgtype.Text        `json:"dispatch_hold_reason"`
-	NextEventSequence         int64              `json:"next_event_sequence"`
 	Failure                   []byte             `json:"failure"`
 	FailureRunID              pgtype.UUID        `json:"failure_run_id"`
 	NextInputSequence         int64              `json:"next_input_sequence"`
 	CommittedInputSequence    int64              `json:"committed_input_sequence"`
+	NextEventSequence         int64              `json:"next_event_sequence"`
 	RunQueueName              string             `json:"run_queue_name"`
 	RunConcurrencyKey         pgtype.Text        `json:"run_concurrency_key"`
 	RunQueueConcurrencyLimit  pgtype.Int8        `json:"run_queue_concurrency_limit"`

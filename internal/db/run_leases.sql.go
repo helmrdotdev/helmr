@@ -1495,7 +1495,7 @@ func (q *Queries) LockRunFinalizationParentRun(ctx context.Context, arg LockRunF
 }
 
 const lockRunLeaseClaimActor = `-- name: LockRunLeaseClaimActor :one
-SELECT id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, next_event_sequence, failure, failure_run_id, next_input_sequence, committed_input_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, failed_at
+SELECT id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, failed_at
   FROM sessions
  WHERE id = $1
    AND workspace_id = $2
@@ -1526,11 +1526,11 @@ func (q *Queries) LockRunLeaseClaimActor(ctx context.Context, arg LockRunLeaseCl
 		&i.DispatchHoldAttemptNumber,
 		&i.DispatchHoldRunGeneration,
 		&i.DispatchHoldReason,
-		&i.NextEventSequence,
 		&i.Failure,
 		&i.FailureRunID,
 		&i.NextInputSequence,
 		&i.CommittedInputSequence,
+		&i.NextEventSequence,
 		&i.RunQueueName,
 		&i.RunConcurrencyKey,
 		&i.RunQueueConcurrencyLimit,
@@ -1975,7 +1975,7 @@ func (q *Queries) LockRunLeaseClaimRuntime(ctx context.Context, arg LockRunLease
 }
 
 const lockRunLeaseClaimWait = `-- name: LockRunLeaseClaimWait :one
-SELECT turn_session_id, turn_id, turn_run_generation, id, environment_id, run_id, workspace_id, kind, condition_status, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_target_declared_id, child_claim_id, child_request, session_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_turn_id, suspension_status, token_registration_run_revision, registration_request_fingerprint, expected_run_revision, attempt_number, actor_speculative_input_sequence, current_run_lease_id, prior_run_lease_id, checkpoint_request_version, checkpoint_ack_version, checkpoint_due_at, suspend_checkpoint_id, resume_attach_id, resume_request_version, resume_ack_version, base_workspace_version_id, base_workspace_content_digest, resume_workspace_version_id, ownership_generation, parent_writer_generation, child_writer_generation, resume_writer_generation, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at
+SELECT id, environment_id, run_id, workspace_id, turn_session_id, turn_id, turn_run_generation, kind, condition_status, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_target_declared_id, child_claim_id, child_request, session_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_turn_id, suspension_status, token_registration_run_revision, registration_request_fingerprint, expected_run_revision, attempt_number, actor_speculative_input_sequence, current_run_lease_id, prior_run_lease_id, checkpoint_request_version, checkpoint_ack_version, checkpoint_due_at, suspend_checkpoint_id, resume_attach_id, resume_request_version, resume_ack_version, base_workspace_version_id, base_workspace_content_digest, resume_workspace_version_id, ownership_generation, parent_writer_generation, child_writer_generation, resume_writer_generation, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at
   FROM run_waits
  WHERE id = $1
    AND environment_id = $2
@@ -2006,13 +2006,13 @@ func (q *Queries) LockRunLeaseClaimWait(ctx context.Context, arg LockRunLeaseCla
 	)
 	var i RunWait
 	err := row.Scan(
-		&i.TurnSessionID,
-		&i.TurnID,
-		&i.TurnRunGeneration,
 		&i.ID,
 		&i.EnvironmentID,
 		&i.RunID,
 		&i.WorkspaceID,
+		&i.TurnSessionID,
+		&i.TurnID,
+		&i.TurnRunGeneration,
 		&i.Kind,
 		&i.ConditionStatus,
 		&i.DueAt,
@@ -2396,7 +2396,7 @@ func (q *Queries) LockRunStartLease(ctx context.Context, arg LockRunStartLeasePa
 }
 
 const lockRunStartWait = `-- name: LockRunStartWait :one
-SELECT turn_session_id, turn_id, turn_run_generation, id, environment_id, run_id, workspace_id, kind, condition_status, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_target_declared_id, child_claim_id, child_request, session_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_turn_id, suspension_status, token_registration_run_revision, registration_request_fingerprint, expected_run_revision, attempt_number, actor_speculative_input_sequence, current_run_lease_id, prior_run_lease_id, checkpoint_request_version, checkpoint_ack_version, checkpoint_due_at, suspend_checkpoint_id, resume_attach_id, resume_request_version, resume_ack_version, base_workspace_version_id, base_workspace_content_digest, resume_workspace_version_id, ownership_generation, parent_writer_generation, child_writer_generation, resume_writer_generation, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at
+SELECT id, environment_id, run_id, workspace_id, turn_session_id, turn_id, turn_run_generation, kind, condition_status, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_target_declared_id, child_claim_id, child_request, session_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_turn_id, suspension_status, token_registration_run_revision, registration_request_fingerprint, expected_run_revision, attempt_number, actor_speculative_input_sequence, current_run_lease_id, prior_run_lease_id, checkpoint_request_version, checkpoint_ack_version, checkpoint_due_at, suspend_checkpoint_id, resume_attach_id, resume_request_version, resume_ack_version, base_workspace_version_id, base_workspace_content_digest, resume_workspace_version_id, ownership_generation, parent_writer_generation, child_writer_generation, resume_writer_generation, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at
   FROM run_waits
  WHERE id = $1
    AND environment_id = $2
@@ -2421,13 +2421,13 @@ func (q *Queries) LockRunStartWait(ctx context.Context, arg LockRunStartWaitPara
 	)
 	var i RunWait
 	err := row.Scan(
-		&i.TurnSessionID,
-		&i.TurnID,
-		&i.TurnRunGeneration,
 		&i.ID,
 		&i.EnvironmentID,
 		&i.RunID,
 		&i.WorkspaceID,
+		&i.TurnSessionID,
+		&i.TurnID,
+		&i.TurnRunGeneration,
 		&i.Kind,
 		&i.ConditionStatus,
 		&i.DueAt,

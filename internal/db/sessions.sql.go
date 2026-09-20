@@ -70,7 +70,7 @@ SELECT $1,
    AND actor_definition.id = $16
    AND actor_definition.kind = 'actor'
    AND actor_definition.declared_id = $17
-RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, next_event_sequence, failure, failure_run_id, next_input_sequence, committed_input_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, failed_at
+RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, failed_at
 `
 
 type CreateActorParams struct {
@@ -130,11 +130,11 @@ func (q *Queries) CreateActor(ctx context.Context, arg CreateActorParams) (Sessi
 		&i.DispatchHoldAttemptNumber,
 		&i.DispatchHoldRunGeneration,
 		&i.DispatchHoldReason,
-		&i.NextEventSequence,
 		&i.Failure,
 		&i.FailureRunID,
 		&i.NextInputSequence,
 		&i.CommittedInputSequence,
+		&i.NextEventSequence,
 		&i.RunQueueName,
 		&i.RunConcurrencyKey,
 		&i.RunQueueConcurrencyLimit,
@@ -155,7 +155,7 @@ func (q *Queries) CreateActor(ctx context.Context, arg CreateActorParams) (Sessi
 }
 
 const getActor = `-- name: GetActor :one
-SELECT id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, next_event_sequence, failure, failure_run_id, next_input_sequence, committed_input_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, failed_at
+SELECT id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, failed_at
   FROM sessions
  WHERE environment_id = $1
    AND id = $2
@@ -185,11 +185,11 @@ func (q *Queries) GetActor(ctx context.Context, arg GetActorParams) (Session, er
 		&i.DispatchHoldAttemptNumber,
 		&i.DispatchHoldRunGeneration,
 		&i.DispatchHoldReason,
-		&i.NextEventSequence,
 		&i.Failure,
 		&i.FailureRunID,
 		&i.NextInputSequence,
 		&i.CommittedInputSequence,
+		&i.NextEventSequence,
 		&i.RunQueueName,
 		&i.RunConcurrencyKey,
 		&i.RunQueueConcurrencyLimit,
@@ -210,7 +210,7 @@ func (q *Queries) GetActor(ctx context.Context, arg GetActorParams) (Session, er
 }
 
 const getActorByKey = `-- name: GetActorByKey :one
-SELECT id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, next_event_sequence, failure, failure_run_id, next_input_sequence, committed_input_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, failed_at
+SELECT id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, failed_at
   FROM sessions
  WHERE environment_id = $1
    AND actor_declared_id = $2
@@ -242,11 +242,11 @@ func (q *Queries) GetActorByKey(ctx context.Context, arg GetActorByKeyParams) (S
 		&i.DispatchHoldAttemptNumber,
 		&i.DispatchHoldRunGeneration,
 		&i.DispatchHoldReason,
-		&i.NextEventSequence,
 		&i.Failure,
 		&i.FailureRunID,
 		&i.NextInputSequence,
 		&i.CommittedInputSequence,
+		&i.NextEventSequence,
 		&i.RunQueueName,
 		&i.RunConcurrencyKey,
 		&i.RunQueueConcurrencyLimit,
@@ -267,7 +267,7 @@ func (q *Queries) GetActorByKey(ctx context.Context, arg GetActorByKeyParams) (S
 }
 
 const getSessionSnapshot = `-- name: GetSessionSnapshot :one
-SELECT sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.revision, sessions.active_turn_id, sessions.dispatch_hold_id, sessions.dispatch_hold_run_id, sessions.dispatch_hold_attempt_number, sessions.dispatch_hold_run_generation, sessions.dispatch_hold_reason, sessions.next_event_sequence, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.status, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.failed_at,
+SELECT sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.revision, sessions.active_turn_id, sessions.dispatch_hold_id, sessions.dispatch_hold_run_id, sessions.dispatch_hold_attempt_number, sessions.dispatch_hold_run_generation, sessions.dispatch_hold_reason, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_event_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.status, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.failed_at,
        deployment_definitions.deployment_id
   FROM sessions
   JOIN environments
@@ -306,11 +306,11 @@ type GetSessionSnapshotRow struct {
 	DispatchHoldAttemptNumber pgtype.Int4        `json:"dispatch_hold_attempt_number"`
 	DispatchHoldRunGeneration pgtype.Int8        `json:"dispatch_hold_run_generation"`
 	DispatchHoldReason        pgtype.Text        `json:"dispatch_hold_reason"`
-	NextEventSequence         int64              `json:"next_event_sequence"`
 	Failure                   []byte             `json:"failure"`
 	FailureRunID              pgtype.UUID        `json:"failure_run_id"`
 	NextInputSequence         int64              `json:"next_input_sequence"`
 	CommittedInputSequence    int64              `json:"committed_input_sequence"`
+	NextEventSequence         int64              `json:"next_event_sequence"`
 	RunQueueName              string             `json:"run_queue_name"`
 	RunConcurrencyKey         pgtype.Text        `json:"run_concurrency_key"`
 	RunQueueConcurrencyLimit  pgtype.Int8        `json:"run_queue_concurrency_limit"`
@@ -353,11 +353,11 @@ func (q *Queries) GetSessionSnapshot(ctx context.Context, arg GetSessionSnapshot
 		&i.DispatchHoldAttemptNumber,
 		&i.DispatchHoldRunGeneration,
 		&i.DispatchHoldReason,
-		&i.NextEventSequence,
 		&i.Failure,
 		&i.FailureRunID,
 		&i.NextInputSequence,
 		&i.CommittedInputSequence,
+		&i.NextEventSequence,
 		&i.RunQueueName,
 		&i.RunConcurrencyKey,
 		&i.RunQueueConcurrencyLimit,
@@ -379,7 +379,7 @@ func (q *Queries) GetSessionSnapshot(ctx context.Context, arg GetSessionSnapshot
 }
 
 const getSessionSnapshotByKey = `-- name: GetSessionSnapshotByKey :one
-SELECT sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.revision, sessions.active_turn_id, sessions.dispatch_hold_id, sessions.dispatch_hold_run_id, sessions.dispatch_hold_attempt_number, sessions.dispatch_hold_run_generation, sessions.dispatch_hold_reason, sessions.next_event_sequence, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.status, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.failed_at,
+SELECT sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.revision, sessions.active_turn_id, sessions.dispatch_hold_id, sessions.dispatch_hold_run_id, sessions.dispatch_hold_attempt_number, sessions.dispatch_hold_run_generation, sessions.dispatch_hold_reason, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_event_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.status, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.failed_at,
        deployment_definitions.deployment_id
   FROM sessions
   JOIN environments
@@ -420,11 +420,11 @@ type GetSessionSnapshotByKeyRow struct {
 	DispatchHoldAttemptNumber pgtype.Int4        `json:"dispatch_hold_attempt_number"`
 	DispatchHoldRunGeneration pgtype.Int8        `json:"dispatch_hold_run_generation"`
 	DispatchHoldReason        pgtype.Text        `json:"dispatch_hold_reason"`
-	NextEventSequence         int64              `json:"next_event_sequence"`
 	Failure                   []byte             `json:"failure"`
 	FailureRunID              pgtype.UUID        `json:"failure_run_id"`
 	NextInputSequence         int64              `json:"next_input_sequence"`
 	CommittedInputSequence    int64              `json:"committed_input_sequence"`
+	NextEventSequence         int64              `json:"next_event_sequence"`
 	RunQueueName              string             `json:"run_queue_name"`
 	RunConcurrencyKey         pgtype.Text        `json:"run_concurrency_key"`
 	RunQueueConcurrencyLimit  pgtype.Int8        `json:"run_queue_concurrency_limit"`
@@ -468,11 +468,11 @@ func (q *Queries) GetSessionSnapshotByKey(ctx context.Context, arg GetSessionSna
 		&i.DispatchHoldAttemptNumber,
 		&i.DispatchHoldRunGeneration,
 		&i.DispatchHoldReason,
-		&i.NextEventSequence,
 		&i.Failure,
 		&i.FailureRunID,
 		&i.NextInputSequence,
 		&i.CommittedInputSequence,
+		&i.NextEventSequence,
 		&i.RunQueueName,
 		&i.RunConcurrencyKey,
 		&i.RunQueueConcurrencyLimit,
@@ -494,7 +494,7 @@ func (q *Queries) GetSessionSnapshotByKey(ctx context.Context, arg GetSessionSna
 }
 
 const listSessionSnapshots = `-- name: ListSessionSnapshots :many
-SELECT sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.revision, sessions.active_turn_id, sessions.dispatch_hold_id, sessions.dispatch_hold_run_id, sessions.dispatch_hold_attempt_number, sessions.dispatch_hold_run_generation, sessions.dispatch_hold_reason, sessions.next_event_sequence, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.status, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.failed_at,
+SELECT sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.revision, sessions.active_turn_id, sessions.dispatch_hold_id, sessions.dispatch_hold_run_id, sessions.dispatch_hold_attempt_number, sessions.dispatch_hold_run_generation, sessions.dispatch_hold_reason, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_event_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.status, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.failed_at,
        deployment_definitions.deployment_id
   FROM sessions
   JOIN environments
@@ -548,11 +548,11 @@ type ListSessionSnapshotsRow struct {
 	DispatchHoldAttemptNumber pgtype.Int4        `json:"dispatch_hold_attempt_number"`
 	DispatchHoldRunGeneration pgtype.Int8        `json:"dispatch_hold_run_generation"`
 	DispatchHoldReason        pgtype.Text        `json:"dispatch_hold_reason"`
-	NextEventSequence         int64              `json:"next_event_sequence"`
 	Failure                   []byte             `json:"failure"`
 	FailureRunID              pgtype.UUID        `json:"failure_run_id"`
 	NextInputSequence         int64              `json:"next_input_sequence"`
 	CommittedInputSequence    int64              `json:"committed_input_sequence"`
+	NextEventSequence         int64              `json:"next_event_sequence"`
 	RunQueueName              string             `json:"run_queue_name"`
 	RunConcurrencyKey         pgtype.Text        `json:"run_concurrency_key"`
 	RunQueueConcurrencyLimit  pgtype.Int8        `json:"run_queue_concurrency_limit"`
@@ -604,11 +604,11 @@ func (q *Queries) ListSessionSnapshots(ctx context.Context, arg ListSessionSnaps
 			&i.DispatchHoldAttemptNumber,
 			&i.DispatchHoldRunGeneration,
 			&i.DispatchHoldReason,
-			&i.NextEventSequence,
 			&i.Failure,
 			&i.FailureRunID,
 			&i.NextInputSequence,
 			&i.CommittedInputSequence,
+			&i.NextEventSequence,
 			&i.RunQueueName,
 			&i.RunConcurrencyKey,
 			&i.RunQueueConcurrencyLimit,
@@ -735,7 +735,7 @@ UPDATE sessions
    AND current_run_id IS NULL
    AND run_generation = 1
    AND revision = 1
-RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, next_event_sequence, failure, failure_run_id, next_input_sequence, committed_input_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, failed_at
+RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, failed_at
 `
 
 type SetActorCurrentRunParams struct {
@@ -769,11 +769,11 @@ func (q *Queries) SetActorCurrentRun(ctx context.Context, arg SetActorCurrentRun
 		&i.DispatchHoldAttemptNumber,
 		&i.DispatchHoldRunGeneration,
 		&i.DispatchHoldReason,
-		&i.NextEventSequence,
 		&i.Failure,
 		&i.FailureRunID,
 		&i.NextInputSequence,
 		&i.CommittedInputSequence,
+		&i.NextEventSequence,
 		&i.RunQueueName,
 		&i.RunConcurrencyKey,
 		&i.RunQueueConcurrencyLimit,
