@@ -90,6 +90,28 @@ completion signal: inspect terminal Turn events or `turn.retrieve()`.
 `turn.interrupt()` returns a stop receipt and hold identity. Acceptance may precede
 physical convergence. Queued work stays retained. `session.resume({ holdId })`
 releases that exact converged hold; it never replays the interrupted Turn.
+`session.cancel()` rejects new input, records queued Turns as `cancelled`, and
+requests interruption of active work. It returns an acceptance receipt; poll
+`session.retrieve()` for `status: "closed"` before deleting its Workspace.
+`cancelRequestedAt` remains visible on the Session. An active Turn uses the normal
+`interrupted` outcome after its stop and capture complete. Previously completed
+Turns and output remain unchanged.
+
+```ts
+await session.cancel({ idempotencyKey: "stop-review" })
+const state = await session.retrieve()
+// An accepted request does not prove physical termination.
+if (state.status === "closed") {
+  await client.workspaces.ref(state.workspaceId).delete()
+}
+```
+
+Cancellation can escalate a Session already closing. It cannot be undone with
+`resume()`. If execution or external effects are uncertain, the Session stays
+held and requires the existing privileged `recover()` operation. Closure never
+releases Workspace ownership until the old writer is excluded. Cancellation
+also works through a runtime Session reference inside an Actor or Task.
+
 `session.close()` rejects new ordinary admission and drains accepted FIFO work.
 Existing holds survive closing, and exact interaction with active work may remain
 valid. Session statuses are `open`, `closing`, `closed`, and `failed`; a failed Turn

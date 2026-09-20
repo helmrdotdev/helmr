@@ -57,7 +57,7 @@ func newTurnRequest(environmentID, sessionID uuid.UUID, key string, op operation
 // the namespace, and the fingerprint fixes its payload and any exact target.
 func NewSessionOperationRequest(environmentID, sessionID uuid.UUID, key, name string, value any) (Request, error) {
 	switch name {
-	case "session.send", "session.enqueue", "turn.message", "session.close", "session.resume", "session.recover", "session.output.write", "session.run.cancel":
+	case "session.send", "session.enqueue", "turn.message", "session.close", "session.cancel", "session.resume", "session.recover", "session.output.write", "session.run.cancel":
 		return newTurnRequest(environmentID, sessionID, key, operation(name), value)
 	default:
 		return nil, errors.New("unknown Session operation")

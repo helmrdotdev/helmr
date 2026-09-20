@@ -133,6 +133,7 @@ export type {
   SessionEventPage,
   SessionEventQuery,
   SessionCloseReceipt,
+  SessionCancelReceipt,
   TurnInterruptReceipt,
   SessionResumeRequest,
   SessionResumeReceipt,

@@ -13,7 +13,7 @@ import {
   parseSession,
   parseSessionAdmissionReceipt,
   parseSessionMessageReceipt,
-  parseSessionCloseReceipt,
+  parseSessionCloseReceipt, parseSessionCancelReceipt,
   parseSessionResumeReceipt,
   parseSessionEventPage,
   parseTurnState,
@@ -1475,6 +1475,9 @@ function programRuntimeOperations(
     },
     sessionClose(sessionId, request, signal) {
       return sessionOperation(correlationId => ({ case: "sessionCloseRequested", value: create(programProto.SessionCloseRequestedSchema, { correlationId, sessionId, idempotencyKey: request?.idempotencyKey ?? newUUIDv7() }) }), parseSessionCloseReceipt, signal)
+    },
+    sessionCancel(sessionId, request, signal) {
+      return sessionOperation(correlationId => ({ case: "sessionCancelRequested", value: create(programProto.SessionCancelRequestedSchema, { correlationId, sessionId, idempotencyKey: request?.idempotencyKey ?? newUUIDv7() }) }), parseSessionCancelReceipt, signal)
     },
     sessionResume(sessionId, request, signal) {
       return sessionOperation(correlationId => ({ case: "sessionResumeRequested", value: create(programProto.SessionResumeRequestedSchema, { correlationId, sessionId, holdId: request.holdId, idempotencyKey: request.idempotencyKey ?? newUUIDv7() }) }), parseSessionResumeReceipt, signal)

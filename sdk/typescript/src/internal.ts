@@ -48,7 +48,7 @@ export { createRunHandle, runHandleID } from "./internal/run-handle"
 export {
   parseSession,
   parseTurnState, parseTurnSource, parseSessionAdmissionReceipt, parseSessionMessageReceipt,
-  parseSessionCloseReceipt, parseTurnInterruptReceipt, parseSessionResumeReceipt,
+  parseSessionCloseReceipt, parseSessionCancelReceipt, parseTurnInterruptReceipt, parseSessionResumeReceipt,
   parseSessionRecoveryReceipt, parseSessionEvent, parseSessionEventPage, parseOutputReceipt,
 } from "./internal/session"
 export { trimGoSpace } from "./internal/strings"

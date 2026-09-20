@@ -1,6 +1,7 @@
 import type {
   SessionOperationOptions,
   SessionCloseReceipt,
+  SessionCancelReceipt,
   SessionAdmissionReceipt,
   SessionMessageReceipt,
   SessionEventQuery,
@@ -97,6 +98,11 @@ export interface RuntimeOperations {
     request?: SessionOperationOptions,
     signal?: AbortSignal,
   ) => Promise<SessionCloseReceipt>
+  readonly sessionCancel: (
+    sessionId: string,
+    request?: SessionOperationOptions,
+    signal?: AbortSignal,
+  ) => Promise<SessionCancelReceipt>
   readonly sessionResume: (
     sessionId: string,
     request: SessionResumeRequest,

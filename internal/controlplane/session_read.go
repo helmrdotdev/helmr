@@ -45,6 +45,7 @@ type parsedSessionListQuery struct {
 }
 
 type sessionProjectionRow struct {
+	cancelRequestedAt  pgtype.Timestamptz
 	id                 pgtype.UUID
 	actorID            string
 	deploymentID       pgtype.UUID
@@ -355,8 +356,14 @@ func projectSession(row sessionProjectionRow) (api.Session, error) {
 		id := pgvalue.UUIDString(row.activeTurnID)
 		activeTurnID = &id
 	}
+	var cancelRequestedAt *time.Time
+	if row.cancelRequestedAt.Valid {
+		value := row.cancelRequestedAt.Time.UTC()
+		cancelRequestedAt = &value
+	}
 	return api.Session{
-		ActiveTurnID: activeTurnID, Dispatch: dispatch,
+		CancelRequestedAt: cancelRequestedAt,
+		ActiveTurnID:      activeTurnID, Dispatch: dispatch,
 		ID: status.id, ActorID: row.actorID, DeploymentID: deploymentID, WorkspaceID: workspaceID,
 		Key: status.key, Status: status.status, CreatedAt: status.createdAt,
 		UpdatedAt: status.updatedAt, CurrentRunID: status.currentRunID, Failure: status.failure,
@@ -364,15 +371,15 @@ func projectSession(row sessionProjectionRow) (api.Session, error) {
 }
 
 func sessionProjectionFromGetRow(row db.GetSessionSnapshotRow) sessionProjectionRow {
-	return sessionProjectionRow{id: row.ID, actorID: row.ActorDeclaredID, deploymentID: row.DeploymentID, workspaceID: row.WorkspaceID, key: row.Key, status: row.Status, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt, currentRunID: row.CurrentRunID, activeTurnID: row.ActiveTurnID, dispatchHoldID: row.DispatchHoldID, dispatchHoldReason: row.DispatchHoldReason, failure: row.Failure, failureRunID: row.FailureRunID}
+	return sessionProjectionRow{id: row.ID, actorID: row.ActorDeclaredID, deploymentID: row.DeploymentID, workspaceID: row.WorkspaceID, key: row.Key, status: row.Status, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt, currentRunID: row.CurrentRunID, activeTurnID: row.ActiveTurnID, dispatchHoldID: row.DispatchHoldID, dispatchHoldReason: row.DispatchHoldReason, cancelRequestedAt: row.CancelRequestedAt, failure: row.Failure, failureRunID: row.FailureRunID}
 }
 
 func sessionProjectionFromKeyRow(row db.GetSessionSnapshotByKeyRow) sessionProjectionRow {
-	return sessionProjectionRow{id: row.ID, actorID: row.ActorDeclaredID, deploymentID: row.DeploymentID, workspaceID: row.WorkspaceID, key: row.Key, status: row.Status, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt, currentRunID: row.CurrentRunID, activeTurnID: row.ActiveTurnID, dispatchHoldID: row.DispatchHoldID, dispatchHoldReason: row.DispatchHoldReason, failure: row.Failure, failureRunID: row.FailureRunID}
+	return sessionProjectionRow{id: row.ID, actorID: row.ActorDeclaredID, deploymentID: row.DeploymentID, workspaceID: row.WorkspaceID, key: row.Key, status: row.Status, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt, currentRunID: row.CurrentRunID, activeTurnID: row.ActiveTurnID, dispatchHoldID: row.DispatchHoldID, dispatchHoldReason: row.DispatchHoldReason, cancelRequestedAt: row.CancelRequestedAt, failure: row.Failure, failureRunID: row.FailureRunID}
 }
 
 func sessionProjectionFromListRow(row db.ListSessionSnapshotsRow) sessionProjectionRow {
-	return sessionProjectionRow{id: row.ID, actorID: row.ActorDeclaredID, deploymentID: row.DeploymentID, workspaceID: row.WorkspaceID, key: row.Key, status: row.Status, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt, currentRunID: row.CurrentRunID, activeTurnID: row.ActiveTurnID, dispatchHoldID: row.DispatchHoldID, dispatchHoldReason: row.DispatchHoldReason, failure: row.Failure, failureRunID: row.FailureRunID}
+	return sessionProjectionRow{id: row.ID, actorID: row.ActorDeclaredID, deploymentID: row.DeploymentID, workspaceID: row.WorkspaceID, key: row.Key, status: row.Status, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt, currentRunID: row.CurrentRunID, activeTurnID: row.ActiveTurnID, dispatchHoldID: row.DispatchHoldID, dispatchHoldReason: row.DispatchHoldReason, cancelRequestedAt: row.CancelRequestedAt, failure: row.Failure, failureRunID: row.FailureRunID}
 }
 
 func (s *Server) writeSessionReadAuthorityError(w http.ResponseWriter, err error) {

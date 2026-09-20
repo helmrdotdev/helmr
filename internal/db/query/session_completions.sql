@@ -203,7 +203,7 @@ WITH created_run AS (
        AND sessions.workspace_id = sqlc.arg(workspace_id)
        AND sessions.current_run_id IS NULL
        AND sessions.run_generation = sqlc.arg(expected_run_generation)
-       AND sessions.status IN ('open', 'closing')
+       AND sessions.status IN ('open', 'closing') AND sessions.cancel_requested_at IS NULL
        AND sessions.active_turn_id IS NULL AND sessions.dispatch_hold_id IS NULL
        AND (sessions.status = 'open' OR sessions.committed_input_sequence < sessions.close_sequence)
        AND NOT EXISTS (

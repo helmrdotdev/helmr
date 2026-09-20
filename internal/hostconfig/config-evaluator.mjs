@@ -33131,6 +33131,13 @@ function createRuntimeSessionRef(id) {
         options?.signal
       );
     },
+    cancel(request, options) {
+      return currentRuntimeOperations().sessionCancel(
+        sessionId,
+        sessionOperationOptions(request),
+        options?.signal
+      );
+    },
     resume(request, options) {
       return currentRuntimeOperations().sessionResume(
         sessionId,

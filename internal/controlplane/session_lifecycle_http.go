@@ -105,6 +105,25 @@ func (s *Server) closeSessionHTTP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, api.SessionCloseReceipt{ID: receipt.ID.String(), SessionID: receipt.SessionID.String(), Status: receipt.Status})
 }
 
+func (s *Server) cancelSessionHTTP(w http.ResponseWriter, r *http.Request) {
+	var body api.CancelSessionRequest
+	if err := decodeSessionCommand(r, &body); err != nil {
+		writeSessionRequestError(w, err)
+		return
+	}
+	request, err := s.sessionCommand(r, auth.PermissionSessionsCancel, body.IdempotencyKey)
+	if err != nil {
+		s.writeSessionOperationError(w, err)
+		return
+	}
+	receipt, err := s.applySessionCancel(r.Context(), request)
+	if err != nil {
+		s.writeSessionOperationError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, api.SessionCancelReceipt{ID: receipt.ID.String(), SessionID: receipt.SessionID.String(), Status: receipt.Status})
+}
+
 func (s *Server) interruptSessionTurnHTTP(w http.ResponseWriter, r *http.Request) {
 	var body api.InterruptTurnRequest
 	if err := decodeSessionCommand(r, &body); err != nil {

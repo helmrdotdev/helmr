@@ -26,6 +26,7 @@ type actorRuntimeContractControlPlane struct {
 	firstAttempt  chan struct{}
 	statusRequest workerapi.SessionReferenceRequest
 	closeRequest  workerapi.CloseSessionRequest
+	cancelRequest workerapi.CancelSessionRequest
 	outputRequest workerapi.ReadSessionEventsRequest
 }
 
@@ -66,6 +67,17 @@ func (controlPlane *actorRuntimeContractControlPlane) CloseRunSession(
 	return workerapi.CloseSessionResponse{
 		CorrelationID: request.CorrelationID,
 		Completed:     &api.SessionCloseReceipt{},
+	}, nil
+}
+
+func (controlPlane *actorRuntimeContractControlPlane) CancelRunSession(
+	_ context.Context,
+	request workerapi.CancelSessionRequest,
+) (workerapi.CancelSessionResponse, error) {
+	controlPlane.cancelRequest = request
+	return workerapi.CancelSessionResponse{
+		CorrelationID: request.CorrelationID,
+		Completed:     &api.SessionCancelReceipt{},
 	}, nil
 }
 
@@ -181,6 +193,11 @@ func TestActorRuntimeVerticalContract(t *testing.T) {
 					CorrelationId: correlationID, SessionId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
 				},
 			}},
+			{Event: &programv0.RunEvent_SessionCancelRequested{
+				SessionCancelRequested: &programv0.SessionCancelRequested{
+					CorrelationId: correlationID, SessionId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
+				},
+			}},
 			{Event: &programv0.RunEvent_SessionEventsRequested{
 				SessionEventsRequested: &programv0.SessionEventsRequested{
 					CorrelationId: correlationID, SessionId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
@@ -198,6 +215,7 @@ func TestActorRuntimeVerticalContract(t *testing.T) {
 			}
 		}
 		if controlPlane.statusRequest.SessionID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33" ||
+			controlPlane.cancelRequest.SessionID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33" ||
 			controlPlane.closeRequest.SessionID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33" ||
 			controlPlane.outputRequest.SessionID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33" ||
 			controlPlane.outputRequest.Limit != 25 {

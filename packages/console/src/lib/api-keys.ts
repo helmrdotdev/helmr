@@ -13,6 +13,7 @@ export type ApiKeyScope =
   | "sessions:resume"
   | "sessions:recover"
   | "sessions:close"
+  | "sessions:cancel"
   | "tokens:create"
   | "tokens:read"
   | "tokens:complete"

@@ -31,6 +31,7 @@ func (task *guestRunLeaseTask) handleResourceRuntime(
 	case *programv0.RunEvent_ActorStartRequested,
 		*programv0.RunEvent_SessionStatusRequested,
 		*programv0.RunEvent_SessionCloseRequested,
+		*programv0.RunEvent_SessionCancelRequested,
 		*programv0.RunEvent_SessionEventsRequested:
 		return task.handleActorRuntime(ctx, event)
 	default:
@@ -132,6 +133,36 @@ func (task *guestRunLeaseTask) handleActorRuntime(
 		failed = response.Failed
 		if response.CorrelationID != correlationID {
 			return errors.New("session close response correlation mismatch")
+		}
+	case *programv0.RunEvent_SessionCancelRequested:
+		base, err := workerSessionReferenceRequestFromCancel(value.SessionCancelRequested)
+		if err != nil {
+			return err
+		}
+		request := workerapi.CancelSessionRequest{
+			SessionReferenceRequest: base,
+			IdempotencyKey:          value.SessionCancelRequested.GetIdempotencyKey(),
+		}
+		correlationID = request.CorrelationID
+		var response workerapi.CancelSessionResponse
+		err = task.callRunSourceRuntime(ctx, func(
+			callCtx context.Context,
+			lease workerapi.RunLeaseAssignment,
+		) error {
+			request.Lease = lease.Fence()
+			var callErr error
+			response, callErr = controlPlane.CancelRunSession(callCtx, request)
+			return callErr
+		})
+		if err != nil {
+			return fmt.Errorf("cancel actor: %w", err)
+		}
+		if response.Completed != nil {
+			completed = response.Completed
+		}
+		failed = response.Failed
+		if response.CorrelationID != correlationID {
+			return errors.New("session cancel response correlation mismatch")
 		}
 	case *programv0.RunEvent_SessionEventsRequested:
 		base, err := workerSessionReferenceRequestFromEvents(value.SessionEventsRequested)
@@ -250,6 +281,18 @@ func workerSessionReferenceRequestFromClose(
 ) (workerapi.SessionReferenceRequest, error) {
 	if requested == nil {
 		return workerapi.SessionReferenceRequest{}, errors.New("session close request is required")
+	}
+	request := workerapi.SessionReferenceRequest{
+		CorrelationID: requested.GetCorrelationId(), SessionID: requested.GetSessionId(),
+	}
+	return validateWorkerSessionReference(request)
+}
+
+func workerSessionReferenceRequestFromCancel(
+	requested *programv0.SessionCancelRequested,
+) (workerapi.SessionReferenceRequest, error) {
+	if requested == nil {
+		return workerapi.SessionReferenceRequest{}, errors.New("session cancel request is required")
 	}
 	request := workerapi.SessionReferenceRequest{
 		CorrelationID: requested.GetCorrelationId(), SessionID: requested.GetSessionId(),

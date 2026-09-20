@@ -210,7 +210,7 @@ WITH created_run AS (
        AND sessions.workspace_id = $7
        AND sessions.current_run_id IS NULL
        AND sessions.run_generation = $8
-       AND sessions.status IN ('open', 'closing')
+       AND sessions.status IN ('open', 'closing') AND sessions.cancel_requested_at IS NULL
        AND sessions.active_turn_id IS NULL AND sessions.dispatch_hold_id IS NULL
        AND (sessions.status = 'open' OR sessions.committed_input_sequence < sessions.close_sequence)
        AND NOT EXISTS (
@@ -665,7 +665,7 @@ UPDATE sessions
    AND run_generation = $7
    AND status IN ('open', 'closing')
    AND active_turn_id IS NULL AND dispatch_hold_id IS NULL
-RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, failed_at
+RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
 `
 
 type ReconcileActorTerminalRunParams struct {
@@ -721,6 +721,7 @@ func (q *Queries) ReconcileActorTerminalRun(ctx context.Context, arg ReconcileAc
 		&i.RunTags,
 		&i.Status,
 		&i.CloseSequence,
+		&i.CancelRequestedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ClosedAt,

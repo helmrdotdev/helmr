@@ -11,6 +11,64 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const advanceCancelledSessionInputs = `-- name: AdvanceCancelledSessionInputs :one
+UPDATE sessions s SET committed_input_sequence=close_sequence,revision=revision+1,updated_at=now()
+WHERE s.environment_id=$1 AND s.id=$2 AND s.cancel_requested_at IS NOT NULL
+ AND s.active_turn_id IS NULL AND s.current_run_id IS NULL
+ AND NOT EXISTS (SELECT 1 FROM session_turns t WHERE t.session_id=s.id
+   AND t.sequence>s.committed_input_sequence AND t.sequence<=s.close_sequence AND t.status<>'cancelled')
+RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
+`
+
+type AdvanceCancelledSessionInputsParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ID            pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) AdvanceCancelledSessionInputs(ctx context.Context, arg AdvanceCancelledSessionInputsParams) (Session, error) {
+	row := q.db.QueryRow(ctx, advanceCancelledSessionInputs, arg.EnvironmentID, arg.ID)
+	var i Session
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.ActorDeclaredID,
+		&i.DeploymentDefinitionID,
+		&i.WorkspaceID,
+		&i.Key,
+		&i.CurrentRunID,
+		&i.RunGeneration,
+		&i.Revision,
+		&i.ActiveTurnID,
+		&i.DispatchHoldID,
+		&i.DispatchHoldRunID,
+		&i.DispatchHoldAttemptNumber,
+		&i.DispatchHoldRunGeneration,
+		&i.DispatchHoldReason,
+		&i.Failure,
+		&i.FailureRunID,
+		&i.NextInputSequence,
+		&i.CommittedInputSequence,
+		&i.NextEventSequence,
+		&i.RunQueueName,
+		&i.RunConcurrencyKey,
+		&i.RunQueueConcurrencyLimit,
+		&i.RunPriority,
+		&i.RunQueueTtlMs,
+		&i.RunMaxActiveDurationMs,
+		&i.RunRetryPolicy,
+		&i.RunMetadata,
+		&i.RunTags,
+		&i.Status,
+		&i.CloseSequence,
+		&i.CancelRequestedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ClosedAt,
+		&i.FailedAt,
+	)
+	return i, err
+}
+
 const beginActorClose = `-- name: BeginActorClose :one
 UPDATE sessions
    SET status = CASE WHEN status = 'open' THEN 'closing' ELSE status END,
@@ -29,7 +87,7 @@ UPDATE sessions
  WHERE environment_id = $1
    AND id = $2
    AND status IN ('open', 'closing')
-RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, failed_at
+RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
 `
 
 type BeginActorCloseParams struct {
@@ -72,10 +130,108 @@ func (q *Queries) BeginActorClose(ctx context.Context, arg BeginActorCloseParams
 		&i.RunTags,
 		&i.Status,
 		&i.CloseSequence,
+		&i.CancelRequestedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ClosedAt,
 		&i.FailedAt,
+	)
+	return i, err
+}
+
+const beginSessionCancellation = `-- name: BeginSessionCancellation :one
+UPDATE sessions SET status='closing',close_sequence=coalesce(close_sequence,next_input_sequence-1),
+ cancel_requested_at=coalesce(cancel_requested_at,now()),revision=revision+1,updated_at=now()
+WHERE environment_id=$1 AND id=$2 AND status IN ('open','closing') RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
+`
+
+type BeginSessionCancellationParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ID            pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) BeginSessionCancellation(ctx context.Context, arg BeginSessionCancellationParams) (Session, error) {
+	row := q.db.QueryRow(ctx, beginSessionCancellation, arg.EnvironmentID, arg.ID)
+	var i Session
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.ActorDeclaredID,
+		&i.DeploymentDefinitionID,
+		&i.WorkspaceID,
+		&i.Key,
+		&i.CurrentRunID,
+		&i.RunGeneration,
+		&i.Revision,
+		&i.ActiveTurnID,
+		&i.DispatchHoldID,
+		&i.DispatchHoldRunID,
+		&i.DispatchHoldAttemptNumber,
+		&i.DispatchHoldRunGeneration,
+		&i.DispatchHoldReason,
+		&i.Failure,
+		&i.FailureRunID,
+		&i.NextInputSequence,
+		&i.CommittedInputSequence,
+		&i.NextEventSequence,
+		&i.RunQueueName,
+		&i.RunConcurrencyKey,
+		&i.RunQueueConcurrencyLimit,
+		&i.RunPriority,
+		&i.RunQueueTtlMs,
+		&i.RunMaxActiveDurationMs,
+		&i.RunRetryPolicy,
+		&i.RunMetadata,
+		&i.RunTags,
+		&i.Status,
+		&i.CloseSequence,
+		&i.CancelRequestedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ClosedAt,
+		&i.FailedAt,
+	)
+	return i, err
+}
+
+const cancelQueuedSessionTurn = `-- name: CancelQueuedSessionTurn :one
+UPDATE session_turns SET status='cancelled',terminal_event_id=$1
+WHERE environment_id=$2 AND session_id=$3
+ AND id=$4 AND status='queued' RETURNING id, environment_id, session_id, sequence, data, source_run_id, status, run_generation, run_id, attempt_number, ready_run_lease_id, settlement_started_at, interrupt_requested_at, terminal_event_id, terminal_request_fingerprint, created_at
+`
+
+type CancelQueuedSessionTurnParams struct {
+	EventID       pgtype.UUID `json:"event_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	SessionID     pgtype.UUID `json:"session_id"`
+	TurnID        pgtype.UUID `json:"turn_id"`
+}
+
+func (q *Queries) CancelQueuedSessionTurn(ctx context.Context, arg CancelQueuedSessionTurnParams) (SessionTurn, error) {
+	row := q.db.QueryRow(ctx, cancelQueuedSessionTurn,
+		arg.EventID,
+		arg.EnvironmentID,
+		arg.SessionID,
+		arg.TurnID,
+	)
+	var i SessionTurn
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.SessionID,
+		&i.Sequence,
+		&i.Data,
+		&i.SourceRunID,
+		&i.Status,
+		&i.RunGeneration,
+		&i.RunID,
+		&i.AttemptNumber,
+		&i.ReadyRunLeaseID,
+		&i.SettlementStartedAt,
+		&i.InterruptRequestedAt,
+		&i.TerminalEventID,
+		&i.TerminalRequestFingerprint,
+		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -96,7 +252,7 @@ UPDATE sessions
    AND active_turn_id IS NULL AND dispatch_hold_id IS NULL
    AND close_sequence IS NOT NULL
    AND committed_input_sequence >= close_sequence
-RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, failed_at
+RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
 `
 
 type CompleteIdleActorCloseParams struct {
@@ -146,6 +302,7 @@ func (q *Queries) CompleteIdleActorClose(ctx context.Context, arg CompleteIdleAc
 		&i.RunTags,
 		&i.Status,
 		&i.CloseSequence,
+		&i.CancelRequestedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ClosedAt,
@@ -215,7 +372,7 @@ func (q *Queries) GetActorCloseWorkspaceActivity(ctx context.Context, workspaceI
 }
 
 const lockActorClose = `-- name: LockActorClose :one
-SELECT id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, created_at, updated_at, closed_at, failed_at
+SELECT id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
   FROM sessions
  WHERE environment_id = $1
    AND id = $2
@@ -262,6 +419,7 @@ func (q *Queries) LockActorClose(ctx context.Context, arg LockActorCloseParams) 
 		&i.RunTags,
 		&i.Status,
 		&i.CloseSequence,
+		&i.CancelRequestedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ClosedAt,
@@ -333,4 +491,51 @@ func (q *Queries) LockActorCloseWorkspace(ctx context.Context, arg LockActorClos
 		&i.DeletedAt,
 	)
 	return i, err
+}
+
+const lockQueuedSessionTurns = `-- name: LockQueuedSessionTurns :many
+SELECT id, environment_id, session_id, sequence, data, source_run_id, status, run_generation, run_id, attempt_number, ready_run_lease_id, settlement_started_at, interrupt_requested_at, terminal_event_id, terminal_request_fingerprint, created_at FROM session_turns WHERE environment_id=$1 AND session_id=$2 AND status='queued'
+ORDER BY sequence FOR UPDATE
+`
+
+type LockQueuedSessionTurnsParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	SessionID     pgtype.UUID `json:"session_id"`
+}
+
+func (q *Queries) LockQueuedSessionTurns(ctx context.Context, arg LockQueuedSessionTurnsParams) ([]SessionTurn, error) {
+	rows, err := q.db.Query(ctx, lockQueuedSessionTurns, arg.EnvironmentID, arg.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SessionTurn
+	for rows.Next() {
+		var i SessionTurn
+		if err := rows.Scan(
+			&i.ID,
+			&i.EnvironmentID,
+			&i.SessionID,
+			&i.Sequence,
+			&i.Data,
+			&i.SourceRunID,
+			&i.Status,
+			&i.RunGeneration,
+			&i.RunID,
+			&i.AttemptNumber,
+			&i.ReadyRunLeaseID,
+			&i.SettlementStartedAt,
+			&i.InterruptRequestedAt,
+			&i.TerminalEventID,
+			&i.TerminalRequestFingerprint,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

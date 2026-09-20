@@ -84,6 +84,9 @@ func CreateContinuation(
 	workspace db.LockActorInputWorkspaceRow,
 	bindings []db.LockWorkspaceSecretsForAdmissionRow,
 ) (pgtype.UUID, error) {
+	if actor.CancelRequestedAt.Valid {
+		return pgtype.UUID{}, ErrAuthority
+	}
 	runID := pgvalue.UUID(uuid.NewV7())
 	traceID, err := tracing.NewTraceID()
 	if err != nil {

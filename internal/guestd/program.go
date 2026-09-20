@@ -1572,6 +1572,8 @@ func runtimeResourceOperationIdentity(event *programv0.RunEvent) (string, string
 		return strings.TrimSpace(value.SessionStatusRequested.GetCorrelationId()), "session status read", true
 	case *programv0.RunEvent_SessionCloseRequested:
 		return strings.TrimSpace(value.SessionCloseRequested.GetCorrelationId()), "session close", true
+	case *programv0.RunEvent_SessionCancelRequested:
+		return strings.TrimSpace(value.SessionCancelRequested.GetCorrelationId()), "session cancel", true
 	case *programv0.RunEvent_SessionEventsRequested:
 		return strings.TrimSpace(value.SessionEventsRequested.GetCorrelationId()), "session output page read", true
 	case *programv0.RunEvent_TurnOutputWriteRequested:

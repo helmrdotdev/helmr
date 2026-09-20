@@ -24,7 +24,7 @@ WITH RECURSIVE source_owners AS (
      WHERE child.parent_owns_lifecycle IS TRUE
        AND parent.environment_id = $1
 )
-SELECT s.id, s.environment_id, s.actor_declared_id, s.deployment_definition_id, s.workspace_id, s.key, s.current_run_id, s.run_generation, s.revision, s.active_turn_id, s.dispatch_hold_id, s.dispatch_hold_run_id, s.dispatch_hold_attempt_number, s.dispatch_hold_run_generation, s.dispatch_hold_reason, s.failure, s.failure_run_id, s.next_input_sequence, s.committed_input_sequence, s.next_event_sequence, s.run_queue_name, s.run_concurrency_key, s.run_queue_concurrency_limit, s.run_priority, s.run_queue_ttl_ms, s.run_max_active_duration_ms, s.run_retry_policy, s.run_metadata, s.run_tags, s.status, s.close_sequence, s.created_at, s.updated_at, s.closed_at, s.failed_at, source_owners.id AS source_owner_run_id
+SELECT s.id, s.environment_id, s.actor_declared_id, s.deployment_definition_id, s.workspace_id, s.key, s.current_run_id, s.run_generation, s.revision, s.active_turn_id, s.dispatch_hold_id, s.dispatch_hold_run_id, s.dispatch_hold_attempt_number, s.dispatch_hold_run_generation, s.dispatch_hold_reason, s.failure, s.failure_run_id, s.next_input_sequence, s.committed_input_sequence, s.next_event_sequence, s.run_queue_name, s.run_concurrency_key, s.run_queue_concurrency_limit, s.run_priority, s.run_queue_ttl_ms, s.run_max_active_duration_ms, s.run_retry_policy, s.run_metadata, s.run_tags, s.status, s.close_sequence, s.cancel_requested_at, s.created_at, s.updated_at, s.closed_at, s.failed_at, source_owners.id AS source_owner_run_id
   FROM sessions s
   LEFT JOIN source_owners ON source_owners.session_id = s.id
  WHERE s.environment_id = $1
@@ -85,6 +85,7 @@ func (q *Queries) LockWorkerControlActors(ctx context.Context, arg LockWorkerCon
 			&i.Session.RunTags,
 			&i.Session.Status,
 			&i.Session.CloseSequence,
+			&i.Session.CancelRequestedAt,
 			&i.Session.CreatedAt,
 			&i.Session.UpdatedAt,
 			&i.Session.ClosedAt,

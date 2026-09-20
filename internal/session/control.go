@@ -85,6 +85,8 @@ func ResumeWithLockedSecrets(ctx context.Context, q db.Querier, request ResumeRe
 	}
 	receipt = ControlReceipt{ID: pgvalue.MustUUIDValue(claim.ID), SessionID: request.SessionID, HoldID: &request.HoldID, Status: "accepted"}
 	switch {
+	case actor.CancelRequestedAt.Valid:
+		receipt.Code = "session_not_open"
 	case actor.DispatchHoldID != pgvalue.UUID(request.HoldID):
 		receipt.Code = "stale_hold"
 	case actor.Status != "open" && actor.Status != "closing":

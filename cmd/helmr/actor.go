@@ -26,6 +26,7 @@ func actorCommand() *cobra.Command {
 		actorTurnCommand(),
 		actorEventsCommand(),
 		actorCloseCommand(),
+		actorCancelCommand(),
 	)
 	return cmd
 }
@@ -314,6 +315,41 @@ func actorCloseCommand() *cobra.Command {
 	}
 	addScopeFlags(cmd, &projectID, &environmentID)
 	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Idempotency key for this close.")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
+	return cmd
+}
+
+func actorCancelCommand() *cobra.Command {
+	var projectID string
+	var environmentID string
+	var idempotencyKey string
+	var jsonOutput bool
+	cmd := &cobra.Command{
+		Use:   "cancel SESSION_ID",
+		Short: "Cancel a Session.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			controlPlane, scope, err := scopedActorClient(cmd, projectID, environmentID)
+			if err != nil {
+				return err
+			}
+			receipt, err := controlPlane.CancelSession(cmd.Context(), args[0], api.CancelSessionRequest{
+				IdempotencyKey: strings.TrimSpace(idempotencyKey),
+			}, scope)
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return writeJSON(cmd.OutOrStdout(), receipt)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "session_id: %s\n", receipt.SessionID)
+			fmt.Fprintf(cmd.OutOrStdout(), "id: %s\n", receipt.ID)
+			fmt.Fprintf(cmd.OutOrStdout(), "status: %s\n", receipt.Status)
+			return nil
+		},
+	}
+	addScopeFlags(cmd, &projectID, &environmentID)
+	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Idempotency key for this cancel.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	return cmd
 }
