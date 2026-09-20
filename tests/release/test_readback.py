@@ -83,9 +83,7 @@ class Readback(unittest.TestCase):
             self.assertEqual((self.root / 'accepted' / name).read_bytes(), value)
 
     def test_stage_command_exports_readback_identity_and_actual_publisher_attempt(self):
-        from test_contract import assets
         selected = selection('tag')
-        assets(self.root, selected)
         api = test_publication.Releases()
         output = self.root / 'job-outputs'
         readback = self.root / 'command-readback'
