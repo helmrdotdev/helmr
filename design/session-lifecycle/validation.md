@@ -944,3 +944,23 @@ was corrected to honor the supplied AbortSignal, like the real repository comman
 completion and check counts now prove that result does not settle the interrupted
 Helmr Turn. No runtime, SDK or sample behavior change was required. This closes the
 previous production-Claude-Actor local integration gap, not VM/hold/restore proof.
+
+## Temporary AWS qualification attempt (2026-09-20)
+
+The paired Product `78ac9d881dbafe9a2b37da060e1c91bee10e610c` and Cloud
+`c5deca8f5e8797634028ab82f41c8bff91ab0a13` produced matching native deployment
+and Schedule bundles and a verified private Worker AMI. This candidate predates
+the later native-probe/sample follow-ups; those remain separately qualified above.
+
+The disposable dev foundation apply stopped at `VpcLimitExceeded` in `us-east-1`:
+the account limit is 5 VPCs, with 4 already used before this two-VPC environment.
+No Product Run or deployed Session was exercised. This is an environment-capacity
+blocker, not evidence of either a passing or failing Session lifecycle.
+
+The manifest-bound destroy passed and verified zero live dev compute/service
+resources; 64 partial resources were destroyed. The separate image root's 11
+resources, AMI, snapshot, dedicated certificate and validation DNS record were
+also removed, with independent state/provider checks. Shared content-addressed
+build artifacts remain. HQ's current lifecycle-plan Handoff owns exact cleanup
+receipts and the decision needed before another environment attempt. VM delivery,
+hold/resume, physical stop and restored native history remain unproved.
