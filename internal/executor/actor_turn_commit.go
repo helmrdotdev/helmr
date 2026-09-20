@@ -31,10 +31,10 @@ func (task *guestRunLeaseTask) handleTurnSettle(
 		return err
 	}
 	if requested.GetDisposition() != "completed" && requested.GetDisposition() != "failed" {
-		return errors.New("Turn settlement disposition is invalid")
+		return errors.New("turn settlement disposition is invalid")
 	}
 	if requested.ResultJson != nil && !json.Valid([]byte(requested.GetResultJson())) || requested.ErrorJson != nil && !json.Valid([]byte(requested.GetErrorJson())) {
-		return errors.New("Turn settlement payload is invalid")
+		return errors.New("turn settlement payload is invalid")
 	}
 	task.mu.Lock()
 	if task.finished || task.finalizingKind != "" {

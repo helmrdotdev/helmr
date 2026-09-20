@@ -25,7 +25,7 @@ func (task *guestRunLeaseTask) handleSessionSubmit(ctx context.Context, requeste
 	}
 	cp, ok := task.controlPlane.(SessionSubmitControlPlane)
 	if !ok {
-		return errors.New("Session submission control plane is required")
+		return errors.New("session submission control plane is required")
 	}
 	var response workerapi.SubmitSessionDataResponse
 	err = task.callRunSourceRuntime(ctx, func(callCtx context.Context, lease workerapi.RunLeaseAssignment) error {
@@ -45,18 +45,18 @@ func (task *guestRunLeaseTask) handleSessionSubmit(ctx context.Context, requeste
 		return err
 	}
 	if response.CorrelationID != request.CorrelationID || (response.Completed == nil) == (response.Failed == nil) {
-		return errors.New("Session admission receipt mismatch")
+		return errors.New("session admission receipt mismatch")
 	}
 	if r := response.Completed; r != nil {
 		if ids.Validate(r.ID) != nil || ids.Validate(r.TurnID) != nil || (r.Kind != "turn" && r.Kind != "message") {
-			return errors.New("Session admission receipt is invalid")
+			return errors.New("session admission receipt is invalid")
 		}
 	}
 	return task.writeRuntimeResult(request.CorrelationID, response.Completed, response.Failed)
 }
 func workerSessionSubmitRequest(requested *programv0.SessionSubmitRequested) (workerapi.SubmitSessionDataRequest, error) {
 	if requested == nil || ids.Validate(requested.GetCorrelationId()) != nil {
-		return workerapi.SubmitSessionDataRequest{}, errors.New("Session submission correlation is invalid")
+		return workerapi.SubmitSessionDataRequest{}, errors.New("session submission correlation is invalid")
 	}
 	r := workerapi.SubmitSessionDataRequest{CorrelationID: requested.GetCorrelationId(), SessionID: requested.GetSessionId(), TurnID: requested.TurnId, Data: json.RawMessage(requested.GetDataJson()), IdempotencyKey: requested.GetIdempotencyKey()}
 	if err := api.ValidateSessionID(r.SessionID); err != nil {
@@ -68,14 +68,14 @@ func workerSessionSubmitRequest(requested *programv0.SessionSubmitRequested) (wo
 	switch requested.GetMode() {
 	case "send", "enqueue":
 		if r.TurnID != nil {
-			return r, errors.New("Session submission cannot name a Turn")
+			return r, errors.New("session submission cannot name a Turn")
 		}
 	case "message":
 		if r.TurnID == nil || ids.Validate(*r.TurnID) != nil {
 			return r, errors.New("exact message requires Turn identity")
 		}
 	default:
-		return r, errors.New("Session submission mode is invalid")
+		return r, errors.New("session submission mode is invalid")
 	}
 	return r, nil
 }

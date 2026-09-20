@@ -245,7 +245,7 @@ func (s *Server) workerPollRunWait(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !current {
-		writeError(w, conflict(errors.New("Turn wait authority was revoked")))
+		writeError(w, conflict(errors.New("turn wait authority was revoked")))
 		return
 	}
 	response := workerapi.RunWaitPollResponse{RunID: pgvalue.UUIDString(locators.RunID), RunWaitID: waitID.String()}

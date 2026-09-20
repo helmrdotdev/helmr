@@ -114,14 +114,14 @@ export const claudeIssueFixer = actor({
         turn.signal.removeEventListener("abort", stop)
       }
       if (failure !== undefined) {
-        if (turn.signal.aborted) throw failure.error
+        turn.signal.throwIfAborted()
         await turn.fail(failure.error)
         continue
       }
       try {
         await checkRepository(cwd, turn.signal)
       } catch (error) {
-        if (turn.signal.aborted) throw error
+        turn.signal.throwIfAborted()
         await turn.fail(error)
         continue
       }

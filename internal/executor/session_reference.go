@@ -17,7 +17,7 @@ type SessionReferenceControlPlane interface {
 func (task *guestRunLeaseTask) handleSessionReferenceCommand(ctx context.Context, event *programv0.RunEvent) error {
 	cp, ok := task.controlPlane.(SessionReferenceControlPlane)
 	if !ok {
-		return errors.New("Session reference control plane is required")
+		return errors.New("session reference control plane is required")
 	}
 	var base workerapi.SessionReferenceRequest
 	var turn, hold, key string
@@ -47,10 +47,10 @@ func (task *guestRunLeaseTask) handleSessionReferenceCommand(ctx context.Context
 	}
 	if turn != "" {
 		if ids.Validate(turn) != nil {
-			return errors.New("Turn identity is invalid")
+			return errors.New("turn identity is invalid")
 		}
 	} else if ids.Validate(hold) != nil {
-		return errors.New("Session hold identity is invalid")
+		return errors.New("session hold identity is invalid")
 	}
 	var correlation string
 	var completed any
@@ -88,7 +88,7 @@ func (task *guestRunLeaseTask) handleSessionReferenceCommand(ctx context.Context
 		return err
 	}
 	if correlation != base.CorrelationID || (completed == nil) == (failed == nil) {
-		return errors.New("Session reference receipt mismatch")
+		return errors.New("session reference receipt mismatch")
 	}
 	return task.writeRuntimeResult(correlation, completed, failed)
 }

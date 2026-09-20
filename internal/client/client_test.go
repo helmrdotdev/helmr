@@ -563,7 +563,7 @@ func TestRunOperations(t *testing.T) {
 				}))
 				defer server.Close()
 				c := sessionTestClient(t, server, scoped)
-				result, err := c.CancelRun(context.Background(), "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", api.CancelRunRequest{}, RunScopeOptions{ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID})
+				result, err := c.CancelRun(context.Background(), "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", api.CancelRunRequest{}, RunScopeOptions(scope))
 				if err != nil {
 					t.Fatal(err)
 				}

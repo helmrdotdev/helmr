@@ -14,9 +14,9 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-var ErrTurnNotActive = errors.New("Turn is not active")
-var ErrTurnStopped = errors.New("Turn interruption has been accepted")
-var ErrTurnScope = errors.New("Turn producer scope is stale")
+var ErrTurnNotActive = errors.New("turn is not active")
+var ErrTurnStopped = errors.New("turn interruption has been accepted")
+var ErrTurnScope = errors.New("turn producer scope is stale")
 
 // TurnScope addresses one input under one execution. It is not a capability.
 // Callers must also validate their authenticated worker/lease authority in this transaction.

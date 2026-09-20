@@ -19,6 +19,8 @@ type sessionProtocolCP struct {
 	*testRunLeaseControlPlane
 	SessionExecutionControlPlane
 	ready   func(workerapi.TurnExecutionRequest) workerapi.TurnCommandResponse
+	claim   func(workerapi.ClaimTurnMessageRequest) workerapi.ClaimTurnMessageResponse
+	output  func(workerapi.WriteTurnOutputRequest) workerapi.WriteOutputResponse
 	control func(workerapi.SessionControlRequest) workerapi.SessionControlResponse
 }
 
@@ -27,6 +29,98 @@ func (c *sessionProtocolCP) TurnMessagesReady(_ context.Context, r workerapi.Tur
 }
 func (c *sessionProtocolCP) ReadSessionControl(_ context.Context, r workerapi.SessionControlRequest) (workerapi.SessionControlResponse, error) {
 	return c.control(r), nil
+}
+
+func (c *sessionProtocolCP) ClaimTurnMessage(_ context.Context, r workerapi.ClaimTurnMessageRequest) (workerapi.ClaimTurnMessageResponse, error) {
+	return c.claim(r), nil
+}
+func (c *sessionProtocolCP) WriteTurnOutput(_ context.Context, r workerapi.WriteTurnOutputRequest) (workerapi.WriteOutputResponse, error) {
+	return c.output(r), nil
+}
+
+func TestOwnSessionRejectionDeliversStopBeforeFailure(t *testing.T) {
+	for _, operation := range []string{"ready", "claim", "output"} {
+		t.Run(operation, func(t *testing.T) {
+			host, guest := net.Pipe()
+			defer host.Close()
+			defer guest.Close()
+			if err := guest.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			lease := testFreshProgramClaim(t).Lease
+			lease.ExpiresAt = time.Now().Add(time.Minute)
+			execution := testTurnExecution(lease)
+			hold := "019c10d5-a6f7-7af1-8f5f-000000000118"
+			reason := "interrupt_requested"
+			correlation := "019c10d5-a6f7-7af1-8f5f-000000000117"
+			failure := &workerapi.RuntimeOperationFailure{Code: "turn_stopping", Message: "Turn interruption has been accepted"}
+			cp := &sessionProtocolCP{testRunLeaseControlPlane: &testRunLeaseControlPlane{},
+				control: func(r workerapi.SessionControlRequest) workerapi.SessionControlResponse {
+					return workerapi.SessionControlResponse{CorrelationID: r.CorrelationID, HoldID: &hold, TurnID: &execution.TurnId, Reason: &reason}
+				},
+				ready: func(r workerapi.TurnExecutionRequest) workerapi.TurnCommandResponse {
+					return workerapi.TurnCommandResponse{CorrelationID: r.CorrelationID, Failed: failure}
+				},
+				claim: func(r workerapi.ClaimTurnMessageRequest) workerapi.ClaimTurnMessageResponse {
+					return workerapi.ClaimTurnMessageResponse{CorrelationID: r.CorrelationID, Failed: failure}
+				},
+				output: func(r workerapi.WriteTurnOutputRequest) workerapi.WriteOutputResponse {
+					return workerapi.WriteOutputResponse{CorrelationID: r.CorrelationID, Failed: failure}
+				},
+			}
+			task := &guestRunLeaseTask{program: freshProgram{session: fakeGuestSession{stream: host}, execution: execution.Session}, lease: lease, controlPlane: cp}
+			done := make(chan error, 1)
+			go func() {
+				switch operation {
+				case "ready":
+					done <- task.handleTurnCommand(t.Context(), &programv0.RunEvent{Event: &programv0.RunEvent_TurnReadyRequested{TurnReadyRequested: &programv0.TurnReadyRequested{CorrelationId: correlation, Execution: execution}}})
+				case "claim":
+					done <- task.handleTurnCommand(t.Context(), &programv0.RunEvent{Event: &programv0.RunEvent_TurnMessageClaimRequested{TurnMessageClaimRequested: &programv0.TurnMessageClaimRequested{CorrelationId: correlation, Execution: execution, DeliveryId: "019c10d5-a6f7-7af1-8f5f-000000000119"}}})
+				case "output":
+					done <- task.handleTurnOutput(t.Context(), &programv0.TurnOutputWriteRequested{CorrelationId: correlation, Execution: execution, DataJson: `{"text":"late output"}`})
+				}
+			}()
+			header, n, err := wire.ReadStreamFrameHeader(guest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stop, err := wire.ReadSessionStop(header, guest, n)
+			if err != nil {
+				t.Fatalf("rejection preceded exact stop: %v", err)
+			}
+			if !proto.Equal(stop.Execution, execution.Session) || stop.GetTurnId() != execution.TurnId || stop.HoldId != hold {
+				t.Fatalf("wrong stop: %+v", stop)
+			}
+			header, n, err = wire.ReadStreamFrameHeader(guest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			decision, err := wire.ReadResumeDecision(header, guest, n)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if decision.Kind != "failed" || decision.CorrelationId != correlation {
+				t.Fatalf("wrong rejection: %+v", decision)
+			}
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestOwnSessionRejectionRequiresExactStopAuthority(t *testing.T) {
+	lease := testFreshProgramClaim(t).Lease
+	lease.ExpiresAt = time.Now().Add(time.Minute)
+	execution := testTurnExecution(lease)
+	cp := &sessionProtocolCP{testRunLeaseControlPlane: &testRunLeaseControlPlane{}, control: func(r workerapi.SessionControlRequest) workerapi.SessionControlResponse {
+		return workerapi.SessionControlResponse{CorrelationID: r.CorrelationID}
+	}}
+	task := &guestRunLeaseTask{program: freshProgram{execution: execution.Session}, lease: lease, controlPlane: cp}
+	err := task.writeOwnSessionResult(t.Context(), "unused", nil, &workerapi.RuntimeOperationFailure{Code: "turn_stopping", Message: "stopped"})
+	if err == nil || err.Error() != "stopped operation has no exact Session stop authority" {
+		t.Fatalf("unconfirmed stop: %v", err)
+	}
 }
 
 func TestHotWaitServesTurnCommandsAndKeepsFollowingEvent(t *testing.T) {

@@ -40,7 +40,7 @@ func NewTurnOutputRequest(environmentID, sessionID uuid.UUID, key string, produc
 
 func newTurnRequest(environmentID, sessionID uuid.UUID, key string, op operation, value any) (Request, error) {
 	if environmentID == uuid.Nil() || sessionID == uuid.Nil() {
-		return nil, errors.New("Session scope is required")
+		return nil, errors.New("session scope is required")
 	}
 	raw, err := json.Marshal(value)
 	if err != nil {

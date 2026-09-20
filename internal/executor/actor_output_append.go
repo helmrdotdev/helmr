@@ -12,7 +12,7 @@ import (
 
 func (task *guestRunLeaseTask) handleTurnOutput(ctx context.Context, requested *programv0.TurnOutputWriteRequested) error {
 	if requested == nil {
-		return errors.New("Turn output request is required")
+		return errors.New("turn output request is required")
 	}
 	scope, err := task.turnRequest(requested.GetCorrelationId(), requested.GetExecution())
 	if err != nil {
@@ -27,7 +27,7 @@ func (task *guestRunLeaseTask) handleTurnOutput(ctx context.Context, requested *
 	}
 	cp, ok := task.controlPlane.(SessionExecutionControlPlane)
 	if !ok {
-		return errors.New("Session output control plane is required")
+		return errors.New("session output control plane is required")
 	}
 	var response workerapi.WriteOutputResponse
 	err = task.callRunSourceRuntime(ctx, func(callCtx context.Context, lease workerapi.RunLeaseAssignment) error {
@@ -39,11 +39,11 @@ func (task *guestRunLeaseTask) handleTurnOutput(ctx context.Context, requested *
 	if err != nil {
 		return err
 	}
-	return task.writeOutputReceipt(scope.CorrelationID, requested.GetExecution().GetSession(), &request.TurnID, response)
+	return task.writeOutputReceipt(ctx, scope.CorrelationID, requested.GetExecution().GetSession(), &request.TurnID, response)
 }
 func (task *guestRunLeaseTask) handleSessionOutput(ctx context.Context, requested *programv0.SessionOutputWriteRequested) error {
 	if requested == nil || ids.Validate(requested.GetCorrelationId()) != nil {
-		return errors.New("Session output request is invalid")
+		return errors.New("session output request is invalid")
 	}
 	if err := task.validateExecution(requested.GetExecution()); err != nil {
 		return err
@@ -54,7 +54,7 @@ func (task *guestRunLeaseTask) handleSessionOutput(ctx context.Context, requeste
 	}
 	cp, ok := task.controlPlane.(SessionExecutionControlPlane)
 	if !ok {
-		return errors.New("Session output control plane is required")
+		return errors.New("session output control plane is required")
 	}
 	var response workerapi.WriteOutputResponse
 	err := task.callRunSourceRuntime(ctx, func(callCtx context.Context, lease workerapi.RunLeaseAssignment) error {
@@ -66,14 +66,14 @@ func (task *guestRunLeaseTask) handleSessionOutput(ctx context.Context, requeste
 	if err != nil {
 		return err
 	}
-	return task.writeOutputReceipt(request.CorrelationID, requested.GetExecution(), nil, response)
+	return task.writeOutputReceipt(ctx, request.CorrelationID, requested.GetExecution(), nil, response)
 }
-func (task *guestRunLeaseTask) writeOutputReceipt(correlation string, execution *programv0.SessionExecution, turnID *string, response workerapi.WriteOutputResponse) error {
+func (task *guestRunLeaseTask) writeOutputReceipt(ctx context.Context, correlation string, execution *programv0.SessionExecution, turnID *string, response workerapi.WriteOutputResponse) error {
 	if response.CorrelationID != correlation || (response.Completed == nil) == (response.Failed == nil) {
 		return errors.New("output receipt correlation mismatch")
 	}
 	if response.Failed != nil {
-		return task.writeRuntimeResult(correlation, nil, response.Failed)
+		return task.writeOwnSessionResult(ctx, correlation, nil, response.Failed)
 	}
 	event := response.Completed
 	p := event.Provenance

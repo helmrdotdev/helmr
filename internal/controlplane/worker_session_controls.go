@@ -87,7 +87,7 @@ func lockWorkerSessionControl(ctx context.Context, work *txWork, worker workerAc
 		}
 		tx, ok := work.tx.(pgx.Tx)
 		if !ok {
-			return fail(errors.New("Session control transaction does not expose PostgreSQL authority"))
+			return fail(errors.New("session control transaction does not expose PostgreSQL authority"))
 		}
 		graph, err = run.LockOwnedFinalizationWithRuntimeFence(ctx, tx, run.OwnedFinalizationRequest{OrgID: pgvalue.MustUUIDValue(loc.OrgID), ProjectID: pgvalue.MustUUIDValue(loc.ProjectID), EnvironmentID: pgvalue.MustUUIDValue(loc.EnvironmentID), RunID: pgvalue.MustUUIDValue(target.CurrentRunID)}, func() error {
 			if sourceInTargetGraph {

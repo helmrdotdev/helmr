@@ -1028,3 +1028,54 @@ and stop-versus-settlement Postgres tests pass in 26.856s
 (`/tmp/session-local-lifecycle-regression.log`). Fresh medium read-only combined
 review found no actionable correctness or simplicity findings. No SDK redesign
 proposal arose from this local evidence.
+
+## Integrated native interruption and continuation (2026-09-20)
+
+The follow-up to `d0390217` extends `TestSessionNativeLocalPostgres` to four
+scenarios: interaction and interruption for each provider. The interruption path
+uses public SDK calls to interrupt a Turn waiting for a native question while a
+second Turn is queued. It verifies premature resume rejection, held input
+rejection, runtime cancellation with exact stop authority, final held state,
+stale hold rejection, and exact resume into a different Helmr Run. A fresh native
+process continues the same conversation. An old question reply is rejected in
+the new Turn, only the second Turn runs repository checks and completes, and no
+message remains unknown. The shared bridge lives in `probes/native-program.ts`.
+
+The tests exposed two implementation defects, now corrected:
+
+- An own-Session command/output rejection could reach the runtime before its
+  polling stop notification, making an intended interruption look like failure.
+  The executor now delivers exact stop authority before these rejections.
+  Foreign-Session references/submissions retain ordinary failure delivery and do
+  not cancel the caller. Framed protocol tests cover ordering and missing authority.
+- Native processes can report generic termination errors during cancellation.
+  Both production Actors now propagate `turn.signal`'s reason after native cleanup
+  so the runtime recognizes the intended interruption. Native probes assert exact
+  reason identity when the promise rejects.
+
+All four integrated scenarios pass in 9.00s, followed by Codex 3 tests / 36
+assertions and Claude 2 tests / 54 assertions
+(`/tmp/session-interruption-final.log`, exit 0). Explicit probe and workflow
+TypeScript checks and workflow tests (10 / 41 assertions) pass in
+`/tmp/session-interruption-ts-final.log`. Full executor, guestd, client, token,
+controlplane, session, wire and idempotency Go packages pass in
+`/tmp/session-pr332-regression.log`; `make go-lint` passes in
+`/tmp/session-pr332-lint-final2.log`. Fresh medium read-only review found no
+actionable correctness or simplicity findings; the ordering helper is bounded to
+own-Session responses and the shared bridge removes duplicated test transport.
+No public primitive or SDK contract change was needed.
+
+Initial Draft PR CI also identified a stale embedded hostconfig bundle, Go lint
+violations, and a stale Token-wait expectation. The bundle is regenerated, lint
+is corrected, and the test now requires `failed/session_stopped` for the stopped
+waiter while preserving the shared completed Token and unrelated waiter. This
+matches the existing cancellation owner; Token behavior was not changed.
+
+Proof boundaries remain explicit: both logical Helmr Runs use the same local
+Node host, and native history persists on local disk across fresh native child
+processes. Worker transport/auth, placement, physical cleanup receipts and capture
+are fixtures; capture contains marker bytes rather than restored native history.
+The executor ordering is separately tested through framed protocol tests, not
+through a real Worker in the native integration. Model responses are loopback
+fixtures. Physical whole-Run stop, VM restoration, actual provider inference and
+real external-interface delivery remain unproved. No cloud resources were created.

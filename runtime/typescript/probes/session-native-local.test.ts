@@ -1,9 +1,7 @@
 // Invoked by TestSessionNativeLocalPostgres. The bridge replaces only the Worker
 // transport/capture, not the SDK, TS runtime, native Actor or Control Plane.
-import { create, fromBinary, toBinary } from "@bufbuild/protobuf"
-import { programProto } from "../../../proto/typescript/src/index"
 import { HelmrClient } from "../../../sdk/typescript/src/client"
-import { runProgram } from "../../../runtime/typescript/src/program"
+import { runNativeProgram } from "./native-program"
 import { PassThrough } from "node:stream"
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -13,10 +11,6 @@ import { test } from "node:test"
 import { claudeModel, codexModel } from "../../../dev/workflows/probes/native-model"
 import { conversation } from "../../../dev/workflows/tasks/issue-fixer/conversation"
 
-function frame(schema: Parameters<typeof create>[0], value: any) {
-  const body = toBinary(schema, create(schema, value)), result = Buffer.alloc(body.length + 4)
-  result.writeUInt32BE(body.length); result.set(body, 4); return result
-}
 const bridge = process.env.HELMR_LOCAL_BRIDGE
 const qualification = bridge ? test : test.skip
 qualification("native Actor through runtime, SDK HTTP and Postgres", async () => {
@@ -50,94 +44,26 @@ qualification("native Actor through runtime, SDK HTTP and Postgres", async () =>
     assert.equal(first.kind, "enqueued")
     let completed = 0, received = 0, ready = false
     let nativeID: string | undefined
-    const worker = async (operation: string, body: any) => {
-      const response = await fetch(`${bridge}/worker/${operation}`, {
-        method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ lease: config.lease, ...body }),
-      })
-      if (!response.ok) throw new Error(`${operation}: ${response.status} ${await response.text()}`)
-      return await response.json() as any
-    }
-    input.write(frame(programProto.ProgramStartSchema, {
-      entrypointDeclaredId: definition.id, runId: config.runId, attemptNumber: 1,
-      deploymentId: config.deploymentId, deploymentVersion: "v1", workspaceId: config.workspaceId,
-      baseWorkspaceVersionId: config.baseWorkspaceVersionId, cause: { kind: { case: "actorStart", value: {} } },
-      entrypoint: { case: "actor", value: { sessionId: config.sessionId, startInputSequence: 0n,
-        inputHighWatermark: 1n, runGeneration: BigInt(config.runGeneration) } },
-    }))
-    input.write(frame(programProto.EntrypointReleaseSchema, { runId: config.runId, attemptNumber: 1,
-      entrypoint: { declaredId: definition.id, kind: { case: "actor", value: {} } } }))
-    runtime = runProgram(new URL("file:///opt/program/declarations.json"), {
-      input, importModule: async () => ({ definition }),
-      readLocator: async () => JSON.stringify({ formatVersion: 0, runtimeContract: "helmr.runtime.v0",
-        architecture: "x86_64", configResultDigest: `sha256:${"4".repeat(64)}`, queues: [],
-        declarations: [{ kind: "actor", declaredId: definition.id, manifest: {},
-          locator: { exportName: "definition", sourcePath: "main.ts", slot: "handler" } }] }),
-      write: async data => {
-        const event = fromBinary(programProto.RunEventSchema, data.subarray(4)).event
-        if (event.case === "entrypointReady" || event.case === "resumeConsumed") return
-        if (event.case === "actorOutcome") { assert.equal(event.value.outcome.case, "succeeded"); return }
-        const value = event.value as any
-        const reply = (data: unknown = {}, kind = "completed") => input.write(frame(programProto.ResumeDecisionSchema, {
-          correlationId: value.correlationId, runWaitId: value.runWaitId ?? "", resumeAttachId: value.resumeAttachId ?? "",
-          kind, dataJson: JSON.stringify(data),
-        }))
-        const scope = { correlation_id: value.correlationId, turn_id: value.execution?.turnId,
-          run_generation: config.runGeneration }
-        if (event.case === "runWaitRequested" && value.kind === "actor_input") {
-          const result = await worker("receive", { correlation_id: value.correlationId,
-            run_wait_id: value.runWaitId, resume_attach_id: value.resumeAttachId, kind: "actor_input",
-            params: JSON.parse(value.paramsJson), actor_speculative_input_sequence: Number(value.actorSpeculativeInputSequence) })
-          if (!result.resolution_kind) throw new Error("Qualification expected an immediately resolved input wait")
-          if (received++ === 0) {
-            // Deliberately between durable activation and runtime delivery: no
-            // Actor/onMessage exists yet. This message must still be admitted.
-            assert.equal(ready, false)
-            const early = await session.send({ type: "invalid_fixture_message" })
-            assert.equal(early.kind, "messaged")
-            assert.equal(early.turn.id, first.turn.id)
-          }
-          reply(result.resolution, result.resolution_kind); return
-        }
-        const operation = {
-          turnReadyRequested: "ready", turnSettlementBeginRequested: "settling",
-          turnMessageClaimRequested: "claim", turnMessageCompleteRequested: "handled",
-        }[event.case as string]
-        if (operation) {
-          const result = await worker(operation, { ...scope,
-            ...(value.deliveryId ? { delivery_id: value.deliveryId } : {}),
-            ...(value.messageId ? { message_id: value.messageId, status: value.status, code: value.code,
-              ...(value.detailsJson ? { details: JSON.parse(value.detailsJson) } : {}) } : {}) })
-          if (operation === "ready") ready = true
-          if (result.failed) reply(result.failed, "failed")
-          else reply(operation === "claim" ? { delivery: result.delivery } : {})
-          return
-        }
-        if (event.case === "turnOutputWriteRequested") {
-          const result = await worker("output", { ...scope, data: JSON.parse(value.dataJson),
-            idempotency_key: value.idempotencyKey, ...(value.messageDeliveryId ? { message_delivery_id: value.messageDeliveryId } : {}) })
-          if (result.failed) { reply(result.failed, "failed"); return }
-          const output = result.completed
-          reply({ id: output.id, sequence: output.sequence, session_id: output.session_id,
-            turn_id: output.turn_id, run_id: output.provenance.run_id,
-            attempt_number: output.provenance.attempt_number, run_generation: output.provenance.run_generation }); return
-        }
-        if (event.case === "turnSettleRequested") {
+    runtime = runNativeProgram(bridge!, config, definition, input, {
+      async received() {
+        if (received++ !== 0) return
+        // Durable activation happened, but the Actor has not received this Turn.
+        assert.equal(ready, false)
+        const early = await session.send({ type: "invalid_fixture_message" })
+        assert.equal(early.kind, "messaged")
+        assert.equal(early.turn.id, first.turn.id)
+      },
+      ready() { ready = true },
+      outcome(value) { assert.equal(value.outcome.case, "succeeded") },
+      async beforeSettle(value) {
           assert.equal(value.disposition, "completed")
           assert.equal(Number(await readFile(join(directory, "checks"), "utf8")), completed + 1)
           const current = await conversation(directory, config.sessionId, config.provider)
           assert.ok(current.id)
           if (nativeID) assert.equal(current.id, nativeID)
           nativeID = current.id
-          const result = await worker("settle", { ...scope, disposition: value.disposition,
-            target_input_sequence: Number(value.targetInputSequence),
-            ...(value.resultJson === undefined ? {} : { result: JSON.parse(value.resultJson) }) })
-          completed++
-          if (completed === 2) await session.close()
-          reply({ event_id: result.event_id, workspace_version_id: result.workspace_version_id }, "committed"); return
-        }
-        throw new Error(`Unexpected runtime event ${event.case}`)
       },
+      async settled() { if (++completed === 2) await session.close() },
     })
     void runtime.finally(() => { finished = true }).catch(() => {})
     // Consume only persisted public events, like a Slack/Linear/desktop adapter.

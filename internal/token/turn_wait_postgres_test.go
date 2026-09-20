@@ -76,12 +76,12 @@ func TestTurnStopDoesNotConsumeSharedTokenOrUnrelatedWait(t *testing.T) {
 	if err != nil || batch.Resolved != 1 || batch.Examined != 1 {
 		t.Fatalf("unrelated wait starved: %+v %v", batch, err)
 	}
-	var status, stoppedCondition, otherCondition, otherSuspension string
+	var status, stoppedCondition, otherCondition, otherSuspension, stoppedReason string
 	var revoked bool
-	if err = fixture.pool.QueryRow(ctx, `SELECT t.status,a.condition_status,(SELECT s.dispatch_hold_id IS NOT NULL FROM sessions s JOIN runs r ON r.id=s.current_run_id WHERE r.id=a.run_id),b.condition_status,b.suspension_status FROM tokens t JOIN run_waits a ON a.id=$2 JOIN run_waits b ON b.id=$3 WHERE t.id=$1`, tokenID, stopped.WaitID, unrelated.WaitID).Scan(&status, &stoppedCondition, &revoked, &otherCondition, &otherSuspension); err != nil {
+	if err = fixture.pool.QueryRow(ctx, `SELECT t.status,a.condition_status,(SELECT s.dispatch_hold_id IS NOT NULL FROM sessions s JOIN runs r ON r.id=s.current_run_id WHERE r.id=a.run_id),b.condition_status,b.suspension_status,a.condition_reason_code FROM tokens t JOIN run_waits a ON a.id=$2 JOIN run_waits b ON b.id=$3 WHERE t.id=$1`, tokenID, stopped.WaitID, unrelated.WaitID).Scan(&status, &stoppedCondition, &revoked, &otherCondition, &otherSuspension, &stoppedReason); err != nil {
 		t.Fatal(err)
 	}
-	if status != "completed" || stoppedCondition != "pending" || !revoked || otherCondition != "completed" || otherSuspension != "released" {
-		t.Fatalf("shared Token authority: %s %s %v %s %s", status, stoppedCondition, revoked, otherCondition, otherSuspension)
+	if status != "completed" || stoppedCondition != "failed" || stoppedReason != "session_stopped" || !revoked || otherCondition != "completed" || otherSuspension != "released" {
+		t.Fatalf("shared Token authority: %s %s %v %s %s %s", status, stoppedCondition, revoked, otherCondition, otherSuspension, stoppedReason)
 	}
 }

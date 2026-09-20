@@ -204,13 +204,13 @@ func validateResumedProgramClaim(
 			admission.execution = &programv0.SessionExecution{SessionId: restore.SessionID, RunId: lease.RunID, AttemptNumber: uint32(lease.AttemptNumber), RunGeneration: restore.RunGeneration}
 			admission.turnID = restore.TurnID
 			if restore.TurnID != nil && ids.Validate(*restore.TurnID) != nil {
-				return resumedProgramAdmission{}, errors.New("Actor restore Turn identity is invalid")
+				return resumedProgramAdmission{}, errors.New("actor restore Turn identity is invalid")
 			}
 			if err := validateSessionExecution(admission.execution, lease); err != nil {
 				return resumedProgramAdmission{}, err
 			}
 		} else if restore.SessionID != "" || restore.RunGeneration != 0 || restore.TurnID != nil {
-			return resumedProgramAdmission{}, errors.New("Task restore has Actor execution scope")
+			return resumedProgramAdmission{}, errors.New("task restore has Actor execution scope")
 		}
 		if admission.runWaitID == "" ||
 			admission.checkpointID == "" ||

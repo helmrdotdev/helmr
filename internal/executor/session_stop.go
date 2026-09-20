@@ -21,7 +21,7 @@ func (task *guestRunLeaseTask) deliverSessionStop(ctx context.Context) (time.Tim
 	}
 	cp, ok := task.controlPlane.(SessionExecutionControlPlane)
 	if !ok {
-		return time.Time{}, errors.New("Session control client is required")
+		return time.Time{}, errors.New("session control client is required")
 	}
 	correlation := uuid.NewV7().String()
 	var response workerapi.SessionControlResponse
@@ -36,13 +36,13 @@ func (task *guestRunLeaseTask) deliverSessionStop(ctx context.Context) (time.Tim
 		return time.Time{}, err
 	}
 	if response.CorrelationID != correlation {
-		return time.Time{}, errors.New("Session control response correlation mismatch")
+		return time.Time{}, errors.New("session control response correlation mismatch")
 	}
 	if response.HoldID == nil {
 		return time.Time{}, nil
 	}
 	if *response.HoldID == "" || response.Reason == nil || *response.Reason == "" || (response.TurnID != nil && *response.TurnID == "") {
-		return time.Time{}, errors.New("Session stop identity is incomplete")
+		return time.Time{}, errors.New("session stop identity is incomplete")
 	}
 	stop := &programv0.SessionStop{Execution: proto.Clone(task.program.execution).(*programv0.SessionExecution), TurnId: response.TurnID, HoldId: *response.HoldID, Reason: *response.Reason}
 	writeCtx, cancelWrite := context.WithDeadline(ctx, deadline)
@@ -69,7 +69,7 @@ func (task *guestRunLeaseTask) pollSessionStop(ctx context.Context) error {
 			case <-ctx.Done():
 				return ctx.Err()
 			case <-timer.C:
-				return errors.New("Session stop did not converge before its lease deadline")
+				return errors.New("session stop did not converge before its lease deadline")
 			}
 		}
 		if err := sleepWithContext(ctx, 100*time.Millisecond); err != nil {

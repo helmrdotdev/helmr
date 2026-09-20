@@ -61,7 +61,7 @@ for (const scenario of ["answer", "interrupt", "approval"]) test(`native ${scena
         },
       })
       if (interrupt && issue === "first unique input") {
-        await expect(run).rejects.toThrow()
+        await run.then(() => { throw new Error("Expected interruption") }, error => expect(error).toBe(turnCancel.signal.reason))
         await expect(handler(pendingReply)).rejects.toThrow()
       } else await run
       const current = await conversation(directory, "same-session", "codex")

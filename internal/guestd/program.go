@@ -913,7 +913,7 @@ func superviseProgram(
 	}
 	if actor := programStart.GetActor(); actor != nil {
 		if actor.GetRunGeneration() <= 0 || actor.GetSessionId() == "" {
-			return errors.New("Actor start scope is incomplete")
+			return errors.New("actor start scope is incomplete")
 		}
 		process.execution = &programv0.SessionExecution{SessionId: actor.GetSessionId(), RunId: programStart.GetRunId(), AttemptNumber: programStart.GetAttemptNumber(), RunGeneration: actor.GetRunGeneration()}
 	}
@@ -1243,10 +1243,10 @@ func relayProgram(
 				outcomeErr = validateActorOutcome(event.GetActorOutcome())
 				interrupted := event.GetActorOutcome().GetInterrupted()
 				if (stopped != nil) != (interrupted != nil) || (interrupted != nil && (interrupted.GetHoldId() != stopped.GetHoldId() || !sameOptionalString(interrupted.TurnId, stopped.TurnId))) {
-					outcomeErr = errors.New("Actor outcome does not match accepted stop")
+					outcomeErr = errors.New("actor outcome does not match accepted stop")
 				}
 				if event.GetActorOutcome().GetRunGeneration() != process.execution.GetRunGeneration() {
-					outcomeErr = errors.New("Actor outcome generation mismatch")
+					outcomeErr = errors.New("actor outcome generation mismatch")
 				}
 				if event.GetTaskOutcome() != nil {
 					outcomeErr = errors.New("actor program emitted a task outcome")
@@ -1284,7 +1284,7 @@ func relayProgram(
 			}
 			if control.stop != nil {
 				if stopped != nil && !proto.Equal(stopped, control.stop) {
-					return errors.New("Session stop hold changed during convergence")
+					return errors.New("session stop hold changed during convergence")
 				}
 				if err := forwardSessionStop(process, control.stop); err != nil {
 					return err
@@ -2764,7 +2764,7 @@ func sameOptionalString(left, right *string) bool {
 }
 func forwardSessionStop(process *programProcess, stop *programv0.SessionStop) error {
 	if stop == nil || process.execution == nil || !proto.Equal(stop.GetExecution(), process.execution) || stop.GetHoldId() == "" || stop.GetReason() == "" || (stop.TurnId != nil && stop.GetTurnId() == "") {
-		return errors.New("Session stop does not match current execution")
+		return errors.New("session stop does not match current execution")
 	}
 	payload := struct {
 		Execution struct {

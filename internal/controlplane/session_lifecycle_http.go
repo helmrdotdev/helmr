@@ -333,9 +333,9 @@ func (s *Server) writeSessionOperationError(w http.ResponseWriter, err error) {
 		writeError(w, notFound(codedError{code: "session_not_found", message: "Session not found"}))
 	default:
 		if s.log != nil {
-			s.log.Error("Session operation failed", "error", err)
+			s.log.Error("session operation failed", "error", err)
 		}
-		writeError(w, errors.New("Session operation failed"))
+		writeError(w, errors.New("session operation failed"))
 	}
 }
 

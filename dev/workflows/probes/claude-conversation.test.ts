@@ -87,7 +87,7 @@ for (const interrupted of [false, true]) test(`Claude Actor ${interrupted ? "int
         },
       })
       if (interrupted && issue === "first unique input") {
-        await expect(run).rejects.toThrow()
+        await run.then(() => { throw new Error("Expected interruption") }, error => expect(error).toBe(stop.signal.reason))
         await expect(handler(staleReply)).rejects.toThrow()
       } else await run
       const current = await conversation(directory, "same-session", "claude")

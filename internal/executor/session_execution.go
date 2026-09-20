@@ -26,7 +26,7 @@ type SessionExecutionControlPlane interface {
 
 func validateSessionExecution(execution *programv0.SessionExecution, lease workerapi.RunLeaseAssignment) error {
 	if execution == nil || api.ValidateSessionID(execution.GetSessionId()) != nil || execution.GetRunId() != lease.RunID || execution.GetAttemptNumber() != uint32(lease.AttemptNumber) || execution.GetRunGeneration() <= 0 {
-		return errors.New("Session execution does not match Run authority")
+		return errors.New("session execution does not match Run authority")
 	}
 	return nil
 }
@@ -38,14 +38,14 @@ func (task *guestRunLeaseTask) validateExecution(execution *programv0.SessionExe
 		return err
 	}
 	if task.program.execution == nil || !proto.Equal(execution, task.program.execution) {
-		return errors.New("Session execution generation mismatch")
+		return errors.New("session execution generation mismatch")
 	}
 	return nil
 }
 
 func (task *guestRunLeaseTask) turnRequest(correlation string, execution *programv0.TurnExecution) (workerapi.TurnExecutionRequest, error) {
 	if ids.Validate(correlation) != nil || execution == nil || ids.Validate(execution.GetTurnId()) != nil {
-		return workerapi.TurnExecutionRequest{}, errors.New("Turn command scope is invalid")
+		return workerapi.TurnExecutionRequest{}, errors.New("turn command scope is invalid")
 	}
 	if err := task.validateExecution(execution.GetSession()); err != nil {
 		return workerapi.TurnExecutionRequest{}, err
@@ -69,10 +69,26 @@ func (task *guestRunLeaseTask) writeRuntimeResult(correlation string, completed 
 	return wire.WriteResumeDecision(task.programStream(), &programv0.ResumeDecision{CorrelationId: correlation, Kind: kind, DataJson: string(data)})
 }
 
+// Only use for operations on this execution. A reference to another held
+// Session must not stop the caller. Confirm and deliver exact stop authority
+// before a rejection can make the runtime classify a cooperative stop as loss.
+func (task *guestRunLeaseTask) writeOwnSessionResult(ctx context.Context, correlation string, completed any, failed *workerapi.RuntimeOperationFailure) error {
+	if failed != nil && (failed.Code == "turn_stopping" || failed.Code == "session_held" || failed.Code == "session_stopped") {
+		deadline, err := task.deliverSessionStop(ctx)
+		if err != nil {
+			return err
+		}
+		if deadline.IsZero() {
+			return errors.New("stopped operation has no exact Session stop authority")
+		}
+	}
+	return task.writeRuntimeResult(correlation, completed, failed)
+}
+
 func (task *guestRunLeaseTask) handleTurnCommand(ctx context.Context, event *programv0.RunEvent) error {
 	cp, ok := task.controlPlane.(SessionExecutionControlPlane)
 	if !ok {
-		return errors.New("Session execution control plane is required")
+		return errors.New("session execution control plane is required")
 	}
 	var execution *programv0.TurnExecution
 	var correlation string
@@ -130,7 +146,7 @@ func (task *guestRunLeaseTask) handleTurnCommand(ctx context.Context, event *pro
 		return callErr
 	})
 	if err != nil {
-		return fmt.Errorf("Turn command: %w", err)
+		return fmt.Errorf("turn command: %w", err)
 	}
 	if claimed != nil {
 		if claimed.CorrelationID != correlation {
@@ -141,20 +157,20 @@ func (task *guestRunLeaseTask) handleTurnCommand(ctx context.Context, event *pro
 				return errors.New("message delivery receipt mismatch")
 			}
 		}
-		return task.writeRuntimeResult(correlation, struct {
+		return task.writeOwnSessionResult(ctx, correlation, struct {
 			Delivery *workerapi.TurnMessageDelivery `json:"delivery"`
 		}{claimed.Delivery}, claimed.Failed)
 	}
 	if response.CorrelationID != correlation || response.Accepted == (response.Failed != nil) {
-		return errors.New("Turn command receipt mismatch")
+		return errors.New("turn command receipt mismatch")
 	}
-	return task.writeRuntimeResult(correlation, struct{}{}, response.Failed)
+	return task.writeOwnSessionResult(ctx, correlation, struct{}{}, response.Failed)
 }
 
 func (task *guestRunLeaseTask) validateWaitScope(execution *programv0.SessionExecution, turnID *string) error {
 	if task.program.execution == nil {
 		if execution != nil || turnID != nil {
-			return errors.New("Task wait carries Actor authority")
+			return errors.New("task wait carries Actor authority")
 		}
 		return nil
 	}

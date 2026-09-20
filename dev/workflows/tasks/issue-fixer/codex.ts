@@ -137,7 +137,7 @@ export const codexIssueFixer = actor({
         lifetime.abort()
         await (stopped ?? server.close())
         await Promise.allSettled(jobs)
-        if (turn.signal.aborted) throw error
+        turn.signal.throwIfAborted()
         await turn.fail(error)
         continue
       } finally {
@@ -150,7 +150,7 @@ export const codexIssueFixer = actor({
       try {
         await checkRepository(cwd, turn.signal)
       } catch (error) {
-        if (turn.signal.aborted) throw error
+        turn.signal.throwIfAborted()
         await turn.fail(error)
         continue
       }

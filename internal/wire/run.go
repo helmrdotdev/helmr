@@ -209,7 +209,7 @@ const SecretEnvCollisionDiagnostic = "workspace Secret env binding conflicts wit
 
 func WriteSessionStop(w io.Writer, stop *programv0.SessionStop) error {
 	if stop == nil {
-		return fmt.Errorf("Session stop is required")
+		return fmt.Errorf("session stop is required")
 	}
 	body, err := proto.Marshal(stop)
 	if err != nil {
@@ -232,7 +232,7 @@ func ReadSessionStop(header StreamHeader, reader io.Reader, bodyLen uint64) (*pr
 		return nil, err
 	}
 	if header.RunID != stop.GetExecution().GetRunId() {
-		return nil, fmt.Errorf("Session stop Run identity mismatch")
+		return nil, fmt.Errorf("session stop Run identity mismatch")
 	}
 	return &stop, nil
 }

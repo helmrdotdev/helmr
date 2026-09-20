@@ -28,10 +28,10 @@ func actorResumeCommand() *cobra.Command {
 					return err
 				}
 				if session.Dispatch.HoldID == nil {
-					return errors.New("Session has no hold to resume")
+					return errors.New("session has no hold to resume")
 				}
 				if session.Dispatch.Reason != nil && *session.Dispatch.Reason == "recovery_required" {
-					return errors.New("Session requires reconciliation; use actor recover")
+					return errors.New("session requires reconciliation; use actor recover")
 				}
 				targetHold = *session.Dispatch.HoldID
 			}
