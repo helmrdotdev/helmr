@@ -14,7 +14,7 @@ cat > "$attempt/bin/ip" <<'IP'
 printf '%s\n' "$*" >> "$IP_LOG"
 [ "$*" != "${FAIL_IP:-}" ] || exit 42
 case "$*" in
-  'link show dev eth0'|'link set eth0 up'|'addr flush dev eth0'|\
+  'link set lo up'|'link show dev eth0'|'link set eth0 up'|'addr flush dev eth0'|\
   'addr add 192.168.127.2/30 dev eth0'|'route replace default via 192.168.127.1 dev eth0') ;;
   'route show default') printf 'default via 192.168.127.1 dev eth0\n' ;;
   *) exit 43 ;;
@@ -43,6 +43,7 @@ run_case static 0 "console=ttyS0 $static"
 printf 'nameserver 10.0.0.2\n' > "$attempt/expected-dns"
 cmp "$attempt/expected-dns" "$attempt/resolv.conf"
 cat > "$attempt/expected-ip" <<'IP'
+link set lo up
 link show dev eth0
 link set eth0 up
 addr flush dev eth0
@@ -78,4 +79,10 @@ run_case 'resolver write failure' 1 "$static"
 run_case 'network-none resolver write failure' 1 'helmr.network=none'
 rmdir "$attempt/resolv.conf"
 run_case network-none 0 'helmr.network=none'
-[[ ! -s "$IP_LOG" && -f "$attempt/resolv.conf" && ! -s "$attempt/resolv.conf" ]]
+printf 'link set lo up\n' > "$attempt/expected-loopback"
+cmp "$attempt/expected-loopback" "$IP_LOG"
+[[ -f "$attempt/resolv.conf" && ! -s "$attempt/resolv.conf" ]]
+export FAIL_IP='link set lo up'
+run_case 'network-none loopback failure' 1 'helmr.network=none'
+cmp "$attempt/expected-loopback" "$IP_LOG"
+unset FAIL_IP
