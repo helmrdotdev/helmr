@@ -4,11 +4,14 @@ package firecracker
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/substrate"
 )
 
 func TestComputerSeedProof(t *testing.T) {
@@ -45,7 +48,8 @@ func TestComputerSeedProof(t *testing.T) {
 		"-O", "sparse_super,large_file,filetype,resize_inode,dir_index,ext_attr,has_journal,extent,huge_file,flex_bg,metadata_csum,metadata_csum_seed,64bit,dir_nlink,extra_isize,orphan_file",
 		"-E", "lazy_itable_init=0,lazy_journal_init=0,nodiscard,root_owner=0:0", "-d", seedRoot, seed)
 	original := computerProofDigest(t, seed)
-	if err := seedComputerDisk(t.Context(), seed, disk, 128<<20, resize); err != nil {
+	seedSource := substrate.NewDiskSource(seed, fmt.Sprintf("sha256:%x", original), 64<<20)
+	if err := seedComputerDisk(t.Context(), seedSource, disk, 128<<20, resize); err != nil {
 		t.Fatal(err)
 	}
 	computerProofCommand(t, "e2fsck", "-fn", disk)
@@ -69,14 +73,14 @@ func TestComputerSeedProof(t *testing.T) {
 	}
 	// Refuse to overwrite an existing Computer, even if a caller retries creation.
 	current := computerProofDigest(t, disk)
-	if err := seedComputerDisk(t.Context(), seed, disk, 128<<20, resize); err == nil {
+	if err := seedComputerDisk(t.Context(), seedSource, disk, 128<<20, resize); err == nil {
 		t.Fatal("existing disk overwritten")
 	}
 	if computerProofDigest(t, disk) != current {
 		t.Fatal("creation retry changed existing disk")
 	}
 	failed := filepath.Join(dir, "failed.ext4")
-	if err := seedComputerDisk(t.Context(), seed, failed, 128<<20, "/missing-resize2fs"); err == nil {
+	if err := seedComputerDisk(t.Context(), seedSource, failed, 128<<20, "/missing-resize2fs"); err == nil {
 		t.Fatal("invalid resize command succeeded")
 	}
 	if _, err := os.Stat(failed); !os.IsNotExist(err) {
@@ -84,17 +88,24 @@ func TestComputerSeedProof(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if err := seedComputerDisk(ctx, seed, failed, 128<<20, resize); err == nil {
+	if err := seedComputerDisk(ctx, seedSource, failed, 128<<20, resize); err == nil {
 		t.Fatal("cancelled creation succeeded")
 	}
 	if _, err := os.Stat(failed); !os.IsNotExist(err) {
 		t.Fatalf("cancelled candidate retained: %v", err)
 	}
-	if err := seedComputerDisk(t.Context(), seed, failed, 32<<20, resize); err == nil {
+	if err := seedComputerDisk(t.Context(), seedSource, failed, 32<<20, resize); err == nil {
 		t.Fatal("undersized capacity accepted")
 	}
 	if _, err := os.Stat(failed); !os.IsNotExist(err) {
 		t.Fatalf("undersized candidate retained: %v", err)
+	}
+	unclean := dir + "/./normalized.ext4"
+	if err := seedComputerDisk(t.Context(), seedSource, unclean, 64<<20, resize); err != nil {
+		t.Fatal(err)
+	}
+	if computerProofDigest(t, filepath.Clean(unclean)) != original {
+		t.Fatal("equal-size seed contents changed")
 	}
 	t.Log("independent writable seed, filesystem growth, immutable source, exclusive creation, and failed candidate removal passed")
 }

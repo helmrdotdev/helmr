@@ -4,9 +4,13 @@ package firecracker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+
+	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
 // seedComputerDisk creates an independent writable disk from a verified,
@@ -14,21 +18,22 @@ import (
 // Computers restore their committed disk and never reapply a Sandbox image.
 // sizeBytes is the total filesystem capacity, not additional free space.
 // The owner must publish this local candidate only after durable storage succeeds.
-func seedComputerDisk(ctx context.Context, seed, target string, sizeBytes int64, resize2fs string) (err error) {
+func seedComputerDisk(ctx context.Context, seed vm.RuntimeSubstrateSource, target string, sizeBytes int64, resize2fs string) (err error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	info, err := os.Stat(seed)
+	if seed == nil || sizeBytes <= 0 || sizeBytes%4096 != 0 {
+		return errors.New("computer disk source and positive block-aligned capacity are required")
+	}
+	// This is the same verified, cancellable projection boundary used by VM
+	// startup. Do not clone that projection a second time.
+	target = filepath.Clean(target)
+	projected, err := seed.MaterializeInto(ctx, filepath.Dir(target), filepath.Base(target), os.Getuid(), os.Getgid())
 	if err != nil {
-		return err
+		return fmt.Errorf("materialize computer seed: %w", err)
 	}
-	if !info.Mode().IsRegular() || sizeBytes < info.Size() || sizeBytes <= 0 || sizeBytes%4096 != 0 {
-		return fmt.Errorf("computer disk capacity %d must fit the regular seed image and be block aligned", sizeBytes)
-	}
-	// Never hard-link the shared seed. The existing sparse copier creates an
-	// exclusive target and removes partial copies on failure.
-	if err := cloneSparseFile(seed, target); err != nil {
-		return fmt.Errorf("clone computer seed: %w", err)
+	if projected != target {
+		return errors.New("computer seed projection returned an unexpected path")
 	}
 	defer func() {
 		if err != nil {
@@ -36,6 +41,16 @@ func seedComputerDisk(ctx context.Context, seed, target string, sizeBytes int64,
 		}
 	}()
 	if err := ctx.Err(); err != nil {
+		return err
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || sizeBytes < info.Size() {
+		return errors.New("computer disk capacity must fit the verified seed")
+	}
+	if err := os.Chmod(target, 0600); err != nil {
 		return err
 	}
 	if sizeBytes != info.Size() {
