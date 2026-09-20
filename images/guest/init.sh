@@ -187,6 +187,7 @@ configure_static_network() (
 	prefix=$(mask_to_prefix "$netmask") || return 1
 
 	# Explicit returns also apply when our caller is an if/AND condition.
+	ip link set lo up || return 1
 	ip link show dev "$iface" >/dev/null || return 1
 	ip link set "$iface" up || return 1
 	ip addr flush dev "$iface" || return 1
@@ -217,6 +218,7 @@ configure_network() (
 	done
 	if [ "$network" = none ]; then
 		[ -z "$ip_arg" ] || return 1
+		ip link set lo up || return 1
 		: > /run/resolv.conf || return 1
 		return 0
 	fi
