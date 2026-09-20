@@ -919,3 +919,28 @@ HumanRequests helper, managed delivery/hold/Workspace restore, actual inference
 or crash durability. Provider-native interaction is now tested; integrated Claude
 Actor qualification remains open. This follow-up adds only probes/documentation;
 AWS build/deployment source remains the clean candidate `78ac9d88`.
+
+
+### Production Claude Actor qualification
+
+The direct SDK probe has been replaced by
+`dev/workflows/probes/claude-conversation.test.ts`. The actual production Actor,
+HumanRequests helper, pinned SDK and native processes now run together against a
+loopback model fixture. Helmr handler delivery and repository checks remain fixtures.
+The isolated process environment contains fixture auth and a temporary home only.
+
+Both scenarios pass (54 assertions, `/tmp/session-claude-actor-test.log`), and the
+explicit probe TypeScript check passes (`/tmp/session-claude-actor-types.log`). The
+ordinary interaction scenario answers a real native question, rejects a duplicate,
+denies a Bash operation without its marker being written, serializes two follow-ups,
+and proves the selected answer, denial and messages survive in the same native ID
+across fresh Actor invocations. The interrupted scenario rejects the old question's
+reply through both old and new message handlers, skips checks and completion for
+the interrupted invocation, and continues the same saved conversation.
+
+The initial probe incorrectly expected interruption always to prevent a native
+result. The real provider can emit a result during cancellation. The check fixture
+was corrected to honor the supplied AbortSignal, like the real repository command;
+completion and check counts now prove that result does not settle the interrupted
+Helmr Turn. No runtime, SDK or sample behavior change was required. This closes the
+previous production-Claude-Actor local integration gap, not VM/hold/restore proof.

@@ -183,17 +183,26 @@ It does not call a remote model or execute the denied command. Helmr handler
 delivery and repository checks are fixtures; this is not a deployed Session,
 queue/hold exercise, crash-durability proof or VM Workspace restore test.
 
-The direct pinned Claude SDK probe is also available:
+The Claude probe runs the production Actor and its HumanRequests helper with the
+actual pinned SDK/native processes:
 
 ```sh
-nix develop --command bun dev/workflows/probes/claude-conversation.ts
+nix develop --command bun test dev/workflows/probes/claude-conversation.test.ts
 ```
 
-It uses isolated native state and loopback Messages responses to verify
-AskUserQuestion, Bash approval denial without the marker being written, and
-restored answers/history after a fresh native process resumes the same ID.
-It waits for direct process exit before removing its state. This probe exercises
-the provider SDK directly, not the production Actor or Helmr runtime.
+Run it separately from other test files: it replaces repository checks and isolates
+the process environment to fixture credentials and a temporary home. Loopback
+Messages responses exercise AskUserQuestion, exact answer handling, duplicate and
+stale reply rejection, Bash approval denial with no marker file, two serialized
+follow-ups and answered/denied history after fresh-process resume. A second scenario
+interrupts a pending question, rejects its old reply in both the old and next Actor
+invocations, and resumes the same native conversation. Native SDK results can arrive
+after interruption; they do not authorize Helmr completion. The check fixture honors
+the abort signal, and the interrupted invocation neither runs checks nor completes.
+
+The Actor waits for its direct child exit before returning. These probes qualify
+application integration, not durable Helmr message delivery, physical descendant
+exclusion, managed waits, crash durability, real inference or VM Workspace restore.
 
 A non-inference probe of pinned Codex 0.133.0 accepted thread/start but a new
 process immediately attempting thread/resume returned "no rollout found". An empty
