@@ -16,7 +16,10 @@ helmr actor send SESSION_ID \
 
 Use a stable upstream event identifier as the idempotency key. A retry then
 replays the original admission instead of adding duplicate work. `send` routes to
-active ready work or enqueues when idle; use `enqueue` to always queue a new Turn.
+the active Turn before settlement or enqueues when idle; use `enqueue` to always
+queue a new Turn. Messages accepted before handler registration wait for delivery
+to that same Turn. Acceptance does not mean the application has handled the message;
+inspect message outcomes in the Session timeline. A held Session rejects `send`.
 For an answer or approval tied to existing work, use `session.turn(turnId).send`
 or `helmr actor turn send SESSION_ID TURN_ID`. These never retarget a late reply.
 

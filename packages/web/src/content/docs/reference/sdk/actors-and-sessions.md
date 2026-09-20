@@ -66,7 +66,7 @@ const session = client.sessions.ref(sessionId)
 const turn = await session.enqueue({ issue: "APP-42" }, {
   idempotencyKey: "linear:event-123",
 })
-// In a later request, once this Turn accepts messages:
+// In a later request, once this Turn is active:
 await turn.send({ type: "update_constraints", allowDependencyChanges: false })
 const state = await turn.retrieve()
 const page = await session.events.list({ after: 0, limit: 100 })
@@ -74,9 +74,12 @@ const page = await session.events.list({ after: 0, limit: 100 })
 
 `enqueue` returns a `TurnRef` and always creates FIFO work. `send` returns
 `{ kind: "enqueued", turn }` or `{ kind: "messaged", turn, message }`: it sends
-to active ready work or enqueues when idle. Active unready work rejects the send;
-it does not fall back to enqueue. `session.turn(id).send(data)` always targets that
-exact Turn, and returns a message receipt, not proof of provider consumption.
+to the active Turn before settlement, even before its handler is registered, or
+joins the FIFO queue when idle. Accepted messages retain that exact target and
+are delivered when its handler is ready; they never fall back to a different Turn.
+`session.turn(id).send(data)` always targets that exact active Turn and returns
+a message receipt, not proof of application or provider handling. Held Sessions
+reject `send`; `enqueue` can still add work to an open held Session.
 
 `events.list({ after?, limit? })` returns `records`, `nextAfter`, `hasMore`, and
 `retainedAfter`. All output and lifecycle events share one sequence. Records carry

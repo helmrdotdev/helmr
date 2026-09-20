@@ -34,9 +34,11 @@ Commands after start address the server-created Session ID. Application data is
 any JSON value; Helmr does not assign meaning to an application's `type` field.
 
 - `send` sends a message to the active Turn or enqueues a new Turn when idle.
-  If active work cannot receive messages, the request fails; it does not silently
-  enqueue replacement work.
-- `enqueue` always queues a new Turn, including while another Turn is running.
+  Handler readiness does not gate acceptance: messages wait for delivery to that
+  same Turn. A settling Turn or held Session rejects the request; it does not
+  silently enqueue replacement work.
+- `enqueue` always queues a new Turn, including while another Turn is running
+  or an open Session is held.
 - `turn send` targets exactly the supplied Turn. Use it for answers, approvals
   and other messages that must never reach a different Turn.
 
