@@ -1057,9 +1057,16 @@ func initializeEmptyWorkspaceRoot(workspaceRoot string) error {
 		return fmt.Errorf("create empty workspace staging dir: %w", err)
 	}
 	cleanupStaging := func() { _ = os.RemoveAll(stagingRoot) }
-	if err := replaceWorkspaceRoot(workspaceRoot, stagingRoot); err != nil {
+	// The image directory can belong to OverlayFS's lower layer, which cannot
+	// be renamed aside. This mount has not been exposed to user processes;
+	// discard its image contents just as in artifact materialization.
+	if err := os.RemoveAll(workspaceRoot); err != nil {
 		cleanupStaging()
-		return fmt.Errorf("initialize empty workspace mount: %w", err)
+		return fmt.Errorf("initialize empty workspace mount: remove image directory: %w", err)
+	}
+	if err := os.Rename(stagingRoot, workspaceRoot); err != nil {
+		cleanupStaging()
+		return fmt.Errorf("initialize empty workspace mount: install empty directory: %w", err)
 	}
 	return nil
 }
@@ -1447,46 +1454,4 @@ func (reader *digestingReader) Read(body []byte) (int, error) {
 
 func (reader *digestingReader) Digest() string {
 	return sha256sum.DigestHash(reader.hash)
-}
-
-func replaceWorkspaceRoot(workspaceRoot, stagingRoot string) error {
-	workspaceParent := filepath.Dir(workspaceRoot)
-	backupRoot, err := os.MkdirTemp(
-		workspaceParent,
-		".helmr-workspace-backup-*",
-	)
-	if err != nil {
-		return fmt.Errorf("create workspace backup marker: %w", err)
-	}
-	if err := os.Remove(backupRoot); err != nil {
-		return fmt.Errorf("remove workspace backup marker: %w", err)
-	}
-	backupCreated := false
-	if err := os.Rename(workspaceRoot, backupRoot); err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("move existing workspace aside: %w", err)
-		}
-	} else {
-		backupCreated = true
-	}
-	if err := os.Rename(stagingRoot, workspaceRoot); err != nil {
-		if backupCreated {
-			if rollbackErr := os.Rename(
-				backupRoot,
-				workspaceRoot,
-			); rollbackErr != nil {
-				return errors.Join(
-					fmt.Errorf("install restored workspace: %w", err),
-					fmt.Errorf("rollback workspace restore: %w", rollbackErr),
-				)
-			}
-		}
-		return fmt.Errorf("install restored workspace: %w", err)
-	}
-	if backupCreated {
-		if err := os.RemoveAll(backupRoot); err != nil {
-			return fmt.Errorf("remove replaced workspace backup: %w", err)
-		}
-	}
-	return nil
 }
