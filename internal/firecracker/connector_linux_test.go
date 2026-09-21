@@ -29,7 +29,6 @@ import (
 
 	"github.com/firecracker-microvm/firecracker-go-sdk"
 	"github.com/firecracker-microvm/firecracker-go-sdk/client/models"
-	"github.com/firecracker-microvm/firecracker-go-sdk/client/operations"
 	"github.com/firecracker-microvm/firecracker-go-sdk/vsock"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/compute"
@@ -1930,14 +1929,6 @@ func TestWithSnapshotRestoreSkipsVsockReconfiguration(t *testing.T) {
 	}
 	if machine.Handlers.FcInit.Has(firecracker.AddVsocksHandlerName) {
 		t.Fatal("restore must not re-add vsock devices after loading a snapshot")
-	}
-}
-
-func TestExplicitFullSnapshotSetsSnapshotType(t *testing.T) {
-	parameters := &operations.CreateSnapshotParams{Body: &models.SnapshotCreateParams{}}
-	explicitFullSnapshot(parameters)
-	if parameters.Body.SnapshotType != models.SnapshotCreateParamsSnapshotTypeFull {
-		t.Fatalf("snapshot type = %q", parameters.Body.SnapshotType)
 	}
 }
 

@@ -4,7 +4,10 @@ package firecracker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -28,6 +31,39 @@ func TestSnapshotFailureNeverResumesGuest(t *testing.T) {
 				api.snapshotErr = errors.New("snapshot failed")
 			}
 			root := t.TempDir()
+			serveSnapshotAPI(t, root, func(w http.ResponseWriter, r *http.Request) {
+				api.snapshots++
+				if api.snapshotErr != nil {
+					w.WriteHeader(500)
+					return
+				}
+				var body struct {
+					State  string `json:"snapshot_path"`
+					Memory string `json:"mem_file_path"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+					w.WriteHeader(400)
+					return
+				}
+				file, err := os.OpenFile(filepath.Join(root, filepath.Base(body.State)), os.O_WRONLY, 0)
+				if err != nil {
+					t.Error(err)
+					w.WriteHeader(500)
+					return
+				}
+				_, err = file.Write([]byte("state"))
+				err = errors.Join(err, file.Close())
+				if err == nil {
+					err = os.WriteFile(filepath.Join(root, filepath.Base(body.Memory)), []byte("memory"), 0600)
+				}
+				if err != nil {
+					t.Error(err)
+					w.WriteHeader(500)
+					return
+				}
+				w.WriteHeader(204)
+			})
 			client := sdk.NewClient(filepath.Join(root, "api.sock"), logrus.NewEntry(logrus.New()), false, sdk.WithOpsClient(api))
 			machine, err := sdk.NewMachine(context.Background(), sdk.Config{SocketPath: filepath.Join(root, "api.sock")}, sdk.WithClient(client))
 			if err != nil {
@@ -44,6 +80,7 @@ func TestSnapshotFailureNeverResumesGuest(t *testing.T) {
 				session.scratchDisk = filepath.Join(root, "missing-scratch.ext4")
 			}
 
+			session.cfg.JailerUID, session.cfg.JailerGID = os.Getuid(), os.Getgid()
 			_, err = session.CreateSnapshot(context.Background(), vm.SnapshotRequest{ID: "checkpoint"})
 			if err == nil {
 				t.Fatal("expected capture failure")
@@ -79,9 +116,4 @@ func (a *snapshotFailureAPI) PatchVM(p *operations.PatchVMParams) (*operations.P
 	a.resumes++
 	a.paused = false
 	return &operations.PatchVMNoContent{}, nil
-}
-
-func (a *snapshotFailureAPI) CreateSnapshot(*operations.CreateSnapshotParams) (*operations.CreateSnapshotNoContent, error) {
-	a.snapshots++
-	return &operations.CreateSnapshotNoContent{}, a.snapshotErr
 }

@@ -30,7 +30,6 @@ import (
 	"github.com/containernetworking/plugins/pkg/ns"
 	"github.com/firecracker-microvm/firecracker-go-sdk"
 	"github.com/firecracker-microvm/firecracker-go-sdk/client/models"
-	"github.com/firecracker-microvm/firecracker-go-sdk/client/operations"
 	"github.com/firecracker-microvm/firecracker-go-sdk/vsock"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/compute"
@@ -2095,12 +2094,7 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 	recordPhase("firecracker_pause_vm", started)
 	s.paused.Store(true)
 	started = time.Now()
-	if err := s.machine.CreateSnapshot(
-		ctx,
-		path.Join("/", memName),
-		path.Join("/", stateName),
-		explicitFullSnapshot,
-	); err != nil {
+	if err := captureSnapshotState(ctx, s.machine.Cfg.SocketPath, s.jailRoot, memName, stateName, s.cfg.JailerUID, s.cfg.JailerGID); err != nil {
 		return vm.SnapshotArtifact{}, fmt.Errorf("create Firecracker snapshot: %w", err)
 	}
 	recordPhase("firecracker_create_snapshot", started)
@@ -2801,12 +2795,6 @@ func withSnapshotRestore(memoryPath string, statePath string) firecracker.Opt {
 			config.ResumeVM = CanonicalVMRuntimeDescriptor().Snapshot.LoadResumeVM
 		})(machine)
 		machine.Handlers.FcInit = machine.Handlers.FcInit.Remove(firecracker.AddVsocksHandlerName)
-	}
-}
-
-func explicitFullSnapshot(parameters *operations.CreateSnapshotParams) {
-	if parameters.Body != nil {
-		parameters.Body.SnapshotType = CanonicalVMRuntimeDescriptor().Snapshot.CreateType
 	}
 }
 
