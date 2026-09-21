@@ -795,7 +795,10 @@ var (
 	errImmutableObjectConflict = errors.New("immutable object publication conflict")
 )
 
-func (c *ImmutableStore) Publish(
+// Publish uploads caller-owned, read-only bytes directly to this store's
+// namespace. It does not allocate a second local stage or tag durable objects
+// for expiry. The caller owns upload registration and uncertain-result recovery.
+func (c *Store) Publish(
 	ctx context.Context,
 	expected cas.Descriptor,
 	file *os.File,
@@ -823,14 +826,14 @@ func (c *ImmutableStore) Publish(
 	if err := cas.VerifyDescriptorFile(ctx, expected, file); err != nil {
 		return cas.Object{}, err
 	}
-	key, err := c.store.objectKey(expected.Digest)
+	key, err := c.objectKey(expected.Digest)
 	if err != nil {
 		return cas.Object{}, err
 	}
 
 	var uploadErr error
 	for range immutablePublishAttempts {
-		uploadErr = c.store.uploadDescriptor(ctx, key, expected, file)
+		uploadErr = c.uploadDescriptor(ctx, key, expected, file)
 		if !errors.Is(uploadErr, errImmutableObjectConflict) {
 			break
 		}
@@ -866,6 +869,10 @@ func (c *ImmutableStore) Publish(
 		return cas.Object{}, errors.New("published file identity changed during upload")
 	}
 	return object, nil
+}
+
+func (c *ImmutableStore) Publish(ctx context.Context, expected cas.Descriptor, file *os.File) (cas.Object, error) {
+	return c.store.Publish(ctx, expected, file)
 }
 
 func (c *ImmutableStore) Stat(ctx context.Context, digest string) (cas.Object, error) {

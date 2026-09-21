@@ -45,7 +45,7 @@ func TestDiskStoreRestoresWithoutSeedAndBindsComputer(t *testing.T) {
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
-	artifact, err := store.Save(t.Context(), diskTestComputer, source)
+	artifact, err := captureAndUpload(t.Context(), store, diskTestComputer, source, dir, storage)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestDiskStoreRestoresWithoutSeedAndBindsComputer(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := store.Save(ctx, diskTestComputer, target); err == nil {
+	if _, err := store.Capture(ctx, diskTestComputer, target, dir); err == nil {
 		t.Fatal("cancelled save accepted")
 	}
 	for _, name := range []string{"wrong-size", "wrong-type", "oversized", "header-capacity"} {
@@ -169,9 +169,7 @@ func TestDiskStoreRestoresWithoutSeedAndBindsComputer(t *testing.T) {
 		t.Fatal("late collision replaced another owner")
 	}
 	assertNoDiskTemps(t, dir)
-	failedUpload := store
-	failedUpload.CAS = failedDiskStore{Store: storage}
-	if _, err := failedUpload.Save(t.Context(), diskTestComputer, target); !errors.Is(err, errDiskUpload) {
+	if _, err := captureAndUpload(t.Context(), store, diskTestComputer, target, dir, failedDiskStore{Store: storage}); !errors.Is(err, errDiskUpload) {
 		t.Fatalf("failed upload = %v", err)
 	}
 	stages, err := os.ReadDir(filepath.Join(dir, "cas", ".staging"))
@@ -259,3 +257,32 @@ func (s failedDiskStore) Stage(ctx context.Context, media string) (cas.Stage, er
 type failedDiskStage struct{ cas.Stage }
 
 func (failedDiskStage) Write([]byte) (int, error) { return 0, errDiskUpload }
+
+// The test adapter uses the real file CAS and verifies the same read-only input
+// contract as the production immutable publisher.
+type diskTestPublisher struct{ cas.Store }
+
+func (p diskTestPublisher) Publish(ctx context.Context, expected cas.Descriptor, file *os.File) (cas.Object, error) {
+	if _, err := cas.InspectPublishedFile(file); err != nil {
+		return cas.Object{}, err
+	}
+	if err := cas.VerifyDescriptorFile(ctx, expected, file); err != nil {
+		return cas.Object{}, err
+	}
+	stage, err := p.Stage(ctx, expected.MediaType)
+	if err != nil {
+		return cas.Object{}, err
+	}
+	return cas.WriteStage(ctx, stage, io.NewSectionReader(file, 0, expected.SizeBytes))
+}
+func captureAndUpload(ctx context.Context, store DiskStore, id, source, staging string, objects cas.Store) (DiskArtifact, error) {
+	candidate, err := store.Capture(ctx, id, source, staging)
+	if err != nil {
+		return DiskArtifact{}, err
+	}
+	defer candidate.Close()
+	if err := candidate.Upload(ctx, diskTestPublisher{objects}); err != nil {
+		return DiskArtifact{}, err
+	}
+	return candidate.Artifact(), nil
+}

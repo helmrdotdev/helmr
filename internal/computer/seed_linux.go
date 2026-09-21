@@ -62,7 +62,7 @@ func seedDisk(ctx context.Context, seed *substrate.DiskSource, target string, si
 			return fmt.Errorf("grow computer filesystem: %w: %s", err, output)
 		}
 	}
-	// No local durability barrier is needed: Initialize uploads before the
-	// owning transaction may publish this candidate, and retries never reuse it.
+	// No local durability barrier is needed: the owner must durably upload the
+	// encoded candidate before publication. This working file is not authority.
 	return ctx.Err()
 }

@@ -18,9 +18,9 @@ type DiskArtifact struct {
 	LogicalBytes int64
 }
 
-// InitialDisk is an uploaded candidate, not permission to boot. The owning
-// transaction must publish its artifact and configuration together against the
-// initializing version and live publisher fence before the working disk is used.
+// InitialDisk describes the candidate artifact and verified seed configuration.
+// Metadata alone does not prove upload or permit boot. The owning transaction
+// must publish both against the initializing version and live publisher fence.
 type InitialDisk struct {
 	Artifact DiskArtifact
 	Config   oci.RuntimeConfig

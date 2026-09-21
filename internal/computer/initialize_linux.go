@@ -20,33 +20,39 @@ type Seed struct {
 	Disk      *substrate.DiskSource
 }
 
-// Initialize prepares an exclusively owned working disk and uploads it before
-// any customer process starts. Failure removes only this invocation's working
-// file. Success transfers that file and the uploaded candidate to the caller.
-// A publication retry must reuse this result: encrypting again changes identity.
-// This method never restores or overwrites an existing Computer.
-func (s DiskStore) Initialize(ctx context.Context, computerID string, seed Seed, target string, capacity int64, resize2fs string) (InitialDisk, error) {
+// InitialDiskCandidate retains encoded bytes until their exact descriptor has
+// been registered, uploaded and resolved by the publication owner.
+type InitialDiskCandidate struct {
+	Disk   *DiskCandidate
+	Config oci.RuntimeConfig
+}
+
+// Initialize prepares an exclusively owned working disk and local ciphertext.
+// It performs no remote writes. Failure removes this invocation's working file;
+// success transfers both working disk and candidate ownership to the caller.
+// The owner must publish the artifact and config before permitting user execution.
+func (s DiskStore) Initialize(ctx context.Context, computerID string, seed Seed, target, stagingDir string, capacity int64, resize2fs string) (*InitialDiskCandidate, error) {
 	if err := s.validate(computerID); err != nil {
-		return InitialDisk{}, err
+		return nil, err
 	}
 	if _, err := diskArtifactLimit(capacity); err != nil {
-		return InitialDisk{}, err
+		return nil, err
 	}
 	if _, err := os.Lstat(target); err == nil {
-		return InitialDisk{}, os.ErrExist
+		return nil, os.ErrExist
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return InitialDisk{}, err
+		return nil, err
 	}
 	config, err := oci.ReadVerifiedConfig(ctx, seed.ImagePath, seed.Image.Digest, seed.Image.SizeBytes)
 	if err != nil {
-		return InitialDisk{}, err
+		return nil, err
 	}
 	if err := seedDisk(ctx, seed.Disk, target, capacity, resize2fs); err != nil {
-		return InitialDisk{}, err
+		return nil, err
 	}
-	artifact, err := s.Save(ctx, computerID, target)
+	candidate, err := s.Capture(ctx, computerID, target, stagingDir)
 	if err != nil {
-		return InitialDisk{}, errors.Join(err, os.Remove(target))
+		return nil, errors.Join(err, os.Remove(target))
 	}
-	return InitialDisk{Artifact: artifact, Config: config}, nil
+	return &InitialDiskCandidate{Disk: candidate, Config: config}, nil
 }

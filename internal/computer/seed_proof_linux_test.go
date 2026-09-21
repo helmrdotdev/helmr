@@ -72,12 +72,16 @@ func TestComputerSeedProof(t *testing.T) {
 	store := DiskStore{CAS: objects, Cipher: cipher}
 	initial, err := store.Initialize(t.Context(), diskTestComputer, Seed{
 		ImagePath: imagePath, Image: cas.Descriptor{Digest: sha256sum.DigestBytes(image), SizeBytes: int64(len(image)), MediaType: "application/vnd.oci.image.layout.v1+tar"}, Disk: seedSource,
-	}, disk, 128<<20, resize)
+	}, disk, dir, 128<<20, resize)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer initial.Disk.Close()
+	if err := initial.Disk.Upload(t.Context(), diskTestPublisher{objects}); err != nil {
+		t.Fatal(err)
+	}
 	// Simulate serialization of the exact publication payload, not a DB commit.
-	record, err := json.Marshal(initial)
+	record, err := json.Marshal(InitialDisk{Artifact: initial.Disk.Artifact(), Config: initial.Config})
 	if err != nil {
 		t.Fatal(err)
 	}

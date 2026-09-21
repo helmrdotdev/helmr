@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -16,72 +15,20 @@ import (
 	"github.com/helmrdotdev/helmr/internal/filepack"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
-	"golang.org/x/sys/unix"
 )
 
 const diskRole = "computer-disk"
 
 type DiskStore struct {
-	CAS    cas.Store
+	CAS    cas.Reader
 	Cipher *checkpoint.Encryptor
 }
 
 func (s DiskStore) validate(computerID string) error {
-	if s.CAS == nil || s.Cipher == nil {
-		return errors.New("computer disk storage and encryption are required")
+	if s.Cipher == nil {
+		return errors.New("computer disk encryption is required")
 	}
 	return ids.Validate(computerID)
-}
-
-// Save requires an exclusively owned, stable disk throughout encoding. It does
-// not freeze writers or publish a Computer version; the caller owns those fences.
-// Encoding streams into the CAS stage without plaintext temporary artifacts.
-func (s DiskStore) Save(ctx context.Context, computerID, disk string) (DiskArtifact, error) {
-	if err := s.validate(computerID); err != nil {
-		return DiskArtifact{}, err
-	}
-	fd, err := unix.Open(disk, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
-	if err != nil {
-		return DiskArtifact{}, err
-	}
-	source := os.NewFile(uintptr(fd), disk)
-	defer source.Close()
-	info, err := source.Stat()
-	if err != nil {
-		return DiskArtifact{}, err
-	}
-	if !info.Mode().IsRegular() {
-		return DiskArtifact{}, errors.New("computer disk must be a regular file")
-	}
-	limit, err := diskArtifactLimit(info.Size())
-	if err != nil {
-		return DiskArtifact{}, err
-	}
-	stage, err := s.CAS.Stage(ctx, DiskMediaType)
-	if err != nil {
-		return DiskArtifact{}, err
-	}
-	defer stage.Abort(context.Background())
-	reader, writer := io.Pipe()
-	packed := make(chan error, 1)
-	go func() {
-		stats, err := filepack.PackTo(ctx, source, writer, diskRole)
-		if err == nil && stats.LogicalBytes != info.Size() {
-			err = errors.New("computer disk size changed during capture")
-		}
-		_ = writer.CloseWithError(err)
-		packed <- err
-	}()
-	encryptErr := s.Cipher.Encrypt(ctx, reader, &boundedWriter{writer: stage, remaining: limit}, "computer-disk:"+computerID)
-	_ = reader.CloseWithError(encryptErr)
-	if err := errors.Join(encryptErr, <-packed); err != nil {
-		return DiskArtifact{}, fmt.Errorf("encode computer disk: %w", err)
-	}
-	object, err := stage.Commit(ctx)
-	if err != nil {
-		return DiskArtifact{}, err
-	}
-	return DiskArtifact{Object: cas.Descriptor{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}, LogicalBytes: info.Size()}, nil
 }
 
 // Restore requires the exact artifact descriptor of the fenced committed version
@@ -89,6 +36,9 @@ func (s DiskStore) Save(ctx context.Context, computerID, disk string) (DiskArtif
 // It creates an independent working disk, never reseeds/resizes it, and exposes
 // target only after authentication, digest/size verification and decoding finish.
 func (s DiskStore) Restore(ctx context.Context, computerID string, artifact DiskArtifact, target string, capacity int64) error {
+	if s.CAS == nil {
+		return errors.New("computer disk storage is required")
+	}
 	if err := s.validate(computerID); err != nil {
 		return err
 	}
