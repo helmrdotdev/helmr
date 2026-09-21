@@ -322,3 +322,261 @@ func TestReadyRuntimeExpiryConcurrentWithWorkerLoss(t *testing.T) {
 		t.Fatalf("lost runtime=%+v", state)
 	}
 }
+
+func TestLockedRuntimeDeadlineUsesCurrentDatabaseTime(t *testing.T) {
+	for _, ready := range []bool{false, true} {
+		t.Run(fmt.Sprintf("ready=%t", ready), func(t *testing.T) {
+			f := newRunPlacementFixture(t)
+			placement, err := f.authority.PlaceReadyRun(f.ctx, ReadyRunCandidate{
+				OrgID: pgvalue.UUID(f.orgID), RunID: pgvalue.UUID(f.runID), ExpectedRunRevision: 1,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ready {
+				markRunPlacementRuntimeReady(t, f, placement.RuntimeInstanceID)
+			}
+			tx, err := f.pool.Begin(f.ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback(context.Background())
+			var workspaceID pgtype.UUID
+			if err := tx.QueryRow(f.ctx, `SELECT workspace_id FROM runtime_instances WHERE id=$1`, placement.RuntimeInstanceID).Scan(&workspaceID); err != nil {
+				t.Fatal(err)
+			}
+			discovered, err := discoverRunRuntime(f.ctx, tx, workspaceID)
+			if err != nil || !discovered.reservationActive {
+				t.Fatalf("live discovery: %+v, %v", discovered, err)
+			}
+			// Commit a deadline after this transaction began but before its locked
+			// recheck. This reproduces time spent between discovery and locking
+			// without a sleep or reliance on the application's clock.
+			column := "preparation_expires_at"
+			if ready {
+				column = "reservation_expires_at"
+			}
+			dbtest.MustExec(t, f.ctx, f.pool, "UPDATE runtime_instances SET "+column+"=clock_timestamp() WHERE id=$1", placement.RuntimeInstanceID)
+			locked, err := lockRunRuntime(f.ctx, tx, discovered)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if locked.reservationActive {
+				t.Fatal("expired runtime remained authorized using transaction-start time")
+			}
+		})
+	}
+}
+
+func TestLockedRuntimeDeadlineExpiresWhileWaitingForUnchangedRow(t *testing.T) {
+	f := newRunPlacementFixture(t)
+	ctx, cancel := context.WithTimeout(f.ctx, 10*time.Second)
+	defer cancel()
+	placement, err := f.authority.PlaceReadyRun(ctx, ReadyRunCandidate{
+		OrgID: pgvalue.UUID(f.orgID), RunID: pgvalue.UUID(f.runID), ExpectedRunRevision: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE runtime_instances SET preparation_expires_at=clock_timestamp()+interval '5 seconds' WHERE id=$1`, placement.RuntimeInstanceID)
+	blocker, err := f.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blocker.Rollback(context.Background())
+	var workspaceID pgtype.UUID
+	if err := blocker.QueryRow(ctx, `SELECT workspace_id FROM runtime_instances WHERE id=$1 FOR UPDATE`, placement.RuntimeInstanceID).Scan(&workspaceID); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := f.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(context.Background())
+	discovered, err := discoverRunRuntime(ctx, tx, workspaceID)
+	if err != nil || !discovered.reservationActive {
+		t.Fatalf("live discovery: %+v, %v", discovered, err)
+	}
+	type result struct {
+		runtime runRuntime
+		err     error
+	}
+	finished := make(chan result, 1)
+	go func() { r, err := lockRunRuntime(ctx, tx, discovered); finished <- result{r, err} }()
+	waitForBlockedQuery(t, f, "FOR UPDATE OF runtime_instances", 1)
+	// Do not change the locked row: a row update could make PostgreSQL evaluate
+	// an otherwise stale SELECT-list expression again after lock acquisition.
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var expired bool
+		if err := f.pool.QueryRow(ctx, `SELECT clock_timestamp() >= preparation_expires_at FROM runtime_instances WHERE id=$1`, placement.RuntimeInstanceID).Scan(&expired); err != nil {
+			t.Fatal(err)
+		}
+		if expired {
+			break
+		}
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+	}
+	if err := blocker.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-finished:
+		if got.err != nil {
+			t.Fatal(got.err)
+		}
+		if got.runtime.reservationActive {
+			t.Fatal("deadline was evaluated before waiting for the runtime lock")
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+}
+
+func TestRuntimeReadyDecisionUsesCurrentDatabaseTime(t *testing.T) {
+	for _, expired := range []bool{false, true} {
+		t.Run(fmt.Sprintf("expired=%t", expired), func(t *testing.T) {
+			f := newRunPlacementFixture(t)
+			placement, err := f.authority.PlaceReadyRun(f.ctx, ReadyRunCandidate{OrgID: pgvalue.UUID(f.orgID), RunID: pgvalue.UUID(f.runID), ExpectedRunRevision: 1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			params := runPlacementRuntimeReadyParams(t, f, placement.RuntimeInstanceID)
+			tx, err := f.pool.Begin(f.ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback(context.Background())
+			var decisionLowerBound time.Time
+			if err := f.pool.QueryRow(f.ctx, `SELECT clock_timestamp()`).Scan(&decisionLowerBound); err != nil {
+				t.Fatal(err)
+			}
+			deadline := decisionLowerBound
+			if !expired {
+				deadline = deadline.Add(time.Minute)
+			}
+			dbtest.MustExec(t, f.ctx, f.pool, `UPDATE runtime_instances SET preparation_expires_at=$2 WHERE id=$1`, placement.RuntimeInstanceID, deadline)
+			ready, err := db.New(tx).MarkRuntimeInstanceReady(f.ctx, params)
+			if expired {
+				if !errors.Is(err, pgx.ErrNoRows) {
+					t.Fatalf("expired preparation accepted: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ready.ReadyAt.Time.Before(decisionLowerBound) || !ready.ObservedAt.Time.Equal(ready.ReadyAt.Time) || ready.ReservationExpiresAt.Time.Sub(ready.ReadyAt.Time) != 5*time.Minute {
+				t.Fatalf("ready decision backdated or shortened reservation: ready=%v observed=%v expiry=%v bound=%v", ready.ReadyAt, ready.ObservedAt, ready.ReservationExpiresAt, decisionLowerBound)
+			}
+		})
+	}
+}
+
+func TestRuntimeReservationConsumptionRechecksTime(t *testing.T) {
+	for _, process := range []bool{false, true} {
+		t.Run(fmt.Sprintf("process=%t", process), func(t *testing.T) {
+			var f runPlacementFixture
+			var runtimeID pgtype.UUID
+			if process {
+				var mountID pgtype.UUID
+				f, _, mountID = prepareClaimableWorkspaceExecMount(t)
+				if err := f.pool.QueryRow(f.ctx, `SELECT runtime_instance_id FROM workspace_mounts WHERE id=$1`, mountID).Scan(&runtimeID); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				f = newRunPlacementFixture(t)
+				placement, err := f.authority.PlaceReadyRun(f.ctx, ReadyRunCandidate{OrgID: pgvalue.UUID(f.orgID), RunID: pgvalue.UUID(f.runID), ExpectedRunRevision: 1})
+				if err != nil {
+					t.Fatal(err)
+				}
+				runtimeID = placement.RuntimeInstanceID
+				markRunPlacementRuntimeReady(t, f, runtimeID)
+			}
+			runtime, err := runtimeDeadlineState(f, runtimeID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tx, err := f.pool.Begin(f.ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback(context.Background())
+			// The caller already owns the Runtime lock. Set the deadline after
+			// transaction start to reproduce time passing before final consumption.
+			dbtest.MustExec(t, f.ctx, tx, `UPDATE runtime_instances SET reservation_expires_at=clock_timestamp() WHERE id=$1`, runtimeID)
+			var n int64
+			if process {
+				n, err = db.New(tx).ConsumeWorkspaceExecRuntimeReservation(f.ctx, db.ConsumeWorkspaceExecRuntimeReservationParams{ID: runtimeID, WorkspaceID: runtime.WorkspaceID, ProcessID: runtime.ReservedProcessID, BaseWorkspaceVersionID: runtime.ReservedWorkspaceVersionID})
+			} else {
+				n, err = db.New(tx).ConsumeRunRuntimeReservation(f.ctx, db.ConsumeRunRuntimeReservationParams{ID: runtimeID, WorkspaceID: runtime.WorkspaceID, RunID: runtime.ReservedRunID, AttemptNumber: runtime.ReservedAttemptNumber, BaseWorkspaceVersionID: runtime.ReservedWorkspaceVersionID, RestoreCheckpointID: runtime.RestoreCheckpointID})
+			}
+			if err != nil || n != 0 {
+				t.Fatalf("expired reservation consumed: rows=%d, %v", n, err)
+			}
+		})
+	}
+}
+
+func TestRuntimeReadyRejectsExpiryDuringRuntimeLockWait(t *testing.T) {
+	f := newRunPlacementFixture(t)
+	ctx, cancel := context.WithTimeout(f.ctx, 10*time.Second)
+	defer cancel()
+	placement, err := f.authority.PlaceReadyRun(ctx, ReadyRunCandidate{OrgID: pgvalue.UUID(f.orgID), RunID: pgvalue.UUID(f.runID), ExpectedRunRevision: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	params := runPlacementRuntimeReadyParams(t, f, placement.RuntimeInstanceID)
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE runtime_instances SET preparation_expires_at=clock_timestamp()+interval '5 seconds' WHERE id=$1`, placement.RuntimeInstanceID)
+	blocker, err := f.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blocker.Rollback(context.Background())
+	var id pgtype.UUID
+	if err := blocker.QueryRow(ctx, `SELECT id FROM runtime_instances WHERE id=$1 FOR UPDATE`, placement.RuntimeInstanceID).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	finished := make(chan error, 1)
+	go func() { _, err := db.New(f.pool).MarkRuntimeInstanceReady(ctx, params); finished <- err }()
+	waitForBlockedQuery(t, f, "MarkRuntimeInstanceReady", 1)
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var expired bool
+		if err := f.pool.QueryRow(ctx, `SELECT clock_timestamp() >= preparation_expires_at FROM runtime_instances WHERE id=$1`, placement.RuntimeInstanceID).Scan(&expired); err != nil {
+			t.Fatal(err)
+		}
+		if expired {
+			break
+		}
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+	}
+	if err := blocker.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-finished:
+		if !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("expired preparation acknowledged: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	state, err := runtimeDeadlineState(f, placement.RuntimeInstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.ObservedState != "allocated" || state.ReadyAt.Valid || state.ReservationExpiresAt.Valid {
+		t.Fatalf("expiry changed runtime readiness: %+v", state)
+	}
+}

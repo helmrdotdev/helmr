@@ -1089,22 +1089,28 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
            = (SELECT count(*) FROM restore_secret_authority
                WHERE restore_secret_authority.runtime_instance_id = runtime_instances.id)
      FOR UPDATE OF run_waits, run_checkpoints, workspace_versions
+), ready_decision AS MATERIALIZED (
+    -- Sample time after all preparation/restore row locks, not at transaction
+    -- start or while a row-locking SELECT is still waiting for its input.
+    SELECT runtime_authority.runtime_instance_id, clock_timestamp() AS decided_at
+      FROM runtime_authority
+     WHERE (SELECT count(*) FROM restore_authority) >= 0
 )
 UPDATE runtime_instances
    SET runtime_substrate_id = $1,
        observed_state = 'ready', observed_version = observed_version + 1,
-       observed_desired_version = $2, observed_at = now(),
-       ready_at = COALESCE(ready_at, now()),
+       observed_desired_version = $2, observed_at = ready_decision.decided_at,
+       ready_at = COALESCE(ready_at, ready_decision.decided_at),
        reservation_expires_at = CASE WHEN reserved_run_id IS NOT NULL OR reserved_process_id IS NOT NULL
-           THEN transaction_timestamp() + $3::bigint * interval '1 second' END,
-       updated_at = now()
-  FROM runtime_authority
+           THEN ready_decision.decided_at + $3::bigint * interval '1 second' END,
+       updated_at = ready_decision.decided_at
+  FROM ready_decision
  WHERE runtime_instances.id = $4 AND runtime_instances.worker_instance_id = $5
-   AND runtime_authority.runtime_instance_id = runtime_instances.id
+   AND ready_decision.runtime_instance_id = runtime_instances.id
    AND runtime_instances.worker_epoch = $6 AND runtime_instances.desired_version = $2
    AND runtime_instances.observed_version = $7
    AND runtime_instances.observed_state = 'allocated'
-   AND runtime_instances.preparation_expires_at > transaction_timestamp()
+   AND runtime_instances.preparation_expires_at > ready_decision.decided_at
    AND runtime_instances.vm_vcpu_count = $8
    AND runtime_instances.cpu_config_digest = $9
    AND (runtime_instances.runtime_substrate_id IS NULL

@@ -344,6 +344,8 @@ INSERT INTO workspace_leases (
 )
 RETURNING *;
 
+-- Caller holds the Runtime row lock; recheck time at consumption because other
+-- grant operations may have waited since the initial locked authority check.
 -- name: ConsumeWorkspaceExecRuntimeReservation :execrows
 UPDATE runtime_instances
    SET reserved_process_id = NULL,
@@ -354,7 +356,7 @@ UPDATE runtime_instances
    AND workspace_id = sqlc.arg(workspace_id)
    AND reserved_process_id = sqlc.arg(process_id)
    AND reserved_workspace_version_id = sqlc.arg(base_workspace_version_id)
-   AND reservation_expires_at > transaction_timestamp();
+   AND reservation_expires_at > clock_timestamp();
 
 -- name: LockWorkspaceExecWorkerAuthority :one
 SELECT sqlc.embed(workspace_processes),

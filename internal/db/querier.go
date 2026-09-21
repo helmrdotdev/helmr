@@ -104,7 +104,11 @@ type Querier interface {
 	ConsumeComputerInitialization(ctx context.Context, arg ConsumeComputerInitializationParams) (ComputerInitialization, error)
 	ConsumeDeviceCode(ctx context.Context, deviceCodeHash []byte) (DeviceCode, error)
 	ConsumeMagicLink(ctx context.Context, arg ConsumeMagicLinkParams) (int64, error)
+	// Caller holds the Runtime row lock; recheck time at consumption because other
+	// grant operations may have waited since the initial locked authority check.
 	ConsumeRunRuntimeReservation(ctx context.Context, arg ConsumeRunRuntimeReservationParams) (int64, error)
+	// Caller holds the Runtime row lock; recheck time at consumption because other
+	// grant operations may have waited since the initial locked authority check.
 	ConsumeWorkspaceExecRuntimeReservation(ctx context.Context, arg ConsumeWorkspaceExecRuntimeReservationParams) (int64, error)
 	ControlOutboxLifecycle(ctx context.Context, deadLetterLimit int64) (ControlOutboxLifecycleRow, error)
 	CountOrganizations(ctx context.Context) (int64, error)

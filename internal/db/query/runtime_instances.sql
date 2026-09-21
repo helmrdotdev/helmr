@@ -398,22 +398,28 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
            = (SELECT count(*) FROM restore_secret_authority
                WHERE restore_secret_authority.runtime_instance_id = runtime_instances.id)
      FOR UPDATE OF run_waits, run_checkpoints, workspace_versions
+), ready_decision AS MATERIALIZED (
+    -- Sample time after all preparation/restore row locks, not at transaction
+    -- start or while a row-locking SELECT is still waiting for its input.
+    SELECT runtime_authority.runtime_instance_id, clock_timestamp() AS decided_at
+      FROM runtime_authority
+     WHERE (SELECT count(*) FROM restore_authority) >= 0
 )
 UPDATE runtime_instances
    SET runtime_substrate_id = sqlc.arg(runtime_substrate_id),
        observed_state = 'ready', observed_version = observed_version + 1,
-       observed_desired_version = sqlc.arg(desired_version), observed_at = now(),
-       ready_at = COALESCE(ready_at, now()),
+       observed_desired_version = sqlc.arg(desired_version), observed_at = ready_decision.decided_at,
+       ready_at = COALESCE(ready_at, ready_decision.decided_at),
        reservation_expires_at = CASE WHEN reserved_run_id IS NOT NULL OR reserved_process_id IS NOT NULL
-           THEN transaction_timestamp() + sqlc.arg(reservation_seconds)::bigint * interval '1 second' END,
-       updated_at = now()
-  FROM runtime_authority
+           THEN ready_decision.decided_at + sqlc.arg(reservation_seconds)::bigint * interval '1 second' END,
+       updated_at = ready_decision.decided_at
+  FROM ready_decision
  WHERE runtime_instances.id = sqlc.arg(id) AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
-   AND runtime_authority.runtime_instance_id = runtime_instances.id
+   AND ready_decision.runtime_instance_id = runtime_instances.id
    AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch) AND runtime_instances.desired_version = sqlc.arg(desired_version)
    AND runtime_instances.observed_version = sqlc.arg(expected_observed_version)
    AND runtime_instances.observed_state = 'allocated'
-   AND runtime_instances.preparation_expires_at > transaction_timestamp()
+   AND runtime_instances.preparation_expires_at > ready_decision.decided_at
    AND runtime_instances.vm_vcpu_count = sqlc.arg(vm_vcpu_count)
    AND runtime_instances.cpu_config_digest = sqlc.arg(cpu_config_digest)
    AND (runtime_instances.runtime_substrate_id IS NULL

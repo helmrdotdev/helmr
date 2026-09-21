@@ -216,6 +216,8 @@ INSERT INTO workspace_leases (
 )
 RETURNING *;
 
+-- Caller holds the Runtime row lock; recheck time at consumption because other
+-- grant operations may have waited since the initial locked authority check.
 -- name: ConsumeRunRuntimeReservation :execrows
 UPDATE runtime_instances
    SET reserved_run_id = NULL,
@@ -229,7 +231,7 @@ UPDATE runtime_instances
    AND reserved_attempt_number = sqlc.arg(attempt_number)
    AND reserved_workspace_version_id = sqlc.arg(base_workspace_version_id)
    AND restore_checkpoint_id IS NOT DISTINCT FROM sqlc.narg(restore_checkpoint_id)
-   AND reservation_expires_at > transaction_timestamp();
+   AND reservation_expires_at > clock_timestamp();
 
 -- name: SetRunCurrentLease :one
 UPDATE runs

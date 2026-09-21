@@ -369,7 +369,7 @@ UPDATE runtime_instances
    AND workspace_id = $2
    AND reserved_process_id = $3
    AND reserved_workspace_version_id = $4
-   AND reservation_expires_at > transaction_timestamp()
+   AND reservation_expires_at > clock_timestamp()
 `
 
 type ConsumeWorkspaceExecRuntimeReservationParams struct {
@@ -379,6 +379,8 @@ type ConsumeWorkspaceExecRuntimeReservationParams struct {
 	BaseWorkspaceVersionID pgtype.UUID `json:"base_workspace_version_id"`
 }
 
+// Caller holds the Runtime row lock; recheck time at consumption because other
+// grant operations may have waited since the initial locked authority check.
 func (q *Queries) ConsumeWorkspaceExecRuntimeReservation(ctx context.Context, arg ConsumeWorkspaceExecRuntimeReservationParams) (int64, error) {
 	result, err := q.db.Exec(ctx, consumeWorkspaceExecRuntimeReservation,
 		arg.ID,

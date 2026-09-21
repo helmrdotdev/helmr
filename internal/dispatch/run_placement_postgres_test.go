@@ -2324,6 +2324,12 @@ UPDATE runtime_instances SET desired_state = 'closed', desired_version = desired
 
 func markRunPlacementRuntimeReadyQuery(t *testing.T, fixture runPlacementFixture, runtimeID pgtype.UUID) error {
 	t.Helper()
+	_, err := db.New(fixture.pool).MarkRuntimeInstanceReady(fixture.ctx, runPlacementRuntimeReadyParams(t, fixture, runtimeID))
+	return err
+}
+
+func runPlacementRuntimeReadyParams(t *testing.T, fixture runPlacementFixture, runtimeID pgtype.UUID) db.MarkRuntimeInstanceReadyParams {
+	t.Helper()
 	var desiredVersion, observedVersion, workerEpoch int64
 	var vmVCPUCount int32
 	var cpuConfigDigest string
@@ -2376,13 +2382,12 @@ SELECT runtime_instances.desired_version,
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.New(fixture.pool).MarkRuntimeInstanceReady(fixture.ctx, db.MarkRuntimeInstanceReadyParams{ReservationSeconds: 300,
+	return db.MarkRuntimeInstanceReadyParams{ReservationSeconds: 300,
 		RuntimeSubstrateID: runtimeSubstrateID,
 		DesiredVersion:     desiredVersion, ID: runtimeID, WorkerInstanceID: workerID,
 		WorkerEpoch: workerEpoch, ExpectedObservedVersion: observedVersion,
 		VMVCPUCount: vmVCPUCount, CPUConfigDigest: cpuConfigDigest,
-	})
-	return err
+	}
 }
 
 func markRunPlacementMountReady(t *testing.T, fixture runPlacementFixture, mountID pgtype.UUID) {

@@ -200,7 +200,7 @@ UPDATE runtime_instances
    AND reserved_attempt_number = $4
    AND reserved_workspace_version_id = $5
    AND restore_checkpoint_id IS NOT DISTINCT FROM $6
-   AND reservation_expires_at > transaction_timestamp()
+   AND reservation_expires_at > clock_timestamp()
 `
 
 type ConsumeRunRuntimeReservationParams struct {
@@ -212,6 +212,8 @@ type ConsumeRunRuntimeReservationParams struct {
 	RestoreCheckpointID    pgtype.UUID `json:"restore_checkpoint_id"`
 }
 
+// Caller holds the Runtime row lock; recheck time at consumption because other
+// grant operations may have waited since the initial locked authority check.
 func (q *Queries) ConsumeRunRuntimeReservation(ctx context.Context, arg ConsumeRunRuntimeReservationParams) (int64, error) {
 	result, err := q.db.Exec(ctx, consumeRunRuntimeReservation,
 		arg.ID,
