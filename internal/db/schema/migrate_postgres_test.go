@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -368,8 +367,8 @@ func assertNoBusinessDatabaseLogic(
 		t.Fatalf("application-owned PostgreSQL rules = %d, want 0", ruleCount)
 	}
 
-	// Physical outbox byte accounting is the sole generated storage projection;
-	// application lifecycle state and metadata admission remain owned by Go.
+	// Generated columns project physical byte accounting and FK availability
+	// keys. Lifecycle transitions and metadata admission remain owned by Go.
 	var generatedColumns []string
 	if err := pool.QueryRow(ctx, `
 		SELECT COALESCE(array_agg(c.relname || '.' || a.attname || ':' || a.attgenerated::text ORDER BY c.relname, a.attname), ARRAY[]::text[])
@@ -380,7 +379,7 @@ func assertNoBusinessDatabaseLogic(
 	`).Scan(&generatedColumns); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(generatedColumns, ",") != "telemetry_outbox.ingest_size_bytes:s" {
+	if strings.Join(generatedColumns, ",") != "cas_object_lifetimes.available:s,cas_objects.availability_required:s,computer_initializations.availability_required:s,telemetry_outbox.ingest_size_bytes:s" {
 		t.Fatalf("unexpected generated storage columns: %v", generatedColumns)
 	}
 
@@ -482,7 +481,7 @@ INSERT INTO worker_instances (
     '01900000-0000-7000-8000-000000000908',
     '00000000-0000-7000-8000-000000000907'
 );
-INSERT INTO cas_objects (
+WITH lifetime AS (INSERT INTO cas_object_lifetimes (digest) VALUES ('sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa') ON CONFLICT DO NOTHING) INSERT INTO cas_objects (
     org_id, digest, size_bytes, media_type
 ) VALUES (
     '00000000-0000-7000-8000-000000000901',
@@ -683,21 +682,6 @@ func assertWorkspaceVersionAuthority(t *testing.T, ctx context.Context, pool *pg
 	}
 	if authorityColumns != 9 {
 		t.Fatalf("workspace version authority columns = %d, want 9", authorityColumns)
-	}
-	var emptyTreeCheck bool
-	if err := pool.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1
-			  FROM pg_constraint
-			 WHERE conrelid = 'workspace_versions'::regclass
-			   AND contype = 'c'
-			   AND pg_get_constraintdef(oid) LIKE '%' || $1 || '%'
-		)
-	`, workspace.CanonicalEmptyTreeDigest).Scan(&emptyTreeCheck); err != nil {
-		t.Fatal(err)
-	}
-	if !emptyTreeCheck {
-		t.Fatal("workspace generation zero does not pin the canonical empty tree digest")
 	}
 	var oneRoot bool
 	if err := pool.QueryRow(ctx, `

@@ -37,7 +37,7 @@ func TestWorkspaceResetTargetAuthorityProjectsPrivateVersionWithinExactWorkspace
 	privateVersionID := uuid.NewV7()
 	digest := dbtest.Digest("private-workspace-reset-target")
 	dbtest.MustExec(t, ctx, fixture.pool, `
-		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+		WITH lifetime AS (INSERT INTO cas_object_lifetimes (digest) VALUES ($2) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 		VALUES ($1, $2, 1, 'application/vnd.helmr.workspace.v0.tar')
 	`, fixture.orgID, digest)
 	dbtest.MustExec(t, ctx, fixture.pool, `

@@ -10,6 +10,10 @@
 -- winning receipt separately; never rewrite the committed root or its references.
 
 -- name: RegisterComputerInitialization :one
+WITH lifetime AS (
+    INSERT INTO cas_object_lifetimes (digest) VALUES (sqlc.arg(digest))
+    ON CONFLICT (digest) DO NOTHING
+)
 INSERT INTO computer_initializations (
     id, environment_id, computer_id, version_id, runtime_instance_id,
     runtime_desired_version, ownership_generation, writer_generation,

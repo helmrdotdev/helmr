@@ -18,7 +18,7 @@ UPDATE computer_initializations
    AND environment_id = $2
    AND computer_id = $3
    AND status IN ('registered', 'abandoned')
-RETURNING id, environment_id, computer_id, version_id, runtime_instance_id, runtime_desired_version, ownership_generation, writer_generation, digest, size_bytes, logical_bytes, media_type, initial_config, status, artifact_id, created_at, consumed_at, abandoned_at
+RETURNING id, environment_id, computer_id, version_id, runtime_instance_id, runtime_desired_version, ownership_generation, writer_generation, digest, size_bytes, logical_bytes, media_type, initial_config, status, artifact_id, created_at, consumed_at, abandoned_at, availability_required
 `
 
 type AbandonComputerInitializationParams struct {
@@ -49,6 +49,7 @@ func (q *Queries) AbandonComputerInitialization(ctx context.Context, arg Abandon
 		&i.CreatedAt,
 		&i.ConsumedAt,
 		&i.AbandonedAt,
+		&i.AvailabilityRequired,
 	)
 	return i, err
 }
@@ -90,7 +91,7 @@ func (q *Queries) AbandonRevokedComputerInitializations(ctx context.Context, row
 }
 
 const getComputerInitialization = `-- name: GetComputerInitialization :one
-SELECT id, environment_id, computer_id, version_id, runtime_instance_id, runtime_desired_version, ownership_generation, writer_generation, digest, size_bytes, logical_bytes, media_type, initial_config, status, artifact_id, created_at, consumed_at, abandoned_at FROM computer_initializations
+SELECT id, environment_id, computer_id, version_id, runtime_instance_id, runtime_desired_version, ownership_generation, writer_generation, digest, size_bytes, logical_bytes, media_type, initial_config, status, artifact_id, created_at, consumed_at, abandoned_at, availability_required FROM computer_initializations
  WHERE environment_id = $1
    AND computer_id = $2
    AND runtime_instance_id = $3
@@ -124,12 +125,13 @@ func (q *Queries) GetComputerInitialization(ctx context.Context, arg GetComputer
 		&i.CreatedAt,
 		&i.ConsumedAt,
 		&i.AbandonedAt,
+		&i.AvailabilityRequired,
 	)
 	return i, err
 }
 
 const getWorkerComputerInitialization = `-- name: GetWorkerComputerInitialization :one
-SELECT initialization.id, initialization.environment_id, initialization.computer_id, initialization.version_id, initialization.runtime_instance_id, initialization.runtime_desired_version, initialization.ownership_generation, initialization.writer_generation, initialization.digest, initialization.size_bytes, initialization.logical_bytes, initialization.media_type, initialization.initial_config, initialization.status, initialization.artifact_id, initialization.created_at, initialization.consumed_at, initialization.abandoned_at
+SELECT initialization.id, initialization.environment_id, initialization.computer_id, initialization.version_id, initialization.runtime_instance_id, initialization.runtime_desired_version, initialization.ownership_generation, initialization.writer_generation, initialization.digest, initialization.size_bytes, initialization.logical_bytes, initialization.media_type, initialization.initial_config, initialization.status, initialization.artifact_id, initialization.created_at, initialization.consumed_at, initialization.abandoned_at, initialization.availability_required
   FROM computer_initializations AS initialization
   JOIN runtime_instances AS runtime ON runtime.id=initialization.runtime_instance_id
  WHERE initialization.runtime_instance_id=$1
@@ -177,13 +179,14 @@ func (q *Queries) GetWorkerComputerInitialization(ctx context.Context, arg GetWo
 		&i.CreatedAt,
 		&i.ConsumedAt,
 		&i.AbandonedAt,
+		&i.AvailabilityRequired,
 	)
 	return i, err
 }
 
 const publishComputerInitialization = `-- name: PublishComputerInitialization :one
 WITH candidate AS MATERIALIZED (
-    SELECT initialization.id, initialization.environment_id, initialization.computer_id, initialization.version_id, initialization.runtime_instance_id, initialization.runtime_desired_version, initialization.ownership_generation, initialization.writer_generation, initialization.digest, initialization.size_bytes, initialization.logical_bytes, initialization.media_type, initialization.initial_config, initialization.status, initialization.artifact_id, initialization.created_at, initialization.consumed_at, initialization.abandoned_at, artifacts.id AS verified_artifact_id
+    SELECT initialization.id, initialization.environment_id, initialization.computer_id, initialization.version_id, initialization.runtime_instance_id, initialization.runtime_desired_version, initialization.ownership_generation, initialization.writer_generation, initialization.digest, initialization.size_bytes, initialization.logical_bytes, initialization.media_type, initialization.initial_config, initialization.status, initialization.artifact_id, initialization.created_at, initialization.consumed_at, initialization.abandoned_at, initialization.availability_required, artifacts.id AS verified_artifact_id
       FROM computer_initializations AS initialization
       JOIN artifacts
         ON artifacts.environment_id = initialization.environment_id
@@ -221,7 +224,7 @@ UPDATE computer_initializations AS initialization
  WHERE initialization.id = $1
    AND initialization.version_id = published.id
    AND initialization.status = 'registered'
-RETURNING initialization.id, initialization.environment_id, initialization.computer_id, initialization.version_id, initialization.runtime_instance_id, initialization.runtime_desired_version, initialization.ownership_generation, initialization.writer_generation, initialization.digest, initialization.size_bytes, initialization.logical_bytes, initialization.media_type, initialization.initial_config, initialization.status, initialization.artifact_id, initialization.created_at, initialization.consumed_at, initialization.abandoned_at
+RETURNING initialization.id, initialization.environment_id, initialization.computer_id, initialization.version_id, initialization.runtime_instance_id, initialization.runtime_desired_version, initialization.ownership_generation, initialization.writer_generation, initialization.digest, initialization.size_bytes, initialization.logical_bytes, initialization.media_type, initialization.initial_config, initialization.status, initialization.artifact_id, initialization.created_at, initialization.consumed_at, initialization.abandoned_at, initialization.availability_required
 `
 
 type PublishComputerInitializationParams struct {
@@ -262,12 +265,17 @@ func (q *Queries) PublishComputerInitialization(ctx context.Context, arg Publish
 		&i.CreatedAt,
 		&i.ConsumedAt,
 		&i.AbandonedAt,
+		&i.AvailabilityRequired,
 	)
 	return i, err
 }
 
 const registerComputerInitialization = `-- name: RegisterComputerInitialization :one
 
+WITH lifetime AS (
+    INSERT INTO cas_object_lifetimes (digest) VALUES ($9)
+    ON CONFLICT (digest) DO NOTHING
+)
 INSERT INTO computer_initializations (
     id, environment_id, computer_id, version_id, runtime_instance_id,
     runtime_desired_version, ownership_generation, writer_generation,
@@ -292,7 +300,7 @@ ON CONFLICT (runtime_instance_id) DO UPDATE
     AND computer_initializations.logical_bytes = EXCLUDED.logical_bytes
     AND computer_initializations.media_type = EXCLUDED.media_type
     AND computer_initializations.initial_config = EXCLUDED.initial_config
-RETURNING id, environment_id, computer_id, version_id, runtime_instance_id, runtime_desired_version, ownership_generation, writer_generation, digest, size_bytes, logical_bytes, media_type, initial_config, status, artifact_id, created_at, consumed_at, abandoned_at
+RETURNING id, environment_id, computer_id, version_id, runtime_instance_id, runtime_desired_version, ownership_generation, writer_generation, digest, size_bytes, logical_bytes, media_type, initial_config, status, artifact_id, created_at, consumed_at, abandoned_at, availability_required
 `
 
 type RegisterComputerInitializationParams struct {
@@ -357,6 +365,7 @@ func (q *Queries) RegisterComputerInitialization(ctx context.Context, arg Regist
 		&i.CreatedAt,
 		&i.ConsumedAt,
 		&i.AbandonedAt,
+		&i.AvailabilityRequired,
 	)
 	return i, err
 }

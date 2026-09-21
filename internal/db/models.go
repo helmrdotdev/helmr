@@ -283,11 +283,26 @@ type AuthSession struct {
 }
 
 type CasObject struct {
-	OrgID     pgtype.UUID        `json:"org_id"`
-	Digest    string             `json:"digest"`
-	SizeBytes int64              `json:"size_bytes"`
-	MediaType string             `json:"media_type"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	OrgID                pgtype.UUID        `json:"org_id"`
+	Digest               string             `json:"digest"`
+	SizeBytes            int64              `json:"size_bytes"`
+	MediaType            string             `json:"media_type"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	AvailabilityRequired pgtype.Bool        `json:"availability_required"`
+}
+
+type CasObjectLifetime struct {
+	Digest           string             `json:"digest"`
+	RetiredAt        pgtype.Timestamptz `json:"retired_at"`
+	Available        pgtype.Bool        `json:"available"`
+	NextReclaimAt    pgtype.Timestamptz `json:"next_reclaim_at"`
+	LastReclaimError pgtype.Text        `json:"last_reclaim_error"`
+}
+
+type CasRetiredUpload struct {
+	Digest        string             `json:"digest"`
+	UploadID      string             `json:"upload_id"`
+	NextReclaimAt pgtype.Timestamptz `json:"next_reclaim_at"`
 }
 
 type ComputerInitialization struct {
@@ -309,6 +324,7 @@ type ComputerInitialization struct {
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 	ConsumedAt            pgtype.Timestamptz `json:"consumed_at"`
 	AbandonedAt           pgtype.Timestamptz `json:"abandoned_at"`
+	AvailabilityRequired  pgtype.Bool        `json:"availability_required"`
 }
 
 type ControlOutbox struct {

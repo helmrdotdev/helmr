@@ -92,7 +92,7 @@ func New(t *testing.T) Fixture {
 	`, fixture.EnvironmentID, fixture.OrgID, fixture.ProjectID,
 		"run-lease-"+dbtest.ShortID(fixture.EnvironmentID))
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
-		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+		WITH lifetime AS (INSERT INTO cas_object_lifetimes (digest) VALUES ($2), ($3) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 		VALUES
 			($1, $2, 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
 			($1, $3, 1, 'application/octet-stream')

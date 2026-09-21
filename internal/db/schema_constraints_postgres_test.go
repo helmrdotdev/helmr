@@ -102,7 +102,7 @@ func TestSchemaWorkspaceVersionArtifactAndFinalizationAuthority(t *testing.T) {
 	defer tx.Rollback(ctx)
 	artifactID, versionID := uuid.NewV7(), uuid.NewV7()
 	digest := dbtest.Digest("schema-workspace-version")
-	dbtest.MustExec(t, ctx, tx, `INSERT INTO cas_objects (org_id,digest,size_bytes,media_type) VALUES ($1,$2,1,'application/octet-stream')`, fixture.orgID, digest)
+	dbtest.MustExec(t, ctx, tx, `WITH lifetime AS (INSERT INTO cas_object_lifetimes (digest) VALUES ($2) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id,digest,size_bytes,media_type) VALUES ($1,$2,1,'application/octet-stream')`, fixture.orgID, digest)
 	dbtest.MustExec(t, ctx, tx, `INSERT INTO artifacts (id,org_id,project_id,environment_id,digest,kind,size_bytes,media_type) VALUES ($1,$2,$3,$4,$5,'workspace_version',1,'application/octet-stream')`, artifactID, fixture.orgID, fixture.projectID, fixture.environmentID, digest)
 	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO workspace_versions (id,environment_id,workspace_id,parent_version_id,

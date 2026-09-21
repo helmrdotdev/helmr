@@ -239,7 +239,7 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 		VALUES ($1, $2, $3, $4, 'Authority', '#3366ff')
 	`, environmentID, orgID, projectID, "authority-"+dbtest.ShortID(environmentID))
 	dbtest.MustExec(t, ctx, pool, `
-		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+		WITH lifetime AS (INSERT INTO cas_object_lifetimes (digest) VALUES ($2), ($3) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 		VALUES ($1, $2, 1, 'application/vnd.helmr.deployment-program.v0+squashfs'), ($1, $3, 1, 'application/octet-stream')
 	`, orgID, programDigest, imageDigest)
 	dbtest.MustExec(t, ctx, pool, `

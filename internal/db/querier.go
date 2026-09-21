@@ -67,6 +67,12 @@ type Querier interface {
 	ClaimDueSchedules(ctx context.Context, arg ClaimDueSchedulesParams) ([]Schedule, error)
 	ClaimEventIngestBatch(ctx context.Context, arg ClaimEventIngestBatchParams) ([]ClaimEventIngestBatchRow, error)
 	ClaimLiveTelemetryOutbox(ctx context.Context, arg ClaimLiveTelemetryOutboxParams) ([]ClaimLiveTelemetryOutboxRow, error)
+	// Claim only scheduling responsibility, not permission to adopt the digest.
+	// A crashed sweeper becomes eligible again; repeated deletion is idempotent.
+	ClaimRetiredCasObjects(ctx context.Context, rowLimit int32) ([]string, error)
+	// Retained upload IDs get independent, fair retry scheduling. Historical IDs
+	// must not monopolize the digest's deadline or starve completed-version cleanup.
+	ClaimRetiredCasUploads(ctx context.Context, arg ClaimRetiredCasUploadsParams) ([]string, error)
 	ClaimRunLogIngestBatch(ctx context.Context, arg ClaimRunLogIngestBatchParams) ([]ClaimRunLogIngestBatchRow, error)
 	ClaimSessionMessage(ctx context.Context, arg ClaimSessionMessageParams) (SessionMessage, error)
 	ClaimWorkspaceMount(ctx context.Context, arg ClaimWorkspaceMountParams) (ClaimWorkspaceMountRow, error)
@@ -328,6 +334,10 @@ type Querier interface {
 	InvalidateRunCheckpoints(ctx context.Context, arg InvalidateRunCheckpointsParams) error
 	IssueAPIKey(ctx context.Context, arg IssueAPIKeyParams) (APIKey, error)
 	ListAPIKeys(ctx context.Context, arg ListAPIKeysParams) ([]ListAPIKeysRow, error)
+	// Only abandoned uploads are retirement candidates. Memberships in any org and
+	// registered owners pin availability with FKs; these NOT EXISTS clauses avoid
+	// routine conflicts but are not the concurrency barrier.
+	ListAbandonedCasObjects(ctx context.Context, rowLimit int32) ([]string, error)
 	ListCancellationLineage(ctx context.Context, arg ListCancellationLineageParams) ([]ListCancellationLineageRow, error)
 	ListCapacityWorkerInstances(ctx context.Context, arg ListCapacityWorkerInstancesParams) ([]ListCapacityWorkerInstancesRow, error)
 	ListCapacityWorkerPools(ctx context.Context, arg ListCapacityWorkerPoolsParams) ([]ListCapacityWorkerPoolsRow, error)
@@ -351,6 +361,7 @@ type Querier interface {
 	ListQueuedRunPlanningUsage(ctx context.Context, arg ListQueuedRunPlanningUsageParams) ([]ListQueuedRunPlanningUsageRow, error)
 	ListRecoverableWorkspaceExecCandidates(ctx context.Context, rowLimit int32) ([]ListRecoverableWorkspaceExecCandidatesRow, error)
 	ListRegions(ctx context.Context) ([]Region, error)
+	ListRetiredCasUploads(ctx context.Context, digest string) ([]string, error)
 	ListRunExecutionLeaseRecoveryCandidates(ctx context.Context, limitCount int32) ([]ListRunExecutionLeaseRecoveryCandidatesRow, error)
 	ListRunListItems(ctx context.Context, arg ListRunListItemsParams) ([]ListRunListItemsRow, error)
 	ListRunWorkerCapacityPressureCandidates(ctx context.Context, arg ListRunWorkerCapacityPressureCandidatesParams) ([]ListRunWorkerCapacityPressureCandidatesRow, error)
@@ -505,6 +516,7 @@ type Querier interface {
 	ReconcileActorTerminalRun(ctx context.Context, arg ReconcileActorTerminalRunParams) (Session, error)
 	ReconcileProviderAbsentWorkerRuntimes(ctx context.Context, workerInstanceID pgtype.UUID) (int64, error)
 	ReconcileSchedules(ctx context.Context, arg ReconcileSchedulesParams) ([]ReconcileSchedulesRow, error)
+	RecordCasReclamation(ctx context.Context, arg RecordCasReclamationParams) error
 	RecordRunTerminalEvent(ctx context.Context, arg RecordRunTerminalEventParams) error
 	RecordWorkerObservation(ctx context.Context, arg RecordWorkerObservationParams) (WorkerInstance, error)
 	RecoverExpiredRunResumes(ctx context.Context, limitCount int32) ([]RecoverExpiredRunResumesRow, error)
@@ -523,6 +535,7 @@ type Querier interface {
 	RegisterComputerInitialization(ctx context.Context, arg RegisterComputerInitializationParams) (ComputerInitialization, error)
 	RegisterDifferentWorkspaceChildCall(ctx context.Context, arg RegisterDifferentWorkspaceChildCallParams) (RunWait, error)
 	RegisterResolvedDifferentWorkspaceChildCall(ctx context.Context, arg RegisterResolvedDifferentWorkspaceChildCallParams) (RunWait, error)
+	RegisterRetiredCasUpload(ctx context.Context, arg RegisterRetiredCasUploadParams) error
 	RegisterSameWorkspaceChildCall(ctx context.Context, arg RegisterSameWorkspaceChildCallParams) (RunWait, error)
 	RegisterTimerRunWait(ctx context.Context, arg RegisterTimerRunWaitParams) (RunWait, error)
 	RegisterTokenWait(ctx context.Context, arg RegisterTokenWaitParams) (RunWait, error)
@@ -558,6 +571,9 @@ type Querier interface {
 	ResolveParkedTerminalChildWait(ctx context.Context, arg ResolveParkedTerminalChildWaitParams) (ResolveParkedTerminalChildWaitRow, error)
 	ResolveParkedTokenWait(ctx context.Context, arg ResolveParkedTokenWaitParams) (pgtype.UUID, error)
 	ResolveRunPinnedWorkspaceDefinitionForCreate(ctx context.Context, arg ResolveRunPinnedWorkspaceDefinitionForCreateParams) (DeploymentDefinition, error)
+	// Commit before making any remote calls. Never clear retired_at or remove this
+	// row: an in-flight upload can finish after a successful empty sweep.
+	RetireAbandonedCasObject(ctx context.Context, digest string) (int64, error)
 	RetireExpiredIdempotencyClaim(ctx context.Context, arg RetireExpiredIdempotencyClaimParams) (IdempotencyClaim, error)
 	RetryControlOutbox(ctx context.Context, arg RetryControlOutboxParams) (ControlOutbox, error)
 	RevokeAPIKey(ctx context.Context, arg RevokeAPIKeyParams) (int64, error)

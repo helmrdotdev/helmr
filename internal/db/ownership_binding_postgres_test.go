@@ -157,7 +157,7 @@ func ownershipVersionParams(t *testing.T, f runLeaseClaimFixture, work runLeaseW
 	if err := f.pool.QueryRow(ctx, "SELECT workspace_id,base_workspace_version_id,id,ownership_generation,writer_generation FROM workspace_leases WHERE owner_run_lease_id=$1", work.leaseID).Scan(&p.WorkspaceID, &p.ParentVersionID, &p.SourceWorkspaceLeaseID, &p.OwnershipGeneration, &p.WriterGeneration); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, ctx, f.pool, "INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES ($1,$2,1,'application/octet-stream')", f.orgID, p.ContentDigest)
+	dbtest.MustExec(t, ctx, f.pool, "WITH lifetime AS (INSERT INTO cas_object_lifetimes (digest) VALUES ($2) ON CONFLICT DO NOTHING) INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES ($1,$2,1,'application/octet-stream')", f.orgID, p.ContentDigest)
 	dbtest.MustExec(t, ctx, f.pool, "INSERT INTO artifacts(id,org_id,project_id,environment_id,digest,kind,size_bytes,media_type) VALUES($1,$2,$3,$4,$5,'workspace_version',1,'application/octet-stream')", p.ArtifactID, f.orgID, f.projectID, f.environmentID, p.ContentDigest)
 	return p
 }

@@ -143,7 +143,7 @@ func TestComputerInitializationRecoveryRespectsRuntimeLockAndConsumption(t *test
 			}
 			if consume {
 				artifactID := pgvalue.UUID(uuid.NewV7())
-				dbtest.MustExec(t, f.ctx, tx, `INSERT INTO cas_objects (org_id,digest,size_bytes,media_type) VALUES ($1,$2,$3,$4)`, f.orgID, candidate.Digest, candidate.SizeBytes, candidate.MediaType)
+				dbtest.MustExec(t, f.ctx, tx, `WITH lifetime AS (INSERT INTO cas_object_lifetimes (digest) VALUES ($2) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id,digest,size_bytes,media_type) VALUES ($1,$2,$3,$4)`, f.orgID, candidate.Digest, candidate.SizeBytes, candidate.MediaType)
 				dbtest.MustExec(t, f.ctx, tx, `INSERT INTO artifacts (id,org_id,project_id,environment_id,digest,kind,size_bytes,media_type)
                     SELECT $1,r.org_id,r.project_id,r.environment_id,$2,'workspace_version',$3,$4 FROM runtime_instances r WHERE r.id=$5`, artifactID, candidate.Digest, candidate.SizeBytes, candidate.MediaType, candidate.RuntimeInstanceID)
 				if _, err := db.New(tx).PublishComputerInitialization(f.ctx, db.PublishComputerInitializationParams{

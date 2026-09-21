@@ -490,7 +490,7 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 		`{"formatVersion":0,"queues":[{"concurrencyLimit":2,"name":"default"},{"name":"priority"}]}`,
 	)
 	dbtest.MustExec(t, t.Context(), pool, `
-		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+		WITH lifetime AS (INSERT INTO cas_object_lifetimes (digest) VALUES ($2), ($3), ($4), ($5) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 		VALUES ($1, $2, 1, 'application/vnd.helmr.deployment-bundle.v0+json'),
 		       ($1, $3, 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
 		       ($1, $4, 1, 'application/octet-stream'),

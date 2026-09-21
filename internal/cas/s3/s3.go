@@ -35,6 +35,9 @@ const (
 )
 
 type s3Client interface {
+	ListMultipartUploads(context.Context, *awss3.ListMultipartUploadsInput, ...func(*awss3.Options)) (*awss3.ListMultipartUploadsOutput, error)
+	ListParts(context.Context, *awss3.ListPartsInput, ...func(*awss3.Options)) (*awss3.ListPartsOutput, error)
+	ListObjectVersions(context.Context, *awss3.ListObjectVersionsInput, ...func(*awss3.Options)) (*awss3.ListObjectVersionsOutput, error)
 	PutObject(context.Context, *awss3.PutObjectInput, ...func(*awss3.Options)) (*awss3.PutObjectOutput, error)
 	HeadObject(context.Context, *awss3.HeadObjectInput, ...func(*awss3.Options)) (*awss3.HeadObjectOutput, error)
 	GetObject(context.Context, *awss3.GetObjectInput, ...func(*awss3.Options)) (*awss3.GetObjectOutput, error)

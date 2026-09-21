@@ -93,7 +93,7 @@ func seedPostgresArtifact(
 	id := uuid.NewV7()
 	digest := dbtest.Digest(label + "-" + ids.deploymentID.String())
 	dbtest.MustExec(t, ctx, pool, `
-		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+		WITH lifetime AS (INSERT INTO cas_object_lifetimes (digest) VALUES ($2) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 		VALUES ($1, $2, 1, $3)
 	`, ids.orgID, digest, mediaType)
 	dbtest.MustExec(t, ctx, pool, `

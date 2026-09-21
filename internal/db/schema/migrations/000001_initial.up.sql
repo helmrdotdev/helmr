@@ -239,6 +239,30 @@ ALTER TABLE secrets
     ON DELETE RESTRICT
     DEFERRABLE INITIALLY DEFERRED;
 
+-- Physical-key lifetime is global; organization memberships are visibility, not
+-- deletion authority. A retired key can never acquire a new live reference.
+CREATE TABLE cas_object_lifetimes (
+    digest TEXT PRIMARY KEY CHECK (digest ~ '^sha256:[0-9a-f]{64}$'),
+    retired_at TIMESTAMPTZ,
+    available BOOLEAN GENERATED ALWAYS AS (retired_at IS NULL) STORED,
+    next_reclaim_at TIMESTAMPTZ,
+    last_reclaim_error TEXT,
+    UNIQUE (digest, available),
+    CHECK ((retired_at IS NULL) = (next_reclaim_at IS NULL))
+);
+CREATE INDEX cas_object_lifetimes_reclaim_idx
+    ON cas_object_lifetimes (next_reclaim_at, digest) WHERE retired_at IS NOT NULL;
+
+-- Persist upload IDs before abort: in-flight parts may arrive after an abort.
+CREATE TABLE cas_retired_uploads (
+    digest TEXT NOT NULL REFERENCES cas_object_lifetimes(digest),
+    upload_id TEXT NOT NULL CHECK (upload_id <> ''),
+    next_reclaim_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (digest, upload_id)
+);
+
+CREATE INDEX cas_retired_uploads_reclaim_idx ON cas_retired_uploads (digest, next_reclaim_at, upload_id);
+
 CREATE TABLE cas_objects (
     org_id UUID NOT NULL,
     digest TEXT NOT NULL CHECK (digest ~ '^sha256:[0-9a-f]{64}$'),
@@ -246,9 +270,13 @@ CREATE TABLE cas_objects (
     media_type TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (org_id, digest),
+    availability_required BOOLEAN GENERATED ALWAYS AS (true) STORED,
+    FOREIGN KEY (digest, availability_required) REFERENCES cas_object_lifetimes(digest, available),
     CONSTRAINT cas_objects_descriptor_key
         UNIQUE (org_id, digest, size_bytes, media_type)
 );
+
+CREATE INDEX cas_objects_digest_idx ON cas_objects (digest);
 
 CREATE TYPE artifact_kind AS ENUM (
     'deployment_program',
@@ -2906,6 +2934,11 @@ CREATE TABLE computer_initializations (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     consumed_at TIMESTAMPTZ,
     abandoned_at TIMESTAMPTZ,
+    availability_required BOOLEAN GENERATED ALWAYS AS (
+        CASE WHEN status = 'registered' THEN true END
+    ) STORED,
+    FOREIGN KEY (digest) REFERENCES cas_object_lifetimes(digest),
+    FOREIGN KEY (digest, availability_required) REFERENCES cas_object_lifetimes(digest, available),
     FOREIGN KEY (environment_id, computer_id, runtime_instance_id)
         REFERENCES runtime_instances(environment_id, workspace_id, id) ON DELETE RESTRICT,
     FOREIGN KEY (environment_id, computer_id, version_id)

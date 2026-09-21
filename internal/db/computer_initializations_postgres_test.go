@@ -44,7 +44,7 @@ SELECT r.id, r.desired_version, w.id, w.head_version_id, w.ownership_generation,
 func initializationArtifact(t *testing.T, f runtest.Fixture, tx db.DBTX, p db.RegisterComputerInitializationParams) pgtype.UUID {
 	t.Helper()
 	id := pgvalue.UUID(uuid.NewV7())
-	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO cas_objects (org_id, digest, size_bytes, media_type) VALUES ($1,$2,$3,$4)`,
+	dbtest.MustExec(t, t.Context(), tx, `WITH lifetime AS (INSERT INTO cas_object_lifetimes (digest) VALUES ($2) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type) VALUES ($1,$2,$3,$4)`,
 		f.OrgID, p.Digest, p.SizeBytes, p.MediaType)
 	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO artifacts
     (id,org_id,project_id,environment_id,digest,kind,size_bytes,media_type)

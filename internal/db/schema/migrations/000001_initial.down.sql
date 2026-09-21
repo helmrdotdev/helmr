@@ -64,6 +64,8 @@ DROP TYPE IF EXISTS telemetry_stream_kind;
 DROP TYPE IF EXISTS wait_kind;
 DROP TYPE IF EXISTS artifact_kind;
 DROP TABLE IF EXISTS cas_objects;
+DROP TABLE IF EXISTS cas_retired_uploads;
+DROP TABLE IF EXISTS cas_object_lifetimes;
 DROP TABLE IF EXISTS device_codes;
 DROP TABLE IF EXISTS api_keys;
 DROP TABLE IF EXISTS magic_links;

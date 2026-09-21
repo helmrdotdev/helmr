@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/artifactgc"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/bootstrap"
 	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
@@ -180,6 +181,10 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure CAS: %w", err)
 	}
+	artifactReclaimer, err := artifactgc.New(pool, casStore, log)
+	if err != nil {
+		return fmt.Errorf("configure artifact reclamation: %w", err)
+	}
 	platformStore, err := cass3.NewImmutable(ctx, cfg.PlatformStoreURI)
 	if err != nil {
 		return fmt.Errorf("configure platform artifact store: %w", err)
@@ -238,6 +243,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	workflows := []backgroundWorkflow{
 		{name: "live telemetry publisher", run: eventStream.RunPublisher},
 		{name: "Run retry readiness", run: runRetryReady.Run},
+		{name: "artifact reclamation", run: artifactReclaimer.Run},
 		{name: "queued child Run expiry", run: queuedChildExpiry.Run},
 		{name: "magic link delivery", run: magicLinkDelivery.Run},
 	}

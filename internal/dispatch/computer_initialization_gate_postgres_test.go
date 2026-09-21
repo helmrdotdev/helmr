@@ -31,7 +31,7 @@ func TestInitializingComputerPreparesButCannotBecomeReadyOrExecute(t *testing.T)
 
 	// This tests the DB publication boundary, not remote verification or boot.
 	artifactID := pgvalue.UUID(uuid.NewV7())
-	dbtest.MustExec(t, f.ctx, f.pool, `INSERT INTO cas_objects (org_id,digest,size_bytes,media_type) VALUES ($1,$2,$3,$4)`, f.orgID, candidate.Digest, candidate.SizeBytes, candidate.MediaType)
+	dbtest.MustExec(t, f.ctx, f.pool, `WITH lifetime AS (INSERT INTO cas_object_lifetimes (digest) VALUES ($2) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id,digest,size_bytes,media_type) VALUES ($1,$2,$3,$4)`, f.orgID, candidate.Digest, candidate.SizeBytes, candidate.MediaType)
 	dbtest.MustExec(t, f.ctx, f.pool, `INSERT INTO artifacts (id,org_id,project_id,environment_id,digest,kind,size_bytes,media_type)
     VALUES ($1,$2,$3,$4,$5,'workspace_version',$6,$7)`, artifactID, f.orgID, f.projectID, f.environmentID, candidate.Digest, candidate.SizeBytes, candidate.MediaType)
 	if _, err := db.New(f.pool).PublishComputerInitialization(f.ctx, db.PublishComputerInitializationParams{

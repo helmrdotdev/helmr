@@ -917,6 +917,10 @@ resource "aws_iam_role_policy" "controlplane_task" {
           "s3:PutObjectTagging",
           "s3:DeleteObject",
           "s3:AbortMultipartUpload",
+          "s3:ListMultipartUploadParts",
+          "s3:ListBucketMultipartUploads",
+          "s3:ListBucketVersions",
+          "s3:DeleteObjectVersion",
           "s3:ListBucket"
         ]
         Resource = [

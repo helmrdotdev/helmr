@@ -12,7 +12,7 @@ import (
 )
 
 const getCasObject = `-- name: GetCasObject :one
-SELECT org_id, digest, size_bytes, media_type, created_at
+SELECT org_id, digest, size_bytes, media_type, created_at, availability_required
   FROM cas_objects
  WHERE org_id = $1
    AND digest = $2
@@ -32,18 +32,23 @@ func (q *Queries) GetCasObject(ctx context.Context, arg GetCasObjectParams) (Cas
 		&i.SizeBytes,
 		&i.MediaType,
 		&i.CreatedAt,
+		&i.AvailabilityRequired,
 	)
 	return i, err
 }
 
 const upsertCasObject = `-- name: UpsertCasObject :one
+WITH lifetime AS (
+    INSERT INTO cas_object_lifetimes (digest) VALUES ($2)
+    ON CONFLICT (digest) DO NOTHING
+)
 INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 VALUES ($1, $2, $3, $4)
 ON CONFLICT (org_id, digest) DO UPDATE SET
     size_bytes = cas_objects.size_bytes
 WHERE cas_objects.size_bytes = EXCLUDED.size_bytes
   AND cas_objects.media_type = EXCLUDED.media_type
-RETURNING org_id, digest, size_bytes, media_type, created_at
+RETURNING org_id, digest, size_bytes, media_type, created_at, availability_required
 `
 
 type UpsertCasObjectParams struct {
@@ -67,6 +72,7 @@ func (q *Queries) UpsertCasObject(ctx context.Context, arg UpsertCasObjectParams
 		&i.SizeBytes,
 		&i.MediaType,
 		&i.CreatedAt,
+		&i.AvailabilityRequired,
 	)
 	return i, err
 }
