@@ -761,7 +761,7 @@ func (m WorkspaceMaterializer) restoreCASObjectUncached(ctx context.Context, tem
 	path := file.Name()
 	cleanup = func() { _ = os.Remove(path) }
 	hash := sha256.New()
-	written, copyErr := io.Copy(io.MultiWriter(file, hash), reader)
+	written, copyErr := copyCASObject(ctx, io.MultiWriter(file, hash), reader, artifact.SizeBytes)
 	closeErr := file.Close()
 	if copyErr != nil {
 		cleanup()
@@ -780,6 +780,25 @@ func (m WorkspaceMaterializer) restoreCASObjectUncached(ctx context.Context, tem
 		return "", func() {}, workspaceMountFailure{code: codeLabel + "_artifact_corrupt", err: fmt.Errorf("%s artifact digest mismatch", label)}
 	}
 	return path, cleanup, nil
+}
+
+// copyCASObject never writes beyond the reserved descriptor size. Inspect one
+// additional byte in memory to reject oversized bodies without filling host disk.
+func copyCASObject(ctx context.Context, destination io.Writer, source io.Reader, size int64) (int64, error) {
+	reader := &contextReader{ctx: ctx, reader: source}
+	written, err := io.CopyN(destination, reader, size)
+	if err != nil {
+		return written, err
+	}
+	var extra [1]byte
+	n, err := io.ReadFull(reader, extra[:])
+	if n != 0 {
+		return written, errors.New("artifact body exceeds declared size")
+	}
+	if err != io.EOF {
+		return written, err
+	}
+	return written, nil
 }
 
 func workspaceArtifactIsEmpty(artifact workerapi.WorkspaceArtifact) bool {
@@ -836,7 +855,7 @@ func (m WorkspaceMaterializer) restoreCASObjectWithCache(ctx context.Context, te
 	}
 	stagedPath := staged.Name()
 	hash := sha256.New()
-	written, copyErr := io.Copy(io.MultiWriter(staged, hash), reader)
+	written, copyErr := copyCASObject(ctx, io.MultiWriter(staged, hash), reader, artifact.SizeBytes)
 	closeErr := staged.Close()
 	if copyErr != nil {
 		_ = os.Remove(stagedPath)
