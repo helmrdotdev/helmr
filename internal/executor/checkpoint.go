@@ -145,6 +145,18 @@ func requireCheckpointArtifact(artifact workerapi.CheckpointArtifact, field stri
 	return nil
 }
 
+// checkpointSourceReleaseError keeps physical cleanup uncertainty distinct from
+// a checkpoint failure that the Control Plane has already acknowledged.
+type checkpointSourceReleaseError struct {
+	err error
+}
+
+func (e *checkpointSourceReleaseError) Error() string {
+	return "release checkpoint source: " + e.err.Error()
+}
+
+func (e *checkpointSourceReleaseError) Unwrap() error { return e.err }
+
 type runtimeCheckpointer struct {
 	protocol   *programProtocol
 	session    vm.CheckpointableSession
@@ -168,7 +180,9 @@ func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request Check
 		}
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
-		_ = c.ReleaseCheckpointSource(cleanupCtx)
+		if releaseErr := c.ReleaseCheckpointSource(cleanupCtx); releaseErr != nil {
+			err = errors.Join(err, &checkpointSourceReleaseError{err: releaseErr})
+		}
 	}()
 	if c.cas == nil {
 		return CheckpointResult{}, errors.New("checkpoint CAS is required")

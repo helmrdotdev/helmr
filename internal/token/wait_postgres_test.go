@@ -793,7 +793,7 @@ SELECT desired_version, observed_version
  WHERE id = $1`, authority.runtimeID).Scan(&runtimeDesiredVersion, &runtimeObservedVersion); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.CloseCheckpointSourceRuntime(ctx, db.CloseCheckpointSourceRuntimeParams{
+	if _, err := queries.DetachCheckpointSource(ctx, db.DetachCheckpointSourceParams{
 		CheckpointedAt:          checkpointedAt,
 		WorkspaceMountID:        pgvalue.UUID(authority.mountID),
 		RuntimeInstanceID:       pgvalue.UUID(authority.runtimeID),

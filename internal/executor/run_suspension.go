@@ -171,7 +171,7 @@ func (w ControlPlaneRunWaits) handleCheckpointDecision(ctx context.Context, requ
 	failCheckpoint := func(err error) error {
 		lease, leaseErr := request.currentLeaseAssignment()
 		if leaseErr != nil {
-			return leaseErr
+			return errors.Join(err, leaseErr)
 		}
 		failedRequest := workerapi.CheckpointFailedRequest{
 			Lease: lease.Fence(), RequestVersion: intent.RequestVersion,
@@ -179,6 +179,10 @@ func (w ControlPlaneRunWaits) handleCheckpointDecision(ctx context.Context, requ
 		}
 		for {
 			if _, failErr := w.Client.MarkCheckpointFailed(ctx, failedRequest); failErr == nil {
+				var releaseErr *checkpointSourceReleaseError
+				if errors.As(err, &releaseErr) {
+					return errors.Join(ErrDetached, err)
+				}
 				return ErrDetached
 			} else if !checkpointReadyRetryable(failErr) {
 				return errors.Join(err, failErr)
@@ -216,7 +220,7 @@ func (w ControlPlaneRunWaits) handleCheckpointDecision(ctx context.Context, requ
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
 		if err := request.Checkpointer.ReleaseCheckpointSource(cleanupCtx); err != nil {
-			resultErr = errors.Join(resultErr, fmt.Errorf("release checkpoint source: %w", err))
+			resultErr = errors.Join(resultErr, &checkpointSourceReleaseError{err: err})
 		}
 	}()
 	if checkpoint.WorkspaceCapture == nil {

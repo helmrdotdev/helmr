@@ -155,7 +155,7 @@ func lockLiveRunLeaseAuthority(
 	locators db.GetLiveRunLeaseLocatorsRow,
 ) (runLeaseClaimAuthority, error) {
 	return lockRunLeaseAuthorityForStatuses(
-		ctx, q, worker, leaseID, leaseSequence, locators, db.RunStatusRunning,
+		ctx, q, worker, leaseID, leaseSequence, locators, validateExecutingRunLeaseAuthority, db.RunStatusRunning,
 	)
 }
 
@@ -168,7 +168,7 @@ func lockRenewableRunLeaseAuthority(
 	locators db.GetLiveRunLeaseLocatorsRow,
 ) (runLeaseClaimAuthority, error) {
 	return lockRunLeaseAuthorityForStatuses(
-		ctx, q, worker, leaseID, leaseSequence, locators,
+		ctx, q, worker, leaseID, leaseSequence, locators, validateExecutingRunLeaseAuthority,
 		db.RunStatusRunning, db.RunStatusWaiting,
 	)
 }
@@ -180,6 +180,7 @@ func lockRunLeaseAuthorityForStatuses(
 	leaseID pgtype.UUID,
 	leaseSequence int64,
 	locators db.GetLiveRunLeaseLocatorsRow,
+	validate func(workerActor, runLeaseClaimAuthority) error,
 	allowedStatuses ...db.RunStatus,
 ) (runLeaseClaimAuthority, error) {
 	var authority runLeaseClaimAuthority
@@ -201,12 +202,12 @@ func lockRunLeaseAuthorityForStatuses(
 	if err := lockRunLeaseAttempt(ctx, q, &authority, locators); err != nil {
 		return authority, err
 	}
-	if err := lockRunLeasePhysicalAuthority(
+	if err := lockRunLeasePhysicalRecords(
 		ctx, q, worker, leaseID, leaseSequence, locators, &authority,
 	); err != nil {
 		return authority, err
 	}
-	return authority, nil
+	return authority, validate(worker, authority)
 }
 
 func validateLockedRunLeaseRun(
@@ -267,7 +268,7 @@ func lockRunLeaseAttempt(
 	return nil
 }
 
-func lockRunLeasePhysicalAuthority(
+func lockRunLeasePhysicalRecords(
 	ctx context.Context,
 	q db.Querier,
 	worker workerActor,
@@ -321,9 +322,6 @@ func lockRunLeasePhysicalAuthority(
 	if !authority.runLease.StartedAt.Valid || !authority.run.StartedAt.Valid {
 		return errStaleRunLeaseClaim
 	}
-	if err := validateClaimPhysicalAuthority(worker, *authority); err != nil {
-		return err
-	}
 
 	authority.workspaceMount, err = q.LockRunLeaseClaimMount(ctx, db.LockRunLeaseClaimMountParams{
 		ID: locators.WorkspaceMountID, OrgID: locators.OrgID, ProjectID: locators.ProjectID,
@@ -345,11 +343,62 @@ func lockRunLeasePhysicalAuthority(
 	if err != nil {
 		return staleRunLeaseClaim(err)
 	}
-	if err := validateRunLeaseWorkspaceAuthority(*authority); err != nil {
-		return err
-	}
 	if !authority.workspaceLease.ExpiresAt.Time.Equal(authority.runLease.ExpiresAt.Time) {
 		return errStaleRunLeaseClaim
 	}
 	return nil
+}
+
+func validateExecutingRunLeaseAuthority(worker workerActor, authority runLeaseClaimAuthority) error {
+	if err := validateClaimPhysicalAuthority(worker, authority); err != nil {
+		return err
+	}
+	return validateRunLeaseWorkspaceAuthority(authority)
+}
+
+// Failure settlement retains live lease and writer fences, but does not grant
+// execution authority to a source whose stop has already failed.
+func lockCheckpointFailureAuthority(
+	ctx context.Context, q db.Querier, worker workerActor,
+	leaseID pgtype.UUID, leaseSequence int64, locators db.GetLiveRunLeaseLocatorsRow,
+) (runLeaseClaimAuthority, error) {
+	return lockRunLeaseAuthorityForStatuses(ctx, q, worker, leaseID, leaseSequence,
+		locators, validateCheckpointFailureAuthority, db.RunStatusWaiting)
+}
+
+func validateCheckpointFailureAuthority(worker workerActor, authority runLeaseClaimAuthority) error {
+	if authority.runLease.Status != db.RunLeaseStatusCheckpointing || authority.runtime.ReclaimedAt.Valid {
+		return errStaleRunLeaseClaim
+	}
+	if err := validateClaimPhysicalIdentity(worker, authority); err != nil {
+		return err
+	}
+	if err := validateRunLeaseWorkspaceIdentity(authority); err != nil {
+		return err
+	}
+	if authority.runtime.ObservedState == db.RuntimeObservedStateFailed {
+		switch authority.workspaceMount.Status {
+		case db.WorkspaceMountStatusMounted, db.WorkspaceMountStatusUnmounting, db.WorkspaceMountStatusFailed:
+			return nil
+		}
+		return errStaleRunLeaseClaim
+	}
+	if authority.runtime.DesiredState != db.RuntimeDesiredStateReady ||
+		authority.runtime.ObservedState != db.RuntimeObservedStateReady ||
+		authority.runtime.ObservedDesiredVersion != authority.runtime.DesiredVersion ||
+		authority.workspaceMount.Status != db.WorkspaceMountStatusMounted {
+		return errStaleRunLeaseClaim
+	}
+	return nil
+}
+
+func lockRunLeasePhysicalAuthority(
+	ctx context.Context, q db.Querier, worker workerActor,
+	leaseID pgtype.UUID, leaseSequence int64, locators db.GetLiveRunLeaseLocatorsRow,
+	authority *runLeaseClaimAuthority,
+) error {
+	if err := lockRunLeasePhysicalRecords(ctx, q, worker, leaseID, leaseSequence, locators, authority); err != nil {
+		return err
+	}
+	return validateExecutingRunLeaseAuthority(worker, *authority)
 }

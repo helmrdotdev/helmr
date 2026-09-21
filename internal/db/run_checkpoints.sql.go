@@ -44,7 +44,7 @@ WITH RECURSIVE proven AS NOT MATERIALIZED (
       JOIN runtime_instances runtime ON runtime.id = lease.runtime_instance_id
        AND runtime.workspace_id = c.workspace_id AND runtime.runtime_identity_id = lease.runtime_identity_id
        AND runtime.program_deployment_id = r.deployment_id
-       AND runtime.desired_state = 'closed' AND runtime.observed_state = 'closed'
+       AND runtime.reclaimed_at IS NOT NULL AND runtime.reclaim_evidence->>'method' IN ('session_closed', 'host_reconciled', 'provider_absent')
      WHERE c.run_id = $4::uuid AND c.attempt_number = $5::integer
        AND c.workspace_id = $2::uuid AND c.status = 'ready'
        AND c.actor_speculative_input_sequence IS NOT NULL
@@ -98,7 +98,7 @@ WITH RECURSIVE proven AS NOT MATERIALIZED (
                            AND child_lease.run_id = child.id AND child_lease.attempt_number = child.current_attempt_number
                            AND child_lease.workspace_id = child_version.workspace_id AND child_lease.status = 'completed'
                           JOIN runtime_instances child_runtime ON child_runtime.id = child_lease.runtime_instance_id
-                           AND child_runtime.desired_state = 'closed' AND child_runtime.observed_state = 'closed'
+                           AND child_runtime.reclaimed_at IS NOT NULL AND child_runtime.reclaim_evidence->>'method' IN ('session_closed', 'host_reconciled', 'provider_absent')
                           WHERE child_version.id = current.base_workspace_version_id
                             AND child_version.workspace_id = $2::uuid AND child_version.status = 'private'
                             AND child_version.ownership_generation = $3::bigint
@@ -237,144 +237,6 @@ func (q *Queries) CheckpointRunLease(ctx context.Context, arg CheckpointRunLease
 		&i.TerminalReasonCode,
 		&i.TerminalError,
 		&i.TerminalRequestFingerprint,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const closeCheckpointSourceRuntime = `-- name: CloseCheckpointSourceRuntime :one
-WITH closed_mount AS (
-    UPDATE workspace_mounts
-       SET status = 'unmounted',
-           stopped_at = COALESCE(stopped_at, $1),
-           unmounted_at = $1,
-           terminal_at = $1,
-           terminal_reason_code = 'checkpointed',
-           terminal_error = NULL,
-           updated_at = $1
-     WHERE workspace_mounts.id = $2
-       AND workspace_mounts.runtime_instance_id = $3
-       AND workspace_mounts.worker_instance_id = $4
-       AND workspace_mounts.worker_epoch = $5
-       AND workspace_mounts.fencing_generation = $6
-       AND workspace_mounts.status = 'mounted'
-    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.status, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
-), closed_runtime AS (
-    UPDATE runtime_instances
-       SET desired_state = 'closed',
-           desired_version = runtime_instances.desired_version + 1,
-           desired_at = $1,
-           desired_reason = 'checkpointed',
-           reserved_run_id = NULL,
-           reserved_attempt_number = NULL,
-           reserved_process_id = NULL,
-           reserved_workspace_version_id = NULL,
-           reservation_expires_at = NULL,
-           updated_at = $1
-      FROM closed_mount
-     WHERE runtime_instances.id = $3
-       AND runtime_instances.id = closed_mount.runtime_instance_id
-       AND runtime_instances.worker_instance_id = $4
-       AND runtime_instances.worker_epoch = $5
-       AND runtime_instances.desired_state = 'ready'
-       AND runtime_instances.desired_version = $7
-       AND runtime_instances.observed_state = 'ready'
-       AND runtime_instances.observed_version = $8
-    RETURNING runtime_instances.id
-)
-SELECT closed_mount.id, closed_mount.org_id, closed_mount.worker_group_id, closed_mount.project_id, closed_mount.environment_id, closed_mount.region_id, closed_mount.worker_instance_id, closed_mount.worker_epoch, closed_mount.workspace_id, closed_mount.materialized_version_id, closed_mount.runtime_instance_id, closed_mount.guest_channel_token_hash, closed_mount.guest_channel_token_expires_at, closed_mount.status, closed_mount.request, closed_mount.dirty_generation, closed_mount.fencing_generation, closed_mount.finalization_kind, closed_mount.finalization_reason_code, closed_mount.finalization_error, closed_mount.staged_version_id, closed_mount.mounted_at, closed_mount.unmounted_at, closed_mount.stopped_at, closed_mount.lost_at, closed_mount.failed_at, closed_mount.terminal_at, closed_mount.terminal_reason_code, closed_mount.terminal_error, closed_mount.created_at, closed_mount.updated_at
-  FROM closed_mount
-  JOIN closed_runtime ON closed_runtime.id = closed_mount.runtime_instance_id
-`
-
-type CloseCheckpointSourceRuntimeParams struct {
-	CheckpointedAt          pgtype.Timestamptz `json:"checkpointed_at"`
-	WorkspaceMountID        pgtype.UUID        `json:"workspace_mount_id"`
-	RuntimeInstanceID       pgtype.UUID        `json:"runtime_instance_id"`
-	WorkerInstanceID        pgtype.UUID        `json:"worker_instance_id"`
-	WorkerEpoch             int64              `json:"worker_epoch"`
-	MountFencingGeneration  int64              `json:"mount_fencing_generation"`
-	ExpectedDesiredVersion  int64              `json:"expected_desired_version"`
-	ExpectedObservedVersion int64              `json:"expected_observed_version"`
-}
-
-type CloseCheckpointSourceRuntimeRow struct {
-	ID                         pgtype.UUID        `json:"id"`
-	OrgID                      pgtype.UUID        `json:"org_id"`
-	WorkerGroupID              pgtype.UUID        `json:"worker_group_id"`
-	ProjectID                  pgtype.UUID        `json:"project_id"`
-	EnvironmentID              pgtype.UUID        `json:"environment_id"`
-	RegionID                   string             `json:"region_id"`
-	WorkerInstanceID           pgtype.UUID        `json:"worker_instance_id"`
-	WorkerEpoch                int64              `json:"worker_epoch"`
-	WorkspaceID                pgtype.UUID        `json:"workspace_id"`
-	MaterializedVersionID      pgtype.UUID        `json:"materialized_version_id"`
-	RuntimeInstanceID          pgtype.UUID        `json:"runtime_instance_id"`
-	GuestChannelTokenHash      string             `json:"guest_channel_token_hash"`
-	GuestChannelTokenExpiresAt pgtype.Timestamptz `json:"guest_channel_token_expires_at"`
-	Status                     string             `json:"status"`
-	Request                    []byte             `json:"request"`
-	DirtyGeneration            int64              `json:"dirty_generation"`
-	FencingGeneration          int64              `json:"fencing_generation"`
-	FinalizationKind           pgtype.Text        `json:"finalization_kind"`
-	FinalizationReasonCode     pgtype.Text        `json:"finalization_reason_code"`
-	FinalizationError          []byte             `json:"finalization_error"`
-	StagedVersionID            pgtype.UUID        `json:"staged_version_id"`
-	MountedAt                  pgtype.Timestamptz `json:"mounted_at"`
-	UnmountedAt                pgtype.Timestamptz `json:"unmounted_at"`
-	StoppedAt                  pgtype.Timestamptz `json:"stopped_at"`
-	LostAt                     pgtype.Timestamptz `json:"lost_at"`
-	FailedAt                   pgtype.Timestamptz `json:"failed_at"`
-	TerminalAt                 pgtype.Timestamptz `json:"terminal_at"`
-	TerminalReasonCode         pgtype.Text        `json:"terminal_reason_code"`
-	TerminalError              []byte             `json:"terminal_error"`
-	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
-}
-
-func (q *Queries) CloseCheckpointSourceRuntime(ctx context.Context, arg CloseCheckpointSourceRuntimeParams) (CloseCheckpointSourceRuntimeRow, error) {
-	row := q.db.QueryRow(ctx, closeCheckpointSourceRuntime,
-		arg.CheckpointedAt,
-		arg.WorkspaceMountID,
-		arg.RuntimeInstanceID,
-		arg.WorkerInstanceID,
-		arg.WorkerEpoch,
-		arg.MountFencingGeneration,
-		arg.ExpectedDesiredVersion,
-		arg.ExpectedObservedVersion,
-	)
-	var i CloseCheckpointSourceRuntimeRow
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.WorkerGroupID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.RegionID,
-		&i.WorkerInstanceID,
-		&i.WorkerEpoch,
-		&i.WorkspaceID,
-		&i.MaterializedVersionID,
-		&i.RuntimeInstanceID,
-		&i.GuestChannelTokenHash,
-		&i.GuestChannelTokenExpiresAt,
-		&i.Status,
-		&i.Request,
-		&i.DirtyGeneration,
-		&i.FencingGeneration,
-		&i.FinalizationKind,
-		&i.FinalizationReasonCode,
-		&i.FinalizationError,
-		&i.StagedVersionID,
-		&i.MountedAt,
-		&i.UnmountedAt,
-		&i.StoppedAt,
-		&i.LostAt,
-		&i.FailedAt,
-		&i.TerminalAt,
-		&i.TerminalReasonCode,
-		&i.TerminalError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -960,6 +822,143 @@ func (q *Queries) CreateRunCheckpoint(ctx context.Context, arg CreateRunCheckpoi
 		&i.ReadyAt,
 		&i.InvalidatedAt,
 		&i.InvalidationReasonCode,
+	)
+	return i, err
+}
+
+const detachCheckpointSource = `-- name: DetachCheckpointSource :one
+WITH closed_mount AS (
+    UPDATE workspace_mounts
+       SET status = 'unmounted',
+           unmounted_at = $1,
+           terminal_at = $1,
+           terminal_reason_code = 'checkpointed',
+           terminal_error = NULL,
+           updated_at = $1
+     WHERE workspace_mounts.id = $2
+       AND workspace_mounts.runtime_instance_id = $3
+       AND workspace_mounts.worker_instance_id = $4
+       AND workspace_mounts.worker_epoch = $5
+       AND workspace_mounts.fencing_generation = $6
+       AND workspace_mounts.status = 'mounted'
+    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.status, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
+), closed_runtime AS (
+    UPDATE runtime_instances
+       SET desired_state = 'closed',
+           desired_version = runtime_instances.desired_version + 1,
+           desired_at = $1,
+           desired_reason = 'checkpointed',
+           reserved_run_id = NULL,
+           reserved_attempt_number = NULL,
+           reserved_process_id = NULL,
+           reserved_workspace_version_id = NULL,
+           reservation_expires_at = NULL,
+           updated_at = $1
+      FROM closed_mount
+     WHERE runtime_instances.id = $3
+       AND runtime_instances.id = closed_mount.runtime_instance_id
+       AND runtime_instances.worker_instance_id = $4
+       AND runtime_instances.worker_epoch = $5
+       AND runtime_instances.desired_state = 'ready'
+       AND runtime_instances.desired_version = $7
+       AND runtime_instances.observed_state = 'ready'
+       AND runtime_instances.observed_version = $8
+    RETURNING runtime_instances.id
+)
+SELECT closed_mount.id, closed_mount.org_id, closed_mount.worker_group_id, closed_mount.project_id, closed_mount.environment_id, closed_mount.region_id, closed_mount.worker_instance_id, closed_mount.worker_epoch, closed_mount.workspace_id, closed_mount.materialized_version_id, closed_mount.runtime_instance_id, closed_mount.guest_channel_token_hash, closed_mount.guest_channel_token_expires_at, closed_mount.status, closed_mount.request, closed_mount.dirty_generation, closed_mount.fencing_generation, closed_mount.finalization_kind, closed_mount.finalization_reason_code, closed_mount.finalization_error, closed_mount.staged_version_id, closed_mount.mounted_at, closed_mount.unmounted_at, closed_mount.stopped_at, closed_mount.lost_at, closed_mount.failed_at, closed_mount.terminal_at, closed_mount.terminal_reason_code, closed_mount.terminal_error, closed_mount.created_at, closed_mount.updated_at
+  FROM closed_mount
+  JOIN closed_runtime ON closed_runtime.id = closed_mount.runtime_instance_id
+`
+
+type DetachCheckpointSourceParams struct {
+	CheckpointedAt          pgtype.Timestamptz `json:"checkpointed_at"`
+	WorkspaceMountID        pgtype.UUID        `json:"workspace_mount_id"`
+	RuntimeInstanceID       pgtype.UUID        `json:"runtime_instance_id"`
+	WorkerInstanceID        pgtype.UUID        `json:"worker_instance_id"`
+	WorkerEpoch             int64              `json:"worker_epoch"`
+	MountFencingGeneration  int64              `json:"mount_fencing_generation"`
+	ExpectedDesiredVersion  int64              `json:"expected_desired_version"`
+	ExpectedObservedVersion int64              `json:"expected_observed_version"`
+}
+
+type DetachCheckpointSourceRow struct {
+	ID                         pgtype.UUID        `json:"id"`
+	OrgID                      pgtype.UUID        `json:"org_id"`
+	WorkerGroupID              pgtype.UUID        `json:"worker_group_id"`
+	ProjectID                  pgtype.UUID        `json:"project_id"`
+	EnvironmentID              pgtype.UUID        `json:"environment_id"`
+	RegionID                   string             `json:"region_id"`
+	WorkerInstanceID           pgtype.UUID        `json:"worker_instance_id"`
+	WorkerEpoch                int64              `json:"worker_epoch"`
+	WorkspaceID                pgtype.UUID        `json:"workspace_id"`
+	MaterializedVersionID      pgtype.UUID        `json:"materialized_version_id"`
+	RuntimeInstanceID          pgtype.UUID        `json:"runtime_instance_id"`
+	GuestChannelTokenHash      string             `json:"guest_channel_token_hash"`
+	GuestChannelTokenExpiresAt pgtype.Timestamptz `json:"guest_channel_token_expires_at"`
+	Status                     string             `json:"status"`
+	Request                    []byte             `json:"request"`
+	DirtyGeneration            int64              `json:"dirty_generation"`
+	FencingGeneration          int64              `json:"fencing_generation"`
+	FinalizationKind           pgtype.Text        `json:"finalization_kind"`
+	FinalizationReasonCode     pgtype.Text        `json:"finalization_reason_code"`
+	FinalizationError          []byte             `json:"finalization_error"`
+	StagedVersionID            pgtype.UUID        `json:"staged_version_id"`
+	MountedAt                  pgtype.Timestamptz `json:"mounted_at"`
+	UnmountedAt                pgtype.Timestamptz `json:"unmounted_at"`
+	StoppedAt                  pgtype.Timestamptz `json:"stopped_at"`
+	LostAt                     pgtype.Timestamptz `json:"lost_at"`
+	FailedAt                   pgtype.Timestamptz `json:"failed_at"`
+	TerminalAt                 pgtype.Timestamptz `json:"terminal_at"`
+	TerminalReasonCode         pgtype.Text        `json:"terminal_reason_code"`
+	TerminalError              []byte             `json:"terminal_error"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) DetachCheckpointSource(ctx context.Context, arg DetachCheckpointSourceParams) (DetachCheckpointSourceRow, error) {
+	row := q.db.QueryRow(ctx, detachCheckpointSource,
+		arg.CheckpointedAt,
+		arg.WorkspaceMountID,
+		arg.RuntimeInstanceID,
+		arg.WorkerInstanceID,
+		arg.WorkerEpoch,
+		arg.MountFencingGeneration,
+		arg.ExpectedDesiredVersion,
+		arg.ExpectedObservedVersion,
+	)
+	var i DetachCheckpointSourceRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.WorkerGroupID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RegionID,
+		&i.WorkerInstanceID,
+		&i.WorkerEpoch,
+		&i.WorkspaceID,
+		&i.MaterializedVersionID,
+		&i.RuntimeInstanceID,
+		&i.GuestChannelTokenHash,
+		&i.GuestChannelTokenExpiresAt,
+		&i.Status,
+		&i.Request,
+		&i.DirtyGeneration,
+		&i.FencingGeneration,
+		&i.FinalizationKind,
+		&i.FinalizationReasonCode,
+		&i.FinalizationError,
+		&i.StagedVersionID,
+		&i.MountedAt,
+		&i.UnmountedAt,
+		&i.StoppedAt,
+		&i.LostAt,
+		&i.FailedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -1972,70 +1971,108 @@ func (q *Queries) ReleaseCheckpointWorkspaceLease(ctx context.Context, arg Relea
 }
 
 const requestCheckpointFailureRuntimeClose = `-- name: RequestCheckpointFailureRuntimeClose :one
-WITH close_runtime AS (
-    UPDATE runtime_instances
-       SET desired_state = 'closed',
-           desired_version = desired_version + 1,
-           desired_at = $1,
-           desired_reason = 'checkpoint_failed',
-           updated_at = $1
-     WHERE runtime_instances.id = $10
-       AND runtime_instances.org_id = $3
-       AND runtime_instances.project_id = $4
-       AND runtime_instances.environment_id = $5
-       AND runtime_instances.workspace_id = $6
-       AND runtime_instances.worker_instance_id = $7
-       AND runtime_instances.worker_epoch = $8
-       AND runtime_instances.desired_state = 'ready'
-       AND runtime_instances.observed_state = 'ready'
+WITH target AS (
+    SELECT workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.status, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
+      FROM workspace_mounts
+      JOIN runtime_instances ON runtime_instances.id = workspace_mounts.runtime_instance_id
+       AND runtime_instances.org_id = workspace_mounts.org_id
+       AND runtime_instances.worker_instance_id = workspace_mounts.worker_instance_id
+       AND runtime_instances.worker_epoch = workspace_mounts.worker_epoch
+       AND runtime_instances.observed_state IN ('ready', 'failed')
        AND runtime_instances.reclaimed_at IS NULL
-    RETURNING id
+     WHERE workspace_mounts.id = $1
+       AND workspace_mounts.org_id = $2
+       AND workspace_mounts.project_id = $3
+       AND workspace_mounts.environment_id = $4
+       AND workspace_mounts.workspace_id = $5
+       AND workspace_mounts.runtime_instance_id = $6
+       AND workspace_mounts.worker_instance_id = $7
+       AND workspace_mounts.worker_epoch = $8
+       AND workspace_mounts.fencing_generation = $9
+       AND workspace_mounts.status IN ('mounted', 'unmounting', 'failed')
+     FOR UPDATE OF runtime_instances, workspace_mounts
+), close_runtime AS (
+    UPDATE runtime_instances
+       SET desired_state = 'closed', desired_version = desired_version + 1,
+           desired_at = $10, desired_reason = 'checkpoint_failed',
+           updated_at = $10
+      FROM target
+     WHERE runtime_instances.id = target.runtime_instance_id
+       AND runtime_instances.desired_state = 'ready'
+    RETURNING runtime_instances.id
+), detach_mount AS (
+    UPDATE workspace_mounts
+       SET status = 'unmounting', updated_at = $10
+      FROM target
+     WHERE workspace_mounts.id = target.id AND target.status = 'mounted'
+    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.status, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
 )
-UPDATE workspace_mounts
-   SET status = 'unmounting',
-       stopped_at = COALESCE(stopped_at, $1),
-       updated_at = $1
-  FROM close_runtime
- WHERE workspace_mounts.id = $2
-   AND workspace_mounts.org_id = $3
-   AND workspace_mounts.project_id = $4
-   AND workspace_mounts.environment_id = $5
-   AND workspace_mounts.workspace_id = $6
-   AND workspace_mounts.runtime_instance_id = close_runtime.id
-   AND workspace_mounts.worker_instance_id = $7
-   AND workspace_mounts.worker_epoch = $8
-   AND workspace_mounts.fencing_generation = $9
-   AND workspace_mounts.status = 'mounted'
-RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.status, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
+SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, guest_channel_token_hash, guest_channel_token_expires_at, status, request, dirty_generation, fencing_generation, finalization_kind, finalization_reason_code, finalization_error, staged_version_id, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at FROM detach_mount
+UNION ALL
+SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, guest_channel_token_hash, guest_channel_token_expires_at, status, request, dirty_generation, fencing_generation, finalization_kind, finalization_reason_code, finalization_error, staged_version_id, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at FROM target WHERE status <> 'mounted'
 `
 
 type RequestCheckpointFailureRuntimeCloseParams struct {
-	FailedAt               pgtype.Timestamptz `json:"failed_at"`
 	WorkspaceMountID       pgtype.UUID        `json:"workspace_mount_id"`
 	OrgID                  pgtype.UUID        `json:"org_id"`
 	ProjectID              pgtype.UUID        `json:"project_id"`
 	EnvironmentID          pgtype.UUID        `json:"environment_id"`
 	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
+	RuntimeInstanceID      pgtype.UUID        `json:"runtime_instance_id"`
 	WorkerInstanceID       pgtype.UUID        `json:"worker_instance_id"`
 	WorkerEpoch            int64              `json:"worker_epoch"`
 	MountFencingGeneration int64              `json:"mount_fencing_generation"`
-	RuntimeInstanceID      pgtype.UUID        `json:"runtime_instance_id"`
+	FailedAt               pgtype.Timestamptz `json:"failed_at"`
 }
 
-func (q *Queries) RequestCheckpointFailureRuntimeClose(ctx context.Context, arg RequestCheckpointFailureRuntimeCloseParams) (WorkspaceMount, error) {
+type RequestCheckpointFailureRuntimeCloseRow struct {
+	ID                         pgtype.UUID        `json:"id"`
+	OrgID                      pgtype.UUID        `json:"org_id"`
+	WorkerGroupID              pgtype.UUID        `json:"worker_group_id"`
+	ProjectID                  pgtype.UUID        `json:"project_id"`
+	EnvironmentID              pgtype.UUID        `json:"environment_id"`
+	RegionID                   string             `json:"region_id"`
+	WorkerInstanceID           pgtype.UUID        `json:"worker_instance_id"`
+	WorkerEpoch                int64              `json:"worker_epoch"`
+	WorkspaceID                pgtype.UUID        `json:"workspace_id"`
+	MaterializedVersionID      pgtype.UUID        `json:"materialized_version_id"`
+	RuntimeInstanceID          pgtype.UUID        `json:"runtime_instance_id"`
+	GuestChannelTokenHash      string             `json:"guest_channel_token_hash"`
+	GuestChannelTokenExpiresAt pgtype.Timestamptz `json:"guest_channel_token_expires_at"`
+	Status                     string             `json:"status"`
+	Request                    []byte             `json:"request"`
+	DirtyGeneration            int64              `json:"dirty_generation"`
+	FencingGeneration          int64              `json:"fencing_generation"`
+	FinalizationKind           pgtype.Text        `json:"finalization_kind"`
+	FinalizationReasonCode     pgtype.Text        `json:"finalization_reason_code"`
+	FinalizationError          []byte             `json:"finalization_error"`
+	StagedVersionID            pgtype.UUID        `json:"staged_version_id"`
+	MountedAt                  pgtype.Timestamptz `json:"mounted_at"`
+	UnmountedAt                pgtype.Timestamptz `json:"unmounted_at"`
+	StoppedAt                  pgtype.Timestamptz `json:"stopped_at"`
+	LostAt                     pgtype.Timestamptz `json:"lost_at"`
+	FailedAt                   pgtype.Timestamptz `json:"failed_at"`
+	TerminalAt                 pgtype.Timestamptz `json:"terminal_at"`
+	TerminalReasonCode         pgtype.Text        `json:"terminal_reason_code"`
+	TerminalError              []byte             `json:"terminal_error"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) RequestCheckpointFailureRuntimeClose(ctx context.Context, arg RequestCheckpointFailureRuntimeCloseParams) (RequestCheckpointFailureRuntimeCloseRow, error) {
 	row := q.db.QueryRow(ctx, requestCheckpointFailureRuntimeClose,
-		arg.FailedAt,
 		arg.WorkspaceMountID,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.WorkspaceID,
+		arg.RuntimeInstanceID,
 		arg.WorkerInstanceID,
 		arg.WorkerEpoch,
 		arg.MountFencingGeneration,
-		arg.RuntimeInstanceID,
+		arg.FailedAt,
 	)
-	var i WorkspaceMount
+	var i RequestCheckpointFailureRuntimeCloseRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,

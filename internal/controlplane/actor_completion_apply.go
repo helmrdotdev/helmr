@@ -359,8 +359,7 @@ func validateRestoredActorBase(
 	sourceAuthority.sourceRunLease = source.RunLease
 	sourceAuthority.sourceWorkspaceLease = source.WorkspaceLease
 	sourceAuthority.sourceRuntime = source.RuntimeInstance
-	if validateCheckpointSource(sourceAuthority) != nil || source.RuntimeInstance.DesiredState != db.RuntimeDesiredStateClosed ||
-		source.RuntimeInstance.ObservedState != db.RuntimeObservedStateClosed {
+	if validateCheckpointSource(sourceAuthority) != nil {
 		return db.RunCheckpoint{}, errStaleActorCompletion
 	}
 
@@ -433,8 +432,7 @@ func validateRestoredActorBase(
 		}
 		if childReceipt.RunLease.Status != db.RunLeaseStatusCompleted ||
 			childReceipt.RuntimeInstance.RuntimeIdentityID != childReceipt.RunLease.RuntimeIdentityID ||
-			childReceipt.RuntimeInstance.DesiredState != db.RuntimeDesiredStateClosed ||
-			childReceipt.RuntimeInstance.ObservedState != db.RuntimeObservedStateClosed {
+			!runtimeHasExclusionProof(childReceipt.RuntimeInstance) {
 			return db.RunCheckpoint{}, errStaleActorCompletion
 		}
 		return checkpoint, nil

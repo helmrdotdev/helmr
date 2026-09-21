@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -1446,24 +1447,24 @@ func validRunLeaseClaimSecretFixture(
 		RevocationGeneration: 2,
 	}
 	return db.LockAttemptSecretDeliveryRow{
-		WorkspaceSecret: db.WorkspaceSecret{
-			WorkspaceID:     locators.WorkspaceID,
-			EnvironmentID:   locators.EnvironmentID,
-			PlacementKind:   "env",
-			PlacementTarget: "API_KEY",
-			SecretID:        secretID,
-		},
-		Secret:                         secretRow,
-		ResolutionID:                   pgvalue.UUID(uuid.New()),
-		ResolutionRunID:                locators.RunID,
-		ResolutionAttemptNumber:        pgtype.Int4{Int32: locators.AttemptNumber, Valid: true},
-		ResolutionSecretVersionID:      versionID,
-		ResolutionRevocationGeneration: pgtype.Int8{Int64: 2, Valid: true},
-	}, db.SecretVersion{
-		ID:       versionID,
-		SecretID: secretID,
-		Version:  1,
-	}
+			WorkspaceSecret: db.WorkspaceSecret{
+				WorkspaceID:     locators.WorkspaceID,
+				EnvironmentID:   locators.EnvironmentID,
+				PlacementKind:   "env",
+				PlacementTarget: "API_KEY",
+				SecretID:        secretID,
+			},
+			Secret:                         secretRow,
+			ResolutionID:                   pgvalue.UUID(uuid.New()),
+			ResolutionRunID:                locators.RunID,
+			ResolutionAttemptNumber:        pgtype.Int4{Int32: locators.AttemptNumber, Valid: true},
+			ResolutionSecretVersionID:      versionID,
+			ResolutionRevocationGeneration: pgtype.Int8{Int64: 2, Valid: true},
+		}, db.SecretVersion{
+			ID:       versionID,
+			SecretID: secretID,
+			Version:  1,
+		}
 }
 
 func validRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsRow, runLeaseClaimAuthority) {
@@ -1699,11 +1700,11 @@ func validCheckpointRestoreRunLeaseClaimFixture(actor bool) (workerActor, db.Get
 		authority.runWait.Kind = db.WaitKindToken
 	}
 	authority.sourceRuntime = authority.runtime
+	authority.sourceRuntime.ReclaimedAt = pgvalue.Timestamptz(time.Now())
+	authority.sourceRuntime.ReclaimEvidence = []byte(`{"method":"session_closed"}`)
 	authority.sourceRuntime.ID = pgvalue.UUID(uuid.New())
-	if actor {
-		authority.sourceRuntime.DesiredState = db.RuntimeDesiredStateClosed
-		authority.sourceRuntime.ObservedState = db.RuntimeObservedStateClosed
-	}
+	authority.sourceRuntime.DesiredState = db.RuntimeDesiredStateClosed
+	authority.sourceRuntime.ObservedState = db.RuntimeObservedStateClosed
 	authority.sourceRunLease = authority.runLease
 	authority.sourceRunLease.ID = sourceRunLeaseID
 	authority.sourceRunLease.RuntimeInstanceID = authority.sourceRuntime.ID
@@ -1814,6 +1815,8 @@ func validSameWorkspaceChildRunLeaseClaimFixture(actorParent bool) (workerActor,
 		Status:                    db.RunCheckpointStatusReady,
 	}
 	authority.sourceRuntime = authority.runtime
+	authority.sourceRuntime.ReclaimedAt = pgvalue.Timestamptz(time.Now())
+	authority.sourceRuntime.ReclaimEvidence = []byte(`{"method":"session_closed"}`)
 	authority.sourceRunLease = authority.runLease
 	authority.sourceRunLease.ID = sourceRunLeaseID
 	authority.sourceRunLease.Status = db.RunLeaseStatusCheckpointed

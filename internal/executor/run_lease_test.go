@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"slices"
 	"sync"
@@ -553,6 +554,7 @@ func (runner *testRunLeaseTaskRunner) StartRunLeaseTask(
 }
 
 type testRunLeaseTask struct {
+	waitErr         error
 	trace           *runLeaseTrace
 	result          RunLeaseTaskResult
 	previous        workerapi.RunLeaseAssignment
@@ -565,7 +567,7 @@ func (task *testRunLeaseTask) Close() {}
 
 func (task *testRunLeaseTask) Wait(context.Context) (RunLeaseTaskResult, error) {
 	task.trace.add("wait")
-	return task.result, nil
+	return task.result, task.waitErr
 }
 
 func (task *testRunLeaseTask) RenewRunLease(
@@ -737,5 +739,32 @@ func testRunFinalizationResponse(
 		Lease: lease.Fence(), ExpiresAt: lease.ExpiresAt,
 		BaseWorkspaceVersionID: lease.BaseWorkspaceVersionID,
 		Kind:                   kind,
+	}
+}
+
+func TestExecutorPreservesCheckpointReleaseFailureAfterDetachment(t *testing.T) {
+	for _, failed := range []bool{false, true} {
+		t.Run(fmt.Sprint(failed), func(t *testing.T) {
+			trace := &runLeaseTrace{}
+			lease := testRunLeaseAssignment(time.Now().Add(time.Minute))
+			releaseErr := errors.New("physical stop uncertain")
+			waitErr := ErrDetached
+			if failed {
+				waitErr = errors.Join(ErrDetached, &checkpointSourceReleaseError{err: releaseErr})
+			}
+			task := &testRunLeaseTask{trace: trace, waitErr: waitErr}
+			client := &testRunLeaseControlPlane{trace: trace, claim: workerapi.RunLeaseClaimResponse{Lease: lease}}
+			e := Executor{RunLeases: client, RunLeaseTasks: &testRunLeaseTaskRunner{trace: trace, task: task}}
+			err := e.ExecuteRunLease(context.Background(), workerapi.RunLeaseWork{LeaseID: lease.ID, LeaseSequence: lease.LeaseSequence})
+			if failed && !errors.Is(err, releaseErr) {
+				t.Fatalf("lost release failure: %v", err)
+			}
+			if !failed && err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(trace.calls, []string{"claim", "start", "wait"}) {
+				t.Fatalf("finalized detached run: %v", trace.calls)
+			}
+		})
 	}
 }

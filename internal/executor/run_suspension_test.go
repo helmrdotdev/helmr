@@ -139,6 +139,11 @@ func TestControlPlaneRunWaitsStaysDetachedWhenCheckpointSourceReleaseFails(t *te
 	if !errors.Is(err, ErrDetached) || !strings.Contains(err.Error(), "release checkpoint source: close failed") {
 		t.Fatalf("err = %v, want detached release failure", err)
 	}
+	var releaseErr *checkpointSourceReleaseError
+	if !errors.As(err, &releaseErr) || client.ready == nil || client.failed != nil {
+		t.Fatalf("successful publication lost cleanup marker or was rewritten as capture failure: %v", err)
+	}
+
 }
 
 func TestControlPlaneRunWaitsContinuesAlreadyOpenedWaitWithoutCreatingAnother(t *testing.T) {
@@ -536,5 +541,21 @@ func testRunCheckpointWaitManifest() workerapi.CheckpointManifest {
 			MemoryArtifacts:     []workerapi.CheckpointArtifact{{Digest: "sha256:" + strings.Repeat("2", 64), MediaType: cas.CheckpointMemoryMediaType}},
 			Config:              json.RawMessage(`{"recovery_point":{"runtime":{"backend":"firecracker"}}}`),
 		},
+	}
+}
+
+func TestCheckpointFailureAcknowledgementPreservesCleanupUncertainty(t *testing.T) {
+	client := &fakeRunWaitClient{}
+	captureErr := errors.New("snapshot failed")
+	releaseErr := errors.New("VM still running")
+	request := testWaitRequest(workerapi.RunWaitKindToken)
+	request.Checkpointer = &fakeCheckpointer{err: errors.Join(captureErr, &checkpointSourceReleaseError{err: releaseErr})}
+	err := (ControlPlaneRunWaits{Client: client}).handleCheckpointDecision(context.Background(), request,
+		workerapi.RunWaitPollResponse{RunWaitID: "wait", CheckpointID: "checkpoint", RequestVersion: 1})
+	if !errors.Is(err, ErrDetached) || !errors.Is(err, captureErr) || !errors.Is(err, releaseErr) {
+		t.Fatalf("acknowledgement lost failure: %v", err)
+	}
+	if client.failed == nil {
+		t.Fatal("checkpoint failure not reported")
 	}
 }

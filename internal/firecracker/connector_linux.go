@@ -2059,6 +2059,8 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 		phases = append(phases, vm.RuntimePhase{Name: name, DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started))})
 	}
 	started := time.Now()
+	// A failed response can leave the VM paused. The owner must converge or
+	// explicitly authorize resume; snapshot failures never thaw customer code.
 	if err := s.machine.PauseVM(ctx); err != nil {
 		return vm.SnapshotArtifact{}, fmt.Errorf("pause Firecracker vm: %w", err)
 	}
@@ -2071,7 +2073,6 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 		path.Join("/", stateName),
 		explicitFullSnapshot,
 	); err != nil {
-		_ = s.Resume(context.Background())
 		return vm.SnapshotArtifact{}, fmt.Errorf("create Firecracker snapshot: %w", err)
 	}
 	recordPhase("firecracker_create_snapshot", started)
@@ -2085,11 +2086,9 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 	runtimeIdentity := s.runtimeIdentity
 	expectedRuntimeID, err := runtimeIdentity.ExpectedID()
 	if err != nil {
-		_ = s.Resume(context.Background())
 		return vm.SnapshotArtifact{}, err
 	}
 	if runtimeIdentity.ID != expectedRuntimeID {
-		_ = s.Resume(context.Background())
 		return vm.SnapshotArtifact{}, errors.New("bound host runtime identity is not canonical")
 	}
 	workerArchitecture := runtimeIdentity.Arch
@@ -2111,7 +2110,6 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 		s.readOnlyDrives,
 	)
 	if err != nil {
-		_ = s.Resume(context.Background())
 		return vm.SnapshotArtifact{}, err
 	}
 	recordPhase("runtime_config_digest", started)
@@ -2140,7 +2138,6 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 	})
 	if err := group.Wait(); err != nil {
 		removeFiles([]string{scratchFile.Path, memoryFile.Path})
-		_ = s.Resume(context.Background())
 		return vm.SnapshotArtifact{}, err
 	}
 	phases = append(phases, scratchPhase, memoryPhase)

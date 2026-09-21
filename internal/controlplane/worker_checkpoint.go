@@ -189,7 +189,7 @@ func (s *Server) workerMarkCheckpointFailed(w http.ResponseWriter, r *http.Reque
 		if err != nil {
 			return err
 		}
-		authority, err := lockRenewableRunLeaseAuthority(
+		authority, err := lockCheckpointFailureAuthority(
 			r.Context(), work.q, worker, pgvalue.UUID(parsed.lease.leaseID), normalized.Lease.LeaseSequence, locators,
 		)
 		if err != nil {
@@ -1003,7 +1003,7 @@ func (s *Server) commitCheckpointReady(
 		}); err != nil {
 			return staleRunLeaseClaim(err)
 		}
-		if _, err := work.q.CloseCheckpointSourceRuntime(ctx, db.CloseCheckpointSourceRuntimeParams{
+		if _, err := work.q.DetachCheckpointSource(ctx, db.DetachCheckpointSourceParams{
 			CheckpointedAt:          checkpointedAt,
 			WorkspaceMountID:        authority.workspaceMount.ID,
 			RuntimeInstanceID:       authority.runtime.ID,

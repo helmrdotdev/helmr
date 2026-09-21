@@ -548,7 +548,7 @@ func (s *Server) workerFailWorkspaceMount(w http.ResponseWriter, r *http.Request
 		if err != nil {
 			return err
 		}
-		failed = row
+		failed = db.WorkspaceMount(row)
 		if execAuthority != nil {
 			return s.failWorkspaceExec(
 				r.Context(),
@@ -669,14 +669,17 @@ func (s *Server) workspaceMountTransition(
 		return workspaceMountTransitionAuthority{}, err
 	}
 	worker := workerFromContext(ctx)
-	mount, err := s.db.GetWorkspaceMountForWorkerTransition(
+	mount, err := s.db.GetWorkspaceMountForWorker(
 		ctx,
-		db.GetWorkspaceMountForWorkerTransitionParams{
+		db.GetWorkspaceMountForWorkerParams{
 			OrgID: orgID, ID: mountID,
 			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 			WorkerEpoch:      worker.WorkerEpoch,
 		},
 	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return workspaceMountTransitionAuthority{}, conflict(errors.New("workspace mount is stale"))
+	}
 	if err != nil {
 		return workspaceMountTransitionAuthority{}, err
 	}

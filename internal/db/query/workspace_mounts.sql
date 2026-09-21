@@ -201,12 +201,11 @@ WHERE workspace_mounts.runtime_instance_id = excluded.runtime_instance_id
 RETURNING workspace_mounts.*, (xmax = 0) AS inserted,
           CASE WHEN xmax = 0 THEN 'created'::text ELSE 'replayed'::text END AS decision;
 
--- name: GetWorkspaceMountForWorkerTransition :one
+-- name: GetWorkspaceMountForWorker :one
 SELECT * FROM workspace_mounts
  WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id)
    AND worker_instance_id = sqlc.arg(worker_instance_id)
-   AND worker_epoch = sqlc.arg(worker_epoch)
-   AND status IN ('mounting','mounted','unmounting');
+   AND worker_epoch = sqlc.arg(worker_epoch);
 
 -- name: ClaimWorkspaceMount :one
 WITH candidate AS (
@@ -458,46 +457,54 @@ UPDATE workspace_mounts
 RETURNING workspace_mounts.*;
 
 -- name: FailWorkspaceMount :one
-WITH target AS (
+WITH source_runtime AS MATERIALIZED (
+    SELECT runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_instance_id, runtime_instances.worker_epoch
+      FROM runtime_instances
+     WHERE runtime_instances.id = sqlc.arg(runtime_instance_id) AND runtime_instances.org_id = sqlc.arg(org_id)
+       AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id) AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
+       AND runtime_instances.observed_state IN ('allocated', 'ready', 'failed') AND reclaimed_at IS NULL
+     FOR UPDATE
+), target AS (
     SELECT workspace_mounts.*
       FROM workspace_mounts
-      JOIN runtime_instances
-        ON runtime_instances.org_id = workspace_mounts.org_id
-       AND runtime_instances.id = workspace_mounts.runtime_instance_id
-       AND runtime_instances.worker_instance_id = workspace_mounts.worker_instance_id
-       AND runtime_instances.worker_epoch = workspace_mounts.worker_epoch
-       AND runtime_instances.observed_state IN ('allocated','ready')
-       AND runtime_instances.reclaimed_at IS NULL
+      JOIN source_runtime
+        ON source_runtime.org_id = workspace_mounts.org_id
+       AND source_runtime.id = workspace_mounts.runtime_instance_id
+       AND source_runtime.worker_instance_id = workspace_mounts.worker_instance_id
+       AND source_runtime.worker_epoch = workspace_mounts.worker_epoch
      WHERE workspace_mounts.org_id = sqlc.arg(org_id)
        AND workspace_mounts.id = sqlc.arg(id)
        AND workspace_mounts.worker_instance_id = sqlc.arg(worker_instance_id)
        AND workspace_mounts.worker_epoch = sqlc.arg(worker_epoch)
        AND workspace_mounts.runtime_instance_id = sqlc.arg(runtime_instance_id)
        AND workspace_mounts.fencing_generation = sqlc.arg(fencing_generation)
-       AND workspace_mounts.status IN ('mounting','mounted','unmounting')
-     FOR UPDATE OF workspace_mounts, runtime_instances
+       AND (workspace_mounts.status IN ('mounting', 'mounted', 'unmounting', 'failed')
+            OR (workspace_mounts.status = 'unmounted' AND workspace_mounts.terminal_reason_code = 'checkpointed'))
+     FOR UPDATE OF workspace_mounts
 ), failed_runtime AS (
     UPDATE runtime_instances
        SET observed_state = 'failed', observed_version = observed_version + 1,
            observed_at = now(), terminal_at = now(),
-           terminal_reason_code = 'workspace_mount_failed',
+           terminal_reason_code = CASE WHEN target.status = 'unmounted'
+               THEN 'checkpoint_source_stop_failed' ELSE 'workspace_mount_failed' END,
            terminal_error = sqlc.narg(error),
            reserved_run_id = NULL, reserved_attempt_number = NULL,
            reserved_process_id = NULL, reserved_workspace_version_id = NULL,
            reservation_expires_at = NULL, updated_at = now()
       FROM target
-     WHERE runtime_instances.org_id = target.org_id
-       AND runtime_instances.id = target.runtime_instance_id
-       AND runtime_instances.worker_instance_id = target.worker_instance_id
-       AND runtime_instances.worker_epoch = target.worker_epoch
-    RETURNING runtime_instances.*
+     WHERE runtime_instances.id = target.runtime_instance_id
+       AND runtime_instances.observed_state IN ('allocated', 'ready')
+    RETURNING runtime_instances.id
+), failed_mount AS (
+    UPDATE workspace_mounts
+       SET status = 'failed', failed_at = now(), terminal_at = now(),
+           terminal_reason_code = sqlc.arg(reason_code), terminal_error = sqlc.narg(error),
+           updated_at = now()
+      FROM target
+     WHERE workspace_mounts.id = target.id
+       AND target.status IN ('mounting', 'mounted', 'unmounting')
+    RETURNING workspace_mounts.*
 )
-UPDATE workspace_mounts
-   SET status = 'failed', failed_at = now(), terminal_at = now(),
-       terminal_reason_code = sqlc.arg(reason_code), terminal_error = sqlc.narg(error),
-       updated_at = now()
-  FROM target, failed_runtime
- WHERE workspace_mounts.org_id = target.org_id
-   AND workspace_mounts.id = target.id
-   AND failed_runtime.id = target.runtime_instance_id
-RETURNING workspace_mounts.*;
+SELECT * FROM failed_mount
+UNION ALL
+SELECT * FROM target WHERE status IN ('failed', 'unmounted');

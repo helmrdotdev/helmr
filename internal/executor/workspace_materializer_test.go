@@ -1659,6 +1659,7 @@ func (s *workspaceMaterializerTestSession) Wait(ctx context.Context) error {
 }
 
 type workspaceMaterializerTestClient struct {
+	failErrors      []error
 	cancel          context.CancelFunc
 	workspaceExec   *workerapi.WorkspaceExec
 	execClaims      []workerapi.WorkspaceExecClaimRequest
@@ -1708,6 +1709,11 @@ func (c *workspaceMaterializerTestClient) StopWorkspaceMount(context.Context, wo
 
 func (c *workspaceMaterializerTestClient) FailWorkspaceMount(_ context.Context, request workerapi.WorkspaceMountFailRequest) (workerapi.WorkspaceMountResponse, error) {
 	c.failures = append(c.failures, request)
+	if len(c.failErrors) > 0 {
+		err := c.failErrors[0]
+		c.failErrors = c.failErrors[1:]
+		return workerapi.WorkspaceMountResponse{}, err
+	}
 	return workerapi.WorkspaceMountResponse{Status: "failed"}, nil
 }
 
@@ -1914,5 +1920,81 @@ func TestArtifactCacheFallbackRejectsSizeBeforeCopy(t *testing.T) {
 	}
 	if _, err := source.Stat(); !errors.Is(err, os.ErrClosed) {
 		t.Fatalf("source FD leaked: %v", err)
+	}
+}
+
+func TestCheckpointReleaseFailureReportsWithoutVMExit(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, server := net.Pipe()
+	defer server.Close()
+	store, mount := testWorkspaceMountArtifacts(t)
+	mount.ID, mount.OrgID, mount.WorkspaceID = "release-failure", "org", "workspace"
+	mount.GuestdChannelToken = "channel-token"
+	mount.GuestdChannelTokenHash = sha256sum.HexBytes([]byte("channel-token"))
+	go acknowledgePreparedWorkspaceMount(t, server, mount, mount.RuntimeInstanceID)
+	stopErr, reportErr := errors.New("VM stop unproved"), errors.New("failure acknowledgement lost")
+	raw := &workspaceMaterializerTestSession{streams: []io.ReadWriteCloser{conn}, operation: discardReadWriteCloser{}, closeErr: stopErr}
+	pool := workspacePreparedRuntimePool(t, mount, raw)
+	sessions := NewWorkspaceMountSessions()
+	mounted := make(chan struct{})
+	client := &workspaceMaterializerTestClient{onMounted: func() { close(mounted) }, failErrors: []error{reportErr}}
+	materializer := WorkspaceMaterializer{CAS: store, Sessions: sessions, TempDir: t.TempDir(), Heartbeat: time.Hour, PollEvery: time.Hour, RuntimePool: pool}
+	done := make(chan error, 1)
+	go func() { done <- materializer.RunWorkspaceMount(ctx, mount, client) }()
+	select {
+	case <-mounted:
+	case <-ctx.Done():
+		t.Fatal("mount not ready")
+	}
+	borrowed, err := sessions.OpenWorkspaceMountSession(ctx, mount.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer borrowed.Session.Close(context.Background())
+	if err := borrowed.Session.(CheckpointSourceReleaser).ReleaseCheckpointSource(ctx); !errors.Is(err, stopErr) {
+		t.Fatalf("release: %v", err)
+	}
+	select {
+	case err := <-done:
+		if !errors.Is(err, stopErr) || !errors.Is(err, reportErr) {
+			t.Fatalf("lost stop/report failure: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("mount waited for VM exit after failed stop")
+	}
+	if len(client.failures) != 2 {
+		t.Fatalf("failure reporting attempts = %d", len(client.failures))
+	}
+	if !pool.runtimeCheckedOut(mount.RuntimeInstanceID, mount.RuntimeEpoch) {
+		t.Fatal("released unproven runtime")
+	}
+	if len(pool.Capacity.Snapshot().Reservations) != 1 {
+		t.Fatal("released capacity before physical reclaim")
+	}
+	if raw.closeCount() != 1 {
+		t.Fatal("retried cached session close instead of deferring physical reclaim")
+	}
+	// Reconciliation receives a CP-authorized target after active leases expire.
+	// It must use host cleanup, not retry the cached session Close failure.
+	connector := &cleanupRuntimeConnector{err: errors.New("process still alive")}
+	pool.Connector = connector
+	target := runtimeCapacityTarget(mount.RuntimeInstanceID, mount.RuntimeEpoch)
+	control := &typedRuntimeClient{}
+	if err := pool.ReclaimFailedRuntimeTarget(ctx, control, target); err == nil {
+		t.Fatal("unproved host cleanup succeeded")
+	}
+	if !pool.runtimeCheckedOut(mount.RuntimeInstanceID, mount.RuntimeEpoch) || len(control.failed) != 0 {
+		t.Fatal("released or published proof before physical cleanup")
+	}
+	connector.err = nil
+	if err := pool.ReclaimFailedRuntimeTarget(ctx, control, target); err != nil {
+		t.Fatal(err)
+	}
+	if pool.runtimeCheckedOut(mount.RuntimeInstanceID, mount.RuntimeEpoch) || len(pool.Capacity.Snapshot().Reservations) != 0 {
+		t.Fatal("retained runtime after proved cleanup")
+	}
+	if len(control.failed) != 1 || control.failed[0].CleanupProof == nil || raw.closeCount() != 1 {
+		t.Fatal("reclaim did not publish host proof independently of cached Close")
 	}
 }

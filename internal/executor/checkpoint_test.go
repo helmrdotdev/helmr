@@ -805,3 +805,17 @@ func assertRemoved(t *testing.T, path string) {
 		t.Fatalf("stat %s err = %v, want not exist", path, err)
 	}
 }
+
+func TestRuntimeCheckpointerPreservesCaptureAndReleaseErrors(t *testing.T) {
+	stream := newCheckpointStream(t, nil, "wait", "checkpoint")
+	captureErr, releaseErr := errors.New("pause response lost"), errors.New("stop failed")
+	session := &checkpointSession{stream: stream, snapshotErr: captureErr, closeErr: releaseErr}
+	_, err := (runtimeCheckpointer{session: session, stream: stream, cas: &checkpointCAS{}, encryptor: testCheckpointEncryptor(t), tempDir: t.TempDir()}).CreateCheckpoint(context.Background(), CheckpointRequest{RunWaitID: "wait", CheckpointID: "checkpoint"})
+	var cleanup *checkpointSourceReleaseError
+	if !errors.Is(err, captureErr) || !errors.Is(err, releaseErr) || !errors.As(err, &cleanup) {
+		t.Fatalf("lost failure: %v", err)
+	}
+	if session.closeCount != 1 || session.resumeCount != 0 {
+		t.Fatalf("close/resume = %d/%d", session.closeCount, session.resumeCount)
+	}
+}

@@ -162,11 +162,10 @@ UPDATE workspace_leases
    AND expires_at > sqlc.arg(checkpointed_at)
 RETURNING *;
 
--- name: CloseCheckpointSourceRuntime :one
+-- name: DetachCheckpointSource :one
 WITH closed_mount AS (
     UPDATE workspace_mounts
        SET status = 'unmounted',
-           stopped_at = COALESCE(stopped_at, sqlc.arg(checkpointed_at)),
            unmounted_at = sqlc.arg(checkpointed_at),
            terminal_at = sqlc.arg(checkpointed_at),
            terminal_reason_code = 'checkpointed',
@@ -426,41 +425,45 @@ UPDATE run_waits
 RETURNING *;
 
 -- name: RequestCheckpointFailureRuntimeClose :one
-WITH close_runtime AS (
-    UPDATE runtime_instances
-       SET desired_state = 'closed',
-           desired_version = desired_version + 1,
-           desired_at = sqlc.arg(failed_at),
-           desired_reason = 'checkpoint_failed',
-           updated_at = sqlc.arg(failed_at)
-     WHERE runtime_instances.id = sqlc.arg(runtime_instance_id)
-       AND runtime_instances.org_id = sqlc.arg(org_id)
-       AND runtime_instances.project_id = sqlc.arg(project_id)
-       AND runtime_instances.environment_id = sqlc.arg(environment_id)
-       AND runtime_instances.workspace_id = sqlc.arg(workspace_id)
-       AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
-       AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
-       AND runtime_instances.desired_state = 'ready'
-       AND runtime_instances.observed_state = 'ready'
+WITH target AS (
+    SELECT workspace_mounts.*
+      FROM workspace_mounts
+      JOIN runtime_instances ON runtime_instances.id = workspace_mounts.runtime_instance_id
+       AND runtime_instances.org_id = workspace_mounts.org_id
+       AND runtime_instances.worker_instance_id = workspace_mounts.worker_instance_id
+       AND runtime_instances.worker_epoch = workspace_mounts.worker_epoch
+       AND runtime_instances.observed_state IN ('ready', 'failed')
        AND runtime_instances.reclaimed_at IS NULL
-    RETURNING id
+     WHERE workspace_mounts.id = sqlc.arg(workspace_mount_id)
+       AND workspace_mounts.org_id = sqlc.arg(org_id)
+       AND workspace_mounts.project_id = sqlc.arg(project_id)
+       AND workspace_mounts.environment_id = sqlc.arg(environment_id)
+       AND workspace_mounts.workspace_id = sqlc.arg(workspace_id)
+       AND workspace_mounts.runtime_instance_id = sqlc.arg(runtime_instance_id)
+       AND workspace_mounts.worker_instance_id = sqlc.arg(worker_instance_id)
+       AND workspace_mounts.worker_epoch = sqlc.arg(worker_epoch)
+       AND workspace_mounts.fencing_generation = sqlc.arg(mount_fencing_generation)
+       AND workspace_mounts.status IN ('mounted', 'unmounting', 'failed')
+     FOR UPDATE OF runtime_instances, workspace_mounts
+), close_runtime AS (
+    UPDATE runtime_instances
+       SET desired_state = 'closed', desired_version = desired_version + 1,
+           desired_at = sqlc.arg(failed_at), desired_reason = 'checkpoint_failed',
+           updated_at = sqlc.arg(failed_at)
+      FROM target
+     WHERE runtime_instances.id = target.runtime_instance_id
+       AND runtime_instances.desired_state = 'ready'
+    RETURNING runtime_instances.id
+), detach_mount AS (
+    UPDATE workspace_mounts
+       SET status = 'unmounting', updated_at = sqlc.arg(failed_at)
+      FROM target
+     WHERE workspace_mounts.id = target.id AND target.status = 'mounted'
+    RETURNING workspace_mounts.*
 )
-UPDATE workspace_mounts
-   SET status = 'unmounting',
-       stopped_at = COALESCE(stopped_at, sqlc.arg(failed_at)),
-       updated_at = sqlc.arg(failed_at)
-  FROM close_runtime
- WHERE workspace_mounts.id = sqlc.arg(workspace_mount_id)
-   AND workspace_mounts.org_id = sqlc.arg(org_id)
-   AND workspace_mounts.project_id = sqlc.arg(project_id)
-   AND workspace_mounts.environment_id = sqlc.arg(environment_id)
-   AND workspace_mounts.workspace_id = sqlc.arg(workspace_id)
-   AND workspace_mounts.runtime_instance_id = close_runtime.id
-   AND workspace_mounts.worker_instance_id = sqlc.arg(worker_instance_id)
-   AND workspace_mounts.worker_epoch = sqlc.arg(worker_epoch)
-   AND workspace_mounts.fencing_generation = sqlc.arg(mount_fencing_generation)
-   AND workspace_mounts.status = 'mounted'
-RETURNING workspace_mounts.*;
+SELECT * FROM detach_mount
+UNION ALL
+SELECT * FROM target WHERE status <> 'mounted';
 
 -- name: GetReadyRunCheckpoint :one
 SELECT sqlc.embed(run_checkpoints),
@@ -604,7 +607,7 @@ WITH RECURSIVE proven AS NOT MATERIALIZED (
       JOIN runtime_instances runtime ON runtime.id = lease.runtime_instance_id
        AND runtime.workspace_id = c.workspace_id AND runtime.runtime_identity_id = lease.runtime_identity_id
        AND runtime.program_deployment_id = r.deployment_id
-       AND runtime.desired_state = 'closed' AND runtime.observed_state = 'closed'
+       AND runtime.reclaimed_at IS NOT NULL AND runtime.reclaim_evidence->>'method' IN ('session_closed', 'host_reconciled', 'provider_absent')
      WHERE c.run_id = sqlc.arg(run_id)::uuid AND c.attempt_number = sqlc.arg(attempt_number)::integer
        AND c.workspace_id = sqlc.arg(workspace_id)::uuid AND c.status = 'ready'
        AND c.actor_speculative_input_sequence IS NOT NULL
@@ -658,7 +661,7 @@ WITH RECURSIVE proven AS NOT MATERIALIZED (
                            AND child_lease.run_id = child.id AND child_lease.attempt_number = child.current_attempt_number
                            AND child_lease.workspace_id = child_version.workspace_id AND child_lease.status = 'completed'
                           JOIN runtime_instances child_runtime ON child_runtime.id = child_lease.runtime_instance_id
-                           AND child_runtime.desired_state = 'closed' AND child_runtime.observed_state = 'closed'
+                           AND child_runtime.reclaimed_at IS NOT NULL AND child_runtime.reclaim_evidence->>'method' IN ('session_closed', 'host_reconciled', 'provider_absent')
                           WHERE child_version.id = current.base_workspace_version_id
                             AND child_version.workspace_id = sqlc.arg(workspace_id)::uuid AND child_version.status = 'private'
                             AND child_version.ownership_generation = sqlc.arg(ownership_generation)::bigint

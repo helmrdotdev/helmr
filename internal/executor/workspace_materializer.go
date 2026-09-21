@@ -80,7 +80,7 @@ func (m WorkspaceMaterializer) RunWorkspaceMount(ctx context.Context, mount work
 			m.logWorkspaceMountPhase(mount, "workspace mount session close failed", "error", closeErr.Error())
 			var priorFailure workspaceMountFailure
 			if !errors.As(runErr, &priorFailure) || !priorFailure.reported {
-				_ = m.failWorkspaceMount(client, mount, failure)
+				runErr = errors.Join(runErr, m.failWorkspaceMount(client, mount, failure))
 			}
 			runErr = errors.Join(runErr, fmt.Errorf("close workspace mount runtime: %w", closeErr))
 			return
@@ -161,6 +161,20 @@ func (m WorkspaceMaterializer) serveWorkspaceMount(
 	}
 	poll := time.NewTimer(0)
 	defer poll.Stop()
+	checkpointReleased := func() error {
+		_, releaseErr := session.CheckpointReleaseResult(context.Background())
+		_ = renewal.stopAndWait()
+		if releaseErr != nil {
+			failure := workspaceMountFailure{
+				code: "workspace_mount_checkpoint_release_failed",
+				err:  fmt.Errorf("release checkpoint source: %w", releaseErr),
+			}
+			reportErr := m.failWorkspaceMount(client, mount, failure)
+			failure.reported = reportErr == nil
+			return errors.Join(failure, reportErr)
+		}
+		return nil
+	}
 	renewDone := renewal.done
 	renewUpdates := renewal.updates
 	for {
@@ -182,17 +196,14 @@ func (m WorkspaceMaterializer) serveWorkspaceMount(
 			if err != nil {
 				return failAndReturn(err)
 			}
+		case <-session.releaseForCheckpointDone:
+			// Failed stop may leave Wait blocked forever. Report through the mount
+			// owner so runtime reconciliation retains and reclaims its checkout.
+			return checkpointReleased()
 		case err := <-sessionExited:
 			sessionExited = nil
-			if released, releaseErr := session.CheckpointReleaseResult(context.Background()); released {
-				_ = renewal.stopAndWait()
-				if releaseErr != nil {
-					return failAndReturn(workspaceMountFailure{
-						code: "workspace_mount_checkpoint_release_failed",
-						err:  fmt.Errorf("release checkpoint source: %w", releaseErr),
-					})
-				}
-				return nil
+			if released, _ := session.CheckpointReleaseResult(context.Background()); released {
+				return checkpointReleased()
 			}
 			if renewal.ctx.Err() != nil {
 				continue

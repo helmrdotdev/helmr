@@ -66,7 +66,6 @@ type Querier interface {
 	ClaimWorkspaceMount(ctx context.Context, arg ClaimWorkspaceMountParams) (ClaimWorkspaceMountRow, error)
 	ClearFreshPrestartRunLease(ctx context.Context, arg ClearFreshPrestartRunLeaseParams) (Run, error)
 	ClearSessionDispatchHold(ctx context.Context, arg ClearSessionDispatchHoldParams) (Session, error)
-	CloseCheckpointSourceRuntime(ctx context.Context, arg CloseCheckpointSourceRuntimeParams) (CloseCheckpointSourceRuntimeRow, error)
 	CloseExpiredRuntimeReservation(ctx context.Context, arg CloseExpiredRuntimeReservationParams) (CloseExpiredRuntimeReservationRow, error)
 	CloseRunActiveIntervalForCheckpoint(ctx context.Context, arg CloseRunActiveIntervalForCheckpointParams) (int64, error)
 	CloseRunActiveIntervalForCheckpointFailure(ctx context.Context, arg CloseRunActiveIntervalForCheckpointFailureParams) (int64, error)
@@ -154,6 +153,7 @@ type Querier interface {
 	DeleteScheduleSecretsForSchedules(ctx context.Context, arg DeleteScheduleSecretsForSchedulesParams) error
 	DeliverControlOutbox(ctx context.Context, arg DeliverControlOutboxParams) (ControlOutbox, error)
 	DenyDeviceCode(ctx context.Context, arg DenyDeviceCodeParams) (DeviceCode, error)
+	DetachCheckpointSource(ctx context.Context, arg DetachCheckpointSourceParams) (DetachCheckpointSourceRow, error)
 	DisableOrgMemberAndRevokeOrgSessions(ctx context.Context, arg DisableOrgMemberAndRevokeOrgSessionsParams) (DisableOrgMemberAndRevokeOrgSessionsRow, error)
 	DiscardStagedWorkspaceExecVersion(ctx context.Context, arg DiscardStagedWorkspaceExecVersionParams) (int64, error)
 	DiscoverWorkerRunLeaseWork(ctx context.Context, arg DiscoverWorkerRunLeaseWorkParams) ([]DiscoverWorkerRunLeaseWorkRow, error)
@@ -177,7 +177,7 @@ type Querier interface {
 	FailParkedRunWait(ctx context.Context, arg FailParkedRunWaitParams) (RunWait, error)
 	FailPendingWorkspaceExecProcess(ctx context.Context, arg FailPendingWorkspaceExecProcessParams) (WorkspaceProcess, error)
 	FailWorkspaceExecProcess(ctx context.Context, arg FailWorkspaceExecProcessParams) (WorkspaceProcess, error)
-	FailWorkspaceMount(ctx context.Context, arg FailWorkspaceMountParams) (WorkspaceMount, error)
+	FailWorkspaceMount(ctx context.Context, arg FailWorkspaceMountParams) (FailWorkspaceMountRow, error)
 	FenceRunWorkspaceLease(ctx context.Context, arg FenceRunWorkspaceLeaseParams) (int64, error)
 	FenceWorkerInstance(ctx context.Context, arg FenceWorkerInstanceParams) (FenceWorkerInstanceRow, error)
 	FenceWorkspaceExecLeaseForSecretRevocation(ctx context.Context, arg FenceWorkspaceExecLeaseForSecretRevocationParams) (WorkspaceLease, error)
@@ -295,7 +295,7 @@ type Querier interface {
 	GetWorkspaceExecLocatorForMount(ctx context.Context, arg GetWorkspaceExecLocatorForMountParams) (GetWorkspaceExecLocatorForMountRow, error)
 	GetWorkspaceLease(ctx context.Context, arg GetWorkspaceLeaseParams) (WorkspaceLease, error)
 	GetWorkspaceListItemByKey(ctx context.Context, arg GetWorkspaceListItemByKeyParams) (GetWorkspaceListItemByKeyRow, error)
-	GetWorkspaceMountForWorkerTransition(ctx context.Context, arg GetWorkspaceMountForWorkerTransitionParams) (WorkspaceMount, error)
+	GetWorkspaceMountForWorker(ctx context.Context, arg GetWorkspaceMountForWorkerParams) (WorkspaceMount, error)
 	GetWorkspaceResetTargetAuthority(ctx context.Context, arg GetWorkspaceResetTargetAuthorityParams) (GetWorkspaceResetTargetAuthorityRow, error)
 	GetWorkspaceSecretCAPublic(ctx context.Context, arg GetWorkspaceSecretCAPublicParams) (GetWorkspaceSecretCAPublicRow, error)
 	GrantUserAdmin(ctx context.Context, userID pgtype.UUID) error
@@ -509,7 +509,7 @@ type Querier interface {
 	RenewWorkspaceExecLeaseForMount(ctx context.Context, arg RenewWorkspaceExecLeaseForMountParams) (int64, error)
 	RenewWorkspaceMount(ctx context.Context, arg RenewWorkspaceMountParams) (WorkspaceMount, error)
 	RequestCapacityPressureIdleWorkspaceMountStopsForWorker(ctx context.Context, arg RequestCapacityPressureIdleWorkspaceMountStopsForWorkerParams) ([]WorkspaceMount, error)
-	RequestCheckpointFailureRuntimeClose(ctx context.Context, arg RequestCheckpointFailureRuntimeCloseParams) (WorkspaceMount, error)
+	RequestCheckpointFailureRuntimeClose(ctx context.Context, arg RequestCheckpointFailureRuntimeCloseParams) (RequestCheckpointFailureRuntimeCloseRow, error)
 	RequestQueuedRunRuntimeCleanup(ctx context.Context, runID pgtype.UUID) error
 	RequestRunWaitCheckpoint(ctx context.Context, arg RequestRunWaitCheckpointParams) (RunWait, error)
 	RequestSameWorkspaceChildAttemptRuntimeDiscard(ctx context.Context, arg RequestSameWorkspaceChildAttemptRuntimeDiscardParams) (WorkspaceMount, error)

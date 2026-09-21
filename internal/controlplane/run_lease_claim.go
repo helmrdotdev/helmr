@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -978,6 +979,16 @@ func validateClaimWorker(authenticated workerActor, worker db.WorkerInstance) er
 }
 
 func validateClaimPhysicalAuthority(worker workerActor, authority runLeaseClaimAuthority) error {
+	if authority.runtime.DesiredState != db.RuntimeDesiredStateReady ||
+		authority.runtime.ObservedState != db.RuntimeObservedStateReady ||
+		authority.runtime.ObservedDesiredVersion != authority.runtime.DesiredVersion ||
+		authority.runtime.ReclaimedAt.Valid {
+		return errStaleRunLeaseClaim
+	}
+	return validateClaimPhysicalIdentity(worker, authority)
+}
+
+func validateClaimPhysicalIdentity(worker workerActor, authority runLeaseClaimAuthority) error {
 	lease := authority.runLease
 	runtime := authority.runtime
 	if lease.WorkerGroupID != pgvalue.UUID(worker.WorkerGroupID) ||
@@ -990,11 +1001,7 @@ func validateClaimPhysicalAuthority(worker workerActor, authority runLeaseClaimA
 	if lease.Status == db.RunLeaseStatusAssigned && !authority.workerRunReady {
 		return errStaleRunLeaseClaim
 	}
-	if runtime.DesiredState != db.RuntimeDesiredStateReady ||
-		runtime.ObservedState != db.RuntimeObservedStateReady ||
-		runtime.ObservedDesiredVersion != runtime.DesiredVersion ||
-		runtime.ReclaimedAt.Valid ||
-		runtime.ProgramDeploymentID != authority.run.DeploymentID ||
+	if runtime.ProgramDeploymentID != authority.run.DeploymentID ||
 		runtime.DeploymentDefinitionID != authority.workspace.DeploymentDefinitionID ||
 		runtime.ReservedRunID.Valid ||
 		runtime.ReservedAttemptNumber.Valid ||
@@ -1031,10 +1038,16 @@ func validateClaimWorkspaceAuthority(
 }
 
 func validateRunLeaseWorkspaceAuthority(authority runLeaseClaimAuthority) error {
+	if authority.workspaceMount.Status != db.WorkspaceMountStatusMounted {
+		return errStaleRunLeaseClaim
+	}
+	return validateRunLeaseWorkspaceIdentity(authority)
+}
+
+func validateRunLeaseWorkspaceIdentity(authority runLeaseClaimAuthority) error {
 	mount := authority.workspaceMount
 	lease := authority.workspaceLease
-	if mount.Status != db.WorkspaceMountStatusMounted ||
-		lease.Status != db.WorkspaceLeaseStatusActive ||
+	if lease.Status != db.WorkspaceLeaseStatusActive ||
 		lease.OwnerRunLeaseID != authority.runLease.ID ||
 		lease.OwnerProcessID.Valid ||
 		lease.BaseWorkspaceVersionID != mount.MaterializedVersionID ||
@@ -1143,7 +1156,8 @@ func validateCheckpointSource(authority runLeaseClaimAuthority) error {
 	sourceRuntime := authority.sourceRuntime
 	currentLease := authority.runLease
 	currentRuntime := authority.runtime
-	if sourceLease.ID != authority.checkpoint.SourceRunLeaseID ||
+	if !runtimeHasExclusionProof(sourceRuntime) ||
+		sourceLease.ID != authority.checkpoint.SourceRunLeaseID ||
 		sourceLease.Status != db.RunLeaseStatusCheckpointed ||
 		sourceWorkspaceLease.ID != authority.checkpoint.SourceWorkspaceLeaseID ||
 		sourceWorkspaceLease.OwnerRunLeaseID != sourceLease.ID ||
@@ -1299,4 +1313,24 @@ func staleRunLeaseClaim(err error) error {
 		return errStaleRunLeaseClaim
 	}
 	return err
+}
+
+// A source can fail and still be safely reclaimed. A never-materialized receipt
+// cannot establish exclusion of an execution that produced durable state.
+func runtimeHasExclusionProof(runtime db.RuntimeInstance) bool {
+	if !runtime.ReclaimedAt.Valid {
+		return false
+	}
+	var evidence struct {
+		Method string `json:"method"`
+	}
+	if json.Unmarshal(runtime.ReclaimEvidence, &evidence) != nil {
+		return false
+	}
+	switch evidence.Method {
+	case workerapi.RuntimeCleanupSessionClosed, workerapi.RuntimeCleanupHostReconciled, "provider_absent":
+		return true
+	default:
+		return false
+	}
 }

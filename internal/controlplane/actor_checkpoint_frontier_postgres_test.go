@@ -288,6 +288,13 @@ func (f *actorCheckpointFixture) suspend(t *testing.T, capture workerapi.Checkpo
 
 func (f *actorCheckpointFixture) suspendWait(t *testing.T, waitID uuid.UUID, capture workerapi.CheckpointWorkspaceCapture) workerapi.CheckpointResponse {
 	t.Helper()
+	out := f.publishWaitCheckpoint(t, waitID, capture)
+	f.reportRuntimeClosed(t)
+	return out
+}
+
+func (f *actorCheckpointFixture) publishWaitCheckpoint(t *testing.T, waitID uuid.UUID, capture workerapi.CheckpointWorkspaceCapture) workerapi.CheckpointResponse {
+	t.Helper()
 	parsed, err := parseRunLeaseFence(f.fence())
 	if err != nil {
 		t.Fatal(err)
@@ -325,7 +332,12 @@ func (f *actorCheckpointFixture) suspendWait(t *testing.T, waitID uuid.UUID, cap
 	}
 	var out workerapi.CheckpointResponse
 	f.workerCall(t, f.server.workerMarkCheckpointReady, req, &out)
-	f.reportRuntimeClosed(t)
+	// A lost acknowledgement retries the same receipt before the source is closed.
+	var replay workerapi.CheckpointResponse
+	f.workerCall(t, f.server.workerMarkCheckpointReady, req, &replay)
+	if replay != out {
+		t.Fatalf("ready receipt replay changed: %+v != %+v", replay, out)
+	}
 	return out
 }
 

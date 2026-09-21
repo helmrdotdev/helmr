@@ -736,8 +736,7 @@ SELECT source_lease.worker_group_id,
                    ON child_runtime.id = child_lease.runtime_instance_id
                   AND child_runtime.workspace_id = child_version.workspace_id
                   AND child_runtime.runtime_identity_id = child_lease.runtime_identity_id
-                  AND child_runtime.desired_state = 'closed'
-                  AND child_runtime.observed_state = 'closed'
+                  AND child_runtime.reclaimed_at IS NOT NULL AND child_runtime.reclaim_evidence->>'method' IN ('session_closed', 'host_reconciled', 'provider_absent')
                  JOIN runs AS child
                    ON child.id = child_lease.run_id
                   AND child.parent_run_id = run_waits.run_id
@@ -804,8 +803,8 @@ SELECT source_lease.worker_group_id,
    AND runtime_substrates.project_id = source_runtime.project_id
    AND runtime_substrates.environment_id = source_runtime.environment_id
    AND runtime_substrates.deployment_definition_id = source_runtime.deployment_definition_id
- WHERE ($10 <> 'actor' OR
-        (source_runtime.desired_state = 'closed' AND source_runtime.observed_state = 'closed'))
+ WHERE source_runtime.reclaimed_at IS NOT NULL
+   AND source_runtime.reclaim_evidence->>'method' IN ('session_closed', 'host_reconciled', 'provider_absent')
    AND run_waits.id = $1
    AND run_waits.run_id = $2
    AND run_waits.attempt_number = $3

@@ -53,7 +53,8 @@ func (e Executor) ExecuteRunLease(
 	current := claim.Lease
 	result, current, err := e.awaitRunLeaseTask(ctx, task, current)
 	if err != nil {
-		if errors.Is(err, ErrDetached) {
+		var releaseErr *checkpointSourceReleaseError
+		if errors.Is(err, ErrDetached) && !errors.As(err, &releaseErr) {
 			return nil
 		}
 		return err
