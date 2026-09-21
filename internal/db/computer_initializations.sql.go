@@ -53,6 +53,42 @@ func (q *Queries) AbandonComputerInitialization(ctx context.Context, arg Abandon
 	return i, err
 }
 
+const abandonRevokedComputerInitializations = `-- name: AbandonRevokedComputerInitializations :execrows
+WITH revoked AS MATERIALIZED (
+    SELECT initialization.id
+      FROM computer_initializations AS initialization
+      JOIN runtime_instances AS runtime ON runtime.id = initialization.runtime_instance_id
+     WHERE initialization.status = 'registered'
+       AND (runtime.desired_state <> 'ready'
+            OR runtime.desired_version <> initialization.runtime_desired_version
+            OR runtime.observed_state IN ('closed', 'failed', 'lost')
+            OR runtime.reclaimed_at IS NOT NULL
+            OR runtime.reserved_workspace_version_id IS DISTINCT FROM initialization.version_id
+            OR (runtime.observed_state = 'allocated'
+                AND runtime.preparation_expires_at <= statement_timestamp()))
+     ORDER BY initialization.created_at, initialization.id
+     LIMIT $1
+     FOR UPDATE OF runtime SKIP LOCKED
+)
+UPDATE computer_initializations AS initialization
+   SET status = 'abandoned', abandoned_at = clock_timestamp()
+  FROM revoked
+ WHERE initialization.id = revoked.id
+   AND initialization.status = 'registered'
+`
+
+// Revocation only: take Runtime before candidate locks, matching publication.
+// A lost preparation cannot become usable again under its original fence. Keep
+// the abandoned row: neither VM termination nor this transition excludes a late
+// host upload, and neither authorizes deleting an object from shared storage.
+func (q *Queries) AbandonRevokedComputerInitializations(ctx context.Context, rowLimit int32) (int64, error) {
+	result, err := q.db.Exec(ctx, abandonRevokedComputerInitializations, rowLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const consumeComputerInitialization = `-- name: ConsumeComputerInitialization :one
 UPDATE computer_initializations AS initialization
    SET status = 'consumed', artifact_id = artifacts.id,

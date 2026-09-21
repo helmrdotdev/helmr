@@ -315,3 +315,68 @@ SELECT $2, org_id, worker_group_id, project_id, environment_id, region_id,
 		t.Fatalf("two initializations consumed: %v / %v", a, b)
 	}
 }
+
+func TestComputerInitializationRevocationBatchSkipsLockedRuntime(t *testing.T) {
+	f := runtest.New(t)
+	q := db.New(f.Pool)
+	var candidates []db.RegisterComputerInitializationParams
+	for range 3 {
+		// The fixture has already cleared preparation reservations, so each
+		// candidate has permanently lost its recorded preparation authority.
+		p := initializationParams(t, f)
+		if _, err := q.RegisterComputerInitialization(t.Context(), p); err != nil {
+			t.Fatal(err)
+		}
+		candidates = append(candidates, p)
+	}
+	locked, err := f.Pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer locked.Rollback(context.Background())
+	var id pgtype.UUID
+	if err := locked.QueryRow(t.Context(), `SELECT id FROM runtime_instances WHERE id=$1 FOR UPDATE`, candidates[0].RuntimeInstanceID).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	tx, err := f.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(context.Background())
+	if n, err := db.New(tx).AbandonRevokedComputerInitializations(ctx, 1); err != nil || n != 1 {
+		t.Fatalf("bounded sweep: %d, %v", n, err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range candidates {
+		row, err := q.GetComputerInitialization(ctx, initializationGet(p))
+		if err != nil || row.Status != "registered" {
+			t.Fatalf("rollback changed candidate: %+v, %v", row, err)
+		}
+	}
+	if n, err := q.AbandonRevokedComputerInitializations(ctx, 1); err != nil || n != 1 {
+		t.Fatalf("bounded retry: %d, %v", n, err)
+	}
+	for i, p := range candidates {
+		row, err := q.GetComputerInitialization(ctx, initializationGet(p))
+		want := "registered"
+		if i == 1 {
+			want = "abandoned"
+		}
+		if err != nil || row.Status != want {
+			t.Fatalf("candidate %d: %+v, %v", i, row, err)
+		}
+	}
+	if err := locked.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := q.AbandonRevokedComputerInitializations(ctx, 10); err != nil || n != 2 {
+		t.Fatalf("remaining sweep: %d, %v", n, err)
+	}
+	if n, err := q.AbandonRevokedComputerInitializations(ctx, 10); err != nil || n != 0 {
+		t.Fatalf("replay: %d, %v", n, err)
+	}
+}

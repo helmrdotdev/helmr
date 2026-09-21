@@ -12,7 +12,9 @@ import (
 )
 
 // RecoverExpiredRuntimeReservations revokes timed-out preparation or unused
-// ready reservations. Only the worker's physical cleanup proof releases capacity.
+// ready reservations, and retains revoked initial uploads for later cleanup.
+// The returned count covers closed reservations, not abandoned upload records.
+// Only the worker's physical cleanup proof releases capacity.
 func (d *Authority) RecoverExpiredRuntimeReservations(ctx context.Context, limit int32) (int, error) {
 	if limit <= 0 {
 		return 0, nil
@@ -32,6 +34,11 @@ func (d *Authority) RecoverExpiredRuntimeReservations(ctx context.Context, limit
 		if changed {
 			recovered++
 		}
+	}
+	// This also catches terminal runtimes and cleared reservations that no longer
+	// appear in the expiry scan. It must run even when no runtime was closed.
+	if _, err := db.New(d.pool).AbandonRevokedComputerInitializations(ctx, limit); err != nil {
+		failures = append(failures, fmt.Errorf("abandon revoked Computer initialization: %w", err))
 	}
 	return recovered, errors.Join(failures...)
 }

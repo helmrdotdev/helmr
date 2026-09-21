@@ -2919,6 +2919,10 @@ CREATE TABLE computer_initializations (
     )
 );
 
+CREATE INDEX computer_initializations_registered_idx
+    ON computer_initializations (created_at, id)
+    WHERE status = 'registered';
+
 CREATE UNIQUE INDEX computer_initializations_consumed_computer_uidx
     ON computer_initializations (computer_id)
     WHERE status = 'consumed';

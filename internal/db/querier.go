@@ -12,6 +12,11 @@ import (
 
 type Querier interface {
 	AbandonComputerInitialization(ctx context.Context, arg AbandonComputerInitializationParams) (ComputerInitialization, error)
+	// Revocation only: take Runtime before candidate locks, matching publication.
+	// A lost preparation cannot become usable again under its original fence. Keep
+	// the abandoned row: neither VM termination nor this transition excludes a late
+	// host upload, and neither authorizes deleting an object from shared storage.
+	AbandonRevokedComputerInitializations(ctx context.Context, rowLimit int32) (int64, error)
 	AcceptInvitation(ctx context.Context, arg AcceptInvitationParams) (int64, error)
 	ActivateSessionTurn(ctx context.Context, arg ActivateSessionTurnParams) (SessionTurn, error)
 	ActivateWorkerInstance(ctx context.Context, arg ActivateWorkerInstanceParams) (WorkerInstance, error)
