@@ -847,6 +847,7 @@ SELECT runs.org_id,
           AND run_waits.attempt_number = runs.current_attempt_number
           AND run_waits.current_run_lease_id = run_leases.id
           AND run_waits.suspension_status = 'resuming'
+          AND run_leases.status IN ('assigned', 'starting')
           AND (runs.entrypoint_kind = 'task' OR EXISTS (
               SELECT 1 FROM sessions
               JOIN run_checkpoints ON run_checkpoints.id = run_waits.suspend_checkpoint_id
@@ -868,19 +869,7 @@ SELECT runs.org_id,
                 AND source_run_leases.status = 'checkpointed'
                 AND run_checkpoints.actor_speculative_input_sequence
                     BETWEEN sessions.committed_input_sequence AND sessions.next_input_sequence - 1
-                AND (run_leases.status <> 'running' OR runs.active_started_at IS NULL
-                     OR runs.active_started_at
-                        + (GREATEST(runs.max_active_duration_ms - runs.active_elapsed_ms, 0)::text || ' milliseconds')::interval
-                        > LEAST(run_leases.expires_at,
-                            COALESCE(worker_instances.lost_at, 'infinity'::timestamptz),
-                            COALESCE(worker_instances.termination_ready_at, 'infinity'::timestamptz),
-                            CASE WHEN worker_instances.current_epoch IS DISTINCT FROM run_leases.worker_epoch
-                                 THEN COALESCE(worker_instances.epoch_started_at, worker_instances.updated_at)
-                                 ELSE 'infinity'::timestamptz END,
-                            CASE WHEN runtime_instances.observed_state IN ('lost', 'failed')
-                                 THEN runtime_instances.terminal_at ELSE 'infinity'::timestamptz END,
-                            COALESCE(workspace_mounts.lost_at, 'infinity'::timestamptz),
-                            COALESCE(workspace_mounts.failed_at, 'infinity'::timestamptz)))
+
           ))
    )
    AND (run_leases.expires_at <= transaction_timestamp()
@@ -938,7 +927,7 @@ WITH RECURSIVE candidates AS MATERIALIZED (
        AND run_leases.run_id = runs.id
        AND run_leases.attempt_number = runs.current_attempt_number
        AND run_leases.workspace_id = runs.workspace_id
-       AND run_leases.status IN ('assigned', 'starting', 'running')
+       AND run_leases.status IN ('assigned', 'starting')
       JOIN workspace_leases
         ON workspace_leases.owner_run_lease_id = run_leases.id
        AND workspace_leases.workspace_id = runs.workspace_id
@@ -963,13 +952,7 @@ WITH RECURSIVE candidates AS MATERIALIZED (
       JOIN worker_instances
         ON worker_instances.id = run_leases.worker_instance_id
      WHERE (run_leases.expires_at <= transaction_timestamp()
-            OR (run_leases.status IN ('assigned', 'starting')
-                AND run_leases.start_deadline_at <= transaction_timestamp())
-            OR (run_leases.status = 'running'
-                AND runs.active_started_at IS NOT NULL
-                AND transaction_timestamp() >= runs.active_started_at
-                    + (GREATEST(runs.max_active_duration_ms - runs.active_elapsed_ms, 0)::text
-                       || ' milliseconds')::interval)
+            OR run_leases.start_deadline_at <= transaction_timestamp()
             OR (runtime_instances.observed_state = 'lost' AND runtime_instances.terminal_at <= transaction_timestamp())
             OR (runtime_instances.observed_state = 'failed' AND runtime_instances.terminal_at <= transaction_timestamp())
             OR worker_instances.lost_at <= transaction_timestamp()
@@ -1013,23 +996,6 @@ WITH RECURSIVE candidates AS MATERIALIZED (
                                AND run_checkpoints.actor_speculative_input_sequence
                                    BETWEEN sessions.committed_input_sequence
                                        AND sessions.next_input_sequence - 1
-                               AND (run_leases.status <> 'running'
-                                    OR runs.active_started_at IS NULL
-                                    OR runs.active_started_at
-                                       + (GREATEST(runs.max_active_duration_ms - runs.active_elapsed_ms, 0)::text
-                                          || ' milliseconds')::interval
-                                       > LEAST(
-                                           run_leases.expires_at,
-                                           COALESCE(worker_instances.lost_at, 'infinity'::timestamptz),
-                                           COALESCE(worker_instances.termination_ready_at, 'infinity'::timestamptz),
-                                           CASE WHEN worker_instances.current_epoch IS DISTINCT FROM run_leases.worker_epoch
-                                                THEN COALESCE(worker_instances.epoch_started_at, worker_instances.updated_at)
-                                                ELSE 'infinity'::timestamptz END,
-                                           CASE WHEN runtime_instances.observed_state IN ('lost', 'failed')
-                                                THEN runtime_instances.terminal_at ELSE 'infinity'::timestamptz END,
-                                           COALESCE(workspace_mounts.lost_at, 'infinity'::timestamptz),
-                                           COALESCE(workspace_mounts.failed_at, 'infinity'::timestamptz)
-                                       ))
                         )
             ))
      ORDER BY runs.id
@@ -1069,9 +1035,6 @@ WITH RECURSIVE candidates AS MATERIALIZED (
            runs.current_attempt_number,
            runs.session_input_start_sequence,
            runs.session_input_high_watermark,
-           runs.max_active_duration_ms,
-           runs.active_elapsed_ms,
-           runs.active_started_at,
            placement_candidates.entrypoint_kind,
            placement_candidates.session_id,
            placement_candidates.actor_run_generation,
@@ -1095,8 +1058,7 @@ WITH RECURSIVE candidates AS MATERIALIZED (
                 AND runs.session_id = placement_candidates.session_id
                 AND runs.cause_kind IN ('actor_start', 'continuation')
                 AND placement_candidates.entrypoint_kind = 'actor'))
-       AND ((runs.status = 'queued' AND runs.active_started_at IS NULL)
-            OR (runs.status = 'running' AND runs.active_started_at IS NOT NULL))
+       AND runs.status = 'queued' AND runs.active_started_at IS NULL
        AND runs.current_run_lease_id = placement_candidates.run_lease_id
      ORDER BY runs.id
      FOR UPDATE OF runs SKIP LOCKED
@@ -1335,7 +1297,7 @@ WITH RECURSIVE candidates AS MATERIALIZED (
        AND run_leases.worker_instance_id = locked_runtimes.worker_instance_id
        AND run_leases.worker_epoch = locked_runtimes.worker_epoch
        AND run_leases.runtime_instance_id = locked_runtimes.runtime_instance_id
-       AND run_leases.status IN ('assigned', 'starting', 'running')
+       AND run_leases.status IN ('assigned', 'starting')
      ORDER BY run_leases.id
      FOR UPDATE OF run_leases
 ), locked_mounts AS MATERIALIZED (
@@ -1391,37 +1353,15 @@ WITH RECURSIVE candidates AS MATERIALIZED (
      FOR UPDATE OF run_waits
 ), loss_authority AS MATERIALIZED (
     SELECT locked_waits.*,
-           hard_deadline.hard_deadline_at,
            physical_loss.physical_loss_at,
            physical_failure.physical_failure_at,
-           CASE
-               WHEN locked_waits.run_lease_status = 'running'
-               THEN LEAST(
-                   locked_waits.run_lease_expires_at,
-                   hard_deadline.hard_deadline_at,
-                   physical_loss.physical_loss_at,
-                   physical_failure.physical_failure_at
-               )
-               ELSE LEAST(
-                   locked_waits.run_lease_expires_at,
-                   locked_waits.start_deadline_at,
-                   physical_loss.physical_loss_at,
-                   physical_failure.physical_failure_at
-               )
-           END AS authority_loss_at
+           LEAST(
+               locked_waits.run_lease_expires_at,
+               locked_waits.start_deadline_at,
+               physical_loss.physical_loss_at,
+               physical_failure.physical_failure_at
+           ) AS authority_loss_at
       FROM locked_waits
-      CROSS JOIN LATERAL (
-          SELECT CASE
-              WHEN locked_waits.run_lease_status = 'running'
-               AND locked_waits.active_started_at IS NOT NULL
-              THEN locked_waits.active_started_at
-                   + (GREATEST(
-                          locked_waits.max_active_duration_ms - locked_waits.active_elapsed_ms,
-                          0
-                      )::text || ' milliseconds')::interval
-              ELSE 'infinity'::timestamptz
-          END AS hard_deadline_at
-      ) AS hard_deadline
       CROSS JOIN LATERAL (
           SELECT LEAST(
               COALESCE(locked_waits.worker_lost_at, 'infinity'::timestamptz),
@@ -1437,8 +1377,6 @@ WITH RECURSIVE candidates AS MATERIALIZED (
       ) AS physical_failure
 ), locked_checkpoints AS MATERIALIZED (
     SELECT loss_authority.*,
-           (loss_authority.run_lease_status = 'running'
-            AND loss_authority.authority_loss_at = loss_authority.hard_deadline_at) AS active_budget_exhausted,
            (run_checkpoints.status = 'ready'
             AND (run_checkpoints.expires_at IS NULL
                  OR run_checkpoints.expires_at > transaction_timestamp())
@@ -1450,16 +1388,8 @@ WITH RECURSIVE candidates AS MATERIALIZED (
                      AND run_checkpoints.actor_speculative_input_sequence
                          BETWEEN loss_authority.actor_committed_input_sequence
                              AND loss_authority.actor_next_input_sequence - 1))
-            AND NOT (
-                loss_authority.run_lease_status = 'running'
-                AND loss_authority.authority_loss_at = loss_authority.hard_deadline_at
-            )) AS checkpoint_recoverable,
-           CASE
-               WHEN loss_authority.run_lease_status = 'running'
-                AND loss_authority.authority_loss_at = loss_authority.hard_deadline_at
-               THEN 'max_active_duration_exceeded'
-               ELSE 'restore_checkpoint_unavailable'
-           END AS recovery_terminal_reason_code
+            ) AS checkpoint_recoverable,
+           'restore_checkpoint_unavailable' AS recovery_terminal_reason_code
       FROM loss_authority
       JOIN run_checkpoints
         ON run_checkpoints.id = loss_authority.restore_checkpoint_id
@@ -1482,8 +1412,6 @@ WITH RECURSIVE candidates AS MATERIALIZED (
        SET status = 'expired',
            terminal_at = transaction_timestamp(),
            terminal_reason_code = CASE
-               WHEN locked_checkpoints.active_budget_exhausted
-               THEN 'max_active_duration_exceeded'
                WHEN locked_checkpoints.authority_loss_at = locked_checkpoints.physical_failure_at
                THEN 'runtime_failed'
                WHEN locked_checkpoints.authority_loss_at = locked_checkpoints.physical_loss_at
@@ -1525,14 +1453,6 @@ WITH RECURSIVE candidates AS MATERIALIZED (
     UPDATE runs
        SET status = 'queued',
            current_run_lease_id = NULL,
-           active_elapsed_ms = LEAST(runs.max_active_duration_ms, runs.active_elapsed_ms + CASE
-               WHEN runs.active_started_at IS NULL THEN 0
-               ELSE GREATEST(
-                   floor(extract(epoch FROM (locked_checkpoints.authority_loss_at - runs.active_started_at)) * 1000)::bigint,
-                   0
-               )
-           END),
-           active_started_at = NULL,
            revision = runs.revision + 1,
            updated_at = transaction_timestamp()
       FROM locked_checkpoints, expired_workspace_leases
@@ -1540,12 +1460,8 @@ WITH RECURSIVE candidates AS MATERIALIZED (
        AND runs.org_id = locked_checkpoints.org_id
        AND runs.current_run_lease_id = locked_checkpoints.run_lease_id
        AND runs.revision = locked_checkpoints.revision
-       AND ((locked_checkpoints.run_lease_status IN ('assigned', 'starting')
-             AND runs.status = 'queued'
-             AND runs.active_started_at IS NULL)
-            OR (locked_checkpoints.run_lease_status = 'running'
-                AND runs.status = 'running'
-                AND runs.active_started_at IS NOT NULL))
+       AND runs.status = 'queued'
+       AND runs.active_started_at IS NULL
        AND expired_workspace_leases.id = locked_checkpoints.workspace_lease_id
        AND expired_workspace_leases.checkpoint_recoverable
     RETURNING runs.org_id, runs.id, runs.revision
@@ -1579,30 +1495,13 @@ WITH RECURSIVE candidates AS MATERIALIZED (
     RETURNING run_attempts.run_id, run_attempts.number
 ), failed_runs AS (
     UPDATE runs
-       SET status = CASE
-               WHEN locked_checkpoints.active_budget_exhausted THEN 'expired'
-               ELSE 'system_failed'
-           END,
+       SET status = 'system_failed',
 	       failure = jsonb_build_object(
 	           'code', locked_checkpoints.recovery_terminal_reason_code,
-	           'message', CASE
-	               WHEN locked_checkpoints.active_budget_exhausted THEN 'Run maximum active duration was exceeded'
-	               ELSE 'Run recovery failed'
-	           END,
+	           'message', 'Run recovery failed',
 	           'details', jsonb_build_object()
 	       ),
            current_run_lease_id = NULL,
-           active_elapsed_ms = CASE
-               WHEN locked_checkpoints.active_budget_exhausted THEN runs.max_active_duration_ms
-               ELSE LEAST(runs.max_active_duration_ms, runs.active_elapsed_ms + CASE
-                   WHEN runs.active_started_at IS NULL THEN 0
-                   ELSE GREATEST(
-                       floor(extract(epoch FROM (locked_checkpoints.authority_loss_at - runs.active_started_at)) * 1000)::bigint,
-                       0
-                   )
-               END)
-           END,
-           active_started_at = NULL,
            revision = runs.revision + 1,
            terminal_at = transaction_timestamp(),
            updated_at = transaction_timestamp()
@@ -1611,12 +1510,8 @@ WITH RECURSIVE candidates AS MATERIALIZED (
        AND runs.org_id = locked_checkpoints.org_id
        AND runs.current_run_lease_id = locked_checkpoints.run_lease_id
        AND runs.revision = locked_checkpoints.revision
-       AND ((locked_checkpoints.run_lease_status IN ('assigned', 'starting')
-             AND runs.status = 'queued'
-             AND runs.active_started_at IS NULL)
-            OR (locked_checkpoints.run_lease_status = 'running'
-                AND runs.status = 'running'
-                AND runs.active_started_at IS NOT NULL))
+       AND runs.status = 'queued'
+       AND runs.active_started_at IS NULL
        AND failed_attempts.run_id = locked_checkpoints.run_id
        AND failed_attempts.number = locked_checkpoints.current_attempt_number
     RETURNING runs.id,
@@ -1743,14 +1638,8 @@ WITH RECURSIVE candidates AS MATERIALIZED (
            'lifecycle',
            'error',
            'control',
-           CASE
-               WHEN locked_checkpoints.active_budget_exhausted THEN 'run.expired'
-               ELSE 'run.system_failed'
-           END,
-           CASE
-               WHEN locked_checkpoints.active_budget_exhausted THEN 'Run maximum active duration exceeded'
-               ELSE 'Run restore Checkpoint became unavailable'
-           END,
+           'run.system_failed',
+           'Run restore Checkpoint became unavailable',
            jsonb_build_object('reasonCode', locked_checkpoints.recovery_terminal_reason_code),
            'internal',
            failed_runs.revision,

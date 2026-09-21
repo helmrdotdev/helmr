@@ -8,7 +8,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/run"
-	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -76,18 +75,7 @@ func (d *Authority) recoverRunExecutionLease(
 		return false, fmt.Errorf("begin Run execution lease recovery: %w", err)
 	}
 	defer rollback(ctx, tx)
-	q := db.New(tx)
-	resolutions, secretsAvailable, err := secret.LockAttemptRetryResolutions(
-		ctx,
-		q,
-		candidate.RunID,
-		candidate.CurrentAttemptNumber,
-		candidate.WorkspaceID,
-	)
-	if err != nil {
-		return false, fmt.Errorf("lock Run execution retry Secret metadata: %w", err)
-	}
-	graph, err := run.LockOwnedFinalization(ctx, tx, run.OwnedFinalizationRequest{
+	graph, err := run.LockExecutionLeaseRecovery(ctx, tx, run.OwnedFinalizationRequest{
 		OrgID: orgID, ProjectID: projectID, EnvironmentID: environmentID, RunID: runID,
 	})
 	if err != nil {
@@ -95,8 +83,7 @@ func (d *Authority) recoverRunExecutionLease(
 	}
 	recovered, err := graph.RecoverExecutionLeaseLoss(ctx, run.ExecutionLeaseRecoveryRequest{
 		RunID: runID, WorkspaceID: workspaceID, AttemptNumber: candidate.CurrentAttemptNumber,
-		RunLeaseID: runLeaseID, RetryResolutions: resolutions,
-		RetrySecretsAvailable: secretsAvailable,
+		RunLeaseID: runLeaseID,
 	})
 	if err != nil {
 		return false, err

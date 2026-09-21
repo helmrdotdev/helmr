@@ -1517,19 +1517,11 @@ SELECT run_waits.suspension_status,
 	}
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
-   SET status = 'running',
+   SET status = 'starting',
        created_at = transaction_timestamp() - interval '20 seconds',
        start_deadline_at = transaction_timestamp() - interval '19 seconds',
-       claimed_at = transaction_timestamp() - interval '18 seconds',
-       started_at = transaction_timestamp() - interval '18 seconds'
+       claimed_at = transaction_timestamp() - interval '18 seconds'
  WHERE id = $1 AND status = 'assigned'`, restoreGrant.Lease.ID)
-	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-UPDATE runs
-   SET status = 'running', started_at = transaction_timestamp(),
-       max_active_duration_ms = 5000,
-       active_started_at = transaction_timestamp() - interval '10 seconds',
-       revision = revision + 1
- WHERE id = $1 AND status = 'queued'`, fixture.runID)
 
 	var originalQueueScore time.Time
 	if err := fixture.pool.QueryRow(fixture.ctx, `SELECT queue_score_at FROM runs WHERE id = $1`, fixture.runID).Scan(&originalQueueScore); err != nil {
@@ -1578,8 +1570,8 @@ SELECT run_waits.suspension_status,
 	if err != nil {
 		t.Fatal(err)
 	}
-	if recoveredState != "resume_pending" || recoveredLeaseID.Valid || recoveredVersion != 6 ||
-		recoveredRequestVersion != 2 || recoveredActiveElapsed < 1900 || recoveredActiveElapsed > 3000 ||
+	if recoveredState != "resume_pending" || recoveredLeaseID.Valid || recoveredVersion != 5 ||
+		recoveredRequestVersion != 2 || recoveredActiveElapsed != 0 ||
 		recoveredLeaseStatus != "expired" ||
 		recoveredWorkspaceLeaseStatus != "expired" || desiredState != "closed" {
 		t.Fatalf("recovery wait=%s lease=%s run_version=%d request_version=%d run_lease=%s workspace_lease=%s runtime=%s",
@@ -1611,7 +1603,7 @@ UPDATE runtime_instances
  WHERE id = $1 AND desired_state = 'closed'`, restored.RuntimeInstanceID)
 	secondRestoreCandidate := ReadyRunCandidate{
 		OrgID: pgvalue.UUID(fixture.orgID), RunID: pgvalue.UUID(fixture.runID),
-		ExpectedRunRevision: 6,
+		ExpectedRunRevision: 5,
 	}
 	secondRestored, err := fixture.authority.PlaceReadyRun(fixture.ctx, secondRestoreCandidate)
 	if err != nil {
@@ -1792,12 +1784,13 @@ UPDATE worker_instances
    SET status = 'lost', lost_at = transaction_timestamp()
  WHERE id = $1`, fixture.workerID)
 	recovered, err = db.New(fixture.pool).RecoverExpiredRunResumes(fixture.ctx, recoverExpiredRunResumesParams(10))
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || len(recovered) != 0 {
+		t.Fatalf("started restore entered retry lane: %+v %v", recovered, err)
 	}
-	if len(recovered) != 1 || recovered[0].ID != pgvalue.UUID(runWaitID) || recovered[0].RunID != pgvalue.UUID(fixture.runID) {
-		t.Fatalf("worker-loss recovered resumes = %+v", recovered)
+	if n, err := fixture.authority.RecoverRunExecutionLeases(fixture.ctx, 10); err != nil || n != 1 {
+		t.Fatalf("started restore loss recovery: %d %v", n, err)
 	}
+	assertLostComputerRequiresRecovery(t, fixture)
 	var lostRunStatus, lostWaitStatus, lostMountStatus string
 	var lostRunLeaseStatus, lostRunLeaseReason, lostWorkspaceLeaseStatus, lostWorkspaceLeaseReason string
 	var lostAttemptOutcome pgtype.Text
@@ -1834,14 +1827,14 @@ SELECT runs.status, run_waits.suspension_status, run_waits.current_run_lease_id,
 	if err != nil {
 		t.Fatal(err)
 	}
-	if lostRunStatus != "queued" || lostWaitStatus != "resume_pending" || lostWaitLeaseID.Valid ||
-		lostRunVersion != 9 || lostResumeRequestVersion != 3 ||
-		lostAttemptOutcome.Valid || lostAttemptTerminalAt.Valid ||
-		lostRunTerminalAt.Valid ||
+	if lostRunStatus != "system_failed" || lostWaitStatus != "failed" || lostWaitLeaseID.Valid ||
+		lostRunVersion != 8 || lostResumeRequestVersion != 2 ||
+		!lostAttemptOutcome.Valid || lostAttemptOutcome.String != "failed" || !lostAttemptTerminalAt.Valid ||
+		!lostRunTerminalAt.Valid ||
 		lostActiveElapsed < 9000 || lostActiveElapsed > 15000 ||
-		ownerRunID != pgvalue.UUID(fixture.runID) ||
+		ownerRunID.Valid ||
 		lostRunLeaseStatus != "expired" || lostRunLeaseReason != "lease_expired" ||
-		lostWorkspaceLeaseStatus != "expired" || lostWorkspaceLeaseReason != "lease_expired" ||
+		lostWorkspaceLeaseStatus != "fenced" || lostWorkspaceLeaseReason != "lease_expired" ||
 		lostMountStatus != "failed" {
 		t.Fatalf("worker-loss recovery run=%s wait=%s wait_lease=%s run_version=%d request_version=%d attempt=%v attempt_at=%v run_at=%v active=%d owner=%s run_lease=%s/%s workspace_lease=%s/%s mount=%s",
 			lostRunStatus, lostWaitStatus, pgvalue.UUIDString(lostWaitLeaseID), lostRunVersion,
@@ -1855,11 +1848,11 @@ SELECT runs.status, run_waits.suspension_status, run_waits.current_run_lease_id,
 SELECT count(*)
   FROM telemetry_outbox
  WHERE run_id = $1
-	   AND kind = 'run.expired'`, fixture.runID).Scan(&terminalEventCount); err != nil {
+	   AND kind = 'run.system_failed'`, fixture.runID).Scan(&terminalEventCount); err != nil {
 		t.Fatal(err)
 	}
-	if terminalEventCount != 0 {
-		t.Fatalf("worker-loss terminal event count = %d, want 0", terminalEventCount)
+	if terminalEventCount != 1 {
+		t.Fatalf("worker-loss terminal event count = %d, want 1", terminalEventCount)
 	}
 }
 

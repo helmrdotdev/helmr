@@ -365,15 +365,12 @@ func (q *Queries) FindCancellationTarget(ctx context.Context, arg FindCancellati
 const getRunExecutionLeaseLossAuthority = `-- name: GetRunExecutionLeaseLossAuthority :one
 SELECT runs.id AS run_id,
        runs.workspace_id,
-       runs.base_workspace_version_id,
        runs.status AS run_status,
        runs.revision,
        runs.current_attempt_number,
-       runs.entrypoint_kind,
        runs.session_id,
        runs.parent_run_id,
        runs.parent_owns_lifecycle,
-       runs.retry_policy,
        runs.max_active_duration_ms,
        runs.active_elapsed_ms,
        runs.active_started_at,
@@ -469,6 +466,7 @@ SELECT runs.id AS run_id,
           AND run_waits.attempt_number = runs.current_attempt_number
           AND run_waits.current_run_lease_id = run_leases.id
           AND run_waits.suspension_status = 'resuming'
+          AND run_leases.status IN ('assigned', 'starting')
           AND (runs.entrypoint_kind = 'task' OR EXISTS (
               SELECT 1 FROM sessions
               JOIN run_checkpoints ON run_checkpoints.id = run_waits.suspend_checkpoint_id
@@ -490,19 +488,7 @@ SELECT runs.id AS run_id,
                 AND source_run_leases.status = 'checkpointed'
                 AND run_checkpoints.actor_speculative_input_sequence
                     BETWEEN sessions.committed_input_sequence AND sessions.next_input_sequence - 1
-                AND (run_leases.status <> 'running' OR runs.active_started_at IS NULL
-                     OR runs.active_started_at
-                        + (GREATEST(runs.max_active_duration_ms - runs.active_elapsed_ms, 0)::text || ' milliseconds')::interval
-                        > LEAST(run_leases.expires_at,
-                            COALESCE(worker_instances.lost_at, 'infinity'::timestamptz),
-                            COALESCE(worker_instances.termination_ready_at, 'infinity'::timestamptz),
-                            CASE WHEN worker_instances.current_epoch IS DISTINCT FROM run_leases.worker_epoch
-                                 THEN COALESCE(worker_instances.epoch_started_at, worker_instances.updated_at)
-                                 ELSE 'infinity'::timestamptz END,
-                            CASE WHEN runtime_instances.observed_state IN ('lost', 'failed')
-                                 THEN runtime_instances.terminal_at ELSE 'infinity'::timestamptz END,
-                            COALESCE(workspace_mounts.lost_at, 'infinity'::timestamptz),
-                            COALESCE(workspace_mounts.failed_at, 'infinity'::timestamptz)))
+
           ))
    )
 `
@@ -517,15 +503,12 @@ type GetRunExecutionLeaseLossAuthorityParams struct {
 type GetRunExecutionLeaseLossAuthorityRow struct {
 	RunID                    pgtype.UUID        `json:"run_id"`
 	WorkspaceID              pgtype.UUID        `json:"workspace_id"`
-	BaseWorkspaceVersionID   pgtype.UUID        `json:"base_workspace_version_id"`
 	RunStatus                string             `json:"run_status"`
 	Revision                 int64              `json:"revision"`
 	CurrentAttemptNumber     int32              `json:"current_attempt_number"`
-	EntrypointKind           string             `json:"entrypoint_kind"`
 	SessionID                pgtype.UUID        `json:"session_id"`
 	ParentRunID              pgtype.UUID        `json:"parent_run_id"`
 	ParentOwnsLifecycle      pgtype.Bool        `json:"parent_owns_lifecycle"`
-	RetryPolicy              []byte             `json:"retry_policy"`
 	MaxActiveDurationMs      int64              `json:"max_active_duration_ms"`
 	ActiveElapsedMs          int64              `json:"active_elapsed_ms"`
 	ActiveStartedAt          pgtype.Timestamptz `json:"active_started_at"`
@@ -565,15 +548,12 @@ func (q *Queries) GetRunExecutionLeaseLossAuthority(ctx context.Context, arg Get
 	err := row.Scan(
 		&i.RunID,
 		&i.WorkspaceID,
-		&i.BaseWorkspaceVersionID,
 		&i.RunStatus,
 		&i.Revision,
 		&i.CurrentAttemptNumber,
-		&i.EntrypointKind,
 		&i.SessionID,
 		&i.ParentRunID,
 		&i.ParentOwnsLifecycle,
-		&i.RetryPolicy,
 		&i.MaxActiveDurationMs,
 		&i.ActiveElapsedMs,
 		&i.ActiveStartedAt,
@@ -626,6 +606,7 @@ func (q *Queries) InvalidateRunCheckpoints(ctx context.Context, arg InvalidateRu
 const listCancellationLineage = `-- name: ListCancellationLineage :many
 WITH RECURSIVE lineage AS (
     SELECT runs.id,
+           runs.workspace_id,
            runs.parent_run_id,
            runs.parent_owns_lifecycle,
            0 AS depth,
@@ -636,6 +617,7 @@ WITH RECURSIVE lineage AS (
      WHERE runs.id = $2
     UNION ALL
     SELECT parent.id,
+           parent.workspace_id,
            parent.parent_run_id,
            parent.parent_owns_lifecycle,
            lineage.depth + 1,
@@ -649,7 +631,7 @@ WITH RECURSIVE lineage AS (
        AND NOT lineage.cycle
        AND lineage.depth < lineage.max_depth
 )
-SELECT id, depth, cycle
+SELECT id, workspace_id, depth, cycle
   FROM lineage
  ORDER BY depth DESC
 `
@@ -660,9 +642,10 @@ type ListCancellationLineageParams struct {
 }
 
 type ListCancellationLineageRow struct {
-	ID    pgtype.UUID `json:"id"`
-	Depth int32       `json:"depth"`
-	Cycle bool        `json:"cycle"`
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Depth       int32       `json:"depth"`
+	Cycle       bool        `json:"cycle"`
 }
 
 func (q *Queries) ListCancellationLineage(ctx context.Context, arg ListCancellationLineageParams) ([]ListCancellationLineageRow, error) {
@@ -674,7 +657,12 @@ func (q *Queries) ListCancellationLineage(ctx context.Context, arg ListCancellat
 	var items []ListCancellationLineageRow
 	for rows.Next() {
 		var i ListCancellationLineageRow
-		if err := rows.Scan(&i.ID, &i.Depth, &i.Cycle); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.Depth,
+			&i.Cycle,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -1275,6 +1263,36 @@ type ReleaseTaskWorkspaceParams struct {
 func (q *Queries) ReleaseTaskWorkspace(ctx context.Context, arg ReleaseTaskWorkspaceParams) error {
 	_, err := q.db.Exec(ctx, releaseTaskWorkspace, arg.WorkspaceID, arg.RunID)
 	return err
+}
+
+const requireLostRunComputerRecovery = `-- name: RequireLostRunComputerRecovery :execrows
+UPDATE workspaces
+   SET status = 'recovery_required',
+       desired_state = 'stopped',
+       dirty_state = 'dirty_state_lost',
+       revision = revision + 1,
+       updated_at = transaction_timestamp()
+  FROM workspace_leases
+ WHERE workspaces.id = $1
+   AND workspace_leases.workspace_id = workspaces.id
+   AND workspace_leases.owner_run_lease_id = $2
+   AND workspace_leases.ownership_generation = workspaces.ownership_generation
+   AND workspace_leases.writer_generation = workspaces.writer_generation
+   AND workspace_leases.status IN ('active', 'releasing')
+   AND workspaces.status = 'active'
+`
+
+type RequireLostRunComputerRecoveryParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	RunLeaseID  pgtype.UUID `json:"run_lease_id"`
+}
+
+func (q *Queries) RequireLostRunComputerRecovery(ctx context.Context, arg RequireLostRunComputerRecoveryParams) (int64, error) {
+	result, err := q.db.Exec(ctx, requireLostRunComputerRecovery, arg.WorkspaceID, arg.RunLeaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const resolveCheckpointingTerminalChildWait = `-- name: ResolveCheckpointingTerminalChildWait :one

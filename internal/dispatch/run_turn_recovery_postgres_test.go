@@ -110,14 +110,10 @@ func TestTurnRecoveryCandidatesDoNotStarveTasks(t *testing.T) {
 					t.Fatalf("expected Run did not recover: %s %v %s", want, current, status)
 				}
 			}
-			if mode == "resume valid checkpoint" {
-				recoverOne(actor.runID)
-			} else {
-				// Uncertain Actors leave the live Lease lane after one bounded
-				// cleanup. They cannot repeatedly consume the Task's next pass.
-				if n, err := actor.authority.RecoverRunExecutionLeases(actor.ctx, 1); err != nil || n != 1 {
-					t.Fatalf("Actor cleanup: %d %v", n, err)
-				}
+			// Uncertain Actors leave the live Lease lane after one bounded
+			// cleanup. They cannot repeatedly consume the Task's next pass.
+			if n, err := actor.authority.RecoverRunExecutionLeases(actor.ctx, 1); err != nil || n != 1 {
+				t.Fatalf("Actor cleanup: %d %v", n, err)
 			}
 			for _, task := range tasks {
 				recoverOne(task.runID)
@@ -147,11 +143,7 @@ WHERE s.id=$1`, actorID, actorLeaseID, actor.runID).Scan(&active, &cursor, &leas
 			if stopIntent != (mode == "fresh held" || mode == "resume held") {
 				t.Fatalf("loss changed Turn interrupt intent: %t", stopIntent)
 			}
-			if mode == "resume valid checkpoint" {
-				if hold.Valid || runStatus != "queued" {
-					t.Fatalf("valid checkpoint held: %v/%s", hold, runStatus)
-				}
-			} else if !hold.Valid || heldRun != currentRun || holdReason != "recovery_required" ||
+			if !hold.Valid || heldRun != currentRun || holdReason != "recovery_required" ||
 				(runStatus != "system_failed" && runStatus != "expired") || physicalLease != "fenced" || desired != "closed" {
 				t.Fatalf("uncertain Actor did not hold and fence: hold=%v bound=%v reason=%s run=%s workspace_lease=%s desired=%s", hold, heldRun, holdReason, runStatus, physicalLease, desired)
 			}

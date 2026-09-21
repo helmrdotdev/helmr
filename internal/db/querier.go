@@ -395,7 +395,6 @@ type Querier interface {
 	LockActorStartDeploymentAuthority(ctx context.Context, arg LockActorStartDeploymentAuthorityParams) (LockActorStartDeploymentAuthorityRow, error)
 	LockActorStartKey(ctx context.Context, arg LockActorStartKeyParams) error
 	LockAttemptSecretDelivery(ctx context.Context, arg LockAttemptSecretDeliveryParams) ([]LockAttemptSecretDeliveryRow, error)
-	LockAttemptSecretResolutionMetadata(ctx context.Context, arg LockAttemptSecretResolutionMetadataParams) ([]LockAttemptSecretResolutionMetadataRow, error)
 	LockCancellationActors(ctx context.Context, arg LockCancellationActorsParams) ([]LockCancellationActorsRow, error)
 	LockCancellationAttempts(ctx context.Context, runIds []pgtype.UUID) ([]pgtype.UUID, error)
 	LockCancellationCheckpoints(ctx context.Context, runIds []pgtype.UUID) ([]pgtype.UUID, error)
@@ -569,6 +568,7 @@ type Querier interface {
 	RequestWorkspaceDeleteMountStop(ctx context.Context, arg RequestWorkspaceDeleteMountStopParams) (RequestWorkspaceDeleteMountStopRow, error)
 	RequestWorkspaceExecMountFinalization(ctx context.Context, arg RequestWorkspaceExecMountFinalizationParams) (RequestWorkspaceExecMountFinalizationRow, error)
 	RequireCheckpointRestoreSupplier(ctx context.Context, arg RequireCheckpointRestoreSupplierParams) (pgtype.UUID, error)
+	RequireLostRunComputerRecovery(ctx context.Context, arg RequireLostRunComputerRecoveryParams) (int64, error)
 	RequireRegisteredCheckpointManifest(ctx context.Context, arg RequireRegisteredCheckpointManifestParams) (pgtype.UUID, error)
 	RequireRunFinalizationObject(ctx context.Context, arg RequireRunFinalizationObjectParams) (RunFinalizationObject, error)
 	ReserveReadyRuntimeForWorkspaceExec(ctx context.Context, arg ReserveReadyRuntimeForWorkspaceExecParams) (RuntimeInstance, error)

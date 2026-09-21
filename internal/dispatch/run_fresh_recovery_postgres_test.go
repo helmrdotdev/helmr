@@ -180,7 +180,7 @@ SELECT runs.status, runs.runtime_preparation_count,
 	}
 }
 
-func TestFreshRunningLeaseLossAppliesPinnedRetryPolicy(t *testing.T) {
+func TestFreshRunningLeaseLossRequiresComputerRecoveryDespiteRetryPolicy(t *testing.T) {
 	for _, entrypointEntered := range []bool{false, true} {
 		t.Run(map[bool]string{false: "before_entrypoint_ack", true: "after_entrypoint_ack"}[entrypointEntered], func(t *testing.T) {
 			fixture, leaseID, _ := prepareFreshRunLease(t)
@@ -207,6 +207,7 @@ UPDATE run_attempts SET entrypoint_entered_at = transaction_timestamp()
 			if err != nil {
 				t.Fatal(err)
 			}
+			assertLostComputerRequiresRecovery(t, fixture)
 			if recovered != 1 {
 				t.Fatalf("recovered = %d, want 1", recovered)
 			}
@@ -229,9 +230,9 @@ SELECT runs.status, runs.current_attempt_number, runs.current_run_lease_id,
 			); err != nil {
 				t.Fatal(err)
 			}
-			if status != "retry_delayed" || currentAttempt != 2 || currentLease.Valid ||
-				!retryAt.Valid || activeStarted.Valid || leaseStatus != "expired" ||
-				attemptOneOutcome != "failed" || attempts != 2 {
+			if status != "system_failed" || currentAttempt != 1 || currentLease.Valid ||
+				retryAt.Valid || activeStarted.Valid || leaseStatus != "expired" ||
+				attemptOneOutcome != "failed" || attempts != 1 {
 				t.Fatalf("retry state status=%s attempt=%d current=%v retry_at=%v active=%v lease=%s outcome=%s attempts=%d",
 					status, currentAttempt, currentLease, retryAt, activeStarted,
 					leaseStatus, attemptOneOutcome, attempts)
@@ -240,7 +241,7 @@ SELECT runs.status, runs.current_attempt_number, runs.current_run_lease_id,
 	}
 }
 
-func TestCheckpointingLeaseLossInvalidatesSuspensionAndRetries(t *testing.T) {
+func TestCheckpointingLeaseLossInvalidatesSuspensionWithoutColdRetry(t *testing.T) {
 	fixture, leaseID, _ := prepareFreshRunLease(t)
 	waitID, checkpointID, resumeAttachID := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	var workspaceLeaseID, baseWorkspaceVersionID pgtype.UUID
@@ -285,6 +286,7 @@ UPDATE run_waits SET suspend_checkpoint_id = $2 WHERE id = $1`, waitID, checkpoi
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertLostComputerRequiresRecovery(t, fixture)
 	if recovered != 1 {
 		t.Fatalf("recovered = %d, want 1", recovered)
 	}
@@ -306,7 +308,7 @@ SELECT runs.status, runs.current_attempt_number, runs.current_run_lease_id,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if runStatus != "retry_delayed" || currentAttempt != 2 || currentLease.Valid ||
+	if runStatus != "system_failed" || currentAttempt != 1 || currentLease.Valid ||
 		leaseStatus != "expired" || waitCondition != "failed" || waitSuspension != "failed" ||
 		checkpointStatus != "invalid" || activeStarted.Valid {
 		t.Fatalf("checkpoint recovery run=%s attempt=%d current=%v lease=%s wait=%s/%s checkpoint=%s active=%v",
@@ -318,7 +320,7 @@ SELECT runs.status, runs.current_attempt_number, runs.current_run_lease_id,
 	}
 }
 
-func TestFinalizingLeaseLossPreservesReceiptAndRetries(t *testing.T) {
+func TestFinalizingLeaseLossPreservesReceiptWithoutColdRetry(t *testing.T) {
 	fixture, leaseID, _ := prepareFreshRunLease(t)
 	operationID := uuid.NewV7()
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
@@ -342,6 +344,7 @@ UPDATE runs
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertLostComputerRequiresRecovery(t, fixture)
 	if recovered != 1 {
 		t.Fatalf("recovered = %d, want 1", recovered)
 	}
@@ -361,7 +364,7 @@ SELECT runs.status, runs.current_attempt_number, runs.current_run_lease_id,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if runStatus != "retry_delayed" || currentAttempt != 2 || currentLease.Valid ||
+	if runStatus != "system_failed" || currentAttempt != 1 || currentLease.Valid ||
 		leaseStatus != "expired" || retainedOperationID != pgvalue.UUID(operationID) ||
 		finalizationKind != "capture" || !finalizationStarted.Valid ||
 		fingerprint != "sha256:"+strings.Repeat("a", 64) {
@@ -392,6 +395,7 @@ UPDATE runs
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertLostComputerRequiresRecovery(t, fixture)
 	if recovered != 1 {
 		t.Fatalf("recovered = %d, want 1", recovered)
 	}
@@ -437,6 +441,7 @@ UPDATE runs
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertLostComputerRequiresRecovery(t, fixture)
 	if recovered != 1 {
 		t.Fatalf("recovered = %d, want 1", recovered)
 	}
@@ -476,6 +481,7 @@ UPDATE runs
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertLostComputerRequiresRecovery(t, fixture)
 	if recovered != 1 {
 		t.Fatalf("recovered = %d, want 1", recovered)
 	}
@@ -500,7 +506,7 @@ SELECT runs.status, runs.current_attempt_number, sessions.status,
 	}
 }
 
-func TestFreshRunningLeaseRetryFailsClosedWhenSecretAuthorityChanged(t *testing.T) {
+func TestFreshRunningLeaseLossDoesNotResolveNewRetrySecrets(t *testing.T) {
 	fixture, leaseID, _ := prepareFreshRunLease(t)
 	secretID, versionID, resolutionID := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	tx, err := fixture.pool.Begin(fixture.ctx)
@@ -553,6 +559,7 @@ UPDATE runs
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertLostComputerRequiresRecovery(t, fixture)
 	if recovered != 1 {
 		t.Fatalf("recovered = %d, want 1", recovered)
 	}
@@ -566,7 +573,7 @@ SELECT runs.status, run_attempts.terminal_reason_code,
  WHERE runs.id = $1`, fixture.runID).Scan(&status, &reason, &attempts); err != nil {
 		t.Fatal(err)
 	}
-	if status != "system_failed" || reason != "secret_retry_unavailable" || attempts != 1 {
+	if status != "system_failed" || reason != "lease_expired" || attempts != 1 {
 		t.Fatalf("Secret failure status=%s reason=%s attempts=%d", status, reason, attempts)
 	}
 }
@@ -712,5 +719,44 @@ func TestFreshActorPrestartLossRetainsSafeLaunchRetry(t *testing.T) {
 				t.Fatalf("safe prestart retry changed: %s %v %d hold=%v current=%v terminal=%v", status, current, attempt, hold, sessionRun, terminal)
 			}
 		})
+	}
+}
+
+func assertLostComputerRequiresRecovery(t *testing.T, fixture runPlacementFixture) {
+	t.Helper()
+	var status, desired, dirty string
+	var head, base pgtype.UUID
+	if err := fixture.pool.QueryRow(fixture.ctx, `SELECT w.status, w.desired_state, w.dirty_state, w.head_version_id, r.base_workspace_version_id FROM workspaces w JOIN runs r ON r.workspace_id=w.id WHERE r.id=$1`, fixture.runID).Scan(&status, &desired, &dirty, &head, &base); err != nil {
+		t.Fatal(err)
+	}
+	if status != "recovery_required" || desired != "stopped" || dirty != "dirty_state_lost" || !head.Valid || head != base {
+		t.Fatalf("lost Computer state=%s/%s/%s head=%v base=%v", status, desired, dirty, head, base)
+	}
+}
+
+func TestLostComputerRecoveryRollsBackWithRunFailure(t *testing.T) {
+	fixture, leaseID, runtimeID := prepareFreshRunLease(t)
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `UPDATE run_leases SET status='running', claimed_at=created_at, started_at=created_at, expires_at=now()+interval '5 minutes' WHERE id=$1`, leaseID)
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `UPDATE runs SET status='running', started_at=now(), active_started_at=now(), revision=revision+1 WHERE id=$1`, fixture.runID)
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `UPDATE runtime_instances SET observed_state='failed', terminal_at=now(), terminal_reason_code='runtime_failed' WHERE id=$1`, runtimeID)
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `CREATE FUNCTION reject_test_run_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.status='system_failed' THEN RAISE EXCEPTION 'test terminal write failure'; END IF; RETURN NEW; END $$`)
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `CREATE TRIGGER reject_test_run_failure BEFORE UPDATE ON runs FOR EACH ROW EXECUTE FUNCTION reject_test_run_failure()`)
+	if _, err := fixture.authority.RecoverRunExecutionLeases(fixture.ctx, 10); err == nil {
+		t.Fatal("terminal failure was ignored")
+	}
+	var state string
+	if err := fixture.pool.QueryRow(fixture.ctx, `SELECT status FROM workspaces WHERE id=$1`, fixture.workspaceID).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != "active" {
+		t.Fatalf("Computer recovery committed without Run failure: %s", state)
+	}
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `DROP TRIGGER reject_test_run_failure ON runs`)
+	if count, err := fixture.authority.RecoverRunExecutionLeases(fixture.ctx, 10); err != nil || count != 1 {
+		t.Fatalf("retry recovery count=%d error=%v", count, err)
+	}
+	assertLostComputerRequiresRecovery(t, fixture)
+	if count, err := fixture.authority.RecoverRunExecutionLeases(fixture.ctx, 10); err != nil || count != 0 {
+		t.Fatalf("recovery replay count=%d error=%v", count, err)
 	}
 }

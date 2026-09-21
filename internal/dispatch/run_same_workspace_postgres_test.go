@@ -17,6 +17,17 @@ import (
 )
 
 func TestSameWorkspaceChildUsesFreshRuntimeAndParentRestoresBIntoC(t *testing.T) {
+	runSameWorkspaceChild(t, "")
+}
+
+func TestSameWorkspaceChildLeaseLossFailsParentWithoutRestoringOldDisk(t *testing.T) {
+	for _, loss := range []string{"lease_expired", "active_deadline", "prestart"} {
+		t.Run(loss, func(t *testing.T) { runSameWorkspaceChild(t, loss) })
+	}
+}
+
+func runSameWorkspaceChild(t *testing.T, loss string) {
+	t.Helper()
 	fixture := newRunPlacementFixture(t)
 	parentCandidate := fixture.candidate()
 	parentRuntime, parentMount, parentLease := placeRunForTest(t, fixture, parentCandidate)
@@ -203,6 +214,93 @@ SELECT run_waits.child_writer_generation, workspaces.writer_generation,
 	if childWriter != 2 || workspaceWriter != 2 || childLeaseBase != pgvalue.UUID(bVersionID) {
 		t.Fatalf("child receipts writer=%d workspace=%d base=%s",
 			childWriter, workspaceWriter, pgvalue.UUIDString(childLeaseBase))
+	}
+
+	if loss != "" {
+		dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE runs SET status = 'running', active_started_at = transaction_timestamp() - interval '10 seconds',
+       started_at = transaction_timestamp() - interval '10 seconds' WHERE id = $1`, childID)
+		dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE run_leases SET status = 'running', created_at = transaction_timestamp() - interval '1 minute',
+       claimed_at = transaction_timestamp() - interval '1 minute',
+       started_at = transaction_timestamp() - interval '1 minute',
+       start_deadline_at = transaction_timestamp() - interval '2 seconds', expires_at = transaction_timestamp() - interval '1 second'
+ WHERE id = $1`, childLease.ID)
+		if loss == "active_deadline" {
+			dbtest.MustExec(t, fixture.ctx, fixture.pool, `UPDATE runs SET max_active_duration_ms = 5000 WHERE id = $1`, childID)
+		}
+		if loss == "prestart" {
+			dbtest.MustExec(t, fixture.ctx, fixture.pool, `UPDATE run_leases SET status = 'starting', started_at = NULL WHERE id = $1`, childLease.ID)
+			dbtest.MustExec(t, fixture.ctx, fixture.pool, `UPDATE runs SET status = 'queued', active_started_at = NULL, started_at = NULL WHERE id = $1`, childID)
+		}
+		recovered, err := fixture.authority.RecoverRunExecutionLeases(fixture.ctx, 10)
+		if err != nil || recovered != 1 {
+			t.Fatalf("recover child = %d, %v", recovered, err)
+		}
+		if loss == "prestart" {
+			var parentStatus, childStatus, computerStatus, suspension string
+			var owner pgtype.UUID
+			if err := fixture.pool.QueryRow(fixture.ctx, `
+SELECT p.status, c.status, w.status, w.owner_run_id, rw.suspension_status
+ FROM runs p JOIN runs c ON c.parent_run_id = p.id
+ JOIN workspaces w ON w.id = p.workspace_id JOIN run_waits rw ON rw.child_run_id = c.id
+ WHERE c.id = $1`, childID).Scan(&parentStatus, &childStatus, &computerStatus, &owner, &suspension); err != nil {
+				t.Fatal(err)
+			}
+			if parentStatus != "waiting" || childStatus != "queued" || computerStatus != "active" || owner != pgvalue.UUID(fixture.runID) || suspension != "parked" {
+				t.Fatalf("prestart parent=%s child=%s Computer=%s owner=%v wait=%s", parentStatus, childStatus, computerStatus, owner, suspension)
+			}
+			return
+		}
+		for _, id := range []uuid.UUID{fixture.runID, childID} {
+			var status, code, attemptCode string
+			if err := fixture.pool.QueryRow(fixture.ctx, `SELECT r.status, r.failure->>'code', a.terminal_reason_code
+ FROM runs r JOIN run_attempts a ON a.run_id = r.id AND a.number = r.current_attempt_number
+ WHERE r.id = $1`, id).Scan(&status, &code, &attemptCode); err != nil {
+				t.Fatal(err)
+			}
+			want := "system_failed"
+			if id == childID && loss == "active_deadline" {
+				want = "expired"
+			}
+			if status != want {
+				t.Fatalf("Run %s status = %s", id, status)
+			}
+			wantCode := "computer_recovery_required"
+			if id == childID {
+				wantCode = "lease_expired"
+				if loss == "active_deadline" {
+					wantCode = "max_active_duration_exceeded"
+				}
+			}
+			if code != wantCode || attemptCode != wantCode {
+				t.Fatalf("Run %s failure=%s attempt=%s, want %s", id, code, attemptCode, wantCode)
+			}
+		}
+		var failedEvents, expiredEvents int
+		if err := fixture.pool.QueryRow(fixture.ctx, `SELECT count(*) FILTER (WHERE kind = 'run.system_failed'),
+ count(*) FILTER (WHERE kind = 'run.expired') FROM telemetry_outbox WHERE run_id = $1`, fixture.runID).Scan(&failedEvents, &expiredEvents); err != nil {
+			t.Fatal(err)
+		}
+		if failedEvents != 1 || expiredEvents != 0 {
+			t.Fatalf("parent failure events=%d expiry events=%d", failedEvents, expiredEvents)
+		}
+		var computer, dirty, suspension, checkpoint string
+		var owner pgtype.UUID
+		if err := fixture.pool.QueryRow(fixture.ctx, `
+SELECT w.status, w.dirty_state, w.owner_run_id, rw.suspension_status, rc.status
+ FROM workspaces w JOIN run_waits rw ON rw.id = $2
+ JOIN run_checkpoints rc ON rc.id = rw.suspend_checkpoint_id
+ WHERE w.id = $1`, fixture.workspaceID, waitID).Scan(&computer, &dirty, &owner, &suspension, &checkpoint); err != nil {
+			t.Fatal(err)
+		}
+		if computer != "recovery_required" || dirty != "dirty_state_lost" || owner.Valid || suspension != "failed" || checkpoint != "invalid" {
+			t.Fatalf("Computer=%s dirty=%s owner=%v suspension=%s checkpoint=%s", computer, dirty, owner, suspension, checkpoint)
+		}
+		if n, err := fixture.authority.RecoverRunExecutionLeases(fixture.ctx, 10); err != nil || n != 0 {
+			t.Fatalf("replay = %d, %v", n, err)
+		}
+		return
 	}
 
 	var childWorkspaceLeaseID pgtype.UUID
