@@ -17,7 +17,6 @@ import (
 	runauthority "github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -84,40 +83,11 @@ func populateRuntimePrepareSource(
 	source *workerapi.RuntimeSource,
 	row db.ListRuntimeReconcileTargetsRow,
 ) error {
-	if !row.BaseWorkspaceVersionID.Valid || !row.WorkspaceContentDigest.Valid ||
-		!row.WorkspaceLogicalSizeBytes.Valid || !row.WorkspaceEntryCount.Valid {
-		return errors.New("runtime reservation has no exact workspace version")
+	computerSource, err := projectRuntimeComputerSource(row)
+	if err != nil {
+		return err
 	}
-	if row.WorkspaceArchitecture == "" {
-		return errors.New("runtime reservation has no workspace architecture")
-	}
-	source.WorkspaceTarget = &workerapi.WorkspaceResetTarget{
-		BaseWorkspaceVersionID: pgvalue.UUIDString(row.BaseWorkspaceVersionID),
-		Tree: workerapi.WorkspaceTreeIdentity{
-			Digest: row.WorkspaceContentDigest.String, SizeBytes: row.WorkspaceLogicalSizeBytes.Int64,
-			EntryCount: row.WorkspaceEntryCount.Int32,
-		},
-	}
-	artifact := workerapi.WorkspaceArtifact{
-		Digest:     row.WorkspaceArtifactDigest,
-		MediaType:  row.WorkspaceArtifactMediaType,
-		SizeBytes:  row.WorkspaceArtifactSizeBytes,
-		EntryCount: row.WorkspaceEntryCount.Int32,
-	}
-	if artifact.Digest == "" {
-		if artifact.SizeBytes != 0 || artifact.MediaType != "" || artifact.EntryCount != 0 ||
-			source.WorkspaceTarget.Tree.Digest != workspace.CanonicalEmptyTreeDigest ||
-			source.WorkspaceTarget.Tree.SizeBytes != 0 || source.WorkspaceTarget.Tree.EntryCount != 0 {
-			return errors.New("runtime reservation has an invalid empty workspace root")
-		}
-		source.WorkspaceTarget.Empty = &workerapi.EmptyWorkspace{}
-	} else {
-		if artifact.SizeBytes <= 0 || artifact.MediaType != workspace.ArtifactMediaType || artifact.EntryCount < 0 {
-			return errors.New("runtime reservation has an invalid workspace artifact")
-		}
-		artifact.Encoding = workspace.ArtifactEncoding
-		source.WorkspaceTarget.Artifact = &artifact
-	}
+	source.Computer = &computerSource
 	if !row.ProgramDeploymentID.Valid {
 		if row.ReservedRunID.Valid {
 			return errors.New("run runtime reservation has no program deployment")

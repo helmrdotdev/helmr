@@ -287,3 +287,50 @@ VALUES ($1,$2,'workspace.exec',decode(repeat('51',32),'hex'),decode(repeat('52',
 		t.Fatalf("explicit exec publication: %+v", got)
 	}
 }
+
+func TestComputerPreparationSourceTracksPublishedRoot(t *testing.T) {
+	f := newInitialPublicationFixture(t)
+	seed := initializingComputerSourceRow(t)
+	// Bind a valid admitted deployment to this reserved runtime. The existing
+	// publication fixture's opaque candidate isolates the database protocol;
+	// disk encoding/authentication is exercised by the computer package.
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO cas_objects (org_id,digest,size_bytes,media_type) VALUES ($1,$2,$3,$4)`,
+		f.OrgID, seed.WorkspaceImageDigest, seed.WorkspaceImageSizeBytes, seed.WorkspaceImageMediaType)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE artifacts SET digest=$2,size_bytes=$3,media_type=$4
+ WHERE id=(SELECT artifact_id FROM deployment_definitions WHERE id=$1)`,
+		f.WorkspaceDefinitionID, seed.WorkspaceImageDigest, seed.WorkspaceImageSizeBytes, seed.WorkspaceImageMediaType)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE deployment_definitions SET manifest=$2 WHERE id=$1`, f.WorkspaceDefinitionID, seed.SandboxManifest)
+	read := func() workerapi.RuntimeComputerSource {
+		t.Helper()
+		rows, err := f.server.db.ListRuntimeReconcileTargets(t.Context(), db.ListRuntimeReconcileTargetsParams{
+			WorkerGroupID: pgvalue.UUID(f.worker.WorkerGroupID), WorkerInstanceID: pgvalue.UUID(f.worker.WorkerInstanceID),
+			WorkerEpoch: f.worker.WorkerEpoch, ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds, RowLimit: 64,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 1 {
+			t.Fatalf("preparation rows: %d", len(rows))
+		}
+		source, err := projectRuntimeComputerSource(rows[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		return source
+	}
+	initial := read()
+	if initial.Seed == nil || initial.Disk != nil || initial.Config.User != "1000" {
+		t.Fatalf("initial: %+v", initial)
+	}
+	requireInitialStatus(t, f.call(t, false, f.request), http.StatusOK)
+	if source := read(); source.Seed == nil || source.Disk != nil {
+		t.Fatal("registration exposed unpublished disk")
+	}
+	f.upload(t)
+	published := requireInitialStatus(t, f.call(t, true, f.request), http.StatusOK)
+	continued := read()
+	if continued.Seed != nil || continued.Disk == nil || continued.Disk.Digest != f.request.Disk.Digest ||
+		continued.Config.User != "root" || continued.VersionID != initial.VersionID || continued.VersionID != published.VersionID {
+		t.Fatalf("published: %+v", continued)
+	}
+}

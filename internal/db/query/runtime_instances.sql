@@ -14,6 +14,10 @@ WITH worker AS (
        AND worker_instances.status IN ('active', 'draining')
 )
 SELECT runtime_instances.*,
+       deployment_definitions.manifest_version AS sandbox_manifest_version,
+       deployment_definitions.manifest AS sandbox_manifest,
+       reserved_workspace_versions.status AS computer_version_status,
+       initialization.initial_config AS computer_initial_config,
        artifacts.digest AS workspace_image_digest,
        artifacts.size_bytes AS workspace_image_size_bytes,
        artifacts.media_type AS workspace_image_media_type,
@@ -51,7 +55,11 @@ SELECT runtime_instances.*,
     ON reserved_workspace_versions.environment_id = runtime_instances.environment_id
    AND reserved_workspace_versions.workspace_id = runtime_instances.workspace_id
    AND reserved_workspace_versions.id = runtime_instances.reserved_workspace_version_id
-   AND reserved_workspace_versions.status IN ('committed', 'private')
+   AND reserved_workspace_versions.status IN ('initializing', 'committed', 'private')
+  LEFT JOIN computer_initializations AS initialization
+    ON initialization.environment_id = runtime_instances.environment_id
+   AND initialization.computer_id = runtime_instances.workspace_id
+   AND initialization.status = 'consumed'
   LEFT JOIN artifacts AS reserved_workspace_artifacts
     ON reserved_workspace_artifacts.environment_id = reserved_workspace_versions.environment_id
    AND reserved_workspace_artifacts.id = reserved_workspace_versions.artifact_id

@@ -298,6 +298,10 @@ WITH worker AS (
        AND worker_instances.status IN ('active', 'draining')
 )
 SELECT runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.vm_vcpu_count, runtime_instances.cpu_config_digest, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.preparation_expires_at, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.ready_at, runtime_instances.terminal_at, runtime_instances.reclaimed_at, runtime_instances.reclaim_evidence, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.updated_at,
+       deployment_definitions.manifest_version AS sandbox_manifest_version,
+       deployment_definitions.manifest AS sandbox_manifest,
+       reserved_workspace_versions.status AS computer_version_status,
+       initialization.initial_config AS computer_initial_config,
        artifacts.digest AS workspace_image_digest,
        artifacts.size_bytes AS workspace_image_size_bytes,
        artifacts.media_type AS workspace_image_media_type,
@@ -335,7 +339,11 @@ SELECT runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_
     ON reserved_workspace_versions.environment_id = runtime_instances.environment_id
    AND reserved_workspace_versions.workspace_id = runtime_instances.workspace_id
    AND reserved_workspace_versions.id = runtime_instances.reserved_workspace_version_id
-   AND reserved_workspace_versions.status IN ('committed', 'private')
+   AND reserved_workspace_versions.status IN ('initializing', 'committed', 'private')
+  LEFT JOIN computer_initializations AS initialization
+    ON initialization.environment_id = runtime_instances.environment_id
+   AND initialization.computer_id = runtime_instances.workspace_id
+   AND initialization.status = 'consumed'
   LEFT JOIN artifacts AS reserved_workspace_artifacts
     ON reserved_workspace_artifacts.environment_id = reserved_workspace_versions.environment_id
    AND reserved_workspace_artifacts.id = reserved_workspace_versions.artifact_id
@@ -424,6 +432,10 @@ type ListRuntimeReconcileTargetsRow struct {
 	TerminalReasonCode              pgtype.Text        `json:"terminal_reason_code"`
 	TerminalError                   []byte             `json:"terminal_error"`
 	UpdatedAt                       pgtype.Timestamptz `json:"updated_at"`
+	SandboxManifestVersion          int32              `json:"sandbox_manifest_version"`
+	SandboxManifest                 []byte             `json:"sandbox_manifest"`
+	ComputerVersionStatus           pgtype.Text        `json:"computer_version_status"`
+	ComputerInitialConfig           []byte             `json:"computer_initial_config"`
 	WorkspaceImageDigest            string             `json:"workspace_image_digest"`
 	WorkspaceImageSizeBytes         int64              `json:"workspace_image_size_bytes"`
 	WorkspaceImageMediaType         string             `json:"workspace_image_media_type"`
@@ -504,6 +516,10 @@ func (q *Queries) ListRuntimeReconcileTargets(ctx context.Context, arg ListRunti
 			&i.TerminalReasonCode,
 			&i.TerminalError,
 			&i.UpdatedAt,
+			&i.SandboxManifestVersion,
+			&i.SandboxManifest,
+			&i.ComputerVersionStatus,
+			&i.ComputerInitialConfig,
 			&i.WorkspaceImageDigest,
 			&i.WorkspaceImageSizeBytes,
 			&i.WorkspaceImageMediaType,

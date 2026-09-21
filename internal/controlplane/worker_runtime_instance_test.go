@@ -62,15 +62,10 @@ func TestWorkerRuntimeReconcileTargetRoundTripsActionWorkspaceAuthority(t *testi
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			row := db.ListRuntimeReconcileTargetsRow{
-				ID: runtimeID, WorkerEpoch: 7,
-				DesiredState: test.desired, ObservedState: test.observed,
-				BaseWorkspaceVersionID:    baseWorkspaceVersionID,
-				WorkspaceContentDigest:    pgvalue.Text(workspace.CanonicalEmptyTreeDigest),
-				WorkspaceLogicalSizeBytes: pgtype.Int8{Int64: 0, Valid: true},
-				WorkspaceEntryCount:       pgtype.Int4{Int32: 0, Valid: true},
-				WorkspaceArchitecture:     "x86_64",
-			}
+			row := initializingComputerSourceRow(t)
+			row.ID, row.WorkerEpoch = runtimeID, 7
+			row.DesiredState, row.ObservedState = test.desired, test.observed
+			row.BaseWorkspaceVersionID = baseWorkspaceVersionID
 			server := &Server{log: discardTestLogger(), db: &runtimeReconcileTargetStore{rows: []db.ListRuntimeReconcileTargetsRow{row}}}
 			request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/runtime-instances/reconcile", strings.NewReader(`{}`))
 			request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
@@ -90,7 +85,7 @@ func TestWorkerRuntimeReconcileTargetRoundTripsActionWorkspaceAuthority(t *testi
 				t.Fatalf("decode response %s: %v", response.Body, err)
 			}
 			if len(decoded.Items) != 1 || decoded.Items[0].Action != test.wantAction ||
-				(decoded.Items[0].Source.WorkspaceTarget != nil) != test.wantTarget {
+				(decoded.Items[0].Source.Computer != nil) != test.wantTarget {
 				t.Fatalf("items = %#v", decoded.Items)
 			}
 		})
