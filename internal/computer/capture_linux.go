@@ -62,6 +62,27 @@ func (c *DiskCandidate) Close() error {
 	return file.Close()
 }
 
+// CaptureSizeLimit is the temporary ciphertext space needed in the worst case.
+// The writable source disk and any VM/RAM snapshot staging are separate charges.
+func (s DiskStore) CaptureSizeLimit(capacity int64) (int64, error) {
+	admissionLimit, err := diskArtifactLimit(capacity)
+	if err != nil {
+		return 0, err
+	}
+	packed, err := filepack.PackedSizeLimit(capacity, diskRole)
+	if err != nil {
+		return 0, err
+	}
+	encoded, err := s.Cipher.EncryptedSize(packed)
+	if err != nil {
+		return 0, err
+	}
+	if encoded > admissionLimit {
+		return 0, errors.New("computer encoder exceeds artifact admission limit")
+	}
+	return encoded, nil
+}
+
 // Capture encodes an exclusively owned stable disk once, without remote writes.
 // stagingDir must be a private directory owned by this runtime, outside the guest;
 // its owner reserves encoding capacity before calling and cleans it after crashes.
@@ -91,7 +112,7 @@ func (s DiskStore) Capture(ctx context.Context, computerID, disk, stagingDir str
 	if !info.Mode().IsRegular() {
 		return nil, errors.New("computer disk must be a regular file")
 	}
-	limit, err := diskArtifactLimit(info.Size())
+	limit, err := s.CaptureSizeLimit(info.Size())
 	if err != nil {
 		return nil, err
 	}

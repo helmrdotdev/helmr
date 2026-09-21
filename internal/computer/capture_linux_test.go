@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"testing"
@@ -109,4 +110,45 @@ func (p *uncertainDiskPublisher) Publish(ctx context.Context, expected cas.Descr
 		return cas.Object{}, errDiskUpload
 	}
 	return object, nil
+}
+
+func TestCaptureUsesEncoderStagingBound(t *testing.T) {
+	cipher, err := checkpoint.New(bytes.Repeat([]byte{7}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := DiskStore{Cipher: cipher}
+	const capacity = int64(32 << 30)
+	limit, err := store.CaptureSizeLimit(capacity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if limit < capacity || limit > capacity+capacity/100 {
+		t.Fatalf("unexpected ciphertext staging bound: %d", limit)
+	}
+	t.Logf("32 GiB disk ciphertext staging limit: %d bytes", limit)
+	dir := t.TempDir()
+	data := make([]byte, (4<<20)+4096)
+	if _, err := rand.NewChaCha8([32]byte{9}).Read(data); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "disk")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := store.Capture(t.Context(), diskTestComputer, path, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer candidate.Close()
+	limit, err = store.CaptureSizeLimit(int64(len(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if candidate.Artifact().Object.SizeBytes > limit {
+		t.Fatal("capture exceeded staging bound")
+	}
+	if _, err := (DiskStore{}).CaptureSizeLimit(4096); err == nil {
+		t.Fatal("missing encryption accepted")
+	}
 }

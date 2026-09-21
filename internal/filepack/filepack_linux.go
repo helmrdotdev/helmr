@@ -62,7 +62,7 @@ func PackTo(ctx context.Context, source *os.File, target io.Writer, role string)
 	}); err != nil {
 		return Stats{}, err
 	}
-	encoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest))
+	encoder, err := newFilepackEncoder()
 	if err != nil {
 		return Stats{}, err
 	}
@@ -181,7 +181,7 @@ func writeFilepackDataRecord(w io.Writer, offset int64, rawSize int, compressed 
 	if len(compressed) == 0 || len(compressed) > maxFilepackChunk {
 		return errors.New("invalid Firecracker filepack compressed chunk size")
 	}
-	var header [21]byte
+	var header [filepackDataHeaderSize]byte
 	header[0] = filepackRecordData
 	binary.BigEndian.PutUint64(header[1:9], uint64(offset))
 	binary.BigEndian.PutUint32(header[9:13], uint32(rawSize))

@@ -13,17 +13,18 @@ import (
 )
 
 const (
-	filepackMagic      = "helmr-firecracker-filepack-v0\n"
-	filepackVersion    = 0
-	filepackChunkSize  = int64(4 << 20)
-	filepackRecordData = byte(1)
-	filepackRecordEnd  = byte(255)
-	maxFilepackHeader  = 1 << 20
-	maxFilepackChunk   = 64 << 20
-	filepackCodecZstd  = "zstd"
-	ScratchRole        = "scratch-disk"
-	MemoryRole         = "memory"
-	maxInt64           = int64(1<<63 - 1)
+	filepackMagic          = "helmr-firecracker-filepack-v0\n"
+	filepackVersion        = 0
+	filepackChunkSize      = int64(4 << 20)
+	filepackRecordData     = byte(1)
+	filepackDataHeaderSize = 21
+	filepackRecordEnd      = byte(255)
+	maxFilepackHeader      = 1 << 20
+	maxFilepackChunk       = 64 << 20
+	filepackCodecZstd      = "zstd"
+	ScratchRole            = "scratch-disk"
+	MemoryRole             = "memory"
+	maxInt64               = int64(1<<63 - 1)
 )
 
 type filepackHeader struct {
