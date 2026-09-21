@@ -45,6 +45,10 @@ func (s DiskStore) Restore(ctx context.Context, computerID string, artifact Disk
 	if err := artifact.Validate(capacity); err != nil {
 		return err
 	}
+	return s.restore(ctx, artifact, target, capacity, "computer-disk:"+computerID, diskRole)
+}
+
+func (s DiskStore) restore(ctx context.Context, artifact DiskArtifact, target string, capacity int64, purpose, role string) error {
 	if _, err := os.Lstat(target); err == nil {
 		return os.ErrExist
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -69,7 +73,7 @@ func (s DiskStore) Restore(ctx context.Context, computerID string, artifact Disk
 		// before exposing a working disk, independently of the storage adapter.
 		hash := sha256.New()
 		bounded := &io.LimitedReader{R: &contextReader{ctx, body}, N: artifact.Object.SizeBytes + 1}
-		err := s.Cipher.Decrypt(ctx, io.TeeReader(bounded, hash), writer, "computer-disk:"+computerID)
+		err := s.Cipher.Decrypt(ctx, io.TeeReader(bounded, hash), writer, purpose)
 		if err == nil && (bounded.N != 1 || sha256sum.FormatDigest(hash.Sum(nil)) != artifact.Object.Digest) {
 			err = errors.New("computer disk ciphertext descriptor mismatch")
 		}
@@ -77,7 +81,7 @@ func (s DiskStore) Restore(ctx context.Context, computerID string, artifact Disk
 		verified <- err
 	}()
 	restored := filepath.Join(dir, "disk.raw")
-	_, unpackErr := filepack.UnpackFrom(ctx, reader, restored, diskRole, capacity)
+	_, unpackErr := filepack.UnpackFrom(ctx, reader, restored, role, capacity)
 	_ = reader.CloseWithError(unpackErr)
 	if unpackErr != nil {
 		cancel()

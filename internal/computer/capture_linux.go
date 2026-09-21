@@ -71,6 +71,11 @@ func (s DiskStore) Capture(ctx context.Context, computerID, disk, stagingDir str
 	if err := s.validate(computerID); err != nil {
 		return nil, err
 	}
+	return s.capture(ctx, disk, stagingDir, "computer-disk:"+computerID, diskRole, DiskMediaType)
+}
+
+// capture shares the byte encoding only; callers own identity and format policy.
+func (s DiskStore) capture(ctx context.Context, disk, stagingDir, purpose, role, mediaType string) (_ *DiskCandidate, retErr error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -112,14 +117,14 @@ func (s DiskStore) Capture(ctx context.Context, computerID, disk, stagingDir str
 	reader, writer := io.Pipe()
 	packed := make(chan error, 1)
 	go func() {
-		stats, err := filepack.PackTo(ctx, source, writer, diskRole)
+		stats, err := filepack.PackTo(ctx, source, writer, role)
 		if err == nil && stats.LogicalBytes != info.Size() {
 			err = errors.New("computer disk size changed during capture")
 		}
 		_ = writer.CloseWithError(err)
 		packed <- err
 	}()
-	encryptErr := s.Cipher.Encrypt(ctx, reader, bounded, "computer-disk:"+computerID)
+	encryptErr := s.Cipher.Encrypt(ctx, reader, bounded, purpose)
 	_ = reader.CloseWithError(encryptErr)
 	if err := errors.Join(encryptErr, <-packed); err != nil {
 		return nil, fmt.Errorf("encode computer disk: %w", err)
@@ -143,7 +148,7 @@ func (s DiskStore) Capture(ctx context.Context, computerID, disk, stagingDir str
 		return nil, closeErr
 	}
 	return &DiskCandidate{file: readOnly, artifact: DiskArtifact{
-		Object:       cas.Descriptor{Digest: sha256sum.FormatDigest(hash.Sum(nil)), SizeBytes: limit - bounded.remaining, MediaType: DiskMediaType},
+		Object:       cas.Descriptor{Digest: sha256sum.FormatDigest(hash.Sum(nil)), SizeBytes: limit - bounded.remaining, MediaType: mediaType},
 		LogicalBytes: info.Size(),
 	}}, nil
 }
