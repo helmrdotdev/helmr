@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"os"
 	"strings"
 	"sync"
@@ -1491,6 +1492,14 @@ func (p *PreparedRuntimePool) reserveRuntimeCapacity(
 		}
 		projectionBytes = topologies[0].Computer.SizeBytes
 	}
+	retained, staging, err := p.checkpointRestoreCapacity(target)
+	if err != nil {
+		return err
+	}
+	if retained > math.MaxInt64-projectionBytes {
+		return capacity.ErrOverflow
+	}
+	projectionBytes += retained
 	request, err := runtimeCapacityVectorWithProjection(
 		int64(target.Source.ReservedCPUMillis),
 		int64(target.Source.ReservedMemoryMiB),
@@ -1504,6 +1513,19 @@ func (p *PreparedRuntimePool) reserveRuntimeCapacity(
 	if errors.Is(err, capacity.ErrCapacityExceeded) || err == nil && !created {
 		return errPreparedRuntimeCapacityBusy
 	}
+	if err != nil {
+		return err
+	}
+	if staging > 0 {
+		created, err = p.Capacity.Reserve(restoreStagingKey(target.ID, target.WorkerEpoch), capacity.Vector{GuestEphemeralDiskBytes: staging})
+		if err != nil || !created {
+			releaseErr := p.Capacity.Release(runtimeCapacityKey(target.ID, target.WorkerEpoch))
+			if errors.Is(err, capacity.ErrCapacityExceeded) || err == nil {
+				err = errPreparedRuntimeCapacityBusy
+			}
+			return errors.Join(err, releaseErr)
+		}
+	}
 	return err
 }
 
@@ -1515,8 +1537,14 @@ func (p *PreparedRuntimePool) releaseRuntimeCapacity(runtimeInstanceID string, r
 		if err := os.RemoveAll(p.computerPreparationDirectory(runtimeInstanceID, runtimeEpoch)); err != nil {
 			return err
 		}
+		if err := os.RemoveAll(p.restorePreparationDirectory(runtimeInstanceID, runtimeEpoch)); err != nil {
+			return err
+		}
 	}
 	if err := p.Capacity.Release(computerStagingKey(runtimeInstanceID, runtimeEpoch)); err != nil {
+		return err
+	}
+	if err := p.Capacity.Release(restoreStagingKey(runtimeInstanceID, runtimeEpoch)); err != nil {
 		return err
 	}
 	return p.Capacity.Release(runtimeCapacityKey(runtimeInstanceID, runtimeEpoch))

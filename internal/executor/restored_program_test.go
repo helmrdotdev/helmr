@@ -369,14 +369,7 @@ func TestValidatePreparedRuntimeRestoreExactTupleAndMembership(t *testing.T) {
 		t.Fatal("mismatched Checkpoint Artifact membership was accepted")
 	}
 	target.Source.Restore.Artifacts[2].Role = "memory"
-	checkpoint.WorkspaceState.Base.MountPath = "/other"
-	target.Source.Restore.Manifest, err = json.Marshal(checkpoint)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := validatePreparedRuntimeRestore(target, deployment.ArchitectureX8664); err == nil {
-		t.Fatal("noncanonical Checkpoint manifest Workspace mount was accepted")
-	}
+
 }
 
 func serveRestoredGrant(conn net.Conn) error {

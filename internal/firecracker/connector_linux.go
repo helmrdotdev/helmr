@@ -633,9 +633,6 @@ func (runtime *QualifiedRuntime) Restore(ctx context.Context, request vm.Restore
 }
 
 func (c *Connector) restore(ctx context.Context, request vm.RestoreRequest) (vm.Session, error) {
-	if request.Topology.Computer != nil {
-		return nil, errors.New("computer restore requires paired writable-disk checkpoint support")
-	}
 	if err := request.Binding.Validate(vm.Owner{Kind: request.OwnerKind, ID: request.RuntimeInstanceID}); err != nil {
 		return nil, fmt.Errorf("the Firecracker workload binding: %w", err)
 	}
@@ -678,6 +675,12 @@ func (c *Connector) restore(ctx context.Context, request vm.RestoreRequest) (vm.
 			return nil, err
 		}
 	}
+	if request.Topology.Substrate != nil {
+		return nil, errors.New("Computer restore cannot contain a substrate")
+	}
+	if err := validateComputerDisk(request.Topology.Computer); err != nil {
+		return nil, err
+	}
 	kernelArgs := runtimeKernelArgs(request.Topology, request.ReadOnlyDrives, c.cfg.NetworkResolverIPv4)
 	manifest, restoreCfg, err := c.validateRestoreIdentity(
 		request.ID,
@@ -699,6 +702,9 @@ func (c *Connector) restore(ctx context.Context, request vm.RestoreRequest) (vm.
 	}
 	if request.MemoryMediaTypes[0] != cas.CheckpointMemoryMediaType {
 		return nil, fmt.Errorf("the Firecracker restore memory media type %q is not supported", request.MemoryMediaTypes[0])
+	}
+	if restoreCfg.MemoryMiB != request.Resources.MemoryMiB || restoreCfg.ScratchDiskMiB != request.Resources.DiskMiB {
+		return nil, errors.New("checkpoint memory or scratch size does not match runtime reservation")
 	}
 	owner := vm.Owner{Kind: request.OwnerKind, ID: request.RuntimeInstanceID}
 	ownerDir, err := createOwnerStateRoot(c.cfg.StateDir, owner)
@@ -1098,7 +1104,7 @@ func (c *Connector) prepareSession(ctx context.Context, mode launchMode, instanc
 	opts := []firecracker.Opt{}
 	if restoring {
 		opts = append(opts, withSnapshotRestore(snapshotMemoryPath, snapshotStatePath))
-		opts = append(opts, withJailedRestoreFiles(c.cfg.RootfsPath, scratchDiskPath, substrateDiskPath, snapshotMemoryPath, snapshotStatePath))
+		opts = append(opts, withJailedRestoreFiles(c.cfg.RootfsPath, scratchDiskPath, substrateDiskPath, computerDiskPath, snapshotMemoryPath, snapshotStatePath))
 		if len(readOnlyDrives) != 0 {
 			opts = append(opts, withRestoreSealedDrives(sealedDriveChrootStrategy{
 				kernelImagePath: c.cfg.KernelPath,
@@ -2894,7 +2900,7 @@ func (strategy sealedDriveChrootStrategy) linkFiles(
 	}
 }
 
-func withJailedRestoreFiles(rootfsPath string, scratchDiskPath string, substrateDiskPath string, memoryPath string, statePath string) firecracker.Opt {
+func withJailedRestoreFiles(rootfsPath string, scratchDiskPath string, substrateDiskPath string, computerDiskPath string, memoryPath string, statePath string) firecracker.Opt {
 	return func(machine *firecracker.Machine) {
 		machine.Handlers.Validation = machine.Handlers.Validation.Append(firecracker.JailerConfigValidationHandler)
 		machine.Handlers.FcInit = machine.Handlers.FcInit.AppendAfter(firecracker.CreateLogFilesHandlerName, firecracker.Handler{
@@ -2931,10 +2937,20 @@ func withJailedRestoreFiles(rootfsPath string, scratchDiskPath string, substrate
 						}
 					}
 				}
-				if err := linkIntoJailForVMM(memoryPath, root, filepath.Base(memoryPath), *machine.Cfg.JailerCfg.UID, *machine.Cfg.JailerCfg.GID); err != nil {
+				if computerDiskPath != "" {
+					if err := linkWritableDiskIntoJail(computerDiskPath, root, "computer.ext4", *machine.Cfg.JailerCfg.UID, *machine.Cfg.JailerCfg.GID); err != nil {
+						return fmt.Errorf("link Computer into restore jail: %w", err)
+					}
+					for i := range machine.Cfg.Drives {
+						if firecracker.StringValue(machine.Cfg.Drives[i].PathOnHost) == computerDiskPath {
+							machine.Cfg.Drives[i].PathOnHost = firecracker.String("computer.ext4")
+						}
+					}
+				}
+				if err := linkWritableDiskIntoJail(memoryPath, root, filepath.Base(memoryPath), *machine.Cfg.JailerCfg.UID, *machine.Cfg.JailerCfg.GID); err != nil {
 					return fmt.Errorf("link snapshot memory into jail: %w", err)
 				}
-				if err := linkIntoJailForVMM(statePath, root, filepath.Base(statePath), *machine.Cfg.JailerCfg.UID, *machine.Cfg.JailerCfg.GID); err != nil {
+				if err := linkWritableDiskIntoJail(statePath, root, filepath.Base(statePath), *machine.Cfg.JailerCfg.UID, *machine.Cfg.JailerCfg.GID); err != nil {
 					return fmt.Errorf("link snapshot state into jail: %w", err)
 				}
 				machine.Cfg.Snapshot.MemFilePath = path.Join("/", filepath.Base(memoryPath))

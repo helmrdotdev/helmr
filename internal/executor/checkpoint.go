@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strings"
 	"sync"
@@ -24,50 +25,39 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func (r ProgramRunner) materializeCheckpointObject(ctx context.Context, digest string, suffix string) (string, error) {
-	return r.materializeEncryptedObject(ctx, digest, suffix, checkpointPurpose(suffix))
-}
-
-func (r ProgramRunner) materializeEncryptedObject(ctx context.Context, digest string, suffix string, purpose string) (string, error) {
-	if r.CheckpointEncryptor == nil {
-		return "", errors.New("checkpoint encryption is required")
+func (r ProgramRunner) materializeCheckpointObject(ctx context.Context, artifact workerapi.CheckpointArtifact, suffix, directory string) (string, error) {
+	if r.CAS == nil || r.CheckpointEncryptor == nil {
+		return "", errors.New("checkpoint storage and encryption are required")
 	}
-	body, err := r.CAS.Get(ctx, digest)
+	descriptor := cas.Descriptor{Digest: artifact.Digest, SizeBytes: artifact.SizeBytes, MediaType: artifact.MediaType}
+	if err := cas.ValidateDescriptor(descriptor); err != nil {
+		return "", err
+	}
+	if artifact.SizeBytes == math.MaxInt64 {
+		return "", errors.New("checkpoint object size overflow")
+	}
+	body, err := r.CAS.Get(ctx, artifact.Digest)
 	if err != nil {
-		return "", fmt.Errorf("get checkpoint object %s: %w", digest, err)
+		return "", err
 	}
-	if err := os.MkdirAll(r.tempDir(), 0o755); err != nil {
-		_ = body.Close()
-		return "", fmt.Errorf("create checkpoint temp dir: %w", err)
-	}
-	file, err := os.CreateTemp(r.tempDir(), "checkpoint-*."+suffix)
+	file, err := os.CreateTemp(directory, "checkpoint-*."+suffix)
 	if err != nil {
-		_ = body.Close()
-		return "", fmt.Errorf("create checkpoint temp file: %w", err)
+		return "", errors.Join(err, body.Close())
 	}
-	path := file.Name()
 	hash := sha256.New()
-	copyErr := r.CheckpointEncryptor.Decrypt(ctx, io.TeeReader(body, hash), file, purpose)
-	bodyCloseErr := body.Close()
-	closeErr := file.Close()
-	if copyErr != nil {
-		_ = os.Remove(path)
-		return "", fmt.Errorf("decrypt checkpoint object %s: %w", digest, copyErr)
+	limited := &io.LimitedReader{R: body, N: artifact.SizeBytes + 1}
+	// Ciphertext framing is larger than plaintext. Bound both the storage stream
+	// and filesystem writes before trusting the source's advertised length.
+	bounded := &checkpointBoundedWriter{writer: file, remaining: artifact.SizeBytes}
+	decryptErr := r.CheckpointEncryptor.Decrypt(ctx, io.TeeReader(limited, hash), bounded, checkpointPurpose(suffix))
+	closeErr := errors.Join(body.Close(), file.Close())
+	if decryptErr == nil && (limited.N != 1 || sha256sum.DigestHash(hash) != artifact.Digest) {
+		decryptErr = errors.New("checkpoint object descriptor mismatch")
 	}
-	if bodyCloseErr != nil {
-		_ = os.Remove(path)
-		return "", fmt.Errorf("close checkpoint object %s: %w", digest, bodyCloseErr)
+	if err := errors.Join(decryptErr, closeErr); err != nil {
+		return "", err
 	}
-	if closeErr != nil {
-		_ = os.Remove(path)
-		return "", fmt.Errorf("close checkpoint object %s: %w", digest, closeErr)
-	}
-	actual := sha256sum.DigestHash(hash)
-	if actual != digest {
-		_ = os.Remove(path)
-		return "", fmt.Errorf("checkpoint object digest mismatch: expected %s, got %s", digest, actual)
-	}
-	return path, nil
+	return file.Name(), nil
 }
 
 func validateRestoreIdentity(

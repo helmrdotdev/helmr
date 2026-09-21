@@ -618,12 +618,14 @@ func TestRestoreRecordsUnpackPhasesOnFilepackFailure(t *testing.T) {
 	if err := os.WriteFile(memoryPack, []byte("not a filepack"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	manifestBytes, identity := testRestoreManifestAndIdentity(t, cfg, "checkpoint-1")
+	topology := testRestoreComputerTopology(t)
+	manifestBytes, identity := testPairedRestoreManifest(t, cfg, "checkpoint-1", topology)
 	runtimeInstanceID := uuid.NewV7().String()
 	var mu sync.Mutex
 	var phases []vm.RuntimePhase
 
 	_, err := connector.restore(context.Background(), vm.RestoreRequest{
+		Topology: topology, Resources: compute.ResourceVector{MemoryMiB: cfg.MemoryMiB, DiskMiB: cfg.ScratchDiskMiB},
 		ID:                "checkpoint-1",
 		RuntimeInstanceID: runtimeInstanceID,
 		OwnerKind:         vm.OwnerRuntime,
@@ -1138,7 +1140,7 @@ func TestLinkIntoJailSetsOwnerAndMode(t *testing.T) {
 	}
 }
 
-func TestWithJailedRestoreFilesLinksScratchDiskAndRewritesDrivePaths(t *testing.T) {
+func TestWithJailedRestoreFilesLinksComputerAndPreservesSnapshotInodes(t *testing.T) {
 	chrootBase := t.TempDir()
 	vmID := "vm-1"
 	root := filepath.Join(chrootBase, "firecracker", vmID, "root")
@@ -1148,10 +1150,10 @@ func TestWithJailedRestoreFilesLinksScratchDiskAndRewritesDrivePaths(t *testing.
 	sourceDir := t.TempDir()
 	rootfsPath := filepath.Join(sourceDir, "rootfs.squashfs")
 	scratchDiskPath := filepath.Join(sourceDir, "restored-scratch.ext4")
-	substrateDiskPath := filepath.Join(sourceDir, "9270959e49b0181ace5338d3acce327260b9e46d6f3827402dfca962a5189126.ext4")
+	computerDiskPath := filepath.Join(sourceDir, "9270959e49b0181ace5338d3acce327260b9e46d6f3827402dfca962a5189126.ext4")
 	memoryPath := filepath.Join(sourceDir, "checkpoint.mem")
 	statePath := filepath.Join(sourceDir, "checkpoint.vmstate")
-	for _, path := range []string{rootfsPath, scratchDiskPath, substrateDiskPath, memoryPath, statePath} {
+	for _, path := range []string{rootfsPath, scratchDiskPath, computerDiskPath, memoryPath, statePath} {
 		if err := os.WriteFile(path, []byte(filepath.Base(path)), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -1173,8 +1175,8 @@ func TestWithJailedRestoreFilesLinksScratchDiskAndRewritesDrivePaths(t *testing.
 				DriveID:    firecracker.String("scratch"),
 				PathOnHost: firecracker.String(scratchDiskPath),
 			}, {
-				DriveID:    firecracker.String("substrate"),
-				PathOnHost: firecracker.String(substrateDiskPath),
+				DriveID:    firecracker.String("computer"),
+				PathOnHost: firecracker.String(computerDiskPath),
 			}},
 			Snapshot: firecracker.SnapshotConfig{},
 		},
@@ -1188,7 +1190,7 @@ func TestWithJailedRestoreFilesLinksScratchDiskAndRewritesDrivePaths(t *testing.
 		},
 	}
 	firecracker.WithLogger(logrus.NewEntry(logrus.New()))(machine)
-	opt := withJailedRestoreFiles(rootfsPath, scratchDiskPath, substrateDiskPath, memoryPath, statePath)
+	opt := withJailedRestoreFiles(rootfsPath, scratchDiskPath, "", computerDiskPath, memoryPath, statePath)
 	opt(machine)
 	if err := machine.Handlers.FcInit.Run(context.Background(), machine); err != nil {
 		t.Fatal(err)
@@ -1200,15 +1202,29 @@ func TestWithJailedRestoreFilesLinksScratchDiskAndRewritesDrivePaths(t *testing.
 	if got := firecracker.StringValue(machine.Cfg.Drives[1].PathOnHost); got != scratchDiskName {
 		t.Fatalf("scratch drive path = %q", got)
 	}
-	substrateName := filepath.Base(substrateDiskPath)
-	if got := firecracker.StringValue(machine.Cfg.Drives[2].PathOnHost); got != substrateName {
+	computerName := "computer.ext4"
+	if got := firecracker.StringValue(machine.Cfg.Drives[2].PathOnHost); got != computerName {
 		t.Fatalf("substrate drive path = %q", got)
 	}
-	for _, name := range []string{filepath.Base(rootfsPath), scratchDiskName, substrateName, filepath.Base(memoryPath), filepath.Base(statePath)} {
+	for _, name := range []string{filepath.Base(rootfsPath), scratchDiskName, computerName, filepath.Base(memoryPath), filepath.Base(statePath)} {
 		if _, err := os.Stat(filepath.Join(root, name)); err != nil {
 			t.Fatalf("expected %s linked into jail: %v", name, err)
 		}
 	}
+	for source, name := range map[string]string{computerDiskPath: "computer.ext4", memoryPath: filepath.Base(memoryPath), statePath: filepath.Base(statePath)} {
+		before, err := os.Stat(source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		jailed, err := os.Stat(filepath.Join(root, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !os.SameFile(before, jailed) {
+			t.Fatalf("%s was copied instead of retaining inode", name)
+		}
+	}
+
 }
 
 func TestRuntimeDrivesIncludeOptionalReadonlySubstrate(t *testing.T) {
@@ -1321,7 +1337,7 @@ func TestRestoreReadOnlyDrivePathsSatisfySDKValidationAndBecomeJailedNames(t *te
 			Drives: cfg.Drives,
 		},
 		withSnapshotRestore(memoryPath, statePath),
-		withJailedRestoreFiles(rootfsPath, scratchPath, "", memoryPath, statePath),
+		withJailedRestoreFiles(rootfsPath, scratchPath, "", "", memoryPath, statePath),
 		withRestoreSealedDrives(strategy),
 		func(machine *firecracker.Machine) {
 			for _, name := range []string{
@@ -2178,4 +2194,47 @@ func hasRuntimePhase(phases []vm.RuntimePhase, name string, errorClass string) b
 func testDigest(body []byte) string {
 	sum := sha256.Sum256(body)
 	return sha256sum.FormatDigest(sum[:])
+}
+
+func testRestoreComputerTopology(t *testing.T) vm.RuntimeTopology {
+	t.Helper()
+	file, err := os.CreateTemp(t.TempDir(), "computer-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = file.Close() })
+	if err := file.Truncate(4096); err != nil {
+		t.Fatal(err)
+	}
+	return vm.RuntimeTopology{Computer: &vm.RuntimeComputer{ComputerID: uuid.NewV7().String(), VersionID: uuid.NewV7().String(), File: file, SizeBytes: 4096}}
+}
+func testPairedRestoreManifest(t *testing.T, cfg Config, id string, topology vm.RuntimeTopology) ([]byte, vm.CheckpointIdentity) {
+	t.Helper()
+	data, identity := testRestoreManifestAndIdentity(t, cfg, id)
+	var manifest snapshotManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	manifest.RecoveryPoint.Runtime.KernelArgs = runtimeKernelArgs(topology, nil, cfg.NetworkResolverIPv4)
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity.RuntimeConfigDigest = testDigest(data)
+	return data, identity
+}
+func TestRestoreRejectsResourceMismatchBeforeUnpack(t *testing.T) {
+	cfg := testRestoreConfig(t)
+	connector := testConnector(t, cfg)
+	topology := testRestoreComputerTopology(t)
+	data, identity := testPairedRestoreManifest(t, cfg, "checkpoint", topology)
+	id := uuid.NewV7().String()
+	for _, resources := range []compute.ResourceVector{{MemoryMiB: cfg.MemoryMiB + 1, DiskMiB: cfg.ScratchDiskMiB}, {MemoryMiB: cfg.MemoryMiB, DiskMiB: cfg.ScratchDiskMiB + 1}} {
+		_, err := connector.restore(t.Context(), vm.RestoreRequest{ID: "checkpoint", RuntimeInstanceID: id, OwnerKind: vm.OwnerRuntime,
+			Binding: vm.WorkloadBinding{WorkerEpoch: 1, OwnerID: id, Generation: 1, RuntimeInstanceID: id, RuntimeIdentityID: identity.RuntimeID}, Topology: topology, Resources: resources,
+			Manifest: data, Checkpoint: identity, VMState: "not-read", VMStateMediaType: cas.CheckpointVMStateMediaType, ScratchDisk: "not-read", ScratchDiskMediaType: cas.CheckpointScratchDiskMediaType, Memory: []string{"not-read"}, MemoryMediaTypes: []string{cas.CheckpointMemoryMediaType}})
+		if err == nil || !strings.Contains(err.Error(), "does not match runtime reservation") {
+			t.Fatalf("error=%v", err)
+		}
+	}
 }

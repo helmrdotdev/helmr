@@ -144,6 +144,7 @@ type SnapshotFile struct {
 }
 
 type RestoreRequest struct {
+	Resources            compute.ResourceVector
 	ID                   string
 	RuntimeInstanceID    string
 	OwnerKind            OwnerKind
