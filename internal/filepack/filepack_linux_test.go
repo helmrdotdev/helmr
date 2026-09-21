@@ -181,3 +181,58 @@ func assertFileByteRange(t *testing.T, path string, offset int64, want []byte) {
 		t.Fatalf("bytes at %d = %x, want %x", offset, got, want)
 	}
 }
+
+func TestPackIndependentOfPhysicalAllocation(t *testing.T) {
+	dir := t.TempDir()
+	const size = 3*filepackChunkSize + 4096
+	content := make([]byte, size)
+	offsets := []int64{5000, 16384, filepackChunkSize - 1, filepackChunkSize + 8192, size - 1}
+	for _, offset := range offsets {
+		content[offset] = byte(offset%251 + 1)
+	}
+	dense, sparse := filepath.Join(dir, "dense"), filepath.Join(dir, "sparse")
+	if err := os.WriteFile(dense, content, 0600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Create(sparse)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(size); err != nil {
+		t.Fatal(err)
+	}
+	for _, offset := range offsets {
+		if _, err := f.WriteAt(content[offset:offset+1], offset); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	a, b := filepath.Join(dir, "a.pack"), filepath.Join(dir, "b.pack")
+	if _, err := Pack(t.Context(), dense, a, ScratchRole); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Pack(t.Context(), sparse, b, ScratchRole); err != nil {
+		t.Fatal(err)
+	}
+	x, err := os.ReadFile(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	y, err := os.ReadFile(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(x, y) {
+		t.Fatal("identical logical bytes encoded differently according to physical allocation")
+	}
+	restored := filepath.Join(dir, "restored")
+	if _, err := Unpack(t.Context(), b, restored, ScratchRole, size); err != nil {
+		t.Fatal(err)
+	}
+	actual, err := os.ReadFile(restored)
+	if err != nil || !bytes.Equal(actual, content) {
+		t.Fatalf("restored bytes differ: %v", err)
+	}
+}

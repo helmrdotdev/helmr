@@ -261,10 +261,18 @@ func writeFilepackData(ctx context.Context, source *os.File, target io.Writer, e
 			offset = nextOffset
 			continue
 		}
-		if err := scanAndWriteFilepackRange(ctx, source, target, encoder, stats, dataStart, dataEnd); err != nil {
+		// Physical extent boundaries vary across filesystems and allocation history.
+		// Use them only to skip holes; encoded chunks always use logical boundaries.
+		start := dataStart - dataStart%filepackChunkSize
+		end := dataEnd
+		if remainder := end % filepackChunkSize; remainder != 0 {
+			end += min(filepackChunkSize-remainder, logicalSize-end)
+		}
+		if err := scanAndWriteFilepackRange(ctx, source, target, encoder, stats, start, end); err != nil {
 			return err
 		}
-		offset = nextOffset
+		// The final chunk may include another extent. Do not emit it twice.
+		offset = end
 	}
 	return nil
 }
