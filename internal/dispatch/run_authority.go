@@ -1256,3 +1256,45 @@ func lockRunQueueScope(
 	}
 	return environmentID, queueName, concurrencyKey, nil
 }
+
+// checkRunPreparationDeadlines is a final preparation check, after provider and
+// Runtime work that may have waited. The caller holds Run/ancestor Run locks
+// and its restore checkpoint lock. Parent checkpoint lifecycle changes also
+// require the parent Run; an expiry reaper cannot invalidate this authority for us.
+func checkRunPreparationDeadlines(ctx context.Context, tx pgx.Tx, authority runPlacementAuthority) error {
+	var id pgtype.UUID
+	err := tx.QueryRow(ctx, `
+SELECT runs.id FROM runs
+ WHERE runs.id = $1 AND runs.current_attempt_number = $2
+   AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL
+        OR runs.queued_expires_at > clock_timestamp())
+   AND ($3::uuid IS NULL OR EXISTS (
+       SELECT 1 FROM run_checkpoints
+        WHERE run_checkpoints.id = $3
+          AND run_checkpoints.run_id = runs.id
+          AND run_checkpoints.attempt_number = runs.current_attempt_number
+          AND run_checkpoints.workspace_id = runs.workspace_id
+          AND run_checkpoints.status = 'ready'
+          AND (run_checkpoints.expires_at IS NULL
+               OR run_checkpoints.expires_at > clock_timestamp())
+   ))
+   AND ($4::uuid IS NULL OR EXISTS (
+       SELECT 1 FROM run_waits AS parent_wait
+       JOIN run_checkpoints AS parent_checkpoint
+         ON parent_checkpoint.id = parent_wait.suspend_checkpoint_id
+        AND parent_checkpoint.run_id = parent_wait.run_id
+        AND parent_checkpoint.attempt_number = parent_wait.attempt_number
+        AND parent_checkpoint.workspace_id = parent_wait.workspace_id
+        AND parent_checkpoint.status = 'ready'
+        WHERE parent_wait.id = $4
+          AND parent_wait.child_run_id = runs.id
+          AND parent_wait.workspace_id = runs.workspace_id
+          AND (parent_checkpoint.expires_at IS NULL
+               OR parent_checkpoint.expires_at > clock_timestamp())
+   ))
+`, authority.runID, authority.attemptNumber, authority.restoreCheckpointID, authority.sameWorkspaceChildWaitID).Scan(&id)
+	if err != nil {
+		return fmt.Errorf("recheck Run preparation deadlines: %w", classifyRunCandidateError(err))
+	}
+	return nil
+}

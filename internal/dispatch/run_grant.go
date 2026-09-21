@@ -247,11 +247,13 @@ SELECT transaction_timestamp(),
 	grantedRun, err := q.SetRunCurrentLease(
 		ctx,
 		db.SetRunCurrentLeaseParams{
-			RunLeaseID:       runLeaseID,
-			ID:               authority.runID,
-			OrgID:            authority.orgID,
-			ExpectedRevision: authority.revision,
-			AttemptNumber:    authority.attemptNumber,
+			RunLeaseID:               runLeaseID,
+			RestoreCheckpointID:      authority.restoreCheckpointID,
+			SameWorkspaceChildWaitID: authority.sameWorkspaceChildWaitID,
+			ID:                       authority.runID,
+			OrgID:                    authority.orgID,
+			ExpectedRevision:         authority.revision,
+			AttemptNumber:            authority.attemptNumber,
 		},
 	)
 	if err != nil {

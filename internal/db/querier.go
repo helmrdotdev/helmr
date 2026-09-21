@@ -578,6 +578,8 @@ type Querier interface {
 	SessionWriterExcluded(ctx context.Context, workspaceID pgtype.UUID) (pgtype.Bool, error)
 	SetActorCurrentRun(ctx context.Context, arg SetActorCurrentRunParams) (Session, error)
 	SetInitialWorkerGroupPrimaryPool(ctx context.Context, arg SetInitialWorkerGroupPrimaryPoolParams) (WorkerGroup, error)
+	// The grant owner already holds Run and any restore checkpoint locks. Recheck
+	// deadlines after potentially blocking grant writes, before publishing the lease.
 	SetRunCurrentLease(ctx context.Context, arg SetRunCurrentLeaseParams) (Run, error)
 	SetSessionTurnMessageReady(ctx context.Context, arg SetSessionTurnMessageReadyParams) (SessionTurn, error)
 	SetWorkerGroupPrimaryPool(ctx context.Context, arg SetWorkerGroupPrimaryPoolParams) (WorkerGroup, error)

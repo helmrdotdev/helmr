@@ -173,6 +173,7 @@ UPDATE workspace_leases
 		t.Fatal(err)
 	}
 	markRunPlacementMountReady(t, fixture, childMountReservation.WorkspaceMountID)
+	assertExpiredParentCheckpointRejectsChild(t, fixture, childCandidate, childMountReservation, pgvalue.UUID(bCheckpointID))
 	childGranted, err := fixture.authority.PlaceReadyRun(fixture.ctx, childCandidate)
 	if err != nil {
 		t.Fatal(err)

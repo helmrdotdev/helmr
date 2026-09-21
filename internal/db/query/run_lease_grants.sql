@@ -233,6 +233,8 @@ UPDATE runtime_instances
    AND restore_checkpoint_id IS NOT DISTINCT FROM sqlc.narg(restore_checkpoint_id)
    AND reservation_expires_at > clock_timestamp();
 
+-- The grant owner already holds Run and any restore checkpoint locks. Recheck
+-- deadlines after potentially blocking grant writes, before publishing the lease.
 -- name: SetRunCurrentLease :one
 UPDATE runs
    SET current_run_lease_id = sqlc.arg(run_lease_id),
@@ -241,7 +243,7 @@ UPDATE runs
        next_runtime_preparation_at = NULL,
        revision = revision + 1,
        updated_at = transaction_timestamp()
- WHERE id = sqlc.arg(id)
+ WHERE runs.id = sqlc.arg(id)
    AND org_id = sqlc.arg(org_id)
    AND revision = sqlc.arg(expected_revision)
    AND status = 'queued'
@@ -249,5 +251,29 @@ UPDATE runs
    AND current_run_lease_id IS NULL
    AND (next_runtime_preparation_at IS NULL
         OR next_runtime_preparation_at <= transaction_timestamp())
-   AND (first_lease_at IS NOT NULL OR queued_expires_at IS NULL OR queued_expires_at > transaction_timestamp())
-RETURNING *;
+   AND (first_lease_at IS NOT NULL OR queued_expires_at IS NULL OR queued_expires_at > clock_timestamp())
+   AND (sqlc.narg(restore_checkpoint_id)::uuid IS NULL OR EXISTS (
+       SELECT 1 FROM run_checkpoints
+        WHERE run_checkpoints.id = sqlc.narg(restore_checkpoint_id)
+          AND run_checkpoints.run_id = runs.id
+          AND run_checkpoints.attempt_number = runs.current_attempt_number
+          AND run_checkpoints.workspace_id = runs.workspace_id
+          AND run_checkpoints.status = 'ready'
+          AND (run_checkpoints.expires_at IS NULL
+               OR run_checkpoints.expires_at > clock_timestamp())
+   ))
+   AND (sqlc.narg(same_workspace_child_wait_id)::uuid IS NULL OR EXISTS (
+       SELECT 1 FROM run_waits AS parent_wait
+       JOIN run_checkpoints AS parent_checkpoint
+         ON parent_checkpoint.id = parent_wait.suspend_checkpoint_id
+        AND parent_checkpoint.run_id = parent_wait.run_id
+        AND parent_checkpoint.attempt_number = parent_wait.attempt_number
+        AND parent_checkpoint.workspace_id = parent_wait.workspace_id
+        AND parent_checkpoint.status = 'ready'
+        WHERE parent_wait.id = sqlc.narg(same_workspace_child_wait_id)
+          AND parent_wait.child_run_id = runs.id
+          AND parent_wait.workspace_id = runs.workspace_id
+          AND (parent_checkpoint.expires_at IS NULL
+               OR parent_checkpoint.expires_at > clock_timestamp())
+   ))
+RETURNING runs.*;

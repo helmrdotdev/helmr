@@ -738,7 +738,7 @@ UPDATE runs
        next_runtime_preparation_at = NULL,
        revision = revision + 1,
        updated_at = transaction_timestamp()
- WHERE id = $2
+ WHERE runs.id = $2
    AND org_id = $3
    AND revision = $4
    AND status = 'queued'
@@ -746,18 +746,46 @@ UPDATE runs
    AND current_run_lease_id IS NULL
    AND (next_runtime_preparation_at IS NULL
         OR next_runtime_preparation_at <= transaction_timestamp())
-   AND (first_lease_at IS NOT NULL OR queued_expires_at IS NULL OR queued_expires_at > transaction_timestamp())
-RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at
+   AND (first_lease_at IS NOT NULL OR queued_expires_at IS NULL OR queued_expires_at > clock_timestamp())
+   AND ($6::uuid IS NULL OR EXISTS (
+       SELECT 1 FROM run_checkpoints
+        WHERE run_checkpoints.id = $6
+          AND run_checkpoints.run_id = runs.id
+          AND run_checkpoints.attempt_number = runs.current_attempt_number
+          AND run_checkpoints.workspace_id = runs.workspace_id
+          AND run_checkpoints.status = 'ready'
+          AND (run_checkpoints.expires_at IS NULL
+               OR run_checkpoints.expires_at > clock_timestamp())
+   ))
+   AND ($7::uuid IS NULL OR EXISTS (
+       SELECT 1 FROM run_waits AS parent_wait
+       JOIN run_checkpoints AS parent_checkpoint
+         ON parent_checkpoint.id = parent_wait.suspend_checkpoint_id
+        AND parent_checkpoint.run_id = parent_wait.run_id
+        AND parent_checkpoint.attempt_number = parent_wait.attempt_number
+        AND parent_checkpoint.workspace_id = parent_wait.workspace_id
+        AND parent_checkpoint.status = 'ready'
+        WHERE parent_wait.id = $7
+          AND parent_wait.child_run_id = runs.id
+          AND parent_wait.workspace_id = runs.workspace_id
+          AND (parent_checkpoint.expires_at IS NULL
+               OR parent_checkpoint.expires_at > clock_timestamp())
+   ))
+RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_definition_id, runs.entrypoint_kind, runs.entrypoint_declared_id, runs.session_id, runs.cause_kind, runs.schedule_id, runs.schedule_generation, runs.scheduled_at, runs.previous_scheduled_at, runs.schedule_timezone, runs.parent_run_id, runs.parent_owns_lifecycle, runs.workspace_id, runs.base_workspace_version_id, runs.session_input_start_sequence, runs.session_input_high_watermark, runs.payload, runs.output, runs.failure, runs.status, runs.revision, runs.current_attempt_number, runs.current_run_lease_id, runs.metadata, runs.tags, runs.queue_name, runs.concurrency_key, runs.queue_concurrency_limit, runs.priority, runs.queue_origin_at, runs.queue_score_at, runs.queued_expires_at, runs.max_active_duration_ms, runs.retry_policy, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.claim_id, runs.created_at, runs.updated_at, runs.first_lease_at, runs.started_at, runs.retry_at, runs.runtime_preparation_count, runs.next_runtime_preparation_at, runs.terminal_at
 `
 
 type SetRunCurrentLeaseParams struct {
-	RunLeaseID       pgtype.UUID `json:"run_lease_id"`
-	ID               pgtype.UUID `json:"id"`
-	OrgID            pgtype.UUID `json:"org_id"`
-	ExpectedRevision int64       `json:"expected_revision"`
-	AttemptNumber    int32       `json:"attempt_number"`
+	RunLeaseID               pgtype.UUID `json:"run_lease_id"`
+	ID                       pgtype.UUID `json:"id"`
+	OrgID                    pgtype.UUID `json:"org_id"`
+	ExpectedRevision         int64       `json:"expected_revision"`
+	AttemptNumber            int32       `json:"attempt_number"`
+	RestoreCheckpointID      pgtype.UUID `json:"restore_checkpoint_id"`
+	SameWorkspaceChildWaitID pgtype.UUID `json:"same_workspace_child_wait_id"`
 }
 
+// The grant owner already holds Run and any restore checkpoint locks. Recheck
+// deadlines after potentially blocking grant writes, before publishing the lease.
 func (q *Queries) SetRunCurrentLease(ctx context.Context, arg SetRunCurrentLeaseParams) (Run, error) {
 	row := q.db.QueryRow(ctx, setRunCurrentLease,
 		arg.RunLeaseID,
@@ -765,6 +793,8 @@ func (q *Queries) SetRunCurrentLease(ctx context.Context, arg SetRunCurrentLease
 		arg.OrgID,
 		arg.ExpectedRevision,
 		arg.AttemptNumber,
+		arg.RestoreCheckpointID,
+		arg.SameWorkspaceChildWaitID,
 	)
 	var i Run
 	err := row.Scan(

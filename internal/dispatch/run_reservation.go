@@ -80,6 +80,9 @@ func (d *Authority) prepareRunWorkspace(
 		if err != nil {
 			return runWorkspaceMount{}, err
 		}
+		if err := checkRunPreparationDeadlines(ctx, tx, authority); err != nil {
+			return runWorkspaceMount{}, err
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return runWorkspaceMount{}, fmt.Errorf("commit run preparation: %w", err)
 		}
@@ -103,6 +106,9 @@ func (d *Authority) prepareRunWorkspace(
 				return runWorkspaceMount{}, pressureErr
 			}
 			if pressured {
+				if err := checkRunPreparationDeadlines(ctx, tx, authority); err != nil {
+					return runWorkspaceMount{}, err
+				}
 				if err := tx.Commit(ctx); err != nil {
 					return runWorkspaceMount{}, fmt.Errorf("commit run capacity pressure: %w", err)
 				}
@@ -163,6 +169,9 @@ func (d *Authority) prepareRunWorkspace(
 			return runWorkspaceMount{}, ErrCapacityUnavailable
 		}
 		return runWorkspaceMount{}, fmt.Errorf("create run runtime reservation: %w", err)
+	}
+	if err := checkRunPreparationDeadlines(ctx, tx, authority); err != nil {
+		return runWorkspaceMount{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return runWorkspaceMount{}, fmt.Errorf("commit run runtime reservation: %w", err)

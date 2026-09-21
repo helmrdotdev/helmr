@@ -1034,7 +1034,8 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
             OR runtime_instances.runtime_substrate_id = $1)
      FOR UPDATE OF runtime_instances
 ), restore_authority AS MATERIALIZED (
-    SELECT runtime_instances.id AS runtime_instance_id
+    SELECT runtime_instances.id AS runtime_instance_id,
+           run_checkpoints.expires_at AS checkpoint_expires_at
       FROM runtime_authority
       JOIN runtime_instances
         ON runtime_instances.id = runtime_authority.runtime_instance_id
@@ -1119,6 +1120,8 @@ UPDATE runtime_instances
         OR EXISTS (
             SELECT 1 FROM restore_authority
              WHERE restore_authority.runtime_instance_id = runtime_instances.id
+               AND (restore_authority.checkpoint_expires_at IS NULL
+                    OR restore_authority.checkpoint_expires_at > ready_decision.decided_at)
         ))
 RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.vm_vcpu_count, runtime_instances.cpu_config_digest, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.preparation_expires_at, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.ready_at, runtime_instances.terminal_at, runtime_instances.reclaimed_at, runtime_instances.reclaim_evidence, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.updated_at
 `

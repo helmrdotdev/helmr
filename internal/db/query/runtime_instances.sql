@@ -343,7 +343,8 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
             OR runtime_instances.runtime_substrate_id = sqlc.arg(runtime_substrate_id))
      FOR UPDATE OF runtime_instances
 ), restore_authority AS MATERIALIZED (
-    SELECT runtime_instances.id AS runtime_instance_id
+    SELECT runtime_instances.id AS runtime_instance_id,
+           run_checkpoints.expires_at AS checkpoint_expires_at
       FROM runtime_authority
       JOIN runtime_instances
         ON runtime_instances.id = runtime_authority.runtime_instance_id
@@ -428,6 +429,8 @@ UPDATE runtime_instances
         OR EXISTS (
             SELECT 1 FROM restore_authority
              WHERE restore_authority.runtime_instance_id = runtime_instances.id
+               AND (restore_authority.checkpoint_expires_at IS NULL
+                    OR restore_authority.checkpoint_expires_at > ready_decision.decided_at)
         ))
 RETURNING runtime_instances.*;
 
