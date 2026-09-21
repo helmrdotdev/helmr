@@ -1357,9 +1357,7 @@ func lockCheckpointSource(ctx context.Context, work *txWork, worker workerActor,
 		AttemptNumber: authority.attempt.Number, WorkspaceID: authority.workspace.ID,
 		CurrentRunLeaseID: authority.runLease.ID,
 	})
-	if err != nil || (wait.Kind != db.WaitKindToken && wait.Kind != db.WaitKindActorInput &&
-		wait.Kind != db.WaitKindChild) ||
-		wait.SuspensionStatus != db.RunWaitStatusCheckpointing ||
+	if err != nil || wait.SuspensionStatus != db.RunWaitStatusCheckpointing ||
 		wait.CheckpointRequestVersion != requestVersion || wait.SuspendCheckpointID != pgvalue.UUID(checkpointID) {
 		return checkpointSource{}, staleRunLeaseClaim(err)
 	}

@@ -22,6 +22,7 @@ export interface TokenCreateRequest {
 
 export interface TokenWaitOptions {
   readonly timeout?: Duration
+  /** Hot managed-wait duration before suspension is eligible; not a response deadline or billing cap. */
   readonly idleTimeout?: Duration
   readonly metadata?: Metadata
   readonly tags?: readonly string[]

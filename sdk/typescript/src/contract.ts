@@ -268,6 +268,7 @@ export interface WaitTimeoutError extends HelmrError {
 
 export interface ActorSessionReceiveOptions {
   readonly timeout?: Duration
+  /** Hot managed-wait duration before suspension is eligible; not a response deadline or billing cap. */
   readonly idleTimeout?: Duration
   readonly metadata?: Metadata
   readonly tags?: readonly string[]
@@ -326,6 +327,7 @@ export interface ActorSession {
 
 export interface ActorConfig extends RunDefaults {
   readonly id: string
+  /** Hot managed-wait duration before suspension is eligible; not a response deadline or billing cap. */
   readonly idleTimeout?: Duration
   readonly run: (session: ActorSession, ctx: ActorContext) => MaybePromise<void>
 }

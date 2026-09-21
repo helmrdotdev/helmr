@@ -31,19 +31,24 @@ func (s *Server) workerCreateTimerRunWait(
 	request workerapi.CreateRunWaitRequest,
 	identity requestedRunWaitIdentity,
 ) {
-	params, dueAt, idleTimeout, checkpointDueAt, err := timerWaitDeadlines(request)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
 	metadata, tags, err := normalizeWaitAnnotations(request.Metadata, request.Tags)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	parsed, worker, registrationLocators, _, err := s.loadRunWaitRegistrationAuthority(r.Context(), request.Lease)
+	parsed, worker, registrationLocators, run, err := s.loadRunWaitRegistrationAuthority(r.Context(), request.Lease)
 	if err != nil {
 		writeError(w, err)
+		return
+	}
+	idleDefault, err := s.runWaitIdleDefault(r.Context(), run)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	params, dueAt, idleTimeout, checkpointDueAt, err := timerWaitDeadlines(request, idleDefault)
+	if err != nil {
+		writeError(w, badRequest(err))
 		return
 	}
 	normalized := request
@@ -185,6 +190,7 @@ func (s *Server) workerCreateTimerRunWait(
 
 func timerWaitDeadlines(
 	request workerapi.CreateRunWaitRequest,
+	defaultIdleTimeout time.Duration,
 ) (workerTimerWaitParams, time.Time, pgtype.Int8, pgtype.Timestamptz, error) {
 	var params workerTimerWaitParams
 	if err := decodeClosedJSON(request.Params, &params); err != nil {
@@ -226,25 +232,13 @@ func timerWaitDeadlines(
 				errors.New("timer date must not be more than 365d in the future")
 		}
 	}
-	idleDuration := defaultRunWaitIdleTimeout
-	if request.IdleTimeoutMS != nil {
-		if *request.IdleTimeoutMS <= 0 || *request.IdleTimeoutMS > maxRunWaitIdleTimeout.Milliseconds() {
-			return params, time.Time{}, pgtype.Int8{}, pgtype.Timestamptz{},
-				fmt.Errorf("idle_timeout_ms must be between 1 and %d", maxRunWaitIdleTimeout.Milliseconds())
-		}
-		idleDuration = time.Duration(*request.IdleTimeoutMS) * time.Millisecond
-	}
-	checkpointDelay := rootRunWaitHotWindow
-	untilDue := dueAt.Sub(now)
-	if untilDue <= checkpointDelay {
-		checkpointDelay = max(untilDue+shortWaitGrace, shortWaitGrace)
-	}
-	if idleDuration < checkpointDelay {
-		checkpointDelay = idleDuration
+	idleDuration, err := runWaitIdleDuration(request.IdleTimeoutMS, defaultIdleTimeout)
+	if err != nil {
+		return params, time.Time{}, pgtype.Int8{}, pgtype.Timestamptz{}, err
 	}
 	return params, dueAt,
 		pgtype.Int8{Int64: idleDuration.Milliseconds(), Valid: true},
-		pgvalue.Timestamptz(now.Add(checkpointDelay)), nil
+		pgvalue.Timestamptz(now.Add(idleDuration)), nil
 }
 
 func parseTimerDuration(value string) (time.Duration, error) {

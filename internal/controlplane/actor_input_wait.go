@@ -60,17 +60,9 @@ func (s *Server) workerCreateActorInputRunWait(
 		writeError(w, conflict(errors.New("actor input wait must target the owning actor")))
 		return
 	}
-	definition, err := s.db.GetDeploymentDefinition(r.Context(), db.GetDeploymentDefinitionParams{
-		EnvironmentID: run.EnvironmentID, DeploymentID: run.DeploymentID,
-		Kind: run.EntrypointKind, DeclaredID: run.EntrypointDeclaredID,
-	})
+	idleTimeoutDefault, err := s.runWaitIdleDefault(r.Context(), run)
 	if err != nil {
-		writeError(w, errors.New("load actor input wait declaration"))
-		return
-	}
-	idleTimeoutDefault, err := actorInputWaitIdleTimeout(definition.Manifest)
-	if err != nil {
-		writeError(w, errors.New("actor input wait declaration is invalid"))
+		writeError(w, err)
 		return
 	}
 	timeoutAt, idleTimeout, checkpointDueAt, err := runWaitDeadlines(
@@ -213,7 +205,7 @@ func (s *Server) workerCreateActorInputRunWait(
 	writeJSON(w, http.StatusOK, response)
 }
 
-func actorInputWaitIdleTimeout(raw json.RawMessage) (time.Duration, error) {
+func actorWaitIdleTimeout(raw json.RawMessage) (time.Duration, error) {
 	var manifest actorWaitManifest
 	if err := json.Unmarshal(raw, &manifest); err != nil {
 		return 0, err
