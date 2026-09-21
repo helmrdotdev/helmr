@@ -290,6 +290,27 @@ type CasObject struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type ComputerInitialization struct {
+	ID                    pgtype.UUID        `json:"id"`
+	EnvironmentID         pgtype.UUID        `json:"environment_id"`
+	ComputerID            pgtype.UUID        `json:"computer_id"`
+	VersionID             pgtype.UUID        `json:"version_id"`
+	RuntimeInstanceID     pgtype.UUID        `json:"runtime_instance_id"`
+	RuntimeDesiredVersion int64              `json:"runtime_desired_version"`
+	OwnershipGeneration   int64              `json:"ownership_generation"`
+	WriterGeneration      int64              `json:"writer_generation"`
+	Digest                string             `json:"digest"`
+	SizeBytes             int64              `json:"size_bytes"`
+	LogicalBytes          int64              `json:"logical_bytes"`
+	MediaType             string             `json:"media_type"`
+	InitialConfig         []byte             `json:"initial_config"`
+	Status                string             `json:"status"`
+	ArtifactID            pgtype.UUID        `json:"artifact_id"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	ConsumedAt            pgtype.Timestamptz `json:"consumed_at"`
+	AbandonedAt           pgtype.Timestamptz `json:"abandoned_at"`
+}
+
 type ControlOutbox struct {
 	ID             pgtype.UUID        `json:"id"`
 	Topic          string             `json:"topic"`

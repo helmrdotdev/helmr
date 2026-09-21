@@ -11,6 +11,7 @@ import (
 )
 
 type Querier interface {
+	AbandonComputerInitialization(ctx context.Context, arg AbandonComputerInitializationParams) (ComputerInitialization, error)
 	AcceptInvitation(ctx context.Context, arg AcceptInvitationParams) (int64, error)
 	ActivateSessionTurn(ctx context.Context, arg ActivateSessionTurnParams) (SessionTurn, error)
 	ActivateWorkerInstance(ctx context.Context, arg ActivateWorkerInstanceParams) (WorkerInstance, error)
@@ -95,6 +96,7 @@ type Querier interface {
 	CompleteWorkerDrain(ctx context.Context, arg CompleteWorkerDrainParams) (CompleteWorkerDrainRow, error)
 	CompleteWorkerStartupRecovery(ctx context.Context, arg CompleteWorkerStartupRecoveryParams) (WorkerInstance, error)
 	ConfirmWorkerInstanceProviderAbsent(ctx context.Context, workerInstanceID pgtype.UUID) (ConfirmWorkerInstanceProviderAbsentRow, error)
+	ConsumeComputerInitialization(ctx context.Context, arg ConsumeComputerInitializationParams) (ComputerInitialization, error)
 	ConsumeDeviceCode(ctx context.Context, deviceCodeHash []byte) (DeviceCode, error)
 	ConsumeMagicLink(ctx context.Context, arg ConsumeMagicLinkParams) (int64, error)
 	ConsumeRunRuntimeReservation(ctx context.Context, arg ConsumeRunRuntimeReservationParams) (int64, error)
@@ -207,6 +209,7 @@ type Querier interface {
 	GetCheckpointReadyReplay(ctx context.Context, id pgtype.UUID) (GetCheckpointReadyReplayRow, error)
 	GetCheckpointWorkspaceBaseAuthority(ctx context.Context, arg GetCheckpointWorkspaceBaseAuthorityParams) (GetCheckpointWorkspaceBaseAuthorityRow, error)
 	GetChildCallRunWaitReplay(ctx context.Context, arg GetChildCallRunWaitReplayParams) (RunWait, error)
+	GetComputerInitialization(ctx context.Context, arg GetComputerInitializationParams) (ComputerInitialization, error)
 	GetCurrentDeployment(ctx context.Context, arg GetCurrentDeploymentParams) (Deployment, error)
 	GetCurrentDeploymentForRoute(ctx context.Context, arg GetCurrentDeploymentForRouteParams) (Deployment, error)
 	GetCurrentSecretValue(ctx context.Context, arg GetCurrentSecretValueParams) (SecretVersion, error)
@@ -491,6 +494,17 @@ type Querier interface {
 	RecoverExpiredRunResumes(ctx context.Context, limitCount int32) ([]RecoverExpiredRunResumesRow, error)
 	RefreshAuthSession(ctx context.Context, arg RefreshAuthSessionParams) error
 	RegisterActorInputRunWait(ctx context.Context, arg RegisterActorInputRunWaitParams) (RunWait, error)
+	// These are transaction primitives. The publication owner must lock and validate
+	// current preparation authority before registration, and publish the version in
+	// the same transaction as consumption. A registration/replay is not an execution
+	// or upload grant. No remote deletion is authorized by these queries.
+	// A registration conflict (no row) is resolved with GetComputerInitialization:
+	// mismatched, consumed and abandoned candidates must not be registered anew.
+	// A digest already owned by another runtime raises a unique violation; replacement
+	// runtimes produce their own candidate rather than transfer cleanup ownership.
+	// Consumption can also raise a unique violation if another initialization won
+	// for this Computer. The owner must roll back before resolving that receipt.
+	RegisterComputerInitialization(ctx context.Context, arg RegisterComputerInitializationParams) (ComputerInitialization, error)
 	RegisterDifferentWorkspaceChildCall(ctx context.Context, arg RegisterDifferentWorkspaceChildCallParams) (RunWait, error)
 	RegisterResolvedDifferentWorkspaceChildCall(ctx context.Context, arg RegisterResolvedDifferentWorkspaceChildCallParams) (RunWait, error)
 	RegisterSameWorkspaceChildCall(ctx context.Context, arg RegisterSameWorkspaceChildCallParams) (RunWait, error)
