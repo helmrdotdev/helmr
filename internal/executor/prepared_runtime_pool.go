@@ -517,6 +517,11 @@ func (p *PreparedRuntimePool) warmRuntimeTarget(
 	if err := validateComputerPreparationSource(target); err != nil {
 		return err
 	}
+	if target.Source.Restore != nil {
+		if _, err := validatePreparedRuntimeRestore(target, p.RuntimeArchitecture); err != nil {
+			return err
+		}
+	}
 	if target.PreparationExpiresAt.IsZero() {
 		return errors.New("runtime preparation deadline is required")
 	}

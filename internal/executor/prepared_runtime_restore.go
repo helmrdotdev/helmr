@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
@@ -128,6 +129,11 @@ func validatePreparedRuntimeRestore(
 		strings.TrimSpace(checkpoint.RecoveryPoint.CorrelationID) == "" {
 		return workerapi.CheckpointManifest{}, errors.New("prepared runtime restore manifest identity is inconsistent")
 	}
+	// A reserved disk is not interchangeable with the one paired with this RAM.
+	// Check the tuple before any disk expansion, downloads or VM materialization.
+	if err := validateCheckpointComputerSource(target.Source, checkpoint.RuntimeState.Computer); err != nil {
+		return workerapi.CheckpointManifest{}, err
+	}
 	if len(checkpoint.RuntimeState.MemoryArtifacts) != 1 {
 		return workerapi.CheckpointManifest{}, errors.New("prepared runtime restore requires exactly one memory artifact")
 	}
@@ -156,4 +162,16 @@ func validatePreparedRuntimeRestore(
 		return workerapi.CheckpointManifest{}, errors.New("prepared runtime restore manifest Workspace base mount is invalid")
 	}
 	return checkpoint, nil
+}
+
+func validateCheckpointComputerSource(source workerapi.RuntimeSource, captured *workerapi.CheckpointComputer) error {
+	reserved := source.Computer
+	if reserved == nil || reserved.Seed != nil || reserved.Disk == nil || captured == nil {
+		return errors.New("checkpoint restore requires a paired computer disk")
+	}
+	if captured.ComputerID != source.WorkspaceID || captured.LogicalBytes != reserved.LogicalBytes ||
+		captured.Artifact.Digest != reserved.Disk.Digest || captured.Artifact.SizeBytes != reserved.Disk.SizeBytes || captured.Artifact.MediaType != reserved.Disk.MediaType {
+		return errors.New("checkpoint computer disk does not match the reserved computer")
+	}
+	return (computer.DiskArtifact{Object: computerObject(*reserved.Disk), LogicalBytes: captured.LogicalBytes}).Validate(reserved.LogicalBytes)
 }

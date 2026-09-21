@@ -177,3 +177,11 @@ func TestCheckpointRuntimeShapeAuthorityMatchesLockedRuntime(t *testing.T) {
 func digestWith(character string) string {
 	return "sha256:" + strings.Repeat(character, 64)
 }
+
+func TestCheckpointReadyDoesNotAcknowledgeUnpersistedComputerDisk(t *testing.T) {
+	request := validCheckpointReadyRequest()
+	request.Manifest.RuntimeState.Computer = &workerapi.CheckpointComputer{}
+	if _, _, err := parseCheckpointReadyRequest(request); err == nil || !strings.Contains(err.Error(), "paired disk persistence") {
+		t.Fatalf("Computer disk passed through tree publication: %v", err)
+	}
+}

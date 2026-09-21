@@ -695,6 +695,11 @@ func parseCheckpointReadyRequest(request workerapi.CheckpointReadyRequest) (pars
 }
 
 func validateCheckpointReadyManifest(request workerapi.CheckpointReadyRequest) ([]byte, checkpointArtifactProofs, error) {
+	// Do not acknowledge a Computer checkpoint until its disk can be committed
+	// atomically with the machine artifacts. The tree publication path cannot do so.
+	if request.Manifest.RuntimeState.Computer != nil {
+		return nil, checkpointArtifactProofs{}, errors.New("computer checkpoint publication requires paired disk persistence")
+	}
 	return validateCheckpointManifest(
 		request.Manifest,
 		request.CheckpointID,

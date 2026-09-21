@@ -1054,7 +1054,17 @@ type CheckpointRuntimeSubstrate struct {
 	SizeBytes int64  `json:"size_bytes"`
 }
 
+// CheckpointComputer binds the writable disk captured with the VM state and RAM.
+// The artifact is a Computer disk, encrypted for ComputerID, not a checkpoint-only
+// encoding: the same bytes can also serve as a cold Computer continuation.
+type CheckpointComputer struct {
+	ComputerID   string             `json:"computer_id"`
+	LogicalBytes int64              `json:"logical_bytes"`
+	Artifact     CheckpointArtifact `json:"artifact"`
+}
+
 type CheckpointRuntimeState struct {
+	Computer            *CheckpointComputer  `json:"computer,omitempty"`
 	ConfigArtifact      CheckpointArtifact   `json:"config_artifact"`
 	VMStateArtifact     CheckpointArtifact   `json:"vm_state_artifact"`
 	ScratchDiskArtifact CheckpointArtifact   `json:"scratch_disk_artifact"`
