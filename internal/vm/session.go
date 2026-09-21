@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -77,7 +78,18 @@ type ReadOnlyDriveSource interface {
 }
 
 type RuntimeTopology struct {
+	Computer  *RuntimeComputer
 	Substrate *RuntimeSubstrate
+}
+
+// RuntimeComputer transfers an exclusively owned working disk to the VM owner.
+// File is valid through Materialize; the connector retains its own inode link.
+// VersionID identifies the published source, not subsequent guest writes.
+type RuntimeComputer struct {
+	Path      string
+	File      *os.File
+	VersionID string
+	SizeBytes int64
 }
 
 type RuntimeSubstrateSource interface {

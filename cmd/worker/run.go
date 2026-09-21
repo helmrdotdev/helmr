@@ -243,6 +243,8 @@ func run(log *slog.Logger) error {
 		preparedRuntimePool.Substrates = substrateResolver
 		preparedRuntimePool.RuntimeSubstrates = controlPlaneClient
 		preparedRuntimePool.CheckpointEncryptor = checkpointEncryptor
+		preparedRuntimePool.ComputerObjects = store
+		preparedRuntimePool.ComputerInitializations = controlPlaneClient
 		preparedRuntimePool.RuntimeInstances = controlPlaneClient
 		preparedRuntimePool.Capacity = hostCapacity
 		preparedRuntimePool.PlatformStore = platformStore

@@ -92,11 +92,24 @@ mount_substrate() {
 	export HELMR_GUESTD_SUBSTRATE_ROOT=/var/lib/helmr/substrate
 }
 
+mount_computer() {
+	if [ "$(kernel_arg helmr.computer || true)" != 1 ]; then
+		return 0
+	fi
+	if [ ! -b /dev/vdc ]; then
+		echo "missing required Helmr Computer disk /dev/vdc" >&2
+		exit 1
+	fi
+	mkdir -p /var/lib/helmr/computer
+	mount -t ext4 -o rw /dev/vdc /var/lib/helmr/computer
+	export HELMR_GUESTD_COMPUTER_ROOT=/var/lib/helmr/computer
+}
+
 mount_program() {
 	if [ "$(kernel_arg helmr.program || true)" != 1 ]; then
 		return 0
 	fi
-	if [ "$(kernel_arg helmr.substrate || true)" = 1 ]; then
+	if [ "$(kernel_arg helmr.substrate || true)" = 1 ] || [ "$(kernel_arg helmr.computer || true)" = 1 ]; then
 		runtime_device=/dev/vdd
 		program_device=/dev/vde
 	else
@@ -248,6 +261,7 @@ enable_user_namespaces
 mount_scratch
 load_vsock
 mount_substrate
+mount_computer
 mount_program
 configure_network
 configure_runtime_identity

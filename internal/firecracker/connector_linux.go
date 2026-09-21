@@ -495,6 +495,14 @@ func stopExactRuntimePID(ctx context.Context, pid int) error {
 }
 
 func (c *Connector) validateMaterializeRequest(request vm.MaterializeRequest) error {
+	if request.Topology.Computer != nil {
+		if request.Topology.Substrate != nil {
+			return errors.New("computer cannot be combined with a substrate")
+		}
+		if err := validateComputerDisk(request.Topology.Computer); err != nil {
+			return err
+		}
+	}
 	if request.OwnerKind != vm.OwnerRuntime {
 		return errors.New("the Firecracker materialize owner must be runtime")
 	}
@@ -567,6 +575,9 @@ func runtimeKernelArgs(
 	args := defaultKernelArgs + fmt.Sprintf(" %s=%s::%s:%s::%s:off:%s::",
 		runtimeIPKernelParameter, guestIP, GuestGatewayIPv4V0,
 		net.IP(guestNetwork.Mask), GuestInterfaceNameV0, strings.TrimSpace(resolverIPv4))
+	if topology.Computer != nil {
+		args += " helmr.computer=1"
+	}
 	if topology.Substrate != nil {
 		args += " " + runtimeSubstrateKernelFlag
 	}
@@ -622,6 +633,9 @@ func (runtime *QualifiedRuntime) Restore(ctx context.Context, request vm.Restore
 }
 
 func (c *Connector) restore(ctx context.Context, request vm.RestoreRequest) (vm.Session, error) {
+	if request.Topology.Computer != nil {
+		return nil, errors.New("computer restore requires paired writable-disk checkpoint support")
+	}
 	if err := request.Binding.Validate(vm.Owner{Kind: request.OwnerKind, ID: request.RuntimeInstanceID}); err != nil {
 		return nil, fmt.Errorf("the Firecracker workload binding: %w", err)
 	}
@@ -1002,6 +1016,16 @@ func (c *Connector) prepareSession(ctx context.Context, mode launchMode, instanc
 		recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "prepare_substrate_for_jailer", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted))})
 	}
 	restoring := snapshotMemoryPath != "" || snapshotStatePath != ""
+	computerDiskPath := ""
+	if topology.Computer != nil {
+		computerDiskPath, err = attachComputerDisk(ctx, topology.Computer, instanceDir, c.cfg.JailerUID, c.cfg.JailerGID)
+		if err != nil {
+			return nil, err
+		}
+		copy := *topology.Computer
+		copy.Path, copy.File = computerDiskPath, nil
+		topology.Computer = &copy
+	}
 	readOnlyDrivePaths := map[string]string(nil)
 	if restoring && len(readOnlyDrives) != 0 {
 		readOnlyDrivePaths, err = prepareRestoreReadOnlyDrivePaths(
@@ -1052,10 +1076,11 @@ func (c *Connector) prepareSession(ctx context.Context, mode launchMode, instanc
 			Stdout:         os.Stderr,
 			Stderr:         os.Stderr,
 		},
-		Drives: runtimeDrivesWithReadOnlyPaths(
+		Drives: runtimeDrivesWithComputer(
 			c.cfg.RootfsPath,
 			scratchDiskPath,
 			substrateDiskPath,
+			computerDiskPath,
 			readOnlyDrives,
 			readOnlyDrivePaths,
 		),
@@ -2049,6 +2074,9 @@ func closeGuestStream(ctx context.Context, stream io.Closer) error {
 }
 
 func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRequest) (vm.SnapshotArtifact, error) {
+	if s.topology.Computer != nil {
+		return vm.SnapshotArtifact{}, errors.New("computer capture requires paired writable-disk checkpoint support")
+	}
 	checkpointID := safeSnapshotID(request.ID)
 	memName := checkpointID + snapshotMemorySuffix
 	stateName := checkpointID + snapshotStateSuffix

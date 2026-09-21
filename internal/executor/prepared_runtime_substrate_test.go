@@ -53,7 +53,7 @@ func TestPreparedRuntimeRestoreRebuildsAndRegistersSubstrateWithoutSubstrateCAS(
 		},
 	}
 	pool := &PreparedRuntimePool{Substrates: resolver}
-	mount := preparedRuntimeWorkspaceMountFromSource(target.Source)
+	mount := workerapi.WorkspaceMount{WorkspaceImage: target.Source.WorkspaceImage, Target: *target.Source.WorkspaceTarget}
 	_, cleanup, topology, err := pool.restoreWorkspaceImageAndRuntimeSubstrate(
 		context.Background(),
 		WorkspaceMaterializer{CAS: store},

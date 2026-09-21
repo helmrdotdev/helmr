@@ -750,20 +750,22 @@ func restorePreparedWorkspaceRuntime(conn io.Reader, request *workspacev0.Prepar
 		return nil, phases, fmt.Errorf("workspace runtime prepare mount_path %q is invalid", request.GetMountPath())
 	}
 	workspaceImage := request.GetWorkspaceImage()
-	if workspaceImage == nil {
-		return nil, phases, errors.New("workspace runtime prepare workspace_image is required")
-	}
-	if strings.TrimSpace(workspaceImage.GetDigest()) == "" {
-		return nil, phases, errors.New("workspace runtime prepare workspace_image digest is required")
-	}
-	if workspaceImage.GetMediaType() != workspaceImageMediaType {
-		return nil, phases, fmt.Errorf("workspace runtime prepare workspace_image media_type %q is not supported", workspaceImage.GetMediaType())
-	}
-	if workspaceImage.GetEncoding() != workspaceImageEncoding {
-		return nil, phases, fmt.Errorf("workspace runtime prepare workspace_image encoding %q is not supported", workspaceImage.GetEncoding())
-	}
-	if workspaceImage.GetSizeBytes() == 0 {
-		return nil, phases, errors.New("workspace runtime prepare workspace_image size_bytes is required")
+	if strings.TrimSpace(os.Getenv("HELMR_GUESTD_COMPUTER_ROOT")) == "" {
+		if workspaceImage == nil {
+			return nil, phases, errors.New("workspace runtime prepare workspace_image is required")
+		}
+		if strings.TrimSpace(workspaceImage.GetDigest()) == "" {
+			return nil, phases, errors.New("workspace runtime prepare workspace_image digest is required")
+		}
+		if workspaceImage.GetMediaType() != workspaceImageMediaType {
+			return nil, phases, fmt.Errorf("workspace runtime prepare workspace_image media_type %q is not supported", workspaceImage.GetMediaType())
+		}
+		if workspaceImage.GetEncoding() != workspaceImageEncoding {
+			return nil, phases, fmt.Errorf("workspace runtime prepare workspace_image encoding %q is not supported", workspaceImage.GetEncoding())
+		}
+		if workspaceImage.GetSizeBytes() == 0 {
+			return nil, phases, errors.New("workspace runtime prepare workspace_image size_bytes is required")
+		}
 	}
 	phaseStarted := time.Now()
 	image, cleanupImage, err := restorePreparedWorkspaceImage(conn, request)
@@ -1155,6 +1157,13 @@ func restoreWorkspaceMountWorkspaceImage(conn io.Reader, request *workspacev0.Ma
 
 func restorePreparedWorkspaceImage(conn io.Reader, request *workspacev0.PrepareWorkspaceRuntimeRequest) (ociImage, func(), error) {
 	cleanup := func() {}
+	if root := strings.TrimSpace(os.Getenv("HELMR_GUESTD_COMPUTER_ROOT")); root != "" {
+		config := request.GetMountedImageConfig()
+		if config == nil {
+			return ociImage{}, cleanup, errors.New("computer preparation requires admitted image config")
+		}
+		return ociImage{RootfsDir: root, Config: oci.RuntimeConfig{Env: config.GetEnv(), WorkingDir: config.GetWorkingDir(), User: config.GetUser(), Entrypoint: config.GetEntrypoint(), Cmd: config.GetCmd()}}, cleanup, nil
+	}
 	if config := request.GetMountedImageConfig(); config != nil {
 		substrateRoot := guestdSubstrateRoot()
 		if substrateRoot == "" {
