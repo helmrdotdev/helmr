@@ -128,6 +128,59 @@ func (q *Queries) GetComputerInitialization(ctx context.Context, arg GetComputer
 	return i, err
 }
 
+const getWorkerComputerInitialization = `-- name: GetWorkerComputerInitialization :one
+SELECT initialization.id, initialization.environment_id, initialization.computer_id, initialization.version_id, initialization.runtime_instance_id, initialization.runtime_desired_version, initialization.ownership_generation, initialization.writer_generation, initialization.digest, initialization.size_bytes, initialization.logical_bytes, initialization.media_type, initialization.initial_config, initialization.status, initialization.artifact_id, initialization.created_at, initialization.consumed_at, initialization.abandoned_at
+  FROM computer_initializations AS initialization
+  JOIN runtime_instances AS runtime ON runtime.id=initialization.runtime_instance_id
+ WHERE initialization.runtime_instance_id=$1
+   AND initialization.runtime_desired_version=$2
+   AND runtime.worker_instance_id=$3
+   AND runtime.worker_group_id=$4
+   AND runtime.worker_epoch=$5
+`
+
+type GetWorkerComputerInitializationParams struct {
+	RuntimeInstanceID     pgtype.UUID `json:"runtime_instance_id"`
+	RuntimeDesiredVersion int64       `json:"runtime_desired_version"`
+	WorkerInstanceID      pgtype.UUID `json:"worker_instance_id"`
+	WorkerGroupID         pgtype.UUID `json:"worker_group_id"`
+	WorkerEpoch           int64       `json:"worker_epoch"`
+}
+
+// Historical receipt access is scoped to the original authenticated Worker and
+// recorded preparation fence. Current readiness/head/desired state is irrelevant.
+func (q *Queries) GetWorkerComputerInitialization(ctx context.Context, arg GetWorkerComputerInitializationParams) (ComputerInitialization, error) {
+	row := q.db.QueryRow(ctx, getWorkerComputerInitialization,
+		arg.RuntimeInstanceID,
+		arg.RuntimeDesiredVersion,
+		arg.WorkerInstanceID,
+		arg.WorkerGroupID,
+		arg.WorkerEpoch,
+	)
+	var i ComputerInitialization
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.ComputerID,
+		&i.VersionID,
+		&i.RuntimeInstanceID,
+		&i.RuntimeDesiredVersion,
+		&i.OwnershipGeneration,
+		&i.WriterGeneration,
+		&i.Digest,
+		&i.SizeBytes,
+		&i.LogicalBytes,
+		&i.MediaType,
+		&i.InitialConfig,
+		&i.Status,
+		&i.ArtifactID,
+		&i.CreatedAt,
+		&i.ConsumedAt,
+		&i.AbandonedAt,
+	)
+	return i, err
+}
+
 const publishComputerInitialization = `-- name: PublishComputerInitialization :one
 WITH candidate AS MATERIALIZED (
     SELECT initialization.id, initialization.environment_id, initialization.computer_id, initialization.version_id, initialization.runtime_instance_id, initialization.runtime_desired_version, initialization.ownership_generation, initialization.writer_generation, initialization.digest, initialization.size_bytes, initialization.logical_bytes, initialization.media_type, initialization.initial_config, initialization.status, initialization.artifact_id, initialization.created_at, initialization.consumed_at, initialization.abandoned_at, artifacts.id AS verified_artifact_id

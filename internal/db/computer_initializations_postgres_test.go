@@ -458,3 +458,35 @@ FROM workspaces w JOIN workspace_versions v ON v.id=w.head_version_id WHERE w.id
 		})
 	}
 }
+
+func TestComputerInitializationWorkerReceiptSurvivesHeadAdvance(t *testing.T) {
+	f := runtest.New(t)
+	q := db.New(f.Pool)
+	p := initializationParams(t, f)
+	if _, err := q.RegisterComputerInitialization(t.Context(), p); err != nil {
+		t.Fatal(err)
+	}
+	artifact := initializationArtifact(t, f, f.Pool, p)
+	published, err := q.PublishComputerInitialization(t.Context(), initializationConsume(p, artifact))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// This fixture owns an existing lease. Advance a child version under that
+	// recorded provenance; do not rewrite or remove the original root receipt.
+	next := pgvalue.UUID(uuid.NewV7())
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO workspace_versions
+(id,environment_id,workspace_id,parent_version_id,artifact_id,content_digest,size_bytes,status,source_workspace_lease_id,ownership_generation,writer_generation,published_at)
+SELECT $1,v.environment_id,v.workspace_id,v.id,v.artifact_id,v.content_digest,v.size_bytes,'committed',l.id,l.ownership_generation,l.writer_generation,now()
+FROM workspace_versions v JOIN workspace_leases l ON l.workspace_id=v.workspace_id WHERE v.id=$2`, next, p.VersionID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspaces SET head_version_id=$2 WHERE id=$1`, p.ComputerID, next)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runtime_instances SET desired_state='closed',desired_version=desired_version+1 WHERE id=$1`, p.RuntimeInstanceID)
+	args := db.GetWorkerComputerInitializationParams{RuntimeInstanceID: p.RuntimeInstanceID, RuntimeDesiredVersion: p.RuntimeDesiredVersion, WorkerInstanceID: pgvalue.UUID(f.WorkerID), WorkerGroupID: pgvalue.UUID(runtest.WorkerGroupID), WorkerEpoch: 1}
+	receipt, err := q.GetWorkerComputerInitialization(t.Context(), args)
+	if err != nil || receipt.ID != published.ID || receipt.VersionID != p.VersionID || receipt.ConsumedAt != published.ConsumedAt {
+		t.Fatalf("historical worker receipt lost: %+v %v", receipt, err)
+	}
+	args.WorkerInstanceID = pgvalue.UUID(uuid.NewV7())
+	if _, err = q.GetWorkerComputerInitialization(t.Context(), args); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("another Worker read receipt: %v", err)
+	}
+}

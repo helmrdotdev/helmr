@@ -612,6 +612,8 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 				r.With(limitRequestBody(16384)).Post("/run/secret-proxy/resolve", s.workerResolveSecretProxy)
 				r.Post("/run/runtime-instances/reconcile", s.workerNextRuntimeReconcileTarget)
 				r.Post("/run/runtime-instances/ready", s.workerMarkRuntimeInstanceReady)
+				r.Post("/run/runtime-instances/initialization/register", s.workerRegisterComputerInitialization)
+				r.Post("/run/runtime-instances/initialization/publish", s.workerPublishComputerInitialization)
 				r.Post("/run/runtime-instances/closed", s.workerMarkRuntimeInstanceClosed)
 				r.Post("/run/runtime-instances/failed", s.workerMarkRuntimeInstanceFailed)
 				r.Post("/run/runtime-substrates/register", s.workerRegisterRuntimeSubstrate)

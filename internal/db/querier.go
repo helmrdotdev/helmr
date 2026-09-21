@@ -291,6 +291,9 @@ type Querier interface {
 	// read-only replay before lineage locks.
 	GetTokenWaitRegistrationReplay(ctx context.Context, arg GetTokenWaitRegistrationReplayParams) (GetTokenWaitRegistrationReplayRow, error)
 	GetUserOnboardingState(ctx context.Context, arg GetUserOnboardingStateParams) (GetUserOnboardingStateRow, error)
+	// Historical receipt access is scoped to the original authenticated Worker and
+	// recorded preparation fence. Current readiness/head/desired state is irrelevant.
+	GetWorkerComputerInitialization(ctx context.Context, arg GetWorkerComputerInitializationParams) (ComputerInitialization, error)
 	GetWorkerGroup(ctx context.Context, id pgtype.UUID) (WorkerGroup, error)
 	GetWorkerGroupByRegionName(ctx context.Context, arg GetWorkerGroupByRegionNameParams) (WorkerGroup, error)
 	GetWorkerGroupStatus(ctx context.Context, workerGroupID pgtype.UUID) (GetWorkerGroupStatusRow, error)

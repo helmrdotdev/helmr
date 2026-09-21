@@ -123,3 +123,15 @@ UPDATE computer_initializations AS initialization
   FROM revoked
  WHERE initialization.id = revoked.id
    AND initialization.status = 'registered';
+
+-- Historical receipt access is scoped to the original authenticated Worker and
+-- recorded preparation fence. Current readiness/head/desired state is irrelevant.
+-- name: GetWorkerComputerInitialization :one
+SELECT initialization.*
+  FROM computer_initializations AS initialization
+  JOIN runtime_instances AS runtime ON runtime.id=initialization.runtime_instance_id
+ WHERE initialization.runtime_instance_id=sqlc.arg(runtime_instance_id)
+   AND initialization.runtime_desired_version=sqlc.arg(runtime_desired_version)
+   AND runtime.worker_instance_id=sqlc.arg(worker_instance_id)
+   AND runtime.worker_group_id=sqlc.arg(worker_group_id)
+   AND runtime.worker_epoch=sqlc.arg(worker_epoch);
