@@ -10,11 +10,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/oci"
 )
 
-// Seed is the immutable preparation receipt supplied by trusted deployment
-// authority. Its config and artifact must come from the same published result;
-// transfer verification alone cannot establish config or image derivation.
+// Seed is the disk and config from one admitted deployment. Admission does not
+// certify how a client derived its filesystem or whether the guest will boot.
 type Seed struct {
-	Identity SeedIdentity
 	Artifact SeedArtifact
 	Config   oci.RuntimeConfig
 }
@@ -30,7 +28,7 @@ type InitialDiskCandidate struct {
 // It performs no remote writes. Failure removes this invocation's working file;
 // success transfers both working disk and candidate ownership to the caller.
 // The owner must publish the artifact and config before permitting user execution.
-func (s DiskStore) Initialize(ctx context.Context, computerID string, seed Seed, target, stagingDir string, capacity int64, resize2fs string) (*InitialDiskCandidate, error) {
+func (s DiskStore) Initialize(ctx context.Context, computerID string, seed Seed, target, stagingDir string, capacity int64) (*InitialDiskCandidate, error) {
 	if err := s.validate(computerID); err != nil {
 		return nil, err
 	}
@@ -42,7 +40,7 @@ func (s DiskStore) Initialize(ctx context.Context, computerID string, seed Seed,
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	if err := (SeedStore{CAS: s.CAS, Cipher: s.Cipher}).materialize(ctx, seed, target, capacity, resize2fs); err != nil {
+	if err := (SeedStore{CAS: s.CAS}).Decode(ctx, seed.Artifact, target, capacity); err != nil {
 		return nil, err
 	}
 	candidate, err := s.Capture(ctx, computerID, target, stagingDir)

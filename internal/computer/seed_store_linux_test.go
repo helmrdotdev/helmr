@@ -15,7 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
 )
 
-func TestSeedTransferIdentityAndComputerSeparation(t *testing.T) {
+func TestSeedTransferAndComputerSeparation(t *testing.T) {
 	dir := t.TempDir()
 	objects, err := cas.NewFile(filepath.Join(dir, "cas"))
 	if err != nil {
@@ -25,8 +25,7 @@ func TestSeedTransferIdentityAndComputerSeparation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := SeedStore{CAS: objects, Cipher: cipher}
-	id := SeedIdentity{EnvironmentID: diskTestComputer, PreparationID: "019c10d5-a6f7-7af1-8f5f-000000000502"}
+	store := SeedStore{CAS: objects}
 	const size = 8 << 20
 	source := filepath.Join(dir, "source")
 	content := make([]byte, size)
@@ -34,33 +33,32 @@ func TestSeedTransferIdentityAndComputerSeparation(t *testing.T) {
 	if err := os.WriteFile(source, content, 0600); err != nil {
 		t.Fatal(err)
 	}
-	candidate, err := store.Encode(t.Context(), id, source, dir)
+	packed := filepath.Join(dir, "packed")
+	artifact, err := EncodeSeed(t.Context(), source, packed)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer candidate.Close()
-	artifact := candidate.Artifact()
-	publisher := diskTestPublisher{objects}
-	for range 2 {
-		if err := candidate.Upload(t.Context(), publisher); err != nil {
-			t.Fatal(err)
-		}
+	file, err := os.Open(packed)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if artifact != candidate.Artifact() {
-		t.Fatal("retry changed ciphertext identity")
+	defer file.Close()
+	publisher := diskTestPublisher{objects}
+	if _, err := publisher.Publish(t.Context(), artifact.Object, file); err != nil {
+		t.Fatal(err)
 	}
 	if artifact.Object.SizeBytes >= size {
 		t.Fatal("sparse seed was not compressed")
 	}
 	target := filepath.Join(dir, "target")
-	if err := store.Decode(t.Context(), id, artifact, target, 2*size); err != nil {
+	if err := store.Decode(t.Context(), artifact, target, size); err != nil {
 		t.Fatal(err)
 	}
 	actual, err := os.ReadFile(target)
 	if err != nil || !bytes.Equal(actual, content) {
 		t.Fatalf("roundtrip: %v", err)
 	}
-	if err := store.Decode(t.Context(), id, artifact, target, 2*size); !errors.Is(err, os.ErrExist) {
+	if err := store.Decode(t.Context(), artifact, target, size); !errors.Is(err, os.ErrExist) {
 		t.Fatalf("collision: %v", err)
 	}
 	actual, err = os.ReadFile(target)
@@ -69,18 +67,15 @@ func TestSeedTransferIdentityAndComputerSeparation(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		name     string
-		identity SeedIdentity
 		artifact SeedArtifact
 	}{
-		{"environment", SeedIdentity{id.PreparationID, id.PreparationID}, artifact},
-		{"preparation", SeedIdentity{id.EnvironmentID, id.EnvironmentID}, artifact},
-		{"digest", id, SeedArtifact{Object: cas.Descriptor{Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", SizeBytes: artifact.Object.SizeBytes, MediaType: SeedMediaType}, LogicalBytes: size}},
-		{"logical-size", id, SeedArtifact{Object: artifact.Object, LogicalBytes: 2 * size}},
-		{"encoded-size", id, SeedArtifact{Object: cas.Descriptor{Digest: artifact.Object.Digest, SizeBytes: artifact.Object.SizeBytes + 1, MediaType: SeedMediaType}, LogicalBytes: size}},
+		{"digest", SeedArtifact{Object: cas.Descriptor{Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", SizeBytes: artifact.Object.SizeBytes, MediaType: SeedMediaType}, LogicalBytes: size}},
+		{"logical-size", SeedArtifact{Object: artifact.Object, LogicalBytes: 2 * size}},
+		{"encoded-size", SeedArtifact{Object: cas.Descriptor{Digest: artifact.Object.Digest, SizeBytes: artifact.Object.SizeBytes + 1, MediaType: SeedMediaType}, LogicalBytes: size}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out := filepath.Join(dir, tc.name)
-			if err := store.Decode(t.Context(), tc.identity, tc.artifact, out, 2*size); err == nil {
+			if err := store.Decode(t.Context(), tc.artifact, out, size); err == nil {
 				t.Fatal("invalid seed accepted")
 			}
 			if _, err := os.Lstat(out); !os.IsNotExist(err) {
@@ -92,13 +87,13 @@ func TestSeedTransferIdentityAndComputerSeparation(t *testing.T) {
 	forged := DiskArtifact{Object: artifact.Object, LogicalBytes: size}
 	forged.Object.MediaType = DiskMediaType
 	out := filepath.Join(dir, "as-computer")
-	if err := (DiskStore{CAS: objects, Cipher: cipher}).Restore(t.Context(), id.PreparationID, forged, out, size); err == nil {
+	if err := (DiskStore{CAS: objects, Cipher: cipher}).Restore(t.Context(), diskTestComputer, forged, out, size); err == nil {
 		t.Fatal("seed accepted as Computer disk")
 	}
 	if _, err := os.Lstat(out); !os.IsNotExist(err) {
 		t.Fatal("failed Computer restore exposed disk")
 	}
-	computer, err := (DiskStore{Cipher: cipher}).Capture(t.Context(), id.PreparationID, source, dir)
+	computer, err := (DiskStore{Cipher: cipher}).Capture(t.Context(), diskTestComputer, source, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,11 +103,10 @@ func TestSeedTransferIdentityAndComputerSeparation(t *testing.T) {
 	}
 	reverse := SeedArtifact{Object: computer.Artifact().Object, LogicalBytes: size}
 	reverse.Object.MediaType = SeedMediaType
-	if err := store.Decode(t.Context(), id, reverse, filepath.Join(dir, "as-seed"), size); err == nil {
+	if err := store.Decode(t.Context(), reverse, filepath.Join(dir, "as-seed"), size); err == nil {
 		t.Fatal("Computer disk accepted as seed")
 	}
-	// Authentication failure must remove partially decoded output, even when the
-	// caller supplies the exact descriptor of the corrupted ciphertext.
+	// Malformed content must remove decoded output even with a matching digest.
 	body, err := objects.Get(t.Context(), artifact.Object.Digest)
 	if err != nil {
 		t.Fatal(err)
@@ -129,25 +123,25 @@ func TestSeedTransferIdentityAndComputerSeparation(t *testing.T) {
 	}
 	bad := SeedArtifact{Object: cas.Descriptor{Digest: corrupt.Digest, SizeBytes: corrupt.SizeBytes, MediaType: corrupt.MediaType}, LogicalBytes: size}
 	out = filepath.Join(dir, "corrupt")
-	if err := store.Decode(t.Context(), id, bad, out, size); err == nil {
+	if err := store.Decode(t.Context(), bad, out, size); err == nil {
 		t.Fatal("corrupt seed accepted")
 	}
 	if _, err := os.Lstat(out); !os.IsNotExist(err) {
 		t.Fatal("corrupt seed exposed")
 	}
 	// Capacity and format failures must precede any storage I/O.
-	rejecting := SeedStore{CAS: seedNoRead{t: t}, Cipher: cipher}
-	if err := rejecting.Decode(t.Context(), id, artifact, filepath.Join(dir, "small"), size/2); err == nil {
+	rejecting := SeedStore{CAS: seedNoRead{t: t}}
+	if err := rejecting.Decode(t.Context(), artifact, filepath.Join(dir, "small"), size/2); err == nil {
 		t.Fatal("capacity accepted")
 	}
 	wrong := artifact
 	wrong.Object.MediaType = DiskMediaType
-	if err := rejecting.Decode(t.Context(), id, wrong, filepath.Join(dir, "format"), size); err == nil {
+	if err := rejecting.Decode(t.Context(), wrong, filepath.Join(dir, "format"), size); err == nil {
 		t.Fatal("format accepted")
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := store.Encode(ctx, id, source, dir); !errors.Is(err, context.Canceled) {
+	if _, err := EncodeSeed(ctx, source, filepath.Join(dir, "cancelled")); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled encode: %v", err)
 	}
 }

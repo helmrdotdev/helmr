@@ -4,30 +4,12 @@ import (
 	"errors"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/ids"
 )
 
-const SeedMediaType = "application/vnd.helmr.computer.seed.v0+filepack+aesgcm"
+const SeedMediaType = "application/vnd.helmr.computer.seed.v0+filepack"
 
-// SeedIdentity binds shared initial bytes to their owning environment and preparation.
-// It is not a Computer identity or permission to initialize a Computer.
-type SeedIdentity struct {
-	EnvironmentID string
-	PreparationID string
-}
-
-func (id SeedIdentity) purpose() (string, error) {
-	if err := ids.Validate(id.EnvironmentID); err != nil {
-		return "", err
-	}
-	if err := ids.Validate(id.PreparationID); err != nil {
-		return "", err
-	}
-	return "computer-seed:" + id.EnvironmentID + ":" + id.PreparationID, nil
-}
-
-// SeedArtifact is a prepared image, never a committed Computer version.
-// Trusted preparation publication separately establishes its source and config.
+// SeedArtifact is a client-built deployment disk, never a committed Computer
+// version. Admission binds its exact descriptor and config to a deployment.
 type SeedArtifact struct {
 	Object       cas.Descriptor
 	LogicalBytes int64
@@ -41,7 +23,7 @@ func (a SeedArtifact) Validate(capacity int64) error {
 	if err != nil {
 		return err
 	}
-	if a.Object.MediaType != SeedMediaType || a.Object.SizeBytes > limit || a.LogicalBytes > capacity {
+	if a.Object.MediaType != SeedMediaType || a.Object.SizeBytes > limit || a.LogicalBytes != capacity {
 		return errors.New("computer seed exceeds capacity or has an invalid format")
 	}
 	return nil

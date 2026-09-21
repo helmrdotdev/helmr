@@ -131,7 +131,8 @@ func TestRuntimeFilepackRejectsOverflowingDataRecord(t *testing.T) {
 	record.Write(header[:])
 	record.Write(compressed)
 
-	err = readFilepackDataRecord(&record, file, decoder, nil, maxInt64)
+	var nextOffset int64
+	err = readFilepackDataRecord(&record, file, decoder, nil, maxInt64, &nextOffset)
 	if err == nil || !strings.Contains(err.Error(), "invalid Firecracker filepack data record") {
 		t.Fatalf("err = %v, want invalid Firecracker filepack data record", err)
 	}
@@ -234,5 +235,54 @@ func TestPackIndependentOfPhysicalAllocation(t *testing.T) {
 	actual, err := os.ReadFile(restored)
 	if err != nil || !bytes.Equal(actual, content) {
 		t.Fatalf("restored bytes differ: %v", err)
+	}
+}
+
+func TestUnpackRejectsUnboundedRecords(t *testing.T) {
+	encoder, err := zstd.NewWriter(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer encoder.Close()
+	chunk := encoder.EncodeAll(bytes.Repeat([]byte{1}, int(filepackChunkSize)), nil)
+	for _, kind := range []string{"duplicate", "descending", "unaligned", "short", "expansion"} {
+		t.Run(kind, func(t *testing.T) {
+			var stream bytes.Buffer
+			logical := 2 * filepackChunkSize
+			if kind == "expansion" {
+				logical = 4096
+			}
+			if err := writeFilepackHeader(&stream, filepackHeader{Version: filepackVersion, Role: ScratchRole, LogicalSize: logical, ChunkSize: filepackChunkSize, Codec: filepackCodecZstd}); err != nil {
+				t.Fatal(err)
+			}
+			write := func(offset int64, size int) {
+				t.Helper()
+				if err := writeFilepackDataRecord(&stream, offset, size, chunk); err != nil {
+					t.Fatal(err)
+				}
+			}
+			switch kind {
+			case "duplicate":
+				write(0, int(filepackChunkSize))
+				write(0, int(filepackChunkSize))
+			case "descending":
+				write(filepackChunkSize, int(filepackChunkSize))
+				write(0, int(filepackChunkSize))
+			case "unaligned":
+				write(1, int(filepackChunkSize))
+			case "short":
+				write(0, 1)
+			case "expansion":
+				write(0, 4096)
+			}
+			stream.WriteByte(filepackRecordEnd)
+			target := filepath.Join(t.TempDir(), "disk")
+			if _, err := UnpackFrom(t.Context(), &stream, target, ScratchRole, logical); err == nil {
+				t.Fatal("malformed record accepted")
+			}
+			if _, err := os.Lstat(target); !os.IsNotExist(err) {
+				t.Fatalf("failed output retained: %v", err)
+			}
+		})
 	}
 }

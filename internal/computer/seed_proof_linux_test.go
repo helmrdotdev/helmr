@@ -21,10 +21,6 @@ import (
 )
 
 func TestComputerSeedProof(t *testing.T) {
-	resize, err := exec.LookPath("resize2fs")
-	if err != nil {
-		t.Fatal(err)
-	}
 	dir := t.TempDir()
 	seed := filepath.Join(dir, "seed.ext4")
 	disk := filepath.Join(dir, "computer.ext4")
@@ -32,7 +28,7 @@ func TestComputerSeedProof(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := source.Truncate(64 << 20); err != nil {
+	if err := source.Truncate(128 << 20); err != nil {
 		t.Fatal(err)
 	}
 	if err := source.Close(); err != nil {
@@ -72,13 +68,13 @@ func TestComputerSeedProof(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	seeds := SeedStore{CAS: objects, Cipher: cipher}
-	seedSource := publishTestSeed(t, seeds, objects, seed, dir, config)
+	seeds := SeedStore{CAS: objects}
+	seedSource := publishTestSeed(t, objects, seed, dir, config)
 	// Runtime initialization must no longer read the original OCI archive.
 	if err := os.Remove(imagePath); err != nil {
 		t.Fatal(err)
 	}
-	initial, err := store.Initialize(t.Context(), diskTestComputer, seedSource, disk, dir, 128<<20, resize)
+	initial, err := store.Initialize(t.Context(), diskTestComputer, seedSource, disk, dir, 128<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +110,7 @@ func TestComputerSeedProof(t *testing.T) {
 	}
 	header := computerProofCommand(t, "debugfs", "-R", "stats", disk)
 	if !strings.Contains(header, "Block count:              32768") {
-		t.Fatalf("filesystem did not grow: %s", header)
+		t.Fatalf("filesystem capacity changed: %s", header)
 	}
 	payload := filepath.Join(dir, "payload")
 	if err := os.WriteFile(payload, []byte("customer modification"), 0600); err != nil {
@@ -129,35 +125,35 @@ func TestComputerSeedProof(t *testing.T) {
 	}
 	// Refuse to overwrite an existing Computer, even if a caller retries creation.
 	current := computerProofDigest(t, disk)
-	if err := seeds.materialize(t.Context(), seedSource, disk, 128<<20, resize); err == nil {
+	if err := seeds.Decode(t.Context(), seedSource.Artifact, disk, 128<<20); err == nil {
 		t.Fatal("existing disk overwritten")
 	}
 	if computerProofDigest(t, disk) != current {
 		t.Fatal("creation retry changed existing disk")
 	}
 	failed := filepath.Join(dir, "failed.ext4")
-	if err := seeds.materialize(t.Context(), seedSource, failed, 128<<20, "/missing-resize2fs"); err == nil {
-		t.Fatal("invalid resize command succeeded")
+	if err := seeds.Decode(t.Context(), seedSource.Artifact, failed, 256<<20); err == nil {
+		t.Fatal("oversized capacity accepted")
 	}
 	if _, err := os.Stat(failed); !os.IsNotExist(err) {
 		t.Fatalf("failed candidate retained: %v", err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if err := seeds.materialize(ctx, seedSource, failed, 128<<20, resize); err == nil {
+	if err := seeds.Decode(ctx, seedSource.Artifact, failed, 128<<20); err == nil {
 		t.Fatal("cancelled creation succeeded")
 	}
 	if _, err := os.Stat(failed); !os.IsNotExist(err) {
 		t.Fatalf("cancelled candidate retained: %v", err)
 	}
-	if err := seeds.materialize(t.Context(), seedSource, failed, 32<<20, resize); err == nil {
+	if err := seeds.Decode(t.Context(), seedSource.Artifact, failed, 32<<20); err == nil {
 		t.Fatal("undersized capacity accepted")
 	}
 	if _, err := os.Stat(failed); !os.IsNotExist(err) {
 		t.Fatalf("undersized candidate retained: %v", err)
 	}
 	unclean := dir + "/./normalized.ext4"
-	if err := seeds.materialize(t.Context(), seedSource, unclean, 64<<20, resize); err != nil {
+	if err := seeds.Decode(t.Context(), seedSource.Artifact, unclean, 128<<20); err != nil {
 		t.Fatal(err)
 	}
 	if computerProofDigest(t, filepath.Clean(unclean)) != original {
@@ -174,7 +170,7 @@ func TestComputerSeedProof(t *testing.T) {
 	if got := computerProofCommand(t, "debugfs", "-R", "cat /sandbox-state", restored); got != "initial environment" {
 		t.Fatal("restored seed state differs")
 	}
-	t.Log("independent writable seed, filesystem growth, immutable source, exclusive creation, and failed candidate removal passed")
+	t.Log("independent writable seed, exact capacity, immutable source, exclusive creation, and failed candidate removal passed")
 }
 
 func computerProofCommand(t *testing.T, name string, args ...string) string {
