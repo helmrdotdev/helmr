@@ -3,9 +3,13 @@
 package firecracker
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/checkpoint"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"io"
 	"os"
 	"os/exec"
@@ -18,8 +22,8 @@ import (
 )
 
 // This opt-in proof exercises the existing filepack codec against a real offline
-// ext4 filesystem. It does not exercise guest mounts, encryption/upload, live
-// writer exclusion, memory restore, or the proposed Computer lifecycle.
+// ext4 filesystem through encrypted local CAS. It does not exercise guest mounts,
+// remote upload, live writer exclusion, memory restore, or fenced publication.
 func TestComputerDiskProof(t *testing.T) {
 	for _, name := range []string{"mke2fs", "debugfs", "e2fsck"} {
 		if _, err := exec.LookPath(name); err != nil {
@@ -75,7 +79,6 @@ func TestComputerDiskProof(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := filepath.Join(root, "computer.raw")
-	packed := filepath.Join(root, "computer.filepack")
 	restored := filepath.Join(root, "restored.raw")
 	const logicalSize = 128 << 20
 	f, err := os.Create(source)
@@ -92,17 +95,21 @@ func TestComputerDiskProof(t *testing.T) {
 	computerProofCommand(t, "e2fsck", "-fn", source)
 	sourceHash := computerProofDigest(t, source)
 	start := time.Now()
-	// Reuse the existing scratch-disk encoding for this private codec experiment;
-	// this does not introduce a persisted Computer role or a compatibility mode.
-	stats, err := packRuntimeFile(context.Background(), source, packed, filepackScratchRole)
+	storage, err := cas.NewFile(filepath.Join(root, "cas"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cipher, err := checkpoint.New(bytes.Repeat([]byte{7}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	disks := computer.DiskStore{CAS: storage, Cipher: cipher}
+	const computerID = "019c10d5-a6f7-7af1-8f5f-000000000501"
+	artifact, err := disks.Save(t.Context(), computerID, source)
 	if err != nil {
 		t.Fatal(err)
 	}
 	packTime := time.Since(start)
-	info, err := os.Stat(packed)
-	if err != nil {
-		t.Fatal(err)
-	}
 	// Remove both original disk and seed: all restoration bytes must come from
 	// the artifact, including paths that the old Workspace tar would omit/reject.
 	if err := os.Remove(source); err != nil {
@@ -112,8 +119,7 @@ func TestComputerDiskProof(t *testing.T) {
 		t.Fatal(err)
 	}
 	start = time.Now()
-	restoredStats, err := unpackRuntimeFile(context.Background(), packed, restored, filepackScratchRole, logicalSize)
-	if err != nil {
+	if err := disks.Restore(t.Context(), computerID, artifact, restored, logicalSize); err != nil {
 		t.Fatal(err)
 	}
 	restoreTime := time.Since(start)
@@ -148,7 +154,7 @@ func TestComputerDiskProof(t *testing.T) {
 	if got := computerProofCommand(t, "debugfs", "-R", "cat /opt/agent/cache", restored); got != string(payload) {
 		t.Fatal("cache content differs")
 	}
-	t.Logf("logical_bytes=%d artifact_bytes=%d pack=%s unpack=%s pack_stats=%+v unpack_stats=%+v", logicalSize, info.Size(), packTime, restoreTime, stats, restoredStats)
+	t.Logf("logical_bytes=%d encrypted_artifact_bytes=%d save=%s restore=%s", logicalSize, artifact.Object.SizeBytes, packTime, restoreTime)
 }
 
 func computerProofCommand(t *testing.T, name string, args ...string) string {

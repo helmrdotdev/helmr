@@ -4,13 +4,13 @@ package firecracker
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/filepack"
 	"io"
 	"net"
 	"net/http"
@@ -37,7 +37,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/sirupsen/logrus"
-	"golang.org/x/sys/unix"
 )
 
 var (
@@ -405,66 +404,6 @@ func TestDefaultKernelArgsDeclareSquashFSRoot(t *testing.T) {
 	}
 }
 
-func TestCloneSparseFilePreservesSparseExtents(t *testing.T) {
-	dir := t.TempDir()
-	source := filepath.Join(dir, "source.raw")
-	dest := filepath.Join(dir, "dest.raw")
-	const logicalSize = int64(64 << 20)
-	const dataOffset = int64(32 << 20)
-	payload := bytes.Repeat([]byte("x"), 4096)
-
-	file, err := os.OpenFile(source, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := file.Truncate(logicalSize); err != nil {
-		_ = file.Close()
-		t.Fatal(err)
-	}
-	if _, err := file.WriteAt(payload, dataOffset); err != nil {
-		_ = file.Close()
-		t.Fatal(err)
-	}
-	if err := file.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := cloneSparseFile(source, dest); err != nil {
-		t.Fatal(err)
-	}
-	info, err := os.Stat(dest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Size() != logicalSize {
-		t.Fatalf("dest size = %d, want %d", info.Size(), logicalSize)
-	}
-	destFile, err := os.Open(dest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer destFile.Close()
-	read := make([]byte, len(payload))
-	if _, err := destFile.ReadAt(read, dataOffset); err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(read, payload) {
-		t.Fatalf("copied payload mismatch")
-	}
-	if allocatedBytes(t, dest) > logicalSize/8 {
-		t.Fatalf("dest was copied densely: allocated=%d logical=%d", allocatedBytes(t, dest), logicalSize)
-	}
-}
-
-func allocatedBytes(t *testing.T, path string) int64 {
-	t.Helper()
-	var stat unix.Stat_t
-	if err := unix.Stat(path, &stat); err != nil {
-		t.Fatal(err)
-	}
-	return stat.Blocks * 512
-}
-
 func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 	cfg := testRestoreConfig(t)
 	kernelDigest := testDigest([]byte("kernel"))
@@ -674,7 +613,7 @@ func TestRestoreRecordsUnpackPhasesOnFilepackFailure(t *testing.T) {
 	if err := createSparseTestFile(scratchRaw, cfg.ScratchDiskMiB*1024*1024); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := packRuntimeFile(context.Background(), scratchRaw, scratchPack, filepackScratchRole); err != nil {
+	if _, err := filepack.Pack(context.Background(), scratchRaw, scratchPack, filepack.ScratchRole); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(memoryPack, []byte("not a filepack"), 0o600); err != nil {
@@ -736,7 +675,7 @@ func TestUnpackRestoreArtifactReturnsFilepackStats(t *testing.T) {
 	if err := createSparseTestFile(raw, 1<<20); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := packRuntimeFile(context.Background(), raw, pack, filepackScratchRole); err != nil {
+	if _, err := filepack.Pack(context.Background(), raw, pack, filepack.ScratchRole); err != nil {
 		t.Fatal(err)
 	}
 	owner := vm.Owner{Kind: vm.OwnerRuntime, ID: uuid.NewV7().String()}
@@ -745,7 +684,7 @@ func TestUnpackRestoreArtifactReturnsFilepackStats(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	restored, phase, err := connector.unpackRestoreArtifact(context.Background(), ownerDir, pack, filepackScratchRole, "scratch.ext4", 1<<20, cas.CheckpointScratchDiskMediaType)
+	restored, phase, err := connector.unpackRestoreArtifact(context.Background(), ownerDir, pack, filepack.ScratchRole, "scratch.ext4", 1<<20, cas.CheckpointScratchDiskMediaType)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1164,30 +1103,6 @@ func TestPreparedGuestSeparatesHealthFromGuestPort(t *testing.T) {
 		if ports[i] != want[i] {
 			t.Fatalf("ports = %v, want %v", ports, want)
 		}
-	}
-}
-
-func TestCopySparseRangeRejectsShortRead(t *testing.T) {
-	dir := t.TempDir()
-	inputPath := filepath.Join(dir, "input.raw")
-	outputPath := filepath.Join(dir, "output.raw")
-	if err := os.WriteFile(inputPath, []byte("short"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	input, err := os.Open(inputPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer input.Close()
-	output, err := os.OpenFile(outputPath, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer output.Close()
-	buffer := bytes.Repeat([]byte{0xff}, 16)
-
-	if err := copySparseRange(input, output, buffer, 0, 16); err == nil {
-		t.Fatal("copy succeeded with short read")
 	}
 }
 

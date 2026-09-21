@@ -1,6 +1,6 @@
 //go:build linux
 
-package firecracker
+package filepack
 
 import (
 	"context"
@@ -11,23 +11,22 @@ import (
 	"io"
 	"os"
 
-	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/klauspost/compress/zstd"
 	"golang.org/x/sys/unix"
 )
 
 const (
-	filepackMagic       = "helmr-firecracker-filepack-v0\n"
-	filepackVersion     = 0
-	filepackChunkSize   = int64(4 << 20)
-	filepackRecordData  = byte(1)
-	filepackRecordEnd   = byte(255)
-	maxFilepackHeader   = 1 << 20
-	maxFilepackChunk    = 64 << 20
-	filepackCodecZstd   = "zstd"
-	filepackScratchRole = "scratch-disk"
-	filepackMemoryRole  = "memory"
-	maxInt64            = int64(1<<63 - 1)
+	filepackMagic      = "helmr-firecracker-filepack-v0\n"
+	filepackVersion    = 0
+	filepackChunkSize  = int64(4 << 20)
+	filepackRecordData = byte(1)
+	filepackRecordEnd  = byte(255)
+	maxFilepackHeader  = 1 << 20
+	maxFilepackChunk   = 64 << 20
+	filepackCodecZstd  = "zstd"
+	ScratchRole        = "scratch-disk"
+	MemoryRole         = "memory"
+	maxInt64           = int64(1<<63 - 1)
 )
 
 type filepackHeader struct {
@@ -38,20 +37,15 @@ type filepackHeader struct {
 	Codec       string `json:"codec"`
 }
 
-func packRuntimeFile(ctx context.Context, sourcePath string, targetPath string, role string) (vm.FilepackStats, error) {
+func Pack(ctx context.Context, sourcePath string, targetPath string, role string) (Stats, error) {
 	source, err := os.Open(sourcePath)
 	if err != nil {
-		return vm.FilepackStats{}, err
+		return Stats{}, err
 	}
 	defer source.Close()
-	info, err := source.Stat()
-	if err != nil {
-		return vm.FilepackStats{}, err
-	}
-	stats := vm.FilepackStats{LogicalBytes: info.Size()}
 	target, err := os.OpenFile(targetPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
-		return vm.FilepackStats{}, err
+		return Stats{}, err
 	}
 	targetClosed := false
 	cleanupTarget := true
@@ -63,6 +57,26 @@ func packRuntimeFile(ctx context.Context, sourcePath string, targetPath string, 
 			_ = os.Remove(targetPath)
 		}
 	}()
+	stats, err := PackTo(ctx, source, target, role)
+	if err != nil {
+		return Stats{}, err
+	}
+	if err := target.Close(); err != nil {
+		targetClosed = true
+		return Stats{}, err
+	}
+	targetClosed = true
+	cleanupTarget = false
+	return stats, nil
+}
+
+// PackTo writes an exclusively owned, stable source into an encoded stream.
+func PackTo(ctx context.Context, source *os.File, target io.Writer, role string) (Stats, error) {
+	info, err := source.Stat()
+	if err != nil {
+		return Stats{}, err
+	}
+	stats := Stats{LogicalBytes: info.Size()}
 	if err := writeFilepackHeader(target, filepackHeader{
 		Version:     filepackVersion,
 		Role:        role,
@@ -70,48 +84,47 @@ func packRuntimeFile(ctx context.Context, sourcePath string, targetPath string, 
 		ChunkSize:   filepackChunkSize,
 		Codec:       filepackCodecZstd,
 	}); err != nil {
-		return vm.FilepackStats{}, err
+		return Stats{}, err
 	}
 	encoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest))
 	if err != nil {
-		return vm.FilepackStats{}, err
+		return Stats{}, err
 	}
 	defer encoder.Close()
 	if err := writeFilepackData(ctx, source, target, encoder, &stats, info.Size()); err != nil {
-		return vm.FilepackStats{}, err
+		return Stats{}, err
 	}
 	if _, err := target.Write([]byte{filepackRecordEnd}); err != nil {
-		return vm.FilepackStats{}, err
+		return Stats{}, err
 	}
-	if err := target.Close(); err != nil {
-		targetClosed = true
-		return vm.FilepackStats{}, err
-	}
-	targetClosed = true
-	cleanupTarget = false
 	return stats, nil
 }
 
-func unpackRuntimeFile(ctx context.Context, sourcePath string, targetPath string, expectedRole string, expectedLogicalSize int64) (vm.FilepackStats, error) {
+func Unpack(ctx context.Context, sourcePath string, targetPath string, expectedRole string, expectedLogicalSize int64) (Stats, error) {
 	source, err := os.Open(sourcePath)
 	if err != nil {
-		return vm.FilepackStats{}, err
+		return Stats{}, err
 	}
 	defer source.Close()
+	return UnpackFrom(ctx, source, targetPath, expectedRole, expectedLogicalSize)
+}
+
+// UnpackFrom creates the target exclusively; failed decoding removes that target.
+func UnpackFrom(ctx context.Context, source io.Reader, targetPath, expectedRole string, expectedLogicalSize int64) (Stats, error) {
 	header, err := readFilepackHeader(source)
 	if err != nil {
-		return vm.FilepackStats{}, err
+		return Stats{}, err
 	}
 	if err := validateFilepackHeader(header, expectedRole); err != nil {
-		return vm.FilepackStats{}, err
+		return Stats{}, err
 	}
 	if expectedLogicalSize < 0 {
-		return vm.FilepackStats{}, errors.New("expected Firecracker filepack logical size must be non-negative")
+		return Stats{}, errors.New("expected Firecracker filepack logical size must be non-negative")
 	}
 	if header.LogicalSize != expectedLogicalSize {
-		return vm.FilepackStats{}, fmt.Errorf("the Firecracker filepack logical size %d does not match expected %d", header.LogicalSize, expectedLogicalSize)
+		return Stats{}, fmt.Errorf("the Firecracker filepack logical size %d does not match expected %d", header.LogicalSize, expectedLogicalSize)
 	}
-	stats := vm.FilepackStats{LogicalBytes: header.LogicalSize}
+	stats := Stats{LogicalBytes: header.LogicalSize}
 	target, err := os.OpenFile(targetPath, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
 	if err != nil {
 		return stats, err
@@ -144,6 +157,10 @@ func unpackRuntimeFile(ctx context.Context, sourcePath string, targetPath string
 		}
 		switch recordType[0] {
 		case filepackRecordEnd:
+			var trailing [1]byte
+			if n, err := source.Read(trailing[:]); n != 0 || !errors.Is(err, io.EOF) {
+				return stats, errors.New("filepack has trailing data or incomplete end")
+			}
 			if err := target.Close(); err != nil {
 				targetClosed = true
 				return stats, err
@@ -227,7 +244,7 @@ func validateFilepackHeader(header filepackHeader, expectedRole string) error {
 	return nil
 }
 
-func writeFilepackData(ctx context.Context, source *os.File, target io.Writer, encoder *zstd.Encoder, stats *vm.FilepackStats, logicalSize int64) error {
+func writeFilepackData(ctx context.Context, source *os.File, target io.Writer, encoder *zstd.Encoder, stats *Stats, logicalSize int64) error {
 	offset := int64(0)
 	for offset < logicalSize {
 		if err := ctx.Err(); err != nil {
@@ -279,7 +296,7 @@ func nextDataRange(file *os.File, offset int64, logicalSize int64) (int64, int64
 	return dataStart, holeStart, holeStart, true, nil
 }
 
-func scanAndWriteFilepackRange(ctx context.Context, source *os.File, target io.Writer, encoder *zstd.Encoder, stats *vm.FilepackStats, start int64, end int64) error {
+func scanAndWriteFilepackRange(ctx context.Context, source *os.File, target io.Writer, encoder *zstd.Encoder, stats *Stats, start int64, end int64) error {
 	buffer := make([]byte, int(filepackChunkSize))
 	for offset := start; offset < end; {
 		if err := ctx.Err(); err != nil {
@@ -336,7 +353,7 @@ func writeFilepackDataRecord(w io.Writer, offset int64, rawSize int, compressed 
 	return err
 }
 
-func readFilepackDataRecord(r io.Reader, target *os.File, decoder *zstd.Decoder, stats *vm.FilepackStats, logicalSize int64) error {
+func readFilepackDataRecord(r io.Reader, target *os.File, decoder *zstd.Decoder, stats *Stats, logicalSize int64) error {
 	var header [20]byte
 	if _, err := io.ReadFull(r, header[:]); err != nil {
 		return err

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/filepack"
 	"io"
 	"net"
 	"net/http"
@@ -696,7 +697,7 @@ func (c *Connector) restore(ctx context.Context, request vm.RestoreRequest) (vm.
 	var rawMemory string
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.Go(func() error {
-		path, phase, err := c.unpackRestoreArtifact(groupCtx, ownerDir, request.ScratchDisk, filepackScratchRole, scratchDiskName, expectedScratchSize, cas.CheckpointScratchDiskMediaType)
+		path, phase, err := c.unpackRestoreArtifact(groupCtx, ownerDir, request.ScratchDisk, filepack.ScratchRole, scratchDiskName, expectedScratchSize, cas.CheckpointScratchDiskMediaType)
 		recordRuntimePhase(recordPhase, phase)
 		if err != nil {
 			return fmt.Errorf("unpack checkpoint scratch disk: %w", err)
@@ -705,7 +706,7 @@ func (c *Connector) restore(ctx context.Context, request vm.RestoreRequest) (vm.
 		return nil
 	})
 	group.Go(func() error {
-		path, phase, err := c.unpackRestoreArtifact(groupCtx, ownerDir, request.Memory[0], filepackMemoryRole, restoreMemoryName, expectedMemorySize, cas.CheckpointMemoryMediaType)
+		path, phase, err := c.unpackRestoreArtifact(groupCtx, ownerDir, request.Memory[0], filepack.MemoryRole, restoreMemoryName, expectedMemorySize, cas.CheckpointMemoryMediaType)
 		recordRuntimePhase(recordPhase, phase)
 		if err != nil {
 			return fmt.Errorf("unpack checkpoint memory: %w", err)
@@ -865,7 +866,7 @@ func (c *Connector) unpackRestoreArtifact(ctx context.Context, ownerDir string, 
 		Role:      role,
 		MediaType: mediaType,
 	}
-	if role == filepackScratchRole {
+	if role == filepack.ScratchRole {
 		phase.Name = "restore_unpack_scratch_filepack"
 	}
 	file, err := os.CreateTemp(ownerDir, "restore-*."+suffix)
@@ -882,10 +883,11 @@ func (c *Connector) unpackRestoreArtifact(ctx context.Context, ownerDir string, 
 		return "", phase, err
 	}
 	_ = os.Remove(targetPath)
-	stats, err := unpackRuntimeFile(ctx, artifactPath, targetPath, role, expectedLogicalSize)
+	stats, err := filepack.Unpack(ctx, artifactPath, targetPath, role, expectedLogicalSize)
 	phase.DurationMs = vm.RuntimeDurationMilliseconds(time.Since(started))
 	if err == nil || stats.LogicalBytes != 0 || stats.EncodedChunks != 0 || stats.UnpackWrittenBytes != 0 {
-		phase.Filepack = &stats
+		measured := vm.FilepackStats(stats)
+		phase.Filepack = &measured
 	}
 	if err != nil {
 		_ = os.Remove(targetPath)
@@ -2119,7 +2121,7 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 	var memoryPhase vm.RuntimePhase
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.Go(func() error {
-		file, phase, err := s.packSnapshotRuntimeFile(groupCtx, s.scratchDisk, filepackScratchRole, checkpointID+snapshotScratchPackSuffix, cas.CheckpointScratchDiskMediaType)
+		file, phase, err := s.packSnapshotRuntimeFile(groupCtx, s.scratchDisk, filepack.ScratchRole, checkpointID+snapshotScratchPackSuffix, cas.CheckpointScratchDiskMediaType)
 		if err != nil {
 			return fmt.Errorf("pack checkpoint scratch disk: %w", err)
 		}
@@ -2128,7 +2130,7 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 		return nil
 	})
 	group.Go(func() error {
-		file, phase, err := s.packSnapshotRuntimeFile(groupCtx, memPath, filepackMemoryRole, checkpointID+snapshotMemoryPackSuffix, cas.CheckpointMemoryMediaType)
+		file, phase, err := s.packSnapshotRuntimeFile(groupCtx, memPath, filepack.MemoryRole, checkpointID+snapshotMemoryPackSuffix, cas.CheckpointMemoryMediaType)
 		if err != nil {
 			return fmt.Errorf("pack checkpoint memory: %w", err)
 		}
@@ -2167,20 +2169,21 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 func (s *guestSession) packSnapshotRuntimeFile(ctx context.Context, sourcePath string, role string, name string, mediaType string) (vm.SnapshotFile, vm.RuntimePhase, error) {
 	targetPath := filepath.Join(filepath.Dir(s.scratchDisk), name)
 	started := time.Now()
-	stats, err := packRuntimeFile(ctx, sourcePath, targetPath, role)
+	stats, err := filepack.Pack(ctx, sourcePath, targetPath, role)
 	if err != nil {
 		return vm.SnapshotFile{}, vm.RuntimePhase{}, err
 	}
 	phaseName := "pack_" + strings.ReplaceAll(role, "-", "_") + "_filepack"
-	if role == filepackScratchRole {
+	if role == filepack.ScratchRole {
 		phaseName = "pack_scratch_filepack"
 	}
-	return vm.SnapshotFile{Path: targetPath, MediaType: mediaType, Filepack: &stats}, vm.RuntimePhase{
+	measured := vm.FilepackStats(stats)
+	return vm.SnapshotFile{Path: targetPath, MediaType: mediaType, Filepack: &measured}, vm.RuntimePhase{
 		Name:       phaseName,
 		DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started)),
 		Role:       role,
 		MediaType:  mediaType,
-		Filepack:   &stats,
+		Filepack:   &measured,
 	}, nil
 }
 
@@ -2888,7 +2891,7 @@ func withJailedRestoreFiles(rootfsPath string, scratchDiskPath string, substrate
 						machine.Cfg.Drives[i].PathOnHost = firecracker.String(filepath.Base(rootfsPath))
 					}
 				}
-				if err := linkIntoJailForVMM(scratchDiskPath, root, scratchDiskName, *machine.Cfg.JailerCfg.UID, *machine.Cfg.JailerCfg.GID); err != nil {
+				if err := linkWritableDiskIntoJail(scratchDiskPath, root, scratchDiskName, *machine.Cfg.JailerCfg.UID, *machine.Cfg.JailerCfg.GID); err != nil {
 					return fmt.Errorf("link scratch disk into jail: %w", err)
 				}
 				for i := range machine.Cfg.Drives {
@@ -2921,6 +2924,40 @@ func withJailedRestoreFiles(rootfsPath string, scratchDiskPath string, substrate
 	}
 }
 
+// Writable disks must retain one inode: capture reads the instance path while
+// the VMM writes its jailed link. A clone or copy would split those histories.
+func linkWritableDiskIntoJail(source, root, name string, uid, gid int) error {
+	if name != filepath.Base(name) || name == "." || name == ".." {
+		return errors.New("writable disk jail name must be a basename")
+	}
+	info, err := os.Lstat(source)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return errors.New("writable disk source must be a regular file")
+	}
+	target := filepath.Join(root, name)
+	created := false
+	if err := os.Link(source, target); err != nil {
+		// The SDK's sealed-drive handler may already have linked ordinary drives.
+		// Accept only that exact inode; never replace an unrelated existing target.
+		linked, statErr := os.Lstat(target)
+		if !errors.Is(err, os.ErrExist) || statErr != nil || !linked.Mode().IsRegular() || !os.SameFile(info, linked) {
+			return fmt.Errorf("link writable disk without copying: %w", err)
+		}
+	} else {
+		created = true
+	}
+	if err := chownJailFile(target, uid, gid); err != nil {
+		if created {
+			return errors.Join(err, os.Remove(target))
+		}
+		return err
+	}
+	return nil
+}
+
 func linkIntoJailForVMM(source string, root string, name string, uid int, gid int) error {
 	if err := linkIntoJail(source, root, name); err != nil {
 		return err
@@ -2936,7 +2973,7 @@ func linkIntoJail(source string, root string, name string) error {
 	if err := os.Link(source, dest); err == nil {
 		return nil
 	}
-	if err := cloneSparseFile(source, dest); err == nil {
+	if err := filepack.Copy(source, dest); err == nil {
 		return nil
 	}
 	input, err := os.Open(source)
@@ -2951,87 +2988,6 @@ func linkIntoJail(source string, root string, name string) error {
 	_, copyErr := io.Copy(output, input)
 	closeErr := output.Close()
 	return errors.Join(copyErr, closeErr)
-}
-
-func cloneSparseFile(source string, dest string) error {
-	input, err := os.Open(source)
-	if err != nil {
-		return err
-	}
-	defer input.Close()
-	info, err := input.Stat()
-	if err != nil {
-		return err
-	}
-	output, err := os.OpenFile(dest, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	closed := false
-	cleanup := true
-	defer func() {
-		if !closed {
-			_ = output.Close()
-		}
-		if cleanup {
-			_ = os.Remove(dest)
-		}
-	}()
-	if err := output.Truncate(info.Size()); err != nil {
-		return err
-	}
-	if err := copySparseFile(input, output, info.Size()); err != nil {
-		return err
-	}
-	if err := output.Close(); err != nil {
-		closed = true
-		return err
-	}
-	closed = true
-	cleanup = false
-	return nil
-}
-
-func copySparseFile(input *os.File, output *os.File, logicalSize int64) error {
-	offset := int64(0)
-	buffer := make([]byte, 4<<20)
-	for offset < logicalSize {
-		dataStart, dataEnd, nextOffset, sparse, err := nextDataRange(input, offset, logicalSize)
-		if err != nil {
-			return err
-		}
-		if !sparse {
-			return copySparseRange(input, output, buffer, offset, logicalSize)
-		}
-		if dataStart < dataEnd {
-			if err := copySparseRange(input, output, buffer, dataStart, dataEnd); err != nil {
-				return err
-			}
-		}
-		offset = nextOffset
-	}
-	return nil
-}
-
-func copySparseRange(input *os.File, output *os.File, buffer []byte, start int64, end int64) error {
-	for offset := start; offset < end; {
-		remaining := end - offset
-		n := int64(len(buffer))
-		if remaining < n {
-			n = remaining
-		}
-		chunk := buffer[:n]
-		if err := readFullAt(input, chunk, offset); err != nil {
-			return err
-		}
-		if !allZero(chunk) {
-			if _, err := output.WriteAt(chunk, offset); err != nil {
-				return err
-			}
-		}
-		offset += n
-	}
-	return nil
 }
 
 func chownJailFile(path string, uid int, gid int) error {

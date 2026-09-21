@@ -93,17 +93,23 @@ func checkHardLinkLayout(cfg Config) error {
 		}
 	}
 
-	probe, err := os.CreateTemp(cfg.TempDir, ".hardlink-")
-	if err != nil {
-		return fmt.Errorf("create Firecracker hard-link probe: %w", err)
+	for _, directory := range []string{cfg.StateDir, cfg.TempDir} {
+		probe, err := os.CreateTemp(directory, ".hardlink-")
+		if err != nil {
+			return fmt.Errorf("create Firecracker hard-link probe: %w", err)
+		}
+		source := probe.Name()
+		if err := probe.Close(); err != nil {
+			_ = os.Remove(source)
+			return fmt.Errorf("close Firecracker hard-link probe: %w", err)
+		}
+		linkErr := proveHardLink("the Firecracker session source", source, cfg.JailerChrootBaseDir)
+		removeErr := os.Remove(source)
+		if err := errors.Join(linkErr, removeErr); err != nil {
+			return err
+		}
 	}
-	source := probe.Name()
-	if err := probe.Close(); err != nil {
-		_ = os.Remove(source)
-		return fmt.Errorf("close Firecracker hard-link probe: %w", err)
-	}
-	defer os.Remove(source)
-	return proveHardLink("the Firecracker session source", source, cfg.JailerChrootBaseDir)
+	return nil
 }
 
 func proveHardLink(label, source, directory string) error {

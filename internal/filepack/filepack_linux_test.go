@@ -1,6 +1,6 @@
 //go:build linux
 
-package firecracker
+package filepack
 
 import (
 	"bytes"
@@ -36,7 +36,7 @@ func TestRuntimeFilepackRoundTripsSparseFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stats, err := packRuntimeFile(context.Background(), source, target, filepackScratchRole)
+	stats, err := Pack(context.Background(), source, target, ScratchRole)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestRuntimeFilepackRoundTripsSparseFile(t *testing.T) {
 	if targetInfo.Size() >= sourceInfo.Size()/8 {
 		t.Fatalf("packed sparse file size = %d, source = %d", targetInfo.Size(), sourceInfo.Size())
 	}
-	restoreStats, err := unpackRuntimeFile(context.Background(), target, restored, filepackScratchRole, sourceInfo.Size())
+	restoreStats, err := Unpack(context.Background(), target, restored, ScratchRole, sourceInfo.Size())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,10 +79,10 @@ func TestRuntimeFilepackRejectsRoleMismatch(t *testing.T) {
 	if err := os.WriteFile(source, []byte("memory"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := packRuntimeFile(context.Background(), source, target, filepackMemoryRole); err != nil {
+	if _, err := Pack(context.Background(), source, target, MemoryRole); err != nil {
 		t.Fatal(err)
 	}
-	_, err := unpackRuntimeFile(context.Background(), target, filepath.Join(dir, "restored.raw"), filepackScratchRole, int64(len("memory")))
+	_, err := Unpack(context.Background(), target, filepath.Join(dir, "restored.raw"), ScratchRole, int64(len("memory")))
 	if err == nil {
 		t.Fatal("unpack succeeded with mismatched role")
 	}
@@ -95,10 +95,10 @@ func TestRuntimeFilepackRejectsLogicalSizeMismatch(t *testing.T) {
 	if err := os.WriteFile(source, []byte("memory"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := packRuntimeFile(context.Background(), source, target, filepackMemoryRole); err != nil {
+	if _, err := Pack(context.Background(), source, target, MemoryRole); err != nil {
 		t.Fatal(err)
 	}
-	_, err := unpackRuntimeFile(context.Background(), target, filepath.Join(dir, "restored.raw"), filepackMemoryRole, 1<<20)
+	_, err := Unpack(context.Background(), target, filepath.Join(dir, "restored.raw"), MemoryRole, 1<<20)
 	if err == nil {
 		t.Fatal("unpack succeeded with mismatched logical size")
 	}

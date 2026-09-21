@@ -128,9 +128,18 @@ func TestCheckHardLinkLayoutRejectsSeparateBindMount(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	err := checkHardLinkLayout(cfg)
-	if err == nil || !strings.Contains(err.Error(), "hard-link layout") {
-		t.Fatalf("error = %v", err)
+	for _, directory := range []string{"temp", "state"} {
+		t.Run(directory, func(t *testing.T) {
+			candidate := cfg
+			if directory == "state" {
+				candidate.TempDir = source
+				candidate.StateDir = filepath.Join(bind, "state")
+			}
+			err := checkHardLinkLayout(candidate)
+			if err == nil || !strings.Contains(err.Error(), "hard-link layout") {
+				t.Fatalf("error = %v", err)
+			}
+		})
 	}
 }
 
