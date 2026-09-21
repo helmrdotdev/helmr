@@ -389,13 +389,13 @@ func finishCheckpointChild(t *testing.T, f *actorCheckpointFixture, capture test
 	proof.Receipt.OperationID = operation
 	if outcome == "success" {
 		content = f.capture(t, "child handback")
-		proof.Tree, proof.Artifact = content.Tree, content.Artifact
 		setCaptureFingerprint(t, proof)
+		f.registerFinalizationDisk(t, proof, content.Artifact.Digest)
 		f.workerCall(t, f.server.workerCompleteTask, workerapi.CompleteTaskRequest{Lease: f.fence(), Outcome: workerapi.TaskOutcome{Succeeded: &workerapi.TaskSucceeded{Output: json.RawMessage(`true`)}}, Workspace: workerapi.TaskWorkspaceProof{Captured: proof}}, nil)
 	} else {
 		content = f.capture(t, "failed child retained changes")
-		proof.Tree, proof.Artifact = content.Tree, content.Artifact
 		setCaptureFingerprint(t, proof)
+		f.registerFinalizationDisk(t, proof, content.Artifact.Digest)
 		f.workerCall(t, f.server.workerCompleteTask, workerapi.CompleteTaskRequest{Lease: f.fence(), Outcome: workerapi.TaskOutcome{Failed: &workerapi.TaskFailure{Message: "child failed"}}, Workspace: workerapi.TaskWorkspaceProof{Captured: proof}}, nil)
 	}
 	return content

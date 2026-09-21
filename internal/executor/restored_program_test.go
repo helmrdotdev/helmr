@@ -600,3 +600,7 @@ func (c *restoredProgramControlPlane) AcknowledgeRunResumeRelease(ctx context.Co
 func (c *restoredProgramControlPlane) RegisterCheckpoint(context.Context, workerapi.RegisterCheckpointRequest) (workerapi.CheckpointResponse, error) {
 	return workerapi.CheckpointResponse{}, nil
 }
+
+func (*restoredProgramControlPlane) RegisterRunFinalization(context.Context, workerapi.RegisterRunFinalizationRequest) error {
+	return nil
+}

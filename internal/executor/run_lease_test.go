@@ -161,8 +161,7 @@ func TestExecutorReplaysFinalizationWithStableAuthority(t *testing.T) {
 				RunLeaseID: lease.ID,
 			},
 		},
-		beginFailures:   1,
-		captureFailures: 1,
+		beginFailures: 1,
 	}
 	controlPlane := &testRunLeaseControlPlane{
 		trace:            trace,
@@ -186,7 +185,7 @@ func TestExecutorReplaysFinalizationWithStableAuthority(t *testing.T) {
 	}
 	if !slices.Equal(trace.calls, []string{
 		"claim", "start", "wait", "renew", "begin", "begin", "guest-begin",
-		"guest-begin", "capture", "capture", "complete", "complete",
+		"guest-begin", "capture", "complete", "complete",
 	}) {
 		t.Fatalf("calls = %v", trace.calls)
 	}
@@ -760,4 +759,8 @@ func TestExecutorPreservesCheckpointReleaseFailureAfterDetachment(t *testing.T) 
 			}
 		})
 	}
+}
+
+func (*testRunLeaseControlPlane) RegisterRunFinalization(context.Context, workerapi.RegisterRunFinalizationRequest) error {
+	return nil
 }

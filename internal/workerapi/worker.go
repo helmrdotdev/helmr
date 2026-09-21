@@ -341,6 +341,13 @@ type RunEntrypointRequest struct {
 	EntrypointDeclaredID string        `json:"entrypoint_declared_id"`
 }
 
+// RegisterRunFinalizationRequest pins one immutable Computer disk before upload.
+type RegisterRunFinalizationRequest struct {
+	Lease       RunLeaseFence      `json:"lease"`
+	OperationID string             `json:"operation_id"`
+	Disk        CheckpointComputer `json:"disk"`
+}
+
 type CompleteTaskRequest struct {
 	Lease     RunLeaseFence      `json:"lease"`
 	Outcome   TaskOutcome        `json:"outcome"`
@@ -645,9 +652,8 @@ type TaskWorkspaceProof struct {
 }
 
 type TaskWorkspaceCapture struct {
-	Receipt  WorkspaceFinalizationReceipt `json:"receipt"`
-	Tree     WorkspaceTreeIdentity        `json:"tree"`
-	Artifact WorkspaceArtifact            `json:"artifact"`
+	Receipt WorkspaceFinalizationReceipt `json:"receipt"`
+	Disk    CheckpointComputer           `json:"disk"`
 }
 
 type WorkspaceFinalizationReceipt struct {

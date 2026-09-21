@@ -1,14 +1,11 @@
 package controlplane
 
 import (
-	"bytes"
 	"context"
-	"os"
 	"testing"
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
@@ -117,7 +114,7 @@ SELECT runs.status,
 	if err := fixture.pool.QueryRow(t.Context(), `SELECT a.digest,v.parent_version_id FROM workspace_versions v JOIN artifacts a ON a.id=v.artifact_id WHERE v.id=$1`, headVersionID).Scan(&digest, &parent); err != nil {
 		t.Fatal(err)
 	}
-	if digest != fixture.request.Workspace.Captured.Artifact.Digest || parent != fixture.privateVersionID {
+	if digest != fixture.request.Workspace.Captured.Disk.Artifact.Digest || parent != fixture.privateVersionID {
 		t.Fatalf("failure capture identity = %s parent=%s", digest, parent)
 	}
 	var countBefore, countAfter int
@@ -495,26 +492,6 @@ UPDATE workspace_mounts SET materialized_version_id = $2 WHERE id = $1`, mountID
 			Captured: validTaskWorkspaceCapture(t, assignment),
 		},
 	}
-	artifact, cleanupArtifact, err := workspace.CreateEmptyWorkspaceArtifact(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(cleanupArtifact)
-	body, err := os.ReadFile(artifact.Path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tree, err := workspace.InspectArtifact(bytes.NewReader(body), artifact)
-	if err != nil {
-		t.Fatal(err)
-	}
-	request.Workspace.Captured.Tree = workerapi.WorkspaceTreeIdentity{
-		Digest: tree.Digest, SizeBytes: tree.SizeBytes, EntryCount: int32(tree.EntryCount),
-	}
-	request.Workspace.Captured.Artifact = workerapi.WorkspaceArtifact{
-		Digest: artifact.Digest, MediaType: artifact.MediaType, Encoding: artifact.Encoding,
-		SizeBytes: artifact.SizeBytes, EntryCount: int32(artifact.EntryCount),
-	}
 	request.Workspace.Captured.Receipt.OperationID = operationID.String()
 	setCaptureFingerprint(t, request.Workspace.Captured)
 	finalizationFingerprint := request.Workspace.Captured.Receipt.RequestFingerprint
@@ -528,13 +505,10 @@ UPDATE workspace_mounts SET materialized_version_id = $2 WHERE id = $1`, mountID
 UPDATE run_leases SET finalization_request_fingerprint = $2 WHERE id = $1`,
 		work.LeaseID, finalizationFingerprint)
 
-	return restoredActorCompletionPostgresFixture{
+	fixture := restoredActorCompletionPostgresFixture{
 		server: &Server{
 			db: db.New(base.Pool), tx: base.Pool,
-			cas: actorTurnCAS{
-				object: cas.Object{Digest: artifact.Digest, SizeBytes: artifact.SizeBytes, MediaType: artifact.MediaType},
-				body:   body,
-			},
+			cas: finalizationTestCAS(t),
 		},
 		pool: base.Pool,
 		worker: workerActor{
@@ -544,4 +518,6 @@ UPDATE run_leases SET finalization_request_fingerprint = $2 WHERE id = $1`,
 		request: request, runID: work.RunID, leaseID: work.LeaseID,
 		headVersionID: headVersionID, privateVersionID: privateVersionID,
 	}
+	registerFinalizationTestDisk(t, base.Pool, fixture.server, fixture.worker, request.Lease, request.Workspace.Captured, operationID.String())
+	return fixture
 }

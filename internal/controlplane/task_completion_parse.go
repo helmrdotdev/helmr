@@ -10,6 +10,8 @@ import (
 	"unicode/utf8"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -36,11 +38,11 @@ type parsedTaskCompletion struct {
 	kind        taskCompletionKind
 	output      json.RawMessage
 	errorObject json.RawMessage
-	capture     *parsedTaskWorkspaceCapture
+	capture     *parsedTaskComputerCapture
 	fingerprint string
 }
 
-type parsedTaskWorkspaceCapture struct {
+type parsedWorkspaceTreeCapture struct {
 	receipt  workspace.FinalizationRequest
 	tree     workspace.TreeIdentity
 	artifact workerapi.WorkspaceArtifact
@@ -110,30 +112,23 @@ func parseTaskCompletionRequest(request workerapi.CompleteTaskRequest) (parsedTa
 	return parsed, nil
 }
 
-func parseTaskWorkspaceCapture(
-	capture workerapi.TaskWorkspaceCapture,
-) (parsedTaskWorkspaceCapture, workerapi.TaskWorkspaceCapture, error) {
-	tree, err := parseTaskWorkspaceTree("workspace.captured.tree", capture.Tree)
+func parseTaskWorkspaceCapture(capture workerapi.TaskWorkspaceCapture) (parsedTaskComputerCapture, workerapi.TaskWorkspaceCapture, error) {
+	if _, err := parseCanonicalUUID("workspace.captured.disk.computer_id", capture.Disk.ComputerID); err != nil {
+		return parsedTaskComputerCapture{}, capture, err
+	}
+	descriptor := computer.DiskArtifact{Object: cas.Descriptor{Digest: capture.Disk.Artifact.Digest, SizeBytes: capture.Disk.Artifact.SizeBytes, MediaType: capture.Disk.Artifact.MediaType}, LogicalBytes: capture.Disk.LogicalBytes}
+	if err := descriptor.Validate(descriptor.LogicalBytes); err != nil {
+		return parsedTaskComputerCapture{}, capture, err
+	}
+	receipt, normalized, err := parseWorkspaceFinalizationReceipt("workspace.captured.receipt", workspace.FinalizationCaptureKind, capture.Receipt, nil)
 	if err != nil {
-		return parsedTaskWorkspaceCapture{}, workerapi.TaskWorkspaceCapture{}, err
+		return parsedTaskComputerCapture{}, capture, err
 	}
-	if err := validateTaskWorkspaceArtifact("workspace.captured.artifact", capture.Artifact); err != nil {
-		return parsedTaskWorkspaceCapture{}, workerapi.TaskWorkspaceCapture{}, err
+	if capture.Disk.ComputerID != receipt.Fence.WorkspaceID {
+		return parsedTaskComputerCapture{}, capture, errors.New("captured Computer differs from finalization authority")
 	}
-	if int64(capture.Artifact.EntryCount) != int64(tree.EntryCount) {
-		return parsedTaskWorkspaceCapture{}, workerapi.TaskWorkspaceCapture{}, errors.New("workspace.captured artifact and tree entry counts differ")
-	}
-	receipt, normalizedReceipt, err := parseWorkspaceFinalizationReceipt(
-		"workspace.captured.receipt",
-		workspace.FinalizationCaptureKind,
-		capture.Receipt,
-		nil,
-	)
-	if err != nil {
-		return parsedTaskWorkspaceCapture{}, workerapi.TaskWorkspaceCapture{}, err
-	}
-	capture.Receipt = normalizedReceipt
-	return parsedTaskWorkspaceCapture{receipt: receipt, tree: tree, artifact: capture.Artifact}, capture, nil
+	capture.Receipt = normalized
+	return parsedTaskComputerCapture{receipt: receipt, disk: capture.Disk}, capture, nil
 }
 
 func parseWorkspaceFinalizationReceipt(

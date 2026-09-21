@@ -153,7 +153,7 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 		writeError(w, err)
 		return
 	}
-	verified, err := s.verifyTaskWorkspaceCapture(r.Context(), parsedTaskWorkspaceCapture{
+	verified, err := s.verifyWorkspaceTreeCapture(r.Context(), parsedWorkspaceTreeCapture{
 		tree: tree, artifact: request.Artifact,
 	})
 	if err != nil {

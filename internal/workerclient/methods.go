@@ -342,6 +342,10 @@ func (c *Client) BeginRunFinalization(
 	return response, nil
 }
 
+func (c *Client) RegisterRunFinalization(ctx context.Context, request workerapi.RegisterRunFinalizationRequest) error {
+	return c.postWorkerJSON(ctx, "/worker/v1/run/finalization/register", request, nil)
+}
+
 func (c *Client) CommitActorTurn(
 	ctx context.Context,
 	request workerapi.CommitActorTurnRequest,

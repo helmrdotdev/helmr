@@ -32,13 +32,12 @@ func (s *Server) completeActor(ctx context.Context, worker workerActor, request 
 	if err != nil || replayed {
 		return err
 	}
-	if completion.capture != nil {
-		verified, err := s.verifyTaskWorkspaceCapture(ctx, *completion.capture)
-		if err != nil {
-			return actorCompletionReplayAfterError(ctx, s.db, worker, request, completion, err)
-		}
-		completion.capture = &verified
+	verified, err := s.verifyTaskComputerCapture(ctx, *completion.capture)
+	if err != nil {
+		return actorCompletionReplayAfterError(ctx, s.db, worker, request, completion, err)
 	}
+	completion.capture = &verified
+
 	err = s.inTx(ctx, func(work *txWork) error {
 		replayed, err := actorCompletionWasReplayed(ctx, work.q, worker, request, completion)
 		if err != nil || replayed {
@@ -112,20 +111,20 @@ func (s *Server) completeActor(ctx context.Context, worker workerActor, request 
 				return err
 			}
 		}
-		var versionID pgtype.UUID
-		if completion.capture != nil {
-			versionID, err = recordTaskWorkspaceVersion(ctx, work.q, worker, authority, *completion.capture, completedAt)
-			if err != nil {
-				return err
-			}
-			if _, err := work.q.AdvanceActorWorkspaceHead(ctx, db.AdvanceActorWorkspaceHeadParams{
-				NewHeadVersionID: versionID, CompletedAt: completedAt, ID: authority.workspace.ID,
-				OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID, EnvironmentID: authority.run.EnvironmentID,
-				SessionID: authority.actor.ID, OwnershipGeneration: authority.workspace.OwnershipGeneration,
-				WriterGeneration: authority.workspace.WriterGeneration, ExpectedHeadVersionID: authority.workspace.HeadVersionID,
-			}); err != nil {
-				return staleActorCompletion(err)
-			}
+		if err := requireFinalizationComputer(ctx, work.q, authority, *completion.capture); err != nil {
+			return staleActorCompletion(err)
+		}
+		versionID, err := recordTaskWorkspaceVersion(ctx, work.q, worker, authority, completion.capture.version(), completedAt)
+		if err != nil {
+			return err
+		}
+		if _, err := work.q.AdvanceActorWorkspaceHead(ctx, db.AdvanceActorWorkspaceHeadParams{
+			NewHeadVersionID: versionID, CompletedAt: completedAt, ID: authority.workspace.ID,
+			OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID, EnvironmentID: authority.run.EnvironmentID,
+			SessionID: authority.actor.ID, OwnershipGeneration: authority.workspace.OwnershipGeneration,
+			WriterGeneration: authority.workspace.WriterGeneration, ExpectedHeadVersionID: authority.workspace.HeadVersionID,
+		}); err != nil {
+			return staleActorCompletion(err)
 		}
 		if completion.kind == actorCompletionInterrupted {
 			if err := session.CompleteInterruption(ctx, work.q, authority.actor, versionID, completion.fingerprint); err != nil {
@@ -149,7 +148,10 @@ func (s *Server) completeActor(ctx context.Context, worker workerActor, request 
 				return err
 			}
 		}
-		return finishActorRun(ctx, work.q, authority, secrets, completion, decision, completedAt)
+		if err := finishActorRun(ctx, work.q, authority, secrets, completion, decision, completedAt); err != nil {
+			return err
+		}
+		return staleActorCompletionPublicationDeadline(ctx, work.q, authority)
 	})
 	if err != nil {
 		return actorCompletionReplayAfterError(ctx, s.db, worker, request, completion, err)

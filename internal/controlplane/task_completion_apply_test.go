@@ -217,7 +217,7 @@ func TestRecordTaskWorkspaceVersionSeparatesTreeAndArtifactIdentity(t *testing.T
 	}
 	versionID := pgvalue.UUID(uuid.NewV7())
 	store := &taskWorkspaceVersionFixture{versionID: versionID}
-	capture := parsedTaskWorkspaceCapture{
+	capture := parsedWorkspaceTreeCapture{
 		tree: workspace.TreeIdentity{
 			Digest: "sha256:" + strings.Repeat("b", 64), SizeBytes: 12, EntryCount: 2,
 		},
@@ -228,7 +228,7 @@ func TestRecordTaskWorkspaceVersionSeparatesTreeAndArtifactIdentity(t *testing.T
 	}
 	got, err := recordTaskWorkspaceVersion(
 		context.Background(), store, workerActor{WorkerInstanceID: uuid.NewV7()},
-		authority, capture, pgvalue.Timestamptz(time.Now()),
+		authority, capture.version(), pgvalue.Timestamptz(time.Now()),
 	)
 	if err != nil {
 		t.Fatal(err)

@@ -13,7 +13,21 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/helmrdotdev/helmr/internal/vm"
 )
+
+// PauseComputer establishes a fresh API dispatch hold, even for a restored VM.
+// The owner must stop the source on any error or ambiguous response.
+func (s *guestSession) PauseComputer(ctx context.Context) (*vm.RuntimeComputer, error) {
+	if err := s.machine.PauseVM(ctx); err != nil {
+		return nil, fmt.Errorf("pause Firecracker vm: %w", err)
+	}
+	if err := s.syncPausedDisks(ctx); err != nil {
+		return nil, err
+	}
+	return cloneRuntimeComputer(s.topology.Computer), nil
+}
 
 // syncPausedDisks requires an acknowledged API Pause, whose dispatch hold must
 // remain owned through snapshot serialization and disk capture. Synchronous

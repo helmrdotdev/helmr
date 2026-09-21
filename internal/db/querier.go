@@ -541,6 +541,10 @@ type Querier interface {
 	RegisterDifferentWorkspaceChildCall(ctx context.Context, arg RegisterDifferentWorkspaceChildCallParams) (RunWait, error)
 	RegisterResolvedDifferentWorkspaceChildCall(ctx context.Context, arg RegisterResolvedDifferentWorkspaceChildCallParams) (RunWait, error)
 	RegisterRetiredCasUpload(ctx context.Context, arg RegisterRetiredCasUploadParams) error
+	// The caller locks current finalization authority before registering immutable
+	// bytes. The lease transition releases the availability pin atomically with
+	// outcome publication, or makes an uncommitted upload eligible for reclamation.
+	RegisterRunFinalizationObject(ctx context.Context, arg RegisterRunFinalizationObjectParams) (RunFinalizationObject, error)
 	RegisterSameWorkspaceChildCall(ctx context.Context, arg RegisterSameWorkspaceChildCallParams) (RunWait, error)
 	RegisterTimerRunWait(ctx context.Context, arg RegisterTimerRunWaitParams) (RunWait, error)
 	RegisterTokenWait(ctx context.Context, arg RegisterTokenWaitParams) (RunWait, error)
@@ -566,6 +570,7 @@ type Querier interface {
 	RequestWorkspaceExecMountFinalization(ctx context.Context, arg RequestWorkspaceExecMountFinalizationParams) (RequestWorkspaceExecMountFinalizationRow, error)
 	RequireCheckpointRestoreSupplier(ctx context.Context, arg RequireCheckpointRestoreSupplierParams) (pgtype.UUID, error)
 	RequireRegisteredCheckpointManifest(ctx context.Context, arg RequireRegisteredCheckpointManifestParams) (pgtype.UUID, error)
+	RequireRunFinalizationObject(ctx context.Context, arg RequireRunFinalizationObjectParams) (RunFinalizationObject, error)
 	ReserveReadyRuntimeForWorkspaceExec(ctx context.Context, arg ReserveReadyRuntimeForWorkspaceExecParams) (RuntimeInstance, error)
 	ReserveWorkspaceForActor(ctx context.Context, arg ReserveWorkspaceForActorParams) (ReserveWorkspaceForActorRow, error)
 	ReserveWorkspaceForRun(ctx context.Context, arg ReserveWorkspaceForRunParams) (ReserveWorkspaceForRunRow, error)

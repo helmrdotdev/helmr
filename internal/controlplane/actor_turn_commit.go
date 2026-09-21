@@ -110,8 +110,8 @@ func (s *Server) commitActorTurn(
 	commit parsedActorTurnCommit,
 ) (workerapi.CommitActorTurnResponse, error) {
 	if commit.artifact != nil {
-		capture := parsedTaskWorkspaceCapture{tree: commit.tree, artifact: *commit.artifact}
-		if _, err := s.verifyTaskWorkspaceCapture(ctx, capture); err != nil {
+		capture := parsedWorkspaceTreeCapture{tree: commit.tree, artifact: *commit.artifact}
+		if _, err := s.verifyWorkspaceTreeCapture(ctx, capture); err != nil {
 			return workerapi.CommitActorTurnResponse{}, err
 		}
 	}
@@ -216,7 +216,7 @@ func (s *Server) commitActorTurn(
 		if changed {
 			versionID, err = recordTaskWorkspaceVersion(
 				ctx, work.q, worker, authority,
-				parsedTaskWorkspaceCapture{tree: commit.tree, artifact: *commit.artifact}, committedAt,
+				(parsedWorkspaceTreeCapture{tree: commit.tree, artifact: *commit.artifact}).version(), committedAt,
 			)
 			if err != nil {
 				return err

@@ -123,13 +123,9 @@ func (e Executor) ExecuteRunLease(
 	if result.ActorOutcome != nil {
 		actorCompletion.Outcome = *result.ActorOutcome
 	}
-	var capture workerapi.TaskWorkspaceCapture
-	if err := retryRunLeaseOperation(stageCtx, func(requestCtx context.Context) error {
-		var requestErr error
-		capture, requestErr = task.CaptureWorkspace(requestCtx)
-		return requestErr
-	}); err != nil {
-		return fmt.Errorf("capture task workspace: %w", err)
+	capture, err := task.CaptureWorkspace(stageCtx)
+	if err != nil {
+		return fmt.Errorf("capture task Computer: %w", err)
 	}
 	completion.Workspace.Captured = &capture
 	actorCompletion.Workspace.Captured = &capture

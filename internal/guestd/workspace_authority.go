@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 	"uuid"
 
@@ -492,6 +493,9 @@ func (entry *workspaceMountEntry) beginWorkspaceFinalizationLocked(
 		return nil, errors.New("workspace run authority state is invalid")
 	}
 
+	// Flush completed guest writes before the host establishes its disk-only hold.
+	// This is cooperative quiescence, not a root-resistant storage receipt.
+	syscall.Sync()
 	return &workspacev0.BeginWorkspaceFinalizationResponse{
 		Fence:       proto.Clone(entry.authority.GetFence()).(*workspacev0.WorkspaceAuthorityFence),
 		OperationId: operationID,

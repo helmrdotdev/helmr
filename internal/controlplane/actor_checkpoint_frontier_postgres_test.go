@@ -387,10 +387,9 @@ func (f *actorCheckpointFixture) complete(t *testing.T, sequence int64, content 
 	f.workerCall(t, f.server.workerBeginRunFinalization, begin, &began)
 	assignment.ExpiresAt = began.ExpiresAt
 	capture := validTaskWorkspaceCapture(t, assignment)
-	capture.Tree = content.Tree
-	capture.Artifact = content.Artifact
 	capture.Receipt.OperationID = operation
 	setCaptureFingerprint(t, capture)
+	f.registerFinalizationDisk(t, capture, content.Artifact.Digest)
 	req := workerapi.CompleteActorRequest{Lease: f.fence(), Outcome: workerapi.ActorOutcome{RunGeneration: f.claim.actor.RunGeneration, Succeeded: &workerapi.ActorSucceeded{}}, Workspace: workerapi.TaskWorkspaceProof{Captured: capture}}
 	parsed, err := parseActorCompletionRequest(req)
 	if err != nil {

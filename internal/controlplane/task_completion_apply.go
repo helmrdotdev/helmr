@@ -59,13 +59,12 @@ func (s *Server) completeTask(
 	if err != nil || replayed {
 		return staleAuthority(staleAuthorityTaskCompletion, taskCompletionPointReplay, err)
 	}
-	if completion.capture != nil {
-		verified, err := s.verifyTaskWorkspaceCapture(ctx, *completion.capture)
-		if err != nil {
-			return taskCompletionReplayAfterError(ctx, s.db, worker, request, completion, err)
-		}
-		completion.capture = &verified
+	verified, err := s.verifyTaskComputerCapture(ctx, *completion.capture)
+	if err != nil {
+		return taskCompletionReplayAfterError(ctx, s.db, worker, request, completion, err)
 	}
+	completion.capture = &verified
+
 	failurePoint := taskCompletionPointReplay
 	err = s.inTx(ctx, func(work *txWork) error {
 		replayed, err := taskCompletionWasReplayed(ctx, work.q, worker, request, completion)
@@ -152,11 +151,14 @@ func (s *Server) completeTask(
 		if err != nil {
 			return deterministicWorkerAdmission(err)
 		}
+		if err := requireFinalizationComputer(ctx, work.q, authority, *completion.capture); err != nil {
+			return staleTaskCompletion(err)
+		}
 		var versionID pgtype.UUID
 		failurePoint = taskCompletionPointWorkspaceVersion
 		if sameWorkspaceChildFinalization(authority) {
 			versionID, err = recordChildTaskWorkspaceVersion(
-				ctx, work.q, worker, authority, *completion.capture,
+				ctx, work.q, worker, authority, completion.capture.version(),
 			)
 			if err == nil {
 				err = updateTaskWorkspaceMountFrontier(
@@ -169,7 +171,7 @@ func (s *Server) completeTask(
 				work.q,
 				worker,
 				authority,
-				*completion.capture,
+				completion.capture.version(),
 				completedAt,
 			)
 		}
@@ -223,16 +225,19 @@ func (s *Server) completeTask(
 				return staleTaskCompletion(err)
 			}
 		}
-		if retry {
-			failurePoint = taskCompletionPointFinish
-			return scheduleTaskRetry(ctx, work.q, authority, secrets, completedAt, retryAt, versionID)
-		}
-		if sameWorkspaceChildFinalization(authority) {
-			failurePoint = taskCompletionPointFinish
-			return finishSameWorkspaceChild(ctx, work.q, authority, completion, completedAt, versionID)
-		}
 		failurePoint = taskCompletionPointFinish
-		return finishTask(ctx, work.q, authority, completion, completedAt, versionID)
+		switch {
+		case retry:
+			err = scheduleTaskRetry(ctx, work.q, authority, secrets, completedAt, retryAt, versionID)
+		case sameWorkspaceChildFinalization(authority):
+			err = finishSameWorkspaceChild(ctx, work.q, authority, completion, completedAt, versionID)
+		default:
+			err = finishTask(ctx, work.q, authority, completion, completedAt, versionID)
+		}
+		if err != nil {
+			return err
+		}
+		return checkFinalizationPublicationDeadline(ctx, work.q, authority)
 	})
 	if err != nil {
 		resolved := taskCompletionReplayAfterError(ctx, s.db, worker, request, completion, err)
@@ -411,7 +416,7 @@ func recordTaskWorkspaceVersion(
 	store taskWorkspaceVersionStore,
 	worker workerActor,
 	authority runLeaseClaimAuthority,
-	capture parsedTaskWorkspaceCapture,
+	capture workspaceVersionCapture,
 	completedAt pgtype.Timestamptz,
 ) (pgtype.UUID, error) {
 	artifact := capture.artifact
@@ -435,7 +440,7 @@ func recordTaskWorkspaceVersion(
 		ID:            pgvalue.UUID(uuid.NewV7()),
 		EnvironmentID: authority.run.EnvironmentID, WorkspaceID: authority.workspace.ID,
 		ParentVersionID: authority.workspaceLease.BaseWorkspaceVersionID, ArtifactID: artifactRow.ID,
-		ContentDigest: pgvalue.Text(capture.tree.Digest), SizeBytes: capture.tree.SizeBytes, EntryCount: int32(capture.tree.EntryCount),
+		ContentDigest: pgvalue.Text(capture.contentDigest), SizeBytes: capture.sizeBytes, EntryCount: capture.entryCount,
 		SourceWorkspaceLeaseID: authority.workspaceLease.ID,
 		OwnershipGeneration:    authority.workspace.OwnershipGeneration,
 		WriterGeneration:       authority.workspace.WriterGeneration, PublishedAt: completedAt,
@@ -827,35 +832,38 @@ func resolveParentOwnedChildWait(
 	return nil
 }
 
-func (s *Server) verifyTaskWorkspaceCapture(ctx context.Context, capture parsedTaskWorkspaceCapture) (parsedTaskWorkspaceCapture, error) {
+func (s *Server) verifyWorkspaceTreeCapture(ctx context.Context, capture parsedWorkspaceTreeCapture) (parsedWorkspaceTreeCapture, error) {
 	if s.cas == nil {
-		return parsedTaskWorkspaceCapture{}, errors.New("workspace CAS is not configured")
+		return parsedWorkspaceTreeCapture{}, errors.New("workspace CAS is not configured")
 	}
 	artifact := capture.artifact
 	object, err := s.cas.Stat(ctx, artifact.Digest)
 	if err != nil {
-		return parsedTaskWorkspaceCapture{}, fmt.Errorf("task workspace artifact is missing from CAS: %w", err)
+		return parsedWorkspaceTreeCapture{}, fmt.Errorf("task workspace artifact is missing from CAS: %w", err)
 	}
 	if object.Digest != artifact.Digest || object.SizeBytes != artifact.SizeBytes ||
 		object.MediaType != artifact.MediaType {
-		return parsedTaskWorkspaceCapture{}, errors.New("task workspace artifact does not match CAS authority")
+		return parsedWorkspaceTreeCapture{}, errors.New("task workspace artifact does not match CAS authority")
 	}
 	body, err := s.cas.Get(ctx, artifact.Digest)
 	if err != nil {
-		return parsedTaskWorkspaceCapture{}, fmt.Errorf("open task workspace artifact: %w", err)
+		return parsedWorkspaceTreeCapture{}, fmt.Errorf("open task workspace artifact: %w", err)
 	}
 	defer body.Close()
 	if err := workspace.VerifyArtifact(body, workspace.WorkspaceArtifact{
 		Digest: artifact.Digest, MediaType: artifact.MediaType, Encoding: artifact.Encoding,
 		SizeBytes: artifact.SizeBytes, EntryCount: int(artifact.EntryCount),
 	}, capture.tree); err != nil {
-		return parsedTaskWorkspaceCapture{}, fmt.Errorf("verify task workspace artifact: %w", err)
+		return parsedWorkspaceTreeCapture{}, fmt.Errorf("verify task workspace artifact: %w", err)
 	}
 	return capture, nil
 }
 
 func staleTaskCompletion(err error) error {
-	if err == nil || errors.Is(err, pgx.ErrNoRows) || errors.Is(err, errStaleRunLeaseClaim) {
+	if errors.Is(err, errStaleWorkerClaims) {
+		return err
+	}
+	if err == nil || errors.Is(err, pgx.ErrNoRows) || errors.Is(err, errStaleRunLeaseClaim) || errors.Is(err, errStaleRunFinalization) {
 		return errStaleTaskCompletion
 	}
 	return err
@@ -866,7 +874,7 @@ func recordChildTaskWorkspaceVersion(
 	store db.Querier,
 	worker workerActor,
 	authority runLeaseClaimAuthority,
-	capture parsedTaskWorkspaceCapture,
+	capture workspaceVersionCapture,
 ) (pgtype.UUID, error) {
 	artifact := capture.artifact
 	if _, err := store.UpsertCasObject(ctx, db.UpsertCasObjectParams{
@@ -887,8 +895,8 @@ func recordChildTaskWorkspaceVersion(
 		ID:            pgvalue.UUID(uuid.NewV7()),
 		EnvironmentID: authority.run.EnvironmentID,
 		WorkspaceID:   authority.workspace.ID, ParentVersionID: authority.workspaceLease.BaseWorkspaceVersionID,
-		ArtifactID: artifactRow.ID, ContentDigest: pgvalue.Text(capture.tree.Digest),
-		SizeBytes: capture.tree.SizeBytes, EntryCount: int32(capture.tree.EntryCount),
+		ArtifactID: artifactRow.ID, ContentDigest: pgvalue.Text(capture.contentDigest),
+		SizeBytes: capture.sizeBytes, EntryCount: capture.entryCount,
 		SourceWorkspaceLeaseID: authority.workspaceLease.ID,
 		OwnershipGeneration:    authority.workspace.OwnershipGeneration, WriterGeneration: authority.workspace.WriterGeneration,
 	})

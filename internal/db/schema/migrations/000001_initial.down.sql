@@ -1,3 +1,4 @@
+DROP TABLE IF EXISTS run_finalization_objects;
 DROP TABLE IF EXISTS run_checkpoint_objects;
 DROP TABLE IF EXISTS computer_initializations;
 ALTER TABLE run_checkpoints DROP CONSTRAINT IF EXISTS run_checkpoints_run_wait_id_fkey;

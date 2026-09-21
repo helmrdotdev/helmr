@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"sync"
 	"testing"
 	"time"
@@ -23,7 +22,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workerclient"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -89,20 +87,7 @@ func testDifferentWorkspaceChildCompletion(t *testing.T, transition string) {
 		t.Fatal(err)
 	}
 
-	artifact, cleanup, err := workspace.CreateEmptyWorkspaceArtifact(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cleanup()
-	body, err := os.ReadFile(artifact.Path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tree, err := workspace.InspectArtifact(bytes.NewReader(body), artifact)
-	if err != nil {
-		t.Fatal(err)
-	}
-	server := &Server{db: db.New(base.Pool), tx: base.Pool, cas: actorTurnCAS{object: cas.Object{Digest: artifact.Digest, SizeBytes: artifact.SizeBytes, MediaType: artifact.MediaType}, body: body}}
+	server := &Server{db: db.New(base.Pool), tx: base.Pool, cas: finalizationTestCAS(t)}
 	worker := workerActor{WorkerInstanceID: base.WorkerID, WorkerGroupID: runtest.WorkerGroupID, WorkerEpoch: 1, ClaimVersion: 1, GroupClaimVersion: 1}
 	assignment := workerapi.RunLeaseAssignment{ID: child.LeaseID.String(), RunID: child.RunID.String(), AttemptNumber: 1, LeaseSequence: 1, WorkerGroupID: runtest.WorkerGroup, WorkerInstanceID: base.WorkerID.String(), WorkerEpoch: 1, RuntimeInstanceID: runtimeID.String(), RuntimeIdentityID: base.RuntimeIdentityID, WorkspaceID: childWorkspace.String(), WorkspaceMountID: mountID.String(), WorkspaceLeaseID: workspaceLeaseID.String(), BaseWorkspaceVersionID: childVersion.String(), OwnershipGeneration: 1, WriterGeneration: 1, MountFencingGeneration: 2}
 	begin := workerapi.BeginRunFinalizationRequest{Lease: assignment.Fence(), OperationID: uuid.NewV7().String(), Kind: workerapi.RunFinalizationCapture, ProgramQuiesced: workerapi.RunQuiescenceProof{RunID: child.RunID.String(), AttemptNumber: 1, RunLeaseID: child.LeaseID.String()}}
@@ -117,9 +102,8 @@ func testDifferentWorkspaceChildCompletion(t *testing.T, transition string) {
 	assignment.ExpiresAt = frozen.ExpiresAt
 	capture := validTaskWorkspaceCapture(t, assignment)
 	capture.Receipt.OperationID = frozen.OperationID
-	capture.Tree = workerapi.WorkspaceTreeIdentity{Digest: tree.Digest, SizeBytes: tree.SizeBytes, EntryCount: int32(tree.EntryCount)}
-	capture.Artifact = workerapi.WorkspaceArtifact{Digest: artifact.Digest, MediaType: artifact.MediaType, Encoding: artifact.Encoding, SizeBytes: artifact.SizeBytes, EntryCount: int32(artifact.EntryCount)}
 	setCaptureFingerprint(t, capture)
+	registerFinalizationTestDisk(t, base.Pool, server, worker, assignment.Fence(), capture, frozen.OperationID)
 	request := workerapi.CompleteTaskRequest{Lease: assignment.Fence(), Outcome: workerapi.TaskOutcome{Succeeded: &workerapi.TaskSucceeded{Output: json.RawMessage(`{"ok":true}`)}}, Workspace: workerapi.TaskWorkspaceProof{Captured: capture}}
 	completion, err := parseTaskCompletionRequest(request)
 	if err != nil {

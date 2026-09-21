@@ -2109,17 +2109,10 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 		phases = append(phases, vm.RuntimePhase{Name: name, DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started))})
 	}
 	started := time.Now()
-	// A failed response can leave the VM paused. The owner must converge or
-	// explicitly authorize resume; snapshot failures never thaw customer code.
-	if err := s.machine.PauseVM(ctx); err != nil {
-		return vm.SnapshotArtifact{}, fmt.Errorf("pause Firecracker vm: %w", err)
-	}
-	recordPhase("firecracker_pause_vm", started)
-	started = time.Now()
-	if err := s.syncPausedDisks(ctx); err != nil {
+	if _, err := s.PauseComputer(ctx); err != nil {
 		return vm.SnapshotArtifact{}, err
 	}
-	recordPhase("sync_paused_disks", started)
+	recordPhase("pause_and_sync_disks", started)
 	started = time.Now()
 	if err := captureSnapshotState(ctx, s.machine.Cfg.SocketPath, s.jailRoot, memName, stateName, s.cfg.JailerUID, s.cfg.JailerGID); err != nil {
 		return vm.SnapshotArtifact{}, fmt.Errorf("create Firecracker snapshot: %w", err)

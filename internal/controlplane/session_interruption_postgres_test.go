@@ -29,10 +29,9 @@ func interruptedCompletionRequest(t *testing.T, f *actorCheckpointFixture, hold 
 	assignment.ExpiresAt = begun.ExpiresAt
 	captured := validTaskWorkspaceCapture(t, assignment)
 	artifact := f.capture(t, "interrupted private work")
-	captured.Tree = artifact.Tree
-	captured.Artifact = artifact.Artifact
 	captured.Receipt.OperationID = operation
 	setCaptureFingerprint(t, captured)
+	f.registerFinalizationDisk(t, captured, artifact.Artifact.Digest)
 	var turnID *string
 	if turn != nil {
 		id := turn.String()

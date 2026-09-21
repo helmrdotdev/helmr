@@ -79,9 +79,9 @@ func TestSessionFailedCompletionRequiresRecoveryPostgres(t *testing.T) {
 			assignment := workerapi.RunLeaseAssignment{ID: f.fence().ID, RunID: f.runID.String(), AttemptNumber: 1, LeaseSequence: f.fence().LeaseSequence, WorkerInstanceID: f.WorkerID.String(), WorkerEpoch: 1, RuntimeInstanceID: pgvalue.UUIDString(a.runtime.ID), RuntimeIdentityID: a.runtime.RuntimeIdentityID, WorkspaceID: f.workspaceID.String(), WorkspaceMountID: pgvalue.UUIDString(a.workspaceMount.ID), WorkspaceLeaseID: pgvalue.UUIDString(a.workspaceLease.ID), BaseWorkspaceVersionID: f.rootID.String(), OwnershipGeneration: a.workspace.OwnershipGeneration, WriterGeneration: a.workspace.WriterGeneration, MountFencingGeneration: a.workspaceMount.FencingGeneration, ExpiresAt: began.ExpiresAt}
 			capture := validTaskWorkspaceCapture(t, assignment)
 			content := f.capture(t, "retained after actor failure")
-			capture.Tree, capture.Artifact = content.Tree, content.Artifact
 			capture.Receipt.OperationID = operation
 			setCaptureFingerprint(t, capture)
+			f.registerFinalizationDisk(t, capture, content.Artifact.Digest)
 			req := workerapi.CompleteActorRequest{Lease: f.fence(), Outcome: workerapi.ActorOutcome{RunGeneration: f.claim.actor.RunGeneration, Failed: &workerapi.TaskFailure{Message: "initialization failed after side effect"}}, Workspace: workerapi.TaskWorkspaceProof{Captured: capture}}
 			parsed, err := parseActorCompletionRequest(req)
 			if err != nil {
@@ -187,10 +187,9 @@ func TestSessionSuccessfulReturnPreservesPendingWorkPostgres(t *testing.T) {
 			assignment := workerapi.RunLeaseAssignment{ID: f.fence().ID, RunID: f.runID.String(), AttemptNumber: 1, LeaseSequence: f.fence().LeaseSequence, WorkerInstanceID: f.WorkerID.String(), WorkerEpoch: 1, RuntimeInstanceID: pgvalue.UUIDString(a.runtime.ID), RuntimeIdentityID: a.runtime.RuntimeIdentityID, WorkspaceID: f.workspaceID.String(), WorkspaceMountID: pgvalue.UUIDString(a.workspaceMount.ID), WorkspaceLeaseID: pgvalue.UUIDString(a.workspaceLease.ID), BaseWorkspaceVersionID: head.String(), OwnershipGeneration: a.workspace.OwnershipGeneration, WriterGeneration: a.workspace.WriterGeneration, MountFencingGeneration: a.workspaceMount.FencingGeneration, ExpiresAt: began.ExpiresAt}
 			capture := validTaskWorkspaceCapture(t, assignment)
 			content := f.capture(t, "returned without more input")
-			capture.Tree = content.Tree
-			capture.Artifact = content.Artifact
 			capture.Receipt.OperationID = operation
 			setCaptureFingerprint(t, capture)
+			f.registerFinalizationDisk(t, capture, content.Artifact.Digest)
 			req := workerapi.CompleteActorRequest{Lease: f.fence(), Outcome: workerapi.ActorOutcome{RunGeneration: f.claim.actor.RunGeneration, Succeeded: &workerapi.ActorSucceeded{}}, Workspace: workerapi.TaskWorkspaceProof{Captured: capture}}
 			parsed, err := parseActorCompletionRequest(req)
 			if err != nil {
@@ -238,7 +237,7 @@ func assertRetainedActorCapture(t *testing.T, f *actorCheckpointFixture, capture
 	if err := f.Pool.QueryRow(t.Context(), `SELECT w.head_version_id, a.digest FROM workspaces w JOIN workspace_versions v ON v.id=w.head_version_id JOIN artifacts a ON a.id=v.artifact_id WHERE w.id=$1`, f.workspaceID).Scan(&head, &digest); err != nil {
 		t.Fatal(err)
 	}
-	if head == previous || digest != capture.Artifact.Digest {
+	if head == previous || digest != capture.Disk.Artifact.Digest {
 		t.Fatalf("failure capture not retained: head=%s digest=%s", head, digest)
 	}
 	return head

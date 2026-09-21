@@ -24,7 +24,7 @@ type parsedActorCompletion struct {
 	holdID        uuid.UUID
 	turnID        *uuid.UUID
 	errorObject   json.RawMessage
-	capture       *parsedTaskWorkspaceCapture
+	capture       *parsedTaskComputerCapture
 	fingerprint   string
 }
 

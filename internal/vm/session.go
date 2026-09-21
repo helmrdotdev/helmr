@@ -51,6 +51,14 @@ type CheckpointableSession interface {
 	CreateSnapshot(context.Context, SnapshotRequest) (SnapshotArtifact, error)
 }
 
+// ComputerCaptureSession holds customer execution and device dispatch until
+// source release. It captures no RAM and does not authorize continuation.
+type ComputerCaptureSession interface {
+	Session
+	SnapshotLimits() (SnapshotLimits, error)
+	PauseComputer(context.Context) (*RuntimeComputer, error)
+}
+
 type ConnectRequest struct {
 	ID             string
 	OwnerKind      OwnerKind

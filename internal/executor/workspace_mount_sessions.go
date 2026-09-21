@@ -420,3 +420,18 @@ func (s *borrowedRunSession) SnapshotLimits() (vm.SnapshotLimits, error) {
 	}
 	return c.SnapshotLimits()
 }
+
+func (s *managedWorkspaceMountSession) PauseComputer(ctx context.Context) (*vm.RuntimeComputer, error) {
+	capture, ok := s.session.(vm.ComputerCaptureSession)
+	if !ok {
+		return nil, errors.New("mounted session cannot capture a Computer")
+	}
+	return capture.PauseComputer(ctx)
+}
+func (s *borrowedRunSession) PauseComputer(ctx context.Context) (*vm.RuntimeComputer, error) {
+	capture, ok := s.parent.(vm.ComputerCaptureSession)
+	if !ok {
+		return nil, errors.New("mounted session cannot capture a Computer")
+	}
+	return capture.PauseComputer(ctx)
+}

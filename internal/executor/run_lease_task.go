@@ -33,6 +33,7 @@ type RunLeaseControlPlane interface {
 	AcknowledgeRunEntrypoint(context.Context, workerapi.RunEntrypointRequest) error
 	RenewRunLease(context.Context, workerapi.RunLeaseAssignment) (workerapi.RunLeaseRenewResponse, error)
 	BeginRunFinalization(context.Context, workerapi.BeginRunFinalizationRequest) (workerapi.BeginRunFinalizationResponse, error)
+	RegisterRunFinalization(context.Context, workerapi.RegisterRunFinalizationRequest) error
 	CompleteTask(context.Context, workerapi.CompleteTaskRequest) error
 	CompleteActor(context.Context, workerapi.CompleteActorRequest) error
 	CommitActorTurn(context.Context, workerapi.CommitActorTurnRequest) (workerapi.CommitActorTurnResponse, error)
@@ -89,17 +90,18 @@ type RunLeaseTaskRunner interface {
 }
 
 type guestRunLeaseTask struct {
-	stopMu        sync.Mutex
-	stopDeadline  time.Time
-	program       freshProgram
-	mounts        WorkspaceMountSessionRegistry
-	store         cas.Store
-	controlPlane  RunLeaseControlPlane
-	resetTarget   workspace.ResetTarget
-	waits         *ControlPlaneRunWaits
-	checkpointer  Checkpointer
-	waitWorkspace workerapi.Workspace
-	orgID         string
+	stopMu          sync.Mutex
+	stopDeadline    time.Time
+	program         freshProgram
+	mounts          WorkspaceMountSessionRegistry
+	store           cas.Store
+	controlPlane    RunLeaseControlPlane
+	resetTarget     workspace.ResetTarget
+	waits           *ControlPlaneRunWaits
+	checkpointer    Checkpointer
+	terminalCapture *terminalComputerCapturer
+	waitWorkspace   workerapi.Workspace
+	orgID           string
 
 	renewalGate      sync.Mutex
 	mu               sync.Mutex
@@ -185,6 +187,9 @@ func (r ProgramRunner) StartRunLeaseTask(
 			claim.Lease,
 			claim.Workspace.ResetTarget,
 		),
+	}
+	if session, ok := program.session.(vm.ComputerCaptureSession); ok {
+		task.terminalCapture = &terminalComputerCapturer{session: session, objects: r.CheckpointObjects, capacity: r.Capacity, encryptor: r.CheckpointEncryptor, tempDir: r.tempDir()}
 	}
 	task.program.protocol = newProgramProtocol(program.session.Stream())
 	if waitClient, ok := controlPlane.(RunWaitClient); ok {
@@ -743,28 +748,16 @@ func (task *guestRunLeaseTask) CaptureWorkspace(
 	if err != nil {
 		return workerapi.TaskWorkspaceCapture{}, err
 	}
-	result, err := task.mounts.CaptureWorkspace(
-		ctx,
-		&workspacev0.CaptureWorkspaceRequest{Envelope: envelope},
-		task.store,
-	)
+	if task.terminalCapture == nil {
+		return workerapi.TaskWorkspaceCapture{}, errors.New("host Computer finalization is unavailable")
+	}
+	disk, err := task.terminalCapture.capture(ctx, task.lease, task.operationID, task.controlPlane.RegisterRunFinalization)
 	if err != nil {
 		return workerapi.TaskWorkspaceCapture{}, err
 	}
 	task.finished = true
 	task.clearCapabilities()
-	return workerapi.TaskWorkspaceCapture{
-		Receipt: workerWorkspaceFinalizationReceipt(result.Receipt),
-		Tree: workerapi.WorkspaceTreeIdentity{
-			Digest: result.ReportedTree.Digest, SizeBytes: result.ReportedTree.SizeBytes,
-			EntryCount: int32(result.ReportedTree.EntryCount),
-		},
-		Artifact: workerapi.WorkspaceArtifact{
-			Digest: result.Artifact.Digest, MediaType: result.Artifact.MediaType,
-			Encoding: result.Artifact.Encoding, SizeBytes: result.Artifact.SizeBytes,
-			EntryCount: int32(result.Artifact.EntryCount),
-		},
-	}, nil
+	return workerapi.TaskWorkspaceCapture{Receipt: workerWorkspaceFinalizationReceipt(&workspacev0.WorkspaceFinalizationReceipt{OperationId: envelope.OperationId, RequestFingerprint: envelope.RequestFingerprint, Fence: envelope.Authority.Fence}), Disk: disk}, nil
 }
 
 func (task *guestRunLeaseTask) finalizationEnvelope(

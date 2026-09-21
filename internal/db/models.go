@@ -602,6 +602,17 @@ type RunCheckpointObject struct {
 	AvailabilityRequired pgtype.Bool `json:"availability_required"`
 }
 
+type RunFinalizationObject struct {
+	RunLeaseID           pgtype.UUID `json:"run_lease_id"`
+	OperationID          pgtype.UUID `json:"operation_id"`
+	Digest               string      `json:"digest"`
+	SizeBytes            int64       `json:"size_bytes"`
+	MediaType            string      `json:"media_type"`
+	LogicalBytes         int64       `json:"logical_bytes"`
+	LeaseStatus          string      `json:"lease_status"`
+	AvailabilityRequired pgtype.Bool `json:"availability_required"`
+}
+
 type RunLease struct {
 	ID                               pgtype.UUID        `json:"id"`
 	OrgID                            pgtype.UUID        `json:"org_id"`

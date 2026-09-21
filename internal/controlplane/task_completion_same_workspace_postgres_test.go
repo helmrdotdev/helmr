@@ -6,12 +6,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
@@ -345,27 +343,6 @@ UPDATE workspace_leases
 			Captured: validTaskWorkspaceCapture(t, assignment),
 		},
 	}
-	artifact, cleanupArtifact, err := workspace.CreateEmptyWorkspaceArtifact(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cleanupArtifact()
-	body, err := os.ReadFile(artifact.Path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tree, err := workspace.InspectArtifact(bytes.NewReader(body), artifact)
-	if err != nil {
-		t.Fatal(err)
-	}
-	request.Workspace.Captured.Tree = workerapi.WorkspaceTreeIdentity{
-		Digest: tree.Digest, SizeBytes: tree.SizeBytes, EntryCount: int32(tree.EntryCount),
-	}
-	request.Workspace.Captured.Artifact = workerapi.WorkspaceArtifact{
-		Digest: artifact.Digest, MediaType: artifact.MediaType,
-		Encoding: artifact.Encoding, SizeBytes: artifact.SizeBytes,
-		EntryCount: int32(artifact.EntryCount),
-	}
 	request.Workspace.Captured.Receipt.OperationID = operationID.String()
 	setCaptureFingerprint(t, request.Workspace.Captured)
 	finalizationFingerprint := request.Workspace.Captured.Receipt.RequestFingerprint
@@ -378,16 +355,10 @@ UPDATE run_leases
  WHERE id = $1`, work.LeaseID, finalizationFingerprint)
 
 	queries := db.New(base.Pool)
-	return sameWorkspaceCompletionPostgresFixture{
+	fixture := sameWorkspaceCompletionPostgresFixture{
 		server: &Server{
 			db: queries, tx: base.Pool,
-			cas: actorTurnCAS{
-				object: cas.Object{
-					Digest: artifact.Digest, SizeBytes: artifact.SizeBytes,
-					MediaType: artifact.MediaType,
-				},
-				body: body,
-			},
+			cas: finalizationTestCAS(t),
 		}, pool: base.Pool,
 		worker: workerActor{
 			WorkerInstanceID: base.WorkerID, WorkerGroupID: runtest.WorkerGroupID,
@@ -397,4 +368,6 @@ UPDATE run_leases
 		waitID: waitID, runtimeID: runtimeID, mountID: mountID,
 		workspaceLeaseID: workspaceLeaseID,
 	}
+	registerFinalizationTestDisk(t, base.Pool, fixture.server, fixture.worker, request.Lease, request.Workspace.Captured, operationID.String())
+	return fixture
 }

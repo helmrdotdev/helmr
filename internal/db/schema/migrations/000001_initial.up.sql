@@ -2206,6 +2206,7 @@ CREATE TABLE run_leases (
     terminal_request_fingerprint TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (id, status),
     UNIQUE (org_id, run_id, id),
     UNIQUE (run_id, lease_sequence),
     UNIQUE (run_id, attempt_number, workspace_id, id),
@@ -2438,6 +2439,22 @@ CREATE TABLE run_checkpoints (
 
 -- Candidate descriptors have no independent lifecycle. The parent's status is
 -- mirrored solely for FK pinning and cascades on every terminal transition.
+CREATE TABLE run_finalization_objects (
+    run_lease_id UUID PRIMARY KEY,
+    operation_id UUID NOT NULL,
+    digest TEXT NOT NULL UNIQUE REFERENCES cas_object_lifetimes(digest),
+    size_bytes BIGINT NOT NULL CHECK (size_bytes > 0),
+    media_type TEXT NOT NULL,
+    logical_bytes BIGINT NOT NULL CHECK (logical_bytes > 0 AND logical_bytes % 4096 = 0),
+    lease_status TEXT NOT NULL,
+    availability_required BOOLEAN GENERATED ALWAYS AS (
+        CASE WHEN lease_status = 'finalizing' THEN true END
+    ) STORED,
+    FOREIGN KEY (run_lease_id, lease_status) REFERENCES run_leases(id, status)
+        ON UPDATE CASCADE ON DELETE RESTRICT,
+    FOREIGN KEY (digest, availability_required) REFERENCES cas_object_lifetimes(digest, available)
+);
+
 CREATE TABLE run_checkpoint_objects (
     checkpoint_id UUID NOT NULL,
     role TEXT NOT NULL CHECK (role IN ('computer', 'runtime_config', 'vm_state', 'memory', 'scratch_disk')),

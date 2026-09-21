@@ -211,6 +211,7 @@ POST /worker/v1/run/checkpoints/failed
 POST /worker/v1/run/checkpoints/ready
 POST /worker/v1/run/checkpoints/register
 POST /worker/v1/run/finalization/begin
+POST /worker/v1/run/finalization/register
 POST /worker/v1/run/leases/claim
 POST /worker/v1/run/leases/discover
 POST /worker/v1/run/leases/entrypoint
