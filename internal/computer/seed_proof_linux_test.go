@@ -7,7 +7,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -17,8 +16,8 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
+	"github.com/helmrdotdev/helmr/internal/oci"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
-	"github.com/helmrdotdev/helmr/internal/substrate"
 )
 
 func TestComputerSeedProof(t *testing.T) {
@@ -55,7 +54,6 @@ func TestComputerSeedProof(t *testing.T) {
 		"-O", "sparse_super,large_file,filetype,resize_inode,dir_index,ext_attr,has_journal,extent,huge_file,flex_bg,metadata_csum,metadata_csum_seed,64bit,dir_nlink,extra_isize,orphan_file",
 		"-E", "lazy_itable_init=0,lazy_journal_init=0,nodiscard,root_owner=0:0", "-d", seedRoot, seed)
 	original := computerProofDigest(t, seed)
-	seedSource := substrate.NewDiskSource(seed, fmt.Sprintf("sha256:%x", original), 64<<20)
 	image := seedConfigImage(t)
 	imagePath := filepath.Join(dir, "image.tar")
 	if err := os.WriteFile(imagePath, image, 0600); err != nil {
@@ -70,9 +68,17 @@ func TestComputerSeedProof(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := DiskStore{CAS: objects, Cipher: cipher}
-	initial, err := store.Initialize(t.Context(), diskTestComputer, Seed{
-		ImagePath: imagePath, Image: cas.Descriptor{Digest: sha256sum.DigestBytes(image), SizeBytes: int64(len(image)), MediaType: "application/vnd.oci.image.layout.v1+tar"}, Disk: seedSource,
-	}, disk, dir, 128<<20, resize)
+	config, err := oci.ReadVerifiedConfig(t.Context(), imagePath, sha256sum.DigestBytes(image), int64(len(image)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	seeds := SeedStore{CAS: objects, Cipher: cipher}
+	seedSource := publishTestSeed(t, seeds, objects, seed, dir, config)
+	// Runtime initialization must no longer read the original OCI archive.
+	if err := os.Remove(imagePath); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := store.Initialize(t.Context(), diskTestComputer, seedSource, disk, dir, 128<<20, resize)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,14 +129,14 @@ func TestComputerSeedProof(t *testing.T) {
 	}
 	// Refuse to overwrite an existing Computer, even if a caller retries creation.
 	current := computerProofDigest(t, disk)
-	if err := seedDisk(t.Context(), seedSource, disk, 128<<20, resize); err == nil {
+	if err := seeds.materialize(t.Context(), seedSource, disk, 128<<20, resize); err == nil {
 		t.Fatal("existing disk overwritten")
 	}
 	if computerProofDigest(t, disk) != current {
 		t.Fatal("creation retry changed existing disk")
 	}
 	failed := filepath.Join(dir, "failed.ext4")
-	if err := seedDisk(t.Context(), seedSource, failed, 128<<20, "/missing-resize2fs"); err == nil {
+	if err := seeds.materialize(t.Context(), seedSource, failed, 128<<20, "/missing-resize2fs"); err == nil {
 		t.Fatal("invalid resize command succeeded")
 	}
 	if _, err := os.Stat(failed); !os.IsNotExist(err) {
@@ -138,20 +144,20 @@ func TestComputerSeedProof(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if err := seedDisk(ctx, seedSource, failed, 128<<20, resize); err == nil {
+	if err := seeds.materialize(ctx, seedSource, failed, 128<<20, resize); err == nil {
 		t.Fatal("cancelled creation succeeded")
 	}
 	if _, err := os.Stat(failed); !os.IsNotExist(err) {
 		t.Fatalf("cancelled candidate retained: %v", err)
 	}
-	if err := seedDisk(t.Context(), seedSource, failed, 32<<20, resize); err == nil {
+	if err := seeds.materialize(t.Context(), seedSource, failed, 32<<20, resize); err == nil {
 		t.Fatal("undersized capacity accepted")
 	}
 	if _, err := os.Stat(failed); !os.IsNotExist(err) {
 		t.Fatalf("undersized candidate retained: %v", err)
 	}
 	unclean := dir + "/./normalized.ext4"
-	if err := seedDisk(t.Context(), seedSource, unclean, 64<<20, resize); err != nil {
+	if err := seeds.materialize(t.Context(), seedSource, unclean, 64<<20, resize); err != nil {
 		t.Fatal(err)
 	}
 	if computerProofDigest(t, filepath.Clean(unclean)) != original {
@@ -159,9 +165,6 @@ func TestComputerSeedProof(t *testing.T) {
 	}
 	// Later wake needs neither the OCI image nor the ext4 seed.
 	if err := os.Remove(seed); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(imagePath); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Restore(t.Context(), diskTestComputer, published.Artifact, restored, 128<<20); err != nil {

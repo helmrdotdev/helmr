@@ -9,31 +9,20 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-
-	"github.com/helmrdotdev/helmr/internal/substrate"
 )
 
-// seedDisk creates an independent writable disk from a verified,
-// immutable Sandbox ext4 image. It is for first creation only: existing
-// Computers restore their committed disk and never reapply a Sandbox image.
-// sizeBytes is the total filesystem capacity, not additional free space.
-// The owner must publish this local candidate only after durable storage succeeds.
-func seedDisk(ctx context.Context, seed *substrate.DiskSource, target string, sizeBytes int64, resize2fs string) (err error) {
+// materialize creates a private writable disk from a published shared seed.
+// It is only for first creation; continuation uses committed Computer artifacts.
+func (s SeedStore) materialize(ctx context.Context, seed Seed, target string, sizeBytes int64, resize2fs string) (err error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if seed == nil || sizeBytes <= 0 || sizeBytes%4096 != 0 {
-		return errors.New("computer disk source and positive block-aligned capacity are required")
+	if _, err := diskArtifactLimit(sizeBytes); err != nil {
+		return err
 	}
-	// This is the same verified, cancellable projection boundary used by VM
-	// startup. Do not clone that projection a second time.
 	target = filepath.Clean(target)
-	projected, err := seed.MaterializeInto(ctx, filepath.Dir(target), filepath.Base(target), os.Getuid(), os.Getgid())
-	if err != nil {
-		return fmt.Errorf("materialize computer seed: %w", err)
-	}
-	if projected != target {
-		return errors.New("computer seed projection returned an unexpected path")
+	if err := s.Decode(ctx, seed.Identity, seed.Artifact, target, sizeBytes); err != nil {
+		return fmt.Errorf("decode computer seed: %w", err)
 	}
 	defer func() {
 		if err != nil {

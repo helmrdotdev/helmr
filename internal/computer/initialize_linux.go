@@ -7,17 +7,16 @@ import (
 	"errors"
 	"os"
 
-	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/oci"
-	"github.com/helmrdotdev/helmr/internal/substrate"
 )
 
-// Seed identifies the pinned Sandbox image and its verified ext4 projection.
-// The resolver must obtain both from the same deployment definition.
+// Seed is the immutable preparation receipt supplied by trusted deployment
+// authority. Its config and artifact must come from the same published result;
+// transfer verification alone cannot establish config or image derivation.
 type Seed struct {
-	ImagePath string
-	Image     cas.Descriptor
-	Disk      *substrate.DiskSource
+	Identity SeedIdentity
+	Artifact SeedArtifact
+	Config   oci.RuntimeConfig
 }
 
 // InitialDiskCandidate retains encoded bytes until their exact descriptor has
@@ -43,16 +42,12 @@ func (s DiskStore) Initialize(ctx context.Context, computerID string, seed Seed,
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	config, err := oci.ReadVerifiedConfig(ctx, seed.ImagePath, seed.Image.Digest, seed.Image.SizeBytes)
-	if err != nil {
-		return nil, err
-	}
-	if err := seedDisk(ctx, seed.Disk, target, capacity, resize2fs); err != nil {
+	if err := (SeedStore{CAS: s.CAS, Cipher: s.Cipher}).materialize(ctx, seed, target, capacity, resize2fs); err != nil {
 		return nil, err
 	}
 	candidate, err := s.Capture(ctx, computerID, target, stagingDir)
 	if err != nil {
 		return nil, errors.Join(err, os.Remove(target))
 	}
-	return &InitialDiskCandidate{Disk: candidate, Config: config}, nil
+	return &InitialDiskCandidate{Disk: candidate, Config: seed.Config}, nil
 }
