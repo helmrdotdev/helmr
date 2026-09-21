@@ -1,0 +1,6 @@
+--- a/misc/create_inode_libarchive.c
++++ b/misc/create_inode_libarchive.c
+@@ -473,3 +472,0 @@
+-		if (strcmp(name, "security.capability") != 0 && strcmp(name, "gnu.translator"))
+-			continue;
+-

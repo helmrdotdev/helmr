@@ -95,7 +95,7 @@ let
     && require (lib.elem "kvm" workerGroups) "firecracker users are not added to kvm"
     && require (
       cfg.environment.sessionVariables.MKFS_EXT4_PATH
-      == "${lib.getBin pkgs.pkgsStatic.e2fsprogs}/bin/mkfs.ext4"
+      == "${lib.getBin helmrPackages.substrateGenerator}/bin/mkfs.ext4"
     ) "the pinned substrate generator is not exported"
     && require (
       cfg.environment.sessionVariables.MKE2FS_CONFIG_PATH == toString ./packages/mke2fs.conf

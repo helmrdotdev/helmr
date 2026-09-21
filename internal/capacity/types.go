@@ -48,7 +48,7 @@ const WorkerTemplateSchema = "helmr.worker-template.v0"
 
 const (
 	SubstrateFormatExt4   = "ext4"
-	SubstrateContractExt4 = "helmr.substrate.ext4.v0"
+	SubstrateContractExt4 = "helmr.substrate.ext4.v1"
 )
 
 type SubstrateProfile struct {

@@ -13,7 +13,7 @@ func TestWorkerTemplateValidation(t *testing.T) {
 		Schema:    WorkerTemplateSchema,
 		Runtime:   testRuntimeProfile(t),
 		CPUShapes: testCPUShapes(4),
-		Substrate: SubstrateProfile{Format: "ext4", Contract: "helmr.substrate.ext4.v0"},
+		Substrate: SubstrateProfile{Format: "ext4", Contract: "helmr.substrate.ext4.v1"},
 		Capacity: ResourceVector{
 			CPUMillis: 8000, MemoryBytes: 16 << 30, GuestEphemeralDiskBytes: 128 << 30,
 			VMSlots: 2,

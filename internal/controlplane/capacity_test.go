@@ -528,7 +528,7 @@ func capacityHTTPTemplate(t *testing.T) capacity.WorkerTemplate {
 			{VCPUCount: 1, CPUConfigDigest: "sha256:" + strings.Repeat("4", 64)},
 			{VCPUCount: 2, CPUConfigDigest: "sha256:" + strings.Repeat("5", 64)},
 		},
-		Substrate: capacity.SubstrateProfile{Format: "ext4", Contract: "helmr.substrate.ext4.v0"},
+		Substrate: capacity.SubstrateProfile{Format: "ext4", Contract: "helmr.substrate.ext4.v1"},
 		Capacity:  capacity.ResourceVector{CPUMillis: 2000, MemoryBytes: 2 << 30, GuestEphemeralDiskBytes: 64 << 30, VMSlots: 1},
 		PerVM:     capacity.ResourceVector{CPUMillis: 2000, MemoryBytes: 2 << 30, GuestEphemeralDiskBytes: 32 << 30},
 	}

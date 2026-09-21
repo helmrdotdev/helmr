@@ -214,7 +214,7 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 			cpu_environment_digest, observed_at, epoch_started_at, activated_at
 		) VALUES (
 			$1, $2, $3, $4, 'active', 1, $5, $6,
-			'ext4', 'helmr.substrate.ext4.v0',
+			'ext4', 'helmr.substrate.ext4.v1',
 			8000, 17179869184, 274877906944,
 			4000, 8589934592, 34359738368,
 			8, 1, '{}'::jsonb, $7, now(), now(), now()

@@ -1,20 +1,17 @@
 package substrate
 
 import (
-	"archive/tar"
 	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
+	"github.com/helmrdotdev/helmr/internal/oci"
+	"math"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
-	"syscall"
-	"time"
 )
 
 const (
@@ -22,36 +19,16 @@ const (
 	ext4Features      = "sparse_super,large_file,filetype,resize_inode,dir_index,ext_attr,has_journal,extent,huge_file,flex_bg,metadata_csum,metadata_csum_seed,64bit,dir_nlink,extra_isize,orphan_file"
 )
 
-func substrateDiskSize(rootfsDir string) (int64, error) {
-	var total int64
-	if err := filepath.WalkDir(rootfsDir, func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		switch {
-		case info.Mode().IsRegular():
-			total += info.Size()
-		case info.Mode()&os.ModeSymlink != 0:
-			target, err := os.Readlink(path)
-			if err != nil {
-				return err
-			}
-			total += int64(len(target))
-		}
-		return nil
-	}); err != nil {
-		return 0, fmt.Errorf("measure substrate rootfs: %w", err)
-	}
-	size := total + defaultExtraBytes
-	const minSize = int64(256 * 1024 * 1024)
-	if size < minSize {
-		size = minSize
+func substrateDiskSize(filesystem *oci.Filesystem) (int64, error) {
+	total, err := filesystem.LogicalBytes()
+	if err != nil {
+		return 0, err
 	}
 	const block = int64(4 * 1024 * 1024)
+	if total > math.MaxInt64-defaultExtraBytes-block {
+		return 0, errors.New("image disk size overflow")
+	}
+	size := max(total+defaultExtraBytes, 256*1024*1024)
 	if rem := size % block; rem != 0 {
 		size += block - rem
 	}
@@ -62,7 +39,7 @@ func createExt4(
 	ctx context.Context,
 	mkfs string,
 	mke2fsConfig string,
-	rootfsDir string,
+	filesystem *oci.Filesystem,
 	path string,
 	sizeBytes int64,
 	key string,
@@ -99,7 +76,9 @@ func createExt4(
 		"LC_ALL=C.UTF-8",
 		"LANG=C.UTF-8",
 		"TZ=UTC",
-		"SOURCE_DATE_EPOCH=0",
+		// SOURCE_DATE_EPOCH also clamps authored mtimes. Use a nonzero fixed
+		// filesystem clock without that clamping mode.
+		"E2FSPROGS_FAKE_TIME=1",
 		"MKE2FS_CONFIG=" + mke2fsConfig,
 	}
 	stdin, err := cmd.StdinPipe()
@@ -112,7 +91,7 @@ func createExt4(
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start mkfs substrate ext4: %w", err)
 	}
-	archiveErr := writeCanonicalRootfsArchive(rootfsDir, stdin)
+	archiveErr := filesystem.WriteArchive(stdin)
 	closeErr := stdin.Close()
 	waitErr := cmd.Wait()
 	if waitErr != nil {
@@ -125,104 +104,6 @@ func createExt4(
 		return fmt.Errorf("close mkfs substrate input: %w", closeErr)
 	}
 	return nil
-}
-
-func writeCanonicalRootfsArchive(rootfsDir string, output io.Writer) error {
-	writer := tar.NewWriter(output)
-	seenHardlinks := map[fileIdentity]string{}
-	walkErr := filepath.WalkDir(rootfsDir, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if path == rootfsDir {
-			return nil
-		}
-		relative, err := filepath.Rel(rootfsDir, path)
-		if err != nil {
-			return err
-		}
-		name := filepath.ToSlash(relative)
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		header := &tar.Header{
-			Name:       name,
-			Mode:       int64(info.Mode().Perm()),
-			Uid:        0,
-			Gid:        0,
-			ModTime:    time.Unix(0, 0).UTC(),
-			AccessTime: time.Time{},
-			ChangeTime: time.Time{},
-			Format:     tar.FormatPAX,
-		}
-		switch {
-		case info.IsDir():
-			header.Typeflag = tar.TypeDir
-			header.Name += "/"
-		case info.Mode().IsRegular():
-			identity, links, err := regularFileIdentity(info)
-			if err != nil {
-				return err
-			}
-			if links > 1 {
-				if target, ok := seenHardlinks[identity]; ok {
-					header.Typeflag = tar.TypeLink
-					header.Linkname = target
-					break
-				}
-				seenHardlinks[identity] = name
-			}
-			header.Typeflag = tar.TypeReg
-			header.Size = info.Size()
-		case info.Mode()&os.ModeSymlink != 0:
-			target, err := os.Readlink(path)
-			if err != nil {
-				return err
-			}
-			header.Typeflag = tar.TypeSymlink
-			header.Linkname = target
-		default:
-			return fmt.Errorf("unsupported substrate rootfs entry %q mode %s", name, info.Mode())
-		}
-		if err := writer.WriteHeader(header); err != nil {
-			return err
-		}
-		if header.Typeflag != tar.TypeReg {
-			return nil
-		}
-		input, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		_, copyErr := io.Copy(writer, input)
-		closeErr := input.Close()
-		if copyErr != nil {
-			return copyErr
-		}
-		return closeErr
-	})
-	closeWriterErr := writer.Close()
-	if walkErr != nil {
-		return fmt.Errorf("encode canonical substrate rootfs archive: %w", walkErr)
-	}
-	if closeWriterErr != nil {
-		return fmt.Errorf("close canonical substrate rootfs archive: %w", closeWriterErr)
-	}
-	return nil
-}
-
-type fileIdentity struct {
-	device uint64
-	inode  uint64
-}
-
-func regularFileIdentity(info os.FileInfo) (fileIdentity, uint64, error) {
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		return fileIdentity{}, 0, errors.New("inspect substrate rootfs hardlink identity: unsupported stat result")
-	}
-	return fileIdentity{device: uint64(stat.Dev), inode: uint64(stat.Ino)}, uint64(stat.Nlink), nil
 }
 
 func deterministicUUID(key string) string {

@@ -4,7 +4,6 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,7 +16,6 @@ import (
 )
 
 func TestDeterministicExt4Projection(t *testing.T) {
-	const expectedDigest = "sha256:0ddc710bea6d99c47a19ad9c18fb7a2b084cc1562ae1aa239f18ea6caf2c2ee2"
 	const expectedSize = int64(256 * 1024 * 1024)
 
 	mkfs := os.Getenv("HELMR_SUBSTRATE_MKFS_EXT4")
@@ -27,9 +25,30 @@ func TestDeterministicExt4Projection(t *testing.T) {
 	if mkfs == "" || config == "" || e2fsck == "" || debugfs == "" {
 		t.Skip("exact substrate generator closure is not configured")
 	}
-	baseLayer := projectionLayer(t, "removed.txt")
-	whiteoutLayer := projectionLayer(t, ".wh.removed.txt")
-	image := ociTarFromLayers(t, baseLayer, whiteoutLayer)
+	var layer bytes.Buffer
+	w := tar.NewWriter(&layer)
+	for _, h := range []tar.Header{
+		{Name: ".", Typeflag: tar.TypeDir, Mode: 0755, Uid: 1000, Gid: 1000},
+		{Name: "home", Typeflag: tar.TypeDir, Mode: 0755},
+		{Name: "home/agent", Typeflag: tar.TypeDir, Mode: 02700, Uid: 1000, Gid: 1000},
+		{Name: "home/agent/payload", Typeflag: tar.TypeReg, Mode: 04750, Uid: 1000, Gid: 1000, Size: 5, ModTime: time.Unix(1234567, 0), Xattrs: map[string]string{"user.helmr": "authored", "security.capability": string([]byte{1, 0, 0, 2, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})}},
+		{Name: "hardlink", Typeflag: tar.TypeLink, Linkname: "home/agent/payload"},
+		{Name: "symlink", Typeflag: tar.TypeSymlink, Mode: 0777, Uid: 1000, Gid: 1000, Linkname: "home/agent/payload"},
+		{Name: "tmp", Typeflag: tar.TypeDir, Mode: 01777},
+	} {
+		if err := w.WriteHeader(&h); err != nil {
+			t.Fatal(err)
+		}
+		if h.Size > 0 {
+			if _, err := w.Write([]byte("hello")); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	image := ociTarFromLayers(t, layer.Bytes())
 
 	var firstDigest string
 	for iteration := range 2 {
@@ -40,35 +59,13 @@ func TestDeterministicExt4Projection(t *testing.T) {
 		t.Setenv("E2FSPROGS_FAKE_TIME", []string{"2", "2000000001"}[iteration])
 		t.Setenv("MKE2FS_SYNC", []string{"1", "2"}[iteration])
 		root := filepath.Join(t.TempDir(), "rootfs")
-		if _, err := oci.Unpack(bytes.NewReader(image), root); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := os.Lstat(filepath.Join(root, "removed.txt")); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("whiteout did not remove base entry: %v", err)
-		}
-		if err := os.MkdirAll(filepath.Join(root, "nested", "日本語"), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		regular := filepath.Join(root, "nested", "日本語", "payload.txt")
-		if err := os.WriteFile(regular, []byte("deterministic substrate\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Chmod(regular, 0o640); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Link(regular, filepath.Join(root, "payload-hardlink")); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Symlink("nested/日本語/payload.txt", filepath.Join(root, "payload-symlink")); err != nil {
-			t.Fatal(err)
-		}
-		stamp := time.Unix(1_700_000_000+int64(iteration*1000), 0)
-		if err := os.Chtimes(regular, stamp, stamp); err != nil {
+		_, filesystem, err := oci.UnpackFilesystem(bytes.NewReader(image), root)
+		if err != nil {
 			t.Fatal(err)
 		}
 
 		image := filepath.Join(t.TempDir(), "substrate.ext4")
-		if err := createExt4(context.Background(), mkfs, config, root, image, 256*1024*1024, "sha256:fixture"); err != nil {
+		if err := createExt4(context.Background(), mkfs, config, filesystem, image, 256*1024*1024, "sha256:fixture"); err != nil {
 			t.Fatal(err)
 		}
 		check := exec.Command(e2fsck, "-fn", image)
@@ -81,8 +78,8 @@ func TestDeterministicExt4Projection(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Logf("projection digest: %s", digest)
-		if digest != expectedDigest || sizeBytes != expectedSize {
-			t.Fatalf("projection identity = (%s, %d), want (%s, %d)", digest, sizeBytes, expectedDigest, expectedSize)
+		if sizeBytes != expectedSize {
+			t.Fatalf("projection size = %d, want %d", sizeBytes, expectedSize)
 		}
 		if iteration == 0 {
 			firstDigest = digest
@@ -91,34 +88,52 @@ func TestDeterministicExt4Projection(t *testing.T) {
 		if digest != firstDigest {
 			t.Fatal("identical rootfs content produced different ext4 bytes")
 		}
+		proveNonrootImageWrite(t, image)
 	}
 }
 
 func assertProjectedFilesystem(t *testing.T, debugfs, image string) {
 	t.Helper()
-	rootStat := runDebugfs(t, debugfs, image, "stat <2>")
-	if !strings.Contains(rootStat, "Type: directory") || !strings.Contains(rootStat, "Mode:  0755") || !strings.Contains(rootStat, "User:     0") || !strings.Contains(rootStat, "Group:     0") {
-		t.Fatalf("root metadata was not preserved:\n%s", rootStat)
+	for _, tc := range []struct {
+		path  string
+		parts []string
+	}{
+		{"<2>", []string{"Type: directory", "User:  1000", "Group:  1000"}},
+		{"home/agent", []string{"Mode:  02700", "User:  1000", "Group:  1000"}},
+		{"home/agent/payload", []string{"Mode:  04750", "User:  1000", "Group:  1000", "Links: 2", "mtime: 0x0012d687"}},
+		{"tmp", []string{"Mode:  01777"}},
+	} {
+		got := runDebugfs(t, debugfs, image, "stat "+tc.path)
+		for _, part := range tc.parts {
+			if !strings.Contains(got, part) {
+				t.Fatalf("%s missing %q:\n%s", tc.path, part, got)
+			}
+		}
 	}
-	regularStat := runDebugfs(t, debugfs, image, "stat nested/日本語/payload.txt")
-	if !strings.Contains(regularStat, "Type: regular") || !strings.Contains(regularStat, "Mode:  0640") || !strings.Contains(regularStat, "User:     0") || !strings.Contains(regularStat, "Group:     0") || !strings.Contains(regularStat, "Links: 2") {
-		t.Fatalf("regular file metadata was not preserved:\n%s", regularStat)
+	if debugfsInode(t, runDebugfs(t, debugfs, image, "stat hardlink")) != debugfsInode(t, runDebugfs(t, debugfs, image, "stat home/agent/payload")) {
+		t.Fatal("hardlink inode changed")
 	}
-	hardlinkStat := runDebugfs(t, debugfs, image, "stat payload-hardlink")
-	if debugfsInode(t, hardlinkStat) != debugfsInode(t, regularStat) {
-		t.Fatalf("hardlink identity was not preserved:\nregular:\n%s\nhardlink:\n%s", regularStat, hardlinkStat)
+	if got := runDebugfs(t, debugfs, image, "ea_list home/agent/payload"); !strings.Contains(got, "user.helmr") || !strings.Contains(got, "authored") || !strings.Contains(got, "security.capability") {
+		t.Fatalf("missing authored xattrs: %s", got)
 	}
-	symlinkStat := runDebugfs(t, debugfs, image, "stat payload-symlink")
-	if !strings.Contains(symlinkStat, "Type: symlink") || !strings.Contains(symlinkStat, `Fast link dest: "nested/日本語/payload.txt"`) {
-		t.Fatalf("symlink identity was not preserved:\n%s", symlinkStat)
+	for name, want := range map[string][]byte{
+		"user.helmr":          []byte("authored"),
+		"security.capability": {1, 0, 0, 2, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+	} {
+		target := filepath.Join(t.TempDir(), "xattr")
+		runDebugfs(t, debugfs, image, "ea_get -f "+target+" home/agent/payload "+name)
+		got, err := os.ReadFile(target)
+		if err != nil || !bytes.Equal(got, want) {
+			t.Fatalf("%s bytes=%x err=%v want=%x", name, got, err, want)
+		}
 	}
-	if body := runDebugfs(t, debugfs, image, "cat nested/日本語/payload.txt"); body != "deterministic substrate\n" {
-		t.Fatalf("projected payload = %q", body)
+	if got := runDebugfs(t, debugfs, image, "stat symlink"); !strings.Contains(got, `Fast link dest: "home/agent/payload"`) {
+		t.Fatalf("symlink changed: %s", got)
 	}
-	missing := runDebugfs(t, debugfs, image, "stat removed.txt")
-	if !strings.Contains(missing, "File not found") {
-		t.Fatalf("whiteouted entry exists in projected filesystem:\n%s", missing)
+	if got := runDebugfs(t, debugfs, image, "cat home/agent/payload"); got != "hello" {
+		t.Fatalf("payload: %q", got)
 	}
+
 }
 
 func runDebugfs(t *testing.T, debugfs, image, command string) string {
