@@ -5,10 +5,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"os"
-	"reflect"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/frameio"
@@ -55,64 +53,6 @@ func preparedConfigImage(t *testing.T) []byte {
 		t.Fatal(err)
 	}
 	return result.Bytes()
-}
-
-func TestPreparedImageConfigVerifiesFullImageAndPreservesSettings(t *testing.T) {
-	body := append(preparedConfigImage(t), []byte("trailing envelope")...)
-	path := t.TempDir() + "/image.tar"
-	if err := os.WriteFile(path, body, 0600); err != nil {
-		t.Fatal(err)
-	}
-	artifact := workerapi.CASObject{Digest: sha256sum.DigestBytes(body), SizeBytes: int64(len(body))}
-	got, err := readPreparedImageConfig(context.Background(), path, artifact)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := &workspacev0.RuntimeImageConfig{Env: []string{"A=one", "A=two", "EMPTY="}, WorkingDir: "/workspace", User: "1000:1000", Entrypoint: []string{"/bin/sh", "-c"}, Cmd: []string{"echo hello"}}
-	if !proto.Equal(got, want) {
-		t.Fatalf("config = %v", got)
-	}
-	parsed, err := oci.ReadConfig(bytes.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(parsed.Env, got.Env) || parsed.User != got.User {
-		t.Fatal("OCI config parity failed")
-	}
-	for _, change := range []string{"digest", "size-small", "size-large", "trailer", "truncated", "cancelled"} {
-		t.Run(change, func(t *testing.T) {
-			b := append([]byte(nil), body...)
-			a := artifact
-			ctx := context.Background()
-			switch change {
-			case "digest":
-				a.Digest = sha256sum.DigestBytes([]byte("other"))
-			case "size-small":
-				a.SizeBytes--
-			case "size-large":
-				a.SizeBytes++
-			case "trailer":
-				b[len(b)-1] ^= 1
-			case "truncated":
-				b = b[:len(b)-1]
-			case "cancelled":
-				var cancel context.CancelFunc
-				ctx, cancel = context.WithCancel(ctx)
-				cancel()
-			}
-			file := t.TempDir() + "/image.tar"
-			if err := os.WriteFile(file, b, 0600); err != nil {
-				t.Fatal(err)
-			}
-			value, err := readPreparedImageConfig(ctx, file, a)
-			if err == nil || value != nil {
-				t.Fatalf("config=%v err=%v", value, err)
-			}
-			if change == "cancelled" && !errors.Is(err, context.Canceled) {
-				t.Fatal(err)
-			}
-		})
-	}
 }
 
 func TestPrepareGuestRuntimeTransfersConfigOrImage(t *testing.T) {

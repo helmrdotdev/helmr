@@ -1,6 +1,6 @@
-//go:build linux && computerproof
+//go:build linux
 
-package firecracker
+package computer
 
 import (
 	"context"
@@ -10,15 +10,15 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/helmrdotdev/helmr/internal/substrate"
 )
 
-// seedComputerDisk creates an independent writable disk from a verified,
+// seedDisk creates an independent writable disk from a verified,
 // immutable Sandbox ext4 image. It is for first creation only: existing
 // Computers restore their committed disk and never reapply a Sandbox image.
 // sizeBytes is the total filesystem capacity, not additional free space.
 // The owner must publish this local candidate only after durable storage succeeds.
-func seedComputerDisk(ctx context.Context, seed vm.RuntimeSubstrateSource, target string, sizeBytes int64, resize2fs string) (err error) {
+func seedDisk(ctx context.Context, seed *substrate.DiskSource, target string, sizeBytes int64, resize2fs string) (err error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -62,14 +62,7 @@ func seedComputerDisk(ctx context.Context, seed vm.RuntimeSubstrateSource, targe
 			return fmt.Errorf("grow computer filesystem: %w: %s", err, output)
 		}
 	}
-	file, err := os.OpenFile(target, os.O_RDWR, 0)
-	if err != nil {
-		return err
-	}
-	syncErr := file.Sync()
-	closeErr := file.Close()
-	if syncErr != nil {
-		return syncErr
-	}
-	return closeErr
+	// No local durability barrier is needed: Initialize uploads before the
+	// owning transaction may publish this candidate, and retries never reuse it.
+	return ctx.Err()
 }
