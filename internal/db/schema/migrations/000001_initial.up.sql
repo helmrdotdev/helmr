@@ -2255,7 +2255,7 @@ CREATE TABLE run_leases (
         OR (status = 'finalizing' AND finalization_operation_id IS NOT NULL)
         OR status IN ('completed', 'failed', 'cancelled', 'lost', 'expired')
     ),
-    CHECK (finalization_kind IS NULL OR finalization_kind IN ('capture', 'reset')),
+    CHECK (finalization_kind IS NULL OR finalization_kind = 'capture'),
     CHECK (finalization_request_fingerprint IS NULL OR finalization_request_fingerprint ~ '^sha256:[0-9a-f]{64}$'),
     CONSTRAINT run_leases_finalization_time_check CHECK (finalization_started_at IS NULL OR (
         started_at IS NOT NULL

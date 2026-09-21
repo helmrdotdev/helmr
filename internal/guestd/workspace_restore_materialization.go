@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/archive"
@@ -251,4 +252,38 @@ func writeWorkspaceRestoreJournal(root string, journal workspaceRestoreJournal) 
 		return err
 	}
 	return syncDirectory(root)
+}
+
+func syncWorkspaceTree(root string) error {
+	var directories []string
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		switch {
+		case info.Mode().IsRegular():
+			return syncFile(path)
+		case info.IsDir():
+			directories = append(directories, path)
+		case info.Mode()&os.ModeSymlink != 0:
+			return nil
+		default:
+			return fmt.Errorf("unsupported workspace entry %q", path)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	sort.Slice(directories, func(i, j int) bool { return len(directories[i]) > len(directories[j]) })
+	for _, directory := range directories {
+		if err := syncDirectory(directory); err != nil {
+			return err
+		}
+	}
+	return syncDirectory(filepath.Dir(root))
 }

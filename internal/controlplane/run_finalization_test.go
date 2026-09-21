@@ -219,19 +219,11 @@ func TestBeginRunFinalizationAcceptsDifferentWorkspaceParentOwnedChild(t *testin
 	}
 }
 
-func TestBeginRunFinalizationAcceptsReset(t *testing.T) {
-	server, _, worker, request, _ := validRunFinalizationFixture(t)
-	request.Kind = workerapi.RunFinalizationReset
-	parsed, err := parseRunFinalization(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	response, err := server.beginRunFinalization(context.Background(), worker, request, parsed)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if response.Kind != workerapi.RunFinalizationReset {
-		t.Fatalf("kind = %q, want reset", response.Kind)
+func TestBeginRunFinalizationRejectsReset(t *testing.T) {
+	_, _, _, request, _ := validRunFinalizationFixture(t)
+	request.Kind = "reset"
+	if _, err := parseRunFinalization(request); err == nil {
+		t.Fatal("removed reset operation accepted")
 	}
 }
 

@@ -16,7 +16,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -378,9 +377,6 @@ func finishCheckpointChild(t *testing.T, f *actorCheckpointFixture, capture test
 	content := capture
 	operation := uuid.NewV7().String()
 	kind := workerapi.RunFinalizationCapture
-	if outcome == "failure" {
-		kind = workerapi.RunFinalizationReset
-	}
 	var began workerapi.BeginRunFinalizationResponse
 	f.workerCall(t, f.server.workerBeginRunFinalization, workerapi.BeginRunFinalizationRequest{Lease: f.fence(), ProgramQuiesced: workerapi.RunQuiescenceProof{RunID: f.runID.String(), AttemptNumber: f.claim.attempt.Number, RunLeaseID: f.fence().ID}, OperationID: operation, Kind: kind}, &began)
 	a := f.claim
@@ -397,16 +393,10 @@ func finishCheckpointChild(t *testing.T, f *actorCheckpointFixture, capture test
 		setCaptureFingerprint(t, proof)
 		f.workerCall(t, f.server.workerCompleteTask, workerapi.CompleteTaskRequest{Lease: f.fence(), Outcome: workerapi.TaskOutcome{Succeeded: &workerapi.TaskSucceeded{Output: json.RawMessage(`true`)}}, Workspace: workerapi.TaskWorkspaceProof{Captured: proof}}, nil)
 	} else {
-		target := workspace.ResetTarget{Kind: workspace.ResetTargetArtifact, BaseWorkspaceVersionID: pgvalue.UUIDString(f.claim.attempt.BaseWorkspaceVersionID),
-			Tree:     workspace.TreeIdentity{Digest: capture.Tree.Digest, SizeBytes: capture.Tree.SizeBytes, EntryCount: int(capture.Tree.EntryCount)},
-			Artifact: &workspace.ArtifactIdentity{Digest: capture.Artifact.Digest, MediaType: capture.Artifact.MediaType, Encoding: capture.Artifact.Encoding, SizeBytes: capture.Artifact.SizeBytes, EntryCount: int(capture.Artifact.EntryCount)}}
-		fingerprint, err := workspace.FinalizationFingerprint(workspace.FinalizationResetKind, workspace.FinalizationRequest{OperationID: operation, Fence: testFinalizationFence(proof.Receipt.Fence), Target: target})
-		if err != nil {
-			t.Fatal(err)
-		}
-		proof.Receipt.RequestFingerprint = fingerprint
-		rollback := &workerapi.TaskWorkspaceRollback{Receipt: proof.Receipt, Target: workerapi.WorkspaceResetTarget{BaseWorkspaceVersionID: pgvalue.UUIDString(f.claim.attempt.BaseWorkspaceVersionID), Tree: capture.Tree, Artifact: &capture.Artifact}}
-		f.workerCall(t, f.server.workerCompleteTask, workerapi.CompleteTaskRequest{Lease: f.fence(), Outcome: workerapi.TaskOutcome{Failed: &workerapi.TaskFailure{Message: "child failed"}}, Workspace: workerapi.TaskWorkspaceProof{RolledBack: rollback}}, nil)
+		content = f.capture(t, "failed child retained changes")
+		proof.Tree, proof.Artifact = content.Tree, content.Artifact
+		setCaptureFingerprint(t, proof)
+		f.workerCall(t, f.server.workerCompleteTask, workerapi.CompleteTaskRequest{Lease: f.fence(), Outcome: workerapi.TaskOutcome{Failed: &workerapi.TaskFailure{Message: "child failed"}}, Workspace: workerapi.TaskWorkspaceProof{Captured: proof}}, nil)
 	}
 	return content
 }

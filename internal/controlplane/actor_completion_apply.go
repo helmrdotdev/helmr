@@ -16,7 +16,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -92,13 +91,7 @@ func (s *Server) completeActor(ctx context.Context, worker workerActor, request 
 				return errActorStopCleanupPending
 			}
 		}
-		if completion.rollback != nil {
-			rollbackAuthority := authority
-			rollbackAuthority.run.BaseWorkspaceVersionID = authority.workspace.HeadVersionID
-			if err := validateTaskWorkspaceRollback(ctx, work.q, rollbackAuthority, *completion.rollback); err != nil {
-				return staleActorCompletion(err)
-			}
-		}
+
 		completedAt, err := work.q.GetTaskCompletionTime(ctx)
 		if err != nil || !completedAt.Valid {
 			if err == nil {
@@ -120,7 +113,7 @@ func (s *Server) completeActor(ctx context.Context, worker workerActor, request 
 			}
 		}
 		var versionID pgtype.UUID
-		if completion.capture != nil && !failed {
+		if completion.capture != nil {
 			versionID, err = recordTaskWorkspaceVersion(ctx, work.q, worker, authority, *completion.capture, completedAt)
 			if err != nil {
 				return err
@@ -132,10 +125,6 @@ func (s *Server) completeActor(ctx context.Context, worker workerActor, request 
 				WriterGeneration: authority.workspace.WriterGeneration, ExpectedHeadVersionID: authority.workspace.HeadVersionID,
 			}); err != nil {
 				return staleActorCompletion(err)
-			}
-		} else if completion.rollback != nil && authority.workspaceMount.MaterializedVersionID != authority.workspace.HeadVersionID {
-			if err := updateTaskWorkspaceMountFrontier(ctx, work.q, authority, authority.workspace.HeadVersionID, completedAt); err != nil {
-				return err
 			}
 		}
 		if completion.kind == actorCompletionInterrupted {
@@ -256,14 +245,11 @@ func validateActorCompletionAuthority(
 	if cursor < authority.attempt.SessionInputStartSequence.Int64 || cursor < actor.CommittedInputSequence || cursor >= actor.NextInputSequence {
 		return errStaleActorCompletion
 	}
-	var finalization workspace.FinalizationRequest
-	wantKind := string(workerapi.RunFinalizationReset)
-	if completion.capture != nil {
-		finalization = completion.capture.receipt
-		wantKind = string(workerapi.RunFinalizationCapture)
-	} else {
-		finalization = completion.rollback.receipt
+	if completion.capture == nil {
+		return errStaleActorCompletion
 	}
+	finalization := completion.capture.receipt
+	wantKind := string(workerapi.RunFinalizationCapture)
 	operationID, err := uuid.Parse(finalization.OperationID)
 	if err != nil || authority.runLease.FinalizationOperationID != pgvalue.UUID(operationID) || authority.runLease.FinalizationKind.String != wantKind {
 		return errStaleActorCompletion

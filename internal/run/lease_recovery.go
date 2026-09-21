@@ -330,7 +330,8 @@ func (g OwnedFinalization) retryCurrentAfterLeaseLoss(
 			}
 		} else if authority.RunStatus == string(db.RunStatusRunning) {
 			if _, err := q.CreateTaskRetryAttempt(ctx, db.CreateTaskRetryAttemptParams{
-				Number: nextAttempt, RunID: authority.RunID, WorkspaceID: authority.WorkspaceID,
+				ResultWorkspaceVersionID: authority.BaseWorkspaceVersionID,
+				Number:                   nextAttempt, RunID: authority.RunID, WorkspaceID: authority.WorkspaceID,
 				PreviousAttemptNumber: authority.CurrentAttemptNumber, RunLeaseID: authority.RunLeaseID,
 			}); err != nil {
 				return cancellationAuthority("create lost Task retry Attempt", err)
@@ -357,7 +358,8 @@ func (g OwnedFinalization) retryCurrentAfterLeaseLoss(
 			return cancellationAuthority("delay lost checkpointing Task retry", err)
 		}
 	} else if _, err := q.DelayTaskRunRetry(ctx, db.DelayTaskRunRetryParams{
-		NextAttemptNumber: nextAttempt, CompletedAt: lostAt, RetryAt: retryTimestamp,
+		ResultWorkspaceVersionID: authority.BaseWorkspaceVersionID,
+		NextAttemptNumber:        nextAttempt, CompletedAt: lostAt, RetryAt: retryTimestamp,
 		ID: authority.RunID, WorkspaceID: authority.WorkspaceID,
 		PreviousAttemptNumber: authority.CurrentAttemptNumber, RunLeaseID: authority.RunLeaseID,
 	}); err != nil {

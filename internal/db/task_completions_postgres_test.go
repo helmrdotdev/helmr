@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -138,7 +139,13 @@ func TestTaskCompletionQueriesCommitReplayAndRollback(t *testing.T) {
 	}
 }
 
-func TestRestoredTaskFailureRollsBackPhysicalFrontier(t *testing.T) {
+func TestTaskFailureRetainsPhysicalFrontier(t *testing.T) {
+	for _, retry := range []bool{false, true} {
+		t.Run(fmt.Sprintf("retry=%v", retry), func(t *testing.T) { testTaskFailureRetainsPhysicalFrontier(t, retry) })
+	}
+}
+
+func testTaskFailureRetainsPhysicalFrontier(t *testing.T, retry bool) {
 	ctx := context.Background()
 	fixture := newRunLeaseClaimFixture(t, ctx)
 	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
@@ -187,7 +194,7 @@ func TestRestoredTaskFailureRollsBackPhysicalFrontier(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := queries.UpdateTaskWorkspaceMountFrontier(ctx, UpdateTaskWorkspaceMountFrontierParams{
-		NewVersionID: pgvalue.UUID(authority.baseWorkspaceVersionID), CompletedAt: completedAt,
+		NewVersionID: pgvalue.UUID(restoredVersionID), CompletedAt: completedAt,
 		ID: pgvalue.UUID(authority.mountID), OrgID: pgvalue.UUID(fixture.orgID),
 		ProjectID: pgvalue.UUID(fixture.projectID), EnvironmentID: pgvalue.UUID(fixture.environmentID),
 		WorkspaceID: pgvalue.UUID(authority.workspaceID), RuntimeInstanceID: pgvalue.UUID(authority.runtimeID),
@@ -195,22 +202,46 @@ func TestRestoredTaskFailureRollsBackPhysicalFrontier(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	completeTaskAttemptQueries(t, ctx, queries, work, authority, completedAt, dbtest.Digest("restored-failure"), false)
-	if _, err := queries.ReleaseTaskWorkspaceOwner(ctx, ReleaseTaskWorkspaceOwnerParams{
-		CompletedAt: completedAt,
-		ID:          pgvalue.UUID(authority.workspaceID), OrgID: pgvalue.UUID(fixture.orgID),
-		ProjectID: pgvalue.UUID(fixture.projectID), EnvironmentID: pgvalue.UUID(fixture.environmentID),
-		RunID: pgvalue.UUID(work.runID), OwnershipGeneration: 1, WriterGeneration: 1,
-		ExpectedHeadVersionID: pgvalue.UUID(authority.baseWorkspaceVersionID),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := queries.FinishTaskRun(ctx, FinishTaskRunParams{
-		Status: RunStatusFailed, Failure: []byte(`{"code":"task_failed","message":"failed","details":{}}`),
-		CompletedAt: completedAt, ID: pgvalue.UUID(work.runID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
-		AttemptNumber: 1, RunLeaseID: pgvalue.UUID(work.leaseID),
-	}); err != nil {
-		t.Fatal(err)
+	completeTaskAttemptQueries(t, ctx, queries, work, authority, completedAt, dbtest.Digest("retained-failure"), false)
+	if retry {
+		if _, err := queries.AdvanceTaskRetryWorkspaceHead(ctx, AdvanceTaskRetryWorkspaceHeadParams{
+			ResultWorkspaceVersionID: pgvalue.UUID(restoredVersionID), CompletedAt: completedAt,
+			WorkspaceID: pgvalue.UUID(authority.workspaceID), RunID: pgvalue.UUID(work.runID),
+			BaseWorkspaceVersionID: pgvalue.UUID(authority.baseWorkspaceVersionID), OwnershipGeneration: 1, WriterGeneration: 1,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := queries.CreateTaskRetryAttempt(ctx, CreateTaskRetryAttemptParams{
+			ResultWorkspaceVersionID: pgvalue.UUID(restoredVersionID), Number: 2, RunID: pgvalue.UUID(work.runID),
+			WorkspaceID: pgvalue.UUID(authority.workspaceID), PreviousAttemptNumber: 1, RunLeaseID: pgvalue.UUID(work.leaseID),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := queries.DelayTaskRunRetry(ctx, DelayTaskRunRetryParams{
+			ResultWorkspaceVersionID: pgvalue.UUID(restoredVersionID), NextAttemptNumber: 2, CompletedAt: completedAt, RetryAt: completedAt,
+			ID: pgvalue.UUID(work.runID), WorkspaceID: pgvalue.UUID(authority.workspaceID), PreviousAttemptNumber: 1, RunLeaseID: pgvalue.UUID(work.leaseID),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+
+		if _, err := queries.ReleaseTaskWorkspaceOwner(ctx, ReleaseTaskWorkspaceOwnerParams{
+			NewHeadVersionID: pgvalue.UUID(restoredVersionID),
+			CompletedAt:      completedAt,
+			ID:               pgvalue.UUID(authority.workspaceID), OrgID: pgvalue.UUID(fixture.orgID),
+			ProjectID: pgvalue.UUID(fixture.projectID), EnvironmentID: pgvalue.UUID(fixture.environmentID),
+			RunID: pgvalue.UUID(work.runID), OwnershipGeneration: 1, WriterGeneration: 1,
+			ExpectedHeadVersionID: pgvalue.UUID(authority.baseWorkspaceVersionID),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := queries.FinishTaskRun(ctx, FinishTaskRunParams{
+			Status: RunStatusFailed, Failure: []byte(`{"code":"task_failed","message":"failed","details":{}}`),
+			CompletedAt: completedAt, ID: pgvalue.UUID(work.runID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
+			AttemptNumber: 1, RunLeaseID: pgvalue.UUID(work.leaseID),
+		}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
@@ -226,9 +257,19 @@ func TestRestoredTaskFailureRollsBackPhysicalFrontier(t *testing.T) {
 	`, authority.mountID).Scan(&mountedVersionID, &headVersionID, &ownerRunID); err != nil {
 		t.Fatal(err)
 	}
-	if mountedVersionID != authority.baseWorkspaceVersionID || headVersionID != authority.baseWorkspaceVersionID || ownerRunID.Valid {
-		t.Fatalf("restored rollback = mount %s head %s owner %v, want base %s and no owner", mountedVersionID, headVersionID, ownerRunID, authority.baseWorkspaceVersionID)
+	if mountedVersionID != restoredVersionID || headVersionID != restoredVersionID || ownerRunID.Valid != retry {
+		t.Fatalf("retained failure = mount %s head %s owner %v, want retained %s with expected ownership", mountedVersionID, headVersionID, ownerRunID, restoredVersionID)
 	}
+	if retry {
+		var runBase, attemptBase uuid.UUID
+		if err := fixture.pool.QueryRow(ctx, `SELECT runs.base_workspace_version_id, run_attempts.base_workspace_version_id FROM runs JOIN run_attempts ON run_attempts.run_id = runs.id AND run_attempts.number = 2 WHERE runs.id = $1`, work.runID).Scan(&runBase, &attemptBase); err != nil {
+			t.Fatal(err)
+		}
+		if runBase != restoredVersionID || attemptBase != restoredVersionID {
+			t.Fatalf("retry discarded retained frontier: run=%s attempt=%s", runBase, attemptBase)
+		}
+	}
+
 }
 
 func TestReadyRunRetriesAdmitsOnceUnderConcurrency(t *testing.T) {
@@ -249,13 +290,15 @@ func TestReadyRunRetriesAdmitsOnceUnderConcurrency(t *testing.T) {
 	}
 	completeTaskAttemptQueries(t, ctx, queries, work, authority, completedAt, dbtest.Digest("retry"), false)
 	if _, err := queries.CreateTaskRetryAttempt(ctx, CreateTaskRetryAttemptParams{
-		Number: 2, RunID: pgvalue.UUID(work.runID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
+		ResultWorkspaceVersionID: pgvalue.UUID(authority.baseWorkspaceVersionID),
+		Number:                   2, RunID: pgvalue.UUID(work.runID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
 		PreviousAttemptNumber: 1, RunLeaseID: pgvalue.UUID(work.leaseID),
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := queries.DelayTaskRunRetry(ctx, DelayTaskRunRetryParams{
-		NextAttemptNumber: 2, CompletedAt: completedAt, RetryAt: completedAt,
+		ResultWorkspaceVersionID: pgvalue.UUID(authority.baseWorkspaceVersionID),
+		NextAttemptNumber:        2, CompletedAt: completedAt, RetryAt: completedAt,
 		ID: pgvalue.UUID(work.runID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
 		PreviousAttemptNumber: 1, RunLeaseID: pgvalue.UUID(work.leaseID),
 	}); err != nil {
@@ -381,7 +424,7 @@ func beginTaskCompletionFinalization(
 		UPDATE run_leases
 		   SET status = 'finalizing',
 		       finalization_operation_id = $2,
-		       finalization_kind = 'reset',
+		       finalization_kind = 'capture',
 		       finalization_started_at = now(),
 		       finalization_request_fingerprint = 'sha256:6efa7ef866e15db96245ea5804c38662a1c3ef899643545704a867b61bdfc9eb'
 		 WHERE id = $1

@@ -208,16 +208,7 @@ message WorkspaceResetTarget {
   }
 }
 
-message ResetWorkspaceRequest {
-  WorkspaceFinalizationEnvelope envelope = 1;
-  WorkspaceResetTarget target = 2;
-}
 
-message ResetWorkspaceResponse {
-  WorkspaceFinalizationReceipt receipt = 1;
-  WorkspaceResetTarget target = 2;
-  string error = 3;
-}
 
 message StopWorkspaceRequest {
   WorkspaceOperationEnvelope envelope = 1;

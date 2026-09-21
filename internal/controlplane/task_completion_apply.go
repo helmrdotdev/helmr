@@ -38,7 +38,6 @@ const (
 	taskCompletionPointFence            taskCompletionFailurePoint = "fence"
 	taskCompletionPointScope            taskCompletionFailurePoint = "scope"
 	taskCompletionPointRuntime          taskCompletionFailurePoint = "runtime"
-	taskCompletionPointRollback         taskCompletionFailurePoint = "rollback"
 	taskCompletionPointDeadline         taskCompletionFailurePoint = "deadline"
 	taskCompletionPointWorkspaceVersion taskCompletionFailurePoint = "workspace_version"
 	taskCompletionPointAttempt          taskCompletionFailurePoint = "attempt"
@@ -136,12 +135,6 @@ func (s *Server) completeTask(
 		if err := validateTaskCompletionAuthority(ctx, work.q, completion, authority); err != nil {
 			return err
 		}
-		if completion.rollback != nil {
-			failurePoint = taskCompletionPointRollback
-			if err := validateTaskWorkspaceRollback(ctx, work.q, authority, *completion.rollback); err != nil {
-				return err
-			}
-		}
 
 		failurePoint = taskCompletionPointDeadline
 		completedAt, err := work.q.GetTaskCompletionTime(ctx)
@@ -160,42 +153,30 @@ func (s *Server) completeTask(
 			return deterministicWorkerAdmission(err)
 		}
 		var versionID pgtype.UUID
-		if completion.capture != nil {
-			failurePoint = taskCompletionPointWorkspaceVersion
-			if sameWorkspaceChildFinalization(authority) {
-				versionID, err = recordChildTaskWorkspaceVersion(
-					ctx, work.q, worker, authority, *completion.capture,
-				)
-				if err == nil {
-					err = updateTaskWorkspaceMountFrontier(
-						ctx, work.q, authority, versionID, completedAt,
-					)
-				}
-			} else {
-				versionID, err = recordTaskWorkspaceVersion(
-					ctx,
-					work.q,
-					worker,
-					authority,
-					*completion.capture,
-					completedAt,
+		failurePoint = taskCompletionPointWorkspaceVersion
+		if sameWorkspaceChildFinalization(authority) {
+			versionID, err = recordChildTaskWorkspaceVersion(
+				ctx, work.q, worker, authority, *completion.capture,
+			)
+			if err == nil {
+				err = updateTaskWorkspaceMountFrontier(
+					ctx, work.q, authority, versionID, completedAt,
 				)
 			}
-			if err != nil {
-				return err
-			}
-		} else if authority.workspaceLease.BaseWorkspaceVersionID != authority.run.BaseWorkspaceVersionID {
-			failurePoint = taskCompletionPointWorkspaceVersion
-			if err := updateTaskWorkspaceMountFrontier(
+		} else {
+			versionID, err = recordTaskWorkspaceVersion(
 				ctx,
 				work.q,
+				worker,
 				authority,
-				authority.run.BaseWorkspaceVersionID,
+				*completion.capture,
 				completedAt,
-			); err != nil {
-				return err
-			}
+			)
 		}
+		if err != nil {
+			return err
+		}
+
 		failurePoint = taskCompletionPointAttempt
 		if err := terminalizeTaskAttempt(
 			ctx,
@@ -244,7 +225,7 @@ func (s *Server) completeTask(
 		}
 		if retry {
 			failurePoint = taskCompletionPointFinish
-			return scheduleTaskRetry(ctx, work.q, authority, secrets, completedAt, retryAt)
+			return scheduleTaskRetry(ctx, work.q, authority, secrets, completedAt, retryAt, versionID)
 		}
 		if sameWorkspaceChildFinalization(authority) {
 			failurePoint = taskCompletionPointFinish
@@ -349,18 +330,11 @@ func validateTaskCompletionAuthority(
 			return staleAuthority(staleAuthorityTaskCompletion, taskCompletionPointParentAuthority, errStaleTaskCompletion)
 		}
 	}
-	if completion.kind != taskCompletionSucceeded &&
-		(completion.rollback == nil || pgvalue.UUID(completion.rollback.baseID) != authority.run.BaseWorkspaceVersionID) {
-		return staleAuthority(staleAuthorityTaskCompletion, taskCompletionPointOutcome, errStaleTaskCompletion)
+	if completion.capture == nil {
+		return errStaleTaskCompletion
 	}
-	var finalization workspace.FinalizationRequest
-	wantKind := string(workerapi.RunFinalizationReset)
-	if completion.capture != nil {
-		finalization = completion.capture.receipt
-		wantKind = string(workerapi.RunFinalizationCapture)
-	} else {
-		finalization = completion.rollback.receipt
-	}
+	finalization := completion.capture.receipt
+	wantKind := string(workerapi.RunFinalizationCapture)
 	operationID, err := uuid.Parse(finalization.OperationID)
 	if err != nil ||
 		authority.runLease.FinalizationOperationID != pgvalue.UUID(operationID) ||
@@ -397,64 +371,6 @@ func sameWorkspaceChildFinalization(authority runLeaseClaimAuthority) bool {
 		authority.run.ParentOwnsLifecycle.Bool &&
 		authority.parentRun.ID == authority.run.ParentRunID &&
 		authority.parentRun.WorkspaceID == authority.run.WorkspaceID
-}
-
-func validateTaskWorkspaceRollback(
-	ctx context.Context,
-	store taskWorkspaceRollbackStore,
-	authority runLeaseClaimAuthority,
-	rollback parsedTaskWorkspaceRollback,
-) error {
-	version, err := store.GetTaskWorkspaceResetVersion(ctx, db.GetTaskWorkspaceResetVersionParams{
-		EnvironmentID: authority.run.EnvironmentID, WorkspaceID: authority.workspace.ID,
-		ID: authority.run.BaseWorkspaceVersionID,
-	})
-	if err != nil {
-		return staleTaskCompletion(err)
-	}
-	if version.ID != authority.run.BaseWorkspaceVersionID ||
-		rollback.target.BaseWorkspaceVersionID != pgvalue.UUIDString(version.ID) ||
-		rollback.target.Tree.Digest != version.ContentDigest.String ||
-		rollback.target.Tree.SizeBytes != version.SizeBytes ||
-		rollback.target.Tree.EntryCount != int(version.EntryCount) {
-		return errStaleTaskCompletion
-	}
-	switch rollback.target.Kind {
-	case workspace.ResetTargetEmpty:
-		if version.ParentVersionID.Valid || version.ArtifactID.Valid || version.SourceWorkspaceLeaseID.Valid ||
-			version.OwnershipGeneration != 0 || version.WriterGeneration != 0 ||
-			version.ContentDigest.String != workspace.CanonicalEmptyTreeDigest || version.SizeBytes != 0 || version.EntryCount != 0 {
-			return errStaleTaskCompletion
-		}
-	case workspace.ResetTargetArtifact:
-		if rollback.target.Artifact == nil || !version.ParentVersionID.Valid || !version.ArtifactID.Valid ||
-			!version.SourceWorkspaceLeaseID.Valid {
-			return errStaleTaskCompletion
-		}
-		artifact, err := store.GetArtifact(ctx, db.GetArtifactParams{
-			OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID,
-			EnvironmentID: version.EnvironmentID, ID: version.ArtifactID,
-		})
-		if err != nil {
-			return staleTaskCompletion(err)
-		}
-		if artifact.Kind != db.ArtifactKindWorkspaceVersion ||
-			artifact.Digest != rollback.target.Artifact.Digest ||
-			artifact.SizeBytes != rollback.target.Artifact.SizeBytes ||
-			artifact.MediaType != rollback.target.Artifact.MediaType ||
-			rollback.target.Artifact.Encoding != workspace.ArtifactEncoding ||
-			rollback.target.Artifact.EntryCount != int(version.EntryCount) {
-			return errStaleTaskCompletion
-		}
-	default:
-		return errStaleTaskCompletion
-	}
-	return nil
-}
-
-type taskWorkspaceRollbackStore interface {
-	GetTaskWorkspaceResetVersion(context.Context, db.GetTaskWorkspaceResetVersionParams) (db.WorkspaceVersion, error)
-	GetArtifact(context.Context, db.GetArtifactParams) (db.Artifact, error)
 }
 
 func validateTaskCompletionDeadline(authority runLeaseClaimAuthority, completedAt time.Time) error {
@@ -613,10 +529,24 @@ func scheduleTaskRetry(
 	secrets []secret.DeliveryEnvelope,
 	completedAt pgtype.Timestamptz,
 	retryAt time.Time,
+	versionID pgtype.UUID,
 ) error {
+	if !versionID.Valid {
+		return errStaleTaskCompletion
+	}
+	if !sameWorkspaceChildFinalization(authority) {
+		if _, err := store.AdvanceTaskRetryWorkspaceHead(ctx, db.AdvanceTaskRetryWorkspaceHeadParams{
+			ResultWorkspaceVersionID: versionID, CompletedAt: completedAt,
+			WorkspaceID: authority.workspace.ID, RunID: authority.run.ID,
+			BaseWorkspaceVersionID: authority.run.BaseWorkspaceVersionID,
+			OwnershipGeneration:    authority.workspace.OwnershipGeneration, WriterGeneration: authority.workspace.WriterGeneration,
+		}); err != nil {
+			return staleTaskCompletion(err)
+		}
+	}
 	nextAttempt := authority.attempt.Number + 1
 	if _, err := store.CreateTaskRetryAttempt(ctx, db.CreateTaskRetryAttemptParams{
-		Number: nextAttempt, RunID: authority.run.ID, WorkspaceID: authority.workspace.ID,
+		ResultWorkspaceVersionID: versionID, Number: nextAttempt, RunID: authority.run.ID, WorkspaceID: authority.workspace.ID,
 		PreviousAttemptNumber: authority.attempt.Number, RunLeaseID: authority.runLease.ID,
 	}); err != nil {
 		return staleTaskCompletion(err)
@@ -631,7 +561,7 @@ func scheduleTaskRetry(
 		return fmt.Errorf("record retry secret resolutions: %w", err)
 	}
 	if _, err := store.DelayTaskRunRetry(ctx, db.DelayTaskRunRetryParams{
-		NextAttemptNumber: nextAttempt, CompletedAt: completedAt, RetryAt: pgvalue.Timestamptz(retryAt),
+		ResultWorkspaceVersionID: versionID, NextAttemptNumber: nextAttempt, CompletedAt: completedAt, RetryAt: pgvalue.Timestamptz(retryAt),
 		ID: authority.run.ID, WorkspaceID: authority.workspace.ID,
 		PreviousAttemptNumber: authority.attempt.Number, RunLeaseID: authority.runLease.ID,
 	}); err != nil {

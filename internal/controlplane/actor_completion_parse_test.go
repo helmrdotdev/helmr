@@ -24,7 +24,7 @@ func TestParseActorCompletionRequestBindsGenerationAndWorkspaceProof(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.kind != actorCompletionSucceeded || parsed.capture == nil || parsed.rollback != nil || parsed.fingerprint == "" {
+	if parsed.kind != actorCompletionSucceeded || parsed.capture == nil || parsed.fingerprint == "" {
 		t.Fatalf("parsed Actor completion = %#v", parsed)
 	}
 }
@@ -38,7 +38,7 @@ func TestParseActorCompletionRejectsNoncanonicalFailureMessage(t *testing.T) {
 			Failed:        &workerapi.TaskFailure{Message: " failed "},
 		},
 		Workspace: workerapi.TaskWorkspaceProof{
-			RolledBack: validTaskWorkspaceRollback(t, taskRequest.Workspace.Captured),
+			Captured: taskRequest.Workspace.Captured,
 		},
 	}
 	if _, err := parseActorCompletionRequest(request); err == nil {

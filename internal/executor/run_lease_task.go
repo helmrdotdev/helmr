@@ -73,7 +73,6 @@ type RunLeaseTask interface {
 	RenewRunLease(context.Context) (RunLeaseTaskRenewal, error)
 	BeginWorkspaceFinalization(context.Context, workerapi.RunLeaseAssignment, workerapi.RunLeaseAssignment, string, workerapi.RunFinalizationKind) error
 	CaptureWorkspace(context.Context) (workerapi.TaskWorkspaceCapture, error)
-	ResetWorkspace(context.Context) (workerapi.TaskWorkspaceRollback, error)
 }
 
 func (task *guestRunLeaseTask) Close() {
@@ -710,7 +709,7 @@ func (task *guestRunLeaseTask) BeginWorkspaceFinalization(
 		return errors.New("workspace finalization expiry did not advance")
 	}
 	if strings.TrimSpace(operationID) == "" ||
-		(kind != workerapi.RunFinalizationCapture && kind != workerapi.RunFinalizationReset) {
+		kind != workerapi.RunFinalizationCapture {
 		return errors.New("workspace finalization identity is invalid")
 	}
 	response, err := task.mounts.BeginWorkspaceFinalization(
@@ -765,37 +764,6 @@ func (task *guestRunLeaseTask) CaptureWorkspace(
 			Encoding: result.Artifact.Encoding, SizeBytes: result.Artifact.SizeBytes,
 			EntryCount: int32(result.Artifact.EntryCount),
 		},
-	}, nil
-}
-
-func (task *guestRunLeaseTask) ResetWorkspace(
-	ctx context.Context,
-) (workerapi.TaskWorkspaceRollback, error) {
-	task.mu.Lock()
-	defer task.mu.Unlock()
-	if task.finished || task.finalizingKind != workerapi.RunFinalizationReset {
-		return workerapi.TaskWorkspaceRollback{}, errors.New("run lease task is not resetting")
-	}
-	envelope, err := task.finalizationEnvelope(workspace.FinalizationResetKind, task.resetTarget)
-	if err != nil {
-		return workerapi.TaskWorkspaceRollback{}, err
-	}
-	result, err := task.mounts.ResetWorkspace(
-		ctx,
-		&workspacev0.ResetWorkspaceRequest{
-			Envelope: envelope,
-			Target:   workspace.ResetTargetProto(task.resetTarget),
-		},
-		task.store,
-	)
-	if err != nil {
-		return workerapi.TaskWorkspaceRollback{}, err
-	}
-	task.finished = true
-	task.clearCapabilities()
-	return workerapi.TaskWorkspaceRollback{
-		Receipt: workerWorkspaceFinalizationReceipt(result.Receipt),
-		Target:  workerWorkspaceResetTarget(result.Target),
 	}, nil
 }
 

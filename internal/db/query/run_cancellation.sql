@@ -354,6 +354,7 @@ UPDATE run_checkpoints
 -- name: GetRunExecutionLeaseLossAuthority :one
 SELECT runs.id AS run_id,
        runs.workspace_id,
+       runs.base_workspace_version_id,
        runs.status AS run_status,
        runs.revision,
        runs.current_attempt_number,

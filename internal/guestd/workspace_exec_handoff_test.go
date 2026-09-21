@@ -45,17 +45,10 @@ func framedBasicExec(t *testing.T, ctx context.Context, registry *workspaceOpera
 }
 
 func TestWorkspaceBasicExecConsumesCommittedPredecessor(t *testing.T) {
-	for _, kind := range []string{"capture", "reset"} {
+	for _, kind := range []string{"capture"} {
 		t.Run(kind, func(t *testing.T) {
 			entry, registry, authority := testWorkspaceFinalizationMount(t)
-			if kind == "capture" {
-				runWorkspaceCapture(t, registry, testWorkspaceCaptureRequest(t, authority, "11111111-1111-4111-8111-111111111111"))
-			} else {
-				reset := testWorkspaceResetRequest(t, authority, "11111111-1111-4111-8111-111111111111", workspace.ResetTargetProto(mustEmptyResetTarget(t, "version-1")))
-				if response := runWorkspaceReset(t, registry, reset, testWorkspaceRootExchange); response.GetError() != "" {
-					t.Fatal(response)
-				}
-			}
+			runWorkspaceCapture(t, registry, testWorkspaceCaptureRequest(t, authority, "11111111-1111-4111-8111-111111111111"))
 			before, err := workspace.InspectTree(entry.workspaceRoot)
 			if err != nil {
 				t.Fatal(err)

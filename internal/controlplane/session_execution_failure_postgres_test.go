@@ -73,14 +73,16 @@ func TestSessionFailedCompletionRequiresRecoveryPostgres(t *testing.T) {
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET retry_policy='{"enabled":true,"maxAttempts":3,"backoff":{"minMs":1,"maxMs":1,"factor":1,"jitter":"none"}}'::jsonb WHERE id=$1`, f.runID)
 			a := f.claim
 			operation := uuid.NewV7().String()
-			begin := workerapi.BeginRunFinalizationRequest{Lease: f.fence(), ProgramQuiesced: workerapi.RunQuiescenceProof{RunID: f.runID.String(), AttemptNumber: 1, RunLeaseID: f.fence().ID}, OperationID: operation, Kind: workerapi.RunFinalizationReset}
+			begin := workerapi.BeginRunFinalizationRequest{Lease: f.fence(), ProgramQuiesced: workerapi.RunQuiescenceProof{RunID: f.runID.String(), AttemptNumber: 1, RunLeaseID: f.fence().ID}, OperationID: operation, Kind: workerapi.RunFinalizationCapture}
 			var began workerapi.BeginRunFinalizationResponse
 			f.workerCall(t, f.server.workerBeginRunFinalization, begin, &began)
 			assignment := workerapi.RunLeaseAssignment{ID: f.fence().ID, RunID: f.runID.String(), AttemptNumber: 1, LeaseSequence: f.fence().LeaseSequence, WorkerInstanceID: f.WorkerID.String(), WorkerEpoch: 1, RuntimeInstanceID: pgvalue.UUIDString(a.runtime.ID), RuntimeIdentityID: a.runtime.RuntimeIdentityID, WorkspaceID: f.workspaceID.String(), WorkspaceMountID: pgvalue.UUIDString(a.workspaceMount.ID), WorkspaceLeaseID: pgvalue.UUIDString(a.workspaceLease.ID), BaseWorkspaceVersionID: f.rootID.String(), OwnershipGeneration: a.workspace.OwnershipGeneration, WriterGeneration: a.workspace.WriterGeneration, MountFencingGeneration: a.workspaceMount.FencingGeneration, ExpiresAt: began.ExpiresAt}
 			capture := validTaskWorkspaceCapture(t, assignment)
+			content := f.capture(t, "retained after actor failure")
+			capture.Tree, capture.Artifact = content.Tree, content.Artifact
 			capture.Receipt.OperationID = operation
-			rollback := validTaskWorkspaceRollback(t, capture)
-			req := workerapi.CompleteActorRequest{Lease: f.fence(), Outcome: workerapi.ActorOutcome{RunGeneration: f.claim.actor.RunGeneration, Failed: &workerapi.TaskFailure{Message: "initialization failed after side effect"}}, Workspace: workerapi.TaskWorkspaceProof{RolledBack: rollback}}
+			setCaptureFingerprint(t, capture)
+			req := workerapi.CompleteActorRequest{Lease: f.fence(), Outcome: workerapi.ActorOutcome{RunGeneration: f.claim.actor.RunGeneration, Failed: &workerapi.TaskFailure{Message: "initialization failed after side effect"}}, Workspace: workerapi.TaskWorkspaceProof{Captured: capture}}
 			parsed, err := parseActorCompletionRequest(req)
 			if err != nil {
 				t.Fatal(err)
@@ -95,7 +97,8 @@ func TestSessionFailedCompletionRequiresRecoveryPostgres(t *testing.T) {
 			if err := f.Pool.QueryRow(t.Context(), `SELECT id FROM session_turns WHERE session_id=$1 AND sequence=1`, f.sessionID).Scan(&queued); err != nil {
 				t.Fatal(err)
 			}
-			assertSessionExecutionHeld(t, f, f.rootID.String(), active, queued, "failed")
+			retainedHead := assertRetainedActorCapture(t, f, capture, f.rootID)
+			assertSessionExecutionHeld(t, f, retainedHead.String(), active, queued, "failed")
 			f.reportRuntimeClosed(t)
 			assertSessionRecoveryCanResume(t, f)
 		})
@@ -205,7 +208,8 @@ func TestSessionSuccessfulReturnPreservesPendingWorkPostgres(t *testing.T) {
 				if err := f.Pool.QueryRow(t.Context(), `SELECT id FROM session_turns WHERE session_id=$1 AND sequence=1`, f.sessionID).Scan(&queued); err != nil {
 					t.Fatal(err)
 				}
-				assertSessionExecutionHeld(t, f, head.String(), uuid.Nil(), queued, "failed")
+				retainedHead := assertRetainedActorCapture(t, f, capture, head)
+				assertSessionExecutionHeld(t, f, retainedHead.String(), uuid.Nil(), queued, "failed")
 				var reason string
 				if err := f.Pool.QueryRow(t.Context(), `SELECT terminal_reason_code FROM run_attempts WHERE run_id=$1 AND number=1`, f.runID).Scan(&reason); err != nil {
 					t.Fatal(err)
@@ -225,4 +229,17 @@ func TestSessionSuccessfulReturnPreservesPendingWorkPostgres(t *testing.T) {
 			}
 		})
 	}
+}
+
+func assertRetainedActorCapture(t *testing.T, f *actorCheckpointFixture, capture *workerapi.TaskWorkspaceCapture, previous uuid.UUID) uuid.UUID {
+	t.Helper()
+	var head uuid.UUID
+	var digest string
+	if err := f.Pool.QueryRow(t.Context(), `SELECT w.head_version_id, a.digest FROM workspaces w JOIN workspace_versions v ON v.id=w.head_version_id JOIN artifacts a ON a.id=v.artifact_id WHERE w.id=$1`, f.workspaceID).Scan(&head, &digest); err != nil {
+		t.Fatal(err)
+	}
+	if head == previous || digest != capture.Artifact.Digest {
+		t.Fatalf("failure capture not retained: head=%s digest=%s", head, digest)
+	}
+	return head
 }

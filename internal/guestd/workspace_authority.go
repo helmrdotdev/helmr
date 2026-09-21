@@ -274,21 +274,8 @@ func (entry *workspaceMountEntry) pruneWorkspaceFinalizationState() error {
 	if entry.finalizationRoot == "" {
 		return nil
 	}
-	journal, found, err := entry.readWorkspaceFinalizationJournal()
-	if err != nil {
+	if _, _, err := entry.readWorkspaceFinalizationJournal(); err != nil {
 		return fmt.Errorf("read workspace finalization state for pruning: %w", err)
-	}
-	if found && journal.Kind == workspace.FinalizationResetKind && strings.TrimSpace(journal.OperationID) != "" {
-		operationID, err := uuid.Parse(journal.OperationID)
-		if err != nil || operationID.String() != journal.OperationID {
-			return errors.New("workspace reset journal operation ID is invalid")
-		}
-		if err := os.RemoveAll(entry.workspaceResetStagingPath(journal.OperationID)); err != nil {
-			return fmt.Errorf("prune workspace reset staging tree: %w", err)
-		}
-		if err := syncDirectory(filepath.Dir(entry.workspaceRoot)); err != nil {
-			return fmt.Errorf("sync pruned workspace reset staging tree: %w", err)
-		}
 	}
 	for _, name := range []string{workspaceCaptureArtifactName, workspaceFinalizationJournalName} {
 		if err := os.Remove(filepath.Join(entry.finalizationRoot, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -423,8 +410,8 @@ func (entry *workspaceMountEntry) beginWorkspaceFinalizationLocked(
 		return nil, errors.New("workspace finalization operation_id must be a canonical UUID")
 	}
 	kind := request.GetKind()
-	if kind != workspace.FinalizationCaptureKind && kind != workspace.FinalizationResetKind {
-		return nil, errors.New("workspace finalization kind must be capture or reset")
+	if kind != workspace.FinalizationCaptureKind {
+		return nil, errors.New("workspace finalization kind must be capture")
 	}
 	previous := request.GetPrevious()
 	previousExpiry := previous.GetFence().GetExpiresAtUnixNano()

@@ -311,7 +311,6 @@ type RunFinalizationKind string
 
 const (
 	RunFinalizationCapture RunFinalizationKind = "capture"
-	RunFinalizationReset   RunFinalizationKind = "reset"
 )
 
 type RunQuiescenceProof struct {
@@ -642,19 +641,13 @@ type TaskFailure struct {
 }
 
 type TaskWorkspaceProof struct {
-	Captured   *TaskWorkspaceCapture  `json:"captured,omitempty"`
-	RolledBack *TaskWorkspaceRollback `json:"rolled_back,omitempty"`
+	Captured *TaskWorkspaceCapture `json:"captured,omitempty"`
 }
 
 type TaskWorkspaceCapture struct {
 	Receipt  WorkspaceFinalizationReceipt `json:"receipt"`
 	Tree     WorkspaceTreeIdentity        `json:"tree"`
 	Artifact WorkspaceArtifact            `json:"artifact"`
-}
-
-type TaskWorkspaceRollback struct {
-	Receipt WorkspaceFinalizationReceipt `json:"receipt"`
-	Target  WorkspaceResetTarget         `json:"target"`
 }
 
 type WorkspaceFinalizationReceipt struct {

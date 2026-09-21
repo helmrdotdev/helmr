@@ -27,14 +27,6 @@ SELECT run_leases.terminal_request_fingerprint
 -- name: GetTaskCompletionTime :one
 SELECT clock_timestamp()::timestamptz;
 
--- name: GetTaskWorkspaceResetVersion :one
-SELECT *
-  FROM workspace_versions
- WHERE environment_id = sqlc.arg(environment_id)
-   AND workspace_id = sqlc.arg(workspace_id)
-   AND id = sqlc.arg(id)
-   AND status IN ('committed', 'private');
-
 -- name: PublishTaskWorkspaceVersion :one
 INSERT INTO workspace_versions (
     id,
@@ -264,7 +256,7 @@ SELECT runs.id,
        sqlc.arg(number),
        'task',
        runs.workspace_id,
-       runs.base_workspace_version_id
+       sqlc.arg(result_workspace_version_id)
   FROM runs
  WHERE runs.id = sqlc.arg(run_id)
    AND runs.workspace_id = sqlc.arg(workspace_id)
@@ -278,6 +270,7 @@ RETURNING *;
 -- name: DelayTaskRunRetry :one
 UPDATE runs
    SET status = 'retry_delayed',
+       base_workspace_version_id = sqlc.arg(result_workspace_version_id),
        revision = revision + 1,
        current_attempt_number = sqlc.arg(next_attempt_number),
        current_run_lease_id = NULL,
@@ -527,3 +520,16 @@ SELECT readied.id,
        readied.current_attempt_number,
        readied.revision
   FROM readied;
+
+-- name: AdvanceTaskRetryWorkspaceHead :one
+UPDATE workspaces
+   SET head_version_id = sqlc.arg(result_workspace_version_id),
+       revision = revision + 1,
+       last_activity_at = sqlc.arg(completed_at),
+       updated_at = sqlc.arg(completed_at)
+ WHERE id = sqlc.arg(workspace_id)
+   AND owner_run_id = sqlc.arg(run_id)
+   AND head_version_id = sqlc.arg(base_workspace_version_id)
+   AND ownership_generation = sqlc.arg(ownership_generation)
+   AND writer_generation = sqlc.arg(writer_generation)
+RETURNING id;

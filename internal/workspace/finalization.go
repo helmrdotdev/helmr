@@ -12,7 +12,6 @@ import (
 
 const FinalizationFingerprintDomain = "helmr.workspace-finalization.v0\x00"
 const FinalizationCaptureKind = "capture"
-const FinalizationResetKind = "reset"
 
 const (
 	ResetTargetEmpty    = "empty"

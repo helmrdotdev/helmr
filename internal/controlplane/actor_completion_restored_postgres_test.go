@@ -68,7 +68,7 @@ SELECT runs.status,
 	}
 }
 
-func TestRestoredActorFailureRollsMountBackToDurableHead(t *testing.T) {
+func TestRestoredActorFailureRetainsCapturedFrontier(t *testing.T) {
 	fixture := newRestoredActorCompletionPostgresFixture(t, true)
 	completion, err := parseActorCompletionRequest(fixture.request)
 	if err != nil {
@@ -109,8 +109,29 @@ SELECT runs.status,
 		t.Fatalf("terminal state = run:%s lease:%s attempt:%s workspace lease:%s Actor:%s",
 			runStatus, leaseStatus, attemptOutcome, workspaceLeaseStatus, actorStatus)
 	}
-	if headVersionID != fixture.headVersionID || mountVersionID != fixture.headVersionID {
-		t.Fatalf("rollback frontier = head:%s mount:%s, want B:%s", headVersionID, mountVersionID, fixture.headVersionID)
+	if headVersionID == fixture.headVersionID || headVersionID == fixture.privateVersionID || mountVersionID != headVersionID {
+		t.Fatalf("retained frontier = head:%s mount:%s", headVersionID, mountVersionID)
+	}
+	var digest string
+	var parent uuid.UUID
+	if err := fixture.pool.QueryRow(t.Context(), `SELECT a.digest,v.parent_version_id FROM workspace_versions v JOIN artifacts a ON a.id=v.artifact_id WHERE v.id=$1`, headVersionID).Scan(&digest, &parent); err != nil {
+		t.Fatal(err)
+	}
+	if digest != fixture.request.Workspace.Captured.Artifact.Digest || parent != fixture.privateVersionID {
+		t.Fatalf("failure capture identity = %s parent=%s", digest, parent)
+	}
+	var countBefore, countAfter int
+	if err := fixture.pool.QueryRow(t.Context(), `SELECT count(*) FROM workspace_versions WHERE workspace_id=(SELECT workspace_id FROM runs WHERE id=$1)`, fixture.runID).Scan(&countBefore); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.server.completeActor(t.Context(), fixture.worker, fixture.request, completion); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.pool.QueryRow(t.Context(), `SELECT count(*) FROM workspace_versions WHERE workspace_id=(SELECT workspace_id FROM runs WHERE id=$1)`, fixture.runID).Scan(&countAfter); err != nil {
+		t.Fatal(err)
+	}
+	if countAfter != countBefore {
+		t.Fatal("replay created another version")
 	}
 	if committedInput != 1 {
 		t.Fatalf("failed Actor advanced committed input to %d", committedInput)
@@ -128,13 +149,13 @@ type restoredActorCompletionPostgresFixture struct {
 	privateVersionID uuid.UUID
 }
 
-func newRestoredActorCompletionPostgresFixture(t *testing.T, rollback bool) restoredActorCompletionPostgresFixture {
+func newRestoredActorCompletionPostgresFixture(t *testing.T, failed bool) restoredActorCompletionPostgresFixture {
 	t.Helper()
 	base := runtest.New(t)
 	work := base.AddRunLease(t, "starting", time.Now().Add(-time.Minute))
 	ctx := t.Context()
 	base.ConvertToActor(t, ctx, work, `{"enabled":false}`)
-	if !rollback {
+	if !failed {
 		// The successful return is drained; backlog without progress is a held failure.
 		dbtest.MustExec(t, ctx, base.Pool, `UPDATE sessions SET next_input_sequence=2 WHERE current_run_id=$1`, work.RunID)
 		dbtest.MustExec(t, ctx, base.Pool, `UPDATE runs SET session_input_high_watermark=1 WHERE id=$1`, work.RunID)
@@ -439,7 +460,7 @@ UPDATE run_leases
        finalization_started_at = transaction_timestamp(),
        finalization_request_fingerprint = 'sha256:62a2fed3d6e08c44835fce71f02210b1ddabfb066e39edf1e6c261988f824dd3'
  WHERE id = $1`, work.LeaseID, expiresAt, operationID,
-		map[bool]string{false: string(workerapi.RunFinalizationCapture), true: string(workerapi.RunFinalizationReset)}[rollback])
+		string(workerapi.RunFinalizationCapture))
 	dbtest.MustExec(t, ctx, tx, `
 UPDATE workspace_leases
    SET base_workspace_version_id = $2, expires_at = $3
@@ -497,33 +518,11 @@ UPDATE workspace_mounts SET materialized_version_id = $2 WHERE id = $1`, mountID
 	request.Workspace.Captured.Receipt.OperationID = operationID.String()
 	setCaptureFingerprint(t, request.Workspace.Captured)
 	finalizationFingerprint := request.Workspace.Captured.Receipt.RequestFingerprint
-	if rollback {
+	if failed {
 		request.Outcome = workerapi.ActorOutcome{
 			RunGeneration: runGeneration,
 			Failed:        &workerapi.TaskFailure{Message: "actor failed"},
 		}
-		rolledBack := validTaskWorkspaceRollback(t, request.Workspace.Captured)
-		rolledBack.Receipt.OperationID = operationID.String()
-		rolledBack.Target.BaseWorkspaceVersionID = headVersionID.String()
-		rolledBack.Receipt.RequestFingerprint = ""
-		target := workspace.ResetTarget{
-			Kind: workspace.ResetTargetEmpty, BaseWorkspaceVersionID: headVersionID.String(),
-			Tree: workspace.TreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest},
-		}
-		fingerprint, err := workspace.FinalizationFingerprint(
-			workspace.FinalizationResetKind,
-			workspace.FinalizationRequest{
-				OperationID: operationID.String(),
-				Fence:       testFinalizationFence(rolledBack.Receipt.Fence),
-				Target:      target,
-			},
-		)
-		if err != nil {
-			t.Fatal(err)
-		}
-		rolledBack.Receipt.RequestFingerprint = fingerprint
-		request.Workspace = workerapi.TaskWorkspaceProof{RolledBack: rolledBack}
-		finalizationFingerprint = fingerprint
 	}
 	dbtest.MustExec(t, ctx, base.Pool, `
 UPDATE run_leases SET finalization_request_fingerprint = $2 WHERE id = $1`,

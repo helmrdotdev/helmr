@@ -317,7 +317,7 @@ UPDATE run_leases
        finalization_started_at = transaction_timestamp(),
        finalization_request_fingerprint = 'sha256:8b0d6826f8d226df300af31f6dfde06263d999e8851e8f452624c3b5d0dd09a7'
  WHERE id = $1`, work.LeaseID, expiresAt, operationID,
-		map[bool]string{true: string(workerapi.RunFinalizationReset), false: string(workerapi.RunFinalizationCapture)}[retry])
+		string(workerapi.RunFinalizationCapture))
 	dbtest.MustExec(t, ctx, tx, `
 UPDATE workspace_leases
    SET writer_generation = 2, expires_at = $2
@@ -371,28 +371,6 @@ UPDATE workspace_leases
 	finalizationFingerprint := request.Workspace.Captured.Receipt.RequestFingerprint
 	if retry {
 		request.Outcome = workerapi.TaskOutcome{Failed: &workerapi.TaskFailure{Message: "retry"}}
-		request.Workspace = workerapi.TaskWorkspaceProof{
-			RolledBack: validTaskWorkspaceRollback(t, request.Workspace.Captured),
-		}
-		request.Workspace.RolledBack.Receipt.OperationID = operationID.String()
-		request.Workspace.RolledBack.Receipt.RequestFingerprint = ""
-		target := workspace.ResetTarget{
-			Kind: workspace.ResetTargetEmpty, BaseWorkspaceVersionID: baseWorkspaceVersionID.String(),
-			Tree: workspace.TreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest},
-		}
-		fingerprint, err := workspace.FinalizationFingerprint(
-			workspace.FinalizationResetKind,
-			workspace.FinalizationRequest{
-				OperationID: operationID.String(),
-				Fence:       testFinalizationFence(request.Workspace.RolledBack.Receipt.Fence),
-				Target:      target,
-			},
-		)
-		if err != nil {
-			t.Fatal(err)
-		}
-		request.Workspace.RolledBack.Receipt.RequestFingerprint = fingerprint
-		finalizationFingerprint = fingerprint
 	}
 	dbtest.MustExec(t, ctx, base.Pool, `
 UPDATE run_leases

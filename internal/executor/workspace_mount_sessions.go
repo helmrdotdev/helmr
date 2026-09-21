@@ -28,7 +28,6 @@ type WorkspaceMountSessionRegistry interface {
 	RenewWorkspaceAuthority(context.Context, *workspacev0.RenewWorkspaceAuthorityRequest) (*workspacev0.WorkspaceAuthorityFence, error)
 	BeginWorkspaceFinalization(context.Context, *workspacev0.BeginWorkspaceFinalizationRequest) (*workspacev0.BeginWorkspaceFinalizationResponse, error)
 	CaptureWorkspace(context.Context, *workspacev0.CaptureWorkspaceRequest, cas.Store) (WorkspaceCapture, error)
-	ResetWorkspace(context.Context, *workspacev0.ResetWorkspaceRequest, cas.Reader) (WorkspaceReset, error)
 }
 
 type WorkspaceMountSession struct {
@@ -176,18 +175,6 @@ func (s *WorkspaceMountSessions) CaptureWorkspace(
 		return WorkspaceCapture{}, err
 	}
 	return captureWorkspaceOnSession(ctx, entry.session, store, request)
-}
-
-func (s *WorkspaceMountSessions) ResetWorkspace(
-	ctx context.Context,
-	request *workspacev0.ResetWorkspaceRequest,
-	store cas.Reader,
-) (WorkspaceReset, error) {
-	entry, err := s.finalizationSession(request.GetEnvelope())
-	if err != nil {
-		return WorkspaceReset{}, err
-	}
-	return resetWorkspaceOnSession(ctx, entry.session, store, request)
 }
 
 func (s *WorkspaceMountSessions) finalizationSession(

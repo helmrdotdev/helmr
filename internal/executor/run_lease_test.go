@@ -61,13 +61,12 @@ func TestExecutorCompletesSuccessfulRunLeaseTask(t *testing.T) {
 		t.Fatalf("calls = %v", trace.calls)
 	}
 	if controlPlane.completed.Workspace.Captured == nil ||
-		controlPlane.completed.Workspace.RolledBack != nil ||
 		controlPlane.completed.Outcome.Succeeded == nil {
 		t.Fatalf("completion = %+v", controlPlane.completed)
 	}
 }
 
-func TestExecutorRollsBackFailedRunLeaseTask(t *testing.T) {
+func TestExecutorCapturesFailedRunLeaseTask(t *testing.T) {
 	trace := &runLeaseTrace{}
 	lease := testRunLeaseAssignment(time.Now().Add(time.Minute))
 	frozen := lease
@@ -87,7 +86,7 @@ func TestExecutorRollsBackFailedRunLeaseTask(t *testing.T) {
 		trace:   trace,
 		claim:   workerapi.RunLeaseClaimResponse{Lease: lease},
 		renewed: testRunLeaseRenewResponse(lease),
-		begin:   testRunFinalizationResponse(frozen, workerapi.RunFinalizationReset),
+		begin:   testRunFinalizationResponse(frozen, workerapi.RunFinalizationCapture),
 	}
 	executor := Executor{
 		RunLeases:     controlPlane,
@@ -101,12 +100,11 @@ func TestExecutorRollsBackFailedRunLeaseTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !slices.Equal(trace.calls, []string{
-		"claim", "start", "wait", "renew", "begin", "guest-begin", "reset", "complete",
+		"claim", "start", "wait", "renew", "begin", "guest-begin", "capture", "complete",
 	}) {
 		t.Fatalf("calls = %v", trace.calls)
 	}
-	if controlPlane.completed.Workspace.Captured != nil ||
-		controlPlane.completed.Workspace.RolledBack == nil ||
+	if controlPlane.completed.Workspace.Captured == nil ||
 		controlPlane.completed.Outcome.Failed == nil {
 		t.Fatalf("completion = %+v", controlPlane.completed)
 	}
@@ -599,11 +597,6 @@ func (task *testRunLeaseTask) CaptureWorkspace(context.Context) (workerapi.TaskW
 		return workerapi.TaskWorkspaceCapture{}, errors.New("transient capture failure")
 	}
 	return workerapi.TaskWorkspaceCapture{}, nil
-}
-
-func (task *testRunLeaseTask) ResetWorkspace(context.Context) (workerapi.TaskWorkspaceRollback, error) {
-	task.trace.add("reset")
-	return workerapi.TaskWorkspaceRollback{}, nil
 }
 
 type testRunLeaseControlPlane struct {

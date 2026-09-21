@@ -63,8 +63,6 @@ func handleConnection(ctx context.Context, conn io.ReadWriteCloser, logger *slog
 		return false, handleWorkspaceFinalizationBeginConnection(conn, workspaceRegistry)
 	case wire.StreamTypeWorkspaceCapture:
 		return false, handleWorkspaceCaptureConnection(ctx, conn, workspaceRegistry)
-	case wire.StreamTypeWorkspaceReset:
-		return false, handleWorkspaceResetConnection(ctx, conn, workspaceRegistry)
 	default:
 		return false, fmt.Errorf("unsupported runtime input type %q", start.streamHeader.Type)
 	}

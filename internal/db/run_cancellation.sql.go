@@ -365,6 +365,7 @@ func (q *Queries) FindCancellationTarget(ctx context.Context, arg FindCancellati
 const getRunExecutionLeaseLossAuthority = `-- name: GetRunExecutionLeaseLossAuthority :one
 SELECT runs.id AS run_id,
        runs.workspace_id,
+       runs.base_workspace_version_id,
        runs.status AS run_status,
        runs.revision,
        runs.current_attempt_number,
@@ -516,6 +517,7 @@ type GetRunExecutionLeaseLossAuthorityParams struct {
 type GetRunExecutionLeaseLossAuthorityRow struct {
 	RunID                    pgtype.UUID        `json:"run_id"`
 	WorkspaceID              pgtype.UUID        `json:"workspace_id"`
+	BaseWorkspaceVersionID   pgtype.UUID        `json:"base_workspace_version_id"`
 	RunStatus                string             `json:"run_status"`
 	Revision                 int64              `json:"revision"`
 	CurrentAttemptNumber     int32              `json:"current_attempt_number"`
@@ -563,6 +565,7 @@ func (q *Queries) GetRunExecutionLeaseLossAuthority(ctx context.Context, arg Get
 	err := row.Scan(
 		&i.RunID,
 		&i.WorkspaceID,
+		&i.BaseWorkspaceVersionID,
 		&i.RunStatus,
 		&i.Revision,
 		&i.CurrentAttemptNumber,

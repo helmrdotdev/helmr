@@ -30,7 +30,6 @@ const (
 	StreamTypeProgramRestoreVerify       StreamType = "program-restore-verify"
 	StreamTypeWorkspaceFinalizationBegin StreamType = "workspace-finalization-begin"
 	StreamTypeWorkspaceCapture           StreamType = "workspace-capture"
-	StreamTypeWorkspaceReset             StreamType = "workspace-reset"
 )
 
 type StreamHeader struct {

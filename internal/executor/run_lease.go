@@ -65,7 +65,7 @@ func (e Executor) ExecuteRunLease(
 	}
 
 	operationID := uuid.NewV7()
-	kind := runFinalizationKind(result)
+	kind := workerapi.RunFinalizationCapture
 	beginRequest := workerapi.BeginRunFinalizationRequest{
 		Lease: current.Fence(), ProgramQuiesced: result.ProgramQuiesced,
 		OperationID: operationID.String(), Kind: kind,
@@ -123,29 +123,17 @@ func (e Executor) ExecuteRunLease(
 	if result.ActorOutcome != nil {
 		actorCompletion.Outcome = *result.ActorOutcome
 	}
-	if kind == workerapi.RunFinalizationCapture {
-		var capture workerapi.TaskWorkspaceCapture
-		if err := retryRunLeaseOperation(stageCtx, func(requestCtx context.Context) error {
-			var requestErr error
-			capture, requestErr = task.CaptureWorkspace(requestCtx)
-			return requestErr
-		}); err != nil {
-			return fmt.Errorf("capture task workspace: %w", err)
-		}
-		completion.Workspace.Captured = &capture
-		actorCompletion.Workspace.Captured = &capture
-	} else {
-		var rollback workerapi.TaskWorkspaceRollback
-		if err := retryRunLeaseOperation(stageCtx, func(requestCtx context.Context) error {
-			var requestErr error
-			rollback, requestErr = task.ResetWorkspace(requestCtx)
-			return requestErr
-		}); err != nil {
-			return fmt.Errorf("reset task workspace: %w", err)
-		}
-		completion.Workspace.RolledBack = &rollback
-		actorCompletion.Workspace.RolledBack = &rollback
+	var capture workerapi.TaskWorkspaceCapture
+	if err := retryRunLeaseOperation(stageCtx, func(requestCtx context.Context) error {
+		var requestErr error
+		capture, requestErr = task.CaptureWorkspace(requestCtx)
+		return requestErr
+	}); err != nil {
+		return fmt.Errorf("capture task workspace: %w", err)
 	}
+	completion.Workspace.Captured = &capture
+	actorCompletion.Workspace.Captured = &capture
+
 	if err := retryRunLeaseCompletion(completeCtx, replayTail, func(requestCtx context.Context) error {
 		if result.ActorOutcome != nil {
 			return e.RunLeases.CompleteActor(requestCtx, actorCompletion)
@@ -296,19 +284,6 @@ func (e Executor) renewRunLease(
 		return current, err
 	}
 	return renewal.Lease, nil
-}
-
-func runFinalizationKind(result RunLeaseTaskResult) workerapi.RunFinalizationKind {
-	if result.ActorOutcome != nil {
-		if result.ActorOutcome.Succeeded != nil || result.ActorOutcome.Interrupted != nil {
-			return workerapi.RunFinalizationCapture
-		}
-		return workerapi.RunFinalizationReset
-	}
-	if result.Outcome.Succeeded != nil {
-		return workerapi.RunFinalizationCapture
-	}
-	return workerapi.RunFinalizationReset
 }
 
 func retryRunLeaseRequest(

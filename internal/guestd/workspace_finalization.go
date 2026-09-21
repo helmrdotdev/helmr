@@ -37,8 +37,6 @@ type workspaceFinalizationJournal struct {
 	Phase              string                        `json:"phase"`
 	Tree               workspace.TreeIdentity        `json:"tree"`
 	Artifact           workspaceFinalizationArtifact `json:"artifact"`
-	PriorTree          *workspace.TreeIdentity       `json:"prior_tree,omitempty"`
-	ResetTarget        *workspace.ResetTarget        `json:"reset_target,omitempty"`
 }
 
 type workspaceFinalizationArtifact struct {
@@ -250,18 +248,12 @@ func validateWorkspaceFinalizationBeginJournal(
 	}
 	if journal.Phase == "begun" && (journal.RequestFingerprint != "" ||
 		journal.Tree != (workspace.TreeIdentity{}) ||
-		journal.Artifact != (workspaceFinalizationArtifact{}) ||
-		journal.PriorTree != nil || journal.ResetTarget != nil) {
+		journal.Artifact != (workspaceFinalizationArtifact{})) {
 		return errors.New("workspace finalization begin journal contains operation output")
 	}
 	switch kind {
 	case workspace.FinalizationCaptureKind:
 		if journal.Phase == "begun" || journal.Phase == "committed" {
-			return nil
-		}
-	case workspace.FinalizationResetKind:
-		switch journal.Phase {
-		case "begun", "prepared", "exchanged", "committed":
 			return nil
 		}
 	}

@@ -35,8 +35,8 @@ func parseRunFinalization(request workerapi.BeginRunFinalizationRequest) (parsed
 	if err != nil {
 		return parsedRunFinalization{}, err
 	}
-	if request.Kind != workerapi.RunFinalizationCapture && request.Kind != workerapi.RunFinalizationReset {
-		return parsedRunFinalization{}, errors.New("kind must be capture or reset")
+	if request.Kind != workerapi.RunFinalizationCapture {
+		return parsedRunFinalization{}, errors.New("kind must be capture")
 	}
 	quiescedRunID, err := parseCanonicalUUID("program_quiesced.run_id", request.ProgramQuiesced.RunID)
 	if err != nil {

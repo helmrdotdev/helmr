@@ -11,6 +11,45 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const advanceTaskRetryWorkspaceHead = `-- name: AdvanceTaskRetryWorkspaceHead :one
+UPDATE workspaces
+   SET head_version_id = $1,
+       revision = revision + 1,
+       last_activity_at = $2,
+       updated_at = $2
+ WHERE id = $3
+   AND owner_run_id = $4
+   AND head_version_id = $5
+   AND ownership_generation = $6
+   AND writer_generation = $7
+RETURNING id
+`
+
+type AdvanceTaskRetryWorkspaceHeadParams struct {
+	ResultWorkspaceVersionID pgtype.UUID        `json:"result_workspace_version_id"`
+	CompletedAt              pgtype.Timestamptz `json:"completed_at"`
+	WorkspaceID              pgtype.UUID        `json:"workspace_id"`
+	RunID                    pgtype.UUID        `json:"run_id"`
+	BaseWorkspaceVersionID   pgtype.UUID        `json:"base_workspace_version_id"`
+	OwnershipGeneration      int64              `json:"ownership_generation"`
+	WriterGeneration         int64              `json:"writer_generation"`
+}
+
+func (q *Queries) AdvanceTaskRetryWorkspaceHead(ctx context.Context, arg AdvanceTaskRetryWorkspaceHeadParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, advanceTaskRetryWorkspaceHead,
+		arg.ResultWorkspaceVersionID,
+		arg.CompletedAt,
+		arg.WorkspaceID,
+		arg.RunID,
+		arg.BaseWorkspaceVersionID,
+		arg.OwnershipGeneration,
+		arg.WriterGeneration,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const completeSameWorkspaceChildFailure = `-- name: CompleteSameWorkspaceChildFailure :one
 WITH queued_parent AS (
     UPDATE runs
@@ -501,29 +540,31 @@ SELECT runs.id,
        $1,
        'task',
        runs.workspace_id,
-       runs.base_workspace_version_id
+       $2
   FROM runs
- WHERE runs.id = $2
-   AND runs.workspace_id = $3
+ WHERE runs.id = $3
+   AND runs.workspace_id = $4
    AND runs.entrypoint_kind = 'task'
    AND runs.session_id IS NULL
    AND runs.status = 'running'
-   AND runs.current_attempt_number = $4
-   AND runs.current_run_lease_id = $5
+   AND runs.current_attempt_number = $5
+   AND runs.current_run_lease_id = $6
 RETURNING run_id, number, entrypoint_kind, workspace_id, entrypoint_entered_at, session_input_start_sequence, base_workspace_version_id, terminal_session_input_sequence, terminal_outcome, terminal_reason_code, terminal_error, created_at, terminal_at
 `
 
 type CreateTaskRetryAttemptParams struct {
-	Number                int32       `json:"number"`
-	RunID                 pgtype.UUID `json:"run_id"`
-	WorkspaceID           pgtype.UUID `json:"workspace_id"`
-	PreviousAttemptNumber int32       `json:"previous_attempt_number"`
-	RunLeaseID            pgtype.UUID `json:"run_lease_id"`
+	Number                   int32       `json:"number"`
+	ResultWorkspaceVersionID pgtype.UUID `json:"result_workspace_version_id"`
+	RunID                    pgtype.UUID `json:"run_id"`
+	WorkspaceID              pgtype.UUID `json:"workspace_id"`
+	PreviousAttemptNumber    int32       `json:"previous_attempt_number"`
+	RunLeaseID               pgtype.UUID `json:"run_lease_id"`
 }
 
 func (q *Queries) CreateTaskRetryAttempt(ctx context.Context, arg CreateTaskRetryAttemptParams) (RunAttempt, error) {
 	row := q.db.QueryRow(ctx, createTaskRetryAttempt,
 		arg.Number,
+		arg.ResultWorkspaceVersionID,
 		arg.RunID,
 		arg.WorkspaceID,
 		arg.PreviousAttemptNumber,
@@ -648,34 +689,37 @@ func (q *Queries) DelayCheckpointFailureRetry(ctx context.Context, arg DelayChec
 const delayTaskRunRetry = `-- name: DelayTaskRunRetry :one
 UPDATE runs
    SET status = 'retry_delayed',
+       base_workspace_version_id = $1,
        revision = revision + 1,
-       current_attempt_number = $1,
+       current_attempt_number = $2,
        current_run_lease_id = NULL,
-       retry_at = $2,
-       updated_at = $3
- WHERE id = $4
-   AND workspace_id = $5
+       retry_at = $3,
+       updated_at = $4
+ WHERE id = $5
+   AND workspace_id = $6
    AND entrypoint_kind = 'task'
    AND session_id IS NULL
    AND status = 'running'
-   AND current_attempt_number = $6
-   AND current_run_lease_id = $7
+   AND current_attempt_number = $7
+   AND current_run_lease_id = $8
    AND active_started_at IS NULL
 RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at
 `
 
 type DelayTaskRunRetryParams struct {
-	NextAttemptNumber     int32              `json:"next_attempt_number"`
-	RetryAt               pgtype.Timestamptz `json:"retry_at"`
-	CompletedAt           pgtype.Timestamptz `json:"completed_at"`
-	ID                    pgtype.UUID        `json:"id"`
-	WorkspaceID           pgtype.UUID        `json:"workspace_id"`
-	PreviousAttemptNumber int32              `json:"previous_attempt_number"`
-	RunLeaseID            pgtype.UUID        `json:"run_lease_id"`
+	ResultWorkspaceVersionID pgtype.UUID        `json:"result_workspace_version_id"`
+	NextAttemptNumber        int32              `json:"next_attempt_number"`
+	RetryAt                  pgtype.Timestamptz `json:"retry_at"`
+	CompletedAt              pgtype.Timestamptz `json:"completed_at"`
+	ID                       pgtype.UUID        `json:"id"`
+	WorkspaceID              pgtype.UUID        `json:"workspace_id"`
+	PreviousAttemptNumber    int32              `json:"previous_attempt_number"`
+	RunLeaseID               pgtype.UUID        `json:"run_lease_id"`
 }
 
 func (q *Queries) DelayTaskRunRetry(ctx context.Context, arg DelayTaskRunRetryParams) (Run, error) {
 	row := q.db.QueryRow(ctx, delayTaskRunRetry,
+		arg.ResultWorkspaceVersionID,
 		arg.NextAttemptNumber,
 		arg.RetryAt,
 		arg.CompletedAt,
@@ -996,44 +1040,6 @@ func (q *Queries) GetTaskCompletionTime(ctx context.Context) (pgtype.Timestamptz
 	var column_1 pgtype.Timestamptz
 	err := row.Scan(&column_1)
 	return column_1, err
-}
-
-const getTaskWorkspaceResetVersion = `-- name: GetTaskWorkspaceResetVersion :one
-SELECT id, environment_id, workspace_id, parent_version_id, artifact_id, content_digest, size_bytes, entry_count, status, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
-  FROM workspace_versions
- WHERE environment_id = $1
-   AND workspace_id = $2
-   AND id = $3
-   AND status IN ('committed', 'private')
-`
-
-type GetTaskWorkspaceResetVersionParams struct {
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	WorkspaceID   pgtype.UUID `json:"workspace_id"`
-	ID            pgtype.UUID `json:"id"`
-}
-
-func (q *Queries) GetTaskWorkspaceResetVersion(ctx context.Context, arg GetTaskWorkspaceResetVersionParams) (WorkspaceVersion, error) {
-	row := q.db.QueryRow(ctx, getTaskWorkspaceResetVersion, arg.EnvironmentID, arg.WorkspaceID, arg.ID)
-	var i WorkspaceVersion
-	err := row.Scan(
-		&i.ID,
-		&i.EnvironmentID,
-		&i.WorkspaceID,
-		&i.ParentVersionID,
-		&i.ArtifactID,
-		&i.ContentDigest,
-		&i.SizeBytes,
-		&i.EntryCount,
-		&i.Status,
-		&i.SourceWorkspaceLeaseID,
-		&i.OwnershipGeneration,
-		&i.WriterGeneration,
-		&i.CreatedAt,
-		&i.PublishedAt,
-		&i.DiscardedAt,
-	)
-	return i, err
 }
 
 const publishTaskWorkspaceVersion = `-- name: PublishTaskWorkspaceVersion :one
