@@ -20,14 +20,6 @@ type Seed struct {
 	Disk      *substrate.DiskSource
 }
 
-// InitialDisk is an uploaded candidate, not permission to boot. The owning
-// transaction must publish its artifact and configuration together against the
-// initializing version and live publisher fence before the working disk is used.
-type InitialDisk struct {
-	Artifact DiskArtifact
-	Config   oci.RuntimeConfig
-}
-
 // Initialize prepares an exclusively owned working disk and uploads it before
 // any customer process starts. Failure removes only this invocation's working
 // file. Success transfers that file and the uploaded candidate to the caller.

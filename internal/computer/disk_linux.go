@@ -1,6 +1,5 @@
 //go:build linux
 
-// Package computer owns durable customer disk artifacts, independently of VM memory.
 package computer
 
 import (
@@ -9,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"path/filepath"
 
@@ -21,15 +19,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const DiskMediaType = "application/vnd.helmr.computer.disk.v0+filepack+aesgcm"
 const diskRole = "computer-disk"
-
-// DiskArtifact describes encrypted storage bytes and the exact restored capacity.
-// It is a candidate until the owning fenced database transaction commits it.
-type DiskArtifact struct {
-	Object       cas.Descriptor
-	LogicalBytes int64
-}
 
 type DiskStore struct {
 	CAS    cas.Store
@@ -41,16 +31,6 @@ func (s DiskStore) validate(computerID string) error {
 		return errors.New("computer disk storage and encryption are required")
 	}
 	return ids.Validate(computerID)
-}
-
-// The format admits at most twice the logical capacity plus metadata allowance.
-// Enforce the same bound on writes and reads, without trusting CAS size metadata.
-func diskArtifactLimit(capacity int64) (int64, error) {
-	const allowance = int64(2 << 20)
-	if capacity <= 0 || capacity%4096 != 0 || capacity > (math.MaxInt64-allowance-1)/2 {
-		return 0, errors.New("invalid computer disk capacity")
-	}
-	return capacity*2 + allowance, nil
 }
 
 // Save requires an exclusively owned, stable disk throughout encoding. It does
@@ -112,15 +92,8 @@ func (s DiskStore) Restore(ctx context.Context, computerID string, artifact Disk
 	if err := s.validate(computerID); err != nil {
 		return err
 	}
-	if err := cas.ValidateDescriptor(artifact.Object); err != nil {
+	if err := artifact.Validate(capacity); err != nil {
 		return err
-	}
-	limit, err := diskArtifactLimit(capacity)
-	if err != nil {
-		return err
-	}
-	if artifact.Object.MediaType != DiskMediaType || artifact.Object.SizeBytes > limit || artifact.LogicalBytes != capacity {
-		return errors.New("computer disk artifact does not match its capacity or format")
 	}
 	if _, err := os.Lstat(target); err == nil {
 		return os.ErrExist
