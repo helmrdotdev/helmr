@@ -12,6 +12,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
@@ -29,7 +30,7 @@ type parsedCheckpointReady struct {
 	lease          parsedRunLeaseFence
 	waitID         uuid.UUID
 	checkpointID   uuid.UUID
-	capture        parsedTaskWorkspaceCapture
+	computer       workerapi.CheckpointComputer
 	manifest       []byte
 	fingerprint    string
 	artifacts      checkpointArtifactProofs
@@ -94,17 +95,7 @@ func (s *Server) workerMarkCheckpointReady(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusOK, response)
 		return
 	}
-	verified, err := s.verifyTaskWorkspaceCapture(r.Context(), parsed.capture)
-	if err != nil {
-		if response, replayed, replayErr := s.checkpointReadyReplay(r.Context(), parsed); replayErr == nil && replayed {
-			writeJSON(w, http.StatusOK, response)
-			return
-		}
-		writeError(w, badRequest(fmt.Errorf("verify checkpoint workspace capture: %w", err)))
-		return
-	}
-	parsed.capture = verified
-	if err := s.verifyCheckpointRuntimeArtifacts(r.Context(), parsed.artifacts); err != nil {
+	if err := s.verifyCheckpointArtifacts(r.Context(), parsed.computer, parsed.artifacts); err != nil {
 		if response, replayed, replayErr := s.checkpointReadyReplay(r.Context(), parsed); replayErr == nil && replayed {
 			writeJSON(w, http.StatusOK, response)
 			return
@@ -669,13 +660,6 @@ func parseCheckpointReadyRequest(request workerapi.CheckpointReadyRequest) (pars
 	if err != nil {
 		return parsedCheckpointReady{}, request, err
 	}
-	tree, err := parseTaskWorkspaceTree("workspace_capture.tree", request.WorkspaceCapture.Tree)
-	if err != nil {
-		return parsedCheckpointReady{}, request, err
-	}
-	if err := validateTaskWorkspaceArtifact("workspace_capture.artifact", request.WorkspaceCapture.Artifact); err != nil {
-		return parsedCheckpointReady{}, request, err
-	}
 	manifest, artifacts, err := validateCheckpointReadyManifest(request)
 	if err != nil {
 		return parsedCheckpointReady{}, request, err
@@ -688,17 +672,22 @@ func parseCheckpointReadyRequest(request workerapi.CheckpointReadyRequest) (pars
 	}
 	return parsedCheckpointReady{
 		lease: lease, waitID: waitID, checkpointID: checkpointID,
-		capture:  parsedTaskWorkspaceCapture{tree: tree, artifact: request.WorkspaceCapture.Artifact},
+		computer: *request.Manifest.RuntimeState.Computer,
 		manifest: manifest, fingerprint: fingerprint, artifacts: artifacts,
 		requestVersion: request.RequestVersion,
 	}, normalized, nil
 }
 
 func validateCheckpointReadyManifest(request workerapi.CheckpointReadyRequest) ([]byte, checkpointArtifactProofs, error) {
-	// Do not acknowledge a Computer checkpoint until its disk can be committed
-	// atomically with the machine artifacts. The tree publication path cannot do so.
-	if request.Manifest.RuntimeState.Computer != nil {
-		return nil, checkpointArtifactProofs{}, errors.New("computer checkpoint publication requires paired disk persistence")
+	disk := request.Manifest.RuntimeState.Computer
+	if disk == nil {
+		return nil, checkpointArtifactProofs{}, errors.New("checkpoint requires a Computer disk")
+	}
+	if _, err := parseCanonicalUUID("computer_id", disk.ComputerID); err != nil {
+		return nil, checkpointArtifactProofs{}, err
+	}
+	if err := checkpointDiskArtifact(*disk).Validate(disk.LogicalBytes); err != nil {
+		return nil, checkpointArtifactProofs{}, err
 	}
 	return validateCheckpointManifest(
 		request.Manifest,
@@ -786,14 +775,17 @@ func validateCheckpointManifest(
 	return encoded, proofs, nil
 }
 
-func (s *Server) verifyCheckpointRuntimeArtifacts(
+func (s *Server) verifyCheckpointArtifacts(
 	ctx context.Context,
+	disk workerapi.CheckpointComputer,
 	proofs checkpointArtifactProofs,
 ) error {
 	if s.cas == nil {
 		return errors.New("checkpoint CAS is not configured")
 	}
-	for _, proof := range proofs.all() {
+	runtime := proofs.all()
+	objects := append([]checkpointArtifactProof{{role: "computer", artifact: disk.Artifact}}, runtime[:]...)
+	for _, proof := range objects {
 		object, err := s.cas.Stat(ctx, proof.artifact.Digest)
 		if err != nil {
 			return fmt.Errorf("checkpoint artifact %s is missing from CAS: %w", proof.role, err)
@@ -856,25 +848,19 @@ func (s *Server) commitCheckpointReady(
 			return err
 		}
 		authority, wait, checkpointedAt := source.authority, source.wait, source.checkpointedAt
-		if source.hasCandidate {
+		if ready.computer.ComputerID != pgvalue.UUIDString(authority.workspace.ID) || checkpointDiskArtifact(ready.computer).Validate(authority.runtime.ReservedGuestEphemeralDiskBytes) != nil {
 			return errStaleRunLeaseClaim
 		}
-		baseAuthority, err := work.q.GetCheckpointWorkspaceBaseAuthority(ctx, db.GetCheckpointWorkspaceBaseAuthorityParams{
-			OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID,
-			EnvironmentID: authority.run.EnvironmentID, WorkspaceID: authority.workspace.ID,
-			VersionID: authority.workspaceLease.BaseWorkspaceVersionID,
-		})
+		candidate := request.Manifest
+		candidate.Phases = nil
+		encoded, err := json.Marshal(candidate)
 		if err != nil {
+			return err
+		}
+		if _, err := work.q.RequireRegisteredCheckpointManifest(ctx, db.RequireRegisteredCheckpointManifestParams{ID: pgvalue.UUID(ready.checkpointID), Manifest: encoded}); err != nil {
 			return staleRunLeaseClaim(err)
 		}
-		sourceBase, err := projectCheckpointWorkspaceBase(baseAuthority)
-		if err != nil {
-			return err
-		}
-		if err := validateCheckpointWorkspaceBaseAuthority(request.Manifest, sourceBase); err != nil {
-			return err
-		}
-		workspaceVersionID, err := recordCheckpointWorkspaceVersion(ctx, work.q, worker, authority, ready.capture)
+		workspaceVersionID, err := recordCheckpointComputerVersion(ctx, work.q, worker, authority, ready.computer)
 		if err != nil {
 			return err
 		}
@@ -940,7 +926,7 @@ func (s *Server) commitCheckpointReady(
 				authority,
 				wait,
 				workspaceVersionID,
-				ready.capture.tree.Digest,
+				ready.computer.Artifact.Digest,
 				checkpointedAt,
 				request.RequestVersion,
 				source.workspaceBindings,
@@ -966,6 +952,13 @@ func (s *Server) commitCheckpointReady(
 			if err != nil {
 				return staleRunLeaseClaim(err)
 			}
+		}
+		now, err := work.q.GetRunLeaseRenewalTime(ctx)
+		if err != nil {
+			return err
+		}
+		if !now.Valid || !now.Time.Before(authority.runLease.ExpiresAt.Time) || source.expiresAt.Valid && !now.Time.Before(source.expiresAt.Time) {
+			return errStaleRunLeaseClaim
 		}
 		response = workerapi.CheckpointResponse{
 			RunID: pgvalue.UUIDString(authority.run.ID), RunWaitID: request.RunWaitID, CheckpointID: request.CheckpointID,
@@ -1214,18 +1207,18 @@ func validateCheckpointRuntimeShapeAuthority(
 	return nil
 }
 
-func recordCheckpointWorkspaceVersion(
+func recordCheckpointComputerVersion(
 	ctx context.Context,
 	store db.Querier,
 	worker workerActor,
 	authority runLeaseClaimAuthority,
-	capture parsedTaskWorkspaceCapture,
+	disk workerapi.CheckpointComputer,
 ) (pgtype.UUID, error) {
-	artifact := capture.artifact
+	artifact := disk.Artifact
 	if _, err := store.UpsertCasObject(ctx, db.UpsertCasObjectParams{
 		OrgID: authority.run.OrgID, Digest: artifact.Digest, SizeBytes: artifact.SizeBytes, MediaType: artifact.MediaType,
 	}); err != nil {
-		return pgtype.UUID{}, fmt.Errorf("record checkpoint workspace CAS object: %w", err)
+		return pgtype.UUID{}, fmt.Errorf("record checkpoint Computer CAS object: %w", err)
 	}
 	artifactRow, err := store.CreateArtifact(ctx, db.CreateArtifactParams{
 		ID: pgvalue.UUID(uuid.NewV7()), OrgID: authority.run.OrgID,
@@ -1234,19 +1227,19 @@ func recordCheckpointWorkspaceVersion(
 		MediaType: artifact.MediaType, CreatedByWorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 	})
 	if err != nil {
-		return pgtype.UUID{}, fmt.Errorf("record checkpoint workspace artifact: %w", err)
+		return pgtype.UUID{}, fmt.Errorf("record checkpoint Computer artifact: %w", err)
 	}
 	version, err := store.CreatePrivateCheckpointWorkspaceVersion(ctx, db.CreatePrivateCheckpointWorkspaceVersionParams{
 		ID:            pgvalue.UUID(uuid.NewV7()),
 		EnvironmentID: authority.run.EnvironmentID,
 		WorkspaceID:   authority.workspace.ID, ParentVersionID: authority.workspaceLease.BaseWorkspaceVersionID,
-		ArtifactID: artifactRow.ID, ContentDigest: pgvalue.Text(capture.tree.Digest),
-		SizeBytes: capture.tree.SizeBytes, EntryCount: int32(capture.tree.EntryCount),
+		ArtifactID: artifactRow.ID, ContentDigest: pgvalue.Text(artifact.Digest),
+		SizeBytes: disk.LogicalBytes, EntryCount: 0,
 		SourceWorkspaceLeaseID: authority.workspaceLease.ID,
 		OwnershipGeneration:    authority.workspace.OwnershipGeneration, WriterGeneration: authority.workspace.WriterGeneration,
 	})
 	if err != nil {
-		return pgtype.UUID{}, fmt.Errorf("record private checkpoint workspace version: %w", err)
+		return pgtype.UUID{}, fmt.Errorf("record private checkpoint Computer version: %w", err)
 	}
 	return version.ID, nil
 }
@@ -1304,7 +1297,6 @@ func recordCheckpointRuntimeArtifact(
 }
 
 type checkpointSource struct {
-	hasCandidate      bool
 	expiresAt         pgtype.Timestamptz
 	authority         runLeaseClaimAuthority
 	wait              db.RunWait
@@ -1420,5 +1412,9 @@ func lockCheckpointSource(ctx context.Context, work *txWork, worker workerActor,
 		pgvalue.UUIDString(authority.run.ID), authority.attempt.Number, waitID.String(), authority.runtime.RuntimeIdentityID); err != nil {
 		return checkpointSource{}, errStaleRunLeaseClaim
 	}
-	return checkpointSource{authority: authority, wait: wait, checkpointedAt: checkpointedAt, workspaceBindings: workspaceBindings, hasCandidate: len(checkpoint.CandidateManifest) != 0, expiresAt: checkpoint.ExpiresAt}, nil
+	return checkpointSource{authority: authority, wait: wait, checkpointedAt: checkpointedAt, workspaceBindings: workspaceBindings, expiresAt: checkpoint.ExpiresAt}, nil
+}
+
+func checkpointDiskArtifact(disk workerapi.CheckpointComputer) computer.DiskArtifact {
+	return computer.DiskArtifact{Object: cas.Descriptor{Digest: disk.Artifact.Digest, SizeBytes: disk.Artifact.SizeBytes, MediaType: disk.Artifact.MediaType}, LogicalBytes: disk.LogicalBytes}
 }

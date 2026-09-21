@@ -233,14 +233,8 @@ func TestCheckpointRegistrationCannotBypassPairedPublication(t *testing.T) {
 	ready.RequestVersion = registered.RequestVersion
 	ready.Manifest = registered.Manifest
 	ready.Manifest.RuntimeState.Computer = nil
-	parsed, normalized, err := parseCheckpointReadyRequest(ready)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Exercise the transaction gate directly, after the legacy request parser.
-	// Storage verification would happen before this transaction in the handler.
-	if _, err := f.server.commitCheckpointReady(t.Context(), f.worker, normalized, parsed); !errors.Is(err, errStaleRunLeaseClaim) {
-		t.Fatalf("registered candidate entered tree publication: %v", err)
+	if _, _, err := parseCheckpointReadyRequest(ready); err == nil {
+		t.Fatal("accepted checkpoint without paired Computer disk")
 	}
 	rows, err := f.server.db.ListCheckpointObjects(t.Context(), pgvalue.UUID(uuid.MustParse(registered.CheckpointID)))
 	if err != nil || len(rows) != 5 {

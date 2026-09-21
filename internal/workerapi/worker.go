@@ -1130,17 +1130,11 @@ type RegisterCheckpointRequest struct {
 }
 
 type CheckpointReadyRequest struct {
-	Lease            RunLeaseFence              `json:"lease"`
-	RequestVersion   int64                      `json:"request_version"`
-	RunWaitID        string                     `json:"run_wait_id"`
-	CheckpointID     string                     `json:"checkpoint_id"`
-	WorkspaceCapture CheckpointWorkspaceCapture `json:"workspace_capture"`
-	Manifest         CheckpointManifest         `json:"manifest"`
-}
-
-type CheckpointWorkspaceCapture struct {
-	Tree     WorkspaceTreeIdentity `json:"tree"`
-	Artifact WorkspaceArtifact     `json:"artifact"`
+	Lease          RunLeaseFence      `json:"lease"`
+	RequestVersion int64              `json:"request_version"`
+	RunWaitID      string             `json:"run_wait_id"`
+	CheckpointID   string             `json:"checkpoint_id"`
+	Manifest       CheckpointManifest `json:"manifest"`
 }
 
 type CheckpointFailedRequest struct {

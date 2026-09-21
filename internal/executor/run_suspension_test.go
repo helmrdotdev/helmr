@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -175,7 +176,7 @@ func TestControlPlaneRunWaitsContinuesAlreadyOpenedWaitWithoutCreatingAnother(t 
 	}
 }
 
-func TestControlPlaneRunWaitsCapturesWorkspaceForTypedCheckpointIntent(t *testing.T) {
+func TestControlPlaneRunWaitsPublishesPairedComputerManifest(t *testing.T) {
 	client := &fakeRunWaitClient{
 		created: liveRunWaitResponse(),
 		polls: []workerapi.RunWaitPollResponse{{
@@ -194,8 +195,7 @@ func TestControlPlaneRunWaitsCapturesWorkspaceForTypedCheckpointIntent(t *testin
 	if !errors.Is(err, ErrDetached) {
 		t.Fatalf("err = %v, want ErrDetached", err)
 	}
-	if client.ready == nil || client.ready.WorkspaceCapture.Artifact.Digest != "sha256:workspace-capture" ||
-		client.ready.WorkspaceCapture.Tree.Digest != "sha256:workspace-tree" {
+	if client.ready == nil || client.ready.Manifest.RuntimeState.Computer == nil || *client.ready.Manifest.RuntimeState.Computer != *checkpointer.manifest.RuntimeState.Computer {
 		t.Fatalf("ready request = %+v", client.ready)
 	}
 }
@@ -535,6 +535,7 @@ func testRunCheckpointWaitManifest() workerapi.CheckpointManifest {
 			VMVCPUCount: 2, CPUConfigDigest: "sha256:" + strings.Repeat("8", 64),
 		}},
 		RuntimeState: workerapi.CheckpointRuntimeState{
+			Computer:            &workerapi.CheckpointComputer{ComputerID: "01900000-0000-7000-8000-000000000903", LogicalBytes: computer.SeedCapacity, Artifact: workerapi.CheckpointArtifact{Digest: "sha256:" + strings.Repeat("5", 64), SizeBytes: 1024, MediaType: computer.DiskMediaType}},
 			ConfigArtifact:      workerapi.CheckpointArtifact{Digest: "sha256:" + strings.Repeat("4", 64), MediaType: cas.CheckpointRuntimeConfigMediaType},
 			VMStateArtifact:     workerapi.CheckpointArtifact{Digest: "sha256:" + strings.Repeat("1", 64), MediaType: cas.CheckpointVMStateMediaType},
 			ScratchDiskArtifact: workerapi.CheckpointArtifact{Digest: "sha256:" + strings.Repeat("3", 64), MediaType: cas.CheckpointScratchDiskMediaType},
@@ -557,5 +558,20 @@ func TestCheckpointFailureAcknowledgementPreservesCleanupUncertainty(t *testing.
 	}
 	if client.failed == nil {
 		t.Fatal("checkpoint failure not reported")
+	}
+}
+
+func TestControlPlaneRunWaitsRejectsUnpairedCheckpoint(t *testing.T) {
+	client := &fakeRunWaitClient{created: liveRunWaitResponse(), polls: []workerapi.RunWaitPollResponse{{RunID: "run-1", RunWaitID: "run-wait-id-1", Status: "checkpoint_requested", RequestVersion: 3, CheckpointID: "checkpoint-1"}}}
+	checkpointer := &fakeCheckpointer{manifest: testRunCheckpointWaitManifest()}
+	checkpointer.manifest.RuntimeState.Computer = nil
+	request := testWaitRequest(workerapi.RunWaitKindToken)
+	request.Checkpointer = checkpointer
+	err := (ControlPlaneRunWaits{Client: client}).Wait(context.Background(), request)
+	if !errors.Is(err, ErrDetached) || client.ready != nil || client.failed == nil || !strings.Contains(client.failed.Error, "paired Computer disk") {
+		t.Fatalf("unpaired checkpoint err=%v ready=%+v failed=%+v", err, client.ready, client.failed)
+	}
+	if checkpointer.releaseCount == 0 {
+		t.Fatal("failed checkpoint did not release source")
 	}
 }

@@ -20,7 +20,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func checkpointTokenAndResume(t *testing.T, f *actorCheckpointFixture, scope session.TurnScope, cursor int64, capture workerapi.CheckpointWorkspaceCapture) workerapi.CheckpointResponse {
+func checkpointTokenAndResume(t *testing.T, f *actorCheckpointFixture, scope session.TurnScope, cursor int64, capture testWorkspaceCapture) workerapi.CheckpointResponse {
 	t.Helper()
 	reconciler, registration := actorTokenWait(t, f, scope)
 	registration.ActorSpeculativeInputSequence.Int64 = cursor
@@ -111,7 +111,7 @@ func TestSessionOutsideTurnCheckpointThenTurnSettlementPostgres(t *testing.T) {
 	f.turn(t, 2, capture, false)
 }
 
-func checkpointChildAndResume(t *testing.T, f *actorCheckpointFixture, scope session.TurnScope, capture workerapi.CheckpointWorkspaceCapture, outcome string) workerapi.CheckpointWorkspaceCapture {
+func checkpointChildAndResume(t *testing.T, f *actorCheckpointFixture, scope session.TurnScope, capture testWorkspaceCapture, outcome string) testWorkspaceCapture {
 	t.Helper()
 	manifestInput := `{"payload":{"kind":"none"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}`
 	if outcome == "retry cancellation" || outcome == "retry exhaustion" {
@@ -373,7 +373,7 @@ func TestSessionChildHandbackCheckpointLineagePostgres(t *testing.T) {
 	}
 }
 
-func finishCheckpointChild(t *testing.T, f *actorCheckpointFixture, capture workerapi.CheckpointWorkspaceCapture, outcome string) workerapi.CheckpointWorkspaceCapture {
+func finishCheckpointChild(t *testing.T, f *actorCheckpointFixture, capture testWorkspaceCapture, outcome string) testWorkspaceCapture {
 	t.Helper()
 	content := capture
 	operation := uuid.NewV7().String()
@@ -411,7 +411,7 @@ func finishCheckpointChild(t *testing.T, f *actorCheckpointFixture, capture work
 	return content
 }
 
-func cancelChildWithAdmittedDescendant(t *testing.T, f *actorCheckpointFixture, waitingParent uuid.UUID, capture workerapi.CheckpointWorkspaceCapture) {
+func cancelChildWithAdmittedDescendant(t *testing.T, f *actorCheckpointFixture, waitingParent uuid.UUID, capture testWorkspaceCapture) {
 	t.Helper()
 	cancelledChild := f.runID
 	target, _ := json.Marshal(map[string]string{"id": f.workspaceID.String()})

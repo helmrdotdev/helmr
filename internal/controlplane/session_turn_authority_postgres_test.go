@@ -20,7 +20,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func turnCommitRequest(t *testing.T, f *actorCheckpointFixture, scope session.TurnScope, capture workerapi.CheckpointWorkspaceCapture) workerapi.CommitActorTurnRequest {
+func turnCommitRequest(t *testing.T, f *actorCheckpointFixture, scope session.TurnScope, capture testWorkspaceCapture) workerapi.CommitActorTurnRequest {
 	t.Helper()
 	var base uuid.UUID
 	if err := f.Pool.QueryRow(t.Context(), `SELECT base_workspace_version_id FROM workspace_leases WHERE owner_run_lease_id=$1`, f.claim.runLease.ID).Scan(&base); err != nil {

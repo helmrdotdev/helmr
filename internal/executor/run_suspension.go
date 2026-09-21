@@ -223,8 +223,8 @@ func (w ControlPlaneRunWaits) handleCheckpointDecision(ctx context.Context, requ
 			resultErr = errors.Join(resultErr, &checkpointSourceReleaseError{err: err})
 		}
 	}()
-	if checkpoint.WorkspaceCapture == nil {
-		err := errors.New("workspace capture is required before parking")
+	if checkpoint.Manifest.RuntimeState.Computer == nil {
+		err := errors.New("paired Computer disk is required before parking")
 		return failCheckpoint(err)
 	}
 	lease, err = request.currentLeaseAssignment()
@@ -234,8 +234,7 @@ func (w ControlPlaneRunWaits) handleCheckpointDecision(ctx context.Context, requ
 	readyRequest := workerapi.CheckpointReadyRequest{
 		Lease: lease.Fence(), RequestVersion: intent.RequestVersion,
 		RunWaitID: intent.RunWaitID, CheckpointID: intent.CheckpointID,
-		WorkspaceCapture: *workerCheckpointWorkspaceCapture(checkpoint.WorkspaceCapture),
-		Manifest:         checkpoint.Manifest,
+		Manifest: checkpoint.Manifest,
 	}
 	for {
 		if _, err := w.Client.MarkCheckpointReady(ctx, readyRequest); err == nil {
@@ -245,22 +244,6 @@ func (w ControlPlaneRunWaits) handleCheckpointDecision(ctx context.Context, requ
 		} else if err := sleepWithContext(ctx, 250*time.Millisecond); err != nil {
 			return err
 		}
-	}
-}
-
-func workerCheckpointWorkspaceCapture(capture *CheckpointWorkspaceCapture) *workerapi.CheckpointWorkspaceCapture {
-	if capture == nil {
-		return nil
-	}
-	return &workerapi.CheckpointWorkspaceCapture{
-		Tree: workerapi.WorkspaceTreeIdentity{
-			Digest: capture.Tree.Digest, SizeBytes: capture.Tree.SizeBytes, EntryCount: int32(capture.Tree.EntryCount),
-		},
-		Artifact: workerapi.WorkspaceArtifact{
-			Digest: capture.Artifact.Digest, MediaType: capture.Artifact.MediaType,
-			Encoding: capture.Artifact.Encoding, SizeBytes: capture.Artifact.SizeBytes,
-			EntryCount: int32(capture.Artifact.EntryCount),
-		},
 	}
 }
 

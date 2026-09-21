@@ -109,3 +109,22 @@ func (q *Queries) RegisterCheckpointObject(ctx context.Context, arg RegisterChec
 	)
 	return i, err
 }
+
+const requireRegisteredCheckpointManifest = `-- name: RequireRegisteredCheckpointManifest :one
+SELECT id FROM run_checkpoints
+ WHERE id=$1 AND status='creating'
+   AND candidate_manifest=$2
+   AND (SELECT count(*) FROM run_checkpoint_objects WHERE checkpoint_id=run_checkpoints.id AND checkpoint_status='creating')=5
+`
+
+type RequireRegisteredCheckpointManifestParams struct {
+	ID       pgtype.UUID `json:"id"`
+	Manifest []byte      `json:"manifest"`
+}
+
+func (q *Queries) RequireRegisteredCheckpointManifest(ctx context.Context, arg RequireRegisteredCheckpointManifestParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, requireRegisteredCheckpointManifest, arg.ID, arg.Manifest)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}

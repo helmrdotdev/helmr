@@ -28,7 +28,6 @@ import (
 type runtimeRestoreProjectionStore struct {
 	db.Querier
 	checkpoint db.GetReadyRunCheckpointRow
-	baseCalls  int
 }
 
 type runtimeReconcileTargetStore struct {
@@ -127,15 +126,7 @@ func (s *runtimeRestoreProjectionStore) GetReadyRunCheckpoint(
 	return s.checkpoint, nil
 }
 
-func (s *runtimeRestoreProjectionStore) GetCheckpointWorkspaceBaseAuthority(
-	_ context.Context,
-	_ db.GetCheckpointWorkspaceBaseAuthorityParams,
-) (db.GetCheckpointWorkspaceBaseAuthorityRow, error) {
-	s.baseCalls++
-	return db.GetCheckpointWorkspaceBaseAuthorityRow{}, errors.New("restore projection queried Workspace base authority")
-}
-
-func TestPopulateRuntimeRestoreSourceKeepsCapturedFrontierWithoutRequeryingBase(t *testing.T) {
+func TestPopulateRuntimeRestoreSourceKeepsCapturedFrontier(t *testing.T) {
 	checkpointID := pgvalue.UUID(uuid.NewV7())
 	runID := pgvalue.UUID(uuid.NewV7())
 	waitID := pgvalue.UUID(uuid.NewV7())
@@ -189,8 +180,8 @@ func TestPopulateRuntimeRestoreSourceKeepsCapturedFrontierWithoutRequeryingBase(
 		source.WorkspaceTarget.Artifact.Digest != validDigest('9') {
 		t.Fatalf("captured frontier was rewritten: %+v", source)
 	}
-	if source.Restore == nil || store.baseCalls != 0 {
-		t.Fatalf("restore projection queried Workspace base authority: restore=%+v calls=%d", source.Restore, store.baseCalls)
+	if source.Restore == nil {
+		t.Fatal("restore projection omitted the captured checkpoint")
 	}
 }
 

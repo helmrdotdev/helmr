@@ -17,6 +17,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/deployment"
@@ -218,7 +219,12 @@ func (f *actorCheckpointFixture) fence() workerapi.RunLeaseFence {
 	return workerapi.RunLeaseFence{ID: pgvalue.UUIDString(f.claim.runLease.ID), LeaseSequence: f.claim.runLease.LeaseSequence}
 }
 
-func (f *actorCheckpointFixture) capture(t *testing.T, value string) workerapi.CheckpointWorkspaceCapture {
+type testWorkspaceCapture struct {
+	Tree     workerapi.WorkspaceTreeIdentity
+	Artifact workerapi.WorkspaceArtifact
+}
+
+func (f *actorCheckpointFixture) capture(t *testing.T, value string) testWorkspaceCapture {
 	t.Helper()
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "marker"), []byte(value), 0600); err != nil {
@@ -238,10 +244,10 @@ func (f *actorCheckpointFixture) capture(t *testing.T, value string) workerapi.C
 	if err != nil {
 		t.Fatal(err)
 	}
-	return workerapi.CheckpointWorkspaceCapture{Tree: workerapi.WorkspaceTreeIdentity{Digest: tree.Digest, SizeBytes: tree.SizeBytes, EntryCount: int32(tree.EntryCount)}, Artifact: workerapi.WorkspaceArtifact{Digest: obj.Digest, SizeBytes: obj.SizeBytes, MediaType: a.MediaType, Encoding: a.Encoding, EntryCount: int32(a.EntryCount)}}
+	return testWorkspaceCapture{Tree: workerapi.WorkspaceTreeIdentity{Digest: tree.Digest, SizeBytes: tree.SizeBytes, EntryCount: int32(tree.EntryCount)}, Artifact: workerapi.WorkspaceArtifact{Digest: obj.Digest, SizeBytes: obj.SizeBytes, MediaType: a.MediaType, Encoding: a.Encoding, EntryCount: int32(a.EntryCount)}}
 }
 
-func (f *actorCheckpointFixture) turn(t *testing.T, sequence int64, capture workerapi.CheckpointWorkspaceCapture, changed bool) workerapi.CommitActorTurnResponse {
+func (f *actorCheckpointFixture) turn(t *testing.T, sequence int64, capture testWorkspaceCapture, changed bool) workerapi.CommitActorTurnResponse {
 	t.Helper()
 	var base uuid.UUID
 	if err := f.Pool.QueryRow(t.Context(), `SELECT base_workspace_version_id FROM workspace_leases WHERE owner_run_lease_id=$1`, f.claim.runLease.ID).Scan(&base); err != nil {
@@ -276,7 +282,7 @@ func (f *actorCheckpointFixture) turn(t *testing.T, sequence int64, capture work
 	return out
 }
 
-func (f *actorCheckpointFixture) suspend(t *testing.T, capture workerapi.CheckpointWorkspaceCapture) workerapi.CheckpointResponse {
+func (f *actorCheckpointFixture) suspend(t *testing.T, capture testWorkspaceCapture) workerapi.CheckpointResponse {
 	t.Helper()
 	seq := int64(1)
 	waitID := uuid.NewV7()
@@ -286,14 +292,14 @@ func (f *actorCheckpointFixture) suspend(t *testing.T, capture workerapi.Checkpo
 	return f.suspendWait(t, waitID, capture)
 }
 
-func (f *actorCheckpointFixture) suspendWait(t *testing.T, waitID uuid.UUID, capture workerapi.CheckpointWorkspaceCapture) workerapi.CheckpointResponse {
+func (f *actorCheckpointFixture) suspendWait(t *testing.T, waitID uuid.UUID, capture testWorkspaceCapture) workerapi.CheckpointResponse {
 	t.Helper()
 	out := f.publishWaitCheckpoint(t, waitID, capture)
 	f.reportRuntimeClosed(t)
 	return out
 }
 
-func (f *actorCheckpointFixture) publishWaitCheckpoint(t *testing.T, waitID uuid.UUID, capture workerapi.CheckpointWorkspaceCapture) workerapi.CheckpointResponse {
+func (f *actorCheckpointFixture) publishWaitCheckpoint(t *testing.T, waitID uuid.UUID, capture testWorkspaceCapture) workerapi.CheckpointResponse {
 	t.Helper()
 	parsed, err := parseRunLeaseFence(f.fence())
 	if err != nil {
@@ -308,7 +314,6 @@ func (f *actorCheckpointFixture) publishWaitCheckpoint(t *testing.T, waitID uuid
 	req.RunWaitID = waitID.String()
 	req.CheckpointID = pgvalue.UUIDString(w.SuspendCheckpointID)
 	req.RequestVersion = w.CheckpointRequestVersion
-	req.WorkspaceCapture = capture
 	rp := &req.Manifest.RecoveryPoint
 	rp.ID = req.CheckpointID
 	rp.RunID = f.runID.String()
@@ -320,16 +325,20 @@ func (f *actorCheckpointFixture) publishWaitCheckpoint(t *testing.T, waitID uuid
 	rp.Runtime.VMVCPUCount = 1
 	rp.Runtime.CPUConfigDigest = f.CPUConfigDigest
 	rp.Runtime.Substrate = &workerapi.CheckpointRuntimeSubstrate{Digest: dbtest.Digest("frontier-substrate"), Format: "squashfs", Contract: "builder-v0", SizeBytes: 1}
-	// Use the committed version artifact as the actual source base descriptor.
-	req.Manifest.WorkspaceState.Base = workerapi.CheckpointWorkspaceBase{ArtifactDigest: capture.Artifact.Digest, ArtifactSizeBytes: capture.Artifact.SizeBytes, ArtifactMediaType: capture.Artifact.MediaType, ArtifactEncoding: capture.Artifact.Encoding, MountPath: "/workspace"}
-	for _, a := range []*workerapi.CheckpointArtifact{&req.Manifest.RuntimeState.ConfigArtifact, &req.Manifest.RuntimeState.VMStateArtifact, &req.Manifest.RuntimeState.ScratchDiskArtifact, &req.Manifest.RuntimeState.MemoryArtifacts[0]} {
-		obj, err := f.server.cas.Put(t.Context(), a.MediaType, strings.NewReader(a.MediaType))
+	// The storage authority is the whole Computer disk, independent of the
+	// tree capture still used by the separate turn-completion test helper.
+	req.Manifest.RuntimeState.Computer = &workerapi.CheckpointComputer{
+		ComputerID: f.workspaceID.String(), LogicalBytes: f.claim.runtime.ReservedGuestEphemeralDiskBytes,
+		Artifact: workerapi.CheckpointArtifact{MediaType: computer.DiskMediaType},
+	}
+	for _, a := range []*workerapi.CheckpointArtifact{&req.Manifest.RuntimeState.Computer.Artifact, &req.Manifest.RuntimeState.ConfigArtifact, &req.Manifest.RuntimeState.VMStateArtifact, &req.Manifest.RuntimeState.ScratchDiskArtifact, &req.Manifest.RuntimeState.MemoryArtifacts[0]} {
+		obj, err := f.server.cas.Put(t.Context(), a.MediaType, strings.NewReader(req.CheckpointID+capture.Artifact.Digest+a.MediaType))
 		if err != nil {
 			t.Fatal(err)
 		}
-		a.Digest = obj.Digest
-		a.SizeBytes = obj.SizeBytes
+		a.Digest, a.SizeBytes = obj.Digest, obj.SizeBytes
 	}
+	f.workerCall(t, f.server.workerRegisterCheckpoint, workerapi.RegisterCheckpointRequest{Lease: req.Lease, RequestVersion: req.RequestVersion, RunWaitID: req.RunWaitID, CheckpointID: req.CheckpointID, Manifest: req.Manifest}, nil)
 	var out workerapi.CheckpointResponse
 	f.workerCall(t, f.server.workerMarkCheckpointReady, req, &out)
 	// A lost acknowledgement retries the same receipt before the source is closed.
@@ -364,7 +373,7 @@ func (f *actorCheckpointFixture) close(t *testing.T) {
 	}
 }
 
-func (f *actorCheckpointFixture) complete(t *testing.T, sequence int64, content workerapi.CheckpointWorkspaceCapture) {
+func (f *actorCheckpointFixture) complete(t *testing.T, sequence int64, content testWorkspaceCapture) {
 	t.Helper()
 	a := f.claim
 	var base uuid.UUID

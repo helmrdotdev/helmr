@@ -163,7 +163,7 @@ func (s *Server) completeTask(
 		if completion.capture != nil {
 			failurePoint = taskCompletionPointWorkspaceVersion
 			if sameWorkspaceChildFinalization(authority) {
-				versionID, err = recordCheckpointWorkspaceVersion(
+				versionID, err = recordChildTaskWorkspaceVersion(
 					ctx, work.q, worker, authority, *completion.capture,
 				)
 				if err == nil {
@@ -929,4 +929,41 @@ func staleTaskCompletion(err error) error {
 		return errStaleTaskCompletion
 	}
 	return err
+}
+
+func recordChildTaskWorkspaceVersion(
+	ctx context.Context,
+	store db.Querier,
+	worker workerActor,
+	authority runLeaseClaimAuthority,
+	capture parsedTaskWorkspaceCapture,
+) (pgtype.UUID, error) {
+	artifact := capture.artifact
+	if _, err := store.UpsertCasObject(ctx, db.UpsertCasObjectParams{
+		OrgID: authority.run.OrgID, Digest: artifact.Digest, SizeBytes: artifact.SizeBytes, MediaType: artifact.MediaType,
+	}); err != nil {
+		return pgtype.UUID{}, fmt.Errorf("record checkpoint workspace CAS object: %w", err)
+	}
+	artifactRow, err := store.CreateArtifact(ctx, db.CreateArtifactParams{
+		ID: pgvalue.UUID(uuid.NewV7()), OrgID: authority.run.OrgID,
+		ProjectID: authority.run.ProjectID, EnvironmentID: authority.run.EnvironmentID,
+		Digest: artifact.Digest, Kind: db.ArtifactKindWorkspaceVersion, SizeBytes: artifact.SizeBytes,
+		MediaType: artifact.MediaType, CreatedByWorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+	})
+	if err != nil {
+		return pgtype.UUID{}, fmt.Errorf("record checkpoint workspace artifact: %w", err)
+	}
+	version, err := store.CreatePrivateCheckpointWorkspaceVersion(ctx, db.CreatePrivateCheckpointWorkspaceVersionParams{
+		ID:            pgvalue.UUID(uuid.NewV7()),
+		EnvironmentID: authority.run.EnvironmentID,
+		WorkspaceID:   authority.workspace.ID, ParentVersionID: authority.workspaceLease.BaseWorkspaceVersionID,
+		ArtifactID: artifactRow.ID, ContentDigest: pgvalue.Text(capture.tree.Digest),
+		SizeBytes: capture.tree.SizeBytes, EntryCount: int32(capture.tree.EntryCount),
+		SourceWorkspaceLeaseID: authority.workspaceLease.ID,
+		OwnershipGeneration:    authority.workspace.OwnershipGeneration, WriterGeneration: authority.workspace.WriterGeneration,
+	})
+	if err != nil {
+		return pgtype.UUID{}, fmt.Errorf("record private checkpoint workspace version: %w", err)
+	}
+	return version.ID, nil
 }
